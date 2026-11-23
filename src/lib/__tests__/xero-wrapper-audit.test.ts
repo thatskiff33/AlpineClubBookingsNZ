@@ -2,6 +2,7 @@ import fs from "fs";
 import path from "path";
 import ts from "typescript";
 import { describe, expect, it } from "vitest";
+import { CENSUS_TIMEOUT_MS } from "@/test/census-timeout";
 
 const SCAN_ROOTS = [
   path.resolve(process.cwd(), "src/app"),
@@ -98,5 +99,5 @@ describe("Xero wrapper audit", () => {
     );
 
     expect(violations).toEqual([]);
-  }, 20_000);
+  }, CENSUS_TIMEOUT_MS);
 });

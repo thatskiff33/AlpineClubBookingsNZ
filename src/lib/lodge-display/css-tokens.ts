@@ -1,6 +1,6 @@
 import { sanitiseRawCss, type BrandShims } from "@/lib/club-theme-schema";
 
-// Authored-CSS handling for the lobby display (ADR-003 §4, LTV-029, #75).
+// Authored-CSS handling for the lobby display (ADR-003 §4, LTV-029, hoppers99/AlpineClubBookingsNZ#75).
 //
 // A Layout carries a default CSS block and a Template layers CSS overrides on
 // top. Both are ADMIN-authored (full-admin only, CMS trust model) but reach an
@@ -18,7 +18,7 @@ import { sanitiseRawCss, type BrandShims } from "@/lib/club-theme-schema";
 // test matrix is the right size for the trust model (no admin-authored JS ever
 // runs; script is stripped by the html sanitiser, not here). This module is
 // CLIENT-SAFE by design — pure string work, no prisma/`server-only`/DOM — so the
-// authoring UI (#79) and the reference screen (#80) can reuse the sanitiser,
+// authoring UI (hoppers99/AlpineClubBookingsNZ#79) and the reference screen (hoppers99/AlpineClubBookingsNZ#80) can reuse the sanitiser,
 // scoper, and `listDisplayCssTokens()` without pulling in the server assembler.
 
 /** The DOM class the display page wraps the editable body/footer in. Authored
@@ -86,8 +86,8 @@ const BRAND_SHIM_TOKEN_DESCRIPTIONS: Record<keyof BrandShims, string> = {
  * The stable set of theme tokens an author may use in display CSS: the board's
  * own `--display-*` palette plus the club theme's `--brand-*` colours and font
  * families (injected read-only into the display page — see `themeCss`). Name +
- * description + family; surfaced by the authoring UI (#79) and reference screen
- * (#80), and the data source the LTV-034 reference expects.
+ * description + family; surfaced by the authoring UI (hoppers99/AlpineClubBookingsNZ#79) and reference screen
+ * (hoppers99/AlpineClubBookingsNZ#80), and the data source the LTV-034 reference expects.
  */
 export function listDisplayCssTokens(): DisplayCssToken[] {
   const brandColours: DisplayCssToken[] = (

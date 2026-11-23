@@ -5,6 +5,7 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 
 import { stripComments, stripCommentsAndStrings } from "./support/strip-comments";
+import { CENSUS_TIMEOUT_MS } from "@/test/census-timeout";
 
 /**
  * #3252 — an order that is part of an IDENTITY is ordered by code unit, in one
@@ -136,7 +137,7 @@ function codeWithStrings(file: string): string {
   return stripComments(readFileSync(path.join(REPO_ROOT, file), "utf8"));
 }
 
-describe("identity ordering census (#3252)", () => {
+describe("identity ordering census (#3252)", { timeout: CENSUS_TIMEOUT_MS }, () => {
   const sources = trackedSources();
 
   it("scans a real, non-trivial share of the tree", () => {

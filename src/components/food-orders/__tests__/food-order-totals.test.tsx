@@ -8,7 +8,7 @@ import { ClubFormatProvider } from "@/components/club-format-provider";
 import { FoodOrderTotals, type FoodOrderYearTotalView } from "../food-order-totals";
 
 /**
- * Fork #121 (owner, 13 Nov 2026): the totals panel keeps its headline and adds
+ * Fork triyder/AlpineClubBookingsNZ#121 (owner, 13 Nov 2026): the totals panel keeps its headline and adds
  * totals by year; previous years sit in a disclosure that starts closed.
  */
 

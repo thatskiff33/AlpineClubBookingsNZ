@@ -10,6 +10,7 @@ import {
 } from "@/lib/club-theme-schema";
 
 import { stripCssComments } from "./support/strip-comments";
+import { CENSUS_TIMEOUT_MS } from "@/test/census-timeout";
 
 // #4553 — `text-destructive` is the app's error ink (inline field errors,
 // `bg-destructive/10` alert boxes, destructive menu items). #4534 measured the
@@ -114,7 +115,7 @@ describe("destructive token contrast (#4553)", () => {
   it("finds the error-box fills it measures", () => {
     // A census that matched nothing would make every box check below vacuous.
     expect(alphas).toContain(10);
-  }, 60_000);
+  }, CENSUS_TIMEOUT_MS);
 
   for (const theme of THEMES) {
     it(`${theme.name}: text-destructive clears AA on every surface it lands on`, () => {

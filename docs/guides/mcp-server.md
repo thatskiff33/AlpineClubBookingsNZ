@@ -25,8 +25,9 @@ Find the club's settings at **Admin → Help & system → AI app connections**
 the **Help & system** hub. The page exists only while the module is on.
 
 The end goal is that members can do everything on the website through an AI
-app, built in stages. Stage 1 (this release) is the foundation plus a first
-set of member actions; see [The roadmap](#the-roadmap).
+app, built in stages. Stage 1 is the foundation plus a first set of member
+actions; ALP-718 adds the member's own account and the club's published
+information; see [The roadmap](#the-roadmap).
 
 ## When you'd use it
 
@@ -59,7 +60,7 @@ set of member actions; see [The roadmap](#the-roadmap).
 
 While the module is off, every AI-connection address answers **Not Found**:
 the MCP endpoint, its sign-in endpoints and discovery documents, the approval
-screen, the profile card, the admin page and the four member reads added for
+screen, the profile card, the admin page and the six member reads added for
 the actions. Connected apps stop working.
 Connections are kept, not ended, and work again when you switch it back on
 (`INV-MCP-001`).
@@ -171,10 +172,10 @@ calls an existing API route, and the route decides, exactly as for a browser.
 | `list_lodges` | The lodges that can be booked, with their ids | read | `GET /api/lodges` |
 | `list_my_bookings` | The member's newest 200 bookings, made by them or as a guest; says when there are older ones | read | `GET /api/bookings/mine` |
 | `get_my_booking` | A summary of one of those bookings; the price and note only on a booking the member made, and whether the price is still being checked | read | `GET /api/bookings/[id]` |
-| `get_my_family_group` | The member and their family groups' active members: id, name, age group, relationship and whether they can be booked | read | `GET /api/members/family` |
-| `get_my_profile` | The member's own name, contact details, address and age group | read | `GET /api/profile/summary` |
-| `list_notices` | Club notices the member can see | read | `GET /api/notices` |
-| `create_draft_booking` | Saves a **draft** booking: holds no beds, takes no payment; the member finishes and pays on the website. Answers with the draft's summary | write | `POST /api/bookings` (always `draft: true`) |
+| `get_my_family_group` | The member and their family groups' active members: id, name, age group, relationship, whether they can be booked, whether they have their own login, and the family group ids the family actions take | read | `GET /api/members/family` |
+| `get_my_profile` | The member's own name, contact details, address, age group and whether two-step sign-in is on | read | `GET /api/profile/summary` |
+| `list_notices` | Club notices the member can see, each body as plain text | read | `GET /api/notices` |
+| `create_draft_booking` | Saves a **draft** booking: holds no beds, takes no payment; the member finishes and pays on the website. The route refuses a connection anything but a draft, and refuses an account that is not a member. Answers with the draft's summary | write | `POST /api/bookings` (always `draft: true`) |
 | `preview_cancel_booking` | What cancelling would refund, without cancelling | read | `GET /api/bookings/[id]/cancel-preview` |
 | `cancel_my_booking` | Cancels one of the member's own bookings and refunds it under the club's policy. An officer's connection is refused anyone else's booking | destructive | `POST /api/bookings/[id]/cancel` |
 | `list_my_draft_bookings` | The member's unconfirmed drafts, in the same summary | read | `GET /api/bookings/drafts` |
@@ -182,7 +183,31 @@ calls an existing API route, and the route decides, exactly as for a browser.
 | `get_my_subscription_status` | Whether this season's subscription is paid, without the invoice link | read | `GET /api/member/subscription-status` |
 
 The last three are reached through `find_actions` rather than listed as their
-own tools. Four built-in tools sit alongside: `who_am_i` (the member, the site
+own tools.
+
+### My account and club information (ALP-718)
+
+All of these are reached through `find_actions`. Each acts on the connected
+member's own record only.
+
+| Action | What it does | Kind | Route |
+| --- | --- | --- | --- |
+| `get_my_notification_preferences` | Which club emails the member receives | read | `GET /api/notifications/preferences` |
+| `update_my_notification_preferences` | Turns club emails on or off; only the ones sent change. Marketing email can only be turned off: the member opts in on the website (`INV-PRIV-026`) | write | `PUT /api/notifications/preferences` |
+| `update_my_profile` | Saves the member's name, phone, date of birth, addresses and occupation. Name and phone are always saved; any other field not sent is kept. Dietary needs and the lobby-screen phone opt-in are website-only: they are not accepted, so an app that sends them has them ignored (the route itself refuses them from a connection). Answers with the `get_my_profile` fields | write | `PUT /api/profile` |
+| `get_notice` | One notice the member can see, its body as plain text. Does not mark it read | read | `GET /api/notices/[id]` (new) |
+| `mark_notice_read` | Records that the member read a notice. Never acknowledges one | write | `POST /api/notices/[id]/read` |
+| `list_my_account_activity` | The member's own account history: when, what kind, what happened | read | `GET /api/member/audit-log` |
+| `get_lodge_roster` | Who is at the lodges the member can book over the roster window (`ROSTER_WINDOW_DAYS` nights, in `src/lib/lodge-roster-window.ts`), as the roster page shows it. Only while the roster module is on | read | `GET /api/lodge-roster` (new) |
+| `get_age_groups` | The club's age groups, their ranges and whether each needs a paid subscription | read | `GET /api/age-tier-settings` |
+| `get_booking_messages` | The club's standard booking messages and the club values their placeholders take | read | `GET /api/booking-messages` |
+| `list_committee` | The published committee: name, role, description | read | `GET /api/committee` |
+| `get_skifield_report` | The ski field's road, lift, weather and trail status | read | `GET /api/skifield-whakapapa` |
+
+The two new routes call the pages' own loaders (`getNoticeForMember`,
+`buildMemberLodgeRoster`), so the audience and privacy rules stay in one
+place; both are counted against the connection's rate limit and answer
+**Not Found** while their module is off. Four built-in tools sit alongside: `who_am_i` (the member, the site
 and the connection's level), `find_actions`, `describe_action` and
 `run_action`.
 
@@ -191,10 +216,45 @@ Three **website-only** entries answer with the page to open and run nothing:
 app), `change_sign_in_details` (passwords and two-step sign-in) and
 `manage_connected_apps` (disconnecting apps).
 
+### Family and membership (ALP-795)
+
+All of these are reached through `find_actions`. Each acts for the connected
+member only: requests are filed in their name, and a lookup is recorded
+against them, whatever officer roles they hold.
+
+| Action | What it does | Kind | Route |
+| --- | --- | --- | --- |
+| `list_my_family_invitations` | Invitations to join another member's family group waiting for the member: who sent each, the group and when | read | `GET /api/members/family/invitations` |
+| `invite_to_family_group` | Invites an adult member, by email, to one of the member's family groups; they accept from their own profile | write | `POST /api/members/family/invite` |
+| `request_family_group` | Asks for a new family group, with an optional partner by email and up to six children; an officer reviews it | write | `POST /api/members/family/create-group` |
+| `request_to_join_family_group` | Asks to join another member's family group; an officer reviews it | write | `POST /api/members/family/request-join` |
+| `request_family_child` | Asks to add an infant, child or youth to a family group; an officer reviews it | write | `POST /api/members/family/request-child` |
+| `request_family_adult` | Asks to add an adult who shares the member's email and has no login; an officer reviews it | write | `POST /api/members/family/request-adult` |
+| `request_family_member_removal` | Asks to remove someone from a family group; nobody is removed until an officer agrees | write | `POST /api/members/family/request-removal` |
+| `confirm_family_member_details` | Saves the name and date of birth of a family member without a login; their phone and addresses are copied from the member's own profile. Answers with name, age group and profile state | write | `PUT /api/members/family/[memberId]/details` |
+| `get_member_guest_options` | Whether members can be added as guests, and found by name or only by exact email | read | `GET /api/members/guest-candidates` |
+| `search_members_for_guest` | Members whose name starts with what was typed, at most ten: id, name and age group. Only while the club has name search on | read | `GET /api/members/guest-candidates/search` |
+| `find_member_by_email` | The member, or household, with exactly this email: id, name and age group | read (a `POST` that changes no member's data) | `POST /api/members/guest-candidates/resolve` |
+| `get_my_partner_link` | The member's partner, pending partner requests, one-step candidates and any unclaimed emailed invitation (its id and expiry, not the address) | read | `GET /api/members/partner-link` |
+| `request_partner_link` | Asks a partner with a login, by email or family member id, to confirm. A family member without a login is declared on the website, because that confirms the partnership at once | write | `POST /api/members/partner-link` |
+| `end_partner_link` | Withdraws a pending request, ends a confirmed partnership (the other person is told) or cancels an unclaimed invitation | destructive | `DELETE /api/members/partner-link` |
+| `get_membership_cancellation_options` | Whose memberships the member may ask to cancel, the club's warning and rejoining text, and their requests so far. No email addresses | read | `GET /api/member/membership-cancellation-requests` |
+
+The guest lookups keep every control the website has: the club's module and
+name-search switches, the per-member and daily limits (shared with the
+member's own use of the website; the per-address backstop counts per
+connection), and an audit row for every search and lookup. An app is sent
+exactly what the website's own guest picker shows. Accepting a family
+invitation, confirming a partnership and asking for memberships to be
+cancelled are the member's own decisions, made on the website, as is
+confirming a cancellation from the emailed link. So is declaring a family
+member without a login as a partner, which confirms the partnership at once:
+`request_partner_link` refuses it from a connection.
+
 ## What stays on the website, and why
 
 Every route method that is not an action has a stated reason
-([`exclusions.ts`](../../src/lib/mcp/exclusions.ts), `INV-MCP-006`). Seven
+([`exclusions.ts`](../../src/lib/mcp/exclusions.ts), `INV-MCP-006`). Thirteen
 reasons are permanent — those routes are never actions:
 
 - **Fresh proof** — anything on the fresh-proof list (`STEP_UP_ROUTES`), which
@@ -205,7 +265,28 @@ reasons are permanent — those routes are never actions:
 - **Providers**, **scheduled jobs**, **lodge kiosk and display screens**, and
   **health checks, deploy hooks and test helpers** — not called by a person.
 - **Needs the browser** — card entry, file uploads and downloads, and links
-  sent to the member by email.
+  sent to the member by email (for example confirming a nomination or a
+  membership cancellation).
+- **Moves money** — anything that takes, moves or refunds money or changes
+  what a booking costs, which the member confirms on the website. No route
+  carries this reason yet: ALP-794 gives it to changing a booking or its
+  dates, adding or removing a guest, confirming a draft booking and sending a
+  guest a payment link. A member's refund request is not one of them: it is a
+  request an officer reviews, so ALP-794 treats it as an ordinary write.
+- **Declarations** — the member's own acknowledgements, consents and
+  decisions: acknowledging a notice, confirming their details at onboarding,
+  asking for their account to be deleted, accepting or declining a family
+  group invitation, confirming or declining a partnership, and asking for
+  memberships to be cancelled.
+- **Website steps** — the website's own screens and steps: the page shown
+  after signing in, the onboarding screen, the conditions widget and the
+  privacy replay.
+- **Visitor forms** — the contact form and membership applications, for
+  people who are not signed in.
+- **Access details** — the lodge instructions, which carry door codes and
+  emergency access details. They are never sent to an AI provider.
+- **The website's help assistant** — the member's own AI app answers them
+  instead.
 
 Everything else is **not yet**: each such route names the follow-on task that
 will bring it in.
@@ -228,9 +309,10 @@ stop an AI model being misled. What limits the damage:
   all, and a draft booking holds no beds and takes no money;
 - every call of a change action writes an audit row (`INV-MCP-008`).
 
-Calls that only read are **not** audited, and neither are connections ended by
-the system or the app (see `INV-MCP-008`); the connection's last-used date
-shows that it was used.
+Calls that only read are **not** audited as AI app calls, and neither are
+connections ended by the system or the app (see `INV-MCP-008`); the
+connection's last-used date shows that it was used. A guest lookup still
+writes the website's own audit row.
 
 ### An officer's connection sends other members' data to their AI provider
 
@@ -252,16 +334,21 @@ acceptable.
 
 ### What a connection sends to the AI provider
 
-Everything an action returns goes to the company that runs the app. Stage 1
-sends only the connected person's own records, as follows:
+Everything an action returns goes to the company that runs the app: only the
+fields each action names, never the rest of what the website's screen uses.
+Every action sends the connected person's own records and those of their
+family groups, except `get_lodge_roster`, the guest lookups, the people
+behind partner requests and invitations, and the club information below:
 
 - `who_am_i`: their name and email address, whether they are an officer, the
   club's website, the app's name and the connection's level.
 - `get_my_profile`: name, email address, phone number, street address, age
   group and whether two-step sign-in is on.
 - `get_my_family_group`: for the person and each active member of their family
-  groups, an id, name, age group, relationship and whether they can be booked.
-  No dates of birth, email addresses, notes or pending requests.
+  groups, an id, name, age group, relationship, whether they can be booked,
+  whether they have their own login and whether the person may confirm their
+  details, plus the family group ids. No dates of birth, email addresses,
+  notes or pending requests.
 - `list_my_bookings` and `get_my_booking`: dates, lodge, status and the party
   (each guest's name, age group and member status), plus the price and note on
   a booking the person made. A booking they are only a guest on carries no
@@ -275,10 +362,56 @@ sends only the connected person's own records, as follows:
 - `get_my_credit_balance`: the balance in cents, not the credit history.
 - `get_my_subscription_status`: this season's status and why, the invoice
   number, the membership type and any member-rate notice. Not the invoice link.
-- `list_notices`: the notices the person can see, with whether they read and
-  acknowledged each.
+- `list_notices`: the notices the person can see, each body as plain text,
+  with whether they read and acknowledged each. That includes notices
+  addressed to a committee role the person holds, so an officer's connection
+  receives committee notices from their own inbox.
 - `get_availability` and `list_lodges`: free beds per night and the lodges the
   person can book. No personal information.
+- `get_my_notification_preferences` and `update_my_notification_preferences`:
+  which club emails the person receives.
+- `update_my_profile`: what `get_my_profile` sends, after the save. Never the
+  date of birth, role, sign-in or accounting fields the save reads. A date of
+  birth the app saves can move the person's age group, and so the prices of
+  their future bookings.
+- `get_notice` and `mark_notice_read`: one notice the person can see, as
+  plain text, and whether they read and acknowledged it.
+- `list_my_account_activity`: for each entry in the person's own history, when
+  it happened, its category, its outcome and its one-line summary. No
+  addresses, devices or details. A summary can name other people the entry
+  involves.
+- `get_lodge_roster`: **other members' names** and nights at the lodges the
+  person can book, reduced exactly as the roster page reduces them
+  (`INV-PRIV-017`): a booking with a child names nobody, and the club's name
+  setting applies. Only while the club has the roster switched on.
+- `list_my_family_invitations`: who invited the person (name and id), to which
+  group, and when.
+- The family requests and `invite_to_family_group`: the club's reply and the
+  request's id. `invite_to_family_group` names the member invited. The app
+  holds what the person typed, which for a child or an adult without a login
+  includes their date of birth.
+- `confirm_family_member_details`: the family member's name, age group and
+  profile state, not their date of birth or the contact details copied to
+  them.
+- `search_members_for_guest` and `find_member_by_email`: **other members'
+  names**, ids and age groups, exactly as the website's guest picker shows
+  them. Never their contact details or dates of birth. Name search reaches
+  only clubs that switched it on; children appear only where the club allows.
+- `get_my_partner_link`: the partner's and candidates' names, ids and whether
+  they have a login, and the dates of each request. Not the email address an
+  unclaimed invitation went to.
+- `request_partner_link` and `end_partner_link`: the club's reply.
+- `get_membership_cancellation_options`: the names, age groups and
+  relationships of the people the person may ask to cancel, their family group
+  names, why anyone cannot be included (no membership to cancel, not active, or
+  already in an open request, with that request's status and date), and the
+  club's warning and rejoining text. Also the requests the person raised or is
+  part of: who asked and the reason they gave, and each participant's name,
+  age group, status and when they confirmed or declined. No email addresses.
+- `get_age_groups`, `get_booking_messages`, `list_committee` and
+  `get_skifield_report`: information the club already publishes. Each
+  committee entry carries a name, a role and the free-text description the
+  club wrote, not photos or phone numbers.
 
 The app also holds whatever the person typed to it, such as the guest names
 for a draft. Disconnecting stops new calls; it does not remove what the
@@ -316,13 +449,15 @@ provider already received. The club's register row is `ai-apps` in
 
 ## The roadmap
 
-Stage 1 is the foundation and the actions above. The remaining routes are
+Stage 1, ALP-718 and ALP-795 are the foundation and the actions above. The remaining routes are
 grouped into follow-on tasks, named in `MCP_NOT_YET_TASKS` in
 [`exclusions.ts`](../../src/lib/mcp/exclusions.ts):
 
 | Task | Area |
 | --- | --- |
-| ALP-718 | Member self-service: the rest of the member and public routes |
+| ALP-794 | Member bookings: edits, quotes, notes, rooms, change, exception and refund requests, promo codes |
+| ALP-796 | Lodge life: calendar, chores, message board, food orders, inductions, maintenance, work parties |
+| ALP-797 | Group, school and whole-lodge requests |
 | ALP-719 | Bookings (officer) |
 | ALP-720 | Membership (officer) |
 | ALP-721 | Finance (officer, including `/api/finance`) |
@@ -338,18 +473,32 @@ route census reject any remaining `not-yet` exclusion.
 1. Add an entry to `MCP_ACTIONS` in
    [`catalogue.ts`](../../src/lib/mcp/catalogue.ts): a new snake-case `id`
    (never reused), the route's `method` and `path`, and its `kind` — `read`
-   only for a `GET`. Import the route's own request schemas for `params`,
-   `query` and `body` from the module the route imports them from; never
-   describe a field a second time (`INV-SSOT-001`). Set `fixedBody` for any
-   field the app must not choose.
-2. A catalogue entry takes precedence over a `not-yet:` reason, so a single
+   only for a `GET`, or for a `POST` that changes no member's data, marked
+   `preview: true` and pinned in the census's `PREVIEW_ROUTE_KEYS`. Import the route's own
+   request schemas for `params`, `query` and `body` from the module the route
+   imports them from; never describe a field a second time (`INV-SSOT-001`).
+   Set `fixedBody` for any field the app must not choose.
+2. Give it `returns`: an allow-list shape in
+   [`connection-shapes.ts`](../../src/lib/connection-shapes.ts), typed with
+   `connectionShapeFor<T>()` so a misspelt field fails to compile. In the
+   route, answer with `connectionJson(request, body, SHAPE)` (from
+   `mcp-connection-request.ts`): a connection gets only the named fields, a
+   browser the whole answer. A route with an officer branch decides with
+   `memberOnlySessionUser(request, session.user)` and refuses an on-behalf
+   target or officer override flag from a connection.
+3. Test the contract with `expectActionContract` from
+   `src/lib/__tests__/helpers/mcp-action-contract.ts`, signed in as
+   `officerMemberSession()`: the connection's answer has exactly the
+   `returns` fields, and the browser's answer is unchanged.
+4. A catalogue entry takes precedence over a `not-yet:` reason, so a single
    route needs no exclusion change. When a follow-on task finishes its area,
    it removes that area's `not-yet` rule in the same change. A permanent
    exclusion always wins: such a route can never be an action.
-3. Run the census, `src/lib/__tests__/mcp-route-census.test.ts`. It fails on
+5. Run the census, `src/lib/__tests__/mcp-route-census.test.ts`. It fails on
    an unclassified route, a catalogue entry whose route does not exist, an
    action on a permanently excluded route, and argument names that collide.
-4. Add the action to the table above.
+6. Add the action to the tables above, and what it sends to
+   [What a connection sends](#what-a-connection-sends-to-the-ai-provider).
 
 A new API route in an area nobody has decided about fails the census until it
 is given a catalogue entry or a reason.

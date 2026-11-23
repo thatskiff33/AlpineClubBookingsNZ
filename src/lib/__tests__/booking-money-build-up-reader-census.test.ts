@@ -9,6 +9,7 @@ import {
 } from "@/lib/__tests__/support/booking-guest-night-writer-scan";
 import { stripComments } from "@/lib/__tests__/support/strip-comments";
 import { BOOKING_MONEY_BUILD_UP_INVARIANT } from "@/lib/booking-money-build-up";
+import { CENSUS_TIMEOUT_MS } from "@/test/census-timeout";
 
 /**
  * #3277 (INV-MONEY-030, INV-SSOT-001): every Stage 3 money reader is named,
@@ -100,7 +101,7 @@ describe("#3277 canonical stored-money reader census", () => {
       .map(relativeSource)
       .sort();
     expect(discovered).toEqual(Object.keys(NAMED_READERS).sort());
-  }, 15_000);
+  }, CENSUS_TIMEOUT_MS);
 
   it("requires every named reader to select, classify disagreement, and record history", () => {
     for (const [file, site] of Object.entries(NAMED_READERS)) {

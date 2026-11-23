@@ -14,6 +14,7 @@ import {
   composeServices,
   readRepoFile,
 } from "@/lib/__tests__/helpers/compose";
+import { CENSUS_TIMEOUT_MS } from "@/test/census-timeout";
 
 /**
  * INV-CONFIG-004: every application-controlled send goes through ONE
@@ -238,7 +239,7 @@ describe("email delivery boundary census (INV-CONFIG-004)", () => {
         "getEmailTransporter(clearance) or verifyEmailTransport() instead " +
         "(INV-CONFIG-004).",
     ).toEqual([TRANSPORT_MODULE]);
-  });
+  }, CENSUS_TIMEOUT_MS);
 
   it("hands a sending transport to exactly the two modules that funnel sends", () => {
     const consumers = filesMatching(/getEmailTransporter\s*\(/).filter(
@@ -252,7 +253,7 @@ describe("email delivery boundary census (INV-CONFIG-004)", () => {
         "and the environment-safety gate, rather than reaching for a transport " +
         "of its own (INV-CONFIG-004).",
     ).toEqual(TRANSPORT_CONSUMERS);
-  });
+  }, CENSUS_TIMEOUT_MS);
 
   it("calls transporter.sendMail in exactly those two modules", () => {
     expect(
@@ -263,7 +264,7 @@ describe("email delivery boundary census (INV-CONFIG-004)", () => {
       "A message may only be handed to a provider from the mailer or the retry " +
         "cron (INV-CONFIG-004).",
     ).toEqual(TRANSPORT_CONSUMERS);
-  });
+  }, CENSUS_TIMEOUT_MS);
 
   it("asks Xero to email an invoice in exactly one module", () => {
     /*
@@ -286,7 +287,7 @@ describe("email delivery boundary census (INV-CONFIG-004)", () => {
         "a fourth call site here would be an ungated provider send " +
         "(INV-CONFIG-004).",
     ).toEqual([XERO_EMAIL_MODULE]);
-  });
+  }, CENSUS_TIMEOUT_MS);
 
   it("#4411: reads only the root dotenv files Git tracks, so an untracked copy is ignored", () => {
     // The repository's own tracked examples are found (a floor, not an exact
@@ -666,7 +667,7 @@ describe("email delivery boundary census (INV-CONFIG-004)", () => {
         "shape census above cannot see them. Each must still inspect the mailer's " +
         "outcome before it advances state (INV-CONFIG-004).",
     ).toEqual([]);
-  });
+  }, CENSUS_TIMEOUT_MS);
 
   /**
    * The retry ceiling is one constant, and every reader imports it (#3035).
@@ -719,7 +720,7 @@ describe("email delivery boundary census (INV-CONFIG-004)", () => {
         `each must import EMAIL_RETRY_MAX_ATTEMPTS from ${EMAIL_RETRY_CEILING_MODULE} ` +
         "rather than hold its own number (INV-SSOT, INV-CONFIG-004).",
     ).toEqual([]);
-  });
+  }, CENSUS_TIMEOUT_MS);
 
   it("keeps a bare number out of every attempts comparison in the ceiling readers", () => {
     // `attempts < 3`, `newAttempts >= 3`, `attempts: { lt: 3 }` and `attempts: 3`
@@ -877,5 +878,5 @@ describe("email delivery boundary census (INV-CONFIG-004)", () => {
         "but it must not reach review at all. Call resolveDeliveryPolicy() and " +
         "use the clearance from its allow branch (INV-CONFIG-004).",
     ).toEqual([POLICY_MODULE]);
-  });
+  }, CENSUS_TIMEOUT_MS);
 });

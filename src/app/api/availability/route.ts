@@ -13,6 +13,8 @@ import {
   parseDateOnly,
 } from "@/lib/date-only";
 import { calendarDateOfDateOnlyInstant } from "@/lib/club-time";
+import { AVAILABILITY_CONNECTION_SHAPE } from "@/lib/connection-shapes";
+import { connectionJson } from "@/lib/mcp-connection-request";
 
 function getMonthStartDateOnly(year: number, month: number): Date {
   return parseDateOnly(`${year}-${String(month + 1).padStart(2, "0")}-01`);
@@ -129,5 +131,5 @@ export async function GET(request: NextRequest) {
     }
   }
 
-  return NextResponse.json({ availability, seasons, lodgeCapacity });
+  return connectionJson(request, { availability, seasons, lodgeCapacity }, AVAILABILITY_CONNECTION_SHAPE);
 }

@@ -80,7 +80,7 @@
  * and their siblings take and imply no zone at all: they are the UTC encoding of
  * a calendar day, which `date-only.ts` is the sanctioned home for (#2684,
  * `INV-DATE-019`). None of them can be wrong about a club's civil time. Renaming
- * those call sites ahead of CT-6 would also BLIND
+ * those call sites would also BLIND
  * `date-only-encoding-guard.test.ts`, whose scanner keys on the encoder names —
  * the same reasoning group A recorded for the admin API.
  *
@@ -183,6 +183,7 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 
 import { stripComments } from "@/lib/__tests__/support/strip-comments";
+import { CENSUS_TIMEOUT_MS } from "@/test/census-timeout";
 
 const ROOT = process.cwd();
 const APP_DIR = path.join(ROOT, "src", "app");
@@ -420,7 +421,7 @@ const FILES = sourceFiles(APP_DIR).filter((file) => {
   return !OTHER_GROUPS.some((prefix) => rel.startsWith(prefix));
 });
 
-describe("member/lodge/finance/public page temporal convergence (CT-4 group E, #2870)", () => {
+describe("member/lodge/finance/public page temporal convergence (CT-4 group E, #2870)", { timeout: CENSUS_TIMEOUT_MS }, () => {
   it("finds the page tree at all", () => {
     // A census whose scan returns nothing passes every assertion below while
     // proving none of them. Pin files this tree certainly contains, in three

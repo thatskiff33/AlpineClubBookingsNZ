@@ -31,7 +31,7 @@ vi.mock("@/lib/cancellation", async (importOriginal) => ({
 }));
 
 const { applyPaymentAdjustments } = await import("@/lib/booking-modify-settlement");
-const { editRefundHasCardToReturnTo } = await import("@/lib/booking-modify-settlement-options");
+const { calculateFullReductionSettlementOptions, calculateModificationSettlementOptions, editRefundHasCardToReturnTo, fullReductionLockedReads } = await import("@/lib/booking-modify-settlement-options");
 const { noReductionAgainstUnpaidAsk } = await import("@/lib/additional-ask-reduction");
 const { editRefundBankTransferPayee, editRefundGoesBackByHand } = await import("@/lib/edit-refund-hand-back");
 const { paymentHasRefundableCardIntent, readRefundableCardIntentId } = await import("@/lib/refundable-card-intent");
@@ -135,6 +135,27 @@ describe("the intent a card refund is owed against", () => {
     expect(paymentFindUnique).not.toHaveBeenCalled();
   });
 
+  it.each<[string, LedgerRow[]]>([
+    ["no ledger rows", []],
+    ["a PENDING charge", [{ ...captured("pi_pending"), status: PaymentStatus.PENDING }]],
+    ["a captured Internet Banking payment", [captured("pi_bank", PaymentSource.INTERNET_BANKING)]],
+    ["a captured charge naming no intent", [captured(null)]],
+    ["a captured charge naming an intent", [captured("pi_capture")]],
+  ])("MUTATION: a payment naming its own intent, with %s, gets the same answer from both", async (_ledger, transactions) => {
+    // #5303: the shortcut answers true without reading, so the read must too.
+    // Tighten `readRefundableCardIntentId` to a captured charge only and every
+    // ledger without one goes red: the edit would promise the card a refund
+    // the debt's writer then refuses (`NoRefundPaymentIntentError`).
+    stored.paymentIntentId = "pi_payment";
+    stored.transactions = transactions;
+
+    const shortcut = await paymentHasRefundableCardIntent(tx, { id: "payment_1", stripePaymentIntentId: "pi_payment" });
+    const read = await readRefundableCardIntentId(tx, "payment_1");
+
+    expect(shortcut).toBe(true);
+    expect(read !== null).toBe(shortcut);
+  });
+
   it("a payment row without one is answered by its captured charges", async () => {
     expect(await paymentHasRefundableCardIntent(tx, { id: "payment_1", stripePaymentIntentId: null })).toBe(false);
     stored.transactions = [captured("pi_capture")];
@@ -151,6 +172,54 @@ describe("whether an edit's reduction has a card to go back to", () => {
     const child = cardPaidBooking({}, { organiserSettled: true, parentBookingId: "organiser_booking" });
     expect(await editRefundHasCardToReturnTo(tx, child)).toBe(true);
     expect(paymentFindUnique).not.toHaveBeenCalled();
+  });
+});
+
+describe("what the edit quote names as the money-back route", () => {
+  // #5303: the quote's label is the settlement's own answer, so it never
+  // promises the card a refund the save sends to the treasurer.
+  const quoteOptions = (booking: ReturnType<typeof cardPaidBooking>) =>
+    calculateModificationSettlementOptions({
+      booking,
+      netChargeCents: -5_000,
+      reduction: noReductionAgainstUnpaidAsk(-5_000),
+      db: tx as never,
+      todayAtClub: TODAY,
+    });
+
+  it("a card payment Stripe holds no record of: a bank transfer, as the save sends it", async () => {
+    const booking = cardPaidBooking();
+    expect(await quoteOptions(booking)).toMatchObject({ requiresSettlementMethod: true, refundByBankTransfer: true });
+    expect(editRefundGoesBackByHand(await adjust(booking, -5_000))).toBe(true);
+  });
+
+  it("an Internet Banking payment: a bank transfer, with no read of Stripe's record", async () => {
+    // Even one carrying a stale intent: there is no card to return to.
+    const booking = cardPaidBooking({ source: PaymentSource.INTERNET_BANKING, stripePaymentIntentId: "pi_stale" });
+    expect(await quoteOptions(booking)).toMatchObject({ requiresSettlementMethod: true, refundByBankTransfer: true });
+    expect(await editRefundHasCardToReturnTo(tx, booking)).toBe(false);
+    expect(paymentFindUnique).not.toHaveBeenCalled();
+  });
+
+  it("control: a card payment naming its intent is still the card's", async () => {
+    const booking = cardPaidBooking({ stripePaymentIntentId: "pi_payment" });
+    expect(await quoteOptions(booking)).toMatchObject({ requiresSettlementMethod: true, refundByBankTransfer: false });
+    expect(editRefundGoesBackByHand(await adjust(booking, -5_000))).toBe(false);
+  });
+
+  it.each([
+    ["a card payment Stripe holds no record of", cardPaidBooking(), true],
+    ["an Internet Banking payment", cardPaidBooking({ source: PaymentSource.INTERNET_BANKING, stripePaymentIntentId: "pi_stale" }), true],
+    ["control: a card payment naming its intent", cardPaidBooking({ stripePaymentIntentId: "pi_payment" }), false],
+  ] as const)("the full-reduction options (batch edit, guest acceptance) answer the same for %s", async (_case, booking, bankTransfer) => {
+    const options = calculateFullReductionSettlementOptions({
+      booking,
+      netChargeCents: -5_000,
+      refundableCashCents: 20_000,
+      todayAtClub: TODAY,
+      ...(await fullReductionLockedReads(tx as never, booking)),
+    });
+    expect(options).toMatchObject({ requiresSettlementMethod: true, refundByBankTransfer: bankTransfer });
   });
 });
 

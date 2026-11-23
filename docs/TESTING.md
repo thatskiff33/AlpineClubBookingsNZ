@@ -1484,6 +1484,21 @@ const alert = await screen.findByRole("alert");
 await waitFor(() => expect(alert).toHaveTextContent("Payment Error"));
 ```
 
+### Wait for the loaded state, not a container that is also the loading state
+
+The same one-turn margin catches a wait for a container that a component
+renders both while it loads and after. `ManualRefundTaskQueue` shows its
+`manual-refund-task-queue` card while `tasks === null`, so
+`waitFor(() => screen.getByTestId("manual-refund-task-queue"))` passes on its
+first check, and the rows the next line reads exist only if the fetch landed
+inside Testing Library's single drain. A loaded runner lost that race on `main`
+(#5357) and on a pull request (#5430), each time with the card holding only
+"Loading…". Wait for the loading state to end instead. For this queue, call
+`waitForManualRefundQueueLoaded()` from
+`src/lib/__tests__/support/manual-refund-task-queue-loaded.ts` straight after
+`render`. It first checks that "Loading…" is on screen, so it cannot pass
+without waiting if that copy changes.
+
 ### Do not make the component's effect a layout effect
 
 It looks like the tidy fix — focus in the same commit as the message, no window
@@ -1679,6 +1694,46 @@ Raise it per test, never globally. `vitest.setup.ts` states `testTimeout` is
 5,000ms and calibrates the 4,000ms RTL window to sit a clear second below it, so
 a global change falsifies a documented constant in another file — and it would
 let thousands of ordinary tests hang six times as long to buy headroom for six.
+
+### A test that reads the whole tree needs its own budget too (#5439)
+
+The same rule covers a census that reads every file under `src/` (or `scripts/`,
+`e2e/`) synchronously. The club-time kernel census's whole-tree case, which
+reads and comment-strips more than 1,000 files, took 2,802ms on an otherwise
+idle 2-CPU sandbox (measured 22 November 2026, vitest 5.1.0, Node 24). A loaded
+CI shard is slower, so under the 5,000ms default it failed on fine code on #5429.
+
+So a case that walks the tree states a shared budget from
+[`src/test/census-timeout.ts`](../src/test/census-timeout.ts), never a local
+literal: `CENSUS_TIMEOUT_MS` (90,000ms) for reading and stripping files,
+`AST_CENSUS_TIMEOUT_MS` (180,000ms) for a full TypeScript parse through
+`scanAuditWriterCensus()`. Pass it as the `it` timeout or a
+`describe(..., { timeout })` option. When several cases scan the same tree,
+read it once (a `beforeAll` under the same budget, or a cached helper) rather
+than once per case. Never loosen an assertion or add a retry to make the scan
+fit.
+
+With a cached helper, whichever case runs first pays the whole read, and under
+`-t` or `.only` that can be any of them. So every case that can trigger the
+first read carries the budget, or the `describe` or file holding them does
+(`vi.setConfig({ testTimeout: CENSUS_TIMEOUT_MS })` after the imports). A case's
+own timeout overrides its `describe`'s, so don't leave a smaller literal on a
+case inside a budgeted `describe`. Prefer the narrowest scope that covers the
+readers: a file-wide budget also lets that file's unrelated tests hang longer.
+
+A walk at module or `describe` scope runs while Vitest collects the file, which
+has no timeout, so the walk itself needs no budget; the cases that then read
+the walked files still do.
+
+[`src/lib/__tests__/census-timeout-coverage.test.ts`](../src/lib/__tests__/census-timeout-coverage.test.ts)
+enforces this. It names the known whole-tree readers (the `support/` source
+helpers, `scanAuditWriterCensus`, the file-size budget's `scanRepository` and
+the quality report's `main`, `git ls-files src`, `src/**` globs and recursive
+directory reads of `src`, `src/lib` or `src/app`) and fails on a test file that
+calls one without importing `CENSUS_TIMEOUT_MS` or `AST_CENSUS_TIMEOUT_MS`. A
+`vi.setConfig({ testTimeout })` counts only when it sets one of those
+constants: a file-wide local literal is not a budget, whatever its size. Its
+short, commented no-budget list holds only fixture-only matches.
 
 ## Census tests and the merge hazard
 
@@ -1949,8 +2004,9 @@ re-verify an entry.
   that mapper the only production season mapping", ran **2,589ms** alone, over
   half the budget with the machine otherwise idle. Under the smaller batch it
   **timed out**. This is the entry closest to being a real per-test budget
-  problem rather than a load artefact, and it is a candidate for an inline
-  budget like the next entry's.
+  problem rather than a load artefact, so its tree-reading tests carry a
+  budget: an inline 30,000ms from #5407, and since #5439 the shared
+  `CENSUS_TIMEOUT_MS` on each of their `describe` blocks.
 - [`src/lib/__tests__/hut-leader-change-last-night.test.tsx`](../src/lib/__tests__/hut-leader-change-last-night.test.tsx)
   — measured 13 October 2026 (vitest 5.0.3, Node 24, WSL2): run alone its
   first test, which absorbs the Hut Leaders page's first jsdom render, took
@@ -1966,6 +2022,36 @@ re-verify an entry.
   now waits for the settled scope before typing (#4085), and keeps the
   30,000ms `describe` budget for the full-page render itself.
 
+Four more suites, and two cases of a fifth, got an inline 30,000ms budget
+in #5407 (measured 22 November 2026 on an in-use 20-core Windows 11 host,
+vitest 5.1.0, Node 24, with other lanes running). Lanes sharing that host
+saw each time out at 5,000ms, and an isolated `pnpm exec vitest run <file>`
+on it did too, so these are not "pass alone" entries: the budget is the fix,
+not a classification. Each loops or walks `src/`, and its 5s default measured
+only that the host was busy. Since #5439 the cases that walk the tree carry
+the shared `CENSUS_TIMEOUT_MS` (90,000ms) instead; the loops keep 30,000ms.
+
+- [`src/lib/__tests__/cli-server-only-reach-census.test.ts`](../src/lib/__tests__/cli-server-only-reach-census.test.ts)
+  — the "no static or dynamic path to `next/headers`" walk timed out at 5,000ms;
+  it now carries `CENSUS_TIMEOUT_MS`.
+- [`src/lib/__tests__/app-currency-import-census.test.ts`](../src/lib/__tests__/app-currency-import-census.test.ts)
+  — the "none of the four retired names" scan timed out at 5,000ms; it now
+  carries `CENSUS_TIMEOUT_MS`.
+- [`src/lib/__tests__/auth-session-max-age.test.ts`](../src/lib/__tests__/auth-session-max-age.test.ts)
+  — the hourly-refresh loops (one handler round trip per simulated hour, up to
+  722 for the 720-hour cap) timed out at 5,000ms.
+- [`src/lib/__tests__/bed-allocation-lock-topology-contract.test.ts`](../src/lib/__tests__/bed-allocation-lock-topology-contract.test.ts)
+  — its two whole-of-`src/` cases (the member-key restore census and the
+  `Booking.lodgeId` writer scan) timed out at 5,000ms; both now carry
+  `CENSUS_TIMEOUT_MS`.
+- [`src/lib/__tests__/admin-hubs-registry.test.ts`](../src/lib/__tests__/admin-hubs-registry.test.ts)
+  — three tree-reading or grid-wide cases ("reproduces canOpenAdminPath for every
+  permission grid", "are linked from nowhere in the code", and the reviewed-importers
+  scan) timed out at 5,000ms. The two that read the tree ("linked from nowhere",
+  and the reviewed-importers scan over `src/`, `scripts/`, `e2e/` and `prisma/`)
+  carry `CENSUS_TIMEOUT_MS` since #5439. The permission-grid loop reads no files
+  and keeps its inline 30,000ms.
+
 Of the entries above, the two 2026-09-19 batches covered the first five; they
 produced no timeout, so their figures show how close each suite runs to the
 budget under a batch of that size, not a red. The reds came later, on 20
@@ -1977,6 +2063,24 @@ batch: the 141 files vitest selects for the filters `census`, `contract` and
 passed alone immediately afterwards. That is the evidence of the limit being
 crossed; a lane running any such batch beside another lane's tests, a build, or
 a typecheck is where it will be crossed again.
+
+### Knip on a Windows host reports two unused exports
+
+Measured under #5407: on unchanged `main`,
+`pnpm run knip` reports `setStripeClientForTests` and `resetStripeClientForTests`
+as unused exports, and CI's Linux run passes. Two test files reach them through
+the `@/` alias: `src/test/providers/provider-transports.test.ts` (static import)
+and `src/test/providers/stripe-webhook-round-trip.realdb.test.ts` (dynamic
+import). `tsconfig.json` excludes every test file. On that host knip credits
+neither, and leaves `@/` unresolved for a test file outside a `__tests__`
+directory;
+lifting the test exclusions from a copy of `tsconfig.json` clears both lines.
+`knip.jsonc` cannot carry the fix: its `tsConfig` is a command-line flag, CI runs
+`pnpm exec knip`, and a `paths` entry did not change the result. Classify the two
+lines as environmental. Do not delete the exports or edit `knip.jsonc` to silence
+them, and take the verdict from CI. The same run suggests removing `awk`,
+`pg_dump` and `gunzip` from `ignoreBinaries`; those are hints, they do not fail
+the run, and their cause is not established, so leave the entries in place.
 
 ## The shared race harness: declare the environment role per suite, and put it back
 

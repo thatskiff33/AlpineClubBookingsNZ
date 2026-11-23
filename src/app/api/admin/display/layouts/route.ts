@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
+import { parseJsonRequestBody } from "@/lib/api-json";
 import { Prisma } from "@prisma/client";
+import { isPrismaKnownUniqueConstraintError } from "@/lib/prisma-known-errors";
 import { z } from "zod";
 import { requireAdmin } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma";
@@ -7,7 +9,7 @@ import { logAudit } from "@/lib/audit";
 import { validateLayoutForSave } from "@/lib/lodge-display/authoring-validation";
 import { isBuiltInDisplayLayoutKey } from "@/lib/lodge-display/built-in-seeds";
 
-// Admin lobby-display LAYOUT management (fork issue #78, LTV-032, ADR-003 §1):
+// Admin lobby-display LAYOUT management (fork issue hoppers99/AlpineClubBookingsNZ#78, LTV-032, ADR-003 §1):
 // list and create authored Layouts (an HTML body with `{{area:key}}`
 // placeholders, a default CSS block, and the area/slot descriptors). Every
 // authored field is judged by the shared save contract
@@ -95,8 +97,10 @@ export async function POST(req: NextRequest) {
   if (!guard.ok) return guard.response;
 
   let body: z.infer<typeof bodyField>;
+  const jsonBody = await parseJsonRequestBody(req);
+  if (!jsonBody.ok) return jsonBody.response;
   try {
-    body = bodyField.parse(await req.json());
+    body = bodyField.parse(jsonBody.body);
   } catch {
     return NextResponse.json({ error: "Invalid request" }, { status: 400 });
   }
@@ -151,10 +155,7 @@ export async function POST(req: NextRequest) {
       { status: 201 }
     );
   } catch (error) {
-    if (
-      error instanceof Prisma.PrismaClientKnownRequestError &&
-      error.code === "P2002"
-    ) {
+    if (isPrismaKnownUniqueConstraintError(error)) {
       return NextResponse.json(
         { error: `A layout with key "${body.key}" already exists` },
         { status: 409 }

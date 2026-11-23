@@ -3,6 +3,7 @@ import { join, relative } from "node:path";
 import { describe, expect, it } from "vitest";
 
 import { stripComments } from "@/lib/__tests__/support/strip-comments";
+import { CENSUS_TIMEOUT_MS } from "@/test/census-timeout";
 
 /**
  * `calculateChangeFee` is the tier math. The late-notice gate
@@ -29,7 +30,7 @@ describe("calculateChangeFee has one production caller", () => {
       .map((file) => relative(process.cwd(), file).split("\\").join("/"))
       .sort();
     expect(callers).toEqual([LEAF]);
-  });
+  }, CENSUS_TIMEOUT_MS);
 });
 
 /**
@@ -52,7 +53,7 @@ describe("the payment's change fee has one writer per kind of edit", () => {
       "src/lib/booking-primary-invoice-claim.ts",
       "src/lib/change-fee-owed.ts",
     ]);
-  });
+  }, CENSUS_TIMEOUT_MS);
 });
 
 /**

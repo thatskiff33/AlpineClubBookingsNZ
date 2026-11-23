@@ -8,6 +8,7 @@ import {
   type RouteGroupKey,
 } from "@/lib/route-group-boundaries";
 import { stripComments } from "@/lib/__tests__/support/strip-comments";
+import { CENSUS_TIMEOUT_MS } from "@/test/census-timeout";
 
 /**
  * EVERY ROUTE GROUP HAS AN ERROR BOUNDARY, IN THE RIGHT PLACE (#4467 item 1).
@@ -119,7 +120,7 @@ describe("route-group boundaries census (#4467)", () => {
         pages.filter((dir) => !isWithin(dir, boundaryDir)),
         `pages outside ${boundaryDir} would fall through to the root error screen`,
       ).toEqual([]);
-    });
+    }, CENSUS_TIMEOUT_MS);
 
     it("has the shared error boundary, naming this group and wired to retry", () => {
       const file = `${boundaryDir}/error.tsx`;
@@ -144,7 +145,7 @@ describe("route-group boundaries census (#4467)", () => {
         (dir) => isWithin(boundaryDir, dir) && dir !== boundaryDir,
       );
       expect(stray).toEqual([]);
-    });
+    }, CENSUS_TIMEOUT_MS);
 
     it("has a loading.tsx, or a recorded reason not to and no such file", () => {
       const reason = entry.loadingExemptReason;
@@ -171,7 +172,7 @@ describe("route-group boundaries census (#4467)", () => {
         offending,
         `loading.tsx found where ROUTE_GROUP_BOUNDARIES.${key}.loadingExemptReason says there must be none: ${reason}`,
       ).toEqual([]);
-    });
+    }, CENSUS_TIMEOUT_MS);
   });
 
   it("rests the public-website exemptions on a ban that still exists", () => {
@@ -207,5 +208,5 @@ describe("route-group boundaries census (#4467)", () => {
       bare,
       "wrap the skeleton in <RouteLoading> so screen readers hear that the page is loading",
     ).toEqual([]);
-  });
+  }, CENSUS_TIMEOUT_MS);
 });

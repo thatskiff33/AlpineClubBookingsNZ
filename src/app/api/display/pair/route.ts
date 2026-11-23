@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { parseJsonRequestBody } from "@/lib/api-json";
 import { z } from "zod";
 import {
   claimDisplayToken,
@@ -12,7 +13,7 @@ import {
 } from "@/lib/lodge-display-auth";
 import { applyRateLimit, rateLimiters } from "@/lib/rate-limit";
 
-// Lobby display pairing (fork issue #27, ADR-001 §2). Two anonymous actions:
+// Lobby display pairing (fork issue hoppers99/AlpineClubBookingsNZ#27, ADR-001 §2). Two anonymous actions:
 //
 //  - "start": issue a fresh pairing code inside an HMAC-signed, httpOnly
 //    cookie blob. Persists NOTHING — anonymous traffic cannot create rows.
@@ -34,8 +35,10 @@ const secureCookies = process.env.NODE_ENV === "production";
 
 export async function POST(req: NextRequest) {
   let action: z.infer<typeof bodySchema>["action"];
+  const jsonBody = await parseJsonRequestBody(req);
+  if (!jsonBody.ok) return jsonBody.response;
   try {
-    action = bodySchema.parse(await req.json()).action;
+    action = bodySchema.parse(jsonBody.body).action;
   } catch {
     return NextResponse.json({ error: "Invalid request" }, { status: 400 });
   }

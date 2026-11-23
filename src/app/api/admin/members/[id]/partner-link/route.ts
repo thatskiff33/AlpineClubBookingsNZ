@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
+import { parseJsonRequestBody, parseOptionalJsonRequestBody } from "@/lib/api-json";
 import { requireAdmin } from "@/lib/session-guards";
 import { transactionContendedResponse } from "@/lib/transaction-contended-response";
 import {
@@ -49,12 +50,9 @@ export async function POST(
   });
   if (!guard.ok) return guard.response;
 
-  let body: unknown;
-  try {
-    body = await req.json();
-  } catch {
-    return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
-  }
+  const jsonBody = await parseJsonRequestBody(req, { error: "Invalid JSON" });
+  if (!jsonBody.ok) return jsonBody.response;
+  const body = jsonBody.body;
 
   const parsed = assignSchema.safeParse(body);
   if (!parsed.success) {
@@ -103,15 +101,11 @@ export async function DELETE(
 
   // #1769a: an optional JSON body carries the admin's notify choice for a
   // CONFIRMED removal. A bodyless DELETE (pending removal) must still succeed,
-  // so a missing/invalid-JSON body is treated as an empty object.
+  // so an empty body is treated as an empty object; a malformed one is a 400.
   const deleteSchema = z.object({ notifyMember: z.boolean().optional() });
-  let rawBody: unknown = {};
-  try {
-    rawBody = await req.json();
-  } catch {
-    rawBody = {};
-  }
-  const parsedBody = deleteSchema.safeParse(rawBody);
+  const jsonBody = await parseOptionalJsonRequestBody(req, { whenAbsent: {} });
+  if (!jsonBody.ok) return jsonBody.response;
+  const parsedBody = deleteSchema.safeParse(jsonBody.body);
   if (!parsedBody.success) {
     return NextResponse.json(
       { error: "Validation failed", details: parsedBody.error.flatten().fieldErrors },

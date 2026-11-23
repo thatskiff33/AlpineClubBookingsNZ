@@ -9,6 +9,7 @@ import { describe, expect, it } from "vitest";
 // touch it at all — explains the whole honesty rule in its module comment.
 // Matching raw text enrolled it as a notify-prompt surface.
 import { stripComments } from "@/lib/__tests__/support/strip-comments";
+import { CENSUS_TIMEOUT_MS } from "@/test/census-timeout";
 
 /*
   #2259 (owner decision D10) — the two invariants the "No emails" UI must never
@@ -79,9 +80,9 @@ const BOOKING_NOTIFY_PROMPTS = [
   "app/(admin)/admin/finance/refund-requests/page.tsx",
   // #4533: a finished-stay promo correction may withhold the change email.
   "components/admin/booking-requests/booking-change-request-officer-entry.tsx",
-  // Fork #119: adding a booking to a work party sends the booking-change email.
+  // Fork triyder/AlpineClubBookingsNZ#119: adding a booking to a work party sends the booking-change email.
   "components/admin/booking-work-party-controls.tsx",
-  // Fork #130: so does removing it from one.
+  // Fork triyder/AlpineClubBookingsNZ#130: so does removing it from one.
   "components/admin/booking-work-party-remove-controls.tsx",
 ];
 
@@ -554,7 +555,7 @@ describe("No emails honesty rule (#2259)", () => {
     ).toEqual(
       [...BOOKING_NOTIFY_PROMPTS, ...Object.keys(NOT_BOOKING_BOUND)].sort(),
     );
-  });
+  }, CENSUS_TIMEOUT_MS);
 
   it("offers no email choice on a silenced booking", () => {
     /*

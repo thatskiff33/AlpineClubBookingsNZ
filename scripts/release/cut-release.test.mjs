@@ -6,7 +6,6 @@ import { execFileSync, spawnSync } from "node:child_process";
 import {
   bumpPackageJson,
   bumpVersion,
-  CI_WORKFLOW_FILE,
   computeRelease,
   FEATURE_FRAGMENT_SUFFIX,
   fragmentBump,
@@ -24,6 +23,7 @@ import {
 } from "./cut-release.mjs";
 import { releaseSection } from "./compile-changelog.mjs";
 import { parseWorkflowYaml } from "../ci/check-workflow-suite-checkout-depth.mjs";
+import { CI_WORKFLOW_FILE } from "../lib/ci-workflow.mjs";
 import {
   NO_UPGRADE_STEPS,
   RUNBOOK_RELEASE_AGNOSTIC_MARKER,
@@ -162,7 +162,11 @@ function makeFixture({
   git(seed, "push", "-q", "origin", "main", "--tags");
 
   const repo = path.join(tempDir("release-cut-clone-"), "repo");
-  execFileSync("git", ["clone", "-q", origin, repo], { stdio: "ignore" });
+  // `-c` sets autocrlf in the clone before its checkout (#5407 item 35): set
+  // afterwards by `configure`, a host whose own git config converts line
+  // endings has already checked out CRLF files over an LF index, and every
+  // file reads as modified.
+  execFileSync("git", ["clone", "-q", "-c", "core.autocrlf=false", origin, repo], { stdio: "ignore" });
   configure(repo);
   git(repo, "config", "remote.origin.url", GITHUB_URL);
   git(repo, "config", `url.${origin}.insteadOf`, GITHUB_URL);
@@ -1673,6 +1677,8 @@ describe("release:cut publish asks GitHub whether CI published the commit's imag
       /run 4242/,
     );
     expect(cancelled.recovery).toContain("gh run rerun 4242 --repo fixture-owner/fixture-repo");
+    // A re-run replaces main's pending run (INV-OPS-021), so the hint says to check first.
+    expect(cancelled.recovery).toContain("gh run list --workflow ci.yml --branch main --status pending --repo fixture-owner/fixture-repo");
     const absent = expectRefusal(() => publishRelease({ repoRoot: repo, run: fixtureRunner(repo, { [GH_RUNS]: ciRuns() }), log: silentLog() }), /no such run/);
     expect(absent.recovery).toBe("Nothing was created. Tag a main commit whose ci.yml run published its images.");
   });

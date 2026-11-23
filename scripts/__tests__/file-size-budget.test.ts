@@ -25,6 +25,7 @@ import {
   summariseSizeDebt,
   type FileStat,
 } from "../lib/file-size-budget";
+import { CENSUS_TIMEOUT_MS } from "@/test/census-timeout";
 
 const REPO_ROOT = path.resolve(__dirname, "..", "..");
 
@@ -220,7 +221,7 @@ describe("blocking CI wiring", () => {
     expect(verify).toContain(
       "BUDGET_BASE: ${{ (github.event_name == 'push' && github.event.created == false" +
         " && !startsWith(github.ref, 'refs/heads/epic/'))" +
-        " && github.event.before || 'origin/main' }}",
+        " && (steps.main-push-base.outputs.sha || github.event.before) || 'origin/main' }}",
     );
   });
 
@@ -1298,7 +1299,7 @@ describe("this repository", () => {
     });
     expect(result.findings.filter((f) => f.severity === "unusable")).toEqual([]);
     expect(result.baseSha).toMatch(/^[0-9a-f]{40}$/);
-  });
+  }, CENSUS_TIMEOUT_MS);
 
   it("carries files in every budget category, so no category is silently unenforced", () => {
     const scan = scanRepository(REPO_ROOT);
@@ -1312,7 +1313,7 @@ describe("this repository", () => {
       "route-handler",
       "route-page-shell",
     ]);
-  });
+  }, CENSUS_TIMEOUT_MS);
 
   it("classifies every tracked file under src/, leaving no scope hole", () => {
     const scan = scanRepository(REPO_ROOT);
@@ -1321,7 +1322,7 @@ describe("this repository", () => {
     expect(
       scan.trackedFiles.filter((file) => file.startsWith("src/")).length,
     ).toBeGreaterThan(3000);
-  });
+  }, CENSUS_TIMEOUT_MS);
 
   it("reports a git failure instead of throwing out of the scan", () => {
     const scan = scanRepository(path.join(REPO_ROOT, "no-such-directory-2687"));

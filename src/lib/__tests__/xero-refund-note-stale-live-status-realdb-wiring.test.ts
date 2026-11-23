@@ -39,7 +39,10 @@ describe("the stale live refund-note status proof stays wired into CI (#4288)", 
     expect(suite).toContain("MUTATION (round 6): a void committing after A's locked re-read is A, then the void, then B - on a bank transfer B lowers it back");
     expect(suite).toContain("MUTATION (round 5, F4): a live row deactivated between A's read and its claim recounts too - judged by the rule that counted it");
     expect(suite).toContain("MUTATION (round 7, F4): the pointer-named canonical note - the void waits on A's Payment lock before it takes the link");
-    expect(suite).toContain("round 6 stated limit: on a card the same order leaves A's raise standing, raise-only, and alerts");
+    // #4444: the stated limit holds only where Stripe's refunds back the raise;
+    // with none behind it the cap closes it, and that case is pinned too.
+    expect(suite).toContain("round 6 stated limit: on a card whose Stripe refunds back the raise, the same order leaves A's raise standing, raise-only, and alerts");
+    expect(suite).toContain("MUTATION (#4444 cap): the same order on a card Stripe recorded no more refunds for writes nothing - the stated limit closed");
     expect(suite).toContain("pg_blocking_pids");
     expect(suite).toContain('assertSafeRaceDbUrl(RACE_DB_URL, "Stale live refund-note status")');
     expect(suite.indexOf("assertSafeRaceDbUrl(RACE_DB_URL")).toBeLessThan(suite.indexOf('await import("@/lib/prisma")'));

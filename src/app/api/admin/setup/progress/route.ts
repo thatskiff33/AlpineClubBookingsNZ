@@ -8,6 +8,7 @@ import {
   normalizeSetupProgress,
   type SetupStepId,
 } from "@/lib/setup-readiness";
+import { parseJsonRequestBody } from "@/lib/api-json";
 
 const progressSchema = z.discriminatedUnion("action", [
   z.object({
@@ -27,12 +28,11 @@ export async function PATCH(request: NextRequest) {
   const guard = await requireAdmin();
   if (!guard.ok) return guard.response;
   const session = guard.session;
-  let body: unknown;
-  try {
-    body = await request.json();
-  } catch {
-    return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
-  }
+  const jsonBody = await parseJsonRequestBody(request, {
+    error: "Invalid JSON",
+  });
+  if (!jsonBody.ok) return jsonBody.response;
+  const body = jsonBody.body;
 
   const parsed = progressSchema.safeParse(body);
   if (!parsed.success) {

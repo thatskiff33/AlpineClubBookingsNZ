@@ -11,6 +11,7 @@ import { readdirSync, readFileSync } from "node:fs";
 import { join, relative, resolve, sep } from "node:path";
 import { describe, expect, it } from "vitest";
 import { stripComments } from "./support/strip-comments";
+import { CENSUS_TIMEOUT_MS } from "@/test/census-timeout";
 
 const ROOT = resolve(__dirname, "../../..");
 const NAMES = [
@@ -75,7 +76,7 @@ function passesHoldBack(name: (typeof NAMES)[number], args: string): boolean {
   return (name === "foldMirrorRefundIntoLedger" || name === "planCardRefundFromLedger") && args.includes(".byTransaction");
 }
 
-describe("every card planner passes the superseded-capture hold-back (#4872)", () => {
+describe("every card planner passes the superseded-capture hold-back (#4872)", { timeout: CENSUS_TIMEOUT_MS }, () => {
   const calls: Array<{ key: string; passes: boolean }> = [];
   for (const file of productionFiles()) {
     const source = stripComments(readFileSync(join(ROOT, file), "utf8"));

@@ -3,6 +3,7 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 
 import { stripComments } from "@/lib/__tests__/support/strip-comments";
+import { CENSUS_TIMEOUT_MS } from "@/test/census-timeout";
 
 /**
  * #4961 (`INV-SSOT-007`): an admin read that fails says so through the one
@@ -81,7 +82,7 @@ describe("#4961: admin pages that load data render AdminLoadError, never the emp
       importers,
       "A file imports AdminLoadError but is not a SITE here (add it with its gate), or a SITE stopped importing it.",
     ).toEqual(SITES.map((site) => site.file).sort());
-  });
+  }, CENSUS_TIMEOUT_MS);
 
   for (const site of SITES) {
     describe(site.file, () => {

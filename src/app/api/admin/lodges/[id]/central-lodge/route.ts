@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { parseJsonRequestBody } from "@/lib/api-json";
 import { z } from "zod";
 
 import { createAuditLog } from "@/lib/audit";
@@ -13,7 +14,7 @@ import { requireAdmin } from "@/lib/session-guards";
 
 /**
  * GET|PUT /api/admin/lodges/[id]/central-lodge — which lodge in the Alpine
- * Central Server's registry THIS lodge is (#62, owner decision D5).
+ * Central Server's registry THIS lodge is (triyder/AlpineClubBookingsNZ#62, owner decision D5).
  *
  * The central server asks this site how many beds are free at one of the
  * lodges it says the club owns, naming it by its permanent central id. This
@@ -130,8 +131,10 @@ export async function PUT(
   }
 
   let body: z.infer<typeof putSchema>;
+  const jsonBody = await parseJsonRequestBody(request);
+  if (!jsonBody.ok) return jsonBody.response;
   try {
-    body = putSchema.parse(await request.json());
+    body = putSchema.parse(jsonBody.body);
   } catch {
     return NextResponse.json({ error: "Invalid request" }, { status: 400 });
   }

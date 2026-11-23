@@ -1,5 +1,6 @@
 import "server-only";
 import { Prisma } from "@prisma/client";
+import { isPrismaKnownUniqueConstraintError } from "@/lib/prisma-known-errors";
 import { otherLodgeChoiceLabel, type OwnedCentralLodge } from "@/lib/other-lodges";
 import { prisma } from "@/lib/prisma";
 import {
@@ -9,7 +10,7 @@ import {
 } from "@/lib/servernz-settings";
 
 /**
- * Which LOCAL lodge a central lodge id means (#62, owner decision D5).
+ * Which LOCAL lodge a central lodge id means (triyder/AlpineClubBookingsNZ#62, owner decision D5).
  *
  * The Alpine Central Server asks about a lodge by its permanent central id —
  * never by name, because a lodge can be renamed centrally. This site answers
@@ -72,7 +73,7 @@ export function preselectedCentralLodgeId(
 }
 
 /**
- * Each owned lodge with the label its option shows (#69): two may share a
+ * Each owned lodge with the label its option shows (triyder/AlpineClubBookingsNZ#69): two may share a
  * name, so such a pair also shows the location their local copies hold.
  */
 export async function labelOwnedLodges(owned: ReadonlyArray<OwnedCentralLodge>) {
@@ -172,7 +173,7 @@ export type CentralLodgeLinkSaveResult =
   | { ok: false; reason: "already-linked"; holderName: string | null };
 
 /**
- * Save one or more lodges' Central lodge links (#62) — the ONE writer the
+ * Save one or more lodges' Central lodge links (triyder/AlpineClubBookingsNZ#62) — the ONE writer the
  * lodge's Central lodge card (`PUT /api/admin/lodges/[id]/central-lodge`) and
  * the setup page's link step both use.
  *
@@ -261,7 +262,7 @@ export async function saveCentralLodgeLinks(
       return { ok: true, before };
     }, SERVERNZ_TRANSACTION_OPTIONS);
   } catch (error) {
-    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
+    if (isPrismaKnownUniqueConstraintError(error)) {
       return { ok: false, reason: "already-linked", holderName: await linkHolderName(wanted, changes) };
     }
     throw error;

@@ -2783,6 +2783,9 @@ read `MemberAccessRole` rows.
 | `EMAIL_SERVER_USER`                      | SMTP relay username (required when `USE_SMTP_RELAY=true` or `USE_LOCAL_CAPTURE=true`).                                                                        |
 | `EMAIL_SERVER_PASSWORD`                  | SMTP relay password (required when `USE_SMTP_RELAY=true` or `USE_LOCAL_CAPTURE=true`).                                                                        |
 | `EMAIL_CAPTURE_ALLOW_PUBLIC_HOST`        | Boolean toggle (`true`/`false`, default `false`). Allows `USE_LOCAL_CAPTURE=true` when `EMAIL_SERVER_HOST` names a host on the **public internet**, which is otherwise **refused** with every send held back (#3071 review). The refusal exists because that combination was a live defect: an installation already running `USE_SMTP_RELAY` against a real relay, told to "set `USE_LOCAL_CAPTURE=true`", flipped the one flag and kept its live relay host — so a copy emailed the club's real members while the log recorded that the message reached nobody. Accepted **without** this flag: a container or service name (`mailpit`, `mailhog`), `localhost`, any loopback/RFC1918/CGNAT/link-local/unique-local address, and the reserved suffixes `.local`, `.internal`, `.home.arpa`, `.test`, `.invalid`, `.example`. Set this `true` only for a sink that genuinely forwards nothing but has a public name — **nothing verifies that, and nothing can**: a mail server on a private address can relay outward too, so the declaration is what carries it. |
+| `EMAIL_SMTP_CONNECTION_TIMEOUT_MS`       | The whole budget for setting up a mail connection, in milliseconds (#5407): the DNS lookup, the TCP connect, the server's greeting and the STARTTLS upgrade together. Default `30000` (the mail library's own is two minutes); accepted `1000` to `600000`. Applies to every provider (AWS SES is reached through its SMTP endpoint). A value outside the range, or not a whole number, is ignored with a warning in the setup readiness checks and the default is used, so a mistyped timeout never stops the club's mail. |
+| `EMAIL_SMTP_GREETING_TIMEOUT_MS`         | A cap on waiting for the server's greeting (and for the STARTTLS upgrade) inside the setup budget above, in milliseconds. Default `30000`, equal to the setup budget and to the mail library's own, so it changes nothing unless set lower; accepted `1000` to `600000`; same fallback. Each of those waits gets the smaller of this cap and what is left of the setup budget, so the cap only matters when it is lower than `EMAIL_SMTP_CONNECTION_TIMEOUT_MS`. A value you set above it has no effect, and the setup readiness checks warn about it; lowering only the connection timeout needs no greeting change. |
+| `EMAIL_SMTP_SOCKET_TIMEOUT_MS`           | How long an open mail connection may sit idle waiting for the server, in milliseconds. Default `120000` (the library's own is ten minutes); accepted `1000` to `600000`; same fallback. Together these keep a stuck send well inside the hour the recovery of a lost booking-bumped notice assumes. A socket timeout after the message body has been sent but before the server's final reply marks the send failed, and the email retry sends it again (for a message whose body is kept for retry), as with any transport error after sending, so the recipient can get it twice. |
 | `EMAIL_FROM`                             | Envelope / Return-Path sender address (bootstrap; must be a provider-verified SES address in production). The ONLY email-identity env var besides transport secrets — from display name, support address, and contact-form recipient are admin-managed DB-first (Admin > Email Messages). |
 | `SES_SNS_TOPIC_ARN`                      | SNS topic ARN for SES bounce/complaint webhooks (required for full SES feedback handling when `USE_AWS_SES=true`).                                           |
 | `SES_SNS_ALLOW_UNSAFE_MISSING_TOPIC_ARN` | Local/dev escape hatch only; never enable for deployed SES feedback ingestion.                                                                               |
@@ -2836,6 +2839,21 @@ from `/api/observability/browser-config` before initializing browser reporting.
 Failed or empty configuration leaves reporting and replay off. Errors before
 that fetch completes are not reported. Replay still needs the separate club
 privacy opt-in; its default remains off.
+
+**Neither the server nor the browser sends session data (#5262).** Server and
+browser events carry the installed version as their Sentry `release` (see
+`APP_VERSION`), for tagging only. Sentry's session tracking, which it uses for
+release health and crash-free rates, is switched off on both. On the server,
+`src/lib/sentry-server-integrations.ts` turns off the per-request counting in
+the SDK's `Http` integration and drops its `ProcessSession` integration. In the
+browser, `src/instrumentation-client.ts` drops the SDK's `BrowserSession`
+integration. The edge SDK has no session tracking. Sentry therefore gets no
+session data for those figures. Before this change, a server with `SENTRY_DSN`
+set sent Sentry a count of requests by outcome for each minute, with the
+release and environment, and session updates for the server process when an
+error was reported before its first request, or when it exited without
+serving one. Error events and performance
+traces are unchanged. Nothing to set.
 
 **Upgrade action:** before deploying the first release with runtime browser
 Sentry, set `NEXT_PUBLIC_SENTRY_DSN` in `.env` if browser reports are wanted.

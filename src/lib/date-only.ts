@@ -6,7 +6,7 @@
  * kernel; the pure UTC-encoding helpers below (`formatDateOnly` and friends)
  * still live here, because this module is the sanctioned home for the date-only
  * encoding (#2684, `INV-DATE-019`) and the kernel deliberately holds a calendar
- * day as text rather than as a `Date`. Retired by CT-6 (#2991).
+ * day as text rather than as a `Date`. #2991 (CT-6) closed with it kept as a reviewed adapter.
  *
  * ONE BEHAVIOUR CHANGE, and it is a bug fix. `startOfDateOnlyForTimeZone`
  * resolved a wall time by applying the zone offset twice, which lands BEFORE the

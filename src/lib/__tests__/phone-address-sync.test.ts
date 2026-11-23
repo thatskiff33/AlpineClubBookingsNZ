@@ -67,7 +67,7 @@ vi.mock("@/lib/email", () => ({
   sendVerificationEmail: vi.fn().mockResolvedValue(undefined),
 }));
 vi.mock("@/lib/verification-tokens", () => ({
-  createEmailVerificationToken: vi.fn().mockResolvedValue("token123"),
+  createEmailVerificationToken: vi.fn().mockResolvedValue({ token: "token123", expiresAt: new Date("2026-07-03T00:00:00.000Z") }),
 }));
 vi.mock("@/lib/rate-limit", () => ({
   applyRateLimit: vi.fn().mockReturnValue(null),
@@ -430,7 +430,14 @@ describe("Profile API: structured phone and address fields", () => {
 
   it("rejects incomplete required profile fields", async () => {
     vi.mocked(auth).mockResolvedValue(memberSession);
-    vi.mocked(prisma.member.findUnique).mockResolvedValue(baseMember as any);
+    // ALP-718: a field not sent keeps its stored value, so the refusal is for
+    // a profile that would be saved without an address, not one merely sent without.
+    vi.mocked(prisma.member.findUnique).mockResolvedValue({
+      ...baseMember,
+      streetAddressLine1: null,
+      streetCity: null,
+      postalAddressLine1: null,
+    } as any);
 
     const res = await updateProfile(makeProfilePut({
       firstName: "Alice",

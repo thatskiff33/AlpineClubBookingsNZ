@@ -11,7 +11,7 @@ import { RoomCards } from "@/components/lodge-display/modules/room-cards";
 import { NightColumns } from "@/components/lodge-display/modules/night-columns";
 import { StatusBoard } from "@/components/lodge-display/modules/status-board";
 
-// Issue #115 (closes #114): the tonight / look-ahead / status modules — pure
+// Issue hoppers99/AlpineClubBookingsNZ#115 (closes hoppers99/AlpineClubBookingsNZ#114): the tonight / look-ahead / status modules — pure
 // functions of the privacy-reduced DisplayState. Fixtures mirror the serialiser
 // payload; no module queries anything. tonight = window.start = 2026-04-13.
 
@@ -234,7 +234,7 @@ describe("NightColumns (mocks O3 / C1a)", () => {
   });
 });
 
-describe("StatusBoard (mock O4, closes #114)", () => {
+describe("StatusBoard (mock O4, closes hoppers99/AlpineClubBookingsNZ#114)", () => {
   const fixture = state({
     bookings: [
       row({ key: "a", guests: [{ label: "Jane S", stayStart: "2026-04-13", stayEnd: "2026-04-15" }] }),

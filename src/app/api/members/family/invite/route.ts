@@ -1,5 +1,4 @@
 import { NextRequest, NextResponse } from "next/server";
-import { z } from "zod";
 import { auth } from "@/lib/auth";
 import { requireActiveSessionUser } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma";
@@ -7,11 +6,10 @@ import { applyRateLimit, rateLimiters } from "@/lib/rate-limit";
 import { logAudit } from "@/lib/audit";
 import logger from "@/lib/logger";
 import { sendFamilyGroupInvitationEmail } from "@/lib/email";
-
-const inviteSchema = z.object({
-  email: z.string().email("Invalid email address"),
-  familyGroupId: z.string().min(1, "Family group ID required"),
-});
+import { parseJsonRequestBody } from "@/lib/api-json";
+import { familyGroupInviteSchema } from "@/lib/family-group-request-schemas";
+import { connectionJson } from "@/lib/mcp-connection-request";
+import { FAMILY_INVITE_CONNECTION_SHAPE } from "@/lib/connection-shapes";
 
 /**
  * POST /api/members/family/invite
@@ -31,14 +29,11 @@ export async function POST(req: NextRequest) {
   const rateLimited = await applyRateLimit(rateLimiters.familyGroupJoinRequest, req);
   if (rateLimited) return rateLimited;
 
-  let body: unknown;
-  try {
-    body = await req.json();
-  } catch {
-    return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
-  }
+  const jsonBody = await parseJsonRequestBody(req, { error: "Invalid JSON" });
+  if (!jsonBody.ok) return jsonBody.response;
+  const body = jsonBody.body;
 
-  const parsed = inviteSchema.safeParse(body);
+  const parsed = familyGroupInviteSchema.safeParse(body);
   if (!parsed.success) {
     return NextResponse.json(
       { error: "Validation failed", details: parsed.error.flatten().fieldErrors },
@@ -174,11 +169,14 @@ export async function POST(req: NextRequest) {
     logger.error({ err, invitationId: invitation.id }, "Failed to send family group invitation email");
   });
 
-  return NextResponse.json(
+  // Also the AI app action `invite_to_family_group` (ALP-795).
+  return connectionJson(
+    req,
     {
       message: `Invitation sent to ${target.firstName} ${target.lastName}. They can accept or decline from their profile.`,
       invitationId: invitation.id,
     },
+    FAMILY_INVITE_CONNECTION_SHAPE,
     { status: 201 }
   );
 }

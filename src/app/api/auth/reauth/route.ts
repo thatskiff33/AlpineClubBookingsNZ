@@ -11,6 +11,7 @@ import {
   type ReauthMember,
 } from "@/lib/session-reauth";
 import { createPasskeyAuthenticationOptions } from "@/lib/webauthn";
+import { parseJsonRequestBody } from "@/lib/api-json";
 
 const MEMBER_SELECT = {
   id: true,
@@ -99,12 +100,11 @@ export async function POST(request: NextRequest) {
   const loaded = await loadMember(session.user.id);
   if (!loaded.ok) return loaded.response;
 
-  let body: unknown;
-  try {
-    body = await request.json();
-  } catch {
-    return NextResponse.json({ error: "Invalid JSON payload" }, { status: 400 });
-  }
+  const jsonBody = await parseJsonRequestBody(request, {
+    error: "Invalid JSON payload",
+  });
+  if (!jsonBody.ok) return jsonBody.response;
+  const body = jsonBody.body;
 
   const parsed = proofSchema.safeParse(body);
   if (!parsed.success) {

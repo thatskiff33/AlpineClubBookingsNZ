@@ -294,11 +294,17 @@ describe("sendToAdmins reports each recipient's fate (#3672)", () => {
     });
   }
 
+  /** The email core writing the copy's EmailLog row, then failing at the provider. */
+  async function failsAfterItsRow({ onAttemptLogged }: { onAttemptLogged?: (id: string) => void }) {
+    onAttemptLogged?.("email-log-1");
+    throw new Error("SMTP down");
+  }
+
   it("counts sent, queued for the retry cron, and not delivered separately", async () => {
     mocks.findMany.mockResolvedValue(treasurers);
     mocks.sendEmail
       .mockResolvedValueOnce({ status: "sent" })
-      .mockRejectedValueOnce(new Error("SMTP down"))
+      .mockImplementationOnce(failsAfterItsRow)
       .mockResolvedValueOnce({ status: "suppressed" });
 
     await expect(send()).resolves.toEqual({
@@ -307,13 +313,38 @@ describe("sendToAdmins reports each recipient's fate (#3672)", () => {
       sent: 1,
       queuedForRetry: 1,
       notDelivered: 1,
+      failedBeforeLogged: 0,
     });
+  });
+
+  // #5407: a copy that fails before its EmailLog row exists leaves nothing for
+  // the retry cron to replay, so it is not queued; it is counted apart.
+  it("counts a failure before the copy's row was written as not delivered, and says so", async () => {
+    mocks.findMany.mockResolvedValue(treasurers.slice(0, 2));
+    mocks.sendEmail
+      .mockRejectedValueOnce(new Error("message settings unreadable"))
+      .mockImplementationOnce(failsAfterItsRow);
+
+    await expect(send()).resolves.toEqual({
+      deliveryAllowed: true,
+      recipients: 2,
+      sent: 0,
+      queuedForRetry: 1,
+      notDelivered: 1,
+      failedBeforeLogged: 1,
+    });
+    // Every copy is still sent with the hook that says its row was written.
+    expect(mocks.sendEmail).toHaveBeenCalledWith(expect.objectContaining({ onAttemptLogged: expect.any(Function) }));
   });
 
   it("counts an environment fault as queued and a confirmed non-production copy as not delivered", async () => {
     mocks.findMany.mockResolvedValue(treasurers.slice(0, 2));
     mocks.sendEmail
-      .mockResolvedValueOnce({ status: "withheld_for_environment", reason: "environment_unknown" })
+      // The fault's copy has its FAILED row (written before the gate ran).
+      .mockImplementationOnce(async ({ onAttemptLogged }: { onAttemptLogged?: (id: string) => void }) => {
+        onAttemptLogged?.("email-log-1");
+        return { status: "withheld_for_environment", reason: "environment_unknown" };
+      })
       .mockResolvedValueOnce({
         status: "withheld_for_environment",
         reason: "environment_non_production",
@@ -325,13 +356,29 @@ describe("sendToAdmins reports each recipient's fate (#3672)", () => {
       sent: 0,
       queuedForRetry: 1,
       notDelivered: 1,
+      failedBeforeLogged: 0,
+    });
+  });
+
+  // #5407 review: a fault's copy whose row write failed has nothing to replay.
+  it("does not count an environment fault's copy as queued when its row was never written", async () => {
+    mocks.findMany.mockResolvedValue(treasurers.slice(0, 1));
+    mocks.sendEmail.mockResolvedValueOnce({ status: "withheld_for_environment", reason: "environment_unknown" });
+
+    await expect(send()).resolves.toEqual({
+      deliveryAllowed: true,
+      recipients: 1,
+      sent: 0,
+      queuedForRetry: 0,
+      notDelivered: 1,
+      failedBeforeLogged: 1,
     });
   });
 
   // A template whose EmailLog keeps no body is never replayed by the cron.
   it("counts a failure nothing replays as not delivered", async () => {
     mocks.findMany.mockResolvedValue(treasurers.slice(0, 1));
-    mocks.sendEmail.mockRejectedValueOnce(new Error("SMTP down"));
+    mocks.sendEmail.mockImplementationOnce(failsAfterItsRow);
 
     await expect(send("admin-email-failure")).resolves.toEqual({
       deliveryAllowed: true,
@@ -339,6 +386,7 @@ describe("sendToAdmins reports each recipient's fate (#3672)", () => {
       sent: 0,
       queuedForRetry: 0,
       notDelivered: 1,
+      failedBeforeLogged: 0,
     });
   });
 
@@ -350,6 +398,7 @@ describe("sendToAdmins reports each recipient's fate (#3672)", () => {
       sent: 0,
       queuedForRetry: 0,
       notDelivered: 0,
+      failedBeforeLogged: 0,
     });
 
     mocks.findMany.mockResolvedValue([
@@ -363,10 +412,76 @@ describe("sendToAdmins reports each recipient's fate (#3672)", () => {
       sent: 0,
       queuedForRetry: 0,
       notDelivered: 0,
+      failedBeforeLogged: 0,
     });
   });
 });
 
+
+/**
+ * #5407: content given as a builder is built only once the policy allows the
+ * alert and someone is opted in, so a sender whose content needs a live Xero
+ * read makes none for an alert nobody can receive. The result is the same as
+ * for content given directly.
+ */
+describe("sendToAdmins builds lazy content only when someone can receive it (#5407)", () => {
+  const officer = enumRole("a@club.test", "FINANCE_ADMIN");
+  const content = { subject: "Alert", html: "<p>alert</p>", templateData: { count: "1" } };
+
+  function sendLazily(build: () => Promise<typeof content>) {
+    return sendToAdmins({ templateName: "admin-group-joiner-started-stay", preferenceKey: "adminPaymentFailure", build });
+  }
+
+  it("does not build when the delivery policy skips the alert", async () => {
+    mocks.shouldSendAdminSystemEmail.mockResolvedValueOnce({ send: false, mode: "disabled" });
+    const build = vi.fn(async () => content);
+
+    await expect(sendLazily(build)).resolves.toMatchObject({ deliveryAllowed: false, recipients: 0 });
+    expect(build).not.toHaveBeenCalled();
+    expect(mocks.findMany).not.toHaveBeenCalled();
+  });
+
+  it("does not build when nobody is opted in, and answers as for direct content", async () => {
+    mocks.findMany.mockResolvedValue([
+      enumRole("a@club.test", "FINANCE_ADMIN", { notificationPreference: { adminPaymentFailure: false } }),
+    ]);
+    const build = vi.fn(async () => content);
+
+    const lazy = await sendLazily(build);
+
+    expect(build).not.toHaveBeenCalled();
+    expect(mocks.sendEmail).not.toHaveBeenCalled();
+    expect(lazy).toEqual({
+      deliveryAllowed: true,
+      recipients: 0,
+      sent: 0,
+      queuedForRetry: 0,
+      notDelivered: 0,
+      failedBeforeLogged: 0,
+    });
+  });
+
+  it("builds once and sends exactly what direct content would send", async () => {
+    mocks.findMany.mockResolvedValue([officer]);
+    const build = vi.fn(async () => content);
+
+    const lazy = await sendLazily(build);
+    const lazySend = mocks.sendEmail.mock.calls[0][0];
+    mocks.sendEmail.mockClear();
+    const direct = await sendToAdmins({
+      templateName: "admin-group-joiner-started-stay",
+      preferenceKey: "adminPaymentFailure",
+      ...content,
+    });
+    const directSend = mocks.sendEmail.mock.calls[0][0];
+
+    expect(build).toHaveBeenCalledTimes(1);
+    expect(lazy).toEqual(direct);
+    // The attempt hook is a fresh closure per call; everything else is equal.
+    expect({ ...lazySend, onAttemptLogged: undefined }).toEqual({ ...directSend, onAttemptLogged: undefined });
+    expect(lazySend).toMatchObject({ to: "a@club.test", subject: "Alert", html: "<p>alert</p>" });
+  });
+});
 
 /**
  * #2761 — the alert nobody may mute.

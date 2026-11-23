@@ -1,5 +1,6 @@
 import type { AdultMemberHostingPolicy } from "@prisma/client";
 import { NextRequest, NextResponse } from "next/server";
+import { parseJsonRequestBody } from "@/lib/api-json";
 import { z } from "zod";
 
 import { logAudit } from "@/lib/audit";
@@ -209,18 +210,16 @@ export async function PUT(request: NextRequest) {
   if (!guard.ok) return guard.response;
   const session = guard.session;
 
-  let data: z.infer<typeof writeSchema>;
-  try {
-    data = writeSchema.parse(await request.json());
-  } catch (error) {
-    if (error instanceof z.ZodError) {
-      return NextResponse.json(
-        { error: "Validation failed", details: error.issues },
-        { status: 400 },
-      );
-    }
-    return NextResponse.json({ error: "Invalid request body" }, { status: 400 });
+  const jsonBody = await parseJsonRequestBody(request);
+  if (!jsonBody.ok) return jsonBody.response;
+  const parsedBody = writeSchema.safeParse(jsonBody.body);
+  if (!parsedBody.success) {
+    return NextResponse.json(
+      { error: "Validation failed", details: parsedBody.error.issues },
+      { status: 400 },
+    );
   }
+  const data = parsedBody.data;
 
   const lodgeId = data.lodgeId ?? null;
   if (lodgeId === null && data.mode === "INHERIT") {

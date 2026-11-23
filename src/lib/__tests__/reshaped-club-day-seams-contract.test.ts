@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 
 import { blankLiterals, stripComments } from "./support/strip-comments";
 import { balancedBrackets } from "./support/balanced-brackets";
+import { CENSUS_TIMEOUT_MS } from "@/test/census-timeout";
 
 /**
  * #3123, the SIGNATURE-RESHAPE group: seven modules whose civil-day authority
@@ -189,7 +190,7 @@ function argumentCount(args: string): number {
   return balancedBrackets(`(${args})`, 0).parts.length;
 }
 
-describe("#3123 reshaped seams keep their required club day", () => {
+describe("#3123 reshaped seams keep their required club day", { timeout: CENSUS_TIMEOUT_MS }, () => {
   it("no reshaped module reads a zone-defaulting date-only helper any more", () => {
     const offenders: string[] = [];
     for (const file of RESHAPED_MODULES) {
@@ -253,9 +254,9 @@ describe("#3123 reshaped seams keep their required club day", () => {
     // the consent service resolved before its transaction. #4202 added a
     // thirteenth: the edit's promo preview refuses a re-rate on a stay under way
     // exactly as the quote does (`promo-preview-edit.ts`), on the club's day it
-    // resolves itself, with no transaction open. Fork #119 added an eighth
+    // resolves itself, with no transaction open. Fork triyder/AlpineClubBookingsNZ#119 added an eighth
     // `bookingStayHasStarted`: "Add to work party" refused a started stay;
-    // fork #127 allows one, so that call became an `isFinishedStay` on the
+    // fork triyder/AlpineClubBookingsNZ#127 allows one, so that call became an `isFinishedStay` on the
     // same club's day, and the count is seven again.
     const sources = productionSources();
     let policyCalls = 0;

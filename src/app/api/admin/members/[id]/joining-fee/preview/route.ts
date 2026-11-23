@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { AgeTier } from "@prisma/client";
+import { parseOptionalJsonRequestBody } from "@/lib/api-json";
 import { requireAdmin } from "@/lib/session-guards";
 import { clubTodayDateOnlyInstant } from "@/lib/club-time/server";
 import {
@@ -48,15 +49,10 @@ export async function POST(
   }
 
   // Body is optional; an empty/absent body means "preview this member".
-  let body: unknown = {};
-  try {
-    const text = await request.text();
-    if (text.trim().length > 0) body = JSON.parse(text);
-  } catch {
-    return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
-  }
+  const jsonBody = await parseOptionalJsonRequestBody(request, { error: "Invalid JSON", whenAbsent: {} });
+  if (!jsonBody.ok) return jsonBody.response;
 
-  const parsedBody = previewSchema.safeParse(body);
+  const parsedBody = previewSchema.safeParse(jsonBody.body);
   if (!parsedBody.success) {
     return NextResponse.json(
       { error: "Invalid input", details: parsedBody.error.flatten() },

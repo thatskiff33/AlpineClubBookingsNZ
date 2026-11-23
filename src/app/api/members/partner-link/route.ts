@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { z } from "zod";
+import { parseJsonRequestBody } from "@/lib/api-json";
 import { requireActiveSession } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma";
 import { applyRateLimit, rateLimiters } from "@/lib/rate-limit";
@@ -13,6 +13,18 @@ import {
 } from "@/lib/member-partner-link";
 import { cancelOwnPartnerInviteToken } from "@/lib/partner-invite-token";
 import { transactionContendedResponse } from "@/lib/transaction-contended-response";
+import {
+  partnerLinkDeleteQuerySchema,
+  partnerLinkRequestSchema,
+  partnerLinkRespondSchema,
+} from "@/lib/partner-link-request-schemas";
+import { connectionJson } from "@/lib/mcp-connection-request";
+import { refuseOneStepPartnerForConnection } from "@/lib/partner-link-connection-guard";
+import {
+  PARTNER_LINK_MESSAGE_CONNECTION_SHAPE,
+  PARTNER_LINK_REQUEST_CONNECTION_SHAPE,
+  PARTNER_LINK_STATE_CONNECTION_SHAPE,
+} from "@/lib/connection-shapes";
 
 /**
  * GET /api/members/partner-link (#1742)
@@ -23,8 +35,12 @@ import { transactionContendedResponse } from "@/lib/transaction-contended-respon
  * family-group-admin gate; computed server-side so the UI renders policy rather
  * than re-implementing it), and any outstanding partner-invite token minted with
  * createPartnerLink.
+ *
+ * Also the AI app action `get_my_partner_link` (ALP-795). A connection is not
+ * sent the outstanding invitation's email address: the person invited may not
+ * be a member, and has not agreed to their address going to an AI provider.
  */
-export async function GET() {
+export async function GET(request: Request) {
   const guard = await requireActiveSession();
   if (!guard.ok) return guard.response;
   const memberId = guard.session.user.id;
@@ -34,17 +50,12 @@ export async function GET() {
     listOneStepPartnerCandidates(memberId),
     getPendingPartnerInviteIntent(memberId),
   ]);
-  return NextResponse.json({ ...state, oneStepCandidates, pendingPartnerInvite });
+  return connectionJson(
+    request,
+    { ...state, oneStepCandidates, pendingPartnerInvite },
+    PARTNER_LINK_STATE_CONNECTION_SHAPE,
+  );
 }
-
-const requestSchema = z
-  .object({
-    email: z.string().email("Invalid email address").optional(),
-    memberId: z.string().min(1).optional(),
-  })
-  .refine((data) => Boolean(data.email) !== Boolean(data.memberId), {
-    message: "Provide either an email or a family member",
-  });
 
 /**
  * POST /api/members/partner-link (#1742)
@@ -52,6 +63,7 @@ const requestSchema = z
  * their profile, mirroring the family ADULT_INVITE consent flow) or by
  * memberId (own family-group members only; a no-login member requires the
  * requester to be that group's admin and forms the link in one step).
+ * Also the AI app action `request_partner_link` (ALP-795).
  */
 export async function POST(req: NextRequest) {
   const guard = await requireActiveSession();
@@ -60,14 +72,11 @@ export async function POST(req: NextRequest) {
   const rateLimited = await applyRateLimit(rateLimiters.familyGroupJoinRequest, req);
   if (rateLimited) return rateLimited;
 
-  let body: unknown;
-  try {
-    body = await req.json();
-  } catch {
-    return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
-  }
+  const parsedJson = await parseJsonRequestBody(req, { error: "Invalid JSON" });
+  if (!parsedJson.ok) return parsedJson.response;
+  const body = parsedJson.body;
 
-  const parsed = requestSchema.safeParse(body);
+  const parsed = partnerLinkRequestSchema.safeParse(body);
   if (!parsed.success) {
     return NextResponse.json(
       { error: "Validation failed", details: parsed.error.flatten().fieldErrors },
@@ -92,6 +101,8 @@ export async function POST(req: NextRequest) {
         { status: 404 }
       );
     }
+    const refused = await refuseOneStepPartnerForConnection(req, parsed.data.memberId);
+    if (refused) return refused;
   }
 
   const result = await requestPartnerLink({
@@ -110,38 +121,27 @@ export async function POST(req: NextRequest) {
   // identically to an eligible one. The Partner card refetches state rather
   // than reading this body. Family memberId targets keep the richer body —
   // that path is fenced to the requester's own family group above.
-  if (parsed.data.email) {
-    return NextResponse.json({ message: result.message }, { status: 201 });
-  }
-
-  return NextResponse.json(
-    { message: result.message, linkId: result.linkId, status: result.status },
-    { status: 201 }
-  );
+  const answer = parsed.data.email
+    ? { message: result.message }
+    : { message: result.message, linkId: result.linkId, status: result.status };
+  return connectionJson(req, answer, PARTNER_LINK_REQUEST_CONNECTION_SHAPE, { status: 201 });
 }
-
-const respondSchema = z.object({
-  linkId: z.string().min(1),
-  action: z.enum(["accept", "decline"]),
-});
 
 /**
  * PUT /api/members/partner-link (#1742)
  * Confirm or decline a pending partner request addressed to the signed-in
- * member.
+ * member. Not an AI app action: the member confirms a partnership
+ * themselves, on the website (ALP-795).
  */
 export async function PUT(req: NextRequest) {
   const guard = await requireActiveSession();
   if (!guard.ok) return guard.response;
 
-  let body: unknown;
-  try {
-    body = await req.json();
-  } catch {
-    return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
-  }
+  const jsonBody = await parseJsonRequestBody(req, { error: "Invalid JSON" });
+  if (!jsonBody.ok) return jsonBody.response;
+  const body = jsonBody.body;
 
-  const parsed = respondSchema.safeParse(body);
+  const parsed = partnerLinkRespondSchema.safeParse(body);
   if (!parsed.success) {
     return NextResponse.json(
       { error: "Validation failed", details: parsed.error.flatten().fieldErrors },
@@ -169,13 +169,21 @@ export async function PUT(req: NextRequest) {
  * partnership (either partner may; the other is notified). With
  * inviteTokenId instead, cancel the member's own outstanding declared-partner
  * invitation (a createPartnerLink token they minted that nobody has claimed).
+ * Also the AI app action `end_partner_link` (ALP-795).
  */
 export async function DELETE(req: NextRequest) {
   const guard = await requireActiveSession();
   if (!guard.ok) return guard.response;
 
-  const linkId = req.nextUrl.searchParams.get("id")?.trim();
-  const inviteTokenId = req.nextUrl.searchParams.get("inviteTokenId")?.trim();
+  // Keyed on the AI app connection for one, on the address for a browser.
+  const rateLimited = await applyRateLimit(rateLimiters.api, req);
+  if (rateLimited) return rateLimited;
+
+  // Both fields are optional strings, so the parse cannot fail.
+  const { id: linkId, inviteTokenId } = partnerLinkDeleteQuerySchema.parse({
+    id: req.nextUrl.searchParams.get("id") ?? undefined,
+    inviteTokenId: req.nextUrl.searchParams.get("inviteTokenId") ?? undefined,
+  });
   if (linkId && inviteTokenId) {
     return NextResponse.json(
       { error: "Provide either a partner link id or an invite token id, not both" },
@@ -194,7 +202,11 @@ export async function DELETE(req: NextRequest) {
         { status: 404 }
       );
     }
-    return NextResponse.json({ message: "Partner invitation cancelled." });
+    return connectionJson(
+      req,
+      { message: "Partner invitation cancelled." },
+      PARTNER_LINK_MESSAGE_CONNECTION_SHAPE,
+    );
   }
 
   if (!linkId) {
@@ -222,5 +234,5 @@ export async function DELETE(req: NextRequest) {
     return NextResponse.json({ error: result.error }, { status: result.status });
   }
 
-  return NextResponse.json({ message: result.message });
+  return connectionJson(req, { message: result.message }, PARTNER_LINK_MESSAGE_CONNECTION_SHAPE);
 }

@@ -17,6 +17,7 @@ import { readFileSync } from "node:fs";
 import ts from "typescript";
 import { describe, expect, it } from "vitest";
 import { productionSourceFiles } from "./support/prisma-delegate-read-scan";
+import { CENSUS_TIMEOUT_MS } from "@/test/census-timeout";
 
 // Keyed by file and the writer's ordinal within it, so a new writer in an
 // exempt file still needs its own classification.
@@ -136,7 +137,7 @@ function scan(text: string, file: string): Site[] {
   return sites;
 }
 
-describe("CANCELLED booking writers release promotions atomically (#4909)", () => {
+describe("CANCELLED booking writers release promotions atomically (#4909)", { timeout: CENSUS_TIMEOUT_MS }, () => {
   const sites = productionSourceFiles(process.cwd())
     .filter((file) => file.startsWith("src/"))
     .flatMap((file) => scan(readFileSync(file, "utf8"), file));

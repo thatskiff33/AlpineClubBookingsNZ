@@ -6,12 +6,17 @@ import { prisma } from "@/lib/prisma";
 import { logAudit } from "@/lib/audit";
 import logger from "@/lib/logger";
 import { sendFamilyGroupInviteAcceptedEmail } from "@/lib/email";
+import { parseJsonRequestBody } from "@/lib/api-json";
+import { connectionJson } from "@/lib/mcp-connection-request";
+import { FAMILY_INVITATIONS_CONNECTION_SHAPE } from "@/lib/connection-shapes";
 
 /**
  * GET /api/members/family/invitations
- * List pending invitations for the logged-in user.
+ * List pending invitations for the logged-in user. Also the AI app action
+ * `list_my_family_invitations` (ALP-795); accepting or declining one (PUT) is
+ * the member's own declaration, made on the website.
  */
-export async function GET() {
+export async function GET(request: Request) {
   const session = await auth();
   if (!session?.user) {
     return NextResponse.json({ error: "Unauthorised" }, { status: 401 });
@@ -34,7 +39,7 @@ export async function GET() {
     orderBy: { createdAt: "desc" },
   });
 
-  return NextResponse.json({ invitations });
+  return connectionJson(request, { invitations }, FAMILY_INVITATIONS_CONNECTION_SHAPE);
 }
 
 const respondSchema = z.object({
@@ -56,12 +61,9 @@ export async function PUT(req: NextRequest) {
     return inactiveResponse;
   }
 
-  let body: unknown;
-  try {
-    body = await req.json();
-  } catch {
-    return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
-  }
+  const jsonBody = await parseJsonRequestBody(req, { error: "Invalid JSON" });
+  if (!jsonBody.ok) return jsonBody.response;
+  const body = jsonBody.body;
 
   const parsed = respondSchema.safeParse(body);
   if (!parsed.success) {

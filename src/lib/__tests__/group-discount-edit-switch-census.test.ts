@@ -10,6 +10,7 @@ import { describe, expect, it } from "vitest";
 // scan that cannot tell code from prose can be talked out of a finding by
 // wording, in either direction.
 import { stripComments } from "./support/strip-comments";
+import { CENSUS_TIMEOUT_MS } from "@/test/census-timeout";
 
 /**
  * Census: the club's edit-time group-discount switch has exactly ONE gate, and
@@ -264,7 +265,7 @@ const creationPathSites = MAPPER_CALL_SITES.filter(
   (site) => site.kind === "creation",
 );
 
-describe("group-discount edit-time switch census (#2770, INV-MOD-026)", () => {
+describe("group-discount edit-time switch census (#2770, INV-MOD-026)", { timeout: CENSUS_TIMEOUT_MS }, () => {
   it("declares every production caller of the creation mapper", () => {
     const found = allSourceFiles(SRC_ROOT)
       .filter(

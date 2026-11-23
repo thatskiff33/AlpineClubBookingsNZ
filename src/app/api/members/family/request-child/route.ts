@@ -1,5 +1,4 @@
 import { NextRequest, NextResponse } from "next/server";
-import { z } from "zod";
 import { auth } from "@/lib/auth";
 import { requireActiveSessionUser } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma";
@@ -13,18 +12,10 @@ import { clubSeasonYear } from "@/lib/financial-year";
 import { logAudit } from "@/lib/audit";
 import logger from "@/lib/logger";
 import { sendChildRequestSubmittedEmail, sendAdminFamilyGroupRequestAlert } from "@/lib/email";
-import { nameField } from "@/lib/zod-helpers";
-import { dateOfBirthStringSchema } from "@/lib/date-only-schema";
-
-const requestChildSchema = z.object({
-  familyGroupId: z.string().min(1, "Family group ID required"),
-  firstName: nameField({ required: "First name required" }),
-  lastName: nameField({ required: "Last name required" }),
-  dateOfBirth: z
-    .string({ error: "Date of birth is required" })
-    .min(1, "Date of birth is required")
-    .pipe(dateOfBirthStringSchema),
-});
+import { parseJsonRequestBody } from "@/lib/api-json";
+import { familyChildRequestSchema } from "@/lib/family-group-request-schemas";
+import { connectionJson } from "@/lib/mcp-connection-request";
+import { FAMILY_REQUEST_SUBMITTED_CONNECTION_SHAPE } from "@/lib/connection-shapes";
 
 /**
  * POST /api/members/family/request-child
@@ -44,14 +35,11 @@ export async function POST(req: NextRequest) {
   const rateLimited = await applyRateLimit(rateLimiters.familyGroupJoinRequest, req);
   if (rateLimited) return rateLimited;
 
-  let body: unknown;
-  try {
-    body = await req.json();
-  } catch {
-    return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
-  }
+  const jsonBody = await parseJsonRequestBody(req, { error: "Invalid JSON" });
+  if (!jsonBody.ok) return jsonBody.response;
+  const body = jsonBody.body;
 
-  const parsed = requestChildSchema.safeParse(body);
+  const parsed = familyChildRequestSchema.safeParse(body);
   if (!parsed.success) {
     return NextResponse.json(
       { error: "Validation failed", details: parsed.error.flatten().fieldErrors },
@@ -199,11 +187,14 @@ export async function POST(req: NextRequest) {
     logger.error({ err, requestId: request.id }, "Failed to send admin family group request alert");
   });
 
-  return NextResponse.json(
+  // Also the AI app action `request_family_child` (ALP-795).
+  return connectionJson(
+    req,
     {
       message: "Request submitted. An admin will review the infant/child/youth member for your family group.",
       requestId: request.id,
     },
+    FAMILY_REQUEST_SUBMITTED_CONNECTION_SHAPE,
     { status: 201 }
   );
 }

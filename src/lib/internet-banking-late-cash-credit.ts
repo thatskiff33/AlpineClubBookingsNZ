@@ -1,4 +1,5 @@
 import type { CreditType, PrismaClient } from "@prisma/client";
+import { storedShortBookingId } from "@/lib/booking-reference";
 
 const CANCELLATION_REFUND = "CANCELLATION_REFUND" satisfies CreditType;
 
@@ -29,7 +30,7 @@ export const INTERNET_BANKING_LATE_CASH_CREDIT_DESCRIPTION_PREFIX =
  * note's stamp (#4685).
  */
 export function internetBankingLateCashCreditDescription(bookingId: string, { bookingCancelled }: { bookingCancelled: boolean }): string {
-  return `${INTERNET_BANKING_LATE_CASH_CREDIT_DESCRIPTION_PREFIX}${bookingCancelled ? "cancelled booking" : "booking"} ${bookingId.slice(0, 8)}`;
+  return `${INTERNET_BANKING_LATE_CASH_CREDIT_DESCRIPTION_PREFIX}${bookingCancelled ? "cancelled booking" : "booking"} ${storedShortBookingId(bookingId)}`;
 }
 
 /** The rows themselves, as a `MemberCredit` where clause. */

@@ -1,4 +1,5 @@
 import { APPLIED_CREDIT_ALLOCATION_ROLE } from "@/lib/xero-applied-credit-link-roles";
+import { storedShortBookingId } from "@/lib/booking-reference";
 import { type CreditNote as XeroCreditNote } from "xero-node";
 import { CreditType, PaymentSource, PaymentStatus } from "@prisma/client";
 import { bookingOwner } from "@/lib/booking-owner";
@@ -7,7 +8,7 @@ import { prisma } from "@/lib/prisma";
 import { lockPaymentForRefundedTotal, PAYMENT_ROW_WAIT_TRANSACTION_OPTIONS } from "@/lib/payment-transactions";
 import logger from "@/lib/logger";
 import { type AccountCreditAllocationRepairResult, type AccountCreditAllocationTarget, type RefundedPaymentBusinessStateRepairResult } from "./types";
-import { buildBookingAppliedCreditDescription, getCreditNoteAmountCents, getJsonRecord, getRefundContributionCentsFromCreditNoteMetadata } from "./amounts";
+import { getCreditNoteAmountCents, getJsonRecord, getRefundContributionCentsFromCreditNoteMetadata } from "./amounts";
 import { isIncludedRefundCreditNoteStatus, readRefundNoteRowsByPayment } from "@/lib/xero-refund-note-status";
 import { findActiveXeroObjectLinks } from "./object-links";
 import { notifyXeroSyncError } from "@/lib/xero-error-alert";
@@ -15,12 +16,13 @@ import { sendBankTransferFloorAlert } from "./credit-note-bank-transfer-floor";
 import { decideXeroRefundedColumns } from "./xero-refunded-columns";
 import { createAuditLog } from "@/lib/audit";
 import { lockMemberCreditLedger } from "@/lib/member-credit";
+import { buildBookingAppliedCreditDescription } from "@/lib/member-credit-booking-rows";
 import { repairLegacyAppliedCreditNoteAllocationsForBooking } from "@/lib/xero-applied-credit-allocation-repair";
 import { assertNoAppliedCreditDeallocationFence } from "@/lib/xero-applied-credit-operation-serialization";
 import { getClubFormat } from "@/lib/club-format-settings";
 import { formatCents } from "@/lib/utils";
 import { decideLinkedRefundedTotalCents } from "./linked-refunded-total";
-import { capOrganiserChildMirrorAtStripeRefunds } from "@/lib/organiser-child-refund";
+import { capCardRefundedTotalAtStripeRefunds } from "@/lib/organiser-child-refund";
 
 /** #3792: the operator alert, and the audit action, for a refused change. */
 const RESTORED_BOOKING_ALLOCATION_CHANGE_ERROR_TYPE =
@@ -215,10 +217,10 @@ export async function repairRefundedPaymentBusinessState(input: {
 
   type RepairedPayment = (typeof payments)[number];
   const repairOne = async (payment: RepairedPayment): Promise<"updated" | "unchanged" | "lost" | "recount"> => {
-    const currentDirectRefundContributionCents =
-      currentDirectRefundPaymentId === payment.id ? currentCreditNoteAmountCents(payment.id) ?? 0 : 0;
-    const currentModificationRefundContributionCents =
-      includesCurrentCreditNoteContribution(payment.id)
+    const countedDirectRefundCents = currentDirectRefundPaymentId === payment.id ? currentCreditNoteAmountCents(payment.id) : null;
+    const currentDirectRefundContributionCents = countedDirectRefundCents ?? 0;
+    const currentModificationRefundContributionCents = // #4444: a note counted above as the payment's own (amount read) is not counted again by its allocation
+      includesCurrentCreditNoteContribution(payment.id) && countedDirectRefundCents === null
         ? input.modificationRefundAmountsByPaymentId.get(payment.id) ?? 0
         : 0;
 
@@ -277,10 +279,10 @@ export async function repairRefundedPaymentBusinessState(input: {
       });
       effectiveRefundedTotalCents = payment.refundedAmountCents;
     }
-    // #3653 (`INV-PAY-114`): a Xero note never raises an organiser child's cash
-    // mirror past the refunds Stripe recorded for it.
-    if (isStripePayment && payment.booking.organiserSettled) {
-      effectiveRefundedTotalCents = await capOrganiserChildMirrorAtStripeRefunds(prisma, payment, effectiveRefundedTotalCents);
+    // #3653 (`INV-PAY-114`), #4444 (`INV-PAY-126`, owner decision 23 Nov 2026): a Xero note never raises a card
+    // payment's total past the refunds Stripe recorded for it, so two notes for one refund cannot.
+    if (isStripePayment) {
+      effectiveRefundedTotalCents = await capCardRefundedTotalAtStripeRefunds(prisma, payment, effectiveRefundedTotalCents);
     }
     // #4449 (`INV-SSOT`): the clamp, the bank-transfer floor (#4162, `INV-ADDPAY-021`: never below a bank
     // transfer's own refund detail; less is alerted, not applied) and the status rule (F5 #1353: never
@@ -687,9 +689,7 @@ export async function repairAccountCreditAllocationBusinessState(
 
     matchedPayments += 1;
     const expectedAmountCents = -target.amountCents;
-    const expectedDescription = buildBookingAppliedCreditDescription(
-      payment.bookingId
-    );
+    const expectedDescription = buildBookingAppliedCreditDescription(payment.bookingId);
     // Serialize each payment's applied-credit repair on the PER-MEMBER credit
     // ledger lock (#1881) so the existing-credit read, the create/link, the
     // aggregate, and the creditAppliedCents write commit atomically AND mutually
@@ -902,7 +902,7 @@ export async function repairAccountCreditAllocationBusinessState(
             memberId: creditLedgerMemberId,
             amountCents: -ledgerDeltaCents,
             type: CreditType.BOOKING_APPLIED,
-            description: `Xero allocation reconciliation for booking ${payment.bookingId.slice(0, 8)}`,
+            description: `Xero allocation reconciliation for booking ${storedShortBookingId(payment.bookingId)}`,
             appliedToBookingId: payment.bookingId,
             xeroCreditNoteId: creditNoteId,
           },

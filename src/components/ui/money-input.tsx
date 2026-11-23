@@ -39,7 +39,7 @@ export interface MoneyInputProps extends NativeMoneyInputProps {
   /**
    * Whether to offer the whole-dollar step controls: the up/down buttons and
    * ArrowUp/ArrowDown stepping. Default true. Pass false where a person only
-   * types the amount (the food-order price, fork #121); the box then renders alone,
+   * types the amount (the food-order price, fork triyder/AlpineClubBookingsNZ#121); the box then renders alone,
    * with no space reserved for the buttons.
    */
   stepButtons?: boolean;

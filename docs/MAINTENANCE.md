@@ -933,9 +933,11 @@ production files changed" whatever the tree holds. Two branches that each add
 sixty lines to a six-hundred-line file both pass their own pull-request run,
 merge cleanly to 720 against a 700 budget, and nothing would ever say so — after
 which the next change to that file is measured against 720. The workflow
-therefore passes the push event's own pre-push commit as `--base`, and keys that
-on the event name, because a `pull_request` payload carries a `before` field too
-and it means something else entirely.
+therefore passes the last judged `main` commit as `--base` (`INV-OPS-021`: the
+push event's own pre-push commit, unless a newer merge replaced that commit's
+run or its run stopped before the ratchet), and keys that on the event name,
+because a `pull_request` payload carries a `before` field too and it means
+something else entirely.
 
 Most of the time that run says exactly what the pull-request run already said,
 against exactly the same base — for a branch that was up to date, the merge
@@ -3763,12 +3765,18 @@ are set — see [`DEPLOYMENT.md`](../DEPLOYMENT.md#the-deploy-refuses-a-commit-t
      release-prep branch commit inside a merge never was);
    - its `ci.yml` push run on `main` has not published its images: GitHub
      reports no run whose `Publish GHCR images` job succeeded, because the run
-     is still going, failed, was cancelled by hand, or never started
-     (`INV-OPS-021`). The refusal names the commit and the run. Wait for the
-     run, or re-run it with `gh run rerun <run-id>` and publish once that job
-     succeeds. The check runs in the dry run too, on the commit that would be
-     tagged (on a resume, the tagged commit), and refuses when GitHub's
-     answer cannot be read — a fine-grained token needs **Actions: Read**;
+     is still going, failed, was cancelled by hand, never started, or was
+     replaced while queued by a newer merge (`INV-OPS-021`, #5356; normally
+     only an intermediate commit given with `--commit`, since the default
+     `origin/main` loses its pending run only to a manual re-run). The refusal
+     names the commit and the run. Wait for the run, or re-run it with
+     `gh run rerun <run-id>` and publish once that job succeeds. A re-run joins
+     `main`'s queue and replaces whatever is pending there, so start it only
+     when nothing is pending on `main`
+     (`gh run list --workflow ci.yml --branch main --status pending`). The
+     check runs in the dry run too, on the commit that would be tagged (on a
+     resume, the tagged commit), and refuses when GitHub's answer cannot be
+     read — a fine-grained token needs **Actions: Read**;
    - `origin` already has the version's tag on another commit, or the version
      is not newer than `origin`'s latest tag — nothing new was prepared;
    - `CHANGELOG.md` has no section for the version, or still has entries

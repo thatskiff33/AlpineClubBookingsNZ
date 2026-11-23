@@ -114,6 +114,20 @@ describe("POST /api/auth/request-email-change", () => {
     });
   });
 
+  it("emails the expiry it stored, the same instant, rather than computing it again (#5407)", async () => {
+    await POST(req({ newEmail: "new@example.com" }));
+
+    // The hoisted mock takes no arguments in its own type, so read the call loosely.
+    const [createArgs] = h.tx.emailChangeToken.create.mock.calls[0] as unknown as [{ data: { expiresAt: Date } }];
+    const stored = createArgs.data.expiresAt;
+    expect(h.sendEmailChangeVerification).toHaveBeenCalledTimes(1);
+    const [to, token, emailed] = h.sendEmailChangeVerification.mock.calls[0];
+    expect(to).toBe("new@example.com");
+    expect(token).toEqual(expect.any(String));
+    // Identity, not equality: the frozen clock would make a recomputed value equal.
+    expect(emailed).toBe(stored);
+  });
+
   it("deletes the member's older email-change tokens in the same transaction, before creating the new one", async () => {
     await POST(req({ newEmail: "new@example.com" }));
 

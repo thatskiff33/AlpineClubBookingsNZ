@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 
+import { parseJsonRequestBody } from "@/lib/api-json";
 import { logAudit } from "@/lib/audit";
 import {
   CLUB_POST_PAGE_SIZE,
@@ -93,15 +94,11 @@ export async function POST(request: NextRequest) {
   );
   if (limited) return limited;
 
-  let body: unknown;
-  try {
-    body = await request.json();
-  } catch {
-    return NextResponse.json(
-      { error: "That post could not be read." },
-      { status: 400 },
-    );
-  }
+  const jsonBody = await parseJsonRequestBody(request, {
+    error: "That post could not be read.",
+  });
+  if (!jsonBody.ok) return jsonBody.response;
+  const body = jsonBody.body;
 
   const content = (body as { content?: unknown })?.content;
   const rawHtml = (body as { bodyHtml?: unknown })?.bodyHtml;

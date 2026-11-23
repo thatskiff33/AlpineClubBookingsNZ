@@ -17,10 +17,17 @@ import { describe, expect, it } from "vitest";
 
 import { blankLiterals, stripComments } from "@/lib/__tests__/support/strip-comments";
 import { balancedBrackets } from "../../__tests__/support/balanced-brackets";
+import { CENSUS_TIMEOUT_MS } from "@/test/census-timeout";
 
 const ROOT = process.cwd();
 const KERNEL = path.join(ROOT, "src", "lib", "club-time");
 const LODGE_DISPLAY = path.join(ROOT, "src", "components", "lodge-display");
+/*
+  A case that reads and comment-strips every production file under `src/` runs
+  synchronously for seconds, and longer on a loaded CI runner. Vitest's 5,000 ms
+  default is not a budget for that scan, so those cases state their own (#5439).
+*/
+// The budget is the shared CENSUS_TIMEOUT_MS (src/test/census-timeout.ts).
 
 function walk(dir: string, out: string[] = []): string[] {
   for (const name of readdirSync(dir)) {
@@ -267,7 +274,7 @@ describe("the legacy adapter is an adapter, not a second implementation", () => 
       cannot catch one whose shape is identical — which is the likelier
       regression, because the obvious way to "fix" a formatting bug in an adapter
       is to build a formatter there. Two implementations that agree today are two
-      implementations, and CT-6 has to delete one of them.
+      implementations, and the kernel exists to leave one of them.
     */
     for (const adapter of ["src/lib/date-only.ts"]) {
       const source = stripComments(
@@ -277,8 +284,8 @@ describe("the legacy adapter is an adapter, not a second implementation", () => 
       expect(
         source.includes("new Intl.DateTimeFormat"),
         `${adapter} builds its own Intl.DateTimeFormat again. It is a ` +
-          "compatibility adapter over @/lib/club-time (CT-2, #2990) and CT-6 (#2991) " +
-          "deletes it; a formatter here is a second rule system growing back under " +
+          "compatibility adapter over @/lib/club-time (CT-2, #2990) that #2991 (CT-6) " +
+          "closed with, kept as a reviewed adapter; a formatter here is a second rule system growing back under " +
           "the one the epic exists to establish.",
       ).toBe(false);
     }
@@ -345,11 +352,14 @@ describe("the stay window is not an occupancy decision", () => {
       "src/lib/club-time/index.ts",
       "src/lib/club-time/bound.ts",
     ]);
-    // A cheap `includes` first over ~1,400 files, comment-stripping only what
-    // survives it: stripping the whole tree costs seconds, and this case shares
-    // a five-second budget with the rest of the file.
-    const candidates = walk(path.join(ROOT, "src"))
-      .map((file) => ({ rel: rel(file), raw: readFileSync(file, "utf8") }))
+    // Read the tree once for both directions below. A cheap `includes` first
+    // over ~1,400 files, comment-stripping only what survives it: stripping the
+    // whole tree costs seconds.
+    const sources = walk(path.join(ROOT, "src")).map((file) => ({
+      rel: rel(file),
+      raw: readFileSync(file, "utf8"),
+    }));
+    const candidates = sources
       .filter(
         (file) => !OWN_MODULES.has(file.rel) && file.raw.includes("stayWindow"),
       );
@@ -378,8 +388,7 @@ describe("the stay window is not an occupancy decision", () => {
       than a list somebody has to remember to extend.
     */
     const OCCUPANCY_INVARIANTS = /INV-DATE-003|INV-DATE-020/;
-    const occupancyModules = walk(path.join(ROOT, "src"))
-      .map((file) => ({ rel: rel(file), raw: readFileSync(file, "utf8") }))
+    const occupancyModules = sources
       // The kernel's own two modules cite them to say they are NOT that.
       .filter((file) => !file.rel.startsWith("src/lib/club-time/"))
       .filter((file) => OCCUPANCY_INVARIANTS.test(file.raw));
@@ -402,7 +411,7 @@ describe("the stay window is not an occupancy decision", () => {
         "INSTANTS. It is not, and must never become, the way a bed, a night or a presence " +
         "is decided — those stay on the date-only half-open [checkIn, checkOut) range.",
     ).toEqual([]);
-  });
+  }, CENSUS_TIMEOUT_MS);
 });
 
 describe("the lobby wall no longer reasons from UTC midnight", () => {
@@ -661,7 +670,7 @@ describe("INV-CONFIG-006 / #3566: no date formatter outside the shared machinery
         "validation probe or an ISO extractor that renders nothing goes on " +
         `DATE_FORMATTER_EXEMPTIONS with its exact count and reason. Offenders: ${offenders.join(", ") || "(none)"}`,
     ).toEqual([]);
-  });
+  }, CENSUS_TIMEOUT_MS);
 
   it("holds every exemption to its EXACT count, so nothing rides in beside it", () => {
     for (const [relative, { hits, reason }] of DATE_FORMATTER_EXEMPTIONS) {

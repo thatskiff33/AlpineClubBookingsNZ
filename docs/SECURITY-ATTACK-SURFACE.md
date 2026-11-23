@@ -149,6 +149,10 @@ the row, not open work. Open findings now live in labelled GitHub issues
 | `/api/mcp/oauth/register` POST (ALP-653) | Public by necessity (RFC 7591): an app registers before any member signs in. Grants nothing. | Any AI app, anonymous. | Writes one `McpClient` (name, redirect addresses); deletes never-approved clients older than a day. | None. | `mcpClientRegister` (20 an hour per address); one to five redirect addresses, each `https` on an approved host or `http` loopback (`INV-MCP-003`). | None. | The client name is self-asserted; the approval screen shows the redirect host as the checkable fact. |
 | `/api/mcp/oauth/token`, `/api/mcp/oauth/revoke` POST (ALP-653) | No session, no client secret. Token: the PKCE S256 verifier for a five-minute single-use code, or a single-use rotating refresh token. Revoke: either token. | AI app. | `McpAuthCode`, `McpToken` (hashes only), `McpGrant` status. | None. | `mcpToken` (60 per 10 minutes per address). Code or refresh reuse ends the connection; use is re-checked before the credential is spent; revoke answers the same for a known and an unknown token. | Connection status and `endedReason`; no audit row for these ends (`INV-MCP-008`). | — |
 | `/api/member/mcp-grants` GET/POST, `/api/member/mcp-grants/[id]` DELETE, page `/connect/authorize` (ALP-653) | Auth.js session via `requireActiveSession()` (the page: the signed-in layout). Any request carrying `x-mcp-principal` is refused 403 (`mcpConnectionMayNotManage`). | Signed-in member. | The member's own connections; POST writes an `McpGrant` and a code after re-running the approval check on the current session (`INV-MCP-002`). | None. | `mcpApprove` (20 an hour per member) on POST; kiosk, unverified-email and club-policy refusals; another member's connection answers 404. | `MCP_CONNECTION_APPROVED`, `MCP_CONNECTION_REVOKED`. | — |
+| `GET /api/notices/[id]`, `GET /api/lodge-roster` (ALP-718) | Auth.js session via `requireActiveSession()`, or an AI app connection through `auth()` (`INV-MCP-005`). 404 while the `mcpServer` module is off (handler check, `INV-MCP-001`) or while `memberNotices` / `memberLodgeRoster` is off (proxy rule plus handler check). | Signed-in member or their AI app. | One notice through `getNoticeForMember` (audience re-checked; out of audience answers 404 alike), body as plain text; the roster through `buildMemberLodgeRoster`, names and nights only (`INV-PRIV-017`). Both answer only the allow-listed fields (`projectForConnection`). No writes. | None. | `api` limiter (100 a minute) keyed on the connection, or on the address for a browser. No parameter widens the roster window or names another member. | None (reads). | The roster sends other members' names to the member's AI provider, as the page already shows them to the member. |
+| Member routes that are AI app actions (ALP-653, ALP-718) | The route's own guards, unchanged. A request carrying `x-mcp-principal` decides with `memberOnlySessionUser` (no officer role or permission) and is answered through `connectionJson`, which keeps only the action's `returns` fields (`INV-MCP-006`). | AI app acting for one member. | As for a browser, on the member's own records. | As for a browser. | Officer override flags and on-behalf targets from a connection refused 403. | The route's own rows, plus `MCP_ACTION_CALLED` for a change (`INV-MCP-008`). | A field a route's answer gains later is withheld from connections until added to its shape. |
+| Member guest lookups as AI app actions: `GET /api/members/guest-candidates/search`, `POST /api/members/guest-candidates/resolve` (ALP-795) | As for a browser: `requireActiveSession()`, 404 while the member-guest module (or, for search, open name search) is off. A connection arrives through `auth()` (`INV-MCP-005`). | AI app acting for one member. | Other members' id, name and age group only (`MEMBER_GUEST_CANDIDATES_CONNECTION_SHAPE`, the picker's four fields), projected again by `connectionJson` so a lookup that grows a field cannot leak contact details or a date of birth. The resolve `POST` is a pinned `preview` read: a view-only connection may run it. | None. | The routes' own per-member and daily limits (keyed on the member, so shared with their browser), with the per-address backstop keyed on the connection rather than the provider's address; the uniform empty answer and response floor on resolve; ten-row cap and prefix matching on search. | `auditMemberGuestSearch` / `auditMemberGuestResolve` against the member for every query, blocked ones included; no `MCP_ACTION_CALLED` row, as for any read. | A connection lets an AI app run lookups as fast as the limits allow, as a member typing could; the daily caps and audit trail are the control. |
+| Family, partner link and cancellation routes that are AI app actions (ALP-795) | The route's own guards, unchanged; no officer branch. `PUT /api/members/family/[memberId]/details` and `DELETE /api/members/partner-link` gained the `api` limiter. | AI app acting for one member. | Requests, invitations and partner links filed in the member's name; the delegated details save. Answers projected to each action's shape: no dates of birth, copied contact details, invited email addresses or cancellation emails. | Email to the people involved, as for a browser. | Existing limits (`familyGroupJoinRequest`, `api`) keyed on the connection. Accepting an invitation or partnership and submitting or confirming a cancellation stay on the website (`declaration`, `needs-browser`); `request_partner_link` refuses a connection the one-step partnership with a family member who has no login. | The route's own `FAMILY_*` and partner rows, plus `MCP_ACTION_CALLED` per change (`INV-MCP-008`). | `invite_to_family_group`, `request_to_join_family_group` and `request_partner_link` answer differently for an email that is not a login member (and the last for one that is not an adult), as they do for a browser. |
 | `/api/admin/mcp/settings` GET/PUT, `/api/admin/mcp/grants` GET, `/api/admin/mcp/grants/[id]` DELETE (ALP-653) | Admin session via `requireAdmin()`: `support` view to read, `support` edit to save or disconnect; PUT also calls `requireRecentAuth()` (on the fresh-proof list, `INV-AUTH-010`). A connection is refused 403. | Admin with support permission. | `McpSettings`; every live connection with member name, app and dates. | None. | Strict Zod schema; hosts normalised and capped at 50; an invalid host refuses the whole save. | `MCP_SETTINGS_UPDATED` with previous and new values, in the save's transaction; `MCP_CONNECTION_REVOKED` for an officer disconnect. | Widening `officersMayConnect` or `maxScope` applies to every connection on its next request. |
 | GitHub Actions, Dockerfile, Compose, deployment scripts | CI/deployment boundary, not app-session auth. | Maintainer, GitHub Actions, deploy operator. | Repository, package lock, Docker images, GHCR packages, environment variables, migrations. | npm, Docker, GHCR, Semgrep, gitleaks, Trivy, CodeQL if enabled by repo settings. | CI gates: audit, lint, tests, production build in CI only, Semgrep, gitleaks, Docker image security. Compose uses read-only app container, tmpfs cache, no-new-privileges, resource limits. | GitHub logs and deploy logs. | #619 should review workflow permissions, package publishing, secret scopes, image provenance, and deploy env contracts. |
 
@@ -319,7 +323,7 @@ These family rules are enforced by automated tests (issue #1132):
 - `src/app/api/booking-policies/check/route.ts`
 - `src/app/api/bookings/**/route.ts`
 - `src/app/api/chores/roster/[date]/print/route.ts`
-- `src/app/api/food-orders/**/route.ts` — fork #121, module-gated
+- `src/app/api/food-orders/**/route.ts` — fork triyder/AlpineClubBookingsNZ#121, module-gated
   (`foodOrders`, off by default; 404 in the proxy and again in every handler).
   An active session that is not an organisation account. `POST` places an order
   (member-scoped rate limit, items and needed-by date validated, stored before
@@ -387,14 +391,14 @@ These family rules are enforced by automated tests (issue #1132):
 ### Admin Routes
 
 - `src/app/api/admin/**/route.ts`
-  - `admin/bookings/[id]/work-party` (fork #119): bookings view to list the
+  - `admin/bookings/[id]/work-party` (fork triyder/AlpineClubBookingsNZ#119): bookings view to list the
     work parties a booking could join, bookings edit to preview or apply
     adding it to one. The only door to a work party's internal promo code on
     an existing booking: the code is admitted by a service argument
     (`officerWorkPartyCorrection`) that no request body can carry, and a census
     pins its one caller (and the service refuses it without an officer, a
     caller transaction and a promo-only change). It moves money only through
-    the canonical booking edit's own settlement (fork #129): account credit by
+    the canonical booking edit's own settlement (triyder/AlpineClubBookingsNZ#129): account credit by
     default, a refund only when the officer chooses it where the edit itself
     offers one — to the card, or the edit's bank-transfer hand-back for
     Internet Banking (any other method is refused, 409) — and an organiser-paid
@@ -410,12 +414,12 @@ These family rules are enforced by automated tests (issue #1132):
     Work Parties module is off. Its POST is on the step-up list
     (`INV-AUTH-010`): the canonical edit it calls reaches the refund
     operations, so it asks for a fresh proof before reading the body.
-    Fork #130: `action: "remove"` takes the
+    Fork triyder/AlpineClubBookingsNZ#130: `action: "remove"` takes the
     booking off the work party it carries through the same service argument
     and edit; the price rises and the difference is owed on the booking. A
     removal carries no settlement method (400 if sent) and refuses, 409, any
     money it would hand back. Its checked figures include an increase invoiced
-    to the group organiser, so a stale preview cannot save it. Fork #127: on a started stay the argument also
+    to the group organiser, so a stale preview cannot save it. Fork triyder/AlpineClubBookingsNZ#127: on a started stay the argument also
     asks the edit policy to price the whole stay (an officer-only mode no body
     can reach), so the promotion re-runs over nights already slept; every
     other in-progress edit still refuses a promo change.
@@ -445,7 +449,7 @@ Admin route subfamilies are:
 - Lodge/chores/committee/hut leaders/roster/issues: `admin/lodge`,
   `admin/chores/**`, `admin/committee/**`, `admin/hut-leaders/**`,
   `admin/roster/**`, `admin/issue-reports/**`
-- Food orders settings (fork #121, `foodOrders` module, Lodge Operations
+- Food orders settings (fork triyder/AlpineClubBookingsNZ#121, `foodOrders` module, Lodge Operations
   view/edit): `admin/food-orders/settings` — the food officer email, checked
   only as an email address, and the officer label
 - Multi-lodge management (always-on since ADR-005 / #128 removed the
@@ -542,20 +546,20 @@ for recipients, data flows and enablement; they do not keep recipient lists.
   the connection's answers (owned list, version, every sync cursor) and
   removes `push_secret` and `push_registered_url` in the same transaction; moving the address does the
   same and removes the key too (#4436, #4470). What the key authorises leaving the club is every column
-  of the club's OWN `OtherLodge` rows plus their amenity lists (#50, #52):
+  of the club's OWN `OtherLodge` rows plus their amenity lists (triyder/AlpineClubBookingsNZ#50, triyder/AlpineClubBookingsNZ#52):
   since the fourteen detail columns were added, that includes a site URL, a
   booking path, a cancellation period, two season dates and nine yes/no
   facilities alongside the booking officer's contact details, and nothing about
-  members. Since #64 (server API 2.3) each such row also carries its central
+  members. Since triyder/AlpineClubBookingsNZ#64 (server API 2.3) each such row also carries its central
   lodge `id`, and a changed name RENAMES that lodge on the central server and so
   at every other club — limited, by the server, to lodges this club owns.
-  Since #58 (API 2.4) a pull's `deletedLodges` can HIDE any local Other lodges
+  Since triyder/AlpineClubBookingsNZ#58 (API 2.4) a pull's `deletedLodges` can HIDE any local Other lodges
   row by its central id, the club's own included, and clears any club lodge's
   Central lodge link to it. Hiding is never undone but removes nothing: the
   row stays on the bookings and requests that name it. The list is bounded
   (100,000) and each entry validated, and a download that hides anything
   writes one audit row naming the lodges. Which rows are the club's own is the server's answer
-  (`ownLodges` on every pull, by central id since #69: two lodges may share a
+  (`ownLodges` on every pull, by central id since triyder/AlpineClubBookingsNZ#69: two lodges may share a
   name), stored on the settings row and applied by the one `ownsOtherLodge`
   rule to the upload, the admin edit route, the committee officer sync and the
   panel. A row not yet keyed by a central id is never owned (two lodges may
@@ -2145,7 +2149,7 @@ them, using the very header the same response carries. The page renders but neve
 hydrates.
 
 This is a standing invariant, not a one-off bug. It has now been hit twice: the
-lobby TV display (fork #54) and the global 404 (#2356).
+lobby TV display (fork hoppers99/AlpineClubBookingsNZ#54) and the global 404 (#2356).
 
 - **Measured on a real build, before the fix.** `.next/server/app/_not-found.html`
   carried 24 `<script>` tags: 17 with `src=` (fine under `script-src 'self'`) and

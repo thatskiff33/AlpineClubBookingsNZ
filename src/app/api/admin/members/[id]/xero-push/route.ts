@@ -1,11 +1,9 @@
 import { after, NextRequest, NextResponse } from "next/server";
 import { hostingCoverageParticipantRetryResponse } from "@/lib/adult-member-hosting-retry-response";
 import { isHostingCoverageParticipantRetry } from "@/lib/adult-member-hosting-queue-participants";
+import { parseOptionalJsonRequestBody } from "@/lib/api-json";
 import { requireAdmin } from "@/lib/session-guards";
-import {
-  TRANSACTION_CONTENDED_STATUS_CHECK_MESSAGE,
-  transactionContendedResponse,
-} from "@/lib/transaction-contended-response";
+import { TRANSACTION_CONTENDED_STATUS_CHECK_MESSAGE, transactionContendedResponse } from "@/lib/transaction-contended-response";
 import { prisma } from "@/lib/prisma";
 import {
   createXeroContactForMember,
@@ -107,17 +105,10 @@ export async function POST(
   let createdXeroContactId: string | null = null;
   let subscriptionRefreshPending = false;
   try {
-    let body: unknown = {};
-    const rawBody = await req.text();
-    if (rawBody.trim()) {
-      try {
-        body = JSON.parse(rawBody);
-      } catch {
-        return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
-      }
-    }
+    const jsonBody = await parseOptionalJsonRequestBody(req, { error: "Invalid JSON", whenAbsent: {} });
+    if (!jsonBody.ok) return jsonBody.response;
 
-    const parsed = pushSchema.safeParse(body);
+    const parsed = pushSchema.safeParse(jsonBody.body);
     if (!parsed.success) {
       return NextResponse.json({ error: "Invalid request body" }, { status: 400 });
     }

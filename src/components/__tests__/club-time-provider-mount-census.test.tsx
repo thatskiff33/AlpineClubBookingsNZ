@@ -13,6 +13,7 @@ import {
   walkImports,
 } from "@/lib/__tests__/support/provider-mount-census";
 import { stripComments } from "@/lib/__tests__/support/strip-comments";
+import { CENSUS_TIMEOUT_MS } from "@/test/census-timeout";
 
 /**
  * EVERY PAGE HAS A CLUB-TIME PROVIDER ABOVE IT (CT-4 group C, #2870; epic #2988;
@@ -221,7 +222,7 @@ describe("club-time provider mount census (CT-4, #2870)", () => {
         "component that renders an instant or derives the club's today throws on " +
         "that page (CT-4, #2870).",
     ).toEqual([]);
-  });
+  }, CENSUS_TIMEOUT_MS);
 
   it("the surfaces outside a route group are exactly the reviewed list", () => {
     expect(
@@ -230,7 +231,7 @@ describe("club-time provider mount census (CT-4, #2870)", () => {
         "it. Add it to PROVIDERLESS_SURFACES with the reason nothing in its " +
         "tree needs the club's zone - or give it a provider.",
     ).toEqual(Object.keys(PROVIDERLESS_SURFACES).sort());
-  });
+  }, CENSUS_TIMEOUT_MS);
 
   /*
     THE ROW IS A CLAIM; THIS IS THE CHECK.

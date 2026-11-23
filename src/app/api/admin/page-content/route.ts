@@ -1,3 +1,4 @@
+import { parseJsonRequestBody } from "@/lib/api-json";
 import { exactContains } from "@/lib/prisma-exact-prefix";
 import { NextRequest, NextResponse } from "next/server";
 import { Prisma } from "@prisma/client";
@@ -118,12 +119,11 @@ export async function POST(request: NextRequest) {
     return guard.response;
   }
 
-  let body: unknown;
-  try {
-    body = await request.json();
-  } catch {
-    return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
-  }
+  const jsonBody = await parseJsonRequestBody(request, {
+    error: "Invalid JSON",
+  });
+  if (!jsonBody.ok) return jsonBody.response;
+  const body = jsonBody.body;
 
   const parsed = createSchema.safeParse(body);
   if (!parsed.success) {
@@ -239,12 +239,11 @@ export async function PUT(request: NextRequest) {
     return guard.response;
   }
 
-  let body: unknown;
-  try {
-    body = await request.json();
-  } catch {
-    return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
-  }
+  const bodyResult = await parseJsonRequestBody(request, {
+    error: "Invalid JSON",
+  });
+  if (!bodyResult.ok) return bodyResult.response;
+  const body = bodyResult.body;
 
   const parsed = updateSchema.safeParse(body);
   if (!parsed.success) {
@@ -410,12 +409,11 @@ export async function PATCH(request: NextRequest) {
     return guard.response;
   }
 
-  let body: unknown;
-  try {
-    body = await request.json();
-  } catch {
-    return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
-  }
+  const parsedJson = await parseJsonRequestBody(request, {
+    error: "Invalid JSON",
+  });
+  if (!parsedJson.ok) return parsedJson.response;
+  const body = parsedJson.body;
 
   const parsed = patchSchema.safeParse(body);
   if (!parsed.success) {
@@ -603,12 +601,11 @@ export async function DELETE(request: NextRequest) {
     return guard.response;
   }
 
-  let body: unknown;
-  try {
-    body = await request.json();
-  } catch {
-    return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
-  }
+  const jsonBody = await parseJsonRequestBody(request, {
+    error: "Invalid JSON",
+  });
+  if (!jsonBody.ok) return jsonBody.response;
+  const body = jsonBody.body;
 
   const parsed = deleteSchema.safeParse(body);
   if (!parsed.success) {

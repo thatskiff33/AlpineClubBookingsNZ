@@ -1,5 +1,4 @@
 import { NextRequest, NextResponse } from "next/server";
-import { z } from "zod";
 import { auth } from "@/lib/auth";
 import { requireActiveSessionUser } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma";
@@ -13,16 +12,10 @@ import { clubTime } from "@/lib/club-time/server";
 import { logAudit } from "@/lib/audit";
 import logger from "@/lib/logger";
 import { sendAdminFamilyGroupRequestAlert } from "@/lib/email";
-import { nameField } from "@/lib/zod-helpers";
-import { dateOfBirthStringSchema } from "@/lib/date-only-schema";
-
-const requestAdultSchema = z.object({
-  familyGroupId: z.string().min(1, "Family group ID required"),
-  firstName: nameField({ required: "First name required" }),
-  lastName: nameField({ required: "Last name required" }),
-  dateOfBirth: dateOfBirthStringSchema,
-  notes: z.string().max(500).optional(),
-});
+import { parseJsonRequestBody } from "@/lib/api-json";
+import { familyAdultRequestSchema } from "@/lib/family-group-request-schemas";
+import { connectionJson } from "@/lib/mcp-connection-request";
+import { FAMILY_REQUEST_SUBMITTED_CONNECTION_SHAPE } from "@/lib/connection-shapes";
 
 /**
  * POST /api/members/family/request-adult
@@ -41,14 +34,11 @@ export async function POST(req: NextRequest) {
   const rateLimited = await applyRateLimit(rateLimiters.familyGroupJoinRequest, req);
   if (rateLimited) return rateLimited;
 
-  let body: unknown;
-  try {
-    body = await req.json();
-  } catch {
-    return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
-  }
+  const jsonBody = await parseJsonRequestBody(req, { error: "Invalid JSON" });
+  if (!jsonBody.ok) return jsonBody.response;
+  const body = jsonBody.body;
 
-  const parsed = requestAdultSchema.safeParse(body);
+  const parsed = familyAdultRequestSchema.safeParse(body);
   if (!parsed.success) {
     return NextResponse.json(
       { error: "Validation failed", details: parsed.error.flatten().fieldErrors },
@@ -192,11 +182,14 @@ export async function POST(req: NextRequest) {
     "Same-email adult family group request submitted"
   );
 
-  return NextResponse.json(
+  // Also the AI app action `request_family_adult` (ALP-795).
+  return connectionJson(
+    req,
     {
       message: "Request submitted. An admin will review the adult addition.",
       requestId: request.id,
     },
+    FAMILY_REQUEST_SUBMITTED_CONNECTION_SHAPE,
     { status: 201 }
   );
 }

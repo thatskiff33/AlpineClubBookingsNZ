@@ -17,6 +17,7 @@ import { parsedDateOnlySchema } from "@/lib/date-only-schema";
 import { clubTodayDateOnlyInstant } from "@/lib/club-time/server";
 import { nameField } from "@/lib/zod-helpers";
 import logger from "@/lib/logger";
+import { parseJsonRequestBody } from "@/lib/api-json";
 
 const noCrlf = (value: string) => !/[\r\n]/.test(value);
 
@@ -59,12 +60,11 @@ export async function POST(request: NextRequest) {
   const rateLimited = await applyRateLimit(rateLimiters.bookingRequest, request);
   if (rateLimited) return rateLimited;
 
-  let body: unknown;
-  try {
-    body = await request.json();
-  } catch {
-    return NextResponse.json({ error: "Invalid JSON payload" }, { status: 400 });
-  }
+  const jsonBody = await parseJsonRequestBody(request, {
+    error: "Invalid JSON payload",
+  });
+  if (!jsonBody.ok) return jsonBody.response;
+  const body = jsonBody.body;
 
   const parsed = schoolBookingRequestSchema.safeParse(body);
   if (!parsed.success) {
