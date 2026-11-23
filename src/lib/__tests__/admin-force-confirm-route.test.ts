@@ -238,6 +238,34 @@ describe("POST /api/admin/bookings/[id]/force-confirm", () => {
     expect(mocks.tx.auditLog.create).not.toHaveBeenCalled();
   });
 
+  // #5407: only an absent body means the defaults. An empty body runs the
+  // force-confirm exactly as `{}` does above; a JSON null is a wrong shape and
+  // never reaches the transaction.
+  function rawForceConfirmRequest(body: string) {
+    return new NextRequest("http://localhost/api/admin/bookings/booking-1/force-confirm", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body,
+    });
+  }
+
+  it("runs with the defaults for an empty body (#5407)", async () => {
+    const response = await POST(rawForceConfirmRequest(""), routeParams());
+
+    expect(response.status).toBe(409);
+    expect(await response.json()).toEqual({ error: "CAPACITY_EXCEEDED", overbookDates: ["2026-07-01"] });
+    expect(mocks.transaction).toHaveBeenCalled();
+  });
+
+  it("refuses a JSON null body with the schema 400 and confirms nothing (#5407)", async () => {
+    const response = await POST(rawForceConfirmRequest("null"), routeParams());
+
+    expect(response.status).toBe(400);
+    expect(await response.json()).toMatchObject({ error: "Invalid input" });
+    expect(mocks.transaction).not.toHaveBeenCalled();
+    expect(mocks.tx.booking.update).not.toHaveBeenCalled();
+  });
+
   it("writes critical overbook audit evidence in the force-confirm transaction", async () => {
     const response = await POST(
       forceConfirmRequest({ allowOverbook: true }),

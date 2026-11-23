@@ -94,6 +94,7 @@ import { z } from "zod";
 
 import { deletedAccountSql } from "@/lib/deleted-account";
 
+import { BOOKING_REFERENCE_SHAPE, SHORT_BOOKING_ID_LENGTH } from "@/lib/booking-reference";
 import { defineDiagnosticsTool, type DiagnosticsToolEntry } from "../define";
 import {
   AID6B_BYTE_LIMIT,
@@ -149,9 +150,6 @@ export const BOOKING_SEARCH_KINDS = [
   "owner_member_id",
   "lodge_nights",
 ] as const;
-
-/** The booking-reference shape: exactly eight alphanumeric characters. */
-const BOOKING_REFERENCE_SHAPE = /^[A-Za-z0-9]{8}$/;
 
 /**
  * THE KEYS EVERY ARM CARRIES WHATEVER THE OPERATOR ASKED FOR, and therefore the
@@ -302,7 +300,7 @@ type BookingSearchArgs = z.infer<typeof bookingSearchArgsSchema>;
  * answer `not_found` for a record that exists.
  */
 const BOOKING_SEARCH_COLUMNS = `b."id" AS booking_ref,
-  pg_catalog.upper(pg_catalog.left(b."id", 8)) AS booking_reference,
+  pg_catalog.upper(pg_catalog.left(b."id", ${SHORT_BOOKING_ID_LENGTH})) AS booking_reference,
   b."memberId" AS owner_member_ref,
   b."lodgeId" AS lodge_ref,
   l."name" AS lodge_name,
@@ -347,7 +345,7 @@ LEFT JOIN public."Lodge" l ON l."id" = b."lodgeId"
 WHERE (
   ($1::text = 'booking_id' AND b."id" = $2::text)
   OR ($1::text = 'owner_member_id' AND b."memberId" = $2::text)
-  OR ($1::text = 'booking_reference' AND pg_catalog.left(b."id", 8) = pg_catalog.lower($3::text))
+  OR ($1::text = 'booking_reference' AND pg_catalog.left(b."id", ${SHORT_BOOKING_ID_LENGTH}) = pg_catalog.lower($3::text))
   OR ($1::text = 'lodge_nights' AND b."lodgeId" = $4::text
       AND b."checkIn" < ($5::date + ($6)::int)
       AND b."checkOut" > $5::date)

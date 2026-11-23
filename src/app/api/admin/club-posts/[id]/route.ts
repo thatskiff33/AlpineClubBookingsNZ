@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { parseJsonRequestBody } from "@/lib/api-json";
 import { z } from "zod";
 
 import { logAudit } from "@/lib/audit";
@@ -89,7 +90,9 @@ export async function PATCH(
   if (!gate.ok) return gate.response;
 
   const { id } = await params;
-  const body = await request.json().catch(() => null);
+  const jsonBody = await parseJsonRequestBody(request);
+  if (!jsonBody.ok) return jsonBody.response;
+  const body = jsonBody.body;
   const parsed = patchSchema.safeParse(body);
   if (!parsed.success) {
     return NextResponse.json(

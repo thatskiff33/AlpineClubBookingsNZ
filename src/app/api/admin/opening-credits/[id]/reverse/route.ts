@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { parseJsonRequestBody } from "@/lib/api-json";
 import { z } from "zod";
 
 import { ApiError } from "@/lib/api-error";
@@ -28,7 +29,9 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
   if (limited) return limited;
 
   const { id } = await params;
-  const parsed = reverseSchema.safeParse(await request.json().catch(() => null));
+  const jsonBody = await parseJsonRequestBody(request);
+  if (!jsonBody.ok) return jsonBody.response;
+  const parsed = reverseSchema.safeParse(jsonBody.body);
   if (!parsed.success) {
     return NextResponse.json({ error: "A reason is required to reverse a batch" }, { status: 400 });
   }

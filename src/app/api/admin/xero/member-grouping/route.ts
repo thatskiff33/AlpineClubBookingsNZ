@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
+import { parseJsonRequestBody } from "@/lib/api-json";
 import { z } from "zod";
 import { Prisma, type AgeTier } from "@prisma/client";
+import { isPrismaKnownUniqueConstraintError } from "@/lib/prisma-known-errors";
 import { requireAdmin } from "@/lib/session-guards";
 import { hasAdminAreaAccess } from "@/lib/admin-permissions";
 import { prisma } from "@/lib/prisma";
@@ -10,11 +12,7 @@ import { ageTierEnum, canonicalizeAgeTiers } from "@/lib/age-tier-schema";
 import { getXeroContactGroups, getXeroContactGroupCacheLastRefreshedAt } from "@/lib/xero-contact-groups";
 import { isXeroConnected } from "@/lib/xero-token-store";
 import { getXeroGroupingMode } from "@/lib/xero-member-grouping";
-import {
-  recordXeroMemberGroupingDryRun,
-  runXeroMemberGroupingBulkResyncChunk,
-  StaleDryRunError,
-} from "@/lib/xero-member-grouping-resync";
+import { recordXeroMemberGroupingDryRun, runXeroMemberGroupingBulkResyncChunk, StaleDryRunError } from "@/lib/xero-member-grouping-resync";
 
 function requireFinanceEdit(
   session: { user: Parameters<typeof hasAdminAreaAccess>[0] },
@@ -188,13 +186,11 @@ export async function POST(request: NextRequest) {
   if (!guard.ok) return guard.response;
   const session = guard.session;
 
-  const body = await request.json().catch(() => null);
-  const parsed = postSchema.safeParse(body);
+  const jsonBody = await parseJsonRequestBody(request);
+  if (!jsonBody.ok) return jsonBody.response;
+  const parsed = postSchema.safeParse(jsonBody.body);
   if (!parsed.success) {
-    return NextResponse.json(
-      { error: "Invalid request", details: parsed.error.flatten() },
-      { status: 400 },
-    );
+    return NextResponse.json({ error: "Invalid request", details: parsed.error.flatten() }, { status: 400 });
   }
   const data = parsed.data;
 
@@ -371,7 +367,7 @@ export async function POST(request: NextRequest) {
   } catch (error) {
     // The DB partial unique index (XeroContactGroupRule_shape_unique) is the
     // last line of defence for concurrent duplicate creates.
-    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
+    if (isPrismaKnownUniqueConstraintError(error)) {
       return duplicateResponse();
     }
     if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2025") {

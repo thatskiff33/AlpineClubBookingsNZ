@@ -35,6 +35,7 @@ import {
   type PaymentStatus,
 } from "@prisma/client";
 import { isManualSettlementMarkerEvent } from "@/lib/manual-settlement-reversal-event";
+import { storedShortBookingId } from "@/lib/booking-reference";
 import {
   captureRefundState,
   isCapturedTransactionStatus,
@@ -88,7 +89,7 @@ export type CancellationRefundDecisionEvidence = {
  * on it exactly and a reworded writer would silently hide a decision.
  */
 export function cancellationCreditDescription(bookingId: string): string {
-  return `Cancellation refund for booking ${bookingId.slice(0, 8)}`;
+  return `Cancellation refund for booking ${storedShortBookingId(bookingId)}`;
 }
 
 /**

@@ -66,6 +66,7 @@ import "server-only";
 
 import { z } from "zod";
 
+import { BOOKING_REFERENCE_SHAPE, SHORT_BOOKING_ID_LENGTH } from "@/lib/booking-reference";
 import { defineDiagnosticsTool, type DiagnosticsToolEntry } from "../define";
 import {
   AMOUNT_CENTS,
@@ -124,9 +125,6 @@ export const FINANCE_SEARCH_REFERENCE_KINDS = [
 
 /** The cuid shape the two record-id kinds require. */
 const CUID_SHAPE = /^[a-z0-9]{20,40}$/;
-
-/** The booking-reference shape: exactly eight alphanumeric characters. */
-const BOOKING_REFERENCE_SHAPE = /^[A-Za-z0-9]{8}$/;
 
 /**
  * Per-kind term validation, applied AFTER the shared shape.
@@ -201,7 +199,7 @@ const referenceSearchInputSchema = {
  */
 const SEARCH_COLUMNS = `p."id" AS payment_ref,
   p."bookingId" AS booking_id,
-  pg_catalog.upper(pg_catalog.left(p."bookingId", 8)) AS booking_reference,
+  pg_catalog.upper(pg_catalog.left(p."bookingId", ${SHORT_BOOKING_ID_LENGTH})) AS booking_reference,
   p."status"::text AS payment_status,
   p."source"::text AS payment_source,
   p."amountCents" AS amount_cents,
@@ -232,7 +230,7 @@ FROM public."Payment" p
 WHERE (
   ($2::text = 'payment_id' AND p."id" = $1::text)
   OR ($2::text = 'booking_id' AND p."bookingId" = $1::text)
-  OR ($2::text = 'booking_reference' AND pg_catalog.left(p."bookingId", 8) = pg_catalog.lower($1::text))
+  OR ($2::text = 'booking_reference' AND pg_catalog.left(p."bookingId", ${SHORT_BOOKING_ID_LENGTH}) = pg_catalog.lower($1::text))
   OR ($2::text = 'stripe_payment_intent' AND (p."stripePaymentIntentId" = $1::text OR p."additionalPaymentIntentId" = $1::text))
   OR ($2::text = 'xero_invoice_id' AND p."xeroInvoiceId" = $1::text)
   OR ($2::text = 'xero_invoice_number' AND p."xeroInvoiceNumber" = $1::text)
