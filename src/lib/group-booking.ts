@@ -1946,7 +1946,7 @@ export async function verifyAndCreateNonMemberJoin(
       // A booking created a moment ago: no recorded fee, and no credit election
       // has reached it, so what is owed is the price (#4058).
       amountDueCents: priceCents,
-      bookingReference: created.bookingId,
+      bookingId: created.bookingId,
       expiresAt: paymentLinkExpiresAt,
     }, format);
   } catch (err) {
