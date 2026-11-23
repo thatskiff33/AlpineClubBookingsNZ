@@ -55,6 +55,7 @@ import {
   LODGE_FILL_OWNER,
   MAPPING_APPLICANT,
   MAPPING_APPLICATION_ID,
+  MAPPING_TARGET_CAN_LOGIN,
   MAPPING_TARGET_MEMBER_ID,
   MEMBERSHIP_APPLICANT,
   MEMBERSHIP_APPLICATION_ID,
@@ -1404,7 +1405,7 @@ async function main() {
     emailLocalPart(MAPPING_APPLICANT.email),
     MAPPING_APPLICANT.firstName,
     MAPPING_APPLICANT.lastName,
-    { id: MAPPING_TARGET_MEMBER_ID, canLogin: false },
+    { id: MAPPING_TARGET_MEMBER_ID, canLogin: MAPPING_TARGET_CAN_LOGIN },
   );
   await prisma.memberApplication.create({
     data: {
