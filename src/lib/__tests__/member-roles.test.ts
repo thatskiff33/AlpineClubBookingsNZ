@@ -11,6 +11,7 @@ import {
   isLodgeKioskAccount,
   isMemberLevelRole,
   isMembershipHolderRecord,
+  isNonMemberRole,
 } from "@/lib/member-roles";
 import { effectiveSubscriptionBehavior } from "@/lib/membership-types";
 
@@ -88,6 +89,16 @@ describe("non-member booking-request roles", () => {
       expect(OPERATIONAL_ROLE_VALUES).not.toContain(role);
       // Non-login records, so onboarding never applies even before the role check.
       expect(shouldShowMemberOnboarding(onboardingProfile(role))).toBe(false);
+    }
+  });
+
+  it("are recognised by isNonMemberRole, and nothing else is (#5407)", () => {
+    for (const role of NON_MEMBER_ROLE_VALUES) expect(isNonMemberRole(role)).toBe(true);
+    for (const role of [...MEMBER_LEVEL_ROLE_VALUES, ...OPERATIONAL_ROLE_VALUES]) {
+      expect(isNonMemberRole(role)).toBe(false);
+    }
+    for (const value of ["", null, undefined, "MEMBER", "school"]) {
+      expect(isNonMemberRole(value)).toBe(false);
     }
   });
 

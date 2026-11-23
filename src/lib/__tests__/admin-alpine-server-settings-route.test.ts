@@ -9,7 +9,7 @@ const mocks = vi.hoisted(() => ({
   failUrlDelete: false,
   failReset: false,
   locked: false,
-  stored: { baseUrl: "https://old.example.invalid", otherLodgesEnabled: true, apiKey: "old-key", pushSecret: "old-push-secret", pushRegisteredUrl: "https://club.example.invalid/api/webhooks/servernz-posts", serverVersion: "2.1", otherLodgesOwnedNames: ["Old lodge"] } as Record<string, unknown>,
+  stored: { baseUrl: "https://old.example.invalid", otherLodgesEnabled: true, apiKey: "old-key", pushSecret: "old-push-secret", pushRegisteredUrl: "https://club.example.invalid/api/webhooks/servernz-posts", serverVersion: "2.1", otherLodgesOwnedLodges: [{ id: "old-central-id", name: "Old lodge" }] } as Record<string, unknown>,
   transaction: vi.fn(),
   invalidateProviderCredentialCache: vi.fn(),
   removedBy: undefined as unknown,
@@ -65,7 +65,7 @@ beforeEach(() => {
   mocks.removedBy = undefined;
   mocks.pushSecretRemovedBy = undefined;
   mocks.pushRegisteredUrlRemovedBy = undefined;
-  mocks.stored = { baseUrl: "https://old.example.invalid", otherLodgesEnabled: true, apiKey: "old-key", pushSecret: "old-push-secret", pushRegisteredUrl: "https://club.example.invalid/api/webhooks/servernz-posts", serverVersion: "2.1", otherLodgesOwnedNames: ["Old lodge"] };
+  mocks.stored = { baseUrl: "https://old.example.invalid", otherLodgesEnabled: true, apiKey: "old-key", pushSecret: "old-push-secret", pushRegisteredUrl: "https://club.example.invalid/api/webhooks/servernz-posts", serverVersion: "2.1", otherLodgesOwnedLodges: [{ id: "old-central-id", name: "Old lodge" }] };
   mocks.transaction.mockImplementation(async (work) => {
     const staged = structuredClone(mocks.stored);
     const tx = {
@@ -108,7 +108,7 @@ describe("central-server settings replacement (#4436)", () => {
     expect(await response.json()).toEqual({ baseUrl: "https://new.example.invalid", otherLodgesEnabled: true, apiKeyCleared: true });
     expect(mocks.transaction).toHaveBeenCalledTimes(1);
     expect(mocks.stored).toMatchObject({ baseUrl: "https://new.example.invalid", apiKey: null, serverVersion: null, otherLodgesOwnedNamesAt: null, serverVersionCheckedAt: null });
-    expect(mocks.stored.otherLodgesOwnedNames).not.toEqual(["Old lodge"]);
+    expect(mocks.stored.otherLodgesOwnedLodges).not.toEqual([{ id: "old-central-id", name: "Old lodge" }]);
     // The route names the acting admin once; the helper forwards that actor to
     // the key removal and records its member as the row's editor (#2723).
     expect(mocks.removedBy).toEqual({ kind: "admin", memberId: "admin-4436" });
@@ -143,7 +143,7 @@ describe("central-server settings replacement (#4436)", () => {
     expect(mocks.stored.pushSecret).toBe("old-push-secret");
     expect(mocks.stored.pushRegisteredUrl).toBe("https://club.example.invalid/api/webhooks/servernz-posts");
     expect(mocks.stored.serverVersion).toBe("2.1");
-    expect(mocks.stored.otherLodgesOwnedNames).toEqual(["Old lodge"]);
+    expect(mocks.stored.otherLodgesOwnedLodges).toEqual([{ id: "old-central-id", name: "Old lodge" }]);
   });
 
   it("clears the key on removing the address", async () => {

@@ -35,6 +35,7 @@ import { CLUB_MODULE_SETTINGS_COLUMN_SELECT } from "@/config/modules";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
+import { schemaDefaultToken } from "./support/prisma-schema-default";
 
 // Delegate names touched by the club-settings category.
 const SINGLETON_DELEGATES = [
@@ -1061,29 +1062,6 @@ describe("membership-lockout useFeeScheduleItemCodes round-trips (#2178)", () =>
 // Prisma schema so the exporter cannot drift from what an unsaved club reads.
 // ---------------------------------------------------------------------------
 
-/** Extract the raw token inside `@default(...)` for a field, from the schema. */
-function schemaDefaultToken(
-  schema: string,
-  modelName: string,
-  fieldName: string,
-): string | null {
-  const lines = schema.split(/\r?\n/);
-  let inModel = false;
-  for (const raw of lines) {
-    const line = raw.trim();
-    if (line.match(new RegExp(`^model\\s+${modelName}\\s*\\{`))) {
-      inModel = true;
-      continue;
-    }
-    if (inModel && line.startsWith("}")) break;
-    if (inModel && line.match(new RegExp(`^${fieldName}\\s`))) {
-      const m = line.match(/@default\(([^)]*)\)/);
-      return m ? m[1].replace(/^"|"$/g, "") : null;
-    }
-  }
-  return null;
-}
-
 describe("#2200 portable singletons export/import and stay schema-bound", () => {
   const SCHEMA = readFileSync(
     path.resolve(process.cwd(), "prisma/schema.prisma"),
@@ -1408,6 +1386,66 @@ describe("D-18: the two open-search privacy toggles never travel", () => {
       .find((entry) => entry.entity === "member-guest-settings");
     expect(item?.action).toBe("unchanged");
     expect(item?.changedFields ?? []).toEqual([]);
+  });
+});
+
+// Way 3 of switching AI Diagnostics on (#5243): an admin config import. The
+// Modules route asks for the provider-disclosure acknowledgement, so a bundle
+// must not be a way round it — even one hand-edited to carry the flag.
+describe("a config import never switches AI Diagnostics on (#5243)", () => {
+  const handEditedModules = () =>
+    new Map<string, Uint8Array>([
+      [
+        "club-settings/club-module-settings.json",
+        strToU8(JSON.stringify({ ...MODULES, aiDiagnostics: true })),
+      ],
+    ]);
+
+  it.each([
+    ["merge", "an existing row"],
+    ["overwrite", "an existing row"],
+    ["merge", "no row"],
+    ["overwrite", "no row"],
+  ] as const)("leaves the flag out of the write in %s mode against %s", async (mode, target) => {
+    const { tx, delegates } = stubTx({
+      clubModuleSettings:
+        target === "no row" ? null : { ...MODULES, aiDiagnostics: false, bedAllocation: false },
+    });
+    await clubSettingsImporter.apply(applyCtx(tx, handEditedModules(), mode));
+
+    // The rest of the row still moves, so the write is real and inspected.
+    expect(delegates.clubModuleSettings.upsert).toHaveBeenCalledTimes(1);
+    const args = delegates.clubModuleSettings.upsert.mock.calls[0][0];
+    expect(args.create).not.toHaveProperty("aiDiagnostics");
+    expect(args.update).not.toHaveProperty("aiDiagnostics");
+  });
+
+  it.each(["merge", "overwrite"] as const)("reports no change to the flag in the %s dry-run", async (mode) => {
+    const zip = buildBundle({
+      entries: [
+        {
+          path: "club-settings/club-module-settings.json",
+          category: "club-settings",
+          rowCount: 1,
+          bytes: strToU8(JSON.stringify({ ...MODULES, aiDiagnostics: true })),
+        },
+      ],
+      appVersion: "0.14.0",
+      prismaMigration: null,
+      includedCategories: ["club-settings"],
+      doorCodesIncluded: false,
+      generatedAt: "2026-07-30T00:00:00.000Z",
+    });
+    const plan = await buildImportPlan(
+      stubDb({ clubModuleSettings: { ...MODULES, aiDiagnostics: false } }),
+      zip,
+      { format: CLUB_FORMAT_TEST, mode },
+    );
+    const item = plan.categories
+      .flatMap((category) => category.items)
+      .find((entry) => entry.entity === "club-module-settings");
+    expect(item?.action).toBe("unchanged");
+    expect(item?.changedFields ?? []).not.toContain("aiDiagnostics");
   });
 });
 

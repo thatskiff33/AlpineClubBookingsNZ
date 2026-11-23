@@ -1,4 +1,5 @@
 import { type APIRequestContext, expect } from "@playwright/test";
+import { AI_DIAGNOSTICS_DISCLOSURE_VERSION } from "@/lib/ai-diagnostics-disclosure";
 
 // Club module toggles (Admin > Setup > Modules). The PUT is strict and needs
 // every module key, so callers read the current settings, override the keys
@@ -19,7 +20,12 @@ export async function setModuleSettings(
   request: APIRequestContext,
   settings: ModuleSettings,
 ): Promise<void> {
-  const res = await request.put("/api/admin/modules", { data: { settings } });
+  // Switching AI Diagnostics on needs the provider disclosure acknowledged
+  // (#5243). The route ignores it unless the save switches Diagnostics on.
+  const data = settings.aiDiagnostics
+    ? { settings, aiDiagnosticsDisclosureAcknowledgedVersion: AI_DIAGNOSTICS_DISCLOSURE_VERSION }
+    : { settings };
+  const res = await request.put("/api/admin/modules", { data });
   expect(res.ok(), `PUT /api/admin/modules (${res.status()})`).toBeTruthy();
 }
 
