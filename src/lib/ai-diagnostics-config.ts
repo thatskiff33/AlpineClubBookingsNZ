@@ -9,9 +9,10 @@
  *    IntegrationCredential store under provider "anthropic-diagnostics", key
  *    "api_key". It NEVER reads the page-help "anthropic"/"api_key" credential,
  *    and there is deliberately no fallback to it — so a deployment can point
- *    diagnostics at a separate Anthropic workspace/key (separate billing, spend
- *    limits, and zero-retention posture), and a page-help key can never silently
- *    authorise diagnostics spend.
+ *    diagnostics at a separate Anthropic workspace/key (separate billing and
+ *    spend limits), and a page-help key can never silently authorise
+ *    diagnostics spend. Retention is whatever the club arranges with Anthropic
+ *    on that account: the application sends no retention instruction (#5243).
  *
  * CREDENTIAL DECISION (dedicated vs reuse) — OWNER CONFIRMATION FLAGGED:
  *   The AID-1 threat-model/ADR (#2370) was not yet delivered when this landed, so

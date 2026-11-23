@@ -192,6 +192,8 @@ export async function runDiagnosticsProviderRound(
   });
 
   try {
+    // No retention instruction is sent: retention is arranged between the club
+    // and Anthropic on the account behind the Diagnostics key (#5243).
     const response = await client.messages.create({
       model: DIAGNOSTICS_MODEL,
       max_tokens: DIAGNOSTICS_MAX_TOKENS,

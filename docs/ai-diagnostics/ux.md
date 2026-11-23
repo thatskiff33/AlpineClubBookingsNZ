@@ -27,6 +27,19 @@ readiness detail of its own — a second readiness surface is exactly the drift 
 out, so a deployment that is not ready says so through the server's own refusal copy,
 which points at the page.
 
+## Switching it on: where your data goes
+
+The AI Diagnostics card on Admin → Modules states, before it can be switched on,
+that each question sends excerpts to Anthropic, which may process them outside New Zealand,
+what those excerpts are, and that retention is arranged between the club and
+Anthropic on the club's own account. Ticking the module adds a second tick — "I
+understand…" — and Save stays disabled, with a one-line hint, until it is ticked.
+Unticking the module clears it. The tick appears only for a save that switches
+Diagnostics on: switching it off, or saving other modules while it is already on,
+asks for nothing. `/admin/ai-diagnostics` repeats the statement, without the tick,
+under "Where your data goes". See the
+[deployment guide](deployment.md#provider-disclosure-and-retention).
+
 ## The route in, from a standing start
 
 1. An admin opens any admin screen. If their role and the module both allow it, the
