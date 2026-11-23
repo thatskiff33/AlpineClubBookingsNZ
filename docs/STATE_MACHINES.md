@@ -4262,17 +4262,29 @@ attempt, is at least the kind's wait old, and then:
 - past the kind's cut-off, or past its maximum age, runs the kind's own step
   instead (for a member's notice, an alert to officers), so the age check can
   never skip that step; a kind with no such step is cleared with an error log,
-  and past its maximum age it is cleared without its subject being read;
+  and past its maximum age it is cleared without its subject being read. The
+  step runs at least once, not exactly once (a stop before the clear runs it
+  again), so a kind whose step must happen once sends it through
+  `alertOfficersOncePastCutoff`, a once-ever claim keyed on the marker;
+- clears any marker past twice its kind's maximum age with an error log,
+  unread, whatever the kind, so a step that keeps failing cannot keep it;
 - otherwise sends it again, as right after the commit.
 
 A kind the running release has no deliverer for is never read, so a marker a
 newer release wrote during a blue-green switchover stays for that release.
-Once per run the sweep counts the markers of such kinds that are over a week
-old and logs the count as an error, so a kind nobody delivers is seen. A
-marker can be written only with a kind this release delivers (`OWED_NOTICE_KINDS`).
-The email retry job caps its sweep (100 markers or two minutes a run) and
-leaves the rest, still owed, for its next run; it replays failed rows whatever
-the sweep does, and a failed run's record still carries the sweep's counts.
+The sweep reports markers of such kinds that are over a week old, at most
+once a day (an error log naming the kinds and how many, counting to 100), so
+a kind nobody delivers is seen. It keeps reporting until the rows are gone:
+rolling forward to the release that knows the kind delivers them, or an
+operator removes a kind that has been abandoned (`docs/UPGRADING.md`,
+"Owed notices get their own table"). A marker can be written only with a kind
+this release delivers (`OWED_NOTICE_KINDS`).
+Each job caps its sweep: the email retry job 100 markers or two minutes a
+run, the confirm-pending job, which sweeps before its pending-booking pass,
+25 or 30 seconds. A capped run takes the kinds' lists in turn, so no kind
+starves another, and a marker another run holds does not count. The rest stay
+owed for the next run. The email retry job replays failed rows whatever the
+sweep does, and a failed run's record still carries the sweep's counts.
 
 A member's notice carries an event key, which becomes its `EmailLog` id, so
 however often it is sent it has one row, and a provider failure leaves that
@@ -4295,9 +4307,11 @@ mechanism: one marker for the member's email (`booking-bumped` or
 alert. Their wait is an hour (a day after an attempt that reached nobody),
 their maximum age and cut-off seven days with no officer alert past it, and
 the member's event key is `<bookingId>:<bumpedAtMs>`, as #5407 shipped. Since
-the sweep also runs in the 30-minute email retry job, a failed bump send is
-retried about every hour to hour and a half, where it was every three hours
-(the confirm-pending job's cadence). The
+the sweep also runs in the 30-minute email retry job, a bump send that failed
+before its email row was written is retried about every hour to hour and a
+half, where it was every three hours (the confirm-pending job's cadence). A
+provider failure after the row was written is still the failed-email retry's
+to replay, as before. The
 sweep clears a bump notice without sending when the booking is gone, is no
 longer cancelled, or has a `CANCELLED`, `MEMBER_PAID` or
 `NON_MEMBER_CONFIRMED` booking event after the bump (it was reinstated and
@@ -4317,8 +4331,10 @@ change commits + markers -> claim -> send settled -> marker cleared
 change commits + markers -> claim -> send throws -> marker kept -> later sweep (a wait on) claims -> send -> cleared
 change commits + markers -> claim -> officers' copies all lack a row -> marker held (a day for the bump) -> later sweep claims -> send -> cleared
 change commits + markers -> job stops -> later sweep claims -> subject still owes it -> send -> cleared
-later sweep claims -> subject gone or moved on, or marker past its maximum age -> cleared, nothing sent
-later sweep claims -> past the kind's cut-off -> kind's own step (or cleared, error log)
+later sweep claims -> subject gone or moved on -> cleared, nothing sent
+later sweep claims -> past its maximum age, kind with no past-cut-off step -> cleared, nothing sent
+later sweep claims -> past the kind's cut-off or maximum age -> kind's own step (or cleared, error log)
+later sweep claims -> past twice its maximum age, any kind -> cleared unread, error log
 later sweep -> kind this release does not know -> left in place
 ```
 
