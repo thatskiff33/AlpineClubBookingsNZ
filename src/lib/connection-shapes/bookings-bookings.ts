@@ -296,15 +296,6 @@ export const ADMIN_FRESH_EMAIL_COPY_CONNECTION_SHAPE = connectionShapeFor<AdminF
   warning: true,
 });
 
-/**
- * `PATCH /api/admin/bookings/[id]/guest-dietary`: which guest was saved. The
- * saved value itself is never sent back to a connection (`INV-PRIV-022`): the
- * app already holds what it sent, and the screen alone shows the stored value.
- */
-export const ADMIN_GUEST_DIETARY_CONNECTION_SHAPE = connectionShapeFor<{ guestId: string }>({
-  guestId: true,
-});
-
 /** `POST /api/admin/bookings/[id]/no-emails`. */
 export interface AdminNoEmailsAnswer {
   success: true;

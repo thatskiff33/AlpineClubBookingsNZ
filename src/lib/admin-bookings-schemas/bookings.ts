@@ -10,12 +10,7 @@
 import { z } from "zod";
 
 import { OCCUPANCY_MONTH_PATTERN } from "@/lib/admin-bookings-schemas/occupancy";
-import { ageTierEnum } from "@/lib/age-tier-schema";
 import { BOOKING_FRESH_COPY_TEMPLATES } from "@/lib/booking-fresh-email-copy-templates";
-import {
-  DIETARY_REQUIREMENTS_TOO_LONG_MESSAGE,
-  isDietaryRequirementsWithinLimit,
-} from "@/lib/member-dietary-field";
 import { nameField } from "@/lib/zod-helpers";
 
 // ── The booking list and search ─────────────────────────────────────────────
@@ -178,37 +173,6 @@ export const adminFreshEmailCopyBodySchema = z
       .describe(
         "Which email: `booking-confirmed`, `pre-arrival-reminder`, or `split-guest-payment-link` (a new payment link that replaces the old one).",
       ),
-  })
-  .strict();
-
-/**
- * `PATCH /api/admin/bookings/[id]/guest-dietary`: exactly one guest and its new
- * value. `dietaryRequirements` is REQUIRED here — a string, or null / a blank
- * string to clear it — because the shared JSON schema treats an absent key as
- * "leave it alone", and on this route an absent key would otherwise arrive as
- * a clear. The limit is the shared one.
- */
-export const adminGuestDietaryBodySchema = z
-  .object({
-    guestId: z.string().min(1).describe("The booking guest's id."),
-    // C2: the occupant the editor was shown. The write matches it, so a row
-    // rewritten in place since the page loaded is refused, not overwritten.
-    occupant: z
-      .object({
-        memberId: z.string().min(1).nullable(),
-        firstName: z.string(),
-        lastName: z.string(),
-        ageTier: ageTierEnum,
-      })
-      .strict()
-      .describe("The guest as last read: their member id (null for a non-member), names and age tier. A guest changed since is refused."),
-    dietaryRequirements: z
-      .string()
-      .nullable()
-      .refine(isDietaryRequirementsWithinLimit, {
-        message: DIETARY_REQUIREMENTS_TOO_LONG_MESSAGE,
-      })
-      .describe("The guest's dietary or allergy needs for this stay; null or blank clears them."),
   })
   .strict();
 

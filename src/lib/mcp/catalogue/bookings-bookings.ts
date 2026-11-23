@@ -15,7 +15,6 @@ import {
   adminExclusiveHoldBodySchema,
   adminForceConfirmBodySchema,
   adminFreshEmailCopyBodySchema,
-  adminGuestDietaryBodySchema,
   adminMemberGuestEmailBodySchema,
   adminMemberGuestNameQuerySchema,
   adminNoEmailsBodySchema,
@@ -37,7 +36,6 @@ import {
   ADMIN_EXCLUSIVE_HOLD_CONNECTION_SHAPE,
   ADMIN_FORCE_CONFIRM_CONNECTION_SHAPE,
   ADMIN_FRESH_EMAIL_COPY_CONNECTION_SHAPE,
-  ADMIN_GUEST_DIETARY_CONNECTION_SHAPE,
   ADMIN_MEMBER_FAMILY_CONNECTION_SHAPE,
   ADMIN_MEMBER_GUEST_EMAIL_CANDIDATES_CONNECTION_SHAPE,
   ADMIN_MEMBER_GUEST_NAME_CANDIDATES_CONNECTION_SHAPE,
@@ -50,7 +48,6 @@ import {
 } from "@/lib/connection-shapes/bookings-bookings";
 
 import { ADDITIONAL_PAYMENT_RESEND_COOLDOWN_MINUTES } from "@/lib/additional-payment-chase";
-import { DIETARY_REQUIREMENTS_MAX_LENGTH } from "@/lib/member-dietary-field";
 import { MEMBER_GUEST_SEARCH_MIN_CHARS, MEMBER_GUEST_SEARCH_RESULT_CAP } from "@/lib/member-guest-find";
 import type { McpAction } from "../catalogue";
 
@@ -289,19 +286,6 @@ const ONE_BOOKING_TOOLS: readonly McpAction[] = [
     body: adminFreshEmailCopyBodySchema,
     kind: "destructive",
     returns: ADMIN_FRESH_EMAIL_COPY_CONNECTION_SHAPE,
-    core: false,
-  },
-  {
-    id: "update_booking_guest_dietary",
-    title: "Change a guest's dietary needs for a stay",
-    summary:
-      `Officer: change or clear one guest's dietary or allergy needs for this booking only (not their profile), up to ${DIETARY_REQUIREMENTS_MAX_LENGTH} characters. Send the guest as last read in \`occupant\`; a guest changed since is refused. Only while the club has the dietary field on. Answers with the guest id only: the saved value is not sent back.`,
-    method: "PATCH",
-    path: "/api/admin/bookings/[id]/guest-dietary",
-    params: bookingIdParamsSchema,
-    body: adminGuestDietaryBodySchema,
-    kind: "write",
-    returns: ADMIN_GUEST_DIETARY_CONNECTION_SHAPE,
     core: false,
   },
   {

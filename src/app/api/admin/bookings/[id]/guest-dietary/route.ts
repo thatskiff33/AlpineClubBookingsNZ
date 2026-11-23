@@ -1,9 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
-import { adminGuestDietaryBodySchema } from "@/lib/admin-bookings-schemas/bookings";
+import { AgeTier } from "@prisma/client";
+import { z } from "zod";
 import { parseJsonRequestBody } from "@/lib/api-json";
 import { createAuditLog } from "@/lib/audit";
-import { ADMIN_GUEST_DIETARY_CONNECTION_SHAPE } from "@/lib/connection-shapes/bookings-bookings";
-import { connectionJson } from "@/lib/mcp-connection-request";
+import {
+  DIETARY_REQUIREMENTS_TOO_LONG_MESSAGE,
+  isDietaryRequirementsWithinLimit,
+} from "@/lib/member-dietary-field";
 import {
   grantBookingAdminDietaryAccess,
   isDietaryFieldEnabled,
@@ -11,6 +14,34 @@ import {
 } from "@/lib/member-dietary";
 import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/session-guards";
+
+/**
+ * The body: exactly one guest and its new value. `dietaryRequirements` is
+ * REQUIRED here — a string, or null / a blank string to clear it — because the
+ * shared JSON schema treats an absent key as "leave it alone", and on this route
+ * an absent key would otherwise arrive as a clear. The limit is the shared one.
+ */
+const guestDietarySchema = z
+  .object({
+    guestId: z.string().min(1),
+    // C2: the occupant the editor was shown. The write matches it, so a row
+    // rewritten in place since the page loaded is refused, not overwritten.
+    occupant: z
+      .object({
+        memberId: z.string().min(1).nullable(),
+        firstName: z.string(),
+        lastName: z.string(),
+        ageTier: z.nativeEnum(AgeTier),
+      })
+      .strict(),
+    dietaryRequirements: z
+      .string()
+      .nullable()
+      .refine(isDietaryRequirementsWithinLimit, {
+        message: DIETARY_REQUIREMENTS_TOO_LONG_MESSAGE,
+      }),
+  })
+  .strict();
 
 /**
  * PATCH /api/admin/bookings/[id]/guest-dietary (#3029, `INV-PRIV-022`,
@@ -27,10 +58,6 @@ import { requireAdmin } from "@/lib/session-guards";
  *  - never the member's profile, and not a booking modification: no reprice, no
  *    email, no Xero (`INV-MOD-001`);
  *  - audited under `booking` as "changed" or "cleared", never with the value.
- *
- * The body is `adminGuestDietaryBodySchema`: exactly one guest, the occupant
- * the editor was shown, and the new value. Also the AI app action
- * `update_booking_guest_dietary` (ALP-719).
  */
 export async function PATCH(
   req: NextRequest,
@@ -56,7 +83,7 @@ export async function PATCH(
   const jsonBody = await parseJsonRequestBody(req, { error: "Invalid JSON" });
   if (!jsonBody.ok) return jsonBody.response;
   const body = jsonBody.body;
-  const parsed = adminGuestDietaryBodySchema.safeParse(body);
+  const parsed = guestDietarySchema.safeParse(body);
   if (!parsed.success) {
     return NextResponse.json(
       { error: "Invalid input", details: parsed.error.flatten() },
@@ -110,10 +137,8 @@ export async function PATCH(
   if (result.status === "not-found") {
     return NextResponse.json({ error: "Guest not found on this booking" }, { status: 404 });
   }
-  // The browser gets the saved value back; a connection only the guest id.
-  return connectionJson(
-    req,
-    { guestId, dietaryRequirements: result.value },
-    ADMIN_GUEST_DIETARY_CONNECTION_SHAPE,
-  );
+  return NextResponse.json({
+    guestId,
+    dietaryRequirements: result.value,
+  });
 }

@@ -64,9 +64,6 @@ const h = vi.hoisted(() => {
     sendConfirmed: vi.fn(),
     sendPlaceRestored: vi.fn(),
     sendFreshCopy: vi.fn(),
-    dietaryEnabled: vi.fn(),
-    dietaryGrant: vi.fn(),
-    updateDietary: vi.fn(),
     setNoEmails: vi.fn(),
     writeRequestedRoom: vi.fn(),
     strandReport: vi.fn(),
@@ -183,12 +180,6 @@ vi.mock("@/lib/booking-fresh-email-copy", async (importOriginal) => ({
   ...((await importOriginal()) as typeof import("@/lib/booking-fresh-email-copy")),
   sendBookingFreshEmailCopy: h.sendFreshCopy,
 }));
-vi.mock("@/lib/member-dietary", async (importOriginal) => ({
-  ...((await importOriginal()) as typeof import("@/lib/member-dietary")),
-  isDietaryFieldEnabled: h.dietaryEnabled,
-  grantBookingAdminDietaryAccess: h.dietaryGrant,
-  updateBookingGuestDietaryRequirements: h.updateDietary,
-}));
 vi.mock("@/lib/booking-no-emails-service", async (importOriginal) => ({
   ...((await importOriginal()) as typeof import("@/lib/booking-no-emails-service")),
   setBookingNoEmails: h.setNoEmails,
@@ -228,7 +219,6 @@ import { GET as getOwnerFamily } from "@/app/api/admin/bookings/[id]/eligible-fa
 import { POST as exclusiveHold } from "@/app/api/admin/bookings/[id]/exclusive-hold/route";
 import { POST as forceConfirm } from "@/app/api/admin/bookings/[id]/force-confirm/route";
 import { POST as freshEmailCopy } from "@/app/api/admin/bookings/[id]/fresh-email-copy/route";
-import { PATCH as guestDietary } from "@/app/api/admin/bookings/[id]/guest-dietary/route";
 import {
   GET as memberGuestsByName,
   POST as memberGuestByEmail,
@@ -301,7 +291,6 @@ describe("the booking actions", () => {
       set_exclusive_lodge_hold: "destructive",
       force_confirm_waitlisted_booking: "destructive",
       send_fresh_booking_email_copy: "destructive",
-      update_booking_guest_dietary: "write",
       set_booking_no_emails: "write",
       set_booking_requested_room: "write",
       clear_booking_requested_room: "write",
@@ -998,32 +987,6 @@ describe("send_fresh_booking_email_copy", () => {
     const projected = { success: true, template: "booking-confirmed", archivedFailureCount: 1, warning: null };
     expect(connection).toEqual(projected);
     expect(browser).toEqual({ ...projected, sentTo: "alex@example.test" });
-  });
-});
-
-describe("update_booking_guest_dietary", () => {
-  it("saves the guest's needs for this stay and answers the guest, not the value", async () => {
-    const grant = { actorMemberId: OFFICER, level: "edit" };
-    h.dietaryEnabled.mockResolvedValue(true);
-    h.dietaryGrant.mockResolvedValue(grant);
-    h.updateDietary.mockResolvedValue({ status: "updated", changed: true, cleared: false, value: "No nuts" });
-    const occupant = { memberId: "member-7", firstName: "Alex", lastName: "Smith", ageTier: "ADULT" };
-
-    const { connection, browser } = await expectActionContract({
-      actionId: "update_booking_guest_dietary",
-      handler: guestDietary,
-      args: { id: "booking-1", guestId: "guest-1", occupant, dietaryRequirements: "  No nuts  " },
-    });
-
-    expect(h.requireAdmin).toHaveBeenCalledWith(BOOKINGS_EDIT);
-    expect(h.updateDietary).toHaveBeenCalledWith(
-      grant,
-      { bookingId: "booking-1", guestId: "guest-1", value: "  No nuts  ", occupant },
-      h.prisma,
-    );
-    // INV-PRIV-022: the saved value goes back to the screen, never to the app.
-    expect(connection).toEqual({ guestId: "guest-1" });
-    expect(browser).toEqual({ guestId: "guest-1", dietaryRequirements: "No nuts" });
   });
 });
 

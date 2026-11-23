@@ -41,6 +41,8 @@ export const MCP_PERMANENT_EXCLUSION_REASONS = {
   "site-helper": "The website's own help assistant; the member's AI app answers them itself.",
   "privacy-posture":
     "Decides who may browse members' names, which an officer chooses on the website, never an AI app.",
+  "unread-value":
+    "Changes a value an AI app is never shown, such as a guest's allergy needs, so the app would be writing blind.",
 } as const;
 
 export type McpPermanentExclusionReason = keyof typeof MCP_PERMANENT_EXCLUSION_REASONS;
@@ -174,6 +176,9 @@ const PERMANENT_ROUTES: ReadonlyArray<{
   // Open member search widens the club's privacy (owner decision D-18): text
   // an app read must never be able to talk it into that.
   { reason: "privacy-posture", routes: ["PUT /api/admin/member-guest-settings"] },
+  // Dietary and allergy needs are never sent to an app (INV-PRIV-022), so an
+  // app could only overwrite or clear what the kitchen relies on unseen.
+  { reason: "unread-value", routes: ["PATCH /api/admin/bookings/[id]/guest-dietary"] },
   { reason: "public-visitor", routes: ["POST /api/contact", "POST /api/applications"] },
   // The nominee confirms through a link emailed to them.
   { reason: "needs-browser", routes: ["POST /api/applications/nominate"] },

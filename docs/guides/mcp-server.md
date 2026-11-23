@@ -247,11 +247,13 @@ ask them to prove who they are again and the switch that opens member search
 - **Audit.** Each change writes the connection's `MCP_ACTION_CALLED` row, with
   no subject member, as well as the route's own audit rows.
 
-Ten Bookings & Beds steps are **website-only**. Saving the member-guest
+Eleven Bookings & Beds steps are **website-only**. Saving the member-guest
 settings decides whether the club's member names, children included, can be
 browsed by anyone starting a booking; owner decision D-18 keeps that choice
-away from anything automated, so it has its own reason (below). The other
-nine are on the fresh-proof list (`STEP_UP_ROUTES`): quoting and deciding a booking change
+away from anything automated, so it has its own reason (below). Changing a
+guest's dietary or allergy needs for a stay is website-only too: an app is
+never shown those needs, so it would be overwriting them blind (below). The
+other nine are on the fresh-proof list (`STEP_UP_ROUTES`): quoting and deciding a booking change
 request, deciding a booking-policy exception request, correcting, declining
 or releasing the hold of a booking request, confirming a booking's pending
 guests, deciding a booking held for review, and adding a booking to a work
@@ -278,7 +280,6 @@ party or removing it from one.
 | `set_exclusive_lodge_hold` | Set or clear a whole-lodge hold | destructive | edit | `POST /api/admin/bookings/[id]/exclusive-hold` |
 | `force_confirm_waitlisted_booking` | Confirm a waitlisted booking | destructive | edit | `POST /api/admin/bookings/[id]/force-confirm` |
 | `send_fresh_booking_email_copy` | Send a fresh copy of a booking email | destructive | edit | `POST /api/admin/bookings/[id]/fresh-email-copy` |
-| `update_booking_guest_dietary` | Change a guest's dietary needs for a stay | write | edit | `PATCH /api/admin/bookings/[id]/guest-dietary` |
 | `set_booking_no_emails` | Turn a booking's No emails switch on or off | write | edit | `POST /api/admin/bookings/[id]/no-emails` |
 | `set_booking_requested_room` | Set the room a booking asks for | write | edit | `PUT /api/admin/bookings/[id]/requested-room` |
 | `clear_booking_requested_room` | Clear the room a booking asks for | write | edit | `DELETE /api/admin/bookings/[id]/requested-room` |
@@ -380,7 +381,7 @@ party or removing it from one.
 ## What stays on the website, and why
 
 Every route method that is not an action has a stated reason
-([`exclusions.ts`](../../src/lib/mcp/exclusions.ts), `INV-MCP-006`). Fourteen
+([`exclusions.ts`](../../src/lib/mcp/exclusions.ts), `INV-MCP-006`). Fifteen
 reasons are permanent — those routes are never actions:
 
 - **Fresh proof** — anything on the fresh-proof list (`STEP_UP_ROUTES`), which
@@ -412,6 +413,9 @@ reasons are permanent — those routes are never actions:
   instead.
 - **Privacy posture** — saving the member-guest settings, which decide who
   may browse members' names. An officer chooses that on the website.
+- **Writing blind** — changing a guest's dietary or allergy needs for a stay.
+  An app is never sent those (`INV-PRIV-022`), so it could only overwrite or
+  clear them unseen.
 
 Everything else is **not yet**: each such route names the follow-on task that
 will bring it in.
@@ -532,8 +536,8 @@ though the admin screens still show them: the booker's email address on a
 search result, waitlist entry or review queue, payment and Xero record ids,
 the address a booking email went to, the member ids of the officers who
 reviewed something, who approved a bed allocation or last saved a setting,
-and a guest's dietary needs: an officer's app may change them, but the saved
-value is never sent back (`INV-PRIV-022`). Seasons, policies and settings
+and a guest's dietary needs, which an officer's app can neither read nor
+change (`INV-PRIV-022`). Seasons, policies and settings
 carry no personal information.
 
 The app also holds whatever the person typed to it, such as the guest names

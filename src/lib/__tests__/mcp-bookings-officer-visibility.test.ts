@@ -119,6 +119,15 @@ describe("Bookings & Beds officer actions: who is offered them", () => {
     expect(found.filter((id) => id.startsWith("update_member_guest"))).toEqual([]);
   });
 
+  it("keeps the guest dietary edit website-only: an app never reads the value it would overwrite", async () => {
+    // INV-PRIV-022: dietary needs are never sent to an app, so no blind write.
+    expect(classifyMcpRoute("src/app/api/admin/bookings/[id]/guest-dietary/route.ts", "PATCH")).toEqual({
+      kind: "excluded", reason: "unread-value",
+    });
+    const found = await foundIds(context({ bookings: "edit" }));
+    expect(found.filter((id) => id.includes("dietary"))).toEqual([]);
+  });
+
   it("offers an officer with Bookings & Beds edit every action, and runs one by name", async () => {
     const ctx = context({ bookings: "edit" });
     const found = new Set(await foundIds(ctx));
