@@ -528,7 +528,9 @@ route census reject any remaining `not-yet` exclusion.
 ## Adding an action (developers)
 
 1. Add an entry to `MCP_ACTIONS` in
-   [`catalogue.ts`](../../src/lib/mcp/catalogue.ts): a new snake-case `id`
+   [`catalogue.ts`](../../src/lib/mcp/catalogue.ts), or to an area's own
+   module it spreads in when the file nears its size budget (lodge life:
+   [`catalogue-lodge-life.ts`](../../src/lib/mcp/catalogue-lodge-life.ts)): a new snake-case `id`
    (never reused), the route's `method` and `path`, and its `kind` — `read`
    only for a `GET`, or for a `POST` that changes no member's data, marked
    `preview: true` and pinned in the census's `PREVIEW_ROUTE_KEYS`. Import the route's own
@@ -536,13 +538,17 @@ route census reject any remaining `not-yet` exclusion.
    imports them from; never describe a field a second time (`INV-SSOT-001`).
    Set `fixedBody` for any field the app must not choose.
 2. Give it `returns`: an allow-list shape in
-   [`connection-shapes.ts`](../../src/lib/connection-shapes.ts), typed with
+   [`connection-shapes.ts`](../../src/lib/connection-shapes.ts) (lodge life:
+   [`connection-shapes-lodge-life.ts`](../../src/lib/connection-shapes-lodge-life.ts)), typed with
    `connectionShapeFor<T>()` so a misspelt field fails to compile. In the
    route, answer with `connectionJson(request, body, SHAPE)` (from
    `mcp-connection-request.ts`): a connection gets only the named fields, a
    browser the whole answer. A route with an officer branch decides with
    `memberOnlySessionUser(request, session.user)` and refuses an on-behalf
-   target or officer override flag from a connection.
+   target or officer override flag from a connection. Officer reach read
+   from records (a committee seat, a hut-leader assignment, a nomination)
+   survives that: guard it with `arrivesAsMcpConnection` and add it to
+   `mcp-record-derived-officer-reach.test.ts`.
 3. Test the contract with `expectActionContract` from
    `src/lib/__tests__/helpers/mcp-action-contract.ts`, signed in as
    `officerMemberSession()`: the connection's answer has exactly the
