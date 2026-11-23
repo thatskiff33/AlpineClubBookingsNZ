@@ -29,11 +29,11 @@ import {
 } from "@/lib/booking-member-night-conflicts";
 import { clubFormatValues } from "@/lib/club-format-server";
 
-/** Each branch reads its fields with the schemas `adminBookingRequestApproveBodySchema` composes;
- * also the AI app action `approve_booking_request` (ALP-719). */
 /** The body as sent: each branch parses its own fields. */
 type ApproveBody = Partial<Record<keyof z.input<typeof adminBookingRequestApproveBodySchema>, unknown>>;
 
+/** Each branch reads its fields with the schemas `adminBookingRequestApproveBodySchema` composes;
+ * also the AI app action `approve_booking_request` (ALP-719). */
 export async function POST(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
@@ -60,7 +60,9 @@ export async function POST(
   // plus the optional map-to-existing-contact decision (issue #1255). The body
   // is empty for general requests and for school approvals that keep the
   // submitted numbers, so parse defensively.
-  const body = ((await req.json().catch(() => null)) ?? {}) as ApproveBody;
+  const raw: unknown = await req.json().catch(() => null);
+  // Anything but a JSON object (none, `null`, an array) is the empty body.
+  const body = (raw !== null && typeof raw === "object" && !Array.isArray(raw) ? raw : {}) as ApproveBody;
 
   // The map target is an existing non-login Organisation/School contact id. The
   // authoritative guard (canLogin:false, role, not archived) runs inside the

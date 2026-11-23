@@ -44,21 +44,6 @@ vi.mock("@/lib/booking-request-quotes", () => {
 
   return {
     BookingRequestQuoteError,
-    bookingRequestQuoteInputSchema: {
-      safeParse: (value: unknown) => {
-        const body = value as {
-          pricingMode?: string;
-          options?: unknown[];
-        };
-        if (!body?.pricingMode || !Array.isArray(body.options)) {
-          return {
-            success: false,
-            error: { flatten: () => ({ fieldErrors: { pricingMode: ["Required"] } }) },
-          };
-        }
-        return { success: true, data: value };
-      },
-    },
     parseBookingRequestQuoteOptions: (raw: unknown) => raw,
     createBookingRequestQuote: (...args: unknown[]) =>
       routeMocks.mockCreateQuote(...args),

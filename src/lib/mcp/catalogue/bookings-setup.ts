@@ -5,9 +5,9 @@
  * Kinds: a setting or record the officer can set back from the admin screens
  * is `write`, seasons and hut rates included (the Hut Fees and Seasons
  * screens edit them). A delete, the minimum-stay "delete" that deactivates,
- * the adult-member hosting save (it can email booking owners whose bookings
- * lose cover) and the member-guest save (it can open the member name list to
- * anyone booking, which cannot be taken back once seen) are `destructive`.
+ * and the adult-member hosting save (it can email booking owners whose bookings
+ * lose cover) are `destructive`. The member-guest save is website-only
+ * (`privacy-posture` in `exclusions.ts`).
  */
 import { adminRecordIdParamsSchema } from "@/lib/admin-bookings-schemas/record-id";
 import {

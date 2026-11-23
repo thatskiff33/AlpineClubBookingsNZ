@@ -56,6 +56,8 @@ const MCP_DECIDED_ADMIN_AREAS = ["bookings"] as const satisfies readonly AdminPe
 
 type McpDecidedAdminArea = (typeof MCP_DECIDED_ADMIN_AREAS)[number];
 
+type McpNotYetAdminArea = Exclude<AdminPermissionArea, McpDecidedAdminArea>;
+
 /**
  * The task that will bring each remaining group of routes into the catalogue.
  * The member keys are the four follow-ons ALP-718 split its member routes
@@ -72,9 +74,7 @@ export const MCP_NOT_YET_TASKS = {
   content: "ALP-723",
   support: "ALP-724",
   overview: "ALP-724",
-} as const satisfies Record<Exclude<AdminPermissionArea, McpDecidedAdminArea> | MemberNotYetGroup, string>;
-
-type McpNotYetAdminArea = Exclude<AdminPermissionArea, McpDecidedAdminArea>;
+} as const satisfies Record<McpNotYetAdminArea | MemberNotYetGroup, string>;
 
 function isNotYetAdminArea(area: AdminPermissionArea): area is McpNotYetAdminArea {
   return !(MCP_DECIDED_ADMIN_AREAS as readonly AdminPermissionArea[]).includes(area);
