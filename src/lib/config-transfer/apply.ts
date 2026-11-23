@@ -181,6 +181,8 @@ export type ApplyConfigImportResult = {
    * age-tier cache only when the `age-tier` entity changed (#2200).
    */
   appliedEntities: string[];
+  /** The post-commit liability clear-up (#5190); see {@link LiabilityClearUpOutcome}. */
+  liabilityClearUp: LiabilityClearUpOutcome;
 };
 
 export async function applyConfigImport(
