@@ -11,4 +11,5 @@ compare the 24-hour Caddy median for `/` with the 1,311 ms measured on 20 Nov
 
 ## How to check it worked
 
-No render takes over 300 ms, and the median for `/` is lower than before.
+No render takes over 300 ms, and you have compared the 24-hour Caddy median
+for `/` with the 1,311 ms measured on 20 Nov 2026.

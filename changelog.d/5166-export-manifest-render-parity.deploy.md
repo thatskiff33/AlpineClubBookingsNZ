@@ -9,4 +9,4 @@ When convenient, do the read-only render-parity run for the export manifests
 
 ## How to check it worked
 
-The run finishes and reports no difference.
+The run completes.
