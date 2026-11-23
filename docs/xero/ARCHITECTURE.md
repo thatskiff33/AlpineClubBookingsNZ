@@ -2543,9 +2543,14 @@ Scheduled hardening (cron tasks, all idempotent):
   (`sendAdminAlertOncePerWindow` in `admin-alert-window.ts`) with one key for
   every error type, so the limit is still one alert an hour in all (#5407):
   two instances failing at once raise one alert, an alert queued for retry or
-  withheld counts as raised, and one nobody could receive holds the key for a
-  day. Senders that call `sendAdminXeroSyncErrorAlert` directly, rather than
-  `notifyXeroSyncError`, are not limited by it.
+  withheld counts as raised, one nobody could receive (switched off, or nobody
+  opted in) holds the key for a day, and one that reached nobody on a passing
+  mail fault (every copy failed before its mail log row existed) holds it for
+  the hour only. Senders that call `sendAdminXeroSyncErrorAlert` directly,
+  rather than `notifyXeroSyncError`, neither hold nor are held by that hour;
+  before #5407 the limit read any sync error row in the mail log, so a direct
+  send held it too. Each direct sender reports one record an officer must act
+  on, and most limit themselves with a claim of their own, once ever or per key.
 
 ### Repairing Stripe refund-note links (#2901)
 

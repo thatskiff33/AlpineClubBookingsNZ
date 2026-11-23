@@ -111,7 +111,7 @@ describe("notifyXeroSyncError: one alert an hour, held by an AlertCooldown claim
     expect(mocks.sendSyncErrorAlert).toHaveBeenCalledTimes(1);
     expect(mocks.loggerInfo).toHaveBeenCalledWith(
       { operation: "refreshToken" },
-      "Xero error alert suppressed (one per hour limit)"
+      "Xero error alert suppressed (window held)"
     );
   });
 
@@ -148,10 +148,6 @@ describe("notifyXeroSyncError: one alert an hour, held by an AlertCooldown claim
   it.each([
     ["the delivery policy skipped it", sendResult({ deliveryAllowed: false, recipients: 0, sent: 0 })],
     ["no admin is opted in", sendResult({ recipients: 0, sent: 0 })],
-    [
-      "every copy failed before its mail log row existed",
-      sendResult({ sent: 0, notDelivered: 1, failedBeforeLogged: 1 }),
-    ],
   ])("holds the claim for a day, not an hour, when nobody could receive it: %s (#3635 F1)", async (_label, result) => {
     mocks.sendSyncErrorAlert.mockResolvedValue(result);
 
@@ -161,6 +157,23 @@ describe("notifyXeroSyncError: one alert an hour, held by an AlertCooldown claim
     expect(mocks.sendSyncErrorAlert).toHaveBeenCalledTimes(1);
     // Stamped so a one-hour claim succeeds again exactly one day after this one.
     expect(mocks.cooldowns.get(KEY)?.getTime()).toBe(Date.now() - HOUR_MS + DAY_MS);
+  });
+
+  it("holds the claim for the hour only when every copy failed before its mail log row existed", async () => {
+    // A transient mail fault, not a setting: a different error an hour on is
+    // reported, not shut out for a day.
+    mocks.sendSyncErrorAlert.mockResolvedValue(sendResult({ sent: 0, notDelivered: 1, failedBeforeLogged: 1 }));
+
+    await alert();
+    await alert("Token refresh failed", "refreshToken");
+
+    expect(mocks.sendSyncErrorAlert).toHaveBeenCalledTimes(1);
+    // Stamped so a one-hour claim succeeds again exactly one hour after this one.
+    expect(mocks.cooldowns.get(KEY)?.getTime()).toBe(Date.now());
+
+    mocks.cooldowns.set(KEY, new Date(Date.now() - HOUR_MS - 1));
+    await alert("Token refresh failed", "refreshToken");
+    expect(mocks.sendSyncErrorAlert).toHaveBeenCalledTimes(2);
   });
 
   it("gives the claim back when the send throws, so the next error alerts", async () => {
