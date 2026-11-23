@@ -6203,7 +6203,8 @@ composition.
 The confirm-pending cron's capacity bump (`resolveHoldWindowUnderLock`) also
 records its two notices as owed (#5407, moved to the owed-notice mechanism by
 #5433, `recordBumpNoticesOwed`): one `OwedNotice` insert of two rows on
-primary keys derived from the kind, the booking and the bump time, stamped
+primary keys derived from the kind, the booking, the bump time and the
+variant (the bumped or the guests-cancelled notice), stamped
 with that time and handed back so the delivery claims with the same value,
 after the guarded `PENDING -> CANCELLED` claim and inside the same
 transaction, under the `lock(1)` and lodge lock it already holds. It adds no

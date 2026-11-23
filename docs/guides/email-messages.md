@@ -397,7 +397,8 @@ you want both reworded; editing only one leaves the other on its built-in text.
 > because its guests could not come) and the officers' **Admin Booking Bumped**
 > alert are then sent by a later run of the same job or, since #5433, of the
 > email retry job (every 30 minutes), so a recovered notice arrives an hour or
-> more late. When the officers' alert could not be recorded for any
+> more late, and a send that keeps failing is retried about every hour to hour
+> and a half, where it was every three hours. When the officers' alert could not be recorded for any
 > of them (for example when writing the email log failed and sending then
 > failed too, or the message could not be built from a saved template), it is
 > tried again a day later. The member never receives it twice. Very rarely the officers may

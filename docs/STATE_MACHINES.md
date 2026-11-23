@@ -4256,16 +4256,23 @@ confirm-pending job and from this job, every 30 minutes. For each kind this
 release knows, it claims each marker whose stamp, the event or its last
 attempt, is at least the kind's wait old, and then:
 
-- clears it with an error log, sending nothing, when it is past the kind's
-  maximum age or cannot be read;
+- clears it with an error log, sending nothing, when it cannot be read;
 - clears it without sending when its subject is gone or has moved on (the
   kind's `stillOwed` reads current state);
-- past the kind's cut-off, runs the kind's own step instead (for a member's
-  notice, an alert to officers) or, with none, clears it with an error log;
+- past the kind's cut-off, or past its maximum age, runs the kind's own step
+  instead (for a member's notice, an alert to officers), so the age check can
+  never skip that step; a kind with no such step is cleared with an error log,
+  and past its maximum age it is cleared without its subject being read;
 - otherwise sends it again, as right after the commit.
 
 A kind the running release has no deliverer for is never read, so a marker a
 newer release wrote during a blue-green switchover stays for that release.
+Once per run the sweep counts the markers of such kinds that are over a week
+old and logs the count as an error, so a kind nobody delivers is seen. A
+marker can be written only with a kind this release delivers (`OWED_NOTICE_KINDS`).
+The email retry job caps its sweep (100 markers or two minutes a run) and
+leaves the rest, still owed, for its next run; it replays failed rows whatever
+the sweep does, and a failed run's record still carries the sweep's counts.
 
 A member's notice carries an event key, which becomes its `EmailLog` id, so
 however often it is sent it has one row, and a provider failure leaves that
@@ -4287,7 +4294,10 @@ mechanism: one marker for the member's email (`booking-bumped` or
 `booking-guests-cancelled`) and one for the officers' `admin-booking-bumped`
 alert. Their wait is an hour (a day after an attempt that reached nobody),
 their maximum age and cut-off seven days with no officer alert past it, and
-the member's event key is `<bookingId>:<bumpedAtMs>`, as #5407 shipped. The
+the member's event key is `<bookingId>:<bumpedAtMs>`, as #5407 shipped. Since
+the sweep also runs in the 30-minute email retry job, a failed bump send is
+retried about every hour to hour and a half, where it was every three hours
+(the confirm-pending job's cadence). The
 sweep clears a bump notice without sending when the booking is gone, is no
 longer cancelled, or has a `CANCELLED`, `MEMBER_PAID` or
 `NON_MEMBER_CONFIRMED` booking event after the bump (it was reinstated and
