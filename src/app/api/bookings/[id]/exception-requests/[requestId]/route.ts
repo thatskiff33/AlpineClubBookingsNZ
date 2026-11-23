@@ -7,7 +7,7 @@ import { requireActiveSessionUser } from "@/lib/session-guards";
 import { cancelModificationExceptionRequest } from "@/lib/booking-exception-request-service";
 import { transactionContendedResponse } from "@/lib/transaction-contended-response";
 import { exceptionRequestWithdrawSchema } from "@/lib/booking-exception-request-schemas";
-import { WITHDRAWN_EXCEPTION_REQUEST_CONNECTION_SHAPE } from "@/lib/connection-shapes";
+import { WITHDRAWN_EXCEPTION_REQUEST_CONNECTION_SHAPE } from "@/lib/connection-shapes-bookings";
 import { connectionJson } from "@/lib/mcp-connection-request";
 
 /**

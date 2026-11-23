@@ -7,7 +7,7 @@ import { lodgeNullTolerantScope } from "@/lib/lodges";
 import { loadEffectiveModuleFlags } from "@/lib/module-settings";
 import { prisma } from "@/lib/prisma";
 import { requireActiveSessionUser } from "@/lib/session-guards";
-import { LODGE_ROOMS_CONNECTION_SHAPE } from "@/lib/connection-shapes";
+import { LODGE_ROOMS_CONNECTION_SHAPE } from "@/lib/connection-shapes-bookings";
 import { connectionJson, memberOnlySessionUser } from "@/lib/mcp-connection-request";
 
 /**

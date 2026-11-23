@@ -9,7 +9,7 @@ import {
 } from "@/lib/lodge-access";
 import { lodgeNullTolerantScope } from "@/lib/lodges";
 import { bookingRoomsQuerySchema } from "@/lib/booking-stay-check-query";
-import { LODGE_ROOMS_CONNECTION_SHAPE } from "@/lib/connection-shapes";
+import { LODGE_ROOMS_CONNECTION_SHAPE } from "@/lib/connection-shapes-bookings";
 import { connectionJson } from "@/lib/mcp-connection-request";
 
 /** Also the AI app action `list_lodge_rooms` (ALP-794). */

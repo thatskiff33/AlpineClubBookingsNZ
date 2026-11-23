@@ -11,13 +11,7 @@
  *
  * Types only from the route modules: nothing here reaches the database.
  */
-import type { BookingChangeRequest, RefundRequest } from "@prisma/client";
-
 import type { CancelBookingResult } from "@/lib/booking-cancel-result";
-import type { ChangeRequestEstimate } from "@/lib/booking-change-request-guests";
-import type { DeleteBookingResult } from "@/lib/booking-delete";
-import type { CreatedExceptionRequest } from "@/lib/booking-exception-request-service";
-import type { PolicyExceptionViolation } from "@/lib/booking-policy-exceptions";
 import type { CancelPreviewAnswer } from "@/lib/cancel-preview-answer";
 import type { BookingMessageClubTokens } from "@/lib/booking-message-definitions";
 import type { serializePublicCommitteeAssignment } from "@/lib/committee";
@@ -26,12 +20,17 @@ import {
   completeConnectionShapeFor,
   connectionShapeFor,
   eachEntry,
-  type CompleteConnectionShapeFor,
   type ConnectionShape,
   type EveryFieldOf,
 } from "@/lib/connection-projection";
 import type { MemberDraftSummary } from "@/lib/member-draft-summary";
-import type { MemberExceptionProposal, MemberExceptionRequestItem } from "@/lib/member-exception-requests";
+import type { MemberGuestCandidateResponse } from "@/lib/member-guest-find";
+import type {
+  PartnerLinkMemberView,
+  PartnerLinkState,
+  PendingPartnerInviteIntent,
+} from "@/lib/member-partner-link";
+import type { MembershipCancellationOverview } from "@/lib/membership-cancellation-requests";
 import type { MemberLodgeRoster } from "@/lib/member-lodge-roster";
 import {
   MEMBER_NOTIFICATION_PREFERENCE_KEYS,
@@ -40,8 +39,6 @@ import {
 import type { MemberBookingSummary, MemberProfileSummary } from "@/lib/member-self-read";
 import type { MemberNoticeTextView } from "@/lib/member-notice-text";
 import type { AgeTierSettingData } from "@/lib/policies/age-tier";
-import type { PriceBreakdown } from "@/lib/policies/pricing";
-import type { AvailablePromoCode } from "@/lib/promo";
 import type { WhakapapaCurlData } from "@/lib/whakapapa-report";
 
 // --- Stage 1 (ALP-653) ------------------------------------------------------
@@ -84,9 +81,15 @@ export const MEMBER_BOOKING_CONNECTION_SHAPE: ConnectionShape = {
   booking: MEMBER_BOOKING_SUMMARY_SHAPE,
 };
 
-/** Who can go on a booking: no dates of birth, email addresses, parent links, notes or pending requests. */
+/**
+ * Who can go on a booking, and the ids the family actions take (ALP-795):
+ * the member's family group ids, each person's groups, whether they have
+ * their own login, and whether the member may confirm their details. No dates
+ * of birth, email addresses, parent links, notes or pending requests.
+ */
 export const MEMBER_FAMILY_CONNECTION_SHAPE = connectionShapeFor<{
   displayName: string | null;
+  familyGroupIds: string[];
   familyMembers: Array<{
     id: string;
     firstName: string;
@@ -94,9 +97,13 @@ export const MEMBER_FAMILY_CONNECTION_SHAPE = connectionShapeFor<{
     ageTier: string;
     relationship: string;
     canBeBooked: boolean;
+    canLogin: boolean;
+    canCurrentUserConfirmDetails: boolean;
+    familyGroupIds: string[];
   }>;
 }>({
   displayName: true,
+  familyGroupIds: true,
   familyMembers: {
     id: true,
     firstName: true,
@@ -104,6 +111,9 @@ export const MEMBER_FAMILY_CONNECTION_SHAPE = connectionShapeFor<{
     ageTier: true,
     relationship: true,
     canBeBooked: true,
+    canLogin: true,
+    canCurrentUserConfirmDetails: true,
+    familyGroupIds: true,
   },
 });
 
@@ -312,321 +322,155 @@ export const SKIFIELD_REPORT_CONNECTION_SHAPE = connectionShapeFor<
   stale: true,
 });
 
-// --- Bookings (ALP-794) --------------------------------------------------------
+// --- Family and membership (ALP-795) ----------------------------------------
 
-/** Free beds each night of one stay, and the lodge's capacity they are out of. */
-export const STAY_AVAILABILITY_CONNECTION_SHAPE = completeConnectionShapeFor<{
-  lodgeCapacity: number;
-  minAvailable: number;
-  nightDetails: Array<{ date: string; occupiedBeds: number; availableBeds: number }>;
+/** A confirmed no-login family member: name, age group and profile state. Never the date of birth or the copied contact details. */
+export const FAMILY_MEMBER_DETAILS_CONNECTION_SHAPE = connectionShapeFor<{
+  member: { id: string; firstName: string; lastName: string; ageTier: string; canLogin: boolean };
+  profileStatus: {
+    isProfileComplete: boolean;
+    isDetailsConfirmed: boolean;
+    canBeBookedAsMember: boolean;
+    missingFields: string[];
+  };
 }>({
-  lodgeCapacity: true,
-  minAvailable: true,
-  nightDetails: { date: true, occupiedBeds: true, availableBeds: true },
+  member: { id: true, firstName: true, lastName: true, ageTier: true, canLogin: true },
+  profileStatus: { isProfileComplete: true, isDetailsConfirmed: true, canBeBookedAsMember: true, missingFields: true },
 });
 
-/**
- * Whether a stay meets the minimum-stay rules, each broken rule in words, and
- * the cancellation schedule. Not the rule's internal scope or requirement
- * evidence, which an officer reviews.
- */
-export const BOOKING_RULES_CONNECTION_SHAPE = connectionShapeFor<{
-  valid: boolean;
-  message: string | null;
-  cancellationSchedule: string[] | null;
-  violations: PolicyExceptionViolation[];
-}>({
-  valid: true,
+export const FAMILY_GROUP_CREATE_CONNECTION_SHAPE = connectionShapeFor<{
+  message: string;
+  requestId: string;
+  familyGroupId: string;
+  childRequestIds: string[];
+}>({ message: true, requestId: true, familyGroupId: true, childRequestIds: true });
+
+export const FAMILY_INVITE_CONNECTION_SHAPE = connectionShapeFor<{ message: string; invitationId: string }>({
   message: true,
-  cancellationSchedule: true,
-  violations: { reasonCode: true, message: true, affectedNights: true, capacityMode: true },
+  invitationId: true,
 });
 
-/** For `list_lodge_rooms` and `list_requestable_rooms`: the rooms a member may ask for. */
-export const LODGE_ROOMS_CONNECTION_SHAPE = completeConnectionShapeFor<{
-  enabled: boolean;
-  rooms: Array<{ id: string; name: string; bedCount: number }>;
+/** The four family requests an officer reviews: adult, child, join and removal. */
+export const FAMILY_REQUEST_SUBMITTED_CONNECTION_SHAPE = connectionShapeFor<{ message: string; requestId: string }>({
+  message: true,
+  requestId: true,
+});
+
+/** Who invited the member, to which group, and when. Not the request row's other columns. */
+export const FAMILY_INVITATIONS_CONNECTION_SHAPE = connectionShapeFor<{
+  invitations: Array<{
+    id: string;
+    createdAt: Date;
+    familyGroup: { id: string; name: string | null };
+    requester: { id: string; firstName: string; lastName: string } | null;
+  }>;
 }>({
-  enabled: true,
-  rooms: { id: true, name: true, bedCount: true },
-});
-
-/** The member's own visible promo codes, as the booking page lists them. */
-export const MEMBER_PROMO_CODES_CONNECTION_SHAPE: ConnectionShape = {
-  promoCodes: completeConnectionShapeFor<AvailablePromoCode>({
-    code: true,
-    description: true,
-    type: true,
-    percentOff: true,
-    valueCents: true,
-    freeNightsPerIndividual: true,
-    lifetimeFreeNightsCap: true,
-    fixedNightlyPriceCents: true,
-    fixedNightlyMode: true,
-  }),
-};
-
-export const BOOKING_NOTE_CONNECTION_SHAPE = completeConnectionShapeFor<{ id: string; notes: string | null }>({
-  id: true,
-  notes: true,
-});
-
-export const ARRIVAL_TIME_CONNECTION_SHAPE = completeConnectionShapeFor<{
-  id: string;
-  expectedArrivalTime: string | null;
-}>({
-  id: true,
-  expectedArrivalTime: true,
-});
-
-export const REQUESTED_ROOM_CONNECTION_SHAPE = completeConnectionShapeFor<{
-  id: string;
-  requestedRoomId: string | null;
-  requestedRoom: { id: string; name: string; active: boolean } | null;
-}>({
-  id: true,
-  requestedRoomId: true,
-  requestedRoom: { id: true, name: true, active: true },
-});
-
-/**
- * One change request on a booking: what was asked, in the request's own
- * summary, and the decision. Never the stored payment snapshot (Stripe and
- * Xero ids), the frozen proposal, its hash or evidence, or who reviewed it.
- */
-const BOOKING_CHANGE_REQUEST_SHAPE = connectionShapeFor<
-  BookingChangeRequest & { requestedChanges: { requested: { summary: string; requestedEffectiveDate: string | null } } }
->({
-  id: true,
-  bookingId: true,
-  kind: true,
-  status: true,
-  reason: true,
-  requestedChanges: { requested: { summary: true, requestedEffectiveDate: true } },
-  adminNotes: true,
-  memberMessage: true,
-  reviewedAt: true,
-  cancelledAt: true,
-  holdExpiresAt: true,
-  createdAt: true,
-  updatedAt: true,
-});
-
-export const BOOKING_CHANGE_REQUEST_CONNECTION_SHAPE: ConnectionShape = BOOKING_CHANGE_REQUEST_SHAPE;
-
-export const BOOKING_CHANGE_REQUEST_LIST_CONNECTION_SHAPE: ConnectionShape = {
-  changeRequests: BOOKING_CHANGE_REQUEST_SHAPE,
-};
-
-/** Every field of either estimate answer: a field the estimate gains must be decided here. */
-export const CHANGE_REQUEST_ESTIMATE_CONNECTION_SHAPE: ConnectionShape = {
-  estimate: completeConnectionShapeFor<EveryFieldOf<ChangeRequestEstimate>>({
-    outcome: true,
-    guests: { priceCents: true, nights: true },
-    totalCents: true,
-    excludesMemberGuests: true,
-    message: true,
-  }),
-};
-
-/** The proposal as the officer will see it, frozen: the dates, the party and each guest's nights. */
-const MEMBER_EXCEPTION_PROPOSAL_SHAPE = {
-  lodgeId: true,
-  checkIn: true,
-  checkOut: true,
-  guests: { firstName: true, lastName: true, ageTier: true, isMember: true, nights: true },
-  guestNights: true,
-  baseCheckIn: true,
-  baseCheckOut: true,
-  baseGuestNights: true,
-} as const satisfies CompleteConnectionShapeFor<MemberExceptionProposal>;
-
-/** A new exception request: its id, the rules it asks to set aside and the frozen proposal. Not its hash. */
-export const CREATED_EXCEPTION_REQUEST_CONNECTION_SHAPE = connectionShapeFor<CreatedExceptionRequest>({
-  id: true,
-  status: true,
-  reasonCodes: true,
-  aggregateCapacityMode: true,
-  capacityHeld: true,
-  proposal: MEMBER_EXCEPTION_PROPOSAL_SHAPE,
-});
-
-/**
- * The member's own exception requests, as their request area shows them. The
- * member DTO is already the privacy boundary (#2562, no officer note), so the
- * shape is complete: a field the DTO gains must be decided here.
- */
-export const MEMBER_EXCEPTION_REQUEST_LIST_CONNECTION_SHAPE: ConnectionShape = {
-  exceptionRequests: completeConnectionShapeFor<MemberExceptionRequestItem>({
+  invitations: {
     id: true,
-    source: true,
-    status: true,
     createdAt: true,
-    reviewedAt: true,
-    proposal: MEMBER_EXCEPTION_PROPOSAL_SHAPE,
-    rules: { reasonCode: true, message: true, affectedNights: true },
-    memberMessage: true,
-    decisionExplanation: true,
-    capacityHeld: true,
-    capacityMode: true,
-    lastConflictReason: true,
-    lastConflictAt: true,
-    bookingId: true,
-    createdBookingId: true,
-    createdBookingHoldsCapacity: true,
-    createdBookingAwaitsPayment: true,
-    supersededByRequestId: true,
-    canWithdraw: true,
-    canReplace: true,
-  }),
-};
-
-export const WITHDRAWN_EXCEPTION_REQUEST_CONNECTION_SHAPE = completeConnectionShapeFor<{ id: string; status: string }>({
-  id: true,
-  status: true,
-});
-
-/** A refund appeal and its outcome. Not the member or officer ids on the row. */
-const REFUND_APPEAL_SHAPE = connectionShapeFor<RefundRequest>({
-  id: true,
-  bookingId: true,
-  status: true,
-  reason: true,
-  requestedAmountCents: true,
-  approvedAmountCents: true,
-  adminNotes: true,
-  reviewedAt: true,
-  createdAt: true,
-});
-
-export const REFUND_APPEAL_CONNECTION_SHAPE: ConnectionShape = REFUND_APPEAL_SHAPE;
-
-export const REFUND_APPEAL_LIST_CONNECTION_SHAPE: ConnectionShape = { refundReviews: REFUND_APPEAL_SHAPE };
-
-/**
- * A stay's price, each guest's share and nights, the member's credit, and
- * whether the booking would wait for a non-member hold or a paid-up adult.
- * Not the rate membership type ids or the guests' member ids.
- */
-export const BOOKING_QUOTE_CONNECTION_SHAPE = connectionShapeFor<
-  PriceBreakdown & {
-    availableCreditCents: number;
-    deferredGuestPortionCents: number | null;
-    groupDiscountApplied: boolean;
-    subscriptionMemberRateNotice: string | null;
-    paidUpAdultMemberMissing: boolean;
-    nonMemberHoldDecision: {
-      enabled: boolean;
-      holdDays: number;
-      daysUntilCheckIn: number;
-      shouldBePending: boolean;
-      status: string;
-    };
-  }
->({
-  guests: { ageTier: true, isMember: true, nights: true, priceCents: true, perNightCents: true, nightDates: true },
-  totalPriceCents: true,
-  availableCreditCents: true,
-  deferredGuestPortionCents: true,
-  groupDiscountApplied: true,
-  subscriptionMemberRateNotice: true,
-  paidUpAdultMemberMissing: true,
-  nonMemberHoldDecision: {
-    enabled: true,
-    holdDays: true,
-    daysUntilCheckIn: true,
-    shouldBePending: true,
-    status: true,
+    familyGroup: { id: true, name: true },
+    requester: { id: true, firstName: true, lastName: true },
   },
 });
 
-/** One code's outcome, alone or as one of several. */
-const PROMO_CODE_OUTCOME_FIELDS = {
-  code: true,
-  valid: true,
-  error: true,
-  description: true,
-  type: true,
-  discountCents: true,
-  promoAdjustmentCents: true,
-  freeNightsUsed: true,
-  eligibleGuestCount: true,
-  remainingFreeNights: true,
-  selectedGuestIndexes: true,
-  requiresGuestSelection: true,
-  selectableGuestIndexes: true,
-} as const;
+export const MEMBER_GUEST_OPTIONS_CONNECTION_SHAPE = connectionShapeFor<{
+  enabled: boolean;
+  openSearchEnabled: boolean;
+  approvalRequired: boolean;
+  pendingHoldExpiryDays: number;
+}>({ enabled: true, openSearchEnabled: true, approvalRequired: true, pendingHoldExpiryDays: true });
 
 /**
- * Every field of the three answers (`check_promo_code` answers with one):
- * one code, several codes, or a code that needs the guests chosen. Not the
- * promo code's internal row, assignments or lodges.
+ * What the website's own guest picker shows of another member: id, name and
+ * age group (owner decision D-19). Never a contact detail or a date of birth.
+ * `truncated` is a boolean, never a count, as on the website.
  */
-export const PROMO_CHECK_CONNECTION_SHAPE: ConnectionShape = {
-  ...PROMO_CODE_OUTCOME_FIELDS,
-  workPartyEvent: { id: true, name: true, discountPercent: true },
-  codes: PROMO_CODE_OUTCOME_FIELDS,
-  totalPriceCents: true,
-  finalPriceCents: true,
-};
-
-/**
- * What an edit to a booking would cost or give back, and whether it can be
- * saved: the figures, every reason the save would refuse it (a full night, a
- * refused promo code, an organiser-billing refusal), and the line items. Not
- * the settlement options, which the website's save step works through with the
- * member.
- */
-export const BOOKING_CHANGE_QUOTE_CONNECTION_SHAPE: ConnectionShape = {
-  newTotalPriceCents: true,
-  newDiscountCents: true,
-  newPromoAdjustmentCents: true,
-  newFinalPriceCents: true,
-  priceDiffCents: true,
-  changeFeeCents: true,
-  netChargeCents: true,
-  unpaidAskOffsetCents: true,
-  askLeftCents: true,
-  appliedCreditGiveBackCents: true,
-  availableCreditCents: true,
-  capacityAvailable: true,
-  capacityFullNights: true,
-  minimumStayValid: true,
-  minimumStayViolations: { reasonCode: true, message: true, affectedNights: true },
-  chargeRefusal: true,
-  priceChangeRefusal: true,
-  promoStillValid: true,
-  promoValidation: { valid: true, error: true, code: true, discountCents: true, promoAdjustmentCents: true },
-  promoCoverage: { promoCode: true, excludedNames: true, message: true },
-  subscriptionMemberRateNotice: true,
-  groupDiscountEditNotice: true,
-  itemizedChanges: { label: true, amountCents: true },
-};
-
-/** Every field of the three accept answers, with the `id` of the booking to pay for. */
-export const WAITLIST_OFFER_ACCEPTED_CONNECTION_SHAPE = completeConnectionShapeFor<{
-  id: string;
-  success: boolean;
-  status: string;
-  newBookingId: string;
-  requiresPayment: boolean;
-  requiresSetup: boolean;
-  subscriptionMemberRateNotice: string | null;
-}>({
-  id: true,
-  success: true,
-  status: true,
-  newBookingId: true,
-  requiresPayment: true,
-  requiresSetup: true,
-  subscriptionMemberRateNotice: true,
+export const MEMBER_GUEST_CANDIDATES_CONNECTION_SHAPE = completeConnectionShapeFor<MemberGuestCandidateResponse>({
+  candidates: { memberId: true, firstName: true, lastName: true, ageTier: true },
+  truncated: true,
 });
 
-export const DRAFT_DELETED_CONNECTION_SHAPE = completeConnectionShapeFor<
-  Extract<DeleteBookingResult, { status: 200 }>["data"]
+const PARTNER_LINK_MEMBER_SHAPE = completeConnectionShapeFor<PartnerLinkMemberView>({
+  id: true,
+  firstName: true,
+  lastName: true,
+  canLogin: true,
+});
+
+const PARTNER_LINK_VIEW_SHAPE = connectionShapeFor<PartnerLinkState["pendingIncoming"][number]>({
+  id: true,
+  status: true,
+  partner: PARTNER_LINK_MEMBER_SHAPE,
+  initiatedByMe: true,
+  assignedByAdmin: true,
+  confirmedAt: true,
+  createdAt: true,
+});
+
+/**
+ * The member's partnership, pending requests and one-step candidates. An
+ * outstanding emailed invitation shows its id and expiry, never the address
+ * it was sent to.
+ */
+export const PARTNER_LINK_STATE_CONNECTION_SHAPE = connectionShapeFor<
+  PartnerLinkState & {
+    oneStepCandidates: PartnerLinkMemberView[];
+    pendingPartnerInvite: PendingPartnerInviteIntent | null;
+  }
 >({
-  success: true,
-  mode: true,
-  bookingId: true,
-  message: true,
+  confirmed: PARTNER_LINK_VIEW_SHAPE,
+  pendingIncoming: PARTNER_LINK_VIEW_SHAPE,
+  pendingOutgoing: PARTNER_LINK_VIEW_SHAPE,
+  oneStepCandidates: PARTNER_LINK_MEMBER_SHAPE,
+  pendingPartnerInvite: { id: true, expiresAt: true },
+});
+
+/** A by-email request answers with the message only, whatever happened (D9); a family member request adds the link. */
+export const PARTNER_LINK_REQUEST_CONNECTION_SHAPE = connectionShapeFor<{
+  message: string;
+  linkId: string | null;
+  status: string;
+}>({ message: true, linkId: true, status: true });
+
+export const PARTNER_LINK_MESSAGE_CONNECTION_SHAPE = connectionShapeFor<{ message: string }>({ message: true });
+
+/**
+ * Who the member may ask to cancel, the club's warning and rejoining text, and
+ * their visible requests. No email addresses, and none of the club's Xero
+ * settings.
+ */
+export const MEMBERSHIP_CANCELLATION_OPTIONS_CONNECTION_SHAPE = connectionShapeFor<MembershipCancellationOverview>({
+  settings: { warningText: true, rejoinProcessText: true },
+  candidates: {
+    id: true,
+    name: true,
+    ageTier: true,
+    relationship: true,
+    canLogin: true,
+    requiresOwnConfirmation: true,
+    eligible: true,
+    ineligibleReason: true,
+    familyGroupNames: true,
+    activeRequest: { id: true, status: true, participantStatus: true, submittedAt: true },
+  },
+  requests: {
+    id: true,
+    status: true,
+    reason: true,
+    submittedAt: true,
+    reviewedAt: true,
+    completedAt: true,
+    requestedBy: { id: true, name: true },
+    participants: {
+      id: true,
+      memberId: true,
+      name: true,
+      ageTier: true,
+      canLogin: true,
+      active: true,
+      status: true,
+      confirmedAt: true,
+      declinedAt: true,
+    },
+  },
 });

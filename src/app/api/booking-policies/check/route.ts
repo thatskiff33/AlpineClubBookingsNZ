@@ -6,7 +6,7 @@ import {
   formatViolationsDetail,
 } from "@/lib/booking-policies"
 import { bookingPolicyCheckQuerySchema } from "@/lib/booking-stay-check-query"
-import { BOOKING_RULES_CONNECTION_SHAPE } from "@/lib/connection-shapes"
+import { BOOKING_RULES_CONNECTION_SHAPE } from "@/lib/connection-shapes-bookings"
 import { connectionJson } from "@/lib/mcp-connection-request"
 import { resolveOptionalActiveLodgeId } from "@/lib/lodges"
 import { prisma } from "@/lib/prisma"

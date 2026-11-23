@@ -15,7 +15,7 @@ import {
 } from "@/lib/booking-change-request-input";
 import { estimateChangeRequestAddedGuests } from "@/lib/booking-change-request-estimate";
 import { checkRateLimit, rateLimiters } from "@/lib/rate-limit";
-import { CHANGE_REQUEST_ESTIMATE_CONNECTION_SHAPE } from "@/lib/connection-shapes";
+import { CHANGE_REQUEST_ESTIMATE_CONNECTION_SHAPE } from "@/lib/connection-shapes-bookings";
 import { connectionJson, memberOnlySessionUser } from "@/lib/mcp-connection-request";
 
 /**

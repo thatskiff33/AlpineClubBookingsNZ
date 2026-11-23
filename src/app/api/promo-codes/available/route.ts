@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { requireActiveSessionUser } from "@/lib/session-guards";
 import { getAvailablePromoCodesForMember } from "@/lib/promo";
-import { MEMBER_PROMO_CODES_CONNECTION_SHAPE } from "@/lib/connection-shapes";
+import { MEMBER_PROMO_CODES_CONNECTION_SHAPE } from "@/lib/connection-shapes-bookings";
 import { arrivesAsMcpConnection, connectionJson } from "@/lib/mcp-connection-request";
 
 /**

@@ -7,6 +7,7 @@ import { BookingEventType, BookingStatus, PaymentSource, PaymentStatus, PaymentT
 import { OPEN_INTENT_TRANSACTION_STATUS_LIST } from "@/lib/payment-transaction-status";
 
 import { bookingOwner } from "@/lib/booking-owner";
+import { formatBookingReference } from "@/lib/booking-reference";
 import { deliverBumpNotices, drainOwedBumpNotices, recordBumpNoticesOwed, type OwedBumpNotice, type OwedBumpNoticeSweepResult } from "@/lib/booking-bump-notice-owed";
 import { bookingBumpReason } from "@/lib/booking-bump-reason";
 import { settleHostingCoverageAfterCommit } from "@/lib/adult-member-hosting-coverage-drain";
@@ -76,6 +77,7 @@ import {
 import { readBookingAmountOwed } from "@/lib/booking-amount-owed";
 import { bookingPromoEmailOptions } from "./booking-promo-email-options";
 import { getNonMemberHoldDays } from "./cancellation";
+import { nonMemberHoldEnd } from "@/lib/non-member-hold-end";
 import { processWaitlistForDates } from "./waitlist";
 import { clubFormatValues } from "@/lib/club-format-server";
 import { localChargeRefusal } from "@/lib/stripe-charge-currency";
@@ -84,8 +86,6 @@ import { LOCK1_HOLDER_TRANSACTION_BUDGET } from "@/lib/db-transaction";
 
 /** How long to extend the hold for request-origin bookings (no saved card) at hold expiry. */
 const REQUEST_HOLD_EXTENSION_MS = 2 * 24 * 60 * 60 * 1000;
-
-const DAY_MS = 24 * 60 * 60 * 1000;
 
 /**
  * #1993 Part B — derived admin-alert cadence for a split child's unpaid
@@ -349,7 +349,7 @@ async function resolveOriginalHoldExpiry(
   booking: PendingBooking
 ): Promise<Date> {
   const holdDays = await getNonMemberHoldDays(booking.checkIn, booking.lodgeId);
-  const scheduledFirstExpiry = booking.checkIn.getTime() - holdDays * DAY_MS;
+  const scheduledFirstExpiry = nonMemberHoldEnd(booking.checkIn, holdDays).getTime();
   return new Date(Math.max(scheduledFirstExpiry, booking.createdAt.getTime()));
 }
 
@@ -1345,7 +1345,7 @@ export async function confirmPendingBookings(): Promise<CronConfirmResult> {
             // promise "your own booking remains confirmed" when the parent is
             // genuinely settled (parentUnpaid === false).
             parentConfirmed: !resolution.parentUnpaid,
-            parentBookingReference: resolution.booking.parentBookingId,
+            parentBookingReference: resolution.booking.parentBookingId && formatBookingReference(resolution.booking.parentBookingId),
             lodgeId: resolution.booking.lodgeId,
           });
         } catch (emailErr) {
@@ -1437,7 +1437,7 @@ export async function confirmPendingBookings(): Promise<CronConfirmResult> {
               guestCount: resolution.booking.guests.length,
               priceCents: resolution.booking.finalPriceCents,
               amountDueCents: (await readBookingAmountOwed(resolution.booking)).dueCents,
-              bookingReference: resolution.booking.id,
+              bookingId: resolution.booking.id,
               expiresAt,
               lodgeId: resolution.booking.lodgeId ?? null,
             }, format);

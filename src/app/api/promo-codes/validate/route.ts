@@ -43,7 +43,7 @@ import { loadMemberGuestAddPolicy, planMemberGuestConsentWrites } from "@/lib/me
 import { guestConsentStatus } from "@/lib/member-guest-consent";
 import { promoPreviewEditContext } from "@/lib/promo-preview-edit";
 import { promoValidateRequestSchema } from "@/lib/promo-validate-request";
-import { PROMO_CHECK_CONNECTION_SHAPE } from "@/lib/connection-shapes";
+import { PROMO_CHECK_CONNECTION_SHAPE } from "@/lib/connection-shapes-bookings";
 import { connectionJson, memberOnlySessionUser } from "@/lib/mcp-connection-request";
 
 /**

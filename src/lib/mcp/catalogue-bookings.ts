@@ -48,7 +48,7 @@ import {
   STAY_AVAILABILITY_CONNECTION_SHAPE,
   WAITLIST_OFFER_ACCEPTED_CONNECTION_SHAPE,
   WITHDRAWN_EXCEPTION_REQUEST_CONNECTION_SHAPE,
-} from "@/lib/connection-shapes";
+} from "@/lib/connection-shapes-bookings";
 import { promoValidateConnectionRequestSchema } from "@/lib/promo-validate-request";
 import { refundAppealRequestSchema } from "@/lib/refund-appeal-request";
 import type { McpAction } from "@/lib/mcp/catalogue";

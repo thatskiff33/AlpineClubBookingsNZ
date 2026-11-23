@@ -11,7 +11,7 @@ import { getClientIp } from "@/lib/rate-limit";
 import { requireActiveSessionUser } from "@/lib/session-guards";
 import { authorizationRoleFromAccessRoles } from "@/lib/access-roles";
 import { transactionContendedResponse } from "@/lib/transaction-contended-response";
-import { DRAFT_DELETED_CONNECTION_SHAPE } from "@/lib/connection-shapes";
+import { DRAFT_DELETED_CONNECTION_SHAPE } from "@/lib/connection-shapes-bookings";
 import { connectionJson, memberOnlySessionUser } from "@/lib/mcp-connection-request";
 
 const deleteBookingBodySchema = z

@@ -43,12 +43,11 @@ export type McpPermanentExclusionReason = keyof typeof MCP_PERMANENT_EXCLUSION_R
 
 /**
  * The task that will bring each remaining group of routes into the catalogue.
- * The member keys are the follow-ons ALP-718 split its member routes into
- * that have not landed yet (bookings, ALP-794, has); the rest are the officer
- * areas.
+ * The member keys are the follow-ons ALP-718 split its member routes into,
+ * less those that have shipped (ALP-794, bookings; ALP-795, family and
+ * membership); the rest are the officer areas.
  */
 export const MCP_NOT_YET_TASKS = {
-  memberFamilyAndMembership: "ALP-795",
   memberLodgeLife: "ALP-796",
   memberGroupsAndWholeLodge: "ALP-797",
   bookings: "ALP-719",
@@ -61,7 +60,6 @@ export const MCP_NOT_YET_TASKS = {
 } as const satisfies Record<AdminPermissionArea | MemberNotYetGroup, string>;
 
 type MemberNotYetGroup =
-  | "memberFamilyAndMembership"
   | "memberLodgeLife"
   | "memberGroupsAndWholeLodge";
 
@@ -150,6 +148,11 @@ const PERMANENT_ROUTES: ReadonlyArray<{
       "POST /api/member/request-deletion",
       // A member guest agreeing to be on someone else's booking (INV-GUEST).
       "POST /api/bookings/[id]/guests/[guestId]/consent",
+      // ALP-795: joining a family group, confirming a partnership and asking
+      // for memberships to be cancelled are the member's own decisions.
+      "PUT /api/members/family/invitations",
+      "PUT /api/members/partner-link",
+      "POST /api/member/membership-cancellation-requests",
     ],
   },
   {
@@ -172,8 +175,10 @@ const PERMANENT_ROUTES: ReadonlyArray<{
   {
     reason: "needs-browser",
     routes: [
-      // The nominee confirms through a link emailed to them.
+      // The nominee confirms through a link emailed to them, as does each
+      // member named in a membership cancellation request.
       "POST /api/applications/nominate",
+      "POST /api/member/membership-cancellation-requests/confirm",
       // Files: the invoice and credit note PDFs, and the booking's calendar entry.
       "GET /api/bookings/[id]/invoice",
       "GET /api/bookings/[id]/invoice/credit-notes/[creditNoteId]",
@@ -188,10 +193,6 @@ const PERMANENT_ROUTES: ReadonlyArray<{
  * someone decides about it.
  */
 const MEMBER_NOT_YET_PREFIXES: Readonly<Record<MemberNotYetGroup, readonly string[]>> = {
-  memberFamilyAndMembership: [
-    "/api/member/membership-cancellation-requests",
-    "/api/members",
-  ],
   memberLodgeLife: [
     "/api/calendar",
     "/api/chores",

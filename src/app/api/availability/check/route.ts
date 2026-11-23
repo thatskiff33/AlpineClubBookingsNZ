@@ -7,7 +7,7 @@ import { isMemberEligibleToBookLodge } from "@/lib/lodge-access";
 import { getDefaultLodgeId } from "@/lib/lodges";
 import { formatDateOnly } from "@/lib/date-only";
 import { availabilityCheckQuerySchema } from "@/lib/booking-stay-check-query";
-import { STAY_AVAILABILITY_CONNECTION_SHAPE } from "@/lib/connection-shapes";
+import { STAY_AVAILABILITY_CONNECTION_SHAPE } from "@/lib/connection-shapes-bookings";
 import { connectionJson } from "@/lib/mcp-connection-request";
 
 export async function GET(request: NextRequest) {

@@ -11,7 +11,7 @@ import { checkRateLimit, getClientIp, rateLimiters } from "@/lib/rate-limit";
 import { sendAdminBookingChangeRequestAlert } from "@/lib/email";
 import { guestRequestSchemaError } from "@/lib/booking-guest-stay-range-input";
 import { modificationExceptionRequestSchema } from "@/lib/booking-exception-request-schemas";
-import { CREATED_EXCEPTION_REQUEST_CONNECTION_SHAPE } from "@/lib/connection-shapes";
+import { CREATED_EXCEPTION_REQUEST_CONNECTION_SHAPE } from "@/lib/connection-shapes-bookings";
 import { connectionJson, memberOnlySessionUser } from "@/lib/mcp-connection-request";
 import {
   dependantIdentitySpeaksOnBehalf,

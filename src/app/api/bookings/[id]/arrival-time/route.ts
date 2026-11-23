@@ -13,7 +13,7 @@ import { hasAdminAccess } from "@/lib/access-roles";
 import { hasAdminAreaAccess } from "@/lib/admin-permissions";
 import { ARRIVAL_TIME_ERROR_MESSAGE } from "@/lib/arrival-time";
 import { arrivalTimeUpdateSchema } from "@/lib/booking-detail-edit-schemas";
-import { ARRIVAL_TIME_CONNECTION_SHAPE } from "@/lib/connection-shapes";
+import { ARRIVAL_TIME_CONNECTION_SHAPE } from "@/lib/connection-shapes-bookings";
 import { connectionJson, memberOnlySessionUser } from "@/lib/mcp-connection-request";
 import { logAudit } from "@/lib/audit";
 import { getClientIp } from "@/lib/rate-limit";

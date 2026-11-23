@@ -8,7 +8,7 @@ import { hasAdminAccess } from "@/lib/access-roles";
 import { hasAdminAreaAccess } from "@/lib/admin-permissions";
 import { isMemberCancellableBookingStatus } from "@/lib/booking-cancel-eligibility";
 import { bookingNotesUpdateSchema } from "@/lib/booking-detail-edit-schemas";
-import { BOOKING_NOTE_CONNECTION_SHAPE } from "@/lib/connection-shapes";
+import { BOOKING_NOTE_CONNECTION_SHAPE } from "@/lib/connection-shapes-bookings";
 import { connectionJson, memberOnlySessionUser } from "@/lib/mcp-connection-request";
 
 /**

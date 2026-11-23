@@ -169,7 +169,7 @@ import { overCapacityNights } from "@/lib/over-capacity-confirmation";
 import { seasonYearOfStoredDate } from "@/lib/financial-year";
 import { storedDateOnly } from "@/lib/stored-calendar-day";
 import { bookingManagementAuthorizationRole } from "@/lib/admin-permissions";
-import { BOOKING_CHANGE_QUOTE_CONNECTION_SHAPE } from "@/lib/connection-shapes";
+import { BOOKING_CHANGE_QUOTE_CONNECTION_SHAPE } from "@/lib/connection-shapes-bookings";
 import { connectionJson, memberOnlySessionUser } from "@/lib/mcp-connection-request";
 import { findBookingMemberNightConflicts, getBookingMemberNightConflictResponse } from "@/lib/booking-member-night-conflicts";
 import { getMemberCreditBalance } from "@/lib/member-credit";

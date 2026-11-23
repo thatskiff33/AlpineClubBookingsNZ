@@ -24,7 +24,7 @@ import { newBookingExceptionRequestSchema } from "@/lib/booking-exception-reques
 import {
   CREATED_EXCEPTION_REQUEST_CONNECTION_SHAPE,
   MEMBER_EXCEPTION_REQUEST_LIST_CONNECTION_SHAPE,
-} from "@/lib/connection-shapes";
+} from "@/lib/connection-shapes-bookings";
 import { arrivesAsMcpConnection, connectionJson } from "@/lib/mcp-connection-request";
 
 /*

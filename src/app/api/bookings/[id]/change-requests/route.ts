@@ -47,7 +47,7 @@ import { finishedStayPromoCorrectionRequestResponse } from "@/lib/booking-change
 import {
   BOOKING_CHANGE_REQUEST_CONNECTION_SHAPE,
   BOOKING_CHANGE_REQUEST_LIST_CONNECTION_SHAPE,
-} from "@/lib/connection-shapes";
+} from "@/lib/connection-shapes-bookings";
 import {
   arrivesAsMcpConnection,
   connectionJson,

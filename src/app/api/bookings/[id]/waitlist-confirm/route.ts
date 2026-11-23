@@ -41,7 +41,7 @@ import { clubFormatValues } from "@/lib/club-format-server";
 import { postStoredBookingConfirmationLedgerLines } from "@/lib/booking-ledger-confirmation-sync";
 import { resolveBookingMoneyPostingContext, type BookingJournalContext } from "@/lib/member-money/doors";
 import { LOCK1_HOLDER_TRANSACTION_BUDGET } from "@/lib/db-transaction";
-import { WAITLIST_OFFER_ACCEPTED_CONNECTION_SHAPE } from "@/lib/connection-shapes";
+import { WAITLIST_OFFER_ACCEPTED_CONNECTION_SHAPE } from "@/lib/connection-shapes-bookings";
 import { arrivesAsMcpConnection, connectionJson } from "@/lib/mcp-connection-request";
 
 /**

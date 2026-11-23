@@ -3493,20 +3493,17 @@ verify_cron_registration() {
   assert_logs_contain_any \
     "$logs" \
     "finance sync registration" \
-    "Scheduled daily finance sync" \
-    "Finance sync cron registration skipped because the module is off"
+    "Scheduled daily finance sync"
 
   assert_logs_contain_any \
     "$logs" \
     "waitlist processor registration" \
-    "Scheduled waitlist processor" \
-    "Waitlist cron registration skipped because the module is off"
+    "Scheduled waitlist processor"
 
   assert_logs_contain_any \
     "$logs" \
     "Xero membership refresh registration" \
-    "Scheduled Xero membership refresh" \
-    "Xero cron registration skipped because the module is off" \
+    "Scheduled Xero membership safety-net refresh" \
     "Xero membership refresh disabled by XERO_ENABLE_DAILY_MEMBERSHIP_REFRESH"
 }
 

@@ -21,7 +21,7 @@ import { refundAppealRequestSchema } from "@/lib/refund-appeal-request";
 import {
   REFUND_APPEAL_CONNECTION_SHAPE,
   REFUND_APPEAL_LIST_CONNECTION_SHAPE,
-} from "@/lib/connection-shapes";
+} from "@/lib/connection-shapes-bookings";
 import {
   arrivesAsMcpConnection,
   connectionJson,

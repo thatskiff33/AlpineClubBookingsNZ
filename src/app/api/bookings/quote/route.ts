@@ -43,7 +43,7 @@ import {
   type NormalizedBookingGuestStayRange, normalizeGuestStayRanges,
 } from "@/lib/booking-guest-stay-range-input";
 import { bookingQuoteRequestSchema } from "@/lib/booking-quote-request";
-import { BOOKING_QUOTE_CONNECTION_SHAPE } from "@/lib/connection-shapes";
+import { BOOKING_QUOTE_CONNECTION_SHAPE } from "@/lib/connection-shapes-bookings";
 import { connectionJson, memberOnlySessionUser } from "@/lib/mcp-connection-request";
 import { bookingManagementAuthorizationRole } from "@/lib/admin-permissions";
 import { refuseOnBehalfUnlessBookingOfficer } from "@/lib/on-behalf-booking";

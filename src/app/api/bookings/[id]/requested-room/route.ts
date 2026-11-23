@@ -10,7 +10,7 @@ import {
 import { requireActiveSessionUser } from "@/lib/session-guards";
 import { transactionContendedResponse } from "@/lib/transaction-contended-response";
 import { requestedRoomUpdateSchema } from "@/lib/booking-detail-edit-schemas";
-import { REQUESTED_ROOM_CONNECTION_SHAPE } from "@/lib/connection-shapes";
+import { REQUESTED_ROOM_CONNECTION_SHAPE } from "@/lib/connection-shapes-bookings";
 import { connectionJson, memberOnlySessionUser } from "@/lib/mcp-connection-request";
 
 /*
