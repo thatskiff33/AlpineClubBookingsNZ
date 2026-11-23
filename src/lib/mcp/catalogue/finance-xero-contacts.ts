@@ -173,7 +173,7 @@ export const FINANCE_XERO_CONTACTS_MCP_ACTIONS: readonly McpAction[] = [
     id: "list_xero_duplicate_contacts",
     title: "List duplicate Xero contacts",
     summary:
-      "Scans every Xero contact for ones sharing an email address and answers with each group's contacts by name, with invoice counts and the member each is linked to, and whether the group's members could form a family group. The shared address is not returned. Reads Xero live, so it can be slow and uses the club's daily Xero allowance; merging happens in Xero.",
+      "Scans every Xero contact for ones sharing an email address and answers with each group's contacts by name, with invoice counts and the member each is linked to, and whether the group's members could form a family group. The shared address is not returned. Reads Xero live, so it can be slow and uses the club's daily Xero allowance: each officer may run at most ten scans an hour. Merging happens in Xero.",
     method: "GET",
     path: "/api/admin/xero/duplicate-contacts",
     kind: "read",

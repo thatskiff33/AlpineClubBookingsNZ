@@ -60,7 +60,7 @@ vi.mock("@/lib/logger", () => ({ default: { error: vi.fn(), warn: vi.fn(), info:
 vi.mock("@/lib/audit", () => ({ logAudit: h.logAudit, createAuditLog: h.createAuditLog }));
 vi.mock("@/lib/rate-limit", () => ({
   checkRateLimit: h.checkRateLimit,
-  rateLimitedResponse: vi.fn(),
+  rateLimitedResponse: vi.fn(() => new Response("Too many requests", { status: 429 })),
   getClientIp: vi.fn(() => "203.0.113.9"),
 }));
 vi.mock("@/lib/club-time/server", () => ({ clubTimeZone: vi.fn(async () => "Pacific/Auckland") }));
@@ -578,6 +578,19 @@ describe("list_xero_duplicate_contacts", () => {
     });
     expect(JSON.stringify(connection)).not.toMatch(WITHHELD);
     expect(browser).toEqual(RESULT);
+    expect(h.checkRateLimit).toHaveBeenCalledWith(
+      expect.objectContaining({ id: "xero-duplicate-contacts-scan", limit: 10 }),
+      "treasurer-1",
+    );
+  });
+
+  it("refuses an officer over the scan limit before it reads Xero", async () => {
+    h.checkRateLimit.mockResolvedValue({ success: false });
+    const response = await listDuplicateContacts(
+      new NextRequest("https://club.example.test/api/admin/xero/duplicate-contacts"),
+    );
+    expect(response.status).toBe(429);
+    expect(h.findDuplicateContacts).not.toHaveBeenCalled();
   });
 });
 

@@ -43,9 +43,6 @@ const FINANCE_SYNC_XERO_PROFIT_AND_LOSS_BY_MONTH_BACKFILL_DATASET_KEY =
 const FINANCE_SYNC_XERO_BALANCE_SHEET_BY_MONTH_BACKFILL_DATASET_KEY =
   "xero-balance-sheet-by-month-backfill";
 
-// The chunk limit's default lives with the request schema the route reads (ALP-721).
-export { DEFAULT_FINANCE_BACKFILL_MAX_CHUNKS };
-
 export interface BackfillFinanceMonthlyFactsInput {
   requestedByMemberId?: string | null;
   /**

@@ -319,6 +319,10 @@ describe("request_credit_adjustment", () => {
     );
   });
 
+  it("is destructive: the requester cannot withdraw it from the app", () => {
+    expect(findMcpAction("request_credit_adjustment")!.kind).toBe("destructive");
+  });
+
   it("refuses a fractional amount before the route sees it", () => {
     const schema = mcpActionInputSchema(findMcpAction("request_credit_adjustment")!);
     expect(schema.safeParse({ ...ARGS, amountCents: 25.5 }).success).toBe(false);

@@ -258,8 +258,8 @@ or applies money, may post a document to Xero, or closes an item for good is
 | `list_payments` | One page of booking payments with the filtered totals | read | `GET /api/admin/payments` |
 | `list_credit_adjustment_requests` | Manual credit adjustments waiting for, or given, a second officer's decision | read | `GET /api/admin/credit-approvals` |
 | `get_member_credits` | One member's credit balance, ledger and pending requests | read | `GET /api/admin/members/[id]/credits` |
-| `request_credit_adjustment` | Asks for a manual credit change in cents; nothing changes until another officer approves | write | `POST /api/admin/members/[id]/credits` |
-| `review_credit_adjustment` | Approves or rejects one; the requester cannot approve their own | destructive | `PATCH /api/admin/members/[id]/credits/[requestId]` |
+| `request_credit_adjustment` | Asks for a manual credit change in cents; nothing changes until another officer approves, and the requester cannot withdraw it | destructive | `POST /api/admin/members/[id]/credits` |
+| `review_credit_adjustment` | Approves or rejects one; the requester cannot decide their own | destructive | `PATCH /api/admin/members/[id]/credits/[requestId]` |
 | `list_opening_credit_batches` | The opening-credit batches posted so far | read | `GET /api/admin/opening-credits` |
 | `generate_payment_invoice` | Raises the missing Xero invoice for a payment | destructive | `POST /api/admin/payments/[id]/generate-invoice` |
 | `answer_bank_refund_void` | Records what an officer did about a voided bank refund note | destructive | `POST /api/admin/payments/bank-refund-voids/[id]/answered` |

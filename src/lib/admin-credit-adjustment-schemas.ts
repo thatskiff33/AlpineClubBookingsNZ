@@ -44,7 +44,7 @@ export const adminCreditAdjustmentReviewParamsSchema = z.object({
 });
 
 /** The review queue's filter (`GET /api/admin/credit-approvals`). */
-export const ADMIN_CREDIT_APPROVAL_STATUSES = ["PENDING", "APPROVED", "REJECTED", "ALL"] as const;
+const ADMIN_CREDIT_APPROVAL_STATUSES = ["PENDING", "APPROVED", "REJECTED", "ALL"] as const;
 
 /**
  * `status` is read case-insensitively and anything else, or nothing, lists the

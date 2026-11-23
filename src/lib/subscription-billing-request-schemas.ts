@@ -16,7 +16,7 @@ import { seasonYearQuerySchema, seasonYearSchema } from "@/lib/season-year-range
 export const FAMILY_INVOICED_NOTE_MAX = 500;
 
 /** How a family's subscriptions are invoiced, club-wide (#159). */
-export const FAMILY_BILLING_MODES = [
+const FAMILY_BILLING_MODES = [
   "BILL_FAMILY_VIA_BILLING_MEMBER",
   "BILL_MEMBERS_INDIVIDUALLY",
 ] as const satisfies readonly FamilyBillingMode[];

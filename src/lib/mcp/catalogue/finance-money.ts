@@ -100,12 +100,12 @@ export const FINANCE_MONEY_MCP_ACTIONS: readonly McpAction[] = [
     id: "request_credit_adjustment",
     title: "Request a credit adjustment",
     summary:
-      `Asks for a manual change to one member's account credit, in integer cents: positive adds credit and must name \`grantAccount\` (${ADMIN_CREDIT_GRANT_ACCOUNTS.map((account) => `\`${account}\``).join(" or ")}), negative deducts and names none. Nothing changes until a different officer approves it. \`idempotencyKey\` is a new UUID for each request; sending the same one again does not make a second request.`,
+      `Asks for a manual change to one member's account credit, in integer cents: positive adds credit and must name \`grantAccount\` (${ADMIN_CREDIT_GRANT_ACCOUNTS.map((account) => `\`${account}\``).join(" or ")}), negative deducts and names none. Nothing changes until a different officer approves it, and the requester can neither withdraw, approve nor reject it, so it cannot be undone from the app. \`idempotencyKey\` is a new UUID for each request; sending the same one again does not make a second request.`,
     method: "POST",
     path: "/api/admin/members/[id]/credits",
     params: recordIdParamsSchema,
     body: adminCreditAdjustmentRequestSchema,
-    kind: "write",
+    kind: "destructive",
     returns: CREDIT_ADJUSTMENT_REQUESTED_CONNECTION_SHAPE,
     core: false,
   },
@@ -137,7 +137,7 @@ export const FINANCE_MONEY_MCP_ACTIONS: readonly McpAction[] = [
     id: "review_credit_adjustment",
     title: "Approve or reject a credit adjustment",
     summary:
-      "Decides a pending manual credit adjustment: `decision` is `APPROVE` or `REJECT`. `id` is the member and `requestId` the request (from `list_credit_adjustment_requests`). Approving applies the amount to the member's account credit straight away and cannot be undone from the app; a correction is a new request. The officer who asked for an adjustment cannot approve it: a different officer must. Answers with the member's balance afterwards, in integer cents.",
+      "Decides a pending manual credit adjustment: `decision` is `APPROVE` or `REJECT`. `id` is the member and `requestId` the request (from `list_credit_adjustment_requests`). Approving applies the amount to the member's account credit straight away and cannot be undone from the app; a correction is a new request. The officer who asked for an adjustment can neither approve nor reject it: a different officer must. Answers with the member's balance afterwards, in integer cents.",
     method: "PATCH",
     path: "/api/admin/members/[id]/credits/[requestId]",
     params: adminCreditAdjustmentReviewParamsSchema,
