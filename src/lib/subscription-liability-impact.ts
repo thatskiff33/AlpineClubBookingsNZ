@@ -10,12 +10,20 @@ import {
   type SubscriptionLiabilitySettings,
 } from "@/lib/policies/subscription";
 import { memberDisplayName } from "@/lib/member-serialization";
+import { SUBSCRIPTION_BILLING_POPULATION_WHERE } from "@/lib/subscription-billing-population";
+import {
+  isUntouchedNotRequiredRow,
+  SEASON_ROW_STATE_SELECT,
+  type SeasonRowState,
+} from "@/lib/subscription-season-row-note";
 
 /**
  * What choosing a subscription-liability rule would change (#5190), read-only.
  *
  * Before a club opts in, an officer needs to see who the choice affects. For a
- * proposed pair this compares, for every current member, today's answers —
+ * proposed pair this compares, for every member in the billing population
+ * (`SUBSCRIPTION_BILLING_POPULATION_WHERE`: active, not archived — whom the
+ * billing run considers), today's answers —
  * billing's and booking access's, which may differ only while the club is
  * `NOT_CHOSEN` — with the one answer both sides would give afterwards:
  *
@@ -26,9 +34,10 @@ import { memberDisplayName } from "@/lib/member-serialization";
  *    already hold (an officer may want to void it);
  *  - `staleRecords`: their season row says "Not required" and nothing has
  *    billed, paid, covered or marked it, but the proposed rule says they owe —
- *    the current members' rows the clear-up (`clearStaleNotRequiredRows`)
- *    would flip. The clear-up also flips archived and cancelled members'
- *    rows, which this list leaves out: it covers current members only.
+ *    the billing population's rows the clear-up (`clearStaleNotRequiredRows`)
+ *    would flip. The clear-up also flips the rows of members outside it
+ *    (inactive or archived), whom billing never considers; this list leaves
+ *    them out, and the clear-up's audit row names them.
  *
  * Every answer comes from the shared rule (`resolveMemberSubscriptionLiability`)
  * with the same inputs billing and the booking gates read; nothing here is a
@@ -60,13 +69,8 @@ export interface LiabilityImpactFacts {
   name: string;
   subscriptionBehavior: Parameters<typeof resolveMemberSubscriptionLiability>[0]["subscriptionBehavior"];
   member: { ageTier: AgeTier; dateOfBirth: Date | null };
-  seasonRow: {
-    status: SubscriptionStatus;
-    xeroInvoiceId: string | null;
-    xeroInvoiceNumber: string | null;
-    manuallyMarkedPaidAt: Date | null;
-    hasActiveCoverage: boolean;
-  } | null;
+  /** Read with `SEASON_ROW_STATE_SELECT`, plus the invoice number. */
+  seasonRow: (SeasonRowState & { xeroInvoiceNumber: string | null }) | null;
 }
 
 const UNPAID_INVOICE_STATUSES: ReadonlySet<SubscriptionStatus> = new Set(["UNPAID", "OVERDUE"]);
@@ -122,15 +126,12 @@ export function classifyLiabilityImpact(input: {
         });
       }
     }
-    const row = facts.seasonRow;
-    // As the clear-up: a member whose type cannot be resolved is left alone.
+    // As the clear-up: the same untouched-row test, and a member whose type
+    // cannot be resolved is left alone.
     if (
       after &&
       facts.subscriptionBehavior != null &&
-      row?.status === "NOT_REQUIRED" &&
-      row.xeroInvoiceId === null &&
-      row.manuallyMarkedPaidAt === null &&
-      !row.hasActiveCoverage
+      isUntouchedNotRequiredRow(facts.seasonRow)
     ) {
       impact.staleRecords.push({ memberId: facts.memberId, name: facts.name });
     }
@@ -149,7 +150,7 @@ type ImpactReadDb = Pick<
 >;
 
 /**
- * Read every current (not archived, not cancelled) member's facts for the season
+ * Read every billing-population member's facts for the season
  * and classify them. Read-only, and strict: a failed settings read rejects
  * rather than comparing against a default.
  */
@@ -162,7 +163,8 @@ export async function buildSubscriptionLiabilityImpact(
     loadMembershipLockoutSettingsStrict(db),
     getAgeTierSettingsStrict(db),
     db.member.findMany({
-      where: { archivedAt: null, cancelledAt: null },
+      // The members billing considers, as the billing preview reads them.
+      where: { ...SUBSCRIPTION_BILLING_POPULATION_WHERE },
       select: {
         id: true,
         firstName: true,
@@ -172,13 +174,7 @@ export async function buildSubscriptionLiabilityImpact(
         subscriptions: {
           where: { seasonYear },
           take: 1,
-          select: {
-            status: true,
-            xeroInvoiceId: true,
-            xeroInvoiceNumber: true,
-            manuallyMarkedPaidAt: true,
-            chargeCoverage: { where: { releasedAt: null }, take: 1, select: { id: true } },
-          },
+          select: { ...SEASON_ROW_STATE_SELECT, xeroInvoiceNumber: true },
         },
       },
       orderBy: [{ lastName: "asc" }, { firstName: "asc" }, { id: "asc" }],
@@ -203,15 +199,7 @@ export async function buildSubscriptionLiabilityImpact(
         name: memberDisplayName(member),
         subscriptionBehavior: policies.get(member.id)?.subscriptionBehavior,
         member,
-        seasonRow: row
-          ? {
-              status: row.status,
-              xeroInvoiceId: row.xeroInvoiceId,
-              xeroInvoiceNumber: row.xeroInvoiceNumber,
-              manuallyMarkedPaidAt: row.manuallyMarkedPaidAt,
-              hasActiveCoverage: row.chargeCoverage.length > 0,
-            }
-          : null,
+        seasonRow: row ?? null,
       };
     }),
   });

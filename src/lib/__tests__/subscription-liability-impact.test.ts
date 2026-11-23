@@ -46,7 +46,7 @@ function facts(
       xeroInvoiceId: null,
       xeroInvoiceNumber: null,
       manuallyMarkedPaidAt: null,
-      hasActiveCoverage: false,
+      chargeCoverage: [],
       ...seasonRow,
     },
   };
@@ -93,7 +93,7 @@ describe("classifyLiabilityImpact (#5190)", () => {
     const members = [
       facts("adult", "REQUIRED", "ADULT", { status: "PAID" }),
       facts("life", "NOT_REQUIRED", "ADULT", { status: "NOT_REQUIRED" }),
-      facts("covered", "BASED_ON_AGE_TIER", "YOUTH", { status: "NOT_REQUIRED", hasActiveCoverage: true }),
+      facts("covered", "BASED_ON_AGE_TIER", "YOUTH", { status: "NOT_REQUIRED", chargeCoverage: [{ id: "claim" }] }),
       facts("invoiced", "BASED_ON_AGE_TIER", "YOUTH", { status: "NOT_REQUIRED", xeroInvoiceId: "x" }),
       facts("marked", "BASED_ON_AGE_TIER", "YOUTH", { status: "NOT_REQUIRED", manuallyMarkedPaidAt: new Date() }),
     ];
