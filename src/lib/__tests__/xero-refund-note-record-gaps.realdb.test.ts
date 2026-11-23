@@ -64,9 +64,6 @@ let prisma: (typeof import("@/lib/prisma"))["prisma"];
   () => {
     async function clearRun() {
       const ops = await prisma.xeroSyncOperation.findMany({ where: { localModel: "Payment", localId: PAYMENT_ID }, select: { id: true } });
-      // #5407: notifyXeroSyncError now holds its window in AlertCooldown, and the clock is
-      // frozen, so a claim one test leaves would suppress the next test's alert.
-      await prisma.alertCooldown.deleteMany({ where: { key: (await import("@/lib/xero-error-alert")).XERO_SYNC_ERROR_ALERT_COOLDOWN_KEY } });
       await prisma.alertCooldown.deleteMany({ where: { key: { in: ops.flatMap((op) => [`xero-success-after-resolution:${op.id}:${NOTE}`, `xero-success-after-resolution:${op.id}`]) } } });
       await prisma.bookingLedgerLine.deleteMany({ where: { bookingId: BOOKING_ID } });
       await prisma.bookingEvent.deleteMany({ where: { bookingId: BOOKING_ID } });

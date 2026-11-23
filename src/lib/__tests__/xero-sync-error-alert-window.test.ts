@@ -47,7 +47,8 @@ vi.mock("@/lib/logger", () => ({
   default: { error: mocks.loggerError, info: mocks.loggerInfo, warn: vi.fn(), debug: vi.fn() },
 }));
 
-import { notifyXeroSyncError, XERO_SYNC_ERROR_ALERT_COOLDOWN_KEY } from "@/lib/xero-error-alert";
+import { notifyXeroSyncError } from "@/lib/xero-error-alert";
+import { XERO_SYNC_ERROR_ALERT_COOLDOWN_KEY } from "@/lib/xero-sync-error-alert-key";
 
 const HOUR_MS = 60 * 60 * 1000;
 const DAY_MS = 24 * HOUR_MS;

@@ -243,9 +243,6 @@ let observerClient: PrismaClient;
      * handed the induction baseline (#2361) a fifth "eligible" member.
      */
     async function clearReviewRunState() {
-      // #5407: notifyXeroSyncError now holds its window in AlertCooldown, and the clock is
-      // frozen, so a claim one test leaves would suppress the next test's alert.
-      await prisma.alertCooldown.deleteMany({ where: { key: (await import("@/lib/xero-error-alert")).XERO_SYNC_ERROR_ALERT_COOLDOWN_KEY } });
       await prisma.memberCredit.deleteMany({
         where: { sourceBookingModificationId: MODIFICATION_ID },
       });

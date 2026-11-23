@@ -2,13 +2,7 @@ import { sendAdminXeroSyncErrorAlert } from "./email";
 import logger from "@/lib/logger";
 import { sendAdminAlertOncePerWindow } from "@/lib/admin-alert-window";
 import { redactSensitiveText } from "@/lib/redact-sensitive-json";
-
-/**
- * The one `AlertCooldown` key holding the sync error alert's hourly window
- * (#5407 item 37). One key for every error type and operation, so the limit
- * stays what it always was: one alert an hour across all Xero errors.
- */
-export const XERO_SYNC_ERROR_ALERT_COOLDOWN_KEY = "xero-sync-error";
+import { XERO_SYNC_ERROR_ALERT_COOLDOWN_KEY } from "@/lib/xero-sync-error-alert-key";
 
 const XERO_SYNC_ERROR_ALERT_WINDOW_MS = 60 * 60 * 1000;
 
