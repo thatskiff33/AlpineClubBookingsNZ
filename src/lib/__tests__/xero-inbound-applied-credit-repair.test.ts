@@ -468,6 +468,93 @@ describe("provider-aware inbound applied-credit repair", () => {
       );
     });
   });
+
+  describe("descriptions the repair leaves in place (#5407 item 40)", () => {
+    // booking-1's built description; the election appends its price source.
+    const BUILT = "Applied to booking booking-";
+    const ELECTION = `${BUILT}; price source STORED_BUILD_UP (stored build-up matched the booking)`;
+    const replayState = () => {
+      h.linkFindMany.mockResolvedValue([{ metadata: { creditNoteId: "cn-1", invoiceId: "invoice-1", amountCents: 3000 } }]);
+      h.allocationAggregate.mockResolvedValue({ _sum: { amountCents: 0 } });
+      h.memberCreditAggregate.mockReset();
+      h.memberCreditAggregate.mockResolvedValue({ _sum: { amountCents: 0 } });
+    };
+    const loneLinkedRow = (description: string) =>
+      h.memberCreditFindMany.mockResolvedValue([
+        { id: "applied", amountCents: -3000, description, xeroCreditNoteId: "cn-1", outsideSpendConvergedAt: null },
+      ]);
+    const descriptionWrites = () =>
+      [...h.memberCreditUpdate.mock.calls, ...h.memberCreditUpdateMany.mock.calls].filter(
+        ([args]) => (args as { data?: { description?: string } }).data?.description !== undefined,
+      );
+
+    it("leaves the built description untouched", async () => {
+      replayState();
+      loneLinkedRow(BUILT);
+
+      await repairAccountCreditAllocationBusinessState("cn-1", []);
+
+      expect(descriptionWrites()).toEqual([]);
+    });
+
+    it("leaves the credit election's description, price source and all, untouched", async () => {
+      replayState();
+      loneLinkedRow(ELECTION);
+
+      await repairAccountCreditAllocationBusinessState("cn-1", []);
+
+      expect(descriptionWrites()).toEqual([]);
+    });
+
+    it.each([
+      ["free text", "stale"],
+      ["the built text without the separator", `${BUILT}price source x`],
+      // Today's behaviour, kept: a row naming another booking is rewritten to this one's.
+      ["another booking's description", "Applied to booking other-bo"],
+      ["another booking's election description", "Applied to booking other-bo; price source X (y)"],
+    ])("still rewrites %s to the built description", async (_label, description) => {
+      replayState();
+      loneLinkedRow(description);
+
+      await repairAccountCreditAllocationBusinessState("cn-1", []);
+
+      expect(h.memberCreditUpdate).toHaveBeenCalledWith({ where: { id: "applied" }, data: { description: BUILT } });
+    });
+
+    it("rewrites only the stale rows among several linked rows, keeping the election's", async () => {
+      replayState();
+      h.memberCreditFindMany.mockResolvedValue([
+        { id: "election", amountCents: -3000, description: ELECTION, xeroCreditNoteId: "cn-1", outsideSpendConvergedAt: null },
+        { id: "offset", amountCents: 3000, description: "stale", xeroCreditNoteId: "cn-1", outsideSpendConvergedAt: null },
+      ]);
+
+      await repairAccountCreditAllocationBusinessState("cn-1", []);
+
+      expect(h.memberCreditUpdateMany).toHaveBeenCalledWith({
+        where: { id: { in: ["offset"] } },
+        data: { description: BUILT },
+      });
+    });
+
+    it.each([
+      ["keeps the election's description", ELECTION, {}],
+      ["rewrites a stale description", "stale", { description: BUILT }],
+    ])("links an unlinked exact row to the note and %s", async (_label, description, descriptionWrite) => {
+      h.allocationAggregate.mockResolvedValue({ _sum: { amountCents: 3000 } });
+      h.memberCreditAggregate.mockReset();
+      h.memberCreditAggregate.mockResolvedValue({ _sum: { amountCents: -3000 } });
+      h.memberCreditFindMany.mockResolvedValue([
+        { id: "unlinked", amountCents: -3000, description, xeroCreditNoteId: null, outsideSpendConvergedAt: null },
+      ]);
+
+      await repairAccountCreditAllocationBusinessState("cn-1", [{ invoiceId: "invoice-1", amountCents: 3000 }]);
+
+      expect(h.memberCreditUpdate).toHaveBeenCalledWith({
+        where: { id: "unlinked" },
+        data: { xeroCreditNoteId: "cn-1", ...descriptionWrite },
+      });
+    });
+  });
 });
 
 
