@@ -418,3 +418,42 @@ describe("membership lockout settings route: who may choose the liability rule (
     expect(mocks.upsert.mock.calls[0]?.[0]?.update).toMatchObject({ mode: "NO_BLOCK" });
   });
 });
+
+describe("membership lockout settings route: contention (#5190 review)", () => {
+  beforeEach(() => {
+    setUpMocks();
+    mocks.requireAdmin.mockResolvedValue({ ok: true, session: liabilitySession });
+  });
+
+  const contention = (code: string) => Object.assign(new Error(code), { code });
+
+  it.each(["P2028", "P2034"])(
+    "answers a chosen-rule save's %s with 503 and writes no audit row",
+    async (code) => {
+      mocks.transaction.mockRejectedValueOnce(contention(code));
+      const response = await putLockoutSettings(
+        request({ requiredTypeAgeRule: "ALWAYS_OWES", liabilityAgeSource: "SEASON_START" }),
+      );
+      expect(response.status).toBe(503);
+      expect((await response.json()).error).toMatch(/try again/i);
+      expect(mocks.auditLogCreate).not.toHaveBeenCalled();
+      expect(mocks.refreshFinancialYearConfig).not.toHaveBeenCalled();
+    },
+  );
+
+  it("answers the singleton create race (P2002) on a plain save with 503", async () => {
+    mocks.upsert.mockRejectedValueOnce(contention("P2002"));
+    const response = await putLockoutSettings(request({ mode: "NO_BLOCK" }));
+    expect(response.status).toBe(503);
+    expect(mocks.auditLogCreate).not.toHaveBeenCalled();
+  });
+
+  it("rethrows anything else", async () => {
+    mocks.transaction.mockRejectedValueOnce(new Error("boom"));
+    await expect(
+      putLockoutSettings(
+        request({ requiredTypeAgeRule: "ALWAYS_OWES", liabilityAgeSource: "SEASON_START" }),
+      ),
+    ).rejects.toThrow("boom");
+  });
+});

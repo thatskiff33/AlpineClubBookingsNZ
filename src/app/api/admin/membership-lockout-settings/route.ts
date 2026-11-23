@@ -22,6 +22,8 @@ import {
   getSubscriptionItemCodes,
 } from "@/lib/xero-mappings";
 import { prisma } from "@/lib/prisma";
+import { isSingletonUpsertContention } from "@/lib/prisma-errors";
+import logger from "@/lib/logger";
 import { requireAdmin } from "@/lib/session-guards";
 import { clubTimeZone } from "@/lib/club-time/server";
 import { clubSeasonYear } from "@/lib/financial-year";
@@ -196,11 +198,28 @@ export async function PUT(request: NextRequest) {
   // #5190: a save that leaves the club on a chosen rule also runs the stale-row
   // clear-up, in the same transaction (`saveLockoutSettings`).
   const seasonYear = clubSeasonYear(await clubTimeZone());
-  const { record, clearedStaleRows } = await saveLockoutSettings(prisma, {
-    data,
-    liabilityAfterSave: liabilityChoice ?? stored,
-    seasonYear,
-  });
+  let saved: Awaited<ReturnType<typeof saveLockoutSettings>>;
+  try {
+    saved = await saveLockoutSettings(prisma, {
+      data,
+      liabilityAfterSave: liabilityChoice ?? stored,
+      seasonYear,
+    });
+  } catch (error) {
+    // P2002 counts as contention for this writer: the save writes the
+    // constant-id settings row (whose create arm loses to a concurrent save's
+    // create) and, in its transaction, only status updates to season rows,
+    // which no unique constraint covers. P2028/P2034: the transaction waited
+    // out its budget on the season key or the settings row, or deadlocked. In
+    // every case nothing was committed, so the caller may simply retry.
+    if (!isSingletonUpsertContention(error)) throw error;
+    logger.warn({ err: error }, "Membership lockout settings save hit write contention");
+    return NextResponse.json(
+      { error: "Another update is in progress — try again shortly." },
+      { status: 503 }
+    );
+  }
+  const { record, clearedStaleRows } = saved;
 
   // Reseed the financial-year cache so the change takes effect immediately on
   // this instance.
