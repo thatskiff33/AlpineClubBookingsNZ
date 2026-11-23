@@ -23,23 +23,43 @@ vi.mock("@/lib/email", () => ({ sendWaitlistOfferExpiredEmail: send.expired }));
 vi.mock("@/lib/email/admin-alerts-waitlist-notice-unsent", () => ({ sendAdminWaitlistNoticeUnsentAlert: send.unsent }));
 vi.mock("@/lib/waitlist-queue", () => ({ getWaitlistPositionOf: send.position }));
 vi.mock("@/lib/club-time-zone-runtime", () => ({ readClubTimeZoneOutsideRequest: async () => "Pacific/Auckland" }));
-vi.mock("@/lib/owed-notice/past-cutoff-once", async (importOriginal) => ({
-  ...((await importOriginal()) as typeof import("@/lib/owed-notice/past-cutoff-once")),
-  alertOfficersOncePastCutoff: async (_marker: unknown, { send: sendAlert }: { send: () => Promise<unknown> }) => {
-    await sendAlert();
-    return "settled";
-  },
-}));
+// The once-ever claim as a set of claimed keys: the first caller for a key
+// sends and keeps it, a later one finds it held and sends nothing. The real
+// claim is proved in owed-notice-past-cutoff-once.test.ts; what this suite
+// proves is which key each path claims.
+const claimed = vi.hoisted(() => new Set<string>());
+vi.mock("@/lib/owed-notice/past-cutoff-once", async (importOriginal) => {
+  const real = (await importOriginal()) as typeof import("@/lib/owed-notice/past-cutoff-once");
+  return {
+    ...real,
+    alertOfficersOncePastCutoff: async (marker: { id: string }, { send: sendAlert }: { send: () => Promise<unknown> }) => {
+      const key = real.pastCutoffAlertKey(marker);
+      if (claimed.has(key)) return "settled";
+      claimed.add(key);
+      await sendAlert();
+      return "settled";
+    },
+  };
+});
 vi.mock("@/lib/logger", () => ({ default: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() } }));
 
 import { sweepOwedNotice } from "@/lib/owed-notice/deliver";
 import { owedNoticeMarker, type OwedNoticeMarker } from "@/lib/owed-notice/store";
 import {
-  deliverWaitlistOfferExpiredNotice,
-  recordWaitlistOfferExpiredNoticesOwed,
-  WAITLIST_OFFER_EXPIRED_NOTICE_DELIVERER as EXPIRED,
+  deliverWaitlistLapseNotice,
+  recordWaitlistLapseNoticesOwed,
+  WAITLIST_LAPSE_NOTICE_DELIVERERS,
 } from "@/lib/waitlist-offer-expired-notice";
-import { WAITLIST_NOTICE_SWEEP_AFTER_MS } from "@/lib/waitlist-offer-notices";
+import {
+  WAITLIST_NOTICE_SWEEP_AFTER_MS,
+  WAITLIST_OFFER_NOTICE_DELIVERERS,
+  waitlistOfferMemberMarker,
+} from "@/lib/waitlist-offer-notices";
+
+const [EXPIRED, UNTOLD] = WAITLIST_LAPSE_NOTICE_DELIVERERS as [
+  (typeof WAITLIST_LAPSE_NOTICE_DELIVERERS)[number],
+  (typeof WAITLIST_LAPSE_NOTICE_DELIVERERS)[number],
+];
 
 const HOUR = 60 * 60 * 1000;
 const NOW = new Date("2026-07-01T00:00:00.000Z");
@@ -71,11 +91,12 @@ function ref(target: OwedNoticeMarker) {
   };
 }
 
-const sweep = (handle: ReturnType<typeof ref>, now = NOW) =>
-  sweepOwedNotice(EXPIRED, handle, new Date(now.getTime() - WAITLIST_NOTICE_SWEEP_AFTER_MS), now, "test-sweep");
+const sweep = (handle: ReturnType<typeof ref>, now = NOW, deliverer = EXPIRED) =>
+  sweepOwedNotice(deliverer, handle, new Date(now.getTime() - WAITLIST_NOTICE_SWEEP_AFTER_MS), now, "test-sweep");
 
 beforeEach(() => {
   vi.clearAllMocks();
+  claimed.clear();
   db.bookingFindUnique.mockResolvedValue(bookingRow());
   db.owedNoticeUpdateMany.mockResolvedValue({ count: 1 });
   db.owedNoticeDeleteMany.mockResolvedValue({ count: 1 });
@@ -87,7 +108,7 @@ beforeEach(() => {
 describe("the offer-expired notice (#5433 WL-2)", () => {
   it("records one marker per lapse in one insert, keyed and stamped by the lapse's time", async () => {
     const createMany = vi.fn().mockResolvedValue({ count: 2 });
-    await recordWaitlistOfferExpiredNoticesOwed({ owedNotice: { createMany } } as never, [
+    await recordWaitlistLapseNoticesOwed({ owedNotice: { createMany } } as never, [
       { bookingId: "a", expiredAt: EXPIRED_AT },
       { bookingId: "b", expiredAt: EXPIRED_AT },
     ]);
@@ -99,7 +120,7 @@ describe("the offer-expired notice (#5433 WL-2)", () => {
   });
 
   it("straight after the revert sends the position the revert worked out, with the lapse's key, and clears the marker", async () => {
-    await deliverWaitlistOfferExpiredNotice(
+    await deliverWaitlistLapseNotice(
       {
         bookingId: "booking1",
         status: "WAITLISTED",
@@ -151,5 +172,82 @@ describe("the offer-expired notice (#5433 WL-2)", () => {
     expect(send.unsent).toHaveBeenCalledWith(expect.objectContaining({ notice: "offer-expired", bookingId: "booking1" }));
     expect(send.expired).not.toHaveBeenCalled();
     expect(handle.settle).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("a never-told lapse alerts the officers once (#5433 owner decision D5)", () => {
+  const OFFERED_AT = new Date(NOW.getTime() - 60 * HOUR);
+  const lapse = { bookingId: "booking1", expiredAt: EXPIRED_AT, untoldOfferedAt: OFFERED_AT };
+  const untold = owedNoticeMarker({
+    kind: "waitlist-offer-lapsed-untold",
+    subjectId: "booking1",
+    eventAt: EXPIRED_AT,
+    payload: { offeredAtMs: OFFERED_AT.getTime() },
+  });
+  const notice = {
+    bookingId: "booking1",
+    status: "WAITLISTED" as const,
+    checkIn: new Date("2026-09-01T00:00:00.000Z"),
+    checkOut: new Date("2026-09-03T00:00:00.000Z"),
+    recipientMemberId: "m1",
+    email: "ada@example.test",
+    firstName: "Ada",
+    memberName: "Ada Proof",
+    lodgeId: "lodge-1",
+    position: 2,
+  };
+  /** What the offer email's own past-cut-off step does for this offer (its member marker). */
+  const offerEmailPastCutoff = () =>
+    WAITLIST_OFFER_NOTICE_DELIVERERS[0]!.pastCutoff!(notice as never, waitlistOfferMemberMarker("booking1", OFFERED_AT));
+
+  it("records the officers' kind, with the offer's time in its payload, in place of the member's email, in the same insert", async () => {
+    const createMany = vi.fn().mockResolvedValue({ count: 2 });
+    await recordWaitlistLapseNoticesOwed({ owedNotice: { createMany } } as never, [lapse, { bookingId: "told", expiredAt: EXPIRED_AT }]);
+    expect(createMany).toHaveBeenCalledTimes(1);
+    expect(createMany.mock.calls[0]![0].data).toEqual([
+      expect.objectContaining({ id: untold.id, kind: "waitlist-offer-lapsed-untold", payload: { offeredAtMs: OFFERED_AT.getTime() } }),
+      expect.objectContaining({ id: `waitlist-offer-expired:told:${EXPIRED_AT.getTime()}`, kind: "waitlist-offer-expired" }),
+    ]);
+  });
+
+  it("straight after the revert alerts the officers with the lapsed-untold wording, sends the member nothing, and clears the marker", async () => {
+    await deliverWaitlistLapseNotice(notice, lapse);
+    expect(send.unsent).toHaveBeenCalledTimes(1);
+    expect(send.unsent).toHaveBeenCalledWith(
+      expect.objectContaining({ notice: "offer-lapsed-untold", bookingId: "booking1", memberName: "Ada Proof" }),
+    );
+    expect(send.expired).not.toHaveBeenCalled();
+    expect(db.owedNoticeDeleteMany).toHaveBeenCalledTimes(1);
+  });
+
+  it("from the sweep alerts once, and a second sweep of the same marker sends nothing more", async () => {
+    await expect(sweep(ref(untold), NOW, UNTOLD)).resolves.toBe("delivered");
+    await expect(sweep(ref(untold), NOW, UNTOLD)).resolves.toBe("delivered");
+    expect(send.unsent).toHaveBeenCalledTimes(1);
+  });
+
+  it("sends nothing when the offer email's past-cut-off step already alerted for this offer", async () => {
+    await offerEmailPastCutoff();
+    expect(send.unsent).toHaveBeenCalledTimes(1);
+    await expect(sweep(ref(untold), NOW, UNTOLD)).resolves.toBe("delivered");
+    expect(send.unsent).toHaveBeenCalledTimes(1);
+  });
+
+  it("leaves nothing for the offer email's past-cut-off step to send once the lapse alerted", async () => {
+    await expect(sweep(ref(untold), NOW, UNTOLD)).resolves.toBe("delivered");
+    await offerEmailPastCutoff();
+    expect(send.unsent).toHaveBeenCalledTimes(1);
+  });
+
+  it("clears without alerting once the member is re-offered, confirmed or cancelled", async () => {
+    db.bookingFindUnique.mockResolvedValue(bookingRow({ status: "WAITLIST_OFFERED" }));
+    await expect(sweep(ref(untold), NOW, UNTOLD)).resolves.toBe("cleared");
+    expect(send.unsent).not.toHaveBeenCalled();
+  });
+
+  it("clears, alerting nobody, a marker whose offer time cannot be read", async () => {
+    const unreadable = owedNoticeMarker({ kind: "waitlist-offer-lapsed-untold", subjectId: "booking1", eventAt: EXPIRED_AT });
+    await expect(sweep(ref(unreadable), NOW, UNTOLD)).resolves.toBe("delivered");
+    expect(send.unsent).not.toHaveBeenCalled();
   });
 });

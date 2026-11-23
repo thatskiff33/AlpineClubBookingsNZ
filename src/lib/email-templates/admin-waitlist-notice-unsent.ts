@@ -4,7 +4,8 @@
  * place (owner decision D2), or the notice that an offer lapsed. The owed
  * notice is then cleared unsent, and this alert, sent once per notice
  * (`alertOfficersOncePastCutoff`), is how a Booking Officer learns the member
- * may not know. Sender: `src/lib/email/admin-alerts-waitlist-notice-unsent.ts`.
+ * may not know. Owner decision D5 (24 Nov 2026) adds a third case: an offer
+ * that lapsed before its email could ever be sent, whose turn has passed. Sender: `src/lib/email/admin-alerts-waitlist-notice-unsent.ts`.
  */
 import { escapeHtml } from "./escape";
 import { alertBox, button, heading, infoTable, layout } from "./layout";

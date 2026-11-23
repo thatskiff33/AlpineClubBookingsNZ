@@ -9,13 +9,17 @@
 
   What members notice, by owner decision: when an offer email goes out late
   like this, the offer gets a full window from when it is sent, up to the
-  start of the check-in date, and the email states that new deadline. If an
-  offer lapses before its email could be sent at all, the member is not sent
-  an "offer expired" email for an offer they never knew about. The place is
-  held a little longer in these rare cases, so the next person may wait longer.
+  start of the check-in date in the club's time zone, and the email states that
+  new deadline. If an offer lapses before its email could be sent at all, the
+  member is not sent an "offer expired" email for an offer they never knew
+  about; they keep their place in the queue, but that turn has passed. The
+  place is held a little longer in these rare cases, so the next person may
+  wait longer.
 
   What officers notice: a new alert, "Waitlist email not sent", sent once when
-  one of these member emails could not be sent in time, so an officer can
-  contact the member. It goes to officers who receive waitlist offer alerts.
+  one of these member emails could not be sent in time, and once when an offer
+  lapses before its email could ever be sent, so a person can step in for the
+  turn the member missed. Officers get it once per offer. It goes to officers
+  who receive waitlist offer alerts.
   The member's booking page already showed a live offer and its deadline; it
   now shows the restarted deadline too.

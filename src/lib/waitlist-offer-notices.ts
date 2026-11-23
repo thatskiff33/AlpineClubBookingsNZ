@@ -112,6 +112,15 @@ const memberInput = (owed: Pick<OwedWaitlistOffer, "bookingId" | "offeredAt">) =
   subjectId: owed.bookingId,
   eventAt: owed.offeredAt,
 });
+
+/**
+ * The offer email's marker, whether or not it still stands: its id keys the
+ * once-ever claim of the officers' "not sent" alert for this offer, which the
+ * past-cut-off step and a never-told lapse share (owner decision D5).
+ */
+export function waitlistOfferMemberMarker(bookingId: string, offeredAt: Date): OwedNoticeMarker {
+  return owedNoticeMarker(memberInput({ bookingId, offeredAt }));
+}
 const officersInput = (owed: OwedWaitlistOffer) => ({
   kind: OFFICERS_KIND,
   subjectId: owed.bookingId,

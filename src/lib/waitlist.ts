@@ -30,8 +30,8 @@ import {
   type WaitlistOfferNotice,
 } from "@/lib/waitlist-offer-notices";
 import {
-  deliverWaitlistOfferExpiredNotice,
-  recordWaitlistOfferExpiredNoticesOwed,
+  deliverWaitlistLapseNotice,
+  recordWaitlistLapseNoticesOwed,
 } from "@/lib/waitlist-offer-expired-notice";
 import { waitlistOfferExpiresAt } from "@/lib/waitlist-offer-window";
 import { logAudit } from "./audit";
@@ -1157,7 +1157,7 @@ export async function expireStaleOffers(format: ClubFormat): Promise<{
   reofferedCount: number;
   failedReofferCount: number;
 }> {
-  const { staleOffers, expiredAt } = await prisma.$transaction(async (tx) => {
+  const { staleOffers } = await prisma.$transaction(async (tx) => {
     await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
     const candidates = await tx.booking.findMany({
       where: {
@@ -1230,26 +1230,27 @@ export async function expireStaleOffers(format: ClubFormat): Promise<{
       })),
     );
 
-    // #5433 (WL-2): each lapse's "offer expired" email is owed from this
-    // commit, except for an offer the member was never told about (owner
-    // decision D2), which gets none. Read and written under this
-    // transaction's locks; the lapse itself is unchanged.
+    // #5433 (WL-2): each lapse's notice is owed from this commit: the member's
+    // "offer expired" email, or, for an offer the member was never told about,
+    // no email (owner decision D2) and one officers' alert instead (D5). Read
+    // and written under this transaction's locks; the lapse is unchanged.
     const neverTold = await findNeverToldWaitlistOffers(
       tx,
       offers.map((offer) => ({ bookingId: offer.id, offeredAt: offer.waitlistOfferedAt })),
     );
     const expiredAt = new Date();
-    await recordWaitlistOfferExpiredNoticesOwed(
-      tx,
-      offers.filter((offer) => !neverTold.has(offer.id)).map((offer) => ({ bookingId: offer.id, expiredAt })),
-    );
+    const lapses = offers.map((offer) => ({
+      bookingId: offer.id,
+      expiredAt,
+      untoldOfferedAt: neverTold.has(offer.id) ? offer.waitlistOfferedAt : null,
+    }));
+    await recordWaitlistLapseNoticesOwed(tx, lapses);
 
     return {
-      expiredAt,
-      staleOffers: offers.map((offer) => ({
+      staleOffers: offers.map((offer, index) => ({
         ...offer,
         newPosition: newPositions.get(offer.id)!,
-        told: !neverTold.has(offer.id),
+        lapse: lapses[index]!,
       })),
     };
   }, LOCK1_HOLDER_TRANSACTION_BUDGET);
@@ -1258,25 +1259,21 @@ export async function expireStaleOffers(format: ClubFormat): Promise<{
 
   for (const offer of staleOffers) {
     const owner = bookingOwner(offer);
-    if (offer.told) {
-      await deliverWaitlistOfferExpiredNotice(
-        {
-          bookingId: offer.id,
-          status: BookingStatus.WAITLISTED,
-          checkIn: offer.checkIn,
-          checkOut: offer.checkOut,
-          recipientMemberId: owner.memberId,
-          email: owner.member.email,
-          firstName: owner.member.firstName,
-          memberName: `${owner.member.firstName} ${owner.member.lastName}`,
-          lodgeId: offer.lodgeId,
-          position: offer.newPosition,
-        },
-        { bookingId: offer.id, expiredAt },
-      );
-    } else {
-      logger.info({ bookingId: offer.id }, "An offer the member was never told about lapsed; no offer-expired email (#5433 D2)");
-    }
+    await deliverWaitlistLapseNotice(
+      {
+        bookingId: offer.id,
+        status: BookingStatus.WAITLISTED,
+        checkIn: offer.checkIn,
+        checkOut: offer.checkOut,
+        recipientMemberId: owner.memberId,
+        email: owner.member.email,
+        firstName: owner.member.firstName,
+        memberName: `${owner.member.firstName} ${owner.member.lastName}`,
+        lodgeId: offer.lodgeId,
+        position: offer.newPosition,
+      },
+      offer.lapse,
+    );
 
     logAudit({
       action: "waitlist.offer_expired",

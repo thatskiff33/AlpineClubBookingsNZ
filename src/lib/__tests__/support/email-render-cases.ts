@@ -1155,6 +1155,8 @@ const GENERATED_CASES: EmailRenderCase[] = [
     adminWaitlistNoticeUnsentTemplate({ notice: "offer", memberName: "memberName-1 <b>", bookingId: "bookingId-2", bookingUrl: "https://example.test/bookings/bookingId-2", checkIn: new Date("2026-03-04T00:00:00.000Z"), checkOut: new Date("2026-03-05T00:00:00.000Z") }) },
   { id: "adminWaitlistNoticeUnsentTemplate:offer-expired", fn: "adminWaitlistNoticeUnsentTemplate", render: () =>
     adminWaitlistNoticeUnsentTemplate({ notice: "offer-expired", memberName: "memberName-1", bookingId: "bookingId-2", bookingUrl: "https://example.test/bookings/bookingId-2", checkIn: new Date("2026-03-04T00:00:00.000Z"), checkOut: new Date("2026-03-05T00:00:00.000Z") }) },
+  { id: "adminWaitlistNoticeUnsentTemplate:offer-lapsed-untold", fn: "adminWaitlistNoticeUnsentTemplate", render: () =>
+    adminWaitlistNoticeUnsentTemplate({ notice: "offer-lapsed-untold", memberName: "memberName-1", bookingId: "bookingId-2", bookingUrl: "https://example.test/bookings/bookingId-2", checkIn: new Date("2026-03-04T00:00:00.000Z"), checkOut: new Date("2026-03-05T00:00:00.000Z") }) },
   { id: "groupJoinPaySelfTemplate:minimal", fn: "groupJoinPaySelfTemplate", render: () =>
     groupJoinPaySelfTemplate({ firstName: "firstName-1", organiserName: "organiserName-2", checkIn: new Date("2026-03-04T00:00:00.000Z"), checkOut: new Date("2026-03-05T00:00:00.000Z") }) },
   { id: "bookingRequestApprovedTemplate:minimal", fn: "bookingRequestApprovedTemplate", render: () =>

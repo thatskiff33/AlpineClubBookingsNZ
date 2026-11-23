@@ -417,17 +417,22 @@ you want both reworded; editing only one leaves the other on its built-in text.
 >
 > What a member can notice: when an offer email arrives late like this, the
 > offer gets a full window from when it arrives, up to the start of the
-> check-in date (owner decision, 23 Nov 2026), and the email states that new
-> deadline. The booking page shows the same deadline. If an offer lapses
-> before its email could be sent at all, the member is not sent a **Waitlist
-> Offer Expired** email for it: they were never told about the offer. Their
-> booking goes back on the waitlist as with any lapsed offer.
+> check-in date in the club's time zone (owner decisions, 23 and 24 Nov 2026),
+> and the email states that new deadline. The booking page shows the same
+> deadline. If an offer lapses before its email could be sent at all, the
+> member is not sent a **Waitlist Offer Expired** email for it: they were never
+> told about the offer. Their booking goes back on the waitlist as with any
+> lapsed offer: they keep their place, but that turn has passed.
 >
 > What an officer can notice: a new alert, **Waitlist email not sent**
 > (`admin-waitlist-notice-unsent`), sent once when one of these member emails
 > could not be sent before it stopped being useful (for the offer, the later
 > of the check-in date and the offer's own deadline; otherwise after seven
-> days). It names the member and the booking so an officer can contact them.
+> days), and when an offer lapses before its email could ever be sent, so a
+> person can step in for the turn the member missed (owner decision, 24 Nov
+> 2026). Officers get it once per offer, never once for the unsent email and
+> again for the lapse. It names the member and the booking so an officer can
+> contact them.
 > It goes to officers who receive waitlist offer alerts, and its wording is
 > editable like the others. Its `{{noticeNote}}` token holds the whole
 > instruction for that email.

@@ -1135,9 +1135,9 @@ const TEMPLATE_TRIGGER_METADATA: Partial<
   },
   "admin-waitlist-notice-unsent": {
     triggerSummary:
-      "A waitlist email owed to a member (the offer of a place, or the notice that an offer lapsed) could not be sent before its cut-off, so it was cleared unsent (#5433)",
+      "A waitlist email owed to a member (the offer of a place, or the notice that an offer lapsed) could not be sent before its cut-off, so it was cleared unsent, or an offer lapsed before its email could ever be sent (#5433, owner decisions D2 and D5)",
     frequency:
-      "Once per unsent notice, guarded by a cross-instance claim. The claim is kept once any admin is sent it or has a copy queued for the email retry cron, held for a day when no admin can receive it, and given back when the send throws before reaching anyone",
+      "Once per unsent notice, and once per offer for its email and its lapse together, guarded by a cross-instance claim. The claim is kept once any admin is sent it or has a copy queued for the email retry cron, held for a day when no admin can receive it, and given back when the send throws before reaching anyone",
   },
   "admin-group-joiner-started-stay": {
     triggerSummary:

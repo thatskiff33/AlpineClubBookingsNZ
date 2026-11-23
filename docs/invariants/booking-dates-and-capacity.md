@@ -1749,10 +1749,10 @@ capacity or double-booking violation.
   owed notices: the offer pass records them in its transaction and sends them
   after the commit (`waitlist-offer-notices.ts`). When a later run's sweep,
   not that first attempt, sends the offer email, it first restarts the window:
-  a full window from that send, capped at the first instant of the check-in
-  date at the club, never earlier than the deadline in force
-  (`restartedWaitlistOfferExpiry`). The email states the deadline the restart
-  left. The first attempt never moves the window.
+  a full window from that send, capped at the start of the check-in date in
+  the club's time zone (D6), never earlier than the deadline in force
+  (`restartedWaitlistOfferExpiry`). The email states that deadline. The first
+  attempt never moves the window.
 - **The offer stays the same offer.** The restart moves only
   `waitlistOfferExpiresAt`; `waitlistOfferedAt` keys the markers, the email's
   event key and the "same offer" check, so the member is sent it once. An
@@ -1760,7 +1760,9 @@ capacity or double-booking violation.
   emails" on keeps its deadline.
 - **No "offer expired" email for an offer the member was never told
   about**: no offer email row, and its notice still owed or past its cut-off
-  unsent. The lapse is otherwise unchanged (`INV-CAP-042`).
+  unsent. The lapse is otherwise unchanged (`INV-CAP-042`). Officers get one
+  owed alert instead (D5, 24 Nov 2026), through the offer email's own
+  once-ever claim, so it and that email's past-cut-off alert never both go.
 - **Locks.** The restart is its own lock(1) and lodge-key transaction with a
   claim guarded on the status, the offer and the deadline read
   (`INV-LOCK-002`); a lost claim sends nothing.

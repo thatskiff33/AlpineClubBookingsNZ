@@ -256,8 +256,9 @@ and the restart's claim is lost. The waitlist's owed markers themselves join
 the offer pass's and the expiry's transactions under the keys they already
 hold: one primary-key insert each, with `skipDuplicates`, never a caught
 unique-key error. The expiry also reads, through its own client, which lapsed
-offers were never told (three primary-key reads), so a lapse and its
-"offer expired" marker are one decision. Forced in both orders against
+offers were never told (three primary-key reads), so a lapse and its marker
+(the member's "offer expired" email, or for an offer never told the officers'
+alert, owner decision D5) are one decision, written in one insert. Forced in both orders against
 PostgreSQL by `waitlist-owed-notices.realdb.test.ts`.
 
 ### Tier 2 — global booking-status / money serialisation

@@ -23,8 +23,9 @@ export function waitlistOfferExpiresAt(from: Date): Date {
 
 /**
  * The latest a restarted window may end (D2: "capped at the check-in date"):
- * the first instant of the check-in date at the club. `checkIn` is the stored
- * date-only lodge night; the club-time kernel turns it into that instant.
+ * the start of the check-in date in the club's time zone (owner decision D6,
+ * 24 Nov 2026). `checkIn` is the stored date-only lodge night; the club-time
+ * kernel turns it into that instant.
  */
 export function waitlistOfferRestartCap(checkIn: Date, zone: ClubTimeZone): Date {
   return startOfClubDay(calendarDateOfDateOnlyInstant(checkIn), zone);

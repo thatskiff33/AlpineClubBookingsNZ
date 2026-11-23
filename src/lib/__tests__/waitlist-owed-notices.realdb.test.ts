@@ -3,7 +3,8 @@
  * owner decision D2: a waitlist offer's notices and an offer-expired email are
  * owed from the commit until sent; a sweep that sends the offer email restarts
  * the window, under lock(1) and the lodge key, and a lost claim sends nothing;
- * and no offer-expired email goes for an offer the member was never told about.
+ * no offer-expired email goes for an offer the member was never told about,
+ * and the officers are alerted once about it instead (owner decision D5).
  *
  * Each case runs the REAL offer pass, expiry, restart, delivery and sweep
  * against the real `OwedNotice`, `Booking` and `EmailLog` tables and the real
@@ -80,7 +81,11 @@ const CASES = {
   neverTold: caseIds("ntl", 28),
   told: caseIds("tld", 1 + 31),
   lapseRecovered: caseIds("lrc", 4 + 31),
+  alreadyAlerted: caseIds("aal", 7 + 31),
 };
+
+const ADMIN_ID = "race-5433w-admin";
+const ADMIN_EMAIL = "race-5433w-admin@example.test";
 
 let prisma: (typeof import("@/lib/prisma"))["prisma"];
 let waitlist: typeof import("@/lib/waitlist");
@@ -108,6 +113,9 @@ let harnessRole: { restore: () => void } | undefined;
 
     async function deleteFixtures() {
       for (const ids of Object.values(CASES)) await deleteCaseRows(ids);
+      await prisma.emailLog.deleteMany({ where: { to: ADMIN_EMAIL } });
+      await prisma.memberAccessRole.deleteMany({ where: { memberId: ADMIN_ID } });
+      await prisma.member.deleteMany({ where: { id: ADMIN_ID } });
       await prisma.member.deleteMany({ where: { id: { in: Object.values(CASES).map((ids) => ids.ownerId) } } });
       await prisma.lodgeSettings.deleteMany({ where: { id: LODGE_ID } });
       await prisma.lodge.deleteMany({ where: { id: LODGE_ID } });
@@ -176,6 +184,10 @@ let harnessRole: { restore: () => void } | undefined;
       };
     }
 
+    /** The officers' "Waitlist email not sent" alerts about this case's member. */
+    const unsentAlertsFor = (ids: CaseIds) =>
+      prisma.emailLog.count({ where: { to: ADMIN_EMAIL, templateName: "admin-waitlist-notice-unsent", subject: { contains: ids.bookingId } } });
+
     const offerSendsFor = (ids: CaseIds) =>
       vi.mocked(email.sendWaitlistOfferEmail).mock.calls.filter(([context]) => context.bookingId === ids.bookingId);
 
@@ -220,6 +232,11 @@ let harnessRole: { restore: () => void } | undefined;
 
       await deleteFixtures();
       await prisma.lodge.create({ data: { id: LODGE_ID, name: "Race 5433 waitlist lodge", slug: LODGE_ID, active: true } });
+      // A Full Admin: covers the bookings area, and waitlist offer alerts are on by default.
+      await prisma.member.create({
+        data: { id: ADMIN_ID, email: ADMIN_EMAIL, passwordHash: "not-a-real-password", firstName: "Officer", lastName: "Proof", ageTier: "ADULT", canLogin: true, role: "ADMIN" },
+      });
+      await prisma.memberAccessRole.create({ data: { memberId: ADMIN_ID, role: "ADMIN" } });
       for (const ids of Object.values(CASES)) {
         await prisma.member.create({
           data: { id: ids.ownerId, email: `${ids.ownerId}@example.test`, passwordHash: "not-a-real-password", firstName: "Ada", lastName: ids.bookingId, ageTier: "ADULT", canLogin: true },
@@ -273,7 +290,10 @@ let harnessRole: { restore: () => void } | undefined;
       await expect(
         prisma.$transaction(async (tx) => {
           await notices.recordWaitlistOfferNoticesOwed(tx, { bookingId: ids.bookingId, offeredAt: at, position: 1 });
-          await expiredNotice.recordWaitlistOfferExpiredNoticesOwed(tx, [{ bookingId: ids.bookingId, expiredAt: at }]);
+          await expiredNotice.recordWaitlistLapseNoticesOwed(tx, [
+            { bookingId: ids.bookingId, expiredAt: at },
+            { bookingId: ids.bookingId, expiredAt: new Date(at.getTime() + 1), untoldOfferedAt: at },
+          ]);
           throw new Error("the change's transaction failed after its markers");
         }),
       ).rejects.toThrow("failed after its markers");
@@ -360,8 +380,9 @@ let harnessRole: { restore: () => void } | undefined;
       const booking = await readBooking(ids);
       expect(booking.status).toBe("WAITLISTED");
       expect(offerSendsFor(ids)).toHaveLength(0);
-      // Never told: no offer-expired email, and none owed.
+      // Never told: no offer-expired email, and none owed; the officers are alerted once instead (D5).
       expect(await rows(ids)).toEqual({ offerEmails: [], expiredEmails: [], markers: [{ id: expect.stringMatching(/^waitlist-offer-officers:/) }] });
+      expect(await unsentAlertsFor(ids)).toBe(1);
     });
 
     it("restart first: when the restart takes lock(1) before the expiry job, the offer gets a full window, its email states it, and the expiry leaves it alone", async () => {
@@ -388,7 +409,7 @@ let harnessRole: { restore: () => void } | undefined;
       expect(recorded.expiredEmails).toEqual([]);
     });
 
-    it("sends no offer-expired email for a lapsed offer the member was never told about, and one for an offer they were (D2)", async () => {
+    it("sends no offer-expired email for a lapsed offer the member was never told about but alerts the officers once (D2, D5), and the email for an offer they were", async () => {
       const offeredAt = new Date(Date.now() - WINDOW_MS - 2 * HOUR);
       await commitOfferThenStop(CASES.neverTold, offeredAt);
       await commitOfferThenStop(CASES.told, offeredAt);
@@ -402,7 +423,9 @@ let harnessRole: { restore: () => void } | undefined;
 
       for (const ids of [CASES.neverTold, CASES.told]) expect((await readBooking(ids)).status).toBe("WAITLISTED");
       expect((await rows(CASES.neverTold)).expiredEmails).toEqual([]);
-      expect((await rows(CASES.neverTold)).markers.map((marker) => marker.id)).not.toContainEqual(expect.stringMatching(/^waitlist-offer-expired:/));
+      expect((await rows(CASES.neverTold)).markers.map((marker) => marker.id)).not.toContainEqual(expect.stringMatching(/^waitlist-offer-(expired|lapsed-untold):/));
+      expect(await unsentAlertsFor(CASES.neverTold)).toBe(1);
+      expect(await unsentAlertsFor(CASES.told)).toBe(0);
       const told = await rows(CASES.told);
       expect(told.expiredEmails).toHaveLength(1);
       expect(told.expiredEmails[0]!.id).toMatch(new RegExp(`^email:waitlist-offer-expired:${CASES.told.bookingId}:\\d+$`));
@@ -413,10 +436,10 @@ let harnessRole: { restore: () => void } | undefined;
       const ids = CASES.lapseRecovered;
       await seedWaitlisted(ids);
       const expiredAt = new Date(Date.now() - 2 * HOUR);
-      await prisma.$transaction((tx) => expiredNotice.recordWaitlistOfferExpiredNoticesOwed(tx, [{ bookingId: ids.bookingId, expiredAt }]));
+      await prisma.$transaction((tx) => expiredNotice.recordWaitlistLapseNoticesOwed(tx, [{ bookingId: ids.bookingId, expiredAt }]));
 
-      await drainOwedNotices(new Date(), { deliverers: [expiredNotice.WAITLIST_OFFER_EXPIRED_NOTICE_DELIVERER] });
-      await drainOwedNotices(new Date(Date.now() + HOUR), { deliverers: [expiredNotice.WAITLIST_OFFER_EXPIRED_NOTICE_DELIVERER] });
+      await drainOwedNotices(new Date(), { deliverers: expiredNotice.WAITLIST_LAPSE_NOTICE_DELIVERERS });
+      await drainOwedNotices(new Date(Date.now() + HOUR), { deliverers: expiredNotice.WAITLIST_LAPSE_NOTICE_DELIVERERS });
 
       expect(await rows(ids)).toEqual({
         offerEmails: [],
@@ -424,6 +447,26 @@ let harnessRole: { restore: () => void } | undefined;
         markers: [],
       });
       expect(vi.mocked(email.sendWaitlistOfferExpiredEmail).mock.calls.filter(([context]) => context.bookingId === ids.bookingId)).toHaveLength(1);
+    });
+
+    it("alerts the officers once per offer: a never-told lapse after its email's past-cut-off alert sends no second alert (D5)", async () => {
+      const ids = CASES.alreadyAlerted;
+      const offeredAt = new Date(Date.now() - WINDOW_MS - 2 * HOUR);
+      await commitOfferThenStop(ids, offeredAt);
+      // The offer email's past-cut-off step already ran for this offer: its
+      // once-ever claim is kept and its marker cleared, unsent.
+      const memberMarker = notices.waitlistOfferMemberMarker(ids.bookingId, offeredAt);
+      await prisma.alertCooldown.create({ data: { key: `owed-notice-past-cutoff:${memberMarker.id}`, lastAlertedAt: new Date(Date.now() - HOUR) } });
+      await prisma.owedNotice.deleteMany({ where: { id: memberMarker.id } });
+
+      await waitlist.expireStaleOffers(CLUB_FORMAT_TEST);
+      await drainOwedNotices(new Date(Date.now() + HOUR), { deliverers: expiredNotice.WAITLIST_LAPSE_NOTICE_DELIVERERS });
+
+      expect((await readBooking(ids)).status).toBe("WAITLISTED");
+      expect(await unsentAlertsFor(ids)).toBe(0);
+      const recorded = await rows(ids);
+      expect(recorded.expiredEmails).toEqual([]);
+      expect(recorded.markers.map((marker) => marker.id)).not.toContainEqual(expect.stringMatching(/^waitlist-offer-lapsed-untold:/));
     });
   },
 );
