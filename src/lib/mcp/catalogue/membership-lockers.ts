@@ -53,7 +53,7 @@ export const MEMBERSHIP_LOCKER_MCP_ACTIONS: readonly McpAction[] = [
     path: "/api/admin/lockers/[id]",
     params: recordIdParamsSchema,
     body: updateLockerSchema,
-    kind: "write",
+    kind: "destructive",
     returns: LOCKER_CONNECTION_SHAPE,
     core: false,
   },

@@ -136,8 +136,10 @@ member presses **Allow**, and again on every use (`INV-MCP-002`).
   is told to have the member reconnect with view and change.
 - **View and change** also runs actions that change something. Each change
   action is marked for the app as either undoable (`write`) or not
-  (`destructive`). Actions marked destructive carry a hint telling the app to
-  confirm with the member first.
+  (`destructive`). An action that emails or notifies anyone else, or
+  overwrites another person's record, is always destructive (owner decision,
+  #5305 item 2). Actions marked destructive carry a hint telling the app to
+  confirm with the member first, and each call is logged as important.
 
 A connection's effective level is always the lesser of what the member chose
 and what the club allows now.
@@ -270,27 +272,27 @@ anyway. All are reached through `find_actions` except `list_members` and
 | `get_member` | One member's record: contact email and phone, membership, subscription and family links. Listed as its own tool | read | `GET /api/admin/members/[id]` |
 | `list_member_activity` | List a member's account history | read | `GET /api/admin/members/[id]/audit-log` |
 | `get_member_lodge_access` | Read a member's lodge access | read | `GET /api/admin/members/[id]/lodge-access` |
-| `set_member_lodge_access` | Set a member's lodge access | write | `PUT /api/admin/members/[id]/lodge-access` |
+| `set_member_lodge_access` | Replaces a member's lodge access | destructive | `PUT /api/admin/members/[id]/lodge-access` |
 | `get_member_partner_links` | Read a member's partner links | read | `GET /api/admin/members/[id]/partner-link` |
 | `link_member_partner` | Records two members as confirmed partners; both are always emailed | destructive | `POST /api/admin/members/[id]/partner-link` |
 | `remove_member_partner_link` | Removes a pending or confirmed partner link; a confirmed one emails both members | destructive | `DELETE /api/admin/members/[id]/partner-link` |
-| `link_member_dependant` | Links a dependant to a parent. Never turns off the dependant's sign-in; no one is emailed | write | `POST /api/admin/members/[id]/dependents/link` |
+| `link_member_dependant` | Links a dependant to a parent. Never turns off the dependant's sign-in; no one is emailed | destructive | `POST /api/admin/members/[id]/dependents/link` |
 | `unlink_member_dependant` | Unlink a dependant from a parent | destructive | `DELETE /api/admin/members/[id]/dependents/[dependentId]` |
 | `list_membership_types` | List membership types | read | `GET /api/admin/membership-types` |
 | **Applications and request queues** | | | |
 | `list_member_applications` | List membership applications | read | `GET /api/admin/member-applications` |
-| `refresh_application_nominations` | Re-send nomination requests | write | `POST /api/admin/member-applications/[id]/nominations/refresh` |
-| `replace_application_nominator` | Replace a nominator | write | `POST /api/admin/member-applications/[id]/nominators/[slot]/replace` |
-| `request_member_archive` | Raises an archive request for another officer to decide on the website | write | `POST /api/admin/members/[id]/lifecycle/archive` |
-| `request_membership_cancellation` | Raises a cancellation request for another officer to decide on the website | write | `POST /api/admin/members/[id]/membership-cancellation` |
+| `refresh_application_nominations` | Re-sends nomination requests; emails each nominator who has not confirmed | destructive | `POST /api/admin/member-applications/[id]/nominations/refresh` |
+| `replace_application_nominator` | Swaps a nominator on an application and emails the new one | destructive | `POST /api/admin/member-applications/[id]/nominators/[slot]/replace` |
+| `request_member_archive` | Raises an archive request for another officer to decide on the website; emails the club's admins | destructive | `POST /api/admin/members/[id]/lifecycle/archive` |
+| `request_membership_cancellation` | Raises a cancellation request for another officer to decide on the website; emails the club's admins | destructive | `POST /api/admin/members/[id]/membership-cancellation` |
 | `list_member_lifecycle_requests` | List archive and deletion requests | read | `GET /api/admin/member-lifecycle-action-requests` |
 | `list_membership_cancellation_requests` | List membership cancellation requests | read | `GET /api/admin/membership-cancellation-requests` |
-| `resend_cancellation_confirmation` | Re-send a cancellation confirmation | write | `POST /api/admin/membership-cancellation-requests/[requestId]/participants/[participantId]/resend-confirmation` |
+| `resend_cancellation_confirmation` | Emails a member a new link to confirm or decline a cancellation | destructive | `POST /api/admin/membership-cancellation-requests/[requestId]/participants/[participantId]/resend-confirmation` |
 | `list_account_deletion_requests` | List account deletion requests | read | `GET /api/admin/deletion-requests` |
 | **Family groups** | | | |
 | `list_family_groups` | List family groups | read | `GET /api/admin/family-groups` |
 | `get_family_group` | Read a family group | read | `GET /api/admin/family-groups/[id]` |
-| `create_family_group` | Create a family group | write | `POST /api/admin/family-groups` |
+| `create_family_group` | Creates a family group and puts members in it | destructive | `POST /api/admin/family-groups` |
 | `update_family_group` | Rename a family group or change its members | destructive | `PUT /api/admin/family-groups/[id]` |
 | `delete_family_group` | Delete a family group | destructive | `DELETE /api/admin/family-groups/[id]` |
 | `search_family_group_members` | Find members for a family group | read | `GET /api/admin/family-groups/member-search` |
@@ -299,19 +301,19 @@ anyway. All are reached through `find_actions` except `list_members` and
 | `list_family_group_requests` | List family group requests | read | `GET /api/admin/family-groups/requests` |
 | `review_family_group_request` | Approves or rejects a family group request | destructive | `PUT /api/admin/family-groups/requests` |
 | `list_family_suggestions` | List suggested family groups | read | `GET /api/admin/family-suggestions` |
-| `create_family_group_from_suggestion` | Create a family group from a suggestion | write | `POST /api/admin/family-suggestions` |
+| `create_family_group_from_suggestion` | Creates a family group from a suggestion and puts members in it | destructive | `POST /api/admin/family-suggestions` |
 | `hide_family_suggestion` | Hide a suggested family group | write | `POST /api/admin/family-suggestions/hide` |
 | `reset_hidden_family_suggestions` | Show hidden family suggestions again | destructive | `POST /api/admin/family-suggestions/reset` |
 | **Notices, sent email and the message board** | | | |
 | `list_admin_notices` | List all club notices | read | `GET /api/admin/notices` |
 | `get_admin_notice` | Read a club notice | read | `GET /api/admin/notices/[id]` |
-| `create_notice` | Writes a club notice. Never emails members: publish on the website to email them | write | `POST /api/admin/notices` |
-| `update_notice` | Edits, publishes or archives a notice; never emails members | write | `PATCH /api/admin/notices/[id]` |
+| `create_notice` | Writes a club notice; a published one shows to members as unread. Never emails members: publish on the website to email them | destructive | `POST /api/admin/notices` |
+| `update_notice` | Edits, publishes or archives a notice; publishing shows it to members as unread. Never emails members | destructive | `PATCH /api/admin/notices/[id]` |
 | `delete_notice` | Delete a club notice | destructive | `DELETE /api/admin/notices/[id]` |
 | `list_notice_reads` | Who has read a notice, without their email addresses | read | `GET /api/admin/notices/[id]/reads` |
 | `list_bulk_email_history` | List sent bulk emails | read | `GET /api/admin/communications/history` |
 | `list_message_board_posts` | List message board posts | read | `GET /api/admin/club-posts` |
-| `moderate_message_board_post` | Hide, restore or edit a message board post | write | `PATCH /api/admin/club-posts/[id]` |
+| `moderate_message_board_post` | Hides, restores or edits a member's message board post | destructive | `PATCH /api/admin/club-posts/[id]` |
 | `remove_message_board_post` | Remove a message board post | destructive | `DELETE /api/admin/club-posts/[id]` |
 | `run_message_board_cleanup` | Delete old message board posts now | destructive | `POST /api/admin/club-posts/cleanup` |
 | **Committee and inductions** | | | |
@@ -320,20 +322,20 @@ anyway. All are reached through `find_actions` except `list_members` and
 | `update_committee_role` | Edit or archive a committee role | write | `PATCH /api/admin/committee/roles/[id]` |
 | `delete_committee_role` | Delete a committee role | destructive | `DELETE /api/admin/committee/roles/[id]` |
 | `list_committee_assignments` | List who holds committee roles | read | `GET /api/admin/committee/assignments` |
-| `assign_committee_role` | Gives a member a committee role, or replaces every setting of one they hold | write | `POST /api/admin/committee/assignments` |
-| `update_committee_assignment` | Change a committee assignment | write | `PATCH /api/admin/committee/assignments/[id]` |
+| `assign_committee_role` | Gives a member a committee role, or replaces every setting of one they hold | destructive | `POST /api/admin/committee/assignments` |
+| `update_committee_assignment` | Changes a member's committee assignment | destructive | `PATCH /api/admin/committee/assignments/[id]` |
 | `deactivate_committee_assignment` | Takes a member off a committee role and off the public committee page | destructive | `DELETE /api/admin/committee/assignments/[id]` |
 | `list_inductions` | List member inductions | read | `GET /api/admin/inductions` |
 | `get_induction` | Show a member induction | read | `GET /api/admin/inductions/[id]` |
-| `create_induction` | Starts an induction; any assigned signers are emailed asking them to sign off | write | `POST /api/admin/inductions` |
-| `reassign_induction_signers` | Replaces an induction's assigned signers; no one is emailed | write | `PATCH /api/admin/inductions/[id]` |
+| `create_induction` | Starts an induction; any assigned signers are emailed asking them to sign off | destructive | `POST /api/admin/inductions` |
+| `reassign_induction_signers` | Replaces an induction's assigned signers; no one is emailed | destructive | `PATCH /api/admin/inductions/[id]` |
 | `void_induction` | Voids an induction with a reason; it cannot be reopened | destructive | `PATCH /api/admin/inductions/[id]` |
 | `list_induction_templates` | List induction checklists | read | `GET /api/admin/induction-templates` |
 | `get_induction_template` | Show an induction checklist | read | `GET /api/admin/induction-templates/[id]` |
 | **Lockers** | | | |
 | `list_lockers` | List lockers | read | `GET /api/admin/lockers` |
 | `create_locker` | Add a locker | write | `POST /api/admin/lockers` |
-| `update_locker` | Rename or reallocate a locker | write | `PUT /api/admin/lockers/[id]` |
+| `update_locker` | Renames a locker or changes, or takes away, who holds it | destructive | `PUT /api/admin/lockers/[id]` |
 | `delete_locker` | Delete a locker | destructive | `DELETE /api/admin/lockers/[id]` |
 | `bulk_create_lockers` | Add numbered lockers | write | `POST /api/admin/lockers/bulk` |
 

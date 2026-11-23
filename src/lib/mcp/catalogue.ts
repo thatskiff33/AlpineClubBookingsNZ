@@ -91,8 +91,8 @@ import { MEMBERSHIP_MCP_ACTIONS } from "./catalogue/membership";
  * (`get_skifield_report` refreshes the ski field report's), or its route's own
  * audit row (a lookup of other members records every query, blocked ones
  * included). `write` changes something the member can undo.
- * `destructive` cannot be undone from the app. A view-only connection runs
- * `read` actions only.
+ * `destructive` cannot be undone, notifies others or overwrites another
+ * person's record (#5305 item 2). View-only runs `read` actions only.
  */
 export type McpActionKind = "read" | "write" | "destructive";
 
