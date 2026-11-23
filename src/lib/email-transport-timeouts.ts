@@ -1,7 +1,14 @@
 // The mail transport's own timeouts (#5407 item 34): their one definition,
 // read by the delivery parser in `email-delivery.ts`. A pure leaf module.
 
-type EnvMap = Record<string, string | undefined>;
+/** An environment to read settings from: `process.env`, or a test's map. */
+export type EnvMap = Record<string, string | undefined>;
+
+/** A setting's value, trimmed, or undefined when unset or blank: the one reading rule. */
+export function readEnv(env: EnvMap, name: string): string | undefined {
+  const value = env[name]?.trim();
+  return value ? value : undefined;
+}
 
 /**
  * How long one mail transport waits, in milliseconds (#5407 item 34), under
@@ -14,15 +21,18 @@ type EnvMap = Record<string, string | undefined>;
  * lookup, every address tried, the greeting and a STARTTLS upgrade together),
  * and the greeting and the upgrade each get the SMALLER of `greetingTimeout`
  * and what is left of that deadline. So the greeting value is a cap inside
- * the setup budget: it only matters when it is lower, and raising it above the
- * connection value changes nothing (the parser warns). `socketTimeout` is the
+ * the setup budget: it only matters when it is lower, and setting it above
+ * the connection value changes nothing (the parser warns when an operator
+ * does). `socketTimeout` is the
  * inactivity allowed on the open connection while waiting for the server.
  *
  * nodemailer's own defaults are a 2-minute setup budget, a 30-second greeting
  * cap and 10 minutes of inactivity. The bump-notice recovery assumes a send
  * finishes well inside an hour, so these are set here: 30 seconds for the
- * whole setup, 15 seconds for the greeting inside it, and 2 minutes of
- * inactivity, which a healthy server never meets.
+ * whole setup, which already bounds a stuck greeting, the greeting cap equal
+ * to it (the library's own 30 seconds, so a slow-greeting relay fails no
+ * sooner than before; set it lower to tighten), and 2 minutes of inactivity,
+ * which a healthy server never meets.
  */
 export interface EmailTransportTimeouts {
   /** The whole connection setup: DNS, connect, greeting and STARTTLS together. */
@@ -39,7 +49,7 @@ export interface EmailTransportTimeouts {
  */
 export const EMAIL_TRANSPORT_TIMEOUT_SETTINGS = {
   connectionTimeout: { env: "EMAIL_SMTP_CONNECTION_TIMEOUT_MS", defaultMs: 30_000 },
-  greetingTimeout: { env: "EMAIL_SMTP_GREETING_TIMEOUT_MS", defaultMs: 15_000 },
+  greetingTimeout: { env: "EMAIL_SMTP_GREETING_TIMEOUT_MS", defaultMs: 30_000 },
   socketTimeout: { env: "EMAIL_SMTP_SOCKET_TIMEOUT_MS", defaultMs: 120_000 },
 } as const satisfies Record<keyof EmailTransportTimeouts, { env: string; defaultMs: number }>;
 
@@ -58,13 +68,14 @@ export const EMAIL_TRANSPORT_TIMEOUT_OPTIONS = Object.keys(
  * Read the three timeouts. A value that is not a whole number of milliseconds
  * inside the accepted range falls back to its default with a warning, rather
  * than an issue: a mistyped timeout must not stop the club's mail. A greeting
- * cap above the setup budget is kept but warned about, because it can never
- * take effect.
+ * cap the operator SET above the setup budget is kept but warned about,
+ * because it can never take effect; a default above a lowered budget is not,
+ * since nobody chose it and the smaller of the two applies anyway.
  */
 export function readTransportTimeouts(env: EnvMap, warnings: string[]): EmailTransportTimeouts {
   const read = (option: keyof EmailTransportTimeouts): number => {
     const { env: name, defaultMs } = EMAIL_TRANSPORT_TIMEOUT_SETTINGS[option];
-    const raw = env[name]?.trim();
+    const raw = readEnv(env, name);
     if (!raw) return defaultMs;
     const { min, max } = EMAIL_TRANSPORT_TIMEOUT_RANGE_MS;
     const parsed = /^\d+$/.test(raw) ? Number(raw) : Number.NaN;
@@ -77,8 +88,8 @@ export function readTransportTimeouts(env: EnvMap, warnings: string[]): EmailTra
   const timeouts = Object.fromEntries(
     EMAIL_TRANSPORT_TIMEOUT_OPTIONS.map((option) => [option, read(option)]),
   ) as unknown as EmailTransportTimeouts;
-  if (timeouts.greetingTimeout > timeouts.connectionTimeout) {
-    const { connectionTimeout, greetingTimeout } = EMAIL_TRANSPORT_TIMEOUT_SETTINGS;
+  const { connectionTimeout, greetingTimeout } = EMAIL_TRANSPORT_TIMEOUT_SETTINGS;
+  if (readEnv(env, greetingTimeout.env) && timeouts.greetingTimeout > timeouts.connectionTimeout) {
     warnings.push(
       `${greetingTimeout.env} (${timeouts.greetingTimeout}) is above ${connectionTimeout.env} (${timeouts.connectionTimeout}), which already covers the greeting, so it has no effect; set it lower or raise ${connectionTimeout.env}`,
     );

@@ -34,7 +34,7 @@ import { declareEnvironmentRole } from "@/lib/__tests__/helpers/environment-role
 
 const DEFAULTS = {
   connectionTimeout: 30_000,
-  greetingTimeout: 15_000,
+  greetingTimeout: 30_000,
   socketTimeout: 120_000,
 };
 
@@ -91,7 +91,7 @@ describe("every transport carries the timeouts (#5407 item 34)", () => {
     expect(config.warnings.filter((line) => line.includes("_TIMEOUT_MS"))).toEqual([]);
   });
 
-  it("warns, and keeps both values, when the greeting cap is above the setup budget", () => {
+  it("warns, and keeps both values, when the operator set the greeting cap above the setup budget", () => {
     // nodemailer gives the greeting the smaller of its cap and what is left of
     // the connection deadline, so a higher cap can never take effect.
     const config = resolveEmailDeliveryConfigFromEnv({
@@ -104,6 +104,14 @@ describe("every transport carries the timeouts (#5407 item 34)", () => {
     expect(config.warnings).toContain(
       "EMAIL_SMTP_GREETING_TIMEOUT_MS (25000) is above EMAIL_SMTP_CONNECTION_TIMEOUT_MS (20000), which already covers the greeting, so it has no effect; set it lower or raise EMAIL_SMTP_CONNECTION_TIMEOUT_MS",
     );
+  });
+
+  it("does not warn when only the setup budget is lowered below the greeting default", () => {
+    // The operator never set the greeting cap; nodemailer applies the smaller
+    // of the two, so there is nothing for them to fix.
+    const config = resolveEmailDeliveryConfigFromEnv({ ...RELAY_ENV, EMAIL_SMTP_CONNECTION_TIMEOUT_MS: "10000" });
+    expect(config.transportOptions).toMatchObject({ connectionTimeout: 10_000, greetingTimeout: DEFAULTS.greetingTimeout });
+    expect(config.warnings.filter((line) => line.includes("_TIMEOUT_MS"))).toEqual([]);
   });
 
   it("does not warn when the greeting cap equals the setup budget", () => {
@@ -119,12 +127,12 @@ describe("every transport carries the timeouts (#5407 item 34)", () => {
     const config = resolveEmailDeliveryConfigFromEnv({
       ...RELAY_ENV,
       EMAIL_SMTP_CONNECTION_TIMEOUT_MS: "10000",
-      EMAIL_SMTP_GREETING_TIMEOUT_MS: "15000",
+      EMAIL_SMTP_GREETING_TIMEOUT_MS: "8000",
       EMAIL_SMTP_SOCKET_TIMEOUT_MS: "45000",
     });
     expect(config.transportOptions).toMatchObject({
       connectionTimeout: 10_000,
-      greetingTimeout: 15_000,
+      greetingTimeout: 8_000,
       socketTimeout: 45_000,
     });
   });

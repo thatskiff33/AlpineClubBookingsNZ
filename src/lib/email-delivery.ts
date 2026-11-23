@@ -1,6 +1,9 @@
-import { readTransportTimeouts, type EmailTransportTimeouts } from "@/lib/email-transport-timeouts";
-
-type EnvMap = Record<string, string | undefined>;
+import {
+  readEnv,
+  readTransportTimeouts,
+  type EmailTransportTimeouts,
+  type EnvMap,
+} from "@/lib/email-transport-timeouts";
 
 /**
  * The three transports, and why the third one exists (#3035).
@@ -279,11 +282,6 @@ export interface ResolvedEmailDeliveryConfig {
   issues: string[];
   warnings: string[];
   transportOptions: EmailTransportOptions | null;
-}
-
-function readEnv(env: EnvMap, name: string): string | undefined {
-  const value = env[name]?.trim();
-  return value ? value : undefined;
 }
 
 function parseBooleanFlag(

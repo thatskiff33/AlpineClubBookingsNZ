@@ -2536,8 +2536,9 @@ Scheduled hardening (cron tasks, all idempotent):
   once the alert is raised (sent, queued for retry, bounced or withheld on a
   copy), held for a day when nobody could receive it (the alert switched off
   or nobody opted in) or when it reached nobody and nothing will replay it (a
-  copy failed before its mail log row existed, #5448), and given back only
-  when the send threw.
+  copy failed before its mail log row existed, #5448). It is given back only
+  when the send threw, or when the claim write itself threw (its stamp may
+  have landed, so it is removed and the failure reported to the caller).
 
 ### Repairing Stripe refund-note links (#2901)
 
