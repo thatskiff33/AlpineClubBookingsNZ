@@ -1727,11 +1727,13 @@ the walked files still do.
 
 [`src/lib/__tests__/census-timeout-coverage.test.ts`](../src/lib/__tests__/census-timeout-coverage.test.ts)
 enforces this. It names the known whole-tree readers (the `support/` source
-helpers, `scanAuditWriterCensus`, `git ls-files src`, `src/**` globs and
-recursive directory reads of `src`, `src/lib` or `src/app`) and fails on a test
-file that calls one without importing a shared budget or calling
-`vi.setConfig({ testTimeout })`. Its short, commented no-budget list holds only
-fixture-only matches.
+helpers, `scanAuditWriterCensus`, the file-size budget's `scanRepository` and
+the quality report's `main`, `git ls-files src`, `src/**` globs and recursive
+directory reads of `src`, `src/lib` or `src/app`) and fails on a test file that
+calls one without importing `CENSUS_TIMEOUT_MS` or `AST_CENSUS_TIMEOUT_MS`. A
+`vi.setConfig({ testTimeout })` counts only when it sets one of those
+constants: a file-wide local literal is not a budget, whatever its size. Its
+short, commented no-budget list holds only fixture-only matches.
 
 ## Census tests and the merge hazard
 

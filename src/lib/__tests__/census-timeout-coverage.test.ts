@@ -8,15 +8,19 @@
  *
  * This census finds the test files that reach a known whole-tree reader:
  *   - a source-reader helper in `src/lib/__tests__/support/` that walks `src`,
- *     `src/app` or the repository (READER_HELPERS below);
+ *     `src/app` or the repository, or `scanRepository()` in
+ *     `scripts/lib/file-size-budget.ts` and the quality report's `main()`,
+ *     which walk the whole repository (READER_HELPERS below);
  *   - `scanAuditWriterCensus()`, the full AST parse of `src`, `scripts` and
  *     `prisma`;
  *   - a direct walker in the test file: `git ls-files src` (or `src/lib`,
  *     `src/app`), a `src/**` glob, or a recursive `readdirSync` rooted at one
  *     of those directories.
- * Each such file must import the shared constant or set
- * `vi.setConfig({ testTimeout })`. It does not prove every case uses the
- * constant; it catches the file that forgot the budget altogether.
+ * Each such file must import `CENSUS_TIMEOUT_MS` or `AST_CENSUS_TIMEOUT_MS`
+ * from the shared module. A `vi.setConfig({ testTimeout })` counts only when
+ * it sets one of those constants (which needs the import); a file-wide local
+ * literal is not a budget. It does not prove every case uses the constant; it
+ * catches the file that forgot the shared budget altogether.
  *
  * The scan is plain text and import matching, not an AST parse, so it stays
  * fast. See docs/TESTING.md "A test that reads the whole tree needs its own
@@ -55,7 +59,13 @@ const READER_HELPERS: Readonly<Record<string, readonly string[]>> = {
   ],
   "src/lib/__tests__/support/static-import-graph": ["productionSourceFiles", "buildImportGraph"],
   "scripts/audit/audit-writer-census": ["scanAuditWriterCensus"],
+  "scripts/lib/file-size-budget": ["scanRepository"],
+  // Scans the real repository root through scanRepository().
+  "scripts/quality-report": ["main"],
 };
+
+/** The shared budgets a reader may state (src/test/census-timeout.ts). */
+const BUDGET_NAMES: readonly string[] = ["CENSUS_TIMEOUT_MS", "AST_CENSUS_TIMEOUT_MS"];
 
 /**
  * Test files the matchers name that need no test budget: they reach a reader
@@ -69,6 +79,8 @@ const NEEDS_NO_BUDGET: Readonly<Record<string, string>> = {
   "src/lib/__tests__/audit-writer-census-scanner.test.ts": "fixture trees only",
   // readdirSync(..., { recursive: true }) walks a temporary fixture repository.
   "scripts/ci/pr-body-file.test.mjs": "fixture repository only",
+  // Its "src" walks are of temporary fixture lanes; its vi.setConfig covers git and pnpm calls.
+  "scripts/remove-worktree.test.mjs": "fixture lanes only",
 };
 
 /** A `git ls-files` call naming `src`, `src/lib` or `src/app`. */
@@ -80,6 +92,8 @@ const READDIR = /\b(?:readdirSync|readdir|opendirSync)\(/;
 /** The read recurses: the recursive option, or a walker that calls itself. */
 const RECURSIVE_OPTION = /recursive:\s*true/;
 /** A root of `src`, `src/lib` or `src/app` and nothing deeper. */
+/** A file-wide `vi.setConfig` testTimeout, capturing its value (for the failure message). */
+const SET_CONFIG_TEST_TIMEOUT = /vi\.setConfig\(\s*\{[^}]*?\btestTimeout\s*:\s*([^,}\s]+)/g;
 const SRC_ROOT = /["'`]src(?:\/(?:lib|app))?\/?["'`]\s*[)\]]|["'`]src["'`]\s*,\s*["'`](?:lib|app)["'`]\s*\)/;
 
 function testFiles(dir: string): string[] {
@@ -148,9 +162,26 @@ function selfRecursiveReaddir(text: string): boolean {
   return false;
 }
 
-function hasBudget(file: string, text: string): boolean {
-  if (/vi\.setConfig\(\s*\{[^}]*testTimeout/.test(text)) return true;
-  return importsOf(file, text).some(({ module }) => module === TIMEOUT_MODULE);
+/** A shared budget name, bare or through a namespace import (`budgets.CENSUS_TIMEOUT_MS`). */
+function isBudgetName(value: string): boolean {
+  return BUDGET_NAMES.includes(value.replace(/^[\w$]+\./, ""));
+}
+
+/**
+ * What is wrong with a reader's budget, or null when it imports a shared one.
+ * Only the import counts: `vi.setConfig({ testTimeout: CENSUS_TIMEOUT_MS })`
+ * has it, and a local literal such as `vi.setConfig({ testTimeout: 60_000 })`
+ * does not, whatever its size (docs/TESTING.md: "never a local literal").
+ */
+function budgetProblem(file: string, text: string): string | null {
+  const imported = importsOf(file, text).some(
+    ({ module, names }) => module === TIMEOUT_MODULE && (names === "*" || names.some(isBudgetName)),
+  );
+  if (imported) return null;
+  const literals = [...text.matchAll(SET_CONFIG_TEST_TIMEOUT)].map((match) => match[1]!).filter((value) => !isBudgetName(value));
+  return literals.length > 0
+    ? `vi.setConfig testTimeout ${literals.join(", ")} is a local literal, not a shared budget`
+    : "no shared budget imported";
 }
 
 describe("every whole-tree reader states a test budget (#5439)", { timeout: CENSUS_TIMEOUT_MS }, () => {
@@ -158,7 +189,9 @@ describe("every whole-tree reader states a test budget (#5439)", { timeout: CENS
   const readers = files.flatMap((file) => {
     const text = readFileSync(path.join(ROOT, file), "utf8");
     const reason = readerReason(file, text);
-    return reason ? [{ file, reason, budgeted: hasBudget(file, text) }] : [];
+    if (!reason) return [];
+    const problem = budgetProblem(file, text);
+    return [{ file, reason, problem, budgeted: problem === null }];
   });
 
   it("finds the readers it is meant to police, so an empty census is not a silent pass", () => {
@@ -174,12 +207,13 @@ describe("every whole-tree reader states a test budget (#5439)", { timeout: CENS
   it("finds no reader without the shared budget, outside the no-budget list", () => {
     const missing = readers
       .filter((reader) => !reader.budgeted && !(reader.file in NEEDS_NO_BUDGET))
-      .map((reader) => `${reader.file} (${reader.reason})`);
+      .map((reader) => `${reader.file} (${reader.reason}; ${reader.problem})`);
     expect(
       missing,
-      "These test files read the whole source tree but neither import CENSUS_TIMEOUT_MS / " +
-        "AST_CENSUS_TIMEOUT_MS from src/test/census-timeout.ts nor call vi.setConfig({ testTimeout }). " +
-        "Budget each case that can make the first read, or its describe or file (docs/TESTING.md, #5439).",
+      "These test files read the whole source tree but do not import CENSUS_TIMEOUT_MS / " +
+        "AST_CENSUS_TIMEOUT_MS from src/test/census-timeout.ts, or set vi.setConfig({ testTimeout }) " +
+        "to a local literal rather than one of those constants. Budget each case that can make the " +
+        "first read, or its describe or file (docs/TESTING.md, #5439).",
     ).toEqual([]);
   });
 
