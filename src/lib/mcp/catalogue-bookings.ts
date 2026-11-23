@@ -51,7 +51,7 @@ import {
 } from "@/lib/connection-shapes-bookings";
 import { promoValidateConnectionRequestSchema } from "@/lib/promo-validate-request";
 import { refundAppealRequestSchema } from "@/lib/refund-appeal-request";
-import type { McpAction } from "@/lib/mcp/catalogue";
+import type { McpAction, McpWebsiteOnlyAction } from "@/lib/mcp/catalogue";
 
 export const MCP_BOOKING_ACTIONS: readonly McpAction[] = [
   {
@@ -362,5 +362,18 @@ export const MCP_BOOKING_ACTIONS: readonly McpAction[] = [
     kind: "destructive",
     returns: DRAFT_DELETED_CONNECTION_SHAPE,
     core: false,
+  },
+];
+
+/** Booking actions the member takes on the website; the app sends them there. */
+export const MCP_BOOKING_WEBSITE_ONLY_ACTIONS: readonly McpWebsiteOnlyAction[] = [
+  {
+    // ALP-794: changing dates or guests can take or refund money (`moves-money`).
+    id: "change_my_booking",
+    title: "Change a booking's dates or guests",
+    summary:
+      "Changing a booking's dates or guests, confirming a draft, or sending a guest a payment link can take or refund money, so the member does it on the club website. `quote_booking_change` shows what it would cost first.",
+    page: "/bookings/{id}",
+    needsId: true,
   },
 ];

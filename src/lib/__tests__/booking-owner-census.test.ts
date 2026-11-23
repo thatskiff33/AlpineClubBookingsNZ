@@ -694,6 +694,7 @@ const OWNERSHIP_COMPARISON_SITES: readonly string[] = [
   "src/lib/waitlist-cross-lodge.ts::if (bookingOwner(entry).memberId !== memberId) {#0",
   "src/lib/waitlist.ts::bookingOwner(offerKind).memberId === memberId &&#0",
   "src/lib/waitlist.ts::if (bookingOwner(booking).memberId !== memberId) {#0",
+  "src/lib/waitlist.ts::if (options.crossLodgeOnWebsiteOnly && bookingOwner(offerKind).memberId === memberId) {#0",
   "src/lib/xero-applied-credit-spent-outside-app.ts::if (!current?.payment || current.payment.id !== paymentId || bookingOwner(current).memberId !== lockedOwnerId) {#0",
   "src/lib/xero-period-lock-guard.ts::bookingOwner(booking).memberId !== options?.actorMemberId#0",
 ];

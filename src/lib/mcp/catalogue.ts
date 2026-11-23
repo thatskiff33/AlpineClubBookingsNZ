@@ -11,9 +11,7 @@
  * the app be told one shape while the route enforces another. So is each
  * action's answer (`returns`): the shape the route projects a connection's
  * answer onto, from `connection-shapes.ts`.
- *
- * The booking actions are in `catalogue-bookings.ts` (ALP-794), their shapes
- * in `connection-shapes-bookings.ts`; later areas each add modules like them.
+ * Bookings (ALP-794): `catalogue-bookings.ts`, `connection-shapes-bookings.ts`.
  *
  * `mcp-route-census.test.ts` holds every route method in `src/app/api` to
  * either an entry here or a reasoned exclusion (`exclusions.ts`).
@@ -61,7 +59,7 @@ import {
   SUBSCRIPTION_STATUS_CONNECTION_SHAPE,
 } from "@/lib/connection-shapes";
 import { MEMBER_AUDIT_TIMELINE_CATEGORY_OPTIONS } from "@/lib/audit-query";
-import { MCP_BOOKING_ACTIONS } from "@/lib/mcp/catalogue-bookings";
+import { MCP_BOOKING_ACTIONS, MCP_BOOKING_WEBSITE_ONLY_ACTIONS } from "@/lib/mcp/catalogue-bookings";
 import {
   delegatedFamilyDetailsSchema,
   familyAdultRequestSchema,
@@ -623,15 +621,7 @@ export const MCP_WEBSITE_ONLY_ACTIONS: readonly McpWebsiteOnlyAction[] = [
     page: "/profile",
     needsId: false,
   },
-  {
-    // ALP-794: changing dates or guests can take or refund money (`moves-money`).
-    id: "change_my_booking",
-    title: "Change a booking's dates or guests",
-    summary:
-      "Changing a booking's dates or guests, confirming a draft, or sending a guest a payment link can take or refund money, so the member does it on the club website. `quote_booking_change` shows what it would cost first.",
-    page: "/bookings/{id}",
-    needsId: true,
-  },
+  ...MCP_BOOKING_WEBSITE_ONLY_ACTIONS,
   {
     id: "manage_connected_apps",
     title: "Disconnect an AI app",

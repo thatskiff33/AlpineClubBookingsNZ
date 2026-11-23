@@ -849,7 +849,7 @@ export async function confirmWaitlistOffer(
     },
   });
   if (offerKind?.waitlistOfferedLodgeId) {
-    if (options.crossLodgeOnWebsiteOnly && offerKind.memberId === memberId) {
+    if (options.crossLodgeOnWebsiteOnly && bookingOwner(offerKind).memberId === memberId) {
       return { ...WAITLIST_CROSS_LODGE_WEBSITE_ONLY_REFUSAL };
     }
     return confirmCrossLodgeWaitlistOffer(bookingId, memberId, format);
