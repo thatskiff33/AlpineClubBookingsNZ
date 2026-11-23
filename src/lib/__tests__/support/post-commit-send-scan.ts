@@ -35,11 +35,16 @@ import { TRANSACTION_OPENERS } from "@/lib/__tests__/support/lock1-transaction-s
  * - a COMMIT POINT is the end of a call that commits. A send INSIDE a
  *   transaction's callback ends before the point and is not counted;
  * - a SITE is a send that starts after a commit point in its unit, keyed
- *   `file#unit#callee`, with the number of calls and the names of every commit
- *   point before any of them (so an entry can name the commit it is about);
- * - a helper outside the scope that commits and then sends inside itself is a
- *   site of its own only when `COMMITS_THEN_SENDS` names it, with a reason: its
- *   module is not scanned, so nothing else would see the send after its commit.
+ *   `file#unit#callee`, with, for each call in source order, the names of the
+ *   commit points before it (so an entry can name the commit each call is
+ *   about);
+ * - an imported helper OUTSIDE the scope that both commits and sends, by its
+ *   own module's reading, is a site of its own wherever it is called (its
+ *   module is not scanned, so nothing else would see the send after its
+ *   commit), recorded as `after` `OWN_COMMIT`. A helper inside the scope is
+ *   not: its module's own sites are listed already. A helper whose commit this
+ *   reader cannot see (single-statement writes, no transaction) is a site of
+ *   its own only when `COMMITS_THEN_SENDS` names it, with a reason.
  *
  * It reads the syntax tree, so a comment naming a sender or an opener is never
  * a site; the census's cheap first pass over the tree strips comments first
@@ -63,11 +68,15 @@ export const COMMITTING_CALLS: ReadonlySet<string> = new Set([...Object.keys(TRA
 
 const SENDER = /^(?:send|alert|notify)[A-Z]/;
 
+/** The `after` of a call to a helper that commits and sends inside itself. */
+export const OWN_COMMIT = "(its own commit)";
+
 /**
  * Helpers outside the scope that commit a change and then send about it inside
- * themselves: a call to one is a site, `after` the helper itself. The census
- * checks each against its own module: it must send by this reader's rules, and
- * its module must write (a commit may be single statements, not a transaction).
+ * themselves, by writes this reader does not read as a commit (single
+ * statements, no transaction), so the derivation cannot find them: a call to
+ * one is a site, `after` `OWN_COMMIT`. The census checks each against its own
+ * module: it must send by this reader's rules, and its module must write.
  */
 export const COMMITS_THEN_SENDS: Readonly<Record<string, { module: string; reason: string }>> = {
   retireAndEscalateUnusableSavedCard: {
@@ -93,6 +102,8 @@ export const SENDS_THROUGH: Readonly<Record<string, { module: string; reason: st
 export interface ImportedRole {
   commits: boolean;
   sends: boolean;
+  /** The imported module is itself in `POST_COMMIT_SEND_SCOPE`, so its own sites are listed. */
+  inScope?: boolean;
 }
 
 function calleeName(call: ts.CallExpression): string | null {
@@ -163,7 +174,7 @@ type Roles = { committing: Set<string>; sending: Set<string> };
 function rolesOf(all: Map<string, ts.CallExpression[]>, imported: ReadonlyMap<string, ImportedRole>): Roles {
   return {
     committing: reaching(all, (name) => COMMITTING_CALLS.has(name) || imported.get(name)?.commits === true),
-    sending: reaching(all, (name) => SENDER.test(name) || name in SENDS_THROUGH),
+    sending: reaching(all, (name) => SENDER.test(name) || Object.hasOwn(SENDS_THROUGH, name)),
   };
 }
 
@@ -205,19 +216,20 @@ export function importedRoles(rel: string, code: string, read: (rel: string) => 
       .find((candidate) => candidate.text !== null);
     if (!target) continue;
     const unitRoles = moduleUnitRoles(target.file, target.text!);
+    const inScope = POST_COMMIT_SEND_SCOPE.some((pattern) => pattern.test(target.file));
     for (const element of bindings.elements) {
       if (element.isTypeOnly) continue;
       const role = unitRoles.get((element.propertyName ?? element.name).text);
-      if (role && (role.commits || role.sends)) roles.set(element.name.text, role);
+      if (role && (role.commits || role.sends)) roles.set(element.name.text, { ...role, inScope });
     }
   }
   return roles;
 }
 
-/** One site: how many calls, and every commit point before any of them. */
+/** One site: for each call, in source order, the commit points before it (`OWN_COMMIT` for a helper that commits and sends itself). */
 export interface PostCommitSite {
   calls: number;
-  after: Set<string>;
+  afterEach: Set<string>[];
 }
 
 /** One module's sites, keyed `file#unit#callee`. */
@@ -229,12 +241,16 @@ export function scanPostCommitSends(
   const all = units(parse(rel, code));
   const { committing, sending } = rolesOf(all, imported);
   const commits = (name: string) => COMMITTING_CALLS.has(name) || committing.has(name) || imported.get(name)?.commits === true;
-  const sends = (name: string) => SENDER.test(name) || sending.has(name) || name in SENDS_THROUGH;
+  const sends = (name: string) => SENDER.test(name) || sending.has(name) || Object.hasOwn(SENDS_THROUGH, name);
+  const commitsAndSendsItself = (name: string) => {
+    const role = imported.get(name);
+    return Object.hasOwn(COMMITS_THEN_SENDS, name) || (role !== undefined && role.commits && role.sends && !role.inScope);
+  };
   const sites = new Map<string, PostCommitSite>();
   const count = (key: string, after: readonly string[]) => {
-    const site = sites.get(key) ?? { calls: 0, after: new Set<string>() };
+    const site = sites.get(key) ?? { calls: 0, afterEach: [] };
     site.calls += 1;
-    for (const name of after) site.after.add(name);
+    site.afterEach.push(new Set(after));
     sites.set(key, site);
   };
   for (const [unit, calls] of all) {
@@ -245,8 +261,8 @@ export function scanPostCommitSends(
     const points = named.filter(({ name }) => commits(name)).map(({ call, name }) => ({ end: call.getEnd(), name }));
     for (const { call, name } of named) {
       const key = `${rel}#${unit}#${name}`;
-      if (name in COMMITS_THEN_SENDS) {
-        count(key, [name]);
+      if (commitsAndSendsItself(name)) {
+        count(key, [OWN_COMMIT]);
         continue;
       }
       if (!sends(name)) continue;

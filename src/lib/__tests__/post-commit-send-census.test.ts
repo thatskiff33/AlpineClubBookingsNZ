@@ -14,9 +14,12 @@
  * - routed through the mechanism: a deliverer call (`deliverOwedNotice`, or a
  *   kind's wrapper such as `deliverBumpNotices`) is not a send, so a converted
  *   site drops out of the scan; or
- * - listed in `POST_COMMIT_SEND_REASONS` with its call count, the commit it is
- *   about (`after`, which must still come before the send) and a reason: the
- *   later pull request of #5433 that converts it, or why it needs no marker.
+ * - listed in `POST_COMMIT_SEND_REASONS` with its call count, the commit each
+ *   call is about (`after`: one name for every call, or one per call in source
+ *   order, each of which must still come before its call) and a reason: the
+ *   later pull request of #5433 that converts it, why it needs no marker, the
+ *   recovery it already has, or "to trace under #5433" for an imported helper
+ *   that commits and sends inside itself which the plan never traced.
  *
  * A new site fails until it is converted or listed; a listed site that is gone
  * (or converted) fails until its entry is removed; a changed call count, or a
@@ -38,8 +41,13 @@
  *   that contains one, or a named import whose own module's unit does, ONE
  *   import level deep: a default or namespace import, a re-export, or a helper
  *   that commits only through a further import is not followed.
- * - An imported helper that commits and then sends inside itself is a site
- *   only when `COMMITS_THEN_SENDS` names it.
+ * - An imported helper outside the scope that commits and sends inside itself
+ *   is a site by derivation; one whose commit is single statements (no
+ *   transaction) only when `COMMITS_THEN_SENDS` names it. Such a site's `after`
+ *   is `OWN_COMMIT`: its commit is inside the helper, so the per-call check
+ *   cannot pin it to anything else. What pins it is the derivation itself: the
+ *   site, and so its entry, goes the moment the helper stops committing or
+ *   sending, and its entry then fails as stale.
  * - Order is source order within a unit, not control flow: a send on a branch
  *   that returned before the commit, or in another `switch` case, is counted
  *   (and listed here as a false positive), and a loop that sends then commits
@@ -54,6 +62,7 @@ import { describe, expect, it } from "vitest";
 import { relativeSource, sourceFiles } from "@/lib/__tests__/support/booking-guest-night-writer-scan";
 import {
   COMMITS_THEN_SENDS,
+  OWN_COMMIT,
   COMMITTING_CALLS,
   importedRoles,
   moduleUnitRoles,
@@ -64,13 +73,24 @@ import {
 } from "@/lib/__tests__/support/post-commit-send-scan";
 import { stripComments } from "@/lib/__tests__/support/strip-comments";
 
-/** One listed site: how many calls, the commit(s) it is about, and why it is not converted here. */
+/**
+ * One listed site: how many calls, the commit each call is about (one name for
+ * every call, or one per call in source order), and why it is not converted here.
+ */
 type Entry = { calls: number; after: readonly string[]; reason: string };
 
 const RECURRING_REMINDER =
   "Recurring officer reminder, left uncovered by decision (#5433, settled by the lane): the booking stays PENDING with its hold extended, so the next due reminder goes out anyway.";
 const SAVED_CARD_RETRY =
   "Not a notice a committed change owes: a refused or failed saved-card charge leaves the booking PENDING (or its claim handed back), so a later run reaches it again and alerts on the refusal cadence (`shouldAlertOnSavedCardChargeRefusal`). #5433's plan traced this as not this shape.";
+const MARK_PAID_ALERTS =
+  "to trace under #5433: the card settle's officer alerts after it commits (payment failure, a capture kept with no recorded settler, a capacity-race refund shortfall, a refund failure; payment-reconciliation.ts). Its duplicate-capture alert is already recovered: an owed marker in the settle transaction, drained by the payments job (duplicate-capture-guard.ts, #5433 plan).";
+const HOSTING_COVER =
+  "to trace under #5433: the hosting-coverage drain's loss-of-cover email to an owner after a re-evaluation commits (adult-member-hosting-coverage-drain.ts). Its docblock says a failure leaves the queue row unprocessed for the general cron; whether a stop after the commit and before the email is covered is what to trace.";
+const LATE_CAPTURE_HOLD =
+  "to trace under #5433: the treasurer's held-late-capture alert after the hold's task commits (late-capture-refund-hold.ts). A still-open task re-announces on the next notice for the same capture (#3635), on no schedule.";
+const CARD_REFUND_ALERTS =
+  "to trace under #5433: the officers' card refund alerts after the refund rows commit (failed-later card refunds, refund cap overflow; payment-transactions.ts).";
 const STRIPE_SWITCH =
   "False positive: another `switch` case of the one event dispatch; the earlier case's commit never runs before this handler, which the census reads as its own unit.";
 
@@ -110,7 +130,7 @@ const POST_COMMIT_SEND_REASONS: Readonly<Record<string, Entry>> = {
   },
   "src/lib/cron-confirm-pending.ts#confirmPendingBookings#retireAndEscalateUnusableSavedCard": {
     calls: 1,
-    after: ["retireAndEscalateUnusableSavedCard"],
+    after: [OWN_COMMIT],
     reason:
       "#5433, a path the plan missed (to convert with PR 4, confirm-pending): the card-unusable email to the member and alert to officers after the card clear commits. A crash between them loses both: the next run takes the missing-payment-method path, which only logs.",
   },
@@ -126,7 +146,7 @@ const POST_COMMIT_SEND_REASONS: Readonly<Record<string, Entry>> = {
   },
   "src/lib/cron-confirm-pending.ts#confirmPendingBookings#sendAdminPaymentFailureAlert": {
     calls: 3,
-    after: ["runSavedCardClaimRelease"],
+    after: ["resolveHoldWindowUnderLock", "runSavedCardClaimRelease", "runSavedCardClaimRelease"],
     reason: SAVED_CARD_RETRY,
   },
 
@@ -162,7 +182,7 @@ const POST_COMMIT_SEND_REASONS: Readonly<Record<string, Entry>> = {
   },
   "src/lib/stripe-webhook-service.ts#handleAdditionalModificationPaymentSucceeded#alertPaymentAmountMismatch": {
     calls: 1,
-    after: ["handleCancelledBookingAdditionalPaymentSucceeded", "releaseXeroSupplementaryInvoiceForCapturedPaymentIntent"],
+    after: ["releaseXeroSupplementaryInvoiceForCapturedPaymentIntent"],
     reason:
       "False positive: the commits before it are the cancelled-booking and already-captured branches, which return first; a mismatch commits nothing and refuses to apply the payment.",
   },
@@ -339,7 +359,7 @@ const POST_COMMIT_SEND_REASONS: Readonly<Record<string, Entry>> = {
   },
   "src/lib/group-settlement.ts#createGroupSettlementIntent#applyGroupSettlementSucceeded": {
     calls: 2,
-    after: ["commitChildrenToConfirmed"],
+    after: ["createGroupSettlementInvoice", "commitChildrenToConfirmed"],
     reason:
       "#5433 PR 7 (B1): applyGroupSettlementSucceeded commits the settlement and sends from settleConfirmedChildrenAndNotify (listed). One call follows the children's commit on the card path, when the intent has already succeeded; the other is counted after the Internet Banking branch's invoice transaction, which returns first.",
   },
@@ -371,6 +391,67 @@ const POST_COMMIT_SEND_REASONS: Readonly<Record<string, Entry>> = {
     after: ["expireMemberGuestConsent"],
     reason: "#5433 PR 8 (B7): the consent outcome email the finalisation sends after the expiry commits.",
   },
+  // Imported helpers outside the scope that commit and send inside themselves (#5433 review, finding 4).
+  "src/lib/cron-confirm-pending.ts#confirmPendingBookings#markBookingPaymentSucceeded": {
+    calls: 1,
+    after: [OWN_COMMIT],
+    reason: MARK_PAID_ALERTS,
+  },
+  "src/lib/stripe-webhook-service.ts#handlePaymentIntentSucceeded#markBookingPaymentSucceeded": {
+    calls: 1,
+    after: [OWN_COMMIT],
+    reason: MARK_PAID_ALERTS,
+  },
+  "src/lib/cron-confirm-pending.ts#confirmPendingBookings#settleHostingCoverageAfterCommit": { calls: 1, after: [OWN_COMMIT], reason: HOSTING_COVER },
+  "src/lib/cron-group-settlement-reaper.ts#reapAndResume#settleHostingCoverageAfterCommit": { calls: 1, after: [OWN_COMMIT], reason: HOSTING_COVER },
+  "src/lib/group-settlement.ts#createGroupSettlementIntent#settleHostingCoverageAfterCommit": { calls: 1, after: [OWN_COMMIT], reason: HOSTING_COVER },
+  "src/lib/group-settlement.ts#createGroupSettlementInvoice#settleHostingCoverageAfterCommit": { calls: 1, after: [OWN_COMMIT], reason: HOSTING_COVER },
+  "src/lib/group-settlement.ts#settleConfirmedChildrenAndNotify#settleHostingCoverageAfterCommit": { calls: 1, after: [OWN_COMMIT], reason: HOSTING_COVER },
+  "src/lib/internet-banking-payment-cron.ts#releaseExpiredInternetBankingHolds#settleHostingCoverageAfterCommit": { calls: 1, after: [OWN_COMMIT], reason: HOSTING_COVER },
+  "src/lib/waitlist.ts#confirmWaitlistOffer#settleHostingCoverageAfterCommit": { calls: 1, after: [OWN_COMMIT], reason: HOSTING_COVER },
+  "src/lib/xero-inbound/invoice-paid-effects.ts#syncInternetBankingPaymentsForPaidInvoice#settleHostingCoverageAfterCommit": { calls: 1, after: [OWN_COMMIT], reason: HOSTING_COVER },
+  "src/lib/cron-group-settlement-reaper.ts#reapStaleGroupSettlements#resendUnsentGroupOrganiserHandBackAlerts": {
+    calls: 1,
+    after: [OWN_COMMIT],
+    reason:
+      "Already recovered: this is the sweep of unsent hand-back alerts itself; the alert record lives on the hand-back task and is swept by task (group-organiser-hand-back.ts; #5433 plan, the group hand-back alert, covered).",
+  },
+  "src/lib/cron-group-settlement-reaper.ts#resumeInterruptedOrganiserCancels#settleGroupBookingOnOrganiserCancel": {
+    calls: 1,
+    after: [OWN_COMMIT],
+    reason:
+      "to trace under #5433: the joiners' cancellation emails after an organiser's cancel settles the group (group-cancel.ts), resumed here by the reaper; its hand-back alert is already swept by task.",
+  },
+  "src/lib/stripe-webhook-service.ts#handleAdditionalModificationPaymentSucceeded#releaseXeroSupplementaryInvoiceForCapturedPaymentIntent": {
+    calls: 2,
+    after: [OWN_COMMIT],
+    reason:
+      "to trace under #5433: the officers' alerts after a captured payment releases its Xero supplementary invoice (invoice not issued on capture, Xero sync error, taken-back invoices paid again; xero-supplementary-invoice-late-capture.ts).",
+  },
+  "src/lib/stripe-webhook-service.ts#handleCancelledBookingPaymentSucceeded#holdLateCaptureForTreasurerIfRequired": { calls: 1, after: [OWN_COMMIT], reason: LATE_CAPTURE_HOLD },
+  "src/lib/stripe-webhook-service.ts#handleCancelledBookingPaymentSucceeded#holdLateCaptureReservationRefused": { calls: 1, after: [OWN_COMMIT], reason: LATE_CAPTURE_HOLD },
+  "src/lib/stripe-webhook-service.ts#handleCancelledBookingPaymentSucceeded#holdLateCaptureDisputeRefused": { calls: 1, after: [OWN_COMMIT], reason: LATE_CAPTURE_HOLD },
+  "src/lib/stripe-webhook-service.ts#handleCancelledBookingPaymentSucceeded#holdLateCaptureRefusedByStripe": { calls: 1, after: [OWN_COMMIT], reason: LATE_CAPTURE_HOLD },
+  "src/lib/stripe-webhook-service.ts#handleCancelledBookingAdditionalPaymentSucceeded#holdLateCaptureForTreasurerIfRequired": { calls: 1, after: [OWN_COMMIT], reason: LATE_CAPTURE_HOLD },
+  "src/lib/stripe-webhook-service.ts#handleCancelledBookingAdditionalPaymentSucceeded#holdLateCaptureReservationRefused": { calls: 1, after: [OWN_COMMIT], reason: LATE_CAPTURE_HOLD },
+  "src/lib/stripe-webhook-service.ts#handleCancelledBookingAdditionalPaymentSucceeded#holdLateCaptureDisputeRefused": { calls: 1, after: [OWN_COMMIT], reason: LATE_CAPTURE_HOLD },
+  "src/lib/stripe-webhook-service.ts#handleCancelledBookingAdditionalPaymentSucceeded#holdLateCaptureRefusedByStripe": { calls: 1, after: [OWN_COMMIT], reason: LATE_CAPTURE_HOLD },
+  "src/lib/stripe-webhook-service.ts#handleCancelledBookingAdditionalPaymentSucceeded#refundPaymentTransactions": {
+    calls: 1,
+    after: [OWN_COMMIT],
+    reason: CARD_REFUND_ALERTS,
+  },
+  "src/lib/stripe-webhook-service.ts#handleChargeRefunded#syncRefundsFromStripeCharge": {
+    calls: 1,
+    after: [OWN_COMMIT],
+    reason: CARD_REFUND_ALERTS,
+  },
+  "src/lib/stripe-webhook-service.ts#processStripeWebhookEvent#recordStripeDispute": {
+    calls: 1,
+    after: [OWN_COMMIT],
+    reason:
+      "Already recovered: each dispute alert is a once-ever claim whose sent stamp is kept on the StripeDispute row, so a webhook that stops before answering is redelivered by Stripe and the redelivery sends what the row shows unsent (stripe-dispute.ts docblock, INV-INT-032).",
+  },
 };
 
 /** A repository file's code, or null when there is none. */
@@ -401,17 +482,28 @@ function scanTree(): Map<string, PostCommitSite> {
   return sites;
 }
 
+/**
+ * Each call comes after the commit its entry names for it: one name for every
+ * call, or one per call in source order (so two calls of one sender after
+ * different commits are each pinned to their own).
+ */
+function callsFollowTheirCommits(site: PostCommitSite, entry: Entry): boolean {
+  if (entry.after.length !== 1 && entry.after.length !== site.calls) return false;
+  return site.afterEach.every((names, i) => names.has(entry.after.length === 1 ? entry.after[0]! : entry.after[i]!));
+}
+
 /** What the census compares: sites with no entry, entries with no site, moved counts, and named commits no longer before the send. */
 function compare(sites: ReadonlyMap<string, PostCommitSite>, reasons: Readonly<Record<string, Entry>>) {
   return {
-    missing: [...sites.keys()].filter((key) => !(key in reasons)).sort(),
+    missing: [...sites.keys()].filter((key) => !Object.hasOwn(reasons, key)).sort(),
     stale: Object.keys(reasons).filter((key) => !sites.has(key)).sort(),
     miscounted: Object.entries(reasons)
       .filter(([key, entry]) => sites.has(key) && sites.get(key)!.calls !== entry.calls)
       .map(([key, entry]) => `${key}: listed ${entry.calls}, found ${sites.get(key)!.calls}`),
     commitMoved: Object.entries(reasons)
-      .filter(([key, entry]) => sites.has(key) && entry.after.some((name) => !sites.get(key)!.after.has(name)))
-      .map(([key, entry]) => `${key}: listed after ${entry.after.join(", ")}, found after ${[...sites.get(key)!.after].join(", ")}`),
+      .filter(([key]) => sites.has(key))
+      .filter(([key, entry]) => !callsFollowTheirCommits(sites.get(key)!, entry))
+      .map(([key, entry]) => `${key}: listed after ${entry.after.join(", ")}, found ${sites.get(key)!.afterEach.map((names, i) => `call ${i + 1} after ${[...names].join(", ")}`).join("; ")}`),
   };
 }
 
@@ -440,7 +532,7 @@ describe("#5433: every notice sent after a commit is owed, or has a recorded rea
 
   it("gives every entry a reason that names a later pull request of #5433, a recovery, or why it is not owed", () => {
     for (const [key, entry] of Object.entries(POST_COMMIT_SEND_REASONS)) {
-      expect(entry.reason, key).toMatch(/#5433 PR \d|#5433, a path the plan missed|Already recovered|Not a notice a committed change owes|False positive|Wrapper|Recurring officer reminder/);
+      expect(entry.reason, key).toMatch(/#5433 PR \d|#5433, a path the plan missed|to trace under #5433|Already recovered|Not a notice a committed change owes|False positive|Wrapper|Recurring officer reminder/);
     }
   });
 
@@ -484,9 +576,9 @@ describe("#5433: every notice sent after a commit is owed, or has a recorded rea
 });
 
 describe("the post-commit send reader", () => {
-  const scan = (code: string, imported = new Map<string, { commits: boolean; sends: boolean }>()) =>
+  const scan = (code: string, imported = new Map<string, { commits: boolean; sends: boolean; inScope?: boolean }>()) =>
     [...scanPostCommitSends("src/lib/cron-x.ts", code, imported)].map(
-      ([key, site]) => `${key.split("#").slice(1).join("#")}x${site.calls} after ${[...site.after].join(",")}`,
+      ([key, site]) => `${key.split("#").slice(1).join("#")}x${site.calls} after ${site.afterEach.map((names) => [...names].join(",")).join(" | ")}`,
     );
 
   it("counts a send after a commit, and not one before it or inside its callback", () => {
@@ -500,7 +592,7 @@ describe("the post-commit send reader", () => {
           await notifyAfter();
           await sendAfter();
         }`),
-    ).toEqual(["run#sendAfterx2 after $transaction", "run#alertAfterx1 after $transaction", "run#notifyAfterx1 after $transaction"]);
+    ).toEqual(["run#sendAfterx2 after $transaction | $transaction", "run#alertAfterx1 after $transaction", "run#notifyAfterx1 after $transaction"]);
   });
 
   it("follows a module helper that opens a transaction, and a module helper that sends", () => {
@@ -529,9 +621,37 @@ describe("the post-commit send reader", () => {
           await finaliseMemberGuestConsentTransition({});
         }`),
     ).toEqual([
-      "run#retireAndEscalateUnusableSavedCardx1 after retireAndEscalateUnusableSavedCard",
+      `run#retireAndEscalateUnusableSavedCardx1 after ${OWN_COMMIT}`,
       "run#finaliseMemberGuestConsentTransitionx1 after $transaction",
     ]);
+  });
+
+  it("counts an imported helper outside the scope that commits and sends as a site of its own, and one inside the scope not", () => {
+    const helper = `export async function settleAndTell() { await prisma.$transaction(async () => {}); await sendTold(); }`;
+    const code = `import { settleAndTell } from "./outside-fixture";\nimport { listedElsewhere } from "./waitlist";\nexport async function run() { await settleAndTell(); await listedElsewhere(); }`;
+    const read = (rel: string) => (rel === "src/lib/outside-fixture.ts" ? helper : rel === "src/lib/waitlist.ts" ? helper.replace("settleAndTell", "listedElsewhere") : null);
+    const roles = importedRoles("src/lib/cron-x.ts", code, read);
+    expect(roles.get("settleAndTell")).toEqual({ commits: true, sends: true, inScope: false });
+    expect(roles.get("listedElsewhere")).toEqual({ commits: true, sends: true, inScope: true });
+    expect(scan(code, roles)).toEqual([`run#settleAndTellx1 after ${OWN_COMMIT}`]);
+  });
+
+  it("pins each call to its own commit: two calls of one sender after different commits", () => {
+    const code = `
+      async function run() {
+        await prisma.$transaction(async () => {});
+        await sendIt();
+        await runSavedCardClaimRelease(x);
+        await sendIt();
+      }`;
+    const site = scanPostCommitSends("src/lib/cron-x.ts", code).get("src/lib/cron-x.ts#run#sendIt")!;
+    const pinned = (after: string[]) => callsFollowTheirCommits(site, { calls: 2, after, reason: "" });
+    expect(pinned(["$transaction", "runSavedCardClaimRelease"])).toBe(true);
+    // The second call follows the release; the first does not.
+    expect(pinned(["runSavedCardClaimRelease", "$transaction"])).toBe(false);
+    expect(pinned(["runSavedCardClaimRelease"])).toBe(false);
+    expect(pinned(["$transaction"])).toBe(true);
+    expect(pinned(["$transaction", "$transaction", "$transaction"])).toBe(false);
   });
 
   it("does not count a deliverer call, a non-sender name, or a sender with a lower-case letter after its prefix", () => {
@@ -543,6 +663,8 @@ describe("the post-commit send reader", () => {
           await deliverBumpNotices(booking, owed);
           await triggerWaitlistProcessing();
           await sendsomething();
+          await value.toString();
+          await value.constructor();
         }`),
     ).toEqual([]);
   });
