@@ -52,7 +52,19 @@ import { POST as requestChange } from "@/app/api/bookings/[id]/change-requests/r
 import { POST as requestChangeException } from "@/app/api/bookings/[id]/exception-requests/route";
 import { POST as requestBookingException } from "@/app/api/bookings/exception-requests/route";
 import { expectActionContract, officerMemberSession } from "@/lib/__tests__/helpers/mcp-action-contract";
+import { sendAdminBookingChangeRequestAlert } from "@/lib/email";
+import { findMcpAction } from "@/lib/mcp/catalogue";
 import { MCP_PRINCIPAL_HEADER } from "@/lib/mcp/principal";
+
+/**
+ * The owner's decision on #5305 (item 2): an action that notifies anyone but
+ * the member is `destructive`, so the app confirms with the member first and
+ * the call is logged as important. Each request here emails the officers.
+ */
+function expectOfficersAlertedSoDestructive(actionId: string): void {
+  expect(sendAdminBookingChangeRequestAlert).toHaveBeenCalled();
+  expect(findMcpAction(actionId)?.kind).toBe("destructive");
+}
 
 /** Every key anywhere in a JSON value. */
 function allKeys(value: unknown, keys = new Set<string>()): Set<string> {
@@ -200,6 +212,7 @@ describe("request_booking_change", () => {
     expect(allKeys(browser).has("stripePaymentIntentId")).toBe(true);
     expect(allKeys(connection).has("stripePaymentIntentId")).toBe(false);
     expect(allKeys(connection).has("requestedByMemberId")).toBe(false);
+    expectOfficersAlertedSoDestructive("request_booking_change");
   });
 
   it("refuses the connection another member's booking, which the officer's browser may ask on", async () => {
@@ -248,6 +261,7 @@ describe("request_booking_exception", () => {
     expect(browser).toMatchObject({ proposalHash: "sha256:abc" });
     expect(connection).not.toHaveProperty("proposalHash");
     expect(h.createNewBookingRequest.mock.calls[0]?.[0]).toMatchObject({ requestedByMemberId: "officer-1" });
+    expectOfficersAlertedSoDestructive("request_booking_exception");
   });
 });
 
@@ -281,6 +295,7 @@ describe("request_booking_change_exception", () => {
       requestedByMemberId: "officer-1",
       bookingOwnerMemberId: "officer-1",
     });
+    expectOfficersAlertedSoDestructive("request_booking_change_exception");
   });
 
   it("refuses the connection another member's booking, which the officer's browser may ask on", async () => {

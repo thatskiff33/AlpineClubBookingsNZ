@@ -6,6 +6,13 @@
  * officer reach on `memberOnlySessionUser`. Booking edits that can take, move
  * or refund money are not here; they are `moves-money` exclusions
  * (`exclusions.ts`) and the website-only `change_my_booking`.
+ *
+ * An action that notifies anyone but the member, or changes another person's
+ * record, is `destructive` (owner decision on #5305, item 2), so the app
+ * confirms with the member first and the call is logged as important: the
+ * change, exception and refund-review requests email the club's officers, and
+ * accepting a waitlist offer runs the hosting check that can email other
+ * members on a group trip.
  */
 import { bookingIdParamsSchema } from "@/lib/booking-cancel-schema";
 import { changeRequestConnectionCreateSchema, changeRequestEstimateSchema } from "@/lib/booking-change-request-input";
@@ -243,12 +250,12 @@ export const MCP_BOOKING_ACTIONS: readonly McpAction[] = [
     id: "request_booking_change",
     title: "Ask the club to change a stay",
     summary:
-      "Asks a booking officer to change one of the signed-in member's own bookings in a way the member can no longer make themselves: a stay under way, or a night today or earlier. Name the change (new dates, guests added or removed, or a guest's nights) and add a `reason`. The officer decides, and any price difference is settled then. One open request per booking.",
+      "Asks a booking officer to change one of the signed-in member's own bookings in a way the member can no longer make themselves: a stay under way, or a night today or earlier. Name the change (new dates, guests added or removed, or a guest's nights) and add a `reason`. The officer decides, and any price difference is settled then. One open request per booking. The club's officers are emailed, so confirm with the member first.",
     method: "POST",
     path: "/api/bookings/[id]/change-requests",
     params: bookingIdParamsSchema,
     body: changeRequestConnectionCreateSchema,
-    kind: "write",
+    kind: "destructive",
     returns: BOOKING_CHANGE_REQUEST_CONNECTION_SHAPE,
     core: false,
   },
@@ -267,11 +274,11 @@ export const MCP_BOOKING_ACTIONS: readonly McpAction[] = [
     id: "request_booking_exception",
     title: "Ask to book outside the rules",
     summary:
-      "Asks a booking officer to allow a new stay the club's rules refuse, such as one shorter than the minimum stay. `memberMessage` explains why. Nothing is booked until an officer approves; the member then confirms and pays on the website. `supersedeRequestId` replaces an open request.",
+      "Asks a booking officer to allow a new stay the club's rules refuse, such as one shorter than the minimum stay. `memberMessage` explains why. Nothing is booked until an officer approves; the member then confirms and pays on the website. `supersedeRequestId` replaces an open request. The club's officers are emailed, so confirm with the member first.",
     method: "POST",
     path: "/api/bookings/exception-requests",
     body: newBookingExceptionRequestConnectionSchema,
-    kind: "write",
+    kind: "destructive",
     returns: CREATED_EXCEPTION_REQUEST_CONNECTION_SHAPE,
     core: false,
   },
@@ -292,12 +299,12 @@ export const MCP_BOOKING_ACTIONS: readonly McpAction[] = [
     id: "request_booking_change_exception",
     title: "Ask to change a booking outside the rules",
     summary:
-      "Asks a booking officer to allow a change to one of the signed-in member's own bookings that the club's rules refuse. Send only what changes, as for `quote_booking_change`, with `memberMessage` explaining why. Nothing changes until an officer approves.",
+      "Asks a booking officer to allow a change to one of the signed-in member's own bookings that the club's rules refuse. Send only what changes, as for `quote_booking_change`, with `memberMessage` explaining why. Nothing changes until an officer approves. The club's officers are emailed, so confirm with the member first.",
     method: "POST",
     path: "/api/bookings/[id]/exception-requests",
     params: bookingIdParamsSchema,
     body: modificationExceptionRequestConnectionSchema,
-    kind: "write",
+    kind: "destructive",
     returns: CREATED_EXCEPTION_REQUEST_CONNECTION_SHAPE,
     core: false,
   },
@@ -329,12 +336,12 @@ export const MCP_BOOKING_ACTIONS: readonly McpAction[] = [
     id: "request_refund_review",
     title: "Ask for a refund review",
     summary:
-      "Asks the club to review the refund on one of the signed-in member's own cancelled bookings. `reason` is 10 to 2000 characters; `requestedAmountCents` is optional. No money moves: an officer decides. One open review per booking.",
+      "Asks the club to review the refund on one of the signed-in member's own cancelled bookings. `reason` is 10 to 2000 characters; `requestedAmountCents` is optional. No money moves: an officer decides. One open review per booking. The club's officers are emailed, so confirm with the member first.",
     method: "POST",
     path: "/api/bookings/[id]/refund-request",
     params: bookingIdParamsSchema,
     body: refundAppealRequestSchema,
-    kind: "write",
+    kind: "destructive",
     returns: REFUND_APPEAL_CONNECTION_SHAPE,
     core: false,
   },
@@ -342,11 +349,11 @@ export const MCP_BOOKING_ACTIONS: readonly McpAction[] = [
     id: "accept_waitlist_offer",
     title: "Accept a waitlist offer",
     summary:
-      "Accepts the place the club has offered on one of the signed-in member's waitlisted bookings. If `requiresPayment` is true the member must pay on the website to keep it. An offer at another lodge is refused (409): the member accepts it on the website, which shows the lodge and price.",
+      "Accepts the place the club has offered on one of the signed-in member's waitlisted bookings. If `requiresPayment` is true the member must pay on the website to keep it. An offer at another lodge is refused (409): the member accepts it on the website, which shows the lodge and price. Confirms the booking and can lead to emails to other members on a group trip, so confirm with the member first.",
     method: "POST",
     path: "/api/bookings/[id]/waitlist-confirm",
     params: bookingIdParamsSchema,
-    kind: "write",
+    kind: "destructive",
     returns: WAITLIST_OFFER_ACCEPTED_CONNECTION_SHAPE,
     core: false,
     nextStep: "If payment is needed, the member pays at {origin}/bookings/{id} to keep the place.",

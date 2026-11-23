@@ -83,6 +83,8 @@ import { DELETE as clearRoom, PUT as setRoom } from "@/app/api/bookings/[id]/req
 import { POST as acceptOffer } from "@/app/api/bookings/[id]/waitlist-confirm/route";
 import { PATCH as withdrawBookingException } from "@/app/api/bookings/exception-requests/[id]/route";
 import { expectActionContract, officerMemberSession } from "@/lib/__tests__/helpers/mcp-action-contract";
+import { sendAdminRefundRequestAlert } from "@/lib/email";
+import { findMcpAction } from "@/lib/mcp/catalogue";
 import { MCP_PRINCIPAL_HEADER } from "@/lib/mcp/principal";
 import { WAITLIST_CROSS_LODGE_WEBSITE_ONLY_CODE } from "@/lib/waitlist-confirm-recovery-contract";
 
@@ -282,6 +284,10 @@ describe("request_refund_review", () => {
     expect(browser).toMatchObject({ memberId: "officer-1" });
     expect(connection).not.toHaveProperty("memberId");
     expect(connection).not.toHaveProperty("reviewedBy");
+    // It emails the club's officers, so it is `destructive` (owner decision on
+    // #5305, item 2): the app confirms with the member first.
+    expect(sendAdminRefundRequestAlert).toHaveBeenCalled();
+    expect(findMcpAction("request_refund_review")?.kind).toBe("destructive");
   });
 
   it("refuses the connection another member's booking, which the officer's browser may appeal", async () => {
@@ -318,6 +324,10 @@ describe("accept_waitlist_offer", () => {
     expect(connection).toEqual({ id: "booking-1", ...(browser as object) });
     expect(connection).toMatchObject({ requiresPayment: true });
     expect(h.confirmWaitlistOffer).toHaveBeenCalledWith("booking-1", "officer-1", expect.anything(), { crossLodgeOnWebsiteOnly: true });
+    // A confirmed offer runs the hosting-coverage settlement, which can email
+    // other members on a group trip (`settleHostingCoverageAfterCommit`), so
+    // the action is `destructive` (owner decision on #5305, item 2).
+    expect(findMcpAction("accept_waitlist_offer")?.kind).toBe("destructive");
   });
 
   it("refuses a connection a cross-lodge offer with 409; the browser may still accept it", async () => {
