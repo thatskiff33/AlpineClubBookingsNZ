@@ -238,14 +238,17 @@ The control plane is fail-closed and denies the paid call on any doubt
   ever tells the operator to reload (a reload during database contention makes the
   cause worse).
 
-## Deferred: ADR-006 postures
+## ADR-006 postures: disclosure and retention
 
-Two ADR-006 deployment postures are **not implemented in this release** and are
-documented honestly rather than as if they shipped: provider/data-residency
-**disclosure** (§2) and the optional **zero-retention** provider posture (§3). The
-§4 deployment-owned **private knowledge overlay** shipped this release (#2861) —
+The provider **disclosure** (ADR-006 §2) is built (#5243): the Modules page states
+where Diagnostics sends data and needs a tick before a save switches it on, the
+modules route refuses an unacknowledged switch-on and audits the acknowledgement,
+and the AI Diagnostics page repeats the statement. There is no **zero-retention**
+setting (§3): Anthropic offers no per-request control to enforce, so retention is
+arranged between the club and Anthropic on the account behind the Diagnostics key.
+The §4 deployment-owned **private knowledge overlay** shipped earlier (#2861) —
 distinct from the build-time allowlist overlay above, which is only a filter over the
-repository's own files. See the [deployment guide's deferred table](deployment.md#deferred-provider-disclosure-and-zero-retention)
+repository's own files. See the [deployment guide](deployment.md#provider-disclosure-and-retention)
 for what each means for an operator.
 
 ## Related links
