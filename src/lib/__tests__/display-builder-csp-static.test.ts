@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 import { ADMIN_PAGES, getAdminPage } from "@/lib/admin-hubs";
 import { withAdminHubTwins } from "@/lib/admin-hubs/security-map";
 import { FRAME_SRC_SELF_PATHS, TIGHT_IMG_SRC_PATHS } from "@/lib/csp";
+import { CENSUS_TIMEOUT_MS } from "@/test/census-timeout";
 
 /**
  * Static guards for the invariants that make this app's route-scoped CSP
@@ -212,7 +213,7 @@ describe("routes with a scoped CSP relaxation are entered by a HARD navigation (
     }
 
     expect(offenders).toEqual([]);
-  });
+  }, CENSUS_TIMEOUT_MS);
 
   it("puts every JSX href at a relaxed path on a plain <a>, never a component", () => {
     /*
@@ -249,7 +250,7 @@ describe("routes with a scoped CSP relaxation are entered by a HARD navigation (
     // its preview link. All but the /display one are adminHref calls.
     expect(sites).toBeGreaterThanOrEqual(5);
     expect(adminHrefSites).toBeGreaterThanOrEqual(4);
-  });
+  }, CENSUS_TIMEOUT_MS);
 
   it("never spreads adminLink of a relaxed page into a component", () => {
     // `adminLink` feeds back links and menu items, which are soft. The relaxed
@@ -261,7 +262,7 @@ describe("routes with a scoped CSP relaxation are entered by a HARD navigation (
       .filter((file) => relaxedLink.test(fs.readFileSync(file, "utf8")))
       .map((file) => path.relative(REPO_ROOT, file));
     expect(offenders).toEqual([]);
-  });
+  }, CENSUS_TIMEOUT_MS);
 
   it("marks every hub/nav descriptor pointing at a relaxed path hardNavigate", () => {
     /*
@@ -300,7 +301,7 @@ describe("routes with a scoped CSP relaxation are entered by a HARD navigation (
     // Positive control, as above: the Lobby Display hub's Visual builder card,
     // an adminHref call since C11 part 1 (#4808).
     expect(descriptors).toBeGreaterThanOrEqual(1);
-  });
+  }, CENSUS_TIMEOUT_MS);
 
   it("still renders a plain anchor when a descriptor opts in", () => {
     const hubRenderer = fs.readFileSync(path.join(REPO_ROOT, HUB_RENDERER), "utf8");

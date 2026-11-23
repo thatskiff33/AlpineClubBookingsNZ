@@ -8,6 +8,7 @@ import {
   relativeSource,
   sourceFiles,
 } from "@/lib/__tests__/support/booking-guest-night-writer-scan";
+import { CENSUS_TIMEOUT_MS } from "@/test/census-timeout";
 
 /**
  * WHO READS A SCHOOL'S ORGANISATION RECORD — programme #2912, stages 1 and 2.
@@ -773,7 +774,7 @@ describe("#3367: each declared reader still plays its declared part", () => {
       )
       .map(({ path }) => path);
     expect(callers).toEqual(["src/lib/school-booking-request.ts"]);
-  });
+  }, CENSUS_TIMEOUT_MS);
 
   it("derives the named people from the organisation's own contact rows", () => {
     // The reason the split half is declared: it is the reader of

@@ -10,6 +10,7 @@ vi.mock("next-auth/react", () => nextAuth);
 
 import { loadWizardWork, saveWizardWork } from "@/lib/booking-wizard-work";
 import { signOutMember } from "@/lib/member-sign-out";
+import { CENSUS_TIMEOUT_MS } from "@/test/census-timeout";
 
 afterEach(() => {
   window.sessionStorage.clear();
@@ -76,7 +77,7 @@ describe("signing out forgets the booking wizard's kept work (#4950)", () => {
       return reachesNextAuthSignOut(readFileSync(join(root, file), "utf8"));
     });
     expect(direct).toEqual([]);
-  });
+  }, CENSUS_TIMEOUT_MS);
 
   it.each([
     ['import { signOut } from "next-auth/react";'],

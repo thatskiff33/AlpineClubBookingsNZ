@@ -65,6 +65,7 @@ import {
   buildBookingModificationRefundMetadata,
 } from "@/lib/payment-recovery-keys";
 import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
+import { CENSUS_TIMEOUT_MS } from "@/test/census-timeout";
 
 const HELPER = "executeBookingModificationRefund";
 
@@ -269,7 +270,7 @@ describe("every booking-edit refund reserves its debt before commit (#4992)", ()
     ]);
     expect(reserves.filter(({ file, node }) => file === producerFiles.guestRemoval &&
       containingFunction(node) === "removeBookingGuestInTransaction")).toHaveLength(1);
-  });
+  }, CENSUS_TIMEOUT_MS);
 
   it("both consent decline and expiry use that reserved removal with the same transaction", () => {
     const calls = callsNamed("removeClaimedConsentGuest");
@@ -280,5 +281,5 @@ describe("every booking-edit refund reserves its debt before commit (#4992)", ()
       '"CONSENT_DECLINE"', '"CONSENT_EXPIRY"',
     ]);
     for (const { node } of calls) expect(node.arguments[0]?.getText()).toBe("tx");
-  });
+  }, CENSUS_TIMEOUT_MS);
 });

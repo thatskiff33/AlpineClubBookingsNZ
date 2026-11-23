@@ -17,6 +17,7 @@ import {
   MIN_CONFIGURED_LODGE_CAPACITY,
   resolveEffectiveLodgeCapacity,
 } from "@/lib/lodge-effective-capacity";
+import { CENSUS_TIMEOUT_MS } from "@/test/census-timeout";
 
 const bookingDoor = (limit: number) => `A booking cannot exceed ${limit} guests`;
 
@@ -147,7 +148,7 @@ describe("no party-size refusal interpolates a capacity directly (#3407)", () =>
     // add-guests payload pre-check, which measured the default lodge before
     // the booking's own lodge was known.
     expect(helperCalls).toBeGreaterThanOrEqual(15);
-  });
+  }, CENSUS_TIMEOUT_MS);
 
   it("would flag the pre-#3407 spelling", () => {
     expect(

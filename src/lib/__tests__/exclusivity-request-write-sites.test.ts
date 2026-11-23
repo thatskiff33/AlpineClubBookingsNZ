@@ -2,6 +2,7 @@ import { readdirSync, readFileSync } from "node:fs";
 import { join, relative, sep } from "node:path";
 import ts from "typescript";
 import { describe, expect, it } from "vitest";
+import { AST_CENSUS_TIMEOUT_MS } from "@/test/census-timeout";
 
 /*
   #2263 / ADR-001 (dated entry, 2026-07-30) — the sanctioned front-doors that may
@@ -264,7 +265,7 @@ function scanWriteSites(): Record<string, number> {
 // The scan parses every .ts/.tsx file under src/, prisma/ and scripts/, which
 // takes well past the 5s default on a loaded box. Memoised above, so this budget
 // covers one pass.
-describe("whole-lodge exclusivity request write sites (#2263, ADR-001)", { timeout: 120_000 }, () => {
+describe("whole-lodge exclusivity request write sites (#2263, ADR-001)", { timeout: AST_CENSUS_TIMEOUT_MS }, () => {
   it("has exactly the sanctioned front-doors and no others, across src, prisma and scripts", () => {
     const found = Object.keys(scanWriteSites()).sort();
 

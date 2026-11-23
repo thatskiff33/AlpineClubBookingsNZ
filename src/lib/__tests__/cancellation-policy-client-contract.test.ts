@@ -57,6 +57,7 @@ import { blankLiterals, stripComments } from "./support/strip-comments";
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import path from "node:path";
 import { balancedBrackets } from "./support/balanced-brackets";
+import { CENSUS_TIMEOUT_MS } from "@/test/census-timeout";
 
 /**
  * The three readers of the booking policy set. All three take
@@ -237,7 +238,7 @@ function clientArgument(site: CallSite): string | null {
   return site.args.length >= 3 ? site.args[2] : null;
 }
 
-describe("which client reads the cancellation policy set (#3110)", () => {
+describe("which client reads the cancellation policy set (#3110)", { timeout: CENSUS_TIMEOUT_MS }, () => {
   it("finds the call sites at all, so nothing below can pass vacuously", () => {
     // A rename, a moved file or a broken walk would empty every sweep and turn
     // this whole file green while enforcing nothing. Pin the shape of the

@@ -7,6 +7,7 @@ import {
   MARKER_STATEMENT,
 } from "../../../scripts/ci/server-only-boundary-selftest.mjs";
 import { stripComments } from "./support/strip-comments";
+import { CENSUS_TIMEOUT_MS } from "@/test/census-timeout";
 
 /**
  * INV-OPS-013, with transitive reach (#2686).
@@ -367,7 +368,7 @@ describe("INV-OPS-013: no client module reaches server-only code, at any depth",
       violations,
       `A "use client" module reaches server-only code. Everything on the path below is compiled into the browser bundle:\n\n${violations.join("\n\n")}`,
     ).toEqual([]);
-  }, 30_000);
+  }, CENSUS_TIMEOUT_MS);
 });
 
 /**
@@ -493,7 +494,7 @@ describe("#3567: no browser module reaches @/config/operational, at any depth", 
       }
     }
     expect(violations, `${BROWSER_CONFIG_MESSAGE}\n\n${violations.join("\n\n")}`).toEqual([]);
-  }, 30_000);
+  }, CENSUS_TIMEOUT_MS);
 
   it("recognises every spelling of the path, with or without a file behind it", () => {
     const from = path.join(SRC, "components", "admin", "x.tsx");

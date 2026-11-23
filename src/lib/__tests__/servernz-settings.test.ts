@@ -32,6 +32,7 @@ import {
   type ServerNzAnswerTx,
   type ServerNzConnectionTx,
 } from "@/lib/servernz-settings";
+import { CENSUS_TIMEOUT_MS } from "@/test/census-timeout";
 
 // The mocked global client standing in for the answer fence's transaction:
 // only `withCurrentServerNzConnection` mints the type in production (#4470).
@@ -237,7 +238,6 @@ describe("the server's reported API version (triyder/AlpineClubBookingsNZ#49)", 
     const [args] = mocks.upsert.mock.calls[0];
     expect(args.where).toEqual({ id: SERVERNZ_SETTINGS_ID });
     expect(args.update).toEqual({
-      otherLodgesOwnedNames: Prisma.DbNull,
       otherLodgesOwnedNamesAt: null,
       otherLodgesOwnedLodges: Prisma.DbNull,
       otherLodgesLastUploadAt: null,
@@ -255,8 +255,9 @@ describe("the server's reported API version (triyder/AlpineClubBookingsNZ#49)", 
     });
     // toEqual does not tell Prisma.DbNull from Prisma.JsonNull, so pin identity:
     // DbNull reads back as "never told"; a JSON null would read as unreadable.
-    expect(args.update.otherLodgesOwnedNames).toBe(Prisma.DbNull);
     expect(args.update.otherLodgesOwnedLodges).toBe(Prisma.DbNull);
+    // The retired name-only list is neither read nor written (#5407): it is
+    // `@ignore`d, and retired-columns-ignored.test.ts pins the client shape.
   });
 });
 
@@ -329,7 +330,7 @@ describe("the owned lodge list, by central id (triyder/AlpineClubBookingsNZ#52, 
     const [args] = mocks.upsert.mock.calls[0];
     expect(args.update.otherLodgesOwnedLodges).toEqual(AORANGI);
     expect(args.update.otherLodgesOwnedNamesAt).toBeInstanceOf(Date);
-    // The draining colour of a blue/green deploy still reads it (triyder/AlpineClubBookingsNZ#69).
+    // Retired: unread since triyder/AlpineClubBookingsNZ#69, unwritten since #5407.
     expect(args.update).not.toHaveProperty("otherLodgesOwnedNames");
     expect(args.create.otherLodgesOwnedLodges).toEqual(AORANGI);
   });
@@ -362,7 +363,7 @@ describe("the version column has one writer (#4366)", () => {
       .map((file) => file.split("\\").join("/"))
       .sort();
     expect(callers).toEqual(["lib/servernz-settings.ts", "lib/servernz-version-record.ts"]);
-  });
+  }, CENSUS_TIMEOUT_MS);
 });
 describe("recordOtherLodgesDownload: the keyed marker (triyder/AlpineClubBookingsNZ#64)", () => {
   it("sets otherLodgesKeyedAt only when told the whole registry merged", async () => {

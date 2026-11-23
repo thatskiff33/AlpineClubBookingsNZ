@@ -28,6 +28,7 @@ import {
  */
 import { readdirSync, readFileSync } from "node:fs";
 import { join, relative } from "node:path";
+import { CENSUS_TIMEOUT_MS } from "@/test/census-timeout";
 
 const ROUTE = readFileSync(
   join(process.cwd(), "src/app/api/bookings/route.ts"),
@@ -183,7 +184,7 @@ function collectProductionCreateCalls(): ProductionCreateCall[] {
 // when the focused suite shared a busy worker pool.
 const PRODUCTION_CREATE_CALLS = collectProductionCreateCalls();
 
-describe("POST /api/bookings — the lodge is required (#2701)", () => {
+describe("POST /api/bookings — the lodge is required (#2701)", { timeout: CENSUS_TIMEOUT_MS }, () => {
   it("refuses before resolving, so the default lodge is never reached", () => {
     // MUTATION PROBE: delete the `if (!parsed.data.lodgeId)` block and this
     // fails. That block is the whole fix; without it

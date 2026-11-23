@@ -3,6 +3,7 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { stripComments } from "./support/strip-comments";
 import { BOOKING_DETAIL_ROUTE_PATTERN } from "@/lib/page-route-patterns";
+import { CENSUS_TIMEOUT_MS } from "@/test/census-timeout";
 
 /**
  * #3635: a `revalidatePath(pattern, "page")` pattern must name a real page
@@ -51,5 +52,5 @@ describe("revalidatePath page patterns (#3635)", () => {
     // Not vacuous: the tree revalidates the root and group layouts literally.
     expect(seen.length).toBeGreaterThan(0);
     expect(offenders).toEqual([]);
-  });
+  }, CENSUS_TIMEOUT_MS);
 });

@@ -1124,7 +1124,7 @@ describe("reissuePaymentLinkForToken", () => {
 
     expect(result.emailed).toBe(true);
     expect(sendSplitGuestPaymentLinkEmail).toHaveBeenCalledWith(
-      expect.objectContaining({ email: "tara@example.com", bookingReference: "booking-1" }), CLUB_FORMAT_TEST
+      expect.objectContaining({ email: "tara@example.com", bookingId: "booking-1" }), CLUB_FORMAT_TEST
     );
     expect(sendBookingRequestApprovedEmail).not.toHaveBeenCalled();
   });
@@ -2334,7 +2334,7 @@ describe("issueSplitGuestPaymentLink (#1967)", () => {
         priceCents: 12000,
         amountDueCents: 12000,
         guestCount: 2,
-        bookingReference: "child-1",
+        bookingId: "child-1",
       }), CLUB_FORMAT_TEST
     );
   });

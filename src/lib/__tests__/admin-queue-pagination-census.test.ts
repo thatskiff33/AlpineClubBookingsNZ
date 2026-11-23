@@ -18,6 +18,7 @@ import { describe, expect, it } from "vitest";
 import { escapeRegExp } from "@/lib/escape-regexp";
 
 import { stripComments } from "./support/strip-comments";
+import { CENSUS_TIMEOUT_MS } from "@/test/census-timeout";
 
 const ROOT = process.cwd();
 const SRC = path.join(ROOT, "src");
@@ -377,7 +378,7 @@ describe("a capped route takes its page fields from one definition (INV-OPS-020)
       return source.includes("pageSize") && SHARED_PAGE_SIZE_DEFINITION.test(stripComments(source));
     });
     expect(redeclared).toEqual([]);
-  });
+  }, CENSUS_TIMEOUT_MS);
 
   it("no schema re-declares the shared page field", () => {
     const redeclared = files.filter((file) => {
@@ -385,7 +386,7 @@ describe("a capped route takes its page fields from one definition (INV-OPS-020)
       return source.includes("page") && SHARED_PAGE_DEFINITION.test(stripComments(source));
     });
     expect(redeclared).toEqual([]);
-  });
+  }, CENSUS_TIMEOUT_MS);
 
   it("the shared page field is still spelled the way the check looks for it (mutation canary)", () => {
     const helper = stripComments(readFileSync(path.join(ROOT, LIST_PAGE_HELPER), "utf8"));

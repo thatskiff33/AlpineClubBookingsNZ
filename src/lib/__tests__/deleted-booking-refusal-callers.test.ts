@@ -28,6 +28,7 @@ import path from "node:path";
 import { escapeRegExp } from "@/lib/escape-regexp";
 
 import { stripComments } from "./support/strip-comments";
+import { CENSUS_TIMEOUT_MS } from "@/test/census-timeout";
 
 const REFUSAL_MODULE = "src/lib/deleted-booking-refusal.ts";
 
@@ -160,14 +161,14 @@ describe("deleted-booking refusal callers (#2700, INV-ADDPAY-034)", () => {
     // allowlist assertion below passes against an empty set.
     expect(readRepoCode(REFUSAL_MODULE)).toContain("DELETED_BOOKING_MESSAGE");
     expect(refusalModuleImporters().length).toBeGreaterThan(0);
-  });
+  }, CENSUS_TIMEOUT_MS);
 
   it("is imported by exactly the surfaces INV-ADDPAY-034 names, and nothing else", () => {
     expect(
       refusalModuleImporters(),
       'A file outside INV-ADDPAY-034\'s surfaces imports the shared "cancelled or removed" sentence. That is not a lint failure to silence by widening this list: INV-ADDPAY-031 says a deleted-booking 404 body must be byte-identical to the ordinary not-found body, and #2700 and #5266 departed from that on exactly five surfaces because the guard provably sits below their authorisation check. Another caller must take that ordering decision explicitly — read INV-ADDPAY-031 and INV-ADDPAY-034, add the surface to APPROVED_IMPORTERS with its own ordering assertion below, and say in the PR why disclosure is safe there.',
     ).toEqual(APPROVED_IMPORTERS);
-  });
+  }, CENSUS_TIMEOUT_MS);
 
   it("puts the change-requests GET guard below its 403", () => {
     expectGuardBelowAuthorisation({
@@ -208,14 +209,14 @@ describe("deleted-booking refusal callers (#2700, INV-ADDPAY-034)", () => {
       refusalModuleImporters(),
       "INV-ADDPAY-035: the consent ROUTE must not carry the deleted-booking body. Its pre-read proves only that the guest row belongs to the booking, so a guard there hands a 404-versus-403 oracle to a caller holding two guessed ids. The guard belongs in member-guest-consent-service.ts, below the target/delegate check.",
     ).not.toContain("src/app/api/bookings/[id]/guests/[guestId]/consent/route.ts");
-  });
+  }, CENSUS_TIMEOUT_MS);
 
   it("lets exactly the two pages INV-ADDPAY-034 names render the removed-booking notice", () => {
     expect(
       importersOf("@/components/removed-booking-notice"),
       "INV-ADDPAY-034 (#5266): only the booking page and the delegate consent page may tell a person a booking was removed, each below the check that makes them entitled. Another page needs its own ordering assertion here and its own entry in the invariant.",
     ).toEqual(APPROVED_NOTICE_PAGES);
-  });
+  }, CENSUS_TIMEOUT_MS);
 
   it("on the booking page, signs the visitor in, then resolves entitlement, then explains", () => {
     const pageCode = readRepoCode("src/app/(authenticated)/bookings/[id]/page.tsx");

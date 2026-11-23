@@ -2,6 +2,7 @@ import { createHmac, timingSafeEqual } from "crypto";
 import { cookies } from "next/headers";
 import type { AppRole } from "./member-roles";
 import { prisma } from "./prisma";
+import { isPrismaUniqueConstraintError } from "./prisma-errors";
 import { requireAuthSecret } from "./runtime-config";
 import logger from "./logger";
 import { getGoogleOAuthConfig } from "./google-config";
@@ -467,12 +468,7 @@ export async function linkGoogleAccount(
     // write. The googleSub @unique constraint rejects it with P2002 — fail
     // closed to the same friendly refusal rather than the bare Auth.js error
     // page (never a takeover; the first writer keeps the sub).
-    if (
-      err &&
-      typeof err === "object" &&
-      "code" in err &&
-      (err as { code?: unknown }).code === "P2002"
-    ) {
+    if (isPrismaUniqueConstraintError(err)) {
       await auditGoogleLink({
         action: "member.google.link_refused",
         actor: { memberId },

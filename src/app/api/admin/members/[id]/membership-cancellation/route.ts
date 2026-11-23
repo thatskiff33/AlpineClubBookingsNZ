@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { parseJsonRequestBody } from "@/lib/api-json";
 import { z } from "zod";
 import logger from "@/lib/logger";
 import {
@@ -20,8 +21,10 @@ export async function POST(
   if (!guard.ok) return guard.response;
   const session = guard.session;
   let body: z.infer<typeof bodySchema>;
+  const jsonBody = await parseJsonRequestBody(request);
+  if (!jsonBody.ok) return jsonBody.response;
   try {
-    body = bodySchema.parse(await request.json());
+    body = bodySchema.parse(jsonBody.body);
   } catch {
     return NextResponse.json({ error: "Invalid request body" }, { status: 400 });
   }

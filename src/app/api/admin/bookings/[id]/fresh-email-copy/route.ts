@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { parseJsonRequestBody } from "@/lib/api-json";
 import { z } from "zod";
 import { getAuditRequestContext } from "@/lib/audit";
 import { sendBookingFreshEmailCopy } from "@/lib/booking-fresh-email-copy";
@@ -39,7 +40,9 @@ export async function POST(
   const session = guard.session;
   const { id: bookingId } = await params;
 
-  const body = await request.json().catch(() => null);
+  const jsonBody = await parseJsonRequestBody(request);
+  if (!jsonBody.ok) return jsonBody.response;
+  const body = jsonBody.body;
   const parsed = freshEmailCopySchema.safeParse(body);
   if (!parsed.success) {
     return NextResponse.json(

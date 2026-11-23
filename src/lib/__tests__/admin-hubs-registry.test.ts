@@ -63,6 +63,7 @@ import {
 } from "@/lib/admin-hubs/security-map";
 import { stripComments } from "@/lib/__tests__/support/strip-comments";
 import { BANK_REFUND_VOIDS_ANCHOR } from "@/components/admin/bank-refund-voids-to-answer-panel";
+import { CENSUS_TIMEOUT_MS } from "@/test/census-timeout";
 
 // ---------------------------------------------------------------------------
 // The admin hub registry (epic #4468, C1 #4798).
@@ -1554,7 +1555,7 @@ describe("retired pages", () => {
         retiredPattern.test(stripComments(fs.readFileSync(path.join(process.cwd(), file), "utf8"))),
     );
     expect(linking).toEqual([]);
-  }, 30_000);
+  }, CENSUS_TIMEOUT_MS);
 });
 
 // ---------------------------------------------------------------------------
@@ -2547,7 +2548,7 @@ describe("the registry is inert", () => {
     );
     // Both directions: an unreviewed importer fails, and so does a stale entry.
     expect(importers.sort()).toEqual(Object.keys(IMPORTERS).sort());
-  }, 30_000);
+  }, CENSUS_TIMEOUT_MS);
 
   it("uses only relative imports inside the registry, so next.config.ts can load it", () => {
     const aliased = sourceFiles(REGISTRY_DIR.slice(0, -1)).filter((file) =>

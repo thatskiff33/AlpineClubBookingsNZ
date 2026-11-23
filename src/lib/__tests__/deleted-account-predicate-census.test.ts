@@ -4,6 +4,7 @@ import { join, relative } from "node:path";
 import { describe, expect, it } from "vitest";
 
 import { stripComments } from "./support/strip-comments";
+import { CENSUS_TIMEOUT_MS } from "@/test/census-timeout";
 
 const SRC_DIR = join(import.meta.dirname, "..", "..");
 const CANONICAL = "lib/deleted-account.ts";
@@ -148,7 +149,7 @@ describe("one canonical erased-member predicate (#3542)", () => {
         "predicate in src/lib/deleted-account.ts. Import it; do not reconstruct " +
         "an erased-member shape.",
     ).toEqual([]);
-  });
+  }, CENSUS_TIMEOUT_MS);
 
   it("mutation: rejects the former canonical password-or-address shape", () => {
     const mutant = `
