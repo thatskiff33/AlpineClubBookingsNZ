@@ -2024,6 +2024,16 @@ module graph (no module reset, so later cases do not); the fourth walks `src/`.
   — "the resolver's rules live in one file, with only known callers", 1,331ms
   alone.
 
+One more carries a 60,000ms budget on a whole `describe` since #5407: each of
+its ten cases builds a scratch repository and runs the deploy's release-tag
+guard, a run of `git` and `bash` spawns whose cost is the host's process
+start-up, not the test.
+
+- [`src/lib/__tests__/deploy-release-tag-guard-script-contract.test.ts`](../src/lib/__tests__/deploy-release-tag-guard-script-contract.test.ts)
+  — "refuses a lightweight vX.Y.Z tag" timed out at 5,000ms in a 47-file
+  by-name batch on 24 November 2026 and took 870ms alone; the slowest case
+  alone took 1,207ms.
+
 Two suites named with these are deliberately not listed.
 `reshaped-club-day-seams-contract.test.ts` has the same budget on its two
 tree-reading cases (909ms and 751ms alone), but it runs in
