@@ -66,10 +66,14 @@ function quotedP2002Lines(file: string, code: string): string[] {
  * A direct read of a Prisma error's `meta.target` (#5407): the driver adapter
  * this stack uses never fills it, so a narrowing that reads it alone never
  * fires. `describeUniqueConstraintTarget` in `prisma-errors.ts` is the one
- * reader. Matches `meta.target`, `meta?.target` and `meta["target"]` in
- * comment-stripped code; a destructured `{ target }` from `meta` is not seen.
+ * reader. Matches, in comment-stripped code, `meta.target`, `meta?.target`,
+ * `meta!.target`, `meta["target"]` (each with optional `!` and `?.`), and a
+ * cast on one line, `(error.meta as { target?: string[] }).target`. Not seen:
+ * a destructured `{ target }` from `meta`, a cast split across lines, and
+ * `meta` copied into a variable of another name first.
  */
-const META_TARGET_READ = /\bmeta\s*\??\.\s*target\b|\bmeta\s*\??\.?\s*\[\s*(["'`])target\1\s*\]/;
+const META_TARGET_READ =
+  /\bmeta\s*!?\s*\??\.\s*target\b|\bmeta\s*!?\s*\??\.?\s*\[\s*(["'`])target\1\s*\]|\bmeta\s+as\b[^;\n]*?\)\s*!?\s*\??\.\s*target\b/;
 
 function read(file: string): string {
   return readFileSync(path.join(process.cwd(), file), "utf8");
@@ -127,6 +131,10 @@ describe("Prisma P2002 census (#5407 item 6)", () => {
       ["err.meta.target.includes(x)", true],
       ["error.meta?.['target']", true],
       ['meta["target"]', true],
+      ["error.meta!.target", true],
+      ["(error.meta as { target?: string[] }).target", true],
+      ["(err.meta as Record<string, unknown>)?.target", true],
+      ["(metadata as { target?: string }).target", false],
       ["link.metadata?.target", false],
       ["target.invoiceId", false],
     ])("treats %j as a meta.target read: %s", (code, expected) => {
