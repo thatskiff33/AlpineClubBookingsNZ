@@ -204,13 +204,6 @@ const PRODUCTION_FILES = walk(path.join(ROOT, "src")).filter(
 const ADAPTER_MODULES = new Set(["src/lib/date-only.ts"]);
 
 /** A file's CODE, with its prose removed. See {@link stripComments}. */
-/**
- * Each tree-wide test reads every production file: a few seconds on an idle
- * machine and several times that on a busy CI runner, which the 5s default
- * does not cover (the same budget as `mcp-route-census.test.ts`).
- */
-const CENSUS_TIMEOUT_MS = 90_000;
-
 const read = (file: string): string =>
   stripComments(fs.readFileSync(path.join(ROOT, file), "utf8"));
 
