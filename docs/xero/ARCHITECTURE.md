@@ -699,7 +699,7 @@ module every provider call goes through (`INV-OPS-013`). Shared JSON-guard micro
 | `xero-api-usage` | Daily budget constant and usage recording/summary. |
 | `xero-active-operation-statuses` | The active correlation-key population, shared by enqueue, resolution and repair reads. The census pins it to the partial unique index; supplementary-invoice statuses alias it and wider blockers extend it. |
 | `xero-api-errors`, `xero-error-shape` | Error classification helpers (status code, body message, headers). |
-| `xero-error-alert` | Ops email on sync errors, deduplicated to one per hour via `EmailLog`. |
+| `xero-error-alert` | Ops email on sync errors, limited to one an hour across every error type by an `AlertCooldown` claim (#5407). |
 | `xero-links`, `xero-record-links`, `xero-record-types` | Deep links into the Xero UI and into local admin pages; shared record-activity types. See "Deep links into Xero" below for why the tenant GUID cannot be used in a Xero URL. |
 | `xero-link-short-code` | `getXeroOrgShortCode()` — the organisation short code for links built on the SERVER (the twin of the `useXeroOrgShortCode` hook). Never throws; null means "build the generic link". |
 | `xero-feature-flags` | `XERO_ENABLE_DAILY_MEMBERSHIP_REFRESH`, `XERO_ENABLE_LIVE_MEMBER_GROUP_LOOKUPS`, `XERO_ENABLE_AUTOLOAD_XERO_CONTACT_GROUPS`. |
@@ -2539,6 +2539,13 @@ Scheduled hardening (cron tasks, all idempotent):
   copy failed before its mail log row existed, #5448). It is given back only
   when the send threw, or when the claim write itself threw (its stamp may
   have landed, so it is removed and the failure reported to the caller).
+  The once-per-hour error alert uses the same sequence
+  (`sendAdminAlertOncePerWindow` in `admin-alert-window.ts`) with one key for
+  every error type, so the limit is still one alert an hour in all (#5407):
+  two instances failing at once raise one alert, an alert queued for retry or
+  withheld counts as raised, and one nobody could receive holds the key for a
+  day. Senders that call `sendAdminXeroSyncErrorAlert` directly, rather than
+  `notifyXeroSyncError`, are not limited by it.
 
 ### Repairing Stripe refund-note links (#2901)
 

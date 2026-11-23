@@ -128,6 +128,13 @@ const { mockPrisma, mockTransporter } = vi.hoisted(() => {
     integrationCredential: {
       findFirst: vi.fn().mockResolvedValue(null),
     },
+    // #5407 item 37: the sync error alert's hourly claim. Free by default
+    // (nothing held, the create wins).
+    alertCooldown: {
+      updateMany: vi.fn().mockResolvedValue({ count: 0 }),
+      create: vi.fn().mockResolvedValue({}),
+      deleteMany: vi.fn().mockResolvedValue({ count: 0 }),
+    },
   };
   return { mockPrisma, mockTransporter };
 });
@@ -354,6 +361,8 @@ describe("N-05: notifyXeroSyncError", () => {
     mockPrisma.emailLog.create.mockResolvedValue({ id: "log-1" });
     mockPrisma.emailLog.update.mockResolvedValue({});
     mockPrisma.emailLog.findFirst.mockResolvedValue(null);
+    mockPrisma.alertCooldown.updateMany.mockResolvedValue({ count: 0 });
+    mockPrisma.alertCooldown.create.mockResolvedValue({});
   });
 
   it("sends alert on first error", async () => {
@@ -390,10 +399,11 @@ describe("N-05: notifyXeroSyncError", () => {
   });
 
   it("suppresses duplicate alerts within 1 hour", async () => {
-    mockPrisma.emailLog.findFirst.mockResolvedValue({
-      id: "existing-alert",
-      templateName: "admin-xero-sync-error",
-    });
+    // #5407 item 37: an alert in the last hour holds the AlertCooldown claim,
+    // so the window update matches nothing and the create hits the unique key.
+    mockPrisma.alertCooldown.create.mockRejectedValue(
+      Object.assign(new Error("Unique constraint failed"), { code: "P2002" }),
+    );
 
     const { notifyXeroSyncError } = await import("../xero-error-alert");
     await notifyXeroSyncError({
