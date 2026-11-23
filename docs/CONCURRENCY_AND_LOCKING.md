@@ -65,8 +65,9 @@ Guarded row claims and leases:
 
 **Lock families.** Most keys have a row in
 [one table](#every-lock-family-in-one-table); the two contact-home keys are in
-[their own section](#the-keys). Subscription billing, the fee schedule and the
-backup run claim are in the table alone. Config-transfer import's order is in
+[their own section](#the-keys). Subscription billing, the subscription
+liability rule, the fee schedule and the backup run claim are in the table
+alone. Config-transfer import's order is in
 [the hosting policy-set key](#the-hosting-policy-set-key-admin-route-configuration-transfer-and-trigger),
 [minimum-stay](#composition-minimum-stay-policy-set-2363),
 [roster dates](#composition-roster-date-writers-2586),

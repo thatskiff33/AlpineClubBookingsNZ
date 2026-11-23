@@ -64,9 +64,12 @@ exempt to a membership type whose subscription is not required
 ([UPGRADING.md](UPGRADING.md#check-members-marked-not-required-that-billing-treats-as-owing-5190)).
 Choosing a rule later clears the notes for the current season only; a record
 for another season keeps its note.
+Do not choose a liability rule until the old colour has fully drained: an
+old-colour billing run does not know the rule and would bill by the old one.
 Before choosing a rule afterwards, read the impact list
 (`GET /api/admin/membership-lockout-settings/liability-impact`) so you know who
-the choice will start or stop charging.
+the choice will start or stop charging. Choosing needs Membership edit and
+Finance edit.
 
 ---
 
