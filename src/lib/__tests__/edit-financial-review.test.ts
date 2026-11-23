@@ -664,6 +664,46 @@ describe("#3030 raise - one task per occurrence, and an unknown amount stays unk
     ).rejects.not.toBeInstanceOf(EditFinancialReviewError);
   });
 
+  describe("reads the colliding constraint the way the database driver in use reports it (#5407)", () => {
+    // Prisma's own class, no `meta.target`, the columns quoted as Postgres
+    // quotes them under `driverAdapterError.cause.constraint.fields`.
+    const driverUniqueViolation = (fields: string[] | null) =>
+      new Prisma.PrismaClientKnownRequestError("unique", {
+        code: "P2002",
+        clientVersion: "test",
+        meta: {
+          modelName: "ManualRefundTask",
+          driverAdapterError: {
+            name: "DriverAdapterError",
+            cause: {
+              originalCode: "23505",
+              kind: "UniqueConstraintViolation",
+              ...(fields ? { constraint: { fields } } : {}),
+            },
+          },
+        },
+      });
+    const raise = () =>
+      raiseEditFinancialReviewTask({ ...raiseInput, occurrence: occurrence(), store: store() });
+
+    it("reports a collision on occurrenceKey as the concurrent raise, 409", async () => {
+      mocks.create.mockRejectedValue(driverUniqueViolation(['"occurrenceKey"']));
+      await expect(raise()).rejects.toMatchObject({ name: "EditFinancialReviewError", status: 409 });
+    });
+
+    it("rethrows a collision on another column unchanged", async () => {
+      const violation = driverUniqueViolation(['"partPaymentReviewPaymentId"']);
+      mocks.create.mockRejectedValue(violation);
+      await expect(raise()).rejects.toBe(violation);
+    });
+
+    it("rethrows a violation whose constraint cannot be read, as before", async () => {
+      const violation = driverUniqueViolation(null);
+      mocks.create.mockRejectedValue(violation);
+      await expect(raise()).rejects.toBe(violation);
+    });
+  });
+
   it("MUTATION: refuses the FULL Prisma client, because the advisory lock it takes would commit and release before the find", async () => {
     // The type cannot refuse it: Prisma 7's deny list is
     // ["$connect","$disconnect","$on","$use","$extends"], so `PrismaClient` is

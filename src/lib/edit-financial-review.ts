@@ -6,6 +6,7 @@ import {
   Prisma,
 } from "@prisma/client";
 import { isPrismaKnownUniqueConstraintError } from "@/lib/prisma-known-errors";
+import { describeUniqueConstraintTarget } from "@/lib/prisma-errors";
 import { ApiError } from "@/lib/api-error";
 import { isRootPrismaClient } from "@/lib/db-transaction";
 import logger from "@/lib/logger";
@@ -378,18 +379,16 @@ export async function raiseEditFinancialReviewTask({
  * Was this unique violation the occurrence-key index, rather than some other
  * unique constraint added later?
  *
- * `meta.target` is `string[]` on PostgreSQL, and Prisma has spelled it more than
- * one way across versions, so an unrecognised shape is treated as "not the
- * occurrence key" - the safe direction, because it sends the caller a genuine
- * error rather than an invitation to retry for ever.
+ * Read with `describeUniqueConstraintTarget` (#5407), which reads the shape the
+ * driver in use reports; `meta.target` alone is never filled by it, so this
+ * never fired. An unreadable constraint is "not the occurrence key" - the safe
+ * direction, because it sends the caller a genuine error rather than an
+ * invitation to retry for ever.
  */
 function occurrenceKeyViolation(
   error: Prisma.PrismaClientKnownRequestError,
 ): boolean {
-  const target = error.meta?.target;
-  if (Array.isArray(target)) return target.includes("occurrenceKey");
-  if (typeof target === "string") return target.includes("occurrenceKey");
-  return false;
+  return describeUniqueConstraintTarget(error)?.includes("occurrencekey") ?? false;
 }
 
 /**
