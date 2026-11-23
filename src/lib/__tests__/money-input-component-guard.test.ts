@@ -5,6 +5,7 @@ import ts from "typescript";
 import { describe, expect, it, vi } from "vitest";
 
 import { jsxSourceFiles, REQUIRED_SCANNED_SUBTREES } from "./support/money-number-input-scan";
+import { CENSUS_TIMEOUT_MS } from "@/test/census-timeout";
 
 // The older number-input guard enforces INV-MONEY-003's text boundary. This
 // guard keeps the editing affordance in one component (INV-SSOT-001, #3414).
@@ -80,7 +81,7 @@ describe("one shared money box (INV-SSOT-001, #3414)", () => {
       ),
     );
     expect(hits).toEqual([]);
-  });
+  }, CENSUS_TIMEOUT_MS);
 
   it("catches a reintroduced spread on an input, including the quote price box", () => {
     expect(

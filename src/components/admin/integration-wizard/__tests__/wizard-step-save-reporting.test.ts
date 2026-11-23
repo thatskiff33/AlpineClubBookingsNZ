@@ -1,6 +1,7 @@
 import { readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
+import { CENSUS_TIMEOUT_MS } from "@/test/census-timeout";
 
 /**
  * #4410: a wizard step's save in flight must reach the shell, which holds
@@ -37,7 +38,7 @@ const stepFiles = sourceFiles(path.join(REPO, "src/app")).filter((file) =>
 );
 const LOCAL_SAVE_FLAG = /const \[(?:saving|busy|submitting|pending), set\w+\] = useState\b/g;
 
-describe("every wizard step reports its save to the shell (#4410)", () => {
+describe("every wizard step reports its save to the shell (#4410)", { timeout: CENSUS_TIMEOUT_MS }, () => {
   it("found the wizard step files, so an empty census is not a pass", () => {
     expect(stepFiles.length).toBeGreaterThanOrEqual(6);
   });

@@ -78,6 +78,7 @@ import {
   findDanglingDefaultLines,
 } from "@/lib/email-message-token-contract";
 import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
+import { CENSUS_TIMEOUT_MS } from "@/test/census-timeout";
 
 const GLOBAL_DATA: EmailTemplateData = {
   BASE_URL: "https://bookings.example.org",
@@ -643,7 +644,7 @@ describe("#2328 × #2483 the unpaid branch's live-path premise", () => {
       .sort();
 
     expect(passers).toEqual(["src/lib/school-booking-request.ts"]);
-  });
+  }, CENSUS_TIMEOUT_MS);
 
   it("applies account credit on that path only where the member chose it, through the shared writer", () => {
     // THE TRIPWIRE FIRED (#4019). The whole-lodge approval now

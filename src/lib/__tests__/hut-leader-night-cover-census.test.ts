@@ -17,6 +17,7 @@ import fs from "node:fs";
 import { describe, expect, it } from "vitest";
 
 import { stripComments } from "@/lib/__tests__/support/strip-comments";
+import { CENSUS_TIMEOUT_MS } from "@/test/census-timeout";
 
 const HELPER_MODULE = "src/lib/hut-leader-night-cover.ts";
 
@@ -151,7 +152,7 @@ function coverageShapedReasons(source: string): string[] {
   return reasons;
 }
 
-describe("hut-leader coverage census (#3818, INV-DATE-031)", () => {
+describe("hut-leader coverage census (#3818, INV-DATE-031)", { timeout: CENSUS_TIMEOUT_MS }, () => {
   it("every registered coverage reader calls the one helper", () => {
     const missing = COVERAGE_READERS.flatMap(({ file, entries }) => {
       const source = read(file);

@@ -8,6 +8,7 @@ import {
 } from "@/lib/api-route-security";
 import { SHARED_ADMIN_GUARD_WRAPPERS } from "@/lib/__tests__/helpers/admin-route-explicit-permissions";
 import { stripComments } from "@/lib/__tests__/support/strip-comments";
+import { CENSUS_TIMEOUT_MS } from "@/test/census-timeout";
 
 function listRouteFiles(dir: string): string[] {
   return fs.readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
@@ -282,7 +283,7 @@ describe("API route boundary metadata", () => {
     });
 
     expect(violations).toEqual([]);
-  });
+  }, CENSUS_TIMEOUT_MS);
 
   it("the shared Alpine Central Server verifier keeps its constant-time compare", () => {
     // Both servernz webhook routes are accepted above because they call
@@ -653,7 +654,7 @@ describe("API route boundary metadata", () => {
       stale: [],
       otherReceivers: [],
     });
-  });
+  }, CENSUS_TIMEOUT_MS);
 
   it("never reads a request body as text or bytes in a route; the shared readers do it", () => {
     const routes = listRouteFiles(path.join(process.cwd(), "src/app/api")).map(

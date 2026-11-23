@@ -7,6 +7,7 @@ import { render, screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import { PreviousPaymentRefundingNotice } from "@/components/previous-payment-refunding-notice";
 import { PREVIOUS_PAYMENT_REFUNDING_NOTICE } from "@/lib/payment-recovery-contract";
+import { CENSUS_TIMEOUT_MS } from "@/test/census-timeout";
 import { toPosix } from "../../../scripts/audit/ts-call-site-scan";
 
 /**
@@ -45,5 +46,5 @@ describe("PreviousPaymentRefundingNotice", () => {
       .filter((file) => readFileSync(file, "utf8").includes("PREVIOUS_PAYMENT_REFUNDING_NOTICE"))
       .map((file) => toPosix(relative(REPO_ROOT, file)));
     expect(users.sort()).toEqual(["src/components/previous-payment-refunding-notice.tsx", "src/lib/payment-recovery-contract.ts"]);
-  });
+  }, CENSUS_TIMEOUT_MS);
 });

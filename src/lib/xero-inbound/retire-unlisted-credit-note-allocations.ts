@@ -212,9 +212,11 @@ async function decideBankTransferRefundedTotal(
  * none, as the repair after it skips one (`resolvePaymentIdsByInvoiceTargets`),
  * and a payment found only by its link is decided by that repair alone.
  * Narrower than that resolution on purpose, not a copy of it: the shared
- * decision finds a bank-transfer payment's invoice allocations by the
- * payment's own invoice id, so only such a payment can be decided by an
- * allocation write; for every one it names, the resolution names the same.
+ * decision finds any payment's invoice allocations by the payment's own
+ * invoice id (#4444), but only a bank transfer's refunded total is decided
+ * here - a card payment's is Stripe-led, decided by the recount alone under
+ * its raise-only floor (#1353); for every payment this names, the resolution
+ * names the same.
  * Read before the lock; `decideBankTransferRefundedTotal` re-checks it under it.
  */
 async function bankTransferPaymentIdsByInvoiceId(

@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 
 import { blankLiterals, stripComments } from "./support/strip-comments";
 import { balancedBrackets } from "./support/balanced-brackets";
+import { CENSUS_TIMEOUT_MS } from "@/test/census-timeout";
 
 /**
  * #3123, the SIGNATURE-RESHAPE group: seven modules whose civil-day authority
@@ -189,7 +190,7 @@ function argumentCount(args: string): number {
   return balancedBrackets(`(${args})`, 0).parts.length;
 }
 
-describe("#3123 reshaped seams keep their required club day", () => {
+describe("#3123 reshaped seams keep their required club day", { timeout: CENSUS_TIMEOUT_MS }, () => {
   it("no reshaped module reads a zone-defaulting date-only helper any more", () => {
     const offenders: string[] = [];
     for (const file of RESHAPED_MODULES) {
@@ -202,7 +203,6 @@ describe("#3123 reshaped seams keep their required club day", () => {
     expect(offenders).toEqual([]);
   });
 
-  // #5407 item 42: walks src/ for every call site; timed out at 5,000ms on a busy host.
   it("every call site of every reshaped seam supplies the day or zone", () => {
     const sources = productionSources();
     // A guard that scanned nothing would pass, so prove the corpus is real.
@@ -237,9 +237,8 @@ describe("#3123 reshaped seams keep their required club day", () => {
     for (const seam of SEAMS) {
       expect(seen.get(seam.name) ?? 0).toBeGreaterThan(0);
     }
-  }, 30_000);
+  });
 
-  // #5407 item 42: reads every production source from disk; timed out at 5,000ms on a busy host.
   it("the booking edit policy still has the call sites this migration threaded", () => {
     // The widest cascade in the group, pinned as a COUNT so a new caller cannot
     // be added without this file being read. Twelve `getBookingEditPolicy` calls
@@ -270,5 +269,5 @@ describe("#3123 reshaped seams keep their required club day", () => {
     }
     expect(policyCalls).toBe(13);
     expect(startedCalls).toBe(7);
-  }, 30_000);
+  });
 });
