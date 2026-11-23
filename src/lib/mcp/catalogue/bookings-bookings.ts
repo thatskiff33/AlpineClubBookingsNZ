@@ -25,7 +25,6 @@ import {
 import { bookingIdParamsSchema } from "@/lib/booking-cancel-schema";
 import {
   ADMIN_ADDITIONAL_PAYMENT_REMINDER_CONNECTION_SHAPE,
-  ADMIN_ADDITIONAL_PAYMENT_WITHDRAW_CONNECTION_SHAPE,
   ADMIN_BOOKING_COPY_CONNECTION_SHAPE,
   ADMIN_BOOKING_ELIGIBLE_FAMILY_CONNECTION_SHAPE,
   ADMIN_BOOKING_SEARCH_CONNECTION_SHAPE,
@@ -54,7 +53,6 @@ import type { McpAction } from "../catalogue";
 // The routes below that name their own `requireAdmin` permission, stricter
 // than (or other than) their path's rule; the census pins each to its handler.
 const BOOKINGS_EDIT = { area: "bookings", level: "edit" } as const;
-const FINANCE_EDIT = { area: "finance", level: "edit" } as const;
 
 // ── The booking list and search ─────────────────────────────────────────────
 
@@ -209,19 +207,6 @@ const ONE_BOOKING_TOOLS: readonly McpAction[] = [
     params: bookingIdParamsSchema,
     kind: "destructive",
     returns: ADMIN_ADDITIONAL_PAYMENT_REMINDER_CONNECTION_SHAPE,
-    core: false,
-  },
-  {
-    id: "withdraw_additional_payment_request",
-    title: "Withdraw an extra payment request",
-    summary:
-      "Officer: withdraw an unpaid request, raised by a completed financial review, for the member to pay an extra amount: the card request is cancelled and the amount no longer shows as owing. Refused once paid (that is a refund). Answers with the amount withdrawn in cents. Cannot be undone.",
-    method: "POST",
-    path: "/api/admin/bookings/[id]/additional-payment/withdraw",
-    params: bookingIdParamsSchema,
-    requires: FINANCE_EDIT,
-    kind: "destructive",
-    returns: ADMIN_ADDITIONAL_PAYMENT_WITHDRAW_CONNECTION_SHAPE,
     core: false,
   },
   {

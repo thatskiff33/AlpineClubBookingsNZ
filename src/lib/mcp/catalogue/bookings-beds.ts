@@ -7,10 +7,11 @@
  *
  * Kinds: every action that places, moves, suggests, approves or removes a
  * guest's bed is `destructive`, because it changes a member's bed (owner
- * decision, #5305 item 2); approving also has no un-approve. Deleting a room
- * or bed is `destructive` too. Settings and room and bed edits are club setup,
- * no one's own record, and stay `write`. The two previews change nothing and
- * run as reads.
+ * decision, #5305 item 2); approving also has no un-approve. The allocation
+ * settings and every room and bed change are club-wide configuration, and
+ * each is `destructive` too, so the app asks the officer first (owner
+ * decision, #5305 comment 7093303964, item 2). The two previews change
+ * nothing and run as reads.
  */
 import { adminRecordIdParamsSchema } from "@/lib/admin-bookings-schemas/record-id";
 import {
@@ -222,7 +223,7 @@ export const BOOKINGS_BEDS_MCP_ACTIONS: readonly McpAction[] = [
     method: "PUT",
     path: "/api/admin/bed-allocation/settings",
     body: bedAllocationSettingsBodySchema,
-    kind: "write",
+    kind: "destructive",
     returns: ADMIN_BED_ALLOCATION_SETTINGS_CONNECTION_SHAPE,
     core: false,
   },
@@ -247,7 +248,7 @@ export const BOOKINGS_BEDS_MCP_ACTIONS: readonly McpAction[] = [
     method: "POST",
     path: "/api/admin/bed-allocation/rooms",
     body: bedAllocationRoomCreateBodySchema,
-    kind: "write",
+    kind: "destructive",
     returns: ADMIN_LODGE_ROOM_CONNECTION_SHAPE,
     core: false,
   },
@@ -258,7 +259,7 @@ export const BOOKINGS_BEDS_MCP_ACTIONS: readonly McpAction[] = [
     method: "POST",
     path: "/api/admin/bed-allocation/rooms/bulk",
     body: bedAllocationRoomsBulkBodySchema,
-    kind: "write",
+    kind: "destructive",
     returns: ADMIN_LODGE_ROOMS_BULK_CONNECTION_SHAPE,
     core: false,
   },
@@ -268,7 +269,7 @@ export const BOOKINGS_BEDS_MCP_ACTIONS: readonly McpAction[] = [
     summary: `Officer: creates the default lodge's rooms and beds from the club's configuration (\`configBeds\` in \`list_lodge_rooms_and_beds\`). Refused once any room or bed exists. Answers how many were created and the rooms. ${INVENTORY_SIDE_EFFECT} Needs Bookings & Beds edit access.`,
     method: "POST",
     path: "/api/admin/bed-allocation/rooms/import-from-config",
-    kind: "write",
+    kind: "destructive",
     returns: ADMIN_LODGE_ROOMS_IMPORT_CONNECTION_SHAPE,
     core: false,
   },
@@ -280,7 +281,7 @@ export const BOOKINGS_BEDS_MCP_ACTIONS: readonly McpAction[] = [
     path: "/api/admin/bed-allocation/rooms/[id]",
     params: adminRecordIdParamsSchema,
     body: bedAllocationRoomUpdateBodySchema,
-    kind: "write",
+    kind: "destructive",
     returns: ADMIN_LODGE_ROOM_CONNECTION_SHAPE,
     core: false,
   },
@@ -304,7 +305,7 @@ export const BOOKINGS_BEDS_MCP_ACTIONS: readonly McpAction[] = [
     method: "POST",
     path: "/api/admin/bed-allocation/beds",
     body: bedAllocationBedCreateBodySchema,
-    kind: "write",
+    kind: "destructive",
     returns: ADMIN_LODGE_BED_CONNECTION_SHAPE,
     core: false,
   },
@@ -316,7 +317,7 @@ export const BOOKINGS_BEDS_MCP_ACTIONS: readonly McpAction[] = [
     path: "/api/admin/bed-allocation/beds/[id]",
     params: adminRecordIdParamsSchema,
     body: bedAllocationBedUpdateBodySchema,
-    kind: "write",
+    kind: "destructive",
     returns: ADMIN_LODGE_BED_CONNECTION_SHAPE,
     core: false,
   },

@@ -101,8 +101,10 @@ import { BOOKINGS_SETUP_MCP_ACTIONS } from "./catalogue/bookings-setup";
  * `destructive` cannot be undone from the app, or notifies other people, or
  * overwrites another person's record (owner decision, #5305 item 2): for an
  * officer, anything that emails or notifies someone or changes a member's
- * booking, request, waitlist place, bed or promo code. The app asks first and
- * the call is audited as important. A view-only connection runs
+ * booking, request, waitlist place, bed or promo code. Every change to
+ * club-wide configuration (seasons, policies, age groups, promo codes, rooms
+ * and beds, settings) is `destructive` too (#5305 comment 7093303964). The app
+ * asks first and the call is audited as important. A view-only connection runs
  * `read` actions only.
  */
 export type McpActionKind = "read" | "write" | "destructive";

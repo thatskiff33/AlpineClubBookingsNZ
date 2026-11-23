@@ -11,6 +11,7 @@ import {
 } from "@/lib/mcp/catalogue";
 import {
   classifyMcpRoute,
+  MCP_FINANCE_NOT_YET_ROUTES,
   MCP_NOT_YET_TASKS,
   MCP_PERMANENT_EXCLUSION_REASONS,
   mcpPermanentExclusion,
@@ -315,8 +316,15 @@ describe("AI app action census (ALP-653, INV-MCP-006)", { timeout: CENSUS_TIMEOU
     for (const route of bookingsRoutes) {
       const result = classifyMcpRoute(route.file, route.method);
       const key = stepUpRouteKey(route.file, route.method);
+      // Only the money routes the owner handed to the Finance lane wait on it
+      // (#5305 comment 7093303964, item 3).
+      if (MCP_FINANCE_NOT_YET_ROUTES.includes(`${route.method} ${adminRouteApiPath(route.file)}`)) {
+        expect(result, key).toEqual({ kind: "excluded", reason: "not-yet:ALP-721" });
+        continue;
+      }
       expect(result.kind === "action" || (result.kind === "excluded" && !result.reason.startsWith("not-yet:")), key).toBe(true);
     }
+    expect(MCP_FINANCE_NOT_YET_ROUTES).toEqual(["POST /api/admin/bookings/[id]/additional-payment/withdraw"]);
     // A new route in a decided area is not covered by a neighbour's decision.
     expect(classifyMcpRoute("src/app/api/admin/bookings/[id]/brand-new/route.ts", "POST")).toEqual({
       kind: "unclassified",

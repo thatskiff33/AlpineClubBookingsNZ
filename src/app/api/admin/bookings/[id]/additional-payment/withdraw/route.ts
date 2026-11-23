@@ -1,11 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { withdrawAdditionalPaymentAsk } from "@/lib/additional-payment-withdraw";
 import { getAuditRequestContext } from "@/lib/audit";
-import {
-  ADMIN_ADDITIONAL_PAYMENT_WITHDRAW_CONNECTION_SHAPE,
-  type AdminAdditionalPaymentWithdrawAnswer,
-} from "@/lib/connection-shapes/bookings-bookings";
-import { connectionJson } from "@/lib/mcp-connection-request";
 import logger from "@/lib/logger";
 import { requireAdmin } from "@/lib/session-guards";
 import {
@@ -30,8 +25,6 @@ import {
  * the request changed under them (the fence) / a background retry is mid-mint;
  * 502 the card provider would not cancel the request and nothing was changed.
  * Every refusal leaves the ledger exactly as it was.
- *
- * Also the AI app action `withdraw_additional_payment_request` (ALP-719).
  */
 export async function POST(
   request: NextRequest,
@@ -58,12 +51,11 @@ export async function POST(
       );
     }
 
-    const answer: AdminAdditionalPaymentWithdrawAnswer = {
+    return NextResponse.json({
       success: true,
       withdrawnAmountCents: result.withdrawnAmountCents,
       retired: result.retired,
-    };
-    return connectionJson(request, answer, ADMIN_ADDITIONAL_PAYMENT_WITHDRAW_CONNECTION_SHAPE);
+    });
   } catch (err) {
     // `INV-LOCK-006`: the card request was already cancelled at the provider
     // before the ledger transaction rolled back, so the officer checks.

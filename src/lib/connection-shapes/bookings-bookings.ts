@@ -10,8 +10,8 @@
  * reaches the database.
  *
  * Left out on purpose, for the connection only (the admin screens still get
- * them): provider references (payment and Xero invoice ids, the Xero
- * operations a withdrawal retired), internal audit action names, the address
+ * them): provider references (payment and Xero invoice ids), internal audit
+ * action names, the address
  * an email went to, and the booker's email on a search result.
  */
 import type { BookingStatus } from "@prisma/client";
@@ -186,19 +186,6 @@ export const ADMIN_ADDITIONAL_PAYMENT_REMINDER_CONNECTION_SHAPE =
     success: true,
     sentAt: true,
     additionalAmountCents: true,
-  });
-
-/** `POST /api/admin/bookings/[id]/additional-payment/withdraw`. */
-export interface AdminAdditionalPaymentWithdrawAnswer {
-  success: true;
-  withdrawnAmountCents: number;
-  retired: { xeroOperations: number };
-}
-
-export const ADMIN_ADDITIONAL_PAYMENT_WITHDRAW_CONNECTION_SHAPE =
-  connectionShapeFor<AdminAdditionalPaymentWithdrawAnswer>({
-    success: true,
-    withdrawnAmountCents: true,
   });
 
 /** `POST /api/admin/bookings/[id]/capacity-hold`. */

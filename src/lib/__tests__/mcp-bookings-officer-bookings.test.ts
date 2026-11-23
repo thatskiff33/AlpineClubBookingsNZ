@@ -55,7 +55,6 @@ const h = vi.hoisted(() => {
     workPartyRemovalEligibility: vi.fn(),
     copyBooking: vi.fn(),
     resendAdditionalPayment: vi.fn(),
-    withdrawAdditionalPayment: vi.fn(),
     reconcileGlobal: vi.fn(),
     reconcileLodge: vi.fn(),
     postingContext: vi.fn(),
@@ -150,10 +149,6 @@ vi.mock("@/lib/additional-payment-resend-service", async (importOriginal) => ({
   ...((await importOriginal()) as typeof import("@/lib/additional-payment-resend-service")),
   resendAdditionalPaymentEmail: h.resendAdditionalPayment,
 }));
-vi.mock("@/lib/additional-payment-withdraw", async (importOriginal) => ({
-  ...((await importOriginal()) as typeof import("@/lib/additional-payment-withdraw")),
-  withdrawAdditionalPaymentAsk: h.withdrawAdditionalPayment,
-}));
 vi.mock("@/lib/bed-allocation-lifecycle", async (importOriginal) => ({
   ...((await importOriginal()) as typeof import("@/lib/bed-allocation-lifecycle")),
   reconcileBedAllocationsForBookingWithGlobalLockHeld: h.reconcileGlobal,
@@ -209,7 +204,6 @@ import {
 } from "@/app/api/admin/bookings/non-member-contact/route";
 import { GET as searchBookings } from "@/app/api/admin/bookings/search/route";
 import { POST as sendReminder } from "@/app/api/admin/bookings/[id]/additional-payment-reminder/route";
-import { POST as withdrawPayment } from "@/app/api/admin/bookings/[id]/additional-payment/withdraw/route";
 import {
   DELETE as releaseCapacityHold,
   POST as placeCapacityHold,
@@ -285,7 +279,6 @@ describe("the booking actions", () => {
       get_booking_work_party_options: "read",
       copy_booking_to_draft: "destructive",
       send_additional_payment_reminder: "destructive",
-      withdraw_additional_payment_request: "destructive",
       place_admin_capacity_hold: "destructive",
       release_admin_capacity_hold: "destructive",
       set_exclusive_lodge_hold: "destructive",
@@ -726,29 +719,6 @@ describe("send_additional_payment_reminder", () => {
     const answer = { success: true, sentAt: "2026-07-01T00:00:00.000Z", additionalAmountCents: 2500 };
     expect(connection).toEqual(answer);
     expect(browser).toEqual(answer);
-  });
-});
-
-describe("withdraw_additional_payment_request", () => {
-  it("needs Finance edit, and answers the amount without the Xero operations retired", async () => {
-    h.withdrawAdditionalPayment.mockResolvedValue({
-      ok: true,
-      withdrawnAmountCents: 2500,
-      retired: { xeroOperations: 2 },
-    });
-
-    const { connection, browser } = await expectActionContract({
-      actionId: "withdraw_additional_payment_request",
-      handler: withdrawPayment,
-      args: { id: "booking-1" },
-    });
-
-    expect(h.requireAdmin).toHaveBeenCalledWith({ permission: { area: "finance", level: "edit" } });
-    expect(h.withdrawAdditionalPayment).toHaveBeenCalledWith(
-      expect.objectContaining({ bookingId: "booking-1", actorMemberId: OFFICER }),
-    );
-    expect(connection).toEqual({ success: true, withdrawnAmountCents: 2500 });
-    expect(browser).toEqual({ success: true, withdrawnAmountCents: 2500, retired: { xeroOperations: 2 } });
   });
 });
 

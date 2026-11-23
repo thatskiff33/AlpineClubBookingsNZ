@@ -2,13 +2,14 @@
  * Booking setup: seasons, booking policies, age groups, member-guest and booking-request settings.
  * Part of the Bookings & Beds officer actions (ALP-719): spread into `MCP_ACTIONS`.
  *
- * Kinds: club configuration the officer can set back from the admin screens
- * is `write`, seasons and hut rates included (the Hut Fees and Seasons
- * screens edit them): none of it notifies anyone or overwrites another
- * person's record (owner decision, #5305 item 2). A delete, the minimum-stay "delete" that deactivates,
- * and the adult-member hosting save (it can email booking owners whose bookings
- * lose cover) are `destructive`. The member-guest save is website-only
- * (`privacy-posture` in `exclusions.ts`).
+ * Kinds: every change here is `destructive`. Seasons and hut rates, booking
+ * periods, minimum stays, the cancellation and group discount policies, age
+ * groups and booking-request settings are club-wide configuration, which an
+ * officer's app may change only after asking the officer first (owner
+ * decision, #5305 comment 7093303964, item 2). A delete, the minimum-stay
+ * "delete" that deactivates, and the adult-member hosting save (it can email
+ * booking owners whose bookings lose cover) were already. The member-guest
+ * save is website-only (`privacy-posture` in `exclusions.ts`).
  */
 import { adminRecordIdParamsSchema } from "@/lib/admin-bookings-schemas/record-id";
 import {
@@ -82,7 +83,7 @@ export const BOOKINGS_SETUP_MCP_ACTIONS: readonly McpAction[] = [
     method: "POST",
     path: "/api/admin/seasons",
     body: seasonCreateBodySchema,
-    kind: "write",
+    kind: "destructive",
     returns: ADMIN_SEASON_CONNECTION_SHAPE,
     core: false,
   },
@@ -95,7 +96,7 @@ export const BOOKINGS_SETUP_MCP_ACTIONS: readonly McpAction[] = [
     path: "/api/admin/seasons/[id]",
     params: adminRecordIdParamsSchema,
     body: seasonUpdateBodySchema,
-    kind: "write",
+    kind: "destructive",
     returns: ADMIN_SEASON_CONNECTION_SHAPE,
     core: false,
   },
@@ -135,7 +136,7 @@ export const BOOKINGS_SETUP_MCP_ACTIONS: readonly McpAction[] = [
     // The route's schema also refuses club-wide fields with a lodge and an
     // empty club-wide list; the route remains the authority for those.
     body: cancellationPolicyBodySchema,
-    kind: "write",
+    kind: "destructive",
     returns: ADMIN_CANCELLATION_POLICY_SAVED_CONNECTION_SHAPE,
     core: false,
   },
@@ -173,7 +174,7 @@ export const BOOKINGS_SETUP_MCP_ACTIONS: readonly McpAction[] = [
     method: "POST",
     path: "/api/admin/booking-policies/periods",
     body: bookingPeriodCreateBodySchema,
-    kind: "write",
+    kind: "destructive",
     returns: ADMIN_BOOKING_PERIOD_CONNECTION_SHAPE,
     core: false,
   },
@@ -186,7 +187,7 @@ export const BOOKINGS_SETUP_MCP_ACTIONS: readonly McpAction[] = [
     path: "/api/admin/booking-policies/periods/[id]",
     params: adminRecordIdParamsSchema,
     body: bookingPeriodUpdateBodySchema,
-    kind: "write",
+    kind: "destructive",
     returns: ADMIN_BOOKING_PERIOD_CONNECTION_SHAPE,
     core: false,
   },
@@ -224,7 +225,7 @@ export const BOOKINGS_SETUP_MCP_ACTIONS: readonly McpAction[] = [
     method: "POST",
     path: "/api/admin/booking-policies/minimum-stay",
     body: minimumStayCreateBodySchema,
-    kind: "write",
+    kind: "destructive",
     returns: ADMIN_MINIMUM_STAY_POLICY_CONNECTION_SHAPE,
     core: false,
   },
@@ -237,7 +238,7 @@ export const BOOKINGS_SETUP_MCP_ACTIONS: readonly McpAction[] = [
     path: "/api/admin/booking-policies/minimum-stay/[id]",
     params: adminRecordIdParamsSchema,
     body: minimumStayUpdateBodySchema,
-    kind: "write",
+    kind: "destructive",
     returns: ADMIN_MINIMUM_STAY_POLICY_CONNECTION_SHAPE,
     core: false,
   },
@@ -275,7 +276,7 @@ export const BOOKINGS_SETUP_MCP_ACTIONS: readonly McpAction[] = [
     method: "PUT",
     path: "/api/admin/booking-policies/group-discount",
     body: groupDiscountBodySchema,
-    kind: "write",
+    kind: "destructive",
     returns: ADMIN_GROUP_DISCOUNT_SAVED_CONNECTION_SHAPE,
     core: false,
   },
@@ -326,7 +327,7 @@ export const BOOKINGS_SETUP_MCP_ACTIONS: readonly McpAction[] = [
     method: "PUT",
     path: "/api/admin/age-tier-settings",
     body: ageTierSettingsBodySchema,
-    kind: "write",
+    kind: "destructive",
     returns: ADMIN_AGE_TIER_SETTINGS_CONNECTION_SHAPE,
     core: false,
   },
@@ -352,7 +353,7 @@ export const BOOKINGS_SETUP_MCP_ACTIONS: readonly McpAction[] = [
     path: "/api/admin/booking-requests/settings",
     // The route also refuses a reminder lead not shorter than the window.
     body: bookingRequestSettingsBodySchema,
-    kind: "write",
+    kind: "destructive",
     returns: ADMIN_BOOKING_REQUEST_SETTINGS_CONNECTION_SHAPE,
     core: false,
   },

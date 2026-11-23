@@ -229,6 +229,17 @@ const MEMBER_NOT_YET_PREFIXES: Readonly<Record<MemberNotYetGroup, readonly strin
 /** Finance officer routes that sit outside `/api/admin`. */
 const FINANCE_NOT_YET_PREFIXES: readonly string[] = ["/api/finance"];
 
+/**
+ * Money routes whose path the `bookings` area guards but which belong to the
+ * Finance lane (ALP-721), as `METHOD /path`. Withdrawing an extra payment
+ * request cancels a card request and retires its ledger row, and its handler
+ * demands finance edit (owner decision, #5305 comment 7093303964, item 3).
+ * Checked before the path's area, which is decided and has no `not-yet`.
+ */
+export const MCP_FINANCE_NOT_YET_ROUTES: readonly string[] = [
+  "POST /api/admin/bookings/[id]/additional-payment/withdraw",
+];
+
 function underPrefix(path: string, prefix: string): boolean {
   return path === prefix || path.startsWith(`${prefix}/`);
 }
@@ -276,6 +287,9 @@ export function classifyMcpRoute(file: string, method: string): McpRouteClassifi
   if (action) return { kind: "action", action };
 
   const path = adminRouteApiPath(file);
+  if (MCP_FINANCE_NOT_YET_ROUTES.includes(`${method} ${path}`)) {
+    return { kind: "excluded", reason: `not-yet:${MCP_NOT_YET_TASKS.finance}` };
+  }
   const adminArea = getAdminRouteRequirement(path, method)?.area;
   if (adminArea) {
     // A route in a decided area has no `not-yet` to fall back on.
