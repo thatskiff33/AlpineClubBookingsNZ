@@ -98,7 +98,7 @@ async function importIt(settings: Record<string, unknown>) {
   const zip = bundle(settings);
   const plan = await buildImportPlan(db.readDb, zip, { format: CLUB_FORMAT_TEST, mode: "merge" });
   expect(plan.errors).toEqual([]);
-  await applyConfigImport({
+  const result = await applyConfigImport({
     format: CLUB_FORMAT_TEST,
     prisma: db.prisma,
     bundleBytes: zip,
@@ -107,7 +107,7 @@ async function importIt(settings: Record<string, unknown>) {
     mode: "merge",
     resolutions: [],
   });
-  return db;
+  return Object.assign(db, { result });
 }
 
 beforeEach(() => {
@@ -168,5 +168,33 @@ describe("config-transfer import of the subscription-liability rule (#5190)", ()
 
     expect(db.$transaction).toHaveBeenCalledTimes(1);
     expect(clearUp.clearStaleNotRequiredRows).not.toHaveBeenCalled();
+  });
+
+  it("reports whether the clear-up ran", async () => {
+    expect((await importIt(STORED)).result.liabilityClearUp).toBe("not-run");
+    expect(
+      (await importIt({ ...STORED, requiredTypeAgeRule: "ALWAYS_OWES", liabilityAgeSource: "SEASON_END" }))
+        .result.liabilityClearUp,
+    ).toBe("done");
+  });
+
+  // #5190 review: the import has committed by the time the clear-up runs, so
+  // a clear-up failure must not turn it into a refused import.
+  it("a failing clear-up still returns the committed import, flagged, with a failure audit", async () => {
+    clearUp.clearStaleNotRequiredRows.mockRejectedValueOnce(
+      Object.assign(new Error("timed out"), { code: "P2028" }),
+    );
+    const db = await importIt({ ...STORED, requiredTypeAgeRule: "ALWAYS_OWES", liabilityAgeSource: "SEASON_END" });
+    expect(db.result.liabilityClearUp).toBe("failed");
+    // The import's own write and success row stand.
+    expect(db.membershipLockoutSettings.upsert).toHaveBeenCalled();
+    const entries = vi.mocked(createAuditLog).mock.calls.map(([entry]) => entry);
+    expect(entries.map((entry) => entry.action)).toContain("configuration.imported");
+    const failure = entries.find(
+      (entry) => entry.action === "configuration.imported.liability_clear_up",
+    );
+    expect(failure).toMatchObject({ outcome: "failure", metadata: { seasonYear: 2026 } });
+    expect(failure?.summary).toMatch(/next membership lockout settings save re-runs it/);
+    expect((failure?.metadata as { bundleSha256?: string }).bundleSha256).toMatch(/^[0-9a-f]{64}$/);
   });
 });

@@ -3,6 +3,7 @@ import "server-only";
 import type { PrismaClient } from "@prisma/client";
 
 import { createAuditLog } from "@/lib/audit";
+import logger from "@/lib/logger";
 import { DEFAULT_BOOKING_DEFAULTS } from "@/config/club-settings-defaults";
 import { auditLateCaptureSettingChange } from "@/lib/late-capture-refund-setting-change";
 import { runDatabaseBackup, type BackupResult } from "@/lib/backup";
@@ -459,9 +460,11 @@ export async function applyConfigImport(
 
   // #5190: an import that changed the lockout settings may have opted the club
   // in to a liability rule; clear the season's stale rows once it has committed.
-  if (appliedEntities.includes("membership-lockout-settings")) {
-    await clearStaleRowsAfterImport(prisma, { actorMemberId, bundleSha256 });
-  }
+  const liabilityClearUp: LiabilityClearUpOutcome = appliedEntities.includes(
+    "membership-lockout-settings",
+  )
+    ? await clearStaleRowsAfterImport(prisma, { actorMemberId, bundleSha256 })
+    : "not-run";
 
   return {
     perCategory,
@@ -472,8 +475,16 @@ export async function applyConfigImport(
     },
     doorCodesWritten: notes.doorCodesWritten,
     appliedEntities,
+    liabilityClearUp,
   };
 }
+
+/**
+ * What the post-import liability clear-up did (#5190): `"failed"` means the
+ * import itself committed but the clear-up did not; the officer is warned and
+ * the next lockout-settings save re-runs it.
+ */
+export type LiabilityClearUpOutcome = "not-run" | "done" | "failed";
 
 /**
  * #5190: an import that changed the lockout settings may have opted the club in
@@ -487,15 +498,45 @@ export async function applyConfigImport(
 async function clearStaleRowsAfterImport(
   prisma: PrismaClient,
   input: { actorMemberId: string; bundleSha256: string },
-): Promise<void> {
-  const seasonYear = clubSeasonYear(await readClubTimeZoneOutsideRequest());
-  // The clear-up waits on the billing season key, which a confirm may hold for
-  // its whole budget.
-  const clearUp = await prisma.$transaction(
-    (tx) => clearStaleNotRequiredRows(tx, seasonYear),
-    { timeout: SUBSCRIPTION_BILLING_SEASON_WAITER_TIMEOUT_MS },
-  );
-  if (clearUp.clearedCount === 0) return;
+): Promise<LiabilityClearUpOutcome> {
+  // Known once read, so a failure after it can name the season.
+  let attemptedSeasonYear: number | null = null;
+  let ran: {
+    seasonYear: number;
+    clearUp: Awaited<ReturnType<typeof clearStaleNotRequiredRows>>;
+  };
+  try {
+    const seasonYear = clubSeasonYear(await readClubTimeZoneOutsideRequest());
+    attemptedSeasonYear = seasonYear;
+    // The clear-up waits on the billing season key, which a confirm may hold
+    // for its whole budget.
+    const clearUp = await prisma.$transaction(
+      (tx) => clearStaleNotRequiredRows(tx, seasonYear),
+      { timeout: SUBSCRIPTION_BILLING_SEASON_WAITER_TIMEOUT_MS },
+    );
+    ran = { seasonYear, clearUp };
+  } catch (error) {
+    // The import has committed and its success row is written, so a failure
+    // here must not be reported as a refused import. Nothing the clear-up
+    // wrote committed; the next lockout-settings save re-runs it.
+    logger.error(
+      { err: error, bundleSha256: input.bundleSha256, seasonYear: attemptedSeasonYear },
+      "Liability clear-up after a configuration import failed",
+    );
+    await createAuditLog({
+      action: "configuration.imported.liability_clear_up",
+      memberId: input.actorMemberId,
+      category: "admin",
+      severity: "important",
+      outcome: "failure",
+      summary:
+        'Clearing stale "not required" subscription rows after a configuration import failed; the next membership lockout settings save re-runs it',
+      metadata: { bundleSha256: input.bundleSha256, seasonYear: attemptedSeasonYear },
+    });
+    return "failed";
+  }
+  const { seasonYear, clearUp } = ran;
+  if (clearUp.clearedCount === 0) return "done";
   await createAuditLog({
     action: "configuration.imported.liability_clear_up",
     memberId: input.actorMemberId,
@@ -508,4 +549,5 @@ async function clearStaleRowsAfterImport(
       clearedStaleNotRequiredRows: clearedRowsAuditMetadata(clearUp, seasonYear),
     },
   });
+  return "done";
 }

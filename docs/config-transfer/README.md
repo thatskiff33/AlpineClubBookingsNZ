@@ -144,7 +144,10 @@ deeper reference for what each category contains and the import safety model.
   `CURRENT_AGE` fails the dry-run. An import that changes the singleton runs the
   stale-row clear-up in its own transaction once the import commits; when it
   moves any row it writes a `configuration.imported.liability_clear_up` audit
-  row with the total and up to 50 of the member ids.
+  row with the total and up to 50 of the member ids. If that clear-up fails,
+  the import still stands: the result carries `liabilityClearUp: "failed"`,
+  the officer sees a warning, a failure audit row of the same action names the
+  bundle, and the next membership lockout settings save re-runs the clear-up.
   The retired `ClubModuleSettings.multiLodge` column needs no entry: it is
   `@ignore`d (#5396), so the generated client the guards read cannot see it.
   Its drop is tracked as hoppers99/AlpineClubBookingsNZ#139.
