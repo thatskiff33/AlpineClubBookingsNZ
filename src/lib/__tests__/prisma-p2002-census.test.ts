@@ -62,6 +62,15 @@ function quotedP2002Lines(file: string, code: string): string[] {
   });
 }
 
+/**
+ * A direct read of a Prisma error's `meta.target` (#5407): the driver adapter
+ * this stack uses never fills it, so a narrowing that reads it alone never
+ * fires. `describeUniqueConstraintTarget` in `prisma-errors.ts` is the one
+ * reader. Matches `meta.target`, `meta?.target` and `meta["target"]` in
+ * comment-stripped code; a destructured `{ target }` from `meta` is not seen.
+ */
+const META_TARGET_READ = /\bmeta\s*\??\.\s*target\b|\bmeta\s*\??\.?\s*\[\s*(["'`])target\1\s*\]/;
+
 function read(file: string): string {
   return readFileSync(path.join(process.cwd(), file), "utf8");
 }
@@ -84,6 +93,17 @@ describe("Prisma P2002 census (#5407 item 6)", () => {
     ).toEqual([...REVIEWED_P2002_LITERALS].sort());
   });
 
+  it("reads meta.target only in prisma-errors.ts, the one constraint reader (#5407)", () => {
+    const readers = files
+      .filter((file) => file !== "src/lib/prisma-errors.ts")
+      .filter((file) => META_TARGET_READ.test(stripComments(read(file))));
+    expect(
+      readers,
+      "the driver adapter never fills meta.target: read the colliding constraint with describeUniqueConstraintTarget",
+    ).toEqual([]);
+    expect(META_TARGET_READ.test(stripComments(read("src/lib/prisma-errors.ts")))).toBe(true);
+  });
+
   it("keeps prisma-errors.ts import-free and prisma-known-errors.ts on the Prisma runtime alone", () => {
     const imports = (file: string) => moduleImports(file, stripComments(read(file))).map((entry) => entry.specifier);
     expect(imports("src/lib/prisma-errors.ts")).toEqual([]);
@@ -100,6 +120,17 @@ describe("Prisma P2002 census (#5407 item 6)", () => {
       ['"P20021"', 0],
     ])("counts %j as %i", (code, expected) => {
       expect(quotedP2002Lines("x.ts", code)).toHaveLength(expected);
+    });
+
+    it.each([
+      ["error.meta?.target", true],
+      ["err.meta.target.includes(x)", true],
+      ["error.meta?.['target']", true],
+      ['meta["target"]', true],
+      ["link.metadata?.target", false],
+      ["target.invoiceId", false],
+    ])("treats %j as a meta.target read: %s", (code, expected) => {
+      expect(META_TARGET_READ.test(code)).toBe(expected);
     });
 
     it("ignores P2002 named only in a comment once comments are stripped", () => {
