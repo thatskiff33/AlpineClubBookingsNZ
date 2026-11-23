@@ -7,7 +7,7 @@
  *
  * Kinds: placing, moving and auto-suggesting beds is `write` (a removal or
  * another move takes it back), as are settings and room and bed edits.
- * Approving is `destructive`: there is no un-approve, and it locks the member
+ * Approving is `destructive`, as is a range placement (approved at once): there is no un-approve, and it locks the member
  * out of changing their requested room. So are removing allocations and
  * deleting a room or bed. The two previews change nothing and run as reads.
  */
@@ -31,6 +31,7 @@ import {
   bedAllocationRoomUpdateBodySchema,
   bedAllocationSettingsBodySchema,
   bedAllocationSettingsQuerySchema,
+  MAX_BED_ALLOCATION_REMOVAL_WINDOW_NIGHTS,
 } from "@/lib/admin-bookings-schemas/beds";
 import {
   ADMIN_BED_ALLOCATION_APPROVE_CONNECTION_SHAPE,
@@ -53,6 +54,12 @@ import {
 
 import { MAX_BED_ALLOCATION_RANGE_NIGHTS } from "@/lib/bed-allocation-date-range";
 import type { McpAction } from "../catalogue";
+
+/**
+ * The two previews' own guard (`requireBedAllocationRead`): looking changes
+ * nothing, so view access is enough, below the path's edit rule for a POST.
+ */
+const BOOKINGS_VIEW = { area: "bookings", level: "view" } as const;
 
 /** Said once on every action that changes the lodge's rooms or beds. */
 const INVENTORY_SIDE_EFFECT = "Public pages that show the lodge's rooms update.";
@@ -105,7 +112,8 @@ export const BOOKINGS_BEDS_MCP_ACTIONS: readonly McpAction[] = [
     method: "POST",
     path: "/api/admin/bed-allocation/allocations/range",
     body: bedAllocationRangeBodySchema,
-    kind: "write",
+    // Its nights are approved at once, and there is no un-approve.
+    kind: "destructive",
     returns: ADMIN_BED_ALLOCATION_RANGE_CONNECTION_SHAPE,
     core: false,
   },
@@ -119,6 +127,7 @@ export const BOOKINGS_BEDS_MCP_ACTIONS: readonly McpAction[] = [
     body: bedAllocationMovePreviewBodySchema,
     kind: "read",
     preview: true,
+    requires: BOOKINGS_VIEW,
     returns: ADMIN_BED_ALLOCATION_MOVE_PREVIEW_CONNECTION_SHAPE,
     core: false,
   },
@@ -164,12 +173,13 @@ export const BOOKINGS_BEDS_MCP_ACTIONS: readonly McpAction[] = [
     id: "preview_bed_allocation_removal",
     title: "Preview removing bed allocations",
     summary:
-      "Officer: what removing allocations would take away, without removing anything: for one allocation, one guest's stay, one booking, or a lodge window of up to 31 nights, the rows of each chosen category, the bookings and nights affected, partners who would be promoted on shared doubles, and the bookings whose member could change their requested room again. Answers a `digest`; run `remove_bed_allocations` with it to apply exactly this preview.",
+      `Officer: what removing allocations would take away, without removing anything: for one allocation, one guest's stay, one booking, or a lodge window of up to ${MAX_BED_ALLOCATION_REMOVAL_WINDOW_NIGHTS} nights, the rows of each chosen category, the bookings and nights affected, partners who would be promoted on shared doubles, and the bookings whose member could change their requested room again. Answers a \`digest\`; run \`remove_bed_allocations\` with it to apply exactly this preview.`,
     method: "POST",
     path: "/api/admin/bed-allocation/allocations/removal",
     body: bedAllocationRemovalPreviewBodySchema,
     kind: "read",
     preview: true,
+    requires: BOOKINGS_VIEW,
     returns: ADMIN_BED_ALLOCATION_REMOVAL_PREVIEW_CONNECTION_SHAPE,
     core: false,
   },

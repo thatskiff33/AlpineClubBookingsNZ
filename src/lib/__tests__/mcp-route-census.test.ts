@@ -17,6 +17,7 @@ import {
 } from "@/lib/mcp/exclusions";
 import { fileExists, hasExport, unwrap, walkDir } from "@/lib/step-up-route-census-ast";
 import { getAdminRouteRequirement } from "@/lib/admin-permissions";
+import { extractRouteGates, type HttpMethod } from "@/lib/__tests__/helpers/admin-route-explicit-permissions";
 import {
   adminRouteApiPath,
   STEP_UP_HTTP_METHODS,
@@ -129,64 +130,6 @@ function handlerCalls({ source, body }: RouteHandler, names: ReadonlySet<string>
     return found;
   };
   return visit(body);
-}
-
-/** `{ area: "x", level: "y" }`, read from an object literal, or null. */
-function requirementLiteral(expression: ts.Expression): { area: string; level: string } | null {
-  const node = unwrap(expression);
-  if (!ts.isObjectLiteralExpression(node)) return null;
-  const read = (key: string) => {
-    const property = node.properties.find(
-      (entry) => ts.isPropertyAssignment(entry) && ts.isIdentifier(entry.name) && entry.name.text === key,
-    );
-    const value = property && ts.isPropertyAssignment(property) ? unwrap(property.initializer) : undefined;
-    return value && ts.isStringLiteral(value) ? value.text : null;
-  };
-  const area = read("area");
-  const level = read("level");
-  return area && level ? { area, level } : null;
-}
-
-/**
- * The area and level the handler passes to `requireAdmin({ permission })`,
- * a literal or a top-level `const` of the file; null when it names none (the
- * path's rule decides). A permission the census cannot read fails loudly.
- */
-function explicitAdminPermission({ source, body }: RouteHandler): { area: string; level: string } | null {
-  const constants = new Map<string, ts.Expression>();
-  for (const statement of source.statements) {
-    if (!ts.isVariableStatement(statement)) continue;
-    for (const declaration of statement.declarationList.declarations) {
-      if (ts.isIdentifier(declaration.name) && declaration.initializer) {
-        constants.set(declaration.name.text, declaration.initializer);
-      }
-    }
-  }
-  let explicit: { area: string; level: string } | null = null;
-  const walk = (node: ts.Node): void => {
-    if (ts.isCallExpression(node) && calleeName(node) === "requireAdmin") {
-      const options = node.arguments[0] && unwrap(node.arguments[0]);
-      const permission = options && ts.isObjectLiteralExpression(options)
-        ? options.properties.find(
-          (entry) => ts.isPropertyAssignment(entry) && ts.isIdentifier(entry.name) && entry.name.text === "permission",
-        )
-        : undefined;
-      if (permission && ts.isPropertyAssignment(permission)) {
-        const value = unwrap(permission.initializer);
-        const resolved = ts.isIdentifier(value) ? constants.get(value.text) : value;
-        // `false` and "any-admin" are looser than the path's rule: the
-        // catalogue keeps the stricter path rule, failing closed.
-        const looser = value.kind === ts.SyntaxKind.FalseKeyword || ts.isStringLiteral(value);
-        if (!looser) {
-          explicit = resolved ? requirementLiteral(resolved) : null;
-          if (!explicit) throw new Error(`Cannot read the requireAdmin permission in ${source.fileName}`);
-        }
-      }
-    }
-    ts.forEachChild(node, walk);
-  };
-  if (body) walk(body);
-  return explicit;
 }
 
 /**
@@ -387,14 +330,22 @@ describe("AI app action census (ALP-653, INV-MCP-006)", { timeout: CENSUS_TIMEOU
   });
 
   it("offers each officer action at exactly the permission its handler demands", () => {
-    // A handler that names its own `requireAdmin` permission overrides the
-    // path's rule; the entry must carry it as `requires`, and only then.
+    // A handler that names its own `requireAdmin` permission, directly or
+    // through a shared guard wrapper, overrides the path's rule; the entry must
+    // carry it as `requires`, and only then. The gate is read by the one
+    // reader the admin authorization proof uses (`INV-SSOT-001`).
     const mismatched = MCP_ACTIONS.filter((action) => mcpActionAdminRequirement(action) !== null).flatMap((action) => {
-      const explicit = explicitAdminPermission(routeHandler(mcpActionRouteFile(action), action.method));
-      const ok = explicit === null
+      const file = mcpActionRouteFile(action);
+      const gate = extractRouteGates(readFileSync(file, "utf8")).gates[action.method as HttpMethod];
+      const ok = gate?.kind === "inferred"
         ? action.requires === undefined
-        : JSON.stringify(mcpActionAdminRequirement(action)) === JSON.stringify(explicit);
-      return ok ? [] : [`${action.id}: handler ${JSON.stringify(explicit)}, entry ${JSON.stringify(action.requires)}`];
+        : gate?.kind === "explicit" && gate.permission.kind === "requirement"
+          ? JSON.stringify(mcpActionAdminRequirement(action)) === JSON.stringify(gate.permission.requirement)
+          // "any-admin" is looser than the path's rule: the catalogue keeps
+          // the stricter path rule, failing closed. Full Admin only, or a gate
+          // the reader cannot resolve, has no entry that could match it.
+          : gate?.kind === "explicit" && gate.permission.kind === "any-admin" && action.requires === undefined;
+      return ok ? [] : [`${action.id}: handler ${JSON.stringify(gate)}, entry ${JSON.stringify(action.requires)}`];
     });
     expect(mismatched).toEqual([]);
   });

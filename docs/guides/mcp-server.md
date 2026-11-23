@@ -232,7 +232,9 @@ ask them to prove who they are again and the switch that opens member search
   (the entry's `requires`, which the route census checks against the
   handler). Anyone without it never sees the action in the tool list,
   `find_actions` or `describe_action`, and cannot run it by name. A view-only
-  officer is offered only reads, and not the three reads that need edit.
+  officer is offered only reads, and not the four reads that need edit (the
+  two family reads, the non-member contact search and the booking request
+  member-link check).
 - **The route still decides.** Each action calls the admin route the screen
   calls, which checks the officer's own permissions exactly as for the
   browser. Withdrawing an extra payment request needs **Finance** edit, as
@@ -326,12 +328,12 @@ party or removing it from one.
 | `get_bed_allocation_board` | Read the bed allocation board | read | view | `GET /api/admin/bed-allocation` |
 | `allocate_guest_bed_night` | Put a guest in a bed for one night | write | edit | `POST /api/admin/bed-allocation/allocations` |
 | `allocate_guest_bed_nights` | Put a guest in a bed for several nights | write | edit | `POST /api/admin/bed-allocation/allocations/bulk` |
-| `assign_guest_bed_range` | Put a guest in a bed for a range of nights | write | edit | `POST /api/admin/bed-allocation/allocations/range` |
-| `preview_bed_allocation_move` | Preview moving a guest to another bed | read | edit | `POST /api/admin/bed-allocation/allocations/move` |
+| `assign_guest_bed_range` | Put a guest in a bed for a range of nights | destructive | edit | `POST /api/admin/bed-allocation/allocations/range` |
+| `preview_bed_allocation_move` | Preview moving a guest to another bed | read | view | `POST /api/admin/bed-allocation/allocations/move` |
 | `move_bed_allocation` | Move a guest to another bed | write | edit | `PATCH /api/admin/bed-allocation/allocations` |
 | `auto_allocate_beds` | Suggest beds automatically | write | edit | `POST /api/admin/bed-allocation/auto-allocate` |
 | `approve_bed_allocations` | Approve bed allocations | destructive | edit | `POST /api/admin/bed-allocation/approve` |
-| `preview_bed_allocation_removal` | Preview removing bed allocations | read | edit | `POST /api/admin/bed-allocation/allocations/removal` |
+| `preview_bed_allocation_removal` | Preview removing bed allocations | read | view | `POST /api/admin/bed-allocation/allocations/removal` |
 | `remove_bed_allocations` | Remove bed allocations | destructive | edit | `PUT /api/admin/bed-allocation/allocations/removal` |
 | `get_bed_allocation_settings` | Read a lodge's bed allocation settings | read | view | `GET /api/admin/bed-allocation/settings` |
 | `update_bed_allocation_settings` | Change a lodge's bed allocation settings | write | edit | `PUT /api/admin/bed-allocation/settings` |

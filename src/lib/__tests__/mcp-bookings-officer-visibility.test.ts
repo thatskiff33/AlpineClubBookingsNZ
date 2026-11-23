@@ -95,7 +95,7 @@ describe("Bookings & Beds officer actions: who is offered them", () => {
     }
   });
 
-  it("offers an action on a Bookings & Beds route at the stricter permission its route names", async () => {
+  it("offers an action on a Bookings & Beds route at the permission its handler names", async () => {
     const withdraw = AREA_ROUTE_ACTIONS.find((action) => action.id === "withdraw_additional_payment_request");
     expect(withdraw && mcpActionAdminRequirement(withdraw)).toEqual({ area: "finance", level: "edit" });
     expect(await foundIds(context({ bookings: "edit" }))).not.toContain("withdraw_additional_payment_request");
@@ -104,6 +104,9 @@ describe("Bookings & Beds officer actions: who is offered them", () => {
     const viewOnly = new Set(await foundIds(context({ bookings: "view" })));
     expect(viewOnly.has("get_member_family_for_booking")).toBe(false);
     expect(viewOnly.has("search_non_member_contacts")).toBe(false);
+    // And below it: the bed previews' own guard asks only view, as on the board.
+    expect(viewOnly.has("preview_bed_allocation_move")).toBe(true);
+    expect(viewOnly.has("preview_bed_allocation_removal")).toBe(true);
   });
 
   it("keeps the open member search switch website-only, even for a Bookings & Beds editor", async () => {
