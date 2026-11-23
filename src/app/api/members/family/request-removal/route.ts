@@ -1,5 +1,4 @@
 import { NextRequest, NextResponse } from "next/server";
-import { z } from "zod";
 import { auth } from "@/lib/auth";
 import { requireActiveSessionUser } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma";
@@ -8,12 +7,9 @@ import { logAudit } from "@/lib/audit";
 import logger from "@/lib/logger";
 import { sendAdminFamilyGroupRequestAlert } from "@/lib/email";
 import { parseJsonRequestBody } from "@/lib/api-json";
-
-const requestRemovalSchema = z.object({
-  familyGroupId: z.string().min(1, "Family group ID required"),
-  memberId: z.string().min(1, "Member ID required"),
-  notes: z.string().max(500).optional(),
-});
+import { familyRemovalRequestSchema } from "@/lib/family-group-request-schemas";
+import { connectionJson } from "@/lib/mcp-connection-request";
+import { FAMILY_REQUEST_SUBMITTED_CONNECTION_SHAPE } from "@/lib/connection-shapes";
 
 /**
  * POST /api/members/family/request-removal
@@ -36,7 +32,7 @@ export async function POST(req: NextRequest) {
   if (!jsonBody.ok) return jsonBody.response;
   const body = jsonBody.body;
 
-  const parsed = requestRemovalSchema.safeParse(body);
+  const parsed = familyRemovalRequestSchema.safeParse(body);
   if (!parsed.success) {
     return NextResponse.json(
       { error: "Validation failed", details: parsed.error.flatten().fieldErrors },
@@ -178,11 +174,14 @@ export async function POST(req: NextRequest) {
     "Family group removal request submitted"
   );
 
-  return NextResponse.json(
+  // Also the AI app action `request_family_member_removal` (ALP-795).
+  return connectionJson(
+    req,
     {
       message: "Removal request submitted. An admin will review it.",
       requestId: request.id,
     },
+    FAMILY_REQUEST_SUBMITTED_CONNECTION_SHAPE,
     { status: 201 }
   );
 }

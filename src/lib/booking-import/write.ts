@@ -24,6 +24,7 @@ import {
   BookingStatus,
   Prisma,
 } from "@prisma/client";
+import { isPrismaKnownUniqueConstraintError } from "@/lib/prisma-known-errors";
 
 import { settleHostingCoverageAfterCommit } from "@/lib/adult-member-hosting-coverage-drain";
 import { recordAdultMemberHostingReviewForNewBooking } from "@/lib/adult-member-hosting-review";
@@ -234,7 +235,7 @@ async function createBatch(plan: BookingImportPlan, officerMemberId: string): Pr
     });
     return batch.id;
   } catch (err) {
-    if (!(err instanceof Prisma.PrismaClientKnownRequestError) || err.code !== "P2002") throw err;
+    if (!isPrismaKnownUniqueConstraintError(err)) throw err;
     const batch = await prisma.bookingImportBatch.findUniqueOrThrow({
       where: { batchKey: plan.batchKey },
       select: { id: true },

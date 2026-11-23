@@ -11,6 +11,7 @@ import {
   mergeFieldValueKind,
   type MergeFieldValueKind,
 } from "@/lib/member-merge-field-kinds";
+import { POSTAL_ADDRESS_FIELDS, STREET_ADDRESS_FIELDS } from "@/lib/member-address";
 
 /**
  * Independent optional scalars filled from the loser only when master is blank.
@@ -59,26 +60,12 @@ const GROUP_FILL_SPECS: { name: string; key: string; fields: string[] }[] = [
   {
     name: "streetAddress",
     key: "streetAddressLine1",
-    fields: [
-      "streetAddressLine1",
-      "streetAddressLine2",
-      "streetCity",
-      "streetRegion",
-      "streetPostalCode",
-      "streetCountry",
-    ],
+    fields: [...STREET_ADDRESS_FIELDS],
   },
   {
     name: "postalAddress",
     key: "postalAddressLine1",
-    fields: [
-      "postalAddressLine1",
-      "postalAddressLine2",
-      "postalCity",
-      "postalRegion",
-      "postalPostalCode",
-      "postalCountry",
-    ],
+    fields: [...POSTAL_ADDRESS_FIELDS],
   },
 ];
 

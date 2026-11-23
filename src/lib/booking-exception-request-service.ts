@@ -1,4 +1,6 @@
 import { Prisma } from "@prisma/client";
+import { isPrismaKnownUniqueConstraintError } from "@/lib/prisma-known-errors";
+import { isPrismaUniqueConstraintError } from "@/lib/prisma-errors";
 
 import { bookingOwner } from "@/lib/booking-owner";
 import { prisma } from "@/lib/prisma";
@@ -1182,10 +1184,7 @@ function freezeProposal(
 }
 
 function isOpenSlotUniqueViolation(error: unknown): boolean {
-  if (
-    error instanceof Prisma.PrismaClientKnownRequestError &&
-    error.code === "P2002"
-  ) {
+  if (isPrismaKnownUniqueConstraintError(error)) {
     const target = error.meta?.target;
     if (Array.isArray(target)) {
       return target.some((column) => String(column).includes("openStateKey"));
@@ -1193,11 +1192,7 @@ function isOpenSlotUniqueViolation(error: unknown): boolean {
     return true;
   }
   // Test seam / defensive: a plain P2002-coded object still maps to the conflict.
-  return (
-    typeof error === "object" &&
-    error !== null &&
-    (error as { code?: unknown }).code === "P2002"
-  );
+  return isPrismaUniqueConstraintError(error);
 }
 
 // ---------------------------------------------------------------------------

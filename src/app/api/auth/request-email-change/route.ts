@@ -100,7 +100,7 @@ export async function POST(request: NextRequest) {
 
     // Send verification to new email and notification to old email
     await Promise.all([
-      sendEmailChangeVerification(newEmail, token),
+      sendEmailChangeVerification(newEmail, token, expiresAt),
       sendEmailChangeNotification(member.email, newEmail),
     ]);
 

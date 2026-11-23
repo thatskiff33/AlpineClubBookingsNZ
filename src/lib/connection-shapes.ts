@@ -24,6 +24,13 @@ import {
   type EveryFieldOf,
 } from "@/lib/connection-projection";
 import type { MemberDraftSummary } from "@/lib/member-draft-summary";
+import type { MemberGuestCandidateResponse } from "@/lib/member-guest-find";
+import type {
+  PartnerLinkMemberView,
+  PartnerLinkState,
+  PendingPartnerInviteIntent,
+} from "@/lib/member-partner-link";
+import type { MembershipCancellationOverview } from "@/lib/membership-cancellation-requests";
 import type { MemberLodgeRoster } from "@/lib/member-lodge-roster";
 import {
   MEMBER_NOTIFICATION_PREFERENCE_KEYS,
@@ -74,9 +81,15 @@ export const MEMBER_BOOKING_CONNECTION_SHAPE: ConnectionShape = {
   booking: MEMBER_BOOKING_SUMMARY_SHAPE,
 };
 
-/** Who can go on a booking: no dates of birth, email addresses, parent links, notes or pending requests. */
+/**
+ * Who can go on a booking, and the ids the family actions take (ALP-795):
+ * the member's family group ids, each person's groups, whether they have
+ * their own login, and whether the member may confirm their details. No dates
+ * of birth, email addresses, parent links, notes or pending requests.
+ */
 export const MEMBER_FAMILY_CONNECTION_SHAPE = connectionShapeFor<{
   displayName: string | null;
+  familyGroupIds: string[];
   familyMembers: Array<{
     id: string;
     firstName: string;
@@ -84,9 +97,13 @@ export const MEMBER_FAMILY_CONNECTION_SHAPE = connectionShapeFor<{
     ageTier: string;
     relationship: string;
     canBeBooked: boolean;
+    canLogin: boolean;
+    canCurrentUserConfirmDetails: boolean;
+    familyGroupIds: string[];
   }>;
 }>({
   displayName: true,
+  familyGroupIds: true,
   familyMembers: {
     id: true,
     firstName: true,
@@ -94,6 +111,9 @@ export const MEMBER_FAMILY_CONNECTION_SHAPE = connectionShapeFor<{
     ageTier: true,
     relationship: true,
     canBeBooked: true,
+    canLogin: true,
+    canCurrentUserConfirmDetails: true,
+    familyGroupIds: true,
   },
 });
 
@@ -300,4 +320,157 @@ export const SKIFIELD_REPORT_CONNECTION_SHAPE = connectionShapeFor<
   },
   error: true,
   stale: true,
+});
+
+// --- Family and membership (ALP-795) ----------------------------------------
+
+/** A confirmed no-login family member: name, age group and profile state. Never the date of birth or the copied contact details. */
+export const FAMILY_MEMBER_DETAILS_CONNECTION_SHAPE = connectionShapeFor<{
+  member: { id: string; firstName: string; lastName: string; ageTier: string; canLogin: boolean };
+  profileStatus: {
+    isProfileComplete: boolean;
+    isDetailsConfirmed: boolean;
+    canBeBookedAsMember: boolean;
+    missingFields: string[];
+  };
+}>({
+  member: { id: true, firstName: true, lastName: true, ageTier: true, canLogin: true },
+  profileStatus: { isProfileComplete: true, isDetailsConfirmed: true, canBeBookedAsMember: true, missingFields: true },
+});
+
+export const FAMILY_GROUP_CREATE_CONNECTION_SHAPE = connectionShapeFor<{
+  message: string;
+  requestId: string;
+  familyGroupId: string;
+  childRequestIds: string[];
+}>({ message: true, requestId: true, familyGroupId: true, childRequestIds: true });
+
+export const FAMILY_INVITE_CONNECTION_SHAPE = connectionShapeFor<{ message: string; invitationId: string }>({
+  message: true,
+  invitationId: true,
+});
+
+/** The four family requests an officer reviews: adult, child, join and removal. */
+export const FAMILY_REQUEST_SUBMITTED_CONNECTION_SHAPE = connectionShapeFor<{ message: string; requestId: string }>({
+  message: true,
+  requestId: true,
+});
+
+/** Who invited the member, to which group, and when. Not the request row's other columns. */
+export const FAMILY_INVITATIONS_CONNECTION_SHAPE = connectionShapeFor<{
+  invitations: Array<{
+    id: string;
+    createdAt: Date;
+    familyGroup: { id: string; name: string | null };
+    requester: { id: string; firstName: string; lastName: string } | null;
+  }>;
+}>({
+  invitations: {
+    id: true,
+    createdAt: true,
+    familyGroup: { id: true, name: true },
+    requester: { id: true, firstName: true, lastName: true },
+  },
+});
+
+export const MEMBER_GUEST_OPTIONS_CONNECTION_SHAPE = connectionShapeFor<{
+  enabled: boolean;
+  openSearchEnabled: boolean;
+  approvalRequired: boolean;
+  pendingHoldExpiryDays: number;
+}>({ enabled: true, openSearchEnabled: true, approvalRequired: true, pendingHoldExpiryDays: true });
+
+/**
+ * What the website's own guest picker shows of another member: id, name and
+ * age group (owner decision D-19). Never a contact detail or a date of birth.
+ * `truncated` is a boolean, never a count, as on the website.
+ */
+export const MEMBER_GUEST_CANDIDATES_CONNECTION_SHAPE = completeConnectionShapeFor<MemberGuestCandidateResponse>({
+  candidates: { memberId: true, firstName: true, lastName: true, ageTier: true },
+  truncated: true,
+});
+
+const PARTNER_LINK_MEMBER_SHAPE = completeConnectionShapeFor<PartnerLinkMemberView>({
+  id: true,
+  firstName: true,
+  lastName: true,
+  canLogin: true,
+});
+
+const PARTNER_LINK_VIEW_SHAPE = connectionShapeFor<PartnerLinkState["pendingIncoming"][number]>({
+  id: true,
+  status: true,
+  partner: PARTNER_LINK_MEMBER_SHAPE,
+  initiatedByMe: true,
+  assignedByAdmin: true,
+  confirmedAt: true,
+  createdAt: true,
+});
+
+/**
+ * The member's partnership, pending requests and one-step candidates. An
+ * outstanding emailed invitation shows its id and expiry, never the address
+ * it was sent to.
+ */
+export const PARTNER_LINK_STATE_CONNECTION_SHAPE = connectionShapeFor<
+  PartnerLinkState & {
+    oneStepCandidates: PartnerLinkMemberView[];
+    pendingPartnerInvite: PendingPartnerInviteIntent | null;
+  }
+>({
+  confirmed: PARTNER_LINK_VIEW_SHAPE,
+  pendingIncoming: PARTNER_LINK_VIEW_SHAPE,
+  pendingOutgoing: PARTNER_LINK_VIEW_SHAPE,
+  oneStepCandidates: PARTNER_LINK_MEMBER_SHAPE,
+  pendingPartnerInvite: { id: true, expiresAt: true },
+});
+
+/** A by-email request answers with the message only, whatever happened (D9); a family member request adds the link. */
+export const PARTNER_LINK_REQUEST_CONNECTION_SHAPE = connectionShapeFor<{
+  message: string;
+  linkId: string | null;
+  status: string;
+}>({ message: true, linkId: true, status: true });
+
+export const PARTNER_LINK_MESSAGE_CONNECTION_SHAPE = connectionShapeFor<{ message: string }>({ message: true });
+
+/**
+ * Who the member may ask to cancel, the club's warning and rejoining text, and
+ * their visible requests. No email addresses, and none of the club's Xero
+ * settings.
+ */
+export const MEMBERSHIP_CANCELLATION_OPTIONS_CONNECTION_SHAPE = connectionShapeFor<MembershipCancellationOverview>({
+  settings: { warningText: true, rejoinProcessText: true },
+  candidates: {
+    id: true,
+    name: true,
+    ageTier: true,
+    relationship: true,
+    canLogin: true,
+    requiresOwnConfirmation: true,
+    eligible: true,
+    ineligibleReason: true,
+    familyGroupNames: true,
+    activeRequest: { id: true, status: true, participantStatus: true, submittedAt: true },
+  },
+  requests: {
+    id: true,
+    status: true,
+    reason: true,
+    submittedAt: true,
+    reviewedAt: true,
+    completedAt: true,
+    requestedBy: { id: true, name: true },
+    participants: {
+      id: true,
+      memberId: true,
+      name: true,
+      ageTier: true,
+      canLogin: true,
+      active: true,
+      status: true,
+      confirmedAt: true,
+      declinedAt: true,
+    },
+  },
 });
