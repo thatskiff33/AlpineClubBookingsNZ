@@ -84,6 +84,7 @@ import logger from "@/lib/logger";
 import { requiredNightPriceCents } from "@/lib/required-price-cents";
 import { parseJsonRequestBody } from "@/lib/api-json";
 import { getNonMemberHoldPolicy } from "@/lib/cancellation";
+import { nonMemberHoldEnd } from "@/lib/non-member-hold-end";
 import { requireActiveSessionUser } from "@/lib/session-guards";
 import {
   assertLinkedBookingMembersCanBeBooked,
@@ -897,10 +898,7 @@ export async function POST(
           holdEnabled: holdPolicy.enabled,
         });
         if (holdDecision.shouldBePending && booking.status === "PENDING") {
-          nonMemberHoldUntil = new Date(
-            new Date(booking.checkIn).getTime() -
-              holdPolicy.holdDays * 24 * 60 * 60 * 1000
-          );
+          nonMemberHoldUntil = nonMemberHoldEnd(booking.checkIn, holdPolicy.holdDays);
         } else {
           nonMemberHoldUntil = null;
           if (booking.status === "PENDING") {
