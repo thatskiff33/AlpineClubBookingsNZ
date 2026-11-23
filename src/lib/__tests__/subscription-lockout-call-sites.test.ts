@@ -709,24 +709,17 @@ describe("the booking OWNER reaches every evaluation (#2543, owner decision 3 Au
 
   it("the waitlist passes the owner on BOTH its evaluations", () => {
     // The confirm is where the refusal lives; the offer reads only the rate notice
-    // and is threaded so the two cannot drift.
-    const source = readRepoFile("src/lib/waitlist.ts");
-    const calls = paidUpEvaluationCalls(source);
+    // and is threaded so the two cannot drift. #5433: the offer's evaluation moved
+    // with the offer email into its owed-notice deliverer, which carries the
+    // owner as `recipientMemberId` (built from `bookingOwner(...).memberId` by the
+    // offer pass and by the sweep's read alike).
+    const confirm = paidUpEvaluationCalls(readRepoFile("src/lib/waitlist.ts"));
+    const offer = paidUpEvaluationCalls(readRepoFile("src/lib/waitlist-offer-notices.ts"));
 
-    expect(calls).toHaveLength(2);
-    expect(calls.every((call) => call.includes("bookingOwnerMemberId:"))).toBe(
-      true,
-    );
-    expect(calls).toEqual(
-      expect.arrayContaining([
-        expect.stringContaining(
-          "bookingOwnerMemberId: bookingOwner(offerKind).memberId",
-        ),
-        expect.stringContaining(
-          "bookingOwnerMemberId: bookingOwner(offerDetails).memberId",
-        ),
-      ]),
-    );
+    expect(confirm).toHaveLength(1);
+    expect(offer).toHaveLength(1);
+    expect(confirm[0]).toContain("bookingOwnerMemberId: bookingOwner(offerKind).memberId");
+    expect(offer[0]).toContain("bookingOwnerMemberId: notice.recipientMemberId");
   });
 
   it("the cross-lodge promotion passes the owner too", () => {
