@@ -2206,7 +2206,8 @@ describe("the registry is inert", () => {
       "C5: the Xero admin link is adminHref",
     "src/app/(admin)/admin/integrations/page.tsx":
       "C5: the Xero setup card is adminHref; C7: and the backup setup and AI assistant cards",
-    "src/app/(admin)/admin/modules/page.tsx": "C5: the Xero module setup link is adminHref",
+    "src/app/(admin)/admin/modules/_components/module-card.tsx":
+      "C5: the Xero module setup link is adminHref; #5243: moved here from the Modules page",
     "src/app/(admin)/admin/setup/finance/page.tsx":
       "#4968: its heading is the registry label and its back link adminLink; its cards moved to setup/hub-cards.ts",
     "src/app/(admin)/admin/stripe/setup/page.tsx": "C5: the payments link is adminHref",

@@ -23,7 +23,7 @@ import {
 } from "@/hooks/use-subscription-category-options"
 import { UNASSIGNED_MEMBERSHIP_TYPE_VALUE } from "@/lib/membership-type-filter"
 import { NO_SUBSCRIPTION_CATEGORY_VALUE } from "@/lib/subscription-category-filter"
-import { NON_MEMBER_ROLE_VALUES, ROLE_LABELS } from "@/lib/member-roles"
+import { isNonMemberRole, NON_MEMBER_ROLE_VALUES, ROLE_LABELS } from "@/lib/member-roles"
 import {
   LOGIN_STAGE_FILTER_VALUES,
   LOGIN_STAGE_LABELS,
@@ -114,9 +114,7 @@ export function MemberFilterToolbar({
   // the active value belongs to the other dimension. The separate Membership
   // Type select below writes its own `membershipType` param (DB membership
   // types) so Role and MembershipType are no longer conflated (#1445).
-  const roleFilterIsNonMemberCategory = (
-    NON_MEMBER_ROLE_VALUES as readonly string[]
-  ).includes(filters.role)
+  const roleFilterIsNonMemberCategory = isNonMemberRole(filters.role)
   const getFilterDisplayValue = (key: string, value: string) => {
     if (key === "xeroContactGroup") {
       return (

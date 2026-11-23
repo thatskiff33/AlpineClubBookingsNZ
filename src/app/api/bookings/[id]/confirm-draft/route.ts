@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { parseOptionalJsonRequestBody } from "@/lib/api-json";
 import { bookingPromoEmailFields } from "@/lib/booking-promo-email-options";
 import { bookingOwner, bookingOwnerAgeTier } from "@/lib/booking-owner";
 import { hostingCoverageParticipantRetryResponse } from "@/lib/adult-member-hosting-retry-response";
@@ -78,11 +79,10 @@ export async function POST(
 
   // #2576 §7. The only field this route reads off the body: an officer's explicit
   // confirmation and reason for overriding a same-owner coverage refusal. Absent on
-  // every ordinary confirmation, and an unparseable body is simply "no override"
-  // rather than a 400 — this endpoint took no body at all before.
-  const hostingOverride = readHostingCoverageOverride(
-    await request.json().catch(() => null),
-  );
+  // every ordinary confirmation (the button sends no body); a malformed one is a 400 (#5407).
+  const jsonBody = await parseOptionalJsonRequestBody(request, { whenAbsent: null, objectOnly: true });
+  if (!jsonBody.ok) return jsonBody.response;
+  const hostingOverride = readHostingCoverageOverride(jsonBody.body);
   // The club's format (#3565), resolved once, before any transaction or
   // lock below — never per amount and never inside a transaction.
   const format = await clubFormatValues();

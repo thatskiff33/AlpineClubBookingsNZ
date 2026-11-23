@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { parseJsonRequestBody } from "@/lib/api-json";
 import { z } from "zod";
 
 import { createAuditLog } from "@/lib/audit";
@@ -130,8 +131,10 @@ export async function PUT(
   }
 
   let body: z.infer<typeof putSchema>;
+  const jsonBody = await parseJsonRequestBody(request);
+  if (!jsonBody.ok) return jsonBody.response;
   try {
-    body = putSchema.parse(await request.json());
+    body = putSchema.parse(jsonBody.body);
   } catch {
     return NextResponse.json({ error: "Invalid request" }, { status: 400 });
   }

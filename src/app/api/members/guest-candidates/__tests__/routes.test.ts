@@ -137,7 +137,7 @@ describe("the module gate — 404, never 403", () => {
 
   it("tells the wizard the surface is off rather than 404ing the config route", async () => {
     h.isEffectiveModuleEnabled.mockResolvedValue(false);
-    const res = await configRoute();
+    const res = await configRoute(new Request("http://localhost/api/members/guest-candidates"));
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ enabled: false });
   });
@@ -391,7 +391,7 @@ describe("the wizard config route", () => {
       openMemberSearchEnabled: true,
       openMemberSearchIncludesMinors: false,
     });
-    expect(await (await configRoute()).json()).toEqual({
+    expect(await (await configRoute(new Request("http://localhost/api/members/guest-candidates"))).json()).toEqual({
       enabled: true,
       openSearchEnabled: true,
       approvalRequired: false,

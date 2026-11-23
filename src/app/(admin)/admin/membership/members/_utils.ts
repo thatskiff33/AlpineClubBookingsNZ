@@ -4,11 +4,7 @@ import { LOGIN_STAGE_LABELS } from "@/lib/member-login-stage";
 import { UNASSIGNED_MEMBERSHIP_TYPE_VALUE } from "@/lib/membership-type-filter";
 import { NO_SUBSCRIPTION_CATEGORY_VALUE } from "@/lib/subscription-category-filter";
 import { defaultMembershipTypeNameForRole } from "@/lib/membership-types";
-import {
-  NON_MEMBER_ROLE_VALUES,
-  ROLE_LABELS,
-  type AppRole,
-} from "@/lib/member-roles";
+import { isNonMemberRole, ROLE_LABELS } from "@/lib/member-roles";
 
 export const emptyForm: MemberForm = {
   title: "",
@@ -157,9 +153,8 @@ function fallbackTypeNameForNonMemberRole(
   role: string | null | undefined,
   clubMembershipTypes?: ReadonlyArray<{ key: string; name: string }>,
 ): string | null {
-  if (!role) return null;
-  if (!(NON_MEMBER_ROLE_VALUES as readonly string[]).includes(role)) return null;
-  return defaultMembershipTypeNameForRole(role as AppRole, clubMembershipTypes);
+  if (!isNonMemberRole(role)) return null;
+  return defaultMembershipTypeNameForRole(role, clubMembershipTypes);
 }
 
 /**

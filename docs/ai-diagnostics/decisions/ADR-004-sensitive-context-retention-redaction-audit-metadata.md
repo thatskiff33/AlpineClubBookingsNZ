@@ -52,8 +52,8 @@ capability Diagnostics offers at any permission level.
 
 - The **prompt, the model's answer, tool arguments, and tool results are not
   persisted.** They exist for the lifetime of the request and are discarded.
-- The provider-side retention is governed by the deployment's provider posture
-  (ADR-006), including the optional zero-retention setting.
+- The provider-side retention is whatever the club arranges with the provider on
+  its own account (ADR-006 §3); the application sends no retention instruction.
 - The only durable records are the metering and audit rows of ADR-001 §3, which
   carry the approved metadata set below and nothing else. They follow the
   platform's existing audit-log retention
@@ -181,6 +181,6 @@ same durable row.
 
 - ADR-001 (named write list; no raw credentials/PII/payloads)
 - ADR-003 (bounded excerpts; observed-at and citation)
-- ADR-006 (provider retention posture; optional zero-retention)
+- ADR-006 (provider disclosure; retention arranged on the club's account)
 - [Threat model](../threat-model.md) — "Information disclosure" and "Repudiation".
 - [`AUDIT_RETENTION_ARCHIVE_RUNBOOK.md`](../../AUDIT_RETENTION_ARCHIVE_RUNBOOK.md)

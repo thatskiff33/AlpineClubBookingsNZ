@@ -22,7 +22,7 @@ export type RefundedPaymentCreditRestore = {
  * removed at 100% ($100 to the card, $50 of credit back), then a cancel at 0%
  * restored the last $50 - $200 against $150.
  *
- * Where money WAS captured (`paymentHasCaptureEvidence`, the caller's test) the
+ * Where money WAS captured (`queryPaymentCaptureEvidence`, the caller's test) the
  * credit is tiered as the paid path tiers it: the card tier, no card slice,
  * on `cancelAppliedCreditBaseCents`, capped at what the booking is worth - but
  * ONLY where the booking was reduced through #3809's settlement (`INV-PAY-115`,

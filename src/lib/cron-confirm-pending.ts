@@ -7,7 +7,9 @@ import { BookingEventType, BookingStatus, PaymentSource, PaymentStatus, PaymentT
 import { OPEN_INTENT_TRANSACTION_STATUS_LIST } from "@/lib/payment-transaction-status";
 
 import { bookingOwner } from "@/lib/booking-owner";
-import { deliverBumpNotices, drainOwedBumpNotices, recordBumpNoticesOwed, type OwedBumpNotice, type OwedBumpNoticeSweepResult } from "@/lib/booking-bump-notice-owed";
+import { formatBookingReference } from "@/lib/booking-reference";
+import { deliverBumpNotices, recordBumpNoticesOwed, type OwedBumpNotice } from "@/lib/booking-bump-notice-owed";
+import { CONFIRM_PENDING_OWED_NOTICE_CAP, drainOwedNotices, type OwedNoticeSweepResult } from "@/lib/owed-notice/drain";
 import { bookingBumpReason } from "@/lib/booking-bump-reason";
 import { settleHostingCoverageAfterCommit } from "@/lib/adult-member-hosting-coverage-drain";
 import { enqueueOwnHostingCoverageReevaluation } from "@/lib/adult-member-hosting-review";
@@ -76,6 +78,7 @@ import {
 import { readBookingAmountOwed } from "@/lib/booking-amount-owed";
 import { bookingPromoEmailOptions } from "./booking-promo-email-options";
 import { getNonMemberHoldDays } from "./cancellation";
+import { nonMemberHoldEnd } from "@/lib/non-member-hold-end";
 import { processWaitlistForDates } from "./waitlist";
 import { clubFormatValues } from "@/lib/club-format-server";
 import { localChargeRefusal } from "@/lib/stripe-charge-currency";
@@ -84,8 +87,6 @@ import { LOCK1_HOLDER_TRANSACTION_BUDGET } from "@/lib/db-transaction";
 
 /** How long to extend the hold for request-origin bookings (no saved card) at hold expiry. */
 const REQUEST_HOLD_EXTENSION_MS = 2 * 24 * 60 * 60 * 1000;
-
-const DAY_MS = 24 * 60 * 60 * 1000;
 
 /**
  * #1993 Part B — derived admin-alert cadence for a split child's unpaid
@@ -322,8 +323,8 @@ export interface CronConfirmResult {
   // members-only amount to settle here. Always empty.
   partialBumpedBookingIds: string[];
   failedBookingIds: string[];
-  // #5407: what this run's sweep did with the bump notices earlier runs left owed.
-  owedBumpNotices: OwedBumpNoticeSweepResult;
+  // #5407, #5433: what this run's sweep did with the notices earlier runs left owed.
+  owedNotices: OwedNoticeSweepResult;
 }
 
 /**
@@ -349,7 +350,7 @@ async function resolveOriginalHoldExpiry(
   booking: PendingBooking
 ): Promise<Date> {
   const holdDays = await getNonMemberHoldDays(booking.checkIn, booking.lodgeId);
-  const scheduledFirstExpiry = booking.checkIn.getTime() - holdDays * DAY_MS;
+  const scheduledFirstExpiry = nonMemberHoldEnd(booking.checkIn, holdDays).getTime();
   return new Date(Math.max(scheduledFirstExpiry, booking.createdAt.getTime()));
 }
 
@@ -1107,10 +1108,9 @@ async function cancelSupersededLinkIntentsBestEffort(
  * For each PENDING booking where nonMemberHoldUntil <= now():
  * 1. Re-check bed availability under the booking advisory lock.
  * 2. If beds are unavailable, cancel the provisional booking, revoke payment
- *    links, and send the appropriate no-charge bump/cancellation email and
- *    the officers' alert. Both are recorded as owed in the cancel's own
- *    transaction and swept by a later run if this one stops before sending
- *    them (#5407, `booking-bump-notice-owed.ts`).
+ *    links, and send the no-charge bump/cancellation email and the officers'
+ *    alert, both recorded as owed in the cancel's transaction and swept by a
+ *    later run if this one stops first (#5407, #5433, `owed-notice/`).
  * 3. If beds are available and a saved payment method exists, claim capacity,
  *    charge off-session, then move to PAID and queue the booking's Xero invoice.
  * 4. If the booking is request-origin and has no saved card, keep the #707
@@ -1153,7 +1153,7 @@ export async function confirmPendingBookings(): Promise<CronConfirmResult> {
     cancelledBookingIds: [],
     partialBumpedBookingIds: [],
     failedBookingIds: [...recovery.failedBookingIds],
-    owedBumpNotices: await drainOwedBumpNotices(now),
+    owedNotices: await drainOwedNotices(now, { ...CONFIRM_PENDING_OWED_NOTICE_CAP, job: "confirmPendingBookings" }),
   };
 
   for (const candidate of pendingBookings) {
@@ -1345,7 +1345,7 @@ export async function confirmPendingBookings(): Promise<CronConfirmResult> {
             // promise "your own booking remains confirmed" when the parent is
             // genuinely settled (parentUnpaid === false).
             parentConfirmed: !resolution.parentUnpaid,
-            parentBookingReference: resolution.booking.parentBookingId,
+            parentBookingReference: resolution.booking.parentBookingId && formatBookingReference(resolution.booking.parentBookingId),
             lodgeId: resolution.booking.lodgeId,
           });
         } catch (emailErr) {
@@ -1437,7 +1437,7 @@ export async function confirmPendingBookings(): Promise<CronConfirmResult> {
               guestCount: resolution.booking.guests.length,
               priceCents: resolution.booking.finalPriceCents,
               amountDueCents: (await readBookingAmountOwed(resolution.booking)).dueCents,
-              bookingReference: resolution.booking.id,
+              bookingId: resolution.booking.id,
               expiresAt,
               lodgeId: resolution.booking.lodgeId ?? null,
             }, format);

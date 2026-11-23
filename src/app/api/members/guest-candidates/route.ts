@@ -1,6 +1,7 @@
-import { NextResponse } from "next/server";
 import { loadMemberGuestFindGate } from "@/lib/member-guest-find-service";
 import { requireActiveSession } from "@/lib/session-guards";
+import { connectionJson } from "@/lib/mcp-connection-request";
+import { MEMBER_GUEST_OPTIONS_CONNECTION_SHAPE } from "@/lib/connection-shapes";
 
 /**
  * `GET /api/members/guest-candidates` — the one server-computed object the
@@ -24,20 +25,27 @@ import { requireActiveSession } from "@/lib/session-guards";
  * routes there is nothing to hide: the absence of the button already tells the
  * member the club does not use the feature, and a definite answer is what lets
  * the wizard avoid rendering a button it then has to take away.
+ *
+ * Also the AI app action `get_member_guest_options` (ALP-795), so an app
+ * knows which of the two find actions the club offers.
  */
-export async function GET() {
+export async function GET(request: Request) {
   const guard = await requireActiveSession();
   if (!guard.ok) return guard.response;
 
   const gate = await loadMemberGuestFindGate({ requiresOpenSearch: false });
   if (!gate.ok) {
-    return NextResponse.json({ enabled: false });
+    return connectionJson(request, { enabled: false }, MEMBER_GUEST_OPTIONS_CONNECTION_SHAPE);
   }
 
-  return NextResponse.json({
-    enabled: true,
-    openSearchEnabled: gate.settings.openMemberSearchEnabled,
-    approvalRequired: gate.settings.approvalRequired,
-    pendingHoldExpiryDays: gate.settings.pendingHoldExpiryDays,
-  });
+  return connectionJson(
+    request,
+    {
+      enabled: true,
+      openSearchEnabled: gate.settings.openMemberSearchEnabled,
+      approvalRequired: gate.settings.approvalRequired,
+      pendingHoldExpiryDays: gate.settings.pendingHoldExpiryDays,
+    },
+    MEMBER_GUEST_OPTIONS_CONNECTION_SHAPE,
+  );
 }
