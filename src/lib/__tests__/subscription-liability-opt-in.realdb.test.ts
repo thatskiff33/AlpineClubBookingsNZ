@@ -13,7 +13,10 @@
  *    it re-previews under the new rule and refuses the stale token.
  * 3. THE LIABILITY-RULE KEY orders the seasonal-assignment reconcile (shared)
  *    against a rule writer (exclusive): the reconcile waits for a writer
- *    holding it and reads the committed rule, but never waits on a billing
+ *    holding it and reads the committed rule; a real opt-in's clear-up waits
+ *    for a real assignment save holding it shared, then clears the row that
+ *    save left (red when the clear-up's exclusive key is removed); it never
+ *    waits on a billing
  *    confirm — a real roll-forward, whose chunk holds lock(1), finishes while
  *    the season key is held, and no lock(1) holder is ever seen waiting.
  * 4. THE SQL DATE-OF-BIRTH CHECK (`subscription-liability-where.ts`) agrees with
@@ -50,6 +53,7 @@ const PREFIX = "race-5190-";
 const OFFICER_ID = `${PREFIX}officer`;
 const REQUIRED_TYPE_ID = `${PREFIX}type-required`;
 const AGE_TYPE_ID = `${PREFIX}type-age`;
+const NOT_REQUIRED_TYPE_ID = `${PREFIX}type-not-required`;
 const FEE_ID = `${PREFIX}fee`;
 const SEASON_YEAR = 2026;
 const DECISION_DATE = new Date("2026-07-01T00:00:00.000Z");
@@ -138,7 +142,9 @@ let priorLockoutSettings: MembershipLockoutSettings | null = null;
       await prisma.seasonalMembershipAssignment.deleteMany({ where: { memberId: ownedMember } });
       await prisma.membershipAnnualFeeComponent.deleteMany({ where: { membershipAnnualFeeId: FEE_ID } });
       await prisma.membershipAnnualFee.deleteMany({ where: { id: FEE_ID } });
-      await prisma.membershipType.deleteMany({ where: { id: { in: [REQUIRED_TYPE_ID, AGE_TYPE_ID] } } });
+      await prisma.membershipType.deleteMany({
+        where: { id: { in: [REQUIRED_TYPE_ID, AGE_TYPE_ID, NOT_REQUIRED_TYPE_ID] } },
+      });
       await prisma.member.deleteMany({ where: { id: ownedMember } });
     }
 
@@ -633,6 +639,78 @@ let priorLockoutSettings: MembershipLockoutSettings | null = null;
         // chosen ALWAYS_OWES rule this ADULT owes, so only a reconcile that
         // waited for the commit flips it.
         await expect(reconciled).resolves.toEqual({ reconciled: true });
+      });
+
+      // #5190 review: real writers on both sides. An assignment save moves a
+      // member onto an age-based type and reconciles under NOT_CHOSEN (which
+      // leaves a BASED_ON_AGE_TIER row alone), holding the rule key SHARED
+      // until it commits. A real opt-in through `saveLockoutSettings` queues
+      // behind it on the rule key inside its clear-up, then sees the committed
+      // assignment and flips the row. Without the clear-up's exclusive rule
+      // key it would judge the member on the old, not-required type, skip the
+      // row, and leave it stale once the assignment commits.
+      it("an opt-in's clear-up waits for a reconcile holding the rule key shared, then clears the row it left", async () => {
+        const memberId = `${PREFIX}reconcile-first`;
+        await createMember(memberId, "ADULT");
+        await prisma.membershipType.create({
+          data: {
+            id: NOT_REQUIRED_TYPE_ID,
+            key: `${PREFIX}not-required`,
+            name: "Race 5190 Not Required",
+            subscriptionBehavior: "NOT_REQUIRED",
+          },
+        });
+        await assign(memberId, NOT_REQUIRED_TYPE_ID);
+        await prisma.memberSubscription.create({ data: { memberId, seasonYear: SEASON_YEAR, status: "NOT_REQUIRED" } });
+        await assertNoForeignUntouchedRows();
+
+        let release!: () => void;
+        const released = new Promise<void>((resolve) => {
+          release = resolve;
+        });
+        let reconciledInside!: (value: { reconciled: boolean }) => void;
+        const reconcileResult = new Promise<{ reconciled: boolean }>((resolve) => {
+          reconciledInside = resolve;
+        });
+        const assignmentSave = prisma.$transaction(
+          async (tx) => {
+            await tx.seasonalMembershipAssignment.updateMany({
+              where: { memberId, seasonYear: SEASON_YEAR },
+              data: { membershipTypeId: AGE_TYPE_ID },
+            });
+            reconciledInside(
+              await defaults.reconcileSeasonSubscriptionForAssignment(tx, {
+                memberId,
+                seasonYear: SEASON_YEAR,
+                subscriptionBehavior: "BASED_ON_AGE_TIER",
+              }),
+            );
+            await released;
+          },
+          { timeout: 30_000 },
+        );
+        // Under NOT_CHOSEN the reconcile leaves the age-based row alone.
+        await expect(reconcileResult).resolves.toEqual({ reconciled: false });
+
+        const saved = optIn(CHOSEN_ALWAYS);
+        try {
+          // The opt-in's clear-up is queued on the rule key behind the reconcile.
+          await untilAdvisoryWaiters(1);
+        } finally {
+          release();
+          await assignmentSave;
+        }
+
+        await expect(saved).resolves.toMatchObject({
+          record: CHOSEN_ALWAYS,
+          clearedStaleRows: { clearedCount: 1, clearedMemberIds: [memberId] },
+        });
+        expect(
+          await prisma.memberSubscription.findUniqueOrThrow({
+            where: { memberId_seasonYear: { memberId, seasonYear: SEASON_YEAR } },
+            select: { status: true },
+          }),
+        ).toEqual({ status: "NOT_INVOICED" });
       });
 
       it("a roll-forward runs to completion while a billing confirm holds the season key, and never holds lock(1) while waiting", async () => {
