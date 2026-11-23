@@ -94,6 +94,14 @@ const BOOKING_SECTIONS: SectionNavItem[] = [
 ];
 
 /**
+ * The page's one level-1 heading, shared by the full detail and the removed
+ * booking notice, so the page file keeps exactly one `<h1>` (#5372).
+ */
+function BookingDetailHeading() {
+  return <h1 className="text-3xl font-bold">Booking Details</h1>;
+}
+
+/**
  * #5266 (`INV-ADDPAY-034`): what the booking's owner, or a member guest on it,
  * sees once the club has removed it. Everybody else gets the plain `notFound()`
  * — `resolveBookingDetailEntry` decides which — and a Full Admin still gets the
@@ -102,7 +110,7 @@ const BOOKING_SECTIONS: SectionNavItem[] = [
 function RemovedBookingDetail() {
   return (
     <div className="mx-auto max-w-2xl space-y-6">
-      <h1 className="text-3xl font-bold">Booking Details</h1>
+      <BookingDetailHeading />
       <RemovedBookingNotice
         links={[
           { href: "/bookings", label: "My bookings" },
@@ -337,7 +345,7 @@ export default async function BookingDetailPage({
         cancellationHasNoPayment={cancellationHasNoPayment}
       />
       <div className="flex items-center justify-between">
-        <h1 className="text-3xl font-bold">Booking Details</h1>
+        <BookingDetailHeading />
         <div className="flex items-center gap-2">
           <Button asChild variant="outline">
             <Link href={backHref}>Back to Bookings</Link>
