@@ -352,11 +352,12 @@ export async function raiseEditFinancialReviewTask({
   } catch (error) {
     if (
       isPrismaKnownUniqueConstraintError(error) &&
-      // Only the occurrence key. Today it is the only unique constraint on this
-      // table other than the cuid primary key, so the check changes nothing -
-      // but a later `@@unique([bookingId, kind])` or similar would otherwise be
-      // reported to the operator as "raised concurrently, retry the edit", and
-      // the retry would loop for ever on a violation retrying cannot fix.
+      // Only the occurrence key. The table's other unique columns
+      // (`lateCaptureApprovalIntentId`, `partPaymentReviewPaymentId`) are never
+      // set by this create, so today the check changes nothing - but a later
+      // unique constraint this create does set would otherwise be reported to
+      // the operator as "raised concurrently, retry the edit", and the retry
+      // would loop for ever on a violation retrying cannot fix.
       occurrenceKeyViolation(error)
     ) {
       // Reported, never swallowed. Reaching here means the find-then-create
@@ -388,7 +389,8 @@ export async function raiseEditFinancialReviewTask({
 function occurrenceKeyViolation(
   error: Prisma.PrismaClientKnownRequestError,
 ): boolean {
-  return describeUniqueConstraintTarget(error)?.includes("occurrencekey") ?? false;
+  const column = Prisma.ManualRefundTaskScalarFieldEnum.occurrenceKey.toLowerCase();
+  return describeUniqueConstraintTarget(error)?.includes(column) ?? false;
 }
 
 /**

@@ -687,7 +687,7 @@ describe("#3030 raise - one task per occurrence, and an unknown amount stays unk
       raiseEditFinancialReviewTask({ ...raiseInput, occurrence: occurrence(), store: store() });
 
     it("reports a collision on occurrenceKey as the concurrent raise, 409", async () => {
-      mocks.create.mockRejectedValue(driverUniqueViolation(['"occurrenceKey"']));
+      mocks.create.mockRejectedValue(driverUniqueViolation([`"${Prisma.ManualRefundTaskScalarFieldEnum.occurrenceKey}"`]));
       await expect(raise()).rejects.toMatchObject({ name: "EditFinancialReviewError", status: 409 });
     });
 

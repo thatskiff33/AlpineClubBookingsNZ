@@ -769,7 +769,7 @@ describe("createNewBookingExceptionRequest", () => {
 
   describe("narrowing a unique violation to the open slot, as the driver reports it (#5407 item 39)", () => {
     it("maps a collision on openStateKey to the open-request conflict", async () => {
-      mocks.nbCreate.mockRejectedValue(driverUniqueViolation(['"openStateKey"']));
+      mocks.nbCreate.mockRejectedValue(driverUniqueViolation([`"${Prisma.NewBookingPolicyExceptionRequestScalarFieldEnum.openStateKey}"`]));
       await expect(createNewBookingExceptionRequest(newBookingInput())).rejects.toBeInstanceOf(
         OpenExceptionRequestConflictError,
       );
@@ -991,7 +991,7 @@ describe("createModificationExceptionRequest", () => {
   });
 
   it.each([
-    ["the open slot", ['"openStateKey"'], "conflict"],
+    ["the open slot", [`"${Prisma.BookingChangeRequestScalarFieldEnum.openStateKey}"`], "conflict"],
     ["another column", ["id"], "rethrown"],
   ] as const)(
     "narrows a driver-shaped unique violation on %s (#5407 item 39)",

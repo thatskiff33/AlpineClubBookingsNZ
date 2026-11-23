@@ -1183,13 +1183,13 @@ function freezeProposal(
   };
 }
 
-// The open slot (`openStateKey`) collided, or the constraint is unreadable. Read
-// with describeUniqueConstraintTarget: the driver never fills meta.target (#5407
-// item 39), so a check on that alone counted every unique violation as the slot.
+// Read with describeUniqueConstraintTarget, as the driver never fills meta.target (#5407). Unreadable counts as
+// the slot: it is the only key a request create can realistically hit, and the transaction rolls back either way.
 function isOpenSlotUniqueViolation(error: unknown): boolean {
   if (isPrismaKnownUniqueConstraintError(error)) {
+    const slot = Prisma.BookingChangeRequestScalarFieldEnum.openStateKey satisfies typeof Prisma.NewBookingPolicyExceptionRequestScalarFieldEnum.openStateKey;
     const target = describeUniqueConstraintTarget(error);
-    return target === null || target.includes("openstatekey");
+    return target === null || target.includes(slot.toLowerCase());
   }
   // Test seam / defensive: a plain P2002-coded object still maps to the conflict.
   return isPrismaUniqueConstraintError(error);
