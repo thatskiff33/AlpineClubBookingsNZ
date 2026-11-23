@@ -7,6 +7,7 @@ import { CLUB_TIME_ZONE_FALLBACK } from "@/lib/club-time-zone";
 import { readEnvironmentClubTimeZoneSeed } from "@/lib/club-time-zone-env";
 
 import { stripComments } from "./support/strip-comments";
+import { CENSUS_TIMEOUT_MS } from "@/test/census-timeout";
 
 /**
  * The seed reader and the suites' model of the environment's zone must not drift
@@ -178,7 +179,7 @@ describe("the club-timezone seed and the suites' environment zone read the same 
       // The seed for the persisted club timezone — the only reading.
       "src/lib/club-time-zone-env.ts",
     ]);
-  });
+  }, CENSUS_TIMEOUT_MS);
 
   it("PREMISE: the census can actually see a reading", () => {
     // Without this leg the assertion above passes just as well when the scanner

@@ -20,6 +20,7 @@ import { stripComments } from "./support/strip-comments";
 
 import type { ClubFormat } from "@/lib/club-format";
 import { CLUB_FORMAT_TEST_OTHER } from "./support/club-format-fixture";
+import { CENSUS_TIMEOUT_MS } from "@/test/census-timeout";
 
 /**
  * The money kernel (#3565, stage 3 of programme #3205). INV-CONFIG-006.
@@ -464,7 +465,7 @@ describe("INV-CONFIG-006 / #3565: one module constructs the money formatters", (
       offenders,
       `INV-CONFIG-006: these modules construct an \`Intl.NumberFormat\` of their own. The club's currency and locale are a persisted setting (#3563), and a formatter built anywhere but \`@/lib/club-format-intl\` is a second authority that the memo, the validators and #3565's byte-identity proof all miss. Render money through \`formatCents\` / \`formatSignedCents\` (@/lib/utils) or the \`finance-format\` shapes, passing the club's format; a genuinely new SHAPE is declared in \`club-format-intl.ts\` beside the others. Offenders: ${offenders.join(", ") || "(none)"}`,
     ).toEqual([]);
-  });
+  }, CENSUS_TIMEOUT_MS);
 
   it("keeps every declared home real, reasoned, and still constructing one", () => {
     for (const [relative, reason] of NUMBER_FORMAT_HOMES) {
@@ -600,7 +601,7 @@ describe("INV-CONFIG-006 / #3565: no module freezes the club's format", () => {
       handWritten,
       `INV-CONFIG-006: these modules write a currency code or a locale tag as a literal into an object. The club's format is a persisted setting (#3563) and reaches a renderer as DATA — \`clubFormat()\` / \`clubFormatValues()\` on the server, \`useClubFormat()\` in the browser. A hand-written one is a second authority that the eslint arms cannot see, because they check \`Intl.NumberFormat\`'s arguments and this constructs nothing. If it is genuinely not a \`ClubFormat\`, add it to LITERAL_FORMAT_EXEMPTIONS with the reason. Offenders: ${handWritten.join(", ") || "(none)"}`,
     ).toEqual([]);
-  });
+  }, CENSUS_TIMEOUT_MS);
 
   it("keeps every exemption real and reasoned", () => {
     for (const [relative, reason] of LITERAL_FORMAT_EXEMPTIONS) {

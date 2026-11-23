@@ -26,6 +26,7 @@ import {
   getEffectiveModuleFlags,
   type ModuleSettingsValues,
 } from "@/config/modules";
+import { CENSUS_TIMEOUT_MS } from "@/test/census-timeout";
 import { delegateUsesBeyondReads, productionSourceFiles } from "./support/prisma-delegate-read-scan";
 import { schemaDefaultToken } from "./support/prisma-schema-default";
 import { stripComments } from "./support/strip-comments";
@@ -117,7 +118,7 @@ describe("AI Diagnostics starts off everywhere (#5243)", () => {
   });
 });
 
-describe("the module settings row has known writers only (#5243)", () => {
+describe("the module settings row has known writers only (#5243)", { timeout: CENSUS_TIMEOUT_MS }, () => {
   it("is written through its delegate by the named writers only", () => {
     const found = Object.fromEntries(
       naming

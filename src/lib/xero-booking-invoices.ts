@@ -8,6 +8,7 @@
  */
 
 import { bookingHasExternalSettlement, externalSettlementSkipReason } from "@/lib/booking-external-settlement";
+import { storedShortBookingId } from "@/lib/booking-reference";
 import {
   Invoice,
   Invoices,
@@ -35,10 +36,7 @@ import {
   startXeroSyncOperation,
   upsertXeroObjectLink,
 } from "@/lib/xero-sync";
-import {
-  callXeroApi,
-  getAuthenticatedXeroClient,
-} from "./xero-api-client";
+import { callXeroApi, getAuthenticatedXeroClient } from "./xero-api-client";
 import {
   resolveXeroInvoiceEmailPolicy,
   sendXeroInvoiceEmail,
@@ -565,7 +563,7 @@ export async function createXeroInvoiceForBooking(
     lineItems,
     date: getBookingInvoiceIssueDate(booking),
     dueDate: getBookingInvoiceDueDate(booking, clubZone),
-    reference: `Booking ${bookingId.slice(0, 8)}`,
+    reference: `Booking ${storedShortBookingId(bookingId)}`,
     status: Invoice.StatusEnum.AUTHORISED,
     lineAmountTypes: taxRendering.lineAmountTypes,
   });
@@ -1517,7 +1515,7 @@ export async function updateXeroBookingInvoiceForBooking(
       dueDate:
         currentInvoice.dueDate ??
         getBookingInvoiceDueDate(booking, await readClubTimeZoneOutsideRequest()),
-      reference: currentInvoice.reference ?? `Booking ${bookingId.slice(0, 8)}`,
+      reference: currentInvoice.reference ?? `Booking ${storedShortBookingId(bookingId)}`,
       invoiceNumber: currentInvoice.invoiceNumber,
       // The basis it was issued under; one Xero did not echo is the booking's own (#4632).
       lineAmountTypes: currentInvoice.lineAmountTypes ?? taxRendering.lineAmountTypes,

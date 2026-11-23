@@ -1,5 +1,4 @@
 import { NextRequest, NextResponse } from "next/server";
-import { z } from "zod";
 import { auth } from "@/lib/auth";
 import { requireActiveSessionUser } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma";
@@ -20,36 +19,10 @@ import {
   getPartnerInviteTokenExpiryDate,
 } from "@/lib/partner-invite-token-policy";
 import { requestPartnerLink } from "@/lib/member-partner-link";
-import { nameField } from "@/lib/zod-helpers";
-import { dateOfBirthStringSchema } from "@/lib/date-only-schema";
 import { parseJsonRequestBody } from "@/lib/api-json";
-
-const createGroupSchema = z.object({
-  groupName: z
-    .string()
-    .min(1, "Group name cannot be empty")
-    .max(100, "Group name must be 100 characters or fewer")
-    .optional(),
-  partnerEmail: z.string().email("Invalid email address").optional(),
-  // #1742: the named partner is the requester's Partner/Husband/Wife. For an
-  // unregistered partner this marks the minted invite token so claiming it
-  // also forms the CONFIRMED MemberPartnerLink; a registered partner instead
-  // receives a PENDING partner-link request to confirm from their profile.
-  declarePartnerLink: z.boolean().default(false),
-  children: z
-    .array(
-      z.object({
-        firstName: nameField({ required: "First name required" }),
-        lastName: nameField({ required: "Last name required" }),
-        dateOfBirth: z
-          .string({ error: "Date of birth is required" })
-          .min(1, "Date of birth is required")
-          .pipe(dateOfBirthStringSchema),
-      })
-    )
-    .max(6, "A group creation request can include at most 6 infant/child/youth members")
-    .default([]),
-});
+import { familyGroupCreateSchema } from "@/lib/family-group-request-schemas";
+import { connectionJson } from "@/lib/mcp-connection-request";
+import { FAMILY_GROUP_CREATE_CONNECTION_SHAPE } from "@/lib/connection-shapes";
 
 /**
  * POST /api/members/family/create-group (#1681, #1682)
@@ -62,6 +35,7 @@ const createGroupSchema = z.object({
  * A partner email that matches no registered member is instead minted a
  * single-use PartnerInviteToken and emailed a claim link (#1682); the response
  * is identical to the registered-partner path so it cannot probe membership.
+ * Also the AI app action `request_family_group` (ALP-795).
  */
 export async function POST(req: NextRequest) {
   const session = await auth();
@@ -80,7 +54,7 @@ export async function POST(req: NextRequest) {
   if (!jsonBody.ok) return jsonBody.response;
   const body = jsonBody.body;
 
-  const parsed = createGroupSchema.safeParse(body);
+  const parsed = familyGroupCreateSchema.safeParse(body);
   if (!parsed.success) {
     return NextResponse.json(
       { error: "Validation failed", details: parsed.error.flatten().fieldErrors },
@@ -483,13 +457,10 @@ export async function POST(req: NextRequest) {
     );
   });
 
-  return NextResponse.json(
-    {
-      message: "Request submitted. An admin will review your new family group.",
-      requestId: createRequest.id,
-      familyGroupId: group.id,
-      childRequestIds,
-    },
-    { status: 201 }
-  );
+  return connectionJson(req, {
+    message: "Request submitted. An admin will review your new family group.",
+    requestId: createRequest.id,
+    familyGroupId: group.id,
+    childRequestIds,
+  }, FAMILY_GROUP_CREATE_CONNECTION_SHAPE, { status: 201 });
 }

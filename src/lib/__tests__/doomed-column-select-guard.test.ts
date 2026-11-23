@@ -3,6 +3,7 @@ import path from "path";
 import { describe, expect, it } from "vitest";
 import { blankLiterals } from "./support/strip-comments";
 import { balancedBrackets } from "./support/balanced-brackets";
+import { CENSUS_TIMEOUT_MS } from "@/test/census-timeout";
 
 // #2130 guard (same shape as club-module-settings-select-guard.test.ts): every
 // read AND write of XeroItemCodeMapping and AgeTierSetting must name its
@@ -140,5 +141,5 @@ describe("doomed-column models are read and written with an explicit select", ()
     // vacuously forever.
     expect(scanned.length).toBeGreaterThan(0);
     expect(offenders).toEqual([]);
-  });
+  }, CENSUS_TIMEOUT_MS);
 });

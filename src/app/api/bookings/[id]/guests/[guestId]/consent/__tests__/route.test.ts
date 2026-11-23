@@ -2,6 +2,10 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { NO_ADDITIONAL_ASK } from "@/lib/additional-payment-ask";
 import { NextRequest } from "next/server";
+import {
+  expectDefaultInvalidJsonAnswer,
+  MALFORMED_JSON_BODY,
+} from "@/lib/__tests__/helpers/invalid-json-body";
 
 /*
   Route tests for POST /api/bookings/[id]/guests/[guestId]/consent (epic #2305,
@@ -430,9 +434,12 @@ describe("session and input guards", () => {
     expect(h.guestFindUnique).not.toHaveBeenCalled();
   });
 
-  it("rejects an unparseable body with the same 400", async () => {
-    const res = await callRoute(makeRequest(undefined, "{ not json"));
-    expect(res.status).toBe(400);
+  // #5407 item 27: an unparseable body used to be swallowed into the action
+  // answer above; it now gets the shared invalid-JSON 400, still before any
+  // guest row is read.
+  it("rejects an unparseable body with the shared invalid-JSON 400", async () => {
+    const res = await callRoute(makeRequest(undefined, MALFORMED_JSON_BODY));
+    await expectDefaultInvalidJsonAnswer(res);
     expect(h.guestFindUnique).not.toHaveBeenCalled();
   });
 });

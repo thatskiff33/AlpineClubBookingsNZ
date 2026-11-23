@@ -2,6 +2,7 @@ import { readdirSync, readFileSync, statSync } from "node:fs";
 import path from "node:path";
 import ts from "typescript";
 import { describe, expect, it } from "vitest";
+import { CENSUS_TIMEOUT_MS } from "@/test/census-timeout";
 
 /**
  * #4467 (review F4): one reader of a validation refusal's `details`.
@@ -87,7 +88,7 @@ const offenders = walk(SRC)
   .filter((file) => file !== READER)
   .filter((file) => readsDetailsByHand(file, readFileSync(file, "utf8")));
 
-describe("one reader of a validation refusal's details (#4467)", () => {
+describe("one reader of a validation refusal's details (#4467)", { timeout: CENSUS_TIMEOUT_MS }, () => {
   it("recognises both hand-written shapes, and not a route building the body", () => {
     expect(readsDetailsByHand("a.ts", "const m = body.details?.fieldErrors;")).toBe(true);
     expect(readsDetailsByHand("a.ts", "const m = payload?.details.formErrors;")).toBe(true);

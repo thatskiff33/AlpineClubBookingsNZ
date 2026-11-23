@@ -9,6 +9,7 @@ import {
   RETIRED_FORMAT_CONSTANT_ARMS,
 } from "../../../eslint.config.mjs";
 import { stripComments } from "./support/strip-comments";
+import { CENSUS_TIMEOUT_MS } from "@/test/census-timeout";
 
 /**
  * `src/config/operational.ts` is gone, with all four of its constants
@@ -194,7 +195,7 @@ describe("#3567 backstop: none of the four retired names in src code, tests incl
       offenders,
       "The environment constants are retired (#3567): take the club's locale and currency from clubFormatValues() / clubFormat() on the server or useClubFormat() in the browser, the card-charge currency from stripe.ts's own derivation, and the club's time zone from clubTimeZone() or readClubTimeZoneOutsideRequest(). A test pins a fixed value instead (CLUB_FORMAT_TEST, CLUB_TIME_TEST_ZONE).",
     ).toEqual([]);
-  }, 30_000);
+  }, CENSUS_TIMEOUT_MS);
 });
 
 describe("#3567 review: no new reader of the environment's currency or locale", () => {
@@ -271,5 +272,5 @@ describe("#3567 re-review: no reader of the environment's currency or locale, in
       offenders,
       "Only src/lib/club-format-env.ts may read CURRENCY / LOCALE (the first-boot seed), and nothing reads the NEXT_PUBLIC_ twins (#3567). Read the club's stored format instead.",
     ).toEqual([]);
-  });
+  }, CENSUS_TIMEOUT_MS);
 });

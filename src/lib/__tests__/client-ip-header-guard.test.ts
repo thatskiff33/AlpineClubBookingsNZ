@@ -10,6 +10,7 @@ import {
 } from "../../../eslint.config.mjs";
 import { auditEnforcedGuardCoverage } from "./support/eslint-guard-coverage";
 import { stripComments } from "./support/strip-comments";
+import { CENSUS_TIMEOUT_MS } from "@/test/census-timeout";
 
 /**
  * #5399: the caller's IP has one rule (last `X-Forwarded-For` address, then
@@ -140,5 +141,5 @@ describe("#5399 census: where a client-address header is named in code", () => {
       .map((full) => path.relative(ROOT, full).split(path.sep).join("/"))
       .sort();
     expect(naming).toEqual([HELPER]);
-  });
+  }, CENSUS_TIMEOUT_MS);
 });

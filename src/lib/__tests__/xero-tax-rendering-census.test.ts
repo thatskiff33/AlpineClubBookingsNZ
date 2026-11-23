@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { productionSourceFiles } from "./support/prisma-delegate-read-scan";
 import { stripComments } from "./support/strip-comments";
+import { CENSUS_TIMEOUT_MS } from "@/test/census-timeout";
 
 /**
  * ONE XERO TAX RENDERER (#4632, `INV-CONFIG-007`). Only `xero-tax-rendering.ts`
@@ -23,7 +24,7 @@ const files = productionSourceFiles(ROOT).filter(
   (file) => (file.startsWith("src/") || file.startsWith("scripts/")) && !file.startsWith("src/test/"),
 );
 
-describe("one Xero tax renderer (#4632)", () => {
+describe("one Xero tax renderer (#4632)", { timeout: CENSUS_TIMEOUT_MS }, () => {
   it("names a Xero tax type or line-amount basis only in the renderer", () => {
     const offenders = files.filter((file) => file !== RENDERER && NAMES_TAX.test(stripComments(readFileSync(join(ROOT, file), "utf8"))));
     expect(offenders, "render Xero tax through xero-tax-rendering.ts").toEqual([]);

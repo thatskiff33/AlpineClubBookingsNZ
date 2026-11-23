@@ -71,6 +71,7 @@ function reading(status: string, updatedAt: string, payments: Array<Record<strin
     async function deleteLinksAndPayments() {
       await prisma.xeroSyncOperation.deleteMany({ where: { localModel: "Payment", localId: { in: [BT, CARD] } } });
       await prisma.xeroObjectLink.deleteMany({ where: { localId: { in: [BT, CARD] } } });
+      await prisma.paymentRefund.deleteMany({ where: { paymentId: { in: [BT, CARD] } } });
       await prisma.payment.deleteMany({ where: { id: { in: [BT, CARD] } } });
     }
     async function deleteFixtures() {
@@ -409,15 +410,28 @@ function reading(status: string, updatedAt: string, payments: Array<Record<strin
     });
 
     /**
+     * #4444 (owner decision 23 Nov 2026): a card recount never rises above the
+     * refunds Stripe recorded. A card case proving the lock order records
+     * Stripe's $150 of refunds (its ledger behind at $50), so Stripe backs A's
+     * raise and only the lock or the re-read can stop it.
+     */
+    async function stripeRecordedOnCard(cents: number) {
+      await prisma.paymentRefund.create({
+        data: { paymentId: CARD, stripeRefundId: `re_${P}_backed`, amountCents: cents, currency: "nzd", status: "succeeded" },
+      });
+    }
+
+    /**
      * A's reconcile paused inside its recount - after its row read, before its
      * claim - while the void and B's whole reconcile run, then released. The
      * payment starts at $50 with a live $100 note beside the $50 one, so A's
      * recount reads the note as live and owes $150; B's finds $50 right and
      * writes nothing.
      */
-    async function voidBetweenReadAndClaim(kase: Case, paymentId: string, inWindow?: () => Promise<void>) {
+    async function voidBetweenReadAndClaim(kase: Case, paymentId: string, inWindow?: () => Promise<void>, stripeRecordedCents?: number) {
       await seed(kase);
       await prisma.payment.update({ where: { id: paymentId }, data: { refundedAmountCents: 5_000 } });
+      if (stripeRecordedCents !== undefined) await stripeRecordedOnCard(stripeRecordedCents);
       let current = reading("AUTHORISED", EARLY);
       const columns = await import("@/lib/xero-inbound/xero-refunded-columns");
       const original = columns.decideXeroRefundedColumns;
@@ -475,10 +489,10 @@ function reading(status: string, updatedAt: string, payments: Array<Record<strin
     });
 
     it("MUTATION (round 6): on a card payment A writes nothing when the void commits before its locked re-read", async () => {
-      await voidBetweenReadAndClaim("Stripe per-delta", CARD);
+      await voidBetweenReadAndClaim("Stripe per-delta", CARD, undefined, 15_000);
       // `INV-ADDPAY-021`: a card recount never lowers the ledger, so a $150
-      // written here would stand. A re-reads the note under the Payment lock
-      // and writes nothing.
+      // written here would stand. Stripe's records back $150 (#4444's cap does
+      // not stop it), so it is the re-read under the Payment lock that writes nothing.
       expect(await refunded(CARD)).toEqual({ refundedAmountCents: 5_000, status: "PARTIALLY_REFUNDED" });
     });
 
@@ -490,9 +504,10 @@ function reading(status: string, updatedAt: string, payments: Array<Record<strin
      * only reads. The serial order is "A, then the void, then B".
      * `waiterQuery` is the statement that must be the one waiting.
      */
-    async function voidAfterLockedReRead(kase: Case, paymentId: string, waiterQuery = "%FOR NO KEY UPDATE%") {
+    async function voidAfterLockedReRead(kase: Case, paymentId: string, waiterQuery = "%FOR NO KEY UPDATE%", stripeRecordedCents?: number) {
       await seed(kase);
       await prisma.payment.update({ where: { id: paymentId }, data: { refundedAmountCents: 5_000 } });
+      if (stripeRecordedCents !== undefined) await stripeRecordedOnCard(stripeRecordedCents);
       let current = reading("AUTHORISED", EARLY);
       const status = await import("@/lib/xero-refund-note-status");
       const original = status.readRefundNoteRowsByPayment;
@@ -552,14 +567,28 @@ function reading(status: string, updatedAt: string, payments: Array<Record<strin
       expect(await state("bank-transfer canonical")).toMatchObject({ pointer: null });
     });
 
-    it("round 6 stated limit: on a card the same order leaves A's raise standing, raise-only, and alerts", async () => {
+    it("round 6 stated limit: on a card whose Stripe refunds back the raise, the same order leaves A's raise standing, raise-only, and alerts", async () => {
       // A's own reconcile pointed the card payment at the note (the inbound
       // gate). The void waits on A's Payment row before it takes the link.
-      const { a, alerted } = await voidAfterLockedReRead("Stripe per-delta", CARD, '%SELECT 1 FROM "Payment"%FOR NO KEY UPDATE%');
+      // Stripe recorded $150, so #4444's cap lets A raise to it.
+      const { a, alerted } = await voidAfterLockedReRead("Stripe per-delta", CARD, '%SELECT 1 FROM "Payment"%FOR NO KEY UPDATE%', 15_000);
       expect(a.updatedRefundedPayments).toBe(1);
       // `INV-ADDPAY-021`, F5 #1353: B never lowers a card ledger; it raises the divergence alert.
       expect(await refunded(CARD)).toEqual({ refundedAmountCents: 15_000, status: "PARTIALLY_REFUNDED" });
       expect(alerted).toContain("refund-ledger-divergence");
+    });
+
+    it("MUTATION (#4444 cap): the same order on a card Stripe recorded no more refunds for writes nothing - the stated limit closed", async () => {
+      // No Stripe refund beyond the $50 ledger. Before #4444 A raised the card
+      // to $150 from the note, the void followed, and B could not lower it
+      // (raise-only), so $150 stood against $50 refunded, with an alert. Since
+      // #4444 (owner decision 23 Nov 2026) A's $150 is capped at the $50
+      // Stripe and the ledger hold: A writes nothing, B finds $50 right.
+      const { a, b, alerted } = await voidAfterLockedReRead("Stripe per-delta", CARD, '%SELECT 1 FROM "Payment"%FOR NO KEY UPDATE%');
+      expect(a.updatedRefundedPayments).toBe(0);
+      expect(b.updatedRefundedPayments).toBe(0);
+      expect(await refunded(CARD)).toEqual({ refundedAmountCents: 5_000, status: "PARTIALLY_REFUNDED" });
+      expect(alerted).not.toContain("refund-ledger-divergence");
     });
 
     it("MUTATION (review 2): a stale reading kept under a newer LIVE snapshot still records its allocations and refund payments", async () => {

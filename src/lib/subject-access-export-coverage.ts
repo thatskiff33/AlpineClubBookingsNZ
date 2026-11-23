@@ -119,6 +119,7 @@ export const SUBJECT_ACCESS_EXPORT_COVERAGE = {
   RateLimitCounter: OPERATIONAL,
   LoginThrottle: OPERATIONAL,
   AlertCooldown: OPERATIONAL,
+  OwedNotice: OPERATIONAL,
   PaymentRecoveryOperation: OPERATIONAL,
   PromoRedemption: "additionalRecords.PromoRedemption",
   PromoRedemptionAllocation: "additionalRecords.PromoRedemptionAllocation",

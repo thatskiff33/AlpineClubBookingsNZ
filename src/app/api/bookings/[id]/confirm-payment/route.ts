@@ -1,6 +1,7 @@
 import { receiptCaptureTime } from "@/lib/stripe-capture-date";
 import { bookingAmountOwedCents, bookingWorthCents } from "@/lib/booking-payment-state";
 import { NextRequest, NextResponse } from "next/server";
+import { parseJsonRequestBody } from "@/lib/api-json";
 import { bookingOwner } from "@/lib/booking-owner";
 import { hostingCoverageParticipantRetryResponse } from "@/lib/adult-member-hosting-retry-response";
 import { auth } from "@/lib/auth";
@@ -52,13 +53,11 @@ export async function POST(
   }
 
   const { id: bookingId } = await params;
-  const body = await request.json();
-  const parsed = schema.safeParse(body);
+  const jsonBody = await parseJsonRequestBody(request);
+  if (!jsonBody.ok) return jsonBody.response;
+  const parsed = schema.safeParse(jsonBody.body);
   if (!parsed.success) {
-    return NextResponse.json(
-      { error: "Invalid input", details: parsed.error.flatten() },
-      { status: 400 }
-    );
+    return NextResponse.json({ error: "Invalid input", details: parsed.error.flatten() }, { status: 400 });
   }
 
   const { paymentIntentId } = parsed.data;

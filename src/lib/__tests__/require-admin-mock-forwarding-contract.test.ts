@@ -2,6 +2,7 @@ import { readdirSync, readFileSync, statSync } from "node:fs";
 import path from "node:path";
 import ts from "typescript";
 import { describe, expect, it } from "vitest";
+import { CENSUS_TIMEOUT_MS } from "@/test/census-timeout";
 
 // ---------------------------------------------------------------------------
 // #2921: the requireAdmin test mock must RECEIVE the route's permission option.
@@ -192,7 +193,7 @@ for (const file of files) {
   visit(source);
 }
 
-describe("requireAdmin test-mock forwarding contract (#2921)", () => {
+describe("requireAdmin test-mock forwarding contract (#2921)", { timeout: CENSUS_TIMEOUT_MS }, () => {
   it("finds the files that use the shared requireAdmin mock", () => {
     // A guard over an empty set is a guard that passes for the wrong reason. If
     // this drops to zero, either the helper was renamed (update HELPER) or the

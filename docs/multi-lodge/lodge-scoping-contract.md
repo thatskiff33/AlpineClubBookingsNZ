@@ -648,6 +648,9 @@ new ADR:
   `finance-dashboard/decisions/ADR-005-single-operational-xero-connection.md`.
 - Email, notifications, audit log, webhooks, cron state, page content,
   media, committee, module settings (`ClubModuleSettings` stays one row).
+  `OwedNotice` (#5433) is a notice a committed change still owes; it names
+  its subject (a booking today) as a plain id with no relation, and the
+  subject carries the lodge, so the marker has none.
 - Inductions (`InductionChecklistTemplate`/`MemberInduction*`, all kinds
   including `HUT_LEADER`): inductions certify the member, not a building
   (recorded 2026-07-03). If hut-leader inductions ever diverge per lodge,

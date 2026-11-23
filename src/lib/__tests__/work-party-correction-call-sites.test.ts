@@ -3,6 +3,7 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 
 import { stripComments } from "@/lib/__tests__/support/strip-comments";
+import { CENSUS_TIMEOUT_MS } from "@/test/census-timeout";
 
 /**
  * #5149 (A-L1 of the maintainers' comment
@@ -62,7 +63,7 @@ const namingFiles = (): string[] => (naming ??= sourceFiles().filter((file) => F
 /** A walk of the whole tree can take seconds under load. */
 const WALK_TIMEOUT_MS = 60_000;
 
-describe("workPartyCorrection call sites (#5149, INV-MOD-063)", () => {
+describe("workPartyCorrection call sites (#5149, INV-MOD-063)", { timeout: CENSUS_TIMEOUT_MS }, () => {
   it("the population is real, so the census is not vacuous", () => {
     const files = sourceFiles();
     expect(files.length).toBeGreaterThan(500);

@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 import { toPosix } from "../../../scripts/audit/ts-call-site-scan";
 import { balancedBrackets } from "./support/balanced-brackets";
 import { blankLiterals, stripComments } from "./support/strip-comments";
+import { CENSUS_TIMEOUT_MS } from "@/test/census-timeout";
 
 function source(relativePath: string): string {
   return readFileSync(path.resolve(process.cwd(), relativePath), "utf8");
@@ -464,7 +465,7 @@ describe("bed allocation lock topology", () => {
     // Walks and masks every file under src/, so it has its own budget, as the
     // other tree-scanning censuses do (docs/TESTING.md, "Suites that time out
     // under load and pass alone").
-  }, 30_000);
+  }, CENSUS_TIMEOUT_MS);
 
   it.each([
     ["src/lib/group-settlement.ts", "const candidateChildren"],
@@ -684,5 +685,5 @@ describe("bed allocation lock topology", () => {
         "deadlock pass in docs/CONCURRENCY_AND_LOCKING.md -> " +
         '"Merge joins the bed-allocation cohort".',
     ).toEqual([]);
-  }, 30_000);
+  }, CENSUS_TIMEOUT_MS);
 });

@@ -91,6 +91,7 @@ describe("GET /api/members/family", () => {
       {
         id: "member-1", firstName: "Ana", lastName: "Reid", ageTier: "ADULT", role: "MEMBER",
         relationship: "self", canLogin: true, canBeBooked: true, missingFields: [],
+        canCurrentUserConfirmDetails: false, familyGroupIds: ["fg-1"],
         dateOfBirth: "1980-02-03", pendingRequests: [{ id: "r1", type: "JOIN", status: "PENDING", familyGroupId: "fg-1" }],
         parentLinks: [{ id: "p1", email: "parent@example.test" }],
         notificationEmailFromId: null, notificationEmailFromName: null, detailsConfirmedBy: null,
@@ -98,6 +99,7 @@ describe("GET /api/members/family", () => {
       {
         id: "kid-1", firstName: "Mere", lastName: "Reid", ageTier: "CHILD", role: "MEMBER",
         relationship: "dependent", canLogin: false, canBeBooked: false, missingFields: ["dateOfBirth"],
+        canCurrentUserConfirmDetails: true, familyGroupIds: ["fg-1"],
         dateOfBirth: "2019-05-06", pendingRequests: [], parentLinks: [],
         notificationEmailFromId: "member-1", notificationEmailFromName: null, detailsConfirmedBy: null,
       },
@@ -117,9 +119,17 @@ describe("GET /api/members/family", () => {
     const body = await res.json();
     expect(body).toEqual({
       displayName: "Ana Reid",
+      // ALP-795: the ids the family actions take, and who has a login.
+      familyGroupIds: ["fg-1"],
       familyMembers: [
-        { id: "member-1", firstName: "Ana", lastName: "Reid", ageTier: "ADULT", relationship: "self", canBeBooked: true },
-        { id: "kid-1", firstName: "Mere", lastName: "Reid", ageTier: "CHILD", relationship: "dependent", canBeBooked: false },
+        {
+          id: "member-1", firstName: "Ana", lastName: "Reid", ageTier: "ADULT", relationship: "self",
+          canBeBooked: true, canLogin: true, canCurrentUserConfirmDetails: false, familyGroupIds: ["fg-1"],
+        },
+        {
+          id: "kid-1", firstName: "Mere", lastName: "Reid", ageTier: "CHILD", relationship: "dependent",
+          canBeBooked: false, canLogin: false, canCurrentUserConfirmDetails: true, familyGroupIds: ["fg-1"],
+        },
       ],
     });
     const keys = allKeys(body);

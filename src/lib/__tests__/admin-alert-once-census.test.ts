@@ -3,6 +3,7 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 
 import { stripComments } from "./support/strip-comments";
+import { CENSUS_TIMEOUT_MS } from "@/test/census-timeout";
 
 /**
  * #4696 (`INV-SSOT`): the caller census in `admin-alert-once.ts` is the one
@@ -71,7 +72,7 @@ describe("#4696: the once-ever helper's caller census matches the code", () => {
       listed,
       "a caller was added or removed: put it in admin-alert-once.ts's #4696 census under the group that says whether its alert is sent again",
     ).toEqual(callers);
-  });
+  }, CENSUS_TIMEOUT_MS);
 
   it("puts each caller in exactly one group, and leaves no group empty", () => {
     const groups = readCensus();
