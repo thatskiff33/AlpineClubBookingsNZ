@@ -14,17 +14,32 @@ import { TRANSACTION_OPENERS } from "@/lib/__tests__/support/lock1-transaction-s
  * - a UNIT is a top-level named function: a function declaration, a `const`
  *   holding a function, or a class method. Everything nested inside a unit
  *   (closures, callbacks) is read as part of it, in source order;
- * - a TRANSACTION POINT is the end of a call to a transaction opener (the
+ * - a unit COMMITS when it calls a transaction opener (the
  *   `TRANSACTION_OPENERS` the lock(1) census reads, plus
- *   `runSavedCardClaimRelease`, which commits a release of its own), or to
- *   another unit of the same module that contains one. A send INSIDE the
+ *   `runSavedCardClaimRelease`, which commits a release of its own), another
+ *   unit of the same module that commits, or an IMPORTED function that commits;
+ * - a unit SENDS when it calls a function named `send`, `alert` or `notify`
+ *   followed by a capital letter (which covers `sendEmail`, `sendToAdmins` and
+ *   `sendUnmuteableAdminAlert`), another unit of the same module that sends
+ *   (how it finds a reaper's `finishReap`), or an imported function
+ *   `SENDS_THROUGH` names, with a reason;
+ * - an IMPORTED function's COMMIT role is read one level deep: the census
+ *   resolves each named import of a scoped file to its module and reads the
+ *   exported unit there with the same rule (`importedRoles`). That is how it
+ *   finds a cron that commits through `resolvePolicyExceptionRequestTerminal`,
+ *   `expireMemberGuestConsent` or `markBookingPaymentSucceeded`. Its SEND role
+ *   is not derived: read that way, every orchestration helper that alerts
+ *   somewhere inside would count as a send, and the list would drown in its
+ *   own wrappers. A helper named by a non-sender name that sends is listed in
+ *   `SENDS_THROUGH` instead;
+ * - a COMMIT POINT is the end of a call that commits. A send INSIDE a
  *   transaction's callback ends before the point and is not counted;
- * - a SEND is a call whose name is `send`, `alert` or `notify` followed by a
- *   capital letter (which covers `sendEmail`, `sendToAdmins` and
- *   `sendUnmuteableAdminAlert`), or a call to another unit of the same module
- *   that contains a send (how it finds a reaper's `finishReap`);
- * - a SITE is a send that starts after the unit's first transaction point.
- *   Sites are keyed `file#unit#callee`, with the number of calls.
+ * - a SITE is a send that starts after a commit point in its unit, keyed
+ *   `file#unit#callee`, with the number of calls and the names of every commit
+ *   point before any of them (so an entry can name the commit it is about);
+ * - a helper outside the scope that commits and then sends inside itself is a
+ *   site of its own only when `COMMITS_THEN_SENDS` names it, with a reason: its
+ *   module is not scanned, so nothing else would see the send after its commit.
  *
  * It reads the syntax tree, so a comment naming a sender or an opener is never
  * a site; the census's cheap first pass over the tree strips comments first
@@ -48,11 +63,47 @@ export const COMMITTING_CALLS: ReadonlySet<string> = new Set([...Object.keys(TRA
 
 const SENDER = /^(?:send|alert|notify)[A-Z]/;
 
+/**
+ * Helpers outside the scope that commit a change and then send about it inside
+ * themselves: a call to one is a site, `after` the helper itself. The census
+ * checks each against its own module: it must send by this reader's rules, and
+ * its module must write (a commit may be single statements, not a transaction).
+ */
+export const COMMITS_THEN_SENDS: Readonly<Record<string, { module: string; reason: string }>> = {
+  retireAndEscalateUnusableSavedCard: {
+    module: "src/lib/saved-card-charge-failure.ts",
+    reason:
+      "commits the clear of an unusable saved card (two single-statement writes, no transaction), then emails the member and alerts officers (#3268)",
+  },
+};
+
+/**
+ * Imported helpers outside the `send`/`alert`/`notify` naming that send a
+ * notice: a call to one counts as a send. Each is checked against its own
+ * module by `moduleUnitRoles` (it must send).
+ */
+export const SENDS_THROUGH: Readonly<Record<string, { module: string; reason: string }>> = {
+  finaliseMemberGuestConsentTransition: {
+    module: "src/lib/member-guest-consent-service.ts",
+    reason: "sends the consent outcome email (notifyMemberGuestConsentOutcome) after the expiry or acceptance commits",
+  },
+};
+
+/** What an imported function does, read from its own module. */
+export interface ImportedRole {
+  commits: boolean;
+  sends: boolean;
+}
+
 function calleeName(call: ts.CallExpression): string | null {
   const callee = call.expression;
   if (ts.isIdentifier(callee)) return callee.text;
   if (ts.isPropertyAccessExpression(callee)) return callee.name.text;
   return null;
+}
+
+function parse(rel: string, code: string): ts.SourceFile {
+  return ts.createSourceFile(rel, code, ts.ScriptTarget.Latest, true, rel.endsWith(".tsx") ? ts.ScriptKind.TSX : ts.ScriptKind.TS);
 }
 
 /** The module's top-level named functions, each with every call inside it. */
@@ -107,25 +158,100 @@ function reaching(all: Map<string, ts.CallExpression[]>, direct: (name: string) 
   return reached;
 }
 
-/** One module's sites: `file#unit#callee` to the number of calls. */
-export function scanPostCommitSends(rel: string, code: string): Map<string, number> {
-  const source = ts.createSourceFile(rel, code, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
-  const all = units(source);
-  const committing = reaching(all, (name) => COMMITTING_CALLS.has(name));
-  const sending = reaching(all, (name) => SENDER.test(name));
-  const sites = new Map<string, number>();
+type Roles = { committing: Set<string>; sending: Set<string> };
+
+function rolesOf(all: Map<string, ts.CallExpression[]>, imported: ReadonlyMap<string, ImportedRole>): Roles {
+  return {
+    committing: reaching(all, (name) => COMMITTING_CALLS.has(name) || imported.get(name)?.commits === true),
+    sending: reaching(all, (name) => SENDER.test(name) || name in SENDS_THROUGH),
+  };
+}
+
+/** Which of a module's units commit and which send, by this reader's rules, with no import followed. */
+export function moduleUnitRoles(rel: string, code: string): Map<string, ImportedRole> {
+  const all = units(parse(rel, code));
+  const { committing, sending } = rolesOf(all, new Map());
+  return new Map([...all.keys()].map((unit) => [unit, { commits: committing.has(unit), sends: sending.has(unit) }]));
+}
+
+/** A module path a specifier names, as candidate files to try, or none for a package. */
+function candidateFiles(fromRel: string, specifier: string): string[] {
+  let base: string;
+  if (specifier.startsWith("@/")) base = `src/${specifier.slice(2)}`;
+  else if (specifier.startsWith(".")) {
+    const parts = fromRel.split("/").slice(0, -1);
+    for (const part of specifier.split("/")) {
+      if (part === "..") parts.pop();
+      else if (part !== ".") parts.push(part);
+    }
+    base = parts.join("/");
+  } else return [];
+  return [`${base}.ts`, `${base}.tsx`, `${base}/index.ts`];
+}
+
+/**
+ * Each named import of a module, by its local name, with the role its own
+ * module gives it (`moduleUnitRoles`). `read` returns a module's code, or null
+ * when the file does not exist. Only names that commit or send are returned.
+ */
+export function importedRoles(rel: string, code: string, read: (rel: string) => string | null): Map<string, ImportedRole> {
+  const roles = new Map<string, ImportedRole>();
+  for (const statement of parse(rel, code).statements) {
+    if (!ts.isImportDeclaration(statement) || !ts.isStringLiteral(statement.moduleSpecifier)) continue;
+    const bindings = statement.importClause?.namedBindings;
+    if (!bindings || !ts.isNamedImports(bindings) || statement.importClause?.isTypeOnly) continue;
+    const target = candidateFiles(rel, statement.moduleSpecifier.text)
+      .map((file) => ({ file, text: read(file) }))
+      .find((candidate) => candidate.text !== null);
+    if (!target) continue;
+    const unitRoles = moduleUnitRoles(target.file, target.text!);
+    for (const element of bindings.elements) {
+      if (element.isTypeOnly) continue;
+      const role = unitRoles.get((element.propertyName ?? element.name).text);
+      if (role && (role.commits || role.sends)) roles.set(element.name.text, role);
+    }
+  }
+  return roles;
+}
+
+/** One site: how many calls, and every commit point before any of them. */
+export interface PostCommitSite {
+  calls: number;
+  after: Set<string>;
+}
+
+/** One module's sites, keyed `file#unit#callee`. */
+export function scanPostCommitSends(
+  rel: string,
+  code: string,
+  imported: ReadonlyMap<string, ImportedRole> = new Map(),
+): Map<string, PostCommitSite> {
+  const all = units(parse(rel, code));
+  const { committing, sending } = rolesOf(all, imported);
+  const commits = (name: string) => COMMITTING_CALLS.has(name) || committing.has(name) || imported.get(name)?.commits === true;
+  const sends = (name: string) => SENDER.test(name) || sending.has(name) || name in SENDS_THROUGH;
+  const sites = new Map<string, PostCommitSite>();
+  const count = (key: string, after: readonly string[]) => {
+    const site = sites.get(key) ?? { calls: 0, after: new Set<string>() };
+    site.calls += 1;
+    for (const name of after) site.after.add(name);
+    sites.set(key, site);
+  };
   for (const [unit, calls] of all) {
-    const named = calls.map((call) => ({ call, name: calleeName(call) }));
-    const points = named
-      .filter(({ name }) => name !== null && name !== unit && (COMMITTING_CALLS.has(name) || committing.has(name)))
-      .map(({ call }) => call.getEnd());
-    if (points.length === 0) continue;
-    const firstPoint = Math.min(...points);
+    const named = calls.flatMap((call) => {
+      const name = calleeName(call);
+      return name === null || name === unit ? [] : [{ call, name }];
+    });
+    const points = named.filter(({ name }) => commits(name)).map(({ call, name }) => ({ end: call.getEnd(), name }));
     for (const { call, name } of named) {
-      if (name === null || name === unit || call.getStart() < firstPoint) continue;
-      if (!SENDER.test(name) && !sending.has(name)) continue;
       const key = `${rel}#${unit}#${name}`;
-      sites.set(key, (sites.get(key) ?? 0) + 1);
+      if (name in COMMITS_THEN_SENDS) {
+        count(key, [name]);
+        continue;
+      }
+      if (!sends(name)) continue;
+      const before = points.filter((point) => point.end <= call.getStart());
+      if (before.length > 0) count(key, before.map((point) => point.name));
     }
   }
   return sites;
