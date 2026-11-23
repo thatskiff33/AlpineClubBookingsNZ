@@ -666,6 +666,27 @@ describe("API route boundary metadata", () => {
     });
   });
 
+  it("binds a shared reader's result to an ordinary name, never a global it would shadow", () => {
+    // #5400's conversion script once bound a result to `undefined`, which
+    // compiles and shadows the global for the rest of the handler (#5407).
+    const shadowing = new Set(["undefined", "NaN", "Infinity", "arguments", "eval"]);
+    const routes = listRouteFiles(path.join(process.cwd(), "src/app/api")).map(
+      relativeRoutePath,
+    );
+    const badBindings = routes.flatMap((routePath) =>
+      [
+        ...stripComments(routeContents(routePath)).matchAll(
+          /\b(?:const|let|var)\s+(\w+)\s*=\s*await\s+parse(?:Optional)?JsonRequestBody\(/g,
+        ),
+      ]
+        .map((match) => match[1] ?? "")
+        .filter((name) => shadowing.has(name))
+        .map((name) => `${routePath}: ${name}`),
+    );
+
+    expect(badBindings).toEqual([]);
+  });
+
   it("does not allow SVG uploads through the static image-manager route (stored XSS)", () => {
     // SVG is an XML dialect that can carry inline <script> and event-handler
     // attributes.  Files under public/images/ are served by Next.js/Caddy
