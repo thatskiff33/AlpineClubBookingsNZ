@@ -145,6 +145,16 @@ const mockTx = {
   groupDiscountSetting: {
     findUnique: vi.fn(),
   },
+  // #5433: the offer records its owed notices, and the expiry its offer-expired
+  // notices, in their own transactions; the expiry first reads which lapsed
+  // offers were never told (no marker, email row or past-cut-off claim here, so
+  // every fixture's offer counts as told, as before #5433).
+  owedNotice: {
+    createMany: vi.fn().mockResolvedValue({ count: 0 }),
+    findMany: vi.fn().mockResolvedValue([]),
+  },
+  emailLog: { findMany: vi.fn().mockResolvedValue([]) },
+  alertCooldown: { findMany: vi.fn().mockResolvedValue([]) },
 };
 
 vi.mock("@/lib/prisma", () => ({
@@ -180,6 +190,11 @@ vi.mock("@/lib/prisma", () => ({
     // #2543: the party read both waitlist paths make on the module client.
     bookingGuest: {
       findMany: (...args: unknown[]) => mockBookingGuestFindMany(...args),
+    },
+    // #5433: the owed notices' claim and clear after the commit.
+    owedNotice: {
+      updateMany: async () => ({ count: 1 }),
+      deleteMany: async () => ({ count: 1 }),
     },
   },
 }));
@@ -232,7 +247,7 @@ vi.mock("@/lib/email", () => ({
   sendWaitlistOfferEmail: vi.fn().mockResolvedValue(undefined),
   sendWaitlistOfferExpiredEmail: vi.fn().mockResolvedValue(undefined),
   sendWaitlistConfirmationEmail: vi.fn().mockResolvedValue(undefined),
-  sendAdminWaitlistOfferAlert: vi.fn().mockResolvedValue(undefined),
+  sendAdminWaitlistOfferAlert: vi.fn().mockResolvedValue({ deliveryAllowed: true, recipients: 1, sent: 1, queuedForRetry: 0, notDelivered: 0, failedBeforeLogged: 0 }),
   sendBookingCancelledEmail: vi.fn().mockResolvedValue(undefined),
 }));
 
@@ -461,7 +476,8 @@ describe("processWaitlistForDates", () => {
     expect(mockTx.bookingGuest.update).toHaveBeenCalledTimes(2);
     // The offer email states the price the member will pay on confirmation.
     expect(sendWaitlistOfferEmail).toHaveBeenCalledWith(
-      { bookingId: "booking1", recipientMemberId: "m1" },
+      // #5433: with the offer's event key, `<bookingId>:<offeredAtMs>`.
+      { bookingId: "booking1", recipientMemberId: "m1", idempotencyKey: "booking1:1782864000000" },
       "test@test.com",
       "John",
       candidate.checkIn,
@@ -806,7 +822,8 @@ describe("processWaitlistForDates", () => {
       })
     );
     expect(sendWaitlistOfferEmail).toHaveBeenCalledWith(
-      { bookingId: "booking1", recipientMemberId: "m1" },
+      // #5433: with the offer's event key, `<bookingId>:<offeredAtMs>`.
+      { bookingId: "booking1", recipientMemberId: "m1", idempotencyKey: "booking1:1782864000000" },
       expect.anything(),
       expect.anything(),
       expect.anything(),
@@ -1010,7 +1027,8 @@ describe("processWaitlistForDates", () => {
       })
     );
     expect(sendWaitlistOfferEmail).toHaveBeenCalledWith(
-      { bookingId: "booking1", recipientMemberId: "m1" },
+      // #5433: with the offer's event key, `<bookingId>:<offeredAtMs>`.
+      { bookingId: "booking1", recipientMemberId: "m1", idempotencyKey: "booking1:1782864000000" },
       expect.anything(),
       expect.anything(),
       expect.anything(),
@@ -1658,7 +1676,8 @@ describe("expireStaleOffers", () => {
 
     // The pre-#5402 count saw only the other lapsed offers and quoted #1.
     expect(sendWaitlistOfferExpiredEmail).toHaveBeenCalledWith(
-      { bookingId: "offer-1", recipientMemberId: undefined },
+      // #5433: with the lapse's event key, `<bookingId>:<expiredAtMs>`.
+      { bookingId: "offer-1", recipientMemberId: undefined, idempotencyKey: "offer-1:1782864000000" },
       "test@test.com",
       "John",
       nights.checkIn,

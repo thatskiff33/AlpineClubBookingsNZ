@@ -214,28 +214,6 @@ const POST_COMMIT_SEND_REASONS: Readonly<Record<string, Entry>> = {
     reason: STRIPE_SWITCH,
   },
 
-  // waitlist.ts
-  "src/lib/waitlist.ts#processWaitlistForDates#sendWaitlistOfferEmail": {
-    calls: 1,
-    after: ["$transaction"],
-    reason: "#5433 PR 2 (WL-1): the waitlist offer email, with the offer window restarted from the real send (owner decision D2).",
-  },
-  "src/lib/waitlist.ts#processWaitlistForDates#sendAdminWaitlistOfferAlert": {
-    calls: 1,
-    after: ["$transaction"],
-    reason: "#5433 PR 2 (WL-1): the officers' waitlist offer alert.",
-  },
-  "src/lib/waitlist.ts#expireStaleOffers#sendWaitlistOfferExpiredEmail": {
-    calls: 1,
-    after: ["$transaction"],
-    reason: "#5433 PR 2 (WL-2): the offer-expired email, withheld for an offer the member was never told about (owner decision D2).",
-  },
-  "src/lib/waitlist.ts#expireStaleOffers#processWaitlistForDates": {
-    calls: 1,
-    after: ["$transaction"],
-    reason: "#5433 PR 2 (WL-1): offering the lapsed place on (#5441) sends the next offer, which PR 2 makes owed inside processWaitlistForDates.",
-  },
-
   // xero-inbound/
   "src/lib/xero-inbound/invoice-paid-effects.ts#syncInternetBankingPaymentsForPaidInvoice#sendBookingConfirmedEmail": {
     calls: 1,

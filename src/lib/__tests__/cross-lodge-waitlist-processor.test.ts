@@ -19,7 +19,7 @@ const mocks = vi.hoisted(() => ({
   confirmCrossLodgeWaitlistOffer: vi.fn(),
   sendWaitlistOfferEmail: vi.fn().mockResolvedValue(undefined),
   sendWaitlistOfferExpiredEmail: vi.fn().mockResolvedValue(undefined),
-  sendAdminWaitlistOfferAlert: vi.fn().mockResolvedValue(undefined),
+  sendAdminWaitlistOfferAlert: vi.fn().mockResolvedValue({ deliveryAllowed: true, recipients: 1, sent: 1, queuedForRetry: 0, notDelivered: 0, failedBeforeLogged: 0 }),
   logAudit: vi.fn(),
 }));
 
@@ -33,6 +33,9 @@ vi.mock("@/lib/prisma", () => ({
     // keeps this suite from exercising the graceful-degradation branch instead of
     // the real read.
     bookingGuest: { findMany: async () => [] },
+    // #5433: the offer's owed notices are claimed and cleared on this client
+    // after the commit.
+    owedNotice: { updateMany: async () => ({ count: 1 }), deleteMany: async () => ({ count: 1 }) },
   },
 }));
 vi.mock("@/lib/lodges", () => ({
@@ -117,6 +120,8 @@ function makeTx(candidates: ReturnType<typeof candidate>[]) {
       update: vi.fn().mockImplementation(async (args) => args),
       count: vi.fn().mockResolvedValue(0),
     },
+    // #5433: the offer records its owed notices in this transaction.
+    owedNotice: { createMany: vi.fn().mockResolvedValue({ count: 2 }) },
   };
 }
 
