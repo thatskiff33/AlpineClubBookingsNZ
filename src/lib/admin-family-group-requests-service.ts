@@ -1,6 +1,7 @@
 import { exactContains } from "@/lib/prisma-exact-prefix";
 import { z } from "zod";
-import { Prisma, type AgeTier } from "@prisma/client";
+import type { AgeTier } from "@prisma/client";
+import { isPrismaKnownUniqueConstraintError } from "@/lib/prisma-known-errors";
 import { UNUSABLE_PLACEHOLDER_PASSWORD_HASH } from "@/lib/password-hashing";
 import { prisma } from "@/lib/prisma";
 import { logAudit } from "@/lib/audit";
@@ -1446,10 +1447,7 @@ async function reviewGroupCreateRequest(params: {
       // the (familyGroupId, memberId) unique constraint after the first
       // admin's transaction committed. State is already correct (first admin
       // won), so surface a normal review error instead of a 500.
-      if (
-        error instanceof Prisma.PrismaClientKnownRequestError &&
-        error.code === "P2002"
-      ) {
+      if (isPrismaKnownUniqueConstraintError(error)) {
         return jsonResult(
           {
             error:

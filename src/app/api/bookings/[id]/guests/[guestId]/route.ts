@@ -1,6 +1,7 @@
 import { loadModificationLinesAuditFields } from "@/lib/booking-modification-lines";
 import { editRefundBankTransferPayee } from "@/lib/edit-refund-hand-back";
 import { NextRequest, NextResponse } from "next/server";
+import { parseOptionalJsonRequestBody } from "@/lib/api-json";
 import { bookingOwner } from "@/lib/booking-owner";
 import { hostingCoverageParticipantRetryResponse } from "@/lib/adult-member-hosting-retry-response";
 import { AdultMemberHostingRequiredError, buildAdultMemberHostingRefusalBody } from "@/lib/adult-member-hosting-refusal";
@@ -83,7 +84,9 @@ export async function DELETE(
   const { id: bookingId, guestId } = await params;
   const ipAddress = getClientIp(request);
 
-  const body = await request.json().catch(() => null);
+  const jsonBody = await parseOptionalJsonRequestBody(request, { whenAbsent: null, objectOnly: true });
+  if (!jsonBody.ok) return jsonBody.response;
+  const body = jsonBody.body;
   const rawSettlementMethod = (body as { settlementMethod?: unknown } | null)
     ?.settlementMethod;
   if (
@@ -91,10 +94,7 @@ export async function DELETE(
     rawSettlementMethod !== "card" &&
     rawSettlementMethod !== "credit"
   ) {
-    return NextResponse.json(
-      { error: "settlementMethod must be 'card' or 'credit'" },
-      { status: 400 },
-    );
+    return NextResponse.json({ error: "settlementMethod must be 'card' or 'credit'" }, { status: 400 });
   }
   const settlementMethod = rawSettlementMethod as
     | BookingModificationSettlementMethod

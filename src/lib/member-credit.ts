@@ -1,4 +1,5 @@
 import { prisma } from "./prisma";
+import { storedShortBookingId } from "@/lib/booking-reference";
 import { ApiError } from "@/lib/api-error";
 import {
   AdminCreditAdjustmentRequestStatus,
@@ -9,7 +10,7 @@ import {
   Prisma,
 } from "@prisma/client";
 import { syncBookingLedgerCredits } from "@/lib/booking-ledger-credit-sync";
-import { RESTORED_CREDIT_PREFIX, bookingAppliedCreditWhere } from "@/lib/member-credit-booking-rows";
+import { RESTORED_CREDIT_PREFIX, bookingAppliedCreditWhere, buildBookingAppliedCreditDescription } from "@/lib/member-credit-booking-rows";
 import { createAuditLog } from "./audit";
 import { isPrismaUniqueConstraintError } from "./prisma-errors";
 import { withStoreTransaction } from "@/lib/db-transaction";
@@ -24,10 +25,7 @@ import {
   GRANT_ACCOUNT_MISSING_MESSAGE,
   type AdminCreditGrantAccount,
 } from "@/lib/admin-credit-grant-account";
-import {
-  assertDeductionLeavesNotedCreditUntouched,
-  enqueueAdminGrantCreditNote,
-} from "@/lib/admin-grant-credit-note";
+import { assertDeductionLeavesNotedCreditUntouched, enqueueAdminGrantCreditNote } from "@/lib/admin-grant-credit-note";
 import { buildXeroIdempotencyKey, startXeroSyncOperation } from "@/lib/xero-sync";
 import { XERO_OUTBOX_APPLIED_CREDIT_DEALLOCATION_TYPE } from "@/lib/xero-operation-outbox-payload";
 import { repairLegacyAppliedCreditNoteAllocationsForBooking } from "@/lib/xero-applied-credit-allocation-repair";
@@ -262,7 +260,7 @@ export async function createBookingModificationCredit(
           memberId,
           amountCents,
           type: CreditType.BOOKING_MODIFICATION_REFUND,
-          description: `Booking reduction credit for booking ${bookingId.slice(0, 8)}`,
+          description: `Booking reduction credit for booking ${storedShortBookingId(bookingId)}`,
           sourceBookingId: bookingId,
           sourceBookingModificationId: bookingModificationId,
           xeroCreditNoteId: xeroCreditNoteId ?? null,
@@ -448,7 +446,7 @@ export async function clampAppliedCreditToBookingPrice(
     memberId,
     bookingId,
     giveBackCentsOf: (applied) => applied - Math.max(0, newWorthCents),
-    description: `Applied credit returned after booking ${bookingId.slice(0, 8)} reprice`,
+    description: `Applied credit returned after booking ${storedShortBookingId(bookingId)} reprice`,
     format,
   }, tx);
 
@@ -593,7 +591,7 @@ export async function applyCreditToBooking(
       memberId,
       amountCents: calculateAppliedCreditAmount(amountCents),
       type: CreditType.BOOKING_APPLIED,
-      description: options?.description ?? `Applied to booking ${bookingId.slice(0, 8)}`,
+      description: options?.description ?? buildBookingAppliedCreditDescription(bookingId),
       appliedToBookingId: bookingId,
     },
   });
@@ -684,7 +682,7 @@ export async function restoreCreditFromBooking(
         memberId,
         amountCents: amount,
         type: CreditType.CANCELLATION_REFUND,
-        description: `${RESTORED_CREDIT_PREFIX} ${bookingId.slice(0, 8)}`,
+        description: `${RESTORED_CREDIT_PREFIX} ${storedShortBookingId(bookingId)}`,
         sourceBookingId: bookingId,
         restoredFromBookingId: bookingId,
       },

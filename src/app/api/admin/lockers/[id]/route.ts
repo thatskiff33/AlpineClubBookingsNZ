@@ -1,5 +1,4 @@
 import { NextResponse } from "next/server";
-import { Prisma } from "@prisma/client";
 import { requireAdmin } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma";
 import { parseJsonRequestBody } from "@/lib/api-json";
@@ -134,11 +133,7 @@ export async function PUT(
 
     return connectionJson(request, { locker }, LOCKER_CONNECTION_SHAPE);
   } catch (error) {
-    if (
-      isPrismaUniqueConstraintError(error) ||
-      (error instanceof Prisma.PrismaClientKnownRequestError &&
-        error.code === "P2002")
-    ) {
+    if (isPrismaUniqueConstraintError(error)) {
       return NextResponse.json(
         { error: "A locker with that name already exists" },
         { status: 409 },

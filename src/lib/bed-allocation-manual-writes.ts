@@ -9,7 +9,8 @@
  * `bed-allocation-move.ts` / `bed-allocation-removal.ts`, which are the
  * reviewed, digest-guarded bulk operations.
  */
-import { Prisma, type BedAllocation } from "@prisma/client";
+import type { BedAllocation } from "@prisma/client";
+import { isPrismaKnownUniqueConstraintError } from "@/lib/prisma-known-errors";
 import {
   formatDateOnly,
   isDateOnlyString,
@@ -70,10 +71,7 @@ export async function manuallyAllocateBedWithLocksHeld(
     if (error instanceof CustodianHoldConflictError) {
       throw new BedAllocationAdminError(error.message, 409);
     }
-    if (
-      error instanceof Prisma.PrismaClientKnownRequestError &&
-      error.code === "P2002"
-    ) {
+    if (isPrismaKnownUniqueConstraintError(error)) {
       throw new BedAllocationAdminError(
         "That bed is already allocated for the selected date.",
         409,
@@ -426,10 +424,7 @@ export async function manuallyAllocateBedForNightsWithLocksHeld(
         conflicts.push({ stayDate: stayDateStr, reason: "CUSTODIAN_HOLD" });
         continue;
       }
-      if (
-        error instanceof Prisma.PrismaClientKnownRequestError &&
-        error.code === "P2002"
-      ) {
+      if (isPrismaKnownUniqueConstraintError(error)) {
         conflicts.push({ stayDate: stayDateStr, reason: "BED_TAKEN" });
         continue;
       }

@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { parseJsonRequestBody } from "@/lib/api-json";
 import { hostingCoverageParticipantRetryResponse } from "@/lib/adult-member-hosting-retry-response";
 import { z } from "zod";
 import {
@@ -34,8 +35,10 @@ export async function PATCH(
   if (!guard.ok) return guard.response;
   const session = guard.session;
   let body: z.infer<typeof reviewSchema>;
+  const jsonBody = await parseJsonRequestBody(request);
+  if (!jsonBody.ok) return jsonBody.response;
   try {
-    body = reviewSchema.parse(await request.json());
+    body = reviewSchema.parse(jsonBody.body);
   } catch {
     return NextResponse.json({ error: "Invalid request body" }, { status: 400 });
   }

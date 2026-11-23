@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { parseJsonRequestBody } from "@/lib/api-json";
 
 import { logAudit } from "@/lib/audit";
 import { ClubPostValidationError } from "@/lib/club-posts";
@@ -68,7 +69,9 @@ export async function PATCH(
   if (!gate.ok) return gate.response;
 
   const { id } = await params;
-  const body = await request.json().catch(() => null);
+  const jsonBody = await parseJsonRequestBody(request);
+  if (!jsonBody.ok) return jsonBody.response;
+  const body = jsonBody.body;
   const parsed = moderateClubPostSchema.safeParse(body);
   if (!parsed.success) {
     return NextResponse.json(

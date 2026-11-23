@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { parseJsonRequestBody } from "@/lib/api-json";
+import { parseJsonRequestBody, parseOptionalJsonRequestBody } from "@/lib/api-json";
 import { requireAdmin } from "@/lib/session-guards";
 import { transactionContendedResponse } from "@/lib/transaction-contended-response";
 import {
@@ -112,14 +112,10 @@ export async function DELETE(
 
   // #1769a: an optional JSON body carries the admin's notify choice for a
   // CONFIRMED removal. A bodyless DELETE (pending removal) must still succeed,
-  // so a missing/invalid-JSON body is treated as an empty object.
-  let rawBody: unknown = {};
-  try {
-    rawBody = await req.json();
-  } catch {
-    rawBody = {};
-  }
-  const parsedBody = removePartnerLinkBodySchema.safeParse(rawBody);
+  // so an empty body is treated as an empty object; a malformed one is a 400.
+  const jsonBody = await parseOptionalJsonRequestBody(req, { whenAbsent: {} });
+  if (!jsonBody.ok) return jsonBody.response;
+  const parsedBody = removePartnerLinkBodySchema.safeParse(jsonBody.body);
   if (!parsedBody.success) {
     return NextResponse.json(
       { error: "Validation failed", details: parsedBody.error.flatten().fieldErrors },

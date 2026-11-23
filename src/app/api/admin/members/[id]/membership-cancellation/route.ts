@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import type { z } from "zod";
+import { parseJsonRequestBody } from "@/lib/api-json";
 import { adminMembershipCancellationRequestSchema } from "@/lib/admin-membership-api/requests";
 import { MEMBERSHIP_CANCELLATION_REQUEST_RESULT_CONNECTION_SHAPE } from "@/lib/connection-shapes/membership-requests";
 import { connectionJson } from "@/lib/mcp-connection-request";
@@ -19,8 +20,10 @@ export async function POST(
   if (!guard.ok) return guard.response;
   const session = guard.session;
   let body: z.infer<typeof adminMembershipCancellationRequestSchema>;
+  const jsonBody = await parseJsonRequestBody(request);
+  if (!jsonBody.ok) return jsonBody.response;
   try {
-    body = adminMembershipCancellationRequestSchema.parse(await request.json());
+    body = adminMembershipCancellationRequestSchema.parse(jsonBody.body);
   } catch {
     return NextResponse.json({ error: "Invalid request body" }, { status: 400 });
   }

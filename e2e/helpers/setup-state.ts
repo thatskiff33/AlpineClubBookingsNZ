@@ -13,14 +13,16 @@ import { createPrismaPgAdapter } from "../../src/lib/prisma-adapter";
  * needs either a second differently-seeded stack or this; see the spec header.
  *
  * `E2E_DATABASE_URL` is exported by `scripts/e2e-stack.sh`. Absent, this throws
- * with the reason rather than silently connecting somewhere else.
+ * with the reason rather than silently connecting somewhere else. Shared with
+ * the one other state no admin route can rewind, the seeded membership
+ * applications (`e2e/helpers/reset.ts`, #5407).
  */
-function client() {
+export function e2eDatabaseClient() {
   const url = process.env.E2E_DATABASE_URL;
 
   if (!url) {
     throw new Error(
-      "E2E_DATABASE_URL is not set. The pre-setup project needs the staging " +
+      "E2E_DATABASE_URL is not set. This step writes to the isolated E2E " +
         "database; run the suite through scripts/e2e-stack.sh, which exports it.",
     );
   }
@@ -37,7 +39,7 @@ function client() {
  *   have to wait out the proxy's own 15-second cache of the state.
  */
 export async function setSiteSetupComplete(complete: boolean): Promise<void> {
-  const prisma = client();
+  const prisma = e2eDatabaseClient();
 
   try {
     await prisma.clubTheme.update({
