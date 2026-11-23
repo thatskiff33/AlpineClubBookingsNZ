@@ -203,6 +203,13 @@ const PRODUCTION_FILES = walk(path.join(ROOT, "src")).filter(
 const ADAPTER_MODULES = new Set(["src/lib/date-only.ts"]);
 
 /** A file's CODE, with its prose removed. See {@link stripComments}. */
+/**
+ * Each tree-wide test reads every production file: a few seconds on an idle
+ * machine and several times that on a busy CI runner, which the 5s default
+ * does not cover (the same budget as `mcp-route-census.test.ts`).
+ */
+const CENSUS_TIMEOUT_MS = 90_000;
+
 const read = (file: string): string =>
   stripComments(fs.readFileSync(path.join(ROOT, file), "utf8"));
 
@@ -444,7 +451,7 @@ const CENSUS_CEILING = {
   localMidnightConstructions: 2,
 } as const;
 
-describe("the escape-hatch census is exact, and only ever revised downward", () => {
+describe("the escape-hatch census is exact, and only ever revised downward", { timeout: CENSUS_TIMEOUT_MS }, () => {
   const defaulted = PRODUCTION_FILES.filter(
     (file) => !ADAPTER_MODULES.has(file),
   ).map((file) => ({ file, calls: findDefaultedZoneCalls(read(file)) }));
@@ -481,7 +488,7 @@ describe("the escape-hatch census is exact, and only ever revised downward", () 
   });
 });
 
-describe("the classes CT-6 closed are at zero, and stay there", () => {
+describe("the classes CT-6 closed are at zero, and stay there", { timeout: CENSUS_TIMEOUT_MS }, () => {
   it("no production file reads or writes a host clock face", () => {
     // The lint arm bans this, and this counts it independently. Two
     // instruments, because a lint rule that stopped resolving would report a
