@@ -86,7 +86,8 @@ export async function POST(request: NextRequest) {
     );
     // Distinct contacts across both full lists, counted the same way as
     // `requestedContacts` (members sharing a contact count once), so the
-    // panel counts out of the true total and says to Refresh again.
+    // panel counts out of the true total and names the full groups refresh
+    // for the rest (another Refresh would re-fetch the same first contacts).
     const flaggedContacts = new Set(
       [...before.mismatches, ...before.informational].map((entry) => entry.xeroContactId)
     ).size;

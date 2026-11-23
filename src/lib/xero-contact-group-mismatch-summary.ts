@@ -77,7 +77,7 @@ export interface ContactGroupResyncCounts {
   /**
    * Distinct contacts flagged across both full lists, before the per-kind
    * {@link CONTACT_GROUP_MISMATCH_LIMIT} cap; more than `requestedContacts`
-   * means this Refresh left some for the next one. Counted like
+   * means this Refresh left some contacts un-fetched. Counted like
    * `requestedContacts`, so members sharing a contact count once. An older
    * server omits it (blue-green).
    */
@@ -86,9 +86,11 @@ export interface ContactGroupResyncCounts {
 
 /**
  * The line the group and link mismatch panels show after a Refresh. Past the
- * limit it counts out of the true total and says to Refresh again, so a
- * capped re-sync never reads as done; the link route sends no
- * `flaggedContacts`, so its line never carries the hint.
+ * limit it counts out of the true total and names the full refresh that
+ * reaches the rest: a genuine mismatch stays flagged in the same order, so
+ * another Refresh re-fetches the same first contacts and never gets past the
+ * limit. The link route sends no `flaggedContacts`, so its line never
+ * carries the hint.
  * `at` is the club-time the re-sync ran, already formatted.
  */
 export function describeContactResync(resync: ContactGroupResyncCounts, at: string): string {
@@ -100,7 +102,11 @@ export function describeContactResync(resync: ContactGroupResyncCounts, at: stri
     resync.removedContacts > 0
       ? ` (${resync.removedContacts} no longer exist in Xero; their stale cache entries were removed)`
       : "";
-  const rest = total > resync.requestedContacts ? " Refresh again for the rest." : "";
+  const notFetched = total - resync.requestedContacts;
+  const rest =
+    notFetched > 0
+      ? ` The other ${notFetched} were not re-fetched; Refresh Xero Groups on the members list (or Refresh from Xero on Xero member grouping) re-reads every contact's groups.`
+      : "";
   return `Re-synced ${resync.resyncedContacts} of ${total} flagged contact${total === 1 ? "" : "s"} from Xero at ${at}${removed}.${rest}`;
 }
 

@@ -156,7 +156,7 @@ describe("the contact-group Refresh line", () => {
     return panel.findByText(/^Re-synced /)
   }
 
-  it("counts out of the true total and says to Refresh again when the limit left contacts out", async () => {
+  it("counts out of the true total and names the full refresh when the limit left contacts out", async () => {
     const line = await refreshWith({
       requestedContacts: CONTACT_GROUP_MISMATCH_LIMIT,
       resyncedContacts: CONTACT_GROUP_MISMATCH_LIMIT,
@@ -164,7 +164,9 @@ describe("the contact-group Refresh line", () => {
       flaggedContacts: 340,
       resyncedAt: "2026-07-01T00:00:00.000Z",
     })
-    expect(line).toHaveTextContent(/^Re-synced 200 of 340 flagged contacts from Xero at .+\. Refresh again for the rest\.$/)
+    expect(line).toHaveTextContent(
+      /^Re-synced 200 of 340 flagged contacts from Xero at .+\. The other 140 were not re-fetched; Refresh Xero Groups on the members list \(or Refresh from Xero on Xero member grouping\) re-reads every contact's groups\.$/
+    )
   })
 
   it("is unchanged at or under the limit", async () => {
@@ -176,7 +178,7 @@ describe("the contact-group Refresh line", () => {
       resyncedAt: "2026-07-01T00:00:00.000Z",
     })
     expect(line).toHaveTextContent(/^Re-synced 200 of 200 flagged contacts from Xero at [^.]+\.$/)
-    expect(line).not.toHaveTextContent("Refresh again")
+    expect(line).not.toHaveTextContent("were not re-fetched")
   })
 
   // Blue-green: a server from before this fix sends no flaggedContacts.
