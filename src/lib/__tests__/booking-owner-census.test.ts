@@ -1030,6 +1030,11 @@ const UNROOTED_ORGANISATION_SELECTIONS: readonly string[] = [
   // passed as `select` to `booking.findUnique`; Booking declares `organisation`.
   "src/lib/waitlist-offer-expired-notice.ts::organisation: { select: { name: true, email: true } },#0",
   "src/lib/waitlist-offer-notices.ts::organisation: { select: { name: true, email: true } },#0",
+  // #5433 review: `RESTART_SELECT`, what the window restart re-reads under its
+  // locks to decide whether an email can go. Verified by hand: written through
+  // `Prisma.validator<Prisma.BookingSelect>()` and passed as `select` to
+  // `booking.findUnique`; Booking declares `organisation`.
+  "src/lib/waitlist-offer-window-restart.ts::organisation: { select: { name: true, email: true } },#0",
   "src/lib/xero-booking-repair-types.ts::organisation: { select: { name: true, email: true } },#0",
   "src/lib/xero-inbound/settlement-conflicts.ts::include: { booking: { include: { member: true, organisation: { select: { name: true, email: true } } } } };#0",
 ];
