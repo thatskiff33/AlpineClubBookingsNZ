@@ -167,7 +167,7 @@ vi.mock("@/lib/xero-sync-now", () => ({
 }));
 // The real change-to-field mapping, so the test sees what the route sends.
 vi.mock("@/lib/xero-bulk-contact-sync", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("@/lib/xero-bulk-contact-sync")>()),
+  ...((await importOriginal()) as typeof import("@/lib/xero-bulk-contact-sync")),
   syncContactsFromXero: h.syncContactsFromXero,
 }));
 vi.mock("@/lib/xero-membership-sync", () => ({
