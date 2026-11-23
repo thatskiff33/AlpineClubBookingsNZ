@@ -94,10 +94,7 @@ import { auditCategoriesForCorrelationDomain } from "@/lib/audit-categories";
 
 import { SHORT_BOOKING_ID_LENGTH } from "@/lib/booking-reference";
 import { defineDiagnosticsTool, type DiagnosticsToolEntry } from "../define";
-import {
-  RECOVERY_SCENARIO_GLOSS,
-  RECOVERY_SCENARIO_SQL,
-} from "./finance-recovery-scenarios";
+import { RECOVERY_SCENARIO_GLOSS, RECOVERY_SCENARIO_SQL } from "./finance-recovery-scenarios";
 import {
   EXACT_REFERENCE,
   FINANCE_BYTE_LIMIT,

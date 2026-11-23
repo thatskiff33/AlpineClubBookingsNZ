@@ -389,10 +389,7 @@
 
 import "server-only";
 
-import type {
-  BookingChangeRequestKind,
-  BookingChangeRequestStatus,
-} from "@prisma/client";
+import type { BookingChangeRequestKind, BookingChangeRequestStatus } from "@prisma/client";
 import { z } from "zod";
 
 import { auditCategoriesForCorrelationDomain } from "@/lib/audit-categories";

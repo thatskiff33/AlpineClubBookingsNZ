@@ -231,10 +231,9 @@ import "server-only";
 import { z } from "zod";
 
 import { auditCategoriesForCorrelationDomain } from "@/lib/audit-categories";
-
+import { SHORT_BOOKING_ID_LENGTH } from "@/lib/booking-reference";
 import { deletedAccountSql } from "@/lib/deleted-account";
 
-import { SHORT_BOOKING_ID_LENGTH } from "@/lib/booking-reference";
 import { defineDiagnosticsTool, type DiagnosticsToolEntry } from "../define";
 import {
   AID6B_BYTE_LIMIT,
