@@ -565,6 +565,9 @@ const EXPECTED_ROUTE_AREAS: Record<string, AdminPermissionArea> = {
   "/api/admin/xero/sync-memberships": "finance",
   "/api/admin/xero/sync-now": "finance",
   "/api/admin/xero/tax-categories": "finance",
+  // #5208: the GST-override pause; finance:view reads it, finance:edit clears it.
+  "/api/admin/xero/tax-override-pause": "finance",
+  "/api/admin/xero/tax-override-pause/clear": "finance",
   "/api/admin/xero/usage": "finance",
   "/api/admin/xero/webhook-health": "finance",
   // #2081: webhook intent-to-receive verify status / amber-badge source. Read is

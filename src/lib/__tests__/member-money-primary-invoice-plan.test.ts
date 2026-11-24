@@ -8,6 +8,9 @@ import { buildXeroBookingInvoiceCorrelationKey } from "@/lib/xero-booking-invoic
 import { changeFeeLineItem, invoiceLineItemsTotalCents } from "@/lib/xero-modification-line-items";
 import { planPromoAdjustmentLines, promoAdjustmentLineItems } from "@/lib/xero-promo-adjustment-lines";
 import { stableDigest } from "@/lib/stable-digest";
+import { clubTaxCode } from "@/lib/club-tax-settings";
+import { splitTaxInclusiveGross } from "@/lib/member-money";
+import { providerAmountToCents } from "@/lib/money-provider-amount";
 import { sanitizeForJson } from "@/lib/xero-sync";
 import type { PostedRevenueLeg } from "@/lib/member-money/internal/components";
 import { buildPrimaryInvoiceLines } from "@/lib/xero-primary-invoice-lines";
@@ -52,6 +55,8 @@ function input(overrides: Partial<PrimaryInvoicePlanInput> = {}): PrimaryInvoice
     changeFeeCents: 0,
     taxRendering: BASELINE_XERO_TAX_RENDERING,
     postedLegs: [leg("BOOKING_REVENUE", STAY, 14000)],
+    // The suites before #5208 hold the builders' own lines; the overrides have their own below.
+    taxOverrides: "PAUSED",
     ...overrides,
   };
 }
@@ -237,3 +242,92 @@ describe("confirmBilledPrimaryInvoice (#4525 review)", () => {
     expect(confirmBilledPrimaryInvoice(plan, [])).toBe(plan);
   });
 });
+
+describe("the journal's GST on each line (#5208, Option A)", () => {
+  const treatment = { registered: true as const, rateBasisPoints: 1500, taxCode: clubTaxCode(1500), xeroTaxType: "OUTPUT2" };
+  /** A leg as the journal posts it: its gross split at 15% (`splitTaxInclusiveGross`). */
+  const taxedLeg = (account: PostedRevenueLeg["account"], chargeIdentity: string, grossCents: number): PostedRevenueLeg => {
+    const split = splitTaxInclusiveGross(grossCents, treatment)!;
+    return leg(account, chargeIdentity, grossCents, { amountCents: split.netCents, netCents: split.netCents, taxCents: split.taxCents, taxCode: split.taxCode });
+  };
+  const night = (day: number, priceCents: number) => ({ stayDate: new Date(`2026-07-${day}T00:00:00.000Z`), priceCents });
+  /** Two adults and a child over four nights, a price change on the third night, a promo and a change fee. */
+  const party = (over: Partial<PrimaryInvoicePlanInput> = {}) => input({
+    checkIn: new Date("2026-07-10T00:00:00.000Z"), checkOut: new Date("2026-07-14T00:00:00.000Z"), nights: 4,
+    guests: [
+      { firstName: "Ana", lastName: "One", ageTier: "ADULT", isMember: true, priceCents: 17_336, nights: [night(10, 4112), night(11, 4112), night(12, 4556), night(13, 4556)] },
+      { firstName: "Bo", lastName: "Two", ageTier: "ADULT", isMember: false, priceCents: 26_002, nights: [night(10, 6167), night(11, 6167), night(12, 6834), night(13, 6834)] },
+      { firstName: "Cy", lastName: "Three", ageTier: "CHILD", isMember: true, priceCents: 8_667, nights: [night(10, 2056), night(11, 2056), night(12, 2278), night(13, 2277)] },
+    ],
+    promo: { aggregateCents: -1_333, redemptions: [{ id: "r1", priceAdjustmentCents: -1_333, promoCode: { code: "SAVE" } }], adjustmentRows: [], firstGuest: null },
+    changeFeeCents: 2_501,
+    taxOverrides: "ON",
+    postedLegs: [taxedLeg("BOOKING_REVENUE", STAY, 50_672), taxedLeg("FEE_REVENUE", "fee:a", 2_501)],
+    ...over,
+  });
+  const lineTax = (lines: { taxAmount?: number }[]) => lines.map((line) => providerAmountToCents(line.taxAmount));
+  /** What Xero would work out on its own: round-half-up(line × rate / (10000 + rate)), line by line. */
+  const xeroOwnTax = (lines: Parameters<typeof invoiceLineItemsTotalCents>[0]) =>
+    lines.reduce((sum, line) => sum + splitTaxInclusiveGross(Math.abs(invoiceLineItemsTotalCents([line])), treatment)!.taxCents * Math.sign(invoiceLineItemsTotalCents([line])), 0);
+
+  it("makes the invoice's tax the journal's to the cent on a multi-night, multi-line booking", () => {
+    const i = party();
+    const plan = planPrimaryBookingInvoice(i);
+    expect(plan.outcome).toBe("COVERED");
+    const stayLines = plan.lines.filter((line) => line.description !== CHANGE_FEE_DESCRIPTION);
+    expect(stayLines.length).toBeGreaterThanOrEqual(7); // price runs per guest, plus the promo line
+    const stayTax = stayLines.reduce((sum, line) => sum + providerAmountToCents(line.taxAmount)!, 0);
+    expect(stayTax).toBe(splitTaxInclusiveGross(50_672, treatment)!.taxCents);
+    expect(providerAmountToCents(plan.lines.at(-1)!.taxAmount)).toBe(splitTaxInclusiveGross(2_501, treatment)!.taxCents);
+    // Without the overrides Xero's own per-line sum is off the journal's, which is why the decision was needed.
+    expect(xeroOwnTax(buildPrimaryInvoiceLines(i).stayLines)).not.toBe(stayTax);
+    // Amounts and codes are the builders'; only the tax is added.
+    expect(plan.lines.map((line) => ({ ...line, taxAmount: undefined }))).toEqual(buildPrimaryInvoiceLines(i).lines.map((line) => ({ ...line, taxAmount: undefined })));
+    expect(plan.payloadHash).toBe(stableDigest(sanitizeForJson(plan.lines)));
+    expect(plan.frozenMapping.taxAllocation).toEqual({ method: "JOURNAL_LARGEST_REMAINDER", lineTaxCents: lineTax(plan.lines) });
+  });
+
+  it("adds no tax to the lines when paused, unregistered or replayed", () => {
+    const paused = planPrimaryBookingInvoice(party({ taxOverrides: "PAUSED" }));
+    expect(paused.lines).toEqual(buildPrimaryInvoiceLines(party()).lines);
+    expect(paused).toMatchObject({ outcome: "COVERED", frozenMapping: { taxAllocation: "PAUSED" } });
+
+    const notRegistered = party({ taxRendering: { lineAmountTypes: LineAmountTypes.NoTax },
+      postedLegs: [leg("BOOKING_REVENUE", STAY, 50_672, { taxCode: null }), leg("FEE_REVENUE", "fee:a", 2_501, { taxCode: null })] });
+    const unregistered = planPrimaryBookingInvoice(notRegistered);
+    expect(unregistered.lines).toEqual(buildPrimaryInvoiceLines(notRegistered).lines);
+    expect(unregistered.outcome).toBe("COVERED");
+    expect(unregistered.frozenMapping).not.toHaveProperty("taxAllocation");
+
+    const stored = sanitizeForJson(buildPrimaryInvoiceLines(party()).lines) as never;
+    const replayed = planReplayedPrimaryBookingInvoice({ bookingId: BOOKING, storedLines: stored, storedLineAmountTypes: "Inclusive", postedLegs: party().postedLegs });
+    expect(replayed.lines).toBe(stored);
+    expect(replayed.frozenMapping).not.toHaveProperty("taxAllocation");
+  });
+
+  it("leaves a conflict's lines as built", () => {
+    const plan = planPrimaryBookingInvoice(party({ postedLegs: [taxedLeg("BOOKING_REVENUE", STAY, 50_671), taxedLeg("FEE_REVENUE", "fee:a", 2_501)] }));
+    expect(plan).toMatchObject({ outcome: "CONFLICT", reason: "STAY_CENTS" });
+    expect(plan.lines.every((line) => line.taxAmount === undefined)).toBe(true);
+  });
+
+  it("is TAX_CENTS, with the lines untouched, when the journal's tax cannot be shared", () => {
+    const tooMuch = { ...taxedLeg("BOOKING_REVENUE", STAY, 50_672), taxCents: 50_673, netCents: -1 };
+    const plan = planPrimaryBookingInvoice(party({ postedLegs: [tooMuch, taxedLeg("FEE_REVENUE", "fee:a", 2_501)] }));
+    expect(plan).toMatchObject({ outcome: "CONFLICT", reason: "TAX_CENTS" });
+    expect(plan.lines).toEqual(buildPrimaryInvoiceLines(party()).lines);
+
+    const untaxed = planPrimaryBookingInvoice(party({ postedLegs: [leg("BOOKING_REVENUE", STAY, 50_672, { taxCode: null }), taxedLeg("FEE_REVENUE", "fee:a", 2_501)] }));
+    expect(untaxed).toMatchObject({ outcome: "CONFLICT", reason: "TAX_CENTS" });
+  });
+
+  it("is TAX_CENTS when the invoice Xero returned holds other tax on a line than was sent", () => {
+    const plan = planPrimaryBookingInvoice(party());
+    const billed = sanitizeForJson(plan.lines) as { taxAmount: number }[];
+    expect(confirmBilledPrimaryInvoice(plan, billed as never)).toBe(plan);
+    billed[0]!.taxAmount = Math.round(billed[0]!.taxAmount * 100 - 1) / 100;
+    expect(confirmBilledPrimaryInvoice(plan, billed as never)).toMatchObject({ outcome: "CONFLICT", reason: "TAX_CENTS", frozenMapping: { componentTaxCodes: [] } });
+  });
+});
+
+const CHANGE_FEE_DESCRIPTION = changeFeeLineItem(1, mapping, BASELINE_XERO_TAX_RENDERING).description;

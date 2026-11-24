@@ -5061,6 +5061,34 @@ capture's decision by `late-capture-kept-xero.test.ts`,
 `xero-kept-late-capture-ledger.test.ts` and, against real PostgreSQL,
 `kept-change-capture-record.realdb.test.ts` (#4324).
 
+### GST-override pause (#5208)
+
+New primary invoices carry the journal's GST on each line while the overrides
+are ON. The state is derived, never stored as a flag: the overrides are PAUSED
+while any `XeroTaxOverrideMismatch` row has `clearedAt IS NULL`.
+
+```mermaid
+stateDiagram-v2
+    [*] --> Open: Xero returns other line tax than was sent (create or update)
+    Open --> Cleared: finance editor ticks, writes a note, resumes
+    Cleared --> [*]
+```
+
+- **Open.** `recordXeroTaxOverrideMismatch` inserts one row per sync operation
+  (unique on `xeroSyncOperationId`; a second record is a no-op) with its audit
+  row, in one short transaction outside any provider call. The sync operation's
+  outcome does not change.
+- **Cleared.** `clearXeroTaxOverridePause` claims the listed rows with
+  `updateMany ... WHERE id IN (...) AND clearedAt IS NULL`, setting `clearedAt`,
+  `clearedByMemberId` and `clearNote`; a lost claim writes no audit row. A
+  cleared row never reopens.
+- The pause is read outside any transaction when each outbox run builds a
+  primary invoice's lines (`INV-LOCK-004`); a run already past that read still
+  sends with overrides. Clearing re-sends nothing.
+
+Pinned by `xero-tax-override-safeguard.test.ts`, `xero-booking-invoice.test.ts`
+and, against real PostgreSQL, `xero-tax-override-safeguard.realdb.test.ts`.
+
 ## Cron And Recovery Lifecycle
 
 ```text
