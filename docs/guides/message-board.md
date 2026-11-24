@@ -106,6 +106,43 @@ your own board are unaffected. The
 setup page shows both version numbers; once they match, sharing and the pull
 resume on their own.
 
+### Sharing problems
+
+Very rarely a share or a withdrawal ends in a way this site could not record.
+The site sends a post at most once, so that a failure never puts two copies on
+other clubs' boards, which means it never retries these on its own. They are
+listed in a **Sharing problems** box at the top of the moderation list, one
+entry per post, removed posts included:
+
+- **Copy on other clubs' boards** — the central server accepted the post, but
+  this site could not record that. The entry shows the **Central server id**
+  with a **Copy** button. Click **Withdraw the shared copy** to take that copy
+  down; the post stays on your own board. Removing the post also withdraws it.
+- **Removed here, not yet taken down elsewhere** — you removed a shared post
+  and the central server has not confirmed taking it off other clubs' boards.
+  The site retries this automatically; **Withdraw the shared copy** tries
+  again now.
+- **Share result unknown** — the post was sent, but no result was recorded, so
+  this site holds no central server id for it. Ask whoever runs the site to
+  find the id in the error log using the **Post reference** shown, then ask
+  the central server's administrator to take the copy down. Click **Mark as
+  dealt with** once that is done, or once you know there is no copy. This
+  button appears only once the send is 15 minutes old: before that, the site
+  may still be recording its own result.
+
+If **Withdraw the shared copy** fails, the reason shows under the entry and the
+id is kept. Send the id to the central server's administrator and ask them to
+take the copy down. A removed post can hold two copies; if one came down
+before the other failed, the message says which. Every attempt, including a
+failed or half-finished one, is written to the audit log with the ids
+withdrawn and the ids still outstanding.
+
+In the list below, a post with one of these problems carries a **Sharing
+problem** badge. A post whose share failed outright, so nothing reached other
+clubs, carries **Not shared with other clubs** with the recorded reason; post
+it again with **Share to all clubs** ticked if it still matters. Members see
+none of this.
+
 ### Set how long posts are kept
 
 1. On the same screen, find the **Retention** card.
@@ -171,8 +208,8 @@ on each such pull.
 | The buttons are greyed out | Your role has membership **view**, not **edit** | Ask a full admin for membership edit access |
 | A hidden post still shows for a member | They are looking at a cached page | Ask them to reload; hiding takes effect immediately on the server |
 | A member says their post vanished | It was hidden or removed by an admin | Check **Hidden**, and the audit log for a removal |
-| A post shows as not shared, or a shared post could not be withdrawn, but it is on other clubs' boards | Sharing reached the central server but recording that here failed (rare: the database was unavailable at that moment). Nothing on screen shows this yet. To avoid a duplicate, the site never sends a post twice, so it is not retried | Ask whoever runs the site to look up the post's server id: it is in the post's share error in the database, or in the error log, which names the post and the server id. Then ask the central server's administrator to take that copy down. Removing the post here does not withdraw it, because this site holds no server id for it |
-| A post you shared never appeared on other clubs' boards | Sharing was interrupted (the site restarted or the database dropped mid-share). A share is sent at most once, so it is not retried | Post it again with **Share to all clubs** ticked |
+| A post shows as not shared, or a shared post could not be withdrawn, but it is on other clubs' boards | Sharing reached the central server but recording that here failed (rare: the database was unavailable at that moment). To avoid a duplicate, the site never sends a post twice, so it is not retried | The post is listed under **Sharing problems** at the top of the moderation list. Where the **Central server id** is shown, click **Withdraw the shared copy**; if that fails, copy the id and send it to the central server's administrator to take the copy down. See [Sharing problems](#sharing-problems) |
+| A post you shared never appeared on other clubs' boards | Sharing was interrupted (the site restarted or the database dropped mid-share). A share is sent at most once, so it is not retried | If it is listed as **Share result unknown**, follow that entry: there may be a copy after all. Otherwise post it again with **Share to all clubs** ticked |
 
 ## Related links
 
