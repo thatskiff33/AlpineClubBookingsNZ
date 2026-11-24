@@ -79,6 +79,20 @@ const GROUP_SETTLEMENT_INVOICE_VOID_ENDED = {
   invoiceNotFoundInXero: "NOT_FOUND",
 } as const;
 
+/** The response-payload flag a VOID handler writes when the invoice ended. */
+type GroupSettlementInvoiceVoidEndedFlag = keyof typeof GROUP_SETTLEMENT_INVOICE_VOID_ENDED;
+
+/**
+ * The payload entry a VOID handler spreads into its completion for how the
+ * invoice ended: the one place the flag names are declared, so a writer can
+ * only write a flag `groupSettlementInvoiceVoidEnded` reads.
+ */
+export function groupSettlementInvoiceVoidEndedPayload<Flag extends GroupSettlementInvoiceVoidEndedFlag>(
+  flag: Flag
+): Record<Flag, true> {
+  return { [flag]: true } as Record<Flag, true>;
+}
+
 /** How a finished VOID's response payload says the invoice ended, or null when it did not. */
 export function groupSettlementInvoiceVoidEnded(responsePayload: unknown): "VOIDED" | "NOT_FOUND" | null {
   const payload = asRecord(responsePayload);

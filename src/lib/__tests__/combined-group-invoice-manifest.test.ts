@@ -260,6 +260,24 @@ describe("recordCombinedGroupInvoiceManifest (#4525, ALP-437)", () => {
       expect(mocks.logger.error).not.toHaveBeenCalled();
     });
 
+    it("covers when the earlier invoice's release lands between this run's own conflict and its step 2, with the release's retry absent", async () => {
+      earlierCovers();
+      mocks.tx.memberMoneyExportCoverage.findFirst.mockResolvedValue({ coverageGeneration: 0 });
+      // inv-0's release commits just after this run's conflict commits; its retry of inv-1's record never runs.
+      mocks.$transaction.mockImplementationOnce(async (fn: (client: typeof mocks.tx) => Promise<unknown>) => {
+        const result = await fn(mocks.tx);
+        mocks.tx.memberMoneyExportCoverage.findMany.mockResolvedValue([]);
+        return result;
+      });
+      await recordCombinedGroupInvoiceManifest(built(), target);
+      expect(manifestWrites()).toEqual([
+        expect.objectContaining({ legacyKey: ATTEMPT_KEY, outcome: "CONFLICT", reason: "ALREADY_COVERED" }),
+        expect.objectContaining({ legacyKey: SUCCESSOR_KEY, outcome: "COVERED", providerInvoiceId: "inv-1" }),
+      ]);
+      expect(coverageRows().map((row: { coverageGeneration: number }) => row.coverageGeneration)).toEqual([1, 1]);
+      expect(mocks.logger.error).not.toHaveBeenCalled();
+    });
+
     it("releases the successor too when this invoice's own void released its conflict while the successor was written", async () => {
       earlierCovers();
       await recordCombinedGroupInvoiceManifest(built(), target);

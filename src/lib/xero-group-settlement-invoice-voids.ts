@@ -37,6 +37,7 @@ import { providerAmountToCents } from "@/lib/money-provider-amount";
 import { getXeroErrorStatusCode } from "@/lib/xero-error-shape";
 import {
   groupSettlementInvoiceLink,
+  groupSettlementInvoiceVoidEndedPayload,
   groupSettlementInvoiceVoidKey,
 } from "@/lib/xero-group-settlement-invoice-outbox";
 import { alertGroupSettlementInvoice } from "@/lib/group-settlement-invoice-alerts";
@@ -189,7 +190,7 @@ export async function voidCancelledGroupSettlementInvoice(params: {
       await completeXeroSyncOperation(syncOperation, {
         status: "SUCCEEDED",
         responsePayload: {
-          cancelledAfterInvoiceCreation: true,
+          ...groupSettlementInvoiceVoidEndedPayload("cancelledAfterInvoiceCreation"),
           createInvoice: params.createResponse ?? null,
           voidInvoice: response.body ?? null,
           invoiceEmailSuppressed: true,
@@ -252,7 +253,7 @@ async function voidStillNeeded(params: {
     await releaseCoverageAround({ settlementId: params.settlementId, invoiceId: params.invoiceId, reason: "NOT_FOUND" }, () =>
       completeXeroSyncOperation(params.syncOperation, {
         status: "SUCCEEDED",
-        responsePayload: { invoiceNotFoundInXero: true },
+        responsePayload: groupSettlementInvoiceVoidEndedPayload("invoiceNotFoundInXero"),
       })
     );
     return false;
@@ -261,7 +262,7 @@ async function voidStillNeeded(params: {
     await releaseCoverageAround({ settlementId: params.settlementId, invoiceId: params.invoiceId, reason: "VOIDED" }, () =>
       completeXeroSyncOperation(params.syncOperation, {
         status: "SUCCEEDED",
-        responsePayload: { invoiceAlreadyVoid: true, invoiceStatus: state.status },
+        responsePayload: { ...groupSettlementInvoiceVoidEndedPayload("invoiceAlreadyVoid"), invoiceStatus: state.status },
         xeroObjectType: "INVOICE",
         xeroObjectId: params.invoiceId,
         xeroObjectUrl: buildXeroInvoiceUrl(params.invoiceId),
@@ -414,7 +415,7 @@ export async function voidXeroInvoiceForAbandonedGroupSettlement(
     completeXeroSyncOperation(options.syncOperation, {
       status: "SUCCEEDED",
       responsePayload: {
-        abandonedBySettlement: true,
+        ...groupSettlementInvoiceVoidEndedPayload("abandonedBySettlement"),
         voidInvoice: response.body ?? null,
       },
       xeroObjectType: "INVOICE",
