@@ -15,7 +15,7 @@ import { z } from "zod";
 
 import { adminListPageQueryFields } from "@/lib/admin-list-page";
 import type { NominatorSlot } from "@/lib/nomination-slots";
-import { recordIdParamsSchema } from "@/lib/route-id-params";
+import { routeIdParamsSchema } from "@/lib/route-id-params";
 
 // ---------------------------------------------------------------------------
 // Membership applications
@@ -36,7 +36,7 @@ const everyNominatorSlotListed: [MissingNominatorSlot] extends [never] ? true : 
 void everyNominatorSlotListed;
 
 /** The address of `POST /api/admin/member-applications/[id]/nominators/[slot]/replace`. */
-export const replaceNominatorParamsSchema = recordIdParamsSchema.extend({
+export const replaceNominatorParamsSchema = routeIdParamsSchema.extend({
   slot: z.enum(NOMINATOR_SLOTS),
 });
 

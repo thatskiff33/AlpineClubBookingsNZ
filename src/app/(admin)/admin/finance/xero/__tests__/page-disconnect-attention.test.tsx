@@ -43,6 +43,7 @@ vi.mock("../_components/panels", async () => {
       </button>
     ),
     ClubTaxCard: stub,
+    XeroTaxOverridePauseCard: stub,
     ContactSyncPanel: stub,
     ErasedMemberContactsPanel: stub,
     HealthAndDiagnosticsPanels: stub,

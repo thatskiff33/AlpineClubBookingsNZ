@@ -149,7 +149,7 @@ export const CLUB_POST_LIST_CONNECTION_SHAPE = connectionShapeFor<{ posts: Admin
 
 /** `status` is "edited" (with the saved text's `length`), "hidden" or "visible". */
 export const CLUB_POST_MODERATED_CONNECTION_SHAPE = connectionShapeFor<{
-  status: "edited" | "hidden" | "visible";
+  status: "edited" | "hidden" | "visible" | "withdrawn" | "dismissed";
   length?: number;
 }>({ status: true, length: true });
 

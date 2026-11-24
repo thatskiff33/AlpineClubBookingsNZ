@@ -3,6 +3,7 @@ import { redirect } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { MemberGuestDelegateConsentCard } from "@/components/member-guest-delegate-consent-card";
+import { RemovedBookingNotice } from "@/components/removed-booking-notice";
 import { auth } from "@/lib/auth";
 import type { ClubDateFormat, ClubTimeZone } from "@/lib/club-time";
 import { clubTimeZone } from "@/lib/club-time/server";
@@ -93,6 +94,9 @@ export default async function DelegateConsentPage({
             </Button>
           </CardContent>
         </Card>
+      ) : state.kind === "BOOKING_REMOVED" ? (
+        // Only the target or an accepted delegate reaches this (#5266).
+        <RemovedBookingNotice links={[{ href: "/", label: "Back to the home page" }]} />
       ) : state.kind === "MODULE_OFF" ? (
         <Card>
           <CardHeader>

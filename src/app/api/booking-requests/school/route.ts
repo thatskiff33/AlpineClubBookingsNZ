@@ -8,9 +8,9 @@ import {
 import {
   assertSchoolGuestsWithinLodgeCapacity,
   createSchoolBookingRequest,
-  schoolChildCountsSchema,
   schoolTeacherSchema,
 } from "@/lib/school-booking-request";
+import { schoolChildCountsSchema } from "@/lib/admin-bookings-schemas/requests";
 import { generateSchoolGuests } from "@/lib/school-booking-constants";
 import { applyRateLimit, rateLimiters } from "@/lib/rate-limit";
 import { parsedDateOnlySchema } from "@/lib/date-only-schema";

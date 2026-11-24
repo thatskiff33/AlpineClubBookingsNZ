@@ -753,6 +753,7 @@ describe("PUT /api/bookings/[id]/modify-dates — price increase", () => {
     PUT = mod.PUT;
   });
 
+  // #5407 item 42: the first case to call the route pays for loading its module graph; timed out at 5,000ms on a busy host.
   it("stores the itemised lines behind the delta, summing to priceDiffCents (#3530)", async () => {
     // A booking whose stored total IS its two sold nights (5000), moved to two
     // nights at 7500: the delta is +10000, and the lines say which nights went
@@ -795,7 +796,7 @@ describe("PUT /api/bookings/[id]/modify-dates — price increase", () => {
       expect.objectContaining({ kind: "GUEST_NIGHTS", sign: -1, unitCents: 2500, nightCount: 2, startDate: "2026-08-01", amountCents: -5000, guestNames: ["Alice Smith"] }),
       expect.objectContaining({ kind: "GUEST_NIGHTS", sign: 1, unitCents: 7500, nightCount: 2, startDate: "2026-08-05", amountCents: 15000 }),
     ]);
-  });
+  }, 30_000);
 
   // #3954 round 9: the door withholds the secret of an ask a reduction retired
   // before it was offered; its email must not name that ask as due either.

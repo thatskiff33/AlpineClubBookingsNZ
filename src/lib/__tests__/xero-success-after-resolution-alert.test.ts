@@ -27,17 +27,20 @@ import { TEST_XERO_CLAIMED_AT, xeroClaim } from "./helpers/xero-claim";
 const mocks = vi.hoisted(() => ({
   transaction: vi.fn(), updateMany: vi.fn(), findUnique: vi.fn(), findUniqueOrThrow: vi.fn(),
   upsert: vi.fn(), claim: vi.fn(), send: vi.fn(), warn: vi.fn(), repeatedFailure: vi.fn(),
+  markOwed: vi.fn(async () => undefined), settleOwed: vi.fn(async () => undefined),
 }));
 const store = {
   xeroSyncOperation: { updateMany: mocks.updateMany, findUnique: mocks.findUnique, findUniqueOrThrow: mocks.findUniqueOrThrow },
   xeroObjectLink: { upsert: mocks.upsert },
 };
-vi.mock("@/lib/prisma", () => ({ prisma: { $transaction: mocks.transaction } }));
+vi.mock("@/lib/prisma", () => ({ prisma: { $transaction: mocks.transaction, alertCooldown: { findUnique: vi.fn(async () => null) } } }));
 vi.mock("@/lib/alert-cooldown", () => ({
   ALERT_ONCE_EVER_WINDOW_MS: 1_000_000,
   ALERT_NOBODY_ELIGIBLE_RETRY_MS: 1000,
   claimAlertCooldown: mocks.claim,
   deferAlertCooldown: vi.fn(async () => undefined), releaseAlertCooldown: vi.fn(async () => undefined),
+  // #5255: the alert is stored for the sweep and settled once sent.
+  markAlertOwed: mocks.markOwed, settleOwedAlert: mocks.settleOwed, confirmAlertCooldownSend: vi.fn(async () => true),
 }));
 vi.mock("@/lib/email", () => ({ sendAdminXeroSyncErrorAlert: mocks.send }));
 vi.mock("@/lib/logger", () => ({ default: { warn: mocks.warn, error: vi.fn(), info: vi.fn() } }));
@@ -46,6 +49,7 @@ vi.mock("@/lib/xero-hardening", () => ({ maybeNotifyXeroRepeatedFailure: mocks.r
 import { completeXeroSyncOperation } from "@/lib/xero-sync";
 import { xeroSuccessAfterResolutionAlertKey } from "@/lib/xero-success-after-resolution-alert";
 import { CREDIT_SPENT_OUTSIDE_APP_RESOLUTION_REASON } from "@/lib/xero-applied-credit-spent-outside-app";
+import { CENSUS_TIMEOUT_MS } from "@/test/census-timeout";
 
 const OPERATION_ID = "op-late";
 const link = { localModel: "Payment", localId: "payment-late", xeroObjectType: "PAYMENT", xeroObjectId: "pay-late", role: "STRIPE_PAYMENT" };
@@ -110,6 +114,12 @@ describe("#4374: a success landing after an officer resolved the operation in Xe
       expect(mocks.claim).toHaveBeenCalledTimes(2);
       expect(mocks.claim).toHaveBeenCalledWith(expect.objectContaining({ key: xeroSuccessAfterResolutionAlertKey(OPERATION_ID) }));
       expect(mocks.send).toHaveBeenCalledTimes(1);
+      // #5255: nothing raises it again, so the alert is stored for the sweep, and settled once sent.
+      expect(mocks.markOwed).toHaveBeenCalledWith(expect.objectContaining({
+        key: `once-ever-owed:${xeroSuccessAfterResolutionAlertKey(OPERATION_ID)}`,
+        replayAlert: expect.objectContaining({ alert: expect.objectContaining({ kind: "xero-sync-error", errorType: "XERO_SUCCESS_AFTER_RESOLUTION" }) }),
+      }));
+      expect(mocks.settleOwed).toHaveBeenCalledTimes(1);
       expect(mocks.send).toHaveBeenCalledWith(expect.objectContaining({
         errorType: "XERO_SUCCESS_AFTER_RESOLUTION",
         operation: "CREATE PAYMENT for Payment payment-late (outbox operation op-late)",
@@ -292,7 +302,7 @@ function completionSites(): CompletionSite[] {
   return sites;
 }
 
-describe("#4374 census: a completion inside its caller's transaction delivers the alert after commit", () => {
+describe("#4374 census: a completion inside its caller's transaction delivers the alert after commit", { timeout: CENSUS_TIMEOUT_MS }, () => {
   const sites = completionSites();
   // `\bstore\b`, not `store:`: the shorthand `{ store }` and `store ? { store } : undefined` pass it too.
   const storeSites = sites.filter((site) => /\bstore\b/.test(site.options));

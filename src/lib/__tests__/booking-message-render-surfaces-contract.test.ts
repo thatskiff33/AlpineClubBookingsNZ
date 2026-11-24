@@ -27,6 +27,7 @@ import {
   renderClientBookingMessage,
 } from "@/lib/booking-message-definitions";
 import { balancedBrackets } from "./support/balanced-brackets";
+import { CENSUS_TIMEOUT_MS } from "@/test/census-timeout";
 
 /**
  * Files that read booking-message bodies and put them on a screen, with the
@@ -292,7 +293,7 @@ describe("every surface that renders a booking-message body (#2919)", () => {
     );
 
     expect(handSubstitution).toEqual([]);
-  });
+  }, CENSUS_TIMEOUT_MS);
 });
 
 describe("the client renderer's contract (#2919)", () => {

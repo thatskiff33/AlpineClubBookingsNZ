@@ -879,7 +879,6 @@ export async function joinGroupBookingAsMember(
       (await requiresPaidSubscriptionForMemberForBooking(prisma, {
         memberId: sessionUserId,
         seasonYear,
-        ageTier: joiner.ageTier,
       }))
     ) {
       const paidSub = await prisma.memberSubscription.findFirst({

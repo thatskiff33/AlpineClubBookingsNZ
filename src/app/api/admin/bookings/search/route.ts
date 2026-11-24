@@ -8,15 +8,14 @@ import {
 import { prisma } from "@/lib/prisma";
 import { exactContains, exactPrefix } from "@/lib/prisma-exact-prefix";
 import { requireAdmin } from "@/lib/session-guards";
-import { z } from "zod";
+import { adminBookingSearchQuerySchema } from "@/lib/admin-bookings-schemas/bookings";
+import {
+  ADMIN_BOOKING_SEARCH_CONNECTION_SHAPE,
+  type AdminBookingSearchAnswer,
+} from "@/lib/connection-shapes/bookings-bookings";
+import { connectionJson } from "@/lib/mcp-connection-request";
 import { formatDateOnly } from "@/lib/date-only";
 import { NOT_CARD_REFUND_REVERSAL_INVOICE } from "@/lib/xero-card-refund-reversal-outbox";
-
-const adminBookingSearchQuerySchema = z.object({
-  q: z.string().trim().min(2),
-  limit: z.coerce.number().int().min(1).max(20).default(8),
-  deleted: z.enum(["hide", "include", "only"]).default("hide"),
-});
 
 const bookingReferencePattern =
   /\bbooking(?:\s+(?:id|ref(?:erence)?(?:\s+number)?))?[\s:#-]+([a-z0-9][a-z0-9_-]{1,})\b/i;
@@ -104,6 +103,7 @@ function getInvoiceSyncEligibility(booking: {
 /**
  * GET /api/admin/bookings/search?q=searchterm
  * Search bookings by booking ID/reference prefix or member identity.
+ * Also the AI app action `search_bookings` (ALP-719).
  */
 export async function GET(request: NextRequest) {
   const guard = await requireAdmin();
@@ -271,7 +271,8 @@ export async function GET(request: NextRequest) {
       };
     });
 
-    return NextResponse.json({ bookings: results });
+    const answer: AdminBookingSearchAnswer = { bookings: results };
+    return connectionJson(request, answer, ADMIN_BOOKING_SEARCH_CONNECTION_SHAPE);
   } catch (err) {
     logger.error({ err, query: q }, "Error searching admin bookings");
     return NextResponse.json({ error: "Failed to search bookings" }, { status: 500 });

@@ -34,7 +34,7 @@ import {
   INDUCTION_UPDATED_CONNECTION_SHAPE,
 } from "@/lib/connection-shapes/membership-committee";
 import { committeeRoleCreateSchema, committeeRolePatchSchema } from "@/lib/forms/committee-role-schema";
-import { recordIdParamsSchema } from "@/lib/route-id-params";
+import { routeIdParamsSchema } from "@/lib/route-id-params";
 
 import type { McpAction } from "../catalogue";
 
@@ -72,7 +72,7 @@ export const MEMBERSHIP_COMMITTEE_MCP_ACTIONS: readonly McpAction[] = [
       "Changes a committee role's fields; a field left out keeps its value. `isActive` false archives the role, true restores it.",
     method: "PATCH",
     path: "/api/admin/committee/roles/[id]",
-    params: recordIdParamsSchema,
+    params: routeIdParamsSchema,
     body: committeeRolePatchSchema,
     kind: "write",
     returns: COMMITTEE_ROLE_CONNECTION_SHAPE,
@@ -85,7 +85,7 @@ export const MEMBERSHIP_COMMITTEE_MCP_ACTIONS: readonly McpAction[] = [
       "Deletes a committee role that has never had an assignment; one that has is refused and can be archived with `update_committee_role` instead. This cannot be undone.",
     method: "DELETE",
     path: "/api/admin/committee/roles/[id]",
-    params: recordIdParamsSchema,
+    params: routeIdParamsSchema,
     kind: "destructive",
     returns: COMMITTEE_ROLE_DELETED_CONNECTION_SHAPE,
     core: false,
@@ -119,7 +119,7 @@ export const MEMBERSHIP_COMMITTEE_MCP_ACTIONS: readonly McpAction[] = [
     summary: `Changes one committee assignment (from \`list_committee_assignments\`); a field left out keeps its value. ${PUBLIC_LISTING_HELP} \`isActive\` true restores a deactivated assignment.`,
     method: "PATCH",
     path: "/api/admin/committee/assignments/[id]",
-    params: recordIdParamsSchema,
+    params: routeIdParamsSchema,
     body: committeeAssignmentPatchSchema,
     kind: "destructive",
     returns: COMMITTEE_ASSIGNMENT_CONNECTION_SHAPE,
@@ -132,7 +132,7 @@ export const MEMBERSHIP_COMMITTEE_MCP_ACTIONS: readonly McpAction[] = [
       "Deactivates one committee assignment and removes it from the public committee page, turning off its published, phone and contactable settings. `update_committee_assignment` can restore it, but those settings have to be set again.",
     method: "DELETE",
     path: "/api/admin/committee/assignments/[id]",
-    params: recordIdParamsSchema,
+    params: routeIdParamsSchema,
     kind: "destructive",
     returns: COMMITTEE_ASSIGNMENT_CONNECTION_SHAPE,
     core: false,
@@ -150,13 +150,13 @@ export const MEMBERSHIP_COMMITTEE_MCP_ACTIONS: readonly McpAction[] = [
     core: false,
   },
   {
-    id: "get_induction",
+    id: "get_admin_induction",
     title: "Show a member induction",
     summary:
       "One induction: its checklist, the sign-offs recorded so far with any comments, its assigned signers, and the declaration each signer accepts.",
     method: "GET",
     path: "/api/admin/inductions/[id]",
-    params: recordIdParamsSchema,
+    params: routeIdParamsSchema,
     kind: "read",
     returns: INDUCTION_DETAIL_CONNECTION_SHAPE,
     core: false,
@@ -178,7 +178,7 @@ export const MEMBERSHIP_COMMITTEE_MCP_ACTIONS: readonly McpAction[] = [
     summary: `Replaces the members assigned to sign off an induction that is not voided with \`signerMemberIds\` (at most ${MAX_ASSIGNED_INDUCTION_SIGNERS}); an empty list removes them all. Nobody is emailed.`,
     method: "PATCH",
     path: "/api/admin/inductions/[id]",
-    params: recordIdParamsSchema,
+    params: routeIdParamsSchema,
     body: reassignInductionSignersSchema.omit({ action: true }),
     fixedBody: { action: "REASSIGN_SIGNERS" },
     kind: "destructive",
@@ -192,7 +192,7 @@ export const MEMBERSHIP_COMMITTEE_MCP_ACTIONS: readonly McpAction[] = [
       "Voids an induction, completed or not, recording `reason`. A voided induction cannot be signed, reassigned or reopened; start a new one instead.",
     method: "PATCH",
     path: "/api/admin/inductions/[id]",
-    params: recordIdParamsSchema,
+    params: routeIdParamsSchema,
     body: voidInductionSchema.omit({ action: true }),
     fixedBody: { action: "VOID" },
     kind: "destructive",
@@ -216,7 +216,7 @@ export const MEMBERSHIP_COMMITTEE_MCP_ACTIONS: readonly McpAction[] = [
     summary: "One induction checklist template with its sections and items, and whether any induction has used it.",
     method: "GET",
     path: "/api/admin/induction-templates/[id]",
-    params: recordIdParamsSchema,
+    params: routeIdParamsSchema,
     kind: "read",
     returns: INDUCTION_TEMPLATE_DETAIL_CONNECTION_SHAPE,
     core: false,

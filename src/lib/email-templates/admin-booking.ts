@@ -27,6 +27,7 @@ import { emailPalette } from "@/lib/email-theme";
 import { FALLBACK_LODGE_CAPACITY } from "@/lib/lodge-capacity";
 import { emailCalendarDay, emailClubDateTime } from "@/lib/email-templates-club-time";
 import type { ClubFormat } from "@/lib/club-format";
+import { waitlistOfferAlertNote, type WaitlistOfferEmailOutcome } from "@/lib/waitlist-offer-alert-note";
 
 // ---- N-02: Admin Alert — New Booking ----
 
@@ -295,10 +296,14 @@ export function adminWaitlistOfferTemplate(data: {
   checkOut: Date;
   guestCount: number;
   position: number;
+  /** #5433: the deadline in force, which a restart may have moved; null leaves the sentence out. */
+  expiresAt: Date | null;
+  /** #5433: whether the offer email went or was withheld by design. */
+  offerEmail: WaitlistOfferEmailOutcome;
 }): string {
   return layout(`
     ${heading("Waitlist Offer Made")}
-    ${paragraph("A waitlist offer has been sent to " + escapeHtml(data.memberName) + ".")}
+    ${paragraph(escapeHtml(waitlistOfferAlertNote(data.memberName, data.offerEmail)))}
     ${infoTable([
       { label: "Member", value: escapeHtml(data.memberName) },
       { label: "Check-in", value: emailCalendarDay(data.checkIn) },
@@ -306,7 +311,7 @@ export function adminWaitlistOfferTemplate(data: {
       { label: "Guests", value: String(data.guestCount) },
       { label: "Queue Position", value: "#" + String(data.position) },
     ])}
-    ${paragraph("The member has 48 hours to confirm their booking.")}
+    ${data.expiresAt ? paragraph(`The member has until ${emailClubDateTime(data.expiresAt)} to confirm their booking.`) : ""}
     ${button("View Waitlist", BASE_URL + adminHref("waitlist"))}
   `);
 }

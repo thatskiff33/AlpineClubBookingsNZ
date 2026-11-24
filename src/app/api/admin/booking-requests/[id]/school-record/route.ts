@@ -1,5 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 
+import { adminBookingRequestSchoolRecordQuerySchema } from "@/lib/admin-bookings-schemas/requests";
+import { ADMIN_BOOKING_REQUEST_SCHOOL_RECORD_CONNECTION_SHAPE } from "@/lib/connection-shapes/bookings-requests";
+import { connectionJson } from "@/lib/mcp-connection-request";
 import { prisma } from "@/lib/prisma";
 import {
   EmptySchoolNameError,
@@ -26,6 +29,8 @@ import { requireAdmin } from "@/lib/session-guards";
  * `{ area: "bookings", level: "view" }`. Deliberately view-level — knowing which
  * school a name answers to is reading, and a view-only officer looking at a
  * request should be able to see the same thing the person correcting it sees.
+ *
+ * Also the AI app action `preview_booking_request_school_record` (ALP-719).
  */
 export async function GET(
   req: NextRequest,
@@ -35,6 +40,12 @@ export async function GET(
   if (!guard.ok) return guard.response;
 
   const { id } = await params;
+  const query = adminBookingRequestSchoolRecordQuerySchema.safeParse({
+    name: req.nextUrl.searchParams.get("name") ?? undefined,
+  });
+  if (!query.success) {
+    return NextResponse.json({ error: "Invalid query parameters" }, { status: 400 });
+  }
   const request = await prisma.bookingRequest.findUnique({
     where: { id },
     select: { id: true, type: true, schoolName: true },
@@ -54,11 +65,11 @@ export async function GET(
 
   // The candidate name, defaulting to the one already on the request so the
   // form can open with the current answer before anything is typed.
-  const name = (req.nextUrl.searchParams.get("name") ?? request.schoolName ?? "").trim();
+  const name = (query.data.name ?? request.schoolName ?? "").trim();
 
   try {
     const preview = await previewSchoolRecordForName(prisma, name);
-    return NextResponse.json({ schoolRecord: preview });
+    return connectionJson(req, { schoolRecord: preview }, ADMIN_BOOKING_REQUEST_SCHOOL_RECORD_CONNECTION_SHAPE);
   } catch (err) {
     if (err instanceof EmptySchoolNameError) {
       return NextResponse.json({ error: err.message }, { status: err.status });

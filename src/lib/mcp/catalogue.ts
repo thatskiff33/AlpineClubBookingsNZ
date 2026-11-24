@@ -10,7 +10,7 @@
  * the routes import them from (`INV-SSOT`). A field described twice would let
  * the app be told one shape while the route enforces another. So is each
  * action's answer (`returns`): the shape the route projects a connection's
- * answer onto, from `connection-shapes.ts`.
+ * answer onto, from `connection-shapes.ts` (or an area's own shapes module).
  *
  * `mcp-route-census.test.ts` holds every route method in `src/app/api` to
  * either an entry here or a reasoned exclusion (`exclusions.ts`).
@@ -21,6 +21,7 @@ import { z } from "zod";
 import { availabilityQuerySchema } from "@/lib/availability-query-schema";
 import { bookingIdParamsSchema, cancelBookingMutationSchema } from "@/lib/booking-cancel-schema";
 import { bookingCreateCoreShape } from "@/lib/booking-create-fields";
+import type { AdminAccessRequirement } from "@/lib/admin-permissions";
 import type { ConnectionShape } from "@/lib/connection-projection";
 import {
   AGE_GROUPS_CONNECTION_SHAPE,
@@ -59,6 +60,7 @@ import {
   SUBSCRIPTION_STATUS_CONNECTION_SHAPE,
 } from "@/lib/connection-shapes";
 import { MEMBER_AUDIT_TIMELINE_CATEGORY_OPTIONS } from "@/lib/audit-query";
+import { MCP_BOOKING_ACTIONS, MCP_BOOKING_WEBSITE_ONLY_ACTIONS } from "@/lib/mcp/catalogue-bookings";
 import {
   delegatedFamilyDetailsSchema,
   familyAdultRequestSchema,
@@ -70,6 +72,7 @@ import {
   familyRemovalRequestSchema,
 } from "@/lib/family-group-request-schemas";
 import { ROSTER_WINDOW_DAYS } from "@/lib/lodge-roster-window";
+import { MCP_LODGE_LIFE_ACTIONS } from "@/lib/mcp/catalogue-lodge-life";
 import { memberAuditLogQuerySchema } from "@/lib/member-audit-log-query";
 import {
   MEMBER_GUEST_SEARCH_MIN_CHARS,
@@ -83,6 +86,14 @@ import { noticeIdParamsSchema } from "@/lib/notices-shared";
 import { partnerLinkDeleteQuerySchema, partnerLinkRequestSchema } from "@/lib/partner-link-request-schemas";
 import type { StepUpHttpMethod } from "@/lib/step-up-routes";
 
+// An action's flat arguments, kept beside the catalogue that defines them.
+export { mcpActionInputJsonSchema, mcpActionInputSchema, splitMcpActionArguments } from "./action-input";
+
+import { BOOKINGS_BEDS_MCP_ACTIONS } from "./catalogue/bookings-beds";
+import { BOOKINGS_BOOKING_MCP_ACTIONS } from "./catalogue/bookings-bookings";
+import { BOOKINGS_REQUEST_MCP_ACTIONS } from "./catalogue/bookings-requests";
+import { BOOKINGS_REVIEW_QUEUE_MCP_ACTIONS } from "./catalogue/bookings-review-queues";
+import { BOOKINGS_SETUP_MCP_ACTIONS } from "./catalogue/bookings-setup";
 import { MEMBERSHIP_MCP_ACTIONS } from "./catalogue/membership";
 
 /**
@@ -91,12 +102,17 @@ import { MEMBERSHIP_MCP_ACTIONS } from "./catalogue/membership";
  * (`get_skifield_report` refreshes the ski field report's), or its route's own
  * audit row (a lookup of other members records every query, blocked ones
  * included). `write` changes something the member can undo.
- * `destructive` cannot be undone, notifies others or overwrites another
- * person's record (#5305 item 2). View-only runs `read` actions only.
+ * `destructive` cannot be undone from the app, notifies other people, or
+ * overwrites another person's record (owner decision, #5305): for an officer,
+ * any email or notice, any change to a member's booking, request, waitlist
+ * place, bed or promo code, a member's record, and every change to club-wide
+ * or Membership configuration (#5305 comments 7093303964, 7111359405). The
+ * app confirms first, and it is audited as important. View-only runs `read`
+ * actions only.
  */
 export type McpActionKind = "read" | "write" | "destructive";
 
-type ObjectSchema = z.ZodObject<z.ZodRawShape>;
+export type ObjectSchema = z.ZodObject<z.ZodRawShape>;
 
 export interface McpAction {
   /** The tool name the AI app calls. Lower snake case, never reused. */
@@ -129,6 +145,12 @@ export interface McpAction {
   /** Listed as its own tool. The rest are reached through `find_actions`. */
   readonly core: boolean;
   /**
+   * An officer route's explicit `requireAdmin({ permission })`, when it names
+   * one instead of the path's rule. The census reads the handler and fails
+   * unless this matches it, so it is never a free-standing copy.
+   */
+  readonly requires?: AdminAccessRequirement;
+  /**
    * A sentence appended to a successful result that points the member at the
    * website for the step an app cannot take. `{origin}` is the club's site and
    * `{id}` the `id` of the returned record.
@@ -151,7 +173,8 @@ export interface McpWebsiteOnlyAction {
 
 const bookingIdParams = bookingIdParamsSchema;
 
-export const MCP_ACTIONS: readonly McpAction[] = [
+/** The member's own actions (ALP-653, ALP-718, ALP-796). */
+const MEMBER_ACTIONS: readonly McpAction[] = [
   {
     id: "get_availability",
     title: "Check lodge availability",
@@ -425,6 +448,8 @@ export const MCP_ACTIONS: readonly McpAction[] = [
     returns: SKIFIELD_REPORT_CONNECTION_SHAPE,
     core: false,
   },
+  // --- Bookings (ALP-794), in `catalogue-bookings.ts` ---
+  ...MCP_BOOKING_ACTIONS,
   // --- Family and membership (ALP-795) ---
   {
     id: "list_my_family_invitations",
@@ -519,7 +544,7 @@ export const MCP_ACTIONS: readonly McpAction[] = [
     params: familyMemberIdParamsSchema,
     body: delegatedFamilyDetailsSchema.omit({ inheritContactFromSelf: true }),
     fixedBody: { inheritContactFromSelf: true },
-    kind: "write",
+    kind: "destructive",
     returns: FAMILY_MEMBER_DETAILS_CONNECTION_SHAPE,
     core: false,
   },
@@ -604,17 +629,33 @@ export const MCP_ACTIONS: readonly McpAction[] = [
     returns: MEMBERSHIP_CANCELLATION_OPTIONS_CONNECTION_SHAPE,
     core: false,
   },
+  // --- Lodge life (ALP-796), in `catalogue-lodge-life.ts` ---
+  ...MCP_LODGE_LIFE_ACTIONS,
+];
+
+/**
+ * Every action. An officer action is one whose route `getAdminRouteRequirement`
+ * resolves to an admin area: it is offered only to someone holding that area
+ * at that level (`officer-actions.ts`), and its route decides with the
+ * officer's own permissions, exactly as on the admin screens. Each officer
+ * area's actions live in a module of their own under `catalogue/`.
+ */
+export const MCP_ACTIONS: readonly McpAction[] = [
+  ...MEMBER_ACTIONS,
+  // Bookings & Beds (ALP-719), every route the `bookings` area guards bar the
+  // fresh-proof ones.
+  ...BOOKINGS_BOOKING_MCP_ACTIONS,
+  ...BOOKINGS_REQUEST_MCP_ACTIONS,
+  ...BOOKINGS_REVIEW_QUEUE_MCP_ACTIONS,
+  ...BOOKINGS_BEDS_MCP_ACTIONS,
+  ...BOOKINGS_SETUP_MCP_ACTIONS,
+  // Membership (ALP-720), every route the `membership` area guards bar the
+  // fresh-proof ones and those with a permanent reason.
   ...MEMBERSHIP_MCP_ACTIONS,
 ];
 
 export const MCP_WEBSITE_ONLY_ACTIONS: readonly McpWebsiteOnlyAction[] = [
-  {
-    id: "pay_for_booking",
-    title: "Pay for a booking",
-    summary: "Card details are entered on the club website, never in an AI app.",
-    page: "/bookings/{id}",
-    needsId: true,
-  },
+  ...MCP_BOOKING_WEBSITE_ONLY_ACTIONS,
   {
     id: "change_sign_in_details",
     title: "Change password or two-step sign-in",
@@ -642,59 +683,4 @@ export function findMcpAction(id: string): McpAction | undefined {
 
 export function findMcpWebsiteOnlyAction(id: string): McpWebsiteOnlyAction | undefined {
   return MCP_WEBSITE_ONLY_ACTIONS.find((action) => action.id === id);
-}
-
-const EMPTY_INPUT = z.object({});
-
-/**
- * The one flat object an app sends for an action: its path, query and body
- * fields together. The catalogue test refuses an action whose three parts
- * share a key, so each argument has one destination.
- */
-export function mcpActionInputSchema(action: McpAction): ObjectSchema {
-  const shape = {
-    ...action.params?.shape,
-    ...action.query?.shape,
-    ...action.body?.shape,
-  };
-  return Object.keys(shape).length === 0 ? EMPTY_INPUT : z.object(shape);
-}
-
-/**
- * JSON Schema for an action's arguments as the app must send them: `io:
- * "input"` describes a date as the string the route parses, not the value the
- * route's transform produces.
- */
-export function mcpActionInputJsonSchema(action: McpAction): Record<string, unknown> {
-  const schema = z.toJSONSchema(mcpActionInputSchema(action), {
-    io: "input",
-    unrepresentable: "any",
-  }) as Record<string, unknown>;
-  delete schema.$schema;
-  return { ...schema, type: "object" };
-}
-
-/** Where each of an app's flat arguments goes on the request. */
-export function splitMcpActionArguments(
-  action: McpAction,
-  args: Readonly<Record<string, unknown>>,
-): {
-  readonly params: Record<string, unknown>;
-  readonly query: Record<string, unknown>;
-  readonly body: Record<string, unknown> | null;
-} {
-  const pick = (schema: ObjectSchema | undefined) => {
-    const picked: Record<string, unknown> = {};
-    for (const key of Object.keys(schema?.shape ?? {})) {
-      if (args[key] !== undefined) picked[key] = args[key];
-    }
-    return picked;
-  };
-  const hasBody = action.body !== undefined || action.fixedBody !== undefined;
-  return {
-    params: pick(action.params),
-    query: pick(action.query),
-    // `fixedBody` is spread last: an app cannot turn a draft into a booking.
-    body: hasBody ? { ...pick(action.body), ...action.fixedBody } : null,
-  };
 }

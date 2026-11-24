@@ -27,6 +27,11 @@ import { processWaitlistForDates } from "@/lib/waitlist";
 import { getWaitlistPositionOf, isWaitlistPositionShown } from "@/lib/waitlist-queue";
 import { clubFormatValues } from "@/lib/club-format-server";
 import { LOCK1_HOLDER_TRANSACTION_BUDGET } from "@/lib/db-transaction";
+import {
+  ADMIN_RETURN_TO_WAITLIST_CONNECTION_SHAPE,
+  type AdminReturnToWaitlistAnswer,
+} from "@/lib/connection-shapes/bookings-bookings";
+import { connectionJson } from "@/lib/mcp-connection-request";
 
 /**
  * #2649 review — the repair's own lock budget.
@@ -106,6 +111,8 @@ import { LOCK1_HOLDER_TRANSACTION_BUDGET } from "@/lib/db-transaction";
  * release should re-evaluate cover the way a cancellation does is a question
  * about all three release sites at once and is carried forward as its own
  * issue rather than answered differently here for one of them.
+ *
+ * Also the AI app action `return_booking_to_waitlist` (ALP-719).
  */
 export async function POST(
   request: NextRequest,
@@ -377,11 +384,12 @@ export async function POST(
       ),
     );
 
-    return NextResponse.json({
+    const answer: AdminReturnToWaitlistAnswer = {
       success: true,
       status: BookingStatus.WAITLISTED,
       waitlistPosition: result.displayedWaitlistPosition,
-    });
+    };
+    return connectionJson(request, answer, ADMIN_RETURN_TO_WAITLIST_CONNECTION_SHAPE);
   } catch (err) {
     logger.error(
       { err, bookingId },

@@ -7,6 +7,7 @@ vi.mock("@/lib/prisma", () => ({ prisma: {} }));
 import { relativeSource, sourceFiles } from "@/lib/__tests__/support/booking-guest-night-writer-scan";
 import { cardRefundDoorOf } from "@/lib/card-refund-own-note-share";
 import * as keys from "@/lib/payment-recovery-keys";
+import { CENSUS_TIMEOUT_MS } from "@/test/census-timeout";
 
 /**
  * #4312 review (`INV-ADDPAY-047`, `INV-SSOT`): EVERY STRIPE REFUND THE APP
@@ -178,7 +179,7 @@ describe("every Stripe refund the app makes stamps a reason (#4312 review)", () 
     const files = scannedFiles();
     expect(refundCalls(files).length).toBeGreaterThan(15); // 18 when written
     expect(refundCallsWithoutReason(files)).toEqual([]);
-  });
+  }, CENSUS_TIMEOUT_MS);
 
   const at = (text: string) => refundCallsWithoutReason([{ path: "x.ts", text }]).map((finding) => finding.replace(/ \(.*\)$/, ""));
 

@@ -35,10 +35,12 @@ function officerWithMembership(level: AdminPermissionLevel): Session {
   });
 }
 
-function context(session: Session): McpServerContext {
+/** A connection the officer approved for officer actions, unless `officerConsent` is false. */
+function context(session: Session, officerConsent = true): McpServerContext {
   return {
     session,
     caller: {
+      officerConsent,
       grantId: "grant-1",
       memberId: session.user.id,
       clientName: "Example Assistant",

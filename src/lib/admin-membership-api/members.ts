@@ -8,7 +8,8 @@
 import { z } from "zod";
 
 import { ADMIN_LIST_DEFAULT_PAGE_SIZE, ADMIN_LIST_MAX_PAGE_SIZE } from "@/lib/admin-list-page";
-import { recordIdParamsSchema } from "@/lib/route-id-params";
+import { routeIdParamsSchema } from "@/lib/route-id-params";
+import { MEMBER_LIST_SUBSCRIPTION_STATUS_FILTERS } from "@/lib/subscription-liability-where";
 
 const optionalSearchParam = z.string().optional();
 
@@ -28,12 +29,13 @@ export const ADMIN_MEMBER_SORT_FIELDS = ["name", "email", "access", "ageTier", "
 /** `lifecycleStatus`: archived members are left out unless it is `archived` or `all`. */
 export const ADMIN_MEMBER_LIFECYCLE_FILTERS = ["active", "inactive", "cancelled", "archived", "all"] as const;
 
-/** `subscription` values matched against this season's subscription row's status. */
-export const ADMIN_MEMBER_SUBSCRIPTION_STATUS_FILTERS = ["PAID", "UNPAID", "OVERDUE", "NOT_INVOICED"] as const;
-
-/** Every `subscription` value: a status above, or no subscription needed or held this season. */
+/**
+ * Every `subscription` value: a saved-row status the list and its CSV export
+ * filter on (`MEMBER_LIST_SUBSCRIPTION_STATUS_FILTERS`), or no subscription
+ * needed or held this season.
+ */
 export const ADMIN_MEMBER_SUBSCRIPTION_FILTERS = [
-  ...ADMIN_MEMBER_SUBSCRIPTION_STATUS_FILTERS,
+  ...MEMBER_LIST_SUBSCRIPTION_STATUS_FILTERS,
   "NOT_REQUIRED",
   "NONE",
 ] as const;
@@ -131,6 +133,6 @@ export const linkDependentSchema = z.object({
 });
 
 /** `DELETE /api/admin/members/[id]/dependents/[dependentId]`: the parent, then the dependant. */
-export const dependentRouteParamsSchema = recordIdParamsSchema.extend({
+export const dependentRouteParamsSchema = routeIdParamsSchema.extend({
   dependentId: z.string().min(1),
 });

@@ -4,6 +4,7 @@ import ts from "typescript";
 import { describe, expect, it } from "vitest";
 import { ADMIN_PAGES, adminHref, getAdminPage, type AdminPageId } from "@/lib/admin-hubs";
 import { DISPLAY_GLOSSARY_LEAD } from "@/lib/lodge-display/display-terminology";
+import { CENSUS_TIMEOUT_MS } from "@/test/census-timeout";
 
 /**
  * A hub card that opens a whole admin page is titled with that page's registry
@@ -160,7 +161,7 @@ function scan() {
   return { files, checked, mismatches, exempted };
 }
 
-describe("admin hub cards are titled with their page's registry label", () => {
+describe("admin hub cards are titled with their page's registry label", { timeout: CENSUS_TIMEOUT_MS }, () => {
   const { files, checked, mismatches, exempted } = scan();
 
   it("PREMISE: the scan reads the production tree and finds the hubs' cards", () => {

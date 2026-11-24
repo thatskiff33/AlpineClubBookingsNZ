@@ -404,7 +404,7 @@ describe("message board moderation", () => {
     h.listClubPostsForAdmin.mockResolvedValue([clubPost]);
 
     const { connection, browser } = await expectActionContract({
-      actionId: "list_message_board_posts",
+      actionId: "list_admin_message_board_posts",
       handler: listClubPosts,
       args: { tab: "hidden", q: "  chains " },
     });
@@ -418,7 +418,7 @@ describe("message board moderation", () => {
 
   it("answers not found and reads nothing when the message board is off", async () => {
     h.modules.mockResolvedValue({ commsPortal: false });
-    const { request } = connectionRequest("list_message_board_posts", {});
+    const { request } = connectionRequest("list_admin_message_board_posts", {});
 
     const res = await listClubPosts(request);
 

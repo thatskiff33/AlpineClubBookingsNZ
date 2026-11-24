@@ -71,10 +71,13 @@ import { resolveGuestRateMembershipTypes } from "@/lib/membership-type-policy";
 import { prisma } from "@/lib/prisma";
 import {
   resolveSchoolGuestOverride,
-  schoolChildCountsSchema,
-  type SchoolChildCounts,
   type SchoolPartyParticipant,
 } from "@/lib/school-booking-request";
+import {
+  bookingRequestGuestNightRateSchema,
+  bookingRequestQuoteInputSchema,
+  type SchoolChildCounts,
+} from "@/lib/admin-bookings-schemas/requests";
 import { seasonYearOfStoredDate } from "@/lib/financial-year";
 import { getCapacityFullNights } from "@/lib/capacity-full-nights";
 import { clubFormatValues } from "@/lib/club-format-server";
@@ -140,43 +143,6 @@ export class BookingRequestQuoteError extends Error {
     this.status = status;
   }
 }
-
-const bookingRequestGuestNightRateSchema = z.object({
-  ageTier: z.enum(AgeTier),
-  isMember: z.boolean(),
-  rateCents: z.number().int().min(0),
-});
-
-const bookingRequestQuoteOptionInputSchema = z.object({
-  id: z.string().min(1).max(40).optional(),
-  cateringOption: z.enum(SchoolCateringOption).optional().nullable(),
-  totalCents: z.number().int().min(0).optional(),
-  guestNightRates: z.array(bookingRequestGuestNightRateSchema).optional(),
-});
-
-export const bookingRequestQuoteInputSchema = z.object({
-  pricingMode: z.enum(BookingRequestPricingMode),
-  options: z.array(bookingRequestQuoteOptionInputSchema).min(1).max(2),
-  message: z.string().max(2000).optional().nullable(),
-  linkedGuestMembers: z
-    .array(
-      z.object({
-        guestIndex: z.number().int().min(0),
-        memberId: z.string().min(1),
-      })
-    )
-    .optional(),
-  /**
-   * #3412 — the officer's adjusted bulk child counts on a SCHOOL request, in
-   * the SAME schema approval takes, because it is the same decision made
-   * earlier. Present only when the officer edited the group-number boxes.
-   * Saving the quote is where that edit becomes real: the guest list is
-   * regenerated and PERSISTED on the request in the quote's own transaction, so
-   * the price, the requester's breakdown, the guest count in the email, the
-   * send-time hold and the approval all read one list.
-   */
-  childCounts: schoolChildCountsSchema.optional(),
-});
 
 type BookingRequestQuoteInput = z.infer<
   typeof bookingRequestQuoteInputSchema

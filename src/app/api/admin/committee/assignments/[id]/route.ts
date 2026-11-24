@@ -17,7 +17,7 @@ import { requireAdmin } from "@/lib/session-guards";
 import { parseJsonRequestBody } from "@/lib/api-json";
 import { committeeAssignmentPatchSchema } from "@/lib/admin-membership-api/committee";
 import { connectionJson } from "@/lib/mcp-connection-request";
-import { recordIdParamsSchema } from "@/lib/route-id-params";
+import { routeIdParamsSchema } from "@/lib/route-id-params";
 import { COMMITTEE_ASSIGNMENT_CONNECTION_SHAPE } from "@/lib/connection-shapes/membership-committee";
 
 export async function PATCH(
@@ -30,7 +30,7 @@ export async function PATCH(
   if (!guard.ok) return guard.response;
   const session = guard.session;
 
-  const parsedParams = recordIdParamsSchema.safeParse(await params);
+  const parsedParams = routeIdParamsSchema.safeParse(await params);
   if (!parsedParams.success) {
     return NextResponse.json(
       { error: "Invalid route parameters", details: parsedParams.error.flatten() },
@@ -181,7 +181,7 @@ export async function DELETE(
   if (!guard.ok) return guard.response;
   const session = guard.session;
 
-  const parsedParams = recordIdParamsSchema.safeParse(await params);
+  const parsedParams = routeIdParamsSchema.safeParse(await params);
   if (!parsedParams.success) {
     return NextResponse.json(
       { error: "Invalid route parameters", details: parsedParams.error.flatten() },

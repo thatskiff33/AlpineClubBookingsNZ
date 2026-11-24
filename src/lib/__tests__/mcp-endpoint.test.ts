@@ -135,12 +135,12 @@ describe("POST /api/mcp: the tools", () => {
       tools: Array<{ name: string; inputSchema: { type: string }; annotations: Record<string, boolean> }>;
     };
     const names = tools.map((tool) => tool.name);
-    // The fixture member holds no admin area, so no officer action is listed.
-    const core = MCP_ACTIONS.filter((action) => action.core && mcpActionAdminRequirement(action) === null).map(
-      (action) => action.id,
-    );
+    // A member with no admin area is offered no officer action, core or not.
+    const core = MCP_ACTIONS.filter((action) => action.core && mcpActionAdminRequirement(action) === null)
+      .map((action) => action.id);
     expect(names).toEqual(["who_am_i", ...core, "find_actions", "describe_action", "run_action"]);
     expect(names).not.toContain("get_my_credit_balance");
+    expect(names).not.toContain("search_bookings");
 
     const byName = new Map(tools.map((tool) => [tool.name, tool]));
     expect(byName.get("get_availability")?.annotations).toMatchObject({
@@ -177,9 +177,20 @@ describe("POST /api/mcp: the tools", () => {
       { year: 2026, month: 6 },
       {
         grantId: "grant-1", memberId: "member-1", clientName: "Example Assistant",
-        scope: "READ_WRITE", clientIp: "203.0.113.9", userAgent: null,
+        scope: "READ_WRITE", officerConsent: false, clientIp: "203.0.113.9", userAgent: null,
       },
     );
+  });
+
+  it("hands on an officer's approval for officer actions only when the connection records one", async () => {
+    // INV-MCP-009: a connection approved before the officer screen has no date.
+    findGrant.mockResolvedValue({ ...grant, officerConsentAt: new Date("2026-06-30T22:00:00.000Z") });
+    await result(await POST(rpc("tools/call", { name: "get_availability", arguments: {} })));
+    expect(run.mock.calls.at(-1)?.[2]).toMatchObject({ officerConsent: true });
+
+    findGrant.mockResolvedValue({ ...grant, officerConsentAt: null });
+    await result(await POST(rpc("tools/call", { name: "get_availability", arguments: {} })));
+    expect(run.mock.calls.at(-1)?.[2]).toMatchObject({ officerConsent: false });
   });
 
   it("reaches the other actions through run_action", async () => {

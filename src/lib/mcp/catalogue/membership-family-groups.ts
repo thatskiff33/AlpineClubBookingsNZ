@@ -28,7 +28,7 @@ import {
   FAMILY_SUGGESTIONS_RESET_CONNECTION_SHAPE,
   PARTNER_INVITE_LIST_CONNECTION_SHAPE,
 } from "@/lib/connection-shapes/membership-family-groups";
-import { recordIdParamsSchema } from "@/lib/route-id-params";
+import { routeIdParamsSchema } from "@/lib/route-id-params";
 
 import type { McpAction } from "../catalogue";
 
@@ -51,7 +51,7 @@ export const MEMBERSHIP_FAMILY_GROUP_MCP_ACTIONS: readonly McpAction[] = [
       "One family group by `id` (from `list_family_groups`), with its members (archived members left out), each as an id, a name, an age tier and whether they are active.",
     method: "GET",
     path: "/api/admin/family-groups/[id]",
-    params: recordIdParamsSchema,
+    params: routeIdParamsSchema,
     kind: "read",
     returns: FAMILY_GROUP_DETAIL_CONNECTION_SHAPE,
     core: false,
@@ -73,7 +73,7 @@ export const MEMBERSHIP_FAMILY_GROUP_MCP_ACTIONS: readonly McpAction[] = [
     summary: `Renames a family group (\`name\`), replaces its member list (\`memberIds\`, 1 to ${ADMIN_FAMILY_GROUP_MAX_MEMBERS}), or both; a field left out is unchanged. \`memberIds\` is the whole new list, not additions: every member left out is removed, including archived members, which \`get_family_group\` does not list, and a removed member who chose this group as their billing family loses that choice. Refused if any listed member does not exist or is archived. Nobody is emailed.`,
     method: "PUT",
     path: "/api/admin/family-groups/[id]",
-    params: recordIdParamsSchema,
+    params: routeIdParamsSchema,
     body: updateFamilyGroupSchema,
     kind: "destructive",
     returns: FAMILY_GROUP_UPDATED_CONNECTION_SHAPE,
@@ -86,7 +86,7 @@ export const MEMBERSHIP_FAMILY_GROUP_MCP_ACTIONS: readonly McpAction[] = [
       "Deletes a family group with its memberships, its requests and its outstanding partner invitations, and clears it as any member's billing family. The members themselves are kept. Nobody is emailed. This cannot be undone.",
     method: "DELETE",
     path: "/api/admin/family-groups/[id]",
-    params: recordIdParamsSchema,
+    params: routeIdParamsSchema,
     kind: "destructive",
     returns: FAMILY_GROUP_SUCCESS_CONNECTION_SHAPE,
     core: false,

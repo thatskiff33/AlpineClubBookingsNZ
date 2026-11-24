@@ -56,6 +56,7 @@ import { DEFAULT_MEMBER_GUEST_SETTINGS } from "@/config/club-settings-defaults";
 import { isEffectiveModuleEnabled } from "@/lib/admin-modules";
 import { buildClubModuleSettingsPayload } from "@/lib/module-settings";
 import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
+import { CENSUS_TIMEOUT_MS } from "@/test/census-timeout";
 
 // Test helper: reads a fixed repo file under process.cwd(); the path is
 // test-controlled, not user input.
@@ -597,7 +598,7 @@ describe("call-site survey", () => {
         site.skipAuthorizationModes.some((mode) => mode === true),
       ),
     ).toHaveLength(CALL_SITES_THAT_CAN_SKIP);
-  });
+  }, CENSUS_TIMEOUT_MS);
 
   it("declares each call site's real authorization modes", () => {
     // Read the modes back off the source, so the table cannot claim a route is
@@ -647,7 +648,7 @@ describe("call-site survey", () => {
     expect(familyFirstCallers).toEqual(
       FAMILY_FIRST_CALL_SITES.map((site) => site.file).sort(),
     );
-  });
+  }, CENSUS_TIMEOUT_MS);
 
   it("declares each family-first caller's real authorization modes", () => {
     for (const site of FAMILY_FIRST_CALL_SITES) {
@@ -1099,7 +1100,7 @@ describe("consent columns have exactly one writer", () => {
       .filter((file) => !(file in census));
 
     expect(mentions).toEqual([]);
-  });
+  }, CENSUS_TIMEOUT_MS);
 
   it("has no census row that no longer names a consent column", () => {
     // THE OTHER HALF, and it was missing. The sweep above only catches a file
@@ -1163,6 +1164,12 @@ describe("the two open-search privacy toggles are off by default, and have exact
       // D-18: the config-transfer spec REFUSES to export these two, so importing
       // another club's configuration cannot quietly make your roll browsable.
       "src/app/api/admin/member-guest-settings/route.ts",
+      // ALP-719: that route's save schema, moved beside the Bookings & Beds
+      // schemas. The save itself is never an AI app action (privacy-posture).
+      "src/lib/admin-bookings-schemas/setup.ts",
+      // ALP-719: the admin settings read as an officer's AI app is sent it,
+      // both values included, as the card shows them; it decides nothing.
+      "src/lib/connection-shapes/bookings-setup.ts",
       "src/components/admin/member-guest-settings-card.tsx",
     ]);
     const decidesDiscoverability = "src/lib/member-guest-find-service.ts";
@@ -1215,7 +1222,7 @@ describe("the two open-search privacy toggles are off by default, and have exact
     for (const file of passesThroughOnly) {
       expect(readRepoFile(file)).not.toContain("openMemberSearchIncludesMinors");
     }
-  });
+  }, CENSUS_TIMEOUT_MS);
 
   it("keeps the honest admin copy in step with reality — the 'not in use yet' notice is gone", () => {
     // The promise src/lib/member-guest-settings.ts made while these values were
@@ -1248,7 +1255,7 @@ describe("the module flag now gates the widening, and says so", () => {
         ),
       );
     expect(readers.length).toBeGreaterThan(0);
-  });
+  }, CENSUS_TIMEOUT_MS);
 
   it("no longer tells an admin the switch does nothing (D-17)", () => {
     // MG1 shipped the switch with a "Not available yet" prefix on its

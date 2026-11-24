@@ -863,6 +863,20 @@ jobs:
           PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: node scripts/ci/check-pr-changelog-fragment.mjs
 
+      # #5379: a step to do after the deploy, named in "Manual Checks Required"
+      # or "Migration Or Deployment Impact", must be written as a
+      # `changelog.d/<pr-number>-<slug>.deploy.md` fragment, and every such
+      # fragment the PR writes must be well formed. Same body fallback as above.
+      - name: Validate PR after-deploy steps
+        if: github.event_name == 'pull_request'
+        env:
+          PR_BODY_FILE: ${{ runner.temp }}/pr-body.md
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: node scripts/ci/check-pr-deploy-fragment.mjs
+
       # #4463: every PR says whether it deviates materially from its issue's
       # plan (`## Plan Deviation`: `None`, or items linking the owner's answer).
       # Enforced after the warning week (#4633): missing, empty or unlinked
@@ -1726,9 +1740,11 @@ jobs:
     runs-on: ubuntu-26.04
     # PR CI measured this job at 9m02s (#4476). By 8 Nov 2026 it took 16-18
     # minutes on `main` and was cancelled at the old 20-minute limit in 4 of 7
-    # runs, so a cancelled run proved nothing (#4793). 35 is about twice the
-    # current run time and still frees a hung runner well inside the hour.
-    timeout-minutes: 35
+    # runs, so a cancelled run proved nothing (#4793). By 25 Nov 2026 it took
+    # 32-35 minutes on `main` and PR runs were cancelled at the 35-minute
+    # limit; 45, the test shards' own limit, gives about 30% headroom until the suite
+    # is split, without lengthening the shard gate's wait (#5222).
+    timeout-minutes: 45
     permissions:
       contents: read
     services:

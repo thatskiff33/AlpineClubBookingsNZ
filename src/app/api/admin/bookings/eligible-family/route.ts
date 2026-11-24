@@ -1,11 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
-import { z } from "zod";
+import { adminEligibleFamilyQuerySchema } from "@/lib/admin-bookings-schemas/bookings";
+import { ADMIN_MEMBER_FAMILY_CONNECTION_SHAPE } from "@/lib/connection-shapes/bookings-bookings";
+import { connectionJson } from "@/lib/mcp-connection-request";
 import { requireAdmin } from "@/lib/session-guards";
 import { resolveMemberFamily } from "@/lib/resolve-member-family";
-
-const querySchema = z.object({
-  forMemberId: z.string().min(1),
-});
 
 /**
  * GET /api/admin/bookings/eligible-family?forMemberId=<id>
@@ -18,7 +16,8 @@ const querySchema = z.object({
  * The actor has already selected the member they are booking for, so the
  * client-supplied `forMemberId` names that single member. It returns exactly
  * ONE member's family group per request (via the shared resolveMemberFamily
- * helper) — never a directory enumeration.
+ * helper) — never a directory enumeration. Also the AI app action
+ * `get_member_family_for_booking` (ALP-719).
  */
 export async function GET(request: NextRequest) {
   const guard = await requireAdmin({
@@ -26,7 +25,7 @@ export async function GET(request: NextRequest) {
   });
   if (!guard.ok) return guard.response;
 
-  const parsed = querySchema.safeParse({
+  const parsed = adminEligibleFamilyQuerySchema.safeParse({
     forMemberId: request.nextUrl.searchParams.get("forMemberId"),
   });
   if (!parsed.success) {
@@ -41,5 +40,5 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: "Member not found" }, { status: 404 });
   }
 
-  return NextResponse.json(family);
+  return connectionJson(request, family, ADMIN_MEMBER_FAMILY_CONNECTION_SHAPE);
 }

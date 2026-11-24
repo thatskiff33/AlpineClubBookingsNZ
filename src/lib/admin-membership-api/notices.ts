@@ -104,6 +104,8 @@ export const moderateClubPostSchema = z
   .object({
     hidden: z.boolean().optional(),
     content: z.string().optional(),
+    withdrawSharedCopy: z.literal(true).optional(),
+    dismissShareProblem: z.literal(true).optional(),
   })
   .strict()
   .refine((value) => Object.keys(value).length > 0, {

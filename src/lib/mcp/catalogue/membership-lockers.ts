@@ -15,7 +15,7 @@ import {
   LOCKER_DELETED_CONNECTION_SHAPE,
   LOCKER_LIST_CONNECTION_SHAPE,
 } from "@/lib/connection-shapes/membership-lockers";
-import { recordIdParamsSchema } from "@/lib/route-id-params";
+import { routeIdParamsSchema } from "@/lib/route-id-params";
 
 import type { McpAction } from "../catalogue";
 
@@ -51,7 +51,7 @@ export const MEMBERSHIP_LOCKER_MCP_ACTIONS: readonly McpAction[] = [
       "Renames a locker or changes who it is allocated to. `allocatedToMemberId` is always saved: send the current holder's id to keep them, or null to free the locker; leaving it out frees the locker too.",
     method: "PUT",
     path: "/api/admin/lockers/[id]",
-    params: recordIdParamsSchema,
+    params: routeIdParamsSchema,
     body: updateLockerSchema,
     kind: "destructive",
     returns: LOCKER_CONNECTION_SHAPE,
@@ -63,7 +63,7 @@ export const MEMBERSHIP_LOCKER_MCP_ACTIONS: readonly McpAction[] = [
     summary: "Deletes a locker and its allocation. This cannot be undone.",
     method: "DELETE",
     path: "/api/admin/lockers/[id]",
-    params: recordIdParamsSchema,
+    params: routeIdParamsSchema,
     kind: "destructive",
     returns: LOCKER_DELETED_CONNECTION_SHAPE,
     core: false,

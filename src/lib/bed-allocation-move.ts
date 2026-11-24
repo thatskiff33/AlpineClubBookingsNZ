@@ -30,14 +30,11 @@ import {
 } from "@/lib/member-partner-link-shared";
 import { prisma } from "@/lib/prisma";
 import { LOCK1_HOLDER_TRANSACTION_BUDGET } from "@/lib/db-transaction";
+// The move scopes are the request schema's vocabulary, held with it (ALP-719).
+import { BED_ALLOCATION_MOVE_SCOPES } from "@/lib/admin-bookings-schemas/beds";
 
 export const BED_ALLOCATION_MOVE_DIGEST_VERSION = "v1" as const;
 export const MAX_BED_ALLOCATION_PERSON_MOVE_NIGHTS = 366;
-
-export const BED_ALLOCATION_MOVE_SCOPES = [
-  "ALLOCATION_NIGHT",
-  "BOOKING_GUEST",
-] as const;
 
 export type BedAllocationMoveScope =
   (typeof BED_ALLOCATION_MOVE_SCOPES)[number];

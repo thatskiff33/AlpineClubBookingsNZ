@@ -8,6 +8,7 @@ import {
   NON_RECIPIENT_HTTPS_HOSTS,
   PRIVACY_RECIPIENTS,
 } from "@/lib/privacy-recipient-classification";
+import { CENSUS_TIMEOUT_MS } from "@/test/census-timeout";
 
 const root = process.cwd();
 
@@ -96,7 +97,7 @@ describe("privacy recipient register census", () => {
     }
     expect(unclassified).toEqual([]);
     // Parses every server-capable file under src/; measured at 6-8s locally.
-  }, 30_000);
+  }, CENSUS_TIMEOUT_MS);
 
   it("keeps the exempt cleaned-bodies file to plain string constants (#5007)", () => {
     // The host scan skips this file, so it must never grow code that could call out.

@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 import { parseJsonRequestBody } from "@/lib/api-json";
 import { getAuditRequestContext } from "@/lib/audit";
 import {
+  approvalCoversOfficerActions,
   approvedMcpScope,
   MCP_SIGN_IN_AGAIN_MESSAGE,
   mcpApprovalDecisionSchema,
@@ -79,6 +80,7 @@ export async function POST(request: Request) {
     return NextResponse.json({ redirectTo: buildMcpDenyRedirect(approval.request) });
   }
 
+  const officerConsent = approvalCoversOfficerActions(approval, parsed.data.officerNoticeShown);
   let approved: Awaited<ReturnType<typeof approveMcpConnection>>;
   try {
     approved = await approveMcpConnection({
@@ -88,6 +90,7 @@ export async function POST(request: Request) {
       settings: approval.settings,
       sessionIssuedAt: approval.signIn.sessionIssuedAt,
       twoFactorVerified: approval.signIn.twoFactorVerified,
+      officerConsent,
     });
   } catch (err) {
     if (err instanceof McpApprovalAccountChangedError) {
@@ -106,6 +109,7 @@ export async function POST(request: Request) {
       clientName: approval.request.clientName,
       redirectHost: approval.request.redirectHost,
       scope: approved.scope,
+      officerActions: officerConsent,
     },
     request: getAuditRequestContext(request),
   });

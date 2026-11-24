@@ -8,6 +8,7 @@ import {
   clubDownloadPrefix,
 } from "@/lib/club-download-filename";
 import { relativeSource, sourceFiles } from "./support/booking-guest-night-writer-scan";
+import { CENSUS_TIMEOUT_MS } from "@/test/census-timeout";
 
 describe("clubDownloadPrefix (#4932, INV-CONFIG-001)", () => {
   it("slugifies the club's short name to lowercase ASCII words joined by dashes", () => {
@@ -85,5 +86,5 @@ describe("no club-visible name carries the reference club's initials (#4932)", (
       }
     }
     expect(hits).toEqual([]);
-  });
+  }, CENSUS_TIMEOUT_MS);
 });

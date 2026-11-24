@@ -30,7 +30,7 @@ import {
   NOTICE_SAVED_CONNECTION_SHAPE,
 } from "@/lib/connection-shapes/membership-notices";
 import { noticeIdParamsSchema } from "@/lib/notices-shared";
-import { recordIdParamsSchema } from "@/lib/route-id-params";
+import { routeIdParamsSchema } from "@/lib/route-id-params";
 
 import type { McpAction } from "../catalogue";
 
@@ -128,7 +128,7 @@ export const MEMBERSHIP_NOTICE_MCP_ACTIONS: readonly McpAction[] = [
     core: false,
   },
   {
-    id: "list_message_board_posts",
+    id: "list_admin_message_board_posts",
     title: "List message board posts",
     summary: `The most recent posts on the club message board for moderation, newest first, with their text, author and when posted (the list is capped, so use \`q\` to find older ones); \`hiddenAt\` is set on a post hidden from members, and \`originClubName\` on one copied from another club. \`tab\` "hidden" lists hidden posts only; \`q\` searches the text and author name. Removed posts are not listed. ${MESSAGE_BOARD_OFF}`,
     method: "GET",
@@ -141,10 +141,10 @@ export const MEMBERSHIP_NOTICE_MCP_ACTIONS: readonly McpAction[] = [
   {
     id: "moderate_message_board_post",
     title: "Hide, restore or edit a message board post",
-    summary: `Changes a message board post by \`id\`: \`hidden\` true hides it from members and false restores it; \`content\` replaces its text, saved as plain text (the original is kept in the audit log). When both are sent only \`content\` is applied. A post copied from another club cannot be edited, only hidden or removed, and a removed post cannot be changed. ${MESSAGE_BOARD_OFF}`,
+    summary: `Changes a message board post by \`id\`: \`hidden\` true hides it from members and false restores it; \`content\` replaces its text, saved as plain text (the original is kept in the audit log). \`withdrawSharedCopy\` true takes this club's shared copy down from the central message board server, and \`dismissShareProblem\` true marks a share whose result was never recorded as dealt with; send one change at a time (\`withdrawSharedCopy\` wins, then \`dismissShareProblem\`, then \`content\`). A post copied from another club cannot be edited, only hidden or removed, and a removed post cannot be changed. ${MESSAGE_BOARD_OFF}`,
     method: "PATCH",
     path: "/api/admin/club-posts/[id]",
-    params: recordIdParamsSchema,
+    params: routeIdParamsSchema,
     body: moderateClubPostSchema,
     kind: "destructive",
     returns: CLUB_POST_MODERATED_CONNECTION_SHAPE,
@@ -156,7 +156,7 @@ export const MEMBERSHIP_NOTICE_MCP_ACTIONS: readonly McpAction[] = [
     summary: `Removes a message board post by \`id\` for good: its text and images are deleted, and a post this club shared is withdrawn from other clubs' boards too. This cannot be undone; \`moderate_message_board_post\` with \`hidden\` true hides a post and keeps it. ${MESSAGE_BOARD_OFF}`,
     method: "DELETE",
     path: "/api/admin/club-posts/[id]",
-    params: recordIdParamsSchema,
+    params: routeIdParamsSchema,
     kind: "destructive",
     returns: CLUB_POST_REMOVED_CONNECTION_SHAPE,
     core: false,

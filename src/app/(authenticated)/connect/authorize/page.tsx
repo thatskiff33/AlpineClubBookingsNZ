@@ -68,6 +68,7 @@ export default async function ConnectAuthorizePage({
           onThisDevice={approval.request.loopback}
           askedToChange={approval.request.wantsWrite}
           mayChange={approval.mayChange}
+          officer={approval.officer}
           params={params}
         />
       )}

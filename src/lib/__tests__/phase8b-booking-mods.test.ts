@@ -723,6 +723,7 @@ describe("PUT /api/bookings/[id]/modify-dates", () => {
     PUT = mod.PUT;
   });
 
+  // #5407 item 42: the first case to call the route pays for loading its module graph; timed out at 5,000ms on a busy host.
   it("returns 401 for unauthenticated requests", async () => {
     mockedAuth.mockResolvedValue(null as any);
     const req = new NextRequest("http://localhost/api/bookings/bk1/modify-dates", {
@@ -731,7 +732,7 @@ describe("PUT /api/bookings/[id]/modify-dates", () => {
     });
     const res = await PUT(req, { params: Promise.resolve({ id: "bk1" }) });
     expect(res.status).toBe(401);
-  });
+  }, 30_000);
 
   it("returns 400 if neither checkIn nor checkOut provided", async () => {
     mockedAuth.mockResolvedValue({ user: { id: "m1", role: "MEMBER", accessRoles: [{ role: "USER" }] } } as any);

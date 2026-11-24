@@ -378,6 +378,8 @@ const EXPECTED_ROUTE_AREAS: Record<string, AdminPermissionArea> = {
   "/api/admin/maintenance-reports/questions": "lodge",
   "/api/admin/maintenance-reports/settings": "lodge",
   "/api/admin/maintenance-reports/tokens": "lodge",
+  "/api/admin/organisations/[id]/contact": "bookings",
+  "/api/admin/organisations/[id]/contact/retry": "bookings",
   "/api/admin/other-lodges": "lodge",
   "/api/admin/other-lodges/[id]": "lodge",
   "/api/admin/other-lodges/[id]/hide": "lodge",
@@ -437,6 +439,7 @@ const EXPECTED_ROUTE_AREAS: Record<string, AdminPermissionArea> = {
     "membership",
   "/api/admin/membership-cancellation-settings": "membership",
   "/api/admin/membership-lockout-settings": "membership",
+  "/api/admin/membership-lockout-settings/liability-impact": "membership",
   "/api/admin/membership-nomination-settings": "membership",
   "/api/admin/membership-types": "membership",
   "/api/admin/membership-types/[id]": "membership",
@@ -565,6 +568,9 @@ const EXPECTED_ROUTE_AREAS: Record<string, AdminPermissionArea> = {
   "/api/admin/xero/sync-memberships": "finance",
   "/api/admin/xero/sync-now": "finance",
   "/api/admin/xero/tax-categories": "finance",
+  // #5208: the GST-override pause; finance:view reads it, finance:edit clears it.
+  "/api/admin/xero/tax-override-pause": "finance",
+  "/api/admin/xero/tax-override-pause/clear": "finance",
   "/api/admin/xero/usage": "finance",
   "/api/admin/xero/webhook-health": "finance",
   // #2081: webhook intent-to-receive verify status / amber-badge source. Read is

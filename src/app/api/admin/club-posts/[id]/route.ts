@@ -5,11 +5,16 @@ import { logAudit } from "@/lib/audit";
 import { ClubPostValidationError } from "@/lib/club-posts";
 import {
   ClubPostAlreadyRemovedError,
+  ClubPostNoShareProblemError,
   ClubPostNotEditableError,
   ClubPostNotFoundError,
+  ClubPostWithdrawalFailedError,
+  ClubPostWithdrawalPausedError,
+  dismissShareOutcome,
   editClubPostContent,
   removeClubPost,
   setClubPostHidden,
+  withdrawSharedCopy,
 } from "@/lib/club-posts-admin";
 import logger from "@/lib/logger";
 import { loadEffectiveModuleFlags } from "@/lib/module-settings";
@@ -22,7 +27,9 @@ import {
 } from "@/lib/connection-shapes/membership-notices";
 
 /**
- * PATCH /api/admin/club-posts/:id — hide, unhide, or rewrite a post.
+ * PATCH /api/admin/club-posts/:id — hide, unhide, or rewrite a post; withdraw
+ * its stray copy from the central server, or mark a share whose result was
+ * never recorded as dealt with (#5246).
  * DELETE /api/admin/club-posts/:id — remove it permanently.
  *
  * Both need `membership:edit`, matching `/admin/notices`: the people who curate
@@ -58,6 +65,13 @@ function errorResponse(error: unknown): NextResponse | null {
   if (error instanceof ClubPostValidationError) {
     return NextResponse.json({ error: error.message }, { status: 400 });
   }
+  if (error instanceof ClubPostNoShareProblemError || error instanceof ClubPostWithdrawalPausedError) {
+    return NextResponse.json({ error: error.message }, { status: 409 });
+  }
+  if (error instanceof ClubPostWithdrawalFailedError) {
+    // The central server, not this site, refused or could not be reached.
+    return NextResponse.json({ error: error.message }, { status: 502 });
+  }
   return null;
 }
 
@@ -83,6 +97,34 @@ export async function PATCH(
   const actorMemberId = gate.session.user.id;
 
   try {
+    if (parsed.data.withdrawSharedCopy) {
+      const { serverPostIds } = await withdrawSharedCopy(id);
+      logAudit({
+        action: "club_post.withdraw_shared_copy",
+        category: "communication",
+        memberId: actorMemberId,
+        entityType: "ClubPost",
+        entityId: id,
+        // The server's ids, never the post's words: a copy is withdrawn for
+        // the same reasons a post is removed.
+        details: `Withdrew a club message board post's copy from the central server (${serverPostIds.join(", ")}).`,
+      });
+      return connectionJson(request, { status: "withdrawn" }, CLUB_POST_MODERATED_CONNECTION_SHAPE);
+    }
+
+    if (parsed.data.dismissShareProblem) {
+      await dismissShareOutcome(id);
+      logAudit({
+        action: "club_post.share_problem.dismiss",
+        category: "communication",
+        memberId: actorMemberId,
+        entityType: "ClubPost",
+        entityId: id,
+        details: "Marked a club message board post's unrecorded share as dealt with.",
+      });
+      return connectionJson(request, { status: "dismissed" }, CLUB_POST_MODERATED_CONNECTION_SHAPE);
+    }
+
     if (parsed.data.content !== undefined) {
       const { before, after } = await editClubPostContent(
         id,
@@ -130,6 +172,25 @@ export async function PATCH(
       { status: 400 },
     );
   } catch (error) {
+    if (
+      parsed.data.withdrawSharedCopy &&
+      (error instanceof ClubPostWithdrawalFailedError || error instanceof ClubPostWithdrawalPausedError)
+    ) {
+      // A failed or half-successful withdrawal is audited too (#5246 review):
+      // a copy may already be down, and the attempt itself is a moderation act.
+      const { withdrawnServerPostIds, outstandingServerPostIds } = error.attempt;
+      logAudit({
+        action: "club_post.withdraw_shared_copy.failed",
+        category: "communication",
+        memberId: actorMemberId,
+        entityType: "ClubPost",
+        entityId: id,
+        details:
+          `Tried to withdraw a club message board post's copy from the central server; ` +
+          (error instanceof ClubPostWithdrawalPausedError ? "sharing is paused by a version difference. " : "the server did not confirm. ") +
+          `Withdrawn: ${withdrawnServerPostIds.join(", ") || "none"}. Still outstanding: ${outstandingServerPostIds.join(", ") || "none"}.`,
+      });
+    }
     const known = errorResponse(error);
     if (known) return known;
     logger.error({ err: error, postId: id }, "failed to moderate club post");

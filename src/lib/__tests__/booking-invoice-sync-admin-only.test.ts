@@ -2,6 +2,7 @@ import { readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 
 import { describe, expect, it } from "vitest";
+import { CENSUS_TIMEOUT_MS } from "@/test/census-timeout";
 
 /**
  * THE XERO INVOICE WARNING IS NEVER MEMBER-FACING (#3001, MAD epic #2725).
@@ -92,5 +93,5 @@ describe("the booking's Xero invoice warning stays behind the admin gate", () =>
       .sort();
 
     expect(importers).toEqual(expected);
-  });
+  }, CENSUS_TIMEOUT_MS);
 });

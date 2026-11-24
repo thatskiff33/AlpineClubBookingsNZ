@@ -2,7 +2,9 @@ import "server-only";
 
 import { clubTodayDateOnlyInstant } from "@/lib/club-time/server";
 import type { ClubFormat } from "@/lib/club-format";
-import { requiresPaidSubscriptionForAgeTier } from "@/lib/policies/subscription";
+import type { AgeTierSettingData } from "@/lib/age-tier";
+import { loadMembershipLockoutSettings } from "@/lib/membership-lockout-settings";
+import { liabilityRuleFor, resolveSubscriptionLiability } from "@/lib/policies/subscription";
 import { prisma } from "@/lib/prisma";
 import {
   activeWindow,
@@ -29,8 +31,9 @@ const FLAT = "FLAT";
  * - An exact-tier row wins, then the type's flat row. A type without age groups
  *   reads only its flat rows, as the invoicing does for its single tier.
  * - No subscription is added for a `NOT_REQUIRED` type, for a `NO_INVOICE` fee,
- *   or for a `BASED_ON_AGE_TIER` tier that is not subscription-liable when its
- *   fee is per member (a per-family fee still applies to it).
+ *   or for a tier the club's liability rule exempts (#5190, billing side —
+ *   before a club chooses, only a `BASED_ON_AGE_TIER` tier) when its fee is per
+ *   member (a per-family fee still applies to it).
  * - A subscription that is required but has no annual fee leaves the row out:
  *   a joining fee alone would read as the whole first-year cost. No joining fee
  *   set means no joining fee.
@@ -47,7 +50,7 @@ export async function loadPublicFirstYearCosts(
   ]);
   if (!joiningOn || !annualOn) return [];
   const today = await clubTodayDateOnlyInstant();
-  const [types, tiers, tierSettings] = await Promise.all([
+  const [types, tiers, tierSettings, lockoutSettings] = await Promise.all([
     prisma.membershipType.findMany({
       where: { isActive: true, publiclyListed: true },
       orderBy: [{ sortOrder: "asc" }, { name: "asc" }],
@@ -70,7 +73,11 @@ export async function loadPublicFirstYearCosts(
     }),
     loadAgeTierLabels(),
     prisma.ageTierSetting.findMany({ select: { tier: true, subscriptionRequiredForBooking: true } }),
+    loadMembershipLockoutSettings(),
   ]);
+  // The tier rows here are the fee's own tiers, so the rule reads the tier as
+  // given rather than a member's age (#5190).
+  const liabilityRule = liabilityRuleFor("billing", lockoutSettings);
   const listed = options.typeKey
     ? types.filter((type) => type.key.toLowerCase() === options.typeKey!.toLowerCase())
     : types;
@@ -105,13 +112,17 @@ export async function loadPublicFirstYearCosts(
     for (const key of rowKeys) {
       const tier = key === FLAT ? null : key;
       const resolved = annual.get(key) ?? annual.get(FLAT);
+      const owes = resolveSubscriptionLiability({
+        subscriptionBehavior: type.subscriptionBehavior,
+        ageTier: tier as AgeTierSettingData["tier"] | null,
+        seasonRowStatus: null,
+        rule: liabilityRule,
+        ageTierSettings: tierSettings as AgeTierSettingData[],
+      });
+      // An exempt tier still pays a per-family fee (#2148 Q5), as billing does.
       const liable =
         type.subscriptionBehavior !== "NOT_REQUIRED" &&
-        !(
-          type.subscriptionBehavior === "BASED_ON_AGE_TIER" &&
-          !requiresPaidSubscriptionForAgeTier(tier as never, tierSettings as never) &&
-          (!resolved || resolved.basis === "PER_MEMBER")
-        );
+        (owes || (resolved !== undefined && resolved.basis !== "PER_MEMBER"));
       if (liable && !resolved) continue;
       const yearly = liable && resolved ? resolved : { cents: 0, prorated: false };
       const totalCents = (joining.get(key) ?? joining.get(FLAT) ?? 0) + yearly.cents;

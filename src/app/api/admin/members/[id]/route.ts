@@ -12,7 +12,7 @@ import {
   isDietaryFieldEnabled,
 } from "@/lib/member-dietary";
 import { requireRecentAuth } from "@/lib/require-recent-auth";
-import { recordIdParamsSchema } from "@/lib/route-id-params";
+import { routeIdParamsSchema } from "@/lib/route-id-params";
 import { connectionJson } from "@/lib/mcp-connection-request";
 import { MEMBER_DETAIL_CONNECTION_SHAPE } from "@/lib/connection-shapes/membership-members";
 
@@ -41,7 +41,7 @@ export async function GET(
   });
   if (!guard.ok) return guard.response;
 
-  const parsed = recordIdParamsSchema.safeParse(await params);
+  const parsed = routeIdParamsSchema.safeParse(await params);
   if (!parsed.success) {
     return NextResponse.json(
       { error: "Invalid route parameters", details: parsed.error.flatten() },
@@ -77,7 +77,7 @@ export async function PUT(
 
   const recent = await requireRecentAuth();
   if (!recent.ok) return recent.response;
-  const parsedParams = recordIdParamsSchema.safeParse(await params);
+  const parsedParams = routeIdParamsSchema.safeParse(await params);
   if (!parsedParams.success) {
     return NextResponse.json(
       { error: "Invalid route parameters", details: parsedParams.error.flatten() },

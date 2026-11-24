@@ -27,7 +27,7 @@ import {
   NOMINATIONS_REFRESHED_CONNECTION_SHAPE,
   NOMINATOR_REPLACED_CONNECTION_SHAPE,
 } from "@/lib/connection-shapes/membership-requests";
-import { recordIdParamsSchema } from "@/lib/route-id-params";
+import { routeIdParamsSchema } from "@/lib/route-id-params";
 
 import type { McpAction } from "../catalogue";
 
@@ -52,7 +52,7 @@ export const MEMBERSHIP_REQUEST_MCP_ACTIONS: readonly McpAction[] = [
       "For an application waiting on nominators (`id` from `list_member_applications`), emails each nominator who has not yet confirmed a fresh nomination link and restarts their reminder count. Their earlier links stop working. Refused if the application is not waiting on nominators, or a pending nominator is no longer an active member. `warnings` names any nominator the email could not reach.",
     method: "POST",
     path: "/api/admin/member-applications/[id]/nominations/refresh",
-    params: recordIdParamsSchema,
+    params: routeIdParamsSchema,
     kind: "destructive",
     returns: NOMINATIONS_REFRESHED_CONNECTION_SHAPE,
     core: false,
@@ -77,7 +77,7 @@ export const MEMBERSHIP_REQUEST_MCP_ACTIONS: readonly McpAction[] = [
       "Raises a request to archive a cancelled member (`id` is the member), with the `reason` the deciding officer reads; the club's admins are emailed an alert. Nothing changes until a different officer approves it on the website. Refused if the member is not cancelled, is already archived or already has a pending archive request; only a Full Admin may put forward a member whose record holds an admin, finance, lodge or custom access role.",
     method: "POST",
     path: "/api/admin/members/[id]/lifecycle/archive",
-    params: recordIdParamsSchema,
+    params: routeIdParamsSchema,
     body: memberArchiveRequestSchema,
     kind: "destructive",
     returns: MEMBER_ARCHIVE_REQUESTED_CONNECTION_SHAPE,
@@ -90,7 +90,7 @@ export const MEMBERSHIP_REQUEST_MCP_ACTIONS: readonly McpAction[] = [
       "Raises a request to cancel an active member's membership (`id` is the member), with the `reason` the deciding officer reads. The member is not asked to confirm; the club's admins are emailed an alert. Nothing changes until a different officer approves it on the website, which ends the membership. Refused for a member who is inactive, already cancelled or archived, already on an open cancellation request, or a lodge kiosk login or booking-request contact. `emailWarnings` says if the alert could not be sent.",
     method: "POST",
     path: "/api/admin/members/[id]/membership-cancellation",
-    params: recordIdParamsSchema,
+    params: routeIdParamsSchema,
     body: adminMembershipCancellationRequestSchema,
     kind: "destructive",
     returns: MEMBERSHIP_CANCELLATION_REQUEST_RESULT_CONNECTION_SHAPE,

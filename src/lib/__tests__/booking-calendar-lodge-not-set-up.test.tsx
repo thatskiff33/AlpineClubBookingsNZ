@@ -41,6 +41,7 @@ vi.mock("next-auth/react", () => ({
 }));
 import { bindClubTime, requireClubTimeZone } from "@/lib/club-time";
 import { LODGE_NOT_SET_UP_FOR_BOOKINGS_MESSAGE } from "@/lib/lodge-booking-readiness";
+import { CENSUS_TIMEOUT_MS } from "@/test/census-timeout";
 
 /*
   #3407 (owner decision 14 Sep 2026): at a lodge nobody has given a capacity the
@@ -229,7 +230,7 @@ describe("the not-set-up notice links an officer to the capacity settings (#3407
     );
     expect(adminBook).toMatch(/\buseLodgeCapacitySettingsHref\(lodgeId\)/);
     expect(adminBook).not.toMatch(/\blodgeCapacitySettingsHref\(/);
-  });
+  }, CENSUS_TIMEOUT_MS);
 
   it("would catch a string-literal prop, a spread, and not a commented-out one", () => {
     expect(PROP.test(stripComments(`<BookingCalendar lodgeSettingsHref="/admin/lodges" />`))).toBe(true);

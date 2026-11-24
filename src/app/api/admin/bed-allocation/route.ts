@@ -17,25 +17,42 @@ import {
 import { prisma } from "@/lib/prisma";
 import { resolveOptionalActiveLodgeId } from "@/lib/lodges";
 import { clubTime } from "@/lib/club-time/server";
+import { bedAllocationBoardQuerySchema } from "@/lib/admin-bookings-schemas/beds";
+import {
+  ADMIN_BED_ALLOCATION_BOARD_CONNECTION_SHAPE,
+  type BedAllocationBoardAnswer,
+} from "@/lib/connection-shapes/bookings-beds";
+import { connectionJson } from "@/lib/mcp-connection-request";
 
 // requireAdmin() is enforced by requireBedAllocationRead().
+/** Also the AI app action `get_bed_allocation_board` (ALP-719). */
 export async function GET(request: NextRequest) {
   const guard = await requireBedAllocationRead();
   if (!guard.ok) return guard.response;
 
   try {
+    const searchParams = request.nextUrl.searchParams;
+    const query = bedAllocationBoardQuerySchema.safeParse({
+      from: searchParams.get("from") ?? undefined,
+      to: searchParams.get("to") ?? undefined,
+      lodgeId: searchParams.get("lodgeId") ?? undefined,
+      bookingId: searchParams.get("bookingId") ?? undefined,
+    });
+    if (!query.success) {
+      return NextResponse.json(
+        { error: "Invalid input", details: query.error.flatten() },
+        { status: 400 },
+      );
+    }
     // The club's own day, for the board's default window when the caller names
     // no `from` (#3123, `INV-CONFIG-002`). Resolved here, once, and passed in:
     // the parse is synchronous and must not read the setting itself — see its
     // docblock and `INV-LOCK-004`.
     const range = parseBedAllocationDateRange(
-      {
-        from: request.nextUrl.searchParams.get("from"),
-        to: request.nextUrl.searchParams.get("to"),
-      },
+      { from: query.data.from, to: query.data.to },
       (await clubTime()).today(),
     );
-    const bookingId = request.nextUrl.searchParams.get("bookingId");
+    const bookingId = query.data.bookingId ?? null;
     // #2678: A NAMED BOOKING FIXES THE LODGE, AND THE SERVER OWNS IT.
     //
     // `docs/multi-lodge/lodge-scoping-contract.md` already states the rule this
@@ -83,8 +100,7 @@ export async function GET(request: NextRequest) {
     // Scope the board to one lodge (ADR-003); omitted = club-wide, which is a
     // deliberate operator view since #2701 and preserves single-lodge
     // behaviour.
-    const requestedLodgeId =
-      request.nextUrl.searchParams.get("lodgeId") ?? undefined;
+    const requestedLodgeId = query.data.lodgeId;
     // The board-level backstop (#2701), mirroring the writer's own
     // LODGE_MISMATCH refusal in `bed-allocation-move.ts`. Checked before the
     // active-lodge validation below so a contradiction reads as a
@@ -113,7 +129,7 @@ export async function GET(request: NextRequest) {
       );
     }
     const scopedLodgeId = bookingLodgeId ?? requestedLodgeId ?? null;
-    return NextResponse.json({
+    const answer: BedAllocationBoardAnswer = {
       ...(await getBedAllocationDashboard({
         range,
         lodgeId: scopedLodgeId ?? undefined,
@@ -128,7 +144,8 @@ export async function GET(request: NextRequest) {
       // `getBedAllocationDashboard` because the derivation is this route's
       // knowledge, and because #2688 is about to split that module.
       scopedLodgeId,
-    });
+    };
+    return connectionJson(request, answer, ADMIN_BED_ALLOCATION_BOARD_CONNECTION_SHAPE);
   } catch (error) {
     return bedAllocationErrorResponse(error);
   }

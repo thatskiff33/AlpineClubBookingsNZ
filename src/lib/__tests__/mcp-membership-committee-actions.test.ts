@@ -403,7 +403,7 @@ describe("inductions", () => {
     });
 
     const { connection } = await expectActionContract({
-      actionId: "get_induction",
+      actionId: "get_admin_induction",
       handler: getInduction,
       args: { id: "induction-1" },
     });

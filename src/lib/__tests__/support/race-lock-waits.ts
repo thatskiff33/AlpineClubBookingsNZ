@@ -19,7 +19,7 @@ export async function backendPid(db: RawClient): Promise<number> {
 }
 
 /** The backends in this database blocked by any of `pids`. */
-async function blockedBy(prisma: PrismaClient, pids: readonly number[]): Promise<number[]> {
+async function blockedBy(prisma: RawClient, pids: readonly number[]): Promise<number[]> {
   if (pids.length === 0) return [];
   const rows = await prisma.$queryRaw<Array<{ pid: number }>>`
     SELECT pid FROM pg_catalog.pg_stat_activity
@@ -42,6 +42,20 @@ export async function untilBlockedChain(prisma: PrismaClient, rootPid: number, d
   throw new Error(`no chain of ${depth} wait(s) behind backend ${rootPid} ever formed`);
 }
 
+/**
+ * Until at least `n` backends wait behind any of `pids` - the holder, or a
+ * waiter already queued behind it, so writers can be queued in a fixed order.
+ * Resolves to the waiting pids.
+ */
+export async function untilBlockedBy(prisma: RawClient, pids: readonly number[], n = 1): Promise<number[]> {
+  for (let attempt = 0; attempt < 400; attempt += 1) {
+    const waiting = await blockedBy(prisma, pids);
+    if (waiting.length >= n) return waiting;
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+  throw new Error(`never saw ${n} backend(s) queued behind ${pids.join(", ")}`);
+}
+
 /** Whether any backend is blocked by `pid` right now. */
 export async function isBlocking(prisma: PrismaClient, pid: number): Promise<boolean> {
   return (await blockedBy(prisma, [pid])).length > 0;
@@ -56,19 +70,35 @@ export async function isBlocking(prisma: PrismaClient, pid: number): Promise<boo
  */
 export const RACE_TRANSACTION_BUDGET = { maxWait: 30_000, timeout: 120_000 } as const;
 
+/** A `$transaction` call's options with the race budget filled in where an interactive call passes none. */
+function budgeted(arg: unknown, options: unknown): unknown {
+  return typeof arg === "function" && options === undefined ? RACE_TRANSACTION_BUDGET : options;
+}
+
 export function withRaceTransactionBudget<T extends object>(client: T): T {
   return new Proxy(client, {
     get(target, prop, receiver) {
       const value = Reflect.get(target, prop, receiver) as unknown;
       if (prop === "$transaction" && typeof value === "function") {
-        return (arg: unknown, options?: unknown) =>
-          (value as (a: unknown, o?: unknown) => unknown).call(
-            target,
-            arg,
-            typeof arg === "function" && options === undefined ? RACE_TRANSACTION_BUDGET : options,
-          );
+        return (arg: unknown, options?: unknown) => (value as (a: unknown, o?: unknown) => unknown).call(target, arg, budgeted(arg, options));
       }
       return typeof value === "function" ? (value as (...args: unknown[]) => unknown).bind(target) : value;
     },
   });
+}
+
+/**
+ * The same budget for one case, on the shared client itself, until the returned
+ * restore runs. For a suite that `concurrency-lock-races.realdb.test.ts`
+ * imports into its process: a `vi.mock("@/lib/prisma")` there would reach every
+ * suite in that process, including the P2028 race that relies on the 5-second
+ * default (`payment-lock-before-rebuild.realdb.test.ts`).
+ */
+export function raiseRaceTransactionBudget(client: object): () => void {
+  const store = client as { $transaction: (arg: unknown, options?: unknown) => unknown };
+  const original = store.$transaction;
+  store.$transaction = (arg: unknown, options?: unknown) => original.call(client, arg, budgeted(arg, options));
+  return () => {
+    store.$transaction = original;
+  };
 }

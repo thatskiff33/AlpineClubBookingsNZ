@@ -1,7 +1,6 @@
 import { prisma } from "./prisma";
 import { BookingStatus } from "@prisma/client";
 import { expireStaleOffers } from "./waitlist";
-import { clubToday, dateOnlyInstantOf } from "@/lib/club-time";
 import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
 import logger from "@/lib/logger";
 import { reconcileBedAllocationsForBookingWithLodgeLockHeld } from "@/lib/bed-allocation-lifecycle";
@@ -9,6 +8,7 @@ import { acquireLodgeCapacityLock } from "@/lib/capacity";
 import { releaseBookingPromoRedemptions } from "@/lib/promo";
 import { clubFormatValues } from "@/lib/club-format-server";
 import { LOCK1_HOLDER_TRANSACTION_BUDGET } from "@/lib/db-transaction";
+import { clubTodayAsStoredDate, waitlistStayEndedWhere, waitlistStayHasEnded } from "@/lib/waitlist-stay-ended";
 
 const DEFAULT_WAITLIST_TRANSACTION_RETRY_ATTEMPTS = 3;
 const DEFAULT_WAITLIST_TRANSACTION_RETRY_DELAY_MS = 500;
@@ -117,12 +117,12 @@ async function processWaitlistCronOnce(tally: ReofferTally): Promise<{
   // checking out today until tomorrow — a day late. The stay whose dates are all
   // in the past includes one checking out today, so it must cancel today
   // (F32, #1888).
-  const today = dateOnlyInstantOf(clubToday(await readClubTimeZoneOutsideRequest()));
+  const today = clubTodayAsStoredDate(await readClubTimeZoneOutsideRequest());
 
   const candidates = await prisma.booking.findMany({
     where: {
       status: { in: [BookingStatus.WAITLISTED, BookingStatus.WAITLIST_OFFERED] },
-      checkOut: { lte: today },
+      ...waitlistStayEndedWhere(today),
     },
     select: { id: true },
   });
@@ -149,7 +149,7 @@ async function processWaitlistCronOnce(tally: ReofferTally): Promise<{
         !booking ||
         (booking.status !== BookingStatus.WAITLISTED &&
           booking.status !== BookingStatus.WAITLIST_OFFERED) ||
-        booking.checkOut > today
+        !waitlistStayHasEnded(booking.checkOut, today)
       ) {
         return null;
       }
@@ -157,7 +157,7 @@ async function processWaitlistCronOnce(tally: ReofferTally): Promise<{
         where: {
           id: booking.id,
           status: { in: [BookingStatus.WAITLISTED, BookingStatus.WAITLIST_OFFERED] },
-          checkOut: { lte: today },
+          ...waitlistStayEndedWhere(today),
         },
         data: {
           status: BookingStatus.CANCELLED,

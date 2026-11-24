@@ -36,7 +36,7 @@ import {
   memberAuditLogQuerySchema,
 } from "@/lib/member-audit-log-query";
 import { UNASSIGNED_MEMBERSHIP_TYPE_VALUE } from "@/lib/membership-type-filter";
-import { recordIdParamsSchema } from "@/lib/route-id-params";
+import { routeIdParamsSchema } from "@/lib/route-id-params";
 
 import type { McpAction } from "../catalogue";
 
@@ -95,7 +95,7 @@ export const MEMBERSHIP_MEMBER_MCP_ACTIONS: readonly McpAction[] = [
       "One member's record as the officer's member page shows it: name, email, phone, age tier, status and membership dates, each season's membership type and subscription, family groups, recorded parents and dependants, whose address their club email goes to (`inheritEmailFrom`), whose address a dependant added under them would use (`dependentEmailSource`), and any open membership cancellation request. `id` is the member id from `list_members`. Date of birth, addresses, dietary needs, bookings and the audit history are not sent.",
     method: "GET",
     path: "/api/admin/members/[id]",
-    params: recordIdParamsSchema,
+    params: routeIdParamsSchema,
     kind: "read",
     returns: MEMBER_DETAIL_CONNECTION_SHAPE,
     core: true,
@@ -106,7 +106,7 @@ export const MEMBERSHIP_MEMBER_MCP_ACTIONS: readonly McpAction[] = [
     summary: `A member's account history as officers see it, newest first: when, what kind, the outcome and a one-line summary of each entry. \`category\` is one of ${quoted(AUDIT_TIMELINE_CATEGORY_OPTIONS.map(({ value }) => value))} (\`all\` when left out). \`page\` counts from 1; \`pageSize\` is at most ${MEMBER_AUDIT_LOG_MAX_PAGE_SIZE} (${MEMBER_AUDIT_LOG_DEFAULT_PAGE_SIZE} when left out).`,
     method: "GET",
     path: "/api/admin/members/[id]/audit-log",
-    params: recordIdParamsSchema,
+    params: routeIdParamsSchema,
     query: memberAuditLogQuerySchema,
     kind: "read",
     returns: MEMBER_AUDIT_TIMELINE_CONNECTION_SHAPE,
@@ -119,7 +119,7 @@ export const MEMBERSHIP_MEMBER_MCP_ACTIONS: readonly McpAction[] = [
       "The lodges a member is limited to booking (`bookingRestrictions`; none means they can book every lodge) and the lodges a lodge-operational (kiosk) account is bound to (`staffGrants`), by lodge id. `lodgeAccess` lists both kinds together.",
     method: "GET",
     path: "/api/admin/members/[id]/lodge-access",
-    params: recordIdParamsSchema,
+    params: routeIdParamsSchema,
     kind: "read",
     returns: MEMBER_LODGE_ACCESS_CONNECTION_SHAPE,
     core: false,
@@ -131,7 +131,7 @@ export const MEMBERSHIP_MEMBER_MCP_ACTIONS: readonly McpAction[] = [
       "Replaces a member's lodge access with exactly the lodges given. `bookingRestrictionLodgeIds` limits which lodges they can book (an empty list lets them book every lodge); `staffLodgeIds` binds a lodge-operational (kiosk) account to lodges. Both lists are always saved, so send the current ids from `get_member_lodge_access` for the one you are not changing. Refused if any lodge id is unknown.",
     method: "PUT",
     path: "/api/admin/members/[id]/lodge-access",
-    params: recordIdParamsSchema,
+    params: routeIdParamsSchema,
     body: memberLodgeAccessUpdateSchema,
     kind: "destructive",
     returns: MEMBER_LODGE_ACCESS_CONNECTION_SHAPE,
@@ -144,7 +144,7 @@ export const MEMBERSHIP_MEMBER_MCP_ACTIONS: readonly McpAction[] = [
       "A member's confirmed partner (`confirmed`, at most one) and the pending partner requests they received (`pendingIncoming`) or sent (`pendingOutgoing`), each with the link id `remove_member_partner_link` takes. `assignedByAdmin` marks a link an officer recorded.",
     method: "GET",
     path: "/api/admin/members/[id]/partner-link",
-    params: recordIdParamsSchema,
+    params: routeIdParamsSchema,
     kind: "read",
     returns: MEMBER_PARTNER_LINK_CONNECTION_SHAPE,
     core: false,
@@ -156,7 +156,7 @@ export const MEMBERSHIP_MEMBER_MCP_ACTIONS: readonly McpAction[] = [
       "Records `partnerMemberId` as the confirmed partner of member `id` straight away, with no request for either to accept; a pending request between the two is confirmed instead. Both must be active adults, neither may already have a confirmed partner, and neither may be the other's recorded parent or child. Every other pending partner request either of them has is removed. Both members are always emailed that they are now partners (one email if they share an address).",
     method: "POST",
     path: "/api/admin/members/[id]/partner-link",
-    params: recordIdParamsSchema,
+    params: routeIdParamsSchema,
     body: assignPartnerLinkSchema.omit({ notifyMember: true }),
     fixedBody: { notifyMember: true },
     kind: "destructive",
@@ -170,7 +170,7 @@ export const MEMBERSHIP_MEMBER_MCP_ACTIONS: readonly McpAction[] = [
       "Deletes partner link `linkId` (from `get_member_partner_links`), pending or confirmed, when it involves member `id`. Removing a confirmed partnership always emails both members (removing a pending request emails no one), and any future nights the pair were sharing a double bed go back to the allocation queue, with an alert to the club's admins. This cannot be undone: the link has to be made again.",
     method: "DELETE",
     path: "/api/admin/members/[id]/partner-link",
-    params: recordIdParamsSchema,
+    params: routeIdParamsSchema,
     query: removePartnerLinkQuerySchema,
     fixedBody: { notifyMember: true },
     kind: "destructive",
@@ -184,7 +184,7 @@ export const MEMBERSHIP_MEMBER_MCP_ACTIONS: readonly McpAction[] = [
       "Records member `memberId` as a dependant of member `id`: as their first recorded parent, or their second when they already have one. `inheritEmail` true sends their club email to the parent's address (or the nearest ancestor who can receive mail); `inheritEmailFromId` instead names which of their parents receives it, or an empty string for their own address; with `inheritEmail` false and no `inheritEmailFromId` their email setting is left as it is. `addToFamilyGroupIds` also adds them to family groups the parent belongs to. Refused when the parent is inactive, archived or an organisation account, when the member is archived, already has two parents or is the parent's ancestor or partner, or when the family would span more than four generations. Their sign-in is never turned off from an AI app. No one is emailed.",
     method: "POST",
     path: "/api/admin/members/[id]/dependents/link",
-    params: recordIdParamsSchema,
+    params: routeIdParamsSchema,
     body: linkDependentSchema.omit({ disableLogin: true }),
     fixedBody: { disableLogin: false },
     kind: "destructive",

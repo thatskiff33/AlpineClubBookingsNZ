@@ -24,6 +24,14 @@ import { formatCents } from "@/lib/utils";
  */
 export const CAPACITY_RACE_REFUND_EVENT_REASON = "Automatic refund after lodge capacity was no longer available.";
 
+/**
+ * #3653: the reason of the one REFUNDED event that IS a cancellation - an organiser's group cancel releasing a joiner
+ * whose settled beds it refunded writes it instead of a CANCELLED event (`group-cancel.ts`). Matched against stored
+ * rows (#5197, `manual-refund-task-reopen.ts`), so a reword adds the old string beside it rather than replacing it.
+ */
+export const GROUP_CANCEL_SETTLED_REFUND_EVENT_REASON =
+  "Group organiser cancelled the booking; the settled beds were refunded to the organiser.";
+
 /** Every cancel card refund reason ends so, before #4145 and since. */
 const CANCEL_CARD_REFUND_REASON_END = "refunded to the original payment method.";
 

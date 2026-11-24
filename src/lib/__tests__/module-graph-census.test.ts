@@ -8,6 +8,7 @@ import {
   importCycles,
   resolveSpecifier,
 } from "./support/static-import-graph";
+import { CENSUS_TIMEOUT_MS } from "@/test/census-timeout";
 
 /**
  * INV-SSOT-008 (#4930): the module graph's three boundary rules.
@@ -146,7 +147,7 @@ describe("module graph census (#4930, INV-SSOT-008)", () => {
     expect(files.length).toBeGreaterThan(100);
     const mentions = files.flatMap((file) => facadeMentions(file, readFileSync(path.join(process.cwd(), file), "utf8")));
     expect(mentions).toEqual([]);
-  });
+  }, CENSUS_TIMEOUT_MS);
 
   it("has no src/components import from a src/app route folder", () => {
     expect(componentAppImports(graph)).toEqual([]);
