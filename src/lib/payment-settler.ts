@@ -66,3 +66,21 @@ export async function findSettlingInternetBankingTransactionId(
   });
   return rows.length === 1 ? rows[0]!.id : null;
 }
+
+/**
+ * #5240: the Stripe intent of the transaction recorded as settling the
+ * payment, or null - none recorded, or a settler with no intent (a cash or
+ * bank receipt). What the history names as "the payment that settled it".
+ */
+export async function readSettlingPaymentIntentId(
+  store: Pick<Prisma.TransactionClient, "payment" | "paymentTransaction">,
+  paymentId: string,
+): Promise<string | null> {
+  const payment = await store.payment.findUnique({ where: { id: paymentId }, select: { settledByTransactionId: true } });
+  if (!payment?.settledByTransactionId) return null;
+  const settler = await store.paymentTransaction.findUnique({
+    where: { id: payment.settledByTransactionId },
+    select: { stripePaymentIntentId: true },
+  });
+  return settler?.stripePaymentIntentId ?? null;
+}
