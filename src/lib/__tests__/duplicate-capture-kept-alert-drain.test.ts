@@ -72,10 +72,26 @@ const mocks = vi.hoisted(() => ({
   duplicateRefundsHolding: vi.fn(),
   executeRaw: vi.fn(),
   rows: [] as Row[],
+  /** #5240: the saved-card captures flagged "not yet settled", by key, with when each was written. */
+  flags: new Map<string, Date>(),
+  /** #5240: owed new-capture markers the flag step wrote, by key. */
+  owed: new Map<string, Date>(),
+  /** #5240 review: how many pages of flags the listing read. */
+  flagPages: 0,
+  /** #5240 review: the flag listing fails as a whole (its read throws). */
+  flagListError: null as Error | null,
+  /** #5240 review: the flag's delete throws once (a crash at the consume). */
+  flagDeleteError: null as Error | null,
+  /** #5240 review: the guard's verdict on the flagged capture, as its arrival would read it. */
+  judge: vi.fn(),
 }));
 
-vi.mock("@/lib/alert-cooldown", () => ({
-  listOwedAlertKeys: (...args: unknown[]) => mocks.listOwedAlertKeys(...args),
+vi.mock("@/lib/alert-cooldown", async (importOriginal) => ({
+  // #5240 review: the flags are listed by the real pager, over the fake flag store's `findMany` below.
+  listAllOwedAlertKeys: ((await importOriginal()) as typeof import("@/lib/alert-cooldown")).listAllOwedAlertKeys,
+  // Each owed prefix lists only its own markers, as the real listing's `startsWith` does.
+  listOwedAlertKeys: async (options: { prefix: string }) =>
+    (((await mocks.listOwedAlertKeys(options)) ?? []) as string[]).filter((key) => key.startsWith(options.prefix)),
   noteOwedAlertAttempt: (...args: unknown[]) => mocks.noteOwedAlertAttempt(...args),
   settleOwedAlert: (...args: unknown[]) => mocks.settleOwedAlert(...args),
   releaseAlertCooldown: vi.fn(),
@@ -174,8 +190,46 @@ vi.mock("@/lib/prisma", () => {
     payment: { findMany: async () => [] },
     groupBookingSettlement: { findFirst: async () => mocks.settlement },
   };
+  // #5240: the flag store, as the flag step and its promotion read and write it.
+  const alertCooldown = {
+    // The listing's shape, interpreted: an escaped prefix, a "due by" stamp, an optional key cursor, its order and page size.
+    findMany: async ({ where, orderBy, take }: {
+      where: { key: { startsWith: string }; lastAlertedAt: { lte: Date }; AND?: Array<{ key: { gt: string } }> };
+      orderBy: { key?: "asc"; lastAlertedAt?: "asc" };
+      take: number;
+    }) => {
+      mocks.flagPages += 1;
+      if (mocks.flagListError) throw mocks.flagListError;
+      const after = where.AND?.[0]?.key.gt;
+      return [...mocks.flags.entries()]
+        .filter(([key, at]) => key.startsWith(unescapeLike(where.key.startsWith)) && at <= where.lastAlertedAt.lte && (after === undefined || key > after))
+        .sort(([a, aAt], [b, bAt]) => (orderBy.key ? a.localeCompare(b) : aAt.getTime() - bAt.getTime()))
+        .slice(0, take)
+        .map(([key]) => ({ key }));
+    },
+    findUnique: async ({ where }: { where: { key: string } }) => {
+      const at = mocks.flags.get(where.key);
+      return at ? { lastAlertedAt: at } : null;
+    },
+    deleteMany: async ({ where }: { where: { key: string } }) => {
+      const error = mocks.flagDeleteError;
+      mocks.flagDeleteError = null;
+      if (error) throw error;
+      return { count: mocks.flags.delete(where.key) ? 1 : 0 };
+    },
+    upsert: async ({ where, create }: { where: { key: string }; create: { lastAlertedAt: Date } }) =>
+      void (mocks.owed.has(where.key) || mocks.owed.set(where.key, create.lastAlertedAt)),
+  };
+  Object.assign(client, { alertCooldown });
   return {
     prisma: {
+      alertCooldown,
+      // #5240 review (23 Nov, item 4): no ledger read outside a transaction. The flag step reads
+      // the capture and its payment's recorded settler in the transaction that claims the flag,
+      // so a read moved back onto the app's client throws here and fails its case.
+      get paymentTransaction(): never {
+        throw new Error("paymentTransaction read outside the transaction");
+      },
       // F3: one read-only snapshot, run against the fake ledger.
       $transaction: async (fn: (tx: typeof client) => unknown, options: unknown) => {
         mocks.transaction(options);
@@ -203,16 +257,22 @@ vi.mock("@/lib/club-format-server", () => ({ clubFormatValues: () => mocks.clubF
 vi.mock("@/lib/duplicate-capture-guard", async (importOriginal) => ({
   ...((await importOriginal()) as typeof import("@/lib/duplicate-capture-guard")),
   alertCaptureKeptWithoutRecordedSettler: (...args: unknown[]) => mocks.alert(...args),
+  // #5240 review: the guard itself is proven over real PostgreSQL (`third-duplicate-capture.realdb.test.ts`).
+  judgeCaptureOnPaidBooking: (...args: unknown[]) => mocks.judge(...args),
 }));
 vi.mock("@/lib/logger", () => ({ default: { error: vi.fn(), warn: vi.fn(), info: vi.fn() } }));
 
 import { drainOwedNewCaptureAlerts, NEW_CAPTURE_ALERT_DRAIN_AFTER_MS } from "@/lib/duplicate-capture-kept-alert-drain";
+import logger from "@/lib/logger";
+import { UNSETTLED_CAPTURE_HAND_OVER_MS } from "@/lib/unsettled-capture-marker";
 import { CLUB_FORMAT_TEST } from "@/lib/__tests__/support/club-format-fixture";
 import { formatCents } from "@/lib/utils";
 
 const KEY = "duplicate-capture-new-capture-owed:booking-1:pi_new";
 const NOW = new Date("2026-07-01T00:00:00.000Z");
 const FORMAT = CLUB_FORMAT_TEST;
+/** #5240: a run whose saved-card flag step found nothing to do. */
+const NO_FLAGS = { promoted: 0, handedOver: 0, promotionFailed: false } as const;
 
 /** A card refund row, in flight unless the case says otherwise. */
 function refundOperation(overrides: Partial<Operation> = {}): Operation {
@@ -260,6 +320,12 @@ function prime({
 
 beforeEach(() => {
   vi.clearAllMocks();
+  mocks.flags.clear();
+  mocks.flagPages = 0;
+  mocks.flagListError = null;
+  mocks.flagDeleteError = null;
+  mocks.judge.mockResolvedValue({ verdict: "keep_unrecorded_settler", reason: "new-capture", otherPaymentIntentId: null, otherHoldsMoney: false, heldCents: 20000 });
+  mocks.owed.clear();
   mocks.rows = [];
   mocks.operations = [];
   mocks.bookingEvents = [];
@@ -282,7 +348,7 @@ describe("the owed new-capture alert's drain (#4285 review)", () => {
   it("reads only due markers under its own prefix, an hour after they were owed, and reads nothing else when none is due", async () => {
     mocks.listOwedAlertKeys.mockResolvedValue([]);
 
-    expect(await drainOwedNewCaptureAlerts(NOW)).toEqual({ checked: 0, sent: 0 });
+    expect(await drainOwedNewCaptureAlerts(NOW)).toEqual({ checked: 0, sent: 0, ...NO_FLAGS });
     expect(mocks.listOwedAlertKeys).toHaveBeenCalledWith({ prefix: "duplicate-capture-new-capture-owed:", now: NOW, retryAfterMs: NEW_CAPTURE_ALERT_DRAIN_AFTER_MS });
     expect(NEW_CAPTURE_ALERT_DRAIN_AFTER_MS).toBe(60 * 60 * 1000);
     expect(mocks.clubFormatValues).not.toHaveBeenCalled();
@@ -291,7 +357,7 @@ describe("the owed new-capture alert's drain (#4285 review)", () => {
   it("sends the kept-capture alert for a capture still holding money on a paid booking, as the settle would", async () => {
     prime();
 
-    expect(await drainOwedNewCaptureAlerts(NOW)).toEqual({ checked: 1, sent: 1 });
+    expect(await drainOwedNewCaptureAlerts(NOW)).toEqual({ checked: 1, sent: 1, ...NO_FLAGS });
     expect(mocks.alert).toHaveBeenCalledWith({
       booking: expect.objectContaining({ id: "booking-1" }),
       memberName: "Alice Example",
@@ -329,7 +395,7 @@ describe("the owed new-capture alert's drain (#4285 review)", () => {
   ])("F2: a refund as account credit marks the capture refunded (%s) but leaves the money on the card: still told, with what the card holds", async (_label, state, held) => {
     prime({ status: "CANCELLED", ...state });
 
-    expect(await drainOwedNewCaptureAlerts(NOW)).toEqual({ checked: 1, sent: 1 });
+    expect(await drainOwedNewCaptureAlerts(NOW)).toEqual({ checked: 1, sent: 1, ...NO_FLAGS });
     expect(mocks.alert).toHaveBeenCalledWith(expect.objectContaining({ reason: "new-capture-closed", amountCents: held }));
     expect(mocks.settleOwedAlert).not.toHaveBeenCalled();
   });
@@ -340,7 +406,7 @@ describe("the owed new-capture alert's drain (#4285 review)", () => {
   ])("clears a marker with nothing to tell (%s) without an email", async (_label, state) => {
     prime(state);
 
-    expect(await drainOwedNewCaptureAlerts(NOW)).toEqual({ checked: 1, sent: 0 });
+    expect(await drainOwedNewCaptureAlerts(NOW)).toEqual({ checked: 1, sent: 0, ...NO_FLAGS });
     expect(mocks.alert).not.toHaveBeenCalled();
     expect(mocks.settleOwedAlert).toHaveBeenCalledWith({ key: KEY });
   });
@@ -349,7 +415,7 @@ describe("the owed new-capture alert's drain (#4285 review)", () => {
     prime();
     mocks.bookingFindUnique.mockResolvedValue(null);
 
-    expect(await drainOwedNewCaptureAlerts(NOW)).toEqual({ checked: 1, sent: 0 });
+    expect(await drainOwedNewCaptureAlerts(NOW)).toEqual({ checked: 1, sent: 0, ...NO_FLAGS });
     expect(mocks.alert).not.toHaveBeenCalled();
     expect(mocks.settleOwedAlert).toHaveBeenCalledWith({ key: KEY });
   });
@@ -364,7 +430,7 @@ describe("the owed new-capture alert's drain (#4285 review)", () => {
     prime({ status: "CANCELLED" });
     mocks.operations.push(operation);
 
-    expect(await drainOwedNewCaptureAlerts(NOW)).toEqual({ checked: 1, sent: 0 });
+    expect(await drainOwedNewCaptureAlerts(NOW)).toEqual({ checked: 1, sent: 0, ...NO_FLAGS });
     expect(mocks.alert).not.toHaveBeenCalled();
     expect(mocks.settleOwedAlert).not.toHaveBeenCalled();
     expect(mocks.noteOwedAlertAttempt).toHaveBeenCalledWith({ key: KEY, now: NOW });
@@ -379,7 +445,7 @@ describe("the owed new-capture alert's drain (#4285 review)", () => {
     prime();
     mocks.operations.push(operation);
 
-    expect(await drainOwedNewCaptureAlerts(NOW)).toEqual({ checked: 1, sent: 1 });
+    expect(await drainOwedNewCaptureAlerts(NOW)).toEqual({ checked: 1, sent: 1, ...NO_FLAGS });
     expect(mocks.alert).toHaveBeenCalledWith(expect.objectContaining({ reason: "new-capture" }));
     expect(mocks.noteOwedAlertAttempt).not.toHaveBeenCalled();
   });
@@ -387,7 +453,7 @@ describe("the owed new-capture alert's drain (#4285 review)", () => {
   it("F2/F3: a booking cancelled since is told as closed, with what the capture still holds after the cancel's refund", async () => {
     prime({ status: "CANCELLED", captureStatus: "PARTIALLY_REFUNDED", refundedAmountCents: 15000 });
 
-    expect(await drainOwedNewCaptureAlerts(NOW)).toEqual({ checked: 1, sent: 1 });
+    expect(await drainOwedNewCaptureAlerts(NOW)).toEqual({ checked: 1, sent: 1, ...NO_FLAGS });
     expect(mocks.alert).toHaveBeenCalledWith(expect.objectContaining({ reason: "new-capture-closed", paymentIntentId: "pi_new", amountCents: 5000, cancellationRefund: null }));
     expect(mocks.settleOwedAlert).not.toHaveBeenCalled();
   });
@@ -524,7 +590,7 @@ describe("the owed new-capture alert's drain (#4285 review)", () => {
     mocks.recoveryRows = [recoveryRow({ ...DEAD, succeededAt: null })];
     mocks.bookingEvents = [CARD_DECISION];
 
-    expect(await drainOwedNewCaptureAlerts(NOW)).toEqual({ checked: 1, sent: 1 });
+    expect(await drainOwedNewCaptureAlerts(NOW)).toEqual({ checked: 1, sent: 1, ...NO_FLAGS });
     expect(mocks.noteOwedAlertAttempt).not.toHaveBeenCalled();
     expect(mocks.alert).toHaveBeenCalledWith(
       expect.objectContaining({ reason: "new-capture-closed", amountCents: 20000, cancellationRefund: cardNote({ amount: money(10000), standing: "not-sent" }) }),
@@ -636,7 +702,7 @@ describe("the owed new-capture alert's drain (#4285 review)", () => {
     prime();
     arrange();
 
-    expect(await drainOwedNewCaptureAlerts(NOW)).toEqual({ checked: 1, sent: 0 });
+    expect(await drainOwedNewCaptureAlerts(NOW)).toEqual({ checked: 1, sent: 0, ...NO_FLAGS });
     expect(mocks.alert).not.toHaveBeenCalled();
     expect(mocks.settleOwedAlert).toHaveBeenCalledWith({ key: KEY });
   });
@@ -716,8 +782,248 @@ describe("the owed new-capture alert's drain (#4285 review)", () => {
     mocks.duplicateRefundIntentIds.mockResolvedValue([]);
     mocks.duplicateRefundsHolding.mockResolvedValue([]);
     mocks.alert.mockResolvedValueOnce("send-threw");
-    expect(await drainOwedNewCaptureAlerts(NOW)).toEqual({ checked: 1, sent: 0 });
+    expect(await drainOwedNewCaptureAlerts(NOW)).toEqual({ checked: 1, sent: 0, ...NO_FLAGS });
     expect(mocks.noteOwedAlertAttempt).not.toHaveBeenCalled();
     expect(mocks.settleOwedAlert).not.toHaveBeenCalled();
+  });
+});
+
+describe("#5240 a saved-card capture still flagged \"not yet settled\" an hour on", () => {
+  const FLAG = "saved-card-capture-unsettled:pi_new";
+  const PROMOTED = (reason: string) => `duplicate-capture-promoted-owed:${reason}:booking-1:pi_new`;
+  const DAY_MS = 24 * 60 * 60 * 1000;
+
+  /** The capture as the flag step reads it: its row, its payment's recorded settler and its booking's status. */
+  function primeFlag({ bookingStatus = "PAID", captureStatus = "SUCCEEDED", settledBy = null as string | null, ageMs = 2 * NEW_CAPTURE_ALERT_DRAIN_AFTER_MS } = {}) {
+    prime({ status: bookingStatus, captureStatus });
+    mocks.flags.set(FLAG, new Date(NOW.getTime() - ageMs));
+    // The owed drain lists what the flag step left owed and due, in the same run.
+    mocks.listOwedAlertKeys.mockImplementation(async ({ now, retryAfterMs }: { now: Date; retryAfterMs: number }) =>
+      [...mocks.owed.entries()].filter(([, at]) => at.getTime() <= now.getTime() - retryAfterMs).map(([key]) => key));
+    mocks.transactionFindUnique.mockResolvedValueOnce({
+      id: "txn-new",
+      status: captureStatus,
+      amountCents: 20000,
+      payment: { id: "payment-1", settledByTransactionId: settledBy, bookingId: "booking-1", booking: { status: bookingStatus } },
+    });
+  }
+
+  it.each(["PAID", "COMPLETED"])("on a %s booking it becomes an owed new-capture alert, due at once, which this same run sends", async (bookingStatus) => {
+    primeFlag({ bookingStatus });
+
+    expect(await drainOwedNewCaptureAlerts(NOW)).toEqual({ checked: 1, sent: 1, ...NO_FLAGS, promoted: 1 });
+
+    expect(mocks.flags.has(FLAG), "the flag is consumed").toBe(false);
+    expect(mocks.owed.get(KEY)).toEqual(new Date(NOW.getTime() - NEW_CAPTURE_ALERT_DRAIN_AFTER_MS));
+    expect(mocks.alert).toHaveBeenCalledWith(expect.objectContaining({ paymentIntentId: "pi_new", reason: "new-capture" }));
+  });
+
+  it("a settle that consumed the flag first wins: the promotion writes nothing owed", async () => {
+    primeFlag();
+    // The capture's arrival takes the flag between the read and the promotion.
+    mocks.transactionFindUnique.mockReset().mockImplementationOnce(async () => {
+      mocks.flags.delete(FLAG);
+      return { id: "txn-new", status: "SUCCEEDED", amountCents: 20000, payment: { id: "payment-1", settledByTransactionId: null, bookingId: "booking-1", booking: { status: "PAID" } } };
+    });
+
+    expect(await drainOwedNewCaptureAlerts(NOW)).toEqual({ checked: 0, sent: 0, ...NO_FLAGS });
+    expect(mocks.owed.size).toBe(0);
+  });
+
+  it.each([
+    ["the booking's recorded settler", { settledBy: "txn-new" }],
+    ["refunded in full", { captureStatus: "REFUNDED" }],
+    ["never captured", { captureStatus: "FAILED" }],
+  ])("a capture that is %s is cleared without an alert", async (_label, overrides) => {
+    primeFlag(overrides);
+
+    await drainOwedNewCaptureAlerts(NOW);
+
+    expect(mocks.flags.has(FLAG), "cleared").toBe(false);
+    expect(mocks.owed.size).toBe(0);
+    expect(mocks.alert).not.toHaveBeenCalled();
+  });
+
+  it("a capture whose row is gone is cleared", async () => {
+    primeFlag();
+    mocks.transactionFindUnique.mockReset().mockResolvedValue(null);
+
+    await drainOwedNewCaptureAlerts(NOW);
+
+    expect(mocks.flags.has(FLAG), "cleared").toBe(false);
+  });
+
+  it("on an unpaid booking it waits for the webhook, unstamped, up to seven days less a millisecond", async () => {
+    primeFlag({ bookingStatus: "CONFIRMED", ageMs: UNSETTLED_CAPTURE_HAND_OVER_MS - 1 });
+
+    await drainOwedNewCaptureAlerts(NOW);
+
+    expect(mocks.flags.get(FLAG)).toEqual(new Date(NOW.getTime() - UNSETTLED_CAPTURE_HAND_OVER_MS + 1));
+    expect(mocks.settleOwedAlert).not.toHaveBeenCalled();
+    expect(mocks.noteOwedAlertAttempt).not.toHaveBeenCalled();
+    expect(mocks.owed.size).toBe(0);
+    expect(logger.error).not.toHaveBeenCalled();
+  });
+
+  it("at seven days it is cleared and handed to the error log once", async () => {
+    expect(UNSETTLED_CAPTURE_HAND_OVER_MS).toBe(7 * DAY_MS);
+    primeFlag({ bookingStatus: "CONFIRMED", ageMs: UNSETTLED_CAPTURE_HAND_OVER_MS });
+
+    await drainOwedNewCaptureAlerts(NOW);
+    await drainOwedNewCaptureAlerts(NOW);
+
+    expect(mocks.flags.has(FLAG)).toBe(false);
+    expect(mocks.owed.size).toBe(0);
+    expect(logger.error).toHaveBeenCalledTimes(1);
+    expect(mocks.judge, "an unpaid booking is never judged").not.toHaveBeenCalled();
+    expect(logger.error).toHaveBeenCalledWith(
+      { bookingId: "booking-1", paymentIntentId: "pi_new", ageMs: UNSETTLED_CAPTURE_HAND_OVER_MS, bookingStatus: "CONFIRMED" },
+      expect.stringContaining("never settled"),
+    );
+  });
+
+  it("#5240 review item 1: the seven-day hand-over is logged before the flag is consumed, so a crash at the consume still leaves the log", async () => {
+    primeFlag({ bookingStatus: "CONFIRMED", ageMs: UNSETTLED_CAPTURE_HAND_OVER_MS });
+    const crash = new Error("connection lost at the consume");
+    mocks.flagDeleteError = crash;
+
+    expect(await drainOwedNewCaptureAlerts(NOW)).toEqual({ checked: 0, sent: 0, ...NO_FLAGS });
+
+    const handOver = { bookingId: "booking-1", paymentIntentId: "pi_new", ageMs: UNSETTLED_CAPTURE_HAND_OVER_MS, bookingStatus: "CONFIRMED" };
+    const calls = vi.mocked(logger.error).mock.calls;
+    expect(calls[0], "the hand-over log came first").toEqual([handOver, expect.stringContaining("never settled")]);
+    expect(calls[1], "then the consume's crash, caught for this flag alone").toEqual([{ err: crash, key: FLAG }, expect.any(String)]);
+    expect(mocks.flags.has(FLAG), "the flag stands for the next run").toBe(true);
+  });
+
+  it("#5240 review item 3: on a paid booking where the arrival would refund it (another card is the settlement), the flag waits for the arrival; at seven days, with Stripe's retries over, it becomes the owed alert and the officers are emailed", async () => {
+    mocks.judge.mockResolvedValue({ verdict: "refund", refundPlan: [{ paymentTransactionId: "txn-new", amountCents: 20000 }], refundCents: 20000, settledPaymentIntentId: "pi_settler" });
+    primeFlag({ ageMs: UNSETTLED_CAPTURE_HAND_OVER_MS - 1 });
+
+    expect(await drainOwedNewCaptureAlerts(NOW)).toEqual({ checked: 0, sent: 0, ...NO_FLAGS });
+    expect(mocks.judge).toHaveBeenCalledWith(expect.anything(), {
+      bookingId: "booking-1",
+      paymentId: "payment-1",
+      recordedSettlerId: null,
+      paymentIntentId: "pi_new",
+      amountCents: 20000,
+      arrivingAlreadyCaptured: false,
+    });
+    expect(mocks.flags.has(FLAG), "left for the arrival, which refunds it").toBe(true);
+    expect(mocks.owed.size).toBe(0);
+    expect(mocks.alert).not.toHaveBeenCalled();
+
+    primeFlag({ ageMs: UNSETTLED_CAPTURE_HAND_OVER_MS });
+    // #5240 review (23 Nov, item 8): owed, but due an hour on, so an arrival that lost the flag
+    // to this run has committed its refund before the drain judges the alert.
+    expect(await drainOwedNewCaptureAlerts(NOW)).toEqual({ checked: 0, sent: 0, ...NO_FLAGS, promoted: 1 });
+    expect(mocks.flags.has(FLAG)).toBe(false);
+    expect(mocks.owed.get(PROMOTED("unsettled-saved-card"))).toEqual(NOW);
+    expect(mocks.alert).not.toHaveBeenCalled();
+
+    const anHourOn = new Date(NOW.getTime() + NEW_CAPTURE_ALERT_DRAIN_AFTER_MS);
+    expect(await drainOwedNewCaptureAlerts(anHourOn)).toEqual({ checked: 1, sent: 1, ...NO_FLAGS });
+    // #5240 review (23 Nov, item 5): told as what it is, not as a payment made with account credit.
+    expect(mocks.alert).toHaveBeenCalledWith(expect.objectContaining({ paymentIntentId: "pi_new", reason: "unsettled-saved-card" }));
+    expect(logger.error, "an email, not only a log line").not.toHaveBeenCalled();
+  });
+
+  it("#5240 review (23 Nov, item 8): a seven-day alert whose capture an arrival refunded within the hour is never sent as kept", async () => {
+    mocks.judge.mockResolvedValue({ verdict: "refund", refundPlan: [{ paymentTransactionId: "txn-new", amountCents: 20000 }], refundCents: 20000, settledPaymentIntentId: "pi_settler" });
+    primeFlag({ ageMs: UNSETTLED_CAPTURE_HAND_OVER_MS });
+    await drainOwedNewCaptureAlerts(NOW);
+    // The arrival, blocked on the flag, replays after the promotion's commit and plans the duplicate's refund.
+    mocks.operations = [refundOperation({ paymentTransactionId: "txn-new", paymentIntentId: "pi_new" })];
+
+    await drainOwedNewCaptureAlerts(new Date(NOW.getTime() + NEW_CAPTURE_ALERT_DRAIN_AFTER_MS));
+
+    expect(mocks.alert, "no kept alert beside the refund").not.toHaveBeenCalled();
+    expect(mocks.noteOwedAlertAttempt, "it waits on the refund").toHaveBeenCalledWith(expect.objectContaining({ key: PROMOTED("unsettled-saved-card") }));
+  });
+
+  it.each(["not-recorded", "settler-released"])("#5240 review 23 Nov item 1(a): on a paid booking the arrival would keep and tell the admins for any reason (%s): the flag becomes the owed alert at once", async (reason) => {
+    mocks.judge.mockResolvedValue({ verdict: "keep_unrecorded_settler", reason, otherPaymentIntentId: "pi_other", otherHoldsMoney: true, heldCents: 20000 });
+    primeFlag();
+
+    expect(await drainOwedNewCaptureAlerts(NOW)).toEqual({ checked: 1, sent: 1, ...NO_FLAGS, promoted: 1 });
+    expect(mocks.flags.has(FLAG)).toBe(false);
+    expect(mocks.owed.get(PROMOTED(reason)), "the reason travels in the marker's key").toEqual(new Date(NOW.getTime() - NEW_CAPTURE_ALERT_DRAIN_AFTER_MS));
+    expect(mocks.owed.has(KEY)).toBe(false);
+    // #5240 review (23 Nov, item 5): the guard's reason, never "new-capture" (account credit or a zero total).
+    expect(mocks.alert).toHaveBeenCalledWith(expect.objectContaining({ paymentIntentId: "pi_new", reason, otherPaymentIntentId: null }));
+  });
+
+  it("#5240 review (23 Nov, item 6): a silent keep (a cancel in flight holds it) waits and is judged again each run; if the cancel dies, the next run alerts; only at seven days is a keep cleared", async () => {
+    mocks.judge.mockResolvedValue({ verdict: "keep" });
+    primeFlag();
+    expect(await drainOwedNewCaptureAlerts(NOW)).toEqual({ checked: 0, sent: 0, ...NO_FLAGS });
+    expect(mocks.flags.has(FLAG), "kept, not cleared: the keep may pass").toBe(true);
+    expect(mocks.owed.size).toBe(0);
+    expect(mocks.alert).not.toHaveBeenCalled();
+
+    // The cancel died: the next run's judgement keeps and tells.
+    mocks.judge.mockResolvedValue({ verdict: "keep_unrecorded_settler", reason: "new-capture", otherPaymentIntentId: null, otherHoldsMoney: false, heldCents: 20000 });
+    primeFlag();
+    expect(await drainOwedNewCaptureAlerts(NOW)).toEqual({ checked: 1, sent: 1, ...NO_FLAGS, promoted: 1 });
+    expect(mocks.judge).toHaveBeenCalledTimes(2);
+    expect(mocks.alert).toHaveBeenCalledWith(expect.objectContaining({ paymentIntentId: "pi_new", reason: "new-capture" }));
+  });
+
+  it("#5240 review (23 Nov, item 6): a keep still standing at seven days is cleared, with nothing owed or logged", async () => {
+    mocks.judge.mockResolvedValue({ verdict: "keep" });
+    primeFlag({ ageMs: UNSETTLED_CAPTURE_HAND_OVER_MS - 1 });
+    await drainOwedNewCaptureAlerts(NOW);
+    expect(mocks.flags.has(FLAG)).toBe(true);
+
+    primeFlag({ ageMs: UNSETTLED_CAPTURE_HAND_OVER_MS });
+    expect(await drainOwedNewCaptureAlerts(NOW)).toEqual({ checked: 0, sent: 0, ...NO_FLAGS });
+    expect(mocks.flags.has(FLAG)).toBe(false);
+    expect(mocks.owed.size).toBe(0);
+    expect(mocks.alert).not.toHaveBeenCalled();
+    expect(logger.error).not.toHaveBeenCalled();
+  });
+
+  it("#5240 review 23 Nov item 1(b): a capture the arrival would not judge (partly refunded) on a paid booking waits, then at seven days becomes the owed alert", async () => {
+    primeFlag({ captureStatus: "PARTIALLY_REFUNDED", ageMs: UNSETTLED_CAPTURE_HAND_OVER_MS - 1 });
+    expect(await drainOwedNewCaptureAlerts(NOW)).toEqual({ checked: 0, sent: 0, ...NO_FLAGS });
+    expect(mocks.flags.has(FLAG)).toBe(true);
+
+    primeFlag({ captureStatus: "PARTIALLY_REFUNDED", ageMs: UNSETTLED_CAPTURE_HAND_OVER_MS });
+    expect(await drainOwedNewCaptureAlerts(NOW)).toEqual({ checked: 0, sent: 0, ...NO_FLAGS, promoted: 1 });
+    expect(mocks.judge, "only a SUCCEEDED row reaches the guard").not.toHaveBeenCalled();
+    expect(mocks.flags.has(FLAG)).toBe(false);
+    expect(await drainOwedNewCaptureAlerts(new Date(NOW.getTime() + NEW_CAPTURE_ALERT_DRAIN_AFTER_MS))).toEqual({ checked: 1, sent: 1, ...NO_FLAGS });
+    expect(mocks.alert).toHaveBeenCalledWith(expect.objectContaining({ paymentIntentId: "pi_new", reason: "unsettled-saved-card" }));
+    expect(logger.error).not.toHaveBeenCalled();
+  });
+
+  it("#5240 review item 2: a flag step that throws as a whole never blocks the owed alerts: they are still drained and sent, and the run records the failure", async () => {
+    prime();
+    mocks.flagListError = new Error("flag listing failed");
+
+    expect(await drainOwedNewCaptureAlerts(NOW)).toEqual({ checked: 1, sent: 1, ...NO_FLAGS, promotionFailed: true });
+
+    expect(mocks.alert).toHaveBeenCalledWith(expect.objectContaining({ paymentIntentId: "pi_new" }));
+    expect(logger.error).toHaveBeenCalledWith({ err: mocks.flagListError }, expect.stringContaining("still drained"));
+  });
+
+  it("#5240 review: more than a page of older flags waiting on unpaid bookings never hides a newer one on a paid booking", async () => {
+    primeFlag();
+    // 60 flags written six days ago, each waiting on an unpaid booking, all ahead of the paid one in key and age order.
+    const waiting = Array.from({ length: 60 }, (_, i) => `saved-card-capture-unsettled:pi_a${String(i).padStart(2, "0")}`);
+    for (const key of waiting) mocks.flags.set(key, new Date(NOW.getTime() - 6 * DAY_MS));
+    const judgeCapture = { id: "txn-new", paymentId: "payment-1", status: "SUCCEEDED", amountCents: 20000, refundedAmountCents: 0 };
+    mocks.transactionFindUnique.mockReset().mockImplementation(async ({ where, select }: { where: { stripePaymentIntentId: string }; select: { payment?: unknown } }) => {
+      if (!select.payment) return judgeCapture;
+      const paid = where.stripePaymentIntentId === "pi_new";
+      return { id: `txn-${where.stripePaymentIntentId}`, status: "SUCCEEDED", amountCents: 20000, payment: { id: "payment-1", settledByTransactionId: null, bookingId: paid ? "booking-1" : "booking-unpaid", booking: { status: paid ? "PAID" : "CONFIRMED" } } };
+    });
+
+    expect(await drainOwedNewCaptureAlerts(NOW)).toEqual({ checked: 1, sent: 1, ...NO_FLAGS, promoted: 1 });
+
+    expect(mocks.flagPages, "the listing read past its first page").toBeGreaterThan(1);
+    expect(mocks.flags.has(FLAG), "the paid booking's flag is consumed").toBe(false);
+    expect(mocks.alert).toHaveBeenCalledWith(expect.objectContaining({ paymentIntentId: "pi_new", reason: "new-capture" }));
+    expect(waiting.every((key) => mocks.flags.has(key)), "the waiting flags still wait").toBe(true);
   });
 });

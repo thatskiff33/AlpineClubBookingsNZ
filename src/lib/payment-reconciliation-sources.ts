@@ -51,8 +51,6 @@ export type MarkBookingPaymentSucceededInput = {
   paymentMethodId: string | null;
   /** The club's format (#3565), resolved before any transaction by the caller. */
   format: ClubFormat;
-  /** #4285 review: the caller just wrote this capture SUCCEEDED itself (`SettledSavedCardChargeAttempt.newlyCaptured`). */
-  recordedByCaller?: boolean;
   capturedAt?: Date;
   /** #5433: the caller delivers the paid confirmation (`StripeSettlementSource.owesPaidConfirmation`). */
   owesPaidConfirmation?: boolean;
@@ -73,8 +71,6 @@ export type StripeSettlementSource = {
   paymentMethodId: string | null;
   /** #3864: for the applied-credit give-back, resolved before the transaction. */
   format: ClubFormat;
-  /** #4285 review: the caller wrote this capture SUCCEEDED just before (`newlyCaptured`), so it is not a replay. */
-  recordedByCaller?: boolean;
   /**
    * #5433 (owner decision D1): the caller sends the member the paid
    * confirmation, so a fresh PAID claim records it as owed in this settle's

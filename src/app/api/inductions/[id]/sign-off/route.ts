@@ -1,16 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { parseJsonRequestBody } from "@/lib/api-json";
-import { hasActiveHutLeaderAssignment } from "@/lib/hut-leader";
 import {
   addSignOff,
   canSignOff,
   getInductionById,
+  inductionSignerContext,
   InductionError,
-  type SignerContext,
 } from "@/lib/induction";
 import logger from "@/lib/logger";
-import { hasAccessRole, hasAdminAccess } from "@/lib/access-roles";
 import { prisma } from "@/lib/prisma";
 import { requireActiveSession } from "@/lib/session-guards";
 
@@ -44,13 +42,7 @@ export async function POST(
   }
 
   const memberId = guard.session.user.id;
-  const ctx: SignerContext = {
-    memberId,
-    isAdmin: hasAdminAccess(guard.session.user),
-    isHutLeader:
-      hasAccessRole(guard.session.user, "USER") &&
-      (await hasActiveHutLeaderAssignment(memberId)),
-  };
+  const ctx = await inductionSignerContext(req, guard.session.user);
 
   const induction = await getInductionById(id);
   if (!induction) {

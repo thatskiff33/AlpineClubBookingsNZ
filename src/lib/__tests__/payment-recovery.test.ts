@@ -6088,7 +6088,7 @@ describe("payment recovery worker", () => {
         }),
       );
       // The event lands exactly once, with the duplicate intent parsed from the
-      // key and a null settling intent (not persisted on the operation).
+      // key; this payment records no settler, so none is named (#5240).
       expect(mockRecordDuplicateCaptureRefundEvent).toHaveBeenCalledTimes(1);
       expect(mockRecordDuplicateCaptureRefundEvent).toHaveBeenCalledWith({
         bookingId: "booking-1",
@@ -6096,6 +6096,44 @@ describe("payment recovery worker", () => {
         duplicatePaymentIntentId: "pi_dup",
         settledPaymentIntentId: null,
       });
+    });
+
+    /** #5240: the payment's recorded settler (`Payment.settledByTransactionId`), read back as the history names it. */
+    async function replayWithSettler(settler: { id: string; stripePaymentIntentId: string | null } | null) {
+      const dupOp = makeDuplicateCaptureOp();
+      setPlannedChargeFixtures([{ paymentTransactionId: "txn-dup", amountCents: 5000 }], "pi_dup");
+      mockPaymentRecoveryFindMany.mockImplementation((args?: { where?: { attempts?: { gte?: number } } }) =>
+        Promise.resolve(isStaleWorkerSweep(args) ? [] : [dupOp]),
+      );
+      mockPaymentRecoveryFindUnique.mockResolvedValue(dupOp);
+      const paymentRead = mockPaymentFindUnique.getMockImplementation();
+      mockPaymentFindUnique.mockImplementation(async (...args: unknown[]) =>
+        (args[0] as { select?: { settledByTransactionId?: boolean } } | undefined)?.select?.settledByTransactionId
+          ? { settledByTransactionId: settler?.id ?? null }
+          : paymentRead?.(...args),
+      );
+      const transactionRead = mockPaymentTransactionFindUnique.getMockImplementation();
+      mockPaymentTransactionFindUnique.mockImplementation(async (...args: unknown[]) =>
+        settler && (args[0] as { where?: { id?: string } } | undefined)?.where?.id === settler.id
+          ? { stripePaymentIntentId: settler.stripePaymentIntentId }
+          : transactionRead?.(...args),
+      );
+
+      expect((await processPaymentRecoveryOperations({ limit: 1 })).succeeded).toBe(1);
+      expect(mockRecordDuplicateCaptureRefundEvent).toHaveBeenCalledTimes(1);
+      return (mockRecordDuplicateCaptureRefundEvent.mock.calls[0]![0] as { settledPaymentIntentId: string | null }).settledPaymentIntentId;
+    }
+
+    it("#5240: the retry's history entry names the settling card payment recorded on the booking", async () => {
+      expect(await replayWithSettler({ id: "txn-settled", stripePaymentIntentId: "pi_settled" })).toBe("pi_settled");
+    });
+
+    it.each([
+      ["no settler is recorded", null],
+      ["the settler is a bank payment", { id: "txn-bank", stripePaymentIntentId: null }],
+      ["the recorded settler is the duplicate itself", { id: "txn-dup-settler", stripePaymentIntentId: "pi_dup" }],
+    ])("#5240: the history names no settling payment when %s", async (_label, settler) => {
+      expect(await replayWithSettler(settler)).toBeNull();
     });
 
     it("does NOT record the event when the terminal transition finds the operation already SUCCEEDED (count 0)", async () => {

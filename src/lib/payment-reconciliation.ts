@@ -114,6 +114,7 @@ import type {
 import { LOCK1_HOLDER_TRANSACTION_BUDGET } from "@/lib/db-transaction";
 import { readClearedCreditElectionCents, readSettledAdditionalPayment } from "@/lib/manual-mark-paid-metadata";
 import { owePaidConfirmationAfterFreshClaim } from "@/lib/paid-booking-confirmation-owed";
+import { consumeCaptureAwaitingSettle } from "@/lib/unsettled-capture-marker";
 
 const PAYABLE_SUCCESS_STATUS_LIST = [
   BookingStatus.PAYMENT_PENDING,
@@ -749,7 +750,7 @@ async function settleBookingPaymentInTransaction(
     await lockPaymentForRefundedTotal(tx, payment.id);
 
     let refundedIntentHistory = false;
-    // #4285 review: the arriving capture's row was already SUCCEEDED (a replay) and not by this caller.
+    // #4285 review: the arriving capture's row was already SUCCEEDED (a replay), with no saved-card "not yet settled" flag (#5240).
     let arrivingAlreadyCaptured = false;
 
     if (settlement.kind === "stripe") {
@@ -771,7 +772,7 @@ async function settleBookingPaymentInTransaction(
         priorTransaction !== null &&
         (priorTransaction.status === PaymentStatus.REFUNDED ||
           priorTransaction.status === PaymentStatus.PARTIALLY_REFUNDED);
-      arrivingAlreadyCaptured = priorTransaction?.status === PaymentStatus.SUCCEEDED && !settlement.recordedByCaller;
+      arrivingAlreadyCaptured = priorTransaction?.status === PaymentStatus.SUCCEEDED && !(await consumeCaptureAwaitingSettle(tx, settlement.paymentIntentId));
 
       if (!refundedIntentHistory) {
         await upsertPaymentIntentTransaction({
@@ -1582,7 +1583,6 @@ export async function markBookingPaymentSucceeded({
   amountCents,
   paymentMethodId,
   format,
-  recordedByCaller = false,
   capturedAt,
   owesPaidConfirmation = false,
 }: MarkBookingPaymentSucceededInput): Promise<MarkBookingPaymentSucceededResult> {
@@ -1594,7 +1594,7 @@ export async function markBookingPaymentSucceeded({
       amountCents,
       paymentMethodId,
       format,
-      recordedByCaller, capturedAt, owesPaidConfirmation,
+      capturedAt, owesPaidConfirmation,
     }, journal), LOCK1_HOLDER_TRANSACTION_BUDGET
   );
 

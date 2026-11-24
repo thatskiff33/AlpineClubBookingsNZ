@@ -37,13 +37,19 @@
  * - `new-capture-later-payment` (#4285 review): that alert, still owed when the
  *   drain sends it, once another payment also holds money. Two payments now hold
  *   money on a booking paid another way or whose earlier payment was refunded.
+ * - `unsettled-saved-card` (#5240 review): a saved-card payment whose charge
+ *   stopped before it settled the booking, still unsettled by its own arrival
+ *   after seven days, on a booking paid by another payment (so its arrival would
+ *   have refunded it) or with the payment no longer simply captured. Nothing will
+ *   refund it now, so the payments cron tells the admins.
  */
 export type DuplicateCaptureKeptReason =
   | "not-recorded"
   | "settler-released"
   | "new-capture"
   | "new-capture-closed"
-  | "new-capture-later-payment";
+  | "new-capture-later-payment"
+  | "unsettled-saved-card";
 
 /**
  * #4285 review: what the cancellation's own record says it refunded, for a
@@ -170,6 +176,10 @@ export function duplicateCaptureKeptParagraph(input: {
       return `A new card payment was recorded on this booking after it was already paid, while ${NO_OTHER_SETTLING_PAYMENT_THEN}, and the booking has since been cancelled or closed. A cancellation refunds at most what the booking was worth, so part or all of this payment may still be held: the amount shown is what this card payment still holds after any card refund taken from it. A refund made as account credit or by hand never touches this card payment, so part of what it holds may already have been refunded another way.${cancellationRefundSentence(input.cancellationRefund)}`;
     case "new-capture-later-payment":
       return laterPayment;
+    case "unsettled-saved-card":
+      return `A saved-card payment was taken on this booking, but the app stopped before settling the booking with it, and in seven days nothing finished settling it. ${input.otherHoldsMoney === false
+        ? `${capitalised(NO_OTHER_SETTLING_PAYMENT)}, so this payment may be extra, or may be what should pay for the booking.`
+        : `${capitalised(otherPaymentLabel(input.otherPaymentIntentId))} on it holds money, so this payment may be extra.`} Nothing was refunded automatically.`;
     case "new-capture":
       // #4285 review: a payment the app no longer counts as settling it (behind a dead
       // cancel, or a refund that failed later) may still hold money; then it is named.
@@ -197,7 +207,7 @@ export function duplicateCaptureKeptAction(input: { otherHoldsMoney?: boolean; r
   if (input.reason === "new-capture-later-payment" || (input.reason === "new-capture" && input.otherHoldsMoney === true)) {
     return "Check which of the two payments should pay for the booking, if either, and refund by hand any the booking does not need — both, if it was paid another way.";
   }
-  return input.reason === "new-capture" ? action : `${action} ${DUPLICATE_CAPTURE_KEPT_STRIPE_CHECK}`;
+  return input.reason === "new-capture" || input.reason === "unsettled-saved-card" ? action : `${action} ${DUPLICATE_CAPTURE_KEPT_STRIPE_CHECK}`;
 }
 
 /** Fixed wording: the check the upgrade window needs (#4211 review). */
