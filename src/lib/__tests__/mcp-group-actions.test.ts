@@ -80,6 +80,7 @@ import { POST as withdrawWholeLodgeRequest } from "@/app/api/booking-requests/wh
 import { POST as openGroupBooking } from "@/app/api/group-bookings/route";
 import { GET as getGroupBooking, PATCH as setGroupBookingJoining } from "@/app/api/group-bookings/[code]/route";
 import { expectActionContract, officerMemberSession } from "@/lib/__tests__/helpers/mcp-action-contract";
+import { findMcpAction } from "@/lib/mcp/catalogue";
 import { MCP_PRINCIPAL_HEADER } from "@/lib/mcp/principal";
 
 const MEMBER_ID = "officer-1";
@@ -178,6 +179,10 @@ describe("request_whole_lodge", () => {
     expect((await requestWholeLodge(routeRequest(url, { method: "POST", body, viaConnection: true }))).status).toBe(201);
     expect((await requestWholeLodge(routeRequest(url, { method: "POST", body, viaConnection: false }))).status).toBe(201);
     expect(h.createMemberWholeLodgeRequest.mock.calls.map((call) => call[0].applyAccountCredit)).toEqual([false, true]);
+  });
+
+  it("always sends no account credit itself, whatever the route's own guard does", () => {
+    expect(findMcpAction("request_whole_lodge")?.fixedBody).toEqual({ applyAccountCredit: false });
   });
 });
 
