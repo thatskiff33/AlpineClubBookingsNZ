@@ -53,8 +53,11 @@ export async function alertOfficersOncePastCutoff(
   if (claim.claimedAt) return "unreached";
   // Another attempt holds the claim. Only one kept for good means the alert
   // went; one still awaiting its send may yet fail or be given back (#5255).
+  // Classify at the read, never earlier: a competing claim made after `now`
+  // and deferred would otherwise read as kept and settle an unsent alert.
+  const readAt = new Date();
   try {
-    return (await readOnceEverClaimState(key, now)) === "kept" ? "settled" : "unreached";
+    return (await readOnceEverClaimState(key, readAt > now ? readAt : now)) === "kept" ? "settled" : "unreached";
   } catch {
     return "threw";
   }

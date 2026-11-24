@@ -82,6 +82,17 @@ describe("alertOfficersOncePastCutoff", () => {
     expect(send).toHaveBeenCalledTimes(2);
   });
 
+  it("#5255: classifies a lost claim at the read, so a claim deferred after the caller's `now` is not read as sent", async () => {
+    // A competing attempt claims after this caller took `now` (as a drain
+    // passing one `now` for a whole run would), reaches nobody and defers.
+    send.mockResolvedValue(result(0, 1));
+    await expect(alertAt(NOW)).resolves.toBe("unreached");
+
+    vi.setSystemTime(new Date(NOW.getTime() + 60_000));
+    await expect(alertAt(new Date(NOW.getTime() - 60_000))).resolves.toBe("unreached");
+    expect(send).toHaveBeenCalledTimes(1);
+  });
+
   it("gives the claim back when the send throws, so the next attempt sends", async () => {
     send.mockRejectedValueOnce(new Error("SMTP down")).mockResolvedValue(result(1));
 
