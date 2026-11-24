@@ -515,7 +515,7 @@ home for that explanation and is not repeated here.
   23 Nov 2026), and never returns to `NOT_CHOSEN`.** The settings `PUT`
   refuses a change without both, a half pair, a move back and `CURRENT_AGE`;
   config import (full admin) ignores a half or `NOT_CHOSEN` pair and fails the
-  dry run on `CURRENT_AGE`. An omitted pair is never written. A save or import
+  dry run on `CURRENT_AGE`. An omitted or unchanged pair is never written. A save or import
   leaving the club chosen runs `clearStaleNotRequiredRows`, which takes the
   liability-rule key after the billing season key, and audits who moved
   (preview: the `liability-impact` list).
