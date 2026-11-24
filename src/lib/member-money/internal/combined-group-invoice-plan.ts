@@ -29,7 +29,8 @@ import {
  * conflict is the invoice's conflict and nothing is covered. A component a
  * primary invoice or another combined invoice still covers, an earlier attempt
  * of the same settlement included, is `ALREADY_COVERED` (owner decision,
- * 25 Nov 2026).
+ * 25 Nov 2026). The recorder plans again under the conflict's successor key
+ * once that cover is released, and this then answers COVERED.
  * The Xero tax type and line-amount basis (the organiser's booking's treatment,
  * #4632) and the journal's tax codes are separate namespaces: both are frozen,
  * neither is translated.

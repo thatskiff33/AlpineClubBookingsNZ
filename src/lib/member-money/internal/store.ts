@@ -560,6 +560,41 @@ export async function readLiveInvoiceCoverage(
   return rows.map(({ manifest, ...row }) => ({ ...row, ...manifest }));
 }
 
+const COVERED_AFTER_RELEASE = "|after-release";
+/**
+ * The key of the one manifest that covers what an `ALREADY_COVERED` conflict
+ * under `conflictKey` could not, once the cover it met is released (#4525,
+ * owner decision 25 Nov 2026). Manifests are write-once on role and key, so the
+ * conflict stays as history and its successor carries the coverage. One is
+ * enough: the successor's own cover ends only when its document is void.
+ */
+export function coveredAfterReleaseKey(conflictKey: string): string {
+  if (conflictKey.length === 0 || conflictKey.includes(COVERED_AFTER_RELEASE)) {
+    throw new Error("A conflict key must be non-empty and not itself a successor's key.");
+  }
+  return `${conflictKey}${COVERED_AFTER_RELEASE}`;
+}
+
+/**
+ * Whether the manifest under `role` and `conflictKey` is an `ALREADY_COVERED`
+ * conflict that may still become cover: its own document not released (not
+ * void, not gone) and no successor recorded under `coveredAfterReleaseKey`.
+ * Whether the cover it met has ended is the caller's re-plan
+ * (`readLiveInvoiceCoverage`), never this.
+ */
+export async function isCoverableConflict(db: Db, role: MemberMoneyExportDocumentRole, conflictKey: string): Promise<boolean> {
+  const conflict = await db.memberMoneyExportManifest.findUnique({
+    where: { documentRole_legacyKey: { documentRole: role, legacyKey: conflictKey } },
+    select: { outcome: true, reason: true, release: { select: { id: true } } },
+  });
+  if (conflict?.outcome !== "CONFLICT" || conflict.reason !== "ALREADY_COVERED" || conflict.release) return false;
+  const successor = await db.memberMoneyExportManifest.findUnique({
+    where: { documentRole_legacyKey: { documentRole: role, legacyKey: coveredAfterReleaseKey(conflictKey) } },
+    select: { id: true },
+  });
+  return successor === null;
+}
+
 /**
  * Insert a manifest under its key, or leave the row already there: the first
  * write wins (`SAME` when it hashed the same lines for the same invoice, else

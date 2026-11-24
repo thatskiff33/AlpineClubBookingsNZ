@@ -719,12 +719,17 @@ generation. A replacement invoice whose settlement's earlier invoice still
 covers a child is `ALREADY_COVERED` like any other: a visible conflict row
 with no coverage, so nothing sent to Xero goes unrecorded, even behind an
 earlier invoice that carries money and keeps its cover (owner decision,
-25 Nov 2026, #4525). The manifest is write-once, so that conflict stands after
-the earlier invoice's release: the release retries the bound invoice's record,
-which finds the row already there and adds no coverage, and the components are
-then covered by neither invoice, which the conflict row records. The retry
-writes only for a bound invoice with no manifest yet (its own record failed or
-has not run), and then covers the released components at the next generation.
+25 Nov 2026, #4525). When the earlier invoice's cover is released, the
+conflict becomes cover. The manifest is write-once, so the conflict row stays
+as history and one successor manifest, under the attempt key plus
+`|after-release` (`coveredAfterReleaseKey`), covers the components at the next
+generation. The recorder writes it after its own row, re-planning the
+components against live cover; the release's retry of the bound invoice's
+record reaches the same step, so a release and a record in either order end
+covered. While the earlier invoice carries money and keeps its cover, the plan
+is still `ALREADY_COVERED` and the conflict stays, visible, with no cover. Only
+an `ALREADY_COVERED` conflict gains a successor, never one for another reason,
+and never one whose own invoice is already void.
 
 | Rendered object | Ledger slice and coverage rule |
 | --- | --- |

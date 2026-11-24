@@ -7307,7 +7307,7 @@ behaviour are unchanged; the Stripe request each sender makes is byte-identical
 
 `recordCombinedGroupInvoiceManifest` and `releaseCombinedGroupInvoiceManifest`
 (`src/lib/member-money/internal/combined-group-invoice-manifest.ts`, ALP-437)
-each run in a short transaction of their own: the record after
+each run in short transactions of their own: the record after
 `bindCreatedGroupSettlementInvoice` has committed, or on an already-bound
 return; the release after a void handler finds the invoice void, voids it, or
 finds no such invoice. Neither joins that bind's `lock(1)` nor takes any key
@@ -7320,8 +7320,16 @@ recorders, or a primary and a combined recorder on one component, meet a
 unique violation (P2002); the loser writes nothing, logs, and a replay
 re-plans it, as `ALREADY_COVERED` if the winner still covers the component
 (a winner from the same settlement's earlier attempt too: owner decision,
-25 Nov 2026, #4525). A release's retry of the bound invoice's record meets that
-row under the write-once key and adds nothing.
+25 Nov 2026, #4525). That conflict becomes cover once the earlier invoice's
+cover is released: a successor manifest under `coveredAfterReleaseKey`, written
+by the recorder in a second transaction after its own row commits, and reached
+again by the release's retry after the release commits. Whichever of a record
+and a release commits second sees the other, so both orders end covered; a
+recorder whose own row lost the key (P2002) still runs that step. Two successor
+writers meet the key, and one is left. A successor written while the
+replacement's own void releases its conflict is released too: the recorder
+re-reads its invoice's releases after writing, and the release sweeps a second
+time after its commit.
 Releases are insert-only, one per manifest (`skipDuplicates`). The deferred
 `member_money_require_export_generation` refuses a later generation whose
 predecessor is not wholly released, at commit; it reads, never locks.

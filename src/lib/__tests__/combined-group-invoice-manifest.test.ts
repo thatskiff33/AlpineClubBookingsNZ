@@ -22,7 +22,7 @@ const mocks = vi.hoisted(() => {
     xeroSyncOperation: { findMany: vi.fn() },
     booking: { findMany: vi.fn() },
     groupBookingSettlement: { findUnique: vi.fn() },
-    manifests: { findMany: vi.fn() },
+    manifests: { findMany: vi.fn(), findFirst: vi.fn() },
     $transaction: vi.fn(async (fn: (client: typeof tx) => Promise<unknown>) => fn(tx)),
     logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
   };
@@ -67,6 +67,11 @@ const stayLeg = (bookingId: string, cents: number) => ({
 });
 const legsOf: Record<string, unknown[]> = {};
 const manifestRow = () => mocks.tx.memberMoneyExportManifest.createMany.mock.calls[0]?.[0].data[0];
+/** The manifests written so far, by key, with the ids released: what `findUnique` reads back. */
+const written = new Map<string, Record<string, unknown>>();
+const releasedIds = new Set<string>();
+const ATTEMPT_KEY = "group-settlement:settle-1:invoice:attempt-1:v1";
+const SUCCESSOR_KEY = `${ATTEMPT_KEY}|after-release`;
 const coverageRows = () => mocks.tx.memberMoneyExportCoverage.createMany.mock.calls[0]?.[0].data;
 
 beforeEach(() => {
@@ -80,12 +85,21 @@ beforeEach(() => {
   mocks.tx.memberMoneyExportCoverage.findMany.mockResolvedValue([]);
   mocks.tx.memberMoneyExportCoverage.findFirst.mockResolvedValue(null);
   mocks.tx.memberMoneyExportCoverage.createMany.mockResolvedValue({ count: 2 });
-  mocks.tx.memberMoneyExportManifest.findUnique.mockResolvedValue(null);
-  mocks.tx.memberMoneyExportManifest.createMany.mockResolvedValue({ count: 1 });
+  written.clear();
+  releasedIds.clear();
+  mocks.tx.memberMoneyExportManifest.findUnique.mockImplementation(async (args: { where: { documentRole_legacyKey: { legacyKey: string } } }) => {
+    const row = written.get(args.where.documentRole_legacyKey.legacyKey);
+    return row ? { ...row, release: releasedIds.has(row.id as string) ? { id: `release-${row.id}` } : null } : null;
+  });
+  mocks.tx.memberMoneyExportManifest.createMany.mockImplementation(async (args: { data: Record<string, unknown>[] }) => {
+    for (const row of args.data) written.set(row.legacyKey as string, row);
+    return { count: args.data.length };
+  });
   mocks.tx.memberMoneyExportCoverageRelease.createMany.mockResolvedValue({ count: 1 });
   mocks.booking.findMany.mockResolvedValue([{ id: "child-a" }, { id: "child-b" }]);
   mocks.xeroSyncOperation.findMany.mockResolvedValue([]);
   mocks.manifests.findMany.mockResolvedValue([]);
+  mocks.manifests.findFirst.mockResolvedValue(null);
   mocks.groupBookingSettlement.findUnique.mockResolvedValue({ xeroInvoiceId: null, groupBooking: { organiserBookingId: "organiser-1" } });
 });
 
@@ -158,6 +172,118 @@ describe("recordCombinedGroupInvoiceManifest (#4525, ALP-437)", () => {
       await recordCombinedGroupInvoiceManifest(built(), target);
       expect(mocks.tx.memberMoneyExportManifest.createMany).not.toHaveBeenCalled();
       expect(mocks.tx.memberMoneyExportCoverage.createMany).not.toHaveBeenCalled();
+    });
+
+    // inv-0 is the abandoned earlier attempt, voided after inv-1 was sent; the settlement is bound to inv-1.
+    const earlierReleased = () => {
+      mocks.tx.memberMoneyExportCoverage.findMany.mockResolvedValue([]);
+      mocks.tx.memberMoneyExportCoverage.findFirst.mockResolvedValue({ coverageGeneration: 0 });
+      mocks.manifests.findMany.mockResolvedValueOnce([{ id: "manifest-0" }]).mockResolvedValue([]);
+      mocks.groupBookingSettlement.findUnique.mockResolvedValue({ xeroInvoiceId: "inv-1", groupBooking: { organiserBookingId: "organiser-1" } });
+      mocks.xeroSyncOperation.findMany.mockResolvedValue([
+        { correlationKey: ATTEMPT_KEY, xeroObjectId: "inv-1",
+          requestPayload: { invoices: [{ lineItems: sanitizeForJson([stayLine(9000), stayLine(8000)]) }], childBookingIds: ["child-a", "child-b"] } },
+      ]);
+    };
+    const manifestWrites = () => mocks.tx.memberMoneyExportManifest.createMany.mock.calls.map((call) => call[0].data[0]);
+
+    it("covers the replacement's components exactly once, at the next generation, when the earlier invoice's cover is released", async () => {
+      earlierCovers();
+      await recordCombinedGroupInvoiceManifest(built(), target);
+      earlierReleased();
+      await releaseCombinedGroupInvoiceManifest({ settlementId: "settle-1", invoiceId: "inv-0", reason: "VOIDED" });
+
+      expect(mocks.tx.memberMoneyExportCoverageRelease.createMany).toHaveBeenCalledWith({
+        data: [expect.objectContaining({ manifestId: "manifest-0", reason: "VOIDED" })], skipDuplicates: true,
+      });
+      // The conflict stays as history; its successor carries the cover.
+      expect(manifestWrites()).toEqual([
+        expect.objectContaining({ legacyKey: ATTEMPT_KEY, outcome: "CONFLICT", reason: "ALREADY_COVERED" }),
+        expect.objectContaining({ legacyKey: SUCCESSOR_KEY, outcome: "COVERED", reason: null, settlementId: "settle-1",
+          bookingId: "organiser-1", providerInvoiceId: "inv-1", lineTotalCents: 17000 }),
+      ]);
+      expect(mocks.tx.memberMoneyExportCoverage.createMany).toHaveBeenCalledOnce();
+      expect(coverageRows()).toEqual([
+        expect.objectContaining({ manifestId: manifestWrites()[1].id, chargeIdentity: "booking:child-a:charge", coveredCents: 9000, coverageGeneration: 1 }),
+        expect.objectContaining({ manifestId: manifestWrites()[1].id, chargeIdentity: "booking:child-b:charge", coveredCents: 8000, coverageGeneration: 1 }),
+      ]);
+      expect(mocks.logger.error).not.toHaveBeenCalled();
+    });
+
+    it("adds nothing on a replayed release or record once the successor is written", async () => {
+      earlierCovers();
+      await recordCombinedGroupInvoiceManifest(built(), target);
+      earlierReleased();
+      await releaseCombinedGroupInvoiceManifest({ settlementId: "settle-1", invoiceId: "inv-0", reason: "VOIDED" });
+      // The successor now covers the components itself.
+      mocks.tx.memberMoneyExportCoverage.findMany.mockResolvedValue([
+        { account: "BOOKING_REVENUE", chargeIdentity: "booking:child-a:charge", documentRole: "COMBINED_GROUP_INVOICE",
+          manifest: { settlementId: "settle-1", providerInvoiceId: "inv-1" } },
+      ]);
+      const before = { manifests: manifestWrites().length, coverage: mocks.tx.memberMoneyExportCoverage.createMany.mock.calls.length };
+      await releaseCombinedGroupInvoiceManifest({ settlementId: "settle-1", invoiceId: "inv-0", reason: "VOIDED" });
+      await recordCombinedGroupInvoiceManifest(built(), target);
+      await recordCombinedGroupInvoiceManifest({ kind: "REPLAY", operationId: null }, target);
+      expect(manifestWrites()).toHaveLength(before.manifests);
+      expect(mocks.tx.memberMoneyExportCoverage.createMany.mock.calls).toHaveLength(before.coverage);
+      expect(mocks.logger.error).not.toHaveBeenCalled();
+    });
+
+    it("keeps the conflict, with no coverage, while the earlier invoice is never released (it carries money)", async () => {
+      earlierCovers();
+      await recordCombinedGroupInvoiceManifest(built(), target);
+      await recordCombinedGroupInvoiceManifest(built(), target);
+      expect(manifestWrites()).toEqual([expect.objectContaining({ legacyKey: ATTEMPT_KEY, outcome: "CONFLICT", reason: "ALREADY_COVERED" })]);
+      expect(mocks.tx.memberMoneyExportCoverage.createMany).not.toHaveBeenCalled();
+    });
+
+    it("never turns a conflict of another reason into cover", async () => {
+      legsOf["child-b"] = [stayLeg("child-b", 7999)];
+      await recordCombinedGroupInvoiceManifest(built(), target);
+      legsOf["child-b"] = [stayLeg("child-b", 8000)];
+      await recordCombinedGroupInvoiceManifest(built(), target);
+      expect(manifestWrites()).toEqual([expect.objectContaining({ outcome: "CONFLICT", reason: "STAY_CENTS" })]);
+      expect(mocks.tx.memberMoneyExportCoverage.createMany).not.toHaveBeenCalled();
+    });
+
+    it("covers when its own row lost the race to a conflict the other run planned before the release committed", async () => {
+      // Another run's ALREADY_COVERED conflict: uncommitted when this run looked, so this run's insert meets the key.
+      written.set(ATTEMPT_KEY, { id: "manifest-1", legacyKey: ATTEMPT_KEY, outcome: "CONFLICT", reason: "ALREADY_COVERED",
+        payloadHash: "f".repeat(64), providerInvoiceId: "inv-1" });
+      mocks.tx.memberMoneyExportManifest.findUnique.mockResolvedValueOnce(null);
+      mocks.tx.memberMoneyExportManifest.createMany.mockRejectedValueOnce(
+        new Prisma.PrismaClientKnownRequestError("unique", { code: "P2002", clientVersion: "test" }));
+      mocks.tx.memberMoneyExportCoverage.findFirst.mockResolvedValue({ coverageGeneration: 0 });
+      await recordCombinedGroupInvoiceManifest(built(), target);
+      expect(written.get(SUCCESSOR_KEY)).toMatchObject({ outcome: "COVERED", providerInvoiceId: "inv-1" });
+      expect(coverageRows().map((row: { coverageGeneration: number }) => row.coverageGeneration)).toEqual([1, 1]);
+      expect(mocks.logger.error).not.toHaveBeenCalled();
+    });
+
+    it("releases the successor too when this invoice's own void released its conflict while the successor was written", async () => {
+      earlierCovers();
+      await recordCombinedGroupInvoiceManifest(built(), target);
+      mocks.tx.memberMoneyExportCoverage.findMany.mockResolvedValue([]);
+      mocks.tx.memberMoneyExportCoverage.findFirst.mockResolvedValue({ coverageGeneration: 0 });
+      // inv-1's void committed its release of the conflict after the successor's transaction read it.
+      mocks.manifests.findFirst.mockResolvedValue({ release: { reason: "VOIDED" } });
+      mocks.manifests.findMany.mockImplementation(async () => [{ id: written.get(SUCCESSOR_KEY)!.id }]);
+      await recordCombinedGroupInvoiceManifest(built(), target);
+      expect(mocks.manifests.findFirst).toHaveBeenCalledWith(expect.objectContaining({
+        where: { documentRole: "COMBINED_GROUP_INVOICE", settlementId: "settle-1", providerInvoiceId: "inv-1", release: { isNot: null } },
+      }));
+      expect(mocks.tx.memberMoneyExportCoverageRelease.createMany).toHaveBeenCalledWith({
+        data: [expect.objectContaining({ manifestId: written.get(SUCCESSOR_KEY)!.id, reason: "VOIDED" })], skipDuplicates: true,
+      });
+    });
+
+    it("writes no successor for a conflict whose own invoice is already released", async () => {
+      earlierCovers();
+      await recordCombinedGroupInvoiceManifest(built(), target);
+      releasedIds.add(written.get(ATTEMPT_KEY)!.id as string);
+      mocks.tx.memberMoneyExportCoverage.findMany.mockResolvedValue([]);
+      await recordCombinedGroupInvoiceManifest(built(), target);
+      expect(written.has(SUCCESSOR_KEY)).toBe(false);
     });
   });
 
@@ -249,25 +375,14 @@ describe("releaseCombinedGroupInvoiceManifest (#4525, ALP-437)", () => {
     }));
   });
 
-  it("releasing the earlier invoice adds no coverage beside the replacement's ALREADY_COVERED conflict", async () => {
-    // inv-0 was abandoned and is now void; the settlement is bound to inv-1, already recorded as a conflict.
-    mocks.manifests.findMany.mockResolvedValue([{ id: "manifest-0" }]);
+  it("sweeps again after its commit, so a successor its own record wrote beside the first pass is released too", async () => {
+    mocks.manifests.findMany.mockResolvedValueOnce([{ id: "manifest-1" }]).mockResolvedValueOnce([{ id: "successor-1" }]).mockResolvedValue([]);
     mocks.groupBookingSettlement.findUnique.mockResolvedValue({ xeroInvoiceId: "inv-1", groupBooking: { organiserBookingId: "organiser-1" } });
-    mocks.xeroSyncOperation.findMany.mockResolvedValue([
-      { correlationKey: "group-settlement:settle-1:invoice:attempt-1:v1", xeroObjectId: "inv-1",
-        requestPayload: { invoices: [{ lineItems: sanitizeForJson([stayLine(9000), stayLine(8000)]) }], childBookingIds: ["child-a", "child-b"] } },
+    await releaseCombinedGroupInvoiceManifest({ settlementId: "settle-1", invoiceId: "inv-1", reason: "NOT_FOUND" });
+    expect(mocks.tx.memberMoneyExportCoverageRelease.createMany.mock.calls.map((call) => call[0].data[0])).toEqual([
+      expect.objectContaining({ manifestId: "manifest-1", reason: "NOT_FOUND" }),
+      expect.objectContaining({ manifestId: "successor-1", reason: "NOT_FOUND" }),
     ]);
-    mocks.tx.memberMoneyExportManifest.findUnique.mockResolvedValue({ payloadHash: "conflict-hash", providerInvoiceId: "inv-1" });
-    await releaseCombinedGroupInvoiceManifest({ settlementId: "settle-1", invoiceId: "inv-0", reason: "VOIDED" });
-    expect(mocks.tx.memberMoneyExportCoverageRelease.createMany).toHaveBeenCalledWith({
-      data: [expect.objectContaining({ manifestId: "manifest-0", reason: "VOIDED" })], skipDuplicates: true,
-    });
-    expect(mocks.tx.memberMoneyExportManifest.findUnique).toHaveBeenCalledWith(expect.objectContaining({
-      where: { documentRole_legacyKey: { documentRole: "COMBINED_GROUP_INVOICE", legacyKey: "group-settlement:settle-1:invoice:attempt-1:v1" } },
-    }));
-    expect(mocks.tx.memberMoneyExportManifest.createMany).not.toHaveBeenCalled();
-    expect(mocks.tx.memberMoneyExportCoverage.createMany).not.toHaveBeenCalled();
-    expect(mocks.logger.error).not.toHaveBeenCalled();
   });
 
   it("never throws", async () => {

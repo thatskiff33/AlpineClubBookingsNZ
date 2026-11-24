@@ -19,9 +19,10 @@ import {
   type CombinedGroupInvoicePlan,
 } from "./combined-group-invoice-plan";
 import { confirmBilledPrimaryInvoice } from "./primary-invoice-plan";
-import { readLiveInvoiceCoverage, releaseExportCoverage, writeExportManifest } from "./store";
+import { coveredAfterReleaseKey, isCoverableConflict, readLiveInvoiceCoverage, releaseExportCoverage, writeExportManifest } from "./store";
 
 type Db = Prisma.TransactionClient;
+const ROLE = "COMBINED_GROUP_INVOICE" as const;
 
 /**
  * THE COMBINED GROUP INVOICE'S EXPORT MANIFEST, FOR THE SENDER (#4525, Ledger
@@ -30,7 +31,9 @@ type Db = Prisma.TransactionClient;
  * transaction of its own; its already-bound returns replay the record from the
  * stored request. The void handlers release a combined invoice's coverage once
  * Xero holds it void or holds no such invoice, so the group's next invoice can
- * cover the same components. Nothing here changes what is sent, voided or
+ * cover the same components, a replacement already recorded as an
+ * ALREADY_COVERED conflict included (its successor manifest, owner decision
+ * 25 Nov 2026). Nothing here changes what is sent, voided or
  * emailed, or how a sync operation ends: a failure is logged and swallowed.
  * No advisory lock: no booking status or settlement money changes
  * (`INV-LOCK-001`); the unique keys are the exclusion.
@@ -100,7 +103,9 @@ async function readStoredCombinedInvoice(settlementId: string, invoiceId: string
 /**
  * Record the manifest for a combined invoice the sender kept. A plan writes
  * COVERED and each child's coverage, a conflict writes CONFLICT alone; a key
- * already recorded keeps its first row. Never throws.
+ * already recorded keeps its first row. An ALREADY_COVERED conflict whose
+ * blocking cover has since been released gains its successor's cover. Never
+ * throws.
  */
 export async function recordCombinedGroupInvoiceManifest(
   source: CombinedGroupInvoiceManifestSource,
@@ -119,53 +124,89 @@ export async function recordCombinedGroupInvoiceManifest(
       : stored!.childBookingIds
         ?? (await prisma.booking.findMany({ where: committedGroupChildrenWhere(organiserBookingId), orderBy: { id: "asc" }, select: { id: true } }))
           .map((child) => child.id);
-    const { plan, result } = await prisma.$transaction(async (tx) => {
-      // Any invoice still covering a child's component, an earlier attempt of
-      // this same settlement included, makes the plan ALREADY_COVERED: a
-      // visible conflict row with no coverage, never nothing (owner decision,
-      // 25 Nov 2026, #4525). The earlier invoice may carry money and keep its
-      // cover, so waiting for its release could leave this one unrecorded.
+    const attemptKey = groupSettlementInvoiceCreateKey(settlementId, source.kind === "BUILT" ? source.attempt : stored!.attempt);
+
+    /** The plan under `legacyKey`, against the children's posted legs and what every invoice covers now. */
+    const planUnder = async (tx: Db, legacyKey: string): Promise<CombinedGroupInvoicePlan> => {
       const { children, liveCoverage } = await readChildren(tx, childIds);
-      let planned: CombinedGroupInvoicePlan;
       if (source.kind === "BUILT") {
         const legs = new Map(children.map((child) => [child.bookingId, child.postedLegs]));
-        planned = confirmBilledPrimaryInvoice(planCombinedGroupInvoice({
-          legacyKey: groupSettlementInvoiceCreateKey(settlementId, source.attempt),
+        return confirmBilledPrimaryInvoice(planCombinedGroupInvoice({
+          legacyKey,
           liveCoverage,
           children: source.lines.byChild.map((child) => ({ ...child, postedLegs: legs.get(child.bookingId) ?? [] })),
           taxRendering: source.taxRendering,
           hutFeeMapping: source.lines.hutFeeMapping,
           hutFeeItemCodeMap: source.lines.hutFeeItemCodeMap,
         }), source.billedLines);
-      } else {
-        planned = planReplayedCombinedGroupInvoice({
-          legacyKey: groupSettlementInvoiceCreateKey(settlementId, stored!.attempt),
-          liveCoverage,
-          storedLines: stored!.storedLines,
-          storedLineAmountTypes: stored!.storedLineAmountTypes,
-          children,
-        });
       }
-      const written = await writeExportManifest(tx, {
-        documentRole: "COMBINED_GROUP_INVOICE",
-        legacyKey: planned.legacyKey,
-        bookingId: organiserBookingId,
-        settlementId,
-        outcome: planned.outcome,
-        reason: planned.outcome === "CONFLICT" ? planned.reason : null,
-        payloadHash: planned.payloadHash,
-        frozenMapping: planned.frozenMapping as Prisma.InputJsonObject,
-        lineTotalCents: planned.lineTotalCents,
-        providerInvoiceId,
-        coverage: planned.outcome === "COVERED" ? planned.coverage : [],
+      return planReplayedCombinedGroupInvoice({
+        legacyKey,
+        liveCoverage,
+        storedLines: stored!.storedLines,
+        storedLineAmountTypes: stored!.storedLineAmountTypes,
+        children,
       });
-      return { plan: planned, result: written };
+    };
+    const write = (tx: Db, planned: CombinedGroupInvoicePlan) => writeExportManifest(tx, {
+      documentRole: ROLE,
+      legacyKey: planned.legacyKey,
+      bookingId: organiserBookingId,
+      settlementId,
+      outcome: planned.outcome,
+      reason: planned.outcome === "CONFLICT" ? planned.reason : null,
+      payloadHash: planned.payloadHash,
+      frozenMapping: planned.frozenMapping as Prisma.InputJsonObject,
+      lineTotalCents: planned.lineTotalCents,
+      providerInvoiceId,
+      coverage: planned.outcome === "COVERED" ? planned.coverage : [],
     });
-    if (plan.outcome === "CONFLICT" && result === "WRITTEN") {
-      logger.warn({ ...context, reason: plan.reason, problem: plan.problem }, "The combined group invoice's lines do not match the journal, or another invoice still covers a component; its manifest records a conflict and the invoice still sent");
+
+    // 1. The attempt's own row. Any invoice still covering a child's component,
+    // an earlier attempt of this same settlement included, makes the plan
+    // ALREADY_COVERED: a visible conflict row with no coverage, never nothing
+    // (owner decision, 25 Nov 2026, #4525). The earlier invoice may carry money
+    // and keep its cover, so waiting for its release could leave this one
+    // unrecorded.
+    let mayBeBlocked = true;
+    try {
+      const { plan, result } = await prisma.$transaction(async (tx) => {
+        const planned = await planUnder(tx, attemptKey);
+        return { plan: planned, result: await write(tx, planned) };
+      });
+      if (plan.outcome === "CONFLICT" && result === "WRITTEN") {
+        logger.warn({ ...context, reason: plan.reason, problem: plan.problem }, "The combined group invoice's lines do not match the journal, or another invoice still covers a component; its manifest records a conflict and the invoice still sent");
+      }
+      if (result === "KEPT_FIRST") {
+        logger.info(context, "The combined group invoice's manifest was already recorded differently; the first row stands");
+      }
+      // A row this run wrote is the conflict only when it planned one.
+      mayBeBlocked = result !== "WRITTEN" || (plan.outcome === "CONFLICT" && plan.reason === "ALREADY_COVERED");
+    } catch (error) {
+      if (!isPrismaKnownUniqueConstraintError(error)) throw error;
+      // Another run wrote the attempt's row first: step 2 reads what it wrote.
+      logger.info(context, "Another document covered these components first, or another run recorded this manifest first; the first row stands");
     }
-    if (result === "KEPT_FIRST") {
-      logger.info(context, "The combined group invoice's manifest was already recorded differently; the first row stands");
+    if (!mayBeBlocked) return;
+
+    // 2. Cover on release (owner decision, 25 Nov 2026, #4525). The attempt's
+    // ALREADY_COVERED conflict, re-planned now: once the cover it met is
+    // released the plan is COVERED, and its successor manifest records the
+    // coverage at the next generation; the conflict stays as history. While
+    // that cover is live (the earlier invoice carries money, or is not void
+    // yet) the plan is still ALREADY_COVERED and nothing is written. It runs in
+    // a transaction after step 1's commit, as the release's retry runs after
+    // the release's: whichever commits second sees the other.
+    const covered = await prisma.$transaction(async (tx) => {
+      if (!(await isCoverableConflict(tx, ROLE, attemptKey))) return null;
+      const planned = await planUnder(tx, coveredAfterReleaseKey(attemptKey));
+      return planned.outcome === "COVERED" ? write(tx, planned) : null;
+    });
+    if (covered === "WRITTEN") {
+      logger.info(context, "The cover the combined group invoice's ALREADY_COVERED conflict met was released; its components are covered now");
+      // This invoice's own void may have released its conflict while the
+      // successor was being written: end the successor's cover too.
+      await releaseLikeAnyReleased(settlementId, providerInvoiceId);
     }
   } catch (error) {
     if (isPrismaKnownUniqueConstraintError(error)) {
@@ -176,15 +217,37 @@ export async function recordCombinedGroupInvoiceManifest(
   }
 }
 
+/** Release every manifest of one combined invoice not yet released: its attempt's row and any successor. */
+async function releaseUnreleased(settlementId: string, invoiceId: string, reason: MemberMoneyExportCoverageReleaseReason): Promise<void> {
+  const manifests = await prisma.memberMoneyExportManifest.findMany({
+    where: { documentRole: ROLE, settlementId, providerInvoiceId: invoiceId, release: { is: null } },
+    select: { id: true },
+  });
+  if (manifests.length === 0) return;
+  await prisma.$transaction(async (tx) => {
+    for (const manifest of manifests) await releaseExportCoverage(tx, manifest.id, reason);
+  });
+}
+
+/** When any manifest of one combined invoice is released, release the rest for the same reason. */
+async function releaseLikeAnyReleased(settlementId: string, invoiceId: string): Promise<void> {
+  const released = await prisma.memberMoneyExportManifest.findFirst({
+    where: { documentRole: ROLE, settlementId, providerInvoiceId: invoiceId, release: { isNot: null } },
+    select: { release: { select: { reason: true } } },
+  });
+  if (released?.release) await releaseUnreleased(settlementId, invoiceId, released.release.reason);
+}
+
 /**
  * A combined invoice Xero holds void, or holds no such invoice: end its
- * manifest's coverage with a release row, then, when the settlement is now bound
- * to a different invoice, try that invoice's record again. That only writes a
- * manifest the bound invoice does not have yet (its own record failed or has
- * not run): one already recorded, an ALREADY_COVERED conflict behind this
- * invoice's cover included, keeps its first row, so a release never adds
- * coverage beside it. Never on an invoice carrying money: the caller decides
- * that. Never throws.
+ * manifests' coverage with release rows, then, when the settlement is now
+ * bound to a different invoice, try that invoice's record again. The retry
+ * writes the bound invoice's manifest if it has none yet (its own record
+ * failed or has not run), and turns its ALREADY_COVERED conflict behind this
+ * invoice's cover into cover at the next generation, under the conflict's
+ * successor key (owner decision, 25 Nov 2026, #4525). Never on an invoice
+ * carrying money: the caller decides that, and that invoice's replacement
+ * keeps its conflict. Never throws.
  */
 export async function releaseCombinedGroupInvoiceManifest(input: {
   settlementId: string;
@@ -193,15 +256,11 @@ export async function releaseCombinedGroupInvoiceManifest(input: {
 }): Promise<void> {
   const { settlementId, invoiceId, reason } = input;
   try {
-    const manifests = await prisma.memberMoneyExportManifest.findMany({
-      where: { documentRole: "COMBINED_GROUP_INVOICE", settlementId, providerInvoiceId: invoiceId, release: { is: null } },
-      select: { id: true },
-    });
-    if (manifests.length > 0) {
-      await prisma.$transaction(async (tx) => {
-        for (const manifest of manifests) await releaseExportCoverage(tx, manifest.id, reason);
-      });
-    }
+    await releaseUnreleased(settlementId, invoiceId, reason);
+    // Once more after that commit: a successor this invoice's own record wrote
+    // beside the first pass is released here, or its writer sees this release
+    // (`releaseLikeAnyReleased`), whichever commits second.
+    await releaseUnreleased(settlementId, invoiceId, reason);
     const settlement = await prisma.groupBookingSettlement.findUnique({
       where: { id: settlementId },
       select: { xeroInvoiceId: true, groupBooking: { select: { organiserBookingId: true } } },

@@ -7,7 +7,14 @@
 import type { PrismaClient } from "@prisma/client";
 import { Client } from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { readLiveInvoiceCoverage, releaseExportCoverage, writeExportManifest, type ExportManifestRow } from "@/lib/member-money/internal/store";
+import {
+  coveredAfterReleaseKey,
+  isCoverableConflict,
+  readLiveInvoiceCoverage,
+  releaseExportCoverage,
+  writeExportManifest,
+  type ExportManifestRow,
+} from "@/lib/member-money/internal/store";
 import { createMemberMoneyScratchDatabase, MEMBER_MONEY_SCRATCH_HOOK_TIMEOUT_MS, type MemberMoneyScratchDatabase } from "./support/member-money-fixtures";
 
 const RUN = process.env.RUN_CONCURRENCY_RACE_TESTS === "1";
@@ -227,22 +234,105 @@ async function generations(chargeIdentity: string) {
   });
 
   // Owner decision, 25 Nov 2026 (#4525): a replacement behind its settlement's
-  // earlier invoice records a visible ALREADY_COVERED conflict, write-once.
-  it("keeps a replacement's ALREADY_COVERED conflict once, with no coverage, through the earlier invoice's release", async () => {
-    const ids = await group();
-    await write(combined(ids, 0));
-    const conflict = combined(ids, 1, { outcome: "CONFLICT", reason: "ALREADY_COVERED", coverage: [], payloadHash: "e".repeat(64) });
-    await expect(write(conflict)).resolves.toBe("WRITTEN");
-    await expect(write(conflict)).resolves.toBe("SAME");
-    const live = () => appPrisma.$transaction((tx) => readLiveInvoiceCoverage(tx, [{ account: "BOOKING_REVENUE", chargeIdentity: stayOf(ids.child) }]));
-    await expect(live()).resolves.toEqual([expect.objectContaining({ providerInvoiceId: combined(ids, 0).providerInvoiceId })]);
+  // earlier invoice records a visible ALREADY_COVERED conflict, write-once; once
+  // the earlier invoice's cover is released, the conflict's successor manifest
+  // covers its components at the next generation.
+  describe("a replacement's ALREADY_COVERED conflict, then cover on release", () => {
+    const conflictOf = (ids: Awaited<ReturnType<typeof group>>) =>
+      combined(ids, 1, { outcome: "CONFLICT", reason: "ALREADY_COVERED", coverage: [], payloadHash: "e".repeat(64) });
+    const successorOf = (ids: Awaited<ReturnType<typeof group>>) =>
+      combined(ids, 1, { legacyKey: coveredAfterReleaseKey(conflictOf(ids).legacyKey), payloadHash: "e".repeat(64) });
+    const coverable = (ids: Awaited<ReturnType<typeof group>>) =>
+      appPrisma.$transaction((tx) => isCoverableConflict(tx, "COMBINED_GROUP_INVOICE", conflictOf(ids).legacyKey));
+    const live = (ids: Awaited<ReturnType<typeof group>>) =>
+      appPrisma.$transaction((tx) => readLiveInvoiceCoverage(tx, [{ account: "BOOKING_REVENUE", chargeIdentity: stayOf(ids.child) }]));
+    const rowsUnder = async (legacyKey: string) =>
+      (await app.query(`SELECT outcome, reason, "providerInvoiceId" FROM "MemberMoneyExportManifest" WHERE "legacyKey" = $1`, [legacyKey])).rows;
 
-    // The earlier invoice is voided; the release's retry re-plans the bound invoice as covered, and the first row stands.
-    await release(combined(ids, 0).legacyKey);
-    await expect(write(combined(ids, 1, { payloadHash: "e".repeat(64) }))).resolves.toBe("SAME");
-    const rows = (await app.query(`SELECT outcome, reason FROM "MemberMoneyExportManifest" WHERE "legacyKey" = $1`, [conflict.legacyKey])).rows;
-    expect(rows).toEqual([{ outcome: "CONFLICT", reason: "ALREADY_COVERED" }]);
-    expect(await generations(stayOf(ids.child))).toEqual([{ documentRole: "COMBINED_GROUP_INVOICE", coverageGeneration: 0 }]);
-    await expect(live()).resolves.toEqual([]);
+    it("records one conflict and no coverage while the earlier invoice's cover is live, and refuses a successor beside it", async () => {
+      const ids = await group();
+      await write(combined(ids, 0));
+      await expect(write(conflictOf(ids))).resolves.toBe("WRITTEN");
+      await expect(write(conflictOf(ids))).resolves.toBe("SAME");
+      await expect(coverable(ids)).resolves.toBe(true);
+      // The earlier invoice never released (it carries money): a successor would double-cover, and the index refuses it.
+      await expect(write(successorOf(ids))).rejects.toMatchObject({ code: "P2002" });
+      expect(await rowsUnder(conflictOf(ids).legacyKey)).toEqual([{ outcome: "CONFLICT", reason: "ALREADY_COVERED", providerInvoiceId: conflictOf(ids).providerInvoiceId }]);
+      expect(await rowsUnder(successorOf(ids).legacyKey)).toEqual([]);
+      expect(await generations(stayOf(ids.child))).toEqual([{ documentRole: "COMBINED_GROUP_INVOICE", coverageGeneration: 0 }]);
+      await expect(live(ids)).resolves.toEqual([expect.objectContaining({ providerInvoiceId: combined(ids, 0).providerInvoiceId })]);
+    });
+
+    it("covers the replacement's components exactly once, at the next generation, once the earlier invoice is released; a replay adds nothing", async () => {
+      const ids = await group();
+      await write(combined(ids, 0));
+      await write(conflictOf(ids));
+      await release(combined(ids, 0).legacyKey);
+      await expect(coverable(ids)).resolves.toBe(true);
+      await expect(write(successorOf(ids))).resolves.toBe("WRITTEN");
+      // The conflict stays as history; the successor carries the cover.
+      expect(await rowsUnder(conflictOf(ids).legacyKey)).toEqual([{ outcome: "CONFLICT", reason: "ALREADY_COVERED", providerInvoiceId: conflictOf(ids).providerInvoiceId }]);
+      expect(await rowsUnder(successorOf(ids).legacyKey)).toEqual([{ outcome: "COVERED", reason: null, providerInvoiceId: conflictOf(ids).providerInvoiceId }]);
+      expect(await generations(stayOf(ids.child))).toEqual([
+        { documentRole: "COMBINED_GROUP_INVOICE", coverageGeneration: 0 },
+        { documentRole: "COMBINED_GROUP_INVOICE", coverageGeneration: 1 },
+      ]);
+      await expect(live(ids)).resolves.toEqual([expect.objectContaining({ providerInvoiceId: conflictOf(ids).providerInvoiceId })]);
+      // Replays: the conflict is no longer coverable, and the successor's key keeps its first row.
+      await expect(coverable(ids)).resolves.toBe(false);
+      await expect(write(successorOf(ids))).resolves.toBe("SAME");
+      await expect(release(combined(ids, 0).legacyKey)).resolves.toBe("ALREADY_RELEASED");
+      expect(await generations(stayOf(ids.child))).toHaveLength(2);
+    });
+
+    it("is not coverable once the replacement's own conflict is released (its invoice is void too)", async () => {
+      const ids = await group();
+      await write(combined(ids, 0));
+      await write(conflictOf(ids));
+      await release(combined(ids, 0).legacyKey);
+      await release(conflictOf(ids).legacyKey);
+      await expect(coverable(ids)).resolves.toBe(false);
+    });
+
+    // Two successor writers (the release's retry and the replacement's own
+    // record) both read the conflict as coverable and both insert: the key and
+    // the coverage index leave exactly one.
+    it("lets exactly one of two concurrent successor writers cover", async () => {
+      const ids = await group();
+      await write(combined(ids, 0));
+      await write(conflictOf(ids));
+      await release(combined(ids, 0).legacyKey);
+      let commitFirst!: () => void;
+      const held = new Promise<void>((resolve) => { commitFirst = resolve; });
+      let firstWrote!: () => void;
+      const wrote = new Promise<void>((resolve) => { firstWrote = resolve; });
+      const first = appPrisma.$transaction(async (tx) => {
+        expect(await isCoverableConflict(tx, "COMBINED_GROUP_INVOICE", conflictOf(ids).legacyKey)).toBe(true);
+        const result = await writeExportManifest(tx, successorOf(ids));
+        firstWrote();
+        await held;
+        return result;
+      }, { timeout: 20_000 });
+      await wrote;
+      const second = appPrisma.$transaction(async (tx) => {
+        expect(await isCoverableConflict(tx, "COMBINED_GROUP_INVOICE", conflictOf(ids).legacyKey)).toBe(true);
+        return writeExportManifest(tx, successorOf(ids));
+      }, { timeout: 20_000 });
+      let secondWaited = false;
+      for (let polls = 0; !secondWaited && polls < 100; polls += 1) {
+        const blocked = await app.query(`SELECT 1 FROM pg_stat_activity WHERE datname = current_database() AND wait_event_type = 'Lock'`);
+        secondWaited = blocked.rows.length > 0;
+        if (!secondWaited) await new Promise((resolve) => setTimeout(resolve, 25));
+      }
+      commitFirst();
+      const settled = await Promise.allSettled([first, second]);
+      expect(settled[0]).toEqual({ status: "fulfilled", value: "WRITTEN" });
+      expect(settled[1]).toMatchObject({ status: "rejected", reason: { code: "P2002" } });
+      expect(secondWaited).toBe(true);
+      expect(await generations(stayOf(ids.child))).toEqual([
+        { documentRole: "COMBINED_GROUP_INVOICE", coverageGeneration: 0 },
+        { documentRole: "COMBINED_GROUP_INVOICE", coverageGeneration: 1 },
+      ]);
+    });
   });
 });
