@@ -199,3 +199,32 @@ describe("a silenced booking sitting on a LIVE offer needs operator action (#225
     expect(deliveries.get("bk_1")!.needsOperatorAction).toBe(false);
   });
 });
+
+describe("the board ties an email row to its offer by the shared lookback (#5433 round 5, F2)", () => {
+  it.each([
+    ["one minute before the offer (inside the clock tolerance)", 60_000, "delivered"],
+    ["three minutes before the offer (an earlier offer's)", 3 * 60_000, "missing"],
+  ])("reads a row dated %s", async (_case, before, retryState) => {
+    mocks.emailLogFindMany.mockResolvedValue([emailLog({ createdAt: new Date(OFFERED_AT.getTime() - before) })]);
+    const delivery = (await getWaitlistOfferEmailDeliveries([booking({ offerExpiresAt: liveOfferExpiry() })])).get("bk_1")!;
+    expect(delivery.retryState).toBe(retryState);
+  });
+});
+
+describe("the board reads the offer email's row by the owed notices' rule (#5433 round 2, item 5c)", () => {
+  it.each([
+    ["a non-production copy's withheld email is held back, needing nothing", { status: "SKIPPED_NON_PRODUCTION", attempts: 1 }, "withheld_non_production", false],
+    ["a FAILED row with no body to replay is exhausted, not retrying", { status: "FAILED", attempts: 1, htmlBody: null, bookingRetryHtmlBody: null }, "exhausted", true],
+    ["a FAILED row that keeps its body is retrying", { status: "FAILED", attempts: 1, bookingRetryHtmlBody: "<p>offer</p>" }, "retrying", false],
+    ["a QUEUED row past its first attempt, claimed just now, is the retry cron's", { status: "QUEUED", attempts: 2, lastAttemptAt: new Date(), bookingRetryHtmlBody: "<p>offer</p>" }, "retrying", false],
+    ["a QUEUED replay left long ago reads as queued, the provider may have it (round 3, item 1)", { status: "QUEUED", attempts: 2, bookingRetryHtmlBody: "<p>offer</p>" }, "queued", false],
+    ["a QUEUED row on its first attempt is queued", { status: "QUEUED", attempts: 1, bookingRetryHtmlBody: "<p>offer</p>" }, "queued", false],
+  ])("%s", async (_case, row, retryState, needsOperatorAction) => {
+    mocks.emailLogFindMany.mockResolvedValue([emailLog(row)]);
+
+    const delivery = (await getWaitlistOfferEmailDeliveries([booking({ offerExpiresAt: liveOfferExpiry() })])).get("bk_1")!;
+
+    expect(delivery.retryState).toBe(retryState);
+    expect(delivery.needsOperatorAction).toBe(needsOperatorAction);
+  });
+});

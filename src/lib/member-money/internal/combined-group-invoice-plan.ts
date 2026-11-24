@@ -11,6 +11,7 @@ import {
   liveBookingInvoiceComponents,
   primaryInvoicePayloadHash,
   splitStayAndFeeCents,
+  withoutTax,
   type PrimaryInvoiceCoverage,
   type PrimaryInvoicePlan,
 } from "./primary-invoice-plan";
@@ -124,8 +125,8 @@ export function planReplayedCombinedGroupInvoice(input: CombinedGroupInvoiceKey 
       conflict = { reason: "COMPONENT_UNUSABLE", problem: `child ${child.bookingId}: the journal holds no stay charge` };
       break;
     }
-    if (live.stay) stays.push(live.stay);
-    fees.push(...live.fees);
+    if (live.stay) stays.push(withoutTax(live.stay));
+    fees.push(...live.fees.map(withoutTax));
   }
   const sum = (components: PrimaryInvoiceCoverage[]) => components.reduce((total, c) => total + c.coveredCents, 0);
   if (!conflict && sum(stays) !== billed.stayCents) {

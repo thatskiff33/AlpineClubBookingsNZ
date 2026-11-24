@@ -153,6 +153,9 @@ export const MEMBER_MERGE_SNAPSHOT_SCALAR_COLUMNS: readonly string[] = [
   // #5209: who last mapped a Xero tax category, the same last-writer note;
   // XERO_TAX_CATEGORY_MAPPED is the full trail.
   "XeroTaxCategoryMapping.updatedByMemberId",
+  // #5208: who checked a GST mismatch Xero returned and resumed the overrides;
+  // XERO_TAX_OVERRIDE_PAUSE_CLEARED is the full trail.
+  "XeroTaxOverrideMismatch.clearedByMemberId",
 
   // #2243 review sweep — bespoke-named FK-less member-id columns the detector
   // cannot see (their names appear nowhere in the schema as a Member FK column),

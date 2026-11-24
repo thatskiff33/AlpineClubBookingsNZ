@@ -15,6 +15,7 @@ import {
   claimAlertCooldown,
   claimOwedAlert,
   deferAlertCooldown,
+  listAllOwedAlertKeys,
   listOwedAlertKeys,
   markAlertOwed,
   noteOwedAlertAttempt,
@@ -144,6 +145,31 @@ describe("owed alert markers (#3635 F1)", () => {
     // Fifteen minutes later is the next run, and the marker is already due.
     await expect(list(store, at(15 * 60 * 1000))).resolves.toEqual([OWED]);
     await expect(list(store, T0)).resolves.toEqual([OWED]);
+  });
+});
+
+describe("listAllOwedAlertKeys (#5240 review)", () => {
+  const PREFIX = "saved-card-capture-unsettled:";
+  /** A store holding `count` due markers and one not yet due, answering the pager's query shape. */
+  function pagedStore(count: number) {
+    const rows = new Map<string, Date>(Array.from({ length: count }, (_, i) => [`${PREFIX}pi_${String(i).padStart(3, "0")}`, T0]));
+    rows.set(`${PREFIX}pi_late`, at(1));
+    const findMany = vi.fn(async ({ where, take }: { where: { key: { startsWith: string }; lastAlertedAt: { lte: Date }; AND?: Array<{ key: { gt: string } }> }; take: number }) =>
+      [...rows.entries()]
+        .filter(([key, stamp]) => key.startsWith(where.key.startsWith) && stamp <= where.lastAlertedAt.lte && (!where.AND || key > where.AND[0].key.gt))
+        .sort(([a], [b]) => a.localeCompare(b))
+        .slice(0, take)
+        .map(([key]) => ({ key })));
+    return { store: { alertCooldown: { findMany } } as never, findMany };
+  }
+
+  it.each([[0, 1], [49, 1], [50, 2], [120, 3]])("returns all %i due markers, reading %i page(s) of 50, and none not yet due", async (count, pages) => {
+    const { store, findMany } = pagedStore(count);
+    const keys = await listAllOwedAlertKeys({ prefix: PREFIX, now: T0, retryAfterMs: 0, store });
+    expect(keys).toHaveLength(count);
+    expect(new Set(keys).size).toBe(count);
+    expect(keys).not.toContain(`${PREFIX}pi_late`);
+    expect(findMany).toHaveBeenCalledTimes(pages);
   });
 });
 

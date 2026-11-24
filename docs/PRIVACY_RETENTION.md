@@ -373,6 +373,7 @@ kinds stay as they were either way:
 | `MemberMoneyRefundReservationRelease` | Release evidence for reserved refund amounts | Kept for financial records | Keep |
 | `MemberMoneySourcePosting` | Exact financial source and journal-line coverage | Kept for financial records | Keep |
 | `MemberMoneyExportManifest` | Booking, sent Xero invoice id and what its lines cover | Kept for financial records | Keep |
+| `XeroTaxOverrideMismatch` | Booking, Xero invoice, the tax sent and returned per line, and the finance officer who cleared it with their note | Kept for financial records; keep clearer attribution for the tax record | Keep |
 | `MemberMoneyExportCoverage` | Journal components a sent invoice bills | Kept for financial records | Keep |
 | `MemberMoneyExportCoverageRelease` | When and why a sent invoice stopped covering its components (voided or gone from Xero) | Kept for financial records | Keep |
 | `McpGrant` | A member's connection to an AI app: which app, what it may do, when it was approved and last used | While the connection is in use, and after it ends as the member's connection history; deleted with the member. A connection whose app stopped renewing leaves the connected lists once its last refresh token lapses (30 days), and its row is kept as history. No scheduled sweep | Delete on member erasure or merge |

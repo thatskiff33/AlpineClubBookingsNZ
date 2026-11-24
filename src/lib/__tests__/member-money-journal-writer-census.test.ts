@@ -17,6 +17,7 @@ import { describe, expect, it } from "vitest";
 import { MEMBER_MONEY_RELATIONS } from "@/lib/member-money-tables";
 import { delegateUsesBeyondReads, productionSourceFiles } from "./support/prisma-delegate-read-scan";
 import { stripComments } from "./support/strip-comments";
+import { CENSUS_TIMEOUT_MS } from "@/test/census-timeout";
 
 const ROOT = process.cwd();
 
@@ -80,6 +81,11 @@ const READERS: Record<string, { reason: string; importOnly: boolean }> = {
   },
   "src/lib/subject-access-export-additional.ts": {
     reason: "the face value of the subject's own obligations for their privacy access file (read-only)",
+    importOnly: false,
+  },
+  // #5208: the GST safeguard compares the journal's planned line tax with Xero's reply.
+  "src/lib/xero-tax-override-safeguard.ts": {
+    reason: "the line tax overrides a primary invoice sent, compared with Xero's reply (a type import)",
     importOnly: false,
   },
 };
@@ -361,7 +367,7 @@ describe("member money journal writer and reader boundaries (#4513, #4627)", () 
     const callers = productionSourceFiles(ROOT).filter((file) => !file.startsWith(BOUNDARY) && command.test(readFileSync(join(ROOT, file), "utf8")));
     expect(callers, "a door calls the reservation engine directly; M4c's senders go through ./doors").toEqual([]);
     expect('reserveMemberMoneyRefund(tx, plan)').toMatch(command);
-  });
+  }, CENSUS_TIMEOUT_MS);
 
   it("admits exactly the M3b and M3c doors as posting callers (#4627, #4628)", () => {
     const callers = found.filter((file) => !file.startsWith(BOUNDARY)

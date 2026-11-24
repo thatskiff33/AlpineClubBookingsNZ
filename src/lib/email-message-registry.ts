@@ -1,6 +1,5 @@
-import { LATE_CAPTURE_REFUNDED_OUTSIDE_APP_NOTE } from "@/lib/late-capture-outside-app-note";
-import { UNMATCHED_APP_LEDGER_MATCH_LABEL, UNMATCHED_APP_STRIPE_PAYMENT_NOTE, UNRECOGNISED_STRIPE_PAYMENT_NOTE } from "@/lib/unrecognised-stripe-payment-note";
-import { STRIPE_DISPUTE_HOLD_NOTE, STRIPE_DISPUTE_NEXT_STEP, stripeDisputeSubjectLabel } from "@/lib/stripe-dispute-note";
+import { stripePaymentAlertSampleValue } from "@/lib/email-message-stripe-payment-samples";
+import { waitlistAlertSampleValue } from "@/lib/email-message-waitlist-samples";
 import {
   EMAIL_AUDIT_DEFAULTS,
   type EmailAuditTemplateName,
@@ -448,6 +447,12 @@ const REQUIRED_TEMPLATE_TOKENS: Partial<Record<EmailAuditTemplateName, string[]>
   // #1992/#2007: memberName identifies the affected member and reviewUrl is the
   // admin action link (the payments board), mirroring the other admin alerts.
   "admin-duplicate-capture-refund": ["memberName", "reviewUrl"],
+  // #5433: {{noticeNote}} says which waitlist email went unsent and what to
+  // do; the member and the booking link are what an officer acts on.
+  "admin-waitlist-notice-unsent": ["noticeNote", "memberName", "bookingUrl"],
+  // #5433: {{offerNote}} says whether the offer email reached the member; an
+  // override without it would tell officers nothing about that.
+  "admin-waitlist-offer": ["offerNote"],
   // #3672: the organiser's booking, and each waiting joiner linked to the
   // booking whose admin tools record their payment.
   "admin-group-joiner-started-stay": [
@@ -1131,6 +1136,11 @@ const TEMPLATE_TRIGGER_METADATA: Partial<
       "Organiser settled a joiner's spot as part of a combined group payment",
     frequency: "One email per joiner booking covered by the settled payment",
   },
+  "admin-waitlist-notice-unsent": {
+    triggerSummary: "A waitlist email owed to a member (the offer of a place, or the notice that an offer lapsed) could not be sent before its cut-off; an offer email's send did not reach the member (it bounced, failed for good, or their address cannot be emailed); or an offer lapsed with its email not known to have reached them (#5433, owner decisions D2 and D5)",
+    frequency:
+      "Once per unsent notice, and once per offer for its email and its lapse together, guarded by a cross-instance claim. The claim is kept once any admin is sent it or has a copy queued for the email retry cron, held for a day when no admin can receive it, and given back when the send throws before reaching anyone",
+  },
   "admin-group-joiner-started-stay": {
     triggerSummary:
       "A paid organiser-pays group had joiners its bill did not cover whose stay had started; they were switched to paying for themselves without an email, so the treasurer collects by hand (#3672)",
@@ -1458,6 +1468,8 @@ export function sampleValue(token: string): string {
   if (token === "holdKeptNote") {
     return internetBankingHoldKeptParagraph("part-paid");
   }
+  const waitlistSample = waitlistAlertSampleValue(token);
+  if (waitlistSample !== undefined) return waitlistSample;
   // #4042: previewed as the cash arm, what the shipped default always said.
   if (token === "handBackNote") return manualRefundTaskAlertNote("cash-cancellation");
   if (token === "handBackLabel") return manualRefundTaskAlertLabel("cash-cancellation");
@@ -1483,23 +1495,8 @@ export function sampleValue(token: string): string {
   if (token === "settlementFigureNote") {
     return ibSettlementFigureParagraph({ keptReason: "folded-refund", owed: null, hasSupplementaryInvoice: false });
   }
-  if (token === "outsideAppRefundNote") return LATE_CAPTURE_REFUNDED_OUTSIDE_APP_NOTE;
-  // #4532: the one passage, and the Stripe ids an unrecognised payment names.
-  if (token === "unrecognisedPaymentNote") return UNRECOGNISED_STRIPE_PAYMENT_NOTE;
-  // #4624: the unmatched app payment's instruction, and what the app found for it.
-  if (token === "unmatchedAppPaymentNote") return UNMATCHED_APP_STRIPE_PAYMENT_NOTE;
-  if (token === "ledgerMatch") return UNMATCHED_APP_LEDGER_MATCH_LABEL.APP_INTENT_NO_TRANSACTION;
-  if (token === "chargeId") return "ch_example";
-  // #4911: previewed as the opened alert, the one every dispute sends first.
-  if (token === "disputeSubjectLabel") return stripeDisputeSubjectLabel("opened", "open");
-  if (token === "disputeNextStep") return STRIPE_DISPUTE_NEXT_STEP.OPEN;
-  if (token === "disputeHoldNote") return STRIPE_DISPUTE_HOLD_NOTE;
-  if (token === "outcome") return "open";
-  if (token === "disputeId") return "dp_example";
-  if (token === "bookingOwner") return "Sam Member";
-  if (token === "checkoutSessionId") return "cs_example";
-  if (token === "paymentLinkId") return "plink_example";
-  if (token === "stripeDashboardUrl") return "https://dashboard.stripe.com/payments/pi_example";
+  const stripePaymentSample = stripePaymentAlertSampleValue(token);
+  if (stripePaymentSample !== undefined) return stripePaymentSample;
   // #4211: previewed as the no-record arm, the case every booking paid before
   // the record existed meets; the released-settler arm is the guard's other reason.
   if (token === "duplicateCaptureKeptNote") {
@@ -2065,6 +2062,9 @@ const APPROVED_EMAIL_TEMPLATE_TOKENS = [
   "handBackConflictNote",
   // #3643: why an expired internet banking hold was kept, not released.
   "holdKeptNote",
+  // #5433: the waitlist alerts' notes: which email went unsent, and the offer's.
+  "noticeNote",
+  "offerNote",
   // #4042: which hand-back a manual refund task alert is about - its body
   // paragraphs, its subject/heading phrase, and whom the money goes back to.
   "handBackNote",

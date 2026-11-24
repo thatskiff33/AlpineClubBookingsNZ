@@ -71,6 +71,7 @@ import logger from "@/lib/logger";
 import { NOT_A_SETTLEMENT_MARKER_WHERE } from "@/lib/manual-settlement-reversal-event";
 import {
   deliverOwedNotice,
+  OWED_OFFICER_ALERT_MAX_AGE_MS,
   type OwedNoticeDeliverer,
   type OwedNoticeOutcome,
   type OwedNoticeRef,
@@ -88,8 +89,12 @@ import { prisma } from "@/lib/prisma";
  */
 export const BUMP_NOTICE_SWEEP_AFTER_MS = 60 * 60 * 1000;
 
-/** A marker older than this is cleared with an error log and nothing is sent. */
-export const BUMP_NOTICE_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
+/**
+ * A marker older than this is cleared with an error log and nothing is sent:
+ * the officers' alerts' seven days (#5433, settled by the lane), which the
+ * bump's member email shares, as it has since #5407.
+ */
+export const BUMP_NOTICE_MAX_AGE_MS = OWED_OFFICER_ALERT_MAX_AGE_MS;
 
 export type BumpNoticeKind = "member" | "officers";
 

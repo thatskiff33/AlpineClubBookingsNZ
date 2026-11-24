@@ -585,6 +585,18 @@ replay records it from the operation's stored lines. The frozen mapping keeps
 the Xero tax type and the journal's tax codes side by side, untranslated. No
 delivery record or dispatcher exists yet.
 
+#5208 makes the journal's GST the figure of record on that one role (owner
+decision, 18 Nov 2026, Option A), as a step inside M13. A COVERED plan for a
+GST-registered club now carries each line's `taxAmount`, shared from the stay
+component's live tax and the fee components' tax by `allocateTaxAcrossLines`
+(largest remainder, earliest line first on a tie), and the sender sends that
+plan's lines, so the invoice's tax equals the journal's to the cent. The frozen
+mapping records it as `taxAllocation` (the cents per line, or `PAUSED`). A line
+Xero returns holding other tax makes the manifest a `TAX_CENTS` conflict and
+pauses the overrides for later invoices until finance clears it
+(`docs/xero/ARCHITECTURE.md#the-journals-gst-on-each-line-5208`). Money already
+posted and invoices already sent are untouched.
+
 The next cohort (ALP-436) adds two roles to the same manifest, still as
 observers: `XeroSyncOperation` keeps sending. `SUPPLEMENTARY_BOOKING_INVOICE`
 (`planSupplementaryBookingInvoice`) bills a *slice* of the stay component,
@@ -980,6 +992,15 @@ no longer disagree, and `club-tax-settings-write.ts` is the one writer a Full
 Admin reaches to schedule a future change (`club-tax-settings-one-writer-census.test.ts`
 holds every other path to reads). A club that is not GST-registered can now
 have that recorded from the admin card on `/admin/finance/xero`.
+
+**Which GST is of record when the two round differently** (#5208, owner
+decision 18 Nov 2026, Option A): the journal's. It splits a component once;
+Xero would round each invoice line, up to half a cent apart per line. New
+primary invoices therefore carry the journal's tax shared across their lines,
+behind a live safeguard that pauses on any line Xero changes
+(`docs/xero/ARCHITECTURE.md#the-journals-gst-on-each-line-5208`). The issue does
+not assert how GST must be rounded; that treatment is the club's to confirm
+with its accountant.
 
 ### D4. Member merge: transfer open balances explicitly
 

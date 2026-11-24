@@ -22,9 +22,22 @@ import { LEDGER_ROWS_NEWEST_FIRST } from "@/lib/payment-ledger-order";
  * Moved verbatim from `page.tsx`; the comments inside the `include` are the
  * ones each relation carried there.
  */
-export async function loadBookingDetail(id: string) {
+export async function loadBookingDetail(
+  id: string,
+  options: {
+    /**
+     * Whether a removed (soft-deleted) booking still loads. Default `true`, the
+     * read every existing caller had. The booking page passes `false` for a
+     * viewer who is not a Full Admin, so a removed booking reads as `null` and
+     * none of its relations are loaded for somebody who may not see them
+     * (`INV-ADDPAY-034`, #5266).
+     */
+    includeDeleted?: boolean;
+  } = {},
+) {
+  const { includeDeleted = true } = options;
   const booking = await prisma.booking.findUnique({
-    where: { id },
+    where: includeDeleted ? { id } : { id, deletedAt: null },
     include: {
       // Deterministic order (#2266 MED-4): the edit panel derives promo
       // beneficiary bindings and pricing rows from this list, so it must be

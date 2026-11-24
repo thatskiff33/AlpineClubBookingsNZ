@@ -1144,3 +1144,86 @@ describe("compile-changelog run directly (#4569)", () => {
     }
   });
 });
+
+describe("after-deploy step fragments (#5379)", () => {
+  const DEPLOY = "## Who\n\nowner\n\n## What to do\n\nRun the report once.\n\n## How to check it worked\n\nIt lists no rows.\n";
+  const ENTRY = "- **An entry (#5379).** Body.\n";
+
+  it("never compiles a deploy step into CHANGELOG.md, and leaves it in place on a plain compile", () => {
+    const root = makeRepo({ fragments: { "5379-entry.md": ENTRY, "5309-stuck-report.deploy.md": DEPLOY } });
+    const log = silentLog();
+
+    const result = compileChangelog({ repoRoot: root, version: "0.15.0", date: "2026-11-23", log });
+
+    expect(result.fragments).toEqual(["5379-entry.md"]);
+    expect(result.deploySteps).toMatchObject([{ name: "5309-stuck-report.deploy.md", pr: 5309, who: "owner" }]);
+    expect(read(root)).not.toContain("Run the report once");
+    expect(fragmentFiles(root)).toEqual(["5309-stuck-report.deploy.md"]);
+    expect(log.text()).toContain("release:cut prepare files them in the release documents");
+  });
+
+  it("deletes the deploy steps with the entries when release:cut consumes them", () => {
+    const root = makeRepo({ fragments: { "5379-entry.md": ENTRY, "5309-stuck-report.deploy.md": DEPLOY } });
+
+    compileChangelog({ repoRoot: root, version: "0.15.0", date: "2026-11-23", consumeDeployFragments: true, log: silentLog() });
+
+    expect(fragmentFiles(root)).toEqual([]);
+    expect(read(root)).toContain("- **An entry (#5379).** Body.");
+  });
+
+  it("consumes deploy steps alone without touching CHANGELOG.md", () => {
+    const root = makeRepo({ fragments: { "5309-stuck-report.deploy.md": DEPLOY } });
+    const before = read(root);
+
+    const result = compileChangelog({ repoRoot: root, version: "0.15.0", date: "2026-11-23", consumeDeployFragments: true, log: silentLog() });
+
+    expect(result.written).toBe(false);
+    expect(read(root)).toBe(before);
+    expect(fragmentFiles(root)).toEqual([]);
+  });
+
+  it("refuses a malformed deploy step before any write, in a dry run too, naming every problem", () => {
+    const fragments = {
+      "5379-entry.md": ENTRY,
+      "5309-good.deploy.md": DEPLOY,
+      "5310-bad.deploy.md": DEPLOY.replace("owner", "everyone"),
+      "5311-worse.deploy.md": "Run it after deploying.\n",
+    };
+    const root = makeRepo({ fragments });
+    const before = read(root);
+
+    for (const dryRun of [true, false]) {
+      expect(() =>
+        compileChangelog({ repoRoot: root, version: "0.15.0", date: "2026-11-23", dryRun, consumeDeployFragments: true, log: silentLog() }),
+      ).toThrow(/2 after-deploy step fragment\(s\).*malformed[\s\S]*5310-bad\.deploy\.md: .*one of owner[\s\S]*5311-worse\.deploy\.md: .*no "## Who"/);
+    }
+    expect(read(root)).toBe(before);
+    expect(fragmentFiles(root)).toEqual(Object.keys(fragments).sort());
+    for (const [name, body] of Object.entries(fragments)) {
+      expect(fs.readFileSync(path.join(root, "changelog.d", name), "utf8")).toBe(body);
+    }
+  });
+
+  it("restores consumed deploy steps when a removal fails part way", () => {
+    const root = makeRepo({ fragments: { "5379-entry.md": ENTRY, "5309-stuck-report.deploy.md": DEPLOY } });
+    const before = read(root);
+    const deploy = path.join(root, "changelog.d", "5309-stuck-report.deploy.md");
+
+    expect(() =>
+      compileChangelog({
+        repoRoot: root,
+        version: "0.15.0",
+        date: "2026-11-23",
+        consumeDeployFragments: true,
+        log: silentLog(),
+        removeFile(file) {
+          fs.rmSync(file);
+          if (file === deploy) throw new Error("injected unlink failure");
+        },
+      }),
+    ).toThrow(/injected unlink failure.*original files restored/);
+    expect(read(root)).toBe(before);
+    expect(fs.readFileSync(deploy, "utf8")).toBe(DEPLOY);
+    expect(fragmentFiles(root)).toEqual(["5309-stuck-report.deploy.md", "5379-entry.md"]);
+  });
+});

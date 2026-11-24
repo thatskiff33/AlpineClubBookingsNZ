@@ -204,6 +204,19 @@ describe("sendAdditionalPaymentReminders", () => {
       );
     });
 
+    it("tells the officers just the same for an owner with no email address, as before #5433 (round 4, item 3)", async () => {
+      // An organisation-owned booking with no organisation email reaches the chase with an empty address.
+      mockReadInvoiceBalance.mockResolvedValue(invoiceOwing(10_000));
+      mockPrisma.booking.findMany.mockResolvedValue([
+        booking({ member: { email: "", firstName: "Alice" }, payment: { transactions: [creditReleaseRow(raisedWeekAgo)], additionalReminderSentAt: firstSent } }),
+      ]);
+      const result = await sendAdditionalPaymentReminders();
+      expect(result.leftToOfficersBookingIds).toEqual(["booking-1"]);
+      expect(mockSignalOfficers).toHaveBeenCalledWith(expect.objectContaining({ bookingId: "booking-1", reason: "invoice-part-paid" }));
+      expect(mockSendAdditionalPaymentReminderEmail).not.toHaveBeenCalled();
+      expect(result.suppressedBookingIds).toEqual([]);
+    });
+
     it("withholds a request carrying an earlier release once the member has transferred only that one", async () => {
       // R1 (8,000) was emailed with the bank offer; R2 then carried it. The member transferred R1.
       mockReadInvoiceBalance.mockResolvedValue(invoiceOwing(13_000));

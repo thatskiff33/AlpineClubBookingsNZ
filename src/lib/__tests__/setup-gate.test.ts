@@ -56,6 +56,7 @@ import {
 import { escapeHtml } from "@/lib/email-templates/escape";
 import { CSP_HEADER, SECURITY_HEADERS } from "@/lib/csp";
 import proxy from "@/proxy";
+import { CENSUS_TIMEOUT_MS } from "@/test/census-timeout";
 
 const CLUB_NAME = "Example Alpine Club";
 const CONTACT_EMAIL = "office@example.org";
@@ -163,7 +164,7 @@ const exemptUrls = [
   "/asset-not-found",
 ];
 
-describe("which addresses the setup gate covers", () => {
+describe("which addresses the setup gate covers", { timeout: CENSUS_TIMEOUT_MS }, () => {
   it.each(publicWebsiteUrls)("treats %s as a public-website address", (url) => {
     expect(isPublicWebsitePath(url)).toBe(true);
   });

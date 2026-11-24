@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
+import { CENSUS_TIMEOUT_MS } from "@/test/census-timeout";
 
 /**
  * WHERE the calculated identity age is allowed to exist (#2568).
@@ -90,7 +91,7 @@ const sourceFiles = walk(SRC_ROOT).map((absolute) => ({
   contents: fs.readFileSync(absolute, "utf8"),
 }));
 
-describe("identity age — which modules may produce it (#2568)", () => {
+describe("identity age — which modules may produce it (#2568)", { timeout: CENSUS_TIMEOUT_MS }, () => {
   it("is calculated only by the allowlisted server modules", () => {
     const producers = sourceFiles
       .filter(({ contents }) => CALCULATES_AGE.test(contents))
@@ -148,7 +149,7 @@ describe("identity age — which modules may produce it (#2568)", () => {
   });
 });
 
-describe("identity age — which modules may render it (#2568)", () => {
+describe("identity age — which modules may render it (#2568)", { timeout: CENSUS_TIMEOUT_MS }, () => {
   it("is displayed only by the allowlisted admin surfaces", () => {
     const renderers = sourceFiles
       .filter(({ contents }) => RENDERS_AGE.test(contents))

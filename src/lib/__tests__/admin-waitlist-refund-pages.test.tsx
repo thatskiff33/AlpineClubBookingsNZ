@@ -240,6 +240,39 @@ describe("Admin waitlist page", () => {
     expect(href.startsWith("/bookings/booking-1?returnTo=/admin/waitlist")).toBe(true);
   });
 
+  it.each([
+    ["a withheld offer email row", "SKIPPED_NO_EMAILS", /turning emails back on will not send the withheld offer email; contact the member directly or retract the offer/],
+    ["no offer email row yet", "MISSING", /turning emails back on lets a still-owed offer email go; otherwise contact the member directly or retract the offer/],
+  ])("gives the next step that is true for %s (#5433 round 5, F4)", async (_case, status, text) => {
+    mocks.currentSearch = "";
+    fetchMock.mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        entries: [
+          {
+            ...waitlistEntry(),
+            offerEmailDelivery: {
+              status,
+              emailLogId: null,
+              attempts: 0,
+              lastAttemptAt: null,
+              errorMessage: null,
+              retryState: "suppressed_live_offer",
+              needsOperatorAction: true,
+            },
+          },
+        ],
+        page: 1,
+        pageSize: 25,
+        total: 1,
+      }),
+    });
+
+    render(<AdminWaitlistPage />);
+
+    expect(await screen.findByRole("link", { name: text })).toBeTruthy();
+  });
+
   it("reports force-confirmed overbook dates and links the critical audit record", async () => {
     mocks.currentSearch = "";
     let waitlistLoads = 0;

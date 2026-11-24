@@ -42,6 +42,7 @@ const cancellationLedger = vi.hoisted(() => ({
 // captured row, and where its refund stands; nothing here is superseded unless
 // a case says so (`supersededDoor.owned`, no refund started).
 const supersededDoor = vi.hoisted(() => ({ owned: new Set<string>(), handOff: vi.fn() }));
+
 vi.mock("@/lib/superseded-capture-ownership", async (importOriginal) => ({
   ...((await importOriginal()) as typeof import("@/lib/superseded-capture-ownership")),
   readSupersededOwnership: async () => ({
@@ -348,7 +349,8 @@ const mockLodgeCount = vi.fn().mockResolvedValue(2);
 // rolled-back bump leaves no marker, as in PostgreSQL.
 // `markerKeysWrittenInTransaction` lists the ids written through the
 // transaction client. The `AlertCooldown` double holds the legacy bump
-// markers the sweep still drains (none here).
+// markers the sweep still drains (none here) and, staged the same way, the
+// #5240 saved-card "not yet settled" flag.
 const alertCooldownStore = createAlertCooldownStore();
 const owedNoticeStore = createOwedNoticeStore();
 const markerKeysWrittenInTransaction: string[] = [];
@@ -735,6 +737,7 @@ describe("Cron: Confirm Pending Bookings", () => {
     mockPrismaTransaction.mockImplementation(async (arg: unknown) => {
       if (typeof arg === "function") {
         const stagedMarkers: Array<Parameters<typeof owedNoticeStore.delegate.createMany>[0]> = [];
+        const stagedCooldownMarkers: Array<Parameters<typeof alertCooldownStore.delegate.upsert>[0]> = [];
         // #2870: how many `clubTimeSettings` reads happened WHILE this callback
         // was running. Zero is the contract — the callback holds
         // `pg_advisory_xact_lock(1)` and the per-lodge capacity lock for its
@@ -791,12 +794,22 @@ describe("Cron: Confirm Pending Bookings", () => {
               return { count: args.data.length };
             },
           },
+          // #5240: a saved-card settle flags its capture "not yet settled" in
+          // `AlertCooldown`, by upsert only, committed with the settle.
+          alertCooldown: {
+            upsert: async (args: (typeof stagedCooldownMarkers)[number]) => {
+              markerKeysWrittenInTransaction.push(args.where.key);
+              stagedCooldownMarkers.push(args);
+              return args.create;
+            },
+          },
           });
           if (transactionCommit.failNext) {
             transactionCommit.failNext = false;
             throw new Error("Transaction commit failed");
           }
           for (const staged of stagedMarkers) await owedNoticeStore.delegate.createMany(staged);
+          for (const staged of stagedCooldownMarkers) await alertCooldownStore.delegate.upsert(staged);
           return result;
         } finally {
           zoneReadsInsideTransaction +=
@@ -3981,8 +3994,15 @@ describe("Cron: Confirm Pending Bookings", () => {
         },
       });
       expect(mockMarkBookingPaymentSucceeded).toHaveBeenCalledWith(
-        // #4285 review: the cron's pre-record wrote the capture just now - new money, not a replay.
-        expect.objectContaining({ paymentIntentId: "pi_admin", recordedByCaller: true })
+        expect.objectContaining({ paymentIntentId: "pi_admin" })
+      );
+      // #5240: the pre-record flagged the capture, committed, for that settle to consume.
+      const flagKey = "saved-card-capture-unsettled:pi_admin";
+      expect(markerKeysWrittenInTransaction).toEqual([flagKey]);
+      const flagCommitted = alertCooldownStore.delegate.upsert.mock.calls.findIndex(([call]) => call.where.key === flagKey);
+      expect(flagCommitted).toBeGreaterThanOrEqual(0);
+      expect(alertCooldownStore.delegate.upsert.mock.invocationCallOrder[flagCommitted]).toBeLessThan(
+        mockMarkBookingPaymentSucceeded.mock.invocationCallOrder[0]!,
       );
     });
 

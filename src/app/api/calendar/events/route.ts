@@ -10,18 +10,23 @@ import {
 import { createCalendarEvent } from "@/lib/calendar-service";
 import {
   calendarEventInputSchema,
+  CALENDAR_EVENT_LIST_DEFAULT_DAYS_AHEAD,
+  CALENDAR_EVENT_LIST_DEFAULT_DAYS_BACK,
+  calendarEventListQuerySchema,
   resolveCalendarEventDates,
   serializeCalendarEvent,
   whereVisibleCalendarEvent,
 } from "@/lib/calendar-events";
 import { loadEffectiveModuleFlags } from "@/lib/module-settings";
+import { CALENDAR_EVENTS_CONNECTION_SHAPE } from "@/lib/connection-shapes-lodge-life";
+import { arrivesAsMcpConnection, connectionJson } from "@/lib/mcp-connection-request";
 
 // Widest window a single list request may span, guarding against an unbounded
 // scan if a client sends a silly range. A month view needs ~6 weeks; a year of
 // slack is plenty.
 const MAX_RANGE_MS = 400 * 24 * 60 * 60 * 1000;
 
-function parseRangeParam(value: string | null): Date | null {
+function parseRangeParam(value: string | undefined): Date | null {
   if (!value) return null;
   const parsed = new Date(value);
   return Number.isNaN(parsed.getTime()) ? null : parsed;
@@ -34,6 +39,10 @@ function parseRangeParam(value: string | null): Date | null {
  * Accepts `from` / `to` ISO bounds (the visible month's grid range); defaults to
  * a broad window around now when omitted. Also returns `canManage` so the client
  * renders edit controls only for committee members and lodge-edit admins.
+ *
+ * Also the AI app action `list_club_events` (ALP-796): a connection is sent
+ * the events without `canManage` or the series bookkeeping, and sees the same
+ * events a member does (the organisation check reads the real account).
  */
 export async function GET(req: NextRequest) {
   const guard = await requireActiveSession();
@@ -47,13 +56,17 @@ export async function GET(req: NextRequest) {
   }
 
   const url = new URL(req.url);
+  const query = calendarEventListQuerySchema.parse({
+    from: url.searchParams.get("from") ?? undefined,
+    to: url.searchParams.get("to") ?? undefined,
+  });
   const now = Date.now();
   const from =
-    parseRangeParam(url.searchParams.get("from")) ??
-    new Date(now - 90 * 24 * 60 * 60 * 1000);
+    parseRangeParam(query.from) ??
+    new Date(now - CALENDAR_EVENT_LIST_DEFAULT_DAYS_BACK * 24 * 60 * 60 * 1000);
   let to =
-    parseRangeParam(url.searchParams.get("to")) ??
-    new Date(now + 275 * 24 * 60 * 60 * 1000);
+    parseRangeParam(query.to) ??
+    new Date(now + CALENDAR_EVENT_LIST_DEFAULT_DAYS_AHEAD * 24 * 60 * 60 * 1000);
   if (to.getTime() - from.getTime() > MAX_RANGE_MS) {
     to = new Date(from.getTime() + MAX_RANGE_MS);
   }
@@ -80,13 +93,15 @@ export async function GET(req: NextRequest) {
       // result set (e.g. a runaway recurrence) rather than truncating real use.
       take: 2000,
     }),
-    canManageCalendarEvents(guard.session.user),
+    // A connection never edits the calendar, and is not told it could.
+    arrivesAsMcpConnection(req) ? false : canManageCalendarEvents(guard.session.user),
   ]);
 
-  return NextResponse.json({
-    events: events.map(serializeCalendarEvent),
-    canManage,
-  });
+  return connectionJson(
+    req,
+    { events: events.map(serializeCalendarEvent), canManage },
+    CALENDAR_EVENTS_CONNECTION_SHAPE,
+  );
 }
 
 /**

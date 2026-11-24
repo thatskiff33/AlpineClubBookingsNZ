@@ -48,6 +48,17 @@ export interface OwedNoticeMarker {
 
 type OwedNoticeStore = Pick<typeof prisma, "owedNotice">;
 
+/**
+ * A member notice's event key, `<subjectId>:<eventAtMs>`: the email core turns
+ * it into the notice's `EmailLog` id, so one event has one row (#5433). The
+ * bump notice keeps the identical format #5407 shipped in its own function
+ * (`bumpNoticeIdempotencyKey`), fixed so a legacy marker and a new one for one
+ * bump still share a row.
+ */
+export function owedNoticeEventKey(subjectId: string, eventAt: Date): string {
+  return `${subjectId}:${eventAt.getTime()}`;
+}
+
 /** The deterministic id: `<kind>:<subjectId>:<eventAtMs>[:variant]`. */
 export function owedNoticeId(kind: string, subjectId: string, eventAt: Date, variant?: string | null): string {
   const base = `${kind}:${subjectId}:${eventAt.getTime()}`;

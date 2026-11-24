@@ -95,15 +95,15 @@ the rule: it names sibling IDs so a change to one prompts checking the others.
 ## INV-PAY-043
 
 - **The settlement is recorded, never guessed** (#4211, owner decision 17 Oct
-  2026): the winning PAID claim (`payment-settler.ts`) writes
+  2026): the winning PAID claim (`payment-settler`) writes
   `Payment.settledByTransactionId` (a bank receipt's PRIMARY row only when
-  exactly one holds money), and the manual reversal clears it.
+  exactly one holds money); the manual reversal clears it.
 - **The recorded settler is never refunded.** Its redelivery is
   `already_paid` whatever else holds money, COMPLETED too (#4285).
 - **Every other card capture arriving on a PAID or COMPLETED booking is
   refunded** while the settler still holds net cash nothing else owns: a third
-  capture, or a stray on a cash- or Xero-settled booking (#2262). Its alert,
-  and an inline refund's history, name the settlement.
+  capture, or a stray on a cash- or Xero-settled booking (#2262). Its alert
+  and refund history name the settlement when a card settles it.
 - **What the superseded machinery holds** (an unsucceeded operation, or a
   succeeded refund failed later that open rows owe back in full, #4227) is
   never the settlement and, unless a dead cancel's, never refunded on top
@@ -113,20 +113,20 @@ the rule: it names sibling IDs so a change to one prompts checking the others.
 - **No record, no automatic refund.** Paid before this release or by the
   old colour while another capture holds money, or a recorded settler no
   longer holding money, regardless: the arriving capture is kept
-  (`duplicate_capture_kept`, no second confirmation or invoice) and an
+  (`duplicate_capture_kept`, no second confirmation or invoice); an
   unmuteable alert asks for a check, daily per capture. An owned duplicate
   re-sends its refund.
 - **Limit:** PAID transitions no transaction settles (zero cash, full credit,
-  $0 auto-pay, group settlement) never write it; a lone capture there is
-  kept and alerted unless already recorded (a replay, or a saved-card
-  pre-record whose settle failed, #4285); the payments cron retries
-  until delivered or moot (`STATE_MACHINES`).
+  $0 auto-pay, group settlement) never write it; a lone capture is
+  kept and alerted unless a replay, retried until delivered or moot (#4285).
+  Unsettled saved-card captures: new money; alerted if paid (bar silent
+  keeps), else logged at day 7 (#5240).
 - **One home**: `duplicate-capture-guard.ts`, sharing the Xero conflict's
   readings (#4283).
 - Decided under `lock(1)`, enqueued before Stripe, one operation per
   (booking, intent).
-- Proven by `issue-1992-duplicate-capture-refund`; on PostgreSQL by
-  `third-duplicate-capture` and `completed-redelivery`.
+- Proven by `issue-1992-duplicate-capture-refund`; on PostgreSQL,
+  `third-duplicate-capture`, `completed-redelivery`.
 
 ## INV-PAY-138
 
@@ -4033,7 +4033,7 @@ _Split from `INV-PAY-057` (#3220)._
 
 ## INV-PAY-126
 
-**Related: `INV-PAY-116`** (the wording), **`INV-PAY-125`**.
+**Related: `INV-PAY-116`**, **`INV-PAY-125`**.
 
 - **An invoice correction is not a refund** (#3979, owner decision 13 Oct
   2026). A modification note worded *Invoice correction* ([INV-PAY-116]) moved
@@ -4046,8 +4046,10 @@ _Split from `INV-PAY-057` (#3220)._
   from an allowlist of the reasons a receipt is born with. Any other receipt,
   a part payment recognised at cancel included, is cash-sized. That receipt
   still includes the corrected amount, so the correction keeps counting and the
-  net stays the cash. A recount finds a bank-transfer payment's
-  modification notes by its invoice, so a later note never drops an earlier one.
+  net stays the cash. A recount finds any payment's modification notes by its
+  invoice (#4444): a later note drops none, and a note counts once per
+  payment. A card payment's total never rises above Stripe's refunds (owner,
+  23 Nov), so two notes for one refund cannot pass Stripe.
   A keep sets the whole refunded total its links record under the `Payment`
   row (`decideLinkedRefundedTotalCents`, floored), never an increment; the
   note's allocation write or removal locks that row first and decides it too,
@@ -4060,13 +4062,8 @@ _Split from `INV-PAY-057` (#3220)._
   organiser-settled child, today's answer stands.
 - The Xero repair tool leaves notes that moved no cash out of its known
   modification refunds.
-- Pinned by `account-credit-modification-notes.test.ts`,
-  `xero-credit-note-repairs.test.ts`, `xero-booking-edit-settlement.test.ts`,
-  `xero-repair-known-modification-refund.test.ts`,
-  `kept-settle-correction-recount.test.ts`,
-  `retire-unlisted-credit-note-allocations.test.ts`,
-  `ib-settle-from-cash.realdb.test.ts` and
-  `kept-settle-queued-cancel.realdb.test.ts`.
+- Pinned by the suites the
+  [Xero guide](../xero/ARCHITECTURE.md#card-recount-stripe-cap) lists.
 
 ## INV-PAY-148
 

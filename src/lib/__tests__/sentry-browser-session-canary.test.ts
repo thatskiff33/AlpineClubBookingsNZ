@@ -3,6 +3,7 @@ import { createRequire } from "node:module";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { loadBrowserSentryInit } from "@/lib/__tests__/helpers/sentry-init-files";
+import { CENSUS_TIMEOUT_MS } from "@/test/census-timeout";
 
 /**
  * A canary bound to the INSTALLED Sentry SDK (#5262).
@@ -155,5 +156,5 @@ describe("the installed Sentry SDK still matches the browser's tagging-only filt
     // And that file is the one that names the integration the app drops.
     const namesIt = new RegExp(`name:\\s*["']${SESSION_INTEGRATION}["']`);
     expect(callers.filter(({ source }) => !namesIt.test(source)).map(({ file }) => file)).toEqual([]);
-  });
+  }, CENSUS_TIMEOUT_MS);
 });

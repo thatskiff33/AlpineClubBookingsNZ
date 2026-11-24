@@ -104,6 +104,16 @@ export function buildPlaceholderContactEmail(): string {
 }
 
 /**
+ * Whether an address can receive mail at all: present, not blank, and not a
+ * placeholder. The email core skips a send to any other address (#3369,
+ * #1935); a caller deciding something on the strength of an email going out
+ * (#5433: whether to restart a waitlist offer's window) asks this.
+ */
+export function canReceiveEmail(email: string | null | undefined): boolean {
+  return typeof email === "string" && email.trim() !== "" && !isPlaceholderContactEmail(email);
+}
+
+/**
  * True when the address is a club-internal placeholder rather than a real one —
  * a walk-in contact who gave no address, or a member anonymised by an approved
  * deletion request. Case/whitespace-insensitive; matches on the reserved

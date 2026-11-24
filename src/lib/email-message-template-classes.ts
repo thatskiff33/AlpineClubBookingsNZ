@@ -25,6 +25,10 @@ export const ADMIN_SYSTEM_TEMPLATE_NAMES = new Set<EmailAuditTemplateName>([
   // preference like its reconcile-by-hand siblings; not delivery-locked,
   // because no money moved.
   "admin-group-joiner-started-stay",
+  // #5433: a waitlist email owed to a member passed its cut-off unsent.
+  // sendToAdmins on the adminWaitlistOffer preference; not delivery-locked,
+  // because no money moved.
+  "admin-waitlist-notice-unsent",
   // #3663: an expired internet banking hold left alone because the stay has
   // started. sendToAdmins on the adminPaymentFailure preference like its
   // reconcile-by-hand siblings; not delivery-locked, because no money moved.

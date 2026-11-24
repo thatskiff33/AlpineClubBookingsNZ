@@ -4,6 +4,10 @@ import { join } from "node:path";
 
 import { afterAll, describe, expect, it } from "vitest";
 
+import {
+  deployFragmentProblems,
+  isDeployFragmentName,
+} from "../../../scripts/lib/deploy-fragments.mjs";
 import { FRAGMENTS_DIRNAME, rebaseFragmentLinks } from "../../../scripts/release/fragment-links.mjs";
 
 /**
@@ -30,10 +34,15 @@ const FRAGMENT_DIR = FRAGMENTS_DIRNAME;
 /** The no-entry marker lives in the pull request body, never in a fragment. */
 const FRAGMENT_PATTERN = /\.md$/;
 
+/**
+ * Changelog entries only. An after-deploy step (`*.deploy.md`, #5379) has its
+ * own fixed headings and is checked against its own format below.
+ */
 function fragmentNames(dir: string): string[] {
   return readdirSync(dir)
     .filter((name) => FRAGMENT_PATTERN.test(name))
     .filter((name) => name !== "README.md")
+    .filter((name) => !isDeployFragmentName(name))
     .sort();
 }
 
@@ -138,5 +147,29 @@ describe("changelog fragment shape (#3112)", () => {
 
   it("links nothing the release compiler cannot rebase to the repository root (#5214)", () => {
     expect(shapeOffences(FRAGMENT_DIR).unrebasable).toEqual([]);
+  });
+
+  /*
+    #5379: an after-deploy step is only read at a release cut too, and a
+    malformed one refuses that cut. The `verify` gate checks the ones a pull
+    request writes; this checks every one on disk, so one that reached the
+    tree another way (an edit during a merge, a hand-made commit) fails here
+    rather than on release day.
+  */
+  it("keeps every after-deploy step fragment well formed", () => {
+    const offenders = readdirSync(FRAGMENT_DIR)
+      .filter((name) => isDeployFragmentName(name))
+      .map((name) => ({
+        name,
+        problems: deployFragmentProblems(name, readFileSync(join(FRAGMENT_DIR, name), "utf8")),
+      }))
+      .filter(({ problems }) => problems.length > 0)
+      .map(({ name, problems }) => `${name}: ${problems.join("; ")}`);
+
+    expect(
+      offenders,
+      `Malformed after-deploy step fragment(s); changelog.d/README.md, ` +
+        `"After-deploy steps", gives the format:\n${offenders.join("\n")}`,
+    ).toEqual([]);
   });
 });

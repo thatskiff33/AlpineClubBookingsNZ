@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 import { toPosix } from "../../../scripts/audit/ts-call-site-scan";
 import { balancedBrackets } from "./support/balanced-brackets";
 import { blankLiterals, stripComments } from "./support/strip-comments";
+import { CENSUS_TIMEOUT_MS } from "@/test/census-timeout";
 
 function source(relativePath: string): string {
   return readFileSync(path.resolve(process.cwd(), relativePath), "utf8");
@@ -464,7 +465,7 @@ describe("bed allocation lock topology", () => {
     // Walks and masks every file under src/, so it has its own budget, as the
     // other tree-scanning censuses do (docs/TESTING.md, "Suites that time out
     // under load and pass alone").
-  }, 30_000);
+  }, CENSUS_TIMEOUT_MS);
 
   it.each([
     ["src/lib/group-settlement.ts", "const candidateChildren"],
@@ -566,11 +567,15 @@ describe("bed allocation lock topology", () => {
     expectInOrder(phaseThree, [
       "pg_advisory_xact_lock(1)",
       "acquireLodgeCapacityLock",
+      // #5433 review A: the entry is re-read under both locks, and only a
+      // window restart since Phase 1 (its deadline and updatedAt) is still
+      // this offer; every other field is still Phase 1's.
+      "offerSnapshotAcrossWindowRestart(tx, entry)",
       "booking.updateMany",
       "status: BookingStatus.WAITLIST_OFFERED",
-      "updatedAt: entry.updatedAt",
+      "updatedAt: snapshot.updatedAt",
       "waitlistOfferedAt: entry.waitlistOfferedAt",
-      "waitlistOfferExpiresAt: entry.waitlistOfferExpiresAt",
+      "waitlistOfferExpiresAt: snapshot.waitlistOfferExpiresAt",
       "waitlistOfferedLodgeId: entry.waitlistOfferedLodgeId",
       "waitlistOfferedPriceCents: entry.waitlistOfferedPriceCents",
       "cancelled.count === 0",
@@ -684,5 +689,5 @@ describe("bed allocation lock topology", () => {
         "deadlock pass in docs/CONCURRENCY_AND_LOCKING.md -> " +
         '"Merge joins the bed-allocation cohort".',
     ).toEqual([]);
-  }, 30_000);
+  }, CENSUS_TIMEOUT_MS);
 });

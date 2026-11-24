@@ -46,6 +46,7 @@ vi.mock("@/lib/xero-hardening", () => ({ maybeNotifyXeroRepeatedFailure: mocks.r
 import { completeXeroSyncOperation } from "@/lib/xero-sync";
 import { xeroSuccessAfterResolutionAlertKey } from "@/lib/xero-success-after-resolution-alert";
 import { CREDIT_SPENT_OUTSIDE_APP_RESOLUTION_REASON } from "@/lib/xero-applied-credit-spent-outside-app";
+import { CENSUS_TIMEOUT_MS } from "@/test/census-timeout";
 
 const OPERATION_ID = "op-late";
 const link = { localModel: "Payment", localId: "payment-late", xeroObjectType: "PAYMENT", xeroObjectId: "pay-late", role: "STRIPE_PAYMENT" };
@@ -292,7 +293,7 @@ function completionSites(): CompletionSite[] {
   return sites;
 }
 
-describe("#4374 census: a completion inside its caller's transaction delivers the alert after commit", () => {
+describe("#4374 census: a completion inside its caller's transaction delivers the alert after commit", { timeout: CENSUS_TIMEOUT_MS }, () => {
   const sites = completionSites();
   // `\bstore\b`, not `store:`: the shorthand `{ store }` and `store ? { store } : undefined` pass it too.
   const storeSites = sites.filter((site) => /\bstore\b/.test(site.options));

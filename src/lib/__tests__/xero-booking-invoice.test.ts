@@ -1,5 +1,6 @@
 import { CHANGE_FEE_LINE_DESCRIPTION } from "@/lib/xero-modification-line-items";
 import { primaryInvoicePayloadHash } from "@/lib/member-money/internal/primary-invoice-plan";
+import { resolveXeroTaxRendering } from "@/lib/xero-tax-anchors";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => {
@@ -40,6 +41,9 @@ const mocks = vi.hoisted(() => {
     memberMoneyExportManifest: { findUnique: vi.fn().mockResolvedValue(null), createMany: vi.fn().mockResolvedValue({ count: 1 }) },
     // #4525 (ALP-437): no released generation of any component, so each row is generation 0.
     memberMoneyExportCoverage: { createMany: vi.fn().mockResolvedValue({ count: 1 }), findFirst: vi.fn().mockResolvedValue(null) },
+    // #5208: a GST mismatch Xero returned, recorded beside its audit row.
+    xeroTaxOverrideMismatch: { findFirst: vi.fn().mockResolvedValue(null), create: vi.fn().mockResolvedValue({ id: "mismatch_1" }) },
+    auditLog: { create: vi.fn().mockResolvedValue({}) },
   };
 
   const prisma = {
@@ -106,6 +110,8 @@ const mocks = vi.hoisted(() => {
     },
     // ALP-436: the primary invoice update reads the primary's manifest on the global client.
     memberMoneyExportManifest: tx.memberMoneyExportManifest,
+    // #5208: the GST-override pause, read before the lines are planned; open unless a test says.
+    xeroTaxOverrideMismatch: tx.xeroTaxOverrideMismatch,
     xeroObjectLink: {
       findFirst: vi.fn(),
       findMany: vi.fn(),
@@ -662,6 +668,119 @@ describe("createXeroInvoiceForBooking", () => {
       await expect(createXeroInvoiceForBooking("booking_1", { syncOperation: xeroClaim("op_1") })).resolves.toBe("inv_1");
       expect(mocks.completeXeroSyncOperation).toHaveBeenCalled();
       expect(mocks.logger.error).toHaveBeenCalledWith(expect.objectContaining({ bookingId: "booking_1" }), expect.stringContaining("export manifest"));
+    });
+  });
+
+  describe("#5208 (Option A): the journal's GST on each line, and the live safeguard", () => {
+    // The fixture's stay: 10000c at 15%, whose journal tax is 1304c.
+    const taxedStayLeg = (grossCents = 10000, taxCents = 1304) => ({
+      account: "BOOKING_REVENUE", chargeIdentity: "booking:booking_1:charge", side: "CREDIT", amountCents: grossCents - taxCents,
+      grossCents, netCents: grossCents - taxCents, taxCents, taxCode: "GST_INCLUSIVE_1500BP", bookingId: "booking_1", lodgeId: "lodge_1",
+    });
+    type SentLine = { description?: string; quantity?: number; unitAmount?: number; taxAmount?: number };
+    const sentLines = () => {
+      const [, sent] = mocks.xeroClientInstance.accountingApi.createInvoices.mock.calls.at(-1) as [unknown, { invoices: [{ lineItems: SentLine[] }] }];
+      return sent.invoices[0].lineItems;
+    };
+    const sentRequest = () => JSON.stringify(mocks.xeroClientInstance.accountingApi.createInvoices.mock.calls.at(-1));
+    /** Xero's reply to the create: the lines sent, with the tax Xero holds on each. */
+    const xeroReplies = (taxAmount: (line: SentLine) => number | undefined) =>
+      mocks.xeroClientInstance.accountingApi.createInvoices.mockImplementationOnce(async (_tenant: string, body: { invoices: [{ lineItems: SentLine[] }] }) => ({
+        body: { invoices: [{ invoiceID: "inv_1", invoiceNumber: "INV-1", total: 0, status: "PAID",
+          lineItems: body.invoices[0].lineItems.map((line) => ({ ...line, taxAmount: taxAmount(line) })) }] },
+      }));
+    const manifestRows = () => mocks.tx.memberMoneyExportManifest.createMany.mock.calls.map(([arg]) => (arg as { data: Array<Record<string, unknown>> }).data[0]);
+    const pauseOpen = () => mocks.tx.xeroTaxOverrideMismatch.findFirst.mockResolvedValueOnce({ id: "mismatch_0" });
+
+    it("sends the journal's tax on the stay lines, and records no mismatch when Xero keeps it", async () => {
+      mocks.prisma.memberMoneyLine.findMany.mockResolvedValueOnce([taxedStayLeg()]);
+      xeroReplies((line) => line.taxAmount);
+      await expect(createXeroInvoiceForBooking("booking_1")).resolves.toBe("inv_1");
+      const lines = sentLines();
+      expect(lines.reduce((sum, line) => sum + Math.round(line.taxAmount! * 100), 0)).toBe(1304);
+      expect(manifestRows()).toEqual([expect.objectContaining({ outcome: "COVERED",
+        frozenMapping: expect.objectContaining({ taxAllocation: { method: "JOURNAL_LARGEST_REMAINDER", lineTaxCents: lines.map((line) => Math.round(line.taxAmount! * 100)) } }) })]);
+      expect(mocks.tx.xeroTaxOverrideMismatch.create).not.toHaveBeenCalled();
+    });
+
+    it("pauses the overrides when Xero returns other tax, and still completes the operation", async () => {
+      mocks.prisma.memberMoneyLine.findMany.mockResolvedValueOnce([taxedStayLeg()]);
+      xeroReplies((line) => Math.round(line.taxAmount! * 100 - 1) / 100);
+      await expect(createXeroInvoiceForBooking("booking_1", { syncOperation: xeroClaim("op_1") })).resolves.toBe("inv_1");
+      expect(mocks.tx.xeroTaxOverrideMismatch.create).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({
+        xeroSyncOperationId: "op_1", bookingId: "booking_1", providerInvoiceId: "inv_1", invoiceNumber: "INV-1", documentKind: "CREATE",
+        lines: [{ index: 0, sentCents: 1304, xeroCents: 1303 }],
+      }) }));
+      expect(mocks.tx.auditLog.create).toHaveBeenCalledWith({ data: expect.objectContaining({ action: "XERO_TAX_OVERRIDES_PAUSED", category: "xero" }) });
+      expect(manifestRows()).toEqual([expect.objectContaining({ outcome: "CONFLICT", reason: "TAX_CENTS" })]);
+      expect(mocks.completeXeroSyncOperation).toHaveBeenCalled();
+      expect(mocks.failXeroSyncOperation).not.toHaveBeenCalled();
+    });
+
+    it("does not compare a replayed create's ORIGINAL invoice, which bills other lines", async () => {
+      mocks.prisma.memberMoneyLine.findMany.mockResolvedValueOnce([taxedStayLeg()]);
+      mocks.xeroClientInstance.accountingApi.createInvoices.mockResolvedValueOnce({
+        body: { invoices: [{ invoiceID: "inv_1", invoiceNumber: "INV-1", total: 0, status: "PAID",
+          lineItems: [{ description: "an earlier stay", quantity: 1, unitAmount: 80, taxAmount: 10.43 }] }] },
+      });
+      await expect(createXeroInvoiceForBooking("booking_1")).resolves.toBe("inv_1");
+      expect(mocks.tx.xeroTaxOverrideMismatch.create).not.toHaveBeenCalled();
+      expect(manifestRows()).toEqual([expect.objectContaining({ outcome: "CONFLICT", reason: "STAY_CENTS" })]);
+    });
+
+    it("does not pause when a retry's earlier attempt sent other line tax, though Xero's reply bills the same amounts", async () => {
+      // The first attempt went out while paused (or from the release before): no taxAmount. Xero replays that invoice.
+      const earlier = [{ description: "Jordan Hartley-Smith - (ADULT, Member) - 2 nights", quantity: 2, unitAmount: 50, taxType: "OUTPUT2", accountCode: "200" }];
+      mocks.prisma.xeroSyncOperation.findMany.mockResolvedValueOnce([{ requestPayload: { invoices: [{ lineItems: earlier }] } }]);
+      mocks.prisma.memberMoneyLine.findMany.mockResolvedValueOnce([taxedStayLeg()]);
+      xeroReplies(() => 13.03);
+      await expect(createXeroInvoiceForBooking("booking_1", { syncOperation: xeroClaim("op_1") })).resolves.toBe("inv_1");
+      expect(mocks.prisma.xeroSyncOperation.findMany).toHaveBeenCalledWith(expect.objectContaining({ where: { idempotencyKey: "booking:booking_1:invoice:v1" } }));
+      expect(sentLines().every((line) => typeof line.taxAmount === "number")).toBe(true);
+      expect(mocks.tx.xeroTaxOverrideMismatch.create).not.toHaveBeenCalled();
+      // The manifest still says the journal and Xero differ.
+      expect(manifestRows()).toEqual([expect.objectContaining({ outcome: "CONFLICT", reason: "TAX_CENTS" })]);
+    });
+
+    it("sends the pre-change request byte for byte while paused or unregistered, then resumes once cleared", async () => {
+      // The request as it was before #5208: the same create with no journal to plan from.
+      await createXeroInvoiceForBooking("booking_1");
+      const before = sentRequest();
+      expect(sentLines().some((line) => "taxAmount" in line)).toBe(false);
+
+      pauseOpen();
+      mocks.prisma.memberMoneyLine.findMany.mockResolvedValueOnce([taxedStayLeg()]);
+      await createXeroInvoiceForBooking("booking_1");
+      expect(sentRequest()).toBe(before);
+      expect(manifestRows().at(-1)).toEqual(expect.objectContaining({ outcome: "COVERED", frozenMapping: expect.objectContaining({ taxAllocation: "PAUSED" }) }));
+
+      vi.mocked(resolveXeroTaxRendering).mockResolvedValueOnce({ lineAmountTypes: "NoTax" as never });
+      mocks.prisma.memberMoneyLine.findMany.mockResolvedValueOnce([{ ...taxedStayLeg(10000, 0), taxCode: null }]);
+      await createXeroInvoiceForBooking("booking_1");
+      expect(sentLines().some((line) => "taxAmount" in line)).toBe(false);
+      expect(manifestRows().at(-1)).toEqual(expect.objectContaining({ outcome: "COVERED" }));
+      expect(manifestRows().at(-1)!.frozenMapping).not.toHaveProperty("taxAllocation");
+
+      // Cleared: no open row, so the next run sends the journal's tax again.
+      mocks.prisma.memberMoneyLine.findMany.mockResolvedValueOnce([taxedStayLeg()]);
+      await createXeroInvoiceForBooking("booking_1");
+      expect(sentLines().every((line) => typeof line.taxAmount === "number")).toBe(true);
+    });
+
+    it("pauses the overrides when an update comes back with other tax than the stored tax it copied", async () => {
+      const fixture = await mocks.prisma.booking.findUnique();
+      mocks.prisma.booking.findUnique.mockResolvedValueOnce({ ...fixture, payment: { ...fixture.payment, xeroInvoiceId: "inv_1", xeroInvoiceNumber: "INV-1" } });
+      const stored = { lineItemID: "line_1", description: "Jordan Hartley-Smith - (ADULT, Member) - 2 nights", quantity: 2, unitAmount: 50, taxType: "OUTPUT2", taxAmount: 13.04, accountCode: "200" };
+      mocks.xeroClientInstance.accountingApi.getInvoice.mockResolvedValueOnce({ body: { invoices: [{ invoiceID: "inv_1", invoiceNumber: "INV-1", type: "ACCREC",
+        contact: { contactID: "contact_1" }, lineAmountTypes: "Inclusive", total: 100, lineItems: [stored] }] } });
+      mocks.xeroClientInstance.accountingApi.updateInvoice.mockResolvedValueOnce({ body: { invoices: [{ invoiceID: "inv_1", invoiceNumber: "INV-1", total: 100,
+        lineItems: [{ ...stored, taxAmount: 13.03 }] }] } });
+      await expect(updateXeroBookingInvoiceForBooking("booking_1")).resolves.toBe("inv_1");
+      const [, , sent] = mocks.xeroClientInstance.accountingApi.updateInvoice.mock.calls.at(-1) as [unknown, unknown, { invoices: [{ lineItems: SentLine[] }] }];
+      expect(sent.invoices[0].lineItems[0]!.taxAmount).toBe(13.04);
+      expect(mocks.tx.xeroTaxOverrideMismatch.create).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({
+        xeroSyncOperationId: "op_1", documentKind: "UPDATE", lines: [{ index: 0, sentCents: 1304, xeroCents: 1303 }] }) }));
+      expect(mocks.failXeroSyncOperation).not.toHaveBeenCalled();
     });
   });
 
