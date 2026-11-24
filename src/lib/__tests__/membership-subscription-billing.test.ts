@@ -2365,7 +2365,7 @@ describe("membership subscription billing", () => {
         // DOB would compute ADULT at season start, but a REQUIRED type has no
         // computed tier — it must price by the stored YOUTH tier (joining-fee
         // convention). The default member() type is REQUIRED.
-        member("required-youth", { ageTier: "YOUTH", dateOfBirth: new Date(1990, 0, 1) }),
+        member("required-youth", { ageTier: "YOUTH", dateOfBirth: storedDateOfBirth("1990-01-01") }),
       ]);
       const preview = await buildSubscriptionBillingPreview({ seasonYear: 2026, decisionDate: new Date("2026-04-01T00:00:00.000Z") });
       expect(mocks.effectiveFee.mock.calls.every((c) => c[0].ageTier === "YOUTH")).toBe(true);
