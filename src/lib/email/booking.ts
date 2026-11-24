@@ -74,7 +74,7 @@ import { sendEmail, type EmailSendOutcome } from "./core";
 import {
   bookingOwnerEmailContext,
   type BookingOwnerEmailSource,
-  type BumpNoticeEmailSource,
+  type KeyedBookingEmailSource,
 } from "@/lib/booking-email-contract";
 import { renderEmailHtml } from "@/lib/email-theme";
 import { emailCalendarDay, emailClubDate, emailClubDateTime } from "@/lib/email-templates-club-time";
@@ -754,7 +754,7 @@ export async function sendBookingPolicyExceptionRefusedEmail(params: {
 
 export async function sendBookingBumpedEmail(
   // Booking this message belongs to (#2258), and the bump's key (#5407).
-  bookingContext: BumpNoticeEmailSource,
+  bookingContext: KeyedBookingEmailSource,
   email: string,
   firstName: string,
   checkIn: Date,
@@ -811,7 +811,7 @@ export async function sendBookingBumpedEmail(
 
 export async function sendBookingGuestsCancelledEmail(
   // Booking this message belongs to (#2258), and the bump's key (#5407).
-  bookingContext: BumpNoticeEmailSource,
+  bookingContext: KeyedBookingEmailSource,
   email: string,
   firstName: string,
   checkIn: Date,
