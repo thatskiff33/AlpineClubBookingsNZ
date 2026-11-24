@@ -136,6 +136,10 @@ File: [`invariants/money.md`](invariants/money.md). Prefix `INV-MONEY`.
 | `INV-MONEY-043` | Money lines, credit links and group settlements refuse booking deletion |
 | `INV-MONEY-044` | Booking doors post their legacy charge lines into the journal once |
 | `INV-MONEY-045` | Bank-transfer charges post at binding; confirmation links, never recharges |
+| `INV-MONEY-047` | Cash writers post exact receipts; collection is a separate capped application |
+| `INV-MONEY-048` | Card refund debts post at their doors; slices reserve before Stripe |
+| `INV-MONEY-049` | Bank and cash hand-backs post debt and payment; censuses check them |
+| `INV-MONEY-050` | Caps C1–C4 refuse by code; cash trims, reservations stop before Stripe |
 
 ## Booking Dates And Capacity
 
@@ -978,6 +982,7 @@ File: [`invariants/integrations.md`](invariants/integrations.md). Prefix
 | `INV-INT-039` | A dead webhook attempt is taken over past the lease |
 | `INV-INT-040` | No subscription or joining-fee invoice work while Xero is off |
 | `INV-INT-041` | A PENDING outbox row always holds a request the outbox can claim |
+| `INV-INT-042` | A once-ever alert claim with no email is given back |
 
 ## Operations
 

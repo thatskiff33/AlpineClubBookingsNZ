@@ -649,8 +649,8 @@ const OWNERSHIP_COMPARISON_SITES: readonly string[] = [
   "src/app/(authenticated)/bookings/[id]/page.tsx::(isAdmin || bookingOwner(booking).memberId === session.user.id);#0",
   "src/app/(authenticated)/bookings/page.tsx::bookingOwner(booking).memberId !== session.user.id#0",
   "src/app/api/bookings/[id]/additional-payment-secret/route.ts::bookingOwner(payment.booking).memberId !== session.user.id &&#0",
-  "src/app/api/bookings/[id]/arrival-time/route.ts::bookingOwner(booking).memberId !== session.user.id &&#0",
-  "src/app/api/bookings/[id]/arrival-time/route.ts::bookingOwner(booking).memberId !== session.user.id &&#1",
+  "src/app/api/bookings/[id]/arrival-time/route.ts::bookingOwner(booking).memberId !== user.id &&#0",
+  "src/app/api/bookings/[id]/arrival-time/route.ts::bookingOwner(booking).memberId !== user.id &&#1",
   "src/app/api/bookings/[id]/arrival-time/route.ts::onBehalf: bookingOwner(booking).memberId !== session.user.id,#0",
   "src/app/api/bookings/[id]/arrival-time/route.ts::onBehalf: bookingOwner(booking).memberId !== session.user.id,#1",
   "src/app/api/bookings/[id]/cancel-preview/route.ts::if (bookingOwner(booking).memberId !== session.user.id && !officerReach) {#0",
@@ -664,10 +664,10 @@ const OWNERSHIP_COMPARISON_SITES: readonly string[] = [
   "src/app/api/bookings/[id]/exception-requests/route.ts::if (bookingOwner(booking).memberId !== session.user.id && !isAdmin) {#0",
   "src/app/api/bookings/[id]/guests/route.ts::bookingOwner(booking).memberId !== session.user.id &&#0",
   "src/app/api/bookings/[id]/modify-quote/route.ts::if (bookingOwner(booking).memberId !== session.user.id && !isAdmin) {#0",
-  "src/app/api/bookings/[id]/notes/route.ts::bookingOwner(booking).memberId !== session.user.id &&#0",
-  "src/app/api/bookings/[id]/refund-request/route.ts::if (bookingOwner(booking).memberId !== session.user.id && !hasAdminAccess(session.user)) {#0",
-  "src/app/api/bookings/[id]/refund-request/route.ts::if (bookingOwner(booking).memberId !== session.user.id && !hasAdminAccess(session.user)) {#1",
-  "src/app/api/bookings/[id]/requested-room/options/route.ts::bookingOwner(booking).memberId !== session.user.id &&#0",
+  "src/app/api/bookings/[id]/notes/route.ts::bookingOwner(booking).memberId !== user.id &&#0",
+  "src/app/api/bookings/[id]/refund-request/route.ts::if (bookingOwner(booking).memberId !== session.user.id && !hasAdminAccess(memberOnlySessionUser(req, session.user))) {#0",
+  "src/app/api/bookings/[id]/refund-request/route.ts::if (bookingOwner(booking).memberId !== session.user.id && !hasAdminAccess(memberOnlySessionUser(req, session.user))) {#1",
+  "src/app/api/bookings/[id]/requested-room/options/route.ts::bookingOwner(booking).memberId !== user.id &&#0",
   "src/app/api/bookings/[id]/send-guest-payment-link/route.ts::if (bookingOwner(booking).memberId !== session.user.id && !isAdmin) {#0",
   "src/app/api/payments/create-payment-intent/route.ts::if (bookingOwner(booking).memberId !== session.user.id && !hasAdminAccess(session.user)) {#0",
   "src/app/api/payments/create-setup-intent/route.ts::if (bookingOwner(booking).memberId !== session.user.id && !hasAdminAccess(session.user)) {#0",
@@ -695,6 +695,7 @@ const OWNERSHIP_COMPARISON_SITES: readonly string[] = [
   "src/lib/waitlist-cross-lodge.ts::if (bookingOwner(entry).memberId !== memberId) {#0",
   "src/lib/waitlist.ts::bookingOwner(offerKind).memberId === memberId &&#0",
   "src/lib/waitlist.ts::if (bookingOwner(booking).memberId !== memberId) {#0",
+  "src/lib/waitlist.ts::if (options.crossLodgeOnWebsiteOnly && bookingOwner(offerKind).memberId === memberId) {#0",
   "src/lib/xero-applied-credit-spent-outside-app.ts::if (!current?.payment || current.payment.id !== paymentId || bookingOwner(current).memberId !== lockedOwnerId) {#0",
   "src/lib/xero-period-lock-guard.ts::bookingOwner(booking).memberId !== options?.actorMemberId#0",
 ];
@@ -1006,6 +1007,12 @@ const UNROOTED_ORGANISATION_SELECTIONS: readonly string[] = [
   // it in budget. Verified by hand: written through
   // `Prisma.validator<Prisma.ManualRefundTaskSelect>()`, and `organisation` sits
   // under its `booking` relation, which declares it.
+  // #5197: the reopen core's select, shared by an officer's reopen and a late
+  // win's. Verified by hand: written through
+  // `Prisma.validator<Prisma.ManualRefundTaskSelect>()` and read back through
+  // `Prisma.ManualRefundTaskGetPayload`, and `organisation` sits under its
+  // `booking` relation, which declares it.
+  "src/lib/manual-refund-task-reopen.ts::booking: { select: { memberId: true, status: true, organiserSettled: true, parentBookingId: true, payment: { select: { source: true } }, organisation: { select: { name: true, email: true } } } },#0",
   "src/lib/manual-refund-task-resolution-select.ts::organisation: { select: { name: true, email: true } },#0",
   // Added when the member lodge roster (#2942, from `main`) was routed through
   // `bookingOwner()` on the eighth epic sync. Verified by hand, which is what

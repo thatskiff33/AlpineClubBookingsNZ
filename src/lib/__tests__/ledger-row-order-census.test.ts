@@ -79,6 +79,8 @@ const UNORDERED_ROW_SETS: Record<string, string> = {
     "the ids of the captured bank rows (by the claim's precondition, only the row it just wrote) handed to the receipt hook as a set (`includes`).",
   "src/lib/member-money/internal/booking-receipts.ts > postBookingReceipts":
     "the payment's rows are looked up by id (`find` on a settlement line's anchor); the hook walks the settlement lines in their own posted order.",
+  "src/lib/member-money/internal/hand-back-census.ts > readBookingHandBackJournal":
+    "#5185: reads only which kept late-capture intents have a captured row, a membership test (`.some`) by intent id; the order cannot matter.",
   "src/lib/member-money/internal/receipt-census.ts > readBookingReceiptCensus":
     "each captured row is judged on its own (its line, its event, its amount); the findings are a set, not a sequence.",
   "src/lib/payment-reconciliation.ts > settleBookingPaymentInTransaction":

@@ -44,5 +44,8 @@ export { receiptPopulationPaymentIds, readBookingReceiptCensus } from "./interna
 
 // M4c operator command: the refund census, the exact reconciliation of stranded reservations and the OPERATOR release.
 export { isRefundReservationOpen, readBookingRefundCensus, reconcileMadeRefundReservations, releaseReservationByOperator, type RefundCensusFinding } from "./internal/refund-census";
+// M4d (#5185): the hand-back classes, defined once, and their read for the booking-ledger census and its report v3.
+export { HAND_BACK_CENSUS_CLASSES, type HandBackCensusClass } from "./internal/refund-census";
+export { classifyHandBacks, heldCaptureReturnOwedCents, heldHandBackOwedCents, readBookingHandBackJournal, type BookingHandBackJournal } from "./internal/hand-back-census";
 // M4c: the one test for a refused card refund reservation, for the senders' callers (runner, webhook holds).
 export { isCardRefundReservationRefusal } from "./internal/refund-refusal";

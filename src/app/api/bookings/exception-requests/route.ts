@@ -1,6 +1,4 @@
 import { NextRequest, NextResponse } from "next/server";
-import { z } from "zod";
-
 import { parseJsonRequestBody } from "@/lib/api-json";
 import { auth } from "@/lib/auth";
 import { logAudit } from "@/lib/audit";
@@ -15,62 +13,26 @@ import { parseDateOnly, formatDateOnly } from "@/lib/date-only";
 import { requireActiveSessionUser } from "@/lib/session-guards";
 import { checkRateLimit, getClientIp, rateLimiters } from "@/lib/rate-limit";
 import { sendAdminBookingChangeRequestAlert } from "@/lib/email";
-import { bookableAgeTierEnum } from "@/lib/age-tier-schema";
-import { nameField } from "@/lib/zod-helpers";
-import {
-  GUEST_CHANGE_LIST_BOUND, guestRequestSchemaError, guestStayFieldsSchema,
-} from "@/lib/booking-guest-stay-range-input";
+import { guestRequestSchemaError } from "@/lib/booking-guest-stay-range-input";
 import logger from "@/lib/logger";
 import {
   createNewBookingExceptionRequest,
   readMemberExceptionRequests,
 } from "@/lib/booking-exception-request-service";
 import { mapExceptionRequestError } from "@/lib/booking-exception-request-http";
-import { dependantIdentityDeclarationSchema } from "@/lib/booking-dependant-identity";
+import { newBookingExceptionRequestSchema } from "@/lib/booking-exception-request-schemas";
+import {
+  CREATED_EXCEPTION_REQUEST_CONNECTION_SHAPE,
+  MEMBER_EXCEPTION_REQUEST_LIST_CONNECTION_SHAPE,
+} from "@/lib/connection-shapes-bookings";
+import { arrivesAsMcpConnection, connectionJson } from "@/lib/mcp-connection-request";
 
 /*
- * A guest's explicit night set (#713) rides in `guestStayFieldsSchema`, as on create.
- *
- * REQUIRED here, not a nicety (#2562 review): the wizard sends per-guest night
- * sets whenever "Multiple date ranges" is on, and zod STRIPS unknown keys — so
- * omitting this field silently froze the whole envelope for a guest who picked one
- * night, and the officer then reviewed (and an approval reserved, priced and
- * booked) nights nobody asked for.
+ * The member's booking-policy exception requests. Also the AI app actions
+ * `request_booking_exception` (POST) and `list_my_exception_requests` (GET),
+ * ALP-794. Both read only the signed-in member's own requests; neither has an
+ * officer branch.
  */
-
-const createSchema = z.object({
-  lodgeId: z.string().trim().min(1).optional(),
-  checkIn: z.string(),
-  checkOut: z.string(),
-  guests: z
-    .array(
-      z.object({
-        firstName: nameField(),
-        lastName: nameField(),
-        ageTier: bookableAgeTierEnum,
-        isMember: z.boolean(),
-        memberId: z.string().trim().min(1).optional(),
-        ...guestStayFieldsSchema.shape,
-      }),
-    )
-    .min(1)
-    .max(...GUEST_CHANGE_LIST_BOUND),
-  memberMessage: z.string().max(5000),
-  /**
-   * #2721: the requester's answers to "this guest has the same name as your own
-   * recorded dependant". An exception request is a CREATE DOOR — approving one
-   * builds a confirmed booking — so it asks the same question the create route
-   * asks, in the same shape, and the service verifies the answers against the
-   * requester's authoritative records rather than trusting them. The cap
-   * mirrors the create route's: far above any real family, and there so a
-   * hostile payload cannot turn the guard into a loop over an unbounded array.
-   */
-  dependantIdentityDeclarations: z
-    .array(dependantIdentityDeclarationSchema)
-    .max(50)
-    .optional(),
-  supersedeRequestId: z.string().trim().min(1).optional(),
-});
 
 export async function POST(req: NextRequest) {
   // #3770: taken at the top, as on the booking add paths (#2388), so the
@@ -99,7 +61,7 @@ export async function POST(req: NextRequest) {
   if (!jsonBody.ok) return jsonBody.response;
   const body = jsonBody.body;
 
-  const parsed = createSchema.safeParse(body);
+  const parsed = newBookingExceptionRequestSchema.safeParse(body);
   if (!parsed.success) {
     return NextResponse.json(
       { error: guestRequestSchemaError(parsed.error, "Validation failed"), details: parsed.error.flatten() },
@@ -196,7 +158,7 @@ export async function POST(req: NextRequest) {
       ),
     );
 
-    return NextResponse.json(created, { status: 201 });
+    return connectionJson(req, created, CREATED_EXCEPTION_REQUEST_CONNECTION_SHAPE, { status: 201 });
   } catch (error) {
     // #3770: a collapsed member-guest refusal owes the add paths' throttle unit,
     // audit row and timing floor; no boundary hook here, so it charges on exit.
@@ -231,7 +193,7 @@ export async function POST(req: NextRequest) {
  * cannot read is a refusal they cannot act on — and the officer UI tells them so
  * before they write it.
  */
-export async function GET() {
+export async function GET(request: Request) {
   const session = await auth();
   if (!session?.user) {
     return NextResponse.json({ error: "Unauthorised" }, { status: 401 });
@@ -240,5 +202,10 @@ export async function GET() {
   if (inactiveResponse) return inactiveResponse;
 
   const requests = await readMemberExceptionRequests(session.user.id);
+  // A connection is answered `{ exceptionRequests }`, an object its allow-list
+  // can project; the website's answer is the bare list, unchanged.
+  if (arrivesAsMcpConnection(request)) {
+    return connectionJson(request, { exceptionRequests: requests }, MEMBER_EXCEPTION_REQUEST_LIST_CONNECTION_SHAPE);
+  }
   return NextResponse.json(requests);
 }

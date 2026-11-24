@@ -3692,8 +3692,15 @@ model LoginThrottle {
 // default keeps the migration a plain CREATE TABLE and avoids the
 // @updatedAt/DB-default deploy-drift trap.
 model AlertCooldown {
-  key           String   @id
-  lastAlertedAt DateTime
+  key               String    @id
+  lastAlertedAt     DateTime
+  // #5255: a once-ever claim whose alert has no email row yet holds its claim
+  // stamp here; the alert's first email row clears it in the same transaction.
+  // Still set 15 minutes on, the sweep gives the claim back (INV-INT-042).
+  awaitingSendSince DateTime?
+  // #5255: on a `once-ever-owed:` row, the stored alert the sweep re-sends for
+  // a caller that raises it only once (`admin-alert-once-replayable.ts`).
+  replayAlert       Json?
 }
 
 // #5433: a notice (an email or an officers' alert) that a committed change

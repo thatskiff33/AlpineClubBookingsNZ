@@ -21,6 +21,8 @@ const mocks = vi.hoisted(() => ({
   cooldownReads: 0,
   /** The member emails recorded, by key: the real `EmailLog` row is unique on it. */
   memberEmails: new Map<string, unknown>(),
+  /** The mail gate's decision (`resolveDeliveryPolicy`); the club's live site unless a case says otherwise. */
+  deliveryPolicy: vi.fn(),
 }));
 
 function cooldownWhereMatches(row: { key: string; lastAlertedAt: Date }, where: { key: unknown; lastAlertedAt?: unknown }): boolean {
@@ -52,6 +54,7 @@ vi.mock("@/lib/email/admin-alerts-finance", () => ({
   sendAdminSupersededPaymentRefundAlert: mocks.sendAdminAlert,
 }));
 vi.mock("@/lib/stripe", () => ({ listRefundsForPaymentIntent: mocks.listRefunds }));
+vi.mock("@/lib/environment-delivery-policy", () => ({ resolveDeliveryPolicy: mocks.deliveryPolicy }));
 vi.mock("@/lib/prisma", () => ({
   prisma: {
     booking: { findUnique: mocks.findBooking },
@@ -104,6 +107,9 @@ import {
   supersededRefundReportKeys,
   supersededRefundReportSettled,
 } from "@/lib/superseded-additional-refund";
+import { confirmAlertCooldownSend, releaseUnsentAlertCooldown } from "@/lib/alert-cooldown";
+import logger from "@/lib/logger";
+import { takeOnceEverClaim } from "@/lib/once-ever-claim-context";
 import { SUPERSEDED_PAYMENT_REFUND_METADATA_REASON } from "@/lib/payment-recovery-keys";
 import { PAYMENT_RECOVERY_STALE_PROCESSING_MS } from "@/lib/payment-recovery-constants";
 import { FROZEN_TEST_CLOCK_BASE_ISO } from "./helpers/clock";
@@ -178,6 +184,10 @@ function bookingRow(
 
 const SENT_TO_ONE_ADMIN = { deliveryAllowed: true, recipients: 1, sent: 1, queuedForRetry: 0, notDelivered: 0 };
 const NOBODY_OPTED_IN = { deliveryAllowed: true, recipients: 0, sent: 0, queuedForRetry: 0, notDelivered: 0 };
+/** The club's delivery policy switched the alert off (`sendToAdmins`' skip): the club chose not to receive it. */
+const SKIPPED_BY_POLICY = { deliveryAllowed: false, recipients: 0, sent: 0, queuedForRetry: 0, notDelivered: 0 };
+/** One admin opted in, but this installation is a copy that holds back every email (`SKIPPED_NON_PRODUCTION`). */
+const HELD_BACK_AS_A_COPY = { deliveryAllowed: true, recipients: 1, sent: 0, queuedForRetry: 0, notDelivered: 1 };
 const OPERATION_ID = "recovery_superseded_1";
 const KEYS = supersededRefundReportKeys(OPERATION_ID);
 
@@ -191,6 +201,7 @@ beforeEach(() => {
   mocks.findBooking.mockReset();
   mocks.findRefunds.mockReset();
   mocks.listRefunds.mockReset();
+  mocks.deliveryPolicy.mockReset().mockResolvedValue({ kind: "allow", grounds: "production" });
   mocks.cooldowns.clear();
   mocks.cooldownFaults.clear();
   mocks.failCooldownRead = null;
@@ -503,13 +514,108 @@ describe("reportSupersededPaymentRefund sends once per recovery row (#4690)", ()
     expect(sent()).toEqual(ONCE_EACH);
   });
 
-  it("nobody can receive the alert: the report is settled, and a second call sends nothing", async () => {
-    mocks.sendAdminAlert.mockResolvedValue(NOBODY_OPTED_IN);
+  it("MUTATION: nobody opted in to the alert (the club did not switch it off) - not settled, it throws, and the row's next attempt sends it once an admin can (#5255)", async () => {
+    mocks.sendAdminAlert.mockResolvedValueOnce(NOBODY_OPTED_IN);
 
-    await report();
-    await report();
+    await expect(report()).rejects.toBeInstanceOf(SupersededRefundReportNotSettledError);
+    expect(await supersededRefundReportSettled(OPERATION_ID)).toBe(false);
 
+    await expect(report()).resolves.toBe("reported");
+    expect(sent()).toEqual({ ...ONCE_EACH, adminAlerts: 2 });
+    expect(await supersededRefundReportSettled(OPERATION_ID)).toBe(true);
+  });
+
+  it("MUTATION: the mail gate holds every copy back on this installation - settled at once, so the row closes and is never retried", async () => {
+    mocks.deliveryPolicy.mockResolvedValue({ kind: "suppress_non_production", decidedBy: "declared" });
+    mocks.sendAdminAlert.mockResolvedValue(HELD_BACK_AS_A_COPY);
+
+    await expect(report()).resolves.toBe("reported");
+    expect(mocks.cooldowns.has(KEYS.reported)).toBe(true);
+
+    await expect(report()).resolves.toBe("reported");
     expect(sent()).toEqual(ONCE_EACH);
+  });
+
+  it("MUTATION: every copy undelivered and the gate's decision unreadable, a fault, or a copy that still sends - not settled, it throws", async () => {
+    mocks.sendAdminAlert.mockResolvedValue(HELD_BACK_AS_A_COPY);
+    mocks.deliveryPolicy.mockRejectedValueOnce(new Error("database unavailable"));
+    await expect(report()).rejects.toBeInstanceOf(SupersededRefundReportNotSettledError);
+    expect(await supersededRefundReportSettled(OPERATION_ID)).toBe(false);
+
+    // A non-production copy that sends to a local capture is not held back.
+    mocks.deliveryPolicy.mockResolvedValueOnce({ kind: "allow", grounds: "non-production-capture" });
+    await expect(report()).rejects.toBeInstanceOf(SupersededRefundReportNotSettledError);
+    expect(await supersededRefundReportSettled(OPERATION_ID)).toBe(false);
+
+    mocks.deliveryPolicy.mockResolvedValueOnce({ kind: "block_capture_public_host" });
+    await expect(report()).rejects.toBeInstanceOf(SupersededRefundReportNotSettledError);
+    expect(await supersededRefundReportSettled(OPERATION_ID)).toBe(false);
+  });
+
+  it("MUTATION: the club's delivery policy skips the alert - settled at once, so the row closes and is never retried (#5255)", async () => {
+    mocks.sendAdminAlert.mockResolvedValue(SKIPPED_BY_POLICY);
+
+    await expect(report()).resolves.toBe("reported");
+    expect(mocks.cooldowns.has(KEYS.reported)).toBe(true);
+    expect(await supersededRefundReportSettled(OPERATION_ID)).toBe(true);
+
+    // A replay of the row reads it settled and asks the policy nothing more.
+    await expect(report()).resolves.toBe("reported");
+    expect(sent()).toEqual(ONCE_EACH);
+  });
+
+  it("MUTATION: the reported marker's first write fails - written on the second try, and nothing is sent again", async () => {
+    mocks.cooldownFaults.set(`updateMany:${KEYS.reported}`, "before");
+
+    await expect(report()).resolves.toBe("reported");
+    expect(await supersededRefundReportSettled(OPERATION_ID)).toBe(true);
+
+    await expect(report()).resolves.toBe("reported");
+    expect(sent()).toEqual(ONCE_EACH);
+  });
+
+  it("MUTATION: gives up after two failed reported-marker writes, saying a later attempt may send it again (the stated limit)", async () => {
+    // Each try fails at a different write: the first at its update, the second at its insert.
+    mocks.cooldownFaults.set(`updateMany:${KEYS.reported}`, "before");
+    mocks.cooldownFaults.set(`create:${KEYS.reported}`, "before");
+    const error = vi.spyOn(logger, "error");
+    try {
+      // A copy went out, so the report is still answered settled.
+      await expect(report()).resolves.toBe("reported");
+      expect(mocks.cooldowns.has(KEYS.reported)).toBe(false);
+      expect(error).toHaveBeenCalledWith(expect.objectContaining({ operationId: OPERATION_ID, attempt: 2 }), expect.stringContaining("may send it again"));
+    } finally {
+      error.mockRestore();
+    }
+  });
+
+  /*
+   * #5255: the lost-alert path the sweep opened. Attempt A takes the alert's
+   * claim, then stalls past the sweep's 15-minute grace before its email rows
+   * are written; the sweep gives A's claim back; A resumes and every
+   * recipient's row is refused (its confirm under the old stamp fails), so the
+   * send returns with nothing sent or queued and without throwing. A must not
+   * write `reported`, or the alert is never sent and `isSent` says it was.
+   */
+  it("MUTATION: a send that stalls past the sweep and resumes with every copy refused - not settled, and the next attempt sends it", async () => {
+    mocks.sendAdminAlert.mockImplementationOnce(async () => {
+      const claim = takeOnceEverClaim();
+      if (!claim) throw new Error("the admin alert ran outside its once-ever claim");
+      // The stall: the payments cron's sweep gives the still-unsent claim back.
+      await expect(releaseUnsentAlertCooldown({ key: KEYS.alert, claimedAt: claim.claimedAt })).resolves.toBe(true);
+      // A resumes: its one recipient's row confirms under the old stamp and is refused (`recordClaimedEmailAttempt`).
+      await expect(confirmAlertCooldownSend({ key: KEYS.alert, claimedAt: claim.claimedAt })).resolves.toBe(false);
+      claim.rowWriteFailed = true;
+      return { deliveryAllowed: true, recipients: 1, sent: 0, queuedForRetry: 0, notDelivered: 1 };
+    });
+
+    await expect(report()).rejects.toBeInstanceOf(SupersededRefundReportNotSettledError);
+    expect(mocks.cooldowns.has(KEYS.reported)).toBe(false);
+    expect(await supersededRefundReportSettled(OPERATION_ID)).toBe(false);
+
+    // The row's next attempt claims afresh and the alert goes out, once.
+    await expect(report()).resolves.toBe("reported");
+    expect(sent()).toEqual({ ...ONCE_EACH, adminAlerts: 2 });
     expect(await supersededRefundReportSettled(OPERATION_ID)).toBe(true);
   });
 

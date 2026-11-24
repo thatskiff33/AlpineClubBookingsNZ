@@ -11,6 +11,8 @@ import { MemberMoneyPlanError } from "./plan";
 import { releaseMemberMoneyRefundReservation } from "./post";
 import { postCardRefundCash } from "./refund-cash";
 import { cardReceiptLine, reservationGenerationsWhere, stripeKeyOfReservation } from "./refund-family";
+import { classifyHandBacks, readBookingHandBackJournal } from "./hand-back-census";
+import { eventPosted } from "./booking-journal-read";
 
 /**
  * THE REFUND CENSUS AND THE ROLLBACK RULES (#4516, Ledger M4c; plan section 8). Read-only classes for an owner's
@@ -29,11 +31,29 @@ import { cardReceiptLine, reservationGenerationsWhere, stripeKeyOfReservation } 
  * - `KEPT_REST_WITHOUT_CLOSE_OUT`: a part close whose record says the club kept the rest, whose R14 posted
  *   applied to its debt, and whose rest has no close-out (`refund-close-out:<record>`). An R14 posted unapplied
  *   (its debt was never in the journal) has no debt to close out, so it is not listed (round-2 review E).
+ *
+ * #5185 (M4d): and the booking's bank and cash hand-backs, the classes `HAND_BACK_CENSUS_CLASSES` names
+ * (`hand-back-census.ts` reads and classifies them).
  */
 
 type Db = Prisma.TransactionClient;
+
+/**
+ * THE HAND-BACK CLASSES (#4516, M4d; #5185), defined once: this command lists them, and the booking-ledger census
+ * (`booking-ledger:census`, and the nightly money census that runs it) reports each as an integrity kind that holds
+ * its gate (`BOOKING_LEDGER_INTEGRITY_KINDS`). What each means: `hand-back-census.ts`.
+ */
+export const HAND_BACK_CENSUS_CLASSES = [
+  "HAND_BACK_WITHOUT_EVENT",
+  "HAND_BACK_PAID_WITHOUT_EVENT",
+  "UNAPPLIED_HAND_BACK",
+  "HAND_BACK_OBLIGATION_DRIFT",
+  "KEEP_WITHOUT_EVENT",
+] as const;
+export type HandBackCensusClass = (typeof HAND_BACK_CENSUS_CLASSES)[number];
 export type RefundCensusClass = "STRANDED_RESERVATION" | "ANSWERABLE_RESERVATION" | "CARD_REFUND_WITHOUT_EVENT"
-  | "RESERVATION_SKIPPED_NO_RECEIPT" | "UNAPPLIED_CARD_REFUND" | "PAID_ANOTHER_WAY_WITHOUT_EVENT" | "KEPT_REST_WITHOUT_CLOSE_OUT";
+  | "RESERVATION_SKIPPED_NO_RECEIPT" | "UNAPPLIED_CARD_REFUND" | "PAID_ANOTHER_WAY_WITHOUT_EVENT" | "KEPT_REST_WITHOUT_CLOSE_OUT"
+  | HandBackCensusClass;
 export interface RefundCensusFinding { bookingId: string; identity: string; kind: RefundCensusClass; cents: number }
 
 /** Each refund a payment's recovery rows mark made, by the exact attempt key of the slice it made. */
@@ -93,6 +113,10 @@ export async function readBookingRefundCensus(tx: Db, paymentId: string): Promis
       add("KEPT_REST_WITHOUT_CLOSE_OUT", close.id, keptCents);
     }
   }
+  // #5185: only a booking whose R01 is in the journal posts a hand-back event.
+  if (!(await eventPosted(tx, memberMoneyEventKeys.bookingCharge(payment.bookingId)))) return findings;
+  const handBacks = (await readBookingHandBackJournal(tx, [payment.bookingId])).get(payment.bookingId)!;
+  for (const finding of classifyHandBacks(payment.bookingId, handBacks)) add(finding.kind, finding.identity, finding.cents);
   return findings;
 }
 

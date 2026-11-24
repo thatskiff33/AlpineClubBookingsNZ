@@ -126,6 +126,25 @@ export const modifyQuoteSchema = z.object({
     .optional(),
 });
 
+/**
+ * What the AI app preview `quote_booking_change` offers (ALP-794,
+ * `INV-SSOT`): the member's own edit of dates, guests, promo codes and credit.
+ * Never the officer's links, re-rates, overrides or partner flags, which the
+ * route refuses or ignores for a connection in any case, nor the
+ * dependant-identity answers, which are the member's own declaration made on
+ * the website.
+ */
+export const modifyQuoteConnectionSchema = modifyQuoteSchema.pick({
+  checkIn: true,
+  checkOut: true,
+  addGuests: true,
+  removeGuestIds: true,
+  guestStayRanges: true,
+  guestUpdates: true,
+  promoCodes: true,
+  applyCreditCents: true,
+});
+
 export const OVERRIDE_DATE_ONLY_FIELDS = [
   "addGuests",
   // #3451: an answer about an added guest is a guest change, never a date override.
