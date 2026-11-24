@@ -10,7 +10,7 @@
  * security internals.
  */
 import { connectionShapeFor, type ConnectionShape } from "@/lib/connection-projection";
-import { MEMBER_ACCOUNT_ACTIVITY_CONNECTION_SHAPE } from "@/lib/connection-shapes";
+import { MEMBER_ACCOUNT_ACTIVITY_CONNECTION_SHAPE } from "@/lib/connection-shapes/account-activity";
 import { MEMBERSHIP_TYPE_SHAPE } from "@/lib/connection-shapes/membership-config";
 import type { serializeLodgeAccessRows } from "@/lib/lodge-access";
 import type { PartnerLinkState } from "@/lib/member-partner-link";
