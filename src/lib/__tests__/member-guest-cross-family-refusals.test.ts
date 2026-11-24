@@ -20,7 +20,10 @@ import { describe, expect, it, vi } from "vitest";
 // at all. Everything else in this file runs against the real implementations.
 vi.mock("@/lib/member-subscription-eligibility", async (importOriginal) => ({
   ...((await importOriginal()) as typeof import("@/lib/member-subscription-eligibility")),
-  isSubscriptionEnforcementActive: vi.fn().mockResolvedValue(true),
+  resolveSubscriptionLockoutPolicy: vi.fn().mockResolvedValue({
+    mode: "HARD_BLOCK",
+    liabilitySettings: { requiredTypeAgeRule: "NOT_CHOSEN", liabilityAgeSource: "NOT_CHOSEN" },
+  }),
 }));
 // The membership-type policy resolver needs far more of the schema than this
 // unit test stubs; an empty map means "no type-level exemption", which is the

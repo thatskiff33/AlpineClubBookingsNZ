@@ -8,8 +8,10 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 // status already read.
 
 vi.mock("@/lib/member-subscription-eligibility", () => ({
-  isSubscriptionEnforcementActive: vi.fn().mockResolvedValue(true),
-  requiresPaidSubscriptionForAgeTier: vi.fn().mockReturnValue(true),
+  resolveSubscriptionLockoutPolicy: vi.fn().mockResolvedValue({
+    mode: "HARD_BLOCK",
+    liabilitySettings: { requiredTypeAgeRule: "NOT_CHOSEN", liabilityAgeSource: "NOT_CHOSEN" },
+  }),
 }));
 vi.mock("@/lib/age-tier", () => ({
   getAgeTierSettings: vi.fn().mockResolvedValue([]),

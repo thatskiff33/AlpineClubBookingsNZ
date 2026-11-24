@@ -381,6 +381,49 @@ the columns again, and they still exist.
 
 ---
 
+### Check members marked "Not required" that billing treats as owing (#5190)
+
+**Who needs it.** Every club. The migration adds the club's subscription
+liability rule as **Not chosen**, which keeps who is billed and who may book as
+they were. The admin members list, its export and the subscriptions list now
+show billing's answer, so some active members who have a saved "Not required"
+record for the season, but whom billing treats as owing, now show as **Not
+invoiced** (and sit under that filter and count) with the note "Marked not
+required, but billing treats this member as owing". The members export shows
+the same status and puts the note in a new last column, **Subscription Note**. Two kinds of
+member usually get it: a child on an always-required membership type, and a
+member on an age-based type whose age tier now owes.
+
+A second group changes with **no note**: an active member on an
+always-required membership type whose stored age tier is exempt (say, a child
+on a Full type) and who has no saved record for the season, or a "Not invoiced"
+one. The lists used to show them as "Not required";
+they now show them as owing (no status, or **Not invoiced**), because billing
+invoices them. Booking is unchanged: they can still book. To find them, filter
+the members list by **Not invoiced** and by no subscription record, and look at
+the age tier and membership type.
+
+**What to do, once, after the upgrade.** Open the admin members list (or
+export the list and filter the **Subscription Note** column) and look at each
+noted row, and at each member of the second group. If the member should not pay a subscription, move them to a
+membership type whose subscription is not required. If they should pay, leave
+them; the next billing run bills them as their fee says (a no-invoice fee, or
+a family fee billed through another member, sends them no invoice of their
+own). If a whole class of them should not pay (say, every child on an
+always-required type), the club can instead choose the liability rule *Age
+tier exempts them*, after reading its impact list. Nothing is billed or
+blocked by the upgrade itself.
+
+**How to check it worked.** Reload the list: a member you moved shows "Not
+required" with no note. Any note left is a member you decided should pay. For
+the current season, the notes go once the club chooses its liability rule
+(`INV-CONFIG-009`), because the member then either stops owing or their record
+is updated to "Not invoiced". The choice's clear-up runs only for the current
+season, so a record for another season keeps its note.
+
+**Rollback.** Nothing to undo: the note is display only, and moving a member's
+membership type is an ordinary edit.
+
 ## v0.13.2 → v0.14.0
 
 ### Upgrade checklist for this release

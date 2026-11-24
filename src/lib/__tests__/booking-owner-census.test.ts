@@ -705,12 +705,12 @@ const OPTIONAL_OWNER_READ_SITES: readonly string[] = [
   // Ten were traced. One — `roster-eligibility.ts` — really had the missing
   // projection and is fixed. Four were the same question spelled by hand,
   // "is there an address to send to?", and now ask `bookingOwnerEmail()`,
-  // which is where that chain belongs. These five remain, each loading the
-  // organisation and each guarding the named-but-unreadable member: the owner's
-  // age tier as a predicate input, the booker's display NAME, two durable
-  // records that store the owner's member id (null for a school), and one
-  // admin health snapshot that renders the address with its own `?? ""`.
-  "src/lib/diagnostics/tools/packs/booking-evidence.ts::ageTier: bookingOwner(booking).member?.ageTier ?? null,#0",
+  // which is where that chain belongs. Four remain (the fifth, the owner's age
+  // tier as a predicate input, went with #5190's settlement loader), each
+  // loading the organisation and each guarding the named-but-unreadable member:
+  // the booker's display NAME, two durable records that store the owner's
+  // member id (null for a school), and one admin health snapshot that renders
+  // the address with its own `?? ""`.
   "src/lib/member-guest-consent-service.ts::[bookingOwner(booking).member?.firstName, bookingOwner(booking).member?.lastName]#0",
   "src/lib/payment-recovery.ts::memberId: bookingOwner(booking).member?.id ?? null,#0",
   "src/lib/payment-recovery.ts::memberId: bookingOwner(booking).member?.id ?? null,#1",

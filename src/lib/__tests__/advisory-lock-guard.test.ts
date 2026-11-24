@@ -1219,7 +1219,16 @@ const SCOPED_ADVISORY_LOCK_INVENTORY: Record<string, number> = {
   // confirmSubscriptionBillingPreview (no new key), so refresh-reconciliation
   // and confirm serialise; counterpart analysis in
   // docs/CONCURRENCY_AND_LOCKING.md, compatibility evidence in PR #2158.
-  "src/lib/membership-subscription-billing.ts": 2,
+  // #5190: the key is now minted once in lockSubscriptionBillingSeason, which
+  // those two and the liability clear-up (clearStaleNotRequiredRows, a
+  // single-lock holder) call, so the clear-up serialises with confirm.
+  "src/lib/subscription-billing-season-lock.ts": 1,
+  // #5190: the liability-rule key, minted once. The seasonal-assignment
+  // reconcile takes it SHARED (last, after lock(1)/lodge/member); the
+  // liability clear-up (run by the settings save and after a config import)
+  // takes it EXCLUSIVE, always after the billing season key, so a lock(1)
+  // holder never waits behind a billing confirm.
+  "src/lib/subscription-liability-rule-lock.ts": 2,
   // #1936/#3291: the two pre-existing membership-application locks
   // (application id + applicant email) remain local. Approval mapping now
   // takes its complete sorted lifecycle set through member-lifecycle-lock.ts,

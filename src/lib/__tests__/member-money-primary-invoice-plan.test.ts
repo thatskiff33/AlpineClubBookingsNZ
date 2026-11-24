@@ -17,6 +17,7 @@ import { buildPrimaryInvoiceLines } from "@/lib/xero-primary-invoice-lines";
 import { BASELINE_XERO_TAX_RENDERING, type XeroTaxRendering } from "@/lib/xero-tax-rendering";
 import {
   confirmBilledPrimaryInvoice,
+  coverBookingInvoiceLines,
   planPrimaryBookingInvoice,
   planReplayedPrimaryBookingInvoice,
   type PrimaryInvoicePlanInput,
@@ -240,6 +241,27 @@ describe("confirmBilledPrimaryInvoice (#4525 review)", () => {
   it("leaves a conflict as it was", () => {
     const plan = planPrimaryBookingInvoice(input({ postedLegs: [leg("BOOKING_REVENUE", STAY, 13999)] }));
     expect(confirmBilledPrimaryInvoice(plan, [])).toBe(plan);
+  });
+});
+
+/** ALP-437: the per-booking match the combined group invoice runs for each child. */
+describe("coverBookingInvoiceLines (#4525, ALP-437)", () => {
+  it("covers nothing, and is no conflict, for a booking with no charge and no lines", () => {
+    expect(coverBookingInvoiceLines({ bookingId: BOOKING, stayCents: 0, feeCents: 0, postedLegs: [] })).toEqual({ coverage: [], stay: null, fees: [] });
+  });
+
+  it("refuses lines for a booking the journal holds no stay charge for, even when its fees match", () => {
+    expect(coverBookingInvoiceLines({ bookingId: BOOKING, stayCents: 0, feeCents: 2500, postedLegs: [leg("FEE_REVENUE", "fee:a", 2500)] }))
+      .toMatchObject({ reason: "COMPONENT_UNUSABLE" });
+  });
+
+  it("leaves a fully reversed fee component out of the coverage", () => {
+    const covered = coverBookingInvoiceLines({ bookingId: BOOKING, stayCents: 14000, feeCents: 0, postedLegs: [
+      leg("BOOKING_REVENUE", STAY, 14000), leg("FEE_REVENUE", "fee:a", 2500), leg("FEE_REVENUE", "fee:a", 2500, { side: "DEBIT" }),
+    ] });
+    expect(covered).toMatchObject({ coverage: [{ account: "BOOKING_REVENUE", chargeIdentity: STAY, coveredCents: 14000, taxCode: TAX }] });
+    // #5208: the live tax is for line rendering only; coverage never carries it.
+    expect("coverage" in covered && covered.coverage[0]).not.toHaveProperty("taxCents");
   });
 });
 

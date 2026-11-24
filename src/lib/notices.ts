@@ -1,11 +1,7 @@
 import "server-only";
 
 import type { AgeTier, NoticeAudienceKind, Prisma } from "@prisma/client";
-import { getAgeTierSettings } from "@/lib/age-tier";
-import {
-  isSubscriptionEnforcementActive,
-  requiresPaidSubscriptionForAgeTier,
-} from "@/lib/member-subscription-eligibility";
+import { resolveSubscriptionLockoutPolicy } from "@/lib/member-subscription-eligibility";
 import {
   defaultMembershipTypeKeyForRole,
 } from "@/lib/membership-types";
@@ -14,6 +10,10 @@ import {
   resolveMembershipTypePoliciesForMembers,
 } from "@/lib/membership-type-policy";
 import { prisma } from "@/lib/prisma";
+import {
+  loadMemberSubscriptionSettlements,
+  subscriptionIsSettled,
+} from "@/lib/subscription-lockout-facts";
 import { fixedClubClock } from "@/lib/club-time";
 import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
 import { clubSeasonYear } from "@/lib/financial-year";
@@ -58,12 +58,11 @@ type FinancialDb = Parameters<typeof requiresPaidSubscriptionForMemberForBooking
  */
 export async function isMemberFinancial(
   db: FinancialDb,
-  params: { memberId: string; seasonYear: number; ageTier: AgeTier | null | undefined },
+  params: { memberId: string; seasonYear: number },
 ): Promise<boolean> {
   const required = await requiresPaidSubscriptionForMemberForBooking(db, {
     memberId: params.memberId,
     seasonYear: params.seasonYear,
-    ageTier: params.ageTier,
   });
   if (!required) {
     return true;
@@ -85,13 +84,11 @@ export async function isMemberFinancial(
  * requiresPaidSubscriptionForMemberForBooking + isMemberFinancial:
  *   - ONE batched effective-type policy resolution (the very resolver the
  *     single-member path calls under the hood);
- *   - ONE batched current-season MemberSubscription read — because
- *     (memberId, seasonYear) is unique there is at most one row per member, and
- *     that single row yields BOTH the NOT_REQUIRED-dominance fact (used only by
- *     BASED_ON_AGE_TIER types, matching hasNotRequiredSubscriptionRow) and the
- *     PAID fact;
- *   - the global subscription-enforcement flag and age-tier settings resolved
- *     ONCE for the whole batch (the singular path re-derived them per member).
+ *   - ONE batched settlement load (`loadMemberSubscriptionSettlements`, the
+ *     loader the single-member path also uses, #5190): the shared liability
+ *     rule plus the PAID and no-invoice-coverage facts;
+ *   - the club's lockout policy resolved ONCE for the whole batch (the singular
+ *     path re-derives it per member).
  * isMemberFinancial stays the canonical single-member helper; a parity test
  * (notices-financial-parity.test.ts) asserts the two never diverge.
  */
@@ -110,36 +107,24 @@ export async function resolveFinancialStatusForMembers(
     seasonYear,
   });
 
-  const subs = await prisma.memberSubscription.findMany({
-    where: { memberId: { in: memberIds }, seasonYear },
-    select: { memberId: true, status: true },
+  // Global config (the same single read the booking owner gate makes), once.
+  const lockout = await resolveSubscriptionLockoutPolicy();
+  if (lockout.mode === "NO_BLOCK") {
+    for (const member of members) result.set(member.id, true);
+    return result;
+  }
+  // #5190: the SAME settlement loader the booking gates use — one shared
+  // liability rule, and a no-invoice fee settles a member as PAID does.
+  const settlements = await loadMemberSubscriptionSettlements(prisma, {
+    memberIds,
+    seasonYear,
+    subscriptionBehaviorByMember: new Map(
+      [...policies].map(([memberId, policy]) => [memberId, policy.subscriptionBehavior]),
+    ),
+    liabilitySettings: lockout.liabilitySettings,
   });
-  const statusByMember = new Map(subs.map((s) => [s.memberId, s.status]));
-
-  // Global config (same seams requiresPaidSubscriptionForBooking uses), once.
-  const enforcementActive = await isSubscriptionEnforcementActive();
-  const ageTierSettings = enforcementActive ? await getAgeTierSettings() : [];
-
   for (const member of members) {
-    const policy = policies.get(member.id);
-    const status = statusByMember.get(member.id) ?? null;
-
-    let required: boolean;
-    if (policy?.subscriptionBehavior === "NOT_REQUIRED") {
-      required = false;
-    } else if (
-      policy?.subscriptionBehavior === "BASED_ON_AGE_TIER" &&
-      status === "NOT_REQUIRED"
-    ) {
-      // Matches hasNotRequiredSubscriptionRow: a NOT_REQUIRED row dominates.
-      required = false;
-    } else {
-      required = enforcementActive
-        ? requiresPaidSubscriptionForAgeTier(member.ageTier, ageTierSettings)
-        : false;
-    }
-
-    result.set(member.id, required ? status === "PAID" : true);
+    result.set(member.id, subscriptionIsSettled(settlements.get(member.id)));
   }
 
   return result;
@@ -207,7 +192,6 @@ export async function getMemberAudienceKeys(
   const isFinancial = await isMemberFinancial(prisma, {
     memberId,
     seasonYear,
-    ageTier: member.ageTier,
   });
 
   return {

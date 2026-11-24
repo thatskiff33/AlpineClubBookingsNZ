@@ -373,7 +373,21 @@ unconditional** (second trigger: owner decision, 3 Aug 2026). It applies when
 
 Both are judged by the one owing test (`resolveMemberSubscriptionSettlement`, via
 the single settlement batch in `evaluateNonMemberPricingRequirements`), so the
-owner cannot be judged by a different rule than the party. The owner joins the
+owner cannot be judged by a different rule than the party. Whether a member owes
+at all is the liability rule billing also reads (`resolveMemberSubscriptionLiability`,
+access side, `INV-CONFIG-009`; #5190): while the club is `NOT_CHOSEN`, an exempt
+stored tier exempts any type and a `BASED_ON_AGE_TIER` member's saved
+`NOT_REQUIRED` row exempts them, exactly as before; once chosen, the club's pair
+decides for both sides and the row exempts nobody. The admin members list, its
+export and the subscriptions list are not access gates: they follow billing
+until the club chooses (owner decision Q2 on #5190), so while `NOT_CHOSEN` they
+can show as owing a member this gate lets book; a saved `NOT_REQUIRED` row
+whose member billing treats as owing carries a note there (`hasNotRequiredRowBillingNote`). A member
+owing one is settled
+by a `PAID` row or by an active coverage claim on a `NO_INVOICE` charge, whatever
+the row says, because such a fee sends no invoice to pay. Every gate reads the
+club's rule with the request's lockout mode or through its own transaction, never
+from a second connection. The owner joins the
 FACTS batch only, never `repricedMemberIds`: an owner who is not staying holds no
 nights, so counting them as repriced would inflate the violation's count and emit
 a rate notice about a charge nobody received.

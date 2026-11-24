@@ -252,6 +252,7 @@ export const PRIVACY_RETENTION_CLASSIFICATION = {
   MemberMoneyRefundReservationRelease: "personal",
   MemberMoneyExportManifest: "personal",
   MemberMoneyExportCoverage: "personal",
+  MemberMoneyExportCoverageRelease: "personal",
   // #4520: a balance transaction names a member's payment intent or refund; a payout is the club's own.
   StripeBalanceTransactionEvidence: "personal",
   StripePayout: "non-personal",
