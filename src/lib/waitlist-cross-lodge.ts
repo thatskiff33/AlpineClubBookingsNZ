@@ -807,7 +807,7 @@ export async function confirmCrossLodgeWaitlistOffer(
         for (const lodgeId of [offeredLodgeId, entry.lodgeId].sort()) {
           await acquireLodgeCapacityLock(tx, lodgeId);
         }
-        // #5433 review A: a window restart since Phase 1 is still this offer.
+        // #5433 review A: a window restart since Phase 1 is still this offer, here and below.
         return revertOfferToWaitlisted(tx, await offerSnapshotAcrossWindowRestart(tx, entry));
       }, LOCK1_HOLDER_TRANSACTION_BUDGET);
       if (!reverted) {
@@ -856,7 +856,6 @@ export async function confirmCrossLodgeWaitlistOffer(
         // the cover gone. Through the system-cancellation seam because a price
         // drift has no actor to refuse.
         await reconcileHostingReviewForSystemCancellation(newBooking.id, tx);
-        // #5433 review A: a window restart since Phase 1 is still this offer.
         const snapshot = await offerSnapshotAcrossWindowRestart(tx, entry);
         const refreshedOffer = await tx.booking.updateMany({
           where: {
@@ -910,7 +909,6 @@ export async function confirmCrossLodgeWaitlistOffer(
     const cancelledEntry = await prisma.$transaction(async (tx) => {
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
       await acquireLodgeCapacityLock(tx, entry.lodgeId);
-      // #5433 review A: a window restart since Phase 1 is still this offer.
       const snapshot = await offerSnapshotAcrossWindowRestart(tx, entry);
       const cancelled = await tx.booking.updateMany({
         where: {

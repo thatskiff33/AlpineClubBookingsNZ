@@ -2476,6 +2476,8 @@ describe("waitlist email templates", () => {
       checkOut: new Date("2026-07-03"),
       guestCount: 4,
       position: 1,
+      expiresAt: new Date("2026-06-30T00:00:00.000Z"),
+      offerEmail: "sent",
     });
 
     expect(html).toContain("Waitlist Offer Made");

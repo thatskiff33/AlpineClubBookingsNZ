@@ -73,8 +73,7 @@ interface OfferEmailDelivery {
     | "suppressed"
     // #2258: silenced AND still holding a live offer — an operator must act.
     | "suppressed_live_offer"
-    // #5433: held back because this is not the club's live site.
-    | "withheld_non_production"
+    | "withheld_non_production" // #5433: held back, this is not the live site
     | "missing";
   needsOperatorAction: boolean;
 }

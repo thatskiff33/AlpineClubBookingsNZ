@@ -322,8 +322,6 @@ export async function sendEmail({
   // thrown, because nearly every booking send is an un-awaited `.catch(log)`.
   // `.invalid` is a walk-in placeholder owner (#1935), stored so `Member.email`
   // stays non-nullable; that skip ignores any per-booking notify choice.
-  // `canReceiveEmail` is the one rule (#5433: a caller deciding something on an
-  // email going out asks it too); the branches below only say which reason.
   if (!canReceiveEmail(normalizedRecipient)) {
     if (normalizedRecipient === "") {
       logger.warn({ templateName, bookingContext }, "Skipped email with no recipient address (#3369)");
