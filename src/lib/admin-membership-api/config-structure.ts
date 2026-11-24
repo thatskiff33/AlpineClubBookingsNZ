@@ -83,9 +83,9 @@ export const subscriptionCategoryPatchSchema = z
 
 // --- Induction checklist templates: `/api/admin/induction-templates/**` -----
 
-export const INDUCTION_TEMPLATE_KINDS = ["NEW_MEMBER", "HUT_LEADER", "YOUTH_TO_FULL", "RE_INDUCTION"] as const;
+const INDUCTION_TEMPLATE_KINDS = ["NEW_MEMBER", "HUT_LEADER", "YOUTH_TO_FULL", "RE_INDUCTION"] as const;
 
-export const INDUCTION_SECTION_PRIORITIES = ["EMERGENCY", "SECURITY", "STARTUP", "SHUTDOWN", "GENERAL"] as const;
+const INDUCTION_SECTION_PRIORITIES = ["EMERGENCY", "SECURITY", "STARTUP", "SHUTDOWN", "GENERAL"] as const;
 
 /** `POST /api/admin/induction-templates`: a new, inactive template, empty or copied from `cloneFromId`. */
 export const inductionTemplateCreateSchema = z.object({
