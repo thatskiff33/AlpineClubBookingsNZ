@@ -82,6 +82,15 @@ describe("PR changelog fragment gate", () => {
     ).toBe("fragment-added");
   });
 
+  it("does not take an after-deploy step for a changelog entry (#5379)", () => {
+    expect(() =>
+      validateChangelogFragment(
+        EMPTY_BODY,
+        changes("M src/lib/booking-cancel.ts", "A changelog.d/2448-run-report.deploy.md"),
+      ),
+    ).toThrow(/needs a changelog entry/);
+  });
+
   it("passes a code-bearing PR whose body carries the no-entry marker", () => {
     for (const marker of [
       "changelog: none",

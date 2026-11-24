@@ -2,6 +2,7 @@ import { isCapturedTransactionStatus } from "@/lib/payment-transaction-status";
 import { postBookingReceipts, type BookingJournalContext } from "@/lib/member-money/doors";
 import { receiptCaptureTime } from "@/lib/stripe-capture-date";
 import { SAVED_CARD_CLAIM_RELEASE_DEFERRED_NOTICE } from "@/lib/saved-card-charge-claim";
+import { recordCaptureAwaitingSettle } from "@/lib/unsettled-capture-marker";
 /**
  * #3267 (epic #3270) — recording Stripe's answer on a saved-card charge attempt
  * row (`INV-PAY-055`). The other half of `saved-card-charge-attempt.ts`, whose
@@ -138,9 +139,11 @@ export interface SettledSavedCardChargeAttempt {
   moved: boolean;
   /**
    * #4285 review: true when this call wrote a capture over a row that held none
-   * (not SUCCEEDED before): the money is new to the ledger. The caller passes it
-   * to `markBookingPaymentSucceeded` as `recordedByCaller`, so the settle does
-   * not read the row this call just wrote as an earlier delivery's replay.
+   * (not SUCCEEDED before): the money is new to the ledger. #5240: the same
+   * transaction then records the capture's "not yet settled" flag
+   * (`recordCaptureAwaitingSettle`), which the booking's settle consumes, so
+   * neither this caller's settle nor a later arrival after it was interrupted
+   * reads the row this call just wrote as an earlier delivery's replay.
    */
   newlyCaptured: boolean;
 }
@@ -247,6 +250,8 @@ export async function settleSavedCardChargeAttempt(params: {
     withStoreTransaction(store, async (db) => {
       await lockPaymentForRefundedTotal(db, paymentId);
       const result = await settleSavedCardChargeAttemptUnderLock(db, { attemptRowId, paymentId, paymentIntent, answer });
+      // #5240: new money the booking's settle has not seen yet; that settle consumes it.
+      if (result.newlyCaptured) await recordCaptureAwaitingSettle(db, paymentIntent.id);
       if (isCapturedTransactionStatus(result.ledgerStatus)) await postBookingReceipts(db, journal, { paymentId,
         // Deferred: the booking's settlement for this intent (`markBookingPaymentSucceeded`) decides collection.
         decision: { paymentIntentId: paymentIntent.id, collect: false, deferred: true,

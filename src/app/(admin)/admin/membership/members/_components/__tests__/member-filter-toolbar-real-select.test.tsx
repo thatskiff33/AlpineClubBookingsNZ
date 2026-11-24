@@ -7,6 +7,7 @@ import { readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
 import { emptyFilters } from "../../_utils";
 import { MemberFilterToolbar } from "../member-filter-toolbar";
+import { CENSUS_TIMEOUT_MS } from "@/test/census-timeout";
 
 /**
  * The members filter toolbar rendered against the REAL `@/components/ui/select`.
@@ -124,5 +125,5 @@ describe("every SelectLabel sits inside a SelectGroup", () => {
         "throws rather than degrading - so a bare <SelectLabel> takes the whole " +
         "page down the moment the select renders. Wrap it in <SelectGroup>.",
     ).toEqual([]);
-  });
+  }, CENSUS_TIMEOUT_MS);
 });

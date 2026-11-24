@@ -601,6 +601,74 @@ beside a config import, can still store a shared Opening Credits account;
 fresh before a Serializable single-table transaction with its audit row and no
 advisory lock; `readXeroTaxHealth` reports a mapping that stops passing.
 
+### The journal's GST on each line (#5208)
+
+**The member-money journal's GST is the figure of record** for a booking's
+primary invoice (owner decision, 18 Nov 2026, Option A). The journal splits a
+booking's whole stay charge once; Xero, left to itself, rounds each line, and
+the two can differ by up to half a cent a line. So a new primary invoice for a
+GST-registered club sends each line's `TaxAmount`: the stay component's live
+tax shared across the stay lines, and the change-fee components' tax across
+the fee line, by `allocateTaxAcrossLines`
+([`member-money/internal/tax.ts`](../../src/lib/member-money/internal/tax.ts)):
+each line's exact share floored, the cents left over to the largest
+remainders, earliest line first on a tie. Example at 15%: lines of 80.00,
+80.00 and 40.00 carry 10.44, 10.43 and 5.22, which is the journal's 26.09;
+Xero's own lines would sum to 26.08. The planner
+(`planPrimaryBookingInvoice`) adds the amounts only to a COVERED plan; an
+unregistered club, a conflict, a replay and a paused send carry none, and are
+byte-for-byte what they were before. Supplementary invoices, edit credit notes
+and group settlement invoices still carry Xero's own per-line tax.
+
+Xero documents the override. Its Accounting API Invoices page
+(<https://developer.xero.com/documentation/api/accounting/invoices>,
+LineItems, `TaxAmount`, read 22 Nov 2026) says: "The tax amount is auto
+calculated as a percentage of the line amount (see below) based on the tax
+rate. This value can be overriden if the calculated TaxAmount is not
+correct." Xero's OpenAPI spec as shipped in `xero-node`
+(`dist/gen/model/accounting/lineItem.d.ts`) says the same: "This value can be
+overriden if the calculated <TaxAmount> is not correct".
+
+**The live safeguard.** The app does not take that on trust. After every
+create and every update of a primary invoice,
+[`xero-tax-override-safeguard.ts`](../../src/lib/xero-tax-override-safeguard.ts)
+compares the tax Xero returns with the tax sent, line by line, on lines whose
+request carried a `TaxAmount`. A difference records one
+`XeroTaxOverrideMismatch` row per sync operation, with an audit row
+(`XERO_TAX_OVERRIDES_PAUSED`), and **pauses** the overrides: while any row is
+uncleared, new primary invoices go without line tax and Xero works the GST out
+itself. The sync operation's own outcome never changes, and the export
+manifest records the invoice as a `TAX_CENTS` conflict. The pause shows on the
+Finance dashboard (`xero-tax-overrides-paused`), in the Xero health check and
+on the "GST overrides" card on `/admin/finance/xero`, where a finance editor
+checks the listed invoices in Xero, ticks, writes a note and resumes
+(`POST /api/admin/xero/tax-override-pause/clear`, audit
+`XERO_TAX_OVERRIDE_PAUSE_CLEARED`). The app never switches to another option
+on its own (owner decision, 20 Nov 2026). A 400 from Xero on a sent
+`TaxAmount` fails the operation visibly, like any other refusal.
+
+How the pause meets queued and in-flight work:
+
+- The pause is read, outside any transaction, when each outbox run builds its
+  lines. An operation queued before the pause and sent during it carries no
+  `TaxAmount`, and its manifest freezes `taxAllocation: "PAUSED"`.
+- A run already past its pause read still sends with overrides, and is checked
+  like any other.
+- Invoices already sent keep their amounts. An update copies Xero's stored
+  amounts, so it never adds or strips an override; it is still checked.
+- A retry under the same idempotency key is compared only on lines that
+  attempt sent a `TaxAmount` for. Xero answers a replay with the ORIGINAL
+  invoice, so a reply is not compared at all when any earlier attempt under
+  the key sent other line tax (sent while paused, or by the release before)
+  or when it bills other line amounts; the manifest still records the
+  difference as a `TAX_CENTS` or `STAY_CENTS` conflict.
+- The check runs as soon as Xero answers. A run that dies before it is not
+  checked again: the replay path records the manifest from the stored request
+  and does not ask Xero for the invoice.
+- Clearing claims only the rows listed and still open, so an invoice flagged
+  after the card loaded keeps the pause on. Nothing is re-sent; overrides
+  resume on the next run.
+
 ## Bird's-eye dataflow
 
 ```mermaid
@@ -699,7 +767,7 @@ module every provider call goes through (`INV-OPS-013`). Shared JSON-guard micro
 | `xero-api-usage` | Daily budget constant and usage recording/summary. |
 | `xero-active-operation-statuses` | The active correlation-key population, shared by enqueue, resolution and repair reads. The census pins it to the partial unique index; supplementary-invoice statuses alias it and wider blockers extend it. |
 | `xero-api-errors`, `xero-error-shape` | Error classification helpers (status code, body message, headers). |
-| `xero-error-alert` | Ops email on sync errors, deduplicated to one per hour via `EmailLog`. |
+| `xero-error-alert` | Ops email on sync errors, limited to one an hour across every error type by an `AlertCooldown` claim (#5407). |
 | `xero-links`, `xero-record-links`, `xero-record-types` | Deep links into the Xero UI and into local admin pages; shared record-activity types. See "Deep links into Xero" below for why the tenant GUID cannot be used in a Xero URL. |
 | `xero-link-short-code` | `getXeroOrgShortCode()` — the organisation short code for links built on the SERVER (the twin of the `useXeroOrgShortCode` hook). Never throws; null means "build the generic link". |
 | `xero-feature-flags` | `XERO_ENABLE_DAILY_MEMBERSHIP_REFRESH`, `XERO_ENABLE_LIVE_MEMBER_GROUP_LOOKUPS`, `XERO_ENABLE_AUTOLOAD_XERO_CONTACT_GROUPS`. |
@@ -1523,7 +1591,10 @@ limit: a void that commits after the locked re-read is the order "the recount,
 then the void, then the void's own recount". On a bank transfer that last recount
 lowers the total back. On a card the ledger is raise-only (`INV-ADDPAY-021`,
 #1353), so the recount's raise stands and the existing refund-ledger-divergence
-alert fires for a person to check. A recount that would need a second retry
+alert fires for a person to check. That needs Stripe's recorded refunds to back
+the raise: since #4444 a card recount never rises above them
+([Card recount Stripe cap](#card-recount-stripe-cap)), so with none beyond the
+ledger the recount writes nothing. A recount that would need a second retry
 fails its inbound event after every other write, and the stored event is
 retried after its backoff (#4095), not left until another note arrives.
 
@@ -2045,6 +2116,56 @@ those ids, one call each. `--apply` adds one confirming call per listed
 candidate payment it checks; a `--payment` id's direct answer is already that
 confirmation.
 
+### Card recount Stripe cap
+
+`INV-PAY-126`, #4444. The inbound recount (`repairRefundedPaymentBusinessState`,
+through `decideLinkedRefundedTotalCents`) finds every payment's modification
+notes by its Xero invoice, whatever its source. The inbound sync links an
+edit's note and its allocation to the edit, not the payment, so before #4444 a
+later note's recount dropped a card payment's earlier edit notes and raised a
+false refund-ledger-divergence alert. Each note id counts once per payment: a
+note the payment links as its own refund or account note, with an amount the
+recount could read, is not added again by its allocation.
+
+**The cap (owner decision, 23 Nov 2026, on
+[#4444](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/4444)).** A
+card payment's recounted total never rises above the refunds Stripe recorded
+for it: the larger of its stored total and its `PaymentRefund` rows, failed and
+cancelled ones left out (`capCardRefundedTotalAtStripeRefunds`). It is the cap
+#3653 set for organiser children (`INV-PAY-114`), now applied to every card
+payment. Before #3993 one card refund could be raised as two Xero notes: the
+edit's note allocated to the invoice and the nightly self-heal's refund note on
+the payment. They have two ids, so counting each note once does not catch them;
+the cap keeps them from reading as twice the money. The accepted cost: where
+Xero shows a refund before Stripe's sync records it, the total waits for that
+sync, which raises it itself. The cap raises no alert; the raise-only floor
+(`INV-ADDPAY-021`) still alerts on a Xero total below the ledger. The kept
+settle and the allocation write are bank-transfer only and take no cap.
+
+A card refund Stripe failed later (#4370) is left out of Stripe's figure, and
+cash paid back by bank for it is in the ledger, so the cap is what went back:
+with its reversal voided in Xero the notes read $190 ($80 failed + $80 bank +
+$30), the cap holds the $110 returned. A recount racing a note's void (#4288)
+can only raise a card as far as Stripe's refunds back it.
+
+Stated limit: counting once is per payment. A note linked directly to one
+payment and allocated to another payment's invoice counts on both. The cap
+bounds that for a card payment; a bank transfer's is bounded only by its
+amount paid, as before #4444.
+
+Pinned by `xero-credit-note-repairs.test.ts`,
+`card-recount-earlier-edit-note.realdb.test.ts`,
+`xero-recount-failed-later-refund.realdb.test.ts`,
+`xero-refund-note-stale-live-status.realdb.test.ts`,
+`allocation-write-real-rules.test.ts`,
+`account-credit-modification-notes.test.ts`,
+`xero-booking-edit-settlement.test.ts`,
+`xero-repair-known-modification-refund.test.ts`,
+`kept-settle-correction-recount.test.ts`,
+`retire-unlisted-credit-note-allocations.test.ts`,
+`ib-settle-from-cash.realdb.test.ts` and
+`kept-settle-queued-cancel.realdb.test.ts`.
+
 ## Flow 3 — Repair and hardening
 
 Reconciliation heals what Xero tells us about; repair audits what we *should*
@@ -2539,6 +2660,18 @@ Scheduled hardening (cron tasks, all idempotent):
   copy failed before its mail log row existed, #5448). It is given back only
   when the send threw, or when the claim write itself threw (its stamp may
   have landed, so it is removed and the failure reported to the caller).
+  The once-per-hour error alert uses the same sequence
+  (`sendAdminAlertOncePerWindow` in `admin-alert-window.ts`) with one key for
+  every error type, so the limit is still one alert an hour in all (#5407):
+  two instances failing at once raise one alert, an alert queued for retry or
+  withheld counts as raised, one nobody could receive (switched off, or nobody
+  opted in) holds the key for a day, and one that reached nobody on a passing
+  mail fault (every copy failed before its mail log row existed) holds it for
+  the hour only. Senders that call `sendAdminXeroSyncErrorAlert` directly,
+  rather than `notifyXeroSyncError`, neither hold nor are held by that hour;
+  before #5407 the limit read any sync error row in the mail log, so a direct
+  send held it too. Each direct sender reports one record an officer must act
+  on, and most limit themselves with a claim of their own, once ever or per key.
 
 ### Repairing Stripe refund-note links (#2901)
 

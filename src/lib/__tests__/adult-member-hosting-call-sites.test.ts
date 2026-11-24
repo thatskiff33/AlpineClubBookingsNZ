@@ -40,7 +40,7 @@
 // is a runtime failure on every booking write path with a green typecheck.
 //
 // Mirrors the convention in subscription-lockout-call-sites.test.ts (#2543).
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 
@@ -58,6 +58,12 @@ import {
   hostScopeEnabled,
   type AdultMemberHostScopeSet,
 } from "@/lib/policies/adult-member-hosting";
+import { CENSUS_TIMEOUT_MS } from "@/test/census-timeout";
+
+// The source readers below are memoised, so whichever case runs first (in file
+// order, or alone under `-t` or `.only`) pays the whole-tree read. Every case in
+// the file carries the budget (#5439).
+vi.setConfig({ testTimeout: CENSUS_TIMEOUT_MS });
 
 function readRepoFile(relativePath: string): string {
   return readFileSync(path.resolve(process.cwd(), relativePath), "utf8");
@@ -2267,7 +2273,7 @@ describe("the participant fence stays switched ON where a suite claims it (#2623
         "double `fenceHostingPolicyFindMany()` (and make its booking fixtures " +
         "hosting-evaluable), or add it here with a reason.",
     ).toEqual(FENCE_DOUBLES_WITHOUT_AN_ACTIVE_POLICY);
-  });
+  }, CENSUS_TIMEOUT_MS);
 
   /**
    * The census above can only see that the helper is CALLED — it cannot see what
@@ -2357,7 +2363,7 @@ describe("the participant fence stays switched ON where a suite claims it (#2623
         "returns first) while every test stays green — the #2675 bypass, " +
         "restored by one word. Use ENFORCED or ADMIN_REVIEW_REQUIRED.",
     ).toEqual([]);
-  });
+  }, CENSUS_TIMEOUT_MS);
 });
 
 

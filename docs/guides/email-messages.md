@@ -407,6 +407,86 @@ you want both reworded; editing only one leaves the other on its built-in text.
 > sent, or when sending it takes longer than an hour. Nothing about the
 > wording changed.
 
+> **Upgrade note (#5433, waitlist offers).** A waitlist offer's emails are no
+> longer lost if the job making the offer is interrupted between saving the
+> offer and sending them. The member's **Spot Available!** email and the
+> officers' **Admin Waitlist Offer** alert, and the member's **Waitlist Offer
+> Expired** email after an offer lapses, are then sent by a later run of the
+> email retry job (every 30 minutes), usually within an hour. The member never
+> receives any of them twice; officers very rarely may.
+>
+> What a member can notice: when an offer email arrives late like this, the
+> offer gets a full window from when it arrives, up to the start of the
+> check-in date in the club's time zone (owner decisions, 23 and 24 Nov 2026),
+> and the email states that new deadline. The booking page shows the same
+> deadline. The window is restarted once per offer: if that late email also
+> fails and goes out on a later run, it states the deadline already set, so the
+> member has what is left of that window. When too little of a window would be
+> left to be worth telling them (less than half an hour), or the member's
+> address cannot be emailed (none, a placeholder, or one on the bounce and
+> complaint suppression list), no offer email goes and the window is not
+> restarted; the officers are alerted instead. If an offer lapses before its
+> email reached the member (never sent, failed, bounced, or recorded but
+> refused for a suppressed address), the member is not sent a **Waitlist
+> Offer Expired** email for it: they were never told about the offer. A failed
+> offer email still waiting to be retried when the offer ends is not retried:
+> it would state a deadline that has passed. Their booking goes back on the waitlist as with any lapsed
+> offer: they keep their place, but for that place everyone else waiting for
+> the same nights is considered before them.
+>
+> What an officer can notice: a new alert, **Waitlist email not sent**
+> (`admin-waitlist-notice-unsent`). It is sent once when a member's offer email
+> could not be sent, did not reach them (for example a suppressed or
+> placeholder address), or failed and could not be retried, before it stopped
+> being useful (the later of the start of the check-in date and the offer's
+> own deadline, and at most seven days after the offer); when a member's
+> **Waitlist Offer Expired** email could not be sent within seven days; and
+> when an offer lapses with its email not known to have reached the member,
+> so a person can step in for the place the member missed (owner decision,
+> 24 Nov 2026). Officers get it once per offer, not once for the unsent email
+> and again for the lapse (very rarely twice, if recording that it went
+> fails twice). It names the member and the booking so an officer can contact
+> them. It goes to officers who receive waitlist offer alerts (the **Waitlist
+> offers** preference, which mutes both), and its wording is editable like the
+> others. Its `{{noticeNote}}` token holds the whole instruction for that
+> email. The **Admin Waitlist Offer** alert still goes for every offer, once
+> what became of the offer email is known (it may wait while a failed send is
+> retried). It says which in the new `{{offerNote}}` token: sent, withheld by
+> the booking's **No emails** switch, or not delivered (alongside the
+> **Waitlist email not sent** alert). It states the deadline in force with
+> `{{expiresAt}}`, in place of a fixed "48 hours". `{{offerNote}}` is now a
+> required token. A saved copy of that template written before this version
+> keeps sending exactly as saved, in its old wording; this page flags it as
+> missing a required token, and it cannot be saved again until you add
+> `{{offerNote}}` back or restore the default. Nothing is blocked until then.
+>
+> Three limits officers should know. The offer email is withheld if **No
+> emails** is on for the booking when the email is sent, and turning emails
+> back on later does not send it: the member is not told of the offer by
+> email. They are told if the offer expires only if emails are on at that
+> moment. So contact them directly, or retract the offer.
+> When the mail provider reports a bounce or
+> a complaint for a member's address, every earlier email to that address is
+> marked bounced too, so a member who did receive their offer can still be
+> reported in a **Waitlist email not sent** alert when it lapses; that alert
+> says only that the email is not known to have reached them. And a **Waitlist
+> Offer Expired** email that cannot be delivered raises no alert: the member
+> is simply back on the waitlist.
+>
+> During the switch to this version, a server still running the version
+> before it that expires an offer this version made and never sent sends the
+> member the **Waitlist Offer Expired** email as before, and no officers'
+> alert is raised for it.
+>
+> Offers made before the upgrade carry on as they did. Their offer email was
+> recorded without the key this version uses, so this version matches it to
+> an offer by time instead: a failed one is still retried while the booking
+> holds a live offer made no later than the email (give or take two minutes
+> for clock differences), as the admin waitlist page already matches them;
+> otherwise it is not sent and moves to the email-failure review queue. It gets no window restart and no
+> "not sent" alert; and if such an offer lapses, the member is sent **Waitlist
+> Offer Expired** as before.
+
 ## Settings reference
 
 Shared email variables (top card):

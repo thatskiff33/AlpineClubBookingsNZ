@@ -10,6 +10,7 @@ import {
 } from "@/lib/mcp/catalogue";
 import {
   classifyMcpRoute,
+  MCP_EXACT_EXCLUDED_ROUTES,
   MCP_NOT_YET_TASKS,
   MCP_PERMANENT_EXCLUSION_REASONS,
   mcpPermanentExclusion,
@@ -20,10 +21,11 @@ import {
   STEP_UP_ROUTES,
   stepUpRouteKey,
 } from "@/lib/step-up-routes";
+import { CENSUS_TIMEOUT_MS } from "@/test/census-timeout";
 
 // The census parses every API route file once: a few seconds on an idle
 // machine and several times that on a busy CI runner.
-const CENSUS_TIMEOUT_MS = 90_000;
+// The budget is the shared CENSUS_TIMEOUT_MS (src/test/census-timeout.ts).
 
 const HTTP_METHODS: ReadonlySet<string> = new Set(STEP_UP_HTTP_METHODS);
 
@@ -347,6 +349,15 @@ describe("AI app action census (ALP-653, INV-MCP-006)", { timeout: CENSUS_TIMEOU
     expect(previews).toEqual([...PREVIEW_ROUTE_KEYS].sort());
   });
 
+  it.each(["post_to_message_board", "place_food_order", "report_maintenance_issue", "confirm_family_member_details"])(
+    "marks %s destructive: it notifies other people or overwrites another person's record (#5305)",
+    (id) => {
+      // Owner decision, #5305 comment 7092977781: the app confirms with the
+      // member first, and the call is audited as important.
+      expect(MCP_ACTIONS.find((action) => action.id === id)?.kind).toBe("destructive");
+    },
+  );
+
   it("says what every action answers with", () => {
     for (const action of MCP_ACTIONS) {
       expect(Object.keys(action.returns).length, action.id).toBeGreaterThan(0);
@@ -373,6 +384,34 @@ describe("AI app action census (ALP-653, INV-MCP-006)", { timeout: CENSUS_TIMEOU
   it("leaves nothing under the member family and cancellation routes undecided", () => {
     // ALP-795 removed their not-yet rule: a new route there fails the census until decided.
     expect(classifyMcpRoute("src/app/api/members/brand-new/route.ts", "GET")).toEqual({ kind: "unclassified" });
+  });
+
+  it("decides every lodge-life route (ALP-796), handing its officer powers to the officer stages", () => {
+    expect(Object.values(MCP_NOT_YET_TASKS)).not.toContain("ALP-796");
+    const officer = (file: string, method: string) => classifyMcpRoute(`src/app/api/${file}/route.ts`, method);
+    expect(officer("calendar/events", "POST")).toEqual({ kind: "excluded", reason: `not-yet:${MCP_NOT_YET_TASKS.lodge}` });
+    expect(officer("calendar/events/[id]/join", "POST")).toEqual({ kind: "excluded", reason: `not-yet:${MCP_NOT_YET_TASKS.lodge}` });
+    // Lodge edit, the area `canEditCalendarEvents` checks, as for `/admin/calendar`.
+    expect(officer("calendar/events/[id]", "DELETE")).toEqual({ kind: "excluded", reason: `not-yet:${MCP_NOT_YET_TASKS.lodge}` });
+    expect(officer("food-orders/[id]/price", "PATCH")).toEqual({ kind: "excluded", reason: `not-yet:${MCP_NOT_YET_TASKS.lodge}` });
+    expect(officer("chores/roster/[date]/print", "GET")).toEqual({ kind: "excluded", reason: `not-yet:${MCP_NOT_YET_TASKS.lodge}` });
+    // The member's side of the same routes is an action.
+    expect(officer("calendar/events", "GET").kind).toBe("action");
+    expect(mcpPermanentExclusion("src/app/api/inductions/[id]/sign-off/route.ts", "POST")).toBe("declaration");
+    expect(mcpPermanentExclusion("src/app/api/club-posts/images/route.ts", "POST")).toBe("needs-browser");
+    // Exact, not a prefix: a new route beside an officer one is undecided.
+    expect(officer("calendar/events/[id]/attendees", "GET")).toEqual({ kind: "unclassified" });
+  });
+
+  it("names only route methods that exist in every exact exclusion (ALP-796 review)", () => {
+    // `METHOD /api/path` → the route file's key; a stale entry would excuse a
+    // route that is gone, or hide a typo that leaves the real one undecided.
+    expect(MCP_EXACT_EXCLUDED_ROUTES).toContain("POST /api/calendar/events");
+    const stale = MCP_EXACT_EXCLUDED_ROUTES.filter((route) => {
+      const [method = "", path = ""] = route.split(" ");
+      return !routeKeys.has(stepUpRouteKey(`src/app${path}/route.ts`, method));
+    });
+    expect(stale).toEqual([]);
   });
 
   it("keeps the lodge door codes website-only for good", () => {

@@ -3,10 +3,10 @@ import { describe, expect, it } from "vitest";
 import {
   assertValidClubPostContent,
   ClubPostValidationError,
-  MAX_CLUB_POST_LENGTH,
   normalizeClubPostContent,
   serializeClubPostForMember,
 } from "@/lib/club-posts";
+import { MAX_CLUB_POST_LENGTH } from "@/lib/club-post-schema";
 
 /**
  * #2994 (epic #2992) — the club message board's content rules and reader shape.

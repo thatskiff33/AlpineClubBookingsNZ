@@ -54,6 +54,7 @@ import {
   XERO_DOT_ACTIONS_THE_CENSUS_CANNOT_NAME,
   unescapeLikeOperands,
 } from "./support/audit-legacy-filter-like";
+import { AST_CENSUS_TIMEOUT_MS } from "@/test/census-timeout";
 
 const MEMBER = "member-under-test";
 
@@ -128,7 +129,7 @@ function memberVisible(row: ReturnType<typeof rowOf>, unescape: boolean): boolea
   return matchesWhere(row, unescape ? unescapeLikeOperands(where) : where);
 }
 
-describe("the audit category filters match their action prefixes literally (#4165, INV-SSOT-006, INV-OPS-012)", () => {
+describe("the audit category filters match their action prefixes literally (#4165, INV-SSOT-006, INV-OPS-012)", { timeout: AST_CENSUS_TIMEOUT_MS }, () => {
   it("reads the population it claims to", () => {
     const { actions, unresolvedConstants } = population();
     expect(actions.size).toBeGreaterThan(500);
@@ -146,7 +147,7 @@ describe("the audit category filters match their action prefixes literally (#416
     }
     // The PostgreSQL proof seeds these as real actions; each must be one.
     expect(LEGACY_FILTER_PREFIX_WITNESSES.filter((action) => !actions.has(action))).toEqual([]);
-  }, 180_000);
+  });
 
   it("puts every known action in the same categories, and on the same member timelines, as the wildcard filter did", () => {
     const moved: string[] = [];
@@ -166,7 +167,7 @@ describe("the audit category filters match their action prefixes literally (#416
       "INV-OPS-012: escaping a legacy audit prefix moved these actions. A change in which rows a member " +
         "sees is the owner's decision; a change of category needs the action named in audit-query.ts.",
     ).toEqual([]);
-  }, 180_000);
+  });
 
   it("keeps the xero. family, which reached the xero filter only through the wildcard `xero_`, in it", () => {
     const xeroDot = [...population().actions].filter((action) => action.startsWith("xero."));
@@ -174,7 +175,7 @@ describe("the audit category filters match their action prefixes literally (#416
     for (const action of xeroDot) {
       expect(matchesWhere(rowOf(action), buildAuditCategoryWhere("xero")!), action).toBe(true);
     }
-  }, 180_000);
+  });
 
   it("stays wired into the race harness CI runs against a real database", () => {
     // The PostgreSQL proof self-skips without the race flag; hosted CI reaches

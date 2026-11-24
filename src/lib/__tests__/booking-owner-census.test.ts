@@ -108,6 +108,7 @@ import {
   sourceFiles,
 } from "@/lib/__tests__/support/booking-guest-night-writer-scan";
 import { stripCommentsAndStrings } from "@/lib/__tests__/support/strip-comments";
+import { CENSUS_TIMEOUT_MS } from "@/test/census-timeout";
 
 /**
  * The ONE file allowed to read the column directly: the accessor's own body,
@@ -243,7 +244,7 @@ const scanned = scan();
 const describeHit = (hit: Hit) =>
   `${hit.file}:${hit.line} (${hit.via}) — ${hit.text.slice(0, 120)}`;
 
-describe("#3368: a booking's owner is read in exactly one place", () => {
+describe("#3368: a booking's owner is read in exactly one place", { timeout: CENSUS_TIMEOUT_MS }, () => {
   it("scans a meaningful number of source files", () => {
     // A walker that silently found nothing would make every assertion below
     // vacuous, which is how a census fails without failing.
@@ -430,7 +431,7 @@ function sitesMatching(
   return out.sort();
 }
 
-describe("#5232: a reviewed site's key survives edits around it", () => {
+describe("#5232: a reviewed site's key survives edits around it", { timeout: CENSUS_TIMEOUT_MS }, () => {
   it("addresses the raw line the rules scanned, in every scanned file", () => {
     // `siteKey` reads the raw line at the index the stripped text matched on.
     // A stripper that dropped or added a newline would key every site below
@@ -566,7 +567,7 @@ describe("#5232: a reviewed site's key survives edits around it", () => {
   });
 });
 
-describe("#3368: the three families stage 4 (#3369) has to answer for", () => {
+describe("#3368: the three families stage 4 (#3369) has to answer for", { timeout: CENSUS_TIMEOUT_MS }, () => {
   it("enumerates every ownership comparison against an actor", () => {
     const sites = sitesMatching(COMPARISON);
     expect(
@@ -845,7 +846,7 @@ const selections = [...scanned.code.keys()].flatMap((file) =>
   selectionsIn(file, readFileSync(file, "utf8")),
 );
 
-describe("#3369: an `organisation` selection names a relation that exists", () => {
+describe("#3369: an `organisation` selection names a relation that exists", { timeout: CENSUS_TIMEOUT_MS }, () => {
   it("scans a meaningful number of selections", () => {
     // Without this the assertions below pass on an empty walk, which is
     // exactly how the sweep's thirteen crashes survived a green suite.
@@ -1023,6 +1024,17 @@ const UNROOTED_ORGANISATION_SELECTIONS: readonly string[] = [
   // and `booking.findUnique`; Booking declares `organisation`.
   "src/lib/pre-arrival-reminder-email.ts::organisation: { select: { name: true, email: true } },#0",
   "src/lib/stuck-state-dashboard.ts::organisation: { select: { name: true, email: true } },#0",
+  // #5433: `EXPIRED_NOTICE_SELECT` and `OFFER_NOTICE_SELECT`, what the
+  // waitlist offer-expired and offer notices' sweeps read again. Verified by
+  // hand: each written through `Prisma.validator<Prisma.BookingSelect>()` and
+  // passed as `select` to `booking.findUnique`; Booking declares `organisation`.
+  "src/lib/waitlist-offer-expired-notice.ts::organisation: { select: { name: true, email: true } },#0",
+  "src/lib/waitlist-offer-notices.ts::organisation: { select: { name: true, email: true } },#0",
+  // #5433 review: `RESTART_SELECT`, what the window restart re-reads under its
+  // locks to decide whether an email can go. Verified by hand: written through
+  // `Prisma.validator<Prisma.BookingSelect>()` and passed as `select` to
+  // `booking.findUnique`; Booking declares `organisation`.
+  "src/lib/waitlist-offer-window-restart.ts::organisation: { select: { name: true, email: true } },#0",
   "src/lib/xero-booking-repair-types.ts::organisation: { select: { name: true, email: true } },#0",
   "src/lib/xero-inbound/settlement-conflicts.ts::include: { booking: { include: { member: true, organisation: { select: { name: true, email: true } } } } };#0",
 ];

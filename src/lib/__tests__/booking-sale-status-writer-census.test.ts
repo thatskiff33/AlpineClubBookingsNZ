@@ -40,6 +40,7 @@ import { compareOrdinal } from "@/lib/ordinal-order";
 import { callsInOwnBody, enclosingFunction } from "./support/function-scope";
 import { productionSourceFiles } from "./support/prisma-delegate-read-scan";
 import { stripComments } from "./support/strip-comments";
+import { CENSUS_TIMEOUT_MS } from "@/test/census-timeout";
 
 const ROOT = process.cwd();
 const WRITE_METHODS = new Set(["create", "createMany", "update", "updateMany", "upsert"]);
@@ -519,7 +520,7 @@ describe("every booking PAID/CANCELLED writer is classified (#4628)", () => {
     ]) {
       expect(other).not.toMatch(RAW_STATUS_UPDATE);
     }
-  });
+  }, CENSUS_TIMEOUT_MS);
 
   it("checks the status-free constants it lets a spread name", () => {
     for (const [name, value] of Object.entries(STATUS_FREE_CONSTANTS)) expect(Object.keys(value), name).not.toContain("status");

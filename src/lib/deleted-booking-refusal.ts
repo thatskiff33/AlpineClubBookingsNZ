@@ -4,7 +4,7 @@ import { NextResponse } from "next/server";
  * The ONE sentence every deleted-booking refusal says (#2700).
  *
  * The rule this module IS: `INV-ADDPAY-034`. Read that for the full statement,
- * including which three surfaces may use this constant and why a fourth needs a
+ * including which five surfaces may use this constant and why a sixth needs a
  * decision rather than an import.
  *
  * WHY A MESSAGE AND NOT A BARE 404. `INV-ADDPAY-031` — the house shape for a
@@ -20,23 +20,23 @@ import { NextResponse } from "next/server";
  * fault. Telling them the booking was cancelled or removed is an explanation
  * they can act on.
  *
- * WHO ACTUALLY SEES IT TODAY, stated honestly because the justification above
- * is easy to over-claim. It is the stale tab — a client that loaded the booking
- * before the deletion and acted after it, the same race `INV-ADDPAY-036`
- * exists for — or a direct API caller. NOT somebody freshly clicking a link in
- * an old club email: every one of those journeys dead-ends earlier of its own
- * accord (the booking page `notFound()`s a non-admin on a deleted booking, the
- * delegate consent page resolves NOT_FOUND above both its target and delegate
- * branches, the refund-appeal button is not rendered on a deleted booking, and
- * `change-requests` GET has no client in the product at all).
- * `INV-ADDPAY-034` records the full list and records that widening it to the
- * email journey is an owner decision, because it would mean changing the
- * delegate page's uniform NOT_FOUND — itself a privacy property.
+ * WHERE IT IS SAID — five surfaces, by owner decision 20 Nov 2026 (#5266),
+ * which settled what #2700 left open. Three answer an API call: the
+ * change-requests GET, the refund-request GET and the consent write. Two are
+ * pages a person reaches from an old club email, through
+ * `components/removed-booking-notice.tsx`: the booking page, for its owner or a
+ * member guest on it, and the delegate consent page, for the consent target or
+ * their accepted family adult. Everybody else on those pages — another member,
+ * a Booking Officer or read-only admin not on the booking, a stranger with a
+ * forwarded link — still gets the page's plain "not found", by the same reads
+ * as for an id that never existed. A signed-out visitor is sent to sign in
+ * before any of this runs. `INV-ADDPAY-034` holds the full list.
  *
  * THAT IS SAFE ONLY BECAUSE OF WHERE THE GUARD SITS. Every caller of this
  * module places the check AFTER its authorisation check, so to see this
- * sentence at all you must already be the guest on that booking, its owner, or
- * an admin. A stranger still gets 403 and learns nothing, which is the property
+ * sentence at all you must already be the guest on that booking, its owner, a
+ * consent target's accepted delegate, or (on the APIs) an admin. A stranger
+ * still gets 403 or "not found" and learns nothing, which is the property
  * `INV-ADDPAY-031`'s ordering half exists to protect and which is untouched
  * here. Disclosure to somebody already entitled to the record is not an oracle.
  *
@@ -47,9 +47,9 @@ import { NextResponse } from "next/server";
  * - **The booking owner's name.** That would leak a member's name on a booking
  *   the club has deleted. "Contact the club" costs the reader nothing.
  *
- * ONE MESSAGE, NOT THREE. The consent write and both read surfaces share this
- * constant precisely so the wording cannot drift into three variants that say
- * subtly different things about the same event.
+ * ONE MESSAGE, NOT FIVE. Every surface shares this constant precisely so the
+ * wording cannot drift into variants that say subtly different things about
+ * the same event.
  */
 export const DELETED_BOOKING_MESSAGE =
   "This booking has been cancelled or removed. Contact the club if you need to know more.";

@@ -1,11 +1,23 @@
 import path from "node:path";
 import { readFileSync } from "node:fs";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 
 import { main } from "../quality-report";
-import { scanRepository, summariseSizeDebt } from "../lib/file-size-budget";
+import {
+  type RepositoryScan,
+  scanRepository,
+  summariseSizeDebt,
+} from "../lib/file-size-budget";
+import { CENSUS_TIMEOUT_MS } from "@/test/census-timeout";
 
 const REPO_ROOT = path.resolve(__dirname, "..", "..");
+/*
+  The report and the scan each read and measure every tracked file in the
+  repository, synchronously. That takes seconds, more on a loaded CI runner, so
+  it runs once in `beforeAll` under an explicit budget rather than in each case
+  under vitest's 5,000 ms default (#5439).
+*/
+// The budget is the shared CENSUS_TIMEOUT_MS (src/test/census-timeout.ts).
 
 function captureReport(): string {
   const chunks: string[] = [];
@@ -28,9 +40,15 @@ afterEach(() => {
 });
 
 describe("quality report", () => {
+  let report: string;
+  let scan: RepositoryScan;
+
+  beforeAll(() => {
+    report = captureReport();
+    scan = scanRepository(REPO_ROOT);
+  }, CENSUS_TIMEOUT_MS);
+
   it("reports the same over-budget population the blocking gate enforces", () => {
-    const report = captureReport();
-    const scan = scanRepository(REPO_ROOT);
     const expected = summariseSizeDebt(scan.productionStats);
 
     // The report and `npm run quality:budget` share one classifier and one debt
@@ -60,12 +78,10 @@ describe("quality report", () => {
       "utf8",
     );
     expect(source).not.toMatch(/file-size-baseline|BASELINE_PATH/);
-    expect(captureReport()).not.toMatch(/file-size-baseline\.txt/);
+    expect(report).not.toMatch(/file-size-baseline\.txt/);
   });
 
   it("shows scope holes, because a file no budget covers reads like a clean pass", () => {
-    const report = captureReport();
-    const scan = scanRepository(REPO_ROOT);
     expect(report).toMatch(
       new RegExp(`\\| Unclassified src/ files \\(scope holes\\)\\s*\\| ${scan.unclassified.length}\\s*\\|`),
     );

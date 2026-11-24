@@ -116,6 +116,14 @@ club, not any lodge. A cash allocation names its booking as a bare id, the way
 return row names a credit restoration and a slice, which identify the same
 booking. None of the three gets a `lodgeId`.
 
+## Xero GST-override pause (#5208)
+
+`XeroTaxOverrideMismatch` is club-wide: one row records a Xero invoice whose
+returned line tax differs from the journal's tax the app sent, and any
+uncleared row pauses the overrides for every lodge, because the club has one
+Xero organisation and one GST return. A row names its booking, which
+identifies the lodge, but carries no lodge key and is never filtered by one.
+
 ## Club-Wide Defaults With Per-Lodge Overrides
 
 `CancellationPolicy`, `MinimumStayPolicy`, and `BookingPeriod` gain a

@@ -25,6 +25,7 @@ import { describe, expect, it } from "vitest";
 
 import { DIRECT_SCROLL_EXCLUSIONS } from "@/hooks/use-scroll-to-feedback";
 import { stripComments } from "@/lib/__tests__/support/strip-comments";
+import { CENSUS_TIMEOUT_MS } from "@/test/census-timeout";
 
 const PRIMITIVE_MODULE = "src/hooks/use-scroll-to-feedback.ts";
 
@@ -74,7 +75,7 @@ function findings(file: string) {
   return { direct: direct.length, deferred: deferred.length };
 }
 
-describe("admin and /book attention goes through the shared primitive (#2934, #4945)", () => {
+describe("admin and /book attention goes through the shared primitive (#2934, #4945)", { timeout: CENSUS_TIMEOUT_MS }, () => {
   const files = trackedCensusedSources();
   const excluded = new Set(DIRECT_SCROLL_EXCLUSIONS.map((entry) => entry.file));
 

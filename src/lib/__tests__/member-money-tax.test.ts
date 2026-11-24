@@ -7,7 +7,7 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { clubTaxCode, type ClubTaxTreatment } from "@/lib/club-tax-settings";
-import { splitTaxInclusiveGross } from "@/lib/member-money";
+import { allocateTaxAcrossLines, splitTaxInclusiveGross } from "@/lib/member-money";
 import { MAX_INTEGER_CENTS as MAX_MEMBER_MONEY_CENTS } from "@/lib/money-input";
 import { stripComments } from "./support/strip-comments";
 
@@ -68,5 +68,70 @@ describe("splitTaxInclusiveGross", () => {
     expect(source).not.toMatch(/\b\d+\.\d+\b/);
     // Every division is between BigInt operands: its divisor is a parenthesised product ending in a bigint literal or variable.
     for (const division of source.matchAll(/\)\s*\/\s*([^/\n;]+)/g)) expect(division[1]).toMatch(/^\(2n \* divisor\)/);
+    // #5208: the allocator divides a BigInt product by the BigInt gross, and nothing else.
+    for (const division of source.matchAll(/\b(\w+)\s*[/%]\s*(\w+)\b/g)) expect([division[1], division[2]]).toEqual(["scaled", "gross"]);
+  });
+});
+
+describe("allocateTaxAcrossLines (#5208, Option A)", () => {
+  const shares = (tax: number, lines: number[]) => {
+    const allocation = allocateTaxAcrossLines(tax, lines);
+    if ("problem" in allocation) throw new Error(allocation.problem);
+    return allocation.lineTaxCents;
+  };
+
+  it("shares the decision's worked example as the owner was shown it", () => {
+    // 20000c at 15%: the journal's tax is 2609c; Xero's own per-line sum is 1043 + 1043 + 522 = 2608c.
+    expect(splitTaxInclusiveGross(20_000, registered(1500))!.taxCents).toBe(2609);
+    expect(shares(2609, [8000, 8000, 4000])).toEqual([1044, 1043, 522]);
+  });
+
+  it("gives tied remainders to the earliest lines", () => {
+    const tax = splitTaxInclusiveGross(48_000, registered(1500))!.taxCents;
+    expect(tax).toBe(6261);
+    expect(shares(tax, [8000, 8000, 8000, 8000, 8000, 8000])).toEqual([1044, 1044, 1044, 1043, 1043, 1043]);
+  });
+
+  it("takes signed tax off a promo line, and none on a zero line", () => {
+    const lines = [8000, 8000, 0, -2000];
+    const tax = splitTaxInclusiveGross(14_000, registered(1500))!.taxCents;
+    const result = shares(tax, lines);
+    expect(result.reduce((a, b) => a + b, 0)).toBe(tax);
+    expect(result[2]).toBe(0);
+    expect(result[3]).toBeLessThan(0);
+  });
+
+  it.each([1500, 1250, 900])("sums to the component's tax, each line within a cent of its exact share, at %i basis points", (rate) => {
+    const values = [...spread(400)].map((v) => v % 500_000);
+    for (let start = 0; start + 5 <= values.length; start += 5) {
+      const lines = values.slice(start, start + 5).map((v, i) => (i === 4 ? -(v % 3000) : v));
+      const gross = lines.reduce((a, b) => a + b, 0);
+      if (gross <= 0) continue;
+      const tax = splitTaxInclusiveGross(gross, registered(rate))!.taxCents;
+      const result = shares(tax, lines);
+      expect(result.reduce((a, b) => a + b, 0)).toBe(tax);
+      lines.forEach((line, i) => {
+        // |share − tax × line / gross| < 1, held in integers: |share·gross − tax·line| < gross.
+        const error = BigInt(result[i]!) * BigInt(gross) - BigInt(tax) * BigInt(line);
+        expect(error < BigInt(gross) && error > -BigInt(gross)).toBe(true);
+      });
+    }
+  });
+
+  it("shares nothing when there is nothing to share", () => {
+    expect(shares(0, [0, 0])).toEqual([0, 0]);
+    expect(shares(0, [])).toEqual([]);
+    expect(shares(0, [500, -500])).toEqual([0, 0]);
+  });
+
+  it.each([
+    [-1, [100]],
+    [101, [100]],
+    [1, [0]],
+    [1, [100, -200]],
+    [0.5, [100]],
+    [1, [Number.NaN]],
+  ])("refuses tax %s across %j", (tax, lines) => {
+    expect(allocateTaxAcrossLines(tax, lines)).toHaveProperty("problem");
   });
 });

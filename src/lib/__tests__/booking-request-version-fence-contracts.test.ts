@@ -3,6 +3,7 @@ import path from "path";
 import { describe, expect, it } from "vitest";
 import { balancedBrackets } from "./support/balanced-brackets";
 import { blankLiterals, stripComments } from "./support/strip-comments";
+import { CENSUS_TIMEOUT_MS } from "@/test/census-timeout";
 
 // #1923 source contract: the held-request conversion fences claim on an integer
 // `version` column instead of the millisecond-precision `updatedAt`. Two writes
@@ -110,7 +111,7 @@ function collectCallSites(): CallSite[] {
   return sites;
 }
 
-describe("BookingRequest version-fence source contract (#1923)", () => {
+describe("BookingRequest version-fence source contract (#1923)", { timeout: CENSUS_TIMEOUT_MS }, () => {
   const sites = collectCallSites();
 
   it("finds every BookingRequest write call site", () => {

@@ -201,6 +201,7 @@ number and prefix, and it is listed at the end of the table below.
 | `INV-CAP-040` | An import claims beds under the lodge lock, never overbooks |
 | `INV-CAP-041` | A waitlist position is read from the live queue, never stored |
 | `INV-CAP-042` | A lapsed offer's place goes on down the queue |
+| `INV-CAP-043` | An offer's window runs from the email that tells the member |
 | `INV-CAP-011` | Waitlisted and offered bookings hold no capacity until confirmed |
 | `INV-CAP-012` | A waitlist offer reprices at current rates and states what is payable |
 | `INV-CAP-013` | A member is present on only one live booking per lodge night |

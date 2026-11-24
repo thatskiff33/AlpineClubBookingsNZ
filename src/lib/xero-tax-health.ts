@@ -11,6 +11,7 @@ import { xeroTaxCategoryLabel, xeroTaxCategoryRateProblem } from "@/lib/xero-tax
 import { loadXeroTaxCategoryMappings, type XeroTaxCategoryMappings } from "@/lib/xero-tax-category-mappings";
 import { xeroTaxCodeProblem, type XeroTaxRateOption } from "@/lib/xero-tax-rate-options";
 import { readXeroTaxRatesOrNull } from "@/lib/xero-tax-rates";
+import { countOpenXeroTaxOverrideMismatches, xeroTaxOverridePauseProblem } from "@/lib/xero-tax-override-safeguard";
 
 /**
  * DOES XERO STILL AGREE WITH THE CLUB'S TAX TREATMENT? (#4632). The writer
@@ -32,6 +33,9 @@ import { readXeroTaxRatesOrNull } from "@/lib/xero-tax-rates";
  *   uses (#4988), which the mapping screen and the config import refuse but two
  *   writes at once can still leave (#5391).
  *
+ * And one the app found itself (#5208): Xero changed the GST sent on an invoice,
+ * so the journal's GST overrides are paused until finance resumes them.
+ *
  * Read outside any transaction. `checked` is false when Xero could not be read
  * at all, so a screen says "not checked" rather than "fine".
  */
@@ -41,12 +45,13 @@ export interface XeroTaxHealth {
 }
 
 export async function readXeroTaxHealth(): Promise<XeroTaxHealth> {
-  const [schedule, zone, rates, organisation, mappings] = await Promise.all([
+  const [schedule, zone, rates, organisation, mappings, pausedInvoices] = await Promise.all([
     loadClubTaxSchedule(prisma),
     readClubTimeZoneOutsideRequest(),
     readXeroTaxRatesOrNull(),
     getXeroConnectedOrganisation(),
     loadXeroTaxCategoryMappings(),
+    countOpenXeroTaxOverrideMismatches(),
   ]);
   const today = clubToday(zone);
   const period = clubTaxPeriodOn(schedule, today);
@@ -68,6 +73,8 @@ export async function readXeroTaxHealth(): Promise<XeroTaxHealth> {
   if (openingCredits) problems.push(openingCredits);
   const sharedAccount = await openingCreditsSharedAccountHealthProblem(mappings);
   if (sharedAccount) problems.push(sharedAccount);
+  const pause = xeroTaxOverridePauseProblem(pausedInvoices);
+  if (pause) problems.push(pause);
   return { checked: rates !== null || paysTax !== null, problems };
 }
 

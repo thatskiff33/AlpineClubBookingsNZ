@@ -44,7 +44,8 @@ import { prisma } from "@/lib/prisma";
  * consent row", and "you are not this target's delegate" all collapse to
  * `NOT_FOUND`, mirroring the consent endpoint's uniform 403: the guestId in
  * the URL must not work as an existence oracle for who is on which booking.
- * Only a caller the delegate rule ACCEPTS ever sees a more specific state.
+ * Only a caller the delegate rule ACCEPTS, or the target themselves, ever sees
+ * a more specific state — "this booking has been removed" included (#5266).
  */
 
 export interface DelegateConsentAskFacts {
@@ -69,6 +70,11 @@ export interface DelegateConsentAskFacts {
 export type DelegateConsentPageState =
   /** Nothing to show this caller. Deliberately indistinguishable — see above. */
   | { kind: "NOT_FOUND" }
+  /**
+   * The club has removed the booking, told ONLY to the target or an accepted
+   * delegate (owner decision 20 Nov 2026, #5266; `INV-ADDPAY-034`).
+   */
+  | { kind: "BOOKING_REMOVED" }
   /** The viewer IS the target; their surface is the booking page (D-11). */
   | { kind: "TARGET_SELF"; bookingId: string }
   /** An accepted delegate, but the module has been switched off since. */
@@ -170,20 +176,24 @@ export async function resolveDelegateConsentPageState(params: {
   });
 
   // A row that is not a member-guest consent row at all — no such row, a
-  // non-member guest, a family-scope row with nothing to answer, or a
-  // soft-deleted booking — is the same NOT_FOUND as "not your family". The
-  // authorization check runs BEFORE any status is disclosed, so an
-  // unauthorized caller learns nothing from any of these branches.
-  if (
-    !guest ||
-    !guest.memberId ||
-    guest.consentStatus === null ||
-    guest.booking.deletedAt
-  ) {
+  // non-member guest, or a family-scope row with nothing to answer — is the
+  // same NOT_FOUND as "not your family". The authorization check runs BEFORE
+  // any status is disclosed, so an unauthorized caller learns nothing from any
+  // of these branches.
+  if (!guest || !guest.memberId || guest.consentStatus === null) {
     return { kind: "NOT_FOUND" };
   }
 
+  // A REMOVED booking is said so only BELOW the two checks that make the caller
+  // entitled — being the target, or the delegate rule accepting them (#5266,
+  // `INV-ADDPAY-034`). Anybody else falls through to the same NOT_FOUND, by
+  // the same reads, as on a live booking, so the link is no deleted-versus-live
+  // oracle. The accepted delegate learns nothing new: the consent POST already
+  // tells them this same sentence (`INV-ADDPAY-035`).
+  const bookingRemoved = guest.booking.deletedAt !== null;
+
   if (guest.memberId === viewerMemberId) {
+    if (bookingRemoved) return { kind: "BOOKING_REMOVED" };
     // The target answering for themselves belongs on the booking page — D-11
     // grants their pending row full access, and the consent card lives there.
     return { kind: "TARGET_SELF", bookingId: guest.booking.id };
@@ -195,6 +205,7 @@ export async function resolveDelegateConsentPageState(params: {
     db,
   });
   if (!isDelegate) return { kind: "NOT_FOUND" };
+  if (bookingRemoved) return { kind: "BOOKING_REMOVED" };
 
   // Only an ACCEPTED delegate gets past this line; every state below may
   // honestly describe the request because the caller is entitled to know.

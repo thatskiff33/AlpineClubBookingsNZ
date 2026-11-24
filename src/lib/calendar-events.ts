@@ -28,6 +28,22 @@ export const recurrenceInputSchema = z.object({
   count: z.number().int().min(1).max(MAX_OCCURRENCES).nullish(),
 });
 
+/**
+ * The query of `GET /api/calendar/events`: the window to list, as ISO date-time
+ * bounds. Shared with the AI app action `list_club_events` (ALP-796,
+ * `INV-SSOT`). A bound that is not a date is ignored and its default used,
+ * as the calendar page has always been answered.
+ */
+/** The days before now `GET /api/calendar/events` lists when `from` is absent. */
+export const CALENDAR_EVENT_LIST_DEFAULT_DAYS_BACK = 90;
+/** The days after now it lists when `to` is absent. */
+export const CALENDAR_EVENT_LIST_DEFAULT_DAYS_AHEAD = 275;
+
+export const calendarEventListQuerySchema = z.object({
+  from: z.string().optional(),
+  to: z.string().optional(),
+});
+
 export const calendarEventInputSchema = z.object({
   title: z.string().trim().min(1, "Title is required").max(200),
   location: z.string().trim().max(200).nullish(),

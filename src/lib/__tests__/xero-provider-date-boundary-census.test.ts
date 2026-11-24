@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 
 import { stripCommentsAndStrings } from "./support/strip-comments";
 import { balancedBrackets } from "./support/balanced-brackets";
+import { CENSUS_TIMEOUT_MS } from "@/test/census-timeout";
 
 /**
  * The provider, job and export temporal boundary, enforced mechanically
@@ -327,7 +328,7 @@ const PROVIDER_FILES = providerFiles();
 // The census
 // ---------------------------------------------------------------------------
 
-describe("the census can tell code from prose", () => {
+describe("the census can tell code from prose", { timeout: CENSUS_TIMEOUT_MS }, () => {
   it("removes a line comment", () => {
     expect(stripCommentsAndStrings("a // new Date(invoice.date)\nb")).toBe("a \nb");
   });
@@ -484,7 +485,7 @@ const RULE_ONE_MESSAGE =
   "offset-less value resolves in the CONTAINER's zone (CT-5, #2869; " +
   "INV-DATE-019).\n";
 
-describe("rule 1: a Xero payload date is classified at the boundary", () => {
+describe("rule 1: a Xero payload date is classified at the boundary", { timeout: CENSUS_TIMEOUT_MS }, () => {
   it("is never parsed in place, anywhere in src/, for a Xero-distinctive field", () => {
     const offenders: string[] = [];
     for (const file of ALL_SOURCE_FILES) {
@@ -562,7 +563,7 @@ describe("rule 2: a scheduled job runs on the club's civil time", () => {
   });
 });
 
-describe("rule 3: an outbound Xero document date is derived at the boundary", () => {
+describe("rule 3: an outbound Xero document date is derived at the boundary", { timeout: CENSUS_TIMEOUT_MS }, () => {
   it("never derives one from the environment's zone", () => {
     const offenders = PROVIDER_FILES.filter((file) =>
       file.code.includes("formatDateOnlyForTimeZone"),

@@ -125,3 +125,12 @@ if (process.env.RUN_CONCURRENCY_RACE_TESTS === "1") {
   );
   serialiseRealdbFile();
 }
+
+// #5407: the alert windows every test shares are cleared before each realdb
+// test, inside the file lock above, so no claim one test leaves reaches the next.
+if (process.env.RUN_CONCURRENCY_RACE_TESTS === "1") {
+  const { resetRealdbGlobalAlertWindows } = await import(
+    "./src/lib/__tests__/support/realdb-alert-window-reset"
+  );
+  resetRealdbGlobalAlertWindows();
+}

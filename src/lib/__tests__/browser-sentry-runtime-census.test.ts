@@ -3,6 +3,7 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { CODE_EXTENSIONS, ROOT, relative, walk } from "./support/provider-mount-census";
 import { stripComments } from "./support/strip-comments";
+import { CENSUS_TIMEOUT_MS } from "@/test/census-timeout";
 
 // Runtime env access is server-only. Scanning ALL source also catches a browser
 // import of a shared helper without relying on a growing list of client roots.
@@ -21,7 +22,7 @@ describe("browser Sentry never inherits an image builder's destination (#4982)",
       .map(relative).sort();
     expect(reads).toEqual([serverConfig]);
     expect(readFileSync(path.join(ROOT, serverConfig), "utf8")).toMatch(/import ["']server-only["']/);
-  });
+  }, CENSUS_TIMEOUT_MS);
 
   it("has no DSN build argument in Docker, compose, or any workflow", () => {
     expect(readFileSync(path.join(ROOT, "Dockerfile"), "utf8")).not.toMatch(new RegExp(`^\\s*(?:ARG|ENV)\\s+${variable}\\b`, "m"));

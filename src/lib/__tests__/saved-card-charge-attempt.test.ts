@@ -62,10 +62,16 @@ const HOUR_MS = 60 * 60 * 1000;
 
 const { ledger, mocks } = vi.hoisted(() => {
   const rows: LedgerRow[] = [];
+  /** #5240: the saved-card captures flagged "not yet settled" (`unsettled-capture-marker.ts`), by key. */
+  const unsettledFlags = new Set<string>();
   let seq = 0;
   const ledger = {
     payment: { findUnique: vi.fn(async () => null) }, // These histories precede R01; M4b PostgreSQL tests cover journal posting.
     rows,
+    unsettledFlags,
+    alertCooldown: {
+      upsert: vi.fn(async (args: { where: { key: string } }) => void unsettledFlags.add(args.where.key)),
+    },
     // #4217: the settle locks the Payment row first (`lockPaymentForRefundedTotal`),
     // in a short transaction of its own on the root client - which this ledger
     // stands in for, so `$transaction` runs the callback on the ledger itself.
@@ -74,6 +80,7 @@ const { ledger, mocks } = vi.hoisted(() => {
     $transaction: vi.fn(async (fn: (tx: unknown) => Promise<unknown>) => fn(ledger)),
     reset() {
       rows.splice(0, rows.length);
+      unsettledFlags.clear();
       seq = 0;
     },
     /** #4646: the booking each payment belongs to (`Payment.bookingId`); `pay_<x>` is `bk_<x>`. */
@@ -1511,6 +1518,43 @@ describe("settleSavedCardChargeAttempt", () => {
       settle(attempt.attemptRowId, { id: "pi_x", status: "succeeded", amount: 10000, payment_method: "pm_1" })
     ).rejects.toThrow("db gone");
   });
+
+  describe("#5240: the write that captures new money flags it \"not yet settled\" for the booking's settle to consume", () => {
+    const flag = (paymentIntentId: string) => `saved-card-capture-unsettled:${paymentIntentId}`;
+
+    it("the attempt's own row, written SUCCEEDED over a row that held none: flagged", async () => {
+      const attempt = await begin();
+
+      expect(await settle(attempt.attemptRowId, { id: "pi_x", status: "succeeded", amount: 10000, payment_method: "pm_1" })).toMatchObject({ newlyCaptured: true });
+      expect([...ledger.unsettledFlags]).toEqual([flag("pi_x")]);
+    });
+
+    it("a non-captured answer is not flagged", async () => {
+      const attempt = await begin();
+
+      await settle(attempt.attemptRowId, { id: "pi_x", status: "processing", amount: 10000, payment_method: "pm_1" });
+      expect(ledger.unsettledFlags.size).toBe(0);
+    });
+
+    it("a capture already on the row (a webhook settled it first) is not flagged: the settle that wrote it ran", async () => {
+      const attempt = await begin();
+      Object.assign(row(attempt.attemptRowId), { status: PaymentStatus.SUCCEEDED, stripePaymentIntentId: "pi_x" });
+
+      expect(await settle(attempt.attemptRowId, { id: "pi_x", status: "succeeded", amount: 10000, payment_method: "pm_1" })).toMatchObject({ newlyCaptured: false });
+      expect(ledger.unsettledFlags.size).toBe(0);
+    });
+
+    it("a kept existing row moved to SUCCEEDED is flagged; one already SUCCEEDED is not", async () => {
+      const attempt = await begin();
+      ledger.seed({ paymentId: PAYMENT, status: PaymentStatus.FAILED, stripePaymentIntentId: "pi_old", amountCents: 10000 });
+      expect(await settle(attempt.attemptRowId, { id: "pi_old", status: "succeeded", amount: 10000, payment_method: "pm_1" })).toMatchObject({ keptExistingRow: true, newlyCaptured: true });
+      expect([...ledger.unsettledFlags]).toEqual([flag("pi_old")]);
+
+      ledger.unsettledFlags.clear();
+      expect(await settle(seedAttempt().id, { id: "pi_old", status: "succeeded", amount: 10000, payment_method: "pm_1" })).toMatchObject({ keptExistingRow: true, newlyCaptured: false });
+      expect(ledger.unsettledFlags.size).toBe(0);
+    });
+  });
 });
 
 describe("adoptSavedCardChargeAttemptForIntent (a webhook for an intent the ledger does not know — the lost-response recovery)", () => {
@@ -1550,6 +1594,23 @@ describe("adoptSavedCardChargeAttemptForIntent (a webhook for an intent the ledg
     const earlier = seedAttempt({ id: "txn_v2" });
 
     expect(await adopt({ idempotencyKey: earlier.reference, metadata: { bookingId: BOOKING, memberId: MEMBER, savedCardAttemptId: earlier.id } })).toMatchObject({ transactionId: earlier.id, moved: true, newlyCaptured: true });
+  });
+
+  it("#5240: the capture an adoption writes is flagged \"not yet settled\"; an adoption that loses to another writer flags nothing", async () => {
+    const attempt = seedV2Attempt();
+
+    expect(await adopt({ idempotencyKey: attempt.idempotencyKey })).toMatchObject({ moved: true, newlyCaptured: true });
+    expect([...ledger.unsettledFlags]).toEqual(["saved-card-capture-unsettled:pi_lost"]);
+
+    ledger.unsettledFlags.clear();
+    const lost = seedAttempt();
+    // Another writer stamps the intent between the lookup and the claim.
+    ledger.paymentTransaction.findFirst.mockImplementationOnce(async () => {
+      Object.assign(row(lost.id), { stripePaymentIntentId: "pi_other", status: PaymentStatus.SUCCEEDED });
+      return { id: lost.id, paymentId: lost.paymentId, reference: lost.reference, payment: { bookingId: BOOKING } };
+    });
+    expect(await adopt({ idempotencyKey: lost.reference, paymentIntent: { ...capture, id: "pi_other" } })).toMatchObject({ moved: false, newlyCaptured: false });
+    expect(ledger.unsettledFlags.size).toBe(0);
   });
 
   it("adopts an original-key row seeded directly by its key, as a row the release before #4646 minted", async () => {

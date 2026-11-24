@@ -183,6 +183,7 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 
 import { stripComments } from "@/lib/__tests__/support/strip-comments";
+import { CENSUS_TIMEOUT_MS } from "@/test/census-timeout";
 
 const ROOT = process.cwd();
 const APP_DIR = path.join(ROOT, "src", "app");
@@ -420,7 +421,7 @@ const FILES = sourceFiles(APP_DIR).filter((file) => {
   return !OTHER_GROUPS.some((prefix) => rel.startsWith(prefix));
 });
 
-describe("member/lodge/finance/public page temporal convergence (CT-4 group E, #2870)", () => {
+describe("member/lodge/finance/public page temporal convergence (CT-4 group E, #2870)", { timeout: CENSUS_TIMEOUT_MS }, () => {
   it("finds the page tree at all", () => {
     // A census whose scan returns nothing passes every assertion below while
     // proving none of them. Pin files this tree certainly contains, in three

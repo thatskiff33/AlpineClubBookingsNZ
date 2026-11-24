@@ -9,6 +9,7 @@ import {
   symbolOfKey,
 } from "./support/advisory-lock-scan";
 import { blankLiterals, blankLiteralsWithSpans, stripComments } from "./support/strip-comments";
+import { CENSUS_TIMEOUT_MS } from "@/test/census-timeout";
 
 // #182 guard (process follow-up to upstream PR #1911 review finding H1): a
 // capacity ADMISSION path must use the per-lodge lock, while global-cohort
@@ -935,6 +936,13 @@ const GLOBAL_LOCK_SITE_REGISTRY: readonly RegisteredGlobalLockSite[] = [
     invariant: "INV-LOCK-002",
   },
   {
+    site: "restartWaitlistOfferWindow#1",
+    tier: "GLOBAL",
+    reason:
+      "#5433 owner decision D2: the owed offer notice's sweep restarts an offer's window just before it sends the offer email the first attempt never sent. It moves only waitlistOfferExpiresAt, and must exclude every writer of the offer's lifecycle - expireStaleOffers' revert, the confirm, the revert after a refused confirm, the past-date cancel, the offer pass and the admin force-confirm and return to the waitlist - all of which take this key, so it joins them, then takes the booking's own lodge key as the expiry and the confirm do. It re-reads under both and claims with an updateMany guarded on WAITLIST_OFFERED, the offer's waitlistOfferedAt and its original deadline (the window it was offered with), so each offer restarts at most once; a lost claim sends nothing. No settings read, no provider call, no new key.",
+    invariant: "INV-LOCK-002",
+  },
+  {
     site: "expireStaleOffers#1",
     tier: "GLOBAL",
     reason:
@@ -1842,7 +1850,7 @@ const CAPACITY_LOCK_MINT = "src/lib/lodge-capacity-lock.ts";
  */
 const ROW_LOCK_STRENGTHS = /FOR (?:UPDATE|KEY SHARE|NO KEY UPDATE|SHARE)/g;
 
-describe("advisory lock guard (#182 / H1 regression class)", () => {
+describe("advisory lock guard (#182 / H1 regression class)", { timeout: CENSUS_TIMEOUT_MS }, () => {
   const sources = lockCensusSources(SRC_DIR);
 
   it("keeps every canonical global pg_advisory_xact_lock(1) site in the reviewed per-site registry", () => {

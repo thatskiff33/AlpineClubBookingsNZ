@@ -35,6 +35,7 @@ import { readFileSync, readdirSync, statSync } from "node:fs";
 import path from "node:path";
 import ts from "typescript";
 import { describe, expect, it } from "vitest";
+import { CENSUS_TIMEOUT_MS } from "@/test/census-timeout";
 
 const ROOT = path.resolve(__dirname, "../../..");
 const SRC = path.join(ROOT, "src");
@@ -124,7 +125,7 @@ function settledByWrites(fileName: string, text: string): number[] {
   return lines;
 }
 
-describe("Payment.settledByTransactionId has one writer home (#4211, INV-PAY-043)", { timeout: 60_000 }, () => {
+describe("Payment.settledByTransactionId has one writer home (#4211, INV-PAY-043)", { timeout: CENSUS_TIMEOUT_MS }, () => {
   it("writes it only in payment-settler.ts", () => {
     const offenders = sourceFiles(SRC).flatMap((file) => {
       const rel = path.relative(ROOT, file).split(path.sep).join("/");

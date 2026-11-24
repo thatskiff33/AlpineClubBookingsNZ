@@ -209,18 +209,20 @@ describe("deliverOwedNotice, right after the commit", () => {
       vi.setSystemTime(EVENT_AT);
     }
 
+    // #5433 review C: the run's own clock, the moment the delivery ran.
     expect(spies.deliver).toHaveBeenCalledWith({ id: "s1", open: true }, markerFor(), {
       idempotencyKey: `s1:${EVENT_AT.getTime()}`,
       job: "test",
+      now: at(30 * 60 * 1000),
     });
     expect(table.rows.size).toBe(0);
   });
 
-  it("hands an officers' kind no event key, only the job", async () => {
+  it("hands an officers' kind no event key, only the job and the run's clock", async () => {
     seed();
     const { deliverer, spies } = testDeliverer(KIND, "officers");
     await deliverOwedNotice(deliverer, markerFor(), { id: "s1", open: true });
-    expect(spies.deliver.mock.calls[0]![2]).toEqual({ job: "test" });
+    expect(spies.deliver.mock.calls[0]![2]).toEqual({ job: "test", now: EVENT_AT });
   });
 
   it("sends nothing when a sweep already holds the marker", async () => {
@@ -252,8 +254,8 @@ describe("drainOwedNotices, the sweep", () => {
     expect(spies.deliver).not.toHaveBeenCalled();
 
     await expect(drainWith(deliverer, at(WAIT))).resolves.toEqual({ checked: 1, delivered: 1, cleared: 0, expired: 0 });
-    // The sweep's own job, not the job that committed the change.
-    expect(spies.deliver.mock.calls[0]![2]).toEqual({ idempotencyKey: `s1:${EVENT_AT.getTime()}`, job: "test-sweep" });
+    // The sweep's own job, not the job that committed the change, and the sweep's own clock.
+    expect(spies.deliver.mock.calls[0]![2]).toEqual({ idempotencyKey: `s1:${EVENT_AT.getTime()}`, job: "test-sweep", now: at(WAIT) });
     expect(table.rows.size).toBe(0);
   });
 
