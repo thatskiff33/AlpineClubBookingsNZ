@@ -119,7 +119,7 @@ const DOORS: Record<string, string> = {
   "src/app/api/admin/refund-requests/[id]/route.ts": "R05 (with its concession) for an approved appeal; withdrawn with release_claim",
   "src/lib/manual-refund-task-resolution.ts": "R05 for an edit review's card refund",
   // #4516 (M4d): moved out of the resolution for its size budget; the same steps, called from the same transaction.
-  "src/lib/manual-refund-task-hand-back-journal.ts": "R14 for a hand-back paid by hand (and a by-hand review's R05); an allowed dismissal (a part to check, a disputed hand-back once lost) withdraws its R05, and a reduction withdraws part of it",
+  "src/lib/manual-refund-task-hand-back-journal.ts": "R14 for a hand-back paid by hand (and a by-hand review's R05); an allowed dismissal (a part to check, a disputed hand-back once lost) withdraws its R05, and a reduction withdraws part of it; a dispute-loss hand-back's reopen restores it (#5197)",
   "src/lib/late-capture-refund-approval.ts": "R05 for a treasurer-approved late capture's return",
   "src/lib/card-refund-paid-another-way-rest.ts": "R14 for a paid-another-way close, its reservations closed, a kept rest's close-out",
   "scripts/member-money-refund-reservations.ts": "dry-run-first refund census; exact reconciliation of reservations",
@@ -155,6 +155,9 @@ const DOORS: Record<string, string> = {
 const CONTEXT_RESOLVERS: readonly string[] = [
   // #4516: the disputed hand-back's reduction resolves the journal; its part withdrawal posts through the hand-back journal door.
   "src/lib/manual-refund-task-dispute-reduction.ts",
+  // #5197: a dispute-loss hand-back's reopen (an officer's, or a late win's) resolves the journal; its restored R05
+  // posts through the hand-back journal door.
+  "src/lib/manual-refund-task-reopen.ts",
   "src/app/api/bookings/[id]/confirm-modification-payment/route.ts",
   "src/app/api/bookings/[id]/guests/route.ts",
   "src/app/api/bookings/[id]/guests/[guestId]/route.ts",

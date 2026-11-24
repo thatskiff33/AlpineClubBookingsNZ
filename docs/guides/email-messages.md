@@ -579,7 +579,9 @@ Two consequences worth knowing before you edit one:
   alert it is and, once closed, how it ended. A subject typed by hand would
   title a closed dispute as a new one. `{{disputeNextStep}}` is what the
   treasurer does now (respond in Stripe, record a lost dispute in Xero by hand,
-  or reverse that entry when a lost dispute is won), `{{disputeHoldNote}}` says
+  or reverse that entry when a lost dispute is won; that last one also names
+  each refund task the app reopened, any it could not reopen and why, and any
+  reduction now owed to the member again, #5197), `{{disputeHoldNote}}` says
   the app gives no card refund or account credit for the payment while the
   dispute is open or lost, and `{{outcome}}` is the dispute's status. The
   message is locked to always send.

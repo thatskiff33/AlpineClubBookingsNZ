@@ -56,8 +56,11 @@ export async function recordManualRefundTaskClosureAudit({
     kind: ManualRefundTaskKind | null;
     /** #3643: set on a part-payment review. Required, so no caller can forget it. */
     partPaymentReviewPaymentId: string | null;
-    /** The booking OWNER, null when it is owned by an Organisation (#3369). */
-    booking: { memberId: string | null };
+    /**
+     * The booking OWNER, null when it is owned by an Organisation (#3369), and (#5197) its status as the closure
+     * read it under its locks: a dismissal on a cancelled booking is what lets a late win reopen an edit's refund.
+     */
+    booking: { memberId: string | null; status?: string };
   };
   resolution: "completed" | "dismissed";
   actingMemberId: string;
@@ -118,6 +121,7 @@ export async function recordManualRefundTaskClosureAudit({
         taskId: task.id,
         bookingId: task.bookingId,
         paymentId: task.paymentId,
+        bookingStatusAtClosure: task.booking.status ?? null,
         ...(bankRefundVoidAnswer
           ? {
               bankRefundVoidAnswer: bankRefundVoidAnswer.answer,
