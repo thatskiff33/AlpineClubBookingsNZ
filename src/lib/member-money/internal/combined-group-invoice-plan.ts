@@ -27,7 +27,9 @@ import {
  * (`coverBookingInvoiceLines`, `INV-SSOT`): its stay lines against its stay
  * charge, its change-fee line against its live fee components. Any child's
  * conflict is the invoice's conflict and nothing is covered. A component a
- * primary invoice or another combined invoice still covers is `ALREADY_COVERED`.
+ * primary invoice or another combined invoice still covers, an earlier attempt
+ * of the same settlement included, is `ALREADY_COVERED` (owner decision,
+ * 25 Nov 2026).
  * The Xero tax type and line-amount basis (the organiser's booking's treatment,
  * #4632) and the journal's tax codes are separate namespaces: both are frozen,
  * neither is translated.

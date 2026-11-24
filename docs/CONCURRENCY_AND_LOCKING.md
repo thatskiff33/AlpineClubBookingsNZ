@@ -7319,8 +7319,9 @@ one primary or combined invoice cover a component at a time. Two racing
 recorders, or a primary and a combined recorder on one component, meet a
 unique violation (P2002); the loser writes nothing, logs, and a replay
 re-plans it, as `ALREADY_COVERED` if the winner still covers the component
-(a winner from the same settlement's earlier attempt is waited for instead: its
-release retries the replacement's record).
+(a winner from the same settlement's earlier attempt too: owner decision,
+25 Nov 2026, #4525). A release's retry of the bound invoice's record meets that
+row under the write-once key and adds nothing.
 Releases are insert-only, one per manifest (`skipDuplicates`). The deferred
 `member_money_require_export_generation` refuses a later generation whose
 predecessor is not wholly released, at commit; it reads, never locks.

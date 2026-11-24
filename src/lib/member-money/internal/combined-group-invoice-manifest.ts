@@ -119,14 +119,13 @@ export async function recordCombinedGroupInvoiceManifest(
       : stored!.childBookingIds
         ?? (await prisma.booking.findMany({ where: committedGroupChildrenWhere(organiserBookingId), orderBy: { id: "asc" }, select: { id: true } }))
           .map((child) => child.id);
-    const recorded = await prisma.$transaction(async (tx) => {
+    const { plan, result } = await prisma.$transaction(async (tx) => {
+      // Any invoice still covering a child's component, an earlier attempt of
+      // this same settlement included, makes the plan ALREADY_COVERED: a
+      // visible conflict row with no coverage, never nothing (owner decision,
+      // 25 Nov 2026, #4525). The earlier invoice may carry money and keep its
+      // cover, so waiting for its release could leave this one unrecorded.
       const { children, liveCoverage } = await readChildren(tx, childIds);
-      // An earlier invoice of this same settlement (an abandoned attempt whose
-      // void has not run yet) still covers a child: record nothing now. Its
-      // void's release retries this invoice, so the replacement is never left
-      // a permanent ALREADY_COVERED for a cover that was always going to end.
-      if (liveCoverage.some((live) => live.documentRole === "COMBINED_GROUP_INVOICE" && live.settlementId === settlementId
-        && live.providerInvoiceId !== providerInvoiceId)) return null;
       let planned: CombinedGroupInvoicePlan;
       if (source.kind === "BUILT") {
         const legs = new Map(children.map((child) => [child.bookingId, child.postedLegs]));
@@ -162,13 +161,8 @@ export async function recordCombinedGroupInvoiceManifest(
       });
       return { plan: planned, result: written };
     });
-    if (!recorded) {
-      logger.info(context, "The combined group invoice waits for its settlement's earlier invoice to be voided; that void records it");
-      return;
-    }
-    const { plan, result } = recorded;
     if (plan.outcome === "CONFLICT" && result === "WRITTEN") {
-      logger.warn({ ...context, reason: plan.reason, problem: plan.problem }, "The combined group invoice's lines do not match the journal; its manifest records a conflict and the invoice still sent");
+      logger.warn({ ...context, reason: plan.reason, problem: plan.problem }, "The combined group invoice's lines do not match the journal, or another invoice still covers a component; its manifest records a conflict and the invoice still sent");
     }
     if (result === "KEPT_FIRST") {
       logger.info(context, "The combined group invoice's manifest was already recorded differently; the first row stands");
@@ -185,9 +179,12 @@ export async function recordCombinedGroupInvoiceManifest(
 /**
  * A combined invoice Xero holds void, or holds no such invoice: end its
  * manifest's coverage with a release row, then, when the settlement is now bound
- * to a different invoice, try that invoice's record again (its own record may
- * have met this one's live coverage). Never on an invoice carrying money: the
- * caller decides that. Never throws.
+ * to a different invoice, try that invoice's record again. That only writes a
+ * manifest the bound invoice does not have yet (its own record failed or has
+ * not run): one already recorded, an ALREADY_COVERED conflict behind this
+ * invoice's cover included, keeps its first row, so a release never adds
+ * coverage beside it. Never on an invoice carrying money: the caller decides
+ * that. Never throws.
  */
 export async function releaseCombinedGroupInvoiceManifest(input: {
   settlementId: string;

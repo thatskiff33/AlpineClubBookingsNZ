@@ -130,14 +130,35 @@ describe("recordCombinedGroupInvoiceManifest (#4525, ALP-437)", () => {
     expect(mocks.tx.memberMoneyExportCoverage.createMany).not.toHaveBeenCalled();
   });
 
-  it("records nothing while an earlier invoice of the same settlement still covers a child, so its void's release records it", async () => {
-    mocks.tx.memberMoneyExportCoverage.findMany.mockResolvedValue([
+  describe("a replacement behind its settlement's earlier invoice (owner decision, 25 Nov 2026)", () => {
+    const earlierCovers = () => mocks.tx.memberMoneyExportCoverage.findMany.mockResolvedValue([
       { account: "BOOKING_REVENUE", chargeIdentity: "booking:child-a:charge", documentRole: "COMBINED_GROUP_INVOICE",
         manifest: { settlementId: "settle-1", providerInvoiceId: "inv-0" } },
     ]);
-    await recordCombinedGroupInvoiceManifest(built(), target);
-    expect(mocks.tx.memberMoneyExportManifest.createMany).not.toHaveBeenCalled();
-    expect(mocks.logger.error).not.toHaveBeenCalled();
+
+    it("records exactly one ALREADY_COVERED conflict and no coverage, even while the earlier invoice still covers a child", async () => {
+      earlierCovers();
+      await recordCombinedGroupInvoiceManifest(built(), target);
+      expect(mocks.tx.memberMoneyExportManifest.createMany).toHaveBeenCalledOnce();
+      expect(mocks.tx.memberMoneyExportManifest.createMany.mock.calls[0][0].data).toEqual([expect.objectContaining({
+        documentRole: "COMBINED_GROUP_INVOICE", legacyKey: "group-settlement:settle-1:invoice:attempt-1:v1",
+        settlementId: "settle-1", providerInvoiceId: "inv-1", outcome: "CONFLICT", reason: "ALREADY_COVERED",
+      })]);
+      expect(mocks.tx.memberMoneyExportCoverage.createMany).not.toHaveBeenCalled();
+      expect(mocks.logger.warn).toHaveBeenCalledWith(expect.objectContaining({ reason: "ALREADY_COVERED" }), expect.any(String));
+      expect(mocks.logger.error).not.toHaveBeenCalled();
+    });
+
+    it("records nothing new on a replay: the first row stands", async () => {
+      earlierCovers();
+      await recordCombinedGroupInvoiceManifest(built(), target);
+      const first = manifestRow();
+      vi.clearAllMocks();
+      mocks.tx.memberMoneyExportManifest.findUnique.mockResolvedValue({ payloadHash: first.payloadHash, providerInvoiceId: first.providerInvoiceId });
+      await recordCombinedGroupInvoiceManifest(built(), target);
+      expect(mocks.tx.memberMoneyExportManifest.createMany).not.toHaveBeenCalled();
+      expect(mocks.tx.memberMoneyExportCoverage.createMany).not.toHaveBeenCalled();
+    });
   });
 
   it("holds the plan to the lines Xero says the invoice bills", async () => {
@@ -226,6 +247,27 @@ describe("releaseCombinedGroupInvoiceManifest (#4525, ALP-437)", () => {
     expect(mocks.xeroSyncOperation.findMany).toHaveBeenCalledWith(expect.objectContaining({
       where: expect.objectContaining({ OR: [{ xeroObjectId: "inv-2" }] }),
     }));
+  });
+
+  it("releasing the earlier invoice adds no coverage beside the replacement's ALREADY_COVERED conflict", async () => {
+    // inv-0 was abandoned and is now void; the settlement is bound to inv-1, already recorded as a conflict.
+    mocks.manifests.findMany.mockResolvedValue([{ id: "manifest-0" }]);
+    mocks.groupBookingSettlement.findUnique.mockResolvedValue({ xeroInvoiceId: "inv-1", groupBooking: { organiserBookingId: "organiser-1" } });
+    mocks.xeroSyncOperation.findMany.mockResolvedValue([
+      { correlationKey: "group-settlement:settle-1:invoice:attempt-1:v1", xeroObjectId: "inv-1",
+        requestPayload: { invoices: [{ lineItems: sanitizeForJson([stayLine(9000), stayLine(8000)]) }], childBookingIds: ["child-a", "child-b"] } },
+    ]);
+    mocks.tx.memberMoneyExportManifest.findUnique.mockResolvedValue({ payloadHash: "conflict-hash", providerInvoiceId: "inv-1" });
+    await releaseCombinedGroupInvoiceManifest({ settlementId: "settle-1", invoiceId: "inv-0", reason: "VOIDED" });
+    expect(mocks.tx.memberMoneyExportCoverageRelease.createMany).toHaveBeenCalledWith({
+      data: [expect.objectContaining({ manifestId: "manifest-0", reason: "VOIDED" })], skipDuplicates: true,
+    });
+    expect(mocks.tx.memberMoneyExportManifest.findUnique).toHaveBeenCalledWith(expect.objectContaining({
+      where: { documentRole_legacyKey: { documentRole: "COMBINED_GROUP_INVOICE", legacyKey: "group-settlement:settle-1:invoice:attempt-1:v1" } },
+    }));
+    expect(mocks.tx.memberMoneyExportManifest.createMany).not.toHaveBeenCalled();
+    expect(mocks.tx.memberMoneyExportCoverage.createMany).not.toHaveBeenCalled();
+    expect(mocks.logger.error).not.toHaveBeenCalled();
   });
 
   it("never throws", async () => {

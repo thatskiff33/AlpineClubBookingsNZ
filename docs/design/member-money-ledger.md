@@ -716,9 +716,15 @@ only by an insert-only `MemberMoneyExportCoverageRelease` row, written when
 Xero holds the invoice void or holds no such invoice, never when it carries
 money; the next document then covers the component at the next coverage
 generation. A replacement invoice whose settlement's earlier invoice still
-covers a child records nothing until that earlier invoice's release, which
-records it; one carrying money keeps its cover, and the replacement stays
-unrecorded.
+covers a child is `ALREADY_COVERED` like any other: a visible conflict row
+with no coverage, so nothing sent to Xero goes unrecorded, even behind an
+earlier invoice that carries money and keeps its cover (owner decision,
+25 Nov 2026, #4525). The manifest is write-once, so that conflict stands after
+the earlier invoice's release: the release retries the bound invoice's record,
+which finds the row already there and adds no coverage, and the components are
+then covered by neither invoice, which the conflict row records. The retry
+writes only for a bound invoice with no manifest yet (its own record failed or
+has not run), and then covers the released components at the next generation.
 
 | Rendered object | Ledger slice and coverage rule |
 | --- | --- |
