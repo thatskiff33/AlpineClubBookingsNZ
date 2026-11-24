@@ -197,10 +197,11 @@ The endpoint's event list in the Stripe dashboard includes all four.
   follow. Say "before or during the deploy" in What to do when the step cannot
   wait until after: the filed list tells the reader to do such a step before
   deploying.
-- Every link is an absolute `https://` URL; write a repository path in
-  backticks instead. A step is copied into the upgrade guide, the notes page
-  and a GitHub issue, where a relative or same-page link points somewhere
-  different in each, so a relative link is refused.
+- Every link, Markdown or HTML (`<a href>`, `<img src>`), is an absolute
+  `https://` URL or a `mailto:` address; write a repository path in backticks
+  instead. A step is copied into the upgrade guide, the notes page and a
+  GitHub issue, where a relative or same-page link points somewhere different
+  in each, so a relative link, or any other scheme, is refused.
 - The name is lower-case letters, digits and hyphens. It normally opens with
   the pull request's number, which the checklist links; a lane that names its
   files before the pull request exists may use its lane name and rename it
@@ -214,15 +215,33 @@ pull request still writes its ordinary fragment too.
 What happens to it:
 
 - **`verify` and `pnpm run pr:check`** fail a pull request whose "Manual Checks
-  Required" or "Migration Or Deployment Impact" answer names a step for after
-  the deploy or the release ("after deploy", "post-deploy", "after release",
-  "once this ships", "the owner runs" or "should run", "after upgrading") while
-  its diff adds or changes no `.deploy.md` fragment, and fail any `.deploy.md`
-  it adds or changes that is malformed
-  (`scripts/ci/check-pr-deploy-fragment.mjs`). There is no escape marker. A
-  pull request with no such step answers "None. No after-deploy step.": a
-  negated answer ("None after deploy.", "Nothing to do after release.") names
-  no step, but a step in another clause or sentence beside it still counts.
+  Required" or "Migration Or Deployment Impact" answer names a time after
+  the deploy or the release ("after deploy", "after the next deploy",
+  "post-deploy", "after release", "after the new release", "post-release",
+  "after upgrading", "after the upgrade", "after cutover", "once this ships",
+  "once deployed") or says "the owner runs" or "should run", in any case and
+  even wrapped onto the next line, while its diff adds or changes no
+  `.deploy.md` fragment, and fail any `.deploy.md` it adds or changes that is
+  malformed (`scripts/ci/check-pr-deploy-fragment.mjs`).
+  A pull request with no such step answers "None. No after-deploy step." The
+  gate reads a negated answer as no step: "no", "none" or "nothing" before
+  the time, with only words such as "step", "is", "needed" or "to do"
+  between ("None after deploy.", "Nothing to do after release."), or the time
+  then "nothing" or "none" ("After deploy: nothing"), which covers the rest of
+  its clause. A clause ends at a full stop, a semicolon or the line's end;
+  each gap between the negation's words may hold one line break, unless the
+  next line opens with a capital (a new sentence). Anything outside the
+  negated clause is read as usual, so "None. After deploy, run the census."
+  fails. So does a negated clause that goes on with "unless", "if", "but" or
+  "except": "No step is needed after deploy unless SMTP is set." and "After
+  deploy, nothing changes for members, but run the backfill." both fail.
+
+  There is no escape marker or phrase (owner decision, 25 Nov 2026, #5379):
+  a sentence that only describes behaviour after the deploy trips the gate
+  too, and its author rewords it to name no time after the deploy. For
+  example, "Just after deploy one extra alert can go out" becomes "One extra
+  alert can go out while the two releases overlap."
+
   The release-prep pull request, which deletes the fragments it files and
   changes nothing but the files `release:cut prepare` writes, is exempt.
 - **`pnpm run release:cut prepare`** refuses to cut, changing nothing, while any

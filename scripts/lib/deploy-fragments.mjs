@@ -53,20 +53,28 @@ const HEADING = /^ {0,3}(#{1,6})(?:[ \t]+(.*?))?[ \t]*#*[ \t]*$/;
 /** A first line that cannot follow `**Who:** ` on one line: a list item, fence, quote, table or indented code. */
 const NOT_PROSE = /^(?:[ \t]*(?:[-*+][ \t]|\d+[.)][ \t]|`{3}|~{3}|>|\|)|[ \t]{4})/;
 const MARKER_TEXT = /<!-{2}\s*deploy-steps:/;
-/** A link target with a scheme (`https:`, `mailto:`), the only kind that means the same thing in every copy of a step. */
-const ABSOLUTE_TARGET = /^<?[a-z][a-z0-9+.-]*:/i;
+/** An `https:` or `mailto:` target, the only kinds that mean the same thing, and are safe, in every copy of a step. */
+const ALLOWED_TARGET = /^<?(?:https|mailto):/i;
+/** An HTML tag's link attribute, `<a href="…">` or `<img src='…'>`, quoted or not; the target is group 1, 2 or 3. */
+const HTML_LINK_ATTRIBUTE = /<[a-z][a-z0-9-]*\b[^>]*?\s(?:href|src)[ \t]*=[ \t]*(?:"([^"]*)"|'([^']*)'|([^\s"'>]+))/gi;
+/** A Markdown autolink, `<scheme:…>`. */
+const AUTOLINK = /<([a-z][a-z0-9+.-]{1,31}:[^<>\s]*)>/gi;
 
 /**
- * The relative link targets in `text`: every inline or reference link whose
- * target has no scheme. A step is copied into the upgrade guide, the release
- * notes page and a GitHub issue, where a relative or same-page link points
- * somewhere different in each, so none is allowed. Code is not read.
+ * The link targets in `text` a step may not carry: every inline or reference
+ * link, autolink and HTML `href` or `src` whose target is not `https:` or
+ * `mailto:`. A step is copied into the upgrade guide, the release notes page
+ * and a GitHub issue, where a relative or same-page link points somewhere
+ * different in each, and another scheme (`http:`, `javascript:`, `file:`) is
+ * insecure or meaningless there, so none is allowed. Code is not read.
  */
-function relativeLinkTargets(text) {
+function refusedLinkTargets(text) {
   const masked = maskCode(text);
-  return [...inlineLinkTargets(masked), ...refDefTargets(masked)]
-    .map(({ target }) => target)
-    .filter((target) => !ABSOLUTE_TARGET.test(target));
+  const html = [...masked.matchAll(HTML_LINK_ATTRIBUTE)].map((match) => match[1] ?? match[2] ?? match[3]);
+  const autolinks = [...masked.matchAll(AUTOLINK)].map((match) => match[1]);
+  return [...inlineLinkTargets(masked).map(({ target }) => target), ...refDefTargets(masked).map(({ target }) => target), ...autolinks, ...html].filter(
+    (target) => !ALLOWED_TARGET.test(target.trim()),
+  );
 }
 
 /** Whether a `changelog.d/` filename is an after-deploy step rather than a changelog entry. */
@@ -132,8 +140,9 @@ function splitFragment(text) {
  * is empty; "Who" is one of `DEPLOY_ROLES` on one line; "What to do" and "How
  * to check it worked" each open with a line of prose (it follows the role, or
  * the words "How to check it worked:", on one line); nothing names the
- * rendered block's markers; every link is absolute (`https://…`), since a
- * relative one breaks once the step is copied out of `changelog.d/`.
+ * rendered block's markers; every link, Markdown or HTML, is `https:` or
+ * `mailto:`, since a relative one breaks once the step is copied out of
+ * `changelog.d/` and another scheme is unsafe in an issue.
  */
 export function deployFragmentProblems(name, text) {
   const problems = [];
@@ -162,11 +171,12 @@ export function deployFragmentProblems(name, text) {
   if (labelled.some(([, lines]) => lines.some((line) => MARKER_TEXT.test(line)))) {
     problems.push(`it must not contain the "${DEPLOY_STEPS_START}" or "${DEPLOY_STEPS_END}" markers`);
   }
-  const relative = relativeLinkTargets(String(text ?? ""));
-  if (relative.length > 0) {
+  const refused = refusedLinkTargets(String(text ?? ""));
+  if (refused.length > 0) {
     problems.push(
-      `it links ${relative.map((target) => `"${target}"`).join(", ")}: a step is copied into the upgrade guide, the notes page ` +
-        "and an issue, where a relative link breaks, so write a path in backticks or link an absolute https:// URL",
+      `it links ${refused.map((target) => `"${target}"`).join(", ")}: a step is copied into the upgrade guide, the notes page ` +
+        "and an issue, where a relative link breaks, so write a path in backticks or link an absolute https:// URL " +
+        "(or a mailto: address)",
     );
   }
   return problems;

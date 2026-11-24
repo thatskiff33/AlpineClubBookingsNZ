@@ -11,13 +11,17 @@
  * A PR fails when:
  *   1. its "Manual Checks Required" or "Migration Or Deployment Impact" section
  *      names a step for after the deploy or the release ("after deploy", "after
- *      release", "once this ships", "the owner should run", "after upgrading",
- *      …) and the diff adds or changes no `.deploy.md` fragment. A negated
- *      answer names no step: "None. No after-deploy step." and "None after
- *      deploy." pass. A release-prep PR, which deletes the fragments it files,
- *      edits `CHANGELOG.md` and changes nothing outside the paths
- *      `release:cut prepare` writes (`RELEASE_PREP_PATHS`), is exempt: its body
- *      describes the steps it is filing. There is no escape marker;
+ *      release", "post-release", "once deployed", "the owner should run",
+ *      "after the upgrade", `WHEN_WORDS`) and the diff adds or changes no
+ *      `.deploy.md` fragment. A negated answer names no step: "None. No
+ *      after-deploy step." and "None after deploy." pass, unless its clause
+ *      goes on "unless", "if", "but" or "except". A release-prep PR, which
+ *      deletes the fragments it files, edits `CHANGELOG.md` and changes
+ *      nothing outside the paths `release:cut prepare` writes
+ *      (`RELEASE_PREP_PATHS`), is exempt: its body describes the steps it is
+ *      filing. There is no escape marker or phrase (owner decision, 25 Nov
+ *      2026): a sentence that only describes behaviour after the deploy is
+ *      reworded;
  *   2. a `.deploy.md` fragment it adds or changes is malformed;
  *   3. its diff is unknown, since neither rule can then be judged.
  *
@@ -47,37 +51,78 @@ const GATE_LABEL = "PR after-deploy step check";
 /** The body sections where a pull request names what has to happen around its deploy. */
 export const DEPLOY_STEP_SECTIONS = Object.freeze(["## Manual Checks Required", "## Migration Or Deployment Impact"]);
 
-/** Phrases that name a step for after the deploy or the release. */
+/** The space between two words: spaces, or one line break where the text wraps. */
+const GAP = String.raw`(?:[ \t]+|[ \t]*\r?\n[ \t]*)`;
+
+/** `source` with each space read as a `GAP`, and each `[ -]` as a hyphen or a `GAP`. */
+function wrapping(source) {
+  return source
+    .split("[ -]")
+    .map((part) => part.split(" ").join(GAP))
+    .join(`(?:-|${GAP})`);
+}
+
+/**
+ * When a step would happen, one source each, case-insensitive: "after deploy",
+ * "post-deploy", "after the next deploy"; "after release", "after the new
+ * release", "post-release" (not "after release-prep merges" or "after this
+ * release's webhook"); "after the new colour"; "after upgrading", "after the
+ * upgrade"; "after cutover"; "once this ships", "once deployed", "once the new
+ * release is serving". The gate reads them as a step, and the negated answer
+ * below reads the same list, so the two cannot drift apart. A space in a
+ * source is a `GAP` and `[ -]` a hyphen or a `GAP` (`wrapping`), so a phrase
+ * that wraps onto the next line is still read.
+ */
+const WHEN_WORDS = [
+  String.raw`(?:after|post)[ -](?:(?:the|this|each|a)[ -])?(?:(?:next|new)[ -])?deploy(?:ing|ment|s|ed)?\b`,
+  String.raw`after (?:(?:the|this|each|a) )?(?:new )?release\b(?!-|['’]s\b)`,
+  String.raw`post[ -]release\b(?!-|['’]s\b)`,
+  String.raw`after (?:the )?new colou?r\b`,
+  String.raw`after (?:(?:the|this|an?) )?upgrad(?:e|ing)\b`,
+  String.raw`(?:after|post)[ -](?:the )?cut-?over\b`,
+  String.raw`once (?:this|it) ships\b`,
+  String.raw`once (?:(?:this|it|the (?:new )?(?:release|colou?r|version)) (?:is|has been) )?(?:deployed|released|live|serving)\b`,
+].map(wrapping);
+
+/** Phrases that name a step for after the deploy or the release, in the order they are reported. */
 const AFTER_DEPLOY_PHRASES = [
-  /\bafter[ -](?:the[ -])?deploy(?:ing|ment|s|ed)?\b/i,
-  /\bpost[ -]deploy(?:ment)?\b/i,
-  // "After release, run …", "after the release"; not "after release-prep merges".
-  /\bafter (?:(?:the|this|each|a) )?release\b(?!-)/i,
-  /\bonce (?:this|it) (?:ships|is (?:deployed|released|live))\b/i,
-  /\b(?:owner|operator) (?:(?:should|must|will|needs to) )?runs?\b/i,
-  /\bafter upgrading\b/i,
+  ...WHEN_WORDS.map((source) => new RegExp(String.raw`\b${source}`, "i")),
+  new RegExp(wrapping(String.raw`\b(?:owner|operator) (?:(?:should|must|will|needs to) )?runs?\b`), "i"),
 ];
 
-/** "after deploy", "post-deploy", "after the release", "after upgrading": when a step would happen. */
-const AFTER_WORDS = String.raw`(?:(?:after|post)[ -](?:the[ -])?deploy(?:ing|ment|s|ed)?|after (?:(?:the|this|each|a) )?release(?!-)|after upgrading)\b`;
+const WHEN = `(?:${WHEN_WORDS.join("|")})`;
+const FILLER = String.raw`(?:manual|further|other|extra|separate|additional|special|owner|operator|deploy(?:ment)?|steps?|actions?|checks?|tasks?|work|is|are|needed|required|necessary|to[ \t]+do)`;
+/** The rest of a clause: it ends at a full stop, a semicolon or the line's end. */
+const CLAUSE_REST = String.raw`[^.;\n]*`;
+/** A word after a negation that makes it conditional, or turns to a step: "unless SMTP is set", "but run …". */
+const UNLESS = String.raw`\b(?:unless|if|but|except)\b`;
 
 /**
  * A negated answer: "no", "none" or "nothing" and an after-deploy word in one
  * clause, such as "None. No after-deploy step.", "None after deploy." or
  * "Nothing to do after release." (house idioms on many merged PRs), or the
- * word first, as in "After deploy: nothing". Only a few filler words may stand
- * between them, so "No migration, but after deploy run …" still names a step,
- * and "None before merge. After deploy, …" does too: the full stop ends the
- * clause.
+ * word first, as in "After deploy: nothing", which then runs to the clause's
+ * end. Only a few filler words may stand between them, so "No migration, but
+ * after deploy run …" still names a step, and "None before merge. After
+ * deploy, …" does too: the full stop ends the clause. One line break may stand
+ * between two of its words, where a wrapped answer breaks. It is not a
+ * negation when the rest of its clause says "unless", "if", "but" or
+ * "except": "No step is needed after deploy unless SMTP is set; then set FOO."
+ * and "After deploy, nothing changes for members, but run …" name a step.
  */
 const NEGATED_AFTER_DEPLOY = new RegExp(
-  String.raw`\b(?:no|none|nothing)\b(?:[ \t]+(?:manual|further|other|extra|separate|additional|special|owner|operator|deploy(?:ment)?|steps?|actions?|checks?|tasks?|work|is|are|needed|required|necessary|to[ \t]+do))*[ \t]+${AFTER_WORDS}` +
-    String.raw`|\b${AFTER_WORDS}[:,]?[ \t]+(?:nothing|none)\b`,
+  String.raw`\b(?:no|none|nothing)\b(?:${GAP}${FILLER})*${GAP}${WHEN}(?!${CLAUSE_REST}${UNLESS})` +
+    String.raw`|\b${WHEN}[:,]?${GAP}(?:nothing|none)\b(?!${CLAUSE_REST}${UNLESS})${CLAUSE_REST}`,
   "gi",
 );
 
-/** `section` with each negated after-deploy answer blanked, so it cannot read as a step. */
-const withoutNegatedAnswers = (section) => section.replace(NEGATED_AFTER_DEPLOY, (match) => " ".repeat(match.length));
+/**
+ * `section` with each negated after-deploy answer blanked, so it cannot read as
+ * a step. A match whose line break is followed by a capital is left alone: the
+ * next line starts a new sentence, as in "None" then "After deploy, run …".
+ */
+const withoutNegatedAnswers = (section) =>
+  section.replace(NEGATED_AFTER_DEPLOY, (match) => (/\n[ \t]*[A-Z]/.test(match) ? match : match.replace(/[^\n]/g, " ")));
 
 /** Whether `file` is one `release:cut prepare` writes, so a release-prep PR may change it. */
 const isReleasePrepPath = (file) => RELEASE_PREP_PATHS.some((prefix) => file === prefix || file.startsWith(`${prefix}/`));
@@ -142,7 +187,8 @@ export function validateDeployFragment(body, changes, { contentsOf } = {}) {
     `"${mention.section}" names a step for after the deploy ("${mention.phrase}"), but the PR adds no ` +
       `changelog.d/<pr-number>-<slug>${DEPLOY_FRAGMENT_SUFFIX} fragment. Write each such step as one ` +
       `(changelog.d/README.md, "After-deploy steps") so the release's post-deploy checklist carries it. ` +
-      "If there is no such step, answer \"None. No after-deploy step.\"",
+      "If there is no such step, answer \"None. No after-deploy step.\", and reword any sentence that only " +
+      "describes what happens after the deploy so it names no time after the deploy (changelog.d/README.md).",
   );
 }
 

@@ -156,6 +156,51 @@ describe("PR after-deploy step gate (#5379)", () => {
     expect(afterDeployMention(body({ manual: "- The tag is cut after release-prep merges." }))).toBeNull();
   });
 
+  // Review of c1eda3d9b7: wordings merged PRs used (#5424, #5367, #5112, #5049) that the gate missed.
+  it.each([
+    ["- Re-run `pnpm run diagnostics:provision-role` once after the new release is serving.", "after the new release"],
+    ["- After the next deploy the owner may check the nightly census.", "After the next deploy"],
+    ["- Once deployed, map the account.", "Once deployed"],
+    ["- After the upgrade, an officer confirms the timings block.", "After the upgrade"],
+    ["- Re-run the repair migration once after cutover.", "after cutover"],
+    ["- Post-release: confirm the webhook.", "Post-release"],
+    ["- AFTER THE NEXT DEPLOY, map the account.", "AFTER THE NEXT DEPLOY"],
+    ["- Map the account once after\n  deploy.", "after\n  deploy"],
+  ])("finds the step in %j", (answer, phrase) => {
+    expect(afterDeployMention(body({ manual: answer }))).toEqual({ section: "## Manual Checks Required", phrase });
+    expect(afterDeployMention(body({ impact: answer }))).toEqual({ section: "## Migration Or Deployment Impact", phrase });
+  });
+
+  it("does not read a possessive as a time after the release", () => {
+    // #5471's wording: it describes the switch, not a step.
+    const answer = "- The previous release's job can still send its own copy after this release's webhook sent one.";
+    expect(afterDeployMention(body({ impact: answer }))).toBeNull();
+  });
+
+  it.each([
+    ["- After deploy, nothing changes for members, but run `pnpm backfill` once.", "After deploy"],
+    ["- No step is needed after deploy unless SMTP is set; then set FOO.", "after deploy"],
+    ["- No after-deploy step if the club uses Stripe; then check the webhook.", "after-deploy"],
+    ["- None after deploy, except clubs on Xero map the account.", "after deploy"],
+    ["- After deploy: nothing, unless the module is on.", "After deploy"],
+    ["- None\nAfter deploy, run the census.", "After deploy"],
+  ])("does not let a negation hide the step in %j", (answer, phrase) => {
+    expect(afterDeployMention(body({ manual: answer }))).toEqual({ section: "## Manual Checks Required", phrase });
+  });
+
+  it.each([
+    "- None. No\n  after-deploy step.",
+    "- None after\n  deploy.",
+    "- After deploy,\n  nothing; the feature stays off.",
+    "- After deploy, nothing changes for members.",
+    "- Nothing to do once deployed.",
+    "- No step is needed after the upgrade.",
+    "- No operator step after cutover.",
+  ])("reads %j as no step, wrapped or not", (answer) => {
+    expect(afterDeployMention(body({ manual: answer }))).toBeNull();
+    expect(afterDeployMention(body({ impact: answer }))).toBeNull();
+  });
+
   it("does not let a changelog entry stand in for a deploy step", () => {
     const diff = [...CODE, ...changes("A changelog.d/5309-stuck-report.md")];
     expect(() => validateDeployFragment(body({ manual: "- After deploy, run it." }), diff, { contentsOf: headOf({}) })).toThrow(

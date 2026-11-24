@@ -91,6 +91,40 @@ describe("deploy fragment shape", () => {
     expect(problems(fragment({ what: "Read `docs/guides/mcp-server.md`, not `[x](../y.md)`." }))).toBe("");
   });
 
+  it("accepts only https: and mailto: in Markdown links, and refuses any other scheme", () => {
+    for (const link of [
+      "See [the page](http://example.com/guide).",
+      "Run [this](javascript:alert(1)).",
+      "Open [the file](file:///etc/hosts).",
+      "See [the runbook][rb].\n\n[rb]: ftp://example.com/runbook",
+      "See <http://example.com/guide>.",
+    ]) {
+      expect(problems(fragment({ what: link })), link).toMatch(/it links ".+": .*link an absolute https:\/\/ URL \(or a mailto: address\)/);
+    }
+    for (const link of [
+      "Write to [the treasurer](mailto:treasurer@example.com).",
+      "See [the page](<https://example.com/a b>).",
+      "See <https://example.com/guide>.",
+      "See [the runbook][rb].\n\n[rb]: https://example.com/runbook",
+    ]) {
+      expect(problems(fragment({ what: link })), link).toBe("");
+    }
+  });
+
+  it("refuses an HTML link or image whose target is relative or not https: or mailto:", () => {
+    for (const html of [
+      'See <a href="../x.md">the guide</a>.',
+      "See <a href='#after-deploying-this-release'>the list</a>.",
+      "See <a class=\"x\" href=/admin/audit-log>the log</a>.",
+      'See <a href="http://example.com">the page</a>.',
+      'It shows <img src="docs/shot.png" alt="the page">.',
+    ]) {
+      expect(problems(fragment({ check: html })), html).toMatch(/it links ".+": /);
+    }
+    expect(problems(fragment({ check: 'See <a href="https://example.com/guide">the guide</a> or <a href="mailto:a@example.com">write</a>.' }))).toBe("");
+    expect(problems(fragment({ check: 'Code is not read: `<a href="../x.md">`.' }))).toBe("");
+  });
+
   it("throws on a malformed step rather than parse part of it", () => {
     expect(() => parseDeployFragment("1-x.deploy.md", fragment({ who: "everyone" }))).toThrow(/changelog\.d\/1-x\.deploy\.md: .*one of owner/);
   });
