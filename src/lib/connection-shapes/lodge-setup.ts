@@ -15,7 +15,7 @@
 import type { DisplayNameGranularity } from "@prisma/client";
 
 import type { labelOwnedLodges } from "@/lib/central-lodge-link";
-import { connectionShapeFor } from "@/lib/connection-projection";
+import { type ConnectionShapeFor, connectionShapeFor } from "@/lib/connection-projection";
 import type { SerializedLodge } from "@/lib/lodges";
 import type { AdminOtherLodge, AdminOtherLodgesResponse } from "@/lib/other-lodges";
 import type { UploadAfterSave } from "@/lib/servernz-upload-after-save";
@@ -32,7 +32,7 @@ const LODGE_SHAPE = {
   active: true,
   address: true,
   travelNote: true,
-} as const;
+} as const satisfies ConnectionShapeFor<SerializedLodge>;
 
 /** The officer's lodge list. An officer without `lodge:view` is never offered it. */
 export const ADMIN_LODGE_LIST_CONNECTION_SHAPE = connectionShapeFor<{ lodges: SerializedLodge[] }>({
@@ -119,7 +119,7 @@ const LODGE_SETTINGS_SAVED_FIELDS = {
   hutLeaderLookaheadDays: true,
   schoolGroupSoftCap: true,
   clubConfigCapacity: true,
-} as const;
+} as const satisfies ConnectionShapeFor<LodgeSettingsSavedAnswer>;
 
 export const ADMIN_LODGE_SETTINGS_SAVED_CONNECTION_SHAPE =
   connectionShapeFor<LodgeSettingsSavedAnswer>(LODGE_SETTINGS_SAVED_FIELDS);
@@ -181,7 +181,7 @@ const OTHER_LODGE_SHAPE = {
   ratesFromFees: true,
   feesProblem: true,
   notOnCentralServer: { bookings: true, bookingRequests: true },
-} as const;
+} as const satisfies ConnectionShapeFor<AdminOtherLodge>;
 
 /** Each row's fields beyond its data depend on whether the club owns it (`oneOfSeveralAnswers` in the tests). */
 export const ADMIN_OTHER_LODGE_LIST_CONNECTION_SHAPE = connectionShapeFor<AdminOtherLodgesResponse>({

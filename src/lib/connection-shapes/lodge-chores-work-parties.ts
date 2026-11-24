@@ -16,7 +16,7 @@
  */
 import type { BookingStatus, ChoreTemplate, WorkPartyEvent } from "@prisma/client";
 
-import { connectionShapeFor } from "@/lib/connection-projection";
+import { type ConnectionShapeFor, connectionShapeFor } from "@/lib/connection-projection";
 
 // ---------------------------------------------------------------------------
 // Chores
@@ -39,7 +39,7 @@ const CHORE_SHAPE = {
   frequencyDaysOfWeek: true,
   active: true,
   lodgeId: true,
-} as const;
+} as const satisfies ConnectionShapeFor<ChoreTemplate>;
 
 export const ADMIN_CHORE_CONNECTION_SHAPE = connectionShapeFor<ChoreTemplate>(CHORE_SHAPE);
 
@@ -60,7 +60,7 @@ const WORK_PARTY_SHAPE = {
   discountPercent: true,
   active: true,
   lodgeId: true,
-} as const;
+} as const satisfies ConnectionShapeFor<WorkPartyEvent>;
 
 /** One work party of `GET /api/admin/work-parties`, with what the card shows beside it. */
 export type AdminWorkPartyListRow = WorkPartyEvent & {

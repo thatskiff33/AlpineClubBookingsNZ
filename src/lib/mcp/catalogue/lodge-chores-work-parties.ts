@@ -100,7 +100,7 @@ export const LODGE_CHORE_WORK_PARTY_MCP_ACTIONS: readonly McpAction[] = [
     id: "list_all_work_parties",
     title: "List all work parties",
     summary:
-      "Officer: every work party (working bee), past and future, latest first, under `events`: name, description, first and last discounted night (`YYYY-MM-DD`, both included), discount percentage, whether active, lodge (null for club-wide), whether it is on the Events Calendar and can be added to it, how many bookings attend it and their total discount in integer cents.",
+      "Officer: every work party (working bee), past and future, latest first, under `events`: name, description, first and last discounted night (ISO timestamps whose date part is the night, both included), discount percentage, whether active, lodge (null for club-wide), whether it is on the Events Calendar and can be added to it, how many bookings attend it and their total discount in integer cents.",
     method: "GET",
     path: "/api/admin/work-parties",
     kind: "read",
@@ -112,7 +112,7 @@ export const LODGE_CHORE_WORK_PARTY_MCP_ACTIONS: readonly McpAction[] = [
     id: "get_work_party_attendance",
     title: "Read a work party and its bookings",
     summary:
-      "Officer: one work party by `id` (from `list_all_work_parties`), with each booking attending it under `attendingBookings`: the booking's id, dates (`YYYY-MM-DD`), status and final price, the discount it got, and the member's id and name; and `totalDiscountCents`. Money in integer cents. No contact details.",
+      "Officer: one work party by `id` (from `list_all_work_parties`), with each booking attending it under `attendingBookings`: the booking's id, dates (ISO timestamps whose date part is the lodge night), status and final price, the discount it got, and the member's id and name; and `totalDiscountCents`. Money in integer cents. No contact details.",
     method: "GET",
     path: "/api/admin/work-parties/[id]",
     params: routeIdParamsSchema,
@@ -138,7 +138,7 @@ export const LODGE_CHORE_WORK_PARTY_MCP_ACTIONS: readonly McpAction[] = [
     id: "update_work_party",
     title: "Change a work party",
     summary:
-      "Officer: changes a work party (`id` from `list_all_work_parties`). Send every field, as read from `get_work_party_attendance`: name, description, dates (`YYYY-MM-DD`), discount, whether active and lodge; an omitted description is cleared, an omitted discount becomes 100, an omitted `active` true and an omitted lodge club-wide. Deactivating stops new bookings choosing it and never changes bookings already attending. Its calendar entries follow the change. Answers the saved work party.",
+      "Officer: changes a work party (`id` from `list_all_work_parties`). Send every field, as read from `get_work_party_attendance`: name, description, dates (`YYYY-MM-DD`, the date part of what was read), discount, whether active and lodge; an omitted description is cleared, an omitted discount becomes 100, an omitted `active` true and an omitted lodge club-wide. Deactivating stops new bookings choosing it and never changes bookings already attending. Its calendar entries follow the change. Answers the saved work party.",
     method: "PUT",
     path: "/api/admin/work-parties/[id]",
     params: routeIdParamsSchema,

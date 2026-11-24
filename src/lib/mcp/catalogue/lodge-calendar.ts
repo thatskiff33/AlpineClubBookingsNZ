@@ -48,7 +48,7 @@ export const LODGE_CALENDAR_MCP_ACTIONS: readonly McpAction[] = [
   {
     id: "update_calendar_event",
     title: "Change a club calendar event",
-    summary: `Officer: changes an event (\`id\` from \`list_club_events\`), sending every field again: ${EVENT_FIELDS}. \`scope: series\` changes every occurrence of a repeating event. An entry a work party manages is changed from its work party instead (\`update_work_party\`). Answers the saved event and the scope applied.`,
+    summary: `Officer: changes an event (\`id\` from \`list_club_events\`), sending every field again: ${EVENT_FIELDS}. \`scope: series\` changes every occurrence of a repeating event; send its \`recurrence\` as read, because a series edit without one turns the series into this single event and deletes every other occurrence. An entry a work party manages is changed from its work party instead (\`update_work_party\`). Answers the saved event and the scope applied.`,
     method: "PATCH",
     path: "/api/calendar/events/[id]",
     params: routeIdParamsSchema,
