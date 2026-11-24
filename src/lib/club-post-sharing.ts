@@ -523,11 +523,16 @@ export async function withdrawOutstandingCopies(post: OutstandingCopyPost): Prom
     }
   } else if (post.unrecordedServerPostId) {
     // The post's own recorded share, never a stray (#5246 review): the marker
-    // is cleared and nothing is withdrawn.
-    await prisma.clubPost.updateMany({
-      where: { id: post.id, unrecordedServerPostId: post.unrecordedServerPostId },
-      data: { unrecordedServerPostId: null },
-    });
+    // is cleared and nothing is withdrawn. Caught like the writes above, so a
+    // failed clear is reported to the caller and never thrown past it.
+    try {
+      await prisma.clubPost.updateMany({
+        where: { id: post.id, unrecordedServerPostId: post.unrecordedServerPostId },
+        data: { unrecordedServerPostId: null },
+      });
+    } catch (error) {
+      firstError = error;
+    }
   }
 
   // The pause answers for both copies: the second is not asked.

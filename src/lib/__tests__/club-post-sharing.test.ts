@@ -99,7 +99,7 @@ vi.mock("@/lib/post-image-storage", () => ({
 }));
 
 import { OUTSTANDING_WITHDRAWAL_WHERE } from "@/lib/club-post-share-problem";
-import { retryPendingShares, shareOnePost } from "@/lib/club-post-sharing";
+import { retryPendingShares, shareOnePost, withdrawOutstandingCopies } from "@/lib/club-post-sharing";
 
 const REQUESTED = new Date("2026-07-01T00:00:00.000Z");
 
@@ -846,5 +846,15 @@ describe("an unrecorded id equal to the post's own share is never withdrawn (#52
       where: { id: "p9", unrecordedServerPostId: "server-9" },
       data: { unrecordedServerPostId: null },
     });
+  });
+
+  it("reports a failed marker clear to the caller instead of throwing past it", async () => {
+    const dbDown = new Error("db down");
+    mocks.updateMany.mockRejectedValueOnce(dbDown);
+
+    await expect(
+      withdrawOutstandingCopies(removed({ serverPostId: "server-9", withdrawnAt: REQUESTED, unrecordedServerPostId: "server-9" })),
+    ).resolves.toEqual({ confirmedServerPostIds: [], error: dbDown });
+    expect(mocks.withdrawClubPost).not.toHaveBeenCalled();
   });
 });
