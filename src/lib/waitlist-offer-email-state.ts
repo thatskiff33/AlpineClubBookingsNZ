@@ -15,19 +15,23 @@
  *   non-production copy. Told, for every decision but the admin page, which
  *   still shows a live offer nobody was told about;
  * - `retrying`: the email retry cron holds it: `FAILED` and replayable
- *   (`isReplayableFailedEmail`), or `QUEUED` past its first attempt (the cron
- *   claims a row as `QUEUED` while it replays it);
+ *   (`isReplayableFailedEmail`), or `QUEUED` past its first attempt and
+ *   claimed within the last `EMAIL_RETRY_BACKOFF_MS` (the cron claims a row as
+ *   `QUEUED` while it replays it). An older such row is left `QUEUED` by a
+ *   replay whose `SENT` write failed after the provider accepted it, or that
+ *   died mid-send, and nothing moves it on; it reads as `sent`, the same
+ *   stated limit as a first attempt (round 3, item 1);
  * - `undeliverable`: `FAILED` with nothing left to replay it, or `BOUNCED`
  *   (including a bounce that arrived after `SENT`). It cannot be sent again
  *   under the same key;
  * - `not-sent`: no row.
  * Told means `sent` or `withheld`, and nothing else.
  */
-import { EmailLogStatus } from "@prisma/client";
+import { BookingStatus, EmailLogStatus, type Prisma } from "@prisma/client";
 
 import { durableEmailLogId } from "@/lib/email/attempt-log";
 import { retireReplayableEmailRow } from "@/lib/email/retire-replayable";
-import { isReplayableFailedEmail } from "@/lib/email/retry-selection";
+import { EMAIL_RETRY_BACKOFF_MS, isReplayableFailedEmail } from "@/lib/email/retry-selection";
 import { WAITLIST_OFFER_TEMPLATE_NAME } from "@/lib/email/waitlist";
 import logger from "@/lib/logger";
 import { owedNoticeEventKey } from "@/lib/owed-notice/store";
@@ -48,12 +52,15 @@ export function offerEmailLogId(bookingId: string, offeredAt: Date): string {
 /** What a row's status alone says; a `FAILED` row still needs its bodies to tell replayable from not. */
 type StatusReading = "sent" | "withheld" | "replaying" | "failed" | "undeliverable";
 
-function readStatus(status: EmailLogStatus, attempts: number): StatusReading {
+/** The fields of an offer email's row the reading needs. */
+export type OfferEmailRowStatus = { status: EmailLogStatus; attempts: number; lastAttemptAt: Date };
+
+function readStatus({ status, attempts, lastAttemptAt }: OfferEmailRowStatus, now: Date): StatusReading {
   switch (status) {
     case EmailLogStatus.SENT:
       return "sent";
     case EmailLogStatus.QUEUED:
-      return attempts > 1 ? "replaying" : "sent";
+      return attempts > 1 && now.getTime() - lastAttemptAt.getTime() < EMAIL_RETRY_BACKOFF_MS ? "replaying" : "sent";
     case EmailLogStatus.SKIPPED_NO_EMAILS:
     case EmailLogStatus.SKIPPED_NON_PRODUCTION:
       return "withheld";
@@ -70,17 +77,18 @@ function readStatus(status: EmailLogStatus, attempts: number): StatusReading {
 }
 
 /** Whether a row says the member was told: its status alone decides. */
-export function isOfferEmailRowTold(row: { status: EmailLogStatus; attempts: number }): boolean {
-  const reading = readStatus(row.status, row.attempts);
+export function isOfferEmailRowTold(row: OfferEmailRowStatus, now: Date = new Date()): boolean {
+  const reading = readStatus(row, now);
   return reading === "sent" || reading === "withheld";
 }
 
 /** A row's full state, or `not-sent` for none. */
 export function offerEmailRowState(
-  row: { status: EmailLogStatus; attempts: number; htmlBody: string | null; bookingRetryHtmlBody: string | null } | null,
+  row: (OfferEmailRowStatus & { htmlBody: string | null; bookingRetryHtmlBody: string | null }) | null,
+  now: Date = new Date(),
 ): OfferEmailState {
   if (!row) return "not-sent";
-  const reading = readStatus(row.status, row.attempts);
+  const reading = readStatus(row, now);
   switch (reading) {
     case "sent":
     case "withheld":
@@ -95,7 +103,7 @@ export function offerEmailRowState(
 
 export const isToldOfferEmailState = (state: OfferEmailState) => state === "sent" || state === "withheld";
 
-const OFFER_EMAIL_ROW_SELECT = { status: true, attempts: true, htmlBody: true, bookingRetryHtmlBody: true } as const;
+const OFFER_EMAIL_ROW_SELECT = { status: true, attempts: true, lastAttemptAt: true, htmlBody: true, bookingRetryHtmlBody: true } as const;
 
 /** The offer email's state, read outside any transaction. */
 export async function readOfferEmailState(bookingId: string, offeredAt: Date): Promise<OfferEmailState> {
@@ -103,20 +111,64 @@ export async function readOfferEmailState(bookingId: string, offeredAt: Date): P
   return offerEmailRowState(row);
 }
 
+const retiredMessage = (why: string) => `Not replayed: the waitlist offer is over (${why}) (#5433)`;
+
 /**
- * When the offer is over (it lapsed, or the booking moved on): retire the
- * offer email's row if the retry cron could still replay it, so the member is
- * never sent an offer stating a dead deadline (round 2, item 4). Status-guarded
- * on the row as read, so it and the cron's claim cannot both win. Never throws.
+ * Retire these offer emails' rows where the retry cron could still replay
+ * them, through `db`: the lapse runs it inside its own transaction, before it
+ * decides who was told, so the decision and the retirement agree (round 3,
+ * item 2). Database-only; status-guarded on each row as read, so it and the
+ * cron's claim cannot both win. Throws, as a write inside a transaction must.
+ */
+export async function retireReplayableOfferEmails(
+  db: Pick<Prisma.TransactionClient, "emailLog">,
+  offers: readonly { bookingId: string; offeredAt: Date | null }[],
+  why: string,
+): Promise<string[]> {
+  const ids = offers.flatMap(({ bookingId, offeredAt }) => (offeredAt ? [offerEmailLogId(bookingId, offeredAt)] : []));
+  if (ids.length === 0) return [];
+  const rows = await db.emailLog.findMany({ where: { id: { in: ids } }, select: { id: true, ...OFFER_EMAIL_ROW_SELECT } });
+  const retired: string[] = [];
+  // One after another: inside a transaction they share its one connection.
+  for (const row of rows.filter(isReplayableFailedEmail)) {
+    const { count } = await retireReplayableEmailRow({ ...row, errorMessage: retiredMessage(why) }, db);
+    if (count === 1) retired.push(row.id);
+  }
+  return retired;
+}
+
+/**
+ * When the offer is over (the booking moved on): retire the offer email's row
+ * if the retry cron could still replay it, so the member is not sent an offer
+ * stating a dead deadline (round 2, item 4). Never throws.
  */
 export async function retireOfferEmailIfReplayable(bookingId: string, offeredAt: Date, why: string): Promise<void> {
-  const id = offerEmailLogId(bookingId, offeredAt);
   try {
-    const row = await prisma.emailLog.findUnique({ where: { id }, select: OFFER_EMAIL_ROW_SELECT });
-    if (!row || !isReplayableFailedEmail(row)) return;
-    const retired = await retireReplayableEmailRow({ id, ...row, errorMessage: `Not replayed: the waitlist offer is over (${why}) (#5433)` });
-    if (retired.count === 1) logger.info({ bookingId, emailLogId: id }, "Retired a replayable waitlist offer email: the offer is over");
+    const retired = await retireReplayableOfferEmails(prisma, [{ bookingId, offeredAt }], why);
+    if (retired.length > 0) logger.info({ bookingId, emailLogId: retired[0] }, "Retired a replayable waitlist offer email: the offer is over");
   } catch (err) {
-    logger.error({ err, bookingId, emailLogId: id }, "Failed to retire a replayable waitlist offer email");
+    logger.error({ err, bookingId, emailLogId: offerEmailLogId(bookingId, offeredAt) }, "Failed to retire a replayable waitlist offer email");
   }
+}
+
+/**
+ * The email retry job's "still wanted?" check for `waitlist-offer`
+ * (`email/retry-still-wanted.ts`, round 3, item 2): only while the booking
+ * still holds the very offer the row is for. Covers every way an offer ends
+ * (confirm, decline, cancel, admin force-confirm or return to the waitlist,
+ * the lapse, a re-offer) without a hook in each. Throws on a failed read; the
+ * job then leaves the row as found.
+ */
+export async function waitlistOfferEmailStillWanted(row: { id: string; bookingId: string | null }): Promise<true | string> {
+  if (!row.bookingId) return "the email names no booking";
+  const booking = await prisma.booking.findUnique({
+    where: { id: row.bookingId },
+    select: { status: true, waitlistOfferedAt: true },
+  });
+  if (!booking) return "the booking no longer exists";
+  if (booking.status !== BookingStatus.WAITLIST_OFFERED) return `the booking is ${booking.status}`;
+  if (!booking.waitlistOfferedAt || offerEmailLogId(row.bookingId, booking.waitlistOfferedAt) !== row.id) {
+    return "the booking holds a different offer";
+  }
+  return true;
 }

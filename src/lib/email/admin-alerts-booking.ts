@@ -299,7 +299,8 @@ export async function sendAdminWaitlistOfferAlert(data: {
       checkIn: emailCalendarDay(data.checkIn),
       checkOut: emailCalendarDay(data.checkOut),
       offerNote: waitlistOfferAlertNote(data.memberName, data.offerEmail),
-      expiresAt: data.expiresAt ? emailClubDateTime(data.expiresAt) : "",
+      // A saved override reads "has until {{expiresAt}}": never an empty gap.
+      expiresAt: data.expiresAt ? emailClubDateTime(data.expiresAt) : "the deadline shown on the booking",
     },
     preferenceKey: "adminWaitlistOffer",
   });

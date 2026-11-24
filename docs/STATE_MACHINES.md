@@ -3391,9 +3391,13 @@ the same way (Email Retry Lifecycle, below). Whether the member was told is
 read from the offer email's own row, one definition everywhere
 (`OfferEmailState`): `SENT`, `QUEUED` on its first attempt and a withhold by
 design ("No emails", a non-production copy) are told; a `FAILED` row the retry
-cron can still replay (`isReplayableFailedEmail`, the cron's own rule) or a
-`QUEUED` row past its first attempt is the cron's; any other `FAILED` row or a
-`BOUNCED` one is undeliverable; no row is never sent. Both the first attempt
+cron can still replay (`isReplayableFailedEmail`, the cron's own rule, which
+includes a fail-closed "No emails" read: it keeps its body) or a `QUEUED` row
+past its first attempt claimed within `EMAIL_RETRY_BACKOFF_MS` is the cron's;
+an older such `QUEUED` row (a replay whose `SENT` write failed after the
+provider accepted it, or that died mid-send, which nothing moves on) counts as
+told, the same limit as a first attempt; any other `FAILED` row or a `BOUNCED`
+one is undeliverable; no row is never sent. Both the first attempt
 and the sweep read the row again after their send, because a send can return
 without reaching the member: a suppressed address is recorded `BOUNCED`, and
 an empty or placeholder address is recorded nowhere. Told, the notice clears;
@@ -3453,10 +3457,18 @@ made before #5433, which wrote neither, counts as told. Such a lapse sends no
 unchanged (`INV-CAP-042`), so the member keeps their place and number and is
 considered last for that one re-offer. Instead the officers are owed one alert
 (owner decision D5, 24 Nov 2026), written in the revert's transaction in place
-of the member's email, so a person can step in. A replayable `FAILED` offer
-email is retired, guarded on the row as read, once the offer lapses or a sweep
-finds it moved on, so the retry cron never sends an offer stating a dead
-deadline. The lapse notices are delivered after the re-offer passes (a stop
+of the member's email, so a person can step in. An offer email must not be
+replayed once its offer is over. The email retry job asks before it claims a
+`waitlist-offer` row whether it is still wanted (`email/retry-still-wanted.ts`):
+only while the booking is `WAITLIST_OFFERED` with the very offer the row is
+for, which covers a confirm, a decline, a cancel, an admin force-confirm or
+return to the waitlist and a re-offer alike; otherwise it retires the row
+(`retireReplayableEmailRow`) and sends nothing. The lapse also retires a
+replayable row inside its own transaction, before it decides who was told, so
+the two agree. **Stated limit:** a replay the job had already claimed, between
+its check and its send, still goes, stating the old deadline; at the lapse such
+a row reads as the cron's, so the member counts as never told although the
+email may then arrive. The lapse notices are delivered after the re-offer passes (a stop
 during the sends costs no re-offer, and the markers cover a lost send), and
 not at all to a lapsed member those passes offered the place again: the
 statuses are read once more, outside any transaction, just before the sends.
@@ -3471,7 +3483,18 @@ nothing, and the other way round. It runs through the once-ever takeover
 whose alert went settles; one taken less than the waitlist wait ago may still
 be in flight, so that attempt retries later; an older one with no sent stamp
 (a holder that died, or whose alert reached nobody) is taken over and sent
-once more.
+once more. The sent stamp is written twice before giving up; **stated limit:**
+if both writes fail, a later attempt takes the claim over and the officers may
+get the alert twice.
+
+Two more stated limits. (a) The mail provider's feedback handler
+(`email/ses-feedback.ts`) marks every earlier email to an address `BOUNCED`
+when any later one bounces or draws a complaint, a temporary bounce included,
+so a member who did receive the offer can read as never told at the lapse; the
+officers' "lapsed untold" wording says only that the email is not known to
+have reached them, which stays true. (b) An "offer expired" email that cannot
+be delivered settles with no officers' alert: nothing is at stake, as the
+member is simply back on the waitlist.
 The member's booking page shows the live offer and its deadline whether or
 not the email went.
 
@@ -4440,11 +4463,12 @@ offer-expired email's seven days; past it officers are alerted once with
 offer email was told after all. The officers' offer alert, which says whether the
 offer email was sent, withheld or not delivered and states the deadline in
 force, waits only while that is unknown (the email is the retry cron's, or
-never sent and still owed), then always goes, as it did before #5433; when the
-email did not reach the member the officers also get the "not sent" alert; it
-and the lapsed-untold alert last seven days, with no alert past it. The
-lapsed-untold alert shares the offer email's once-ever claim, so one offer
-alerts the officers once. The sweep's offer email restarts the offer window
+never sent and still owed), then goes, as it did before #5433, unless the offer
+has moved on meanwhile or seven days have passed; when the email did not reach
+the member the officers also get the "not sent" alert; it and the
+lapsed-untold alert last seven days, with no alert past it. The lapsed-untold
+alert shares the offer email's once-ever claim, so one offer alerts the
+officers once, bar the stamp limit above. The sweep's offer email restarts the offer window
 before it sends (Waitlist Lifecycle).
 
 **Stated limit: a failed offer email is replayed with the deadline it was
@@ -4456,7 +4480,8 @@ attempts, `EMAIL_RETRY_BACKOFF_MS` apart (`src/lib/email/retry-selection.ts`).
 It does not always succeed: a row that exhausts those attempts, or bounces,
 was never told. The sweep then alerts the officers once instead of clearing
 the notice silently, and a lapse of that offer counts as never told. A replay
-still pending when the offer ends is retired, not sent.
+still pending when the offer ends is retired, not sent, unless the retry job
+had already claimed it (Waitlist Lifecycle).
 
 ```text
 change commits + markers -> claim -> send settled -> marker cleared

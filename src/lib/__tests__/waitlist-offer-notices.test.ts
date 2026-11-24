@@ -21,7 +21,15 @@ const db = vi.hoisted(() => ({
 vi.mock("@/lib/prisma", () => ({
   prisma: {
     booking: { findUnique: db.bookingFindUnique },
-    emailLog: { findUnique: db.emailLogFindUnique, updateMany: db.emailLogUpdateMany },
+    // The retirement reads its rows by id list; one offer here, so it is the one row `findUnique` gives.
+    emailLog: {
+      findUnique: db.emailLogFindUnique,
+      findMany: async (args: { where: { id: { in: string[] } } }) => {
+        const found = await db.emailLogFindUnique({ where: { id: args.where.id.in[0] } });
+        return found ? [{ id: args.where.id.in[0], ...found }] : [];
+      },
+      updateMany: db.emailLogUpdateMany,
+    },
     bookingGuest: { findMany: async () => [] },
     owedNotice: { updateMany: db.owedNoticeUpdateMany, deleteMany: db.owedNoticeDeleteMany, findUnique: db.owedNoticeFindUnique },
   },
@@ -68,9 +76,9 @@ import {
   findNeverToldWaitlistOffers,
   recordWaitlistOfferNoticesOwed,
   WAITLIST_OFFER_NOTICE_DELIVERERS,
-  waitlistOfferEmailKey,
   type WaitlistOfferNotice,
 } from "@/lib/waitlist-offer-notices";
+import { waitlistOfferEmailKey } from "@/lib/waitlist-offer-email-state";
 import { WAITLIST_NOTICE_SWEEP_AFTER_MS } from "@/lib/waitlist-offer-window";
 import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
@@ -150,8 +158,8 @@ const sweep = (deliverer: typeof MEMBER, handle: OwedNoticeRef, now = NOW) =>
   sweepOwedNotice(deliverer, handle, new Date(now.getTime() - WAITLIST_NOTICE_SWEEP_AFTER_MS), now, "test-sweep");
 
 /** An offer email row as `readOfferEmailState` reads it; `replayable` keeps a body the retry cron can replay. */
-function row(status: string, attempts = 1, replayable = true) {
-  return { status, attempts, htmlBody: null, bookingRetryHtmlBody: replayable ? "<p>the offer</p>" : null };
+function row(status: string, attempts = 1, replayable = true, lastAttemptAt = NOW) {
+  return { status, attempts, lastAttemptAt, htmlBody: null, bookingRetryHtmlBody: replayable ? "<p>the offer</p>" : null };
 }
 
 /** The offer email's row, fixed whatever is sent. */
@@ -235,7 +243,7 @@ describe("the first attempt, straight after the offer commits", () => {
   describe("a send that returns without reaching the member (round 2, item 2)", () => {
     it.each([
       ["a suppressed address (BOUNCED)", row("BOUNCED")],
-      ["a fail-closed No-emails read or a body-less copy (FAILED, nothing to replay)", row("FAILED", 1, false)],
+      ["a FAILED row with nothing left to replay (its body gone)", row("FAILED", 1, false)],
       ["an empty or placeholder address (no row at all)", null],
     ])("alerts the officers once and clears the member's marker for %s; the routine offer alert still goes, saying the email was not delivered", async (_case, after) => {
       rowAfterSend(after);
@@ -305,7 +313,7 @@ describe("the sweep's offer email (owner decision D2; the told rule, review B)",
       await expect(sweep(MEMBER, handle)).resolves.toBe("delivered");
       expect(db.emailLogFindUnique).toHaveBeenCalledWith({
         where: { id: `email:waitlist-offer:booking1:${OFFERED_AT.getTime()}` },
-        select: { status: true, attempts: true, htmlBody: true, bookingRetryHtmlBody: true },
+        select: { status: true, attempts: true, lastAttemptAt: true, htmlBody: true, bookingRetryHtmlBody: true },
       });
       expect(send.restart).not.toHaveBeenCalled();
       expect(send.offer).not.toHaveBeenCalled();
@@ -358,6 +366,16 @@ describe("the sweep's offer email (owner decision D2; the told rule, review B)",
     expect(db.emailLogUpdateMany).toHaveBeenCalledWith(
       expect.objectContaining({ where: expect.objectContaining({ status: "FAILED", attempts: 1 }) }),
     );
+  });
+
+  it("keeps the notice, restarting, sending and alerting nothing, when the suppression list cannot be read (round 3, item 4)", async () => {
+    db.suppression.mockRejectedValue(new Error("db down"));
+    const handle = ref(memberMarker);
+    await expect(sweep(MEMBER, handle)).resolves.toBe("kept");
+    expect(send.restart).not.toHaveBeenCalled();
+    expect(send.offer).not.toHaveBeenCalled();
+    expect(send.unsent).not.toHaveBeenCalled();
+    expect(handle.settle).not.toHaveBeenCalled();
   });
 
   it("alerts the officers instead, restarting and sending nothing, for a placeholder address (round 2, item 6)", async () => {
@@ -566,6 +584,7 @@ describe("findNeverToldWaitlistOffers (D2: no offer-expired email for an offer n
     { bookingId: "bounced", offeredAt: OFFERED_AT },
     { bookingId: "withheld", offeredAt: OFFERED_AT },
     { bookingId: "replaying", offeredAt: OFFERED_AT },
+    { bookingId: "stale-replay", offeredAt: OFFERED_AT },
     { bookingId: "past-cutoff", offeredAt: OFFERED_AT },
     { bookingId: "legacy", offeredAt: OFFERED_AT },
     { bookingId: "no-offer-time", offeredAt: null },
@@ -582,13 +601,15 @@ describe("findNeverToldWaitlistOffers (D2: no offer-expired email for an offer n
       },
       emailLog: {
         findMany: vi.fn().mockResolvedValue([
-          { id: emailId("sent"), status: "SENT", attempts: 1 },
-          { id: emailId("crashed-after-send"), status: "QUEUED", attempts: 1 },
+          { id: emailId("sent"), status: "SENT", attempts: 1, lastAttemptAt: NOW },
+          { id: emailId("crashed-after-send"), status: "QUEUED", attempts: 1, lastAttemptAt: NOW },
           // No marker or claim remains for these: the row alone decides.
-          { id: emailId("failed"), status: "FAILED", attempts: 1 },
-          { id: emailId("bounced"), status: "BOUNCED", attempts: 1 },
-          { id: emailId("replaying"), status: "QUEUED", attempts: 2 },
-          { id: emailId("withheld"), status: "SKIPPED_NO_EMAILS", attempts: 1 },
+          { id: emailId("failed"), status: "FAILED", attempts: 1, lastAttemptAt: NOW },
+          { id: emailId("bounced"), status: "BOUNCED", attempts: 1, lastAttemptAt: NOW },
+          { id: emailId("replaying"), status: "QUEUED", attempts: 2, lastAttemptAt: NOW },
+          // Round 3, item 1: a replay left QUEUED long ago reads as sent (the provider may have it).
+          { id: emailId("stale-replay"), status: "QUEUED", attempts: 2, lastAttemptAt: new Date(NOW.getTime() - HOUR) },
+          { id: emailId("withheld"), status: "SKIPPED_NO_EMAILS", attempts: 1, lastAttemptAt: NOW },
         ]),
       },
       alertCooldown: { findMany: vi.fn().mockResolvedValue([{ key: `owed-notice-past-cutoff:${memberId("past-cutoff")}` }]) },

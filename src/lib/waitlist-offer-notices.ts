@@ -71,7 +71,7 @@ import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
 import { sendAdminWaitlistOfferAlert, sendWaitlistOfferEmail } from "@/lib/email";
 import { adminAlertNeedsResend } from "@/lib/email/admin-alert-send-result";
 import { sendAdminWaitlistNoticeUnsentAlert } from "@/lib/email/admin-alerts-waitlist-notice-unsent";
-import { getActiveEmailSuppression } from "@/lib/email-suppression";
+import { emailReachability } from "@/lib/email-reachability";
 import { seasonYearOfStoredDate } from "@/lib/financial-year";
 import logger from "@/lib/logger";
 import { resolveSubscriptionLockoutMode } from "@/lib/member-subscription-eligibility";
@@ -86,7 +86,6 @@ import {
 import type { OwedNoticeKind } from "@/lib/owed-notice/kinds";
 import { alertOfficersOncePastCutoff, pastCutoffAlertKey } from "@/lib/owed-notice/past-cutoff-once";
 import { owedNoticeId, owedNoticeMarker, recordOwedNotices, type OwedNoticeMarker } from "@/lib/owed-notice/store";
-import { canReceiveEmail } from "@/lib/placeholder-contact-email";
 import { prisma } from "@/lib/prisma";
 import {
   evaluateNonMemberPricingRequirements,
@@ -110,7 +109,6 @@ export const WAITLIST_MEMBER_NOTICE_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 const MEMBER_KIND: OwedNoticeKind = "waitlist-offer-member";
 const OFFICERS_KIND: OwedNoticeKind = "waitlist-offer-officers";
 
-export { waitlistOfferEmailKey } from "@/lib/waitlist-offer-email-state";
 
 /** One offer's owed notices: the booking, the offer's time, and the position the officers' alert quotes. */
 export interface OwedWaitlistOffer {
@@ -280,9 +278,9 @@ const offerEmailStateOf = (marker: OwedNoticeMarker) => readOfferEmailState(mark
  * The member's offer email, stating `expiresAt`, with the offer's event key;
  * then what became of it (round 2, item 2). A send that returns has not
  * necessarily reached the member: the email core returns without throwing for
- * a suppressed address (`BOUNCED`), a fail-closed "No emails" read or the
- * environment gate's body-less copy (`FAILED`, not replayable), and an empty or
- * placeholder address (no row at all). So the row decides: told, settled; the
+ * a suppressed address (`BOUNCED`), for a fail-closed "No emails" read or an
+ * environment fault (`FAILED`, keeping its body, so the retry cron's), and for
+ * an empty or placeholder address (no row at all). So the row decides: told, settled; the
  * retry cron's, kept for it; undeliverable, or nothing recorded, the officers
  * are alerted once through the shared claim. Never throws.
  */
@@ -336,13 +334,13 @@ async function sendOfferEmail(
 }
 
 /**
- * Whether the member's address can be emailed at all: present, not a
- * placeholder, and not on the SES suppression list (round 2, item 6). Read
- * outside any transaction.
+ * Whether the member's address can be emailed at all (`emailReachability`,
+ * round 2 item 6, round 3 item 4), read outside any transaction. An unreadable
+ * suppression list is "not now": the notice is offered again a wait later.
  */
-async function memberCanBeEmailed(notice: WaitlistOfferNotice): Promise<boolean> {
-  if (!canReceiveEmail(notice.email)) return false;
-  return (await getActiveEmailSuppression(notice.email)) === null;
+async function memberReachability(notice: WaitlistOfferNotice): Promise<"reachable" | "unreachable" | "unknown"> {
+  const reach = await emailReachability(notice.email);
+  return reach === "reachable" || reach === "unknown" ? reach : "unreachable";
 }
 
 /**
@@ -391,7 +389,12 @@ async function sendOfferEmailFromSweep(
       logger.info(log, "The email retry cron holds this waitlist offer email; the owed notice waits for it");
       return "threw";
     }
-    if (state === "undeliverable" || !(await memberCanBeEmailed(notice))) {
+    const reach = state === "undeliverable" ? "unreachable" : await memberReachability(notice);
+    if (reach === "unknown") {
+      logger.warn(log, "Could not tell whether the member's address can be emailed; the offer email stays owed");
+      return "threw";
+    }
+    if (reach === "unreachable") {
       logger.warn({ ...log, state }, "The waitlist offer email cannot reach the member; alerting the officers instead");
       return alertOfficersWaitlistNoticeUnsent(notice, marker, "offer");
     }
@@ -602,7 +605,7 @@ export async function findNeverToldWaitlistOffers(
   const markers = await db.owedNotice.findMany({ where: { id: { in: made.map((offer) => offer.markerId) } }, select: { id: true } });
   const emails = await db.emailLog.findMany({
     where: { id: { in: made.map((offer) => offer.emailLogId) } },
-    select: { id: true, status: true, attempts: true },
+    select: { id: true, status: true, attempts: true, lastAttemptAt: true },
   });
   const pastCutoff = await db.alertCooldown.findMany({
     where: { key: { in: made.map((offer) => offer.pastCutoffKey) } },

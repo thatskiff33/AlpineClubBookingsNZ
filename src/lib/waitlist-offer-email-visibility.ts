@@ -158,7 +158,7 @@ function toDelivery(
   booking: WaitlistOfferBooking,
   now: Date,
 ): WaitlistOfferEmailDelivery {
-  const state = offerEmailRowState(emailLog);
+  const state = offerEmailRowState(emailLog, now);
   if (!emailLog || state === "not-sent") {
     const missing = { status: "MISSING" as const, emailLogId: null, attempts: null, lastAttemptAt: null, errorMessage: null };
     // A suppressed booking never gets an offer email (processWaitlistForDates

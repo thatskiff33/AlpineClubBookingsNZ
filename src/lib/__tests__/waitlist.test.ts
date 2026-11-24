@@ -160,7 +160,7 @@ const mockTx = {
     createMany: vi.fn().mockResolvedValue({ count: 0 }),
     findMany: vi.fn().mockResolvedValue([]),
   },
-  emailLog: { findMany: vi.fn().mockResolvedValue([]) },
+  emailLog: { findMany: vi.fn().mockResolvedValue([]), updateMany: vi.fn().mockResolvedValue({ count: 1 }) },
   alertCooldown: { findMany: vi.fn().mockResolvedValue([]) },
 };
 
@@ -2063,17 +2063,23 @@ describe("the lapse notices go after the re-offer passes (#5433 review F)", () =
     expect(sendWaitlistOfferExpiredEmail).not.toHaveBeenCalled();
   });
 
-  it("retires a replayable FAILED offer email once its offer lapses, guarded on the row as read (round 2, item 4)", async () => {
+  it("retires a replayable FAILED offer email inside the lapse's own transaction, before it decides who was told (round 2, item 4; round 3, item 2)", async () => {
     const { expireStaleOffers } = await import("@/lib/waitlist");
     mockTxBookingFindMany.mockResolvedValueOnce([lapsed]).mockResolvedValue([]);
-    mockOfferEmailRow.mockResolvedValue({ status: "FAILED", attempts: 1, htmlBody: null, bookingRetryHtmlBody: "<p>offer</p>" });
+    const emailId = `email:waitlist-offer:told:${lapsed.waitlistOfferedAt.getTime()}`;
+    mockTx.emailLog.findMany.mockResolvedValueOnce([
+      { id: emailId, status: "FAILED", attempts: 1, lastAttemptAt: new Date(), htmlBody: null, bookingRetryHtmlBody: "<p>offer</p>" },
+    ]);
 
     await expireStaleOffers(CLUB_FORMAT_TEST);
 
-    expect(mockEmailLogUpdateMany).toHaveBeenCalledWith({
-      where: expect.objectContaining({ id: expect.stringContaining(`told:${lapsed.waitlistOfferedAt.getTime()}`), status: "FAILED", attempts: 1 }),
+    expect(mockTx.emailLog.updateMany).toHaveBeenCalledWith({
+      where: expect.objectContaining({ id: emailId, status: "FAILED", attempts: 1 }),
       data: expect.objectContaining({ bookingRetryHtmlBody: null, errorMessage: expect.stringContaining("the offer lapsed") }),
     });
+    // Through the transaction, before the never-told read, and never through the module client.
+    expect(mockTx.emailLog.updateMany.mock.invocationCallOrder[0]!).toBeLessThan(mockTx.owedNotice.findMany.mock.invocationCallOrder[0]!);
+    expect(mockEmailLogUpdateMany).not.toHaveBeenCalled();
   });
 
   it("sends no lapse notice to a member the re-offer pass offered the place again (a queue of one)", async () => {

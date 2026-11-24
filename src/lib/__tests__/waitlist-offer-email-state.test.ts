@@ -5,21 +5,32 @@
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const db = vi.hoisted(() => ({ findUnique: vi.fn(), updateMany: vi.fn() }));
-vi.mock("@/lib/prisma", () => ({ prisma: { emailLog: { findUnique: db.findUnique, updateMany: db.updateMany } } }));
+const db = vi.hoisted(() => ({ findMany: vi.fn(), updateMany: vi.fn(), bookingFindUnique: vi.fn() }));
+vi.mock("@/lib/prisma", () => ({
+  prisma: { emailLog: { findMany: db.findMany, updateMany: db.updateMany }, booking: { findUnique: db.bookingFindUnique } },
+}));
 vi.mock("@/lib/logger", () => ({ default: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() } }));
 
 import { EmailLogStatus } from "@prisma/client";
 
-import { EMAIL_RETRY_MAX_ATTEMPTS } from "@/lib/email/retry-selection";
+import { EMAIL_RETRY_BACKOFF_MS, EMAIL_RETRY_MAX_ATTEMPTS } from "@/lib/email/retry-selection";
 import {
   isOfferEmailRowTold,
   offerEmailLogId,
   offerEmailRowState,
   retireOfferEmailIfReplayable,
+  retireReplayableOfferEmails,
+  waitlistOfferEmailStillWanted,
 } from "@/lib/waitlist-offer-email-state";
 
-const body = (replayable: boolean) => ({ htmlBody: null, bookingRetryHtmlBody: replayable ? "<p>the offer</p>" : null });
+const NOW = new Date("2026-07-01T00:00:00.000Z");
+const STALE = new Date(NOW.getTime() - EMAIL_RETRY_BACKOFF_MS);
+/** A row's bodies, and a last attempt just now unless a case says otherwise. */
+const body = (replayable: boolean, lastAttemptAt: Date = NOW) => ({
+  lastAttemptAt,
+  htmlBody: null,
+  bookingRetryHtmlBody: replayable ? "<p>the offer</p>" : null,
+});
 const offeredAt = new Date("2026-06-28T00:00:00.000Z");
 
 beforeEach(() => {
@@ -32,29 +43,31 @@ describe("offerEmailRowState", () => {
     ["no row", null, "not-sent", false],
     ["SENT", { status: EmailLogStatus.SENT, attempts: 1, ...body(true) }, "sent", true],
     ["QUEUED on its first attempt (the crash-during-the-provider-call limit)", { status: EmailLogStatus.QUEUED, attempts: 1, ...body(true) }, "sent", true],
-    ["QUEUED past its first attempt (the retry cron is replaying it)", { status: EmailLogStatus.QUEUED, attempts: 2, ...body(true) }, "retrying", false],
+    ["QUEUED past its first attempt, claimed within the backoff (the retry cron is replaying it)", { status: EmailLogStatus.QUEUED, attempts: 2, ...body(true) }, "retrying", false],
+    ["QUEUED past its first attempt and older than the backoff (a replay whose SENT write failed, or that died: round 3, item 1)", { status: EmailLogStatus.QUEUED, attempts: 2, ...body(true, STALE) }, "sent", true],
     ["withheld by No emails", { status: EmailLogStatus.SKIPPED_NO_EMAILS, attempts: 1, ...body(false) }, "withheld", true],
     ["withheld by a non-production copy", { status: EmailLogStatus.SKIPPED_NON_PRODUCTION, attempts: 1, ...body(false) }, "withheld", true],
     ["FAILED, replayable", { status: EmailLogStatus.FAILED, attempts: 1, ...body(true) }, "retrying", false],
     ["FAILED at the ceiling", { status: EmailLogStatus.FAILED, attempts: EMAIL_RETRY_MAX_ATTEMPTS, ...body(true) }, "undeliverable", false],
-    ["FAILED with no body (the gate's copy, a fail-closed read)", { status: EmailLogStatus.FAILED, attempts: 1, ...body(false) }, "undeliverable", false],
+    ["FAILED with no body (an environment fault's copy of a sensitive template)", { status: EmailLogStatus.FAILED, attempts: 1, ...body(false) }, "undeliverable", false],
+    ["FAILED with its body after a fail-closed No-emails read (the retry cron's)", { status: EmailLogStatus.FAILED, attempts: 1, ...body(true) }, "retrying", false],
     ["BOUNCED (a suppressed address, or a bounce after SENT)", { status: EmailLogStatus.BOUNCED, attempts: 1, ...body(true) }, "undeliverable", false],
   ])("reads %s", (_case, row, state, told) => {
-    expect(offerEmailRowState(row)).toBe(state);
-    if (row) expect(isOfferEmailRowTold(row)).toBe(told);
+    expect(offerEmailRowState(row, NOW)).toBe(state);
+    if (row) expect(isOfferEmailRowTold(row, NOW)).toBe(told);
   });
 
   it("classifies every status the schema has", () => {
     for (const status of Object.values(EmailLogStatus)) {
-      expect(() => offerEmailRowState({ status, attempts: 1, ...body(true) })).not.toThrow();
-      expect(offerEmailRowState({ status, attempts: 1, ...body(true) })).not.toBe(undefined);
+      expect(() => offerEmailRowState({ status, attempts: 1, ...body(true) }, NOW)).not.toThrow();
+      expect(offerEmailRowState({ status, attempts: 1, ...body(true) }, NOW)).not.toBe(undefined);
     }
   });
 });
 
 describe("retireOfferEmailIfReplayable (round 2, item 4)", () => {
   it("retires a replayable row with an update guarded on the row as read, so the retry cron's claim and this cannot both win", async () => {
-    db.findUnique.mockResolvedValue({ status: EmailLogStatus.FAILED, attempts: 2, ...body(true) });
+    db.findMany.mockResolvedValue([{ id: offerEmailLogId("booking1", offeredAt), status: EmailLogStatus.FAILED, attempts: 2, ...body(true) }]);
     await retireOfferEmailIfReplayable("booking1", offeredAt, "the offer lapsed");
     expect(db.updateMany).toHaveBeenCalledWith({
       where: { id: offerEmailLogId("booking1", offeredAt), status: "FAILED", attempts: 2, htmlBody: null, bookingRetryHtmlBody: "<p>the offer</p>" },
@@ -73,13 +86,68 @@ describe("retireOfferEmailIfReplayable (round 2, item 4)", () => {
     ["a row the cron already claimed (QUEUED)", { status: EmailLogStatus.QUEUED, attempts: 2, ...body(true) }],
     ["an exhausted row", { status: EmailLogStatus.FAILED, attempts: EMAIL_RETRY_MAX_ATTEMPTS, ...body(true) }],
   ])("writes nothing for %s", async (_case, row) => {
-    db.findUnique.mockResolvedValue(row);
+    db.findMany.mockResolvedValue(row ? [{ id: offerEmailLogId("booking1", offeredAt), ...row }] : []);
     await retireOfferEmailIfReplayable("booking1", offeredAt, "the offer lapsed");
     expect(db.updateMany).not.toHaveBeenCalled();
   });
 
   it("never throws", async () => {
-    db.findUnique.mockRejectedValue(new Error("db down"));
+    db.findMany.mockRejectedValue(new Error("db down"));
     await expect(retireOfferEmailIfReplayable("booking1", offeredAt, "the offer lapsed")).resolves.toBeUndefined();
+  });
+});
+
+describe("retireReplayableOfferEmails, the lapse's retirement inside its transaction (round 3, item 2)", () => {
+  it("reads every lapsed offer's row through the transaction's client and retires only the replayable ones", async () => {
+    const tx = {
+      emailLog: {
+        findMany: vi.fn().mockResolvedValue([
+          { id: offerEmailLogId("a", offeredAt), status: EmailLogStatus.FAILED, attempts: 1, ...body(true) },
+          { id: offerEmailLogId("b", offeredAt), status: EmailLogStatus.SENT, attempts: 1, ...body(true) },
+        ]),
+        updateMany: vi.fn().mockResolvedValue({ count: 1 }),
+      },
+    };
+    const retired = await retireReplayableOfferEmails(tx as never, [
+      { bookingId: "a", offeredAt },
+      { bookingId: "b", offeredAt },
+      { bookingId: "c", offeredAt: null },
+    ], "the offer lapsed");
+    expect(tx.emailLog.findMany).toHaveBeenCalledWith(expect.objectContaining({ where: { id: { in: [offerEmailLogId("a", offeredAt), offerEmailLogId("b", offeredAt)] } } }));
+    expect(tx.emailLog.updateMany).toHaveBeenCalledTimes(1);
+    expect(tx.emailLog.updateMany).toHaveBeenCalledWith(expect.objectContaining({ where: expect.objectContaining({ id: offerEmailLogId("a", offeredAt), status: "FAILED" }) }));
+    expect(retired).toEqual([offerEmailLogId("a", offeredAt)]);
+    // Nothing through the module client: the write commits with the lapse.
+    expect(db.updateMany).not.toHaveBeenCalled();
+  });
+
+  it("lets a failed read throw, as a write inside a transaction must", async () => {
+    const tx = { emailLog: { findMany: vi.fn().mockRejectedValue(new Error("aborted")), updateMany: vi.fn() } };
+    await expect(retireReplayableOfferEmails(tx as never, [{ bookingId: "a", offeredAt }], "the offer lapsed")).rejects.toThrow("aborted");
+  });
+});
+
+describe("waitlistOfferEmailStillWanted, the retry job's check (round 3, item 2)", () => {
+  const id = offerEmailLogId("booking1", offeredAt);
+  it.each([
+    ["the live offer it is for", { status: "WAITLIST_OFFERED", waitlistOfferedAt: offeredAt }, true],
+    ["a confirmed offer", { status: "PAYMENT_PENDING", waitlistOfferedAt: null }, "the booking is PAYMENT_PENDING"],
+    ["a lapsed or returned offer", { status: "WAITLISTED", waitlistOfferedAt: null }, "the booking is WAITLISTED"],
+    ["a cancelled booking", { status: "CANCELLED", waitlistOfferedAt: null }, "the booking is CANCELLED"],
+    ["a later offer to the same booking", { status: "WAITLIST_OFFERED", waitlistOfferedAt: new Date(offeredAt.getTime() + 1) }, "the booking holds a different offer"],
+    ["a booking that no longer exists", null, "the booking no longer exists"],
+  ])("answers for %s", async (_case, booking, answer) => {
+    db.bookingFindUnique.mockResolvedValue(booking);
+    await expect(waitlistOfferEmailStillWanted({ id, bookingId: "booking1" })).resolves.toBe(answer);
+  });
+
+  it("is not wanted when the row names no booking", async () => {
+    await expect(waitlistOfferEmailStillWanted({ id, bookingId: null })).resolves.toBe("the email names no booking");
+    expect(db.bookingFindUnique).not.toHaveBeenCalled();
+  });
+
+  it("throws on a failed read, so the job leaves the row as found", async () => {
+    db.bookingFindUnique.mockRejectedValue(new Error("db down"));
+    await expect(waitlistOfferEmailStillWanted({ id, bookingId: "booking1" })).rejects.toThrow("db down");
   });
 });

@@ -21,6 +21,9 @@
  *   it `threw`;
  * - this attempt's own send reached nobody, threw, or its claim write failed:
  *   `unreached`, so the marker waits the kind's longer retry.
+ * Stated limit: the sent stamp is written twice before giving up; if both
+ * writes fail, a later attempt older than the wait takes the claim over and
+ * the officers may get the alert twice.
  *
  * Never throws.
  */
@@ -40,6 +43,26 @@ export function pastCutoffAlertKey(marker: Pick<OwedNoticeMarker, "id">): string
 /** The stamp written once that alert went out: the claim's `isSent`. */
 export function pastCutoffSentKey(marker: Pick<OwedNoticeMarker, "id">): string {
   return `owed-notice-past-cutoff-sent:${marker.id}`;
+}
+
+/** How many times the sent stamp is written before giving up (round 3, item 6). */
+export const SENT_STAMP_WRITE_ATTEMPTS = 2;
+
+/**
+ * Write the sent stamp, trying twice as `giveBackOwnOnceEverClaim` tries its
+ * release: without it a later attempt finds a claim with no stamp, older than
+ * the wait, and takes it over, sending the alert again. Never throws.
+ */
+async function stampSent(sentKey: string, label: string, context: Record<string, unknown>): Promise<void> {
+  for (let attempt = 1; attempt <= SENT_STAMP_WRITE_ATTEMPTS; attempt += 1) {
+    try {
+      await claimAlertCooldown({ key: sentKey, windowMs: ALERT_ONCE_EVER_WINDOW_MS, now: new Date() });
+      return;
+    } catch (err) {
+      const last = attempt === SENT_STAMP_WRITE_ATTEMPTS;
+      logger.error({ ...context, err, attempt }, last ? `Failed to stamp the ${label} as sent; a later attempt may send it again` : `Failed to stamp the ${label} as sent; trying once more`);
+    }
+  }
 }
 
 export async function alertOfficersOncePastCutoff(
@@ -66,11 +89,7 @@ export async function alertOfficersOncePastCutoff(
       inFlightMs,
       send: async () => {
         const result = await send();
-        if (adminAlertIsDeliveredOrQueued(result)) {
-          await claimAlertCooldown({ key: sentKey, windowMs: ALERT_ONCE_EVER_WINDOW_MS, now: new Date() }).catch((err) =>
-            logger.error({ ...context, err }, `Failed to stamp the ${label} as sent; a later attempt may send it again`),
-          );
-        }
+        if (adminAlertIsDeliveredOrQueued(result)) await stampSent(sentKey, label, context);
         return result;
       },
       isSent: async () => (await readHeldOnceEverAlertTimes([sentKey], new Date())).has(sentKey),

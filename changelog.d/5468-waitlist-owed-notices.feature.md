@@ -14,7 +14,7 @@
   the member (never sent, failed, bounced, or refused for a suppressed
   address), the member is not sent an "offer expired" email for an offer they
   never knew about, and a failed offer email is not retried once the offer has
-  ended; they keep their place in the queue, but others waiting for those
+  ended (bar a retry already under way at that moment); they keep their place in the queue, but others waiting for those
   nights are considered first for that place. The
   place is held a little longer in these rare cases, so the next person may
   wait longer.

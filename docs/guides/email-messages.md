@@ -441,21 +441,33 @@ you want both reworded; editing only one leaves the other on its built-in text.
 > being useful (the later of the start of the check-in date and the offer's
 > own deadline, and at most seven days after the offer); when a member's
 > **Waitlist Offer Expired** email could not be sent within seven days; and
-> when an offer lapses before its email could ever be sent, so a person can
-> step in for the place the member missed (owner decision, 24 Nov 2026).
-> Officers get it once per offer, never once for the unsent email and again
-> for the lapse. It names the member and the booking so an officer can contact
+> when an offer lapses with its email not known to have reached the member,
+> so a person can step in for the place the member missed (owner decision,
+> 24 Nov 2026). Officers get it once per offer, not once for the unsent email
+> and again for the lapse (very rarely twice, if recording that it went
+> fails twice). It names the member and the booking so an officer can contact
 > them. It goes to officers who receive waitlist offer alerts (the **Waitlist
 > offers** preference, which mutes both), and its wording is editable like the
 > others. Its `{{noticeNote}}` token holds the whole instruction for that
 > email. The **Admin Waitlist Offer** alert still goes for every offer, once
 > what became of the offer email is known (it may wait while a failed send is
 > retried). It says which in the new `{{offerNote}}` token: sent, withheld by
-> the booking's **No emails** switch or because this is not the live site, or
-> not delivered (alongside the **Waitlist email not sent** alert). It states
-> the deadline in force with `{{expiresAt}}`, in place of a fixed "48 hours". A saved copy
-> of that template keeps its old wording until you restore the default or add
-> the tokens.
+> the booking's **No emails** switch (with the next step: turn the booking's
+> emails back on or retract the offer), or not delivered (alongside the
+> **Waitlist email not sent** alert). It states the deadline in force with
+> `{{expiresAt}}`, in place of a fixed "48 hours". `{{offerNote}}` is now a
+> required token. A saved copy of that template written before this version
+> keeps sending exactly as saved, in its old wording; this page flags it as
+> missing a required token, and it cannot be saved again until you add
+> `{{offerNote}}` back or restore the default. Nothing is blocked until then.
+>
+> Two limits officers should know. When the mail provider reports a bounce or
+> a complaint for a member's address, every earlier email to that address is
+> marked bounced too, so a member who did receive their offer can still be
+> reported in a **Waitlist email not sent** alert when it lapses; that alert
+> says only that the email is not known to have reached them. And a **Waitlist
+> Offer Expired** email that cannot be delivered raises no alert: the member
+> is simply back on the waitlist.
 >
 > During the switch to this version, a server still running the version
 > before it that expires an offer this version made and never sent sends the

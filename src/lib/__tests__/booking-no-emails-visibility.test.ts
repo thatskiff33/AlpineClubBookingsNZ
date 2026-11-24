@@ -205,7 +205,8 @@ describe("the board reads the offer email's row by the owed notices' rule (#5433
     ["a non-production copy's withheld email is held back, needing nothing", { status: "SKIPPED_NON_PRODUCTION", attempts: 1 }, "withheld_non_production", false],
     ["a FAILED row with no body to replay is exhausted, not retrying", { status: "FAILED", attempts: 1, htmlBody: null, bookingRetryHtmlBody: null }, "exhausted", true],
     ["a FAILED row that keeps its body is retrying", { status: "FAILED", attempts: 1, bookingRetryHtmlBody: "<p>offer</p>" }, "retrying", false],
-    ["a QUEUED row past its first attempt is the retry cron's", { status: "QUEUED", attempts: 2, bookingRetryHtmlBody: "<p>offer</p>" }, "retrying", false],
+    ["a QUEUED row past its first attempt, claimed just now, is the retry cron's", { status: "QUEUED", attempts: 2, lastAttemptAt: new Date(), bookingRetryHtmlBody: "<p>offer</p>" }, "retrying", false],
+    ["a QUEUED replay left long ago reads as queued, the provider may have it (round 3, item 1)", { status: "QUEUED", attempts: 2, bookingRetryHtmlBody: "<p>offer</p>" }, "queued", false],
     ["a QUEUED row on its first attempt is queued", { status: "QUEUED", attempts: 1, bookingRetryHtmlBody: "<p>offer</p>" }, "queued", false],
   ])("%s", async (_case, row, retryState, needsOperatorAction) => {
     mocks.emailLogFindMany.mockResolvedValue([emailLog(row)]);

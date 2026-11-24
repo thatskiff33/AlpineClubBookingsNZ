@@ -450,6 +450,9 @@ const REQUIRED_TEMPLATE_TOKENS: Partial<Record<EmailAuditTemplateName, string[]>
   // #5433: {{noticeNote}} says which waitlist email went unsent and what to
   // do; the member and the booking link are what an officer acts on.
   "admin-waitlist-notice-unsent": ["noticeNote", "memberName", "bookingUrl"],
+  // #5433: {{offerNote}} says whether the offer email reached the member; an
+  // override without it would tell officers nothing about that.
+  "admin-waitlist-offer": ["offerNote"],
   // #3672: the organiser's booking, and each waiting joiner linked to the
   // booking whose admin tools record their payment.
   "admin-group-joiner-started-stay": [
@@ -1134,7 +1137,7 @@ const TEMPLATE_TRIGGER_METADATA: Partial<
     frequency: "One email per joiner booking covered by the settled payment",
   },
   "admin-waitlist-notice-unsent": {
-    triggerSummary: "A waitlist email owed to a member (the offer of a place, or the notice that an offer lapsed) could not be sent before its cut-off, so it was cleared unsent, or an offer lapsed before its email could ever be sent (#5433, owner decisions D2 and D5)",
+    triggerSummary: "A waitlist email owed to a member (the offer of a place, or the notice that an offer lapsed) could not be sent before its cut-off; an offer email's send did not reach the member (it bounced, failed for good, or their address cannot be emailed); or an offer lapsed with its email not known to have reached them (#5433, owner decisions D2 and D5)",
     frequency:
       "Once per unsent notice, and once per offer for its email and its lapse together, guarded by a cross-instance claim. The claim is kept once any admin is sent it or has a copy queued for the email retry cron, held for a day when no admin can receive it, and given back when the send throws before reaching anyone",
   },

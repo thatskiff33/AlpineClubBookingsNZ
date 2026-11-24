@@ -13,6 +13,7 @@ import {
   REPLAYABLE_FAILED_EMAIL_WHERE,
 } from "@/lib/email/retry-selection";
 import { retireReplayableEmailRow } from "@/lib/email/retire-replayable";
+import { emailStillWanted } from "@/lib/email/retry-still-wanted";
 import {
   describeDeliveryDecision,
   resolveDeliveryPolicy,
@@ -417,6 +418,29 @@ export async function retryFailedEmails(): Promise<{
           'Skipped email retry for a booking with "No emails" turned on',
         );
         // A withheld skip is not a retry attempt.
+        continue;
+      }
+
+      // #5433: a template whose email stops being true once its subject moves
+      // on (a waitlist offer that has ended) registers a check; an unwanted row
+      // is retired, not sent. Templates with no check pass straight through.
+      const stillWanted = await emailStillWanted(emailLog).catch((err) => {
+        logger.error({ err, emailLogId: emailLog.id }, "Skipped email retry: could not tell whether it is still wanted");
+        return null;
+      });
+      if (stillWanted === null) continue;
+      if (stillWanted !== true) {
+        await retireUnverifiableBookingEmail({
+          emailLogId: emailLog.id,
+          bookingId: emailLog.bookingId,
+          templateName: emailLog.templateName,
+          to: emailLog.to,
+          expectedAttempts: emailLog.attempts,
+          expectedHtmlBody: emailLog.htmlBody,
+          expectedBookingRetryHtmlBody: emailLog.bookingRetryHtmlBody,
+          errorMessage: `Not retried: no longer wanted (${stillWanted}).`,
+          logMessage: "Retired an email that is no longer wanted",
+        });
         continue;
       }
 

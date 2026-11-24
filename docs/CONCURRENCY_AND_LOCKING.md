@@ -258,12 +258,17 @@ address suppressed between that read and the send is recorded `BOUNCED` by the
 email core, which the post-send read counts as not told.
 
 Retiring a replayable `FAILED` offer email once the offer is over
-(`retireOfferEmailIfReplayable`, through `retireReplayableEmailRow`, the retry
-cron's own retirement) takes no advisory key: it is one `updateMany` guarded on
-the row exactly as read (status `FAILED`, attempts and bodies), and the retry
-cron claims a row the same way, from `FAILED` to `QUEUED`, so of the two only
-one can win and a lost retirement changes nothing. Stated limit: a replay the
-cron claimed first still goes, stating the deadline it was rendered with.
+(`retireReplayableEmailRow`, the retry cron's own retirement) is one
+`updateMany` guarded on the row exactly as read (status `FAILED`, attempts and
+bodies), and the retry cron claims a row the same way, from `FAILED` to
+`QUEUED`, so of the two only one can win and a lost retirement changes nothing.
+Three writers use it: the retry job itself, after its "still wanted?" check
+(`email/retry-still-wanted.ts`) finds the offer over, with no advisory key; a
+sweep that finds the offer moved on, with none; and `expireStaleOffers`, inside
+its lock(1) and lodge-key transaction and before it decides who was told: a
+database-only read and write by primary key, adding no key and no provider
+call. Stated limit: a replay the job claimed between its check and its send
+still goes, stating the deadline it was rendered with.
 
 The cross-lodge confirm claims the entry in its second and third transactions
 on the row its first one read, `updatedAt` and the deadline included, so a

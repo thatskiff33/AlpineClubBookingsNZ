@@ -8,17 +8,23 @@
  * every retirement (`INV-SSOT`): the cron's unverifiable booking email
  * (`cron-email-retry.ts`) and a waitlist offer that is over (#5433 review).
  */
+import type { Prisma } from "@prisma/client";
+
 import { EMAIL_RETRY_MAX_ATTEMPTS } from "@/lib/email/retry-selection";
 import { prisma } from "@/lib/prisma";
 
-export async function retireReplayableEmailRow(row: {
-  id: string;
-  attempts: number;
-  htmlBody: string | null;
-  bookingRetryHtmlBody: string | null;
-  errorMessage: string;
-}): Promise<{ count: number }> {
-  return prisma.emailLog.updateMany({
+export async function retireReplayableEmailRow(
+  row: {
+    id: string;
+    attempts: number;
+    htmlBody: string | null;
+    bookingRetryHtmlBody: string | null;
+    errorMessage: string;
+  },
+  /** A transaction's client when the retirement must commit with a decision (the waitlist's lapse). */
+  db: Pick<Prisma.TransactionClient, "emailLog"> = prisma,
+): Promise<{ count: number }> {
+  return db.emailLog.updateMany({
     where: {
       id: row.id,
       status: "FAILED",

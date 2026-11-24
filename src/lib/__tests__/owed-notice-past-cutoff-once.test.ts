@@ -96,6 +96,43 @@ describe("alertOfficersOncePastCutoff", () => {
     expect(send).toHaveBeenCalledTimes(2);
   });
 
+  it("writes the sent stamp a second time when the first write throws (round 3, item 6)", async () => {
+    send.mockResolvedValue(result(1));
+    const sentKey = pastCutoffSentKey(marker);
+    const realUpdateMany = cooldown.delegate.updateMany.getMockImplementation()!;
+    let failed = false;
+    cooldown.delegate.updateMany.mockImplementation(async (args: { where: { key: string } }) => {
+      if (args.where.key === sentKey && !failed) {
+        failed = true;
+        throw new Error("db blip");
+      }
+      return realUpdateMany(args as never);
+    });
+    try {
+      await expect(alert()).resolves.toBe("settled");
+      expect(cooldown.rows.has(sentKey)).toBe(true);
+    } finally {
+      cooldown.delegate.updateMany.mockImplementation(realUpdateMany);
+    }
+  });
+
+  it("gives up after two failed stamp writes, saying a later attempt may send again (the stated limit)", async () => {
+    send.mockResolvedValue(result(1));
+    const sentKey = pastCutoffSentKey(marker);
+    const realUpdateMany = cooldown.delegate.updateMany.getMockImplementation()!;
+    cooldown.delegate.updateMany.mockImplementation(async (args: { where: { key: string } }) => {
+      if (args.where.key === sentKey) throw new Error("db down");
+      return realUpdateMany(args as never);
+    });
+    try {
+      await expect(alert()).resolves.toBe("settled");
+      expect(cooldown.rows.has(sentKey)).toBe(false);
+      expect(mocks.logger.error).toHaveBeenCalledWith(expect.objectContaining({ attempt: 2 }), expect.stringContaining("may send it again"));
+    } finally {
+      cooldown.delegate.updateMany.mockImplementation(realUpdateMany);
+    }
+  });
+
   it("sends nothing when the claim cannot be written", async () => {
     cooldown.delegate.updateMany.mockRejectedValueOnce(new Error("db down"));
     await expect(alert()).resolves.not.toBe("settled");

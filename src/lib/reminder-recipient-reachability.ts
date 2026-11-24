@@ -1,6 +1,5 @@
-import { getActiveEmailSuppression } from "@/lib/email-suppression";
+import { emailReachability } from "@/lib/email-reachability";
 import logger from "@/lib/logger";
-import { isPlaceholderContactEmail } from "@/lib/placeholder-contact-email";
 
 /**
  * Can this member actually be reached, before anything is claimed? The additional-payment
@@ -12,36 +11,31 @@ import { isPlaceholderContactEmail } from "@/lib/placeholder-contact-email";
  * claim would mean handing the stamp back on every pass and manufacturing a
  * bounce row each time; finding it out first costs one indexed read and leaves
  * the reminder cleanly due for whenever the address is fixed or the suppression
- * cleared. A suppression read that fails is treated as "cannot reach", the same
- * fail-closed direction as the cron's "No emails" switch check.
+ * cleared. A suppression read that fails is treated as "cannot reach" for this
+ * pass, the same fail-closed direction as the cron's "No emails" switch check.
+ * The rule itself is `emailReachability` (#5433 round 3): since then an empty
+ * address is skipped here too, where it used to be claimed and then withheld.
  */
 export async function canReceiveChaseEmail(
   email: string,
   bookingId: string,
 ): Promise<boolean> {
-  if (isPlaceholderContactEmail(email)) {
-    logger.info(
-      { bookingId, job: "additionalPaymentReminders" },
-      "Skipped an additional-payment reminder to a walk-in placeholder address",
-    );
-    return false;
-  }
-
-  try {
-    const suppression = await getActiveEmailSuppression(email);
-    if (suppression) {
-      logger.warn(
-        { bookingId, job: "additionalPaymentReminders" },
-        "Skipped an additional-payment reminder to a suppressed address",
-      );
+  const reach = await emailReachability(email);
+  const log = { bookingId, job: "additionalPaymentReminders" };
+  switch (reach) {
+    case "reachable":
+      return true;
+    case "no-address":
+      logger.info(log, "Skipped an additional-payment reminder: the member has no email address");
       return false;
-    }
-    return true;
-  } catch (err) {
-    logger.error(
-      { err, bookingId, job: "additionalPaymentReminders" },
-      "Could not check the member's email suppression state; skipping the additional-payment reminder",
-    );
-    return false;
+    case "placeholder":
+      logger.info(log, "Skipped an additional-payment reminder to a walk-in placeholder address");
+      return false;
+    case "suppressed":
+      logger.warn(log, "Skipped an additional-payment reminder to a suppressed address");
+      return false;
+    case "unknown":
+      logger.error(log, "Could not check the member's email suppression state; skipping the additional-payment reminder");
+      return false;
   }
 }

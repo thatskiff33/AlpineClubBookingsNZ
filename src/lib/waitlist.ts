@@ -34,7 +34,7 @@ import {
   recordWaitlistLapseNoticesOwed,
 } from "@/lib/waitlist-offer-expired-notice";
 import { waitlistOfferExpiresAt } from "@/lib/waitlist-offer-window";
-import { retireOfferEmailIfReplayable } from "@/lib/waitlist-offer-email-state";
+import { retireReplayableOfferEmails } from "@/lib/waitlist-offer-email-state";
 import { logAudit } from "./audit";
 import logger from "@/lib/logger";
 import { isTransactionContention } from "@/lib/prisma-errors";
@@ -1249,11 +1249,13 @@ export async function expireStaleOffers(format: ClubFormat): Promise<{
     // #5433 (WL-2): each lapse's notice is owed from this commit: the member's
     // "offer expired" email, or, for an offer the member was never told about,
     // no email (owner decision D2) and one officers' alert instead (D5). Read
-    // and written under this transaction's locks; the lapse is unchanged.
-    const neverTold = await findNeverToldWaitlistOffers(
-      tx,
-      offers.map((offer) => ({ bookingId: offer.id, offeredAt: offer.waitlistOfferedAt })),
-    );
+    // and written under this transaction's locks; the lapse is unchanged. A
+    // lapsed offer is over, so an offer email the retry cron could still replay
+    // is retired first, in this transaction, so the decision below and the
+    // retirement agree (round 3, item 2): a database-only write by primary key.
+    const lapsedOffers = offers.map((offer) => ({ bookingId: offer.id, offeredAt: offer.waitlistOfferedAt }));
+    await retireReplayableOfferEmails(tx, lapsedOffers, "the offer lapsed");
+    const neverTold = await findNeverToldWaitlistOffers(tx, lapsedOffers);
     const expiredAt = new Date();
     const lapses = offers.map((offer) => ({
       bookingId: offer.id,
@@ -1272,13 +1274,6 @@ export async function expireStaleOffers(format: ClubFormat): Promise<{
   }, LOCK1_HOLDER_TRANSACTION_BUDGET);
 
   let reofferedCount = 0;
-
-  // #5433 (round 2, item 4): a lapsed offer is over, so an offer email the
-  // retry cron could still replay is retired before it can state a dead
-  // deadline. Never throws.
-  for (const offer of staleOffers) {
-    if (offer.waitlistOfferedAt) await retireOfferEmailIfReplayable(offer.id, offer.waitlistOfferedAt, "the offer lapsed");
-  }
 
   for (const offer of staleOffers) {
     logAudit({
