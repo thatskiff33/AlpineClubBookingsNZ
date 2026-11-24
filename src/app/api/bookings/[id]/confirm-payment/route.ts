@@ -8,7 +8,7 @@ import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { getPaymentIntent } from "@/lib/stripe";
 import { markBookingPaymentSucceeded } from "@/lib/payment-reconciliation";
-import { sendPaidBookingConfirmedEmail } from "@/lib/paid-booking-confirmation-email";
+import { deliverPaidBookingConfirmation } from "@/lib/paid-booking-confirmation-notice";
 import { logAudit } from "@/lib/audit";
 import { getClientIp } from "@/lib/rate-limit-http";
 import logger from "@/lib/logger";
@@ -209,6 +209,7 @@ export async function POST(
       paymentIntentId: pi.id,
       amountCents: pi.amount,
       paymentMethodId: getStripePaymentMethodId(pi),
+      owesPaidConfirmation: true,
     });
 
     if (
@@ -232,12 +233,11 @@ export async function POST(
       return NextResponse.json(SUPERSEDED_CARD_PAYMENT_REFUNDING_BODY, { status: 409 });
     }
 
-    // Send the confirmation email only on a fresh transition to PAID. If the
-    // Stripe webhook reconciled this payment first, markBookingPaymentSucceeded
-    // returns "already_paid" here and we skip the send, so the email goes out
-    // exactly once whichever path wins the race (issue #772).
-    if (reconciliation.outcome === "paid") {
-      await sendPaidBookingConfirmedEmail(bookingId, format);
+    // Only a fresh transition to PAID carries the settle's owed marker (#5433): if
+    // the webhook settled first this is "already_paid", so the email goes once
+    // whichever path wins (#772), and a stop before this line leaves it to the sweep.
+    if (reconciliation.paidConfirmation) {
+      await deliverPaidBookingConfirmation(reconciliation.paidConfirmation, format, "confirm-payment");
     }
 
     await queueXeroInvoiceForPaidBooking({

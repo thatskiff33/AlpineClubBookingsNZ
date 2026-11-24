@@ -15,6 +15,7 @@ export const OWED_NOTICE_KINDS = [
   "waitlist-offer-officers",
   "waitlist-offer-expired",
   "waitlist-offer-lapsed-untold",
+  "booking-confirmed",
 ] as const;
 
 export type OwedNoticeKind = (typeof OWED_NOTICE_KINDS)[number];

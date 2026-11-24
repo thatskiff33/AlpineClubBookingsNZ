@@ -1,5 +1,6 @@
 import { stripePaymentAlertSampleValue } from "@/lib/email-message-stripe-payment-samples";
 import { waitlistAlertSampleValue } from "@/lib/email-message-waitlist-samples";
+import { OWED_NOTICE_ALERT_TRIGGERS } from "@/lib/email-message-owed-notice-triggers";
 import {
   EMAIL_AUDIT_DEFAULTS,
   type EmailAuditTemplateName,
@@ -450,6 +451,8 @@ const REQUIRED_TEMPLATE_TOKENS: Partial<Record<EmailAuditTemplateName, string[]>
   // #5433: {{noticeNote}} says which waitlist email went unsent and what to
   // do; the member and the booking link are what an officer acts on.
   "admin-waitlist-notice-unsent": ["noticeNote", "memberName", "bookingUrl"],
+  // #5433 (D1): the owner and the booking link are what an officer acts on.
+  "admin-booking-confirmation-unsent": ["memberName", "bookingUrl"],
   // #5433: {{offerNote}} says whether the offer email reached the member; an
   // override without it would tell officers nothing about that.
   "admin-waitlist-offer": ["offerNote"],
@@ -1136,11 +1139,7 @@ const TEMPLATE_TRIGGER_METADATA: Partial<
       "Organiser settled a joiner's spot as part of a combined group payment",
     frequency: "One email per joiner booking covered by the settled payment",
   },
-  "admin-waitlist-notice-unsent": {
-    triggerSummary: "A waitlist email owed to a member (the offer of a place, or the notice that an offer lapsed) could not be sent before its cut-off; an offer email's send did not reach the member (it bounced, failed for good, or their address cannot be emailed); or an offer lapsed with its email not known to have reached them (#5433, owner decisions D2 and D5)",
-    frequency:
-      "Once per unsent notice, and once per offer for its email and its lapse together, guarded by a cross-instance claim. The claim is kept once any admin is sent it or has a copy queued for the email retry cron, held for a day when no admin can receive it, and given back when the send throws before reaching anyone",
-  },
+  ...OWED_NOTICE_ALERT_TRIGGERS,
   "admin-group-joiner-started-stay": {
     triggerSummary:
       "A paid organiser-pays group had joiners its bill did not cover whose stay had started; they were switched to paying for themselves without an email, so the treasurer collects by hand (#3672)",

@@ -112,6 +112,7 @@ import type {
 } from "@/lib/payment-reconciliation-sources";
 import { LOCK1_HOLDER_TRANSACTION_BUDGET } from "@/lib/db-transaction";
 import { readClearedCreditElectionCents, readSettledAdditionalPayment } from "@/lib/manual-mark-paid-metadata";
+import { recordPaidBookingConfirmationOwed } from "@/lib/paid-booking-confirmation-owed";
 
 const PAYABLE_SUCCESS_STATUS_LIST = [
   BookingStatus.PAYMENT_PENDING,
@@ -1570,7 +1571,10 @@ async function settleAndPostBookingReceipts(tx: Prisma.TransactionClient, bookin
     await postRefundObligation(tx, journal, { bookingId, scope: "capture-return", id: settlement.paymentIntentId, amountCents: result.plannedRefundCents,
       origin: "APP", debtorRead: "plain" });
   }
-  return result;
+  // #5433 (D1): a fresh card PAID claim ("paid" is reached only through it) owes its caller's confirmation, written last.
+  const paidConfirmation = result.outcome === "paid" && settlement.kind === "stripe" && settlement.owesPaidConfirmation
+    ? await recordPaidBookingConfirmationOwed(tx, { bookingId, paidAt: new Date() }) : null;
+  return { ...result, paidConfirmation };
 }
 
 export async function markBookingPaymentSucceeded({
@@ -1581,6 +1585,7 @@ export async function markBookingPaymentSucceeded({
   format,
   recordedByCaller = false,
   capturedAt,
+  owesPaidConfirmation = false,
 }: {
   bookingId: string;
   paymentIntentId: string;
@@ -1591,6 +1596,8 @@ export async function markBookingPaymentSucceeded({
   /** #4285 review: the caller just wrote this capture SUCCEEDED itself (`SettledSavedCardChargeAttempt.newlyCaptured`). */
   recordedByCaller?: boolean;
   capturedAt?: Date;
+  /** #5433: the caller delivers the paid confirmation (`StripeSettlementSource.owesPaidConfirmation`). */
+  owesPaidConfirmation?: boolean;
 }): Promise<MarkBookingPaymentSucceededResult> {
   const journal = await resolveBookingMoneyPostingContext();
   const reconciliation = await prisma.$transaction((tx) =>
@@ -1600,7 +1607,7 @@ export async function markBookingPaymentSucceeded({
       amountCents,
       paymentMethodId,
       format,
-      recordedByCaller, capturedAt,
+      recordedByCaller, capturedAt, owesPaidConfirmation,
     }, journal), LOCK1_HOLDER_TRANSACTION_BUDGET
   );
 
@@ -1980,6 +1987,7 @@ export async function markBookingPaymentSucceeded({
     outcome: reconciliation.outcome,
     bookingId,
     bumpedBookingIds: reconciliation.bumpedBookingIds,
+    ...(reconciliation.paidConfirmation ? { paidConfirmation: reconciliation.paidConfirmation } : {}),
   };
 }
 

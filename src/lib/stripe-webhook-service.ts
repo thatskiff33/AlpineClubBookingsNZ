@@ -19,7 +19,7 @@ import {
   sendAdminPaymentFailureAlert,
   sendSetupIntentFailedEmail,
 } from "@/lib/email";
-import { sendPaidBookingConfirmedEmail } from "@/lib/paid-booking-confirmation-email";
+import { deliverPaidBookingConfirmation } from "@/lib/paid-booking-confirmation-notice";
 import { recordWebhookLog } from "@/lib/webhook-log";
 import { recordRefusedCardRefund } from "@/lib/card-refund-status-sync";
 import { notifyXeroSyncError } from "@/lib/xero-error-alert";
@@ -497,6 +497,7 @@ async function handlePaymentIntentSucceeded(
       typeof paymentIntent.payment_method === "string"
         ? paymentIntent.payment_method
         : paymentIntent.payment_method?.id ?? null,
+    owesPaidConfirmation: true,
   });
 
   if (
@@ -519,12 +520,11 @@ async function handlePaymentIntentSucceeded(
 
   logger.info({ bookingId, paymentIntentId: paymentIntent.id, outcome: reconciliation.outcome }, `PaymentIntent reconciled: ${reconciliation.outcome}`);
 
-  // Send confirmation email only on a fresh transition to PAID. An
-  // "already_paid" outcome means the synchronous confirm-payment route (or a
-  // prior delivery) already reconciled this payment and sent the email, so we
-  // skip here to keep the send exactly-once across both paths (issue #772).
-  if (reconciliation.outcome === "paid") {
-    await sendPaidBookingConfirmedEmail(bookingId, format);
+  // Confirmation only on a fresh transition to PAID, whose settle recorded it as
+  // owed (#5433): "already_paid" carries no marker, so the send stays once across
+  // both paths (#772), and a stop before this line leaves it to the sweep.
+  if (reconciliation.paidConfirmation) {
+    await deliverPaidBookingConfirmation(reconciliation.paidConfirmation, format, "stripe-webhook");
   }
 
   await queueXeroInvoiceForPaidBooking({ bookingId });

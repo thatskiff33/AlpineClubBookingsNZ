@@ -65,7 +65,7 @@ export const ADMIN_NOTIFICATION_PREFERENCE_META = {
   adminBookingReviewRequired: {
     label: "Booking review required",
     description:
-      "Alerts when a booking needs admin review before it can check in, such as a paid booking left with only under-18 guests. Kept separate so muting routine new-booking alerts does not silence this review alert.",
+      "Alerts when a booking needs admin review before it can check in, such as a paid booking left with only under-18 guests, or a paid booking whose confirmation email could not be sent. Kept separate so muting routine new-booking alerts does not silence this review alert.",
   },
   adminMemberDeleteRequest: {
     label: "Member delete requests",

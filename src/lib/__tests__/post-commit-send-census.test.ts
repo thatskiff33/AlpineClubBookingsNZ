@@ -28,10 +28,10 @@
  *
  * Blind spots, stated as `INV-SSOT-004` asks:
  * - Only the scoped files are read (`POST_COMMIT_SEND_SCOPE`): the paths #5433's
- *   plan traced. A transaction-then-send elsewhere is not found. Among what is
- *   left out: the confirm-payment route (`src/app/api/bookings/[id]/confirm-payment/route.ts`,
- *   the plan's ST path from the browser), which #5433's PR 3 converts with the
- *   webhook, and every route an officer starts by clicking a button.
+ *   plan traced, the confirm-payment route among them (the plan's ST path from
+ *   the browser, converted with the webhook in PR 3). A transaction-then-send
+ *   elsewhere is not found; among what is left out is every route an officer
+ *   starts by clicking a button.
  * - A sender is found by NAME (`send`, `alert` or `notify` and a capital
  *   letter), as a unit of the same module that contains one, or as an imported
  *   helper `SENDS_THROUGH` names. Any other imported helper that sends under
@@ -99,10 +99,10 @@ const STRIPE_SWITCH =
 const POST_COMMIT_SEND_REASONS: Readonly<Record<string, Entry>> = {
   // cron-confirm-pending.ts
   "src/lib/cron-confirm-pending.ts#confirmPendingBookings#sendConfirmationEmail": {
-    calls: 2,
-    after: ["resolveHoldWindowUnderLock", "markBookingPaymentSucceeded"],
+    calls: 1,
+    after: ["resolveHoldWindowUnderLock"],
     reason:
-      "#5433 PR 3 converts the saved-card success confirmation (CP-2, after markBookingPaymentSucceeded) to the shared booking-confirmed kind; PR 4 converts the zero-balance confirmation (CP-1, after the hold window's own commit) onto the same kind.",
+      "#5433 PR 4 (CP-1): the zero-balance confirmation, after the hold window's own commit, onto the booking-confirmed kind PR 3 added for the saved-card confirmation (CP-2), which goes through deliverPaidBookingConfirmation.",
   },
   "src/lib/cron-confirm-pending.ts#confirmPendingBookings#sendBookingRequestPaymentExpiredEmail": {
     calls: 1,
@@ -152,11 +152,6 @@ const POST_COMMIT_SEND_REASONS: Readonly<Record<string, Entry>> = {
   },
 
   // stripe-webhook-service.ts
-  "src/lib/stripe-webhook-service.ts#handlePaymentIntentSucceeded#sendPaidBookingConfirmedEmail": {
-    calls: 1,
-    after: ["markBookingPaymentSucceeded"],
-    reason: "#5433 PR 3 (ST): the card payment confirmation, which a redelivered webhook never sends again.",
-  },
   "src/lib/stripe-webhook-service.ts#handlePaymentIntentSucceeded#alertPaymentAmountMismatch": {
     calls: 2,
     after: ["handleCancelledBookingPaymentSucceeded"],
@@ -191,13 +186,13 @@ const POST_COMMIT_SEND_REASONS: Readonly<Record<string, Entry>> = {
     calls: 1,
     after: ["markPaymentIntentTransactionFailed"],
     reason:
-      "Outside the paths #5433's plan traced; to be traced with #5433 PR 3 (card payments): the officers' card-payment-failure alert after the attempt row is marked failed, which a redelivered webhook may not raise again.",
+      "Traced in #5433 PR 3: a stop before the event's lease completes replays the handler (a redelivery or a lease takeover), and the handler alerts on every run, not only on the transition to FAILED, so that window is recovered. Left open: the alert is not awaited, so a stop after the handler returns and before the provider call loses it; to convert (or await) under #5433.",
   },
   "src/lib/stripe-webhook-service.ts#handleChargeRefunded#notifyXeroSyncError": {
     calls: 1,
     after: ["syncRefundsFromStripeCharge"],
     reason:
-      "Outside the paths #5433's plan traced; to be traced with #5433 PR 3 (card payments): the Xero sync error alert when the refund's credit note could not be queued after the refund sync committed (deduped to one an hour by notifyXeroSyncError).",
+      "Traced in #5433 PR 3: sent only when queueing the refund's credit note fails after the refund sync committed (deduped to one an hour by notifyXeroSyncError), and not awaited. A replay after a stop finds no refund newly recorded, so it neither queues the credit note nor alerts; the credit note's own recovery is the larger question and is outside the email paths. To decide under #5433 with that.",
   },
   "src/lib/stripe-webhook-service.ts#processStripeWebhookEvent#handlePaymentIntentFailed": {
     calls: 1,
@@ -381,6 +376,11 @@ const POST_COMMIT_SEND_REASONS: Readonly<Record<string, Entry>> = {
     after: [OWN_COMMIT],
     reason: MARK_PAID_ALERTS,
   },
+  "src/app/api/bookings/[id]/confirm-payment/route.ts#POST#markBookingPaymentSucceeded": {
+    calls: 1,
+    after: [OWN_COMMIT],
+    reason: MARK_PAID_ALERTS,
+  },
   "src/lib/cron-confirm-pending.ts#confirmPendingBookings#settleHostingCoverageAfterCommit": { calls: 1, after: [OWN_COMMIT], reason: HOSTING_COVER },
   "src/lib/cron-group-settlement-reaper.ts#reapAndResume#settleHostingCoverageAfterCommit": { calls: 1, after: [OWN_COMMIT], reason: HOSTING_COVER },
   "src/lib/group-settlement.ts#createGroupSettlementIntent#settleHostingCoverageAfterCommit": { calls: 1, after: [OWN_COMMIT], reason: HOSTING_COVER },
@@ -526,6 +526,20 @@ describe("#5433: every notice sent after a commit is owed, or has a recorded rea
     for (const [name, { module }] of Object.entries(SENDS_THROUGH)) {
       expect(moduleUnitRoles(module, readRepoFile(module) ?? "").get(name)?.sends, `${name} in ${module}`).toBe(true);
     }
+  });
+
+  // #5433 PR 3 (ST, CP-2): the converted card confirmation. A send put back after
+  // the settle is a site with no entry (the test above); this pins the other half:
+  // each of the three callers asks the settle for the marker and delivers it.
+  it.each([
+    "src/lib/stripe-webhook-service.ts",
+    "src/app/api/bookings/[id]/confirm-payment/route.ts",
+    "src/lib/cron-confirm-pending.ts",
+  ])("%s owes the paid confirmation in the settle and delivers it through its owed notice", (rel) => {
+    const code = stripComments(readRepoFile(rel) ?? "");
+    expect(code).toContain("owesPaidConfirmation: true");
+    expect(code.indexOf("deliverPaidBookingConfirmation(reconciliation.paidConfirmation")).toBeGreaterThan(code.indexOf("markBookingPaymentSucceeded("));
+    expect(code).not.toMatch(/sendPaidBookingConfirm/);
   });
 
   // The mutation probes, kept: each edit the census must catch, applied to a copy.
