@@ -30,7 +30,8 @@ cents; dates are NZ date-only.
 ### Find and filter members
 
 1. Go to **Admin → Members → Members**. Search by name, email, or member-ID prefix,
-   and use the filters (Access Role, Membership Type, Status) — open **More
+   and use the filters (Access Role, Membership Type, Subscription Category —
+   **Individual (no category)** finds members with none — and Status) — open **More
    filters** for age tier, family group, login access, Xero link, subscription
    status, Xero contact group, and **Contactable** — the last of which finds
    members the club currently cannot email (#2716), and is what the Stuck States
@@ -131,6 +132,16 @@ cents; dates are NZ date-only.
    timeout mid-reconcile can never lose a committed change. If the day's Xero API
    budget or a timeout cuts the reconcile short, the results panel says how many
    groups synced and the nightly reconcile finishes the rest automatically.
+
+3. **Set Subscription Category** sets or clears one season's
+   [subscription category](subscription-categories.md#assigning-members) for the
+   whole selection without changing anyone's membership type. Pick the category
+   (or **Individual (no category)** to clear it) and season, then **Preview**:
+   it lists each member's current and new category, skips archived members and
+   anyone with no membership type or an archived one that season, and flags
+   members already paid or invoiced for the season (their invoice does not
+   change). Enter a reason and confirm; each member's change gets its own audit
+   entry. Up to 100 members at a time. Membership edit only.
 
 ### Export
 
@@ -284,14 +295,14 @@ The list is a working roster; its controls:
 | Control | What it does | Notes / constraints |
 | --- | --- | --- |
 | Search | Match name, email, or member-ID prefix | 300 ms debounce |
-| Access Role / Membership Type / Status | Primary filters | Status defaults to All Non-Archived |
+| Access Role / Membership Type / Subscription Category / Status | Primary filters | Status defaults to All Non-Archived |
 | More filters | Age tier, family group, login access, Xero, subscription, Xero group | Xero-group filter needs Xero connected + the feature flag |
 | Reset | Restore list search, filters, sort, and page | Disabled while the list is already at its defaults |
 | Add Member / Open | Create a member, or open an existing member read-only | Opening needs membership view; create and per-section Edit need membership edit; Admin user-type and privileged roles are Full-Admin only |
 | Import CSV | Bulk-create from a CSV | Membership edit; 500-row cap; duplicate-email rows skipped |
 | Export CSV | Download the filtered list | View access can export |
 | Invite / Resend / Reset Password | Send login/setup emails | Setup invites are 7-day links; reset expiry 1 hour / 1 day / 3 days |
-| Bulk bar | Deactivate / Reactivate / Change Access / Set Membership Type / send emails | Membership edit |
+| Bulk bar | Deactivate / Reactivate / Change Access / Set Membership Type / Set Subscription Category / send emails | Membership edit |
 | Refresh Xero Groups | Refresh cached contact-group memberships | Membership edit; only when Xero is connected |
 | Credit adjustment (detail) | Request a credit change | Finance edit; a **different** admin must approve; dollars stored as cents |
 | Merge (detail) | Combine a duplicate into this member | Full Admin only; typed confirmation phrase |

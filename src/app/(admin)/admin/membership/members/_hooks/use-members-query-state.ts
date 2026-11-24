@@ -38,6 +38,7 @@ export function useMembersQueryState() {
     financeAccess: searchParams.get("financeAccess") || "",
     lifecycleStatus: getInitialLifecycleStatus(searchParams),
     membershipType: searchParams.get("membershipType") || "",
+    subscriptionCategory: searchParams.get("subscriptionCategory") || "",
     ageTier: searchParams.get("ageTier") || "",
     familyGroup: searchParams.get("familyGroup") || "",
     inviteStatus: searchParams.get("inviteStatus") || "",

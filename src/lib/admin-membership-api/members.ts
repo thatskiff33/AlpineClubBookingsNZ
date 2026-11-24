@@ -68,6 +68,7 @@ export const adminMembersQuerySchema = z
     ageTier: optionalSearchParam,
     ageTierIn: optionalSearchParam,
     membershipType: optionalSearchParam,
+    subscriptionCategory: optionalSearchParam,
     xeroLinked: optionalSearchParam,
     contactability: optionalSearchParam,
     inviteStatus: optionalSearchParam,

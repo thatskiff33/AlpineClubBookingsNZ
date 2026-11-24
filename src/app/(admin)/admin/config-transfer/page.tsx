@@ -39,7 +39,7 @@ const CATEGORY_LABELS: Record<ConfigTransferCategory, string> = {
   "booking-policies": "Booking policies",
   committee: "Committee (roles)",
   induction: "Induction checklists",
-  "membership-fees": "Membership fees (joining & annual)",
+  "membership-fees": "Membership fees (joining, annual & subscription categories)",
   "xero-config": "Xero configuration",
 };
 

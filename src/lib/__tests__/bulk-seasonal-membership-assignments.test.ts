@@ -34,8 +34,14 @@ vi.mock("@/lib/bed-allocation-lifecycle", () => ({
 vi.mock("@/lib/email", () => ({
   sendAdminPartnerShareSweptAlert: vi.fn().mockResolvedValue(undefined),
 }));
+const mockLoggerError = vi.fn();
 vi.mock("@/lib/logger", () => ({
-  default: { error: vi.fn(), info: vi.fn(), warn: vi.fn(), debug: vi.fn() },
+  default: {
+    error: (...args: unknown[]) => mockLoggerError(...args),
+    info: vi.fn(),
+    warn: vi.fn(),
+    debug: vi.fn(),
+  },
 }));
 // The season-row reconcile reads the club's age-tier settings for the shared
 // liability rule (#5190); with no rows the real reader returns the documented
@@ -53,6 +59,7 @@ vi.mock("@/lib/age-tier", async () => {
   };
 });
 
+import { BULK_SEASONAL_SAVE_THREW_MESSAGE } from "@/lib/bulk-seasonal-save";
 import {
   bulkSaveSeasonalMembershipAssignments,
   getSeasonalMembershipChangePreview,
@@ -530,7 +537,13 @@ describe("bulkSaveSeasonalMembershipAssignments", () => {
     const throwEntry = body.results.find((r: any) => r.memberId === "m-throw");
     expect(throwEntry.outcome).toBe("error");
     expect(throwEntry.name).toBe("Member m-throw");
-    expect(throwEntry.error).toMatch(/deadlock/i);
+    // The admin sees a generic message; the thrown detail goes to the log only.
+    expect(throwEntry.error).toBe(BULK_SEASONAL_SAVE_THREW_MESSAGE);
+    expect(throwEntry.error).not.toMatch(/deadlock/i);
+    expect(mockLoggerError).toHaveBeenCalledWith(
+      expect.objectContaining({ memberId: "m-throw", err: expect.any(Error) }),
+      expect.any(String),
+    );
     const afterEntry = body.results.find((r: any) => r.memberId === "m-after");
     expect(afterEntry.outcome).toBe("changed");
 

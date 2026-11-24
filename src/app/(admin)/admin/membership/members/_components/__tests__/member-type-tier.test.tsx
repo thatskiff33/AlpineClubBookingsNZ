@@ -125,6 +125,7 @@ const baseMember: Member = {
   postalCountry: null,
   familyGroups: [],
   currentMembershipType: null,
+  currentSubscriptionCategory: null,
 };
 
 function renderToolbar() {

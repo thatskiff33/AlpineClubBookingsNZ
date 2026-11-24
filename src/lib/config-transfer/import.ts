@@ -24,6 +24,7 @@ import { committeeImporter } from "./categories/committee";
 import { inductionImporter } from "./categories/induction";
 import { membershipFeesImporter } from "./categories/membership-fees";
 import { ageTierImporter } from "./categories/age-tier";
+import { subscriptionCategoriesImporter } from "./categories/subscription-categories";
 import { xeroConfigImporter, connectedXeroTenantId, readXeroSourceTenantId } from "./categories/xero-config";
 import type { ClubFormat } from "@/lib/club-format";
 
@@ -49,6 +50,9 @@ export const CATEGORY_IMPORTERS: CategoryImporter[] = [
   // age-tier rides the membership-fees category as its own module (#2200); its
   // plan/apply short-circuit when the bundle carries no age-tiers.csv.
   ageTierImporter,
+  // Subscription categories and their fees (#5248); short-circuit likewise
+  // when the bundle carries none of their files.
+  subscriptionCategoriesImporter,
   membershipFeesImporter,
   xeroConfigImporter,
 ];

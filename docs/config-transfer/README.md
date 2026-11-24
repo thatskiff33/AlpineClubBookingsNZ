@@ -481,6 +481,31 @@ deeper reference for what each category contains and the import safety model.
     ages. `age-tiers.csv` rides the membership-fees category as its own module and
     is emitted whenever the source has age tiers (independent of whether it has
     fees), so it does not affect the joining-fee precedence rule below.
+  - **Subscription categories** (#5248) — the club's subscription categories
+    and their flat annual fee schedules, as three files that ride the
+    membership-fees category as their own module:
+    - `membership-fees/subscription-categories.csv` —
+      `key, name, description, isActive, sortOrder`; natural key `key`.
+    - `membership-fees/subscription-category-fees.csv` —
+      `categoryKey, effectiveFrom, effectiveTo, amountCents, prorationRule`;
+      natural key `categoryKey × effectiveFrom`.
+    - `membership-fees/subscription-category-fee-components.csv` —
+      `categoryKey, effectiveFrom, label, amountCents, prorate,
+      xeroAccountCode, xeroItemCode, sortOrder`; natural key
+      `(parent fee = categoryKey × effectiveFrom) × label`.
+
+    The built-in Individual category is never exported, and a bundle row that
+    targets it is a blocking error. Which member is in which category is member
+    data and never travels. Apply is upsert-only by natural key, so importing
+    the same bundle twice changes nothing the second time. The planner checks
+    the **effective post-merge** state, as the admin pages do: a new category
+    `key` must have the shape the Subscription Categories page creates
+    (capital letters, digits and single underscores); a name may not repeat
+    under another key (case-insensitive); a fee's category must be in the
+    bundle or on the target; every fee's components sum exactly to its amount;
+    and one category's fee windows may **not overlap** — the database has no
+    constraint for that, so the planner is the guard. Each failure is
+    blocking.
 
   Referenced membership types must already exist on the target (matched by
   `key`) — membership types themselves are not transferred (they are managed on
