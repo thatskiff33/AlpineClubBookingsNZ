@@ -393,9 +393,10 @@ const VOIDED_UNRELEASED_ROW = z.object({ id: z.string(), createdAt: z.date(), se
  * a released invoice, a live one and one carrying money (no ended flag) are
  * never read. The join finds the invoice in the VOID's key
  * (`groupSettlementInvoiceVoidKey` holds the invoice id verbatim); every row is
- * checked again against the exact keys by `finishedVoidReasons`.
+ * checked again against the exact keys by `finishedVoidReasons`. Exported for
+ * its real-PostgreSQL proof (`combined-group-cover-sweep-read.realdb.test.ts`).
  */
-async function readVoidedUnreleasedPage(cursor: { createdAt: Date; id: string } | null) {
+export async function readVoidedUnreleasedPage(cursor: { createdAt: Date; id: string } | null) {
   const ended = Prisma.join(GROUP_SETTLEMENT_INVOICE_VOID_ENDED_FLAGS.map((flag) => Prisma.sql`${JSON.stringify({ [flag]: true })}::jsonb`));
   const after = cursor ? Prisma.sql`AND (o."createdAt", o."id") > (${cursor.createdAt}, ${cursor.id})` : Prisma.empty;
   const rows = await prisma.$queryRaw`
