@@ -554,8 +554,8 @@ decision,
 An officer who holds the **Lodge Operations** admin area can do through an AI
 app what they can do on that area's admin screens: hut leaders, chore
 rosters, chores, work parties, lodges and their settings, the Other lodges
-registry, maintenance reports and the food-order settings, and the club
-calendar, which `/admin/calendar` (a Lodge page) edits. The actions live in
+registry, maintenance reports, the food-order settings (read only), and the
+club calendar, which `/admin/calendar` (a Lodge page) edits. The actions live in
 [`src/lib/mcp/catalogue/`](../../src/lib/mcp/catalogue/) (`lodge-*.ts`).
 Who is offered them, the officer's approval, and the audit work as for
 Bookings & Beds above.
@@ -571,7 +571,7 @@ Bookings & Beds above.
 - **Asks first.** Every change is `destructive`. Hut leader assignments and
   rosters change another member's record and are often emailed; chores, work
   parties, lodges, their settings, maintenance report questions and policy,
-  the QR signs' switch, the food-order settings and the calendar are
+  the QR signs' switch and the calendar are
   club-wide configuration (owner decisions,
   [#5305](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/5305#issuecomment-7092977781)).
 - **One route, several actions.** The roster save takes one of four requests
@@ -580,8 +580,10 @@ Bookings & Beds above.
   route's `action` fixed, so the app names what it means to do.
 - **What is never sent.** A lodge's door code (and an app cannot set one), a
   hut leader's kiosk PIN, a QR sign's link, a maintenance report's photo and
-  the reporter's contact details, the food officer's email address, and
-  another club's booking officer's email address and phone number.
+  the reporter's contact details, the food officer's email address, and a
+  booking officer's email address and phone number in the Other lodges
+  registry. An app cannot change the club's own booking officer's contact
+  details either: the save publishes them to every club.
 - **Reading a roster can save one.** Opening a night that has no roster saves
   the suggested chores, as opening the page does; `get_chore_roster` does
   the same.
@@ -591,8 +593,9 @@ account, a hut leader's kiosk PIN and the display screens' setup belong with
 the kiosk; the lodge instructions (door codes and emergency access), minting
 or rotating a maintenance QR sign (its link is shown once) and a meeting's
 host link are access details; the printable chore roster needs the browser;
-and pricing or receiving a food order is writing blind, since a connection
-reads only its member's own food orders (ALP-796). Reading and creating the
+pricing or receiving a food order is writing blind, since a connection reads
+only its member's own food orders (ALP-796); and so is saving the food-order
+settings, whose officer address an app is never shown. Reading and creating the
 kiosk account ask for fresh proof.
 
 #### Hut leaders
@@ -670,7 +673,6 @@ kiosk account ask for fresh proof.
 | `list_maintenance_report_signs` | List the lodges' QR report signs | read | view | `GET /api/admin/maintenance-reports/tokens` |
 | `set_maintenance_report_sign_active` | Pause or resume a lodge's QR report sign | destructive | edit | `PATCH /api/admin/maintenance-reports/tokens` |
 | `get_food_order_settings` | Read the food-order settings | read | view | `GET /api/admin/food-orders/settings` |
-| `update_food_order_settings` | Change the food-order settings | destructive | edit | `PUT /api/admin/food-orders/settings` |
 
 ## What stays on the website, and why
 
@@ -724,7 +726,8 @@ reasons are permanent — those routes are never actions:
 - **Writing blind** — changing a guest's dietary or allergy needs for a stay.
   An app is never sent those (`INV-PRIV-022`), so it could only overwrite or
   clear them unseen. So too pricing a food order or ticking its items
-  received: a connection reads only its member's own food orders (ALP-796).
+  received (a connection reads only its member's own food orders, ALP-796),
+  and saving the food-order settings, whose officer address is never sent.
 
 Everything else is **not yet**: each such route names the follow-on task that
 will bring it in.

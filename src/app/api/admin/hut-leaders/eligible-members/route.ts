@@ -32,7 +32,11 @@ export async function GET(req: NextRequest) {
   // Shared with the AI app action `list_hut_leader_candidates` (ALP-722).
   // The lodge is answered first, then the dates, with the page's own 400s.
   const { searchParams } = new URL(req.url);
-  const query = hutLeaderCandidatesQuerySchema.safeParse(Object.fromEntries(searchParams));
+  const query = hutLeaderCandidatesQuerySchema.safeParse({
+    lodgeId: searchParams.get("lodgeId") ?? undefined,
+    startDate: searchParams.get("startDate") ?? undefined,
+    endDate: searchParams.get("endDate") ?? undefined,
+  });
   const requestedLodgeId = searchParams.get("lodgeId");
   const lodgeId = requestedLodgeId
     ? await resolveOptionalActiveLodgeId(prisma, requestedLodgeId)

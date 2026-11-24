@@ -30,10 +30,9 @@ import { requireAdmin } from "@/lib/session-guards";
  * ordering is not set up: the order page says so and the API refuses orders.
  */
 
-// The body schema ("" clears the address; anything else must be a valid one)
-// lives in admin-lodge-schemas/maintenance.ts so the AI app action
-// `update_food_order_settings` offers the same fields (ALP-722). A connection
-// is never sent the officer's address back.
+// The read is the AI app action `get_food_order_settings` (ALP-722), which a
+// connection answers without the officer's address. The save is website-only
+// (`unread-value`): an app that never sees the address must not overwrite it.
 
 export async function GET(request: Request) {
   if (await foodOrderModuleOff()) {
@@ -128,7 +127,7 @@ export async function PUT(request: NextRequest) {
       },
       { isolationLevel: "Serializable" },
     );
-    return connectionJson(request, { settings }, ADMIN_FOOD_ORDER_SETTINGS_CONNECTION_SHAPE);
+    return NextResponse.json({ settings });
   } catch (err) {
     // P2002 counts as contention here: the only unique keys this transaction
     // can hit are FoodOrderSettings' constant id (a racing first save's create

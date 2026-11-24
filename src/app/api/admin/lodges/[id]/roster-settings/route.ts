@@ -3,7 +3,7 @@ import { NextResponse } from "next/server";
 import { parseJsonRequestBody } from "@/lib/api-json";
 import type { z } from "zod";
 
-import { adminRecordIdParamsSchema } from "@/lib/admin-bookings-schemas/record-id";
+import { routeIdParamsSchema } from "@/lib/route-id-params";
 import { lodgeRosterSettingsBodySchema } from "@/lib/admin-lodge-schemas/setup";
 import { createAuditLog } from "@/lib/audit";
 import {
@@ -77,7 +77,7 @@ export async function GET(
   });
   if (!guard.ok) return guard.response;
 
-  const parsedParams = adminRecordIdParamsSchema.safeParse(await params);
+  const parsedParams = routeIdParamsSchema.safeParse(await params);
   if (!parsedParams.success) {
     return NextResponse.json({ error: "Invalid lodge id" }, { status: 400 });
   }
@@ -98,7 +98,7 @@ export async function PUT(
   });
   if (!guard.ok) return guard.response;
 
-  const parsedParams = adminRecordIdParamsSchema.safeParse(await params);
+  const parsedParams = routeIdParamsSchema.safeParse(await params);
   if (!parsedParams.success) {
     return NextResponse.json({ error: "Invalid lodge id" }, { status: 400 });
   }

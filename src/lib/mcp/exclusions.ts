@@ -105,12 +105,7 @@ const PERMANENT_PREFIXES: ReadonlyArray<{
   },
   { reason: "provider", prefixes: ["/api/webhooks", "/api/stripe"] },
   { reason: "cron", prefixes: ["/api/cron"] },
-  {
-    reason: "kiosk",
-    // The display screens' officer setup (layouts, templates, devices and
-    // their pairing codes, preview links) belongs with the screens (ALP-722).
-    prefixes: ["/api/lodge", "/api/display", "/api/admin/display"],
-  },
+  { reason: "kiosk", prefixes: ["/api/lodge", "/api/display"] },
   {
     reason: "needs-browser",
     prefixes: [
@@ -200,8 +195,37 @@ const PERMANENT_ROUTES: ReadonlyArray<{
       "POST /api/admin/organisations/[id]/contact/retry",
     ],
   },
-  // ALP-722: the kiosk's sign-in account and a hut leader's kiosk PIN.
-  { reason: "kiosk", routes: ["PUT /api/admin/lodge", "POST /api/admin/hut-leaders/[id]/pin"] },
+  // ALP-722: the kiosk's sign-in account, a hut leader's kiosk PIN, and the
+  // display screens' officer setup (layouts, templates, devices and their
+  // pairing codes, preview links), which belongs with the screens.
+  {
+    reason: "kiosk",
+    routes: [
+      "PUT /api/admin/lodge",
+      "POST /api/admin/hut-leaders/[id]/pin",
+      "POST /api/admin/display/built-ins/restore",
+      "GET /api/admin/display/devices",
+      "POST /api/admin/display/devices",
+      "PATCH /api/admin/display/devices/[id]",
+      "POST /api/admin/display/devices/[id]/pairing",
+      "POST /api/admin/display/devices/[id]/revoke",
+      "GET /api/admin/display/layouts",
+      "POST /api/admin/display/layouts",
+      "DELETE /api/admin/display/layouts/[id]",
+      "GET /api/admin/display/layouts/[id]",
+      "PUT /api/admin/display/layouts/[id]",
+      "GET /api/admin/display/lodge-config",
+      "PUT /api/admin/display/lodge-config",
+      "GET /api/admin/display/preview",
+      "POST /api/admin/display/preview-grant",
+      "GET /api/admin/display/reference/conditions",
+      "GET /api/admin/display/templates",
+      "POST /api/admin/display/templates",
+      "DELETE /api/admin/display/templates/[id]",
+      "GET /api/admin/display/templates/[id]",
+      "PUT /api/admin/display/templates/[id]",
+    ],
+  },
   // Door codes and emergency access: never sent to an AI provider, nor
   // written by one. Nor the links that let someone in: a maintenance QR
   // sign's link, answered only when minted, and a meeting's host link.
@@ -229,6 +253,8 @@ const PERMANENT_ROUTES: ReadonlyArray<{
       "PATCH /api/admin/bookings/[id]/guest-dietary",
       "PATCH /api/food-orders/[id]/price",
       "POST /api/food-orders/[id]/received",
+      // ALP-722: the food officer's address is never sent to an app.
+      "PUT /api/admin/food-orders/settings",
     ],
   },
   { reason: "public-visitor", routes: ["POST /api/contact", "POST /api/applications"] },

@@ -218,3 +218,14 @@ export const otherLodgeUpdateBodySchema = z
       .describe("Fill the rates (integer cents) and season dates (`YYYY-MM-DD`) from the Fees page; while on, those sent are ignored."),
   })
   .strict();
+
+/**
+ * What an AI app may send to change this club's Other lodges entry: everything
+ * but the booking officer's email address and phone number. An app is never
+ * shown them, and the save publishes them to every club on the central
+ * server, so text an app read elsewhere must not be able to replace them.
+ */
+export const otherLodgeUpdateConnectionBodySchema = otherLodgeUpdateBodySchema.omit({
+  bookingOfficerEmail: true,
+  bookingOfficerPhone: true,
+});

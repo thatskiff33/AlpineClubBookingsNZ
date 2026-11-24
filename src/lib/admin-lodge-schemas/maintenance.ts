@@ -146,15 +146,15 @@ export const maintenanceReportSettingsBodySchema = z
 // The QR sign switch
 // ---------------------------------------------------------------------------
 
+/** The lodge a QR sign belongs to, as both the mint and the switch take it. */
+export const maintenanceSignLodgeIdSchema = z.string().trim().min(1).max(64);
+
 /** `PATCH /api/admin/maintenance-reports/tokens`: pause or resume, never mint. */
 export const maintenanceSignActiveBodySchema = z
   .object({
-    lodgeId: z
-      .string()
-      .trim()
-      .min(1)
-      .max(64)
-      .describe("The lodge whose sign is switched, as `lodgeId` from `list_maintenance_report_signs`."),
+    lodgeId: maintenanceSignLodgeIdSchema.describe(
+      "The lodge whose sign is switched, as `lodgeId` from `list_maintenance_report_signs`.",
+    ),
     active: z
       .boolean()
       .describe("false pauses the sign, true resumes it. A pause is not a revocation: the same sign works again when resumed."),
@@ -168,7 +168,7 @@ export const maintenanceSignActiveBodySchema = z
 /**
  * The one format check for the food officer's address, shared by the settings
  * save and the read that decides whether ordering is set up
- * (`food-order-settings.ts` re-exports it). Checked only as an email address
+ * (`food-order-settings.ts` imports it from here). Checked only as an email address
  * (fork triyder/AlpineClubBookingsNZ#121 owner decision 10).
  */
 export const foodOfficerEmailSchema = z.string().trim().max(FOOD_OFFICER_EMAIL_MAX_LENGTH).email();

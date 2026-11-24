@@ -25,10 +25,10 @@ import {
 } from "@/lib/date-only";
 import {
   isOpenWorkPartyEvent,
+  MAX_WORK_PARTY_NIGHTS,
   OPEN_WORK_PARTY_EVENT_WHERE,
   workPartyNightCount,
 } from "@/lib/work-party-rules";
-import { MAX_OCCURRENCES } from "@/lib/calendar-recurrence";
 
 type WorkPartyDbClient = typeof prisma | Prisma.TransactionClient;
 
@@ -290,20 +290,17 @@ export function workPartyEventRefusal(
 // `admin-lodge-schemas/chores-work-parties.ts` (ALP-722) so the AI app
 // catalogue can offer it without loading this server module.
 
-/** The longest window a work party may have: the calendar's series cap. */
-const MAX_WORK_PARTY_NIGHTS = MAX_OCCURRENCES;
-
 /**
  * Why a work party's dates cannot be saved, or null. `existing` is the row an
  * edit changes (omit it on create).
  *
  * #5148: the calendar shows a work party as one entry per night, and a
- * calendar series holds at most MAX_OCCURRENCES of them, so a NEW window
+ * calendar series holds at most MAX_WORK_PARTY_NIGHTS of them, so a NEW window
  * longer than that is refused rather than cut short on the calendar without a
  * word. The cap applies only when the dates themselves change: a work party
  * saved longer before the cap existed can still be deactivated, renamed or
  * re-described with its dates as they are (its calendar shows its first
- * MAX_OCCURRENCES nights), and is refused only when its dates are edited.
+ * MAX_WORK_PARTY_NIGHTS nights), and is refused only when its dates are edited.
  */
 export function workPartyEventDatesError(
   data: { startDate: Date; endDate: Date },

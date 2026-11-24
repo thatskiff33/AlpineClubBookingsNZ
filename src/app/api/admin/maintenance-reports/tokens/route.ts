@@ -1,7 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 
-import { maintenanceSignActiveBodySchema } from "@/lib/admin-lodge-schemas/maintenance";
+import {
+  maintenanceSignActiveBodySchema,
+  maintenanceSignLodgeIdSchema,
+} from "@/lib/admin-lodge-schemas/maintenance";
 import { getAppBaseUrl } from "@/lib/app-url";
 import { logAudit } from "@/lib/audit";
 import { getClientIp } from "@/lib/rate-limit-http";
@@ -46,7 +49,7 @@ import { connectionJson } from "@/lib/mcp-connection-request";
 // AI app action and keeps its schema here. The PATCH schema lives in
 // admin-lodge-schemas/maintenance.ts so the action
 // `set_maintenance_report_sign_active` offers the same fields (ALP-722).
-const postSchema = z.object({ lodgeId: z.string().trim().min(1).max(64) }).strict();
+const postSchema = z.object({ lodgeId: maintenanceSignLodgeIdSchema }).strict();
 
 export async function GET(request: Request) {
   const admin = await requireAdmin({

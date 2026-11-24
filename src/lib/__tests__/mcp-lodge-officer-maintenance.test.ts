@@ -66,7 +66,7 @@ vi.mock("@/lib/food-order-settings", async (importOriginal) => ({
   loadFoodOrderSettings: h.loadFoodSettings,
 }));
 
-import { GET as getFoodSettings, PUT as putFoodSettings } from "@/app/api/admin/food-orders/settings/route";
+import { GET as getFoodSettings } from "@/app/api/admin/food-orders/settings/route";
 import { GET as getReport, PATCH as patchReport } from "@/app/api/admin/maintenance-reports/[id]/route";
 import { GET as getQuestions, PUT as putQuestions } from "@/app/api/admin/maintenance-reports/questions/route";
 import { GET as listReports } from "@/app/api/admin/maintenance-reports/route";
@@ -485,28 +485,5 @@ describe("get_food_order_settings", () => {
 
     expect(connection).toEqual({ settings: { officerLabel: "Food officer" } });
     expect(browser).toEqual({ settings: { officerEmail: "food@example.com", officerLabel: "Food officer" } });
-  });
-});
-
-describe("update_food_order_settings", () => {
-  it("saves the address and label in one serialisable transaction and answers the label", async () => {
-    h.foodModuleOff.mockResolvedValue(false);
-    h.prisma.foodOrderSettings.findUnique.mockResolvedValue({ officerEmail: null, officerLabel: "Food officer" });
-    h.prisma.foodOrderSettings.upsert.mockResolvedValue({ officerEmail: "food@example.com", officerLabel: "Catering" });
-
-    const { connection, browser } = await expectActionContract({
-      actionId: "update_food_order_settings",
-      handler: putFoodSettings,
-      args: { officerEmail: "food@example.com", officerLabel: "Catering" },
-    });
-
-    expect(h.prisma.$transaction).toHaveBeenCalledWith(expect.any(Function), { isolationLevel: "Serializable" });
-    expect(h.prisma.foodOrderSettings.upsert).toHaveBeenCalledWith(
-      expect.objectContaining({
-        update: { officerEmail: "food@example.com", officerLabel: "Catering", updatedByMemberId: "officer-1" },
-      }),
-    );
-    expect(connection).toEqual({ settings: { officerLabel: "Catering" } });
-    expect(browser).toEqual({ settings: { officerEmail: "food@example.com", officerLabel: "Catering" } });
   });
 });

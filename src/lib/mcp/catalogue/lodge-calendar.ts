@@ -23,7 +23,7 @@ import {
   ADMIN_CALENDAR_EVENT_DELETED_CONNECTION_SHAPE,
   ADMIN_CALENDAR_EVENT_UPDATED_CONNECTION_SHAPE,
 } from "@/lib/connection-shapes/lodge-calendar";
-import { adminRecordIdParamsSchema } from "@/lib/admin-bookings-schemas/record-id";
+import { routeIdParamsSchema } from "@/lib/route-id-params";
 
 import type { McpAction } from "../catalogue";
 
@@ -51,7 +51,7 @@ export const LODGE_CALENDAR_MCP_ACTIONS: readonly McpAction[] = [
     summary: `Officer: changes an event (\`id\` from \`list_club_events\`), sending every field again: ${EVENT_FIELDS}. \`scope: series\` changes every occurrence of a repeating event. An entry a work party manages is changed from its work party instead (\`update_work_party\`). Answers the saved event and the scope applied.`,
     method: "PATCH",
     path: "/api/calendar/events/[id]",
-    params: adminRecordIdParamsSchema,
+    params: routeIdParamsSchema,
     body: calendarEventUpdateSchema,
     kind: "destructive",
     returns: ADMIN_CALENDAR_EVENT_UPDATED_CONNECTION_SHAPE,
@@ -65,7 +65,7 @@ export const LODGE_CALENDAR_MCP_ACTIONS: readonly McpAction[] = [
       "Officer: deletes an event (`id` from `list_club_events`), or with `scope: series` every occurrence of a repeating event. It cannot be undone. An entry a work party manages is removed from its work party instead. Answers `success` and the scope applied.",
     method: "DELETE",
     path: "/api/calendar/events/[id]",
-    params: adminRecordIdParamsSchema,
+    params: routeIdParamsSchema,
     query: calendarEventDeleteQuerySchema,
     kind: "destructive",
     returns: ADMIN_CALENDAR_EVENT_DELETED_CONNECTION_SHAPE,

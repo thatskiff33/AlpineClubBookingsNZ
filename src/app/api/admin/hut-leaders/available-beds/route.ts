@@ -6,7 +6,10 @@ import { isEffectiveModuleEnabled } from "@/lib/admin-modules";
 import { listCustodianBedOptions } from "@/lib/custodian-assignment";
 import { resolveOptionalActiveLodgeId } from "@/lib/lodges";
 import { hutLeaderBedOptionsQuerySchema } from "@/lib/admin-lodge-schemas/hut-leaders";
-import { ADMIN_HUT_LEADER_BED_OPTIONS_CONNECTION_SHAPE } from "@/lib/connection-shapes/lodge-hut-leaders";
+import {
+  ADMIN_HUT_LEADER_BED_OPTIONS_CONNECTION_SHAPE,
+  type AdminHutLeaderBedRoom,
+} from "@/lib/connection-shapes/lodge-hut-leaders";
 import { connectionJson } from "@/lib/mcp-connection-request";
 
 /**
@@ -112,11 +115,7 @@ export async function GET(req: NextRequest) {
   });
 
   // Grouped by room so the picker reads the way the board does.
-  const rooms: Array<{
-    roomId: string;
-    roomName: string;
-    beds: typeof options;
-  }> = [];
+  const rooms: AdminHutLeaderBedRoom[] = [];
   for (const option of options) {
     let room = rooms.find((entry) => entry.roomId === option.roomId);
     if (!room) {

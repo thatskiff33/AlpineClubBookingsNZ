@@ -6,10 +6,8 @@ import { createAuditLog } from "@/lib/audit"
 import { acquireLodgeCapacityLock } from "@/lib/capacity"
 import { getDefaultLodgeId } from "@/lib/lodges"
 import { choreUpdateBodySchema } from "@/lib/admin-lodge-schemas/chores-work-parties"
-import {
-  ADMIN_CHORE_CONNECTION_SHAPE,
-  ADMIN_LODGE_RECORD_DELETED_CONNECTION_SHAPE,
-} from "@/lib/connection-shapes/lodge-chores-work-parties"
+import { ADMIN_CHORE_CONNECTION_SHAPE } from "@/lib/connection-shapes/lodge-chores-work-parties"
+import { ADMIN_LODGE_DONE_CONNECTION_SHAPE } from "@/lib/connection-shapes/lodge-hut-leaders"
 import { connectionJson } from "@/lib/mcp-connection-request"
 
 // The body schema lives in admin-lodge-schemas/chores-work-parties.ts so the
@@ -148,5 +146,5 @@ export async function DELETE(
     },
   })
 
-  return connectionJson(req, { success: true }, ADMIN_LODGE_RECORD_DELETED_CONNECTION_SHAPE)
+  return connectionJson(req, { success: true }, ADMIN_LODGE_DONE_CONNECTION_SHAPE)
 }

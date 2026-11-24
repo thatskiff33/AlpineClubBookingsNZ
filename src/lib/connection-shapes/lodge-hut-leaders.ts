@@ -91,15 +91,25 @@ export const ADMIN_HUT_LEADER_UPDATED_CONNECTION_SHAPE = connectionShapeFor<{
   schoolNightsWarning: true,
 });
 
-/** A change that answers `{ success: true }`: an assignment deleted, a roster regenerated or confirmed. */
-export const ADMIN_HUT_LEADER_DONE_CONNECTION_SHAPE = connectionShapeFor<{ success: boolean }>({
+/**
+ * A Lodge Operations change that answers `{ success: true }`: a hut leader
+ * assignment, chore or work party deleted, a roster regenerated or confirmed.
+ */
+export const ADMIN_LODGE_DONE_CONNECTION_SHAPE = connectionShapeFor<{ success: boolean }>({
   success: true,
 });
+
+/** One room of `GET /api/admin/hut-leaders/available-beds`, as the route groups it. */
+export interface AdminHutLeaderBedRoom {
+  roomId: string;
+  roomName: string;
+  beds: CustodianBedOption[];
+}
 
 /** `GET /api/admin/hut-leaders/available-beds`: every active bed, by room. */
 export const ADMIN_HUT_LEADER_BED_OPTIONS_CONNECTION_SHAPE = connectionShapeFor<{
   lodgeId: string;
-  rooms: Array<{ roomId: string; roomName: string; beds: CustodianBedOption[] }>;
+  rooms: AdminHutLeaderBedRoom[];
 }>({
   lodgeId: true,
   rooms: {
@@ -252,8 +262,8 @@ const ADMIN_ROSTER_EMAIL_CONNECTION_SHAPE = connectionShapeFor<{
 /** What each variant of `PUT /api/admin/roster/[date]` answers, by its `action`. */
 export const ADMIN_ROSTER_ACTION_CONNECTION_SHAPES = {
   save: ADMIN_ROSTER_CONNECTION_SHAPE,
-  regenerate: ADMIN_HUT_LEADER_DONE_CONNECTION_SHAPE,
-  confirm: ADMIN_HUT_LEADER_DONE_CONNECTION_SHAPE,
+  regenerate: ADMIN_LODGE_DONE_CONNECTION_SHAPE,
+  confirm: ADMIN_LODGE_DONE_CONNECTION_SHAPE,
   email: ADMIN_ROSTER_EMAIL_CONNECTION_SHAPE,
 } as const satisfies Record<RosterActionInput["action"], ConnectionShape>;
 

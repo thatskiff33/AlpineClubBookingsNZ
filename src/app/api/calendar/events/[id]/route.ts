@@ -72,7 +72,7 @@ export async function PATCH(
     );
   }
 
-  const scope = parsed.data.scope ?? "single";
+  const { scope } = parsed.data;
 
   const dates = resolveCalendarEventDates(parsed.data);
   if ("error" in dates) {
@@ -180,9 +180,8 @@ export async function DELETE(
       { status: 400 },
     );
   }
-  const scope = query.data.scope ?? "single";
-  // What a whole-series delete does with detached exceptions; default "keep".
-  const exceptionMode = query.data.exceptions ?? "keep";
+  // `exceptions`: what a whole-series delete does with detached exceptions.
+  const { scope, exceptions: exceptionMode } = query.data;
 
   const result = await refusingWorkPartyManaged(() =>
     deleteCalendarEvent(id, scope, exceptionMode),

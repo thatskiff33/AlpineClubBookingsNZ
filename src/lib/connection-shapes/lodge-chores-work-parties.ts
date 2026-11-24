@@ -47,11 +47,6 @@ export const ADMIN_CHORE_LIST_CONNECTION_SHAPE = connectionShapeFor<{ chores: Ch
   chores: CHORE_SHAPE,
 });
 
-/** A delete that answers `{ success: true }`: a chore or a work party. */
-export const ADMIN_LODGE_RECORD_DELETED_CONNECTION_SHAPE = connectionShapeFor<{ success: boolean }>({
-  success: true,
-});
-
 // ---------------------------------------------------------------------------
 // Work parties
 // ---------------------------------------------------------------------------
@@ -68,7 +63,7 @@ const WORK_PARTY_SHAPE = {
 } as const;
 
 /** One work party of `GET /api/admin/work-parties`, with what the card shows beside it. */
-type AdminWorkPartyListRow = WorkPartyEvent & {
+export type AdminWorkPartyListRow = WorkPartyEvent & {
   lodgeName: string | null;
   onCalendar: boolean;
   canAddToCalendar: boolean;
@@ -88,14 +83,15 @@ export const ADMIN_WORK_PARTY_LIST_CONNECTION_SHAPE = connectionShapeFor<{ event
 });
 
 /** `GET /api/admin/work-parties/[id]`: the work party and each booking attending it. */
-type AdminWorkPartyDetail = {
+export type AdminWorkPartyDetail = {
   event: WorkPartyEvent;
   attendingBookings: Array<{
     id: string;
     discountCents: number;
     createdAt: Date;
     booking: { id: string; checkIn: Date; checkOut: Date; status: BookingStatus; finalPriceCents: number };
-    member: { id: string; firstName: string; lastName: string; email: string };
+    /** Null for a redemption with no member (a non-member booking). */
+    member: { id: string; firstName: string; lastName: string; email: string } | null;
   }>;
   totalDiscountCents: number;
 };

@@ -70,7 +70,7 @@ const CALENDAR_EDIT_SCOPE_DESCRIPTION =
  * `update_calendar_event` (ALP-722, `INV-SSOT`).
  */
 export const calendarEventUpdateSchema = calendarEventInputSchema.extend({
-  scope: calendarEditScopeSchema.optional().describe(CALENDAR_EDIT_SCOPE_DESCRIPTION),
+  scope: calendarEditScopeSchema.default("single").describe(CALENDAR_EDIT_SCOPE_DESCRIPTION),
 });
 
 /**
@@ -80,10 +80,10 @@ export const calendarEventUpdateSchema = calendarEventInputSchema.extend({
  * edited on their own into standalone events, `delete` removes them too.
  */
 export const calendarEventDeleteQuerySchema = z.object({
-  scope: calendarEditScopeSchema.optional().describe(CALENDAR_EDIT_SCOPE_DESCRIPTION),
+  scope: calendarEditScopeSchema.default("single").describe(CALENDAR_EDIT_SCOPE_DESCRIPTION),
   exceptions: z
     .enum(["keep", "delete"])
-    .optional()
+    .default("keep")
     .describe(
       "With `scope: series`: `keep` (the default) keeps occurrences edited on their own as standalone events, `delete` removes them too.",
     ),

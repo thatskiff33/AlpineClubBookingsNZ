@@ -17,17 +17,17 @@ import {
   choreUpdateBodySchema,
   workPartyEventSchema,
 } from "@/lib/admin-lodge-schemas/chores-work-parties";
-import { MAX_OCCURRENCES } from "@/lib/calendar-recurrence";
+import { MAX_WORK_PARTY_NIGHTS } from "@/lib/work-party-rules";
 import {
   ADMIN_CHORE_CONNECTION_SHAPE,
   ADMIN_CHORE_LIST_CONNECTION_SHAPE,
-  ADMIN_LODGE_RECORD_DELETED_CONNECTION_SHAPE,
   ADMIN_WORK_PARTY_CALENDAR_CONNECTION_SHAPE,
   ADMIN_WORK_PARTY_CREATED_CONNECTION_SHAPE,
   ADMIN_WORK_PARTY_DETAIL_CONNECTION_SHAPE,
   ADMIN_WORK_PARTY_LIST_CONNECTION_SHAPE,
   ADMIN_WORK_PARTY_UPDATED_CONNECTION_SHAPE,
 } from "@/lib/connection-shapes/lodge-chores-work-parties";
+import { ADMIN_LODGE_DONE_CONNECTION_SHAPE } from "@/lib/connection-shapes/lodge-hut-leaders";
 import { routeIdParamsSchema } from "@/lib/route-id-params";
 
 import type { McpAction } from "../catalogue";
@@ -90,7 +90,7 @@ export const LODGE_CHORE_WORK_PARTY_MCP_ACTIONS: readonly McpAction[] = [
     path: "/api/admin/chores/[id]",
     params: routeIdParamsSchema,
     kind: "destructive",
-    returns: ADMIN_LODGE_RECORD_DELETED_CONNECTION_SHAPE,
+    returns: ADMIN_LODGE_DONE_CONNECTION_SHAPE,
     core: false,
     requires: LODGE_EDIT,
   },
@@ -125,7 +125,7 @@ export const LODGE_CHORE_WORK_PARTY_MCP_ACTIONS: readonly McpAction[] = [
     id: "create_work_party",
     title: "Create a work party",
     // The night cap is the calendar's series cap (`workPartyEventDatesError`).
-    summary: `Officer: adds a work party: name, the first and last discounted night (\`YYYY-MM-DD\`, both included, at most ${MAX_OCCURRENCES} nights), the discount percentage a booking attending it gets on those nights (100 if omitted), and its lodge (\`lodgeId\` from \`list_lodges\`, or null for club-wide). Members can then choose it when booking. With the Events Calendar on, it is also put on the calendar; \`calendarWarning\` says if that failed. Answers the saved work party.`,
+    summary: `Officer: adds a work party: name, the first and last discounted night (\`YYYY-MM-DD\`, both included, at most ${MAX_WORK_PARTY_NIGHTS} nights), the discount percentage a booking attending it gets on those nights (100 if omitted), and its lodge (\`lodgeId\` from \`list_lodges\`, or null for club-wide). Members can then choose it when booking. With the Events Calendar on, it is also put on the calendar; \`calendarWarning\` says if that failed. Answers the saved work party.`,
     method: "POST",
     path: "/api/admin/work-parties",
     body: workPartyEventSchema,
@@ -157,7 +157,7 @@ export const LODGE_CHORE_WORK_PARTY_MCP_ACTIONS: readonly McpAction[] = [
     path: "/api/admin/work-parties/[id]",
     params: routeIdParamsSchema,
     kind: "destructive",
-    returns: ADMIN_LODGE_RECORD_DELETED_CONNECTION_SHAPE,
+    returns: ADMIN_LODGE_DONE_CONNECTION_SHAPE,
     core: false,
     requires: LODGE_EDIT,
   },

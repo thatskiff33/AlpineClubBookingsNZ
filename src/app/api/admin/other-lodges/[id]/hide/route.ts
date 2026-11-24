@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { adminRecordIdParamsSchema } from "@/lib/admin-bookings-schemas/record-id";
+import { routeIdParamsSchema } from "@/lib/route-id-params";
 import {
   buildStructuredAuditLogCreateArgs,
   getAuditRequestContext,
@@ -23,7 +23,7 @@ export async function POST(
   });
   if (!guard.ok) return guard.response;
 
-  const parsedParams = adminRecordIdParamsSchema.safeParse(await params);
+  const parsedParams = routeIdParamsSchema.safeParse(await params);
   if (!parsedParams.success) {
     return NextResponse.json({ error: "Invalid lodge id" }, { status: 400 });
   }

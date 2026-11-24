@@ -384,6 +384,7 @@ describe("AI app action census (ALP-653, INV-MCP-006)", { timeout: CENSUS_TIMEOU
     const reason = (file: string, method: string) => classifyMcpRoute(`src/app/api/${file}/route.ts`, method);
     expect(reason("admin/display/devices/[id]/pairing", "POST")).toEqual({ kind: "excluded", reason: "kiosk" });
     expect(reason("admin/display/layouts", "GET")).toEqual({ kind: "excluded", reason: "kiosk" });
+    expect(reason("admin/display/brand-new", "GET")).toEqual({ kind: "unclassified" });
     expect(reason("admin/hut-leaders/[id]/pin", "POST")).toEqual({ kind: "excluded", reason: "kiosk" });
     expect(reason("admin/lodge", "PUT")).toEqual({ kind: "excluded", reason: "kiosk" });
     expect(reason("admin/lodge", "POST")).toEqual({ kind: "excluded", reason: "fresh-proof" });

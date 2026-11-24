@@ -14,6 +14,7 @@ import { workPartyEventSchema } from "@/lib/admin-lodge-schemas/chores-work-part
 import {
   ADMIN_WORK_PARTY_CREATED_CONNECTION_SHAPE,
   ADMIN_WORK_PARTY_LIST_CONNECTION_SHAPE,
+  type AdminWorkPartyListRow,
 } from "@/lib/connection-shapes/lodge-chores-work-parties";
 import { connectionJson } from "@/lib/mcp-connection-request";
 import { syncCreatedWorkPartyCalendar } from "@/lib/work-party-calendar";
@@ -46,7 +47,7 @@ export async function GET(req: NextRequest) {
   ]);
 
   return connectionJson(req, {
-    events: events.map(({ promoCode, lodge, _count, ...event }) => ({
+    events: events.map(({ promoCode, lodge, _count, ...event }): AdminWorkPartyListRow => ({
       ...event,
       lodgeName: lodge?.name ?? null,
       onCalendar: _count.calendarEvents > 0,

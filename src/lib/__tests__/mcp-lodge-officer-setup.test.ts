@@ -151,6 +151,21 @@ describe("the lodge setup entries", () => {
       expect(body, id).not.toHaveProperty("doorCode");
     }
   });
+
+  it("never lets an app replace the booking officer's contact details it is never shown", () => {
+    const action = findMcpAction("update_other_lodge")!;
+    const offered = Object.keys(mcpActionInputSchema(action).shape);
+    expect(offered).not.toContain("bookingOfficerEmail");
+    expect(offered).not.toContain("bookingOfficerPhone");
+    expect(JSON.stringify(action.returns)).not.toMatch(/bookingOfficer(Email|Phone)/);
+    // Sent anyway, they never reach the route (which publishes them to every club).
+    const { body } = splitMcpActionArguments(action, {
+      id: "other-1",
+      bookingOfficerEmail: "attacker@example.test",
+      bookingOfficerPhone: "000",
+    });
+    expect(body).toEqual({});
+  });
 });
 
 // ---------------------------------------------------------------------------

@@ -15,7 +15,7 @@
  * the route's schema without it, and their answers leave it out. The lodge
  * instructions route that holds it is website-only (`exclusions.ts`).
  */
-import { adminRecordIdParamsSchema } from "@/lib/admin-bookings-schemas/record-id";
+import { routeIdParamsSchema } from "@/lib/route-id-params";
 import {
   lodgeCentralLinkBodySchema,
   lodgeCreateConnectionBodySchema,
@@ -23,7 +23,7 @@ import {
   lodgeSettingsBodySchema,
   lodgeSettingsQuerySchema,
   lodgeUpdateConnectionBodySchema,
-  otherLodgeUpdateBodySchema,
+  otherLodgeUpdateConnectionBodySchema,
 } from "@/lib/admin-lodge-schemas/setup";
 import {
   ADMIN_LODGE_CENTRAL_LINK_CONNECTION_SHAPE,
@@ -78,7 +78,7 @@ export const LODGE_SETUP_MCP_ACTIONS: readonly McpAction[] = [
       "Officer: changes a lodge (`id` from `list_lodges_for_officers`): name, address, travel note, or `active`. Deactivating is refused, listing what depends on the lodge, unless `force` is sent after the officer agrees. A door code can be changed only on the website. Answers the lodge under `lodge`.",
     method: "PATCH",
     path: "/api/admin/lodges/[id]",
-    params: adminRecordIdParamsSchema,
+    params: routeIdParamsSchema,
     body: lodgeUpdateConnectionBodySchema,
     kind: "destructive",
     returns: ADMIN_LODGE_CONNECTION_SHAPE,
@@ -94,7 +94,7 @@ export const LODGE_SETUP_MCP_ACTIONS: readonly McpAction[] = [
       "Officer: which lodge in the Alpine Central Server's registry a lodge (`id` from `list_lodges_for_officers`) is: its saved `centralLodgeId`, the central lodges the club owns (`ownedLodges`, null until downloaded), which one it answers for, another local lodge holding the link, a suggested link, whether Other lodges sharing is on and whether the site is registered with the central server.",
     method: "GET",
     path: "/api/admin/lodges/[id]/central-lodge",
-    params: adminRecordIdParamsSchema,
+    params: routeIdParamsSchema,
     kind: "read",
     returns: ADMIN_LODGE_CENTRAL_LINK_CONNECTION_SHAPE,
     core: false,
@@ -107,7 +107,7 @@ export const LODGE_SETUP_MCP_ACTIONS: readonly McpAction[] = [
       "Officer: links a lodge (`id` from `list_lodges_for_officers`) to one of the central lodges the club owns (`centralLodgeId` from `ownedLodges` in `get_lodge_central_link`), or unlinks it with null. Refused if another lodge holds that link. Answers the link as `get_lodge_central_link` does.",
     method: "PUT",
     path: "/api/admin/lodges/[id]/central-lodge",
-    params: adminRecordIdParamsSchema,
+    params: routeIdParamsSchema,
     body: lodgeCentralLinkBodySchema,
     kind: "destructive",
     returns: ADMIN_LODGE_CENTRAL_LINK_CONNECTION_SHAPE,
@@ -123,7 +123,7 @@ export const LODGE_SETUP_MCP_ACTIONS: readonly McpAction[] = [
       "Officer: how much of each name the member lodge roster shows at a lodge (`id` from `list_lodges_for_officers`): its own choice (null uses the default), the default, and whether the roster is switched on.",
     method: "GET",
     path: "/api/admin/lodges/[id]/roster-settings",
-    params: adminRecordIdParamsSchema,
+    params: routeIdParamsSchema,
     kind: "read",
     returns: ADMIN_LODGE_ROSTER_SETTINGS_CONNECTION_SHAPE,
     core: false,
@@ -136,7 +136,7 @@ export const LODGE_SETUP_MCP_ACTIONS: readonly McpAction[] = [
       "Officer: sets how much of each name the member lodge roster shows at a lodge (`id` from `list_lodges_for_officers`), or null for the default. This changes what members see of each other. Answers as `get_lodge_roster_settings`.",
     method: "PUT",
     path: "/api/admin/lodges/[id]/roster-settings",
-    params: adminRecordIdParamsSchema,
+    params: routeIdParamsSchema,
     body: lodgeRosterSettingsBodySchema,
     kind: "destructive",
     returns: ADMIN_LODGE_ROSTER_SETTINGS_CONNECTION_SHAPE,
@@ -189,11 +189,11 @@ export const LODGE_SETUP_MCP_ACTIONS: readonly McpAction[] = [
     id: "update_other_lodge",
     title: "Change this club's Other lodges entry",
     summary:
-      "Officer: changes this club's own entry in the Other lodges registry (`id` of an owned row from `list_other_lodges`); another club's entry is refused. Send only what changes: rates in integer cents, season dates `YYYY-MM-DD`, `amenities` replaces the whole list, `ratesFromFees` fills rates and dates from the Fees page. The change is uploaded to the Alpine Central Server, which every club reads. Answers the row and the upload's outcome.",
+      "Officer: changes this club's own entry in the Other lodges registry (`id` of an owned row from `list_other_lodges`); another club's entry is refused. Send only what changes: rates in integer cents, season dates `YYYY-MM-DD`, `amenities` replaces the whole list, `ratesFromFees` fills rates and dates from the Fees page. The booking officer's email address and phone number are changed on the website. The change is uploaded to the Alpine Central Server, which every club reads. Answers the row and the upload's outcome.",
     method: "PATCH",
     path: "/api/admin/other-lodges/[id]",
-    params: adminRecordIdParamsSchema,
-    body: otherLodgeUpdateBodySchema,
+    params: routeIdParamsSchema,
+    body: otherLodgeUpdateConnectionBodySchema,
     kind: "destructive",
     returns: ADMIN_OTHER_LODGE_SAVED_CONNECTION_SHAPE,
     core: false,
@@ -206,7 +206,7 @@ export const LODGE_SETUP_MCP_ACTIONS: readonly McpAction[] = [
       "Officer: hides a registry row the Alpine Central Server no longer lists (`id` of a row with `notOnCentralServer` in `list_other_lodges`). It stays on the bookings and requests that name it. Hiding is never undone. Answers `ok`.",
     method: "POST",
     path: "/api/admin/other-lodges/[id]/hide",
-    params: adminRecordIdParamsSchema,
+    params: routeIdParamsSchema,
     kind: "destructive",
     returns: ADMIN_OTHER_LODGE_HIDDEN_CONNECTION_SHAPE,
     core: false,

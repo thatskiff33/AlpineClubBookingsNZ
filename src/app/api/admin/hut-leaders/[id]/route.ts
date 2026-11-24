@@ -16,7 +16,7 @@ import { isCustodianOccupancy } from "@/lib/custodian-occupancy";
 import { readSavedHutLeaderSchoolNightsWarning } from "@/lib/hut-leader-school-nights-warning";
 import { hutLeaderAssignmentUpdateBodySchema } from "@/lib/admin-lodge-schemas/hut-leaders";
 import {
-  ADMIN_HUT_LEADER_DONE_CONNECTION_SHAPE,
+  ADMIN_LODGE_DONE_CONNECTION_SHAPE,
   ADMIN_HUT_LEADER_UPDATED_CONNECTION_SHAPE,
 } from "@/lib/connection-shapes/lodge-hut-leaders";
 import { connectionJson } from "@/lib/mcp-connection-request";
@@ -223,7 +223,7 @@ export async function DELETE(
       );
     }
     logger.info({ assignmentId: id }, "Hut leader assignment deleted");
-    return connectionJson(req, { success: true }, ADMIN_HUT_LEADER_DONE_CONNECTION_SHAPE);
+    return connectionJson(req, { success: true }, ADMIN_LODGE_DONE_CONNECTION_SHAPE);
   } catch (err) {
     logger.error({ err }, "Error deleting hut leader assignment");
     return NextResponse.json({ error: "Failed to delete assignment" }, { status: 500 });

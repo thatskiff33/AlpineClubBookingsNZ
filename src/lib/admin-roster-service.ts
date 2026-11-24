@@ -36,10 +36,8 @@ function jsonResult(body: unknown, init?: ResponseInit): JsonRouteResult {
   return { body, init }
 }
 
-// The PUT body lives in `admin-lodge-schemas/hut-leaders.ts` (ALP-722), so
-// the AI app catalogue offers its variants without loading this module; it is
-// re-exported here for the route and the tests that read it from here.
-export { rosterActionSchema, type RosterActionInput } from "@/lib/admin-lodge-schemas/hut-leaders"
+// The PUT body, `rosterActionSchema`, lives in `admin-lodge-schemas/hut-leaders.ts`
+// (ALP-722), so the AI app catalogue offers its variants without loading this module.
 
 export const ROSTER_ERROR_COPY = {
   stale: "This roster changed while you were editing. Your changes were not saved. Reload the latest roster and try again.",

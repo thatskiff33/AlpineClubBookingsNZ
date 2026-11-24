@@ -17,9 +17,8 @@
  * link once, so it is never an action (`exclusions.ts`); the status read and
  * the pause/resume switch carry no token, hash or link.
  */
-import { adminRecordIdParamsSchema } from "@/lib/admin-bookings-schemas/record-id";
+import { routeIdParamsSchema } from "@/lib/route-id-params";
 import {
-  foodOrderSettingsBodySchema,
   maintenanceQuestionsBodySchema,
   maintenanceReportListQuerySchema,
   maintenanceReportPhotoDeleteBodySchema,
@@ -67,7 +66,7 @@ export const LODGE_MAINTENANCE_MCP_ACTIONS: readonly McpAction[] = [
       "Officer: one maintenance report by `id` (from `list_maintenance_reports`), with the same fields as the list. The photo itself is not sent: only whether it is still held and its dates. The read is audited.",
     method: "GET",
     path: "/api/admin/maintenance-reports/[id]",
-    params: adminRecordIdParamsSchema,
+    params: routeIdParamsSchema,
     kind: "read",
     returns: ADMIN_MAINTENANCE_REPORT_CONNECTION_SHAPE,
     core: false,
@@ -80,7 +79,7 @@ export const LODGE_MAINTENANCE_MCP_ACTIONS: readonly McpAction[] = [
       "Officer: sets a maintenance report (`id` from `list_maintenance_reports`) to OPEN, IN_PROGRESS or RESOLVED, with an optional `note` of what was done, kept only while RESOLVED. Answers the report under `report`.",
     method: "PATCH",
     path: "/api/admin/maintenance-reports/[id]",
-    params: adminRecordIdParamsSchema,
+    params: routeIdParamsSchema,
     body: maintenanceReportStatusBodySchema,
     fixedBody: { action: "setStatus" },
     kind: "destructive",
@@ -95,7 +94,7 @@ export const LODGE_MAINTENANCE_MCP_ACTIONS: readonly McpAction[] = [
       "Officer: deletes a maintenance report's photo (`id` from `list_maintenance_reports`) ahead of the retention sweep, with an optional `reason`. It cannot be undone. Answers the report under `report`.",
     method: "PATCH",
     path: "/api/admin/maintenance-reports/[id]",
-    params: adminRecordIdParamsSchema,
+    params: routeIdParamsSchema,
     body: maintenanceReportPhotoDeleteBodySchema,
     fixedBody: { action: "deletePhoto" },
     kind: "destructive",
@@ -197,18 +196,5 @@ export const LODGE_MAINTENANCE_MCP_ACTIONS: readonly McpAction[] = [
     returns: ADMIN_FOOD_ORDER_SETTINGS_CONNECTION_SHAPE,
     core: false,
     requires: LODGE_VIEW,
-  },
-  {
-    id: "update_food_order_settings",
-    title: "Change the food-order settings",
-    summary:
-      "Officer: sets the address food orders are emailed to (`officerEmail`; empty or null turns ordering off) and what the club calls the food officer. Send both. New orders go to the new address. Answers the saved label.",
-    method: "PUT",
-    path: "/api/admin/food-orders/settings",
-    body: foodOrderSettingsBodySchema,
-    kind: "destructive",
-    returns: ADMIN_FOOD_ORDER_SETTINGS_CONNECTION_SHAPE,
-    core: false,
-    requires: LODGE_EDIT,
   },
 ];

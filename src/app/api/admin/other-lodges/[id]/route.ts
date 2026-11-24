@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import type { Prisma } from "@prisma/client";
 import { parseJsonRequestBody } from "@/lib/api-json";
-import { adminRecordIdParamsSchema } from "@/lib/admin-bookings-schemas/record-id";
+import { routeIdParamsSchema } from "@/lib/route-id-params";
 import { otherLodgeUpdateBodySchema } from "@/lib/admin-lodge-schemas/setup";
 import {
   buildStructuredAuditLogCreateArgs,
@@ -51,7 +51,7 @@ export async function PATCH(
   if (!guard.ok) return guard.response;
   const session = guard.session;
 
-  const parsedParams = adminRecordIdParamsSchema.safeParse(await params);
+  const parsedParams = routeIdParamsSchema.safeParse(await params);
   if (!parsedParams.success) {
     return NextResponse.json({ error: "Invalid lodge id" }, { status: 400 });
   }

@@ -6,10 +6,11 @@ import { logAudit } from "@/lib/audit";
 import { formatDateOnly } from "@/lib/date-only";
 import { workPartyEventDatesError } from "@/lib/work-party";
 import { workPartyEventSchema } from "@/lib/admin-lodge-schemas/chores-work-parties";
+import { ADMIN_LODGE_DONE_CONNECTION_SHAPE } from "@/lib/connection-shapes/lodge-hut-leaders";
 import {
-  ADMIN_LODGE_RECORD_DELETED_CONNECTION_SHAPE,
   ADMIN_WORK_PARTY_DETAIL_CONNECTION_SHAPE,
   ADMIN_WORK_PARTY_UPDATED_CONNECTION_SHAPE,
+  type AdminWorkPartyDetail,
 } from "@/lib/connection-shapes/lodge-chores-work-parties";
 import { connectionJson } from "@/lib/mcp-connection-request";
 import { updateWorkPartyWithCalendar } from "@/lib/work-party-calendar";
@@ -69,7 +70,7 @@ export async function GET(
       (sum, redemption) => sum + redemption.discountCents,
       0
     ),
-  }, ADMIN_WORK_PARTY_DETAIL_CONNECTION_SHAPE);
+  } satisfies AdminWorkPartyDetail, ADMIN_WORK_PARTY_DETAIL_CONNECTION_SHAPE);
 }
 
 export async function PUT(
@@ -213,5 +214,5 @@ export async function DELETE(
     metadata: { name: existing.name },
   });
 
-  return connectionJson(req, { success: true }, ADMIN_LODGE_RECORD_DELETED_CONNECTION_SHAPE);
+  return connectionJson(req, { success: true }, ADMIN_LODGE_DONE_CONNECTION_SHAPE);
 }

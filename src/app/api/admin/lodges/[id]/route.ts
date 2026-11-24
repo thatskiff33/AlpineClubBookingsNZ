@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { parseJsonRequestBody } from "@/lib/api-json";
-import { adminRecordIdParamsSchema } from "@/lib/admin-bookings-schemas/record-id";
+import { routeIdParamsSchema } from "@/lib/route-id-params";
 import { lodgeUpdateBodySchema } from "@/lib/admin-lodge-schemas/setup";
 import { ADMIN_LODGE_CONNECTION_SHAPE } from "@/lib/connection-shapes/lodge-setup";
 import { connectionJson } from "@/lib/mcp-connection-request";
@@ -38,7 +38,7 @@ export async function PATCH(
   if (!guard.ok) return guard.response;
   const session = guard.session;
 
-  const parsedParams = adminRecordIdParamsSchema.safeParse(await params);
+  const parsedParams = routeIdParamsSchema.safeParse(await params);
   if (!parsedParams.success) {
     return NextResponse.json({ error: "Invalid lodge id" }, { status: 400 });
   }
