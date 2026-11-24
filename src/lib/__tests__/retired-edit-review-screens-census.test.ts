@@ -4,6 +4,7 @@ import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 
 import { moduleImports, productionSourceFiles, resolveSpecifier } from "./support/static-import-graph";
+import { CENSUS_TIMEOUT_MS } from "@/test/census-timeout";
 
 /**
  * #4344 (wave C1 of #4302): the officer edit review's screens stay retired.
@@ -61,7 +62,7 @@ function retiredModuleNamedBy(file: string, specifier: string): string | null {
 
 // Parsing every production file takes several seconds on a CI shard - longer
 // than the 5s default (the same allowance payment-settler-writer-census takes).
-describe("the officer edit review's screens stay retired (#4344)", { timeout: 60_000 }, () => {
+describe("the officer edit review's screens stay retired (#4344)", { timeout: CENSUS_TIMEOUT_MS }, () => {
   // Walked once: the census and its control both read the same list.
   const files = productionSourceFiles();
 

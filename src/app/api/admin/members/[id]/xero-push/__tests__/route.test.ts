@@ -124,6 +124,12 @@ const params = Promise.resolve({ id: "mem_1" });
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // #5407 item 41: clearAllMocks keeps each mock's implementation, so a case
+  // that rejects the audit write or the create would leave it rejecting for
+  // every case after it. These two are reset here; the rest are set below.
+  mockCreate.mockReset();
+  mockLogAudit.mockReset();
+  mockLogAudit.mockResolvedValue(undefined);
   mockRequireAdmin.mockResolvedValue(okGuard());
   mockMemberFindUnique.mockResolvedValue({
     id: "mem_1",
@@ -427,5 +433,20 @@ describe("POST /api/admin/members/[id]/xero-push — optional body (#5407)", () 
     expect(res.status).toBe(400);
     expect(await res.json()).toEqual({ error: "Invalid request body" });
     expect(mockCreate).not.toHaveBeenCalled();
+  });
+});
+
+// #5407 item 41: a plain create placed after every other case still succeeds,
+// so no earlier case's rejected mock (the audit write, the create) leaks
+// into the cases after it.
+describe("POST /api/admin/members/[id]/xero-push — no state left by earlier cases (#5407)", () => {
+  it("creates and links a contact with a plain request", async () => {
+    mockCreate.mockResolvedValue("contact-1");
+
+    const res = await POST(postReq(), { params });
+
+    expect(res.status).toBe(200);
+    await expect(res.json()).resolves.toMatchObject({ xeroContactId: "contact-1" });
+    expect(mockLogAudit).toHaveBeenCalled();
   });
 });

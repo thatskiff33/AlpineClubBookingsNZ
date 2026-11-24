@@ -10,6 +10,7 @@ import { stripComments } from "@/lib/__tests__/support/strip-comments";
 import { MCP_ACTIONS } from "@/lib/mcp/catalogue";
 import { readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
+import { CENSUS_TIMEOUT_MS } from "@/test/census-timeout";
 
 /**
  * `INV-INT-016` — the no-`lodgeId` mode of `GET /api/bookings/rooms` is kept for
@@ -117,7 +118,7 @@ describe("INV-INT-016: /api/bookings/rooms unscoped mode (#2678)", () => {
         "FORKED and EXTERNAL consumers only — see INV-INT-016 in " +
         "docs/invariants/integrations.md.",
     ).toEqual([]);
-  });
+  }, CENSUS_TIMEOUT_MS);
 
   it("offers an AI app no action that calls it without a lodgeId (ALP-794)", () => {
     const actions = MCP_ACTIONS.filter((action) => action.path === ROUTE);
@@ -178,5 +179,5 @@ describe("INV-INT-016: /api/bookings/rooms unscoped mode (#2678)", () => {
         "live claim that it does not. Rewrite it in the past tense and cite the " +
         "rule — docs/invariants/integrations.md, INV-INT-016.",
     ).toEqual([]);
-  });
+  }, CENSUS_TIMEOUT_MS);
 });

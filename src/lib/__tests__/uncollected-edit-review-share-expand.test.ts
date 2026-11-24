@@ -4,6 +4,7 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 
 import { stripComments } from "./support/strip-comments";
+import { CENSUS_TIMEOUT_MS } from "@/test/census-timeout";
 
 /**
  * `INV-PAY-051` - the expand half of a two-release enum addition, and the rule
@@ -239,7 +240,7 @@ describe("INV-PAY-051: the withheld-share item type is registered, not yet writt
         "release comes, delete this assertion in the same change that starts writing the value.",
       ].join("\n"),
     ).toEqual([]);
-  });
+  }, CENSUS_TIMEOUT_MS);
 
   it("would notice a writer - the detector is not blind", () => {
     // The assertion above is an empty-list assertion, so the detector is

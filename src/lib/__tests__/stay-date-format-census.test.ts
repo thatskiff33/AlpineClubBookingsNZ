@@ -4,6 +4,7 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 
 import { stripComments } from "./support/strip-comments";
+import { CENSUS_TIMEOUT_MS } from "@/test/census-timeout";
 
 /**
  * #3507 — "format a stay date" has ONE home, and this is what keeps it there.
@@ -208,7 +209,7 @@ describe("the scanner recognises what it refuses", () => {
   });
 });
 
-describe("the home really is the home (#3507)", () => {
+describe("the home really is the home (#3507)", { timeout: CENSUS_TIMEOUT_MS }, () => {
   it("exists, and composes the pair", () => {
     expect(fs.existsSync(path.join(ROOT, HOME))).toBe(true);
     const source = read(HOME);
@@ -227,7 +228,7 @@ describe("the home really is the home (#3507)", () => {
   });
 });
 
-describe("INV-SSOT-001: no production file outside the home composes a stay date itself", () => {
+describe("INV-SSOT-001: no production file outside the home composes a stay date itself", { timeout: CENSUS_TIMEOUT_MS }, () => {
   const files = trackedProductionFiles();
 
   it("found the tree to scan, so an empty census is not a silent pass", () => {

@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 
 import { ADDITIONAL_ASK_INTENT_TYPE } from "@/lib/ordinary-ask-request";
 import { relativeSource, sourceFiles } from "./support/booking-guest-night-writer-scan";
+import { CENSUS_TIMEOUT_MS } from "@/test/census-timeout";
 
 const CANONICAL_MODULE = "src/lib/ordinary-ask-request.ts";
 const INVARIANT = "INV-SSOT-001";
@@ -86,5 +87,5 @@ describe(`${INVARIANT}: additional asks share one intent type (#4078)`, () => {
     expect(literals.filter(({ canonical }) => canonical), `${INVARIANT}: expected exactly one canonical definition`).toHaveLength(1);
     // The whole-production AST walk measured 5.8s under the 772-file related batch.
     // Keep the walk complete while giving this disk/parse test its own bounded budget.
-  }, 20_000);
+  }, CENSUS_TIMEOUT_MS);
 });

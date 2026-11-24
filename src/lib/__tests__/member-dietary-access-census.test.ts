@@ -62,6 +62,7 @@ import { describe, expect, it } from "vitest";
 import { PRISMA_CLIENT_GLOBAL_OMIT } from "@/lib/prisma-global-omit";
 import { blankLiterals, stripComments } from "@/lib/__tests__/support/strip-comments";
 import { balancedBrackets } from "./support/balanced-brackets";
+import { CENSUS_TIMEOUT_MS } from "@/test/census-timeout";
 
 const INVARIANT_ID = "INV-PRIV-022";
 const LIFECYCLE_INVARIANT_ID = "INV-MOD-059";
@@ -730,7 +731,7 @@ function report(findings: Finding[]): string {
   return findings.map((f) => `  ${f.rule}: ${f.file} — ${f.detail}`).join("\n");
 }
 
-describe(`member dietary access census (${INVARIANT_ID})`, () => {
+describe(`member dietary access census (${INVARIANT_ID})`, { timeout: CENSUS_TIMEOUT_MS }, () => {
   it("walks every scanned root", () => {
     // A walk that found nothing would pass every rule below vacuously.
     const { files } = census();
@@ -925,7 +926,7 @@ describe(`booking-guest dietary writer census (${LIFECYCLE_INVARIANT_ID})`, () =
       sites,
       `${LIFECYCLE_INVARIANT_ID}: a new BookingGuest create site must be listed here and hand its builder a dietary decision.`,
     ).toEqual(Object.keys(BOOKING_GUEST_CREATE_SITES).sort());
-  });
+  }, CENSUS_TIMEOUT_MS);
 
   it("every create site hands its builder a dietary decision, one per create, file by file (L2)", () => {
     const mismatched = Object.keys(BOOKING_GUEST_CREATE_SITES).flatMap((file) => {
@@ -950,7 +951,7 @@ describe(`booking-guest dietary writer census (${LIFECYCLE_INVARIANT_ID})`, () =
       .files.filter((file) => file.startsWith("src/"))
       .filter((file) => /\bbookingGuest\s*\.\s*createMany\s*\(/.test(code(file)));
     expect(bulk, LIFECYCLE_INVARIANT_ID).toEqual([]);
-  });
+  }, CENSUS_TIMEOUT_MS);
 
   it("the never-name writers neither spell the column nor import the module", () => {
     const offenders = Object.keys(NEVER_NAME_WRITERS).filter((file) => {

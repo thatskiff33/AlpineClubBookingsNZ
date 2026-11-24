@@ -36,7 +36,7 @@ reason: tells confirmWaitlistOffer the caller is a connection and maps its
   cross-lodge refusal to 409, beside the handler's other refusal statuses.
 
 file: src/lib/waitlist.ts
-lines: 1380
+lines: 1367
 reason: the cross-lodge refusal for a connection, at the one dispatch that
   chooses the cross-lodge path, with its frozen body and doc comment.
 

@@ -1,6 +1,4 @@
 import { NextRequest, NextResponse } from "next/server";
-import { z } from "zod";
-
 import {
   compareCalendarDates,
   dateOnlyInstantOf,
@@ -19,6 +17,7 @@ import {
   FOOD_ORDER_ITEM_QUANTITY_MAX,
   FOOD_ORDER_MAX_ITEMS,
   FOOD_ORDER_NOTES_MAX_LENGTH,
+  FOOD_ORDER_UNITS,
   foodOrderItemsProblem,
   isFoodOrderUnit,
   parseFoodOrderQuantity,
@@ -35,6 +34,12 @@ import { prisma } from "@/lib/prisma";
 import { applyMemberScopedRateLimit } from "@/lib/rate-limit";
 import { requireActiveSession } from "@/lib/session-guards";
 import { parseJsonRequestBody } from "@/lib/api-json";
+import {
+  FOOD_ORDER_CREATED_CONNECTION_SHAPE,
+  FOOD_ORDER_OPTIONS_CONNECTION_SHAPE,
+} from "@/lib/connection-shapes-lodge-life";
+import { foodOrderPlaceSchema } from "@/lib/food-order-schema";
+import { connectionJson } from "@/lib/mcp-connection-request";
 
 /**
  * The member's Order food door (fork triyder/AlpineClubBookingsNZ#121): `GET` returns what the form needs,
@@ -45,40 +50,17 @@ import { parseJsonRequestBody } from "@/lib/api-json";
  * order, its item lines and its audit row in one transaction; only after that
  * commits is the food officer emailed, outside the transaction and not awaited
  * into the response.
+ *
+ * Also the AI app actions `get_food_order_options` and `place_food_order`
+ * (ALP-796): the same form facts and the same order, from a connection.
  */
 
 const NOT_SET_UP =
   "Food ordering is not set up yet: the club has not entered an email address to send orders to.";
 
-// Bounded here so an oversized payload is refused before it is walked; the
-// item rules themselves are `foodOrderItemsProblem`, shared with the form.
-const postSchema = z
-  .object({
-    lodgeId: z.string().trim().min(1).max(64),
-    neededBy: z.string().trim().max(10),
-    notes: z.string().max(FOOD_ORDER_NOTES_MAX_LENGTH).optional().nullable(),
-    items: z
-      .array(
-        z
-          .object({
-            description: z
-              .string()
-              .max(FOOD_ORDER_ITEM_DESCRIPTION_MAX_LENGTH * 2),
-            // A decimal STRING ("0.5"), parsed strictly by
-            // `parseFoodOrderQuantity` in `foodOrderItemsProblem`; a JSON
-            // number is refused so no float ever carries a quantity.
-            quantity: z.string().max(16),
-            // Required: the form sends its default, Items.
-            unit: z.string().max(20),
-          })
-          .strict(),
-      )
-      .max(FOOD_ORDER_MAX_ITEMS * 2),
-  })
-  .strict();
 
-export async function GET() {
-  const guard = await requireFoodOrderViewer(() => requireActiveSession());
+export async function GET(request: NextRequest) {
+  const guard = await requireFoodOrderViewer(request, () => requireActiveSession());
   if (!guard.ok) return guard.response;
 
   const [settings, activeLodges, access, club] = await Promise.all([
@@ -96,24 +78,26 @@ export async function GET() {
   // helper, as every other lodge-scoped member surface.
   const lodges = filterLodgesByEligibility(access, activeLodges);
 
-  return NextResponse.json({
+  return connectionJson(request, {
     // Whether there is anybody to send an order to. The address itself is not
     // returned to members.
     ready: settings.officerEmail !== null,
     officerLabel: settings.officerLabel,
     lodges,
     today: club.today(),
+    // The item unit codes an order takes: fixed product values, not club data.
+    units: FOOD_ORDER_UNITS,
     limits: {
       maxItems: FOOD_ORDER_MAX_ITEMS,
       descriptionMaxLength: FOOD_ORDER_ITEM_DESCRIPTION_MAX_LENGTH,
       quantityMax: FOOD_ORDER_ITEM_QUANTITY_MAX,
       notesMaxLength: FOOD_ORDER_NOTES_MAX_LENGTH,
     },
-  });
+  }, FOOD_ORDER_OPTIONS_CONNECTION_SHAPE);
 }
 
 export async function POST(request: NextRequest) {
-  const guard = await requireFoodOrderViewer(() => requireActiveSession());
+  const guard = await requireFoodOrderViewer(request, () => requireActiveSession());
   if (!guard.ok) return guard.response;
   const { memberId } = guard;
 
@@ -129,7 +113,7 @@ export async function POST(request: NextRequest) {
   });
   if (!jsonBody.ok) return jsonBody.response;
   const body = jsonBody.body;
-  const parsed = postSchema.safeParse(body);
+  const parsed = foodOrderPlaceSchema.safeParse(body);
   if (!parsed.success) {
     return NextResponse.json({ error: "Invalid input" }, { status: 400 });
   }
@@ -206,5 +190,7 @@ export async function POST(request: NextRequest) {
     ),
   );
 
-  return NextResponse.json({ id: created.id }, { status: 201 });
+  return connectionJson(request, { id: created.id }, FOOD_ORDER_CREATED_CONNECTION_SHAPE, {
+    status: 201,
+  });
 }

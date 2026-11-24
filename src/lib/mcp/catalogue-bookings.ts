@@ -375,6 +375,13 @@ export const MCP_BOOKING_ACTIONS: readonly McpAction[] = [
 /** Booking actions the member takes on the website; the app sends them there. */
 export const MCP_BOOKING_WEBSITE_ONLY_ACTIONS: readonly McpWebsiteOnlyAction[] = [
   {
+    id: "pay_for_booking",
+    title: "Pay for a booking",
+    summary: "Card details are entered on the club website, never in an AI app.",
+    page: "/bookings/{id}",
+    needsId: true,
+  },
+  {
     // ALP-794: changing dates or guests can take or refund money (`moves-money`).
     id: "change_my_booking",
     title: "Change a booking's dates or guests",

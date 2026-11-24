@@ -75,6 +75,7 @@ import { describe, expect, it } from "vitest";
 
 import { blankLiteralsWithSpans } from "./support/strip-comments";
 import { balancedBrackets } from "./support/balanced-brackets";
+import { CENSUS_TIMEOUT_MS } from "@/test/census-timeout";
 
 const INVARIANT_ID = "INV-OPS-015";
 const REPO_ROOT = process.cwd();
@@ -434,7 +435,7 @@ function describeOffence(offence: Offence): string {
   return `${offence.file}: mocks \`${offence.seam}\` (${mocks}) and asserts money it affects at line(s) ${offence.assertionLines.join(", ")}`;
 }
 
-describe(`${INVARIANT_ID}: a money seam is never mocked away in a test that asserts its money (#3341)`, () => {
+describe(`${INVARIANT_ID}: a money seam is never mocked away in a test that asserts its money (#3341)`, { timeout: CENSUS_TIMEOUT_MS }, () => {
   it("names seams that exist, as exported functions of the modules it points at", () => {
     for (const seam of MONEY_SEAMS) {
       const source = readFileSync(path.join(REPO_ROOT, `${seam.module}.ts`), "utf8");

@@ -899,6 +899,22 @@ describe("#2320 review — senders supply the composed notes their defaults rend
     expect(later).not.toContain("previous app version");
     expect(stray).not.toContain("refund the other one");
     expect(stray).toContain("refund it by hand only if the booking should not be paid by it");
+
+    // #5240 review (23 Nov, item 5): a saved-card capture left unsettled for seven days says so, never "account credit".
+    for (const [other, said, action] of [
+      [{ otherPaymentIntentId: "pi_settler", otherHoldsMoney: true }, "Card payment pi_settler on it holds money, so this payment may be extra.", "refund the other one by hand."],
+      [{ otherPaymentIntentId: null, otherHoldsMoney: true }, "A cash or bank payment on it holds money, so this payment may be extra.", "refund the other one by hand."],
+      [{ otherPaymentIntentId: null, otherHoldsMoney: false }, "The app counts no other payment on it as settling it, so this payment may be extra, or may be what should pay for the booking.", "refund it by hand only if the booking should not be paid by it."],
+    ] as const) {
+      mocks.sendUnmuteableAdminAlert.mockClear();
+      await sendAdminDuplicateCaptureKeptAlert({ ...alert, reason: "unsettled-saved-card", ...other }, CLUB_FORMAT_TEST);
+      const unsettled = renderDefaultBody("admin-duplicate-capture-kept", capturedUnmuteableTemplateData());
+      expect(unsettled).toContain("A saved-card payment was taken on this booking, but the app stopped before settling the booking with it, and in seven days nothing finished settling it.");
+      expect(unsettled).toContain(said);
+      expect(unsettled).toContain(action);
+      expect(unsettled).not.toContain("account credit");
+      expect(unsettled).not.toContain("previous app version");
+    }
   });
 
   it("admin-superseded-capture-refused: {{supersededCaptureNote}} says it was not applied, worded by the booking's status (#4300)", async () => {

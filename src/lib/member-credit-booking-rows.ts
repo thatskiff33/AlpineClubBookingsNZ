@@ -52,11 +52,39 @@ export function bookingIssuedCreditWhere(bookingId: string) {
 /**
  * The description an applied-credit row is written with (`applyCreditToBooking`'s
  * default, and the start of the credit election's) and that the Xero
- * allocation repair rewrites a row back to (`credit-note-repairs.ts`): one
- * builder, so the writer and the repair cannot drift (#5407 item 36).
+ * allocation repair rewrites a row back to (`credit-note-repairs.ts`) when
+ * `isBookingAppliedCreditDescription` refuses it: one builder, so the writer
+ * and the repair cannot drift (#5407 items 36 and 40).
  */
 export function buildBookingAppliedCreditDescription(bookingId: string): string {
   return `Applied to booking ${storedShortBookingId(bookingId)}`;
+}
+
+/** Where the credit election's note starts, after the built description. */
+const ELECTION_PRICE_SOURCE_SEPARATOR = "; price source ";
+
+/**
+ * The description the credit election writes on its applied-credit row
+ * (`booking-credit-election.ts`): the built description, then the price
+ * source the election priced against and why (#5407 item 40).
+ */
+export function buildElectionAppliedCreditDescription(
+  bookingId: string,
+  priceSource: { source: string; reason: string },
+): string {
+  return `${buildBookingAppliedCreditDescription(bookingId)}${ELECTION_PRICE_SOURCE_SEPARATOR}${priceSource.source} (${priceSource.reason})`;
+}
+
+/**
+ * Whether a description is an applied-credit description for this booking:
+ * the built description alone, or the credit election's form with its
+ * price-source note (#5407 item 40). The one definition the Xero allocation
+ * repair reads, so it leaves the election's note in place and rewrites only
+ * a description that is neither (another booking's, or free text).
+ */
+export function isBookingAppliedCreditDescription(description: string, bookingId: string): boolean {
+  const built = buildBookingAppliedCreditDescription(bookingId);
+  return description === built || description.startsWith(`${built}${ELECTION_PRICE_SOURCE_SEPARATOR}`);
 }
 
 /**

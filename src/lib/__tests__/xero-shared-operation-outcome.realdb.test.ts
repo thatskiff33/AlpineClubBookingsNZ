@@ -187,7 +187,7 @@ let sync: typeof import("@/lib/xero-sync");
     it("#4374: W fails, an officer resolves the row in Xero, then L succeeds: the success lands with its link, keeps the mark and alerts once", async () => {
       const email = await import("@/lib/email");
       const send = vi.spyOn(email, "sendAdminXeroSyncErrorAlert").mockResolvedValue({
-        deliveryAllowed: true, recipients: 1, sent: 1, queuedForRetry: 0, notDelivered: 0,
+        deliveryAllowed: true, recipients: 1, sent: 1, queuedForRetry: 0, notDelivered: 0, failedBeforeLogged: 0,
       });
       const { claimResolvedInXeroMark } = await import("@/lib/xero-operation-resolve-guards");
       const { xeroSuccessAfterResolutionAlertKey } = await import("@/lib/xero-success-after-resolution-alert");

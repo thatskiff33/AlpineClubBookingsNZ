@@ -33,6 +33,7 @@ import {
 } from "@/lib/admin-booking-requests-path";
 import { sendToAdmins } from "./admin-alerts-shared";
 import type { AdminAlertRecipientsResult } from "./admin-alert-send-result";
+import { waitlistOfferAlertNote, type WaitlistOfferEmailOutcome } from "@/lib/waitlist-offer-alert-note";
 import { renderEmailHtml } from "@/lib/email-theme";
 import { emailCalendarDay, emailClubDateTime } from "@/lib/email-templates-club-time";
 import type { ClubFormat } from "@/lib/club-format";
@@ -277,21 +278,29 @@ export async function sendAdminCapacityWarningAlert(
   });
 }
 
+/** The officers' waitlist offer alert, with the deadline in force and how the offer email went (#5433). */
 export async function sendAdminWaitlistOfferAlert(data: {
   memberName: string;
   checkIn: Date;
   checkOut: Date;
   guestCount: number;
   position: number;
-}) {
-  await sendToAdmins({
+  expiresAt: Date | null;
+  offerEmail: WaitlistOfferEmailOutcome;
+}): Promise<AdminAlertRecipientsResult> {
+  return sendToAdmins({
     subject: `Waitlist Offer: ${data.memberName}`,
     html: await renderEmailHtml(() => adminWaitlistOfferTemplate(data)),
     templateName: "admin-waitlist-offer",
     templateData: {
-      ...data,
+      memberName: data.memberName,
+      guestCount: data.guestCount,
+      position: data.position,
       checkIn: emailCalendarDay(data.checkIn),
       checkOut: emailCalendarDay(data.checkOut),
+      offerNote: waitlistOfferAlertNote(data.memberName, data.offerEmail),
+      // A saved override reads "has until {{expiresAt}}": never an empty gap.
+      expiresAt: data.expiresAt ? emailClubDateTime(data.expiresAt) : "the deadline shown on the booking",
     },
     preferenceKey: "adminWaitlistOffer",
   });

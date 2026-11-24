@@ -38,6 +38,7 @@ import {
   type AuditWriteSite,
 } from "../../../scripts/audit/audit-writer-census";
 import { REVIEWED_ADMIN_CATEGORIES_2730 } from "../../../scripts/audit/audit-writer-census-manifest";
+import { AST_CENSUS_TIMEOUT_MS } from "@/test/census-timeout";
 
 const BACKFILL_MIGRATION = "20260810020000_backfill_bed_allocation_audit_category";
 
@@ -104,7 +105,7 @@ function actionNamesWrittenAt(site: AuditWriteSite): string[] {
   return literalActionNamesAt(site);
 }
 
-describe("the #2751 bed-allocation category backfill (INV-OPS-012)", () => {
+describe("the #2751 bed-allocation category backfill (INV-OPS-012)", { timeout: AST_CENSUS_TIMEOUT_MS }, () => {
   it("rewrites exactly the actions #2730's reclassified writers record", () => {
     const census = scanAuditWriterCensus();
     const reviewedSites = census.sites.filter(
@@ -149,7 +150,7 @@ describe("the #2751 bed-allocation category backfill (INV-OPS-012)", () => {
         "/migration.sql is correct ONLY while that migration is still " +
         "unreleased and unapplied anywhere.",
     ).toEqual(writtenActions);
-  }, 180_000);
+  });
 
   it("keeps the action list literal, and keeps `category` the only column it writes", () => {
     // The two shortcuts that would defeat the review. A prefix match cannot be

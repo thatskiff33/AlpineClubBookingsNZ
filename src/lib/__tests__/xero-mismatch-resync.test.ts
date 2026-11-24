@@ -171,6 +171,7 @@ describe("POST /api/admin/xero/contact-group-mismatches (resync)", () => {
         lastRefreshedAt: "2026-07-01T00:00:00.000Z",
         mismatchCount: 1,
         mismatches: [{ memberId: "m1", xeroContactId: "xc-1" }],
+        informationalCount: 0,
         informational: [],
       })
       // Recompute after the resync: the fix made inside Xero has landed in
@@ -180,6 +181,7 @@ describe("POST /api/admin/xero/contact-group-mismatches (resync)", () => {
         lastRefreshedAt: "2026-07-01T00:00:00.000Z",
         mismatchCount: 0,
         mismatches: [],
+        informationalCount: 0,
         informational: [],
       });
     mockFetchContactsByIds.mockResolvedValue([{ contactID: "xc-1" }]);
@@ -215,6 +217,7 @@ describe("POST /api/admin/xero/contact-group-mismatches (resync)", () => {
         lastRefreshedAt: "2026-07-01T00:00:00.000Z",
         mismatchCount: 1,
         mismatches: [{ memberId: "m1", xeroContactId: "xc-1" }],
+        informationalCount: 1,
         informational: [{ memberId: "m2", xeroContactId: "xc-org" }],
       })
       .mockResolvedValueOnce({
@@ -222,6 +225,7 @@ describe("POST /api/admin/xero/contact-group-mismatches (resync)", () => {
         lastRefreshedAt: "2026-07-01T00:00:00.000Z",
         mismatchCount: 0,
         mismatches: [],
+        informationalCount: 0,
         informational: [],
       });
     mockFetchContactsByIds.mockResolvedValue([{ contactID: "xc-1" }, { contactID: "xc-org" }]);
@@ -237,16 +241,21 @@ describe("POST /api/admin/xero/contact-group-mismatches (resync)", () => {
     );
   });
 
+  const flaggedSnapshot = (mismatchIds: string[], informationalIds: string[]) => ({
+    cacheReady: true,
+    lastRefreshedAt: "2026-07-01T00:00:00.000Z",
+    mismatchCount: mismatchIds.length,
+    mismatches: mismatchIds.map((id, i) => ({ memberId: `m${i}`, xeroContactId: id })),
+    informationalCount: informationalIds.length,
+    informational: informationalIds.map((id, i) => ({ memberId: `o${i}`, xeroContactId: id })),
+  });
+  const ids = (prefix: string, count: number) =>
+    Array.from({ length: count }, (_, i) => `${prefix}-${i}`);
+
   // #5234: a POST with no body must not re-fetch the whole flagged
-  // population; it is capped at the panel's 200 like the Refresh button.
-  it("caps a POST that sends no limit at 200 contacts", async () => {
-    mockGroupSnapshot.mockResolvedValue({
-      cacheReady: true,
-      lastRefreshedAt: "2026-07-01T00:00:00.000Z",
-      mismatchCount: 0,
-      mismatches: [],
-      informational: [],
-    });
+  // population; each kind is capped at the panel's 200 like the Refresh button.
+  it("caps a POST that sends no limit at 200 contacts of each kind", async () => {
+    mockGroupSnapshot.mockResolvedValue(flaggedSnapshot(ids("xc", 250), ids("org", 210)));
     mockFetchContactsByIds.mockResolvedValue([]);
 
     const res = await resyncGroupMismatches(
@@ -254,10 +263,56 @@ describe("POST /api/admin/xero/contact-group-mismatches (resync)", () => {
     );
 
     expect(res.status).toBe(200);
-    expect(mockGroupSnapshot).toHaveBeenCalledTimes(2);
-    for (const call of mockGroupSnapshot.mock.calls) {
-      expect(call[0]).toEqual({ limit: 200 });
-    }
+    // The first snapshot is uncapped, so flaggedContacts counts every
+    // flagged contact rather than the first page of each list.
+    expect(mockGroupSnapshot.mock.calls[0]).toEqual([]);
+    expect(mockFetchContactsByIds).toHaveBeenCalledWith(
+      expect.objectContaining({
+        contactIds: [...ids("xc", 200), ...ids("org", 200)],
+      })
+    );
+    expect((await res.json()).resync).toMatchObject({
+      requestedContacts: 400,
+      flaggedContacts: 460,
+    });
+    // The recompute returned to the panel keeps the panel's page size.
+    expect(mockGroupSnapshot).toHaveBeenLastCalledWith({ limit: 200 });
+  });
+
+  // The panel counts out of the true total only if the route says how many
+  // distinct contacts are flagged in all, past the limit included.
+  it("reports the distinct flagged contacts past the limit", async () => {
+    mockGroupSnapshot.mockResolvedValue(
+      flaggedSnapshot(["xc-1", "xc-2", "xc-3"], ["org-1", "org-2"])
+    );
+    mockFetchContactsByIds.mockResolvedValue([{ contactID: "xc-1" }, { contactID: "org-1" }]);
+
+    const res = await resyncGroupMismatches(
+      postRequest("http://localhost/api/admin/xero/contact-group-mismatches", { limit: 1 })
+    );
+
+    expect(res.status).toBe(200);
+    expect((await res.json()).resync).toMatchObject({
+      requestedContacts: 2,
+      flaggedContacts: 5,
+    });
+  });
+
+  // Two members sharing one Xero contact are one contact in both counts, so
+  // the "of N" total never exceeds what a full Refresh would request.
+  it("counts two members sharing one contact once in the total", async () => {
+    mockGroupSnapshot.mockResolvedValue(flaggedSnapshot(["xc-1", "xc-shared", "xc-shared"], []));
+    mockFetchContactsByIds.mockResolvedValue([{ contactID: "xc-1" }, { contactID: "xc-shared" }]);
+
+    const res = await resyncGroupMismatches(
+      postRequest("http://localhost/api/admin/xero/contact-group-mismatches", { limit: 200 })
+    );
+
+    expect(res.status).toBe(200);
+    expect((await res.json()).resync).toMatchObject({
+      requestedContacts: 2,
+      flaggedContacts: 2,
+    });
   });
 
   it("returns 409 without calling Xero when the cache has never been synced", async () => {
@@ -266,6 +321,7 @@ describe("POST /api/admin/xero/contact-group-mismatches (resync)", () => {
       lastRefreshedAt: null,
       mismatchCount: 0,
       mismatches: [],
+      informationalCount: 0,
       informational: [],
     });
 
@@ -284,6 +340,7 @@ describe("POST /api/admin/xero/contact-group-mismatches (resync)", () => {
       lastRefreshedAt: "2026-07-01T00:00:00.000Z",
       mismatchCount: 1,
       mismatches: [{ memberId: "m1", xeroContactId: "xc-1" }],
+      informationalCount: 0,
       informational: [],
     });
     mockFetchContactsByIds.mockRejectedValue(new XeroDailyLimitError(3600));
@@ -302,6 +359,7 @@ describe("POST /api/admin/xero/contact-group-mismatches (resync)", () => {
       lastRefreshedAt: "2026-07-01T00:00:00.000Z",
       mismatchCount: 1,
       mismatches: [{ memberId: "m1", xeroContactId: "xc-1" }],
+      informationalCount: 0,
       informational: [],
     });
     mockIsXeroConnected.mockResolvedValue(false);
