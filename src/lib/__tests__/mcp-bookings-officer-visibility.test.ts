@@ -124,7 +124,11 @@ describe("Bookings & Beds officer actions: who is offered them", () => {
       kind: "excluded", reason: "not-yet:ALP-721",
     });
     const found = await foundIds(context({ bookings: "edit", finance: "edit" }));
-    expect(found.filter((id) => id.includes("withdraw"))).toEqual([]);
+    // The officer's own member actions (ALP-794) withdraw their own requests; no officer action withdraws.
+    const officerIds = new Set(
+      MCP_ACTIONS.filter((action) => mcpActionAdminRequirement(action) !== null).map((action) => action.id),
+    );
+    expect(found.filter((id) => officerIds.has(id) && id.includes("withdraw"))).toEqual([]);
     // Every requires-pinned action in this area asks for the area itself.
     for (const action of AREA_ROUTE_ACTIONS) {
       expect(mcpActionAdminRequirement(action)?.area, action.id).toBe("bookings");
@@ -139,6 +143,16 @@ describe("Bookings & Beds officer actions: who is offered them", () => {
     const found = await foundIds(context({ bookings: "edit" }));
     expect(found).toContain("get_member_guest_settings");
     expect(found.filter((id) => id.startsWith("update_member_guest"))).toEqual([]);
+  });
+
+  it("keeps the school contact editor website-only: its save asks for fresh proof", () => {
+    // #5245: the read and the Xero retry serve the editor; Xero retries are the Finance lane's (ALP-721).
+    const file = "src/app/api/admin/organisations/[id]/contact/route.ts";
+    expect(classifyMcpRoute(file, "PATCH")).toEqual({ kind: "excluded", reason: "fresh-proof" });
+    expect(classifyMcpRoute(file, "GET")).toEqual({ kind: "excluded", reason: "website-flow" });
+    expect(classifyMcpRoute("src/app/api/admin/organisations/[id]/contact/retry/route.ts", "POST")).toEqual({
+      kind: "excluded", reason: "website-flow",
+    });
   });
 
   it("keeps the guest dietary edit website-only: an app never reads the value it would overwrite", async () => {

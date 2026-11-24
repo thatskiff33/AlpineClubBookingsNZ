@@ -186,6 +186,12 @@ const PERMANENT_ROUTES: ReadonlyArray<{
       // The booking wizard's guest promo chips: which of the guests' own codes
       // the booker may use (#3492). An app checks codes with `check_promo_code`.
       "POST /api/promo-codes/guest-codes",
+      // The school contact editor (#5245), whose save is fresh-proof: its read
+      // loads the version that save checks, and its retry re-sends a failed
+      // save to Xero. No action names a school record, and re-running failed
+      // Xero work is left to the Finance actions (ALP-721).
+      "GET /api/admin/organisations/[id]/contact",
+      "POST /api/admin/organisations/[id]/contact/retry",
     ],
   },
   // Door codes and emergency access: never sent to an AI provider.

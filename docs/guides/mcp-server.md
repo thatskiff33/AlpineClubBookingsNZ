@@ -409,17 +409,21 @@ ask them to prove who they are again and the switch that opens member search
 - **Audit.** Each change writes the connection's `MCP_ACTION_CALLED` row, with
   no subject member, as well as the route's own audit rows.
 
-Eleven Bookings & Beds steps are **website-only**. Saving the member-guest
+Fourteen Bookings & Beds steps are **website-only**. Saving the member-guest
 settings decides whether the club's member names, children included, can be
 browsed by anyone starting a booking; owner decision D-18 keeps that choice
 away from anything automated, so it has its own reason (below). Changing a
 guest's dietary or allergy needs for a stay is website-only too: an app is
-never shown those needs, so it would be overwriting them blind (below). The
-other nine are on the fresh-proof list (`STEP_UP_ROUTES`): quoting and deciding a booking change
+never shown those needs, so it would be overwriting them blind (below). Ten
+are on the fresh-proof list (`STEP_UP_ROUTES`): quoting and deciding a booking change
 request, deciding a booking-policy exception request, correcting, declining
 or releasing the hold of a booking request, confirming a booking's pending
-guests, deciding a booking held for review, and adding a booking to a work
-party or removing it from one.
+guests, deciding a booking held for review, adding a booking to a work
+party or removing it from one, and correcting a school's email address and
+phone number. The school contact editor's other two steps, reading those
+details and sending a failed Xero update of them again, serve that screen:
+no action names a school record, and re-running failed Xero work is left to
+the Finance actions (ALP-721).
 
 Withdrawing an extra payment request sits under a booking's address but moves
 money (it cancels the card request and retires the amount owing), so it is
