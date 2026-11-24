@@ -495,9 +495,9 @@ Journey: Create or edit a category and its flat fee, then assign members from th
 
 Screen: `/admin/subscription-lockout`.
 
-Shows: Lapsed-subscription rules and related notification settings, and **Who owes a subscription**: the club's liability rule (#5190).
+Shows: Lapsed-subscription rules, notifications, liability rule.
 
-Journey: Review the lapsed-subscription rules and member-facing wording. To choose the liability rule: Choose rule → answer both questions → Preview changes (who starts or stops owing, which "Not required" records are reset) → Save rule, which stays disabled until the preview matches the answers. Needs Membership edit and Finance edit.
+Journey: Review rules; preview a liability rule before saving.
 
 [Guide](guides/subscription-lockout.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
 
