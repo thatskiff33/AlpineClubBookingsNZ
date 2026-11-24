@@ -150,6 +150,8 @@ const MCP_READ_HANDLERS: Readonly<Record<string, readonly string[]>> = {
 const PRE_MODULE_ROUTES_WITHOUT_WEBSITE_CALLER: Readonly<Record<string, string>> = {
   "src/app/api/bookings/drafts/route.ts":
     "draft bookings (Issue 7, April 2026), long before the module; its website caller has since gone",
+  "src/app/api/admin/booking-requests/[id]/price/route.ts":
+    "officer pricing of a booking request (#733, June 2026), long before the module; the quote workflow replaced its website caller",
 };
 
 /**
