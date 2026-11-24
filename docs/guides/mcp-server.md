@@ -629,8 +629,9 @@ reasons are permanent — those routes are never actions:
   An app is never sent those (`INV-PRIV-022`), so it could only overwrite or
   clear them unseen.
 
-Every member route is an action or has one of these reasons. The officer
-routes are **not yet**: each names the officer stage that will bring it in.
+Every member route is an action or has one of these reasons. The remaining
+officer routes, outside Bookings & Beds, are **not yet**: each names the
+officer stage that will bring it in.
 
 ## Risks and limits
 
