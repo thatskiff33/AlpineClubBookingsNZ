@@ -11,7 +11,7 @@
  */
 import { connectionShapeFor, type ConnectionShape } from "@/lib/connection-projection";
 import { MEMBER_ACCOUNT_ACTIVITY_CONNECTION_SHAPE } from "@/lib/connection-shapes/account-activity";
-import { MEMBERSHIP_TYPE_SHAPE } from "@/lib/connection-shapes/membership-config";
+import { MEMBERSHIP_TYPE_SHAPE, type MembershipTypeAnswer } from "@/lib/connection-shapes/membership-config";
 import type { serializeLodgeAccessRows } from "@/lib/lodge-access";
 import type { PartnerLinkState } from "@/lib/member-partner-link";
 import type { serializeSeasonalMembershipAssignment } from "@/lib/seasonal-membership-assignments";
@@ -246,7 +246,10 @@ export const DEPENDENT_UNLINKED_CONNECTION_SHAPE = connectionShapeFor<{
  * Each type with its booking, subscription and age-tier rules, which the
  * configuration actions change (#5305 comment 7111359405); no fees.
  */
-export const MEMBERSHIP_TYPE_LIST_CONNECTION_SHAPE: ConnectionShape = {
+export const MEMBERSHIP_TYPE_LIST_CONNECTION_SHAPE = connectionShapeFor<{
+  membershipTypes: MembershipTypeAnswer[];
+  currentSeasonYear: number;
+}>({
   membershipTypes: MEMBERSHIP_TYPE_SHAPE,
   currentSeasonYear: true,
-};
+});

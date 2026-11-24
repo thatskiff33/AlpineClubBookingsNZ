@@ -4,8 +4,8 @@
  * Overriding an induction to complete is never offered: it vouches for the
  * member's safety induction in place of the sign-offs, which an officer does
  * on the website. Its `VOID` and `REASSIGN_SIGNERS` siblings on the same
- * route are pinned with `fixedBody`. Induction templates are read only here;
- * writing one is club setup (`exclusions.ts`).
+ * route are pinned with `fixedBody`. Induction templates are read here and
+ * written in `membership-config-structure.ts`.
  */
 import {
   committeeAssignmentCreateSchema,

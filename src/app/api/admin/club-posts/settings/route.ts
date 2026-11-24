@@ -7,6 +7,7 @@ import {
   countPostsBeyondRetention,
   loadClubPostSettings,
   saveClubPostRetention,
+  RETENTION_CHOICE_REFUSAL,
 } from "@/lib/club-post-retention";
 import logger from "@/lib/logger";
 import { loadEffectiveModuleFlags } from "@/lib/module-settings";
@@ -56,10 +57,7 @@ export async function PUT(request: NextRequest) {
   if (!jsonBody.ok) return jsonBody.response;
   const parsed = clubPostRetentionUpdateSchema.safeParse(jsonBody.body);
   if (!parsed.success) {
-    return NextResponse.json(
-      { error: "Choose one of the retention periods offered." },
-      { status: 400 },
-    );
+    return NextResponse.json({ error: RETENTION_CHOICE_REFUSAL }, { status: 400 });
   }
   const before = await loadClubPostSettings();
 

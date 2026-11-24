@@ -6,10 +6,14 @@
  * setting (`persisted`, who saved it), and the Xero item codes and unpaid
  * invoice numbers the lockout screens show only to Finance officers.
  */
-import type { MemberFieldsSettingsValues } from "@/config/member-fields";
 import type { ClubPostSettingsValues } from "@/lib/club-post-retention";
-import { connectionShapeFor, type ConnectionShape } from "@/lib/connection-projection";
+import {
+  completeConnectionShapeFor,
+  connectionShapeFor,
+  type ConnectionShapeFor,
+} from "@/lib/connection-projection";
 import type { FinancialYearResolution } from "@/lib/financial-year-server";
+import type { MemberFieldsSettingsPayload } from "@/lib/member-fields-settings";
 import type { MembershipCancellationSettings } from "@/lib/membership-cancellation-settings";
 import type { MembershipLockoutSettings } from "@/lib/membership-lockout-settings";
 import type { MembershipNominationSettings } from "@/lib/membership-nomination-settings";
@@ -18,8 +22,11 @@ import type { serializeSubscriptionCategory } from "@/lib/subscription-categorie
 import type { SubscriptionLiabilityImpact } from "@/lib/subscription-liability-impact";
 
 // --- Settings ---------------------------------------------------------------
+// Complete shapes: a save sends every setting back, so a field the app could
+// not read would be saved empty. A new setting fails to compile until it is
+// named here.
 
-export const CLUB_POST_SETTINGS_CONNECTION_SHAPE = connectionShapeFor<{
+export const CLUB_POST_SETTINGS_CONNECTION_SHAPE = completeConnectionShapeFor<{
   settings: ClubPostSettingsValues;
   beyondRetention: number;
 }>({
@@ -27,15 +34,14 @@ export const CLUB_POST_SETTINGS_CONNECTION_SHAPE = connectionShapeFor<{
   beyondRetention: true,
 });
 
-export const MEMBER_FIELDS_SETTINGS_CONNECTION_SHAPE = connectionShapeFor<{
-  settings: MemberFieldsSettingsValues;
-  updatedAt: string | null;
-}>({
+export const MEMBER_FIELDS_SETTINGS_CONNECTION_SHAPE = completeConnectionShapeFor<
+  Omit<MemberFieldsSettingsPayload, "updatedByMemberId">
+>({
   settings: { showTitle: true, showGender: true, showOccupation: true, showDietaryRequirements: true },
   updatedAt: true,
 });
 
-export const MEMBERSHIP_CANCELLATION_SETTINGS_CONNECTION_SHAPE = connectionShapeFor<{
+export const MEMBERSHIP_CANCELLATION_SETTINGS_CONNECTION_SHAPE = completeConnectionShapeFor<{
   settings: MembershipCancellationSettings;
 }>({
   settings: {
@@ -46,7 +52,7 @@ export const MEMBERSHIP_CANCELLATION_SETTINGS_CONNECTION_SHAPE = connectionShape
   },
 });
 
-export const MEMBERSHIP_NOMINATION_SETTINGS_CONNECTION_SHAPE = connectionShapeFor<{
+export const MEMBERSHIP_NOMINATION_SETTINGS_CONNECTION_SHAPE = completeConnectionShapeFor<{
   settings: MembershipNominationSettings;
 }>({
   settings: {
@@ -58,7 +64,7 @@ export const MEMBERSHIP_NOMINATION_SETTINGS_CONNECTION_SHAPE = connectionShapeFo
   },
 });
 
-export const MEMBERSHIP_LOCKOUT_SETTINGS_CONNECTION_SHAPE = connectionShapeFor<{
+export const MEMBERSHIP_LOCKOUT_SETTINGS_CONNECTION_SHAPE = completeConnectionShapeFor<{
   settings: MembershipLockoutSettings;
   financialYear: FinancialYearResolution;
 }>({
@@ -90,10 +96,10 @@ export const LIABILITY_IMPACT_CONNECTION_SHAPE = connectionShapeFor<{ impact: Su
 
 // --- Membership types and subscription categories ---------------------------
 
-type MembershipTypeAnswer = ReturnType<typeof serializeMembershipType>;
+export type MembershipTypeAnswer = ReturnType<typeof serializeMembershipType>;
 
 /** One membership type with its booking, subscription and age-tier rules. */
-export const MEMBERSHIP_TYPE_SHAPE = connectionShapeFor<MembershipTypeAnswer>({
+export const MEMBERSHIP_TYPE_SHAPE = {
   id: true,
   key: true,
   name: true,
@@ -108,11 +114,15 @@ export const MEMBERSHIP_TYPE_SHAPE = connectionShapeFor<MembershipTypeAnswer>({
   sortOrder: true,
   assignmentCount: true,
   allowedAgeTiers: true,
+} as const satisfies ConnectionShapeFor<MembershipTypeAnswer>;
+
+export const MEMBERSHIP_TYPE_CONNECTION_SHAPE = connectionShapeFor<{ membershipType: MembershipTypeAnswer }>({
+  membershipType: MEMBERSHIP_TYPE_SHAPE,
 });
 
-export const MEMBERSHIP_TYPE_CONNECTION_SHAPE: ConnectionShape = { membershipType: MEMBERSHIP_TYPE_SHAPE };
-
-export const MEMBERSHIP_TYPES_REORDERED_CONNECTION_SHAPE: ConnectionShape = { membershipTypes: MEMBERSHIP_TYPE_SHAPE };
+export const MEMBERSHIP_TYPES_REORDERED_CONNECTION_SHAPE = connectionShapeFor<{
+  membershipTypes: MembershipTypeAnswer[];
+}>({ membershipTypes: MEMBERSHIP_TYPE_SHAPE });
 
 export const MEMBERSHIP_TYPE_MERGED_CONNECTION_SHAPE = connectionShapeFor<{
   ok: boolean;
@@ -121,7 +131,9 @@ export const MEMBERSHIP_TYPE_MERGED_CONNECTION_SHAPE = connectionShapeFor<{
   targetId: string;
 }>({ ok: true, reassignedCount: true, sourceId: true, targetId: true });
 
-const SUBSCRIPTION_CATEGORY_SHAPE = connectionShapeFor<ReturnType<typeof serializeSubscriptionCategory>>({
+type SubscriptionCategoryAnswer = ReturnType<typeof serializeSubscriptionCategory>;
+
+const SUBSCRIPTION_CATEGORY_SHAPE = {
   id: true,
   key: true,
   name: true,
@@ -131,15 +143,15 @@ const SUBSCRIPTION_CATEGORY_SHAPE = connectionShapeFor<ReturnType<typeof seriali
   sortOrder: true,
   assignmentCount: true,
   feeCount: true,
-});
+} as const satisfies ConnectionShapeFor<SubscriptionCategoryAnswer>;
 
-export const SUBSCRIPTION_CATEGORY_LIST_CONNECTION_SHAPE: ConnectionShape = {
-  subscriptionCategories: SUBSCRIPTION_CATEGORY_SHAPE,
-};
+export const SUBSCRIPTION_CATEGORY_LIST_CONNECTION_SHAPE = connectionShapeFor<{
+  subscriptionCategories: SubscriptionCategoryAnswer[];
+}>({ subscriptionCategories: SUBSCRIPTION_CATEGORY_SHAPE });
 
-export const SUBSCRIPTION_CATEGORY_CONNECTION_SHAPE: ConnectionShape = {
-  subscriptionCategory: SUBSCRIPTION_CATEGORY_SHAPE,
-};
+export const SUBSCRIPTION_CATEGORY_CONNECTION_SHAPE = connectionShapeFor<{
+  subscriptionCategory: SubscriptionCategoryAnswer;
+}>({ subscriptionCategory: SUBSCRIPTION_CATEGORY_SHAPE });
 
 /** A delete, an activation, or anything else answered with `ok` alone. */
 export const CONFIG_OK_CONNECTION_SHAPE = connectionShapeFor<{ ok: boolean }>({ ok: true });

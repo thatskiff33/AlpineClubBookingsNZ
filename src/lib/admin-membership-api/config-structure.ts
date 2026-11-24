@@ -7,6 +7,7 @@
  */
 import { z } from "zod";
 
+import { INDUCTION_KINDS, INDUCTION_SECTION_PRIORITIES } from "@/lib/induction-display";
 import {
   MEMBERSHIP_TYPE_AGE_TIERS,
   MEMBERSHIP_TYPE_BOOKING_BEHAVIORS,
@@ -83,15 +84,11 @@ export const subscriptionCategoryPatchSchema = z
 
 // --- Induction checklist templates: `/api/admin/induction-templates/**` -----
 
-const INDUCTION_TEMPLATE_KINDS = ["NEW_MEMBER", "HUT_LEADER", "YOUTH_TO_FULL", "RE_INDUCTION"] as const;
-
-const INDUCTION_SECTION_PRIORITIES = ["EMERGENCY", "SECURITY", "STARTUP", "SHUTDOWN", "GENERAL"] as const;
-
 /** `POST /api/admin/induction-templates`: a new, inactive template, empty or copied from `cloneFromId`. */
 export const inductionTemplateCreateSchema = z.object({
   name: z.string().trim().min(1).max(200),
   version: z.string().trim().min(1).max(50),
-  kind: z.enum(INDUCTION_TEMPLATE_KINDS).optional(),
+  kind: z.enum(INDUCTION_KINDS).optional(),
   cloneFromId: z.string().min(1).optional(),
 });
 
@@ -102,7 +99,7 @@ export const inductionTemplateCreateSchema = z.object({
 export const inductionTemplateUpdateSchema = z.object({
   name: z.string().trim().min(1).max(200).optional(),
   version: z.string().trim().min(1).max(50).optional(),
-  kind: z.enum(INDUCTION_TEMPLATE_KINDS).optional(),
+  kind: z.enum(INDUCTION_KINDS).optional(),
   sections: z
     .array(
       z.object({
