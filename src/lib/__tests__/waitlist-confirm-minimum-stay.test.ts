@@ -537,12 +537,12 @@ describe("confirmWaitlistOffer policy backstop inside the claim (#2363)", () => 
 // so it may not accept a cross-lodge offer (ADR-004 decision 2: the member
 // re-confirms at the figure they can see, on the website).
 describe("confirmWaitlistOffer refuses a connection a cross-lodge offer (ALP-794)", () => {
-  const website = { crossLodgeOnWebsiteOnly: true };
+  const connection = { crossLodgeOnWebsiteOnly: true };
 
   it("refuses without touching the offer: no new booking, no cancelled place", async () => {
     h.prismaBookingFindUnique.mockResolvedValue(offer({ waitlistOfferedLodgeId: "lodge-b" }));
 
-    const result = await confirmWaitlistOffer("booking-1", "member-1", CLUB_FORMAT_TEST, website);
+    const result = await confirmWaitlistOffer("booking-1", "member-1", CLUB_FORMAT_TEST, connection);
 
     expect(result).toEqual({
       success: false,
@@ -559,13 +559,13 @@ describe("confirmWaitlistOffer refuses a connection a cross-lodge offer (ALP-794
     h.prismaBookingFindUnique.mockResolvedValue(offer({ waitlistOfferedLodgeId: "lodge-b" }));
     h.confirmCrossLodgeWaitlistOffer.mockResolvedValue({ success: false, error: "Forbidden" });
 
-    const result = await confirmWaitlistOffer("booking-1", "someone-else", CLUB_FORMAT_TEST, website);
+    const result = await confirmWaitlistOffer("booking-1", "someone-else", CLUB_FORMAT_TEST, connection);
 
     expect(result).toEqual({ success: false, error: "Forbidden" });
   });
 
   it("still accepts a same-lodge offer through a connection", async () => {
-    const result = await confirmWaitlistOffer("booking-1", "member-1", CLUB_FORMAT_TEST, website);
+    const result = await confirmWaitlistOffer("booking-1", "member-1", CLUB_FORMAT_TEST, connection);
 
     expect(result.success).toBe(true);
     expect(h.txBookingUpdateMany).toHaveBeenCalled();
