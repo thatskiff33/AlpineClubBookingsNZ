@@ -210,6 +210,32 @@ describe("recordCombinedGroupInvoiceManifest (#4525, ALP-437)", () => {
       expect(mocks.logger.error).not.toHaveBeenCalled();
     });
 
+    // Money review F1: the replacement's CREATE writes `xeroObjectId` only once its email is sent, after the bind.
+    describe.each([
+      ["before the replacement's CREATE completes (its email still sending)", null],
+      ["after the replacement's CREATE completes", "inv-1"],
+    ] as const)("the earlier invoice's release committing %s", (_when, createNames) => {
+      it("turns the replacement's conflict into cover through the release's retry", async () => {
+        earlierCovers();
+        await recordCombinedGroupInvoiceManifest(built(), target);
+        earlierReleased();
+        const createRows = [
+          // An older attempt's row that never named an invoice: never the bound invoice's.
+          { id: "op-0", correlationKey: "group-settlement:settle-1:invoice:v1", xeroObjectId: null,
+            requestPayload: { invoices: [{ lineItems: sanitizeForJson([stayLine(1)]) }], childBookingIds: ["child-a"] } },
+          { id: "op-1", correlationKey: ATTEMPT_KEY, xeroObjectId: createNames,
+            requestPayload: { invoices: [{ lineItems: sanitizeForJson([stayLine(9000), stayLine(8000)]) }], childBookingIds: ["child-a", "child-b"] } },
+        ];
+        mocks.xeroSyncOperation.findMany.mockImplementation(async (args: { where: { OR?: Record<string, unknown>[] } }) =>
+          createRows.filter((row) => !args.where.OR
+            || args.where.OR.some((clause) => Object.entries(clause).every(([key, value]) => row[key as keyof typeof row] === value))));
+        await releaseCombinedGroupInvoiceManifest({ settlementId: "settle-1", invoiceId: "inv-0", reason: "VOIDED" });
+        expect(written.get(SUCCESSOR_KEY)).toMatchObject({ outcome: "COVERED", providerInvoiceId: "inv-1", lineTotalCents: 17000 });
+        expect(coverageRows().map((row: { coverageGeneration: number }) => row.coverageGeneration)).toEqual([1, 1]);
+        expect(mocks.logger.error).not.toHaveBeenCalled();
+      });
+    });
+
     it("adds nothing on a replayed release or record once the successor is written", async () => {
       earlierCovers();
       await recordCombinedGroupInvoiceManifest(built(), target);

@@ -746,7 +746,9 @@ as history and one successor manifest, under the attempt key plus
 generation. The recorder writes it after its own row, re-planning the
 components against live cover; the release's retry of the bound invoice's
 record reaches the same step, so a release and a record in either order end
-covered. While the earlier invoice carries money and keeps its cover, the plan
+covered. The retry finds the replacement's CREATE row by the invoice it names,
+or, while its email is still sending and the row names no invoice yet, by the
+current attempt's key (`groupSettlementInvoiceCreateKey`). While the earlier invoice carries money and keeps its cover, the plan
 is still `ALREADY_COVERED` and the conflict stays, visible, with no cover. Only
 an `ALREADY_COVERED` conflict gains a successor, never one for another reason,
 and never one whose own invoice is already void. A manifest recorded after its

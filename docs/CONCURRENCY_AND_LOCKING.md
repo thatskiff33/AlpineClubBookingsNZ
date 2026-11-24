@@ -7398,7 +7398,9 @@ first" log line (main's wording, unchanged here); the combined cover stands
 (ledger §7). A combined `ALREADY_COVERED` conflict becomes cover once the earlier invoice's
 cover is released: a successor manifest under `coveredAfterReleaseKey`, written
 by the recorder in a second transaction after its own row commits, and reached
-again by the release's retry after the release commits. Whichever of a record
+again by the release's retry after the release commits (which reads the
+replacement's CREATE row by the current attempt's key while that row names no
+invoice, its email still sending). Whichever of a record
 and a release commits second sees the other, so both orders end covered; a
 recorder whose own row lost the key (P2002) still runs that step. Two successor
 writers meet the key, and one is left. A successor written while the

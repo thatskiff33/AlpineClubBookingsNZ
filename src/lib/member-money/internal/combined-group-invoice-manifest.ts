@@ -7,6 +7,7 @@ import { storedInvoiceRequestLines } from "../../xero-json";
 import { committedGroupChildrenWhere, storedGroupInvoiceChildBookingIds } from "../../xero-group-settlement-invoice-children";
 import type { GroupSettlementInvoiceLines } from "../../xero-group-settlement-invoice-lines";
 import {
+  currentGroupSettlementInvoiceAttempt,
   groupSettlementInvoiceCreateKey,
   groupSettlementInvoiceVoidEnded,
   groupSettlementInvoiceVoidKey,
@@ -83,13 +84,25 @@ async function readChildren(db: Db, bookingIds: readonly string[]) {
  * The CREATE row that raised `invoiceId`, else the caller's row: its stored
  * lines, basis, attempt and the children it billed (null on a request written
  * before those were recorded).
+ *
+ * A caller with no row of its own (the release's retry of the bound invoice)
+ * also reads the current attempt's row by its key while that row names no
+ * invoice yet: the CREATE writes `xeroObjectId` only once the invoice's email
+ * has been sent, after the bind, so a release committed meanwhile would
+ * otherwise find nothing and leave the replacement's ALREADY_COVERED conflict
+ * uncovered. A bind only takes the current attempt's invoice, and a later
+ * attempt is queued only once the settlement has let that invoice go.
  */
 async function readStoredCombinedInvoice(settlementId: string, invoiceId: string, operationId: string | null) {
   const where = {
     entityType: "INVOICE", operationType: "CREATE", localModel: "GroupBookingSettlement", localId: settlementId,
   } as const;
+  const currentAttempt = operationId ? null : await currentGroupSettlementInvoiceAttempt(prisma, settlementId);
+  const unnamed = operationId
+    ? [{ id: operationId, xeroObjectId: null }]
+    : currentAttempt === null ? [] : [{ correlationKey: groupSettlementInvoiceCreateKey(settlementId, currentAttempt), xeroObjectId: null }];
   const rows = await prisma.xeroSyncOperation.findMany({
-    where: { ...where, OR: [{ xeroObjectId: invoiceId }, ...(operationId ? [{ id: operationId, xeroObjectId: null }] : [])] },
+    where: { ...where, OR: [{ xeroObjectId: invoiceId }, ...unnamed] },
     orderBy: { createdAt: "asc" },
     select: { correlationKey: true, requestPayload: true, xeroObjectId: true },
   });
