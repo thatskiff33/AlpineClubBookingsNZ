@@ -198,7 +198,9 @@ only the rules.
   also act as an officer. Without it, `mcpCallerMayUse` hides every officer
   action and `describe_action` and `run_action` tell the app the officer must
   reconnect; member actions keep working. Earlier approvals, and those given
-  before the member became an officer, carry no date.
+  before the member became an officer, carry no date. The screen's wording is
+  general, so one date covers every admin area, later ones included; no
+  wording version is stored.
 - **Every club-wide configuration change is `destructive`**, so the app asks
   the officer first.
 

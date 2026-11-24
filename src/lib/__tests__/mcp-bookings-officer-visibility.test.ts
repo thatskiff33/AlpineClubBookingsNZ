@@ -2,7 +2,8 @@
  * Who is offered the Bookings & Beds officer actions (ALP-719): only someone
  * holding that admin area, at the level the route itself demands. Anyone else
  * never meets them in `tools/list`, `find_actions` or `describe_action`, and
- * cannot run one by name.
+ * cannot run one by name. The last block holds every officer action in the
+ * catalogue, whatever its area, to the officer's own approval.
  */
 import type { Session } from "next-auth";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -15,7 +16,11 @@ vi.mock("@/lib/mcp/dispatch", () => ({
   websiteOnlyAnswer: () => ({ isError: false, text: "Nothing was done. Open the website." }),
 }));
 
-import { getAdminRouteRequirement, type AdminPermissionMatrix } from "@/lib/admin-permissions";
+import {
+  ADMIN_PERMISSION_AREAS,
+  getAdminRouteRequirement,
+  type AdminPermissionMatrix,
+} from "@/lib/admin-permissions";
 import { MCP_ACTIONS, mcpActionAdminRequirement } from "@/lib/mcp/catalogue";
 import { classifyMcpRoute } from "@/lib/mcp/exclusions";
 import {
@@ -293,5 +298,48 @@ describe("Bookings & Beds officer actions: an officer approves again", () => {
     expect(describeOfficer.text).toContain("There is no action called");
     const who = JSON.parse((await callMcpTool(ctx, "who_am_i", {})).text) as { officerActions?: string };
     expect(who.officerActions).toBeUndefined();
+  });
+});
+
+// Owner decision, #5305 comment 7131483847: one approval, worded generally,
+// covers every officer area, later ones included. So the consent gate must
+// hold for every officer action in the catalogue, not only Bookings & Beds:
+// an officer holding every area at edit, on a connection without that
+// approval, meets none of them and runs none (`INV-MCP-009`).
+describe("every officer action in the catalogue: needs the officer's approval", () => {
+  const OFFICER_ACTIONS = MCP_ACTIONS.filter((action) => mcpActionAdminRequirement(action) !== null);
+  const officerIds = new Set(OFFICER_ACTIONS.map((action) => action.id));
+  const EVERY_AREA_EDIT = Object.fromEntries(
+    ADMIN_PERMISSION_AREAS.map((area) => [area.key, "edit"]),
+  ) as AdminPermissionMatrix;
+
+  it("has reads, changes and listed tools to check, each offered once the officer approves", async () => {
+    expect(OFFICER_ACTIONS.some((action) => action.kind === "read")).toBe(true);
+    expect(OFFICER_ACTIONS.some((action) => action.kind !== "read")).toBe(true);
+    expect(OFFICER_ACTIONS.some((action) => action.core)).toBe(true);
+    // The same officer, approved, is offered every one, so the refusals below
+    // come from the missing approval and nothing else.
+    const found = await foundIds(context(EVERY_AREA_EDIT, true));
+    expect(OFFICER_ACTIONS.filter((action) => !found.includes(action.id)).map((action) => action.id)).toEqual([]);
+  });
+
+  it("lists none of them in tools/list or find_actions", async () => {
+    const ctx = context(EVERY_AREA_EDIT, false);
+    expect(listMcpTools(ctx).filter((tool) => officerIds.has(tool.name)).map((tool) => tool.name)).toEqual([]);
+    expect((await foundIds(ctx)).filter((id) => officerIds.has(id))).toEqual([]);
+  });
+
+  it("refuses each through describe_action, run_action and by name, saying to reconnect, and runs nothing", async () => {
+    const ctx = context(EVERY_AREA_EDIT, false);
+    for (const action of OFFICER_ACTIONS) {
+      for (const outcome of [
+        await callMcpTool(ctx, "describe_action", { id: action.id }),
+        await callMcpTool(ctx, "run_action", { id: action.id, arguments: {} }),
+        await callMcpTool(ctx, action.id, {}),
+      ]) {
+        expect(outcome, action.id).toEqual({ isError: true, text: MCP_OFFICER_RECONNECT_MESSAGE });
+      }
+    }
+    expect(run).not.toHaveBeenCalled();
   });
 });

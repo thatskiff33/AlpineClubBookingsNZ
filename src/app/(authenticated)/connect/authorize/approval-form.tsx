@@ -136,9 +136,12 @@ export function ApprovalForm({
           <li>The app acts as you. What you ask it, and what it reads, goes to the company that runs it.</li>
           {officer ? (
             <li data-testid="mcp-officer-notice">
+              {/* General on purpose: one approval covers every officer area, later ones
+                  included (owner decision, #5305 comment 7131483847). The app is told to
+                  ask first by the server's instructions, which cover every change. */}
               {mayChange
-                ? "As a club officer, the app can also read other members' bookings and details that your admin role allows, and with View and change, change them."
-                : "As a club officer, the app can also read other members' bookings and details that your admin role allows."}
+                ? "As a club officer, the app can also read the club records your admin role allows, such as other members' bookings and details and the club's booking settings, and with View and change, change them. The app is told to ask you before it changes anything."
+                : "As a club officer, the app can also read the club records your admin role allows, such as other members' bookings and details and the club's booking settings."}
             </li>
           ) : null}
           <li>Paying by card and changing your password or sign-in stay on this website.</li>

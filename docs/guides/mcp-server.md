@@ -123,11 +123,15 @@ disconnect them under **Connections**. An app on the member's own computer
   company that runs it; card payments and password or sign-in changes stay on
   the website; the app can be disconnected on the profile at any time.
 - **For an officer only**, a fourth: as a club officer, the app can also read
-  other members' bookings and details that their admin role allows, and with
-  **View and change**, change them (owner decision,
+  the club records their admin role allows, such as other members' bookings
+  and details and the club's booking settings, and with **View and change**,
+  change them; the app is told to ask before it changes anything (owner
+  decision,
   [#5305](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/5305#issuecomment-7093303964)).
   Approving this screen is what lets the connection run officer actions
-  (below).
+  (below). The wording is general on purpose, so one approval covers every
+  admin area the officer holds, including areas added later (owner decision,
+  [#5305](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/5305#issuecomment-7131483847)).
 
 The screen refuses, with a reason and nothing shared, when the app or its
 return address is not registered or not approved, when the account is a lodge
@@ -287,6 +291,8 @@ ask them to prove who they are again and the switch that opens member search
   and `run_action` refuse an officer action, saying the officer must connect
   the app again (owner decision,
   [#5305](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/5305#issuecomment-7093303964)).
+  The approval is one date, not a version: a later area's actions need no new
+  approval.
 - **The route still decides.** Each action calls the admin route the screen
   calls, which checks the officer's own permissions exactly as for the
   browser.
@@ -528,7 +534,9 @@ switch governs the connection, not the action list. That is why **Officers
 may connect an AI app** is a separate switch, off by default. An officer
 action also needs the officer's own approval on the screen that tells them
 the app can act as an officer, so a connection approved before that screen
-reaches only the officer's own records until they connect again. Before
+reaches only the officer's own records until they connect again. That one
+approval also covers the areas added later, as the screen says it covers any
+club records the officer's admin role allows. Before
 switching it on, the club should cover it in its privacy notice and decide
 which AI providers are acceptable.
 
