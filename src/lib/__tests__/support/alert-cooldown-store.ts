@@ -11,9 +11,11 @@ import { vi } from "vitest";
  * #5255: a once-ever claim's `awaitingSendSince` mark is kept beside `rows`
  * (in `awaiting`, present only while set), so a write that changes only the
  * mark, such as the email row's confirm, leaves the claim's stamp alone. A
- * `where` may test it as `null`, `{ not: null }` or `{ lt }`. `findMany`
- * still orders by `lastAlertedAt` only; `replayAlert` is not kept (the
- * fuller fake in `helpers/alert-cooldown-fake.ts` keeps both).
+ * `where` may test it as `null`, `{ not: null }` or `{ lt }`. `findUnique`
+ * reads one row by its exact `key`, as Prisma does: null when absent, else the
+ * row (`awaitingSendSince` null when unset), narrowed to `select` if given.
+ * `findMany` still orders by `lastAlertedAt` only; `replayAlert` is not kept
+ * (the fuller fake in `helpers/alert-cooldown-fake.ts` keeps both).
  */
 type StampFilter = Date | { lt?: Date; lte?: Date; gte?: Date };
 type AwaitingFilter = null | { not: null } | { lt: Date };
@@ -85,6 +87,13 @@ export function createAlertCooldownStore() {
         awaiting.delete(key);
       }
       return { count: hits.length };
+    }),
+    findUnique: vi.fn(async ({ where, select }: { where: { key: string }; select?: Record<string, boolean> }) => {
+      const lastAlertedAt = rows.get(where.key);
+      if (!lastAlertedAt) return null;
+      const row = { key: where.key, lastAlertedAt, awaitingSendSince: awaiting.get(where.key) ?? null };
+      if (!select) return row;
+      return Object.fromEntries(Object.entries(row).filter(([field]) => select[field]));
     }),
     findMany: vi.fn(async ({ where, take }: { where: CooldownWhere; take?: number }) =>
       matching(where)

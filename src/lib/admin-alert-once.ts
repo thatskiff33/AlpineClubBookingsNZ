@@ -55,16 +55,20 @@ export async function sendAdminAlertOnceEver(args: OnceEverAlertArgs): Promise<b
  * `admin-alert-once-census.test.ts`: every production caller of the once-ever
  * helpers in `src/lib`, grouped by what sends its alert again once the claim
  * is given back (#5255). A caller retried by its next run calls
- * `sendAdminAlertOnceEver`; one that raises its alert only once calls
- * `sendReplayableAdminAlertOnceEver`, which stores the alert for the sweep to
- * re-send. Each caller's own docblock says how it runs. A give-back cannot make
- * a sibling send twice: it deletes only a row under this call's own stamp, this
- * call sent nothing, and a sibling that read that row held sent nothing.
- * Limit: two claims for one key in the same millisecond share a stamp (at worst
- * a duplicate). The takeover callers (`admin-alert-once-takeover.ts`) retry
- * until sent and give back their own claims.
+ * `sendAdminAlertOnceEver` or `sendAdminAlertOnceEverClaim`; one that raises
+ * its alert only once calls `sendReplayableAdminAlertOnceEver`, which stores
+ * the alert for the sweep to re-send. Each caller's own docblock says how it
+ * runs. A give-back cannot make a sibling send twice: it deletes only a row
+ * under this call's own stamp, this call sent nothing, and a sibling that read
+ * that row held sent nothing. Limit: two claims for one key in the same
+ * millisecond share a stamp (at worst a duplicate). The takeover callers
+ * (`admin-alert-once-takeover.ts`) retry until sent and give back their own
+ * claims; the past-cut-off step settles its marker only on a kept claim, so a
+ * claim the sweep gives back leaves the marker for its next run.
  *
  * Retried by its next run (cron, or a webhook or request then cron):
+ * - admin-alert-once-takeover.ts
+ * - owed-notice/past-cutoff-once.ts
  * - internet-banking-payment-cron.ts
  * - xero-waiting-invoice-reaper.ts
  * - group-settlement-invoice-alerts.ts

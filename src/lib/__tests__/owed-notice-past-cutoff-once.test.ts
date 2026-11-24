@@ -20,7 +20,8 @@ vi.mock("@/lib/prisma", () => ({
 }));
 vi.mock("@/lib/logger", () => ({ default: mocks.logger }));
 
-import { ALERT_NOBODY_ELIGIBLE_RETRY_MS } from "@/lib/alert-cooldown";
+import { ONCE_EVER_UNSENT_GRACE_MS } from "@/lib/admin-alert-once-sweep";
+import { ALERT_NOBODY_ELIGIBLE_RETRY_MS, listStaleUnsentAlertCooldowns, releaseUnsentAlertCooldown } from "@/lib/alert-cooldown";
 import type { AdminAlertSendResult } from "@/lib/email/admin-alert-send-result";
 import { alertOfficersOncePastCutoff, pastCutoffAlertKey } from "@/lib/owed-notice/past-cutoff-once";
 import { owedNoticeMarker } from "@/lib/owed-notice/store";
@@ -88,6 +89,51 @@ describe("alertOfficersOncePastCutoff", () => {
     expect(cooldown.rows.size).toBe(0);
     await expect(alertAt(new Date(NOW.getTime() + 60_000))).resolves.toBe("settled");
     expect(send).toHaveBeenCalledTimes(2);
+  });
+
+  it("#5255: a held claim still awaiting its send answers unreached; once the sweep gives it back the next attempt sends once", async () => {
+    // The first attempt claims and its send hangs: the claim stays marked "no email yet".
+    let failHungSend!: (err: Error) => void;
+    send.mockImplementationOnce(() => new Promise((_, reject) => (failHungSend = reject)));
+    const hung = alertAt(NOW);
+    await vi.waitFor(() => expect(send).toHaveBeenCalledTimes(1));
+
+    // A rerun loses the claim. No email went, so it must not settle (which would
+    // clear the marker); `unreached` holds the marker for the kind's longer retry.
+    const rerunAt = new Date(NOW.getTime() + 60_000);
+    vi.setSystemTime(rerunAt);
+    await expect(alertAt(rerunAt)).resolves.toBe("unreached");
+    expect(send).toHaveBeenCalledTimes(1);
+
+    // The payments cron's sweep gives back the claim once it is past the grace.
+    const sweepAt = new Date(NOW.getTime() + ONCE_EVER_UNSENT_GRACE_MS + 60_000);
+    vi.setSystemTime(sweepAt);
+    const stale = await listStaleUnsentAlertCooldowns({ markedBefore: new Date(sweepAt.getTime() - ONCE_EVER_UNSENT_GRACE_MS) });
+    expect(stale.map((row) => row.key)).toEqual([pastCutoffAlertKey(marker)]);
+    await expect(releaseUnsentAlertCooldown({ key: stale[0].key, claimedAt: stale[0].lastAlertedAt })).resolves.toBe(true);
+
+    // The marker's next attempt sends exactly once and settles.
+    send.mockResolvedValue(result(1));
+    const retryAt = new Date(sweepAt.getTime() + 60_000);
+    vi.setSystemTime(retryAt);
+    await expect(alertAt(retryAt)).resolves.toBe("settled");
+    expect(send).toHaveBeenCalledTimes(2);
+
+    // The hung send now fails: it gives back only its own stamp, so the kept
+    // claim stands and a later rerun settles without sending.
+    failHungSend(new Error("SMTP timed out"));
+    await expect(hung).resolves.toBe("unreached");
+    await expect(alertAt(new Date(retryAt.getTime() + 60_000))).resolves.toBe("settled");
+    expect(send).toHaveBeenCalledTimes(2);
+  });
+
+  it("#5255: answers threw, sending nothing, when a held claim's state cannot be read", async () => {
+    send.mockResolvedValue(result(1));
+    await alertAt(NOW);
+    cooldown.delegate.findUnique.mockRejectedValueOnce(new Error("db down"));
+
+    await expect(alertAt(new Date(NOW.getTime() + 60_000))).resolves.toBe("threw");
+    expect(send).toHaveBeenCalledTimes(1);
   });
 
   it("answers threw, sending nothing, when the claim cannot be written", async () => {

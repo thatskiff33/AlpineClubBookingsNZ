@@ -10,10 +10,11 @@ import { CENSUS_TIMEOUT_MS } from "@/test/census-timeout";
  * `admin-alert-once.ts` is the one list of the once-ever helpers' callers,
  * grouped by what sends an alert again once its claim is given back. This
  * suite holds that list to the code: it walks `src/` for every production file
- * that names either helper outside a comment, and fails when a file is missing
+ * that names a helper outside a comment, and fails when a file is missing
  * from its group, or sits in the other one. A caller retried by its own next
- * run calls `sendAdminAlertOnceEver`; one raised only once calls
- * `sendReplayableAdminAlertOnceEver`, so the sweep re-sends its stored alert.
+ * run calls `sendAdminAlertOnceEver` or `sendAdminAlertOnceEverClaim`; one
+ * raised only once calls `sendReplayableAdminAlertOnceEver`, so the sweep
+ * re-sends its stored alert.
  * A new caller cannot arrive without someone deciding which it is.
  * Disk-scanning: run by name (`pnpm run test:named`).
  */
@@ -24,7 +25,7 @@ const CALLER_DIR = "src/lib";
 const RETRIED = "Retried by its next run (cron, or a webhook or request then cron)";
 const REPLAYED = "Raised once; the sweep re-sends its stored alert";
 const NAMES = {
-  [RETRIED]: /\bsendAdminAlertOnceEver\b/,
+  [RETRIED]: /\bsendAdminAlertOnceEver(?:Claim)?\b/,
   [REPLAYED]: /\bsendReplayableAdminAlertOnceEver\b/,
 };
 

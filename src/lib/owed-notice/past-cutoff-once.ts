@@ -13,20 +13,22 @@
  *   `settled`, and the marker is cleared;
  * - already held by an earlier attempt for this marker and kept for good (the
  *   alert went, and the run stopped before the clear): `settled`, with no send;
- * - held for a day after an attempt nobody could receive, or this attempt
- *   reached nobody or threw (the claim is held a day or given back):
- *   `unreached`, so the marker waits the kind's longer retry;
- * - the claim call itself threw: the uncertain claim is given back and the
- *   step answers `threw`.
+ * - held by an earlier attempt still marked "no email yet" (#5255: a hung or
+ *   failed send, or an uncertain claim whose give-backs failed), held for a day
+ *   after an attempt nobody could receive, or this attempt reached nobody or
+ *   threw (the claim is held a day or given back): `unreached`, so the marker
+ *   waits the kind's longer retry, by when the claim is kept (the rerun
+ *   settles), or released or given back by the sweep (the rerun sends);
+ * - the claim call itself threw (its uncertain claim is given back), or the
+ *   held claim's state cannot be read: `threw`.
  *
  * Never throws.
  */
 import {
   giveBackOwnOnceEverClaim,
-  readHeldOnceEverAlertTimes,
+  readOnceEverClaimState,
   sendAdminAlertOnceEverClaim,
 } from "@/lib/admin-alert-once";
-import { ALERT_ONCE_EVER_WINDOW_MS } from "@/lib/alert-cooldown";
 import type { AdminAlertSendResult } from "@/lib/email/admin-alert-send-result";
 import type { OwedNoticeOutcome } from "@/lib/owed-notice/deliver";
 import type { OwedNoticeMarker } from "@/lib/owed-notice/store";
@@ -49,14 +51,11 @@ export async function alertOfficersOncePastCutoff(
     return "threw";
   }
   if (claim.claimedAt) return "unreached";
-  // Another attempt holds the claim. A claim kept for good carries its send's
-  // time; one held for a day after nobody received it is dated back by almost
-  // the whole once-ever window (`deferAlertCooldown`), so the two are apart.
-  let heldAt: Date | undefined;
+  // Another attempt holds the claim. Only one kept for good means the alert
+  // went; one still awaiting its send may yet fail or be given back (#5255).
   try {
-    heldAt = (await readHeldOnceEverAlertTimes([key], now)).get(key);
+    return (await readOnceEverClaimState(key, now)) === "kept" ? "settled" : "unreached";
   } catch {
     return "threw";
   }
-  return heldAt && heldAt.getTime() > now.getTime() - ALERT_ONCE_EVER_WINDOW_MS / 2 ? "settled" : "unreached";
 }
