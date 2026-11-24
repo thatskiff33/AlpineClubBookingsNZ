@@ -119,7 +119,7 @@ function summary(report: BookingLedgerCensusReport, format: ClubFormat): string 
     "  JOURNAL_PENDING (#4628), in place of JOURNAL for a bank-transfer booking charged at its binding moment and not yet confirmed on the ledger: the journal's live charge against the booking's final price plus the change fees on its payment, or, once cancelled, the kept figure its CANCELLED snapshot froze; acknowledge a disagreement to the cent with identity JOURNAL_PENDING",
   );
   out.push(
-    "  JOURNAL_REFUND_PAYABLE (#5185, report v3): the journal's open refund payable against what the legacy records still owe back on the debts it holds - each hand-back task whose R05 posted, at what it still owes, plus each open card refund row whose R05 posted, at its slices not yet made; the hand-back classes (HAND_BACK_*, KEEP_WITHOUT_EVENT) are listed under integrity",
+    "  JOURNAL_REFUND_PAYABLE (#5185, report v3): the journal's open refund payable against what the legacy records still owe back on the debts it holds - each hand-back task whose debt posted, at what it still owes, plus each open card refund row whose debt is still live, at its slices not yet made (a row left on a debt since reversed, such as a kept late capture's, counts nothing), plus each late capture held open for the treasurer whose capture-return debt posted and no such row pays, at its task's amount; the hand-back classes (HAND_BACK_*, KEEP_WITHOUT_EVENT) are listed under integrity",
   );
   const strands = report.info.ibUnallocatedAppliedCredit;
   out.push(

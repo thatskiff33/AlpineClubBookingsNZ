@@ -698,6 +698,8 @@ async function cleanup() {
       await db.paymentRecoveryOperation.create({ data: { type: "REFUND_BOOKING_MODIFICATION", status: "FAILED", attempts: 9, bookingId: id, paymentId: `${id}-payment`,
         paymentIntentId: intent, amountCents: 2_500, idempotencyKey: buildLateCaptureApprovalRefundRecoveryIdempotencyKey(intent) } });
       expect(await refundPayable(id)).toMatchObject({ status: "AGREE", columnCents: 2_500, ledgerCents: 2_500 });
+      // Held OPEN, the task is no keep yet: only a dismissed task's intent is read for one.
+      expect(await handBackFindings()).toEqual([]);
       // The treasurer keeps it through the real door: the debt is reversed (`closeKeptCaptureReturn`) and the keep posts.
       await resolve(task.id, "dismissed");
       expect(await db.manualRefundTask.findUniqueOrThrow({ where: { id: task.id }, select: { status: true } })).toEqual({ status: "DISMISSED" });
