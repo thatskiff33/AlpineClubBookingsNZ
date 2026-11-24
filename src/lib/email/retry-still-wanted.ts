@@ -13,6 +13,9 @@
  * and never on the domain code that answers (the waitlist, here).
  */
 
+import { retireReplayableEmailRow } from "@/lib/email/retire-replayable";
+import logger from "@/lib/logger";
+
 /** A row the job is about to claim: its durable id and the booking it is about. */
 export interface RetryCandidate {
   id: string;
@@ -35,4 +38,34 @@ export async function emailStillWanted(row: RetryCandidate & { templateName: str
   const load = STILL_WANTED_CHECKS.get(row.templateName);
   if (!load) return true;
   return (await load())({ id: row.id, bookingId: row.bookingId });
+}
+
+/**
+ * The retry job's question, answered before it claims the row: replay it
+ * (`true`), or not (`false`). A row no longer wanted is retired through the
+ * job's own guarded retirement, so the job's claim and this cannot both win; a
+ * check that cannot answer leaves the row as found for a later run. Never
+ * throws.
+ */
+export async function replayStillWanted(row: RetryCandidate & {
+  templateName: string;
+  to: string;
+  attempts: number;
+  htmlBody: string | null;
+  bookingRetryHtmlBody: string | null;
+}): Promise<boolean> {
+  let answer: true | string;
+  try {
+    answer = await emailStillWanted(row);
+  } catch (err) {
+    logger.error({ err, emailLogId: row.id }, "Skipped email retry: could not tell whether it is still wanted");
+    return false;
+  }
+  if (answer === true) return true;
+  const retired = await retireReplayableEmailRow({ ...row, errorMessage: `Not retried: no longer wanted (${answer}).` }).catch((err) => {
+    logger.error({ err, emailLogId: row.id }, "Failed to retire an email that is no longer wanted");
+    return { count: 0 };
+  });
+  if (retired.count === 1) logger.warn({ emailLogId: row.id, bookingId: row.bookingId, templateName: row.templateName, to: row.to }, "Retired an email that is no longer wanted");
+  return false;
 }

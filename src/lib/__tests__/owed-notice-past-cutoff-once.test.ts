@@ -101,12 +101,12 @@ describe("alertOfficersOncePastCutoff", () => {
     const sentKey = pastCutoffSentKey(marker);
     const realUpdateMany = cooldown.delegate.updateMany.getMockImplementation()!;
     let failed = false;
-    cooldown.delegate.updateMany.mockImplementation(async (args: { where: { key: string } }) => {
+    cooldown.delegate.updateMany.mockImplementation(async (args: Parameters<typeof realUpdateMany>[0]) => {
       if (args.where.key === sentKey && !failed) {
         failed = true;
         throw new Error("db blip");
       }
-      return realUpdateMany(args as never);
+      return realUpdateMany(args);
     });
     try {
       await expect(alert()).resolves.toBe("settled");
@@ -120,9 +120,9 @@ describe("alertOfficersOncePastCutoff", () => {
     send.mockResolvedValue(result(1));
     const sentKey = pastCutoffSentKey(marker);
     const realUpdateMany = cooldown.delegate.updateMany.getMockImplementation()!;
-    cooldown.delegate.updateMany.mockImplementation(async (args: { where: { key: string } }) => {
+    cooldown.delegate.updateMany.mockImplementation(async (args: Parameters<typeof realUpdateMany>[0]) => {
       if (args.where.key === sentKey) throw new Error("db down");
-      return realUpdateMany(args as never);
+      return realUpdateMany(args);
     });
     try {
       await expect(alert()).resolves.toBe("settled");
