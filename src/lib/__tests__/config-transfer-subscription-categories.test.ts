@@ -409,11 +409,24 @@ describe("config transfer — subscription categories (#5248)", () => {
 
   it("takes the fee-schedule locks after the config-import lock and before the in-lock re-plan", () => {
     const source = readFileSync(join(process.cwd(), "src/lib/config-transfer/apply.ts"), "utf8");
-    const configLock = source.indexOf("await acquireConfigImportLock(tx)");
-    const feeLocks = source.indexOf("await lockAffectedSubscriptionCategoryFeeSchedules(tx, parsed.files)");
-    const replan = source.indexOf("const replan = await buildImportPlanFromParsed");
+    // The apply takes every category's keys through one helper, called after
+    // the singleton and before the re-plan; in it the fee schedules come last.
+    const applyFn = source.slice(source.indexOf("export async function applyConfigImport"));
+    const configLock = applyFn.indexOf("await acquireConfigImportLock(tx)");
+    const categoryKeys = applyFn.indexOf("await lockSelectedCategoryKeys(tx, parsed, params.selectedCategories)");
+    const replan = applyFn.indexOf("const replan = await buildImportPlanFromParsed");
     expect(configLock).toBeGreaterThan(-1);
-    expect(feeLocks).toBeGreaterThan(configLock);
-    expect(replan).toBeGreaterThan(feeLocks);
+    expect(categoryKeys).toBeGreaterThan(configLock);
+    expect(replan).toBeGreaterThan(categoryKeys);
+    const keyHelper = source.slice(
+      source.indexOf("async function lockSelectedCategoryKeys"),
+      source.indexOf("export type BootstrapBackupSkip"),
+    );
+    const policyLocks = keyHelper.indexOf("await lockAdultMemberHostingPolicySet(tx)");
+    const lodgeLocks = keyHelper.indexOf("await lockAffectedLodgeConfigLodges(tx, parsed.files)");
+    const feeLocks = keyHelper.indexOf("await lockAffectedSubscriptionCategoryFeeSchedules(tx, parsed.files)");
+    expect(policyLocks).toBeGreaterThan(-1);
+    expect(lodgeLocks).toBeGreaterThan(policyLocks);
+    expect(feeLocks).toBeGreaterThan(lodgeLocks);
   });
 });

@@ -40,17 +40,17 @@ reason: the category select is its own component; what the toolbar gains is its
   which belong with the other filters' chips and placement.
 
 function: src/app/(admin)/admin/membership/members/_components/member-table.tsx#MemberTable
-lines: 310
+lines: 309
 reason: one line renders the category label component under the Type - Tier
   cell it annotates.
 
 function: src/app/api/admin/members/export/route.ts#GET
-lines: 500
+lines: 465
 reason: the shared category filter is applied among this handler's other
   filter clauses, which is where the export builds its where-clause.
 
 function: src/lib/admin-members-service.ts#listAdminMembers
-lines: 982
+lines: 931
 reason: the shared category filter is applied beside the membership-type filter,
   and the row gains its current-season category beside its membership type;
   both sit where the list query assembles them.
