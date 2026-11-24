@@ -3346,8 +3346,10 @@ call may still come back with a note:
   may have recorded that very note, in which case nothing needs voiding.
 
 Limit: if the app stops between deciding not to record the note and writing
-its audit entry, the app's log is the only record of it; if the email cannot
-reach anyone, it is not sent again, and the audit entry and the log remain.
+its audit entry, the app's log is the only record of it. If the email cannot
+reach anyone, or its send fails, the payments cron re-sends it every 15
+minutes (daily while nobody can receive it) until it is out, for up to seven
+days (#5255); after that the audit entry and the log remain.
 
 The job can also stall after it has recorded its note, while it allocates the
 waiver or records the refund payment (#4680). After **Reset stale running**,

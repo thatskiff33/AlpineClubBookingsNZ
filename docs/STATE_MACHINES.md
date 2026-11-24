@@ -5148,6 +5148,25 @@ additional lock is involved. As before,
 a crash after a send but before its sent stamp can repeat that alert when the
 ten-minute cooldown expires; the retry is at least once.
 
+### Once-ever admin alert claim (#5255)
+
+```text
+no claim -> claimed, awaiting send (awaitingSendSince = the claim's stamp)
+awaiting send -> first email row written -> kept, for good (mark cleared in the row's transaction)
+awaiting send -> send reached nobody -> deferred a day -> no claim
+awaiting send -> send threw, or recorded no email -> given back -> no claim
+awaiting send, 15 minutes on -> once-ever-alert-sweep gives it back -> no claim
+no claim -> the caller's next run claims and sends
+raised-once alert -> stored owed row -> sweep re-sends while no claim holds it
+  -> settled once kept; dropped with an error after 7 days
+```
+
+The give-back and the first email row race on the `AlertCooldown` row's lock:
+whichever commits first wins, and the loser changes nothing, so the sweep never
+makes a second send (`INV-INT-042`). A claim taken before #5255 has no mark and
+is never swept. Known limits, not owner-accepted: an alert raised while every
+database write fails (#5297), and an email row a crash left `QUEUED` (#5298).
+
 ### Shared Xero inbound run authority (#4432)
 
 The scheduled inbound cycle, HTTP cron's inbound/mirror tasks and whole-club
@@ -5284,7 +5303,9 @@ claim reads nothing outstanding, after its preflight records Stripe's list
   a refund on the row's intent carrying exactly its runner's metadata,
     recorded as made in the ledger                     -> report, then close
   none (another door's refund), or not recorded as made -> close, no notice
-report not settled (email not recorded, alert not sent) -> throws; row retried
+report not settled (email not recorded, no alert copy delivered or queued
+  and neither the club switched the alert off nor a non-live copy held it
+  back) -> throws; row retried
 alert claim held, no sent marker: younger than the stale threshold
   -> the row waits (attempt handed back: never terminal, no officer alert);
   older -> the dead attempt's claim is given back and the alert sent
