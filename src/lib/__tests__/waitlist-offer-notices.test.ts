@@ -616,6 +616,8 @@ describe("findNeverToldWaitlistOffers (D2: no offer-expired email for an offer n
     };
     const neverTold = await findNeverToldWaitlistOffers(tx as never, offers);
     expect([...neverTold].sort()).toEqual(["bounced", "failed", "owed", "past-cutoff", "replaying"]);
+    // The read carries the last attempt, which tells a live replay from a stale one (round 3, item 1).
+    expect(tx.emailLog.findMany).toHaveBeenCalledWith(expect.objectContaining({ select: expect.objectContaining({ lastAttemptAt: true }) }));
   });
 
   it("reads nothing when no lapsed offer has an offer time", async () => {
