@@ -170,11 +170,11 @@ describe("club calendar officer actions (ALP-722)", () => {
     signIn(memberSession({ id: "committee-1" }));
     h.committeeSeat.mockResolvedValue({ id: "seat-1" });
 
-    const browser = await createEvent(create(false), {} as never);
+    const browser = await createEvent(create(false));
     expect(browser.status).toBe(201);
 
     h.createCalendarEvent.mockClear();
-    const connection = await createEvent(create(true), {} as never);
+    const connection = await createEvent(create(true));
     expect(connection.status).toBe(403);
     expect(h.createCalendarEvent).not.toHaveBeenCalled();
   });
