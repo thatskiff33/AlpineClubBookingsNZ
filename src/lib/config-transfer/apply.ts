@@ -19,7 +19,7 @@ import {
   clearedRowsAuditMetadata,
 } from "@/lib/member-subscription-defaults";
 import { SUBSCRIPTION_BILLING_SEASON_WAITER_TIMEOUT_MS } from "@/lib/subscription-billing-season-lock";
-import { readBundle, sha256Hex } from "./bundle";
+import { readBundle, sha256Hex, type ReadBundleResult } from "./bundle";
 import { buildImportPlanFromParsed, CATEGORY_IMPORTERS } from "./import";
 import { mediaApplies, recreateBundleMedia } from "./media";
 import {
@@ -36,6 +36,7 @@ import {
   folderLodgeSlug,
   lodgeFolderSegments,
 } from "./categories/lodge-config";
+import { lockAffectedSubscriptionCategoryFeeSchedules } from "./categories/subscription-categories";
 import type { ClubFormat } from "@/lib/club-format";
 
 // Apply orchestrator. Order (ADR-002): parse once → pre-apply database backup →
@@ -96,6 +97,46 @@ async function lockAffectedLodgeConfigLodges(
   });
   for (const lodgeId of lodges.map(({ id }) => id).sort()) {
     await acquireLodgeCapacityLock(tx, lodgeId);
+  }
+}
+
+/**
+ * The keys an import takes after the config-import singleton and before its
+ * in-lock re-plan, for each category it applies (in the bundle and, when the
+ * officer chose, among the chosen). The order is permanent: config-transfer
+ * singleton -> policy sets -> affected lodge ids (lexical) -> affected
+ * subscription-category fee schedules (by id) -> in-lock re-plan.
+ */
+async function lockSelectedCategoryKeys(
+  tx: TxDb,
+  parsed: ReadBundleResult,
+  chosen: readonly ConfigTransferCategory[] | undefined,
+): Promise<void> {
+  const applies = (category: ConfigTransferCategory) =>
+    parsed.manifest.includedCategories.includes(category) &&
+    (!chosen || chosen.includes(category));
+
+  // The booking-policy importer is a replace-set. Its global set lock must be
+  // held BEFORE the in-lock re-plan so no live CRUD can move the set between
+  // the preview fingerprint and its mutations.
+  if (applies("booking-policies")) {
+    await lockMinimumStayPolicySet(tx);
+    // #2364: the category's second replace-set. Live CRUD takes only one of
+    // the minimum-stay and hosting sets, and no writer takes them in any other
+    // order, so the three cannot form a cycle.
+    await lockAdultMemberHostingPolicySet(tx);
+  }
+
+  if (applies("lodge-config")) {
+    await lockAffectedLodgeConfigLodges(tx, parsed.files);
+  }
+
+  // #5248: the subscription-category fee schedules this bundle touches, in id
+  // order, so the re-plan's window and component checks and the writes see one
+  // serialised schedule. The fee-configuration route takes only this key,
+  // never the config-import one, so the order cannot invert.
+  if (applies("membership-fees")) {
+    await lockAffectedSubscriptionCategoryFeeSchedules(tx, parsed.files);
   }
 }
 
@@ -263,32 +304,9 @@ export async function applyConfigImport(
       // writes, so a stale preview can never apply (ADR-002).
       await acquireConfigImportLock(tx);
 
-      // The booking-policy importer is a replace-set. Its global set lock must
-      // be held BEFORE the in-lock re-plan so no live CRUD can move the set
-      // between the preview fingerprint and its mutations. The lock order is
-      // permanently config-transfer singleton -> policy set.
-      const bookingPoliciesSelected =
-        parsed.manifest.includedCategories.includes("booking-policies") &&
-        (!params.selectedCategories ||
-          params.selectedCategories.includes("booking-policies"));
-      if (bookingPoliciesSelected) {
-        await lockMinimumStayPolicySet(tx);
-        // #2364: the category's second replace-set. Permanent lock order is
-        // config-transfer singleton -> minimum-stay set -> hosting set; live
-        // CRUD takes only one of the last two, and no writer takes them in any
-        // other order, so the three cannot form a cycle.
-        await lockAdultMemberHostingPolicySet(tx);
-      }
-
-      const lodgeConfigSelected =
-        parsed.manifest.includedCategories.includes("lodge-config") &&
-        (!params.selectedCategories ||
-          params.selectedCategories.includes("lodge-config"));
-      if (lodgeConfigSelected) {
-        // Permanent order: config-transfer singleton -> policy-set locks (when
-        // selected) -> affected lodge ids in lexical order -> in-lock re-plan.
-        await lockAffectedLodgeConfigLodges(tx, parsed.files);
-      }
+      // The policy-set, lodge and fee-schedule keys of the categories this
+      // import applies, in their permanent order, before the re-plan.
+      await lockSelectedCategoryKeys(tx, parsed, params.selectedCategories);
 
       // ADR-003 bootstrap only: re-run the emptiness probe INSIDE the lock,
       // before the re-plan and before anything is written. A concurrent

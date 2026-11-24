@@ -45,7 +45,7 @@ beforeEach(() => {
 describe("useMembersQueryState Reset", () => {
   it("resets search, filters, sort, and page while preserving unknown URL keys", async () => {
     navigation.currentSearch =
-      "futureContext=keep&q=Aroha&role=ADMIN&contactability=unreachable&sortBy=email&sortDir=desc&page=3"
+      "futureContext=keep&q=Aroha&role=ADMIN&contactability=unreachable&subscriptionCategory=none&sortBy=email&sortDir=desc&page=3"
 
     render(<Harness />)
     fireEvent.click(screen.getByRole("button", { name: "Reset members" }))
@@ -56,11 +56,11 @@ describe("useMembersQueryState Reset", () => {
       expect(state.page).toBe(1)
       expect(state.sortBy).toBe("name")
       expect(state.sortDir).toBe("asc")
-      // Eleven since #2716 added `contactability` — the members-list filter the
-      // stuck-states dashboard deep-links into. Counting rather than naming them
+      // Twelve since #5248 added `subscriptionCategory` (eleven since #2716
+      // added `contactability`, the filter the stuck-states dashboard deep-links into). Counting rather than naming them
       // is deliberate: a filter added without a reset path is the bug this pins,
       // and a count catches one that a name list would be updated to excuse.
-      expect(Object.values(state.filters)).toEqual(Array(11).fill(""))
+      expect(Object.values(state.filters)).toEqual(Array(12).fill(""))
     })
 
     await waitFor(() => {
@@ -71,6 +71,7 @@ describe("useMembersQueryState Reset", () => {
         "q",
         "role",
         "contactability",
+        "subscriptionCategory",
         "sortBy",
         "sortDir",
         "page",
