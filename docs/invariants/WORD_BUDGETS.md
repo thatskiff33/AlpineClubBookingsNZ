@@ -110,7 +110,7 @@ while exceptions are proposed on their deciding issues (#2576, #3040, #3039,
 | `INV-ADDPAY-038` | 1025 |
 | `INV-CONFIG-002` | 874 |
 | `INV-MONEY-003` | 867 |
-| `INV-ADDPAY-034` | 828 |
+| `INV-ADDPAY-034` | 583 |
 | `INV-MOD-026` | 828 |
 | `INV-PRIV-011` | 809 |
 | `INV-DATE-013` | 780 |

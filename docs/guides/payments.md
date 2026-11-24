@@ -816,7 +816,7 @@ against the hand-back you recorded, and recover the difference if there is one.
 Neither email can be switched off.
 
 There is no **View booking** link on these rows. A deleted booking's page opens only
-for a Full Admin, and a cancelled booking's page needs Bookings access that a
+for a Full Admin (its owner and guests see only a note that it was removed), and a cancelled booking's page needs Bookings access that a
 Finance Viewer does not have, so the booking's identifier is printed as text for you
 to quote instead of a link that would not work for you.
 
