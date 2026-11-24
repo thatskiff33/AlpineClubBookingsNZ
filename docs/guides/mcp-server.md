@@ -27,7 +27,8 @@ the **Help & system** hub. The page exists only while the module is on.
 The end goal is that members can do everything on the website through an AI
 app, built in stages. Stage 1 is the foundation plus a first set of member
 actions; ALP-718 adds the member's own account and the club's published
-information; see [The roadmap](#the-roadmap).
+information, and ALP-794 the member's bookings; see
+[The roadmap](#the-roadmap).
 
 ## When you'd use it
 
@@ -224,9 +225,72 @@ place; both are counted against the connection's rate limit and answer
 and the connection's level), `find_actions`, `describe_action` and
 `run_action`.
 
-Three **website-only** entries answer with the page to open and run nothing:
+### Bookings (ALP-794)
+
+These are in [`catalogue-bookings.ts`](../../src/lib/mcp/catalogue-bookings.ts),
+their answers' shapes in
+[`connection-shapes-bookings.ts`](../../src/lib/connection-shapes-bookings.ts),
+and all are reached through `find_actions`. Each acts on the connected
+member's own bookings only: a connection never reaches another member's
+booking, even an officer's, and never sends an officer's on-behalf fields.
+
+| Action | What it does | Kind | Route |
+| --- | --- | --- | --- |
+| `check_stay_availability` | Free beds at a lodge for each night of one stay, and the fewest free on any night | read | `GET /api/availability/check` |
+| `check_booking_rules` | Whether a stay meets the minimum-stay rules, each rule it breaks, and the cancellation schedule | read | `GET /api/booking-policies/check` |
+| `list_lodge_rooms` | The rooms a member can ask for at one lodge (its id from `list_lodges`), with bed counts. The cross-lodge listing stays for callers outside this repository (`INV-INT-016`) | read | `GET /api/bookings/rooms` |
+| `list_requestable_rooms` | The rooms the member can request on one of their bookings | read | `GET /api/bookings/[id]/requested-room/options` |
+| `list_my_promo_codes` | The promo codes the club has given the member | read | `GET /api/promo-codes/available` |
+| `quote_booking` | What a stay would cost, guest by guest. Changes none of the member's bookings | read (preview) | `POST /api/bookings/quote` |
+| `check_promo_code` | What a promo code or working bee would take off a stay. Changes none of the member's bookings | read (preview) | `POST /api/promo-codes/validate` |
+| `quote_booking_change` | What changing a booking would cost or give back, and whether it can be made. Changes none of the member's bookings | read (preview) | `POST /api/bookings/[id]/modify-quote` |
+| `quote_booking_change_request` | An estimate for the guests a change request would add. Changes none of the member's bookings | read (preview) | `POST /api/bookings/[id]/change-requests/quote` |
+| `set_my_booking_note` | Saves or clears the booking's note | write | `PUT /api/bookings/[id]/notes` |
+| `set_my_arrival_time`, `clear_my_arrival_time` | Sets or clears the expected arrival time | write | `PUT`, `DELETE /api/bookings/[id]/arrival-time` |
+| `set_my_requested_room`, `clear_my_requested_room` | Asks for a room, or withdraws the request | write | `PUT`, `DELETE /api/bookings/[id]/requested-room` |
+| `list_booking_change_requests` | The change and exception requests on a booking | read | `GET /api/bookings/[id]/change-requests` |
+| `request_booking_change` | Asks an officer to change a stay the member can no longer change themselves. Emails the booking officers | destructive | `POST /api/bookings/[id]/change-requests` |
+| `list_my_exception_requests` | The member's requests to book or change outside the rules | read | `GET /api/bookings/exception-requests` |
+| `request_booking_exception` | Asks an officer to allow a new stay the rules refuse. Emails the booking officers | destructive | `POST /api/bookings/exception-requests` |
+| `request_booking_change_exception` | Asks an officer to allow a change the rules refuse. Emails the booking officers | destructive | `POST /api/bookings/[id]/exception-requests` |
+| `withdraw_booking_exception_request`, `withdraw_booking_change_exception_request` | Withdraws an open exception request. Cannot be undone | destructive | `PATCH /api/bookings/exception-requests/[id]`, `PATCH /api/bookings/[id]/exception-requests/[requestId]` |
+| `list_my_refund_reviews` | The refund reviews on a cancelled booking | read | `GET /api/bookings/[id]/refund-request` |
+| `request_refund_review` | Asks the club to review a refund. No money moves: an officer decides. Emails the officers | destructive | `POST /api/bookings/[id]/refund-request` |
+| `accept_waitlist_offer` | Accepts a place the club offered at the booking's own lodge; an offer at another lodge is accepted on the website. If payment or a saved card is needed, the app tells the member to finish on the website. Confirming re-checks adult hosting cover, which can email other members on a group trip | destructive | `POST /api/bookings/[id]/waitlist-confirm` |
+| `delete_my_draft_booking` | Deletes one of the member's drafts. Never a confirmed booking | destructive | `DELETE /api/bookings/[id]` |
+
+An action that notifies anyone but the member, or changes another person's
+record, is `destructive` (owner decision on
+[#5305](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/5305#issuecomment-7092977781),
+item 2): the app asks the member to confirm before running it, and the call is
+logged as important. Notes, arrival times and room requests notify no one and
+stay `write`.
+
+A preview is a `read`: a view-only connection may run it. It changes none of
+the member's bookings, but it is not write-free: each call counts against the
+connection's rate limits, and a member guest from outside the family spends
+the member-guest probe limit and, if refused, writes its audit row (#2388), as
+on the website. A connection may not raise an officer's promo correction on a
+change request (#4533), and the officer-only parts of each route stay
+officer-only. The routes' request schemas live in `src/lib` modules the
+catalogue shares, so the app is offered exactly what the route accepts
+(`INV-SSOT`).
+
+`accept_waitlist_offer` accepts only an offer at the booking's own lodge. An
+offer at another lodge cancels the waitlist place and books that lodge at a
+price the app cannot show, so a connection is refused it (409, nothing
+written, the offer stands) and the member accepts it on the website, where the
+button names the lodge and the price (ADR-004).
+
+Changing a booking's dates or guests, confirming a draft and sending a guest a
+payment link can take or refund money, so they stay on the website: the
+website-only `change_my_booking` sends the member to the booking's page, and
+`quote_booking_change` shows the cost first.
+
+Four **website-only** entries answer with the page to open and run nothing:
 `pay_for_booking` (card details are entered on the website, never in an AI
-app), `change_sign_in_details` (passwords and two-step sign-in) and
+app), `change_my_booking` (changing a booking's dates or guests, ALP-794),
+`change_sign_in_details` (passwords and two-step sign-in) and
 `manage_connected_apps` (disconnecting apps).
 
 ### Family and membership (ALP-795)
@@ -411,7 +475,7 @@ decision,
 | Action | What it does | Kind | Needs | Route |
 | --- | --- | --- | --- | --- |
 | `get_lodge_occupancy` | Read a lodge's occupancy for a month | read | view | `GET /api/admin/occupancy` |
-| `list_booking_change_requests` | List booking change requests | read | view | `GET /api/admin/booking-change-requests` |
+| `list_booking_change_request_queue` | List booking change requests | read | view | `GET /api/admin/booking-change-requests` |
 | `get_booking_change_request` | Read a booking change request | read | view | `GET /api/admin/booking-change-requests/[id]` |
 | `list_booking_exception_requests` | List booking-policy exception requests | read | view | `GET /api/admin/booking-exception-requests` |
 | `get_booking_exception_request` | Read a booking-policy exception request | read | view | `GET /api/admin/booking-exception-requests/[id]` |
@@ -494,25 +558,28 @@ reasons are permanent — those routes are never actions:
   connections or widen what they may do.
 - **Providers**, **scheduled jobs**, **lodge kiosk and display screens**, and
   **health checks, deploy hooks and test helpers** — not called by a person.
-- **Needs the browser** — card entry, file uploads and downloads, and links
+- **Needs the browser** — card entry, file uploads and downloads (such as a
+  booking's invoice and credit note PDFs and its calendar entry), and links
   sent to the member by email or opened from a QR code: confirming a
   nomination or a membership cancellation, the chore roster link, the
   lodge's maintenance QR form, message-board pictures, and problem reports,
   which carry the page and a screenshot.
 - **Moves money** — anything that takes, moves or refunds money or changes
-  what a booking costs, which the member confirms on the website. No route
-  carries this reason yet: ALP-794 gives it to changing a booking or its
-  dates, adding or removing a guest, confirming a draft booking and sending a
-  guest a payment link. A member's refund request is not one of them: it is a
-  request an officer reviews, so ALP-794 treats it as an ordinary write.
+  what a booking costs, which the member confirms on the website: changing a
+  booking or its dates, adding or removing a guest, confirming a draft booking
+  and sending a guest a payment link. A member's refund review is not one of
+  them: no money moves until an officer decides. It is `destructive`, because
+  it emails the club's officers at once and cannot be withdrawn.
 - **Declarations** — the member's own acknowledgements, consents and
   decisions: acknowledging a notice, confirming their details at onboarding,
-  asking for their account to be deleted, accepting or declining a family
-  group invitation, confirming or declining a partnership, asking for
-  memberships to be cancelled, and signing off another member's induction.
+  asking for their account to be deleted, a member guest agreeing to be on
+  someone else's booking (`INV-GUEST`), accepting or declining a family group
+  invitation, confirming or declining a partnership, asking for memberships
+  to be cancelled, and signing off another member's induction.
 - **Website steps** — the website's own screens and steps: the page shown
-  after signing in, the onboarding screen, the conditions widget and the
-  privacy replay.
+  after signing in, the onboarding screen, the conditions widget, the
+  privacy replay and the booking wizard's guest promo chips (an app checks a
+  code with `check_promo_code`).
 - **Visitor forms** — the contact form and membership applications, for
   people who are not signed in.
 - **Access details** — the lodge instructions, which carry door codes and
@@ -740,13 +807,12 @@ provider already received. The club's register row is `ai-apps` in
 
 ## The roadmap
 
-Stage 1, ALP-718, ALP-795, ALP-796 and ALP-719 are the foundation and the actions above. The remaining routes are
+Stage 1, ALP-718, ALP-794, ALP-795, ALP-796 and ALP-719 are the foundation and the actions above. The remaining routes are
 grouped into follow-on tasks, named in `MCP_NOT_YET_TASKS` in
 [`exclusions.ts`](../../src/lib/mcp/exclusions.ts):
 
 | Task | Area |
 | --- | --- |
-| ALP-794 | Member bookings: edits, quotes, notes, rooms, change, exception and refund requests, promo codes |
 | ALP-797 | Group, school and whole-lodge requests |
 | ALP-720 | Membership (officer) |
 | ALP-721 | Finance (officer, including `/api/finance`) |
@@ -776,7 +842,10 @@ route census reject any remaining `not-yet` exclusion.
    handler passes its own `permission` to `requireAdmin`, set `requires` to
    it; the census fails until they match.
 2. Give it `returns`: an allow-list shape in
-   [`connection-shapes.ts`](../../src/lib/connection-shapes.ts) (lodge life:
+   [`connection-shapes.ts`](../../src/lib/connection-shapes.ts) (or its area's
+   module: bookings,
+   [`connection-shapes-bookings.ts`](../../src/lib/connection-shapes-bookings.ts);
+   lodge life,
    [`connection-shapes-lodge-life.ts`](../../src/lib/connection-shapes-lodge-life.ts)), typed with
    `connectionShapeFor<T>()` so a misspelt field fails to compile. In the
    route, answer with `connectionJson(request, body, SHAPE)` (from

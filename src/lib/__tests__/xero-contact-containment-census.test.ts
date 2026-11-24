@@ -90,6 +90,13 @@ const ORGANISATION_CONTACT_MODULE = "src/lib/organisation-xero-contacts.ts";
 const ORGANISATION_CONTACT_PERSONS_MODULE =
   "src/lib/organisation-xero-contact-persons.ts";
 const CONTACT_SHAPE_MODULE = "src/lib/xero-contact-shape.ts";
+/*
+  #5245: an officer's correction of a school's own email and phone is sent with
+  `updateContact` from its own module, so it is a contact writer that resolves
+  the policy in its own entry point, exactly as the resolve above does.
+*/
+const ORGANISATION_CONTACT_DETAILS_MODULE =
+  "src/lib/organisation-xero-contact-details.ts";
 
 /**
  * Every module that builds a Xero contact payload carrying an email address.
@@ -215,6 +222,7 @@ describe("Xero contact containment census (INV-CONFIG-005)", () => {
         CONTACTS_MODULE,
         ORGANISATION_CONTACT_MODULE,
         ORGANISATION_CONTACT_PERSONS_MODULE,
+        ORGANISATION_CONTACT_DETAILS_MODULE,
         ...NO_EMAIL_CONTACT_WRITERS,
       ].sort(),
     );
@@ -324,6 +332,7 @@ describe("Xero contact containment census (INV-CONFIG-005)", () => {
       CONTACTS_MODULE,
       ORGANISATION_CONTACT_MODULE,
       ORGANISATION_CONTACT_PERSONS_MODULE,
+      ORGANISATION_CONTACT_DETAILS_MODULE,
       CONTACT_SHAPE_MODULE,
       ...NO_EMAIL_CONTACT_WRITERS,
     ]) {
@@ -365,6 +374,10 @@ describe("Xero contact containment census (INV-CONFIG-005)", () => {
       [
         ORGANISATION_CONTACT_MODULE,
         "export async function findOrCreateXeroContactForOrganisation(",
+      ],
+      [
+        ORGANISATION_CONTACT_DETAILS_MODULE,
+        "export async function syncOrganisationContactDetails(",
       ],
     ];
     for (const [home, fn] of ENTRY_POINTS) {

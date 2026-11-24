@@ -4634,6 +4634,16 @@ Refund notes target the invoice that held each paid share and wait for its
 unpaid-balance waiver to finish before payout. The organiser's app
 notice is a separate durable email row, sent by the email retry lifecycle.
 
+A school's corrected email and phone (#5245) queue one
+`ORGANISATION_CONTACT_DETAILS` row (CONTACT UPDATE, anchored on the
+`Organisation`) in the edit's own transaction, and only when the school already
+has a Xero contact. The row carries no details: the worker reads them when it
+runs and sends `contactID`, `emailAddress` and `phones`, never `name`. A row a
+later correction superseded closes `CANCELLED` unsent; a row that finds no
+contact closes `SUCCEEDED` as a no-op; a provider failure leaves it `FAILED` and
+replayable, and the officer's Retry (or Xero Operations') returns it to
+`PENDING` for the outbox.
+
 The outbox scan (`processQueuedXeroOutboxOperations`) and the retry scan
 (`processQueuedXeroOperationRetries`) read `PENDING` rows oldest first, ordered
 by `createdAt` then `id` (#4663). `createdAt` comes from JS time, so rows queued

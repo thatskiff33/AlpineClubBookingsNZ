@@ -59,6 +59,7 @@ import {
   SUBSCRIPTION_STATUS_CONNECTION_SHAPE,
 } from "@/lib/connection-shapes";
 import { MEMBER_AUDIT_TIMELINE_CATEGORY_OPTIONS } from "@/lib/audit-query";
+import { MCP_BOOKING_ACTIONS, MCP_BOOKING_WEBSITE_ONLY_ACTIONS } from "@/lib/mcp/catalogue-bookings";
 import {
   delegatedFamilyDetailsSchema,
   familyAdultRequestSchema,
@@ -444,6 +445,8 @@ const MEMBER_ACTIONS: readonly McpAction[] = [
     returns: SKIFIELD_REPORT_CONNECTION_SHAPE,
     core: false,
   },
+  // --- Bookings (ALP-794), in `catalogue-bookings.ts` ---
+  ...MCP_BOOKING_ACTIONS,
   // --- Family and membership (ALP-795) ---
   {
     id: "list_my_family_invitations",
@@ -646,13 +649,7 @@ export const MCP_ACTIONS: readonly McpAction[] = [
 ];
 
 export const MCP_WEBSITE_ONLY_ACTIONS: readonly McpWebsiteOnlyAction[] = [
-  {
-    id: "pay_for_booking",
-    title: "Pay for a booking",
-    summary: "Card details are entered on the club website, never in an AI app.",
-    page: "/bookings/{id}",
-    needsId: true,
-  },
+  ...MCP_BOOKING_WEBSITE_ONLY_ACTIONS,
   {
     id: "change_sign_in_details",
     title: "Change password or two-step sign-in",

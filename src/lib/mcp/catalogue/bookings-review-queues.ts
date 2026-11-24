@@ -60,7 +60,7 @@ export const BOOKINGS_REVIEW_QUEUE_MCP_ACTIONS: readonly McpAction[] = [
 
   // --- Locked-period change requests -----------------------------------------
   {
-    id: "list_booking_change_requests",
+    id: "list_booking_change_request_queue",
     title: "List booking change requests",
     summary:
       "Officer: members' requests to change a booking inside its locked period (today or past nights), by default those waiting for a decision, oldest first, a page at a time (`page`, `pageSize`, `total`, `totalPages`). Each answers with its id, status, what was asked (summary, dates, guests to add, and each guest's requested nights as runs of `YYYY-MM-DD` nights), the member's reason, the member-visible and private officer notes, who asked and who decided (names), the booking (dates as ISO timestamps whose date part is the lodge night, status, total and payment in integer cents, owner), whether approving would apply the change (a finished stay) and any promo correction it carries. Deciding a request is website-only.",
@@ -75,7 +75,7 @@ export const BOOKINGS_REVIEW_QUEUE_MCP_ACTIONS: readonly McpAction[] = [
     id: "get_booking_change_request",
     title: "Read a booking change request",
     summary:
-      "Officer: one booking change request by `id` (from `list_booking_change_requests`): its kind, status, what was asked, the member's reason, the member-visible and private officer notes, who asked and who decided (names), any linked booking modification (price difference and change fee in integer cents) and the booking (dates as ISO timestamps, status, total and payment in integer cents, owner). Deciding it is website-only.",
+      "Officer: one booking change request by `id` (from `list_booking_change_request_queue`): its kind, status, what was asked, the member's reason, the member-visible and private officer notes, who asked and who decided (names), any linked booking modification (price difference and change fee in integer cents) and the booking (dates as ISO timestamps, status, total and payment in integer cents, owner). Deciding it is website-only.",
     method: "GET",
     path: "/api/admin/booking-change-requests/[id]",
     params: adminRecordIdParamsSchema,

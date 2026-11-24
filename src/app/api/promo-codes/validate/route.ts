@@ -30,15 +30,10 @@ import { validateSeveralPromoCodes } from "@/lib/promo-codes-preview";
 import { clubTime } from "@/lib/club-time/server";
 import { applyRateLimit, rateLimiters } from "@/lib/rate-limit";
 import { parseJsonRequestBody } from "@/lib/api-json";
-import { z } from "zod";
-import { bookableAgeTierEnum } from "@/lib/age-tier-schema";
 import { bookingManagementAuthorizationRole } from "@/lib/admin-permissions";
 import { refuseOnBehalfUnlessBookingOfficer } from "@/lib/on-behalf-booking";
-import {
-  BOOKING_PARTY_GUESTS_MAX, guestRequestSchemaError, guestStayFieldsSchema,
-} from "@/lib/booking-guest-stay-range-input";
+import { guestRequestSchemaError } from "@/lib/booking-guest-stay-range-input";
 import { resolvePromoPreviewStaysOrRefusal } from "@/lib/promo-preview-stay-ranges";
-import { parsedDateOnlySchema } from "@/lib/date-only-schema";
 import { workPartyWindowOverlapsStay } from "@/lib/work-party";
 import { isOpenWorkPartyEvent } from "@/lib/work-party-rules";
 import { bookingFinalPriceCents } from "@/lib/booking-final-price";
@@ -46,95 +41,18 @@ import { normalizePromoCodeInput } from "@/lib/promo-code-list-rules";
 import { computeMemberGuestBoundary } from "@/lib/booking-guests";
 import { loadMemberGuestAddPolicy, planMemberGuestConsentWrites } from "@/lib/member-guest-add-policy";
 import { guestConsentStatus } from "@/lib/member-guest-consent";
-import { promoPreviewEditContext, promoPreviewEditFieldsSchema } from "@/lib/promo-preview-edit";
+import { promoPreviewEditContext } from "@/lib/promo-preview-edit";
+import { promoValidateRequestSchema } from "@/lib/promo-validate-request";
+import { PROMO_CHECK_CONNECTION_SHAPE } from "@/lib/connection-shapes-bookings";
+import { connectionJson, memberOnlySessionUser } from "@/lib/mcp-connection-request";
 
-const validateSchema = z
-  .object({
-    code: z.string().min(1).optional(),
-    // Work party (working bee) event preview: resolves the event's internal
-    // promo server-side; the internal code is never sent to or accepted
-    // from the client.
-    workPartyEventId: z.string().min(1).optional(),
-    checkIn: parsedDateOnlySchema,
-    checkOut: parsedDateOnlySchema,
-    guests: z
-      .array(
-        z.object({
-          ageTier: bookableAgeTierEnum,
-          isMember: z.boolean(),
-          memberId: z.string().min(1).optional(),
-          // #4199: Date In and Date Out, or the grid's night set (#713), so the
-          // preview prices the nights the quote and the save price.
-          ...guestStayFieldsSchema.shape,
-          // #3827 (D-3813-4): optional, and it can only make a guest MORE
-          // pending. Whether a guest awaits acceptance is decided server-side
-          // below, the way the create decides it; no client sends this today.
-          awaitingAcceptance: z.boolean().optional(),
-          // #3492: on an edit preview (`bookingId` below), the row this guest
-          // already is on that booking, so their STORED consent is used — the
-          // way `modify-quote` and the save judge them — instead of re-deciding
-          // it as a fresh add. Ignored without an owned `bookingId`.
-          bookingGuestId: z.string().min(1).max(64).optional(),
-        })
-      )
-      .min(1).max(BOOKING_PARTY_GUESTS_MAX),
-    forMemberId: z.string().optional(),
-    promoGuestIndexes: z.array(z.number().int().min(0)).max(BOOKING_PARTY_GUESTS_MAX).optional(),
-    // #3827: several codes, in the booker's order (D-3813-2), each with its own
-    // guest choice. Combines with a working bee (D-3813-3). The response then
-    // answers per code plus the booking's totals.
-    codes: z
-      .array(
-        z.object({
-          code: z.string().min(1).max(50),
-          promoGuestIndexes: z.array(z.number().int().min(0)).max(BOOKING_PARTY_GUESTS_MAX).optional(),
-        }),
-      )
-      .min(1)
-      .max(20)
-      .optional(),
-    // Lodge the booking under quote is for (multi-lodge phase 8): promo lodge
-    // restrictions and season pricing validate against it; omitted, the default
-    // lodge. IGNORED on an edit (`bookingId`), which uses the booking's own (#4202).
-    lodgeId: z.string().min(1).optional(),
-    // WHICH KIND OF PURCHASE this preview is for (#2770, INV-MOD-026). This one
-    // route serves both the create wizard (a first purchase) and the edit panel
-    // (a later edit), and the two resolve their group discount through different
-    // mappers, because the club's `applyToEdits` switch governs edits only. The
-    // caller has to say which, because the route cannot tell from the body: the
-    // guests, dates and code look the same either way.
-    //
-    // Optional and defaulting to a FIRST purchase, so every existing client — the
-    // member wizard, the admin book page — keeps behaving exactly as it does now;
-    // a `bookingId` implies an edit whatever this says (#4202). A client that lied about this could only mislead ITSELF: the preview is
-    // never the charge. `modify-quote` recomputes the promo on its own gated
-    // pricing and the save path recomputes it again, so the money is decided
-    // there, not here (#1095).
-    forBookingEdit: z.boolean().optional(),
-    // #3492, #4199, #4202: the booking an EDIT preview is for, priced as the
-    // quote prices it (`promoPreviewEditContext`): its owner, lodge, stored
-    // rows (consent, nights, sold prices, flags) and its own promotion slots.
-    // The caller must own it or hold the booking-management role, and any other
-    // id answers exactly as a missing booking does (404), confirming nothing.
-    bookingId: z.string().min(1).max(64).optional(),
-    // #4202: the officer re-rates the quote is sent (#2337 links, the other-lodge
-    // election, with the removals and renames a link is judged against). Read only with `bookingId`.
-    ...promoPreviewEditFieldsSchema.shape,
-  })
-  .refine(
-    (data) =>
-      data.codes
-        ? !data.code
-        : Boolean(data.code) !== Boolean(data.workPartyEventId),
-    {
-      message: "Provide either a promo code or a working bee event, not both",
-    },
-  )
-  .refine((data) => !data.workPartyEventId || Boolean(data.lodgeId), {
-    message: "lodgeId is required for a working bee event",
-    path: ["lodgeId"],
-  });
-
+/**
+ * What a promo code takes off a stay. Also the AI app preview
+ * `check_promo_code` (ALP-794), which changes no booking and acts as the member
+ * only: the on-behalf check and the edit preview's role read the member-only
+ * user, so a connection's `forMemberId` is refused (403) and the officer
+ * re-rates are never applied for it.
+ */
 export async function POST(req: NextRequest) {
   const rateLimited = await applyRateLimit(rateLimiters.bookingQuery, req);
   if (rateLimited) return rateLimited;
@@ -151,7 +69,7 @@ export async function POST(req: NextRequest) {
   const json = await parseJsonRequestBody(req);
   if (!json.ok) return json.response;
 
-  const parsed = validateSchema.safeParse(json.body);
+  const parsed = promoValidateRequestSchema.safeParse(json.body);
 
   if (!parsed.success) {
     return NextResponse.json(
@@ -164,7 +82,8 @@ export async function POST(req: NextRequest) {
   // On-behalf promo validation follows the booking create/quote rule (#1442):
   // bookings:edit holders validate against the target member; an unauthorized
   // forMemberId is rejected rather than silently checked against the caller.
-  const onBehalfRefusal = refuseOnBehalfUnlessBookingOfficer(session.user, parsed.data.forMemberId);
+  const memberAuthority = memberOnlySessionUser(req, session.user);
+  const onBehalfRefusal = refuseOnBehalfUnlessBookingOfficer(memberAuthority, parsed.data.forMemberId);
   if (onBehalfRefusal) return onBehalfRefusal;
   // #3492: an edit preview judges a guest already on the booking by the consent
   // stored on their row (D-3492-4: a confirmed cross-family guest's code counts),
@@ -184,7 +103,7 @@ export async function POST(req: NextRequest) {
     ? await promoPreviewEditContext({
         bookingId: parsed.data.bookingId,
         actorMemberId: session.user.id,
-        role: bookingManagementAuthorizationRole(session.user),
+        role: bookingManagementAuthorizationRole(memberAuthority),
         request: parsed.data,
       })
     : undefined;
@@ -393,7 +312,8 @@ export async function POST(req: NextRequest) {
     });
 
     if (parsed.data.codes) {
-      return NextResponse.json(
+      return connectionJson(
+        req,
         await validateSeveralPromoCodes({
           codes: parsed.data.codes,
           workPartyPromo: workPartyEvent ? promoCode : null,
@@ -406,6 +326,7 @@ export async function POST(req: NextRequest) {
           todayAtClub: (await clubTime()).today(),
           excludeBookingId: edited?.bookingId,
         }),
+        PROMO_CHECK_CONNECTION_SHAPE,
       );
     }
 
@@ -447,7 +368,7 @@ export async function POST(req: NextRequest) {
       beneficiaryMemberIds: [],
     };
     if (application.requiresGuestSelection) {
-      return NextResponse.json({
+      return connectionJson(req, {
         valid: false,
         requiresGuestSelection: true,
         error: application.error,
@@ -455,7 +376,7 @@ export async function POST(req: NextRequest) {
         description: promoCode!.description,
         type: promoCode!.type,
         selectableGuestIndexes: application.selectableGuestIndexes ?? [],
-      });
+      }, PROMO_CHECK_CONNECTION_SHAPE);
     }
     if (application.error || !application.discount) {
       return NextResponse.json(
@@ -465,7 +386,7 @@ export async function POST(req: NextRequest) {
     }
     const promoResult = application.discount;
 
-    return NextResponse.json({
+    return connectionJson(req, {
       valid: true,
       // Never expose the internal code for work-party validations; the
       // client identifies the discount by the event instead.
@@ -484,7 +405,7 @@ export async function POST(req: NextRequest) {
         totalPriceCents: price.totalPriceCents,
         promoAdjustmentCents: promoResult.priceAdjustmentCents,
       }),
-    });
+    }, PROMO_CHECK_CONNECTION_SHAPE);
   } catch (err) {
     if (err instanceof MembershipTypeBookingPolicyError) {
       // Finding 2 (privacy re-review of MG3 #2308). This route is a member-facing

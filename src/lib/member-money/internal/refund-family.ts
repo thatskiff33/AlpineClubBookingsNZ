@@ -1,4 +1,4 @@
-import type { Prisma } from "@prisma/client";
+import type { MemberMoneySide, Prisma } from "@prisma/client";
 import { compareOrdinal } from "@/lib/ordinal-order";
 import { exactPrefix } from "@/lib/prisma-exact-prefix";
 import { readMemberMoneyApplicationState } from "./application-read";
@@ -42,7 +42,7 @@ export type RefundBooking = { bookingId: string; lodgeId: string };
  * live R05 is posted for it. `next` is the key a fresh R05 for that door posts under.
  */
 /** The live tip of a reversal chain. The reversal sits on the journal, never on the event. */
-export async function memberMoneyChainTip(tx: Db, base: MemberMoneyEventKey): Promise<MemberMoneyEventKey> {
+export async function memberMoneyChainTip(tx: Pick<Db, "memberMoneyEvent">, base: MemberMoneyEventKey): Promise<MemberMoneyEventKey> {
   return walkMemberMoneyChain(base, async (eventKey) =>
     (await tx.memberMoneyEvent.findUnique({ where: { eventKey }, select: { journal: { select: { reversedBy: { select: { id: true } } } } } }))?.journal ?? null);
 }
@@ -76,8 +76,7 @@ export async function refundFamilyTip(tx: Db, context: MemberMoneyPostingContext
   owner: MemberMoneyDebtor): Promise<ApplicationObligation | null> {
   const { tip } = refundFamily(await readMemberMoneyApplicationState(tx, booking.bookingId), rootKey);
   if (!tip || ownedBy(tip, owner)) return tip;
-  const lines = await tx.memberMoneyLine.findMany({ where: { obligationId: tip.id, account: "REFUND_PAYABLE" }, select: { side: true, amountCents: true } });
-  const remaining = lines.reduce((sum, line) => sum + (line.side === "CREDIT" ? line.amountCents : -line.amountCents), 0);
+  const remaining = refundPayableOpenCents(await tx.memberMoneyLine.findMany({ where: { obligationId: tip.id, account: "REFUND_PAYABLE" }, select: { side: true, amountCents: true } }));
   if (remaining <= 0) return tip;
   const from = lineDebtor(tip);
   const eventKey = memberMoneyEventKeys.successor(tip.key, debtorId(from), debtorId(owner));
@@ -90,6 +89,13 @@ export async function refundFamilyTip(tx: Db, context: MemberMoneyPostingContext
       legs: [{ ...leg, side: "DEBIT", debtor: from, obligationKey: tip.key }, { ...leg, side: "CREDIT", debtor: owner, obligationKey: successor }] });
   }
   return refundFamily(await readMemberMoneyApplicationState(tx, booking.bookingId), rootKey).tip;
+}
+
+/** What refund-payable lines leave owed: their credits less their debits. The one reading of a debt's balance from its lines. */
+export function refundPayableOpenCents(lines: Iterable<{ side: MemberMoneySide; amountCents: number }>): number {
+  let open = 0;
+  for (const line of lines) open += line.side === "CREDIT" ? line.amountCents : -line.amountCents;
+  return open;
 }
 
 /** The live receivable credit of one receipt event, or null when that event is missing or reversed. */

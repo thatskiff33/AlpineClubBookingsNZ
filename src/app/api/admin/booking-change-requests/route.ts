@@ -23,7 +23,7 @@ import { connectionJson } from "@/lib/mcp-connection-request";
 
 /**
  * GET /api/admin/booking-change-requests — the locked-period change queue.
- * Also the AI app action `list_booking_change_requests` (ALP-719).
+ * Also the AI app action `list_booking_change_request_queue` (ALP-719).
  */
 export async function GET(req: NextRequest) {
   const guard = await requireAdmin();

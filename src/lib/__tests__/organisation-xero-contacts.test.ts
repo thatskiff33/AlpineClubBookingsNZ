@@ -174,7 +174,13 @@ beforeEach(() => {
   mocks.containmentUpsert.mockResolvedValue({});
   mocks.organisationFindUnique.mockResolvedValue(organisationRow());
   mocks.xeroObjectLinkFindFirst.mockResolvedValue(null);
-  mocks.tx.organisation.findUnique.mockResolvedValue({ xeroContactId: null });
+  // Phase 2's re-read: unchanged since phase 1 unless a test says otherwise.
+  mocks.tx.organisation.findUnique.mockResolvedValue({
+    xeroContactId: null,
+    email: ORGANISATION.email,
+    phone: ORGANISATION.phone,
+    updatedAt: new Date("2026-07-01T00:00:00.000Z"),
+  });
   // Leg 2's evidence read has NO default on purpose. A test that reaches it has
   // put a foreign school name in the member's history, and what the club's own
   // records answer to that name is the whole question — a default would decide
@@ -350,6 +356,42 @@ describe("#3367: creating the contact is idempotent under replay", () => {
     expect(mocks.updateContact).not.toHaveBeenCalled();
     // Not even an authentication: a school in steady state must cost nothing.
     expect(mocks.getAuthenticatedXeroClient).not.toHaveBeenCalled();
+  });
+
+  it("queues an officer's correction that landed between the create and the link (#5245)", async () => {
+    // Phase 1 built the contact from the old details; the edit committed before
+    // phase 2 with no contact to queue for. The link must queue it instead.
+    mocks.tx.organisation.findUnique.mockResolvedValue({
+      xeroContactId: null,
+      email: "new-office@school.test",
+      phone: ORGANISATION.phone,
+      updatedAt: new Date("2026-07-01T00:00:00.005Z"),
+    });
+
+    await expect(findOrCreateXeroContactForOrganisation("org-1")).resolves.toBe(
+      "contact-org-1",
+    );
+    const queued = mocks.startXeroSyncOperation.mock.calls
+      .map(([input]) => input)
+      .filter((input) => input.requestPayload?.queueType === "ORGANISATION_CONTACT_DETAILS");
+    expect(queued).toEqual([
+      expect.objectContaining({
+        localModel: "Organisation",
+        localId: "org-1",
+        status: "PENDING",
+        requestPayload: { queueType: "ORGANISATION_CONTACT_DETAILS" },
+        store: mocks.tx,
+      }),
+    ]);
+  });
+
+  it("queues nothing on the link when the details did not move", async () => {
+    await findOrCreateXeroContactForOrganisation("org-1");
+    expect(
+      mocks.startXeroSyncOperation.mock.calls.filter(
+        ([input]) => input.requestPayload?.queueType === "ORGANISATION_CONTACT_DETAILS",
+      ),
+    ).toEqual([]);
   });
 
   it("keeps a concurrent resolver's link rather than overwriting it", async () => {
@@ -1163,6 +1205,9 @@ describe("#3367: a stale contact reference repairs the INVOICED party", () => {
     );
     mocks.tx.organisation.findUnique.mockResolvedValue({
       xeroContactId: "contact-stale",
+      email: ORGANISATION.email,
+      phone: ORGANISATION.phone,
+      updatedAt: new Date("2026-07-01T00:00:00.000Z"),
     });
     mocks.tx.xeroObjectLink.updateMany.mockResolvedValue({ count: 1 });
 

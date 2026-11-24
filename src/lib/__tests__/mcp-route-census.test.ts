@@ -36,7 +36,8 @@ const HTTP_METHODS: ReadonlySet<string> = new Set(STEP_UP_HTTP_METHODS);
 
 /**
  * The only `POST`s that may run as a `read` (`preview: true`): each changes
- * no member's data, which a reviewer checked against the route. A view-only
+ * no member's data, bookings included, and writes only the counters and audit
+ * rows listed beside it, which a reviewer checked against the route. A view-only
  * connection runs them and the dispatcher writes no `MCP_ACTION_CALLED` audit
  * row, so adding one here is a decision.
  */
@@ -49,6 +50,18 @@ const PREVIEW_ROUTE_KEYS: readonly string[] = [
   // ALP-795: looks a member up by exact email; writes only its own audit row
   // and its rate-limit counters.
   "POST src/app/api/members/guest-candidates/resolve/route.ts",
+  // ALP-794: prices and checks. They change none of the member's bookings.
+  // What they do write, as the website's own call does:
+  // - a RateLimitCounter upsert on every call: `mcpCall` for the connection
+  //   (src/app/api/mcp/route.ts), and `bookingQuery` on quote, the
+  //   change-request quote and promo validate;
+  // - on quote, modify-quote and promo validate, when a member guest outside
+  //   the family is named: the `memberGuestAddProbe` and daily probe counters,
+  //   and on a refusal the probe's audit row (#2388).
+  "POST src/app/api/bookings/quote/route.ts",
+  "POST src/app/api/bookings/[id]/modify-quote/route.ts",
+  "POST src/app/api/bookings/[id]/change-requests/quote/route.ts",
+  "POST src/app/api/promo-codes/validate/route.ts",
 ];
 
 /** The HTTP methods a route file exports, however it spells the export. */

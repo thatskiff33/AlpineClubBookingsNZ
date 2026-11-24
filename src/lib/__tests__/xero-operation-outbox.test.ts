@@ -67,6 +67,7 @@ const mocks = vi.hoisted(() => ({
   createXeroCardRefundReversalInvoice: vi.fn(),
   recordAdditionalCaptureReceipt: vi.fn(),
   createAdminGrantCreditNote: vi.fn(),
+  syncOrganisationContactDetails: vi.fn(),
   enqueueAdditionalCaptureReceiptOperation: vi.fn(),
   anchorCaptureHasReceipt: vi.fn(),
   bookingHasUnattributedCaptures: vi.fn(),
@@ -296,6 +297,10 @@ vi.mock("@/lib/xero-kept-late-capture-invoice", () => ({
 vi.mock("@/lib/xero-card-refund-reversal-invoice", () => ({
   createXeroCardRefundReversalInvoice: mocks.createXeroCardRefundReversalInvoice,
 }));
+vi.mock("@/lib/organisation-xero-contact-details", () => ({
+  syncOrganisationContactDetails: mocks.syncOrganisationContactDetails,
+}));
+
 vi.mock("@/lib/xero-admin-grant-credit-note", () => ({
   createAdminGrantCreditNote: mocks.createAdminGrantCreditNote,
 }));
@@ -2571,11 +2576,12 @@ describe("processQueuedXeroOutboxOperations", () => {
       // #5228: never a row whose request names no queue type.
       NOT: NAMES_NO_QUEUE_TYPE,
     });
-    // #4299, #4369 and #4431: the pinned types, the organiser extra, the reversal, and the admin grant note.
-    expect(args.where.queueType.in).toHaveLength(21);
+    // #4299, #4369, #4431 and #5245: the pinned types, the organiser extra, the reversal, the admin grant note, and a school's contact details.
+    expect(args.where.queueType.in).toHaveLength(22);
     expect(args.where.queueType.in).toContain("ORGANISER_EXTRA_ADJUSTMENT");
     expect(args.where.queueType.in).toContain("CARD_REFUND_REVERSAL_INVOICE");
     expect(args.where.queueType.in).toContain("ADMIN_GRANT_CREDIT_NOTE");
+    expect(args.where.queueType.in).toContain("ORGANISATION_CONTACT_DETAILS");
     // The legacy `requestPayload->>'queueType'` OR predicate is gone; the
     // payload is read only to leave out the rows #5228's report owns.
     expect(args.where.OR).toBeUndefined();
@@ -3964,6 +3970,17 @@ describe("processQueuedXeroOutboxOperations dispatch domain (#1272)", () => {
       },
       handler: mocks.createAdminGrantCreditNote,
     },
+    // #5245: the school is the row's anchor; the payload is its queue type alone.
+    ORGANISATION_CONTACT_DETAILS: {
+      op: {
+        id: "op_org_contact_1",
+        localId: "org_1",
+        localModel: "Organisation",
+        createdByMemberId: "admin_1",
+        requestPayload: { queueType: "ORGANISATION_CONTACT_DETAILS" },
+      },
+      handler: mocks.syncOrganisationContactDetails,
+    },
   };
 
   beforeEach(() => {
@@ -3995,6 +4012,7 @@ describe("processQueuedXeroOutboxOperations dispatch domain (#1272)", () => {
     mocks.voidXeroInvoiceForCancelledGroupSettlement.mockResolvedValue(undefined);
     mocks.createXeroMembershipSubscriptionInvoice.mockResolvedValue("inv");
     mocks.createAdminGrantCreditNote.mockResolvedValue(undefined);
+    mocks.syncOrganisationContactDetails.mockResolvedValue(undefined);
   });
 
   it("has one dispatch fixture for every queue type and no extras", () => {

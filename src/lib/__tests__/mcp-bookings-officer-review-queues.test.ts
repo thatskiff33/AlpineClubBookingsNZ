@@ -278,7 +278,7 @@ const CONNECTION_CHANGE_REQUEST = {
   },
 };
 
-describe("list_booking_change_requests", () => {
+describe("list_booking_change_request_queue", () => {
   it("answers each request with what it asks and its booking, without emails or approval controls", async () => {
     h.prisma.bookingChangeRequest.findMany.mockResolvedValue([
       {
@@ -294,7 +294,7 @@ describe("list_booking_change_requests", () => {
     h.prisma.bookingChangeRequest.count.mockResolvedValue(1);
 
     const { connection, browser } = await expectActionContract({
-      actionId: "list_booking_change_requests",
+      actionId: "list_booking_change_request_queue",
       handler: listChangeRequests,
       args: { status: "ALL" },
     });
