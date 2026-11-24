@@ -411,9 +411,7 @@ export async function POST(req: NextRequest) {
       isCustodian,
     });
 
-    return connectionJson(
-      req,
-      {
+    return connectionJson(req, {
         id: assignment.id,
         emailSent,
         // #2286 privacy guard: a minor custodian (bed or tick, #3817) is never individually
@@ -425,10 +423,7 @@ export async function POST(req: NextRequest) {
             ? "This member is a minor, so the lodge screen will show the custodian role only and never their name."
             : null,
         schoolNightsWarning,
-      },
-      ADMIN_HUT_LEADER_CREATED_CONNECTION_SHAPE,
-      { status: 201 }
-    );
+      }, ADMIN_HUT_LEADER_CREATED_CONNECTION_SHAPE, { status: 201 });
   } catch (err) {
     if (err instanceof HutLeaderOverlapError) {
       return NextResponse.json({ error: err.message }, { status: 409 });

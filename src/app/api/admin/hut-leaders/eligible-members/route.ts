@@ -29,15 +29,10 @@ type StayOnBooking = MemberStay & { bookingId: string };
 export async function GET(req: NextRequest) {
   const guard = await requireAdmin();
   if (!guard.ok) return guard.response;
-  // The schema is shared with the AI app action `list_hut_leader_candidates`
-  // (ALP-722). The lodge is answered first, then the dates, each with the
-  // 400 the page has always been told.
+  // Shared with the AI app action `list_hut_leader_candidates` (ALP-722).
+  // The lodge is answered first, then the dates, with the page's own 400s.
   const { searchParams } = new URL(req.url);
-  const query = hutLeaderCandidatesQuerySchema.safeParse({
-    lodgeId: searchParams.get("lodgeId") ?? undefined,
-    startDate: searchParams.get("startDate") ?? undefined,
-    endDate: searchParams.get("endDate") ?? undefined,
-  });
+  const query = hutLeaderCandidatesQuerySchema.safeParse(Object.fromEntries(searchParams));
   const requestedLodgeId = searchParams.get("lodgeId");
   const lodgeId = requestedLodgeId
     ? await resolveOptionalActiveLodgeId(prisma, requestedLodgeId)
@@ -284,6 +279,5 @@ export async function GET(req: NextRequest) {
         `${a.lastName} ${a.firstName}`.localeCompare(`${b.lastName} ${b.firstName}`),
     );
 
-  // A connection gets each candidate without their email or eligibility stamp.
   return connectionJson(req, { members }, ADMIN_HUT_LEADER_CANDIDATES_CONNECTION_SHAPE);
 }
