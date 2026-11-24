@@ -444,7 +444,8 @@ const SENDERS: readonly Sender[] = [
     label: "the waitlist offer, whose sender takes positional arguments",
     send: () =>
       sendWaitlistOfferEmail(
-        { bookingId: "bk_1", recipientMemberId: "mem_1" },
+        // #5433: the offer's event key, `<bookingId>:<offeredAtMs>`.
+        { bookingId: "bk_1", recipientMemberId: "mem_1", idempotencyKey: "bk_1:1" },
         "tara@example.test",
         "Tara",
         CHECK_IN,

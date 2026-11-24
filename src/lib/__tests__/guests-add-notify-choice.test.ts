@@ -378,6 +378,7 @@ afterEach(() => {
 });
 
 describe("POST /api/bookings/[id]/guests notify choice (#1769b)", () => {
+  // #5407 item 42: the first case to call the route pays for loading its module graph; timed out at 5,000ms on a busy host.
   it("emails the member and records no notify field on a member self-add without the flag", async () => {
     const booking = makeBooking();
     const tx = makeTx(booking);
@@ -394,7 +395,7 @@ describe("POST /api/bookings/[id]/guests notify choice (#1769b)", () => {
     ]);
     const metadata = mockedLogAudit.mock.calls[0][0].metadata as Record<string, unknown>;
     expect(metadata).not.toHaveProperty("notifyMember");
-  });
+  }, 30_000);
 
   it("suppresses the email and records notifyMember:false for an admin add with notifyMember:false", async () => {
     mockedAuth.mockResolvedValue(makeAdminSession() as any);

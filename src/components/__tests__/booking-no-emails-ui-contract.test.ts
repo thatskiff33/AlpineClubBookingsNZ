@@ -9,6 +9,7 @@ import { describe, expect, it } from "vitest";
 // touch it at all — explains the whole honesty rule in its module comment.
 // Matching raw text enrolled it as a notify-prompt surface.
 import { stripComments } from "@/lib/__tests__/support/strip-comments";
+import { CENSUS_TIMEOUT_MS } from "@/test/census-timeout";
 
 /*
   #2259 (owner decision D10) — the two invariants the "No emails" UI must never
@@ -554,7 +555,7 @@ describe("No emails honesty rule (#2259)", () => {
     ).toEqual(
       [...BOOKING_NOTIFY_PROMPTS, ...Object.keys(NOT_BOOKING_BOUND)].sort(),
     );
-  });
+  }, CENSUS_TIMEOUT_MS);
 
   it("offers no email choice on a silenced booking", () => {
     /*

@@ -8,6 +8,7 @@ import {
 } from "@/lib/__tests__/helpers/sentry-init-files";
 import { stripComments } from "@/lib/__tests__/support/strip-comments";
 import { APP_VERSION_ENV_VAR, getAppVersion } from "@/lib/app-version";
+import { CENSUS_TIMEOUT_MS } from "@/test/census-timeout";
 
 // Only `init` matters here: the tests read the options each runtime hands it.
 const sentry = vi.hoisted(() => ({
@@ -85,7 +86,7 @@ describe("the Sentry initialisation census (#5262)", () => {
       return /\bSentry\.init\s*\(/.test(source) || namedInit;
     });
     expect(callers.sort()).toEqual([...SENTRY_INIT_FILES].sort());
-  });
+  }, CENSUS_TIMEOUT_MS);
 });
 
 describe("browser Sentry tags releases without session tracking (#5262)", () => {

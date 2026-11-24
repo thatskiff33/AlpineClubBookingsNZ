@@ -13,6 +13,7 @@ import {
   walkImports,
 } from "@/lib/__tests__/support/provider-mount-census";
 import { stripComments } from "@/lib/__tests__/support/strip-comments";
+import { CENSUS_TIMEOUT_MS } from "@/test/census-timeout";
 
 /**
  * EVERY PAGE HAS A CLUB-FORMAT PROVIDER ABOVE IT (#3564, stage 2 of programme
@@ -247,7 +248,7 @@ describe("club-format provider mount census (#3564)", () => {
         "component that renders the club's currency or a locale-formatted " +
         "number throws on that page (#3564).",
     ).toEqual([]);
-  });
+  }, CENSUS_TIMEOUT_MS);
 
   it("the surfaces outside a route group are exactly the reviewed list", () => {
     expect(
@@ -262,7 +263,7 @@ describe("club-format provider mount census (#3564)", () => {
         ...Object.keys(SELF_MOUNTING_SURFACES),
       ].sort(),
     );
-  });
+  }, CENSUS_TIMEOUT_MS);
 
   /*
     THE ROW IS A CLAIM; THIS IS THE CHECK.

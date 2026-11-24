@@ -21,10 +21,11 @@ import {
   STEP_UP_ROUTES,
   stepUpRouteKey,
 } from "@/lib/step-up-routes";
+import { CENSUS_TIMEOUT_MS } from "@/test/census-timeout";
 
 // The census parses every API route file once: a few seconds on an idle
 // machine and several times that on a busy CI runner.
-const CENSUS_TIMEOUT_MS = 90_000;
+// The budget is the shared CENSUS_TIMEOUT_MS (src/test/census-timeout.ts).
 
 const HTTP_METHODS: ReadonlySet<string> = new Set(STEP_UP_HTTP_METHODS);
 

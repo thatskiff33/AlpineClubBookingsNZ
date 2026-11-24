@@ -39,7 +39,7 @@ import type {
   XeroHealthSnapshot,
 } from "./types"
 import { adminHref } from "@/lib/admin-hubs";
-import { CONTACT_GROUP_MISMATCH_LIMIT, describeContactGroupMismatchTotal } from "@/lib/xero-contact-group-mismatch-summary";
+import { CONTACT_GROUP_MISMATCH_LIMIT, describeContactGroupMismatchTotal, describeContactResync } from "@/lib/xero-contact-group-mismatch-summary";
 import { ContactGroupMismatchPanel } from "./contact-group-mismatch-panel"
 
 type Props = {
@@ -566,9 +566,7 @@ function ContactLinkMismatchPanel({
               </p>
               {data.resync ? (
                 <p className="text-xs text-success">
-                  {data.resync.requestedContacts === 0
-                    ? `Nothing was flagged to re-sync; audit recomputed at ${clubTime.instantTime(requireInstant(data.resync.resyncedAt))}.`
-                    : `Re-synced ${data.resync.resyncedContacts} of ${data.resync.requestedContacts} flagged contact${data.resync.requestedContacts === 1 ? "" : "s"} from Xero at ${clubTime.instantTime(requireInstant(data.resync.resyncedAt))}${data.resync.removedContacts > 0 ? ` (${data.resync.removedContacts} no longer exist in Xero; their stale cache entries were removed)` : ""}.`}
+                  {describeContactResync(data.resync, clubTime.instantTime(requireInstant(data.resync.resyncedAt)))}
                 </p>
               ) : null}
             </div>

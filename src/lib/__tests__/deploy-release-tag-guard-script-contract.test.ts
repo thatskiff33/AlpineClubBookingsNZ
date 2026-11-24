@@ -126,7 +126,9 @@ function runGuard(repo: { dir: string; clone: string }, resolvedRef: string, env
   };
 }
 
-describe("an untagged commit is refused unless somebody records why (#4978)", () => {
+// #5407 item 42: every case builds a scratch repository and runs the guard, about
+// fifteen `git` and `bash` spawns; one timed out at 5,000ms in a batch on a busy host.
+describe("an untagged commit is refused unless somebody records why (#4978)", { timeout: 60_000 }, () => {
   it("refuses a pushed commit that no tag points at, naming the commit and the override", () => {
     const repo = scratchRepository();
     const result = runGuard(repo, repo.head);

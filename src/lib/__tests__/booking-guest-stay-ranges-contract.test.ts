@@ -11,6 +11,7 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 
 import { stripComments } from "./support/strip-comments";
+import { CENSUS_TIMEOUT_MS } from "@/test/census-timeout";
 
 const ROOT = process.cwd();
 
@@ -134,7 +135,7 @@ describe("stay-range model contract (#2622)", () => {
       "src/lib/booking-guest-stay-ranges.ts",
       "src/lib/lodge-display-state.ts",
     ]);
-  });
+  }, CENSUS_TIMEOUT_MS);
 
   it("MUTATION PROBE: every converted read surface loads the explicit night rows (#2631)", () => {
     // The operational-day rule is per-night, so a surface that asks it about a

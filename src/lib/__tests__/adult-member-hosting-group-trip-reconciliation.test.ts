@@ -74,6 +74,7 @@ import {
   loadGroupTripCoverageDependentBookingIds,
   reconcileAdultMemberHostingReviewWithSiblings,
 } from "@/lib/adult-member-hosting-review";
+import { CENSUS_TIMEOUT_MS } from "@/test/census-timeout";
 
 const LODGE = "lodge-a";
 const TRIP = "group-trip-1";
@@ -1071,7 +1072,7 @@ describe("what the actor is told, and what the owner queue resolves (#3039)", ()
       "INV-HOST-046: a booking-write seam that passed a group source ceiling would make the " +
         "evidence refusal reachable from a member's change",
     ).not.toContain("groupTripSourceCeiling");
-  });
+  }, CENSUS_TIMEOUT_MS);
 });
 
 describe("the container's own status governs joining, not cover (#3039, INV-HOST-043)", () => {

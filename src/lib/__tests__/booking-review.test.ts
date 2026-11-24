@@ -13,6 +13,7 @@ import {
 import { resolveAdminReviewFields } from "@/lib/booking-create-guests";
 import { guestConsentStatus } from "@/lib/member-guest-consent";
 import type { BookingGuestInput } from "@/lib/booking-create-types";
+import { CENSUS_TIMEOUT_MS } from "@/test/census-timeout";
 
 describe("booking review helper", () => {
   it("flags bookings with only minors", () => {
@@ -271,5 +272,5 @@ describe("adult-supervision callers: the declared set, and the shape each passes
     for (const [file, marker] of Object.entries(CALLERS)) {
       if (marker) expect(stripComments(readFileSync(file, "utf8")), file).toContain(marker);
     }
-  });
+  }, CENSUS_TIMEOUT_MS);
 });

@@ -32,6 +32,7 @@ import {
   type ServerNzAnswerTx,
   type ServerNzConnectionTx,
 } from "@/lib/servernz-settings";
+import { CENSUS_TIMEOUT_MS } from "@/test/census-timeout";
 
 // The mocked global client standing in for the answer fence's transaction:
 // only `withCurrentServerNzConnection` mints the type in production (#4470).
@@ -362,7 +363,7 @@ describe("the version column has one writer (#4366)", () => {
       .map((file) => file.split("\\").join("/"))
       .sort();
     expect(callers).toEqual(["lib/servernz-settings.ts", "lib/servernz-version-record.ts"]);
-  });
+  }, CENSUS_TIMEOUT_MS);
 });
 describe("recordOtherLodgesDownload: the keyed marker (triyder/AlpineClubBookingsNZ#64)", () => {
   it("sets otherLodgesKeyedAt only when told the whole registry merged", async () => {
