@@ -44,7 +44,9 @@ vi.mock("@/lib/admin-bed-allocation-routes", () => ({
   bedAllocationErrorResponse: vi.fn(),
 }));
 
-vi.mock("@/lib/bed-allocation-date-range", () => ({
+// The real limits stay: the routes' request schemas read them (ALP-719).
+vi.mock("@/lib/bed-allocation-date-range", async (importOriginal) => ({
+  ...((await importOriginal()) as typeof import("@/lib/bed-allocation-date-range")),
   parseBedAllocationDateRange: () => ({
     from: new Date("2026-04-01T00:00:00Z"),
     to: new Date("2026-04-14T00:00:00Z"),

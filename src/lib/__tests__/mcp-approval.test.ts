@@ -219,10 +219,14 @@ describe("resolveMcpApproval", () => {
     });
   });
 
-  it("asks an officer when the club lets officers connect", async () => {
+  it("asks an officer when the club lets officers connect, with the officer line", async () => {
     previewUser.adminPermissionMatrix = officerMatrix;
     clubSettings = { ...clubSettings, membersMayConnect: false, officersMayConnect: true };
-    await expect(resolveMcpApproval(authorize, memberUser)).resolves.toMatchObject({ kind: "ask" });
+    await expect(resolveMcpApproval(authorize, memberUser)).resolves.toMatchObject({ kind: "ask", officer: true });
+  });
+
+  it("asks a member without the officer line", async () => {
+    await expect(resolveMcpApproval(authorize, memberUser)).resolves.toMatchObject({ kind: "ask", officer: false });
   });
 
   it("refuses when the sign-in behind the screen has ended", async () => {
@@ -350,6 +354,48 @@ describe("POST /api/member/mcp-grants", () => {
     const response = await POST(decisionRequest(approve("READ_WRITE", { ...authorize, scope })));
     expect(response.status).toBe(200);
     expect(store.state.grants[0]?.scope).toBe(recorded);
+  });
+
+  // Owner decision, #5305 comment 7093303964, item 1 (`INV-MCP-009`).
+  describe("approval for officer actions", () => {
+    const officerApproval = (shown: boolean | undefined) => ({ ...approve(), officerNoticeShown: shown });
+
+    beforeEach(() => {
+      previewUser.adminPermissionMatrix = officerMatrix;
+      clubSettings = { ...clubSettings, officersMayConnect: true };
+    });
+
+    it("records when an officer approved the screen that told them the app can act as an officer", async () => {
+      const response = await POST(decisionRequest(officerApproval(true)));
+      expect(response.status).toBe(200);
+      expect(store.state.grants[0]?.officerConsentAt).toBeInstanceOf(Date);
+      expect(audit).toHaveBeenCalledWith(
+        expect.objectContaining({
+          action: "MCP_CONNECTION_APPROVED",
+          metadata: expect.objectContaining({ officerActions: true }),
+        }),
+      );
+    });
+
+    it.each([
+      ["did not show the officer line", false],
+      ["predates the officer line", undefined],
+    ] as const)("records no officer approval from a screen that %s", async (_name, shown) => {
+      const response = await POST(decisionRequest(officerApproval(shown)));
+      expect(response.status).toBe(200);
+      expect(store.state.grants[0]?.officerConsentAt).toBeNull();
+      expect(audit).toHaveBeenCalledWith(
+        expect.objectContaining({ metadata: expect.objectContaining({ officerActions: false }) }),
+      );
+    });
+
+    it("records none for a member, whatever the form says", async () => {
+      previewUser.adminPermissionMatrix = undefined;
+      clubSettings = { ...clubSettings, membersMayConnect: true };
+      const response = await POST(decisionRequest(officerApproval(true)));
+      expect(response.status).toBe(200);
+      expect(store.state.grants[0]?.officerConsentAt).toBeNull();
+    });
   });
 
   it("waits for the member lifecycle fence before reading grants to replace", async () => {

@@ -26,15 +26,21 @@ import {
   workPartyRemovalEligibility,
 } from "@/lib/work-party-booking-correction";
 import { workPartyCorrectionBodySchema as bodySchema } from "@/lib/work-party-correction-request";
+import {
+  ADMIN_BOOKING_WORK_PARTY_OPTIONS_CONNECTION_SHAPE,
+  type AdminBookingWorkPartyOptionsAnswer,
+} from "@/lib/connection-shapes/bookings-bookings";
+import { connectionJson } from "@/lib/mcp-connection-request";
 
 /**
  * The work parties this booking could be added to (fork triyder/AlpineClubBookingsNZ#119): every open work
  * party whose window overlaps the stay, each with the shared eligibility rule's
  * answer, so the admin booking page lists them with the reason a refused one
- * cannot be chosen. Booking Officers and Full Admins (`bookings:view`).
+ * cannot be chosen. Booking Officers and Full Admins (`bookings:view`). Also the
+ * AI app action `get_booking_work_party_options` (ALP-719).
  */
 export async function GET(
-  _req: NextRequest,
+  req: NextRequest,
   { params }: { params: Promise<{ id: string }> },
 ) {
   const guard = await requireAdmin({ permission: { area: "bookings", level: "view" } });
@@ -66,7 +72,7 @@ export async function GET(
   // fork triyder/AlpineClubBookingsNZ#130: whether the work party on the booking can be taken off it.
   const removal = current ? workPartyRemovalEligibility(facts.remove, { today }, current.id) : null;
 
-  return NextResponse.json({
+  const answer: AdminBookingWorkPartyOptionsAnswer = {
     currentWorkParty: current,
     removal: removal && { eligible: removal.ok, reason: removal.ok ? null : removal.reason },
     workParties: events.map((event) => {
@@ -86,7 +92,8 @@ export async function GET(
         reason: eligibility.ok ? null : eligibility.reason,
       };
     }),
-  });
+  };
+  return connectionJson(req, answer, ADMIN_BOOKING_WORK_PARTY_OPTIONS_CONNECTION_SHAPE);
 }
 
 /**

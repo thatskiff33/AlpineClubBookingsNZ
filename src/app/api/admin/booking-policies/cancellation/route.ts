@@ -14,6 +14,12 @@ import {
   policySchema,
 } from "@/lib/booking-policy-cancellation-schema"
 import { revalidatePublicPageContent } from "@/lib/public-content-revalidation"
+import { adminPolicyLodgeQuerySchema } from "@/lib/admin-bookings-schemas/setup"
+import {
+  ADMIN_CANCELLATION_POLICY_CONNECTION_SHAPE,
+  ADMIN_CANCELLATION_POLICY_SAVED_CONNECTION_SHAPE,
+} from "@/lib/connection-shapes/bookings-setup"
+import { connectionJson } from "@/lib/mcp-connection-request"
 
 export async function GET(req: NextRequest) {
   const guard = await requireAdmin({
@@ -22,7 +28,14 @@ export async function GET(req: NextRequest) {
   if (!guard.ok) return guard.response;
   // Exact partition, not null-tolerant: null rows are the club-wide rules
   // and a lodge's rows are its override set (replace, never merge).
-  const lodgeId = req.nextUrl.searchParams.get("lodgeId")
+  // A string or nothing always parses; the 400 is only a backstop.
+  const query = adminPolicyLodgeQuerySchema.safeParse({
+    lodgeId: req.nextUrl.searchParams.get("lodgeId") ?? undefined,
+  })
+  if (!query.success) {
+    return NextResponse.json({ error: query.error.issues[0]?.message }, { status: 400 })
+  }
+  const lodgeId = query.data.lodgeId
   const policies = await prisma.cancellationPolicy.findMany({
     where: { lodgeId: lodgeId ?? null },
     orderBy: { daysBeforeStay: "desc" },
@@ -32,11 +45,15 @@ export async function GET(req: NextRequest) {
     where: { id: "default" },
   })
 
-  return NextResponse.json({
-    rules: policies.map(normalizeCancellationRule),
-    ...clubWideDefaults(defaults),
-    lodgeId: lodgeId ?? null,
-  })
+  return connectionJson(
+    req,
+    {
+      rules: policies.map(normalizeCancellationRule),
+      ...clubWideDefaults(defaults),
+      lodgeId: lodgeId ?? null,
+    },
+    ADMIN_CANCELLATION_POLICY_CONNECTION_SHAPE,
+  )
 }
 
 export async function PUT(req: NextRequest) {
@@ -216,5 +233,5 @@ export async function PUT(req: NextRequest) {
     })
   }
   revalidatePublicPageContent()
-  return NextResponse.json(result)
+  return connectionJson(req, result, ADMIN_CANCELLATION_POLICY_SAVED_CONNECTION_SHAPE)
 }

@@ -383,6 +383,8 @@ export async function approveMcpConnection(input: {
   readonly settings: McpSettingsValues;
   readonly sessionIssuedAt: Date;
   readonly twoFactorVerified: boolean;
+  /** The officer approved the screen that says the app can act as an officer (`INV-MCP-009`). */
+  readonly officerConsent: boolean;
 }): Promise<{ readonly grantId: string; readonly scope: McpGrantScope; readonly redirectTo: string }> {
   const { request, memberId } = input;
   const scope = effectiveMcpScope(input.scope, input.settings);
@@ -425,6 +427,7 @@ export async function approveMcpConnection(input: {
         scope,
         sessionIssuedAt: input.sessionIssuedAt,
         twoFactorVerified: input.twoFactorVerified,
+        officerConsentAt: input.officerConsent ? now : null,
       },
       select: { id: true },
     });

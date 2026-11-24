@@ -1,4 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
+import { adminBookingsCalendarQuerySchema } from "@/lib/admin-bookings-schemas/bookings";
+import {
+  ADMIN_BOOKINGS_CALENDAR_CONNECTION_SHAPE,
+  type AdminBookingsCalendarAnswer,
+} from "@/lib/connection-shapes/bookings-bookings";
+import { connectionJson } from "@/lib/mcp-connection-request";
 import { isBookingStatus } from "@/lib/booking-status";
 import { bookingOwner } from "@/lib/booking-owner";
 import { requireAdmin } from "@/lib/session-guards";
@@ -55,15 +61,23 @@ function getMaxActiveGuestsInVisibleMonth(booking: {
 /**
  * GET /api/admin/bookings?calendarMonth=YYYY-MM
  * Returns bookings overlapping the given month for calendar view,
- * plus per-day availability data.
+ * plus per-day availability data. Also the AI app action
+ * `list_bookings_for_month` (ALP-719).
  */
 export async function GET(request: NextRequest) {
   const guard = await requireAdmin();
   if (!guard.ok) return guard.response;
-  const calendarMonth = request.nextUrl.searchParams.get("calendarMonth");
-  if (!calendarMonth || !/^\d{4}-\d{2}$/.test(calendarMonth)) {
+  // Only `calendarMonth` can fail: the rest are optional strings.
+  const query = adminBookingsCalendarQuerySchema.safeParse({
+    calendarMonth: request.nextUrl.searchParams.get("calendarMonth") ?? undefined,
+    status: request.nextUrl.searchParams.get("status") ?? undefined,
+    deleted: request.nextUrl.searchParams.get("deleted") ?? undefined,
+    lodgeId: request.nextUrl.searchParams.get("lodgeId") ?? undefined,
+  });
+  if (!query.success) {
     return NextResponse.json({ error: "calendarMonth parameter required (YYYY-MM)" }, { status: 400 });
   }
+  const { calendarMonth } = query.data;
 
   // Sliced rather than split: the pattern above has already proven the string
   // is exactly `YYYY-MM`, so fixed offsets read the two halves as `string`
@@ -83,10 +97,8 @@ export async function GET(request: NextRequest) {
     ? parseDateOnly(`${year + 1}-01-01`)
     : parseDateOnly(`${yearStr}-${String(month + 1).padStart(2, "0")}-01`);
 
-  const statusParam = request.nextUrl.searchParams.get("status");
-  const deletedVisibility = parseBookingDeletedVisibility(
-    request.nextUrl.searchParams.get("deleted")
-  );
+  const statusParam = query.data.status;
+  const deletedVisibility = parseBookingDeletedVisibility(query.data.deleted);
   const statusFilter: Record<string, unknown> = {};
   if (statusParam && statusParam !== "all") {
     const statuses = statusParam.split(",").map((s) => s.trim()).filter(Boolean);
@@ -104,7 +116,7 @@ export async function GET(request: NextRequest) {
     // a multi-lodge "All lodges" view hides the per-day count for now, since a
     // single summed figure across non-fungible lodges would mislead (see the
     // "All lodges bed display" discussion). Bookings stay unfiltered across all.
-    const lodgeParam = request.nextUrl.searchParams.get("lodgeId");
+    const lodgeParam = query.data.lodgeId;
     const specificLodge = lodgeParam && lodgeParam !== "all" ? lodgeParam : null;
     const bedsLodgeId =
       specificLodge ??
@@ -165,7 +177,8 @@ export async function GET(request: NextRequest) {
       }
     }
 
-    return NextResponse.json({ bookings: result, availability });
+    const answer: AdminBookingsCalendarAnswer = { bookings: result, availability };
+    return connectionJson(request, answer, ADMIN_BOOKINGS_CALENDAR_CONNECTION_SHAPE);
   } catch (err) {
     logger.error({ err }, "Error fetching admin bookings");
     return NextResponse.json({ error: "Failed to fetch bookings" }, { status: 500 });

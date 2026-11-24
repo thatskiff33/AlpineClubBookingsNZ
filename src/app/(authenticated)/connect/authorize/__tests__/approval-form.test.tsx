@@ -49,7 +49,9 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-function renderForm(overrides: { mayChange?: boolean; askedToChange?: boolean; onThisDevice?: boolean } = {}) {
+function renderForm(
+  overrides: { mayChange?: boolean; askedToChange?: boolean; onThisDevice?: boolean; officer?: boolean } = {},
+) {
   return render(
     <ApprovalForm
       appName="Example Assistant"
@@ -57,6 +59,7 @@ function renderForm(overrides: { mayChange?: boolean; askedToChange?: boolean; o
       onThisDevice={overrides.onThisDevice ?? false}
       askedToChange={overrides.askedToChange ?? true}
       mayChange={overrides.mayChange ?? false}
+      officer={overrides.officer ?? false}
       params={params}
     />,
   );
@@ -88,7 +91,7 @@ describe("ApprovalForm", () => {
 
     fireEvent.click(allow());
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
-    expect(sentBody()).toEqual({ decision: "approve", scope: "READ", params });
+    expect(sentBody()).toEqual({ decision: "approve", scope: "READ", officerNoticeShown: false, params });
   });
 
   it("sends view only unless the member picks view and change", async () => {
@@ -108,7 +111,33 @@ describe("ApprovalForm", () => {
     fireEvent.click(screen.getByRole("button", { name: /view and change/i }));
     fireEvent.click(allow());
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
-    expect(sentBody()).toEqual({ decision: "approve", scope: "READ_WRITE", params });
+    expect(sentBody()).toEqual({ decision: "approve", scope: "READ_WRITE", officerNoticeShown: false, params });
+  });
+
+  it("tells an officer the app can also act as an officer, and says it did", async () => {
+    // Owner decision, #5305 comment 7093303964, item 1 (`INV-MCP-009`); general
+    // wording so one approval covers every officer area, #5305 comment 7131483847.
+    renderForm({ officer: true, mayChange: true });
+    expect(screen.getByTestId("mcp-officer-notice").textContent).toBe(
+      "As a club officer, the app can also see the club records your admin role gives you, such as other members' bookings and details and the club's booking settings. If you choose View and change, it can change them too, and it is told to ask you first.",
+    );
+    fireEvent.click(allow());
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+    expect(sentBody()).toMatchObject({ decision: "approve", officerNoticeShown: true });
+  });
+
+  it("tells an officer on a view-only screen that the app can read, not change", () => {
+    renderForm({ officer: true, mayChange: false });
+    const notice = screen.getByTestId("mcp-officer-notice").textContent ?? "";
+    expect(notice).toBe(
+      "As a club officer, the app can also see the club records your admin role gives you, such as other members' bookings and details and the club's booking settings.",
+    );
+    expect(notice).not.toContain("change");
+  });
+
+  it("shows a member no officer line", () => {
+    renderForm({ officer: false });
+    expect(screen.queryByTestId("mcp-officer-notice")).toBeNull();
   });
 
   it("sends a refusal with the same request and follows the answer back to the app", async () => {
@@ -118,7 +147,7 @@ describe("ApprovalForm", () => {
     renderForm();
     fireEvent.click(dontAllow());
     await waitFor(() => expect(assign).toHaveBeenCalledWith("https://claude.ai/callback?error=access_denied"));
-    expect(sentBody()).toEqual({ decision: "deny", scope: "READ", params });
+    expect(sentBody()).toEqual({ decision: "deny", scope: "READ", officerNoticeShown: false, params });
   });
 
   it("goes to the address the server answered after an approval, and keeps both buttons off", async () => {

@@ -1,20 +1,25 @@
 import { NextRequest, NextResponse } from "next/server";
-import { z } from "zod";
 
+import { adminBookingRequestResolvePendingAdultsBodySchema } from "@/lib/admin-bookings-schemas/requests";
 import { parseJsonRequestBody } from "@/lib/api-json";
 import { BookingRequestError, serializeBookingRequestForAdmin } from "@/lib/booking-request";
 import { BookingRequestQuoteError } from "@/lib/booking-request-quotes";
+import {
+  ADMIN_BOOKING_REQUEST_PENDING_ADULTS_CONNECTION_SHAPE,
+  type AdminBookingRequestPendingAdultsAnswer,
+} from "@/lib/connection-shapes/bookings-requests";
+import { connectionJson } from "@/lib/mcp-connection-request";
 import { prisma } from "@/lib/prisma";
 import { resolveAcceptedSchoolPendingAdults } from "@/lib/school-pending-adult-resolution";
-import { schoolTeacherSchema } from "@/lib/school-teacher-schema";
 import { requireAdmin } from "@/lib/session-guards";
 import { transactionContendedResponse } from "@/lib/transaction-contended-response";
 
-const inputSchema = z.object({
-  expectedVersion: z.number().int().min(0),
-  teachers: z.array(schoolTeacherSchema).min(1).max(50),
-});
-
+/**
+ * POST /api/admin/booking-requests/[id]/resolve-pending-adults — give an
+ * accepted school request's pending adults their real names, on its held
+ * beds, without changing the deal. Also the AI app action
+ * `name_school_pending_adults` (ALP-719).
+ */
 export async function POST(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> },
@@ -27,7 +32,7 @@ export async function POST(
   });
   if (!jsonBody.ok) return jsonBody.response;
   const body = jsonBody.body;
-  const parsed = inputSchema.safeParse(body);
+  const parsed = adminBookingRequestResolvePendingAdultsBodySchema.safeParse(body);
   if (!parsed.success) {
     return NextResponse.json({ error: "Enter the real names for the pending adults", details: parsed.error.flatten().fieldErrors }, { status: 422 });
   }
@@ -43,11 +48,12 @@ export async function POST(
       })),
     });
     const updated = await prisma.bookingRequest.findUnique({ where: { id } });
-    return NextResponse.json({
+    const answer: AdminBookingRequestPendingAdultsAnswer = {
       request: updated ? serializeBookingRequestForAdmin(updated) : null,
       pendingAdultCount: resolved.pendingAdultCount,
       version: resolved.version,
-    });
+    };
+    return connectionJson(req, answer, ADMIN_BOOKING_REQUEST_PENDING_ADULTS_CONNECTION_SHAPE);
   } catch (err) {
     // `INV-LOCK-006`: the naming's one transaction rolled back.
     const contended = transactionContendedResponse(

@@ -1115,3 +1115,4 @@ headings the index keeps verbatim.
 | `INV-MCP-006` | Every API route method is an action or has a stated exclusion |
 | `INV-MCP-007` | Actions reach routes over loopback; scope enforced before dispatch |
 | `INV-MCP-008` | Which connection events and action calls write an audit row |
+| `INV-MCP-009` | Officer actions need the route's admin area and the officer's own approval |

@@ -1,17 +1,19 @@
 import { NextRequest, NextResponse } from "next/server";
-import { z } from "zod";
 
 import { parseJsonRequestBody } from "@/lib/api-json";
 import { ApiError } from "@/lib/api-error";
 import { copyBookingToDraft } from "@/lib/admin-booking-copy";
+import { adminBookingCopyBodySchema } from "@/lib/admin-bookings-schemas/bookings";
+import { ADMIN_BOOKING_COPY_CONNECTION_SHAPE } from "@/lib/connection-shapes/bookings-bookings";
+import { connectionJson } from "@/lib/mcp-connection-request";
 import logger from "@/lib/logger";
 import { requireAdmin } from "@/lib/session-guards";
 import { transactionContendedResponse } from "@/lib/transaction-contended-response";
 
-const copyBookingSchema = z.object({
-  checkIn: z.string().min(1),
-});
-
+/**
+ * POST /api/admin/bookings/[id]/copy — copy a booking to a new draft starting
+ * on another date. Also the AI app action `copy_booking_to_draft` (ALP-719).
+ */
 export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> },
@@ -24,7 +26,7 @@ export async function POST(
   const json = await parseJsonRequestBody(request);
   if (!json.ok) return json.response;
 
-  const parsed = copyBookingSchema.safeParse(json.body);
+  const parsed = adminBookingCopyBodySchema.safeParse(json.body);
   if (!parsed.success) {
     return NextResponse.json(
       { error: "Invalid input", details: parsed.error.flatten() },
@@ -39,7 +41,7 @@ export async function POST(
       targetCheckIn: parsed.data.checkIn,
       adminMemberId: guard.session.user.id,
     });
-    return NextResponse.json(result);
+    return connectionJson(request, result, ADMIN_BOOKING_COPY_CONNECTION_SHAPE);
   } catch (error) {
     // `INV-LOCK-006`: the draft's one transaction rolled back.
     const contended = transactionContendedResponse(

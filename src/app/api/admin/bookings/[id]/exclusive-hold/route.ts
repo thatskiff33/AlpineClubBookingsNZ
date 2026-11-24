@@ -21,12 +21,13 @@ import {
 } from "@/lib/bed-allocation-lifecycle";
 import { formatDateOnly } from "@/lib/date-only";
 import logger from "@/lib/logger";
-import { z } from "zod";
 import { LOCK1_HOLDER_TRANSACTION_BUDGET } from "@/lib/db-transaction";
-
-const exclusiveHoldSchema = z.object({
-  hold: z.boolean(),
-});
+import { adminExclusiveHoldBodySchema } from "@/lib/admin-bookings-schemas/bookings";
+import {
+  ADMIN_EXCLUSIVE_HOLD_CONNECTION_SHAPE,
+  type AdminExclusiveHoldAnswer,
+} from "@/lib/connection-shapes/bookings-bookings";
+import { connectionJson } from "@/lib/mcp-connection-request";
 
 /**
  * POST /api/admin/bookings/[id]/exclusive-hold — set/clear the exclusive
@@ -49,6 +50,8 @@ const exclusiveHoldSchema = z.object({
  * onto this per-lodge key so the guarantee holds again.) Authorisation mirrors the
  * sibling capacity-hold route (requireAdmin: admin/full-admin); both set and
  * clear are audited.
+ *
+ * Also the AI app action `set_exclusive_lodge_hold` (ALP-719).
  */
 export async function POST(
   request: NextRequest,
@@ -63,7 +66,7 @@ export async function POST(
 
   const jsonBody = await parseJsonRequestBody(request);
   if (!jsonBody.ok) return jsonBody.response;
-  const parsed = exclusiveHoldSchema.safeParse(jsonBody.body);
+  const parsed = adminExclusiveHoldBodySchema.safeParse(jsonBody.body);
   if (!parsed.success) {
     return NextResponse.json({ error: "Invalid input", details: parsed.error.flatten().fieldErrors }, { status: 422 });
   }
@@ -401,7 +404,7 @@ export async function POST(
       );
     }
 
-    return NextResponse.json({
+    const answer: AdminExclusiveHoldAnswer = {
       success: true,
       wholeLodgeHold: result.wholeLodgeHold,
       wholeLodgeHoldAt: result.wholeLodgeHoldAt,
@@ -413,7 +416,8 @@ export async function POST(
       // `enabled: false` means the bed-allocation module is off and nothing was
       // touched. Surfaced in the admin toast so the change is never silent.
       bedAllocationReconcile: result.bedAllocationReconcile,
-    });
+    };
+    return connectionJson(request, answer, ADMIN_EXCLUSIVE_HOLD_CONNECTION_SHAPE);
   } catch (err) {
     // `INV-LOCK-006`: the toggle's one transaction rolled back.
     const contended = transactionContendedResponse(

@@ -21,12 +21,6 @@ vi.mock("@/lib/bed-allocation-settings", () => ({
   BedAllocationSettingsValidationError: class BedAllocationSettingsValidationError extends Error {},
 }));
 vi.mock("@/lib/bed-allocation-removal", () => ({
-  BED_ALLOCATION_REMOVAL_CATEGORIES: [
-    "AUTO_DRAFT",
-    "MANUAL_DRAFT",
-    "APPROVED",
-  ],
-  MAX_BED_ALLOCATION_REMOVAL_WINDOW_NIGHTS: 31,
   BedAllocationRemovalError: class BedAllocationRemovalError extends Error {
     status: number;
     refreshedPreview?: unknown;

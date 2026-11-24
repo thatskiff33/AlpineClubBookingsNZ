@@ -1,5 +1,4 @@
 import { NextResponse } from "next/server";
-import { z } from "zod";
 import {
   createBedAllocationRoom,
   getRoomsAndBedsConfiguration,
@@ -14,25 +13,34 @@ import { logAudit } from "@/lib/audit";
 import { prisma } from "@/lib/prisma";
 import { resolveOptionalActiveLodgeId } from "@/lib/lodges";
 import { revalidatePublicSite } from "@/lib/public-content-revalidation";
+import {
+  bedAllocationRoomCreateBodySchema,
+  bedAllocationRoomsQuerySchema,
+} from "@/lib/admin-bookings-schemas/beds";
+import {
+  ADMIN_LODGE_ROOM_CONNECTION_SHAPE,
+  ADMIN_LODGE_ROOMS_CONNECTION_SHAPE,
+} from "@/lib/connection-shapes/bookings-beds";
+import { connectionJson } from "@/lib/mcp-connection-request";
 
 // requireAdmin() is enforced by the route-specific bed-inventory guard.
-const roomSchema = z
-  .object({
-    name: z.string().trim().min(1).max(100),
-    sortOrder: z.coerce.number().int().min(0).max(10000).default(0),
-    active: z.boolean().default(true),
-    notes: z.string().trim().max(500).nullable().optional(),
-    lodgeId: z.string().min(1).optional(),
-  })
-  .strict();
 
+/** Also the AI app action `list_lodge_rooms_and_beds` (ALP-719). */
 export async function GET(request: Request) {
   const guard = await requireBedInventoryRead();
   if (!guard.ok) return guard.response;
 
   try {
-    const lodgeId =
-      new URL(request.url).searchParams.get("lodgeId") ?? undefined;
+    const query = bedAllocationRoomsQuerySchema.safeParse({
+      lodgeId: new URL(request.url).searchParams.get("lodgeId") ?? undefined,
+    });
+    if (!query.success) {
+      return NextResponse.json(
+        { error: "Invalid input", details: query.error.flatten() },
+        { status: 400 },
+      );
+    }
+    const lodgeId = query.data.lodgeId;
     // Validate an explicit lodge scope the way the POST path does (400 on
     // unknown/inactive); omitted stays club-wide.
     if (lodgeId && !(await resolveOptionalActiveLodgeId(prisma, lodgeId))) {
@@ -41,14 +49,17 @@ export async function GET(request: Request) {
         { status: 400 },
       );
     }
-    return NextResponse.json(
+    return connectionJson(
+      request,
       await getRoomsAndBedsConfiguration(undefined, lodgeId),
+      ADMIN_LODGE_ROOMS_CONNECTION_SHAPE,
     );
   } catch (error) {
     return bedAllocationErrorResponse(error);
   }
 }
 
+/** Also the AI app action `create_lodge_room` (ALP-719). */
 export async function POST(request: Request) {
   const guard = await requireBedInventoryWrite();
   if (!guard.ok) return guard.response;
@@ -57,7 +68,7 @@ export async function POST(request: Request) {
     const json = await parseJsonRequestBody(request);
     if (!json.ok) return json.response;
 
-    const body = roomSchema.safeParse(json.body);
+    const body = bedAllocationRoomCreateBodySchema.safeParse(json.body);
     if (!body.success) {
       return NextResponse.json(
         { error: "Invalid input", details: body.error.flatten() },
@@ -89,7 +100,7 @@ export async function POST(request: Request) {
       metadata: { roomId: room.id, name: room.name },
     });
 
-    return NextResponse.json({ room }, { status: 201 });
+    return connectionJson(request, { room }, ADMIN_LODGE_ROOM_CONNECTION_SHAPE, { status: 201 });
   } catch (error) {
     return bedAllocationErrorResponse(error);
   }

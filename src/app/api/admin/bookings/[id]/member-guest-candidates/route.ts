@@ -1,6 +1,15 @@
 import { NextRequest, NextResponse } from "next/server";
 import { hasAdminAreaAccess } from "@/lib/admin-permissions";
+import {
+  adminMemberGuestEmailBodySchema,
+  adminMemberGuestNameQuerySchema,
+} from "@/lib/admin-bookings-schemas/bookings";
 import { parseJsonRequestBody } from "@/lib/api-json";
+import {
+  ADMIN_MEMBER_GUEST_EMAIL_CANDIDATES_CONNECTION_SHAPE,
+  ADMIN_MEMBER_GUEST_NAME_CANDIDATES_CONNECTION_SHAPE,
+} from "@/lib/connection-shapes/bookings-bookings";
+import { connectionJson } from "@/lib/mcp-connection-request";
 import logger from "@/lib/logger";
 import {
   auditMemberGuestResolve,
@@ -97,7 +106,8 @@ import { requireAdmin } from "@/lib/session-guards";
  *
  * Available to any booking officer, `membership:view` or not: it is the #1376
  * fallback, and it is bounded by the same thing that has always bounded it — you
- * must already know the address.
+ * must already know the address. Also the AI app action
+ * `find_member_guest_by_email` (ALP-719).
  */
 export async function POST(
   request: NextRequest,
@@ -121,10 +131,9 @@ export async function POST(
 
   const json = await parseJsonRequestBody(request);
   if (!json.ok) return json.response;
-  const rawEmail =
-    typeof (json.body as { email?: unknown } | null)?.email === "string"
-      ? (json.body as { email: string }).email.slice(0, 320)
-      : "";
+  // No string `email` reads as an empty address: the audited miss, never a 400.
+  const body = adminMemberGuestEmailBodySchema.safeParse(json.body);
+  const rawEmail = body.success ? body.data.email.slice(0, 320) : "";
   const email = normalizeMemberGuestEmail(rawEmail);
 
   if (!email) {
@@ -143,7 +152,7 @@ export async function POST(
       candidates: [],
       outcome: "failure",
     });
-    return NextResponse.json({ candidates: [] });
+    return connectionJson(request, { candidates: [] }, ADMIN_MEMBER_GUEST_EMAIL_CANDIDATES_CONNECTION_SHAPE);
   }
 
   try {
@@ -156,7 +165,7 @@ export async function POST(
         memberId: candidate.memberId,
       })),
     });
-    return NextResponse.json(result);
+    return connectionJson(request, result, ADMIN_MEMBER_GUEST_EMAIL_CANDIDATES_CONNECTION_SHAPE);
   } catch (err) {
     logger.error({ err }, "Failed to resolve member-guest candidates for an admin");
     // AUDITED BEFORE RETURNING, for the same rider. A lookup that blew up is
@@ -170,12 +179,13 @@ export async function POST(
       candidates: [],
       outcome: "failure",
     });
-    return NextResponse.json({ candidates: [] });
+    return connectionJson(request, { candidates: [] }, ADMIN_MEMBER_GUEST_EMAIL_CANDIDATES_CONNECTION_SHAPE);
   }
 }
 
 /**
  * The NAME mode — a fragment, in the query string, gated on `membership:view`.
+ * Also the AI app action `search_member_guest_candidates` (ALP-719).
  */
 export async function GET(
   request: NextRequest,
@@ -204,7 +214,11 @@ export async function GET(
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
 
-  const rawQ = (request.nextUrl.searchParams.get("q") ?? "").slice(
+  // Every `q` parses (an optional string); a missing one is the empty fragment.
+  const query = adminMemberGuestNameQuerySchema.safeParse({
+    q: request.nextUrl.searchParams.get("q") ?? undefined,
+  });
+  const rawQ = ((query.success ? query.data.q : undefined) ?? "").slice(
     0,
     MEMBER_GUEST_SEARCH_Q_MAX_CHARS,
   );
@@ -226,9 +240,10 @@ export async function GET(
       resultCount: result.candidates.length,
       truncated: result.truncated === true,
     });
-    return NextResponse.json(result);
+    return connectionJson(request, result, ADMIN_MEMBER_GUEST_NAME_CANDIDATES_CONNECTION_SHAPE);
   } catch (err) {
     logger.error({ err }, "Failed to search member-guest candidates for an admin");
-    return NextResponse.json({ candidates: [], truncated: false });
+    const empty = { candidates: [], truncated: false };
+    return connectionJson(request, empty, ADMIN_MEMBER_GUEST_NAME_CANDIDATES_CONNECTION_SHAPE);
   }
 }

@@ -4,6 +4,11 @@ import { requireAdmin } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma";
 import { resolveMemberFamily } from "@/lib/resolve-member-family";
 import { listBookingPartnerSharingCandidates } from "@/lib/double-bed-sharing";
+import {
+  ADMIN_BOOKING_ELIGIBLE_FAMILY_CONNECTION_SHAPE,
+  type AdminBookingEligibleFamilyAnswer,
+} from "@/lib/connection-shapes/bookings-bookings";
+import { connectionJson } from "@/lib/mcp-connection-request";
 
 /**
  * GET /api/admin/bookings/[id]/eligible-family
@@ -18,9 +23,10 @@ import { listBookingPartnerSharingCandidates } from "@/lib/double-bed-sharing";
  * The booking owner's memberId is read SERVER-SIDE from the booking; the client
  * never supplies a member id here. It returns exactly one member's family group
  * (via the shared resolveMemberFamily helper), never a directory enumeration.
+ * Also the AI app action `get_booking_owner_family` (ALP-719).
  */
 export async function GET(
-  _request: NextRequest,
+  request: NextRequest,
   { params }: { params: Promise<{ id: string }> },
 ) {
   const guard = await requireAdmin({
@@ -56,5 +62,6 @@ export async function GET(
   const partnerSharingCandidates =
     await listBookingPartnerSharingCandidates(bookingId);
 
-  return NextResponse.json({ ...family, partnerSharingCandidates });
+  const answer: AdminBookingEligibleFamilyAnswer = { ...family, partnerSharingCandidates };
+  return connectionJson(request, answer, ADMIN_BOOKING_ELIGIBLE_FAMILY_CONNECTION_SHAPE);
 }

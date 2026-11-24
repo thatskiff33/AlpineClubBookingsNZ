@@ -92,3 +92,17 @@ export function connectionJson(
   const projected = status >= 200 && status < 300 && arrivesAsMcpConnection(request);
   return NextResponse.json(projected ? projectForConnection(body, shape) : body, init);
 }
+
+/**
+ * A list route's answer, where the browser reads a bare array. A connection's
+ * answer must be an object, so it gets the list under `key`, projected onto
+ * `shape` (which names that key).
+ */
+export function connectionListJson(
+  request: Request,
+  list: readonly unknown[],
+  key: string,
+  shape: ConnectionShape,
+): NextResponse {
+  return connectionJson(request, arrivesAsMcpConnection(request) ? { [key]: list } : list, shape);
+}

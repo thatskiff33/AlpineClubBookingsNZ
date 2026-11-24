@@ -1164,6 +1164,12 @@ describe("the two open-search privacy toggles are off by default, and have exact
       // D-18: the config-transfer spec REFUSES to export these two, so importing
       // another club's configuration cannot quietly make your roll browsable.
       "src/app/api/admin/member-guest-settings/route.ts",
+      // ALP-719: that route's save schema, moved beside the Bookings & Beds
+      // schemas. The save itself is never an AI app action (privacy-posture).
+      "src/lib/admin-bookings-schemas/setup.ts",
+      // ALP-719: the admin settings read as an officer's AI app is sent it,
+      // both values included, as the card shows them; it decides nothing.
+      "src/lib/connection-shapes/bookings-setup.ts",
       "src/components/admin/member-guest-settings-card.tsx",
     ]);
     const decidesDiscoverability = "src/lib/member-guest-find-service.ts";
