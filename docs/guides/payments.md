@@ -246,7 +246,7 @@ member is told the club will arrange their refund.
    treasurer.
    A task dismissed before these dismissal rules (#4516) can still be
    reopened, except the older booking change's refund above, which is
-   checked by hand.
+   refused as above.
 
 **The same task for a booking change (#3827).** When a member or an officer
 changes a booking that was paid by internet banking or in cash, and the change
