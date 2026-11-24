@@ -83,6 +83,7 @@ import {
   REOPEN_ONLY_OFFICER_DISMISSAL_MESSAGE,
   REOPEN_RACED_MESSAGE,
   LATE_WIN_REOPEN_NOT_WON_MESSAGE,
+  REOPEN_DISMISSAL_STATUS_UNRECORDED_MESSAGE,
   ReopenCountedByCancellationError,
   reopenHandBackAfterLateWin,
   reopenManualRefundTask,
@@ -431,6 +432,8 @@ describe("reopening a dismissed EDIT refund hand-back (#3827, INV-PAY-117)", () 
       booking: { memberId: "member-1", status: "CANCELLED", organisation: null },
     });
     mocks.aggregate.mockResolvedValue({ _sum: { amountCents: null } });
+    // The cancellation's own booking event, after the dismissal (#5197 reads it).
+    mocks.latestCancellation = { occurredAt: new Date("2026-06-21T00:00:00.000Z") };
 
     await expect(reopen()).rejects.toMatchObject({
       status: 409,
@@ -581,6 +584,7 @@ describe("reopening a dismissed hand-back on a joiner the organiser paid for by 
 
   it("refuses an edit's after the group cancel, naming the organiser", async () => {
     mocks.findUnique.mockResolvedValue(dismissedOnGroupChild("edit-refund-hand-back:mod-1", "CANCELLED"));
+    mocks.latestCancellation = { occurredAt: new Date("2026-06-21T00:00:00.000Z") };
 
     await expect(reopen()).rejects.toMatchObject({ status: 409, message: editRefundHandBackReopenAfterCancelMessage(GROUP_CHILD) });
     expect(editRefundHandBackReopenAfterCancelMessage(GROUP_CHILD)).toContain("organiser");
@@ -634,9 +638,9 @@ describe("reopening a dispute-loss hand-back (#5197)", () => {
     }));
   });
 
-  it("MUTATION: dismissed on a live booking, with no status recorded, or cancelled again since, it is refused as counted by the cancellation", async () => {
+  it("MUTATION: dismissed on a live booking, or cancelled again since, it is refused as counted by the cancellation", async () => {
     mocks.findUnique.mockResolvedValue(LOST_EDIT);
-    for (const [audit, latest] of [[dismissedOn("PAID"), null], [dismissedOn(), null], [null, null], [dismissedOn("CANCELLED"), cancelledAt(60_000)]] as const) {
+    for (const [audit, latest] of [[dismissedOn("PAID"), null], [dismissedOn("CANCELLED"), cancelledAt(60_000)], [dismissedOn(), cancelledAt(60_000)]] as const) {
       mocks.dismissalAudit = audit;
       mocks.latestCancellation = latest;
       const refusal = await reopen().catch((err: unknown) => err);
@@ -644,6 +648,19 @@ describe("reopening a dispute-loss hand-back (#5197)", () => {
       expect(refusal).toMatchObject({ status: 409, message: EDIT_REFUND_HAND_BACK_REOPEN_AFTER_CANCEL_MESSAGE });
     }
     expect(mocks.updateMany).not.toHaveBeenCalled();
+  });
+
+  it("MUTATION: an older dismissal with no booking status recorded, and no cancellation since, is refused to check by hand, never as counted", async () => {
+    mocks.findUnique.mockResolvedValue(LOST_EDIT);
+    for (const audit of [dismissedOn(), { metadata: { bookingStatusAtClosure: null } }, null]) {
+      mocks.dismissalAudit = audit;
+      mocks.latestCancellation = cancelledAt(-60_000);
+      const refusal = await reopen().catch((err: unknown) => err);
+      expect(refusal).not.toBeInstanceOf(ReopenCountedByCancellationError);
+      expect(refusal).toMatchObject({ status: 409, message: REOPEN_DISMISSAL_STATUS_UNRECORDED_MESSAGE });
+    }
+    expect(mocks.updateMany).not.toHaveBeenCalled();
+    expect(mocks.restoreHandBackObligation).not.toHaveBeenCalled();
   });
 
   it("a lost claim restores nothing", async () => {

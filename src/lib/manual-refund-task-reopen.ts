@@ -177,6 +177,14 @@ export const LATE_WIN_REOPEN_NOT_WON_MESSAGE =
 export const LATE_WIN_REOPEN_NOT_DISPUTE_LOSS_MESSAGE =
   "It is not a disputed card payment's hand-back.";
 
+/**
+ * #5197: an edit refund hand-back on a cancelled booking whose dismissal recorded no booking status (dismissed before
+ * #5197, or with no audit row) and no cancellation since: it may have been dismissed after the cancel for a lost dispute,
+ * when the cancel counted it as going back, so neither "counted by the cancellation" nor a reopen is safe to assume.
+ */
+export const REOPEN_DISMISSAL_STATUS_UNRECORDED_MESSAGE =
+  "It was dismissed before the app recorded the booking's status, so the app cannot tell whether the booking's cancellation counted it in its own refund. Check the booking's payments by hand before paying or reopening anything.";
+
 /** #5197: how long a late win's reopen waits for a lock before it gives up and the alert names the task instead. */
 export const LATE_WIN_REOPEN_LOCK_TIMEOUT_MS = 5_000;
 
@@ -340,8 +348,11 @@ async function reopenInTransaction(
   // #5197: except a dismissal made after the cancellation, which only a lost
   // dispute allows (#4516, owner decision 18 Nov 2026): the cancel counted the
   // task as going back, so putting it back restores what the cancel assumed.
-  if (isEditRefundHandBackTask(task) && task.booking.status === BookingStatus.CANCELLED && !(await dismissedAfterCancellation(tx, task))) {
-    throw new ReopenCountedByCancellationError(editRefundHandBackReopenAfterCancelMessage(task.booking)); // #3949
+  // An older dismissal with no recorded status cannot be told either way: refused, for a person to check.
+  if (isEditRefundHandBackTask(task) && task.booking.status === BookingStatus.CANCELLED) {
+    const dismissal = await dismissalAgainstCancellation(tx, task);
+    if (dismissal === "status-unrecorded") throw new ManualBookingPaymentError(REOPEN_DISMISSAL_STATUS_UNRECORDED_MESSAGE, 409);
+    if (dismissal === "counted") throw new ReopenCountedByCancellationError(editRefundHandBackReopenAfterCancelMessage(task.booking)); // #3949
   }
   // #3827 (`INV-PAY-117`): never promise back more cash than was taken - for
   // an edit's refund and (D-3813-7) an approved appeal's alike, an appeal's
@@ -427,26 +438,33 @@ async function assertLateWinDisputeWon(tx: Prisma.TransactionClient, task: Reope
 /**
  * #5197: whether this edit hand-back was dismissed AFTER its booking's latest cancellation. The after-cancel
  * dismissal refusal (`INV-PAY-117`) lets only a lost dispute through (#4516, owner decision 18 Nov 2026), and then the
- * cancellation counted the task as going back. Two records, both required, each failing towards a refusal:
+ * cancellation counted the task as going back (`after-cancel`). Two records, both required, each failing towards a
+ * refusal:
+ * - a CANCELLED or REFUNDED booking event after the dismissal: a cancellation since sized its refund without the task
+ *   (`counted`);
  * - the dismissal's own audit row, written in its transaction, says the booking read CANCELLED under its locks
- *   (`bookingStatusAtClosure`; a dismissal recorded before #5197 has none, so it is refused);
- * - no CANCELLED or REFUNDED booking event after the dismissal: a booking restored and cancelled again since sized
- *   that cancellation without the task.
+ *   (`bookingStatusAtClosure`). Another recorded status means the cancel came later (`counted`); none (a dismissal
+ *   recorded before #5197, or no audit row) cannot be told either way (`status-unrecorded`), so it is never reopened and
+ *   never reported as counted by the cancellation.
  */
-async function dismissedAfterCancellation(tx: Prisma.TransactionClient, task: ReopenTask): Promise<boolean> {
-  if (task.completedAt === null) return false;
+async function dismissalAgainstCancellation(
+  tx: Prisma.TransactionClient,
+  task: ReopenTask,
+): Promise<"after-cancel" | "counted" | "status-unrecorded"> {
+  if (task.completedAt === null) return "counted";
+  const laterCancellation = await tx.bookingEvent.findFirst({
+    where: { bookingId: task.bookingId, type: { in: [BookingEventType.CANCELLED, BookingEventType.REFUNDED] }, occurredAt: { gt: task.completedAt } },
+    select: { id: true },
+  });
+  if (laterCancellation !== null) return "counted";
   const dismissal = await tx.auditLog.findFirst({
     where: { entityType: "ManualRefundTask", entityId: task.id, action: "booking-payment.manual-refund-task.dismiss" },
     orderBy: { createdAt: "desc" },
     select: { metadata: true },
   });
-  const metadata = dismissal?.metadata as { bookingStatusAtClosure?: unknown } | null | undefined;
-  if (metadata?.bookingStatusAtClosure !== BookingStatus.CANCELLED) return false;
-  const laterCancellation = await tx.bookingEvent.findFirst({
-    where: { bookingId: task.bookingId, type: { in: [BookingEventType.CANCELLED, BookingEventType.REFUNDED] }, occurredAt: { gt: task.completedAt } },
-    select: { id: true },
-  });
-  return laterCancellation === null;
+  const status = (dismissal?.metadata as { bookingStatusAtClosure?: unknown } | null | undefined)?.bookingStatusAtClosure;
+  if (status === undefined || status === null) return "status-unrecorded";
+  return status === BookingStatus.CANCELLED ? "after-cancel" : "counted";
 }
 
 export { MANUAL_PAYMENT_NOTE_MAX };

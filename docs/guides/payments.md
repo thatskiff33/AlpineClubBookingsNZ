@@ -236,8 +236,11 @@ member is told the club will arrange their refund.
    owed again, so pay the member that by bank transfer with the rest and take
    it to the treasurer to record. A booking change's refund dismissed for a
    lost dispute after its booking was cancelled can be reopened like any other,
-   if it was dismissed after this change (earlier dismissals did not record
-   that the booking was cancelled). Like the lost-dispute allocation itself, a
+   if it was dismissed after this change. An earlier dismissal did not record
+   whether the booking was already cancelled, so the alert names it as not
+   reopened, to check by hand: the app cannot tell whether the cancellation's
+   refund included it, and reopening it here is refused for the same reason.
+   Like the lost-dispute allocation itself, a
    late win counts a refund task dismissed for another reason by older code as
    dismissed for the loss, so it may reopen it: take such a task to the
    treasurer.

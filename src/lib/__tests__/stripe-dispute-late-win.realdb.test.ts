@@ -4,6 +4,7 @@ import type Stripe from "stripe";
 import { postHandBackObligation } from "@/lib/member-money/doors";
 import { memberMoneyEventKeys } from "@/lib/member-money";
 import { editRefundHandBackOccurrenceKey, EDIT_REFUND_HAND_BACK_REOPEN_AFTER_CANCEL_MESSAGE } from "@/lib/manual-refund-task-settlement-rules";
+import { REOPEN_DISMISSAL_STATUS_UNRECORDED_MESSAGE } from "@/lib/manual-refund-task-reopen";
 import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 import { cleanHistories, createHistoryBooking, historyNames, seedHistoryFixtures, settleHistoryByCard } from "./support/booking-ledger-history";
 import { memberMoneyTestContext } from "./support/member-money-fixtures";
@@ -244,6 +245,28 @@ const liveHandBackDebts = (taskId: string) => db.memberMoneyEvent.count({ where:
     expect(lateWinAlerts(disputeId)[0]!.disputeNextStep).not.toContain("could not reopen");
     // The officer meets the same refusal, in its own words.
     await expect(officerReopen(edit)).rejects.toMatchObject({ status: 409, message: EDIT_REFUND_HAND_BACK_REOPEN_AFTER_CANCEL_MESSAGE });
+  });
+
+  it("an edit hand-back dismissed after the cancel before its status was recorded is listed to check by hand, never as counted", async () => {
+    const id = await cardBooking();
+    const edit = await raise(id, "edit", 10_000, 1);
+    await cancelled(id, new Date("2026-06-25T00:00:00.000Z"));
+    const disputeId = await dispute(id, 10_000);
+    await dismiss(edit);
+    // As a dismissal recorded before #5197 reads: its audit row has no booking status.
+    const audit = await db.auditLog.findFirstOrThrow({ where: { entityId: edit, action: "booking-payment.manual-refund-task.dismiss" } });
+    const { bookingStatusAtClosure, ...older } = audit.metadata as Record<string, unknown>;
+    expect(bookingStatusAtClosure).toBe("CANCELLED");
+    await db.auditLog.update({ where: { id: audit.id }, data: { metadata: older as object } });
+
+    expect(await deliverWon(disputeId)).toBe(200);
+
+    expect(await task(edit)).toEqual({ status: "DISMISSED", amountCents: 10_000 });
+    expect(await refundPayable(id)).toBe(0);
+    const step = lateWinAlerts(disputeId)[0]!.disputeNextStep;
+    expect(step).toContain(`could not reopen them: task ${edit} ($100.00): ${REOPEN_DISMISSAL_STATUS_UNRECORDED_MESSAGE}`);
+    expect(step).not.toContain("counted that money in its own refund");
+    await expect(officerReopen(edit)).rejects.toMatchObject({ status: 409, message: REOPEN_DISMISSAL_STATUS_UNRECORDED_MESSAGE });
   });
 
   it("a part win: one of two lost disputes won reopens the task whole, says how much is owed again, and Reduce takes the rest", async () => {

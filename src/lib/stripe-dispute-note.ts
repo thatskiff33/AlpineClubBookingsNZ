@@ -76,8 +76,9 @@ export type StripeDisputeAlertStage = "opened" | "closed" | "won-after-loss";
 /**
  * #5197: what a late win did about the hand-back tasks on the disputed payment, for the won-after-loss alert. A task
  * dismissed while the dispute read lost is reopened by the app (`reopened`), was already back on the queue
- * (`alreadyOpen`), could not be reopened (`notReopened`, with the reason), or is an edit's refund dismissed before its
- * booking's cancellation, which then counted that money in its own refund (`countedByCancellation`); a reduction made
+ * (`alreadyOpen`), could not be reopened (`notReopened`, with the reason: among them an older dismissal that recorded no
+ * booking status, left to check by hand), or is an edit's refund dismissed before its booking's cancellation, which
+ * then counted that money in its own refund (`countedByCancellation`); a reduction made
  * for the loss is owed again but changes nothing in the app (`reduced`). `cents` is what the late win makes owed again.
  */
 export type LateWinHandBackReport =

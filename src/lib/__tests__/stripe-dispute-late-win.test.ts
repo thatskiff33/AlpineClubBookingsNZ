@@ -5,6 +5,7 @@ vi.mock("@/lib/prisma", () => ({ prisma: {} }));
 
 import { editRefundHandBackOccurrenceKey } from "@/lib/manual-refund-task-settlement-rules";
 import type { PaymentHandBackTask } from "@/lib/manual-refund-task-hand-back-journal";
+import { REOPEN_DISMISSAL_STATUS_UNRECORDED_MESSAGE } from "@/lib/manual-refund-task-reopen";
 import { lateWinOwedAgain } from "@/lib/stripe-dispute-late-win";
 import { stripeDisputeWonAfterLossNextStep } from "@/lib/stripe-dispute-note";
 
@@ -92,6 +93,13 @@ describe("the won-after-loss alert's next step (#5197)", () => {
   it("a part reopen says how much is owed again and to reduce the rest first", () => {
     const step = stripeDisputeWonAfterLossNextStep({ ...read, reopened: [{ taskId: "t1", cents: 10_000, taskCents: 30_000 }] }, money);
     expect(step).toMatch(/task t1 \(\$300\.00, of which \$100\.00 is owed again; .*reduce it/);
+  });
+
+  it("lists an older dismissal with no recorded status as not reopened, to check by hand, never as counted by the cancellation", () => {
+    const step = stripeDisputeWonAfterLossNextStep({ ...read, notReopened: [{ taskId: "t3", cents: 10_000, reason: REOPEN_DISMISSAL_STATUS_UNRECORDED_MESSAGE }] }, money);
+    expect(step).toContain("the app could not reopen them: task t3 ($100.00): It was dismissed before the app recorded the booking's status");
+    expect(step).toContain("Check the booking's payments by hand");
+    expect(step).not.toMatch(/counted that money in its own refund/);
   });
 
   it("names a task already back on the queue", () => {

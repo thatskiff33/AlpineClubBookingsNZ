@@ -4312,8 +4312,8 @@ alert nobody received answers 500).
 - **No money moves**: no refund, credit, `Payment` total or Xero posting
   (the treasurer's, by hand: `DEPLOYMENT.md`). Its one journal effect is a
   hand-back's R05: withdrawn when an officer dismisses or reduces it for a
-  LOST dispute, posted again when that dispute is later WON and the app
-  reopens the task (#5197; a reduction is only named).
+  LOST dispute, posted again when an officer reopens it, or the app on a
+  late WIN (#5197; a reduction is only named).
 - Limits: a dispute recorded after a cancel's or edit's read is unseen; a
   joiner's reduction owed to the organiser's card is refused only at
   `processRefund`; a task raised before a win stays with the treasurer.
