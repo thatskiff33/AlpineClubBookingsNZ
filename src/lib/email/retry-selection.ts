@@ -33,6 +33,33 @@ export const RETAINS_REPLAYABLE_EMAIL_BODY = {
 } satisfies Prisma.EmailLogWhereInput;
 
 /**
+ * #5433 review (`INV-SSOT`): THE RULE for "the email retry cron can still
+ * replay this row": `FAILED`, below the attempt ceiling, and a body kept to
+ * replay. In two forms over one set of constants: the filter the cron selects
+ * with (beside its backoff, which is when, not whether), and the predicate a
+ * caller holding a row applies (the waitlist offer email's state, its admin
+ * page). `retry-selection.test.ts` holds the two to the same answers.
+ */
+export const REPLAYABLE_FAILED_EMAIL_WHERE = {
+  status: "FAILED",
+  attempts: { lt: EMAIL_RETRY_MAX_ATTEMPTS },
+  ...RETAINS_REPLAYABLE_EMAIL_BODY,
+} satisfies Prisma.EmailLogWhereInput;
+
+export function isReplayableFailedEmail(row: {
+  status: string;
+  attempts: number;
+  htmlBody: string | null;
+  bookingRetryHtmlBody: string | null;
+}): boolean {
+  return (
+    row.status === "FAILED" &&
+    row.attempts < EMAIL_RETRY_MAX_ATTEMPTS &&
+    (row.htmlBody !== null || row.bookingRetryHtmlBody !== null)
+  );
+}
+
+/**
  * How long the email retry cron waits after a row's last attempt before it
  * selects the row again. The operator's "Try again" on an exhausted failure
  * (`requeueExhaustedEmailFailure`) dates the row back past it, so the next run

@@ -144,6 +144,13 @@ test("an officer enters the guests a free-text request described, checks the fig
   await page.goto(`/bookings/${CHANGE_REQUEST_FINISHED_BOOKING_ID}`);
   const content = page.getByTestId("booking-detail-content");
   await expect(content.getByRole("heading", { name: "Booking Details" })).toBeVisible();
+  // The officer also sees the bed-allocation card, which names every guest once
+  // its own client read lands. Counting across the whole content raced that
+  // read: it passed only when the count was sampled first (#5266 CI). The guest
+  // row is the one outside that card.
+  const outsideBedAllocationCard = page.locator(
+    "xpath=//*[not(ancestor-or-self::*[@id='bed-allocation'])]",
+  );
   for (const guest of GUESTS) {
     // Exact, so the request's own summary line ("add Ari Grandchild, …") is
     // not what satisfies it: this is the guest row. Visible-filtered, because
@@ -152,7 +159,8 @@ test("an officer enters the guests a free-text request described, checks the fig
     await expect(
       content
         .getByText(`${guest.firstName} ${guest.lastName}`, { exact: true })
-        .filter({ visible: true }),
+        .filter({ visible: true })
+        .and(outsideBedAllocationCard),
     ).toHaveCount(1);
   }
   const modification = content

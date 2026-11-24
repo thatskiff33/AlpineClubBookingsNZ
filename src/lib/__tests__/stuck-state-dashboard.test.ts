@@ -155,6 +155,7 @@ function buildDeps(overrides?: Partial<StuckStateDashboardDependencies>) {
       refundsMissingCreditNotes: { count: 0, graceHours: 24 },
       contactGroupMismatches: { count: 0, resyncCount: 0, reviewByHandCount: 0, cacheReady: true },
       contactLinkMismatches: { count: 0, cacheReady: true },
+      taxOverridePause: { count: 0 },
       apiBudget: {
         status: "healthy",
         usagePercent: 10,
@@ -290,6 +291,7 @@ describe("getStuckStateDashboard", () => {
         refundsMissingCreditNotes: { count: 10, graceHours: 24 },
         contactGroupMismatches: { count: 12, resyncCount: 12, reviewByHandCount: 0, cacheReady: true },
         contactLinkMismatches: { count: 11, cacheReady: true },
+        taxOverridePause: { count: 3 },
         apiBudget: {
           status: "warning",
           usagePercent: 85,
@@ -375,6 +377,15 @@ describe("getStuckStateDashboard", () => {
           severity: "critical",
           owner: "Finance",
           count: 10,
+        }),
+        // #5208: Xero changed the GST sent on invoices; the overrides are paused.
+        expect.objectContaining({
+          id: "xero-tax-overrides-paused",
+          severity: "critical",
+          owner: "Finance",
+          count: 3,
+          summary: "Xero changed the GST on 3 invoices after the app sent it. Until someone in finance checks them and resumes, "
+            + "new invoices go to Xero without the club's own GST figures and Xero works the GST out itself.",
         }),
         expect.objectContaining({
           id: "email-token-recovery",

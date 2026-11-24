@@ -28,6 +28,8 @@ const mocks = vi.hoisted(() => ({
   paymentTransactionCreate: vi.fn(),
   paymentTransactionUpdate: vi.fn(),
   paymentTransactionUpdateMany: vi.fn(),
+  // #5240: the "captured, not yet settled" flag the attempt's settle writes.
+  alertCooldownUpsert: vi.fn(),
   paymentTransactionFindUnique: vi.fn(),
   paymentTransactionDeleteMany: vi.fn(),
   reconcilePaymentAggregates: vi.fn(),
@@ -193,6 +195,7 @@ const txClient = {
     findUnique: mocks.paymentTransactionFindUnique,
     deleteMany: mocks.paymentTransactionDeleteMany,
   },
+  alertCooldown: { upsert: mocks.alertCooldownUpsert },
   // #2576 §9: the officer's confirmation records the bounded same-owner hosting
   // re-evaluation inside this transaction. No policy row, so the rule resolves off
   // and the enqueue is a no-op — which is what every expectation here assumes.
@@ -467,9 +470,17 @@ describe("POST /api/admin/bookings/[id]/confirm-pending-guests", () => {
     expect(orderOf(mocks.paymentTransactionUpdateMany, settle!)).toBeLessThan(
       mocks.markBookingPaymentSucceeded.mock.invocationCallOrder[0]
     );
+    // #5240: the same write flags the capture "not yet settled", after the row and before the booking's settle.
+    expect(mocks.alertCooldownUpsert).toHaveBeenCalledTimes(1);
+    expect(mocks.alertCooldownUpsert).toHaveBeenCalledWith({
+      where: { key: "saved-card-capture-unsettled:pi_1" },
+      create: { key: "saved-card-capture-unsettled:pi_1", lastAlertedAt: expect.any(Date) },
+      update: {},
+    });
+    expect(mocks.alertCooldownUpsert.mock.invocationCallOrder[0]).toBeGreaterThan(orderOf(mocks.paymentTransactionUpdateMany, settle!));
+    expect(mocks.alertCooldownUpsert.mock.invocationCallOrder[0]).toBeLessThan(mocks.markBookingPaymentSucceeded.mock.invocationCallOrder[0]);
     expect(mocks.upsertPaymentIntentTransaction).not.toHaveBeenCalled();
-    // #4285 review: that pre-record wrote the capture just now - the settle is told it is new money.
-    expect(mocks.markBookingPaymentSucceeded).toHaveBeenCalledWith(expect.objectContaining({ paymentIntentId: "pi_1", recordedByCaller: true }));
+    expect(mocks.markBookingPaymentSucceeded).toHaveBeenCalledWith(expect.objectContaining({ paymentIntentId: "pi_1" }));
     expect(mocks.createStructuredAuditLog).toHaveBeenCalled();
     // The booking's OWN saved card is charged; the claim writes only the
     // customer onto its row (#3269 — a pm write-back would race the

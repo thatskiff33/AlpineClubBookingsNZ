@@ -697,7 +697,10 @@ describe("email delivery boundary census (INV-CONFIG-004)", () => {
     "src/lib/cron-email-retry.ts",
     "src/lib/email-failure-review.ts",
     "src/lib/email/environment-gate.ts",
-    "src/lib/waitlist-offer-email-visibility.ts",
+    // #5433 round 2: the waitlist offer email's board reads its row through
+    // `offerEmailRowState`, which asks `isReplayableFailedEmail` in the ceiling's
+    // own module, so it holds no ceiling to import; the retirement writes it.
+    "src/lib/email/retire-replayable.ts",
   ];
 
   it("declares the email retry ceiling once, and every reader imports it", () => {

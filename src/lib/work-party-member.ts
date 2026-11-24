@@ -120,8 +120,9 @@ export async function findMemberWorkParty(
 }
 
 /**
- * Upcoming open work parties for the dashboard card: those whose last night is
- * on or after the club's today, soonest first. `take` is the card's limit.
+ * Upcoming open work parties for the dashboard card and `GET /api/work-parties`:
+ * those whose last night is on or after the club's today, soonest first.
+ * `take` is the caller's limit.
  */
 export async function listUpcomingMemberWorkParties(
   today: Date,

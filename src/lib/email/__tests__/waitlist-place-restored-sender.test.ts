@@ -92,7 +92,9 @@ describe("sendWaitlistPlaceRestoredEmail", () => {
       3,
     );
     await sendWaitlistOfferExpiredEmail(
-      { bookingId: "bk_1", recipientMemberId: "mem_1" },
+      // #5433: the expiry notice alone carries an event key (it is an owed
+      // notice); the key is not part of what the two share below.
+      { bookingId: "bk_1", recipientMemberId: "mem_1", idempotencyKey: "bk_1:1" },
       "member@example.test",
       "Mike",
       CHECK_IN,

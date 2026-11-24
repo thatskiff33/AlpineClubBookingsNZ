@@ -83,6 +83,11 @@ const READERS: Record<string, { reason: string; importOnly: boolean }> = {
     reason: "the face value of the subject's own obligations for their privacy access file (read-only)",
     importOnly: false,
   },
+  // #5208: the GST safeguard compares the journal's planned line tax with Xero's reply.
+  "src/lib/xero-tax-override-safeguard.ts": {
+    reason: "the line tax overrides a primary invoice sent, compared with Xero's reply (a type import)",
+    importOnly: false,
+  },
 };
 /**
  * M3b (#4627): THE POSTING CALLERS, exactly. Each posts through

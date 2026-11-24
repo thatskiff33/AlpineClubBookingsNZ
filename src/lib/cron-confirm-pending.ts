@@ -1627,7 +1627,7 @@ export async function confirmPendingBookings(): Promise<CronConfirmResult> {
       if (paymentIntent.status === "succeeded") {
         paymentSucceeded = true;
 
-        const { newlyCaptured } = await settleSavedCardChargeAttempt({
+        await settleSavedCardChargeAttempt({ // #5240: flags new money for the settle below to consume
             journal,
           attemptRowId: resolution.attempt.attemptRowId,
           paymentId: resolution.paymentId,
@@ -1636,7 +1636,7 @@ export async function confirmPendingBookings(): Promise<CronConfirmResult> {
 
         const reconciliation = await markBookingPaymentSucceeded({
       capturedAt: receiptCaptureTime(paymentIntent),
-          format, recordedByCaller: newlyCaptured, // #4285 review: new money, not a replay
+          format,
           bookingId: resolution.booking.id,
           paymentIntentId: paymentIntent.id,
           amountCents: paymentIntent.amount,

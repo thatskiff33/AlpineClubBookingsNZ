@@ -20,6 +20,18 @@ import {
 } from "@/lib/booking-email-suppression";
 
 describe("email message registry", () => {
+  it("requires {{offerNote}} in the officers' waitlist offer alert, as its sibling requires {{noticeNote}} (#5433 round 3, item 5)", () => {
+    for (const [templateName, token] of [["admin-waitlist-offer", "offerNote"], ["admin-waitlist-notice-unsent", "noticeNote"]] as const) {
+      const definition = getEmailTemplateDefinition(templateName)!;
+      expect(definition.requiredTokens).toContain(token);
+      expect(definition.defaultBody).toContain(`{{${token}}}`);
+      // A saved override that drops it is refused at save; the shipped default passes.
+      const dropped = validateEmailTemplateContent({ templateName, subject: definition.defaultSubject, bodyText: definition.defaultBody.replace(`{{${token}}}`, "") });
+      expect(dropped.missingRequiredTokens).toEqual([token]);
+      expect(validateEmailTemplateContent({ templateName, subject: definition.defaultSubject, bodyText: definition.defaultBody }).valid).toBe(true);
+    }
+  });
+
   it("uses content-only defaults for noisy scheduled report emails", () => {
     expect(getDefaultDeliveryMode("admin-daily-digest")).toBe("content_only");
     expect(getDefaultDeliveryMode("admin-xero-reconciliation-report")).toBe(
