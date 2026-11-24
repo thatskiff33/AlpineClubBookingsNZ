@@ -13,20 +13,24 @@ vi.mock("@/lib/logger", () => ({ default: { info: vi.fn(), warn: vi.fn(), error:
 
 import { EmailLogStatus } from "@prisma/client";
 
-import { EMAIL_RETRY_BACKOFF_MS, EMAIL_RETRY_MAX_ATTEMPTS } from "@/lib/email/retry-selection";
+import { replayInFlightWindowMs } from "@/lib/email/replay-in-flight";
+import { EMAIL_RETRY_MAX_ATTEMPTS } from "@/lib/email/retry-selection";
 import {
   isOfferEmailRowTold,
   offerEmailLogId,
   offerEmailRowState,
   retireOfferEmailIfReplayable,
+  offerEmailLookupStart,
   offerTimeOfEmailLogId,
   retireReplayableOfferEmails,
+  WAITLIST_EMAIL_LOOKBACK_MS,
   waitlistOfferEmailStillWanted,
   waitlistOfferMovedOn,
 } from "@/lib/waitlist-offer-email-state";
 
 const NOW = new Date("2026-07-01T00:00:00.000Z");
-const STALE = new Date(NOW.getTime() - EMAIL_RETRY_BACKOFF_MS);
+// Exactly the replay window ago: no longer in flight (round 4, item 6).
+const STALE = new Date(NOW.getTime() - replayInFlightWindowMs());
 /** A row's bodies, and a last attempt just now unless a case says otherwise. */
 const body = (replayable: boolean, lastAttemptAt: Date = NOW) => ({
   lastAttemptAt,
@@ -45,8 +49,8 @@ describe("offerEmailRowState", () => {
     ["no row", null, "not-sent", false],
     ["SENT", { status: EmailLogStatus.SENT, attempts: 1, ...body(true) }, "sent", true],
     ["QUEUED on its first attempt (the crash-during-the-provider-call limit)", { status: EmailLogStatus.QUEUED, attempts: 1, ...body(true) }, "sent", true],
-    ["QUEUED past its first attempt, claimed within the backoff (the retry cron is replaying it)", { status: EmailLogStatus.QUEUED, attempts: 2, ...body(true) }, "retrying", false],
-    ["QUEUED past its first attempt and older than the backoff (a replay whose SENT write failed, or that died: round 3, item 1)", { status: EmailLogStatus.QUEUED, attempts: 2, ...body(true, STALE) }, "sent", true],
+    ["QUEUED past its first attempt, claimed within the replay window (the retry cron is replaying it)", { status: EmailLogStatus.QUEUED, attempts: 2, ...body(true) }, "retrying", false],
+    ["QUEUED past its first attempt and older than the replay window (a replay whose SENT write failed, or that died: round 3, item 1)", { status: EmailLogStatus.QUEUED, attempts: 2, ...body(true, STALE) }, "sent", true],
     ["withheld by No emails", { status: EmailLogStatus.SKIPPED_NO_EMAILS, attempts: 1, ...body(false) }, "withheld", true],
     ["withheld by a non-production copy", { status: EmailLogStatus.SKIPPED_NON_PRODUCTION, attempts: 1, ...body(false) }, "withheld", true],
     ["FAILED, replayable", { status: EmailLogStatus.FAILED, attempts: 1, ...body(true) }, "retrying", false],
@@ -140,17 +144,17 @@ describe("waitlistOfferEmailStillWanted, the retry job's check (round 3, item 2)
     ["a booking that no longer exists", null, "the booking no longer exists"],
   ])("answers for %s", async (_case, booking, answer) => {
     db.bookingFindUnique.mockResolvedValue(booking);
-    await expect(waitlistOfferEmailStillWanted({ id, bookingId: "booking1" })).resolves.toBe(answer);
+    await expect(waitlistOfferEmailStillWanted({ id, bookingId: "booking1", createdAt: offeredAt })).resolves.toBe(answer);
   });
 
   it("is not wanted when the row names no booking", async () => {
-    await expect(waitlistOfferEmailStillWanted({ id, bookingId: null })).resolves.toBe("the email names no booking");
+    await expect(waitlistOfferEmailStillWanted({ id, bookingId: null, createdAt: offeredAt })).resolves.toBe("the email names no booking");
     expect(db.bookingFindUnique).not.toHaveBeenCalled();
   });
 
   it("throws on a failed read, so the job leaves the row as found", async () => {
     db.bookingFindUnique.mockRejectedValue(new Error("db down"));
-    await expect(waitlistOfferEmailStillWanted({ id, bookingId: "booking1" })).rejects.toThrow("db down");
+    await expect(waitlistOfferEmailStillWanted({ id, bookingId: "booking1", createdAt: offeredAt })).rejects.toThrow("db down");
   });
 });
 
@@ -171,12 +175,33 @@ describe("a row the release before #5433 wrote, with no key (round 4, item 1)", 
 
   it("is replayed while the booking is offered at all, as that release would: the offer is not left untold", async () => {
     db.bookingFindUnique.mockResolvedValue({ status: "WAITLIST_OFFERED", waitlistOfferedAt: offeredAt });
-    await expect(waitlistOfferEmailStillWanted({ id: OLD_ID, bookingId: "booking1" })).resolves.toBe(true);
+    await expect(waitlistOfferEmailStillWanted({ id: OLD_ID, bookingId: "booking1", createdAt: offeredAt })).resolves.toBe(true);
+  });
+
+  it("is retired when it predates the booking's current offer, so an earlier offer's email is not replayed for a later one (round 5, F2)", async () => {
+    const reofferedAt = new Date(offeredAt.getTime() + 3 * 86_400_000);
+    db.bookingFindUnique.mockResolvedValue({ status: "WAITLIST_OFFERED", waitlistOfferedAt: reofferedAt });
+    await expect(waitlistOfferEmailStillWanted({ id: OLD_ID, bookingId: "booking1", createdAt: offeredAt })).resolves.toBe(
+      "the email predates the booking's current offer",
+    );
+  });
+
+  it("allows the clock tolerance: a row dated up to WAITLIST_EMAIL_LOOKBACK_MS before the offer is still its own", async () => {
+    db.bookingFindUnique.mockResolvedValue({ status: "WAITLIST_OFFERED", waitlistOfferedAt: offeredAt });
+    const atEdge = new Date(offeredAt.getTime() - WAITLIST_EMAIL_LOOKBACK_MS);
+    await expect(waitlistOfferEmailStillWanted({ id: OLD_ID, bookingId: "booking1", createdAt: atEdge })).resolves.toBe(true);
+    await expect(waitlistOfferEmailStillWanted({ id: OLD_ID, bookingId: "booking1", createdAt: new Date(atEdge.getTime() - 1) })).resolves.toBe(
+      "the email predates the booking's current offer",
+    );
+  });
+
+  it("is the same lookback the admin waitlist page ties an email row to its offer by", () => {
+    expect(offerEmailLookupStart(offeredAt)).toEqual(new Date(offeredAt.getTime() - WAITLIST_EMAIL_LOOKBACK_MS));
   });
 
   it.each([["WAITLISTED"], ["PAYMENT_PENDING"], ["CANCELLED"]])("is retired once the booking is %s: no offer of it is live", async (status) => {
     db.bookingFindUnique.mockResolvedValue({ status, waitlistOfferedAt: null });
-    await expect(waitlistOfferEmailStillWanted({ id: OLD_ID, bookingId: "booking1" })).resolves.toBe(`the booking is ${status}`);
+    await expect(waitlistOfferEmailStillWanted({ id: OLD_ID, bookingId: "booking1", createdAt: offeredAt })).resolves.toBe(`the booking is ${status}`);
   });
 });
 
@@ -204,8 +229,8 @@ describe("the retrying window follows the transport timeouts (round 4, item 6)",
     }
   });
 
-  it("reads the same replay as sent with the default timeouts, whose window is the backoff", () => {
+  it("reads the same replay as sent with the default timeouts, whose window is 20.5 minutes", () => {
     expect(offerEmailRowState(queuedAgo(30 * MINUTE), NOW)).toBe("sent");
-    expect(offerEmailRowState(queuedAgo(14 * MINUTE), NOW)).toBe("retrying");
+    expect(offerEmailRowState(queuedAgo(20 * MINUTE), NOW)).toBe("retrying");
   });
 });

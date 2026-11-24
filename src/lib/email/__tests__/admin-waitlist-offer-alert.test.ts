@@ -54,7 +54,7 @@ describe("sendAdminWaitlistOfferAlert", () => {
 
   it("says what to do when the email was withheld, and that turning emails back on does not send it (round 4, item 2)", () => {
     const note = waitlistOfferAlertNote("Ada Proof", "withheld");
-    expect(note).toContain('"No emails" is on for this booking');
+    expect(note).toContain('"No emails" was on for this booking');
     expect(note).toContain("Turning emails back on does not send it");
     expect(note).toContain("contact the member directly, or retract the offer");
     expect(note).not.toContain("live site");

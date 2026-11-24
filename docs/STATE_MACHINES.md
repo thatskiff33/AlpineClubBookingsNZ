@@ -3395,8 +3395,8 @@ cron can still replay (`isReplayableFailedEmail`, the cron's own rule, which
 includes a fail-closed "No emails" read: it keeps its body) or a `QUEUED` row
 past its first attempt claimed within `replayInFlightWindowMs()` is the cron's
 (the longest a replay can still be sending: the transport's setup timeout plus
-six inactivity timeouts, never under `EMAIL_RETRY_BACKOFF_MS`; 15 minutes with
-the default timeouts, at most 70);
+ten inactivity timeouts, one per server reply after setup, never under
+`EMAIL_RETRY_BACKOFF_MS`; 20.5 minutes with the default timeouts, at most 110);
 an older such `QUEUED` row (a replay whose `SENT` write failed after the
 provider accepted it, or that died mid-send, which nothing moves on) counts as
 told, the same limit as a first attempt; any other `FAILED` row or a `BOUNCED`
@@ -3472,10 +3472,13 @@ only while the booking is `WAITLIST_OFFERED` with the very offer the row is
 for (`waitlistOfferMovedOn`, the rule the owed notices' sweep uses too), which
 covers a confirm, a decline, a cancel, an admin force-confirm or return to the
 waitlist and a re-offer alike; otherwise it retires the row
-(`retireReplayableEmailRow`) and sends nothing. A row without this release's
-key, written by the release before #5433, cannot be tied to an offer: it is
-replayed while the booking is offered at all, as that release would, and
-retired once it is not. Such an offer has no owed notice, so it gets no
+(`retireReplayableEmailRow`, which moves it to the email-failure review queue)
+and sends nothing. A row without this release's key, written by the release
+before #5433, has no offer time in its id: it is replayed while it could be
+the current offer's (the booking is offered and the row is dated no earlier
+than that offer less `WAITLIST_EMAIL_LOOKBACK_MS`, two minutes for the
+database and application clocks differing, the admin waitlist page's own
+rule), and retired otherwise. Such an offer has no owed notice, so it gets no
 restart and no "not sent" alert, and its lapse counts it as told. The lapse also retires a
 replayable row inside its own transaction, before it decides who was told, so
 the two agree. **Stated limit:** a replay the job had already claimed, between

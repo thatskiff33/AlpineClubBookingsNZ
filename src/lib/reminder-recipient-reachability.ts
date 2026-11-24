@@ -20,8 +20,11 @@ export async function canReceiveChaseEmail(
   email: string,
   bookingId: string,
 ): Promise<boolean> {
-  const reach = await emailReachability(email);
   const log = { bookingId, job: "additionalPaymentReminders" };
+  // One line with the error and the booking, as before #5433 (round 5, F6).
+  const reach = await emailReachability(email, (err) =>
+    logger.error({ err, ...log }, "Could not check the member's email suppression state; skipping the additional-payment reminder"),
+  );
   switch (reach) {
     case "reachable":
       return true;
@@ -39,7 +42,6 @@ export async function canReceiveChaseEmail(
       logger.warn(log, "Skipped an additional-payment reminder to a suppressed address");
       return false;
     case "unknown":
-      logger.error(log, "Could not check the member's email suppression state; skipping the additional-payment reminder");
       return false;
   }
 }

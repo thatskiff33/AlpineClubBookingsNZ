@@ -72,6 +72,21 @@ export function offerTimeOfEmailLogId(bookingId: string, id: string): Date | nul
 }
 
 /**
+ * How far before an offer's `waitlistOfferedAt` its email's row may be dated
+ * and still be that offer's. The row's `createdAt` is the database's clock and
+ * `waitlistOfferedAt` the application's, so this is the tolerance for the two
+ * differing. One definition for the admin waitlist page, which ties the
+ * latest row to the offer by it, and the retry job's check of an unkeyed row
+ * (round 5, F2).
+ */
+export const WAITLIST_EMAIL_LOOKBACK_MS = 2 * 60 * 1000;
+
+/** The earliest `createdAt` an offer email row may carry and still be the offer made at `offeredAt`. */
+export function offerEmailLookupStart(offeredAt: Date): Date {
+  return new Date(offeredAt.getTime() - WAITLIST_EMAIL_LOOKBACK_MS);
+}
+
+/**
  * THE one "is this still the same live offer?" rule (round 4, item 4): null
  * when the booking still holds the offer made at `offeredAt`; otherwise why it
  * moved on. Used by the owed notices' sweep and the retry job's check alike.
@@ -195,13 +210,15 @@ export async function retireOfferEmailIfReplayable(bookingId: string, offeredAt:
  * return to the waitlist, the lapse, a re-offer) without a hook in each.
  *
  * A row without this release's key (round 4, item 1) was written by the
- * release before #5433 and cannot be tied to an offer: it is wanted while the
- * booking is offered at all, and replayed as that release would, so a live
- * offer made before the upgrade is not left untold. Once the booking is no
- * longer offered, no offer of it is live, so it is retired. Throws on a failed
- * read; the job then leaves the row as found.
+ * release before #5433 and has no offer time in its id. It is wanted while it
+ * could be the current offer's: the booking is offered and the row is no
+ * older than that offer, less the clock tolerance (`offerEmailLookupStart`,
+ * the admin page's own rule; round 5, F2). So a live offer made before the
+ * upgrade is not left untold, and an earlier offer's email is not replayed
+ * for a later one. Otherwise it is retired. Throws on a failed read; the job
+ * then leaves the row as found.
  */
-export async function waitlistOfferEmailStillWanted(row: { id: string; bookingId: string | null }): Promise<true | string> {
+export async function waitlistOfferEmailStillWanted(row: { id: string; bookingId: string | null; createdAt: Date }): Promise<true | string> {
   if (!row.bookingId) return "the email names no booking";
   const booking = await prisma.booking.findUnique({
     where: { id: row.bookingId },
@@ -210,7 +227,11 @@ export async function waitlistOfferEmailStillWanted(row: { id: string; bookingId
   if (!booking) return "the booking no longer exists";
   const offeredAt = offerTimeOfEmailLogId(row.bookingId, row.id);
   if (offeredAt === null) {
-    return booking.status === BookingStatus.WAITLIST_OFFERED ? true : `the booking is ${booking.status}`;
+    if (booking.status !== BookingStatus.WAITLIST_OFFERED) return `the booking is ${booking.status}`;
+    if (booking.waitlistOfferedAt && row.createdAt < offerEmailLookupStart(booking.waitlistOfferedAt)) {
+      return "the email predates the booking's current offer";
+    }
+    return true;
   }
   return waitlistOfferMovedOn(booking, offeredAt) ?? true;
 }

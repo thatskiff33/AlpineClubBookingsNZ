@@ -16,7 +16,7 @@ export function waitlistOfferAlertNote(memberName: string, outcome: WaitlistOffe
     case "sent":
       return `A waitlist offer has been sent to ${memberName}.`;
     case "withheld":
-      return `A waitlist offer has been made to ${memberName}, but its email was withheld because "No emails" is on for this booking, so they may not know about it. Turning emails back on does not send it: contact the member directly, or retract the offer.`;
+      return `A waitlist offer has been made to ${memberName}, but its email was withheld because "No emails" was on for this booking, so they may not know about it. Turning emails back on does not send it: contact the member directly, or retract the offer.`;
     case "not-delivered":
       return `A waitlist offer has been made to ${memberName}, but its email did not reach them, so they may not know about it. A separate "Waitlist email not sent" alert says what to do.`;
   }

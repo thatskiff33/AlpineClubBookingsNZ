@@ -13,9 +13,14 @@
   email states that new deadline. If an offer lapses before its email reached
   the member (never sent, failed, bounced, or refused for a suppressed
   address), the member is not sent an "offer expired" email for an offer they
-  never knew about, and a failed offer email is not retried once the offer has
-  ended (bar a retry already under way at that moment); they keep their place in the queue, but others waiting for those
-  nights are considered first for that place. The
+  never knew about; they keep their place in the queue, but others waiting for
+  those nights are considered first for that place. A failed offer email still
+  waiting to be retried when its offer ends is not sent: it moves to the
+  email-failure review queue instead (a retry already under way at that moment
+  still goes). For an offer made before the upgrade, whose email carries no
+  offer key, a failed email is retried only while the booking holds an offer it
+  could belong to (one made no later than the email, give or take two minutes),
+  and moves to the review queue otherwise. The
   place is held a little longer in these rare cases, so the next person may
   wait longer.
 

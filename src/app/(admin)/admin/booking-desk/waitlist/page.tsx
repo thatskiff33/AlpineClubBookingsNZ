@@ -209,6 +209,7 @@ function getOfferEmailSummary(delivery: OfferEmailDelivery) {
   }
 }
 
+const withheldOfferNextStep = (delivery: OfferEmailDelivery) => delivery.status === "MISSING" ? "Open the booking — turning emails back on lets a still-owed offer email go; otherwise contact the member directly or retract the offer" : "Open the booking — turning emails back on will not send the withheld offer email; contact the member directly or retract the offer";
 function getOfferEmailBadgeClass(delivery: OfferEmailDelivery) {
   if (delivery.needsOperatorAction) {
     return "bg-danger-muted text-danger";
@@ -948,7 +949,7 @@ export default function AdminWaitlistPage() {
                           "suppressed_live_offer" ? (
                             // #2258: nothing failed to deliver, so email
                             // recovery is the wrong place to send an officer.
-                            // The fix is on the booking itself.
+                            // #5433: a withheld email is never sent later; no row yet can still go.
                             <Link
                               href={buildHrefWithReturnTo(
                                 buildBookingDetailPath(entry.id),
@@ -956,8 +957,7 @@ export default function AdminWaitlistPage() {
                               )}
                               className="block text-xs text-primary hover:underline"
                             >
-                              Open the booking — turn emails back on or retract
-                              the offer
+                              {withheldOfferNextStep(entry.offerEmailDelivery)}
                             </Link>
                           ) : (
                             <Link

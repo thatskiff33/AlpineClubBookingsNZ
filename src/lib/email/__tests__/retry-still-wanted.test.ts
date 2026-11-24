@@ -11,6 +11,8 @@ vi.mock("@/lib/waitlist-offer-email-state", () => ({ waitlistOfferEmailStillWant
 import { emailStillWanted, STILL_WANTED_TEMPLATE_NAMES } from "@/lib/email/retry-still-wanted";
 import { WAITLIST_OFFER_TEMPLATE_NAME } from "@/lib/email/waitlist-offer-template";
 
+const AT = new Date("2026-06-30T00:00:00.000Z");
+
 beforeEach(() => {
   vi.clearAllMocks();
 });
@@ -22,20 +24,20 @@ describe("emailStillWanted", () => {
 
   it("asks the waitlist offer email's check, with the row's id and booking", async () => {
     check.waitlist.mockResolvedValue("the booking is WAITLISTED");
-    await expect(emailStillWanted({ id: "row", bookingId: "bk", templateName: WAITLIST_OFFER_TEMPLATE_NAME })).resolves.toBe("the booking is WAITLISTED");
-    expect(check.waitlist).toHaveBeenCalledWith({ id: "row", bookingId: "bk" });
+    await expect(emailStillWanted({ id: "row", bookingId: "bk", createdAt: AT, templateName: WAITLIST_OFFER_TEMPLATE_NAME })).resolves.toBe("the booking is WAITLISTED");
+    expect(check.waitlist).toHaveBeenCalledWith({ id: "row", bookingId: "bk", createdAt: AT });
   });
 
   it.each([["booking-confirmed"], ["waitlist-offer-expired"], ["constructor"], ["toString"]])(
     "passes %s straight through, asking nothing",
     async (templateName) => {
-      await expect(emailStillWanted({ id: "row", bookingId: "bk", templateName })).resolves.toBe(true);
+      await expect(emailStillWanted({ id: "row", bookingId: "bk", createdAt: AT, templateName })).resolves.toBe(true);
       expect(check.waitlist).not.toHaveBeenCalled();
     },
   );
 
   it("lets a failing check throw, so the job leaves the row as found", async () => {
     check.waitlist.mockRejectedValue(new Error("db down"));
-    await expect(emailStillWanted({ id: "row", bookingId: "bk", templateName: "waitlist-offer" })).rejects.toThrow("db down");
+    await expect(emailStillWanted({ id: "row", bookingId: "bk", createdAt: AT, templateName: "waitlist-offer" })).rejects.toThrow("db down");
   });
 });

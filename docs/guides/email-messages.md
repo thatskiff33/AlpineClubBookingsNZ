@@ -460,10 +460,11 @@ you want both reworded; editing only one leaves the other on its built-in text.
 > missing a required token, and it cannot be saved again until you add
 > `{{offerNote}}` back or restore the default. Nothing is blocked until then.
 >
-> Three limits officers should know. When **No emails** is on for a booking
-> with a live offer, the offer email is withheld, and turning emails back on
-> does not send it: the member is not told of the offer by email, though they
-> will be told if it expires, so contact them directly or retract the offer.
+> Three limits officers should know. The offer email is withheld if **No
+> emails** is on for the booking when the email is sent, and turning emails
+> back on later does not send it: the member is not told of the offer by
+> email. They are told if the offer expires only if emails are on at that
+> moment. So contact them directly, or retract the offer.
 > When the mail provider reports a bounce or
 > a complaint for a member's address, every earlier email to that address is
 > marked bounced too, so a member who did receive their offer can still be
@@ -478,9 +479,11 @@ you want both reworded; editing only one leaves the other on its built-in text.
 > alert is raised for it.
 >
 > Offers made before the upgrade carry on as they did. Their offer email was
-> recorded without the key this version uses, so this version cannot match it
-> to its offer: a failed one is still retried while the booking holds a live
-> offer, and dropped only once it does not; it gets no window restart and no
+> recorded without the key this version uses, so this version matches it to
+> an offer by time instead: a failed one is still retried while the booking
+> holds a live offer made no later than the email (give or take two minutes
+> for clock differences), as the admin waitlist page already matches them;
+> otherwise it is not sent and moves to the email-failure review queue. It gets no window restart and no
 > "not sent" alert; and if such an offer lapses, the member is sent **Waitlist
 > Offer Expired** as before.
 

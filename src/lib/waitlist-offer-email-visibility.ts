@@ -2,8 +2,7 @@ import { EmailLogStatus, BookingStatus } from "@prisma/client";
 import { bookingOwner } from "@/lib/booking-owner";
 import { prisma } from "@/lib/prisma";
 import { WAITLIST_OFFER_TEMPLATE_NAME } from "@/lib/email/waitlist-offer-template";
-import { offerEmailRowState } from "@/lib/waitlist-offer-email-state";
-const WAITLIST_EMAIL_LOOKBACK_MS = 2 * 60 * 1000;
+import { offerEmailLookupStart, offerEmailRowState } from "@/lib/waitlist-offer-email-state";
 
 type WaitlistOfferEmailRetryState =
   | "delivered"
@@ -73,8 +72,7 @@ type WaitlistOfferEmailLog = {
 };
 
 function getLookupStart(booking: WaitlistOfferBooking) {
-  const offeredAt = booking.waitlistOfferedAt ?? new Date(0);
-  return new Date(offeredAt.getTime() - WAITLIST_EMAIL_LOOKBACK_MS);
+  return offerEmailLookupStart(booking.waitlistOfferedAt ?? new Date(0));
 }
 
 function emailLogMatchesBooking(

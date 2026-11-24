@@ -337,7 +337,9 @@ async function sendOfferEmail(
  * suppression list is "not now": the notice is offered again a wait later.
  */
 async function memberReachability(notice: WaitlistOfferNotice): Promise<"reachable" | "unreachable" | "unknown"> {
-  const reach = await emailReachability(notice.email);
+  const reach = await emailReachability(notice.email, (err) =>
+    logger.error({ err, bookingId: notice.bookingId }, "Could not read the email suppression list; the waitlist offer email stays owed"),
+  );
   return reach === "reachable" || reach === "unknown" ? reach : "unreachable";
 }
 
@@ -388,10 +390,7 @@ async function sendOfferEmailFromSweep(
       return "threw";
     }
     const reach = state === "undeliverable" ? "unreachable" : await memberReachability(notice);
-    if (reach === "unknown") {
-      logger.warn(log, "Could not tell whether the member's address can be emailed; the offer email stays owed");
-      return "threw";
-    }
+    if (reach === "unknown") return "threw";
     if (reach === "unreachable") {
       logger.warn({ ...log, state }, "The waitlist offer email cannot reach the member; alerting the officers instead");
       return alertOfficersWaitlistNoticeUnsent(notice, marker, "offer");

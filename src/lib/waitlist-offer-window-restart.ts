@@ -56,6 +56,7 @@ import type { ClubTimeZone } from "@/lib/club-time";
 import { LOCK1_HOLDER_TRANSACTION_BUDGET } from "@/lib/db-transaction";
 import { canReceiveEmail } from "@/lib/placeholder-contact-email";
 import { prisma } from "@/lib/prisma";
+import { waitlistOfferMovedOn } from "@/lib/waitlist-offer-email-state";
 import {
   restartedWaitlistOfferExpiry,
   WAITLIST_NOTICE_SWEEP_AFTER_MS,
@@ -103,8 +104,8 @@ export async function restartWaitlistOfferWindow({
 
     const offer = await tx.booking.findUnique({ where: { id: bookingId }, select: RESTART_SELECT });
     if (!offer) return { kind: "moved-on", why: "the booking is gone" };
-    if (offer.status !== BookingStatus.WAITLIST_OFFERED) return { kind: "moved-on", why: `the booking is ${offer.status}` };
-    if (offer.waitlistOfferedAt?.getTime() !== offeredAt.getTime()) return { kind: "moved-on", why: "a different offer" };
+    const movedOn = waitlistOfferMovedOn(offer, offeredAt); // the one rule (round 5, F3)
+    if (movedOn !== null) return { kind: "moved-on", why: movedOn };
 
     const current = offer.waitlistOfferExpiresAt;
     const original = waitlistOfferExpiresAt(offeredAt);

@@ -210,13 +210,23 @@ describe("the retry job asks a template's still-wanted check before it claims (#
 
   it("replays a row the release before #5433 wrote (no key) while the booking is offered, as that release would (round 4, item 1)", async () => {
     bookingIs({ status: "WAITLIST_OFFERED", waitlistOfferedAt: OFFERED_AT });
-    mockPrismaRows([{ ...offerEmail(), id: "clx0prerelease0000000000" }]);
+    mockPrismaRows([{ ...offerEmail(), id: "clx0prerelease0000000000", createdAt: new Date(OFFERED_AT.getTime() + 1_000) }]);
     mocks.sendMail.mockResolvedValue({ messageId: "msg_1" });
 
     const result = await retryFailedEmails();
 
     expect(result).toEqual({ retried: 1, succeeded: 1, failed: 0 });
     expect(mocks.sendMail).toHaveBeenCalledTimes(1);
+  });
+
+  it("retires a row the release before #5433 wrote when it predates the booking's current offer (round 5, F2)", async () => {
+    bookingIs({ status: "WAITLIST_OFFERED", waitlistOfferedAt: OFFERED_AT });
+    mockPrismaRows([{ ...offerEmail(), id: "clx0prerelease0000000000", createdAt: new Date(OFFERED_AT.getTime() - 86_400_000) }]);
+
+    await retryFailedEmails();
+
+    expect(mocks.sendMail).not.toHaveBeenCalled();
+    expect(mocks.updateMany).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ errorMessage: expect.stringContaining("predates") }) }));
   });
 
   it("retires a row the release before #5433 wrote once its booking is no longer offered", async () => {

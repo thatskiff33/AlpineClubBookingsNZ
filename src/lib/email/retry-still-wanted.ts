@@ -17,10 +17,11 @@ import { retireReplayableEmailRow } from "@/lib/email/retire-replayable";
 import { WAITLIST_OFFER_TEMPLATE_NAME } from "@/lib/email/waitlist-offer-template";
 import logger from "@/lib/logger";
 
-/** A row the job is about to claim: its durable id and the booking it is about. */
+/** A row the job is about to claim: its id, the booking it is about, and when it was written. */
 export interface RetryCandidate {
   id: string;
   bookingId: string | null;
+  createdAt: Date;
 }
 
 /** `true` to send; otherwise why the email is no longer wanted. May throw; the job then leaves the row as found. */
@@ -38,7 +39,7 @@ export const STILL_WANTED_TEMPLATE_NAMES: readonly string[] = [...STILL_WANTED_C
 export async function emailStillWanted(row: RetryCandidate & { templateName: string }): Promise<true | string> {
   const load = STILL_WANTED_CHECKS.get(row.templateName);
   if (!load) return true;
-  return (await load())({ id: row.id, bookingId: row.bookingId });
+  return (await load())({ id: row.id, bookingId: row.bookingId, createdAt: row.createdAt });
 }
 
 /**
