@@ -2,11 +2,15 @@ import type {
   MembershipTypeSubscriptionBehavior,
   Prisma,
   Role,
+  SubscriptionStatus,
 } from "@prisma/client";
 import { getAgeTierSettingsStrict } from "@/lib/age-tier";
 import { loadMembershipLockoutSettingsStrict } from "@/lib/membership-lockout-settings";
 import { resolveMembershipTypePoliciesForMembers } from "@/lib/membership-type-policy";
-import { effectiveSubscriptionBehavior } from "@/lib/membership-types";
+import {
+  effectiveSubscriptionBehavior,
+  isSubscriptionNotRequiredForMembershipType,
+} from "@/lib/membership-types";
 import { memberDisplayName } from "@/lib/member-serialization";
 import {
   hasChosenLiabilityRule,
@@ -22,6 +26,8 @@ import {
 } from "@/lib/subscription-liability-rule-lock";
 import {
   isUntouchedNotRequiredRow,
+  listSubscriptionStatus,
+  notRequiredRowBillingNote,
   UNTOUCHED_NOT_REQUIRED_ROW,
 } from "@/lib/subscription-season-row-note";
 
@@ -268,7 +274,26 @@ export interface StaleNotRequiredRow {
    * invoice them until they are made active again.
    */
   inBillingPopulation: boolean;
+  /**
+   * The status the admin members list, its CSV export and the subscriptions
+   * list show for this member today, under `listSettings` (#5190, owner
+   * decision 22 Nov 2026): billing's "Not invoiced" when the row carries the
+   * "Marked not required" note, else "Not required". Worked out with the lists'
+   * own helpers (`listSubscriptionStatus`), so the preview never names a status
+   * the members list does not show.
+   */
+  listStatus: SubscriptionStatus | null;
+  /** The members list's note on this row today, or null. */
+  listNote: string | null;
 }
+
+/** An untouched `NOT_REQUIRED` row's state, as the stale selection reads it. */
+const UNTOUCHED_NOT_REQUIRED_ROW_STATE = {
+  status: UNTOUCHED_NOT_REQUIRED_ROW.status,
+  xeroInvoiceId: UNTOUCHED_NOT_REQUIRED_ROW.xeroInvoiceId,
+  manuallyMarkedPaidAt: UNTOUCHED_NOT_REQUIRED_ROW.manuallyMarkedPaidAt,
+  chargeCoverage: [],
+} as const;
 
 /**
  * Which season rows the liability clear-up would reset under `settings`
@@ -290,9 +315,18 @@ export async function findStaleNotRequiredRows(
     | "seasonalMembershipAssignment"
     | "membershipType"
   >,
-  input: { seasonYear: number; settings: SubscriptionLiabilitySettings },
+  input: {
+    seasonYear: number;
+    settings: SubscriptionLiabilitySettings;
+    /**
+     * The club's stored settings, which the members list reads today; only
+     * `listStatus` and `listNote` use them. The selection itself reads
+     * `settings` alone.
+     */
+    listSettings: SubscriptionLiabilitySettings;
+  },
 ): Promise<StaleNotRequiredRow[]> {
-  const { seasonYear, settings } = input;
+  const { seasonYear, settings, listSettings } = input;
   if (!hasChosenLiabilityRule(settings)) {
     return [];
   }
@@ -316,6 +350,13 @@ export async function findStaleNotRequiredRows(
         lastName: true,
         active: true,
         archivedAt: true,
+        // The members list's own type derivation, for `listStatus`.
+        role: true,
+        seasonalMembershipAssignments: {
+          where: { seasonYear },
+          take: 1,
+          select: { membershipType: { select: { subscriptionBehavior: true } } },
+        },
       },
     }),
     getAgeTierSettingsStrict(db),
@@ -347,11 +388,37 @@ export async function findStaleNotRequiredRows(
         byText(a.firstName, b.firstName) ||
         a.id.localeCompare(b.id),
     )
-    .map((member) => ({
-      memberId: member.id,
-      name: memberDisplayName(member),
-      inBillingPopulation: isInSubscriptionBillingPopulation(member),
-    }));
+    .map((member) => {
+      // As `admin-members-service.ts` derives a list row's status and note.
+      const listFacts = {
+        subscriptionBehavior: effectiveSubscriptionBehavior(
+          member.seasonalMembershipAssignments[0]?.membershipType.subscriptionBehavior,
+          member.role,
+        ),
+        member,
+        seasonYear,
+        ageTierSettings,
+        liabilitySettings: listSettings,
+      };
+      const listNote = notRequiredRowBillingNote({
+        ...listFacts,
+        seasonRow: UNTOUCHED_NOT_REQUIRED_ROW_STATE,
+      });
+      return {
+        memberId: member.id,
+        name: memberDisplayName(member),
+        inBillingPopulation: isInSubscriptionBillingPopulation(member),
+        listStatus: listSubscriptionStatus({
+          notRequired: isSubscriptionNotRequiredForMembershipType({
+            ...listFacts,
+            seasonRowStatus: UNTOUCHED_NOT_REQUIRED_ROW.status,
+          }),
+          seasonRowStatus: UNTOUCHED_NOT_REQUIRED_ROW.status,
+          billingNote: listNote,
+        }),
+        listNote,
+      };
+    });
 }
 
 /**
@@ -387,7 +454,7 @@ export async function clearStaleNotRequiredRows(
   await lockSubscriptionLiabilityRuleExclusive(tx);
   const settings = await loadMembershipLockoutSettingsStrict(tx);
   const owingMemberIds = (
-    await findStaleNotRequiredRows(tx, { seasonYear, settings })
+    await findStaleNotRequiredRows(tx, { seasonYear, settings, listSettings: settings })
   ).map((row) => row.memberId);
   if (owingMemberIds.length === 0) {
     return nothingCleared;

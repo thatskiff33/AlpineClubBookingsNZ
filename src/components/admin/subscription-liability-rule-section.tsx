@@ -35,6 +35,7 @@ import {
   LIABILITY_RULE_CHOICE_PERMISSIONS,
   type SubscriptionLiabilitySettings,
 } from "@/lib/policies/subscription";
+import { subscriptionStatusLabel } from "@/lib/status-colors";
 import type { SubscriptionLiabilityImpact } from "@/lib/subscription-liability-impact";
 
 /**
@@ -372,7 +373,7 @@ export function SubscriptionLiabilityRuleSection() {
 function saveMessage(save: { cleared: number; previewed: number } | null): string {
   const saved = "Rule saved. Billing and booking now both follow it.";
   if (save === null || (save.cleared === 0 && save.previewed === 0)) return saved;
-  const reset = `${save.cleared} "Not required" ${save.cleared === 1 ? "record was" : "records were"} reset to Not invoiced.`;
+  const reset = `${save.cleared} "Not required" ${save.cleared === 1 ? "record was" : "records were"} reset to Not Invoiced.`;
   return save.cleared === save.previewed
     ? `${saved} ${reset}`
     : `${saved} ${reset} The preview listed ${save.previewed}: records changed between the preview and the save.`;
@@ -500,7 +501,7 @@ function RuleQuestions({
       <p className="text-xs text-muted-foreground">
         Once a rule is chosen, a saved &ldquo;Not required&rdquo; record no
         longer exempts anyone on its own. Saving resets each such record whose
-        member now owes to Not invoiced, so the next billing run can invoice
+        member now owes to Not Invoiced, so the next billing run can invoice
         them. A chosen rule can be changed later, but not set back to Not
         chosen. Preview the changes before you save.
       </p>
@@ -567,12 +568,18 @@ function LiabilityPreview({
       />
 
       <PreviewList
-        title={"“Not required” records that would be reset to Not invoiced"}
-        explanation="These members have a saved Not required record for this season, but under this rule they owe. Saving resets each record to Not invoiced so the next billing run can invoice them. A record that is invoiced, paid, marked paid or covered by a no-invoice fee is never changed."
+        title={"Saved “Not required” records that would be reset to Not Invoiced"}
+        explanation="These members have a saved Not required record for this season, but under this rule they owe. Each row says what the members list shows for them today: a member billing already treats as owing shows as Not Invoiced with a “Marked not required” note. Saving resets each record to Not Invoiced, which removes the note, so the next billing run can invoice them. A record that is invoiced, paid, marked paid or covered by a no-invoice fee is never changed."
         rows={impact.staleRecords.map((record) => ({
           key: record.memberId,
           name: record.name,
           detail: [
+            // #5190 (owner decision 22 Nov 2026): the members list's own status.
+            record.listStatus
+              ? `members list shows ${subscriptionStatusLabel(record.listStatus)}${
+                  record.listNote ? ", with the “Marked not required” note" : ""
+                }`
+              : null,
             record.inBillingPopulation
               ? null
               : "inactive or archived: not invoiced unless made active again",

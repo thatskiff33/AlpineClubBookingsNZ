@@ -64,10 +64,13 @@ describe("buildSubscriptionLiabilityImpact reads the billing population (#5190)"
       xeroInvoiceNumber: true,
     });
     // Stale records come from the clear-up's selection, under the proposed
-    // rule, including a member outside the billing population.
+    // rule, including a member outside the billing population. Each row's
+    // members-list status is read under the stored settings, which the members
+    // list shows today (owner decision 22 Nov 2026).
     expect(findStaleNotRequiredRows).toHaveBeenCalledWith(expect.anything(), {
       seasonYear: 2026,
       settings: { requiredTypeAgeRule: "ALWAYS_OWES", liabilityAgeSource: "SEASON_START" },
+      listSettings: { requiredTypeAgeRule: "NOT_CHOSEN", liabilityAgeSource: "NOT_CHOSEN" },
     });
     expect(impact.staleRecords).toEqual([
       { memberId: "gone", name: "Archived Member", inBillingPopulation: false },

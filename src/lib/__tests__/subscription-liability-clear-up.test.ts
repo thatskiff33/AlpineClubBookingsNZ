@@ -2,6 +2,10 @@ import type { MembershipTypeSubscriptionBehavior } from "@prisma/client";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { matchesWhere } from "@/lib/__tests__/support/prisma-where";
+import {
+  listSubscriptionStatus,
+  NOT_REQUIRED_ROW_BILLING_NOTE,
+} from "@/lib/subscription-season-row-note";
 
 // #5190: once a club chooses its liability rule, a saved NOT_REQUIRED row
 // exempts nobody, so `clearStaleNotRequiredRows` flips the untouched ones whose
@@ -59,6 +63,8 @@ type MemberFixture = {
   lastName?: string;
   active?: boolean;
   archivedAt?: Date | null;
+  role?: string;
+  seasonalMembershipAssignments?: Array<{ membershipType: { subscriptionBehavior: string } }>;
 };
 
 function member(
@@ -68,7 +74,19 @@ function member(
   extra: Omit<MemberFixture, "id" | "ageTier" | "dateOfBirth"> = {},
 ): MemberFixture {
   behaviors.set(id, behavior);
-  return { id, ageTier, dateOfBirth: null, firstName: id, lastName: "Member", active: true, archivedAt: null, ...extra };
+  return {
+    id,
+    ageTier,
+    dateOfBirth: null,
+    firstName: id,
+    lastName: "Member",
+    active: true,
+    archivedAt: null,
+    // The members list's own type derivation reads these (`listStatus`).
+    role: "MEMBER",
+    seasonalMembershipAssignments: [{ membershipType: { subscriptionBehavior: behavior } }],
+    ...extra,
+  };
 }
 
 function makeTx(input: {
@@ -121,6 +139,7 @@ function makeTx(input: {
 }
 
 const CHOSEN = { requiredTypeAgeRule: "AGE_TIER_EXEMPTS", liabilityAgeSource: "SEASON_START" };
+const NOT_CHOSEN = { requiredTypeAgeRule: "NOT_CHOSEN", liabilityAgeSource: "NOT_CHOSEN" } as const;
 
 describe("clearStaleNotRequiredRows (#5190)", () => {
   beforeEach(() => behaviors.clear());
@@ -204,7 +223,7 @@ describe("clearStaleNotRequiredRows (#5190)", () => {
     // A NO_INVOICE confirm attaches an active claim between the read and the write.
     tx.member.findMany.mockImplementationOnce(async () => {
       rows[0]!.chargeCoverage.push({ releasedAt: null });
-      return [{ id: "youth", ageTier: "YOUTH", dateOfBirth: null }];
+      return [member("youth", "BASED_ON_AGE_TIER", "YOUTH")];
     });
 
     await expect(clearStaleNotRequiredRows(tx as never, SEASON)).resolves.toEqual(NOTHING_CLEARED);
@@ -260,6 +279,7 @@ describe("findStaleNotRequiredRows: the one selection the preview lists and the 
       findStaleNotRequiredRows(tx as never, {
         seasonYear: SEASON,
         settings: { requiredTypeAgeRule: "NOT_CHOSEN", liabilityAgeSource: "NOT_CHOSEN" },
+        listSettings: NOT_CHOSEN,
       }),
     ).resolves.toEqual([]);
     expect(tx.memberSubscription.findMany).not.toHaveBeenCalled();
@@ -267,13 +287,48 @@ describe("findStaleNotRequiredRows: the one selection the preview lists and the 
 
   it("names every member whose untouched row the rule would reset, flagging those billing never considers", async () => {
     const { tx } = makeTx({ settings: CHOSEN, ...fixtures() });
-    await expect(
-      findStaleNotRequiredRows(tx as never, { seasonYear: SEASON, settings: CHOSEN as never }),
-    ).resolves.toEqual([
+    const stale = await findStaleNotRequiredRows(tx as never, {
+      seasonYear: SEASON,
+      settings: CHOSEN as never,
+      listSettings: NOT_CHOSEN,
+    });
+    expect(
+      stale.map(({ memberId, name, inBillingPopulation }) => ({ memberId, name, inBillingPopulation })),
+    ).toEqual([
       { memberId: "archived", name: "Ada Archived", inBillingPopulation: false },
       { memberId: "inactive", name: "Ivan Idle", inBillingPopulation: false },
       { memberId: "youth", name: "Yara Young", inBillingPopulation: true },
     ]);
+  });
+
+  // Owner decision 22 Nov 2026 (#5190 comment 7070827526): a noted row shows
+  // billing's status, so the preview names the status the members list shows.
+  it("states each row's members-list status and note, from the lists' own helpers", async () => {
+    const { tx } = makeTx({ settings: NOT_CHOSEN, ...fixtures() });
+    const stale = await findStaleNotRequiredRows(tx as never, {
+      seasonYear: SEASON,
+      settings: CHOSEN as never,
+      listSettings: NOT_CHOSEN,
+    });
+    const listed = Object.fromEntries(
+      stale.map((row) => [row.memberId, { status: row.listStatus, note: row.listNote }]),
+    );
+    expect(listed).toEqual({
+      // Active and owing on billing's side: "Not Invoiced" with the note.
+      youth: { status: "NOT_INVOICED", note: NOT_REQUIRED_ROW_BILLING_NOTE },
+      // Outside the billing population: no note, so the row's own status.
+      archived: { status: "NOT_REQUIRED", note: null },
+      inactive: { status: "NOT_REQUIRED", note: null },
+    });
+    for (const row of stale) {
+      expect(row.listStatus).toBe(
+        listSubscriptionStatus({
+          notRequired: false,
+          seasonRowStatus: "NOT_REQUIRED",
+          billingNote: row.listNote,
+        }),
+      );
+    }
   });
 
   it("is exactly what saving that rule resets: the preview and the clear-up cannot disagree", async () => {
@@ -281,6 +336,7 @@ describe("findStaleNotRequiredRows: the one selection the preview lists and the 
     const previewed = await findStaleNotRequiredRows(tx as never, {
       seasonYear: SEASON,
       settings: CHOSEN as never,
+      listSettings: CHOSEN as never,
     });
     const cleared = await clearStaleNotRequiredRows(tx as never, SEASON);
     expect(cleared.clearedMemberIds).toEqual(previewed.map((stale) => stale.memberId).sort());

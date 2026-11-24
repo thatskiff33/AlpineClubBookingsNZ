@@ -300,7 +300,10 @@ To choose or change the rule:
    - which **"Not required" records would be reset** to "Not invoiced". The
      save resets this same selection, as it stands when you save, including
      members who are inactive or archived (marked as such: billing does not
-     invoice them unless they are made active again).
+     invoice them unless they are made active again). Each row also says what
+     the members list shows for that member today, worked out the same way:
+     a member billing already treats as owing shows as "Not invoiced" with the
+     "Marked not required" note, and the save removes that note.
 4. Click **Save rule**. It stays unavailable until a preview of exactly your
    answers is on screen; change an answer and you must preview again. The
    confirmation says how many records were reset, and says so if records

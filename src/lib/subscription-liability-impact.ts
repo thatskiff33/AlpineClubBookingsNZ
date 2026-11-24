@@ -156,8 +156,14 @@ export async function buildSubscriptionLiabilityImpact(
   params: { seasonYear: number; proposed: SubscriptionLiabilitySettings },
 ): Promise<SubscriptionLiabilityImpact> {
   const { seasonYear } = params;
-  const [lockoutSettings, ageTierSettings, members, staleRecords] = await Promise.all([
-    loadMembershipLockoutSettingsStrict(db),
+  // Stored settings first: the stale list states each row's members-list
+  // status under them, which is what the members list shows today.
+  const lockoutSettings = await loadMembershipLockoutSettingsStrict(db);
+  const current: SubscriptionLiabilitySettings = {
+    requiredTypeAgeRule: lockoutSettings.requiredTypeAgeRule,
+    liabilityAgeSource: lockoutSettings.liabilityAgeSource,
+  };
+  const [ageTierSettings, members, staleRecords] = await Promise.all([
     getAgeTierSettingsStrict(db),
     db.member.findMany({
       // The members billing considers, as the billing preview reads them.
@@ -177,7 +183,11 @@ export async function buildSubscriptionLiabilityImpact(
       orderBy: [{ lastName: "asc" }, { firstName: "asc" }, { id: "asc" }],
     }),
     // The rows saving the proposed rule would reset, as the clear-up selects them.
-    findStaleNotRequiredRows(db, { seasonYear, settings: params.proposed }),
+    findStaleNotRequiredRows(db, {
+      seasonYear,
+      settings: params.proposed,
+      listSettings: current,
+    }),
   ]);
   const policies = await resolveMembershipTypePoliciesForMembers(db, {
     memberIds: members.map((member) => member.id),
@@ -185,10 +195,7 @@ export async function buildSubscriptionLiabilityImpact(
   });
   return classifyLiabilityImpact({
     seasonYear,
-    current: {
-      requiredTypeAgeRule: lockoutSettings.requiredTypeAgeRule,
-      liabilityAgeSource: lockoutSettings.liabilityAgeSource,
-    },
+    current,
     proposed: params.proposed,
     ageTierSettings,
     staleRecords,

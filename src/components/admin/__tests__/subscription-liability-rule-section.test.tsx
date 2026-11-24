@@ -65,8 +65,20 @@ const IMPACT = {
     { memberId: "ola", name: "Ola Old", billingChanges: true, accessChanges: false, unpaidInvoiceNumber: "INV-7" },
   ],
   staleRecords: [
-    { memberId: "mia", name: "Mia Major", inBillingPopulation: true },
-    { memberId: "ivy", name: "Ivy Idle", inBillingPopulation: false },
+    {
+      memberId: "mia",
+      name: "Mia Major",
+      inBillingPopulation: true,
+      listStatus: "NOT_INVOICED",
+      listNote: "Marked not required, but billing treats this member as owing",
+    },
+    {
+      memberId: "ivy",
+      name: "Ivy Idle",
+      inBillingPopulation: false,
+      listStatus: "NOT_REQUIRED",
+      listNote: null,
+    },
   ],
 };
 
@@ -179,6 +191,12 @@ describe("SubscriptionLiabilityRuleSection (#5190)", () => {
     expect(screen.getByText(/unpaid invoice INV-7/)).toBeTruthy();
     expect(screen.getByText("Mia Major")).toBeTruthy();
     expect(screen.getByText(/inactive or archived/)).toBeTruthy();
+    // Owner decision 22 Nov 2026: each stale row names the members list's own
+    // status, billing's "Not Invoiced" for a noted row.
+    expect(
+      screen.getByText(/members list shows Not Invoiced, with the “Marked not required” note/),
+    ).toBeTruthy();
+    expect(screen.getByText(/members list shows Not Required; inactive or archived/)).toBeTruthy();
     await waitFor(() => expect(save().disabled).toBe(false));
 
     // Changing an answer makes the preview stale and blocks Save again.

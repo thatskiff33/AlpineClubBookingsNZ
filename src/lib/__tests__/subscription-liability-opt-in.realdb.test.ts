@@ -478,6 +478,16 @@ let priorLockoutSettings: MembershipLockoutSettings | null = null;
       expect(clearedStaleRows?.clearedMemberIds).toEqual(
         staleRecords.map((stale) => stale.memberId).sort(),
       );
+      // Owner decision 22 Nov 2026 (#5190): before the save the members list
+      // shows the active member as billing does, "Not invoiced" with the note;
+      // a member outside the billing population keeps the row's own status.
+      expect(
+        staleRecords.map((stale) => [stale.memberId.replace(PREFIX, ""), stale.listStatus, stale.listNote !== null]),
+      ).toEqual([
+        ["active", "NOT_INVOICED", true],
+        ["archived", "NOT_REQUIRED", false],
+        ["inactive", "NOT_REQUIRED", false],
+      ]);
     });
 
     describe("a billing confirm and the settings save serialise on the season key", () => {
