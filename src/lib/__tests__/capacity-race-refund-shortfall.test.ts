@@ -29,7 +29,13 @@ const log = vi.hoisted(() => ({ info: vi.fn(), warn: vi.fn(), error: vi.fn(), de
 vi.mock("@/lib/logger", () => ({ default: log }));
 // The hand-back raiser's own module pulls these in; nothing here reaches them.
 vi.mock("@/lib/email", () => ({ sendAdminManualRefundTaskAlert: vi.fn() }));
-vi.mock("@/lib/prisma", () => ({ prisma: {} }));
+// #5255: the owed row the alert is stored in for the sweep.
+const db = vi.hoisted(() => ({ fake: null as unknown as import("./helpers/alert-cooldown-fake").AlertCooldownFake }));
+vi.mock("@/lib/prisma", async () => {
+  const { createAlertCooldownFake } = await import("./helpers/alert-cooldown-fake");
+  db.fake = createAlertCooldownFake();
+  return { prisma: { alertCooldown: db.fake.delegate } };
+});
 vi.mock("server-only", () => ({}));
 // #4516 (M4d review B): the part's R05 is the journal's (`member-money-hand-backs.test.ts`); here, that the raise asks for it.
 const handBackDoor = vi.hoisted(() => ({ postHandBackObligation: vi.fn(async () => null) }));
@@ -51,6 +57,7 @@ const SENT = { deliveryAllowed: true, recipients: 1, sent: 1, queuedForRetry: 0,
 describe("the capacity race's refund shortfall alert (#4125)", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    db.fake.reset();
     doubles.claim.mockResolvedValue(true);
     doubles.alertOfficers.mockResolvedValue(SENT);
   });
@@ -94,10 +101,19 @@ describe("the capacity race's refund shortfall alert (#4125)", () => {
     expect(doubles.alertOfficers).not.toHaveBeenCalled();
   });
 
-  it("never throws when the send does", async () => {
+  it("never throws when the send does, and leaves the alert stored for the sweep to re-send (#5255)", async () => {
     doubles.alertOfficers.mockRejectedValue(new Error("smtp down"));
 
     await expect(alertCapacityRaceRefundShortfall({ bookingId: "booking-1", paymentIntentId: "pi_1", chargedCents: 10000, plannedRefundCents: 8000 }, CLUB_FORMAT_TEST)).resolves.toBe(false);
+    expect(db.fake.rows.get("once-ever-owed:capacity-race-refund-shortfall:booking-1")?.replayAlert).toMatchObject({
+      label: "capacity-race refund shortfall alert",
+      alert: { kind: "payment-recovery", bookingId: "booking-1", paymentIntentId: "pi_1", amountCents: 2000, errorMessage: expect.stringContaining("refund the member the $20.00 by hand") },
+    });
+  });
+
+  it("settles the stored alert once it is sent (#5255)", async () => {
+    await alertCapacityRaceRefundShortfall({ bookingId: "booking-1", paymentIntentId: "pi_1", chargedCents: 10000, plannedRefundCents: 8000 }, CLUB_FORMAT_TEST);
+    expect(db.fake.rows.size).toBe(0);
   });
 });
 

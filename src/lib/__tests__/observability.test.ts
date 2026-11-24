@@ -98,6 +98,11 @@ const paymentsCycleTasks = vi.hoisted(() => ({
   reannounceHeldLateCaptures: vi.fn(),
   runCreditReleaseAskSweep: vi.fn(),
   drainOwedNewCaptureAlerts: vi.fn(),
+  sweepOnceEverAlerts: vi.fn(),
+}));
+
+vi.mock("@/lib/admin-alert-once-sweep", () => ({
+  sweepOnceEverAlerts: paymentsCycleTasks.sweepOnceEverAlerts,
 }));
 
 vi.mock("@/lib/credit-release-ask-sweep", () => ({
@@ -466,6 +471,7 @@ describe("OBS-03: cron job run recording", { timeout: 30_000 }, () => {
     );
     paymentsCycleTasks.reannounceHeldLateCaptures.mockResolvedValue({ checked: 0, announced: 0 });
     paymentsCycleTasks.runCreditReleaseAskSweep.mockResolvedValue({ enqueued: 0, payments: null, closes: null });
+    paymentsCycleTasks.sweepOnceEverAlerts.mockResolvedValue({ released: 0, resent: 0, settled: 0, dropped: 0, failed: 0 });
     paymentsCycleTasks.drainOwedNewCaptureAlerts.mockResolvedValue({ checked: 0, sent: 0 });
     paymentsCycleTasks.reapStaleWaitingPaymentXeroOutboxOperations.mockResolvedValue({
       reaped: 0,
@@ -488,6 +494,7 @@ describe("OBS-03: cron job run recording", { timeout: 30_000 }, () => {
       .mocked(prisma.cronJobRun.create)
       .mock.calls.map(([arg]) => (arg as { data: { jobName: string; status: string } }).data);
     expect(runs).toEqual([
+      expect.objectContaining({ jobName: "once-ever-alert-sweep", status: "SUCCESS" }),
       expect.objectContaining({ jobName: "payment-recovery", status: "SUCCESS" }),
       expect.objectContaining({
         jobName: "internet-banking-hold-release",

@@ -2190,10 +2190,10 @@ total at apply).
   (`bookingStayHasStarted`, the club's today) is emailed to pay, at most
   once. A started stay is not emailed; the treasurer is alerted once per
   group, linking each joiner's booking. The claim (`sendAdminAlertOnceEver`)
-  is kept once an admin has it or a copy is queued for the email retry cron,
-  held a day when no admin can receive it, and given back when the send
-  throws first, or when the claim write itself throws, under the exact stamp
-  it tried to write (#4696). The
+  is kept once an admin has it or the email retry cron holds a copy, held a
+  day when no admin can receive it, and given back when the send throws
+  first or the claim write throws, under its exact stamp (#4696), or by the
+  sweep if no email followed (`INV-INT-042`). The
   reaper retries it from the events of stays not yet ended.
 - Pinned by `group-late-joiner.test.ts`, `group-late-joiner-heal.test.ts`,
   `group-late-joiner-alert-outage.test.ts`, `alert-cooldown.test.ts`,
