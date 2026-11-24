@@ -1,7 +1,7 @@
 import { EmailLogStatus, BookingStatus } from "@prisma/client";
 import { bookingOwner } from "@/lib/booking-owner";
 import { prisma } from "@/lib/prisma";
-import { WAITLIST_OFFER_TEMPLATE_NAME } from "@/lib/email/waitlist";
+import { WAITLIST_OFFER_TEMPLATE_NAME } from "@/lib/email/waitlist-offer-template";
 import { offerEmailRowState } from "@/lib/waitlist-offer-email-state";
 const WAITLIST_EMAIL_LOOKBACK_MS = 2 * 60 * 1000;
 

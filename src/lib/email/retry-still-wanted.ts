@@ -14,6 +14,7 @@
  */
 
 import { retireReplayableEmailRow } from "@/lib/email/retire-replayable";
+import { WAITLIST_OFFER_TEMPLATE_NAME } from "@/lib/email/waitlist-offer-template";
 import logger from "@/lib/logger";
 
 /** A row the job is about to claim: its durable id and the booking it is about. */
@@ -27,7 +28,7 @@ export type EmailStillWantedCheck = (row: RetryCandidate) => Promise<true | stri
 
 // A Map, not an object literal: a template name such as "constructor" must find nothing.
 const STILL_WANTED_CHECKS: ReadonlyMap<string, () => Promise<EmailStillWantedCheck>> = new Map<string, () => Promise<EmailStillWantedCheck>>([
-  ["waitlist-offer", async () => (await import("@/lib/waitlist-offer-email-state")).waitlistOfferEmailStillWanted],
+  [WAITLIST_OFFER_TEMPLATE_NAME, async () => (await import("@/lib/waitlist-offer-email-state")).waitlistOfferEmailStillWanted],
 ]);
 
 /** The templates that register a check. */

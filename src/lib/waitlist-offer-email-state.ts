@@ -16,8 +16,9 @@
  *   still shows a live offer nobody was told about;
  * - `retrying`: the email retry cron holds it: `FAILED` and replayable
  *   (`isReplayableFailedEmail`), or `QUEUED` past its first attempt and
- *   claimed within the last `EMAIL_RETRY_BACKOFF_MS` (the cron claims a row as
- *   `QUEUED` while it replays it). An older such row is left `QUEUED` by a
+ *   claimed within `replayInFlightWindowMs()` (the cron claims a row as
+ *   `QUEUED` while it replays it; the window is the longest a replay can still
+ *   be sending, from the transport timeouts). An older such row is left `QUEUED` by a
  *   replay whose `SENT` write failed after the provider accepted it, or that
  *   died mid-send, and nothing moves it on; it reads as `sent`, the same
  *   stated limit as a first attempt (round 3, item 1);
@@ -26,13 +27,20 @@
  *   under the same key;
  * - `not-sent`: no row.
  * Told means `sent` or `withheld`, and nothing else.
+ *
+ * An offer made by the release before #5433 has no keyed row: its email was
+ * sent with no key, under a random id. Every reading here is by the keyed id,
+ * so such an offer reads as `not-sent` with no owed notice, which the lapse
+ * counts as told, exactly as that release did; and the retry job replays its
+ * row while the booking is still offered (`waitlistOfferEmailStillWanted`).
  */
 import { BookingStatus, EmailLogStatus, type Prisma } from "@prisma/client";
 
 import { durableEmailLogId } from "@/lib/email/attempt-log";
 import { retireReplayableEmailRow } from "@/lib/email/retire-replayable";
-import { EMAIL_RETRY_BACKOFF_MS, isReplayableFailedEmail } from "@/lib/email/retry-selection";
-import { WAITLIST_OFFER_TEMPLATE_NAME } from "@/lib/email/waitlist";
+import { replayInFlightWindowMs } from "@/lib/email/replay-in-flight";
+import { isReplayableFailedEmail } from "@/lib/email/retry-selection";
+import { WAITLIST_OFFER_TEMPLATE_NAME } from "@/lib/email/waitlist-offer-template";
 import logger from "@/lib/logger";
 import { owedNoticeEventKey } from "@/lib/owed-notice/store";
 import { prisma } from "@/lib/prisma";
@@ -49,6 +57,34 @@ export function offerEmailLogId(bookingId: string, offeredAt: Date): string {
   return durableEmailLogId(WAITLIST_OFFER_TEMPLATE_NAME, waitlistOfferEmailKey(bookingId, offeredAt));
 }
 
+/**
+ * The offer a keyed offer email row is for, read back from its id; null for a
+ * row without this release's key (one the release before #5433 wrote, under a
+ * random id). Exact: the id must be the one `offerEmailLogId` gives for that
+ * time.
+ */
+export function offerTimeOfEmailLogId(bookingId: string, id: string): Date | null {
+  const prefix = offerEmailLogId(bookingId, new Date(0)).slice(0, -1);
+  const suffix = id.startsWith(prefix) ? id.slice(prefix.length) : "";
+  if (!/^\d+$/.test(suffix)) return null;
+  const offeredAt = new Date(Number(suffix));
+  return offerEmailLogId(bookingId, offeredAt) === id ? offeredAt : null;
+}
+
+/**
+ * THE one "is this still the same live offer?" rule (round 4, item 4): null
+ * when the booking still holds the offer made at `offeredAt`; otherwise why it
+ * moved on. Used by the owed notices' sweep and the retry job's check alike.
+ */
+export function waitlistOfferMovedOn(
+  booking: { status: BookingStatus; waitlistOfferedAt: Date | null },
+  offeredAt: Date,
+): string | null {
+  if (booking.status !== BookingStatus.WAITLIST_OFFERED) return `the booking is ${booking.status}`;
+  if (booking.waitlistOfferedAt?.getTime() !== offeredAt.getTime()) return "the booking holds a different offer";
+  return null;
+}
+
 /** What a row's status alone says; a `FAILED` row still needs its bodies to tell replayable from not. */
 type StatusReading = "sent" | "withheld" | "replaying" | "failed" | "undeliverable";
 
@@ -60,7 +96,7 @@ function readStatus({ status, attempts, lastAttemptAt }: OfferEmailRowStatus, no
     case EmailLogStatus.SENT:
       return "sent";
     case EmailLogStatus.QUEUED:
-      return attempts > 1 && now.getTime() - lastAttemptAt.getTime() < EMAIL_RETRY_BACKOFF_MS ? "replaying" : "sent";
+      return attempts > 1 && now.getTime() - lastAttemptAt.getTime() < replayInFlightWindowMs() ? "replaying" : "sent";
     case EmailLogStatus.SKIPPED_NO_EMAILS:
     case EmailLogStatus.SKIPPED_NON_PRODUCTION:
       return "withheld";
@@ -154,10 +190,16 @@ export async function retireOfferEmailIfReplayable(bookingId: string, offeredAt:
 /**
  * The email retry job's "still wanted?" check for `waitlist-offer`
  * (`email/retry-still-wanted.ts`, round 3, item 2): only while the booking
- * still holds the very offer the row is for. Covers every way an offer ends
- * (confirm, decline, cancel, admin force-confirm or return to the waitlist,
- * the lapse, a re-offer) without a hook in each. Throws on a failed read; the
- * job then leaves the row as found.
+ * still holds the very offer the row is for (`waitlistOfferMovedOn`). Covers
+ * every way an offer ends (confirm, decline, cancel, admin force-confirm or
+ * return to the waitlist, the lapse, a re-offer) without a hook in each.
+ *
+ * A row without this release's key (round 4, item 1) was written by the
+ * release before #5433 and cannot be tied to an offer: it is wanted while the
+ * booking is offered at all, and replayed as that release would, so a live
+ * offer made before the upgrade is not left untold. Once the booking is no
+ * longer offered, no offer of it is live, so it is retired. Throws on a failed
+ * read; the job then leaves the row as found.
  */
 export async function waitlistOfferEmailStillWanted(row: { id: string; bookingId: string | null }): Promise<true | string> {
   if (!row.bookingId) return "the email names no booking";
@@ -166,9 +208,9 @@ export async function waitlistOfferEmailStillWanted(row: { id: string; bookingId
     select: { status: true, waitlistOfferedAt: true },
   });
   if (!booking) return "the booking no longer exists";
-  if (booking.status !== BookingStatus.WAITLIST_OFFERED) return `the booking is ${booking.status}`;
-  if (!booking.waitlistOfferedAt || offerEmailLogId(row.bookingId, booking.waitlistOfferedAt) !== row.id) {
-    return "the booking holds a different offer";
+  const offeredAt = offerTimeOfEmailLogId(row.bookingId, row.id);
+  if (offeredAt === null) {
+    return booking.status === BookingStatus.WAITLIST_OFFERED ? true : `the booking is ${booking.status}`;
   }
-  return true;
+  return waitlistOfferMovedOn(booking, offeredAt) ?? true;
 }

@@ -52,9 +52,11 @@ describe("sendAdminWaitlistOfferAlert", () => {
     expect(h.sendToAdmins.mock.calls[0][0].templateData.offerNote).toBe(waitlistOfferAlertNote("Ada Proof", outcome));
   });
 
-  it("says what to do when the email was withheld, naming only the reason officers can meet on the live site", () => {
+  it("says what to do when the email was withheld, and that turning emails back on does not send it (round 4, item 2)", () => {
     const note = waitlistOfferAlertNote("Ada Proof", "withheld");
-    expect(note).toContain("turn its emails back on, or retract the offer");
+    expect(note).toContain('"No emails" is on for this booking');
+    expect(note).toContain("Turning emails back on does not send it");
+    expect(note).toContain("contact the member directly, or retract the offer");
     expect(note).not.toContain("live site");
   });
 });

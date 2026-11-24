@@ -19,8 +19,10 @@ import {
   offerEmailLogId,
   offerEmailRowState,
   retireOfferEmailIfReplayable,
+  offerTimeOfEmailLogId,
   retireReplayableOfferEmails,
   waitlistOfferEmailStillWanted,
+  waitlistOfferMovedOn,
 } from "@/lib/waitlist-offer-email-state";
 
 const NOW = new Date("2026-07-01T00:00:00.000Z");
@@ -149,5 +151,58 @@ describe("waitlistOfferEmailStillWanted, the retry job's check (round 3, item 2)
   it("throws on a failed read, so the job leaves the row as found", async () => {
     db.bookingFindUnique.mockRejectedValue(new Error("db down"));
     await expect(waitlistOfferEmailStillWanted({ id, bookingId: "booking1" })).rejects.toThrow("db down");
+  });
+});
+
+describe("a row the release before #5433 wrote, with no key (round 4, item 1)", () => {
+  const OLD_ID = "clx0prerelease0000000000";
+
+  it("reads no offer time from an id without this release's key, and the exact one from a keyed id", () => {
+    expect(offerTimeOfEmailLogId("booking1", OLD_ID)).toBeNull();
+    expect(offerTimeOfEmailLogId("booking1", offerEmailLogId("booking1", offeredAt))).toEqual(offeredAt);
+    // Another booking's keyed row, a trailing tail and a non-number are not this booking's.
+    expect(offerTimeOfEmailLogId("booking1", offerEmailLogId("booking12", offeredAt))).toBeNull();
+    expect(offerTimeOfEmailLogId("booking1", `${offerEmailLogId("booking1", offeredAt)}x`)).toBeNull();
+    expect(offerTimeOfEmailLogId("booking1", "email:waitlist-offer:booking1:soon")).toBeNull();
+  });
+
+  it("is replayed while the booking is offered at all, as that release would: the offer is not left untold", async () => {
+    db.bookingFindUnique.mockResolvedValue({ status: "WAITLIST_OFFERED", waitlistOfferedAt: offeredAt });
+    await expect(waitlistOfferEmailStillWanted({ id: OLD_ID, bookingId: "booking1" })).resolves.toBe(true);
+  });
+
+  it.each([["WAITLISTED"], ["PAYMENT_PENDING"], ["CANCELLED"]])("is retired once the booking is %s: no offer of it is live", async (status) => {
+    db.bookingFindUnique.mockResolvedValue({ status, waitlistOfferedAt: null });
+    await expect(waitlistOfferEmailStillWanted({ id: OLD_ID, bookingId: "booking1" })).resolves.toBe(`the booking is ${status}`);
+  });
+});
+
+describe("waitlistOfferMovedOn, the one same-live-offer rule (round 4, item 4)", () => {
+  it.each([
+    ["the same live offer", { status: "WAITLIST_OFFERED", waitlistOfferedAt: offeredAt }, null],
+    ["another offer", { status: "WAITLIST_OFFERED", waitlistOfferedAt: new Date(offeredAt.getTime() + 1) }, "the booking holds a different offer"],
+    ["an offer with no time", { status: "WAITLIST_OFFERED", waitlistOfferedAt: null }, "the booking holds a different offer"],
+    ["an ended offer", { status: "WAITLISTED", waitlistOfferedAt: null }, "the booking is WAITLISTED"],
+  ] as const)("answers for %s", (_case, booking, answer) => {
+    expect(waitlistOfferMovedOn(booking as never, offeredAt)).toBe(answer);
+  });
+});
+
+describe("the retrying window follows the transport timeouts (round 4, item 6)", () => {
+  const queuedAgo = (ms: number) => ({ status: EmailLogStatus.QUEUED, attempts: 2, ...body(true, new Date(NOW.getTime() - ms)) });
+  const MINUTE = 60_000;
+
+  it("keeps a replay claimed 30 minutes ago as the retry cron's when the transport may still be sending it", () => {
+    vi.stubEnv("EMAIL_SMTP_SOCKET_TIMEOUT_MS", "600000");
+    try {
+      expect(offerEmailRowState(queuedAgo(30 * MINUTE), NOW)).toBe("retrying");
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it("reads the same replay as sent with the default timeouts, whose window is the backoff", () => {
+    expect(offerEmailRowState(queuedAgo(30 * MINUTE), NOW)).toBe("sent");
+    expect(offerEmailRowState(queuedAgo(14 * MINUTE), NOW)).toBe("retrying");
   });
 });

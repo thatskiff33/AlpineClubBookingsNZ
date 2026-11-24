@@ -15,14 +15,10 @@ import {
 import { renderEmailHtml } from "@/lib/email-theme";
 import { emailCalendarDay, emailClubDateTime } from "@/lib/email-templates-club-time";
 import type { ClubFormat } from "@/lib/club-format";
+import { WAITLIST_OFFER_TEMPLATE_NAME } from "./waitlist-offer-template";
 
 // ---- Waitlist emails ----
 
-/**
- * The offer email's template name: its `EmailLog` rows, and so the durable row
- * id an owed offer notice reads (`waitlist-offer-notices.ts`, #5433).
- */
-export const WAITLIST_OFFER_TEMPLATE_NAME = "waitlist-offer";
 
 export async function sendWaitlistConfirmationEmail(
   // Waitlist entry's booking (#2258): a waitlist entry IS a booking row, so the

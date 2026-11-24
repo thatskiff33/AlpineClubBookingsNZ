@@ -49,8 +49,8 @@ describe("canReceiveChaseEmail, the additional-payment chase's use of it", () =>
     ["an ordinary address", "ada@example.test", null, true],
     ["a suppressed address", "ada@example.test", { id: "s1" }, false],
     ["a placeholder", `walk-in@${PLACEHOLDER_CONTACT_EMAIL_DOMAIN}`, null, false],
-    // Changed in round 3: an empty address used to read as reachable, be claimed and then withheld by the mailer.
-    ["an empty address", "", null, false],
+    // As before #5433: an empty address passes, so the chase's preparation (the officers' note) still runs.
+    ["an empty address", "", null, true],
   ])("answers for %s", async (_case, email, row, answer) => {
     suppression.read.mockResolvedValue(row);
     await expect(canReceiveChaseEmail(email, "booking1")).resolves.toBe(answer);

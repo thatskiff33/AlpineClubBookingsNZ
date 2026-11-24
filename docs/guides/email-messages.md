@@ -452,8 +452,7 @@ you want both reworded; editing only one leaves the other on its built-in text.
 > email. The **Admin Waitlist Offer** alert still goes for every offer, once
 > what became of the offer email is known (it may wait while a failed send is
 > retried). It says which in the new `{{offerNote}}` token: sent, withheld by
-> the booking's **No emails** switch (with the next step: turn the booking's
-> emails back on or retract the offer), or not delivered (alongside the
+> the booking's **No emails** switch, or not delivered (alongside the
 > **Waitlist email not sent** alert). It states the deadline in force with
 > `{{expiresAt}}`, in place of a fixed "48 hours". `{{offerNote}}` is now a
 > required token. A saved copy of that template written before this version
@@ -461,7 +460,11 @@ you want both reworded; editing only one leaves the other on its built-in text.
 > missing a required token, and it cannot be saved again until you add
 > `{{offerNote}}` back or restore the default. Nothing is blocked until then.
 >
-> Two limits officers should know. When the mail provider reports a bounce or
+> Three limits officers should know. When **No emails** is on for a booking
+> with a live offer, the offer email is withheld, and turning emails back on
+> does not send it: the member is not told of the offer by email, though they
+> will be told if it expires, so contact them directly or retract the offer.
+> When the mail provider reports a bounce or
 > a complaint for a member's address, every earlier email to that address is
 > marked bounced too, so a member who did receive their offer can still be
 > reported in a **Waitlist email not sent** alert when it lapses; that alert
@@ -473,6 +476,13 @@ you want both reworded; editing only one leaves the other on its built-in text.
 > before it that expires an offer this version made and never sent sends the
 > member the **Waitlist Offer Expired** email as before, and no officers'
 > alert is raised for it.
+>
+> Offers made before the upgrade carry on as they did. Their offer email was
+> recorded without the key this version uses, so this version cannot match it
+> to its offer: a failed one is still retried while the booking holds a live
+> offer, and dropped only once it does not; it gets no window restart and no
+> "not sent" alert; and if such an offer lapses, the member is sent **Waitlist
+> Offer Expired** as before.
 
 ## Settings reference
 

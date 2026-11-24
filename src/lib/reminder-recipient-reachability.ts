@@ -13,8 +13,8 @@ import logger from "@/lib/logger";
  * the reminder cleanly due for whenever the address is fixed or the suppression
  * cleared. A suppression read that fails is treated as "cannot reach" for this
  * pass, the same fail-closed direction as the cron's "No emails" switch check.
- * The rule itself is `emailReachability` (#5433 round 3): since then an empty
- * address is skipped here too, where it used to be claimed and then withheld.
+ * The rule itself is `emailReachability` (#5433 round 3); an empty address
+ * passes here, as it always has (see below).
  */
 export async function canReceiveChaseEmail(
   email: string,
@@ -26,8 +26,12 @@ export async function canReceiveChaseEmail(
     case "reachable":
       return true;
     case "no-address":
-      logger.info(log, "Skipped an additional-payment reminder: the member has no email address");
-      return false;
+      // Not a reason to stop here (#5433 round 4, item 3): the chase's own
+      // preparation still runs for a booking with no address (an organisation
+      // with none, say), so a credit-release request the Xero gate holds back
+      // still reaches the officers' note; only then does the mailer skip the
+      // send. As before #5433.
+      return true;
     case "placeholder":
       logger.info(log, "Skipped an additional-payment reminder to a walk-in placeholder address");
       return false;

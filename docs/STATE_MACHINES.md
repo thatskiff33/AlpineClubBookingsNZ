@@ -3393,7 +3393,10 @@ read from the offer email's own row, one definition everywhere
 design ("No emails", a non-production copy) are told; a `FAILED` row the retry
 cron can still replay (`isReplayableFailedEmail`, the cron's own rule, which
 includes a fail-closed "No emails" read: it keeps its body) or a `QUEUED` row
-past its first attempt claimed within `EMAIL_RETRY_BACKOFF_MS` is the cron's;
+past its first attempt claimed within `replayInFlightWindowMs()` is the cron's
+(the longest a replay can still be sending: the transport's setup timeout plus
+six inactivity timeouts, never under `EMAIL_RETRY_BACKOFF_MS`; 15 minutes with
+the default timeouts, at most 70);
 an older such `QUEUED` row (a replay whose `SENT` write failed after the
 provider accepted it, or that died mid-send, which nothing moves on) counts as
 told, the same limit as a first attempt; any other `FAILED` row or a `BOUNCED`
@@ -3401,7 +3404,12 @@ one is undeliverable; no row is never sent. Both the first attempt
 and the sweep read the row again after their send, because a send can return
 without reaching the member: a suppressed address is recorded `BOUNCED`, and
 an empty or placeholder address is recorded nowhere. Told, the notice clears;
-the cron's, it waits; otherwise the officers are alerted once. When the email retry job's sweep, not
+the cron's, it waits; otherwise the officers are alerted once. **Stated limit:** an
+email withheld by "No emails" counts as told, and turning emails back on
+sends nothing (`booking-no-emails-service.ts`), so a member whose emails are
+turned back on during a live offer is not told of it, though they are told if
+it expires; the officers' alert says so and asks them to contact the member
+or retract the offer. When the email retry job's sweep, not
 that first attempt, sends the offer email (only when it was never sent), it
 restarts the window first: a full window from the sweep's own clock, capped
 at the start of the check-in date in the club's time zone (owner decision D6)
@@ -3461,9 +3469,14 @@ of the member's email, so a person can step in. An offer email must not be
 replayed once its offer is over. The email retry job asks before it claims a
 `waitlist-offer` row whether it is still wanted (`email/retry-still-wanted.ts`):
 only while the booking is `WAITLIST_OFFERED` with the very offer the row is
-for, which covers a confirm, a decline, a cancel, an admin force-confirm or
-return to the waitlist and a re-offer alike; otherwise it retires the row
-(`retireReplayableEmailRow`) and sends nothing. The lapse also retires a
+for (`waitlistOfferMovedOn`, the rule the owed notices' sweep uses too), which
+covers a confirm, a decline, a cancel, an admin force-confirm or return to the
+waitlist and a re-offer alike; otherwise it retires the row
+(`retireReplayableEmailRow`) and sends nothing. A row without this release's
+key, written by the release before #5433, cannot be tied to an offer: it is
+replayed while the booking is offered at all, as that release would, and
+retired once it is not. Such an offer has no owed notice, so it gets no
+restart and no "not sent" alert, and its lapse counts it as told. The lapse also retires a
 replayable row inside its own transaction, before it decides who was told, so
 the two agree. **Stated limit:** a replay the job had already claimed, between
 its check and its send, still goes, stating the old deadline; at the lapse such
@@ -3474,7 +3487,8 @@ not at all to a lapsed member those passes offered the place again: the
 statuses are read once more, outside any transaction, just before the sends.
 **Blue-green limit:** if a release before #5433 expires an offer this release
 made and never sent, it sends "offer expired" inline as before, and no
-officers' alert is raised.
+officers' alert is raised; and that release's retry job has no "still wanted?"
+check, so during the overlap it can replay an ended offer's email.
 It is `admin-waitlist-notice-unsent`, sent through the once-ever claim of the
 offer email's own marker: if that email's past-cut-off step or a send that
 did not reach the member already alerted the officers, the lapse sends

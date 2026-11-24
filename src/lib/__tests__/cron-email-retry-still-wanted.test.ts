@@ -183,6 +183,7 @@ describe("the retry job asks a template's still-wanted check before it claims (#
     });
   }
 
+  const mockPrismaRows = (rows: unknown[]) => mocks.findMany.mockResolvedValue(rows);
   const offerEmail = () =>
     failedEmail({ id: OFFER_ROW_ID, templateName: "waitlist-offer", subject: "Spot Available!", htmlBody: null, bookingRetryHtmlBody: "<p>the offer</p>", attempts: 1 });
 
@@ -205,6 +206,27 @@ describe("the retry job asks a template's still-wanted check before it claims (#
       where: { id: OFFER_ROW_ID, status: "FAILED", attempts: 1, htmlBody: null, bookingRetryHtmlBody: "<p>the offer</p>" },
       data: expect.objectContaining({ attempts: 3, htmlBody: null, bookingRetryHtmlBody: null, errorMessage: expect.stringContaining("no longer wanted") }),
     });
+  });
+
+  it("replays a row the release before #5433 wrote (no key) while the booking is offered, as that release would (round 4, item 1)", async () => {
+    bookingIs({ status: "WAITLIST_OFFERED", waitlistOfferedAt: OFFERED_AT });
+    mockPrismaRows([{ ...offerEmail(), id: "clx0prerelease0000000000" }]);
+    mocks.sendMail.mockResolvedValue({ messageId: "msg_1" });
+
+    const result = await retryFailedEmails();
+
+    expect(result).toEqual({ retried: 1, succeeded: 1, failed: 0 });
+    expect(mocks.sendMail).toHaveBeenCalledTimes(1);
+  });
+
+  it("retires a row the release before #5433 wrote once its booking is no longer offered", async () => {
+    bookingIs({ status: "WAITLISTED", waitlistOfferedAt: null });
+    mockPrismaRows([{ ...offerEmail(), id: "clx0prerelease0000000000" }]);
+
+    await retryFailedEmails();
+
+    expect(mocks.sendMail).not.toHaveBeenCalled();
+    expect(mocks.updateMany).toHaveBeenCalledWith(expect.objectContaining({ where: expect.objectContaining({ id: "clx0prerelease0000000000", status: "FAILED" }) }));
   });
 
   it("replays a waitlist offer email whose offer is still the live one", async () => {

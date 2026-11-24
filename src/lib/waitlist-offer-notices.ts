@@ -99,6 +99,7 @@ import {
   readOfferEmailState,
   retireOfferEmailIfReplayable,
   waitlistOfferEmailKey,
+  waitlistOfferMovedOn,
 } from "@/lib/waitlist-offer-email-state";
 import { WAITLIST_NOTICE_SWEEP_AFTER_MS, waitlistOfferRestartCap } from "@/lib/waitlist-offer-window";
 import { restartWaitlistOfferWindow } from "@/lib/waitlist-offer-window-restart";
@@ -224,12 +225,9 @@ async function loadWaitlistOfferNotice(marker: OwedNoticeMarker): Promise<Waitli
   };
 }
 
-/** True to send; otherwise why the offer moved on. Reads current state only. */
-function offerMovedOn(notice: WaitlistOfferNotice, marker: OwedNoticeMarker): string | null {
-  if (notice.status !== BookingStatus.WAITLIST_OFFERED) return `the booking is ${notice.status}`;
-  if (notice.offeredAt?.getTime() !== marker.eventAt.getTime()) return "the booking holds a different offer";
-  return null;
-}
+/** Null to send; otherwise why the offer moved on (`waitlistOfferMovedOn`, the one rule). */
+const offerMovedOn = (notice: WaitlistOfferNotice, marker: OwedNoticeMarker): string | null =>
+  waitlistOfferMovedOn({ status: notice.status, waitlistOfferedAt: notice.offeredAt }, marker.eventAt);
 
 /**
  * The offer's "moved on" check. When the offer is over, a `FAILED` offer email
