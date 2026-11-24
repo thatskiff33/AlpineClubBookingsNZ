@@ -246,7 +246,7 @@ booking, even an officer's, and never sends an officer's on-behalf fields.
 | `withdraw_booking_exception_request`, `withdraw_booking_change_exception_request` | Withdraws an open exception request. Cannot be undone | destructive | `PATCH /api/bookings/exception-requests/[id]`, `PATCH /api/bookings/[id]/exception-requests/[requestId]` |
 | `list_my_refund_reviews` | The refund reviews on a cancelled booking | read | `GET /api/bookings/[id]/refund-request` |
 | `request_refund_review` | Asks the club to review a refund. No money moves: an officer decides. Emails the officers | destructive | `POST /api/bookings/[id]/refund-request` |
-| `accept_waitlist_offer` | Accepts a place the club offered at the booking's own lodge; an offer at another lodge is accepted on the website. If payment is needed, the app tells the member to pay on the website. Confirming re-checks adult hosting cover, which can email other members on a group trip | destructive | `POST /api/bookings/[id]/waitlist-confirm` |
+| `accept_waitlist_offer` | Accepts a place the club offered at the booking's own lodge; an offer at another lodge is accepted on the website. If payment or a saved card is needed, the app tells the member to finish on the website. Confirming re-checks adult hosting cover, which can email other members on a group trip | destructive | `POST /api/bookings/[id]/waitlist-confirm` |
 | `delete_my_draft_booking` | Deletes one of the member's drafts. Never a confirmed booking | destructive | `DELETE /api/bookings/[id]` |
 
 An action that notifies anyone but the member, or changes another person's

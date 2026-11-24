@@ -349,14 +349,14 @@ export const MCP_BOOKING_ACTIONS: readonly McpAction[] = [
     id: "accept_waitlist_offer",
     title: "Accept a waitlist offer",
     summary:
-      "Accepts the place the club has offered on one of the signed-in member's waitlisted bookings. If `requiresPayment` is true the member must pay on the website to keep it. An offer at another lodge is refused (409): the member accepts it on the website, which shows the lodge and price. Confirms the booking and can lead to emails to other members on a group trip, so confirm with the member first.",
+      "Accepts the place the club has offered on one of the signed-in member's waitlisted bookings. If `requiresPayment` is true the member must pay on the website to keep it; if `requiresSetup` is true the booking is held as pending and the member saves a card on the website, charged only once the booking is confirmed. An offer at another lodge is refused (409): the member accepts it on the website, which shows the lodge and price. Confirms the booking and can lead to emails to other members on a group trip, so confirm with the member first.",
     method: "POST",
     path: "/api/bookings/[id]/waitlist-confirm",
     params: bookingIdParamsSchema,
     kind: "destructive",
     returns: WAITLIST_OFFER_ACCEPTED_CONNECTION_SHAPE,
     core: false,
-    nextStep: "If payment is needed, the member pays at {origin}/bookings/{id} to keep the place.",
+    nextStep: "If payment or a saved card is needed, the member finishes at {origin}/bookings/{id}.",
   },
   {
     id: "delete_my_draft_booking",
