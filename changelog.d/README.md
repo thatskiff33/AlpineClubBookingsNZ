@@ -218,23 +218,28 @@ What happens to it:
   Required" or "Migration Or Deployment Impact" answer names a time after
   the deploy or the release ("after deploy", "after the next deploy",
   "post-deploy", "after release", "after the new release", "post-release",
-  "after upgrading", "after the upgrade", "after cutover", "once this ships",
-  "once deployed") or says "the owner runs" or "should run", in any case and
-  even wrapped onto the next line, while its diff adds or changes no
+  "after this release's deploy", "after the new colour", "after upgrading",
+  "after the upgrade", "after cutover", "once this ships", "once deployed",
+  "once it is live", "once the new release is serving", "once released") or
+  says "the owner runs" or "should run", in any case and even wrapped onto
+  the next line, while its diff adds or changes no
   `.deploy.md` fragment, and fail any `.deploy.md` it adds or changes that is
   malformed (`scripts/ci/check-pr-deploy-fragment.mjs`).
   A pull request with no such step answers "None. No after-deploy step." The
   gate reads a negated answer as no step: "no", "none" or "nothing" before
   the time, with only words such as "step", "is", "needed" or "to do"
   between ("None after deploy.", "Nothing to do after release."), or the time
-  then "nothing" or "none" ("After deploy: nothing"), which covers the rest of
-  its clause. A clause ends at a full stop, a semicolon or the line's end;
-  each gap between the negation's words may hold one line break, unless the
-  next line opens with a capital (a new sentence). Anything outside the
-  negated clause is read as usual, so "None. After deploy, run the census."
-  fails. So does a negated clause that goes on with "unless", "if", "but" or
-  "except": "No step is needed after deploy unless SMTP is set." and "After
-  deploy, nothing changes for members, but run the backfill." both fail.
+  then "nothing" or "none" ("After deploy: nothing"). Only those words are
+  set aside: the rest of the sentence is read as usual, so "None. After
+  deploy, run the census." and "After deploy nothing breaks, and the owner
+  should run the census." fail. A negation may wrap onto the next line only
+  where that line finishes it ("None. No" then "after-deploy step."), not
+  where it opens with a capital (a new sentence) or goes on to a step ("None"
+  then "after deploy run the census." fails). A negation whose clause goes on
+  with "unless", "if", "but" or "except" is no negation: "No step is needed
+  after deploy unless SMTP is set." and "After deploy, nothing changes for
+  members, but run the backfill." both fail. A clause ends at a full stop, a
+  semicolon or the line's end.
 
   There is no escape marker or phrase (owner decision, 25 Nov 2026, #5379):
   a sentence that only describes behaviour after the deploy trips the gate

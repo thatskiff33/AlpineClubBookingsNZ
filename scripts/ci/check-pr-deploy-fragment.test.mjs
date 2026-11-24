@@ -177,6 +177,16 @@ describe("PR after-deploy step gate (#5379)", () => {
     expect(afterDeployMention(body({ impact: answer }))).toBeNull();
   });
 
+  // Review of 4eed6a2409: a possessive followed by the release's own event still names a time.
+  it.each([
+    ["- After this release's deploy, run X.", "After this release"],
+    ["- After the new release's migration finishes, run X.", "After the new release"],
+    ["- After this release's\n  first deploy, run X.", "After this release"],
+    ["- Post-release's upgrade done, run X.", "Post-release"],
+  ])("reads a possessive naming the release's event as a time in %j", (answer, phrase) => {
+    expect(afterDeployMention(body({ manual: answer }))).toEqual({ section: "## Manual Checks Required", phrase });
+  });
+
   it.each([
     ["- After deploy, nothing changes for members, but run `pnpm backfill` once.", "After deploy"],
     ["- No step is needed after deploy unless SMTP is set; then set FOO.", "after deploy"],
@@ -184,6 +194,13 @@ describe("PR after-deploy step gate (#5379)", () => {
     ["- None after deploy, except clubs on Xero map the account.", "after deploy"],
     ["- After deploy: nothing, unless the module is on.", "After deploy"],
     ["- None\nAfter deploy, run the census.", "After deploy"],
+    // Review of 4eed6a2409: the negation covers only its own words, not the rest of the sentence.
+    ["- After deploy nothing breaks, and the owner should run `pnpm x`.", "owner should run"],
+    ["- After deploy: nothing for members, and after release run X.", "after release"],
+    // ...and wraps onto the next line only where that line finishes it, not where it goes on to a step.
+    ["- None\nafter deploy run X.", "after deploy"],
+    ["- No manual step\n  after the upgrade for clubs on Xero; map the account.", "after the upgrade"],
+    ["- After deploy:\n  nothing for members, then run X.", "After deploy"],
   ])("does not let a negation hide the step in %j", (answer, phrase) => {
     expect(afterDeployMention(body({ manual: answer }))).toEqual({ section: "## Manual Checks Required", phrase });
   });
@@ -191,6 +208,8 @@ describe("PR after-deploy step gate (#5379)", () => {
   it.each([
     "- None. No\n  after-deploy step.",
     "- None after\n  deploy.",
+    "- No\n  after-deploy step is needed.",
+    "- None after the\n  next deploy; the job reads the new column.",
     "- After deploy,\n  nothing; the feature stays off.",
     "- After deploy, nothing changes for members.",
     "- Nothing to do once deployed.",

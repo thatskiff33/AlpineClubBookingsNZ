@@ -15,7 +15,7 @@
  * the tree-wide census (`INV-SSOT`). Node built-ins only: the gate runs before
  * `pnpm install` in `verify`.
  */
-import { scannableLines } from "./markdown-blocks.mjs";
+import { scanMarkdownBlocks, scannableLines } from "./markdown-blocks.mjs";
 import { inlineLinkTargets, maskCode, refDefTargets } from "./markdown-links.mjs";
 
 /** The suffix that marks a `changelog.d/` fragment as an after-deploy step. */
@@ -55,22 +55,48 @@ const NOT_PROSE = /^(?:[ \t]*(?:[-*+][ \t]|\d+[.)][ \t]|`{3}|~{3}|>|\|)|[ \t]{4}
 const MARKER_TEXT = /<!-{2}\s*deploy-steps:/;
 /** An `https:` or `mailto:` target, the only kinds that mean the same thing, and are safe, in every copy of a step. */
 const ALLOWED_TARGET = /^<?(?:https|mailto):/i;
-/** An HTML tag's link attribute, `<a href="…">` or `<img src='…'>`, quoted or not; the target is group 1, 2 or 3. */
-const HTML_LINK_ATTRIBUTE = /<[a-z][a-z0-9-]*\b[^>]*?\s(?:href|src)[ \t]*=[ \t]*(?:"([^"]*)"|'([^']*)'|([^\s"'>]+))/gi;
+/** An HTML start tag, to its `>` (one inside a quoted value does not end it) or the text's end. */
+const HTML_TAG = /<[a-z][a-z0-9-]*\b(?:[^>"']|"[^"]*"|'[^']*'|["'])*>?/gi;
+/** One attribute of an HTML tag and its value, quoted or not: the name is group 1, the value group 2, 3 or 4. */
+const HTML_ATTRIBUTE = /\s([^\s"'>/=]+)(?:[ \t]*=[ \t]*(?:"([^"]*)"|'([^']*)'|([^\s"'>]+)))?/g;
+/** The attributes whose value is a link: `<a href="…">`, `<img src='…'>`. */
+const HTML_LINK_NAME = /^(?:href|src)$/i;
+
+/**
+ * Every `href` and `src` value in the HTML tags of `text`, each attribute of a
+ * tag and not only its first link. `masked` is `text` with its code blanked
+ * (`maskCode`); a raw HTML block, such as an `<img …>` alone on its line, is
+ * read as written, since it is rendered as HTML rather than shown as code.
+ */
+function htmlLinkTargets(text, masked) {
+  const rawHtml = new Map(scanMarkdownBlocks(text).html.map(({ number, text: line }) => [number, line]));
+  const readable = masked
+    .split("\n")
+    .map((line, index) => rawHtml.get(index + 1) ?? line)
+    .join("\n");
+  return [...readable.matchAll(HTML_TAG)].flatMap(([tag]) =>
+    [...tag.matchAll(HTML_ATTRIBUTE)]
+      .filter((match) => HTML_LINK_NAME.test(match[1]))
+      .map((match) => match[2] ?? match[3] ?? match[4])
+      .filter((target) => target !== undefined),
+  );
+}
+
 /** A Markdown autolink, `<scheme:…>`. */
 const AUTOLINK = /<([a-z][a-z0-9+.-]{1,31}:[^<>\s]*)>/gi;
 
 /**
  * The link targets in `text` a step may not carry: every inline or reference
- * link, autolink and HTML `href` or `src` whose target is not `https:` or
- * `mailto:`. A step is copied into the upgrade guide, the release notes page
- * and a GitHub issue, where a relative or same-page link points somewhere
- * different in each, and another scheme (`http:`, `javascript:`, `file:`) is
- * insecure or meaningless there, so none is allowed. Code is not read.
+ * link, autolink and HTML `href` or `src` (every one in a tag, and in a raw
+ * HTML block too) whose target is not `https:` or `mailto:`. A step is copied
+ * into the upgrade guide, the release notes page and a GitHub issue, where a
+ * relative or same-page link points somewhere different in each, and another
+ * scheme (`http:`, `javascript:`, `file:`) is insecure or meaningless there,
+ * so none is allowed. Code is not read.
  */
 function refusedLinkTargets(text) {
   const masked = maskCode(text);
-  const html = [...masked.matchAll(HTML_LINK_ATTRIBUTE)].map((match) => match[1] ?? match[2] ?? match[3]);
+  const html = htmlLinkTargets(text, masked);
   const autolinks = [...masked.matchAll(AUTOLINK)].map((match) => match[1]);
   return [...inlineLinkTargets(masked).map(({ target }) => target), ...refDefTargets(masked).map(({ target }) => target), ...autolinks, ...html].filter(
     (target) => !ALLOWED_TARGET.test(target.trim()),

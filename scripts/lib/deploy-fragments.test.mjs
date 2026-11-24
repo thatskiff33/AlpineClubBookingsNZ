@@ -118,6 +118,12 @@ describe("deploy fragment shape", () => {
       "See <a class=\"x\" href=/admin/audit-log>the log</a>.",
       'See <a href="http://example.com">the page</a>.',
       'It shows <img src="docs/shot.png" alt="the page">.',
+      // Review of 4eed6a2409: every link attribute of a tag is read, not only its first.
+      'See <a href="https://example.com" src="../y">the guide</a>.',
+      'See <a title=">" href="../y">the guide</a>.',
+      'See <img src="https://example.com/a.png" alt="x" href="#top">.',
+      // A raw HTML block is rendered as HTML, so it is read too.
+      '<img alt="the page" src="docs/shot.png">',
     ]) {
       expect(problems(fragment({ check: html })), html).toMatch(/it links ".+": /);
     }

@@ -65,18 +65,29 @@ function wrapping(source) {
 /**
  * When a step would happen, one source each, case-insensitive: "after deploy",
  * "post-deploy", "after the next deploy"; "after release", "after the new
- * release", "post-release" (not "after release-prep merges" or "after this
- * release's webhook"); "after the new colour"; "after upgrading", "after the
- * upgrade"; "after cutover"; "once this ships", "once deployed", "once the new
- * release is serving". The gate reads them as a step, and the negated answer
+ * release", "post-release" (not "after release-prep merges", nor "after this
+ * release's webhook", where a possessive names a thing of the release, though
+ * "after this release's deploy" still names a time, `RELEASE_EVENT`); "after
+ * the new colour"; "after upgrading", "after the upgrade"; "after cutover";
+ * "once this ships", "once deployed", "once it is live", "once the new release
+ * is serving". The gate reads them as a step, and the negated answer
  * below reads the same list, so the two cannot drift apart. A space in a
  * source is a `GAP` and `[ -]` a hyphen or a `GAP` (`wrapping`), so a phrase
  * that wraps onto the next line is still read.
  */
+/**
+ * A release's event, so "after this release's deploy" and "after the new
+ * release's migration finishes" still name a time; any other noun after the
+ * possessive ("after this release's webhook sent one", #5471) does not.
+ */
+const RELEASE_EVENT = String.raw`(?:(?:first|initial|full|schema|database|data)\s+)?(?:deploy|migrat|upgrad|roll-?out|cut-?over|release|launch|go-?live|backfill|switch)`;
+/** After "release": not "release-prep", nor a possessive unless an event follows it. */
+const NOT_RELEASE_THING = String.raw`(?!-|['’]s\b(?!\s+${RELEASE_EVENT}))`;
+
 const WHEN_WORDS = [
   String.raw`(?:after|post)[ -](?:(?:the|this|each|a)[ -])?(?:(?:next|new)[ -])?deploy(?:ing|ment|s|ed)?\b`,
-  String.raw`after (?:(?:the|this|each|a) )?(?:new )?release\b(?!-|['’]s\b)`,
-  String.raw`post[ -]release\b(?!-|['’]s\b)`,
+  String.raw`after (?:(?:the|this|each|a) )?(?:new )?release\b${NOT_RELEASE_THING}`,
+  String.raw`post[ -]release\b${NOT_RELEASE_THING}`,
   String.raw`after (?:the )?new colou?r\b`,
   String.raw`after (?:(?:the|this|an?) )?upgrad(?:e|ing)\b`,
   String.raw`(?:after|post)[ -](?:the )?cut-?over\b`,
@@ -101,28 +112,43 @@ const UNLESS = String.raw`\b(?:unless|if|but|except)\b`;
  * A negated answer: "no", "none" or "nothing" and an after-deploy word in one
  * clause, such as "None. No after-deploy step.", "None after deploy." or
  * "Nothing to do after release." (house idioms on many merged PRs), or the
- * word first, as in "After deploy: nothing", which then runs to the clause's
- * end. Only a few filler words may stand between them, so "No migration, but
- * after deploy run …" still names a step, and "None before merge. After
- * deploy, …" does too: the full stop ends the clause. One line break may stand
- * between two of its words, where a wrapped answer breaks. It is not a
- * negation when the rest of its clause says "unless", "if", "but" or
+ * word first, as in "After deploy: nothing". Only the negation itself is
+ * blanked, so the rest of its clause is still read: "After deploy nothing
+ * breaks, and the owner should run …" names a step. Only a few filler words
+ * may stand between them, so "No migration, but after deploy run …" still
+ * names a step, and "None before merge. After deploy, …" does too: the full
+ * stop ends the clause. One line break may stand between two of its words,
+ * where a wrapped answer breaks (`withoutNegatedAnswers` says when). It is not
+ * a negation when the rest of its clause says "unless", "if", "but" or
  * "except": "No step is needed after deploy unless SMTP is set; then set FOO."
  * and "After deploy, nothing changes for members, but run …" name a step.
  */
 const NEGATED_AFTER_DEPLOY = new RegExp(
   String.raw`\b(?:no|none|nothing)\b(?:${GAP}${FILLER})*${GAP}${WHEN}(?!${CLAUSE_REST}${UNLESS})` +
-    String.raw`|\b${WHEN}[:,]?${GAP}(?:nothing|none)\b(?!${CLAUSE_REST}${UNLESS})${CLAUSE_REST}`,
+    String.raw`|\b${WHEN}[:,]?${GAP}(?:nothing|none)\b(?!${CLAUSE_REST}${UNLESS})`,
   "gi",
 );
 
+/** The rest of a wrapped negation's clause when the next line only finishes it: "step.", "is needed.", nothing. */
+const NEGATION_TAIL = new RegExp(String.raw`^(?:[ \t]+${FILLER}\b)*[ \t]*$`, "i");
+
 /**
  * `section` with each negated after-deploy answer blanked, so it cannot read as
- * a step. A match whose line break is followed by a capital is left alone: the
- * next line starts a new sentence, as in "None" then "After deploy, run …".
+ * a step. A match that spans a line break is blanked only when the next line
+ * continues the negation: it opens lower case, and the rest of its clause is
+ * filler words at most. So "None. No" then "after-deploy step." is blanked,
+ * but "None" then "After deploy, run …" (a new sentence) and "None" then
+ * "after deploy run …" (a step) are read as written.
  */
 const withoutNegatedAnswers = (section) =>
-  section.replace(NEGATED_AFTER_DEPLOY, (match) => (/\n[ \t]*[A-Z]/.test(match) ? match : match.replace(/[^\n]/g, " ")));
+  section.replace(NEGATED_AFTER_DEPLOY, (match, ...rest) => {
+    const blanked = match.replace(/[^\n]/g, " ");
+    if (!match.includes("\n")) return blanked;
+    if (/\n[ \t]*[A-Z]/.test(match)) return match;
+    const [offset, whole] = rest.slice(-2);
+    const tail = /^[^.;\n]*/.exec(whole.slice(offset + match.length))[0];
+    return NEGATION_TAIL.test(tail) ? blanked : match;
+  });
 
 /** Whether `file` is one `release:cut prepare` writes, so a release-prep PR may change it. */
 const isReleasePrepPath = (file) => RELEASE_PREP_PATHS.some((prefix) => file === prefix || file.startsWith(`${prefix}/`));
