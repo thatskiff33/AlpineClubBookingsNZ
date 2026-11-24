@@ -123,6 +123,15 @@ const READY_DOCS = { "docs/UPGRADING.md": UPGRADING_READY, "docs/PRODUCTION_UPGR
  * A bare origin holding one release-tagged commit plus pending fragments, and a
  * clean clone of it. Returns `{ origin, repo }`.
  */
+/**
+ * The budget for a case that calls makeFixture (#5472). Each builds a bare
+ * origin, a seed and a clone and then runs the release script: a run of `git`
+ * spawns whose cost is the host's process start-up, not the test. On a busy CI
+ * runner the first such case exceeded vitest's 5,000ms default and turned
+ * `main` red; the same budget as the deploy release-tag guard's suite.
+ */
+const FIXTURE_REPOSITORY_BUDGET = { timeout: 60_000 };
+
 function makeFixture({
   fragments = { "4400-a-fix.md": "- **A fix (#4400).** Body.\n" },
   tags = ["v0.13.2"],
@@ -424,7 +433,7 @@ describe("package.json, remote and release-body helpers", () => {
   });
 });
 
-describe("release:cut prepare on a fixture repository", () => {
+describe("release:cut prepare on a fixture repository", FIXTURE_REPOSITORY_BUDGET, () => {
   it("prints the whole plan in a dry run and changes nothing", () => {
     const { origin, repo } = makeFixture({
       fragments: { "4400-a-fix.md": "- **A fix (#4400).**\n", "4465-cut.feature.md": "- **Cut releases (#4465).**\n" },
@@ -739,7 +748,7 @@ function lateFragmentFixture({ lateName = "4500-late.md", bump = null, docs = {}
   return { ...fixture, prep, merge: git(fixture.repo, "rev-parse", "HEAD") };
 }
 
-describe("late fragments: release:cut prepare --amend and publish --carry-late-fragments", () => {
+describe("late fragments: release:cut prepare --amend and publish --carry-late-fragments", FIXTURE_REPOSITORY_BUDGET, () => {
   it("refuses the merge commit, offers both paths, and refuses the prep commit CI never built", () => {
     const { repo, prep, merge } = lateFragmentFixture();
 
@@ -903,7 +912,7 @@ describe("late fragments: release:cut prepare --amend and publish --carry-late-f
   });
 });
 
-describe("release documents: the upgrade guide and notes page (#4983)", () => {
+describe("release documents: the upgrade guide and notes page (#4983)", FIXTURE_REPOSITORY_BUDGET, () => {
   /** Commit `edit(repo)` straight to origin/main, as a merged pull request. */
   function mergeToMain(repo, message, edit) {
     git(repo, "switch", "-q", "--detach", "origin/main");
@@ -1184,7 +1193,7 @@ describe("release documents: the upgrade guide and notes page (#4983)", () => {
   });
 });
 
-describe("release:cut publish on a fixture repository", () => {
+describe("release:cut publish on a fixture repository", FIXTURE_REPOSITORY_BUDGET, () => {
   it("prints the plan in a dry run, checks gh read-only, and creates nothing", () => {
     const { repo, merged } = mergedReleaseFixture();
     const run = fixtureRunner(repo);
