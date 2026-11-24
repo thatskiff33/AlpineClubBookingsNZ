@@ -29,7 +29,7 @@ import type { BookingLedgerCensusRow } from "@/lib/booking-ledger-projection-cen
 import type { CancellationEventSnapshot } from "@/lib/booking-events";
 import { INTERNET_BANKING_SETTLEMENT_EVIDENCE_SELECT } from "@/lib/internet-banking-settlement-evidence";
 import { bookingIdOfCreditRow, bookingsCreditRowsWhere } from "@/lib/member-credit-booking-rows";
-import { readBookingJournalCharges, type BookingJournalCharges } from "@/lib/member-money";
+import { readBookingHandBackJournal, readBookingJournalCharges, type BookingHandBackJournal, type BookingJournalCharges } from "@/lib/member-money";
 import { LEDGER_ROWS_OLDEST_FIRST } from "@/lib/payment-ledger-order";
 import { decodeRawRows } from "@/lib/raw-sql-rows";
 import { withReadOnlySnapshot } from "@/lib/read-only-snapshot";
@@ -256,6 +256,7 @@ export function toCensusRow(
   groupChildren: ReadonlyMap<string, NonNullable<BookingLedgerCensusRow["groupChild"]>> = new Map(),
   appeals: ReadonlyMap<string, BookingLedgerCensusRow["appeals"]> = new Map(),
   journal: ReadonlyMap<string, BookingJournalCharges> = new Map(),
+  handBacks: ReadonlyMap<string, BookingHandBackJournal> = new Map(),
 ): BookingLedgerCensusRow {
   const { payment } = booking;
   const settlement = booking.organiserSettled ? (booking.parentBooking?.groupBookingAsOrganiser?.settlement ?? null) : null;
@@ -308,6 +309,7 @@ export function toCensusRow(
     groupChild: groupChildren.get(booking.id) ?? null,
     lines: booking.ledgerLines,
     journal: journal.get(booking.id) ?? null,
+    handBacks: handBacks.get(booking.id) ?? null,
   };
 }
 
@@ -338,6 +340,8 @@ async function readLedgerTableStatistics(tx: Prisma.TransactionClient): Promise<
  * (#3583 PR 2, `booking-ledger-back-post.ts`) judges the lines it has just
  * written, inside its own transaction and under its locks, by the same row and
  * the same evaluation the census uses. Null where the booking does not exist.
+ * It reads no hand-back facts (#5185): refund debts are not the back-post's to
+ * fill, so the hand-back classes and report v3 never refuse its lines.
  */
 export async function readBookingLedgerCensusRow(
   tx: CensusReadStore,
@@ -347,7 +351,7 @@ export async function readBookingLedgerCensusRow(
   if (!booking) return null;
   const credits = await tx.memberCredit.findMany({ where: bookingsCreditRowsWhere([bookingId]), orderBy: ASC, select: CREDIT_SELECT });
   return (
-    await censusRows(tx, [booking], (id) => (id === bookingId ? credits.filter((credit) => bookingIdOfCreditRow(credit) === bookingId) : []))
+    await censusRows(tx, [booking], (id) => (id === bookingId ? credits.filter((credit) => bookingIdOfCreditRow(credit) === bookingId) : []), { handBacks: false })
   )[0]!;
 }
 
@@ -362,7 +366,7 @@ export const CENSUS_PAGE_SIZE = 500;
 type CensusReadStore = Pick<
   Prisma.TransactionClient,
   "booking" | "memberCredit" | "paymentRecoveryOperation" | "payment" | "auditLog" | "manualRefundTask"
-  | "memberMoneyEvent" | "memberMoneyLine" | "memberMoneySourceLink"
+  | "memberMoneyEvent" | "memberMoneyLine" | "memberMoneySourceLink" | "paymentTransaction"
 >;
 
 /**
@@ -433,16 +437,21 @@ async function censusRows(
   tx: CensusReadStore,
   page: readonly StoredCensusBooking[],
   creditsOf: (bookingId: string) => BookingLedgerCensusRow["credits"],
+  options: { handBacks: boolean } = { handBacks: true },
 ): Promise<BookingLedgerCensusRow[]> {
   const groupRefunds = await groupRefundRecoveries(tx, page);
   const appeals = await approvedAppeals(tx, page);
   // #4627: the journal's charges for the page, read in the same snapshot.
   const journal = await readBookingJournalCharges(tx, page.map((booking) => booking.id));
-  const rows = page.map((booking) => toCensusRow(booking, creditsOf(booking.id), groupRefunds, new Map(), appeals, journal));
+  // #5185: and their hand-backs and refund debts, for the bookings whose R01 is in the journal.
+  const handBacks = options.handBacks
+    ? await readBookingHandBackJournal(tx, page.flatMap((booking) => (journal.get(booking.id)?.charged ? [booking.id] : [])))
+    : new Map<string, BookingHandBackJournal>();
+  const rows = page.map((booking) => toCensusRow(booking, creditsOf(booking.id), groupRefunds, new Map(), appeals, journal, handBacks));
   const candidates = page.filter((_, index) => rows[index]!.groupSettlement !== null && isGroupSettlementOffLedger(rows[index]!));
   if (candidates.length === 0) return rows;
   const groupChildren = await groupChildEvidence(tx, candidates);
-  return page.map((booking) => toCensusRow(booking, creditsOf(booking.id), groupRefunds, groupChildren, appeals, journal));
+  return page.map((booking) => toCensusRow(booking, creditsOf(booking.id), groupRefunds, groupChildren, appeals, journal, handBacks));
 }
 
 /**

@@ -7,6 +7,8 @@ import { lodgeNullTolerantScope } from "@/lib/lodges";
 import { loadEffectiveModuleFlags } from "@/lib/module-settings";
 import { prisma } from "@/lib/prisma";
 import { requireActiveSessionUser } from "@/lib/session-guards";
+import { LODGE_ROOMS_CONNECTION_SHAPE } from "@/lib/connection-shapes-bookings";
+import { connectionJson, memberOnlySessionUser } from "@/lib/mcp-connection-request";
 
 /**
  * GET /api/bookings/[id]/requested-room/options — the rooms a booking's
@@ -54,9 +56,12 @@ import { requireActiveSessionUser } from "@/lib/session-guards";
  * putting it in this list would do the one thing the list must not do: make a
  * retired room look pickable. This response is therefore exactly "the rooms this
  * booking may newly request".
+ *
+ * Also the AI app action `list_requestable_rooms` (ALP-794), which acts as the
+ * member only: the officer branches below read the member-only user.
  */
 export async function GET(
-  _request: NextRequest,
+  request: NextRequest,
   { params }: { params: Promise<{ id: string }> },
 ) {
   const session = await auth();
@@ -69,6 +74,7 @@ export async function GET(
     return inactiveResponse;
   }
 
+  const user = memberOnlySessionUser(request, session.user);
   const { id } = await params;
 
   // The booking first: its lodge is the scope, and its owner is the authority.
@@ -82,9 +88,9 @@ export async function GET(
   }
 
   if (
-    bookingOwner(booking).memberId !== session.user.id &&
-    !hasAdminAccess(session.user) &&
-    !hasAdminAreaAccess(session.user, { area: "bookings", level: "edit" })
+    bookingOwner(booking).memberId !== user.id &&
+    !hasAdminAccess(user) &&
+    !hasAdminAreaAccess(user, { area: "bookings", level: "edit" })
   ) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
@@ -114,7 +120,7 @@ export async function GET(
 
   const modules = await loadEffectiveModuleFlags();
   if (!modules.bedAllocation) {
-    return NextResponse.json({ enabled: false, rooms: [] });
+    return connectionJson(request, { enabled: false, rooms: [] }, LODGE_ROOMS_CONNECTION_SHAPE);
   }
 
   const rooms = await prisma.lodgeRoom.findMany({
@@ -130,12 +136,12 @@ export async function GET(
     orderBy: [{ sortOrder: "asc" }, { name: "asc" }, { id: "asc" }],
   });
 
-  return NextResponse.json({
+  return connectionJson(request, {
     enabled: true,
     rooms: rooms.map((room) => ({
       id: room.id,
       name: room.name,
       bedCount: room.beds.length,
     })),
-  });
+  }, LODGE_ROOMS_CONNECTION_SHAPE);
 }

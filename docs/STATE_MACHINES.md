@@ -2866,8 +2866,24 @@ still open on the same payment, wait for it) or cover it all (dismiss
 instead), read under `lock(1)` and the booking row, so the lost part
 is never paid twice. A legacy row with no `raisedAmountCents` records its
 original with the first reduction. A Stripe late win after a reduction leaves
-it reduced: a stated limit, with #5197. Reopened, it has no live R05, and Mark paid then
-posts its R14 unapplied, as for a task raised before M4d.
+it reduced: the won-after-loss alert names the cents now owed again (#5197).
+
+**#5197: DISMISSED -> OPEN by a late win.** When Stripe reports WON a dispute
+recorded LOST, the webhook (after the WON commit, while its alert is unsent)
+puts each dispute-loss hand-back the loss dismissed back OPEN, newest first,
+as far as the lost cents still recorded no longer cover what the payment's
+hand-backs applied (`lateWinOwedAgain`). The officer's reopen rules apply,
+with no actor (origin `STRIPE`), and the claim also posts the task's R05 again:
+a whole R05 the dismissal reversed is posted at its chain's next key, a
+reduced task's rest withdrawal is reversed exactly (`restoreHandBackObligation`),
+so the journal owes what the task does. An officer's reopen of a dispute-loss
+hand-back restores it the same way, and dismissing it again withdraws it again.
+A refused or timed-out reopen leaves it DISMISSED and the alert names it. An
+edit's hand-back dismissed on a cancelled booking (only a lost dispute allows
+it; the dismissal's audit row records the booking's status) with no
+cancellation since is spared the after-cancel reopen refusal; one dismissed
+before the cancellation is refused, and the alert says the cancellation
+counted it.
 
 **#3498: and one of the two terminal states is no longer terminal.** A DISMISSED
 row can be put back OPEN by an officer, which is the arm above; a COMPLETED row
@@ -4634,6 +4650,16 @@ Refund notes target the invoice that held each paid share and wait for its
 unpaid-balance waiver to finish before payout. The organiser's app
 notice is a separate durable email row, sent by the email retry lifecycle.
 
+A school's corrected email and phone (#5245) queue one
+`ORGANISATION_CONTACT_DETAILS` row (CONTACT UPDATE, anchored on the
+`Organisation`) in the edit's own transaction, and only when the school already
+has a Xero contact. The row carries no details: the worker reads them when it
+runs and sends `contactID`, `emailAddress` and `phones`, never `name`. A row a
+later correction superseded closes `CANCELLED` unsent; a row that finds no
+contact closes `SUCCEEDED` as a no-op; a provider failure leaves it `FAILED` and
+replayable, and the officer's Retry (or Xero Operations') returns it to
+`PENDING` for the outbox.
+
 The outbox scan (`processQueuedXeroOutboxOperations`) and the retry scan
 (`processQueuedXeroOperationRetries`) read `PENDING` rows oldest first, ordered
 by `createdAt` then `id` (#4663). `createdAt` comes from JS time, so rows queued
@@ -5122,6 +5148,25 @@ additional lock is involved. As before,
 a crash after a send but before its sent stamp can repeat that alert when the
 ten-minute cooldown expires; the retry is at least once.
 
+### Once-ever admin alert claim (#5255)
+
+```text
+no claim -> claimed, awaiting send (awaitingSendSince = the claim's stamp)
+awaiting send -> first email row written -> kept, for good (mark cleared in the row's transaction)
+awaiting send -> send reached nobody -> deferred a day -> no claim
+awaiting send -> send threw, or recorded no email -> given back -> no claim
+awaiting send, 15 minutes on -> once-ever-alert-sweep gives it back -> no claim
+no claim -> the caller's next run claims and sends
+raised-once alert -> stored owed row -> sweep re-sends while no claim holds it
+  -> settled once kept; dropped with an error after 7 days
+```
+
+The give-back and the first email row race on the `AlertCooldown` row's lock:
+whichever commits first wins, and the loser changes nothing, so the sweep never
+makes a second send (`INV-INT-042`). A claim taken before #5255 has no mark and
+is never swept. Known limits, not owner-accepted: an alert raised while every
+database write fails (#5297), and an email row a crash left `QUEUED` (#5298).
+
 ### Shared Xero inbound run authority (#4432)
 
 The scheduled inbound cycle, HTTP cron's inbound/mirror tasks and whole-club
@@ -5258,7 +5303,9 @@ claim reads nothing outstanding, after its preflight records Stripe's list
   a refund on the row's intent carrying exactly its runner's metadata,
     recorded as made in the ledger                     -> report, then close
   none (another door's refund), or not recorded as made -> close, no notice
-report not settled (email not recorded, alert not sent) -> throws; row retried
+report not settled (email not recorded, no alert copy delivered or queued
+  and neither the club switched the alert off nor a non-live copy held it
+  back) -> throws; row retried
 alert claim held, no sent marker: younger than the stale threshold
   -> the row waits (attempt handed back: never terminal, no officer alert);
   older -> the dead attempt's claim is given back and the alert sent

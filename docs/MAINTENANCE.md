@@ -2278,6 +2278,24 @@ close-out. A close whose debt was never in the journal posts its bank cash
 unapplied and has no debt to close out, so it is not listed. Open reservations give exit status 2.
 No provider call; nothing is matched by amount or time.
 
+Since Ledger M4d (#5185) it also lists each booking's bank and cash hand-back
+classes, which `booking-ledger:census` reports too (below), excluding history
+from before the journal's first M4d event: `HAND_BACK_WITHOUT_EVENT`, a
+hand-back raised with no refund debt in the journal; `HAND_BACK_PAID_WITHOUT_EVENT`,
+one marked paid with no hand-back payment (R14); `UNAPPLIED_HAND_BACK`, an R14
+that paid no debt although the task's debt is the journal's;
+`HAND_BACK_OBLIGATION_DRIFT`, a debt whose open cents differ from what its task
+still owes (open while the task is closed, closed while it is open, or open
+with no task row behind it); and `KEEP_WITHOUT_EVENT`, a late capture the
+treasurer kept with no keep in the journal. Each is a journal that no longer
+says what the task says: a door that skipped the journal, a row changed outside
+one, or a door that does not yet post its step (two are known: a hand-back paid
+onto a group organiser's settlement mirror posts no R14, and putting a dismissed
+hand-back back on the queue posts no fresh R05). Report each as a defect;
+nothing here repairs it. During the blue/green switch that deploys M4d, the old
+colour can still raise or pay a hand-back after the new one's first event, and
+such a task is listed too: acknowledge those once the old colour has drained.
+
 Expected until the milestone that answers unapplied refunds: a refund that
 posted unapplied (a debt raised before M4c, a Stripe dashboard refund, a merged
 debtor's) pays no refund obligation, so the receipt census keeps listing its
@@ -2309,7 +2327,29 @@ A disagreement there means a writer moved the price before payment without a
 journal event; the confirmation will re-state it once (logged as "confirmation
 lines differ from the charge posted before settlement"), so acknowledge it to
 the cent or let the booking settle. A charge line on such a booking is
-`UNBRIDGED_CHARGE_LINE`: a confirmation that skipped the bridge. It prints:
+`UNBRIDGED_CHARGE_LINE`: a confirmation that skipped the bridge. Since Ledger
+M4d (#5185, [`INV-MONEY-049`](invariants/money.md#inv-money-049)) report v3
+adds `JOURNAL_REFUND_PAYABLE` for every booking whose confirmation is in the
+journal: its open refund payable against what the legacy records still owe back
+on the debts the journal holds (each hand-back task whose debt posted, at what
+it still owes; each open card refund row whose debt is still live, at its
+slices not yet made, so a row left on a debt since reversed, such as a kept
+late capture's, counts nothing; each late capture held open for the treasurer
+whose capture-return debt posted and no such row pays, at its task's amount).
+A card refund that went back without paying its debt (listed by the
+refund reservations command as `UNAPPLIED_CARD_REFUND` or
+`RESERVATION_SKIPPED_NO_RECEIPT`) disagrees here until the milestone that
+answers unapplied refunds; acknowledge it to the cent. So, for a while, does a
+card refund row whose slice Stripe made without answering the attempt: the row
+marks the slice made only on its next run, or on "Paid another way" once dead.
+So does a late capture kept while its capture-return debt is already partly
+paid or reserved: the keep leaves that debt open on purpose (logged as "A
+kept late capture's refund debt is paid or reserved, so the keep leaves it
+open"), the dismissed task owes nothing and the refused refund left no card
+refund row, so v3 disagrees by the debt's open cents. Today's automatic refund
+sends one slice and a refusal releases its reservation, so this is not expected;
+check the capture in Stripe, then acknowledge it to the cent.
+It prints:
 
 - per identity, how many bookings it applies to, agree, disagree, are
   classified, or are a coverage gap;
@@ -2327,9 +2367,11 @@ the cent or let the booking settle. A charge line on such a booking is
   cancellation's frozen kept figure) no longer bears out, and (`UNBRIDGED_CHARGE_LINE`)
   a charge line on a journal-confirmed booking that no journal batch links,
   (`CONFIRMED_WITHOUT_R01`) a booking created after the journal's first
-  confirmation and confirmed on the ledger with none, and (`JOURNAL_INACTIVE`,
+  confirmation and confirmed on the ledger with none, (`JOURNAL_INACTIVE`,
   once) a club whose currency no card can be charged in, for which the journal
-  posts nothing.
+  posts nothing, and the five M4d hand-back classes (#5185,
+  [card refund reservations](#reconcile-and-census-card-refund-reservations-m4c)
+  explains each).
   PostgreSQL's update and delete counts for the table are printed as
   information only;
 - **named classes** — expected differences, each matched to the cent from the
@@ -3304,8 +3346,10 @@ call may still come back with a note:
   may have recorded that very note, in which case nothing needs voiding.
 
 Limit: if the app stops between deciding not to record the note and writing
-its audit entry, the app's log is the only record of it; if the email cannot
-reach anyone, it is not sent again, and the audit entry and the log remain.
+its audit entry, the app's log is the only record of it. If the email cannot
+reach anyone, or its send fails, the payments cron re-sends it every 15
+minutes (daily while nobody can receive it) until it is out, for up to seven
+days (#5255); after that the audit entry and the log remain.
 
 The job can also stall after it has recorded its note, while it allocates the
 waiver or records the refund payment (#4680). After **Reset stale running**,

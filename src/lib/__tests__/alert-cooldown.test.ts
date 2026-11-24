@@ -14,14 +14,19 @@ import {
   ALERT_ONCE_EVER_WINDOW_MS,
   claimAlertCooldown,
   claimOwedAlert,
+  confirmAlertCooldownSend,
   deferAlertCooldown,
   listAllOwedAlertKeys,
   listOwedAlertKeys,
+  listStaleUnsentAlertCooldowns,
   markAlertOwed,
   noteOwedAlertAttempt,
   releaseAlertCooldown,
+  releaseUnsentAlertCooldown,
   settleOwedAlert,
 } from "@/lib/alert-cooldown";
+import { promotedCaptureAlertOwedKey, recordCaptureAwaitingSettle, UNSETTLED_CAPTURE_PREFIX } from "@/lib/unsettled-capture-marker";
+import { createAlertCooldownFake } from "./helpers/alert-cooldown-fake";
 import { createAlertCooldownStore } from "./support/alert-cooldown-store";
 
 /** The shared in-memory table (`support/alert-cooldown-store.ts`), as a helper's `store`. */
@@ -81,6 +86,7 @@ describe("alert-cooldown (#3672)", () => {
         lastAlertedAt: new Date(
           T0.getTime() - ALERT_ONCE_EVER_WINDOW_MS + ALERT_NOBODY_ELIGIBLE_RETRY_MS
         ),
+        awaitingSendSince: null,
       },
     });
 
@@ -145,6 +151,105 @@ describe("owed alert markers (#3635 F1)", () => {
     // Fifteen minutes later is the next run, and the marker is already due.
     await expect(list(store, at(15 * 60 * 1000))).resolves.toEqual([OWED]);
     await expect(list(store, T0)).resolves.toEqual([OWED]);
+  });
+});
+
+/*
+ * #5255 (`INV-INT-042`): a once-ever claim marked as having no email behind it.
+ * The alert's email row confirms it; the sweep gives back only a claim still
+ * marked, under its own stamp, so a confirmed or newer claim is never released.
+ */
+describe("the once-ever claim's unsent mark (#5255)", () => {
+  const claimAwaiting = (fake: ReturnType<typeof createAlertCooldownFake>, now: Date) =>
+    claimAlertCooldown({ key: KEY, windowMs: ALERT_ONCE_EVER_WINDOW_MS, now, awaitingSend: true, store: fake.store });
+
+  it("marks a claim taken with awaitingSend on both the create and the re-claim path", async () => {
+    const fake = createAlertCooldownFake();
+    await claimAwaiting(fake, T0);
+    expect(fake.rows.get(KEY)?.awaitingSendSince).toEqual(T0);
+
+    await deferAlertCooldown({ key: KEY, claimedAt: T0, windowMs: ALERT_ONCE_EVER_WINDOW_MS, retryAfterMs: 1, store: fake.store });
+    expect(fake.rows.get(KEY)?.awaitingSendSince, "a deferred claim is settled for the day").toBeNull();
+    await expect(claimAwaiting(fake, at(2))).resolves.toBe(true);
+    expect(fake.rows.get(KEY)?.awaitingSendSince).toEqual(at(2));
+  });
+
+  it("leaves a claim taken without awaitingSend unmarked", async () => {
+    const fake = createAlertCooldownFake();
+    await claimAlertCooldown({ key: KEY, windowMs: ALERT_ONCE_EVER_WINDOW_MS, now: T0, store: fake.store });
+    expect(fake.rows.get(KEY)?.awaitingSendSince).toBeNull();
+    await expect(listStaleUnsentAlertCooldowns({ markedBefore: at(86_400_000), store: fake.store })).resolves.toEqual([]);
+  });
+
+  it("confirms under the claim's own stamp, for every recipient, and refuses once the claim is gone", async () => {
+    const fake = createAlertCooldownFake();
+    const store = fake.store;
+    await claimAwaiting(fake, T0);
+
+    await expect(confirmAlertCooldownSend({ key: KEY, claimedAt: at(-1), store }), "another caller's stamp").resolves.toBe(false);
+    expect(fake.rows.get(KEY)?.awaitingSendSince).toEqual(T0);
+    await expect(confirmAlertCooldownSend({ key: KEY, claimedAt: T0, store })).resolves.toBe(true);
+    await expect(confirmAlertCooldownSend({ key: KEY, claimedAt: T0, store }), "the second recipient").resolves.toBe(true);
+    expect(fake.rows.get(KEY)?.awaitingSendSince).toBeNull();
+
+    await releaseAlertCooldown({ key: KEY, claimedAt: T0, store });
+    await expect(confirmAlertCooldownSend({ key: KEY, claimedAt: T0, store })).resolves.toBe(false);
+  });
+
+  it("gives back a claim only while it is still marked, under its own stamp", async () => {
+    const fake = createAlertCooldownFake();
+    const store = fake.store;
+    await claimAwaiting(fake, T0);
+
+    await expect(releaseUnsentAlertCooldown({ key: KEY, claimedAt: at(-1), store })).resolves.toBe(false);
+    await confirmAlertCooldownSend({ key: KEY, claimedAt: T0, store });
+    await expect(releaseUnsentAlertCooldown({ key: KEY, claimedAt: T0, store }), "confirmed: kept").resolves.toBe(false);
+    expect(fake.rows.has(KEY)).toBe(true);
+
+    fake.reset();
+    await claimAwaiting(fake, T0);
+    await expect(releaseUnsentAlertCooldown({ key: KEY, claimedAt: T0, store })).resolves.toBe(true);
+    expect(fake.rows.has(KEY)).toBe(false);
+  });
+
+  it("lists claims marked before the cut-off only, oldest first", async () => {
+    const fake = createAlertCooldownFake();
+    const store = fake.store;
+    await claimAlertCooldown({ key: "b", windowMs: ALERT_ONCE_EVER_WINDOW_MS, now: at(2), awaitingSend: true, store });
+    await claimAlertCooldown({ key: "a", windowMs: ALERT_ONCE_EVER_WINDOW_MS, now: at(1), awaitingSend: true, store });
+    await claimAlertCooldown({ key: "c", windowMs: ALERT_ONCE_EVER_WINDOW_MS, now: at(3), awaitingSend: true, store });
+
+    await expect(listStaleUnsentAlertCooldowns({ markedBefore: at(3), store })).resolves.toEqual([
+      { key: "a", lastAlertedAt: at(1) },
+      { key: "b", lastAlertedAt: at(2) },
+    ]);
+  });
+
+  it("stores an owed marker's replayable alert", async () => {
+    const fake = createAlertCooldownFake();
+    const replayAlert = { kind: "xero-sync-error", errorType: "X" };
+    await markAlertOwed({ key: "owed:1", due: "after-retry", retryAfterMs: 1, replayAlert, now: T0, store: fake.store });
+    expect(fake.rows.get("owed:1")).toMatchObject({ lastAlertedAt: T0, replayAlert });
+  });
+
+  it("never lists or gives back #5240's owed flags, which are upserted without the mark", async () => {
+    const { store, rows, alertCooldown } = memoryStore();
+    await claimAlertCooldown({ key: KEY, windowMs: ALERT_ONCE_EVER_WINDOW_MS, now: T0, awaitingSend: true, store });
+    // The saved-card settle's flag, and a promoted owed marker written the way `recordNewCaptureAlertOwed` writes it.
+    const flagKey = `${UNSETTLED_CAPTURE_PREFIX}pi_1`;
+    const promotedKey = promotedCaptureAlertOwedKey("not-recorded", "b1", "pi_1");
+    await recordCaptureAwaitingSettle(store, "pi_1", T0);
+    await alertCooldown.upsert({
+      where: { key: promotedKey },
+      create: { key: promotedKey, lastAlertedAt: T0 },
+    });
+
+    await expect(listStaleUnsentAlertCooldowns({ markedBefore: at(ALERT_ONCE_EVER_WINDOW_MS), store })).resolves.toEqual([
+      { key: KEY, lastAlertedAt: T0 },
+    ]);
+    await expect(releaseUnsentAlertCooldown({ key: flagKey, claimedAt: T0, store })).resolves.toBe(false);
+    await expect(releaseUnsentAlertCooldown({ key: promotedKey, claimedAt: T0, store })).resolves.toBe(false);
+    expect(rows.has(flagKey) && rows.has(promotedKey)).toBe(true);
   });
 });
 

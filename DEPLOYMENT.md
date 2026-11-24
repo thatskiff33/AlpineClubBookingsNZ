@@ -2294,9 +2294,13 @@ alert, "Lost card payment dispute now won". If you recorded the loss in Xero:
    referencing the booking and the Stripe dispute id, and a second for the fee
    if Stripe returned it.
 3. Reconcile both against that payout.
-4. A treasurer task the app raised while the dispute held stays open. If you
-   already dismissed it, the member's refund or credit is now owed again: pay
-   it as the task would have.
+4. A treasurer task the app raised while the dispute held stays open. One
+   dismissed for the loss is put back on the queue by the app, its refund
+   owed to the member again, and the alert names it (#5197); pay it as usual.
+   The alert also names any task it could not reopen (reopen it under
+   Finance → Payments) and any reduction made for the loss, now owed to the
+   member again: the app leaves a reduced task as it is, so pay that amount by
+   bank transfer and record it in Xero as you record the task's payment.
 
 If Stripe webhook delivery was missed while the endpoint, DNS, TLS, or the
 signing secret stored under **Admin > Integrations > Stripe** was wrong (it is
@@ -2657,7 +2661,7 @@ truth. The public POST endpoints are:
 | Endpoint | Task(s) | Typical cadence | Recorded `CronJobRun.jobName` |
 | -------- | ------- | --------------- | ----------------------------- |
 | `POST /api/cron` | General cron cycle: pending booking confirmation, group-settlement reaper, abandoned policy-exception capacity-hold reaper, pre-arrival reminders, booking-request retention purge, quote-expiry reminders, school attendee confirmations, and placeholder guest-name reminders. | Every 3 hours in the cron leader. | `confirm-pending`, `group-settlement-reaper`, `placeholder-guest-name-reminders`, `policy-exception-hold-reaper`, `pre-arrival-reminders`, `purge-booking-requests`, `quote-expiry-reminders`, `school-attendee-confirmations` |
-| `POST /api/cron/payments?task=recovery` | The payments cycle: durable Stripe payment recovery (with a read-back of card refunds still recorded pending, so one Stripe failed is owed again, #4104), expired Internet Banking hold release, stale `WAITING_PAYMENT` Xero outbox reaping, a retry of the held late-capture alert for any approval still open, and delivery of an owed alert for a card payment kept on a paid booking that nothing else paid for (#4285), and the released-credit requests (raise, record the card payment in Xero, close when Xero shows paid; raising is off until an operator enables it, see `docs/xero/ARCHITECTURE.md`). The cron leader runs the same cycle itself (`src/lib/payments-cron-runner.ts`), so no external scheduler is needed; each task is error-isolated and records its own run. | Every 15 minutes in the cron leader. | `payment-recovery`, `internet-banking-hold-release`, `xero-waiting-invoice-reaper`, `late-capture-held-alert`, `credit-release-asks`, `duplicate-capture-kept-alert` |
+| `POST /api/cron/payments?task=recovery` | The payments cycle: a sweep that gives back a once-ever admin alert claim with no email behind it and re-sends a raised-once alert (#5255), durable Stripe payment recovery (with a read-back of card refunds still recorded pending, so one Stripe failed is owed again, #4104), expired Internet Banking hold release, stale `WAITING_PAYMENT` Xero outbox reaping, a retry of the held late-capture alert for any approval still open, and delivery of an owed alert for a card payment kept on a paid booking that nothing else paid for (#4285), and the released-credit requests (raise, record the card payment in Xero, close when Xero shows paid; raising is off until an operator enables it, see `docs/xero/ARCHITECTURE.md`). The cron leader runs the same cycle itself (`src/lib/payments-cron-runner.ts`), so no external scheduler is needed; each task is error-isolated and records its own run. | Every 15 minutes in the cron leader. | `once-ever-alert-sweep`, `payment-recovery`, `internet-banking-hold-release`, `xero-waiting-invoice-reaper`, `late-capture-held-alert`, `credit-release-asks`, `duplicate-capture-kept-alert` |
 | `POST /api/cron/xero?task=memberships` | Optional Xero-backed membership status refresh. | Daily when `XERO_ENABLE_DAILY_MEMBERSHIP_REFRESH=true` and the Xero module is effectively enabled. | `xero-membership-refresh` |
 | `POST /api/cron/xero?task=outbox` | Process queued outbound Xero operations. | Every 15 minutes when the Xero module is effectively enabled. | `xero-outbox` |
 | `POST /api/cron/xero?task=retries` | Replay failed retryable Xero operations. | Every 15 minutes when the Xero module is effectively enabled. | `xero-operation-replay` |

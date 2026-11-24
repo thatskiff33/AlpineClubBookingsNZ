@@ -65,4 +65,44 @@ describe("expectActionContract", () => {
       expectActionContract({ actionId: "list_lodges", handler: answering({ lodges: [] }) }),
     ).rejects.toThrow(/lodges carries at least one entry the shape can be checked against/);
   });
+
+  describe("for one of several answers (ALP-794)", () => {
+    // `accept_waitlist_offer` answers a same-lodge offer without `newBookingId`.
+    const SAME_LODGE = {
+      id: "b1",
+      success: true,
+      status: "PAYMENT_PENDING",
+      requiresPayment: true,
+      requiresSetup: false,
+      subscriptionMemberRateNotice: null,
+    };
+
+    it("lets the answer leave out a field another answer carries", async () => {
+      await expect(
+        expectActionContract({
+          actionId: "accept_waitlist_offer",
+          handler: answering(SAME_LODGE),
+          args: { id: "b1" },
+          oneOfSeveralAnswers: true,
+        }),
+      ).resolves.toBeDefined();
+    });
+
+    it("still throws on a field the action does not return", async () => {
+      await expect(
+        expectActionContract({
+          actionId: "accept_waitlist_offer",
+          handler: answering({ ...SAME_LODGE, stripeClientSecret: "pi_secret" }),
+          args: { id: "b1" },
+          oneOfSeveralAnswers: true,
+        }),
+      ).rejects.toThrow(/has no field the action does not return/);
+    });
+
+    it("throws without the option, so an action with one answer must carry every field", async () => {
+      await expect(
+        expectActionContract({ actionId: "accept_waitlist_offer", handler: answering(SAME_LODGE), args: { id: "b1" } }),
+      ).rejects.toThrow(/has exactly the fields the action returns/);
+    });
+  });
 });

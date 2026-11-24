@@ -8,6 +8,7 @@ const {
   mockReannounceHeldLateCaptures,
   mockRunCreditReleaseAskSweep,
   mockDrainOwedNewCaptureAlerts,
+  mockSweepOnceEverAlerts,
   mockCronJobRunCreate,
   mockReportCronError,
 } = vi.hoisted(() => ({
@@ -17,6 +18,7 @@ const {
   mockReannounceHeldLateCaptures: vi.fn(),
   mockRunCreditReleaseAskSweep: vi.fn(),
   mockDrainOwedNewCaptureAlerts: vi.fn(),
+  mockSweepOnceEverAlerts: vi.fn(),
   mockCronJobRunCreate: vi.fn(),
   mockReportCronError: vi.fn(),
 }));
@@ -69,6 +71,11 @@ vi.mock("@/lib/duplicate-capture-kept-alert-drain", () => ({
   drainOwedNewCaptureAlerts: (...args: unknown[]) => mockDrainOwedNewCaptureAlerts(...args),
 }));
 
+// #5255: the first task, the once-ever alert sweep.
+vi.mock("@/lib/admin-alert-once-sweep", () => ({
+  sweepOnceEverAlerts: (...args: unknown[]) => mockSweepOnceEverAlerts(...args),
+}));
+
 vi.mock("@/lib/logger", () => ({
   default: {
     info: vi.fn(),
@@ -111,6 +118,7 @@ describe("POST /api/cron/payments", () => {
     mockReannounceHeldLateCaptures.mockResolvedValue({ checked: 0, announced: 0 });
     mockRunCreditReleaseAskSweep.mockResolvedValue({ enqueued: 0, payments: null, closes: null });
     mockDrainOwedNewCaptureAlerts.mockResolvedValue({ checked: 0, sent: 0 });
+    mockSweepOnceEverAlerts.mockResolvedValue({ released: 0, resent: 0, settled: 0, dropped: 0, failed: 0 });
     mockReapStaleWaitingPaymentXeroOutboxOperations.mockResolvedValue({
       reaped: 0,
       released: 0,
@@ -138,7 +146,7 @@ describe("POST /api/cron/payments", () => {
     );
   }
 
-  it("runs all five payments tasks and records each under its own job name", async () => {
+  it("runs all seven payments tasks and records each under its own job name", async () => {
     const { POST } = await import("@/app/api/cron/payments/route");
     const response = await POST(
       authorisedRequest("http://localhost/api/cron/payments?task=recovery")
@@ -152,9 +160,11 @@ describe("POST /api/cron/payments", () => {
     expect(mockReannounceHeldLateCaptures).toHaveBeenCalledOnce();
     expect(mockRunCreditReleaseAskSweep).toHaveBeenCalledOnce();
     expect(mockDrainOwedNewCaptureAlerts).toHaveBeenCalledOnce();
+    expect(mockSweepOnceEverAlerts).toHaveBeenCalledOnce();
     expect(data.internetBankingHoldRelease).toMatchObject({ released: 0, failed: 0 });
     expect(data.xeroOutboxReap).toMatchObject({ reaped: 0 });
     expect(recordedRuns()).toEqual([
+      expect.objectContaining({ jobName: "once-ever-alert-sweep", status: "SUCCESS" }),
       expect.objectContaining({ jobName: "payment-recovery", status: "SUCCESS" }),
       expect.objectContaining({ jobName: "internet-banking-hold-release", status: "SUCCESS" }),
       expect.objectContaining({ jobName: "xero-waiting-invoice-reaper", status: "SUCCESS" }),
@@ -187,7 +197,21 @@ describe("POST /api/cron/payments", () => {
     expect(holdRun?.resultSummary.warning).toMatch(/^2 expired Internet Banking hold/);
   });
 
+  it("records a once-ever alert sweep with failed rows as a warning admin cron health shows (#5255)", async () => {
+    mockSweepOnceEverAlerts.mockResolvedValueOnce({ released: 1, resent: 0, settled: 0, dropped: 0, failed: 2 });
+    const { POST } = await import("@/app/api/cron/payments/route");
+    const response = await POST(authorisedRequest("http://localhost/api/cron/payments?task=recovery"));
+
+    expect(response.status).toBe(200);
+    const sweepRun = mockCronJobRunCreate.mock.calls
+      .map(([arg]) => (arg as { data: { jobName: string; status: string; resultSummary: Record<string, unknown> } }).data)
+      .find((run) => run.jobName === "once-ever-alert-sweep");
+    expect(sweepRun?.status).toBe("SUCCESS");
+    expect(sweepRun?.resultSummary.warning).toMatch(/^2 once-ever alert/);
+  });
+
   it.each([
+    ["once-ever-alert-sweep", mockSweepOnceEverAlerts, "onceEverAlertSweep"],
     ["payment-recovery", mockProcessPaymentRecoveryOperations, "recovery"],
     ["internet-banking-hold-release", mockReleaseExpiredInternetBankingHolds, "internetBankingHoldRelease"],
     ["xero-waiting-invoice-reaper", mockReapStaleWaitingPaymentXeroOutboxOperations, "xeroOutboxReap"],
@@ -218,7 +242,7 @@ describe("POST /api/cron/payments", () => {
         expect.objectContaining({ tag: failingJob })
       );
       const runs = recordedRuns();
-      expect(runs).toHaveLength(6);
+      expect(runs).toHaveLength(7);
       for (const run of runs) {
         expect(run.status).toBe(run.jobName === failingJob ? "FAILURE" : "SUCCESS");
       }
