@@ -1133,8 +1133,8 @@ export async function confirmWaitlistOffer(
   // drain it: a queue row with nobody draining it turns the owner's "immediate
   // re-evaluation" into "within three hours", which is how long an officer-created
   // booking that has just RESTORED cover would leave a critical incident standing,
-  // or one that removed it would leave the owner un-notified. Best-effort and
-  // scoped to this booking's owner; the cron sweep is the authority on completion.
+  // or one that removed it would leave the owner un-notified. Best-effort, for this
+  // booking and its Group Trip siblings (#3039); the cron sweep is the authority.
   if (result.success) {
     await settleHostingCoverageAfterCommit({ bookingId });
   }
