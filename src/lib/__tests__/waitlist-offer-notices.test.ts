@@ -349,6 +349,25 @@ describe("the sweep's offer email (owner decision D2; the told rule, review B)",
     expect(handle.settle).toHaveBeenCalledTimes(1);
   });
 
+  it("retires a replayable offer email when the restart finds the offer moved on (round 2, item 4)", async () => {
+    send.restart.mockResolvedValue({ kind: "moved-on", why: "the booking is WAITLISTED" });
+    // No row when the sweep read it; a replayable one (another attempt's failed send) by the time the restart lost.
+    db.emailLogFindUnique.mockResolvedValueOnce(null).mockResolvedValue(row("FAILED", 1, true));
+    await expect(sweep(MEMBER, ref(memberMarker))).resolves.toBe("delivered");
+    expect(db.emailLogUpdateMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: expect.objectContaining({ status: "FAILED", attempts: 1 }) }),
+    );
+  });
+
+  it("alerts the officers instead, restarting and sending nothing, for a placeholder address (round 2, item 6)", async () => {
+    db.bookingFindUnique.mockResolvedValue(bookingRow({ member: { id: "m1", email: "walk-in@no-email.invalid", firstName: "Ada", lastName: "Proof" } }));
+    const handle = ref(memberMarker);
+    await expect(sweep(MEMBER, handle)).resolves.toBe("delivered");
+    expect(send.restart).not.toHaveBeenCalled();
+    expect(send.offer).not.toHaveBeenCalled();
+    expect(send.unsent).toHaveBeenCalledWith(expect.objectContaining({ notice: "offer" }));
+  });
+
   it("alerts the officers instead, restarting and sending nothing, for an address on the SES suppression list (round 2, item 6)", async () => {
     db.suppression.mockResolvedValue({ email: "ada@example.test" });
     const handle = ref(memberMarker);

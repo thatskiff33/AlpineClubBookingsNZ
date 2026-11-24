@@ -61,6 +61,9 @@ const mockBookingGuestFindMany = vi.fn().mockResolvedValue([]);
 const mockLapseStatusRead = vi.fn(async (ids: string[]) => ids.map((id) => ({ id })));
 /** #5433: an owed notice's claim after the commit; won unless a case says otherwise. */
 const mockOwedNoticeClaim = vi.fn().mockResolvedValue({ count: 1 });
+/** #5433 round 2: the offer email's row (SENT unless a case says otherwise) and its retirement once the offer lapses. */
+const mockOfferEmailRow = vi.fn(async (): Promise<Record<string, unknown> | null> => ({ status: "SENT", attempts: 1, htmlBody: null, bookingRetryHtmlBody: null }));
+const mockEmailLogUpdateMany = vi.fn().mockResolvedValue({ count: 1 });
 
 /**
  * #2619 — the hosting participant fence, on the transaction client.
@@ -212,7 +215,8 @@ vi.mock("@/lib/prisma", () => ({
     // #5433 review L: the officers' offer alert goes once the offer email's row
     // says it went (every fixture's send succeeds).
     emailLog: {
-      findUnique: async () => ({ status: "SENT", attempts: 1 }),
+      findUnique: () => mockOfferEmailRow(),
+      updateMany: (...args: unknown[]) => mockEmailLogUpdateMany(...args),
       count: async () => 1,
     },
   },
@@ -331,6 +335,7 @@ vi.mock("@/lib/logger", () => ({
 
 beforeEach(() => {
   vi.clearAllMocks();
+  mockOfferEmailRow.mockResolvedValue({ status: "SENT", attempts: 1, htmlBody: null, bookingRetryHtmlBody: null });
   zoneReadFault.call = 0;
   zoneReadFault.failOn = 0;
   mockPrismaTransaction.mockReset();
@@ -2056,6 +2061,19 @@ describe("the lapse notices go after the re-offer passes (#5433 review F)", () =
 
     expect(mockLapseStatusRead).toHaveBeenCalledWith(["told"]);
     expect(sendWaitlistOfferExpiredEmail).not.toHaveBeenCalled();
+  });
+
+  it("retires a replayable FAILED offer email once its offer lapses, guarded on the row as read (round 2, item 4)", async () => {
+    const { expireStaleOffers } = await import("@/lib/waitlist");
+    mockTxBookingFindMany.mockResolvedValueOnce([lapsed]).mockResolvedValue([]);
+    mockOfferEmailRow.mockResolvedValue({ status: "FAILED", attempts: 1, htmlBody: null, bookingRetryHtmlBody: "<p>offer</p>" });
+
+    await expireStaleOffers(CLUB_FORMAT_TEST);
+
+    expect(mockEmailLogUpdateMany).toHaveBeenCalledWith({
+      where: expect.objectContaining({ id: expect.stringContaining(`told:${lapsed.waitlistOfferedAt.getTime()}`), status: "FAILED", attempts: 1 }),
+      data: expect.objectContaining({ bookingRetryHtmlBody: null, errorMessage: expect.stringContaining("the offer lapsed") }),
+    });
   });
 
   it("sends no lapse notice to a member the re-offer pass offered the place again (a queue of one)", async () => {
