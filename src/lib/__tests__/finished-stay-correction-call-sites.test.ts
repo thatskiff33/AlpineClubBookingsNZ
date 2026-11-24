@@ -3,6 +3,7 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 
 import { stripComments } from "@/lib/__tests__/support/strip-comments";
+import { CENSUS_TIMEOUT_MS } from "@/test/census-timeout";
 
 /**
  * #3750: `finishedStayCorrection` lifts the fully-past edit lock on a booking.
@@ -54,7 +55,7 @@ describe("finishedStayCorrection call sites (#3750)", () => {
     expect(files.length).toBeGreaterThan(500);
     expect(files).toContain(EXECUTOR);
     expect(files).toContain(SERVICE);
-  });
+  }, CENSUS_TIMEOUT_MS);
 
   it("is named only by the executor and the modules that implement the mode", () => {
     expect(naming("finishedStayCorrection")).toEqual([
@@ -71,7 +72,7 @@ describe("finishedStayCorrection call sites (#3750)", () => {
       "src/lib/booking-finished-stay-correction.ts",
       "src/lib/booking-modify-validation.ts",
     ]);
-  });
+  }, CENSUS_TIMEOUT_MS);
 
   it("is passed to modifyBookingBatch by the executor alone", () => {
     const callers = sourceFiles().filter((file) => {
@@ -86,13 +87,13 @@ describe("finishedStayCorrection call sites (#3750)", () => {
     expect(read(EXECUTOR)).toContain(
       "finishedStayCorrection: { changeRequestId: requestId }",
     );
-  });
+  }, CENSUS_TIMEOUT_MS);
 
   it("no route reads it from a request: nothing under src/app names it", () => {
     expect(naming("finishedStayCorrection").filter((file) => file.startsWith("src/app/"))).toEqual(
       [],
     );
-  });
+  }, CENSUS_TIMEOUT_MS);
 
   it("the service refuses it outside a caller transaction, from a non-officer, or with the date override", () => {
     const service = read(SERVICE);

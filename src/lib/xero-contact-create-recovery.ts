@@ -1,5 +1,6 @@
 import type { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
+import { POSTAL_ADDRESS_FIELDS, STREET_ADDRESS_FIELDS } from "@/lib/member-address";
 import { isDeletedAccountRecord } from "@/lib/deleted-account";
 export { DELETED_ACCOUNT_PASSWORD_HASH } from "@/lib/deleted-account";
 import {
@@ -412,14 +413,7 @@ export async function applyInboundMemberContactPatch(
       data.streetRegion = candidate.streetRegion ?? null;
       data.streetPostalCode = candidate.streetPostalCode ?? null;
       data.streetCountry = candidate.streetCountry ?? null;
-      appliedFields.push(
-        "streetAddressLine1",
-        "streetAddressLine2",
-        "streetCity",
-        "streetRegion",
-        "streetPostalCode",
-        "streetCountry",
-      );
+      appliedFields.push(...STREET_ADDRESS_FIELDS);
     }
     if (!current.postalAddressLine1 && candidate.postalAddressLine1) {
       data.postalAddressLine1 = candidate.postalAddressLine1;
@@ -428,14 +422,7 @@ export async function applyInboundMemberContactPatch(
       data.postalRegion = candidate.postalRegion ?? null;
       data.postalPostalCode = candidate.postalPostalCode ?? null;
       data.postalCountry = candidate.postalCountry ?? null;
-      appliedFields.push(
-        "postalAddressLine1",
-        "postalAddressLine2",
-        "postalCity",
-        "postalRegion",
-        "postalPostalCode",
-        "postalCountry",
-      );
+      appliedFields.push(...POSTAL_ADDRESS_FIELDS);
     }
 
     if (appliedFields.length > 0) {

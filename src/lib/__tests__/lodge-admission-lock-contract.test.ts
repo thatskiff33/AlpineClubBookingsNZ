@@ -1,6 +1,7 @@
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
+import { CENSUS_TIMEOUT_MS } from "@/test/census-timeout";
 
 function source(path: string): string {
   return readFileSync(join(process.cwd(), path), "utf8");
@@ -318,7 +319,7 @@ describe("lodge admission and assignment lock topology (#2701)", () => {
     expect(source("src/lib/school-booking-request.ts")).toContain(
       "acquireLodgeCapacityLock(",
     );
-  });
+  }, CENSUS_TIMEOUT_MS);
 
   it("asks the deactivation predicate the same question before and under the lock", () => {
     // One predicate, two callers. A dependency class added to a copy rather

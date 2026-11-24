@@ -27,7 +27,7 @@ import { resolveInternalReturnPath } from "@/lib/internal-return-path";
 import { isFullAdmin, sessionPrivilegeInput } from "@/lib/access-roles";
 import {
   canAdminRequestMembershipCancellation,
-  NON_MEMBER_ROLE_VALUES,
+  isNonMemberRole,
 } from "@/lib/member-roles";
 import { defaultMembershipTypeNameForRole } from "@/lib/membership-types";
 import { toast } from "sonner";
@@ -782,7 +782,7 @@ export default function MemberDetailPage({
    */
   const currentSeasonTypeName =
     currentSeasonAssignment?.membershipType.name ??
-    ((NON_MEMBER_ROLE_VALUES as readonly string[]).includes(member.role)
+    (isNonMemberRole(member.role)
       ? defaultMembershipTypeNameForRole(member.role, membershipTypes)
       : null);
   const embeddedCardClassName = "rounded-none border-0 shadow-none";

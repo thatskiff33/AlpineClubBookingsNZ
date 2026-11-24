@@ -10,6 +10,7 @@ import { leavingDateForDeactivation } from "@/lib/member-leaving-date";
  * requires a reason.
  */
 import { NextRequest, NextResponse } from "next/server";
+import { parseJsonRequestBody } from "@/lib/api-json";
 import { hostingCoverageParticipantRetryResponse } from "@/lib/adult-member-hosting-retry-response";
 import { settleHostingCoverageAfterCommit } from "@/lib/adult-member-hosting-coverage-drain";
 import { enqueueHostingCoverageReevaluationForMember } from "@/lib/adult-member-hosting-review";
@@ -251,20 +252,13 @@ export async function POST(
   const session = guard.session;
   const { id } = await params;
 
-  let body: {
-    action: "approve" | "reject" | "release";
-    note?: string;
-    notifyMember?: boolean;
-    confirmReleasedApproval?: boolean;
-  };
   const recent = await requireRecentAuth();
   if (!recent.ok) return recent.response;
-  try {
-    const raw = await request.json();
-    body = actionSchema.parse(raw);
-  } catch {
-    return NextResponse.json({ error: "Invalid request body" }, { status: 400 });
-  }
+  const jsonBody = await parseJsonRequestBody(request);
+  if (!jsonBody.ok) return jsonBody.response;
+  const parsedBody = actionSchema.safeParse(jsonBody.body);
+  if (!parsedBody.success) return NextResponse.json({ error: "Invalid request body" }, { status: 400 });
+  const body = parsedBody.data;
 
   // ONE request context for every audit row of this decision (#3454 review):
   // the canonical helper's proxy-appended hop, not the client-settable first.

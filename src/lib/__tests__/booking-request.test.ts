@@ -814,8 +814,17 @@ describe("declineBookingRequest", () => {
   it("throws 404 when the request does not exist", async () => {
     mockedFindUnique.mockResolvedValue(null);
     await expect(
-      declineBookingRequest({ requestId: "missing", adminMemberId: "admin-1" })
+      declineBookingRequest({ requestId: "missing", adminMemberId: "admin-1", ipAddress: "203.0.113.20" })
     ).rejects.toMatchObject({ status: 404 });
+  });
+
+  it("cannot be called without the officer's address, so the release audit never records an empty one (#5407)", () => {
+    // Type-level: `pnpm run typecheck` fails if `ipAddress` becomes optional
+    // again, because this directive would then have no error to expect.
+    const withoutAddress = () =>
+      // @ts-expect-error ipAddress is required
+      declineBookingRequest({ requestId: "req-1", adminMemberId: "admin-1" });
+    expect(withoutAddress).toBeTypeOf("function");
   });
 
   it("declines a PRICED request, clears pending adults, emails the requester, and audits the reviewer", async () => {
@@ -829,6 +838,7 @@ describe("declineBookingRequest", () => {
     const updated = await declineBookingRequest({
       requestId: "req-1",
       adminMemberId: "admin-1",
+      ipAddress: "203.0.113.20",
       reason: "Fully booked",
     });
 
@@ -871,6 +881,7 @@ describe("declineBookingRequest", () => {
     await declineBookingRequest({
       requestId: "req-1",
       adminMemberId: "admin-1",
+      ipAddress: "203.0.113.20",
       reason: "Holding that week for the school group",
     });
 
@@ -914,6 +925,7 @@ describe("declineBookingRequest", () => {
     await declineBookingRequest({
       requestId: "req-1",
       adminMemberId: "admin-1",
+      ipAddress: "203.0.113.20",
       reason: "Fully booked",
     });
 
@@ -1008,7 +1020,7 @@ describe("declineBookingRequest", () => {
       data: { success: true },
     } as never);
 
-    await declineBookingRequest({ requestId: "req-1", adminMemberId: "admin-1" });
+    await declineBookingRequest({ requestId: "req-1", adminMemberId: "admin-1", ipAddress: "203.0.113.20" });
 
     expect(mockedWithdrawnNotifications).not.toHaveBeenCalled();
   });
@@ -1024,6 +1036,7 @@ describe("declineBookingRequest", () => {
     const updated = await declineBookingRequest({
       requestId: "req-1",
       adminMemberId: "admin-1",
+      ipAddress: "203.0.113.20",
     });
 
     expect(updated?.status).toBe(BookingRequestStatus.DECLINED);
@@ -1160,7 +1173,7 @@ describe("declineBookingRequest", () => {
       mockedUpdateMany.mockResolvedValue({ count: 0 } as never);
 
       await expect(
-        declineBookingRequest({ requestId: "req-1", adminMemberId: "admin-1" })
+        declineBookingRequest({ requestId: "req-1", adminMemberId: "admin-1", ipAddress: "203.0.113.20" })
       ).rejects.toMatchObject({ status: 409 });
 
       expect(mockedCancelBooking).not.toHaveBeenCalled();
@@ -1337,6 +1350,7 @@ describe("declineBookingRequest", () => {
     const failure = declineBookingRequest({
       requestId: "req-1",
       adminMemberId: "admin-1",
+      ipAddress: "203.0.113.20",
     });
 
     await expect(failure).rejects.toBeInstanceOf(
@@ -1365,6 +1379,7 @@ describe("declineBookingRequest", () => {
       declineBookingRequest({
         requestId: "req-1",
         adminMemberId: "admin-1",
+        ipAddress: "203.0.113.20",
       })
     ).rejects.toMatchObject({
       status: 500,
@@ -1400,6 +1415,7 @@ describe("declineBookingRequest", () => {
     const updated = await declineBookingRequest({
       requestId: "req-1",
       adminMemberId: "admin-1",
+      ipAddress: "203.0.113.20",
     });
 
     // Nothing live to cancel: detach the pointer, no cancelBooking, no abort.
@@ -1432,6 +1448,7 @@ describe("declineBookingRequest", () => {
     const updated = await declineBookingRequest({
       requestId: "req-1",
       adminMemberId: "admin-1",
+      ipAddress: "203.0.113.20",
     });
 
     // Nothing to cancel; the stale pointer is detached, then the decline lands.
@@ -1462,7 +1479,7 @@ describe("declineBookingRequest", () => {
     it("emails the requester and records no notify field when the choice is omitted (default)", async () => {
       primeDecline();
 
-      await declineBookingRequest({ requestId: "req-1", adminMemberId: "admin-1" });
+      await declineBookingRequest({ requestId: "req-1", adminMemberId: "admin-1", ipAddress: "203.0.113.20" });
 
       expect(mockedSendDeclined).toHaveBeenCalledTimes(1);
       const auditCall = declinedAuditCall();
@@ -1476,6 +1493,7 @@ describe("declineBookingRequest", () => {
       const updated = await declineBookingRequest({
         requestId: "req-1",
         adminMemberId: "admin-1",
+        ipAddress: "203.0.113.20",
         notifyMember: false,
       });
 
@@ -1495,6 +1513,7 @@ describe("declineBookingRequest", () => {
       await declineBookingRequest({
         requestId: "req-1",
         adminMemberId: "admin-1",
+        ipAddress: "203.0.113.20",
         notifyMember: true,
       });
 

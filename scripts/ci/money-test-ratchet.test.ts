@@ -33,6 +33,7 @@ import {
   codeownersSrcLibGlobs,
   codeownersUnreadableSrcLibPatterns,
 } from "../lib/money-modules.mjs";
+import { CENSUS_TIMEOUT_MS } from "@/test/census-timeout";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 const read = (file: string): string => fs.readFileSync(path.join(ROOT, file), "utf8");
@@ -252,7 +253,7 @@ describe("the money-module list", () => {
       mustBeOwned.filter((file) => !listed.has(file)),
       "codeowners-census.test.ts says these must stay owned money modules",
     ).toEqual([]);
-  });
+  }, CENSUS_TIMEOUT_MS);
 
   it("reads CODEOWNERS' src/lib patterns: files, and a directory spelled three ways, never the owned tests", () => {
     const source = [

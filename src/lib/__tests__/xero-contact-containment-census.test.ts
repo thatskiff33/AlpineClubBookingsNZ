@@ -6,6 +6,7 @@ import { PLACEHOLDER_CONTACT_EMAIL_DOMAINS } from "@/lib/placeholder-contact-ema
 import { XERO_SANDBOX_CONTACT_EMAIL_DOMAIN } from "@/lib/xero-sandbox-contact-email";
 
 import { stripComments } from "./support/strip-comments";
+import { CENSUS_TIMEOUT_MS } from "@/test/census-timeout";
 
 /**
  * INV-CONFIG-005: no Xero contact write can put a member's real email address on
@@ -225,7 +226,7 @@ describe("Xero contact containment census (INV-CONFIG-005)", () => {
         ...NO_EMAIL_CONTACT_WRITERS,
       ].sort(),
     );
-  });
+  }, CENSUS_TIMEOUT_MS);
 
   it("keeps the two no-email writers from COMPOSING an email address", () => {
     /*
@@ -481,7 +482,7 @@ describe("Xero contact containment census (INV-CONFIG-005)", () => {
         "rather than putting a member's address on a copy's Xero contact, but " +
         "it must not reach review at all (INV-CONFIG-005).",
     ).toEqual([CONTAINMENT_MODULE]);
-  });
+  }, CENSUS_TIMEOUT_MS);
 
   it("reads the environment ROLE for containment, never the delivery policy", () => {
     /*
@@ -551,7 +552,7 @@ describe("Xero contact containment census (INV-CONFIG-005)", () => {
         "builder come to disagree about what counts as contained " +
         "(INV-CONFIG-005).",
     ).toEqual([SANDBOX_MODULE]);
-  });
+  }, CENSUS_TIMEOUT_MS);
 
   it("never writes a contained address onto a Member row", () => {
     /*

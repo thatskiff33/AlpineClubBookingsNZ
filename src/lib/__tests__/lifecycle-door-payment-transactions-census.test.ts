@@ -55,6 +55,7 @@ import {
   sourceFiles,
 } from "@/lib/__tests__/support/booking-guest-night-writer-scan";
 import { enclosingFunction } from "@/lib/__tests__/support/function-scope";
+import { CENSUS_TIMEOUT_MS } from "@/test/census-timeout";
 
 /** The callees whose answer depends on the payment's transaction rows. */
 const UNPAID_READERS = new Set(["applyLifecycleTransitions", "isUnpaidConfirmedWholeLodge"]);
@@ -179,7 +180,7 @@ function scanTree(): Map<string, DoorScan> {
   return doors;
 }
 
-describe("INV-PAY-143: whole-lodge unpaid readers load the shared include and post confirmation lines", () => {
+describe("INV-PAY-143: whole-lodge unpaid readers load the shared include and post confirmation lines", { timeout: CENSUS_TIMEOUT_MS }, () => {
   const doors = scanTree();
 
   it("pins the exact set of edit doors that call the unpaid readers", () => {

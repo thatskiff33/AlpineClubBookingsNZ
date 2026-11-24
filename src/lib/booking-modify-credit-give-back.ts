@@ -1,4 +1,5 @@
 import { BookingStatus, type Prisma } from "@prisma/client";
+import { storedShortBookingId } from "@/lib/booking-reference";
 
 import { bookingOwner } from "@/lib/booking-owner";
 import type { LoadedBookingForModify } from "@/lib/booking-modify-validation";
@@ -112,7 +113,7 @@ export async function giveBackPaidReductionCredit(
       memberId,
       bookingId: booking.id,
       format,
-      description: `Applied credit returned after booking ${booking.id.slice(0, 8)} price reduction`,
+      description: `Applied credit returned after booking ${storedShortBookingId(booking.id)} price reduction`,
       giveBackCentsOf: (applied) => {
         given = untiered
           ? untieredCreditGiveBack({ reductionCents, cardBasisCents, appliedCreditCents: applied })

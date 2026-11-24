@@ -1,6 +1,7 @@
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
+import { CENSUS_TIMEOUT_MS } from "@/test/census-timeout";
 
 /**
  * #2926 — `HutLeaderAssignment.source` must be written once and never updated.
@@ -122,7 +123,7 @@ describe("#2926 — HutLeaderAssignment.source is write-once", () => {
         "the row. If it is an UPDATE, do not add it: the column is write-once, " +
         "and the overlap carve-out in findHutLeaderOverlapRefusal depends on it.",
     ).toEqual(EXPECTED);
-  });
+  }, CENSUS_TIMEOUT_MS);
 
   it("is never included in a hutLeaderAssignment update", () => {
     const offenders: string[] = [];
@@ -146,7 +147,7 @@ describe("#2926 — HutLeaderAssignment.source is write-once", () => {
         "a row can be moved in or out of the overlap check after the fact, " +
         "which is the Member.role hole #2926 exists to avoid.",
     ).toEqual([]);
-  });
+  }, CENSUS_TIMEOUT_MS);
 
   it("tells a stamp from a read, so narrowing it did not blind it", () => {
     // A real insert, in the shape all three writers use.
@@ -223,5 +224,5 @@ describe("#2926 — HutLeaderAssignment.source is write-once", () => {
       }
     }
     expect(offenders).toEqual([]);
-  });
+  }, CENSUS_TIMEOUT_MS);
 });

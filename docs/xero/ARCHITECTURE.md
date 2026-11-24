@@ -1523,7 +1523,10 @@ limit: a void that commits after the locked re-read is the order "the recount,
 then the void, then the void's own recount". On a bank transfer that last recount
 lowers the total back. On a card the ledger is raise-only (`INV-ADDPAY-021`,
 #1353), so the recount's raise stands and the existing refund-ledger-divergence
-alert fires for a person to check. A recount that would need a second retry
+alert fires for a person to check. That needs Stripe's recorded refunds to back
+the raise: since #4444 a card recount never rises above them
+([Card recount Stripe cap](#card-recount-stripe-cap)), so with none beyond the
+ledger the recount writes nothing. A recount that would need a second retry
 fails its inbound event after every other write, and the stored event is
 retried after its backoff (#4095), not left until another note arrives.
 
@@ -2045,6 +2048,56 @@ those ids, one call each. `--apply` adds one confirming call per listed
 candidate payment it checks; a `--payment` id's direct answer is already that
 confirmation.
 
+### Card recount Stripe cap
+
+`INV-PAY-126`, #4444. The inbound recount (`repairRefundedPaymentBusinessState`,
+through `decideLinkedRefundedTotalCents`) finds every payment's modification
+notes by its Xero invoice, whatever its source. The inbound sync links an
+edit's note and its allocation to the edit, not the payment, so before #4444 a
+later note's recount dropped a card payment's earlier edit notes and raised a
+false refund-ledger-divergence alert. Each note id counts once per payment: a
+note the payment links as its own refund or account note, with an amount the
+recount could read, is not added again by its allocation.
+
+**The cap (owner decision, 23 Nov 2026, on
+[#4444](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/4444)).** A
+card payment's recounted total never rises above the refunds Stripe recorded
+for it: the larger of its stored total and its `PaymentRefund` rows, failed and
+cancelled ones left out (`capCardRefundedTotalAtStripeRefunds`). It is the cap
+#3653 set for organiser children (`INV-PAY-114`), now applied to every card
+payment. Before #3993 one card refund could be raised as two Xero notes: the
+edit's note allocated to the invoice and the nightly self-heal's refund note on
+the payment. They have two ids, so counting each note once does not catch them;
+the cap keeps them from reading as twice the money. The accepted cost: where
+Xero shows a refund before Stripe's sync records it, the total waits for that
+sync, which raises it itself. The cap raises no alert; the raise-only floor
+(`INV-ADDPAY-021`) still alerts on a Xero total below the ledger. The kept
+settle and the allocation write are bank-transfer only and take no cap.
+
+A card refund Stripe failed later (#4370) is left out of Stripe's figure, and
+cash paid back by bank for it is in the ledger, so the cap is what went back:
+with its reversal voided in Xero the notes read $190 ($80 failed + $80 bank +
+$30), the cap holds the $110 returned. A recount racing a note's void (#4288)
+can only raise a card as far as Stripe's refunds back it.
+
+Stated limit: counting once is per payment. A note linked directly to one
+payment and allocated to another payment's invoice counts on both. The cap
+bounds that for a card payment; a bank transfer's is bounded only by its
+amount paid, as before #4444.
+
+Pinned by `xero-credit-note-repairs.test.ts`,
+`card-recount-earlier-edit-note.realdb.test.ts`,
+`xero-recount-failed-later-refund.realdb.test.ts`,
+`xero-refund-note-stale-live-status.realdb.test.ts`,
+`allocation-write-real-rules.test.ts`,
+`account-credit-modification-notes.test.ts`,
+`xero-booking-edit-settlement.test.ts`,
+`xero-repair-known-modification-refund.test.ts`,
+`kept-settle-correction-recount.test.ts`,
+`retire-unlisted-credit-note-allocations.test.ts`,
+`ib-settle-from-cash.realdb.test.ts` and
+`kept-settle-queued-cancel.realdb.test.ts`.
+
 ## Flow 3 — Repair and hardening
 
 Reconciliation heals what Xero tells us about; repair audits what we *should*
@@ -2530,6 +2583,15 @@ Scheduled hardening (cron tasks, all idempotent):
   events, link problems).
 - Repeated-failure alerting (`maybeNotifyXeroRepeatedFailure`) and the
   once-per-hour error alert (`notifyXeroSyncError`) keep failure noise bounded.
+  The repeated-failure alert goes out once per correlation key per 24-hour
+  window, held by an `AlertCooldown` claim on that key (#5407), so a subject
+  the club saves for the alert cannot switch the limit off. The claim is kept
+  once the alert is raised (sent, queued for retry, bounced or withheld on a
+  copy), held for a day when nobody could receive it (the alert switched off
+  or nobody opted in) or when it reached nobody and nothing will replay it (a
+  copy failed before its mail log row existed, #5448). It is given back only
+  when the send threw, or when the claim write itself threw (its stamp may
+  have landed, so it is removed and the failure reported to the caller).
 
 ### Repairing Stripe refund-note links (#2901)
 
@@ -3984,10 +4046,13 @@ settled by owner decision on 1 and 2 August 2026, is three sentences long:
    the read and returns null unless it succeeded, so an email names the
    organisation only when it was confirmed at send time and otherwise degrades
    to the generic link. It is affordable because the senders bound it, not
-   traffic: the repeated-failure alert is deduplicated against `EmailLog` for
-   the window, the settlement conflict is throttled by a cross-instance
-   `AlertCooldown` claim, and the nightly report takes one read for the whole
-   email.
+   traffic: the repeated-failure alert and the settlement conflict are each
+   throttled by a cross-instance `AlertCooldown` claim, and the nightly report
+   takes one read for the whole email. The repeated-failure sender also reads
+   the delivery policy and the opted-in audience first and makes no Xero read
+   when either rules the alert out; with the claim held for a day in that
+   case, a switched-off alert costs at most one policy read a day per failing
+   key and no Xero read at all.
 
 The producers behind the six server-fed render sites, all covered:
 

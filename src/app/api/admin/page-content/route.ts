@@ -119,11 +119,11 @@ export async function POST(request: NextRequest) {
     return guard.response;
   }
 
-  const undefined = await parseJsonRequestBody(request, {
+  const jsonBody = await parseJsonRequestBody(request, {
     error: "Invalid JSON",
   });
-  if (!undefined.ok) return undefined.response;
-  const body = undefined.body;
+  if (!jsonBody.ok) return jsonBody.response;
+  const body = jsonBody.body;
 
   const parsed = createSchema.safeParse(body);
   if (!parsed.success) {

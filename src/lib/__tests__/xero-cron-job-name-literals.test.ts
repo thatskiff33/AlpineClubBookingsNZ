@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 
 import { XERO_CRON_JOB_NAMES } from "@/lib/xero-cron-jobs";
 import { stripComments } from "@/lib/__tests__/support/strip-comments";
+import { CENSUS_TIMEOUT_MS } from "@/test/census-timeout";
 
 // ---------------------------------------------------------------------------
 // No code under `src/` outside `__tests__` spells one of the ten Xero cron
@@ -85,7 +86,7 @@ describe("The ten Xero cron runner job names have one spelling (INV-SSOT)", () =
       .filter((file) => file !== HOME)
       .flatMap((file) => findJobNameLiterals(file, fs.readFileSync(path.join(ROOT, file), "utf8")));
     expect(elsewhere).toEqual([]);
-  });
+  }, CENSUS_TIMEOUT_MS);
 
   it("keeps xero-cron-jobs.ts free of imports, so booting the scheduler pulls in nothing else", () => {
     const code = stripComments(fs.readFileSync(path.join(ROOT, HOME), "utf8"));

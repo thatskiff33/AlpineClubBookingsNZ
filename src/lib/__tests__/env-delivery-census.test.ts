@@ -16,6 +16,7 @@ import {
   readRepoFile,
 } from "@/lib/__tests__/helpers/compose";
 import { stripComments } from "@/lib/__tests__/support/strip-comments";
+import { CENSUS_TIMEOUT_MS } from "@/test/census-timeout";
 
 /**
  * A SETTING AN OPERATOR CAN SEE IN THEIR `.env` MUST ACTUALLY REACH THE APP
@@ -386,7 +387,7 @@ const DELIBERATELY_NOT_DELIVERED: Record<string, string> = {
   NEXT_PUBLIC_TZ: "inlined into the client bundle at build time; TZ is delivered",
 };
 
-describe("GUARD A: every declared, read variable is delivered (INV-CONFIG-004)", () => {
+describe("GUARD A: every declared, read variable is delivered (INV-CONFIG-004)", { timeout: CENSUS_TIMEOUT_MS }, () => {
   const declared = declaredVariables();
   const delivered = deliveredVariables();
   const corpus = sourceCorpus();

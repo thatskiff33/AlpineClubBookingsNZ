@@ -9,6 +9,7 @@ import {
   symbolOfKey,
 } from "./support/advisory-lock-scan";
 import { blankLiterals, blankLiteralsWithSpans, stripComments } from "./support/strip-comments";
+import { CENSUS_TIMEOUT_MS } from "@/test/census-timeout";
 
 // #182 guard (process follow-up to upstream PR #1911 review finding H1): a
 // capacity ADMISSION path must use the per-lodge lock, while global-cohort
@@ -1847,7 +1848,7 @@ const CAPACITY_LOCK_MINT = "src/lib/lodge-capacity-lock.ts";
  */
 const ROW_LOCK_STRENGTHS = /FOR (?:UPDATE|KEY SHARE|NO KEY UPDATE|SHARE)/g;
 
-describe("advisory lock guard (#182 / H1 regression class)", () => {
+describe("advisory lock guard (#182 / H1 regression class)", { timeout: CENSUS_TIMEOUT_MS }, () => {
   const sources = lockCensusSources(SRC_DIR);
 
   it("keeps every canonical global pg_advisory_xact_lock(1) site in the reviewed per-site registry", () => {

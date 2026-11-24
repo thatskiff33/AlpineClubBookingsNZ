@@ -3,6 +3,7 @@ import { join, relative, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import { expressionAt } from "@/lib/__tests__/support/balanced-brackets";
 import { blankLiterals, stripComments } from "@/lib/__tests__/support/strip-comments";
+import { CENSUS_TIMEOUT_MS } from "@/test/census-timeout";
 
 /**
  * #4146 (`INV-SSOT-006`): every Prisma `startsWith` or `contains` whose operand carries an id
@@ -81,7 +82,7 @@ function census(): { unexplained: string[]; allowedSeen: Set<string>; scanned: n
   return { unexplained, allowedSeen, scanned: files.length };
 }
 
-describe("every id- or input-carrying Prisma startsWith/contains uses literal matching (#4146, #4190, INV-SSOT-006)", () => {
+describe("every id- or input-carrying Prisma startsWith/contains uses literal matching (#4146, #4190, INV-SSOT-006)", { timeout: CENSUS_TIMEOUT_MS }, () => {
   const result = census();
 
   it("reads the tree it claims to", () => {

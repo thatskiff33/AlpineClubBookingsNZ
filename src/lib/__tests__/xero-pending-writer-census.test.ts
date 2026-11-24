@@ -33,6 +33,7 @@ import { readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import ts from "typescript";
 import { describe, expect, it } from "vitest";
+import { CENSUS_TIMEOUT_MS } from "@/test/census-timeout";
 
 const REPO_ROOT = path.resolve(__dirname, "..", "..", "..");
 
@@ -301,7 +302,7 @@ const rawSqlWrites = (text: string) => [...text.matchAll(RAW_SQL_WRITE)].length;
 
 const counts = (table: Readonly<Record<string, { writes: number }>>) => Object.fromEntries(Object.entries(table).map(([file, { writes }]) => [file, writes]));
 
-describe("Xero operation PENDING writers (#5228)", () => {
+describe("Xero operation PENDING writers (#5228)", { timeout: CENSUS_TIMEOUT_MS }, () => {
   it("every PENDING write onto a Xero operation row is counted per file and named, with why its request stays claimable", () => {
     const writers = Object.fromEntries(
       [...sourceFiles("src"), ...sourceFiles("scripts")].flatMap((file) => {
