@@ -21,8 +21,8 @@ const mocks = vi.hoisted(() => ({
   cooldownReads: 0,
   /** The member emails recorded, by key: the real `EmailLog` row is unique on it. */
   memberEmails: new Map<string, unknown>(),
-  /** The installation's environment role (`getEnvironmentRole`); the club's live site unless a case says otherwise. */
-  environmentRole: vi.fn(),
+  /** The mail gate's decision (`resolveDeliveryPolicy`); the club's live site unless a case says otherwise. */
+  deliveryPolicy: vi.fn(),
 }));
 
 function cooldownWhereMatches(row: { key: string; lastAlertedAt: Date }, where: { key: unknown; lastAlertedAt?: unknown }): boolean {
@@ -54,7 +54,7 @@ vi.mock("@/lib/email/admin-alerts-finance", () => ({
   sendAdminSupersededPaymentRefundAlert: mocks.sendAdminAlert,
 }));
 vi.mock("@/lib/stripe", () => ({ listRefundsForPaymentIntent: mocks.listRefunds }));
-vi.mock("@/lib/environment-role", () => ({ getEnvironmentRole: mocks.environmentRole }));
+vi.mock("@/lib/environment-delivery-policy", () => ({ resolveDeliveryPolicy: mocks.deliveryPolicy }));
 vi.mock("@/lib/prisma", () => ({
   prisma: {
     booking: { findUnique: mocks.findBooking },
@@ -201,7 +201,7 @@ beforeEach(() => {
   mocks.findBooking.mockReset();
   mocks.findRefunds.mockReset();
   mocks.listRefunds.mockReset();
-  mocks.environmentRole.mockReset().mockResolvedValue("PRODUCTION");
+  mocks.deliveryPolicy.mockReset().mockResolvedValue({ kind: "allow", grounds: "production" });
   mocks.cooldowns.clear();
   mocks.cooldownFaults.clear();
   mocks.failCooldownRead = null;
@@ -525,8 +525,8 @@ describe("reportSupersededPaymentRefund sends once per recovery row (#4690)", ()
     expect(await supersededRefundReportSettled(OPERATION_ID)).toBe(true);
   });
 
-  it("MUTATION: an installation that is not the club's live site holds back every copy - settled at once, so the row closes and is never retried", async () => {
-    mocks.environmentRole.mockResolvedValue("NON_PRODUCTION");
+  it("MUTATION: the mail gate holds every copy back on this installation - settled at once, so the row closes and is never retried", async () => {
+    mocks.deliveryPolicy.mockResolvedValue({ kind: "suppress_non_production", decidedBy: "declared" });
     mocks.sendAdminAlert.mockResolvedValue(HELD_BACK_AS_A_COPY);
 
     await expect(report()).resolves.toBe("reported");
@@ -536,13 +536,18 @@ describe("reportSupersededPaymentRefund sends once per recovery row (#4690)", ()
     expect(sent()).toEqual(ONCE_EACH);
   });
 
-  it("MUTATION: every copy undelivered and the environment role unreadable or not a copy - not settled, it throws", async () => {
+  it("MUTATION: every copy undelivered and the gate's decision unreadable, a fault, or a copy that still sends - not settled, it throws", async () => {
     mocks.sendAdminAlert.mockResolvedValue(HELD_BACK_AS_A_COPY);
-    mocks.environmentRole.mockRejectedValueOnce(new Error("database unavailable"));
+    mocks.deliveryPolicy.mockRejectedValueOnce(new Error("database unavailable"));
     await expect(report()).rejects.toBeInstanceOf(SupersededRefundReportNotSettledError);
     expect(await supersededRefundReportSettled(OPERATION_ID)).toBe(false);
 
-    mocks.environmentRole.mockResolvedValueOnce("UNKNOWN");
+    // A non-production copy that sends to a local capture is not held back.
+    mocks.deliveryPolicy.mockResolvedValueOnce({ kind: "allow", grounds: "non-production-capture" });
+    await expect(report()).rejects.toBeInstanceOf(SupersededRefundReportNotSettledError);
+    expect(await supersededRefundReportSettled(OPERATION_ID)).toBe(false);
+
+    mocks.deliveryPolicy.mockResolvedValueOnce({ kind: "block_capture_public_host" });
     await expect(report()).rejects.toBeInstanceOf(SupersededRefundReportNotSettledError);
     expect(await supersededRefundReportSettled(OPERATION_ID)).toBe(false);
   });

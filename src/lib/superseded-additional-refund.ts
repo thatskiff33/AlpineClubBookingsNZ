@@ -10,7 +10,7 @@ import { recordBookingEvent } from "@/lib/booking-events";
 import { adminAlertIsDeliveredOrQueued, adminAlertSendOutcome } from "@/lib/email/admin-alert-send-result";
 import { sendAdminSupersededPaymentRefundAlert } from "@/lib/email/admin-alerts-finance";
 import { sendSupersededPaymentRefundedEmail } from "@/lib/email/booking";
-import { getEnvironmentRole } from "@/lib/environment-role";
+import { resolveDeliveryPolicy } from "@/lib/environment-delivery-policy";
 import logger from "@/lib/logger";
 import { carriesCardRefundOperationMetadata } from "@/lib/open-card-refund-owed";
 import { PAYMENT_RECOVERY_STALE_PROCESSING_MS } from "@/lib/payment-recovery-constants";
@@ -454,17 +454,19 @@ async function sendAdminAlertOnce(params: ReportParams, context: ReportContext, 
 }
 
 /**
- * Whether this installation is a copy that never emails (`NON_PRODUCTION`,
- * the role whose every copy the mail gate holds back as `SKIPPED_NON_PRODUCTION`).
- * Like a policy skip, that hold is final: no later attempt sends the alert, so
- * retrying would only end the row FAILED. Read only after a send reached
- * nobody; an unreadable role answers false, and the report stays unsettled.
+ * Whether the mail gate itself holds every copy back on this installation
+ * (`resolveDeliveryPolicy` answers `suppress_non_production`: a confirmed copy
+ * pointed at a live provider). Like a policy skip, that hold is final: no later
+ * attempt sends the alert, so retrying would only end the row FAILED. A copy
+ * that sends to a local capture (mailpit) is not held back and is retried like
+ * production. Read only after a send reached nobody; an unreadable policy
+ * answers false, and the report stays unsettled.
  */
 async function heldBackAsNonLiveCopy(logContext: Record<string, unknown>): Promise<boolean> {
   try {
-    return (await getEnvironmentRole()) === "NON_PRODUCTION";
+    return (await resolveDeliveryPolicy()).kind === "suppress_non_production";
   } catch (err) {
-    logger.error({ ...logContext, err }, "Could not read the environment role after a superseded-payment refund alert reached nobody; it will be retried");
+    logger.error({ ...logContext, err }, "Could not read the mail delivery policy after a superseded-payment refund alert reached nobody; it will be retried");
     return false;
   }
 }
