@@ -164,6 +164,9 @@ describe("a row the release before #5433 wrote, with no key (round 4, item 1)", 
     expect(offerTimeOfEmailLogId("booking1", offerEmailLogId("booking12", offeredAt))).toBeNull();
     expect(offerTimeOfEmailLogId("booking1", `${offerEmailLogId("booking1", offeredAt)}x`)).toBeNull();
     expect(offerTimeOfEmailLogId("booking1", "email:waitlist-offer:booking1:soon")).toBeNull();
+    expect(offerTimeOfEmailLogId("booking1", `email:waitlist-offer:booking1:0${offeredAt.getTime()}`)).toBeNull();
+    expect(offerTimeOfEmailLogId("booking1", "email:waitlist-offer:booking1:")).toBeNull();
+    expect(offerTimeOfEmailLogId("booking1", "email:waitlist-offer:booking1:NaN")).toBeNull();
   });
 
   it("is replayed while the booking is offered at all, as that release would: the offer is not left untold", async () => {

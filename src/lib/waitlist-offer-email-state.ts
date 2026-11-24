@@ -65,10 +65,10 @@ export function offerEmailLogId(bookingId: string, offeredAt: Date): string {
  */
 export function offerTimeOfEmailLogId(bookingId: string, id: string): Date | null {
   const prefix = offerEmailLogId(bookingId, new Date(0)).slice(0, -1);
-  const suffix = id.startsWith(prefix) ? id.slice(prefix.length) : "";
-  if (!/^\d+$/.test(suffix)) return null;
-  const offeredAt = new Date(Number(suffix));
-  return offerEmailLogId(bookingId, offeredAt) === id ? offeredAt : null;
+  // Exact by round trip: another prefix, or a tail that is not the canonical
+  // number (empty, "soon", "0123", "1e3"), gives back a different id.
+  const offeredAt = new Date(Number(id.slice(prefix.length)));
+  return Number.isNaN(offeredAt.getTime()) || offerEmailLogId(bookingId, offeredAt) !== id ? null : offeredAt;
 }
 
 /**
