@@ -839,6 +839,10 @@ What happens next:
   **Retry sending to Xero** button; the details stay saved in the app either
   way. The same failure is on the Xero operations screen, where a finance
   officer can retry it too.
+- **Clearing the school's email address sends a teacher's to Xero instead.**
+  Xero gets the newest teacher's address (or another named contact's) as the
+  contact's main email, as when the contact was first created; it is blank only
+  when none of them has one.
 - **A school Xero has not met yet** (no invoice raised so far) is not sent
   anything now. Its Xero contact is created with the corrected details on its
   first invoice.

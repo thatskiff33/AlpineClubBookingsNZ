@@ -12,6 +12,10 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
  *  3. SUPERSEDED AND CONTACTLESS ROWS make no provider call.
  *  4. A PROVIDER FAILURE THROWS, so the outbox records the row FAILED and the
  *     officer's Retry has something to replay.
+ *  5. A CLEARED SCHOOL EMAIL FALLS BACK, exactly as on the create path: the
+ *     first named contact with an address (teachers first) becomes the Xero
+ *     contact's main email, and it is blank only when no contact has one. This
+ *     pins kept behaviour; it is not a defect.
  */
 
 const mocks = vi.hoisted(() => ({
@@ -123,6 +127,42 @@ describe("syncOrganisationContactDetails (#5245)", () => {
     expect((await sentContact()).phones).toEqual([
       { phoneType: "MOBILE", phoneCountryCode: "", phoneAreaCode: "", phoneNumber: "" },
     ]);
+  });
+
+  it("sends the first teacher's address as the main email when the school's own email is cleared", async () => {
+    mocks.organisationFindUnique.mockResolvedValue(
+      school({
+        email: null,
+        contacts: [
+          { member: { firstName: "Aroha", lastName: "Ngata", email: "aroha.ngata@tokoroa.example" } },
+          { member: { firstName: "Ben", lastName: "Hart", email: "ben.hart@tokoroa.example" } },
+        ],
+      }),
+    );
+
+    await syncOrganisationContactDetails({ organisationId: "org-1", syncOperation: CLAIM });
+
+    // The details call is the first; the contact persons may follow it.
+    const [, contactId, body] = mocks.updateContact.mock.calls[0];
+    expect(contactId).toBe("xero-contact-1");
+    const { policy } = await resolveXeroContactEmailPolicy();
+    expect(body.contacts[0].emailAddress).toBe(
+      applyXeroContactEmailPolicy(policy, "aroha.ngata@tokoroa.example"),
+    );
+  });
+
+  it("sends a blank main email when the school's email is cleared and no teacher has one", async () => {
+    mocks.organisationFindUnique.mockResolvedValue(
+      school({
+        email: null,
+        contacts: [{ member: { firstName: "Aroha", lastName: "Ngata", email: null } }],
+      }),
+    );
+
+    await syncOrganisationContactDetails({ organisationId: "org-1", syncOperation: CLAIM });
+
+    const [, , body] = mocks.updateContact.mock.calls[0];
+    expect(body.contacts[0].emailAddress).toBe("");
   });
 
   it("gives each set of details its own idempotency key, so a retry of new details is not answered from Xero's cache", async () => {
