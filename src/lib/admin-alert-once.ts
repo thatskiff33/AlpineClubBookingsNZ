@@ -35,6 +35,11 @@ import { prisma } from "@/lib/prisma";
  *   inserting; only the failed claim is logged).
  * Never throws; returns whether the claim was kept. `context` is logged with
  * every failure, `label` names the alert in those lines.
+ * An alert raised at most once per WINDOW uses `sendAdminAlertOncePerWindow`
+ * (`admin-alert-window.ts`) instead: there a raised alert holds its window even
+ * when every copy bounced or was withheld, because the next failure inside the
+ * window is reported again; here a claim kept is kept for good, so it is kept
+ * only once a copy was sent or queued.
  */
 export async function sendAdminAlertOnceEver(args: OnceEverAlertArgs): Promise<boolean> {
   const claim = await sendAdminAlertOnceEverClaim(args);

@@ -1966,6 +1966,7 @@ describe("#2563 exactly one stay-range resolution exists, and the route calls it
     expect(source.match(/resolveModificationStayRanges\(/g)).toHaveLength(1);
   });
 
+  // #5407 item 42: walks src/ for every caller; timed out at 5,000ms on a busy host.
   it("the resolver's rules live in one file, with only known callers", () => {
     // If a new surface starts resolving modification stay ranges, this list is
     // where it has to be declared — the point being that it is a decision, not a

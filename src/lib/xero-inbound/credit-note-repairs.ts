@@ -16,7 +16,7 @@ import { sendBankTransferFloorAlert } from "./credit-note-bank-transfer-floor";
 import { decideXeroRefundedColumns } from "./xero-refunded-columns";
 import { createAuditLog } from "@/lib/audit";
 import { lockMemberCreditLedger } from "@/lib/member-credit";
-import { buildBookingAppliedCreditDescription } from "@/lib/member-credit-booking-rows";
+import { buildBookingAppliedCreditDescription, isBookingAppliedCreditDescription } from "@/lib/member-credit-booking-rows";
 import { repairLegacyAppliedCreditNoteAllocationsForBooking } from "@/lib/xero-applied-credit-allocation-repair";
 import { assertNoAppliedCreditDeallocationFence } from "@/lib/xero-applied-credit-operation-serialization";
 import { getClubFormat } from "@/lib/club-format-settings";
@@ -763,7 +763,7 @@ export async function repairAccountCreditAllocationBusinessState(
           description?: string;
         } = {};
 
-        if (appliedCredit.description !== expectedDescription && appliedCredit.outsideSpendConvergedAt === null) {
+        if (!isBookingAppliedCreditDescription(appliedCredit.description, payment.bookingId) && appliedCredit.outsideSpendConvergedAt === null) {
           updates.description = expectedDescription;
         }
 
@@ -781,7 +781,7 @@ export async function repairAccountCreditAllocationBusinessState(
         // intentional append-only record. The precise slice reconciler below,
         // not destructive rewrites of those rows, determines provider truth.
         // #4219: a row the credit-note convergence wrote keeps the description that says why.
-        const staleDescriptions = linkedAppliedCredits.filter((credit) => credit.description !== expectedDescription && credit.outsideSpendConvergedAt === null);
+        const staleDescriptions = linkedAppliedCredits.filter((credit) => !isBookingAppliedCreditDescription(credit.description, payment.bookingId) && credit.outsideSpendConvergedAt === null);
         if (staleDescriptions.length > 0) {
           await tx.memberCredit.updateMany({
             where: { id: { in: staleDescriptions.map((credit) => credit.id) } },
@@ -805,7 +805,7 @@ export async function repairAccountCreditAllocationBusinessState(
             },
             data: {
               xeroCreditNoteId: creditNoteId,
-              description: expectedDescription,
+              description: isBookingAppliedCreditDescription(onlyUnlinkedCredit.description, payment.bookingId) ? onlyUnlinkedCredit.description : expectedDescription,
             },
           });
           updatedAppliedCredits += 1;
