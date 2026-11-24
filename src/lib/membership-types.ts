@@ -4,7 +4,15 @@ import type {
   MembershipTypeSubscriptionBehavior,
   Prisma,
   Role,
+  SubscriptionStatus,
 } from "@prisma/client";
+import type { AgeTierSettingData } from "@/lib/policies/age-tier";
+import {
+  ADMIN_LIST_LIABILITY_SIDE,
+  liabilityRuleFor,
+  resolveMemberSubscriptionLiability,
+  type SubscriptionLiabilitySettings,
+} from "@/lib/policies/subscription";
 import { buildUniqueCatalogueKey, normalizeCatalogueText } from "@/lib/catalogue-key";
 import { isKeyResolvedRateHolder } from "@/lib/membership-type-rate-coverage";
 
@@ -507,37 +515,31 @@ export function effectiveSubscriptionBehavior(
 }
 
 /**
- * Shared "subscription not required" (exempt) decision (#2149). Given a member's
- * EFFECTIVE membership-type subscription behaviour plus their age tier and
- * current-season subscription row, returns true when the member does not owe a
- * subscription. Consolidates the four divergent inline OR-chains onto one rule:
- *   - the membership type opts out entirely (NOT_REQUIRED), OR
- *   - the type defers to the age tier (BASED_ON_AGE_TIER) and a NOT_REQUIRED
- *     current-season row is authoritative (dominates a mid-season tier promotion,
- *     #2041), OR
- *   - the member's age tier is not subscription-liable.
- * This is the display-side companion to the booking gate
- * `requiresPaidSubscriptionForMemberForBooking`; the booking gate additionally
- * layers the Xero-enforcement bypass, which display surfaces deliberately omit.
+ * Shared "subscription not required" (exempt) decision for display surfaces
+ * (#2149): the admin members list, its CSV export and the subscriptions list.
+ * It is the ONE liability rule (#5190, `resolveMemberSubscriptionLiability`) on
+ * the side `ADMIN_LIST_LIABILITY_SIDE` names: billing (owner decision Q2,
+ * 22 Nov 2026). While the club is `NOT_CHOSEN` the flag says who the billing
+ * run charges, which can differ from who booking access lets book; once the
+ * club has chosen, the two are the same rule. Their SQL filters are built from
+ * the same settings and side by `subscriptionNotRequiredMemberConditions`.
  */
 export function isSubscriptionNotRequiredForMembershipType(params: {
   subscriptionBehavior: MembershipTypeSubscriptionBehavior | null | undefined;
-  ageTier: AgeTier | string | null | undefined;
-  notRequiredAgeTiers: ReadonlySet<string>;
-  hasNotRequiredSeasonRow: boolean;
+  member: { ageTier: AgeTier; dateOfBirth: Date | null };
+  seasonRowStatus: SubscriptionStatus | null | undefined;
+  seasonYear: number;
+  ageTierSettings: AgeTierSettingData[];
+  liabilitySettings: SubscriptionLiabilitySettings;
 }): boolean {
-  if (params.subscriptionBehavior === "NOT_REQUIRED") {
-    return true;
-  }
-  if (
-    params.subscriptionBehavior === "BASED_ON_AGE_TIER" &&
-    params.hasNotRequiredSeasonRow
-  ) {
-    return true;
-  }
-  return (
-    params.ageTier != null && params.notRequiredAgeTiers.has(params.ageTier)
-  );
+  return !resolveMemberSubscriptionLiability({
+    subscriptionBehavior: params.subscriptionBehavior,
+    member: params.member,
+    seasonRowStatus: params.seasonRowStatus,
+    seasonYear: params.seasonYear,
+    rule: liabilityRuleFor(ADMIN_LIST_LIABILITY_SIDE, params.liabilitySettings),
+    ageTierSettings: params.ageTierSettings,
+  }).owes;
 }
 
 // test seam

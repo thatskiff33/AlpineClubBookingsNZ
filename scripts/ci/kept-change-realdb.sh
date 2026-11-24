@@ -36,6 +36,8 @@ files=(
   src/lib/__tests__/capacity-race-refund-shortfall-task.realdb.test.ts
   src/lib/__tests__/booking-ledger-cancellation.realdb.test.ts
   src/lib/__tests__/booking-ledger-group-settlement.realdb.test.ts
+  # #5255: the once-ever alert sweep's give-back against the alert's email row.
+  src/lib/__tests__/admin-alert-once-sweep.realdb.test.ts
 )
 # An explicit report plus the existing validator rejects green describe.skip.
 pnpm exec vitest run --maxWorkers=1 --reporter=json --outputFile="$race_dir/report.json" "${files[@]}"

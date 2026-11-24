@@ -9,7 +9,7 @@ import { memberMoneyApplicationKeys, memberMoneyEventKeys, type MemberMoneyEvent
 import { MemberMoneyPlanError, type MemberMoneyDebtor, type MemberMoneyEvidence, type MemberMoneyLegPlan, type MemberMoneyPostingContext } from "./plan";
 import { postMemberMoneyEvent, releaseMemberMoneyRefundReservation, reverseMemberMoneyJournal } from "./post";
 import { isStripeKeyOfSenderPrefix } from "../../payment-recovery-keys";
-import { refundFamily, refundFamilyOpenCents, refundFamilyTip, refundObligationChain, stripeKeyOfReservation, type RefundBooking } from "./refund-family";
+import { memberMoneyChainTip, refundFamily, refundFamilyOpenCents, refundFamilyTip, refundObligationChain, stripeKeyOfReservation, type RefundBooking } from "./refund-family";
 import { lineDebtor, moveMergedDebtorResidue } from "./booking-receipts";
 
 /**
@@ -163,7 +163,10 @@ async function withdrawRefundObligationPart(tx: Db, context: MemberMoneyPostingC
   const { part } = input;
   const open = Math.max(0, refundFamilyOpenCents(input.state, input.live));
   const cents = part.amountCents === "open" ? open : Math.min(part.amountCents, open);
-  if (await eventPosted(tx, part.eventKey)) {
+  // #5197: a rest withdrawal a late win reversed (`restoreHandBackObligation`) is followed by its chain's next key,
+  // so dismissing the reopened task again withdraws the restored rest again; a replay still finds its own tip.
+  const eventKey = part.amountCents === "open" ? await memberMoneyChainTip(tx, part.eventKey) : part.eventKey;
+  if (await eventPosted(tx, eventKey)) {
     if (part.amountCents === "open") return false;
     // A reduction's key names the lost disputes it counted; posted already, a new reduction under it means a
     // dispute's amount changed since. Refused, so the door rolls back rather than lowering the task alone.
@@ -177,10 +180,10 @@ async function withdrawRefundObligationPart(tx: Db, context: MemberMoneyPostingC
   const debtor = lineDebtor(tip);
   const evidence = { withdrawnFrom: input.live, cents };
   const leg = { type: "amount" as const, amountCents: cents, booking, evidence };
-  await postMemberMoneyEvent(tx, context, { kind: "ADJUSTMENT", eventKey: part.eventKey, origin: "OFFICER", actorMemberId: input.actorMemberId,
-    source: { kind: "BOOKING", id: input.bookingId, version: part.eventKey }, reason: input.reason,
+  await postMemberMoneyEvent(tx, context, { kind: "ADJUSTMENT", eventKey, origin: "OFFICER", actorMemberId: input.actorMemberId,
+    source: { kind: "BOOKING", id: input.bookingId, version: eventKey }, reason: input.reason,
     legs: [{ ...leg, account: "REFUND_PAYABLE", side: "DEBIT", debtor, obligationKey: tip.key }, { ...leg, account: "MEMBER_RECEIVABLE", side: "CREDIT", debtor }],
-    applications: [{ key: memberMoneyApplicationKeys.application(part.eventKey, input.bookingId, tip.key), source: { leg: 0 }, obligationKey: tip.key, amountCents: cents }] });
+    applications: [{ key: memberMoneyApplicationKeys.application(eventKey, input.bookingId, tip.key), source: { leg: 0 }, obligationKey: tip.key, amountCents: cents }] });
   return true;
 }
 

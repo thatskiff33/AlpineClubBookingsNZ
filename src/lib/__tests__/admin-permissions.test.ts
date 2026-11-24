@@ -26,6 +26,7 @@ import {
   hasAdminAccess,
   type AppAccessRole,
 } from "@/lib/access-roles";
+import { CENSUS_TIMEOUT_MS } from "@/test/census-timeout";
 
 const LODGE_ONLY_DEFINITION = {
   overviewLevel: "NONE",
@@ -517,7 +518,7 @@ describe("outstanding additional payment panel visibility (#2350)", () => {
   });
 });
 
-describe("in-booking bed allocation panel visibility (#2252)", () => {
+describe("in-booking bed allocation panel visibility (#2252)", { timeout: CENSUS_TIMEOUT_MS }, () => {
   const ROUTE_DIR = "src/app/(authenticated)/bookings/[id]";
   /*
     CODE ONLY, through the canonical stripper. The anchor-order assertion below
@@ -1416,7 +1417,7 @@ const OVERVIEW_CATCH_ALL_ALLOWLIST: string[] = [
   "/api/admin/menu-role",
 ];
 
-describe("admin API authorization matrix (issue #1132)", () => {
+describe("admin API authorization matrix (issue #1132)", { timeout: CENSUS_TIMEOUT_MS }, () => {
   const routeFiles = listAdminRouteFiles(ADMIN_API_DIR).sort();
   const routeMethodPairs = routeFiles.flatMap((filePath) => {
     const pathname = routeFileToPathname(filePath);

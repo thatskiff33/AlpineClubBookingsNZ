@@ -2,6 +2,7 @@ import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import path from "node:path";
 
 import { describe, expect, it } from "vitest";
+import { CENSUS_TIMEOUT_MS } from "@/test/census-timeout";
 
 import {
   EXTENSIONS,
@@ -520,7 +521,7 @@ describe("CLI entrypoints and the `server-only` boundary", () => {
         "caller that has a request (CT-5, #2869).\n\n" +
         violations.join("\n\n"),
     ).toEqual([]);
-  }, 30_000);
+  }, CENSUS_TIMEOUT_MS);
 
   it("publishes every `server-only`-reaching command with the condition", () => {
     const violations: string[] = [];
@@ -590,7 +591,7 @@ describe("CLI entrypoints and the `server-only` boundary", () => {
         "`--help` text and docblock (#2850).\n\n" +
         unswept.join("\n"),
     ).toEqual([]);
-  });
+  }, CENSUS_TIMEOUT_MS);
 
   it("would see a raw invocation printed in a script's own usage text", () => {
     // The mutation this guard exists to catch, run as a fixture rather than

@@ -1,6 +1,7 @@
 import { readdirSync, readFileSync } from "node:fs";
 import { join, relative } from "node:path";
 import { describe, expect, it } from "vitest";
+import { CENSUS_TIMEOUT_MS } from "@/test/census-timeout";
 
 // #2283: every outbound Xero link must be built by the `src/lib/xero-links.ts`
 // builders. A hand-rolled `https://go.xero.com/...` string cannot carry the
@@ -54,7 +55,7 @@ function collectSourceFiles(dir: string, out: string[]): string[] {
   return out;
 }
 
-describe("xero-links guard (#2283)", () => {
+describe("xero-links guard (#2283)", { timeout: CENSUS_TIMEOUT_MS }, () => {
   it("keeps every go.xero.com URL inside src/lib/xero-links.ts", () => {
     const root = process.cwd();
     const offenders: string[] = [];

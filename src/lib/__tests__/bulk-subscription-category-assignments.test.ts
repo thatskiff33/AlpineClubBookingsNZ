@@ -35,10 +35,21 @@ vi.mock("@/lib/logger", () => ({
     debug: vi.fn(),
   },
 }));
-vi.mock("@/lib/age-tier", () => ({
-  computeAgeTier: vi.fn().mockResolvedValue("ADULT"),
-  getSeasonStartDate: vi.fn(() => new Date("2026-04-01")),
-}));
+// The season-row reconcile reads the club's age-tier settings for the shared
+// liability rule (#5190); with no rows the real reader returns the documented
+// defaults, so the mock does the same, as the bulk seasonal test does.
+vi.mock("@/lib/age-tier", async () => {
+  const { AGE_TIER_DEFAULTS, cloneAgeTierSettings } = (await vi.importActual(
+    "@/lib/policies/age-tier",
+  )) as typeof import("@/lib/policies/age-tier");
+  return {
+    computeAgeTier: vi.fn().mockResolvedValue("ADULT"),
+    getSeasonStartDate: vi.fn(() => new Date("2026-04-01")),
+    getAgeTierSettingsStrict: vi.fn(async () =>
+      cloneAgeTierSettings(AGE_TIER_DEFAULTS),
+    ),
+  };
+});
 
 import {
   bulkSaveSubscriptionCategory,
@@ -190,6 +201,8 @@ function makeDb(members: Record<string, MemberConfig>) {
       findUnique: vi.fn().mockResolvedValue(null),
       updateMany: vi.fn().mockResolvedValue({ count: 0 }),
     },
+    // #5190: the club's liability rule; a missing row is NOT_CHOSEN.
+    membershipLockoutSettings: { findUnique: vi.fn().mockResolvedValue(null) },
     auditLog: { create: vi.fn().mockResolvedValue({}) },
     $executeRaw: vi.fn().mockResolvedValue(1),
     $transaction: vi.fn(async (cb: any) => cb(db)),

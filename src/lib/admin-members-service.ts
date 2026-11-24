@@ -83,12 +83,17 @@ import { ensureMemberAccessRoles } from "@/lib/member-access-role-writes";
 import { issueActionToken } from "@/lib/action-tokens";
 import { hasMemberCompletedAccountSetup } from "@/lib/password-reset";
 import { nameField } from "@/lib/zod-helpers";
+import { ROLE_VALUES, isRole } from "@/lib/member-roles";
+import { loadMembershipLockoutSettings } from "@/lib/membership-lockout-settings";
 import {
-  NON_MEMBER_ROLE_VALUES,
-  OPERATIONAL_ROLE_VALUES,
-  ROLE_VALUES,
-  isRole,
-} from "@/lib/member-roles";
+  memberListSubscriptionFilterConditions,
+  subscriptionNotRequiredMemberConditions,
+} from "@/lib/subscription-liability-where";
+import {
+  listSubscriptionStatus,
+  notRequiredRowBillingNote,
+  SEASON_ROW_STATE_SELECT,
+} from "@/lib/subscription-season-row-note";
 import {
   accessRoleChangeRequiresFullAdmin,
   accessRolesFromCompatibilityFields,
@@ -204,12 +209,6 @@ const SORT_BY_WHITELIST = [
   "ageTier",
   "active",
   "createdAt",
-] as const;
-const SUBSCRIPTION_STATUS_FILTERS = [
-  "PAID",
-  "UNPAID",
-  "OVERDUE",
-  "NOT_INVOICED",
 ] as const;
 /**
  * How many excluded matches the dependant-link search explains when it finds no
@@ -362,64 +361,19 @@ export async function listAdminMembers(
     await readClubTimeZoneOutsideRequest(),
     fixedClubClock(now),
   );
-  const ageTierSettings = await getAgeTierSettings();
-  const notRequiredAgeTiers = new Set(
-    ageTierSettings
-      .filter((setting) => setting.subscriptionRequiredForBooking === false)
-      .map((setting) => setting.tier),
-  );
-  // #2149: the SQL exempt-filter must derive from the SAME source as the
-  // displayed flag, so it cannot key off role alone. Membership type is the
-  // authority: a member is exempt when their assigned season type is NOT_REQUIRED,
-  // OR — with no season assignment — their role's DEFAULT built-in type is
-  // NOT_REQUIRED (the role→default-type fallback the resolver applies). Roles
-  // whose default type is NOT_REQUIRED are exactly OPERATIONAL + NON_MEMBER
-  // (ADMIN/LODGE/NON_MEMBER/SCHOOL); USER defaults to FULL (REQUIRED). Guarding
-  // the role clause on "no assignment" is what stops a fee-paying admin (role
-  // ADMIN with a REQUIRED assignment) from being wrongly filtered as exempt.
-  const notRequiredSubscriptionConditions = [
-    {
-      AND: [
-        {
-          seasonalMembershipAssignments: {
-            none: { seasonYear: currentSeasonYear },
-          },
-        },
-        { role: { in: [...OPERATIONAL_ROLE_VALUES, ...NON_MEMBER_ROLE_VALUES] }, },
-      ],
-    },
-    {
-      seasonalMembershipAssignments: {
-        some: {
-          seasonYear: currentSeasonYear,
-          membershipType: { subscriptionBehavior: "NOT_REQUIRED" },
-        },
-      },
-    },
-    // #2041/#2149: mirror the displayed flag's row-dominance branch. A
-    // BASED_ON_AGE_TIER assignment paired with a NOT_REQUIRED current-season
-    // subscription row is exempt even when the member's age tier is
-    // subscription-liable (the mid-season tier-promotion shape). This clause
-    // matches `isSubscriptionNotRequiredForMembershipType`'s
-    // `subscriptionBehavior === "BASED_ON_AGE_TIER" && hasNotRequiredSeasonRow`
-    // branch exactly — the assignment gate is required because a bare NOT_REQUIRED
-    // row does NOT exempt a REQUIRED type, and effective behavior is only
-    // BASED_ON_AGE_TIER when a season assignment carries it (no role default does).
-    {
-      seasonalMembershipAssignments: {
-        some: {
-          seasonYear: currentSeasonYear,
-          membershipType: { subscriptionBehavior: "BASED_ON_AGE_TIER" },
-        },
-      },
-      subscriptions: {
-        some: { seasonYear: currentSeasonYear, status: "NOT_REQUIRED" },
-      },
-    },
-    ...(notRequiredAgeTiers.size > 0
-      ? [{ ageTier: { in: Array.from(notRequiredAgeTiers) } }]
-      : []),
-  ];
+  const [ageTierSettings, lockoutSettings] = await Promise.all([
+    getAgeTierSettings(),
+    loadMembershipLockoutSettings(),
+  ]);
+  // #2149/#5190: the SQL exempt-filter derives from the SAME rule and settings as
+  // the displayed flag (`isSubscriptionNotRequiredForMembershipType`): the shared
+  // liability rule on the billing side until the club chooses (#5190 Q2). See
+  // `subscriptionNotRequiredMemberConditions`.
+  const notRequiredSubscriptionConditions = subscriptionNotRequiredMemberConditions({
+    seasonYear: currentSeasonYear,
+    ageTierSettings,
+    liabilitySettings: lockoutSettings,
+  });
 
   // Build where clause
   const where: Record<string, unknown> = {};
@@ -740,35 +694,14 @@ export async function listAdminMembers(
     );
   }
 
-  // Filter: subscription
-  if (subscriptionFilter === "NOT_REQUIRED") {
-    andConditions.push({ OR: notRequiredSubscriptionConditions });
-  } else if (subscriptionFilter === "NONE") {
-    // #2149: no separate role exclusion — the NOT_REQUIRED conditions above now
-    // exempt bare operational/non-member accounts via the assignment-aware
-    // fallback, so a fee-paying admin (REQUIRED assignment) correctly stays in
-    // the owing set instead of being dropped by a blanket role filter.
-    andConditions.push(
-      { NOT: { OR: notRequiredSubscriptionConditions } },
-      {
-        subscriptions: { none: { seasonYear: currentSeasonYear } },
-      },
-    );
-  } else if (
-    subscriptionFilter &&
-    (SUBSCRIPTION_STATUS_FILTERS as readonly string[]).includes(
-      subscriptionFilter,
-    )
-  ) {
-    andConditions.push(
-      { NOT: { OR: notRequiredSubscriptionConditions } },
-      {
-        subscriptions: {
-          some: { seasonYear: currentSeasonYear, status: subscriptionFilter },
-        },
-      },
-    );
-  }
+  // Filter: subscription. One definition with the CSV export (#2149, #5190):
+  // each value matches the members whose row shows that status.
+  andConditions.push(
+    ...memberListSubscriptionFilterConditions(subscriptionFilter, {
+      seasonYear: currentSeasonYear,
+      notRequiredConditions: notRequiredSubscriptionConditions,
+    }),
+  );
 
   // Filter: family group (via join table)
   if (familyGroupFilter === "none") {
@@ -888,7 +821,8 @@ export async function listAdminMembers(
     },
     subscriptions: {
       where: { seasonYear: currentSeasonYear },
-      select: { status: true, seasonYear: true, xeroInvoiceId: true },
+      // #5190: the row-state columns the billing note reads.
+      select: { ...SEASON_ROW_STATE_SELECT, seasonYear: true },
       take: 1,
     },
     seasonalMembershipAssignments: {
@@ -1198,14 +1132,25 @@ export async function listAdminMembers(
     // assignment correctly owes a subscription). The current-season row (already
     // selected as m.subscriptions[0]) still lets a NOT_REQUIRED row dominate a
     // BASED_ON_AGE_TIER type after a mid-season tier promotion (#2041).
-    const subscriptionNotRequired = isSubscriptionNotRequiredForMembershipType({
+    const liabilityFacts = {
       subscriptionBehavior: effectiveSubscriptionBehavior(
         currentMembershipType?.subscriptionBehavior,
         m.role,
       ),
-      ageTier: m.ageTier,
-      notRequiredAgeTiers,
-      hasNotRequiredSeasonRow: m.subscriptions?.[0]?.status === "NOT_REQUIRED",
+      member: m,
+      seasonYear: currentSeasonYear,
+      ageTierSettings,
+      liabilitySettings: lockoutSettings,
+    };
+    const subscriptionNotRequired = isSubscriptionNotRequiredForMembershipType({
+      ...liabilityFacts,
+      seasonRowStatus: m.subscriptions?.[0]?.status,
+    });
+    // #5190 (owner decision 22 Nov 2026): a saved "Not required" row the
+    // billing treats as owing gets a plain note.
+    const subscriptionBillingNote = notRequiredRowBillingNote({
+      ...liabilityFacts,
+      seasonRow: m.subscriptions?.[0],
     });
 
     return {
@@ -1220,12 +1165,15 @@ export async function listAdminMembers(
       // visible warning; the refusals in
       // bulk update, member edit and the login providers are the enforcement.
       deletedAccount: isDeletedAccountRecord(m),
-      subscriptionStatus:
-        subscriptionNotRequired
-          ? "NOT_REQUIRED"
-          : (m.subscriptions[0]?.status ?? null),
+      // #5190: a noted row shows billing's status, as its filter matches.
+      subscriptionStatus: listSubscriptionStatus({
+        notRequired: subscriptionNotRequired,
+        seasonRowStatus: m.subscriptions?.[0]?.status,
+        billingNote: subscriptionBillingNote,
+      }),
       subscriptionXeroInvoiceId:
         m.subscriptions[0]?.xeroInvoiceId ?? null,
+      subscriptionBillingNote,
       currentMembershipType: currentMembershipType
         ? {
             id: currentMembershipType.id,

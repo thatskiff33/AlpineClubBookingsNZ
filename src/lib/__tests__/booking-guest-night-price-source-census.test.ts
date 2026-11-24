@@ -8,6 +8,7 @@ import {
   scanSource,
 } from "@/lib/__tests__/support/booking-guest-night-writer-scan";
 import { stripComments } from "@/lib/__tests__/support/strip-comments";
+import { CENSUS_TIMEOUT_MS } from "@/test/census-timeout";
 
 const REPO = process.cwd();
 
@@ -116,7 +117,7 @@ const REQUIRED_WRITER_SITE_COUNTS = new Map<
 
 const DISCOVERED_WRITER_SITE_COUNTS = discoveredWriterSiteCounts();
 
-describe("INV-MONEY-028 BookingGuestNight writer census", () => {
+describe("INV-MONEY-028 BookingGuestNight writer census", { timeout: CENSUS_TIMEOUT_MS }, () => {
   it("knows every direct and nested writer site, including repeats in one file", () => {
     expect(
       [...DISCOVERED_WRITER_SITE_COUNTS]

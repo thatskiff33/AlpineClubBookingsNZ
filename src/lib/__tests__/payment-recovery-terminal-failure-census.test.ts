@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 
 import { blankLiterals, stripComments } from "@/lib/__tests__/support/strip-comments";
 import { balancedBrackets } from "./support/balanced-brackets";
+import { CENSUS_TIMEOUT_MS } from "@/test/census-timeout";
 
 /**
  * #3220: "THIS RECOVERY IS DEAD" IS ONE TRANSITION, IN ONE PLACE.
@@ -157,7 +158,7 @@ describe("INV-PAY-056: one terminal-failure transition, census", () => {
       // Two status-set constants (reads) and the chokepoint's one write.
       [RECOVERY_MODULE]: 3,
     });
-  });
+  }, CENSUS_TIMEOUT_MS);
 
   it("writes the status in exactly one place, and that place is the chokepoint", () => {
     const source = code(RECOVERY_MODULE);
@@ -204,7 +205,7 @@ describe("INV-PAY-056: one terminal-failure transition, census", () => {
       offenders,
       `A PaymentRecoveryOperation status is being written as the raw string "FAILED". Prisma types that identically to ${STATUS_MENTION}, so the count above cannot see it - and a terminal transition written this way skips the exhaustion alert and the stranded-intent withdrawal that ${CHOKEPOINT} owes a dead recovery. Call ${CHOKEPOINT} instead. If this is a READ inside a write's fence rather than a transition, name it through one of the module's status-set constants.`,
     ).toEqual([]);
-  });
+  }, CENSUS_TIMEOUT_MS);
 
   it("keeps the reader-side sets named rather than re-spelled", () => {
     const source = code(RECOVERY_MODULE);

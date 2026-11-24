@@ -25,6 +25,7 @@ import {
   visibleImportPlanItems,
 } from "@/lib/config-transfer/preview";
 import { getAdminPage } from "@/lib/admin-hubs";
+import { ConfigImportClearUpWarning } from "@/components/admin/config-import-clear-up-warning";
 
 // Full-admin Configuration Export & Import page. Export selected categories to a
 // portable zip; import a bundle via a mandatory dry-run before applying (the
@@ -115,6 +116,7 @@ export default function ConfigTransferPage() {
   const [resealing, setResealing] = useState(false);
   const [importError, setImportError] = useState<string | null>(null);
   const [applied, setApplied] = useState<string | null>(null);
+  const [clearUpFailed, setClearUpFailed] = useState(false); // #5190
 
   const canExport = useMemo(() => selected.size > 0, [selected]);
 
@@ -176,6 +178,7 @@ export default function ConfigTransferPage() {
     setPlanning(true);
     setImportError(null);
     setApplied(null);
+    setClearUpFailed(false);
     setPlan(null);
     try {
       const form = new FormData();
@@ -276,6 +279,7 @@ export default function ConfigTransferPage() {
                 deleted: number;
                 unchanged: number;
               };
+              liabilityClearUp?: "not-run" | "done" | "failed";
             };
             error?: string;
           }
@@ -285,6 +289,7 @@ export default function ConfigTransferPage() {
       }
       const t = data.result.totals;
       setApplied(`Applied: ${formatConfigImportTotals(t)}.`);
+      setClearUpFailed(data.result.liabilityClearUp === "failed");
       setPlan(null);
       setResolutions([]);
       setImportCategories(null);
@@ -382,6 +387,7 @@ export default function ConfigTransferPage() {
               setFile(e.target.files?.[0] ?? null);
               setPlan(null);
               setApplied(null);
+              setClearUpFailed(false);
               setImportError(null);
               setResolutions([]);
               setImportCategories(null);
@@ -639,6 +645,7 @@ export default function ConfigTransferPage() {
               {applied}
             </p>
           )}
+          {clearUpFailed && <ConfigImportClearUpWarning />}
           {importError && (
             <p className="rounded-md bg-danger-3 p-2 text-sm text-danger-11">
               {importError}

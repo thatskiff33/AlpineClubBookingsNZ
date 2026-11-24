@@ -1,0 +1,8 @@
+{
+  "4998": "## Migration Or Deployment Impact\n\n- No migration. During blue/green overlap the old colour can still dismiss a hand-back whose R05 the new colour posted, without withdrawing it; reopen puts it back, and #5185's comparison will list any such row. Deploy after M4c.\n\n## Manual Checks Required\n\n- After deploy, the owner reads `pnpm run booking-ledger:census` (read-only) for hand-back drift, as the issue's rollout says.\n",
+  "5107": "## Migration Or Deployment Impact\n\n- None. No migration, environment variable or deployment step. Old page names and addresses still resolve; only the displayed names change.\n\n## Manual Checks Required\n\n- After deploy, open Admin, Setup, Foundations Setup, Bookings, Book on Behalf and Export & Import once and confirm each heading matches its menu entry. Search the palette for \"Setup Wizard\" and \"Chore Templates\" and confirm each finds its page.\n",
+  "5340": "## Migration Or Deployment Impact\n\n- None (no schema change).\n\n## Manual Checks Required\n\n- None after deploy.\n",
+  "5435": "## Migration Or Deployment Impact\n\n- None. No after-deploy step.\n\n## Manual Checks Required\n\n- None.\n",
+  "5450": "## Migration Or Deployment Impact\n\n- None. No after-deploy step. Blue-green safe: old code creates the row on read, new code reads defaults; both answer the same body.\n\n## Manual Checks Required\n\n- None.\n",
+  "_source": "The \"Migration Or Deployment Impact\" and \"Manual Checks Required\" sections of merged PR bodies, verbatim (gh pr view <n> --json body, 24 Nov 2026), for check-pr-deploy-fragment.test.mjs (#5379). 5450, 5435 and 5340 name no after-deploy step; 4998 and 5107 name one."
+}

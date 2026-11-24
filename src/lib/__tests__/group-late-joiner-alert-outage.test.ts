@@ -21,7 +21,14 @@ const h = vi.hoisted(() => ({
 // Like the real core, it says when it has written the copy's row
 // (`onAttemptLogged`): only a logged copy can be FAILED and replayed (#5407).
 vi.mock("@/lib/email/core", () => ({
-  sendEmail: vi.fn(async ({ to, onAttemptLogged }: { to: string; onAttemptLogged?: (id: string) => void }) => {
+  // #5255: the real mailer writes the row before the provider is called, and
+  // that row confirms the once-ever claim the alert was sent under.
+  sendEmail: vi.fn(async ({ to, onAttemptLogged, onceEverClaim }: {
+    to: string;
+    onAttemptLogged?: (id: string) => void;
+    onceEverClaim?: { rowWritten: boolean };
+  }) => {
+    if (onceEverClaim) onceEverClaim.rowWritten = true;
     onAttemptLogged?.(`email-log-${h.emailLog.length + 1}`);
     if (!h.smtpUp) {
       h.emailLog.push({ to, status: "FAILED" });

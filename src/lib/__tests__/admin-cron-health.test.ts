@@ -275,6 +275,8 @@ describe("admin cron health", () => {
     // CronJobRun row, so each needs its own health entry (#3635 adds the
     // held late-capture alert's re-selecting run).
     for (const jobName of [
+      // #5255: the once-ever alert sweep, the cycle's first task.
+      "once-ever-alert-sweep",
       "payment-recovery",
       "internet-banking-hold-release",
       "xero-waiting-invoice-reaper",
@@ -282,6 +284,8 @@ describe("admin cron health", () => {
       "credit-release-asks",
       // #4285 review: the owed new-capture alert's drain.
       "duplicate-capture-kept-alert",
+      // #4525 review: the combined group invoice cover-release sweep.
+      "combined-invoice-cover-release",
     ]) {
       expect(
         definitions.find((definition) => definition.jobName === jobName)

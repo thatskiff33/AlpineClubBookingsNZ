@@ -585,6 +585,18 @@ replay records it from the operation's stored lines. The frozen mapping keeps
 the Xero tax type and the journal's tax codes side by side, untranslated. No
 delivery record or dispatcher exists yet.
 
+#5208 makes the journal's GST the figure of record on that one role (owner
+decision, 18 Nov 2026, Option A), as a step inside M13. A COVERED plan for a
+GST-registered club now carries each line's `taxAmount`, shared from the stay
+component's live tax and the fee components' tax by `allocateTaxAcrossLines`
+(largest remainder, earliest line first on a tie), and the sender sends that
+plan's lines, so the invoice's tax equals the journal's to the cent. The frozen
+mapping records it as `taxAllocation` (the cents per line, or `PAUSED`). A line
+Xero returns holding other tax makes the manifest a `TAX_CENTS` conflict and
+pauses the overrides for later invoices until finance clears it
+(`docs/xero/ARCHITECTURE.md#the-journals-gst-on-each-line-5208`). Money already
+posted and invoices already sent are untouched.
+
 The next cohort (ALP-436) adds two roles to the same manifest, still as
 observers: `XeroSyncOperation` keeps sending. `SUPPLEMENTARY_BOOKING_INVOICE`
 (`planSupplementaryBookingInvoice`) bills a *slice* of the stay component,
@@ -694,6 +706,85 @@ A supplementary invoice names the capture its queued payload names; an
 officer's inline retry of a FAILED one passes that payload's
 `paymentIntentId` to the sender, so the retry's receipt names the same capture
 the outbox run would have.
+
+The combined group invoice cohort (ALP-437) adds `COMBINED_GROUP_INVOICE` on
+the same manifest, and `createXeroInvoiceForGroupSettlement` still sends,
+emails and voids exactly as before. `planCombinedGroupInvoice` runs each
+committed child through the primary invoice's own match
+(`coverBookingInvoiceLines`); any child's conflict, or a component a primary
+invoice or another combined invoice still covers (`ALREADY_COVERED`), covers
+nothing. The manifest names the organiser's booking and the settlement, under
+the attempt's key (`groupSettlementInvoiceCreateKey`); a replacement invoice is
+the next attempt, never a second render revision. Only a kept invoice is
+recorded, after its bind; an already-bound return replays it from the CREATE
+row's stored lines, matched across the children together because those lines do
+not say which child each bills. The replay reads its children from the stored
+request's `childBookingIds`. A request written before that key existed falls
+back to the children committed now, matched on totals only, so there a child
+swapped for another with the same charges would be covered in its place: a
+stated limit of those older rows. A primary invoice and a combined invoice
+never both live-cover one component (a partial unique index). A primary invoice
+raised for a child while a combined invoice covers its charge is refused by
+that index (P2002): its recorder, old or new code, plans no `ALREADY_COVERED`
+against combined cover, so it writes no manifest row and logs "Another run
+recorded the primary invoice's manifest first", and nothing records it later (a
+primary replay runs only when its CREATE runs again against an already-bound
+invoice, which nothing schedules). The combined cover stands, so nothing is
+recorded as billed twice; that primary invoice is a stated gap in the manifest.
+Coverage ends only by an insert-only `MemberMoneyExportCoverageRelease` row,
+written by `releaseCombinedGroupInvoiceManifest` (from the void handlers, the
+recorder or the payments cycle's sweep below) when Xero holds the invoice void
+or holds no such invoice, never when it carries money; the next document then
+covers the component at the next coverage generation. A replacement invoice
+whose settlement's earlier invoice still covers a child is `ALREADY_COVERED`
+like any other: a visible conflict row with no coverage, so nothing sent to
+Xero goes unrecorded, even behind an earlier invoice that carries money and
+keeps its cover (owner decision, 25 Nov 2026, #4525). When the earlier
+invoice's cover is released, the conflict becomes cover. The manifest is
+write-once, so the conflict row stays as history and one successor manifest,
+under the attempt key plus `|after-release` (`coveredAfterReleaseKey`), covers
+the components at the next generation. The recorder writes it after its own
+row, re-planning the components against live cover; the release's retry of the
+bound invoice's record reaches the same step, so a release and a record in
+either order end covered. The retry finds the replacement's CREATE row by the
+invoice it names, or, while its email is still sending and the row names no
+invoice yet, by the current attempt's key (`groupSettlementInvoiceCreateKey`).
+Its reads take no lock, so it reads the settlement's binding again after the
+rows and trusts an unnamed row only while the settlement still names that
+invoice: an abandoned invoice is never bound again, so no later attempt's
+request is ever recorded under the abandoned invoice.
+While the earlier invoice carries money and keeps its cover, the plan is still
+`ALREADY_COVERED` and the conflict stays, visible, with no cover. Only an
+`ALREADY_COVERED` conflict gains a successor, never one for another reason, and
+never one whose own invoice is already void. A manifest recorded after its own
+invoice's void found nothing to release is released by the recorder: it reads
+the invoice's finished VOID operation and releases for the reason that row
+records (void or not in Xero; never when it carries money). The void handler
+releases before completing that row and once more after, so a record and a void
+in either order end released.
+
+Three gaps leave cover live on a void invoice, and one sweep heals them. Two
+are crash windows, each a process crash inside an already narrow race. On the
+handler side, the void handler completes its VOID row and dies before its last
+release, while a record committed beside it read that row unfinished. On the
+recorder side, the recorder dies after its own row or its successor commits and
+before it reads the VOID row or re-reads the invoice's releases, after the
+void's last sweep has run. The third is the deploy: while the old colour
+drains, its void handlers finish VOIDs and write no release at all. The
+payments cycle's `combined-invoice-cover-release` task
+(`sweepVoidedCombinedGroupInvoiceCover`) releases every unreleased combined
+manifest whose invoice has a SUCCEEDED VOID that ended it, for that VOID's
+reason, through `releaseCombinedGroupInvoiceManifest`, the one release writer;
+its retry of the bound invoice's record then turns the replacement's
+`ALREADY_COVERED` conflict into cover. A VOID that found the invoice carrying
+money ends nothing and is never released, and one not yet SUCCEEDED is never
+read. The bound is one payments cycle: the next run, at most about 15 minutes
+after the VOID completes or the crash, once the new code runs the cron leader.
+A run starts from those VOIDs, oldest first, and reads only invoices still
+owed a release, so live and money-carrying invoices never fill its pages; it
+reads 5,000 such VOIDs at most and warns on admin cron health when it stops
+at that cap or a release fails. The sweep is a lane decision under the owner's standing instruction of 25
+Nov 2026, the recommended option, for the owner to confirm.
 
 | Rendered object | Ledger slice and coverage rule |
 | --- | --- |
@@ -928,6 +1019,15 @@ Admin reaches to schedule a future change (`club-tax-settings-one-writer-census.
 holds every other path to reads). A club that is not GST-registered can now
 have that recorded from the admin card on `/admin/finance/xero`.
 
+**Which GST is of record when the two round differently** (#5208, owner
+decision 18 Nov 2026, Option A): the journal's. It splits a component once;
+Xero would round each invoice line, up to half a cent apart per line. New
+primary invoices therefore carry the journal's tax shared across their lines,
+behind a live safeguard that pauses on any line Xero changes
+(`docs/xero/ARCHITECTURE.md#the-journals-gst-on-each-line-5208`). The issue does
+not assert how GST must be rounded; that treatment is the club's to confirm
+with its accountant.
+
 ### D4. Member merge: transfer open balances explicitly
 
 Decided by the owner on 28 Oct 2026 ([recorded on #4461](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/4461#issuecomment-6479558948)).
@@ -1099,6 +1199,26 @@ Approving that keep later reverses the component before the return posts. The
 comparison counts a kept-capture component on the ledger side as the gross it
 still carries. No card reservation is taken: the bank payment happens in the
 same transaction as the task. Organiser shares stay M6's.
+
+**Census and comparison report v3 (#5185).** Read-only checks over what M4d
+posts, for bookings whose R01 is in the journal, with history from before the
+journal's first M4d event left to M9. Five classes, defined once with the
+refund census and reported by `booking-ledger:census` as integrity findings
+that hold its gate: `HAND_BACK_WITHOUT_EVENT` (a hand-back raised with no R05),
+`HAND_BACK_PAID_WITHOUT_EVENT` (paid with no R14), `UNAPPLIED_HAND_BACK` (an R14
+that paid no debt although the debt is the journal's), `HAND_BACK_OBLIGATION_DRIFT`
+(a debt open while its task is closed, or the reverse, or open with no task
+behind it) and `KEEP_WITHOUT_EVENT` (a kept late capture with no keep). Report
+v3, identity `JOURNAL_REFUND_PAYABLE`, compares each booking's open refund
+payable with what the legacy records still owe back on the debts the journal
+holds: each hand-back task whose R05 posted, at what it still owes, and each
+open card refund row whose debt is still live (the live end of its chain), at
+its slices not yet made, and each late capture held open for the treasurer
+whose capture-return R05 posted with no such row, at its task's amount. A refund
+that went back without paying its debt (an unapplied R12) disagrees until the
+milestone that answers unapplied refunds. A source census classifies every
+`ManualRefundTask` creation, so a new raise site cannot skip its R05
+(`INV-MONEY-049`).
 
 ## 11. Proposed children, in shipping order
 

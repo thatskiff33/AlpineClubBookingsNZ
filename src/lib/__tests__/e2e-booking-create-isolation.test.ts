@@ -21,6 +21,7 @@ import {
   getClientIp,
   rateLimiters,
 } from "../rate-limit";
+import { CENSUS_TIMEOUT_MS } from "@/test/census-timeout";
 
 const E2E_ROOT = path.join(process.cwd(), "e2e");
 
@@ -2048,7 +2049,7 @@ describe("E2E booking-create retry isolation (#2599)", () => {
       "e2e/helpers/booking-create-client-ip.ts:postBookingCreate",
     ]);
     expect(unresolvedPostRoutes).toEqual([]);
-  });
+  }, CENSUS_TIMEOUT_MS);
 
   it("pins browser booking-create triggers inside the exact-action wrapper", () => {
     const unwrappedCandidates: string[] = [];

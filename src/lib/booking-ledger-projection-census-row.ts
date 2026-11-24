@@ -23,7 +23,7 @@ import type {
 
 import type { ConfirmationPostingBooking } from "@/lib/booking-ledger-confirmation-posting";
 import type { GroupChildSibling } from "@/lib/booking-ledger-group-child-plan";
-import type { BookingJournalCharges } from "@/lib/member-money";
+import type { BookingHandBackJournal, BookingJournalCharges } from "@/lib/member-money";
 
 // ---------------------------------------------------------------------------
 // The snapshot one booking is judged from
@@ -209,4 +209,10 @@ export type BookingLedgerCensusRow = {
    * reader did not ask.
    */
   journal?: BookingJournalCharges | null;
+  /**
+   * #5185 (M4d): what the journal holds of this booking's hand-backs and refund
+   * debts (`readBookingHandBackJournal`), for the hand-back classes and report
+   * v3; read only for a booking whose R01 is in the journal, absent otherwise.
+   */
+  handBacks?: BookingHandBackJournal | null;
 };

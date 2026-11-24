@@ -6,11 +6,13 @@ const mocks = vi.hoisted(() => ({
   settings: vi.fn(),
   membershipTypes: vi.fn(),
   ageTiers: vi.fn(),
+  lockoutSettings: vi.fn(),
 }));
 vi.mock("@/lib/prisma", () => ({ prisma: {
   publicContentSettings: { findUnique: mocks.settings },
   membershipType: { findMany: mocks.membershipTypes },
   ageTierSetting: { findMany: mocks.ageTiers },
+  membershipLockoutSettings: { findUnique: mocks.lockoutSettings },
 } }));
 
 import { loadPublicFirstYearCosts } from "@/lib/public-first-year-costs";
@@ -18,6 +20,7 @@ import { CLUB_FORMAT_TEST, CLUB_FORMAT_TEST_OTHER } from "./support/club-format-
 
 beforeEach(() => {
   vi.clearAllMocks();
+  mocks.lockoutSettings.mockResolvedValue(null);
   mocks.settings.mockImplementation(({ select }: { select: Record<string, boolean> }) =>
     Object.fromEntries(Object.keys(select).map((key) => [key, true])),
   );
@@ -173,6 +176,23 @@ describe("loadPublicFirstYearCosts (#4295)", () => {
       ]);
       await expect(loadPublicFirstYearCosts(CLUB_FORMAT_TEST)).resolves.toEqual([
         { heading, rows: [row("Full — Child", 15000, "$150.00"), row("Full — Adult", 46000, "$460.00")] },
+      ]);
+    });
+
+    // #5190 Edge 1: an always-required type charges every tier until the club
+    // chooses AGE_TIER_EXEMPTS, which the public figure follows like billing.
+    it("follows the club's rule for an exempt tier on an always-required type", async () => {
+      mocks.ageTiers.mockResolvedValue(exemptChild);
+      mocks.membershipTypes.mockResolvedValue([
+        type({ key: "FULL", name: "Full", ageGroupsApply: true, subscriptionBehavior: "REQUIRED",
+          joiningFees, annualFees: [annual(null, 7000)] }),
+      ]);
+      await expect(loadPublicFirstYearCosts(CLUB_FORMAT_TEST)).resolves.toEqual([
+        { heading, rows: [row("Full — Child", 8000, "$80.00"), row("Full — Adult", 39000, "$390.00")] },
+      ]);
+      mocks.lockoutSettings.mockResolvedValue({ requiredTypeAgeRule: "AGE_TIER_EXEMPTS", liabilityAgeSource: "SEASON_START" });
+      await expect(loadPublicFirstYearCosts(CLUB_FORMAT_TEST)).resolves.toEqual([
+        { heading, rows: [row("Full — Child", 1000, "$10.00"), row("Full — Adult", 39000, "$390.00")] },
       ]);
     });
 

@@ -166,7 +166,7 @@
 
 import "server-only";
 
-import type { AgeTier, Prisma } from "@prisma/client";
+import type { Prisma } from "@prisma/client";
 
 import { bookingOwner } from "@/lib/booking-owner";
 import { SAME_GROUP_TRIP_COVERAGE_SOURCE_LIMIT } from "@/lib/adult-member-hosting-coverage-ceilings";
@@ -204,7 +204,7 @@ import { peekSubscriptionLockoutModeStrict } from "@/lib/member-subscription-eli
 import { resolveMembershipTypePolicyForMember } from "@/lib/membership-type-policy";
 import { participantQualifiesAsHost } from "@/lib/policies/adult-member-hosting";
 import {
-  resolveMemberSubscriptionSettlement,
+  loadMemberSubscriptionSettlements,
   subscriptionIsUnpaid,
 } from "@/lib/subscription-lockout-facts";
 
@@ -867,20 +867,11 @@ const BLOCK_STATE_BOOKING_SELECT = {
    * module.
    */
   finalPriceCents: true,
-  /**
-   * THE OWNER'S LIVE AGE TIER, AND NOTHING ELSE OFF `Member`.
-   *
-   * `resolveMemberSubscriptionSettlement` takes the tier as an input and treats an
-   * unresolvable one as OWING a subscription, so it has to come from the live row
-   * rather than from anything cached on the booking. `confirm-draft` reads exactly
-   * this field for exactly this gate (`booking.member.ageTier`).
-   *
-   * ONE field, because the header's rule applies with full force to a nested
-   * select: `Member` is the relation carrying `comments`, `dateOfBirth`,
-   * `passwordHash` and `totpSecret`, and this is the module where the named
-   * `select` IS the boundary. It is a PREDICATE input and appears in no projection.
-   */
-  member: { select: { ageTier: true } },
+  // #5190: no `Member` columns. The owner's subscription refusal reads its facts
+  // (tier, date of birth, coverage) through the settlement loader, which returns
+  // only the verdict — `Member` is the relation carrying `comments`,
+  // `dateOfBirth`, `passwordHash` and `totpSecret`, and this is the module where
+  // the named `select` IS the boundary.
   // #3369: the owner may be an Organisation; bookingOwner() reads both.
   organisation: { select: { name: true, email: true } },
 } as const;
@@ -905,10 +896,9 @@ const BLOCK_STATE_BOOKING_SELECT = {
  * suppression; `checkIn`/`checkOut` are the capacity window and the edit policy;
  * `requiresAdminReview`, `adminReviewStatus` and
  * `adultMemberHostingReviewStatus` are the three fields the platform's own review
- * predicates are called with, field by field; `finalPriceCents` and
- * `member.ageTier` are the two inputs the club's own subscription refusal needs —
- * which door the booking's confirm actually uses, and what the owner's tier owes.
- * Neither of those two is projected.
+ * predicates are called with, field by field; `finalPriceCents` is the input the
+ * club's own subscription refusal needs — which door the booking's confirm
+ * actually uses — and is not projected.
  */
 
 /**
@@ -983,9 +973,10 @@ function subscriptionHardBlockGatesThisBooking(booking: {
  * WHY IT IS NOT A SECOND IMPLEMENTATION OF THE RULE. Three of the four inputs are
  * the canonical ones and the fourth is a status list:
  *
- *  - the FACT comes from `resolveMemberSubscriptionSettlement`, which is the single
- *    definition #2543 created precisely so the owner gate, the member-guest gate and
- *    the reprice cannot drift — its own docblock forbids a caller adding a condition;
+ *  - the FACT comes from `loadMemberSubscriptionSettlements`, the loader over the
+ *    single definition #2543 created precisely so the owner gate, the member-guest
+ *    gate and the reprice cannot drift, now the shared liability rule (#5190) — it
+ *    reads the club's liability settings strictly through `tx`;
  *  - `subscriptionIsUnpaid` is the same predicate `member_eligibility_state` reads,
  *    so the two entries in this pack now answer one question one way;
  *  - the MODE is the strictly-read club setting already in hand, so a failed
@@ -994,22 +985,18 @@ function subscriptionHardBlockGatesThisBooking(booking: {
  *
  * WHAT IT DELIBERATELY DOES NOT USE. `requiresPaidSubscriptionForMemberForBooking`
  * is the function the routes call, and it would have been the obvious reuse — but it
- * reaches `requiresPaidSubscriptionForBooking`, which calls
- * `resolveSubscriptionLockoutMode()` and the CACHED age-tier settings reader, and
- * both turn a database failure into a confident default. That is the exact defect
- * the strict seams exist to keep out of an evidence path. What it computes is the
- * same three branches this composition does, minus those two swallowing reads: a
- * `NOT_REQUIRED` type owes nothing, a `BASED_ON_AGE_TIER` type with a `NOT_REQUIRED`
- * season row owes nothing, otherwise the per-tier flag decides. The Xero-off bypass
- * that function also carries is covered here by the mode itself, because the strict
- * mode reader already answers `NO_BLOCK` when the Xero module is effectively off.
+ * calls `resolveSubscriptionLockoutPolicy()`, which turns a database failure into a
+ * confident default. That is the exact defect the strict seams exist to keep out of
+ * an evidence path. It calls the same settlement loader this composition does, minus
+ * that swallowing read. The Xero-off bypass that function also carries is covered
+ * here by the mode itself, because the strict mode reader already answers
+ * `NO_BLOCK` when the Xero module is effectively off.
  */
 async function readOwnerSubscriptionHardBlock(
   tx: Prisma.TransactionClient,
   input: {
     memberId: string;
     seasonYear: number;
-    ageTier: AgeTier | null;
     /**
      * The row's ONE strict, transaction-bound age-tier observation, shared with the
      * policy evaluator and the hosting bridge so all three subscription rules on a
@@ -1019,30 +1006,23 @@ async function readOwnerSubscriptionHardBlock(
     readAgeTierSettings: () => Promise<AgeTierSettingData[]>;
   },
 ): Promise<boolean> {
-  const [typePolicy, subscription, ageTierSettings] = await Promise.all([
-    resolveMembershipTypePolicyForMember(tx, {
-      memberId: input.memberId,
-      seasonYear: input.seasonYear,
-    }),
-    tx.memberSubscription.findUnique({
-      where: {
-        memberId_seasonYear: {
-          memberId: input.memberId,
-          seasonYear: input.seasonYear,
-        },
-      },
-      select: { status: true },
-    }),
-    input.readAgeTierSettings(),
-  ]);
-  return subscriptionIsUnpaid(
-    resolveMemberSubscriptionSettlement({
-      subscriptionBehavior: typePolicy?.subscriptionBehavior ?? null,
-      subscriptionStatus: subscription?.status ?? null,
-      ageTier: input.ageTier,
-      ageTierSettings,
-    }),
-  );
+  const typePolicy = await resolveMembershipTypePolicyForMember(tx, {
+    memberId: input.memberId,
+    seasonYear: input.seasonYear,
+  });
+  // #5190: the settlement LOADER, not a hand-assembled call to the rule. It
+  // reads the club's liability settings strictly through `tx`, the member's
+  // date of birth (which this module must never select itself — see the module
+  // doc) and the no-invoice coverage, and returns only the verdict.
+  const settlements = await loadMemberSubscriptionSettlements(tx, {
+    memberIds: [input.memberId],
+    seasonYear: input.seasonYear,
+    subscriptionBehaviorByMember: new Map(
+      typePolicy ? [[input.memberId, typePolicy.subscriptionBehavior]] : [],
+    ),
+    readAgeTierSettings: input.readAgeTierSettings,
+  });
+  return subscriptionIsUnpaid(settlements.get(input.memberId));
 }
 
 /**
@@ -1429,7 +1409,6 @@ async function readBookingBlockState(
         : readOwnerSubscriptionHardBlock(tx, {
           memberId: bookingOwner(booking).memberId as string,
           seasonYear: requireResolvedSeasonYear(seasonYear),
-          ageTier: bookingOwner(booking).member?.ageTier ?? null,
           readAgeTierSettings,
         }),
     ]);
@@ -2088,12 +2067,24 @@ async function readMemberEligibility(
       getInductionStatusForMember(memberId, tx),
     ]);
 
-  const settlement = resolveMemberSubscriptionSettlement({
-    subscriptionBehavior: typePolicy?.subscriptionBehavior ?? null,
-    subscriptionStatus: subscription?.status ?? null,
-    ageTier: member.ageTier,
-    ageTierSettings,
-  });
+  // #5190: through the settlement loader, as the owner gate above, so the
+  // liability rule and the no-invoice coverage are judged exactly as the booking
+  // gates judge them, with the strict tier observation already read above.
+  const settlement = (
+    await loadMemberSubscriptionSettlements(tx, {
+      memberIds: [memberId],
+      seasonYear,
+      subscriptionBehaviorByMember: new Map(
+        typePolicy ? [[memberId, typePolicy.subscriptionBehavior]] : [],
+      ),
+      readAgeTierSettings: async () => ageTierSettings,
+    })
+  ).get(memberId);
+  if (!settlement) {
+    // The loader answers every id it is asked about; anything else is a defect,
+    // and evidence refuses rather than guessing.
+    throw new Error("AI Diagnostics: the settlement loader returned no answer for the member");
+  }
   const unpaid = subscriptionIsUnpaid(settlement);
 
   /** Canonical structural-or-reserved-address deletion verdict. */

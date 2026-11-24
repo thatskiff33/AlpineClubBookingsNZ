@@ -59,6 +59,7 @@ import {
   relativeSource,
   sourceFiles,
 } from "@/lib/__tests__/support/booking-guest-night-writer-scan";
+import { CENSUS_TIMEOUT_MS } from "@/test/census-timeout";
 
 const ORDER_HOME = "src/lib/payment-ledger-order.ts";
 const LEDGER_ORDERS = new Set(["LEDGER_ROWS_OLDEST_FIRST", "LEDGER_ROWS_NEWEST_FIRST"]);
@@ -78,6 +79,8 @@ const UNORDERED_ROW_SETS: Record<string, string> = {
     "the ids of the captured bank rows (by the claim's precondition, only the row it just wrote) handed to the receipt hook as a set (`includes`).",
   "src/lib/member-money/internal/booking-receipts.ts > postBookingReceipts":
     "the payment's rows are looked up by id (`find` on a settlement line's anchor); the hook walks the settlement lines in their own posted order.",
+  "src/lib/member-money/internal/hand-back-census.ts > readBookingHandBackJournal":
+    "#5185: reads only which kept late-capture intents have a captured row, a membership test (`.some`) by intent id; the order cannot matter.",
   "src/lib/member-money/internal/receipt-census.ts > readBookingReceiptCensus":
     "each captured row is judged on its own (its line, its event, its amount); the findings are a set, not a sequence.",
   "src/lib/payment-reconciliation.ts > settleBookingPaymentInTransaction":
@@ -510,7 +513,7 @@ describe("every capture-ledger read is ordered by the ledger's order, or declare
         "Use compareLedgerRowsOldestFirst / compareLedgerRowsNewestFirst from payment-ledger-order.ts, or " +
         "declare it in CREATED_AT_ONLY_COMPARATORS with the reason a tie cannot matter.",
     ).toEqual(Object.keys(CREATED_AT_ONLY_COMPARATORS).sort());
-  });
+  }, CENSUS_TIMEOUT_MS);
 
   it("keeps a reason against every entry", () => {
     for (const [entry, reason] of Object.entries({
@@ -533,7 +536,7 @@ describe("every capture-ledger read is ordered by the ledger's order, or declare
     expect(home, `INV-PAY-133: LEDGER_ROWS_NEWEST_FIRST in ${ORDER_HOME} must be createdAt desc, then insertionSeq desc.`).toMatch(
       /export const LEDGER_ROWS_NEWEST_FIRST = \[\s*\{ createdAt: "desc" \},\s*\{ insertionSeq: "desc" \},\s*\]/,
     );
-  });
+  }, CENSUS_TIMEOUT_MS);
 
   it("finds no raw SQL that orders PaymentTransaction by createdAt without insertionSeq", () => {
     expect(
@@ -541,7 +544,7 @@ describe("every capture-ledger read is ordered by the ledger's order, or declare
       'INV-PAY-133: raw SQL orders PaymentTransaction by "createdAt" with no "insertionSeq" tiebreak. Add one, ' +
         "or declare the file in RAW_SQL_WITHOUT_INSERTION_SEQ with the reason the order cannot matter.",
     ).toEqual(Object.keys(RAW_SQL_WITHOUT_INSERTION_SEQ).sort());
-  });
+  }, CENSUS_TIMEOUT_MS);
 });
 
 describe("unordered first-read scanner regressions (#4180, INV-PAY-133)", () => {

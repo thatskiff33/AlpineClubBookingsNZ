@@ -16,13 +16,13 @@ reason: the page owns every bulk dialog's open state, its mount and its
   were folded into one to keep the growth down.
 
 file: src/app/api/admin/members/export/route.ts
-lines: 561
+lines: 526
 reason: the CSV export must apply the same subscription-category filter as the
   list so the file matches the screen; the clause is one shared helper call
   among this route's other filter clauses.
 
 file: src/lib/admin-members-service.ts
-lines: 1788
+lines: 1736
 reason: the list query applies the shared category filter beside the
   membership-type filter it mirrors, selects the current-season category and
   returns it on each row; splitting the list query is a refactor of its own.

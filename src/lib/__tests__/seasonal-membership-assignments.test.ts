@@ -34,10 +34,21 @@ vi.mock("@/lib/logger", () => ({
   default: { error: vi.fn(), info: vi.fn(), warn: vi.fn(), debug: vi.fn() },
 }));
 const mockComputeAgeTier = vi.fn().mockResolvedValue("ADULT");
-vi.mock("@/lib/age-tier", () => ({
-  computeAgeTier: (...args: unknown[]) => mockComputeAgeTier(...args),
-  getSeasonStartDate: vi.fn(() => new Date("2026-04-01")),
-}));
+// The season-row reconcile reads the club's age-tier settings for the shared
+// liability rule (#5190); with no rows the real reader returns the documented
+// defaults, so the mock does the same.
+vi.mock("@/lib/age-tier", async () => {
+  const { AGE_TIER_DEFAULTS, cloneAgeTierSettings } = (await vi.importActual(
+    "@/lib/policies/age-tier",
+  )) as typeof import("@/lib/policies/age-tier");
+  return {
+    computeAgeTier: (...args: unknown[]) => mockComputeAgeTier(...args),
+    getSeasonStartDate: vi.fn(() => new Date("2026-04-01")),
+    getAgeTierSettingsStrict: vi.fn(async () =>
+      cloneAgeTierSettings(AGE_TIER_DEFAULTS),
+    ),
+  };
+});
 
 /**
  * The season year the code under test computes for "now", WRITTEN OUT.
@@ -245,6 +256,8 @@ function makePreviewDb() {
       findUnique: vi.fn().mockResolvedValue(null),
       updateMany: vi.fn().mockResolvedValue({ count: 0 }),
     },
+    // #5190: the club's liability rule; a missing row is NOT_CHOSEN.
+    membershipLockoutSettings: { findUnique: vi.fn().mockResolvedValue(null) },
     auditLog: {
       create: vi.fn().mockResolvedValue({}),
     },
@@ -336,6 +349,8 @@ function makeRollForwardDb() {
       findUnique: vi.fn().mockResolvedValue(null),
       updateMany: vi.fn().mockResolvedValue({ count: 0 }),
     },
+    // #5190: the club's liability rule; a missing row is NOT_CHOSEN.
+    membershipLockoutSettings: { findUnique: vi.fn().mockResolvedValue(null) },
     auditLog: {
       create: vi.fn().mockResolvedValue({}),
     },
@@ -1257,12 +1272,17 @@ describe("seasonal membership assignment roll-forward", () => {
           }
           return candidateMembers;
         }),
+        // #5190: the season-row reconcile reads the member's tier for the
+        // billing side of the liability rule.
+        findUnique: vi.fn(async ({ where }: any) => freshById[where.id] ?? null),
         update: vi.fn().mockResolvedValue({}),
       },
       memberSubscription: {
         findUnique: vi.fn().mockResolvedValue(null),
         updateMany: vi.fn().mockResolvedValue({ count: 0 }),
       },
+      // #5190: the club's liability rule; a missing row is NOT_CHOSEN.
+      membershipLockoutSettings: { findUnique: vi.fn().mockResolvedValue(null) },
       auditLog: { create: vi.fn().mockResolvedValue({}) },
       $executeRaw: vi.fn().mockResolvedValue(1),
       $transaction: vi.fn(async (callback: any) => callback(db)),
@@ -1371,6 +1391,9 @@ describe("seasonal membership assignment roll-forward", () => {
           }
           return candidateMembers;
         }),
+        // #5190: the season-row reconcile reads the member's tier for the
+        // billing side of the liability rule.
+        findUnique: vi.fn(async ({ where }: any) => freshById[where.id] ?? null),
         // The first chunk (members 0-24) throws when it reaches member-0; the
         // second chunk (25-29) must still reconcile.
         update: vi.fn().mockImplementation(async ({ where }: any) => {
@@ -1378,6 +1401,12 @@ describe("seasonal membership assignment roll-forward", () => {
           return {};
         }),
       },
+      memberSubscription: {
+        findUnique: vi.fn().mockResolvedValue(null),
+        updateMany: vi.fn().mockResolvedValue({ count: 0 }),
+      },
+      // #5190: the club's liability rule; a missing row is NOT_CHOSEN.
+      membershipLockoutSettings: { findUnique: vi.fn().mockResolvedValue(null) },
       auditLog: { create: vi.fn().mockResolvedValue({}) },
       $executeRaw: vi.fn().mockResolvedValue(1),
       $transaction: vi.fn(async (callback: any) => callback(db)),

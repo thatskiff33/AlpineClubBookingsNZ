@@ -125,7 +125,7 @@ File: [`invariants/money.md`](invariants/money.md). Prefix `INV-MONEY`.
 | `INV-MONEY-046` | Subscription category is a second billing axis, independent of membership type |
 | `INV-MONEY-015` | Approval stands when billing setup is incomplete; billing records a visible exception |
 | `INV-MONEY-016` | Membership type governs liability, including archived role defaults; role grants no exemption |
-| `INV-MONEY-017` | Paid-up: NOT_REQUIRED type, PAID current-season row, exempt tier; nomination honours first |
+| `INV-MONEY-017` | Paid-up: liability rule, PAID row or no-invoice cover; nomination stricter |
 | `INV-MONEY-018` | Manual subscription mark-paid is cash-only, never clobbered; a Xero link reclaims authority |
 | `INV-MONEY-019` | Opt-in item-code look-through detects paid subscriptions from every fee-schedule component code |
 | `INV-MONEY-020` | Look-through on: subscription-invoice selection strong-first, settled, earliest; off keeps first-match |
@@ -136,6 +136,10 @@ File: [`invariants/money.md`](invariants/money.md). Prefix `INV-MONEY`.
 | `INV-MONEY-043` | Money lines, credit links and group settlements refuse booking deletion |
 | `INV-MONEY-044` | Booking doors post their legacy charge lines into the journal once |
 | `INV-MONEY-045` | Bank-transfer charges post at binding; confirmation links, never recharges |
+| `INV-MONEY-047` | Cash writers post exact receipts; collection is a separate capped application |
+| `INV-MONEY-048` | Card refund debts post at their doors; slices reserve before Stripe |
+| `INV-MONEY-049` | Bank and cash hand-backs post debt and payment; censuses check them |
+| `INV-MONEY-050` | Caps C1–C4 refuse by code; cash trims, reservations stop before Stripe |
 
 ## Booking Dates And Capacity
 
@@ -201,6 +205,7 @@ number and prefix, and it is listed at the end of the table below.
 | `INV-CAP-040` | An import claims beds under the lodge lock, never overbooks |
 | `INV-CAP-041` | A waitlist position is read from the live queue, never stored |
 | `INV-CAP-042` | A lapsed offer's place goes on down the queue |
+| `INV-CAP-043` | An offer's window runs from the email that tells the member |
 | `INV-CAP-011` | Waitlisted and offered bookings hold no capacity until confirmed |
 | `INV-CAP-012` | A waitlist offer reprices at current rates and states what is payable |
 | `INV-CAP-013` | A member is present on only one live booking per lodge night |
@@ -977,6 +982,7 @@ File: [`invariants/integrations.md`](invariants/integrations.md). Prefix
 | `INV-INT-039` | A dead webhook attempt is taken over past the lease |
 | `INV-INT-040` | No subscription or joining-fee invoice work while Xero is off |
 | `INV-INT-041` | A PENDING outbox row always holds a request the outbox can claim |
+| `INV-INT-042` | A once-ever alert claim with no email is given back |
 
 ## Operations
 
@@ -1038,6 +1044,7 @@ headings the index keeps verbatim.
 | `INV-CONFIG-006` | One persisted currency and locale; the environment seeds them once |
 | `INV-CONFIG-007` | One GST schedule, dated periods; Xero and the journal resolve it |
 | `INV-CONFIG-008` | Tax categories map to the club's own Xero rates; none hard-coded |
+| `INV-CONFIG-009` | One chosen liability rule for billing and access; NOT_CHOSEN changes nobody |
 
 ## Single Source Of Truth
 

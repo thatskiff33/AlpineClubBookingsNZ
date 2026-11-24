@@ -326,3 +326,15 @@ describe("paging", () => {
     expect(res.status).toBe(200);
   });
 });
+
+describe("members see nothing of the admin's sharing problems (#5246)", () => {
+  it("the member reader selects none of the share-outcome columns", async () => {
+    expect((await GET(get())).status).toBe(200);
+
+    const calls = mocks.clubPostFindMany.mock.calls as unknown as [{ select: Record<string, unknown> }][];
+    const select = calls[0]![0].select;
+    for (const column of ["shareError", "shareSentAt", "unrecordedServerPostId"]) {
+      expect(select).not.toHaveProperty(column);
+    }
+  });
+});

@@ -7,7 +7,10 @@ import type {
   InductionStatus,
   Prisma,
 } from "@prisma/client";
+import { hasAccessRole, hasAdminAccess } from "@/lib/access-roles";
 import { logAudit } from "@/lib/audit";
+import { hasActiveHutLeaderAssignment } from "@/lib/hut-leader";
+import { arrivesAsMcpConnection, memberOnlySessionUser } from "@/lib/mcp-connection-request";
 import { loadMembershipNominationSettings } from "@/lib/membership-nomination-settings";
 import { prisma } from "@/lib/prisma";
 
@@ -412,6 +415,31 @@ export async function voidInduction(params: {
   return updated;
 }
 
+/**
+ * An induction as the induction routes send it: the record without the
+ * inductee's or assigned signers' other member columns. One mapper for
+ * `GET /api/inductions` and `GET /api/inductions/[id]`, so the two cannot
+ * answer the same record differently.
+ */
+export function memberInductionView(induction: MemberInductionWithDetail) {
+  return {
+    ...induction,
+    member: {
+      id: induction.member.id,
+      firstName: induction.member.firstName,
+      lastName: induction.member.lastName,
+    },
+    assignedSigners: induction.assignedSigners.map((signer) => ({
+      memberId: signer.memberId,
+      firstName: signer.member.firstName,
+      lastName: signer.member.lastName,
+      emailSentAt: signer.emailSentAt,
+    })),
+  };
+}
+
+export type MemberInductionView = ReturnType<typeof memberInductionView>;
+
 /** The member's most recent induction with full detail (for their own page). */
 export async function getInductionForMember(
   memberId: string,
@@ -471,6 +499,31 @@ export interface SignerContext {
   memberId: string;
   isAdmin: boolean;
   isHutLeader: boolean;
+}
+
+/**
+ * The signed-in person as an induction signer: the one reading every
+ * induction route shares (`INV-SSOT`). An AI app connection (ALP-796) is
+ * neither: `memberOnlySessionUser` drops the officer roles, and the hut-leader
+ * assignment, read from records rather than roles, is not consulted for it
+ * (`INV-MCP-006`).
+ */
+export async function inductionSignerContext<
+  U extends Parameters<typeof memberOnlySessionUser>[1] & Parameters<typeof hasAdminAccess>[0],
+>(
+  request: Request,
+  sessionUser: U,
+): Promise<SignerContext> {
+  const user = memberOnlySessionUser(request, sessionUser);
+  const viaConnection = arrivesAsMcpConnection(request);
+  return {
+    memberId: sessionUser.id,
+    isAdmin: hasAdminAccess(user),
+    isHutLeader:
+      !viaConnection &&
+      hasAccessRole(user, "USER") &&
+      (await hasActiveHutLeaderAssignment(sessionUser.id)),
+  };
 }
 
 /**

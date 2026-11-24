@@ -13,6 +13,13 @@
  * completes quietly. Anything else that fails leaves the row FAILED, which the
  * operator's Retry returns to the outbox (`xero-operation-retry.ts`).
  *
+ * #4525 (ALP-437): an invoice found void, voided here, or missing from Xero has
+ * its export manifest's coverage released, so the group's next invoice can
+ * cover the same components; one carrying money keeps its coverage. The release
+ * runs before and again after the VOID's row completes (`releaseCoverageAround`),
+ * so a manifest recorded beside the void is ended too. The release never
+ * changes the void's outcome.
+ *
  * Deploy note: code from before #3642 reads an abandon VOID row (its payload
  * names an invoice) as a cancellation VOID, refuses it ("Cannot VOID an active
  * group settlement") and leaves it FAILED. That fails closed — nothing is voided
@@ -30,12 +37,31 @@ import { providerAmountToCents } from "@/lib/money-provider-amount";
 import { getXeroErrorStatusCode } from "@/lib/xero-error-shape";
 import {
   groupSettlementInvoiceLink,
+  groupSettlementInvoiceVoidEndedPayload,
   groupSettlementInvoiceVoidKey,
 } from "@/lib/xero-group-settlement-invoice-outbox";
 import { alertGroupSettlementInvoice } from "@/lib/group-settlement-invoice-alerts";
 import { clubFormatValues } from "@/lib/club-format-server";
 import { formatCents } from "@/lib/utils";
 import type { XeroOperationClaim } from "@/lib/xero-operation-outcome-guard";
+import { releaseCombinedGroupInvoiceManifest } from "@/lib/member-money/doors";
+
+/**
+ * #4525 (ALP-437): end the invoice's export coverage, record the VOID's
+ * outcome, then end it once more. A combined manifest recorded beside the first
+ * release is ended by the second, or its recorder reads the outcome this
+ * completion committed (`releaseIfVoidFinished`), whichever comes second. The
+ * first release stays before the completion, so a run that stops between them
+ * leaves its row to be retried, never coverage on a void invoice.
+ */
+async function releaseCoverageAround(
+  release: Parameters<typeof releaseCombinedGroupInvoiceManifest>[0],
+  complete: () => Promise<unknown>
+): Promise<void> {
+  await releaseCombinedGroupInvoiceManifest(release);
+  await complete();
+  await releaseCombinedGroupInvoiceManifest(release);
+}
 
 /** What a combined invoice's state in Xero lets the app do with it. */
 export type GroupSettlementInvoiceState =
@@ -154,30 +180,31 @@ export async function voidCancelledGroupSettlementInvoice(params: {
       context: `voidInvoice(cancelled group settlement ${params.settlementId})`,
     }
   );
-
   const link = groupSettlementInvoiceLink(params.settlementId, {
     id: params.invoiceId,
     number: params.invoiceNumber,
   });
-
-  if (params.syncOperation) {
-    await completeXeroSyncOperation(params.syncOperation, {
-      status: "SUCCEEDED",
-      responsePayload: {
-        cancelledAfterInvoiceCreation: true,
-        createInvoice: params.createResponse ?? null,
-        voidInvoice: response.body ?? null,
-        invoiceEmailSuppressed: true,
-      },
-      xeroObjectType: "INVOICE",
-      xeroObjectId: params.invoiceId,
-      xeroObjectNumber: params.invoiceNumber,
-      xeroObjectUrl: buildXeroInvoiceUrl(params.invoiceId),
-      extraLinks: [link],
-    });
-  } else {
-    await upsertXeroObjectLink(link);
-  }
+  const syncOperation = params.syncOperation;
+  await releaseCoverageAround({ settlementId: params.settlementId, invoiceId: params.invoiceId, reason: "VOIDED" }, async () => {
+    if (syncOperation) {
+      await completeXeroSyncOperation(syncOperation, {
+        status: "SUCCEEDED",
+        responsePayload: {
+          ...groupSettlementInvoiceVoidEndedPayload("cancelledAfterInvoiceCreation"),
+          createInvoice: params.createResponse ?? null,
+          voidInvoice: response.body ?? null,
+          invoiceEmailSuppressed: true,
+        },
+        xeroObjectType: "INVOICE",
+        xeroObjectId: params.invoiceId,
+        xeroObjectNumber: params.invoiceNumber,
+        xeroObjectUrl: buildXeroInvoiceUrl(params.invoiceId),
+        extraLinks: [link],
+      });
+    } else {
+      await upsertXeroObjectLink(link);
+    }
+  });
 }
 
 /**
@@ -223,20 +250,24 @@ async function voidStillNeeded(params: {
       },
       await clubFormatValues()
     );
-    await completeXeroSyncOperation(params.syncOperation, {
-      status: "SUCCEEDED",
-      responsePayload: { invoiceNotFoundInXero: true },
-    });
+    await releaseCoverageAround({ settlementId: params.settlementId, invoiceId: params.invoiceId, reason: "NOT_FOUND" }, () =>
+      completeXeroSyncOperation(params.syncOperation, {
+        status: "SUCCEEDED",
+        responsePayload: groupSettlementInvoiceVoidEndedPayload("invoiceNotFoundInXero"),
+      })
+    );
     return false;
   }
   if (state.kind === "void") {
-    await completeXeroSyncOperation(params.syncOperation, {
-      status: "SUCCEEDED",
-      responsePayload: { invoiceAlreadyVoid: true, invoiceStatus: state.status },
-      xeroObjectType: "INVOICE",
-      xeroObjectId: params.invoiceId,
-      xeroObjectUrl: buildXeroInvoiceUrl(params.invoiceId),
-    });
+    await releaseCoverageAround({ settlementId: params.settlementId, invoiceId: params.invoiceId, reason: "VOIDED" }, () =>
+      completeXeroSyncOperation(params.syncOperation, {
+        status: "SUCCEEDED",
+        responsePayload: { ...groupSettlementInvoiceVoidEndedPayload("invoiceAlreadyVoid"), invoiceStatus: state.status },
+        xeroObjectType: "INVOICE",
+        xeroObjectId: params.invoiceId,
+        xeroObjectUrl: buildXeroInvoiceUrl(params.invoiceId),
+      })
+    );
     return false;
   }
   const format = await clubFormatValues();
@@ -380,14 +411,16 @@ export async function voidXeroInvoiceForAbandonedGroupSettlement(
       context: `voidInvoice(abandoned group settlement ${settlementId})`,
     }
   );
-  await completeXeroSyncOperation(options.syncOperation, {
-    status: "SUCCEEDED",
-    responsePayload: {
-      abandonedBySettlement: true,
-      voidInvoice: response.body ?? null,
-    },
-    xeroObjectType: "INVOICE",
-    xeroObjectId: xeroInvoiceId,
-    xeroObjectUrl: buildXeroInvoiceUrl(xeroInvoiceId),
-  });
+  await releaseCoverageAround({ settlementId, invoiceId: xeroInvoiceId, reason: "VOIDED" }, () =>
+    completeXeroSyncOperation(options.syncOperation, {
+      status: "SUCCEEDED",
+      responsePayload: {
+        ...groupSettlementInvoiceVoidEndedPayload("abandonedBySettlement"),
+        voidInvoice: response.body ?? null,
+      },
+      xeroObjectType: "INVOICE",
+      xeroObjectId: xeroInvoiceId,
+      xeroObjectUrl: buildXeroInvoiceUrl(xeroInvoiceId),
+    })
+  );
 }

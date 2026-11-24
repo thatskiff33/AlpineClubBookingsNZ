@@ -32,6 +32,7 @@ import {
   WAITLIST_CONFIRM_OFFER_RELEASE_FAILED_AUDIT_ACTION,
   WAITLIST_CONFIRM_RELEASED_UNAVAILABLE_BODY,
   WAITLIST_CONFIRM_STATUS_MOVED_BODY,
+  WAITLIST_CROSS_LODGE_WEBSITE_ONLY_CODE,
   WAITLIST_OFFER_CONSUMED_STATUS_MOVED_FLAGS,
   WAITLIST_OFFER_RELEASED_CAPACITY_BODY,
   WAITLIST_OFFER_RELEASED_FLAGS,
@@ -40,6 +41,8 @@ import { clubFormatValues } from "@/lib/club-format-server";
 import { postStoredBookingConfirmationLedgerLines } from "@/lib/booking-ledger-confirmation-sync";
 import { resolveBookingMoneyPostingContext, type BookingJournalContext } from "@/lib/member-money/doors";
 import { LOCK1_HOLDER_TRANSACTION_BUDGET } from "@/lib/db-transaction";
+import { WAITLIST_OFFER_ACCEPTED_CONNECTION_SHAPE } from "@/lib/connection-shapes-bookings";
+import { arrivesAsMcpConnection, connectionJson } from "@/lib/mcp-connection-request";
 
 /**
  * #2623 T4 — budgets for the compensating offer release.
@@ -82,8 +85,23 @@ function contendedStatus(error: unknown): 503 | 500 {
   return isTransactionContention(error) ? 503 : 500;
 }
 
+/**
+ * A successful accept. Also the AI app action `accept_waitlist_offer`
+ * (ALP-794), whose answer carries the `id` of the booking the member now pays
+ * for, so the app can send them to it. A connection is refused a cross-lodge
+ * offer (website only), so it never reaches the new-booking branch. Only the
+ * booking's own member may accept (`confirmWaitlistOffer`): no officer branch.
+ */
+function acceptedAnswer(request: NextRequest, bookingId: string, body: Record<string, unknown>) {
+  return connectionJson(
+    request,
+    arrivesAsMcpConnection(request) ? { id: bookingId, ...body } : body,
+    WAITLIST_OFFER_ACCEPTED_CONNECTION_SHAPE,
+  );
+}
+
 export async function POST(
-  _request: NextRequest,
+  request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   const session = await auth();
@@ -103,7 +121,10 @@ export async function POST(
 
   let result: Awaited<ReturnType<typeof confirmWaitlistOffer>>;
   try {
-    result = await confirmWaitlistOffer(bookingId, session.user.id, format);
+    // A connection may not accept a cross-lodge offer (ALP-794): website only.
+    result = await confirmWaitlistOffer(bookingId, session.user.id, format, {
+      crossLodgeOnWebsiteOnly: arrivesAsMcpConnection(request),
+    });
   } catch (err) {
     // Phase one's claim (or the cross-lodge create) is the first write, and it
     // rolled back (INV-LOCK-006); the offer still stands.
@@ -137,6 +158,7 @@ export async function POST(
       // hard-stop family that may not enter review.
       : result.code === "ADULT_MEMBER_HOSTING_REQUIRED" ? 409
       : result.code === HOSTING_COVERAGE_RETRY_CODE ? 409
+      : result.code === WAITLIST_CROSS_LODGE_WEBSITE_ONLY_CODE ? 409
       : 400;
     return NextResponse.json(
       {
@@ -183,7 +205,7 @@ export async function POST(
       where: { id: result.newBookingId },
       select: { finalPriceCents: true, status: true },
     });
-    return NextResponse.json({
+    return acceptedAnswer(request, result.newBookingId, {
       success: true,
       status: result.newStatus,
       newBookingId: result.newBookingId,
@@ -554,7 +576,7 @@ export async function POST(
         )
       );
 
-    return NextResponse.json({
+    return acceptedAnswer(request, bookingId, {
       success: true,
       status: "PAID",
       requiresPayment: false,
@@ -578,7 +600,7 @@ export async function POST(
     ).catch((err) => logger.error({ err }, "Failed to send pending email after waitlist confirm"));
   }
 
-  return NextResponse.json({
+  return acceptedAnswer(request, bookingId, {
     success: true,
     status: result.newStatus,
     requiresPayment: result.newStatus === BookingStatus.PAYMENT_PENDING && booking.finalPriceCents > 0,

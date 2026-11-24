@@ -16,8 +16,14 @@ vi.mock("@/lib/prisma", () => ({
     },
     seasonalMembershipAssignment: { findMany: vi.fn(async () => []) },
     membershipType: { findMany: vi.fn(async () => []) },
-    // #2041 NOT_REQUIRED-row dominance lookup (booking resolver).
-    memberSubscription: { findFirst: vi.fn(async () => null) },
+    // #2041 NOT_REQUIRED-row dominance lookup (booking resolver), and the
+    // season-row batch read `loadMemberSubscriptionSettlements` makes (#5190).
+    memberSubscription: {
+      findFirst: vi.fn(async () => null),
+      findMany: vi.fn(async () => []),
+    },
+    // The club's liability settings (#5190): no row means NOT_CHOSEN.
+    membershipLockoutSettings: { findUnique: vi.fn(async () => null) },
   },
 }));
 
@@ -179,6 +185,11 @@ describe("GET /api/member/subscription-status", () => {
       ageTier: "CHILD",
       subscriptions: [],
     });
+    // The settlement check reads the live Member row by batch (#5190); an
+    // unresolved member fails closed to "owes", so the CHILD row must resolve.
+    (prisma.member.findMany as ReturnType<typeof vi.fn>).mockResolvedValue([
+      { id: "member-1", role: "MEMBER", ageTier: "CHILD", dateOfBirth: null },
+    ]);
 
     const res = await GET();
     const body = await res.json();
@@ -201,7 +212,7 @@ describe("GET /api/member/subscription-status", () => {
     });
     const findMany = prisma.member.findMany as ReturnType<typeof vi.fn>;
     findMany.mockResolvedValue([
-      { id: "member-1", firstName: "Alex", lastName: "Member", email: "a@x.test", role: "MEMBER", ageTier: "CHILD" },
+      { id: "member-1", firstName: "Alex", lastName: "Member", email: "a@x.test", role: "MEMBER", ageTier: "CHILD", dateOfBirth: null },
     ]);
     (prisma.seasonalMembershipAssignment.findMany as ReturnType<typeof vi.fn>).mockResolvedValue([
       {

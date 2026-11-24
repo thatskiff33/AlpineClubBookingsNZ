@@ -10,7 +10,7 @@
  * the routes import them from (`INV-SSOT`). A field described twice would let
  * the app be told one shape while the route enforces another. So is each
  * action's answer (`returns`): the shape the route projects a connection's
- * answer onto, from `connection-shapes.ts`.
+ * answer onto, from `connection-shapes.ts` (or an area's own shapes module).
  *
  * `mcp-route-census.test.ts` holds every route method in `src/app/api` to
  * either an entry here or a reasoned exclusion (`exclusions.ts`).
@@ -58,6 +58,7 @@ import {
   SUBSCRIPTION_STATUS_CONNECTION_SHAPE,
 } from "@/lib/connection-shapes";
 import { MEMBER_AUDIT_TIMELINE_CATEGORY_OPTIONS } from "@/lib/audit-query";
+import { MCP_BOOKING_ACTIONS, MCP_BOOKING_WEBSITE_ONLY_ACTIONS } from "@/lib/mcp/catalogue-bookings";
 import {
   delegatedFamilyDetailsSchema,
   familyAdultRequestSchema,
@@ -69,6 +70,7 @@ import {
   familyRemovalRequestSchema,
 } from "@/lib/family-group-request-schemas";
 import { ROSTER_WINDOW_DAYS } from "@/lib/lodge-roster-window";
+import { MCP_LODGE_LIFE_ACTIONS } from "@/lib/mcp/catalogue-lodge-life";
 import { memberAuditLogQuerySchema } from "@/lib/member-audit-log-query";
 import {
   MEMBER_GUEST_SEARCH_MIN_CHARS,
@@ -88,8 +90,9 @@ import type { StepUpHttpMethod } from "@/lib/step-up-routes";
  * (`get_skifield_report` refreshes the ski field report's), or its route's own
  * audit row (a lookup of other members records every query, blocked ones
  * included). `write` changes something the member can undo.
- * `destructive` cannot be undone from the app. A view-only connection runs
- * `read` actions only.
+ * `destructive` cannot be undone from the app, notifies other people, or
+ * overwrites another person's record (owner decision, #5305): the app confirms
+ * first, and it is audited as important. View-only runs `read` actions only.
  */
 export type McpActionKind = "read" | "write" | "destructive";
 
@@ -422,6 +425,8 @@ export const MCP_ACTIONS: readonly McpAction[] = [
     returns: SKIFIELD_REPORT_CONNECTION_SHAPE,
     core: false,
   },
+  // --- Bookings (ALP-794), in `catalogue-bookings.ts` ---
+  ...MCP_BOOKING_ACTIONS,
   // --- Family and membership (ALP-795) ---
   {
     id: "list_my_family_invitations",
@@ -516,7 +521,7 @@ export const MCP_ACTIONS: readonly McpAction[] = [
     params: familyMemberIdParamsSchema,
     body: delegatedFamilyDetailsSchema.omit({ inheritContactFromSelf: true }),
     fixedBody: { inheritContactFromSelf: true },
-    kind: "write",
+    kind: "destructive",
     returns: FAMILY_MEMBER_DETAILS_CONNECTION_SHAPE,
     core: false,
   },
@@ -601,16 +606,12 @@ export const MCP_ACTIONS: readonly McpAction[] = [
     returns: MEMBERSHIP_CANCELLATION_OPTIONS_CONNECTION_SHAPE,
     core: false,
   },
+  // --- Lodge life (ALP-796), in `catalogue-lodge-life.ts` ---
+  ...MCP_LODGE_LIFE_ACTIONS,
 ];
 
 export const MCP_WEBSITE_ONLY_ACTIONS: readonly McpWebsiteOnlyAction[] = [
-  {
-    id: "pay_for_booking",
-    title: "Pay for a booking",
-    summary: "Card details are entered on the club website, never in an AI app.",
-    page: "/bookings/{id}",
-    needsId: true,
-  },
+  ...MCP_BOOKING_WEBSITE_ONLY_ACTIONS,
   {
     id: "change_sign_in_details",
     title: "Change password or two-step sign-in",

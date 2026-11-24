@@ -48,7 +48,7 @@ export async function PATCH(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> },
 ) {
-  const guard = await requireFoodOrderViewer(() => requireActiveSession());
+  const guard = await requireFoodOrderViewer(request, () => requireActiveSession());
   if (!guard.ok) return guard.response;
 
   const jsonBody = await parseJsonRequestBody(request, {

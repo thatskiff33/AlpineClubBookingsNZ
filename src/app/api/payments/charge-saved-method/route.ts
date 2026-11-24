@@ -437,14 +437,13 @@ export async function POST(request: NextRequest) {
         amountCents: paymentIntent.amount,
       };
       // Record the capture BEFORE reconciliation, so the webhook (finding the row by intent id) can always finish a failed
-      // promotion; non-fatal, reconciliation upserts the same row. #4285 review: `newlyCaptured` means new money, not a replay.
-      let recordedByCaller = false;
+      // promotion; non-fatal, reconciliation upserts the same row. #5240: new money is flagged for the settle to consume.
       try {
-        ({ newlyCaptured: recordedByCaller } = await settleSavedCardChargeAttempt({ journal: receiptJournal,
+        await settleSavedCardChargeAttempt({ journal: receiptJournal,
           attemptRowId: claim.attempt.attemptRowId,
           paymentId,
           paymentIntent,
-        }));
+        });
       } catch (recordError) {
         logger.error(
           { err: recordError, bookingId, paymentIntentId: paymentIntent.id },
@@ -454,7 +453,7 @@ export async function POST(request: NextRequest) {
       const reconciliation = await markBookingPaymentSucceeded({
       capturedAt: receiptCaptureTime(paymentIntent),
         format,
-        bookingId, recordedByCaller,
+        bookingId,
         paymentIntentId: paymentIntent.id,
         amountCents: paymentIntent.amount,
         paymentMethodId:

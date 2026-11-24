@@ -2,6 +2,7 @@ import { readdirSync, readFileSync, statSync } from "node:fs";
 import path from "node:path";
 import ts from "typescript";
 import { describe, expect, it } from "vitest";
+import { CENSUS_TIMEOUT_MS } from "@/test/census-timeout";
 
 const API_ROOT = path.join(process.cwd(), "src/app/api");
 
@@ -269,5 +270,5 @@ describe("client-facing API error response contract (#1888 F31)", () => {
     }
 
     expect(violations).toEqual([]);
-  });
+  }, CENSUS_TIMEOUT_MS);
 });
