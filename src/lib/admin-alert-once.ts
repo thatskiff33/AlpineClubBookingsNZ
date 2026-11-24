@@ -220,6 +220,28 @@ export async function giveBackOwnOnceEverClaim({
   }
 }
 
+/** How many times a once-ever alert's sent stamp is written before giving up (#5433 round 3, item 6; #5255). */
+export const SENT_STAMP_WRITE_ATTEMPTS = 2;
+
+/**
+ * Write a once-ever alert's sent stamp, the marker its caller's `isSent` reads,
+ * trying twice as `giveBackOwnOnceEverClaim` tries its release: without it a
+ * later attempt finds a claim with no stamp and may take it over, sending the
+ * alert again. The stated limit: both writes failing is logged, never thrown,
+ * since a copy already went out. Never throws.
+ */
+export async function stampOnceEverAlertSent(sentKey: string, label: string, context: Record<string, unknown>): Promise<void> {
+  for (let attempt = 1; attempt <= SENT_STAMP_WRITE_ATTEMPTS; attempt += 1) {
+    try {
+      await claimAlertCooldown({ key: sentKey, windowMs: ALERT_ONCE_EVER_WINDOW_MS, now: new Date() });
+      return;
+    } catch (err) {
+      const last = attempt === SENT_STAMP_WRITE_ATTEMPTS;
+      logger.error({ ...context, err, attempt }, last ? `Failed to stamp the ${label} as sent; a later attempt may send it again` : `Failed to stamp the ${label} as sent; trying once more`);
+    }
+  }
+}
+
 /**
  * #4149: which of these once-ever keys are held now - claimed and kept, or
  * deferred for a day because nobody could receive the alert - so a sweep can

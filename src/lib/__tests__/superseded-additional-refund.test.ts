@@ -105,6 +105,7 @@ import {
   supersededRefundReportSettled,
 } from "@/lib/superseded-additional-refund";
 import { confirmAlertCooldownSend, releaseUnsentAlertCooldown } from "@/lib/alert-cooldown";
+import logger from "@/lib/logger";
 import { takeOnceEverClaim } from "@/lib/once-ever-claim-context";
 import { SUPERSEDED_PAYMENT_REFUND_METADATA_REASON } from "@/lib/payment-recovery-keys";
 import { PAYMENT_RECOVERY_STALE_PROCESSING_MS } from "@/lib/payment-recovery-constants";
@@ -180,6 +181,8 @@ function bookingRow(
 
 const SENT_TO_ONE_ADMIN = { deliveryAllowed: true, recipients: 1, sent: 1, queuedForRetry: 0, notDelivered: 0 };
 const NOBODY_OPTED_IN = { deliveryAllowed: true, recipients: 0, sent: 0, queuedForRetry: 0, notDelivered: 0 };
+/** The club's delivery policy switched the alert off (`sendToAdmins`' skip): the club chose not to receive it. */
+const SKIPPED_BY_POLICY = { deliveryAllowed: false, recipients: 0, sent: 0, queuedForRetry: 0, notDelivered: 0 };
 const OPERATION_ID = "recovery_superseded_1";
 const KEYS = supersededRefundReportKeys(OPERATION_ID);
 
@@ -505,7 +508,7 @@ describe("reportSupersededPaymentRefund sends once per recovery row (#4690)", ()
     expect(sent()).toEqual(ONCE_EACH);
   });
 
-  it("MUTATION: nobody can receive the alert - not settled, it throws, and the row's next attempt sends it once an admin can (#5255)", async () => {
+  it("MUTATION: nobody opted in to the alert (the club did not switch it off) - not settled, it throws, and the row's next attempt sends it once an admin can (#5255)", async () => {
     mocks.sendAdminAlert.mockResolvedValueOnce(NOBODY_OPTED_IN);
 
     await expect(report()).rejects.toBeInstanceOf(SupersededRefundReportNotSettledError);
@@ -514,6 +517,43 @@ describe("reportSupersededPaymentRefund sends once per recovery row (#4690)", ()
     await expect(report()).resolves.toBe("reported");
     expect(sent()).toEqual({ ...ONCE_EACH, adminAlerts: 2 });
     expect(await supersededRefundReportSettled(OPERATION_ID)).toBe(true);
+  });
+
+  it("MUTATION: the club's delivery policy skips the alert - settled at once, so the row closes and is never retried (#5255)", async () => {
+    mocks.sendAdminAlert.mockResolvedValue(SKIPPED_BY_POLICY);
+
+    await expect(report()).resolves.toBe("reported");
+    expect(mocks.cooldowns.has(KEYS.reported)).toBe(true);
+    expect(await supersededRefundReportSettled(OPERATION_ID)).toBe(true);
+
+    // A replay of the row reads it settled and asks the policy nothing more.
+    await expect(report()).resolves.toBe("reported");
+    expect(sent()).toEqual(ONCE_EACH);
+  });
+
+  it("MUTATION: the reported marker's first write fails - written on the second try, and nothing is sent again", async () => {
+    mocks.cooldownFaults.set(`updateMany:${KEYS.reported}`, "before");
+
+    await expect(report()).resolves.toBe("reported");
+    expect(await supersededRefundReportSettled(OPERATION_ID)).toBe(true);
+
+    await expect(report()).resolves.toBe("reported");
+    expect(sent()).toEqual(ONCE_EACH);
+  });
+
+  it("MUTATION: gives up after two failed reported-marker writes, saying a later attempt may send it again (the stated limit)", async () => {
+    // Each try fails at a different write: the first at its update, the second at its insert.
+    mocks.cooldownFaults.set(`updateMany:${KEYS.reported}`, "before");
+    mocks.cooldownFaults.set(`create:${KEYS.reported}`, "before");
+    const error = vi.spyOn(logger, "error");
+    try {
+      // A copy went out, so the report is still answered settled.
+      await expect(report()).resolves.toBe("reported");
+      expect(mocks.cooldowns.has(KEYS.reported)).toBe(false);
+      expect(error).toHaveBeenCalledWith(expect.objectContaining({ operationId: OPERATION_ID, attempt: 2 }), expect.stringContaining("may send it again"));
+    } finally {
+      error.mockRestore();
+    }
   });
 
   /*

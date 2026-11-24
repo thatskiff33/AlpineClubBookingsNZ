@@ -5249,7 +5249,8 @@ claim reads nothing outstanding, after its preflight records Stripe's list
   a refund on the row's intent carrying exactly its runner's metadata,
     recorded as made in the ledger                     -> report, then close
   none (another door's refund), or not recorded as made -> close, no notice
-report not settled (email not recorded, no alert copy delivered or queued) -> throws; row retried
+report not settled (email not recorded, no alert copy delivered or queued
+  and the club did not switch the alert off) -> throws; row retried
 alert claim held, no sent marker: younger than the stale threshold
   -> the row waits (attempt handed back: never terminal, no officer alert);
   older -> the dead attempt's claim is given back and the alert sent
