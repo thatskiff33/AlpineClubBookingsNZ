@@ -88,7 +88,7 @@ the legacy `hashtext(<memberId>)` contact-link key's in
 | Adult-member hosting policy set | [The key](#the-hosting-policy-set-key-admin-route-configuration-transfer-and-trigger) · [hosting policy client](#which-client-reads-the-hosting-policy) · [lockout mode (#2543)](#which-client-reads-the-subscription-lockout-mode-2543) · [Xero lock dates (#3232)](#which-client-reads-the-xero-lock-dates-3232) · [club timezone (#2870)](#which-client-reads-the-clubs-timezone-2870) · [cancellation policy (#3110)](#which-client-reads-the-cancellation-and-non-member-hold-policy-3110) |
 | Diagnostics budget reserve | [Composition (AID-2)](#composition-diagnostics-budget-reserve-aid-2-2371) |
 | Xero supplementary invoice per anchor | [Holders (#3170)](#xero-supplementary-invoice-per-anchor-who-holds-the-key-3170) · [capture receipt (#3953)](#supplementary-invoice-anchor-the-change-capture-receipt-and-its-planning-gate-3953) · [gap invoice (#4324)](#supplementary-invoice-anchor-a-gap-invoice-and-a-kept-change-capture-4324) · [proofs and outbox-only write (#3947)](#supplementary-invoice-anchor-the-in-transaction-caller-the-outbox-only-write-and-their-real-postgresql-proofs-3947) · [superseded move (#3403)](#supplementary-invoice-anchor-the-superseded-invoice-move-3403) · [why the key, short-sent, second ask (#3170, #3193)](#supplementary-invoice-anchor-why-3170-created-the-key-the-p2002-abort-the-short-sent-residual-and-the-second-ask-3193) |
-| Xero contact home | [Contact-home key (#3367)](#one-xero-contact-one-local-home-the-contact-home-key-3367) |
+| Xero contact home | [Contact-home key (#3367)](#one-xero-contact-one-local-home-the-contact-home-key-3367) · [a school's contact details edit (#5245)](#a-schools-contact-details-edit-the-organisation-contact-key-5245) |
 | Xero inbound cycle run claim | [Run claim (#4432)](#xero-inbound-cycle-run-claim-4432) |
 
 **Member money, credit and refunds.**
@@ -9004,7 +9004,7 @@ reasoning that gave `lockBookingMemberNights` its own family.
 | Key | Minted in | Taken by |
 | --- | --- | --- |
 | `pg_advisory_xact_lock(hashtext('xero-contact-home:<contactId>'))` | `src/lib/xero-contact-home.ts` (`lockXeroContactHome`) | every contact-linking writer, measured by `xero-contact-linker-census.test.ts` |
-| `pg_advisory_xact_lock(hashtext('xero-organisation-contact:<organisationId>'))` | `src/lib/organisation-xero-contacts.ts` | the organisation resolve only |
+| `pg_advisory_xact_lock(hashtext('xero-organisation-contact:<organisationId>'))` | `src/lib/organisation-xero-contacts.ts` (`lockOrganisationXeroContact`) | the organisation resolve, and the school contact details edit (#5245) |
 
 Both are domain-keyed `hashtext` locks in their own namespaces. Neither joins the
 global lock(1) cohort and neither is a capacity key, so `INV-LOCK-001`'s tier
@@ -9035,6 +9035,36 @@ contacts — it calls `findOrCreateXeroContact` once per member, so the first ro
 above is taken and released once per member exactly as for a single invoice.
 Only ONE contact key is ever taken per transaction, so the sorted-key discipline
 the member families need does not apply here.
+
+#### A school's contact details edit: the organisation contact key (#5245)
+
+`updateSchoolOrganisationContact` (`school-organisation-contact-edit.ts`) is the
+officer's correction of a school's own email and phone. It is not a linker — it
+never writes `xeroContactId` — so it is not in the table above, but it takes the
+organisation key, through the one mint, and nothing else:
+
+`xero-organisation-contact:<organisationId>` → re-read the `Organisation` →
+guarded `updateMany` on the `updatedAt` the officer loaded → audit row → the
+contact-details outbox row INSERT, all in one transaction.
+
+- **Why the key.** The edit re-reads `xeroContactId` to decide whether to queue a
+  Xero update. Under the key the resolve's phase-2 link write cannot commit
+  between that read and the edit's commit. The resolve builds its create in
+  phase 1, outside the key, so phase 2 re-reads the email and phone under it
+  and queues the same row when they moved since phase 1
+  (`enqueueOrganisationContactDetailsIfMoved`). A school being given its
+  contact is therefore created from the corrected record or gets a queued
+  row — never neither.
+- **Two officers.** Saves of one school serialise on the key; the second re-reads
+  a moved `updatedAt` and is refused (409) before it writes. The guarded
+  `updateMany` is the second line. The edit sets `updatedAt` itself, at least one
+  millisecond past the old value, because `@updatedAt` is the app's clock and two
+  saves inside one millisecond would otherwise leave the token unchanged — the
+  real-PostgreSQL proof in `school-organisation-contact-edit.realdb.test.ts`
+  fails without it.
+- **Order.** It takes only this key, and no contact-home key or `Member` row, so
+  it adds no edge to the order above. No provider call runs inside it: the outbox
+  sends the details later, reading them fresh.
 
 **That the table is COMPLETE is measured rather than remembered.**
 `src/lib/__tests__/xero-contact-linker-census.test.ts` reads the tree from disk,

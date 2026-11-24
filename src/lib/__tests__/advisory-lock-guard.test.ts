@@ -1273,6 +1273,11 @@ const SCOPED_ADVISORY_LOCK_INVENTORY: Record<string, number> = {
     the contact-home key immediately after it, so the whole family acquires in
     one direction. No counterpart reverses that order, because this is the only
     writer of `Organisation.xeroContactId`.
+
+    #5245: still ONE site. The mint moved into `lockOrganisationXeroContact`,
+    which the resolve's phase 2 and the officer's school contact details edit
+    (`updateSchoolOrganisationContact`) both call. The edit takes this key alone
+    — no contact-home key, no Member row — so it adds no edge to the order.
   */
   "src/lib/organisation-xero-contacts.ts": 1,
   // #3170: `enqueueXeroSupplementaryInvoiceOperation` takes

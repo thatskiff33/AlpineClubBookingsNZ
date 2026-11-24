@@ -55,12 +55,12 @@
  * club's own record of a school outranks one booking request, and silently
  * rewriting it would change who the next invoice reaches.
  *
- * The honest consequence is that in THIS stage they are frozen, with no in-app
- * way to correct them. A school whose office address changes keeps the old one
- * on its Xero contact until an officer edits it at Xero. #2936 (admin editing
- * of requests) is where the in-app remedy belongs. "Kept honest" above is about
- * the contact PERSONS and nothing else, and this paragraph exists because that
- * phrase reads as though it covered more.
+ * An officer corrects them instead (#5245): "Edit school details" saves them
+ * on the record and queues them for the school's Xero contact, and
+ * `organisation-xero-contact-details.ts` sends them — read fresh, and never
+ * with the name. "Kept honest" above is about the contact PERSONS and nothing
+ * else, and this paragraph exists because that phrase reads as though it
+ * covered more.
  *
  * Only `contactPersons` is refreshed. The contact's NAME is never rewritten:
  * Xero enforces unique contact names, renaming is the operation the settled rule
