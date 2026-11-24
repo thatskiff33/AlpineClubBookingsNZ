@@ -99,6 +99,8 @@ import {
   paidConfirmationKey,
   paidConfirmationMovedOn,
   paidConfirmationSendBy,
+  type PaidConfirmationSubject,
+  type PaidConfirmationSweepSubject,
 } from "@/lib/paid-booking-confirmation-notice";
 import { BOOKING_CONFIRMED_KIND, owePaidConfirmationAfterFreshClaim, recordPaidBookingConfirmationOwed } from "@/lib/paid-booking-confirmation-owed";
 import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
@@ -155,6 +157,15 @@ describe("the marker the settle writes", () => {
     expect(owed.store.delegate.createMany.mock.calls[0]![0]).toMatchObject({ skipDuplicates: true, data: [{ id: marker.id, stampedAt: paidAt }] });
     expect(paidConfirmationKey(marker)).toBe(`${BOOKING_ID}:${paidAt.getTime()}`);
     expect(paidConfirmationEmailLogId(marker)).toBe(`email:booking-confirmed:${BOOKING_ID}:${paidAt.getTime()}`);
+  });
+});
+
+describe("the sweep's subject always carries the club's time zone (round 2, F4)", () => {
+  it("cannot be written without one, so a cut-off can never be asked without a zone (a compile-time pin)", () => {
+    const immediate: PaidConfirmationSubject = { booking: paidBooking() as never, format: CLUB_FORMAT_TEST };
+    // @ts-expect-error -- a sweep subject needs the zone its cut-off reads; making `zone` optional fails the typecheck here.
+    const sweepWithoutZone: PaidConfirmationSweepSubject = { ...immediate };
+    expect(sweepWithoutZone).toEqual(immediate);
   });
 });
 
