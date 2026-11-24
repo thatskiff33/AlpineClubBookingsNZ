@@ -1094,6 +1094,8 @@ const GENERATED_CASES: EmailRenderCase[] = [
     adminWaitlistOfferTemplate({ memberName: "memberName-1", checkIn: new Date("2026-03-03T00:00:00.000Z"), checkOut: new Date("2026-03-04T00:00:00.000Z"), guestCount: 104, position: 105, expiresAt: new Date("2026-03-01T00:00:00.000Z"), offerEmail: "sent" }) },
   { id: "adminWaitlistOfferTemplate:withheld", fn: "adminWaitlistOfferTemplate", render: () =>
     adminWaitlistOfferTemplate({ memberName: "memberName-1 <b>", checkIn: new Date("2026-03-03T00:00:00.000Z"), checkOut: new Date("2026-03-04T00:00:00.000Z"), guestCount: 104, position: 105, expiresAt: null, offerEmail: "withheld" }) },
+  { id: "adminWaitlistOfferTemplate:not-delivered", fn: "adminWaitlistOfferTemplate", render: () =>
+    adminWaitlistOfferTemplate({ memberName: "memberName-1", checkIn: new Date("2026-03-03T00:00:00.000Z"), checkOut: new Date("2026-03-04T00:00:00.000Z"), guestCount: 104, position: 105, expiresAt: new Date("2026-03-01T00:00:00.000Z"), offerEmail: "not-delivered" }) },
   { id: "setupIntentFailedTemplate:minimal", fn: "setupIntentFailedTemplate", render: () =>
     setupIntentFailedTemplate({ firstName: "firstName-1", checkIn: new Date("2026-03-03T00:00:00.000Z"), checkOut: new Date("2026-03-04T00:00:00.000Z") }) },
   { id: "supersededPaymentRefundedTemplate:owing", fn: "supersededPaymentRefundedTemplate", render: () =>

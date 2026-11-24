@@ -26,8 +26,9 @@
   them, so a person can step in for the
   turn the member missed. Officers get it once per offer. It goes to officers
   who receive waitlist offer alerts (that preference mutes both), and the
-  existing waitlist offer alert now goes only once the member's offer email has
-  gone or been held back on purpose, says which, and states the deadline in
-  force rather than a fixed 48 hours.
+  existing waitlist offer alert still goes for every offer, once it is known
+  what became of the member's offer email; it says whether that email was sent,
+  withheld or not delivered, and states the deadline in force rather than a
+  fixed 48 hours.
   The member's booking page already showed a live offer and its deadline; it
   now shows the restarted deadline too.

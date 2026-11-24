@@ -71,7 +71,6 @@ import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
 import { sendAdminWaitlistOfferAlert, sendWaitlistOfferEmail } from "@/lib/email";
 import { adminAlertNeedsResend } from "@/lib/email/admin-alert-send-result";
 import { sendAdminWaitlistNoticeUnsentAlert } from "@/lib/email/admin-alerts-waitlist-notice-unsent";
-import type { EmailSendOutcome } from "@/lib/email/core";
 import { getActiveEmailSuppression } from "@/lib/email-suppression";
 import { seasonYearOfStoredDate } from "@/lib/financial-year";
 import logger from "@/lib/logger";
@@ -294,10 +293,9 @@ async function sendOfferEmail(
   context: OwedNoticeRun & { idempotencyKey: string },
 ): Promise<OwedNoticeOutcome> {
   const { idempotencyKey, job } = context;
-  let result: EmailSendOutcome;
   try {
     const rateNotice = await offerRateNotice(notice, notice.lockoutMode);
-    result = await sendWaitlistOfferEmail(
+    await sendWaitlistOfferEmail(
       { bookingId: notice.bookingId, recipientMemberId: notice.recipientMemberId, idempotencyKey },
       notice.email,
       notice.firstName,
@@ -327,7 +325,7 @@ async function sendOfferEmail(
       return "threw";
     }
     logger.warn(
-      { bookingId: notice.bookingId, job, sendStatus: result.status, state },
+      { bookingId: notice.bookingId, job, state },
       "The waitlist offer email did not reach the member; alerting the officers instead",
     );
     return alertOfficersWaitlistNoticeUnsent(notice, marker, "offer");
@@ -438,14 +436,15 @@ async function offerEmailStillOwed(marker: OwedNoticeMarker): Promise<boolean> {
 }
 
 /**
- * The officers' routine offer alert, which states whether the offer email
- * went or was withheld, and the deadline in force (round 2, item 7). Sent once
- * the offer email is told (review L); kept while that email is the retry
- * cron's or still owed; dropped when it cannot reach the member, or when its
- * own notice ended without a row (an owner with no address, say): the "not
- * sent" alert told the officers instead, and this must not wait for an email
- * that will never be recorded. Settled once an officer has it or nobody is
- * meant to; unreached when nobody got it and nothing replays it. Never throws.
+ * The officers' routine offer alert, which states what became of the offer
+ * email (sent, withheld, or not delivered) and the deadline in force (round 2,
+ * item 7). It waits only while that is not yet known: the email is the retry
+ * cron's, or never sent and still owed (review L). Then it always goes, as it
+ * did before #5433, including when the email cannot reach the member or its
+ * notice ended with no row (an owner with no address, say): the officers then
+ * also get the "not sent" alert, which says what to do. Settled once an
+ * officer has it or nobody is meant to; unreached when nobody got it and
+ * nothing replays it. Never throws.
  */
 async function alertOfficersOfOffer(notice: WaitlistOfferNotice, marker: OwedNoticeMarker, { job }: OwedNoticeRun): Promise<OwedNoticeOutcome> {
   const position = payloadPosition(marker);
@@ -455,16 +454,8 @@ async function alertOfficersOfOffer(notice: WaitlistOfferNotice, marker: OwedNot
   }
   try {
     const state = await offerEmailStateOf(marker);
-    if (state === "undeliverable") {
-      logger.info({ bookingId: notice.bookingId, job }, "The offer email cannot be sent; the officers' offer alert gives way to the not-sent alert");
-      return "settled";
-    }
     if (state === "retrying") return "threw";
-    if (state === "not-sent") {
-      if (await offerEmailStillOwed(marker)) return "threw";
-      logger.info({ bookingId: notice.bookingId, job }, "The offer email's notice ended without a row; the officers' offer alert gives way to the not-sent alert");
-      return "settled";
-    }
+    if (state === "not-sent" && (await offerEmailStillOwed(marker))) return "threw";
     const result = await sendAdminWaitlistOfferAlert({
       memberName: notice.memberName,
       checkIn: notice.checkIn,
@@ -472,7 +463,7 @@ async function alertOfficersOfOffer(notice: WaitlistOfferNotice, marker: OwedNot
       guestCount: notice.guestCount,
       position,
       expiresAt: notice.expiresAt,
-      offerEmail: state,
+      offerEmail: isToldOfferEmailState(state) ? state : "not-delivered",
     });
     if (!adminAlertNeedsResend(result)) return "settled";
     logger.warn(

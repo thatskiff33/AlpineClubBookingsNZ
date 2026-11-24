@@ -131,7 +131,10 @@ const CASES = {
   bounced: caseIds("bnc", 19 + 31),
   lapseFailed: caseIds("lfl", 22 + 31),
   resend: caseIds("rsn", 25 + 31),
-  floor: caseIds("flr", 28 + 31),
+  // Its stay begins on the frozen "today", so its check-in date has begun at
+  // the club. Seeded on those dates: a booking's dates cannot move away from
+  // its guests' stay ranges (round 1's CI failure, a CHECK violation).
+  floor: { ...caseIds("flr", 28 + 31), checkIn: new Date("2026-07-01T00:00:00.000Z"), checkOut: new Date("2026-07-03T00:00:00.000Z") },
   suppressedAtOffer: caseIds("sup", 31 + 31),
   placeholderAtOffer: caseIds("plh", 34 + 31),
   suppressedAtSweep: caseIds("sps", 37 + 31),
@@ -672,7 +675,7 @@ let harnessRole: { restore: () => void } | undefined;
       expect(await unsentAlertsFor(ids)).toBe(0);
     });
 
-    it("counts an offer email the core recorded but never sent, to a suppressed address, as not told: the officers hear once, the routine offer alert does not wait for it, and its lapse alerts nobody again (round 2, item 2)", async () => {
+    it("counts an offer email the core recorded but never sent, to a suppressed address, as not told: the officers hear once, the routine offer alert goes saying so, and its lapse alerts nobody again (round 2, item 2)", async () => {
       const ids = CASES.suppressedAtOffer;
       await seedWaitlisted(ids);
       await setCapacity(10);
@@ -684,7 +687,8 @@ let harnessRole: { restore: () => void } | undefined;
       expect(offerSendsFor(ids)).toHaveLength(1);
       expect(await offerEmailRowAfter(ids, offeredAt)).toMatchObject({ status: "BOUNCED" });
       expect(await unsentAlertsFor(ids)).toBe(1);
-      expect(await routineOfferAlertsFor(ids)).toBe(0);
+      // The routine alert still goes, as for every offer before #5433, saying the email did not reach them.
+      expect(await routineOfferAlertsFor(ids)).toBe(1);
       expect((await rows(ids)).markers).toEqual([]);
 
       // Its lapse: never told, so no offer-expired email, and the shared claim holds the officers to one alert.
@@ -698,7 +702,7 @@ let harnessRole: { restore: () => void } | undefined;
       expect(await unsentAlertsFor(ids)).toBe(1);
     });
 
-    it("tells the officers once, and never loops the routine offer alert, for an owner with only a placeholder address, whose send records no row at all (round 2, item 2)", async () => {
+    it("tells the officers once, and sends the routine offer alert once without looping, for an owner with only a placeholder address, whose send records no row at all (round 2, item 2)", async () => {
       const ids = CASES.placeholderAtOffer;
       await seedWaitlisted(ids);
       await setCapacity(10);
@@ -709,7 +713,8 @@ let harnessRole: { restore: () => void } | undefined;
       expect((await readBooking(ids)).status).toBe("WAITLIST_OFFERED");
       expect(await rows(ids)).toEqual({ offerEmails: [], expiredEmails: [], markers: [] });
       expect(await unsentAlertsFor(ids)).toBe(1);
-      expect(await routineOfferAlertsFor(ids)).toBe(0);
+      // The routine alert still goes, as for every offer before #5433, saying the email did not reach them.
+      expect(await routineOfferAlertsFor(ids)).toBe(1);
     });
 
     it("restarts nothing and sends nothing when the owner's address is suppressed, and tells the officers once instead (round 2, item 6)", async () => {
@@ -752,10 +757,6 @@ let harnessRole: { restore: () => void } | undefined;
       // begun at the club, so a restart has nothing to give.
       const offeredAt = new Date(Date.now() - WINDOW_MS + 10 * 60 * 1000);
       await seedWaitlisted(ids);
-      await prisma.booking.update({
-        where: { id: ids.bookingId },
-        data: { checkIn: new Date("2026-07-01T00:00:00.000Z"), checkOut: new Date("2026-07-03T00:00:00.000Z") },
-      });
       await prisma.$transaction(async (tx) => {
         await tx.booking.update({
           where: { id: ids.bookingId },

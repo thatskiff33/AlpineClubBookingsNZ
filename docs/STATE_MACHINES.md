@@ -4437,11 +4437,11 @@ is the later of the start of the check-in date in the club's time zone and the
 offer's own deadline, the
 offer-expired email's seven days; past it officers are alerted once with
 `admin-waitlist-notice-unsent` (`alertOfficersOncePastCutoff`), unless the
-offer email was told after all. The officers' offer alert, which says the
-offer email has been sent or was withheld and states the deadline in force,
-goes only once that email is told, waits while it is the retry cron's or
-still owed, and gives way to the "not sent" alert when it cannot reach the
-member or its notice ended with no row; it
+offer email was told after all. The officers' offer alert, which says whether the
+offer email was sent, withheld or not delivered and states the deadline in
+force, waits only while that is unknown (the email is the retry cron's, or
+never sent and still owed), then always goes, as it did before #5433; when the
+email did not reach the member the officers also get the "not sent" alert; it
 and the lapsed-untold alert last seven days, with no alert past it. The
 lapsed-untold alert shares the offer email's once-ever claim, so one offer
 alerts the officers once. The sweep's offer email restarts the offer window

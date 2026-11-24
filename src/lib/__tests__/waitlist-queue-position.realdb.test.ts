@@ -49,12 +49,29 @@ vi.mock("@/lib/email", async (importOriginal) => {
   return Object.fromEntries(
     Object.entries(actual).map(([name, value]) => [
       name,
-      name.startsWith("send") && typeof value === "function"
-        ? vi.fn().mockResolvedValue(undefined)
-        : value,
+      name === "sendWaitlistOfferEmail"
+        ? vi.fn(recordOfferEmailAsSent)
+        : name.startsWith("send") && typeof value === "function"
+          ? vi.fn().mockResolvedValue(undefined)
+          : value,
     ]),
   );
 });
+
+/**
+ * #5433: whether a member was told of an offer is read from the offer email's
+ * own `EmailLog` row, so "resolves as if sent" leaves the row a sent email
+ * leaves: `SENT`, at its durable id. Without it the offer reads as never told,
+ * and the officers' routine offer alert waits for an email that never comes.
+ */
+async function recordOfferEmailAsSent(context: { bookingId: string; idempotencyKey: string }, to: string) {
+  const { prisma: db } = await import("@/lib/prisma");
+  await db.emailLog.createMany({
+    data: [{ id: `email:waitlist-offer:${context.idempotencyKey}`, to, subject: "Spot Available!", templateName: "waitlist-offer", status: "SENT", bookingId: context.bookingId }],
+    skipDuplicates: true,
+  });
+  return { status: "sent", emailLogId: `email:waitlist-offer:${context.idempotencyKey}`, messageId: null };
+}
 // A full factory, never `importOriginal`: the real module imports next-auth,
 // whose own `import "next/server"` does not resolve under plain Node ESM
 // ("Did you mean to import next/server.js?"), so loading it fails this file
@@ -171,6 +188,7 @@ async function cleanBookings() {
   // #5433: the offers and lapses this suite makes leave owed-notice markers
   // (its mocked officer alert reports nothing, so that marker stays).
   await prisma.owedNotice.deleteMany({ where: { subjectId: owned } });
+  await prisma.emailLog.deleteMany({ where: { bookingId: owned } });
   await prisma.bookingEvent.deleteMany({ where: { bookingId: owned } });
   await prisma.bookingGuest.deleteMany({ where: { bookingId: owned } });
   await prisma.bookingWaitlistAlternateLodge.deleteMany({ where: { bookingId: owned } });
@@ -353,7 +371,7 @@ async function deleteCrossLodgeSeason() {
       expect(offeredBookingId).toBe(first);
       expect(await status(first)).toBe("WAITLIST_OFFERED");
       expect(vi.mocked(email.sendAdminWaitlistOfferAlert)).toHaveBeenCalledWith(
-        expect.objectContaining({ position: 1 }),
+        expect.objectContaining({ position: 1, offerEmail: "sent" }),
       );
       await expectEverywhere(three, [null, 1, 2]);
     });

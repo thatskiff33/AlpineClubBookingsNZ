@@ -448,11 +448,12 @@ you want both reworded; editing only one leaves the other on its built-in text.
 > them. It goes to officers who receive waitlist offer alerts (the **Waitlist
 > offers** preference, which mutes both), and its wording is editable like the
 > others. Its `{{noticeNote}}` token holds the whole instruction for that
-> email. The **Admin Waitlist Offer** alert now goes only once the offer
-> email has reached the member or been held back on purpose. It says which
-> (sent, or withheld by the booking's **No emails** switch or because this is
-> not the live site) in the new `{{offerNote}}` token, and states the deadline
-> in force with `{{expiresAt}}`, in place of a fixed "48 hours". A saved copy
+> email. The **Admin Waitlist Offer** alert still goes for every offer, once
+> what became of the offer email is known (it may wait while a failed send is
+> retried). It says which in the new `{{offerNote}}` token: sent, withheld by
+> the booking's **No emails** switch or because this is not the live site, or
+> not delivered (alongside the **Waitlist email not sent** alert). It states
+> the deadline in force with `{{expiresAt}}`, in place of a fixed "48 hours". A saved copy
 > of that template keeps its old wording until you restore the default or add
 > the tokens.
 >

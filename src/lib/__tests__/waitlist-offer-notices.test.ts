@@ -237,14 +237,15 @@ describe("the first attempt, straight after the offer commits", () => {
       ["a suppressed address (BOUNCED)", row("BOUNCED")],
       ["a fail-closed No-emails read or a body-less copy (FAILED, nothing to replay)", row("FAILED", 1, false)],
       ["an empty or placeholder address (no row at all)", null],
-    ])("alerts the officers once and clears the member's marker for %s; the routine offer alert gives way", async (_case, after) => {
+    ])("alerts the officers once and clears the member's marker for %s; the routine offer alert still goes, saying the email was not delivered", async (_case, after) => {
       rowAfterSend(after);
       send.offer.mockResolvedValue(after ? { status: "suppressed", emailLogId: "row" } : { status: "skipped_no_recipient", emailLogId: null });
       await deliverWaitlistOfferNotices(notice(), owed);
       expect(send.unsent).toHaveBeenCalledTimes(1);
       expect(send.unsent).toHaveBeenCalledWith(expect.objectContaining({ notice: "offer", bookingId: "booking1" }));
-      expect(send.officers).not.toHaveBeenCalled();
-      // Both markers cleared: the member's after the alert, the officers' routine one given way.
+      // As before #5433, the officers' routine alert goes for every offer; it now says what became of the email.
+      expect(send.officers).toHaveBeenCalledTimes(1);
+      expect(send.officers).toHaveBeenCalledWith(expect.objectContaining({ offerEmail: "not-delivered", expiresAt: EXPIRES_AT }));
       expect(db.owedNoticeDeleteMany).toHaveBeenCalledTimes(2);
     });
 
@@ -523,20 +524,20 @@ describe("the sweep's officers' alert (it says the offer email has been sent: re
     },
   );
 
-  it("gives way, sending nothing, when the offer email has no row and its notice has ended (an owner with no address): it does not wait every half hour", async () => {
+  it("goes, saying the email was not delivered, when the offer email has no row and its notice has ended (an owner with no address): it does not wait every half hour", async () => {
     emailRow(null);
     db.owedNoticeFindUnique.mockResolvedValue(null);
     const handle = ref(officersMarker);
     await expect(sweep(OFFICERS, handle)).resolves.toBe("delivered");
-    expect(send.officers).not.toHaveBeenCalled();
+    expect(send.officers).toHaveBeenCalledWith(expect.objectContaining({ offerEmail: "not-delivered" }));
     expect(handle.settle).toHaveBeenCalledTimes(1);
   });
 
-  it("gives way to the not-sent alert, sending nothing, when the offer email is undeliverable", async () => {
+  it("goes, saying the email was not delivered, when the offer email is undeliverable: officers got this alert for every offer before #5433", async () => {
     emailRow("BOUNCED");
     const handle = ref(officersMarker);
     await expect(sweep(OFFICERS, handle)).resolves.toBe("delivered");
-    expect(send.officers).not.toHaveBeenCalled();
+    expect(send.officers).toHaveBeenCalledWith(expect.objectContaining({ offerEmail: "not-delivered" }));
     expect(handle.settle).toHaveBeenCalledTimes(1);
   });
 
