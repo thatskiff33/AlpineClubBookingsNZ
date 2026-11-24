@@ -21,7 +21,7 @@ import {
   type OperationalRosterGuest,
 } from "@/lib/roster-eligibility"
 import { lockRosterEligibilityMutation } from "@/lib/roster-lock"
-import { z } from "zod"
+import type { RosterActionInput } from "@/lib/admin-lodge-schemas/hut-leaders"
 import logger from "@/lib/logger"
 import { logAudit } from "@/lib/audit"
 import { LOCK1_HOLDER_TRANSACTION_BUDGET } from "@/lib/db-transaction";
@@ -36,28 +36,10 @@ function jsonResult(body: unknown, init?: ResponseInit): JsonRouteResult {
   return { body, init }
 }
 
-export const rosterActionSchema = z.discriminatedUnion("action", [
-  z.object({
-    action: z.literal("save"),
-    baseRevision: z.string().min(1),
-    acknowledgeCompletedReset: z.boolean(),
-    assignments: z.array(z.object({
-      rowKey: z.string().min(1),
-      assignmentId: z.string().min(1).optional(),
-      choreTemplateId: z.string().min(1),
-      bookingGuestId: z.string().min(1),
-    })),
-  }),
-  z.object({
-    action: z.literal("regenerate"),
-    includeNonEssential: z.boolean().optional(),
-    overwriteConfirmed: z.boolean().optional(),
-  }),
-  z.object({ action: z.literal("confirm") }),
-  z.object({ action: z.literal("email"), notifyMember: z.boolean().optional() }),
-])
-
-export type RosterActionInput = z.infer<typeof rosterActionSchema>
+// The PUT body lives in `admin-lodge-schemas/hut-leaders.ts` (ALP-722), so
+// the AI app catalogue offers its variants without loading this module; it is
+// re-exported here for the route and the tests that read it from here.
+export { rosterActionSchema, type RosterActionInput } from "@/lib/admin-lodge-schemas/hut-leaders"
 
 export const ROSTER_ERROR_COPY = {
   stale: "This roster changed while you were editing. Your changes were not saved. Reload the latest roster and try again.",
@@ -307,6 +289,9 @@ async function loadRosterSnapshot(
     guestCount: guests.length,
   }
 }
+
+/** One lodge night's roster as the GET and a save answer it (ALP-722: the AI app shape reads it). */
+export type AdminRosterSnapshot = Awaited<ReturnType<typeof loadRosterSnapshot>>
 
 export async function getAdminRosterForDate(params: {
   date: Date

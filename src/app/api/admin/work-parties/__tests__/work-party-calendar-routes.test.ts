@@ -271,7 +271,7 @@ describe("list: when Add to calendar is offered", () => {
       row({ id: "inactive", active: false }),
       row({ id: "linked", _count: { calendarEvents: 3 } }),
     ]);
-    const body = await (await listRoute()).json();
+    const body = await (await listRoute(json("GET"))).json();
     const offered = Object.fromEntries(
       body.events.map((e: { id: string; canAddToCalendar: boolean }) => [e.id, e.canAddToCalendar]),
     );
@@ -285,7 +285,7 @@ describe("list: when Add to calendar is offered", () => {
     expect(body.events.find((e: { id: string }) => e.id === "linked").onCalendar).toBe(true);
 
     h.modules.eventsCalendar = false;
-    const off = await (await listRoute()).json();
+    const off = await (await listRoute(json("GET"))).json();
     expect(off.events.some((e: { canAddToCalendar: boolean }) => e.canAddToCalendar)).toBe(false);
   });
 });

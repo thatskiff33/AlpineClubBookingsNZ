@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
-import { z } from "zod";
 import { parseJsonRequestBody } from "@/lib/api-json";
+import { lodgeCreateBodySchema } from "@/lib/admin-lodge-schemas/setup";
 import {
   buildStructuredAuditLogCreateArgs,
   getAuditRequestContext,
@@ -22,37 +22,16 @@ import { revalidatePublicPageContent } from "@/lib/public-content-revalidation";
 import { invalidatePublicClubIdentity } from "@/lib/public-layout-cache";
 import { primeClubIdentitySync } from "@/lib/club-identity-settings";
 import { acquireConfigImportLock } from "@/lib/config-transfer-lock";
-import {
-  MAX_CONFIGURED_LODGE_CAPACITY,
-  MIN_CONFIGURED_LODGE_CAPACITY,
-} from "@/lib/lodge-effective-capacity";
 import { createNewLodgeSettings } from "@/lib/lodge-settings";
+import {
+  ADMIN_LODGE_CONNECTION_SHAPE,
+  ADMIN_LODGE_LIST_CONNECTION_SHAPE,
+} from "@/lib/connection-shapes/lodge-setup";
+import { connectionJson } from "@/lib/mcp-connection-request";
 
-const createSchema = z
-  .object({
-    name: z.string().trim().min(1).max(120),
-    address: z.string().trim().max(300).nullable().optional(),
-    doorCode: z.string().trim().max(80).nullable().optional(),
-    travelNote: z.string().trim().max(2000).nullable().optional(),
-    active: z.boolean().optional().default(true),
-    /*
-      REQUIRED (#3407, owner decision 14 Sep 2026). A lodge used to be born with
-      no `LodgeSettings` row, so with Bed Allocation off — the default — it
-      resolved to capacity 0 (`unconfigured_lodge`) and refused every booking,
-      while the setup wizard, which has no rooms step in that mode, told the
-      officer it was ready. Asking for the number here is what closes that gap.
-      The bounds are the save bounds every other editor of the field reads
-      (`INV-SSOT-001`), so a figure accepted here is exactly one
-      `/api/admin/lodge-settings` would accept. It is per-deployment data a
-      club types, never a default this code supplies (`INV-CONFIG-001`).
-    */
-    capacity: z
-      .number()
-      .int()
-      .min(MIN_CONFIGURED_LODGE_CAPACITY)
-      .max(MAX_CONFIGURED_LODGE_CAPACITY),
-  })
-  .strict();
+// The create body (the capacity is required, #3407) lives in
+// admin-lodge-schemas/setup.ts so the AI app action `create_lodge` offers the
+// same fields, less the door code (ALP-722).
 
 /*
   ADMISSION: any admitted administrator (#2925, owner decision 17 Aug 2026).
@@ -115,7 +94,7 @@ const createSchema = z
   `POST` below keeps `lodge:edit`, and `PATCH` in `[id]/route.ts` is untouched:
   this changes who may READ the lodge names, and nothing about who may write.
 */
-export async function GET() {
+export async function GET(request: Request) {
   const guard = await requireAdmin({ permission: "any-admin" });
   if (!guard.ok) return guard.response;
 
@@ -136,7 +115,11 @@ export async function GET() {
       orderBy: lodgeOrderBy(),
       select: lodgeIdentitySelect,
     });
-    return NextResponse.json({ lodges: lodges.map(serializeLodgeIdentity) });
+    return connectionJson(
+      request,
+      { lodges: lodges.map(serializeLodgeIdentity) },
+      ADMIN_LODGE_LIST_CONNECTION_SHAPE,
+    );
   }
 
   const lodges = await prisma.lodge.findMany({
@@ -144,7 +127,12 @@ export async function GET() {
     select: lodgeSelect,
   });
 
-  return NextResponse.json({ lodges: lodges.map(serializeLodge) });
+  // A connection never receives the door code (ALP-722).
+  return connectionJson(
+    request,
+    { lodges: lodges.map(serializeLodge) },
+    ADMIN_LODGE_LIST_CONNECTION_SHAPE,
+  );
 }
 
 export async function POST(request: Request) {
@@ -160,7 +148,7 @@ export async function POST(request: Request) {
   if (!jsonBody.ok) return jsonBody.response;
   const body = jsonBody.body;
 
-  const parsed = createSchema.safeParse(body);
+  const parsed = lodgeCreateBodySchema.safeParse(body);
   if (!parsed.success) {
     return NextResponse.json(
       { error: "Invalid input", details: parsed.error.flatten() },
@@ -217,8 +205,10 @@ export async function POST(request: Request) {
   invalidatePublicClubIdentity();
   await primeClubIdentitySync();
 
-  return NextResponse.json(
+  return connectionJson(
+    request,
     { lodge: serializeLodge(created) },
+    ADMIN_LODGE_CONNECTION_SHAPE,
     { status: 201 },
   );
 }

@@ -13,7 +13,6 @@
  */
 import { randomInt } from "crypto";
 import { Prisma, PromoCodeType } from "@prisma/client";
-import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import logger from "@/lib/logger";
 import {
@@ -24,7 +23,6 @@ import {
   addDaysDateOnly,
   formatDateOnly,
 } from "@/lib/date-only";
-import { parsedDateOnlySchema } from "@/lib/date-only-schema";
 import {
   isOpenWorkPartyEvent,
   OPEN_WORK_PARTY_EVENT_WHERE,
@@ -288,19 +286,9 @@ export function workPartyEventRefusal(
   return null;
 }
 
-// Shared by the admin work-parties create and update routes.
-export const workPartyEventSchema = z
-  .object({
-    name: z.string().trim().min(1).max(200),
-    description: z.string().trim().max(1000).optional().nullable(),
-    startDate: parsedDateOnlySchema,
-    endDate: parsedDateOnlySchema,
-    discountPercent: z.number().int().min(1).max(100).default(100),
-    active: z.boolean().default(true),
-    // Lodge the working bee is held at; null/omitted = club-wide event.
-    lodgeId: z.string().min(1).optional().nullable(),
-  })
-  .strict();
+// The admin create and update schema, `workPartyEventSchema`, lives in
+// `admin-lodge-schemas/chores-work-parties.ts` (ALP-722) so the AI app
+// catalogue can offer it without loading this server module.
 
 /** The longest window a work party may have: the calendar's series cap. */
 const MAX_WORK_PARTY_NIGHTS = MAX_OCCURRENCES;

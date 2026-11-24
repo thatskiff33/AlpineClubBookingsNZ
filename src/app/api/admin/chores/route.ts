@@ -2,50 +2,24 @@ import { NextRequest, NextResponse } from "next/server"
 import { parseJsonRequestBody } from "@/lib/api-json"
 import { requireAdmin } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma"
-import { z } from "zod"
 import { createAuditLog } from "@/lib/audit"
 import {
   lodgeNullTolerantScope,
   resolveOptionalActiveLodgeId,
 } from "@/lib/lodges"
+import {
+  choreCreateBodySchema,
+  choreListQuerySchema,
+} from "@/lib/admin-lodge-schemas/chores-work-parties"
+import {
+  ADMIN_CHORE_CONNECTION_SHAPE,
+  ADMIN_CHORE_LIST_CONNECTION_SHAPE,
+} from "@/lib/connection-shapes/lodge-chores-work-parties"
+import { connectionJson, connectionListJson } from "@/lib/mcp-connection-request"
 
-const choreSchema = z
-  .object({
-    name: z.string().min(1, "Name is required"),
-    description: z.string().optional().default(""),
-    recommendedPeopleMin: z.number().int().min(1).default(1),
-    recommendedPeopleMax: z.number().int().min(1).default(2),
-    isEssential: z.boolean().default(false),
-    ageRestriction: z
-      .enum(["ANY", "ADULTS_ONLY", "MIXED_PREFERRED", "ADULT_SUPERVISED"])
-      .default("ANY"),
-    conditionalNote: z.string().nullable().optional().default(null),
-    minAge: z.number().int().min(0).default(0),
-    sortOrder: z.number().int().default(0),
-    timeOfDay: z.enum(["MORNING", "EVENING", "ANYTIME"]).default("ANYTIME"),
-    frequencyMode: z
-      .enum(["DAILY", "EVERY_X_DAYS", "SPECIFIC_DAYS"])
-      .default("DAILY"),
-    frequencyDays: z.number().int().min(2).nullable().optional().default(null),
-    frequencyDaysOfWeek: z
-      .array(z.number().int().min(1).max(7))
-      .optional()
-      .default([]),
-    active: z.boolean().default(true),
-    lodgeId: z.string().min(1).optional(),
-  })
-  .superRefine((data, ctx) => {
-    if (
-      data.frequencyMode === "SPECIFIC_DAYS" &&
-      data.frequencyDaysOfWeek.length === 0
-    ) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ["frequencyDaysOfWeek"],
-        message: "Select at least one day for SPECIFIC_DAYS chores",
-      });
-    }
-  });
+// The schemas live in admin-lodge-schemas/chores-work-parties.ts so the AI
+// app actions `list_chore_templates` and `create_chore_template` offer the
+// same fields (ALP-722).
 
 export async function GET(req: NextRequest) {
   const guard = await requireAdmin({
@@ -54,7 +28,14 @@ export async function GET(req: NextRequest) {
   if (!guard.ok) return guard.response;
   // Null-tolerant filter: rows without a lodgeId (pre-backfill or written by
   // a draining old colour during the expand deploy) show under every lodge.
-  const lodgeId = req.nextUrl.searchParams.get("lodgeId")
+  // A string or nothing always parses; the 400 is only a backstop.
+  const query = choreListQuerySchema.safeParse({
+    lodgeId: req.nextUrl.searchParams.get("lodgeId") ?? undefined,
+  })
+  if (!query.success) {
+    return NextResponse.json({ error: query.error.issues[0]?.message }, { status: 400 })
+  }
+  const lodgeId = query.data.lodgeId
   // Validate an explicit lodge scope the way the POST path does (400 on
   // unknown/inactive). Omitted lists chores across every lodge, so only
   // validate when a lodgeId is supplied.
@@ -68,7 +49,8 @@ export async function GET(req: NextRequest) {
     where: lodgeId ? lodgeNullTolerantScope(lodgeId) : undefined,
     orderBy: { sortOrder: "asc" },
   })
-  return NextResponse.json(chores)
+  // The browser keeps the bare array; a connection gets it under `chores`.
+  return connectionListJson(req, chores, "chores", ADMIN_CHORE_LIST_CONNECTION_SHAPE)
 }
 
 export async function POST(req: NextRequest) {
@@ -79,7 +61,7 @@ export async function POST(req: NextRequest) {
   const jsonBody = await parseJsonRequestBody(req)
   if (!jsonBody.ok) return jsonBody.response
   const body = jsonBody.body
-  const parsed = choreSchema.safeParse(body)
+  const parsed = choreCreateBodySchema.safeParse(body)
   if (!parsed.success) {
     return NextResponse.json(
       { error: "Validation failed", details: parsed.error.flatten() },
@@ -126,5 +108,5 @@ export async function POST(req: NextRequest) {
     },
   })
 
-  return NextResponse.json(chore, { status: 201 })
+  return connectionJson(req, chore, ADMIN_CHORE_CONNECTION_SHAPE, { status: 201 })
 }

@@ -1,6 +1,9 @@
 import { NextResponse } from "next/server";
-import { z } from "zod";
 import { parseJsonRequestBody } from "@/lib/api-json";
+import { adminRecordIdParamsSchema } from "@/lib/admin-bookings-schemas/record-id";
+import { lodgeUpdateBodySchema } from "@/lib/admin-lodge-schemas/setup";
+import { ADMIN_LODGE_CONNECTION_SHAPE } from "@/lib/connection-shapes/lodge-setup";
+import { connectionJson } from "@/lib/mcp-connection-request";
 import {
   buildStructuredAuditLogCreateArgs,
   getAuditRequestContext,
@@ -22,22 +25,8 @@ import { acquireLodgeCapacityLock } from "@/lib/lodge-capacity-lock";
 import { findLodgeDeactivationRefusal } from "@/lib/lodge-deactivation-guard";
 import { clubTodayDateOnlyInstant } from "@/lib/club-time/server";
 
-const paramsSchema = z.object({
-  id: z.string().min(1),
-});
-
-const patchSchema = z
-  .object({
-    name: z.string().trim().min(1).max(120).optional(),
-    address: z.string().trim().max(300).nullable().optional(),
-    doorCode: z.string().trim().max(80).nullable().optional(),
-    travelNote: z.string().trim().max(2000).nullable().optional(),
-    active: z.boolean().optional(),
-    // Acknowledge the deactivation dependency pre-flight and proceed anyway.
-    // Never written to the lodge row.
-    force: z.boolean().optional(),
-  })
-  .strict();
+// The body schema lives in admin-lodge-schemas/setup.ts so the AI app action
+// `update_lodge` offers the same fields, less the door code (ALP-722).
 
 export async function PATCH(
   request: Request,
@@ -49,7 +38,7 @@ export async function PATCH(
   if (!guard.ok) return guard.response;
   const session = guard.session;
 
-  const parsedParams = paramsSchema.safeParse(await params);
+  const parsedParams = adminRecordIdParamsSchema.safeParse(await params);
   if (!parsedParams.success) {
     return NextResponse.json({ error: "Invalid lodge id" }, { status: 400 });
   }
@@ -60,7 +49,7 @@ export async function PATCH(
   if (!jsonBody.ok) return jsonBody.response;
   const body = jsonBody.body;
 
-  const parsed = patchSchema.safeParse(body);
+  const parsed = lodgeUpdateBodySchema.safeParse(body);
   if (!parsed.success) {
     return NextResponse.json(
       { error: "Invalid input", details: parsed.error.flatten() },
@@ -125,7 +114,11 @@ export async function PATCH(
   }
 
   if (Object.keys(data).length === 0) {
-    return NextResponse.json({ lodge: serializeLodge(existing) });
+    return connectionJson(
+      request,
+      { lodge: serializeLodge(existing) },
+      ADMIN_LODGE_CONNECTION_SHAPE,
+    );
   }
 
   // NAME THIS `updated`, not `outcome`. The audit-writer census identifies
@@ -233,5 +226,10 @@ export async function PATCH(
   invalidatePublicClubIdentity();
   await primeClubIdentitySync();
 
-  return NextResponse.json({ lodge: serializeLodge(updatedLodge) });
+  // A connection never receives the door code (ALP-722).
+  return connectionJson(
+    request,
+    { lodge: serializeLodge(updatedLodge) },
+    ADMIN_LODGE_CONNECTION_SHAPE,
+  );
 }

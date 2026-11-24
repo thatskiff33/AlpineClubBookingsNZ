@@ -1,8 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
-import { z } from "zod";
 
+import { foodOrderSettingsBodySchema } from "@/lib/admin-lodge-schemas/maintenance";
 import { parseJsonRequestBody } from "@/lib/api-json";
 import { createAuditLog } from "@/lib/audit";
+import { ADMIN_FOOD_ORDER_SETTINGS_CONNECTION_SHAPE } from "@/lib/connection-shapes/lodge-maintenance";
 import {
   FOOD_ORDER_NOT_FOUND,
   foodOrderAuditContext,
@@ -10,12 +11,11 @@ import {
 } from "@/lib/food-order-route";
 import {
   FOOD_ORDER_SETTINGS_ID,
-  foodOfficerEmailSchema,
-  foodOfficerLabelSchema,
   loadFoodOrderSettings,
   normaliseFoodOrderSettings,
 } from "@/lib/food-order-settings";
 import logger from "@/lib/logger";
+import { connectionJson } from "@/lib/mcp-connection-request";
 import { isSingletonUpsertContention } from "@/lib/prisma-errors";
 import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/session-guards";
@@ -30,15 +30,12 @@ import { requireAdmin } from "@/lib/session-guards";
  * ordering is not set up: the order page says so and the API refuses orders.
  */
 
-const putSchema = z
-  .object({
-    // "" clears it; anything else must be a valid address.
-    officerEmail: z.union([z.literal(""), foodOfficerEmailSchema]).nullable(),
-    officerLabel: foodOfficerLabelSchema,
-  })
-  .strict();
+// The body schema ("" clears the address; anything else must be a valid one)
+// lives in admin-lodge-schemas/maintenance.ts so the AI app action
+// `update_food_order_settings` offers the same fields (ALP-722). A connection
+// is never sent the officer's address back.
 
-export async function GET() {
+export async function GET(request: Request) {
   if (await foodOrderModuleOff()) {
     return NextResponse.json(FOOD_ORDER_NOT_FOUND, { status: 404 });
   }
@@ -47,7 +44,11 @@ export async function GET() {
   });
   if (!admin.ok) return admin.response;
 
-  return NextResponse.json({ settings: await loadFoodOrderSettings() });
+  return connectionJson(
+    request,
+    { settings: await loadFoodOrderSettings() },
+    ADMIN_FOOD_ORDER_SETTINGS_CONNECTION_SHAPE,
+  );
 }
 
 export async function PUT(request: NextRequest) {
@@ -64,7 +65,7 @@ export async function PUT(request: NextRequest) {
   });
   if (!jsonBody.ok) return jsonBody.response;
   const body = jsonBody.body;
-  const parsed = putSchema.safeParse(body);
+  const parsed = foodOrderSettingsBodySchema.safeParse(body);
   if (!parsed.success) {
     return NextResponse.json(
       {
@@ -127,7 +128,7 @@ export async function PUT(request: NextRequest) {
       },
       { isolationLevel: "Serializable" },
     );
-    return NextResponse.json({ settings });
+    return connectionJson(request, { settings }, ADMIN_FOOD_ORDER_SETTINGS_CONNECTION_SHAPE);
   } catch (err) {
     // P2002 counts as contention here: the only unique keys this transaction
     // can hit are FoodOrderSettings' constant id (a racing first save's create

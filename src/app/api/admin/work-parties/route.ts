@@ -9,12 +9,17 @@ import { clubTodayDateOnlyInstant } from "@/lib/club-time/server";
 import {
   createWorkPartyEventWithPromo,
   workPartyEventDatesError,
-  workPartyEventSchema,
 } from "@/lib/work-party";
+import { workPartyEventSchema } from "@/lib/admin-lodge-schemas/chores-work-parties";
+import {
+  ADMIN_WORK_PARTY_CREATED_CONNECTION_SHAPE,
+  ADMIN_WORK_PARTY_LIST_CONNECTION_SHAPE,
+} from "@/lib/connection-shapes/lodge-chores-work-parties";
+import { connectionJson } from "@/lib/mcp-connection-request";
 import { syncCreatedWorkPartyCalendar } from "@/lib/work-party-calendar";
 import { isUpcomingWorkParty } from "@/lib/work-party-rules";
 
-export async function GET() {
+export async function GET(req: NextRequest) {
   const guard = await requireAdmin({
     permission: { area: "lodge", level: "view" },
   });
@@ -40,7 +45,7 @@ export async function GET() {
     clubTodayDateOnlyInstant(),
   ]);
 
-  return NextResponse.json({
+  return connectionJson(req, {
     events: events.map(({ promoCode, lodge, _count, ...event }) => ({
       ...event,
       lodgeName: lodge?.name ?? null,
@@ -58,7 +63,7 @@ export async function GET() {
         0
       ),
     })),
-  });
+  }, ADMIN_WORK_PARTY_LIST_CONNECTION_SHAPE);
 }
 
 export async function POST(req: NextRequest) {
@@ -134,5 +139,10 @@ export async function POST(req: NextRequest) {
     },
   });
 
-  return NextResponse.json({ event, calendarWarning }, { status: 201 });
+  return connectionJson(
+    req,
+    { event, calendarWarning },
+    ADMIN_WORK_PARTY_CREATED_CONNECTION_SHAPE,
+    { status: 201 }
+  );
 }
