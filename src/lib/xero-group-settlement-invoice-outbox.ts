@@ -82,6 +82,11 @@ const GROUP_SETTLEMENT_INVOICE_VOID_ENDED = {
 /** The response-payload flag a VOID handler writes when the invoice ended. */
 type GroupSettlementInvoiceVoidEndedFlag = keyof typeof GROUP_SETTLEMENT_INVOICE_VOID_ENDED;
 
+/** Every flag that says a VOID ended its invoice: what the cover sweep's statement filters on. */
+export const GROUP_SETTLEMENT_INVOICE_VOID_ENDED_FLAGS = Object.keys(
+  GROUP_SETTLEMENT_INVOICE_VOID_ENDED
+) as GroupSettlementInvoiceVoidEndedFlag[];
+
 /**
  * The payload entry a VOID handler spreads into its completion for how the
  * invoice ended: the one place the flag names are declared, so a writer can

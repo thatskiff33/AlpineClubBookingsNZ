@@ -7401,7 +7401,11 @@ manifest under `coveredAfterReleaseKey`, written by the recorder in a second
 transaction after its own row commits, and reached again by the release's retry
 after the release commits (which reads the replacement's CREATE row by the
 current attempt's key while that row names no invoice, its email still
-sending). Whichever of a record and a release commits second sees the other, so
+sending). Those reads take no lock, so the invoice may be abandoned and the
+next attempt queued between them; the retry reads the binding again after the
+rows and keeps an unnamed row only while the settlement still names the
+invoice (an abandoned invoice is never bound again), so no later attempt's
+request is recorded under it. Whichever of a record and a release commits second sees the other, so
 both orders end covered; a recorder whose own row lost the key (P2002) still
 runs that step. Two successor writers meet the key, and one is left. A
 successor written while the replacement's own void releases its conflict is
@@ -7419,9 +7423,10 @@ before its VOID read or release re-read, once the void's last sweep has run.
 The third is the deploy: while the old colour drains, its void handlers write
 no release at all. Each leaves cover live on a void invoice until the payments
 cycle's `combined-invoice-cover-release` sweep
-(`sweepVoidedCombinedGroupInvoiceCover`) runs: it releases every unreleased
-combined manifest whose invoice has a SUCCEEDED VOID that ended it, through
-`releaseCombinedGroupInvoiceManifest` (no second writer), so the bound is one
+(`sweepVoidedCombinedGroupInvoiceCover`) runs: it reads from the SUCCEEDED
+VOIDs that ended their invoice and still have an unreleased combined manifest,
+and releases each through `releaseCombinedGroupInvoiceManifest` (no second
+writer), so the bound is one
 15-minute payments cycle once the new code runs the cron leader (ledger §7). It
 takes no lock either: its release rows are keyed by manifest, so a sweep beside
 a handler's or recorder's release writes one row, and the release's own second

@@ -1,13 +1,16 @@
 import { Prisma, type MemberMoneyAccount, type MemberMoneyExportCoverageReleaseReason } from "@prisma/client";
 import type { LineItem } from "xero-node";
+import { z } from "zod";
 import { isPrismaKnownUniqueConstraintError } from "@/lib/prisma-known-errors";
 import { prisma } from "../../prisma";
+import { decodeRawRows } from "../../raw-sql-rows";
 import logger from "../../logger";
 import { storedInvoiceRequestLines } from "../../xero-json";
 import { committedGroupChildrenWhere, storedGroupInvoiceChildBookingIds } from "../../xero-group-settlement-invoice-children";
 import type { GroupSettlementInvoiceLines } from "../../xero-group-settlement-invoice-lines";
 import {
   currentGroupSettlementInvoiceAttempt,
+  GROUP_SETTLEMENT_INVOICE_VOID_ENDED_FLAGS,
   groupSettlementInvoiceCreateKey,
   groupSettlementInvoiceVoidEnded,
   groupSettlementInvoiceVoidKey,
@@ -93,6 +96,13 @@ async function readChildren(db: Db, bookingIds: readonly string[]) {
  * otherwise find nothing and leave the replacement's ALREADY_COVERED conflict
  * uncovered. A bind only takes the current attempt's invoice, and a later
  * attempt is queued only once the settlement has let that invoice go.
+ *
+ * Those reads take no lock, so the invoice may be let go and the next attempt
+ * queued between them: its unnamed row would then be read as this invoice's.
+ * The binding is read again after the rows, and an unnamed row is kept only
+ * while the settlement still names `invoiceId`. An abandoned invoice is never
+ * bound again, so a binding seen before and after the reads held throughout,
+ * and no later attempt existed while they ran.
  */
 async function readStoredCombinedInvoice(settlementId: string, invoiceId: string, operationId: string | null) {
   const where = {
@@ -102,11 +112,15 @@ async function readStoredCombinedInvoice(settlementId: string, invoiceId: string
   const unnamed = operationId
     ? [{ id: operationId, xeroObjectId: null }]
     : currentAttempt === null ? [] : [{ correlationKey: groupSettlementInvoiceCreateKey(settlementId, currentAttempt), xeroObjectId: null }];
-  const rows = await prisma.xeroSyncOperation.findMany({
+  let rows = await prisma.xeroSyncOperation.findMany({
     where: { ...where, OR: [{ xeroObjectId: invoiceId }, ...unnamed] },
     orderBy: { createdAt: "asc" },
     select: { correlationKey: true, requestPayload: true, xeroObjectId: true },
   });
+  if (!operationId && rows.some((row) => row.xeroObjectId !== invoiceId)) {
+    const bound = await prisma.groupBookingSettlement.findUnique({ where: { id: settlementId }, select: { xeroInvoiceId: true } });
+    if (bound?.xeroInvoiceId !== invoiceId) rows = rows.filter((row) => row.xeroObjectId === invoiceId);
+  }
   // A row Xero's answer named first; the caller's own row only when none does.
   rows.sort((a, b) => Number(b.xeroObjectId === invoiceId) - Number(a.xeroObjectId === invoiceId));
   for (const row of rows) {
@@ -318,20 +332,24 @@ async function releaseIfVoidFinished(settlementId: string, invoiceId: string): P
  * invoice's cover into cover at the next generation, under the conflict's
  * successor key (owner decision, 25 Nov 2026, #4525). Never on an invoice
  * carrying money: the caller decides that, and that invoice's replacement
- * keeps its conflict. Never throws.
+ * keeps its conflict. Never throws: true once the invoice's manifests are
+ * released (the retry's own failure is logged by the recorder), false when
+ * the release itself failed and was logged.
  */
 export async function releaseCombinedGroupInvoiceManifest(input: {
   settlementId: string;
   invoiceId: string;
   reason: MemberMoneyExportCoverageReleaseReason;
-}): Promise<void> {
+}): Promise<boolean> {
   const { settlementId, invoiceId, reason } = input;
+  let released = false;
   try {
     await releaseUnreleased(settlementId, invoiceId, reason);
     // Once more after that commit: a successor this invoice's own record wrote
     // beside the first pass is released here, or its writer sees this release
     // (`releaseLikeAnyReleased`), whichever commits second.
     await releaseUnreleased(settlementId, invoiceId, reason);
+    released = true;
     const settlement = await prisma.groupBookingSettlement.findUnique({
       where: { id: settlementId },
       select: { xeroInvoiceId: true, groupBooking: { select: { organiserBookingId: true } } },
@@ -346,21 +364,58 @@ export async function releaseCombinedGroupInvoiceManifest(input: {
   } catch (error) {
     logger.error({ err: error, settlementId, invoiceId }, "Could not release the combined group invoice's export coverage; the void is unchanged");
   }
+  return released;
 }
 
-/** One page of the cover-release sweep, and how many pages one run reads at most (5,000 invoices). */
+/** One page of the cover-release sweep, and how many pages one run reads at most (5,000 VOIDs). */
 export const COMBINED_COVER_SWEEP_PAGE_SIZE = 100;
 export const COMBINED_COVER_SWEEP_MAX_PAGES = 50;
 
 export interface CombinedCoverSweepResult {
-  /** Combined invoices with an unreleased manifest whose VOID was read. */
+  /** Voided combined invoices with an unreleased manifest the run read. */
   checked: number;
   /** Of those, the invoices whose finished VOID ended them, released now. */
   released: number;
-  /** The run stopped at its cap: older unreleased combined manifests were not read. */
+  /** Of those, the invoices whose release failed (logged); the next run tries again. */
+  releaseFailures: number;
+  /** The run stopped at its cap: later VOIDs still owed a release were not read. */
   truncated: boolean;
   /** The sweep's own read failed; what it had not reached is left for the next run. */
   failed: boolean;
+}
+
+const VOIDED_UNRELEASED_ROW = z.object({ id: z.string(), createdAt: z.date(), settlementId: z.string(), invoiceId: z.string() });
+
+/**
+ * One page of the sweep's work: each SUCCEEDED group-settlement VOID whose
+ * response carries an ended flag, joined to its invoice's unreleased combined
+ * manifests, oldest VOID first after `cursor`. Only what still needs releasing:
+ * a released invoice, a live one and one carrying money (no ended flag) are
+ * never read. The join finds the invoice in the VOID's key
+ * (`groupSettlementInvoiceVoidKey` holds the invoice id verbatim); every row is
+ * checked again against the exact keys by `finishedVoidReasons`.
+ */
+async function readVoidedUnreleasedPage(cursor: { createdAt: Date; id: string } | null) {
+  const ended = Prisma.join(GROUP_SETTLEMENT_INVOICE_VOID_ENDED_FLAGS.map((flag) => Prisma.sql`${JSON.stringify({ [flag]: true })}::jsonb`));
+  const after = cursor ? Prisma.sql`AND (o."createdAt", o."id") > (${cursor.createdAt}, ${cursor.id})` : Prisma.empty;
+  const rows = await prisma.$queryRaw`
+    SELECT DISTINCT o."id", o."createdAt", o."localId" AS "settlementId", m."providerInvoiceId" AS "invoiceId"
+    FROM "XeroSyncOperation" o
+    JOIN "MemberMoneyExportManifest" m
+      ON m."settlementId" = o."localId"
+     AND m."documentRole" = ${ROLE}::"MemberMoneyExportDocumentRole"
+     AND strpos(o."correlationKey", m."providerInvoiceId") > 0
+    WHERE o."entityType" = 'INVOICE'
+      AND o."operationType" = 'UPDATE'
+      AND o."localModel" = 'GroupBookingSettlement'
+      AND o."status" = 'SUCCEEDED'
+      AND o."responsePayload" @> ANY (ARRAY[${ended}])
+      AND NOT EXISTS (SELECT 1 FROM "MemberMoneyExportCoverageRelease" r WHERE r."manifestId" = m."id")
+      ${after}
+    ORDER BY o."createdAt" ASC, o."id" ASC
+    LIMIT ${COMBINED_COVER_SWEEP_PAGE_SIZE}
+  `;
+  return decodeRawRows(rows, VOIDED_UNRELEASED_ROW, "voided combined group invoices with unreleased cover");
 }
 
 /**
@@ -373,43 +428,36 @@ export interface CombinedCoverSweepResult {
  * replacement's ALREADY_COVERED conflict becomes cover. It heals what no
  * handler or recorder pass reaches: an old-colour void handler that writes no
  * release while the old colour drains, and the two crash windows (ledger §7).
- * The payments cron cycle runs it every 15 minutes. Newest manifests first, a
- * page of `COMBINED_COVER_SWEEP_PAGE_SIZE` and one VOID read per page, at most
- * `COMBINED_COVER_SWEEP_MAX_PAGES` pages a run; a run that stops at the cap
- * says so. Idempotent: a released manifest is not read again, and release rows
- * are keyed by manifest. Never throws. No advisory lock (`INV-LOCK-001`): it
+ * The payments cron cycle runs it every 15 minutes. It reads from the VOIDs
+ * that still owe a release (`readVoidedUnreleasedPage`), so live and
+ * money-carrying invoices never fill its pages; oldest VOID first, a page of
+ * `COMBINED_COVER_SWEEP_PAGE_SIZE`, at most `COMBINED_COVER_SWEEP_MAX_PAGES`
+ * pages a run; a run that stops at the cap, or whose release failed, says so.
+ * Idempotent: a released manifest leaves the work set, and release rows are
+ * keyed by manifest. Never throws. No advisory lock (`INV-LOCK-001`): it
  * changes no booking status or settlement money; the release's keys are the
  * exclusion.
  */
 export async function sweepVoidedCombinedGroupInvoiceCover(): Promise<CombinedCoverSweepResult> {
-  const result: CombinedCoverSweepResult = { checked: 0, released: 0, truncated: false, failed: false };
+  const result: CombinedCoverSweepResult = { checked: 0, released: 0, releaseFailures: 0, truncated: false, failed: false };
   try {
     const seen = new Set<string>();
     let cursor: { createdAt: Date; id: string } | null = null;
     for (let page = 0; page < COMBINED_COVER_SWEEP_MAX_PAGES; page += 1) {
-      const rows: { id: string; createdAt: Date; settlementId: string | null; providerInvoiceId: string }[] =
-        await prisma.memberMoneyExportManifest.findMany({
-          where: {
-            documentRole: ROLE, settlementId: { not: null }, release: { is: null },
-            ...(cursor ? { OR: [{ createdAt: { lt: cursor.createdAt } }, { createdAt: cursor.createdAt, id: { lt: cursor.id } }] } : {}),
-          },
-          orderBy: [{ createdAt: "desc" }, { id: "desc" }],
-          take: COMBINED_COVER_SWEEP_PAGE_SIZE,
-          select: { id: true, createdAt: true, settlementId: true, providerInvoiceId: true },
-        });
+      const rows = await readVoidedUnreleasedPage(cursor);
       const invoices: { settlementId: string; invoiceId: string }[] = [];
       for (const row of rows) {
-        if (!row.settlementId || seen.has(invoicePairKey(row.settlementId, row.providerInvoiceId))) continue;
-        seen.add(invoicePairKey(row.settlementId, row.providerInvoiceId));
-        invoices.push({ settlementId: row.settlementId, invoiceId: row.providerInvoiceId });
+        if (seen.has(invoicePairKey(row.settlementId, row.invoiceId))) continue;
+        seen.add(invoicePairKey(row.settlementId, row.invoiceId));
+        invoices.push({ settlementId: row.settlementId, invoiceId: row.invoiceId });
       }
       result.checked += invoices.length;
       const reasons = await finishedVoidReasons(invoices);
       for (const invoice of invoices) {
         const reason = reasons.get(invoicePairKey(invoice.settlementId, invoice.invoiceId));
         if (!reason) continue;
-        await releaseCombinedGroupInvoiceManifest({ ...invoice, reason });
-        result.released += 1;
+        if (await releaseCombinedGroupInvoiceManifest({ ...invoice, reason })) result.released += 1;
+        else result.releaseFailures += 1;
       }
       if (rows.length < COMBINED_COVER_SWEEP_PAGE_SIZE) return result;
       const last = rows[rows.length - 1]!;

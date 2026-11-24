@@ -474,7 +474,7 @@ describe("OBS-03: cron job run recording", { timeout: 30_000 }, () => {
     paymentsCycleTasks.reannounceHeldLateCaptures.mockResolvedValue({ checked: 0, announced: 0 });
     paymentsCycleTasks.runCreditReleaseAskSweep.mockResolvedValue({ enqueued: 0, payments: null, closes: null });
     paymentsCycleTasks.drainOwedNewCaptureAlerts.mockResolvedValue({ checked: 0, sent: 0 });
-    paymentsCycleTasks.sweepVoidedCombinedGroupInvoiceCover.mockResolvedValue({ checked: 0, released: 0, truncated: false, failed: false });
+    paymentsCycleTasks.sweepVoidedCombinedGroupInvoiceCover.mockResolvedValue({ checked: 0, released: 0, releaseFailures: 0, truncated: false, failed: false });
     paymentsCycleTasks.reapStaleWaitingPaymentXeroOutboxOperations.mockResolvedValue({
       reaped: 0,
       released: 0,

@@ -749,6 +749,10 @@ bound invoice's record reaches the same step, so a release and a record in
 either order end covered. The retry finds the replacement's CREATE row by the
 invoice it names, or, while its email is still sending and the row names no
 invoice yet, by the current attempt's key (`groupSettlementInvoiceCreateKey`).
+Its reads take no lock, so it reads the settlement's binding again after the
+rows and trusts an unnamed row only while the settlement still names that
+invoice: an abandoned invoice is never bound again, so no later attempt's
+request is ever recorded under the abandoned invoice.
 While the earlier invoice carries money and keeps its cover, the plan is still
 `ALREADY_COVERED` and the conflict stays, visible, with no cover. Only an
 `ALREADY_COVERED` conflict gains a successor, never one for another reason, and
@@ -773,11 +777,13 @@ manifest whose invoice has a SUCCEEDED VOID that ended it, for that VOID's
 reason, through `releaseCombinedGroupInvoiceManifest`, the one release writer;
 its retry of the bound invoice's record then turns the replacement's
 `ALREADY_COVERED` conflict into cover. A VOID that found the invoice carrying
-money ends nothing and is never released. The bound is one payments cycle: the
-next run, at most about 15 minutes after the VOID completes or the crash, once
-the new code runs the cron leader. A run reads the newest 5,000 unreleased
-combined invoices at most and warns on admin cron health when it stops at that
-cap. The sweep is a lane decision under the owner's standing instruction of 25
+money ends nothing and is never released, and one not yet SUCCEEDED is never
+read. The bound is one payments cycle: the next run, at most about 15 minutes
+after the VOID completes or the crash, once the new code runs the cron leader.
+A run starts from those VOIDs, oldest first, and reads only invoices still
+owed a release, so live and money-carrying invoices never fill its pages; it
+reads 5,000 such VOIDs at most and warns on admin cron health when it stops
+at that cap or a release fails. The sweep is a lane decision under the owner's standing instruction of 25
 Nov 2026, the recommended option, for the owner to confirm.
 
 | Rendered object | Ledger slice and coverage rule |

@@ -124,15 +124,19 @@ function holdReleaseSummary(release: InternetBankingHoldReleaseResult) {
 }
 
 /**
- * The sweep never throws, so a read that failed, or a run that stopped at its
- * cap, carries a `warning` that keeps it from reading as a healthy job.
+ * The sweep never throws, so a read that failed, a release that failed, or a
+ * run that stopped at its cap carries a `warning` that keeps it from reading
+ * as a healthy job.
  */
 function combinedCoverSweepSummary(sweep: CombinedCoverSweepResult) {
   if (sweep.failed) {
     return { ...sweep, warning: "The combined group invoice cover sweep could not read its manifests and will try again next run; see the application logs." };
   }
+  if (sweep.releaseFailures > 0) {
+    return { ...sweep, warning: `The combined group invoice cover sweep could not release ${sweep.releaseFailures} voided invoice(s) and will try again next run; see the application logs.` };
+  }
   if (sweep.truncated) {
-    return { ...sweep, warning: "The combined group invoice cover sweep stopped at its per-run cap and read only the newest unreleased combined invoices; older ones were not checked." };
+    return { ...sweep, warning: "The combined group invoice cover sweep stopped at its per-run cap; later voided invoices still owed a release were not read and wait for the next run." };
   }
   return sweep;
 }

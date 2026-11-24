@@ -118,7 +118,7 @@ describe("POST /api/cron/payments", () => {
     mockReannounceHeldLateCaptures.mockResolvedValue({ checked: 0, announced: 0 });
     mockRunCreditReleaseAskSweep.mockResolvedValue({ enqueued: 0, payments: null, closes: null });
     mockDrainOwedNewCaptureAlerts.mockResolvedValue({ checked: 0, sent: 0 });
-    mockSweepVoidedCombinedGroupInvoiceCover.mockResolvedValue({ checked: 0, released: 0, truncated: false, failed: false });
+    mockSweepVoidedCombinedGroupInvoiceCover.mockResolvedValue({ checked: 0, released: 0, releaseFailures: 0, truncated: false, failed: false });
     mockReapStaleWaitingPaymentXeroOutboxOperations.mockResolvedValue({
       reaped: 0,
       released: 0,
@@ -175,8 +175,9 @@ describe("POST /api/cron/payments", () => {
   });
 
   it.each([
-    [{ checked: 2, released: 0, truncated: false, failed: true }, /could not read its manifests/],
-    [{ checked: 5000, released: 1, truncated: true, failed: false }, /stopped at its per-run cap/],
+    [{ checked: 2, released: 0, releaseFailures: 0, truncated: false, failed: true }, /could not read its manifests/],
+    [{ checked: 3, released: 1, releaseFailures: 2, truncated: false, failed: false }, /could not release 2 voided invoice/],
+    [{ checked: 5000, released: 1, releaseFailures: 0, truncated: true, failed: false }, /stopped at its per-run cap/],
   ])("records the cover sweep's failed read or capped run as a warning admin cron health shows (#4525)", async (sweep, warning) => {
     mockSweepVoidedCombinedGroupInvoiceCover.mockResolvedValueOnce(sweep);
     const { POST } = await import("@/app/api/cron/payments/route");

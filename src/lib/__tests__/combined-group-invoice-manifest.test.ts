@@ -24,12 +24,14 @@ const mocks = vi.hoisted(() => {
     groupBookingSettlement: { findUnique: vi.fn() },
     manifests: { findMany: vi.fn(), findFirst: vi.fn() },
     $transaction: vi.fn(async (fn: (client: typeof tx) => Promise<unknown>) => fn(tx)),
+    $queryRaw: vi.fn(),
     logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
   };
 });
 vi.mock("@/lib/prisma", () => ({
   prisma: {
     $transaction: mocks.$transaction,
+    $queryRaw: mocks.$queryRaw,
     xeroSyncOperation: mocks.xeroSyncOperation,
     booking: mocks.booking,
     groupBookingSettlement: mocks.groupBookingSettlement,
@@ -41,6 +43,7 @@ vi.mock("@/lib/logger", () => ({ default: mocks.logger }));
 import type { LineItem } from "xero-node";
 import { BASELINE_XERO_TAX_RENDERING } from "@/lib/xero-tax-rendering";
 import { sanitizeForJson } from "@/lib/xero-sync";
+import { groupSettlementInvoiceVoidKey } from "@/lib/xero-group-settlement-invoice-outbox";
 import {
   COMBINED_COVER_SWEEP_MAX_PAGES,
   COMBINED_COVER_SWEEP_PAGE_SIZE,
@@ -103,6 +106,7 @@ beforeEach(() => {
   mocks.xeroSyncOperation.findMany.mockResolvedValue([]);
   mocks.manifests.findMany.mockResolvedValue([]);
   mocks.manifests.findFirst.mockResolvedValue(null);
+  mocks.$queryRaw.mockResolvedValue([]);
   mocks.groupBookingSettlement.findUnique.mockResolvedValue({ xeroInvoiceId: null, groupBooking: { organiserBookingId: "organiser-1" } });
 });
 
@@ -508,6 +512,29 @@ describe("releaseCombinedGroupInvoiceManifest (#4525, ALP-437)", () => {
     }));
   });
 
+  // Delta review: the retry's reads take no lock. Between its read of the binding and its read of the CREATE rows,
+  // inv-1 is abandoned and attempt 2 queued; attempt 2's handler has stored its request, unnamed.
+  it("writes nothing for the bound invoice when it is let go and the next attempt queued during the retry's reads", async () => {
+    mocks.groupBookingSettlement.findUnique
+      .mockResolvedValueOnce({ xeroInvoiceId: "inv-1", groupBooking: { organiserBookingId: "organiser-1" } })
+      .mockResolvedValue({ xeroInvoiceId: null, groupBooking: { organiserBookingId: "organiser-1" } });
+    const createRows = [
+      // inv-1's own CREATE, its email never sent: it names no invoice.
+      { correlationKey: ATTEMPT_KEY, xeroObjectId: null,
+        requestPayload: { invoices: [{ lineItems: sanitizeForJson([stayLine(9000), stayLine(8000)]) }], childBookingIds: ["child-a", "child-b"] } },
+      // Attempt 2's request, for the invoice still to be raised.
+      { correlationKey: "group-settlement:settle-1:invoice:attempt-2:v1", xeroObjectId: null,
+        requestPayload: { invoices: [{ lineItems: sanitizeForJson([stayLine(9000)]) }], childBookingIds: ["child-a"] } },
+    ];
+    mocks.xeroSyncOperation.findMany.mockImplementation(async (args: { where: { OR?: Record<string, unknown>[] } }) =>
+      createRows.filter((row) => !args.where.OR
+        || args.where.OR.some((clause) => Object.entries(clause).every(([key, value]) => row[key as keyof typeof row] === value))));
+    await releaseCombinedGroupInvoiceManifest({ settlementId: "settle-1", invoiceId: "inv-0", reason: "VOIDED" });
+    // Attempt 2's key stays free for the invoice it raises.
+    expect(mocks.tx.memberMoneyExportManifest.createMany).not.toHaveBeenCalled();
+    expect(mocks.logger.error).not.toHaveBeenCalled();
+  });
+
   it("sweeps again after its commit, so a successor its own record wrote beside the first pass is released too", async () => {
     mocks.manifests.findMany.mockResolvedValueOnce([{ id: "manifest-1" }]).mockResolvedValueOnce([{ id: "successor-1" }]).mockResolvedValue([]);
     mocks.groupBookingSettlement.findUnique.mockResolvedValue({ xeroInvoiceId: "inv-1", groupBooking: { organiserBookingId: "organiser-1" } });
@@ -518,9 +545,10 @@ describe("releaseCombinedGroupInvoiceManifest (#4525, ALP-437)", () => {
     ]);
   });
 
-  it("never throws", async () => {
+  it("never throws, and says whether the invoice's manifests were released", async () => {
+    await expect(releaseCombinedGroupInvoiceManifest({ settlementId: "settle-1", invoiceId: "inv-1", reason: "VOIDED" })).resolves.toBe(true);
     mocks.manifests.findMany.mockRejectedValue(new Error("down"));
-    await expect(releaseCombinedGroupInvoiceManifest({ settlementId: "settle-1", invoiceId: "inv-1", reason: "VOIDED" })).resolves.toBeUndefined();
+    await expect(releaseCombinedGroupInvoiceManifest({ settlementId: "settle-1", invoiceId: "inv-1", reason: "VOIDED" })).resolves.toBe(false);
     expect(mocks.logger.error).toHaveBeenCalledTimes(1);
   });
 });
@@ -535,14 +563,16 @@ describe("releaseCombinedGroupInvoiceManifest (#4525, ALP-437)", () => {
 describe("sweepVoidedCombinedGroupInvoiceCover (#4525 review)", () => {
   const ABANDON_VOID_KEY = "group-settlement:settle-1:invoice-void-after-abandon:inv-0:v1";
   /** inv-0: the earlier attempt's invoice, covered; inv-1: the replacement the settlement is bound to. */
-  const manifests = [{ id: "manifest-0", createdAt: new Date("2026-06-30T00:00:00.000Z"), settlementId: "settle-1", providerInvoiceId: "inv-0" }];
-  let voidPayload: Record<string, unknown>;
-  const isPage = (args: { take?: number }) => args.take !== undefined;
-  const unreleasedOf = (invoiceId?: string) => manifests
-    .filter((row) => !releasedIds.has(row.id) && (invoiceId === undefined || row.providerInvoiceId === invoiceId));
+  const manifests = [{ id: "manifest-0", settlementId: "settle-1", providerInvoiceId: "inv-0" }];
+  /** The group-settlement VOID rows the database holds. */
+  let voids: { id: string; createdAt: Date; status: string; responsePayload: Record<string, unknown> }[];
+  const unreleasedOf = (invoiceId: string) => manifests.filter((row) => !releasedIds.has(row.id) && row.providerInvoiceId === invoiceId);
+  const ENDED = ["cancelledAfterInvoiceCreation", "abandonedBySettlement", "invoiceAlreadyVoid", "invoiceNotFoundInXero"];
+  /** The statement the sweep sent: its text and bound values. */
+  const statement = (call: unknown[]) => Prisma.sql(call[0] as TemplateStringsArray, ...call.slice(1));
 
   beforeEach(() => {
-    voidPayload = { abandonedBySettlement: true, voidInvoice: null };
+    voids = [{ id: "void-0", createdAt: new Date("2026-06-30T00:00:00.000Z"), status: "SUCCEEDED", responsePayload: { abandonedBySettlement: true, voidInvoice: null } }];
     // The earlier invoice covers child-a until its manifest is released.
     mocks.tx.memberMoneyExportCoverage.findMany.mockImplementation(async () => releasedIds.has("manifest-0") ? [] : [
       { account: "BOOKING_REVENUE", chargeIdentity: "booking:child-a:charge", documentRole: "COMBINED_GROUP_INVOICE",
@@ -553,16 +583,21 @@ describe("sweepVoidedCombinedGroupInvoiceCover (#4525 review)", () => {
       for (const row of args.data) releasedIds.add(row.manifestId);
       return { count: args.data.length };
     });
-    mocks.manifests.findMany.mockImplementation(async (args: { take?: number; where: { providerInvoiceId?: string } }) =>
-      isPage(args) ? unreleasedOf() : unreleasedOf(args.where.providerInvoiceId).map(({ id }) => ({ id })));
+    mocks.manifests.findMany.mockImplementation(async (args: { where: { providerInvoiceId: string } }) =>
+      unreleasedOf(args.where.providerInvoiceId).map(({ id }) => ({ id })));
+    // The statement's join: a VOID with an ended flag whose invoice still has an unreleased manifest. Its status
+    // filter is the statement's own (asserted on its text); every status is returned here, so the re-check is proven too.
+    mocks.$queryRaw.mockImplementation(async () => voids
+      .filter((row) => ENDED.some((flag) => row.responsePayload[flag] === true) && unreleasedOf("inv-0").length > 0)
+      .map((row) => ({ id: row.id, createdAt: row.createdAt, settlementId: "settle-1", invoiceId: "inv-0" })));
     mocks.groupBookingSettlement.findUnique.mockResolvedValue({ xeroInvoiceId: "inv-1", groupBooking: { organiserBookingId: "organiser-1" } });
     const createRow = { id: "op-1", correlationKey: ATTEMPT_KEY, xeroObjectId: "inv-1",
       requestPayload: { invoices: [{ lineItems: sanitizeForJson([stayLine(9000), stayLine(8000)]) }], childBookingIds: ["child-a", "child-b"] } };
-    mocks.xeroSyncOperation.findMany.mockImplementation(async (args: { where: { operationType: string; correlationKey?: { in: string[] } } }) => {
+    mocks.xeroSyncOperation.findMany.mockImplementation(async (args: { where: { operationType: string; status?: string; correlationKey?: { in: string[] } } }) => {
       if (args.where.operationType === "CREATE") return [createRow];
-      return args.where.correlationKey?.in.includes(ABANDON_VOID_KEY)
-        ? [{ correlationKey: ABANDON_VOID_KEY, status: "SUCCEEDED", responsePayload: voidPayload }]
-        : [];
+      if (!args.where.correlationKey?.in.includes(ABANDON_VOID_KEY)) return [];
+      return voids.filter((row) => args.where.status === undefined || row.status === args.where.status)
+        .map((row) => ({ correlationKey: ABANDON_VOID_KEY, status: row.status, responsePayload: row.responsePayload }));
     });
   });
 
@@ -576,7 +611,7 @@ describe("sweepVoidedCombinedGroupInvoiceCover (#4525 review)", () => {
     await replacementBehindEarlier();
     // The old colour's handler finished the VOID and wrote no release: nothing else runs.
     expect(releasedIds.has("manifest-0")).toBe(false);
-    await expect(sweepVoidedCombinedGroupInvoiceCover()).resolves.toEqual({ checked: 1, released: 1, truncated: false, failed: false });
+    await expect(sweepVoidedCombinedGroupInvoiceCover()).resolves.toEqual({ checked: 1, released: 1, releaseFailures: 0, truncated: false, failed: false });
     expect(mocks.tx.memberMoneyExportCoverageRelease.createMany).toHaveBeenCalledWith({
       data: [expect.objectContaining({ manifestId: "manifest-0", reason: "VOIDED" })], skipDuplicates: true,
     });
@@ -586,7 +621,7 @@ describe("sweepVoidedCombinedGroupInvoiceCover (#4525 review)", () => {
   });
 
   it("releases for the reason the VOID found: not in Xero", async () => {
-    voidPayload = { invoiceNotFoundInXero: true };
+    voids[0]!.responsePayload = { invoiceNotFoundInXero: true };
     await sweepVoidedCombinedGroupInvoiceCover();
     expect(mocks.tx.memberMoneyExportCoverageRelease.createMany).toHaveBeenCalledWith({
       data: [expect.objectContaining({ manifestId: "manifest-0", reason: "NOT_FOUND" })], skipDuplicates: true,
@@ -597,37 +632,74 @@ describe("sweepVoidedCombinedGroupInvoiceCover (#4525 review)", () => {
     await replacementBehindEarlier();
     await sweepVoidedCombinedGroupInvoiceCover();
     const before = { releases: mocks.tx.memberMoneyExportCoverageRelease.createMany.mock.calls.length, manifests: written.size };
-    await expect(sweepVoidedCombinedGroupInvoiceCover()).resolves.toEqual({ checked: 0, released: 0, truncated: false, failed: false });
+    await expect(sweepVoidedCombinedGroupInvoiceCover()).resolves.toEqual({ checked: 0, released: 0, releaseFailures: 0, truncated: false, failed: false });
     expect(mocks.tx.memberMoneyExportCoverageRelease.createMany.mock.calls).toHaveLength(before.releases);
     expect(written.size).toBe(before.manifests);
   });
 
   it("never releases an invoice whose VOID found it carrying money, and the replacement keeps its conflict", async () => {
-    voidPayload = { invoiceNotVoidedCarriesMoney: true, invoiceState: { kind: "has_money" } };
+    voids[0]!.responsePayload = { invoiceNotVoidedCarriesMoney: true, invoiceState: { kind: "has_money" } };
     await replacementBehindEarlier();
-    await expect(sweepVoidedCombinedGroupInvoiceCover()).resolves.toEqual({ checked: 1, released: 0, truncated: false, failed: false });
+    await expect(sweepVoidedCombinedGroupInvoiceCover()).resolves.toEqual({ checked: 0, released: 0, releaseFailures: 0, truncated: false, failed: false });
     expect(mocks.tx.memberMoneyExportCoverageRelease.createMany).not.toHaveBeenCalled();
     expect(written.has(SUCCESSOR_KEY)).toBe(false);
   });
 
-  it("pages newest first by a keyset, stops at its cap and says so", async () => {
-    const page = Array.from({ length: COMBINED_COVER_SWEEP_PAGE_SIZE }, (_, i) =>
-      ({ id: `m-${i}`, createdAt: new Date("2026-06-30T00:00:00.000Z"), settlementId: `s-${i}`, providerInvoiceId: `i-${i}` }));
-    mocks.manifests.findMany.mockImplementation(async (args: { take?: number }) => (isPage(args) ? page : []));
+  it.each(["RUNNING", "FAILED"])("never releases on a VOID that is %s, even one carrying an ended flag", async (status) => {
+    voids[0]!.status = status;
+    await replacementBehindEarlier();
+    await expect(sweepVoidedCombinedGroupInvoiceCover()).resolves.toMatchObject({ released: 0, releaseFailures: 0, failed: false });
+    expect(mocks.tx.memberMoneyExportCoverageRelease.createMany).not.toHaveBeenCalled();
+    expect(written.has(SUCCESSOR_KEY)).toBe(false);
+  });
+
+  it("reads only SUCCEEDED group-settlement VOIDs with an ended flag whose invoice has an unreleased combined manifest", async () => {
+    await sweepVoidedCombinedGroupInvoiceCover();
+    const { sql, values } = statement(mocks.$queryRaw.mock.calls[0]!);
+    expect(sql).toMatch(/o\."status" = 'SUCCEEDED'/);
+    expect(sql).toMatch(/o\."operationType" = 'UPDATE'/);
+    expect(sql).toMatch(/o\."localModel" = 'GroupBookingSettlement'/);
+    expect(sql).toMatch(/m\."settlementId" = o\."localId"/);
+    expect(sql).toMatch(/NOT EXISTS \(SELECT 1 FROM "MemberMoneyExportCoverageRelease" r WHERE r\."manifestId" = m\."id"\)/);
+    expect(sql).toMatch(/ORDER BY o\."createdAt" ASC, o\."id" ASC/);
+    expect(values).toEqual(expect.arrayContaining(["COMBINED_GROUP_INVOICE", ...ENDED.map((flag) => JSON.stringify({ [flag]: true }))]));
+  });
+
+  it("keeps the invoice id verbatim in the VOID's key the statement joins on", () => {
+    const settlementId = "c".repeat(25);
+    const invoiceId = "0f8fad5b-d9cb-469f-a165-70867728950e";
+    for (const path of ["cancel", "abandon"] as const) {
+      expect(groupSettlementInvoiceVoidKey(settlementId, invoiceId, path)).toContain(invoiceId);
+    }
+  });
+
+  it("counts a release that failed as a failure, not a release", async () => {
+    mocks.manifests.findMany.mockRejectedValue(new Error("down"));
+    await expect(sweepVoidedCombinedGroupInvoiceCover()).resolves.toEqual({ checked: 1, released: 0, releaseFailures: 1, truncated: false, failed: false });
+  });
+
+  it("pages oldest VOID first by a keyset, stops at its cap and says so", async () => {
+    const at = new Date("2026-06-30T00:00:00.000Z");
+    const page = Array.from({ length: COMBINED_COVER_SWEEP_PAGE_SIZE }, (_, i) => ({ id: `v-${i}`, createdAt: at, settlementId: `s-${i}`, invoiceId: `i-${i}` }));
+    mocks.$queryRaw.mockResolvedValue(page);
     const result = await sweepVoidedCombinedGroupInvoiceCover();
     expect(result).toMatchObject({ released: 0, truncated: true, failed: false });
-    const pages = mocks.manifests.findMany.mock.calls.map((call) => call[0]);
-    expect(pages).toHaveLength(COMBINED_COVER_SWEEP_MAX_PAGES);
-    expect(pages[0]).toMatchObject({ orderBy: [{ createdAt: "desc" }, { id: "desc" }], take: COMBINED_COVER_SWEEP_PAGE_SIZE,
-      where: { documentRole: "COMBINED_GROUP_INVOICE", settlementId: { not: null }, release: { is: null } } });
-    expect(pages[1].where.OR).toEqual([
-      { createdAt: { lt: page.at(-1)!.createdAt } }, { createdAt: page.at(-1)!.createdAt, id: { lt: page.at(-1)!.id } },
-    ]);
+    expect(mocks.$queryRaw).toHaveBeenCalledTimes(COMBINED_COVER_SWEEP_MAX_PAGES);
+    const [first, second] = mocks.$queryRaw.mock.calls.map(statement);
+    expect(first!.sql).not.toMatch(/o\."createdAt", o\."id"\) >/);
+    expect(first!.values.at(-1)).toBe(COMBINED_COVER_SWEEP_PAGE_SIZE);
+    expect(second!.text).toMatch(/AND \(o\."createdAt", o\."id"\) > \(\$\d+, \$\d+\)/);
+    expect(second!.values.slice(-3)).toEqual([at, page.at(-1)!.id, COMBINED_COVER_SWEEP_PAGE_SIZE]);
   });
 
   it("never throws", async () => {
-    mocks.manifests.findMany.mockRejectedValue(new Error("down"));
+    mocks.$queryRaw.mockRejectedValue(new Error("down"));
     await expect(sweepVoidedCombinedGroupInvoiceCover()).resolves.toMatchObject({ failed: true });
     expect(mocks.logger.error).toHaveBeenCalledTimes(1);
+  });
+
+  it("treats a statement returning an unexpected shape as a failed read", async () => {
+    mocks.$queryRaw.mockResolvedValue([{ id: "void-0", created_at: new Date() }]);
+    await expect(sweepVoidedCombinedGroupInvoiceCover()).resolves.toMatchObject({ failed: true, released: 0 });
   });
 });
