@@ -213,7 +213,7 @@ vi.mock("@/lib/xero-group-settlement-void-outbox", () => ({
 import { prisma } from "@/lib/prisma";
 import { declareEnvironmentRole } from "@/lib/__tests__/helpers/environment-role";
 import { createXeroInvoiceForGroupSettlement } from "@/lib/xero-group-settlement-invoices";
-import { deferredGroupInvoiceEmailPayload, readDeferredGroupInvoiceEmail } from "@/lib/xero-group-settlement-invoice-outbox";
+import { deferredGroupInvoiceEmailPayload, groupSettlementInvoiceVoidEnded, readDeferredGroupInvoiceEmail } from "@/lib/xero-group-settlement-invoice-outbox";
 import { GroupSettlementInvoiceEmailDeferredError } from "@/lib/xero-applied-credit-operation-serialization";
 import { getAuthenticatedXeroClient, resetXeroRateLimitStateForTests } from "@/lib/xero-api-client";
 import {
@@ -1821,6 +1821,24 @@ describe("the bound-invoice rule in the create worker (#3642)", () => {
       expect(mocks.releaseManifest).not.toHaveBeenCalled();
     });
 
+    /**
+     * #4525: released before the VOID's row completes and once more after, and
+     * the completion says the invoice ended, so a manifest recorded beside the
+     * void is ended by one side or the other.
+     */
+    const expectReleasedAroundCompletion = (invoiceId: string, reason: "VOIDED" | "NOT_FOUND") => {
+      expect(mocks.releaseManifest.mock.calls).toEqual([
+        [{ settlementId: "settle-1", invoiceId, reason }],
+        [{ settlementId: "settle-1", invoiceId, reason }],
+      ]);
+      expect(mocks.completeSync).toHaveBeenCalledTimes(1);
+      const [first, last] = mocks.releaseManifest.mock.invocationCallOrder;
+      const completed = mocks.completeSync.mock.invocationCallOrder[0];
+      expect(first).toBeLessThan(completed);
+      expect(completed).toBeLessThan(last);
+      expect(groupSettlementInvoiceVoidEnded(mocks.completeSync.mock.calls[0][1].responsePayload)).toBe(reason);
+    };
+
     it("records nothing, and releases, when the group was cancelled while Xero raised the invoice", async () => {
       mocks.settlementFindUnique
         .mockResolvedValueOnce(settlement(GroupBookingStatus.OPEN))
@@ -1831,7 +1849,7 @@ describe("the bound-invoice rule in the create worker (#3642)", () => {
       ).resolves.toBeNull();
 
       expect(mocks.recordManifest).not.toHaveBeenCalled();
-      expect(mocks.releaseManifest).toHaveBeenCalledWith({ settlementId: "settle-1", invoiceId: "inv-1", reason: "VOIDED" });
+      expectReleasedAroundCompletion("inv-1", "VOIDED");
     });
 
     it("records nothing when the committed children no longer total the settlement", async () => {
@@ -1858,12 +1876,13 @@ describe("the bound-invoice rule in the create worker (#3642)", () => {
       mocks.settlementFindUnique.mockResolvedValue({ id: "settle-1", xeroInvoiceId: null });
       await voidXeroInvoiceForAbandonedGroupSettlement("settle-1", "inv-old", { syncOperation: xeroClaim("void-op-9") });
       expect(mocks.accountingApi.updateInvoice).toHaveBeenCalledTimes(1);
-      expect(mocks.releaseManifest).toHaveBeenCalledWith({ settlementId: "settle-1", invoiceId: "inv-old", reason: "VOIDED" });
+      expectReleasedAroundCompletion("inv-old", "VOIDED");
 
       mocks.releaseManifest.mockClear();
+      mocks.completeSync.mockClear();
       mocks.accountingApi.getInvoice.mockResolvedValue({ body: { invoices: [{ invoiceID: "inv-old", status: "VOIDED" }] } });
       await voidXeroInvoiceForAbandonedGroupSettlement("settle-1", "inv-old", { syncOperation: xeroClaim("void-op-9") });
-      expect(mocks.releaseManifest).toHaveBeenCalledWith({ settlementId: "settle-1", invoiceId: "inv-old", reason: "VOIDED" });
+      expectReleasedAroundCompletion("inv-old", "VOIDED");
     });
 
     it("releases the coverage of an invoice Xero does not have", async () => {
@@ -1872,7 +1891,7 @@ describe("the bound-invoice rule in the create worker (#3642)", () => {
 
       await voidXeroInvoiceForAbandonedGroupSettlement("settle-1", "inv-old", { syncOperation: xeroClaim("void-op-9") });
 
-      expect(mocks.releaseManifest).toHaveBeenCalledWith({ settlementId: "settle-1", invoiceId: "inv-old", reason: "NOT_FOUND" });
+      expectReleasedAroundCompletion("inv-old", "NOT_FOUND");
     });
 
     it("keeps the coverage of an invoice carrying money, which is never voided", async () => {
@@ -1884,6 +1903,7 @@ describe("the bound-invoice rule in the create worker (#3642)", () => {
       await voidXeroInvoiceForAbandonedGroupSettlement("settle-1", "inv-old", { syncOperation: xeroClaim("void-op-9") });
 
       expect(mocks.releaseManifest).not.toHaveBeenCalled();
+      expect(groupSettlementInvoiceVoidEnded(mocks.completeSync.mock.calls[0][1].responsePayload)).toBeNull();
     });
   });
 });

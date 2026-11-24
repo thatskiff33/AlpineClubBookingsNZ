@@ -8,6 +8,8 @@ import { committedGroupChildrenWhere, storedGroupInvoiceChildBookingIds } from "
 import type { GroupSettlementInvoiceLines } from "../../xero-group-settlement-invoice-lines";
 import {
   groupSettlementInvoiceCreateKey,
+  groupSettlementInvoiceVoidEnded,
+  groupSettlementInvoiceVoidKey,
   parseGroupSettlementInvoiceAttempt,
 } from "../../xero-group-settlement-invoice-outbox";
 import type { XeroTaxRendering } from "../../xero-tax-rendering";
@@ -33,8 +35,11 @@ const ROLE = "COMBINED_GROUP_INVOICE" as const;
  * Xero holds it void or holds no such invoice, so the group's next invoice can
  * cover the same components, a replacement already recorded as an
  * ALREADY_COVERED conflict included (its successor manifest, owner decision
- * 25 Nov 2026). Nothing here changes what is sent, voided or
- * emailed, or how a sync operation ends: a failure is logged and swallowed.
+ * 25 Nov 2026). A record that commits after its own invoice's void released
+ * nothing reads the VOID's finished row and releases itself; the handler
+ * releases once more after that row commits. Nothing here changes what is
+ * sent, voided or emailed, or how a sync operation ends: a failure is logged
+ * and swallowed.
  * No advisory lock: no booking status or settlement money changes
  * (`INV-LOCK-001`); the unique keys are the exclusion.
  */
@@ -187,6 +192,10 @@ export async function recordCombinedGroupInvoiceManifest(
       // Another run wrote the attempt's row first: step 2 reads what it wrote.
       logger.info(context, "Another document covered these components first, or another run recorded this manifest first; the first row stands");
     }
+    // A row committed after this invoice's own void released nothing (the
+    // void's release ran first) would cover for good: end it now. Before step
+    // 2, so a released conflict gains no successor.
+    await releaseIfVoidFinished(settlementId, providerInvoiceId);
     if (!mayBeBlocked) return;
 
     // 2. Cover on release (owner decision, 25 Nov 2026, #4525). The attempt's
@@ -236,6 +245,27 @@ async function releaseLikeAnyReleased(settlementId: string, invoiceId: string): 
     select: { release: { select: { reason: true } } },
   });
   if (released?.release) await releaseUnreleased(settlementId, invoiceId, released.release.reason);
+}
+
+/**
+ * When the invoice's VOID operation has finished with it void or gone in Xero,
+ * release every manifest of it for that reason. The VOID's row is the void's
+ * own record, committed by its handler before the handler's last release
+ * (`releaseCombinedGroupInvoiceManifest`, called again after the completion):
+ * a manifest committed before this read is released by that last pass, and one
+ * this read sees finished is released here, whichever commits second.
+ */
+async function releaseIfVoidFinished(settlementId: string, invoiceId: string): Promise<void> {
+  const voids = await prisma.xeroSyncOperation.findMany({
+    where: {
+      entityType: "INVOICE", operationType: "UPDATE", localModel: "GroupBookingSettlement", localId: settlementId, status: "SUCCEEDED",
+      correlationKey: { in: [groupSettlementInvoiceVoidKey(settlementId, invoiceId, "cancel"), groupSettlementInvoiceVoidKey(settlementId, invoiceId, "abandon")] },
+    },
+    orderBy: { createdAt: "asc" },
+    select: { responsePayload: true },
+  });
+  const reason = voids.map((row) => groupSettlementInvoiceVoidEnded(row.responsePayload)).find((ended) => ended !== null);
+  if (reason) await releaseUnreleased(settlementId, invoiceId, reason);
 }
 
 /**

@@ -729,7 +729,12 @@ record reaches the same step, so a release and a record in either order end
 covered. While the earlier invoice carries money and keeps its cover, the plan
 is still `ALREADY_COVERED` and the conflict stays, visible, with no cover. Only
 an `ALREADY_COVERED` conflict gains a successor, never one for another reason,
-and never one whose own invoice is already void.
+and never one whose own invoice is already void. A manifest recorded after its
+own invoice's void found nothing to release is released by the recorder: it
+reads the invoice's finished VOID operation and releases for the reason that
+row records (void or not in Xero; never when it carries money). The void
+handler releases before completing that row and once more after, so a record
+and a void in either order end released.
 
 | Rendered object | Ledger slice and coverage rule |
 | --- | --- |

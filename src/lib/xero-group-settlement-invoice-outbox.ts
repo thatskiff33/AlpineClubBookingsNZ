@@ -65,6 +65,31 @@ export function parseGroupSettlementInvoiceAttempt(
 }
 
 /**
+ * #4525 (ALP-437): the flag a finished VOID's response payload carries when the
+ * invoice ended in Xero, and how: voided by the run (after a cancel or an
+ * abandon), found void already, or not in Xero at all. The VOID handlers write
+ * these flags; a combined invoice's export manifest recorded after the void's
+ * own coverage release reads them back (`releaseIfVoidFinished`). A payload
+ * with none (the invoice carries money, or is still bound) ended nothing.
+ */
+const GROUP_SETTLEMENT_INVOICE_VOID_ENDED = {
+  cancelledAfterInvoiceCreation: "VOIDED",
+  abandonedBySettlement: "VOIDED",
+  invoiceAlreadyVoid: "VOIDED",
+  invoiceNotFoundInXero: "NOT_FOUND",
+} as const;
+
+/** How a finished VOID's response payload says the invoice ended, or null when it did not. */
+export function groupSettlementInvoiceVoidEnded(responsePayload: unknown): "VOIDED" | "NOT_FOUND" | null {
+  const payload = asRecord(responsePayload);
+  if (!payload) return null;
+  for (const [flag, reason] of Object.entries(GROUP_SETTLEMENT_INVOICE_VOID_ENDED)) {
+    if (payload[flag] === true) return reason;
+  }
+  return null;
+}
+
+/**
  * The Xero idempotency and outbox correlation key of a VOID: after the group
  * was cancelled (`INV-PAY-035`), or after the settlement abandoned the invoice
  * (`INV-PAY-105`). Invoice-specific, so every observer of one invoice converges

@@ -287,6 +287,92 @@ describe("recordCombinedGroupInvoiceManifest (#4525, ALP-437)", () => {
     });
   });
 
+  describe("a record that commits after its own invoice's void released nothing", () => {
+    const VOID_KEYS = [
+      "group-settlement:settle-1:invoice-void-after-cancel:inv-1:v1",
+      "group-settlement:settle-1:invoice-void-after-abandon:inv-1:v1",
+    ];
+    /** The VOID rows the database holds: SUCCEEDED once the handler completes. */
+    const voidRows: { status: string; responsePayload: unknown }[] = [];
+    /** The manifests of inv-1 not yet released: what the release's sweep reads. */
+    const unreleased = () => [...written.values()].filter((row) => row.providerInvoiceId === "inv-1" && !releasedIds.has(row.id as string))
+      .map((row) => ({ id: row.id }));
+    const isVoidRead = (args: { where: { operationType?: string } }) => args.where.operationType === "UPDATE";
+    beforeEach(() => {
+      voidRows.length = 0;
+      mocks.xeroSyncOperation.findMany.mockImplementation(async (args: { where: { operationType?: string; status?: string } }) =>
+        isVoidRead(args) ? voidRows.filter((row) => row.status === args.where.status) : []);
+      mocks.manifests.findMany.mockImplementation(async () => unreleased());
+      mocks.tx.memberMoneyExportCoverageRelease.createMany.mockImplementation(async (args: { data: { manifestId: string }[] }) => {
+        for (const row of args.data) releasedIds.add(row.manifestId);
+        return { count: args.data.length };
+      });
+      mocks.groupBookingSettlement.findUnique.mockResolvedValue({ xeroInvoiceId: "inv-1", groupBooking: { organiserBookingId: "organiser-1" } });
+    });
+    const releases = () => mocks.tx.memberMoneyExportCoverageRelease.createMany.mock.calls.map((call) => call[0].data[0]);
+
+    it("void then record: the VOID finished before the record, so the record releases its own cover", async () => {
+      // The void's release ran with nothing to release, then its row completed.
+      await releaseCombinedGroupInvoiceManifest({ settlementId: "settle-1", invoiceId: "inv-1", reason: "VOIDED" });
+      voidRows.push({ status: "SUCCEEDED", responsePayload: { invoiceAlreadyVoid: true, invoiceStatus: "VOIDED" } });
+      await recordCombinedGroupInvoiceManifest(built(), target);
+      expect(manifestRow()).toMatchObject({ outcome: "COVERED", providerInvoiceId: "inv-1" });
+      expect(mocks.xeroSyncOperation.findMany).toHaveBeenCalledWith(expect.objectContaining({
+        where: expect.objectContaining({ localId: "settle-1", status: "SUCCEEDED", correlationKey: { in: VOID_KEYS } }),
+      }));
+      expect(releases()).toEqual([expect.objectContaining({ manifestId: manifestRow().id, reason: "VOIDED" })]);
+      expect(unreleased()).toEqual([]);
+    });
+
+    it("releases for the reason the VOID found: not in Xero", async () => {
+      voidRows.push({ status: "SUCCEEDED", responsePayload: { invoiceNotFoundInXero: true } });
+      await recordCombinedGroupInvoiceManifest(built(), target);
+      expect(releases()).toEqual([expect.objectContaining({ manifestId: manifestRow().id, reason: "NOT_FOUND" })]);
+    });
+
+    it("record beside the void: the record read the VOID unfinished, and the handler's release after completing ends the cover", async () => {
+      // The release's first passes ran before the record committed; the VOID row is still running when the record reads it.
+      await releaseCombinedGroupInvoiceManifest({ settlementId: "settle-1", invoiceId: "inv-1", reason: "VOIDED" });
+      voidRows.push({ status: "RUNNING", responsePayload: null });
+      await recordCombinedGroupInvoiceManifest(built(), target);
+      expect(unreleased()).toEqual([{ id: manifestRow().id }]);
+      // The handler completes its row, then releases once more.
+      voidRows[0] = { status: "SUCCEEDED", responsePayload: { abandonedBySettlement: true, voidInvoice: null } };
+      await releaseCombinedGroupInvoiceManifest({ settlementId: "settle-1", invoiceId: "inv-1", reason: "VOIDED" });
+      expect(releases()).toEqual([expect.objectContaining({ manifestId: manifestRow().id, reason: "VOIDED" })]);
+      expect(unreleased()).toEqual([]);
+    });
+
+    it("record then void: the void's own release ends the cover, and the record's read adds nothing", async () => {
+      await recordCombinedGroupInvoiceManifest(built(), target);
+      expect(releases()).toEqual([]);
+      voidRows.push({ status: "SUCCEEDED", responsePayload: { cancelledAfterInvoiceCreation: true, voidInvoice: null } });
+      await releaseCombinedGroupInvoiceManifest({ settlementId: "settle-1", invoiceId: "inv-1", reason: "VOIDED" });
+      expect(releases()).toEqual([expect.objectContaining({ manifestId: manifestRow().id, reason: "VOIDED" })]);
+      expect(unreleased()).toEqual([]);
+    });
+
+    it("keeps the cover when the VOID found the invoice carrying money", async () => {
+      voidRows.push({ status: "SUCCEEDED", responsePayload: { invoiceNotVoidedCarriesMoney: true, invoiceState: { kind: "has_money" } } });
+      voidRows.push({ status: "SUCCEEDED", responsePayload: { skippedInvoiceStillLinkedToSettlement: true } });
+      await recordCombinedGroupInvoiceManifest(built(), target);
+      expect(manifestRow()).toMatchObject({ outcome: "COVERED" });
+      expect(releases()).toEqual([]);
+    });
+
+    it("writes no successor for a conflict the finished VOID released", async () => {
+      mocks.tx.memberMoneyExportCoverage.findMany.mockResolvedValueOnce([
+        { account: "BOOKING_REVENUE", chargeIdentity: "booking:child-a:charge", documentRole: "COMBINED_GROUP_INVOICE",
+          manifest: { settlementId: "settle-1", providerInvoiceId: "inv-0" } },
+      ]);
+      voidRows.push({ status: "SUCCEEDED", responsePayload: { invoiceAlreadyVoid: true } });
+      await recordCombinedGroupInvoiceManifest(built(), target);
+      expect(written.get(ATTEMPT_KEY)).toMatchObject({ outcome: "CONFLICT", reason: "ALREADY_COVERED" });
+      expect(releasedIds.has(written.get(ATTEMPT_KEY)!.id as string)).toBe(true);
+      expect(written.has(SUCCESSOR_KEY)).toBe(false);
+    });
+  });
+
   it("holds the plan to the lines Xero says the invoice bills", async () => {
     await recordCombinedGroupInvoiceManifest(built([stayLine(9000)]), target);
     expect(manifestRow()).toMatchObject({ outcome: "CONFLICT", reason: "STAY_CENTS" });

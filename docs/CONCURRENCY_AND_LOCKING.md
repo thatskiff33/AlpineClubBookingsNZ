@@ -7329,7 +7329,12 @@ recorder whose own row lost the key (P2002) still runs that step. Two successor
 writers meet the key, and one is left. A successor written while the
 replacement's own void releases its conflict is released too: the recorder
 re-reads its invoice's releases after writing, and the release sweeps a second
-time after its commit.
+time after its commit. A record whose own invoice's void released nothing (the
+void's release ran before the record committed) meets the same rule: the
+recorder reads the invoice's VOID operation after writing and releases when it
+finished void or not found, and the void handler releases once more after that
+row completes (`releaseCoverageAround`), so whichever commits second sees the
+other.
 Releases are insert-only, one per manifest (`skipDuplicates`). The deferred
 `member_money_require_export_generation` refuses a later generation whose
 predecessor is not wholly released, at commit; it reads, never locks.
