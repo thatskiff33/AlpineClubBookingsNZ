@@ -410,6 +410,29 @@ describe("membership lockout settings route: who may choose the liability rule (
     expect(mocks.upsert.mock.calls[0]?.[0]?.update).toMatchObject(chosen);
   });
 
+  it("lets an admin with membership edit and finance edit change one chosen rule to another", async () => {
+    asAdmin("edit", "edit");
+    const changed = { requiredTypeAgeRule: "AGE_TIER_EXEMPTS", liabilityAgeSource: "SEASON_END" };
+    mocks.findUnique.mockResolvedValue({ id: "default", mode: "HARD_BLOCK", ...chosen });
+    // The clear-up must see the new pair already written, not the stored one.
+    let committedRow: Record<string, unknown> = { id: "default", mode: "HARD_BLOCK", ...chosen };
+    let rowAtClearUp: Record<string, unknown> | undefined;
+    mocks.upsert.mockImplementation(async (args: { update: Record<string, unknown> }) => {
+      committedRow = { ...committedRow, ...args.update };
+      return committedRow;
+    });
+    mocks.clearStale.mockImplementation(async (_tx: unknown, seasonYear: number) => {
+      mocks.order.push(`clear:${seasonYear}`);
+      rowAtClearUp = { ...committedRow };
+      return { clearedCount: 0, clearedMemberIds: [] };
+    });
+    const response = await putLockoutSettings(request(changed));
+    expect(response.status).toBe(200);
+    expect(mocks.upsert.mock.calls[0]?.[0]?.update).toMatchObject(changed);
+    expect(mocks.order).toEqual(["lock:2026", "upsert", "clear:2026"]);
+    expect(rowAtClearUp).toMatchObject(changed);
+  });
+
   it("a membership-only admin may still save other settings, echoing the stored pair", async () => {
     asAdmin("edit", "view");
     mocks.findUnique.mockResolvedValue({ id: "default", mode: "HARD_BLOCK", ...chosen });
