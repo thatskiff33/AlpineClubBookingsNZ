@@ -12,6 +12,14 @@ import {
   STARTER_PRIVACY_RECIPIENT_ITEMS,
   starterPageContent,
 } from "../../../prisma/starter-page-content";
+import { toPosix } from "../../../scripts/audit/ts-call-site-scan";
+
+/**
+ * A migration's directory name, which starts with its timestamp, from the path
+ * to its `migration.sql`. Read in POSIX form, because the paths below are built
+ * with `join` and carry backslashes on Windows (#5407 item 42).
+ */
+const stamp = (path: string) => toPosix(path).split("/").at(-2)!;
 
 // Production deploys run Prisma migrations but not the seed, so the starter
 // PageContent rows are backfilled by a data migration. These tests keep that
@@ -821,7 +829,6 @@ describe("starter FAQ personal-data summary update migration (#4914 follow-up)",
   });
 
   it("sorts after the #1945 migration it corrects, so migrate deploy applies it second", () => {
-    const stamp = (path: string) => path.split("/").at(-2)!;
     expect(stamp(FAQ_PERSONAL_DATA_MIGRATION_PATH) > stamp(GENERICISE_LODGE_COPY_MIGRATION_PATH)).toBe(true);
   });
 });
@@ -1028,7 +1035,6 @@ describe("starter privacy recipients and hosting migration (#5007)", () => {
   });
 
   it("sorts after the #1945, #4031, #4914 and #4915 migrations it follows", () => {
-    const stamp = (path: string) => path.split(/[\\/]/).at(-2)!;
     expect(stamp(PRIVACY_RECIPIENTS_MIGRATION_PATH) > stamp(GENERICISE_LODGE_COPY_MIGRATION_PATH)).toBe(true);
     expect(stamp(PRIVACY_RECIPIENTS_MIGRATION_PATH) > stamp(PRIVACY_SUBJECT_ACCESS_MIGRATION_PATH)).toBe(true);
     expect(stamp(PRIVACY_RECIPIENTS_MIGRATION_PATH) > stamp(PRIVACY_RETENTION_HOSTING_MIGRATION_PATH)).toBe(true);
@@ -1096,7 +1102,6 @@ describe("starter privacy AI apps migration (#5305)", () => {
   });
 
   it("sorts after the #5007 migration it follows and the connections migration", () => {
-    const stamp = (path: string) => path.split(/[\\/]/).at(-2)!;
     expect(stamp(PRIVACY_AI_APPS_MIGRATION_PATH) > stamp(PRIVACY_RECIPIENTS_MIGRATION_PATH)).toBe(true);
     expect(stamp(PRIVACY_AI_APPS_MIGRATION_PATH) > "20270101010000_add_mcp_connections").toBe(true);
   });

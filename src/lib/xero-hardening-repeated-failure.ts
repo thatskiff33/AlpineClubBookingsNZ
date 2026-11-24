@@ -6,17 +6,7 @@ import type { XeroSyncOperation } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import logger from "@/lib/logger";
 import { sendAdminXeroRepeatedFailureAlert } from "@/lib/email";
-import {
-  ALERT_NOBODY_ELIGIBLE_RETRY_MS,
-  claimAlertCooldown,
-  deferAlertCooldown,
-  releaseAlertCooldown,
-} from "@/lib/alert-cooldown";
-import {
-  adminAlertNeedsResend,
-  adminAlertSendOutcome,
-  type AdminAlertRecipientsResult,
-} from "@/lib/email/admin-alert-send-result";
+import { sendAdminAlertOncePerWindow } from "@/lib/admin-alert-window";
 import { buildXeroObjectUrl } from "@/lib/xero-links";
 import { buildLocalAdminUrl } from "@/lib/xero-record-links";
 import {
@@ -88,10 +78,14 @@ export async function maybeNotifyXeroRepeatedFailure(
     return { triggered: false, failureCount };
   }
 
-  const subject = getRepeatedFailureAlertSubject(operation.correlationKey);
+  // Narrowed here: the send below runs in a closure, where the guard above does not reach.
+  const correlationKey = operation.correlationKey;
+  const subject = getRepeatedFailureAlertSubject(correlationKey);
   /*
     ONE ALERT PER CORRELATION KEY PER WINDOW, held by an `AlertCooldown` claim
-    keyed on the correlation key (#5407 item 29).
+    keyed on the correlation key (#5407 item 29), through the shared windowed
+    sequence (`sendAdminAlertOncePerWindow`, which states how the claim is
+    kept, held for a day, given back or rethrown).
 
     It used to look for an earlier `EmailLog` row by this built-in subject. The
     log stores the subject actually sent, and a club that saves its own subject
@@ -99,91 +93,46 @@ export async function maybeNotifyXeroRepeatedFailure(
     found and the alert went out on every qualifying failure. The key here is
     built from the correlation key alone, which no club setting can change.
 
-    The claim asks "has this alert already been RAISED", not "did it arrive"
-    (#3035 review), the same question the old lookup answered by listing every
-    status a raised alert's row can have. After the send it is settled by the
-    shared reading of the result (`adminAlertSendOutcome`) and the house rule
-    in `alert-cooldown.ts` (#3635 F1):
-    - sent, queued for the retry cron, or undelivered (BOUNCED, or withheld on
-      a copy as `SKIPPED_NON_PRODUCTION`): kept for the window;
-    - nobody could receive it (`skipped-by-policy`, `no-recipients`), or it
-      reached nobody and nothing will replay it (`adminAlertNeedsResend`: a
-      copy failed before its mail log row existed): held for
-      `ALERT_NOBODY_ELIGIBLE_RETRY_MS`, as `sendAdminAlertOnceEver` and the
-      bump notice hold it, then the next qualifying failure tries again (with
-      the default 24-hour window the hold and the window are the same day).
-      The sender reads the policy and the audience before its live Xero read,
-      so a switched-off alert costs no Xero call;
-    - the send threw: given back, so the next qualifying failure retries.
-
-    Claim first and send after, outside any transaction (`alert-cooldown.ts`),
-    so two instances failing the same key at once raise one alert.
+    With the default 24-hour window the day's hold for an alert nobody could
+    receive and the window are the same day. The sender reads the policy and
+    the audience before its live Xero read, so a switched-off alert costs no
+    Xero call.
   */
-  const key = repeatedFailureAlertCooldownKey(operation.correlationKey);
-  const windowMs = now.getTime() - windowStart.getTime();
-  let claimed: boolean;
-  try {
-    claimed = await claimAlertCooldown({ key, windowMs, now });
-  } catch (error) {
-    // The write may have committed before the throw: give back this call's
-    // own stamp so the next failure can alert, then fail as the read did.
-    await releaseAlertCooldown({ key, claimedAt: now }).catch(() => undefined);
-    throw error;
-  }
-  if (!claimed) {
-    return { triggered: false, failureCount };
-  }
-
-  let result: AdminAlertRecipientsResult;
-  try {
-    result = await sendAdminXeroRepeatedFailureAlert({
-      subject,
-      correlationKey: operation.correlationKey,
-      failureCount,
-      windowHours,
-      entityType: operation.entityType,
-      operationType: operation.operationType,
-      localModel: operation.localModel ?? null,
-      localId: operation.localId ?? null,
-      localUrl: buildLocalAdminUrl(operation.localModel, operation.localId),
-      xeroObjectUrl:
-        operation.xeroObjectUrl ??
-        (operation.xeroObjectType && operation.xeroObjectId
-          ? buildXeroObjectUrl(operation.xeroObjectType, operation.xeroObjectId)
-          : null),
-      latestErrorMessage: operation.lastErrorMessage ?? null,
-      timestamp: now,
-    });
-  } catch (error) {
-    await releaseAlertCooldown({ key, claimedAt: now }).catch((err) =>
-      logger.error(
-        { err, correlationKey: operation.correlationKey },
-        "Failed to release the repeated Xero failure alert claim"
-      )
-    );
+  const attempt = await sendAdminAlertOncePerWindow({
+    key: repeatedFailureAlertCooldownKey(operation.correlationKey),
+    windowMs: now.getTime() - windowStart.getTime(),
+    now,
+    label: "repeated Xero failure alert",
+    context: { correlationKey: operation.correlationKey },
+    raiseAlert: () =>
+      sendAdminXeroRepeatedFailureAlert({
+        subject,
+        correlationKey,
+        failureCount,
+        windowHours,
+        entityType: operation.entityType,
+        operationType: operation.operationType,
+        localModel: operation.localModel ?? null,
+        localId: operation.localId ?? null,
+        localUrl: buildLocalAdminUrl(operation.localModel, operation.localId),
+        xeroObjectUrl:
+          operation.xeroObjectUrl ??
+          (operation.xeroObjectType && operation.xeroObjectId
+            ? buildXeroObjectUrl(operation.xeroObjectType, operation.xeroObjectId)
+            : null),
+        latestErrorMessage: operation.lastErrorMessage ?? null,
+        timestamp: now,
+      }),
+  });
+  if (!attempt.raised && attempt.reason === "send-threw") {
     logger.error(
       {
-        err: error,
+        err: attempt.error,
         correlationKey: operation.correlationKey,
         operationId: operation.id,
       },
       "Failed to send repeated Xero failure alert"
     );
-    return { triggered: false, failureCount };
   }
-  const outcome = adminAlertSendOutcome(result);
-  if (outcome === "skipped-by-policy" || outcome === "no-recipients" || adminAlertNeedsResend(result)) {
-    await deferAlertCooldown({
-      key,
-      claimedAt: now,
-      windowMs,
-      retryAfterMs: ALERT_NOBODY_ELIGIBLE_RETRY_MS,
-    }).catch((err) =>
-      logger.error(
-        { err, correlationKey: operation.correlationKey, outcome },
-        "Failed to defer the repeated Xero failure alert claim"
-      )
-    );
-  }
-  return { triggered: true, failureCount };
+  return { triggered: attempt.raised, failureCount };
 }

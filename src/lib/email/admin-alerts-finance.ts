@@ -467,7 +467,7 @@ export async function sendAdminXeroSyncErrorAlert(data: {
   operation: string;
   errorMessage: string;
   timestamp: Date;
-}): Promise<AdminAlertSendResult> {
+}): Promise<AdminAlertRecipientsResult> {
   return sendToAdmins({
     subject: `Xero Sync Error — ${CLUB_BOOKINGS_NAME}`,
     html: await renderEmailHtml(() => adminXeroSyncErrorTemplate(data)),
