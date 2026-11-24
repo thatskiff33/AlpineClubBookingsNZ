@@ -487,6 +487,40 @@ you want both reworded; editing only one leaves the other on its built-in text.
 > "not sent" alert; and if such an offer lapses, the member is sent **Waitlist
 > Offer Expired** as before.
 
+> **Upgrade note (#5433, card-payment confirmations).** A member's **Booking
+> Confirmed** email after paying by card is no longer lost if the payment is
+> saved and the app is interrupted before the email goes. That applies to a
+> card payment on the booking page, one confirmed by Stripe's notice to the
+> app, and the scheduled charge of a saved card. A later run of the email
+> retry job (every 30 minutes) sends it instead, so it can arrive late,
+> usually within an hour (owner decision, 23 Nov 2026). The member never
+> receives it twice. It is built from the booking as it is when it goes: its
+> dates, guests, lodge and door code then, and, if the price was raised since
+> and the extra not yet paid, the amount still owing. It is not sent for a
+> booking cancelled, refunded or deleted in the meantime.
+>
+> What an officer can notice: a new alert, **Booking confirmation not sent**
+> (`admin-booking-confirmation-unsent`). It is sent once per paid booking when
+> its confirmation could not be sent by the end of the check-in day (or within
+> seven days of the payment), or did not reach the owner: the send failed, the
+> address bounced or is on the suppression list, the booking's **No emails**
+> setting could not be read, or the owner has no address that can be emailed
+> (an organisation with no address, a walk-in placeholder). It names the owner
+> and the booking so an officer can send a fresh confirmation from the booking
+> page or contact them. It goes to officers who receive **Booking review
+> required** alerts, and its wording is editable like the others. A
+> confirmation the booking's **No emails** switch held back is not an alert,
+> as before. Nor is one this installation held back because its environment is
+> not declared (or a capture mailbox is set where it must not be): that one
+> waits in the email-failure review queue, as before.
+>
+> Nothing changes for the other ways a booking is confirmed: an officer's
+> charge of a saved card, an officer's confirmation of pending guests (which
+> still sends only when the officer asks), a zero-balance confirmation, a bank
+> transfer, and the recovery of a card payment found already taken. During the
+> switch to this version a server still running the version before it sends
+> the confirmation as it always did.
+
 ## Settings reference
 
 Shared email variables (top card):

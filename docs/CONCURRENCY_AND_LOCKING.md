@@ -6296,6 +6296,22 @@ clear. Bump markers a release before #5433 wrote to `AlertCooldown` are
 drained by the same sweep with `claimOwedAlert`, the same guard on that
 table, until #5433's last pull request removes that source.
 
+The Stripe capture's settle records the member's paid confirmation the same way
+(#5433 PR 3, `recordPaidBookingConfirmationOwed`), when its caller asks
+(`owesPaidConfirmation`: the Stripe webhook, the confirm-payment route and the
+confirm-pending job's saved-card charge): one `OwedNotice` insert of one row on
+a primary key derived from the kind, the booking and the moment it was paid,
+written by `settleAndPostBookingReceipts` only when the settle body returns a
+fresh `paid` (its status-guarded PAID claim), and last in that transaction,
+after the receipts and any refund obligation, under the `lock(1)`, lodge and
+member credit keys it already holds. It adds no advisory key, no change of
+order, no read, and no provider call or settings query, and moves no other
+write: amounts, receipts, ledger lines and Xero outbox rows are written exactly
+as before, in the same order. A replayed settle that finds the booking already
+paid never reaches the claim and writes none. Delivery after the commit and
+the sweep are the bump's, above, with the member's event key
+`<bookingId>:<paidAtMs>`.
+
 Officer approval of a held generic request pre-reads only the held booking's immutable concrete
 `lodgeId`, then takes global -> that lodge -> the held booking's row (#4857,
 "A booking writer takes the booking row before a Member key share") and fully

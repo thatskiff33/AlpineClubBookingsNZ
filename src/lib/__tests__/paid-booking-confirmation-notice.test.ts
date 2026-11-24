@@ -86,7 +86,7 @@ import {
   paidConfirmationMovedOn,
   paidConfirmationSendBy,
 } from "@/lib/paid-booking-confirmation-notice";
-import { BOOKING_CONFIRMED_KIND, recordPaidBookingConfirmationOwed } from "@/lib/paid-booking-confirmation-owed";
+import { BOOKING_CONFIRMED_KIND, owePaidConfirmationAfterFreshClaim, recordPaidBookingConfirmationOwed } from "@/lib/paid-booking-confirmation-owed";
 import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
 const HOUR = 60 * 60 * 1000;
@@ -139,6 +139,33 @@ describe("the marker the settle writes", () => {
     expect(owed.store.delegate.createMany.mock.calls[0]![0]).toMatchObject({ skipDuplicates: true, data: [{ id: marker.id, stampedAt: paidAt }] });
     expect(paidConfirmationKey(marker)).toBe(`${BOOKING_ID}:${paidAt.getTime()}`);
     expect(paidConfirmationEmailLogId(marker)).toBe(`email:booking-confirmed:${BOOKING_ID}:${paidAt.getTime()}`);
+  });
+});
+
+describe("the settle's last write (owePaidConfirmationAfterFreshClaim)", () => {
+  const card = (owesPaidConfirmation?: boolean) =>
+    ({ kind: "stripe", paymentIntentId: "pi_1", amountCents: 100, paymentMethodId: null, format: CLUB_FORMAT_TEST, owesPaidConfirmation }) as const;
+  const tx = () => ({ owedNotice: owed.store.delegate }) as never;
+
+  it("records it only for a fresh card \"paid\" whose caller asked, and hands the result back with the marker", async () => {
+    const result = await owePaidConfirmationAfterFreshClaim(tx(), BOOKING_ID, card(true), { outcome: "paid", extra: 1 });
+
+    expect(result).toMatchObject({ outcome: "paid", extra: 1, paidConfirmation: { kind: BOOKING_CONFIRMED_KIND, subjectId: BOOKING_ID, eventAt: NOW } });
+    expect(owed.store.rows.size).toBe(1);
+  });
+
+  it.each([
+    ["a caller that sends no confirmation", card(undefined), "paid"],
+    ["a caller that said no", card(false), "paid"],
+    ["an already-paid replay", card(true), "already_paid"],
+    ["a capacity-race cancel", card(true), "capacity_failed"],
+    ["a duplicate capture", card(true), "duplicate_capture"],
+    ["an officer's manual settle", { kind: "manual", actingAdminMemberId: "a", note: null, expectedAmountCents: 1, notifyMember: true, additionalCoverage: null } as const, "manual_paid"],
+  ])("writes nothing for %s", async (_label, settlement, outcome) => {
+    const result = await owePaidConfirmationAfterFreshClaim(tx(), BOOKING_ID, settlement, { outcome });
+
+    expect(result.paidConfirmation).toBeNull();
+    expect(owed.store.delegate.createMany).not.toHaveBeenCalled();
   });
 });
 
@@ -312,7 +339,7 @@ describe("what became of the email after a send (the told rule)", () => {
   });
 
   it.each([
-    ["FAILED with no body (a provider failure, a fail-closed No-emails read, an environment fault)", EmailLogStatus.FAILED],
+    ["FAILED with no body and no block reason (a provider failure, a fail-closed No-emails read)", EmailLogStatus.FAILED],
     ["BOUNCED (a suppressed address)", EmailLogStatus.BOUNCED],
     ["no row (no address, or a club placeholder)", "none"],
   ])("%s: not told, so the officers are alerted once and the marker cleared", async (_label, next) => {
@@ -324,6 +351,20 @@ describe("what became of the email after a send (the told rule)", () => {
     expect(alerts.onceKeys).toEqual([marker.id]);
     expect(alerts.unsent).toHaveBeenCalledTimes(1);
     expect(owed.store.rows.size).toBe(0);
+  });
+
+  it("held back by the installation's environment gate (FAILED with a block reason, in the review queue): cleared with no officers' alert, as before #5433", async () => {
+    const marker = await commitSettle(NOW);
+    const { sendPaidBookingConfirmation } = await import("@/lib/paid-booking-confirmation-email");
+    vi.mocked(sendPaidBookingConfirmation).mockImplementationOnce(async () => {
+      db.emailRows.set(paidConfirmationEmailLogId(marker), { status: EmailLogStatus.FAILED, attempts: 3, lastAttemptAt: NOW, htmlBody: null, bookingRetryHtmlBody: null, deliveryBlockReason: "ENVIRONMENT_UNKNOWN" } as never);
+      return { status: "withheld_for_environment", emailLogId: paidConfirmationEmailLogId(marker), reason: "environment_unknown" };
+    });
+
+    await deliverPaidBookingConfirmation(marker, CLUB_FORMAT_TEST, "stripe-webhook");
+
+    expect(owed.store.rows.size).toBe(0);
+    expect(alerts.unsent).not.toHaveBeenCalled();
   });
 
   it("keeps the marker when the row cannot be read after the send", async () => {

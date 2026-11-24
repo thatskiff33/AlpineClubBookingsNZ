@@ -4500,6 +4500,44 @@ the notice silently, and a lapse of that offer counts as never told. A replay
 still pending when the offer ends is retired, not sent, unless the retry job
 had already claimed it (Waitlist Lifecycle).
 
+A card payment's confirmation (#5433 PR 3, owner decision D1) is the kind
+`booking-confirmed`. The three callers that send it (the Stripe webhook, the
+confirm-payment route and the confirm-pending job's saved-card charge) ask the
+settle to record it (`owesPaidConfirmation`); `settleAndPostBookingReceipts`
+writes the marker last in its transaction when the settle body returns a fresh
+`paid`, so a replayed settle that finds the booking already paid writes none.
+The other card doors (the charge-saved-method route, an officer's
+confirm-pending-guests, the create-payment-intent and payment-link recoveries)
+send no confirmation, or send one only on the officer's choice, and record none,
+as before. The caller delivers the marker after its commit. The wait is 30
+minutes (a day after an officers' attempt that reached nobody), the event key
+`<bookingId>:<paidAtMs>`. The email is rendered from the booking as it stands
+then (`paid-booking-confirmation-email.ts`), stating any upward change since
+the payment that is not yet collected. It is cleared without sending when the
+booking is gone, deleted, or no longer `PAID` or `COMPLETED`, checked by the
+sweep and again just before every send. The cut-off is the end of the
+check-in day in the club's time zone, or seven days after the payment if that
+comes first; past it officers are alerted once with
+`admin-booking-confirmation-unsent`. Every send is followed by a read of the
+email's row by the told rule the waitlist offer shares
+(`email/keyed-email-state.ts`): told (sent, or withheld by "No emails" or a
+non-production copy), cleared; held back by the installation's environment
+gate, cleared, because the gate already writes that row to the retry ceiling,
+where it waits in the email-failure review queue, as before #5433; otherwise (a
+provider failure, a bounce or suppressed address, a fail-closed "No emails"
+read, no address at all) the officers get the same alert, once per payment. The
+confirmation's body is never kept, so the retry cron never replays one, and a
+booking cancelled after a failed send is not sent it later; it needs no "still
+wanted" check.
+
+**Stated limits for the confirmation.** It can arrive hours late (D1): a
+recovered one goes on a sweep at least 30 minutes after the payment, and the
+email retry job sweeps every 30 minutes. A booking edited downward after the
+payment is confirmed at its new worth, as an officer's fresh copy is. During a
+blue-green switch the previous release settles with no marker and sends inline
+as before; a marker this release wrote is swept only by a release that knows
+the kind, so after a rollback it waits for this release to return.
+
 ```text
 change commits + markers -> claim -> send settled -> marker cleared
 change commits + markers -> claim -> send throws -> marker kept -> later sweep (a wait on) claims -> send -> cleared

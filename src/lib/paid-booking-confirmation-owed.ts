@@ -23,6 +23,7 @@ import type { Prisma } from "@prisma/client";
 
 import type { OwedNoticeKind } from "@/lib/owed-notice/kinds";
 import { recordOwedNotices, type OwedNoticeMarker } from "@/lib/owed-notice/store";
+import type { BookingSettlementSource } from "@/lib/payment-reconciliation-sources";
 
 /** The owed confirmation's kind. Named for the email, not the payment, so the zero-balance and bank-transfer confirmations can join it. */
 export const BOOKING_CONFIRMED_KIND: OwedNoticeKind = "booking-confirmed";
@@ -38,4 +39,21 @@ export async function recordPaidBookingConfirmationOwed(
 ): Promise<OwedNoticeMarker> {
   const [marker] = await recordOwedNotices(tx, [{ kind: BOOKING_CONFIRMED_KIND, subjectId: bookingId, eventAt: paidAt }]);
   return marker!;
+}
+
+/**
+ * The settle's last write (`settleAndPostBookingReceipts`), given what its body
+ * returned: record the confirmation as owed, paid now, when the body returned
+ * "paid" (only its fresh PAID claim does) for a card settle whose caller asked
+ * for it (`owesPaidConfirmation`); otherwise write nothing. The result goes back
+ * with the marker, or null, for the caller's delivery after the commit.
+ */
+export async function owePaidConfirmationAfterFreshClaim<R extends { outcome: string }>(
+  tx: Pick<Prisma.TransactionClient, "owedNotice">,
+  bookingId: string,
+  settlement: BookingSettlementSource,
+  result: R,
+): Promise<R & { paidConfirmation: OwedNoticeMarker | null }> {
+  const owed = result.outcome === "paid" && settlement.kind === "stripe" && settlement.owesPaidConfirmation === true;
+  return { ...result, paidConfirmation: owed ? await recordPaidBookingConfirmationOwed(tx, { bookingId, paidAt: new Date() }) : null };
 }

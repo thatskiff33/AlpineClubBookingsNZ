@@ -87,7 +87,7 @@ offered to them at all:
 | Refund requests | Finance | A member submits a refund appeal |
 | Reported issues | Support & System | A logged-in user reports a site issue |
 | Public booking requests | Bookings | A non-member submits a public booking request |
-| Booking review required | Bookings | A booking needs admin review before confirmation |
+| Booking review required | Bookings | A booking needs admin review before confirmation. Also the **Booking confirmation not sent** alert: a paid booking's confirmation email could not be sent in time or did not reach the owner; once per paid booking (#5433) |
 | Member delete requests | Membership | A hard-delete of a member is requested (two-admin rule) |
 | Maintenance reports | Lodge Operations | Somebody reports a physical fault at a lodge |
 | Central server version | Lodge Operations | Every day, inside the Daily digest, while syncing with the Alpine Central Server is paused because the server is on a different software version from this site. This is the one entry that reaches two audiences: the digest's own readers get it inside their digest, and a Lodge Operations editor who does not receive the digest gets a separate message, *Admin Server Version Paused* under [Email Messages](email-messages.md), carrying **only** this entry — never the digest's alert counts — with its own wording and its own delivery rule. Somebody in both groups gets one email, the digest |

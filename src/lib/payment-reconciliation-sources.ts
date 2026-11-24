@@ -43,6 +43,21 @@ export type MarkBookingPaymentSucceededResult = {
   paidConfirmation?: OwedNoticeMarker;
 };
 
+/** The card settle door's input (`markBookingPaymentSucceeded`), here with the other settlement types (#5005, #5433). */
+export type MarkBookingPaymentSucceededInput = {
+  bookingId: string;
+  paymentIntentId: string;
+  amountCents: number;
+  paymentMethodId: string | null;
+  /** The club's format (#3565), resolved before any transaction by the caller. */
+  format: ClubFormat;
+  /** #4285 review: the caller just wrote this capture SUCCEEDED itself (`SettledSavedCardChargeAttempt.newlyCaptured`). */
+  recordedByCaller?: boolean;
+  capturedAt?: Date;
+  /** #5433: the caller delivers the paid confirmation (`StripeSettlementSource.owesPaidConfirmation`). */
+  owesPaidConfirmation?: boolean;
+};
+
 /**
  * B5 (#2262) — a booking settlement is now described by its SOURCE, so the one
  * settlement body below serves both the Stripe capture and the admin recording

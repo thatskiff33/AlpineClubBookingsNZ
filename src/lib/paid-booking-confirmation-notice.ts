@@ -41,8 +41,12 @@
  * all). So every send is followed by a read of the email's own row
  * (`email/keyed-email-state.ts`, the rule the waitlist offer shares): told
  * (sent, or withheld by "No emails" or a non-production copy), settled; held
- * by the retry job, kept for it; anything else, the officers are alerted once,
- * through the same claim as the past-cut-off alert.
+ * back by the installation's environment gate (an undeclared role, a misplaced
+ * capture transport), settled as before this change, because the gate already
+ * puts that row in the email-failure review queue; held by the retry job, kept
+ * for it; anything else (a provider failure, a bounce or suppressed address, a
+ * fail-closed "No emails" read, no address at all), the officers are alerted
+ * once, through the same claim as the past-cut-off alert.
  *
  * Who owes it: only the three callers that send the confirmation ask the
  * settle to record it (`owesPaidConfirmation`): the Stripe webhook, the
@@ -63,7 +67,7 @@ import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
 import { sendAdminBookingConfirmationUnsentAlert } from "@/lib/email/admin-alerts-booking-confirmation-unsent";
 import { durableEmailLogId } from "@/lib/email/attempt-log";
 import { BOOKING_CONFIRMED_TEMPLATE_NAME } from "@/lib/email/booking-confirmed-template";
-import { isToldKeyedEmailState, readKeyedEmailState } from "@/lib/email/keyed-email-state";
+import { isToldKeyedEmailState, KEYED_EMAIL_ROW_SELECT, keyedEmailRowState, type KeyedEmailState } from "@/lib/email/keyed-email-state";
 import logger from "@/lib/logger";
 import { deliverOwedNotice, type OwedNoticeDeliverer, type OwedNoticeOutcome, type OwedNoticeRun } from "@/lib/owed-notice/deliver";
 import { alertOfficersOncePastCutoff } from "@/lib/owed-notice/past-cutoff-once";
@@ -74,6 +78,7 @@ import {
   type PaidConfirmationBooking,
 } from "@/lib/paid-booking-confirmation-email";
 import { BOOKING_CONFIRMED_KIND } from "@/lib/paid-booking-confirmation-owed";
+import { prisma } from "@/lib/prisma";
 
 /** How long after its stamp a sweep takes a confirmation's marker, so the attempt right after the settle goes first. */
 export const PAID_CONFIRMATION_SWEEP_AFTER_MS = 30 * 60 * 1000;
@@ -140,15 +145,36 @@ function alertOfficersPaidConfirmationUnsent(subject: PaidConfirmationSubject, m
 }
 
 /**
+ * The confirmation's email by the shared told rule, and whether the
+ * installation's environment gate held it back (an undeclared role, or a
+ * capture transport where it must not be): such a row is `FAILED` with a block
+ * reason, written to the retry ceiling so it waits in the email-failure review
+ * queue for an officer's fresh copy (`email/environment-gate.ts`).
+ */
+async function readPaidConfirmationEmail(marker: OwedNoticeMarker): Promise<{ state: KeyedEmailState; heldByEnvironment: boolean }> {
+  const row = await prisma.emailLog.findUnique({
+    where: { id: paidConfirmationEmailLogId(marker) },
+    select: { ...KEYED_EMAIL_ROW_SELECT, deliveryBlockReason: true },
+  });
+  return { state: keyedEmailRowState(row), heldByEnvironment: row?.deliveryBlockReason != null };
+}
+
+/**
  * What became of the confirmation's email, read from its row: told, settled;
- * held by the email retry job, kept for it; undeliverable or never recorded,
- * the officers are alerted once. Never throws.
+ * held back by the installation's environment gate, settled as before #5433
+ * (it waits in the review queue, where officers already see it); held by the
+ * email retry job, kept for it; undeliverable or never recorded, the officers
+ * are alerted once. Never throws.
  */
 async function paidConfirmationOutcome(subject: PaidConfirmationSubject, marker: OwedNoticeMarker, job: string): Promise<OwedNoticeOutcome> {
   const log = { bookingId: marker.subjectId, key: marker.id, job };
   try {
-    const state = await readKeyedEmailState(paidConfirmationEmailLogId(marker));
+    const { state, heldByEnvironment } = await readPaidConfirmationEmail(marker);
     if (isToldKeyedEmailState(state)) return "settled";
+    if (heldByEnvironment) {
+      logger.warn(log, "The booking confirmation was held back by this installation's environment gate; it waits in the email-failure review queue");
+      return "settled";
+    }
     if (state === "retrying") {
       logger.info(log, "The email retry cron holds this booking confirmation; the owed notice waits for it");
       return "threw";
@@ -185,10 +211,11 @@ async function deliverOwedPaidConfirmation(
   return paidConfirmationOutcome(subject, marker, job);
 }
 
-/** Past the cut-off: alert the officers once, unless the confirmation did reach the owner after all. */
+/** Past the cut-off: alert the officers once, unless the confirmation did reach the owner after all, or waits in the review queue. */
 async function paidConfirmationPastCutoff(subject: PaidConfirmationSubject, marker: OwedNoticeMarker, run: OwedNoticeRun): Promise<OwedNoticeOutcome> {
   try {
-    if (isToldKeyedEmailState(await readKeyedEmailState(paidConfirmationEmailLogId(marker)))) return "settled";
+    const { state, heldByEnvironment } = await readPaidConfirmationEmail(marker);
+    if (isToldKeyedEmailState(state) || heldByEnvironment) return "settled";
   } catch (err) {
     logger.error({ err, key: marker.id, job: run.job }, "Failed to read the booking confirmation's state past its cut-off");
     return "threw";
