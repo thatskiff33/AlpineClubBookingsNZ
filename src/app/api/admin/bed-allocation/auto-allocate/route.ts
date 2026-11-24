@@ -1,5 +1,4 @@
 import { NextResponse } from "next/server";
-import { z } from "zod";
 import {
   runAutoBedAllocation,
 } from "@/lib/bed-allocation-auto-allocate";
@@ -15,17 +14,13 @@ import { logAudit } from "@/lib/audit";
 import { resolveOptionalActiveLodgeId } from "@/lib/lodges";
 import { prisma } from "@/lib/prisma";
 import { clubTime } from "@/lib/club-time/server";
+import { bedAllocationAutoAllocateBodySchema } from "@/lib/admin-bookings-schemas/beds";
+import { ADMIN_BED_ALLOCATION_AUTO_ALLOCATE_CONNECTION_SHAPE } from "@/lib/connection-shapes/bookings-beds";
+import { connectionJson } from "@/lib/mcp-connection-request";
 
 // requireAdmin() with bookings:edit is enforced by requireBedAllocationWrite().
-const autoAllocateSchema = z
-  .object({
-    from: z.string().optional(),
-    to: z.string().optional(),
-    // Board actions are always scoped to exactly one lodge.
-    lodgeId: z.string().min(1),
-  })
-  .strict();
 
+/** Also the AI app action `auto_allocate_beds` (ALP-719). */
 export async function POST(request: Request) {
   const guard = await requireBedAllocationWrite();
   if (!guard.ok) return guard.response;
@@ -34,7 +29,7 @@ export async function POST(request: Request) {
     const json = await parseJsonRequestBody(request);
     if (!json.ok) return json.response;
 
-    const body = autoAllocateSchema.safeParse(json.body);
+    const body = bedAllocationAutoAllocateBodySchema.safeParse(json.body);
     if (!body.success) {
       return NextResponse.json(
         { error: "Invalid input", details: body.error.flatten() },
@@ -74,7 +69,11 @@ export async function POST(request: Request) {
       metadata: { range, createdCount: result.count },
     });
 
-    return NextResponse.json({ createdCount: result.count });
+    return connectionJson(
+      request,
+      { createdCount: result.count },
+      ADMIN_BED_ALLOCATION_AUTO_ALLOCATE_CONNECTION_SHAPE,
+    );
   } catch (error) {
     return bedAllocationErrorResponse(error);
   }

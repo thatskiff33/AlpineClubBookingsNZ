@@ -18,7 +18,7 @@ import { BUILT_IN_MEMBERSHIP_TYPES, defaultMembershipTypeKeyForRole, storedRoleD
 import type { SubscriptionLockoutMode } from "@/lib/membership-lockout-settings";
 import {
   peekSubscriptionLockoutMode,
-  requiresPaidSubscriptionForBooking,
+  resolveSubscriptionLockoutPolicy,
 } from "@/lib/member-subscription-eligibility";
 import { memberUnpaidSubscriptionForcesNonMemberRate } from "@/lib/policies/subscription-lockout-pricing";
 import {
@@ -1276,80 +1276,48 @@ export async function priceBookingGuestsWithMembershipTypePolicy(
   );
 }
 
-// Structural read seam so the NOT_REQUIRED-row dominance check works with
-// PrismaClient, a transaction client, and test doubles alike.
-type MemberSubscriptionStatusReadDb = {
-  memberSubscription: {
-    findFirst(args: {
-      where: { memberId: string; seasonYear: number; status: "NOT_REQUIRED" };
-      select: { id: true };
-    }): Promise<{ id: string } | null>;
-  };
-};
-
-function canReadMemberSubscriptionStatus(
-  db: unknown,
-): db is MemberSubscriptionStatusReadDb {
-  const candidate = db as Partial<MemberSubscriptionStatusReadDb> | null | undefined;
-  return typeof candidate?.memberSubscription?.findFirst === "function";
-}
-
-async function hasNotRequiredSubscriptionRow(
-  db: unknown,
-  params: { memberId: string; seasonYear: number },
-): Promise<boolean> {
-  if (!canReadMemberSubscriptionStatus(db)) {
-    return false;
-  }
-  const row = await db.memberSubscription.findFirst({
-    where: {
-      memberId: params.memberId,
-      seasonYear: params.seasonYear,
-      status: "NOT_REQUIRED",
-    },
-    select: { id: true },
-  });
-  return row !== null;
-}
-
+/**
+ * Whether the booking gate requires this member to hold a PAID subscription for
+ * the season: the club enforces subscriptions, and the shared liability rule
+ * (access side, #5190 `INV-LOCKOUT-020`) says they owe one that no no-invoice
+ * fee already covers. Reads the member's facts through the same settlement
+ * loader as the party gates, so the owner can never be judged by a different
+ * rule than their guests.
+ * The member's tier and date of birth are read from their live row; a member
+ * with no row owes.
+ */
 export async function requiresPaidSubscriptionForMemberForBooking(
   db: unknown,
   params: {
     memberId: string;
     seasonYear: number;
-    ageTier: AgeTier | null | undefined;
   },
 ): Promise<boolean> {
   const policy = await resolveMembershipTypePolicyForMember(db, {
     memberId: params.memberId,
     seasonYear: params.seasonYear,
   });
+  // #2149: role carries no exemption; a bare ADMIN/LODGE account resolves to
+  // its own NOT_REQUIRED built-in type. Answered before any other read.
   if (policy?.subscriptionBehavior === "NOT_REQUIRED") {
     return false;
   }
-  // #2149: role-based subscription exemption dropped. Membership type is the sole
-  // authority — a bare ADMIN/LODGE account resolves (via the role→default-type
-  // fallback) to its own NOT_REQUIRED built-in type and is caught above, while a
-  // fee-paying human who holds the admin permission carries a REQUIRED membership
-  // type and now correctly owes a subscription.
-  // BASED_ON_AGE_TIER (issue #2041): the type defers its subscription-required
-  // answer to the per-age-tier flag (decision Q2 — the same
-  // AgeTierSetting.subscriptionRequiredForBooking that gates invoice minting).
-  // A NOT_REQUIRED MemberSubscription row for the season is authoritative and
-  // dominates: the annual-fee sweep writes it for a tier-exempt member (season-
-  // start age), so it keeps the booking gate consistent with billing even if
-  // the stored ageTier is later promoted mid-season (decision Q4). This keeps
-  // one coherent meaning of "not required" (DOMAIN_INVARIANTS paid-up
-  // one-meaning). Scoped to BASED_ON_AGE_TIER so REQUIRED/NOT_REQUIRED types are
-  // byte-unchanged (no extra query on their booking path).
-  if (
-    policy?.subscriptionBehavior === "BASED_ON_AGE_TIER" &&
-    (await hasNotRequiredSubscriptionRow(db, {
-      memberId: params.memberId,
-      seasonYear: params.seasonYear,
-    }))
-  ) {
+  const lockout = await resolveSubscriptionLockoutPolicy();
+  if (lockout.mode === "NO_BLOCK") {
     return false;
   }
-  return requiresPaidSubscriptionForBooking(params.ageTier);
+  if (!canReadUnpaidSubscriptionFacts(db)) {
+    // A client that cannot read the facts cannot judge anyone settled: the
+    // safe direction is owing, as for an unresolved member.
+    return true;
+  }
+  const settlements = await loadMemberSubscriptionSettlements(db, {
+    memberIds: [params.memberId],
+    seasonYear: params.seasonYear,
+    subscriptionBehaviorByMember: new Map(
+      policy ? [[params.memberId, policy.subscriptionBehavior]] : [],
+    ),
+    liabilitySettings: lockout.liabilitySettings,
+  });
+  return settlements.get(params.memberId)?.subscriptionRequired ?? true;
 }

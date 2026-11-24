@@ -1740,9 +1740,11 @@ jobs:
     runs-on: ubuntu-26.04
     # PR CI measured this job at 9m02s (#4476). By 8 Nov 2026 it took 16-18
     # minutes on `main` and was cancelled at the old 20-minute limit in 4 of 7
-    # runs, so a cancelled run proved nothing (#4793). 35 is about twice the
-    # current run time and still frees a hung runner well inside the hour.
-    timeout-minutes: 35
+    # runs, so a cancelled run proved nothing (#4793). By 25 Nov 2026 it took
+    # 32-35 minutes on `main` and PR runs were cancelled at the 35-minute
+    # limit; 45, the test shards' own limit, gives about 30% headroom until the suite
+    # is split, without lengthening the shard gate's wait (#5222).
+    timeout-minutes: 45
     permissions:
       contents: read
     services:

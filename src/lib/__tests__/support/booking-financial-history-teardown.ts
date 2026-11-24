@@ -67,6 +67,7 @@ async function releaseMemberMoneyJournalForTeardown(tx: Prisma.TransactionClient
   if (manifests.length > 0) {
     const manifestIds = manifests.map((row) => row.id);
     await tx.$executeRaw`SET LOCAL session_replication_role = replica`;
+    await tx.$executeRaw`DELETE FROM "MemberMoneyExportCoverageRelease" WHERE "manifestId" = ANY(${manifestIds}::text[])`;
     await tx.$executeRaw`DELETE FROM "MemberMoneyExportCoverage" WHERE "manifestId" = ANY(${manifestIds}::text[])`;
     await tx.$executeRaw`DELETE FROM "MemberMoneyExportManifest" WHERE id = ANY(${manifestIds}::text[])`;
     await tx.$executeRaw`SET LOCAL session_replication_role = origin`;

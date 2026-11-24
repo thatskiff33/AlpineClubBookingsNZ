@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { parseOptionalJsonRequestBody } from "@/lib/api-json";
 import { bookingPromoEmailFields } from "@/lib/booking-promo-email-options";
-import { bookingOwner, bookingOwnerAgeTier } from "@/lib/booking-owner";
+import { bookingOwner } from "@/lib/booking-owner";
 import { hostingCoverageParticipantRetryResponse } from "@/lib/adult-member-hosting-retry-response";
 import { auth } from "@/lib/auth";
 import { getDefaultLodgeId } from "@/lib/lodges";
@@ -180,7 +180,6 @@ export async function POST(
     (await requiresPaidSubscriptionForMemberForBooking(prisma, {
       memberId: bookingOwner(booking).memberId as string,
       seasonYear,
-      ageTier: bookingOwnerAgeTier(booking),
     }))
   ) {
     const paidSub = await prisma.memberSubscription.findFirst({

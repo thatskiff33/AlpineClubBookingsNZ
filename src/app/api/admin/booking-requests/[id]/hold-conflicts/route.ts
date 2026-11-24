@@ -10,6 +10,11 @@ import {
 import { getDefaultLodgeId } from "@/lib/lodges";
 import { getLodgeCapacity } from "@/lib/lodge-capacity";
 import { formatDateOnly } from "@/lib/date-only";
+import {
+  ADMIN_BOOKING_REQUEST_HOLD_CONFLICTS_CONNECTION_SHAPE,
+  type AdminBookingRequestHoldConflictsAnswer,
+} from "@/lib/connection-shapes/bookings-requests";
+import { connectionJson } from "@/lib/mcp-connection-request";
 
 /**
  * Advisory, ADMIN-ONLY pre-approval availability + conflict preview for a
@@ -30,9 +35,12 @@ import { formatDateOnly } from "@/lib/date-only";
  * requireAdmin: a member must never learn that a night is held or full for a
  * reason other than their own booking (ADR-001 decision 6). No member surface
  * calls it and the route-boundary matrix asserts the admin guard.
+ *
+ * Also the AI app action `get_booking_request_hold_conflicts` (ALP-719): an
+ * officer's connection only, through the same `requireAdmin`.
  */
 export async function GET(
-  _req: Request,
+  req: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
   const guard = await requireAdmin();
@@ -76,7 +84,7 @@ export async function GET(
 
   const heldNightSet = new Set(heldNights);
 
-  return NextResponse.json({
+  const answer: AdminBookingRequestHoldConflictsAnswer = {
     lodgeId,
     lodgeCapacity,
     nights: availability.nightDetails.map((night) => {
@@ -93,5 +101,6 @@ export async function GET(
     }),
     // Informational only — see the module comment. Never a refusal.
     conflicts: [...conflicts, ...overriddenConflicts],
-  });
+  };
+  return connectionJson(req, answer, ADMIN_BOOKING_REQUEST_HOLD_CONFLICTS_CONNECTION_SHAPE);
 }

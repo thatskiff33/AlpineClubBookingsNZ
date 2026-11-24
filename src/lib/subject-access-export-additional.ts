@@ -79,7 +79,10 @@ export async function readAdditionalSubjectRecords(memberId: string) {
     }),
     prisma.mcpGrant.findMany({
       where: own,
-      select: { scope: true, status: true, createdAt: true, lastUsedAt: true, endedAt: true, client: { select: { name: true } } },
+      select: {
+        scope: true, status: true, createdAt: true, lastUsedAt: true, endedAt: true, officerConsentAt: true,
+        client: { select: { name: true } },
+      },
     }),
     // The member's own food orders. Who received or priced one is an officer's
     // snapshot id and is left out, like a maintenance report's resolver.

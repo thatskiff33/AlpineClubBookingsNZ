@@ -38,26 +38,46 @@ export const MCP_PERMANENT_EXCLUSION_REASONS = {
   "website-flow": "Serves the website's own screens and steps, not something a member asks for.",
   "access-secrets": "Shows lodge door codes or other access details, which stay on the website.",
   "site-helper": "The website's own help assistant; the member's AI app answers them itself.",
+  "privacy-posture":
+    "Decides who may browse members' names, which an officer chooses on the website, never an AI app.",
+  "unread-value":
+    "Changes a value an AI app is never shown, such as a guest's allergy needs, so the app would be writing blind.",
 } as const;
 
 export type McpPermanentExclusionReason = keyof typeof MCP_PERMANENT_EXCLUSION_REASONS;
 
 /**
+ * Officer areas whose every route method has been decided: each is a
+ * catalogue action or has a permanent reason. A route added to one of these
+ * areas is unclassified until someone decides about it.
+ *
+ * - `bookings` (Bookings & Beds): ALP-719.
+ */
+const MCP_DECIDED_ADMIN_AREAS = ["bookings"] as const satisfies readonly AdminPermissionArea[];
+
+type McpDecidedAdminArea = (typeof MCP_DECIDED_ADMIN_AREAS)[number];
+
+type McpNotYetAdminArea = Exclude<AdminPermissionArea, McpDecidedAdminArea>;
+
+/**
  * The task that will bring each remaining group of officer routes into the
- * catalogue, by admin area. Every member route is decided: ALP-718 split them
- * into five follow-ons, the last of which (ALP-797, groups and whole-lodge)
- * removed the member rule, so a new member route fails the census until
- * someone decides about it.
+ * catalogue, by admin area not yet decided. Every member route is decided:
+ * ALP-718 split them into five follow-ons, the last of which (ALP-797, groups
+ * and whole-lodge) removed the member rule, so a new member route fails the
+ * census until someone decides about it.
  */
 export const MCP_NOT_YET_TASKS = {
-  bookings: "ALP-719",
   membership: "ALP-720",
   finance: "ALP-721",
   lodge: "ALP-722",
   content: "ALP-723",
   support: "ALP-724",
   overview: "ALP-724",
-} as const satisfies Record<AdminPermissionArea, string>;
+} as const satisfies Record<McpNotYetAdminArea, string>;
+
+function isNotYetAdminArea(area: AdminPermissionArea): area is McpNotYetAdminArea {
+  return !(MCP_DECIDED_ADMIN_AREAS as readonly AdminPermissionArea[]).includes(area);
+}
 
 export type McpExclusionReason = McpPermanentExclusionReason | `not-yet:${string}`;
 
@@ -169,11 +189,23 @@ const PERMANENT_ROUTES: ReadonlyArray<{
       // The booking wizard's guest promo chips: which of the guests' own codes
       // the booker may use (#3492). An app checks codes with `check_promo_code`.
       "POST /api/promo-codes/guest-codes",
+      // The school contact editor (#5245), whose save is fresh-proof: its read
+      // loads the version that save checks, and its retry re-sends a failed
+      // save to Xero. No action names a school record, and re-running failed
+      // Xero work is left to the Finance actions (ALP-721).
+      "GET /api/admin/organisations/[id]/contact",
+      "POST /api/admin/organisations/[id]/contact/retry",
     ],
   },
   // Door codes and emergency access: never sent to an AI provider.
   { reason: "access-secrets", routes: ["GET /api/lodge-instructions"] },
   { reason: "site-helper", routes: ["POST /api/help/chat"] },
+  // Open member search widens the club's privacy (owner decision D-18): text
+  // an app read must never be able to talk it into that.
+  { reason: "privacy-posture", routes: ["PUT /api/admin/member-guest-settings"] },
+  // Dietary and allergy needs are never sent to an app (INV-PRIV-022), so an
+  // app could only overwrite or clear what the kitchen relies on unseen.
+  { reason: "unread-value", routes: ["PATCH /api/admin/bookings/[id]/guest-dietary"] },
   {
     reason: "public-visitor",
     routes: [
@@ -221,6 +253,17 @@ const PERMANENT_ROUTES: ReadonlyArray<{
 const FINANCE_NOT_YET_PREFIXES: readonly string[] = ["/api/finance"];
 
 /**
+ * Money routes whose path the `bookings` area guards but which belong to the
+ * Finance lane (ALP-721), as `METHOD /path`. Withdrawing an extra payment
+ * request cancels a card request and retires its ledger row, and its handler
+ * demands finance edit (owner decision, #5305 comment 7093303964, item 3).
+ * Checked before the path's area, which is decided and has no `not-yet`.
+ */
+export const MCP_FINANCE_NOT_YET_ROUTES: readonly string[] = [
+  "POST /api/admin/bookings/[id]/additional-payment/withdraw",
+];
+
+/**
  * Officer powers on lodge-life routes outside `/api/admin` (ALP-796), by
  * exact method and path, all for the lodge officer stage: editing the events
  * calendar and minting a meeting's host link (Lodge edit,
@@ -228,7 +271,7 @@ const FINANCE_NOT_YET_PREFIXES: readonly string[] = ["/api/finance"];
  * and receiving food orders and printing the chore roster. Their member
  * neighbours are actions or permanent exclusions.
  */
-const OFFICER_NOT_YET_ROUTES: Readonly<Partial<Record<AdminPermissionArea, readonly string[]>>> = {
+const OFFICER_NOT_YET_ROUTES: Readonly<Partial<Record<McpNotYetAdminArea, readonly string[]>>> = {
   lodge: [
     "POST /api/calendar/events",
     "PATCH /api/calendar/events/[id]",
@@ -248,6 +291,7 @@ const OFFICER_NOT_YET_ROUTES: Readonly<Partial<Record<AdminPermissionArea, reado
 export const MCP_EXACT_EXCLUDED_ROUTES: readonly string[] = [
   ...PERMANENT_ROUTES.flatMap((rule) => rule.routes),
   ...Object.values(OFFICER_NOT_YET_ROUTES).flatMap((routes) => routes ?? []),
+  ...MCP_FINANCE_NOT_YET_ROUTES,
 ];
 
 function underPrefix(path: string, prefix: string): boolean {
@@ -297,16 +341,22 @@ export function classifyMcpRoute(file: string, method: string): McpRouteClassifi
   if (action) return { kind: "action", action };
 
   const path = adminRouteApiPath(file);
+  if (MCP_FINANCE_NOT_YET_ROUTES.includes(`${method} ${path}`)) {
+    return { kind: "excluded", reason: `not-yet:${MCP_NOT_YET_TASKS.finance}` };
+  }
   const adminArea = getAdminRouteRequirement(path, method)?.area;
   if (adminArea) {
-    return { kind: "excluded", reason: `not-yet:${MCP_NOT_YET_TASKS[adminArea]}` };
+    // A route in a decided area has no `not-yet` to fall back on.
+    return isNotYetAdminArea(adminArea)
+      ? { kind: "excluded", reason: `not-yet:${MCP_NOT_YET_TASKS[adminArea]}` }
+      : { kind: "unclassified" };
   }
   if (FINANCE_NOT_YET_PREFIXES.some((prefix) => underPrefix(path, prefix))) {
     return { kind: "excluded", reason: `not-yet:${MCP_NOT_YET_TASKS.finance}` };
   }
   const route = `${method} ${path}`;
   for (const [area, routes] of Object.entries(OFFICER_NOT_YET_ROUTES) as Array<
-    [AdminPermissionArea, readonly string[]]
+    [McpNotYetAdminArea, readonly string[]]
   >) {
     if (routes.includes(route)) {
       return { kind: "excluded", reason: `not-yet:${MCP_NOT_YET_TASKS[area]}` };

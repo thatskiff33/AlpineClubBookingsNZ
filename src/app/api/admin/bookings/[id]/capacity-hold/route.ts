@@ -23,11 +23,14 @@ import { getDefaultLodgeId } from "@/lib/lodges";
 import { bookingHoldsCapacity } from "@/lib/booking-status";
 import { createAuditLog, getAuditRequestContext } from "@/lib/audit";
 import logger from "@/lib/logger";
-import { z } from "zod";
-
-const capacityHoldSchema = z.object({
-  allowOverbook: z.boolean().optional(),
-});
+import { adminCapacityHoldBodySchema } from "@/lib/admin-bookings-schemas/bookings";
+import {
+  ADMIN_CAPACITY_HOLD_CONNECTION_SHAPE,
+  ADMIN_CAPACITY_HOLD_RELEASE_CONNECTION_SHAPE,
+  type AdminCapacityHoldAnswer,
+  type AdminCapacityHoldReleaseAnswer,
+} from "@/lib/connection-shapes/bookings-bookings";
+import { connectionJson } from "@/lib/mcp-connection-request";
 
 /**
  * POST /api/admin/bookings/[id]/capacity-hold — Admin Hold (#1764).
@@ -40,6 +43,8 @@ const capacityHoldSchema = z.object({
  * capacity re-check (#1366 pattern); an over-capacity hold requires the
  * explicit `allowOverbook` confirm, mirroring force-confirm (#1668 semantics,
  * 409 CAPACITY_EXCEEDED).
+ *
+ * Also the AI app action `place_admin_capacity_hold` (ALP-719).
  */
 export async function POST(
   request: NextRequest,
@@ -54,7 +59,7 @@ export async function POST(
 
   const jsonBody = await parseOptionalJsonRequestBody(request, { whenAbsent: {}, objectOnly: true });
   if (!jsonBody.ok) return jsonBody.response;
-  const parsed = capacityHoldSchema.safeParse(jsonBody.body);
+  const parsed = adminCapacityHoldBodySchema.safeParse(jsonBody.body);
   const allowOverbook = parsed.success ? Boolean(parsed.data.allowOverbook) : false;
   const auditRequest = getAuditRequestContext(request);
 
@@ -236,12 +241,13 @@ export async function POST(
       );
     }
 
-    return NextResponse.json({
+    const answer: AdminCapacityHoldAnswer = {
       success: true,
       overbooked: result.overbooked,
       overbookDates: result.overbookDates,
       adminCapacityHoldAt: result.adminCapacityHoldAt,
-    });
+    };
+    return connectionJson(request, answer, ADMIN_CAPACITY_HOLD_CONNECTION_SHAPE);
   } catch (err) {
     logger.error({ err, bookingId }, "Failed to place admin capacity hold");
     return NextResponse.json(
@@ -259,6 +265,8 @@ export async function POST(
  * capacity stays impossible — the hold record is then inert and the normal
  * cancel paths clear it. Double-unhold answers a clear 409 without changing
  * state. Releasing capacity cannot overbook, so no capacity lock is needed.
+ *
+ * Also the AI app action `release_admin_capacity_hold` (ALP-719).
  */
 export async function DELETE(
   request: NextRequest,
@@ -349,7 +357,8 @@ export async function DELETE(
       );
     }
 
-    return NextResponse.json({ success: true });
+    const answer: AdminCapacityHoldReleaseAnswer = { success: true };
+    return connectionJson(request, answer, ADMIN_CAPACITY_HOLD_RELEASE_CONNECTION_SHAPE);
   } catch (err) {
     logger.error({ err, bookingId }, "Failed to release admin capacity hold");
     return NextResponse.json(

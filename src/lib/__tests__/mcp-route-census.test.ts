@@ -6,17 +6,22 @@ import { describe, expect, it } from "vitest";
 import {
   MCP_ACTIONS,
   MCP_WEBSITE_ONLY_ACTIONS,
+  mcpActionAdminRequirement,
   mcpActionRouteFile,
 } from "@/lib/mcp/catalogue";
 import {
   classifyMcpRoute,
   MCP_EXACT_EXCLUDED_ROUTES,
+  MCP_FINANCE_NOT_YET_ROUTES,
   MCP_NOT_YET_TASKS,
   MCP_PERMANENT_EXCLUSION_REASONS,
   mcpPermanentExclusion,
 } from "@/lib/mcp/exclusions";
 import { fileExists, hasExport, unwrap, walkDir } from "@/lib/step-up-route-census-ast";
+import { getAdminRouteRequirement } from "@/lib/admin-permissions";
+import { extractRouteGates, type HttpMethod } from "@/lib/__tests__/helpers/admin-route-explicit-permissions";
 import {
+  adminRouteApiPath,
   STEP_UP_HTTP_METHODS,
   STEP_UP_ROUTES,
   stepUpRouteKey,
@@ -37,6 +42,11 @@ const HTTP_METHODS: ReadonlySet<string> = new Set(STEP_UP_HTTP_METHODS);
  * row, so adding one here is a decision.
  */
 const PREVIEW_ROUTE_KEYS: readonly string[] = [
+  // ALP-719: bed allocation's move and removal previews, and the member-link
+  // check a booking request's quote runs before it is saved.
+  "POST src/app/api/admin/bed-allocation/allocations/move/route.ts",
+  "POST src/app/api/admin/bed-allocation/allocations/removal/route.ts",
+  "POST src/app/api/admin/booking-requests/[id]/link-conflicts/route.ts",
   // ALP-795: looks a member up by exact email; writes only its own audit row
   // and its rate-limit counters.
   "POST src/app/api/members/guest-candidates/resolve/route.ts",
@@ -84,6 +94,62 @@ function exportedMethods(file: string): string[] {
     }
   }
   return [...found].sort();
+}
+
+/** The calls that cut an answer down for a connection (`INV-MCP-006`). */
+const PROJECTIONS: ReadonlySet<string> = new Set(["connectionJson", "connectionListJson", "projectForConnection"]);
+
+interface RouteHandler {
+  readonly source: ts.SourceFile;
+  readonly body: ts.Node | undefined;
+}
+
+/** One exported method's function, by `export async function` or `export const`. */
+function routeHandler(file: string, method: string): RouteHandler {
+  const source = ts.createSourceFile(file, readFileSync(file, "utf8"), ts.ScriptTarget.Latest, true);
+  for (const statement of source.statements) {
+    if (ts.isFunctionDeclaration(statement) && statement.name?.text === method && hasExport(statement)) {
+      return { source, body: statement };
+    }
+    if (ts.isVariableStatement(statement) && hasExport(statement)) {
+      const declaration = statement.declarationList.declarations.find(
+        (entry) => ts.isIdentifier(entry.name) && entry.name.text === method,
+      );
+      if (declaration) return { source, body: declaration.initializer };
+    }
+  }
+  return { source, body: undefined };
+}
+
+function calleeName(call: ts.CallExpression): string | null {
+  const callee = unwrap(call.expression);
+  return ts.isIdentifier(callee) ? callee.text : null;
+}
+
+/** Whether `node`, or a top-level function of the same file it calls, calls one of `names`. */
+function handlerCalls({ source, body }: RouteHandler, names: ReadonlySet<string>): boolean {
+  const localFunctions = new Map<string, ts.Node>();
+  for (const statement of source.statements) {
+    if (ts.isFunctionDeclaration(statement) && statement.name) localFunctions.set(statement.name.text, statement);
+  }
+  const seen = new Set<ts.Node>();
+  const visit = (node: ts.Node | undefined): boolean => {
+    if (!node || seen.has(node)) return false;
+    seen.add(node);
+    let found = false;
+    const walk = (child: ts.Node): void => {
+      if (found) return;
+      if (ts.isCallExpression(child)) {
+        const name = calleeName(child);
+        if (name && names.has(name)) found = true;
+        else if (name && localFunctions.has(name)) found = visit(localFunctions.get(name));
+      }
+      if (!found) ts.forEachChild(child, walk);
+    };
+    walk(node);
+    return found;
+  };
+  return visit(body);
 }
 
 /**
@@ -245,13 +311,70 @@ describe("AI app action census (ALP-653, INV-MCP-006)", { timeout: CENSUS_TIMEOU
     }
   });
 
-  it("leaves no route waiting on ALP-718, which decided its member routes", () => {
-    expect(Object.values(MCP_NOT_YET_TASKS)).not.toContain("ALP-718");
-    const waiting = routeMethods.filter((route) => {
-      const result = classifyMcpRoute(route.file, route.method);
-      return result.kind === "excluded" && result.reason === "not-yet:ALP-718";
-    });
+  // ALP-718 decided its member routes; ALP-719 the Bookings & Beds officer routes.
+  it.each(["ALP-718", "ALP-719"])("leaves no route waiting on %s, which decided its routes", (task) => {
+    expect(Object.values(MCP_NOT_YET_TASKS)).not.toContain(task);
+    const waiting = routeMethods
+      .filter((route) => {
+        const result = classifyMcpRoute(route.file, route.method);
+        return result.kind === "excluded" && result.reason === `not-yet:${task}`;
+      })
+      .map((route) => stepUpRouteKey(route.file, route.method));
     expect(waiting).toEqual([]);
+  });
+
+  it("brings every Bookings & Beds officer route in, or keeps it website-only for a stated reason", () => {
+    const bookingsRoutes = routeMethods.filter(
+      (route) => getAdminRouteRequirement(adminRouteApiPath(route.file), route.method)?.area === "bookings",
+    );
+    expect(bookingsRoutes.length).toBeGreaterThan(90);
+    for (const route of bookingsRoutes) {
+      const result = classifyMcpRoute(route.file, route.method);
+      const key = stepUpRouteKey(route.file, route.method);
+      // Only the money routes the owner handed to the Finance lane wait on it
+      // (#5305 comment 7093303964, item 3).
+      if (MCP_FINANCE_NOT_YET_ROUTES.includes(`${route.method} ${adminRouteApiPath(route.file)}`)) {
+        expect(result, key).toEqual({ kind: "excluded", reason: "not-yet:ALP-721" });
+        continue;
+      }
+      expect(result.kind === "action" || (result.kind === "excluded" && !result.reason.startsWith("not-yet:")), key).toBe(true);
+    }
+    expect(MCP_FINANCE_NOT_YET_ROUTES).toEqual(["POST /api/admin/bookings/[id]/additional-payment/withdraw"]);
+    // A new route in a decided area is not covered by a neighbour's decision.
+    expect(classifyMcpRoute("src/app/api/admin/bookings/[id]/brand-new/route.ts", "POST")).toEqual({
+      kind: "unclassified",
+    });
+  });
+
+  it("answers a connection on every officer action only through the connection projection", () => {
+    // A member action's route may answer with a complete shape (stage 1); an
+    // officer route also feeds the admin screens, so each catalogued handler
+    // must project, itself or through a function of its own file.
+    const unprojected = MCP_ACTIONS.filter((action) => mcpActionAdminRequirement(action) !== null)
+      .filter((action) => !handlerCalls(routeHandler(mcpActionRouteFile(action), action.method), PROJECTIONS))
+      .map((action) => stepUpRouteKey(mcpActionRouteFile(action), action.method));
+    expect(unprojected).toEqual([]);
+  });
+
+  it("offers each officer action at exactly the permission its handler demands", () => {
+    // A handler that names its own `requireAdmin` permission, directly or
+    // through a shared guard wrapper, overrides the path's rule; the entry must
+    // carry it as `requires`, and only then. The gate is read by the one
+    // reader the admin authorization proof uses (`INV-SSOT-001`).
+    const mismatched = MCP_ACTIONS.filter((action) => mcpActionAdminRequirement(action) !== null).flatMap((action) => {
+      const file = mcpActionRouteFile(action);
+      const gate = extractRouteGates(readFileSync(file, "utf8")).gates[action.method as HttpMethod];
+      const ok = gate?.kind === "inferred"
+        ? action.requires === undefined
+        : gate?.kind === "explicit" && gate.permission.kind === "requirement"
+          ? JSON.stringify(mcpActionAdminRequirement(action)) === JSON.stringify(gate.permission.requirement)
+          // "any-admin" is looser than the path's rule: the catalogue keeps
+          // the stricter path rule, failing closed. Full Admin only, or a gate
+          // the reader cannot resolve, has no entry that could match it.
+          : gate?.kind === "explicit" && gate.permission.kind === "any-admin" && action.requires === undefined;
+      return ok ? [] : [`${action.id}: handler ${JSON.stringify(gate)}, entry ${JSON.stringify(action.requires)}`];
+    });
+    expect(mismatched).toEqual([]);
   });
 
   it("points every catalogue entry at a route method that exists", () => {
@@ -261,9 +384,11 @@ describe("AI app action census (ALP-653, INV-MCP-006)", { timeout: CENSUS_TIMEOU
     expect(stale).toEqual([]);
   });
 
-  it("decides officer reach in a catalogued route only on the member-only user", () => {
+  it("decides officer reach in a catalogued member route only on the member-only user", () => {
     const methodsByFile = new Map<string, Set<string>>();
-    for (const action of MCP_ACTIONS) {
+    // An officer action's route decides with the officer's own permissions,
+    // as the admin screen does: only member actions are read here.
+    for (const action of MCP_ACTIONS.filter((entry) => mcpActionAdminRequirement(entry) === null)) {
       const file = mcpActionRouteFile(action);
       methodsByFile.set(file, (methodsByFile.get(file) ?? new Set<string>()).add(action.method));
     }

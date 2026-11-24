@@ -1,46 +1,29 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma";
-import { z } from "zod";
 import { parseJsonRequestBody } from "@/lib/api-json";
 import { logAudit } from "@/lib/audit";
 import { formatDateOnly, parseDateOnly } from "@/lib/date-only";
-import { dateOnlyStringSchema } from "@/lib/date-only-schema";
+import { promoCodeUpdateBodySchema } from "@/lib/admin-bookings-schemas/promo-codes";
+import {
+  ADMIN_PROMO_CODE_CONNECTION_SHAPE,
+  ADMIN_PROMO_CODE_DELETED_CONNECTION_SHAPE,
+  ADMIN_PROMO_CODE_RESTORED_CONNECTION_SHAPE,
+  type AdminPromoCodeDeletedAnswer,
+  type AdminPromoCodeRestoredAnswer,
+  type AdminPromoCodeView,
+} from "@/lib/connection-shapes/bookings-review-queues";
+import { connectionJson } from "@/lib/mcp-connection-request";
 
-const updatePromoCodeSchema = z.object({
-  code: z.string().min(1).transform((s) => s.toUpperCase().trim()).optional(),
-  description: z.string().optional().nullable(),
-  type: z.enum(["PERCENTAGE", "FIXED_AMOUNT", "FREE_NIGHTS", "FIXED_NIGHTLY_PRICE"]).optional(),
-  valueCents: z.number().int().min(0).optional().nullable(),
-  percentOff: z.number().int().min(0).max(100).optional().nullable(),
-  freeNightsPerIndividual: z.number().int().min(0).optional().nullable(),
-  lifetimeFreeNightsCap: z.number().int().min(1).optional().nullable(),
-  fixedNightlyPriceCents: z.number().int().min(0).optional().nullable(),
-  fixedNightlyMode: z.enum(["SET_PRICE", "CAP_ONLY"]).optional().nullable(),
-  maxNightlyValueCents: z.number().int().min(0).optional().nullable(),
-  maxGuestsPerBooking: z.number().int().min(1).optional().nullable(),
-  maxRedemptionsTotal: z.number().int().min(1).optional().nullable(),
-  maxUniqueMembersTotal: z.number().int().min(1).optional().nullable(),
-  maxUsesPerMember: z.number().int().min(1).optional().nullable(),
-  validFrom: dateOnlyStringSchema.optional().nullable(),
-  validUntil: dateOnlyStringSchema.optional().nullable(),
-  bookingStartFrom: dateOnlyStringSchema.optional().nullable(),
-  bookingStartUntil: dateOnlyStringSchema.optional().nullable(),
-  membersOnly: z.boolean().optional(),
-  memberGuestsOnly: z.boolean().optional(),
-  assignedMembersOnlyOwnNights: z.boolean().optional(),
-  xeroItemCode: z.string().trim().min(1).max(30).optional().nullable(),
-  xeroAccountCode: z.string().trim().min(1).max(10).optional().nullable(),
-  active: z.boolean().optional(),
-  assignedMemberIds: z.array(z.string()).optional(),
-  // Optional per-lodge restriction (multi-lodge phase 6, ADR-001 resolved
-  // question 4). Empty/omitted clears the restriction (redeemable at every
-  // lodge); a non-empty list restricts redemption to those lodges.
-  lodgeIds: z.array(z.string()).max(20).optional(),
-});
+// The body schema lives in admin-bookings-schemas/promo-codes.ts so the AI
+// app action `update_promo_code` offers the same fields (ALP-719).
 
+/**
+ * GET /api/admin/promo-codes/[id] — one promo code with its uses.
+ * Also the AI app action `get_promo_code` (ALP-719).
+ */
 export async function GET(
-  _req: NextRequest,
+  req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params;
@@ -73,13 +56,18 @@ export async function GET(
   }
 
   const { allocations, lodges, ...promoCodeResponse } = promoCode;
-  return NextResponse.json({
+  const answer: AdminPromoCodeView & { redemptions: typeof allocations } = {
     ...promoCodeResponse,
     redemptions: allocations,
     lodgeIds: lodges.map((row) => row.lodgeId),
-  });
+  };
+  return connectionJson(req, answer, ADMIN_PROMO_CODE_CONNECTION_SHAPE);
 }
 
+/**
+ * PUT /api/admin/promo-codes/[id] — change a promo code.
+ * Also the AI app action `update_promo_code` (ALP-719).
+ */
 export async function PUT(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
@@ -98,7 +86,7 @@ export async function PUT(
   const json = await parseJsonRequestBody(req);
   if (!json.ok) return json.response;
 
-  const parsed = updatePromoCodeSchema.safeParse(json.body);
+  const parsed = promoCodeUpdateBodySchema.safeParse(json.body);
 
   if (!parsed.success) {
     return NextResponse.json(
@@ -211,7 +199,7 @@ export async function PUT(
     );
   }
 
-  const updated = await prisma.$transaction(async (tx) => {
+  const updated: AdminPromoCodeView | null = await prisma.$transaction(async (tx) => {
     await tx.promoCode.update({
       where: { id },
       data: {
@@ -344,11 +332,15 @@ export async function PUT(
     details: `Updated promo code: ${existing.code}${requestedLodgeIds !== undefined ? ` (lodge restriction: ${requestedLodgeIds.length ? `${requestedLodgeIds.length} lodge(s)` : "cleared"})` : ""}`,
   });
 
-  return NextResponse.json(updated);
+  return connectionJson(req, updated, ADMIN_PROMO_CODE_CONNECTION_SHAPE);
 }
 
+/**
+ * DELETE /api/admin/promo-codes/[id] — archive a code that was ever applied,
+ * else delete it. Also the AI app action `delete_promo_code` (ALP-719).
+ */
 export async function DELETE(
-  _req: NextRequest,
+  req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params;
@@ -388,7 +380,8 @@ export async function DELETE(
       details: `Archived promo code: ${existing.code} (${existing._count.redemptions} redemption(s))`,
     });
 
-    return NextResponse.json({ success: true, archived: true });
+    const archived: AdminPromoCodeDeletedAnswer = { success: true, archived: true };
+    return connectionJson(req, archived, ADMIN_PROMO_CODE_DELETED_CONNECTION_SHAPE);
   }
 
   await prisma.promoCode.delete({ where: { id } });
@@ -403,11 +396,16 @@ export async function DELETE(
     details: `Deleted promo code: ${existing.code}`,
   });
 
-  return NextResponse.json({ success: true, archived: false });
+  const deleted: AdminPromoCodeDeletedAnswer = { success: true, archived: false };
+  return connectionJson(req, deleted, ADMIN_PROMO_CODE_DELETED_CONNECTION_SHAPE);
 }
 
+/**
+ * PATCH /api/admin/promo-codes/[id] — restore an archived code.
+ * Also the AI app action `restore_promo_code` (ALP-719).
+ */
 export async function PATCH(
-  _req: NextRequest,
+  req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params;
@@ -440,5 +438,6 @@ export async function PATCH(
     details: `Restored archived promo code: ${existing.code}`,
   });
 
-  return NextResponse.json({ success: true });
+  const answer: AdminPromoCodeRestoredAnswer = { success: true };
+  return connectionJson(req, answer, ADMIN_PROMO_CODE_RESTORED_CONNECTION_SHAPE);
 }

@@ -19,16 +19,20 @@ export const ADMIN_LIST_MAX_PAGE_SIZE = 100
  */
 export const adminListPageField = z.coerce.number().int().min(1).optional().default(1)
 
-/** The `page` / `pageSize` query fields each capped route spreads into its schema. */
+/**
+ * The `page` / `pageSize` query fields each capped route spreads into its
+ * schema. The descriptions are what an AI app is told about them (ALP-719).
+ */
 export const adminListPageQueryFields = {
-  page: adminListPageField,
+  page: adminListPageField.describe("The page to read, from 1."),
   pageSize: z.coerce
     .number()
     .int()
     .min(1)
     .max(ADMIN_LIST_MAX_PAGE_SIZE)
     .optional()
-    .default(ADMIN_LIST_DEFAULT_PAGE_SIZE),
+    .default(ADMIN_LIST_DEFAULT_PAGE_SIZE)
+    .describe(`Rows per page, 1 to ${ADMIN_LIST_MAX_PAGE_SIZE}; ${ADMIN_LIST_DEFAULT_PAGE_SIZE} by default.`),
 }
 
 /**

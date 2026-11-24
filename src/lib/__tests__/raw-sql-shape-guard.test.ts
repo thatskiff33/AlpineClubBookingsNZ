@@ -98,6 +98,17 @@ const RAW_READ_INVENTORY: Record<string, number> = {
   // payment's source, which no Prisma JSON filter expresses. Its rows are
   // schema-decoded through `decodeRawRows`.
   "src/lib/bank-refund-void-scan.ts": 1,
+  // #4525: the combined group invoice cover sweep's work set - SUCCEEDED VOIDs
+  // with an ended flag joined to their invoice's unreleased combined manifests.
+  // No Prisma relation links an outbox row to a manifest, and a Prisma scan of
+  // either side alone grows with every invoice or VOID ever written. Its rows
+  // are schema-decoded through `decodeRawRows`. Measured on PostgreSQL 16 with
+  // 20,000 SUCCEEDED INVOICE operations, 500 combined manifests (295 released)
+  // and 5 owed: the plan starts from the unreleased manifests and probes
+  // `XeroSyncOperation_localModel_localId_createdAt_idx` per settlement, about
+  // 900 buffer hits and 0.6-0.9 ms a page, so it scales with unreleased
+  // invoices, not sync history (#4525 review, 25 Nov 2026).
+  "src/lib/member-money/internal/combined-group-invoice-manifest.ts": 1,
   // #4042: a group organiser hand-back's alert lease reads the database's own
   // `now()` - no Prisma model exposes the server clock, and stamping the lease
   // with each replica's clock would let a skewed one take over a live lease.

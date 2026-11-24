@@ -47,11 +47,10 @@ vi.mock("@/lib/prisma", () => ({
       updateMany: mocks.coverageUpdateMany,
     },
     membershipSubscriptionCharge: { updateMany: mocks.chargeUpdateMany },
+    // #5190: the sync reads the liability rule strictly; no row is NOT_CHOSEN.
+    membershipLockoutSettings: { findUnique: vi.fn(async () => null) },
     $transaction: mocks.transaction,
   },
-}));
-vi.mock("@/lib/member-subscription-eligibility", () => ({
-  requiresPaidSubscriptionForAgeTierFromSettings: vi.fn().mockResolvedValue(true),
 }));
 vi.mock("@/lib/member-subscription-defaults", () => ({
   roleNeverRequiresSubscription: vi.fn().mockReturnValue(false),

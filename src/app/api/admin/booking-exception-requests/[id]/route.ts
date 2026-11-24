@@ -40,6 +40,12 @@ import {
 } from "@/lib/adult-member-hosting-same-owner";
 import { clubFormatValues } from "@/lib/club-format-server";
 import { requireRecentAuth } from "@/lib/require-recent-auth";
+import {
+  ADMIN_EXCEPTION_REQUEST_DETAIL_CONNECTION_SHAPE,
+  type AdminExceptionRequestDetailAnswer,
+  type AdminExceptionRequestProposedGuest,
+} from "@/lib/connection-shapes/bookings-review-queues";
+import { connectionJson } from "@/lib/mcp-connection-request";
 
 /**
  * #2526 — the Booking Officer's DECISION endpoint for a booking-policy exception
@@ -47,7 +53,9 @@ import { requireRecentAuth } from "@/lib/require-recent-auth";
  *
  * `GET` returns the one request in full (frozen evidence, the exact proposal an
  * approval would execute, the member's message, the request's age); `PATCH`
- * approves or refuses it.
+ * approves or refuses it. The `GET` is also the AI app action
+ * `get_booking_exception_request` (ALP-719); the `PATCH` needs a fresh sign-in
+ * proof and stays website-only.
  *
  * An approval is NOT a status flip: it hands #2525's atomic approve-and-execute
  * engine the real hooks (#2526's `booking-exception-approval.ts`) and the engine
@@ -186,23 +194,6 @@ async function notifyMemberOfRefusal(args: {
   }
 }
 
-/** One proposed guest, as the officer needs to see them before deciding. */
-interface ProposedPartyGuest {
-  firstName: string;
-  lastName: string;
-  ageTier: string;
-  isMember: boolean;
-  nights: string[];
-  /** True when this guest is a MEMBER being attached to the booking. */
-  isMemberGuest: boolean;
-  /**
-   * True when that member is OUTSIDE the requester's family group — the case the
-   * member's own booking path either refuses outright or turns into a consent
-   * request. Null when there is no member id to judge.
-   */
-  beyondFamily: boolean | null;
-}
-
 /**
  * Describe the exact party an approval would create or leave behind, including
  * whether each member guest sits outside the requester's family.
@@ -214,7 +205,7 @@ interface ProposedPartyGuest {
 async function describeProposedParty(
   snapshot: ReturnType<typeof parseProposalSnapshot>,
   requestedByMemberId: string,
-): Promise<ProposedPartyGuest[]> {
+): Promise<AdminExceptionRequestProposedGuest[]> {
   if (!snapshot) return [];
   const guests = snapshot.proposed.guests;
   const memberIds = [
@@ -241,7 +232,7 @@ async function describeProposedParty(
 }
 
 export async function GET(
-  _req: NextRequest,
+  req: NextRequest,
   { params }: { params: Promise<{ id: string }> },
 ) {
   const guard = await requireAdmin({
@@ -271,7 +262,7 @@ export async function GET(
     snapshot,
     row.requestedByMemberId,
   );
-  return NextResponse.json({
+  const answer: AdminExceptionRequestDetailAnswer = {
     source,
     id: row.id,
     status: row.status,
@@ -303,7 +294,8 @@ export async function GET(
     booking: source === "MODIFICATION" ? row.booking : null,
     lodge: source === "NEW_BOOKING" ? row.lodge : null,
     createdBookingId: source === "NEW_BOOKING" ? row.createdBookingId : null,
-  });
+  };
+  return connectionJson(req, answer, ADMIN_EXCEPTION_REQUEST_DETAIL_CONNECTION_SHAPE);
 }
 
 export async function PATCH(

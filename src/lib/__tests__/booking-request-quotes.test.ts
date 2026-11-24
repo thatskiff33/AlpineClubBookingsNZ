@@ -209,29 +209,22 @@ vi.mock("@/lib/booking-request", () => {
 });
 
 /*
- * #3412: the quote service now shares the school module's guest-override
- * resolver, and composes its count schema into the quote input schema at MODULE
- * scope — so both must be present here before the service imports.
+ * #3412: the quote service shares the school module's guest-override
+ * resolver, so it must be present here before the service imports. (The count
+ * schema now lives in `admin-bookings-schemas/requests.ts`, read for real.)
  *
  * NOT `importOriginal`: this file mocks `@/lib/capacity` down to two exports and
  * the real school module imports a third, so importing it for real fails at
- * import. The schema is therefore mirrored (it is the five-line shape approval
- * already validates), and the resolver is a spy each test states the resolution
+ * import. The resolver is a spy each test states the resolution
  * for. What the resolver itself does — the strict read, the preserved teachers,
  * the regenerated children, the capacity bound — is proven directly against the
  * real implementation in `school-booking-request.test.ts`; these tests are about
  * what the QUOTE does with its answer.
  */
 vi.mock("@/lib/school-booking-request", async () => {
-  const { z } = await import("zod");
   return {
     approveSchoolBookingRequest: (...args: unknown[]) =>
       mocks.mockApproveSchoolBookingRequest(...args),
-    schoolChildCountsSchema: z.object({
-      INFANT: z.number().int().min(0).max(200).optional(),
-      CHILD: z.number().int().min(0).max(200).optional(),
-      YOUTH: z.number().int().min(0).max(200).optional(),
-    }),
     resolveSchoolGuestOverride: (...args: unknown[]) =>
       mocks.mockResolveSchoolGuestOverride(...args),
   };

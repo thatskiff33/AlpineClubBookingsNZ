@@ -1,4 +1,3 @@
-import { NextResponse } from "next/server";
 import {
   importRoomsAndBedsFromClubConfig,
 } from "@/lib/bed-allocation-rooms";
@@ -8,9 +7,12 @@ import {
 } from "@/lib/admin-bed-allocation-routes";
 import { logAudit } from "@/lib/audit";
 import { revalidatePublicSite } from "@/lib/public-content-revalidation";
+import { ADMIN_LODGE_ROOMS_IMPORT_CONNECTION_SHAPE } from "@/lib/connection-shapes/bookings-beds";
+import { connectionJson } from "@/lib/mcp-connection-request";
 
 // requireAdmin() is enforced by requireBedInventoryWrite().
-export async function POST() {
+/** Also the AI app action `import_rooms_and_beds_from_config` (ALP-719). */
+export async function POST(request: Request) {
   const guard = await requireBedInventoryWrite();
   if (!guard.ok) return guard.response;
 
@@ -30,7 +32,7 @@ export async function POST() {
       },
     });
 
-    return NextResponse.json(result, { status: 201 });
+    return connectionJson(request, result, ADMIN_LODGE_ROOMS_IMPORT_CONNECTION_SHAPE, { status: 201 });
   } catch (error) {
     return bedAllocationErrorResponse(error);
   }
