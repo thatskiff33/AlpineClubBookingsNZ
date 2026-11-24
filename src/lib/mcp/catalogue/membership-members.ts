@@ -13,6 +13,7 @@ import {
   dependentRouteParamsSchema,
   linkDependentSchema,
   memberLodgeAccessUpdateSchema,
+  removePartnerLinkBodySchema,
   removePartnerLinkQuerySchema,
 } from "@/lib/admin-membership-api/members";
 import { ADMIN_LIST_DEFAULT_PAGE_SIZE, ADMIN_LIST_MAX_PAGE_SIZE, adminListPageQueryFields } from "@/lib/admin-list-page";
@@ -153,12 +154,11 @@ export const MEMBERSHIP_MEMBER_MCP_ACTIONS: readonly McpAction[] = [
     id: "link_member_partner",
     title: "Record two members as partners",
     summary:
-      "Records `partnerMemberId` as the confirmed partner of member `id` straight away, with no request for either to accept; a pending request between the two is confirmed instead. Both must be active adults, neither may already have a confirmed partner, and neither may be the other's recorded parent or child. Every other pending partner request either of them has is removed. Both members are always emailed that they are now partners (one email if they share an address).",
+      "Records `partnerMemberId` as the confirmed partner of member `id` straight away, with no request for either to accept; a pending request between the two is confirmed instead. Both must be active adults, neither may already have a confirmed partner, and neither may be the other's recorded parent or child. Every other pending partner request either of them has is removed. Both members are emailed that they are now partners (one email if they share an address) unless `notifyMember` is false, as the officer may choose on the website.",
     method: "POST",
     path: "/api/admin/members/[id]/partner-link",
     params: routeIdParamsSchema,
-    body: assignPartnerLinkSchema.omit({ notifyMember: true }),
-    fixedBody: { notifyMember: true },
+    body: assignPartnerLinkSchema,
     kind: "destructive",
     returns: PARTNER_LINK_ASSIGNED_CONNECTION_SHAPE,
     core: false,
@@ -167,12 +167,12 @@ export const MEMBERSHIP_MEMBER_MCP_ACTIONS: readonly McpAction[] = [
     id: "remove_member_partner_link",
     title: "Remove a partner link",
     summary:
-      "Deletes partner link `linkId` (from `get_member_partner_links`), pending or confirmed, when it involves member `id`. Removing a confirmed partnership always emails both members (removing a pending request emails no one), and any future nights the pair were sharing a double bed go back to the allocation queue, with an alert to the club's admins. This cannot be undone: the link has to be made again.",
+      "Deletes partner link `linkId` (from `get_member_partner_links`), pending or confirmed, when it involves member `id`. Removing a confirmed partnership emails both members unless `notifyMember` is false, as the officer may choose on the website (removing a pending request emails no one), and any future nights the pair were sharing a double bed go back to the allocation queue, with an alert to the club's admins. This cannot be undone: the link has to be made again.",
     method: "DELETE",
     path: "/api/admin/members/[id]/partner-link",
     params: routeIdParamsSchema,
     query: removePartnerLinkQuerySchema,
-    fixedBody: { notifyMember: true },
+    body: removePartnerLinkBodySchema,
     kind: "destructive",
     returns: PARTNER_LINK_REMOVED_CONNECTION_SHAPE,
     core: false,
@@ -207,7 +207,7 @@ export const MEMBERSHIP_MEMBER_MCP_ACTIONS: readonly McpAction[] = [
     id: "list_membership_types",
     title: "List membership types",
     summary:
-      "The club's membership types, with the id `list_members` filters by, and whether each is active. `currentSeasonYear` is the season the club is in now.",
+      "The club's membership types in order, each with the id `list_members` filters by, whether it is active, how many members hold it, and its rules: the rate its members book at (`bookingBehavior`), whether they owe a subscription (`subscriptionBehavior`) and the age tiers it may be given to. No fees. `currentSeasonYear` is the season the club is in now.",
     method: "GET",
     path: "/api/admin/membership-types",
     kind: "read",

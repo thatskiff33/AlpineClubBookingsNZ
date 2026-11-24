@@ -482,7 +482,7 @@ describe("partner links", () => {
     expect(h.getPartnerLinkState).toHaveBeenCalledWith("member-2");
   });
 
-  it("link_member_partner always emails both members, whatever the app sends", async () => {
+  it("link_member_partner passes the officer's email choice, as on the website (#5305 comment 7111359405)", async () => {
     h.adminAssignPartnerLink.mockResolvedValue({
       ok: true,
       linkId: "link-1",
@@ -501,11 +501,24 @@ describe("partner links", () => {
       adminMemberId: "officer-1",
       memberOneId: "member-2",
       memberTwoId: "member-3",
-      notifyMember: true,
+      notifyMember: false,
     });
   });
 
-  it("remove_member_partner_link removes the named link only within the member in the address, and always notifies", async () => {
+  it("link_member_partner left to its default emails both members, as the screen's default does", async () => {
+    h.adminAssignPartnerLink.mockResolvedValue({ ok: true, linkId: "link-1", status: "CONFIRMED", message: "Linked." });
+
+    await expectActionContract({
+      actionId: "link_member_partner",
+      handler: linkPartner,
+      args: { id: "member-2", partnerMemberId: "member-3" },
+    });
+
+    // Absent means notify (#1769a): the route's own default decides.
+    expect(h.adminAssignPartnerLink).toHaveBeenCalledWith(expect.objectContaining({ notifyMember: undefined }));
+  });
+
+  it("remove_member_partner_link removes the named link only within the member in the address, with the officer's email choice", async () => {
     h.adminRemovePartnerLink.mockResolvedValue({ ok: true, linkId: "link-1", status: "REMOVED", message: "Partner link removed." });
 
     const { connection } = await expectActionContract({
@@ -519,7 +532,7 @@ describe("partner links", () => {
       adminMemberId: "officer-1",
       linkId: "link-1",
       memberScopeId: "member-2",
-      notifyMember: true,
+      notifyMember: false,
     });
   });
 
@@ -653,7 +666,7 @@ describe("dependants", () => {
 });
 
 describe("list_membership_types", () => {
-  it("sends each type's id, key, name and whether it is active, never its rules", async () => {
+  it("sends each type with its rules, which the configuration actions change, never its dates", async () => {
     h.prisma.membershipType.findMany.mockResolvedValue([
       {
         id: "type-1",
@@ -681,9 +694,26 @@ describe("list_membership_types", () => {
     });
 
     expect(connection).toEqual({
-      membershipTypes: [{ id: "type-1", key: "FULL", name: "Full", isActive: true }],
+      membershipTypes: [
+        {
+          id: "type-1",
+          key: "FULL",
+          name: "Full",
+          description: "Full membership",
+          publicDescription: null,
+          publiclyListed: true,
+          isActive: true,
+          isBuiltIn: true,
+          bookingBehavior: "STANDARD",
+          subscriptionBehavior: "REQUIRED",
+          ageGroupsApply: true,
+          sortOrder: 1,
+          assignmentCount: 4,
+          allowedAgeTiers: ["ADULT"],
+        },
+      ],
       currentSeasonYear: expect.any(Number),
     });
-    expect(browser).toMatchObject({ membershipTypes: [{ subscriptionBehavior: "REQUIRED" }] });
+    expect(browser).toMatchObject({ membershipTypes: [{ createdAt: "2026-01-01T00:00:00.000Z" }] });
   });
 });

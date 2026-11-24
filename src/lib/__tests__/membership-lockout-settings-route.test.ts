@@ -129,7 +129,7 @@ describe("membership lockout settings route guards (#1940)", () => {
     const forbidden = NextResponse.json({ error: "Forbidden" }, { status: 403 });
     mocks.requireAdmin.mockResolvedValueOnce({ ok: false, response: forbidden });
 
-    expect((await getLockoutSettings()).status).toBe(403);
+    expect((await getLockoutSettings(new NextRequest("http://localhost/api/admin/membership-lockout-settings"))).status).toBe(403);
     expect(mocks.requireAdmin).toHaveBeenCalledWith({
       permission: { area: "membership", level: "view" },
     });
@@ -242,7 +242,7 @@ describe("membership lockout settings route guards (#1940)", () => {
   });
 
   it("GET returns the fee-schedule detection preview for a finance-view admin (#2109)", async () => {
-    const response = await getLockoutSettings();
+    const response = await getLockoutSettings(new NextRequest("http://localhost/api/admin/membership-lockout-settings"));
     expect(response.status).toBe(200);
     const body = await response.json();
     // The resolver/overlap reads degrade to [] under the route's minimal prisma
@@ -265,7 +265,7 @@ describe("membership lockout settings route guards (#1940)", () => {
       },
     });
 
-    const response = await getLockoutSettings();
+    const response = await getLockoutSettings(new NextRequest("http://localhost/api/admin/membership-lockout-settings"));
     expect(response.status).toBe(200);
     const body = await response.json();
     expect(body.settings).toBeDefined();

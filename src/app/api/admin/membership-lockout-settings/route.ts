@@ -1,5 +1,4 @@
 import { NextRequest, NextResponse } from "next/server";
-import { z } from "zod";
 import { hasAdminAreaAccess } from "@/lib/admin-permissions";
 import { parseJsonRequestBody } from "@/lib/api-json";
 import { clearedRowsAuditMetadata } from "@/lib/member-subscription-defaults";
@@ -13,7 +12,6 @@ import {
 } from "@/lib/financial-year-server";
 import {
   MEMBERSHIP_LOCKOUT_SETTINGS_ID,
-  SUBSCRIPTION_LOCKOUT_MODES,
   loadPersistedMembershipLockoutSettings,
   normalizeMembershipLockoutSettings,
 } from "@/lib/membership-lockout-settings";
@@ -25,46 +23,14 @@ import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/session-guards";
 import { clubTimeZone } from "@/lib/club-time/server";
 import { clubSeasonYear } from "@/lib/financial-year";
-import {
-  SUBSCRIPTION_LIABILITY_AGE_SOURCES,
-  SUBSCRIPTION_REQUIRED_TYPE_AGE_RULES,
-} from "@/lib/policies/subscription";
+import { membershipLockoutSettingsSchema } from "@/lib/admin-membership-api/config-settings";
+import { connectionJson } from "@/lib/mcp-connection-request";
+import { MEMBERSHIP_LOCKOUT_SETTINGS_CONNECTION_SHAPE } from "@/lib/connection-shapes/membership-config";
 import {
   liabilityChoiceRefusal,
   liabilityChoiceToWrite,
   saveLockoutSettingsUnlessBusy,
 } from "@/lib/subscription-liability-settings-write";
-
-const settingsSchema = z
-  .object({
-    /**
-     * #2543 — the three-way lockout policy replaced the old `enabled` boolean,
-     * which no longer exists as a column (#2561).
-     *
-     * Deliberately still `.strict()`, so an old client that sends the boolean is
-     * REFUSED rather than silently ignored. A silent ignore is the dangerous
-     * direction here — an admin would see their "turn the lockout off" click
-     * succeed while the club carried on hard-blocking members.
-     */
-    mode: z.enum(SUBSCRIPTION_LOCKOUT_MODES).optional(),
-    financialYearEndMonthOverride: z
-      .number()
-      .int()
-      .min(1)
-      .max(12)
-      .nullable()
-      .optional(),
-    textFallbackEnabled: z.boolean().optional(),
-    useFeeScheduleItemCodes: z.boolean().optional(),
-    /**
-     * #5190 — the club's subscription-liability rule, two answers chosen
-     * together. Omitted, the stored pair is preserved. See
-     * `liabilityChoiceError` for what a save may and may not do with them.
-     */
-    requiredTypeAgeRule: z.enum(SUBSCRIPTION_REQUIRED_TYPE_AGE_RULES).optional(),
-    liabilityAgeSource: z.enum(SUBSCRIPTION_LIABILITY_AGE_SOURCES).optional(),
-  })
-  .strict();
 
 /**
  * Compute the fee-schedule detection preview (#2109): the resolved item-code set
@@ -104,7 +70,15 @@ async function buildFeeScheduleItemCodePreviewForViewer(
   return buildFeeScheduleItemCodePreview();
 }
 
-export async function GET() {
+/**
+ * GET|PUT /api/admin/membership-lockout-settings. Also the AI app actions
+ * `get_membership_lockout_settings` and `update_membership_lockout_settings`
+ * (ALP-720). A connection is sent the settings and the financial year, never
+ * the stored row or the Finance-only item-code preview. A change to the
+ * liability rule pair is refused here, for the browser and the app alike,
+ * unless the caller also holds Finance edit (`liabilityChoiceRefusal`).
+ */
+export async function GET(request: NextRequest) {
   const guard = await requireAdmin({
     permission: { area: "membership", level: "view" },
   });
@@ -115,12 +89,16 @@ export async function GET() {
   const preview = await buildFeeScheduleItemCodePreviewForViewer(
     guard.session.user
   );
-  return NextResponse.json({
-    settings: normalizeMembershipLockoutSettings(persisted),
-    financialYear,
-    persisted,
-    ...(preview ?? {}),
-  });
+  return connectionJson(
+    request,
+    {
+      settings: normalizeMembershipLockoutSettings(persisted),
+      financialYear,
+      persisted,
+      ...(preview ?? {}),
+    },
+    MEMBERSHIP_LOCKOUT_SETTINGS_CONNECTION_SHAPE,
+  );
 }
 
 export async function PUT(request: NextRequest) {
@@ -136,7 +114,7 @@ export async function PUT(request: NextRequest) {
   if (!jsonBody.ok) return jsonBody.response;
   const body = jsonBody.body;
 
-  const parsed = settingsSchema.safeParse(body);
+  const parsed = membershipLockoutSettingsSchema.safeParse(body);
   if (!parsed.success) {
     return NextResponse.json(
       { error: "Invalid input", details: parsed.error.flatten() },
@@ -232,10 +210,14 @@ export async function PUT(request: NextRequest) {
   const preview = await buildFeeScheduleItemCodePreviewForViewer(
     session.user
   );
-  return NextResponse.json({
-    settings: normalizeMembershipLockoutSettings(record),
-    financialYear,
-    persisted: record,
-    ...(preview ?? {}),
-  });
+  return connectionJson(
+    request,
+    {
+      settings: normalizeMembershipLockoutSettings(record),
+      financialYear,
+      persisted: record,
+      ...(preview ?? {}),
+    },
+    MEMBERSHIP_LOCKOUT_SETTINGS_CONNECTION_SHAPE,
+  );
 }

@@ -11,6 +11,9 @@ import {
 import logger from "@/lib/logger";
 import { loadEffectiveModuleFlags } from "@/lib/module-settings";
 import { requireAdmin } from "@/lib/session-guards";
+import { clubPostRetentionUpdateSchema } from "@/lib/admin-membership-api/config-settings";
+import { connectionJson } from "@/lib/mcp-connection-request";
+import { CLUB_POST_SETTINGS_CONNECTION_SHAPE } from "@/lib/connection-shapes/membership-config";
 
 /**
  * GET|PUT /api/admin/club-posts/settings — the board's retention window
@@ -18,6 +21,8 @@ import { requireAdmin } from "@/lib/session-guards";
  *
  * GET also answers how many posts the CURRENT window would delete, so the
  * screen can show the consequence before an admin saves rather than after.
+ * Both are also AI app actions (ALP-720): `get_message_board_settings` and
+ * `update_message_board_settings`, answered through the connection shape.
  */
 
 async function gate(level: "view" | "edit") {
@@ -31,15 +36,16 @@ async function gate(level: "view" | "edit") {
   return requireAdmin({ permission: { area: "membership", level } });
 }
 
-export async function GET() {
+export async function GET(request: NextRequest) {
   const guard = await gate("view");
   if (!guard.ok) return guard.response;
 
   const settings = await loadClubPostSettings();
-  return NextResponse.json({
-    settings,
-    beyondRetention: await countPostsBeyondRetention(settings.retentionDays),
-  });
+  return connectionJson(
+    request,
+    { settings, beyondRetention: await countPostsBeyondRetention(settings.retentionDays) },
+    CLUB_POST_SETTINGS_CONNECTION_SHAPE,
+  );
 }
 
 export async function PUT(request: NextRequest) {
@@ -48,12 +54,18 @@ export async function PUT(request: NextRequest) {
 
   const jsonBody = await parseJsonRequestBody(request);
   if (!jsonBody.ok) return jsonBody.response;
-  const body = jsonBody.body;
+  const parsed = clubPostRetentionUpdateSchema.safeParse(jsonBody.body);
+  if (!parsed.success) {
+    return NextResponse.json(
+      { error: "Choose one of the retention periods offered." },
+      { status: 400 },
+    );
+  }
   const before = await loadClubPostSettings();
 
   try {
     const settings = await saveClubPostRetention(
-      (body as { retentionDays?: unknown })?.retentionDays,
+      parsed.data.retentionDays,
       guard.session.user.id,
     );
 
@@ -68,10 +80,11 @@ export async function PUT(request: NextRequest) {
       details: `Club message board retention changed from ${before.retentionDays} to ${settings.retentionDays} days (0 = keep everything).`,
     });
 
-    return NextResponse.json({
-      settings,
-      beyondRetention: await countPostsBeyondRetention(settings.retentionDays),
-    });
+    return connectionJson(
+      request,
+      { settings, beyondRetention: await countPostsBeyondRetention(settings.retentionDays) },
+      CLUB_POST_SETTINGS_CONNECTION_SHAPE,
+    );
   } catch (error) {
     if (error instanceof ClubPostSettingsValidationError) {
       return NextResponse.json({ error: error.message }, { status: 400 });

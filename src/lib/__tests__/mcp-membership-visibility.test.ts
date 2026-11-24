@@ -81,6 +81,22 @@ describe("an officer without the Membership area", () => {
   });
 });
 
+describe("an officer with the Membership area on a connection not approved for officer actions", () => {
+  it("is shown none of them and runs none, until they approve again (INV-MCP-009)", async () => {
+    const session = officerWithMembership("edit");
+    const unapproved = context(session, false);
+    const listed = listMcpTools(unapproved).map((tool) => tool.name);
+    expect(listed.filter((id) => MEMBERSHIP_IDS.has(id))).toEqual([]);
+    const outcome = await callMcpTool(unapproved, "find_actions", { query: "" });
+    const { actions } = JSON.parse(outcome.text) as { actions: Array<{ id: string }> };
+    expect(actions.filter((action) => MEMBERSHIP_IDS.has(action.id))).toEqual([]);
+    for (const id of MEMBERSHIP_IDS) {
+      expect((await callMcpTool(unapproved, "run_action", { id, arguments: {} })).isError, id).toBe(true);
+    }
+    expect(run).not.toHaveBeenCalled();
+  });
+});
+
 describe("an officer with the Membership area", () => {
   it("at view level is shown its reads and none of its changes", async () => {
     const found = (await foundIds(officerWithMembership("view"))).filter((id) => MEMBERSHIP_IDS.has(id));
@@ -108,7 +124,6 @@ describe("an officer with the Membership area", () => {
 const CHANGE_ACTION_KINDS: Record<string, "write" | "destructive"> = {
   // Change only the club's own lists, notify no one, overwrite no person.
   create_committee_role: "write",
-  update_committee_role: "write",
   hide_family_suggestion: "write",
   create_locker: "write",
   bulk_create_lockers: "write",
@@ -141,6 +156,28 @@ const CHANGE_ACTION_KINDS: Record<string, "write" | "destructive"> = {
   moderate_message_board_post: "destructive",
   remove_message_board_post: "destructive",
   update_locker: "destructive",
+  // Redirect other people's messages: a role's contact email is where the
+  // public contact form sends them, and archiving it stops them arriving.
+  update_committee_role: "destructive",
+  // Change how the club treats every member: Membership configuration
+  // (#5305 comment 7111359405, item 1).
+  update_message_board_settings: "destructive",
+  update_member_field_settings: "destructive",
+  update_membership_cancellation_settings: "destructive",
+  update_membership_nomination_settings: "destructive",
+  update_membership_lockout_settings: "destructive",
+  create_membership_type: "destructive",
+  update_membership_type: "destructive",
+  delete_membership_type: "destructive",
+  merge_membership_type: "destructive",
+  reorder_membership_types: "destructive",
+  create_subscription_category: "destructive",
+  update_subscription_category: "destructive",
+  delete_subscription_category: "destructive",
+  create_induction_template: "destructive",
+  update_induction_template: "destructive",
+  activate_induction_template: "destructive",
+  delete_induction_template: "destructive",
   // Cannot be undone from the app.
   delete_notice: "destructive",
   run_message_board_cleanup: "destructive",

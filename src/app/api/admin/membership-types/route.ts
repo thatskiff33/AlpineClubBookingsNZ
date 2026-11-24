@@ -1,17 +1,13 @@
 import { NextResponse } from "next/server";
 import { revalidatePath } from "next/cache";
 import { Prisma } from "@prisma/client";
-import { z } from "zod";
 import { parseJsonRequestBody } from "@/lib/api-json";
 import {
   buildStructuredAuditLogCreateArgs,
   getAuditRequestContext,
 } from "@/lib/audit";
 import {
-  MEMBERSHIP_TYPE_BOOKING_BEHAVIORS,
-  MEMBERSHIP_TYPE_AGE_TIERS,
   DEFAULT_MEMBERSHIP_TYPE_AGE_TIERS,
-  MEMBERSHIP_TYPE_SUBSCRIPTION_BEHAVIORS,
   buildUniqueMembershipTypeKey,
   membershipTypeOrderBy,
   normalizeMembershipTypeAgeTiers,
@@ -26,6 +22,8 @@ import { clubTimeZone } from "@/lib/club-time/server";
 import { clubSeasonYear } from "@/lib/financial-year";
 import { connectionJson } from "@/lib/mcp-connection-request";
 import { MEMBERSHIP_TYPE_LIST_CONNECTION_SHAPE } from "@/lib/connection-shapes/membership-members";
+import { MEMBERSHIP_TYPE_CONNECTION_SHAPE } from "@/lib/connection-shapes/membership-config";
+import { membershipTypeCreateSchema } from "@/lib/admin-membership-api/config-structure";
 
 const membershipTypeSelect = {
   id: true,
@@ -49,20 +47,6 @@ const membershipTypeSelect = {
   _count: { select: { assignments: true } },
 } satisfies Prisma.MembershipTypeSelect;
 
-const createSchema = z
-  .object({
-    name: z.string().trim().min(1).max(120),
-    description: z.string().trim().max(1000).nullable().optional(),
-    publicDescription: z.string().trim().max(4000).nullable().optional(),
-    publiclyListed: z.boolean().optional().default(false),
-    bookingBehavior: z.enum(MEMBERSHIP_TYPE_BOOKING_BEHAVIORS),
-    subscriptionBehavior: z.enum(MEMBERSHIP_TYPE_SUBSCRIPTION_BEHAVIORS),
-    isActive: z.boolean().optional().default(true),
-    sortOrder: z.number().int().min(0).max(100000).optional(),
-    allowedAgeTiers: z.array(z.enum(MEMBERSHIP_TYPE_AGE_TIERS)).optional(),
-  })
-  .strict();
-
 async function loadMembershipTypes() {
   const membershipTypes = await prisma.membershipType.findMany({
     orderBy: membershipTypeOrderBy(),
@@ -80,8 +64,8 @@ async function loadMembershipTypes() {
 
 /**
  * GET /api/admin/membership-types
- * An AI app connection is sent each type's id, key, name and whether it is
- * active, never its booking, subscription or age-tier rules (ALP-720).
+ * An AI app connection is sent each type with its booking, subscription and
+ * age-tier rules, which `update_membership_type` changes (ALP-720).
  */
 export async function GET(request: Request) {
   const guard = await requireAdmin({
@@ -109,7 +93,7 @@ export async function POST(request: Request) {
   if (!jsonBody.ok) return jsonBody.response;
   const body = jsonBody.body;
 
-  const parsed = createSchema.safeParse(body);
+  const parsed = membershipTypeCreateSchema.safeParse(body);
   if (!parsed.success) {
     return NextResponse.json(
       { error: "Invalid input", details: parsed.error.flatten() },
@@ -196,10 +180,10 @@ export async function POST(request: Request) {
   });
   revalidatePath("/", "layout");
 
-  return NextResponse.json(
-    {
-      membershipType: serializeMembershipType(created),
-    },
+  return connectionJson(
+    request,
+    { membershipType: serializeMembershipType(created) },
+    MEMBERSHIP_TYPE_CONNECTION_SHAPE,
     { status: 201 },
   );
 }

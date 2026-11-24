@@ -40,7 +40,7 @@ const NO_NOTICE_EMAIL = { sendEmail: false } as const;
 const AUDIENCE_HELP =
   "`audiences` lists at least one rule: `{ kind: \"ALL_MEMBERS\" }`, or `MEMBER` with `memberId`, `MEMBERSHIP_TYPE` with `membershipTypeId`, `LODGE` with `lodgeId` (from `list_lodges`) or `COMMITTEE_ROLE` with `committeeRoleId`.";
 
-const MESSAGE_BOARD_OFF =
+export const MESSAGE_BOARD_OFF =
   "Answers not found when the club's message board is switched off.";
 
 export const MEMBERSHIP_NOTICE_MCP_ACTIONS: readonly McpAction[] = [

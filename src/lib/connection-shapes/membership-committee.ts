@@ -203,18 +203,27 @@ export const INDUCTION_TEMPLATE_LIST_CONNECTION_SHAPE = connectionShapeFor<{
   },
 });
 
+const INDUCTION_TEMPLATE_SHAPE = {
+  id: true,
+  name: true,
+  version: true,
+  kind: true,
+  sourceLabel: true,
+  isActive: true,
+  sections: CHECKLIST_SECTIONS_SHAPE,
+} as const;
+
 export const INDUCTION_TEMPLATE_DETAIL_CONNECTION_SHAPE = connectionShapeFor<{
   template: MemberInductionWithDetail["template"];
   used: boolean;
 }>({
-  template: {
-    id: true,
-    name: true,
-    version: true,
-    kind: true,
-    sourceLabel: true,
-    isActive: true,
-    sections: CHECKLIST_SECTIONS_SHAPE,
-  },
+  template: INDUCTION_TEMPLATE_SHAPE,
   used: true,
+});
+
+/** A template an officer created or rewrote: the same fields as the detail read. */
+export const INDUCTION_TEMPLATE_CONNECTION_SHAPE = connectionShapeFor<{
+  template: MemberInductionWithDetail["template"];
+}>({
+  template: INDUCTION_TEMPLATE_SHAPE,
 });

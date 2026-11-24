@@ -69,12 +69,13 @@ export const MEMBERSHIP_COMMITTEE_MCP_ACTIONS: readonly McpAction[] = [
     id: "update_committee_role",
     title: "Edit or archive a committee role",
     summary:
-      "Changes a committee role's fields; a field left out keeps its value. `isActive` false archives the role, true restores it.",
+      "Changes a committee role's fields; a field left out keeps its value. `contactEmail` is where the public contact form sends messages for the role, and `isActive` false archives the role, which stops those messages; true restores it.",
     method: "PATCH",
     path: "/api/admin/committee/roles/[id]",
     params: routeIdParamsSchema,
     body: committeeRolePatchSchema,
-    kind: "write",
+    // Destructive: it can redirect or stop other people's messages to the role.
+    kind: "destructive",
     returns: COMMITTEE_ROLE_CONNECTION_SHAPE,
     core: false,
   },

@@ -152,6 +152,10 @@ const PRE_MODULE_ROUTES_WITHOUT_WEBSITE_CALLER: Readonly<Record<string, string>>
     "draft bookings (Issue 7, April 2026), long before the module; its website caller has since gone",
   "src/app/api/admin/booking-requests/[id]/price/route.ts":
     "officer pricing of a booking request (#733, June 2026), long before the module; the quote workflow replaced its website caller",
+  "src/app/api/admin/membership-cancellation-requests/[requestId]/participants/[participantId]/resend-confirmation/route.ts":
+    "resending a cancellation confirmation link (May 2026), long before the module; no admin screen calls it today",
+  "src/app/api/admin/membership-lockout-settings/liability-impact/route.ts":
+    "the subscription-liability preview (#5190), built for the upgrade runbook and the liability screen still to come, not for the module",
 };
 
 /**

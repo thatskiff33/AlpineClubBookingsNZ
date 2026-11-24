@@ -37,7 +37,7 @@ export const MEMBERSHIP_FAMILY_GROUP_MCP_ACTIONS: readonly McpAction[] = [
     id: "list_family_groups",
     title: "List family groups",
     summary:
-      "Every family group, by name, with its members (archived members left out), each as an id, a name, an age tier and whether they are active, plus how many members are inactive and how many requests await review. No email addresses or ages.",
+      "Every family group, by name, with its members (archived members left out), each as an id, a name, an age tier and whether they are active, plus how many members are inactive and how many requests await review. No email addresses or ages. It answers every group at once, so a large club's answer can be cut short: to find one person's group, search with `list_members` (`q`; each member comes with their family groups) and read it with `get_family_group`, and `list_members` with `familyGroup` lists one group's members a page at a time.",
     method: "GET",
     path: "/api/admin/family-groups",
     kind: "read",
