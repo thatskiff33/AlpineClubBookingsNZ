@@ -9927,6 +9927,38 @@ enum MemberMoneyExportConflictReason {
   CAPTURE_CENTS
   /// The receipt names no capture, or the journal holds no live receipt for it.
   CAPTURE_NOT_JOURNALLED
+  /// #5208: the journal's tax cannot be shared across the lines, or Xero holds other tax than was sent.
+  TAX_CENTS
+}
+
+/// #5208: which Xero document a tax-override mismatch was found on.
+enum XeroTaxOverrideDocumentKind {
+  CREATE
+  UPDATE
+}
+
+/// #5208 (owner decision 18 Nov 2026, Option A): a Xero invoice whose returned
+/// line tax differs from the journal's tax the app sent on it. Club-wide. While
+/// any row is uncleared, new primary invoices are sent without tax amounts and
+/// Xero works the tax out itself; a finance officer clears the rows to resume.
+/// Written once per sync operation; only the clear columns ever change.
+model XeroTaxOverrideMismatch {
+  id                  String                      @id @default(uuid())
+  createdAt           DateTime                    @default(now())
+  xeroSyncOperationId String                      @unique
+  bookingId           String
+  providerInvoiceId   String
+  invoiceNumber       String?
+  documentKind        XeroTaxOverrideDocumentKind
+  /// [{ index, sentCents, xeroCents }]: each line whose tax Xero did not keep.
+  lines               Json
+  clearedAt           DateTime?
+  clearedByMemberId   String?
+  clearNote           String?
+
+  @@index([clearedAt])
+  @@index([bookingId])
+  @@index([clearedByMemberId])
 }
 
 /// M13 (#4525): what one sent provider document covers, written once under its

@@ -2084,6 +2084,17 @@ start-up, not the test.
   by-name batch on 24 November 2026 and took 870ms alone; the slowest case
   alone took 1,207ms.
 
+A second suite carries the same 60,000ms budget, on each `describe` whose
+cases build a throwaway repository (a bare origin, a seed and a clone) and run
+the release script, since #5472.
+
+- [`scripts/release/cut-release.test.mjs`](../scripts/release/cut-release.test.mjs)
+  — "prints the whole plan in a dry run and changes nothing" timed out at
+  5,000ms on a CI runner on 24 November 2026, in the push build of `main`, with
+  no assertion failing. Run alone on a busy Windows host on 25 November 2026,
+  thirteen of its repository cases exceeded 5,000ms and the slowest took
+  6,369ms.
+
 Two suites named with these are deliberately not listed.
 `reshaped-club-day-seams-contract.test.ts` timed out with them on its two
 tree-reading cases (909ms and 751ms alone) and carries the shared

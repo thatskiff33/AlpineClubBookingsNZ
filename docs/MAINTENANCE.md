@@ -3658,6 +3658,15 @@ are set — see [`DEPLOYMENT.md`](../DEPLOYMENT.md#the-deploy-refuses-a-commit-t
      before / during / after list, and the plan says so when it does not.
      `--amend` moves steps added under the fresh `## Unreleased` to the end
      of the untagged release's section.
+   - **After-deploy steps are filed (#5379).** Every
+     `changelog.d/*.deploy.md` fragment
+     ([format](../changelog.d/README.md#after-deploy-steps-the-deploymd-suffix))
+     becomes one checkbox under "After deploying this release" at the end of
+     the release's upgrade-guide section and in its notes page, naming who
+     does it, what to do, how to check it worked and the pull request it came
+     from, and the fragment is deleted with the others. `prepare` refuses,
+     dry run included and before it switches branch, while any of them is
+     malformed. `--amend` adds late steps to both lists.
    - **A notes stub is written.** `docs/releases/v<version>.md` links the
      version's changelog and upgrade-guide sections. It carries an unfinished
      marker (`<!-- release-notes:unfinished -->`), a note saying it is a stub
@@ -3741,7 +3750,8 @@ are set — see [`DEPLOYMENT.md`](../DEPLOYMENT.md#the-deploy-refuses-a-commit-t
      is not newer than `origin`'s latest tag — nothing new was prepared;
    - `CHANGELOG.md` has no section for the version, or still has entries
      written directly under `## Unreleased`;
-   - the commit still holds `changelog.d/` fragments. Required checks are not
+   - the commit still holds `changelog.d/` fragments, `.deploy.md` steps
+     included. Required checks are not
      strict, so a pull request can merge while the release-prep one is open
      and leave its fragment in the merge commit. Two supported ways out:
      **fold** them — from a fresh `origin/main`,
@@ -3789,6 +3799,19 @@ are set — see [`DEPLOYMENT.md`](../DEPLOYMENT.md#the-deploy-refuses-a-commit-t
    publish never deletes the pushed tag. `compile-changelog.mjs --append`
    only adds to the newest section, so a fold can never rewrite a released
    version's notes.
+   Before `gh release create` it opens the **post-deploy checklist**
+   (#5379): a "v<version> post-deploy checklist" issue with the notes page's
+   after-deploy steps, one checkbox each linking its pull request, labelled
+   `post-deploy-checklist` and assigned to the repository's owner (owner
+   decision D2 on #5379); the release body links it under "After deploying
+   this release". `--checklist-assignee <login>` names someone else. When an
+   organisation owns the repository, or GitHub cannot say who does, it is
+   assigned to whoever publishes (`@me`) and the plan says why. A re-run
+   finds the issue by its label and exact title and reuses it. A release with
+   no steps opens none. If the issue cannot be opened, the release is still
+   published, linking the notes page instead, and the script writes the body
+   to a file and prints the `gh label create` and `gh issue create` commands
+   to run. The dry run prints the issue's title, assignee and body.
    Add validation evidence, migration notes, image names and non-blocking
    maintainability follow-ups to the published release by hand.
 9. Deploy the tag (`DEPLOYMENT.md`, "Cut the release first").

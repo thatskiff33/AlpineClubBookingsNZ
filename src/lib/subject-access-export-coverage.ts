@@ -162,6 +162,7 @@ export const SUBJECT_ACCESS_EXPORT_COVERAGE = {
   ClubFormatSettings: CLUB_CONFIG,
   ClubTaxSettings: CLUB_CONFIG,
   XeroTaxCategoryMapping: CLUB_CONFIG,
+  XeroTaxOverrideMismatch: OPERATIONAL,
   LoginSecuritySetting: CLUB_CONFIG,
   AnalyticsSettings: CLUB_CONFIG,
   EmailTemplateOverride: CLUB_CONFIG,

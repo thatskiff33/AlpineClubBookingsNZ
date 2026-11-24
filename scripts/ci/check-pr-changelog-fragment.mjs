@@ -41,8 +41,11 @@ const CODE_PATH = /^(?:src|prisma)\//;
  */
 const TEST_FILE = /(?:^|\/)__tests__\/|\.(?:test|spec)\.[cm]?[jt]sx?$/i;
 
-/** A compilable fragment: any `changelog.d/*.md` except the convention README. */
-const FRAGMENT_PATH = /^changelog\.d\/(?!README\.md$)[^/]+\.md$/i;
+/**
+ * A compilable fragment: any `changelog.d/*.md` except the convention README
+ * and an after-deploy step (`*.deploy.md`, #5379), which is not an entry.
+ */
+const FRAGMENT_PATH = /^changelog\.d\/(?!README\.md$)(?![^/]*\.deploy\.md$)[^/]+\.md$/i;
 
 /**
  * The explicit no-entry escape. Must start its own line (optionally inside a

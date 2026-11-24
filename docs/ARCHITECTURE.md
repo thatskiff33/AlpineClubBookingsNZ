@@ -2147,6 +2147,15 @@ those callers. Writers implement the existing advisory tiers
 read-only snapshot. See [deployment grants](../DEPLOYMENT.md#member-money-journal-grants-m1)
 and [lodge scoping](multi-lodge/lodge-scoping-contract.md#member-money-journal-4513).
 
+`XeroTaxOverrideMismatch` (#5208) is the GST-override pause: one club-wide row
+per Xero sync operation whose invoice came back holding other line tax than the
+journal's tax the app sent on it (`src/lib/xero-tax-override-safeguard.ts`).
+While any row has no `clearedAt`, new primary invoices are sent without line tax
+amounts; a finance officer clearing the rows (`clearedByMemberId`, `clearNote`)
+resumes them. Rows are written once; only the clear columns change. See
+[Xero tax treatment](xero/ARCHITECTURE.md#tax-treatment) and
+[lodge scoping](multi-lodge/lodge-scoping-contract.md#xero-gst-override-pause-5208).
+
 ### Organisations, and the school that is currently a person
 
 **What happens today.** A school is not a thing in this system. When a school's
