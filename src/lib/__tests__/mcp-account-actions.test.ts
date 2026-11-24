@@ -127,6 +127,28 @@ describe("get_my_notification_preferences and update_my_notification_preferences
     expect(h.prisma.notificationPreference.findUnique).toHaveBeenCalledWith({ where: { memberId: "officer-1" } });
   });
 
+  // ALP-801: catches a read that creates the row, which let two first reads
+  // race on the unique memberId and answer 500 (the race itself is proven in
+  // notification-preferences-first-read.realdb.test.ts).
+  it("answers a member with no saved row with the defaults and writes nothing", async () => {
+    h.prisma.notificationPreference.findUnique.mockResolvedValue(null);
+    const { connection } = await expectActionContract({
+      actionId: "get_my_notification_preferences",
+      handler: getPrefs,
+    });
+    const browser = await getPrefs(new Request("https://club.example.test/api/notifications/preferences"));
+    // The exact bytes the website answered when this read created a row with
+    // the schema defaults: same values, same key order.
+    const browserText = await browser.text();
+    expect(browserText).toBe(
+      '{"bookingConfirmation":true,"bookingReminder":true,"bookingBumped":true,"bookingCancelled":true,' +
+        '"bookingAddedByFamily":true,"choreRoster":true,"clubNotices":true,"marketingEmails":false}',
+    );
+    expect(connection).toEqual(JSON.parse(browserText));
+    expect(h.prisma.notificationPreference.create).not.toHaveBeenCalled();
+    expect(h.prisma.notificationPreference.upsert).not.toHaveBeenCalled();
+  });
+
   it("changes only the preferences sent, for the member themselves", async () => {
     h.prisma.notificationPreference.findUnique.mockResolvedValue(PREFS_ROW);
     h.prisma.notificationPreference.upsert.mockResolvedValue({ ...PREFS_ROW, clubNotices: false });

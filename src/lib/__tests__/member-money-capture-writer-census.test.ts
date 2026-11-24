@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { captureWriterSites } from "./support/capture-writer-scan";
 import { productionSourceFiles } from "./support/prisma-delegate-read-scan";
+import { CENSUS_TIMEOUT_MS } from "@/test/census-timeout";
 
 // Every mutation is classified, including non-capturing ones: a computed data/status value cannot evade the inventory.
 const REVIEWED: Record<string, string> = {
@@ -68,7 +69,7 @@ describe("M4b capture-writer census", () => {
     for (const site of found) counts.set(site, (counts.get(site) ?? 0) + 1);
     expect([...counts].map(([site, n]) => `${site}|${n}`).sort()).toEqual(Object.keys(REVIEWED).sort());
     for (const reason of Object.values(REVIEWED)) expect(reason.length).toBeGreaterThan(20);
-  }, 15_000);
+  }, CENSUS_TIMEOUT_MS);
   it("discovers direct, bracket, alias, computed-data and nested writers, and a new generic capture caller", () => {
     for (const write of [
       'tx.paymentTransaction.create({ data: { status: "SUCCEEDED" } })',

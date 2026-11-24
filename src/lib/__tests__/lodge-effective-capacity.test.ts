@@ -23,6 +23,7 @@ import {
   resolvePartnerSpotsLostByCapacityChange,
   type EffectiveLodgeCapacity,
 } from "@/lib/lodge-effective-capacity";
+import { CENSUS_TIMEOUT_MS } from "@/test/census-timeout";
 
 describe("resolveEffectiveLodgeCapacity — the scenario table in docs/CAPACITY_MODEL.md", () => {
   // Columns match the published table: active beds, configured capacity, then
@@ -379,7 +380,7 @@ describe("the effective-capacity rule has one home (INV-SSOT-001)", () => {
       .sort();
 
     expect(importers).toEqual([...EXPECTED_IMPORTERS].sort());
-  });
+  }, CENSUS_TIMEOUT_MS);
 
   it("would see a relative or dynamic importer, not only an alias one", () => {
     // Mutation-proof for the widening itself: the three forms an importer can

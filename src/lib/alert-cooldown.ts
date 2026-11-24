@@ -1,3 +1,4 @@
+import { claimByStamp, deferredStamp } from "@/lib/owed-notice/stamp";
 import { prisma } from "@/lib/prisma";
 import { exactPrefix } from "@/lib/prisma-exact-prefix";
 import { isPrismaUniqueConstraintError } from "@/lib/prisma-errors";
@@ -104,7 +105,7 @@ export async function deferAlertCooldown({
 }): Promise<void> {
   await store.alertCooldown.updateMany({
     where: { key, lastAlertedAt: claimedAt },
-    data: { lastAlertedAt: new Date(claimedAt.getTime() - windowMs + retryAfterMs) },
+    data: { lastAlertedAt: deferredStamp(claimedAt, windowMs, retryAfterMs) },
   });
 }
 
@@ -225,7 +226,10 @@ export async function noteOwedAlertAttempt({
  * could otherwise hand two callers the same instant). Returns that stamp, for
  * `settleOwedAlert`'s own-claim guard, or null when the claim was lost. A
  * claimed marker its caller leaves (the send threw) is offered again by
- * `listOwedAlertKeys` once `retryAfterMs` has passed since the claim.
+ * `listOwedAlertKeys` once `retryAfterMs` has passed since the claim. The
+ * stamp rule is shared with the `OwedNotice` table's claim (#5433,
+ * `owed-notice/stamp.ts`); since #5433 the only caller is the drain of the
+ * bump markers an earlier release wrote here.
  */
 export async function claimOwedAlert({
   key,
@@ -238,12 +242,12 @@ export async function claimOwedAlert({
   now?: Date;
   store?: Pick<typeof prisma, "alertCooldown">;
 }): Promise<Date | null> {
-  const claimedAt = new Date(Math.max(now.getTime(), stampedNoLaterThan.getTime() + 1));
-  const claimed = await store.alertCooldown.updateMany({
-    where: { key, lastAlertedAt: { lte: stampedNoLaterThan } },
-    data: { lastAlertedAt: claimedAt },
-  });
-  return claimed.count === 1 ? claimedAt : null;
+  return claimByStamp(stampedNoLaterThan, now, (claimedAt) =>
+    store.alertCooldown.updateMany({
+      where: { key, lastAlertedAt: { lte: stampedNoLaterThan } },
+      data: { lastAlertedAt: claimedAt },
+    }),
+  );
 }
 
 /**

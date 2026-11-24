@@ -5,6 +5,7 @@ import ts from "typescript";
 import { beforeAll, describe, expect, it } from "vitest";
 
 import { CLUB_FORMAT_GUARD_ARMS, MANDATORY_SRC_RESTRICTIONS } from "../../../eslint.config.mjs";
+import { CENSUS_TIMEOUT_MS } from "@/test/census-timeout";
 
 /**
  * The club's format stays a REQUIRED parameter (#3566 review, finding B7).
@@ -259,5 +260,5 @@ describe("#3566: no alias of a club format outside the kernel (the census for wh
       found.push(...findClubFormatAliases(file, readFileSync(full, "utf8")));
     }
     expect(found.sort()).toEqual(ALLOWED_CLUB_FORMAT_ALIASES);
-  });
+  }, CENSUS_TIMEOUT_MS);
 });

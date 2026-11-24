@@ -22,6 +22,7 @@ import type {
 
 import { getClubIdentitySync } from "@/lib/club-identity-settings";
 import { prisma } from "@/lib/prisma";
+import { isPrismaUniqueConstraintError } from "@/lib/prisma-errors";
 import {
   assertEnrolmentNotSuperseded,
   FactorResetBlocksEnrolmentError,
@@ -311,7 +312,7 @@ export async function verifyPasskeyRegistration(input: {
         error: "Sign in again before adding a passkey.",
       };
     }
-    if (isUniqueConflict(error)) {
+    if (isPrismaUniqueConstraintError(error)) {
       return { ok: false, status: 409, error: "That passkey is already saved." };
     }
     throw error;
@@ -494,15 +495,6 @@ class PasskeyCapError extends Error {
     super("passkey cap");
     this.name = "PasskeyCapError";
   }
-}
-
-function isUniqueConflict(error: unknown): boolean {
-  return (
-    typeof error === "object" &&
-    error !== null &&
-    "code" in error &&
-    (error as { code?: unknown }).code === "P2002"
-  );
 }
 
 function counterRegression(error: unknown): { reported: number; stored: number } | null {

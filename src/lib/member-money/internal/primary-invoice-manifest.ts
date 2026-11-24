@@ -1,4 +1,5 @@
 import { Prisma } from "@prisma/client";
+import { isPrismaKnownUniqueConstraintError } from "@/lib/prisma-known-errors";
 import type { LineAmountTypes, LineItem } from "xero-node";
 import { buildXeroBookingInvoiceCorrelationKey } from "../../xero-booking-invoice-key";
 import { prisma } from "../../prisma";
@@ -86,7 +87,7 @@ export async function recordPrimaryInvoiceManifest(source: PrimaryInvoiceManifes
       logger.info({ bookingId, providerInvoiceId }, "The primary invoice's manifest was already recorded differently; the first row stands");
     }
   } catch (error) {
-    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
+    if (isPrismaKnownUniqueConstraintError(error)) {
       logger.info({ bookingId, providerInvoiceId }, "Another run recorded the primary invoice's manifest first; the first row stands");
       return;
     }
@@ -140,7 +141,7 @@ export async function recordPrimaryInvoiceUpdateManifest(input: {
       logger.info({ bookingId, providerInvoiceId }, "The primary invoice update's manifest was already recorded differently; the first row stands");
     }
   } catch (error) {
-    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
+    if (isPrismaKnownUniqueConstraintError(error)) {
       logger.info({ bookingId, providerInvoiceId }, "Another run recorded the primary invoice update's manifest first; the first row stands");
       return;
     }

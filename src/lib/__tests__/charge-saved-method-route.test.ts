@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
 import { Prisma } from "@prisma/client";
 import { stripeSdkError } from "./support/stripe-sdk-error";
+import { expectDefaultInvalidJsonAnswer, MALFORMED_JSON_BODY } from "./helpers/invalid-json-body";
 import { SAVED_CARD_CLAIM_RELEASE_DEFERRED_NOTICE } from "@/lib/saved-card-charge-claim";
 
 const {
@@ -1416,5 +1417,52 @@ describe("POST /api/payments/charge-saved-method", () => {
       expect(response.status).toBe(500);
       expect(response.headers.get("Retry-After")).toBeNull();
     });
+  });
+});
+
+// #5407 item 26: the body is read inside the outer catch-all, before any
+// claim, lock, attempt row or Stripe call. A malformed body used to throw into
+// that catch-all and answer 500; it is now the shared invalid-JSON 400, and the
+// catch-all has nothing to release or alert on.
+describe("POST /api/payments/charge-saved-method: malformed body (#5407)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    clubFormatMock.mockResolvedValue(CLUB_FORMAT_TEST);
+    mockAuth.mockResolvedValue({ user: { id: "admin-1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] } });
+    mockIsValidCronSecret.mockReturnValue(false);
+  });
+
+  function requestWithBody(body: string) {
+    return new NextRequest("http://localhost/api/payments/charge-saved-method", {
+      method: "POST",
+      body,
+      headers: { "content-type": "application/json" },
+    });
+  }
+
+  it("answers the shared invalid-JSON 400 and reads, claims and charges nothing", async () => {
+    const response = await POST(requestWithBody(MALFORMED_JSON_BODY));
+
+    await expectDefaultInvalidJsonAnswer(response);
+    expect(mockBookingFindUnique).not.toHaveBeenCalled();
+    expect(mockPrismaTransaction).not.toHaveBeenCalled();
+    expect(mockChargePaymentMethod).not.toHaveBeenCalled();
+    expect(mockSendAdminPaymentFailureAlert).not.toHaveBeenCalled();
+  });
+
+  it("still refuses an unauthorised caller before the body is read", async () => {
+    mockAuth.mockResolvedValue(null);
+
+    const response = await POST(requestWithBody(MALFORMED_JSON_BODY));
+
+    expect(response.status).toBe(401);
+  });
+
+  it("keeps the schema answer for a well-formed body of the wrong shape", async () => {
+    const response = await POST(requestWithBody(JSON.stringify({ bookingId: 7 })));
+
+    expect(response.status).toBe(400);
+    expect(await response.json()).toMatchObject({ error: "Invalid input" });
+    expect(mockBookingFindUnique).not.toHaveBeenCalled();
   });
 });

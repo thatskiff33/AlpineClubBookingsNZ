@@ -214,7 +214,7 @@ describe("GET /api/members/family/invitations", () => {
       },
     ] as any);
 
-    const res = await getInvitations();
+    const res = await getInvitations(new Request("http://localhost/api/members/family/invitations"));
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(body.invitations).toHaveLength(1);

@@ -887,6 +887,20 @@ describe("POST /api/group-bookings/[code]/settle", () => {
     );
   });
 
+  // #5407: only an absent body (the case above) means the default method. A
+  // JSON null, or any other body that is not an object, used to crash on the
+  // property read (a 500); it is now a 400 and nothing is settled.
+  it.each([null, ["internet_banking"], "stripe"])(
+    "refuses the non-object body %j with a 400 and settles nothing (#5407)",
+    async (body) => {
+      const res = await callSettle(body);
+
+      expect(res.status).toBe(400);
+      await expect(res.json()).resolves.toMatchObject({ error: "Invalid request body" });
+      expect(mocks.createGroupSettlementIntent).not.toHaveBeenCalled();
+    },
+  );
+
   it("forwards an internet_banking choice and returns the invoice reference", async () => {
     mocks.createGroupSettlementIntent.mockResolvedValueOnce({
       outcome: "invoice_sent",

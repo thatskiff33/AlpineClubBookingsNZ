@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
+import { expectDefaultInvalidJsonAnswer, MALFORMED_JSON_BODY } from "./helpers/invalid-json-body";
 
 const mocks = vi.hoisted(() => ({
   requireAdmin: vi.fn(),
@@ -208,5 +209,35 @@ describe("minimum-stay policy versioned writes", () => {
     expect(mocks.executeRaw.mock.invocationCallOrder[0]).toBeLessThan(
       mocks.findUnique.mock.invocationCallOrder[0],
     );
+  });
+
+  // #5407 item 27: the read sat inside the try that also wraps the transaction,
+  // whose catch knows only the policy errors and ZodError, so a body that was
+  // not JSON fell through to its 500. It is now the shared invalid-JSON 400,
+  // before the transaction; a body of the wrong shape keeps its ZodError 400.
+  it.each(["PUT", "DELETE"] as const)(
+    "answers a %s body that is not JSON with the shared 400 and opens no transaction (#5407)",
+    async (method) => {
+      const handler = method === "PUT" ? PUT : DELETE;
+      const response = await handler(
+        new NextRequest("https://example.test/api/policy/policy-1", {
+          method,
+          headers: { "content-type": "application/json" },
+          body: MALFORMED_JSON_BODY,
+        }),
+        context,
+      );
+
+      await expectDefaultInvalidJsonAnswer(response);
+      expect(mocks.transaction).not.toHaveBeenCalled();
+    },
+  );
+
+  it("keeps the ZodError answer for a PUT body of the wrong shape (#5407)", async () => {
+    const response = await PUT(request("PUT", { version: "four" }), context);
+
+    expect(response.status).toBe(400);
+    expect(await response.json()).toMatchObject({ error: "Validation failed" });
+    expect(mocks.transaction).not.toHaveBeenCalled();
   });
 });

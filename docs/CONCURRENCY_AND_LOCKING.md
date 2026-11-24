@@ -407,7 +407,9 @@ attempt count, legacy body, and rollback-isolated booking body, so only one
 concurrent runner can move the snapshot; losing either guard sends nothing.
 The additive `EmailLog` authority columns introduce no advisory-lock key or
 transaction participant; provider delivery remains outside a database
-transaction. New booking rows keep `htmlBody` null and retain retry HTML only in
+transaction. Since #5433 the job first sweeps the owed notices
+(`cron-email-retry-job.ts`): single guarded statements on `OwedNotice` (and
+the legacy `AlertCooldown` bump markers), no transaction and no advisory key. New booking rows keep `htmlBody` null and retain retry HTML only in
 `bookingRetryHtmlBody`, which the old worker cannot select after rollback.
 
 ### Organiser bank-transfer extra invoices (#4299)
@@ -6199,23 +6201,31 @@ switch-to-internet-banking hold, the officer's held-request conversion
 composition.
 
 The confirm-pending cron's capacity bump (`resolveHoldWindowUnderLock`) also
-records its two notices as owed (#5407, `recordBumpNoticesOwed`): two
-`AlertCooldown` upserts on primary keys derived from the booking and the bump
-time, stamped with that time and handed back so the delivery claims with the
-same value, after the guarded `PENDING -> CANCELLED` claim and inside the same
-transaction, under the `lock(1)` and lodge lock it already holds. They add no
+records its two notices as owed (#5407, moved to the owed-notice mechanism by
+#5433, `recordBumpNoticesOwed`): one `OwedNotice` insert of two rows on
+primary keys derived from the kind, the booking, the bump time and the
+variant (the bumped or the guests-cancelled notice), stamped
+with that time and handed back so the delivery claims with the same value,
+after the guarded `PENDING -> CANCELLED` claim and inside the same
+transaction, under the `lock(1)` and lodge lock it already holds. It adds no
 advisory key, no change of order, no read, and no provider call or settings
-query (`INV-INT-003`); a plain upsert, never a caught unique-key error, so the
-transaction is never aborted by one. Everything after the commit runs on the
-base client with no advisory key: each notice's claim is an `updateMany` on
-its marker guarded by the marker's stamp (`claimOwedAlert`). Of the post-commit
-delivery and the sweeps of overlapping runs, only one caller holds a marker at a
-time, and a lost claim sends nothing; the clear deletes only a marker still
-stamped with its own claim. A claim is a stamp, not a lease: a send still
-running an hour after its claim, or a large clock difference between two app
-instances, lets a sweep claim the marker again. The member is still sent one
-email (the same event key); the officers may get their alert twice, the same
-outcome as a crash between a send and its clear.
+query (`INV-INT-003`); `createMany` with `skipDuplicates` (`INSERT ... ON
+CONFLICT DO NOTHING`), never a caught unique-key error, so the transaction is
+never aborted by one. Everything after the commit runs on the base client with
+no advisory key and no transaction of its own: each notice's claim is one
+`updateMany` on its marker guarded by the marker's stamp (`claimOwedNotice`,
+whose stamp rule `owed-notice/stamp.ts` shares with `claimOwedAlert`). Of the
+post-commit delivery and the sweeps of overlapping runs (the confirm-pending
+job and, every 30 minutes, the email retry job), only one caller holds a
+marker at a time, and a lost claim sends nothing; the clear and the defer
+touch only a marker still stamped with its own claim. A claim is a stamp, not
+a lease: a send still running a kind's whole wait after its claim, or a large
+clock difference between two app instances, lets a sweep claim the marker
+again. The member is still sent one email (the same event key); the officers
+may get their alert twice, the same outcome as a crash between a send and its
+clear. Bump markers a release before #5433 wrote to `AlertCooldown` are
+drained by the same sweep with `claimOwedAlert`, the same guard on that
+table, until #5433's last pull request removes that source.
 
 Officer approval of a held generic request pre-reads only the held booking's immutable concrete
 `lodgeId`, then takes global -> that lodge -> the held booking's row (#4857,
@@ -8759,7 +8769,9 @@ A's locked re-read is "A, then the void, then B". B's recount queues on A's
 lock, or, with a pointer naming the note, the void's link write itself queues
 there, on the Payment row and not yet holding the link; either way B sees A's write. On a bank transfer B lowers the total back. On a card the
 ledger is raise-only (`INV-ADDPAY-021`, #1353): A's raise stands, and B raises the
-refund-ledger-divergence alert. The inbound void runs its own recount; the
+refund-ledger-divergence alert, but only as far as Stripe's recorded refunds back
+it. Since #4444 a card recount never rises above them (owner, 23 Nov 2026), so
+with none beyond the ledger A writes nothing and the limit does not arise. The inbound void runs its own recount; the
 Stripe status recorder runs none. The suite pins the void before A's locked
 re-read (A writes nothing, bank and card), a row deactivated there, and the void
 after it: per-refund, pointer-named canonical and card (the void waits on

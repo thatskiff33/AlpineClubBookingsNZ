@@ -22,6 +22,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { NextRequest } from "next/server";
 import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 import { createAlertCooldownStore } from "./support/alert-cooldown-store";
+import { createOwedNoticeStore } from "./support/owed-notice-store";
 
 vi.stubEnv("STRIPE_SECRET_KEY", "sk_test_fake");
 
@@ -61,13 +62,16 @@ const mockLodgeFindUnique = vi.fn(
 const mockTxMemberLodgeAccessFindMany = vi.fn().mockResolvedValue([]);
 const mockValidateMinimumStay = vi.fn();
 
-// #5407: a bump records its notices as owed (`AlertCooldown`) in its
-// transaction, and the cron claims, clears and sweeps them on the base client.
+// #5407: a bump records its notices as owed (in `OwedNotice` since #5433) in
+// its transaction, and the cron claims, clears and sweeps them on the base
+// client; the sweep also reads the legacy `AlertCooldown` bump markers.
 const alertCooldownStore = createAlertCooldownStore();
+const owedNoticeStore = createOwedNoticeStore();
 
 // Shared tx mock used by booking route
 const mockTx = {
   alertCooldown: alertCooldownStore.delegate,
+  owedNotice: owedNoticeStore.delegate,
   $queryRaw: vi.fn().mockResolvedValue([{ held: true }]),
   $executeRaw: mockExecuteRaw,
   // #2364: the hosting review is reconciled inside the booking write, so
@@ -128,6 +132,9 @@ vi.mock("@/lib/prisma", () => ({
     memberLodgeAccess: { findMany: vi.fn().mockResolvedValue([]) },
     get alertCooldown() {
       return alertCooldownStore.delegate;
+    },
+    get owedNotice() {
+      return owedNoticeStore.delegate;
     },
     $transaction: (fn: (tx: unknown) => Promise<unknown>) => mockPrismaTransaction(fn),
     lodge: { findFirst: mockTxLodgeFindFirst, findUnique: mockLodgeFindUnique },

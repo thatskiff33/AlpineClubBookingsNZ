@@ -45,6 +45,7 @@ import {
   PLACEHOLDER_NAME_FINAL_ESCALATION_DAYS,
   sendPlaceholderGuestNameReminders,
 } from "@/lib/placeholder-guest-name-reminders";
+import { CENSUS_TIMEOUT_MS } from "@/test/census-timeout";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 // Midday NZ, so the UTC instant and the NZ calendar date agree (AGENTS.md).
@@ -417,7 +418,7 @@ describe("countBookingsWithUnnamedPlaceholderGuests (#2550)", () => {
  * confirmation path, this fails and they have to come back to the owner
  * decision that says visibility only.
  */
-describe("#2550 never blocks a stay", () => {
+describe("#2550 never blocks a stay", { timeout: CENSUS_TIMEOUT_MS }, () => {
   const SRC_DIR = path.join(process.cwd(), "src");
 
   /** Non-test source files allowed to import the #2550 modules. */

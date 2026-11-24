@@ -12,6 +12,7 @@ import {
   isAppCreatedPaymentIntent,
   type AppPaymentIntentMetadata,
 } from "@/lib/stripe-app-intent-metadata";
+import { CENSUS_TIMEOUT_MS } from "@/test/census-timeout";
 
 /**
  * #4532 (`INV-INT-032`): which succeeded PaymentIntents are the app's own. The
@@ -118,7 +119,7 @@ describe("Stripe money-object creation census (#4532)", () => {
       }
     }
     expect(found.sort()).toEqual(["src/lib/stripe.ts: paymentIntents", "src/lib/stripe.ts: paymentIntents"]);
-  });
+  }, CENSUS_TIMEOUT_MS);
 
   it("types the metadata of both stripe.ts creations as the app's", () => {
     const source = readFileSync("src/lib/stripe.ts", "utf8");

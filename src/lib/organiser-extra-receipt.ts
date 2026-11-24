@@ -1,5 +1,6 @@
 /** A supplementary organiser invoice's actual cash joins the child's paid mirror. */
 import type { Invoice } from "xero-node";
+import { storedShortBookingId } from "@/lib/booking-reference";
 import type { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { lockPaymentForRefundedTotal } from "@/lib/payment-transactions";
@@ -120,7 +121,7 @@ async function raiseCashReversedAfterRefundReview(
       localModel: "Booking", localId: input.bookingId, status: "FAILED", correlationKey, replayable: false,
       lastErrorCode: "ORGANISER_EXTRA_CASH_REVERSED",
       lastErrorMessage:
-        `Cash on the group organiser's extra invoice ${reference} for Booking ${input.bookingId.slice(0, 8)} was reversed in Xero ` +
+        `Cash on the group organiser's extra invoice ${reference} for Booking ${storedShortBookingId(input.bookingId)} was reversed in Xero ` +
         "after part of it had been refunded to the organiser, so the app has left what it records as paid unchanged. Check the invoice, " +
         "the reversal and the refund in Xero, recover or write off the difference there, then choose Resolve (fixed in Xero).",
       requestPayload: { invoiceId: input.invoice.invoiceID ?? null, bookingId: input.bookingId, modificationId: input.modificationId, cashCents: input.cashCents },

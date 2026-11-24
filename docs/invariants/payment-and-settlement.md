@@ -4033,7 +4033,7 @@ _Split from `INV-PAY-057` (#3220)._
 
 ## INV-PAY-126
 
-**Related: `INV-PAY-116`** (the wording), **`INV-PAY-125`**.
+**Related: `INV-PAY-116`**, **`INV-PAY-125`**.
 
 - **An invoice correction is not a refund** (#3979, owner decision 13 Oct
   2026). A modification note worded *Invoice correction* ([INV-PAY-116]) moved
@@ -4046,8 +4046,10 @@ _Split from `INV-PAY-057` (#3220)._
   from an allowlist of the reasons a receipt is born with. Any other receipt,
   a part payment recognised at cancel included, is cash-sized. That receipt
   still includes the corrected amount, so the correction keeps counting and the
-  net stays the cash. A recount finds a bank-transfer payment's
-  modification notes by its invoice, so a later note never drops an earlier one.
+  net stays the cash. A recount finds any payment's modification notes by its
+  invoice (#4444): a later note drops none, and a note counts once per
+  payment. A card payment's total never rises above Stripe's refunds (owner,
+  23 Nov), so two notes for one refund cannot pass Stripe.
   A keep sets the whole refunded total its links record under the `Payment`
   row (`decideLinkedRefundedTotalCents`, floored), never an increment; the
   note's allocation write or removal locks that row first and decides it too,
@@ -4060,13 +4062,8 @@ _Split from `INV-PAY-057` (#3220)._
   organiser-settled child, today's answer stands.
 - The Xero repair tool leaves notes that moved no cash out of its known
   modification refunds.
-- Pinned by `account-credit-modification-notes.test.ts`,
-  `xero-credit-note-repairs.test.ts`, `xero-booking-edit-settlement.test.ts`,
-  `xero-repair-known-modification-refund.test.ts`,
-  `kept-settle-correction-recount.test.ts`,
-  `retire-unlisted-credit-note-allocations.test.ts`,
-  `ib-settle-from-cash.realdb.test.ts` and
-  `kept-settle-queued-cancel.realdb.test.ts`.
+- Pinned by the suites the
+  [Xero guide](../xero/ARCHITECTURE.md#card-recount-stripe-cap) lists.
 
 ## INV-PAY-148
 

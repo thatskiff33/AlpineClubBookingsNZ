@@ -21,6 +21,7 @@ import { describe, expect, it, vi } from "vitest";
 // on every count this test makes (#3132).
 import { liveDocSurfaces } from "@/lib/__tests__/support/live-doc-surfaces";
 import { stripComments } from "@/lib/__tests__/support/strip-comments";
+import { CENSUS_TIMEOUT_MS } from "@/test/census-timeout";
 
 /*
   Every test here is pure static analysis: parse ~230 admin source files with
@@ -33,10 +34,11 @@ import { stripComments } from "@/lib/__tests__/support/strip-comments";
   slowest test, which tripped vitest's 5s default: a red suite with no defect
   behind it. The suite-level hoisting further down cut the real cost (6.5s -> 3s
   of test time, slowest test 1.6s -> 1.1s), and this raises the ceiling so the
-  margin does not depend on machine load. Matches the convention in
-  `src/lib/__tests__/phase-b2.test.ts`.
+  margin does not depend on machine load. The ceiling is the shared whole-tree
+  budget from `src/test/census-timeout.ts`, not a local literal: the file walks
+  `src/` for live doc surfaces (#5439).
 */
-vi.setConfig({ testTimeout: 30_000 });
+vi.setConfig({ testTimeout: CENSUS_TIMEOUT_MS });
 
 /*
   #2160 contract test — the ONE invariant the banner rollout must never break.

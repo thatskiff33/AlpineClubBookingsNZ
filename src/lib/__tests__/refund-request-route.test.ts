@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
+import { expectDefaultInvalidJsonAnswer, MALFORMED_JSON_BODY } from "./helpers/invalid-json-body";
 
 const mocks = vi.hoisted(() => ({
   readSupersededCaptureHeldBack: vi.fn().mockResolvedValue({ byTransaction: new Map(), totalCents: 0 }),
@@ -353,6 +354,58 @@ describe("POST /api/bookings/[id]/refund-request", () => {
       },
       _sum: { amountCents: true },
     });
+    expect(mocks.refundRequestCreate).not.toHaveBeenCalled();
+  });
+});
+
+// #5407 item 26: the body is read only once the booking is known to be an
+// eligible cancelled booking with no pending appeal, with no handling of its
+// own, so a malformed body used to be a 500. It is now the shared invalid-JSON
+// 400, before any appeal is written.
+describe("POST /api/bookings/[id]/refund-request: malformed body (#5407)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.cardDebtPaymentFindUnique.mockResolvedValue(null);
+    mocks.readSupersededCaptureHeldBack.mockResolvedValue({ byTransaction: new Map(), totalCents: 0 });
+    mocks.auth.mockResolvedValue({
+      user: { id: "member-1", role: "MEMBER", accessRoles: [{ role: "USER" }] },
+    });
+    mocks.refundRequestFindFirst.mockResolvedValue(null);
+    mocks.manualRefundTaskAggregate.mockResolvedValue({ _sum: { amountCents: null } });
+    mocks.memberCreditAggregate.mockResolvedValue({ _sum: { amountCents: null } });
+    mocks.bookingFindUnique.mockResolvedValue({
+      id: "booking-1",
+      memberId: "member-1",
+      status: "CANCELLED",
+      checkIn: new Date("2026-07-01"),
+      checkOut: new Date("2026-07-03"),
+      payment: { amountCents: 9000, refundedAmountCents: 1000, status: "PARTIALLY_REFUNDED" },
+      member: { firstName: "Alex", lastName: "Example" },
+    });
+  });
+
+  function postWithBody(body: string) {
+    return POST(
+      new NextRequest("http://localhost/api/bookings/booking-1/refund-request", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body,
+      }),
+      { params: Promise.resolve({ id: "booking-1" }) },
+    );
+  }
+
+  it("answers the shared invalid-JSON 400 and writes no appeal", async () => {
+    await expectDefaultInvalidJsonAnswer(await postWithBody(MALFORMED_JSON_BODY));
+    expect(mocks.refundRequestCreate).not.toHaveBeenCalled();
+    expect(mocks.sendAdminRefundRequestAlert).not.toHaveBeenCalled();
+  });
+
+  it("keeps the schema answer for a well-formed body of the wrong shape", async () => {
+    const response = await postWithBody(JSON.stringify({ reason: 7 }));
+
+    expect(response.status).toBe(400);
+    expect(await response.json()).toMatchObject({ error: "Validation failed" });
     expect(mocks.refundRequestCreate).not.toHaveBeenCalled();
   });
 });

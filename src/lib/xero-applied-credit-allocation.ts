@@ -20,6 +20,7 @@
  * outbox worker, outside the ledger transactions.
  */
 import { CreditNote } from "xero-node";
+import { storedShortBookingId } from "@/lib/booking-reference";
 import { CreditType, Prisma } from "@prisma/client";
 import { appliedCreditSettledByCancel, unallocatedAppliedCents } from "./xero-applied-credit-ledger-state";
 import { prisma } from "./prisma";
@@ -244,7 +245,7 @@ async function mintAppliedCreditRemainderNote(params: {
   const { codings, taxRendering, exemptLineTax } = await resolveMintLines(bookingId, mintGroups);
   const lineItems = mintLineItems(
     codings,
-    `Account credit applied to booking ${bookingId.slice(0, 8)}`,
+    `Account credit applied to booking ${storedShortBookingId(bookingId)}`,
     taxRendering,
     exemptLineTax,
   );
@@ -263,7 +264,7 @@ async function mintAppliedCreditRemainderNote(params: {
     date: remainderNoteDate,
     lineAmountTypes: taxRendering.lineAmountTypes,
     lineItems,
-    reference: `Applied credit - Booking ${bookingId.slice(0, 8)}`,
+    reference: `Applied credit - Booking ${storedShortBookingId(bookingId)}`,
     status: CreditNote.StatusEnum.AUTHORISED,
   });
 

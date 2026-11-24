@@ -1,6 +1,7 @@
 import "server-only";
 
 import { PaymentSource, PaymentStatus, PaymentTransactionKind } from "@prisma/client";
+import { storedShortBookingId } from "@/lib/booking-reference";
 
 import {
   creditReleaseShareOverlaps,
@@ -114,7 +115,7 @@ async function alertOnce(key: string, bookingId: string, headline: string, detai
     if (!(await claimAlertCooldown({ key, windowMs: ALERT_WINDOW_MS }))) return;
     await sendAdminXeroSyncErrorAlert({
       errorType: "CREDIT_RELEASE_PAYMENT",
-      operation: `${headline} (booking ${bookingId.slice(0, 8)})`,
+      operation: `${headline} (booking ${storedShortBookingId(bookingId)})`,
       errorMessage: detail,
       timestamp: new Date(),
     });
