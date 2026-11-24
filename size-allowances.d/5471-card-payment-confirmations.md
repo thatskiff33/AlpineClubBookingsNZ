@@ -1,4 +1,4 @@
-# File-size allowances for #5433 PR 3 (card-payment confirmations)
+# File-size allowances for #5471 (#5433, card-payment confirmations)
 
 file: src/lib/email/booking.ts
 lines: 1859
