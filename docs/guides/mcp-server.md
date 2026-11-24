@@ -353,16 +353,17 @@ These are in [`catalogue-groups.ts`](../../src/lib/mcp/catalogue-groups.ts),
 their answers' shapes in
 [`connection-shapes-groups.ts`](../../src/lib/connection-shapes-groups.ts),
 and all are reached through `find_actions`. None of these routes has an
-officer branch: each reads the signed-in member's id from the session, so a
-connection acts on the member's own requests and groups only. The group
+officer branch: each one that reads or changes a request or group reads the
+signed-in member's id from the session, so a connection acts on the member's
+own requests and groups only. The group
 actions answer **Not Found** while the group bookings module is off.
 
 | Action | What it does | Kind | Route |
 | --- | --- | --- | --- |
 | `list_my_whole_lodge_requests` | The member's own whole-lodge requests, as My bookings lists them: dates, party size, `pending`/`approved`/`declined`/`withdrawn`, the booking an approved one became, and whether it can be withdrawn | read | `GET /api/booking-requests/whole-lodge` (new) |
-| `request_whole_lodge` | Asks the booking officer for the whole lodge. Books and charges nothing, and answers the same whether or not the lodge is free (ADR-001). Emails the booking officers | destructive | `POST /api/booking-requests/whole-lodge` |
+| `request_whole_lodge` | Asks the booking officer for the whole lodge. Books and charges nothing, and answers the same whether or not the lodge is free (ADR-001). Putting account credit towards it is the member's choice on the website: the request never carries it from a connection. Emails the booking officers | destructive | `POST /api/booking-requests/whole-lodge` (always `applyAccountCredit: false`) |
 | `withdraw_whole_lodge_request` | Withdraws one of the member's open requests. Cannot be undone | destructive | `POST /api/booking-requests/whole-lodge/[id]/withdraw` |
-| `open_group_booking` | Opens a group on one of the member's own bookings and answers with its join code, not the group's internal id | write | `POST /api/group-bookings` |
+| `open_group_booking` | Opens a group on one of the member's own bookings and answers with its join code, not the group's internal id. A booking keeps its one group, and its payment mode cannot be changed | destructive | `POST /api/group-bookings` |
 | `get_group_booking` | What a group's public join page shows for its code, including the organiser's first name | read | `GET /api/group-bookings/[code]` |
 | `set_group_booking_joining` | Closes the member's own group to new joins, or reopens it | write | `PATCH /api/group-bookings/[code]` |
 
@@ -573,7 +574,8 @@ organiser and the club information below:
   `request_whole_lodge` and `withdraw_whole_lodge_request` send back only the
   club's fixed acknowledgement.
 - `open_group_booking` and `set_group_booking_joining`: the person's own
-  group's join code, payment mode, status, deadline and size limit.
+  group's join code, payment mode, status, deadline and size limit. Anyone
+  holding the join code can read the group's join page.
 - `get_group_booking`: for a join code the person has, what the group's
   public join page shows: **the organiser's first name**, the lodge, the
   dates, how it is paid for and whether it can be joined.

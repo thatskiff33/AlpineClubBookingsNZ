@@ -79,11 +79,9 @@ export function isMemberWholeLodgeRequestOpen(
 export const MY_WHOLE_LODGE_REQUEST_LIMIT = 20;
 
 /** The four words a member may see. Nothing else is ever rendered. */
-export type MyWholeLodgeRequestStatus =
-  | "pending"
-  | "approved"
-  | "declined"
-  | "withdrawn";
+export const MY_WHOLE_LODGE_REQUEST_STATUSES = ["pending", "approved", "declined", "withdrawn"] as const;
+
+export type MyWholeLodgeRequestStatus = (typeof MY_WHOLE_LODGE_REQUEST_STATUSES)[number];
 
 export type MyWholeLodgeRequestItem = {
   id: string;

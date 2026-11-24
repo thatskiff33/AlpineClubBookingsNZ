@@ -368,6 +368,8 @@ describe("AI app action census (ALP-653, INV-MCP-006)", { timeout: CENSUS_TIMEOU
     "report_maintenance_issue",
     "confirm_family_member_details",
     "request_whole_lodge",
+    // Cannot be undone: a booking keeps its one group and its payment mode.
+    "open_group_booking",
   ])(
     "marks %s destructive: it notifies other people or overwrites another person's record (#5305)",
     (id) => {

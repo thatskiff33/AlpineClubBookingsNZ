@@ -27,8 +27,9 @@ export const groupBookingJoinStatusSchema = z
   .strict();
 
 /**
- * The `[code]` segment: the join code as the organiser hands it out. Spaces,
- * hyphens and case are normalised by the service (`normaliseJoinCode`).
+ * The `[code]` segment: the join code as the organiser hands it out. Case and
+ * hyphens are normalised by the service (`normaliseJoinCode`); a code that
+ * fails this schema answers Not Found, as an unknown code does.
  */
 export const groupBookingCodeParamsSchema = z.object({
   code: z.string().min(1).max(64),

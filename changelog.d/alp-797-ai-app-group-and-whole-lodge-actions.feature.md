@@ -6,9 +6,12 @@
   and close or reopen the member's own group to new joins. The group actions
   answer **Not Found** while group bookings are switched off. Every change
   needs a connection the member approved for **View and change** and is
-  recorded in the audit log. Asking for or withdrawing a whole-lodge request
-  can't be undone from the app and the request emails the booking officer, so
-  the app is asked to confirm with the member first.
+  recorded in the audit log. A whole-lodge request emails the booking officer
+  at once, a withdrawal can't be reversed, and a group can't be removed or
+  have its payment mode changed once opened, so for these the app is asked to
+  confirm with the member first. Putting account credit towards a whole-lodge
+  request is still chosen on the website: a request made through an AI app
+  never uses the member's credit.
 
   Joining a group and paying a group's combined bill move money, so they stay
   on the website, as do the visitor and school booking request forms and a

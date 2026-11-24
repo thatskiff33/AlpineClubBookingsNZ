@@ -10,7 +10,10 @@ import {
   resolveGroupBookingByCode,
 } from "@/lib/group-booking";
 import { toGroupBookingSummaryResponse } from "@/lib/group-booking-summary-response";
-import { groupBookingJoinStatusSchema } from "@/lib/group-booking-request-schemas";
+import {
+  groupBookingCodeParamsSchema,
+  groupBookingJoinStatusSchema,
+} from "@/lib/group-booking-request-schemas";
 import {
   GROUP_BOOKING_JOIN_STATUS_CONNECTION_SHAPE,
   GROUP_BOOKING_SUMMARY_CONNECTION_SHAPE,
@@ -33,8 +36,10 @@ export async function GET(
   const rateLimited = await applyRateLimit(rateLimiters.groupBookingLookup, request);
   if (rateLimited) return rateLimited;
 
-  const { code } = await params;
-  const summary = await resolveGroupBookingByCode(code);
+  const parsedParams = groupBookingCodeParamsSchema.safeParse(await params);
+  const summary = parsedParams.success
+    ? await resolveGroupBookingByCode(parsedParams.data.code)
+    : null;
   if (!summary) {
     return NextResponse.json({ error: "Group booking not found" }, { status: 404 });
   }
@@ -80,7 +85,11 @@ export async function PATCH(
     );
   }
 
-  const { code } = await params;
+  const parsedParams = groupBookingCodeParamsSchema.safeParse(await params);
+  if (!parsedParams.success) {
+    return NextResponse.json({ error: "Group booking not found" }, { status: 404 });
+  }
+  const { code } = parsedParams.data;
   try {
     const group =
       parsed.data.action === "close"

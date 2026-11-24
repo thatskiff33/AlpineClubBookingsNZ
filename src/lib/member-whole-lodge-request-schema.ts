@@ -4,9 +4,10 @@ import { parsedDateOnlySchema } from "@/lib/date-only-schema";
 
 /**
  * The body of a member's "Book the whole lodge" request
- * (`POST /api/booking-requests/whole-lodge`, #2263), in a lib module so the
- * route and the AI app action catalogue read one description of it (ALP-797,
- * `INV-SSOT`). Client-safe: zod only.
+ * (`POST /api/booking-requests/whole-lodge`, #2263), and the fixed answers
+ * of that route and its withdraw route, in a lib module so the routes, the AI
+ * app action catalogue and its answer shapes read one description of each
+ * (ALP-797, `INV-SSOT`). Client-safe: zod only.
  */
 
 const noCrlf = (value: string) => !/[\r\n]/.test(value);
@@ -41,3 +42,21 @@ export const memberWholeLodgeRequestSchema = z.object({
 
 /** The `[id]` segment of `/api/booking-requests/whole-lodge/[id]/withdraw`. */
 export { routeIdParamsSchema as wholeLodgeRequestIdParamsSchema } from "@/lib/route-id-params";
+
+/*
+ * The two acknowledgement bodies. FROZEN OBJECTS, not Responses: a Response's
+ * body is a one-shot stream, so reusing an instance across requests breaks on
+ * the second caller. Each request re-serialises the same object, so every
+ * member on every path receives identical bytes, and neither echoes anything
+ * the member sent (ADR-001 decision 6: an echo is a channel).
+ */
+export const WHOLE_LODGE_REQUEST_ACCEPTED = Object.freeze({
+  success: true,
+  message:
+    "Thanks — your whole-lodge request has been sent to the booking officer. They'll be in touch to confirm what's possible. You can see it under My requests on My bookings.",
+});
+
+export const WHOLE_LODGE_REQUEST_WITHDRAWN = Object.freeze({
+  success: true,
+  message: "Your whole-lodge request has been withdrawn.",
+});

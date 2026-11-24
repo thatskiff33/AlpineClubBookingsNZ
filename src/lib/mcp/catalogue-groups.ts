@@ -27,13 +27,18 @@ import {
   memberWholeLodgeRequestSchema,
   wholeLodgeRequestIdParamsSchema,
 } from "@/lib/member-whole-lodge-request-schema";
-import { MY_WHOLE_LODGE_REQUEST_LIMIT } from "@/lib/member-whole-lodge-requests";
+import {
+  MY_WHOLE_LODGE_REQUEST_LIMIT,
+  MY_WHOLE_LODGE_REQUEST_STATUSES,
+} from "@/lib/member-whole-lodge-requests";
+
+const codeList = (values: readonly string[]) => values.map((value) => `\`${value}\``).join(", ");
 
 export const MCP_GROUP_ACTIONS: readonly McpAction[] = [
   {
     id: "list_my_whole_lodge_requests",
     title: "List my whole-lodge requests",
-    summary: `The signed-in member's own requests to book the whole lodge, newest first (up to ${MY_WHOLE_LODGE_REQUEST_LIMIT}): dates (\`YYYY-MM-DD\`), approximate party size, status (\`pending\`, \`approved\`, \`declined\` or \`withdrawn\`), the booking an approved one became, and whether it can still be withdrawn.`,
+    summary: `The signed-in member's own requests to book the whole lodge, newest first (up to ${MY_WHOLE_LODGE_REQUEST_LIMIT}): dates (\`YYYY-MM-DD\`), approximate party size, status (one of ${codeList(MY_WHOLE_LODGE_REQUEST_STATUSES)}), the booking an approved one became, and whether it can still be withdrawn.`,
     method: "GET",
     path: "/api/booking-requests/whole-lodge",
     kind: "read",
@@ -44,10 +49,12 @@ export const MCP_GROUP_ACTIONS: readonly McpAction[] = [
     id: "request_whole_lodge",
     title: "Ask to book the whole lodge",
     summary:
-      "Sends the club's booking officer a request for the signed-in member's group to have a lodge to itself from `checkIn` to `checkOut` (`YYYY-MM-DD`, not in the past): the lodge (`lodgeId`, from `list_lodges`), an approximate `headcount`, who the group is (`groupDescription`), optional `notes`, and whether to put the member's account credit towards it if approved (`applyAccountCredit`). Nothing is booked or charged: the officer decides and sets the price. The answer is the same whether or not the lodge is free. A member may have only a few requests waiting at once. The booking officer is emailed it, so confirm it with the member first.",
+      "Sends the club's booking officer a request for the signed-in member's group to have a lodge to itself from `checkIn` to `checkOut` (`YYYY-MM-DD`, not in the past): the lodge (`lodgeId`, from `list_lodges`), an approximate `headcount`, who the group is (`groupDescription`) and optional `notes`. Nothing is booked or charged: the officer decides and sets the price. Putting the member's account credit towards it is chosen on the website, not here. The answer is the same whether or not the lodge is free. A member may have only a few requests waiting at once. The booking officer is emailed it at once, so confirm it with the member first.",
     method: "POST",
     path: "/api/booking-requests/whole-lodge",
-    body: memberWholeLodgeRequestSchema,
+    // Approval spends the credit with no further step: the member's own choice.
+    body: memberWholeLodgeRequestSchema.omit({ applyAccountCredit: true }),
+    fixedBody: { applyAccountCredit: false },
     kind: "destructive",
     returns: WHOLE_LODGE_REQUEST_SENT_CONNECTION_SHAPE,
     core: false,
@@ -68,11 +75,11 @@ export const MCP_GROUP_ACTIONS: readonly McpAction[] = [
     id: "open_group_booking",
     title: "Open a group on my booking",
     summary:
-      "Opens a group on one of the signed-in member's own bookings (`organiserBookingId`) so other members can add their own bookings to it with the join code it answers with. `paymentMode` is `EACH_PAYS_OWN` (each joiner pays for themselves) or `ORGANISER_PAYS` (the member later pays one combined bill on the website). Optional `joinDeadline` (`YYYY-MM-DD`) and `maxJoiners`. Joining and paying happen on the website.",
+      "Opens a group on one of the signed-in member's own bookings (`organiserBookingId`) so other members can add their own bookings to it with the join code it answers with. `paymentMode` is `EACH_PAYS_OWN` (each joiner pays for themselves) or `ORGANISER_PAYS` (the member pays one combined bill for everyone who joins, on the website). Optional `joinDeadline` (`YYYY-MM-DD`) and `maxJoiners`. A booking has one group, which cannot be removed and whose payment mode cannot be changed, so confirm both with the member first. Joining and paying happen on the website.",
     method: "POST",
     path: "/api/group-bookings",
     body: createGroupBookingSchema,
-    kind: "write",
+    kind: "destructive",
     returns: GROUP_BOOKING_CREATED_CONNECTION_SHAPE,
     core: false,
   },
@@ -80,7 +87,7 @@ export const MCP_GROUP_ACTIONS: readonly McpAction[] = [
     id: "get_group_booking",
     title: "Read a group booking",
     summary:
-      "What the join page shows for a group's join `code`: its status, how it is paid for and how a member joining now pays, the organiser's first name, the lodge, the dates, the join deadline and whether it can be joined now. An unknown code answers Not Found.",
+      "What the join page shows for a group's join `code` (letters and digits, without spaces): its status, how it is paid for and how a member joining now pays, the organiser's first name, the lodge, the dates, the join deadline and whether it can be joined now. An unknown code answers Not Found.",
     method: "GET",
     path: "/api/group-bookings/[code]",
     params: groupBookingCodeParamsSchema,
@@ -92,7 +99,7 @@ export const MCP_GROUP_ACTIONS: readonly McpAction[] = [
     id: "set_group_booking_joining",
     title: "Close or reopen my group to new joins",
     summary:
-      "For a group the signed-in member organises, by join `code`: `action` `close` stops new members joining and `reopen` lets them join again. Members already in the group keep their bookings. A cancelled group cannot be reopened.",
+      "For a group the signed-in member organises, by join `code` (without spaces): `action` `close` stops new members joining and `reopen` lets them join again. Members already in the group keep their bookings. A cancelled group cannot be reopened.",
     method: "PATCH",
     path: "/api/group-bookings/[code]",
     params: groupBookingCodeParamsSchema,

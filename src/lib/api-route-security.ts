@@ -357,8 +357,8 @@ export const mixedMethodApiRoutes = {
   },
   // #2263 — recorded here for the RATIONALE, not because the file mixes
   // boundaries. Both member whole-lodge routes are wholly
-  // member-boundary; the reason string is the documented home for a route whose
-  // response shape is deliberately uniform, and writing it down here keeps the
+  // member-boundary; the reason string is the documented home for the POSTs,
+  // whose response shape is deliberately uniform, and writing it down here keeps the
   // per-method guard enforced (every exported method must be documented and must
   // carry a session guard). They are POINTEDLY ABSENT from
   // `explicitPublicApiRoutes`: listing them there would EXEMPT them from the

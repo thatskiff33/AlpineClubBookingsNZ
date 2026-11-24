@@ -16,13 +16,16 @@ import { clubTodayDateOnlyInstant } from "@/lib/club-time/server";
 import { requireActiveSession } from "@/lib/session-guards";
 import logger from "@/lib/logger";
 import { parseJsonRequestBody } from "@/lib/api-json";
-import { memberWholeLodgeRequestSchema } from "@/lib/member-whole-lodge-request-schema";
+import {
+  memberWholeLodgeRequestSchema,
+  WHOLE_LODGE_REQUEST_ACCEPTED,
+} from "@/lib/member-whole-lodge-request-schema";
 import { loadMyWholeLodgeRequests } from "@/lib/member-whole-lodge-request-list";
 import {
   MY_WHOLE_LODGE_REQUESTS_CONNECTION_SHAPE,
   WHOLE_LODGE_REQUEST_SENT_CONNECTION_SHAPE,
 } from "@/lib/connection-shapes-groups";
-import { connectionJson } from "@/lib/mcp-connection-request";
+import { arrivesAsMcpConnection, connectionJson } from "@/lib/mcp-connection-request";
 
 /*
  * Member-facing "Book the whole lodge" request (#2263, epic #2245).
@@ -57,8 +60,10 @@ import { connectionJson } from "@/lib/mcp-connection-request";
  * `request_whole_lodge` and GET is `list_my_whole_lodge_requests`, the
  * member's own requests as My bookings lists them (the one loader both read),
  * which is where an app finds the id `withdraw_whole_lodge_request` takes.
- * The request body's schema lives in `member-whole-lodge-request-schema.ts`
- * so the action describes it once (`INV-SSOT`).
+ * The request body's schema and the frozen acknowledgement live in
+ * `member-whole-lodge-request-schema.ts` so the action describes them once
+ * (`INV-SSOT`). Putting account credit towards the request is the member's
+ * own choice on the website: a connection's request never carries it.
  */
 
 /**
@@ -76,18 +81,6 @@ export async function GET(request: NextRequest) {
   const requests = await loadMyWholeLodgeRequests(guard.session.user.id);
   return connectionJson(request, { requests }, MY_WHOLE_LODGE_REQUESTS_CONNECTION_SHAPE);
 }
-
-/**
- * The one acknowledgement body. A module-level FROZEN OBJECT, not a Response:
- * a Response's body is a one-shot stream, so reusing an instance across requests
- * breaks on the second caller. Each request re-serialises this same object, so
- * every member on every path receives identical bytes.
- */
-const WHOLE_LODGE_REQUEST_ACCEPTED = Object.freeze({
-  success: true,
-  message:
-    "Thanks — your whole-lodge request has been sent to the booking officer. They'll be in touch to confirm what's possible. You can see it under My requests on My bookings.",
-});
 
 export async function POST(request: NextRequest) {
   // 1. Session. Any login-holder may ask (owner decision D2) — there is no
@@ -170,9 +163,12 @@ export async function POST(request: NextRequest) {
       lodgeId,
       // Recorded only when approval will leave the payment method to the
       // member (#4019); the legacy approval ignores it, so a tick sent with
-      // either module off is dropped rather than stored as a promise.
+      // either module off is dropped rather than stored as a promise. Approval
+      // spends the credit with no further step, so an AI app may not choose
+      // it for the member (ALP-797): from a connection it is always no.
       applyAccountCredit:
         parsed.data.applyAccountCredit === true &&
+        !arrivesAsMcpConnection(request) &&
         memberWholeLodgeChoosesPaymentMethod(await loadEffectiveModuleFlags()),
     });
 

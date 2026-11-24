@@ -9,6 +9,7 @@
  *   branch, so each test pins the member id the service was called with;
  * - the browser's answer is unchanged.
  */
+import { NextRequest } from "next/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const h = vi.hoisted(() => ({
@@ -79,8 +80,19 @@ import { POST as withdrawWholeLodgeRequest } from "@/app/api/booking-requests/wh
 import { POST as openGroupBooking } from "@/app/api/group-bookings/route";
 import { GET as getGroupBooking, PATCH as setGroupBookingJoining } from "@/app/api/group-bookings/[code]/route";
 import { expectActionContract, officerMemberSession } from "@/lib/__tests__/helpers/mcp-action-contract";
+import { MCP_PRINCIPAL_HEADER } from "@/lib/mcp/principal";
 
 const MEMBER_ID = "officer-1";
+
+function routeRequest(url: string, init: { method: string; body?: unknown; viaConnection: boolean }): NextRequest {
+  const headers: Record<string, string> = { "content-type": "application/json" };
+  if (init.viaConnection) headers[MCP_PRINCIPAL_HEADER] = "test-principal";
+  return new NextRequest(`https://club.example.test${url}`, {
+    method: init.method,
+    headers,
+    body: init.body === undefined ? undefined : JSON.stringify(init.body),
+  });
+}
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -147,8 +159,25 @@ describe("request_whole_lodge", () => {
     expect(JSON.stringify(connection)).not.toContain("request-new");
     expect(browser).toEqual(connection);
     expect(h.createMemberWholeLodgeRequest).toHaveBeenCalledWith(
-      expect.objectContaining({ memberId: MEMBER_ID, headcount: 18, lodgeId: "lodge-1" }),
+      expect.objectContaining({ memberId: MEMBER_ID, headcount: 18, lodgeId: "lodge-1", applyAccountCredit: false }),
     );
+  });
+
+  it("never lets a connection put the member's account credit towards the request", async () => {
+    // Approval spends the credit with no further step, so only the member chooses it, on the website.
+    h.createMemberWholeLodgeRequest.mockResolvedValue({ id: "request-new" });
+    const body = {
+      checkIn: "2026-08-01",
+      checkOut: "2026-08-03",
+      headcount: 18,
+      groupDescription: "Ski club reunion",
+      lodgeId: "lodge-1",
+      applyAccountCredit: true,
+    };
+    const url = "/api/booking-requests/whole-lodge";
+    expect((await requestWholeLodge(routeRequest(url, { method: "POST", body, viaConnection: true }))).status).toBe(201);
+    expect((await requestWholeLodge(routeRequest(url, { method: "POST", body, viaConnection: false }))).status).toBe(201);
+    expect(h.createMemberWholeLodgeRequest.mock.calls.map((call) => call[0].applyAccountCredit)).toEqual([false, true]);
   });
 });
 
@@ -216,6 +245,15 @@ describe("get_group_booking", () => {
     });
     expect(connection).toMatchObject({ code: "ABCD2345", organiserFirstName: "Olive", checkIn: "2026-08-01T00:00:00.000Z" });
     expect(browser).toEqual(connection);
+  });
+
+  it("answers a code its schema refuses as Not Found, without a lookup, as an unknown code", async () => {
+    const response = await getGroupBooking(
+      routeRequest("/api/group-bookings/x", { method: "GET", viaConnection: true }) as never,
+      { params: Promise.resolve({ code: "A".repeat(65) }) },
+    );
+    expect(response.status).toBe(404);
+    expect(h.resolveGroupBookingByCode).not.toHaveBeenCalled();
   });
 });
 

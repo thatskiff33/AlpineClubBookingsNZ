@@ -13,6 +13,10 @@ import { requireActiveSession } from "@/lib/session-guards";
 import logger from "@/lib/logger";
 import { WHOLE_LODGE_REQUEST_WITHDRAWN_CONNECTION_SHAPE } from "@/lib/connection-shapes-groups";
 import { connectionJson } from "@/lib/mcp-connection-request";
+import {
+  WHOLE_LODGE_REQUEST_WITHDRAWN,
+  wholeLodgeRequestIdParamsSchema,
+} from "@/lib/member-whole-lodge-request-schema";
 
 /*
  * Member withdraws their own pending whole-lodge request (#2263, D3).
@@ -30,12 +34,6 @@ import { connectionJson } from "@/lib/mcp-connection-request";
  *
  * Also the AI app action `withdraw_whole_lodge_request` (ALP-797).
  */
-
-/** One frozen body, re-serialised per request; echoes nothing back. */
-const WITHDRAW_ACCEPTED = Object.freeze({
-  success: true,
-  message: "Your whole-lodge request has been withdrawn.",
-});
 
 export async function POST(
   request: NextRequest,
@@ -56,11 +54,15 @@ export async function POST(
   );
   if (!memberLimit.success) return rateLimitedResponse(memberLimit);
 
-  const { id } = await params;
+  const parsedParams = wholeLodgeRequestIdParamsSchema.safeParse(await params);
+  if (!parsedParams.success) {
+    return NextResponse.json({ error: "Invalid request id" }, { status: 400 });
+  }
+  const { id } = parsedParams.data;
 
   try {
     await withdrawMemberWholeLodgeRequest({ requestId: id, memberId });
-    return connectionJson(request, WITHDRAW_ACCEPTED, WHOLE_LODGE_REQUEST_WITHDRAWN_CONNECTION_SHAPE);
+    return connectionJson(request, WHOLE_LODGE_REQUEST_WITHDRAWN, WHOLE_LODGE_REQUEST_WITHDRAWN_CONNECTION_SHAPE);
   } catch (err) {
     if (err instanceof BookingRequestError) {
       return NextResponse.json({ error: err.message }, { status: err.status });

@@ -3,23 +3,30 @@
  * `INV-MCP-006`): the one place a catalogue entry's `returns` and its
  * route's projection both read (`INV-SSOT`).
  *
- * Types only from the route modules: nothing here reaches the database.
+ * Types only from the lib modules the routes answer from: nothing here
+ * reaches the database.
  */
-import { completeConnectionShapeFor, connectionShapeFor, type ConnectionShape } from "@/lib/connection-projection";
+import type { GroupBookingStatus } from "@prisma/client";
+
+import { completeConnectionShapeFor, connectionShapeFor } from "@/lib/connection-projection";
 import type { GroupBookingCreatedResponse } from "@/lib/group-booking-request-schemas";
 import type { GroupBookingSummaryResponse } from "@/lib/group-booking-summary-response";
+import type {
+  WHOLE_LODGE_REQUEST_ACCEPTED,
+  WHOLE_LODGE_REQUEST_WITHDRAWN,
+} from "@/lib/member-whole-lodge-request-schema";
 import type { MyWholeLodgeRequestItem } from "@/lib/member-whole-lodge-requests";
 
 /**
  * The whole-lodge request routes' fixed acknowledgement. It echoes nothing
  * the member sent and says nothing about the calendar (ADR-001 decision 6).
  */
-const WHOLE_LODGE_ACKNOWLEDGEMENT_SHAPE = completeConnectionShapeFor<{ success: boolean; message: string }>({
-  success: true,
-  message: true,
-});
-export const WHOLE_LODGE_REQUEST_SENT_CONNECTION_SHAPE: ConnectionShape = WHOLE_LODGE_ACKNOWLEDGEMENT_SHAPE;
-export const WHOLE_LODGE_REQUEST_WITHDRAWN_CONNECTION_SHAPE: ConnectionShape = WHOLE_LODGE_ACKNOWLEDGEMENT_SHAPE;
+export const WHOLE_LODGE_REQUEST_SENT_CONNECTION_SHAPE = completeConnectionShapeFor<
+  typeof WHOLE_LODGE_REQUEST_ACCEPTED
+>({ success: true, message: true });
+export const WHOLE_LODGE_REQUEST_WITHDRAWN_CONNECTION_SHAPE = completeConnectionShapeFor<
+  typeof WHOLE_LODGE_REQUEST_WITHDRAWN
+>({ success: true, message: true });
 
 /** The member's own whole-lodge requests: the four member-visible words, never the pipeline status. */
 export const MY_WHOLE_LODGE_REQUESTS_CONNECTION_SHAPE = completeConnectionShapeFor<{
@@ -47,7 +54,7 @@ export const GROUP_BOOKING_CREATED_CONNECTION_SHAPE = connectionShapeFor<GroupBo
 });
 
 /** Whether the group now takes new joins. */
-export const GROUP_BOOKING_JOIN_STATUS_CONNECTION_SHAPE = completeConnectionShapeFor<{ status: string }>({
+export const GROUP_BOOKING_JOIN_STATUS_CONNECTION_SHAPE = completeConnectionShapeFor<{ status: GroupBookingStatus }>({
   status: true,
 });
 
