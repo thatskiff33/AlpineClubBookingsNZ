@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
+import { z } from "zod";
 
-import { foodOrderSettingsBodySchema } from "@/lib/admin-lodge-schemas/maintenance";
 import { parseJsonRequestBody } from "@/lib/api-json";
 import { createAuditLog } from "@/lib/audit";
 import { ADMIN_FOOD_ORDER_SETTINGS_CONNECTION_SHAPE } from "@/lib/connection-shapes/lodge-maintenance";
@@ -11,6 +11,8 @@ import {
 } from "@/lib/food-order-route";
 import {
   FOOD_ORDER_SETTINGS_ID,
+  foodOfficerEmailSchema,
+  foodOfficerLabelSchema,
   loadFoodOrderSettings,
   normaliseFoodOrderSettings,
 } from "@/lib/food-order-settings";
@@ -33,6 +35,14 @@ import { requireAdmin } from "@/lib/session-guards";
 // The read is the AI app action `get_food_order_settings` (ALP-722), which a
 // connection answers without the officer's address. The save is website-only
 // (`unread-value`): an app that never sees the address must not overwrite it.
+
+const putSchema = z
+  .object({
+    // "" clears it; anything else must be a valid address.
+    officerEmail: z.union([z.literal(""), foodOfficerEmailSchema]).nullable(),
+    officerLabel: foodOfficerLabelSchema,
+  })
+  .strict();
 
 export async function GET(request: Request) {
   if (await foodOrderModuleOff()) {
@@ -64,7 +74,7 @@ export async function PUT(request: NextRequest) {
   });
   if (!jsonBody.ok) return jsonBody.response;
   const body = jsonBody.body;
-  const parsed = foodOrderSettingsBodySchema.safeParse(body);
+  const parsed = putSchema.safeParse(body);
   if (!parsed.success) {
     return NextResponse.json(
       {

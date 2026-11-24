@@ -1,5 +1,10 @@
-import { foodOfficerEmailSchema, foodOfficerLabelSchema } from "@/lib/admin-lodge-schemas/maintenance";
-import { DEFAULT_FOOD_OFFICER_LABEL } from "@/lib/food-order-rules";
+import { z } from "zod";
+
+import {
+  DEFAULT_FOOD_OFFICER_LABEL,
+  FOOD_OFFICER_EMAIL_MAX_LENGTH,
+  FOOD_OFFICER_LABEL_MAX_LENGTH,
+} from "@/lib/food-order-rules";
 import logger from "@/lib/logger";
 import { prisma } from "@/lib/prisma";
 
@@ -29,9 +34,18 @@ export type FoodOrderSettingsValues = {
   officerLabel: string;
 };
 
-// The one format check for the officer address and label, shared by this read
-// and the settings save, lives in the pure schema module the settings route
-// and the AI app catalogue read (ALP-722, `INV-SSOT`).
+/** The one format check for the officer address, shared by read and write. */
+export const foodOfficerEmailSchema = z
+  .string()
+  .trim()
+  .max(FOOD_OFFICER_EMAIL_MAX_LENGTH)
+  .email();
+
+export const foodOfficerLabelSchema = z
+  .string()
+  .trim()
+  .min(1)
+  .max(FOOD_OFFICER_LABEL_MAX_LENGTH);
 
 /** A stored address that is not a valid email reads as unset, never as a recipient. */
 export function normaliseFoodOfficerEmail(

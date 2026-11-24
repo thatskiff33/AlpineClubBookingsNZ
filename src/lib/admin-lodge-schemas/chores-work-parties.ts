@@ -4,9 +4,11 @@
  * work parties (working bees) with their discount.
  *
  * In a pure lib module because each route parses with these and the AI app
- * action catalogue offers the same fields (`INV-SSOT`). Zod and client-safe
- * helpers only: no database or server imports, so the catalogue can load it.
+ * action catalogue offers the same fields (`INV-SSOT`). Zod, the Prisma enums
+ * and client-safe helpers only: no database or server imports, so the
+ * catalogue can load it.
  */
+import { AgeRestriction, ChoreFrequencyMode, ChoreTimeOfDay } from "@prisma/client";
 import { z } from "zod";
 
 import { parsedDateOnlySchema } from "@/lib/date-only-schema";
@@ -23,9 +25,6 @@ export const choreListQuerySchema = z.object({
     .describe("A lodge id from `list_lodges` to list only that lodge's chores; omit for every lodge."),
 });
 
-const CHORE_AGE_RESTRICTIONS = ["ANY", "ADULTS_ONLY", "MIXED_PREFERRED", "ADULT_SUPERVISED"] as const;
-const CHORE_TIMES_OF_DAY = ["MORNING", "EVENING", "ANYTIME"] as const;
-const CHORE_FREQUENCY_MODES = ["DAILY", "EVERY_X_DAYS", "SPECIFIC_DAYS"] as const;
 
 // One description per field, shared by the create and the change.
 const CHORE_FIELD = {
@@ -53,12 +52,12 @@ export const choreCreateBodySchema = z
     recommendedPeopleMin: z.number().int().min(1).default(1).describe(CHORE_FIELD.recommendedPeopleMin),
     recommendedPeopleMax: z.number().int().min(1).default(2).describe(CHORE_FIELD.recommendedPeopleMax),
     isEssential: z.boolean().default(false).describe(CHORE_FIELD.isEssential),
-    ageRestriction: z.enum(CHORE_AGE_RESTRICTIONS).default("ANY").describe(CHORE_FIELD.ageRestriction),
+    ageRestriction: z.nativeEnum(AgeRestriction).default(AgeRestriction.ANY).describe(CHORE_FIELD.ageRestriction),
     conditionalNote: z.string().nullable().optional().default(null).describe(CHORE_FIELD.conditionalNote),
     minAge: z.number().int().min(0).default(0).describe(CHORE_FIELD.minAge),
     sortOrder: z.number().int().default(0).describe(CHORE_FIELD.sortOrder),
-    timeOfDay: z.enum(CHORE_TIMES_OF_DAY).default("ANYTIME").describe(CHORE_FIELD.timeOfDay),
-    frequencyMode: z.enum(CHORE_FREQUENCY_MODES).default("DAILY").describe(CHORE_FIELD.frequencyMode),
+    timeOfDay: z.nativeEnum(ChoreTimeOfDay).default(ChoreTimeOfDay.ANYTIME).describe(CHORE_FIELD.timeOfDay),
+    frequencyMode: z.nativeEnum(ChoreFrequencyMode).default(ChoreFrequencyMode.DAILY).describe(CHORE_FIELD.frequencyMode),
     frequencyDays: z.number().int().min(2).nullable().optional().default(null).describe(CHORE_FIELD.frequencyDays),
     frequencyDaysOfWeek: z
       .array(z.number().int().min(1).max(7))
@@ -85,12 +84,12 @@ export const choreUpdateBodySchema = z.object({
   recommendedPeopleMin: z.number().int().min(1).optional().describe(CHORE_FIELD.recommendedPeopleMin),
   recommendedPeopleMax: z.number().int().min(1).optional().describe(CHORE_FIELD.recommendedPeopleMax),
   isEssential: z.boolean().optional().describe(CHORE_FIELD.isEssential),
-  ageRestriction: z.enum(CHORE_AGE_RESTRICTIONS).optional().describe(CHORE_FIELD.ageRestriction),
+  ageRestriction: z.nativeEnum(AgeRestriction).optional().describe(CHORE_FIELD.ageRestriction),
   conditionalNote: z.string().nullable().optional().describe(CHORE_FIELD.conditionalNote),
   minAge: z.number().int().min(0).optional().describe(CHORE_FIELD.minAge),
   sortOrder: z.number().int().optional().describe(CHORE_FIELD.sortOrder),
-  timeOfDay: z.enum(CHORE_TIMES_OF_DAY).optional().describe(CHORE_FIELD.timeOfDay),
-  frequencyMode: z.enum(CHORE_FREQUENCY_MODES).optional().describe(CHORE_FIELD.frequencyMode),
+  timeOfDay: z.nativeEnum(ChoreTimeOfDay).optional().describe(CHORE_FIELD.timeOfDay),
+  frequencyMode: z.nativeEnum(ChoreFrequencyMode).optional().describe(CHORE_FIELD.frequencyMode),
   frequencyDays: z.number().int().min(2).nullable().optional().describe(CHORE_FIELD.frequencyDays),
   frequencyDaysOfWeek: z
     .array(z.number().int().min(1).max(7))

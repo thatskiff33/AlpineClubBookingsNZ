@@ -1,8 +1,8 @@
 /**
- * The request schemas of the Lodge Operations maintenance and food-order
- * settings routes: the maintenance report queue, its question set and policy,
- * the QR sign switch, and the food-order settings card (ALP-722,
- * `INV-MCP-006`).
+ * The request schemas of the Lodge Operations maintenance routes: the
+ * maintenance report queue, its question set and policy, and the QR sign
+ * switch (ALP-722, `INV-MCP-006`). The food-order settings save is
+ * website-only (`unread-value`), so its schema stays beside its route.
  *
  * In a pure lib module because each route parses with these and the AI app
  * action catalogue offers the same fields (`INV-SSOT`). No database or server
@@ -19,7 +19,6 @@ import {
   MAINTENANCE_REPORT_PHOTO_RETENTION_DAYS_MIN,
 } from "@/config/club-settings-defaults";
 import { adminListPageQueryFields } from "@/lib/admin-list-page";
-import { FOOD_OFFICER_EMAIL_MAX_LENGTH, FOOD_OFFICER_LABEL_MAX_LENGTH } from "@/lib/food-order-rules";
 import {
   MAX_MAINTENANCE_QUESTION_CHOICE_LENGTH,
   MAX_MAINTENANCE_QUESTION_CHOICES,
@@ -158,33 +157,5 @@ export const maintenanceSignActiveBodySchema = z
     active: z
       .boolean()
       .describe("false pauses the sign, true resumes it. A pause is not a revocation: the same sign works again when resumed."),
-  })
-  .strict();
-
-// ---------------------------------------------------------------------------
-// Food-order settings
-// ---------------------------------------------------------------------------
-
-/**
- * The one format check for the food officer's address, shared by the settings
- * save and the read that decides whether ordering is set up
- * (`food-order-settings.ts` imports it from here). Checked only as an email address
- * (fork triyder/AlpineClubBookingsNZ#121 owner decision 10).
- */
-export const foodOfficerEmailSchema = z.string().trim().max(FOOD_OFFICER_EMAIL_MAX_LENGTH).email();
-
-export const foodOfficerLabelSchema = z.string().trim().min(1).max(FOOD_OFFICER_LABEL_MAX_LENGTH);
-
-/** `PUT /api/admin/food-orders/settings`. */
-export const foodOrderSettingsBodySchema = z
-  .object({
-    // "" clears it; anything else must be a valid address.
-    officerEmail: z
-      .union([z.literal(""), foodOfficerEmailSchema])
-      .nullable()
-      .describe("The address food orders are emailed to; an empty string or null turns ordering off."),
-    officerLabel: foodOfficerLabelSchema.describe(
-      `What the club calls its food officer, up to ${FOOD_OFFICER_LABEL_MAX_LENGTH} characters.`,
-    ),
   })
   .strict();

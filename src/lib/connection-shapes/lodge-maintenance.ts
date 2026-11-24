@@ -15,7 +15,7 @@
  *   an app cannot read as text. Whether a photo is still held, and its
  *   dates, are kept;
  * - the food officer's email address: a person's address an app has no need
- *   to read back; the save still takes it;
+ *   to read, so the save that sets it is website-only (`unread-value`);
  * - any QR sign token, hash or sign link: the sign status read has none, and
  *   minting a sign (which answers its link once) is website-only;
  * - row timestamps that mean nothing to an officer (`updatedAt`).
@@ -25,7 +25,7 @@
 import type { MaintenanceReportQuestion } from "@prisma/client";
 
 import type { AdminListPage } from "@/lib/admin-list-page";
-import { connectionShapeFor } from "@/lib/connection-projection";
+import { type ConnectionShapeFor, connectionShapeFor } from "@/lib/connection-projection";
 import type { FoodOrderSettingsValues } from "@/lib/food-order-settings";
 import type { mapMaintenanceReportForDetail, mapMaintenanceReportForList } from "@/lib/maintenance-report-admin";
 import type { MaintenanceReportSettingsValues } from "@/lib/maintenance-report-settings";
@@ -59,7 +59,7 @@ const MAINTENANCE_REPORT_SHAPE = {
   resolutionNote: true,
   createdAt: true,
   answers: { id: true, questionLabel: true, questionType: true, answerText: true },
-} as const;
+} as const satisfies ConnectionShapeFor<MaintenanceReportListItem & MaintenanceReportDetail>;
 
 /** One page of the queue, the active lodges to filter by, and how many reports are not yet resolved. */
 export const ADMIN_MAINTENANCE_REPORT_LIST_CONNECTION_SHAPE = connectionShapeFor<
@@ -103,7 +103,7 @@ const MAINTENANCE_QUESTION_SHAPE = {
   choices: true,
   sortOrder: true,
   active: true,
-} as const;
+} as const satisfies ConnectionShapeFor<MaintenanceQuestionAnswer>;
 
 /** The save's echo: the active set, in order. */
 export const ADMIN_MAINTENANCE_QUESTIONS_SAVED_CONNECTION_SHAPE = connectionShapeFor<{
@@ -137,7 +137,7 @@ const MAINTENANCE_SETTINGS_SHAPE = {
   anonymousPhotosEnabled: true,
   photoRetentionDays: true,
   anonymousContactPrompt: true,
-} as const;
+} as const satisfies ConnectionShapeFor<MaintenanceReportSettingsValues>;
 
 /** The save's echo. */
 export const ADMIN_MAINTENANCE_SETTINGS_SAVED_CONNECTION_SHAPE = connectionShapeFor<{
@@ -184,7 +184,7 @@ export const ADMIN_MAINTENANCE_SIGN_SWITCHED_CONNECTION_SHAPE = connectionShapeF
 // Food-order settings
 // ---------------------------------------------------------------------------
 
-/** The read and the save's echo, without the officer's address (see the module note). */
+/** The read, without the officer's address (see the module note). */
 export const ADMIN_FOOD_ORDER_SETTINGS_CONNECTION_SHAPE = connectionShapeFor<{
   settings: FoodOrderSettingsValues;
 }>({
