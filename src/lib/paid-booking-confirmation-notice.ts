@@ -23,16 +23,22 @@
  * - the email carries the event key `<bookingId>:<paidAtMs>`, so one payment
  *   has one `EmailLog` row and the member can never be sent it twice;
  * - "moved on": the booking is gone, deleted, or no longer paid (PAID or
- *   COMPLETED): cancelled, refunded or reversed. Checked by the sweep and
- *   again just before every send, so neither sends for such a booking;
+ *   COMPLETED): cancelled (with or without a refund) or its payment reversed.
+ *   A partial refund that leaves it paid does not stop the email. Checked by
+ *   the sweep, and again just before every send from a fresh read of the
+ *   booking's status (round 1, item 4). Stated limit: a cancel that commits
+ *   between that read and the provider call is still sent the confirmation;
  * - rendered afresh from the booking as it stands (`sendPaidBookingConfirmation`):
  *   the confirmation's body is never kept (`SENSITIVE_EMAIL_LOG_TEMPLATES`),
  *   which is also why the email retry job can never replay one, before or
  *   after this change, so nothing here has to retire a replay;
  * - the cut-off is the end of the check-in day in the club's time zone
  *   (`paidConfirmationSendBy`, through the club-time kernel), or seven days
- *   after the payment, whichever comes first; past it the notice is cleared
- *   and the officers are alerted once (`alertOfficersOncePastCutoff`).
+ *   after the payment, whichever comes first (owner decision D7, 25 Nov 2026);
+ *   past it the notice is cleared and the officers are alerted once
+ *   (`alertOfficersOncePastCutoff`). The cut-off is the sweep's only: the
+ *   attempt right after the payment always sends, even for a payment recorded
+ *   after the check-in day, as before #5433.
  *
  * A send that returns is not proof the member was told: the email core returns
  * without throwing for a suppressed address (`BOUNCED`), a fail-closed "No
@@ -43,10 +49,12 @@
  * (sent, or withheld by "No emails" or a non-production copy), settled; held
  * back by the installation's environment gate (an undeclared role, a misplaced
  * capture transport), settled as before this change, because the gate already
- * puts that row in the email-failure review queue; held by the retry job, kept
- * for it; anything else (a provider failure, a bounce or suppressed address, a
- * fail-closed "No emails" read, no address at all), the officers are alerted
- * once, through the same claim as the past-cut-off alert.
+ * puts that row in the email-failure review queue; a fail-closed "No emails"
+ * read, settled, because the email core alerts officers about that row itself
+ * (round 1, item 3); held by the retry job, kept for it; anything else (a
+ * provider failure, a bounce or suppressed address, no address at all, which
+ * owner decision D8 keeps), the officers are alerted once, through the same
+ * claim as the past-cut-off alert.
  *
  * Who owes it: only the three callers that send the confirmation ask the
  * settle to record it (`owesPaidConfirmation`): the Stripe webhook, the
@@ -57,6 +65,8 @@
  * advisory key. The marker joins the settle's transaction under the locks it
  * already holds; everything in this file runs after the commit.
  */
+import { EmailLogStatus } from "@prisma/client";
+
 import { ALERT_NOBODY_ELIGIBLE_RETRY_MS } from "@/lib/alert-cooldown";
 import { bookingOwner } from "@/lib/booking-owner";
 import { isPaidLikeBookingStatus } from "@/lib/booking-status";
@@ -67,6 +77,7 @@ import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
 import { sendAdminBookingConfirmationUnsentAlert } from "@/lib/email/admin-alerts-booking-confirmation-unsent";
 import { durableEmailLogId } from "@/lib/email/attempt-log";
 import { BOOKING_CONFIRMED_TEMPLATE_NAME } from "@/lib/email/booking-confirmed-template";
+import { BOOKING_NO_EMAILS_UNREADABLE_MESSAGE } from "@/lib/email/booking-no-emails-unreadable";
 import { isToldKeyedEmailState, KEYED_EMAIL_ROW_SELECT, keyedEmailRowState, type KeyedEmailState } from "@/lib/email/keyed-email-state";
 import logger from "@/lib/logger";
 import { deliverOwedNotice, type OwedNoticeDeliverer, type OwedNoticeOutcome, type OwedNoticeRun } from "@/lib/owed-notice/deliver";
@@ -86,11 +97,16 @@ export const PAID_CONFIRMATION_SWEEP_AFTER_MS = 30 * 60 * 1000;
 /** A confirmation still owed this long after the payment is past its cut-off, whatever the check-in date. */
 export const PAID_CONFIRMATION_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 
-/** The confirmation as a send needs it: the booking as it stands, and the club's settings read outside any transaction. */
+/**
+ * The confirmation as a send needs it: the booking as it stands, and the club's
+ * settings read outside any transaction. `zone` is read only by the sweep,
+ * whose cut-off needs it; the attempt right after the payment has no cut-off,
+ * so it reads no time zone and leaves it null (round 1, item 6).
+ */
 export interface PaidConfirmationSubject {
   booking: PaidConfirmationBooking;
   format: ClubFormat;
-  zone: ClubTimeZone;
+  zone: ClubTimeZone | null;
 }
 
 /** The confirmation's event key, `<bookingId>:<paidAtMs>`: one `EmailLog` row per payment. */
@@ -115,11 +131,23 @@ export function paidConfirmationSendBy(checkIn: Date, zone: ClubTimeZone): Date 
   return endOfClubDayInclusive(calendarDateOfDateOnlyInstant(checkIn), zone);
 }
 
-/** The booking and the club's time zone, read outside any transaction; null when the booking is gone. */
-async function loadPaidConfirmationSubject(marker: OwedNoticeMarker, format: ClubFormat): Promise<PaidConfirmationSubject | null> {
+/** The booking as it stands, read outside any transaction; null when it is gone. */
+async function loadPaidConfirmationSubject(
+  marker: OwedNoticeMarker,
+  format: ClubFormat,
+  zone: ClubTimeZone | null,
+): Promise<PaidConfirmationSubject | null> {
   const booking = await loadPaidConfirmationBooking(marker.subjectId);
-  if (!booking) return null;
-  return { booking, format, zone: await readClubTimeZoneOutsideRequest() };
+  return booking ? { booking, format, zone } : null;
+}
+
+/**
+ * Why the booking no longer owes its confirmation, read afresh just before a
+ * send (one read by primary key, outside any transaction): null to send.
+ */
+async function paidConfirmationMovedOnNow(bookingId: string): Promise<string | null> {
+  const current = await prisma.booking.findUnique({ where: { id: bookingId }, select: { status: true, deletedAt: true } });
+  return current ? paidConfirmationMovedOn(current) : "the booking is gone";
 }
 
 /**
@@ -149,30 +177,44 @@ function alertOfficersPaidConfirmationUnsent(subject: PaidConfirmationSubject, m
  * installation's environment gate held it back (an undeclared role, or a
  * capture transport where it must not be): such a row is `FAILED` with a block
  * reason, written to the retry ceiling so it waits in the email-failure review
- * queue for an officer's fresh copy (`email/environment-gate.ts`).
+ * queue for an officer's fresh copy (`email/environment-gate.ts`). And whether
+ * officers were already told about it: a fail-closed "No emails" read writes
+ * the row `FAILED` with its own message, and the email core alerts officers
+ * about that row itself (round 1, item 3), so a second alert would repeat it.
  */
-async function readPaidConfirmationEmail(marker: OwedNoticeMarker): Promise<{ state: KeyedEmailState; heldByEnvironment: boolean }> {
+async function readPaidConfirmationEmail(
+  marker: OwedNoticeMarker,
+): Promise<{ state: KeyedEmailState; heldByEnvironment: boolean; reportedByCore: boolean }> {
   const row = await prisma.emailLog.findUnique({
     where: { id: paidConfirmationEmailLogId(marker) },
-    select: { ...KEYED_EMAIL_ROW_SELECT, deliveryBlockReason: true },
+    select: { ...KEYED_EMAIL_ROW_SELECT, deliveryBlockReason: true, errorMessage: true },
   });
-  return { state: keyedEmailRowState(row), heldByEnvironment: row?.deliveryBlockReason != null };
+  return {
+    state: keyedEmailRowState(row),
+    heldByEnvironment: row?.deliveryBlockReason != null,
+    reportedByCore: row?.status === EmailLogStatus.FAILED && row.errorMessage === BOOKING_NO_EMAILS_UNREADABLE_MESSAGE,
+  };
 }
 
 /**
  * What became of the confirmation's email, read from its row: told, settled;
  * held back by the installation's environment gate, settled as before #5433
- * (it waits in the review queue, where officers already see it); held by the
- * email retry job, kept for it; undeliverable or never recorded, the officers
- * are alerted once. Never throws.
+ * (it waits in the review queue, where officers already see it); withheld
+ * because "No emails" could not be read, settled, the email core having
+ * alerted officers itself; held by the email retry job, kept for it;
+ * undeliverable or never recorded, the officers are alerted once. Never throws.
  */
 async function paidConfirmationOutcome(subject: PaidConfirmationSubject, marker: OwedNoticeMarker, job: string): Promise<OwedNoticeOutcome> {
   const log = { bookingId: marker.subjectId, key: marker.id, job };
   try {
-    const { state, heldByEnvironment } = await readPaidConfirmationEmail(marker);
+    const { state, heldByEnvironment, reportedByCore } = await readPaidConfirmationEmail(marker);
     if (isToldKeyedEmailState(state)) return "settled";
     if (heldByEnvironment) {
       logger.warn(log, "The booking confirmation was held back by this installation's environment gate; it waits in the email-failure review queue");
+      return "settled";
+    }
+    if (reportedByCore) {
+      logger.warn(log, "The booking confirmation was withheld because the booking's No emails switch could not be read; the email core alerted the officers");
       return "settled";
     }
     if (state === "retrying") {
@@ -189,20 +231,23 @@ async function paidConfirmationOutcome(subject: PaidConfirmationSubject, marker:
 
 /**
  * Send the confirmation with the payment's event key, then read what became
- * of it. A booking that moved on since the payment is not sent (D1): a cancel
- * between the settle and this attempt clears the notice too. Never throws.
+ * of it. A booking that moved on since the payment is not sent (D1): its status
+ * is read afresh just before the send, so a cancel between the settle (or the
+ * sweep's read) and this attempt clears the notice too. Stated limit: a cancel
+ * that commits between that read and the provider call is still sent it.
+ * Never throws.
  */
 async function deliverOwedPaidConfirmation(
   subject: PaidConfirmationSubject,
   marker: OwedNoticeMarker,
   { idempotencyKey, job }: OwedNoticeRun & { idempotencyKey: string },
 ): Promise<OwedNoticeOutcome> {
-  const movedOn = paidConfirmationMovedOn(subject.booking);
-  if (movedOn !== null) {
-    logger.warn({ bookingId: marker.subjectId, key: marker.id, why: movedOn, job }, "The paid booking moved on before its confirmation was sent; not sending it");
-    return "settled";
-  }
   try {
+    const movedOn = await paidConfirmationMovedOnNow(marker.subjectId);
+    if (movedOn !== null) {
+      logger.warn({ bookingId: marker.subjectId, key: marker.id, why: movedOn, job }, "The paid booking moved on before its confirmation was sent; not sending it");
+      return "settled";
+    }
     await sendPaidBookingConfirmation(subject.booking, subject.format, idempotencyKey);
   } catch (err) {
     logger.error({ err, bookingId: marker.subjectId, job }, "Failed to send confirmation email");
@@ -214,8 +259,8 @@ async function deliverOwedPaidConfirmation(
 /** Past the cut-off: alert the officers once, unless the confirmation did reach the owner after all, or waits in the review queue. */
 async function paidConfirmationPastCutoff(subject: PaidConfirmationSubject, marker: OwedNoticeMarker, run: OwedNoticeRun): Promise<OwedNoticeOutcome> {
   try {
-    const { state, heldByEnvironment } = await readPaidConfirmationEmail(marker);
-    if (isToldKeyedEmailState(state) || heldByEnvironment) return "settled";
+    const { state, heldByEnvironment, reportedByCore } = await readPaidConfirmationEmail(marker);
+    if (isToldKeyedEmailState(state) || heldByEnvironment || reportedByCore) return "settled";
   } catch (err) {
     logger.error({ err, key: marker.id, job: run.job }, "Failed to read the booking confirmation's state past its cut-off");
     return "threw";
@@ -231,9 +276,14 @@ const PAID_CONFIRMATION: OwedNoticeDeliverer<PaidConfirmationSubject> = {
   sweepAfterMs: PAID_CONFIRMATION_SWEEP_AFTER_MS,
   unreachedRetryAfterMs: ALERT_NOBODY_ELIGIBLE_RETRY_MS,
   maxAgeMs: PAID_CONFIRMATION_MAX_AGE_MS,
-  load: async (marker) => loadPaidConfirmationSubject(marker, await clubFormatValues()),
+  load: async (marker) => loadPaidConfirmationSubject(marker, await clubFormatValues(), await readClubTimeZoneOutsideRequest()),
   stillOwed: async ({ booking }) => paidConfirmationMovedOn(booking) ?? true,
-  sendBy: ({ booking, zone }) => paidConfirmationSendBy(booking.checkIn, zone),
+  // Only the sweep asks, and its `load` always reads the zone; the attempt
+  // right after the payment has no cut-off and never calls this.
+  sendBy: ({ booking, zone }) => {
+    if (!zone) throw new Error("A paid confirmation's cut-off needs the club's time zone, which only the sweep reads");
+    return paidConfirmationSendBy(booking.checkIn, zone);
+  },
   pastCutoff: paidConfirmationPastCutoff,
   idempotencyKey: paidConfirmationKey,
   deliver: deliverOwedPaidConfirmation,
@@ -253,7 +303,7 @@ export const PAID_CONFIRMATION_NOTICE_DELIVERERS: readonly OwedNoticeDeliverer<P
 export async function deliverPaidBookingConfirmation(marker: OwedNoticeMarker, format: ClubFormat, job: string): Promise<void> {
   let subject: PaidConfirmationSubject | null;
   try {
-    subject = await loadPaidConfirmationSubject(marker, format);
+    subject = await loadPaidConfirmationSubject(marker, format, null);
   } catch (err) {
     logger.error({ err, bookingId: marker.subjectId, job }, "Failed to read a paid booking for its confirmation; a later run sends it");
     return;

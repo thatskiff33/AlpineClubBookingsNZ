@@ -6308,7 +6308,11 @@ member credit keys it already holds. It adds no advisory key, no change of
 order, no read, and no provider call or settings query, and moves no other
 write: amounts, receipts, ledger lines and Xero outbox rows are written exactly
 as before, in the same order. A replayed settle that finds the booking already
-paid never reaches the claim and writes none. Delivery after the commit and
+paid never reaches the claim and writes none. Whether the marker can be written
+is decided before the insert, without a write: a booking id that cannot key one
+is an error log and the settle commits, so the marker can never roll back a
+captured payment for a reason of shape (a database failure of the insert still
+rolls the transaction back, like any write in it). Delivery after the commit and
 the sweep are the bump's, above, with the member's event key
 `<bookingId>:<paidAtMs>`.
 

@@ -493,33 +493,52 @@ you want both reworded; editing only one leaves the other on its built-in text.
 > card payment on the booking page, one confirmed by Stripe's notice to the
 > app, and the scheduled charge of a saved card. A later run of the email
 > retry job (every 30 minutes) sends it instead, so it can arrive late,
-> usually within an hour (owner decision, 23 Nov 2026). The member never
-> receives it twice. It is built from the booking as it is when it goes: its
-> dates, guests, lodge and door code then, and, if the price was raised since
-> and the extra not yet paid, the amount still owing. It is not sent for a
-> booking cancelled, refunded or deleted in the meantime.
+> usually within an hour (owner decision, 23 Nov 2026). The member is not sent
+> it twice by this version; during the switch to it, a server still running the
+> version before can send its own copy as well (below). It is built from the
+> booking as it is when it goes: its dates, guests, lodge and door code then,
+> and, if the price was raised since and the extra not yet paid, the amount
+> still owing. It is not sent once the booking is cancelled (with or without a
+> refund), deleted, or its payment reversed; a partial refund that leaves the
+> booking paid does not stop it.
+>
+> A late confirmation is tried until the end of the check-in day, or for seven
+> days after the payment if that comes first (owner decision, 25 Nov 2026):
+> the seven days matter only when every attempt has failed for a week while
+> check-in is further away. Then it stops and the officers are alerted once.
+> This limit is only on the late retries: a payment recorded after the
+> check-in day still gets its confirmation straight away, as before.
+>
+> The scheduled saved-card charge's confirmation now looks like the one sent
+> after a card payment on the booking page: a booking whose non-member guests
+> are charged separately gets the paragraph about them, and an extra still to
+> pay shows as "Still Owing". It no longer sends a second confirmation when
+> Stripe's notice settled the same charge first.
 >
 > What an officer can notice: a new alert, **Booking confirmation not sent**
 > (`admin-booking-confirmation-unsent`). It is sent once per paid booking when
-> its confirmation could not be sent by the end of the check-in day (or within
-> seven days of the payment), or did not reach the owner: the send failed, the
-> address bounced or is on the suppression list, the booking's **No emails**
-> setting could not be read, or the owner has no address that can be emailed
-> (an organisation with no address, a walk-in placeholder). It names the owner
-> and the booking so an officer can send a fresh confirmation from the booking
-> page or contact them. It goes to officers who receive **Booking review
-> required** alerts, and its wording is editable like the others. A
-> confirmation the booking's **No emails** switch held back is not an alert,
-> as before. Nor is one this installation held back because its environment is
-> not declared (or a capture mailbox is set where it must not be): that one
-> waits in the email-failure review queue, as before.
+> its confirmation could not be sent in time (as above), or did not reach the
+> owner: the send failed, the address bounced or is on the suppression list,
+> or the owner has no address that can be emailed (a walk-in with a placeholder
+> address, or an organisation with none; owner decision, 25 Nov 2026). It names
+> the owner and the booking so an officer can contact them, or, while the
+> booking is not yet completed and the owner has an address, send a fresh
+> confirmation from the booking page. It goes to officers who receive
+> **Booking review required** alerts, and its wording is editable like the
+> others. No alert is sent for a confirmation the booking's **No emails**
+> switch held back, as before; nor when that switch could not be read, because
+> officers already get the existing **An email to a member could not be sent**
+> alert for it; nor for one this installation held back because its
+> environment is not declared (or a capture mailbox is set where it must not
+> be): that one waits in the email-failure review queue, as before.
 >
 > Nothing changes for the other ways a booking is confirmed: an officer's
 > charge of a saved card, an officer's confirmation of pending guests (which
 > still sends only when the officer asks), a zero-balance confirmation, a bank
 > transfer, and the recovery of a card payment found already taken. During the
 > switch to this version a server still running the version before it sends
-> the confirmation as it always did.
+> the confirmation as it always did, so an owner can be sent two: one by this
+> version after Stripe's notice, and one by the older server's scheduled job.
 
 ## Settings reference
 

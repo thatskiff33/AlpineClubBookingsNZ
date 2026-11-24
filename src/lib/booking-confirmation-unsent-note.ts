@@ -4,8 +4,10 @@
  * default body (`email-message-audit-defaults.ts`), so they cannot drift. It
  * must be true in every case the alert is sent for: the confirmation could not
  * be sent in time, it failed or bounced, or the owner's address cannot be
- * emailed (none, a club placeholder, or on the bounce list). A leaf, so the
+ * emailed (none, a club placeholder, or on the bounce list); and for every
+ * status it can be sent for, PAID or COMPLETED, though the fresh-copy action
+ * takes only a booking not yet completed (round 1, item 8). A leaf, so the
  * registry can use it without loading a template.
  */
 export const BOOKING_CONFIRMATION_UNSENT_NOTE =
-  "This booking was paid, but the email confirming it did not reach the booking's owner, and it will not be sent automatically. Either it could not be sent in time, or it failed or bounced, or the owner has no address that can be emailed. Check the booking, then send a fresh confirmation from its page or contact the owner another way.";
+  "This booking was paid, but the email confirming it did not reach the booking's owner, and it will not be sent automatically. Either it could not be sent in time, or it failed or bounced, or the owner has no address that can be emailed. Check the booking and contact the owner. While the booking is not yet completed and the owner has an email address, you can also send a fresh confirmation from its page.";

@@ -37,6 +37,7 @@ import {
 // template layer in, so this adds no failure mode to the alert that reports a
 // failure (#2689).
 import { adminEmailWithheldTemplate } from "@/lib/email-templates/admin-ops";
+import { BOOKING_NO_EMAILS_UNREADABLE_MESSAGE } from "./booking-no-emails-unreadable";
 import {
   ensureEmailPaletteReady,
   renderEmailHtml,
@@ -374,7 +375,7 @@ export async function sendEmail({
     const withheld = bookingGate.decision === "withhold";
     const errorMessage = withheld
       ? 'Withheld: this booking has the "No emails" switch turned on'
-      : 'Withheld: the booking\'s "No emails" switch could not be read, so the send failed closed';
+      : BOOKING_NO_EMAILS_UNREADABLE_MESSAGE;
     if (emailLogId) {
       try {
         await prisma.emailLog.update({

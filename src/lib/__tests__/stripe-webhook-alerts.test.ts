@@ -720,7 +720,7 @@ describe("Stripe webhook Xero alerting", () => {
   // #772, #5398, #5433 PR 3: the webhook is one of the two racing halves of the
   // paid confirmation. It asks the settle to record the confirmation as owed, and
   // a fresh "paid" settle hands back the marker, which the webhook delivers once,
-  // before it queues the invoice; the "already_paid" and superseded cases below
+  // after it queues the invoice; the "already_paid" and superseded cases below
   // carry no marker and deliver nothing. What the email says is the renderer's
   // (paid-booking-confirmation-email.test.ts).
   it("sends the paid confirmation exactly once on a fresh paid settle (#772)", async () => {
@@ -768,7 +768,8 @@ describe("Stripe webhook Xero alerting", () => {
     expect(mockMarkBookingPaymentSucceeded).toHaveBeenCalledWith(expect.objectContaining({ bookingId: "booking-1", owesPaidConfirmation: true }));
     expect(confirmation.deliver).toHaveBeenCalledTimes(1);
     expect(confirmation.deliver).toHaveBeenCalledWith(confirmation.marker, CLUB_FORMAT_TEST, "stripe-webhook");
-    expect(confirmation.deliver.mock.invocationCallOrder[0]).toBeLessThan(mockEnqueueXeroBookingInvoiceOperation.mock.invocationCallOrder[0]!);
+    // #5433 round 1: the invoice is queued first, so a stop during the delivery never leaves a paid booking with no queued invoice.
+    expect(confirmation.deliver.mock.invocationCallOrder[0]).toBeGreaterThan(mockEnqueueXeroBookingInvoiceOperation.mock.invocationCallOrder[0]!);
   });
 
   it("alerts and refuses a capture whose amount no longer matches the booking total (#1161)", async () => {

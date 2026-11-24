@@ -520,14 +520,10 @@ async function handlePaymentIntentSucceeded(
 
   logger.info({ bookingId, paymentIntentId: paymentIntent.id, outcome: reconciliation.outcome }, `PaymentIntent reconciled: ${reconciliation.outcome}`);
 
-  // Confirmation only on a fresh transition to PAID, whose settle recorded it as
-  // owed (#5433): "already_paid" carries no marker, so the send stays once across
-  // both paths (#772), and a stop before this line leaves it to the sweep.
-  if (reconciliation.paidConfirmation) {
-    await deliverPaidBookingConfirmation(reconciliation.paidConfirmation, format, "stripe-webhook");
-  }
-
   await queueXeroInvoiceForPaidBooking({ bookingId });
+  // After the invoice is queued (#5433 round 1): only a fresh PAID carries the owed
+  // marker, so the send stays once across both paths (#772); a stop leaves it to the sweep.
+  if (reconciliation.paidConfirmation) await deliverPaidBookingConfirmation(reconciliation.paidConfirmation, format, "stripe-webhook");
 }
 
 /**

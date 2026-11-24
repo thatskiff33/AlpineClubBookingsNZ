@@ -233,17 +233,13 @@ export async function POST(
       return NextResponse.json(SUPERSEDED_CARD_PAYMENT_REFUNDING_BODY, { status: 409 });
     }
 
-    // Only a fresh transition to PAID carries the settle's owed marker (#5433): if
-    // the webhook settled first this is "already_paid", so the email goes once
-    // whichever path wins (#772), and a stop before this line leaves it to the sweep.
-    if (reconciliation.paidConfirmation) {
-      await deliverPaidBookingConfirmation(reconciliation.paidConfirmation, format, "confirm-payment");
-    }
-
     await queueXeroInvoiceForPaidBooking({
       bookingId,
       createdByMemberId: session.user.id,
     });
+    // After the invoice is queued (#5433 round 1): only a fresh PAID carries the owed
+    // marker, so the email goes once whichever path wins (#772); a stop leaves it to the sweep.
+    if (reconciliation.paidConfirmation) await deliverPaidBookingConfirmation(reconciliation.paidConfirmation, format, "confirm-payment");
 
     logAudit({
       action: "booking.payment.confirmed",

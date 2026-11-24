@@ -21,8 +21,9 @@
  */
 import type { Prisma } from "@prisma/client";
 
+import logger from "@/lib/logger";
 import type { OwedNoticeKind } from "@/lib/owed-notice/kinds";
-import { recordOwedNotices, type OwedNoticeMarker } from "@/lib/owed-notice/store";
+import { OWED_NOTICE_PAYLOAD_ID, recordOwedNotices, type OwedNoticeMarker } from "@/lib/owed-notice/store";
 import type { BookingSettlementSource } from "@/lib/payment-reconciliation-sources";
 
 /** The owed confirmation's kind. Named for the email, not the payment, so the zero-balance and bank-transfer confirmations can join it. */
@@ -55,5 +56,14 @@ export async function owePaidConfirmationAfterFreshClaim<R extends { outcome: st
   result: R,
 ): Promise<R & { paidConfirmation: OwedNoticeMarker | null }> {
   const owed = result.outcome === "paid" && settlement.kind === "stripe" && settlement.owesPaidConfirmation === true;
-  return { ...result, paidConfirmation: owed ? await recordPaidBookingConfirmationOwed(tx, { bookingId, paidAt: new Date() }) : null };
+  if (!owed) return { ...result, paidConfirmation: null };
+  // Round 1, item 1: the marker's identity check throws on a booking id that is
+  // not an id, and a throw here would roll back a captured card payment (and
+  // Stripe would retry it for days). So the shape is decided first, without
+  // writing: an unwritable marker is an error log, and the settle goes on.
+  if (!OWED_NOTICE_PAYLOAD_ID.test(bookingId)) {
+    logger.error({ bookingId }, "A paid booking's id cannot key an owed confirmation; the payment settles and no confirmation is recorded as owed");
+    return { ...result, paidConfirmation: null };
+  }
+  return { ...result, paidConfirmation: await recordPaidBookingConfirmationOwed(tx, { bookingId, paidAt: new Date() }) };
 }

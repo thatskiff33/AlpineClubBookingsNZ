@@ -20,6 +20,8 @@ const owed = vi.hoisted(() => ({ store: null as unknown as ReturnType<typeof imp
 const db = vi.hoisted(() => ({
   emailRows: new Map<string, { status: string; attempts: number; lastAttemptAt: Date; htmlBody: string | null; bookingRetryHtmlBody: string | null }>(),
   emailReadFails: false,
+  /** The booking's status as a fresh read just before a send finds it; null follows the loaded booking. */
+  liveStatus: null as string | null,
 }));
 vi.mock("@/lib/prisma", () => ({
   prisma: {
@@ -33,6 +35,11 @@ vi.mock("@/lib/prisma", () => ({
       },
     },
     alertCooldown: { findMany: async () => [] },
+    // The fresh status read just before a send (round 1, item 4).
+    booking: {
+      findUnique: async () =>
+        core.booking ? { status: db.liveStatus ?? core.booking.status, deletedAt: core.booking.deletedAt ?? null } : null,
+    },
   },
 }));
 
@@ -65,13 +72,21 @@ vi.mock("@/lib/owed-notice/past-cutoff-once", async (importOriginal) => ({
     return "settled";
   },
 }));
-vi.mock("@/lib/club-time-zone-runtime", () => ({ readClubTimeZoneOutsideRequest: async () => "Pacific/Auckland" }));
+const zoneReads = vi.hoisted(() => ({ count: 0 }));
+vi.mock("@/lib/club-time-zone-runtime", () => ({
+  readClubTimeZoneOutsideRequest: async () => {
+    zoneReads.count += 1;
+    return "Pacific/Auckland";
+  },
+}));
 vi.mock("@/lib/club-format-server", async () => ({
   clubFormatValues: async () => (await import("./support/club-format-fixture")).CLUB_FORMAT_TEST,
 }));
 vi.mock("@/lib/logger", () => ({ default: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() } }));
 
 import { requireClubTimeZone } from "@/lib/club-time";
+import { BOOKING_NO_EMAILS_UNREADABLE_MESSAGE } from "@/lib/email/booking-no-emails-unreadable";
+import logger from "@/lib/logger";
 import { shouldPersistEmailHtml } from "@/lib/email/internal";
 import { STILL_WANTED_TEMPLATE_NAMES } from "@/lib/email/retry-still-wanted";
 import { drainOwedNotices } from "@/lib/owed-notice/drain";
@@ -122,6 +137,8 @@ beforeEach(() => {
   owed.store = createOwedNoticeStore();
   db.emailRows.clear();
   db.emailReadFails = false;
+  db.liveStatus = null;
+  zoneReads.count = 0;
   core.next = "SENT";
   core.booking = paidBooking();
   core.sends = [];
@@ -152,6 +169,14 @@ describe("the settle's last write (owePaidConfirmationAfterFreshClaim)", () => {
 
     expect(result).toMatchObject({ outcome: "paid", extra: 1, paidConfirmation: { kind: BOOKING_CONFIRMED_KIND, subjectId: BOOKING_ID, eventAt: NOW } });
     expect(owed.store.rows.size).toBe(1);
+  });
+
+  it("never throws inside the settle for a booking id that cannot key a marker: logs an error and writes nothing (round 1, item 1)", async () => {
+    const result = await owePaidConfirmationAfterFreshClaim(tx(), "not:an-id", card(true), { outcome: "paid" });
+
+    expect(result.paidConfirmation).toBeNull();
+    expect(owed.store.delegate.createMany).not.toHaveBeenCalled();
+    expect(vi.mocked(logger.error)).toHaveBeenCalledWith({ bookingId: "not:an-id" }, expect.stringContaining("cannot key an owed confirmation"));
   });
 
   it.each([
@@ -198,6 +223,25 @@ describe("delivery right after the settle commits", () => {
 
     expect(core.sends).toEqual([]);
     expect(owed.store.rows.size).toBe(0);
+  });
+
+  it("reads the booking's status afresh just before the send: a cancel after the booking was loaded is not sent (round 1, item 4)", async () => {
+    const marker = await commitSettle(NOW);
+    db.liveStatus = "CANCELLED";
+
+    await deliverPaidBookingConfirmation(marker, CLUB_FORMAT_TEST, "stripe-webhook");
+
+    expect(core.sends).toEqual([]);
+    expect(owed.store.rows.size).toBe(0);
+  });
+
+  it("reads no time zone: only the sweep's cut-off needs one (round 1, item 6)", async () => {
+    const marker = await commitSettle(NOW);
+
+    await deliverPaidBookingConfirmation(marker, CLUB_FORMAT_TEST, "stripe-webhook");
+
+    expect(core.sends).toHaveLength(1);
+    expect(zoneReads.count).toBe(0);
   });
 
   it("leaves the marker to the sweep when the send throws, and alerts nobody yet", async () => {
@@ -263,6 +307,16 @@ describe("the sweep (a first attempt that never started)", () => {
     expect(await sweep(NOW)).toMatchObject({ checked: 1, cleared: 1, delivered: 0 });
     expect(core.sends).toEqual([]);
     expect(owed.store.rows.size).toBe(0);
+  });
+
+  it("clears a booking cancelled between the sweep's read and its send, from the fresh status read (round 1, item 4)", async () => {
+    await commitSettle(new Date(NOW.getTime() - 2 * HOUR));
+    db.liveStatus = "CANCELLED";
+
+    expect(await sweep(NOW)).toMatchObject({ checked: 1, delivered: 1 });
+    expect(core.sends).toEqual([]);
+    expect(owed.store.rows.size).toBe(0);
+    expect(zoneReads.count).toBe(1);
   });
 
   it("clears a booking that is gone without sending", async () => {
@@ -365,6 +419,31 @@ describe("what became of the email after a send (the told rule)", () => {
 
     expect(owed.store.rows.size).toBe(0);
     expect(alerts.unsent).not.toHaveBeenCalled();
+  });
+
+  it("withheld because No emails could not be read (the email core already alerted officers): cleared with no second alert (round 1, item 3)", async () => {
+    const marker = await commitSettle(NOW);
+    const { sendPaidBookingConfirmation } = await import("@/lib/paid-booking-confirmation-email");
+    vi.mocked(sendPaidBookingConfirmation).mockImplementationOnce(async () => {
+      db.emailRows.set(paidConfirmationEmailLogId(marker), { status: EmailLogStatus.FAILED, attempts: 1, lastAttemptAt: NOW, htmlBody: null, bookingRetryHtmlBody: null, errorMessage: BOOKING_NO_EMAILS_UNREADABLE_MESSAGE } as never);
+      return { status: "withheld_for_booking", emailLogId: paidConfirmationEmailLogId(marker), bookingId: BOOKING_ID, reason: "booking_flag_unreadable" };
+    });
+
+    await deliverPaidBookingConfirmation(marker, CLUB_FORMAT_TEST, "stripe-webhook");
+
+    expect(owed.store.rows.size).toBe(0);
+    expect(alerts.unsent).not.toHaveBeenCalled();
+  });
+
+  it("past the cut-off, a row the email core already reported alerts nobody either", async () => {
+    const marker = await commitSettle(new Date(NOW.getTime() - 48 * HOUR));
+    core.booking = paidBooking({ checkIn: new Date("2026-06-30T00:00:00.000Z") });
+    db.emailRows.set(paidConfirmationEmailLogId(marker), { status: EmailLogStatus.FAILED, attempts: 1, lastAttemptAt: NOW, htmlBody: null, bookingRetryHtmlBody: null, errorMessage: BOOKING_NO_EMAILS_UNREADABLE_MESSAGE } as never);
+
+    await sweep(NOW);
+
+    expect(alerts.unsent).not.toHaveBeenCalled();
+    expect(owed.store.rows.size).toBe(0);
   });
 
   it("keeps the marker when the row cannot be read after the send", async () => {

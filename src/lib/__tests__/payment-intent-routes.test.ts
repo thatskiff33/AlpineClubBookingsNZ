@@ -2054,7 +2054,7 @@ describe("confirm-payment route: booking confirmation email (issue #772)", () =>
   });
 
   // #5433 PR 3: a fresh "paid" settle hands back the owed marker it committed; the
-  // route delivers it once, before it queues the invoice. What the email says is
+  // route delivers it once, after it queues the invoice. What the email says is
   // the renderer's (paid-booking-confirmation-email.test.ts).
   it("sends exactly one confirmation email on a fresh paid outcome", async () => {
     setupConfirmPayment();
@@ -2073,7 +2073,8 @@ describe("confirm-payment route: booking confirmation email (issue #772)", () =>
     expect(mocks.markBookingPaymentSucceeded).toHaveBeenCalledWith(expect.objectContaining({ owesPaidConfirmation: true }));
     expect(confirmation.deliver).toHaveBeenCalledTimes(1);
     expect(confirmation.deliver).toHaveBeenCalledWith(confirmation.marker, CLUB_FORMAT_TEST, "confirm-payment");
-    expect(confirmation.deliver.mock.invocationCallOrder[0]).toBeLessThan(mocks.queueXeroInvoiceForPaidBooking.mock.invocationCallOrder[0]!);
+    // #5433 round 1: the invoice is queued first, so a stop during the delivery never leaves a paid booking with no queued invoice.
+    expect(confirmation.deliver.mock.invocationCallOrder[0]).toBeGreaterThan(mocks.queueXeroInvoiceForPaidBooking.mock.invocationCallOrder[0]!);
   });
 
   it("does not send when the webhook already reconciled (already_paid)", async () => {
@@ -2120,8 +2121,9 @@ describe("confirm-payment route: booking confirmation email (issue #772)", () =>
     expect(confirmation.deliver).toHaveBeenCalledTimes(1);
   });
 
-  // The owed notice never throws: a send that fails is logged and stays owed for the sweep.
-  it("does not fail the request if the confirmation email throws", async () => {
+  // #5433 round 1: the delivery never throws (a send that fails is logged inside it and
+  // stays owed for the sweep), so the route answers success once it has handed it over.
+  it("answers success once the confirmation is handed to its owed notice", async () => {
     setupConfirmPayment();
     mocks.markBookingPaymentSucceeded.mockResolvedValue({
       outcome: "paid",
@@ -2137,6 +2139,7 @@ describe("confirm-payment route: booking confirmation email (issue #772)", () =>
 
     expect(res.status).toBe(200);
     await expect(res.json()).resolves.toEqual({ success: true });
+    expect(confirmation.deliver).toHaveBeenCalledWith(confirmation.marker, CLUB_FORMAT_TEST, "confirm-payment");
   });
 });
 

@@ -186,13 +186,13 @@ const POST_COMMIT_SEND_REASONS: Readonly<Record<string, Entry>> = {
     calls: 1,
     after: ["markPaymentIntentTransactionFailed"],
     reason:
-      "Traced in #5433 PR 3: a stop before the event's lease completes replays the handler (a redelivery or a lease takeover), and the handler alerts on every run, not only on the transition to FAILED, so that window is recovered. Left open: the alert is not awaited, so a stop after the handler returns and before the provider call loses it; to convert (or await) under #5433.",
+      "To convert under #5433, tracked on its body (traced in its third pull request): a stop before the event's lease completes replays the handler (a redelivery or a lease takeover), and the handler alerts on every run, not only on the transition to FAILED, so that window is recovered. Left open: the alert is not awaited, so a stop after the handler returns and before the provider call loses it.",
   },
   "src/lib/stripe-webhook-service.ts#handleChargeRefunded#notifyXeroSyncError": {
     calls: 1,
     after: ["syncRefundsFromStripeCharge"],
     reason:
-      "Traced in #5433 PR 3: sent only when queueing the refund's credit note fails after the refund sync committed (deduped to one an hour by notifyXeroSyncError), and not awaited. A replay after a stop finds no refund newly recorded, so it neither queues the credit note nor alerts; the credit note's own recovery is the larger question and is outside the email paths. To decide under #5433 with that.",
+      "To convert under #5433, tracked on its body (traced in its third pull request): sent only when queueing the refund's credit note fails after the refund sync committed (deduped to one an hour by notifyXeroSyncError), and not awaited. A replay after a stop finds no refund newly recorded, so it neither queues the credit note nor alerts; the credit note's own recovery is the larger question and is outside the email paths.",
   },
   "src/lib/stripe-webhook-service.ts#processStripeWebhookEvent#handlePaymentIntentFailed": {
     calls: 1,
@@ -509,9 +509,9 @@ describe("#5433: every notice sent after a commit is owed, or has a recorded rea
     expect(result.commitMoved, "The commit an entry is about no longer comes before the send: re-read the site, then update its entry").toEqual([]);
   });
 
-  it("gives every entry a reason that names a later pull request of #5433, a recovery, or why it is not owed", () => {
+  it("gives every entry a reason that names a later pull request of #5433, where its body tracks it, a recovery, or why it is not owed", () => {
     for (const [key, entry] of Object.entries(POST_COMMIT_SEND_REASONS)) {
-      expect(entry.reason, key).toMatch(/#5433 PR \d|#5433, a path the plan missed|to trace under #5433|Already recovered|Not a notice a committed change owes|False positive|Wrapper|Recurring officer reminder/);
+      expect(entry.reason, key).toMatch(/#5433 PR \d|#5433, a path the plan missed|to trace under #5433|To convert under #5433, tracked on its body|Already recovered|Not a notice a committed change owes|False positive|Wrapper|Recurring officer reminder/);
     }
   });
 
