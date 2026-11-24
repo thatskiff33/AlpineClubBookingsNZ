@@ -285,8 +285,9 @@ describe("request_refund_review", () => {
     expect(connection).not.toHaveProperty("memberId");
     expect(connection).not.toHaveProperty("reviewedBy");
     // It emails the club's officers, so it is `destructive` (owner decision on
-    // #5305, item 2): the app confirms with the member first.
-    expect(sendAdminRefundRequestAlert).toHaveBeenCalled();
+    // #5305, item 2): the app confirms with the member first. One alert per
+    // call, connection then browser: two proves the connection's call alerted.
+    expect(sendAdminRefundRequestAlert).toHaveBeenCalledTimes(2);
     expect(findMcpAction("request_refund_review")?.kind).toBe("destructive");
   });
 

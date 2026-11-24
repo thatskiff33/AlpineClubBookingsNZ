@@ -62,7 +62,10 @@ import { MCP_PRINCIPAL_HEADER } from "@/lib/mcp/principal";
  * the call is logged as important. Each request here emails the officers.
  */
 function expectOfficersAlertedSoDestructive(actionId: string): void {
-  expect(sendAdminBookingChangeRequestAlert).toHaveBeenCalled();
+  // `expectActionContract` calls the route as the connection, then as the
+  // browser, and each call sends one alert: two proves the connection's own
+  // call alerted the officers, not just the browser's.
+  expect(sendAdminBookingChangeRequestAlert).toHaveBeenCalledTimes(2);
   expect(findMcpAction(actionId)?.kind).toBe("destructive");
 }
 
