@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { hasAdminAreaAccess } from "@/lib/admin-permissions";
 import { parseJsonRequestBody } from "@/lib/api-json";
+import { clearedRowsAuditMetadata } from "@/lib/member-subscription-defaults";
 import {
   buildStructuredAuditLogCreateArgs,
   getAuditRequestContext,
@@ -22,6 +23,17 @@ import {
 } from "@/lib/xero-mappings";
 import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/session-guards";
+import { clubTimeZone } from "@/lib/club-time/server";
+import { clubSeasonYear } from "@/lib/financial-year";
+import {
+  SUBSCRIPTION_LIABILITY_AGE_SOURCES,
+  SUBSCRIPTION_REQUIRED_TYPE_AGE_RULES,
+} from "@/lib/policies/subscription";
+import {
+  liabilityChoiceRefusal,
+  liabilityChoiceToWrite,
+  saveLockoutSettingsUnlessBusy,
+} from "@/lib/subscription-liability-settings-write";
 
 const settingsSchema = z
   .object({
@@ -44,6 +56,13 @@ const settingsSchema = z
       .optional(),
     textFallbackEnabled: z.boolean().optional(),
     useFeeScheduleItemCodes: z.boolean().optional(),
+    /**
+     * #5190 — the club's subscription-liability rule, two answers chosen
+     * together. Omitted, the stored pair is preserved. See
+     * `liabilityChoiceError` for what a save may and may not do with them.
+     */
+    requiredTypeAgeRule: z.enum(SUBSCRIPTION_REQUIRED_TYPE_AGE_RULES).optional(),
+    liabilityAgeSource: z.enum(SUBSCRIPTION_LIABILITY_AGE_SOURCES).optional(),
   })
   .strict();
 
@@ -128,14 +147,24 @@ export async function PUT(request: NextRequest) {
   const before = await prisma.membershipLockoutSettings.findUnique({
     where: { id: MEMBERSHIP_LOCKOUT_SETTINGS_ID },
   });
+  const stored = normalizeMembershipLockoutSettings(before);
+  // #5190: a rule change needs membership and finance edit (owner decision
+  // 23 Nov 2026), and the pair is chosen whole.
+  const refusal = liabilityChoiceRefusal(parsed.data, stored, session.user);
+  if (refusal) {
+    return NextResponse.json({ error: refusal.error }, { status: refusal.status });
+  }
 
   // #2543. A save that does not name a mode must PRESERVE the stored one, so
   // saving any other field on this panel cannot move the club's booking policy.
   // Routed through `normalizeMembershipLockoutSettings` rather than reading
   // `before.mode` raw so the closed vocabulary is enforced in exactly one place,
   // and so a missing row resolves to the same default the rest of the app sees.
-  const mode = parsed.data.mode ?? normalizeMembershipLockoutSettings(before).mode;
+  const mode = parsed.data.mode ?? stored.mode;
 
+  // #5190: the liability pair is written only when the save changes the rule
+  // `stored` holds, so an echo of an earlier read never writes a rule back.
+  const liabilityChoice = liabilityChoiceToWrite(parsed.data, stored);
   const data = {
     mode,
     financialYearEndMonthOverride:
@@ -148,14 +177,24 @@ export async function PUT(request: NextRequest) {
       parsed.data.useFeeScheduleItemCodes ??
       before?.useFeeScheduleItemCodes ??
       false,
+    ...liabilityChoice,
     updatedByMemberId: session.user.id,
   };
-
-  const record = await prisma.membershipLockoutSettings.upsert({
-    where: { id: MEMBERSHIP_LOCKOUT_SETTINGS_ID },
-    create: { id: MEMBERSHIP_LOCKOUT_SETTINGS_ID, ...data },
-    update: data,
+  // #5190: a save that leaves the club on a chosen rule also runs the stale-row
+  // clear-up, in the same transaction (`saveLockoutSettings`).
+  const seasonYear = clubSeasonYear(await clubTimeZone());
+  const saved = await saveLockoutSettingsUnlessBusy(prisma, {
+    data,
+    liabilityAfterSave: liabilityChoice ?? stored,
+    seasonYear,
   });
+  if (saved === null) {
+    return NextResponse.json(
+      { error: "Another update is in progress — try again shortly." },
+      { status: 503 }
+    );
+  }
+  const { record, clearedStaleRows } = saved;
 
   // Reseed the financial-year cache so the change takes effect immediately on
   // this instance.
@@ -173,7 +212,18 @@ export async function PUT(request: NextRequest) {
       severity: "important",
       outcome: "success",
       summary: "Membership booking lockout settings updated",
-      metadata: { previousSettings: before, newSettings: data },
+      metadata: {
+        previousSettings: before,
+        newSettings: data,
+        ...(clearedStaleRows === null
+          ? {}
+          : {
+              clearedStaleNotRequiredRows: clearedRowsAuditMetadata(
+                clearedStaleRows,
+                seasonYear,
+              ),
+            }),
+      },
       request: getAuditRequestContext(request),
     })
   );

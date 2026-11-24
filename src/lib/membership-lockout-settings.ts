@@ -2,6 +2,11 @@ import type { PrismaClient } from "@prisma/client";
 
 import { DEFAULT_MEMBERSHIP_LOCKOUT_SETTINGS } from "@/config/club-settings-defaults";
 import { prisma } from "@/lib/prisma";
+import {
+  isSubscriptionLiabilityAgeSource,
+  isSubscriptionRequiredTypeAgeRule,
+  type SubscriptionLiabilitySettings,
+} from "@/lib/policies/subscription";
 
 // Admin-configurable settings for the booking lockout that blocks members with
 // an unpaid annual subscription. Single-row table (id = "default"), same
@@ -34,7 +39,7 @@ export function isSubscriptionLockoutMode(
   );
 }
 
-export interface MembershipLockoutSettings {
+export interface MembershipLockoutSettings extends SubscriptionLiabilitySettings {
   /**
    * How an unpaid member is treated at booking time (#2543):
    *  - `NO_BLOCK` — no subscription gate at all;
@@ -75,6 +80,12 @@ export interface PersistedMembershipLockoutSettings {
   financialYearEndMonthOverride: number | null;
   textFallbackEnabled: boolean | null;
   useFeeScheduleItemCodes: boolean | null;
+  /**
+   * #5190. Typed loosely for the same reason as `mode`: a bundle value may be
+   * hand-edited. Anything outside the closed vocabulary reads as NOT_CHOSEN.
+   */
+  requiredTypeAgeRule?: string | null;
+  liabilityAgeSource?: string | null;
   updatedByMemberId?: string | null;
   createdAt?: Date | string | null;
   updatedAt?: Date | string | null;
@@ -135,6 +146,17 @@ export function normalizeMembershipLockoutSettings(
       persisted?.textFallbackEnabled ?? defaults.textFallbackEnabled,
     useFeeScheduleItemCodes:
       persisted?.useFeeScheduleItemCodes ?? defaults.useFeeScheduleItemCodes,
+    // #5190: an unknown value is NOT_CHOSEN, the state that changes nobody.
+    requiredTypeAgeRule: isSubscriptionRequiredTypeAgeRule(
+      persisted?.requiredTypeAgeRule,
+    )
+      ? persisted.requiredTypeAgeRule
+      : defaults.requiredTypeAgeRule,
+    liabilityAgeSource: isSubscriptionLiabilityAgeSource(
+      persisted?.liabilityAgeSource,
+    )
+      ? persisted.liabilityAgeSource
+      : defaults.liabilityAgeSource,
   };
 }
 

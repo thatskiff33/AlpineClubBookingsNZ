@@ -8712,6 +8712,26 @@ enum SubscriptionLockoutMode {
   NON_MEMBER_PRICING
 }
 
+// How a REQUIRED-type member whose age tier is subscription-exempt is treated
+// (#5190, owner decision 18 Nov 2026: each club decides). NOT_CHOSEN keeps the
+// pre-#5190 split: billing charges them, booking access exempts them.
+enum SubscriptionRequiredTypeAgeRule {
+  NOT_CHOSEN
+  ALWAYS_OWES
+  AGE_TIER_EXEMPTS
+}
+
+// Which age decides a member's subscription liability (#5190). NOT_CHOSEN keeps
+// the pre-#5190 split: billing reads the season-start tier, booking access the
+// stored tier. CURRENT_AGE is refused by every writer until part-season invoices
+// ship (#5190 PR 3).
+enum SubscriptionLiabilityAgeSource {
+  NOT_CHOSEN
+  SEASON_START
+  SEASON_END
+  CURRENT_AGE
+}
+
 model MembershipLockoutSettings {
   id                            String                  @id @default("default")
   // Three-way lockout policy (#2543), and the ONLY record of it: the legacy
@@ -8736,6 +8756,12 @@ model MembershipLockoutSettings {
   // per membership type + age tier are still recognised as paid. Default false =
   // single-code behaviour byte-for-byte.
   useFeeScheduleItemCodes       Boolean  @default(false)
+  // The club's subscription-liability rule (#5190, INV-CONFIG-009). Both stay
+  // NOT_CHOSEN until an admin chooses them together; while either is NOT_CHOSEN
+  // billing and booking access keep their pre-#5190 rules exactly. Read through
+  // `loadMembershipLockoutSettings` and `liabilityRuleFor`, never directly.
+  requiredTypeAgeRule           SubscriptionRequiredTypeAgeRule @default(NOT_CHOSEN)
+  liabilityAgeSource            SubscriptionLiabilityAgeSource  @default(NOT_CHOSEN)
   updatedByMemberId             String?
   createdAt                     DateTime @default(now())
   updatedAt                     DateTime @updatedAt

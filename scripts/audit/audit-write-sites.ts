@@ -410,6 +410,8 @@ export const AUDIT_WRITE_SITES: Readonly<Record<string, AuditWriteSiteLedgerEntr
   "src/lib/club-tax-settings-write.ts::cancelScheduledClubTaxChange#0": {"category":"admin","sink":"auditLog.create","action":"CLUB_TAX_TREATMENT_SCHEDULE_CANCELLED"},
   "src/lib/club-tax-settings-write.ts::scheduleClubTaxChange#0": {"category":"admin","sink":"auditLog.create","action":"CLUB_TAX_TREATMENT_SCHEDULED"},
   "src/lib/config-transfer/apply.ts::applyConfigImport#0": {"category":"admin","sink":"createAuditLog","action":"configuration.imported"},
+  "src/lib/config-transfer/apply.ts::clearStaleRowsAfterImport#0": {"category":"admin","sink":"createAuditLog","action":"configuration.imported.liability_clear_up"},
+  "src/lib/config-transfer/apply.ts::clearStaleRowsAfterImport#1": {"category":"admin","sink":"createAuditLog","action":"configuration.imported.liability_clear_up"},
   "src/lib/config-transfer/bootstrap-import.ts::runConfigBootstrapImport.result#0": {"category":"system","sink":"createAuditLog","action":"(dynamic) CONFIG_BOOTSTRAP_AUDIT_ACTION"},
   "src/lib/credit-release-ask-close.ts::closeCreditReleaseAsksPaidInXero.closed#0": {"category":"payment","sink":"createAuditLog","action":"payment.credit_release_ask.closed_paid_in_xero"},
   "src/lib/credit-release-ask-close.ts::recordReleasePaidInXeroCash#0": {"category":"payment","sink":"createAuditLog","action":"payment.credit_release_ask.closed_paid_in_xero"},

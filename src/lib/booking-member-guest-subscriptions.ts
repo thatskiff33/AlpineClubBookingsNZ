@@ -1,9 +1,11 @@
 import type { AgeTier, SubscriptionStatus } from "@prisma/client";
 import { getAgeTierSettings } from "@/lib/age-tier";
 import { memberGuestCrossFamilyRefusal } from "@/lib/booking-guests";
-import { isSubscriptionEnforcementActive } from "@/lib/member-subscription-eligibility";
+import { resolveSubscriptionLockoutPolicy } from "@/lib/member-subscription-eligibility";
 import { resolveMembershipTypePoliciesForMembers } from "@/lib/membership-type-policy";
 import {
+  ACTIVE_NO_INVOICE_COVERAGE,
+  hasActiveNoInvoiceCoverage,
   resolveMemberSubscriptionSettlement,
   subscriptionIsUnpaid,
 } from "@/lib/subscription-lockout-facts";
@@ -32,6 +34,7 @@ interface BookingMemberGuestSubscriptionDb {
         status: true;
         xeroOnlineInvoiceUrl: true;
         xeroInvoiceNumber: true;
+        chargeCoverage: typeof ACTIVE_NO_INVOICE_COVERAGE;
       };
     }): Promise<
       Array<{
@@ -39,15 +42,16 @@ interface BookingMemberGuestSubscriptionDb {
         status: SubscriptionStatus;
         xeroOnlineInvoiceUrl: string | null;
         xeroInvoiceNumber: string | null;
+        chargeCoverage?: Array<{ id: string }>;
       }>
     >;
   };
   member: {
     findMany(args: {
       where: { id: { in: string[] } };
-      select: { id: true; firstName: true; lastName: true; ageTier: true };
+      select: { id: true; firstName: true; lastName: true; ageTier: true; dateOfBirth: true };
     }): Promise<
-      Array<{ id: string; firstName: string; lastName: string; ageTier: AgeTier }>
+      Array<{ id: string; firstName: string; lastName: string; ageTier: AgeTier; dateOfBirth: Date | null }>
     >;
   };
 }
@@ -84,7 +88,8 @@ export async function findUnpaidMemberGuests(
 
   // With the Xero module effectively off, subscriptions cannot be invoiced or
   // paid, so member guests are never blocked on subscription status.
-  if (!(await isSubscriptionEnforcementActive())) {
+  const lockout = await resolveSubscriptionLockoutPolicy();
+  if (lockout.mode === "NO_BLOCK") {
     return [];
   }
 
@@ -101,6 +106,7 @@ export async function findUnpaidMemberGuests(
       status: true,
       xeroOnlineInvoiceUrl: true,
       xeroInvoiceNumber: true,
+      chargeCoverage: ACTIVE_NO_INVOICE_COVERAGE,
     },
   });
   const membershipTypePolicies = await resolveMembershipTypePoliciesForMembers(db, {
@@ -113,7 +119,7 @@ export async function findUnpaidMemberGuests(
   );
   const linkedMembers = await db.member.findMany({
     where: { id: { in: uniqueIds } },
-    select: { id: true, firstName: true, lastName: true, ageTier: true },
+    select: { id: true, firstName: true, lastName: true, ageTier: true, dateOfBirth: true },
   });
 
   const memberById = new Map(linkedMembers.map((member) => [member.id, member]));
@@ -128,8 +134,11 @@ export async function findUnpaidMemberGuests(
       resolveMemberSubscriptionSettlement({
         subscriptionBehavior: membershipTypePolicies.get(id)?.subscriptionBehavior,
         subscriptionStatus: subscriptionById.get(id)?.status,
-        ageTier: memberById.get(id)?.ageTier ?? null,
+        coveredByNoInvoiceCharge: hasActiveNoInvoiceCoverage(subscriptionById.get(id)),
+        member: memberById.get(id) ?? null,
+        seasonYear,
         ageTierSettings,
+        liabilitySettings: lockout.liabilitySettings,
       }),
     ),
   );

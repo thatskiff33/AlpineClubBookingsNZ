@@ -202,7 +202,7 @@ describe("the payment path is DELIBERATELY ungated (#2779, INV-LOCKOUT-069)", ()
     "peekSubscriptionLockoutMode(",
     "peekSubscriptionLockoutModeStrict(",
     "requiresPaidSubscriptionForMemberForBooking(",
-    "requiresPaidSubscriptionForBooking(",
+    "resolveSubscriptionLockoutPolicy(",
     'code: "SUBSCRIPTION_REQUIRED"',
   ] as const;
 
