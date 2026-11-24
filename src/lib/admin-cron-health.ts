@@ -352,18 +352,15 @@ export function getAdminCronJobDefinitions(
       },
       globalDisabledReason
     ),
-    // The 15-minute payments cycle (`payments-cron-runner`, #3663): each task is
-    // recorded under its own name so a missing run is visible. #3635 re-announces
-    // an OPEN held late-capture payment nobody has been told about; #4285 review
-    // delivers an owed alert for a card payment kept on a paid booking that
-    // nothing else paid for.
+    // The 15-minute payments cycle (`payments-cron-runner`, #3663), each task
+    // under its own name so a missing run is visible: #3635's held late-capture
+    // alert, #4285's kept card payment alert, #4525's combined invoice cover sweep.
     ...([
       ["payment-recovery", "Stripe payment recovery"],
       ["internet-banking-hold-release", "Expired Internet Banking hold release"],
       ["xero-waiting-invoice-reaper", "Stale waiting Xero invoice reaper"],
       ["late-capture-held-alert", "Held late payment alert"],
       ["duplicate-capture-kept-alert", "Kept card payment alert"],
-      // #4525 review: releases a combined group invoice's ledger cover once its VOID ended it.
       ["combined-invoice-cover-release", "Combined group invoice cover release"],
     ] as const).map(([jobName, label]) =>
       defineCronJob(
