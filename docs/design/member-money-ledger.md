@@ -723,7 +723,15 @@ stored request's `childBookingIds`. A request written before that key existed
 falls back to the children committed now, matched on totals only, so there a
 child swapped for another with the same charges would be covered in its place:
 a stated limit of those older rows. A primary invoice and a combined invoice
-never both live-cover one component (a partial unique index). Coverage ends
+never both live-cover one component (a partial unique index). A primary
+invoice raised for a child while a combined invoice covers its charge is
+refused by that index (P2002): its recorder, old or new code, plans no
+`ALREADY_COVERED` against combined cover, so it writes no manifest row and
+logs "Another run recorded the primary invoice's manifest first", and nothing
+records it later (a primary replay runs only when its CREATE runs again
+against an already-bound invoice, which nothing schedules). The combined
+cover stands, so nothing is recorded as billed twice; that primary invoice is
+a stated gap in the manifest. Coverage ends
 only by an insert-only `MemberMoneyExportCoverageRelease` row, written when
 Xero holds the invoice void or holds no such invoice, never when it carries
 money; the next document then covers the component at the next coverage

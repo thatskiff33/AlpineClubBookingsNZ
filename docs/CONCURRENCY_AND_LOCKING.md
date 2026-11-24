@@ -7386,10 +7386,16 @@ The exclusion is structural: the manifest's unique `(documentRole, legacyKey)`,
 the coverage key per generation, and the partial unique index that lets only
 one primary or combined invoice cover a component at a time. Two racing
 recorders, or a primary and a combined recorder on one component, meet a
-unique violation (P2002); the loser writes nothing, logs, and a replay
-re-plans it, as `ALREADY_COVERED` if the winner still covers the component
-(a winner from the same settlement's earlier attempt too: owner decision,
-25 Nov 2026, #4525). That conflict becomes cover once the earlier invoice's
+unique violation (P2002), and the loser writes nothing and logs. A combined
+loser re-plans in its second step below, as `ALREADY_COVERED` if the winner
+still covers the component (a winner from the same settlement's earlier
+attempt too: owner decision, 25 Nov 2026, #4525). A primary loser does not:
+the primary plan reads no live cover, so it never plans `ALREADY_COVERED`, and
+a primary replay runs only when the CREATE runs again against an already-bound
+invoice, which nothing schedules. That primary invoice keeps no manifest row,
+under the recorder's "Another run recorded the primary invoice's manifest
+first" log line (main's wording, unchanged here); the combined cover stands
+(ledger §7). A combined `ALREADY_COVERED` conflict becomes cover once the earlier invoice's
 cover is released: a successor manifest under `coveredAfterReleaseKey`, written
 by the recorder in a second transaction after its own row commits, and reached
 again by the release's retry after the release commits. Whichever of a record
