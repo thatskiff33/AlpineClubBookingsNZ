@@ -23,11 +23,16 @@ import type { Prisma } from "@prisma/client";
 
 import logger from "@/lib/logger";
 import type { OwedNoticeKind } from "@/lib/owed-notice/kinds";
-import { OWED_NOTICE_PAYLOAD_ID, recordOwedNotices, type OwedNoticeMarker } from "@/lib/owed-notice/store";
+import { owedNoticeInputProblem, recordOwedNotices, type OwedNoticeInput, type OwedNoticeMarker } from "@/lib/owed-notice/store";
 import type { BookingSettlementSource } from "@/lib/payment-reconciliation-sources";
 
 /** The owed confirmation's kind. Named for the email, not the payment, so the zero-balance and bank-transfer confirmations can join it. */
 export const BOOKING_CONFIRMED_KIND: OwedNoticeKind = "booking-confirmed";
+
+/** The marker's input for one payment: one definition for the write and its pre-check. */
+function paidConfirmationInput(bookingId: string, paidAt: Date): OwedNoticeInput {
+  return { kind: BOOKING_CONFIRMED_KIND, subjectId: bookingId, eventAt: paidAt };
+}
 
 /**
  * Record the confirmation as owed, keyed by the booking and the moment it was
@@ -38,7 +43,7 @@ export async function recordPaidBookingConfirmationOwed(
   tx: Pick<Prisma.TransactionClient, "owedNotice">,
   { bookingId, paidAt }: { bookingId: string; paidAt: Date },
 ): Promise<OwedNoticeMarker> {
-  const [marker] = await recordOwedNotices(tx, [{ kind: BOOKING_CONFIRMED_KIND, subjectId: bookingId, eventAt: paidAt }]);
+  const [marker] = await recordOwedNotices(tx, [paidConfirmationInput(bookingId, paidAt)]);
   return marker!;
 }
 
@@ -57,13 +62,15 @@ export async function owePaidConfirmationAfterFreshClaim<R extends { outcome: st
 ): Promise<R & { paidConfirmation: OwedNoticeMarker | null }> {
   const owed = result.outcome === "paid" && settlement.kind === "stripe" && settlement.owesPaidConfirmation === true;
   if (!owed) return { ...result, paidConfirmation: null };
-  // Round 1, item 1: the marker's identity check throws on a booking id that is
-  // not an id, and a throw here would roll back a captured card payment (and
-  // Stripe would retry it for days). So the shape is decided first, without
-  // writing: an unwritable marker is an error log, and the settle goes on.
-  if (!OWED_NOTICE_PAYLOAD_ID.test(bookingId)) {
-    logger.error({ bookingId }, "A paid booking's id cannot key an owed confirmation; the payment settles and no confirmation is recorded as owed");
+  // Round 1, item 1 (round 2, F3): the store throws on an input it cannot write,
+  // and a throw here would roll back a captured card payment (and Stripe would
+  // retry it for days). So the store's own rule is asked first, without writing:
+  // an unwritable marker is an error log, and the settle goes on.
+  const paidAt = new Date();
+  const problem = owedNoticeInputProblem(paidConfirmationInput(bookingId, paidAt));
+  if (problem) {
+    logger.error({ bookingId, problem }, "A paid booking cannot key an owed confirmation; the payment settles and no confirmation is recorded as owed");
     return { ...result, paidConfirmation: null };
   }
-  return { ...result, paidConfirmation: await recordPaidBookingConfirmationOwed(tx, { bookingId, paidAt: new Date() }) };
+  return { ...result, paidConfirmation: await recordPaidBookingConfirmationOwed(tx, { bookingId, paidAt }) };
 }

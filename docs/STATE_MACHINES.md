@@ -4532,12 +4532,16 @@ waitlist offer shares (`email/keyed-email-state.ts`): told (sent, or withheld
 by "No emails" or a non-production copy), cleared; held back by the
 installation's environment gate, cleared, because the gate already writes that
 row to the retry ceiling, where it waits in the email-failure review queue, as
-before #5433; withheld because the booking's "No emails" switch could not be
-read, cleared, because the email core alerts officers about that row itself
-(`admin-email-failure`), so they are not told twice; otherwise (a provider
-failure, a bounce or suppressed address, or no address at all, a walk-in's
+before #5433; otherwise (a provider failure, a bounce or suppressed address,
+a "No emails" switch that could not be read, or no address at all, a walk-in's
 placeholder or an organisation with none, D8) the officers get the alert, once
-per payment. The confirmation's body is never kept, so the retry cron never
+per payment, through the notice's own durable claim. For an unreadable "No
+emails" switch the email core also sends its own `admin-email-failure` alert,
+to support-area editors rather than the booking-review officers, so officers
+can get both. That is accepted: the core's alert is not durable (it is
+throttled in memory, a failure to send it is only logged, and it is never
+retried), and the issue already accepts that officers may very rarely get an
+alert twice rather than a paid booking go unflagged. The confirmation's body is never kept, so the retry cron never
 replays one, and a booking cancelled after a failed send is not sent it later;
 it needs no "still wanted" check.
 
@@ -4562,10 +4566,12 @@ paid" too.
   made and the marker stays; the sweep then finds the row `QUEUED` and counts
   the owner as told, sending nothing. Before #5433 that confirmation was sent
   anyway, its row left queued.
-- When the email core's own "No emails could not be read" alert is held back by
-  its throttle (once in 15 minutes per booking, and five in 15 minutes per app
-  instance), the
-  officers get no alert for that confirmation.
+- In the webhook and the confirm-payment route the member's email now waits
+  for the Xero invoice to be queued, which runs one pending outbox job inline
+  when Xero is connected (the oldest, not necessarily this booking's, and it
+  can make several Xero calls). The handler takes no longer in all than before,
+  but a stop during that call now loses the immediate send; the marker
+  recovers it on a sweep about half an hour later.
 - A booking edited downward after the payment is confirmed at its new worth,
   as an officer's fresh copy is.
 - During a blue-green switch the previous release settles with no marker and

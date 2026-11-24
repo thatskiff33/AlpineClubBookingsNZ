@@ -85,7 +85,6 @@ vi.mock("@/lib/club-format-server", async () => ({
 vi.mock("@/lib/logger", () => ({ default: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() } }));
 
 import { requireClubTimeZone } from "@/lib/club-time";
-import { BOOKING_NO_EMAILS_UNREADABLE_MESSAGE } from "@/lib/email/booking-no-emails-unreadable";
 import logger from "@/lib/logger";
 import { shouldPersistEmailHtml } from "@/lib/email/internal";
 import { STILL_WANTED_TEMPLATE_NAMES } from "@/lib/email/retry-still-wanted";
@@ -176,7 +175,10 @@ describe("the settle's last write (owePaidConfirmationAfterFreshClaim)", () => {
 
     expect(result.paidConfirmation).toBeNull();
     expect(owed.store.delegate.createMany).not.toHaveBeenCalled();
-    expect(vi.mocked(logger.error)).toHaveBeenCalledWith({ bookingId: "not:an-id" }, expect.stringContaining("cannot key an owed confirmation"));
+    expect(vi.mocked(logger.error)).toHaveBeenCalledWith(
+      { bookingId: "not:an-id", problem: expect.stringContaining("subjectId") },
+      expect.stringContaining("cannot key an owed confirmation"),
+    );
   });
 
   it.each([
@@ -242,6 +244,19 @@ describe("delivery right after the settle commits", () => {
 
     expect(core.sends).toHaveLength(1);
     expect(zoneReads.count).toBe(0);
+  });
+
+  it("leaves the marker to the sweep when the status read before the send fails, logging that read, and sends nothing (round 2, F5)", async () => {
+    const marker = await commitSettle(NOW);
+    const { prisma } = await import("@/lib/prisma");
+    const spy = vi.spyOn(prisma.booking, "findUnique").mockRejectedValueOnce(new Error("database down"));
+
+    await deliverPaidBookingConfirmation(marker, CLUB_FORMAT_TEST, "stripe-webhook");
+
+    expect(core.sends).toEqual([]);
+    expect(owed.store.rows.size).toBe(1);
+    expect(vi.mocked(logger.error)).toHaveBeenCalledWith(expect.objectContaining({ bookingId: BOOKING_ID }), expect.stringContaining("status before sending its confirmation"));
+    spy.mockRestore();
   });
 
   it("leaves the marker to the sweep when the send throws, and alerts nobody yet", async () => {
@@ -421,28 +436,19 @@ describe("what became of the email after a send (the told rule)", () => {
     expect(alerts.unsent).not.toHaveBeenCalled();
   });
 
-  it("withheld because No emails could not be read (the email core already alerted officers): cleared with no second alert (round 1, item 3)", async () => {
+  it("withheld because No emails could not be read: undeliverable like any other, so the officers are alerted once through this notice's own claim (round 2, F1)", async () => {
     const marker = await commitSettle(NOW);
     const { sendPaidBookingConfirmation } = await import("@/lib/paid-booking-confirmation-email");
     vi.mocked(sendPaidBookingConfirmation).mockImplementationOnce(async () => {
-      db.emailRows.set(paidConfirmationEmailLogId(marker), { status: EmailLogStatus.FAILED, attempts: 1, lastAttemptAt: NOW, htmlBody: null, bookingRetryHtmlBody: null, errorMessage: BOOKING_NO_EMAILS_UNREADABLE_MESSAGE } as never);
+      // The email core's own fail-closed row: FAILED, no body, no block reason.
+      db.emailRows.set(paidConfirmationEmailLogId(marker), { status: EmailLogStatus.FAILED, attempts: 1, lastAttemptAt: NOW, htmlBody: null, bookingRetryHtmlBody: null, errorMessage: "Withheld: the booking's \"No emails\" switch could not be read, so the send failed closed" } as never);
       return { status: "withheld_for_booking", emailLogId: paidConfirmationEmailLogId(marker), bookingId: BOOKING_ID, reason: "booking_flag_unreadable" };
     });
 
     await deliverPaidBookingConfirmation(marker, CLUB_FORMAT_TEST, "stripe-webhook");
 
-    expect(owed.store.rows.size).toBe(0);
-    expect(alerts.unsent).not.toHaveBeenCalled();
-  });
-
-  it("past the cut-off, a row the email core already reported alerts nobody either", async () => {
-    const marker = await commitSettle(new Date(NOW.getTime() - 48 * HOUR));
-    core.booking = paidBooking({ checkIn: new Date("2026-06-30T00:00:00.000Z") });
-    db.emailRows.set(paidConfirmationEmailLogId(marker), { status: EmailLogStatus.FAILED, attempts: 1, lastAttemptAt: NOW, htmlBody: null, bookingRetryHtmlBody: null, errorMessage: BOOKING_NO_EMAILS_UNREADABLE_MESSAGE } as never);
-
-    await sweep(NOW);
-
-    expect(alerts.unsent).not.toHaveBeenCalled();
+    expect(alerts.onceKeys).toEqual([marker.id]);
+    expect(alerts.unsent).toHaveBeenCalledTimes(1);
     expect(owed.store.rows.size).toBe(0);
   });
 

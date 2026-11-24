@@ -513,7 +513,10 @@ you want both reworded; editing only one leaves the other on its built-in text.
 > after a card payment on the booking page: a booking whose non-member guests
 > are charged separately gets the paragraph about them, and an extra still to
 > pay shows as "Still Owing". It no longer sends a second confirmation when
-> Stripe's notice settled the same charge first.
+> Stripe's notice settled the same charge first. After a card payment on the
+> booking page or Stripe's notice, the email now goes once the booking's Xero
+> invoice is queued; if the app stops while Xero is being called, the email
+> goes on a later run, about half an hour later.
 >
 > What an officer can notice: a new alert, **Booking confirmation not sent**
 > (`admin-booking-confirmation-unsent`). It is sent once per paid booking when
@@ -526,11 +529,13 @@ you want both reworded; editing only one leaves the other on its built-in text.
 > confirmation from the booking page. It goes to officers who receive
 > **Booking review required** alerts, and its wording is editable like the
 > others. No alert is sent for a confirmation the booking's **No emails**
-> switch held back, as before; nor when that switch could not be read, because
-> officers already get the existing **An email to a member could not be sent**
-> alert for it; nor for one this installation held back because its
-> environment is not declared (or a capture mailbox is set where it must not
-> be): that one waits in the email-failure review queue, as before.
+> switch held back, as before, nor for one this installation held back because
+> its environment is not declared (or a capture mailbox is set where it must
+> not be): that one waits in the email-failure review queue, as before. When
+> the **No emails** switch could not be read, this alert is sent as well as
+> the existing **An email to a member could not be sent** alert, which goes to
+> a different group of officers; the existing one is not retried if it fails,
+> so this one makes sure the booking-review officers hear.
 >
 > Nothing changes for the other ways a booking is confirmed: an officer's
 > charge of a saved card, an officer's confirmation of pending guests (which
