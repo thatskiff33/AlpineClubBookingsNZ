@@ -1007,6 +1007,12 @@ const UNROOTED_ORGANISATION_SELECTIONS: readonly string[] = [
   // it in budget. Verified by hand: written through
   // `Prisma.validator<Prisma.ManualRefundTaskSelect>()`, and `organisation` sits
   // under its `booking` relation, which declares it.
+  // #5197: the reopen core's select, shared by an officer's reopen and a late
+  // win's. Verified by hand: written through
+  // `Prisma.validator<Prisma.ManualRefundTaskSelect>()` and read back through
+  // `Prisma.ManualRefundTaskGetPayload`, and `organisation` sits under its
+  // `booking` relation, which declares it.
+  "src/lib/manual-refund-task-reopen.ts::booking: { select: { memberId: true, status: true, organiserSettled: true, parentBookingId: true, payment: { select: { source: true } }, organisation: { select: { name: true, email: true } } } },#0",
   "src/lib/manual-refund-task-resolution-select.ts::organisation: { select: { name: true, email: true } },#0",
   // Added when the member lodge roster (#2942, from `main`) was routed through
   // `bookingOwner()` on the eighth epic sync. Verified by hand, which is what

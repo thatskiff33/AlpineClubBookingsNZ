@@ -14,7 +14,15 @@ const findUnique = vi.hoisted(() =>
   vi.fn<(args: unknown) => Promise<{ id: string; status: string; attempts: number } | null>>(async () => null),
 );
 const findBooking = vi.hoisted(() => vi.fn<(args: unknown) => Promise<{ id: string } | null>>(async () => ({ id: "b1" })));
-vi.mock("@/lib/prisma", () => ({ prisma: { paymentRecoveryOperation: { updateMany, findUnique }, booking: { findUnique: findBooking } } }));
+// #5255: the owed row the lost-close alert is stored in for the sweep.
+const storeOwed = vi.hoisted(() => vi.fn<(args: unknown) => Promise<unknown>>(async () => ({})));
+vi.mock("@/lib/prisma", () => ({
+  prisma: {
+    paymentRecoveryOperation: { updateMany, findUnique },
+    booking: { findUnique: findBooking },
+    alertCooldown: { create: storeOwed, deleteMany: vi.fn(async () => ({ count: 1 })) },
+  },
+}));
 
 const logger = vi.hoisted(() => ({ error: vi.fn(), warn: vi.fn(), info: vi.fn(), debug: vi.fn() }));
 vi.mock("@/lib/logger", () => ({ default: logger }));
@@ -26,7 +34,7 @@ vi.mock("@/lib/payment-recovery-alert", () => ({
 }));
 
 const sendAdminAlertOnceEver = vi.hoisted(() => vi.fn<(args: { key: string; send: () => Promise<unknown> }) => Promise<boolean>>(async () => true));
-vi.mock("@/lib/admin-alert-once", () => ({ sendAdminAlertOnceEver }));
+vi.mock("@/lib/admin-alert-once", () => ({ sendAdminAlertOnceEver, readOnceEverClaimState: async () => "none" }));
 
 import { closeDoorRow, closePrePersistedRefundRow, type LostCloseContext } from "@/lib/pre-persisted-refund-close";
 import type { RefundAllocationSlice } from "@/lib/payment-transactions";
@@ -134,6 +142,13 @@ describe("closeDoorRow (#4144)", () => {
     expect(sendAdminAlertOnceEver).toHaveBeenCalledTimes(1);
     const [{ key, send }] = sendAdminAlertOnceEver.mock.calls[0]!;
     expect(key).toBe("capacity-race-close-lost:op_row");
+    // #5255: nothing raises it again, so it is stored for the sweep first.
+    expect(storeOwed).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        key: "once-ever-owed:capacity-race-close-lost:op_row",
+        replayAlert: expect.objectContaining({ alert: expect.objectContaining({ kind: "payment-recovery", operationId: "op_row", amountCents: 5000 }) }),
+      }),
+    });
     await send();
     expect(alertPaymentRecoveryOfficers).toHaveBeenCalledWith(
       expect.objectContaining({

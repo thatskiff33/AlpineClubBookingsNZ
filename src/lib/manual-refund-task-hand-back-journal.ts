@@ -3,7 +3,7 @@ import type { EditReviewSettlementRoute } from "@/lib/edit-financial-review-sett
 import { isJournalHandBackTask, type HandBackFacts } from "@/lib/manual-refund-task-hand-back-population";
 import { cancelCardShortfallPart, isEditRefundHandBackTask, isNonCancellationHandBackTask } from "@/lib/manual-refund-task-settlement-rules";
 import { lockMemberCreditLedger, requireMemberCreditRecipient } from "@/lib/member-credit";
-import { postHandBackPayment, postRefundObligation, withdrawRefundObligation, type BookingJournalContext } from "@/lib/member-money/doors";
+import { postHandBackPayment, postRefundObligation, restoreHandBackObligation, withdrawRefundObligation, type BookingJournalContext } from "@/lib/member-money/doors";
 import { memberMoneyEventKeys } from "@/lib/member-money";
 import { lockPaymentForRefundedTotal } from "@/lib/payment-transactions";
 import {
@@ -76,13 +76,25 @@ export const NO_HAND_BACK_DISPUTES: HandBackDisputeContext = { disputes: [], pay
  * step after a lost dispute was always to dismiss it, #5061), any other its reductions (raised less still owed, the
  * only change these tasks' amounts take).
  */
-function lossAppliedByTask(task: PaymentHandBackTask): number {
-  const raised = task.raisedAmountCents ?? task.amountCents ?? 0;
+export function lossAppliedByTask(task: Pick<PaymentHandBackTask, "status" | "amountCents" | "raisedAmountCents">): number {
+  const raised = handBackRaisedCents(task);
   return task.status === "DISMISSED" ? raised : Math.max(0, raised - (task.amountCents ?? 0));
 }
 
-const olderThan = (a: PaymentHandBackTask, b: PaymentHandBackTask) =>
+/** What a task was raised for: a legacy row with no `raisedAmountCents` was never reduced, so its amount. */
+export function handBackRaisedCents(task: Pick<PaymentHandBackTask, "amountCents" | "raisedAmountCents">): number {
+  return task.raisedAmountCents ?? task.amountCents ?? 0;
+}
+
+/** The allocation's order (oldest first, then by id); #5197's late win walks it in reverse. */
+export const olderThan = (a: Pick<PaymentHandBackTask, "createdAt" | "id">, b: Pick<PaymentHandBackTask, "createdAt" | "id">) =>
   a.createdAt.getTime() < b.createdAt.getTime() || (a.createdAt.getTime() === b.createdAt.getTime() && a.id < b.id);
+
+/** The cents of the disputes on this payment that read lost: what the allocation applies. */
+export function lostCentsOnPayment(paymentId: string | null, disputes: HandBackDisputes): number {
+  return disputesOnTaskPayment({ paymentId }, disputes).filter((dispute) => disputeIsLost(dispute.status))
+    .reduce((sum, dispute) => sum + dispute.amountCents, 0);
+}
 
 /**
  * THE ONCE-ONLY ALLOCATION (owner decision, 18 Nov 2026, #4516; `INV-SSOT`): the lost cents this task may take. The
@@ -93,8 +105,7 @@ const olderThan = (a: PaymentHandBackTask, b: PaymentHandBackTask) =>
  */
 export function disputeLossAvailableToTask(task: PaymentHandBackTask, context: HandBackDisputeContext): number {
   if (task.paymentId === null) return 0;
-  const lost = disputesOnTaskPayment(task, context.disputes).filter((dispute) => disputeIsLost(dispute.status))
-    .reduce((sum, dispute) => sum + dispute.amountCents, 0);
+  const lost = lostCentsOnPayment(task.paymentId, context.disputes);
   const tasks = [task, ...context.paymentTasks.filter((other) => other.id !== task.id)]
     .filter((other) => other.paymentId === task.paymentId && isDisputeLossHandBack(other));
   const applied = tasks.reduce((sum, other) => sum + lossAppliedByTask(other), 0);
@@ -275,6 +286,28 @@ export async function withdrawReducedHandBackDebt(tx: Prisma.TransactionClient, 
     reason: "Disputed card payment's hand-back reduced: a dispute lost for part of it, so the cardholder already has that part",
     senderKeyPrefix: `hand-back-reduce:${task.id}`,
     part: { eventKey: memberMoneyEventKeys.handBackReduced(task.id, reduction.lostDisputeIds), amountCents: reduction.cents, debtorRead: "booking-row" },
+  });
+}
+
+/**
+ * #5197: a dispute-loss hand-back put back on the queue, by a late win (Stripe reports a lost dispute won) or by an
+ * officer, owes the member again: its refund debt is posted again exactly as its dismissal withdrew it
+ * (`restoreHandBackObligation`), so the journal owes what the reopened task does. With the reopen's status claim and
+ * under its locks (`lock(1)`, the booking row, the Payment row), as the dismissal took them. Every other kind posts
+ * nothing, as before.
+ */
+export async function restoreReopenedHandBackDebt(tx: Prisma.TransactionClient, journal: BookingJournalContext, input: {
+  task: HandBackFacts & { id: string; bookingId: string; amountCents: number | null };
+  origin: "OFFICER" | "STRIPE";
+  actorMemberId: string | null;
+}): Promise<void> {
+  const { task } = input;
+  if (!isDisputeLossHandBack(task) || task.amountCents === null) return;
+  await restoreHandBackObligation(tx, journal, {
+    bookingId: task.bookingId, taskId: task.id, amountCents: task.amountCents, origin: input.origin, actorMemberId: input.actorMemberId,
+    reason: input.origin === "STRIPE"
+      ? "Disputed card payment's hand-back reopened: Stripe reports the lost dispute won, so the club owes the member again"
+      : "Disputed card payment's hand-back put back on the queue by an officer: the refund is owed again",
   });
 }
 

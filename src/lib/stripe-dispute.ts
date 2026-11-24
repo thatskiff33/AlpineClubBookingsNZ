@@ -29,13 +29,18 @@
  * (`INV-INT-032`): a send nobody received throws and the webhook answers 500 so
  * Stripe redelivers.
  *
- * A record and a hold, never money: nothing here writes a ledger line, a
- * journal, a refund, `Payment.refundedAmountCents` or Xero. The hold is read by
- * `disputedCaptureCents` (`stripe-dispute-hold.ts`).
+ * A record and a hold, and no money moves: nothing here writes a ledger line,
+ * a refund, `Payment.refundedAmountCents` or Xero. The hold is read by
+ * `disputedCaptureCents` (`stripe-dispute-hold.ts`). Its one journal effect
+ * (#5197, `INV-PAY-154`): a late win reopens each hand-back task dismissed while
+ * the dispute read lost, posting its refund debt again
+ * (`stripe-dispute-late-win.ts`), once the move to WON has committed.
  *
- * No advisory lock: nothing here changes a booking, settlement money, capacity
- * or credit; two deliveries of one dispute are decided by the unique key and the
- * row lock. The charge read, a provider call, runs before any write.
+ * Two deliveries of one dispute are decided by the unique key and the row lock.
+ * A WON event also takes `pg_advisory_xact_lock(1)` first, bounded, so a move
+ * from LOST to WON never interleaves with an officer's Dismiss or Reduce of a
+ * hand-back on the payment (#5197); no other event takes an advisory lock. The
+ * charge read, a provider call, runs before any write.
  */
 import type Stripe from "stripe";
 import { StripeDisputeStatus, type StripeDispute } from "@prisma/client";
@@ -50,14 +55,19 @@ import { UNMUTEABLE_ALERT_SENT } from "@/lib/email/admin-alert-send-result";
 import type { StripeDisputeAlertFields } from "@/lib/email-templates/admin-stripe-dispute";
 import { emailClubDateTime } from "@/lib/email-templates-club-time";
 import logger from "@/lib/logger";
+import { LOCK1_HOLDER_TRANSACTION_BUDGET } from "@/lib/db-transaction";
+import { setTransactionLockTimeout } from "@/lib/member-merge-booking-lock";
 import { prisma } from "@/lib/prisma";
 import { getChargePaymentIntentId } from "@/lib/stripe-charge";
 import {
   STRIPE_DISPUTE_NEXT_STEP,
   STRIPE_DISPUTE_STATUS_LABEL,
-  STRIPE_DISPUTE_WON_AFTER_LOSS_NEXT_STEP,
+  stripeDisputeWonAfterLossNextStep,
+  type LateWinHandBackReport,
   type StripeDisputeAlertStage,
 } from "@/lib/stripe-dispute-note";
+import { settleLateWinHandBacks } from "@/lib/stripe-dispute-late-win";
+import { stripeDisputeAlertKey, stripeDisputeWonAfterLossOwedKey } from "@/lib/stripe-dispute-keys";
 import {
   UNRECOGNISED_ALERT_IN_FLIGHT_MS,
   stripeDashboardPaymentUrl,
@@ -263,9 +273,21 @@ async function claimRecord(dispute: Stripe.Dispute, event: Stripe.Event): Promis
   return stored;
 }
 
-/** Apply this event to the stored row under its lock; a replay writes nothing. */
+/** #5197: how long a WON event waits for `lock(1)` before the webhook answers 500 and Stripe redelivers. */
+export const STRIPE_DISPUTE_WON_LOCK_TIMEOUT_MS = 5_000;
+
+/**
+ * Apply this event to the stored row under its lock; a replay writes nothing. A WON event first takes `lock(1)`
+ * (#5197), bounded, so a move from LOST to WON is serialised with every officer's Dismiss and Reduce of a dispute-loss
+ * hand-back, which decide under `lock(1)` on the disputes as recorded: the officer either reads WON and is refused,
+ * or commits first and the late win finds the task dismissed or reduced. A timeout throws, writing nothing.
+ */
 async function applyEvent(row: StripeDispute, snapshot: DisputeSnapshot): Promise<StripeDispute> {
   return prisma.$transaction(async (tx) => {
+    if (snapshot.status === StripeDisputeStatus.WON) {
+      await setTransactionLockTimeout(tx, STRIPE_DISPUTE_WON_LOCK_TIMEOUT_MS);
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
+    }
     // Lock raw, read typed (`INV-OPS-001`): a concurrent event's merge waits.
     await tx.$executeRaw`SELECT 1 FROM "StripeDispute" WHERE "id" = ${row.id} FOR NO KEY UPDATE`;
     const current = await tx.stripeDispute.findUniqueOrThrow({ where: { id: row.id } });
@@ -277,7 +299,7 @@ async function applyEvent(row: StripeDispute, snapshot: DisputeSnapshot): Promis
       await tx.alertCooldown.upsert({ where: { key }, create: { key, lastAlertedAt: new Date() }, update: {} });
     }
     return tx.stripeDispute.update({ where: { id: row.id }, data: merged });
-  });
+  }, LOCK1_HOLDER_TRANSACTION_BUDGET);
 }
 
 /**
@@ -316,15 +338,13 @@ export async function recordStripeDispute(
 
 type AlertStage = StripeDisputeAlertStage;
 
-/** #5061 follow-up: the durable marker that a lost dispute's won-after-loss alert is owed. */
-export function stripeDisputeWonAfterLossOwedKey(disputeId: string): string {
-  return `stripe-dispute-won-after-loss-owed:${disputeId}`;
-}
-
 /**
  * Send the won-after-loss alert while its owed marker stands, then settle the
  * marker. A replay after the send finds the once-ever claim kept and sends
- * nothing; an OPEN dispute that is won never writes the marker.
+ * nothing; an OPEN dispute that is won never writes the marker. Runs after the
+ * move to WON committed (`applyEvent`); until the alert is sent, each delivery
+ * first reopens the hand-backs the loss dismissed (#5197,
+ * `settleLateWinHandBacks`, which never throws) and the alert names them.
  */
 async function ensureWonAfterLossAlert(row: StripeDispute, livemode: boolean, format: ClubFormat): Promise<void> {
   // The marker is written only on a move to WON, so no other row can owe it.
@@ -332,13 +352,10 @@ async function ensureWonAfterLossAlert(row: StripeDispute, livemode: boolean, fo
   const key = stripeDisputeWonAfterLossOwedKey(row.stripeDisputeId);
   const owed = await prisma.alertCooldown.findUnique({ where: { key }, select: { key: true } });
   if (!owed) return;
-  await ensureAlert(row, "won-after-loss", livemode, format);
+  if (!(await alertWasSent(row, "won-after-loss"))) {
+    await ensureAlert(row, "won-after-loss", livemode, format, await settleLateWinHandBacks(row));
+  }
   await settleOwedAlert({ key });
-}
-
-/** The once-ever claim of one dispute's alert at one stage. */
-export function stripeDisputeAlertKey(disputeId: string, stage: AlertStage): string {
-  return `stripe-dispute-${stage}:${disputeId}`;
 }
 
 /** The marker that the alert went out although its stamp on the row failed. */
@@ -366,12 +383,18 @@ const STAMP_FIELD: Record<AlertStage, "openedAlertedAt" | "closedAlertedAt" | nu
  * (`sendAdminAlertOnceEverWithTakeover`, #4690), with the same in-flight window
  * against the same webhook lease.
  */
-async function ensureAlert(row: StripeDispute, stage: AlertStage, livemode: boolean, format: ClubFormat): Promise<void> {
+async function ensureAlert(
+  row: StripeDispute,
+  stage: AlertStage,
+  livemode: boolean,
+  format: ClubFormat,
+  lateWin: LateWinHandBackReport | null = null,
+): Promise<void> {
   const stampField = STAMP_FIELD[stage];
   if (stampField && row[stampField] != null) return;
   const key = stripeDisputeAlertKey(row.stripeDisputeId, stage);
   const context = { disputeId: row.stripeDisputeId, stage };
-  const fields = await alertFields(row, stage, livemode, format);
+  const fields = await alertFields(row, stage, livemode, format, lateWin);
   const outcome = await sendAdminAlertOnceEverWithTakeover({
     key,
     label: `Stripe dispute ${stage} alert`,
@@ -445,6 +468,7 @@ async function alertFields(
   stage: AlertStage,
   livemode: boolean,
   format: ClubFormat,
+  lateWin: LateWinHandBackReport | null,
 ): Promise<StripeDisputeAlertFields> {
   // The opened alert reports the dispute as open, whatever event raised it.
   const status = stage === "opened" ? StripeDisputeStatus.OPEN : row.status;
@@ -459,7 +483,9 @@ async function alertFields(
     disputeId: row.stripeDisputeId,
     paymentIntentId: row.stripePaymentIntentId ?? NONE,
     chargeId: row.stripeChargeId,
-    disputeNextStep: stage === "won-after-loss" ? STRIPE_DISPUTE_WON_AFTER_LOSS_NEXT_STEP : STRIPE_DISPUTE_NEXT_STEP[status],
+    disputeNextStep: stage === "won-after-loss"
+      ? stripeDisputeWonAfterLossNextStep(lateWin ?? { kind: "read-failed" }, (cents) => unrecognisedPaymentAmountLabel(cents, row.currency, format))
+      : STRIPE_DISPUTE_NEXT_STEP[status],
     stripeDashboardUrl: stripeDashboardPaymentUrl(row.stripePaymentIntentId ?? row.stripeChargeId, livemode),
   };
 }

@@ -45,16 +45,19 @@ const doubles = vi.hoisted(() => ({
     return true;
   }),
   alertOfficers: vi.fn(async () => ({ sent: 1 })),
+  storeOwed: vi.fn(async () => ({})),
   error: vi.fn(),
 }));
 vi.mock("@/lib/prisma", () => ({
   prisma: {
     paymentTransaction: { findUnique: doubles.findUnique },
     manualRefundTask: { count: vi.fn(async ({ where }: { where: Record<string, unknown> }) => doubles.tasks.filter((task) => matches(task, where)).length) },
+    // #5255: the alert is stored for the sweep, then settled once sent.
+    alertCooldown: { create: doubles.storeOwed, deleteMany: vi.fn(async () => ({ count: 1 })) },
   },
 }));
 vi.mock("@/lib/stripe-cash-refund-evidence", () => ({ accountCreditDispositionCents: doubles.accountCredit }));
-vi.mock("@/lib/admin-alert-once", () => ({ sendAdminAlertOnceEver: doubles.onceEver }));
+vi.mock("@/lib/admin-alert-once", () => ({ sendAdminAlertOnceEver: doubles.onceEver, readOnceEverClaimState: async () => "none" }));
 vi.mock("@/lib/payment-recovery-alert", () => ({ alertPaymentRecoveryOfficers: doubles.alertOfficers, NOBODY_ALERTED: { sent: 0 } }));
 vi.mock("@/lib/club-format-server", async () => ({ clubFormatValues: async () => (await import("./support/club-format-fixture")).CLUB_FORMAT_TEST }));
 vi.mock("@/lib/logger", () => ({ default: { error: doubles.error, warn: vi.fn(), info: vi.fn() } }));
@@ -98,6 +101,13 @@ describe("a card refund past its charge alerts the officers (#4159 F2, round 3)"
     doubles.tasks = [row];
     await expect(alertCardRefundCapOverflow(OVERFLOW)).resolves.toBe(true);
     expect(doubles.onceEver).toHaveBeenCalledWith(expect.objectContaining({ key: cardRefundCapOverflowAlertKey(OVERFLOW) }));
+    // #5255: raised once, so the alert is stored for the sweep to re-send.
+    expect(doubles.storeOwed).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        key: `once-ever-owed:${cardRefundCapOverflowAlertKey(OVERFLOW)}`,
+        replayAlert: expect.objectContaining({ alert: expect.objectContaining({ kind: "payment-recovery", amountCents: 5_000 }) }),
+      }),
+    });
     expect(doubles.alertOfficers).toHaveBeenCalledWith(
       expect.objectContaining({ bookingId: "booking-1", amountCents: 5_000, paymentIntentId: "pi_race" }),
       expect.anything(),

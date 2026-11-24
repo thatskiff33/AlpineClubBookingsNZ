@@ -48,7 +48,8 @@ Guarded row claims and leases:
 [a Xero row back on PENDING (#5228)](#a-xero-outbox-row-back-on-pending-and-the-stuck-row-release-compare-and-sets-no-advisory-key-5228) ·
 [Xero token refresh (#3454)](#the-xero-token-refresh-uses-a-row-lease-3454-3806) ·
 [data-key re-encrypt (#4456)](#the-data-key-re-encrypt-joins-the-row-claims-and-takes-no-advisory-key-4456) ·
-[password cost upgrade (#5261)](#stored-password-cost-upgrade-5261).
+[password cost upgrade (#5261)](#stored-password-cost-upgrade-5261) ·
+[once-ever alert sweep (#5255)](#once-ever-alert-sweep-against-the-alerts-email-row-5255).
 
 [AI app connections and settings (ALP-653)](#ai-app-connection-writers-alp-653).
 
@@ -2500,7 +2501,7 @@ mispricing a booking.
   kept-capture invoice and then that change's anchor. The approval
   task's own resolution and reopen claims take `lock(1)` first or not at all,
   never after the task row (`resolveManualRefundTask#1`,
-  `reopenManualRefundTask#1`); no holder takes
+  `reopenInTransaction#1`); no holder takes
   `lock(1)` or the Payment row after the task row. No provider call is made
   while it is held.
 
@@ -2837,6 +2838,30 @@ mispricing a booking.
   The same suite queues two upgrades of one older hash behind a held row
   (#5342): exactly one writes, and the stored hash is at the current cost and
   still verifies.
+
+#### Once-ever alert sweep against the alert's email row (#5255)
+
+- **Once-ever alert claim** — `src/lib/admin-alert-once-sweep.ts`
+  (`sweepOnceEverAlerts`, #5255, `INV-INT-042`) and
+  `src/lib/email/attempt-log.ts` (`recordEmailAttempt` with `onceEverClaim`):
+  a once-ever claim is written with `awaitingSendSince` set. The alert's email
+  row is written in one short transaction after `confirmAlertCooldownSend`, an
+  `updateMany` on the claim's `AlertCooldown` row by key and exact stamp that
+  clears the mark. The sweep's `releaseUnsentAlertCooldown` is one `deleteMany`
+  by key, exact stamp and mark still set, run 15 minutes on. Both statements
+  take the one row's lock, so whichever commits first decides: PostgreSQL
+  re-checks the loser's guard against the committed row, so a delete after the
+  confirm matches nothing (the claim is kept) and a confirm after the delete
+  matches nothing (`recordEmailAttempt` throws, no row is written and nothing
+  is sent). No advisory key, tier or order (INV-LOCK-001, INV-LOCK-002); this
+  entry is the site's registration (INV-LOCK-003). The provider call stays
+  after the commit, outside the transaction.
+
+  Reconciled with #4709's give-back of an uncertain claim and the takeover
+  callers (`admin-alert-once-takeover.ts`): both delete only a row under their
+  own exact stamp, as before; a sweep delete and either one can at worst both
+  match the same unsent claim, and only one deletes it. Proved on PostgreSQL by
+  `admin-alert-once-sweep.realdb.test.ts` (each order, behind a held row).
 
 #### Member photo writer (epic #171)
 
@@ -4020,7 +4045,7 @@ The `lock(1)` writers take a booking's two rows in both orders:
 | Order | Writers |
 | --- | --- |
 | Payment → booking | a card settle (W1: its PAID claim and R01's owner read), the back-post. A manual settle takes the booking row first since #4840 |
-| booking → Payment | the edit doors (after their lodge key), an edit review, an approved appeal and its `release_claim` (#5191) |
+| booking → Payment | the edit doors (after their lodge key), an edit review, an approved appeal and its `release_claim` (#5191), a dispute-loss hand-back's Dismiss, Reduce and reopen (#5197) |
 
 Two `lock(1)` holders never interleave, so neither order is a defect between
 them. Merge is not a `lock(1)` holder, so neither fixed place for the Payment
@@ -5605,13 +5630,22 @@ Without a key that interleaves, and the interleaving pays a member twice:
    would have refused a replay never sees one.
 
 So the reopen takes `pg_advisory_xact_lock(1)` as its first statement, before it
-reads the row. **The bounded-exception rule that keeps the closure path key-free
+reads the row. **#5197:** the same core (`reopenInTransaction#1`) serves a late
+win's reopen of a dispute-loss hand-back (`reopenHandBackAfterLateWin`, every
+wait bounded by `lock_timeout`). A dispute-loss hand-back, either caller's,
+takes its booking row (`lockBookingRowForOwnerRead`) right after the task
+read, re-reads the task, then takes its Payment row and re-reads the disputes:
+the order of its Dismiss and Reduce (`lock(1)`, booking row, Payment row). Its
+restored R05 reads its debtor under that booking row, so the reopen never adds
+a Payment → booking edge, and it takes the booking row before its audit row's
+Member key share, as member merge (which never waits for a Payment row, #4823)
+orders them. **The bounded-exception rule that keeps the closure path key-free
 has nothing to apply to here**: the reopen calls no provider, sends no email,
 writes no allocation and re-prices nothing — the transaction is one read, one
 status-fenced `updateMany` and one audit row, all local. Single-lock holder,
 composing with no narrower tier, so `INV-LOCK-002`'s global -> lodge -> member
 order is satisfied trivially and no cycle is reachable. Registered as
-`reopenManualRefundTask#1` in `advisory-lock-guard.test.ts`.
+`reopenInTransaction#1` in `advisory-lock-guard.test.ts`.
 
 **#4343's headline re-base** (`editReviewHeadlineRebase#1`) takes the same global
 key first, re-reads the booking, and compare-and-sets the four money columns
@@ -8036,7 +8070,7 @@ ceiling nets the payment's open card refund debts (`INV-PAY-118`,
 then reads the payment. Two readers hold the money decision and take the
 Payment row (`lockPaymentForRefundedTotal`) after `lock(1)` and BEFORE those
 reads: the approval (`PUT /api/admin/refund-requests/[id]#1`) and the reopen
-of a dismissed appeal task (`reopenManualRefundTask#1`, for that task only).
+of a dismissed appeal task (`reopenInTransaction#1`, for that task only).
 `lock(1)`, then the Payment row, is the order every holder of both already
 takes (`INV-LOCK-002`; the paid cancel, "Paid another way", the organiser
 child refund recorder), and no holder of the Payment row takes `lock(1)` after
@@ -8050,11 +8084,12 @@ the R05 (owner decisions, 15 Nov 2026), reading the owner its reversal's
 merged-debtor residue moves to under the booking row they hold (#5191); a lost
 claim withdraws nothing. The
 disputed one re-reads its booking's disputes after the Payment row and answers
-them as recorded at that read: the dispute writer takes none of these locks and
-serialises only on its own `StripeDispute` row, so no cycle exists. An open,
-won or short read refuses, writing nothing. A dispute never reopens to open;
-Stripe's rare "late win" (lost to won) can still land after the read, and is a
-stated limit in the payments guide. The reduce action
+them as recorded at that read. The dispute writer serialises on its own
+`StripeDispute` row; an event reporting WON takes `lock(1)` first, bounded by
+`lock_timeout` (#5197), so Stripe's rare "late win" (lost to won) commits
+either before the read (the officer is refused) or after the claim (the late
+win reopens the task). It takes nothing else, so no cycle exists. An open,
+won or short read refuses, writing nothing. A dispute never reopens to open. The reduce action
 (`reduceDisputedHandBack`) takes the same `lock(1)`, booking row, Payment row
 and dispute re-read through the same decision, then claims with an `updateMany`
 guarded on `status: OPEN` and the amount it read, before the journal's part
@@ -8208,10 +8243,22 @@ Stripe dispute id (`recordStripeDispute`, `src/lib/stripe-dispute.ts`):
 - **Merge.** Each event then locks that row alone (`SELECT 1 … FOR NO KEY
   UPDATE`, the strength its UPDATE takes), re-reads it and merges the event's
   snapshot. An event older than the one already applied changes no status;
-  the withdrawn and reinstated sums only grow. No advisory key, no other lock:
-  the writer touches no booking, payment, credit or capacity row.
+  the withdrawn and reinstated sums only grow. The merge touches no booking,
+  payment, credit or capacity row. An event reporting WON first takes
+  `pg_advisory_xact_lock(1)` (`applyEvent#1`, #5197), bounded by `lock_timeout`
+  (a timeout writes nothing and the webhook answers 500, so Stripe
+  redelivers), so a move from LOST to WON never commits between an officer's
+  dispute read and claim in Dismiss or Reduce of a hand-back on the payment.
+  Global key, then the dispute row; nothing after it.
 - **Alerts** are once-ever claims (`sendAdminAlertOnceEverWithTakeover`) sent
   after the merge commits, outside the row lock.
+- **A late win's reopens** (#5197) run after the WON merge commits and before
+  its alert, each in its own transaction through the officer's reopen core
+  (`reopenHandBackAfterLateWin`): `lock_timeout` first, then `lock(1)`, the
+  booking row, the Payment row, the dispute re-read, the status-fenced claim,
+  the restored R05 and a (dispute, task) `AlertCooldown` marker. A lock wait
+  past the bound, or a refusal, leaves the task dismissed and the alert names
+  it; nothing is retried in the webhook.
 - **Readers.** Every card-refund door (`processRefund`,
   `refundPaymentTransactions`) and the paid cancel read the holding disputes
   through `disputedCaptureCents`, without locking the dispute row; the cancel
