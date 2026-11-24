@@ -70,6 +70,14 @@ export function isMemberWholeLodgeRequestOpen(
   return MEMBER_WHOLE_LODGE_OPEN_STATUS_SET.has(status);
 }
 
+/**
+ * How many of their own requests a member is shown, newest first. Bounded
+ * history: declined and withdrawn rows purge on the 90-day retention clock
+ * anyway (owner decision OD-B), and the list is a sidebar to My bookings, not
+ * an archive.
+ */
+export const MY_WHOLE_LODGE_REQUEST_LIMIT = 20;
+
 /** The four words a member may see. Nothing else is ever rendered. */
 export type MyWholeLodgeRequestStatus =
   | "pending"

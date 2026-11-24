@@ -11,6 +11,8 @@ import {
 } from "@/lib/rate-limit";
 import { requireActiveSession } from "@/lib/session-guards";
 import logger from "@/lib/logger";
+import { WHOLE_LODGE_REQUEST_WITHDRAWN_CONNECTION_SHAPE } from "@/lib/connection-shapes-groups";
+import { connectionJson } from "@/lib/mcp-connection-request";
 
 /*
  * Member withdraws their own pending whole-lodge request (#2263, D3).
@@ -25,6 +27,8 @@ import logger from "@/lib/logger";
  * status-guarded claim inside `withdrawMemberWholeLodgeRequest`, so there is no
  * window between "is this mine?" and "cancel it", and someone else's request id
  * behaves exactly like an id that does not exist.
+ *
+ * Also the AI app action `withdraw_whole_lodge_request` (ALP-797).
  */
 
 /** One frozen body, re-serialised per request; echoes nothing back. */
@@ -56,7 +60,7 @@ export async function POST(
 
   try {
     await withdrawMemberWholeLodgeRequest({ requestId: id, memberId });
-    return NextResponse.json(WITHDRAW_ACCEPTED);
+    return connectionJson(request, WITHDRAW_ACCEPTED, WHOLE_LODGE_REQUEST_WITHDRAWN_CONNECTION_SHAPE);
   } catch (err) {
     if (err instanceof BookingRequestError) {
       return NextResponse.json({ error: err.message }, { status: err.status });

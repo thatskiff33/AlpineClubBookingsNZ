@@ -8,7 +8,7 @@ import { Button } from "@/components/ui/button";
 import { MyBookingsList, type MyBookingItem } from "./_components/my-bookings-list";
 import { MyWholeLodgeRequests } from "./_components/my-whole-lodge-requests";
 import { MyExceptionRequests } from "./_components/my-exception-requests";
-import { toMyWholeLodgeRequestItem } from "@/lib/member-whole-lodge-requests";
+import { loadMyWholeLodgeRequests } from "@/lib/member-whole-lodge-request-list";
 import { readMemberExceptionRequests } from "@/lib/booking-exception-request-service";
 import { bookingsWithOpenFinancialReview } from "@/lib/booking-financial-review-visibility";
 import {
@@ -53,39 +53,10 @@ export default async function MyBookingsPage() {
   */
   const canSeeAdminTools = canSeeBookingAdminTools(session.user);
 
-  // #2263 — the member's own whole-lodge requests. Scoped by
-  // requestedByMemberId + exclusivityRequested, and projected through
-  // toMyWholeLodgeRequestItem, which is the ONE place a request row is reduced
-  // to something a member may see (strict allowlist + exhaustive status
-  // mapping). Nothing from the row reaches the client except those fields.
-  const wholeLodgeRequestRows = await prisma.bookingRequest.findMany({
-    where: {
-      requestedByMemberId: session.user.id,
-      exclusivityRequested: true,
-    },
-    select: {
-      id: true,
-      status: true,
-      checkIn: true,
-      checkOut: true,
-      createdAt: true,
-      convertedBookingId: true,
-      heldBookingId: true,
-      guests: true,
-    },
-    orderBy: { createdAt: "desc" },
-    // Bounded history: declined and withdrawn rows purge on the 90-day
-    // retention clock anyway (owner decision OD-B), and the section is a
-    // sidebar to My bookings, not an archive.
-    take: 20,
-  });
-
-  const wholeLodgeRequests = wholeLodgeRequestRows.map((row) =>
-    toMyWholeLodgeRequestItem({
-      ...row,
-      guestCount: Array.isArray(row.guests) ? row.guests.length : 0,
-    }),
-  );
+  // #2263 — the member's own whole-lodge requests, through the one loader the
+  // AI app's `list_my_whole_lodge_requests` also reads (ALP-797). Nothing from
+  // a request row reaches the client except the fields its allowlist names.
+  const wholeLodgeRequests = await loadMyWholeLodgeRequests(session.user.id);
 
   // #2562 — the member's own booking-policy exception requests, both flavours.
   // Projected by `readMemberExceptionRequests`, which is the ONE place a request

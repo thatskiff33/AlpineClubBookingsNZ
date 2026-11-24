@@ -7,8 +7,9 @@
  * cannot become reachable, or stay unreachable, by accident.
  *
  * Two kinds of reason. A permanent one says the route is never an action. A
- * `not-yet:` one names the task that will add it; that task removes its rule
- * here in the same change that adds the catalogue entries.
+ * `not-yet:` one names the officer stage that will decide it; that task
+ * removes its rule here in the same change that adds the catalogue entries.
+ * Every member route is decided (ALP-797): an action or a permanent reason.
  *
  * A member route that is never an action is listed by its exact method and
  * path (`PERMANENT_ROUTES`), so the reason cannot spread to a neighbour.
@@ -42,13 +43,13 @@ export const MCP_PERMANENT_EXCLUSION_REASONS = {
 export type McpPermanentExclusionReason = keyof typeof MCP_PERMANENT_EXCLUSION_REASONS;
 
 /**
- * The task that will bring each remaining group of routes into the catalogue.
- * The member keys are the follow-ons ALP-718 split its member routes into,
- * less those that have shipped (ALP-794, bookings; ALP-795, family and
- * membership; ALP-796, lodge life); the rest are the officer areas.
+ * The task that will bring each remaining group of officer routes into the
+ * catalogue, by admin area. Every member route is decided: ALP-718 split them
+ * into five follow-ons, the last of which (ALP-797, groups and whole-lodge)
+ * removed the member rule, so a new member route fails the census until
+ * someone decides about it.
  */
 export const MCP_NOT_YET_TASKS = {
-  memberGroupsAndWholeLodge: "ALP-797",
   bookings: "ALP-719",
   membership: "ALP-720",
   finance: "ALP-721",
@@ -56,9 +57,7 @@ export const MCP_NOT_YET_TASKS = {
   content: "ALP-723",
   support: "ALP-724",
   overview: "ALP-724",
-} as const satisfies Record<AdminPermissionArea | MemberNotYetGroup, string>;
-
-type MemberNotYetGroup = "memberGroupsAndWholeLodge";
+} as const satisfies Record<AdminPermissionArea, string>;
 
 export type McpExclusionReason = McpPermanentExclusionReason | `not-yet:${string}`;
 
@@ -135,6 +134,11 @@ const PERMANENT_ROUTES: ReadonlyArray<{
       "DELETE /api/bookings/[id]/guests/[guestId]",
       "POST /api/bookings/[id]/confirm-draft",
       "POST /api/bookings/[id]/send-guest-payment-link",
+      // ALP-797: joining a group creates the joiner's own booking and takes
+      // its payment, and settling an organiser-pays group holds its beds and
+      // opens one combined bill.
+      "POST /api/group-bookings/[code]/join",
+      "POST /api/group-bookings/[code]/settle",
     ],
   },
   {
@@ -170,7 +174,21 @@ const PERMANENT_ROUTES: ReadonlyArray<{
   // Door codes and emergency access: never sent to an AI provider.
   { reason: "access-secrets", routes: ["GET /api/lodge-instructions"] },
   { reason: "site-helper", routes: ["POST /api/help/chat"] },
-  { reason: "public-visitor", routes: ["POST /api/contact", "POST /api/applications"] },
+  {
+    reason: "public-visitor",
+    routes: [
+      "POST /api/contact",
+      "POST /api/applications",
+      // ALP-797: the non-member and school booking request forms, their price
+      // quote and settings, and a non-member's request to join a group. A
+      // member asks for the whole lodge with `request_whole_lodge` instead.
+      "POST /api/booking-requests",
+      "POST /api/booking-requests/quote",
+      "GET /api/booking-requests/settings",
+      "POST /api/booking-requests/school",
+      "POST /api/group-bookings/[code]/join-request",
+    ],
+  },
   {
     reason: "needs-browser",
     routes: [
@@ -193,22 +211,11 @@ const PERMANENT_ROUTES: ReadonlyArray<{
       "GET /api/bookings/[id]/invoice",
       "GET /api/bookings/[id]/invoice/credit-notes/[creditNoteId]",
       "GET /api/booking-calendar/[id]",
+      // A school confirms its attendees through the link emailed to it.
+      "POST /api/school-bookings/confirm-attendees",
     ],
   },
 ];
-
-/**
- * Member and public areas not yet in the catalogue, by the follow-on task
- * that decides them. A route in an area listed nowhere fails the census until
- * someone decides about it.
- */
-const MEMBER_NOT_YET_PREFIXES: Readonly<Record<MemberNotYetGroup, readonly string[]>> = {
-  memberGroupsAndWholeLodge: [
-    "/api/booking-requests",
-    "/api/group-bookings",
-    "/api/school-bookings",
-  ],
-};
 
 /** Finance officer routes that sit outside `/api/admin`. */
 const FINANCE_NOT_YET_PREFIXES: readonly string[] = ["/api/finance"];
@@ -303,13 +310,6 @@ export function classifyMcpRoute(file: string, method: string): McpRouteClassifi
   >) {
     if (routes.includes(route)) {
       return { kind: "excluded", reason: `not-yet:${MCP_NOT_YET_TASKS[area]}` };
-    }
-  }
-  for (const [group, prefixes] of Object.entries(MEMBER_NOT_YET_PREFIXES) as Array<
-    [MemberNotYetGroup, readonly string[]]
-  >) {
-    if (prefixes.some((prefix) => underPrefix(path, prefix))) {
-      return { kind: "excluded", reason: `not-yet:${MCP_NOT_YET_TASKS[group]}` };
     }
   }
   return { kind: "unclassified" };

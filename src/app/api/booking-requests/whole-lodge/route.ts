@@ -1,7 +1,6 @@
 import { memberWholeLodgeChoosesPaymentMethod } from "@/lib/booking-payment-flow";
 import { loadEffectiveModuleFlags } from "@/lib/module-settings";
 import { NextRequest, NextResponse } from "next/server";
-import { z } from "zod";
 import {
   assertRequestedLodgeActive,
   BookingRequestError,
@@ -13,11 +12,17 @@ import {
   rateLimitedResponse,
   rateLimiters,
 } from "@/lib/rate-limit";
-import { parsedDateOnlySchema } from "@/lib/date-only-schema";
 import { clubTodayDateOnlyInstant } from "@/lib/club-time/server";
 import { requireActiveSession } from "@/lib/session-guards";
 import logger from "@/lib/logger";
 import { parseJsonRequestBody } from "@/lib/api-json";
+import { memberWholeLodgeRequestSchema } from "@/lib/member-whole-lodge-request-schema";
+import { loadMyWholeLodgeRequests } from "@/lib/member-whole-lodge-request-list";
+import {
+  MY_WHOLE_LODGE_REQUESTS_CONNECTION_SHAPE,
+  WHOLE_LODGE_REQUEST_SENT_CONNECTION_SHAPE,
+} from "@/lib/connection-shapes-groups";
+import { connectionJson } from "@/lib/mcp-connection-request";
 
 /*
  * Member-facing "Book the whole lodge" request (#2263, epic #2245).
@@ -47,37 +52,30 @@ import { parseJsonRequestBody } from "@/lib/api-json";
  *   3. Every rejection that IS observable (401 / 429 / 400 / 422 / 409) is
  *      derived from the member's own session, their own request history, or the
  *      shape of their own payload — never from the state of the calendar.
+ *
+ * Both methods are also AI app actions (ALP-797): POST is
+ * `request_whole_lodge` and GET is `list_my_whole_lodge_requests`, the
+ * member's own requests as My bookings lists them (the one loader both read),
+ * which is where an app finds the id `withdraw_whole_lodge_request` takes.
+ * The request body's schema lives in `member-whole-lodge-request-schema.ts`
+ * so the action describes it once (`INV-SSOT`).
  */
 
-const noCrlf = (value: string) => !/[\r\n]/.test(value);
+/**
+ * The signed-in member's own whole-lodge requests: the same four member-visible
+ * words My bookings shows, never the pipeline status. Reads only the member's
+ * own request history, so it says nothing about the calendar either.
+ */
+export async function GET(request: NextRequest) {
+  const guard = await requireActiveSession();
+  if (!guard.ok) return guard.response;
 
-const wholeLodgeRequestSchema = z.object({
-  checkIn: parsedDateOnlySchema,
-  checkOut: parsedDateOnlySchema,
-  // Approximate party size. Bounded against the lodge's configured capacity
-  // below; there is no availability check of any kind.
-  headcount: z.number().int().min(1).max(500),
-  // Who the group is, in the member's words. No guest names are collected (D5).
-  groupDescription: z
-    .string()
-    .min(1, "Tell us who the group is")
-    .max(500)
-    .refine(noCrlf, "This cannot contain line breaks"),
-  notes: z
-    .string()
-    .max(400)
-    .refine(noCrlf, "Notes cannot contain line breaks")
-    .optional()
-    .nullable(),
-  // "Put my account credit towards this booking if it is approved." A yes/no,
-  // never an amount: the price is set by the officer at approval, and the
-  // approval applies min(balance, price). Derived from the member's own choice,
-  // so it reveals nothing about the calendar (contract point 3).
-  applyAccountCredit: z.boolean().optional(),
-  // The control is visually hidden for one lodge, but the client still sends
-  // that sole explicit identity. Unknown scope must never become the default.
-  lodgeId: z.string().min(1),
-});
+  const limited = await applyRateLimit(rateLimiters.bookingQuery, request);
+  if (limited) return limited;
+
+  const requests = await loadMyWholeLodgeRequests(guard.session.user.id);
+  return connectionJson(request, { requests }, MY_WHOLE_LODGE_REQUESTS_CONNECTION_SHAPE);
+}
 
 /**
  * The one acknowledgement body. A module-level FROZEN OBJECT, not a Response:
@@ -118,7 +116,7 @@ export async function POST(request: NextRequest) {
   if (!jsonBody.ok) return jsonBody.response;
   const body = jsonBody.body;
 
-  const parsed = wholeLodgeRequestSchema.safeParse(body);
+  const parsed = memberWholeLodgeRequestSchema.safeParse(body);
   if (!parsed.success) {
     return NextResponse.json(
       { error: "Invalid input", details: parsed.error.flatten().fieldErrors },
@@ -178,7 +176,10 @@ export async function POST(request: NextRequest) {
         memberWholeLodgeChoosesPaymentMethod(await loadEffectiveModuleFlags()),
     });
 
-    return NextResponse.json(WHOLE_LODGE_REQUEST_ACCEPTED, { status: 201 });
+    // A connection is sent the same two fields: the body echoes nothing.
+    return connectionJson(request, WHOLE_LODGE_REQUEST_ACCEPTED, WHOLE_LODGE_REQUEST_SENT_CONNECTION_SHAPE, {
+      status: 201,
+    });
   } catch (err) {
     if (err instanceof BookingRequestError) {
       return NextResponse.json({ error: err.message }, { status: err.status });

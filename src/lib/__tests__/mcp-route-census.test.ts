@@ -362,7 +362,13 @@ describe("AI app action census (ALP-653, INV-MCP-006)", { timeout: CENSUS_TIMEOU
     expect(previews).toEqual([...PREVIEW_ROUTE_KEYS].sort());
   });
 
-  it.each(["post_to_message_board", "place_food_order", "report_maintenance_issue", "confirm_family_member_details"])(
+  it.each([
+    "post_to_message_board",
+    "place_food_order",
+    "report_maintenance_issue",
+    "confirm_family_member_details",
+    "request_whole_lodge",
+  ])(
     "marks %s destructive: it notifies other people or overwrites another person's record (#5305)",
     (id) => {
       // Owner decision, #5305 comment 7092977781: the app confirms with the
@@ -414,6 +420,54 @@ describe("AI app action census (ALP-653, INV-MCP-006)", { timeout: CENSUS_TIMEOU
     expect(mcpPermanentExclusion("src/app/api/club-posts/images/route.ts", "POST")).toBe("needs-browser");
     // Exact, not a prefix: a new route beside an officer one is undecided.
     expect(officer("calendar/events/[id]/attendees", "GET")).toEqual({ kind: "unclassified" });
+  });
+
+  it("leaves no member route waiting: stage 2 (ALP-718's five follow-ons) decided them all", () => {
+    const stage2 = ["ALP-718", "ALP-794", "ALP-795", "ALP-796", "ALP-797"];
+    for (const task of stage2) expect(Object.values(MCP_NOT_YET_TASKS)).not.toContain(task);
+    const waiting = routeMethods.filter((route) => {
+      const result = classifyMcpRoute(route.file, route.method);
+      return result.kind === "excluded" && stage2.some((task) => result.reason === `not-yet:${task}`);
+    });
+    expect(waiting).toEqual([]);
+    // A new route beside the group and whole-lodge routes is undecided, not waiting.
+    expect(classifyMcpRoute("src/app/api/group-bookings/[code]/brand-new/route.ts", "POST")).toEqual({
+      kind: "unclassified",
+    });
+    expect(classifyMcpRoute("src/app/api/booking-requests/brand-new/route.ts", "GET")).toEqual({
+      kind: "unclassified",
+    });
+  });
+
+  it("decides every group-booking and whole-lodge route (ALP-797)", () => {
+    const route = (file: string, method: string) => classifyMcpRoute(`src/app/api/${file}/route.ts`, method);
+    const actionId = (file: string, method: string) => {
+      const result = route(file, method);
+      return result.kind === "action" ? result.action.id : result;
+    };
+    expect(actionId("booking-requests/whole-lodge", "GET")).toBe("list_my_whole_lodge_requests");
+    expect(actionId("booking-requests/whole-lodge", "POST")).toBe("request_whole_lodge");
+    expect(actionId("booking-requests/whole-lodge/[id]/withdraw", "POST")).toBe("withdraw_whole_lodge_request");
+    expect(actionId("group-bookings", "POST")).toBe("open_group_booking");
+    expect(actionId("group-bookings/[code]", "GET")).toBe("get_group_booking");
+    expect(actionId("group-bookings/[code]", "PATCH")).toBe("set_group_booking_joining");
+    // Joining a group and paying its combined bill move money.
+    expect(route("group-bookings/[code]/join", "POST")).toEqual({ kind: "excluded", reason: "moves-money" });
+    expect(route("group-bookings/[code]/settle", "POST")).toEqual({ kind: "excluded", reason: "moves-money" });
+    // The visitor forms.
+    for (const [file, method] of [
+      ["booking-requests", "POST"],
+      ["booking-requests/quote", "POST"],
+      ["booking-requests/settings", "GET"],
+      ["booking-requests/school", "POST"],
+      ["group-bookings/[code]/join-request", "POST"],
+    ] as const) {
+      expect(route(file, method), `${method} ${file}`).toEqual({ kind: "excluded", reason: "public-visitor" });
+    }
+    // Emailed links.
+    expect(route("school-bookings/confirm-attendees", "POST")).toEqual({ kind: "excluded", reason: "needs-browser" });
+    expect(route("group-bookings/join/verify/[token]", "POST")).toEqual({ kind: "excluded", reason: "needs-browser" });
+    expect(route("booking-requests/respond/[token]", "POST")).toEqual({ kind: "excluded", reason: "needs-browser" });
   });
 
   it("names only route methods that exist in every exact exclusion (ALP-796 review)", () => {
