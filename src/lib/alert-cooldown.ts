@@ -231,15 +231,49 @@ export async function listOwedAlertKeys({
   store?: Pick<typeof prisma, "alertCooldown">;
 }): Promise<string[]> {
   const rows = await store.alertCooldown.findMany({
-    where: {
-      key: exactPrefix(prefix),
-      lastAlertedAt: { lte: new Date(now.getTime() - retryAfterMs) },
-    },
+    where: owedDueWhere(prefix, now, retryAfterMs),
     select: { key: true },
     orderBy: { lastAlertedAt: "asc" },
-    take: 50,
+    take: OWED_ALERT_PAGE_SIZE,
   });
   return rows.map((row) => row.key);
+}
+
+const OWED_ALERT_PAGE_SIZE = 50;
+
+function owedDueWhere(prefix: string, now: Date, retryAfterMs: number) {
+  return { key: exactPrefix(prefix), lastAlertedAt: { lte: new Date(now.getTime() - retryAfterMs) } };
+}
+
+/**
+ * #5240 review: EVERY due owed marker under `prefix`, read a page at a time in
+ * key order. For a drain whose markers may wait unstamped (so `listOwedAlertKeys`'
+ * oldest 50 could stay the same 50 run after run, and a newer marker behind
+ * them would never be read).
+ */
+export async function listAllOwedAlertKeys({
+  prefix,
+  now = new Date(),
+  retryAfterMs,
+  store = prisma,
+}: {
+  prefix: string;
+  now?: Date;
+  retryAfterMs: number;
+  store?: Pick<typeof prisma, "alertCooldown">;
+}): Promise<string[]> {
+  const keys: string[] = [];
+  for (;;) {
+    const after = keys.at(-1);
+    const rows = await store.alertCooldown.findMany({
+      where: { ...owedDueWhere(prefix, now, retryAfterMs), ...(after === undefined ? {} : { AND: [{ key: { gt: after } }] }) },
+      select: { key: true },
+      orderBy: { key: "asc" },
+      take: OWED_ALERT_PAGE_SIZE,
+    });
+    keys.push(...rows.map((row) => row.key));
+    if (rows.length < OWED_ALERT_PAGE_SIZE) return keys;
+  }
 }
 
 /**

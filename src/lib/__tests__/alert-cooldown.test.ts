@@ -16,6 +16,7 @@ import {
   claimOwedAlert,
   confirmAlertCooldownSend,
   deferAlertCooldown,
+  listAllOwedAlertKeys,
   listOwedAlertKeys,
   listStaleUnsentAlertCooldowns,
   markAlertOwed,
@@ -24,6 +25,7 @@ import {
   releaseUnsentAlertCooldown,
   settleOwedAlert,
 } from "@/lib/alert-cooldown";
+import { promotedCaptureAlertOwedKey, recordCaptureAwaitingSettle, UNSETTLED_CAPTURE_PREFIX } from "@/lib/unsettled-capture-marker";
 import { createAlertCooldownFake } from "./helpers/alert-cooldown-fake";
 import { createAlertCooldownStore } from "./support/alert-cooldown-store";
 
@@ -228,6 +230,51 @@ describe("the once-ever claim's unsent mark (#5255)", () => {
     const replayAlert = { kind: "xero-sync-error", errorType: "X" };
     await markAlertOwed({ key: "owed:1", due: "after-retry", retryAfterMs: 1, replayAlert, now: T0, store: fake.store });
     expect(fake.rows.get("owed:1")).toMatchObject({ lastAlertedAt: T0, replayAlert });
+  });
+
+  it("never lists or gives back #5240's owed flags, which are upserted without the mark", async () => {
+    const { store, rows, alertCooldown } = memoryStore();
+    await claimAlertCooldown({ key: KEY, windowMs: ALERT_ONCE_EVER_WINDOW_MS, now: T0, awaitingSend: true, store });
+    // The saved-card settle's flag, and a promoted owed marker written the way `recordNewCaptureAlertOwed` writes it.
+    const flagKey = `${UNSETTLED_CAPTURE_PREFIX}pi_1`;
+    const promotedKey = promotedCaptureAlertOwedKey("not-recorded", "b1", "pi_1");
+    await recordCaptureAwaitingSettle(store, "pi_1", T0);
+    await alertCooldown.upsert({
+      where: { key: promotedKey },
+      create: { key: promotedKey, lastAlertedAt: T0 },
+    });
+
+    await expect(listStaleUnsentAlertCooldowns({ markedBefore: at(ALERT_ONCE_EVER_WINDOW_MS), store })).resolves.toEqual([
+      { key: KEY, lastAlertedAt: T0 },
+    ]);
+    await expect(releaseUnsentAlertCooldown({ key: flagKey, claimedAt: T0, store })).resolves.toBe(false);
+    await expect(releaseUnsentAlertCooldown({ key: promotedKey, claimedAt: T0, store })).resolves.toBe(false);
+    expect(rows.has(flagKey) && rows.has(promotedKey)).toBe(true);
+  });
+});
+
+describe("listAllOwedAlertKeys (#5240 review)", () => {
+  const PREFIX = "saved-card-capture-unsettled:";
+  /** A store holding `count` due markers and one not yet due, answering the pager's query shape. */
+  function pagedStore(count: number) {
+    const rows = new Map<string, Date>(Array.from({ length: count }, (_, i) => [`${PREFIX}pi_${String(i).padStart(3, "0")}`, T0]));
+    rows.set(`${PREFIX}pi_late`, at(1));
+    const findMany = vi.fn(async ({ where, take }: { where: { key: { startsWith: string }; lastAlertedAt: { lte: Date }; AND?: Array<{ key: { gt: string } }> }; take: number }) =>
+      [...rows.entries()]
+        .filter(([key, stamp]) => key.startsWith(where.key.startsWith) && stamp <= where.lastAlertedAt.lte && (!where.AND || key > where.AND[0].key.gt))
+        .sort(([a], [b]) => a.localeCompare(b))
+        .slice(0, take)
+        .map(([key]) => ({ key })));
+    return { store: { alertCooldown: { findMany } } as never, findMany };
+  }
+
+  it.each([[0, 1], [49, 1], [50, 2], [120, 3]])("returns all %i due markers, reading %i page(s) of 50, and none not yet due", async (count, pages) => {
+    const { store, findMany } = pagedStore(count);
+    const keys = await listAllOwedAlertKeys({ prefix: PREFIX, now: T0, retryAfterMs: 0, store });
+    expect(keys).toHaveLength(count);
+    expect(new Set(keys).size).toBe(count);
+    expect(keys).not.toContain(`${PREFIX}pi_late`);
+    expect(findMany).toHaveBeenCalledTimes(pages);
   });
 });
 

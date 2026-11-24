@@ -49,8 +49,6 @@ export type StripeSettlementSource = {
   paymentMethodId: string | null;
   /** #3864: for the applied-credit give-back, resolved before the transaction. */
   format: ClubFormat;
-  /** #4285 review: the caller wrote this capture SUCCEEDED just before (`newlyCaptured`), so it is not a replay. */
-  recordedByCaller?: boolean;
 };
 
 /**

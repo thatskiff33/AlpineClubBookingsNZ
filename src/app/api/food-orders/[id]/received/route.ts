@@ -50,7 +50,7 @@ export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> },
 ) {
-  const guard = await requireFoodOrderViewer(() => requireActiveSession());
+  const guard = await requireFoodOrderViewer(request, () => requireActiveSession());
   if (!guard.ok) return guard.response;
 
   const { id } = await params;

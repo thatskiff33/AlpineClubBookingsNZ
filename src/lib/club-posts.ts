@@ -4,6 +4,7 @@ import {
   clubPostImageIds,
   sanitiseClubPostHtml,
 } from "@/lib/club-post-html";
+import { MAX_CLUB_POST_LENGTH } from "@/lib/club-post-schema";
 import { prisma } from "@/lib/prisma";
 
 /**
@@ -19,8 +20,6 @@ import { prisma } from "@/lib/prisma";
  * docs/multi-lodge/lodge-scoping-contract.md).
  */
 
-/** Matches the `ClubPost.content` column, so a body that fits here fits there. */
-export const MAX_CLUB_POST_LENGTH = 4000;
 
 /** How many posts one page of the board holds. */
 export const CLUB_POST_PAGE_SIZE = 20;

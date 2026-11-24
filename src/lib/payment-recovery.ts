@@ -29,6 +29,7 @@ import {
 import { clubFormatValues } from "@/lib/club-format-server";
 import { chargeCurrencyRefusal } from "@/lib/stripe-charge-currency";
 import { prisma } from "@/lib/prisma";
+import { readSettlingPaymentIntentId } from "@/lib/payment-settler";
 import { cancelPaymentIntentIfCancellableWithResult, getPaymentIntent, processRefund } from "@/lib/stripe";
 import { assertCaptureNotDisputed } from "@/lib/stripe-dispute-hold";
 import { isPaymentIntentCancelConfirmed } from "@/lib/card-intent-retirement";
@@ -2365,14 +2366,13 @@ async function processBookingModificationRefundOperation(
   );
   if (duplicatePaymentIntentId !== null) {
     if (await completePaymentRecoveryOperation(operation, { lossExpected: true })) {
+      // #5240: the payment's recorded settler (#4211), never the duplicate itself; null with none or a bank settler.
+      const settledPaymentIntentId = await readSettlingPaymentIntentId(prisma, operation.paymentId);
       await recordDuplicateCaptureRefundEvent({
         bookingId: operation.bookingId,
         amountCents: operation.amountCents,
-        // The settling intent is not persisted on the operation, so the replay
-        // records it as null (the inline path, which owns the common case,
-        // carries the settling intent).
         duplicatePaymentIntentId,
-        settledPaymentIntentId: null,
+        settledPaymentIntentId: settledPaymentIntentId === duplicatePaymentIntentId ? null : settledPaymentIntentId,
       });
     }
     return;
