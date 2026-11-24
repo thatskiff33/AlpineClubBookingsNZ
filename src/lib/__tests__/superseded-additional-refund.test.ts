@@ -21,6 +21,8 @@ const mocks = vi.hoisted(() => ({
   cooldownReads: 0,
   /** The member emails recorded, by key: the real `EmailLog` row is unique on it. */
   memberEmails: new Map<string, unknown>(),
+  /** The installation's environment role (`getEnvironmentRole`); the club's live site unless a case says otherwise. */
+  environmentRole: vi.fn(),
 }));
 
 function cooldownWhereMatches(row: { key: string; lastAlertedAt: Date }, where: { key: unknown; lastAlertedAt?: unknown }): boolean {
@@ -52,6 +54,7 @@ vi.mock("@/lib/email/admin-alerts-finance", () => ({
   sendAdminSupersededPaymentRefundAlert: mocks.sendAdminAlert,
 }));
 vi.mock("@/lib/stripe", () => ({ listRefundsForPaymentIntent: mocks.listRefunds }));
+vi.mock("@/lib/environment-role", () => ({ getEnvironmentRole: mocks.environmentRole }));
 vi.mock("@/lib/prisma", () => ({
   prisma: {
     booking: { findUnique: mocks.findBooking },
@@ -183,6 +186,8 @@ const SENT_TO_ONE_ADMIN = { deliveryAllowed: true, recipients: 1, sent: 1, queue
 const NOBODY_OPTED_IN = { deliveryAllowed: true, recipients: 0, sent: 0, queuedForRetry: 0, notDelivered: 0 };
 /** The club's delivery policy switched the alert off (`sendToAdmins`' skip): the club chose not to receive it. */
 const SKIPPED_BY_POLICY = { deliveryAllowed: false, recipients: 0, sent: 0, queuedForRetry: 0, notDelivered: 0 };
+/** One admin opted in, but this installation is a copy that holds back every email (`SKIPPED_NON_PRODUCTION`). */
+const HELD_BACK_AS_A_COPY = { deliveryAllowed: true, recipients: 1, sent: 0, queuedForRetry: 0, notDelivered: 1 };
 const OPERATION_ID = "recovery_superseded_1";
 const KEYS = supersededRefundReportKeys(OPERATION_ID);
 
@@ -196,6 +201,7 @@ beforeEach(() => {
   mocks.findBooking.mockReset();
   mocks.findRefunds.mockReset();
   mocks.listRefunds.mockReset();
+  mocks.environmentRole.mockReset().mockResolvedValue("PRODUCTION");
   mocks.cooldowns.clear();
   mocks.cooldownFaults.clear();
   mocks.failCooldownRead = null;
@@ -517,6 +523,28 @@ describe("reportSupersededPaymentRefund sends once per recovery row (#4690)", ()
     await expect(report()).resolves.toBe("reported");
     expect(sent()).toEqual({ ...ONCE_EACH, adminAlerts: 2 });
     expect(await supersededRefundReportSettled(OPERATION_ID)).toBe(true);
+  });
+
+  it("MUTATION: an installation that is not the club's live site holds back every copy - settled at once, so the row closes and is never retried", async () => {
+    mocks.environmentRole.mockResolvedValue("NON_PRODUCTION");
+    mocks.sendAdminAlert.mockResolvedValue(HELD_BACK_AS_A_COPY);
+
+    await expect(report()).resolves.toBe("reported");
+    expect(mocks.cooldowns.has(KEYS.reported)).toBe(true);
+
+    await expect(report()).resolves.toBe("reported");
+    expect(sent()).toEqual(ONCE_EACH);
+  });
+
+  it("MUTATION: every copy undelivered and the environment role unreadable or not a copy - not settled, it throws", async () => {
+    mocks.sendAdminAlert.mockResolvedValue(HELD_BACK_AS_A_COPY);
+    mocks.environmentRole.mockRejectedValueOnce(new Error("database unavailable"));
+    await expect(report()).rejects.toBeInstanceOf(SupersededRefundReportNotSettledError);
+    expect(await supersededRefundReportSettled(OPERATION_ID)).toBe(false);
+
+    mocks.environmentRole.mockResolvedValueOnce("UNKNOWN");
+    await expect(report()).rejects.toBeInstanceOf(SupersededRefundReportNotSettledError);
+    expect(await supersededRefundReportSettled(OPERATION_ID)).toBe(false);
   });
 
   it("MUTATION: the club's delivery policy skips the alert - settled at once, so the row closes and is never retried (#5255)", async () => {

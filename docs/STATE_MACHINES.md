@@ -5278,7 +5278,8 @@ claim reads nothing outstanding, after its preflight records Stripe's list
     recorded as made in the ledger                     -> report, then close
   none (another door's refund), or not recorded as made -> close, no notice
 report not settled (email not recorded, no alert copy delivered or queued
-  and the club did not switch the alert off) -> throws; row retried
+  and neither the club switched the alert off nor a non-live copy held it
+  back) -> throws; row retried
 alert claim held, no sent marker: younger than the stale threshold
   -> the row waits (attempt handed back: never terminal, no officer alert);
   older -> the dead attempt's claim is given back and the alert sent

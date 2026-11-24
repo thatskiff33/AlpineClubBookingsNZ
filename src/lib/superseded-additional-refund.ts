@@ -10,6 +10,7 @@ import { recordBookingEvent } from "@/lib/booking-events";
 import { adminAlertIsDeliveredOrQueued, adminAlertSendOutcome } from "@/lib/email/admin-alert-send-result";
 import { sendAdminSupersededPaymentRefundAlert } from "@/lib/email/admin-alerts-finance";
 import { sendSupersededPaymentRefundedEmail } from "@/lib/email/booking";
+import { getEnvironmentRole } from "@/lib/environment-role";
 import logger from "@/lib/logger";
 import { carriesCardRefundOperationMetadata } from "@/lib/open-card-refund-owed";
 import { PAYMENT_RECOVERY_STALE_PROCESSING_MS } from "@/lib/payment-recovery-constants";
@@ -157,7 +158,8 @@ async function readOrNotSettled<T>(operationId: string, reason: string, read: ()
  *   they are written once (a crash between the two loses them, never doubles them);
  * - `alert`: the admin alert's once-ever claim (`sendAdminAlertOnceEverWithTakeover`);
  * - `reported`: written once a copy of the alert was delivered or queued, the
- *   club's delivery policy skipped it, or the booking has nobody to address
+ *   club's delivery policy skipped it, the installation is a copy that holds
+ *   back every email, or the booking has nobody to address
  *   (its critical row is the escalation):
  *   the report is settled, and a later attempt reads it and sends nothing.
  */
@@ -402,7 +404,9 @@ async function writeRecordsOnce(params: ReportParams, context: ReportContext | n
  * (`adminAlertIsDeliveredOrQueued`, the rule the claim itself is kept on)
  * writes `reported`, as does one the club's delivery policy skipped
  * (`skipped-by-policy`): the club chose not to receive it, so retrying would
- * only end the row FAILED. Any other send that reached nobody - nobody opted
+ * only end the row FAILED. So does one held back because this installation
+ * is not the club's live site (`heldBackAsNonLiveCopy`), for the same reason.
+ * Any other send that reached nobody - nobody opted
  * in, every copy suppressed, or #5255: every copy refused because the sweep
  * gave a stalled call's claim back - writes nothing, and the report is not
  * settled, so the row's next attempt sends it. Its own failed send, or a claim
@@ -431,8 +435,9 @@ async function sendAdminAlertOnce(params: ReportParams, context: ReportContext, 
         bookingId,
       }, format);
       // #5255: only a copy that went out, or waits for the retry cron, settles
-      // the report, or a club that switched this alert off.
-      if (adminAlertIsDeliveredOrQueued(result) || adminAlertSendOutcome(result) === "skipped-by-policy") {
+      // the report, or a club that switched this alert off, or an installation
+      // that is not the club's live site and so holds back every copy.
+      if (adminAlertIsDeliveredOrQueued(result) || adminAlertSendOutcome(result) === "skipped-by-policy" || (await heldBackAsNonLiveCopy(logContext))) {
         settled = true;
         await markReported(keys, logContext);
       }
@@ -443,9 +448,25 @@ async function sendAdminAlertOnce(params: ReportParams, context: ReportContext, 
   }));
   // A sibling that re-claimed after a takeover is still sending, too: wait for it.
   if (outcome === "in-flight" || outcome === "taken-over") return "in-flight";
-  // Its own copy went out (or the club skipped it) though its claim was not kept: `reported` settles that.
+  // Its own copy went out (or the club or a non-live copy held it back) though its claim was not kept: `reported` settles that.
   if (outcome === "settled" || settled) return "reported";
   throw new SupersededRefundReportNotSettledError(operationId, "the admin alert was not sent");
+}
+
+/**
+ * Whether this installation is a copy that never emails (`NON_PRODUCTION`,
+ * the role whose every copy the mail gate holds back as `SKIPPED_NON_PRODUCTION`).
+ * Like a policy skip, that hold is final: no later attempt sends the alert, so
+ * retrying would only end the row FAILED. Read only after a send reached
+ * nobody; an unreadable role answers false, and the report stays unsettled.
+ */
+async function heldBackAsNonLiveCopy(logContext: Record<string, unknown>): Promise<boolean> {
+  try {
+    return (await getEnvironmentRole()) === "NON_PRODUCTION";
+  } catch (err) {
+    logger.error({ ...logContext, err }, "Could not read the environment role after a superseded-payment refund alert reached nobody; it will be retried");
+    return false;
+  }
 }
 
 /**
