@@ -7379,51 +7379,54 @@ behaviour are unchanged; the Stripe request each sender makes is byte-identical
 each run in short transactions of their own: the record after
 `bindCreatedGroupSettlementInvoice` has committed, or on an already-bound
 return; the release after a void handler finds the invoice void, voids it, or
-finds no such invoice. Neither joins that bind's `lock(1)` nor takes any key
-(`INV-LOCK-001`: a manifest or a release changes no booking status and no
-settlement money), and neither changes the void's or the create's operation.
-The exclusion is structural: the manifest's unique `(documentRole, legacyKey)`,
-the coverage key per generation, and the partial unique index that lets only
-one primary or combined invoice cover a component at a time. Two racing
-recorders, or a primary and a combined recorder on one component, meet a
-unique violation (P2002), and the loser writes nothing and logs. A combined
-loser re-plans in its second step below, as `ALREADY_COVERED` if the winner
-still covers the component (a winner from the same settlement's earlier
-attempt too: owner decision, 25 Nov 2026, #4525). A primary loser does not:
-the primary plan reads no live cover, so it never plans `ALREADY_COVERED`, and
-a primary replay runs only when the CREATE runs again against an already-bound
-invoice, which nothing schedules. That primary invoice keeps no manifest row,
-under the recorder's "Another run recorded the primary invoice's manifest
-first" log line (main's wording, unchanged here); the combined cover stands
-(ledger §7). A combined `ALREADY_COVERED` conflict becomes cover once the earlier invoice's
-cover is released: a successor manifest under `coveredAfterReleaseKey`, written
-by the recorder in a second transaction after its own row commits, and reached
-again by the release's retry after the release commits (which reads the
-replacement's CREATE row by the current attempt's key while that row names no
-invoice, its email still sending). Whichever of a record
-and a release commits second sees the other, so both orders end covered; a
-recorder whose own row lost the key (P2002) still runs that step. Two successor
-writers meet the key, and one is left. A successor written while the
-replacement's own void releases its conflict is released too: the recorder
-re-reads its invoice's releases after writing, and the release sweeps a second
-time after its commit. A record whose own invoice's void released nothing (the
-void's release ran before the record committed) meets the same rule: the
-recorder reads the invoice's VOID operation after writing and releases when it
-finished void or not found, and the void handler releases once more after that
-row completes (`releaseCoverageAround`), so whichever commits second sees the
-other. Two crash windows remain, each a process crash inside that already
-narrow race: the handler dies after completing its VOID row and before its last
+finds no such invoice, or from the payments cycle's sweep below. Neither joins
+that bind's `lock(1)` nor takes any key (`INV-LOCK-001`: a manifest or a
+release changes no booking status and no settlement money), and neither changes
+the void's or the create's operation. The exclusion is structural: the
+manifest's unique `(documentRole, legacyKey)`, the coverage key per generation,
+and the partial unique index that lets only one primary or combined invoice
+cover a component at a time. Two racing recorders, or a primary and a combined
+recorder on one component, meet a unique violation (P2002), and the loser
+writes nothing and logs. A combined loser re-plans in its second step below, as
+`ALREADY_COVERED` if the winner still covers the component (a winner from the
+same settlement's earlier attempt too: owner decision, 25 Nov 2026, #4525). A
+primary loser does not: the primary plan reads no live cover, so it never plans
+`ALREADY_COVERED`, and a primary replay runs only when the CREATE runs again
+against an already-bound invoice, which nothing schedules. That primary invoice
+keeps no manifest row, under the recorder's "Another run recorded the primary
+invoice's manifest first" log line (main's wording, unchanged here); the
+combined cover stands (ledger §7). A combined `ALREADY_COVERED` conflict
+becomes cover once the earlier invoice's cover is released: a successor
+manifest under `coveredAfterReleaseKey`, written by the recorder in a second
+transaction after its own row commits, and reached again by the release's retry
+after the release commits (which reads the replacement's CREATE row by the
+current attempt's key while that row names no invoice, its email still
+sending). Whichever of a record and a release commits second sees the other, so
+both orders end covered; a recorder whose own row lost the key (P2002) still
+runs that step. Two successor writers meet the key, and one is left. A
+successor written while the replacement's own void releases its conflict is
+released too: the recorder re-reads its invoice's releases after writing, and
+the release sweeps a second time after its commit. A record whose own invoice's
+void released nothing (the void's release ran before the record committed)
+meets the same rule: the recorder reads the invoice's VOID operation after
+writing and releases when it finished void or not found, and the void handler
+releases once more after that row completes (`releaseCoverageAround`), so
+whichever commits second sees the other. Three gaps remain, and one sweep heals
+them. Two are crash windows, each a process crash inside that already narrow
+race: the handler dies after completing its VOID row and before its last
 release, or the recorder dies after its own or its successor's commit and
 before its VOID read or release re-read, once the void's last sweep has run.
-While the old colour drains, its void handlers write no release at all. Each
-leaves cover live on a void invoice until the payments cycle's
-`combined-invoice-cover-release` sweep (`sweepVoidedCombinedGroupInvoiceCover`)
-runs: it releases every unreleased combined manifest whose invoice has a
-SUCCEEDED VOID that ended it, through `releaseCombinedGroupInvoiceManifest`
-(no second writer), so the bound is one 15-minute payments cycle once the new
-code runs the cron leader (ledger §7). It takes no lock either: its release rows are
-keyed by manifest, so a sweep beside a handler's or recorder's release writes
-one row, and the release's own second pass and retry run as above.
+The third is the deploy: while the old colour drains, its void handlers write
+no release at all. Each leaves cover live on a void invoice until the payments
+cycle's `combined-invoice-cover-release` sweep
+(`sweepVoidedCombinedGroupInvoiceCover`) runs: it releases every unreleased
+combined manifest whose invoice has a SUCCEEDED VOID that ended it, through
+`releaseCombinedGroupInvoiceManifest` (no second writer), so the bound is one
+15-minute payments cycle once the new code runs the cron leader (ledger §7). It
+takes no lock either: its release rows are keyed by manifest, so a sweep beside
+a handler's or recorder's release writes one row, and the release's own second
+pass and retry run as above.
+
 Releases are insert-only, one per manifest (`skipDuplicates`). The deferred
 `member_money_require_export_generation` refuses a later generation whose
 predecessor is not wholly released, at commit; it reads, never locks.
