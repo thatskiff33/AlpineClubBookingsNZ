@@ -43,3 +43,5 @@ export { recordCaptureReceiptManifest, type CaptureReceiptManifestInput } from "
 export { recordFailedLaterRefundReversalManifest } from "./internal/refund-note-manifest";
 // #4525 (ALP-437): the organiser's combined group invoice's manifest, recorded once the invoice is kept, and released when it is void or gone.
 export { recordCombinedGroupInvoiceManifest, releaseCombinedGroupInvoiceManifest } from "./internal/combined-group-invoice-manifest";
+// #4525 review: the payments cycle's sweep that releases a combined invoice's cover once its VOID has ended it.
+export { sweepVoidedCombinedGroupInvoiceCover, type CombinedCoverSweepResult } from "./internal/combined-group-invoice-manifest";

@@ -7415,10 +7415,15 @@ other. Two crash windows remain, each a process crash inside that already
 narrow race: the handler dies after completing its VOID row and before its last
 release, or the recorder dies after its own or its successor's commit and
 before its VOID read or release re-read, once the void's last sweep has run.
-Either leaves cover live on a void invoice until a later record of it runs;
-nothing schedules one, and on the abandon path none runs. The sign is a
-replacement's `ALREADY_COVERED` conflict that never becomes cover behind a void
-invoice (ledger §7).
+While the old colour drains, its void handlers write no release at all. Each
+leaves cover live on a void invoice until the payments cycle's
+`combined-invoice-cover-release` sweep (`sweepVoidedCombinedGroupInvoiceCover`)
+runs: it releases every unreleased combined manifest whose invoice has a
+SUCCEEDED VOID that ended it, through `releaseCombinedGroupInvoiceManifest`
+(no second writer), so the bound is one 15-minute payments cycle once the new
+code runs the cron leader (ledger §7). It takes no lock either: its release rows are
+keyed by manifest, so a sweep beside a handler's or recorder's release writes
+one row, and the release's own second pass and retry run as above.
 Releases are insert-only, one per manifest (`skipDuplicates`). The deferred
 `member_money_require_export_generation` refuses a later generation whose
 predecessor is not wholly released, at commit; it reads, never locks.

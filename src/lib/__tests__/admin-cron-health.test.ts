@@ -282,6 +282,8 @@ describe("admin cron health", () => {
       "credit-release-asks",
       // #4285 review: the owed new-capture alert's drain.
       "duplicate-capture-kept-alert",
+      // #4525 review: the combined group invoice cover-release sweep.
+      "combined-invoice-cover-release",
     ]) {
       expect(
         definitions.find((definition) => definition.jobName === jobName)

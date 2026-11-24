@@ -98,6 +98,13 @@ const paymentsCycleTasks = vi.hoisted(() => ({
   reannounceHeldLateCaptures: vi.fn(),
   runCreditReleaseAskSweep: vi.fn(),
   drainOwedNewCaptureAlerts: vi.fn(),
+  sweepVoidedCombinedGroupInvoiceCover: vi.fn(),
+}));
+
+// #4525 review: the combined group invoice cover-release sweep, doubled like the others.
+vi.mock("@/lib/member-money/doors", async (importOriginal) => ({
+  ...((await importOriginal()) as typeof import("@/lib/member-money/doors")),
+  sweepVoidedCombinedGroupInvoiceCover: paymentsCycleTasks.sweepVoidedCombinedGroupInvoiceCover,
 }));
 
 vi.mock("@/lib/credit-release-ask-sweep", () => ({
@@ -467,6 +474,7 @@ describe("OBS-03: cron job run recording", { timeout: 30_000 }, () => {
     paymentsCycleTasks.reannounceHeldLateCaptures.mockResolvedValue({ checked: 0, announced: 0 });
     paymentsCycleTasks.runCreditReleaseAskSweep.mockResolvedValue({ enqueued: 0, payments: null, closes: null });
     paymentsCycleTasks.drainOwedNewCaptureAlerts.mockResolvedValue({ checked: 0, sent: 0 });
+    paymentsCycleTasks.sweepVoidedCombinedGroupInvoiceCover.mockResolvedValue({ checked: 0, released: 0, truncated: false, failed: false });
     paymentsCycleTasks.reapStaleWaitingPaymentXeroOutboxOperations.mockResolvedValue({
       reaped: 0,
       released: 0,
@@ -498,6 +506,7 @@ describe("OBS-03: cron job run recording", { timeout: 30_000 }, () => {
       expect.objectContaining({ jobName: "late-capture-held-alert", status: "SUCCESS" }),
       expect.objectContaining({ jobName: "credit-release-asks", status: "SUCCESS" }),
       expect.objectContaining({ jobName: "duplicate-capture-kept-alert", status: "SUCCESS" }),
+      expect.objectContaining({ jobName: "combined-invoice-cover-release", status: "SUCCESS" }),
     ]);
   });
 

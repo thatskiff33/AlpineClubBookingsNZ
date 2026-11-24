@@ -758,17 +758,26 @@ row records (void or not in Xero; never when it carries money). The void
 handler releases before completing that row and once more after, so a record
 and a void in either order end released.
 
-Two crash windows are stated limits. Each needs a process crash inside an
-already narrow race. On the handler side, the void handler completes its VOID
-row and dies before its last release, while a record committed beside it read
-that row unfinished. On the recorder side, the recorder dies after its own row
-or its successor commits and before it reads the VOID row or re-reads the
-invoice's releases, after the void's last sweep has run. Either leaves cover
-live on a void invoice until repaired: a later record of that invoice reads the
-finished VOID row and releases it, but nothing schedules one, and on the
-abandon path, whose settlement no longer names the invoice, none runs. An
-operator notices it as the group's next invoice logging an `ALREADY_COVERED`
-conflict that never becomes cover while the invoice it names is void in Xero.
+Three gaps leave cover live on a void invoice, and one sweep heals them. Two
+are crash windows, each a process crash inside an already narrow race. On the
+handler side, the void handler completes its VOID row and dies before its last
+release, while a record committed beside it read that row unfinished. On the
+recorder side, the recorder dies after its own row or its successor commits
+and before it reads the VOID row or re-reads the invoice's releases, after the
+void's last sweep has run. The third is the deploy: while the old colour
+drains, its void handlers finish VOIDs and write no release at all. The
+payments cycle's `combined-invoice-cover-release` task
+(`sweepVoidedCombinedGroupInvoiceCover`) releases every unreleased combined
+manifest whose invoice has a SUCCEEDED VOID that ended it, for that VOID's
+reason, through `releaseCombinedGroupInvoiceManifest`, the one release writer;
+its retry of the bound invoice's record then turns the replacement's
+`ALREADY_COVERED` conflict into cover. A VOID that found the invoice carrying
+money ends nothing and is never released. The bound is one payments cycle:
+the next run, at most about 15 minutes after the VOID completes or the crash,
+once the new code runs the cron leader. A run reads the newest 5,000 unreleased combined
+invoices at most and warns on admin cron health when it stops at that cap. The
+sweep is a lane decision under the owner's standing instruction of
+25 Nov 2026, the recommended option, for the owner to confirm.
 
 | Rendered object | Ledger slice and coverage rule |
 | --- | --- |

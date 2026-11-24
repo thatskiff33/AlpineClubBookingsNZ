@@ -363,6 +363,8 @@ export function getAdminCronJobDefinitions(
       ["xero-waiting-invoice-reaper", "Stale waiting Xero invoice reaper"],
       ["late-capture-held-alert", "Held late payment alert"],
       ["duplicate-capture-kept-alert", "Kept card payment alert"],
+      // #4525 review: releases a combined group invoice's ledger cover once its VOID ended it.
+      ["combined-invoice-cover-release", "Combined group invoice cover release"],
     ] as const).map(([jobName, label]) =>
       defineCronJob(
         {

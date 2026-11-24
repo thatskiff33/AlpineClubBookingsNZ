@@ -40,7 +40,8 @@ const ROLE = "COMBINED_GROUP_INVOICE" as const;
  * nothing reads the VOID's finished row and releases itself; the handler
  * releases once more after that row commits. Nothing here changes what is
  * sent, voided or emailed, or how a sync operation ends: a failure is logged
- * and swallowed.
+ * and swallowed. The payments cycle's sweep (`sweepVoidedCombinedGroupInvoiceCover`)
+ * releases whatever a VOID ended and no handler or recorder released.
  * No advisory lock: no booking status or settlement money changes
  * (`INV-LOCK-001`); the unique keys are the exclusion.
  */
@@ -261,6 +262,41 @@ async function releaseLikeAnyReleased(settlementId: string, invoiceId: string): 
 }
 
 /**
+ * How each invoice's VOID operation ended it, keyed `settlementId\u0000invoiceId`,
+ * for the invoices whose VOID finished void or not in Xero (never one carrying
+ * money). One read for any number of invoices, by the VOIDs' own keys.
+ */
+async function finishedVoidReasons(
+  invoices: ReadonlyArray<{ settlementId: string; invoiceId: string }>,
+): Promise<Map<string, MemberMoneyExportCoverageReleaseReason>> {
+  const invoiceOfKey = new Map<string, string>();
+  for (const { settlementId, invoiceId } of invoices) {
+    for (const path of ["cancel", "abandon"] as const) {
+      invoiceOfKey.set(groupSettlementInvoiceVoidKey(settlementId, invoiceId, path), invoicePairKey(settlementId, invoiceId));
+    }
+  }
+  const reasons = new Map<string, MemberMoneyExportCoverageReleaseReason>();
+  if (invoiceOfKey.size === 0) return reasons;
+  const voids = await prisma.xeroSyncOperation.findMany({
+    where: {
+      entityType: "INVOICE", operationType: "UPDATE", localModel: "GroupBookingSettlement", status: "SUCCEEDED",
+      localId: { in: [...new Set(invoices.map((invoice) => invoice.settlementId))] },
+      correlationKey: { in: [...invoiceOfKey.keys()] },
+    },
+    orderBy: { createdAt: "asc" },
+    select: { correlationKey: true, responsePayload: true },
+  });
+  for (const row of voids) {
+    const invoice = row.correlationKey === null ? undefined : invoiceOfKey.get(row.correlationKey);
+    const ended = groupSettlementInvoiceVoidEnded(row.responsePayload);
+    if (invoice !== undefined && ended !== null && !reasons.has(invoice)) reasons.set(invoice, ended);
+  }
+  return reasons;
+}
+
+const invoicePairKey = (settlementId: string, invoiceId: string) => `${settlementId}\u0000${invoiceId}`;
+
+/**
  * When the invoice's VOID operation has finished with it void or gone in Xero,
  * release every manifest of it for that reason. The VOID's row is the void's
  * own record, committed by its handler before the handler's last release
@@ -269,15 +305,7 @@ async function releaseLikeAnyReleased(settlementId: string, invoiceId: string): 
  * this read sees finished is released here, whichever commits second.
  */
 async function releaseIfVoidFinished(settlementId: string, invoiceId: string): Promise<void> {
-  const voids = await prisma.xeroSyncOperation.findMany({
-    where: {
-      entityType: "INVOICE", operationType: "UPDATE", localModel: "GroupBookingSettlement", localId: settlementId, status: "SUCCEEDED",
-      correlationKey: { in: [groupSettlementInvoiceVoidKey(settlementId, invoiceId, "cancel"), groupSettlementInvoiceVoidKey(settlementId, invoiceId, "abandon")] },
-    },
-    orderBy: { createdAt: "asc" },
-    select: { responsePayload: true },
-  });
-  const reason = voids.map((row) => groupSettlementInvoiceVoidEnded(row.responsePayload)).find((ended) => ended !== null);
+  const reason = (await finishedVoidReasons([{ settlementId, invoiceId }])).get(invoicePairKey(settlementId, invoiceId));
   if (reason) await releaseUnreleased(settlementId, invoiceId, reason);
 }
 
@@ -317,5 +345,80 @@ export async function releaseCombinedGroupInvoiceManifest(input: {
     }
   } catch (error) {
     logger.error({ err: error, settlementId, invoiceId }, "Could not release the combined group invoice's export coverage; the void is unchanged");
+  }
+}
+
+/** One page of the cover-release sweep, and how many pages one run reads at most (5,000 invoices). */
+export const COMBINED_COVER_SWEEP_PAGE_SIZE = 100;
+export const COMBINED_COVER_SWEEP_MAX_PAGES = 50;
+
+export interface CombinedCoverSweepResult {
+  /** Combined invoices with an unreleased manifest whose VOID was read. */
+  checked: number;
+  /** Of those, the invoices whose finished VOID ended them, released now. */
+  released: number;
+  /** The run stopped at its cap: older unreleased combined manifests were not read. */
+  truncated: boolean;
+  /** The sweep's own read failed; what it had not reached is left for the next run. */
+  failed: boolean;
+}
+
+/**
+ * THE COVER-RELEASE SWEEP (#4525 review; lane decision under the owner's
+ * standing instruction of 25 Nov 2026). Every unreleased combined manifest
+ * whose invoice has a SUCCEEDED VOID that ended it (`groupSettlementInvoiceVoidEnded`:
+ * voided, already void, or not in Xero; never one carrying money) is released
+ * for that reason through `releaseCombinedGroupInvoiceManifest`, the one
+ * release writer, which then retries the bound invoice's record, so a
+ * replacement's ALREADY_COVERED conflict becomes cover. It heals what no
+ * handler or recorder pass reaches: an old-colour void handler that writes no
+ * release while the old colour drains, and the two crash windows (ledger §7).
+ * The payments cron cycle runs it every 15 minutes. Newest manifests first, a
+ * page of `COMBINED_COVER_SWEEP_PAGE_SIZE` and one VOID read per page, at most
+ * `COMBINED_COVER_SWEEP_MAX_PAGES` pages a run; a run that stops at the cap
+ * says so. Idempotent: a released manifest is not read again, and release rows
+ * are keyed by manifest. Never throws. No advisory lock (`INV-LOCK-001`): it
+ * changes no booking status or settlement money; the release's keys are the
+ * exclusion.
+ */
+export async function sweepVoidedCombinedGroupInvoiceCover(): Promise<CombinedCoverSweepResult> {
+  const result: CombinedCoverSweepResult = { checked: 0, released: 0, truncated: false, failed: false };
+  try {
+    const seen = new Set<string>();
+    let cursor: { createdAt: Date; id: string } | null = null;
+    for (let page = 0; page < COMBINED_COVER_SWEEP_MAX_PAGES; page += 1) {
+      const rows: { id: string; createdAt: Date; settlementId: string | null; providerInvoiceId: string }[] =
+        await prisma.memberMoneyExportManifest.findMany({
+          where: {
+            documentRole: ROLE, settlementId: { not: null }, release: { is: null },
+            ...(cursor ? { OR: [{ createdAt: { lt: cursor.createdAt } }, { createdAt: cursor.createdAt, id: { lt: cursor.id } }] } : {}),
+          },
+          orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+          take: COMBINED_COVER_SWEEP_PAGE_SIZE,
+          select: { id: true, createdAt: true, settlementId: true, providerInvoiceId: true },
+        });
+      const invoices: { settlementId: string; invoiceId: string }[] = [];
+      for (const row of rows) {
+        if (!row.settlementId || seen.has(invoicePairKey(row.settlementId, row.providerInvoiceId))) continue;
+        seen.add(invoicePairKey(row.settlementId, row.providerInvoiceId));
+        invoices.push({ settlementId: row.settlementId, invoiceId: row.providerInvoiceId });
+      }
+      result.checked += invoices.length;
+      const reasons = await finishedVoidReasons(invoices);
+      for (const invoice of invoices) {
+        const reason = reasons.get(invoicePairKey(invoice.settlementId, invoice.invoiceId));
+        if (!reason) continue;
+        await releaseCombinedGroupInvoiceManifest({ ...invoice, reason });
+        result.released += 1;
+      }
+      if (rows.length < COMBINED_COVER_SWEEP_PAGE_SIZE) return result;
+      const last = rows[rows.length - 1]!;
+      cursor = { createdAt: last.createdAt, id: last.id };
+    }
+    result.truncated = true;
+    return result;
+  } catch (error) {
+    logger.error({ err: error }, "Could not sweep the combined group invoices' cover on void invoices; the next run tries again");
+    return { ...result, failed: true };
   }
 }
