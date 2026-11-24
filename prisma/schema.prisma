@@ -2734,6 +2734,8 @@ model GroupBookingSettlement {
   /// group cascades with the organiser's booking; the settlement refuses, so a
   /// settled group stops that delete (`INV-MONEY-043`).
   groupBooking GroupBooking @relation(fields: [groupBookingId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  /// #4525 (ALP-437): the combined invoices' export manifests; each refuses this settlement's delete.
+  memberMoneyExportManifests MemberMoneyExportManifest[]
 
   @@index([status, createdAt])
 }
@@ -6663,9 +6665,22 @@ model ClubPost {
   // not yet succeeded is retried by the cron; until it does, the post is live
   // on this club's own board exactly as any other.
   shareRequestedAt DateTime?
-  // Why the last attempt failed, for the member and the admin screen. Cleared
-  // on success. Bounded because it can carry the remote's own error text.
+  // Why the last attempt failed, for the admin's message-board screen, which
+  // names it on the post (#5246). Cleared on success. Bounded because it can
+  // carry the remote's own error text.
   shareError       String?   @db.VarChar(300)
+  // The send was claimed and its result is not yet recorded (#5246). Set by
+  // the claim before the send and cleared by every write that records the
+  // result, so a marker that outlives SHARE_OUTCOME_GRACE_MS means the process
+  // or the database failed between the two: the post may be on other clubs'
+  // boards with no id held here. Never a reason to send again.
+  shareSentAt      DateTime?
+  // The server's id for an ACCEPTED copy of this post that is not its
+  // recorded share (#5246): the stamp failed, or the post already held a
+  // different id. The only handle by which that stray copy can be withdrawn;
+  // cleared only once the central server confirms the withdrawal. Not unique:
+  // a mirror row may hold the same id after the mirror pulled the copy back.
+  unrecordedServerPostId String? @db.VarChar(64)
   // How many times the share has been attempted and failed (#3091 review 5).
   // MAX_SHARE_ATTEMPTS in club-post-sharing.ts is the cap: at the cap the
   // request is cleared with the reason on shareError, so eight permanently
@@ -9929,6 +9944,8 @@ enum MemberMoneyExportDocumentRole {
   FAILED_LATER_REFUND_REVERSAL
   /// #4525 (ALP-605): a stored Xero payment's cents of one card capture, under its own idempotency key.
   CAPTURE_RECEIPT
+  /// #4525 (ALP-437): the organiser's combined group-settlement invoice, covering each child's whole components.
+  COMBINED_GROUP_INVOICE
 }
 
 enum MemberMoneyExportOutcome {
@@ -10002,19 +10019,27 @@ model MemberMoneyExportManifest {
   frozenMapping Json
   lineTotalCents Int
   providerInvoiceId String
+  /// #4525 (ALP-437): the group settlement a COMBINED_GROUP_INVOICE bills; set for that role only.
+  settlementId String?
   createdAt DateTime @default(now())
   booking Booking @relation(fields: [bookingId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  settlement GroupBookingSettlement? @relation(fields: [settlementId], references: [id], onDelete: Restrict, onUpdate: Restrict)
   coverage MemberMoneyExportCoverage[]
+  release MemberMoneyExportCoverageRelease?
   @@unique([documentRole, legacyKey])
   @@unique([id, documentRole])
   @@index([bookingId])
+  @@index([settlementId])
 }
 
 /// One journal component a manifest's document covers: whole (sliceKey ''), the
 /// slice one journal event moved (sliceKey: that event's key, supplementary only),
 /// or the cents of one card capture a Xero payment applied (sliceKey: that
 /// payment's idempotency key, capture receipts only). A component is covered
-/// whole by at most one document of each role, and each slice by at most one.
+/// whole by at most one document of each role, and each slice by at most one,
+/// per coverage generation; an invoice and the combined group invoice share one
+/// key (a raw partial unique index, prisma/partial-unique-indexes.tsv). A row
+/// takes the generation after its component's last released one (#4525, ALP-437).
 model MemberMoneyExportCoverage {
   id String @id @default(cuid())
   manifestId String
@@ -10024,9 +10049,26 @@ model MemberMoneyExportCoverage {
   sliceKey String @default("")
   coveredCents Int
   taxCode String?
+  coverageGeneration Int @default(0)
   manifest MemberMoneyExportManifest @relation(fields: [manifestId, documentRole], references: [id, documentRole], onDelete: Restrict, onUpdate: Restrict)
-  @@unique([documentRole, account, chargeIdentity, sliceKey])
+  @@unique([documentRole, account, chargeIdentity, sliceKey, coverageGeneration])
   @@index([manifestId, documentRole])
+}
+
+/// Why a manifest's coverage ended: its document was voided, or the provider holds no such document.
+enum MemberMoneyExportCoverageReleaseReason {
+  VOIDED
+  NOT_FOUND
+}
+
+/// M13 (#4525, ALP-437): the end of one manifest's coverage, appended once its
+/// document is void or gone. Insert-only; the manifest is never edited.
+model MemberMoneyExportCoverageRelease {
+  id String @id @default(cuid())
+  manifestId String @unique
+  reason MemberMoneyExportCoverageReleaseReason
+  createdAt DateTime @default(now())
+  manifest MemberMoneyExportManifest @relation(fields: [manifestId], references: [id], onDelete: Restrict, onUpdate: Restrict)
 }
 
 /// Privacy disclosure is its own domain singleton: branding saves must not

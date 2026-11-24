@@ -8,6 +8,7 @@ const {
   mockReannounceHeldLateCaptures,
   mockRunCreditReleaseAskSweep,
   mockDrainOwedNewCaptureAlerts,
+  mockSweepVoidedCombinedGroupInvoiceCover,
   mockSweepOnceEverAlerts,
   mockCronJobRunCreate,
   mockReportCronError,
@@ -18,6 +19,7 @@ const {
   mockReannounceHeldLateCaptures: vi.fn(),
   mockRunCreditReleaseAskSweep: vi.fn(),
   mockDrainOwedNewCaptureAlerts: vi.fn(),
+  mockSweepVoidedCombinedGroupInvoiceCover: vi.fn(),
   mockSweepOnceEverAlerts: vi.fn(),
   mockCronJobRunCreate: vi.fn(),
   mockReportCronError: vi.fn(),
@@ -56,7 +58,7 @@ vi.mock("@/lib/xero-waiting-invoice-reaper", () => ({
     mockReapStaleWaitingPaymentXeroOutboxOperations(...args),
 }));
 
-// #3635: the fourth task, the held late-capture alert's re-selecting run.
+// #3635: the fifth task, the held late-capture alert's re-selecting run.
 vi.mock("@/lib/late-capture-refund-hold", () => ({
   reannounceHeldLateCaptures: (...args: unknown[]) => mockReannounceHeldLateCaptures(...args),
 }));
@@ -66,9 +68,14 @@ vi.mock("@/lib/credit-release-ask-sweep", () => ({
   runCreditReleaseAskSweep: (...args: unknown[]) => mockRunCreditReleaseAskSweep(...args),
 }));
 
-// #4285 review: the sixth task, the owed new-capture alert's drain.
+// #4285 review: the seventh task, the owed new-capture alert's drain.
 vi.mock("@/lib/duplicate-capture-kept-alert-drain", () => ({
   drainOwedNewCaptureAlerts: (...args: unknown[]) => mockDrainOwedNewCaptureAlerts(...args),
+}));
+
+// #4525 review: the eighth task, the combined group invoice cover-release sweep.
+vi.mock("@/lib/member-money/doors", () => ({
+  sweepVoidedCombinedGroupInvoiceCover: (...args: unknown[]) => mockSweepVoidedCombinedGroupInvoiceCover(...args),
 }));
 
 // #5255: the first task, the once-ever alert sweep.
@@ -118,6 +125,7 @@ describe("POST /api/cron/payments", () => {
     mockReannounceHeldLateCaptures.mockResolvedValue({ checked: 0, announced: 0 });
     mockRunCreditReleaseAskSweep.mockResolvedValue({ enqueued: 0, payments: null, closes: null });
     mockDrainOwedNewCaptureAlerts.mockResolvedValue({ checked: 0, sent: 0 });
+    mockSweepVoidedCombinedGroupInvoiceCover.mockResolvedValue({ checked: 0, released: 0, releaseFailures: 0, truncated: false, failed: false });
     mockSweepOnceEverAlerts.mockResolvedValue({ released: 0, resent: 0, settled: 0, dropped: 0, failed: 0 });
     mockReapStaleWaitingPaymentXeroOutboxOperations.mockResolvedValue({
       reaped: 0,
@@ -146,7 +154,7 @@ describe("POST /api/cron/payments", () => {
     );
   }
 
-  it("runs all seven payments tasks and records each under its own job name", async () => {
+  it("runs all eight payments tasks and records each under its own job name", async () => {
     const { POST } = await import("@/app/api/cron/payments/route");
     const response = await POST(
       authorisedRequest("http://localhost/api/cron/payments?task=recovery")
@@ -160,6 +168,7 @@ describe("POST /api/cron/payments", () => {
     expect(mockReannounceHeldLateCaptures).toHaveBeenCalledOnce();
     expect(mockRunCreditReleaseAskSweep).toHaveBeenCalledOnce();
     expect(mockDrainOwedNewCaptureAlerts).toHaveBeenCalledOnce();
+    expect(mockSweepVoidedCombinedGroupInvoiceCover).toHaveBeenCalledOnce();
     expect(mockSweepOnceEverAlerts).toHaveBeenCalledOnce();
     expect(data.internetBankingHoldRelease).toMatchObject({ released: 0, failed: 0 });
     expect(data.xeroOutboxReap).toMatchObject({ reaped: 0 });
@@ -171,7 +180,24 @@ describe("POST /api/cron/payments", () => {
       expect.objectContaining({ jobName: "late-capture-held-alert", status: "SUCCESS" }),
       expect.objectContaining({ jobName: "credit-release-asks", status: "SUCCESS" }),
       expect.objectContaining({ jobName: "duplicate-capture-kept-alert", status: "SUCCESS" }),
+      expect.objectContaining({ jobName: "combined-invoice-cover-release", status: "SUCCESS" }),
     ]);
+  });
+
+  it.each([
+    [{ checked: 2, released: 0, releaseFailures: 0, truncated: false, failed: true }, /could not read its manifests/],
+    [{ checked: 3, released: 1, releaseFailures: 2, truncated: false, failed: false }, /could not release 2 voided invoice/],
+    [{ checked: 5000, released: 1, releaseFailures: 0, truncated: true, failed: false }, /stopped at its per-run cap/],
+  ])("records the cover sweep's failed read or capped run as a warning admin cron health shows (#4525)", async (sweep, warning) => {
+    mockSweepVoidedCombinedGroupInvoiceCover.mockResolvedValueOnce(sweep);
+    const { POST } = await import("@/app/api/cron/payments/route");
+    const response = await POST(authorisedRequest("http://localhost/api/cron/payments?task=recovery"));
+    expect(response.status).toBe(200);
+    const run = mockCronJobRunCreate.mock.calls
+      .map(([arg]) => (arg as { data: { jobName: string; status: string; resultSummary: Record<string, unknown> } }).data)
+      .find((recorded) => recorded.jobName === "combined-invoice-cover-release");
+    expect(run?.status).toBe("SUCCESS");
+    expect(run?.resultSummary.warning).toMatch(warning);
   });
 
   it("records a hold release with item failures as a warning admin cron health shows (#3663)", async () => {
@@ -218,6 +244,7 @@ describe("POST /api/cron/payments", () => {
     ["late-capture-held-alert", mockReannounceHeldLateCaptures, "lateCaptureHeldAlert"],
     ["credit-release-asks", mockRunCreditReleaseAskSweep, "creditReleaseAsks"],
     ["duplicate-capture-kept-alert", mockDrainOwedNewCaptureAlerts, "duplicateCaptureKeptAlert"],
+    ["combined-invoice-cover-release", mockSweepVoidedCombinedGroupInvoiceCover, "combinedInvoiceCoverRelease"],
   ] as const)(
     "keeps running the other tasks when %s fails, and reports it as failed",
     async (failingJob, failingMock, resultKey) => {
@@ -242,7 +269,7 @@ describe("POST /api/cron/payments", () => {
         expect.objectContaining({ tag: failingJob })
       );
       const runs = recordedRuns();
-      expect(runs).toHaveLength(7);
+      expect(runs).toHaveLength(8);
       for (const run of runs) {
         expect(run.status).toBe(run.jobName === failingJob ? "FAILURE" : "SUCCESS");
       }

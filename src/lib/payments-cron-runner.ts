@@ -22,6 +22,7 @@ import { reapStaleWaitingPaymentXeroOutboxOperations } from "@/lib/xero-waiting-
 import { reannounceHeldLateCaptures } from "@/lib/late-capture-refund-hold";
 import { runCreditReleaseAskSweep } from "@/lib/credit-release-ask-sweep";
 import { drainOwedNewCaptureAlerts } from "@/lib/duplicate-capture-kept-alert-drain";
+import { sweepVoidedCombinedGroupInvoiceCover, type CombinedCoverSweepResult } from "@/lib/member-money/doors";
 import { sweepOnceEverAlerts, type OnceEverAlertSweepResult } from "@/lib/admin-alert-once-sweep";
 import { runRecordedCronTask } from "@/lib/cron-recorded-task";
 import { reportCronError } from "@/lib/observability-bridge";
@@ -33,7 +34,8 @@ export type PaymentsCronJobName =
   | "xero-waiting-invoice-reaper"
   | "late-capture-held-alert"
   | "credit-release-asks"
-  | "duplicate-capture-kept-alert";
+  | "duplicate-capture-kept-alert"
+  | "combined-invoice-cover-release";
 
 /** A task's result, or `null` when that task failed (its FAILURE row says why). */
 export interface PaymentsCronCycleResult {
@@ -52,6 +54,8 @@ export interface PaymentsCronCycleResult {
   creditReleaseAsks: Awaited<ReturnType<typeof runCreditReleaseAskSweep>> | null;
   /** #4285 review: the owed new-capture alert's drain. */
   duplicateCaptureKeptAlert: Awaited<ReturnType<typeof drainOwedNewCaptureAlerts>> | null;
+  /** #4525 review: the sweep that releases a combined group invoice's cover once its VOID ended it. */
+  combinedInvoiceCoverRelease: CombinedCoverSweepResult | null;
 }
 
 export interface PaymentsCronFailure {
@@ -123,6 +127,24 @@ function holdReleaseSummary(release: InternetBankingHoldReleaseResult) {
     : release;
 }
 
+/**
+ * The sweep never throws, so a read that failed, a release that failed, or a
+ * run that stopped at its cap carries a `warning` that keeps it from reading
+ * as a healthy job.
+ */
+function combinedCoverSweepSummary(sweep: CombinedCoverSweepResult) {
+  if (sweep.failed) {
+    return { ...sweep, warning: "The combined group invoice cover sweep could not read its manifests and will try again next run; see the application logs." };
+  }
+  if (sweep.releaseFailures > 0) {
+    return { ...sweep, warning: `The combined group invoice cover sweep could not release ${sweep.releaseFailures} voided invoice(s) and will try again next run; see the application logs.` };
+  }
+  if (sweep.truncated) {
+    return { ...sweep, warning: "The combined group invoice cover sweep stopped at its per-run cap; later voided invoices still owed a release were not read and wait for the next run." };
+  }
+  return sweep;
+}
+
 /** The sweep never throws, so a run whose reads or writes failed says so here (#5255). */
 function onceEverAlertSweepSummary(sweep: OnceEverAlertSweepResult) {
   return sweep.failed > 0
@@ -142,6 +164,7 @@ export async function runPaymentsCronCycle(): Promise<PaymentsCronCycleResult> {
     lateCaptureHeldAlert: null,
     creditReleaseAsks: null,
     duplicateCaptureKeptAlert: null,
+    combinedInvoiceCoverRelease: null,
   };
   const failures: PaymentsCronFailure[] = [];
 
@@ -190,6 +213,13 @@ export async function runPaymentsCronCycle(): Promise<PaymentsCronCycleResult> {
     resultKey: "duplicateCaptureKeptAlert",
     failureMessage: "Failed to deliver owed kept-capture alerts",
     work: () => drainOwedNewCaptureAlerts(),
+  });
+  await runRecordedTask(result, failures, {
+    jobName: "combined-invoice-cover-release",
+    resultKey: "combinedInvoiceCoverRelease",
+    failureMessage: "Failed to sweep the combined group invoices' cover on void invoices",
+    work: () => sweepVoidedCombinedGroupInvoiceCover(),
+    summaryFor: combinedCoverSweepSummary,
   });
 
   if (failures.length > 0) {

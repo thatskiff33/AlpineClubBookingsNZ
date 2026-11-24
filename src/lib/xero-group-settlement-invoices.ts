@@ -61,6 +61,7 @@ import { providerAmountToCents } from "@/lib/money-provider-amount";
 import { formatCents } from "@/lib/utils";
 import type { XeroOperationClaim } from "@/lib/xero-operation-outcome-guard";
 import { LOCK1_HOLDER_TRANSACTION_BUDGET } from "@/lib/db-transaction";
+import { recordCombinedGroupInvoiceManifest } from "@/lib/member-money/doors";
 
 export interface CreateXeroGroupSettlementInvoiceOptions
   extends FindOrCreateXeroContactOptions {
@@ -145,6 +146,60 @@ export async function bindCreatedGroupSettlementInvoice(
     totalMismatch: false,
     queuedVoidOperationId: queuedVoid?.queueOperationId ?? null,
   };
+}
+
+/**
+ * #3642: an invoice the bind abandoned on arrival is never emailed. Its CREATE
+ * row closes on it (FAILED, with one operator alert, when Xero raised it at a
+ * total other than the settlement's), so its queued VOID can find it.
+ */
+async function closeAbandonedGroupSettlementInvoice(params: {
+  settlementId: string;
+  invoice: { id: string; number: string | null };
+  totalMismatch: boolean;
+  operationClaim: XeroOperationClaim;
+  createResponse: unknown;
+}): Promise<void> {
+  const { settlementId, invoice, totalMismatch } = params;
+  if (totalMismatch) {
+    // Refused before the send by the line check, so this is Xero
+    // rounding the lines to a different total. A person has to look.
+    await alertGroupSettlementInvoice(
+      {
+        kind: "raised_at_wrong_total",
+        settlementId,
+        invoiceId: invoice.id,
+        errorMessage: `Xero raised the group's combined invoice ${invoice.id} at a total different from the settlement's, so it was voided and not sent. Check the invoice lines, then ask the organiser to settle again.`,
+      },
+      await clubFormatValues()
+    );
+  }
+  await completeXeroSyncOperation(params.operationClaim, {
+    status: totalMismatch ? "FAILED" : "SUCCEEDED",
+    responsePayload: {
+      abandonedAfterInvoiceCreation: true,
+      invoiceTotalDiffersFromSettlement: totalMismatch,
+      createInvoice: params.createResponse,
+      invoiceEmailSuppressed: true,
+    },
+    xeroObjectType: "INVOICE",
+    xeroObjectId: invoice.id,
+    xeroObjectNumber: invoice.number,
+    xeroObjectUrl: buildXeroInvoiceUrl(invoice.id),
+  });
+}
+
+/** #4525 (ALP-437): a bound invoice's export manifest, replayed from the request that raised it. Never throws. */
+function replayCombinedInvoiceManifest(
+  settlement: { id: string; xeroInvoiceId: string | null; groupBooking: { organiserBookingId: string } },
+  operationId: string | null,
+): Promise<void> {
+  if (!settlement.xeroInvoiceId) return Promise.resolve();
+  return recordCombinedGroupInvoiceManifest({ kind: "REPLAY", operationId }, {
+    settlementId: settlement.id,
+    organiserBookingId: settlement.groupBooking.organiserBookingId,
+    providerInvoiceId: settlement.xeroInvoiceId,
+  });
 }
 
 /**
@@ -258,6 +313,7 @@ export async function createXeroInvoiceForGroupSettlement(
   if (settlement.xeroInvoiceId && initialFence.deferredEmail && options?.syncOperation) {
     const deferred = initialFence.deferredEmail;
     const createdInvoice = { invoiceID: settlement.xeroInvoiceId, invoiceNumber: settlement.xeroInvoiceNumber };
+    await replayCombinedInvoiceManifest(settlement, options.syncOperation.id);
     try {
       const { xero, tenantId } = await getAuthenticatedXeroClient();
       return await finishGroupSettlementInvoiceEmail({
@@ -279,6 +335,7 @@ export async function createXeroInvoiceForGroupSettlement(
   // Already raised: its link was written beside the pointer under the lock (#3642), and re-writing it here could
   // re-activate a retired invoice's link. #4710: a claimed row closes SUCCEEDED on the bound invoice, never left RUNNING.
   if (settlement.xeroInvoiceId) {
+    await replayCombinedInvoiceManifest(settlement, options?.syncOperation?.id ?? null);
     if (options?.syncOperation) await completeXeroSyncOperation(options.syncOperation, boundGroupSettlementInvoiceCompletion({ id: settlement.xeroInvoiceId, number: settlement.xeroInvoiceNumber ?? null }));
     return settlement.xeroInvoiceId;
   }
@@ -420,31 +477,12 @@ export async function createXeroInvoiceForGroupSettlement(
       }), LOCK1_HOLDER_TRANSACTION_BUDGET);
 
     if (cancellationResult.abandoned) {
-      if (cancellationResult.totalMismatch) {
-        // Refused before the send by the line check above, so this is Xero
-        // rounding the lines to a different total. A person has to look.
-        await alertGroupSettlementInvoice(
-          {
-            kind: "raised_at_wrong_total",
-            settlementId,
-            invoiceId: createdInvoice.invoiceID,
-            errorMessage: `Xero raised the group's combined invoice ${createdInvoice.invoiceID} at a total different from the settlement's, so it was voided and not sent. Check the invoice lines, then ask the organiser to settle again.`,
-          },
-          await clubFormatValues()
-        );
-      }
-      await completeXeroSyncOperation(operationClaim!, {
-        status: cancellationResult.totalMismatch ? "FAILED" : "SUCCEEDED",
-        responsePayload: {
-          abandonedAfterInvoiceCreation: true,
-          invoiceTotalDiffersFromSettlement: cancellationResult.totalMismatch,
-          createInvoice: response.body,
-          invoiceEmailSuppressed: true,
-        },
-        xeroObjectType: "INVOICE",
-        xeroObjectId: createdInvoice.invoiceID,
-        xeroObjectNumber: createdInvoice.invoiceNumber ?? null,
-        xeroObjectUrl: buildXeroInvoiceUrl(createdInvoice.invoiceID),
+      await closeAbandonedGroupSettlementInvoice({
+        settlementId,
+        invoice: { id: createdInvoice.invoiceID, number: createdInvoice.invoiceNumber ?? null },
+        totalMismatch: cancellationResult.totalMismatch,
+        operationClaim: operationClaim!,
+        createResponse: response.body,
       });
       return null;
     }
@@ -459,6 +497,12 @@ export async function createXeroInvoiceForGroupSettlement(
       });
       return null;
     }
+
+    // #4525 (ALP-437): the kept invoice's manifest, after the bind; held to the lines the returned invoice bills. Never throws.
+    await recordCombinedGroupInvoiceManifest(
+      { kind: "BUILT", attempt, lines, taxRendering, billedLines: createdInvoice.lineItems ?? lineItems },
+      { settlementId, organiserBookingId, providerInvoiceId: createdInvoice.invoiceID },
+    );
 
     return await finishGroupSettlementInvoiceEmail({
       settlementId,

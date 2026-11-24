@@ -108,6 +108,7 @@ the legacy `hashtext(<memberId>)` contact-link key's in
 [recovery preflight (#4359)](#charge-backed-refund-recovery-preflight-4359) ·
 [refund failed later (#4104)](#a-card-refund-that-failed-later-the-payment-row-lock-no-advisory-key-4104) ·
 [primary invoice link (#3980)](#an-edit-against-the-primary-invoices-link-the-payment-row-lock-no-advisory-key-3980) ·
+[combined group invoice manifest (#4525)](#the-combined-group-invoices-export-manifest-no-lock-the-unique-keys-4525) ·
 [a Stripe dispute's record (#4911)](#a-stripe-disputes-record-4911).
 
 **Xero refund-note links.**
@@ -3152,7 +3153,7 @@ mispricing a booking.
   | Mirror upsert and tombstone (`club-post-mirror.ts`) | Settings row (the page's fence, which since #4588 also refuses unless `commsSyncStartedAt` is still this pass's claim stamp), then `$executeRaw`SELECT 1 FROM "ClubPost" WHERE "serverPostId" = $1 FOR UPDATE`` (`lockMirroredPost`) and a re-read under it; create or update, or delete, then image rows. A zero count is not found. A row this club removed is never rewritten; a "hidden" tombstone scrubs it to a marker (author and origin name blanked, its reports and image rows deleted under the post lock), and a "removed" one deletes it (#4588). |
   | Admin removal (`removeClubPost`, `club-posts-admin.ts`) | Status-guarded `updateMany` (`removedAt: null`) takes the post row; images and share state re-read under it, then the image rows deleted. A lost claim is a no-op, or not found when the row is gone. Files deleted after commit. |
   | Retention (`runClubPostCleanup`, #4588) | Batches of 200: `$executeRaw`SELECT 1 FROM "ClubPost" WHERE "id" IN (…) ORDER BY "id" FOR UPDATE``, the images re-read under those locks, the posts deleted (image rows by cascade); the files after commit. Its single-flight claim (`cleanupStartedAt`) is released, since #4590, only while it still holds the stamp this pass wrote. |
-  | Share send and stamp (`shareOnePost`, `stampShare`, `club-post-sharing.ts`, #4588, #4590) | Before the send, the CLAIM (#4590 review, #4592): `clubPost.updateMany` taking `shareRequestedAt` off our post, guarded on the value read and on no `sharedAt`/`serverPostId`; a count of 0 sends nothing. So the remote send is at most once: a second caller, a failed stamp, a database outage or a process killed mid-send leaves no request to re-send. Only a share the server did NOT take puts the request back (a retryable failure, or a version pause); if that write fails the share is lost, never duplicated. After acceptance, the stamp: settings row (`lockServerNzSettings`), then, only when the mirror already copied our own post under the server's id, our post and that copy (`SELECT 1 … WHERE "id" IN (…, …) ORDER BY "id" FOR UPDATE`), the copy deleted (image rows by cascade, files after commit) and our post stamped while it holds no id or this one. Retried with the id already returned: the locked stamp, then `clubPost.updateMany` of our post alone while its `serverPostId` is null (no settings lock; the unique `serverPostId` refuses it while a mirror copy holds the id), then the locked stamp again. Every exit names the server id: a copy that is not ours, or a different id already held (never overwritten), is a final failure whose `shareError` names it; all three attempts failing records it in `shareError`; a post deleted meanwhile, or that last write failing, leaves it in the error log only. No screen shows `shareError` yet (docs/guides/message-board.md, Troubleshooting). |
+  | Share send and stamp (`shareOnePost`, `stampShare`, `club-post-sharing.ts`, #4588, #4590) | Before the send, the CLAIM (#4590 review, #4592): `clubPost.updateMany` taking `shareRequestedAt` off our post and setting `shareSentAt` (#5246), guarded on the value read and on no `sharedAt`/`serverPostId`; a count of 0 sends nothing. Every write that records the result clears `shareSentAt`. So the remote send is at most once: a second caller, a failed stamp, a database outage or a process killed mid-send leaves no request to re-send. Only a share the server did NOT take puts the request back (a retryable failure, or a version pause); if that write fails the share is lost, never duplicated. After acceptance, the stamp: settings row (`lockServerNzSettings`), then, only when the mirror already copied our own post under the server's id, our post and that copy (`SELECT 1 … WHERE "id" IN (…, …) ORDER BY "id" FOR UPDATE`), the copy deleted (image rows by cascade, files after commit) and our post stamped while it holds no id or this one. Retried with the id already returned: the locked stamp, then `clubPost.updateMany` of our post alone while its `serverPostId` is null (no settings lock; the unique `serverPostId` refuses it while a mirror copy holds the id), then the locked stamp again. Every exit names the server id: a copy that is not ours, or a different id already held (never overwritten), is a final failure, and so are all three attempts failing; each stores the id in `unrecordedServerPostId` and the reason in `shareError` (#5246). A post deleted meanwhile leaves the id in the error log only; that last write failing leaves `shareSentAt` set too. The admin's message-board screen lists all of these under "Sharing problems" (docs/guides/message-board.md). |
   | Member post create (`createClubPost`) | One transaction since #4590: inserts the new post, then claims the member's unclaimed images (`updateMany`, `postId: null`), and rolls back, refusing the post, when fewer are claimed than the body names (an upload the orphan sweep deleted first). Nothing else can hold the new post. |
 
   Retention and the share stamp take two or more posts in id order. Two other
@@ -3164,8 +3165,17 @@ mispricing a booking.
   two posts; PostgreSQL detects that deadlock and aborts one transaction, a
   risk the single `deleteMany` retention used before #4588 carried too.
   Making those writers id-ordered is not done here. Post-only writers (hide, edit, the
-  share's failure record, the withdrawal stamp, the mirror's own-post takedown)
-  take no image row. The image-only writers touch no post row: upload, and the
+  share's failure record, the withdrawal stamp, the mirror's own-post takedown,
+  and since #5246 `withdrawOutstandingCopies`' guarded clear of
+  `unrecordedServerPostId` and `dismissShareOutcome`'s clear of
+  `shareSentAt`, guarded on the 15-minute grace) take no image row, and none
+  takes an advisory lock (`INV-LOCK-001`): each is one guarded `updateMany`
+  or `update` on the post row, and none writes `shareRequestedAt`, so none
+  can cause a send. The withdrawal stamp is guarded on `withdrawnAt: null`
+  since #5246, so when the admin's **Withdraw the shared copy**, a removal and
+  the withdrawal sweep race on one post, each sends its DELETE (the server
+  answers the later ones 404, which counts as confirmed) and only the first
+  confirmation writes. The image-only writers touch no post row: upload, and the
   orphan sweep, which since #4588 deletes one row at a time and only while
   `postId` is still null, deleting a file only for a row it deleted, so a
   claim committing first keeps its image and a single-row delete cannot
@@ -7406,6 +7416,70 @@ Counterpart reconciliation at M4c's base (`0d678da`): #4791 (M4b receipts),
 claims, exact `madeRefundId` and key-generation markers, preflight and outbox
 behaviour are unchanged; the Stripe request each sender makes is byte-identical
 (`card-refund-obligation-census.test.ts`, `member-money-refunds.realdb.test.ts`).
+
+## The combined group invoice's export manifest: no lock, the unique keys (#4525)
+
+`recordCombinedGroupInvoiceManifest` and `releaseCombinedGroupInvoiceManifest`
+(`src/lib/member-money/internal/combined-group-invoice-manifest.ts`, ALP-437)
+each run in short transactions of their own: the record after
+`bindCreatedGroupSettlementInvoice` has committed, or on an already-bound
+return; the release after a void handler finds the invoice void, voids it, or
+finds no such invoice, or from the payments cycle's sweep below. Neither joins
+that bind's `lock(1)` nor takes any key (`INV-LOCK-001`: a manifest or a
+release changes no booking status and no settlement money), and neither changes
+the void's or the create's operation. The exclusion is structural: the
+manifest's unique `(documentRole, legacyKey)`, the coverage key per generation,
+and the partial unique index that lets only one primary or combined invoice
+cover a component at a time. Two racing recorders, or a primary and a combined
+recorder on one component, meet a unique violation (P2002), and the loser
+writes nothing and logs. A combined loser re-plans in its second step below, as
+`ALREADY_COVERED` if the winner still covers the component (a winner from the
+same settlement's earlier attempt too: owner decision, 25 Nov 2026, #4525). A
+primary loser does not: the primary plan reads no live cover, so it never plans
+`ALREADY_COVERED`, and a primary replay runs only when the CREATE runs again
+against an already-bound invoice, which nothing schedules. That primary invoice
+keeps no manifest row, under the recorder's "Another run recorded the primary
+invoice's manifest first" log line (main's wording, unchanged here); the
+combined cover stands (ledger §7). A combined `ALREADY_COVERED` conflict
+becomes cover once the earlier invoice's cover is released: a successor
+manifest under `coveredAfterReleaseKey`, written by the recorder in a second
+transaction after its own row commits, and reached again by the release's retry
+after the release commits (which reads the replacement's CREATE row by the
+current attempt's key while that row names no invoice, its email still
+sending). Those reads take no lock, so the invoice may be abandoned and the
+next attempt queued between them; the retry reads the binding again after the
+rows and keeps an unnamed row only while the settlement still names the
+invoice (an abandoned invoice is never bound again), so no later attempt's
+request is recorded under it. Whichever of a record and a release commits second sees the other, so
+both orders end covered; a recorder whose own row lost the key (P2002) still
+runs that step. Two successor writers meet the key, and one is left. A
+successor written while the replacement's own void releases its conflict is
+released too: the recorder re-reads its invoice's releases after writing, and
+the release sweeps a second time after its commit. A record whose own invoice's
+void released nothing (the void's release ran before the record committed)
+meets the same rule: the recorder reads the invoice's VOID operation after
+writing and releases when it finished void or not found, and the void handler
+releases once more after that row completes (`releaseCoverageAround`), so
+whichever commits second sees the other. Three gaps remain, and one sweep heals
+them. Two are crash windows, each a process crash inside that already narrow
+race: the handler dies after completing its VOID row and before its last
+release, or the recorder dies after its own or its successor's commit and
+before its VOID read or release re-read, once the void's last sweep has run.
+The third is the deploy: while the old colour drains, its void handlers write
+no release at all. Each leaves cover live on a void invoice until the payments
+cycle's `combined-invoice-cover-release` sweep
+(`sweepVoidedCombinedGroupInvoiceCover`) runs: it reads from the SUCCEEDED
+VOIDs that ended their invoice and still have an unreleased combined manifest,
+and releases each through `releaseCombinedGroupInvoiceManifest` (no second
+writer), so the bound is one
+15-minute payments cycle once the new code runs the cron leader (ledger §7). It
+takes no lock either: its release rows are keyed by manifest, so a sweep beside
+a handler's or recorder's release writes one row, and the release's own second
+pass and retry run as above.
+
+Releases are insert-only, one per manifest (`skipDuplicates`). The deferred
+`member_money_require_export_generation` refuses a later generation whose
+predecessor is not wholly released, at commit; it reads, never locks.
 
 ## A credit note spent outside the app: global, then the member's credit ledger (#4219)
 
