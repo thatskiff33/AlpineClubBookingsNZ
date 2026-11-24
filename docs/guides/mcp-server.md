@@ -357,6 +357,34 @@ stage (ALP-722, below): editing events is a Lodge edit officer action, while
 minting a meeting's host link, pricing or receiving food orders and printing
 the chore roster stay on the website.
 
+### Groups and whole-lodge requests (ALP-797)
+
+These are in [`catalogue-groups.ts`](../../src/lib/mcp/catalogue-groups.ts),
+their answers' shapes in
+[`connection-shapes-groups.ts`](../../src/lib/connection-shapes-groups.ts),
+and all are reached through `find_actions`. None of these routes has an
+officer branch: each one that reads or changes a request or group reads the
+signed-in member's id from the session, so a connection acts on the member's
+own requests and groups only. The group
+actions answer **Not Found** while the group bookings module is off.
+
+| Action | What it does | Kind | Route |
+| --- | --- | --- | --- |
+| `list_my_whole_lodge_requests` | The member's own whole-lodge requests, as My bookings lists them: dates, party size, `pending`/`approved`/`declined`/`withdrawn`, the booking an approved one became, and whether it can be withdrawn | read | `GET /api/booking-requests/whole-lodge` (new) |
+| `request_whole_lodge` | Asks the booking officer for the whole lodge. Books and charges nothing, and answers the same whether or not the lodge is free (ADR-001). Putting account credit towards it is the member's choice on the website: the request never carries it from a connection. Emails the booking officers | destructive | `POST /api/booking-requests/whole-lodge` (always `applyAccountCredit: false`) |
+| `withdraw_whole_lodge_request` | Withdraws one of the member's open requests. Cannot be undone | destructive | `POST /api/booking-requests/whole-lodge/[id]/withdraw` |
+| `open_group_booking` | Opens a group on one of the member's own bookings and answers with its join code, not the group's internal id. A booking keeps its one group, and its payment mode cannot be changed | destructive | `POST /api/group-bookings` |
+| `get_group_booking` | What a group's public join page shows for its code, including the organiser's first name | read | `GET /api/group-bookings/[code]` |
+| `set_group_booking_joining` | Closes the member's own group to new joins, or reopens it | write | `PATCH /api/group-bookings/[code]` |
+
+The new route reuses the My bookings page's loader
+(`loadMyWholeLodgeRequests`), so the page and the app list the same requests
+in the same four words. Joining a group and paying an organiser-pays group's
+combined bill move money and stay on the website, as do the visitor and
+school request forms and a school's attendee confirmation.
+
+With these, every member route is decided: stage 2 (ALP-718 and its four
+follow-ons) left no member route waiting.
 ### Bookings & Beds officer actions (ALP-719)
 
 An officer who holds the **Bookings & Beds** admin area can do through an AI
@@ -694,12 +722,14 @@ reasons are permanent — those routes are never actions:
   booking's invoice and credit note PDFs and its calendar entry), and links
   sent to the member by email or opened from a QR code: confirming a
   nomination or a membership cancellation, the chore roster link, the
-  lodge's maintenance QR form, message-board pictures, problem reports,
-  which carry the page and a screenshot, and the printable chore roster.
+  lodge's maintenance QR form, a school's attendee confirmation,
+  message-board pictures, problem reports, which carry the page and a
+  screenshot, and the printable chore roster.
 - **Moves money** — anything that takes, moves or refunds money or changes
   what a booking costs, which the member confirms on the website: changing a
-  booking or its dates, adding or removing a guest, confirming a draft booking
-  and sending a guest a payment link. A member's refund review is not one of
+  booking or its dates, adding or removing a guest, confirming a draft booking,
+  sending a guest a payment link, joining a group booking and paying an
+  organiser-pays group's combined bill. A member's refund review is not one of
   them: no money moves until an officer decides. It is `destructive`, because
   it emails the club's officers at once and cannot be withdrawn.
 - **Declarations** — the member's own acknowledgements, consents and
@@ -712,8 +742,11 @@ reasons are permanent — those routes are never actions:
   after signing in, the onboarding screen, the conditions widget, the
   privacy replay and the booking wizard's guest promo chips (an app checks a
   code with `check_promo_code`).
-- **Visitor forms** — the contact form and membership applications, for
-  people who are not signed in.
+- **Visitor forms** — the contact form, membership applications, the
+  non-member and school booking request forms with their price quote and
+  settings, and a non-member's request to join a group, for people who are
+  not signed in. A member asks for the whole lodge with
+  `request_whole_lodge`.
 - **Access details** — the lodge instructions, which carry door codes and
   emergency access details, read or edited. They are never sent to an AI
   provider, nor written by one. Nor are the links that let someone in:
@@ -729,8 +762,9 @@ reasons are permanent — those routes are never actions:
   received (a connection reads only its member's own food orders, ALP-796),
   and saving the food-order settings, whose officer address is never sent.
 
-Everything else is **not yet**: each such route names the follow-on task that
-will bring it in.
+Every member route is an action or has one of these reasons. The remaining
+officer routes, outside Bookings & Beds and Lodge Operations, are **not yet**:
+each names the officer stage that will bring it in.
 
 ## Risks and limits
 
@@ -787,8 +821,9 @@ Everything an action returns goes to the company that runs the app: only the
 fields each action names, never the rest of what the website's screen uses.
 Every member action sends the connected person's own records and those of
 their family groups, except `get_lodge_roster`, the guest lookups, the people
-behind partner requests and invitations, the message board and the club
-information below. The officer actions are described after the list.
+behind partner requests and invitations, the message board, a group's
+organiser and the club information below. The officer actions are described
+after the list.
 
 - `who_am_i`: their name and email address, whether they are an officer, the
   club's website, the app's name and the connection's level.
@@ -878,6 +913,17 @@ information below. The officer actions are described after the list.
   signers' comments, the final comments or the checklist's competency notes.
 - `get_maintenance_report_form` and `report_maintenance_issue`: the club's
   questions and lodges, and the new report's id.
+- `list_my_whole_lodge_requests`: the person's own whole-lodge requests:
+  dates, party size, one of four status words and the booking an approved one
+  became. Not the officer's notes or the request's pipeline state.
+  `request_whole_lodge` and `withdraw_whole_lodge_request` send back only the
+  club's fixed acknowledgement.
+- `open_group_booking` and `set_group_booking_joining`: the person's own
+  group's join code, payment mode, status, deadline and size limit. Anyone
+  holding the join code can read the group's join page.
+- `get_group_booking`: for a join code the person has, what the group's
+  public join page shows: **the organiser's first name**, the lodge, the
+  dates, how it is paid for and whether it can be joined.
 
 The Bookings & Beds officer actions send **other members' information**,
 as that area's admin screens show it to the officer:
@@ -945,19 +991,22 @@ provider already received. The club's register row is `ai-apps` in
 
 ## The roadmap
 
-Stage 1, ALP-718, ALP-794, ALP-795, ALP-796, ALP-719 and ALP-722 are the foundation and the actions above. The remaining routes are
-grouped into follow-on tasks, named in `MCP_NOT_YET_TASKS` in
+Stage 1 (ALP-653) is the foundation. Stage 2 (ALP-718, then ALP-794,
+ALP-795, ALP-796 and ALP-797) decided every member route: the actions above,
+or a permanent reason. ALP-719 decided the Bookings & Beds officer routes the
+same way, and ALP-722 the Lodge Operations ones. The remaining routes are
+officer routes, grouped by admin area into follow-on tasks named in
+`MCP_NOT_YET_TASKS` in
 [`exclusions.ts`](../../src/lib/mcp/exclusions.ts):
 
 | Task | Area |
 | --- | --- |
-| ALP-797 | Group, school and whole-lodge requests |
 | ALP-720 | Membership (officer) |
 | ALP-721 | Finance (officer, including `/api/finance`) |
 | ALP-723 | Content (officer) |
 | ALP-724 | Support and overview (officer) |
 
-After all seven areas ship, **ALP-727** reviews them together and makes the
+After all six officer tasks ship, **ALP-727** reviews them together and makes the
 route census reject any remaining `not-yet` exclusion.
 
 ## Adding an action (developers)
@@ -965,7 +1014,9 @@ route census reject any remaining `not-yet` exclusion.
 1. Add an entry to `MCP_ACTIONS` in
    [`catalogue.ts`](../../src/lib/mcp/catalogue.ts), or to an area's own
    module it spreads in when the file nears its size budget (lodge life:
-   [`catalogue-lodge-life.ts`](../../src/lib/mcp/catalogue-lodge-life.ts)): a new snake-case `id`
+   [`catalogue-lodge-life.ts`](../../src/lib/mcp/catalogue-lodge-life.ts);
+   groups and whole-lodge:
+   [`catalogue-groups.ts`](../../src/lib/mcp/catalogue-groups.ts)): a new snake-case `id`
    (never reused), the route's `method` and `path`, and its `kind` — `read`
    only for a `GET`, or for a `POST` that changes no member's data, marked
    `preview: true` and pinned in the census's `PREVIEW_ROUTE_KEYS`. Import the route's own
@@ -983,7 +1034,9 @@ route census reject any remaining `not-yet` exclusion.
    module: bookings,
    [`connection-shapes-bookings.ts`](../../src/lib/connection-shapes-bookings.ts);
    lodge life,
-   [`connection-shapes-lodge-life.ts`](../../src/lib/connection-shapes-lodge-life.ts)), typed with
+   [`connection-shapes-lodge-life.ts`](../../src/lib/connection-shapes-lodge-life.ts);
+   groups and whole-lodge,
+   [`connection-shapes-groups.ts`](../../src/lib/connection-shapes-groups.ts)), typed with
    `connectionShapeFor<T>()` so a misspelt field fails to compile. In the
    route, answer with `connectionJson(request, body, SHAPE)` (from
    `mcp-connection-request.ts`): a connection gets only the named fields, a
@@ -999,8 +1052,10 @@ route census reject any remaining `not-yet` exclusion.
    `officerMemberSession()`: the connection's answer has exactly the
    `returns` fields, and the browser's answer is unchanged.
 4. A catalogue entry takes precedence over a `not-yet:` reason, so a single
-   route needs no exclusion change. When a follow-on task finishes its area,
-   it removes that area's `not-yet` rule in the same change. A permanent
+   route needs no exclusion change. When an officer task finishes its area,
+   it removes that area's `not-yet` rule in the same change. A new member
+   route has no `not-yet` rule to fall under: it needs an entry or a
+   permanent reason. A permanent
    exclusion always wins: such a route can never be an action.
 5. Run the census, `src/lib/__tests__/mcp-route-census.test.ts`. It fails on
    an unclassified route, a catalogue entry whose route does not exist, an

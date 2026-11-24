@@ -185,12 +185,21 @@ describe("roster-date lock source contract (#2586)", () => {
     )
 
     const configApply = source("src/lib/config-transfer/apply.ts")
-    const configLock = configApply.indexOf("await acquireConfigImportLock(tx)")
-    const importedLodgeLocks = configApply.indexOf("await lockAffectedLodgeConfigLodges(tx, parsed.files)")
-    const inLockReplan = configApply.indexOf("const replan = await buildImportPlanFromParsed")
+    // The apply takes the lodge keys inside its category-keys helper, which it
+    // calls after the singleton and before the in-lock re-plan.
+    const applyFn = configApply.slice(configApply.indexOf("export async function applyConfigImport"))
+    const configLock = applyFn.indexOf("await acquireConfigImportLock(tx)")
+    const categoryKeys = applyFn.indexOf("await lockSelectedCategoryKeys(tx, parsed, params.selectedCategories)")
+    const inLockReplan = applyFn.indexOf("const replan = await buildImportPlanFromParsed")
     expect(configLock).toBeGreaterThan(-1)
-    expect(importedLodgeLocks).toBeGreaterThan(configLock)
-    expect(inLockReplan).toBeGreaterThan(importedLodgeLocks)
+    expect(categoryKeys).toBeGreaterThan(configLock)
+    expect(inLockReplan).toBeGreaterThan(categoryKeys)
+    const categoryKeysHelper = configApply.slice(
+      configApply.indexOf("async function lockSelectedCategoryKeys"),
+      configApply.indexOf("export type BootstrapBackupSkip"),
+    )
+    expect(categoryKeysHelper).toContain('if (applies("lodge-config"))')
+    expect(categoryKeysHelper).toContain("await lockAffectedLodgeConfigLodges(tx, parsed.files)")
     const importedLodgeLockHelper = configApply.slice(
       configApply.indexOf("async function lockAffectedLodgeConfigLodges"),
       configApply.indexOf("export type BootstrapBackupSkip"),

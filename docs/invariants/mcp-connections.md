@@ -156,13 +156,14 @@ only the rules.
   [`mcp-route-census.test.ts`](../../src/lib/__tests__/mcp-route-census.test.ts)
   fails on anything unclassified, a catalogue entry whose route method is
   missing, and an action on a permanently excluded route.
-- **A permanent reason says a route is never an action.** The reasons are
-  the keys of `MCP_PERMANENT_EXCLUSION_REASONS`. `fresh-proof` is read from
+- **A permanent reason says a route is never an action.** Each is a key of
+  `MCP_PERMANENT_EXCLUSION_REASONS`. `fresh-proof` is read from
   `STEP_UP_ROUTES`, never copied. A member or officer route's reason names
   its exact method and path. A permanent exclusion beats a catalogue entry.
-- **A `not-yet:` reason names the follow-on task** from `MCP_NOT_YET_TASKS`;
-  that task adds its entries and removes its rule in one change. A route in
-  an undecided or finished area stays unclassified and fails the census.
+- **A `not-yet:` reason names the officer stage** from `MCP_NOT_YET_TASKS`;
+  that stage's change adds its entries and removes its rule. No member route
+  has one. A route in an undecided or finished area stays unclassified,
+  failing the census.
 - **The catalogue adds no behaviour or permission.** An action's request
   schemas and `returns` shape are its route's, imported from lib modules
   ([`connection-shapes.ts`](../../src/lib/connection-shapes.ts) for shapes,

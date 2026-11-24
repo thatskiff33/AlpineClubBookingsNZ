@@ -96,6 +96,7 @@ vi.mock("../_components/member-bulk-action-bar", () => ({
   ),
 }));
 vi.mock("../_components/member-bulk-membership-dialog", () => ({ MemberBulkMembershipDialog: () => null }));
+vi.mock("../_components/member-bulk-subscription-category-dialog", () => ({ MemberBulkSubscriptionCategoryDialog: () => null }));
 vi.mock("../_components/member-editor-dialog", () => ({ MemberEditorDialog: () => null }));
 vi.mock("../_components/member-filter-toolbar", () => ({ MemberFilterToolbar: () => null }));
 vi.mock("../_components/member-import-dialog", () => ({ MemberImportDialog: () => null }));

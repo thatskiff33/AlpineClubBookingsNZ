@@ -71,6 +71,7 @@ import {
   familyRemovalRequestSchema,
 } from "@/lib/family-group-request-schemas";
 import { ROSTER_WINDOW_DAYS } from "@/lib/lodge-roster-window";
+import { MCP_GROUP_ACTIONS } from "@/lib/mcp/catalogue-groups";
 import { MCP_LODGE_LIFE_ACTIONS } from "@/lib/mcp/catalogue-lodge-life";
 import { memberAuditLogQuerySchema } from "@/lib/member-audit-log-query";
 import {
@@ -627,8 +628,9 @@ const MEMBER_ACTIONS: readonly McpAction[] = [
     returns: MEMBERSHIP_CANCELLATION_OPTIONS_CONNECTION_SHAPE,
     core: false,
   },
-  // --- Lodge life (ALP-796), in `catalogue-lodge-life.ts` ---
+  // --- Lodge life (ALP-796) and groups and whole-lodge (ALP-797), in their own modules ---
   ...MCP_LODGE_LIFE_ACTIONS,
+  ...MCP_GROUP_ACTIONS,
 ];
 
 /**
