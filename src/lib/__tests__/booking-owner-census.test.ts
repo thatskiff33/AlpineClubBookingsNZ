@@ -1015,6 +1015,12 @@ const UNROOTED_ORGANISATION_SELECTIONS: readonly string[] = [
   // compile-checked and a relation this model did not declare would fail to
   // build. The walk cannot root it only because the literal names no delegate.
   "src/lib/member-lodge-roster.ts::organisation: { select: { name: true } },#0",
+  // #5433 PR 3: `PAID_CONFIRMATION_INCLUDE`, the paid confirmation's read of the
+  // booking as it stands (moved out of the old `findUnique` literal). Verified by
+  // hand: written through `Prisma.validator<Prisma.BookingInclude>()`, read back
+  // through `Prisma.BookingGetPayload<{ include: typeof … }>`, and passed as
+  // `include` to `booking.findUnique`; Booking declares `organisation`.
+  "src/lib/paid-booking-confirmation-email.ts::organisation: { select: { name: true, email: true } },#0",
   "src/lib/payment-link.ts::organisation: { select: { name: true; email: true } };#0",
   "src/lib/payment-reconciliation.ts::organisation: { select: { name: true; email: true } };#0",
   // The pre-arrival reminder's include, moved out of the daily cron so the

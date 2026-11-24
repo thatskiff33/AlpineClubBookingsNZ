@@ -273,7 +273,7 @@ const tx = {
     upsert: (...args: unknown[]) => mocks.paymentUpsert(...args),
     update: (...args: unknown[]) => mocks.paymentUpdate(...args),
   },
-  owedNotice: { createMany: (...args: unknown[]) => mocks.owedNoticeCreateMany(...args) },
+  owedNotice: { createMany: (args: { data: unknown[] }) => mocks.owedNoticeCreateMany(args) },
 };
 
 function makeStaggeredBooking() {
