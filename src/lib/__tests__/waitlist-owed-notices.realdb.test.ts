@@ -20,10 +20,21 @@
  * booking, owner and nights (in 2033, which no other suite uses), and asserts
  * on its own rows only; `expireStaleOffers` is database-wide, so its counts are
  * never asserted. No provider is called: the installation is declared
- * non-production, so the email core records each message and withholds it.
+ * non-production, so the email core records each message and withholds it
+ * (an offer email so withheld counts as told), and the officers' "not sent"
+ * alert's result is read as a live site's (the double below).
+ *
+ * Round 2 adds: a send that returns without reaching the member (a suppressed
+ * address, recorded `BOUNCED`; a placeholder address, recorded nowhere) counts
+ * as not told, and the officers hear once; a suppressed address gets no
+ * restart; a replayable `FAILED` offer email is retired once the offer is over.
  */
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { EMAIL_RETRY_MAX_ATTEMPTS } from "@/lib/email/retry-selection";
+import { PLACEHOLDER_CONTACT_EMAIL_DOMAIN } from "@/lib/placeholder-contact-email";
+
+import { releaseBookingFinancialHistoryForTeardown } from "./support/booking-financial-history-teardown";
 import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 import { assertSafeRaceDbUrl } from "./support/race-db-url";
 import { backendPid, untilBlockedChain } from "./support/race-lock-waits";
@@ -50,6 +61,22 @@ vi.mock("@/lib/email-message-renderer", async (importOriginal) => {
       if (outage.down) throw new Error("render failed");
       return real.prepareEmailMessage(...args);
     },
+  };
+});
+// The real "Waitlist email not sent" alert, with its result read as the live
+// site would give it. On this copy the core withholds every admin copy, and
+// `sendAdminAlertTo` counts a non-production withhold as not delivered, so a
+// once-only claim would be deferred for a day and its marker kept, which no
+// live site does when an officer is opted in. The alert's EmailLog rows are
+// the real ones; only the count of copies an officer has is moved.
+vi.mock("@/lib/email/admin-alerts-waitlist-notice-unsent", async (importOriginal) => {
+  const real = (await importOriginal()) as typeof import("@/lib/email/admin-alerts-waitlist-notice-unsent");
+  return {
+    ...real,
+    sendAdminWaitlistNoticeUnsentAlert: vi.fn(async (...args: Parameters<typeof real.sendAdminWaitlistNoticeUnsentAlert>) => {
+      const result = await real.sendAdminWaitlistNoticeUnsentAlert(...args);
+      return result.recipients > 0 ? { ...result, sent: result.sent + result.notDelivered, notDelivered: 0 } : result;
+    }),
   };
 });
 // The real senders, wrapped so a case can count and filter their calls.
@@ -105,7 +132,17 @@ const CASES = {
   lapseFailed: caseIds("lfl", 22 + 31),
   resend: caseIds("rsn", 25 + 31),
   floor: caseIds("flr", 28 + 31),
+  suppressedAtOffer: caseIds("sup", 31 + 31),
+  placeholderAtOffer: caseIds("plh", 34 + 31),
+  suppressedAtSweep: caseIds("sps", 37 + 31),
+  movedOnRetired: caseIds("mvr", 40 + 31),
 };
+
+/** A case's owner's address: a walk-in placeholder for the one case about it (round 2, item 2). */
+const ownerEmail = (ids: CaseIds) =>
+  ids === CASES.placeholderAtOffer ? `${ids.ownerId}@${PLACEHOLDER_CONTACT_EMAIL_DOMAIN}` : `${ids.ownerId}@example.test`;
+/** The cases whose owner's address is on the SES suppression list (round 2, items 2 and 6). */
+const SUPPRESSED = [CASES.suppressedAtOffer, CASES.suppressedAtSweep];
 
 const ADMIN_ID = "race-5433w-admin";
 const ADMIN_EMAIL = "race-5433w-admin@example.test";
@@ -124,6 +161,8 @@ let harnessRole: { restore: () => void } | undefined;
   { timeout: 90_000 },
   () => {
     async function deleteCaseRows(ids: CaseIds) {
+      // A cancelled cross-lodge entry may carry money rows whose keys restrict its delete.
+      await releaseBookingFinancialHistoryForTeardown(prisma, [ids.bookingId]);
       await prisma.emailLog.deleteMany({ where: { bookingId: ids.bookingId } });
       await prisma.alertCooldown.deleteMany({ where: { key: { contains: ids.bookingId } } });
       await prisma.owedNotice.deleteMany({ where: { subjectId: ids.bookingId } });
@@ -137,37 +176,46 @@ let harnessRole: { restore: () => void } | undefined;
 
     /**
      * The cross-lodge confirm's replacement booking (review A), at the offered
-     * lodge, owned by the case's member: best effort over the rows a confirmed
-     * booking can carry, so a later run starts clean.
+     * lodge, owned by the case's member, with every row a confirmed booking
+     * can carry whose key restricts its delete (`Booking.memberId` among them,
+     * so this runs before any member is deleted). A row this does not know of
+     * fails the teardown, naming the booking, rather than leaving the booking
+     * and its owner behind for the next run to trip over.
      */
     async function deleteReplacementBookings() {
-      const replacements = await prisma.booking.findMany({
-        where: { lodgeId: OFFERED_LODGE_ID, memberId: CASES.crossLodge.ownerId },
-        select: { id: true },
-      });
-      for (const { id } of replacements) {
-        try {
-          await prisma.auditLog.deleteMany({ where: { targetId: id } });
-          await prisma.emailLog.deleteMany({ where: { bookingId: id } });
-          await prisma.owedNotice.deleteMany({ where: { subjectId: id } });
-          await prisma.bookingEvent.deleteMany({ where: { bookingId: id } });
-          await prisma.bedAllocation.deleteMany({ where: { bookingId: id } });
-          await prisma.bookingGuestNight.deleteMany({ where: { bookingGuest: { bookingId: id } } });
-          await prisma.bookingGuest.deleteMany({ where: { bookingId: id } });
-          await prisma.booking.delete({ where: { id } });
-        } catch {
-          // A row this suite does not know of; the race database is disposable.
-        }
+      const ids = (
+        await prisma.booking.findMany({ where: { lodgeId: OFFERED_LODGE_ID, memberId: CASES.crossLodge.ownerId }, select: { id: true } })
+      ).map((row) => row.id);
+      if (ids.length === 0) return;
+      const where = { bookingId: { in: ids } };
+      try {
+        await releaseBookingFinancialHistoryForTeardown(prisma, ids);
+        const paymentIds = (await prisma.payment.findMany({ where, select: { id: true } })).map((row) => row.id);
+        await prisma.paymentRefund.deleteMany({ where: { paymentId: { in: paymentIds } } });
+        await prisma.paymentTransaction.deleteMany({ where: { paymentId: { in: paymentIds } } });
+        await prisma.payment.deleteMany({ where });
+        await prisma.auditLog.deleteMany({ where: { targetId: { in: ids } } });
+        await prisma.emailLog.deleteMany({ where });
+        await prisma.owedNotice.deleteMany({ where: { subjectId: { in: ids } } });
+        await prisma.bookingModification.deleteMany({ where });
+        await prisma.bookingEvent.deleteMany({ where });
+        await prisma.bedAllocation.deleteMany({ where });
+        await prisma.bookingGuest.deleteMany({ where });
+        await prisma.booking.deleteMany({ where: { id: { in: ids } } });
+      } catch (err) {
+        throw new Error(`Could not delete the cross-lodge replacement booking(s) ${ids.join(", ")}`, { cause: err });
       }
     }
 
     async function deleteFixtures() {
+      // Bookings first: `Booking.memberId` and `Booking.lodgeId` restrict a delete of either.
+      await deleteReplacementBookings();
       for (const ids of Object.values(CASES)) await deleteCaseRows(ids);
       await prisma.emailLog.deleteMany({ where: { to: ADMIN_EMAIL } });
+      await prisma.emailSuppression.deleteMany({ where: { email: { in: SUPPRESSED.map(ownerEmail) } } });
       await prisma.memberAccessRole.deleteMany({ where: { memberId: ADMIN_ID } });
       await prisma.member.deleteMany({ where: { id: ADMIN_ID } });
       await prisma.member.deleteMany({ where: { id: { in: Object.values(CASES).map((ids) => ids.ownerId) } } });
-      await deleteReplacementBookings();
       await prisma.membershipTypeSeasonRate.deleteMany({ where: { seasonId: OFFERED_SEASON_ID } });
       await prisma.season.deleteMany({ where: { id: OFFERED_SEASON_ID } });
       await prisma.lodgeSettings.deleteMany({ where: { id: { in: [LODGE_ID, OFFERED_LODGE_ID] } } });
@@ -241,6 +289,17 @@ let harnessRole: { restore: () => void } | undefined;
     const unsentAlertsFor = (ids: CaseIds) =>
       prisma.emailLog.count({ where: { to: ADMIN_EMAIL, templateName: "admin-waitlist-notice-unsent", subject: { contains: ids.bookingId } } });
 
+    /** The officers' routine "Waitlist Offer" alerts about this case's member. */
+    const routineOfferAlertsFor = (ids: CaseIds) =>
+      prisma.emailLog.count({ where: { to: ADMIN_EMAIL, templateName: "admin-waitlist-offer", subject: { contains: ids.bookingId } } });
+
+    /** What the offer email's row holds now, for the fields the told rule and the retry cron read. */
+    const offerEmailRowAfter = (ids: CaseIds, offeredAt: Date) =>
+      prisma.emailLog.findUnique({
+        where: { id: offerEmailId(ids, offeredAt) },
+        select: { status: true, attempts: true, htmlBody: true, bookingRetryHtmlBody: true },
+      });
+
     const offerSendsFor = (ids: CaseIds) =>
       vi.mocked(email.sendWaitlistOfferEmail).mock.calls.filter(([context]) => context.bookingId === ids.bookingId);
 
@@ -292,7 +351,13 @@ let harnessRole: { restore: () => void } | undefined;
       await prisma.memberAccessRole.create({ data: { memberId: ADMIN_ID, role: "ADMIN" } });
       for (const ids of Object.values(CASES)) {
         await prisma.member.create({
-          data: { id: ids.ownerId, email: `${ids.ownerId}@example.test`, passwordHash: "not-a-real-password", firstName: "Ada", lastName: ids.bookingId, ageTier: "ADULT", canLogin: true },
+          data: { id: ids.ownerId, email: ownerEmail(ids), passwordHash: "not-a-real-password", firstName: "Ada", lastName: ids.bookingId, ageTier: "ADULT", canLogin: true },
+        });
+      }
+      // As SES feedback leaves an address it may no longer be sent to.
+      for (const ids of SUPPRESSED) {
+        await prisma.emailSuppression.create({
+          data: { email: ownerEmail(ids), reason: "BOUNCE", suppressedAt: new Date(Date.now() - 24 * HOUR), lastEventType: "Bounce", lastBounceType: "Permanent" },
         });
       }
     }, 90_000);
@@ -510,9 +575,13 @@ let harnessRole: { restore: () => void } | undefined;
       const offeredAt = new Date(Date.now() - WINDOW_MS - 2 * HOUR);
       await commitOfferThenStop(ids, offeredAt);
       // The offer email's past-cut-off step already ran for this offer: its
-      // once-ever claim is kept and its marker cleared, unsent.
+      // once-ever claim and its sent stamp are kept and its marker cleared,
+      // the email unsent. (A claim with no sent stamp, older than the wait, is
+      // a holder that died before sending, which the takeover sends for.)
       const memberMarker = notices.waitlistOfferMemberMarker(ids.bookingId, offeredAt);
-      await prisma.alertCooldown.create({ data: { key: `owed-notice-past-cutoff:${memberMarker.id}`, lastAlertedAt: new Date(Date.now() - HOUR) } });
+      for (const key of [`owed-notice-past-cutoff:${memberMarker.id}`, `owed-notice-past-cutoff-sent:${memberMarker.id}`]) {
+        await prisma.alertCooldown.create({ data: { key, lastAlertedAt: new Date(Date.now() - HOUR) } });
+      }
       await prisma.owedNotice.deleteMany({ where: { id: memberMarker.id } });
 
       await waitlist.expireStaleOffers(CLUB_FORMAT_TEST);
@@ -572,17 +641,89 @@ let harnessRole: { restore: () => void } | undefined;
       expect((await rows(ids)).markers.map((marker) => marker.id)).not.toContain(memberMarkerId(ids, offeredAt));
     });
 
-    it("counts a lapsed offer whose email row is FAILED as never told: no offer-expired email, one officers' alert (review B, D5)", async () => {
+    it("counts a lapsed offer whose email row is FAILED as never told, with no marker or claim left: no offer-expired email, one officers' alert, and the row retired so the cron never replays a dead offer (review B, D5; round 2, items 2 and 4)", async () => {
       const ids = CASES.lapseFailed;
       const offeredAt = new Date(Date.now() - WINDOW_MS - 2 * HOUR);
       await commitOfferThenStop(ids, offeredAt);
       await offerEmailRow(ids, offeredAt, "FAILED", 2);
+      // The row decides, whatever else remains: no owed notice and no claim.
+      await prisma.owedNotice.deleteMany({ where: { subjectId: ids.bookingId } });
 
       await waitlist.expireStaleOffers(CLUB_FORMAT_TEST);
 
       expect((await readBooking(ids)).status).toBe("WAITLISTED");
       expect((await rows(ids)).expiredEmails).toEqual([]);
       expect(await unsentAlertsFor(ids)).toBe(1);
+      expect(await offerEmailRowAfter(ids, offeredAt)).toEqual({ status: "FAILED", attempts: EMAIL_RETRY_MAX_ATTEMPTS, htmlBody: null, bookingRetryHtmlBody: null });
+    });
+
+    it("retires a replayable FAILED offer email when the sweep finds the offer over, and sends and restarts nothing (round 2, item 4)", async () => {
+      const ids = CASES.movedOnRetired;
+      const offeredAt = new Date(Date.now() - 3 * HOUR);
+      await commitOfferThenStop(ids, offeredAt);
+      await offerEmailRow(ids, offeredAt, "FAILED", 1);
+      await prisma.booking.update({ where: { id: ids.bookingId }, data: { status: "PAYMENT_PENDING", waitlistOfferedAt: null, waitlistOfferExpiresAt: null } });
+
+      await drainOwedNotices(new Date(), { deliverers: notices.WAITLIST_OFFER_NOTICE_DELIVERERS });
+
+      expect(offerSendsFor(ids)).toHaveLength(0);
+      expect((await rows(ids)).markers).toEqual([]);
+      expect(await offerEmailRowAfter(ids, offeredAt)).toEqual({ status: "FAILED", attempts: EMAIL_RETRY_MAX_ATTEMPTS, htmlBody: null, bookingRetryHtmlBody: null });
+      expect(await unsentAlertsFor(ids)).toBe(0);
+    });
+
+    it("counts an offer email the core recorded but never sent, to a suppressed address, as not told: the officers hear once, the routine offer alert does not wait for it, and its lapse alerts nobody again (round 2, item 2)", async () => {
+      const ids = CASES.suppressedAtOffer;
+      await seedWaitlisted(ids);
+      await setCapacity(10);
+
+      await waitlist.processWaitlistForDates({ checkIn: ids.checkIn, checkOut: ids.checkOut, lodgeId: LODGE_ID }, CLUB_FORMAT_TEST);
+
+      const offeredAt = (await readBooking(ids)).waitlistOfferedAt!;
+      // The send returned without throwing; its row says it reached nobody.
+      expect(offerSendsFor(ids)).toHaveLength(1);
+      expect(await offerEmailRowAfter(ids, offeredAt)).toMatchObject({ status: "BOUNCED" });
+      expect(await unsentAlertsFor(ids)).toBe(1);
+      expect(await routineOfferAlertsFor(ids)).toBe(0);
+      expect((await rows(ids)).markers).toEqual([]);
+
+      // Its lapse: never told, so no offer-expired email, and the shared claim holds the officers to one alert.
+      await setCapacity(0);
+      await prisma.booking.update({ where: { id: ids.bookingId }, data: { waitlistOfferExpiresAt: new Date(Date.now() - HOUR) } });
+      await waitlist.expireStaleOffers(CLUB_FORMAT_TEST);
+      await drainOwedNotices(new Date(Date.now() + HOUR), { deliverers: expiredNotice.WAITLIST_LAPSE_NOTICE_DELIVERERS });
+
+      expect((await readBooking(ids)).status).toBe("WAITLISTED");
+      expect((await rows(ids)).expiredEmails).toEqual([]);
+      expect(await unsentAlertsFor(ids)).toBe(1);
+    });
+
+    it("tells the officers once, and never loops the routine offer alert, for an owner with only a placeholder address, whose send records no row at all (round 2, item 2)", async () => {
+      const ids = CASES.placeholderAtOffer;
+      await seedWaitlisted(ids);
+      await setCapacity(10);
+
+      await waitlist.processWaitlistForDates({ checkIn: ids.checkIn, checkOut: ids.checkOut, lodgeId: LODGE_ID }, CLUB_FORMAT_TEST);
+      await drainOwedNotices(new Date(Date.now() + HOUR), { deliverers: notices.WAITLIST_OFFER_NOTICE_DELIVERERS });
+
+      expect((await readBooking(ids)).status).toBe("WAITLIST_OFFERED");
+      expect(await rows(ids)).toEqual({ offerEmails: [], expiredEmails: [], markers: [] });
+      expect(await unsentAlertsFor(ids)).toBe(1);
+      expect(await routineOfferAlertsFor(ids)).toBe(0);
+    });
+
+    it("restarts nothing and sends nothing when the owner's address is suppressed, and tells the officers once instead (round 2, item 6)", async () => {
+      const ids = CASES.suppressedAtSweep;
+      const offeredAt = new Date(Date.now() - 3 * HOUR);
+      await commitOfferThenStop(ids, offeredAt);
+
+      await drainOwedNotices(new Date(), { deliverers: memberDeliverer() });
+
+      expect(offerSendsFor(ids)).toHaveLength(0);
+      expect((await readBooking(ids)).waitlistOfferExpiresAt).toEqual(new Date(offeredAt.getTime() + WINDOW_MS));
+      expect(await prisma.auditLog.count({ where: { targetId: ids.bookingId, action: "waitlist.offer_window_restarted" } })).toBe(0);
+      expect(await unsentAlertsFor(ids)).toBe(1);
+      expect((await rows(ids)).markers.map((marker) => marker.id)).not.toContain(memberMarkerId(ids, offeredAt));
     });
 
     it("restarts a window once: a send that fails again leaves the restarted deadline, which a later sweep states unmoved (review C)", async () => {
@@ -632,6 +773,15 @@ let harnessRole: { restore: () => void } | undefined;
 
     it("a window restart between the cross-lodge confirm's first and last phases is the same offer: the confirm completes and strands no entry (review A)", async () => {
       const ids = CASES.crossLodge;
+      // What the confirm checks, and why this fixture passes each (re-read for
+      // round 2, item 1): the owner has no lodge-access rows, so may book every
+      // active lodge; the paid-up-adult rule runs only in NON_MEMBER_PRICING
+      // mode, and the migrated database's lockout mode is HARD_BLOCK, which
+      // refuses at the request routes, not in this library call; no
+      // adult-member hosting policy exists club-wide or for the offered
+      // lodge (the table is created empty), so a party of one non-member adult
+      // is not held for hosting; and the offered lodge prices the nights from
+      // this season's non-member rates, the same quote the offer pass made.
       await prisma.lodge.upsert({
         where: { id: OFFERED_LODGE_ID },
         create: { id: OFFERED_LODGE_ID, name: "Race 5433 offered lodge", slug: OFFERED_LODGE_ID, active: true },

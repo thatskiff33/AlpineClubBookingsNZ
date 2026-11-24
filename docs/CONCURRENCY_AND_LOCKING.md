@@ -251,7 +251,19 @@ offer time), so it moves a deadline at most once per offer, writing only
 sends nothing. The club's timezone and the sweep's clock are passed in; no
 settings read, provider call or new key. The "No emails" switch is set
 without `lock(1)`, so the re-read of it can be stale by a moment: the only
-effect is an extended window for an email then withheld.
+effect is an extended window for an email then withheld. Whether the owner's
+address can be emailed at all (not a placeholder, not on the SES suppression
+list) is read by the caller before the restart, outside any transaction; an
+address suppressed between that read and the send is recorded `BOUNCED` by the
+email core, which the post-send read counts as not told.
+
+Retiring a replayable `FAILED` offer email once the offer is over
+(`retireOfferEmailIfReplayable`, through `retireReplayableEmailRow`, the retry
+cron's own retirement) takes no advisory key: it is one `updateMany` guarded on
+the row exactly as read (status `FAILED`, attempts and bodies), and the retry
+cron claims a row the same way, from `FAILED` to `QUEUED`, so of the two only
+one can win and a lost retirement changes nothing. Stated limit: a replay the
+cron claimed first still goes, stating the deadline it was rendered with.
 
 The cross-lodge confirm claims the entry in its second and third transactions
 on the row its first one read, `updatedAt` and the deadline included, so a

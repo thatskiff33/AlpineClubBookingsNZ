@@ -203,6 +203,7 @@ Force-confirming any of these skips the email choice, as described above.
 | Waitlist is missing from the sidebar | The `waitlist` module is off | Enable it under **Admin → Setup → Modules** — see [`CONFIGURATION.md`](../../CONFIGURATION.md#module-controls-and-admin-modules) |
 | **Force Confirm** is disabled | Your admin role is view-only for bookings | Ask a full admin for bookings edit access |
 | "Offer email log missing" / "undeliverable" badge | The waitlist offer email did not send | Click **Review email recovery** to open the email deliverability page (`/admin/email-deliverability`) and re-send |
+| "Offer email held back (not the live site)" badge | This copy is not the club's live site, so it records emails and never sends them | Nothing to do: on the live site the email goes |
 | Confirming warns about overbooking | The lodge is full for those nights | Use **Confirm Anyway (Overbook)** only when you intend to overbook; it is audited |
 | "Unpaid finished stay created" after confirming | The confirmed stay is in the past and unpaid | Chase it from the **Unpaid Finished Stays** queue on the [Bookings](bookings.md) list |
 | A member says their free waitlist confirmation "did nothing", and the booking is not on this queue | The confirmation got half-way and could not undo itself | Open the booking from **Admin → Bookings** and press **Return to waitlist** in the Admin tools card — see [above](#return-a-stranded-free-confirm-to-the-waitlist) |

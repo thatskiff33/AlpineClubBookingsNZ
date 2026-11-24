@@ -422,17 +422,22 @@ you want both reworded; editing only one leaves the other on its built-in text.
 > deadline. The window is restarted once per offer: if that late email also
 > fails and goes out on a later run, it states the deadline already set, so the
 > member has what is left of that window. When too little of a window would be
-> left to be worth telling them (less than half an hour), no offer email goes;
-> the officers are alerted instead. If an offer lapses before its email could
-> be sent at all, or after it failed and was never delivered, the member is
-> not sent a **Waitlist Offer Expired** email for it: they were never told
-> about the offer. Their booking goes back on the waitlist as with any lapsed
+> left to be worth telling them (less than half an hour), or the member's
+> address cannot be emailed (none, a placeholder, or one on the bounce and
+> complaint suppression list), no offer email goes and the window is not
+> restarted; the officers are alerted instead. If an offer lapses before its
+> email reached the member (never sent, failed, bounced, or recorded but
+> refused for a suppressed address), the member is not sent a **Waitlist
+> Offer Expired** email for it: they were never told about the offer. A failed
+> offer email still waiting to be retried when the offer ends is not retried:
+> it would state a deadline that has passed. Their booking goes back on the waitlist as with any lapsed
 > offer: they keep their place, but for that place everyone else waiting for
 > the same nights is considered before them.
 >
 > What an officer can notice: a new alert, **Waitlist email not sent**
 > (`admin-waitlist-notice-unsent`). It is sent once when a member's offer email
-> could not be sent, or failed and could not be retried, before it stopped
+> could not be sent, did not reach them (for example a suppressed or
+> placeholder address), or failed and could not be retried, before it stopped
 > being useful (the later of the start of the check-in date and the offer's
 > own deadline, and at most seven days after the offer); when a member's
 > **Waitlist Offer Expired** email could not be sent within seven days; and
@@ -443,8 +448,13 @@ you want both reworded; editing only one leaves the other on its built-in text.
 > them. It goes to officers who receive waitlist offer alerts (the **Waitlist
 > offers** preference, which mutes both), and its wording is editable like the
 > others. Its `{{noticeNote}}` token holds the whole instruction for that
-> email. The **Admin Waitlist Offer** alert, which says the offer email has
-> been sent, now goes only once it has.
+> email. The **Admin Waitlist Offer** alert now goes only once the offer
+> email has reached the member or been held back on purpose. It says which
+> (sent, or withheld by the booking's **No emails** switch or because this is
+> not the live site) in the new `{{offerNote}}` token, and states the deadline
+> in force with `{{expiresAt}}`, in place of a fixed "48 hours". A saved copy
+> of that template keeps its old wording until you restore the default or add
+> the tokens.
 >
 > During the switch to this version, a server still running the version
 > before it that expires an offer this version made and never sent sends the

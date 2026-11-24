@@ -939,7 +939,7 @@ const GLOBAL_LOCK_SITE_REGISTRY: readonly RegisteredGlobalLockSite[] = [
     site: "restartWaitlistOfferWindow#1",
     tier: "GLOBAL",
     reason:
-      "#5433 owner decision D2: the owed offer notice's sweep restarts an offer's window just before it sends the offer email the first attempt never sent. It moves only waitlistOfferExpiresAt, and must exclude every writer of the offer's lifecycle - expireStaleOffers' revert, the confirm, the revert after a refused confirm, the past-date cancel, the offer pass and the admin force-confirm and return to the waitlist - all of which take this key, so it joins them, then takes the booking's own lodge key as the expiry and the confirm do. It re-reads under both and claims with an updateMany guarded on WAITLIST_OFFERED, the offer's waitlistOfferedAt and the deadline it read; a lost claim sends nothing. No settings read, no provider call, no new key.",
+      "#5433 owner decision D2: the owed offer notice's sweep restarts an offer's window just before it sends the offer email the first attempt never sent. It moves only waitlistOfferExpiresAt, and must exclude every writer of the offer's lifecycle - expireStaleOffers' revert, the confirm, the revert after a refused confirm, the past-date cancel, the offer pass and the admin force-confirm and return to the waitlist - all of which take this key, so it joins them, then takes the booking's own lodge key as the expiry and the confirm do. It re-reads under both and claims with an updateMany guarded on WAITLIST_OFFERED, the offer's waitlistOfferedAt and its original deadline (the window it was offered with), so each offer restarts at most once; a lost claim sends nothing. No settings read, no provider call, no new key.",
     invariant: "INV-LOCK-002",
   },
   {

@@ -194,7 +194,7 @@ const EXPIRED: OwedNoticeDeliverer<WaitlistOfferExpiredNotice> = {
   load: loadExpiredNotice,
   stillOwed: expiredNoticeStillOwed,
   sendBy: (_notice, marker) => new Date(marker.eventAt.getTime() + WAITLIST_MEMBER_NOTICE_MAX_AGE_MS),
-  pastCutoff: (notice, marker, run) => alertOfficersWaitlistNoticeUnsent(notice, marker, "offer-expired", run),
+  pastCutoff: (notice, marker) => alertOfficersWaitlistNoticeUnsent(notice, marker, "offer-expired"),
   idempotencyKey: (marker) => owedNoticeEventKey(marker.subjectId, marker.eventAt),
   deliver: (notice, _marker, context) => sendExpiredEmail(notice, context),
 };
@@ -222,7 +222,7 @@ async function alertOfficersOfUntoldLapse(
     logger.error({ key: marker.id, job: run.job }, "A never-told lapse's officer alert has no readable offer time; cleared without sending it");
     return "settled";
   }
-  return alertOfficersWaitlistNoticeUnsent(notice, waitlistOfferMemberMarker(notice.bookingId, offeredAt), "offer-lapsed-untold", run);
+  return alertOfficersWaitlistNoticeUnsent(notice, waitlistOfferMemberMarker(notice.bookingId, offeredAt), "offer-lapsed-untold");
 }
 
 const UNTOLD: OwedNoticeDeliverer<WaitlistOfferExpiredNotice> = {

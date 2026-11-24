@@ -33,8 +33,9 @@
  * with and never moves it (`MEMBER_RIGHT_AFTER_OFFER`). The sweep's send
  * (`sendOfferEmailFromSweep`) first reads the offer email's state
  * (`OfferEmailState`, review B): told, it clears; the email retry cron's, it
- * waits; undeliverable, it alerts the officers. Only an email that never
- * reached its row is sent by the sweep, in order:
+ * waits; undeliverable, or to an address no email can reach (none, a
+ * placeholder, or SES-suppressed: round 2, item 6), it alerts the officers.
+ * Only an email that never reached its row is sent by the sweep, in order:
  * 1. restart the window in its own locked transaction
  *    (`restartWaitlistOfferWindow`): once per offer, and not at all when too
  *    little window would be left (the officers are alerted instead); a lost
@@ -44,6 +45,9 @@
  * the next sweep finds the restarted deadline and sends with it as it stands,
  * so the member then has the remainder of the restarted window, not a fresh
  * one (stated limit, review C).
+ *
+ * Either send is followed by a read of the email's row (`sendOfferEmail`),
+ * because a send can return without reaching the member (round 2, item 2).
  *
  * "No offer expired email for an offer the member was never told about" is
  * `findNeverToldWaitlistOffers`, which `expireStaleOffers` reads in its own
