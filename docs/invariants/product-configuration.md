@@ -509,15 +509,15 @@ home for that explanation and is not repeated here.
   may the sides differ. Once chosen, a saved row exempts nobody.
 - **The admin lists follow billing** (Q2): the members list, its export, the
   subscriptions list and their filters read `ADMIN_LIST_LIABILITY_SIDE`. An
-  active member's untouched `NOT_REQUIRED` row whose member billing treats as
+  active member's untouched `NOT_REQUIRED` row that billing treats as
   owing shows `NOT_INVOICED` with a note (`hasNotRequiredRowBillingNote`).
 - **The pair is chosen whole, needs membership and finance edit (owner,
   23 Nov 2026), and never returns to `NOT_CHOSEN`.** The settings `PUT`
   refuses a change without both, a half pair, a move back and `CURRENT_AGE`;
   config import (full admin) ignores a half or `NOT_CHOSEN` pair and fails the
   dry run on `CURRENT_AGE`. An omitted or unchanged pair is never written. A save or import
-  leaving the club chosen runs `clearStaleNotRequiredRows`, which takes the
-  liability-rule key after the billing season key, and audits who moved
-  (preview: the `liability-impact` list).
+  leaving the club chosen runs `clearStaleNotRequiredRows` (season, then
+  rule key), resetting and auditing exactly the rows the `liability-impact`
+  preview lists (`findStaleNotRequiredRows`); the screen saves only a previewed pair.
 - **A no-invoice fee settles its member for booking** (every club): an active coverage claim on a `NO_INVOICE` charge counts as paid
   whatever the row status.
