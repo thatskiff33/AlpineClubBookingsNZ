@@ -124,7 +124,7 @@ export function stripeDisputeWonAfterLossNextStep(report: LateWinHandBackReport,
   if (report.notReopened.length > 0) {
     const named = report.notReopened.map((item) => `${task(item)}: ${item.reason}`);
     parts.push(`These refund tasks were dismissed while the dispute read lost, and the app could not reopen them: ${named.join(" ")} ` +
-      "Reopen them under Finance → Payments, or take them to the treasurer.");
+      "Check each one by hand: reopen it under Finance → Payments where the app allows, or take it to the treasurer.");
   }
   if (report.countedByCancellation.length > 0) {
     parts.push(`Not reopened, because the booking was cancelled after they were dismissed and its cancellation counted that money in its own refund: ${report.countedByCancellation.map(task).join("; ")}.`);

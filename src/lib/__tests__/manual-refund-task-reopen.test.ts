@@ -2,6 +2,14 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ManualRefundTaskStatus } from "@prisma/client";
 import { EDIT_REFUND_HAND_BACK_REOPEN_AFTER_CANCEL_MESSAGE } from "@/lib/manual-refund-task-settlement-rules";
 import { editRefundHandBackReopenAfterCancelMessage } from "@/lib/manual-refund-task-copy";
+import {
+  CAPACITY_RACE_REFUND_EVENT_REASON,
+  GROUP_CANCEL_SETTLED_REFUND_EVENT_REASON,
+  cancelCardRefundEventReason,
+} from "@/lib/cancel-card-refund-event-reason";
+import { DUPLICATE_CAPTURE_REFUND_EVENT_REASON } from "@/lib/duplicate-capture-refund-event";
+import { MANUAL_SETTLEMENT_REVERSAL_EVENT_REASON } from "@/lib/manual-settlement-reversal-event";
+import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
 /**
  * #3498 (owner decision D2, epic #2797): putting a DISMISSED money task back on
@@ -21,6 +29,29 @@ import { editRefundHandBackReopenAfterCancelMessage } from "@/lib/manual-refund-
  * (`docs/TESTING.md`).
  */
 
+/**
+ * #5197: the where-clause the later-cancellation read sends, evaluated against one event (equality, `gt`, `in`,
+ * `notIn`, nested OR), so a filter on the event's `type` or `reason` is really exercised.
+ */
+type EventWhere = { [key: string]: unknown };
+type MockEvent = { occurredAt: Date; type: string; reason: string | null };
+function eventMatches(event: MockEvent, where: EventWhere): boolean {
+  return Object.entries(where).every(([key, condition]) => {
+    if (key === "OR") return (condition as EventWhere[]).some((each) => eventMatches(event, each));
+    if (key === "bookingId") return true;
+    const value = event[key as keyof MockEvent];
+    if (condition !== null && typeof condition === "object" && !(condition instanceof Date)) {
+      const ops = condition as { gt?: Date; notIn?: unknown[]; in?: unknown[] };
+      if (ops.gt !== undefined && !(value instanceof Date && value > ops.gt)) return false;
+      // SQL three-valued logic: NULL is never NOT IN anything.
+      if (ops.notIn !== undefined && (value === null || ops.notIn.includes(value))) return false;
+      if (ops.in !== undefined && !ops.in.includes(value)) return false;
+      return true;
+    }
+    return value === condition;
+  });
+}
+
 const mocks = vi.hoisted(() => ({
   transaction: vi.fn(),
   findUnique: vi.fn(),
@@ -38,7 +69,8 @@ const mocks = vi.hoisted(() => ({
   lockBookingRow: vi.fn(),
   disputes: [] as { stripeDisputeId: string; status: string; amountCents: number; paymentId: string | null }[],
   restoreHandBackObligation: vi.fn(),
-  latestCancellation: null as { occurredAt: Date } | null,
+  // A booking event after the dismissal: CANCELLED with no reason unless the test says otherwise.
+  latestCancellation: null as { occurredAt: Date; type?: string; reason?: string | null } | null,
   dismissalAudit: null as { metadata: Record<string, unknown> } | null,
   alertCooldownUpsert: vi.fn(),
 }));
@@ -122,8 +154,11 @@ const tx = {
     findFirst: async () => mocks.dismissalAudit,
   },
   bookingEvent: {
-    findFirst: async ({ where }: { where: { occurredAt: { gt: Date } } }) =>
-      mocks.latestCancellation && mocks.latestCancellation.occurredAt > where.occurredAt.gt ? { id: "event-1" } : null,
+    findFirst: async ({ where }: { where: EventWhere }) => {
+      const event = mocks.latestCancellation;
+      if (event === null) return null;
+      return eventMatches({ type: "CANCELLED", reason: null, ...event }, where) ? { id: "event-1" } : null;
+    },
   },
   alertCooldown: {
     upsert: (...a: unknown[]) => mocks.alertCooldownUpsert(...a),
@@ -661,6 +696,46 @@ describe("reopening a dispute-loss hand-back (#5197)", () => {
     }
     expect(mocks.updateMany).not.toHaveBeenCalled();
     expect(mocks.restoreHandBackObligation).not.toHaveBeenCalled();
+  });
+
+  it("MUTATION: a REFUNDED event after the dismissal that is not a cancellation, or a settlement marker, is not read as one", async () => {
+    mocks.findUnique.mockResolvedValue(LOST_EDIT);
+    const notCancellations = [
+      // Another hand-back marked paid (manual-refund-task-resolution.ts), a member cancel's card refund row closing, a
+      // duplicate capture's refund, a capacity race's refund, and a #2262 marker stored as CANCELLED.
+      { type: "REFUNDED", reason: "manual_refund_completed" },
+      { type: "REFUNDED", reason: cancelCardRefundEventReason({ cardRefundCents: 10000, policy: null, shortfall: false, format: CLUB_FORMAT_TEST }) },
+      { type: "REFUNDED", reason: DUPLICATE_CAPTURE_REFUND_EVENT_REASON },
+      { type: "REFUNDED", reason: CAPACITY_RACE_REFUND_EVENT_REASON },
+      { type: "REFUNDED", reason: null },
+      { type: "CANCELLED", reason: MANUAL_SETTLEMENT_REVERSAL_EVENT_REASON },
+    ];
+    for (const event of notCancellations) {
+      mocks.dismissalAudit = dismissedOn("CANCELLED");
+      mocks.latestCancellation = { ...cancelledAt(60_000), ...event };
+      await expect(reopen()).resolves.toMatchObject({ status: ManualRefundTaskStatus.OPEN });
+    }
+    expect(mocks.updateMany).toHaveBeenCalledTimes(notCancellations.length);
+
+    // With no recorded status it falls through to "check by hand", never to "counted".
+    mocks.updateMany.mockClear();
+    mocks.dismissalAudit = dismissedOn();
+    mocks.latestCancellation = { ...cancelledAt(60_000), type: "REFUNDED", reason: "manual_refund_completed" };
+    const refusal = await reopen().catch((err: unknown) => err);
+    expect(refusal).not.toBeInstanceOf(ReopenCountedByCancellationError);
+    expect(refusal).toMatchObject({ status: 409, message: REOPEN_DISMISSAL_STATUS_UNRECORDED_MESSAGE });
+    expect(mocks.updateMany).not.toHaveBeenCalled();
+  });
+
+  it("MUTATION: an organiser's group cancel refunding the beds after the dismissal still reads as the cancellation that counted it", async () => {
+    mocks.findUnique.mockResolvedValue(LOST_EDIT);
+    for (const audit of [dismissedOn("CANCELLED"), dismissedOn()]) {
+      mocks.dismissalAudit = audit;
+      mocks.latestCancellation = { ...cancelledAt(60_000), type: "REFUNDED", reason: GROUP_CANCEL_SETTLED_REFUND_EVENT_REASON };
+      const refusal = await reopen().catch((err: unknown) => err);
+      expect(refusal).toBeInstanceOf(ReopenCountedByCancellationError);
+    }
+    expect(mocks.updateMany).not.toHaveBeenCalled();
   });
 
   it("a lost claim restores nothing", async () => {

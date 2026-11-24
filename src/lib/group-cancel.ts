@@ -99,6 +99,7 @@ import {
 } from "./booking-status";
 import { revokePaymentLinksForBooking } from "./payment-link";
 import { recordBookingEvent } from "./booking-events";
+import { GROUP_CANCEL_SETTLED_REFUND_EVENT_REASON } from "@/lib/cancel-card-refund-event-reason";
 import { logAudit } from "./audit";
 import { sendBookingCancelledEmail } from "./email";
 import { processWaitlistForDates } from "./waitlist";
@@ -795,9 +796,8 @@ export async function settleGroupBookingOnOrganiserCancel(
       type: refundEvent ? BookingEventType.REFUNDED : BookingEventType.CANCELLED,
       actorMemberId: sessionUserId,
       amountCents: refundEvent ? refundForChild : undefined,
-      reason:
-        refundForChild > 0
-          ? "Group organiser cancelled the booking; the settled beds were refunded to the organiser."
+      reason: refundForChild > 0
+          ? GROUP_CANCEL_SETTLED_REFUND_EVENT_REASON
           : owedForChild > 0
             ? "Group organiser cancelled the booking; the refund to the organiser is owed and will be retried."
             : "Group organiser cancelled the booking, releasing this held spot.",

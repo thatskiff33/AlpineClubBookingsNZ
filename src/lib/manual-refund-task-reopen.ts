@@ -26,6 +26,8 @@ import {
   normaliseManualPaymentNote,
 } from "@/lib/manual-subscription-payment";
 import { prisma } from "@/lib/prisma";
+import { GROUP_CANCEL_SETTLED_REFUND_EVENT_REASON } from "@/lib/cancel-card-refund-event-reason";
+import { NOT_A_SETTLEMENT_MARKER_WHERE } from "@/lib/manual-settlement-reversal-event";
 import { LOCK1_HOLDER_TRANSACTION_BUDGET } from "@/lib/db-transaction";
 import { setTransactionLockTimeout } from "@/lib/member-merge-booking-lock";
 
@@ -436,12 +438,22 @@ async function assertLateWinDisputeWon(tx: Prisma.TransactionClient, task: Reope
 }
 
 /**
+ * #5197: the booking events that ARE a cancellation: a CANCELLED event that is not a settlement marker (#2262, stored
+ * as CANCELLED but never cancelling), or the REFUNDED event an organiser's group cancel writes in place of one (#3653).
+ */
+const CANCELLATION_EVENT_WHERE = [
+  { type: BookingEventType.CANCELLED, ...NOT_A_SETTLEMENT_MARKER_WHERE },
+  { type: BookingEventType.REFUNDED, reason: GROUP_CANCEL_SETTLED_REFUND_EVENT_REASON },
+] satisfies Prisma.BookingEventWhereInput[];
+
+/**
  * #5197: whether this edit hand-back was dismissed AFTER its booking's latest cancellation. The after-cancel
  * dismissal refusal (`INV-PAY-117`) lets only a lost dispute through (#4516, owner decision 18 Nov 2026), and then the
  * cancellation counted the task as going back (`after-cancel`). Two records, both required, each failing towards a
  * refusal:
- * - a CANCELLED or REFUNDED booking event after the dismissal: a cancellation since sized its refund without the task
- *   (`counted`);
+ * - a cancellation event after the dismissal (`CANCELLATION_EVENT_WHERE`): a cancellation since sized its refund
+ *   without the task (`counted`). Any other REFUNDED event (another hand-back marked paid, a card refund row's close,
+ *   a duplicate capture's refund) is not one, so it falls through to the next record;
  * - the dismissal's own audit row, written in its transaction, says the booking read CANCELLED under its locks
  *   (`bookingStatusAtClosure`). Another recorded status means the cancel came later (`counted`); none (a dismissal
  *   recorded before #5197, or no audit row) cannot be told either way (`status-unrecorded`), so it is never reopened and
@@ -453,7 +465,7 @@ async function dismissalAgainstCancellation(
 ): Promise<"after-cancel" | "counted" | "status-unrecorded"> {
   if (task.completedAt === null) return "counted";
   const laterCancellation = await tx.bookingEvent.findFirst({
-    where: { bookingId: task.bookingId, type: { in: [BookingEventType.CANCELLED, BookingEventType.REFUNDED] }, occurredAt: { gt: task.completedAt } },
+    where: { bookingId: task.bookingId, occurredAt: { gt: task.completedAt }, OR: CANCELLATION_EVENT_WHERE },
     select: { id: true },
   });
   if (laterCancellation !== null) return "counted";

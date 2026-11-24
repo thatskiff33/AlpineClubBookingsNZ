@@ -100,6 +100,9 @@ describe("the won-after-loss alert's next step (#5197)", () => {
     expect(step).toContain("the app could not reopen them: task t3 ($100.00): It was dismissed before the app recorded the booking's status");
     expect(step).toContain("Check the booking's payments by hand");
     expect(step).not.toMatch(/counted that money in its own refund/);
+    // Reopen is refused for this one, so the list never tells the treasurer simply to reopen it.
+    expect(step).toContain("Check each one by hand: reopen it under Finance → Payments where the app allows");
+    expect(step).not.toMatch(/Reopen them under/);
   });
 
   it("names a task already back on the queue", () => {

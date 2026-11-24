@@ -244,7 +244,9 @@ member is told the club will arrange their refund.
    late win counts a refund task dismissed for another reason by older code as
    dismissed for the loss, so it may reopen it: take such a task to the
    treasurer.
-   A task dismissed before this change can still be reopened.
+   A task dismissed before these dismissal rules (#4516) can still be
+   reopened, except the older booking change's refund above, which is
+   checked by hand.
 
 **The same task for a booking change (#3827).** When a member or an officer
 changes a booking that was paid by internet banking or in cash, and the change
