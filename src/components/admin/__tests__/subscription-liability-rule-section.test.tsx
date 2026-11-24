@@ -3,13 +3,34 @@
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const access = vi.hoisted(() => ({
-  membership: true as boolean | undefined,
-  finance: true as boolean | undefined,
+// The real permission hook and the route's own requirement list decide who
+// may edit; only the session behind them is faked.
+const session = vi.hoisted(() => ({
+  status: "authenticated" as "authenticated" | "loading",
+  membership: "edit" as "edit" | "view",
+  finance: "edit" as "edit" | "view",
 }));
-vi.mock("@/hooks/use-admin-area-edit-access", () => ({
-  useAdminAreaEditAccess: (area: "membership" | "finance") => access[area],
-  ADMIN_VIEW_ONLY_ACTION_REASON: "View-only reason",
+vi.mock("next-auth/react", () => ({
+  useSession: () => ({
+    status: session.status,
+    data:
+      session.status === "loading"
+        ? null
+        : {
+            user: {
+              id: "officer",
+              adminPermissionMatrix: {
+                overview: "view",
+                bookings: "view",
+                membership: session.membership,
+                finance: session.finance,
+                lodge: "view",
+                content: "view",
+                support: "view",
+              },
+            },
+          },
+  }),
 }));
 
 import { SubscriptionLiabilityRuleSection } from "@/components/admin/subscription-liability-rule-section";
@@ -93,8 +114,9 @@ function choose(label: string) {
 
 describe("SubscriptionLiabilityRuleSection (#5190)", () => {
   beforeEach(() => {
-    access.membership = true;
-    access.finance = true;
+    session.status = "authenticated";
+    session.membership = "edit";
+    session.finance = "edit";
   });
   afterEach(() => {
     cleanup();
@@ -117,10 +139,10 @@ describe("SubscriptionLiabilityRuleSection (#5190)", () => {
   });
 
   it.each([
-    ["Membership edit alone", { membership: true, finance: false }],
-    ["Finance edit alone", { membership: false, finance: true }],
-  ])("is view-only with %s, saying both are needed", async (_label, granted) => {
-    Object.assign(access, granted);
+    ["Membership edit alone", { membership: "edit", finance: "view" }],
+    ["Finance edit alone", { membership: "view", finance: "edit" }],
+  ] as const)("is view-only with %s, saying both are needed", async (_label, granted) => {
+    Object.assign(session, granted);
     stubFetch();
     render(<SubscriptionLiabilityRuleSection />);
     const edit = await screen.findByRole("button", { name: "Choose rule" });
@@ -219,5 +241,56 @@ describe("SubscriptionLiabilityRuleSection (#5190)", () => {
     expect(screen.queryByText("Sam Small")).toBeNull();
     expect(screen.getByText("Not chosen yet")).toBeTruthy();
     expect(putCalls(fetchMock)).toHaveLength(0);
+  });
+
+  it("offers no editor and no view-only banner while the session resolves", async () => {
+    session.status = "loading";
+    stubFetch();
+    render(<SubscriptionLiabilityRuleSection />);
+    const edit = await screen.findByRole("button", { name: "Choose rule" });
+    expect((edit as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.queryByText(/needs both Membership edit and Finance edit/)).toBeNull();
+  });
+
+  it("says so when the save reset a different number of records than the preview listed", async () => {
+    stubFetch({ clearedStaleRecords: 3 });
+    render(<SubscriptionLiabilityRuleSection />);
+    await openEditor();
+    choose("They still owe");
+    choose("first day of the season");
+    fireEvent.click(screen.getByRole("button", { name: "Preview changes" }));
+    await screen.findByText("Sam Small");
+    fireEvent.click(screen.getByRole("button", { name: "Save rule" }));
+    expect(
+      await screen.findByText(/3 "Not required" records were reset.*The preview listed 2/),
+    ).toBeTruthy();
+  });
+
+  it("drops a preview that arrives after Cancel, so a reopened editor cannot save on it", async () => {
+    const fetchMock = stubFetch();
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const answer = fetchMock.getMockImplementation()!;
+    fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
+      if (url.startsWith(`${IMPACT_ENDPOINT}?`)) await held;
+      return answer(url, init);
+    });
+    render(<SubscriptionLiabilityRuleSection />);
+    await openEditor();
+    choose("They still owe");
+    choose("first day of the season");
+    fireEvent.click(screen.getByRole("button", { name: "Preview changes" }));
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    release();
+    await held;
+
+    await openEditor();
+    choose("They still owe");
+    choose("first day of the season");
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(screen.queryByText("Sam Small")).toBeNull();
+    expect((screen.getByRole("button", { name: "Save rule" }) as HTMLButtonElement).disabled).toBe(true);
   });
 });

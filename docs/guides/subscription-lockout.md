@@ -288,7 +288,8 @@ To choose or change the rule:
 1. On this page, find **Who owes a subscription**. It shows the club's rule in
    plain English, or **Not chosen yet**.
 2. Click **Choose rule** (or **Change rule**) and answer both questions. Each
-   answer says what it means for a member, with a worked example.
+   answer says what it means for a member, and the first question has a worked
+   example.
 3. Click **Preview changes**. Before anything is saved, the preview lists, for
    the current season:
    - who would **start owing**, and whether they would be newly invoiced, must
@@ -296,13 +297,14 @@ To choose or change the rule:
    - who would **stop owing**, with the number of any unpaid invoice they
      already hold (shown only to an officer with Finance access). That invoice
      stays in Xero: void it there if it should not be paid;
-   - which **"Not required" records would be reset** to "Not invoiced". This is
-     exactly the list the save resets, including members who are inactive or
-     archived (marked as such: billing does not invoice them unless they are
-     made active again).
+   - which **"Not required" records would be reset** to "Not invoiced". The
+     save resets this same selection, as it stands when you save, including
+     members who are inactive or archived (marked as such: billing does not
+     invoice them unless they are made active again).
 4. Click **Save rule**. It stays unavailable until a preview of exactly your
    answers is on screen; change an answer and you must preview again. The
-   confirmation says how many records were reset.
+   confirmation says how many records were reset, and says so if records
+   changed after the preview and the number differs.
 
 Choosing, or changing, the rule needs both **Membership edit** and **Finance
 edit**, because it changes who is invoiced; an officer with Membership edit

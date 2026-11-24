@@ -20,7 +20,7 @@ import {
   AdminViewOnlySectionBanner,
   ViewOnlyActionButton,
 } from "@/components/admin/view-only-action";
-import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access";
+import { useAdminAccessToAll } from "@/hooks/use-admin-area-edit-access";
 import {
   saveRefusalFromResponse,
   useSectionEditState,
@@ -32,6 +32,7 @@ import {
 import {
   hasChosenLiabilityRule,
   isChoosableLiabilityAgeSource,
+  LIABILITY_RULE_CHOICE_PERMISSIONS,
   type SubscriptionLiabilitySettings,
 } from "@/lib/policies/subscription";
 import type { SubscriptionLiabilityImpact } from "@/lib/subscription-liability-impact";
@@ -141,20 +142,19 @@ interface LoadedPreview {
 }
 
 export function SubscriptionLiabilityRuleSection() {
-  // The route refuses a rule change without BOTH (owner decision 23 Nov 2026).
-  // Tri-state: undecided while either session check is still resolving.
-  const membershipEdit = useAdminAreaEditAccess("membership");
-  const financeEdit = useAdminAreaEditAccess("finance");
-  const canEdit =
-    membershipEdit === undefined || financeEdit === undefined
-      ? undefined
-      : membershipEdit && financeEdit;
+  // The list the route enforces (membership edit AND finance edit); undecided
+  // while the session resolves.
+  const canEdit = useAdminAccessToAll(LIABILITY_RULE_CHOICE_PERMISSIONS);
 
   const [preview, setPreview] = useState<LoadedPreview | null>(null);
   const [previewing, setPreviewing] = useState(false);
   const [previewError, setPreviewError] = useState("");
-  // How many records the last save reset, for its success message.
-  const clearedRecords = useRef<number | null>(null);
+  // What the last save reset, against what its preview listed, for the
+  // success message.
+  const lastSave = useRef<{ cleared: number; previewed: number } | null>(null);
+  // Bumped by each preview request and by Cancel, so a reply that lands after
+  // a newer request, or after Cancel, is dropped rather than shown.
+  const previewRequest = useRef(0);
 
   const section = useSectionEditState<SubscriptionLiabilitySettings>({
     load: async (signal) => {
@@ -179,16 +179,14 @@ export function SubscriptionLiabilityRuleSection() {
         settings: SubscriptionLiabilitySettings;
         clearedStaleRecords: number | null;
       };
-      clearedRecords.current = body.clearedStaleRecords;
+      lastSave.current = {
+        cleared: body.clearedStaleRecords ?? 0,
+        previewed: preview?.impact.staleRecords.length ?? 0,
+      };
       setPreview(null);
       return toPair(body.settings);
     },
-    successMessage: () => {
-      const cleared = clearedRecords.current ?? 0;
-      return cleared > 0
-        ? `Rule saved. Billing and booking now both follow it. ${cleared} "Not required" ${cleared === 1 ? "record was" : "records were"} reset to Not invoiced.`
-        : "Rule saved. Billing and booking now both follow it.";
-    },
+    successMessage: () => saveMessage(lastSave.current),
     loadErrorFallback: LOAD_FALLBACK,
     saveErrorFallback: SAVE_FALLBACK,
     // Save only what was previewed: both answers chosen, and the preview on
@@ -202,6 +200,8 @@ export function SubscriptionLiabilityRuleSection() {
   async function loadPreview() {
     if (!draft || !hasChosenLiabilityRule(draft)) return;
     const key = pairKey(draft);
+    const request = ++previewRequest.current;
+    const current = () => request === previewRequest.current;
     setPreviewing(true);
     setPreviewError("");
     try {
@@ -213,26 +213,34 @@ export function SubscriptionLiabilityRuleSection() {
         credentials: "same-origin",
       });
       if (!res.ok) {
+        const message = await apiErrorMessageFromResponse(res, PREVIEW_FALLBACK);
+        if (!current()) return;
         setPreview(null);
-        setPreviewError(await apiErrorMessageFromResponse(res, PREVIEW_FALLBACK));
+        setPreviewError(message);
         return;
       }
       const body = (await res.json()) as {
         impact: SubscriptionLiabilityImpact;
         invoiceNumbersShown: boolean;
       };
+      if (!current()) return;
       setPreview({ key, impact: body.impact, invoiceNumbersShown: body.invoiceNumbersShown });
     } catch {
+      if (!current()) return;
       setPreview(null);
       setPreviewError(PREVIEW_FALLBACK);
     } finally {
-      setPreviewing(false);
+      if (current()) setPreviewing(false);
     }
   }
 
   function cancel() {
+    previewRequest.current += 1;
     setPreview(null);
+    setPreviewing(false);
     setPreviewError("");
+    // A failed save's message belongs to the editor being closed.
+    section.setError("");
     section.cancelEditing();
   }
 
@@ -245,9 +253,12 @@ export function SubscriptionLiabilityRuleSection() {
       because it changes who is invoiced.
     </AdminViewOnlySectionBanner>
   );
+  // While the editor is open, a failed save is shown beside its buttons (below
+  // a long preview, the top of the section can be off screen); otherwise, such
+  // as a failed load, at the top.
   const feedback = (
     <PolicyFeedback
-      error={error}
+      error={editing ? "" : error}
       success={success}
       onClearError={() => section.setError("")}
       onClearSuccess={() => section.setSuccess("")}
@@ -305,8 +316,6 @@ export function SubscriptionLiabilityRuleSection() {
             <CurrentRule saved={saved} />
           )}
 
-          <FocusedActionError id="subscription-liability-preview-error" error={previewError} />
-
           {editing && preview !== null ? (
             previewCurrent ? (
               <LiabilityPreview
@@ -320,6 +329,11 @@ export function SubscriptionLiabilityRuleSection() {
               </p>
             )
           ) : null}
+
+          <FocusedActionError
+            id="subscription-liability-action-error"
+            error={editing ? error || previewError : ""}
+          />
 
           {editing ? (
             <div className="flex flex-wrap gap-2">
@@ -348,6 +362,20 @@ export function SubscriptionLiabilityRuleSection() {
       </Card>
     </div>
   );
+}
+
+/**
+ * The confirmation after a save. The preview was read earlier, so records can
+ * have moved in between (another officer's save, an invoice, a new
+ * assignment); when the count differs from the one previewed, it says so.
+ */
+function saveMessage(save: { cleared: number; previewed: number } | null): string {
+  const saved = "Rule saved. Billing and booking now both follow it.";
+  if (save === null || (save.cleared === 0 && save.previewed === 0)) return saved;
+  const reset = `${save.cleared} "Not required" ${save.cleared === 1 ? "record was" : "records were"} reset to Not invoiced.`;
+  return save.cleared === save.previewed
+    ? `${saved} ${reset}`
+    : `${saved} ${reset} The preview listed ${save.previewed}: records changed between the preview and the save.`;
 }
 
 /** The saved rule, read-only, in plain English. */
@@ -498,7 +526,7 @@ function LiabilityPreview({
       className="space-y-4 rounded-md border border-border p-4"
     >
       <h3 id="subscription-liability-preview-heading" className="text-sm font-semibold">
-        If you save this rule, for this season
+        If you save this rule, for the {impact.seasonYear} season
       </h3>
       {nobody ? (
         <p className="text-sm text-muted-foreground">

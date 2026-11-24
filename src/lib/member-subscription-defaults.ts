@@ -275,7 +275,7 @@ export interface StaleNotRequiredRow {
  * (#5190): every untouched `NOT_REQUIRED` row ({@link UNTOUCHED_NOT_REQUIRED_ROW})
  * whose member the rule's billing side says owes, for any member, active or not.
  * A member whose type cannot be resolved is left out, and a rule that is not
- * chosen selects nobody. Sorted by name, then id.
+ * chosen selects nobody. Sorted by surname, first name, then id.
  *
  * The one selection the clear-up writes from and the admin preview lists
  * (`INV-SSOT`), so the list an officer reads before saving is the list the save
@@ -321,7 +321,7 @@ export async function findStaleNotRequiredRows(
     getAgeTierSettingsStrict(db),
   ]);
   const rule = liabilityRuleFor("billing", settings);
-  const stale: StaleNotRequiredRow[] = [];
+  const stale: typeof members = [];
   for (const member of members) {
     const policy = policies.get(member.id);
     if (
@@ -335,16 +335,23 @@ export async function findStaleNotRequiredRows(
         ageTierSettings,
       }).owes
     ) {
-      stale.push({
-        memberId: member.id,
-        name: memberDisplayName(member),
-        inBillingPopulation: isInSubscriptionBillingPopulation(member),
-      });
+      stale.push(member);
     }
   }
-  return stale.sort(
-    (a, b) => a.name.localeCompare(b.name) || a.memberId.localeCompare(b.memberId),
-  );
+  // Surname order, as the preview's other lists (`buildSubscriptionLiabilityImpact`).
+  const byText = (a: string | null, b: string | null) => (a ?? "").localeCompare(b ?? "");
+  return stale
+    .sort(
+      (a, b) =>
+        byText(a.lastName, b.lastName) ||
+        byText(a.firstName, b.firstName) ||
+        a.id.localeCompare(b.id),
+    )
+    .map((member) => ({
+      memberId: member.id,
+      name: memberDisplayName(member),
+      inBillingPopulation: isInSubscriptionBillingPopulation(member),
+    }));
 }
 
 /**
