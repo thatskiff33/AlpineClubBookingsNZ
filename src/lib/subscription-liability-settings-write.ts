@@ -124,16 +124,23 @@ export function liabilityChoiceRefusal(
 
 /**
  * The pair a save writes, or null to leave both columns out of the write. Only a
- * real choice is written: omitted (or an unchanged `NOT_CHOSEN`), the columns are
- * not re-written from an earlier read, so a save racing an opt-in can never put
- * the club back on `NOT_CHOSEN`. Call after {@link liabilityChoiceError}.
+ * real change to a chosen rule is written: omitted, an unchanged `NOT_CHOSEN`,
+ * or an echo of the `stored` pair, the columns are not re-written from an
+ * earlier read. So a save racing an opt-in can never put the club back on
+ * `NOT_CHOSEN`, and a save whose permission check passed only because it
+ * echoed `stored` (a membership-only admin) can never write back a rule that a
+ * membership and finance admin changed after that read (#5190 review; owner
+ * decision 23 Nov 2026). Call after {@link liabilityChoiceRefusal}, with the
+ * same `stored`.
  */
 export function liabilityChoiceToWrite(
   requested: RequestedLiability,
+  stored: SubscriptionLiabilitySettings,
 ): SubscriptionLiabilitySettings | null {
   const { requiredTypeAgeRule, liabilityAgeSource } = requested;
   return requiredTypeAgeRule !== undefined &&
     liabilityAgeSource !== undefined &&
+    namesLiabilityRuleChange(requested, stored) &&
     hasChosenLiabilityRule({ requiredTypeAgeRule, liabilityAgeSource })
     ? { requiredTypeAgeRule, liabilityAgeSource }
     : null;

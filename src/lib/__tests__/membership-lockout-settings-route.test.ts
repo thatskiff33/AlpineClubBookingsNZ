@@ -417,6 +417,30 @@ describe("membership lockout settings route: who may choose the liability rule (
     expect(response.status).toBe(200);
     expect(mocks.upsert.mock.calls[0]?.[0]?.update).toMatchObject({ mode: "NO_BLOCK" });
   });
+
+  it("never writes back the pair a membership-only admin echoed, so a rule changed after its read stands (#5190 review)", async () => {
+    // Interleaving: the membership-only save reads `chosen`; a membership and
+    // finance admin's change to `changed` commits before its upsert runs. The
+    // echo passed the permission check against the earlier read, so writing it
+    // would undo a rule choice this admin may not make (owner decision 23 Nov
+    // 2026). The row the upsert lands on is modelled as already holding `changed`.
+    asAdmin("edit", "view");
+    const changed = { requiredTypeAgeRule: "AGE_TIER_EXEMPTS", liabilityAgeSource: "SEASON_END" };
+    mocks.findUnique.mockResolvedValue({ id: "default", mode: "HARD_BLOCK", ...chosen });
+    let committedRow: Record<string, unknown> = { id: "default", mode: "HARD_BLOCK", ...changed };
+    mocks.upsert.mockImplementation(async (args: { update: Record<string, unknown> }) => {
+      committedRow = { ...committedRow, ...args.update };
+      return committedRow;
+    });
+    const response = await putLockoutSettings(request({ mode: "NO_BLOCK", ...chosen }));
+    expect(response.status).toBe(200);
+    const update = mocks.upsert.mock.calls[0]?.[0]?.update as Record<string, unknown>;
+    expect(update).not.toHaveProperty("requiredTypeAgeRule");
+    expect(update).not.toHaveProperty("liabilityAgeSource");
+    expect(committedRow).toMatchObject({ mode: "NO_BLOCK", ...changed });
+    // The clear-up still runs, and reads the committed rule under its own lock.
+    expect(mocks.order).toEqual(["lock:2026", "upsert", "clear:2026"]);
+  });
 });
 
 describe("membership lockout settings route: contention (#5190 review)", () => {

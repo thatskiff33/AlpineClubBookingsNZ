@@ -162,8 +162,9 @@ export async function PUT(request: NextRequest) {
   // and so a missing row resolves to the same default the rest of the app sees.
   const mode = parsed.data.mode ?? stored.mode;
 
-  // #5190: the liability pair is written only when the save makes a choice.
-  const liabilityChoice = liabilityChoiceToWrite(parsed.data);
+  // #5190: the liability pair is written only when the save changes the rule
+  // `stored` holds, so an echo of an earlier read never writes a rule back.
+  const liabilityChoice = liabilityChoiceToWrite(parsed.data, stored);
   const data = {
     mode,
     financialYearEndMonthOverride:
