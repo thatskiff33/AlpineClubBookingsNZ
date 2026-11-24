@@ -59,7 +59,7 @@ Guarded row claims and leases:
 | --- | --- |
 | Capacity claim, per-lodge key | [The discipline](#capacity-claim--per-lodge-lock-read-key--lock--re-read) · [who claims, who releases](#capacity-who-claims-who-releases-under-which-lock) · [lodge admission and hut leaders (#2701)](#composition-lodge-admission-deactivation-and-hut-leader-assignments-2701) |
 | Global-cohort money or status transition, `lock(1)` | [The cohort](#the-global-cohort-cancel-capture-settle-release-and-refund-writers) · [additional ask's queue (#4442)](#an-additional-asks-queue-excludes-a-capture-of-its-balance-4442) · [organiser child refunds (#3653)](#organiser-child-refunds-from-the-combined-card-payment-3653-3956) · [ledger lines (#3854)](#booking-ledger-lines-join-the-cohort-3854) · [unpaid ask retirement (#3954)](#retiring-an-unpaid-ask-at-every-reduction-door-3954) · [ended booking (#4316)](#retiring-an-ask-on-an-ended-booking-and-the-never-captured-cancel-4316) · [organiser hand-back (#4042)](#the-organisers-hand-back-joins-the-claim-4042) · [late-capture holds (#2700)](#deleted-modification-refund-tasks-and-late-capture-holds-2700-3639) · [shortfall tasks (#4097)](#refund-shortfall-tasks-in-the-paid-cancel-and-the-capacity-void-4097-4154) · [deleted-modification webhook counterpart (#2760)](#the-deleted-modification-tasks-webhook-counterpart-in-deleted-booking-modification-paymentts-close-or-create-under-lock1-2760) · [late-capture read and edit review settle (#4149, #3032)](#the-late-capture-handlers-shared-writer-and-unlocked-read-and-settling-an-edit-review-on-that-lockless-path-4149-3032) · [night prices (#3191)](#night-prices-on-the-lockless-path-3191-3214) · [money columns (#3219)](#the-bookings-money-columns-and-the-promo-row-lock-3219) · [review completion (#3582, #3791)](#an-edit-reviews-completion-takes-lock1-then-the-members-credit-key-and-its-hand-backs-3582-3791) · [promo row timing (#3257)](#when-the-promo-row-lock-is-taken-and-the-bookings-payment-re-read-3257-3194) · [review reopen (#3498)](#reopening-a-dismissed-edit-review-takes-lock1-3498) · [key scopes (#3170)](#refund-and-charge-key-scopes-and-two-officers-settling-shares-3170) · [charge raise (#3402)](#the-charge-raise-is-single-flight-per-edit-3402) · [refunded total (#3640)](#the-refunded-total-a-safe-write-and-one-lock-order-3640) · [Payment row first (#4217)](#ledger-row-writers-take-the-payment-row-first-4217) · [booking-edit read](#one-read-inside-the-booking-edit-lock-envelope) · [booking soft-delete](#booking-soft-delete-cancels-its-paymentintents-after-the-commit-never-under-lock1) · [global, lodge, member credit (#2262)](#three-tier-composition-global--lodge--member-credit-2262) |
-| Both tiers, `lock(1)` then per-lodge | [Capture, approvals, Internet Banking](#capture-confirm-pending-approvals-and-the-internet-banking-switch) · [compensating transaction (#2623)](#a-compensating-transaction-gets-its-own-budget-its-own-guard-and-an-operator-door-2623) · [group settlement (#3672)](#group-settlement-initiation-its-combined-invoice-and-joiner-payers-3672) · [race harness (#1881)](#the-postgresql-race-harness-ci-wiring-and-its-probes-1881) |
+| Both tiers, `lock(1)` then per-lodge | [Capture, approvals, Internet Banking](#capture-confirm-pending-approvals-and-the-internet-banking-switch) · [waitlist offer window restart (#5433)](#the-waitlist-offer-windows-restart-5433) · [compensating transaction (#2623)](#a-compensating-transaction-gets-its-own-budget-its-own-guard-and-an-operator-door-2623) · [group settlement (#3672)](#group-settlement-initiation-its-combined-invoice-and-joiner-payers-3672) · [race harness (#1881)](#the-postgresql-race-harness-ci-wiring-and-its-probes-1881) |
 | Member-night guard, per-member key | [Across lodges](#member-night-guard--per-member-lock-across-lodges) |
 | Narrow row or table lock | [Lock raw, read typed (#2289)](#lock-raw-read-typed-2289) · [held-party guests (#3029)](#held-party-guest-rows-before-a-dietary-rebuild-3029) · [ledger back-post (#3583)](#booking-ledger-back-post-3583) · [kept late-capture task (#3635)](#kept-late-capture-task-row-3635) · [capture-receipt manifest (#4525)](#capture-receipt-manifest-the-captures-paymenttransaction-row-4525) · [induction baseline (#2361)](#trusted-legacy-induction-baseline-2361) · [promo codes (#3827)](#promo-code-rows-on-create-and-modification-3827) · [bunk pairing, club theme (#2322)](#bunk-pairing-room-row-and-the-club-theme-logo-writer-2322) · [login throttle (#4609)](#login-throttle-claim-4609) · [member photo (#171)](#member-photo-writer-epic-171) · [Alpine Central Server (#4436)](#alpine-central-server-connection-and-version-recorder-4436) · [other lodges (#4485)](#owned-lodge-list-other-lodges-and-central-lodge-link-writers-4485) · [message board (#4586)](#message-board-posts-and-their-images-4586-4588) · [deletion-request release (#2627)](#deletion-request-approval-release-2627) · [adding one (#2623)](#adding-a-row-lock-update-this-inventory-2623) |
 | Member merge (E11 #1937) | [Key order](#merges-key-order-policy-set-lodges-lifecycle-partner-links) · [Member-row fence](#merges-member-row-fence-xero-contacts-and-account-deletion) · [re-read and window](#merges-re-read-guard-matrix-and-transaction-window) · [participant-row wait (#2623 T6)](#member-merge-the-fences-blocking-counterpart-one-savepoint-and-a-bounded-wait-2623-t6-4876) · [bed-allocation cohort (#2595)](#merges-partner-share-prefix-what-it-holds-where-and-why-no-global-key-2595) · [guest-row derivation (#2672)](#merges-guest-row-derivation-and-why-the-date-filter-is-gone-2672) · [evidence and cost](#merges-derivation-against-real-postgresql-and-what-it-costs) · [two checks](#merges-rejected-alternative-and-its-two-checks) · [deadlock analysis](#merges-deadlock-analysis-for-its-edge-set-2672) · [tests and sweep](#merges-tests-its-double-bed-sweep-and-two-consequences) · [no Payment-row wait (#4823)](#member-merge-never-waits-for-a-payment-row-4823) · [booking row first (#4840)](#a-booking-writer-takes-the-booking-row-before-a-member-key-share-4840) · [one Member row at a time (#4855)](#merge-never-holds-a-member-row-while-waiting-for-another-4855) · [one duplicate booking at a time (#4860)](#merge-never-holds-one-of-the-duplicates-bookings-while-waiting-for-another-4860) |
@@ -231,6 +231,75 @@ its transaction-start retry attempts, recorded before its next step, and throws
 `WaitlistReofferFailedError` only after the retry loop, so a retried attempt
 cannot lose the failure and the failure itself is never retried: the reverts are
 committed, and a retried sweep would find nothing left to re-offer.
+
+#### The waitlist offer window's restart (#5433)
+
+`restartWaitlistOfferWindow` (`waitlist-offer-window-restart.ts`,
+`INV-CAP-043`, owner decision D2) is a new `lock(1)` site, registered as
+`restartWaitlistOfferWindow#1` (`INV-LOCK-003`) on the shared budget
+(`INV-LOCK-006`). The owed offer notice's sweep runs it after the commit it
+recovers, just before it sends an offer email the first attempt never sent.
+It takes `lock(1)` because every writer of an offer's lifecycle does (the
+offer pass, `expireStaleOffers`, the same-lodge confirm and its revert, the
+cross-lodge confirm's three phases and its reverts, the past-date cancel, the
+admin force-confirm and return to the waitlist), then the booking's own lodge
+key through `acquireLodgeCapacityLock`, the key the expiry and the confirm take
+for the same offer (`INV-LOCK-002`). It re-reads the offer after both and
+claims with one `updateMany` guarded on `WAITLIST_OFFERED`, the offer's
+`waitlistOfferedAt` and its original deadline (`waitlistOfferExpiresAt` of the
+offer time), so it moves a deadline at most once per offer, writing only
+`waitlistOfferExpiresAt` (and Prisma's `updatedAt`). A lost claim writes and
+sends nothing. The club's timezone and the sweep's clock are passed in; no
+settings read, provider call or new key. The "No emails" switch is set
+without `lock(1)`, so the re-read of it can be stale by a moment: the only
+effect is an extended window for an email then withheld. Whether the owner's
+address can be emailed at all (not a placeholder, not on the SES suppression
+list) is read by the caller before the restart, outside any transaction; an
+address suppressed between that read and the send is recorded `BOUNCED` by the
+email core, which the post-send read counts as not told.
+
+Retiring a replayable `FAILED` offer email once the offer is over
+(`retireReplayableEmailRow`, the retry cron's own retirement) is one
+`updateMany` guarded on the row exactly as read (status `FAILED`, attempts and
+bodies), and the retry cron claims a row the same way, from `FAILED` to
+`QUEUED`, so of the two only one can win and a lost retirement changes nothing.
+Three writers use it: the retry job itself, after its "still wanted?" check
+(`email/retry-still-wanted.ts`) finds the offer over, with no advisory key; a
+sweep that finds the offer moved on, with none; and `expireStaleOffers`, inside
+its lock(1) and lodge-key transaction and before it decides who was told: a
+database-only read and write by primary key, adding no key and no provider
+call. Stated limit: a replay the job claimed between its check and its send
+still goes, stating the deadline it was rendered with.
+
+The cross-lodge confirm claims the entry in its second and third transactions
+on the row its first one read, `updatedAt` and the deadline included, so a
+restart between the phases would make those claims match nothing and strand
+the entry beside the new booking. Each later phase therefore re-reads the row
+under its locks and, when every other column still equals the first phase's
+read, claims on the two columns the restart writes as they now stand
+(`offerSnapshotAcrossWindowRestart`, `waitlist-offer-epoch.ts`). Any other
+change still fails the claim, as before. The same-lodge confirm and the admin
+force-confirm and return-to-waitlist routes claim inside the transaction that
+re-read the row, so a restart cannot fall between their read and their claim.
+
+Racing the expiry: both take `lock(1)` first and re-read, so they never both
+act on one offer. The expiry selects stale offers after taking it, so a
+restart that committed first leaves nothing stale to revert; an expiry that
+committed first leaves a `WAITLISTED` booking, and the restart's claim is
+lost. The restart leaves at least the waitlist wait
+(`WAITLIST_NOTICE_SWEEP_AFTER_MS`) on the deadline it sends, or sends nothing,
+so the email's row normally exists before the expiry can select the offer.
+What locks cannot close, stated as a limit: the send runs after the restart
+commits, so a confirm or cancel committing in between leaves an offer email
+for an offer that has just moved on, and a send failing before its row leaves
+a restarted offer untold until the next sweep. The waitlist's owed markers themselves join
+the offer pass's and the expiry's transactions under the keys they already
+hold: one primary-key insert each, with `skipDuplicates`, never a caught
+unique-key error. The expiry also reads, through its own client, which lapsed
+offers were never told (three primary-key reads), so a lapse and its marker
+(the member's "offer expired" email, or for an offer never told the officers'
+alert, owner decision D5) are one decision, written in one insert. Forced in both orders against
+PostgreSQL by `waitlist-owed-notices.realdb.test.ts`.
 
 ### Tier 2 — global booking-status / money serialisation
 
@@ -8794,7 +8863,9 @@ A's locked re-read is "A, then the void, then B". B's recount queues on A's
 lock, or, with a pointer naming the note, the void's link write itself queues
 there, on the Payment row and not yet holding the link; either way B sees A's write. On a bank transfer B lowers the total back. On a card the
 ledger is raise-only (`INV-ADDPAY-021`, #1353): A's raise stands, and B raises the
-refund-ledger-divergence alert. The inbound void runs its own recount; the
+refund-ledger-divergence alert, but only as far as Stripe's recorded refunds back
+it. Since #4444 a card recount never rises above them (owner, 23 Nov 2026), so
+with none beyond the ledger A writes nothing and the limit does not arise. The inbound void runs its own recount; the
 Stripe status recorder runs none. The suite pins the void before A's locked
 re-read (A writes nothing, bank and card), a row deactivated there, and the void
 after it: per-refund, pointer-named canonical and card (the void waits on

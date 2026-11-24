@@ -12,20 +12,25 @@ import { CENSUS_TIMEOUT_MS } from "@/test/census-timeout";
  * suite holds that list to the code: it walks `src/` for every production file
  * that names a helper outside a comment, and fails when a file is missing
  * from its group, or sits in the other one. A caller retried by its own next
- * run calls `sendAdminAlertOnceEver` or `sendAdminAlertOnceEverClaim`; one
- * raised only once calls `sendReplayableAdminAlertOnceEver`, so the sweep
- * re-sends its stored alert.
+ * run calls `sendAdminAlertOnceEver`, `sendAdminAlertOnceEverClaim` or the
+ * takeover sequence `sendAdminAlertOnceEverWithTakeover` (itself a helper, so
+ * its callers are listed, not it); one raised only once calls
+ * `sendReplayableAdminAlertOnceEver`, so the sweep re-sends its stored alert.
  * A new caller cannot arrive without someone deciding which it is.
  * Disk-scanning: run by name (`pnpm run test:named`).
  */
 const ROOT = process.cwd();
-const HELPERS = new Set(["src/lib/admin-alert-once.ts", "src/lib/admin-alert-once-replayable.ts"]);
+const HELPERS = new Set([
+  "src/lib/admin-alert-once.ts",
+  "src/lib/admin-alert-once-replayable.ts",
+  "src/lib/admin-alert-once-takeover.ts",
+]);
 const CENSUS = "src/lib/admin-alert-once.ts";
 const CALLER_DIR = "src/lib";
 const RETRIED = "Retried by its next run (cron, or a webhook or request then cron)";
 const REPLAYED = "Raised once; the sweep re-sends its stored alert";
 const NAMES = {
-  [RETRIED]: /\bsendAdminAlertOnceEver(?:Claim)?\b/,
+  [RETRIED]: /\bsendAdminAlertOnceEver(?:Claim|WithTakeover)?\b/,
   [REPLAYED]: /\bsendReplayableAdminAlertOnceEver\b/,
 };
 

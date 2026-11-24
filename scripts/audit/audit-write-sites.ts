@@ -567,6 +567,7 @@ export const AUDIT_WRITE_SITES: Readonly<Record<string, AuditWriteSiteLedgerEntr
   "src/lib/token-email-recovery.ts::reissueNominationRequest#0": {"category":"communication","sink":"logAudit","action":"membership_application.nomination_token_reissued"},
   "src/lib/two-factor-audit.ts::recordTwoFactorMutation#0": {"category":"security","sink":"createAuditLog","action":"(dynamic) params.action"},
   "src/lib/waitlist-cross-lodge.ts::confirmCrossLodgeWaitlistOffer#0": {"category":"booking","sink":"logAudit","action":"waitlist.cross_lodge_offer_confirmed"},
+  "src/lib/waitlist-offer-notices.ts::auditWindowRestart#0": {"category":"booking","sink":"logAudit","action":"waitlist.offer_window_restarted"},
   "src/lib/waitlist.ts::confirmWaitlistOffer#0": {"category":"booking","sink":"logAudit","action":"waitlist.offer_confirmed"},
   "src/lib/waitlist.ts::expireStaleOffers#0": {"category":"booking","sink":"logAudit","action":"waitlist.offer_expired"},
   "src/lib/waitlist.ts::processWaitlistForDates#0": {"category":"booking","sink":"logAudit","action":"waitlist.offer_sent"},

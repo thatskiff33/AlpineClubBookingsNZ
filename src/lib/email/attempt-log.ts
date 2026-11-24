@@ -12,6 +12,15 @@ type EmailAttemptLogResult =
   | { kind: "already_recorded"; emailLogId: string };
 
 /**
+ * The `EmailLog` id of a send that carries an event key: one row per template
+ * and event, so a second send finds it (`already_recorded`). Also what a caller
+ * reads to learn whether that event's email was already recorded (#5433).
+ */
+export function durableEmailLogId(templateName: string, idempotencyKey: string): string {
+  return `email:${templateName}:${idempotencyKey}`;
+}
+
+/**
  * Persist delivery and retry provenance before a provider can receive a message.
  * Logging is best effort unless the event opts into durable idempotency; that
  * event's primary key also serializes concurrent re-drives.
@@ -43,7 +52,7 @@ export async function recordEmailAttempt(params: {
     throw new Error("An email sent under a once-ever claim cannot also carry an event key");
   }
   const durableLogId = idempotencyKey
-    ? `email:${params.templateName}:${idempotencyKey}`
+    ? durableEmailLogId(params.templateName, idempotencyKey)
     : null;
   const data = {
     ...(durableLogId ? { id: durableLogId } : {}),

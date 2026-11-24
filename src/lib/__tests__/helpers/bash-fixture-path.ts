@@ -1,4 +1,5 @@
 import { execFileSync } from "node:child_process";
+import { tmpdir } from "node:os";
 import path from "node:path";
 
 /**
@@ -76,6 +77,25 @@ import path from "node:path";
  * validator invocation that way, and it is the one suite in this family that
  * never showed either failure.
  *
+ * ## Mechanism 3 — the temporary directory is mounted somewhere else
+ *
+ * A relative path is sound only while every directory it climbs through is
+ * where Windows says it is. Git Bash mounts the Windows temporary directory at
+ * `/tmp`, so a shell started inside it does not sit under `AppData/Local`.
+ * Measured on a Windows host (#5407): a Git Bash shell started in
+ * `<temp>/diag-x` reports `/tmp/diag-x`; `cd ..` gives `/tmp`, and `cd ..`
+ * again gives `/`, the Git install directory. A path relative to a fixture
+ * directory that climbs out of the temporary directory to reach the repository
+ * therefore resolves against the wrong tree, and the gate exits 127 with "No
+ * such file or directory" (`first-bootstrap-environment-role.test.ts`, seven
+ * cases, every run). So when `cwd` is inside the temporary directory and the
+ * target is not, the absolute path is translated by the selected bash instead,
+ * as for the cross-drive case. That is right under either bash: `cygpath -u`
+ * names the repository by its drive mount (`/c/…`), and `wslpath -u` by
+ * `/mnt/c/…`, each in its own namespace. A target inside the temporary
+ * directory, or a `cwd` outside it (the repository root, which every other
+ * suite spawns from), keeps the relative form exactly as before.
+ *
  * ## Why this was recorded as something else
  *
  * Both mechanisms are platform-deterministic: they reproduce on a clean tree,
@@ -107,6 +127,7 @@ export function bashFixturePath(
   value: string,
   cwd: string = process.cwd(),
   runner: BashPathTranslatorRunner = runBashPathTranslator,
+  temporaryRoot: string = tmpdir(),
 ): string {
   // POSIX hosts (Linux/CI, macOS): identity. Nothing below can improve a string
   // that is already exactly what bash reads.
@@ -128,10 +149,23 @@ export function bashFixturePath(
     return translateWindowsAbsolutePathForBash(value, cwd, runner);
   }
 
+  // Mechanism 3: a climb out of the temporary directory lands in the wrong tree
+  // under Git Bash, which mounts that directory at `/tmp`.
+  if (isWithin(cwd, temporaryRoot) && !isWithin(value, temporaryRoot)) {
+    return translateWindowsAbsolutePathForBash(value, cwd, runner);
+  }
+
   return relative.split(path.sep).join("/");
 }
 
 type BashPathTranslatorRunner = (command: string, cwd: string) => string;
+
+/** Whether `child` is `parent` or below it (Windows comparison rules). */
+function isWithin(child: string, parent: string): boolean {
+  const relative = path.relative(parent, child);
+  const climbs = relative === ".." || relative.startsWith(`..${path.sep}`);
+  return relative === "" || (!climbs && !path.isAbsolute(relative));
+}
 
 function runBashPathTranslator(command: string, cwd: string): string {
   return execFileSync("bash", ["-c", command], {

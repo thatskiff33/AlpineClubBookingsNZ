@@ -41,6 +41,11 @@ import { prisma } from "@/lib/prisma";
  * send.
  * Never throws; returns whether the claim was kept. `context` is logged with
  * every failure, `label` names the alert in those lines.
+ * An alert raised at most once per WINDOW uses `sendAdminAlertOncePerWindow`
+ * (`admin-alert-window.ts`) instead: there a raised alert holds its window even
+ * when every copy bounced or was withheld, because the next failure inside the
+ * window is reported again; here a claim kept is kept for good, so it is kept
+ * only once a copy was sent or queued.
  */
 export async function sendAdminAlertOnceEver(args: OnceEverAlertArgs): Promise<boolean> {
   const claim = await sendAdminAlertOnceEverClaim(args);
@@ -55,20 +60,26 @@ export async function sendAdminAlertOnceEver(args: OnceEverAlertArgs): Promise<b
  * `admin-alert-once-census.test.ts`: every production caller of the once-ever
  * helpers in `src/lib`, grouped by what sends its alert again once the claim
  * is given back (#5255). A caller retried by its next run calls
- * `sendAdminAlertOnceEver` or `sendAdminAlertOnceEverClaim`; one that raises
- * its alert only once calls `sendReplayableAdminAlertOnceEver`, which stores
- * the alert for the sweep to re-send. Each caller's own docblock says how it
- * runs. A give-back cannot make a sibling send twice: it deletes only a row
- * under this call's own stamp, this call sent nothing, and a sibling that read
- * that row held sent nothing. Limit: two claims for one key in the same
- * millisecond share a stamp (at worst a duplicate). The takeover callers
- * (`admin-alert-once-takeover.ts`) retry until sent and give back their own
- * claims; the past-cut-off step settles its marker only on a kept claim, so a
- * claim the sweep gives back leaves the marker for its next run.
+ * `sendAdminAlertOnceEver`, `sendAdminAlertOnceEverClaim` or the takeover
+ * sequence `sendAdminAlertOnceEverWithTakeover` (`admin-alert-once-takeover.ts`);
+ * one that raises its alert only once calls `sendReplayableAdminAlertOnceEver`,
+ * which stores the alert for the sweep to re-send. Each caller's own docblock
+ * says how it runs. A give-back cannot make a sibling send twice: it deletes
+ * only a row under this call's own stamp, this call sent nothing, and a
+ * sibling that read that row held sent nothing. Limit: two claims for one key
+ * in the same millisecond share a stamp (at worst a duplicate). The takeover
+ * callers settle only on their own kept claim or their own sent marker
+ * (`isSent`), which their send writes once it returns and which is never
+ * marked "no email yet": a claim still awaiting its send has no sent marker,
+ * so it reads as in flight or is taken over, and a claim the sweep gives back
+ * leaves the caller to retry (Stripe's redelivery, the payment recovery cron,
+ * the owed-notice sweep).
  *
  * Retried by its next run (cron, or a webhook or request then cron):
- * - admin-alert-once-takeover.ts
  * - owed-notice/past-cutoff-once.ts
+ * - stripe-dispute.ts
+ * - unrecognised-stripe-payment.ts
+ * - superseded-additional-refund.ts
  * - internet-banking-payment-cron.ts
  * - xero-waiting-invoice-reaper.ts
  * - group-settlement-invoice-alerts.ts

@@ -6,16 +6,19 @@ import {
 } from "@/lib/email-templates/waitlist";
 import { EMAIL_DEFAULT_LODGE_NAME } from "@/lib/email-message-settings";
 import { formatCents as formatMoneyCents } from "@/lib/utils";
-import { sendEmail } from "./core";
+import { sendEmail, type EmailSendOutcome } from "./core";
 import {
   bookingOwnerEmailContext,
   type BookingOwnerEmailSource,
+  type KeyedBookingEmailSource,
 } from "@/lib/booking-email-contract";
 import { renderEmailHtml } from "@/lib/email-theme";
 import { emailCalendarDay, emailClubDateTime } from "@/lib/email-templates-club-time";
 import type { ClubFormat } from "@/lib/club-format";
+import { WAITLIST_OFFER_TEMPLATE_NAME } from "./waitlist-offer-template";
 
 // ---- Waitlist emails ----
+
 
 export async function sendWaitlistConfirmationEmail(
   // Waitlist entry's booking (#2258): a waitlist entry IS a booking row, so the
@@ -58,8 +61,10 @@ export async function sendWaitlistConfirmationEmail(
 
 export async function sendWaitlistOfferEmail(
   // Waitlist entry's booking (#2258): a waitlist entry IS a booking row, so the
-  // per-booking "No emails" switch must be able to withhold these too.
-  bookingContext: BookingOwnerEmailSource,
+  // per-booking "No emails" switch must be able to withhold these too. #5433:
+  // and the offer's event key (`<bookingId>:<offeredAtMs>`), so the member is
+  // never sent the same offer twice, however often the owed notice is sent.
+  bookingContext: KeyedBookingEmailSource,
   email: string,
   firstName: string,
   checkIn: Date,
@@ -86,8 +91,9 @@ export async function sendWaitlistOfferEmail(
   // that figure, so the explanation belongs with it. Null on every other offer,
   // which renders exactly as before.
   subscriptionMemberRateNotice?: string | null,
-) {
-  await sendEmail({
+): Promise<EmailSendOutcome> {
+  // #5433: the core's result, so the owed notice can tell a skipped send.
+  return sendEmail({
     to: email,
     subject: `Spot Available! - ${EMAIL_DEFAULT_LODGE_NAME}`,
     html: await renderEmailHtml(() => waitlistOfferTemplate(
@@ -106,7 +112,7 @@ export async function sendWaitlistOfferEmail(
       bookingContext.bookingId,
       bookingContext.recipientMemberId,
     ),
-    templateName: "waitlist-offer",
+    templateName: WAITLIST_OFFER_TEMPLATE_NAME,
     templateData: {
       firstName,
       checkIn: emailCalendarDay(checkIn),
@@ -124,13 +130,15 @@ export async function sendWaitlistOfferEmail(
         : {}),
     },
     lodgeId,
+    idempotencyKey: bookingContext.idempotencyKey,
   });
 }
 
 export async function sendWaitlistOfferExpiredEmail(
   // Waitlist entry's booking (#2258): a waitlist entry IS a booking row, so the
-  // per-booking "No emails" switch must be able to withhold these too.
-  bookingContext: BookingOwnerEmailSource,
+  // per-booking "No emails" switch must be able to withhold these too. #5433:
+  // and the lapse's event key (`<bookingId>:<expiredAtMs>`), one email per lapse.
+  bookingContext: KeyedBookingEmailSource,
   email: string,
   firstName: string,
   checkIn: Date,
@@ -155,6 +163,7 @@ export async function sendWaitlistOfferExpiredEmail(
       position,
     },
     lodgeId,
+    idempotencyKey: bookingContext.idempotencyKey,
   });
 }
 

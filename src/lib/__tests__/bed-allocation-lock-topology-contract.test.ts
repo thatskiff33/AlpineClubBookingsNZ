@@ -567,11 +567,15 @@ describe("bed allocation lock topology", () => {
     expectInOrder(phaseThree, [
       "pg_advisory_xact_lock(1)",
       "acquireLodgeCapacityLock",
+      // #5433 review A: the entry is re-read under both locks, and only a
+      // window restart since Phase 1 (its deadline and updatedAt) is still
+      // this offer; every other field is still Phase 1's.
+      "offerSnapshotAcrossWindowRestart(tx, entry)",
       "booking.updateMany",
       "status: BookingStatus.WAITLIST_OFFERED",
-      "updatedAt: entry.updatedAt",
+      "updatedAt: snapshot.updatedAt",
       "waitlistOfferedAt: entry.waitlistOfferedAt",
-      "waitlistOfferExpiresAt: entry.waitlistOfferExpiresAt",
+      "waitlistOfferExpiresAt: snapshot.waitlistOfferExpiresAt",
       "waitlistOfferedLodgeId: entry.waitlistOfferedLodgeId",
       "waitlistOfferedPriceCents: entry.waitlistOfferedPriceCents",
       "cancelled.count === 0",

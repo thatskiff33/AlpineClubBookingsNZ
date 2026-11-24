@@ -18,7 +18,7 @@ import {
   resolveBookingEmailGate,
   type EmailBookingContext,
 } from "@/lib/booking-email-suppression";
-import { isPlaceholderContactEmail } from "@/lib/placeholder-contact-email";
+import { canReceiveEmail } from "@/lib/placeholder-contact-email";
 import { resolveBookingEmailLink } from "@/lib/booking-email-authority";
 import {
   finalizeBookingEmailHtml,
@@ -324,11 +324,11 @@ export async function sendEmail({
   // thrown, because nearly every booking send is an un-awaited `.catch(log)`.
   // `.invalid` is a walk-in placeholder owner (#1935), stored so `Member.email`
   // stays non-nullable; that skip ignores any per-booking notify choice.
-  if (normalizedRecipient === "") {
-    logger.warn({ templateName, bookingContext }, "Skipped email with no recipient address (#3369)");
-    return { status: "skipped_no_recipient", emailLogId: null, reason: "no_recipient" };
-  }
-  if (isPlaceholderContactEmail(normalizedRecipient)) {
+  if (!canReceiveEmail(normalizedRecipient)) {
+    if (normalizedRecipient === "") {
+      logger.warn({ templateName, bookingContext }, "Skipped email with no recipient address (#3369)");
+      return { status: "skipped_no_recipient", emailLogId: null, reason: "no_recipient" };
+    }
     logger.info({ templateName }, "Skipped email to walk-in placeholder recipient");
     return { status: "skipped_placeholder_recipient", emailLogId: null, reason: "placeholder_recipient" };
   }

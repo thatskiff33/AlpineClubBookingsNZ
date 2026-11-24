@@ -153,6 +153,7 @@ export const REGISTRY_KEY_RENDERERS: Record<string, string> = {
   "admin-split-settlement-cancelled": "adminSplitSettlementCancelledTemplate",
   "admin-split-settlement-unpaid": "adminSplitSettlementUnpaidTemplate",
   "admin-waitlist-offer": "adminWaitlistOfferTemplate",
+  "admin-waitlist-notice-unsent": "adminWaitlistNoticeUnsentTemplate",
   "admin-whole-lodge-manual-invoice": "adminWholeLodgeManualInvoiceTemplate",
   // admin-alerts-finance
   "admin-credit-sync-drift": "adminCreditSyncDriftTemplate",
