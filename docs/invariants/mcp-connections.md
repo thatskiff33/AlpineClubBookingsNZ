@@ -162,10 +162,9 @@ only the rules.
   `public-visitor`, `website-flow`, `access-secrets`, `site-helper`. A member
   route's reason names its exact method and path. A permanent exclusion beats
   a catalogue entry.
-- **A `not-yet:` reason names the follow-on task** from `MCP_NOT_YET_TASKS`
+- **A `not-yet:` reason names the officer stage** from `MCP_NOT_YET_TASKS`
   that brings the route in, adding its entries and removing its rule in
-  one change. A route in an undecided area stays unclassified and fails the
-  census.
+  one change. No member route has one; an undecided route fails the census.
 - **The catalogue adds no behaviour or permission.** An action's request
   schemas and its `returns` shape are its route's, imported from
   lib modules ([`connection-shapes.ts`](../../src/lib/connection-shapes.ts)
