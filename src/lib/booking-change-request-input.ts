@@ -11,6 +11,7 @@ import {
   requestedDatesIgnoredByNightsRefusal,
   type ChangeRequestAddGuest,
 } from "@/lib/booking-change-request-guests";
+import { changeRequestPromoChangeSchema } from "@/lib/booking-change-request-promo";
 import { calendarDateOfDateOnlyInstant, dateOnlyInstantOf, parseCalendarDate } from "@/lib/club-time";
 import type { LiveGuestStayRow } from "@/lib/booking-modification-stay-ranges";
 import { storedDateOnly } from "@/lib/stored-calendar-day";
@@ -27,6 +28,33 @@ export const changeRequestDeltaSchema = z.object({
 
 /** The merged editor-and-card proposal, as both routes parse it. */
 export type ChangeRequestDelta = z.infer<typeof changeRequestDeltaSchema>;
+
+/**
+ * `POST /api/bookings/[id]/change-requests` (ALP-794, `INV-SSOT`): the change,
+ * the member's note to the officer and, #4533, an officer's promo correction
+ * of a finished stay (Edit Booking).
+ */
+export const changeRequestCreateSchema = changeRequestDeltaSchema.extend({
+  reason: z.string().max(2000).optional(),
+  promoChange: changeRequestPromoChangeSchema.optional(),
+});
+
+/**
+ * What the AI app action `request_booking_change` offers: the member's own
+ * request, without the officer's promo correction, which the route refuses a
+ * connection in any case.
+ */
+export const changeRequestConnectionCreateSchema = changeRequestCreateSchema.omit({ promoChange: true });
+
+/**
+ * `POST /api/bookings/[id]/change-requests/quote` (#4030 Part A): the guests a
+ * request card adds, priced inside the whole proposal; only they are priced,
+ * the rest of the proposal is validated.
+ */
+export const changeRequestEstimateSchema = z.object({
+  addGuests: changeRequestAddGuestsSchema.nonempty(),
+  editorChanges: changeRequestDeltaSchema.optional(),
+});
 
 /**
  * Preserve editor-first ordering at quote, estimate and submission
