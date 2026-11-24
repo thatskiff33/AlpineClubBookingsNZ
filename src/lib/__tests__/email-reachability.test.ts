@@ -7,8 +7,9 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const suppression = vi.hoisted(() => ({ read: vi.fn() }));
+const log = vi.hoisted(() => ({ info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() }));
 vi.mock("@/lib/email-suppression", () => ({ getActiveEmailSuppression: suppression.read }));
-vi.mock("@/lib/logger", () => ({ default: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() } }));
+vi.mock("@/lib/logger", () => ({ default: log }));
 
 import { emailReachability } from "@/lib/email-reachability";
 import { PLACEHOLDER_CONTACT_EMAIL_DOMAIN } from "@/lib/placeholder-contact-email";
@@ -56,8 +57,11 @@ describe("canReceiveChaseEmail, the additional-payment chase's use of it", () =>
     await expect(canReceiveChaseEmail(email, "booking1")).resolves.toBe(answer);
   });
 
-  it("skips this pass, as before, when the suppression list cannot be read", async () => {
-    suppression.read.mockRejectedValue(new Error("db down"));
+  it("skips this pass, as before, when the suppression list cannot be read, on one log line carrying the error and the booking (round 5, F6)", async () => {
+    const failure = new Error("db down");
+    suppression.read.mockRejectedValue(failure);
     await expect(canReceiveChaseEmail("ada@example.test", "booking1")).resolves.toBe(false);
+    expect(log.error).toHaveBeenCalledTimes(1);
+    expect(log.error).toHaveBeenCalledWith(expect.objectContaining({ err: failure, bookingId: "booking1" }), expect.any(String));
   });
 });

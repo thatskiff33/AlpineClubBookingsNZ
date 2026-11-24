@@ -200,6 +200,17 @@ describe("a silenced booking sitting on a LIVE offer needs operator action (#225
   });
 });
 
+describe("the board ties an email row to its offer by the shared lookback (#5433 round 5, F2)", () => {
+  it.each([
+    ["one minute before the offer (inside the clock tolerance)", 60_000, "delivered"],
+    ["three minutes before the offer (an earlier offer's)", 3 * 60_000, "missing"],
+  ])("reads a row dated %s", async (_case, before, retryState) => {
+    mocks.emailLogFindMany.mockResolvedValue([emailLog({ createdAt: new Date(OFFERED_AT.getTime() - before) })]);
+    const delivery = (await getWaitlistOfferEmailDeliveries([booking({ offerExpiresAt: liveOfferExpiry() })])).get("bk_1")!;
+    expect(delivery.retryState).toBe(retryState);
+  });
+});
+
 describe("the board reads the offer email's row by the owed notices' rule (#5433 round 2, item 5c)", () => {
   it.each([
     ["a non-production copy's withheld email is held back, needing nothing", { status: "SKIPPED_NON_PRODUCTION", attempts: 1 }, "withheld_non_production", false],
