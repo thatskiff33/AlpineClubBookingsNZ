@@ -5,6 +5,4 @@
  * own id uses `bookingIdParamsSchema`. The dispatcher also holds every path
  * argument to a plain record id before it is sent.
  */
-import { idParamsSchema } from "@/lib/id-params-schema";
-
-export const adminRecordIdParamsSchema = idParamsSchema;
+export { routeIdParamsSchema as adminRecordIdParamsSchema } from "@/lib/route-id-params";

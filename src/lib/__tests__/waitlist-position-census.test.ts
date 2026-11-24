@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 import { isConnectionShapeModule } from "./support/connection-shape-modules";
 import { stripComments } from "./support/strip-comments";
 import { moduleImports, productionSourceFiles } from "./support/static-import-graph";
+import { CENSUS_TIMEOUT_MS } from "@/test/census-timeout";
 
 // #5402 (`INV-CAP-041`): a waitlist position is read from the live queue by
 // `src/lib/waitlist-queue.ts`, and nothing stores it. Five places used to count
@@ -83,7 +84,7 @@ function positionKeyUses(file: string, code: string): string[] {
     });
 }
 
-describe("waitlist position census (#5402, INV-CAP-041)", () => {
+describe("waitlist position census (#5402, INV-CAP-041)", { timeout: CENSUS_TIMEOUT_MS }, () => {
   it("reads the production tree", () => {
     expect(sources.length).toBeGreaterThan(500);
     expect(sources.some(({ file }) => file === QUEUE_MODULE)).toBe(true);

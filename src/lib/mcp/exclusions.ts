@@ -63,12 +63,11 @@ type McpNotYetAdminArea = Exclude<AdminPermissionArea, McpDecidedAdminArea>;
 /**
  * The task that will bring each remaining group of routes into the catalogue.
  * The member keys are the follow-ons ALP-718 split its member routes into,
- * less those that have shipped (ALP-795, family and membership); the rest are
- * the officer areas not yet decided.
+ * less those that have shipped (ALP-795, family and membership; ALP-796,
+ * lodge life); the rest are the officer areas not yet decided.
  */
 export const MCP_NOT_YET_TASKS = {
   memberBookings: "ALP-794",
-  memberLodgeLife: "ALP-796",
   memberGroupsAndWholeLodge: "ALP-797",
   membership: "ALP-720",
   finance: "ALP-721",
@@ -84,7 +83,6 @@ function isNotYetAdminArea(area: AdminPermissionArea): area is McpNotYetAdminAre
 
 type MemberNotYetGroup =
   | "memberBookings"
-  | "memberLodgeLife"
   | "memberGroupsAndWholeLodge";
 
 export type McpExclusionReason = McpPermanentExclusionReason | `not-yet:${string}`;
@@ -157,6 +155,8 @@ const PERMANENT_ROUTES: ReadonlyArray<{
       "POST /api/notices/[id]/acknowledge",
       "POST /api/member/onboarding/confirm",
       "POST /api/member/request-deletion",
+      // Signing off another member's induction is the signer's own declaration.
+      "POST /api/inductions/[id]/sign-off",
       // ALP-795: joining a family group, confirming a partnership and asking
       // for memberships to be cancelled are the member's own decisions.
       "PUT /api/members/family/invitations",
@@ -184,13 +184,24 @@ const PERMANENT_ROUTES: ReadonlyArray<{
   // app could only overwrite or clear what the kitchen relies on unseen.
   { reason: "unread-value", routes: ["PATCH /api/admin/bookings/[id]/guest-dietary"] },
   { reason: "public-visitor", routes: ["POST /api/contact", "POST /api/applications"] },
-  // The nominee confirms through a link emailed to them, as does each member
-  // named in a membership cancellation request.
   {
     reason: "needs-browser",
     routes: [
+      // The nominee confirms through a link emailed to them, as does each member
+      // named in a membership cancellation request.
       "POST /api/applications/nominate",
       "POST /api/member/membership-cancellation-requests/confirm",
+      // The chore roster is opened from the link in the roster email.
+      "GET /api/chores/[token]",
+      "PUT /api/chores/[token]",
+      // Message board pictures are files uploaded and shown in the browser.
+      "POST /api/club-posts/images",
+      "GET /api/club-posts/images/[publicId]",
+      // A problem report carries the page it was sent from and a screenshot.
+      "POST /api/issue-reports",
+      // The maintenance form opened from the lodge's QR code.
+      "GET /api/lodge-maintenance/[token]",
+      "POST /api/lodge-maintenance/[token]",
     ],
   },
 ];
@@ -207,17 +218,6 @@ const MEMBER_NOT_YET_PREFIXES: Readonly<Record<MemberNotYetGroup, readonly strin
     "/api/booking-policies",
     "/api/bookings",
     "/api/promo-codes",
-  ],
-  memberLodgeLife: [
-    "/api/calendar",
-    "/api/chores",
-    "/api/club-posts",
-    "/api/food-orders",
-    "/api/inductions",
-    "/api/issue-reports",
-    "/api/lodge-maintenance",
-    "/api/maintenance-reports",
-    "/api/work-parties",
   ],
   memberGroupsAndWholeLodge: [
     "/api/booking-requests",
@@ -238,6 +238,37 @@ const FINANCE_NOT_YET_PREFIXES: readonly string[] = ["/api/finance"];
  */
 export const MCP_FINANCE_NOT_YET_ROUTES: readonly string[] = [
   "POST /api/admin/bookings/[id]/additional-payment/withdraw",
+];
+
+/**
+ * Officer powers on lodge-life routes outside `/api/admin` (ALP-796), by
+ * exact method and path, all for the lodge officer stage: editing the events
+ * calendar and minting a meeting's host link (Lodge edit,
+ * `hasCalendarManageViaAdmin`, as `/admin/calendar` is a Lodge page), pricing
+ * and receiving food orders and printing the chore roster. Their member
+ * neighbours are actions or permanent exclusions.
+ */
+const OFFICER_NOT_YET_ROUTES: Readonly<Partial<Record<McpNotYetAdminArea, readonly string[]>>> = {
+  lodge: [
+    "POST /api/calendar/events",
+    "PATCH /api/calendar/events/[id]",
+    "DELETE /api/calendar/events/[id]",
+    "POST /api/calendar/events/[id]/join",
+    "PATCH /api/food-orders/[id]/price",
+    "POST /api/food-orders/[id]/received",
+    "GET /api/chores/roster/[date]/print",
+  ],
+};
+
+/**
+ * Every exact `METHOD /api/path` an exclusion names, permanent or officer
+ * not-yet. The census checks each against a real route file and method, so an
+ * entry left behind by a moved or deleted route fails instead of lingering.
+ */
+export const MCP_EXACT_EXCLUDED_ROUTES: readonly string[] = [
+  ...PERMANENT_ROUTES.flatMap((rule) => rule.routes),
+  ...Object.values(OFFICER_NOT_YET_ROUTES).flatMap((routes) => routes ?? []),
+  ...MCP_FINANCE_NOT_YET_ROUTES,
 ];
 
 function underPrefix(path: string, prefix: string): boolean {
@@ -299,6 +330,14 @@ export function classifyMcpRoute(file: string, method: string): McpRouteClassifi
   }
   if (FINANCE_NOT_YET_PREFIXES.some((prefix) => underPrefix(path, prefix))) {
     return { kind: "excluded", reason: `not-yet:${MCP_NOT_YET_TASKS.finance}` };
+  }
+  const route = `${method} ${path}`;
+  for (const [area, routes] of Object.entries(OFFICER_NOT_YET_ROUTES) as Array<
+    [McpNotYetAdminArea, readonly string[]]
+  >) {
+    if (routes.includes(route)) {
+      return { kind: "excluded", reason: `not-yet:${MCP_NOT_YET_TASKS[area]}` };
+    }
   }
   for (const [group, prefixes] of Object.entries(MEMBER_NOT_YET_PREFIXES) as Array<
     [MemberNotYetGroup, readonly string[]]

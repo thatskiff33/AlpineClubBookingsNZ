@@ -10,7 +10,11 @@ import {
   SHORT_BOOKING_ID_LENGTH,
   storedShortBookingId,
 } from "@/lib/booking-reference";
-import { buildBookingAppliedCreditDescription } from "@/lib/member-credit-booking-rows";
+import {
+  buildBookingAppliedCreditDescription,
+  buildElectionAppliedCreditDescription,
+  isBookingAppliedCreditDescription,
+} from "@/lib/member-credit-booking-rows";
 
 // #5407 item 36: the stored short forms of a booking id are written into Xero,
 // the credit ledger and members' bank references, and some are matched later.
@@ -57,6 +61,23 @@ describe("the applied-credit description writer and repair share", () => {
   it("is the stored short id after a fixed phrase", () => {
     expect(buildBookingAppliedCreditDescription(CUID)).toBe("Applied to booking cmb7x2k9");
     expect(buildBookingAppliedCreditDescription("bk-1")).toBe("Applied to booking bk-1");
+  });
+
+  it("is followed by the price source in the credit election's form, byte for byte as before (#5407 item 40)", () => {
+    expect(buildElectionAppliedCreditDescription(CUID, { source: "STORED", reason: "matched" })).toBe(
+      "Applied to booking cmb7x2k9; price source STORED (matched)",
+    );
+  });
+
+  it.each([
+    ["the built description", "Applied to booking cmb7x2k9", true],
+    ["the election's form", "Applied to booking cmb7x2k9; price source STORED (matched)", true],
+    ["another booking's", "Applied to booking cmb7x2k8", false],
+    ["another booking's election form", "Applied to booking cmb7x2k8; price source STORED (matched)", false],
+    ["the built text run on without the separator", "Applied to booking cmb7x2k9x", false],
+    ["free text", "Automatic adjustment: credit no longer applied", false],
+  ])("counts %s as this booking's applied-credit description: %s", (_label, description, expected) => {
+    expect(isBookingAppliedCreditDescription(description, CUID)).toBe(expected);
   });
 });
 

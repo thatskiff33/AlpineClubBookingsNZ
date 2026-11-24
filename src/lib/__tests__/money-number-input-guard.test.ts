@@ -9,6 +9,7 @@ import {
   scanSourceForMoneyNumberInputs,
   scanTreeForMoneyNumberInputs,
 } from "./support/money-number-input-scan";
+import { CENSUS_TIMEOUT_MS } from "@/test/census-timeout";
 
 /*
   #2932 — the mechanical guard for `INV-MONEY-003`'s input half.
@@ -46,8 +47,9 @@ import {
   costs a few seconds on its own and more under parallel load. Vitest's 5000 ms
   default expires there, so the budget is stated rather than left to luck - the
   same reasoning as `money-cents-guard.test.ts`, which pays an ESLint bootstrap.
+  It is the shared whole-tree budget from `src/test/census-timeout.ts` (#5439).
 */
-vi.setConfig({ testTimeout: 60_000 });
+vi.setConfig({ testTimeout: CENSUS_TIMEOUT_MS });
 
 /**
  * A money box, spelled the wrong way. The shape a future change would add.

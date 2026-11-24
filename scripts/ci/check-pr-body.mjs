@@ -6,8 +6,9 @@
  *   pnpm run pr:check path/to/body.md --base origin/main
  *
  * `verify` runs gates that read the PR body rather than the code: the
- * concurrency declaration and the changelog fragment, and (#4463) the plan
- * deviation section and the soft size limit. Only the size check reports WARN
+ * concurrency declaration and the changelog fragment, (#4463) the plan
+ * deviation section and the soft size limit, and (#5379) the after-deploy
+ * steps. Only the size check reports WARN
  * where CI prints a `::warning::`. All fetch the live body
  * from GitHub, so before this script the only way to test a body was to open or
  * edit a PR and wait ~15 minutes for the answer — one field per attempt, because
@@ -30,6 +31,7 @@ import {
   validateConcurrencyDeclaration,
 } from "./check-pr-concurrency-declaration.mjs";
 import { validateChangelogFragment } from "./check-pr-changelog-fragment.mjs";
+import { validateDeployFragment } from "./check-pr-deploy-fragment.mjs";
 import { planDeviationVerdict } from "./check-pr-plan-deviation.mjs";
 import { measurePrSize, prSizeVerdict } from "./check-pr-size.mjs";
 import { gitDiffChangedFiles, parseNameStatus } from "./pr-body.mjs";
@@ -158,6 +160,12 @@ for (const [label, run] of [
       }
       return validateChangelogFragment(body, changes);
     },
+  ],
+  [
+    "After-deploy steps",
+    // #5379: the same refusal as the changelog gate on an unknown diff. The
+    // validator refuses `null` itself, as CI does with no PR_BASE_SHA/PR_HEAD_SHA.
+    () => validateDeployFragment(body, changes, { contentsOf }),
   ],
 ]) {
   try {

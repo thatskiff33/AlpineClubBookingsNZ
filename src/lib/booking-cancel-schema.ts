@@ -1,7 +1,6 @@
 import { z } from "zod";
 
 import { hostingCoverageOverrideSchema } from "@/lib/adult-member-hosting-same-owner";
-import { idParamsSchema } from "@/lib/id-params-schema";
 
 /**
  * The body of `POST /api/bookings/[id]/cancel`.
@@ -28,4 +27,4 @@ export const cancelBookingMutationSchema = z.object({
  * The `[id]` segment of the booking routes (`/api/bookings/[id]` and the
  * routes under it), shared with the catalogue for the same reason.
  */
-export const bookingIdParamsSchema = idParamsSchema;
+export { routeIdParamsSchema as bookingIdParamsSchema } from "@/lib/route-id-params";

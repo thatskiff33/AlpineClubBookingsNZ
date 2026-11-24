@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
 import { stripCssComments } from "./support/strip-comments";
+import { CENSUS_TIMEOUT_MS } from "@/test/census-timeout";
 
 // #2146 — printing a finance/admin report while the app is in dark mode used to
 // produce a blank-looking PDF.
@@ -831,7 +832,7 @@ describe("#2146 no literal-palette dark: utility on a printable surface", () => 
     expect(stale, `Remove these stale entries:\n${stale.join("\n")}`).toEqual(
       [],
     );
-  });
+  }, CENSUS_TIMEOUT_MS);
 });
 
 // COVERAGE LIMIT, stated plainly because the Download PDF button is the one

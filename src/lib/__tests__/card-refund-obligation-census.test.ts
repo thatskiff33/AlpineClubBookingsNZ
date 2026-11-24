@@ -12,6 +12,7 @@ import { describe, expect, it } from "vitest";
 import { balancedBrackets } from "./support/balanced-brackets";
 import { productionSourceFiles } from "./support/prisma-delegate-read-scan";
 import { blankLiterals } from "./support/strip-comments";
+import { CENSUS_TIMEOUT_MS } from "@/test/census-timeout";
 
 const ROOT = process.cwd();
 const CALL = /\brefundPaymentTransactions\s*\(/g;
@@ -78,5 +79,5 @@ describe("every card refund sender names the debt its slices pay (#4516)", () =>
       return [[file, { withCardRefund, withoutCardRefund: found.length - withCardRefund }] as const];
     });
     expect(Object.fromEntries(sites), "an edit posts its lines without its card refund: its refund would post unapplied").toEqual(MODIFICATION_LINE_SITES);
-  });
+  }, CENSUS_TIMEOUT_MS);
 });

@@ -6,6 +6,7 @@ import { describe, expect, it } from "vitest";
 // prose with its own copy goes falsely green when the copy under-reports, and
 // this file's own docblocks quote the defect it looks for.
 import { stripComments } from "./support/strip-comments";
+import { CENSUS_TIMEOUT_MS } from "@/test/census-timeout";
 
 /**
  * The bounded census behind #2981: every credential-bearing input rendered on a
@@ -336,7 +337,7 @@ describe("Raw-CSS surfaces: credential inputs must not reflect the secret (#2981
     // whether it is a fourth SINK — in which case RAW_CSS_SINKS and the surfaces
     // the census walks both have to grow.
     expect(referencing).toEqual(Object.keys(CLUB_THEME_CSS_REFERENCES).sort());
-  });
+  }, CENSUS_TIMEOUT_MS);
 
   it("resolves the website chrome's surfaces from the tree", () => {
     // A new Raw-CSS route group is censused automatically, but it still has to

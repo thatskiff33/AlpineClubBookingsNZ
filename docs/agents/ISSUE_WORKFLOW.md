@@ -47,9 +47,8 @@ not apply is left out, not padded.
 8. **Acceptance criteria, required tests, validation commands, rollout, and
    residual-risk reporting**, as applicable.
 
-None of this makes an issue vaguer for the agent that implements it. The
-implementation brief and the acceptance sections are the same contract as
-before, and they carry the fields a Codex-ready issue has always needed:
+None of this makes an issue vaguer for its implementing agent. The brief and
+acceptance sections carry the fields a Codex-ready issue has always needed:
 
 - Workstream
 - Risk
@@ -72,8 +71,7 @@ Use the internal `.github/ISSUE_TEMPLATE/internal_codex_task.yml` template for
 implementation issues and the internal
 `.github/ISSUE_TEMPLATE/internal_codex_finding.yml` template for review findings
 that still need triage or splitting. The task form asks for the sections above
-in this order, so filling it in from the top produces a body that reads to a
-person and still briefs an agent.
+in this order.
 
 **A finding that touches a payment instrument, invoice, refund or credit says
 what happens to the money, not only to the row** — the finding form's required
@@ -104,6 +102,10 @@ verbatim with values on the label's line.
 [The diff decides](../../CONTRIBUTING.md#branch-protection) when the changelog
 and `## Concurrency And Lock Impact` sections are required, but fill the whole
 template regardless. `Closes #NNN` works only in the PR description.
+
+Before hand-over, the PR's author, human or agent, writes each step to do after
+deploy as a [`.deploy.md` fragment](../../changelog.d/README.md#after-deploy-steps-the-deploymd-suffix)
+in the same PR (#5379).
 
 ### Plan deviation
 

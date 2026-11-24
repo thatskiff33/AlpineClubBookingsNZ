@@ -20,6 +20,7 @@ import {
   type BookingMoneyReconciliationProjection,
   type BookingMoneyReconciliationReason,
 } from "@/lib/booking-money-reconciliation";
+import { CENSUS_TIMEOUT_MS } from "@/test/census-timeout";
 
 const REVIEWED_WRITERS = [
   "e2e/setup/seed-second-lodge.ts|booking|create,deleteMany,update|discountCents,finalPriceCents,promoAdjustmentCents,totalPriceCents|3",
@@ -397,7 +398,7 @@ function mechanicallyDerivedWriterProofs(
   ];
 }
 
-describe("INV-MONEY-031 booking money writer census", () => {
+describe("INV-MONEY-031 booking money writer census", { timeout: CENSUS_TIMEOUT_MS }, () => {
   it("discovers direct, variable-backed, mutable-array, bracket and raw-SQL writers", () => {
     expect(
       scanBookingMoneyWriterSites(

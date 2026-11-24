@@ -31,7 +31,12 @@
  *   4. Deletes the changelog fragments it consumed and committed, clean
  *      `size-allowances.d/*.md` files made inert by their merge to main.
  *      Untracked or locally edited allowance files are never deleted.
- *   5. Prints exactly what it did,
+ *   5. Validates every `changelog.d/*.deploy.md` after-deploy step (#5379)
+ *      before anything is written, and refuses on a malformed one. Those are
+ *      never changelog entries: `release:cut prepare` files them in the
+ *      release documents and has this compile delete them
+ *      (`consumeDeployFragments`); the plain CLI leaves them in place.
+ *   6. Prints exactly what it did,
  *      including a loud warning for anything left under `## Unreleased` that is
  *      neither the note nor an entry.
  *
@@ -43,6 +48,7 @@ import path from "node:path";
 import process from "node:process";
 import { execFileSync } from "node:child_process";
 import { ALLOWANCE_DIR, isReservedAllowanceName, isSafeAllowanceName } from "../lib/allowance-dir.mjs";
+import { deployFragmentProblems, isDeployFragmentName, parseDeployFragment } from "../lib/deploy-fragments.mjs";
 import { isMainModule } from "../lib/is-main-module.mjs";
 import { FRAGMENTS_DIRNAME, rebaseFragmentLinks } from "./fragment-links.mjs";
 
@@ -61,9 +67,14 @@ const RESERVED_FRAGMENT_NAMES = new Set(["readme.md", ".gitkeep"]);
 export const MAIN_REF = "origin/main";
 const MERGED_ALLOWANCE_REF = MAIN_REF;
 
-/** Whether a `changelog.d/` filename is a compilable fragment (not README.md or .gitkeep). */
+/**
+ * Whether a `changelog.d/` filename is a compilable changelog fragment: not
+ * README.md or .gitkeep, and not an after-deploy step (`*.deploy.md`, #5379),
+ * which `readDeployFragments` reads instead.
+ */
 export function isFragmentName(name) {
-  return name.toLowerCase().endsWith(".md") && !RESERVED_FRAGMENT_NAMES.has(name.toLowerCase());
+  const lower = name.toLowerCase();
+  return lower.endsWith(".md") && !RESERVED_FRAGMENT_NAMES.has(lower) && !isDeployFragmentName(lower);
 }
 
 const VERSION_PATTERN = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.]+)?$/;
@@ -227,6 +238,45 @@ export function readFragments(dir) {
         body: bytes.toString("utf8").replace(/\r\n/g, "\n"),
       };
     });
+}
+
+/**
+ * Every after-deploy step fragment in `dir` (#5379), in `compareFragmentNames`
+ * order, as `{ fragments, problems }`: each fragment is `{ name, bytes, step }`
+ * with `step` from `parseDeployFragment` (`null` when malformed), and
+ * `problems` names every malformed one, one line each. Reading never refuses;
+ * the callers do, before they write anything.
+ */
+export function readDeployFragments(dir) {
+  if (!fs.existsSync(dir)) return { fragments: [], problems: [] };
+  const fragments = [];
+  const problems = [];
+  const names = fs
+    .readdirSync(dir, { withFileTypes: true })
+    .filter((entry) => isDeployFragmentName(entry.name))
+    .map((entry) => {
+      if (!entry.isFile()) problems.push(`${FRAGMENTS_DIRNAME}/${entry.name}: it must be a regular file.`);
+      return entry;
+    })
+    .filter((entry) => entry.isFile())
+    .map((entry) => entry.name)
+    .sort(compareFragmentNames);
+  for (const name of names) {
+    const bytes = fs.readFileSync(path.join(dir, name));
+    const text = bytes.toString("utf8");
+    const found = deployFragmentProblems(name, text);
+    if (found.length > 0) problems.push(`${FRAGMENTS_DIRNAME}/${name}: ${found.join("; ")}.`);
+    fragments.push({ name, bytes, step: found.length > 0 ? null : parseDeployFragment(name, text) });
+  }
+  return { fragments, problems };
+}
+
+/** The refusal for malformed after-deploy step fragments, naming each one. */
+export function deployFragmentRefusal(problems) {
+  return (
+    `${problems.length} after-deploy step fragment(s) in ${FRAGMENTS_DIRNAME}/ are malformed ` +
+    `(${FRAGMENTS_DIRNAME}/README.md, "After-deploy steps"):\n${problems.map((problem) => `  - ${problem}`).join("\n")}`
+  );
 }
 
 /**
@@ -487,6 +537,7 @@ export function compileChangelog({
   date = releaseDateToday(),
   dryRun = false,
   append = false,
+  consumeDeployFragments = false,
   log = console.log,
   removeFile = fs.rmSync,
   beforeApplySnapshot = () => {},
@@ -515,6 +566,14 @@ export function compileChangelog({
   }
   const target = append ? existing.heading : releaseHeading(version, date);
 
+  // Before anything else that could write: a malformed after-deploy step
+  // refuses the compile, in a dry run too, so no release is cut without it.
+  const deploy = readDeployFragments(fragmentsDir);
+  if (deploy.problems.length > 0) throw new Error(deployFragmentRefusal(deploy.problems));
+  const deploySteps = deploy.fragments.map((fragment) => fragment.step);
+  const deployNames = deploy.fragments.map((fragment) => fragment.name);
+  const consumed = consumeDeployFragments ? deploy.fragments : [];
+
   const fragments = readFragments(fragmentsDir);
   const composed = composeChangelog({ changelog, version, date, fragments, append });
 
@@ -536,20 +595,28 @@ export function compileChangelog({
     log("");
   }
 
-  if (fragments.length === 0 && !composed.foldedLegacyEntries) {
+  // Only a fold that consumes after-deploy steps writes without entries; it
+  // then deletes them and leaves CHANGELOG.md as it is.
+  const hasEntries = fragments.length > 0 || composed.foldedLegacyEntries;
+  if (!hasEntries && consumed.length === 0) {
     log(
       `Nothing to compile: ${FRAGMENTS_DIRNAME}/ holds no fragments and "## Unreleased" has no ` +
         "entries. CHANGELOG.md was left unchanged.",
     );
     log("  Any spent allowance fragments remain until a release is compiled.");
-    return { written: false, version, date, fragments: [], retiredAllowances: [], foldedLegacyEntries: false };
+    logDeployFragments({ log, names: deployNames, consumed: false, dryRun });
+    return { written: false, version, date, fragments: [], retiredAllowances: [], foldedLegacyEntries: false, deploySteps };
   }
 
-  const retiredAllowances = retiredAllowancePaths(repoRoot);
+  const retiredAllowances = hasEntries ? retiredAllowancePaths(repoRoot) : [];
   const names = fragments.map((fragment) => fragment.name);
   if (dryRun) {
     log(`  Source is local ${MERGED_ALLOWANCE_REF}; refresh it before release prep.`);
-    log(`[dry run] Would ${append ? "append to" : "add"} "${target}" ${append ? "in" : "to"} CHANGELOG.md with:`);
+    log(
+      hasEntries
+        ? `[dry run] Would ${append ? "append to" : "add"} "${target}" ${append ? "in" : "to"} CHANGELOG.md with:`
+        : "[dry run] Would leave CHANGELOG.md unchanged (no entries) and:",
+    );
     if (composed.restoredPointerNote) {
       log('  - a restored changelog.d pointer note under "## Unreleased" (it is missing)');
     }
@@ -562,8 +629,9 @@ export function compileChangelog({
     for (const relative of retiredAllowances) {
       log(`  - ${relative} (spent allowance; would be deleted)`);
     }
+    logDeployFragments({ log, names: deployNames, consumed: consumed.length > 0, dryRun });
     log("[dry run] No files were changed.");
-    return { written: false, version, date, fragments: names, retiredAllowances, ...composed };
+    return { written: false, version, date, fragments: names, retiredAllowances, deploySteps, ...composed };
   }
 
   // Snapshot every planned deletion before the first write. An ordinary I/O
@@ -572,9 +640,12 @@ export function compileChangelog({
   beforeApplySnapshot(); // deterministic race hook in fixture tests; no-op in the CLI
   const removalPaths = [
     ...names.map((name) => path.join(fragmentsDir, name)),
+    ...consumed.map(({ name }) => path.join(fragmentsDir, name)),
     ...retiredAllowances.map((relative) => path.join(repoRoot, relative)),
   ];
-  const fragmentBytes = new Map(fragments.map(({ name, bytes }) => [path.join(fragmentsDir, name), bytes]));
+  const fragmentBytes = new Map(
+    [...fragments, ...consumed].map(({ name, bytes }) => [path.join(fragmentsDir, name), bytes]),
+  );
   const originals = removalPaths.map((file) => {
     const stat = fs.lstatSync(file);
     if (!stat.isFile()) throw new Error(`Release fragment must be a regular file: ${file}`);
@@ -599,7 +670,7 @@ export function compileChangelog({
   }
 
   try {
-    fs.writeFileSync(changelogPath, composed.changelog);
+    if (hasEntries) fs.writeFileSync(changelogPath, composed.changelog);
     for (const { file, bytes } of originals) {
       const current = fs.lstatSync(file, { throwIfNoEntry: false });
       if (!current?.isFile() || !fs.readFileSync(file).equals(bytes)) {
@@ -655,7 +726,7 @@ export function compileChangelog({
   }
 
   log(`  Source was local ${MERGED_ALLOWANCE_REF}; it must be refreshed before release prep.`);
-  log(`${append ? "Appended to" : "Added"} "${target}" ${append ? "in" : "to"} CHANGELOG.md.`);
+  log(hasEntries ? `${append ? "Appended to" : "Added"} "${target}" ${append ? "in" : "to"} CHANGELOG.md.` : "CHANGELOG.md is unchanged: no entries.");
   if (composed.restoredPointerNote) {
     log('  Restored the changelog.d pointer note under "## Unreleased" (it was missing).');
   }
@@ -668,7 +739,19 @@ export function compileChangelog({
       : "  No fragments were present.",
   );
   log(`  Retired ${retiredAllowances.length} committed size-allowance fragment(s).`);
-  return { written: true, version, date, fragments: names, retiredAllowances, ...composed };
+  logDeployFragments({ log, names: deployNames, consumed: consumed.length > 0, dryRun });
+  return { written: hasEntries, version, date, fragments: names, retiredAllowances, deploySteps, ...composed };
+}
+
+/** Say what happened to the after-deploy step fragments: consumed for `release:cut`, or left for it. */
+function logDeployFragments({ log, names, consumed, dryRun }) {
+  if (names.length === 0) return;
+  if (consumed) {
+    log(`  ${dryRun ? "Would delete" : "Deleted"} ${names.length} after-deploy step fragment(s), filed by release:cut: ${names.join(", ")}`);
+  } else {
+    log(`  Left ${names.length} after-deploy step fragment(s) in place: ${names.join(", ")}`);
+    log("  They are not changelog entries; pnpm run release:cut prepare files them in the release documents and deletes them.");
+  }
 }
 
 /** Parse argv into `{ version, date, dryRun }`. Exported for tests. */

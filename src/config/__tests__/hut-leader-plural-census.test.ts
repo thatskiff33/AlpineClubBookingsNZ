@@ -3,6 +3,7 @@ import { join, relative } from "node:path";
 import { describe, expect, it } from "vitest";
 
 import { stripComments } from "@/lib/__tests__/support/strip-comments";
+import { CENSUS_TIMEOUT_MS } from "@/test/census-timeout";
 
 /*
   #3976 — every plural of the club's hut-leader label goes through
@@ -115,5 +116,5 @@ describe("hut-leader plural census (#3976)", () => {
         "(src/config/hut-leader-label.ts), never by appending \"s\" — a club that " +
         'saved "Hut Leaders" otherwise reads "Hut Leaderss".',
     ).toEqual([]);
-  });
+  }, CENSUS_TIMEOUT_MS);
 });

@@ -15,6 +15,7 @@ import { describe, expect, it } from "vitest";
 import { MODEL_LEVEL_EXCLUSIONS } from "@/lib/config-transfer/singleton-models";
 import { delegateUsesBeyondReads, productionSourceFiles } from "./support/prisma-delegate-read-scan";
 import { stripComments } from "./support/strip-comments";
+import { CENSUS_TIMEOUT_MS } from "@/test/census-timeout";
 
 const ROOT = process.cwd();
 const DELEGATE = "clubTaxSettings";
@@ -35,7 +36,7 @@ function shellAndSqlFiles(dir: string): string[] {
   });
 }
 
-describe("the club tax treatment has one writer (#4632)", () => {
+describe("the club tax treatment has one writer (#4632)", { timeout: CENSUS_TIMEOUT_MS }, () => {
   it("is written through its delegate by the one writer only", () => {
     const offenders = naming
       .filter(({ file }) => file !== WRITER)

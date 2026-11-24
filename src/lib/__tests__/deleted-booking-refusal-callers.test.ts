@@ -2,7 +2,7 @@
 // say it, read off the real source files.
 //
 // ENFORCES INV-ADDPAY-034 (docs/invariants/additional-payment-chasing.md), which
-// names three surfaces and states that the disclosure is safe ONLY because the
+// names five surfaces (three since #2700, two pages since #5266) and states that the disclosure is safe ONLY because the
 // guard sits below the authorisation check on every one of them. Both halves of
 // that rule were prose until this file existed: `deleted-booking-refusal.ts`
 // asserted in its own docblock that "every caller of this module places the
@@ -25,20 +25,29 @@
 import { describe, expect, it } from "vitest";
 import { readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
+import { escapeRegExp } from "@/lib/escape-regexp";
 
 import { stripComments } from "./support/strip-comments";
+import { CENSUS_TIMEOUT_MS } from "@/test/census-timeout";
 
 const REFUSAL_MODULE = "src/lib/deleted-booking-refusal.ts";
 
 /**
- * The three surfaces INV-ADDPAY-034 names, plus the module that defines the
- * sentence. Any other file appearing here has taken an ordering decision nobody
- * reviewed.
+ * The three API surfaces INV-ADDPAY-034 names, plus the one component both of
+ * its pages render (#5266). Any other file appearing here has taken an ordering
+ * decision nobody reviewed.
  */
 const APPROVED_IMPORTERS = [
   "src/app/api/bookings/[id]/change-requests/route.ts",
   "src/app/api/bookings/[id]/refund-request/route.ts",
+  "src/components/removed-booking-notice.tsx",
   "src/lib/member-guest-consent-service.ts",
+].sort();
+
+/** The two pages INV-ADDPAY-034 lets render that component (#5266). */
+const APPROVED_NOTICE_PAGES = [
+  "src/app/(authenticated)/bookings/[id]/page.tsx",
+  "src/app/(authenticated)/bookings/consent/[guestId]/page.tsx",
 ].sort();
 
 function readRepoFile(relativePath: string): string {
@@ -68,6 +77,12 @@ function readRepoCode(relativePath: string): string {
  * them.
  */
 function refusalModuleImporters(): string[] {
+  return importersOf("@/lib/deleted-booking-refusal");
+}
+
+/** Every non-test source file under `src/` importing `specifier`, sorted. */
+function importersOf(specifier: string): string[] {
+  const importLine = new RegExp(`from\\s*"${escapeRegExp(specifier)}"`);
   const root = path.resolve(process.cwd(), "src");
   const found: string[] = [];
   const walk = (dir: string) => {
@@ -83,7 +98,7 @@ function refusalModuleImporters(): string[] {
       }
       const relative = path.relative(process.cwd(), full).split(path.sep).join("/");
       if (relative === REFUSAL_MODULE) continue;
-      if (/from\s*"@\/lib\/deleted-booking-refusal"/.test(readRepoCode(relative))) {
+      if (importLine.test(readRepoCode(relative))) {
         found.push(relative);
       }
     }
@@ -146,14 +161,14 @@ describe("deleted-booking refusal callers (#2700, INV-ADDPAY-034)", () => {
     // allowlist assertion below passes against an empty set.
     expect(readRepoCode(REFUSAL_MODULE)).toContain("DELETED_BOOKING_MESSAGE");
     expect(refusalModuleImporters().length).toBeGreaterThan(0);
-  });
+  }, CENSUS_TIMEOUT_MS);
 
-  it("is imported by exactly the three surfaces INV-ADDPAY-034 names, and nothing else", () => {
+  it("is imported by exactly the surfaces INV-ADDPAY-034 names, and nothing else", () => {
     expect(
       refusalModuleImporters(),
-      'A file outside INV-ADDPAY-034\'s three surfaces imports the shared "cancelled or removed" sentence. That is not a lint failure to silence by widening this list: INV-ADDPAY-031 says a deleted-booking 404 body must be byte-identical to the ordinary not-found body, and #2700 departed from that on exactly three surfaces because the guard provably sits below their authorisation check. A fourth caller must take that ordering decision explicitly — read INV-ADDPAY-031 and INV-ADDPAY-034, add the surface to APPROVED_IMPORTERS with its own ordering assertion below, and say in the PR why disclosure is safe there.',
+      'A file outside INV-ADDPAY-034\'s surfaces imports the shared "cancelled or removed" sentence. That is not a lint failure to silence by widening this list: INV-ADDPAY-031 says a deleted-booking 404 body must be byte-identical to the ordinary not-found body, and #2700 and #5266 departed from that on exactly five surfaces because the guard provably sits below their authorisation check. Another caller must take that ordering decision explicitly — read INV-ADDPAY-031 and INV-ADDPAY-034, add the surface to APPROVED_IMPORTERS with its own ordering assertion below, and say in the PR why disclosure is safe there.',
     ).toEqual(APPROVED_IMPORTERS);
-  });
+  }, CENSUS_TIMEOUT_MS);
 
   it("puts the change-requests GET guard below its 403", () => {
     expectGuardBelowAuthorisation({
@@ -194,5 +209,62 @@ describe("deleted-booking refusal callers (#2700, INV-ADDPAY-034)", () => {
       refusalModuleImporters(),
       "INV-ADDPAY-035: the consent ROUTE must not carry the deleted-booking body. Its pre-read proves only that the guest row belongs to the booking, so a guard there hands a 404-versus-403 oracle to a caller holding two guessed ids. The guard belongs in member-guest-consent-service.ts, below the target/delegate check.",
     ).not.toContain("src/app/api/bookings/[id]/guests/[guestId]/consent/route.ts");
+  }, CENSUS_TIMEOUT_MS);
+
+  it("lets exactly the two pages INV-ADDPAY-034 names render the removed-booking notice", () => {
+    expect(
+      importersOf("@/components/removed-booking-notice"),
+      "INV-ADDPAY-034 (#5266): only the booking page and the delegate consent page may tell a person a booking was removed, each below the check that makes them entitled. Another page needs its own ordering assertion here and its own entry in the invariant.",
+    ).toEqual(APPROVED_NOTICE_PAGES);
+  }, CENSUS_TIMEOUT_MS);
+
+  it("on the booking page, signs the visitor in, then resolves entitlement, then explains", () => {
+    const pageCode = readRepoCode("src/app/(authenticated)/bookings/[id]/page.tsx");
+    const body = functionBody(pageCode, "export default async function BookingDetailPage(");
+    const signIn = body.search(/if\s*\(!session\)\s*redirect\("\/login"\)/);
+    const resolve = body.search(/resolveBookingDetailEntry\(\{\s*id,\s*session\s*\}\)/);
+    const notice = body.search(/entry\.kind\s*===\s*"REMOVED_FOR_VIEWER"\)\s*return\s*<RemovedBookingDetail\s*\/>/);
+    expect(signIn, "the booking page no longer sends a signed-out visitor to sign in").toBeGreaterThan(-1);
+    expect(
+      resolve,
+      "INV-ADDPAY-034: the booking page must decide entitlement (resolveBookingDetailEntry) only once the visitor is signed in",
+    ).toBeGreaterThan(signIn);
+    expect(
+      notice,
+      "INV-ADDPAY-034: the booking page renders the removed-booking notice other than on resolveBookingDetailEntry's REMOVED_FOR_VIEWER answer",
+    ).toBeGreaterThan(resolve);
+    // The notice itself is rendered only by that one helper, never elsewhere
+    // on the page where it could escape the entitlement decision.
+    const helper = functionBody(pageCode, "function RemovedBookingDetail(");
+    expect(pageCode.match(/<RemovedBookingNotice\b/g)).toHaveLength(1);
+    expect(helper).toMatch(/<RemovedBookingNotice\b/);
+    expect(pageCode.match(/<RemovedBookingDetail\b/g)).toHaveLength(1);
+  });
+
+  it("in the delegate page's resolver, says BOOKING_REMOVED only below the target and delegate checks", () => {
+    const body = functionBody(
+      readRepoCode("src/lib/member-guest-delegate-page.ts"),
+      "export async function resolveDelegateConsentPageState(",
+    );
+    const removed = [...body.matchAll(/return\s*\{\s*kind:\s*"BOOKING_REMOVED"\s*\}/g)].map((m) => m.index);
+    const targetCheck = body.search(/if\s*\(guest\.memberId\s*===\s*viewerMemberId\)\s*\{/);
+    const targetEnd = body.indexOf('return { kind: "TARGET_SELF"', targetCheck);
+    const delegateRefusal = body.search(/if\s*\(!isDelegate\)\s*return\s*\{\s*kind:\s*"NOT_FOUND"\s*\}/);
+
+    expect(targetCheck).toBeGreaterThan(-1);
+    expect(delegateRefusal).toBeGreaterThan(-1);
+    expect(
+      removed,
+      "INV-ADDPAY-034 (#5266): BOOKING_REMOVED is returned in exactly two places — inside the target branch, and after the delegate rule has accepted the caller",
+    ).toHaveLength(2);
+    const [forTarget, forDelegate] = removed as [number, number];
+    expect(
+      forTarget > targetCheck && forTarget < targetEnd,
+      "INV-ADDPAY-034: the target's BOOKING_REMOVED must sit inside the `guest.memberId === viewerMemberId` branch, above its TARGET_SELF return",
+    ).toBe(true);
+    expect(
+      forDelegate,
+      "INV-ADDPAY-034: BOOKING_REMOVED is said to a caller the delegate rule has not accepted — a deleted-versus-live oracle for anyone holding a guest link",
+    ).toBeGreaterThan(delegateRefusal);
   });
 });

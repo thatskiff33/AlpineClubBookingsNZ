@@ -36,7 +36,8 @@ export const ADMIN_NOTIFICATION_PREFERENCE_META = {
   },
   adminWaitlistOffer: {
     label: "Waitlist offers",
-    description: "Alerts when a waitlist spot is offered to a member.",
+    description:
+      "Alerts when a waitlist spot is offered to a member, and when a member's waitlist email could not be sent, so they may not know about an offer.",
   },
   adminFamilyGroupRequest: {
     label: "Member requests",

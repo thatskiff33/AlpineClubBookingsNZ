@@ -23,6 +23,7 @@ import {
 import { PROMO_WORK_PARTY_EXCLUSION_OFFICER_MESSAGE } from "@/lib/promo-code-list-rules";
 import { editTotalMoneyBackCents, workPartyAskAbsorbedSentence, workPartyAskPartlyAbsorbedSentence } from "@/lib/edit-money-back";
 import { CLUB_FORMAT_TEST } from "@/lib/__tests__/support/club-format-fixture";
+import { CENSUS_TIMEOUT_MS } from "@/test/census-timeout";
 
 /**
  * Fork triyder/AlpineClubBookingsNZ#119: the eligibility rule for "Add booking to work party", one case per
@@ -472,7 +473,7 @@ describe("the officer-only internal-code admission (census)", () => {
     // hands it on to the promo engine in the plan; the correction module is
     // the one file that passes it in.
     expect(callers).toEqual(["src/lib/work-party-booking-correction.ts"]);
-  });
+  }, CENSUS_TIMEOUT_MS);
 
   it("only the batch service hands the correction to the promo engine (Add admits, fork triyder/AlpineClubBookingsNZ#130 Remove drops)", () => {
     const service = readFileSync(path.join(root, "lib", "booking-batch-modification-service.ts"), "utf8");
@@ -507,7 +508,7 @@ describe("the officer-only internal-code admission (census)", () => {
       .filter((file) => /officerWorkParty/.test(readFileSync(file, "utf8")))
       .map(rel);
     expect(offenders).toEqual([]);
-  });
+  }, CENSUS_TIMEOUT_MS);
 
   it("still refuses every other internal code in applyPromoCodeChanges", () => {
     const plan = readFileSync(path.join(root, "lib", "booking-modify-plan.ts"), "utf8");

@@ -10,7 +10,7 @@
  * the routes import them from (`INV-SSOT`). A field described twice would let
  * the app be told one shape while the route enforces another. So is each
  * action's answer (`returns`): the shape the route projects a connection's
- * answer onto, from `connection-shapes.ts`.
+ * answer onto, from `connection-shapes.ts` (or an area's own shapes module).
  *
  * `mcp-route-census.test.ts` holds every route method in `src/app/api` to
  * either an entry here or a reasoned exclusion (`exclusions.ts`).
@@ -70,6 +70,7 @@ import {
   familyRemovalRequestSchema,
 } from "@/lib/family-group-request-schemas";
 import { ROSTER_WINDOW_DAYS } from "@/lib/lodge-roster-window";
+import { MCP_LODGE_LIFE_ACTIONS } from "@/lib/mcp/catalogue-lodge-life";
 import { memberAuditLogQuerySchema } from "@/lib/member-audit-log-query";
 import {
   MEMBER_GUEST_SEARCH_MIN_CHARS,
@@ -98,14 +99,12 @@ import { BOOKINGS_SETUP_MCP_ACTIONS } from "./catalogue/bookings-setup";
  * (`get_skifield_report` refreshes the ski field report's), or its route's own
  * audit row (a lookup of other members records every query, blocked ones
  * included). `write` changes something the member can undo.
- * `destructive` cannot be undone from the app, or notifies other people, or
- * overwrites another person's record (owner decision, #5305 item 2): for an
- * officer, anything that emails or notifies someone or changes a member's
- * booking, request, waitlist place, bed or promo code. Every change to
- * club-wide configuration (seasons, policies, age groups, promo codes, rooms
- * and beds, settings) is `destructive` too (#5305 comment 7093303964). The app
- * asks first and the call is audited as important. A view-only connection runs
- * `read` actions only.
+ * `destructive` cannot be undone from the app, notifies other people, or
+ * overwrites another person's record (owner decision, #5305): for an officer,
+ * any email or notice, any change to a member's booking, request, waitlist
+ * place, bed or promo code, and every change to club-wide configuration
+ * (#5305 comment 7093303964). The app confirms first, and it is audited as
+ * important. View-only runs `read` actions only.
  */
 export type McpActionKind = "read" | "write" | "destructive";
 
@@ -170,7 +169,7 @@ export interface McpWebsiteOnlyAction {
 
 const bookingIdParams = bookingIdParamsSchema;
 
-/** The member's own actions (ALP-653, ALP-718). */
+/** The member's own actions (ALP-653, ALP-718, ALP-796). */
 const MEMBER_ACTIONS: readonly McpAction[] = [
   {
     id: "get_availability",
@@ -539,7 +538,7 @@ const MEMBER_ACTIONS: readonly McpAction[] = [
     params: familyMemberIdParamsSchema,
     body: delegatedFamilyDetailsSchema.omit({ inheritContactFromSelf: true }),
     fixedBody: { inheritContactFromSelf: true },
-    kind: "write",
+    kind: "destructive",
     returns: FAMILY_MEMBER_DETAILS_CONNECTION_SHAPE,
     core: false,
   },
@@ -624,6 +623,8 @@ const MEMBER_ACTIONS: readonly McpAction[] = [
     returns: MEMBERSHIP_CANCELLATION_OPTIONS_CONNECTION_SHAPE,
     core: false,
   },
+  // --- Lodge life (ALP-796), in `catalogue-lodge-life.ts` ---
+  ...MCP_LODGE_LIFE_ACTIONS,
 ];
 
 /**

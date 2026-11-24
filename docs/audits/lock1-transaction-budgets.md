@@ -295,6 +295,7 @@ the opener's callback.
 | `lib/waitlist-cross-lodge.ts` | \$transaction | `confirmCrossLodgeWaitlistOffer#4` | direct | defaults | budget |
 | `lib/waitlist-cross-lodge.ts` | \$transaction | `confirmCrossLodgeWaitlistOffer#5` | direct | defaults | budget |
 | `lib/waitlist-cross-lodge.ts` | \$transaction | `confirmCrossLodgeWaitlistOffer#6` | direct | defaults | budget |
+| `lib/waitlist-offer-window-restart.ts` | \$transaction | `restartWaitlistOfferWindow#1` | direct | none (new in #5433) | budget |
 | `lib/waitlist.ts` | \$transaction | `processWaitlistForDates#1` | direct | defaults | budget |
 | `lib/waitlist.ts` | \$transaction | `revertSameLodgeOfferToWaitlisted#1` | direct | defaults | budget |
 | `lib/waitlist.ts` | \$transaction | `confirmWaitlistOffer#1` | direct | defaults | budget |

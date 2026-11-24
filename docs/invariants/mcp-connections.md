@@ -46,9 +46,9 @@ only the rules.
   profile card is not rendered.
 - **The member reads added for the actions are absent too.**
   `GET /api/bookings/mine`, `GET /api/bookings/[id]`, `GET /api/profile/summary`,
-  `GET /api/notices`, `GET /api/notices/[id]` and `GET /api/lodge-roster` sit
-  beside older routes, so no proxy prefix can cover them: each handler's own
-  `mcpModuleOffResponse` check is the gate.
+  `GET /api/notices`, `GET /api/notices/[id]`, `GET /api/lodge-roster` and
+  `GET /api/work-parties` sit beside older routes, so no proxy prefix can cover
+  them: each handler's own `mcpModuleOffResponse` check is the gate.
 - **Existing connections cannot be used while it is off**, because `/api/mcp`
   and the token endpoint answer 404 before reading a token. They are kept, not
   ended, and work again when the module is switched back on, subject to every
@@ -173,11 +173,13 @@ only the rules.
   at every depth; a refusal passes unchanged. Only a `POST` the census pins
   as side-effect free may run as a `preview` read.
 - **A member action acts as a member, never as an officer.** A route with an
-  officer branch decides with `memberOnlySessionUser`: role `USER`, no other
-  access role, an empty permission matrix. An on-behalf target or officer
-  override flag from a connection is refused. A reused member page keeps its
-  audience, as privacy register row `ai-apps` discloses: committee-role
-  notices (`notices.ts`) and the person's own account history.
+  officer branch decides with `memberOnlySessionUser`: no officer role, only
+  `USER`/`ORG` access roles, an empty permission matrix. Officer reach read
+  from records survives that, so the route also refuses it
+  (`arrivesAsMcpConnection`). An on-behalf target or officer override flag
+  from a connection is refused. A reused member page keeps its audience
+  (register row `ai-apps`): committee-role notices (`notices.ts`) and the
+  person's own account history.
 
 ## INV-MCP-009
 
