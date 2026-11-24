@@ -23,6 +23,7 @@ import type { Prisma, PrismaClient } from "@prisma/client";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import type { BookingLedgerCensusReport } from "@/lib/booking-ledger-projection-census-report";
+import { HAND_BACK_CENSUS_CLASSES } from "@/lib/member-money";
 import { cleanHistories, historyNames, postHistoryEdit, seedHistoryFixtures } from "@/lib/__tests__/support/booking-ledger-history";
 import {
   cancelGroupHistory,
@@ -57,12 +58,20 @@ async function census(): Promise<BookingLedgerCensusReport> {
   return censusStore.censusBookingLedgerProjection(prisma);
 }
 
-/** Everything the census says about one booking. */
+/**
+ * #5185: the member-money journal's hand-back checks are not this suite's. A hand-back completed onto the
+ * organiser's mirror posts no hand-back payment (R14), so a debt its raise posted stays open in the journal: a known
+ * M4d gap the hand-back census reports (`HAND_BACK_PAID_WITHOUT_EVENT`, `HAND_BACK_OBLIGATION_DRIFT`, report v3),
+ * pinned below in `the joiner's own cancel` and left for its own change. This suite proves the legacy ledger.
+ */
+const JOURNAL_HAND_BACK_CHECKS: readonly string[] = [...HAND_BACK_CENSUS_CLASSES, "JOURNAL_REFUND_PAYABLE"];
+
+/** Everything the census says about one booking, the journal's hand-back checks aside. */
 function about(report: BookingLedgerCensusReport, bookingId: string) {
   return {
-    disagreements: report.disagreements.filter((row) => row.bookingId === bookingId),
+    disagreements: report.disagreements.filter((row) => row.bookingId === bookingId && !JOURNAL_HAND_BACK_CHECKS.includes(row.identity)),
     coverage: Object.entries(report.coverage).flatMap(([kind, ids]) => (ids.includes(bookingId) ? [kind] : [])),
-    integrity: report.integrity.findings.filter((finding) => finding.bookingId === bookingId).map((finding) => finding.kind),
+    integrity: report.integrity.findings.filter((finding) => finding.bookingId === bookingId && !JOURNAL_HAND_BACK_CHECKS.includes(finding.kind)).map((finding) => finding.kind),
     classes: Object.entries(report.classes).flatMap(([name, entry]) =>
       entry.instances.filter((instance) => instance.bookingId === bookingId).map((instance) => `${name}:${instance.identity}`),
     ),
@@ -301,7 +310,15 @@ const money = async (bookingId: string) =>
             `CANCELLATION_FEE:CANCELLATION:${GROUP_CHILD_CENTS - editedCents - dueCents}`,
           ].sort(),
         );
-        expect(about(await census(), joiner!)).toEqual(PAID_BACK);
+        const paidBack = await census();
+        expect(about(paidBack, joiner!)).toEqual(PAID_BACK);
+        // KNOWN M4d GAP (#5185): the cancel posted the hand-back's R05, and the mirror completion paid nothing in the
+        // journal, so the census reports the debt still open. Fixing the completion fails this, as it should.
+        expect(paidBack.integrity.findings.filter((finding) => finding.bookingId === joiner && finding.lineId === task.id).map((finding) => finding.kind).sort())
+          .toEqual(["HAND_BACK_OBLIGATION_DRIFT", "HAND_BACK_PAID_WITHOUT_EVENT"]);
+        expect(paidBack.disagreements.filter((row) => row.bookingId === joiner && row.identity === "JOURNAL_REFUND_PAYABLE")).toEqual([
+          expect.objectContaining({ columnCents: dueCents, ledgerCents: 0 }),
+        ]);
 
         // The organiser later cancels the group: the joiner's place is already gone, so only the other is refunded.
         await cancelGroupHistory(NAMES, g);

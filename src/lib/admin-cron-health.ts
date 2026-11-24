@@ -352,10 +352,11 @@ export function getAdminCronJobDefinitions(
       },
       globalDisabledReason
     ),
-    // The 15-minute payments cycle (`payments-cron-runner`, #3663), each task
-    // under its own name so a missing run is visible: #3635's held late-capture
-    // alert, #4285's kept card payment alert, #4525's combined invoice cover sweep.
+    // The 15-minute payments cycle (`payments-cron-runner`, #3663), each task under
+    // its own name so a missing run is visible: #5255's once-ever alert sweep, #3635's
+    // held late-capture alert, #4285's kept card payment alert, #4525's cover sweep.
     ...([
+      ["once-ever-alert-sweep", "Once-ever admin alert sweep"],
       ["payment-recovery", "Stripe payment recovery"],
       ["internet-banking-hold-release", "Expired Internet Banking hold release"],
       ["xero-waiting-invoice-reaper", "Stale waiting Xero invoice reaper"],

@@ -129,3 +129,13 @@ export function isWaitlistConfirmAwaitingOperator(value: unknown): boolean {
     candidate.awaitingOperatorRecovery === true
   );
 }
+
+/**
+ * The AI app action `accept_waitlist_offer` (ALP-794) is refused a cross-lodge
+ * offer: accepting one cancels the waitlist place and books another lodge at a
+ * price the app's answer does not show, and ADR-004 has the member re-confirm
+ * at the figure they can see, on the website. Nothing is written, so the offer
+ * stands; the route answers 409.
+ */
+export const WAITLIST_CROSS_LODGE_WEBSITE_ONLY_CODE =
+  "CROSS_LODGE_OFFER_WEBSITE_ONLY" as const;

@@ -246,6 +246,7 @@ export async function sendEmail({
   idempotencyKey,
   deferDelivery,
   onAttemptLogged,
+  onceEverClaim,
 }: {
   to: string;
   subject: string;
@@ -266,6 +267,7 @@ export async function sendEmail({
   bookingContext: EmailBookingContext;
   // This attempt's EmailLog id once written, which a throw cannot return (#4669).
   onAttemptLogged?: (emailLogId: string) => void;
+  onceEverClaim?: Parameters<typeof recordEmailAttempt>[0]["onceEverClaim"]; // #5255: an admin alert's claim, confirmed by its row
 } & (
   // Stable business-event identity makes logging mandatory before delivery;
   // the EmailLog primary key serializes concurrent re-drives. Deferred mail
@@ -353,6 +355,7 @@ export async function sendEmail({
     hasAttachments: Boolean(attachments?.length),
     idempotencyKey,
     deferDelivery,
+    onceEverClaim,
   });
   if (recorded.kind === "already_recorded") {
     return { status: "already_recorded", emailLogId: recorded.emailLogId };

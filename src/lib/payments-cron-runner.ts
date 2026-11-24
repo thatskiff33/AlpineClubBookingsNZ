@@ -23,10 +23,12 @@ import { reannounceHeldLateCaptures } from "@/lib/late-capture-refund-hold";
 import { runCreditReleaseAskSweep } from "@/lib/credit-release-ask-sweep";
 import { drainOwedNewCaptureAlerts } from "@/lib/duplicate-capture-kept-alert-drain";
 import { sweepVoidedCombinedGroupInvoiceCover, type CombinedCoverSweepResult } from "@/lib/member-money/doors";
+import { sweepOnceEverAlerts, type OnceEverAlertSweepResult } from "@/lib/admin-alert-once-sweep";
 import { runRecordedCronTask } from "@/lib/cron-recorded-task";
 import { reportCronError } from "@/lib/observability-bridge";
 
 export type PaymentsCronJobName =
+  | "once-ever-alert-sweep"
   | "payment-recovery"
   | "internet-banking-hold-release"
   | "xero-waiting-invoice-reaper"
@@ -37,6 +39,8 @@ export type PaymentsCronJobName =
 
 /** A task's result, or `null` when that task failed (its FAILURE row says why). */
 export interface PaymentsCronCycleResult {
+  /** #5255: once-ever alert claims with no email given back, and raised-once alerts re-sent. */
+  onceEverAlertSweep: OnceEverAlertSweepResult | null;
   recovery: Awaited<ReturnType<typeof processPaymentRecoveryOperations>> | null;
   internetBankingHoldRelease: Awaited<
     ReturnType<typeof releaseExpiredInternetBankingHolds>
@@ -141,8 +145,19 @@ function combinedCoverSweepSummary(sweep: CombinedCoverSweepResult) {
   return sweep;
 }
 
+/** The sweep never throws, so a run whose reads or writes failed says so here (#5255). */
+function onceEverAlertSweepSummary(sweep: OnceEverAlertSweepResult) {
+  return sweep.failed > 0
+    ? {
+        ...sweep,
+        warning: `${sweep.failed} once-ever alert claim(s) or owed alert(s) could not be swept and will be retried next run; see the application logs.`,
+      }
+    : sweep;
+}
+
 export async function runPaymentsCronCycle(): Promise<PaymentsCronCycleResult> {
   const result: PaymentsCronCycleResult = {
+    onceEverAlertSweep: null,
     recovery: null,
     internetBankingHoldRelease: null,
     xeroOutboxReap: null,
@@ -153,6 +168,14 @@ export async function runPaymentsCronCycle(): Promise<PaymentsCronCycleResult> {
   };
   const failures: PaymentsCronFailure[] = [];
 
+  // #5255: first, so a claim it gives back is sent by this cycle's own tasks.
+  await runRecordedTask(result, failures, {
+    jobName: "once-ever-alert-sweep",
+    resultKey: "onceEverAlertSweep",
+    failureMessage: "Failed to sweep once-ever admin alerts",
+    work: () => sweepOnceEverAlerts(),
+    summaryFor: onceEverAlertSweepSummary,
+  });
   await runRecordedTask(result, failures, {
     jobName: "payment-recovery",
     resultKey: "recovery",

@@ -42,6 +42,9 @@ export const STEP_UP_OPERATIONS = [
   // the member CSV export. The member's own download is not an admin route.
   { file: "src/lib/subject-access-export.ts", exportName: "buildSubjectAccessExport" },
   { file: "src/lib/officer-factor-reset.ts", exportName: "clearMemberSecondFactors" },
+  // Re-points where a school's invoices and emails go (#5245), so it asks for
+  // the same fresh proof as the booking-request correction beside it.
+  { file: "src/lib/school-organisation-contact-edit.ts", exportName: "updateSchoolOrganisationContact" },
 ] as const;
 
 /**
@@ -130,6 +133,7 @@ export const STEP_UP_ROUTES = [
   { method: "POST", file: "src/app/api/admin/booking-change-requests/[id]/quote/route.ts" },
   { method: "PATCH", file: "src/app/api/admin/bookings/[id]/review/route.ts" },
   { method: "POST", file: "src/app/api/admin/booking-requests/[id]/correct/route.ts" },
+  { method: "PATCH", file: "src/app/api/admin/organisations/[id]/contact/route.ts" },
   { method: "POST", file: "src/app/api/admin/booking-requests/[id]/decline/route.ts" },
   { method: "POST", file: "src/app/api/admin/booking-requests/[id]/release-hold/route.ts" },
   { method: "POST", file: "src/app/api/admin/bookings/[id]/confirm-pending-guests/route.ts" },

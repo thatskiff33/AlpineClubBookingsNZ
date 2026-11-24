@@ -22,7 +22,7 @@ import { refreshFinancialYearConfig } from "@/lib/financial-year-server";
 import { getBookingEditPolicy } from "@/lib/booking-edit-policy";
 import { clubTime } from "@/lib/club-time/server";
 import { dateOnlyInstantOf } from "@/lib/club-time";
-import { modifyQuoteSchema } from "@/lib/booking-modify-quote-request";
+import type { promoPreviewEditFieldsSchema } from "@/lib/promo-validate-request";
 import type { PromoPreviewEdit } from "@/lib/promo-preview-stay-ranges";
 
 /**
@@ -70,19 +70,6 @@ export type PromoPreviewEditContext = {
   consentById: Map<string, { memberId: string | null; consentStatus: MemberGuestConsentStatus | null }>;
   edit: PromoPreviewEdit;
 };
-
-/**
- * The edit fields a preview request may carry, parsed exactly as the quote
- * parses them: the officer re-rates, and the removals and renames the link
- * resolver judges a link against.
- */
-export const promoPreviewEditFieldsSchema = modifyQuoteSchema.pick({
-  linkGuestToMember: true,
-  otherLodgeId: true,
-  otherLodgeMemberGuestIds: true,
-  removeGuestIds: true,
-  guestUpdates: true,
-});
 
 export type PromoPreviewEditRequest = z.infer<typeof promoPreviewEditFieldsSchema> & {
   guests: ReadonlyArray<{ bookingGuestId?: string }>;

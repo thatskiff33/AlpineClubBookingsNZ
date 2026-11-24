@@ -306,10 +306,22 @@ describe("xero operation outbox payload parsing", () => {
       "ADDITIONAL_CAPTURE_RECEIPT",
       "ORGANISER_EXTRA_ADJUSTMENT",
       "ADMIN_GRANT_CREDIT_NOTE",
+      "ORGANISATION_CONTACT_DETAILS",
     ]);
     expect(new Set(XERO_OUTBOX_QUEUE_TYPES).size).toBe(
       XERO_OUTBOX_QUEUE_TYPES.length
     );
+  });
+
+  it("#5245: reads a school contact-details row as its queue type alone, a CONTACT UPDATE on the Organisation", () => {
+    expect(readQueuedOutboxPayload({ queueType: "ORGANISATION_CONTACT_DETAILS", organisationId: "org_1" })).toEqual({
+      queueType: "ORGANISATION_CONTACT_DETAILS",
+    });
+    expect(getQueuedOutboxExpectedOperation("ORGANISATION_CONTACT_DETAILS")).toEqual({
+      entityType: "CONTACT",
+      operationType: "UPDATE",
+      localModels: ["Organisation"],
+    });
   });
 
   it("ALP-580: reads a card-refund reversal's close day only when it is a real day", () => {
@@ -438,6 +450,7 @@ describe("xero operation outbox payload parsing", () => {
       ["CARD_REFUND_REVERSAL_INVOICE", "INVOICE"],
       ["ADDITIONAL_CAPTURE_RECEIPT", "PAYMENT"],
       ["ADMIN_GRANT_CREDIT_NOTE", "CREDIT_NOTE"],
+      ["ORGANISATION_CONTACT_DETAILS", "CONTACT"],
     ]);
     for (const queueType of XERO_OUTBOX_QUEUE_TYPES) {
       expect(getQueuedOutboxExpectedOperation(queueType).entityType).toBe(
