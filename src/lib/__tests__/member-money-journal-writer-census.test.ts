@@ -71,8 +71,13 @@ const READERS: Record<string, { reason: string; importOnly: boolean }> = {
     importOnly: false,
   },
   "src/lib/booking-ledger-projection-census-journal.ts": {
-    reason: "the pure JOURNAL comparison of the journal's charges with the bridged lines",
+    reason: "the pure JOURNAL comparison of the journal's charges with the bridged lines, and report v3 over its refund debts (#5185)",
     importOnly: false,
+  },
+  // #5185 (M4d): the hand-back classes join the census's integrity kinds, defined once with the refund census.
+  "src/lib/booking-ledger-projection-census.ts": {
+    reason: "the census's integrity kinds include the hand-back classes the refund census defines (a constant import)",
+    importOnly: true,
   },
   // #4915: the subject access export copies the subject's own journal lines and obligations into their file.
   "src/lib/subject-access-export-sections.ts": {
