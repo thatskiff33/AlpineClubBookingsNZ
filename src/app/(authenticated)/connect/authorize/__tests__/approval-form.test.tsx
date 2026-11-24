@@ -119,7 +119,7 @@ describe("ApprovalForm", () => {
     // wording so one approval covers every officer area, #5305 comment 7131483847.
     renderForm({ officer: true, mayChange: true });
     expect(screen.getByTestId("mcp-officer-notice").textContent).toBe(
-      "As a club officer, the app can also read the club records your admin role allows, such as other members' bookings and details and the club's booking settings, and with View and change, change them. The app is told to ask you before it changes anything.",
+      "As a club officer, the app can also see the club records your admin role gives you, such as other members' bookings and details and the club's booking settings. If you choose View and change, it can change them too, and it is told to ask you first.",
     );
     fireEvent.click(allow());
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
@@ -130,7 +130,7 @@ describe("ApprovalForm", () => {
     renderForm({ officer: true, mayChange: false });
     const notice = screen.getByTestId("mcp-officer-notice").textContent ?? "";
     expect(notice).toBe(
-      "As a club officer, the app can also read the club records your admin role allows, such as other members' bookings and details and the club's booking settings.",
+      "As a club officer, the app can also see the club records your admin role gives you, such as other members' bookings and details and the club's booking settings.",
     );
     expect(notice).not.toContain("change");
   });
