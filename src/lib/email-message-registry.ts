@@ -1,5 +1,5 @@
 import { stripePaymentAlertSampleValue } from "@/lib/email-message-stripe-payment-samples";
-import { WAITLIST_NOTICE_UNSENT_NOTE } from "@/lib/waitlist-notice-unsent-note";
+import { waitlistAlertSampleValue } from "@/lib/email-message-waitlist-samples";
 import {
   EMAIL_AUDIT_DEFAULTS,
   type EmailAuditTemplateName,
@@ -1134,8 +1134,7 @@ const TEMPLATE_TRIGGER_METADATA: Partial<
     frequency: "One email per joiner booking covered by the settled payment",
   },
   "admin-waitlist-notice-unsent": {
-    triggerSummary:
-      "A waitlist email owed to a member (the offer of a place, or the notice that an offer lapsed) could not be sent before its cut-off, so it was cleared unsent, or an offer lapsed before its email could ever be sent (#5433, owner decisions D2 and D5)",
+    triggerSummary: "A waitlist email owed to a member (the offer of a place, or the notice that an offer lapsed) could not be sent before its cut-off, so it was cleared unsent, or an offer lapsed before its email could ever be sent (#5433, owner decisions D2 and D5)",
     frequency:
       "Once per unsent notice, and once per offer for its email and its lapse together, guarded by a cross-instance claim. The claim is kept once any admin is sent it or has a copy queued for the email retry cron, held for a day when no admin can receive it, and given back when the send throws before reaching anyone",
   },
@@ -1466,8 +1465,8 @@ export function sampleValue(token: string): string {
   if (token === "holdKeptNote") {
     return internetBankingHoldKeptParagraph("part-paid");
   }
-  // #5433: previewed as the offer arm, the commoner of the two.
-  if (token === "noticeNote") return WAITLIST_NOTICE_UNSENT_NOTE.offer;
+  const waitlistSample = waitlistAlertSampleValue(token);
+  if (waitlistSample !== undefined) return waitlistSample;
   // #4042: previewed as the cash arm, what the shipped default always said.
   if (token === "handBackNote") return manualRefundTaskAlertNote("cash-cancellation");
   if (token === "handBackLabel") return manualRefundTaskAlertLabel("cash-cancellation");
@@ -2060,8 +2059,9 @@ const APPROVED_EMAIL_TEMPLATE_TOKENS = [
   "handBackConflictNote",
   // #3643: why an expired internet banking hold was kept, not released.
   "holdKeptNote",
-  // #5433: which waitlist email went unsent past its cut-off, and what to do.
+  // #5433: the waitlist alerts' notes: which email went unsent, and the offer's.
   "noticeNote",
+  "offerNote",
   // #4042: which hand-back a manual refund task alert is about - its body
   // paragraphs, its subject/heading phrase, and whom the money goes back to.
   "handBackNote",

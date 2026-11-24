@@ -2,10 +2,13 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createAlertCooldownStore } from "./support/alert-cooldown-store";
 
 /*
- * #5433 review: a kind's past-cut-off officer alert, at most once per marker
- * (owner decision D1). Real: `alertOfficersOncePastCutoff`, the once-ever
- * claim (`admin-alert-once.ts`) and the cooldown helpers. Doubled: the
- * `AlertCooldown` table (in memory) and the logger.
+ * #5433 review: a kind's past-cut-off officer alert, at most once per claim
+ * key (owner decision D1; the waitlist offer's email and its never-told lapse
+ * share one key, D5). Through the once-ever takeover sequence
+ * (`sendAdminAlertOnceEverWithTakeover`, round 2 item 5e) with a sent stamp as
+ * its `isSent`. Real: `alertOfficersOncePastCutoff`, the once-ever claim, the
+ * takeover and the cooldown helpers. Doubled: the `AlertCooldown` table (in
+ * memory) and the logger.
  */
 
 const mocks = vi.hoisted(() => ({ logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() } }));
@@ -22,7 +25,7 @@ vi.mock("@/lib/logger", () => ({ default: mocks.logger }));
 
 import { ALERT_NOBODY_ELIGIBLE_RETRY_MS } from "@/lib/alert-cooldown";
 import type { AdminAlertSendResult } from "@/lib/email/admin-alert-send-result";
-import { alertOfficersOncePastCutoff, pastCutoffAlertKey } from "@/lib/owed-notice/past-cutoff-once";
+import { alertOfficersOncePastCutoff, pastCutoffAlertKey, pastCutoffSentKey } from "@/lib/owed-notice/past-cutoff-once";
 import { owedNoticeMarker } from "@/lib/owed-notice/store";
 
 const NOW = new Date("2026-07-01T00:00:00.000Z");
@@ -37,11 +40,12 @@ const result = (sent: number, notDelivered = 0): AdminAlertSendResult => ({
 });
 
 const send = vi.fn<() => Promise<AdminAlertSendResult>>();
-/** The calling kind's wait: a claim younger than this may still be in flight (#5433 review E). */
+/** The calling kind's wait: another holder's claim younger than this may still be sending. */
 const IN_FLIGHT_MS = 30 * 60 * 1000;
-const alertAt = (now: Date, target = marker) =>
-  alertOfficersOncePastCutoff(target, { label: "test past-cut-off alert", send, inFlightMs: IN_FLIGHT_MS, now });
-const later = (ms: number) => new Date(NOW.getTime() + ms);
+const alert = (target = marker) => alertOfficersOncePastCutoff(target, { label: "test past-cut-off alert", send, inFlightMs: IN_FLIGHT_MS });
+const at = (ms: number) => {
+  vi.setSystemTime(new Date(NOW.getTime() + ms));
+};
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -50,90 +54,79 @@ beforeEach(() => {
 });
 
 describe("alertOfficersOncePastCutoff", () => {
-  it("sends once and settles; a rerun for the same marker sends nothing, retrying while the claim may be in flight and settling once it is kept", async () => {
+  it("sends once, stamps it sent and settles; a rerun for the same key settles at once without sending again", async () => {
     send.mockResolvedValue(result(1));
 
-    await expect(alertAt(NOW)).resolves.toBe("settled");
-    await expect(alertAt(later(60_000))).resolves.toBe("threw");
-    await expect(alertAt(later(IN_FLIGHT_MS + 1))).resolves.toBe("settled");
+    await expect(alert()).resolves.toBe("settled");
+    expect(cooldown.rows.has(pastCutoffAlertKey(marker))).toBe(true);
+    expect(cooldown.rows.has(pastCutoffSentKey(marker))).toBe(true);
+    at(60_000);
+    await expect(alert()).resolves.toBe("settled");
 
     expect(send).toHaveBeenCalledTimes(1);
-    expect(cooldown.rows.has(pastCutoffAlertKey(marker))).toBe(true);
   });
 
   it("keys the claim on the marker, so another marker's alert still goes", async () => {
     send.mockResolvedValue(result(1));
     const other = owedNoticeMarker({ kind: "booking-bump-member", subjectId: "b2", eventAt: marker.eventAt });
 
-    await alertAt(NOW);
-    await expect(alertAt(NOW, other)).resolves.toBe("settled");
+    await alert();
+    await expect(alert(other)).resolves.toBe("settled");
 
     expect(send).toHaveBeenCalledTimes(2);
   });
 
-  it("answers unreached when nobody received it, sends nothing again for a day, then tries again", async () => {
+  it("answers unreached when nobody received it; the kind's day-later retry sends it again", async () => {
     send.mockResolvedValue(result(0, 1));
-
-    await expect(alertAt(NOW)).resolves.toBe("unreached");
-    vi.setSystemTime(new Date(NOW.getTime() + 60_000));
-    await expect(alertAt(new Date(NOW.getTime() + 60_000))).resolves.toBe("unreached");
-    expect(send).toHaveBeenCalledTimes(1);
+    await expect(alert()).resolves.toBe("unreached");
+    expect(cooldown.rows.has(pastCutoffSentKey(marker))).toBe(false);
 
     send.mockResolvedValue(result(1));
-    const dayLater = new Date(NOW.getTime() + ALERT_NOBODY_ELIGIBLE_RETRY_MS + 1);
-    vi.setSystemTime(dayLater);
-    await expect(alertAt(dayLater)).resolves.toBe("settled");
+    at(ALERT_NOBODY_ELIGIBLE_RETRY_MS + 1);
+    await expect(alert()).resolves.toBe("settled");
     expect(send).toHaveBeenCalledTimes(2);
   });
 
   it("gives the claim back when the send throws, so the next attempt sends", async () => {
     send.mockRejectedValueOnce(new Error("SMTP down")).mockResolvedValue(result(1));
 
-    await expect(alertAt(NOW)).resolves.toBe("unreached");
-    expect(cooldown.rows.size).toBe(0);
-    await expect(alertAt(later(60_000))).resolves.toBe("settled");
+    await expect(alert()).resolves.toBe("unreached");
+    expect(cooldown.rows.has(pastCutoffAlertKey(marker))).toBe(false);
+    await expect(alert()).resolves.toBe("settled");
     expect(send).toHaveBeenCalledTimes(2);
   });
 
-  it("answers threw, sending nothing, when the claim cannot be written", async () => {
+  it("sends nothing when the claim cannot be written", async () => {
     cooldown.delegate.updateMany.mockRejectedValueOnce(new Error("db down"));
-
-    await expect(alertAt(NOW)).resolves.toBe("threw");
+    await expect(alert()).resolves.not.toBe("settled");
     expect(send).not.toHaveBeenCalled();
   });
 
-  describe("a claim another attempt holds (#5433 review E: two markers share one claim)", () => {
-    it("retries, sending nothing, while the holder's claim is younger than its wait, and settles once the claim is kept", async () => {
-      send.mockResolvedValue(result(1));
-      await expect(alertAt(NOW)).resolves.toBe("settled");
+  describe("a claim another attempt holds (#5433 round 2, item 5e)", () => {
+    /** Another attempt's claim on the key, taken `ago` before now, with or without its sent stamp. */
+    const heldByAnother = (ago: number, sent: boolean) => {
+      cooldown.rows.set(pastCutoffAlertKey(marker), new Date(Date.now() - ago));
+      if (sent) cooldown.rows.set(pastCutoffSentKey(marker), new Date(Date.now() - ago));
+    };
 
-      vi.setSystemTime(later(5 * 60_000));
-      await expect(alertAt(later(5 * 60_000))).resolves.toBe("threw");
-      vi.setSystemTime(later(IN_FLIGHT_MS + 1));
-      await expect(alertAt(later(IN_FLIGHT_MS + 1))).resolves.toBe("settled");
-      expect(send).toHaveBeenCalledTimes(1);
+    it("settles, sending nothing, when the holder's alert went (its sent stamp), however recent", async () => {
+      heldByAnother(1_000, true);
+      await expect(alert()).resolves.toBe("settled");
+      expect(send).not.toHaveBeenCalled();
     });
 
-    it("does not settle on a holder whose send then reached nobody: the loser waits for it and tries again", async () => {
-      // The holder claims; while its send runs, the loser reads the claim.
-      let loser: Promise<unknown> | undefined;
-      send.mockImplementationOnce(async () => {
-        loser = alertAt(later(1_000));
-        await loser;
-        return result(0, 1);
-      });
-      await expect(alertAt(NOW)).resolves.toBe("unreached");
-      await expect(loser).resolves.toBe("threw");
+    it("retries later, sending nothing, while the holder may still be sending (younger than the wait, no sent stamp)", async () => {
+      heldByAnother(5 * 60_000, false);
+      await expect(alert()).resolves.toBe("threw");
+      expect(send).not.toHaveBeenCalled();
+    });
 
-      // A wait later the holder's claim is the day-long hold nobody received: still not settled.
-      vi.setSystemTime(later(IN_FLIGHT_MS + 1));
-      await expect(alertAt(later(IN_FLIGHT_MS + 1))).resolves.toBe("unreached");
-      // A day on, the claim is free again and the alert goes.
+    it("takes over a holder that died after claiming (older than the wait, no sent stamp) and sends the alert, so it is not lost", async () => {
       send.mockResolvedValue(result(1));
-      const dayLater = later(ALERT_NOBODY_ELIGIBLE_RETRY_MS + 1);
-      vi.setSystemTime(dayLater);
-      await expect(alertAt(dayLater)).resolves.toBe("settled");
-      expect(send).toHaveBeenCalledTimes(2);
+      heldByAnother(IN_FLIGHT_MS + 1, false);
+      await expect(alert()).resolves.toBe("settled");
+      expect(send).toHaveBeenCalledTimes(1);
+      expect(cooldown.rows.has(pastCutoffSentKey(marker))).toBe(true);
     });
   });
 });

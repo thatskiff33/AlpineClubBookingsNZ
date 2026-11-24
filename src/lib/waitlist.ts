@@ -34,6 +34,7 @@ import {
   recordWaitlistLapseNoticesOwed,
 } from "@/lib/waitlist-offer-expired-notice";
 import { waitlistOfferExpiresAt } from "@/lib/waitlist-offer-window";
+import { retireOfferEmailIfReplayable } from "@/lib/waitlist-offer-email-state";
 import { logAudit } from "./audit";
 import logger from "@/lib/logger";
 import { isTransactionContention } from "@/lib/prisma-errors";
@@ -1148,6 +1149,21 @@ export async function confirmWaitlistOffer(
     : result;
 }
 
+/** Of these bookings, the ones still WAITLISTED: one read, outside any transaction; none when it fails. */
+async function stillWaitlistedIds(ids: string[]): Promise<Set<string>> {
+  if (ids.length === 0) return new Set();
+  try {
+    const rows = await prisma.booking.findMany({
+      where: { id: { in: ids }, status: BookingStatus.WAITLISTED },
+      select: { id: true },
+    });
+    return new Set(rows.map((row) => row.id));
+  } catch (err) {
+    logger.error({ err, count: ids.length }, "Failed to re-read lapsed waitlist entries; their notices are left for the sweep");
+    return new Set();
+  }
+}
+
 /**
  * Expire stale WAITLIST_OFFERED bookings and re-offer to next candidates.
  * `failedReofferCount`: re-offer passes that failed (#5410); the cron surfaces it.
@@ -1257,6 +1273,13 @@ export async function expireStaleOffers(format: ClubFormat): Promise<{
 
   let reofferedCount = 0;
 
+  // #5433 (round 2, item 4): a lapsed offer is over, so an offer email the
+  // retry cron could still replay is retired before it can state a dead
+  // deadline. Never throws.
+  for (const offer of staleOffers) {
+    if (offer.waitlistOfferedAt) await retireOfferEmailIfReplayable(offer.id, offer.waitlistOfferedAt, "the offer lapsed");
+  }
+
   for (const offer of staleOffers) {
     logAudit({
       action: "waitlist.offer_expired",
@@ -1288,15 +1311,11 @@ export async function expireStaleOffers(format: ClubFormat): Promise<{
     .sort((a, b) => compareWaitlistJoinOrder(a.key, b.key));
   const run = lapses.map(({ key }) => key);
   let failedReofferCount = 0;
-  const reofferedIds = new Set<string>();
   for (const { offer, key } of lapses) {
     const freed = { checkIn: offer.checkIn, checkOut: offer.checkOut, lodgeId: key.offeredLodgeId };
     try {
       const pass = await processWaitlistForDates(freed, format, { key, run });
-      if (pass.offeredBookingId) {
-        reofferedCount++;
-        reofferedIds.add(pass.offeredBookingId);
-      }
+      if (pass.offeredBookingId) reofferedCount++;
       if (pass.failed) failedReofferCount++;
     } catch (err) {
       failedReofferCount++;
@@ -1306,11 +1325,14 @@ export async function expireStaleOffers(format: ClubFormat): Promise<{
 
   // #5433: each lapse's owed notice, after the re-offer passes (review F): a
   // stop during these sends loses nothing (the markers stand for the sweep),
-  // and a stop before them no longer costs the re-offers. A lapsed member the
-  // passes offered a place again is told by that offer; their lapse notice is
-  // left for the sweep, which clears it as moved on.
+  // and a stop before them no longer costs the re-offers. Only to a booking
+  // still WAITLISTED, read once here outside any transaction (round 2, item
+  // 8): these passes, another caller's offer pass or the member's own cancel
+  // may have moved it on since the revert, and the sweep clears that notice
+  // as moved on. A failed read sends nothing here; the sweep sends what is owed.
+  const stillWaitlisted = await stillWaitlistedIds(staleOffers.map((offer) => offer.id));
   for (const offer of staleOffers) {
-    if (reofferedIds.has(offer.id)) continue;
+    if (!stillWaitlisted.has(offer.id)) continue;
     const owner = bookingOwner(offer);
     await deliverWaitlistLapseNotice(
       {

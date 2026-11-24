@@ -8,14 +8,17 @@
  * (`recordWaitlistOfferExpiredNoticesOwed`): one `OwedNotice` marker per
  * lapse, keyed by booking and the lapse's time. After the commit
  * `deliverWaitlistOfferExpiredNotice` sends it and clears the marker; the sweep
- * sends what that attempt never did.
+ * sends what that attempt never did. `expireStaleOffers` makes that attempt
+ * after its re-offer passes, not straight after the commit (#5433 review F).
  *
  * - wait: `WAITLIST_NOTICE_SWEEP_AFTER_MS` after the lapse or the last attempt;
  * - event key `<bookingId>:<expiredAtMs>`: one email per lapse;
  * - "moved on": the booking is gone or no longer `WAITLISTED` (re-offered,
  *   confirmed, cancelled);
- * - the position: the one the revert's transaction worked out, straight after
- *   the commit; the queue as it stands when a sweep sends it;
+ * - the position: the one the revert's transaction worked out, when
+ *   `expireStaleOffers` delivers it after that run's re-offer passes (to a
+ *   booking still `WAITLISTED` then); the queue as it stands when a sweep
+ *   sends it;
  * - "moved on" also once the stay has ended at the club (its check-out date
  *   has begun): a release notice is worth sending until the check-out date
  *   (#5433, settled by the lane), and the past-date waitlist cron cancels such

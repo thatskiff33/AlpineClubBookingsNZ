@@ -57,6 +57,8 @@ const mockReconcileBedAllocations = vi.fn().mockResolvedValue(undefined);
  * money guard.
  */
 const mockBookingGuestFindMany = vi.fn().mockResolvedValue([]);
+/** #5433 round 2: the expiry's re-read of lapsed bookings still WAITLISTED; all of them unless a case says otherwise. */
+const mockLapseStatusRead = vi.fn(async (ids: string[]) => ids.map((id) => ({ id })));
 /** #5433: an owed notice's claim after the commit; won unless a case says otherwise. */
 const mockOwedNoticeClaim = vi.fn().mockResolvedValue({ count: 1 });
 
@@ -183,7 +185,16 @@ vi.mock("@/lib/prisma", () => ({
     member: { findMany: fenceMemberFindMany() },
     booking: {
       findUnique: (...args: unknown[]) => mockBookingFindUnique(...args),
-      findMany: (...args: unknown[]) => mockBookingFindMany(...args),
+      // #5433 round 2 (item 8): the expiry re-reads which lapsed bookings are
+      // still WAITLISTED before it delivers their notices. That read has its own
+      // double (every one still waitlisted unless a case says otherwise), so the
+      // stubs below keep answering the reads they were written for.
+      findMany: (...args: unknown[]) => {
+        const where = (args[0] as { where?: { status?: string; id?: { in?: string[] } } } | undefined)?.where;
+        return where?.status === "WAITLISTED" && where.id?.in
+          ? mockLapseStatusRead(where.id.in)
+          : mockBookingFindMany(...args);
+      },
       count: (...args: unknown[]) => mockBookingCount(...args),
       update: (...args: unknown[]) => mockBookingUpdate(...args),
       updateMany: (...args: unknown[]) => mockBookingUpdateMany(...args),
@@ -2035,6 +2046,18 @@ describe("the lapse notices go after the re-offer passes (#5433 review F)", () =
     );
   });
 
+  it("sends no lapse notice to a booking that moved on before the deliveries (another offer pass, or the member's cancel: round 2, item 8)", async () => {
+    const { expireStaleOffers } = await import("@/lib/waitlist");
+    const { sendWaitlistOfferExpiredEmail } = await import("@/lib/email");
+    mockTxBookingFindMany.mockResolvedValueOnce([lapsed]).mockResolvedValue([]);
+    mockLapseStatusRead.mockResolvedValueOnce([]);
+
+    await expireStaleOffers(CLUB_FORMAT_TEST);
+
+    expect(mockLapseStatusRead).toHaveBeenCalledWith(["told"]);
+    expect(sendWaitlistOfferExpiredEmail).not.toHaveBeenCalled();
+  });
+
   it("sends no lapse notice to a member the re-offer pass offered the place again (a queue of one)", async () => {
     const { expireStaleOffers } = await import("@/lib/waitlist");
     const { sendWaitlistOfferExpiredEmail, sendWaitlistOfferEmail } = await import("@/lib/email");
@@ -2054,6 +2077,8 @@ describe("the lapse notices go after the re-offer passes (#5433 review F)", () =
         },
       ]) // the pass's candidates: the same booking, on its own
       .mockResolvedValue([]);
+    // The re-read after the passes finds it offered again, not WAITLISTED.
+    mockLapseStatusRead.mockResolvedValueOnce([]);
 
     const result = await expireStaleOffers(CLUB_FORMAT_TEST);
 

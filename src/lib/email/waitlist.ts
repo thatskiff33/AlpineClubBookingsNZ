@@ -6,7 +6,7 @@ import {
 } from "@/lib/email-templates/waitlist";
 import { EMAIL_DEFAULT_LODGE_NAME } from "@/lib/email-message-settings";
 import { formatCents as formatMoneyCents } from "@/lib/utils";
-import { sendEmail } from "./core";
+import { sendEmail, type EmailSendOutcome } from "./core";
 import {
   bookingOwnerEmailContext,
   type BookingOwnerEmailSource,
@@ -95,8 +95,9 @@ export async function sendWaitlistOfferEmail(
   // that figure, so the explanation belongs with it. Null on every other offer,
   // which renders exactly as before.
   subscriptionMemberRateNotice?: string | null,
-) {
-  await sendEmail({
+): Promise<EmailSendOutcome> {
+  // #5433: the core's result, so the owed notice can tell a skipped send.
+  return sendEmail({
     to: email,
     subject: `Spot Available! - ${EMAIL_DEFAULT_LODGE_NAME}`,
     html: await renderEmailHtml(() => waitlistOfferTemplate(

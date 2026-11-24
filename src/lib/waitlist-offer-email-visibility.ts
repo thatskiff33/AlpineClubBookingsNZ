@@ -1,8 +1,8 @@
 import { EmailLogStatus, BookingStatus } from "@prisma/client";
 import { bookingOwner } from "@/lib/booking-owner";
-import { EMAIL_RETRY_MAX_ATTEMPTS } from "@/lib/email/retry-selection";
 import { prisma } from "@/lib/prisma";
 import { WAITLIST_OFFER_TEMPLATE_NAME } from "@/lib/email/waitlist";
+import { offerEmailRowState } from "@/lib/waitlist-offer-email-state";
 const WAITLIST_EMAIL_LOOKBACK_MS = 2 * 60 * 1000;
 
 type WaitlistOfferEmailRetryState =
@@ -25,6 +25,9 @@ type WaitlistOfferEmailRetryState =
   // window while the member is never told, then lapses. This is the ONE
   // suppression state with needsOperatorAction: true.
   | "suppressed_live_offer"
+  // #5433: held back because this installation is not the club's live site
+  // (`SKIPPED_NON_PRODUCTION`): by design, not an operator problem.
+  | "withheld_non_production"
   | "missing";
 
 export interface WaitlistOfferEmailDelivery {
@@ -66,6 +69,7 @@ type WaitlistOfferEmailLog = {
   errorMessage: string | null;
   createdAt: Date;
   htmlBody: string | null;
+  bookingRetryHtmlBody: string | null;
 };
 
 function getLookupStart(booking: WaitlistOfferBooking) {
@@ -120,94 +124,70 @@ function suppressedState(
     : { retryState: "suppressed", needsOperatorAction: false };
 }
 
-function toDelivery(
-  emailLog: WaitlistOfferEmailLog | null,
-  booking: WaitlistOfferBooking,
-  now: Date,
+function deliveryOf(
+  emailLog: WaitlistOfferEmailLog,
+  retryState: WaitlistOfferEmailRetryState,
+  needsOperatorAction: boolean,
 ): WaitlistOfferEmailDelivery {
-  if (!emailLog) {
-    // A suppressed booking never gets an offer email (processWaitlistForDates
-    // excludes it from candidacy), so an absent log here is expected rather than
-    // an operator problem. Reporting "missing" would be a false alarm.
-    if (booking.noEmails) {
-      return {
-        status: "MISSING",
-        emailLogId: null,
-        attempts: null,
-        lastAttemptAt: null,
-        errorMessage: null,
-        ...suppressedState(booking, now),
-      };
-    }
-    return {
-      status: "MISSING",
-      emailLogId: null,
-      attempts: null,
-      lastAttemptAt: null,
-      errorMessage: null,
-      retryState: "missing",
-      needsOperatorAction: true,
-    };
-  }
-
-  if (emailLog.status === EmailLogStatus.SKIPPED_NO_EMAILS) {
-    return {
-      status: emailLog.status,
-      emailLogId: emailLog.id,
-      attempts: emailLog.attempts,
-      lastAttemptAt: emailLog.lastAttemptAt.toISOString(),
-      errorMessage: emailLog.errorMessage,
-      ...suppressedState(booking, now),
-    };
-  }
-
-  if (emailLog.status === EmailLogStatus.SENT) {
-    return {
-      status: emailLog.status,
-      emailLogId: emailLog.id,
-      attempts: emailLog.attempts,
-      lastAttemptAt: emailLog.lastAttemptAt.toISOString(),
-      errorMessage: null,
-      retryState: "delivered",
-      needsOperatorAction: false,
-    };
-  }
-
-  if (emailLog.status === EmailLogStatus.QUEUED) {
-    return {
-      status: emailLog.status,
-      emailLogId: emailLog.id,
-      attempts: emailLog.attempts,
-      lastAttemptAt: emailLog.lastAttemptAt.toISOString(),
-      errorMessage: emailLog.errorMessage,
-      retryState: "queued",
-      needsOperatorAction: false,
-    };
-  }
-
-  if (emailLog.status === EmailLogStatus.BOUNCED) {
-    return {
-      status: emailLog.status,
-      emailLogId: emailLog.id,
-      attempts: emailLog.attempts,
-      lastAttemptAt: emailLog.lastAttemptAt.toISOString(),
-      errorMessage: emailLog.errorMessage,
-      retryState: "undeliverable",
-      needsOperatorAction: true,
-    };
-  }
-
-  const exhausted = emailLog.attempts >= EMAIL_RETRY_MAX_ATTEMPTS;
-
   return {
     status: emailLog.status,
     emailLogId: emailLog.id,
     attempts: emailLog.attempts,
     lastAttemptAt: emailLog.lastAttemptAt.toISOString(),
-    errorMessage: emailLog.errorMessage,
-    retryState: exhausted ? "exhausted" : "retrying",
-    needsOperatorAction: exhausted,
+    errorMessage: emailLog.status === EmailLogStatus.SENT ? null : emailLog.errorMessage,
+    retryState,
+    needsOperatorAction,
   };
+}
+
+/**
+ * #5433 (round 2, item 5c): built on the one definition of what the offer
+ * email's row says (`offerEmailRowState`), the same reading the offer's owed
+ * notices and the lapse use; the page keeps its own words for each case. Three
+ * cases read differently from before, each because the old reading was wrong:
+ * a non-production copy's withheld email (it read as retrying or exhausted by
+ * its attempts) is now `withheld_non_production`, neutral; a `FAILED` row with
+ * no body to replay (it read as retrying below the ceiling) is now `exhausted`;
+ * and a `QUEUED` row past its first attempt, which the retry cron holds while
+ * it replays it, is now `retrying`. A live offer whose email the booking's "No
+ * emails" withheld is still flagged for an operator: that member was not told,
+ * whatever the owed notices count as told.
+ */
+function toDelivery(
+  emailLog: WaitlistOfferEmailLog | null,
+  booking: WaitlistOfferBooking,
+  now: Date,
+): WaitlistOfferEmailDelivery {
+  const state = offerEmailRowState(emailLog);
+  if (!emailLog || state === "not-sent") {
+    const missing = { status: "MISSING" as const, emailLogId: null, attempts: null, lastAttemptAt: null, errorMessage: null };
+    // A suppressed booking never gets an offer email (processWaitlistForDates
+    // excludes it from candidacy), so an absent log here is expected rather than
+    // an operator problem. Reporting "missing" would be a false alarm.
+    return booking.noEmails
+      ? { ...missing, ...suppressedState(booking, now) }
+      : { ...missing, retryState: "missing", needsOperatorAction: true };
+  }
+  switch (state) {
+    case "sent":
+      return emailLog.status === EmailLogStatus.SENT
+        ? deliveryOf(emailLog, "delivered", false)
+        : deliveryOf(emailLog, "queued", false);
+    case "withheld":
+      if (emailLog.status === EmailLogStatus.SKIPPED_NON_PRODUCTION) {
+        return deliveryOf(emailLog, "withheld_non_production", false);
+      }
+      {
+        const suppressed = suppressedState(booking, now);
+        return deliveryOf(emailLog, suppressed.retryState, suppressed.needsOperatorAction);
+      }
+    case "retrying":
+      return deliveryOf(emailLog, "retrying", false);
+    case "undeliverable":
+      return emailLog.status === EmailLogStatus.BOUNCED
+        ? deliveryOf(emailLog, "undeliverable", true)
+        : deliveryOf(emailLog, "exhausted", true);
+  }
 }
 
 export async function getWaitlistOfferEmailDeliveries(
@@ -266,6 +246,7 @@ export async function getWaitlistOfferEmailDeliveries(
       errorMessage: true,
       createdAt: true,
       htmlBody: true,
+      bookingRetryHtmlBody: true,
     },
   });
 

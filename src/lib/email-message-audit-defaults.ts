@@ -119,7 +119,7 @@ const EMAIL_AUDIT_DEFAULTS_BASE = {
   },
   "admin-waitlist-offer": {
     "defaultSubject": "Waitlist Offer: {{memberName}}",
-    "defaultBody": "Waitlist Offer Made\n\nA waitlist offer has been sent to {{memberName}}.\n\nMember: {{memberName}}\nCheck-in: {{checkIn}}\nCheck-out: {{checkOut}}\nGuests: {{guestCount}}\nQueue Position: #{{position}}\n\nThe member has 48 hours to confirm their booking.\n\nView Waitlist: {{BASE_URL}}" + adminHref("waitlist")
+    "defaultBody": "Waitlist Offer Made\n\n{{offerNote}}\n\nMember: {{memberName}}\nCheck-in: {{checkIn}}\nCheck-out: {{checkOut}}\nGuests: {{guestCount}}\nQueue Position: #{{position}}\n\nThe member has until {{expiresAt}} to confirm their booking.\n\nView Waitlist: {{BASE_URL}}" + adminHref("waitlist")
   },
   // #5433: a waitlist email owed to a member passed its cut-off unsent.
   "admin-waitlist-notice-unsent": {

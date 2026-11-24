@@ -18,5 +18,5 @@ export const WAITLIST_NOTICE_UNSENT_NOTE: Readonly<Record<WaitlistNoticeUnsent, 
   "offer-expired":
     "This member's waitlist offer lapsed and they are back on the waitlist, but the email telling them could not be sent in time, so it will not be sent automatically. Contact them if they need to know.",
   "offer-lapsed-untold":
-    "This member was offered a waitlist place, but the offer lapsed before the email telling them could ever be sent, so they did not know about it. They keep their place in the queue, but for this place the waitlist considers everyone else waiting for these nights before them. Contact them if you want to step in.",
+    "This member was offered a waitlist place, but the offer lapsed before the email telling them could ever be sent, so they may not have known about it. They keep their place in the queue, but for this place the waitlist considers everyone else waiting for these nights before them. Contact them if you want to step in.",
 };

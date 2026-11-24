@@ -33,6 +33,7 @@ import {
 } from "@/lib/admin-booking-requests-path";
 import { sendToAdmins } from "./admin-alerts-shared";
 import type { AdminAlertRecipientsResult } from "./admin-alert-send-result";
+import { waitlistOfferAlertNote, type WaitlistOfferEmailOutcome } from "@/lib/waitlist-offer-alert-note";
 import { renderEmailHtml } from "@/lib/email-theme";
 import { emailCalendarDay, emailClubDateTime } from "@/lib/email-templates-club-time";
 import type { ClubFormat } from "@/lib/club-format";
@@ -288,15 +289,23 @@ export async function sendAdminWaitlistOfferAlert(data: {
   checkOut: Date;
   guestCount: number;
   position: number;
+  /** The deadline in force (#5433: a restart may have moved it). */
+  expiresAt: Date | null;
+  /** Whether the offer email went or was withheld by design (#5433). */
+  offerEmail: WaitlistOfferEmailOutcome;
 }): Promise<AdminAlertRecipientsResult> {
   return sendToAdmins({
     subject: `Waitlist Offer: ${data.memberName}`,
     html: await renderEmailHtml(() => adminWaitlistOfferTemplate(data)),
     templateName: "admin-waitlist-offer",
     templateData: {
-      ...data,
+      memberName: data.memberName,
+      guestCount: data.guestCount,
+      position: data.position,
       checkIn: emailCalendarDay(data.checkIn),
       checkOut: emailCalendarDay(data.checkOut),
+      offerNote: waitlistOfferAlertNote(data.memberName, data.offerEmail),
+      expiresAt: data.expiresAt ? emailClubDateTime(data.expiresAt) : "",
     },
     preferenceKey: "adminWaitlistOffer",
   });

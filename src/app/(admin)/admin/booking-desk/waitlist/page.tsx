@@ -58,7 +58,7 @@ import {
 const PAGE_SIZE_OPTIONS = [10, 25, 50, 100] as const;
 
 interface OfferEmailDelivery {
-  status: "QUEUED" | "SENT" | "FAILED" | "BOUNCED" | "SKIPPED_NO_EMAILS" | "MISSING";
+  status: "QUEUED" | "SENT" | "FAILED" | "BOUNCED" | "SKIPPED_NO_EMAILS" | "SKIPPED_NON_PRODUCTION" | "MISSING";
   emailLogId: string | null;
   attempts: number | null;
   lastAttemptAt: string | null;
@@ -73,6 +73,8 @@ interface OfferEmailDelivery {
     | "suppressed"
     // #2258: silenced AND still holding a live offer — an operator must act.
     | "suppressed_live_offer"
+    // #5433: held back because this is not the club's live site.
+    | "withheld_non_production"
     | "missing";
   needsOperatorAction: boolean;
 }
@@ -201,6 +203,8 @@ function getOfferEmailSummary(delivery: OfferEmailDelivery) {
       return "Offer email withheld (No emails)";
     case "suppressed_live_offer":
       return "Offer live but emails are off — member not told";
+    case "withheld_non_production":
+      return "Offer email held back (not the live site)";
     case "missing":
       return "Offer email log missing";
   }
@@ -217,7 +221,7 @@ function getOfferEmailBadgeClass(delivery: OfferEmailDelivery) {
 
   // #2258: deliberate silence is neither a success nor a problem — render it
   // neutral so it never reads as "the member was told".
-  if (delivery.retryState === "suppressed") {
+  if (delivery.retryState === "suppressed" || delivery.retryState === "withheld_non_production") {
     return "bg-muted text-muted-foreground";
   }
 
