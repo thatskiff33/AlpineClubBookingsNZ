@@ -7,11 +7,14 @@ import { getAgeTierSettingsStrict } from "@/lib/age-tier";
 import { loadMembershipLockoutSettingsStrict } from "@/lib/membership-lockout-settings";
 import { resolveMembershipTypePoliciesForMembers } from "@/lib/membership-type-policy";
 import { effectiveSubscriptionBehavior } from "@/lib/membership-types";
+import { memberDisplayName } from "@/lib/member-serialization";
 import {
   hasChosenLiabilityRule,
   liabilityRuleFor,
   resolveMemberSubscriptionLiability,
+  type SubscriptionLiabilitySettings,
 } from "@/lib/policies/subscription";
+import { isInSubscriptionBillingPopulation } from "@/lib/subscription-billing-population";
 import { lockSubscriptionBillingSeason } from "@/lib/subscription-billing-season-lock";
 import {
   lockSubscriptionLiabilityRuleExclusive,
@@ -255,11 +258,101 @@ export async function reconcileSeasonSubscriptionForAssignment(
   return { reconciled: result.count > 0 };
 }
 
+/** One untouched `NOT_REQUIRED` season row whose member owes under a rule. */
+export interface StaleNotRequiredRow {
+  memberId: string;
+  name: string;
+  /**
+   * Whether the member is in the billing population (active, not archived).
+   * A member outside it still has their row reset, but no billing run will
+   * invoice them until they are made active again.
+   */
+  inBillingPopulation: boolean;
+}
+
+/**
+ * Which season rows the liability clear-up would reset under `settings`
+ * (#5190): every untouched `NOT_REQUIRED` row ({@link UNTOUCHED_NOT_REQUIRED_ROW})
+ * whose member the rule's billing side says owes, for any member, active or not.
+ * A member whose type cannot be resolved is left out, and a rule that is not
+ * chosen selects nobody. Sorted by name, then id.
+ *
+ * The one selection the clear-up writes from and the admin preview lists
+ * (`INV-SSOT`), so the list an officer reads before saving is the list the save
+ * resets. Read-only; the clear-up takes its locks before calling it.
+ */
+export async function findStaleNotRequiredRows(
+  db: Pick<
+    Prisma.TransactionClient,
+    | "memberSubscription"
+    | "member"
+    | "ageTierSetting"
+    | "seasonalMembershipAssignment"
+    | "membershipType"
+  >,
+  input: { seasonYear: number; settings: SubscriptionLiabilitySettings },
+): Promise<StaleNotRequiredRow[]> {
+  const { seasonYear, settings } = input;
+  if (!hasChosenLiabilityRule(settings)) {
+    return [];
+  }
+  const rows = await db.memberSubscription.findMany({
+    where: { seasonYear, ...UNTOUCHED_NOT_REQUIRED_ROW },
+    select: { memberId: true },
+  });
+  if (rows.length === 0) {
+    return [];
+  }
+  const memberIds = rows.map((row) => row.memberId);
+  const [policies, members, ageTierSettings] = await Promise.all([
+    resolveMembershipTypePoliciesForMembers(db, { memberIds, seasonYear }),
+    db.member.findMany({
+      where: { id: { in: memberIds } },
+      select: {
+        id: true,
+        ageTier: true,
+        dateOfBirth: true,
+        firstName: true,
+        lastName: true,
+        active: true,
+        archivedAt: true,
+      },
+    }),
+    getAgeTierSettingsStrict(db),
+  ]);
+  const rule = liabilityRuleFor("billing", settings);
+  const stale: StaleNotRequiredRow[] = [];
+  for (const member of members) {
+    const policy = policies.get(member.id);
+    if (
+      policy !== undefined &&
+      resolveMemberSubscriptionLiability({
+        subscriptionBehavior: policy.subscriptionBehavior,
+        member,
+        seasonRowStatus: "NOT_REQUIRED",
+        seasonYear,
+        rule,
+        ageTierSettings,
+      }).owes
+    ) {
+      stale.push({
+        memberId: member.id,
+        name: memberDisplayName(member),
+        inBillingPopulation: isInSubscriptionBillingPopulation(member),
+      });
+    }
+  }
+  return stale.sort(
+    (a, b) => a.name.localeCompare(b.name) || a.memberId.localeCompare(b.memberId),
+  );
+}
+
 /**
  * The liability clear-up (#5190): once the club has chosen its liability rule,
  * flip every untouched `NOT_REQUIRED` row for the season whose member the rule
  * says owes a subscription to `NOT_INVOICED` — the annual-fee sweep's canonical
- * un-invoiced status.
+ * un-invoiced status. The rows are {@link findStaleNotRequiredRows}'s, the
+ * selection the admin preview lists.
  *
  * Why it exists: before the choice, the sweep wrote `NOT_REQUIRED` for a member
  * who was tier-exempt at season start, and booking access honoured that row.
@@ -286,43 +379,9 @@ export async function clearStaleNotRequiredRows(
   // the rule key only for this clear-up's own writes, never for a confirm.
   await lockSubscriptionLiabilityRuleExclusive(tx);
   const settings = await loadMembershipLockoutSettingsStrict(tx);
-  if (!hasChosenLiabilityRule(settings)) {
-    return nothingCleared;
-  }
-  const rows = await tx.memberSubscription.findMany({
-    where: { seasonYear, ...UNTOUCHED_NOT_REQUIRED_ROW },
-    select: { memberId: true },
-  });
-  if (rows.length === 0) {
-    return nothingCleared;
-  }
-  const memberIds = rows.map((row) => row.memberId);
-  const [policies, members, ageTierSettings] = await Promise.all([
-    resolveMembershipTypePoliciesForMembers(tx, { memberIds, seasonYear }),
-    tx.member.findMany({
-      where: { id: { in: memberIds } },
-      select: { id: true, ageTier: true, dateOfBirth: true },
-    }),
-    getAgeTierSettingsStrict(tx),
-  ]);
-  const memberById = new Map(members.map((member) => [member.id, member]));
-  const rule = liabilityRuleFor("billing", settings);
-  const owingMemberIds = memberIds.filter((memberId) => {
-    const policy = policies.get(memberId);
-    const member = memberById.get(memberId);
-    return (
-      policy !== undefined &&
-      member !== undefined &&
-      resolveMemberSubscriptionLiability({
-        subscriptionBehavior: policy.subscriptionBehavior,
-        member,
-        seasonRowStatus: "NOT_REQUIRED",
-        seasonYear,
-        rule,
-        ageTierSettings,
-      }).owes
-    );
-  });
+  const owingMemberIds = (
+    await findStaleNotRequiredRows(tx, { seasonYear, settings })
+  ).map((row) => row.memberId);
   if (owingMemberIds.length === 0) {
     return nothingCleared;
   }

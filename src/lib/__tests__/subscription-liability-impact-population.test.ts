@@ -2,7 +2,8 @@ import { describe, expect, it, vi } from "vitest";
 
 // #5190 review: the impact list speaks for the members the billing run
 // considers, reading their season rows with the same untouched-row select the
-// clear-up and the row note use.
+// clear-up and the row note use. Its stale-record list is the clear-up's own
+// selection for the proposed rule, so it names exactly the rows saving resets.
 
 vi.mock("@/lib/prisma", () => ({ prisma: {} }));
 vi.mock("@/lib/age-tier", () => ({
@@ -17,6 +18,10 @@ vi.mock("@/lib/membership-lockout-settings", () => ({
     liabilityAgeSource: "NOT_CHOSEN",
   }),
 }));
+const findStaleNotRequiredRows = vi.hoisted(() =>
+  vi.fn(async () => [{ memberId: "gone", name: "Archived Member", inBillingPopulation: false }]),
+);
+vi.mock("@/lib/member-subscription-defaults", () => ({ findStaleNotRequiredRows }));
 vi.mock("@/lib/membership-type-policy", () => ({
   resolveMembershipTypePoliciesForMembers: async () =>
     new Map([["m1", { subscriptionBehavior: "BASED_ON_AGE_TIER" }]]),
@@ -58,7 +63,14 @@ describe("buildSubscriptionLiabilityImpact reads the billing population (#5190)"
       ...SEASON_ROW_STATE_SELECT,
       xeroInvoiceNumber: true,
     });
-    // The untouched NOT_REQUIRED row of a member the rule says owes is stale.
-    expect(impact.staleRecords).toEqual([{ memberId: "m1", name: expect.any(String) }]);
+    // Stale records come from the clear-up's selection, under the proposed
+    // rule, including a member outside the billing population.
+    expect(findStaleNotRequiredRows).toHaveBeenCalledWith(expect.anything(), {
+      seasonYear: 2026,
+      settings: { requiredTypeAgeRule: "ALWAYS_OWES", liabilityAgeSource: "SEASON_START" },
+    });
+    expect(impact.staleRecords).toEqual([
+      { memberId: "gone", name: "Archived Member", inBillingPopulation: false },
+    ]);
   });
 });

@@ -24,6 +24,7 @@ import {
   CLEARED_ROWS_AUDIT_MEMBER_ID_LIMIT,
   clearStaleNotRequiredRows,
   clearedRowsAuditMetadata,
+  findStaleNotRequiredRows,
 } from "@/lib/member-subscription-defaults";
 
 const SEASON = 2026;
@@ -50,15 +51,30 @@ function row(memberId: string, overrides: Partial<Row> = {}): Row {
   };
 }
 
-function member(id: string, behavior: MembershipTypeSubscriptionBehavior, ageTier: string) {
+type MemberFixture = {
+  id: string;
+  ageTier: string;
+  dateOfBirth: Date | null;
+  firstName?: string;
+  lastName?: string;
+  active?: boolean;
+  archivedAt?: Date | null;
+};
+
+function member(
+  id: string,
+  behavior: MembershipTypeSubscriptionBehavior,
+  ageTier: string,
+  extra: Omit<MemberFixture, "id" | "ageTier" | "dateOfBirth"> = {},
+): MemberFixture {
   behaviors.set(id, behavior);
-  return { id, ageTier, dateOfBirth: null };
+  return { id, ageTier, dateOfBirth: null, firstName: id, lastName: "Member", active: true, archivedAt: null, ...extra };
 }
 
 function makeTx(input: {
   settings: { requiredTypeAgeRule: string; liabilityAgeSource: string } | null;
   rows: Row[];
-  members: Array<{ id: string; ageTier: string; dateOfBirth: Date | null }>;
+  members: MemberFixture[];
 }) {
   const calls: string[] = [];
   const tx = {
@@ -211,5 +227,63 @@ describe("clearStaleNotRequiredRows (#5190)", () => {
     expect(
       clearedRowsAuditMetadata({ clearedCount: 1, clearedMemberIds: ["m1"] }, SEASON),
     ).toEqual({ seasonYear: SEASON, total: 1, memberIds: ["m1"], memberIdsTruncated: false });
+  });
+});
+
+describe("findStaleNotRequiredRows: the one selection the preview lists and the clear-up resets (#5190)", () => {
+  beforeEach(() => behaviors.clear());
+
+  function fixtures() {
+    const archived = new Date("2026-05-01T00:00:00.000Z");
+    const rows = [
+      row("youth"),
+      row("child"),
+      row("inactive"),
+      row("archived"),
+      row("invoiced", { xeroInvoiceId: "inv-1" }),
+      row("unresolved"),
+    ];
+    const members = [
+      member("youth", "BASED_ON_AGE_TIER", "YOUTH", { firstName: "Yara", lastName: "Young" }),
+      member("child", "BASED_ON_AGE_TIER", "CHILD"),
+      member("inactive", "REQUIRED", "ADULT", { firstName: "Ivan", lastName: "Idle", active: false }),
+      member("archived", "REQUIRED", "ADULT", { firstName: "Ada", lastName: "Archived", archivedAt: archived }),
+      member("invoiced", "REQUIRED", "ADULT"),
+      { id: "unresolved", ageTier: "ADULT", dateOfBirth: null },
+    ];
+    return { rows, members };
+  }
+
+  it("selects nobody for a rule that is not chosen", async () => {
+    const { tx } = makeTx({ settings: CHOSEN, ...fixtures() });
+    await expect(
+      findStaleNotRequiredRows(tx as never, {
+        seasonYear: SEASON,
+        settings: { requiredTypeAgeRule: "NOT_CHOSEN", liabilityAgeSource: "NOT_CHOSEN" },
+      }),
+    ).resolves.toEqual([]);
+    expect(tx.memberSubscription.findMany).not.toHaveBeenCalled();
+  });
+
+  it("names every member whose untouched row the rule would reset, flagging those billing never considers", async () => {
+    const { tx } = makeTx({ settings: CHOSEN, ...fixtures() });
+    await expect(
+      findStaleNotRequiredRows(tx as never, { seasonYear: SEASON, settings: CHOSEN as never }),
+    ).resolves.toEqual([
+      { memberId: "archived", name: "Ada Archived", inBillingPopulation: false },
+      { memberId: "inactive", name: "Ivan Idle", inBillingPopulation: false },
+      { memberId: "youth", name: "Yara Young", inBillingPopulation: true },
+    ]);
+  });
+
+  it("is exactly what saving that rule resets: the preview and the clear-up cannot disagree", async () => {
+    const { tx } = makeTx({ settings: CHOSEN, ...fixtures() });
+    const previewed = await findStaleNotRequiredRows(tx as never, {
+      seasonYear: SEASON,
+      settings: CHOSEN as never,
+    });
+    const cleared = await clearStaleNotRequiredRows(tx as never, SEASON);
+    expect(cleared.clearedMemberIds).toEqual(previewed.map((stale) => stale.memberId).sort());
+    expect(cleared.clearedCount).toBe(previewed.length);
   });
 });

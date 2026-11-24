@@ -346,6 +346,8 @@ describe("membership lockout settings route: the subscription liability rule (#5
     expect(JSON.stringify(audit)).toContain(
       JSON.stringify({ seasonYear: 2026, total: 3, memberIds: ["m1", "m2", "m3"], memberIdsTruncated: false }),
     );
+    // The settings screen tells the officer how many records the save reset.
+    await expect(response.json()).resolves.toMatchObject({ clearedStaleRecords: 3 });
   });
 
   it("a save that omits the pair leaves it out of the write, and re-runs the clear-up for a chosen club", async () => {
@@ -363,6 +365,7 @@ describe("membership lockout settings route: the subscription liability rule (#5
     expect(response.status).toBe(200);
     expect(mocks.transaction).not.toHaveBeenCalled();
     expect(mocks.clearStale).not.toHaveBeenCalled();
+    await expect(response.json()).resolves.toMatchObject({ clearedStaleRecords: null });
   });
 });
 

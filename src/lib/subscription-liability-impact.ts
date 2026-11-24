@@ -10,9 +10,12 @@ import {
   type SubscriptionLiabilitySettings,
 } from "@/lib/policies/subscription";
 import { memberDisplayName } from "@/lib/member-serialization";
+import {
+  findStaleNotRequiredRows,
+  type StaleNotRequiredRow,
+} from "@/lib/member-subscription-defaults";
 import { SUBSCRIPTION_BILLING_POPULATION_WHERE } from "@/lib/subscription-billing-population";
 import {
-  isUntouchedNotRequiredRow,
   SEASON_ROW_STATE_SELECT,
   type SeasonRowState,
 } from "@/lib/subscription-season-row-note";
@@ -34,15 +37,14 @@ import {
  *    already hold (an officer may want to void it);
  *  - `staleRecords`: their season row says "Not required" and nothing has
  *    billed, paid, covered or marked it, but the proposed rule says they owe —
- *    the billing population's rows the clear-up (`clearStaleNotRequiredRows`)
- *    would flip. The clear-up also flips the rows of members outside it
- *    (inactive or archived), whom billing never considers; this list leaves
- *    them out, and the clear-up's audit row names them.
+ *    exactly the rows saving the rule would reset (`findStaleNotRequiredRows`,
+ *    the clear-up's own selection), including those of members outside the
+ *    billing population (inactive or archived), each flagged.
  *
  * Every answer comes from the shared rule (`resolveMemberSubscriptionLiability`)
  * with the same inputs billing and the booking gates read; nothing here is a
- * second copy of it. The admin liability screen (#5190's second pull request)
- * shows this list; until then it is the endpoint the upgrade runbook names.
+ * second copy of it. The admin liability section on the subscription-lockout
+ * page shows this list before an officer saves a rule.
  */
 
 export interface LiabilityImpactMember {
@@ -60,7 +62,7 @@ export interface SubscriptionLiabilityImpact {
   proposed: SubscriptionLiabilitySettings;
   newlyOwing: LiabilityImpactMember[];
   noLongerOwing: Array<LiabilityImpactMember & { unpaidInvoiceNumber: string | null }>;
-  staleRecords: Array<{ memberId: string; name: string }>;
+  staleRecords: StaleNotRequiredRow[];
 }
 
 /** The facts one member's three answers are computed from. */
@@ -75,13 +77,17 @@ export interface LiabilityImpactFacts {
 
 const UNPAID_INVOICE_STATUSES: ReadonlySet<SubscriptionStatus> = new Set(["UNPAID", "OVERDUE"]);
 
-/** The pure comparison, over facts already read. */
+/**
+ * The pure comparison, over facts already read. `staleRecords` is passed
+ * through as read: it comes from the clear-up's own selection, not from here.
+ */
 export function classifyLiabilityImpact(input: {
   seasonYear: number;
   current: SubscriptionLiabilitySettings;
   proposed: SubscriptionLiabilitySettings;
   ageTierSettings: AgeTierSettingData[];
   members: LiabilityImpactFacts[];
+  staleRecords: StaleNotRequiredRow[];
 }): SubscriptionLiabilityImpact {
   const currentBilling = liabilityRuleFor("billing", input.current);
   const currentAccess = liabilityRuleFor("access", input.current);
@@ -93,7 +99,7 @@ export function classifyLiabilityImpact(input: {
     proposed: input.proposed,
     newlyOwing: [],
     noLongerOwing: [],
-    staleRecords: [],
+    staleRecords: input.staleRecords,
   };
   for (const facts of input.members) {
     const owes = (rule: typeof proposedRule) =>
@@ -126,15 +132,6 @@ export function classifyLiabilityImpact(input: {
         });
       }
     }
-    // As the clear-up: the same untouched-row test, and a member whose type
-    // cannot be resolved is left alone.
-    if (
-      after &&
-      facts.subscriptionBehavior != null &&
-      isUntouchedNotRequiredRow(facts.seasonRow)
-    ) {
-      impact.staleRecords.push({ memberId: facts.memberId, name: facts.name });
-    }
   }
   return impact;
 }
@@ -159,7 +156,7 @@ export async function buildSubscriptionLiabilityImpact(
   params: { seasonYear: number; proposed: SubscriptionLiabilitySettings },
 ): Promise<SubscriptionLiabilityImpact> {
   const { seasonYear } = params;
-  const [lockoutSettings, ageTierSettings, members] = await Promise.all([
+  const [lockoutSettings, ageTierSettings, members, staleRecords] = await Promise.all([
     loadMembershipLockoutSettingsStrict(db),
     getAgeTierSettingsStrict(db),
     db.member.findMany({
@@ -179,6 +176,8 @@ export async function buildSubscriptionLiabilityImpact(
       },
       orderBy: [{ lastName: "asc" }, { firstName: "asc" }, { id: "asc" }],
     }),
+    // The rows saving the proposed rule would reset, as the clear-up selects them.
+    findStaleNotRequiredRows(db, { seasonYear, settings: params.proposed }),
   ]);
   const policies = await resolveMembershipTypePoliciesForMembers(db, {
     memberIds: members.map((member) => member.id),
@@ -192,6 +191,7 @@ export async function buildSubscriptionLiabilityImpact(
     },
     proposed: params.proposed,
     ageTierSettings,
+    staleRecords,
     members: members.map((member) => {
       const row = member.subscriptions[0];
       return {

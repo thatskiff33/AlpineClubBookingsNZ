@@ -236,6 +236,8 @@ export async function PUT(request: NextRequest) {
     settings: normalizeMembershipLockoutSettings(record),
     financialYear,
     persisted: record,
+    // #5190: how many "Not required" records the save reset (null: no clear-up ran).
+    clearedStaleRecords: clearedStaleRows?.clearedCount ?? null,
     ...(preview ?? {}),
   });
 }
