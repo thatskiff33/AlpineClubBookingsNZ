@@ -9,11 +9,16 @@ import {
   WorkPartyManagedCalendarEventError,
 } from "@/lib/calendar-service";
 import {
-  calendarEditScopeSchema,
-  calendarEventInputSchema,
+  calendarEventDeleteQuerySchema,
+  calendarEventUpdateSchema,
   resolveCalendarEventDates,
   serializeCalendarEvent,
 } from "@/lib/calendar-events";
+import {
+  ADMIN_CALENDAR_EVENT_DELETED_CONNECTION_SHAPE,
+  ADMIN_CALENDAR_EVENT_UPDATED_CONNECTION_SHAPE,
+} from "@/lib/connection-shapes/lodge-calendar";
+import { connectionJson } from "@/lib/mcp-connection-request";
 
 /**
  * #5148: an entry a work party manages is changed from Work Parties only.
@@ -56,7 +61,10 @@ export async function PATCH(
   const json = await parseJsonRequestBody(req);
   if (!json.ok) return json.response;
 
-  const parsed = calendarEventInputSchema.safeParse(json.body);
+  // The schema is shared with the AI app action `update_calendar_event`
+  // (ALP-722). A `scope` other than single or series is refused, not read as
+  // single: an edit meant for a whole series must not quietly change one day.
+  const parsed = calendarEventUpdateSchema.safeParse(json.body);
   if (!parsed.success) {
     return NextResponse.json(
       { error: "Validation failed", details: parsed.error.flatten() },
@@ -64,9 +72,7 @@ export async function PATCH(
     );
   }
 
-  const scope = calendarEditScopeSchema
-    .catch("single")
-    .parse((json.body as { scope?: unknown })?.scope);
+  const scope = parsed.data.scope ?? "single";
 
   const dates = resolveCalendarEventDates(parsed.data);
   if ("error" in dates) {
@@ -132,10 +138,11 @@ export async function PATCH(
     },
   });
 
-  return NextResponse.json({
-    event: serializeCalendarEvent(result.anchor),
-    scope: result.scope,
-  });
+  return connectionJson(
+    req,
+    { event: serializeCalendarEvent(result.anchor), scope: result.scope },
+    ADMIN_CALENDAR_EVENT_UPDATED_CONNECTION_SHAPE,
+  );
 }
 
 /**
@@ -161,12 +168,21 @@ export async function DELETE(
 
   const { id } = await params;
   const searchParams = new URL(req.url).searchParams;
-  const scope = calendarEditScopeSchema
-    .catch("single")
-    .parse(searchParams.get("scope"));
+  // Shared with the AI app action `delete_calendar_event` (ALP-722). As for
+  // the edit, an unknown value is refused rather than read as the default.
+  const query = calendarEventDeleteQuerySchema.safeParse({
+    scope: searchParams.get("scope") ?? undefined,
+    exceptions: searchParams.get("exceptions") ?? undefined,
+  });
+  if (!query.success) {
+    return NextResponse.json(
+      { error: "Validation failed", details: query.error.flatten() },
+      { status: 400 },
+    );
+  }
+  const scope = query.data.scope ?? "single";
   // What a whole-series delete does with detached exceptions; default "keep".
-  const exceptionMode =
-    searchParams.get("exceptions") === "delete" ? "delete" : "keep";
+  const exceptionMode = query.data.exceptions ?? "keep";
 
   const result = await refusingWorkPartyManaged(() =>
     deleteCalendarEvent(id, scope, exceptionMode),
@@ -196,5 +212,9 @@ export async function DELETE(
     },
   });
 
-  return NextResponse.json({ success: true, scope: result.scope });
+  return connectionJson(
+    req,
+    { success: true, scope: result.scope },
+    ADMIN_CALENDAR_EVENT_DELETED_CONNECTION_SHAPE,
+  );
 }
