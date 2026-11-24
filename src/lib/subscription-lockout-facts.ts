@@ -119,7 +119,9 @@ export function hasActiveNoInvoiceCoverage(
 /**
  * The club's liability settings, through the caller's client. A missing row is
  * NOT_CHOSEN; a failed read REJECTS, so neither a booking gate nor an evidence
- * path can judge an opted-in club by the default rule.
+ * path can judge an opted-in club by the default rule. A client with no
+ * `membershipLockoutSettings` delegate (only a narrow test double: every Prisma
+ * client has one) makes no read, so it reads NOT_CHOSEN rather than rejecting.
  */
 export async function readSubscriptionLiabilitySettings(
   db: Pick<SubscriptionSettlementDb, "membershipLockoutSettings">,
