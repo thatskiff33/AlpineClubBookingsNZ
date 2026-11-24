@@ -90,6 +90,7 @@ import { MODULE_KEYS } from "@/config/modules";
 import type { FeatureFlags } from "@/config/schema";
 import { MCP_ACTIONS, mcpActionRouteFile } from "@/lib/mcp/catalogue";
 import { walkDir } from "@/lib/step-up-route-census-ast";
+import { CENSUS_TIMEOUT_MS } from "@/test/census-timeout";
 
 const HTTP_METHODS = ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"];
 
@@ -255,7 +256,7 @@ function expectNoWork() {
   expect(recentAuth).not.toHaveBeenCalled();
 }
 
-describe("the mcpServer module's routes are discovered (INV-MCP-001)", () => {
+describe("the mcpServer module's routes are discovered (INV-MCP-001)", { timeout: CENSUS_TIMEOUT_MS }, () => {
   it("finds the module's rule and every route it added", () => {
     expect(mcpRule).toBeDefined();
     // The discovery is not vacuous: each route ALP-653 shipped is in it.

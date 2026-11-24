@@ -22,8 +22,8 @@ import { describe, expect, it } from "vitest";
 
 import { MCP_ACTIONS, mcpActionRouteFile } from "@/lib/mcp/catalogue";
 import { STEP_UP_HTTP_METHODS } from "@/lib/step-up-routes";
+import { CENSUS_TIMEOUT_MS } from "@/test/census-timeout";
 
-const CENSUS_TIMEOUT_MS = 90_000;
 
 const RECORD_DERIVED_OFFICER_PREDICATES = [
   // An active committee seat lets a member create events and see meeting links.
