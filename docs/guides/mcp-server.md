@@ -352,10 +352,10 @@ is on the committee, a hut leader or an admin.
 
 The new route reuses the dashboard card's loader
 (`listUpcomingMemberWorkParties`) and is members only, like the work party
-page. Officer powers on these routes, such as editing events, minting a
-meeting's host link, pricing or receiving food orders and printing the chore
-roster, wait for the Lodge officer stage (ALP-722): the calendar's editing
-rights are Lodge edit, as `/admin/calendar` is a Lodge page.
+page. Officer powers on these routes were decided by the Lodge officer
+stage (ALP-722, below): editing events is a Lodge edit officer action, while
+minting a meeting's host link, pricing or receiving food orders and printing
+the chore roster stay on the website.
 
 ### Bookings & Beds officer actions (ALP-719)
 
@@ -549,6 +549,129 @@ decision,
 | `update_booking_request_settings` | Change the booking request settings | destructive | edit | `PUT /api/admin/booking-requests/settings` |
 | `get_member_guest_settings` | Read the member-guest settings | read | view | `GET /api/admin/member-guest-settings` |
 
+### Lodge Operations officer actions (ALP-722)
+
+An officer who holds the **Lodge Operations** admin area can do through an AI
+app what they can do on that area's admin screens: hut leaders, chore
+rosters, chores, work parties, lodges and their settings, the Other lodges
+registry, maintenance reports and the food-order settings, and the club
+calendar, which `/admin/calendar` (a Lodge page) edits. The actions live in
+[`src/lib/mcp/catalogue/`](../../src/lib/mcp/catalogue/) (`lodge-*.ts`).
+Who is offered them, the officer's approval, and the audit work as for
+Bookings & Beds above.
+
+- **Needs.** Lodge Operations view for every read, edit for every change.
+  The calendar's routes sit outside `/api/admin`, so their entries carry
+  `requires` Lodge edit, and the route census checks each handler calls the
+  calendar's admin write gate (`canEditCalendarEvents`). A committee member
+  without the area still creates events on the website; a connection never
+  creates one on a committee seat.
+- **Only `list_hut_leaders` is listed as its own tool**; the rest are reached
+  through `find_actions`.
+- **Asks first.** Every change is `destructive`. Hut leader assignments and
+  rosters change another member's record and are often emailed; chores, work
+  parties, lodges, their settings, maintenance report questions and policy,
+  the QR signs' switch, the food-order settings and the calendar are
+  club-wide configuration (owner decisions,
+  [#5305](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/5305#issuecomment-7092977781)).
+- **One route, several actions.** The roster save takes one of four requests
+  (save, suggest again, confirm, email) and a maintenance report's change
+  one of two (status, delete the photo). Each is its own action with the
+  route's `action` fixed, so the app names what it means to do.
+- **What is never sent.** A lodge's door code (and an app cannot set one), a
+  hut leader's kiosk PIN, a QR sign's link, a maintenance report's photo and
+  the reporter's contact details, the food officer's email address, and
+  another club's booking officer's email address and phone number.
+- **Reading a roster can save one.** Opening a night that has no roster saves
+  the suggested chores, as opening the page does; `get_chore_roster` does
+  the same.
+
+Website-only, and why (the reasons are listed below): the kiosk's sign-in
+account, a hut leader's kiosk PIN and the display screens' setup belong with
+the kiosk; the lodge instructions (door codes and emergency access), minting
+or rotating a maintenance QR sign (its link is shown once) and a meeting's
+host link are access details; the printable chore roster needs the browser;
+and pricing or receiving a food order is writing blind, since a connection
+reads only its member's own food orders (ALP-796). Reading and creating the
+kiosk account ask for fresh proof.
+
+#### Hut leaders
+
+| Action | What it does | Kind | Needs | Route |
+| --- | --- | --- | --- | --- |
+| `list_hut_leaders` (tool) | List hut leaders | read | view | `GET /api/admin/hut-leaders` |
+| `create_hut_leader_assignment` | Make a member hut leader | destructive | edit | `POST /api/admin/hut-leaders` |
+| `update_hut_leader_assignment` | Change a hut leader assignment | destructive | edit | `PUT /api/admin/hut-leaders/[id]` |
+| `delete_hut_leader_assignment` | Remove a hut leader assignment | destructive | edit | `DELETE /api/admin/hut-leaders/[id]` |
+| `list_hut_leader_bed_options` | List beds a hut leader could hold | read | view | `GET /api/admin/hut-leaders/available-beds` |
+| `list_hut_leader_candidates` | List members who could be hut leader | read | view | `GET /api/admin/hut-leaders/eligible-members` |
+| `list_nights_without_hut_leader` | List nights with no hut leader | read | view | `GET /api/admin/hut-leaders/unassigned-dates` |
+| `get_school_hut_leader_kinds` | Read who can lead school bookings | read | view | `GET /api/admin/lodge-settings/school-hut-leaders` |
+| `update_school_hut_leader_kinds` | Change who can lead school bookings | destructive | edit | `PUT /api/admin/lodge-settings/school-hut-leaders` |
+
+#### Chore rosters and chores
+
+| Action | What it does | Kind | Needs | Route |
+| --- | --- | --- | --- | --- |
+| `get_chore_roster` | Read a night's chore roster | read | view | `GET /api/admin/roster/[date]` |
+| `save_chore_roster` | Save a night's chore roster | destructive | edit | `PUT /api/admin/roster/[date]` (`action: "save"`) |
+| `regenerate_chore_roster` | Suggest a night's chore roster again | destructive | edit | `PUT /api/admin/roster/[date]` (`action: "regenerate"`) |
+| `confirm_chore_roster` | Confirm a night's chore roster | destructive | edit | `PUT /api/admin/roster/[date]` (`action: "confirm"`) |
+| `email_chore_roster` | Email a night's chore roster | destructive | edit | `PUT /api/admin/roster/[date]` (`action: "email"`) |
+| `get_chore_roster_month_status` | Read the roster status of a month | read | view | `GET /api/admin/roster/status` |
+| `list_chore_templates` | List chores | read | view | `GET /api/admin/chores` |
+| `create_chore_template` | Create a chore | destructive | edit | `POST /api/admin/chores` |
+| `update_chore_template` | Change a chore | destructive | edit | `PUT /api/admin/chores/[id]` |
+| `delete_chore_template` | Delete a chore | destructive | edit | `DELETE /api/admin/chores/[id]` |
+
+#### Work parties and the club calendar
+
+| Action | What it does | Kind | Needs | Route |
+| --- | --- | --- | --- | --- |
+| `list_all_work_parties` | List all work parties | read | view | `GET /api/admin/work-parties` |
+| `get_work_party_attendance` | Read a work party and its bookings | read | view | `GET /api/admin/work-parties/[id]` |
+| `create_work_party` | Create a work party | destructive | edit | `POST /api/admin/work-parties` |
+| `update_work_party` | Change a work party | destructive | edit | `PUT /api/admin/work-parties/[id]` |
+| `delete_work_party` | Delete a work party | destructive | edit | `DELETE /api/admin/work-parties/[id]` |
+| `add_work_party_to_calendar` | Put a work party on the calendar | destructive | edit | `POST /api/admin/work-parties/[id]/calendar` |
+| `create_calendar_event` | Add an event to the club calendar | destructive | edit | `POST /api/calendar/events` |
+| `update_calendar_event` | Change a club calendar event | destructive | edit | `PATCH /api/calendar/events/[id]` |
+| `delete_calendar_event` | Delete a club calendar event | destructive | edit | `DELETE /api/calendar/events/[id]` |
+
+#### Lodges, lodge settings and Other lodges
+
+| Action | What it does | Kind | Needs | Route |
+| --- | --- | --- | --- | --- |
+| `list_lodges_for_officers` | List the club's lodges (officer) | read | view | `GET /api/admin/lodges` |
+| `create_lodge` | Create a lodge | destructive | edit | `POST /api/admin/lodges` |
+| `update_lodge` | Change or deactivate a lodge | destructive | edit | `PATCH /api/admin/lodges/[id]` |
+| `get_lodge_central_link` | Read a lodge's central-server link | read | view | `GET /api/admin/lodges/[id]/central-lodge` |
+| `set_lodge_central_link` | Link a lodge to the central server | destructive | edit | `PUT /api/admin/lodges/[id]/central-lodge` |
+| `get_lodge_roster_settings` | Read a lodge's roster name detail | read | view | `GET /api/admin/lodges/[id]/roster-settings` |
+| `update_lodge_roster_settings` | Change a lodge's roster name detail | destructive | edit | `PUT /api/admin/lodges/[id]/roster-settings` |
+| `get_lodge_settings` | Read lodge settings | read | view | `GET /api/admin/lodge-settings` |
+| `update_lodge_settings` | Change lodge settings | destructive | edit | `PUT /api/admin/lodge-settings` |
+| `list_other_lodges` | List Other lodges | read | view | `GET /api/admin/other-lodges` |
+| `update_other_lodge` | Change this club's Other lodges entry | destructive | edit | `PATCH /api/admin/other-lodges/[id]` |
+| `hide_other_lodge` | Hide an Other lodge the server no longer lists | destructive | edit | `POST /api/admin/other-lodges/[id]/hide` |
+
+#### Maintenance reports and food-order settings
+
+| Action | What it does | Kind | Needs | Route |
+| --- | --- | --- | --- | --- |
+| `list_maintenance_reports` | List maintenance reports | read | view | `GET /api/admin/maintenance-reports` |
+| `get_maintenance_report` | Read a maintenance report | read | view | `GET /api/admin/maintenance-reports/[id]` |
+| `set_maintenance_report_status` | Move a maintenance report's status | destructive | edit | `PATCH /api/admin/maintenance-reports/[id]` (`action: "setStatus"`) |
+| `delete_maintenance_report_photo` | Delete a maintenance report's photo | destructive | edit | `PATCH /api/admin/maintenance-reports/[id]` (`action: "deletePhoto"`) |
+| `get_maintenance_report_questions` | Read the maintenance report questions | read | view | `GET /api/admin/maintenance-reports/questions` |
+| `update_maintenance_report_questions` | Replace the maintenance report questions | destructive | edit | `PUT /api/admin/maintenance-reports/questions` |
+| `get_maintenance_report_settings` | Read the maintenance report policy | read | view | `GET /api/admin/maintenance-reports/settings` |
+| `update_maintenance_report_settings` | Change the maintenance report policy | destructive | edit | `PUT /api/admin/maintenance-reports/settings` |
+| `list_maintenance_report_signs` | List the lodges' QR report signs | read | view | `GET /api/admin/maintenance-reports/tokens` |
+| `set_maintenance_report_sign_active` | Pause or resume a lodge's QR report sign | destructive | edit | `PATCH /api/admin/maintenance-reports/tokens` |
+| `get_food_order_settings` | Read the food-order settings | read | view | `GET /api/admin/food-orders/settings` |
+| `update_food_order_settings` | Change the food-order settings | destructive | edit | `PUT /api/admin/food-orders/settings` |
+
 ## What stays on the website, and why
 
 Every route method that is not an action has a stated reason
@@ -562,12 +685,15 @@ reasons are permanent — those routes are never actions:
   connections or widen what they may do.
 - **Providers**, **scheduled jobs**, **lodge kiosk and display screens**, and
   **health checks, deploy hooks and test helpers** — not called by a person.
+  The kiosk's officer side goes with it: the kiosk's sign-in account, a hut
+  leader's kiosk PIN, and the display screens' layouts, templates, devices,
+  pairing codes and preview links.
 - **Needs the browser** — card entry, file uploads and downloads (such as a
   booking's invoice and credit note PDFs and its calendar entry), and links
   sent to the member by email or opened from a QR code: confirming a
   nomination or a membership cancellation, the chore roster link, the
-  lodge's maintenance QR form, message-board pictures, and problem reports,
-  which carry the page and a screenshot.
+  lodge's maintenance QR form, message-board pictures, problem reports,
+  which carry the page and a screenshot, and the printable chore roster.
 - **Moves money** — anything that takes, moves or refunds money or changes
   what a booking costs, which the member confirms on the website: changing a
   booking or its dates, adding or removing a guest, confirming a draft booking
@@ -587,14 +713,18 @@ reasons are permanent — those routes are never actions:
 - **Visitor forms** — the contact form and membership applications, for
   people who are not signed in.
 - **Access details** — the lodge instructions, which carry door codes and
-  emergency access details. They are never sent to an AI provider.
+  emergency access details, read or edited. They are never sent to an AI
+  provider, nor written by one. Nor are the links that let someone in:
+  minting or rotating a maintenance QR sign, whose link is shown only then,
+  and a meeting's host link.
 - **The website's help assistant** — the member's own AI app answers them
   instead.
 - **Privacy posture** — saving the member-guest settings, which decide who
   may browse members' names. An officer chooses that on the website.
 - **Writing blind** — changing a guest's dietary or allergy needs for a stay.
   An app is never sent those (`INV-PRIV-022`), so it could only overwrite or
-  clear them unseen.
+  clear them unseen. So too pricing a food order or ticking its items
+  received: a connection reads only its member's own food orders (ALP-796).
 
 Everything else is **not yet**: each such route names the follow-on task that
 will bring it in.
@@ -634,9 +764,10 @@ actions, exactly as a member's does. `preview_cancel_booking` and
 officer's own (`INV-MCP-006`).
 
 It also reaches the officer actions for each admin area the officer holds,
-starting with Bookings & Beds (ALP-719; the other areas follow). Whatever the
-officer asks about through those, such as another member's bookings, family
-or contact details, goes to that officer's AI provider. The
+so far Bookings & Beds (ALP-719) and Lodge Operations (ALP-722); the other
+areas follow. Whatever the officer asks about through those, such as another
+member's bookings, family or contact details, or the names on a chore roster
+or maintenance report, goes to that officer's AI provider. The
 switch governs the connection, not the action list. That is why **Officers
 may connect an AI app** is a separate switch, off by default. An officer
 action also needs the officer's own approval on the screen that tells them
@@ -811,7 +942,7 @@ provider already received. The club's register row is `ai-apps` in
 
 ## The roadmap
 
-Stage 1, ALP-718, ALP-794, ALP-795, ALP-796 and ALP-719 are the foundation and the actions above. The remaining routes are
+Stage 1, ALP-718, ALP-794, ALP-795, ALP-796, ALP-719 and ALP-722 are the foundation and the actions above. The remaining routes are
 grouped into follow-on tasks, named in `MCP_NOT_YET_TASKS` in
 [`exclusions.ts`](../../src/lib/mcp/exclusions.ts):
 
@@ -820,7 +951,6 @@ grouped into follow-on tasks, named in `MCP_NOT_YET_TASKS` in
 | ALP-797 | Group, school and whole-lodge requests |
 | ALP-720 | Membership (officer) |
 | ALP-721 | Finance (officer, including `/api/finance`) |
-| ALP-722 | Lodge (officer) |
 | ALP-723 | Content (officer) |
 | ALP-724 | Support and overview (officer) |
 
