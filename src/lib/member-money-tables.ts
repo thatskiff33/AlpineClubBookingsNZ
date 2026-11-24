@@ -11,4 +11,5 @@ export const MEMBER_MONEY_RELATIONS = [
   "MemberMoneyRefundReservationRelease",
   "MemberMoneyExportManifest",
   "MemberMoneyExportCoverage",
+  "MemberMoneyExportCoverageRelease",
 ] as const;

@@ -1,66 +1,57 @@
 /**
- * #5407 item 13: THE BUMP NOTICES ARE OWED UNTIL SENT.
+ * #5407 item 13, moved onto the owed-notice mechanism by #5433: THE BUMP
+ * NOTICES ARE OWED UNTIL SENT.
  *
  * When the confirm-pending cron bumps a pending booking (its dates filled up),
  * the member is emailed (`booking-bumped`, or `booking-guests-cancelled` for a
  * booking flagged to cancel if its guests could not come) and the officers are
  * alerted (`admin-booking-bumped`). Both are sent after the bump commits, and
- * a rerun finds the booking CANCELLED and never reaches them again. So a job
- * stopped between the commit and the send, or a send that threw before its
- * EmailLog row existed, used to lose both notices for good.
- *
- * The cron now records them as owed IN THE BUMP'S OWN TRANSACTION
- * (`recordBumpNoticesOwed`): one `AlertCooldown` marker per notice, keyed by
+ * a rerun finds the booking CANCELLED and never reaches them again. So the
+ * cron records them as owed IN THE BUMP'S OWN TRANSACTION
+ * (`recordBumpNoticesOwed`): one `OwedNotice` marker per notice, keyed by kind,
  * booking, bump time and variant and stamped with the bump time, which is
  * taken there once and handed back as the descriptor the delivery claims with.
  * After the commit `deliverBumpNotices` claims each marker, sends, and clears
- * it when the notice is settled; a send that throws, or an officers' alert
- * nobody received that nothing will replay, leaves it. Each run of the same
- * cron also sweeps what is still owed (`drainOwedBumpNotices`): it claims a
- * marker whose stamp (the bump, or the last attempt) is at least
- * `BUMP_NOTICE_SWEEP_AFTER_MS` old, re-reads the booking, and sends, or clears
- * without sending when the booking is gone, no longer cancelled, or cancelled
- * or confirmed again since the bump, or when the marker is past its maximum
- * age.
+ * it when the notice is settled. The sweep (`drainOwedNotices`, run by the
+ * confirm-pending job and the email retry job) sends what is still owed. The
+ * claim, the clear and the sweep are the mechanism's (`owed-notice/deliver.ts`);
+ * this module supplies the two kinds' deliverers.
  *
- * Every send is behind a claim: an `updateMany` on the marker guarded by its
- * stamp (`claimOwedAlert`). Of two runs reaching one marker at the same time
- * exactly one wins and the other sends nothing.
+ * The two kinds, as before #5433:
+ * - the wait: a marker is swept once its stamp (the bump, or the last
+ *   attempt) is at least `BUMP_NOTICE_SWEEP_AFTER_MS` (an hour) old; an
+ *   officers' alert that reached nobody waits `ALERT_NOBODY_ELIGIBLE_RETRY_MS`
+ *   (a day), so a persistent fault writes at most about seven
+ *   undeliverable-alert escalation rows before the marker expires;
+ * - the maximum age, and the cut-off: `BUMP_NOTICE_MAX_AGE_MS` (seven days);
+ *   past it the marker is cleared with an error log and nothing is sent, and
+ *   no officer alert is raised;
+ * - the member's email carries the event key `<bookingId>:<bumpedAtMs>`
+ *   (`bumpNoticeIdempotencyKey`), so one bump has one `EmailLog` row;
+ * - the officers' alert is at least once (`booking-bump-alert.ts`).
  *
- * What it guarantees:
- * - The member: at most one EmailLog row per bump. The email carries an event
- *   key (`email:<template>:<bookingId>:<bumpedAtMs>`), so a second send finds
- *   the row and sends nothing; a provider failure leaves that row FAILED for
- *   the email retry cron.
- * - The officers: at least once. Their alert has no event key (it is one row
- *   per officer), so a crash after the send and before the marker is cleared
- *   repeats it on a later run. Very rare, and the trade-off already accepted
- *   for other alerts (`caller-retried-alert.ts`, `duplicate-capture-guard.ts`).
+ * "Moved on": the sweep clears without sending when the booking is gone, no
+ * longer cancelled, or has a `CANCELLED`, `MEMBER_PAID` or
+ * `NON_MEMBER_CONFIRMED` booking event after the bump (reinstated and then
+ * cancelled or confirmed again; a settlement marker, a `CANCELLED` event that
+ * cancels nothing, does not count). Most of those events are narrative,
+ * written best effort after their own commits (`recordBookingEvent`); only a
+ * few decision records commit with what they describe. A narrative event
+ * lost the same way still leaves the booking told it was bumped. This narrows
+ * the gap; it does not close it.
  *
- * Stated limits:
- * - A crash during the provider call itself leaves the member's row QUEUED,
- *   which nothing replays (the window every inline send has).
- * - A recovered notice arrives on a later run, at least
- *   `BUMP_NOTICE_SWEEP_AFTER_MS` after the bump or the interrupted attempt.
- * - A send still running `BUMP_NOTICE_SWEEP_AFTER_MS` after its claim, or a
- *   large clock difference between two app instances, lets a sweep claim the
- *   marker again. The member is still sent one email (same event key); the
- *   officers may get their alert twice.
- * - A booking reinstated and then cancelled or confirmed again is caught by
- *   the booking event that records it (`CANCELLED`, `MEMBER_PAID` or
- *   `NON_MEMBER_CONFIRMED` after the bump; a settlement marker, a `CANCELLED`
- *   event that cancels nothing, does not count). Most of those events are
- *   narrative, written best effort after their own commits
- *   (`recordBookingEvent`); only a few decision records commit with what they
- *   describe. A narrative event lost the same way still leaves the booking
- *   told it was bumped. This narrows the gap; it does not close it.
- * - An officers' alert that reached nobody because every copy failed before
- *   its row waits `ALERT_NOBODY_ELIGIBLE_RETRY_MS` (a day) before the next
- *   try, not an hour, so a persistent fault writes at most about seven
- *   undeliverable-alert escalation rows before the marker expires.
+ * BLUE-GREEN (#5433): a release before #5433 wrote these markers to
+ * `AlertCooldown` under the `booking-bump-member-owed:` and
+ * `booking-bump-officers-owed:` prefixes, and may run beside this one; markers
+ * it wrote before the deploy outlive it. `legacyBumpMarkerSource` keeps
+ * sweeping those prefixes with the same stamp-guarded claim
+ * (`claimOwedAlert`, which shares its stamp rule with the table's claim) and
+ * the same event key. One bump is committed by exactly one release, so its
+ * markers are in one table; whichever release reaches a legacy marker first
+ * wins it. It goes once two releases have shipped with the table.
  *
  * Locks (`INV-LOCK-001`): the markers are written under the global lock and
- * the lodge lock the bump transaction already holds, two primary-key upserts
+ * the lodge lock the bump transaction already holds, one primary-key insert
  * with no read, provider call or settings query (`INV-INT-003`). The claim,
  * the sends and the sweep run after the commit on the base client and take no
  * advisory key.
@@ -78,11 +69,17 @@ import { bookingOwner } from "@/lib/booking-owner";
 import { sendBookingBumpedEmail, sendBookingGuestsCancelledEmail } from "@/lib/email";
 import logger from "@/lib/logger";
 import { NOT_A_SETTLEMENT_MARKER_WHERE } from "@/lib/manual-settlement-reversal-event";
+import {
+  deliverOwedNotice,
+  OWED_OFFICER_ALERT_MAX_AGE_MS,
+  type OwedNoticeDeliverer,
+  type OwedNoticeOutcome,
+  type OwedNoticeRef,
+  type OwedNoticeSource,
+} from "@/lib/owed-notice/deliver";
+import type { OwedNoticeKind } from "@/lib/owed-notice/kinds";
+import { owedNoticeId, owedNoticeMarker, recordOwedNotices, type OwedNoticeMarker } from "@/lib/owed-notice/store";
 import { prisma } from "@/lib/prisma";
-
-/** The namespaces of the owed markers, one per notice. */
-export const BUMP_MEMBER_NOTICE_OWED_PREFIX = "booking-bump-member-owed:";
-export const BUMP_OFFICER_ALERT_OWED_PREFIX = "booking-bump-officers-owed:";
 
 /**
  * How long a marker waits after its last attempt before the sweep tries it:
@@ -92,37 +89,38 @@ export const BUMP_OFFICER_ALERT_OWED_PREFIX = "booking-bump-officers-owed:";
  */
 export const BUMP_NOTICE_SWEEP_AFTER_MS = 60 * 60 * 1000;
 
-/** A marker older than this is cleared with an error log and nothing is sent. */
-export const BUMP_NOTICE_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
+/**
+ * A marker older than this is cleared with an error log and nothing is sent:
+ * the officers' alerts' seven days (#5433, settled by the lane), which the
+ * bump's member email shares, as it has since #5407.
+ */
+export const BUMP_NOTICE_MAX_AGE_MS = OWED_OFFICER_ALERT_MAX_AGE_MS;
 
 export type BumpNoticeKind = "member" | "officers";
 
 const KINDS: readonly BumpNoticeKind[] = ["member", "officers"];
 
-const PREFIX: Record<BumpNoticeKind, string> = {
-  member: BUMP_MEMBER_NOTICE_OWED_PREFIX,
-  officers: BUMP_OFFICER_ALERT_OWED_PREFIX,
+/** The `OwedNotice.kind` of each notice. */
+const KIND: Record<BumpNoticeKind, OwedNoticeKind> = {
+  member: "booking-bump-member",
+  officers: "booking-bump-officers",
 };
 
-/** The variant in the key: g, the guests-cancelled notice; b, the bumped one. */
+/** The variant in the id: g, the guests-cancelled notice; b, the bumped one. */
 const FLAGGED_VARIANT = "g";
 const BUMPED_VARIANT = "b";
 
+const variantOf = (flagged: boolean) => (flagged ? FLAGGED_VARIANT : BUMPED_VARIANT);
+
 /**
- * One notice's owed marker. The bump time is in the key because a cancelled
- * booking can be reinstated and bumped again, and that bump owes its own
- * notices.
+ * One notice's marker id. The bump time is in it because a cancelled booking
+ * can be reinstated and bumped again, and that bump owes its own notices.
  */
-export function bumpNoticeOwedKey(
-  kind: BumpNoticeKind,
-  bookingId: string,
-  bumpedAt: Date,
-  flagged: boolean,
-): string {
-  return `${PREFIX[kind]}${bookingId}:${bumpedAt.getTime()}:${flagged ? FLAGGED_VARIANT : BUMPED_VARIANT}`;
+export function bumpNoticeId(kind: BumpNoticeKind, bookingId: string, bumpedAt: Date, flagged: boolean): string {
+  return owedNoticeId(KIND[kind], bookingId, bumpedAt, variantOf(flagged));
 }
 
-/** The member email's event key: one EmailLog row per bump. */
+/** The member email's event key: one EmailLog row per bump, the format #5407 shipped. */
 export function bumpNoticeIdempotencyKey(bookingId: string, bumpedAt: Date): string {
   return `${bookingId}:${bumpedAt.getTime()}`;
 }
@@ -134,31 +132,27 @@ export interface OwedBumpNotice {
   flagged: boolean;
 }
 
-function parseBumpNoticeOwedKey(kind: BumpNoticeKind, key: string): OwedBumpNotice | null {
-  const [bookingId, bumpedAtMs, variant, ...rest] = key.slice(PREFIX[kind].length).split(":");
-  const bumpedAt = new Date(Number(bumpedAtMs));
-  if (!bookingId || rest.length > 0 || Number.isNaN(bumpedAt.getTime())) return null;
-  if (variant !== FLAGGED_VARIANT && variant !== BUMPED_VARIANT) return null;
-  return { bookingId, bumpedAt, flagged: variant === FLAGGED_VARIANT };
+function bumpMarkerInput(kind: BumpNoticeKind, owed: OwedBumpNotice) {
+  return { kind: KIND[kind], subjectId: owed.bookingId, eventAt: owed.bumpedAt, variant: variantOf(owed.flagged) };
 }
 
 /**
  * Inside the bump's transaction, under its global and lodge locks: record both
  * notices as owed, stamped with the bump time, and return the descriptor the
  * delivery claims with, so the stamp and the claim's bound are one value
- * (`INV-SSOT-002`). A plain upsert, never `markAlertOwed`: that one catches a
- * unique-key error, and a caught error still aborts a PostgreSQL transaction.
- * `update: {}` leaves an existing marker as it is.
+ * (`INV-SSOT-002`). One insert that skips a marker already there, never a
+ * caught unique-key error, which would abort a PostgreSQL transaction.
  */
 export async function recordBumpNoticesOwed(
-  tx: Pick<Prisma.TransactionClient, "alertCooldown">,
+  tx: Pick<Prisma.TransactionClient, "owedNotice">,
   { bookingId, flagged, bumpedAt = new Date() }: { bookingId: string; flagged: boolean; bumpedAt?: Date },
 ): Promise<OwedBumpNotice> {
-  for (const kind of KINDS) {
-    const key = bumpNoticeOwedKey(kind, bookingId, bumpedAt, flagged);
-    await tx.alertCooldown.upsert({ where: { key }, create: { key, lastAlertedAt: bumpedAt }, update: {} });
-  }
-  return { bookingId, bumpedAt, flagged };
+  const owed = { bookingId, bumpedAt, flagged };
+  await recordOwedNotices(
+    tx,
+    KINDS.map((kind) => bumpMarkerInput(kind, owed)),
+  );
+  return owed;
 }
 
 /** What the notices need, read again by the sweep. */
@@ -177,18 +171,19 @@ export const BUMP_NOTICE_BOOKING_SELECT = Prisma.validator<Prisma.BookingSelect>
 export type BumpNoticeBooking = Prisma.BookingGetPayload<{ select: typeof BUMP_NOTICE_BOOKING_SELECT }>;
 
 /**
- * The member's email, with the bump's event key. True when the send returned
- * (sent, already recorded, withheld or skipped); false when it threw, logged.
+ * The member's email, with the bump's event key. Settled when the send
+ * returned (sent, already recorded, withheld or skipped); threw when it threw,
+ * logged.
  */
-async function sendBumpedMemberNotice(booking: BumpNoticeBooking, owed: OwedBumpNotice): Promise<boolean> {
+async function sendBumpedMemberNotice(
+  booking: BumpNoticeBooking,
+  flagged: boolean,
+  { idempotencyKey, job }: { idempotencyKey: string; job: string },
+): Promise<OwedNoticeOutcome> {
   const owner = bookingOwner(booking);
-  const context = {
-    bookingId: booking.id,
-    recipientMemberId: owner.memberId,
-    idempotencyKey: bumpNoticeIdempotencyKey(booking.id, owed.bumpedAt),
-  };
+  const context = { bookingId: booking.id, recipientMemberId: owner.memberId, idempotencyKey };
   try {
-    if (owed.flagged) {
+    if (flagged) {
       await sendBookingGuestsCancelledEmail(
         context,
         owner.member.email,
@@ -219,89 +214,12 @@ async function sendBumpedMemberNotice(booking: BumpNoticeBooking, owed: OwedBump
         owner.member.canLogin ?? false,
       );
     }
-    return true;
+    return "settled";
   } catch (err) {
-    logger.error({ err, bookingId: booking.id, job: "confirmPendingBookings" }, "Failed to send bumped email");
-    return false;
+    logger.error({ err, bookingId: booking.id, job }, "Failed to send bumped email");
+    return "threw";
   }
 }
-
-/**
- * Under a won claim: send one notice, and clear its marker if it is settled.
- * A send that threw leaves the marker under this claim's stamp, so the sweep
- * offers it again `BUMP_NOTICE_SWEEP_AFTER_MS` later. An officers' alert that
- * reached nobody, with nothing to replay it, is held a day instead
- * (`ALERT_NOBODY_ELIGIBLE_RETRY_MS`, as the once-only alerts are), so a
- * persistent fault does not escalate every hour.
- */
-async function sendAndSettle(
-  kind: BumpNoticeKind,
-  key: string,
-  claimedAt: Date,
-  booking: BumpNoticeBooking,
-  owed: OwedBumpNotice,
-): Promise<"delivered" | "kept"> {
-  const outcome =
-    kind === "member"
-      ? (await sendBumpedMemberNotice(booking, owed)) ? "settled" : "threw"
-      : await alertOfficersOfBump(booking, owed.flagged);
-  if (outcome === "settled") {
-    await settleOwedAlert({ key, claimedAt });
-    return "delivered";
-  }
-  if (outcome === "unreached") {
-    await deferAlertCooldown({ key, claimedAt, windowMs: BUMP_NOTICE_SWEEP_AFTER_MS, retryAfterMs: ALERT_NOBODY_ELIGIBLE_RETRY_MS });
-  }
-  return "kept";
-}
-
-/**
- * After the bump commits: deliver one of its notices. The claim is taken on
- * the marker as the transaction stamped it (`owed.bumpedAt`), so a sweep that
- * already claimed it wins and this sends nothing. Never throws: a failure is
- * logged and the marker, if it still stands, is the sweep's.
- */
-export async function deliverBumpNotice(
-  kind: BumpNoticeKind,
-  booking: BumpNoticeBooking,
-  owed: OwedBumpNotice,
-): Promise<void> {
-  const key = bumpNoticeOwedKey(kind, owed.bookingId, owed.bumpedAt, owed.flagged);
-  try {
-    const claimedAt = await claimOwedAlert({ key, stampedNoLaterThan: owed.bumpedAt });
-    if (!claimedAt) {
-      logger.info({ key, job: "confirmPendingBookings" }, "Another run holds this bump notice; not sending it here");
-      return;
-    }
-    await sendAndSettle(kind, key, claimedAt, booking, owed);
-  } catch (err) {
-    logger.error(
-      { err, key, job: "confirmPendingBookings" },
-      "Failed to claim or clear a bump notice's owed marker; a later run sends what is still owed",
-    );
-  }
-}
-
-/**
- * After the bump commits: deliver both notices, the member's first, from the
- * descriptor `recordBumpNoticesOwed` returned inside the transaction.
- */
-export async function deliverBumpNotices(booking: BumpNoticeBooking, owed: OwedBumpNotice): Promise<void> {
-  for (const kind of KINDS) await deliverBumpNotice(kind, booking, owed);
-}
-
-export interface OwedBumpNoticeSweepResult {
-  /** Due markers offered to this run. */
-  checked: number;
-  /** Notices whose send returned, and whose marker was cleared. */
-  delivered: number;
-  /** Cleared without a send: the booking is gone, no longer cancelled, or cancelled or confirmed again since the bump. */
-  cleared: number;
-  /** Cleared without a send, with an error log: past the maximum age, or unreadable. */
-  expired: number;
-}
-
-type SweepOutcome = "delivered" | "kept" | "cleared" | "expired" | "claim-lost";
 
 /**
  * Booking events that mean the booking moved on after this bump: reinstated
@@ -316,73 +234,119 @@ const MOVED_ON_SINCE_BUMP: BookingEventType[] = [
   BookingEventType.NON_MEMBER_CONFIRMED,
 ];
 
-/** Why the sweep must not tell this booking it was bumped, or null to send. Read outside any transaction. */
-async function bumpNoticeNoLongerTrue(booking: { status: BookingStatus } | null, owed: OwedBumpNotice): Promise<string | null> {
-  if (!booking) return "gone";
+/** True to send; otherwise why the booking must not be told it was bumped. Read outside any transaction. */
+async function bumpNoticeStillOwed(booking: BumpNoticeBooking, marker: OwedNoticeMarker): Promise<true | string> {
   if (booking.status !== BookingStatus.CANCELLED) return "no longer cancelled";
   const later = await prisma.bookingEvent.findFirst({
     where: {
-      bookingId: owed.bookingId,
+      bookingId: marker.subjectId,
       type: { in: MOVED_ON_SINCE_BUMP },
-      occurredAt: { gt: owed.bumpedAt },
+      occurredAt: { gt: marker.eventAt },
       ...NOT_A_SETTLEMENT_MARKER_WHERE,
     },
     select: { type: true },
   });
-  return later ? `recorded ${later.type} since the bump` : null;
+  return later ? `recorded ${later.type} since the bump` : true;
 }
 
-async function sweepOne(kind: BumpNoticeKind, key: string, dueBefore: Date, now: Date): Promise<SweepOutcome> {
-  const claimedAt = await claimOwedAlert({ key, stampedNoLaterThan: dueBefore, now });
-  if (!claimedAt) return "claim-lost";
-  const owed = parseBumpNoticeOwedKey(kind, key);
-  if (!owed || now.getTime() - owed.bumpedAt.getTime() > BUMP_NOTICE_MAX_AGE_MS) {
-    logger.error(
-      { key, job: "confirmPendingBookings" },
-      "A bump notice was still owed past its maximum age, or its marker could not be read; cleared without sending it",
-    );
-    await settleOwedAlert({ key, claimedAt });
-    return "expired";
-  }
-  const booking = await prisma.booking.findUnique({ where: { id: owed.bookingId }, select: BUMP_NOTICE_BOOKING_SELECT });
-  const why = await bumpNoticeNoLongerTrue(booking, owed);
-  if (why || !booking) {
-    logger.warn(
-      { key, bookingId: owed.bookingId, status: booking?.status ?? null, why, job: "confirmPendingBookings" },
-      "An owed bump notice's booking is gone, no longer cancelled, or cancelled or confirmed again since the bump; cleared without sending it",
-    );
-    await settleOwedAlert({ key, claimedAt });
-    return "cleared";
-  }
-  return sendAndSettle(kind, key, claimedAt, booking, owed);
+const isFlagged = (marker: OwedNoticeMarker) => marker.variant === FLAGGED_VARIANT;
+
+/** What both bump kinds share: the read, the moved-on check, the wait and the cut-off. */
+const BUMP_KIND_COMMON = {
+  job: "confirmPendingBookings",
+  sweepAfterMs: BUMP_NOTICE_SWEEP_AFTER_MS,
+  unreachedRetryAfterMs: ALERT_NOBODY_ELIGIBLE_RETRY_MS,
+  maxAgeMs: BUMP_NOTICE_MAX_AGE_MS,
+  load: (marker: OwedNoticeMarker) =>
+    prisma.booking.findUnique({ where: { id: marker.subjectId }, select: BUMP_NOTICE_BOOKING_SELECT }),
+  stillOwed: bumpNoticeStillOwed,
+  sendBy: (_booking: BumpNoticeBooking, marker: OwedNoticeMarker) => new Date(marker.eventAt.getTime() + BUMP_NOTICE_MAX_AGE_MS),
+};
+
+const BUMP_DELIVERER: Record<BumpNoticeKind, OwedNoticeDeliverer<BumpNoticeBooking>> = {
+  member: {
+    ...BUMP_KIND_COMMON,
+    kind: KIND.member,
+    audience: "member",
+    idempotencyKey: (marker) => bumpNoticeIdempotencyKey(marker.subjectId, marker.eventAt),
+    deliver: (booking, marker, context) => sendBumpedMemberNotice(booking, isFlagged(marker), context),
+  },
+  officers: {
+    ...BUMP_KIND_COMMON,
+    kind: KIND.officers,
+    audience: "officers",
+    deliver: (booking, marker, { job }) => alertOfficersOfBump(booking, isFlagged(marker), job),
+  },
+};
+
+/** The two bump kinds, member first, as the registry lists them. */
+export const BUMP_NOTICE_DELIVERERS: readonly OwedNoticeDeliverer<BumpNoticeBooking>[] = KINDS.map(
+  (kind) => BUMP_DELIVERER[kind],
+);
+
+/**
+ * After the bump commits: deliver one of its notices. The claim is taken on
+ * the marker as the transaction stamped it (`owed.bumpedAt`), so a sweep that
+ * already claimed it wins and this sends nothing. Never throws.
+ */
+export async function deliverBumpNotice(
+  kind: BumpNoticeKind,
+  booking: BumpNoticeBooking,
+  owed: OwedBumpNotice,
+): Promise<void> {
+  await deliverOwedNotice(BUMP_DELIVERER[kind], owedNoticeMarker(bumpMarkerInput(kind, owed)), booking);
 }
 
 /**
- * Each confirm-pending run: send the bump notices still owed. Offers markers
- * last attempted at least `BUMP_NOTICE_SWEEP_AFTER_MS` ago and claims each one
- * on that bound before anything else. Never throws, for one marker or for the
- * read of the list.
+ * After the bump commits: deliver both notices, the member's first, from the
+ * descriptor `recordBumpNoticesOwed` returned inside the transaction.
  */
-export async function drainOwedBumpNotices(now: Date = new Date()): Promise<OwedBumpNoticeSweepResult> {
-  const result: OwedBumpNoticeSweepResult = { checked: 0, delivered: 0, cleared: 0, expired: 0 };
-  const dueBefore = new Date(now.getTime() - BUMP_NOTICE_SWEEP_AFTER_MS);
-  for (const kind of KINDS) {
-    let keys: string[];
-    try {
-      keys = await listOwedAlertKeys({ prefix: PREFIX[kind], now, retryAfterMs: BUMP_NOTICE_SWEEP_AFTER_MS });
-    } catch (err) {
-      logger.error({ err, kind, job: "confirmPendingBookings" }, "Failed to read the owed bump notices");
-      continue;
-    }
-    for (const key of keys) {
-      result.checked += 1;
-      try {
-        const outcome = await sweepOne(kind, key, dueBefore, now);
-        if (outcome === "delivered" || outcome === "cleared" || outcome === "expired") result[outcome] += 1;
-      } catch (err) {
-        logger.error({ err, key, job: "confirmPendingBookings" }, "Failed to deliver an owed bump notice; it stays owed");
-      }
-    }
-  }
-  return result;
+export async function deliverBumpNotices(booking: BumpNoticeBooking, owed: OwedBumpNotice): Promise<void> {
+  for (const kind of KINDS) await deliverBumpNotice(kind, booking, owed);
 }
+
+// ---------------------------------------------------------------------------
+// The bump markers a release before #5433 wrote to `AlertCooldown`.
+// ---------------------------------------------------------------------------
+
+/** The `AlertCooldown` prefix each kind's markers carried before #5433. */
+const LEGACY_PREFIX: Readonly<Partial<Record<OwedNoticeKind, string>>> = {
+  [KIND.member]: "booking-bump-member-owed:",
+  [KIND.officers]: "booking-bump-officers-owed:",
+};
+
+/** A legacy marker's `AlertCooldown` key: `<prefix><bookingId>:<bumpedAtMs>:<g|b>`. */
+export function legacyBumpNoticeKey(kind: BumpNoticeKind, bookingId: string, bumpedAt: Date, flagged: boolean): string {
+  return `${LEGACY_PREFIX[KIND[kind]]}${bookingId}:${bumpedAt.getTime()}:${variantOf(flagged)}`;
+}
+
+/** A legacy key read as the marker it stands for, or null when it cannot be read. */
+function parseLegacyBumpNoticeKey(kind: OwedNoticeKind, key: string): OwedNoticeMarker | null {
+  const [bookingId, bumpedAtMs, variant, ...rest] = key.slice(LEGACY_PREFIX[kind]!.length).split(":");
+  const bumpedAt = new Date(Number(bumpedAtMs));
+  if (!bookingId || rest.length > 0 || Number.isNaN(bumpedAt.getTime())) return null;
+  if (variant !== FLAGGED_VARIANT && variant !== BUMPED_VARIANT) return null;
+  return owedNoticeMarker({ kind, subjectId: bookingId, eventAt: bumpedAt, variant });
+}
+
+function legacyRef(kind: OwedNoticeKind, key: string): OwedNoticeRef {
+  return {
+    key,
+    marker: parseLegacyBumpNoticeKey(kind, key),
+    claim: (stampedNoLaterThan, now) => claimOwedAlert({ key, stampedNoLaterThan, now }),
+    settle: (claimedAt) => settleOwedAlert({ key, claimedAt }),
+    defer: (claimedAt, waitMs, retryAfterMs) => deferAlertCooldown({ key, claimedAt, windowMs: waitMs, retryAfterMs }),
+  };
+}
+
+/** The legacy `AlertCooldown` bump markers, for the two bump kinds only. */
+export const legacyBumpMarkerSource: OwedNoticeSource = {
+  name: "AlertCooldown (bump markers before #5433)",
+  async listDue(deliverer, { dueBefore }) {
+    const prefix = LEGACY_PREFIX[deliverer.kind];
+    if (!prefix) return [];
+    // The drain's own bound, as given (`INV-SSOT-002`): stamped no later than `dueBefore`.
+    const keys = await listOwedAlertKeys({ prefix, now: dueBefore, retryAfterMs: 0 });
+    return keys.map((key) => legacyRef(deliverer.kind, key));
+  },
+};

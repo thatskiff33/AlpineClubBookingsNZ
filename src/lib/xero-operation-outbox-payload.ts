@@ -9,6 +9,7 @@ import {
 } from "@/lib/xero-refund-method";
 import { readKeptLateCaptureInvoicePayload, XERO_OUTBOX_KEPT_LATE_CAPTURE_INVOICE_TYPE, type QueuedKeptLateCaptureInvoiceOutboxPayload } from "@/lib/kept-late-capture-invoice-payload";
 import { readAdditionalCaptureReceiptPayload, XERO_OUTBOX_ADDITIONAL_CAPTURE_RECEIPT_TYPE, type QueuedAdditionalCaptureReceiptOutboxPayload } from "@/lib/additional-capture-receipt-payload";
+import { readOrganisationContactDetailsPayload, XERO_OUTBOX_ORGANISATION_CONTACT_DETAILS_TYPE, type OrganisationContactDetailsPayload } from "@/lib/organisation-contact-details-payload";
 export { XERO_OUTBOX_ADDITIONAL_CAPTURE_RECEIPT_TYPE }; // #3953: a change's card capture's own receipt
 export { XERO_OUTBOX_KEPT_LATE_CAPTURE_INVOICE_TYPE }; // #3635: a kept late capture's invoice (`xero-kept-late-capture-invoice.ts`)
 
@@ -53,6 +54,7 @@ export const XERO_OUTBOX_QUEUE_TYPES = [
   XERO_OUTBOX_ADDITIONAL_CAPTURE_RECEIPT_TYPE,
   XERO_OUTBOX_ORGANISER_EXTRA_ADJUSTMENT_TYPE, // #4299 (`INV-PAY-148`)
   XERO_OUTBOX_ADMIN_GRANT_CREDIT_NOTE_TYPE, // #4431
+  XERO_OUTBOX_ORGANISATION_CONTACT_DETAILS_TYPE, // #5245: a school's corrected email and phone
 ] as const;
 
 interface QueuedEntranceFeeOutboxPayload {
@@ -234,7 +236,8 @@ export type QueuedOutboxPayload =
   | QueuedKeptLateCaptureInvoiceOutboxPayload
   | QueuedCardRefundReversalInvoiceOutboxPayload
   | QueuedAdditionalCaptureReceiptOutboxPayload
-  | AdminGrantCreditNotePayload;
+  | AdminGrantCreditNotePayload
+  | OrganisationContactDetailsPayload;
 
 export interface QueuedOutboxExpectedOperation {
   entityType: "INVOICE" | "CREDIT_NOTE" | "ALLOCATION" | "CONTACT" | "PAYMENT";
@@ -255,6 +258,7 @@ export interface QueuedOutboxExpectedOperation {
     | "ManualRefundTask"
     | "PaymentTransaction"
     | "MemberCredit"
+    | "Organisation"
   >;
 }
 
@@ -311,6 +315,7 @@ export function readQueuedOutboxPayload(
 
   if (queueType === XERO_OUTBOX_ORGANISER_EXTRA_ADJUSTMENT_TYPE) return readOrganiserExtraAdjustmentPayload(value);
   if (queueType === XERO_OUTBOX_ADMIN_GRANT_CREDIT_NOTE_TYPE) return readAdminGrantCreditNotePayload(value);
+  if (queueType === XERO_OUTBOX_ORGANISATION_CONTACT_DETAILS_TYPE) return readOrganisationContactDetailsPayload(value);
   if (queueType === XERO_OUTBOX_BOOKING_INVOICE_TYPE) {
     const bookingId = readString(payload.bookingId);
     return bookingId ? { queueType, bookingId } : null;
@@ -573,6 +578,7 @@ export function getQueuedOutboxExpectedOperation(
 
   if (queueType === XERO_OUTBOX_ADDITIONAL_CAPTURE_RECEIPT_TYPE) return { entityType: "PAYMENT", operationType: "CREATE", localModels: ["PaymentTransaction"] };
   if (queueType === XERO_OUTBOX_ADMIN_GRANT_CREDIT_NOTE_TYPE) return { entityType: "CREDIT_NOTE", operationType: "CREATE", localModels: ["MemberCredit"] };
+  if (queueType === XERO_OUTBOX_ORGANISATION_CONTACT_DETAILS_TYPE) return { entityType: "CONTACT", operationType: "UPDATE", localModels: ["Organisation"] };
   if (queueType === XERO_OUTBOX_GROUP_SETTLEMENT_INVOICE_VOID_TYPE) {
     return {
       entityType: "INVOICE",

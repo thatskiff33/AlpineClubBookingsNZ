@@ -1,14 +1,22 @@
 import { NextRequest, NextResponse } from "next/server";
+import { parseOptionalJsonRequestBody } from "@/lib/api-json";
 import { hostingCoverageParticipantRetryResponse } from "@/lib/adult-member-hosting-retry-response";
 import { BookingRequestType } from "@prisma/client";
 import { AdultMemberHostingRequiredError } from "@/lib/adult-member-hosting-refusal";
 import { approveBookingRequest, BookingRequestError } from "@/lib/booking-request";
+import { approveMemberWholeLodgeRequest, approveSchoolBookingRequest } from "@/lib/school-booking-request";
+import type { z } from "zod";
 import {
-  approveMemberWholeLodgeRequest,
-  approveSchoolBookingRequest,
+  adminBookingRequestApproveBodySchema,
+  bookingRequestOwnerContactIdSchema,
   memberWholeLodgeApprovalSchema,
   schoolChildCountsSchema,
-} from "@/lib/school-booking-request";
+} from "@/lib/admin-bookings-schemas/requests";
+import {
+  ADMIN_BOOKING_REQUEST_APPROVAL_CONNECTION_SHAPE,
+  type AdminBookingRequestApprovalAnswer,
+} from "@/lib/connection-shapes/bookings-requests";
+import { connectionJson } from "@/lib/mcp-connection-request";
 import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/session-guards";
 import { transactionContendedResponse } from "@/lib/transaction-contended-response";
@@ -22,6 +30,11 @@ import {
 } from "@/lib/booking-member-night-conflicts";
 import { clubFormatValues } from "@/lib/club-format-server";
 
+/** The body as sent: each branch parses its own fields. */
+type ApproveBody = Partial<Record<keyof z.input<typeof adminBookingRequestApproveBodySchema>, unknown>>;
+
+/** Each branch reads its fields with the schemas `adminBookingRequestApproveBodySchema` composes;
+ * also the AI app action `approve_booking_request` (ALP-719). */
 export async function POST(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
@@ -48,30 +61,20 @@ export async function POST(
   // plus the optional map-to-existing-contact decision (issue #1255). The body
   // is empty for general requests and for school approvals that keep the
   // submitted numbers, so parse defensively.
-  const body = (await req.json().catch(() => ({}))) as {
-    childCounts?: unknown;
-    ownerContactMemberId?: unknown;
-    pricedHeadcount?: unknown;
-    priceOverrideCents?: unknown;
-    priceAsWholeLodge?: unknown;
-  };
+  const jsonBody = await parseOptionalJsonRequestBody(req, { whenAbsent: {}, objectOnly: true });
+  if (!jsonBody.ok) return jsonBody.response;
+  const body = jsonBody.body as ApproveBody;
 
   // The map target is an existing non-login Organisation/School contact id. The
   // authoritative guard (canLogin:false, role, not archived) runs inside the
   // approval transaction; here we only normalise the shape.
   let ownerContactMemberId: string | undefined;
   if (body.ownerContactMemberId !== undefined && body.ownerContactMemberId !== null) {
-    if (
-      typeof body.ownerContactMemberId !== "string" ||
-      body.ownerContactMemberId.trim().length === 0 ||
-      body.ownerContactMemberId.length > 64
-    ) {
-      return NextResponse.json(
-        { error: "Invalid contact selection" },
-        { status: 422 }
-      );
+    const parsedContact = bookingRequestOwnerContactIdSchema.safeParse(body.ownerContactMemberId);
+    if (!parsedContact.success) {
+      return NextResponse.json({ error: "Invalid contact selection" }, { status: 422 });
     }
-    ownerContactMemberId = body.ownerContactMemberId;
+    ownerContactMemberId = parsedContact.data;
   }
 
   try {
@@ -81,23 +84,11 @@ export async function POST(
     // payment-link path — minting a duplicate non-login member for someone who
     // already has an account and emailing them a tokenised payment page.
     if (requestRow.requestedByMemberId && requestRow.exclusivityRequested) {
-      const parsedOverride = memberWholeLodgeApprovalSchema.safeParse({
-        ...(body.pricedHeadcount !== undefined
-          ? { pricedHeadcount: body.pricedHeadcount }
-          : {}),
-        ...(body.priceOverrideCents !== undefined
-          ? { priceOverrideCents: body.priceOverrideCents }
-          : {}),
-        // #2338: the officer's per-approval "price as whole lodge" toggle.
-        ...(body.priceAsWholeLodge !== undefined
-          ? { priceAsWholeLodge: body.priceAsWholeLodge }
-          : {}),
-      });
+      // The schema names its own fields (#2338's "price as whole lodge" toggle
+      // among them) and drops the other branches' keys.
+      const parsedOverride = memberWholeLodgeApprovalSchema.safeParse(body);
       if (!parsedOverride.success) {
-        return NextResponse.json(
-          { error: "Invalid headcount or price override" },
-          { status: 422 }
-        );
+        return NextResponse.json({ error: "Invalid headcount or price override" }, { status: 422 });
       }
 
       const result = await approveMemberWholeLodgeRequest({
@@ -117,7 +108,7 @@ export async function POST(
         );
       }
 
-      return NextResponse.json({
+      const answer: AdminBookingRequestApprovalAnswer = {
         success: true,
         type: "MEMBER_WHOLE_LODGE",
         bookingId: result.bookingId,
@@ -132,7 +123,8 @@ export async function POST(
         // the officer must resolve by hand. This reaches the admin caller and
         // nothing else — no member surface reads this response.
         exclusiveHoldConflicts: result.exclusiveHoldConflicts,
-      });
+      };
+      return connectionJson(req, answer, ADMIN_BOOKING_REQUEST_APPROVAL_CONNECTION_SHAPE);
     }
 
     if (requestRow.type === BookingRequestType.SCHOOL) {
@@ -165,7 +157,7 @@ export async function POST(
         );
       }
 
-      return NextResponse.json({
+      const answer: AdminBookingRequestApprovalAnswer = {
         success: true,
         type: "SCHOOL",
         bookingId: result.bookingId,
@@ -180,7 +172,8 @@ export async function POST(
         // hold was set at approval (issue #119); the officer resolves them
         // manually (decision 1). Empty when no hold was set or nights are clear.
         exclusiveHoldConflicts: result.exclusiveHoldConflicts,
-      });
+      };
+      return connectionJson(req, answer, ADMIN_BOOKING_REQUEST_APPROVAL_CONNECTION_SHAPE);
     }
 
     const result = await approveBookingRequest({
@@ -199,14 +192,15 @@ export async function POST(
       );
     }
 
-    return NextResponse.json({
+    const answer: AdminBookingRequestApprovalAnswer = {
       success: true,
       type: "GENERAL",
       bookingId: result.bookingId,
       memberId: result.memberId,
       priceCents: result.priceCents,
       paymentLinkExpiresAt: result.paymentLinkExpiresAt.toISOString(),
-    });
+    };
+    return connectionJson(req, answer, ADMIN_BOOKING_REQUEST_APPROVAL_CONNECTION_SHAPE);
   } catch (err) {
     // `INV-LOCK-006`: the approval's one transaction rolled back.
     const contended = transactionContendedResponse(err, "Booking request approval contended for the lock(1) budget", {

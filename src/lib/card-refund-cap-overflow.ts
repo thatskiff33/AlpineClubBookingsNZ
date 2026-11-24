@@ -26,8 +26,10 @@ import { formatCents } from "@/lib/utils";
  * once per charge and set of counted refunds (a replay of the same refunds
  * alerts nothing new, any new refund does),
  * through the payment recovery alert, after the refund's own commit - never
- * inside it. The alert's claim (`sendAdminAlertOnceEver`) and the email row are
- * the durable record; the error log stays beside them.
+ * inside it. The alert's claim and the email row are the durable record; the
+ * error log stays beside them. Nothing raises it again, so the alert is stored
+ * for the payments cron's sweep, which re-sends it until it is out
+ * (`sendReplayableAdminAlertOnceEver`, #5255, `INV-INT-042`).
  */
 export type CardRefundCapOverflow = {
   paymentId: string;
@@ -117,26 +119,23 @@ export async function alertCardRefundCapOverflow(overflow: CardRefundCapOverflow
     }
     const paidAnotherWay = await memberPaidAnotherWay(overflow.paymentId, bookingId);
     // Loaded here, not at the top: the payment ledger imports this module, and the alert's own imports reach back to it.
-    const [{ clubFormatValues }, { alertPaymentRecoveryOfficers, NOBODY_ALERTED }, { sendAdminAlertOnceEver }] = await Promise.all([
+    const [{ clubFormatValues }, { sendReplayableAdminAlertOnceEver }] = await Promise.all([
       import("@/lib/club-format-server"),
-      import("@/lib/payment-recovery-alert"),
-      import("@/lib/admin-alert-once"),
+      import("@/lib/admin-alert-once-replayable"),
     ]);
     const format = await clubFormatValues();
-    return await sendAdminAlertOnceEver({
+    return await sendReplayableAdminAlertOnceEver({
       key: cardRefundCapOverflowAlertKey(overflow),
       label: "card refund past its charge alert",
       context,
-      send: async () =>
-        (await alertPaymentRecoveryOfficers(
-          {
-            bookingId,
-            amountCents: overflow.discardedCents,
-            paymentIntentId: row?.stripePaymentIntentId ?? "",
-            errorMessage: cardRefundCapOverflowMessage(formatCents(overflow.discardedCents, format), paidAnotherWay),
-          },
-          format,
-        )) ?? NOBODY_ALERTED,
+      alert: {
+        kind: "payment-recovery",
+        bookingId,
+        amountCents: overflow.discardedCents,
+        paymentIntentId: row?.stripePaymentIntentId ?? "",
+        errorMessage: cardRefundCapOverflowMessage(formatCents(overflow.discardedCents, format), paidAnotherWay),
+      },
+      format,
     });
   } catch (err) {
     logger.error({ ...context, err }, "Could not alert the officers to a card refund past its charge (#4159)");

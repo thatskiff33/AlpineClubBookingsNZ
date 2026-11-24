@@ -119,10 +119,14 @@ describe("E2E spec shards (#4397)", () => {
   it("keeps Playwright's default test-file shapes, and ignores its two other projects' dirs by absolute or relative path", () => {
     for (const file of ["a.spec.ts", "a.test.ts", "a.spec.tsx", "a.spec.mjs", "a.test.js"]) expect(PLAYWRIGHT_TEST_FILE.test(file)).toBe(true);
     for (const file of ["auth.setup.ts", "helpers/x.ts", "a.spec.ts.snap"]) expect(PLAYWRIGHT_TEST_FILE.test(file)).toBe(false);
+    // The function resolves its directory, which on Windows gains a drive
+    // letter; the expected paths are resolved the same way (#5407 item 42).
+    const abs = (dir) => path.resolve(dir).split(path.sep).join("/");
+    const e2e = abs("/home/runner/repo/e2e");
     const ignore = notChromiumIgnore("/home/runner/repo/e2e");
-    for (const file of ["/home/runner/repo/e2e/pre-setup/a.spec.ts", "/home/runner/repo/e2e/multi-lodge/b.spec.ts"]) expect(ignore.test(file)).toBe(true);
-    for (const file of ["/home/runner/repo/e2e/booking.spec.ts", "/home/runner/repo/e2e/not-multi-lodge-x.spec.ts"]) expect(ignore.test(file)).toBe(false);
+    for (const file of [`${e2e}/pre-setup/a.spec.ts`, `${e2e}/multi-lodge/b.spec.ts`]) expect(ignore.test(file)).toBe(true);
+    for (const file of [`${e2e}/booking.spec.ts`, `${e2e}/not-multi-lodge-x.spec.ts`]) expect(ignore.test(file)).toBe(false);
     // A parent folder sharing a name must not hide the whole suite.
-    expect(notChromiumIgnore("/src/worktrees/pre-setup/e2e").test("/src/worktrees/pre-setup/e2e/booking.spec.ts")).toBe(false);
+    expect(notChromiumIgnore("/src/worktrees/pre-setup/e2e").test(`${abs("/src/worktrees/pre-setup/e2e")}/booking.spec.ts`)).toBe(false);
   });
 });

@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { parseOptionalJsonRequestBody } from "@/lib/api-json";
 import { hostingCoverageParticipantRetryResponse } from "@/lib/adult-member-hosting-retry-response";
 import { BookingRequestError } from "@/lib/booking-request";
 import {
@@ -10,7 +11,18 @@ import {
   BookingMemberNightConflictError,
   getBookingMemberNightConflictResponse,
 } from "@/lib/booking-member-night-conflicts";
-import { schoolChildCountsSchema } from "@/lib/school-booking-request";
+import type { z } from "zod";
+import {
+  adminBookingRequestSendQuoteBodySchema,
+  bookingRequestOwnerContactIdSchema,
+  schoolChildCountsSchema,
+  type SchoolChildCounts,
+} from "@/lib/admin-bookings-schemas/requests";
+import {
+  ADMIN_BOOKING_REQUEST_QUOTE_SENT_CONNECTION_SHAPE,
+  type AdminBookingRequestQuoteSentAnswer,
+} from "@/lib/connection-shapes/bookings-requests";
+import { connectionJson } from "@/lib/mcp-connection-request";
 import { requireAdmin } from "@/lib/session-guards";
 import {
   TRANSACTION_CONTENDED_STATUS_CHECK_MESSAGE,
@@ -18,6 +30,12 @@ import {
 } from "@/lib/transaction-contended-response";
 import { clubFormatValues } from "@/lib/club-format-server";
 
+/**
+ * POST /api/admin/booking-requests/[id]/send-quote — hold the beds and email
+ * the requester the latest saved quote. The body's fields are read with the
+ * schemas `adminBookingRequestSendQuoteBodySchema` composes. Also the AI app
+ * action `send_booking_request_quote` (ALP-719).
+ */
 export async function POST(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
@@ -31,23 +49,21 @@ export async function POST(
   // Optional map-to-existing-contact decision (issue #1255). Sending a quote
   // auto-holds capacity, which materialises the owner, so the decision rides in
   // the send body. The authoritative guard runs inside the hold transaction.
-  const body = (await req.json().catch(() => ({}))) as {
-    ownerContactMemberId?: unknown;
-    childCounts?: unknown;
-  };
+  const jsonBody = await parseOptionalJsonRequestBody(req, { whenAbsent: {}, objectOnly: true });
+  if (!jsonBody.ok) return jsonBody.response;
+  const body = jsonBody.body as Partial<
+    Record<keyof z.input<typeof adminBookingRequestSendQuoteBodySchema>, unknown>
+  >;
   let ownerContactMemberId: string | undefined;
   if (body.ownerContactMemberId !== undefined && body.ownerContactMemberId !== null) {
-    if (
-      typeof body.ownerContactMemberId !== "string" ||
-      body.ownerContactMemberId.trim().length === 0 ||
-      body.ownerContactMemberId.length > 64
-    ) {
+    const parsedContact = bookingRequestOwnerContactIdSchema.safeParse(body.ownerContactMemberId);
+    if (!parsedContact.success) {
       return NextResponse.json(
         { error: "Invalid contact selection" },
         { status: 422 }
       );
     }
-    ownerContactMemberId = body.ownerContactMemberId;
+    ownerContactMemberId = parsedContact.data;
   }
 
   // #3412 (review, B1): the school group numbers the officer currently has on
@@ -55,7 +71,7 @@ export async function POST(
   // the request, so the service refuses the send when these differ from it —
   // the same defect the issue fixes on Save quote, one button over. Same schema
   // saving and approving parse, so one shape of numbers reaches all three.
-  let childCounts: ReturnType<typeof schoolChildCountsSchema.parse> | undefined;
+  let childCounts: SchoolChildCounts | undefined;
   if (body.childCounts !== undefined && body.childCounts !== null) {
     const parsedCounts = schoolChildCountsSchema.safeParse(body.childCounts);
     if (!parsedCounts.success) {
@@ -75,7 +91,7 @@ export async function POST(
       childCounts,
     });
 
-    return NextResponse.json({
+    const answer: AdminBookingRequestQuoteSentAnswer = {
       success: true,
       id: quote.id,
       version: quote.version,
@@ -83,7 +99,8 @@ export async function POST(
       expiresAt: quote.responseTokenExpiresAt?.toISOString() ?? null,
       emailDelivered: quote.emailDelivered,
       options: parseBookingRequestQuoteOptions(quote.options),
-    });
+    };
+    return connectionJson(req, answer, ADMIN_BOOKING_REQUEST_QUOTE_SENT_CONNECTION_SHAPE);
   } catch (err) {
     // `INV-LOCK-006`: sending holds the beds in one transaction and claims the
     // quote in another, so the hold may already stand.

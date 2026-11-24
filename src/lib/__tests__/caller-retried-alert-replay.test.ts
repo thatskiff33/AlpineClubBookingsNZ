@@ -155,10 +155,11 @@ vi.mock("@/lib/prisma", () => {
     booking: { findUnique: async () => null },
     $executeRaw: async () => 1,
     alertCooldown: {
-      updateMany: async ({ where, data }: { where: Record<string, unknown> & { key: string }; data: { lastAlertedAt: Date } }) => {
+      updateMany: async ({ where, data }: { where: Record<string, unknown> & { key: string }; data: { lastAlertedAt?: Date } }) => {
         const held = state.cooldowns.get(where.key);
         if (!held || !matchesWhere({ key: where.key, lastAlertedAt: held }, where)) return { count: 0 };
-        state.cooldowns.set(where.key, data.lastAlertedAt);
+        // #5255: the alert's email row confirms its claim; only the stamp is kept here.
+        if (data.lastAlertedAt) state.cooldowns.set(where.key, data.lastAlertedAt);
         return { count: 1 };
       },
       create: async ({ data }: { data: { key: string; lastAlertedAt: Date } }) => {

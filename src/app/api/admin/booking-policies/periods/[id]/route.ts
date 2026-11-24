@@ -1,46 +1,28 @@
 import { Prisma } from "@prisma/client";
 import { NextRequest, NextResponse } from "next/server";
+import { parseJsonRequestBody } from "@/lib/api-json";
 import { revalidatePublicPageContent } from "@/lib/public-content-revalidation";
 import { requireAdmin } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma";
 import { z } from "zod";
 import { parseDateOnly } from "@/lib/date-only";
-import { dateOnlyStringSchema } from "@/lib/date-only-schema";
 import {
-  hasDuplicateCancellationThresholds,
   normalizeCancellationRules,
   normalizeStoredCancellationRules,
 } from "@/lib/cancellation-rules";
 import { logAudit } from "@/lib/audit";
+import { bookingPeriodUpdateBodySchema } from "@/lib/admin-bookings-schemas/setup";
+import {
+  ADMIN_BOOKING_PERIOD_CONNECTION_SHAPE,
+  ADMIN_SETUP_DELETED_CONNECTION_SHAPE,
+} from "@/lib/connection-shapes/bookings-setup";
+import { connectionJson } from "@/lib/mcp-connection-request";
 
-const cancellationRuleSchema = z.object({
-  daysBeforeStay: z.number().int().min(0),
-  refundPercentage: z.number().int().min(0).max(100),
-  creditRefundPercentage: z.number().int().min(0).max(100).optional(),
-  fixedFeeCents: z.number().int().min(0).optional(),
-  creditFixedFeeCents: z.number().int().min(0).optional(),
-});
-
-const updateSchema = z.object({
-  name: z.string().min(1).max(200).optional(),
-  startDate: dateOnlyStringSchema.optional(),
-  endDate: dateOnlyStringSchema.optional(),
-  nonMemberHoldEnabled: z.boolean().optional(),
-  nonMemberHoldDays: z.number().int().min(1).max(365).optional(),
-  cancellationRules: z.array(cancellationRuleSchema).min(1).optional(),
-  active: z.boolean().optional(),
-}).superRefine((data, ctx) => {
-  if (data.cancellationRules && hasDuplicateCancellationThresholds(data.cancellationRules)) {
-    ctx.addIssue({
-      code: z.ZodIssueCode.custom,
-      path: ["cancellationRules"],
-      message: "Cancellation rule day thresholds must be unique",
-    });
-  }
-});
+// The body schema lives in admin-bookings-schemas/setup.ts so the AI app
+// action `update_booking_period` offers the same fields (ALP-719).
 
 export async function GET(
-  _request: NextRequest,
+  request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   const guard = await requireAdmin({
@@ -54,10 +36,14 @@ export async function GET(
     return NextResponse.json({ error: "Period not found" }, { status: 404 });
   }
 
-  return NextResponse.json({
-    ...period,
-    cancellationRules: normalizeStoredCancellationRules(period.cancellationRules),
-  });
+  return connectionJson(
+    request,
+    {
+      ...period,
+      cancellationRules: normalizeStoredCancellationRules(period.cancellationRules),
+    },
+    ADMIN_BOOKING_PERIOD_CONNECTION_SHAPE,
+  );
 }
 
 export async function PUT(
@@ -70,9 +56,11 @@ export async function PUT(
   if (!guard.ok) return guard.response;
   const { id } = await params;
 
+  const jsonBody = await parseJsonRequestBody(request);
+  if (!jsonBody.ok) return jsonBody.response;
   try {
-    const body = await request.json();
-    const data = updateSchema.parse(body);
+    const body = jsonBody.body;
+    const data = bookingPeriodUpdateBodySchema.parse(body);
 
     const existing = await prisma.bookingPeriod.findUnique({ where: { id } });
     if (!existing) {
@@ -113,7 +101,7 @@ export async function PUT(
     logAudit({ action: "booking-period.update", category: "booking", memberId: guard.session.user.id, targetId: id, entityType: "BookingPeriod", entityId: id, details: JSON.stringify({ lodgeId: existing.lodgeId, before: existing, after: period }) });
 
     revalidatePublicPageContent();
-    return NextResponse.json(period);
+    return connectionJson(request, period, ADMIN_BOOKING_PERIOD_CONNECTION_SHAPE);
   } catch (error) {
     if (error instanceof z.ZodError) {
       return NextResponse.json(
@@ -129,7 +117,7 @@ export async function PUT(
 }
 
 export async function DELETE(
-  _request: NextRequest,
+  request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   const guard = await requireAdmin({
@@ -144,7 +132,7 @@ export async function DELETE(
     await prisma.bookingPeriod.delete({ where: { id } });
     logAudit({ action: "booking-period.delete", category: "booking", memberId: guard.session.user.id, targetId: id, entityType: "BookingPeriod", entityId: id, details: JSON.stringify({ lodgeId: existing.lodgeId, before: existing }) });
     revalidatePublicPageContent();
-    return NextResponse.json({ success: true });
+    return connectionJson(request, { success: true }, ADMIN_SETUP_DELETED_CONNECTION_SHAPE);
   } catch {
     return NextResponse.json(
       { error: "Failed to delete booking period" },

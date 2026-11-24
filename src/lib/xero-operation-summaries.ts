@@ -344,6 +344,13 @@ function summarizeQueuedPayload(
         facts: facts.build(),
       };
 
+    case "ORGANISATION_CONTACT_DETAILS":
+      // #5245: the school is the row's anchor; its details are read when it runs.
+      return {
+        title: "Queued: send a school's corrected email and phone to its Xero contact",
+        facts: facts.build(),
+      };
+
     default:
       return null;
   }

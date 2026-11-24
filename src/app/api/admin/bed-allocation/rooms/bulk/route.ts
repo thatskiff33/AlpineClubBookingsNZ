@@ -1,10 +1,5 @@
 import { NextResponse } from "next/server";
-import { z } from "zod";
-import {
-  MAX_BULK_BEDS_PER_ROOM,
-  MAX_BULK_ROOMS,
-  createBedAllocationRoomsBulk,
-} from "@/lib/bed-allocation-rooms";
+import { createBedAllocationRoomsBulk } from "@/lib/bed-allocation-rooms";
 import {
   bedAllocationErrorResponse,
   requireBedInventoryWrite,
@@ -14,20 +9,16 @@ import { logAudit } from "@/lib/audit";
 import { prisma } from "@/lib/prisma";
 import { resolveOptionalActiveLodgeId } from "@/lib/lodges";
 import { revalidatePublicSite } from "@/lib/public-content-revalidation";
+import { bedAllocationRoomsBulkBodySchema } from "@/lib/admin-bookings-schemas/beds";
+import { ADMIN_LODGE_ROOMS_BULK_CONNECTION_SHAPE } from "@/lib/connection-shapes/bookings-beds";
+import { connectionJson } from "@/lib/mcp-connection-request";
 
 // requireAdmin() is enforced by requireBedInventoryWrite().
-const bulkSchema = z
-  .object({
-    roomCount: z.coerce.number().int().min(1).max(MAX_BULK_ROOMS),
-    bedsPerRoom: z.coerce.number().int().min(0).max(MAX_BULK_BEDS_PER_ROOM),
-    namePrefix: z.string().trim().min(1).max(80).optional(),
-    lodgeId: z.string().min(1).optional(),
-  })
-  .strict();
 
 /**
  * POST /api/admin/bed-allocation/rooms/bulk
  * Seed N rooms of M beds each in one transaction (ADR-003 bulk seeding).
+ * Also the AI app action `create_lodge_rooms_in_bulk` (ALP-719).
  */
 export async function POST(request: Request) {
   const guard = await requireBedInventoryWrite();
@@ -37,7 +28,7 @@ export async function POST(request: Request) {
     const json = await parseJsonRequestBody(request);
     if (!json.ok) return json.response;
 
-    const body = bulkSchema.safeParse(json.body);
+    const body = bedAllocationRoomsBulkBodySchema.safeParse(json.body);
     if (!body.success) {
       return NextResponse.json(
         { error: "Invalid input", details: body.error.flatten() },
@@ -80,7 +71,7 @@ export async function POST(request: Request) {
       },
     });
 
-    return NextResponse.json(result, { status: 201 });
+    return connectionJson(request, result, ADMIN_LODGE_ROOMS_BULK_CONNECTION_SHAPE, { status: 201 });
   } catch (error) {
     return bedAllocationErrorResponse(error);
   }

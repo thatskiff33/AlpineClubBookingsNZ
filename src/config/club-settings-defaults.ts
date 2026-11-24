@@ -180,6 +180,14 @@ export const DEFAULT_MEMBERSHIP_LOCKOUT_SETTINGS = {
   financialYearEndMonthOverride: null,
   textFallbackEnabled: true,
   useFeeScheduleItemCodes: false,
+  /**
+   * #5190 subscription-liability rule. NOT_CHOSEN for an existing club and a
+   * fresh install alike (owner decision, 20 Nov 2026): billing and booking
+   * access keep their pre-#5190 rules until an admin chooses both answers.
+   * Matches the database defaults.
+   */
+  requiredTypeAgeRule: "NOT_CHOSEN",
+  liabilityAgeSource: "NOT_CHOSEN",
 } as const;
 
 /**

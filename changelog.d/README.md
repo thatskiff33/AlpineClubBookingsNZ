@@ -160,6 +160,112 @@ that genuinely need no entry (every workflow tweak, every test-harness change),
 and the noise would train everyone to reach for the no-entry marker, which is
 the one outcome that switches the gate off in practice.
 
+## After-deploy steps: the `.deploy.md` suffix
+
+A change that needs someone to act once its release is deployed — run a
+report, map a setting, check a page — writes that step as its own fragment,
+`changelog.d/<pr-number>-<short-slug>.deploy.md` (#5379, owner decisions D1 and
+D4, 22 Nov 2026). **The pull request's author, human or agent, adds it in the
+same pull request.** Before, such steps lived only in pull request
+descriptions, and a release's checklist had to be collected from them by hand
+(#5378). A pull request with two steps writes two fragments.
+
+The file is exactly three headings, once each, in this order, with nothing
+above the first and no other heading:
+
+```markdown
+## Who
+
+operator
+
+## What to do
+
+Before or during the deploy, check that your Stripe webhook endpoint sends the
+four `charge.dispute.*` events, as `DEPLOYMENT.md` lists them.
+
+## How to check it worked
+
+The endpoint's event list in the Stripe dashboard includes all four.
+```
+
+- **Who** is one line naming one role: `owner` (the club's owner, for a
+  production action only they may take), `operator` (whoever runs the
+  servers and the release) or `officer` (a lodge officer with admin access,
+  for a check in the app).
+- **What to do** and **How to check it worked** each open with a sentence,
+  not a list, quote, table or code block; more paragraphs, lists or code may
+  follow. Say "before or during the deploy" in What to do when the step cannot
+  wait until after: the filed list tells the reader to do such a step before
+  deploying.
+- Every link, Markdown or HTML (`<a href>`, `<img src>`), is an absolute
+  `https://` URL or a `mailto:` address; write a repository path in backticks
+  instead. A step is copied into the upgrade guide, the notes page and a
+  GitHub issue, where a relative or same-page link points somewhere different
+  in each, so a relative link, or any other scheme, is refused.
+- The name is lower-case letters, digits and hyphens. It normally opens with
+  the pull request's number, which the checklist links; a lane that names its
+  files before the pull request exists may use its lane name and rename it
+  once the number is known.
+
+`scripts/lib/deploy-fragments.mjs` is the one definition of the format. A
+`.deploy.md` file is not a changelog entry: the compiler never puts it in
+`CHANGELOG.md`, and it does not satisfy the changelog gate, so a code-bearing
+pull request still writes its ordinary fragment too.
+
+What happens to it:
+
+- **`verify` and `pnpm run pr:check`** fail a pull request whose "Manual Checks
+  Required" or "Migration Or Deployment Impact" answer names a time after
+  the deploy or the release ("after deploy", "after the next deploy",
+  "post-deploy", "after release", "after the new release", "post-release",
+  "after this release's deploy", "after the new colour", "after upgrading",
+  "after the upgrade", "after cutover", "once this ships", "once deployed",
+  "once it is live", "once the new release is serving", "once released") or
+  says "the owner runs" or "should run", in any case and even wrapped onto
+  the next line, while its diff adds or changes no
+  `.deploy.md` fragment, and fail any `.deploy.md` it adds or changes that is
+  malformed (`scripts/ci/check-pr-deploy-fragment.mjs`).
+  A pull request with no such step answers "None. No after-deploy step." The
+  gate reads a negated answer as no step: "no", "none" or "nothing" before
+  the time, with only words such as "step", "is", "needed" or "to do"
+  between ("None after deploy.", "Nothing to do after release."), or the time
+  then "nothing" or "none" ("After deploy: nothing"). Only those words are
+  set aside: the rest of the sentence is read as usual, so "None. After
+  deploy, run the census." and "After deploy nothing breaks, and the owner
+  should run the census." fail. A negation may wrap onto the next line only
+  where that line finishes it ("None. No" then "after-deploy step."), not
+  where it opens with a capital (a new sentence) or goes on to a step ("None"
+  then "after deploy run the census." fails). A negation whose clause goes on
+  with "unless", "if", "but" or "except" is no negation: "No step is needed
+  after deploy unless SMTP is set." and "After deploy, nothing changes for
+  members, but run the backfill." both fail. A clause ends at a full stop, a
+  semicolon or the line's end.
+
+  There is no escape marker or phrase (owner decision, 25 Nov 2026, #5379):
+  a sentence that only describes behaviour after the deploy trips the gate
+  too, and its author rewords it to name no time after the deploy. For
+  example, "Just after deploy one extra alert can go out" becomes "One extra
+  alert can go out while the two releases overlap."
+
+  The release-prep pull request, which deletes the fragments it files and
+  changes nothing but the files `release:cut prepare` writes, is exempt.
+- **`pnpm run release:cut prepare`** refuses to cut, changing nothing, while any
+  `.deploy.md` is malformed. Otherwise it files every step, one checkbox each,
+  under "After deploying this release" at the end of the release's section of
+  `docs/UPGRADING.md` and in its notes page `docs/releases/v<version>.md`, and
+  deletes the fragments with the others. `--amend` adds late steps to both.
+  `compile-changelog.mjs` run on its own validates them but leaves them in
+  place.
+- **`pnpm run release:cut publish`** opens a "v<version> post-deploy checklist"
+  issue from the notes page's steps, labelled `post-deploy-checklist`, and links
+  it from the GitHub release. It is assigned to the repository's owner (owner
+  decision D2 on #5379), or to `--checklist-assignee <login>` when given; when
+  an organisation owns the repository, or GitHub cannot say, it is assigned to
+  whoever publishes (`@me`) and the plan says why. A re-run finds the issue by
+  its label and reuses it. If it cannot be opened, the release is still
+  published, linking the notes page instead, and the exact `gh` commands are
+  printed. A release with no steps opens no issue.
+
 ## Compiling a release
 
 `pnpm run release:cut prepare --execute` runs the compiler for you on a new

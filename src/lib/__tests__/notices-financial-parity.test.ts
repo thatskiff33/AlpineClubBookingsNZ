@@ -9,20 +9,22 @@ import { describe, expect, it, vi } from "vitest";
 // This is a REAL parity test, not mock-against-mock: the membership-type policy
 // resolution (resolveMembershipTypePoliciesForMembers /
 // requiresPaidSubscriptionForMemberForBooking) runs for REAL against a
-// fixture-backed prisma fake, exercised through BOTH code paths. Only the two
-// global config seams (subscription enforcement + the age-tier rule) are stubbed
-// — and stubbed CONSISTENTLY so the singular `requiresPaidSubscriptionForBooking`
-// and the batched `enforcement && requiresPaidSubscriptionForAgeTier` agree.
+// fixture-backed prisma fake, exercised through BOTH code paths. Only the global
+// config seams (the club's lockout policy and its age-tier settings) are stubbed,
+// and both paths read the same stubs through the shared settlement loader
+// (#5190).
 
 vi.mock("server-only", () => ({}));
-vi.mock("@/lib/age-tier", () => ({ getAgeTierSettings: async () => [] }));
+// A tier with no settings row owes; SENIOR (a fixture-only tier) is exempt.
+vi.mock("@/lib/age-tier", () => ({
+  getAgeTierSettings: async () => [
+    { tier: "SENIOR", minAge: 65, maxAge: null, label: "Senior", sortOrder: 9, subscriptionRequiredForBooking: false },
+  ],
+}));
 
 const h = vi.hoisted(() => {
   const SEASON = 2026;
 
-  // Age tiers that owe a paid subscription when enforcement is on.
-  const AGE_REQUIRES = new Set(["ADULT"]);
-  const ENFORCEMENT = true;
 
   type FakeType = {
     id: string;
@@ -56,6 +58,7 @@ const h = vi.hoisted(() => {
     ageTier: string;
     type: FakeType;
     subStatus?: string;
+    noInvoiceCoverage?: boolean;
   }> = [
     { id: "m1", ageTier: "ADULT", type: notRequiredType }, // exempt type
     { id: "m2", ageTier: "ADULT", type: requiredType, subStatus: "PAID" },
@@ -65,6 +68,8 @@ const h = vi.hoisted(() => {
     { id: "m6", ageTier: "ADULT", type: ageTierType, subStatus: "NOT_REQUIRED" }, // dominance
     { id: "m7", ageTier: "ADULT", type: ageTierType, subStatus: "PAID" },
     { id: "m8", ageTier: "ADULT", type: ageTierType }, // age requires, unpaid
+    // #5190: a no-invoice fee's coverage settles them whatever the row says.
+    { id: "m9", ageTier: "ADULT", type: requiredType, subStatus: "NOT_INVOICED", noInvoiceCoverage: true },
   ];
 
   const members = spec.map((s) => ({
@@ -74,6 +79,7 @@ const h = vi.hoisted(() => {
     email: `${s.id}@x.test`,
     role: "MEMBER",
     ageTier: s.ageTier,
+    dateOfBirth: null,
   }));
   const assignments = spec.map((s) => ({
     memberId: s.id,
@@ -82,7 +88,12 @@ const h = vi.hoisted(() => {
   }));
   const subs = spec
     .filter((s) => s.subStatus)
-    .map((s) => ({ memberId: s.id, seasonYear: SEASON, status: s.subStatus! }));
+    .map((s) => ({
+      memberId: s.id,
+      seasonYear: SEASON,
+      status: s.subStatus!,
+      chargeCoverage: s.noInvoiceCoverage ? [{ id: `cov-${s.id}` }] : [],
+    }));
 
   const prismaMock = {
     member: {
@@ -139,17 +150,15 @@ const h = vi.hoisted(() => {
     },
   };
 
-  return { SEASON, AGE_REQUIRES, ENFORCEMENT, members, prismaMock, spec };
+  return { SEASON, members, prismaMock, spec };
 });
 
 vi.mock("@/lib/prisma", () => ({ prisma: h.prismaMock }));
 vi.mock("@/lib/member-subscription-eligibility", () => ({
-  isSubscriptionEnforcementActive: async () => h.ENFORCEMENT,
-  requiresPaidSubscriptionForAgeTier: (ageTier: string) =>
-    h.AGE_REQUIRES.has(ageTier),
-  // Kept consistent with the two seams above so both code paths agree.
-  requiresPaidSubscriptionForBooking: async (ageTier: string) =>
-    h.ENFORCEMENT && h.AGE_REQUIRES.has(ageTier),
+  resolveSubscriptionLockoutPolicy: async () => ({
+    mode: "HARD_BLOCK",
+    liabilitySettings: { requiredTypeAgeRule: "NOT_CHOSEN", liabilityAgeSource: "NOT_CHOSEN" },
+  }),
 }));
 
 import {
@@ -167,7 +176,6 @@ describe("resolveFinancialStatusForMembers parity with isMemberFinancial", () =>
       const single = await isMemberFinancial(h.prismaMock, {
         memberId: member.id,
         seasonYear: h.SEASON,
-        ageTier: member.ageTier as never,
       });
       expect(
         batched.get(member.id),
@@ -187,6 +195,7 @@ describe("resolveFinancialStatusForMembers parity with isMemberFinancial", () =>
     expect(batched.get("m5")).toBe(true);
     expect(batched.get("m6")).toBe(true);
     expect(batched.get("m7")).toBe(true);
+    expect(batched.get("m9")).toBe(true);
     // m3 required+unpaid; m4 required+no row; m8 age-tier required + unpaid.
     expect(batched.get("m3")).toBe(false);
     expect(batched.get("m4")).toBe(false);

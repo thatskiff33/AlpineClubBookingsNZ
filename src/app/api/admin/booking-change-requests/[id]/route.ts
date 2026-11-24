@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { parseJsonRequestBody } from "@/lib/api-json";
 import type { Prisma } from "@prisma/client";
 import { bookingOwner } from "@/lib/booking-owner";
 import { logAudit } from "@/lib/audit";
@@ -13,6 +14,8 @@ import {
 } from "@/lib/booking-change-request-admin-decision";
 import { acknowledgedKeptNightsRecord } from "@/lib/booking-change-request-stored";
 import { requireRecentAuth } from "@/lib/require-recent-auth";
+import { ADMIN_CHANGE_REQUEST_CONNECTION_SHAPE } from "@/lib/connection-shapes/bookings-review-queues";
+import { connectionJson } from "@/lib/mcp-connection-request";
 
 const reviewSchema = z.object({
   status: z.enum(["APPROVED", "REJECTED"]),
@@ -37,9 +40,12 @@ const reviewSchema = z.object({
 });
 
 
-
+/**
+ * GET /api/admin/booking-change-requests/[id] — one request in full.
+ * Also the AI app action `get_booking_change_request` (ALP-719).
+ */
 export async function GET(
-  _req: NextRequest,
+  req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   const guard = await requireAdmin({
@@ -57,7 +63,7 @@ export async function GET(
     return NextResponse.json({ error: "Booking change request not found" }, { status: 404 });
   }
 
-  return NextResponse.json(request);
+  return connectionJson(req, request, ADMIN_CHANGE_REQUEST_CONNECTION_SHAPE);
 }
 
 export async function PATCH(
@@ -73,7 +79,9 @@ export async function PATCH(
   const { id } = await params;
   const recent = await requireRecentAuth();
   if (!recent.ok) return recent.response;
-  const body = await req.json();
+  const jsonBody = await parseJsonRequestBody(req);
+  if (!jsonBody.ok) return jsonBody.response;
+  const body = jsonBody.body;
   const parsed = reviewSchema.safeParse(body);
   if (!parsed.success) {
     return NextResponse.json(

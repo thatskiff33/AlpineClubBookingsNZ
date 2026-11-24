@@ -30,6 +30,9 @@ export const MCP_GRANT_SESSION_SELECT = {
   status: true,
   sessionIssuedAt: true,
   twoFactorVerified: true,
+  // Not part of the session: `/api/mcp` hands it to the tool list as the
+  // caller's `officerConsent` (`INV-MCP-009`).
+  officerConsentAt: true,
   client: { select: { id: true, name: true } },
   member: { select: { email: true, firstName: true, lastName: true } },
 } as const;

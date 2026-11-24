@@ -119,6 +119,7 @@ export const SUBJECT_ACCESS_EXPORT_COVERAGE = {
   RateLimitCounter: OPERATIONAL,
   LoginThrottle: OPERATIONAL,
   AlertCooldown: OPERATIONAL,
+  OwedNotice: OPERATIONAL,
   PaymentRecoveryOperation: OPERATIONAL,
   PromoRedemption: "additionalRecords.PromoRedemption",
   PromoRedemptionAllocation: "additionalRecords.PromoRedemptionAllocation",
@@ -161,6 +162,7 @@ export const SUBJECT_ACCESS_EXPORT_COVERAGE = {
   ClubFormatSettings: CLUB_CONFIG,
   ClubTaxSettings: CLUB_CONFIG,
   XeroTaxCategoryMapping: CLUB_CONFIG,
+  XeroTaxOverrideMismatch: OPERATIONAL,
   LoginSecuritySetting: CLUB_CONFIG,
   AnalyticsSettings: CLUB_CONFIG,
   EmailTemplateOverride: CLUB_CONFIG,
@@ -246,6 +248,7 @@ export const SUBJECT_ACCESS_EXPORT_COVERAGE = {
   // rows, keyed by booking and journal component like the ledger links above.
   MemberMoneyExportManifest: SHARED,
   MemberMoneyExportCoverage: SHARED,
+  MemberMoneyExportCoverageRelease: SHARED,
   // #4520: Stripe's own balance transaction, keyed by a payment intent rather than a member.
   StripeBalanceTransactionEvidence: OPERATIONAL,
   // ALP-653: the member's own AI app connections are listed; the codes and

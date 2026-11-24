@@ -313,7 +313,30 @@ shows the database role as `under_provisioned` with the blocker
 credential is missing one or more required read-only grants, so no tool was
 run." Re-run the same command, with the same settings, from the old release.
 
-### Three unused columns leave the app's queries (#5396)
+### Owed notices get their own table (#5433)
+
+Nothing to do: the usual migration step creates the `OwedNotice` table. A
+rollback to the previous release leaves any notice this release recorded and
+had not yet sent until you upgrade again, when it is sent, or cleared if it
+is more than seven days old.
+
+**Owed notices of an unknown kind.** If the log shows, at most once a day,
+"Owed notices of a kind this release does not deliver have waited over a
+week", rows in `OwedNotice` belong to a kind the running release does not
+know: usually a newer release wrote them and you rolled back. They are kept
+on purpose, because deleting them would lose that release's notices. Rolling
+forward to the release that knows the kind delivers them (or clears them if
+they are past their age). Only if you are staying on this release for good,
+remove the kinds the log names, one kind at a time, from the live
+environment's database:
+
+```sql
+DELETE FROM "OwedNotice" WHERE "kind" = '<kind from the log>';
+```
+
+Those notices are then never sent; nothing else references the rows.
+
+### Four unused columns leave the app's queries (#5396, #5407)
 
 **What changes.** No migration runs and nothing administrators or members see
 changes. The app stops naming `ClubModuleSettings.multiLodge`,
@@ -325,11 +348,22 @@ preferences. All three columns stay in the database with their defaults
 (`false`, `true` and `false`), so the previous release keeps working while it
 drains.
 
-**Why it matters for a later upgrade.** A later release drops these columns.
-That drop is safe during a blue-green deploy only when the release it replaces
-is this one or newer: an older release names the columns in its INSERTs, so its
-settings saves would fail between the migration and cutover. Deploy this release
-before the one that drops them, as the tag-to-tag rule above already requires.
+`ServerNzSettings.otherLodgesOwnedNames` (#5407), the lodge-name list older
+central-server versions sent, goes the same way. v0.14.0 already stopped
+reading it, but still cleared it when an administrator removed or replaced the
+central-server key or moved its address. This release neither reads nor writes
+it. The column is nullable with no default and stays in the database, so a new
+row simply leaves it empty, and v0.14.0 clearing it while it drains is
+harmless.
+
+**Why it matters for a later upgrade.** A later release (#5415) drops these
+columns. That drop is safe during a blue-green deploy only when the release it
+replaces is this one or newer: an older release names the first three columns
+in its INSERTs, so its settings saves would fail between the migration and
+cutover, and v0.14.0's central-server settings writes (upserts with no
+`select`) name `otherLodgesOwnedNames` in the columns they return, so they
+would fail the same way. Deploy this release before the one that drops them,
+as the tag-to-tag rule above already requires.
 
 **Do not drop any of these columns yourself.** Earlier code comments said that
 dropping `multiLodge` was blue-green safe because every query selects named
@@ -346,6 +380,49 @@ or administrator set it.
 the columns again, and they still exist.
 
 ---
+
+### Check members marked "Not required" that billing treats as owing (#5190)
+
+**Who needs it.** Every club. The migration adds the club's subscription
+liability rule as **Not chosen**, which keeps who is billed and who may book as
+they were. The admin members list, its export and the subscriptions list now
+show billing's answer, so some active members who have a saved "Not required"
+record for the season, but whom billing treats as owing, now show as **Not
+invoiced** (and sit under that filter and count) with the note "Marked not
+required, but billing treats this member as owing". The members export shows
+the same status and puts the note in a new last column, **Subscription Note**. Two kinds of
+member usually get it: a child on an always-required membership type, and a
+member on an age-based type whose age tier now owes.
+
+A second group changes with **no note**: an active member on an
+always-required membership type whose stored age tier is exempt (say, a child
+on a Full type) and who has no saved record for the season, or a "Not invoiced"
+one. The lists used to show them as "Not required";
+they now show them as owing (no status, or **Not invoiced**), because billing
+invoices them. Booking is unchanged: they can still book. To find them, filter
+the members list by **Not invoiced** and by no subscription record, and look at
+the age tier and membership type.
+
+**What to do, once, after the upgrade.** Open the admin members list (or
+export the list and filter the **Subscription Note** column) and look at each
+noted row, and at each member of the second group. If the member should not pay a subscription, move them to a
+membership type whose subscription is not required. If they should pay, leave
+them; the next billing run bills them as their fee says (a no-invoice fee, or
+a family fee billed through another member, sends them no invoice of their
+own). If a whole class of them should not pay (say, every child on an
+always-required type), the club can instead choose the liability rule *Age
+tier exempts them*, after reading its impact list. Nothing is billed or
+blocked by the upgrade itself.
+
+**How to check it worked.** Reload the list: a member you moved shows "Not
+required" with no note. Any note left is a member you decided should pay. For
+the current season, the notes go once the club chooses its liability rule
+(`INV-CONFIG-009`), because the member then either stops owing or their record
+is updated to "Not invoiced". The choice's clear-up runs only for the current
+season, so a record for another season keeps its note.
+
+**Rollback.** Nothing to undo: the note is display only, and moving a member's
+membership type is an ordinary edit.
 
 ## v0.13.2 → v0.14.0
 

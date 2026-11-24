@@ -1695,6 +1695,46 @@ Raise it per test, never globally. `vitest.setup.ts` states `testTimeout` is
 a global change falsifies a documented constant in another file — and it would
 let thousands of ordinary tests hang six times as long to buy headroom for six.
 
+### A test that reads the whole tree needs its own budget too (#5439)
+
+The same rule covers a census that reads every file under `src/` (or `scripts/`,
+`e2e/`) synchronously. The club-time kernel census's whole-tree case, which
+reads and comment-strips more than 1,000 files, took 2,802ms on an otherwise
+idle 2-CPU sandbox (measured 22 November 2026, vitest 5.1.0, Node 24). A loaded
+CI shard is slower, so under the 5,000ms default it failed on fine code on #5429.
+
+So a case that walks the tree states a shared budget from
+[`src/test/census-timeout.ts`](../src/test/census-timeout.ts), never a local
+literal: `CENSUS_TIMEOUT_MS` (90,000ms) for reading and stripping files,
+`AST_CENSUS_TIMEOUT_MS` (180,000ms) for a full TypeScript parse through
+`scanAuditWriterCensus()`. Pass it as the `it` timeout or a
+`describe(..., { timeout })` option. When several cases scan the same tree,
+read it once (a `beforeAll` under the same budget, or a cached helper) rather
+than once per case. Never loosen an assertion or add a retry to make the scan
+fit.
+
+With a cached helper, whichever case runs first pays the whole read, and under
+`-t` or `.only` that can be any of them. So every case that can trigger the
+first read carries the budget, or the `describe` or file holding them does
+(`vi.setConfig({ testTimeout: CENSUS_TIMEOUT_MS })` after the imports). A case's
+own timeout overrides its `describe`'s, so don't leave a smaller literal on a
+case inside a budgeted `describe`. Prefer the narrowest scope that covers the
+readers: a file-wide budget also lets that file's unrelated tests hang longer.
+
+A walk at module or `describe` scope runs while Vitest collects the file, which
+has no timeout, so the walk itself needs no budget; the cases that then read
+the walked files still do.
+
+[`src/lib/__tests__/census-timeout-coverage.test.ts`](../src/lib/__tests__/census-timeout-coverage.test.ts)
+enforces this. It names the known whole-tree readers (the `support/` source
+helpers, `scanAuditWriterCensus`, the file-size budget's `scanRepository` and
+the quality report's `main`, `git ls-files src`, `src/**` globs and recursive
+directory reads of `src`, `src/lib` or `src/app`) and fails on a test file that
+calls one without importing `CENSUS_TIMEOUT_MS` or `AST_CENSUS_TIMEOUT_MS`. A
+`vi.setConfig({ testTimeout })` counts only when it sets one of those
+constants: a file-wide local literal is not a budget, whatever its size. Its
+short, commented no-budget list holds only fixture-only matches.
+
 ## Census tests and the merge hazard
 
 A third convention that is load-bearing rather than stylistic, for the same
@@ -1910,9 +1950,10 @@ cannot show both is a claim rather than evidence:
 1. The failure text is vitest's own `Test timed out in Nms` — the per-test
    budget, 5,000ms unless the `it()` or its `describe` carries an inline one.
    Nothing else qualifies. A suite that fails on an **assertion** is never in this class,
-   whatever the machine: `page-content-starter-backfill.test.ts` (seed-copy
-   drift, the known-environmental failure this section is the home of) is a different
-   class, and #2886 removed two suites that had been excused as
+   whatever the machine: `page-content-starter-backfill.test.ts` failed on
+   Windows on an assertion, because it split a migration path on `/`, which
+   was a real defect and a different class (it reads the path through
+   `toPosix` since #5407), and #2886 removed two suites that had been excused as
    "load-sensitive" when they were failing deterministically on Windows for
    real reasons (the shell-out section above).
 2. An isolated re-run of that one file — `pnpm exec vitest run <path>` — passes.
@@ -1964,8 +2005,9 @@ re-verify an entry.
   that mapper the only production season mapping", ran **2,589ms** alone, over
   half the budget with the machine otherwise idle. Under the smaller batch it
   **timed out**. This is the entry closest to being a real per-test budget
-  problem rather than a load artefact, so since #5407 its three tree-reading
-  tests carry an inline 30,000ms budget, like the entries below.
+  problem rather than a load artefact, so its tree-reading tests carry a
+  budget: an inline 30,000ms from #5407, and since #5439 the shared
+  `CENSUS_TIMEOUT_MS` on each of their `describe` blocks.
 - [`src/lib/__tests__/hut-leader-change-last-night.test.tsx`](../src/lib/__tests__/hut-leader-change-last-night.test.tsx)
   — measured 13 October 2026 (vitest 5.0.3, Node 24, WSL2): run alone its
   first test, which absorbs the Hut Leaders page's first jsdom render, took
@@ -1981,28 +2023,88 @@ re-verify an entry.
   now waits for the settled scope before typing (#4085), and keeps the
   30,000ms `describe` budget for the full-page render itself.
 
-Four more suites, and two cases of a fifth, carry an inline 30,000ms budget
-since #5407 (measured 22 November 2026 on an in-use 20-core Windows 11 host,
+Four more suites, and two cases of a fifth, got an inline 30,000ms budget
+in #5407 (measured 22 November 2026 on an in-use 20-core Windows 11 host,
 vitest 5.1.0, Node 24, with other lanes running). Lanes sharing that host
 saw each time out at 5,000ms, and an isolated `pnpm exec vitest run <file>`
 on it did too, so these are not "pass alone" entries: the budget is the fix,
 not a classification. Each loops or walks `src/`, and its 5s default measured
-only that the host was busy.
+only that the host was busy. Since #5439 the cases that walk the tree carry
+the shared `CENSUS_TIMEOUT_MS` (90,000ms) instead; the loops keep 30,000ms.
 
 - [`src/lib/__tests__/cli-server-only-reach-census.test.ts`](../src/lib/__tests__/cli-server-only-reach-census.test.ts)
-  — the "no static or dynamic path to `next/headers`" walk timed out at 5,000ms.
+  — the "no static or dynamic path to `next/headers`" walk timed out at 5,000ms;
+  it now carries `CENSUS_TIMEOUT_MS`.
 - [`src/lib/__tests__/app-currency-import-census.test.ts`](../src/lib/__tests__/app-currency-import-census.test.ts)
-  — the "none of the four retired names" scan timed out at 5,000ms.
+  — the "none of the four retired names" scan timed out at 5,000ms; it now
+  carries `CENSUS_TIMEOUT_MS`.
 - [`src/lib/__tests__/auth-session-max-age.test.ts`](../src/lib/__tests__/auth-session-max-age.test.ts)
   — the hourly-refresh loops (one handler round trip per simulated hour, up to
   722 for the 720-hour cap) timed out at 5,000ms.
 - [`src/lib/__tests__/bed-allocation-lock-topology-contract.test.ts`](../src/lib/__tests__/bed-allocation-lock-topology-contract.test.ts)
   — its two whole-of-`src/` cases (the member-key restore census and the
-  `Booking.lodgeId` writer scan) timed out at 5,000ms.
+  `Booking.lodgeId` writer scan) timed out at 5,000ms; both now carry
+  `CENSUS_TIMEOUT_MS`.
 - [`src/lib/__tests__/admin-hubs-registry.test.ts`](../src/lib/__tests__/admin-hubs-registry.test.ts)
   — three tree-reading or grid-wide cases ("reproduces canOpenAdminPath for every
   permission grid", "are linked from nowhere in the code", and the reviewed-importers
-  scan) timed out at 5,000ms.
+  scan) timed out at 5,000ms. The two that read the tree ("linked from nowhere",
+  and the reviewed-importers scan over `src/`, `scripts/`, `e2e/` and `prisma/`)
+  carry `CENSUS_TIMEOUT_MS` since #5439. The permission-grid loop reads no files
+  and keeps its inline 30,000ms.
+
+Four more carry a budget on one case each since #5407, after lanes on
+that host saw them time out at 5,000ms in batches and pass alone. Measured
+23 November 2026 alone on the same host while other lanes ran, each slow case
+took the time below and every other case in its file under 700ms. The first
+three are route suites whose first case to call the route pays for loading its
+module graph (no module reset, so later cases do not) and carry an inline
+30,000ms; the fourth walks `src/` and carries the shared `CENSUS_TIMEOUT_MS`
+since #5439.
+
+- [`src/lib/__tests__/guests-add-notify-choice.test.ts`](../src/lib/__tests__/guests-add-notify-choice.test.ts)
+  — "emails the member and records no notify field on a member self-add
+  without the flag", 3,556ms alone.
+- [`src/lib/__tests__/phase8b-booking-mods.test.ts`](../src/lib/__tests__/phase8b-booking-mods.test.ts)
+  — "returns 401 for unauthenticated requests", 2,721ms alone; the route's
+  import in `beforeEach` took 0ms, so the cost is the handler's first call.
+- [`src/lib/__tests__/fix-mod-payment.test.ts`](../src/lib/__tests__/fix-mod-payment.test.ts)
+  — "stores the itemised lines behind the delta", 2,251ms alone.
+- [`src/app/api/bookings/[id]/__tests__/modify-quote-planner-stay-range-parity.test.ts`](../src/app/api/bookings/[id]/__tests__/modify-quote-planner-stay-range-parity.test.ts)
+  — "the resolver's rules live in one file, with only known callers", 1,331ms
+  alone.
+
+One more carries a 60,000ms budget on a whole `describe` since #5407: each of
+its ten cases builds a scratch repository and runs the deploy's release-tag
+guard, a run of `git` and `bash` spawns whose cost is the host's process
+start-up, not the test.
+
+- [`src/lib/__tests__/deploy-release-tag-guard-script-contract.test.ts`](../src/lib/__tests__/deploy-release-tag-guard-script-contract.test.ts)
+  — "refuses a lightweight vX.Y.Z tag" timed out at 5,000ms in a 47-file
+  by-name batch on 24 November 2026 and took 870ms alone; the slowest case
+  alone took 1,207ms.
+
+A second suite carries the same 60,000ms budget, on each `describe` whose
+cases build a throwaway repository (a bare origin, a seed and a clone) and run
+the release script, since #5472.
+
+- [`scripts/release/cut-release.test.mjs`](../scripts/release/cut-release.test.mjs)
+  — "prints the whole plan in a dry run and changes nothing" timed out at
+  5,000ms on a CI runner on 24 November 2026, in the push build of `main`, with
+  no assertion failing. Run alone on a busy Windows host on 25 November 2026,
+  thirteen of its repository cases exceeded 5,000ms and the slowest took
+  6,369ms.
+
+Two suites named with these are deliberately not listed.
+`reshaped-club-day-seams-contract.test.ts` timed out with them on its two
+tree-reading cases (909ms and 751ms alone) and carries the shared
+`CENSUS_TIMEOUT_MS` on its `describe` since #5439, but it runs in
+`pnpm run ci:fast-censuses`, and a suite listed in this section is kept out of
+that run (`run-fast-censuses.test.mjs`); with the budget it no longer needs
+to be. `deploy-email-transport-env-contract.test.ts` spawns `bash` and every
+case that does already carries its own budget (60,000ms, or 240,000ms for
+the provider matrix); alone on that host it took 195s, its matrix 95s and no
+other case over 9.4s, so nothing in it runs on the 5,000ms default.
 
 Of the entries above, the two 2026-09-19 batches covered the first five; they
 produced no timeout, so their figures show how close each suite runs to the

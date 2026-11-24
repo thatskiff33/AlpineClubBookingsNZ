@@ -84,6 +84,7 @@ export const PRIVACY_RETENTION_CLASSIFICATION = {
   RateLimitCounter: "personal",
   LoginThrottle: "personal",
   AlertCooldown: "personal",
+  OwedNotice: "personal",
   PaymentRecoveryOperation: "personal",
   PromoCode: "non-personal",
   PromoRedemption: "personal",
@@ -149,6 +150,7 @@ export const PRIVACY_RETENTION_CLASSIFICATION = {
   ClubFormatSettings: "personal",
   ClubTaxSettings: "personal", // #4632: each period records the Full Admin who scheduled it (updatedByMemberId).
   XeroTaxCategoryMapping: "personal", // #5209: each mapping records the Full Admin who last chose it (updatedByMemberId).
+  XeroTaxOverrideMismatch: "personal", // #5208: records the finance officer who cleared it (clearedByMemberId) and their note.
   LoginSecuritySetting: "personal",
   AnalyticsSettings: "personal",
   EmailTemplateOverride: "personal",
@@ -250,6 +252,7 @@ export const PRIVACY_RETENTION_CLASSIFICATION = {
   MemberMoneyRefundReservationRelease: "personal",
   MemberMoneyExportManifest: "personal",
   MemberMoneyExportCoverage: "personal",
+  MemberMoneyExportCoverageRelease: "personal",
   // #4520: a balance transaction names a member's payment intent or refund; a payout is the club's own.
   StripeBalanceTransactionEvidence: "personal",
   StripePayout: "non-personal",

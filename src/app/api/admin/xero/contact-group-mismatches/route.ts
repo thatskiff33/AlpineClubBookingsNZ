@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { parseOptionalJsonRequestBody } from "@/lib/api-json";
 import { z } from "zod";
 import { requireAdmin } from "@/lib/session-guards";
 import { getXeroMemberGroupingSnapshot } from "@/lib/xero-member-grouping-resync";
@@ -50,8 +51,9 @@ export async function POST(request: NextRequest) {
   const guard = await requireAdmin();
   if (!guard.ok) return guard.response;
 
-  const body = await request.json().catch(() => ({}));
-  const parsed = resyncBodySchema.safeParse(body ?? {});
+  const jsonBody = await parseOptionalJsonRequestBody(request, { whenAbsent: {} });
+  if (!jsonBody.ok) return jsonBody.response;
+  const parsed = resyncBodySchema.safeParse(jsonBody.body);
   if (!parsed.success) {
     return NextResponse.json(
       { error: "Invalid request body", details: parsed.error.flatten() },
@@ -60,7 +62,9 @@ export async function POST(request: NextRequest) {
   }
 
   try {
-    const before = await getXeroMemberGroupingSnapshot(parsed.data);
+    // Uncapped, so the total below covers every flagged contact; the
+    // re-sync itself is still capped per kind just after.
+    const before = await getXeroMemberGroupingSnapshot();
     if (!before.cacheReady) {
       return NextResponse.json(
         {
@@ -72,17 +76,25 @@ export async function POST(request: NextRequest) {
     }
 
     // #5234: information-only entries too, so a contact removed from a
-    // managed group in Xero drops off the panel on Refresh. Both lists are
-    // capped by `limit` (sent, or CONTACT_GROUP_MISMATCH_LIMIT).
+    // managed group in Xero drops off the panel on Refresh. Each list is
+    // capped at `limit` (sent, or CONTACT_GROUP_MISMATCH_LIMIT).
+    const { limit } = parsed.data;
     const resync = await resyncXeroContactCachesByIds(
       [
-        ...before.mismatches.map((mismatch) => mismatch.xeroContactId),
-        ...before.informational.map((entry) => entry.xeroContactId),
+        ...before.mismatches.slice(0, limit).map((mismatch) => mismatch.xeroContactId),
+        ...before.informational.slice(0, limit).map((entry) => entry.xeroContactId),
       ],
       "adminXeroContactGroupMismatchResync"
     );
+    // Distinct contacts across both full lists, counted the same way as
+    // `requestedContacts` (members sharing a contact count once), so the
+    // panel counts out of the true total and names the full groups refresh
+    // for the rest (another Refresh would re-fetch the same first contacts).
+    const flaggedContacts = new Set(
+      [...before.mismatches, ...before.informational].map((entry) => entry.xeroContactId)
+    ).size;
     const snapshot = await getXeroMemberGroupingSnapshot(parsed.data);
-    return NextResponse.json({ ...snapshot, resync });
+    return NextResponse.json({ ...snapshot, resync: { ...resync, flaggedContacts } });
   } catch (error) {
     if (error instanceof XeroResyncUnavailableError) {
       return NextResponse.json({ error: error.message }, { status: error.status });

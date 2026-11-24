@@ -6,6 +6,7 @@ import { describe, expect, it } from "vitest";
 
 import { unexercisedRealdbFiles } from "./check-realdb-ran.mjs";
 import { realdbFilesToRun } from "./realdb-files.mjs";
+import { CENSUS_TIMEOUT_MS } from "../../src/test/census-timeout.ts";
 
 const root = path.resolve(import.meta.dirname, "..", "..");
 const A = "src/lib/__tests__/a.realdb.test.ts";
@@ -80,5 +81,5 @@ describe("the realdb-all job's did-it-really-run check (#4458)", () => {
     expect(bad.status).toBe(1);
     expect(bad.stderr).toContain(`${files[0]}: no test passed`);
     expect(run().status).toBe(2);
-  });
+  }, CENSUS_TIMEOUT_MS);
 });

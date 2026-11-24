@@ -99,6 +99,24 @@ export async function resolveFoodOrderViewer(
   };
 }
 
+/**
+ * The viewer an AI app connection decides with (ALP-796, `INV-MCP-006`): the
+ * member's own orders and nothing more. A connection never acts as an officer,
+ * so the committee, hut-leader and Lodge Operations facts that widen what a
+ * person sees or manages on the website are cleared; whether the account is an
+ * organisation is kept, since that takes away rather than grants.
+ */
+export function ownOrdersOnlyFoodOrderViewer(viewer: FoodOrderViewer): FoodOrderViewer {
+  return {
+    memberId: viewer.memberId,
+    isOrganisation: viewer.isOrganisation,
+    isCommitteeMember: false,
+    hutLeaderLodgeIds: new Set(),
+    hasLodgeOperationsView: false,
+    hasLodgeOperationsEdit: false,
+  };
+}
+
 /** May this account place a food order at all? */
 export function canPlaceFoodOrder(viewer: FoodOrderViewer): boolean {
   return !viewer.isOrganisation;

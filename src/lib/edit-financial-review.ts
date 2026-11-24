@@ -5,6 +5,8 @@ import {
   ManualRefundTaskStatus,
   Prisma,
 } from "@prisma/client";
+import { isPrismaKnownUniqueConstraintError } from "@/lib/prisma-known-errors";
+import { describeUniqueConstraintTarget } from "@/lib/prisma-errors";
 import { ApiError } from "@/lib/api-error";
 import { isRootPrismaClient } from "@/lib/db-transaction";
 import logger from "@/lib/logger";
@@ -349,13 +351,13 @@ export async function raiseEditFinancialReviewTask({
     };
   } catch (error) {
     if (
-      error instanceof Prisma.PrismaClientKnownRequestError &&
-      error.code === "P2002" &&
-      // Only the occurrence key. Today it is the only unique constraint on this
-      // table other than the cuid primary key, so the check changes nothing -
-      // but a later `@@unique([bookingId, kind])` or similar would otherwise be
-      // reported to the operator as "raised concurrently, retry the edit", and
-      // the retry would loop for ever on a violation retrying cannot fix.
+      isPrismaKnownUniqueConstraintError(error) &&
+      // Only the occurrence key. The table's other unique columns
+      // (`lateCaptureApprovalIntentId`, `partPaymentReviewPaymentId`) are never
+      // set by this create, so today the check changes nothing - but a later
+      // unique constraint this create does set would otherwise be reported to
+      // the operator as "raised concurrently, retry the edit", and the retry
+      // would loop for ever on a violation retrying cannot fix.
       occurrenceKeyViolation(error)
     ) {
       // Reported, never swallowed. Reaching here means the find-then-create
@@ -378,18 +380,17 @@ export async function raiseEditFinancialReviewTask({
  * Was this unique violation the occurrence-key index, rather than some other
  * unique constraint added later?
  *
- * `meta.target` is `string[]` on PostgreSQL, and Prisma has spelled it more than
- * one way across versions, so an unrecognised shape is treated as "not the
- * occurrence key" - the safe direction, because it sends the caller a genuine
- * error rather than an invitation to retry for ever.
+ * Read with `describeUniqueConstraintTarget` (#5407), which reads the shape the
+ * driver in use reports; `meta.target` alone is never filled by it, so this
+ * never fired. An unreadable constraint is "not the occurrence key" - the safe
+ * direction, because it sends the caller a genuine error rather than an
+ * invitation to retry for ever.
  */
 function occurrenceKeyViolation(
   error: Prisma.PrismaClientKnownRequestError,
 ): boolean {
-  const target = error.meta?.target;
-  if (Array.isArray(target)) return target.includes("occurrenceKey");
-  if (typeof target === "string") return target.includes("occurrenceKey");
-  return false;
+  const column = Prisma.ManualRefundTaskScalarFieldEnum.occurrenceKey.toLowerCase();
+  return describeUniqueConstraintTarget(error)?.includes(column) ?? false;
 }
 
 /**

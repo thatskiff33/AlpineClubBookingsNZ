@@ -1,6 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { resendAdditionalPaymentEmail } from "@/lib/additional-payment-resend-service";
 import { getAuditRequestContext } from "@/lib/audit";
+import {
+  ADMIN_ADDITIONAL_PAYMENT_REMINDER_CONNECTION_SHAPE,
+  type AdminAdditionalPaymentReminderAnswer,
+} from "@/lib/connection-shapes/bookings-bookings";
+import { connectionJson } from "@/lib/mcp-connection-request";
 import logger from "@/lib/logger";
 import { requireAdmin } from "@/lib/session-guards";
 
@@ -27,6 +32,8 @@ import { requireAdmin } from "@/lib/session-guards";
  * 503 the "No emails" switch could not be read — our own uncertainty rather than
  * a fact about this booking, so the message was held back and queued for the
  * retry job instead of being sent or discarded.
+ *
+ * Also the AI app action `send_additional_payment_reminder` (ALP-719).
  */
 export async function POST(
   request: NextRequest,
@@ -53,11 +60,12 @@ export async function POST(
       );
     }
 
-    return NextResponse.json({
+    const answer: AdminAdditionalPaymentReminderAnswer = {
       success: true,
       sentAt: result.sentAt,
       additionalAmountCents: result.additionalAmountCents,
-    });
+    };
+    return connectionJson(request, answer, ADMIN_ADDITIONAL_PAYMENT_REMINDER_CONNECTION_SHAPE);
   } catch (err) {
     logger.error(
       { err, bookingId },

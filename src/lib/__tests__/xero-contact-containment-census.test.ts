@@ -6,6 +6,7 @@ import { PLACEHOLDER_CONTACT_EMAIL_DOMAINS } from "@/lib/placeholder-contact-ema
 import { XERO_SANDBOX_CONTACT_EMAIL_DOMAIN } from "@/lib/xero-sandbox-contact-email";
 
 import { stripComments } from "./support/strip-comments";
+import { CENSUS_TIMEOUT_MS } from "@/test/census-timeout";
 
 /**
  * INV-CONFIG-005: no Xero contact write can put a member's real email address on
@@ -89,6 +90,13 @@ const ORGANISATION_CONTACT_MODULE = "src/lib/organisation-xero-contacts.ts";
 const ORGANISATION_CONTACT_PERSONS_MODULE =
   "src/lib/organisation-xero-contact-persons.ts";
 const CONTACT_SHAPE_MODULE = "src/lib/xero-contact-shape.ts";
+/*
+  #5245: an officer's correction of a school's own email and phone is sent with
+  `updateContact` from its own module, so it is a contact writer that resolves
+  the policy in its own entry point, exactly as the resolve above does.
+*/
+const ORGANISATION_CONTACT_DETAILS_MODULE =
+  "src/lib/organisation-xero-contact-details.ts";
 
 /**
  * Every module that builds a Xero contact payload carrying an email address.
@@ -214,10 +222,11 @@ describe("Xero contact containment census (INV-CONFIG-005)", () => {
         CONTACTS_MODULE,
         ORGANISATION_CONTACT_MODULE,
         ORGANISATION_CONTACT_PERSONS_MODULE,
+        ORGANISATION_CONTACT_DETAILS_MODULE,
         ...NO_EMAIL_CONTACT_WRITERS,
       ].sort(),
     );
-  });
+  }, CENSUS_TIMEOUT_MS);
 
   it("keeps the two no-email writers from COMPOSING an email address", () => {
     /*
@@ -323,6 +332,7 @@ describe("Xero contact containment census (INV-CONFIG-005)", () => {
       CONTACTS_MODULE,
       ORGANISATION_CONTACT_MODULE,
       ORGANISATION_CONTACT_PERSONS_MODULE,
+      ORGANISATION_CONTACT_DETAILS_MODULE,
       CONTACT_SHAPE_MODULE,
       ...NO_EMAIL_CONTACT_WRITERS,
     ]) {
@@ -364,6 +374,10 @@ describe("Xero contact containment census (INV-CONFIG-005)", () => {
       [
         ORGANISATION_CONTACT_MODULE,
         "export async function findOrCreateXeroContactForOrganisation(",
+      ],
+      [
+        ORGANISATION_CONTACT_DETAILS_MODULE,
+        "export async function syncOrganisationContactDetails(",
       ],
     ];
     for (const [home, fn] of ENTRY_POINTS) {
@@ -468,7 +482,7 @@ describe("Xero contact containment census (INV-CONFIG-005)", () => {
         "rather than putting a member's address on a copy's Xero contact, but " +
         "it must not reach review at all (INV-CONFIG-005).",
     ).toEqual([CONTAINMENT_MODULE]);
-  });
+  }, CENSUS_TIMEOUT_MS);
 
   it("reads the environment ROLE for containment, never the delivery policy", () => {
     /*
@@ -538,7 +552,7 @@ describe("Xero contact containment census (INV-CONFIG-005)", () => {
         "builder come to disagree about what counts as contained " +
         "(INV-CONFIG-005).",
     ).toEqual([SANDBOX_MODULE]);
-  });
+  }, CENSUS_TIMEOUT_MS);
 
   it("never writes a contained address onto a Member row", () => {
     /*

@@ -44,6 +44,7 @@ vi.mock("@/lib/email/admin-alerts-shared", () => ({
 
 import { sendAdminPaymentFailureAlert } from "@/lib/email/admin-alerts-finance";
 import { CLUB_FORMAT_TEST } from "@/lib/__tests__/support/club-format-fixture";
+import { CENSUS_TIMEOUT_MS } from "@/test/census-timeout";
 
 type Captured = {
   subject: string;
@@ -166,5 +167,5 @@ describe("no caller invents a date it does not have", () => {
       offenders,
       "A check-in/check-out passed to the payment-anomaly alert is built from `new Date()`. That is a wall-clock instant, the alert renders these as stored calendar days and refuses an instant, and every caller swallows the throw — so this does not show a wrong date, it deletes the alert. Pass `null`; it renders \"Unknown\".",
     ).toEqual([]);
-  });
+  }, CENSUS_TIMEOUT_MS);
 });

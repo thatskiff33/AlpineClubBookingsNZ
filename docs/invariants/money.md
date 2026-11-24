@@ -820,13 +820,14 @@ check the others.
   reversal rules (`INV-MONEY-018`, #4110) apply to both axes. Booking rights,
   rate and lockout stay with `MembershipType`.
 - **Exemption** (#4554 option A, owner, 11 Nov 2026: the type exemption
-  wins): both axes use `resolveSubscriptionTierExemption`, never the booking
-  resolver `resolveMemberSubscriptionSettlement`, which tier-gates a
-  `REQUIRED` type off the stored tier. The two agree on `NOT_REQUIRED` types;
-  their pre-existing age-tier edge is tracked from #4554. A tier-exempt child
-  is exempt inside a category family too, outside its coverage: the type
-  axis's `PER_FAMILY` carve-out (#2148 Q5) would bill a solo exempt child the
-  flat fee.
+  wins): both axes ask the one liability rule, billing side
+  (`resolveMemberSubscriptionLiability`, `INV-CONFIG-009`), the rule booking
+  access also reads. While the club is `NOT_CHOSEN` that is the pre-#5190
+  billing rule: a `REQUIRED` type always owes, a `BASED_ON_AGE_TIER` type owes
+  by its season-start tier, and a saved `NOT_REQUIRED` row is ignored. Once the
+  club chooses, its pair decides for both sides. A tier-exempt child is exempt
+  inside a category family too, outside its coverage: the type axis's
+  `PER_FAMILY` carve-out (#2148 Q5) would bill a solo exempt child the flat fee.
 - **One category per family:** a member whose family already has a charge,
   this run or earlier, on the other axis or another category raises
   `MIXED_AXIS_FAMILY_BILLING` and is withheld.
@@ -842,11 +843,13 @@ check the others.
 - **Membership type is the sole subscription authority; role carries no
   exemption (#2149).** Whether a member owes a subscription is decided ONLY by
   their effective membership type (`subscriptionBehavior`, plus the per-age-tier
-  flag where the type is `BASED_ON_AGE_TIER`). Access **role is a pure permission
+  flag where the type is `BASED_ON_AGE_TIER`, or where the club's chosen rule
+  lets an exempt tier exempt a `REQUIRED` type — `INV-CONFIG-009`). Access **role is a pure permission
   concept** and grants no exemption of its own — the retired
   `roleNeverRequiresSubscription` short-circuit is gone from every derivation
   (booking gate, profile, subscriptions list, admin members list + its SQL
-  filters, CSV export, member-guest booking block, and the Xero sync). Operational
+  filters, CSV export, member-guest booking block, Xero sync). Admin lists
+  show billing until the club chooses (#5190 Q2). Operational
   and non-member accounts are exempt only because they resolve to a `NOT_REQUIRED`
   membership type: a member with no explicit season assignment falls back through
   `defaultMembershipTypeKeyForRole`, which maps `ADMIN`→built-in `ADMIN`
@@ -871,38 +874,35 @@ check the others.
 
 ## INV-MONEY-017
 
-- **Paid-up semantics (one meaning, three facts).** A member counts as paid-up
-  (not owing a subscription) when ANY of: their membership-type policy
-  `subscriptionBehavior` is `NOT_REQUIRED` (Life/honorary/operational — no
-  subscription row needed); their current-season `MemberSubscription.status` is
-  `PAID`; OR their type is `BASED_ON_AGE_TIER` and their age tier does not
-  require a subscription — which, once the annual-fee sweep has run, is recorded
-  as a NOT_REQUIRED current-season `MemberSubscription` row that is thereafter
-  authoritative (the third fact, #2041). Booking (`findUnpaidMemberGuests`),
-  nomination eligibility (`verifyNominator`), the member-facing
-  `/api/member/subscription-status`, the admin members-list flag
-  (`admin-members-service`), and the Xero sync (`checkMembershipStatus`) all
-  resolve paid-up from these same facts. Before the sweep writes the row there is
-  a pre-sweep window in which a `BASED_ON_AGE_TIER` exempt member has no row yet;
-  every surface still reads exempt because the tier-flag check is the same fallback
-  the sweep uses, and once the row exists the members-list and Xero-sync surfaces
-  consult it so a manual mid-season tier promotion can never make them disagree
-  with the booking gate. Nomination deliberately honours ONLY the membership-type
-  `NOT_REQUIRED` rule, NOT the booking side's junior age-tier subscription
-  exemption (`requiresPaidSubscriptionForAgeTier`): nominating is an adult-member
-  act and widening it to un-subscribed junior tiers is an owner policy decision.
-  A third `subscriptionBehavior`, `BASED_ON_AGE_TIER` (#2041), defers the
-  subscription-required answer to the per-age-tier
-  `AgeTierSetting.subscriptionRequiredForBooking` flag — the SAME flag that gates
-  booking-lockout — so it is the single source of truth for both booking-lockout
-  and annual-fee invoice minting. Under it, the billing sweep skips a member
-  whose age tier AT THE START OF THE SEASON (the club financial year, derived
-  from DOB; stored tier as the fail-closed fallback when DOB is unknown) does not
-  require a subscription, and writes that member a NOT_REQUIRED
-  `MemberSubscription` row for the season. That NOT_REQUIRED status row is then
-  authoritative and dominates in the booking resolvers: it keeps booking status
-  consistent with billing even if the member's stored age tier is later promoted
-  mid-season. `REQUIRED` and `NOT_REQUIRED` type behavior is byte-unchanged.
+- **Paid-up semantics (one meaning).** A member counts as paid-up (not owing an
+  unpaid subscription) when the one liability rule (`INV-CONFIG-009`, access
+  side) says they owe none, or their current-season `MemberSubscription.status`
+  is `PAID`, or an active coverage claim on a `NO_INVOICE` charge covers them
+  (#5190: such a fee sends no invoice, so its member could never reach `PAID`).
+  The rule says they owe none when their type is `NOT_REQUIRED`
+  (Life/honorary/operational — no row needed), or their type is
+  `BASED_ON_AGE_TIER` (#2041) and their age tier does not require a
+  subscription. While the club is `NOT_CHOSEN`, two pre-#5190 facts also hold:
+  an exempt stored tier exempts a `REQUIRED` type, and a `BASED_ON_AGE_TIER`
+  member's saved `NOT_REQUIRED` row (the sweep writes it for a member tier-exempt
+  at season start) stays authoritative through a mid-season tier promotion. Once
+  the club chooses, its pair decides and the row exempts nobody.
+  Booking (`findUnpaidMemberGuests` and the owner gate), notices and
+  `/api/member/subscription-status` resolve paid-up through that rule and the
+  settlement loader; the Xero sync (`checkMembershipStatus`) asks the rule's
+  access side for one member through `owesSubscriptionForAccess`. Never a copy.
+  The admin members list and export and the subscriptions list call the same
+  rule on its billing side, so while `NOT_CHOSEN` the two pre-#5190 access facts
+  above do not exempt anyone there (#5190 Q2). An active member's untouched
+  saved `NOT_REQUIRED` row whose member billing treats as owing shows
+  `NOT_INVOICED` with a note, from the same rule (`hasNotRequiredRowBillingNote`).
+  Nomination deliberately honours ONLY the membership-type `NOT_REQUIRED` rule,
+  NOT the junior age-tier exemption (`requiresPaidSubscriptionForAgeTier`):
+  nominating is an adult-member act and widening it to un-subscribed junior
+  tiers is an owner policy decision. `BASED_ON_AGE_TIER` defers to the
+  per-age-tier `AgeTierSetting.subscriptionRequiredForBooking` flag, the SAME
+  flag the billing sweep reads, so one flag governs both booking-lockout and
+  annual-fee invoice minting.
 
 ## INV-MONEY-018
 
@@ -1150,3 +1150,106 @@ function, not per file or per branch (#4928). Pins:
 `member-money-pending-charges.test.ts`,
 `booking-sale-status-writer-census.test.ts`,
 `booking-ledger-pending-charge.realdb.test.ts`.
+
+## INV-MONEY-047
+
+From Ledger M4b (#4516), every legacy cash writer records the money it receives
+in the member-money journal, in its own transaction, for a booking whose R01 is
+in the journal (`postBookingReceipts`): R06 for a card capture, keyed to its
+intent; R07 for a bank receipt; R08 for cash or an officer's settle. Cash posts
+in full. Collecting it is a separate, exact application to the booking's CHARGE
+obligation, capped by the receipt's room (C1) and the booking's live charge (C2,
+`INV-MONEY-050`), and made only for the instruments the writer wrote or decided
+in that transaction: the settle that paid the booking, an additional capture on
+a booking neither cancelled nor deleted, a Xero receipt that took the paid arm,
+a part payment or close for the row it wrote. A saved-card answer defers to its
+settle; a superseded or held capture never collects. Each receipt records how it
+was posted (`postedAs`), and only a `deferred` one is collected later. Each hook
+catches up the payment's other receipts unapplied. A ZERO R01 opens its CHARGE
+obligation lazily, with no second charge. An officer reversal first reverses
+the collection exactly, through whichever credit applied it, then the receipt.
+A merged member's survivor gets CHARGE successors from the chain's one live tip,
+lazily under the Payment row, never inside merge (D4). Organiser shares stay
+M6's; no legacy decision reader changes. `pnpm run
+member-money:receipt-catch-up` is a read-only census unless `--execute`. Pins:
+`member-money-capture-writer-census.test.ts` (every transaction mutation
+classified; a receipt hook at each capturing chokepoint),
+`member-money-receipts.test.ts`, `member-money-receipts.realdb.test.ts`.
+
+## INV-MONEY-048
+
+From Ledger M4c (#4516), each card-refund door posts its refund debt (R05) in
+its own transaction, for a booking whose R01 is in the journal: one obligation
+per debt record, keyed `refund-obligation|<scope>|<id>`, re-posted only under
+its reversal chain's next key. A superseded intent's and an automatic late
+capture's refund defer R05 to the sender. Before each slice,
+`refundPaymentTransactions` reserves it under Stripe's own key, in a short
+transaction holding only the Payment row, funded from that capture's own
+receipt after taking back exactly the shortfall of its collection
+(`refund-uncollect`). A key whose reservations were all released without a
+refund reserves its next generation (`<key>#<n>`) while Stripe is sent the key
+unchanged; a key a refund answered reserves nothing. With no receipt, no R05 or
+a merged debtor's receipt, nothing is reserved and the refund posts unapplied.
+The cash writer posts R12 once per counted refund, applied only through the
+reservation its own key names; R13 reverses an answer once. No refund is
+matched to a debt by amount or time. A failed refund releases its open
+reservation (REFUSED). A "Paid another way" close posts R14 from its record,
+trimmed to what is open, and a kept rest one close-out per record. Stripe
+requests, keys and metadata are unchanged. `pnpm run
+member-money:refund-reservations` lists stranded reservations, answers those a
+recovery row marks made, and releases another only on the owner's audited
+OPERATOR command. Pins: `member-money-refunds.test.ts`,
+`member-money-refunds.realdb.test.ts`,
+`card-refund-reservation-operator.test.ts`.
+
+## INV-MONEY-049
+
+From Ledger M4d (#4516), a hand-back the club pays by bank or in cash
+(`isJournalHandBackTask`) posts its refund debt (R05, scope `hand-back`) with
+its task, in the raise's transaction; marking it paid posts R14
+(`hand-back-paid:<task>`), funded only from the receipts that completion
+allocated. Cash is never refused for a cap: the applied part trims to what is
+open and the rest debits the owner's receivable. A task raised before M4d has
+no debt, so its payment posts unapplied. Dismissing a real bank or cash
+hand-back is refused for now (owner decision, 14 Nov 2026); a card shortfall's
+part to check, and a disputed card payment's hand-back once a lost dispute
+covers it, dismiss and withdraw the debt exactly, and a dispute lost for part
+of one reduces it by those cents. A kept late capture closes its unpaid,
+unreserved capture-return R05, then posts its keep (`kept-capture:<intent>`);
+approving it later reverses the keep first. Every `ManualRefundTask` creation
+in production code is classified as posting R05 (its own function calls
+`postHandBackObligation`), recorded by another step, or not a debt
+(`manual-refund-task-creation-census.test.ts`). `booking-ledger:census`
+reports `HAND_BACK_WITHOUT_EVENT`, `HAND_BACK_PAID_WITHOUT_EVENT`,
+`UNAPPLIED_HAND_BACK`, `HAND_BACK_OBLIGATION_DRIFT` and `KEEP_WITHOUT_EVENT` as
+integrity findings, excluding history before the journal's first M4d event.
+Its report v3 (`JOURNAL_REFUND_PAYABLE`) holds each R01 booking's open refund
+payable equal to what its legacy records still owe on the debts the journal
+holds: hand-backs at their owed cents, open card refund rows whose debt is
+still live at their unmade slices, and a late capture held open with its
+capture-return R05 and no such row at its task's amount. Pins:
+`member-money-hand-backs.realdb.test.ts`, `member-money-hand-back-census.test.ts`,
+`dispute-loss-hand-backs.realdb.test.ts`.
+
+## INV-MONEY-050
+
+Every member-money application obeys the conservation caps, checked by the
+store inside the batch's transaction under the booking's Payment row and by the
+read-only verifier (`memberMoneyConservationProblems`); a refusal names its
+code (`cap-problems.ts`) and is classified by that code, never by its text. C1:
+what a source line applies stays between zero and its amount. C2: a collection
+never takes the booking's collected total past its live charge, as the applying
+caller read it in the same transaction; it caps collection, never a refund. C3:
+a refund family's funding, and its paid plus reserved cents, never exceed its
+root obligation's face. C4: for each capture, a family's paid plus reserved
+cents never exceed what that capture funded. A refund's broken cap is a
+`MemberMoneyReservationRefused`; any other plan error is a fault. What a refusal
+does depends on the writer. Money handed back by bank or in cash is never
+refused: its applied part trims to what is open and the rest debits the
+receivable. A booking door's batch is part of the door's transaction, so a
+refusal rolls the door back (`INV-MONEY-044`). A card reservation is refused
+before Stripe is asked, in its own short transaction: the committed door
+stands, the sender throws, the recovery runner stops the row without a retry
+for the treasurer's "Paid another way", and a webhook sender holds the capture
+rather than ask for redelivery. Pins: `member-money-application-store.test.ts`,
+`member-money-applications.test.ts`, `member-money-refunds.test.ts`.

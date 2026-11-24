@@ -154,13 +154,13 @@ For what an officer sees and does on each screen, use the
 | `stripe` | finance | [`guides/integrations.md`](guides/integrations.md) (Stripe Setup), [`guides/payments.md`](guides/payments.md) | [guide](guides/integrations.md) (`stripe/setup` wizard) | — (guided setup epic #2078; postdates #2050) |
 | `stuck-states` | support | `ARCHITECTURE.md` (stuck-state dashboard) | [guide](guides/stuck-states.md) | 4 |
 | `subscription-categories` | membership | `AUTHORITATIVE_FEES.md` (subscription category billing axis) | [guide](guides/subscription-categories.md) | — (subscription-category-decoupling; postdates #2050) |
-| `subscription-lockout` | membership | `ARCHITECTURE.md` (subscription lockout) | [guide](guides/subscription-lockout.md) | 2 |
+| `subscription-lockout` | membership | `ARCHITECTURE.md` (subscription lockout), [`invariants/product-configuration.md`](invariants/product-configuration.md) (`INV-CONFIG-009`: the liability rule and its `liability-impact` list, #5190) | [guide](guides/subscription-lockout.md) | 2 |
 | `subscriptions` | finance | `ARCHITECTURE.md` (membership subscription billing) | [guide](guides/subscriptions.md) | 2 |
 | `testing` | overview (allowlisted) | TEST-ONLY: `testing/route-error` is the route-error probe for the #4467 boundary E2E. In a real production runtime it calls `notFound()` before any await and has no loading boundary above it, so the answer is a real 404 status; elsewhere it runs the admin guard itself before reading its cookie (`src/lib/route-error-probe.ts`) | — (not an operator surface) | — |
 | `video-meetings` | finance | [`guides/calendar.md`](guides/calendar.md) ("Video meetings (MiroTalk)"), `SECURITY-ATTACK-SURFACE.md` (MiroTalk meeting tokens) | [guide](guides/calendar.md) | — (MAD #2940, epic #2725; postdates #2050) |
 | `waitlist` | bookings | `ARCHITECTURE.md` (waitlist), `E2E_PLAYWRIGHT.md` | [guide](guides/waitlist.md) | 1 |
 | `work-parties` | lodge | `SECURITY-ATTACK-SURFACE.md` (member route `/dashboard/work-parties/[id]` and `/api/work-parties`, #5148), [`guides/calendar.md`](guides/calendar.md) (linked calendar entries) | [guide](guides/work-parties.md) | 3 |
-| `xero` | finance | `xero/ARCHITECTURE.md` (including the unallocated payments queue, `xero/unallocated-payments`, #5204: finance view to read, finance edit to refresh), `XERO_MEMBER_GROUPING_RUNBOOK.md` | [guide](guides/xero.md) | 2 |
+| `xero` | finance | `xero/ARCHITECTURE.md` (including the unallocated payments queue, `xero/unallocated-payments`, #5204: finance view to read, finance edit to refresh; the GST overrides card and `api/admin/xero/tax-override-pause`, #5208), `XERO_MEMBER_GROUPING_RUNBOOK.md` | [guide](guides/xero.md) | 2 |
 
 ## Summary
 
@@ -190,6 +190,10 @@ flagging for #2050 scoping:
   `school-attendee-confirmations` cron (`ARCHITECTURE.md`), not a
   `/admin/school-bookings` page. Cover it as a cross-cutting topic within the
   bookings-cluster guide rather than expecting a standalone page.
+  The same holds for correcting a school's own email and phone (#5245): an
+  **Edit school details** dialog reached from `bookings` and `booking-requests`,
+  not a school directory page. Its API, `/api/admin/organisations`, is in the
+  bookings permission area.
 - **"membership-types/setup" is two adjacent routes**, `membership-types` and
   `membership-setup` (plus `member-fields`). Decide in #2050 whether they are
   one guide or three; they share the Membership permission area.

@@ -1,6 +1,7 @@
 import { promises as fs } from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
+import { CENSUS_TIMEOUT_MS } from "@/test/census-timeout";
 
 /**
  * Contract for #2440: every public render path reads PageContent through
@@ -67,5 +68,5 @@ describe("public PageContent published contract (#2440)", () => {
       "draft pages are never served to the public (#2440):",
       ...offenders,
     ].join("\n")).toEqual([]);
-  });
+  }, CENSUS_TIMEOUT_MS);
 });

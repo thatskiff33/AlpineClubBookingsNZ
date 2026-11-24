@@ -126,7 +126,9 @@ function runGuard(repo: { dir: string; clone: string }, resolvedRef: string, env
   };
 }
 
-describe("an untagged commit is refused unless somebody records why (#4978)", () => {
+// #5407 item 42: every case builds a scratch repository and runs the guard, about
+// fifteen `git` and `bash` spawns; one timed out at 5,000ms in a batch on a busy host.
+describe("an untagged commit is refused unless somebody records why (#4978)", { timeout: 60_000 }, () => {
   it("refuses a pushed commit that no tag points at, naming the commit and the override", () => {
     const repo = scratchRepository();
     const result = runGuard(repo, repo.head);
@@ -260,11 +262,14 @@ describe("one definition of a release tag (INV-SSOT)", () => {
   ];
 
   it("accepts and refuses exactly the names release:cut does", () => {
+    // The names go in on stdin, one a line, not as arguments: a Windows Git
+    // Bash expands an argument such as `v*` against the files in its working
+    // directory before the script sees it (#5407 item 35).
     const harness = [
       shellFunctionSource(SCRIPT, "is_release_tag_name"),
-      'for name in "$@"; do if is_release_tag_name "$name"; then echo "yes"; else echo "no"; fi; done',
+      'while IFS= read -r name; do if is_release_tag_name "$name"; then echo "yes"; else echo "no"; fi; done',
     ].join("\n");
-    const output = execFileSync("bash", ["-c", harness, "harness", ...names], { encoding: "utf8" });
+    const output = execFileSync("bash", ["-c", harness], { encoding: "utf8", input: `${names.join("\n")}\n` });
     const shell = output.trim().split("\n");
     // `parseReleaseTag` trims its input; the deploy reads tag names that git
     // never pads, so only untrimmed names are compared.

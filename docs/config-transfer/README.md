@@ -135,6 +135,19 @@ deeper reference for what each category contains and the import safety model.
   is ordinary portable policy and travels.
   `MembershipLockoutSettings.useFeeScheduleItemCodes` (#2109) is
   classified should-travel and now exports like the rest of that singleton.
+  Its subscription-liability pair, `requiredTypeAgeRule` and
+  `liabilityAgeSource` (#5190, `INV-CONFIG-009`), travels too, but only whole
+  and chosen: a bundle naming `NOT_CHOSEN`, or only one of the two, carries
+  nothing for them, so it never moves a chosen target back. Choosing the pair
+  needs membership edit and finance edit (owner, 23 Nov 2026); import is
+  full-admin only, and a full admin holds both, so it needs no check of its own. A bundle naming
+  `CURRENT_AGE` fails the dry-run. An import that changes the singleton runs the
+  stale-row clear-up in its own transaction once the import commits; when it
+  moves any row it writes a `configuration.imported.liability_clear_up` audit
+  row with the total and up to 50 of the member ids. If that clear-up fails,
+  the import still stands: the result carries `liabilityClearUp: "failed"`,
+  the officer sees a warning, a failure audit row of the same action names the
+  bundle, and the next membership lockout settings save re-runs the clear-up.
   The retired `ClubModuleSettings.multiLodge` column needs no entry: it is
   `@ignore`d (#5396), so the generated client the guards read cannot see it.
   Its drop is tracked as hoppers99/AlpineClubBookingsNZ#139.
@@ -468,6 +481,31 @@ deeper reference for what each category contains and the import safety model.
     ages. `age-tiers.csv` rides the membership-fees category as its own module and
     is emitted whenever the source has age tiers (independent of whether it has
     fees), so it does not affect the joining-fee precedence rule below.
+  - **Subscription categories** (#5248) — the club's subscription categories
+    and their flat annual fee schedules, as three files that ride the
+    membership-fees category as their own module:
+    - `membership-fees/subscription-categories.csv` —
+      `key, name, description, isActive, sortOrder`; natural key `key`.
+    - `membership-fees/subscription-category-fees.csv` —
+      `categoryKey, effectiveFrom, effectiveTo, amountCents, prorationRule`;
+      natural key `categoryKey × effectiveFrom`.
+    - `membership-fees/subscription-category-fee-components.csv` —
+      `categoryKey, effectiveFrom, label, amountCents, prorate,
+      xeroAccountCode, xeroItemCode, sortOrder`; natural key
+      `(parent fee = categoryKey × effectiveFrom) × label`.
+
+    The built-in Individual category is never exported, and a bundle row that
+    targets it is a blocking error. Which member is in which category is member
+    data and never travels. Apply is upsert-only by natural key, so importing
+    the same bundle twice changes nothing the second time. The planner checks
+    the **effective post-merge** state, as the admin pages do: a new category
+    `key` must have the shape the Subscription Categories page creates
+    (capital letters, digits and single underscores); a name may not repeat
+    under another key (case-insensitive); a fee's category must be in the
+    bundle or on the target; every fee's components sum exactly to its amount;
+    and one category's fee windows may **not overlap** — the database has no
+    constraint for that, so the planner is the guard. Each failure is
+    blocking.
 
   Referenced membership types must already exist on the target (matched by
   `key`) — membership types themselves are not transferred (they are managed on

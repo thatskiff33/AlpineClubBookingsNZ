@@ -7,10 +7,8 @@ import { ClubPostBody } from "@/components/club-post-body";
 import { ClubPostComposer } from "@/components/club-post-composer";
 import { isServerNzConfigured } from "@/lib/servernz-config";
 import { Card, CardContent } from "@/components/ui/card";
-import {
-  listClubPostsForMember,
-  MAX_CLUB_POST_LENGTH,
-} from "@/lib/club-posts";
+import { listClubPostsForMember } from "@/lib/club-posts";
+import { MAX_CLUB_POST_LENGTH } from "@/lib/club-post-schema";
 import { loadEffectiveModuleFlags } from "@/lib/module-settings";
 import { clubTime } from "@/lib/club-time/server";
 

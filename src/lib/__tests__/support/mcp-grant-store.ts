@@ -21,6 +21,7 @@ export interface StoredMcpGrant {
   lastUsedAt: Date | null;
   sessionIssuedAt: Date;
   twoFactorVerified: boolean;
+  officerConsentAt: Date | null;
   client: { name: string; redirectUris: string[] };
   member: { firstName: string; lastName: string };
 }
@@ -59,6 +60,7 @@ export function mcpGrant(overrides: Partial<StoredMcpGrant> & { id: string }): S
     lastUsedAt: null,
     sessionIssuedAt: new Date("2026-06-30T00:00:00.000Z"),
     twoFactorVerified: false,
+    officerConsentAt: null,
     client: { name: "Example Assistant", redirectUris: ["https://claude.ai/callback"] },
     member: { firstName: "Ana", lastName: "Reid" },
     ...overrides,

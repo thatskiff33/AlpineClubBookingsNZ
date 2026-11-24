@@ -13,7 +13,8 @@ import {
   EmptySchoolNameError,
   SchoolRecordAcknowledgementError,
 } from "@/lib/school-organisation-preview";
-import { schoolChildCountsSchema, schoolTeacherSchema } from "@/lib/school-booking-request";
+import { schoolChildCountsSchema } from "@/lib/admin-bookings-schemas/requests";
+import { schoolTeacherSchema } from "@/lib/school-booking-request";
 import { requireAdmin } from "@/lib/session-guards";
 import { transactionContendedResponse } from "@/lib/transaction-contended-response";
 import { nameField } from "@/lib/zod-helpers";

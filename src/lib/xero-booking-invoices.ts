@@ -8,6 +8,7 @@
  */
 
 import { bookingHasExternalSettlement, externalSettlementSkipReason } from "@/lib/booking-external-settlement";
+import { storedShortBookingId } from "@/lib/booking-reference";
 import {
   Invoice,
   Invoices,
@@ -35,10 +36,7 @@ import {
   startXeroSyncOperation,
   upsertXeroObjectLink,
 } from "@/lib/xero-sync";
-import {
-  callXeroApi,
-  getAuthenticatedXeroClient,
-} from "./xero-api-client";
+import { callXeroApi, getAuthenticatedXeroClient } from "./xero-api-client";
 import {
   resolveXeroInvoiceEmailPolicy,
   sendXeroInvoiceEmail,
@@ -103,6 +101,7 @@ import {
 import { PRIMARY_INVOICE_NOTHING_LEFT_DUE_REASON } from "@/lib/xero-primary-invoice-fee-at-link";
 import { readBookingForPrimaryInvoice } from "@/lib/xero-primary-invoice-read";
 import { planPrimaryInvoiceManifest, recordPrimaryInvoiceManifest, recordPrimaryInvoiceUpdateManifest } from "@/lib/member-money/doors";
+import { readXeroTaxOverridePause, recordXeroTaxOverrideMismatch } from "@/lib/xero-tax-override-safeguard";
 import { primaryInvoicePaymentKey, readStoredPrimaryInvoicePayment, recordPrimaryInvoicePaymentReceipt, recordStoredPrimaryInvoicePaymentReceipt } from "@/lib/capture-receipt-senders";
 import type { XeroOperationClaim } from "@/lib/xero-operation-outcome-guard";
 
@@ -233,6 +232,31 @@ async function readStoredPrimaryInvoiceLines(
   } catch (error) {
     logger.error({ err: error, syncOperationId }, "Could not read the stored primary invoice lines");
     return { storedLines: null, storedLineAmountTypes: null };
+  }
+}
+
+/**
+ * #5208: the lines every earlier attempt under a primary invoice's idempotency
+ * key stored, read before this attempt stores its own. An operation that failed
+ * after its request reached Xero leaves its key to the next, and Xero answers a
+ * replay with the invoice the first request raised. A read failure is "unknown":
+ * one entry no request matches, so the reply is not compared.
+ */
+async function readEarlierPrimaryInvoiceRequests(idempotencyKey: string): Promise<LineItem[][]> {
+  try {
+    const operations = await prisma.xeroSyncOperation.findMany({
+      where: { idempotencyKey },
+      select: { requestPayload: true },
+      orderBy: { createdAt: "desc" },
+      take: 20,
+    });
+    return operations.flatMap(({ requestPayload }) => {
+      const { storedLines } = storedInvoiceRequestLines(requestPayload);
+      return storedLines ? [storedLines] : [];
+    });
+  } catch (error) {
+    logger.error({ err: error, idempotencyKey }, "Could not read the earlier primary invoice requests");
+    return [[]];
   }
 }
 
@@ -515,11 +539,11 @@ export async function createXeroInvoiceForBooking(
     taxRendering,
   };
   const primaryLines = buildPrimaryInvoiceLines(primaryLineInput);
-  const lineItems = primaryLines.lines;
   const promoLineRecord = promoAdjustmentLineRecord(primaryLines.promoLinePlan);
-  // #4525 (Ledger M13): the same composition, planned against the journal's components.
-  // Kept aside for the manifest once the link is stored; these lines are still what is sent.
-  const manifestPlan = await planPrimaryInvoiceManifest({ bookingId, ...primaryLineInput });
+  // #4525 (M13): planned against the journal, kept for the manifest. #5208: a COVERED plan's lines are sent, with the
+  // journal's GST on each line unless paused (read outside any transaction, `INV-LOCK-004`); otherwise the builders'.
+  const manifestPlan = await planPrimaryInvoiceManifest({ bookingId, ...primaryLineInput, taxOverrides: await readXeroTaxOverridePause() });
+  const lineItems = manifestPlan?.outcome === "COVERED" ? manifestPlan.lines : primaryLines.lines;
   // #3980: the worth this read gives and what its lines bill, stored with the link.
   const builtFrom = {
     worthCents: bookingWorthCents({ finalPriceCents: booking.finalPriceCents, changeFeeCents: booking.payment.changeFeeCents }),
@@ -539,7 +563,7 @@ export async function createXeroInvoiceForBooking(
     lineItems,
     date: getBookingInvoiceIssueDate(booking),
     dueDate: getBookingInvoiceDueDate(booking, clubZone),
-    reference: `Booking ${bookingId.slice(0, 8)}`,
+    reference: `Booking ${storedShortBookingId(bookingId)}`,
     status: Invoice.StatusEnum.AUTHORISED,
     lineAmountTypes: taxRendering.lineAmountTypes,
   });
@@ -558,6 +582,8 @@ export async function createXeroInvoiceForBooking(
     ...(promoLineRecord ? { promoLines: promoLineRecord } : {}),
   };
 
+  // #5208: what earlier attempts under this key sent; Xero may answer this one with that attempt's invoice.
+  const earlierSentLines = await readEarlierPrimaryInvoiceRequests(invoiceIdempotencyKey);
   if (operationId) {
     await prisma.xeroSyncOperation.update({
       where: { id: operationId },
@@ -676,6 +702,9 @@ export async function createXeroInvoiceForBooking(
     if (!createdInvoice?.invoiceID) {
       throw new Error("Failed to create Xero invoice");
     }
+    // #5208: Xero must keep the GST sent on each line; a difference pauses the overrides. Never throws.
+    await recordXeroTaxOverrideMismatch({ xeroSyncOperationId: operationId!, bookingId, providerInvoiceId: createdInvoice.invoiceID,
+      invoiceNumber: createdInvoice.invoiceNumber ?? null, documentKind: "CREATE", sent: lineItems, returned: createdInvoice.lineItems ?? [], earlierSent: earlierSentLines });
 
     // Record payment against the invoice in Xero when real funds moved.
     // Xero already marks zero-total invoices as PAID and rejects $0 payments.
@@ -1486,7 +1515,7 @@ export async function updateXeroBookingInvoiceForBooking(
       dueDate:
         currentInvoice.dueDate ??
         getBookingInvoiceDueDate(booking, await readClubTimeZoneOutsideRequest()),
-      reference: currentInvoice.reference ?? `Booking ${bookingId.slice(0, 8)}`,
+      reference: currentInvoice.reference ?? `Booking ${storedShortBookingId(bookingId)}`,
       invoiceNumber: currentInvoice.invoiceNumber,
       // The basis it was issued under; one Xero did not echo is the booking's own (#4632).
       lineAmountTypes: currentInvoice.lineAmountTypes ?? taxRendering.lineAmountTypes,
@@ -1552,6 +1581,9 @@ export async function updateXeroBookingInvoiceForBooking(
       lineAmountTypes: updatedInvoice.lineAmountTypes!,
       providerTotal: updated?.total ?? currentInvoice.total,
     });
+    // #5208: the copied lines carry Xero's own stored tax; it must come back unchanged. Never throws.
+    await recordXeroTaxOverrideMismatch({ xeroSyncOperationId: operationId, bookingId, providerInvoiceId: updated?.invoiceID ?? invoiceId,
+      invoiceNumber: updated?.invoiceNumber ?? currentInvoice.invoiceNumber ?? null, documentKind: "UPDATE", sent: updatedInvoice.lineItems ?? [], returned: updated?.lineItems ?? [] });
 
     return updated?.invoiceID ?? invoiceId;
   } catch (error) {

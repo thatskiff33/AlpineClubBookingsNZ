@@ -8,7 +8,11 @@ import {
   isMemberEligibleToBookLodge,
 } from "@/lib/lodge-access";
 import { lodgeNullTolerantScope } from "@/lib/lodges";
+import { bookingRoomsQuerySchema } from "@/lib/booking-stay-check-query";
+import { LODGE_ROOMS_CONNECTION_SHAPE } from "@/lib/connection-shapes-bookings";
+import { connectionJson } from "@/lib/mcp-connection-request";
 
+/** Also the AI app action `list_lodge_rooms` (ALP-794). */
 export async function GET(request: NextRequest) {
   const session = await auth();
   if (!session) {
@@ -20,16 +24,24 @@ export async function GET(request: NextRequest) {
     return inactiveResponse;
   }
 
+  // An empty `lodgeId` lists across lodges, as it always has.
+  const parsed = bookingRoomsQuerySchema.safeParse({
+    lodgeId: request.nextUrl.searchParams.get("lodgeId") || undefined,
+  });
+  if (!parsed.success) {
+    return NextResponse.json({ error: "Invalid query parameters" }, { status: 400 });
+  }
+
   const modules = await loadEffectiveModuleFlags();
   if (!modules.bedAllocation) {
-    return NextResponse.json({ enabled: false, rooms: [] });
+    return connectionJson(request, { enabled: false, rooms: [] }, LODGE_ROOMS_CONNECTION_SHAPE);
   }
 
   // Room preferences are per lodge (multi-lodge phase 8): the booking flow
   // passes its chosen lodge so members only see that lodge's rooms.
   // (LodgeRoom.lodgeId is NOT NULL since migration 20260708001100; the old
   // null-lodge expand-release tolerance no longer applies.)
-  const lodgeId = request.nextUrl.searchParams.get("lodgeId");
+  const { lodgeId } = parsed.data;
   // A BOOKING_RESTRICTION-ed member must not read a forbidden lodge's rooms,
   // mirroring the booking create path — whether they name the lodge or list
   // across lodges. Both branches gate on the same eligibility rule (item 6 of
@@ -83,12 +95,12 @@ export async function GET(request: NextRequest) {
     orderBy: [{ sortOrder: "asc" }, { name: "asc" }, { id: "asc" }],
   });
 
-  return NextResponse.json({
+  return connectionJson(request, {
     enabled: true,
     rooms: rooms.map((room) => ({
       id: room.id,
       name: room.name,
       bedCount: room.beds.length,
     })),
-  });
+  }, LODGE_ROOMS_CONNECTION_SHAPE);
 }

@@ -1,4 +1,6 @@
 import { Prisma } from "@prisma/client";
+import { isPrismaKnownUniqueConstraintError } from "@/lib/prisma-known-errors";
+import { describeUniqueConstraintTarget, isPrismaUniqueConstraintError } from "@/lib/prisma-errors";
 
 import { bookingOwner } from "@/lib/booking-owner";
 import { prisma } from "@/lib/prisma";
@@ -1181,23 +1183,16 @@ function freezeProposal(
   };
 }
 
+// Read with describeUniqueConstraintTarget, as the driver never fills meta.target (#5407). Unreadable counts as
+// the slot: it is the only key a request create can realistically hit, and the transaction rolls back either way.
 function isOpenSlotUniqueViolation(error: unknown): boolean {
-  if (
-    error instanceof Prisma.PrismaClientKnownRequestError &&
-    error.code === "P2002"
-  ) {
-    const target = error.meta?.target;
-    if (Array.isArray(target)) {
-      return target.some((column) => String(column).includes("openStateKey"));
-    }
-    return true;
+  if (isPrismaKnownUniqueConstraintError(error)) {
+    const slot = Prisma.BookingChangeRequestScalarFieldEnum.openStateKey satisfies typeof Prisma.NewBookingPolicyExceptionRequestScalarFieldEnum.openStateKey;
+    const target = describeUniqueConstraintTarget(error);
+    return target === null || target.includes(slot.toLowerCase());
   }
   // Test seam / defensive: a plain P2002-coded object still maps to the conflict.
-  return (
-    typeof error === "object" &&
-    error !== null &&
-    (error as { code?: unknown }).code === "P2002"
-  );
+  return isPrismaUniqueConstraintError(error);
 }
 
 // ---------------------------------------------------------------------------

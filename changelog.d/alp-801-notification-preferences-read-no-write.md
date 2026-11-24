@@ -1,0 +1,2 @@
+- **Reading your email preferences no longer saves anything (ALP-801).**
+  The preferences page and the AI app action `get_my_notification_preferences` used to create a member's saved preferences the first time they were read. Two first reads at once, such as an AI app asking twice, could both try to create it, and one failed with a server error. Now a member with nothing saved simply reads the defaults, and a saved record is created only when they change a preference. The answer the page and the AI app receive is unchanged.

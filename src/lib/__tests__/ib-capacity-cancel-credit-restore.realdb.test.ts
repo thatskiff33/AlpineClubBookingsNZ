@@ -29,6 +29,7 @@
 import type { PrismaClient } from "@prisma/client";
 import type { Invoice } from "xero-node";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { XERO_SYNC_ERROR_ALERT_COOLDOWN_KEY } from "@/lib/xero-sync-error-alert-key";
 import { releaseBookingJournalForTeardown } from "./support/booking-financial-history-teardown";
 
 import { bookingLedgerBalance } from "@/lib/booking-ledger-balance";
@@ -103,7 +104,6 @@ function paidInvoice(cashCents: number, allocatedNoteCents = 0): Invoice {
 
 async function clean(): Promise<void> {
   await prisma.auditLog.deleteMany({ where: { action: REFUSAL_AUDIT_ACTION, entityId: BOOKING_ID } });
-  await prisma.emailLog.deleteMany({ where: { to: "race-3792-unrelated@example.invalid" } });
   const slices = await prisma.memberCreditNoteAllocation.findMany({ where: { appliedToBookingId: BOOKING_ID }, select: { id: true } });
   await prisma.xeroObjectLink.deleteMany({ where: { localModel: "MemberCreditNoteAllocation", localId: { in: slices.map((slice) => slice.id) } } });
   await prisma.memberCreditNoteAllocation.deleteMany({ where: { appliedToBookingId: BOOKING_ID } });
@@ -331,8 +331,12 @@ async function reconcile(cashCents: number) {
     // The real throttle, held by an unrelated Xero alert sent a minute ago.
     const actualAlert = (await vi.importActual("@/lib/xero-error-alert")) as typeof import("@/lib/xero-error-alert");
     xeroSyncAlert.mockImplementation(actualAlert.notifyXeroSyncError);
-    await prisma.emailLog.create({
-      data: { to: "race-3792-unrelated@example.invalid", subject: "Xero Sync Error", templateName: "admin-xero-sync-error", status: "SENT", createdAt: new Date(Date.now() - 60_000) },
+    // #5407 item 37: the throttle is the alert's AlertCooldown claim, not the mail log.
+    const heldAt = new Date(Date.now() - 60_000);
+    await prisma.alertCooldown.upsert({
+      where: { key: XERO_SYNC_ERROR_ALERT_COOLDOWN_KEY },
+      create: { key: XERO_SYNC_ERROR_ALERT_COOLDOWN_KEY, lastAlertedAt: heldAt },
+      update: { lastAlertedAt: heldAt },
     });
     const alertMailBefore = await prisma.emailLog.count({ where: { templateName: "admin-xero-sync-error" } });
 

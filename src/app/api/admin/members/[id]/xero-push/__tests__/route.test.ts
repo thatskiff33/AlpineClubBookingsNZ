@@ -124,6 +124,12 @@ const params = Promise.resolve({ id: "mem_1" });
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // #5407 item 41: clearAllMocks keeps each mock's implementation, so a case
+  // that rejects the audit write or the create would leave it rejecting for
+  // every case after it. These two are reset here; the rest are set below.
+  mockCreate.mockReset();
+  mockLogAudit.mockReset();
+  mockLogAudit.mockResolvedValue(undefined);
   mockRequireAdmin.mockResolvedValue(okGuard());
   mockMemberFindUnique.mockResolvedValue({
     id: "mem_1",
@@ -381,5 +387,66 @@ describe("POST /api/admin/members/[id]/xero-push (#2089)", () => {
     );
     expect(body).not.toHaveProperty("subscriptionRefreshPending");
     expect(JSON.stringify(body)).not.toContain("private audit detail");
+  });
+});
+
+// #5407 item 28: the body is optional (an empty one is a plain create) and is
+// read through the shared optional reader, no longer by hand. A body that is
+// not JSON keeps this route's own invalid-JSON wording and reaches no
+// provider call; a body of the wrong shape keeps its own answer.
+describe("POST /api/admin/members/[id]/xero-push — optional body (#5407)", () => {
+  function rawPost(body?: string) {
+    return new NextRequest("http://localhost/api/admin/members/mem_1/xero-push", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      ...(body === undefined ? {} : { body }),
+    });
+  }
+
+  it.each([
+    ["no body", undefined],
+    ["an empty body", ""],
+  ])("goes on to a plain create for %s", async (_label, raw) => {
+    mockCreate.mockResolvedValue("contact-1");
+
+    const res = await POST(rawPost(raw), { params });
+
+    // What happens after the create is the cases above; here, only that the
+    // body was read as "no options" and the create ran.
+    expect(res.status).not.toBe(400);
+    expect(mockFindPotential).toHaveBeenCalled();
+    expect(mockCreate).toHaveBeenCalledWith("mem_1", { createdByMemberId: "admin-1" });
+  });
+
+  it("answers a body that is not JSON with its own invalid-JSON 400 and calls no provider", async () => {
+    const res = await POST(rawPost("{not json"), { params });
+
+    expect(res.status).toBe(400);
+    expect(await res.text()).toBe(JSON.stringify({ error: "Invalid JSON" }));
+    expect(mockFindPotential).not.toHaveBeenCalled();
+    expect(mockCreate).not.toHaveBeenCalled();
+  });
+
+  it("keeps its own answer for a body of the wrong shape", async () => {
+    const res = await POST(postReq({ forceCreate: "yes" }), { params });
+
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ error: "Invalid request body" });
+    expect(mockCreate).not.toHaveBeenCalled();
+  });
+});
+
+// #5407 item 41: a plain create placed after every other case still succeeds,
+// so no earlier case's rejected mock (the audit write, the create) leaks
+// into the cases after it.
+describe("POST /api/admin/members/[id]/xero-push — no state left by earlier cases (#5407)", () => {
+  it("creates and links a contact with a plain request", async () => {
+    mockCreate.mockResolvedValue("contact-1");
+
+    const res = await POST(postReq(), { params });
+
+    expect(res.status).toBe(200);
+    await expect(res.json()).resolves.toMatchObject({ xeroContactId: "contact-1" });
+    expect(mockLogAudit).toHaveBeenCalled();
   });
 });

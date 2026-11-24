@@ -79,8 +79,8 @@ describe("buildGroupSettlementInvoiceLines (#3642)", () => {
     expect(lines.lineItems).toContainEqual(
       expect.objectContaining({ description: "Promo adjustment - SAVE5", unitAmount: -5 })
     );
-    // One code records nothing new on the operation.
-    expect(lines.operationRecord).toEqual({});
+    // One code records no promo split; the operation records only the children billed (#4525).
+    expect(lines.operationRecord).toEqual({ childBookingIds: [expect.any(String), "full-price"] });
   });
 
   it("#3955 F3: bills a joiner's recorded change fee, so the invoice still totals the settlement", async () => {

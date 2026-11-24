@@ -20,7 +20,9 @@ vi.mock("@/lib/session-guards", () => ({
 }));
 vi.mock("@/lib/booking-cancel", () => ({ cancelBooking: h.cancelBooking }));
 vi.mock("@/lib/rate-limit", () => ({ getClientIp: () => "127.0.0.1" }));
-vi.mock("@/lib/access-roles", () => ({
+// Partial, so the real role readers `memberOnlySessionUser` uses stay.
+vi.mock("@/lib/access-roles", async (importOriginal) => ({
+  ...((await importOriginal()) as typeof import("@/lib/access-roles")),
   authorizationRoleFromAccessRoles: h.authorizationRoleFromAccessRoles,
 }));
 vi.mock("@/lib/admin-permissions", () => ({

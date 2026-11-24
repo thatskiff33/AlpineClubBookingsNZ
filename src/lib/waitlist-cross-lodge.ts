@@ -60,6 +60,7 @@ import {
 } from "@/lib/member-dietary-booking-writes";
 import type { ClubFormat } from "@/lib/club-format";
 import { LOCK1_HOLDER_TRANSACTION_BUDGET } from "@/lib/db-transaction";
+import { offerSnapshotAcrossWindowRestart } from "@/lib/waitlist-offer-epoch";
 
 // Cross-lodge waitlist support (ADR-004). The processor consults these
 // helpers when a member has opted into alternate lodges: the quote decides
@@ -806,7 +807,8 @@ export async function confirmCrossLodgeWaitlistOffer(
         for (const lodgeId of [offeredLodgeId, entry.lodgeId].sort()) {
           await acquireLodgeCapacityLock(tx, lodgeId);
         }
-        return revertOfferToWaitlisted(tx, entry);
+        // #5433 review A: a window restart since Phase 1 is still this offer, here and below.
+        return revertOfferToWaitlisted(tx, await offerSnapshotAcrossWindowRestart(tx, entry));
       }, LOCK1_HOLDER_TRANSACTION_BUDGET);
       if (!reverted) {
         return {
@@ -854,13 +856,14 @@ export async function confirmCrossLodgeWaitlistOffer(
         // the cover gone. Through the system-cancellation seam because a price
         // drift has no actor to refuse.
         await reconcileHostingReviewForSystemCancellation(newBooking.id, tx);
+        const snapshot = await offerSnapshotAcrossWindowRestart(tx, entry);
         const refreshedOffer = await tx.booking.updateMany({
           where: {
             id: entry.id,
             status: BookingStatus.WAITLIST_OFFERED,
-            updatedAt: entry.updatedAt,
+            updatedAt: snapshot.updatedAt,
             waitlistOfferedAt: entry.waitlistOfferedAt,
-            waitlistOfferExpiresAt: entry.waitlistOfferExpiresAt,
+            waitlistOfferExpiresAt: snapshot.waitlistOfferExpiresAt,
             waitlistOfferedLodgeId: entry.waitlistOfferedLodgeId,
             waitlistOfferedPriceCents: entry.waitlistOfferedPriceCents,
           },
@@ -906,13 +909,14 @@ export async function confirmCrossLodgeWaitlistOffer(
     const cancelledEntry = await prisma.$transaction(async (tx) => {
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
       await acquireLodgeCapacityLock(tx, entry.lodgeId);
+      const snapshot = await offerSnapshotAcrossWindowRestart(tx, entry);
       const cancelled = await tx.booking.updateMany({
         where: {
           id: entry.id,
           status: BookingStatus.WAITLIST_OFFERED,
-          updatedAt: entry.updatedAt,
+          updatedAt: snapshot.updatedAt,
           waitlistOfferedAt: entry.waitlistOfferedAt,
-          waitlistOfferExpiresAt: entry.waitlistOfferExpiresAt,
+          waitlistOfferExpiresAt: snapshot.waitlistOfferExpiresAt,
           waitlistOfferedLodgeId: entry.waitlistOfferedLodgeId,
           waitlistOfferedPriceCents: entry.waitlistOfferedPriceCents,
         },

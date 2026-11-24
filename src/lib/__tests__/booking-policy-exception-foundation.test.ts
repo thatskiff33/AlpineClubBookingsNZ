@@ -13,6 +13,7 @@ import {
   MINIMUM_STAY_POLICY_SET_LOCK_KEY,
   lockMinimumStayPolicySet,
 } from "@/lib/minimum-stay-policy-set";
+import { minimumStayCreateBodySchema } from "@/lib/admin-bookings-schemas/setup";
 import { getMinimumStayViolations } from "@/lib/policies/minimum-stay";
 
 const MIGRATION =
@@ -194,15 +195,21 @@ describe("minimum-stay policy write contract (#2363)", () => {
   });
 
   it("requires new-runtime creates to submit capacityMode explicitly", () => {
+    // The create schema lives beside the AI app catalogue's copy of it
+    // (ALP-719); the route parses with it, so its refusal is the route's.
+    const create = {
+      name: "Peak weekends",
+      startDate: "2026-07-01",
+      endDate: "2026-09-30",
+      triggerDays: [5],
+      minimumNights: 2,
+    };
+    expect(minimumStayCreateBodySchema.safeParse(create).success).toBe(false);
+    expect(minimumStayCreateBodySchema.safeParse({ ...create, capacityMode: "HOLD" }).success).toBe(true);
     const route = repoFile(
       "src/app/api/admin/booking-policies/minimum-stay/route.ts",
     );
-    expect(route).toContain(
-      'capacityMode: z.enum(["HOLD", "NO_HOLD"]),',
-    );
-    expect(route).not.toMatch(
-      /capacityMode:\s*z\.enum\(\["HOLD", "NO_HOLD"\]\)\.(?:default|optional)/,
-    );
+    expect(route).toContain("minimumStayCreateBodySchema.parse(");
     expect(route).toContain("capacityMode: data.capacityMode");
     expect(route).not.toContain("capacityMode: data.capacityMode ??");
   });

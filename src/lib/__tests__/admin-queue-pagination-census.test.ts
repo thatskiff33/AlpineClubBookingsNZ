@@ -18,6 +18,7 @@ import { describe, expect, it } from "vitest";
 import { escapeRegExp } from "@/lib/escape-regexp";
 
 import { stripComments } from "./support/strip-comments";
+import { CENSUS_TIMEOUT_MS } from "@/test/census-timeout";
 
 const ROOT = process.cwd();
 const SRC = path.join(ROOT, "src");
@@ -83,6 +84,60 @@ function cappedRoutesRead(code: string): string[] {
   return Object.keys(CAPPED_QUEUE_ROUTES).filter((route) =>
     new RegExp(`${escapeRegExp(route)}(?=[?"'\`])`).test(code),
   );
+}
+
+/**
+ * The text of one top-level `const` declaration, from its name to the `;`
+ * that ends it, or null when there is none or it never ends. Brackets and string literals are skipped over, so a
+ * `;` inside either does not end it early.
+ */
+function constDeclaration(code: string, name: string): string | null {
+  const start = new RegExp(`\\bconst\\s+${escapeRegExp(name)}\\b[^=]*=`).exec(code);
+  if (!start) return null;
+  let depth = 0;
+  for (let i = start.index + start[0].length; i < code.length; i += 1) {
+    const char = code[i];
+    if (char === '"' || char === "'" || char === "`") {
+      // Skip the literal, honouring escapes.
+      for (i += 1; i < code.length && code[i] !== char; i += 1) {
+        if (code[i] === "\\") i += 1;
+      }
+    } else if (char === "(" || char === "{" || char === "[") {
+      depth += 1;
+    } else if (char === ")" || char === "}" || char === "]") {
+      depth -= 1;
+    } else if (char === ";" && depth === 0) {
+      return code.slice(start.index, i);
+    }
+  }
+  // Unterminated: read nothing rather than the declarations after it.
+  return null;
+}
+
+/**
+ * Where the route's query schema is declared: the route file itself, and the
+ * declaration of each schema the route parses with that it imports from an
+ * `@/lib` module (shared with the AI app catalogue, ALP-719). Only that one
+ * declaration is read, never the rest of its module, so a route that parses a
+ * schema without paging fields fails even when a sibling schema has them.
+ */
+function querySchemaSources(routeFile: string): string[] {
+  const code = stripComments(readFileSync(routeFile, "utf8"));
+  const sources = [code];
+  const parsed = new Set([...code.matchAll(/\b(\w+)\.(?:safeParse|parse)\(/g)].map((match) => match[1]));
+  for (const match of code.matchAll(/import\s*\{([^}]*)\}\s*from\s*"@\/lib\/([^"]+)"/g)) {
+    const base = path.join(SRC, "lib", match[2] ?? "");
+    const schemaModule = [`${base}.ts`, path.join(base, "index.ts")].find((candidate) => existsSync(candidate));
+    if (!schemaModule) continue;
+    for (const specifier of (match[1] ?? "").split(",")) {
+      // `exported as local`: the route parses with the local name.
+      const [exported, local = exported] = specifier.replace(/^\s*type\s+/, "").trim().split(/\s+as\s+/);
+      if (!exported || !local || !parsed.has(local)) continue;
+      const declaration = constDeclaration(stripComments(readFileSync(schemaModule, "utf8")), exported);
+      if (declaration) sources.push(declaration);
+    }
+  }
+  return sources;
 }
 
 function queueReaders(): Map<string, string[]> {
@@ -187,9 +242,11 @@ describe("row-capped officer queues page through every row (INV-OPS-020)", () =>
   });
 
   it("every capped route's schema spreads adminListPageQueryFields", () => {
+    // The schema is in the route, or is the one the route parses with,
+    // declared in a lib module (shared with the AI app catalogue, ALP-719).
     const failures = Object.keys(CAPPED_QUEUE_ROUTES).filter((route) => {
       const file = path.join(ROOT, "src/app", `${route}/route.ts`);
-      return !/\.\.\.adminListPageQueryFields\b/.test(stripComments(readFileSync(file, "utf8")));
+      return !querySchemaSources(file).some((code) => /\.\.\.adminListPageQueryFields\b/.test(code));
     });
     expect(failures).toEqual([]);
   });
@@ -377,7 +434,7 @@ describe("a capped route takes its page fields from one definition (INV-OPS-020)
       return source.includes("pageSize") && SHARED_PAGE_SIZE_DEFINITION.test(stripComments(source));
     });
     expect(redeclared).toEqual([]);
-  });
+  }, CENSUS_TIMEOUT_MS);
 
   it("no schema re-declares the shared page field", () => {
     const redeclared = files.filter((file) => {
@@ -385,7 +442,7 @@ describe("a capped route takes its page fields from one definition (INV-OPS-020)
       return source.includes("page") && SHARED_PAGE_DEFINITION.test(stripComments(source));
     });
     expect(redeclared).toEqual([]);
-  });
+  }, CENSUS_TIMEOUT_MS);
 
   it("the shared page field is still spelled the way the check looks for it (mutation canary)", () => {
     const helper = stripComments(readFileSync(path.join(ROOT, LIST_PAGE_HELPER), "utf8"));

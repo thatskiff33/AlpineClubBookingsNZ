@@ -2,13 +2,15 @@ import { BookingEventType, Prisma, type PaymentRecoveryOperation } from "@prisma
 
 import { bookingOwner } from "@/lib/booking-owner";
 import { bookingOutstandingCents } from "@/lib/additional-payment-ask";
-import { findHeldOnceEverAlertKeys, giveBackOwnOnceEverClaim } from "@/lib/admin-alert-once";
+import { findHeldOnceEverAlertKeys, giveBackOwnOnceEverClaim, stampOnceEverAlertSent } from "@/lib/admin-alert-once";
 import { sendAdminAlertOnceEverWithTakeover } from "@/lib/admin-alert-once-takeover";
 import { ALERT_ONCE_EVER_WINDOW_MS, claimAlertCooldown } from "@/lib/alert-cooldown";
 import { logAudit } from "@/lib/audit";
 import { recordBookingEvent } from "@/lib/booking-events";
+import { adminAlertIsDeliveredOrQueued, adminAlertSendOutcome } from "@/lib/email/admin-alert-send-result";
 import { sendAdminSupersededPaymentRefundAlert } from "@/lib/email/admin-alerts-finance";
 import { sendSupersededPaymentRefundedEmail } from "@/lib/email/booking";
+import { resolveDeliveryPolicy } from "@/lib/environment-delivery-policy";
 import logger from "@/lib/logger";
 import { carriesCardRefundOperationMetadata } from "@/lib/open-card-refund-owed";
 import { PAYMENT_RECOVERY_STALE_PROCESSING_MS } from "@/lib/payment-recovery-constants";
@@ -155,8 +157,11 @@ async function readOrNotSettled<T>(operationId: string, reason: string, read: ()
  * - `records`: claimed before the audit row and booking event are written, so
  *   they are written once (a crash between the two loses them, never doubles them);
  * - `alert`: the admin alert's once-ever claim (`sendAdminAlertOnceEverWithTakeover`);
- * - `reported`: written once the alert went out, or reached nobody: the report
- *   is settled, and a later attempt reads it and sends nothing.
+ * - `reported`: written once a copy of the alert was delivered or queued, the
+ *   club's delivery policy skipped it, the installation is a copy that holds
+ *   back every email, or the booking has nobody to address
+ *   (its critical row is the escalation):
+ *   the report is settled, and a later attempt reads it and sends nothing.
  */
 export function supersededRefundReportKeys(operationId: string) {
   const base = `superseded-payment-refund-report:${operationId}`;
@@ -395,9 +400,18 @@ async function writeRecordsOnce(params: ReportParams, context: ReportContext | n
 /**
  * The admin alert, once ever per row, by the shared sequence
  * (`sendAdminAlertOnceEverWithTakeover`, `INV-INT-032`'s rule): a call that
- * took the claim and sent it, or found nobody to receive it, writes `reported`.
- * Its own failed send, or a claim write that threw, is given back and the
- * report is not settled. A claim held elsewhere with no `reported` is a sibling
+ * took the claim and had a copy delivered or queued for the retry cron
+ * (`adminAlertIsDeliveredOrQueued`, the rule the claim itself is kept on)
+ * writes `reported`, as does one the club's delivery policy skipped
+ * (`skipped-by-policy`): the club chose not to receive it, so retrying would
+ * only end the row FAILED. So does one held back because this installation
+ * is not the club's live site (`heldBackAsNonLiveCopy`), for the same reason.
+ * Any other send that reached nobody - nobody opted
+ * in, every copy suppressed, or #5255: every copy refused because the sweep
+ * gave a stalled call's claim back - writes nothing, and the report is not
+ * settled, so the row's next attempt sends it. Its own failed send, or a claim
+ * write that threw, is given back and the report is not settled. A claim held
+ * elsewhere with no `reported` is a sibling
  * attempt's while younger than the stale reaper's threshold - `in-flight`, so
  * the row waits - and a dead attempt's after it: given back and sent here
  * (and waited on, if a sibling re-claims it first).
@@ -405,7 +419,7 @@ async function writeRecordsOnce(params: ReportParams, context: ReportContext | n
 async function sendAdminAlertOnce(params: ReportParams, context: ReportContext, keys: ReportKeys): Promise<SupersededRefundReportOutcome> {
   const { bookingId, operationId, paymentIntentId, refundedAmountCents, format } = params;
   const logContext = { operationId, bookingId, paymentIntentId };
-  let sendReturned = false;
+  let settled = false;
   const outcome = await readOrNotSettled(operationId, "the admin alert's state could not be read", () => sendAdminAlertOnceEverWithTakeover({
     key: keys.alert,
     label: "superseded-payment refund alert",
@@ -420,8 +434,13 @@ async function sendAdminAlertOnce(params: ReportParams, context: ReportContext, 
         paymentIntentId,
         bookingId,
       }, format);
-      sendReturned = true;
-      await markReported(keys, logContext);
+      // #5255: only a copy that went out, or waits for the retry cron, settles
+      // the report, or a club that switched this alert off, or an installation
+      // that is not the club's live site and so holds back every copy.
+      if (adminAlertIsDeliveredOrQueued(result) || adminAlertSendOutcome(result) === "skipped-by-policy" || (await heldBackAsNonLiveCopy(logContext))) {
+        settled = true;
+        await markReported(keys, logContext);
+      }
       return result;
     },
     isSent: () => supersededRefundReportSettled(operationId),
@@ -429,14 +448,34 @@ async function sendAdminAlertOnce(params: ReportParams, context: ReportContext, 
   }));
   // A sibling that re-claimed after a takeover is still sending, too: wait for it.
   if (outcome === "in-flight" || outcome === "taken-over") return "in-flight";
-  // Not kept but sent: nobody could receive it, and `reported` settles that.
-  if (outcome === "settled" || sendReturned) return "reported";
+  // Its own copy went out (or the club or a non-live copy held it back) though its claim was not kept: `reported` settles that.
+  if (outcome === "settled" || settled) return "reported";
   throw new SupersededRefundReportNotSettledError(operationId, "the admin alert was not sent");
 }
 
-/** The settled marker. Never throws: the alert is out, so a failed write is logged for an operator. */
+/**
+ * Whether the mail gate itself holds every copy back on this installation
+ * (`resolveDeliveryPolicy` answers `suppress_non_production`: a confirmed copy
+ * pointed at a live provider). Like a policy skip, that hold is final: no later
+ * attempt sends the alert, so retrying would only end the row FAILED. A copy
+ * that sends to a local capture (mailpit) is not held back and is retried like
+ * production. Read only after a send reached nobody; an unreadable policy
+ * answers false, and the report stays unsettled.
+ */
+async function heldBackAsNonLiveCopy(logContext: Record<string, unknown>): Promise<boolean> {
+  try {
+    return (await resolveDeliveryPolicy()).kind === "suppress_non_production";
+  } catch (err) {
+    logger.error({ ...logContext, err }, "Could not read the mail delivery policy after a superseded-payment refund alert reached nobody; it will be retried");
+    return false;
+  }
+}
+
+/**
+ * The settled marker, written twice before giving up (`stampOnceEverAlertSent`).
+ * Never throws: the alert is out, so both writes failing is logged for an
+ * operator, and a later attempt may send it again (the stated limit).
+ */
 async function markReported(keys: ReportKeys, logContext: Record<string, unknown>): Promise<void> {
-  await claimAlertCooldown({ key: keys.reported, windowMs: ALERT_ONCE_EVER_WINDOW_MS }).catch((err) =>
-    logger.error({ ...logContext, err }, "A superseded-payment refund's notice went out, but its sent marker was not written"),
-  );
+  await stampOnceEverAlertSent(keys.reported, "superseded-payment refund alert", logContext);
 }

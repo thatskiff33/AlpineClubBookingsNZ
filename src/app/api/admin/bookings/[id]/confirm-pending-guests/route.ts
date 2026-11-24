@@ -1,6 +1,7 @@
 import { releaseSavedCardChargeClaim, runSavedCardClaimRelease } from "@/lib/saved-card-charge-claim";
 import { receiptCaptureTime } from "@/lib/stripe-capture-date";
 import { NextRequest, NextResponse } from "next/server";
+import { parseOptionalJsonRequestBody } from "@/lib/api-json";
 import { handOffSupersededCaptureAfterRefusal } from "@/lib/superseded-paid-intent";
 import { SUPERSEDED_CHARGE_NOT_SETTLED_BODY } from "@/lib/payment-recovery-contract";
 import { bookingOwner } from "@/lib/booking-owner";
@@ -100,13 +101,11 @@ export async function POST(
 
   const recent = await requireRecentAuth();
   if (!recent.ok) return recent.response;
-  const body = await request.json().catch(() => ({}));
-  const parsedBody = confirmPendingGuestsSchema.safeParse(body);
+  const jsonBody = await parseOptionalJsonRequestBody(request, { whenAbsent: {} });
+  if (!jsonBody.ok) return jsonBody.response;
+  const parsedBody = confirmPendingGuestsSchema.safeParse(jsonBody.body);
   if (!parsedBody.success) {
-    return NextResponse.json(
-      { error: "Invalid input", details: parsedBody.error.flatten() },
-      { status: 400 }
-    );
+    return NextResponse.json({ error: "Invalid input", details: parsedBody.error.flatten() }, { status: 400 });
   }
   const allowOverbook = parsedBody.data.allowOverbook ?? false;
   const notifyMember = parsedBody.data.notifyMember;
@@ -746,15 +745,14 @@ export async function POST(
     // payment_intent.succeeded webhook refuses to act without it ("no primary payment transaction"), which is
     // exactly how captured money used to go silent. With the row committed here, the webhook can always finish
     // the promotion (or route a cancelled booking through the #1350 refund guard). Since #3267 the row already
-    // exists (the attempt); this stamps the intent and SUCCEEDED onto it, and (#4285 review) `newlyCaptured`
-    // tells the settle it is new money, not a replay.
-    let recordedByCaller = false;
+    // exists (the attempt); this stamps the intent and SUCCEEDED onto it, and (#5240) flags new money the
+    // settle has not seen, so the settle - or the next arrival, if this one stops - never reads it as a replay.
     try {
-      ({ newlyCaptured: recordedByCaller } = await settleSavedCardChargeAttempt({ journal: receiptJournal,
+      await settleSavedCardChargeAttempt({ journal: receiptJournal,
         attemptRowId: claim.attempt.attemptRowId,
         paymentId: claim.paymentId,
         paymentIntent,
-      }));
+      });
     } catch (recordErr) {
       // Non-fatal: reconciliation below upserts the identical row.
       logger.error(
@@ -768,7 +766,7 @@ export async function POST(
       reconciliation = await markBookingPaymentSucceeded({
       capturedAt: receiptCaptureTime(paymentIntent),
         format,
-        bookingId, recordedByCaller,
+        bookingId,
         paymentIntentId: paymentIntent.id,
         amountCents: paymentIntent.amount,
         paymentMethodId,

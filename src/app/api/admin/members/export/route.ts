@@ -9,16 +9,23 @@ import { getAgeTierSettings } from "@/lib/age-tier";
 import { formatGenderLabel, formatTitleLabel } from "@/lib/member-enums";
 import { loadMemberFieldsFlags } from "@/lib/member-fields-settings";
 import { createAuditLog } from "@/lib/audit";
+import { isRole } from "@/lib/member-roles";
+import { loadMembershipLockoutSettings } from "@/lib/membership-lockout-settings";
 import {
-  NON_MEMBER_ROLE_VALUES,
-  OPERATIONAL_ROLE_VALUES,
-  isRole,
-} from "@/lib/member-roles";
+  memberListSubscriptionFilterConditions,
+  subscriptionNotRequiredMemberConditions,
+} from "@/lib/subscription-liability-where";
+import {
+  listSubscriptionStatus,
+  notRequiredRowBillingNote,
+  SEASON_ROW_STATE_SELECT,
+} from "@/lib/subscription-season-row-note";
 import {
   effectiveSubscriptionBehavior,
   isSubscriptionNotRequiredForMembershipType,
 } from "@/lib/membership-types";
 import { UNASSIGNED_MEMBERSHIP_TYPE_VALUE } from "@/lib/membership-type-filter";
+import { subscriptionCategoryFilterWhere } from "@/lib/subscription-category-filter";
 import { fixedClubClock } from "@/lib/club-time";
 import { clubTime } from "@/lib/club-time/server";
 import { clubDownloadFilename } from "@/lib/club-download-filename";
@@ -34,12 +41,6 @@ import {
 import { requireRecentAuth } from "@/lib/require-recent-auth";
 
 const AGE_TIER_VALUES = Object.values(AgeTier);
-const SUBSCRIPTION_STATUS_FILTERS = [
-  "PAID",
-  "UNPAID",
-  "OVERDUE",
-  "NOT_INVOICED",
-] as const;
 const MEMBER_LIFECYCLE_STATUS_FILTERS = [
   "active",
   "inactive",
@@ -74,55 +75,18 @@ export async function GET(req: NextRequest) {
   // container's month (CT-4, #2870). `now` is pinned so the whole export is one
   // moment's answer.
   const currentSeasonYear = clubSeasonYear(club.zone, fixedClubClock(now));
-  const ageTierSettings = await getAgeTierSettings();
-  const notRequiredAgeTiers = new Set(
-    ageTierSettings
-      .filter((setting) => setting.subscriptionRequiredForBooking === false)
-      .map((setting) => setting.tier),
-  );
-  // #2149: mirror the members-list filter exactly — membership type is the
-  // authority. Exempt when the assigned season type is NOT_REQUIRED, or (no
-  // assignment) the role's default built-in type is NOT_REQUIRED. See
-  // admin-members-service for the full rationale.
-  const notRequiredSubscriptionConditions = [
-    {
-      AND: [
-        {
-          seasonalMembershipAssignments: {
-            none: { seasonYear: currentSeasonYear },
-          },
-        },
-        { role: { in: [...OPERATIONAL_ROLE_VALUES, ...NON_MEMBER_ROLE_VALUES] } },
-      ],
-    },
-    {
-      seasonalMembershipAssignments: {
-        some: {
-          seasonYear: currentSeasonYear,
-          membershipType: { subscriptionBehavior: "NOT_REQUIRED" },
-        },
-      },
-    },
-    // #2041/#2149: mirror the members-list filter and the displayed flag's
-    // row-dominance branch. A BASED_ON_AGE_TIER assignment with a NOT_REQUIRED
-    // current-season row is exempt even when the age tier is liable
-    // (mid-season tier promotion). See admin-members-service for the full
-    // rationale on why the assignment gate is required.
-    {
-      seasonalMembershipAssignments: {
-        some: {
-          seasonYear: currentSeasonYear,
-          membershipType: { subscriptionBehavior: "BASED_ON_AGE_TIER" },
-        },
-      },
-      subscriptions: {
-        some: { seasonYear: currentSeasonYear, status: "NOT_REQUIRED" },
-      },
-    },
-    ...(notRequiredAgeTiers.size > 0
-      ? [{ ageTier: { in: Array.from(notRequiredAgeTiers) } }]
-      : []),
-  ];
+  const [ageTierSettings, lockoutSettings] = await Promise.all([
+    getAgeTierSettings(),
+    loadMembershipLockoutSettings(),
+  ]);
+  // #2149/#5190: mirror the members-list filter exactly — the shared liability
+  // rule on the billing side until the club chooses (Q2), from the same settings
+  // as the per-row column below.
+  const notRequiredSubscriptionConditions = subscriptionNotRequiredMemberConditions({
+    seasonYear: currentSeasonYear,
+    ageTierSettings,
+    liabilitySettings: lockoutSettings,
+  });
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const where: Record<string, any> = {};
@@ -202,6 +166,10 @@ export async function GET(req: NextRequest) {
     });
   }
 
+  // #5248: the same subscription-category filter as the list endpoint.
+  const categoryWhere = subscriptionCategoryFilterWhere(sp.get("subscriptionCategory"), currentSeasonYear);
+  if (categoryWhere) andConditions.push(categoryWhere);
+
   const xeroLinkedFilter = sp.get("xeroLinked");
   if (xeroLinkedFilter === "true") {
     andConditions.push({ xeroContactId: { not: null } });
@@ -248,32 +216,13 @@ export async function GET(req: NextRequest) {
     );
   }
 
-  const subscriptionFilter = sp.get("subscription");
-  if (subscriptionFilter === "NOT_REQUIRED") {
-    andConditions.push({ OR: notRequiredSubscriptionConditions });
-  } else if (subscriptionFilter === "NONE") {
-    // #2149: no blanket role exclusion — see admin-members-service.
-    andConditions.push(
-      { NOT: { OR: notRequiredSubscriptionConditions } },
-      {
-        subscriptions: { none: { seasonYear: currentSeasonYear } },
-      },
-    );
-  } else if (
-    subscriptionFilter &&
-    (SUBSCRIPTION_STATUS_FILTERS as readonly string[]).includes(
-      subscriptionFilter,
-    )
-  ) {
-    andConditions.push(
-      { NOT: { OR: notRequiredSubscriptionConditions } },
-      {
-        subscriptions: {
-          some: { seasonYear: currentSeasonYear, status: subscriptionFilter },
-        },
-      },
-    );
-  }
+  // #2149/#5190: the members list's own filter, so the CSV holds the same rows.
+  andConditions.push(
+    ...memberListSubscriptionFilterConditions(sp.get("subscription"), {
+      seasonYear: currentSeasonYear,
+      notRequiredConditions: notRequiredSubscriptionConditions,
+    }),
+  );
 
   const familyGroupFilter = sp.get("familyGroup");
   if (familyGroupFilter === "none") {
@@ -325,7 +274,8 @@ export async function GET(req: NextRequest) {
         comments: true,
         subscriptions: {
           where: { seasonYear: currentSeasonYear },
-          select: { status: true },
+          // #5190: the row-state columns the billing note reads.
+          select: SEASON_ROW_STATE_SELECT,
           take: 1,
         },
         seasonalMembershipAssignments: {
@@ -356,6 +306,24 @@ export async function GET(req: NextRequest) {
 
     // Optional fields are filtered so the header and data rows stay aligned.
     type MemberRow = (typeof members)[number];
+    // One member's inputs to the shared liability rule (#5190), read by the
+    // status column and the note column alike.
+    const liabilityFactsOf = (m: MemberRow) => ({
+      subscriptionBehavior: effectiveSubscriptionBehavior(
+        (m.seasonalMembershipAssignments ?? [])[0]?.membershipType
+          .subscriptionBehavior,
+        m.role,
+      ),
+      member: m,
+      seasonYear: currentSeasonYear,
+      ageTierSettings,
+      liabilitySettings: lockoutSettings,
+    });
+    const noteOf = (m: MemberRow) =>
+      notRequiredRowBillingNote({
+        ...liabilityFactsOf(m),
+        seasonRow: m.subscriptions[0],
+      });
     const columns: Array<{ header: string; value: (m: MemberRow) => string }> =
       [
         ...(flags.showTitle
@@ -472,26 +440,28 @@ export async function GET(req: NextRequest) {
         {
           header: "Subscription Status",
           value: (m: MemberRow) =>
-            // #2149: membership type is the sole authority (role carries no
-            // exemption); mirrors the members-list flag and the SQL filter.
-            isSubscriptionNotRequiredForMembershipType({
-              subscriptionBehavior: effectiveSubscriptionBehavior(
-                (m.seasonalMembershipAssignments ?? [])[0]?.membershipType
-                  .subscriptionBehavior,
-                m.role,
-              ),
-              ageTier: m.ageTier,
-              notRequiredAgeTiers,
-              hasNotRequiredSeasonRow:
-                m.subscriptions[0]?.status === "NOT_REQUIRED",
-            })
-              ? "NOT_REQUIRED"
-              : m.subscriptions[0]?.status || "NONE",
+            // #2149/#5190: the members list's status, from the same rule; a
+            // noted row shows billing's status, as the filter matches it.
+            listSubscriptionStatus({
+              notRequired: isSubscriptionNotRequiredForMembershipType({
+                ...liabilityFactsOf(m),
+                seasonRowStatus: m.subscriptions[0]?.status,
+              }),
+              seasonRowStatus: m.subscriptions[0]?.status,
+              billingNote: noteOf(m),
+            }) ?? "NONE",
         },
         { header: "Comments", value: (m: MemberRow) => csvEscape(m.comments || "") },
         {
           header: "Created At",
           value: (m: MemberRow) => new Date(m.createdAt).toISOString(),
+        },
+        {
+          // #5190 (owner decision 22 Nov 2026): the members list's row note,
+          // so the export carries the same fact. Empty for every other row.
+          // Last, so every earlier column keeps its position.
+          header: "Subscription Note",
+          value: (m: MemberRow) => csvEscape(noteOf(m) ?? ""),
         },
       ];
 

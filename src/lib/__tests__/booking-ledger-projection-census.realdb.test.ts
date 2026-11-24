@@ -38,6 +38,7 @@
  */
 import type { PrismaClient } from "@prisma/client";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { HAND_BACK_CENSUS_CLASSES } from "@/lib/member-money";
 import { releaseBookingJournalForTeardown } from "./support/booking-financial-history-teardown";
 
 import type { BookingLedgerCensusReport } from "@/lib/booking-ledger-projection-census-report";
@@ -486,5 +487,28 @@ const NOTHING = { disagreements: [], coverage: [], integrity: [], classes: [] };
     expect(paid.classes.REFUND_APPEAL_PAID.instances.filter((instance) => instance.bookingId === BANK_APPEAL)).toEqual([
       expect.objectContaining({ identity: "PRICE", cents: -4_000 }),
     ]);
+  }, 120_000);
+
+  it("#5185: report v3 agrees on the real writers' bookings, and a raise that skipped its R05 holds the gate as a hand-back class", async () => {
+    // CASH's R01 is in the journal (the real settle), and its hand-back was raised and paid by the real writers.
+    const report = await census();
+    expect(report.identities.JOURNAL_REFUND_PAYABLE.applicable).toBeGreaterThan(0);
+    expect(report.disagreements.filter((row) => row.bookingId.startsWith("race-3583-") && row.identity === "JOURNAL_REFUND_PAYABLE")).toEqual([]);
+    expect(report.integrity.findings.filter((finding) => finding.bookingId.startsWith("race-3583-") && (HAND_BACK_CENSUS_CLASSES as readonly string[]).includes(finding.kind))).toEqual([]);
+
+    // A hand-back task written as a door that skipped its R05 would leave it: in the hand-back era, with no debt.
+    const task = await prisma.manualRefundTask.create({
+      data: { bookingId: CASH, paymentId: `${CASH}-payment`, amountCents: 1_000, raisedAmountCents: 1_000, kind: "CANCELLED_BOOKING_HAND_BACK", reason: "race 3583: a raise with no journal debt" },
+      select: { id: true },
+    });
+    try {
+      const held = await census();
+      expect(about(held, CASH)).toEqual({ ...NOTHING, integrity: ["HAND_BACK_WITHOUT_EVENT"], classes: ["REFUND_MIRROR_HAND_BACK:REFUNDED"] });
+      expect(held.integrity.findings.find((finding) => finding.bookingId === CASH)).toMatchObject({ lineId: task.id });
+      expect(held.integrity.counts.HAND_BACK_WITHOUT_EVENT).toBeGreaterThanOrEqual(1);
+      expect(held.verdict).toBe("GATE_CLOSED");
+    } finally {
+      await prisma.manualRefundTask.delete({ where: { id: task.id } });
+    }
   }, 120_000);
 });

@@ -8,6 +8,7 @@
  * most of the code and none of it shared with the event alerts.
  */
 import { escapeHtml } from "./escape";
+import { storedShortBookingId } from "@/lib/booking-reference";
 import {
   alertBox,
   BASE_URL,
@@ -407,7 +408,7 @@ export function adminCreditSyncDriftTemplate(report: CreditSyncDriftReportEmail,
       return `
       <tr>
         <td style="padding: 8px 12px; font-size: 13px; border-bottom: 1px solid ${p.mist}; color: ${p.deep};">${escapeHtml(drift.memberName)}</td>
-        <td style="padding: 8px 12px; font-size: 13px; border-bottom: 1px solid ${p.mist}; color: ${p.deep};">${escapeHtml(drift.bookingId.slice(0, 8))}</td>
+        <td style="padding: 8px 12px; font-size: 13px; border-bottom: 1px solid ${p.mist}; color: ${p.deep};">${escapeHtml(storedShortBookingId(drift.bookingId))}</td>
         <td style="padding: 8px 12px; font-size: 13px; border-bottom: 1px solid ${p.mist}; color: ${p.deep};">${escapeHtml(creditSyncDriftDirectionLabel(drift.kind))}</td>
         <td style="padding: 8px 12px; font-size: 13px; border-bottom: 1px solid ${p.mist}; color: ${p.deep};">${formatMoneyCents(drift.localCents, format)}</td>
         <td style="padding: 8px 12px; font-size: 13px; border-bottom: 1px solid ${p.mist}; color: ${p.deep};">${formatMoneyCents(drift.xeroCents, format)}</td>

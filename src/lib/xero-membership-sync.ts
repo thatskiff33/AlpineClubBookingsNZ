@@ -42,7 +42,7 @@ import {
   xeroInstant,
 } from "@/lib/xero-provider-dates";
 import { loadMembershipLockoutSettings } from "@/lib/membership-lockout-settings";
-import { requiresPaidSubscriptionForAgeTierFromSettings } from "@/lib/member-subscription-eligibility";
+import { owesSubscriptionForAccess } from "@/lib/subscription-lockout-facts";
 import { enqueueHostingCoverageReevaluationForMember } from "@/lib/adult-member-hosting-review";
 import { isHostingCoverageParticipantRetry } from "@/lib/adult-member-hosting-queue-participants";
 import { settleHostingCoverageAfterCommit } from "@/lib/adult-member-hosting-coverage-drain";
@@ -568,21 +568,13 @@ export async function checkMembershipStatus(
     { memberId, seasonYear: year },
   );
 
-  // #2041: BASED_ON_AGE_TIER dominance. If the sweep already wrote a
-  // NOT_REQUIRED row for this season (the member was tier-exempt at season
-  // start) AND their current-season type defers to the age tier, that row is
-  // authoritative: a later manual mid-season tier promotion must not let a Xero
-  // sync re-mark them required and re-mint an invoice. The not-required outcome
-  // flows through the SAME writeXeroDerivedSubscriptionState NOT_REQUIRED path
-  // below, so Xero op shapes are byte-unchanged.
-  const ageTierNotRequiredRow =
-    manualPaidGuard?.status === "NOT_REQUIRED" &&
-    membershipTypePolicy?.subscriptionBehavior === "BASED_ON_AGE_TIER";
-
-  const subscriptionRequired =
-    membershipTypePolicy?.subscriptionBehavior !== "NOT_REQUIRED" &&
-    !ageTierNotRequiredRow &&
-    (await requiresPaidSubscriptionForAgeTierFromSettings(member.ageTier));
+  // #5190: a not-required member takes the SAME NOT_REQUIRED write below.
+  const subscriptionRequired = await owesSubscriptionForAccess({
+    subscriptionBehavior: membershipTypePolicy?.subscriptionBehavior,
+    member,
+    seasonRowStatus: manualPaidGuard?.status,
+    seasonYear: year,
+  });
 
   if (!subscriptionRequired) {
     const write = await writeXeroDerivedSubscriptionState({

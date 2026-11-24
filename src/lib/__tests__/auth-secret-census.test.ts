@@ -3,6 +3,7 @@ import ts from "typescript";
 import { describe, expect, it } from "vitest";
 
 import { relativeSource, sourceFiles } from "./support/booking-guest-night-writer-scan";
+import { CENSUS_TIMEOUT_MS } from "@/test/census-timeout";
 
 /**
  * #4638 / INV-SSOT: new signing paths use requireAuthSecret, not private copies.
@@ -87,5 +88,5 @@ describe("auth secret census", () => {
     }
     expect(env, "Use runtime-config; preserve only the documented distinct readers.").toEqual(ENV_READERS);
     expect(optional, "Use requireAuthSecret for new required signing keys.").toEqual(OPTIONAL_READERS);
-  });
+  }, CENSUS_TIMEOUT_MS);
 });

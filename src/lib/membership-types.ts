@@ -4,7 +4,15 @@ import type {
   MembershipTypeSubscriptionBehavior,
   Prisma,
   Role,
+  SubscriptionStatus,
 } from "@prisma/client";
+import type { AgeTierSettingData } from "@/lib/policies/age-tier";
+import {
+  ADMIN_LIST_LIABILITY_SIDE,
+  liabilityRuleFor,
+  resolveMemberSubscriptionLiability,
+  type SubscriptionLiabilitySettings,
+} from "@/lib/policies/subscription";
 import { buildUniqueCatalogueKey, normalizeCatalogueText } from "@/lib/catalogue-key";
 import { isKeyResolvedRateHolder } from "@/lib/membership-type-rate-coverage";
 
@@ -405,27 +413,41 @@ export async function buildUniqueMembershipTypeKey(
     Boolean(await db.membershipType.findUnique({ where: { key }, select: { id: true } })));
 }
 
+/**
+ * The built-in type a role falls back to when a member has no season
+ * assignment. Takes `Role` only (#5407), and maps each `Role` explicitly; an
+ * untyped value (a cast, a fixture) still returns the billable `FULL`, so an
+ * arbitrary string here could put a member on a type that owes a
+ * subscription. A caller holding a wider value narrows it at its own boundary
+ * (`isRole`, `isNonMemberRole`).
+ */
 export function defaultMembershipTypeKeyForRole(
-  role: Role | string,
+  role: Role,
 ): BuiltInMembershipTypeKey {
-  if (role === "SCHOOL") {
-    return "SCHOOL";
+  // Exhaustive (#5407): a new Role value fails to compile here until it is
+  // given its own type, rather than falling through to the billable FULL.
+  switch (role) {
+    case "USER":
+      return "FULL";
+    case "SCHOOL":
+      return "SCHOOL";
+    case "NON_MEMBER":
+      return "NON_MEMBER";
+    // #2149: operational accounts fall back to their own NOT_REQUIRED built-in
+    // types so a bare account (no explicit season assignment) is never treated
+    // as owing a subscription and, for LODGE, keeps member booking-rate access.
+    case "ADMIN":
+      return "ADMIN";
+    case "LODGE":
+      return "LODGE";
+    default: {
+      // Unreachable for a Role. An untyped value (a test fixture, a cast) keeps
+      // the answer it always had, so no runtime result changes here.
+      const unmapped: never = role;
+      void unmapped;
+      return "FULL";
+    }
   }
-  if (role === "NON_MEMBER") {
-    return "NON_MEMBER";
-  }
-  // #2149: operational accounts fall back to their own NOT_REQUIRED built-in
-  // types so a bare account (no explicit season assignment) is never treated as
-  // owing a subscription and — for LODGE — keeps member booking-rate access.
-  // Without this an un-remapped ADMIN/LODGE fell back to FULL (billable) once
-  // the role-based subscription exemption was dropped.
-  if (role === "ADMIN") {
-    return "ADMIN";
-  }
-  if (role === "LODGE") {
-    return "LODGE";
-  }
-  return "FULL";
 }
 
 /**
@@ -459,7 +481,7 @@ export function storedRoleDefaultMembershipTypeWhere(keys: string[]) {
  * caller is a client component that already holds the club's types.
  */
 export function defaultMembershipTypeNameForRole(
-  role: Role | string,
+  role: Role,
   liveTypes?: ReadonlyArray<{ key: string; name: string }>,
 ): string {
   const key = defaultMembershipTypeKeyForRole(role);
@@ -480,7 +502,7 @@ export function defaultMembershipTypeNameForRole(
  */
 export function effectiveSubscriptionBehavior(
   assignmentBehavior: MembershipTypeSubscriptionBehavior | null | undefined,
-  role: Role | string,
+  role: Role,
 ): MembershipTypeSubscriptionBehavior {
   if (assignmentBehavior) {
     return assignmentBehavior;
@@ -493,37 +515,31 @@ export function effectiveSubscriptionBehavior(
 }
 
 /**
- * Shared "subscription not required" (exempt) decision (#2149). Given a member's
- * EFFECTIVE membership-type subscription behaviour plus their age tier and
- * current-season subscription row, returns true when the member does not owe a
- * subscription. Consolidates the four divergent inline OR-chains onto one rule:
- *   - the membership type opts out entirely (NOT_REQUIRED), OR
- *   - the type defers to the age tier (BASED_ON_AGE_TIER) and a NOT_REQUIRED
- *     current-season row is authoritative (dominates a mid-season tier promotion,
- *     #2041), OR
- *   - the member's age tier is not subscription-liable.
- * This is the display-side companion to the booking gate
- * `requiresPaidSubscriptionForMemberForBooking`; the booking gate additionally
- * layers the Xero-enforcement bypass, which display surfaces deliberately omit.
+ * Shared "subscription not required" (exempt) decision for display surfaces
+ * (#2149): the admin members list, its CSV export and the subscriptions list.
+ * It is the ONE liability rule (#5190, `resolveMemberSubscriptionLiability`) on
+ * the side `ADMIN_LIST_LIABILITY_SIDE` names: billing (owner decision Q2,
+ * 22 Nov 2026). While the club is `NOT_CHOSEN` the flag says who the billing
+ * run charges, which can differ from who booking access lets book; once the
+ * club has chosen, the two are the same rule. Their SQL filters are built from
+ * the same settings and side by `subscriptionNotRequiredMemberConditions`.
  */
 export function isSubscriptionNotRequiredForMembershipType(params: {
   subscriptionBehavior: MembershipTypeSubscriptionBehavior | null | undefined;
-  ageTier: AgeTier | string | null | undefined;
-  notRequiredAgeTiers: ReadonlySet<string>;
-  hasNotRequiredSeasonRow: boolean;
+  member: { ageTier: AgeTier; dateOfBirth: Date | null };
+  seasonRowStatus: SubscriptionStatus | null | undefined;
+  seasonYear: number;
+  ageTierSettings: AgeTierSettingData[];
+  liabilitySettings: SubscriptionLiabilitySettings;
 }): boolean {
-  if (params.subscriptionBehavior === "NOT_REQUIRED") {
-    return true;
-  }
-  if (
-    params.subscriptionBehavior === "BASED_ON_AGE_TIER" &&
-    params.hasNotRequiredSeasonRow
-  ) {
-    return true;
-  }
-  return (
-    params.ageTier != null && params.notRequiredAgeTiers.has(params.ageTier)
-  );
+  return !resolveMemberSubscriptionLiability({
+    subscriptionBehavior: params.subscriptionBehavior,
+    member: params.member,
+    seasonRowStatus: params.seasonRowStatus,
+    seasonYear: params.seasonYear,
+    rule: liabilityRuleFor(ADMIN_LIST_LIABILITY_SIDE, params.liabilitySettings),
+    ageTierSettings: params.ageTierSettings,
+  }).owes;
 }
 
 // test seam

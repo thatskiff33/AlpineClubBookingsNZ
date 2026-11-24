@@ -508,7 +508,7 @@ let priorXeroModule: { xeroIntegration: boolean } | null = null;
       // subscription-liable (the club's default tiers), but the per-family fee
       // keeps the child in the family path, so they reach the closed-charge rule.
       const { getAgeTierSettings, invalidateAgeTierCache } = await import("@/lib/age-tier");
-      const { requiresPaidSubscriptionForAgeTier } = await import("@/lib/member-subscription-eligibility");
+      const { requiresPaidSubscriptionForAgeTier } = await import("@/lib/policies/subscription");
       invalidateAgeTierCache();
       expect(requiresPaidSubscriptionForAgeTier("CHILD", await getAgeTierSettings())).toBe(false);
       await prisma.membershipType.update({ where: { id: TYPE_ID }, data: { subscriptionBehavior: "BASED_ON_AGE_TIER" } });

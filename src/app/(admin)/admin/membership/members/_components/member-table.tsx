@@ -10,6 +10,7 @@ import { Spinner } from "@/components/ui/spinner"
 import { StatusChip } from "@/components/ui/status-chip"
 import { AdminDataTable } from "@/components/admin/admin-data-table"
 import { SortHeader } from "@/components/admin/sort-header"
+import { SubscriptionBillingNote } from "@/components/admin/subscription-billing-note"
 import {
   TableBody,
   TableCell,
@@ -123,6 +124,21 @@ function InfoChip({
       className={`inline-flex items-center gap-1 rounded-md border border-transparent px-2 py-0.5 text-xs font-medium whitespace-nowrap ${CHIP_TONE_CLASSES[tone]} ${className ?? ""}`}
     >
       {children}
+    </span>
+  )
+}
+
+/** #5248: the member's billing category under Type – Tier, when not Individual. */
+function MemberSubscriptionCategoryLabel({
+  category,
+}: {
+  category: Member["currentSubscriptionCategory"]
+}) {
+  if (!category) return null
+  return (
+    <span className="block text-xs text-muted-foreground whitespace-nowrap">
+      {category.name}
+      {category.isActive ? "" : " (archived)"}
     </span>
   )
 }
@@ -325,6 +341,7 @@ export function MemberTable({
                     membershipTypes,
                   )}
                 </span>
+                <MemberSubscriptionCategoryLabel category={member.currentSubscriptionCategory} />
               </TableCell>
               <TableCell>
                 <StatusChip kind="lifecycle" value={lifecycleConfig.label} />
@@ -356,9 +373,7 @@ export function MemberTable({
               <TableCell>
                 {member.subscriptionXeroInvoiceId ? (
                   <a
-                    href={buildXeroInvoiceUrl(member.subscriptionXeroInvoiceId, {
-                      shortCode: xeroOrgShortCode,
-                    })}
+                    href={buildXeroInvoiceUrl(member.subscriptionXeroInvoiceId, { shortCode: xeroOrgShortCode })}
                     target="_blank"
                     rel="noopener noreferrer"
                     className="inline-flex items-center gap-1"
@@ -369,6 +384,7 @@ export function MemberTable({
                 ) : (
                   subscriptionChip
                 )}
+                <SubscriptionBillingNote note={member.subscriptionBillingNote} />
               </TableCell>
               <TableCell>
                 <div className="space-y-1">

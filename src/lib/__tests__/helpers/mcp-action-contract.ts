@@ -22,6 +22,13 @@
  *
  * Every nested shape must be exercised: a null or an empty list where the
  * shape names fields fails, so a fixture cannot hide a leaked field.
+ *
+ * A route with more than one success answer (ALP-794: one promo code or
+ * several, a same-lodge or a cross-lodge waitlist offer) has a `returns` that
+ * names the fields of every answer, and no one answer carries them all. Its
+ * tests pass `oneOfSeveralAnswers`: the answer may then leave out a field, or
+ * leave a nested value null or empty, but it still may carry no field the
+ * shape does not name. Each answer is run by its own test.
  */
 import { NextRequest } from "next/server";
 import { expect } from "vitest";
@@ -41,7 +48,15 @@ export function officerMemberSession(id = "officer-1") {
 
 type RouteHandler = (request: never, context: never) => Promise<Response>;
 
-function requestFor(
+/**
+ * The request and route context the dispatcher's loopback call hands
+ * `action`'s handler for `args`, built from the catalogue entry alone (method,
+ * path, and where each argument goes), with the principal header only when
+ * `viaConnection`. The arguments must pass the action's own schema. For a
+ * test that cannot use `expectActionContract`, such as an answer whose keys
+ * vary by outcome, so it still sends only what the app could send.
+ */
+export function buildActionRequest(
   action: McpAction,
   args: Readonly<Record<string, unknown>>,
   viaConnection: boolean,
@@ -68,7 +83,10 @@ function requestFor(
   };
 }
 
-function expectField(value: unknown, field: ConnectionField, path: string): void {
+/** `exact`: every field of the shape, every nested shape filled. `within`: no field outside the shape. */
+type Strictness = "exact" | "within";
+
+function expectField(value: unknown, field: ConnectionField, path: string, strictness: Strictness): void {
   if (field === true) {
     const plain = (item: unknown) =>
       item === null || ["string", "number", "boolean"].includes(typeof item);
@@ -77,11 +95,12 @@ function expectField(value: unknown, field: ConnectionField, path: string): void
   }
   // A nested shape is checked only where the fixture fills it: a null or an
   // empty list would let any field through unseen, so the fixture must carry
-  // at least one full entry.
+  // at least one full entry, unless another answer of the action fills it.
+  if (strictness === "within" && (value === null || (Array.isArray(value) && value.length === 0))) return;
   expect(value, `${path} carries a value the shape can be checked against`).not.toBeNull();
   if (Array.isArray(value)) {
     expect(value.length, `${path} carries at least one entry the shape can be checked against`).toBeGreaterThan(0);
-    value.forEach((item, index) => expectField(item, field, `${path}[${index}]`));
+    value.forEach((item, index) => expectField(item, field, `${path}[${index}]`, strictness));
     return;
   }
   expect(typeof value, `${path} is an object`).toBe("object");
@@ -90,17 +109,25 @@ function expectField(value: unknown, field: ConnectionField, path: string): void
     (symbol) => (field as unknown as Record<symbol, ConnectionField>)[symbol],
   )[0];
   if (entryField !== undefined) {
-    for (const [key, inner] of Object.entries(record)) expectField(inner, entryField, `${path}.${key}`);
+    for (const [key, inner] of Object.entries(record)) expectField(inner, entryField, `${path}.${key}`, strictness);
     return;
   }
-  expectExactShape(record, field as ConnectionShape, path);
+  expectShape(record, field as ConnectionShape, path, strictness);
 }
 
-function expectExactShape(value: Record<string, unknown>, shape: ConnectionShape, path: string): void {
-  expect(Object.keys(value).sort(), `${path} has exactly the fields the action returns`).toEqual(
-    Object.keys(shape).sort(),
-  );
-  for (const [key, field] of Object.entries(shape)) expectField(value[key], field, `${path}.${key}`);
+function expectShape(value: Record<string, unknown>, shape: ConnectionShape, path: string, strictness: Strictness): void {
+  if (strictness === "exact") {
+    expect(Object.keys(value).sort(), `${path} has exactly the fields the action returns`).toEqual(
+      Object.keys(shape).sort(),
+    );
+  } else {
+    const outside = Object.keys(value).filter((key) => !Object.prototype.hasOwnProperty.call(shape, key));
+    expect(outside, `${path} has no field the action does not return`).toEqual([]);
+  }
+  for (const [key, field] of Object.entries(shape)) {
+    if (strictness === "within" && !(key in value)) continue;
+    expectField(value[key], field, `${path}.${key}`, strictness);
+  }
 }
 
 /**
@@ -111,18 +138,26 @@ export async function expectActionContract(options: {
   actionId: string;
   handler: RouteHandler;
   args?: Readonly<Record<string, unknown>>;
+  /** The route has several success answers and this is one of them (see the module note). */
+  oneOfSeveralAnswers?: true;
 }): Promise<{ connection: unknown; browser: unknown }> {
   const action = findMcpAction(options.actionId);
   expect(action, `${options.actionId} is in the catalogue`).toBeDefined();
   const run = async (viaConnection: boolean) => {
-    const { request, context } = requestFor(action!, options.args ?? {}, viaConnection);
+    const { request, context } = buildActionRequest(action!, options.args ?? {}, viaConnection);
     const call = options.handler as unknown as (r: Request, c: unknown) => Promise<Response>;
     const response = await call(request, context);
     expect(response.status, `${options.actionId} succeeds`).toBeLessThan(300);
     return response.json() as Promise<unknown>;
   };
   const connection = await run(true);
-  expectExactShape(connection as Record<string, unknown>, action!.returns, options.actionId);
+  expect(connection, `${options.actionId} answers with an object`).toEqual(expect.any(Object));
+  expectShape(
+    connection as Record<string, unknown>,
+    action!.returns,
+    options.actionId,
+    options.oneOfSeveralAnswers ? "within" : "exact",
+  );
   const browser = await run(false);
   return { connection, browser };
 }

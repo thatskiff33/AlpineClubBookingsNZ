@@ -17,8 +17,13 @@ import {
 } from "@/components/ui/select"
 import { useAccessRoleOptions } from "@/hooks/use-access-role-options"
 import type { MembershipTypeOption } from "@/hooks/use-membership-type-options"
+import {
+  subscriptionCategoryOptionLabel,
+  type SubscriptionCategoryOption,
+} from "@/hooks/use-subscription-category-options"
 import { UNASSIGNED_MEMBERSHIP_TYPE_VALUE } from "@/lib/membership-type-filter"
-import { NON_MEMBER_ROLE_VALUES, ROLE_LABELS } from "@/lib/member-roles"
+import { NO_SUBSCRIPTION_CATEGORY_VALUE } from "@/lib/subscription-category-filter"
+import { isNonMemberRole, NON_MEMBER_ROLE_VALUES, ROLE_LABELS } from "@/lib/member-roles"
 import {
   LOGIN_STAGE_FILTER_VALUES,
   LOGIN_STAGE_LABELS,
@@ -30,6 +35,34 @@ import {
 } from "../_age-tier-filter-values"
 import type { Filters, XeroContactGroup, XeroFeatureFlags } from "../_types"
 import { filterLabelMap, filterValueLabels } from "../_utils"
+
+/** #5248: the members list's subscription-category filter; "" is no filter. */
+function SubscriptionCategoryFilterSelect({
+  value,
+  options,
+  onChange,
+}: {
+  value: string
+  options: SubscriptionCategoryOption[]
+  onChange: (value: string) => void
+}) {
+  return (
+    <Select value={value || "all"} onValueChange={(next) => onChange(next === "all" ? "" : next)}>
+      <SelectTrigger className="w-[190px]" aria-label="Filter by subscription category">
+        <SelectValue placeholder="Subscription Category" />
+      </SelectTrigger>
+      <SelectContent>
+        <SelectItem value="all">All Subscription Categories</SelectItem>
+        <SelectItem value={NO_SUBSCRIPTION_CATEGORY_VALUE}>Individual (no category)</SelectItem>
+        {options.map((category) => (
+          <SelectItem key={category.id} value={category.id}>
+            {subscriptionCategoryOptionLabel(category)}
+          </SelectItem>
+        ))}
+      </SelectContent>
+    </Select>
+  )
+}
 
 interface MemberFilterToolbarProps {
   search: string
@@ -43,6 +76,12 @@ interface MemberFilterToolbarProps {
    * would fetch the same endpoint twice on one page load.
    */
   membershipTypes?: MembershipTypeOption[]
+  /**
+   * The club's subscription categories, built-in Individual excluded, archived
+   * included. Passed in for the same reason as `membershipTypes`: the bulk
+   * category dialog on the same page needs the list too.
+   */
+  subscriptionCategories?: SubscriptionCategoryOption[]
   onSearchChange: (value: string) => void
   onSetFilter: (key: keyof Filters, value: string) => void
   resetDisabled: boolean
@@ -55,6 +94,7 @@ export function MemberFilterToolbar({
   xeroFeatures,
   xeroContactGroupsList,
   membershipTypes,
+  subscriptionCategories,
   onSearchChange,
   onSetFilter,
   resetDisabled,
@@ -66,15 +106,15 @@ export function MemberFilterToolbar({
   const membershipTypeOptions = (membershipTypes ?? []).filter(
     (type) => type.isActive,
   )
+  // Archived categories stay offered: finding members left in one is the point.
+  const subscriptionCategoryOptions = subscriptionCategories ?? []
   // The `role` filter param is shared by the Access Role and Non-Member
   // Category selects (backend reads a single `role` param); the two categories
   // are mutually exclusive, so each select shows its neutral "All" state when
   // the active value belongs to the other dimension. The separate Membership
   // Type select below writes its own `membershipType` param (DB membership
   // types) so Role and MembershipType are no longer conflated (#1445).
-  const roleFilterIsNonMemberCategory = (
-    NON_MEMBER_ROLE_VALUES as readonly string[]
-  ).includes(filters.role)
+  const roleFilterIsNonMemberCategory = isNonMemberRole(filters.role)
   const getFilterDisplayValue = (key: string, value: string) => {
     if (key === "xeroContactGroup") {
       return (
@@ -87,11 +127,15 @@ export function MemberFilterToolbar({
         membershipTypeOptions.find((type) => type.id === value)?.name ?? value
       )
     }
+    if (key === "subscriptionCategory" && value !== NO_SUBSCRIPTION_CATEGORY_VALUE) {
+      const category = subscriptionCategoryOptions.find((option) => option.id === value)
+      return category ? subscriptionCategoryOptionLabel(category) : value
+    }
     return filterValueLabels[key as keyof Filters]?.[value] ?? value
   }
 
   // Count of active filters that live under "More filters" (Access Role,
-  // Membership Type and Status stay in the always-visible primary row). The
+  // Membership Type, Subscription Category and Status stay in the always-visible primary row). The
   // shared `role` param counts as advanced only when it holds a Non-Member
   // Category value (that control lives under the disclosure; the Access Role
   // select is primary). Presentation only — the params are unchanged.
@@ -195,6 +239,11 @@ export function MemberFilterToolbar({
               ))}
             </SelectContent>
           </Select>
+          <SubscriptionCategoryFilterSelect
+            value={filters.subscriptionCategory}
+            options={subscriptionCategoryOptions}
+            onChange={(value) => onSetFilter("subscriptionCategory", value)}
+          />
           <Select
             value={filters.lifecycleStatus || "nonArchived"}
             onValueChange={(value) =>
