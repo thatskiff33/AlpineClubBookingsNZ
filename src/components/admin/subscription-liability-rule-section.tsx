@@ -287,7 +287,7 @@ export function SubscriptionLiabilityRuleSection() {
       <Card {...section.sectionRegionProps}>
         <CardHeader className="flex flex-row items-start justify-between gap-3">
           <div>
-            <CardTitle {...section.titleProps}>Who owes a subscription</CardTitle>
+            <CardTitle {...section.titleProps} headingLevel={2}>Who owes a subscription</CardTitle>
             <CardDescription>
               One rule decides both who is invoiced for a subscription and who
               must pay before booking.
