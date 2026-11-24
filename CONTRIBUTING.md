@@ -426,7 +426,7 @@ gets a runner.
 
 | Gate | Runner queue | Longest job limit | Total wait | Gate job's limit |
 | --- | --- | --- | --- | --- |
-| `verify` | 60 | 45 (`Test shard`; `Real-PostgreSQL suites (all)` is 35) | 110 | 130 |
+| `verify` | 60 | 45 (`Test shard`; `Real-PostgreSQL suites (all)` is 45) | 110 | 130 |
 | `Playwright E2E`, shards 2-3 | 25 | 45 (`E2E shard`) | 75 | 165 |
 
 The numbers are set in the workflows. `scripts/ci/require-test-shards.test.mjs`
