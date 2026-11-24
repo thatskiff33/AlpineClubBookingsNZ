@@ -104,6 +104,8 @@ import {
   supersededRefundReportKeys,
   supersededRefundReportSettled,
 } from "@/lib/superseded-additional-refund";
+import { confirmAlertCooldownSend, releaseUnsentAlertCooldown } from "@/lib/alert-cooldown";
+import { takeOnceEverClaim } from "@/lib/once-ever-claim-context";
 import { SUPERSEDED_PAYMENT_REFUND_METADATA_REASON } from "@/lib/payment-recovery-keys";
 import { PAYMENT_RECOVERY_STALE_PROCESSING_MS } from "@/lib/payment-recovery-constants";
 import { FROZEN_TEST_CLOCK_BASE_ISO } from "./helpers/clock";
@@ -503,13 +505,44 @@ describe("reportSupersededPaymentRefund sends once per recovery row (#4690)", ()
     expect(sent()).toEqual(ONCE_EACH);
   });
 
-  it("nobody can receive the alert: the report is settled, and a second call sends nothing", async () => {
-    mocks.sendAdminAlert.mockResolvedValue(NOBODY_OPTED_IN);
+  it("MUTATION: nobody can receive the alert - not settled, it throws, and the row's next attempt sends it once an admin can (#5255)", async () => {
+    mocks.sendAdminAlert.mockResolvedValueOnce(NOBODY_OPTED_IN);
 
-    await report();
-    await report();
+    await expect(report()).rejects.toBeInstanceOf(SupersededRefundReportNotSettledError);
+    expect(await supersededRefundReportSettled(OPERATION_ID)).toBe(false);
 
-    expect(sent()).toEqual(ONCE_EACH);
+    await expect(report()).resolves.toBe("reported");
+    expect(sent()).toEqual({ ...ONCE_EACH, adminAlerts: 2 });
+    expect(await supersededRefundReportSettled(OPERATION_ID)).toBe(true);
+  });
+
+  /*
+   * #5255: the lost-alert path the sweep opened. Attempt A takes the alert's
+   * claim, then stalls past the sweep's 15-minute grace before its email rows
+   * are written; the sweep gives A's claim back; A resumes and every
+   * recipient's row is refused (its confirm under the old stamp fails), so the
+   * send returns with nothing sent or queued and without throwing. A must not
+   * write `reported`, or the alert is never sent and `isSent` says it was.
+   */
+  it("MUTATION: a send that stalls past the sweep and resumes with every copy refused - not settled, and the next attempt sends it", async () => {
+    mocks.sendAdminAlert.mockImplementationOnce(async () => {
+      const claim = takeOnceEverClaim();
+      if (!claim) throw new Error("the admin alert ran outside its once-ever claim");
+      // The stall: the payments cron's sweep gives the still-unsent claim back.
+      await expect(releaseUnsentAlertCooldown({ key: KEYS.alert, claimedAt: claim.claimedAt })).resolves.toBe(true);
+      // A resumes: its one recipient's row confirms under the old stamp and is refused (`recordClaimedEmailAttempt`).
+      await expect(confirmAlertCooldownSend({ key: KEYS.alert, claimedAt: claim.claimedAt })).resolves.toBe(false);
+      claim.rowWriteFailed = true;
+      return { deliveryAllowed: true, recipients: 1, sent: 0, queuedForRetry: 0, notDelivered: 1 };
+    });
+
+    await expect(report()).rejects.toBeInstanceOf(SupersededRefundReportNotSettledError);
+    expect(mocks.cooldowns.has(KEYS.reported)).toBe(false);
+    expect(await supersededRefundReportSettled(OPERATION_ID)).toBe(false);
+
+    // The row's next attempt claims afresh and the alert goes out, once.
+    await expect(report()).resolves.toBe("reported");
+    expect(sent()).toEqual({ ...ONCE_EACH, adminAlerts: 2 });
     expect(await supersededRefundReportSettled(OPERATION_ID)).toBe(true);
   });
 
