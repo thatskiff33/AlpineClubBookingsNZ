@@ -279,9 +279,9 @@ website-only `change_my_booking` sends the member to the booking's page, and
 
 Four **website-only** entries answer with the page to open and run nothing:
 `pay_for_booking` (card details are entered on the website, never in an AI
-app), `change_sign_in_details` (passwords and two-step sign-in) and
-`manage_connected_apps` (disconnecting apps) and `change_my_booking`
-(changing a booking's dates or guests, ALP-794).
+app), `change_my_booking` (changing a booking's dates or guests, ALP-794),
+`change_sign_in_details` (passwords and two-step sign-in) and
+`manage_connected_apps` (disconnecting apps).
 
 ### Family and membership (ALP-795)
 
@@ -370,7 +370,8 @@ reasons are permanent — those routes are never actions:
   what a booking costs, which the member confirms on the website: changing a
   booking or its dates, adding or removing a guest, confirming a draft booking
   and sending a guest a payment link. A member's refund review is not one of
-  them: it is a request an officer decides, so it is an ordinary write.
+  them: no money moves until an officer decides. It is `destructive`, because
+  it emails the club's officers at once and cannot be withdrawn.
 - **Declarations** — the member's own acknowledgements, consents and
   decisions: acknowledging a notice, confirming their details at onboarding,
   asking for their account to be deleted, a member guest agreeing to be on
