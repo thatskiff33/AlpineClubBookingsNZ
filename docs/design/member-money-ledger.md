@@ -736,6 +736,18 @@ row records (void or not in Xero; never when it carries money). The void
 handler releases before completing that row and once more after, so a record
 and a void in either order end released.
 
+Two crash windows are stated limits. Each needs a process crash inside an
+already narrow race. On the handler side, the void handler completes its VOID
+row and dies before its last release, while a record committed beside it read
+that row unfinished. On the recorder side, the recorder dies after its own row
+or its successor commits and before it reads the VOID row or re-reads the
+invoice's releases, after the void's last sweep has run. Either leaves cover
+live on a void invoice until repaired: a later record of that invoice reads the
+finished VOID row and releases it, but nothing schedules one, and on the
+abandon path, whose settlement no longer names the invoice, none runs. An
+operator notices it as the group's next invoice logging an `ALREADY_COVERED`
+conflict that never becomes cover while the invoice it names is void in Xero.
+
 | Rendered object | Ledger slice and coverage rule |
 | --- | --- |
 | Primary, supplementary or combined group invoice | Exact issued charge components, including fee coverage assigned once. Combined invoices consume child charge coverage; individual child invoices cannot consume it again. Pending bank-transfer obligations already have R01 postings. |
