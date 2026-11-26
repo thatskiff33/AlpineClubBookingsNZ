@@ -49,7 +49,7 @@ vi.mock("@/lib/public-content-revalidation", () => ({
   revalidatePublicSite: vi.fn(),
 }));
 vi.mock("@/lib/club-time/server", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("@/lib/club-time/server")>()),
+  ...((await importOriginal()) as typeof import("@/lib/club-time/server")),
   clubTodayDateOnlyInstant: vi.fn(async () => new Date("2026-07-01T00:00:00.000Z")),
 }));
 

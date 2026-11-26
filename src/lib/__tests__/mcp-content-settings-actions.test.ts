@@ -44,18 +44,18 @@ vi.mock("@/lib/public-content-revalidation", () => ({
   revalidatePublicSite: vi.fn(),
 }));
 vi.mock("@/lib/public-layout-cache", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("@/lib/public-layout-cache")>()),
+  ...((await importOriginal()) as typeof import("@/lib/public-layout-cache")),
   invalidatePublicClubIdentity: vi.fn(),
 }));
 vi.mock("@/lib/club-identity-settings", () => ({ primeClubIdentitySync: vi.fn() }));
 vi.mock("@/lib/email-theme", () => ({ primeEmailPalette: vi.fn() }));
 vi.mock("@/lib/club-theme", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("@/lib/club-theme")>()),
+  ...((await importOriginal()) as typeof import("@/lib/club-theme")),
   getClubThemeForAdmin: h.getClubThemeForAdmin,
   saveClubTheme: h.saveClubTheme,
 }));
 vi.mock("@/lib/whakapapa-report.server", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("@/lib/whakapapa-report.server")>()),
+  ...((await importOriginal()) as typeof import("@/lib/whakapapa-report.server")),
   fetchWhakapapaCurlData: h.fetchWhakapapaCurlData,
 }));
 
