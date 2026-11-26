@@ -413,6 +413,9 @@ export async function issueSplitGuestPaymentLink(
         ? { outcome: "withheld" }
         : { outcome: "transient_failure" };
     }
+    // #5298: a lost hand-over is a database fault, not the member's address.
+    // This email keeps no body, so nothing re-sends it and the link is revoked.
+    if (emailOutcome.status === "handover_lost") return { outcome: "transient_failure" };
 
     // Suppressed (or placeholder) recipient: the address really is the problem.
     return { outcome: "suppressed" };

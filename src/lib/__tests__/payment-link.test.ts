@@ -2487,6 +2487,27 @@ describe("issueSplitGuestPaymentLink (#1967)", () => {
     });
   });
 
+  it("reports a lost email hand-over (#5298) as transient, not an undeliverable address", async () => {
+    mockedBookingFindUnique
+      .mockResolvedValueOnce(splitChild() as never)
+      .mockResolvedValueOnce({ status: BookingStatus.PENDING } as never);
+    mockedPaymentLinkFindFirst.mockResolvedValue(null);
+    mockedPaymentLinkCreate.mockResolvedValue({ id: "pl-fresh" } as never);
+    vi.mocked(sendSplitGuestPaymentLinkEmail).mockResolvedValueOnce({
+      status: "handover_lost",
+      emailLogId: "log-1",
+    } as never);
+
+    expect(await issueSplitGuestPaymentLink("child-1", CLUB_FORMAT_TEST)).toEqual({
+      outcome: "transient_failure",
+    });
+    expect(mockedUpdateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ id: "pl-fresh", revokedAt: null }),
+      })
+    );
+  });
+
   it("reports a confirmed COPY as withheld, which is the deliberate bucket", async () => {
     /*
       Not transient: a copy is a copy until somebody re-declares it, so "try again
