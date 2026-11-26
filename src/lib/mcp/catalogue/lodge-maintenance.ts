@@ -40,10 +40,6 @@ import {
 
 import type { McpAction } from "../catalogue";
 
-// The handlers name these explicitly in `requireAdmin({ permission })`.
-const LODGE_VIEW = { area: "lodge", level: "view" } as const;
-const LODGE_EDIT = { area: "lodge", level: "edit" } as const;
-
 export const LODGE_MAINTENANCE_MCP_ACTIONS: readonly McpAction[] = [
   // --- The maintenance report queue ------------------------------------------
   {
@@ -57,7 +53,6 @@ export const LODGE_MAINTENANCE_MCP_ACTIONS: readonly McpAction[] = [
     kind: "read",
     returns: ADMIN_MAINTENANCE_REPORT_LIST_CONNECTION_SHAPE,
     core: false,
-    requires: LODGE_VIEW,
   },
   {
     id: "get_maintenance_report",
@@ -70,7 +65,6 @@ export const LODGE_MAINTENANCE_MCP_ACTIONS: readonly McpAction[] = [
     kind: "read",
     returns: ADMIN_MAINTENANCE_REPORT_CONNECTION_SHAPE,
     core: false,
-    requires: LODGE_VIEW,
   },
   {
     id: "set_maintenance_report_status",
@@ -85,7 +79,6 @@ export const LODGE_MAINTENANCE_MCP_ACTIONS: readonly McpAction[] = [
     kind: "destructive",
     returns: ADMIN_MAINTENANCE_REPORT_CONNECTION_SHAPE,
     core: false,
-    requires: LODGE_EDIT,
   },
   {
     id: "delete_maintenance_report_photo",
@@ -100,7 +93,6 @@ export const LODGE_MAINTENANCE_MCP_ACTIONS: readonly McpAction[] = [
     kind: "destructive",
     returns: ADMIN_MAINTENANCE_REPORT_CONNECTION_SHAPE,
     core: false,
-    requires: LODGE_EDIT,
   },
 
   // --- The question set ------------------------------------------------------
@@ -114,7 +106,6 @@ export const LODGE_MAINTENANCE_MCP_ACTIONS: readonly McpAction[] = [
     kind: "read",
     returns: ADMIN_MAINTENANCE_QUESTIONS_CONNECTION_SHAPE,
     core: false,
-    requires: LODGE_VIEW,
   },
   {
     id: "update_maintenance_report_questions",
@@ -127,7 +118,6 @@ export const LODGE_MAINTENANCE_MCP_ACTIONS: readonly McpAction[] = [
     kind: "destructive",
     returns: ADMIN_MAINTENANCE_QUESTIONS_SAVED_CONNECTION_SHAPE,
     core: false,
-    requires: LODGE_EDIT,
   },
 
   // --- The maintenance report policy -----------------------------------------
@@ -141,7 +131,6 @@ export const LODGE_MAINTENANCE_MCP_ACTIONS: readonly McpAction[] = [
     kind: "read",
     returns: ADMIN_MAINTENANCE_SETTINGS_CONNECTION_SHAPE,
     core: false,
-    requires: LODGE_VIEW,
   },
   {
     id: "update_maintenance_report_settings",
@@ -154,7 +143,6 @@ export const LODGE_MAINTENANCE_MCP_ACTIONS: readonly McpAction[] = [
     kind: "destructive",
     returns: ADMIN_MAINTENANCE_SETTINGS_SAVED_CONNECTION_SHAPE,
     core: false,
-    requires: LODGE_EDIT,
   },
 
   // --- The QR signs ----------------------------------------------------------
@@ -168,7 +156,6 @@ export const LODGE_MAINTENANCE_MCP_ACTIONS: readonly McpAction[] = [
     kind: "read",
     returns: ADMIN_MAINTENANCE_SIGN_LIST_CONNECTION_SHAPE,
     core: false,
-    requires: LODGE_VIEW,
   },
   {
     id: "set_maintenance_report_sign_active",
@@ -181,7 +168,6 @@ export const LODGE_MAINTENANCE_MCP_ACTIONS: readonly McpAction[] = [
     kind: "destructive",
     returns: ADMIN_MAINTENANCE_SIGN_SWITCHED_CONNECTION_SHAPE,
     core: false,
-    requires: LODGE_EDIT,
   },
 
   // --- Food-order settings ---------------------------------------------------
@@ -195,6 +181,5 @@ export const LODGE_MAINTENANCE_MCP_ACTIONS: readonly McpAction[] = [
     kind: "read",
     returns: ADMIN_FOOD_ORDER_SETTINGS_CONNECTION_SHAPE,
     core: false,
-    requires: LODGE_VIEW,
   },
 ];

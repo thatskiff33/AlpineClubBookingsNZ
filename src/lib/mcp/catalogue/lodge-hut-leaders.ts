@@ -49,11 +49,6 @@ import { routeIdParamsSchema } from "@/lib/route-id-params";
 
 import type { McpAction } from "../catalogue";
 
-// The handlers that name their own `requireAdmin({ permission })`; the census
-// holds each entry's `requires` to the handler's.
-const LODGE_VIEW = { area: "lodge", level: "view" } as const;
-const LODGE_EDIT = { area: "lodge", level: "edit" } as const;
-
 /** Said once on every action that may refuse a bed or the custodian with a 409. */
 const BED_HOLD_REFUSALS =
   "A held bed, or a custodian, takes a space at the lodge on each night: a 409 says when the lodge would be over capacity (send `confirmOverCapacity: true` after the officer agrees) or when it would narrow a whole-lodge hold (`amendOverlappingHolds: true`).";
@@ -71,7 +66,6 @@ export const LODGE_HUT_LEADER_MCP_ACTIONS: readonly McpAction[] = [
     kind: "read",
     returns: ADMIN_HUT_LEADER_LIST_CONNECTION_SHAPE,
     core: true,
-    requires: LODGE_VIEW,
   },
   {
     id: "create_hut_leader_assignment",
@@ -83,7 +77,6 @@ export const LODGE_HUT_LEADER_MCP_ACTIONS: readonly McpAction[] = [
     kind: "destructive",
     returns: ADMIN_HUT_LEADER_CREATED_CONNECTION_SHAPE,
     core: false,
-    requires: LODGE_EDIT,
   },
   {
     id: "update_hut_leader_assignment",
@@ -96,7 +89,6 @@ export const LODGE_HUT_LEADER_MCP_ACTIONS: readonly McpAction[] = [
     kind: "destructive",
     returns: ADMIN_HUT_LEADER_UPDATED_CONNECTION_SHAPE,
     core: false,
-    requires: LODGE_EDIT,
   },
   {
     id: "delete_hut_leader_assignment",
@@ -109,7 +101,6 @@ export const LODGE_HUT_LEADER_MCP_ACTIONS: readonly McpAction[] = [
     kind: "destructive",
     returns: ADMIN_LODGE_DONE_CONNECTION_SHAPE,
     core: false,
-    requires: LODGE_EDIT,
   },
   {
     id: "list_hut_leader_bed_options",
@@ -122,7 +113,6 @@ export const LODGE_HUT_LEADER_MCP_ACTIONS: readonly McpAction[] = [
     kind: "read",
     returns: ADMIN_HUT_LEADER_BED_OPTIONS_CONNECTION_SHAPE,
     core: false,
-    requires: LODGE_VIEW,
   },
   {
     id: "list_hut_leader_candidates",
@@ -161,7 +151,6 @@ export const LODGE_HUT_LEADER_MCP_ACTIONS: readonly McpAction[] = [
     kind: "read",
     returns: ADMIN_SCHOOL_HUT_LEADER_KINDS_CONNECTION_SHAPE,
     core: false,
-    requires: LODGE_VIEW,
   },
   {
     id: "update_school_hut_leader_kinds",
@@ -174,7 +163,6 @@ export const LODGE_HUT_LEADER_MCP_ACTIONS: readonly McpAction[] = [
     kind: "destructive",
     returns: ADMIN_SCHOOL_HUT_LEADER_KINDS_CONNECTION_SHAPE,
     core: false,
-    requires: LODGE_EDIT,
   },
 
   // --- The chore roster ------------------------------------------------------
@@ -190,7 +178,6 @@ export const LODGE_HUT_LEADER_MCP_ACTIONS: readonly McpAction[] = [
     kind: "read",
     returns: ADMIN_ROSTER_CONNECTION_SHAPE,
     core: false,
-    requires: LODGE_VIEW,
   },
   {
     id: "save_chore_roster",
@@ -206,7 +193,6 @@ export const LODGE_HUT_LEADER_MCP_ACTIONS: readonly McpAction[] = [
     kind: "destructive",
     returns: ADMIN_ROSTER_ACTION_CONNECTION_SHAPES.save,
     core: false,
-    requires: LODGE_EDIT,
   },
   {
     id: "regenerate_chore_roster",
@@ -222,7 +208,6 @@ export const LODGE_HUT_LEADER_MCP_ACTIONS: readonly McpAction[] = [
     kind: "destructive",
     returns: ADMIN_ROSTER_ACTION_CONNECTION_SHAPES.regenerate,
     core: false,
-    requires: LODGE_EDIT,
   },
   {
     id: "confirm_chore_roster",
@@ -237,7 +222,6 @@ export const LODGE_HUT_LEADER_MCP_ACTIONS: readonly McpAction[] = [
     kind: "destructive",
     returns: ADMIN_ROSTER_ACTION_CONNECTION_SHAPES.confirm,
     core: false,
-    requires: LODGE_EDIT,
   },
   {
     id: "email_chore_roster",
@@ -253,7 +237,6 @@ export const LODGE_HUT_LEADER_MCP_ACTIONS: readonly McpAction[] = [
     kind: "destructive",
     returns: ADMIN_ROSTER_ACTION_CONNECTION_SHAPES.email,
     core: false,
-    requires: LODGE_EDIT,
   },
   {
     id: "get_chore_roster_month_status",
@@ -266,6 +249,5 @@ export const LODGE_HUT_LEADER_MCP_ACTIONS: readonly McpAction[] = [
     kind: "read",
     returns: ADMIN_ROSTER_MONTH_STATUS_CONNECTION_SHAPE,
     core: false,
-    requires: LODGE_VIEW,
   },
 ];

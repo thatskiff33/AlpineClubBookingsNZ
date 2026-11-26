@@ -1208,9 +1208,10 @@ route census reject any remaining `not-yet` exclusion.
    actions go in a module of their own under `src/lib/mcp/catalogue/`,
    spread into `MCP_ACTIONS`, with their shapes under
    `src/lib/connection-shapes/`; when every route in the area is decided,
-   add the area to `MCP_DECIDED_ADMIN_AREAS` in `exclusions.ts`. If the
-   handler passes its own `permission` to `requireAdmin`, set `requires` to
-   it; the census fails until they match.
+   add the area to `MCP_DECIDED_ADMIN_AREAS` in `exclusions.ts`. Set
+   `requires` only where the handler demands more than the path's rule in
+   `admin-permissions.ts`, or the route sits outside `/api/admin`; the census
+   fails until the two match.
 2. Give it `returns`: an allow-list shape in
    [`connection-shapes.ts`](../../src/lib/connection-shapes.ts) (or its area's
    module: bookings,

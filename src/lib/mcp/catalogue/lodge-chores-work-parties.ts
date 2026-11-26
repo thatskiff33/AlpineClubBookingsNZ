@@ -32,11 +32,6 @@ import { routeIdParamsSchema } from "@/lib/route-id-params";
 
 import type { McpAction } from "../catalogue";
 
-// Every handler here names its own `requireAdmin({ permission })`; the census
-// holds each entry's `requires` to the handler's.
-const LODGE_VIEW = { area: "lodge", level: "view" } as const;
-const LODGE_EDIT = { area: "lodge", level: "edit" } as const;
-
 const CHORE_FIELDS =
   "how many people it takes, whether it is essential, who may do it (age restriction and youngest age), its place in the roster, time of day, how often it is due (daily, every so many days, or on given weekdays, 1 Monday to 7 Sunday), whether it is active, and its lodge";
 
@@ -52,7 +47,6 @@ export const LODGE_CHORE_WORK_PARTY_MCP_ACTIONS: readonly McpAction[] = [
     kind: "read",
     returns: ADMIN_CHORE_LIST_CONNECTION_SHAPE,
     core: false,
-    requires: LODGE_VIEW,
   },
   {
     id: "create_chore_template",
@@ -65,7 +59,6 @@ export const LODGE_CHORE_WORK_PARTY_MCP_ACTIONS: readonly McpAction[] = [
     kind: "destructive",
     returns: ADMIN_CHORE_CONNECTION_SHAPE,
     core: false,
-    requires: LODGE_EDIT,
   },
   {
     id: "update_chore_template",
@@ -79,7 +72,6 @@ export const LODGE_CHORE_WORK_PARTY_MCP_ACTIONS: readonly McpAction[] = [
     kind: "destructive",
     returns: ADMIN_CHORE_CONNECTION_SHAPE,
     core: false,
-    requires: LODGE_EDIT,
   },
   {
     id: "delete_chore_template",
@@ -92,7 +84,6 @@ export const LODGE_CHORE_WORK_PARTY_MCP_ACTIONS: readonly McpAction[] = [
     kind: "destructive",
     returns: ADMIN_LODGE_DONE_CONNECTION_SHAPE,
     core: false,
-    requires: LODGE_EDIT,
   },
 
   // --- Work parties ----------------------------------------------------------
@@ -106,7 +97,6 @@ export const LODGE_CHORE_WORK_PARTY_MCP_ACTIONS: readonly McpAction[] = [
     kind: "read",
     returns: ADMIN_WORK_PARTY_LIST_CONNECTION_SHAPE,
     core: false,
-    requires: LODGE_VIEW,
   },
   {
     id: "get_work_party_attendance",
@@ -119,7 +109,6 @@ export const LODGE_CHORE_WORK_PARTY_MCP_ACTIONS: readonly McpAction[] = [
     kind: "read",
     returns: ADMIN_WORK_PARTY_DETAIL_CONNECTION_SHAPE,
     core: false,
-    requires: LODGE_VIEW,
   },
   {
     id: "create_work_party",
@@ -132,7 +121,6 @@ export const LODGE_CHORE_WORK_PARTY_MCP_ACTIONS: readonly McpAction[] = [
     kind: "destructive",
     returns: ADMIN_WORK_PARTY_CREATED_CONNECTION_SHAPE,
     core: false,
-    requires: LODGE_EDIT,
   },
   {
     id: "update_work_party",
@@ -146,7 +134,6 @@ export const LODGE_CHORE_WORK_PARTY_MCP_ACTIONS: readonly McpAction[] = [
     kind: "destructive",
     returns: ADMIN_WORK_PARTY_UPDATED_CONNECTION_SHAPE,
     core: false,
-    requires: LODGE_EDIT,
   },
   {
     id: "delete_work_party",
@@ -159,7 +146,6 @@ export const LODGE_CHORE_WORK_PARTY_MCP_ACTIONS: readonly McpAction[] = [
     kind: "destructive",
     returns: ADMIN_LODGE_DONE_CONNECTION_SHAPE,
     core: false,
-    requires: LODGE_EDIT,
   },
   {
     id: "add_work_party_to_calendar",
@@ -172,6 +158,5 @@ export const LODGE_CHORE_WORK_PARTY_MCP_ACTIONS: readonly McpAction[] = [
     kind: "destructive",
     returns: ADMIN_WORK_PARTY_CALENDAR_CONNECTION_SHAPE,
     core: false,
-    requires: LODGE_EDIT,
   },
 ];

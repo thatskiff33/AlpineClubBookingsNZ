@@ -39,10 +39,6 @@ import {
 
 import type { McpAction } from "../catalogue";
 
-// The handlers name these explicitly in `requireAdmin({ permission })`.
-const LODGE_VIEW = { area: "lodge", level: "view" } as const;
-const LODGE_EDIT = { area: "lodge", level: "edit" } as const;
-
 export const LODGE_SETUP_MCP_ACTIONS: readonly McpAction[] = [
   // --- Lodges ----------------------------------------------------------------
   {
@@ -69,7 +65,6 @@ export const LODGE_SETUP_MCP_ACTIONS: readonly McpAction[] = [
     kind: "destructive",
     returns: ADMIN_LODGE_CONNECTION_SHAPE,
     core: false,
-    requires: LODGE_EDIT,
   },
   {
     id: "update_lodge",
@@ -83,7 +78,6 @@ export const LODGE_SETUP_MCP_ACTIONS: readonly McpAction[] = [
     kind: "destructive",
     returns: ADMIN_LODGE_CONNECTION_SHAPE,
     core: false,
-    requires: LODGE_EDIT,
   },
 
   // --- Central-server link ---------------------------------------------------
@@ -98,7 +92,6 @@ export const LODGE_SETUP_MCP_ACTIONS: readonly McpAction[] = [
     kind: "read",
     returns: ADMIN_LODGE_CENTRAL_LINK_CONNECTION_SHAPE,
     core: false,
-    requires: LODGE_VIEW,
   },
   {
     id: "set_lodge_central_link",
@@ -112,7 +105,6 @@ export const LODGE_SETUP_MCP_ACTIONS: readonly McpAction[] = [
     kind: "destructive",
     returns: ADMIN_LODGE_CENTRAL_LINK_CONNECTION_SHAPE,
     core: false,
-    requires: LODGE_EDIT,
   },
 
   // --- Member roster name detail ---------------------------------------------
@@ -127,7 +119,6 @@ export const LODGE_SETUP_MCP_ACTIONS: readonly McpAction[] = [
     kind: "read",
     returns: ADMIN_LODGE_ROSTER_SETTINGS_CONNECTION_SHAPE,
     core: false,
-    requires: LODGE_VIEW,
   },
   {
     id: "update_lodge_roster_settings",
@@ -141,7 +132,6 @@ export const LODGE_SETUP_MCP_ACTIONS: readonly McpAction[] = [
     kind: "destructive",
     returns: ADMIN_LODGE_ROSTER_SETTINGS_CONNECTION_SHAPE,
     core: false,
-    requires: LODGE_EDIT,
   },
 
   // --- Lodge settings --------------------------------------------------------
@@ -156,7 +146,6 @@ export const LODGE_SETUP_MCP_ACTIONS: readonly McpAction[] = [
     kind: "read",
     returns: ADMIN_LODGE_SETTINGS_CONNECTION_SHAPE,
     core: false,
-    requires: LODGE_VIEW,
   },
   {
     id: "update_lodge_settings",
@@ -169,7 +158,6 @@ export const LODGE_SETUP_MCP_ACTIONS: readonly McpAction[] = [
     kind: "destructive",
     returns: ADMIN_LODGE_SETTINGS_SAVED_CONNECTION_SHAPE,
     core: false,
-    requires: LODGE_EDIT,
   },
 
   // --- Other lodges ----------------------------------------------------------
@@ -183,7 +171,6 @@ export const LODGE_SETUP_MCP_ACTIONS: readonly McpAction[] = [
     kind: "read",
     returns: ADMIN_OTHER_LODGE_LIST_CONNECTION_SHAPE,
     core: false,
-    requires: LODGE_VIEW,
   },
   {
     id: "update_other_lodge",
@@ -197,7 +184,6 @@ export const LODGE_SETUP_MCP_ACTIONS: readonly McpAction[] = [
     kind: "destructive",
     returns: ADMIN_OTHER_LODGE_SAVED_CONNECTION_SHAPE,
     core: false,
-    requires: LODGE_EDIT,
   },
   {
     id: "hide_other_lodge",
@@ -210,6 +196,5 @@ export const LODGE_SETUP_MCP_ACTIONS: readonly McpAction[] = [
     kind: "destructive",
     returns: ADMIN_OTHER_LODGE_HIDDEN_CONNECTION_SHAPE,
     core: false,
-    requires: LODGE_EDIT,
   },
 ];
