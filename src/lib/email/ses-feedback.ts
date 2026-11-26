@@ -67,7 +67,7 @@ function getSesFeedbackRecipients(
 /**
  * #5469: THE ONE ANSWER TO "WHICH EMAIL IS THIS FEEDBACK ABOUT", as the
  * `EmailLog.messageId` values that name it. A bounce or complaint marks only
- * that email; it never rewrites the rest of the address's history (owner
+ * that email and leaves the rest of the address's history as it was (owner
  * decision, option A, 27 Nov 2026).
  *
  * What the row stores is the Message-ID header the mail library generated
