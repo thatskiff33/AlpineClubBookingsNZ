@@ -547,19 +547,31 @@ async function processHostingCoverageReevaluation(
   // is FALSE: `sameOwnerCoverageDependentWhere` pins `lodgeId` and
   // `hostingSiblingWhere` carries NO lodge clause, so a split pair at two lodges is
   // exactly what it cannot reach. See `expandWithSplitHalves`.
+  const sourceIds =
+    refreshedItem.sourceBookingId && !sourceBookingIsTerminal
+      ? [refreshedItem.sourceBookingId]
+      : [];
+  // THE ROW'S OWN BOOKING IS NEVER LEFT TO THE CAPPED READ (#5239). The
+  // same-owner read stops at `SAME_OWNER_COVERAGE_DEPENDENT_LIMIT`, so an owner
+  // with that many overlapping bookings could have the very booking a Group Trip
+  // fan-out queued this row for cut off, and the row completed without it: the
+  // kiosk would then trust a sibling-cover snapshot nobody re-checked.
   const dependentIds = await expandWithSplitHalves(
     policy.hostScopes.sameBookingOwner || !refreshedItem.sourceBookingId
-      ? await loadSameOwnerCoverageDependentIds(
-          {
-            memberId: refreshedItem.memberId,
-            lodgeId: refreshedItem.lodgeId,
-            nights: refreshedItem.nights,
-          },
-          db,
-        )
-      : sourceBookingIsTerminal
-        ? []
-        : [refreshedItem.sourceBookingId],
+      ? [
+          ...new Set([
+            ...(await loadSameOwnerCoverageDependentIds(
+              {
+                memberId: refreshedItem.memberId,
+                lodgeId: refreshedItem.lodgeId,
+                nights: refreshedItem.nights,
+              },
+              db,
+            )),
+            ...sourceIds,
+          ]),
+        ]
+      : sourceIds,
     db,
   );
 

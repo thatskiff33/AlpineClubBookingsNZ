@@ -71,6 +71,11 @@ subscription**: its preview shows who the choice will start or stop charging,
 and which records it resets, before it can be saved. Choosing needs Membership
 edit and Finance edit.
 
+Do not merge member records until the old colour has fully drained either
+(#5239): an old-colour merge does not mark the Group Trips the merged person
+attends for their adult cover to be checked again, so the lodge kiosk could show
+cover from another booking in the trip as current when it may not be.
+
 ---
 
 ## 1. Pre-flight

@@ -1995,8 +1995,15 @@ writers — the join-status writer in `group-booking.ts`, the cancellation fence
 else before commit, so whoever holds a trip row is never waiting on a key the other
 side holds. (Not every writer that reaches a truncating fan-out holds `lock(1)` —
 the membership-standing seam's callers need not — so the argument rests on that
-ordering, not on `lock(1)`.) A future `GroupBooking` writer that waits on a hosting
-key or a `Member` row while holding a trip row must reconcile this first.
+ordering, not on `lock(1)`.) One writer does wait while holding a trip row: the
+merge's `applyMoves` re-points `GroupBooking.organiserMemberId` before the merge
+takes its `Member … FOR UPDATE` set. A truncating fan-out that holds one of those
+rows `FOR KEY SHARE` while its trigger waits for that trip row would close a cycle;
+the merge's bounded `Member` wait (#4855, `55P03` → its safe 409) or PostgreSQL's
+deadlock detector breaks it by rolling one whole transaction back, so the cost is
+a retry, never a hang or a half-written bump. A future `GroupBooking` writer that waits
+on a hosting key or a `Member` row while holding a trip row must reconcile this
+first.
 
 The kiosk's own reads (revision, the policy re-queue cohort and each card's
 dependent count) are plain reads with no lock: a wrong answer can only withhold.

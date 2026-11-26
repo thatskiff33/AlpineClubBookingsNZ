@@ -178,9 +178,10 @@ export async function enqueueMemberMergeHostingCoveragePlan(
     assertHostingCoverageQueueParticipantsLocked(proof, item);
     if (await enqueueHostingCoverageReevaluation(item, proof, db)) queued += 1;
   }
-  // LAST, after every key and row the merge takes, so the merge never holds a
-  // GroupBooking row while waiting for anything (docs/CONCURRENCY_AND_LOCKING.md,
-  // the cover-invalidation revision). One statement, ids sorted.
+  // LAST, after every key and row the merge takes, so this bump adds no wait
+  // while it holds a trip row (`applyMoves` already holds organiser rows; see
+  // docs/CONCURRENCY_AND_LOCKING.md, the cover-invalidation revision, for how
+  // that wait is bounded). One statement, ids sorted.
   if (plan.invalidatedGroupTripIds.length > 0) {
     await db.groupBooking.updateMany({
       where: { id: { in: [...plan.invalidatedGroupTripIds] } },
