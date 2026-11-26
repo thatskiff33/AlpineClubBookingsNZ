@@ -6,6 +6,7 @@
  * `finance-payments.ts`. Types only: nothing here reaches the database.
  */
 import { connectionShapeFor } from "@/lib/connection-projection";
+import type { SubscriptionBillingPreviewSummary } from "@/lib/subscription-billing-preview-summary";
 
 /**
  * `GET /api/admin/subscriptions`: one page of the season's member
@@ -75,9 +76,24 @@ type BillingPerson = { memberId: string; memberName: string };
  * open billing exceptions and the settings it ran with. Recipients' email
  * addresses, Xero invoice ids and links, idempotency keys and the exceptions'
  * raw context stay behind. `preview.confirmationToken` stays: confirming the
- * batch sends it back.
+ * batch sends it back. `summary` comes first, so an answer cut at its length
+ * limit still says what confirming would invoice in all
+ * (`subscription-billing-preview-summary.ts`).
  */
 const SUBSCRIPTION_BILLING_DATA_SHAPE = {
+  summary: {
+    entryCount: true,
+    totalCents: true,
+    coveredMemberCount: true,
+    byMembership: { subscriptionCategoryName: true, membershipTypeName: true, entryCount: true, chargedCents: true },
+    exemptCount: true,
+    alreadyInvoicedCount: true,
+    alreadyInvoicedFamilyCount: true,
+    exceptionCount: true,
+    withheldCount: true,
+    warningCount: true,
+    needsDecisionCount: true,
+  },
   preview: {
     seasonYear: true,
     decisionDate: true,
@@ -158,6 +174,7 @@ const SUBSCRIPTION_BILLING_DATA_SHAPE = {
 } as const;
 
 type SubscriptionBillingData = {
+  summary: SubscriptionBillingPreviewSummary;
   preview: {
     seasonYear: number;
     decisionDate: string;

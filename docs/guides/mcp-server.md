@@ -769,7 +769,7 @@ logged as important. Only `run_finance_sync` and
 | `list_refund_requests` | Members' refund requests and their figures | read | `GET /api/admin/refund-requests` |
 | `get_finance_report` | The finance report for a date range | read | `GET /api/admin/reports` |
 | `list_subscriptions` | Members' subscriptions and their status | read | `GET /api/admin/subscriptions` |
-| `get_subscription_billing` | The season's billing preview, charges and exceptions | read | `GET /api/admin/subscription-billing` |
+| `get_subscription_billing` | The season's billing preview, charges and exceptions, headed by a summary (invoice count and total, by category or type, exemptions and problems) the app shows the officer before confirming | read | `GET /api/admin/subscription-billing` |
 | `refresh_subscription_billing` | Refreshes the preview and clears exceptions it no longer finds | destructive | `POST /api/admin/subscription-billing` (`REFRESH_PREVIEW`) |
 | `confirm_subscription_billing_batch` | Raises the season's subscription invoices from a preview | destructive | same (`CONFIRM_ANNUAL_BATCH`) |
 | `retry_subscription_charge` | Queues a charge's invoice again, raising it if it never was | destructive | same (`RETRY_CHARGE`) |
@@ -781,7 +781,10 @@ logged as important. Only `run_finance_sync` and
 | `backfill_finance_monthly_facts` | Rebuilds the monthly figures from a month | write | `POST /api/finance/sync/backfill-monthly-facts` |
 
 Changing the club's billing settings (`UPDATE_SETTINGS` on the same route) is
-not offered: it is club setup.
+not offered: it is club setup. A large club's preview can be longer than an
+answer may be, so the answer opens with `summary`, read from the same preview,
+and the action tells the app to show it to the officer before confirming and
+never to confirm on a preview it received only in part.
 
 **Xero sync**
 

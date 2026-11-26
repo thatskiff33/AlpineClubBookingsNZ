@@ -22,7 +22,10 @@
   and each answer leaves out email addresses, Stripe ids and Xero internal ids
   other than a contact's id, which linking a member needs. Searching Xero
   contacts, which asks Xero live each time, is now limited to 30 searches a
-  minute per officer, on the website and through an app alike. The list is in the
+  minute per officer, on the website and through an app alike. The billing
+  preview an app reads opens with a summary (how many invoices, their total
+  by category or membership type, exemptions and problems), which the app
+  shows the officer before confirming the batch. The list is in the
   AI app connections guide. If you named what an AI app receives in your
   privacy notice, the recipient register's `ai-apps` row now lists the
   finance information an officer's connection sends.

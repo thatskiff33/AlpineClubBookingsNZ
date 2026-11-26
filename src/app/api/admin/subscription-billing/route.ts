@@ -29,6 +29,7 @@ import {
 import logger from "@/lib/logger";
 import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/session-guards";
+import { subscriptionBillingPreviewSummary } from "@/lib/subscription-billing-preview-summary";
 import { seasonYearOfStoredDate } from "@/lib/financial-year";
 import { refreshFinancialYearConfig } from "@/lib/financial-year-server";
 import { enqueueMembershipSubscriptionChargeOperation } from "@/lib/xero-subscription-invoices";
@@ -86,6 +87,9 @@ async function loadBillingData(seasonYear: number, decisionDate: Date) {
         where: { seasonYear, status: { in: [...CHARGE_STATUSES_AWAITING_XERO] } },
       });
   return {
+    // What confirming would invoice in all; the connection shape sends it first,
+    // so an AI app's answer cut at its length limit still carries it.
+    summary: subscriptionBillingPreviewSummary(preview),
     preview,
     charges,
     exceptions: visiblePersistentExceptions,

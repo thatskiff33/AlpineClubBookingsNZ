@@ -934,6 +934,77 @@ describe("subscription billing actions", () => {
     );
   });
 
+  // ALP-721 review: the answer is cut at MCP_RESULT_MAX_CHARS, which can drop
+  // entries while the confirmation token survives, so a summary read from the
+  // same preview comes first and the app is told to show it before confirming.
+  it("get_subscription_billing opens with a summary of what confirming would invoice, read from the preview", async () => {
+    stubPanel();
+    const { connection } = await expectActionContract({
+      actionId: "get_subscription_billing",
+      handler: getSubscriptionBilling,
+      args: { seasonYear: 2026, decisionDate: "2026-07-01" },
+    });
+    expect(Object.keys(connection as object)[0]).toBe("summary");
+    expect((connection as { summary: unknown }).summary).toEqual({
+      entryCount: 1,
+      totalCents: 18_000,
+      coveredMemberCount: 1,
+      byMembership: [{ subscriptionCategoryName: "Couple", membershipTypeName: null, entryCount: 1, chargedCents: 18_000 }],
+      exemptCount: 1,
+      alreadyInvoicedCount: 1,
+      alreadyInvoicedFamilyCount: 1,
+      exceptionCount: 1,
+      withheldCount: 1,
+      warningCount: 0,
+      needsDecisionCount: 0,
+    });
+    // A cut at the limit keeps the summary: it sits before the token and every entry.
+    const text = JSON.stringify(connection);
+    expect(text.indexOf('"summary"')).toBeLessThan(text.indexOf('"confirmationToken"'));
+    const action = findMcpAction("get_subscription_billing")!;
+    expect(action.summary).toContain("Show the officer `summary` before asking them to confirm");
+    expect(findMcpAction("confirm_subscription_billing_batch")!.summary).toContain("seen the preview's `summary`");
+  });
+
+  it("totals the summary from the preview's own total and groups, never pricing again", async () => {
+    const entry = PREVIEW.entries[0]!;
+    stubPanel();
+    h.buildSubscriptionBillingPreview.mockResolvedValue({
+      ...PREVIEW,
+      // Deliberately not the entries' sum: the summary reports the preview's figure.
+      totalCents: 99_999,
+      entries: [
+        { ...entry, key: "a", subscriptionCategoryName: null, membershipTypeName: "Full member", chargedAmountCents: 9_000 },
+        { ...entry, key: "b", subscriptionCategoryName: null, membershipTypeName: "Full member", chargedAmountCents: 9_000,
+          coveredMembers: [{ id: "m-1", name: "One" }, { id: "m-2", name: "Two" }] },
+        { ...entry, key: "c", subscriptionCategoryName: null, membershipTypeName: "Junior", chargedAmountCents: 4_000 },
+      ],
+      exceptions: [
+        ...PREVIEW.exceptions,
+        { ...PREVIEW.exceptions[0]!, fingerprint: "fp-2", code: "CLOSED_FAMILY_PARTLY_REVERSED" },
+        { ...PREVIEW.exceptions[0]!, fingerprint: "fp-3", code: "CLOSED_FAMILY_MEMBER_NEEDS_DECISION" },
+      ],
+    });
+    const { connection } = await expectActionContract({
+      actionId: "get_subscription_billing",
+      handler: getSubscriptionBilling,
+      args: { seasonYear: 2026, decisionDate: "2026-07-01" },
+    });
+    expect((connection as { summary: unknown }).summary).toMatchObject({
+      entryCount: 3,
+      totalCents: 99_999,
+      coveredMemberCount: 4,
+      byMembership: [
+        { subscriptionCategoryName: null, membershipTypeName: "Full member", entryCount: 2, chargedCents: 18_000 },
+        { subscriptionCategoryName: null, membershipTypeName: "Junior", entryCount: 1, chargedCents: 4_000 },
+      ],
+      exceptionCount: 3,
+      withheldCount: 2,
+      warningCount: 1,
+      needsDecisionCount: 1,
+    });
+  });
+
   it("refresh_subscription_billing closes stale problems for the season and day the app named", async () => {
     stubPanel();
     h.reconcileSubscriptionBillingExceptions.mockResolvedValue({ resolvedCount: 2 });
