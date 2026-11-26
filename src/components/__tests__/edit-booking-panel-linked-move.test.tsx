@@ -632,3 +632,86 @@ describe("EditBookingPanel — the linked-move offer (#3232)", () => {
     expect(screen.queryAllByRole("radio")).toEqual([]);
   });
 });
+
+describe("EditBookingPanel — accepting binds every booking's figures (#5238)", () => {
+  const PRIMARY_FIGURES = { newFinalPriceCents: 10_000, priceDiffCents: 0, changeFeeCents: 1_000, netChargeCents: 1_000 };
+  const DEPENDENT_FIGURES = { newFinalPriceCents: 8_800, priceDiffCents: -1_200, changeFeeCents: 1_000, netChargeCents: -200 };
+  const FRESH_ACCEPT_KEY = `v1:${"c".repeat(64)}`;
+
+  function offerWithFigures(dependent = DEPENDENT_FIGURES, acceptStateKey = ACCEPT_KEY) {
+    const offer = linkedMoveOffer({ acceptStateKey });
+    const [row] = offer.linkedBookings as Array<Record<string, unknown>>;
+    return {
+      ...offer,
+      primary: { ...(offer.primary as object), quotedFigures: PRIMARY_FIGURES },
+      linkedBookings: [{ ...row, quotedFigures: dependent }],
+    };
+  }
+
+  it("sends the offer's figures for the primary and for each other booking", async () => {
+    modifyResponse = () => jsonResponse(offerWithFigures(), 409);
+    render(<EditBookingPanel booking={makeBooking()} onDone={vi.fn()} />);
+    const saveButton = await saveIntoTheOffer();
+
+    modifyResponse = () => jsonResponse({ booking: { id: BOOKING_ID } });
+    fireEvent.click(screen.getByRole("radio", { name: /Move both bookings/ }));
+    fireEvent.click(saveButton);
+
+    await waitFor(() => expect(modifyBodies).toHaveLength(2));
+    expect(modifyBodies[1]).toMatchObject({
+      quotedFigures: PRIMARY_FIGURES,
+      linkedQuotedFigures: [{ bookingId: "bk-dependent-01", figures: DEPENDENT_FIGURES }],
+    });
+  });
+
+  it("sends no linked figures when declining", async () => {
+    modifyResponse = () => jsonResponse(offerWithFigures(), 409);
+    render(<EditBookingPanel booking={makeBooking()} onDone={vi.fn()} />);
+    const saveButton = await saveIntoTheOffer();
+
+    modifyResponse = () => jsonResponse({ booking: { id: BOOKING_ID } });
+    fireEvent.click(screen.getByRole("radio", { name: /Move only this booking/ }));
+    fireEvent.click(saveButton);
+
+    await waitFor(() => expect(modifyBodies).toHaveLength(2));
+    expect("linkedQuotedFigures" in (modifyBodies[1] ?? {})).toBe(false);
+  });
+
+  it("on EDIT_PRICE_CHANGED puts up the fresh offer, clears the answer and says nothing was saved", async () => {
+    const freshDependent = { ...DEPENDENT_FIGURES, changeFeeCents: 2_500, netChargeCents: 1_300 };
+    modifyResponse = () => jsonResponse(offerWithFigures(), 409);
+    const onDone = vi.fn();
+    render(<EditBookingPanel booking={makeBooking()} onDone={onDone} />);
+    const saveButton = await saveIntoTheOffer();
+
+    modifyResponse = () =>
+      jsonResponse(
+        {
+          code: "EDIT_PRICE_CHANGED",
+          error: "The price changed since you previewed it. Review and save again.",
+          figures: freshDependent,
+          linkedMove: offerWithFigures(freshDependent, FRESH_ACCEPT_KEY),
+        },
+        409,
+      );
+    fireEvent.click(screen.getByRole("radio", { name: /Move both bookings/ }));
+    fireEvent.click(saveButton);
+
+    expect(
+      await screen.findByText(/The price of moving both bookings changed since you accepted it, so nothing was saved/),
+    ).toBeInTheDocument();
+    expect(onDone).not.toHaveBeenCalled();
+    for (const radio of screen.getAllByRole("radio", { name: /Move/ })) expect(radio).not.toBeChecked();
+
+    // The next acceptance answers the NEW offer, at its figures.
+    modifyResponse = () => jsonResponse({ booking: { id: BOOKING_ID } });
+    fireEvent.click(screen.getByRole("radio", { name: /Move both bookings/ }));
+    await waitFor(() => expect(saveButton).not.toBeDisabled(), { timeout: 2500 });
+    fireEvent.click(saveButton);
+    await waitFor(() => expect(modifyBodies).toHaveLength(3));
+    expect(modifyBodies[2]).toMatchObject({
+      hostingCoverageLinkedMove: { choice: "MOVE_BOTH", stateKey: FRESH_ACCEPT_KEY },
+      linkedQuotedFigures: [{ bookingId: "bk-dependent-01", figures: freshDependent }],
+    });
+  });
+});
