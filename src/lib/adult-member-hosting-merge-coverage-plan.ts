@@ -26,12 +26,18 @@ import {
 } from "@/lib/adult-member-hosting-queue-participants";
 import { bookingOwner } from "@/lib/booking-owner";
 import { eachDateOnlyInRange, formatDateOnly } from "@/lib/date-only";
-import type { ResolvedAdultMemberHostingPolicy } from "@/lib/policies/adult-member-hosting";
+import { groupTripIdentityOf } from "@/lib/group-trip-identity";
+import {
+  hostingModeQueuesCoverageReevaluation,
+  type ResolvedAdultMemberHostingPolicy,
+} from "@/lib/policies/adult-member-hosting";
 
 export type MemberMergeHostingCoveragePlan = Readonly<{
   items: readonly HostingCoverageReevaluationInput[];
   sources: readonly HostingCoverageSourceParticipant[];
   coverageOwnerIds: readonly string[];
+  /** Trips whose sibling cover the merge invalidates (#5239); see below. */
+  invalidatedGroupTripIds: readonly string[];
 }>;
 
 /**
@@ -87,9 +93,29 @@ export async function buildMemberMergeHostingCoveragePlan(
       policyByLodge.set(booking.lodgeId, policy);
     }
   }
-  const included = candidates.filter(
-    (booking) => policyByLodge.get(booking.lodgeId)?.mode === "ENFORCED",
-  );
+  const queues = (booking: { lodgeId: string }): boolean => {
+    const policy = policyByLodge.get(booking.lodgeId);
+    return policy !== undefined && hostingModeQueuesCoverageReevaluation(policy.mode);
+  };
+  const included = candidates.filter(queues);
+  // #5239: THE MERGE HAS NO GROUP TRIP FAN-OUT, so a booking on ANOTHER account
+  // that relied on an adult the merged person brings is not queued for a re-check
+  // — the master's standing (paid-up, age tier, active) now decides that adult's
+  // qualification. Rather than let the kiosk show that sibling cover as current,
+  // the merge moves the revision of every trip the person attends at a lodge
+  // where sibling cover is shown, which leaves every snapshot in those trips
+  // unverified until it is next evaluated (`INV-HOST-045`).
+  const invalidatedGroupTripIds = [
+    ...new Set(
+      attended
+        .filter(
+          (booking) =>
+            queues(booking) &&
+            policyByLodge.get(booking.lodgeId)?.hostScopes.sameGroupTrip === true,
+        )
+        .flatMap((booking) => groupTripIdentityOf(booking)?.groupBookingId ?? []),
+    ),
+  ].sort();
   const items = included.map((booking) => ({
     memberId: bookingOwner(booking).memberId,
     lodgeId: booking.lodgeId,
@@ -123,6 +149,7 @@ export async function buildMemberMergeHostingCoveragePlan(
           .map((booking) => bookingOwner(booking).memberId),
       )].sort(),
     ),
+    invalidatedGroupTripIds: Object.freeze(invalidatedGroupTripIds),
   });
 }
 
@@ -137,7 +164,8 @@ export function memberMergeHostingCoveragePlanFingerprint(
       cause: item.cause,
       sourceBookingId: item.sourceBookingId ?? null,
     })),
-  ) + JSON.stringify(plan.coverageOwnerIds);
+  ) + JSON.stringify(plan.coverageOwnerIds) +
+    JSON.stringify(plan.invalidatedGroupTripIds);
 }
 
 export async function enqueueMemberMergeHostingCoveragePlan(
@@ -149,6 +177,15 @@ export async function enqueueMemberMergeHostingCoveragePlan(
   for (const item of plan.items) {
     assertHostingCoverageQueueParticipantsLocked(proof, item);
     if (await enqueueHostingCoverageReevaluation(item, proof, db)) queued += 1;
+  }
+  // LAST, after every key and row the merge takes, so the merge never holds a
+  // GroupBooking row while waiting for anything (docs/CONCURRENCY_AND_LOCKING.md,
+  // the cover-invalidation revision). One statement, ids sorted.
+  if (plan.invalidatedGroupTripIds.length > 0) {
+    await db.groupBooking.updateMany({
+      where: { id: { in: [...plan.invalidatedGroupTripIds] } },
+      data: { coverageInvalidationRevision: { increment: 1 } },
+    });
   }
   return queued;
 }

@@ -2896,7 +2896,7 @@ async function settleSameOwnerDependentCoverage(
   // confirmed but uncovered, and a later correction must close that incident.
   // Only the cross-booking fan-out needs the owner lock and dependent inspection.
   if (!resolved.hostScopes.sameBookingOwner) {
-    if (resolved.mode !== "ENFORCED") return;
+    if (!hostingModeQueuesCoverageReevaluation(resolved.mode)) return;
     const context = options.coverageChange ?? { cause: "SYSTEM_CHANGE" as const };
     if (context.cause === "OFFICER_OVERRIDE" && !context.reason?.trim()) {
       throw new Error(

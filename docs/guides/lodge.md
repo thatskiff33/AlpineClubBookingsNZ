@@ -293,6 +293,8 @@ than showing cover it cannot stand behind, when:
 - the trip is very large (100 or more overlapping bookings at the lodge), or a
   change to it once was, so that some bookings may have been missed. That stays
   until the booking itself is checked again, even if the trip has since shrunk;
+- an adult in the trip had their member record merged with another, until each
+  booking in the trip is checked again;
 - the booking was last checked before this release, or the stay is already
   finished — there is nothing left to re-check it against.
 

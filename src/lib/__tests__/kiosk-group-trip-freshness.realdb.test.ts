@@ -16,7 +16,9 @@
  *     trip is now, until a fresh canonical evaluation restamps it — without
  *     reopening the officer's decision;
  *  5. both interleavings of an evaluation and a truncating fan-out: the stamp can
- *     be OLDER than the facts the evaluation read, never newer.
+ *     be OLDER than the facts the evaluation read, never newer;
+ *  6. a member merge, which has no Group Trip fan-out, moves the revision of the
+ *     trips the merged person attends.
  *
  * Ordinary runs stay database-free: the suite runs only when
  * `RUN_CONCURRENCY_RACE_TESTS=1`, reads only the guarded race URL, and cleans its
@@ -63,6 +65,7 @@ let observer: PrismaClient;
 let review: typeof import("@/lib/adult-member-hosting-review");
 let storedReview: typeof import("@/lib/adult-member-hosting-stored-review");
 let ceilings: typeof import("@/lib/adult-member-hosting-coverage-ceilings");
+let mergePlan: typeof import("@/lib/adult-member-hosting-merge-coverage-plan");
 let locks: typeof import("@/lib/adult-member-hosting-coverage-lock");
 let kioskCover: typeof import("@/lib/kiosk-adult-cover");
 let HOSTING_COVERAGE_RETRY_CODE: string;
@@ -291,12 +294,13 @@ describe("kiosk Group Trip freshness race DB safety guard (#5239)", () => {
     beforeAll(async () => {
       assertSafeRaceDbUrl(RACE_DB_URL, "Group Trip freshness");
       process.env.DATABASE_URL = RACE_DB_URL;
-      [review, storedReview, ceilings, locks, kioskCover] = await Promise.all([
+      [review, storedReview, ceilings, locks, kioskCover, mergePlan] = await Promise.all([
         import("@/lib/adult-member-hosting-review"),
         import("@/lib/adult-member-hosting-stored-review"),
         import("@/lib/adult-member-hosting-coverage-ceilings"),
         import("@/lib/adult-member-hosting-coverage-lock"),
         import("@/lib/kiosk-adult-cover"),
+        import("@/lib/adult-member-hosting-merge-coverage-plan"),
       ]);
       HOSTING_COVERAGE_RETRY_CODE = (
         await import("@/lib/adult-member-hosting-queue-participants")
@@ -408,6 +412,30 @@ describe("kiosk Group Trip freshness race DB safety guard (#5239)", () => {
         select: { adultMemberHostingReviewStatus: true },
       });
       expect(row.adultMemberHostingReviewStatus).toBe("APPROVED");
+    });
+
+    it("leaves sibling cover unverified after a member merge touches the trip's host", async () => {
+      // Merge has no Group Trip fan-out, so it moves the revision of every trip the
+      // merged person attends instead (the adult here attends the organiser's booking).
+      expect((await evaluateJoiner(writerA)).action).toBe("opened");
+      await writerB.$transaction(async (tx) => {
+        const plan = await mergePlan.buildMemberMergeHostingCoveragePlan(
+          {
+            masterId: IDS.adultMember,
+            capturedLoserOwnedBookingIds: [],
+            today: new Date("2026-07-01T00:00:00.000Z"),
+          },
+          tx as never,
+        );
+        expect(plan.invalidatedGroupTripIds).toEqual([IDS.group]);
+        await mergePlan.enqueueMemberMergeHostingCoveragePlan(
+          { ...plan, items: [] },
+          {} as never,
+          tx as never,
+        );
+      });
+      expect(await revision()).toBe(1);
+      expect(await kioskSays()).toEqual({ status: "STALE", nights: [], scopes: [] });
     });
 
     it("leaves the stamp behind when a truncation waits for an evaluation holding the trip key", async () => {

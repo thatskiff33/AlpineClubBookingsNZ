@@ -900,11 +900,10 @@ compliant indefinitely.
   "fully covered" is the ABSENCE of a snapshot and the display has no "all
   covered" wording (pinned against the real evaluator).
 
-  **Four statuses; only `EVALUATED` carries night rows** (a discriminated union;
-  the others carry empty `nights` and `scopes` tuples). `NOT_RECORDED`, no
-  snapshot and no signal against it, is the ordinary state: muted text, *"Adult
-  cover: no issue recorded for this booking"*, neither a warning nor a positive
-  claim. `UNREADABLE` (not canonical, or self-contradictory) and `STALE` render
+  **Four statuses; only `EVALUATED` carries night rows** (a discriminated
+  union). `NOT_RECORDED`, no snapshot and no signal against it, is the ordinary
+  state: muted text, *"Adult cover: no issue recorded for this booking"*,
+  neither a warning nor a positive claim. `UNREADABLE` (not canonical, or self-contradictory) and `STALE` render
   amber. `EVALUATED` means at least one night, at least one uncovered.
 
   **Staleness signals, in this order:** (1) a queued
@@ -917,8 +916,8 @@ compliant indefinitely.
   Verified means: an `ENFORCED` lodge (`hostingModeQueuesCoverageReevaluation`),
   the scope on, a card `hostingPolicyReconciliationCandidateWhere` matches, below
   `GROUP_TRIP_COVERAGE_DEPENDENT_LIMIT`, and a `groupTripCoverFreshness` stamp
-  naming its trip's current `coverageInvalidationRevision`; a failed read is
-  unverified. The policy revision is NOT a signal: a material change reaches
+  naming its trip's current `coverageInvalidationRevision` (truncated fan-outs
+  and member merges move it); a failed read is unverified. The policy revision is NOT a signal: a material change reaches
   signal 1.
 
   **A partially readable snapshot is `UNREADABLE`**: no malformed night row is

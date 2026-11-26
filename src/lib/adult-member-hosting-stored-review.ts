@@ -81,10 +81,7 @@ export function storedHostingReviewOf(
  * because PostgreSQL hands JSONB back with its keys re-ordered, and a byte
  * comparison would rewrite every unchanged snapshot on every evaluation.
  */
-export function storedHostingReviewDiffers(
-  current: unknown,
-  next: StoredHostingReview,
-): boolean {
+export function storedHostingReviewDiffers(current: unknown, next: unknown): boolean {
   return stableStringify(current) !== stableStringify(next);
 }
 

@@ -248,6 +248,7 @@ interface FakeStore {
     incidentFindMany: number;
     dependentCountWheres: unknown[];
     cohortWheres: unknown[];
+    cardMembershipWheres: unknown[];
   };
 }
 
@@ -267,6 +268,8 @@ function fakeStore(options: {
   dependentPopulation?: number;
   /** Stamped cards a policy change would NOT re-queue (#5239). */
   outsidePolicyCohort?: string[];
+  /** The snapshot as re-read after the queue read, where it has moved. */
+  rereadReview?: Record<string, unknown>;
   /** Make the revision read or the dependent count throw. */
   failRevisionRead?: boolean;
   failDependentCount?: boolean;
@@ -280,6 +283,7 @@ function fakeStore(options: {
     incidentFindMany: 0,
     dependentCountWheres: [] as unknown[],
     cohortWheres: [] as unknown[],
+    cardMembershipWheres: [] as unknown[],
   };
   const db = {
     adultMemberHostingPolicy: {
@@ -302,14 +306,20 @@ function fakeStore(options: {
         // The cohort clause is the reconciliation's own builder, asserted by
         // value below, so the fake answers it from the test's own list.
         if ("AND" in args.where) {
-          const [ids, cohort] = args.where.AND as [
-            { id: { in: string[] } },
+          const [cards, cohort] = args.where.AND as [
+            { OR: Array<{ AND: [{ id: string }, unknown] }> },
             unknown,
           ];
           calls.cohortWheres.push(cohort);
-          return ids.id.in
+          calls.cardMembershipWheres.push(...cards.OR.map((card) => card.AND));
+          return cards.OR.map((card) => card.AND[0].id)
             .filter((id) => !(options.outsidePolicyCohort ?? []).includes(id))
-            .map((id) => ({ id }));
+            .map((id) => ({
+              id,
+              adultMemberHostingReview:
+                options.rereadReview?.[id] ??
+                bookings.find((row) => row.id === id)?.adultMemberHostingReview,
+            }));
         }
         return bookings
           .filter((row) => matchBookingWhere(row, args.where))
@@ -1552,6 +1562,31 @@ describe("#5239 sibling cover is shown only when it can be verified (INV-HOST-04
         new Date("2026-07-01T00:00:00.000Z"),
       ),
     ]);
+  });
+
+  it("asks whether a sibling's fan-out reaches each card through the fan-out's own predicate", async () => {
+    // A completed stay is outside the fan-out's dependent cohort, so no sibling
+    // change ever queues a re-check for it and its cover cannot be verified.
+    const { calls } = await cover(siblingReview());
+    const [dependent] = rows();
+    expect(calls.cardMembershipWheres).toEqual([
+      [
+        { id: "b-dependent" },
+        groupTripCoverageDependentWhere(
+          { ...dependent, id: null },
+          { groupBookingId: TRIP, role: "JOINER" },
+        ),
+      ],
+    ]);
+  });
+
+  it("withholds it when the snapshot moved between the day list's read and the queue read", async () => {
+    // The drain finished in between: no pending row is left, and the day list
+    // is showing the answer from before the re-check.
+    const { source } = await cover(siblingReview(), {
+      rereadReview: { "b-dependent": siblingReview({ ...STAMP, revision: 5 }) },
+    });
+    expect(source).toEqual(STALE);
   });
 
   it("counts the card's dependent population with the fan-out's own predicate", async () => {

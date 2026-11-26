@@ -5,7 +5,11 @@ import { describe, expect, it, vi } from "vitest";
 
 import { enqueueHostingCoverageReevaluation } from "@/lib/adult-member-hosting-coverage-queue";
 import { tryLockHostingCoverageOwners } from "@/lib/adult-member-hosting-coverage-lock";
-import { buildMemberMergeHostingCoveragePlan } from "@/lib/adult-member-hosting-merge-coverage-plan";
+import {
+  buildMemberMergeHostingCoveragePlan,
+  enqueueMemberMergeHostingCoveragePlan,
+  memberMergeHostingCoveragePlanFingerprint,
+} from "@/lib/adult-member-hosting-merge-coverage-plan";
 
 import { stripComments } from "./support/strip-comments";
 
@@ -875,6 +879,84 @@ describe("hosting coverage queue participant fence (#2597)", () => {
       cause: "SYSTEM_CHANGE",
       actorMemberId: null,
     });
+  });
+});
+
+describe("a merge invalidates sibling cover in the trips the person attends (#5239)", () => {
+  // The merge has no Group Trip fan-out, so a booking on ANOTHER account relying
+  // on an adult the merged person brings is never queued. The kiosk would then
+  // show that sibling cover as current (INV-HOST-045); moving the trip revision
+  // makes every snapshot in the trip unverifiable until it is next evaluated.
+  const attendedInTrip = {
+    id: "booking-trip",
+    memberId: "owner-1",
+    lodgeId: "lodge-1",
+    checkIn: new Date("2026-08-01T00:00:00Z"),
+    checkOut: new Date("2026-08-03T00:00:00Z"),
+    groupBookingAsOrganiser: null,
+    groupBookingJoin: { groupBookingId: "trip-1" },
+  };
+  function mergeDb(policy: Record<string, unknown>) {
+    return {
+      booking: {
+        findMany: vi.fn(({ where }: { where: Record<string, unknown> }) =>
+          Promise.resolve("guests" in where ? [attendedInTrip] : []),
+        ),
+      },
+      adultMemberHostingPolicy: {
+        findMany: vi.fn().mockResolvedValue([
+          {
+            id: "policy-1",
+            scopeKey: "club-wide",
+            lodgeId: null,
+            mode: "ENFORCED",
+            capacityMode: "NO_HOLD",
+            version: 1,
+            hostScopeSameBooking: true,
+            hostScopeSameBookingOwner: false,
+            hostScopeSameGroupTrip: true,
+            ...policy,
+          },
+        ]),
+      },
+      groupBooking: { updateMany: vi.fn().mockResolvedValue({ count: 1 }) },
+      hostingCoverageReevaluation: { create: vi.fn() },
+    };
+  }
+  const plan = (db: ReturnType<typeof mergeDb>) =>
+    buildMemberMergeHostingCoveragePlan(
+      { today: CLUB_TODAY_DATE_ONLY, masterId: "master-1", capturedLoserOwnedBookingIds: [] },
+      db as never,
+    );
+
+  it("plans the trip, fingerprints it, and moves its revision last", async () => {
+    const db = mergeDb({});
+    const built = await plan(db);
+    expect(built.invalidatedGroupTripIds).toEqual(["trip-1"]);
+    expect(memberMergeHostingCoveragePlanFingerprint(built)).toContain("trip-1");
+
+    // An empty proof is enough here: the plan's items are checked against it,
+    // and this test is about the trip, so the items are cleared.
+    await enqueueMemberMergeHostingCoveragePlan(
+      { ...built, items: [] },
+      {} as never,
+      db as never,
+    );
+    expect(
+      db.groupBooking.updateMany,
+      "INV-HOST-045 (docs/invariants/adult-member-hosting.md): a merge must leave sibling cover in the person's trips unverified",
+    ).toHaveBeenCalledWith({
+      where: { id: { in: ["trip-1"] } },
+      data: { coverageInvalidationRevision: { increment: 1 } },
+    });
+  });
+
+  it.each([
+    ["the scope is off", { hostScopeSameGroupTrip: false }],
+    ["the lodge does not show sibling cover (review-only)", { mode: "ADMIN_REVIEW_REQUIRED" }],
+  ])("invalidates nothing where %s", async (_label, policy) => {
+    const built = await plan(mergeDb(policy));
+    expect(built.invalidatedGroupTripIds).toEqual([]);
   });
 });
 

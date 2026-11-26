@@ -1960,7 +1960,7 @@ The kiosk shows cover resting on a Group Trip sibling only while the booking's
 hosting snapshot carries its trip's current `GroupBooking.coverageInvalidationRevision`
 (`INV-HOST-045`). **No advisory key is added, moved or re-ordered**
 (`INV-LOCK-001`..`INV-LOCK-003`); the protocol is two statements placed under the
-existing per-trip key:
+existing per-trip key, plus the merge's bump below:
 
 - **The increment is a database trigger, not application code.**
   `AuditLog_bump_group_trip_coverage_invalidation` fires AFTER INSERT of a
@@ -1979,14 +1979,24 @@ existing per-trip key:
   its bump leaves the stamp behind. The stamp can be older than the facts, never
   newer. `kiosk-group-trip-freshness.realdb.test.ts` forces both orders.
 
-**The trigger's row lock adds no wait-for cycle.** It takes a row lock on one
-`GroupBooking` row while the fan-out already holds the trip key. The other
-`GroupBooking` row writers — the join-status writer in `group-booking.ts` and the
-cancellation fence in `group-cancel.ts` — take `lock(1)` first, update the row and
-commit without waiting on anything else, and every booking writer that can reach a
-truncating fan-out holds `lock(1)` as well (#3038's write-skew argument above), so
-those writers are serialised before the row is reached. A future `GroupBooking`
-writer that waits on a hosting key while holding the row must reconcile this first.
+**A member merge moves the revision too.** Merge has no Group Trip fan-out, so
+`enqueueMemberMergeHostingCoveragePlan` increments the revision of every trip the
+merged person attends at a lodge that shows sibling cover, in one `updateMany` over
+sorted ids, as the LAST write after every key and row the merge takes. That bump is
+not under the trip key, and needs not be: it commits with the standing change, so an
+evaluation that read the old revision is left behind by it, and one that reads the
+new revision reads the merged standing too. Merges serialise on the hosting
+policy-set key, so two merges never update overlapping trip rows concurrently.
+
+**The row lock adds no wait-for cycle.** The trigger and the merge each take row
+locks on `GroupBooking` rows as their last lock. The other `GroupBooking` row
+writers — the join-status writer in `group-booking.ts`, the cancellation fence and
+`markGroupCancelled` in `group-cancel.ts` — update the row and then wait on nothing
+else before commit, so whoever holds a trip row is never waiting on a key the other
+side holds. (Not every writer that reaches a truncating fan-out holds `lock(1)` —
+the membership-standing seam's callers need not — so the argument rests on that
+ordering, not on `lock(1)`.) A future `GroupBooking` writer that waits on a hosting
+key or a `Member` row while holding a trip row must reconcile this first.
 
 The kiosk's own reads (revision, the policy re-queue cohort and each card's
 dependent count) are plain reads with no lock: a wrong answer can only withhold.
