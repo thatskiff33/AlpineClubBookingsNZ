@@ -94,10 +94,11 @@ async function retireUnverifiableBookingEmail(params: {
  * EMAIL_RETRY_MAX_ATTEMPTS and re-sends.
  * Token-bearing templates are intentionally excluded because their HTML bodies
  * are not retained in EmailLog.
- * SES/SNS bounce and complaint feedback marks undeliverable messages as
- * BOUNCED, so they are excluded from retry recovery. Suppression is
- * re-checked per row before each retry send (F26, #1885) because a FAILED
- * row can predate the suppression that SNS feedback created.
+ * SES/SNS bounce and complaint feedback marks only the message it names as
+ * BOUNCED (#5469), so that row is excluded from retry recovery. Other rows to
+ * the address keep their status: suppression is re-checked per row before
+ * each retry send (F26, #1885), and that check, not a status rewrite, is what
+ * stops a FAILED row to an address SNS feedback has since suppressed.
  * Each row is claimed (FAILED -> QUEUED) with a guarded update before the
  * send so an interrupted or concurrent run can never deliver the same email
  * twice (F33, #1885).

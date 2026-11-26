@@ -437,10 +437,13 @@ describe("N-10: EmailLog tracking", () => {
       recipients: ["member@example.com"],
       suppressionsProcessed: 1,
     });
+    // #5469: only the email the notification names, never every row to the
+    // address (`ses-feedback-named-message.test.ts` pins the rule itself).
     expect(mockPrisma.emailLog.updateMany).toHaveBeenCalledWith({
-      where: expect.objectContaining({
-        to: { in: ["Member@Example.com", "member@example.com"] },
-      }),
+      where: {
+        messageId: { in: ["ses-message-1", "<ses-message-1>"] },
+        status: { in: ["QUEUED", "SENT", "FAILED"] },
+      },
       data: expect.objectContaining({ status: "BOUNCED" }),
     });
     expect(mockPrisma.emailSuppression.create).toHaveBeenCalledWith({

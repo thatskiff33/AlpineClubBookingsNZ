@@ -26,8 +26,10 @@
  *   stated limit as a first attempt (round 3, item 1). A template whose body
  *   is never kept (`booking-confirmed`) is never replayed, so never `retrying`;
  * - `undeliverable`: `FAILED` with nothing left to replay it, or `BOUNCED`
- *   (including a bounce that arrived after `SENT`). It cannot be sent again
- *   under the same key;
+ *   (refused for a suppressed address, or a bounce or complaint the mail
+ *   provider reported for this very email after `SENT`; since #5469 feedback
+ *   about another email to the address leaves this row as it was). It cannot
+ *   be sent again under the same key;
  * - `not-sent`: no row.
  * Told means `sent` or `withheld`, and nothing else.
  */
