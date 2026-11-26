@@ -400,6 +400,11 @@ describe("the retired saved card's notices", () => {
     return recorded!;
   }
 
+  it("records nothing and returns null when the clear cannot key its markers, so the clear still commits", async () => {
+    expect(await recordSavedCardUnusableNoticesOwed(tx(), { bookingId: "not an id", facts, claimReleased: true, amountCents: 1, paymentIntentId: "pi_1" })).toBeNull();
+    expect(owed.store.rows.size).toBe(0);
+  });
+
   it("sends the owner's email a stopped run never sent, keyed by the clear, and the officers' alert from its payload with Stripe's message not kept", async () => {
     const recorded = await owe();
 
