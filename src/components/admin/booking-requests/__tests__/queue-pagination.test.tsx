@@ -9,7 +9,7 @@ import { BookingApprovalsPanel } from "@/components/admin/booking-requests/booki
 import { BookingChangeRequestsPanel } from "@/components/admin/booking-requests/booking-change-requests-panel";
 import { PolicyExceptionRequestsPanel } from "@/components/admin/booking-requests/policy-exception-requests-panel";
 import { PublicBookingRequestsPanel } from "@/components/admin/booking-requests/public-booking-requests-panel";
-import { adminHref } from "@/lib/admin-hubs";
+import { buildBookingRequestsHref } from "@/lib/admin-booking-requests-path";
 import { PINNED_QUEUE_RECORD_NOTE } from "@/lib/admin-list-page";
 
 /**
@@ -517,7 +517,9 @@ describe("PolicyExceptionRequestsPanel paging", () => {
     expect(pageOf(fetches.reads(route).at(-1)!)).toBe("1");
     await waitFor(() => expect(writtenAddress().searchParams.get("status")).toBe("EXPIRED"));
     const written = writtenAddress();
-    expect(written.pathname).toBe(adminHref("booking-requests"));
+    // The page's path from the reviewed path helper, not the admin-hubs registry,
+    // whose importers are a reviewed census (admin-hubs-registry.test.ts).
+    expect(written.pathname).toBe(new URL(buildBookingRequestsHref("exceptions"), "http://localhost").pathname);
     expect(Object.fromEntries(written.searchParams)).toEqual({ tab: "exceptions", status: "EXPIRED" });
   });
 
