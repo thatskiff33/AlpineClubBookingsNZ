@@ -5,7 +5,9 @@
  * with the officer's real permissions, and is offered only to an officer
  * holding that area at the route's level (`mcpActionAdminRequirement`).
  * Refunds and anything else that asks for a fresh sign-in stay on the website
- * (`exclusions.ts`). Every amount is integer cents.
+ * (`exclusions.ts`), as does marking a booking or a subscription paid by hand
+ * (`moves-money`, #5305 comments 7131138226 and 7200981104). Every amount is
+ * integer cents.
  *
  * Kinds follow the owner's rule (#5305): an action that notifies anyone, or
  * changes a member's payment, refund, credit, invoice, subscription or Xero
@@ -57,7 +59,6 @@ import {
 } from "@/lib/connection-shapes/finance-reports";
 import {
   ADMIN_SUBSCRIPTIONS_CONNECTION_SHAPE,
-  MANUAL_SUBSCRIPTION_PAYMENT_CONNECTION_SHAPE,
   SUBSCRIPTION_BILLING_ANNUAL_BATCH_CONFIRMED_CONNECTION_SHAPE,
   SUBSCRIPTION_BILLING_CHARGE_CLOSED_CONNECTION_SHAPE,
   SUBSCRIPTION_BILLING_CHARGE_RETRIED_CONNECTION_SHAPE,
@@ -65,7 +66,6 @@ import {
   SUBSCRIPTION_BILLING_FAMILY_MARKER_CONNECTION_SHAPE,
   SUBSCRIPTION_BILLING_REFRESHED_CONNECTION_SHAPE,
 } from "@/lib/connection-shapes/finance-subscriptions";
-import { manualSubscriptionPaymentBodySchema } from "@/lib/manual-payment-request-schemas";
 import { MANUAL_PAYMENT_NOTE_MAX } from "@/lib/manual-payment-note";
 import { routeIdParamsSchema } from "@/lib/route-id-params";
 import { CLOSE_ALREADY_PAID_REASON_MAX } from "@/lib/subscription-charge-already-paid";
@@ -224,7 +224,7 @@ export const FINANCE_MONEY_MCP_ACTIONS: readonly McpAction[] = [
     id: "list_subscriptions",
     title: "List member subscriptions",
     summary:
-      "One page of the season's member subscriptions with how many are paid, unpaid, overdue, not invoiced and not required. `seasonYear` is the season's starting year (the current season if omitted); `status` is `PAID`, `UNPAID`, `OVERDUE`, `NOT_INVOICED`, `NOT_REQUIRED` or `all`; `ageTier` and `xeroContactGroup` (a group name) narrow it; `sortBy` and `sortDir` order it. Each row's `id` is what `record_subscription_manual_payment` needs.",
+      "One page of the season's member subscriptions with how many are paid, unpaid, overdue, not invoiced and not required. `seasonYear` is the season's starting year (the current season if omitted); `status` is `PAID`, `UNPAID`, `OVERDUE`, `NOT_INVOICED`, `NOT_REQUIRED` or `all`; `ageTier` and `xeroContactGroup` (a group name) narrow it; `sortBy` and `sortDir` order it. Marking a subscription paid by hand is done on the website.",
     method: "GET",
     path: "/api/admin/subscriptions",
     query: adminSubscriptionsQuerySchema,
@@ -232,20 +232,6 @@ export const FINANCE_MONEY_MCP_ACTIONS: readonly McpAction[] = [
     returns: ADMIN_SUBSCRIPTIONS_CONNECTION_SHAPE,
     core: false,
   },
-  {
-    id: "record_subscription_manual_payment",
-    title: "Record a subscription paid by hand",
-    summary:
-      `Marks one member subscription paid outside Xero (\`direction\` \`paid\`), or reverses an earlier manual mark (\`direction\` \`unpaid\`). \`id\` is the subscription (from \`list_subscriptions\`). Marking paid must say \`notifyMember\` (true emails the member a receipt); a reversal emails nobody and must not send it. \`note\` (up to ${MANUAL_PAYMENT_NOTE_MAX} characters) says how it was paid; \`confirmed\` must be \`true\`, sent only after the officer confirms. It never raises or voids a Xero invoice. It changes the member's money record straight away; a mistake is put right by reversing it.`,
-    method: "POST",
-    path: "/api/admin/subscriptions/[id]/manual-payment",
-    params: routeIdParamsSchema,
-    body: manualSubscriptionPaymentBodySchema,
-    kind: "destructive",
-    returns: MANUAL_SUBSCRIPTION_PAYMENT_CONNECTION_SHAPE,
-    core: false,
-  },
-
   {
     id: "get_subscription_billing",
     title: "Preview subscription billing",

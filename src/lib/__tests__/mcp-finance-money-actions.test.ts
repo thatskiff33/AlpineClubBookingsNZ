@@ -36,7 +36,6 @@ const h = vi.hoisted(() => ({
   resolveMetricsCapacityAndScope: vi.fn(),
   buildRevenueSeries: vi.fn(),
   getXeroContactGroupMemberships: vi.fn(),
-  applyManualSubscriptionPayment: vi.fn(),
   buildSubscriptionBillingPreview: vi.fn(),
   confirmSubscriptionBillingPreview: vi.fn(),
   reconcileSubscriptionBillingExceptions: vi.fn(),
@@ -123,11 +122,6 @@ vi.mock("@/lib/xero-contact-groups", () => ({
   getXeroContactIdsForGroup: vi.fn(async () => []),
   getXeroContactGroupMemberships: h.getXeroContactGroupMemberships,
 }));
-vi.mock("@/lib/adult-member-hosting-retry-response", () => ({ hostingCoverageParticipantRetryResponse: () => null }));
-vi.mock("@/lib/manual-subscription-payment", async (importOriginal) => ({
-  ...((await importOriginal()) as typeof import("@/lib/manual-subscription-payment")),
-  applyManualSubscriptionPayment: h.applyManualSubscriptionPayment,
-}));
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 vi.mock("@/lib/membership-subscription-billing", () => ({
   buildSubscriptionBillingPreview: h.buildSubscriptionBillingPreview,
@@ -179,7 +173,6 @@ import { GET as listManualRefundTasks } from "@/app/api/admin/payments/manual-re
 import { GET as listRefundRequests } from "@/app/api/admin/refund-requests/route";
 import { GET as getFinanceReport } from "@/app/api/admin/reports/route";
 import { GET as listSubscriptions } from "@/app/api/admin/subscriptions/route";
-import { POST as recordSubscriptionPayment } from "@/app/api/admin/subscriptions/[id]/manual-payment/route";
 import { GET as getSubscriptionBilling, POST as runSubscriptionBilling } from "@/app/api/admin/subscription-billing/route";
 import { GET as getFinanceBookingMetrics } from "@/app/api/finance/bookings/metrics/route";
 import { POST as backfillFinanceMonthlyFacts } from "@/app/api/finance/sync/backfill-monthly-facts/route";
@@ -786,44 +779,6 @@ describe("list_subscriptions", () => {
     expect(h.prisma.memberSubscription.findMany).toHaveBeenCalledWith(
       expect.objectContaining({ where: expect.objectContaining({ seasonYear: 2026 }) }),
     );
-  });
-});
-
-describe("record_subscription_manual_payment", () => {
-  it("marks the subscription the app named paid, as the signed-in officer, with their email choice", async () => {
-    const RESULT = {
-      id: "sub-1",
-      memberId: "member-7",
-      seasonYear: 2026,
-      status: "PAID",
-      direction: "paid",
-      memberNotified: true,
-      receipt: "queued",
-    };
-    h.applyManualSubscriptionPayment.mockResolvedValue(RESULT);
-    const { connection, browser } = await expectActionContract({
-      actionId: "record_subscription_manual_payment",
-      handler: recordSubscriptionPayment,
-      args: { id: "sub-1", direction: "paid", notifyMember: true, note: "Cash at the AGM", confirmed: true },
-    });
-    expect(connection).toEqual({
-      success: true,
-      subscription: RESULT,
-      message: "Subscription marked paid. A receipt is being emailed to the member.",
-    });
-    expect(browser).toEqual(connection);
-    expect(h.applyManualSubscriptionPayment).toHaveBeenCalledWith({
-      subscriptionId: "sub-1",
-      direction: "paid",
-      note: "Cash at the AGM",
-      actingMemberId: "treasurer-1",
-      notifyMember: true,
-    });
-  });
-
-  it("cannot be sent without the officer's confirmation", () => {
-    const schema = mcpActionInputSchema(findMcpAction("record_subscription_manual_payment")!);
-    expect(schema.safeParse({ id: "sub-1", direction: "paid", notifyMember: true }).success).toBe(false);
   });
 });
 

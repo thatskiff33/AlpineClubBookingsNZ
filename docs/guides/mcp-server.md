@@ -712,9 +712,13 @@ An officer who holds the **Finance** admin area can do through a connected
 app what they can do on the finance screens, except what needs a fresh
 sign-in (refunds, card-refund resolutions, disconnecting Xero and the rest of
 `STEP_UP_ROUTES`), marking a booking paid and withdrawing an extra payment
-request (both reach Stripe, so `moves-money`), and the club's Finance setup
-(see [What stays on the website](#what-stays-on-the-website-and-why)). Card
-entry stays in the browser.
+request (both reach Stripe), marking a member's subscription paid by hand or
+reversing that (it emails the member a receipt and changes their booking
+prices; owner decision,
+[#5305](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/5305#issuecomment-7200981104)),
+all three `moves-money`, and the club's Finance setup (see
+[What stays on the website](#what-stays-on-the-website-and-why)). Card entry
+stays in the browser.
 
 How an officer action works:
 
@@ -765,7 +769,6 @@ logged as important. Only `run_finance_sync` and
 | `list_refund_requests` | Members' refund requests and their figures | read | `GET /api/admin/refund-requests` |
 | `get_finance_report` | The finance report for a date range | read | `GET /api/admin/reports` |
 | `list_subscriptions` | Members' subscriptions and their status | read | `GET /api/admin/subscriptions` |
-| `record_subscription_manual_payment` | Records a subscription paid by hand | destructive | `POST /api/admin/subscriptions/[id]/manual-payment` |
 | `get_subscription_billing` | The season's billing preview, charges and exceptions | read | `GET /api/admin/subscription-billing` |
 | `refresh_subscription_billing` | Refreshes the preview and clears exceptions it no longer finds | destructive | `POST /api/admin/subscription-billing` (`REFRESH_PREVIEW`) |
 | `confirm_subscription_billing_batch` | Raises the season's subscription invoices from a preview | destructive | same (`CONFIRM_ANNUAL_BATCH`) |

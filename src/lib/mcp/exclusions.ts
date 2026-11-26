@@ -392,12 +392,16 @@ const PERMANENT_ROUTES: ReadonlyArray<{
   // Money that goes through Stripe (owner decision, #5305 comment
   // 7131138226, item 1): marking a booking paid cancels the member's open card
   // checkouts and posts a receipt, and withdrawing an extra payment request
-  // cancels a card request and retires its ledger row.
+  // cancels a card request and retires its ledger row. Marking a member's
+  // subscription paid by hand, or reversing it, emails a receipt and moves
+  // their booking prices, so it stays with booking mark-paid (owner decision,
+  // #5305 comment 7200981104).
   {
     reason: "moves-money",
     routes: [
       "POST /api/admin/bookings/[id]/mark-paid",
       "POST /api/admin/bookings/[id]/additional-payment/withdraw",
+      "POST /api/admin/subscriptions/[id]/manual-payment",
     ],
   },
   // Handlers that call `requireRecentAuth` without being on `STEP_UP_ROUTES`

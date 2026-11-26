@@ -2,11 +2,11 @@
  * What an officer sends to record, or reverse, a payment taken by hand: a
  * member subscription (`POST /api/admin/subscriptions/[id]/manual-payment`)
  * and a booking paid in cash or by an off-Xero bank transfer (`POST
- * /api/admin/bookings/[id]/mark-paid`). The routes, and the subscription
- * route's AI app action, read these (ALP-721, `INV-SSOT`); marking a booking
- * paid is website-only (#5305 comment 7131138226, item 1). Amounts are
- * integer cents; neither route takes a settlement amount, only the figure the
- * officer was shown, which the route checks against its own.
+ * /api/admin/bookings/[id]/mark-paid`). Both routes read these (ALP-721,
+ * `INV-SSOT`); both are website-only (#5305 comment 7131138226, item 1, and
+ * comment 7200981104). Amounts are integer cents; neither route takes a
+ * settlement amount, only the figure the officer was shown, which the route
+ * checks against its own.
  */
 import { z } from "zod";
 

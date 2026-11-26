@@ -6,7 +6,6 @@
  * `finance-payments.ts`. Types only: nothing here reaches the database.
  */
 import { connectionShapeFor } from "@/lib/connection-projection";
-import type { ManualSubscriptionPaymentResult } from "@/lib/manual-subscription-payment";
 
 /**
  * `GET /api/admin/subscriptions`: one page of the season's member
@@ -66,25 +65,6 @@ export const ADMIN_SUBSCRIPTIONS_CONNECTION_SHAPE = connectionShapeFor<{
     notRequired: true,
   },
   xeroContactGroupsLoaded: true,
-});
-
-/** `POST /api/admin/subscriptions/[id]/manual-payment`: the subscription afterwards and what became of the receipt. */
-export const MANUAL_SUBSCRIPTION_PAYMENT_CONNECTION_SHAPE = connectionShapeFor<{
-  success: boolean;
-  subscription: ManualSubscriptionPaymentResult;
-  message: string;
-}>({
-  success: true,
-  subscription: {
-    id: true,
-    memberId: true,
-    seasonYear: true,
-    status: true,
-    direction: true,
-    memberNotified: true,
-    receipt: true,
-  },
-  message: true,
 });
 
 type BillingPerson = { memberId: string; memberName: string };

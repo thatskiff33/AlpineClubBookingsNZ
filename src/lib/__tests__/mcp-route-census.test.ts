@@ -519,9 +519,11 @@ describe("AI app action census (ALP-653, INV-MCP-006)", { timeout: CENSUS_TIMEOU
 
   it("keeps the Finance money and setup routes the owner kept website-only off the catalogue", () => {
     // #5305 comment 7131138226: item 1, Stripe-touching money; item 4, setup.
+    // Comment 7200981104: a subscription marked paid by hand, as booking mark-paid.
     const ownerDecided: Array<[string, string, string]> = [
       ["src/app/api/admin/bookings/[id]/mark-paid/route.ts", "POST", "moves-money"],
       ["src/app/api/admin/bookings/[id]/additional-payment/withdraw/route.ts", "POST", "moves-money"],
+      ["src/app/api/admin/subscriptions/[id]/manual-payment/route.ts", "POST", "moves-money"],
       ["src/app/api/admin/internet-banking-settings/route.ts", "PUT", "club-setup"],
       ["src/app/api/admin/fee-configuration/route.ts", "POST", "club-setup"],
       ["src/app/api/admin/club-tax/route.ts", "PUT", "club-setup"],

@@ -2,11 +2,7 @@ import { revalidateAdminPage } from "@/lib/admin-page-revalidation";
 import { NextRequest, NextResponse } from "next/server";
 import { hostingCoverageParticipantRetryResponse } from "@/lib/adult-member-hosting-retry-response";
 import { parseJsonRequestBody } from "@/lib/api-json";
-import {
-  MANUAL_SUBSCRIPTION_PAYMENT_CONNECTION_SHAPE,
-} from "@/lib/connection-shapes/finance-subscriptions";
 import { manualSubscriptionPaymentBodySchema } from "@/lib/manual-payment-request-schemas";
-import { connectionJson } from "@/lib/mcp-connection-request";
 import logger from "@/lib/logger";
 import { requireAdmin } from "@/lib/session-guards";
 import {
@@ -92,7 +88,7 @@ export async function POST(
     );
     revalidateAdminPage("subscriptions");
     revalidateAdminPage("member-detail");
-    return connectionJson(request, {
+    return NextResponse.json({
       success: true,
       subscription: result,
       // #2260: report what became of the receipt, never a delivery claim the
@@ -108,7 +104,7 @@ export async function POST(
               ? "Subscription marked paid, but the receipt could not be sent — check the member's email address."
               : "Subscription marked paid. The member was not emailed."
           : "Manual payment reversed.",
-    }, MANUAL_SUBSCRIPTION_PAYMENT_CONNECTION_SHAPE);
+    });
   } catch (error) {
     const hostingRetry = hostingCoverageParticipantRetryResponse(error);
     if (hostingRetry) return hostingRetry;

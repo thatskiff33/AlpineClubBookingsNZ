@@ -4,7 +4,7 @@
   says it can act as an officer, can list payments, refund requests, money
   owed back by hand, subscriptions and the finance report; request and
   approve account credit adjustments (a different officer still approves);
-  record a subscription paid by hand; run subscription billing; check and
+  run subscription billing; check and
   repair the Xero sync, links and contacts, including re-running failed Xero
   work; and review and resume the club's GST overrides in Xero. A Finance
   viewer is offered only what their access allows (the reads, less the
@@ -14,7 +14,9 @@
   first and is logged as important; only the finance report sync and backfill
   do not. These stay on the website: refunds and anything else that asks for
   a fresh sign-in; card entry; marking a booking paid and withdrawing an extra
-  payment request, which reach Stripe; and Finance setup (the bank account
+  payment request, which reach Stripe; marking a subscription paid by hand,
+  which emails the member and changes their booking prices; and Finance
+  setup (the bank account
   members pay into, fees, tax settings, accounting and item-code mappings,
   integration credentials and the Xero connection). Amounts are always cents,
   and each answer leaves out email addresses, Stripe ids and Xero internal ids
