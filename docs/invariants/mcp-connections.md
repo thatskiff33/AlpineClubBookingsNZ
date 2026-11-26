@@ -192,32 +192,30 @@ only the rules.
   the admin route map, or from the entry's `requires` where the handler's
   guard (`requireAdmin`, or the finance workspace's own) names its own
   permission; the census holds `requires` to that guard. Elsewhere outside
-  `/api/admin` the census pins each route's predicate, and `requires` is the
-  admin leg it always admits. The tool list, `find_actions`,
+  `/api/admin`, the census pins the route's predicate and `requires` is its
+  always-admitted admin leg. The tool list, `find_actions`,
   `describe_action` and `run_action` all ask it.
 - **The route runs with the officer's real permissions** and its own guard
   decides, as for the browser, and answers through the projection. A
   step-up route stays website-only (`fresh-proof`, `INV-MCP-006`).
-- **An officer action needs the officer's own approval for officer actions**
-  (owner decision, #5305). `McpGrant.officerConsentAt` is set only when
-  someone holding an admin area approves on the screen that says the app can
-  also act as an officer. Without it, `mcpCallerMayUse` hides every officer
+- **An officer action needs the officer's own approval** (owner decision,
+  #5305). `McpGrant.officerConsentAt` is set only when an officer approves on
+  the screen saying the app can also act as an officer. Without it, `mcpCallerMayUse` hides every officer
   action and `describe_action` and `run_action` tell the app the officer must
-  reconnect; member actions keep working. Earlier approvals, and those given
-  before the member became an officer, carry no date. The screen's wording is
-  general, so one date covers every admin area, later ones included; no
+  reconnect; member actions keep working. Approvals given earlier, or before
+  the member became an officer, carry no date. The general wording means one
+  date covers every admin area, later ones included; no
   wording version is stored.
 - **Every club-wide or Membership configuration change is `destructive`**,
-  so the app asks the officer first (#5305 comments 7093303964, 7111359405).
+  so the app asks first (#5305 comments 7093303964, 7111359405).
   Finance setup is the recorded exception: website-only (`club-setup`,
   comment 7131138226).
   A setting a route guards with a second permission keeps it: the
-  subscription-liability rule pair still needs Finance edit too, refused by
-  the settings route itself.
+  subscription-liability rule pair still needs Finance edit, refused by the
+  settings route itself.
 - **An officer action that emails or notifies anyone, or overwrites another
   person's record, is `destructive`** (#5305 item 2). Where the website lets
-  the officer choose whether a member is emailed, the app passes the same
-  choice.
+  the officer choose whether to email a member, so can the app.
 
 ## INV-MCP-007
 
