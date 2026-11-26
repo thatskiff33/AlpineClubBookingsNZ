@@ -10,6 +10,7 @@
  * 7093303964). Asking AI Diagnostics a question is website-only
  * (`site-helper` in `exclusions.ts`): the connected app answers itself.
  */
+import { AI_ASSISTANT_MAX_MONTHLY_BUDGET_CENTS } from "@/config/ai-spend";
 import {
   aiSpendCurrencyUpdateSchema,
   diagnosticsBudgetUpdateSchema,
@@ -43,7 +44,7 @@ export const SUPPORT_AI_MCP_ACTIONS: readonly McpAction[] = [
     id: "update_help_assistant_budget",
     title: "Change the help assistant's spend cap",
     summary:
-      "Officer: sets the website help assistant's monthly spend cap in cents of the club's currency (0 turns paid answers off; at most 100,000). Answers the saved cap.",
+      `Officer: sets the website help assistant's monthly spend cap in cents of the club's currency (0 turns paid answers off; at most ${AI_ASSISTANT_MAX_MONTHLY_BUDGET_CENTS}). Answers the saved cap.`,
     method: "PUT",
     path: "/api/admin/ai-assistant/settings",
     body: helpAssistantBudgetUpdateSchema,

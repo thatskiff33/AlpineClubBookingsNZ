@@ -1,9 +1,6 @@
 import { describe, expect, it } from "vitest";
-import {
-  MAX_BUDGET_CENTS,
-  centsToDollars,
-  parseDollarsToCents,
-} from "../budget";
+import { AI_ASSISTANT_MAX_MONTHLY_BUDGET_CENTS as MAX_BUDGET_CENTS } from "@/config/ai-spend";
+import { centsToDollars, parseDollarsToCents } from "../budget";
 import { CLUB_FORMAT_TEST } from "@/lib/__tests__/support/club-format-fixture";
 
 describe("centsToDollars", () => {

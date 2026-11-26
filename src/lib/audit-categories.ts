@@ -182,9 +182,10 @@ export function auditCategoriesForCorrelationDomain(
 
 /**
  * The categories a reader holding the areas `holdsArea` accepts may read,
- * when the reader is a model rather than a person at Admin > Audit Log: AI
- * Diagnostics' correlation tools, and an officer's AI app connection reading
- * the audit log (`search_audit_log`, ALP-724). Each category needs every area
+ * when the reader is a model rather than a person at Admin > Audit Log: an
+ * officer's AI app connection reading the audit log (`search_audit_log`,
+ * ALP-724). AI Diagnostics applies the same table through
+ * `auditCategoriesForCorrelationDomain`. Each category needs every area
  * `auditCategoryReaderAreas` names. A row with no category is in none.
  */
 export function auditCategoriesReadableWith(

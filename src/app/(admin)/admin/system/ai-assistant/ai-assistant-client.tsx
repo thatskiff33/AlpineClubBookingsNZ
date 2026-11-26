@@ -26,11 +26,8 @@ import { useClubTime } from "@/components/club-time-provider";
 import { requireInstant } from "@/lib/club-time";
 import type { AiAssistantKeyState } from "@/lib/ai-assistant-config";
 import { formatCents } from "@/lib/utils";
-import {
-  MAX_BUDGET_CENTS,
-  centsToDollars,
-  parseDollarsToCents,
-} from "./budget";
+import { AI_ASSISTANT_MAX_MONTHLY_BUDGET_CENTS } from "@/config/ai-spend";
+import { centsToDollars, parseDollarsToCents } from "./budget";
 import { apiErrorMessageFromResponse } from "@/lib/api-error-message";
 
 const CREDENTIALS_URL = "/api/admin/integrations/credentials";
@@ -381,7 +378,7 @@ function BudgetCard() {
                 />
               </div>
               <p className="text-xs text-muted-foreground">
-                Maximum {formatCents(MAX_BUDGET_CENTS, format)}. Also set a spend limit
+                Maximum {formatCents(AI_ASSISTANT_MAX_MONTHLY_BUDGET_CENTS, format)}. Also set a spend limit
                 in the Anthropic console as the hard backstop.
               </p>
             </div>

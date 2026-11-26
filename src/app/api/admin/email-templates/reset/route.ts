@@ -12,7 +12,7 @@ import { requireAdmin } from "@/lib/session-guards";
 import { parseJsonRequestBody } from "@/lib/api-json";
 
 // The save route caps a stored body at 10,000 characters and a subject at 500
-// (src/app/api/admin/email-templates/route.ts), so this is the largest wording
+// (src/lib/admin-support-api/messages.ts), so this is the largest wording
 // a club can have to lose — and, because the audit row is the only copy left
 // after a reset, the length the archive has to keep whole. Audit metadata
 // otherwise clips every string at 1000 characters, which turned a measured

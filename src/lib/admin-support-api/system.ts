@@ -47,6 +47,9 @@ export const providerTestSchema = z.object({
 // Privacy retention
 // ---------------------------------------------------------------------------
 
+/** How many rows each paged list of the privacy retention preview answers. */
+export const PRIVACY_RETENTION_PREVIEW_PAGE_SIZE = 25;
+
 /** `GET /api/admin/privacy-retention`: which page of what the retention jobs would remove. */
 export const privacyRetentionPreviewQuerySchema = z.object({
   page: z.coerce
@@ -54,7 +57,9 @@ export const privacyRetentionPreviewQuerySchema = z.object({
     .int()
     .min(1)
     .optional()
-    .describe("Page of the email, application and undated member lists, 25 to a page, from 1."),
+    .describe(
+      `Page of the email, application and undated member lists, ${PRIVACY_RETENTION_PREVIEW_PAGE_SIZE} to a page, from 1.`,
+    ),
   memberAfter: z
     .string()
     .min(1)

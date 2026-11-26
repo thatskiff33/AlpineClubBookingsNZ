@@ -1,6 +1,9 @@
 import { NextResponse } from "next/server";
 import { hasAdminAreaAccess } from "@/lib/admin-permissions";
-import { privacyRetentionPreviewQuerySchema } from "@/lib/admin-support-api/system";
+import {
+  PRIVACY_RETENTION_PREVIEW_PAGE_SIZE,
+  privacyRetentionPreviewQuerySchema,
+} from "@/lib/admin-support-api/system";
 import {
   PRIVACY_RETENTION_CONNECTION_SHAPE,
   PRIVACY_RETENTION_SAVED_CONNECTION_SHAPE,
@@ -41,9 +44,8 @@ export async function GET(request: Request) {
   const canViewMembership = hasAdminAreaAccess(guard.session.user, {
     area: "membership", level: "view",
   });
-  const pageSize = 25;
   const { settings, ...preview } = await getPrivacyRetentionPreview({
-    page, pageSize, memberAfter, includeMembers: canViewMembership,
+    page, pageSize: PRIVACY_RETENTION_PREVIEW_PAGE_SIZE, memberAfter, includeMembers: canViewMembership,
   });
   const answer: PrivacyRetentionAnswer = {
     settings,
@@ -63,7 +65,7 @@ export async function GET(request: Request) {
       memberNextCursor: preview.memberNextCursor,
     } : {}),
     page,
-    pageSize,
+    pageSize: PRIVACY_RETENTION_PREVIEW_PAGE_SIZE,
     canViewMembership,
   };
   return connectionJson(request, answer, PRIVACY_RETENTION_CONNECTION_SHAPE);

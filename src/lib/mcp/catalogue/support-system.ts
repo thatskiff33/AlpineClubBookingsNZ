@@ -16,6 +16,7 @@
  * reads them.
  */
 import {
+  PRIVACY_RETENTION_PREVIEW_PAGE_SIZE,
   privacyRetentionPreviewQuerySchema,
   providerTestSchema,
   setupStepProgressSchema,
@@ -235,7 +236,7 @@ export const SUPPORT_SYSTEM_MCP_ACTIONS: readonly McpAction[] = [
     id: "get_privacy_retention",
     title: "Read the privacy retention settings",
     summary:
-      "Officer: how long email logs, rejected applications and former members are kept, how long a stay's dietary needs are kept, which removal jobs are switched on, and a preview of what they would remove now (record ids and dates, 25 to a page). The application and member lists come only with Membership view.",
+      `Officer: how long email logs, rejected applications and former members are kept, how long a stay's dietary needs are kept, which removal jobs are switched on, and a preview of what they would remove now (record ids and dates, ${PRIVACY_RETENTION_PREVIEW_PAGE_SIZE} to a page). The application and member lists come only with Membership view.`,
     method: "GET",
     path: "/api/admin/privacy-retention",
     query: privacyRetentionPreviewQuerySchema,
