@@ -953,6 +953,141 @@ kiosk account ask for fresh proof.
 | `set_maintenance_report_sign_active` | Pause or resume a lodge's QR report sign | destructive | edit | `PATCH /api/admin/maintenance-reports/tokens` |
 | `get_food_order_settings` | Read the food-order settings | read | view | `GET /api/admin/food-orders/settings` |
 
+### Support & System and Admin Overview officer actions (ALP-724)
+
+An officer who holds the **Support & System** admin area can do through an AI
+app what they can do on that area's screens: read the health report, Stuck
+States, the setup checklist, backups, the modules and the sign-in rules; run
+the provider tests and a backup; follow up problem reports; search the audit
+log; manage booking message wording, email templates, the club's email
+settings and delivery policies, officers' email alerts, stopped addresses and
+failed emails; and set the AI spend caps and privacy retention. An officer who
+holds **Admin Overview** can read the officer work-queue counts the dashboard
+shows. The actions live in
+[`src/lib/mcp/catalogue/`](../../src/lib/mcp/catalogue/) (`support-*.ts`).
+Who is offered them, the officer's approval, and the audit work as for
+Bookings & Beds above.
+
+- **Needs.** Support view for every read, edit for every change; Admin
+  Overview view for the work-queue counts. The two previews admit a Support
+  viewer, as on the website, so their entries carry `requires` Support view.
+- **Listed as their own tools:** `get_system_health` and
+  `get_officer_work_queue_counts`. The rest are reached through
+  `find_actions`.
+- **Asks first.** Wording, templates, email settings, delivery policies, the
+  AI caps and rate, and privacy retention are club-wide configuration whose
+  effect reaches members; an officer's alerts are another person's record;
+  clearing a stopped address lets mail reach it again; retrying a failed email
+  sends it; a problem report is the member's; resetting the setup checklist
+  and deleting a report's screenshot cannot be undone. All of these are
+  `destructive` (owner decisions,
+  [#5305](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/5305#issuecomment-7092977781)).
+  Ticking a setup step, finishing the checklist, testing a provider and
+  starting a backup change only the club's own housekeeping, so they are
+  `write`.
+- **One route, several actions.** A problem report's change takes one of
+  three decisions (resolve, reopen, delete the screenshot) and the setup
+  progress save a step or the whole checklist. Each is its own action with
+  the route's `action` fixed, so the app names what it means to do.
+  `get_email_template` reads one template whole (`?templateName=`), because
+  every template's wording at once is more than an answer can carry;
+  `list_email_templates` carries no wording.
+- **The audit log keeps its visibility rules.** A connection is read by a
+  model, as AI Diagnostics is, so `search_audit_log` searches only the
+  categories the officer's areas may read
+  ([the audit log guide](audit-log.md#categories-and-what-they-are-actually-for)):
+  Support alone reads `admin`, `security` and `system`; `booking` also needs
+  Bookings & Beds, `payment` and `xero` Finance, `lodge` Lodge Operations, and
+  `account`, `family`, `communication` and `privacy` Membership. An entry with
+  no category is never sent. The route decides this, whatever the app filters
+  on. The filter lists the screen draws from every entry are not sent either.
+- **What is never sent.** A problem report's screenshot and the reporter's
+  browser details, the lodge's door code (the email settings carry it for the
+  emails that print it), a backup's credentials, directory and file names,
+  the audit log's IP addresses, browser details and raw metadata, and
+  anyone's email address in the audit log or on a problem report.
+
+Website-only, and why (the reasons are listed below): the AI app connection
+settings and their list of connections, for good; backup restore, the
+backup destination and its credentials, the configuration import, switching
+modules, the sign-in rules, resetting someone's two-step sign-in, and
+changing the access roles, which ask for fresh proof; the club's
+currency and locale change, its time zone and the environment safety switch,
+which only a Full Admin may see or change; asking AI Diagnostics a question
+(the app answers itself); configuration bundles, which are files; reissuing
+a failed email's link, which can be a sign-in link; and the backup wizard's
+resume step and the sidebar's role menu, which serve the website's screens.
+
+#### Health, setup and backups
+
+| Action | What it does | Kind | Needs | Route |
+| --- | --- | --- | --- | --- |
+| `get_system_health` (tool) | Read the system health report | read | view | `GET /api/admin/health` |
+| `get_runtime_status` | Read the running process's status | read | view | `GET /api/admin/runtime-status` |
+| `get_stuck_states` | Read Stuck States | read | view | `GET /api/admin/stuck-states` |
+| `get_officer_work_queue_counts` (tool) | Count what is waiting for officers | read | Admin Overview view | `GET /api/admin/pending-counts` |
+| `get_setup_readiness` | Read the setup checklist | read | view | `GET /api/admin/setup` |
+| `update_setup_step` | Tick, skip or reopen a setup step | write | edit | `PATCH /api/admin/setup/progress` |
+| `finish_setup` | Mark the setup checklist finished | write | edit | `PATCH /api/admin/setup/progress` (`action: "finish"`) |
+| `reset_setup_progress` | Start the setup checklist again | destructive | edit | `PATCH /api/admin/setup/progress` (`action: "reset"`) |
+| `test_provider_connection` | Test a provider connection | write | edit | `POST /api/admin/setup/provider-test` |
+| `get_backup_status` | Read the database backup status | read | view | `GET /api/admin/backups/status` |
+| `run_backup_now` | Start a database backup now | write | edit | `POST /api/admin/backups/run` |
+| `list_modules` | List the club's modules | read | view | `GET /api/admin/modules` |
+| `get_club_format` | Read the club's currency and locale | read | view | `GET /api/admin/club-format` |
+| `get_password_policy` | Read the sign-in rules | read | view | `GET /api/admin/security/password-policy` |
+| `get_officer_two_factor_policy` | Read the officer two-step sign-in rule | read | view | `GET /api/admin/security/officer-two-factor` |
+| `list_access_roles` | List the access roles | read | view | `GET /api/admin/access-roles` |
+| `get_privacy_retention` | Read the privacy retention settings | read | view | `GET /api/admin/privacy-retention` |
+| `update_privacy_retention` | Change the privacy retention settings | destructive | edit | `PUT /api/admin/privacy-retention` |
+
+#### Audit log and problem reports
+
+| Action | What it does | Kind | Needs | Route |
+| --- | --- | --- | --- | --- |
+| `search_audit_log` | Search the audit log | read | view | `GET /api/admin/audit-log` |
+| `list_issue_reports` | List problem reports | read | view | `GET /api/admin/issue-reports` |
+| `get_issue_report` | Read a problem report | read | view | `GET /api/admin/issue-reports/[id]` |
+| `resolve_issue_report` | Resolve a problem report | destructive | edit | `PATCH /api/admin/issue-reports/[id]` (`action: "resolve"`) |
+| `reopen_issue_report` | Reopen a problem report | destructive | edit | `PATCH /api/admin/issue-reports/[id]` (`action: "reopen"`) |
+| `delete_issue_report_screenshot` | Delete a problem report's screenshot | destructive | edit | `PATCH /api/admin/issue-reports/[id]` (`action: "deleteScreenshot"`) |
+
+#### Messages and email delivery
+
+| Action | What it does | Kind | Needs | Route |
+| --- | --- | --- | --- | --- |
+| `list_booking_message_wording` | List the booking messages' wording | read | view | `GET /api/admin/booking-messages` |
+| `preview_booking_message` | Preview booking message wording | read (preview) | view | `POST /api/admin/booking-messages/preview` |
+| `update_booking_message` | Change a booking message's wording | destructive | edit | `PUT /api/admin/booking-messages` |
+| `reset_booking_message` | Reset a booking message to its default | destructive | edit | `POST /api/admin/booking-messages/reset` |
+| `list_email_templates` | List email templates | read | view | `GET /api/admin/email-templates` |
+| `get_email_template` | Read an email template | read | view | `GET /api/admin/email-templates?templateName=` |
+| `preview_email_template` | Preview an email template | read (preview) | view | `POST /api/admin/email-templates/preview` |
+| `update_email_template` | Change an email template | destructive | edit | `PUT /api/admin/email-templates` |
+| `reset_email_template` | Reset an email template to its default | destructive | edit | `POST /api/admin/email-templates/reset` |
+| `get_email_settings` | Read the club's email settings | read | view | `GET /api/admin/email-settings` |
+| `update_email_settings` | Change the club's email settings | destructive | edit | `PUT /api/admin/email-settings` |
+| `list_notification_delivery_policies` | List officer email delivery policies | read | view | `GET /api/admin/notification-delivery-policies` |
+| `set_notification_delivery_policy` | Change an officer email's delivery policy | destructive | edit | `PUT /api/admin/notification-delivery-policies` |
+| `update_officer_alerts` | Change an officer's email alerts | destructive | edit | `PUT /api/admin/notifications` |
+| `list_email_suppressions` | List stopped email addresses | read | view | `GET /api/admin/email-suppressions` |
+| `clear_email_suppression` | Let the site email an address again | destructive | edit | `POST /api/admin/email-suppressions/[id]/clear` |
+| `retry_failed_email` | Try a failed email again | destructive | edit | `POST /api/admin/email-failures/[id]/retry` |
+| `dismiss_failed_email` | Dismiss a failed email | destructive | edit | `POST /api/admin/email-failures/[id]/review` |
+
+#### AI spend
+
+| Action | What it does | Kind | Needs | Route |
+| --- | --- | --- | --- | --- |
+| `get_help_assistant_budget` | Read the help assistant's spend cap | read | view | `GET /api/admin/ai-assistant/settings` |
+| `update_help_assistant_budget` | Change the help assistant's spend cap | destructive | edit | `PUT /api/admin/ai-assistant/settings` |
+| `get_help_assistant_usage` | Read the help assistant's usage | read | view | `GET /api/admin/ai-assistant/usage` |
+| `get_ai_diagnostics_readiness` | Check whether AI Diagnostics is ready | read | view | `GET /api/admin/ai-diagnostics/readiness` |
+| `get_ai_diagnostics_budget` | Read AI Diagnostics' budget and usage | read | view | `GET /api/admin/ai-diagnostics/settings` |
+| `update_ai_diagnostics_budget` | Change AI Diagnostics' budget | destructive | edit | `PUT /api/admin/ai-diagnostics/settings` |
+| `get_ai_spend_rate` | Read the AI spend conversion rate | read | view | `GET /api/admin/ai-spend-currency` |
+| `set_ai_spend_rate` | Set the AI spend conversion rate | destructive | edit | `PUT /api/admin/ai-spend-currency` |
+
 ## What stays on the website, and why
 
 Every route method that is not an action has a stated reason
@@ -1006,8 +1141,8 @@ reasons are permanent — those routes are never actions:
   provider, nor written by one. Nor are the links that let someone in:
   minting or rotating a maintenance QR sign, whose link is shown only then,
   and a meeting's host link.
-- **The website's help assistant** — the member's own AI app answers them
-  instead.
+- **The website's AI assistants** — page help, and asking AI Diagnostics a
+  question. The connected AI app answers the question itself.
 - **Privacy posture** — saving the member-guest settings, which decide who
   may browse members' names, and saving how much of each name a lodge's
   member roster shows. An officer chooses that on the website.
@@ -1041,10 +1176,14 @@ Officer areas add their own permanent reasons:
 - **Privacy request** — part of answering a person's request for their own
   data, which a Full Admin does after proving who they are again.
 - **Switched off** — a route that only answers that it is switched off.
+- **Full Admin only** — a setting only a Full Admin may see or change: the
+  club's currency and locale change, its time zone, and whether the site may
+  send to real people (environment safety). The officer gate offers an action
+  by admin area and level, and no area or level is Full Admin.
 
 Every member route is an action or has one of these reasons. The remaining
-officer routes, outside Bookings & Beds, Membership and Lodge Operations, are
-**not yet**: each names the officer stage that will bring it in.
+officer routes, in the Content area, are **not yet**: each names the officer
+stage that will bring it in.
 
 ## Risks and limits
 
@@ -1080,13 +1219,15 @@ actions, exactly as a member's does. `preview_cancel_booking` and
 `cancel_my_booking` still refuse an officer's connection any booking but the
 officer's own (`INV-MCP-006`).
 
-It also reaches the officer actions for each admin area the officer holds,
-starting with Bookings & Beds (ALP-719), Membership (ALP-720), Finance
-(ALP-721) and Lodge Operations (ALP-722); the other areas follow. Whatever the
+It also reaches the officer actions for each admin area the officer holds:
+Bookings & Beds (ALP-719), Membership (ALP-720), Finance (ALP-721), Lodge
+Operations (ALP-722), and Support & System with Admin Overview (ALP-724); the
+other areas follow. Whatever the
 officer asks about through those, such as another member's bookings, record,
 family links, applications, requests, inductions or committee roles, their
-payments, credit, subscriptions or Xero contacts, or the names on a chore
-roster or maintenance report, goes to that officer's AI provider (see
+payments, credit, subscriptions or Xero contacts, the names on a chore
+roster or maintenance report, or the audit log and problem reports, goes to
+that officer's AI provider (see
 [what each sends](#what-a-connection-sends-to-the-ai-provider)). The
 switch governs the connection, not the action list. That is why **Officers
 may connect an AI app** is a separate switch, off by default. An officer
@@ -1281,6 +1422,27 @@ officer's AI provider, only the fields each action names:
   names the members a proposed rule would change (never their invoice
   numbers).
 
+The Support & System officer actions send, only the fields each action
+names (`src/lib/connection-shapes/support-*.ts`):
+
+- The audit log: each entry's action, category, outcome, summary and free-text
+  detail, with the names and member ids of who acted and who it affected,
+  only in the categories the officer's areas may read. A summary or detail can
+  name other people or quote the email address or other detail the entry was
+  about. Not email addresses, IP addresses, browser details or raw metadata.
+- Problem reports: what the member wrote, the page it came from, the
+  reporter's name and member id, and the resolution note. Not the screenshot,
+  the reporter's email address or their browser details.
+- Email delivery: the addresses the site has stopped emailing, and for each
+  email that ran out of send attempts, its recipient's address, subject and
+  error.
+- The access roles list: how many people hold each role, not who.
+- Health, Stuck States, setup, backups, modules, sign-in rules, wording,
+  templates, email settings, delivery policies, AI spend and privacy
+  retention carry no personal information beyond the club's own contact
+  addresses and the counts and record ids a card or preview names. Stuck
+  States' named rows come only to an officer with Membership view.
+
 The app also holds whatever the person typed to it, such as the guest names
 for a draft. Disconnecting stops new calls; it does not remove what the
 provider already received. The club's register row is `ai-apps` in
@@ -1327,8 +1489,9 @@ provider already received. The club's register row is `ai-apps` in
 Stage 1 (ALP-653) is the foundation. Stage 2 (ALP-718, then ALP-794,
 ALP-795, ALP-796 and ALP-797) decided every member route: the actions above,
 or a permanent reason. ALP-719 decided the Bookings & Beds officer routes,
-ALP-720 the Membership ones, ALP-721 the Finance ones and ALP-722 the Lodge
-Operations ones the same way. The remaining routes are officer routes, grouped
+ALP-720 the Membership ones, ALP-721 the Finance ones, ALP-722 the Lodge
+Operations ones and ALP-724 the Support & System and Admin Overview ones the
+same way. The remaining routes are officer routes, grouped
 by admin area into follow-on tasks named in
 `MCP_NOT_YET_TASKS` in
 [`exclusions.ts`](../../src/lib/mcp/exclusions.ts):
@@ -1336,7 +1499,6 @@ by admin area into follow-on tasks named in
 | Task | Area |
 | --- | --- |
 | ALP-723 | Content (officer) |
-| ALP-724 | Support and overview (officer) |
 
 After all six officer tasks ship, **ALP-727** reviews them together and makes the
 route census reject any remaining `not-yet` exclusion.

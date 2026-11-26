@@ -48,6 +48,10 @@ const PREVIEW_ROUTE_KEYS: readonly string[] = [
   "POST src/app/api/admin/bed-allocation/allocations/move/route.ts",
   "POST src/app/api/admin/bed-allocation/allocations/removal/route.ts",
   "POST src/app/api/admin/booking-requests/[id]/link-conflicts/route.ts",
+  // ALP-724: the booking message and email template previews render wording
+  // with sample data. They write nothing, not even an audit row.
+  "POST src/app/api/admin/booking-messages/preview/route.ts",
+  "POST src/app/api/admin/email-templates/preview/route.ts",
   // ALP-795: looks a member up by exact email; writes only its own audit row
   // and its rate-limit counters.
   "POST src/app/api/members/guest-candidates/resolve/route.ts",
@@ -354,8 +358,9 @@ describe("AI app action census (ALP-653, INV-MCP-006)", { timeout: CENSUS_TIMEOU
   });
 
   // ALP-718 decided its member routes; ALP-719 the Bookings & Beds officer
-  // routes; ALP-722 the Lodge Operations ones.
-  it.each(["ALP-718", "ALP-719", "ALP-722"])("leaves no route waiting on %s, which decided its routes", (task) => {
+  // routes; ALP-722 the Lodge Operations ones; ALP-724 the Support & System
+  // and Admin Overview ones.
+  it.each(["ALP-718", "ALP-719", "ALP-722", "ALP-724"])("leaves no route waiting on %s, which decided its routes", (task) => {
     expect(Object.values(MCP_NOT_YET_TASKS)).not.toContain(task);
     const waiting = routeMethods
       .filter((route) => {
@@ -437,6 +442,59 @@ describe("AI app action census (ALP-653, INV-MCP-006)", { timeout: CENSUS_TIMEOU
     expect(classifyMcpRoute("src/app/api/admin/hut-leaders/brand-new/route.ts", "GET")).toEqual({
       kind: "unclassified",
     });
+  });
+
+  it("brings every Support & System and Admin Overview route in, or keeps it website-only for a stated reason", () => {
+    const supportRoutes = routeMethods.filter((route) => {
+      const area = getAdminRouteRequirement(adminRouteApiPath(route.file), route.method)?.area;
+      return area === "support" || area === "overview";
+    });
+    expect(supportRoutes.length).toBeGreaterThan(70);
+    const undecided = supportRoutes
+      .filter((route) => {
+        const result = classifyMcpRoute(route.file, route.method);
+        return !(result.kind === "action" || (result.kind === "excluded" && !result.reason.startsWith("not-yet:")));
+      })
+      .map((route) => stepUpRouteKey(route.file, route.method));
+    expect(undecided).toEqual([]);
+    const reason = (file: string, method: string) => classifyMcpRoute(`src/app/api/${file}/route.ts`, method);
+    // The AI app connection settings stay website-only for good.
+    expect(reason("admin/mcp/settings", "GET")).toEqual({ kind: "excluded", reason: "auth-flow" });
+    expect(reason("admin/mcp/grants", "GET")).toEqual({ kind: "excluded", reason: "auth-flow" });
+    expect(reason("admin/mcp/grants/[id]", "DELETE")).toEqual({ kind: "excluded", reason: "auth-flow" });
+    // Fresh proof: backup restore, config import, credentials, modules, sign-in rules.
+    for (const [file, method] of [
+      ["admin/backups/restore", "POST"],
+      ["admin/config-transfer/apply", "POST"],
+      ["admin/modules", "PUT"],
+      ["admin/security/password-policy", "PUT"],
+      ["admin/access-roles", "POST"],
+    ] as const) {
+      expect(reason(file, method), `${method} ${file}`).toEqual({ kind: "excluded", reason: "fresh-proof" });
+    }
+    // Full Admin only: the officer gate offers actions by area and level.
+    expect(reason("admin/club-format", "PUT")).toEqual({ kind: "excluded", reason: "full-admin" });
+    expect(reason("admin/club-format", "GET").kind).toBe("action");
+    expect(reason("admin/club-time-zone", "GET")).toEqual({ kind: "excluded", reason: "full-admin" });
+    expect(reason("admin/environment-safety", "PATCH")).toEqual({ kind: "excluded", reason: "full-admin" });
+    // A new route in a decided area is not covered by a neighbour's decision.
+    expect(classifyMcpRoute("src/app/api/admin/issue-reports/brand-new/route.ts", "GET")).toEqual({
+      kind: "unclassified",
+    });
+  });
+
+  it("gives the Full Admin reason only to handlers that admit only a Full Admin", () => {
+    // `requireAdmin({ permission: false })`: no area and level can express it,
+    // so no catalogue entry could gate it (`INV-MCP-009`).
+    const fullAdmin = routeMethods.filter(
+      (route) => classifyMcpRoute(route.file, route.method).kind === "excluded" &&
+        mcpPermanentExclusion(route.file, route.method) === "full-admin",
+    );
+    expect(fullAdmin.length).toBeGreaterThan(0);
+    for (const route of fullAdmin) {
+      const gate = extractRouteGates(readFileSync(route.file, "utf8")).gates[route.method as HttpMethod];
+      expect(gate, `${route.method} ${route.file}`).toEqual({ kind: "explicit", permission: { kind: "full-admin" } });
+    }
   });
 
   it("answers a connection on every officer action only through the connection projection", () => {

@@ -1,4 +1,3 @@
-import { NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/session-guards";
 import { getEmailDeliverabilityTelemetry } from "@/lib/email-suppression";
 import { EMAIL_SUPPRESSION_LIST_CONNECTION_SHAPE } from "@/lib/connection-shapes/support-messages";

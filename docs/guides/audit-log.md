@@ -214,6 +214,14 @@ There are eleven, and each one belongs to exactly one AI Diagnostics area:
 | `communication` | Bulk email, member notices, **delivery-suppression clearances**, credential-email reissues | Support **+ Membership** |
 | `privacy` | **Deletion requests and the decisions on them**, member exports, member-guest lookups, **issue reports** (even though Issue Reports sits under Support) | Support **+ Membership** |
 
+**An officer's AI app reads by the same column** (ALP-724). The audit log is an
+AI app action (`search_audit_log`, see the [AI app guide](mcp-server.md)), and an
+app is a model reading on the officer's behalf, not the officer at this screen. So
+a connection searches only the entries whose category the officer's areas may
+correlate in AI Diagnostics, whatever filters the app sends, and never an entry
+with no category. Its answer leaves out email addresses, IP addresses, browser
+details and the raw metadata. The officer still reads every entry here.
+
 **Several of those rows changed in this release, and every one of them changes who
 can see what.**
 
