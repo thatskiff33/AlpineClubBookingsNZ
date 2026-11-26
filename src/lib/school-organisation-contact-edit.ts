@@ -28,13 +28,12 @@ import { z } from "zod";
 
 import { createAuditLog } from "@/lib/audit";
 import { prisma } from "@/lib/prisma";
+import { noCrlf } from "@/lib/zod-helpers";
 import { lockOrganisationXeroContact } from "@/lib/organisation-xero-contacts";
 import {
   enqueueOrganisationContactDetailsOperation,
   findLatestOrganisationContactDetailsOperation,
 } from "@/lib/organisation-xero-contact-details";
-
-const noLineBreaks = (value: string) => !/[\r\n]/.test(value);
 
 /**
  * The two fields as an officer types them. Trimmed; an empty value clears the
@@ -52,7 +51,7 @@ export const schoolContactDetailsSchema = z.object({
   phone: z
     .string()
     .max(30)
-    .refine(noLineBreaks, "Phone number cannot contain line breaks")
+    .refine(noCrlf, "Phone number cannot contain line breaks")
     .transform((value) => value.trim()),
 });
 

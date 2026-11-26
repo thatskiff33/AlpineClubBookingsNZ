@@ -402,7 +402,8 @@ describe("AlpineServerSetup key save names the shown address (#4470)", () => {
     saveKey("acs_old_server");
     const message = await screen.findByText(/address was changed after this page was loaded/i);
     expect(message.textContent).toMatch(/reload the page/i);
-    expect(message.className).toMatch(/text-destructive/);
+    // A failure, in the page's alert that takes focus (#5257).
+    expect(message.closest("#alpine-server-action-error")).not.toBeNull();
     expect(screen.queryByText(/^stored$/i)).toBeNull();
     expect(screen.getByText(/^not set$/i)).toBeTruthy();
   });

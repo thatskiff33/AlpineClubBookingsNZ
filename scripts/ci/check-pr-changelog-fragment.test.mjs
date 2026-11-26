@@ -113,16 +113,71 @@ describe("PR changelog fragment gate", () => {
     ).toThrow(/needs a changelog entry/);
   });
 
-  // TRANSITION GRACE (#2452). Delete this test together with the
-  // `legacy-changelog-edit` branch when the grace is tightened.
-  it("accepts a direct CHANGELOG.md edit during the transition", () => {
-    expect(
-      validateChangelogFragment(EMPTY_BODY, changes("M src/lib/booking-cancel.ts", "M CHANGELOG.md"))
-        .outcome,
-    ).toBe("legacy-changelog-edit");
+  // #5263: the #2452 transition grace is gone. A direct edit no longer stands
+  // in for an entry, or parallel lanes conflict on the top of one file again.
+  it("fails a code-bearing PR whose only entry is a direct CHANGELOG.md edit", () => {
+    expect(() =>
+      validateChangelogFragment(EMPTY_BODY, changes("M src/lib/booking-cancel.ts", "M CHANGELOG.md")),
+    ).toThrow(/changelog\.d\/README\.md[\s\S]*Editing CHANGELOG\.md directly does not count/);
   });
 
-  it("fails a code-bearing PR with no fragment, no marker and no CHANGELOG edit", () => {
+  it("still passes a CHANGELOG.md edit alongside a fragment or the marker", () => {
+    expect(
+      validateChangelogFragment(
+        EMPTY_BODY,
+        changes("M src/lib/booking-cancel.ts", "M CHANGELOG.md", "A changelog.d/5263-x.md"),
+      ).outcome,
+    ).toBe("fragment-added");
+    expect(
+      validateChangelogFragment(
+        "changelog: none\n",
+        changes("M src/lib/booking-cancel.ts", "M CHANGELOG.md"),
+      ).outcome,
+    ).toBe("none-marker");
+  });
+
+  it("does not credit a CHANGELOG.md edit paired with a modified, deleted or after-deploy fragment", () => {
+    for (const fragment of [
+      "M changelog.d/2448-tolerant-reads.md",
+      "D changelog.d/2448-tolerant-reads.md",
+      "A changelog.d/5263-run-report.deploy.md",
+    ]) {
+      expect(() =>
+        validateChangelogFragment(
+          EMPTY_BODY,
+          changes("M src/lib/booking-cancel.ts", "M CHANGELOG.md", fragment),
+        ),
+      ).toThrow(/needs a changelog entry/);
+    }
+  });
+
+  // The release compile (scripts/release/compile-changelog.mjs) is the one job
+  // that still writes CHANGELOG.md. It passes because it changes no application
+  // source, not through any bypass, so adding source to it needs an entry.
+  const RELEASE_COMPILE = changes(
+    "M CHANGELOG.md",
+    "M package.json",
+    "M docs/UPGRADING.md",
+    "A docs/releases/v0.15.0.md",
+    "M docs/releases/README.md",
+    "D changelog.d/5100-some-fix.md",
+    "D changelog.d/5101-a-feature.feature.md",
+    "D size-allowances.d/5100-some-fix.md",
+  );
+
+  it("passes the release-compile PR that folds fragments into CHANGELOG.md", () => {
+    expect(validateChangelogFragment(EMPTY_BODY, RELEASE_COMPILE).outcome).toBe(
+      "not-code-bearing",
+    );
+  });
+
+  it("fails a release-compile PR that also changes application source", () => {
+    expect(() =>
+      validateChangelogFragment(EMPTY_BODY, [...RELEASE_COMPILE, ...SOURCE_CHANGE]),
+    ).toThrow(/needs a changelog entry/);
+  });
+
+  it("fails a code-bearing PR with no fragment and no marker", () => {
     expect(() => validateChangelogFragment(EMPTY_BODY, SOURCE_CHANGE)).toThrow(
       /needs a changelog entry/,
     );
