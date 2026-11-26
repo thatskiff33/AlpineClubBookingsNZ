@@ -460,18 +460,14 @@ you want both reworded; editing only one leaves the other on its built-in text.
 > missing a required token, and it cannot be saved again until you add
 > `{{offerNote}}` back or restore the default. Nothing is blocked until then.
 >
-> Three limits officers should know. The offer email is withheld if **No
+> Two limits officers should know. The offer email is withheld if **No
 > emails** is on for the booking when the email is sent, and turning emails
 > back on later does not send it: the member is not told of the offer by
 > email. They are told if the offer expires only if emails are on at that
-> moment. So contact them directly, or retract the offer.
-> When the mail provider reports a bounce or
-> a complaint for a member's address, every earlier email to that address is
-> marked bounced too, so a member who did receive their offer can still be
-> reported in a **Waitlist email not sent** alert when it lapses; that alert
-> says only that the email is not known to have reached them. And a **Waitlist
+> moment. So contact them directly, or retract the offer. And a **Waitlist
 > Offer Expired** email that cannot be delivered raises no alert: the member
-> is simply back on the waitlist.
+> is simply back on the waitlist. What a bounce or complaint marks changed
+> again in #5469 (the next upgrade note).
 >
 > During the switch to this version, a server still running the version
 > before it that expires an offer this version made and never sent sends the
@@ -486,6 +482,31 @@ you want both reworded; editing only one leaves the other on its built-in text.
 > otherwise it is not sent and moves to the email-failure review queue. It gets no window restart and no
 > "not sent" alert; and if such an offer lapses, the member is sent **Waitlist
 > Offer Expired** as before.
+
+> **Upgrade note (#5469, bounces and complaints).** When the mail provider
+> reports a bounce or a complaint, only the email it is about is now marked
+> bounced. Before, every earlier email to that address was marked bounced too,
+> so a member's email history could show emails that arrived as bounced. A
+> temporary bounce (a full mailbox, say) and a complaint follow the same rule.
+> The address is blocked from further emails exactly as before: at once for a
+> complaint or a permanent bounce, from the second temporary bounce. Once it
+> is blocked, nothing waiting to be sent or retried goes to it. After a first
+> temporary bounce, an email to the address that failed and is waiting for a
+> retry is now retried, where before it was marked bounced and dropped.
+>
+> What an officer can notice: a member who received their waitlist offer
+> email still counts as told if another email to them later bounces or draws
+> a complaint, so they are sent **Waitlist Offer Expired** if the offer lapses
+> and no **Waitlist email not sent** alert is raised for it.
+>
+> Limits. The provider's report names the email only when the setting in
+> [`CONFIGURATION.md`](../../CONFIGURATION.md#ses-bounce-and-complaint-feedback)
+> is on. Without it no email is marked: the address is still blocked, but an
+> email that did bounce keeps showing as sent, and an offer email that bounced
+> counts as told. Emails already marked bounced before this version stay
+> marked, so older history can still show a delivered email as bounced.
+> During the switch to this version, a server still running the version
+> before it marks every email to the address, as before.
 
 > **Upgrade note (#5433, card-payment confirmations).** A member's **Booking
 > Confirmed** email after paying by card is no longer lost if the payment is

@@ -202,6 +202,14 @@ describe("SES feedback marks only the email it names (#5469)", () => {
     expect(statuses()).toMatchObject({ named: EmailLogStatus.BOUNCED, offer: EmailLogStatus.SENT });
   });
 
+  it("MUTATION: a bracketed id in the notification finds a row stored without brackets", async () => {
+    byId("named").messageId = "named-1@club.example.test";
+
+    await ingestSesSnsEmailFeedback(hardBounce(namedMail()));
+
+    expect(statuses()).toMatchObject({ named: EmailLogStatus.BOUNCED, offer: EmailLogStatus.SENT });
+  });
+
   it.each([
     ["a temporary bounce", transientBounce],
     ["a complaint", complaint],

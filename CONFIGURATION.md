@@ -2804,6 +2804,20 @@ subscription (or topic) that keeps retrying past 15 minutes, within SNS's
 retries for roughly 50 minutes. See
 [Amazon SNS message delivery retries](https://docs.aws.amazon.com/sns/latest/dg/sns-message-delivery-retries.html).
 
+### SES Bounce and Complaint Feedback
+
+A bounce or complaint marks as bounced only the email it is about (#5469);
+the address is suppressed either way, so nothing more is sent to it. The app
+finds that email by the Message-ID header it sent, which SES replaces with its
+own on the way out and reports back only among the original headers. So turn
+on **include original email headers** for the sending identity's bounce and
+complaint notifications in SES (the `SetIdentityHeadersInNotificationsEnabled`
+setting). Without it the address is still suppressed, but no email is marked:
+an email that did bounce keeps showing as sent, and a waitlist offer email
+that bounced counts as told. See
+[Amazon SNS notification contents for Amazon SES](https://docs.aws.amazon.com/ses/latest/dg/notification-contents.html)
+and [Email Retry Lifecycle](docs/STATE_MACHINES.md#email-retry-lifecycle).
+
 ## Address Autocomplete
 
 | Variable          | Description                                     |

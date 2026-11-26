@@ -777,7 +777,8 @@ as a duplicate and never applied twice by racing takeovers.
   over through the same guard; losing it answers 409. A fresh one is refused.
 - **The operation row** the dead attempt left is recovered by `INV-INT-038`.
 - **Replays are harmless.** Handlers are idempotent; the same SES feedback
-  (message id and event type) is not counted twice toward suppression.
+  (message id and event type) is not counted twice toward suppression, and
+  marks `BOUNCED` only the email named (#5469).
 - **A poison event stops being retaken.** After three dead attempts (the
   `INV-INT-038` row's `attemptCount`), the worker leaves the event PROCESSING
   and logs an error each run; only Replay retries it.
@@ -788,7 +789,8 @@ as a duplicate and never applied twice by racing takeovers.
   operation threshold must not exceed the lease.
 
 Pinned by `ses-sns-webhook.test.ts`, `stripe-webhook-events.test.ts`,
-`xero-inbound-stale-event-takeover.test.ts`, `email-suppression-replay.test.ts`
+`xero-inbound-stale-event-takeover.test.ts`, `email-suppression-replay.test.ts`,
+`ses-feedback-named-message.test.ts`
 and, against real PostgreSQL, `xero-inbound-stale-event-takeover.realdb.test.ts`.
 
 ## Stored outbox payloads (#3971)
