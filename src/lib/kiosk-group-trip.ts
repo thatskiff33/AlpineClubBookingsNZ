@@ -7,9 +7,11 @@ import { clubTodayDateOnlyInstant } from "@/lib/club-time/server";
 import {
   loadAdultMemberHostingPolicy,
   readInheritedSplitPairGroupTrips,
+} from "@/lib/adult-member-hosting-review";
+import {
   readStoredGroupTripCoverFreshness,
   type GroupTripCoverFreshness,
-} from "@/lib/adult-member-hosting-review";
+} from "@/lib/adult-member-hosting-stored-review";
 import {
   deriveKioskAdultCoverSource,
   type KioskAdultCoverDecision,

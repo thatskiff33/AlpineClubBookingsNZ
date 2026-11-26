@@ -6,7 +6,7 @@ import {
   parseStoredHostingReview,
   readStoredGroupTripCoverFreshness,
   type GroupTripCoverFreshness,
-} from "@/lib/adult-member-hosting-review";
+} from "@/lib/adult-member-hosting-stored-review";
 
 /**
  * Reading a canonical adult-member-hosting snapshot as kiosk cover evidence

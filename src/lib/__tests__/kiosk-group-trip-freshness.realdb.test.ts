@@ -61,6 +61,7 @@ let writerB: PrismaClient;
 let observer: PrismaClient;
 
 let review: typeof import("@/lib/adult-member-hosting-review");
+let storedReview: typeof import("@/lib/adult-member-hosting-stored-review");
 let ceilings: typeof import("@/lib/adult-member-hosting-coverage-ceilings");
 let locks: typeof import("@/lib/adult-member-hosting-coverage-lock");
 let kioskCover: typeof import("@/lib/kiosk-adult-cover");
@@ -290,8 +291,9 @@ describe("kiosk Group Trip freshness race DB safety guard (#5239)", () => {
     beforeAll(async () => {
       assertSafeRaceDbUrl(RACE_DB_URL, "Group Trip freshness");
       process.env.DATABASE_URL = RACE_DB_URL;
-      [review, ceilings, locks, kioskCover] = await Promise.all([
+      [review, storedReview, ceilings, locks, kioskCover] = await Promise.all([
         import("@/lib/adult-member-hosting-review"),
+        import("@/lib/adult-member-hosting-stored-review"),
         import("@/lib/adult-member-hosting-coverage-ceilings"),
         import("@/lib/adult-member-hosting-coverage-lock"),
         import("@/lib/kiosk-adult-cover"),
@@ -462,7 +464,7 @@ describe("kiosk Group Trip freshness race DB safety guard (#5239)", () => {
       expect((await evaluateJoiner(writerA)).action).toBe("opened");
       expect(await kioskSays()).toMatchObject({ status: "EVALUATED" });
       expect(
-        review.readStoredGroupTripCoverFreshness(
+        storedReview.readStoredGroupTripCoverFreshness(
           (
             await observer.booking.findUniqueOrThrow({
               where: { id: IDS.joinerBooking },

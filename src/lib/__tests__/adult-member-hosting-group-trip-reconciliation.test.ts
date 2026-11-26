@@ -72,10 +72,10 @@ import {
   GROUP_TRIP_COVERAGE_SOURCE_SELECT,
   enqueueHostingCoverageReevaluationForMember,
   loadGroupTripCoverageDependentBookingIds,
-  readStoredGroupTripCoverFreshness,
   reconcileAdultMemberHostingReview,
   reconcileAdultMemberHostingReviewWithSiblings,
 } from "@/lib/adult-member-hosting-review";
+import { readStoredGroupTripCoverFreshness } from "@/lib/adult-member-hosting-stored-review";
 import { kioskPendingReevaluationWhere } from "@/lib/kiosk-group-trip";
 import { CENSUS_TIMEOUT_MS } from "@/test/census-timeout";
 

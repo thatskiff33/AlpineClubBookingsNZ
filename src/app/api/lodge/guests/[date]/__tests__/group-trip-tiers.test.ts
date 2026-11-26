@@ -90,9 +90,9 @@ function guest(id: string) {
  * The first version of this fixture recorded every night covered with
  * `uncovered: []`, which the canonical evaluator never produces — it returns
  * `null` when nothing is uncovered, and the reconciler then clears the column —
- * and covered them by `SAME_GROUP_TRIP`, a claim the kiosk withholds while
- * #3039's re-evaluation fan-out is unbuilt. Both halves made the route
- * assertions below agree with behaviour the kiosk should not have had.
+ * and covered them by `SAME_GROUP_TRIP` with no freshness stamp, a claim the
+ * kiosk cannot verify (#5239). Both halves made the route assertions below
+ * agree with behaviour the kiosk should not have had.
  *
  * So: one night covered by an adult on this booking, one night uncovered, and
  * the `uncovered` list that goes with it.
