@@ -32,7 +32,6 @@ import {
 } from "@/lib/payments-cron-jobs";
 import { reportCronError } from "@/lib/observability-bridge";
 
-
 /** A task's result, or `null` when that task failed (its FAILURE row says why). */
 export interface PaymentsCronCycleResult {
   /** #5255: once-ever alert claims with no email given back, and raised-once alerts re-sent. */

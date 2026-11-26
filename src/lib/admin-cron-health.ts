@@ -22,6 +22,7 @@ import { XERO_CRON_JOB_NAMES } from "@/lib/xero-cron-jobs";
 const DAILY_STALE_AFTER_MINUTES = 36 * 60;
 const THREE_HOURLY_STALE_AFTER_MINUTES = 6 * 60 + 30;
 const FIFTEEN_MINUTE_STALE_AFTER_MINUTES = 60;
+const THIRTY_MINUTE_STALE_AFTER_MINUTES = 90;
 
 /** Each payments-cycle task's Cron Health row label, in row order (#5256). */
 const PAYMENTS_CRON_HEALTH_LABELS: Record<PaymentsCronTask, string> = {
@@ -35,7 +36,6 @@ const PAYMENTS_CRON_HEALTH_LABELS: Record<PaymentsCronTask, string> = {
   // #4253: asks for credit released after a Xero credit note was spent, records its payment.
   creditReleaseAsks: "Released credit payment requests",
 };
-const THIRTY_MINUTE_STALE_AFTER_MINUTES = 90;
 
 type CronHealthStatus =
   | "current"
