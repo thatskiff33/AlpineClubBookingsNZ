@@ -5,6 +5,8 @@ import { runClubPostCleanup } from "@/lib/club-post-retention";
 import logger from "@/lib/logger";
 import { loadEffectiveModuleFlags } from "@/lib/module-settings";
 import { requireAdmin } from "@/lib/session-guards";
+import { connectionJson } from "@/lib/mcp-connection-request";
+import { CLUB_POST_CLEANUP_CONNECTION_SHAPE } from "@/lib/connection-shapes/membership-notices";
 
 /**
  * POST /api/admin/club-posts/cleanup — run the retention pass now (#2999).
@@ -13,7 +15,7 @@ import { requireAdmin } from "@/lib/session-guards";
  * pressing this while the scheduled pass is running reports `busy` rather than
  * deleting twice.
  */
-export async function POST() {
+export async function POST(request: Request) {
   const modules = await loadEffectiveModuleFlags();
   if (!modules.commsPortal) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
@@ -41,7 +43,7 @@ export async function POST() {
         : `Ran club message board cleanup: deleted ${outcome.deleted} post(s).`,
     });
 
-    return NextResponse.json(outcome);
+    return connectionJson(request, outcome, CLUB_POST_CLEANUP_CONNECTION_SHAPE);
   } catch (error) {
     logger.error({ err: error }, "club post cleanup failed");
     return NextResponse.json(

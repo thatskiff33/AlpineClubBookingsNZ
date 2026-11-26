@@ -1,24 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
-import { z } from "zod";
 import { hasAdminAreaAccess } from "@/lib/admin-permissions";
 import { clubTimeZone } from "@/lib/club-time/server";
 import { clubSeasonYear } from "@/lib/financial-year";
-import { CHOOSABLE_LIABILITY_AGE_SOURCES } from "@/lib/policies/subscription";
 import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/session-guards";
 import { buildSubscriptionLiabilityImpact } from "@/lib/subscription-liability-impact";
-
-/**
- * A proposed subscription-liability rule (#5190): both answers, chosen, from
- * the values open for choice — exactly what the settings `PUT` would accept as
- * an opt-in, so the list can never preview a rule the club cannot save.
- */
-const proposalSchema = z
-  .object({
-    requiredTypeAgeRule: z.enum(["ALWAYS_OWES", "AGE_TIER_EXEMPTS"]),
-    liabilityAgeSource: z.enum(CHOOSABLE_LIABILITY_AGE_SOURCES),
-  })
-  .strict();
+import { liabilityImpactQuerySchema } from "@/lib/admin-membership-api/config-settings";
+import { connectionJson } from "@/lib/mcp-connection-request";
+import { LIABILITY_IMPACT_CONNECTION_SHAPE } from "@/lib/connection-shapes/membership-config";
 
 /**
  * Who a proposed liability rule would change, for the club's current season
@@ -26,7 +15,9 @@ const proposalSchema = z
  * like the settings it previews. The unpaid invoice numbers in `noLongerOwing`
  * are finance data, so they are returned only to a caller who also holds
  * finance view (#5190 review); anyone else gets null and
- * `invoiceNumbersShown: false`.
+ * `invoiceNumbersShown: false`. Also the AI app action
+ * `preview_subscription_liability_rule` (ALP-720), whose answer never carries
+ * the invoice numbers.
  */
 export async function GET(request: NextRequest) {
   const guard = await requireAdmin({
@@ -34,7 +25,7 @@ export async function GET(request: NextRequest) {
   });
   if (!guard.ok) return guard.response;
 
-  const parsed = proposalSchema.safeParse(
+  const parsed = liabilityImpactQuerySchema.safeParse(
     Object.fromEntries(request.nextUrl.searchParams),
   );
   if (!parsed.success) {
@@ -53,7 +44,7 @@ export async function GET(request: NextRequest) {
     area: "finance",
     level: "view",
   });
-  return NextResponse.json({
+  return connectionJson(request, {
     impact: invoiceNumbersShown
       ? impact
       : {
@@ -64,5 +55,5 @@ export async function GET(request: NextRequest) {
           })),
         },
     invoiceNumbersShown,
-  });
+  }, LIABILITY_IMPACT_CONNECTION_SHAPE);
 }

@@ -29,6 +29,7 @@ const caller: McpCaller = {
   userAgent: "example-agent/1.0",
 };
 const viewOnly: McpCaller = { ...caller, scope: "READ" };
+const officer: McpCaller = { ...caller, memberId: "officer-1" };
 
 function action(id: string): McpAction {
   const found = findMcpAction(id);
@@ -93,6 +94,15 @@ describe("runMcpAction: the request it sends", () => {
       expect(send).not.toHaveBeenCalled();
     },
   );
+
+  it("refuses an id spelt like the static route beside the record route", async () => {
+    // `/api/admin/members/export` is the fresh-proof export, not a member record.
+    for (const id of ["export", "subject-access", "send-password-reset"]) {
+      const outcome = await runMcpAction(action("get_member"), { id }, officer);
+      expect(outcome.isError, id).toBe(true);
+    }
+    expect(send).not.toHaveBeenCalled();
+  });
 
   it("sends a record id as the one path segment it is", async () => {
     await runMcpAction(action("get_my_booking"), { id: "cm0booking_1-a" }, caller);

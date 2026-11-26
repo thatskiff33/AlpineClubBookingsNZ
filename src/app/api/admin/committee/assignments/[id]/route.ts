@@ -1,6 +1,5 @@
 import { NextResponse } from "next/server";
 import { Prisma } from "@prisma/client";
-import { z } from "zod";
 import {
   buildStructuredAuditLogCreateArgs,
   getAuditRequestContext,
@@ -16,29 +15,10 @@ import { syncBookingOfficerForRole } from "@/lib/committee-booking-officer-sync"
 import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/session-guards";
 import { parseJsonRequestBody } from "@/lib/api-json";
-
-const paramsSchema = z.object({
-  id: z.string().min(1),
-});
-
-const patchSchema = z
-  .object({
-    blurb: z.string().trim().max(1000).nullable().optional(),
-    sortOrder: z.number().int().min(0).max(100000).optional(),
-    published: z.boolean().optional(),
-    showPhone: z.boolean().optional(),
-    contactable: z.boolean().optional(),
-    contactEmailMode: z.enum(["ROLE", "MEMBER", "CUSTOM"]).optional(),
-    contactEmailOverride: z
-      .string()
-      .trim()
-      .max(320)
-      .email("Invalid committee email")
-      .nullable()
-      .optional(),
-    isActive: z.boolean().optional(),
-  })
-  .strict();
+import { committeeAssignmentPatchSchema } from "@/lib/admin-membership-api/committee";
+import { connectionJson } from "@/lib/mcp-connection-request";
+import { routeIdParamsSchema } from "@/lib/route-id-params";
+import { COMMITTEE_ASSIGNMENT_CONNECTION_SHAPE } from "@/lib/connection-shapes/membership-committee";
 
 export async function PATCH(
   request: Request,
@@ -50,7 +30,7 @@ export async function PATCH(
   if (!guard.ok) return guard.response;
   const session = guard.session;
 
-  const parsedParams = paramsSchema.safeParse(await params);
+  const parsedParams = routeIdParamsSchema.safeParse(await params);
   if (!parsedParams.success) {
     return NextResponse.json(
       { error: "Invalid route parameters", details: parsedParams.error.flatten() },
@@ -64,7 +44,7 @@ export async function PATCH(
   if (!jsonBody.ok) return jsonBody.response;
   const body = jsonBody.body;
 
-  const parsed = patchSchema.safeParse(body);
+  const parsed = committeeAssignmentPatchSchema.safeParse(body);
   if (!parsed.success) {
     return NextResponse.json(
       { error: "Invalid input", details: parsed.error.flatten() },
@@ -184,7 +164,11 @@ export async function PATCH(
     return assignment;
   });
 
-  return NextResponse.json({ assignment: serializeCommitteeAssignment(updated) });
+  return connectionJson(
+    request,
+    { assignment: serializeCommitteeAssignment(updated) },
+    COMMITTEE_ASSIGNMENT_CONNECTION_SHAPE,
+  );
 }
 
 export async function DELETE(
@@ -197,7 +181,7 @@ export async function DELETE(
   if (!guard.ok) return guard.response;
   const session = guard.session;
 
-  const parsedParams = paramsSchema.safeParse(await params);
+  const parsedParams = routeIdParamsSchema.safeParse(await params);
   if (!parsedParams.success) {
     return NextResponse.json(
       { error: "Invalid route parameters", details: parsedParams.error.flatten() },
@@ -254,5 +238,9 @@ export async function DELETE(
     return assignment;
   });
 
-  return NextResponse.json({ assignment: serializeCommitteeAssignment(updated) });
+  return connectionJson(
+    request,
+    { assignment: serializeCommitteeAssignment(updated) },
+    COMMITTEE_ASSIGNMENT_CONNECTION_SHAPE,
+  );
 }

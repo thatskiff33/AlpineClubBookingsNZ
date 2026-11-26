@@ -7,37 +7,19 @@ import {
   isSubscriptionRequiredTypeAgeRule,
   type SubscriptionLiabilitySettings,
 } from "@/lib/policies/subscription";
+import { isSubscriptionLockoutMode, type SubscriptionLockoutMode } from "@/lib/subscription-lockout-modes";
 
 // Admin-configurable settings for the booking lockout that blocks members with
 // an unpaid annual subscription. Single-row table (id = "default"), same
 // pattern as membership-nomination-settings.ts.
 export const MEMBERSHIP_LOCKOUT_SETTINGS_ID = "default";
 
-/**
- * The three answers a club can give about a member whose season subscription is
- * required but unpaid (#2543). Mirrors the Prisma `SubscriptionLockoutMode`
- * enum without importing it, so the pure policy modules and the settings layer
- * can name one type.
- */
-export type SubscriptionLockoutMode =
-  | "NO_BLOCK"
-  | "HARD_BLOCK"
-  | "NON_MEMBER_PRICING";
-
-export const SUBSCRIPTION_LOCKOUT_MODES = [
-  "NO_BLOCK",
-  "HARD_BLOCK",
-  "NON_MEMBER_PRICING",
-] as const satisfies readonly SubscriptionLockoutMode[];
-
-export function isSubscriptionLockoutMode(
-  value: unknown,
-): value is SubscriptionLockoutMode {
-  return (
-    typeof value === "string" &&
-    (SUBSCRIPTION_LOCKOUT_MODES as readonly string[]).includes(value)
-  );
-}
+// The modes live in an import-free module the catalogue can load (ALP-720).
+export {
+  isSubscriptionLockoutMode,
+  SUBSCRIPTION_LOCKOUT_MODES,
+  type SubscriptionLockoutMode,
+} from "@/lib/subscription-lockout-modes";
 
 export interface MembershipLockoutSettings extends SubscriptionLiabilitySettings {
   /**

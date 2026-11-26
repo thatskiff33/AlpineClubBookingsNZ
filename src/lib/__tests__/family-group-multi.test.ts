@@ -143,7 +143,7 @@ describe("GET /api/admin/family-groups", () => {
 
     mockPrisma.familyGroup.findMany.mockResolvedValue(mockGroups);
 
-    const res = await getFamilyGroups();
+    const res = await getFamilyGroups(new Request("http://localhost/api/admin/family-groups"));
     const data = await res.json();
 
     expect(res.status).toBe(200);
@@ -181,7 +181,7 @@ describe("GET /api/admin/family-groups", () => {
     ];
     mockPrisma.familyGroup.findMany.mockResolvedValue(mockGroups);
 
-    const res = await getFamilyGroups();
+    const res = await getFamilyGroups(new Request("http://localhost/api/admin/family-groups"));
     const data = await res.json();
 
     expect(data.familyGroups[0].memberCount).toBe(2);

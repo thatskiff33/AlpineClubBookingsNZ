@@ -1,9 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
-import { z } from "zod";
 import { parseJsonRequestBody } from "@/lib/api-json";
 import { logAudit } from "@/lib/audit";
 import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/session-guards";
+import { connectionJson } from "@/lib/mcp-connection-request";
+import {
+  INDUCTION_TEMPLATE_CONNECTION_SHAPE,
+  INDUCTION_TEMPLATE_LIST_CONNECTION_SHAPE,
+} from "@/lib/connection-shapes/membership-committee";
+import { inductionTemplateCreateSchema } from "@/lib/admin-membership-api/config-structure";
 
 const TEMPLATE_INCLUDE = {
   sections: {
@@ -12,16 +17,7 @@ const TEMPLATE_INCLUDE = {
   },
 };
 
-const createSchema = z.object({
-  name: z.string().trim().min(1).max(200),
-  version: z.string().trim().min(1).max(50),
-  kind: z
-    .enum(["NEW_MEMBER", "HUT_LEADER", "YOUTH_TO_FULL", "RE_INDUCTION"])
-    .optional(),
-  cloneFromId: z.string().min(1).optional(),
-});
-
-export async function GET() {
+export async function GET(request: NextRequest) {
   const guard = await requireAdmin({
     permission: { area: "membership", level: "view" },
   });
@@ -34,7 +30,7 @@ export async function GET() {
     },
   });
 
-  return NextResponse.json({
+  return connectionJson(request, {
     templates: templates.map((template) => ({
       id: template.id,
       name: template.name,
@@ -47,7 +43,7 @@ export async function GET() {
       inductionCount: template._count.inductions,
       used: template._count.inductions > 0,
     })),
-  });
+  }, INDUCTION_TEMPLATE_LIST_CONNECTION_SHAPE);
 }
 
 export async function POST(request: NextRequest) {
@@ -62,7 +58,7 @@ export async function POST(request: NextRequest) {
   if (!jsonBody.ok) return jsonBody.response;
   const body = jsonBody.body;
 
-  const parsed = createSchema.safeParse(body);
+  const parsed = inductionTemplateCreateSchema.safeParse(body);
   if (!parsed.success) {
     return NextResponse.json(
       { error: "Invalid input", details: parsed.error.flatten() },
@@ -132,5 +128,5 @@ export async function POST(request: NextRequest) {
     }),
   });
 
-  return NextResponse.json({ template }, { status: 201 });
+  return connectionJson(request, { template }, INDUCTION_TEMPLATE_CONNECTION_SHAPE, { status: 201 });
 }

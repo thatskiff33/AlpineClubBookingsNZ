@@ -1,9 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
-import {
-  familyGroupMemberSearchQuerySchema,
-  searchFamilyGroupCandidateMembers,
-} from "@/lib/admin-family-group-member-search";
+import { searchFamilyGroupCandidateMembers } from "@/lib/admin-family-group-member-search";
+import { familyGroupMemberSearchQuerySchema } from "@/lib/admin-membership-api/family-groups";
 import { requireAdmin } from "@/lib/session-guards";
+import { connectionJson } from "@/lib/mcp-connection-request";
+import { FAMILY_GROUP_MEMBER_SEARCH_CONNECTION_SHAPE } from "@/lib/connection-shapes/membership-family-groups";
 
 function unauthorizedResponse() {
   return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -20,6 +20,9 @@ function unauthorizedResponse() {
  * The membership-view permission is re-checked here on every request, server
  * side, against the roles read from the database — an administrator whose role
  * covers an unrelated area gets a 401 and no identity information at all.
+ *
+ * An AI app connection is sent no age and no sign-in field, and each parent
+ * link as an id, a name and the link type only (ALP-720).
  */
 export async function GET(req: NextRequest) {
   const guard = await requireAdmin({
@@ -44,5 +47,5 @@ export async function GET(req: NextRequest) {
   }
 
   const result = await searchFamilyGroupCandidateMembers(parsed.data);
-  return NextResponse.json(result);
+  return connectionJson(req, result, FAMILY_GROUP_MEMBER_SEARCH_CONNECTION_SHAPE);
 }

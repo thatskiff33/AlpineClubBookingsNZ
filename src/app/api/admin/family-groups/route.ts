@@ -1,24 +1,17 @@
 import { NextRequest, NextResponse } from "next/server";
-import { z } from "zod";
 import { parseJsonRequestBody } from "@/lib/api-json";
 import { requireAdmin } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma";
 import { logAudit } from "@/lib/audit";
 import logger from "@/lib/logger";
 import { REVIEWED_REQUEST_TYPES } from "@/lib/admin-family-group-requests-service";
+import { createFamilyGroupWithMembers } from "@/lib/admin-family-group-create";
+import { createFamilyGroupSchema } from "@/lib/admin-membership-api/family-groups";
+import { connectionJson } from "@/lib/mcp-connection-request";
 import {
-  ADMIN_FAMILY_GROUP_MAX_MEMBERS,
-  ADMIN_FAMILY_GROUP_NAME_MAX_LENGTH,
-  createFamilyGroupWithMembers,
-} from "@/lib/admin-family-group-create";
-
-const createFamilyGroupSchema = z.object({
-  name: z.string().min(1, "Name is required").max(ADMIN_FAMILY_GROUP_NAME_MAX_LENGTH),
-  memberIds: z
-    .array(z.string())
-    .min(1, "At least one member is required")
-    .max(ADMIN_FAMILY_GROUP_MAX_MEMBERS),
-});
+  FAMILY_GROUP_CREATED_CONNECTION_SHAPE,
+  FAMILY_GROUP_LIST_CONNECTION_SHAPE,
+} from "@/lib/connection-shapes/membership-family-groups";
 
 /**
  * GET /api/admin/family-groups
@@ -28,8 +21,9 @@ const createFamilyGroupSchema = z.object({
  * neither a date of birth nor a calculated age — the member pills here are a
  * roster, not an identity check, and age belongs only on the screens where an
  * administrator is acting on one specific member record. Do not add either.
+ * An AI app connection is also sent no email address or sign-in field (ALP-720).
  */
-export async function GET() {
+export async function GET(request: Request) {
   const guard = await requireAdmin();
   if (!guard.ok) return guard.response;
   const groups = await prisma.familyGroup.findMany({
@@ -92,7 +86,7 @@ export async function GET() {
     };
   });
 
-  return NextResponse.json({ familyGroups: result });
+  return connectionJson(request, { familyGroups: result }, FAMILY_GROUP_LIST_CONNECTION_SHAPE);
 }
 
 /**
@@ -180,5 +174,5 @@ export async function POST(req: NextRequest) {
       }
     : group;
 
-  return NextResponse.json(response, { status: 201 });
+  return connectionJson(req, response, FAMILY_GROUP_CREATED_CONNECTION_SHAPE, { status: 201 });
 }

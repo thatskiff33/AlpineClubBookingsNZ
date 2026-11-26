@@ -428,7 +428,7 @@ describe("GET /api/admin/family-suggestions", () => {
     vi.mocked(auth).mockResolvedValue({ user: { id: "u1", role: "MEMBER", accessRoles: [{ role: "USER" }] } } as any);
 
     const { GET } = await import("../../app/api/admin/family-suggestions/route");
-    const res = await GET();
+    const res = await GET(new Request("http://localhost/api/admin/family-suggestions"));
     expect(res.status).toBe(403);
   });
 });
@@ -518,7 +518,7 @@ describe("POST /api/admin/family-suggestions/reset", () => {
     vi.mocked(auth).mockResolvedValue({ user: { id: "u1", role: "MEMBER", accessRoles: [{ role: "USER" }] } } as any);
 
     const { POST } = await import("../../app/api/admin/family-suggestions/reset/route");
-    const res = await POST();
+    const res = await POST(new Request("http://localhost/api/admin/family-suggestions/reset", { method: "POST" }));
     expect(res.status).toBe(403);
   });
 
@@ -529,7 +529,7 @@ describe("POST /api/admin/family-suggestions/reset", () => {
     } as any);
 
     const { POST } = await import("../../app/api/admin/family-suggestions/reset/route");
-    const res = await POST();
+    const res = await POST(new Request("http://localhost/api/admin/family-suggestions/reset", { method: "POST" }));
     const json = await res.json();
 
     expect(res.status).toBe(200);

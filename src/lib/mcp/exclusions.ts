@@ -42,6 +42,17 @@ export const MCP_PERMANENT_EXCLUSION_REASONS = {
     "Decides who may browse members' names, which an officer chooses on the website, never an AI app.",
   "unread-value":
     "Changes a value an AI app is never shown, such as a guest's allergy needs, so the app would be writing blind.",
+  // Officer reasons (ALP-720 onwards).
+  "changes-charges":
+    "Changes what a member owes or is invoiced, or previews such a change for an officer to confirm, which an officer reviews and confirms on the website.",
+  "ends-membership":
+    "Decides a request to archive, delete or cancel someone's membership, which cannot be undone from an app and is decided on the website.",
+  "sign-in-access":
+    "Sends someone a sign-in link or changes who signs in with an email address, which stays on the website.",
+  "mass-message": "Emails many members at once, which an officer composes, checks and sends on the website.",
+  "privacy-request":
+    "Part of answering a person's request for their own data, which a Full Admin does on the website after proving who they are again.",
+  "switched-off": "Does nothing but answer that it is switched off.",
 } as const;
 
 export type McpPermanentExclusionReason = keyof typeof MCP_PERMANENT_EXCLUSION_REASONS;
@@ -52,8 +63,9 @@ export type McpPermanentExclusionReason = keyof typeof MCP_PERMANENT_EXCLUSION_R
  * areas is unclassified until someone decides about it.
  *
  * - `bookings` (Bookings & Beds): ALP-719.
+ * - `membership` (Membership): ALP-720.
  */
-const MCP_DECIDED_ADMIN_AREAS = ["bookings"] as const satisfies readonly AdminPermissionArea[];
+const MCP_DECIDED_ADMIN_AREAS = ["bookings", "membership"] as const satisfies readonly AdminPermissionArea[];
 
 type McpDecidedAdminArea = (typeof MCP_DECIDED_ADMIN_AREAS)[number];
 
@@ -67,7 +79,6 @@ type McpNotYetAdminArea = Exclude<AdminPermissionArea, McpDecidedAdminArea>;
  * census until someone decides about it.
  */
 export const MCP_NOT_YET_TASKS = {
-  membership: "ALP-720",
   finance: "ALP-721",
   lodge: "ALP-722",
   content: "ALP-723",
@@ -140,7 +151,7 @@ const PERMANENT_PREFIXES: ReadonlyArray<{
  * covered by its neighbour's reason and fails the census until decided.
  */
 const PERMANENT_ROUTES: ReadonlyArray<{
-  readonly reason: Exclude<McpPermanentExclusionReason, "fresh-proof">;
+  readonly reason: McpPermanentExclusionReason;
   readonly routes: readonly string[];
 }> = [
   // Booking edits that can take, move or refund money (ALP-794): the AI app
@@ -247,6 +258,65 @@ const PERMANENT_ROUTES: ReadonlyArray<{
       "POST /api/school-bookings/confirm-attendees",
     ],
   },
+
+  // --- Membership (ALP-720) ------------------------------------------------
+  // A member's seasonal membership type sets their subscription and age tier,
+  // and their subscription category how they are billed, and so what they
+  // owe; approving an application can raise an entrance-fee invoice. Each
+  // preview mints the token its save needs, so both stay together.
+  {
+    reason: "changes-charges",
+    routes: [
+      "POST /api/admin/members/[id]/seasonal-membership/preview",
+      "PATCH /api/admin/members/[id]/seasonal-membership",
+      "POST /api/admin/members/bulk-membership-type/preview",
+      "POST /api/admin/members/bulk-membership-type",
+      "POST /api/admin/members/bulk-subscription-category/preview",
+      "POST /api/admin/members/bulk-subscription-category",
+      "POST /api/admin/membership-types/roll-forward",
+      "POST /api/admin/members/[id]/joining-fee/preview",
+      "POST /api/admin/member-applications/[id]/approval-preview",
+      "PUT /api/admin/member-applications/[id]",
+    ],
+  },
+  // Approving archives or deletes the member, or ends their membership and
+  // its future bookings. Raising the request is an action: a second officer
+  // decides it here, on the website.
+  {
+    reason: "ends-membership",
+    routes: [
+      "PATCH /api/admin/member-lifecycle-action-requests/[requestId]",
+      "POST /api/admin/membership-cancellation-requests/[requestId]/participants/[participantId]",
+    ],
+  },
+  {
+    reason: "sign-in-access",
+    routes: [
+      "POST /api/admin/members/send-password-reset",
+      "POST /api/admin/members/send-setup-invite",
+      "POST /api/admin/family-groups/[id]/login-holder",
+    ],
+  },
+  // The recipient count is the compose screen's own preview of the send.
+  {
+    reason: "mass-message",
+    routes: ["GET /api/admin/communications/send", "POST /api/admin/communications/send"],
+  },
+  // Finds a guest's id for the subject access report, which is fresh-proof.
+  { reason: "privacy-request", routes: ["GET /api/admin/members/subject-access/guests"] },
+  // The merge's preview, whose merge is fresh-proof; the link dialogs'
+  // "whose mailbox would this reach" helper; and the member page's drawn
+  // family tree, whose links `get_member` already answers.
+  {
+    reason: "website-flow",
+    routes: [
+      "POST /api/admin/members/[id]/merge/preview",
+      "GET /api/admin/members/[id]/dependent-email-source",
+      "GET /api/admin/members/[id]/family-tree",
+    ],
+  },
+  // Direct deletion answers 405: deletion is a lifecycle request.
+  { reason: "switched-off", routes: ["DELETE /api/admin/members/[id]"] },
 ];
 
 /** Finance officer routes that sit outside `/api/admin`. */

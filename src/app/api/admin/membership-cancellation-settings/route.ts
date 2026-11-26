@@ -1,5 +1,4 @@
 import { NextRequest, NextResponse } from "next/server";
-import { z } from "zod";
 import { parseJsonRequestBody } from "@/lib/api-json";
 import {
   buildStructuredAuditLogCreateArgs,
@@ -11,36 +10,17 @@ import {
 } from "@/lib/membership-cancellation-settings";
 import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/session-guards";
+import { membershipCancellationSettingsSchema } from "@/lib/admin-membership-api/config-settings";
+import { connectionJson } from "@/lib/mcp-connection-request";
+import { MEMBERSHIP_CANCELLATION_SETTINGS_CONNECTION_SHAPE } from "@/lib/connection-shapes/membership-config";
 
-function nullableTrimmedString(maxLength: number) {
-  return z
-    .preprocess(
-      (value) => {
-        if (typeof value !== "string") return value;
-        const trimmed = value.trim();
-        return trimmed ? trimmed : null;
-      },
-      z.string().min(1).max(maxLength).nullable().optional(),
-    );
-}
-
-const xeroGroupSchema = z
-  .object({
-    groupId: z.string().trim().min(1).max(200),
-    groupName: nullableTrimmedString(200),
-  })
-  .strict();
-
-const settingsSchema = z
-  .object({
-    warningText: nullableTrimmedString(4000),
-    rejoinProcessText: nullableTrimmedString(4000),
-    xeroArchiveContactsOnCancellation: z.boolean().optional(),
-    xeroContactGroups: z.array(xeroGroupSchema).max(20).optional(),
-  })
-  .strict();
-
-export async function GET() {
+/**
+ * GET|PUT /api/admin/membership-cancellation-settings. Also the AI app
+ * actions `get_membership_cancellation_settings` and
+ * `update_membership_cancellation_settings` (ALP-720): a connection is sent
+ * the settings, never the stored row with who saved it.
+ */
+export async function GET(request: NextRequest) {
   const guard = await requireAdmin({
     permission: { area: "membership", level: "view" },
   });
@@ -55,10 +35,11 @@ export async function GET() {
     },
   });
 
-  return NextResponse.json({
-    settings: normalizeMembershipCancellationSettings(persisted),
-    persisted,
-  });
+  return connectionJson(
+    request,
+    { settings: normalizeMembershipCancellationSettings(persisted), persisted },
+    MEMBERSHIP_CANCELLATION_SETTINGS_CONNECTION_SHAPE,
+  );
 }
 
 export async function PUT(request: NextRequest) {
@@ -74,7 +55,7 @@ export async function PUT(request: NextRequest) {
   if (!jsonBody.ok) return jsonBody.response;
   const body = jsonBody.body;
 
-  const parsed = settingsSchema.safeParse(body);
+  const parsed = membershipCancellationSettingsSchema.safeParse(body);
   if (!parsed.success) {
     return NextResponse.json(
       { error: "Invalid input", details: parsed.error.flatten() },
@@ -155,8 +136,9 @@ export async function PUT(request: NextRequest) {
     }),
   );
 
-  return NextResponse.json({
-    settings: normalizeMembershipCancellationSettings(record),
-    persisted: record,
-  });
+  return connectionJson(
+    request,
+    { settings: normalizeMembershipCancellationSettings(record), persisted: record },
+    MEMBERSHIP_CANCELLATION_SETTINGS_CONNECTION_SHAPE,
+  );
 }
