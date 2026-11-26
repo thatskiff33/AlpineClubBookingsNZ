@@ -78,6 +78,7 @@ export type McpPermanentExclusionReason = keyof typeof MCP_PERMANENT_EXCLUSION_R
  * - `membership` (Membership): ALP-720.
  * - `finance` (Finance): ALP-721, including the `/api/finance` workspace.
  * - `lodge` (Lodge Operations): ALP-722.
+ * - `content` (Content): ALP-723.
  * - `support` (Support & System) and `overview` (Admin Overview): ALP-724.
  */
 const MCP_DECIDED_ADMIN_AREAS = [
@@ -85,6 +86,7 @@ const MCP_DECIDED_ADMIN_AREAS = [
   "membership",
   "finance",
   "lodge",
+  "content",
   "support",
   "overview",
 ] as const satisfies readonly AdminPermissionArea[];
@@ -98,11 +100,10 @@ type McpNotYetAdminArea = Exclude<AdminPermissionArea, McpDecidedAdminArea>;
  * catalogue, by admin area not yet decided. Every member route is decided:
  * ALP-718 split them into five follow-ons, the last of which (ALP-797, groups
  * and whole-lodge) removed the member rule, so a new member route fails the
- * census until someone decides about it.
+ * census until someone decides about it. Every officer area is decided too
+ * (ALP-724 was the last), so this is empty; ALP-727 retires it.
  */
-export const MCP_NOT_YET_TASKS = {
-  content: "ALP-723",
-} as const satisfies Record<McpNotYetAdminArea, string>;
+export const MCP_NOT_YET_TASKS = {} as const satisfies Record<McpNotYetAdminArea, string>;
 
 function isNotYetAdminArea(area: AdminPermissionArea): area is McpNotYetAdminArea {
   return !(MCP_DECIDED_ADMIN_AREAS as readonly AdminPermissionArea[]).includes(area);
@@ -396,6 +397,18 @@ const PERMANENT_ROUTES: ReadonlyArray<{
       "PATCH /api/food-orders/[id]/price",
       "POST /api/food-orders/[id]/received",
       "PUT /api/admin/food-orders/settings",
+    ],
+  },
+
+  // --- Content (ALP-723) ---------------------------------------------------
+  // File uploads from the officer's browser: photos into a gallery folder, an
+  // image into the page image library, and the site logo.
+  {
+    reason: "needs-browser",
+    routes: [
+      "POST /api/admin/image-manager/upload",
+      "POST /api/admin/image-library",
+      "POST /api/admin/site-style/logo",
     ],
   },
 

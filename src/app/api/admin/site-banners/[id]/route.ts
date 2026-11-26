@@ -1,43 +1,25 @@
 import { NextResponse } from "next/server";
-import { z } from "zod";
 import { parseJsonRequestBody } from "@/lib/api-json";
 import {
   buildStructuredAuditLogCreateArgs,
   getAuditRequestContext,
 } from "@/lib/audit";
 import { parseDateOnly } from "@/lib/date-only";
-import { dateOnlyStringSchema } from "@/lib/date-only-schema";
 import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/session-guards";
+import { siteBannerUpdateSchema } from "@/lib/admin-content-api/banners";
+import { connectionJson } from "@/lib/mcp-connection-request";
 import {
-  SITE_BANNER_MESSAGE_MAX_LENGTH,
-  SITE_BANNER_PRIORITIES,
-} from "@/lib/site-banner-shared";
+  SITE_BANNER_CONNECTION_SHAPE,
+  SITE_BANNER_DELETED_CONNECTION_SHAPE,
+} from "@/lib/connection-shapes/content-pages";
+import { routeIdParamsSchema } from "@/lib/route-id-params";
 import {
   serializeAdminSiteBanner,
   siteBannerAuditSnapshot,
 } from "@/lib/site-banners";
 import { PUBLIC_LAYOUT_CACHE_TAGS } from "@/lib/public-layout-cache";
 import { revalidatePublicSite } from "@/lib/public-content-revalidation";
-
-const paramsSchema = z.object({
-  id: z.string().min(1),
-});
-
-const patchSchema = z
-  .object({
-    message: z
-      .string()
-      .trim()
-      .min(1)
-      .max(SITE_BANNER_MESSAGE_MAX_LENGTH)
-      .optional(),
-    priority: z.enum(SITE_BANNER_PRIORITIES).optional(),
-    startDate: dateOnlyStringSchema.optional(),
-    endDate: dateOnlyStringSchema.optional(),
-    active: z.boolean().optional(),
-  })
-  .strict();
 
 export async function PATCH(
   request: Request,
@@ -51,7 +33,7 @@ export async function PATCH(
   }
   const session = guard.session;
 
-  const parsedParams = paramsSchema.safeParse(await params);
+  const parsedParams = routeIdParamsSchema.safeParse(await params);
   if (!parsedParams.success) {
     return NextResponse.json(
       { error: "Invalid route parameters", details: parsedParams.error.flatten() },
@@ -65,7 +47,7 @@ export async function PATCH(
   if (!jsonBody.ok) return jsonBody.response;
   const body = jsonBody.body;
 
-  const parsed = patchSchema.safeParse(body);
+  const parsed = siteBannerUpdateSchema.safeParse(body);
   if (!parsed.success) {
     return NextResponse.json(
       { error: "Invalid input", details: parsed.error.flatten() },
@@ -135,7 +117,7 @@ export async function PATCH(
   // Full-route clear as well as the tag clear (#2352 F3) — see the POST route.
   revalidatePublicSite(PUBLIC_LAYOUT_CACHE_TAGS.banners);
 
-  return NextResponse.json({ banner: serializeAdminSiteBanner(banner) });
+  return connectionJson(request, { banner: serializeAdminSiteBanner(banner) }, SITE_BANNER_CONNECTION_SHAPE);
 }
 
 export async function DELETE(
@@ -150,7 +132,7 @@ export async function DELETE(
   }
   const session = guard.session;
 
-  const parsedParams = paramsSchema.safeParse(await params);
+  const parsedParams = routeIdParamsSchema.safeParse(await params);
   if (!parsedParams.success) {
     return NextResponse.json(
       { error: "Invalid route parameters", details: parsedParams.error.flatten() },
@@ -189,5 +171,5 @@ export async function DELETE(
   // Full-route clear as well as the tag clear (#2352 F3) — see the POST route.
   revalidatePublicSite(PUBLIC_LAYOUT_CACHE_TAGS.banners);
 
-  return NextResponse.json({ ok: true });
+  return connectionJson(request, { ok: true }, SITE_BANNER_DELETED_CONNECTION_SHAPE);
 }

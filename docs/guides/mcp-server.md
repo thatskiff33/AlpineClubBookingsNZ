@@ -125,14 +125,16 @@ disconnect them under **Connections**. An app on the member's own computer
   the website; the app can be disconnected on the profile at any time.
 - **For an officer only**, a fourth: as a club officer, the app can also see
   the club records their admin role gives them, such as other members'
-  bookings and details and the club's booking settings; with **View and
-  change** it can change them too, and it is told to ask first (owner
-  decision,
+  bookings and details, the club's booking settings, and the public
+  website's pages and settings; with **View and change** it can change them
+  too, and it is told to ask first (owner decision,
   [#5305](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/5305#issuecomment-7093303964)).
   Approving this screen is what lets the connection run officer actions
   (below). The wording is general on purpose, so one approval covers every
   admin area the officer holds, including areas added later (owner decision,
   [#5305](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/5305#issuecomment-7131483847)).
+  The public website's pages and settings were named when the Content
+  actions arrived, under that same decision.
 
 The screen refuses, with a reason and nothing shared, when the app or its
 return address is not registered or not approved, when the account is a lodge
@@ -953,6 +955,83 @@ kiosk account ask for fresh proof.
 | `set_maintenance_report_sign_active` | Pause or resume a lodge's QR report sign | destructive | edit | `PATCH /api/admin/maintenance-reports/tokens` |
 | `get_food_order_settings` | Read the food-order settings | read | view | `GET /api/admin/food-orders/settings` |
 
+### Content (officer, ALP-723)
+
+An officer who holds the **Content** admin area can do through a connected app
+what they can do on that area's screens (pages, footer, banners, club identity,
+public fee and policy sections, the privacy page's hosting details, site style,
+mountain conditions and public images), except upload a file. Each action runs
+on the area's own route with the officer's real permissions
+([`catalogue/content.ts`](../../src/lib/mcp/catalogue/content.ts)): a **view**
+grant reaches the reads, an **edit** grant the changes too. Anyone without the
+area, or on a connection not approved for officer actions, is never shown these
+actions: a call on an unapproved connection is refused before the route is
+reached, and the route itself refuses anyone without the area. All are reached through
+`find_actions` except `list_site_pages` and `list_site_banners`.
+
+HTML an app sends (a page's header and body, a footer section) goes through the
+same sanitiser as the website's editor (`sanitizePageContentHtml`) before it is
+saved; the app path adds no second one. The single-page and footer reads send
+the stored HTML, because their saves replace it whole; the page list leaves it
+out, so a long page is never cut off mid-list and saved back half-empty.
+
+| Action | What it does | Kind | Route |
+| --- | --- | --- | --- |
+| **Pages, footer and banners** | | | |
+| `list_site_pages` | Every public page with its address, menu title and whether it is published; not its HTML, which can outgrow an app's answer. Listed as its own tool | read | `GET /api/admin/page-content` |
+| `get_site_page` | One page whole, with its stored HTML | read | `GET /api/admin/page-content` |
+| `create_site_page` | Adds a page, published at once with an empty body | destructive | `POST /api/admin/page-content` |
+| `update_site_page` | Replaces every field of a page, live on the site; a system page keeps its slug and menu order | destructive | `PUT /api/admin/page-content` |
+| `set_site_page_published` | Shows or hides a page the club added | destructive | `PATCH /api/admin/page-content` |
+| `delete_site_page` | Deletes a page the club added; names the pages and footer sections that still link to it | destructive | `DELETE /api/admin/page-content` |
+| `list_footer_sections` | The footer columns with their stored HTML | read | `GET /api/admin/site-content` |
+| `update_footer_section` | Replaces one footer column's HTML | destructive | `PUT /api/admin/site-content` |
+| `list_site_banners` | Current, upcoming and past banners. Listed as its own tool | read | `GET /api/admin/site-banners` |
+| `create_site_banner` | Adds a banner across the top of every public page for its dates | destructive | `POST /api/admin/site-banners` |
+| `update_site_banner` | Changes a banner's message, priority, dates or whether it shows | destructive | `PATCH /api/admin/site-banners/[id]` |
+| `delete_site_banner` | Deletes a banner | destructive | `DELETE /api/admin/site-banners/[id]` |
+| **Site settings and style** | | | |
+| `get_club_identity` | The club's name, short name, hut leader label, Facebook address, and the invoice legal name and postal address | read | `GET /api/admin/club-identity` |
+| `update_club_identity` | Replaces those settings | destructive | `PUT /api/admin/club-identity` |
+| `get_contact_page_role` | Which committee role the Contact page lists, and the roles to choose from | read | `GET /api/admin/club-contact` |
+| `set_contact_page_role` | Chooses that role | destructive | `PUT /api/admin/club-contact` |
+| `get_public_content_settings` | Which fee and policy sections the public pages show, where Book Now goes, and how committee photos are shown | read | `GET /api/admin/public-content-settings` |
+| `update_public_content_settings` | Replaces those settings, except how committee photos are shown, which stays as stored | destructive | `PUT /api/admin/public-content-settings` |
+| `get_privacy_hosting_disclosure` | The hosting company and data location the privacy page names | read | `GET /api/admin/privacy-hosting` |
+| `update_privacy_hosting_disclosure` | Sets them | destructive | `PUT /api/admin/privacy-hosting` |
+| `get_site_style` | Brand colours, fonts, custom CSS, which logo is in use and contrast warnings; never the inline logo's bytes | read | `GET /api/admin/site-style` |
+| `update_site_style` | Replaces the colours, fonts and custom CSS, all of which must be sent. Never writes the logo or completes setup | destructive | `PUT /api/admin/site-style` |
+| `get_mountain_conditions_report` | The stored ski field report, its source and its refresh pause | read | `GET /api/admin/mountain-conditions` |
+| `refresh_mountain_conditions_report` | Fetches the report from its source now, replacing the stored one | destructive | `POST /api/admin/mountain-conditions` |
+| `replace_mountain_conditions_report` | Saves a report by hand, with its own section choices, and pauses auto refresh for 12 hours | destructive | `PUT /api/admin/mountain-conditions` |
+| `update_mountain_conditions_settings` | Which sections the widget shows, or the report's source and selectors | destructive | `PATCH /api/admin/mountain-conditions` |
+| **Public images** | | | |
+| `list_image_folders` | The Image Manager's photo folders | read | `GET /api/admin/image-manager/directories` |
+| `create_image_folder` | Adds an empty photo folder | write | `POST /api/admin/image-manager/directories` |
+| `rename_image_folder` | Renames a folder; a page gallery naming the old one shows nothing until edited | destructive | `PATCH /api/admin/image-manager/directories` |
+| `delete_image_folder` | Deletes a folder and everything in it | destructive | `DELETE /api/admin/image-manager/directories` |
+| `list_folder_photos` | The photos in one folder, with their public addresses | read | `GET /api/admin/image-manager/images` |
+| `delete_folder_photo` | Deletes one photo and its website-sized copies | destructive | `DELETE /api/admin/image-manager/images` |
+| `list_library_images` | The images uploaded for pages, a page at a time; never members' photos | read | `GET /api/admin/image-library` |
+| `delete_library_image` | Deletes a library image; names the pages that still show it | destructive | `DELETE /api/admin/image-library/[id]` |
+| `list_branding_images` | The branding images that ship with the site | read | `GET /api/admin/site-images` |
+
+Kinds follow the owner's rule (#5305): every Content change shows on the public
+website at once, replacing what another officer may have written, and is a
+club-wide configuration change (comment 7111359405), so it is `destructive`.
+Only adding an empty photo folder is a `write`: it shows nothing until a photo
+is uploaded into it on the website.
+
+What stays on the website in this area: uploading photos into a folder, an
+image into the page image library, and the site logo (each is a file from the
+officer's browser); finishing the site setup wizard; and choosing whether, and how, the
+public committee roster shows members' photos. Turning photos on publishes
+committee members' photos on public pages, which widens what others see of
+members (the spirit of the D-18 `privacy-posture` rule), so an officer makes
+that change on the website. The app's save leaves it as stored, and the route
+refuses the field from a connection (lane decision on PR #5487, owner to
+confirm).
+
 ### Support & System and Admin Overview officer actions (ALP-724)
 
 An officer who holds the **Support & System** admin area can do through an AI
@@ -1181,9 +1260,8 @@ Officer areas add their own permanent reasons:
   send to real people (environment safety). The officer gate offers an action
   by admin area and level, and no area or level is Full Admin.
 
-Every member route is an action or has one of these reasons. The remaining
-officer routes, in the Content area, are **not yet**: each names the officer
-stage that will bring it in.
+Every member route and every officer route is an action or has one of these
+reasons.
 
 ## Risks and limits
 
@@ -1221,8 +1299,8 @@ officer's own (`INV-MCP-006`).
 
 It also reaches the officer actions for each admin area the officer holds:
 Bookings & Beds (ALP-719), Membership (ALP-720), Finance (ALP-721), Lodge
-Operations (ALP-722), and Support & System with Admin Overview (ALP-724); the
-other areas follow. Whatever the
+Operations (ALP-722), Content (ALP-723), and Support & System with Admin
+Overview (ALP-724). Whatever the
 officer asks about through those, such as another member's bookings, record,
 family links, applications, requests, inductions or committee roles, their
 payments, credit, subscriptions or Xero contacts, the names on a chore
@@ -1490,18 +1568,13 @@ Stage 1 (ALP-653) is the foundation. Stage 2 (ALP-718, then ALP-794,
 ALP-795, ALP-796 and ALP-797) decided every member route: the actions above,
 or a permanent reason. ALP-719 decided the Bookings & Beds officer routes,
 ALP-720 the Membership ones, ALP-721 the Finance ones, ALP-722 the Lodge
-Operations ones and ALP-724 the Support & System and Admin Overview ones the
-same way. The remaining routes are officer routes, grouped
-by admin area into follow-on tasks named in
-`MCP_NOT_YET_TASKS` in
-[`exclusions.ts`](../../src/lib/mcp/exclusions.ts):
+Operations ones, ALP-723 the Content ones and ALP-724 the Support & System
+and Admin Overview ones the same way. No officer area is waiting:
+`MCP_NOT_YET_TASKS` in [`exclusions.ts`](../../src/lib/mcp/exclusions.ts)
+is empty.
 
-| Task | Area |
-| --- | --- |
-| ALP-723 | Content (officer) |
-
-After all six officer tasks ship, **ALP-727** reviews them together and makes the
-route census reject any remaining `not-yet` exclusion.
+With all six officer tasks shipped, **ALP-727** reviews them together and makes
+the route census reject any `not-yet` exclusion.
 
 ## Adding an action (developers)
 

@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { FocusedActionError } from "@/components/focused-action-error";
 import { StatusRegion } from "@/components/status-region";
+import { useActionFocusReturn } from "@/hooks/use-scroll-to-feedback";
 
 export function PartnerInviteClaimCard(props: {
   token: string;
@@ -15,8 +16,11 @@ export function PartnerInviteClaimCard(props: {
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
   const [joined, setJoined] = useState(false);
+  const focusReturn = useActionFocusReturn();
 
   async function handleClaim() {
+    // A browser drops focus from a disabled control; hand it back when re-enabled (#5442).
+    focusReturn.capture();
     setLoading(true);
     setError("");
 
@@ -41,6 +45,7 @@ export function PartnerInviteClaimCard(props: {
       setError("Could not accept this invitation right now.");
     } finally {
       setLoading(false);
+      focusReturn.release();
     }
   }
 

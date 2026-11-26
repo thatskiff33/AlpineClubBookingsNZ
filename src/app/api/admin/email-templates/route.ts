@@ -5,7 +5,7 @@ import {
   type EmailTemplateOverrideAnswer,
   type EmailTemplateStaleContent,
 } from "@/lib/connection-shapes/support-messages";
-import { answerTemplates, readTemplateQuery } from "@/lib/email-templates-route-answer";
+import { readTemplateQuery, templatesAnswer } from "@/lib/email-templates-route-answer";
 import { connectionJson } from "@/lib/mcp-connection-request";
 import {
   buildStructuredAuditLogCreateArgs,
@@ -481,7 +481,7 @@ export async function GET(request: NextRequest) {
     })
     .filter((entry): entry is { templateName: string; tokens: string[] } => entry !== null);
 
-  return answerTemplates(request, query.templateName, {
+  const { body, shape } = templatesAnswer(query.templateName, {
     templates: EMAIL_TEMPLATE_DEFINITIONS.map((definition) => {
       const override = overrideByTemplate.get(definition.key);
       return {
@@ -497,6 +497,7 @@ export async function GET(request: NextRequest) {
     retiredTokenOverrides,
     missingRequiredTokenOverrides,
   });
+  return connectionJson(request, body, shape);
 }
 export async function PUT(request: NextRequest) {
   const guard = await requireAdmin({

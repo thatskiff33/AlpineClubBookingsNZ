@@ -9,6 +9,7 @@ import {
   MCP_WEBSITE_ONLY_ACTIONS,
   mcpActionRouteFile,
 } from "@/lib/mcp/catalogue";
+import { CONTENT_MCP_ACTIONS } from "@/lib/mcp/catalogue/content";
 import { MEMBERSHIP_MCP_ACTIONS } from "@/lib/mcp/catalogue/membership";
 import {
   classifyMcpRoute,
@@ -390,6 +391,35 @@ describe("AI app action census (ALP-653, INV-MCP-006)", { timeout: CENSUS_TIMEOU
     expect(MEMBERSHIP_MCP_ACTIONS.length).toBeGreaterThan(0);
     for (const action of MEMBERSHIP_MCP_ACTIONS) {
       expect(mcpActionAdminRequirement(action)?.area, action.id).toBe("membership");
+    }
+  });
+
+  it("leaves no route waiting on ALP-723, which decided the Content admin area", () => {
+    expect(Object.values(MCP_NOT_YET_TASKS)).not.toContain("ALP-723");
+    const content = routeMethods.filter(
+      (route) => getAdminRouteRequirement(adminRouteApiPath(route.file), route.method)?.area === "content",
+    );
+    expect(content.length).toBeGreaterThan(30);
+    const excluded: string[] = [];
+    for (const route of content) {
+      const result = classifyMcpRoute(route.file, route.method);
+      expect(result.kind, `${route.method} ${route.file}`).not.toBe("unclassified");
+      if (result.kind === "excluded") excluded.push(`${route.method} ${adminRouteApiPath(route.file)} ${result.reason}`);
+    }
+    // Only the file uploads stay on the website; nothing in the area needs a fresh proof.
+    expect(excluded.sort()).toEqual([
+      "POST /api/admin/image-library needs-browser",
+      "POST /api/admin/image-manager/upload needs-browser",
+      "POST /api/admin/site-style/logo needs-browser",
+    ]);
+    // The area is finished: a new content route has to be decided, not deferred.
+    expect(classifyMcpRoute("src/app/api/admin/site-banners/brand-new/route.ts", "GET")).toEqual({ kind: "unclassified" });
+  });
+
+  it("runs every Content action on a route the area gates", () => {
+    expect(CONTENT_MCP_ACTIONS.length).toBeGreaterThan(30);
+    for (const action of CONTENT_MCP_ACTIONS) {
+      expect(mcpActionAdminRequirement(action)?.area, action.id).toBe("content");
     }
   });
 
