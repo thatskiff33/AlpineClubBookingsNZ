@@ -166,7 +166,7 @@ import {
   type FinishedStayChangeFeeRule,
   type FinishedStayCorrection,
 } from "@/lib/booking-finished-stay-correction";
-import { batchModificationSettlementFacts, unpaidAskResultFacts, type BatchModificationSettlementFacts, type BatchModificationTransactionResult, type ModifiedBooking } from "@/lib/booking-batch-modification-transaction-result";
+import { batchModificationResultFacts, unpaidAskResultFacts, type BatchModificationSettlementFacts, type BatchModificationTransactionResult, type ModifiedBooking } from "@/lib/booking-batch-modification-transaction-result";
 
 /**
  * WHY a change fee on this booking was waived, as it is stored (#3232 D2).
@@ -2237,29 +2237,9 @@ export async function modifyBookingBatch({
     });
 
     return {
-      booking: result.booking,
-      quotedFigures: result.quotedFigures,
-      bookingModificationId: result.bookingModificationId,
-      priceDiffCents: result.priceDiffCents,
-      changeFeeCents: result.changeFeeCents,
-      refundAmountCents: result.refundAmountCents,
-      accountCreditAmountCents: result.accountCreditAmountCents,
-      appliedCreditGivenBackCents: result.appliedCreditGivenBackCents,
-      refundedExcessCreditCents: result.refundedExcessCreditCents,
-      additionalAmountCents: result.additionalAmountCents,
-      billedToOrganiserCents: result.billedToOrganiserCents,
-      settlementMethod: result.settlementMethod,
-      requiresSettlementMethod: result.requiresSettlementMethod,
+      ...batchModificationResultFacts(result),
       additionalPaymentClientSecret: additionalMint.additionalPaymentClientSecret ?? null,
       stripeRefundId: refund.stripeRefundId ?? null,
-      promoRemoved: result.promoRemoved,
-      promoChanged: result.promoChanged,
-      promoCoverage: result.promoCoverage,
-      promoChangeNotApplied: result.promoChangeNotApplied,
-      choreWarnings: result.choreWarnings,
-      creditElectionCents: result.creditElectionCents,
-      ...batchModificationSettlementFacts(result),
-      capacityOverridden: result.capacityOverridden,
     };
   };
 
@@ -2282,32 +2262,12 @@ export async function modifyBookingBatch({
     // amount is payable ACROSS the bookings and settles on each separately
     // (`formatLinkedMoveMoneySentence`), rather than implying one payment step.
     return {
-      booking: result.booking,
-      quotedFigures: result.quotedFigures,
-      bookingModificationId: result.bookingModificationId,
+      ...batchModificationResultFacts(result),
       ...(result.pendingHostingReconcile
         ? { pendingHostingReconcile: result.pendingHostingReconcile }
         : {}),
-      priceDiffCents: result.priceDiffCents,
-      changeFeeCents: result.changeFeeCents,
-      refundAmountCents: result.refundAmountCents,
-      accountCreditAmountCents: result.accountCreditAmountCents,
-      appliedCreditGivenBackCents: result.appliedCreditGivenBackCents,
-      refundedExcessCreditCents: result.refundedExcessCreditCents,
-      additionalAmountCents: result.additionalAmountCents,
-      billedToOrganiserCents: result.billedToOrganiserCents,
-      settlementMethod: result.settlementMethod,
-      requiresSettlementMethod: result.requiresSettlementMethod,
       additionalPaymentClientSecret: null,
       stripeRefundId: null,
-      promoRemoved: result.promoRemoved,
-      promoChanged: result.promoChanged,
-      promoCoverage: result.promoCoverage,
-      promoChangeNotApplied: result.promoChangeNotApplied,
-      choreWarnings: result.choreWarnings,
-      creditElectionCents: result.creditElectionCents,
-      ...batchModificationSettlementFacts(result),
-      capacityOverridden: result.capacityOverridden,
       deferredPostCommit: async () => {
         await runPostCommit();
       },

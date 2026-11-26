@@ -30,11 +30,21 @@ export type EditQuotedFigures = z.infer<typeof editQuotedFiguresSchema>;
  * booking so a re-ordered or re-shaped stranded set cannot pair one booking's
  * figures with another's.
  */
-export const linkedQuotedFiguresSchema = z
+const linkedQuotedFiguresSchema = z
   .array(z.object({ bookingId: z.string().min(1), figures: editQuotedFiguresSchema }).strict())
   .max(100);
 
 export type LinkedQuotedFigures = z.infer<typeof linkedQuotedFiguresSchema>;
+
+/**
+ * The figure fields of a save request, one definition for both edit doors'
+ * schemas. Optional in the shape so a save without them gets the reload
+ * refusal (`requireEditQuotedFigures`), not a schema 400.
+ */
+export const editSaveFiguresShape = {
+  quotedFigures: editQuotedFiguresSchema.optional(),
+  linkedQuotedFigures: linkedQuotedFiguresSchema.optional(),
+};
 
 export const EDIT_PRICE_CHANGED_CODE = "EDIT_PRICE_CHANGED";
 const EDIT_FIGURES_REQUIRED_CODE = "EDIT_FIGURES_REQUIRED";

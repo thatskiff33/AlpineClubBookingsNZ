@@ -13,9 +13,10 @@ import { linkedMoveStateKey } from "@/lib/adult-member-hosting-linked-move";
 import { strandedCoverageStateKey } from "@/lib/adult-member-hosting-same-owner";
 import {
   formatLinkedMoveMoneySentence,
-  hostingCoverageLinkedMoveAcceptedFigures,
   hostingCoverageLinkedMoveAnswer,
+  hostingCoverageLinkedMoveAnswerFields,
   readHostingCoverageLinkedMovePrompt,
+  readLinkedMoveRefusal,
   type LinkedMoveMoneyFacts,
 } from "@/lib/hosting-coverage-linked-move-client";
 import {
@@ -419,29 +420,70 @@ describe("the figures an acceptance echoes (#5238, INV-MOD-062)", () => {
     };
   }
 
-  it("returns every booking's figures, keyed by booking", () => {
+  it("accepting sends the answer with every booking's figures, keyed by booking", () => {
     const prompt = readHostingCoverageLinkedMovePrompt(withFigures())!;
-    expect(hostingCoverageLinkedMoveAcceptedFigures(prompt)).toEqual({
+    expect(hostingCoverageLinkedMoveAnswerFields(prompt, "MOVE_BOTH")).toEqual({
+      hostingCoverageLinkedMove: { choice: "MOVE_BOTH", acknowledged: true, stateKey: KEY_A },
       quotedFigures: PRIMARY,
       linkedQuotedFigures: [{ bookingId: "b-main", figures: LINKED }],
     });
   });
 
+  it("declining sends the answer alone, leaving the preview's own figures in place", () => {
+    const prompt = readHostingCoverageLinkedMovePrompt(withFigures())!;
+    expect(hostingCoverageLinkedMoveAnswerFields(prompt, "LEAVE_UNCOVERED")).toEqual({
+      hostingCoverageLinkedMove: { choice: "LEAVE_UNCOVERED", acknowledged: true, stateKey: KEY_B },
+    });
+  });
+
+  it("sends nothing on an arm with no answer to give", () => {
+    const prompt = readHostingCoverageLinkedMovePrompt({ ...withFigures(), linkedMoveAvailable: false })!;
+    expect(hostingCoverageLinkedMoveAnswerFields(prompt, "MOVE_BOTH")).toEqual({});
+  });
+
   it("still reads an older server's offer, which carries none, and then echoes none", () => {
     const prompt = readHostingCoverageLinkedMovePrompt(body());
     expect(prompt).not.toBeNull();
-    expect(hostingCoverageLinkedMoveAcceptedFigures(prompt!)).toBeNull();
+    expect(hostingCoverageLinkedMoveAnswerFields(prompt!, "MOVE_BOTH")).not.toHaveProperty("linkedQuotedFigures");
   });
 
   it("echoes none when any one booking's figures are missing", () => {
     const offer = body();
     const prompt = readHostingCoverageLinkedMovePrompt({ ...offer, primary: { ...offer.primary, quotedFigures: PRIMARY } })!;
-    expect(hostingCoverageLinkedMoveAcceptedFigures(prompt)).toBeNull();
+    expect(hostingCoverageLinkedMoveAnswerFields(prompt, "MOVE_BOTH")).not.toHaveProperty("linkedQuotedFigures");
   });
 
   it("fails closed on figures that are not integer cents", () => {
     expect(readHostingCoverageLinkedMovePrompt(withFigures({ ...PRIMARY, changeFeeCents: 0.5 }))).toBeNull();
     expect(readHostingCoverageLinkedMovePrompt(withFigures(PRIMARY, { ...LINKED, netChargeCents: "3000" }))).toBeNull();
+  });
+});
+
+describe("the offer a refused save carries (#3232, #5238)", () => {
+  it("reads the first offer and asks for a choice", () => {
+    expect(readLinkedMoveRefusal(body())).toMatchObject({
+      priceChanged: false,
+      message: "Choose whether to move both bookings or only this one, then save again.",
+      prompt: { acceptStateKey: KEY_A },
+    });
+  });
+
+  it("reads the fresh offer inside a price-changed refusal and says nothing was saved", () => {
+    const refusal = readLinkedMoveRefusal({
+      code: "EDIT_PRICE_CHANGED",
+      error: "The price changed since you previewed it. Review and save again.",
+      figures: { newFinalPriceCents: 1, priceDiffCents: 0, changeFeeCents: 0, netChargeCents: 0 },
+      linkedMove: body({ acceptStateKey: `v1:${"c".repeat(64)}` }),
+    });
+    expect(refusal?.priceChanged).toBe(true);
+    expect(refusal?.prompt.acceptStateKey).toBe(`v1:${"c".repeat(64)}`);
+    expect(refusal?.message).toMatch(/so nothing was saved/);
+  });
+
+  it("reads nothing from a plain price change or any other refusal", () => {
+    expect(readLinkedMoveRefusal({ code: "EDIT_PRICE_CHANGED", figures: {} })).toBeNull();
+    expect(readLinkedMoveRefusal({ code: "EDIT_FIGURES_REQUIRED", error: "Reload" })).toBeNull();
+    expect(readLinkedMoveRefusal(null)).toBeNull();
   });
 });
 

@@ -55,9 +55,7 @@ import { PriceSummaryCard } from "@/components/edit-booking/price-summary-card";
 import { LinkedMoveSettlementMethod } from "@/components/edit-booking/linked-move-settlement-method";
 import {
   editPriceChangedMessage,
-  LINKED_MOVE_PRICE_CHANGED_MESSAGE,
   readEditPriceChangedFigures,
-  readEditPriceChangedLinkedMove,
 } from "@/components/edit-booking/edit-price-changed";
 import { useClubFormat } from "@/components/club-format-provider";
 import { hasSeveralPromoCodes, PromoCodeCard } from "@/components/edit-booking/promo-code-card";
@@ -93,9 +91,8 @@ import {
 } from "@/components/edit-booking/hooks/use-hosting-coverage-linked-move";
 import { HostingCoverageLinkedMovePrompt } from "@/components/hosting-coverage-linked-move-prompt";
 import {
-  hostingCoverageLinkedMoveAcceptedFigures,
-  hostingCoverageLinkedMoveAnswer,
-  readHostingCoverageLinkedMovePrompt,
+  hostingCoverageLinkedMoveAnswerFields,
+  readLinkedMoveRefusal,
 } from "@/lib/hosting-coverage-linked-move-client";
 import { useMemberGuestFinder } from "@/components/edit-booking/hooks/use-member-guest-finder";
 import { useOtherLodgeRate } from "@/components/edit-booking/hooks/use-other-lodge-rate";
@@ -1328,8 +1325,7 @@ export function EditBookingPanel({
       // unchanged so the save refuses rather than settle a different amount.
       // Added after the signature, like the linked-move answers below: a
       // re-priced preview is not a different proposal and must not retire an
-      // open prompt. No preview, no figures — the server then asks for a reload
-      // (#5238) rather than price a figure nobody was shown.
+      // open prompt. No preview, no figures: the server asks for a reload (#5238).
       const previewedFigures = quote?.quotedFigures ?? null;
       if (previewedFigures) body.quotedFigures = previewedFigures;
       if (overrideState) {
@@ -1344,13 +1340,10 @@ export function EditBookingPanel({
       // stranded set — so the key comes off the prompt rather than being picked
       // here. A null answer means the arm is not answerable (the offer said there
       // are not beds for both), and the save then carries no answer at all so the
-      // server re-prompts rather than acting on half of one.
+      // server re-prompts rather than acting on half of one. Accepting also binds
+      // every booking to the figure the offer showed for it (#5238).
       if (linkedMoveState && linkedMoveChoice) {
-        const answer = hostingCoverageLinkedMoveAnswer(
-          linkedMoveState.prompt,
-          linkedMoveChoice,
-        );
-        if (answer) body.hostingCoverageLinkedMove = answer;
+        Object.assign(body, hostingCoverageLinkedMoveAnswerFields(linkedMoveState.prompt, linkedMoveChoice));
         // #3232: and the return method for the other booking's refund, added HERE
         // rather than in the payload builder for the reason its state slot gives —
         // in the builder it would change the proposal signature and retire this
@@ -1365,13 +1358,6 @@ export function EditBookingPanel({
         if (linkedMoveChoice === "MOVE_BOTH" && linkedMoveSettlementMethod) {
           body.settlementMethod = linkedMoveSettlementMethod;
         }
-        // #5238 (`INV-MOD-062`): accepting binds every booking to the figure the
-        // offer showed for it, the primary's included, so either may refuse.
-        const accepted =
-          linkedMoveChoice === "MOVE_BOTH"
-            ? hostingCoverageLinkedMoveAcceptedFigures(linkedMoveState.prompt)
-            : null;
-        if (accepted) Object.assign(body, accepted);
       }
 
       const res = await fetch(`/api/bookings/${booking.id}/modify`, {
@@ -1382,20 +1368,6 @@ export function EditBookingPanel({
 
       const data = await res.json();
       if (!res.ok) {
-        // #5238: the linked move's price moved since the member accepted it, so
-        // neither booking was saved. Put the fresh offer up and ask again.
-        const freshOffer = readEditPriceChangedLinkedMove(data);
-        if (freshOffer) {
-          setLinkedMoveState({
-            prompt: freshOffer,
-            proposalSignature: refusedHostingProposalSignature,
-            notifyMemberChoice,
-          });
-          setLinkedMoveChoice(null);
-          setSaveError(LINKED_MOVE_PRICE_CHANGED_MESSAGE);
-          requote();
-          return;
-        }
         // #4924: the price moved since the preview, so nothing was saved. Say
         // what changed, keep the edit open and price it again.
         const freshFigures = readEditPriceChangedFigures(data);
@@ -1407,18 +1379,18 @@ export function EditBookingPanel({
         // #3232, BEFORE the officer's override prompt: a linked-move offer is
         // raised for the BOOKING'S OWN MEMBER, admin or not, so it must not be
         // gated on `actingAsAdmin` the way the override prompt is. The two bodies
-        // carry different codes, so only one reader can ever match.
-        const linkedMovePrompt = readHostingCoverageLinkedMovePrompt(data);
-        if (linkedMovePrompt) {
+        // carry different codes, so only one reader can ever match. #5238: the
+        // fresh offer of an acceptance whose price moved arrives the same way.
+        const linkedMoveRefusal = readLinkedMoveRefusal(data);
+        if (linkedMoveRefusal) {
           setLinkedMoveState({
-            prompt: linkedMovePrompt,
+            prompt: linkedMoveRefusal.prompt,
             proposalSignature: refusedHostingProposalSignature,
             notifyMemberChoice,
           });
           setLinkedMoveChoice(null);
-          setSaveError(
-            "Choose whether to move both bookings or only this one, then save again.",
-          );
+          setSaveError(linkedMoveRefusal.message);
+          if (linkedMoveRefusal.priceChanged) requote();
           return;
         }
         const hostingPrompt = actingAsAdmin

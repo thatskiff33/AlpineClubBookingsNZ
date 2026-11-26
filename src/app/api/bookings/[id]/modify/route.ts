@@ -218,10 +218,8 @@ export async function PUT(
 
     return NextResponse.json(result);
   } catch (err) {
-    // #4924, #5238 (`INV-MOD-062`): the save carried no figures, or its own
-    // figures differ from the ones the member previewed. Both are thrown before
-    // the first write, so nothing was settled; a price change carries the fresh
-    // figures, and on a linked move the fresh offer.
+    // #4924, #5238 (`INV-MOD-062`): no figures, or figures the save no longer
+    // matches; thrown before the first write, so nothing was settled.
     const figuresRefusal = editQuotedFiguresRefusal(err);
     if (figuresRefusal) return NextResponse.json(figuresRefusal.body, { status: figuresRefusal.status });
     // The edit commits before its refund and additional-ask steps, so a

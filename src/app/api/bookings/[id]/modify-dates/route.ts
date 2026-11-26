@@ -18,12 +18,7 @@ import {
 } from "@/lib/adult-member-hosting-linked-move";
 import { modifyBookingDatesWithLinkedMoveSupport } from "@/lib/booking-linked-date-move-arms";
 import { ApiError } from "@/lib/api-error";
-import {
-  editQuotedFiguresRefusal,
-  editQuotedFiguresSchema,
-  linkedQuotedFiguresSchema,
-  requireEditQuotedFigures,
-} from "@/lib/edit-quoted-figures";
+import { editQuotedFiguresRefusal, editSaveFiguresShape, requireEditQuotedFigures } from "@/lib/edit-quoted-figures";
 import { MinimumStayPolicyViolationError } from "@/lib/booking-policy-exceptions";
 import { auth } from "@/lib/auth";
 import { getClientIp } from "@/lib/rate-limit-http";
@@ -60,11 +55,7 @@ import { clubFormatValues } from "@/lib/club-format-server";
 
 const modifyDatesSchema = z
   .object({
-    // #4924, #5238 (`INV-MOD-062`): the figures the member was shown, and on a
-    // linked-move acceptance each other booking's. Optional in the shape so a
-    // save without them gets the reload refusal, not a schema 400.
-    quotedFigures: editQuotedFiguresSchema.optional(),
-    linkedQuotedFigures: linkedQuotedFiguresSchema.optional(),
+    ...editSaveFiguresShape, // #5238 (`INV-MOD-062`)
     checkIn: z.string().optional(),
     checkOut: z.string().optional(),
     settlementMethod: z.enum(["card", "credit"]).optional(),
@@ -371,8 +362,7 @@ export async function PUT(
         { status: err.status },
       );
     }
-    // #4924, #5238 (`INV-MOD-062`): no figures, or figures the save no longer
-    // matches. Both are thrown before the first write, so nothing was settled.
+    // #5238 (`INV-MOD-062`): thrown before the first write, so nothing was settled.
     const figuresRefusal = editQuotedFiguresRefusal(err);
     if (figuresRefusal) return NextResponse.json(figuresRefusal.body, { status: figuresRefusal.status });
     if (err instanceof ApiError) {

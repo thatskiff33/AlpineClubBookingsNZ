@@ -24,6 +24,7 @@
 
 import { formatCents } from "@/lib/utils";
 import {
+  EDIT_PRICE_CHANGED_CODE,
   editQuotedFiguresSchema,
   type EditQuotedFigures,
   type LinkedQuotedFigures,
@@ -526,12 +527,12 @@ export function hostingCoverageLinkedMoveAnswer(
 
 /**
  * #5238 (`INV-MOD-062`): the figures a `MOVE_BOTH` acceptance sends back, the
- * primary's and every other booking's exactly as the offer priced them. Empty
+ * primary's and every other booking's exactly as the offer priced them. Null
  * when the offer came from a server older than #5238 and carried none: the
  * save then sends no linked figures and the server asks for a reload rather
  * than settle a figure the panel cannot vouch for.
  */
-export function hostingCoverageLinkedMoveAcceptedFigures(
+function acceptedFigures(
   prompt: HostingCoverageLinkedMovePromptData,
 ): { quotedFigures: EditQuotedFigures; linkedQuotedFigures: LinkedQuotedFigures } | null {
   const linkedQuotedFigures: LinkedQuotedFigures = [];
@@ -541,4 +542,42 @@ export function hostingCoverageLinkedMoveAcceptedFigures(
   }
   if (!prompt.quotedFigures) return null;
   return { quotedFigures: prompt.quotedFigures, linkedQuotedFigures };
+}
+
+/**
+ * What the retry adds to the save body for the arm the member chose: the answer
+ * (`hostingCoverageLinkedMoveAnswer`) and, on `MOVE_BOTH`, every booking's
+ * figures from the offer (#5238), which replace the primary's own preview
+ * figures because the offer is what the member accepted. Nothing when the arm
+ * has no answer to give.
+ */
+export function hostingCoverageLinkedMoveAnswerFields(
+  prompt: HostingCoverageLinkedMovePromptData,
+  choice: HostingCoverageLinkedMoveChoice,
+): Record<string, unknown> {
+  const answer = hostingCoverageLinkedMoveAnswer(prompt, choice);
+  if (!answer) return {};
+  return { hostingCoverageLinkedMove: answer, ...(choice === "MOVE_BOTH" ? acceptedFigures(prompt) : null) };
+}
+
+/**
+ * The linked-move offer a refused save carries, with what to tell the member:
+ * the first offer (#3232), or a fresh one after an acceptance refused because a
+ * booking's price moved (#5238, 409 `EDIT_PRICE_CHANGED` with `linkedMove`),
+ * when nothing was saved for either booking. Null for any other refusal.
+ */
+export function readLinkedMoveRefusal(
+  data: unknown,
+): { prompt: HostingCoverageLinkedMovePromptData; priceChanged: boolean; message: string } | null {
+  const record = data && typeof data === "object" ? (data as { code?: unknown; linkedMove?: unknown }) : null;
+  const priceChanged = record?.code === EDIT_PRICE_CHANGED_CODE;
+  const prompt = readHostingCoverageLinkedMovePrompt(priceChanged ? record?.linkedMove : data);
+  if (!prompt) return null;
+  return {
+    prompt,
+    priceChanged,
+    message: priceChanged
+      ? "The price of moving both bookings changed since you accepted it, so nothing was saved. Check the new figures and choose again."
+      : "Choose whether to move both bookings or only this one, then save again.",
+  };
 }

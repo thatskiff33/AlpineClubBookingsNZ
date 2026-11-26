@@ -4,40 +4,21 @@ import {
   editQuotedFiguresSchema,
   type EditQuotedFigures,
 } from "@/lib/edit-quoted-figures";
-import {
-  readHostingCoverageLinkedMovePrompt,
-  type HostingCoverageLinkedMovePromptData,
-} from "@/lib/hosting-coverage-linked-move-client";
 import { formatCents } from "@/lib/utils";
 
 /**
  * #4924 (`INV-MOD-062`): the save's fresh figures from a 409
- * `EDIT_PRICE_CHANGED` body, or null when the body is any other refusal.
+ * `EDIT_PRICE_CHANGED` body, or null when the body is any other refusal. A
+ * refused linked-move acceptance (#5238) carries a fresh offer to answer
+ * instead, read by `readLinkedMoveRefusal`.
  */
 export function readEditPriceChangedFigures(data: unknown): EditQuotedFigures | null {
   if (!data || typeof data !== "object") return null;
-  const record = data as { code?: unknown; figures?: unknown };
-  if (record.code !== EDIT_PRICE_CHANGED_CODE) return null;
+  const record = data as { code?: unknown; figures?: unknown; linkedMove?: unknown };
+  if (record.code !== EDIT_PRICE_CHANGED_CODE || record.linkedMove !== undefined) return null;
   const figures = editQuotedFiguresSchema.safeParse(record.figures);
   return figures.success ? figures.data : null;
 }
-
-/**
- * #5238: the fresh linked-move offer a refused `MOVE_BOTH` acceptance carries,
- * or null for any other body. The member answers the new offer; the old answer
- * is never resent.
- */
-export function readEditPriceChangedLinkedMove(
-  data: unknown,
-): HostingCoverageLinkedMovePromptData | null {
-  if (!data || typeof data !== "object") return null;
-  const record = data as { code?: unknown; linkedMove?: unknown };
-  if (record.code !== EDIT_PRICE_CHANGED_CODE) return null;
-  return readHostingCoverageLinkedMovePrompt(record.linkedMove);
-}
-
-export const LINKED_MOVE_PRICE_CHANGED_MESSAGE =
-  "The price of moving both bookings changed since you accepted it, so nothing was saved. Check the new figures and choose again.";
 
 function describeNetCharge(cents: number, format: ClubFormat): string {
   if (cents > 0) return `an extra charge of ${formatCents(cents, format)}`;
