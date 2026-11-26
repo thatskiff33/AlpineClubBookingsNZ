@@ -1,6 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
 
+import { PAYMENTS_CRON_JOB_NAMES } from "@/lib/payments-cron-jobs";
+
 const {
   mockProcessPaymentRecoveryOperations,
   mockReleaseExpiredInternetBankingHolds,
@@ -58,27 +60,27 @@ vi.mock("@/lib/xero-waiting-invoice-reaper", () => ({
     mockReapStaleWaitingPaymentXeroOutboxOperations(...args),
 }));
 
-// #3635: the fifth task, the held late-capture alert's re-selecting run.
+// #3635: the held late-capture alert's re-selecting run.
 vi.mock("@/lib/late-capture-refund-hold", () => ({
   reannounceHeldLateCaptures: (...args: unknown[]) => mockReannounceHeldLateCaptures(...args),
 }));
 
-// #4253: the sixth task, the credit-release payment sweep.
+// #4253: the credit-release payment sweep.
 vi.mock("@/lib/credit-release-ask-sweep", () => ({
   runCreditReleaseAskSweep: (...args: unknown[]) => mockRunCreditReleaseAskSweep(...args),
 }));
 
-// #4285 review: the seventh task, the owed new-capture alert's drain.
+// #4285 review: the owed new-capture alert's drain.
 vi.mock("@/lib/duplicate-capture-kept-alert-drain", () => ({
   drainOwedNewCaptureAlerts: (...args: unknown[]) => mockDrainOwedNewCaptureAlerts(...args),
 }));
 
-// #4525 review: the eighth task, the combined group invoice cover-release sweep.
+// #4525 review: the combined group invoice cover-release sweep.
 vi.mock("@/lib/member-money/doors", () => ({
   sweepVoidedCombinedGroupInvoiceCover: (...args: unknown[]) => mockSweepVoidedCombinedGroupInvoiceCover(...args),
 }));
 
-// #5255: the first task, the once-ever alert sweep.
+// #5255: the once-ever alert sweep.
 vi.mock("@/lib/admin-alert-once-sweep", () => ({
   sweepOnceEverAlerts: (...args: unknown[]) => mockSweepOnceEverAlerts(...args),
 }));
@@ -154,7 +156,7 @@ describe("POST /api/cron/payments", () => {
     );
   }
 
-  it("runs all eight payments tasks and records each under its own job name", async () => {
+  it("runs every payments task and records each under its own job name", async () => {
     const { POST } = await import("@/app/api/cron/payments/route");
     const response = await POST(
       authorisedRequest("http://localhost/api/cron/payments?task=recovery")
@@ -182,6 +184,8 @@ describe("POST /api/cron/payments", () => {
       expect.objectContaining({ jobName: "duplicate-capture-kept-alert", status: "SUCCESS" }),
       expect.objectContaining({ jobName: "combined-invoice-cover-release", status: "SUCCESS" }),
     ]);
+    // A task added to the names module but never run fails here (#5256).
+    expect(recordedRuns().map((run) => run.jobName)).toEqual(Object.values(PAYMENTS_CRON_JOB_NAMES));
   });
 
   it.each([

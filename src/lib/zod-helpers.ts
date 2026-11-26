@@ -16,3 +16,11 @@ export function nameField(message?: { required?: string; max?: string }) {
       message: "Name cannot be empty",
     });
 }
+
+/**
+ * Refinement predicate: true when the value holds no carriage return or line
+ * feed. Use it with `.refine(noCrlf, "<field> cannot contain line breaks")` on
+ * single-line fields that reach email headers or one-line layouts; each schema
+ * keeps its own message. Unlike `nameField`, it rejects rather than strips.
+ */
+export const noCrlf = (value: string) => !/[\r\n]/.test(value);

@@ -4,7 +4,7 @@
  * claims runs under it, the scheduler logs and checks in to Sentry under it,
  * and admin cron health reads the recorded rows back by it. A raw copy anywhere
  * else would silently stop matching on a rename, so
- * `xero-cron-job-name-literals.test.ts` refuses one.
+ * `cron-job-name-literals.test.ts` refuses one.
  *
  * Dependency-free on purpose: `instrumentation.node.ts` imports it at boot,
  * and must not pull the runner's provider and Prisma graph in to do so.
