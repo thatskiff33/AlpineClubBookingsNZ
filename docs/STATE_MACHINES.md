@@ -3451,8 +3451,10 @@ past its first attempt claimed within `replayInFlightWindowMs()` is the cron's
 ten inactivity timeouts, one per server reply after setup, never under
 `EMAIL_RETRY_BACKOFF_MS`; 20.5 minutes with the default timeouts, at most 110);
 an older such `QUEUED` row (a replay whose `SENT` write failed after the
-provider accepted it, or that died mid-send, which nothing moves on) counts as
-told, the same limit as a first attempt; any other `FAILED` row or a `BOUNCED`
+provider accepted it, or that died mid-send) counts as told, the same limit as
+a first attempt, and so does such a row once the stranded-email sweep has
+flagged it `UNCONFIRMED` at the retry ceiling (#5298, `INV-INT-043`), until an
+officer's Try again requeues it; any other `FAILED` row or a `BOUNCED`
 one is undeliverable; no row is never sent. Both the first attempt
 and the sweep read the row again after their send, because a send can return
 without reaching the member: a suppressed address is recorded `BOUNCED`, and
@@ -4405,7 +4407,9 @@ less than 7 days, each with a write guarded on the row as read:
   replayed by the same run with its usual checks;
 - `PENDING` at attempts 1, no body: `FAILED` at the ceiling, "never sent";
 - anything else (`STARTED`, null, or attempts above 1): `FAILED` at the
-  ceiling and `UNCONFIRMED`, never sent again automatically.
+  ceiling and `UNCONFIRMED`, never sent again automatically. A keyed email's
+  told rule (`keyed-email-state.ts`) reads it as it read the `QUEUED` row:
+  told.
 
 Both ceiling outcomes alert officers through the exhausted-retry alert, and the
 review queue marks an `UNCONFIRMED` row "May already have been delivered"; its

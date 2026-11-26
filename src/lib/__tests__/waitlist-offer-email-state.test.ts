@@ -11,7 +11,7 @@ vi.mock("@/lib/prisma", () => ({
 }));
 vi.mock("@/lib/logger", () => ({ default: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() } }));
 
-import { EmailLogStatus } from "@prisma/client";
+import { EmailHandoverState, EmailLogStatus } from "@prisma/client";
 
 import { replayInFlightWindowMs } from "@/lib/email/replay-in-flight";
 import { EMAIL_RETRY_MAX_ATTEMPTS } from "@/lib/email/retry-selection";
@@ -55,6 +55,10 @@ describe("offerEmailRowState", () => {
     ["withheld by a non-production copy", { status: EmailLogStatus.SKIPPED_NON_PRODUCTION, attempts: 1, ...body(false) }, "withheld", true],
     ["FAILED, replayable", { status: EmailLogStatus.FAILED, attempts: 1, ...body(true) }, "retrying", false],
     ["FAILED at the ceiling", { status: EmailLogStatus.FAILED, attempts: EMAIL_RETRY_MAX_ATTEMPTS, ...body(true) }, "undeliverable", false],
+    // #5298: a first attempt a crash stranded mid-send reads as it did while QUEUED, since it may have arrived.
+    ["a stranded send flagged UNCONFIRMED at the ceiling", { status: EmailLogStatus.FAILED, attempts: EMAIL_RETRY_MAX_ATTEMPTS, handoverState: EmailHandoverState.UNCONFIRMED, ...body(false) }, "sent", true],
+    ["that row once an officer's Try again requeued it", { status: EmailLogStatus.FAILED, attempts: EMAIL_RETRY_MAX_ATTEMPTS - 1, handoverState: EmailHandoverState.UNCONFIRMED, ...body(true) }, "retrying", false],
+    ["a stranded send that never reached the mail server and kept no body", { status: EmailLogStatus.FAILED, attempts: EMAIL_RETRY_MAX_ATTEMPTS, handoverState: EmailHandoverState.PENDING, ...body(false) }, "undeliverable", false],
     ["FAILED with no body (an environment fault's copy of a sensitive template)", { status: EmailLogStatus.FAILED, attempts: 1, ...body(false) }, "undeliverable", false],
     ["FAILED with its body after a fail-closed No-emails read (the retry cron's)", { status: EmailLogStatus.FAILED, attempts: 1, ...body(true) }, "retrying", false],
     ["BOUNCED (a suppressed address, or a bounce after SENT)", { status: EmailLogStatus.BOUNCED, attempts: 1, ...body(true) }, "undeliverable", false],
