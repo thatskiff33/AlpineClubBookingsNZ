@@ -66,6 +66,7 @@ import {
   CREDIT_NOTE_MIRROR_WRITE_DOWN_DESCRIPTION,
   writtenDownCentsByCreditNote,
 } from "./xero-credit-note-write-down";
+import { noteHasOpenDeductionCorrection, noteVoidedByDeductionCorrection } from "./admin-credit-deduction-note-guard";
 
 // The evidence gates and the settle window live with the comparator, so the early warning (#4220) asks the same ones.
 export { CREDIT_NOTE_MIRROR_SETTLE_MS };
@@ -134,7 +135,11 @@ export type CreditNoteMirrorRefusal =
   | "lot-changed"
   | "nothing-to-do"
   | "none-free"
-  | "writes-disabled";
+  | "writes-disabled"
+  // #5241: an officer's deduction is changing this note; looked at again later.
+  | "deduction-correction-open"
+  // #5241: a completed officer deduction voided the note itself; nothing to tell.
+  | "voided-by-deduction";
 
 export type CreditNoteMirrorResult =
   | { acted: true; action: "written-down" | "restored"; cents: number; leftForAllocationCents: number }
@@ -226,6 +231,10 @@ export async function mirrorCreditNoteOutsideSpend(
 
   const gate = judgeOutsideSpendEvidence(evidence, now);
   if (gate === "note-not-active") {
+    if (evidence.status === "VOIDED" && (await noteVoidedByDeductionCorrection(db, creditNoteId))) {
+      logger.info({ creditNoteId }, "A credit note was voided by an officer's completed credit deduction; nothing to mirror");
+      return { acted: false, reason: "voided-by-deduction" };
+    }
     // Voided or deleted in Xero is a different class of change from credit spent: the ledger
     // may owe the member something that no rule here knows, so an officer is told.
     const log = evidence.status === "VOIDED" || evidence.status === "DELETED" ? logger.error : logger.warn;
@@ -251,6 +260,9 @@ export async function mirrorCreditNoteOutsideSpend(
     const funding = await findFundingLotsForNote(tx, memberId, creditNoteId);
     const [lot, ...extraLots] = funding;
     if (!lot || lot.id !== firstLot.id || extraLots.length > 0) return { acted: false, reason: "lot-changed" };
+    // #5241: the reservation's write-down is in the ledger before Xero shows the
+    // correction; comparing now would restore the reserved cents.
+    if (await noteHasOpenDeductionCorrection(tx, creditNoteId)) return { acted: false, reason: "deduction-correction-open" };
 
     const slices = await tx.memberCreditNoteAllocation.findMany({
       where: { memberCreditId: lot.id },
@@ -384,6 +396,9 @@ export async function mirrorCreditNoteOutsideSpend(
     return { acted: true, action: "restored", cents: plan.cents, leftForAllocationCents: 0 };
   });
 
+  if (!outcome.acted && outcome.reason === "deduction-correction-open") {
+    await scheduleRecheck(db, creditNoteId, new Date(now.getTime() + CREDIT_NOTE_MIRROR_SETTLE_MS));
+  }
   if (outcome.acted) {
     logger.info({ creditNoteId, action: outcome.action, cents: outcome.cents, leftForAllocationCents: outcome.leftForAllocationCents }, "Mirrored a credit note spent or un-spent in Xero");
   } else if (outcome.reason === "writes-disabled") {

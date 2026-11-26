@@ -31,6 +31,8 @@ interface Store {
   payment: Row[];
   booking: Row[];
   xeroSyncOperation: Row[];
+  /** #5241: deduction correction lines, each carrying its correction's `status`. */
+  adminCreditDeductionCorrectionLine?: Row[];
 }
 
 const READS = new Set(["findMany", "findFirst", "groupBy", "aggregate", "count"]);
@@ -81,6 +83,17 @@ function readOnlyDb(store: Store) {
     {},
     {
       get(_target, key: string) {
+        if (key === "adminCreditDeductionCorrectionLine") {
+          // #5241: only the open-correction read; the relation filter is evaluated by hand.
+          return {
+            findMany: async (args: { where: { xeroCreditNoteId: { in: string[] }; correction: { status: string } } }) => {
+              calls.push(`${key}.findMany`);
+              return (store.adminCreditDeductionCorrectionLine ?? []).filter(
+                (row) => args.where.xeroCreditNoteId.in.includes(row.xeroCreditNoteId as string) && row.status === args.where.correction.status,
+              );
+            },
+          };
+        }
         if (key in store) return model(key as keyof Store);
         return () => {
           calls.push(key);
@@ -196,6 +209,7 @@ function store(options: { reading?: StoredCreditNoteSpendEvidence | null; extra?
     ],
     booking: [booking("b0"), booking("b1"), ...(options.extra?.booking ?? [])],
     xeroSyncOperation: [...(options.extra?.xeroSyncOperation ?? [])],
+    adminCreditDeductionCorrectionLine: [...(options.extra?.adminCreditDeductionCorrectionLine ?? [])],
   };
 }
 
@@ -219,6 +233,12 @@ describe("the early warning: a credit note spent in Xero outside the app (#4220)
       resolvedAllocations: [],
       observedAt: new Date(SETTLED),
     });
+  });
+
+  it("#5241: skips a note an officer's deduction is still correcting, and flags it again once that ends", async () => {
+    const line = (status: string) => ({ xeroCreditNoteId: "N1", status });
+    expect(await find(store({ extra: { adminCreditDeductionCorrectionLine: [line("RESERVED")] } }))).toEqual([]);
+    expect((await find(store({ extra: { adminCreditDeductionCorrectionLine: [line("COMPLETED")] } }))).map((f) => f.creditNoteId)).toEqual(["N1"]);
   });
 
   it("finds it from the waiting booking's scope, not from one Xero already holds or one that draws on no lot", async () => {
