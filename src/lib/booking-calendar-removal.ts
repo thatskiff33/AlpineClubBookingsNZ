@@ -24,17 +24,26 @@ import type { EmailAttachment } from "@/lib/email/internal";
 import { resolveBookingEmailLink } from "@/lib/booking-email-authority";
 import { buildBookingIcs, SERVABLE_BOOKING_STATUS } from "@/lib/calendar-links";
 import { formatDateOnly } from "@/lib/date-only";
+import { calendarRemovalNote, calendarUpdateNote } from "@/lib/email-message-notes";
 import logger from "@/lib/logger";
 import { prisma } from "@/lib/prisma";
 
 interface BookingCalendarRemoval {
-  /** The member was offered a calendar entry, so the email carries the sentence. */
-  offered: boolean;
-  /** The cancellation file, or null when not offered or it could not be built. */
-  attachment: EmailAttachment | null;
+  /** `{{calendarRemovalNote}}` and the HTML paragraph; empty when not offered. */
+  note: string;
+  /** The cancellation file, or none when not offered or it could not be built. */
+  attachments: EmailAttachment[];
 }
 
-const NOT_OFFERED: BookingCalendarRemoval = { offered: false, attachment: null };
+const NOT_OFFERED: BookingCalendarRemoval = { note: "", attachments: [] };
+
+/** Offered, with or without the file: the note names an attachment only if there is one. */
+function offeredRemoval(attachment: EmailAttachment | null): BookingCalendarRemoval {
+  return {
+    note: calendarRemovalNote(attachment !== null),
+    attachments: attachment ? [attachment] : [],
+  };
+}
 
 /** The templates that carry the cancellation file, here and on a retry. */
 const CALENDAR_REMOVAL_TEMPLATE_NAMES: ReadonlySet<string> = new Set([
@@ -55,7 +64,7 @@ interface CalendarOfferParams {
  * Whether this recipient was offered an add-to-calendar entry for the booking.
  * Fails closed: any read error answers false, logged.
  */
-export async function wasBookingCalendarEntryOffered(
+async function wasBookingCalendarEntryOffered(
   params: CalendarOfferParams,
 ): Promise<boolean> {
   if (!params.recipientMemberId) return false;
@@ -109,7 +118,7 @@ export async function resolveBookingCalendarRemoval(
       },
     });
     if (!booking || SERVABLE_BOOKING_STATUS[booking.status]) {
-      return { offered: true, attachment: null };
+      return offeredRemoval(null);
     }
     const sentAt = new Date();
     // Above every SEQUENCE the download route served (epoch seconds of an
@@ -131,21 +140,40 @@ export async function resolveBookingCalendarRemoval(
     });
     // checkIn is date-only, so formatDateOnly is its encoder (INV-DATE-019).
     const fileDate = formatDateOnly(booking.checkIn).replaceAll("-", "");
-    return {
-      offered: true,
-      attachment: {
-        filename: `lodge-stay-cancelled-${fileDate}.ics`,
-        content: Buffer.from(ics, "utf8"),
-        contentType: "text/calendar; charset=utf-8; method=CANCEL",
-      },
-    };
+    return offeredRemoval({
+      filename: `lodge-stay-cancelled-${fileDate}.ics`,
+      content: Buffer.from(ics, "utf8"),
+      contentType: "text/calendar; charset=utf-8; method=CANCEL",
+    });
   } catch (err) {
     logger.error(
       { err, bookingId: params.bookingId, templateName: params.templateName },
       "Failed to build a calendar cancellation; sending the calendar note without it (#5249)",
     );
-    return { offered: true, attachment: null };
+    return offeredRemoval(null);
   }
+}
+
+/**
+ * `{{calendarUpdateNote}}` for a booking-modified email: the sentence only when
+ * the stay's dates moved and the member was offered an entry, else empty. No
+ * file: an app that ignores the event id would add a second entry beside the
+ * stale one.
+ */
+export async function resolveCalendarUpdateNote(
+  params: CalendarOfferParams & {
+    oldCheckIn: Date;
+    oldCheckOut: Date;
+    newCheckIn: Date;
+    newCheckOut: Date;
+  },
+): Promise<string> {
+  const datesMoved =
+    formatDateOnly(params.oldCheckIn) !== formatDateOnly(params.newCheckIn) ||
+    formatDateOnly(params.oldCheckOut) !== formatDateOnly(params.newCheckOut);
+  return datesMoved && (await wasBookingCalendarEntryOffered(params))
+    ? calendarUpdateNote()
+    : "";
 }
 
 /**
@@ -165,11 +193,11 @@ export async function retryCalendarRemovalAttachments(emailLog: {
   ) {
     return [];
   }
-  const { attachment } = await resolveBookingCalendarRemoval({
+  const { attachments } = await resolveBookingCalendarRemoval({
     bookingId: emailLog.bookingId,
     recipientMemberId: emailLog.bookingRecipientMemberId,
     deliveryAddress: emailLog.to,
     templateName: emailLog.templateName,
   });
-  return attachment ? [attachment] : [];
+  return attachments;
 }

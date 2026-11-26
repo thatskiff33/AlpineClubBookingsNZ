@@ -72,9 +72,7 @@ export const OPTIONAL_TEMPLATE_TOKENS: Record<string, readonly string[]> = {
   // when no applied credit was restored (#1164 D7) — declared for the same
   // reason as booking-confirmed's doorCodeNote above.
   "booking-cancelled": ["creditRestoredMessage", "calendarRemovalNote"],
-  // #5249: the calendar sentences are composed whole by the sender and EMPTY
-  // unless the member was offered an add-to-calendar entry (and, on a
-  // modification, unless the dates moved).
+  // #5249: the calendar sentences, EMPTY unless an entry was offered.
   "booking-bumped": ["calendarRemovalNote"],
   "booking-modified": ["paymentNote", "calendarUpdateNote"],
   // #2268 sweep. Each of these was an "[only when …]" annotated line.

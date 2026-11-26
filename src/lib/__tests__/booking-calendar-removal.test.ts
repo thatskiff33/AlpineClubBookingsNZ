@@ -30,9 +30,10 @@ vi.mock("@/lib/logger", () => ({
 
 import {
   resolveBookingCalendarRemoval,
+  resolveCalendarUpdateNote,
   retryCalendarRemovalAttachments,
-  wasBookingCalendarEntryOffered,
 } from "@/lib/booking-calendar-removal";
+import { calendarRemovalNote, calendarUpdateNote } from "@/lib/email-message-notes";
 import { buildBookingIcs } from "@/lib/calendar-links";
 import { parseDateOnly } from "@/lib/date-only";
 
@@ -53,9 +54,12 @@ const BOOKING = {
   lodge: { name: "Example Lodge" },
 };
 
-function icsText(attachment: { content: Buffer } | null | undefined): string {
+function icsText(attachment: { content: Buffer } | undefined): string {
   return attachment ? attachment.content.toString("utf8") : "";
 }
+
+const NOTHING = { note: "", attachments: [] };
+const NOTE_WITHOUT_FILE = { note: calendarRemovalNote(false), attachments: [] };
 
 beforeEach(() => {
   vi.stubEnv("AUTH_SECRET", "calendar-test-secret");
@@ -67,9 +71,9 @@ beforeEach(() => {
   mocks.bookingFindUnique.mockResolvedValue(BOOKING);
 });
 
-describe("wasBookingCalendarEntryOffered", () => {
+describe("who was offered a calendar entry", () => {
   it("looks for a SENT confirmation to this recipient, then repeats the booking-link privacy decision", async () => {
-    await expect(wasBookingCalendarEntryOffered(PARAMS)).resolves.toBe(true);
+    await resolveBookingCalendarRemoval(PARAMS);
     expect(mocks.emailLogFindFirst).toHaveBeenCalledWith(
       expect.objectContaining({
         where: {
@@ -88,10 +92,10 @@ describe("wasBookingCalendarEntryOffered", () => {
     });
   });
 
-  it("is false for an organisation-owned booking without reading anything", async () => {
+  it("is nobody for an organisation-owned booking, without reading anything", async () => {
     await expect(
-      wasBookingCalendarEntryOffered({ ...PARAMS, recipientMemberId: null }),
-    ).resolves.toBe(false);
+      resolveBookingCalendarRemoval({ ...PARAMS, recipientMemberId: null }),
+    ).resolves.toEqual(NOTHING);
     expect(mocks.emailLogFindFirst).not.toHaveBeenCalled();
   });
 });
@@ -116,10 +120,7 @@ describe("resolveBookingCalendarRemoval", () => {
     ],
   ])("sends neither note nor file with %s", async (_label, arrange) => {
     arrange();
-    await expect(resolveBookingCalendarRemoval(PARAMS)).resolves.toEqual({
-      offered: false,
-      attachment: null,
-    });
+    await expect(resolveBookingCalendarRemoval(PARAMS)).resolves.toEqual(NOTHING);
     expect(mocks.bookingFindUnique).not.toHaveBeenCalled();
   });
 
@@ -127,19 +128,13 @@ describe("resolveBookingCalendarRemoval", () => {
     "never builds a file for a %s booking, whose entry still stands",
     async (status) => {
       mocks.bookingFindUnique.mockResolvedValue({ ...BOOKING, status });
-      await expect(resolveBookingCalendarRemoval(PARAMS)).resolves.toEqual({
-        offered: true,
-        attachment: null,
-      });
+      await expect(resolveBookingCalendarRemoval(PARAMS)).resolves.toEqual(NOTE_WITHOUT_FILE);
     },
   );
 
   it("keeps the note but drops the file when the booking cannot be read", async () => {
     mocks.bookingFindUnique.mockRejectedValue(new Error("db down"));
-    await expect(resolveBookingCalendarRemoval(PARAMS)).resolves.toEqual({
-      offered: true,
-      attachment: null,
-    });
+    await expect(resolveBookingCalendarRemoval(PARAMS)).resolves.toEqual(NOTE_WITHOUT_FILE);
     expect(mocks.loggerError).toHaveBeenCalledTimes(1);
   });
 
@@ -147,8 +142,10 @@ describe("resolveBookingCalendarRemoval", () => {
     "attaches a CANCEL for the original event to a %s booking, at a sequence above its last revision",
     async (status) => {
       mocks.bookingFindUnique.mockResolvedValue({ ...BOOKING, status });
-      const { offered, attachment } = await resolveBookingCalendarRemoval(PARAMS);
-      expect(offered).toBe(true);
+      const { note, attachments } = await resolveBookingCalendarRemoval(PARAMS);
+      expect(note).toBe(calendarRemovalNote(true));
+      expect(attachments).toHaveLength(1);
+      const [attachment] = attachments;
       expect(attachment).toMatchObject({
         filename: "lodge-stay-cancelled-20260801.ics",
         contentType: "text/calendar; charset=utf-8; method=CANCEL",
@@ -171,6 +168,39 @@ describe("resolveBookingCalendarRemoval", () => {
       );
     },
   );
+});
+
+describe("resolveCalendarUpdateNote", () => {
+  const MODIFIED = {
+    ...PARAMS,
+    templateName: "booking-modified",
+    oldCheckIn: BOOKING.checkIn,
+    oldCheckOut: BOOKING.checkOut,
+    newCheckIn: BOOKING.checkIn,
+    newCheckOut: BOOKING.checkOut,
+  };
+
+  it.each([
+    ["check-in", { newCheckIn: parseDateOnly("2026-08-02") }],
+    ["checkout", { newCheckOut: parseDateOnly("2026-08-05") }],
+  ])("asks an offered member to update the entry when the %s moved", async (_label, moved) => {
+    await expect(resolveCalendarUpdateNote({ ...MODIFIED, ...moved })).resolves.toBe(calendarUpdateNote());
+    expect(mocks.bookingFindUnique).not.toHaveBeenCalled();
+  });
+
+  it("says nothing, and reads nothing, when the dates did not move", async () => {
+    await expect(
+      resolveCalendarUpdateNote({ ...MODIFIED, newCheckOut: parseDateOnly("2026-08-04") }),
+    ).resolves.toBe("");
+    expect(mocks.emailLogFindFirst).not.toHaveBeenCalled();
+  });
+
+  it("says nothing to a member never offered an entry", async () => {
+    mocks.emailLogFindFirst.mockResolvedValue(null);
+    await expect(
+      resolveCalendarUpdateNote({ ...MODIFIED, newCheckIn: parseDateOnly("2026-08-02") }),
+    ).resolves.toBe("");
+  });
 });
 
 describe("retryCalendarRemovalAttachments", () => {

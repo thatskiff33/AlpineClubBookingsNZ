@@ -7,23 +7,24 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
  * `{{calendarRemovalNote}}` / `{{calendarUpdateNote}}` token (a club override
  * reads only the token), and stay silent when no entry was offered.
  *
+ * Which members are offered an entry, and when the dates moved, is the
+ * resolver's rule (`booking-calendar-removal.test.ts`); here it is mocked.
+ *
  * MUTATION PROOF. Drop `attachments` from a sender's `sendEmail` call and its
  * "attaches" case fails; drop the token supply line and its "token" assertion
- * fails; drop the note argument to a template and its HTML assertion fails;
- * remove the date comparison from the modified sender and the "guest-only
- * change" case fails.
+ * fails; drop the note argument to a template and its HTML assertion fails.
  */
 
 const mocks = vi.hoisted(() => ({
   sendEmail: vi.fn(async () => ({ status: "sent", emailLogId: "log-1", messageId: null })),
   resolveBookingCalendarRemoval: vi.fn(),
-  wasBookingCalendarEntryOffered: vi.fn(),
+  resolveCalendarUpdateNote: vi.fn(),
 }));
 
 vi.mock("@/lib/email/core", () => ({ sendEmail: mocks.sendEmail }));
 vi.mock("@/lib/booking-calendar-removal", () => ({
   resolveBookingCalendarRemoval: mocks.resolveBookingCalendarRemoval,
-  wasBookingCalendarEntryOffered: mocks.wasBookingCalendarEntryOffered,
+  resolveCalendarUpdateNote: mocks.resolveCalendarUpdateNote,
 }));
 
 import { EMAIL_AUDIT_DEFAULTS } from "@/lib/email-message-audit-defaults";
@@ -92,8 +93,8 @@ async function sendBumped() {
 }
 
 beforeEach(() => {
-  mocks.resolveBookingCalendarRemoval.mockResolvedValue({ offered: true, attachment: ATTACHMENT });
-  mocks.wasBookingCalendarEntryOffered.mockResolvedValue(true);
+  mocks.resolveBookingCalendarRemoval.mockResolvedValue({ note: WITH_FILE, attachments: [ATTACHMENT] });
+  mocks.resolveCalendarUpdateNote.mockResolvedValue(calendarUpdateNote());
 });
 
 describe.each([
@@ -120,18 +121,18 @@ describe.each([
   });
 
   it("names no attachment when the file could not be built", async () => {
-    mocks.resolveBookingCalendarRemoval.mockResolvedValue({ offered: true, attachment: null });
+    mocks.resolveBookingCalendarRemoval.mockResolvedValue({ note: WITHOUT_FILE, attachments: [] });
     const sent = await send();
-    expect(sent.attachments).toBeUndefined();
+    expect(sent.attachments).toEqual([]);
     expect(sent.html).toContain(WITHOUT_FILE);
     expect(sent.html).not.toContain(WITH_FILE);
     expect(sent.templateData.calendarRemovalNote).toBe(WITHOUT_FILE);
   });
 
   it("carries neither file nor sentence when no calendar entry was offered", async () => {
-    mocks.resolveBookingCalendarRemoval.mockResolvedValue({ offered: false, attachment: null });
+    mocks.resolveBookingCalendarRemoval.mockResolvedValue({ note: "", attachments: [] });
     const sent = await send();
-    expect(sent.attachments).toBeUndefined();
+    expect(sent.attachments).toEqual([]);
     expect(sent.html).not.toContain("to your calendar");
     expect(sent.templateData.calendarRemovalNote).toBe("");
     expect(defaultBody(templateName, sent.templateData)).not.toContain("to your calendar");
@@ -139,62 +140,59 @@ describe.each([
 });
 
 describe("booking-modified", () => {
-  function modifiedParams(dates: { newCheckIn: Date; newCheckOut: Date }) {
-    return {
-      bookingId: "booking-1",
-      recipientMemberId: "member-1",
-      email: "sam@example.org",
-      firstName: "Sam",
-      modificationType: "DATE_CHANGE",
-      oldCheckIn: CHECK_IN,
-      oldCheckOut: CHECK_OUT,
-      ...dates,
-      oldGuestCount: 2,
-      newGuestCount: 2,
-      oldFinalPriceCents: 24000,
-      newFinalPriceCents: 24000,
-      changeFeeCents: 0,
-      addedGuests: [],
-      refundAmountCents: 0,
-      additionalAmountCents: 0,
-      financialReviewPending: false,
-      refundByBankTransfer: null,
-      appliedCreditGivenBackCents: 0,
-      unpaidAskCancelled: false,
-      refundDestination: "own" as const,
-    };
-  }
-  const MOVED = { newCheckIn: new Date("2026-08-02T00:00:00.000Z"), newCheckOut: CHECK_OUT };
-  const UNMOVED = { newCheckIn: CHECK_IN, newCheckOut: new Date(CHECK_OUT.getTime()) };
+  const NEW_CHECK_IN = new Date("2026-08-02T00:00:00.000Z");
+  const PARAMS = {
+    bookingId: "booking-1",
+    recipientMemberId: "member-1",
+    email: "sam@example.org",
+    firstName: "Sam",
+    modificationType: "DATE_CHANGE",
+    oldCheckIn: CHECK_IN,
+    oldCheckOut: CHECK_OUT,
+    newCheckIn: NEW_CHECK_IN,
+    newCheckOut: CHECK_OUT,
+    oldGuestCount: 2,
+    newGuestCount: 2,
+    oldFinalPriceCents: 24000,
+    newFinalPriceCents: 24000,
+    changeFeeCents: 0,
+    addedGuests: [],
+    refundAmountCents: 0,
+    additionalAmountCents: 0,
+    financialReviewPending: false,
+    refundByBankTransfer: null,
+    appliedCreditGivenBackCents: 0,
+    unpaidAskCancelled: false,
+    refundDestination: "own" as const,
+  };
 
-  it("tells an offered member their entry shows the old dates, with no attachment", async () => {
-    await sendBookingModifiedEmail(modifiedParams(MOVED), CLUB_FORMAT_TEST);
+  it("asks the resolver with the old and new dates, and carries its sentence with no attachment", async () => {
+    await sendBookingModifiedEmail(PARAMS, CLUB_FORMAT_TEST);
     const sent = lastSent();
-    expect(mocks.wasBookingCalendarEntryOffered).toHaveBeenCalledWith({
-      bookingId: "booking-1",
-      recipientMemberId: "member-1",
-      deliveryAddress: "sam@example.org",
-      templateName: "booking-modified",
-    });
+    expect(mocks.resolveCalendarUpdateNote).toHaveBeenCalledWith(
+      expect.objectContaining({
+        bookingId: "booking-1",
+        recipientMemberId: "member-1",
+        deliveryAddress: "sam@example.org",
+        templateName: "booking-modified",
+        oldCheckIn: CHECK_IN,
+        oldCheckOut: CHECK_OUT,
+        newCheckIn: NEW_CHECK_IN,
+        newCheckOut: CHECK_OUT,
+      }),
+    );
     expect(sent.attachments).toBeUndefined();
     expect(sent.html).toContain(calendarUpdateNote());
     expect(sent.templateData.calendarUpdateNote).toBe(calendarUpdateNote());
     expect(defaultBody("booking-modified", sent.templateData)).toContain(calendarUpdateNote());
   });
 
-  it("says nothing about the calendar on a change that kept the dates", async () => {
-    await sendBookingModifiedEmail(modifiedParams(UNMOVED), CLUB_FORMAT_TEST);
+  it("says nothing about the calendar when the resolver answers empty", async () => {
+    mocks.resolveCalendarUpdateNote.mockResolvedValue("");
+    await sendBookingModifiedEmail(PARAMS, CLUB_FORMAT_TEST);
     const sent = lastSent();
-    expect(mocks.wasBookingCalendarEntryOffered).not.toHaveBeenCalled();
-    expect(sent.html).not.toContain(calendarUpdateNote());
+    expect(sent.html).not.toContain("to your calendar");
     expect(sent.templateData.calendarUpdateNote).toBe("");
-  });
-
-  it("says nothing about the calendar to a member never offered an entry", async () => {
-    mocks.wasBookingCalendarEntryOffered.mockResolvedValue(false);
-    await sendBookingModifiedEmail(modifiedParams(MOVED), CLUB_FORMAT_TEST);
-    const sent = lastSent();
-    expect(sent.html).not.toContain(calendarUpdateNote());
-    expect(sent.templateData.calendarUpdateNote).toBe("");
+    expect(defaultBody("booking-modified", sent.templateData)).not.toContain("to your calendar");
   });
 });

@@ -330,15 +330,6 @@ export function bookingPendingTemplate(
   `);
 }
 
-/**
- * #5249: the calendar note paragraph, composed by the sender
- * (`calendarRemovalNote` / `calendarUpdateNote`). Appended to the line before
- * it, so an email WITHOUT a note renders byte-identical to the pre-#5249 output.
- */
-function calendarNoteParagraph(note: string): string {
-  return note ? paragraph(escapeHtml(note)) : "";
-}
-
 export function bookingBumpedTemplate(
   firstName: string,
   checkIn: Date,
@@ -351,8 +342,7 @@ export function bookingBumpedTemplate(
   // leaky value is `true`, so a new send site that forgot this argument would
   // silently mail a login-less contact a members-only link (#2430 review).
   recipientCanBookOnline: boolean,
-  // #5249: the sender's `calendarRemovalNote`; empty when no entry was offered.
-  calendarNote: string = "",
+  calendarNote = "", // #5249: `calendarRemovalNote`; appended, so "" renders as before
 ): string {
   const rebook = bookingBumpedRebookAction(recipientCanBookOnline);
   return layout(`
@@ -363,7 +353,7 @@ export function bookingBumpedTemplate(
       { label: "Check-out", value: emailCalendarDay(checkOut) },
       { label: "Guests", value: String(guestCount) },
     ])}
-    ${alertBox("Your card has not been charged.", "info")}${calendarNoteParagraph(calendarNote)}
+    ${alertBox("Your card has not been charged.", "info")}${calendarNote ? paragraph(escapeHtml(calendarNote)) : ""}
     ${paragraph("As a non-member booking, priority is given to club members when the lodge reaches capacity. You're welcome to rebook for different dates where availability exists.")}
     ${button(rebook.label, BASE_URL + rebook.path)}
     ${supportContactSentence("If you have any questions, contact the club at ")}
@@ -388,8 +378,7 @@ export function bookingCancelledTemplate(
   refundSentenceCents: number = refundCents,
   // #4097: the parts of an own-card refund its card refund could not carry.
   shortfall: { bankCents: number; checkCents: number } = { bankCents: 0, checkCents: 0 },
-  // #5249: the sender's `calendarRemovalNote`; empty when no entry was offered.
-  calendarNote: string = "",
+  calendarNote = "", // #5249: as in bookingBumpedTemplate
 ): string {
   // #3973: the one wording `{{refundMessage}}` also reads, and its one tone.
   const refundInfo = alertBox(
@@ -420,7 +409,7 @@ export function bookingCancelledTemplate(
       { label: "Check-out", value: emailCalendarDay(checkOut) },
     ])}
     ${refundInfo}
-    ${creditRestoredInfo}${calendarNoteParagraph(calendarNote)}
+    ${creditRestoredInfo}${calendarNote ? paragraph(escapeHtml(calendarNote)) : ""}
     ${paragraph("You can make a new booking at any time from your account.")}
     ${button("Make a New Booking", BASE_URL + "/book")}
   `);
@@ -498,8 +487,7 @@ export function bookingModifiedTemplate(params: {
    * #3949: WHO it goes to - the member, or the group organiser who paid by
    * internet banking (`editRefundBankTransferPayee`); null when none is sent. */
   refundByBankTransfer: BankTransferRefundPayee | null;
-  /** #5249: the sender's `calendarUpdateNote`; empty or absent unless the dates moved. */
-  calendarUpdateNote?: string;
+  calendarUpdateNote?: string; // #5249: as in bookingBumpedTemplate
 },
   format: ClubFormat,
 ): string {
@@ -634,7 +622,7 @@ export function bookingModifiedTemplate(params: {
     ${paragraph("Hi " + escapeHtml(firstName) + ", your booking has been updated.")}
     ${alertBox(escapeHtml(bookingModificationTypeLabel(modificationType)), "info")}
     ${infoTable(rows)}
-    ${paymentNote}${calendarNoteParagraph(params.calendarUpdateNote ?? "")}
+    ${paymentNote}${params.calendarUpdateNote ? paragraph(escapeHtml(params.calendarUpdateNote)) : ""}
     ${paragraph("You can view your updated booking details from your account.")}
     ${button("View Booking", BASE_URL + "/bookings")}
   `);

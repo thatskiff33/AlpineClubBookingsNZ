@@ -553,9 +553,7 @@ export async function retryFailedEmails(): Promise<{
     }
 
     let result: SentMessageInfo;
-    // #5249: a cancelled or bumped email's calendar cancellation is not stored
-    // with the row, so the replay rebuilds it under the same rules.
-    const attachments = await retryCalendarRemovalAttachments(emailLog);
+    const attachments = await retryCalendarRemovalAttachments(emailLog); // #5249
     try {
       result = await transporter.sendMail({
         from: formatEmailFromAddress(EMAIL_FROM),
