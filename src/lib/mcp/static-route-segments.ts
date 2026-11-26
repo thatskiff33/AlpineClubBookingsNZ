@@ -11,6 +11,7 @@
  */
 export const MCP_STATIC_SIBLING_SEGMENTS: ReadonlySet<string> = new Set([
   "active",
+  "available-beds",
   "bulk",
   "bulk-membership-type",
   "bulk-subscription-category",
@@ -19,6 +20,7 @@ export const MCP_STATIC_SIBLING_SEGMENTS: ReadonlySet<string> = new Set([
   "create-group",
   "drafts",
   "eligible-family",
+  "eligible-members",
   "exception-requests",
   "export",
   "import",
@@ -33,6 +35,7 @@ export const MCP_STATIC_SIBLING_SEGMENTS: ReadonlySet<string> = new Set([
   "partner-invite",
   "partner-invites",
   "pending-counts",
+  "questions",
   "quote",
   "reorder",
   "request-adult",
@@ -46,5 +49,8 @@ export const MCP_STATIC_SIBLING_SEGMENTS: ReadonlySet<string> = new Set([
   "send-password-reset",
   "send-setup-invite",
   "settings",
+  "status",
   "subject-access",
+  "tokens",
+  "unassigned-dates",
 ]);

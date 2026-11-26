@@ -30,10 +30,10 @@ vi.mock("@/lib/member-utils", () => ({ getEffectiveEmail: mocks.effectiveEmail }
 vi.mock("@/lib/logger", () => ({ default: { debug: vi.fn(), warn: vi.fn(), error: vi.fn() } }))
 vi.mock("@/lib/audit", () => ({ logAudit: vi.fn() }))
 
+import type { RosterActionInput } from "@/lib/admin-lodge-schemas/hut-leaders"
 import {
   createRosterRevision,
   getAdminRosterForDate,
-  type RosterActionInput,
   updateAdminRosterForDate,
 } from "@/lib/admin-roster-service"
 

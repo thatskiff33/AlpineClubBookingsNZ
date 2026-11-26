@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
-import { z } from "zod";
 
+import { maintenanceReportListQuerySchema } from "@/lib/admin-lodge-schemas/maintenance";
+import { ADMIN_MAINTENANCE_REPORT_LIST_CONNECTION_SHAPE } from "@/lib/connection-shapes/lodge-maintenance";
 import logger from "@/lib/logger";
 import {
   MAINTENANCE_REPORT_LIST_SELECT,
@@ -8,11 +9,8 @@ import {
 } from "@/lib/maintenance-report-admin";
 import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/session-guards";
-import {
-  adminListPage,
-  adminListPageQueryFields,
-  adminQueueCreatedOrder,
-} from "@/lib/admin-list-page";
+import { adminListPage, adminQueueCreatedOrder } from "@/lib/admin-list-page";
+import { connectionJson } from "@/lib/mcp-connection-request";
 
 /**
  * The maintenance queue's list read (#2780). Lodge Operations `view`.
@@ -26,12 +24,8 @@ import {
  * write one.
  */
 
-const querySchema = z.object({
-  status: z.enum(["OPEN", "IN_PROGRESS", "RESOLVED", "ALL"]).optional().default("OPEN"),
-  lodgeId: z.string().trim().max(64).optional(),
-  source: z.enum(["MEMBER_PORTAL", "LODGE_QR", "ALL"]).optional().default("ALL"),
-  ...adminListPageQueryFields,
-});
+// The query schema lives in admin-lodge-schemas/maintenance.ts so the AI app
+// action `list_maintenance_reports` offers the same filters (ALP-722).
 
 export async function GET(request: NextRequest) {
   const admin = await requireAdmin({
@@ -39,7 +33,7 @@ export async function GET(request: NextRequest) {
   });
   if (!admin.ok) return admin.response;
 
-  const parsed = querySchema.safeParse(
+  const parsed = maintenanceReportListQuerySchema.safeParse(
     Object.fromEntries(request.nextUrl.searchParams.entries()),
   );
   if (!parsed.success) {
@@ -79,12 +73,17 @@ export async function GET(request: NextRequest) {
     ]);
 
     const now = new Date();
-    return NextResponse.json({
-      reports: rows.map((row) => mapMaintenanceReportForList(row, now)),
-      lodges,
-      ...adminListPage({ page, pageSize, total }),
-      outstandingCount: openCount,
-    });
+    // A connection is sent no reporter contact or member email (ALP-722).
+    return connectionJson(
+      request,
+      {
+        reports: rows.map((row) => mapMaintenanceReportForList(row, now)),
+        lodges,
+        ...adminListPage({ page, pageSize, total }),
+        outstandingCount: openCount,
+      },
+      ADMIN_MAINTENANCE_REPORT_LIST_CONNECTION_SHAPE,
+    );
   } catch (err) {
     logger.error({ err }, "Failed to list maintenance reports");
     return NextResponse.json(

@@ -1,10 +1,18 @@
 import { NextRequest, NextResponse } from "next/server"
-import { z } from "zod"
 import {
   getAdminRosterForDate,
-  rosterActionSchema,
   updateAdminRosterForDate,
 } from "@/lib/admin-roster-service"
+import {
+  adminRosterDateParamsSchema,
+  adminRosterQuerySchema,
+  rosterActionSchema,
+} from "@/lib/admin-lodge-schemas/hut-leaders"
+import {
+  ADMIN_ROSTER_ACTION_CONNECTION_SHAPES,
+  ADMIN_ROSTER_CONNECTION_SHAPE,
+} from "@/lib/connection-shapes/lodge-hut-leaders"
+import { connectionJson } from "@/lib/mcp-connection-request"
 import { isDateOnlyString, parseDateOnly } from "@/lib/date-only"
 import { resolveOptionalActiveLodgeId } from "@/lib/lodges"
 import { prisma } from "@/lib/prisma"
@@ -12,20 +20,9 @@ import { requireAdmin } from "@/lib/session-guards"
 import { transactionContendedResponse } from "@/lib/transaction-contended-response"
 import logger from "@/lib/logger"
 
-const paramsSchema = z.object({
-  date: z.string().min(1),
-})
-
-const rosterQuerySchema = z.object({
-  regenerate: z.enum(["true", "false"]).optional(),
-  includeNonEssential: z.enum(["true", "false"]).optional(),
-}).transform((value) => ({
-  regenerate: value.regenerate === "true",
-  includeNonEssential:
-    value.includeNonEssential === undefined
-      ? undefined
-      : value.includeNonEssential === "true",
-}))
+// The params, query and body schemas live in admin-lodge-schemas/hut-leaders.ts
+// so the AI app roster actions offer the same fields (ALP-722). The app's
+// read leaves out `regenerate`; it regenerates with `regenerate_chore_roster`.
 
 function unauthorizedResponse() {
   return NextResponse.json(
@@ -103,7 +100,7 @@ export async function GET(
   })
   if (!guard.ok) return guard.response
 
-  const parsedParams = paramsSchema.safeParse(await params)
+  const parsedParams = adminRosterDateParamsSchema.safeParse(await params)
   if (!parsedParams.success) {
     return NextResponse.json(
       { code: "ROSTER_PARAMS_INVALID", error: "Roster could not be loaded because its route parameters were invalid. Choose a valid lodge night and try again.", details: parsedParams.error.flatten() },
@@ -114,7 +111,8 @@ export async function GET(
   const parsedDate = parseRosterDate(parsedParams.data.date)
   if (!parsedDate.ok) return parsedDate.response
 
-  const parsedQuery = rosterQuerySchema.safeParse({
+  const parsedQuery = adminRosterQuerySchema.safeParse({
+    lodgeId: req.nextUrl.searchParams.get("lodgeId") ?? undefined,
     regenerate: req.nextUrl.searchParams.get("regenerate") ?? undefined,
     includeNonEssential: req.nextUrl.searchParams.get("includeNonEssential") ?? undefined,
   })
@@ -128,14 +126,15 @@ export async function GET(
   const lodge = await resolveRosterLodgeId(req)
   if (!lodge.ok) return lodge.response
 
+  const { regenerate, includeNonEssential } = parsedQuery.data
   const result = await getAdminRosterForDate({
     date: parsedDate.date,
     dateString: parsedParams.data.date,
-    regenerate: parsedQuery.data.regenerate,
-    includeNonEssential: parsedQuery.data.includeNonEssential,
+    regenerate: regenerate === "true",
+    includeNonEssential: includeNonEssential === undefined ? undefined : includeNonEssential === "true",
     lodgeId: lodge.lodgeId,
   })
-  return NextResponse.json(result.body, result.init)
+  return connectionJson(req, result.body, ADMIN_ROSTER_CONNECTION_SHAPE, result.init)
   } catch (error) {
     const contended = transactionContendedResponse(
       error,
@@ -167,7 +166,7 @@ export async function PUT(
   })
   if (!guard.ok) return guard.response
 
-  const parsedParams = paramsSchema.safeParse(await params)
+  const parsedParams = adminRosterDateParamsSchema.safeParse(await params)
   if (!parsedParams.success) {
     return NextResponse.json(
       { code: "ROSTER_PARAMS_INVALID", error: "Roster not saved because its route parameters were invalid. Choose a valid lodge night and try again.", details: parsedParams.error.flatten() },
@@ -207,7 +206,13 @@ export async function PUT(
     lodgeId: lodge.lodgeId,
     adminMemberId: guard.session.user.id,
   })
-  return NextResponse.json(result.body, result.init)
+  // Each variant is its own AI app action, answered with that action's shape.
+  return connectionJson(
+    req,
+    result.body,
+    ADMIN_ROSTER_ACTION_CONNECTION_SHAPES[parsedBody.data.action],
+    result.init,
+  )
   } catch (error) {
     const contended = transactionContendedResponse(
       error,

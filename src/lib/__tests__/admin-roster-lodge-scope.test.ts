@@ -38,9 +38,6 @@ vi.mock("@/lib/prisma", () => ({
 vi.mock("@/lib/admin-roster-service", () => ({
   getAdminRosterForDate: mocks.getAdminRosterForDate,
   updateAdminRosterForDate: mocks.updateAdminRosterForDate,
-  rosterActionSchema: {
-    safeParse: (value: unknown) => ({ success: true, data: value }),
-  },
 }));
 
 vi.mock("@/lib/logger", () => ({
@@ -131,14 +128,16 @@ describe("admin roster lodge scoping", () => {
     expect(JSON.stringify(body)).not.toContain("secret");
   });
 
+  // The real body schema parses these, so the save carries a whole draft.
+  const SAVE_BODY = { action: "save", baseRevision: "rev-1", acknowledgeCompletedReset: false, assignments: [] };
   it.each([
-    ["save", "ROSTER_SERVICE_UNAVAILABLE", "Roster not saved because the service could not be reached. Your draft is still here; try Save again."],
-    ["confirm", "ROSTER_ACTION_FAILED", "Roster action could not be completed because the service is unavailable. Nothing was changed; try again."],
-  ])("returns a stable outer-route %s failure", async (action, code, error) => {
+    [SAVE_BODY, "ROSTER_SERVICE_UNAVAILABLE", "Roster not saved because the service could not be reached. Your draft is still here; try Save again."],
+    [{ action: "confirm" }, "ROSTER_ACTION_FAILED", "Roster action could not be completed because the service is unavailable. Nothing was changed; try again."],
+  ])("returns a stable outer-route %o failure", async (requestBody, code, error) => {
     mocks.updateAdminRosterForDate.mockRejectedValueOnce(new Error("secret route detail"));
     const req = new NextRequest("http://localhost/api/admin/roster/2026-07-10", {
       method: "PUT",
-      body: JSON.stringify({ action }),
+      body: JSON.stringify(requestBody),
       headers: { "Content-Type": "application/json" },
     });
     const res = await PUT(req, dateParams);

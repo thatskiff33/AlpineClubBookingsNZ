@@ -4,6 +4,7 @@ import { prisma } from "@/lib/prisma";
 import { parseJsonRequestBody } from "@/lib/api-json";
 import { logAudit } from "@/lib/audit";
 import {
+  canEditCalendarEvents,
   canManageCalendarEvents,
   canViewCalendarEvents,
 } from "@/lib/calendar-access";
@@ -19,6 +20,7 @@ import {
 } from "@/lib/calendar-events";
 import { loadEffectiveModuleFlags } from "@/lib/module-settings";
 import { CALENDAR_EVENTS_CONNECTION_SHAPE } from "@/lib/connection-shapes-lodge-life";
+import { ADMIN_CALENDAR_EVENT_CREATED_CONNECTION_SHAPE } from "@/lib/connection-shapes/lodge-calendar";
 import { arrivesAsMcpConnection, connectionJson } from "@/lib/mcp-connection-request";
 
 // Widest window a single list request may span, guarding against an unbounded
@@ -109,12 +111,20 @@ export async function GET(req: NextRequest) {
  * admins (see canManageCalendarEvents). A meeting event is assigned an
  * unguessable MiroTalk room slug server-side so the join link cannot be
  * predicted from the title or id.
+ *
+ * Also the officer AI app action `create_calendar_event` (ALP-722), offered
+ * only to Lodge Operations edit. A connection creates on that admin leg alone
+ * (`canEditCalendarEvents`): a committee seat is officer reach read from a
+ * record, which a connection never carries (INV-MCP-006).
  */
 export async function POST(req: NextRequest) {
   const guard = await requireActiveSession();
   if (!guard.ok) return guard.response;
 
-  if (!(await canManageCalendarEvents(guard.session.user))) {
+  const mayCreate = arrivesAsMcpConnection(req)
+    ? canEditCalendarEvents(guard.session.user)
+    : await canManageCalendarEvents(guard.session.user);
+  if (!mayCreate) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
@@ -197,8 +207,10 @@ export async function POST(req: NextRequest) {
     },
   });
 
-  return NextResponse.json(
+  return connectionJson(
+    req,
     { event: serializeCalendarEvent(event) },
+    ADMIN_CALENDAR_EVENT_CREATED_CONNECTION_SHAPE,
     { status: 201 },
   );
 }

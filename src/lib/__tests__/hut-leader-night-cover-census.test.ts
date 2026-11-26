@@ -92,7 +92,8 @@ const NOT_COVERAGE: Readonly<Record<string, string>> = {
     "a custodian occupancy (a held bed or the tick, INV-LIFE-062) as capacity and bed occupancy: which beds and spaces are taken, not whether a night has a leader.",
   "src/lib/custodian-assignment.ts":
     "expands a custodian's bed hold into the nights its bed is held (INV-LIFE-062): bed occupancy, not coverage.",
-  "src/app/api/admin/hut-leaders/route.ts":
+  // The create's body schema moved here from the route (ALP-722).
+  "src/lib/admin-lodge-schemas/hut-leaders.ts":
     "validates a submitted assignment's own range (start on or before end): input checking, not coverage.",
   "src/app/(admin)/admin/hut-leaders/page.tsx":
     "the assignments table's 'Active' badge says whether a ROW's dates span today; the page's coverage comes from the server's cover (coveredNights / unassigned-dates).",

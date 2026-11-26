@@ -327,6 +327,10 @@ describe("every officer action in the catalogue: needs the officer's approval", 
     expect(OFFICER_ACTIONS.some((action) => action.kind === "read")).toBe(true);
     expect(OFFICER_ACTIONS.some((action) => action.kind !== "read")).toBe(true);
     expect(OFFICER_ACTIONS.some((action) => action.core)).toBe(true);
+    // Every decided officer area is in the set, so the gate is checked for
+    // each area's actions, not only the first area's.
+    const areas = new Set(OFFICER_ACTIONS.map((action) => mcpActionAdminRequirement(action)?.area));
+    expect([...areas]).toEqual(expect.arrayContaining(["bookings", "membership", "lodge"]));
     // The same officer, approved, is offered every one, so the refusals below
     // come from the missing approval and nothing else.
     const found = await foundIds(context(EVERY_AREA_EDIT, true));

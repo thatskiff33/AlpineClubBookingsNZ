@@ -69,6 +69,15 @@ whether the module is on or off.
 The gate is enforced on the server for every create/edit/delete, so the buttons
 a member cannot use are never shown — and even a stale page could not save.
 
+- **Through a connected AI app** (ALP-722), only an admin with **lodge edit**
+  may add, edit or delete events, on a connection approved for officer
+  actions; a committee member adds events on the website. The meeting link
+  is never sent to an app. See the
+  [AI app guide](mcp-server.md#lodge-operations-officer-actions-alp-722).
+- An edit or delete whose `scope` is not `single` or `series` (or a delete's
+  `exceptions` not `keep` or `delete`) is refused, rather than applied to one
+  occurrence.
+
 > To check why a specific person can or cannot edit, run
 > `pnpm run calendar:diagnose-access their@email` — it prints their
 > permission matrix, committee assignments, and the final decision.

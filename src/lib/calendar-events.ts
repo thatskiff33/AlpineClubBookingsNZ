@@ -61,6 +61,34 @@ export type CalendarEventInput = z.infer<typeof calendarEventInputSchema>;
 export const calendarEditScopeSchema = z.enum(["single", "series"]);
 export type CalendarEditScope = z.infer<typeof calendarEditScopeSchema>;
 
+const CALENDAR_EDIT_SCOPE_DESCRIPTION =
+  "For a repeating event: `single` (the default) changes this occurrence only, `series` every occurrence.";
+
+/**
+ * The body of `PATCH /api/calendar/events/[id]`: the event, and which
+ * occurrences the edit changes. Shared with the AI app action
+ * `update_calendar_event` (ALP-722, `INV-SSOT`).
+ */
+export const calendarEventUpdateSchema = calendarEventInputSchema.extend({
+  scope: calendarEditScopeSchema.default("single").describe(CALENDAR_EDIT_SCOPE_DESCRIPTION),
+});
+
+/**
+ * The query of `DELETE /api/calendar/events/[id]`, shared with the AI app
+ * action `delete_calendar_event` (ALP-722, `INV-SSOT`). `exceptions` matters
+ * only for a whole-series delete: `keep` (the default) turns occurrences
+ * edited on their own into standalone events, `delete` removes them too.
+ */
+export const calendarEventDeleteQuerySchema = z.object({
+  scope: calendarEditScopeSchema.default("single").describe(CALENDAR_EDIT_SCOPE_DESCRIPTION),
+  exceptions: z
+    .enum(["keep", "delete"])
+    .default("keep")
+    .describe(
+      "With `scope: series`: `keep` (the default) keeps occurrences edited on their own as standalone events, `delete` removes them too.",
+    ),
+});
+
 /**
  * Parse and range-check the ISO date strings. Returns concrete Dates, or an
  * `error` message for the 400. An all-day event keeps `endsAt` null; a timed
