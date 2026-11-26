@@ -275,7 +275,8 @@ What happens:
   100% work party brought to nothing, which was then marked paid and given its
   beds. Removing the work party would leave it paid and holding beds while
   owing what the work party took off, so **cancel the booking, or ask the
-  treasurer**;
+  treasurer**. A booking marked paid with no payment record at all (only old
+  or hand-edited data) is refused the same way;
 - it is marked paid with account credit alone, and no money taken: for example
   an unpaid $200 booking with $100 of credit applied, which a 50% work party
   brought down to the credit, so it was marked paid. For the same reason,

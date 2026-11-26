@@ -561,6 +561,12 @@ describe("workPartyPaidWithNoMoneyTaken (owner decisions of 18 and 20 Nov 2026)"
     },
   );
 
+  it("is true for a PAID booking with no payment row at all, failing safe (#5338)", async () => {
+    const noRow = (status: BookingStatus) => ({ status, payment: null }) as unknown as Parameters<typeof workPartyPaidWithNoMoneyTaken>[1];
+    expect(await workPartyPaidWithNoMoneyTaken(ledger([]), noRow(BookingStatus.PAID))).toBe(true);
+    expect(await workPartyPaidWithNoMoneyTaken(ledger([]), noRow(BookingStatus.CONFIRMED))).toBe(false);
+  });
+
   it("does not count an intent never captured (failed, or still pending)", async () => {
     const rows = [{ paymentId: "pay-1", amountCents: 20_000, status: "FAILED" }, { paymentId: "pay-1", amountCents: 20_000, status: "PENDING" }];
     expect(await workPartyPaidWithNoMoneyTaken(ledger(rows), paid({}))).toBe(true);
