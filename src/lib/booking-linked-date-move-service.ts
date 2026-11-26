@@ -1,3 +1,5 @@
+import { EditPriceChangedError, EditFiguresRequiredError, type LinkedQuotedFigures } from "@/lib/edit-quoted-figures";
+import { buildSameOwnerCoverageLinkedMoveBody } from "@/lib/adult-member-hosting-linked-move";
 import type { Role } from "@prisma/client";
 
 import {
@@ -145,6 +147,7 @@ import type { ClubFormat } from "@/lib/club-format";
 
 
 export interface LinkedDateMoveArgs {
+  linkedQuotedFigures?: LinkedQuotedFigures;
   bookingId: string;
   actor: { id: string; role: Role };
   input: BatchModifyInput;
@@ -256,11 +259,11 @@ async function runLinkedDateMove(
     const organiserPaidIds = new Set(paidByOrganiser(before) ? [args.bookingId] : []), organiserBankIds = new Set(paidByOrganiserInternetBanking(before) ? [args.bookingId] : []);
     const choiceFor = (bookingId: string, method: typeof args.input.settlementMethod) =>
       method && !organiserPaidIds.has(bookingId) ? { settlementMethod: method } : {};
-    const { settlementMethod: memberChoice, ...inputWithoutChoice } = args.input;
+    const { settlementMethod: memberChoice, quotedFigures, ...inputWithoutChoice } = args.input;
     const primary = await modifyBookingBatch({
       bookingId: args.bookingId,
       actor: args.actor,
-      input: { ...inputWithoutChoice, ...choiceFor(args.bookingId, memberChoice) },
+      input: { ...inputWithoutChoice, ...(mode === "apply" ? { quotedFigures } : {}), ...choiceFor(args.bookingId, memberChoice) },
       ipAddress: args.ipAddress,
       todayAtClub: args.todayAtClub,
       format: args.format,
@@ -312,6 +315,7 @@ async function runLinkedDateMove(
           bookingId: dependent.bookingId,
           actor: args.actor,
           input: {
+            quotedFigures: mode === "apply" ? args.linkedQuotedFigures?.find(row => row.bookingId === dependent.bookingId)?.figures : undefined,
             checkIn: target.checkIn,
             checkOut: target.checkOut,
             // ONE settlement choice covers both bookings — the member is asked
@@ -545,6 +549,10 @@ async function runLinkedDateMove(
       throw new LinkedMoveProbeComplete(quote, keys);
     }
 
+    if (!args.input.quotedFigures || linked.some(entry => !args.linkedQuotedFigures?.some(row => row.bookingId === entry.stranded.bookingId))) {
+      throw new EditFiguresRequiredError();
+    }
+
     const deferred = [
       primary.deferredPostCommit,
       ...linked.map((entry) => entry.result?.deferredPostCommit),
@@ -623,6 +631,16 @@ export async function applyLinkedDateMove(
       preTransaction,
     );
   } catch (error) {
+    if (error instanceof EditPriceChangedError) {
+      try {
+        await offerLinkedDateMove(args);
+      } catch (offer) {
+        if (offer instanceof SameOwnerCoverageLinkedMoveRequiredError) {
+          throw new EditPriceChangedError(error.figures, buildSameOwnerCoverageLinkedMoveBody(offer));
+        }
+        throw offer;
+      }
+    }
     if (error instanceof LinkedMoveProbeComplete) {
       throw new SameOwnerCoverageLinkedMoveRequiredError(error.quote, {
         acceptStateKey: error.acceptStateKey,

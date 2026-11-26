@@ -209,6 +209,7 @@ export async function PUT(
             ...(parsed.data.hostingCoverageLinkedMove
               ? { linkedMove: parsed.data.hostingCoverageLinkedMove }
               : {}),
+            linkedQuotedFigures: parsed.data.linkedQuotedFigures,
             input: parsed.data,
             ipAddress,
             todayAtClub,

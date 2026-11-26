@@ -1,3 +1,4 @@
+import type { EditQuotedFigures } from "@/lib/edit-quoted-figures";
 import { createHash } from "node:crypto";
 
 import { z } from "zod";
@@ -98,6 +99,7 @@ export type LinkedMoveBooking = HostingCoverageLinkedMoveBooking;
 
 /** The booking the member actually asked to move. */
 export interface LinkedMovePrimary {
+  quotedFigures: EditQuotedFigures;
   bookingId: string;
   reference: string;
   proposedCheckIn: string;
@@ -382,6 +384,7 @@ export function formatLinkedMoveOfferMessage(quote: LinkedMoveQuote, format: Clu
  * that at the one call site.
  */
 export interface LinkedMoveSettledBooking {
+  quotedFigures: EditQuotedFigures;
   priceDiffCents: number;
   changeFeeCents: number;
   additionalAmountCents: number;
@@ -551,6 +554,7 @@ export function combineLinkedMoveQuote(input: {
 }): LinkedMoveQuote {
   const linked: LinkedMoveBooking[] = input.linked
     .map((entry) => ({
+      quotedFigures: entry.result?.quotedFigures,
       bookingId: entry.stranded.bookingId,
       reference: entry.stranded.reference,
       lodgeName: entry.stranded.lodgeName,
@@ -582,6 +586,7 @@ export function combineLinkedMoveQuote(input: {
 
   return {
     primary: {
+      quotedFigures: input.primary.quotedFigures,
       bookingId: input.primaryId,
       reference: formatBookingReference(input.primaryId),
       proposedCheckIn: input.primaryRange.checkIn,

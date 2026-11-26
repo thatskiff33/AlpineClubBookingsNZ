@@ -1,3 +1,4 @@
+import { editQuotedFiguresSchema, type EditQuotedFigures } from "@/lib/edit-quoted-figures";
 /**
  * Browser-side half of #3232's linked-move offer.
  *
@@ -38,6 +39,7 @@ import type { ClubFormat } from "@/lib/club-format";
  * shape are two things that can disagree about what the server sends.
  */
 export interface HostingCoverageLinkedMoveBooking {
+  quotedFigures?: EditQuotedFigures;
   bookingId: string;
   /** The short handle the member sees, never the raw cuid alone. */
   reference: string;
@@ -66,6 +68,7 @@ export interface HostingCoverageLinkedMoveBooking {
 }
 
 export interface HostingCoverageLinkedMovePromptData {
+  quotedFigures?: EditQuotedFigures;
   message: string;
   /** The key `MOVE_BOTH` must return; bound to the moves AND the money. */
   acceptStateKey: string;
@@ -405,7 +408,10 @@ function readBooking(value: unknown): HostingCoverageLinkedMoveBooking | null {
   ) {
     return null;
   }
+  const figures = editQuotedFiguresSchema.optional().safeParse(row.quotedFigures);
+  if (!figures.success) return null;
   return {
+    ...(figures.data ? { quotedFigures: figures.data } : {}),
     bookingId: row.bookingId,
     reference: row.reference,
     lodgeName: row.lodgeName,
@@ -459,7 +465,11 @@ export function readHostingCoverageLinkedMovePrompt(
     linkedBookings.push(row);
   }
 
+  const primary = record.primary as { quotedFigures?: unknown } | undefined;
+  const figures = editQuotedFiguresSchema.optional().safeParse(primary?.quotedFigures);
+  if (!figures.success) return null;
   return {
+    ...(figures.data ? { quotedFigures: figures.data } : {}),
     message: record.error,
     acceptStateKey: record.acceptStateKey,
     declineStateKey: record.declineStateKey,
