@@ -803,6 +803,7 @@ not offered: it is club setup.
 | `force_sync_member_xero_contact`, `force_refresh_member_xero_membership` | Forces one member's contact (creating one if Xero has none) or membership status | destructive | `POST /api/admin/xero/force-sync` (`syncType` fixed) |
 | `force_sync_booking_xero_invoice` | Forces a paid booking's invoice into Xero, even beside one made by hand | destructive | same |
 | `run_xero_link_maintenance` | The nightly link backfill and clean-up, now | destructive | `POST /api/admin/xero/link-maintenance` |
+| `list_xero_tax_override_mismatches`, `resume_xero_tax_overrides` | Invoices whose GST Xero changed, with each line's sent and kept GST in cents, and resuming the club's GST overrides once they are checked | read, destructive | `GET /api/admin/xero/tax-override-pause`, `POST …/clear` |
 
 **Xero contacts and invoices**
 

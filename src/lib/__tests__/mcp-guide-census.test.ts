@@ -28,7 +28,10 @@ function guideKinds(): { kinds: Map<string, string>; badRows: string[] } {
     const ids = [...cells[1].matchAll(/`([a-z_]+)`/g)].map((match) => match[1]);
     const rowKinds = cells[3].split(",").map((kind) => kind.trim());
     if (rowKinds.length !== 1 && rowKinds.length !== ids.length) badRows.push(row);
-    ids.forEach((id, index) => kinds.set(id, rowKinds.length === 1 ? rowKinds[0] : rowKinds[index]));
+    // "read (preview)" is a `POST` run as a read: its kind is `read`.
+    ids.forEach((id, index) =>
+      kinds.set(id, (rowKinds.length === 1 ? rowKinds[0] : rowKinds[index]).replace(/\s*\(preview\)$/, "")),
+    );
   }
   return { kinds, badRows };
 }
