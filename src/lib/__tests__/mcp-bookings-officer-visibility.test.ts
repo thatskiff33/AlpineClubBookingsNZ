@@ -114,10 +114,11 @@ describe("Bookings & Beds officer actions: who is offered them", () => {
     expect(viewOnly.has("preview_bed_allocation_removal")).toBe(true);
   });
 
-  it("leaves withdrawing an extra payment request to the Finance lane, even for a Finance editor", async () => {
-    // Owner decision, #5305 comment 7093303964, item 3: a money action, ALP-721.
+  it("keeps withdrawing an extra payment request website-only, even for a Finance editor", async () => {
+    // It cancels a Stripe payment request: website-only (#5305 comment
+    // 7131138226, item 1, settling comment 7093303964's item 3).
     expect(classifyMcpRoute("src/app/api/admin/bookings/[id]/additional-payment/withdraw/route.ts", "POST")).toEqual({
-      kind: "excluded", reason: "not-yet:ALP-721",
+      kind: "excluded", reason: "moves-money",
     });
     const found = await foundIds(context({ bookings: "edit", finance: "edit" }));
     // The officer's own member actions (ALP-794) withdraw their own requests; no officer action withdraws.
@@ -327,10 +328,13 @@ describe("every officer action in the catalogue: needs the officer's approval", 
     expect(OFFICER_ACTIONS.some((action) => action.kind === "read")).toBe(true);
     expect(OFFICER_ACTIONS.some((action) => action.kind !== "read")).toBe(true);
     expect(OFFICER_ACTIONS.some((action) => action.core)).toBe(true);
-    // Every decided officer area is in the set, so the gate is checked for
-    // each area's actions, not only the first area's.
-    const areas = new Set(OFFICER_ACTIONS.map((action) => mcpActionAdminRequirement(action)?.area));
-    expect([...areas]).toEqual(expect.arrayContaining(["bookings", "membership", "lodge", "content"]));
+    // Every decided officer area is in the loop below, reads and changes alike,
+    // so dropping the approval term fails it for each area's actions.
+    for (const area of ["bookings", "membership", "finance", "lodge", "content"]) {
+      const own = OFFICER_ACTIONS.filter((action) => mcpActionAdminRequirement(action)?.area === area);
+      expect(own.some((action) => action.kind === "read"), `${area} reads`).toBe(true);
+      expect(own.some((action) => action.kind !== "read"), `${area} changes`).toBe(true);
+    }
     // The same officer, approved, is offered every one, so the refusals below
     // come from the missing approval and nothing else.
     const found = await foundIds(context(EVERY_AREA_EDIT, true));

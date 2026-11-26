@@ -72,7 +72,7 @@ describe("finance/support/comms action route guards (#1997)", () => {
   });
 
   it("xero retry-all POST requires finance:edit", async () => {
-    const res = await retryAllPost();
+    const res = await retryAllPost(new Request("http://localhost/api/admin/xero/operations/retry-all", { method: "POST" }));
     expect(res.status).toBe(403);
     expect(mocks.requireAdmin).toHaveBeenCalledWith({
       permission: FINANCE_EDIT,
@@ -80,7 +80,7 @@ describe("finance/support/comms action route guards (#1997)", () => {
   });
 
   it("xero reset-stale-running POST requires finance:edit", async () => {
-    const res = await resetStalePost();
+    const res = await resetStalePost(new Request("http://localhost/api/admin/xero/operations/reset-stale-running", { method: "POST" }));
     expect(res.status).toBe(403);
     expect(mocks.requireAdmin).toHaveBeenCalledWith({
       permission: FINANCE_EDIT,

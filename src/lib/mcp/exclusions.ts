@@ -54,6 +54,12 @@ export const MCP_PERMANENT_EXCLUSION_REASONS = {
   "privacy-request":
     "Part of answering a person's request for their own data, which a Full Admin does on the website after proving who they are again.",
   "switched-off": "Does nothing but answer that it is switched off.",
+  // Finance (ALP-721). Finance setup is a recorded exception to the rule that
+  // an officer area's configuration is an action (owner decision, #5305
+  // comment 7131138226, item 4).
+  "club-setup":
+    "Sets up the club's money and its links to other services: the bank account members pay into, fees, tax settings, finance-report, accounting and item-code mappings, Xero contact grouping, integration credentials, the Xero and Stripe connections, the Xero member import and webhook health check, and the analytics, MiroTalk, Google and Alpine Central Server integration settings, which an officer changes on the website.",
+  "service-export": "An export another system collects with its own shared key, not something a person asks for.",
 } as const;
 
 export type McpPermanentExclusionReason = keyof typeof MCP_PERMANENT_EXCLUSION_REASONS;
@@ -65,10 +71,11 @@ export type McpPermanentExclusionReason = keyof typeof MCP_PERMANENT_EXCLUSION_R
  *
  * - `bookings` (Bookings & Beds): ALP-719.
  * - `membership` (Membership): ALP-720.
+ * - `finance` (Finance): ALP-721, including the `/api/finance` workspace.
  * - `lodge` (Lodge Operations): ALP-722.
  * - `content` (Content): ALP-723.
  */
-const MCP_DECIDED_ADMIN_AREAS = ["bookings", "membership", "lodge", "content"] as const satisfies readonly AdminPermissionArea[];
+const MCP_DECIDED_ADMIN_AREAS = ["bookings", "membership", "finance", "lodge", "content"] as const satisfies readonly AdminPermissionArea[];
 
 type McpDecidedAdminArea = (typeof MCP_DECIDED_ADMIN_AREAS)[number];
 
@@ -82,7 +89,6 @@ type McpNotYetAdminArea = Exclude<AdminPermissionArea, McpDecidedAdminArea>;
  * census until someone decides about it.
  */
 export const MCP_NOT_YET_TASKS = {
-  finance: "ALP-721",
   support: "ALP-724",
   overview: "ALP-724",
 } as const satisfies Record<McpNotYetAdminArea, string>;
@@ -393,30 +399,101 @@ const PERMANENT_ROUTES: ReadonlyArray<{
       "POST /api/admin/site-style/logo",
     ],
   },
+
+  // --- Finance (ALP-721) ---------------------------------------------------
+  // Money that goes through Stripe (owner decision, #5305 comment
+  // 7131138226, item 1): marking a booking paid cancels the member's open card
+  // checkouts and posts a receipt, and withdrawing an extra payment request
+  // cancels a card request and retires its ledger row. Marking a member's
+  // subscription paid by hand, or reversing it, emails a receipt and moves
+  // their booking prices, so it stays with booking mark-paid (owner decision,
+  // #5305 comment 7200981104).
+  {
+    reason: "moves-money",
+    routes: [
+      "POST /api/admin/bookings/[id]/mark-paid",
+      "POST /api/admin/bookings/[id]/additional-payment/withdraw",
+      "POST /api/admin/subscriptions/[id]/manual-payment",
+    ],
+  },
+  // Handlers that call `requireRecentAuth` without being on `STEP_UP_ROUTES`
+  // (which lists the destructive operations, #4619). A connection never holds
+  // a fresh proof (`INV-MCP-005`); the census finds every such handler.
+  {
+    reason: "fresh-proof",
+    routes: [
+      "POST /api/admin/opening-credits/preview",
+      "POST /api/admin/opening-credits/confirm",
+      "POST /api/admin/opening-credits/[id]/reverse",
+    ],
+  },
+  // The finance area also holds the club's setup screens: fees, tax, bank
+  // details, accounting mappings, and the connections to Xero, Stripe,
+  // Google, MiroTalk, analytics and the Alpine Central Server. Credentials,
+  // OAuth hand-offs and mappings that every later invoice follows stay where
+  // an officer sees the whole screen. `import-members` is the one-off import
+  // that seeds the member list from Xero during setup.
+  {
+    reason: "club-setup",
+    routes: [
+      "GET /api/admin/alpine-server/version",
+      "POST /api/admin/alpine-server/lodge-links",
+      "PUT /api/admin/alpine-server/lodge-links",
+      "POST /api/admin/alpine-server/other-lodges/download",
+      "POST /api/admin/alpine-server/other-lodges/upload",
+      "GET /api/admin/club-tax",
+      "PUT /api/admin/club-tax",
+      "DELETE /api/admin/club-tax",
+      "GET /api/admin/fee-configuration",
+      "POST /api/admin/fee-configuration",
+      "GET /api/admin/integrations/analytics",
+      "PUT /api/admin/integrations/analytics",
+      "POST /api/admin/integrations/analytics/reconsent",
+      "GET /api/admin/integrations/credentials",
+      "GET /api/admin/integrations/google/status",
+      "POST /api/admin/integrations/google/verify/start",
+      "GET /api/admin/integrations/mirotalk",
+      "GET /api/admin/integrations/stripe/status",
+      "GET /api/admin/integrations/wizard-progress",
+      "POST /api/admin/integrations/wizard-progress",
+      "GET /api/admin/internet-banking-settings",
+      "PUT /api/admin/internet-banking-settings",
+      "GET /api/admin/setup/finance-report-mappings",
+      "PUT /api/admin/setup/finance-report-mappings",
+      "POST /api/admin/setup/finance-report-mappings/backfill",
+      "GET /api/admin/xero/account-mappings",
+      "PUT /api/admin/xero/account-mappings",
+      "GET /api/admin/xero/item-code-mappings",
+      "PUT /api/admin/xero/item-code-mappings",
+      "GET /api/admin/xero/tax-categories",
+      "PUT /api/admin/xero/tax-categories",
+      "DELETE /api/admin/xero/tax-categories",
+      "GET /api/admin/xero/chart-of-accounts",
+      "GET /api/admin/xero/items",
+      "GET /api/admin/xero/contact-groups",
+      "GET /api/admin/xero/organisation",
+      "GET /api/admin/xero/member-grouping",
+      "POST /api/admin/xero/member-grouping",
+      "GET /api/admin/xero/connect",
+      "GET /api/admin/xero/callback",
+      "GET /api/admin/xero/webhook-health",
+      "PUT /api/admin/xero/webhook-health",
+      "GET /api/admin/xero/webhook/verify-status",
+      "POST /api/admin/xero/import-members",
+    ],
+  },
+  // Answers with a redirect into the old finance dashboard, not with data.
+  { reason: "website-flow", routes: ["GET /api/finance/legacy-dashboard/auth"] },
+  // Also needs the dashboard's shared bearer key, which no person holds.
+  { reason: "service-export", routes: ["GET /api/finance/legacy-dashboard/bookings"] },
 ];
 
-/** Finance officer routes that sit outside `/api/admin`. */
-const FINANCE_NOT_YET_PREFIXES: readonly string[] = ["/api/finance"];
-
 /**
- * Money routes whose path the `bookings` area guards but which belong to the
- * Finance lane (ALP-721), as `METHOD /path`. Withdrawing an extra payment
- * request cancels a card request and retires its ledger row, and its handler
- * demands finance edit (owner decision, #5305 comment 7093303964, item 3).
- * Checked before the path's area, which is decided and has no `not-yet`.
- */
-export const MCP_FINANCE_NOT_YET_ROUTES: readonly string[] = [
-  "POST /api/admin/bookings/[id]/additional-payment/withdraw",
-];
-
-/**
- * Every exact `METHOD /api/path` an exclusion names, permanent or Finance
- * not-yet. The census checks each against a real route file and method, so an
+ * Every exact `METHOD /api/path` a permanent exclusion names. The census checks each against a real route file and method, so an
  * entry left behind by a moved or deleted route fails instead of lingering.
  */
 export const MCP_EXACT_EXCLUDED_ROUTES: readonly string[] = [
   ...PERMANENT_ROUTES.flatMap((rule) => rule.routes),
-  ...MCP_FINANCE_NOT_YET_ROUTES,
 ];
 
 function underPrefix(path: string, prefix: string): boolean {
@@ -466,18 +543,12 @@ export function classifyMcpRoute(file: string, method: string): McpRouteClassifi
   if (action) return { kind: "action", action };
 
   const path = adminRouteApiPath(file);
-  if (MCP_FINANCE_NOT_YET_ROUTES.includes(`${method} ${path}`)) {
-    return { kind: "excluded", reason: `not-yet:${MCP_NOT_YET_TASKS.finance}` };
-  }
   const adminArea = getAdminRouteRequirement(path, method)?.area;
   if (adminArea) {
     // A route in a decided area has no `not-yet` to fall back on.
     return isNotYetAdminArea(adminArea)
       ? { kind: "excluded", reason: `not-yet:${MCP_NOT_YET_TASKS[adminArea]}` }
       : { kind: "unclassified" };
-  }
-  if (FINANCE_NOT_YET_PREFIXES.some((prefix) => underPrefix(path, prefix))) {
-    return { kind: "excluded", reason: `not-yet:${MCP_NOT_YET_TASKS.finance}` };
   }
   return { kind: "unclassified" };
 }

@@ -55,7 +55,8 @@ vi.mock("@/lib/logger", () => ({
   default: { error: mocks.loggerError, warn: vi.fn(), info: vi.fn() },
 }));
 
-import { GET } from "../route";
+import { NextRequest } from "next/server";
+import { GET as getRoute } from "../route";
 import {
   AUTOMATIC_CANCELLED_BOOKING_REFUND_NOTE_PREFIX,
   AUTOMATIC_REFUND_NOTICE_WINDOW_DAYS,
@@ -64,6 +65,11 @@ import {
   cancelledBookingModificationRefundReason,
   deletedBookingModificationRefundReason,
 } from "@/lib/deleted-booking-modification-payment";
+
+/** A browser's request: no AI app connection header, so the full answer. */
+function GET() {
+  return getRoute(new NextRequest("http://localhost/api/admin/payments/manual-refund-tasks"));
+}
 
 const CHECK_IN = new Date("2026-08-10T00:00:00.000Z");
 const CHECK_OUT = new Date("2026-08-12T00:00:00.000Z");

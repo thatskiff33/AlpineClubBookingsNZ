@@ -116,7 +116,7 @@ function addNameMismatchToSyncReport(
   });
 }
 
-function getSafeXeroContactAuditChanges(changes: string[]) {
+export function xeroContactChangedFields(changes: string[]) {
   const fields = new Set<string>();
 
   for (const change of changes) {
@@ -147,7 +147,7 @@ async function writeXeroContactSyncAudit(input: {
   changes: string[];
   source: string;
 }) {
-  const changedFields = getSafeXeroContactAuditChanges(input.changes);
+  const changedFields = xeroContactChangedFields(input.changes);
 
   try {
     await createAuditLog({
