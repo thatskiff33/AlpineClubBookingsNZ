@@ -237,11 +237,9 @@ export async function POST(
       bookingId,
       createdByMemberId: session.user.id,
     });
-    // After the invoice is queued (#5433 round 1): only a fresh PAID carries the owed
-    // marker, so the email goes once whichever path wins (#772); a stop leaves it to the sweep.
-    if (reconciliation.paidConfirmation) await deliverPaidBookingConfirmation(reconciliation.paidConfirmation, format, "confirm-payment");
-    // A fresh PAID whose marker could not be keyed (#5433 PR 4, round 2): sent as before #5433.
-    else if (reconciliation.outcome === "paid") await sendUnrecordedPaidBookingConfirmation(bookingId, format, "confirm-payment");
+    // After the invoice is queued (#5433 round 1): only a fresh PAID carries the owed marker, so the email goes once
+    // whichever path wins (#772); a stop leaves it to the sweep; one whose marker could not be keyed is sent unkeyed (PR 4).
+    if (reconciliation.paidConfirmation) await deliverPaidBookingConfirmation(reconciliation.paidConfirmation, format, "confirm-payment"); else if (reconciliation.outcome === "paid") await sendUnrecordedPaidBookingConfirmation(bookingId, format, "confirm-payment");
 
     logAudit({
       action: "booking.payment.confirmed",

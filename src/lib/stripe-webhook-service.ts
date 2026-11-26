@@ -519,11 +519,9 @@ async function handlePaymentIntentSucceeded(
   logger.info({ bookingId, paymentIntentId: paymentIntent.id, outcome: reconciliation.outcome }, `PaymentIntent reconciled: ${reconciliation.outcome}`);
 
   await queueXeroInvoiceForPaidBooking({ bookingId });
-  // After the invoice is queued (#5433 round 1): only a fresh PAID carries the owed
-  // marker, so the send stays once across both paths (#772); a stop leaves it to the sweep.
-  if (reconciliation.paidConfirmation) await deliverPaidBookingConfirmation(reconciliation.paidConfirmation, format, "stripe-webhook");
-  // A fresh PAID whose marker could not be keyed (#5433 PR 4, round 2): sent as before #5433.
-  else if (reconciliation.outcome === "paid") await sendUnrecordedPaidBookingConfirmation(bookingId, format, "stripe-webhook");
+  // After the invoice is queued (#5433 round 1): only a fresh PAID carries the owed marker, so the send stays once
+  // across both paths (#772); a stop leaves it to the sweep; one whose marker could not be keyed is sent unkeyed (PR 4).
+  if (reconciliation.paidConfirmation) await deliverPaidBookingConfirmation(reconciliation.paidConfirmation, format, "stripe-webhook"); else if (reconciliation.outcome === "paid") await sendUnrecordedPaidBookingConfirmation(bookingId, format, "stripe-webhook");
 }
 
 /**
