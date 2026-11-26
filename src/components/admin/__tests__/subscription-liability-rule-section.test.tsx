@@ -284,6 +284,51 @@ describe("SubscriptionLiabilityRuleSection (#5190)", () => {
     ).toBeTruthy();
   });
 
+  it("keeps keyboard focus on Preview while it runs, ignores a second press, and announces the result", async () => {
+    const fetchMock = stubFetch();
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const answer = fetchMock.getMockImplementation()!;
+    fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
+      if (url.startsWith(`${IMPACT_ENDPOINT}?`)) await held;
+      return answer(url, init);
+    });
+    render(<SubscriptionLiabilityRuleSection />);
+    await openEditor();
+    choose("They still owe");
+    choose("first day of the season");
+    const previewButton = screen.getByRole("button", { name: "Preview changes" }) as HTMLButtonElement;
+    previewButton.focus();
+    fireEvent.click(previewButton);
+
+    // A disabled button would drop focus to the page; this one stays focused,
+    // says it is busy, and a second press sends no second request.
+    const busy = await screen.findByRole("button", { name: "Working out who changes…" });
+    expect(busy).toBe(previewButton);
+    expect((busy as HTMLButtonElement).disabled).toBe(false);
+    expect(busy.getAttribute("aria-disabled")).toBe("true");
+    expect(document.activeElement).toBe(busy);
+    fireEvent.click(busy);
+    const previewCalls = () =>
+      fetchMock.mock.calls.filter(([url]) => String(url).startsWith(IMPACT_ENDPOINT));
+    expect(previewCalls()).toHaveLength(1);
+    const status = () => document.getElementById("subscription-liability-preview-status")!;
+    expect(status().getAttribute("role")).toBe("status");
+    expect(status().getAttribute("aria-live")).toBe("polite");
+    expect(status().textContent).toBe("Working out who changes.");
+
+    release();
+    await screen.findByText("Sam Small");
+    expect(document.activeElement).toBe(previewButton);
+    expect(previewButton.getAttribute("aria-disabled")).toBeNull();
+    // The polite status announces what the preview found, without moving focus.
+    expect(status().textContent).toBe(
+      "Preview ready for the 2026 season: 1 would start owing, 1 would stop owing, and 2 \u201cNot required\u201d records would be reset.",
+    );
+  });
+
   it("drops a preview that arrives after Cancel, so a reopened editor cannot save on it", async () => {
     const fetchMock = stubFetch();
     let release!: () => void;

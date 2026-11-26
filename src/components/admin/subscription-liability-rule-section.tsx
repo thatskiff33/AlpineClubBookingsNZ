@@ -150,6 +150,9 @@ export function SubscriptionLiabilityRuleSection() {
   const [preview, setPreview] = useState<LoadedPreview | null>(null);
   const [previewing, setPreviewing] = useState(false);
   const [previewError, setPreviewError] = useState("");
+  // What the polite status says once a preview has loaded; a failure has its
+  // own assertive message instead.
+  const [previewAnnouncement, setPreviewAnnouncement] = useState("");
   // What the last save reset, against what its preview listed, for the
   // success message.
   const lastSave = useRef<{ cleared: number; previewed: number } | null>(null);
@@ -199,12 +202,15 @@ export function SubscriptionLiabilityRuleSection() {
   const { draft, saved, editing, saving, dirty, error, success } = section;
 
   async function loadPreview() {
-    if (!draft || !hasChosenLiabilityRule(draft)) return;
+    // The button stays focusable while a preview runs (see the button), so a
+    // second press is ignored here rather than by disabling it.
+    if (previewing || !draft || !hasChosenLiabilityRule(draft)) return;
     const key = pairKey(draft);
     const request = ++previewRequest.current;
     const current = () => request === previewRequest.current;
     setPreviewing(true);
     setPreviewError("");
+    setPreviewAnnouncement("");
     try {
       const query = new URLSearchParams({
         requiredTypeAgeRule: draft.requiredTypeAgeRule,
@@ -226,6 +232,7 @@ export function SubscriptionLiabilityRuleSection() {
       };
       if (!current()) return;
       setPreview({ key, impact: body.impact, invoiceNumbersShown: body.invoiceNumbersShown });
+      setPreviewAnnouncement(previewSummary(body.impact));
     } catch {
       if (!current()) return;
       setPreview(null);
@@ -240,6 +247,7 @@ export function SubscriptionLiabilityRuleSection() {
     setPreview(null);
     setPreviewing(false);
     setPreviewError("");
+    setPreviewAnnouncement("");
     // A failed save's message belongs to the editor being closed.
     section.setError("");
     section.cancelEditing();
@@ -331,6 +339,19 @@ export function SubscriptionLiabilityRuleSection() {
             )
           ) : null}
 
+          {/* Mounted for the whole edit, so a screen reader hears the preview
+              arrive without leaving the Preview button. */}
+          {editing ? (
+            <p
+              id="subscription-liability-preview-status"
+              role="status"
+              aria-live="polite"
+              className="sr-only"
+            >
+              {previewing ? "Working out who changes." : previewAnnouncement}
+            </p>
+          ) : null}
+
           <FocusedActionError
             id="subscription-liability-action-error"
             error={editing ? error || previewError : ""}
@@ -338,11 +359,16 @@ export function SubscriptionLiabilityRuleSection() {
 
           {editing ? (
             <div className="flex flex-wrap gap-2">
+              {/* aria-disabled, never disabled, while previewing: a disabled
+                  button drops keyboard focus to the page (see
+                  admin-load-error.tsx); loadPreview ignores the extra press. */}
               <Button
                 type="button"
                 variant="outline"
+                className="aria-disabled:opacity-50"
                 onClick={loadPreview}
-                disabled={!draftChosen || !dirty || previewing || saving}
+                disabled={!draftChosen || !dirty || saving}
+                aria-disabled={previewing || undefined}
               >
                 {previewing ? "Working out who changes…" : "Preview changes"}
               </Button>
@@ -377,6 +403,17 @@ function saveMessage(save: { cleared: number; previewed: number } | null): strin
   return save.cleared === save.previewed
     ? `${saved} ${reset}`
     : `${saved} ${reset} The preview listed ${save.previewed}: records changed between the preview and the save.`;
+}
+
+/** The preview's outcome in one sentence, for the polite status. */
+function previewSummary(impact: SubscriptionLiabilityImpact): string {
+  const heading = `Preview ready for the ${impact.seasonYear} season:`;
+  const { newlyOwing, noLongerOwing, staleRecords } = impact;
+  if (newlyOwing.length === 0 && noLongerOwing.length === 0 && staleRecords.length === 0) {
+    return `${heading} nobody’s subscription changes, and no records are reset.`;
+  }
+  const records = staleRecords.length === 1 ? "record" : "records";
+  return `${heading} ${newlyOwing.length} would start owing, ${noLongerOwing.length} would stop owing, and ${staleRecords.length} “Not required” ${records} would be reset.`;
 }
 
 /** The saved rule, read-only, in plain English. */
