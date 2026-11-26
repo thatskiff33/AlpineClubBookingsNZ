@@ -20,9 +20,10 @@
  *      `README.md` / `.gitkeep`, in a deterministic filename order, and
  *      rewrites each relative link so it resolves from the repository root
  *      rather than from `changelog.d/` (`rebaseFragmentLinks`, #5214).
- *   2. Folds any entries still written directly under a legacy `## Unreleased`
- *      heading into the same new release section (transition support — several
- *      PRs opened before the fragment convention still carry direct entries).
+ *   2. Folds any entries written directly under `## Unreleased` into the same
+ *      new release section, so a stray direct entry is released rather than
+ *      lost. The changelog gate no longer accepts one from a code-bearing PR
+ *      (#5263), but a non-code PR can still add one.
  *   3. Inserts `## <version> - <date>` above the existing releases, leaving the
  *      `## Unreleased` heading in place with its pointer note and nothing else.
  *      The note is identified by its `<!-- changelog-pointer-note:start -->`

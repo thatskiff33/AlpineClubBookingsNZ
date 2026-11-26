@@ -245,9 +245,9 @@ conflict on that file daily (#2452).
 The `verify` job fails a pull request that changes anything under `src/` or
 `prisma/` (test files aside) and carries neither a fragment nor that marker.
 Documentation-only, test-only, and workflow-only pull requests are never asked
-for one. During the transition a pull request that still edits `CHANGELOG.md`
-directly also passes, and `CHANGELOG.md merge=union` in `.gitattributes` (#2451)
-keeps those merges conflict-free.
+for one. Editing `CHANGELOG.md` directly does not satisfy it (#5263): only the
+release compile writes that file, and its pull request passes because it changes
+no application source.
 
 At release time `pnpm run release:cut prepare` compiles the fragments into a
 version section on a release-prep branch, and `pnpm run release:cut publish`
