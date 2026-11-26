@@ -42,6 +42,8 @@ const h = vi.hoisted(() => {
     XeroSyncNowError,
     XeroContactValidationError,
     requireAdmin: vi.fn(),
+    listOpenXeroTaxOverrideMismatches: vi.fn(),
+    clearXeroTaxOverridePause: vi.fn(),
     logAudit: vi.fn(),
     createAuditLog: vi.fn(),
     transaction: vi.fn(),
@@ -107,6 +109,12 @@ vi.mock("@/lib/prisma", () => ({
   },
 }));
 vi.mock("@/lib/session-guards", () => ({ requireAdmin: h.requireAdmin }));
+// The real pause sentence, so the test sees what the route sends.
+vi.mock("@/lib/xero-tax-override-safeguard", async (importOriginal) => ({
+  ...((await importOriginal()) as typeof import("@/lib/xero-tax-override-safeguard")),
+  listOpenXeroTaxOverrideMismatches: h.listOpenXeroTaxOverrideMismatches,
+  clearXeroTaxOverridePause: h.clearXeroTaxOverridePause,
+}));
 vi.mock("@/lib/audit", () => ({ logAudit: h.logAudit, createAuditLog: h.createAuditLog }));
 vi.mock("@/lib/logger", () => ({ default: { error: vi.fn(), warn: vi.fn(), info: vi.fn(), debug: vi.fn() } }));
 vi.mock("@/lib/club-format-server", () => ({ clubFormatValues: vi.fn(async () => ({})) }));
@@ -206,6 +214,8 @@ import { POST as syncContacts } from "@/app/api/admin/xero/sync-contacts/route";
 import { POST as syncMemberships } from "@/app/api/admin/xero/sync-memberships/route";
 import { POST as syncNow } from "@/app/api/admin/xero/sync-now/route";
 import { GET as getUsage } from "@/app/api/admin/xero/usage/route";
+import { GET as listTaxOverrides } from "@/app/api/admin/xero/tax-override-pause/route";
+import { POST as resumeTaxOverrides } from "@/app/api/admin/xero/tax-override-pause/clear/route";
 import { expectActionContract } from "@/lib/__tests__/helpers/mcp-action-contract";
 import { adminSession } from "@/lib/__tests__/helpers/sessions";
 import { findMcpAction, mcpActionInputSchema } from "@/lib/mcp/catalogue";
@@ -874,5 +884,56 @@ describe("run_xero_link_maintenance", () => {
     expect(browser).toEqual(
       expect.objectContaining({ cleanup: expect.objectContaining({ deactivatedLinkIds: ["link-secret-1", "link-secret-2"] }) }),
     );
+  });
+});
+
+describe("GST overrides (#5208)", () => {
+  const MISMATCH = {
+    id: "mismatch-1",
+    createdAt: new Date("2026-06-30T01:00:00.000Z"),
+    bookingId: "booking-1",
+    providerInvoiceId: "xero-inv-uuid",
+    invoiceNumber: "INV-0042",
+    documentKind: "CREATE" as const,
+    lines: [{ index: 0, sentCents: 1_304, xeroCents: 1_300 }],
+  };
+
+  it("list_xero_tax_override_mismatches answers with the invoices in cents, never Xero's invoice id", async () => {
+    h.listOpenXeroTaxOverrideMismatches.mockResolvedValue([MISMATCH]);
+    const { connection, browser } = await expectActionContract({
+      actionId: "list_xero_tax_override_mismatches",
+      handler: listTaxOverrides,
+    });
+    expect(JSON.stringify(connection)).not.toMatch(WITHHELD);
+    expect(connection).toMatchObject({
+      invoices: [{ invoiceNumber: "INV-0042", lines: [{ sentCents: 1_304, xeroCents: 1_300 }] }],
+    });
+    expect((connection as { problem: string }).problem).toContain("1 invoice");
+    expect(browser).toMatchObject({ invoices: [{ providerInvoiceId: "xero-inv-uuid" }] });
+  });
+
+  it("resume_xero_tax_overrides clears only the ids sent, with the officer's note, and is destructive", async () => {
+    h.clearXeroTaxOverridePause.mockResolvedValue({ cleared: 1 });
+    // One flagged after the officer looked stays listed, holding the pause.
+    h.listOpenXeroTaxOverrideMismatches.mockResolvedValue([{ ...MISMATCH, id: "mismatch-2" }]);
+    const { connection } = await expectActionContract({
+      actionId: "resume_xero_tax_overrides",
+      handler: resumeTaxOverrides,
+      args: { ids: ["mismatch-1"], note: "Checked INV-0042 in Xero: rounding only.", confirmed: true },
+    });
+    expect(JSON.stringify(connection)).not.toMatch(WITHHELD);
+    expect(connection).toMatchObject({ cleared: 1, invoices: [{ id: "mismatch-2" }] });
+    expect(h.clearXeroTaxOverridePause).toHaveBeenCalledWith(
+      "treasurer-1",
+      ["mismatch-1"],
+      "Checked INV-0042 in Xero: rounding only.",
+    );
+    expect(findMcpAction("resume_xero_tax_overrides")!.kind).toBe("destructive");
+  });
+
+  it("resume_xero_tax_overrides cannot be sent without the officer's confirmation", () => {
+    const schema = mcpActionInputSchema(findMcpAction("resume_xero_tax_overrides")!);
+    expect(schema.safeParse({ ids: ["mismatch-1"], note: "Checked." }).success).toBe(false);
+    expect(schema.safeParse({ ids: ["mismatch-1"], note: "Checked.", confirmed: true }).success).toBe(true);
   });
 });
