@@ -117,7 +117,7 @@ describe("Every cron runner's job names have one spelling, in their home module 
 
   it("spells each home's names in that home only, and nowhere else under src/", () => {
     const files = scannedFiles("src");
-    const homeFiles = HOMES.map((home) => home.file);
+    const homeFiles: string[] = HOMES.map((home) => home.file);
 
     for (const home of HOMES) {
       expect(files).toContain(home.file);
