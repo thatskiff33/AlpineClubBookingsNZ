@@ -6,10 +6,10 @@
   or download takes focus, and takes it AGAIN when the same failure repeats word
   for word. The lodge wizard's failed load stays passive and moves nothing.
 
-  The Alpine server page's own buttons (Save, Save key, Enable or Disable,
-  Upload, Download) still report through its passive status line; only
-  `useLodgeLinkStep().run` is converted, so it is exercised through a harness
-  that stands in for the key save which calls it.
+  `useLodgeLinkStep().run` is exercised through a harness that stands in for
+  the key save which calls it. The Alpine server page's own buttons (Save,
+  Save key, Enable or Disable, Upload, Download) are covered by
+  `alpine-server/setup/alpine-server-setup-action-attention.test.tsx` (#5257).
 */
 
 import "@testing-library/jest-dom/vitest";

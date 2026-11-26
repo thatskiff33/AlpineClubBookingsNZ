@@ -1,8 +1,10 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
+import { FINANCE_SYNC_STATUS_CONNECTION_SHAPE } from "@/lib/connection-shapes/finance-reports";
 import { requireFinanceManagerApiAccess } from "@/lib/finance-api-auth";
 import { getFinanceSyncDiagnosticsStatus } from "@/lib/finance-sync-diagnostics";
+import { connectionJson } from "@/lib/mcp-connection-request";
 
-export async function GET() {
+export async function GET(request: NextRequest) {
   const authResult = await requireFinanceManagerApiAccess();
 
   if (!authResult.ok) {
@@ -11,7 +13,7 @@ export async function GET() {
 
   try {
     const diagnostics = await getFinanceSyncDiagnosticsStatus();
-    return NextResponse.json(diagnostics);
+    return connectionJson(request, diagnostics, FINANCE_SYNC_STATUS_CONNECTION_SHAPE);
   } catch (error) {
     const message =
       error instanceof Error

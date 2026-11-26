@@ -10,7 +10,7 @@ import {
   resolveLogoFields,
   type ClubThemeValues,
 } from "@/lib/club-theme-schema";
-import type { ClubThemeUpdateInput } from "@/lib/club-theme-update-schema";
+import type { ClubThemeStyleInput, ClubThemeUpdateInput } from "@/lib/club-theme-update-schema";
 import { storableLogoDataUrl } from "@/lib/image-metadata";
 
 /** Sentinel distinguishing "the read threw" from "there is no row" (#2420 F4). */
@@ -27,14 +27,18 @@ async function ensureClubTheme() {
   });
 }
 
-export async function getClubThemeForAdmin() {
-  const theme = await ensureClubTheme();
+/** The theme as the admin screens and the site style saves answer with it. */
+function adminThemeAnswer(theme: Parameters<typeof normaliseThemeValues>[0] & { completedAt: Date | null }) {
   const values = normaliseThemeValues(theme);
   return {
     ...values,
     completedAt: theme.completedAt?.toISOString() ?? null,
     contrastWarnings: getContrastWarnings(values),
   };
+}
+
+export async function getClubThemeForAdmin() {
+  return adminThemeAnswer(await ensureClubTheme());
 }
 
 /**
@@ -188,12 +192,34 @@ export async function saveClubTheme(input: ClubThemeUpdateInput) {
     { maxWait: 10_000, timeout: 15_000 },
   );
 
-  const values = normaliseThemeValues(theme);
-  return {
-    ...values,
-    completedAt: theme.completedAt?.toISOString() ?? null,
-    contrastWarnings: getContrastWarnings(values),
+  return adminThemeAnswer(theme);
+}
+
+/**
+ * An AI app connection's site style save (ALP-723): the colours, fonts and
+ * custom CSS, and nothing else. The logo columns and the setup date are never
+ * written, so the save cannot change or clear the logo, delete its image, or
+ * complete setup, whatever a browser save does at the same moment.
+ */
+export async function saveClubThemeStyle(input: ClubThemeStyleInput) {
+  const data = {
+    brandGold: input.brandGold,
+    brandDeep: input.brandDeep,
+    brandSafety: input.brandSafety,
+    headingFontKey: input.headingFontKey,
+    bodyFontKey: input.bodyFontKey,
+    rawCss: input.rawCss,
   };
+  // Materialise the singleton first, as `saveClubTheme` does, so two first-ever
+  // saves cannot race on the create; the same timings, for the same reason.
+  const theme = await prisma.$transaction(
+    async (tx) => {
+      await tx.clubTheme.createMany({ data: [{ id: CLUB_THEME_ID, ...data }], skipDuplicates: true });
+      return tx.clubTheme.update({ where: { id: CLUB_THEME_ID }, data });
+    },
+    { maxWait: 10_000, timeout: 15_000 },
+  );
+  return adminThemeAnswer(theme);
 }
 
 /**

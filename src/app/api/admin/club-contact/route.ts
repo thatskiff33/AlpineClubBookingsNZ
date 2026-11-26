@@ -1,6 +1,5 @@
 import { revalidatePath } from "next/cache";
 import { NextResponse } from "next/server";
-import { z } from "zod";
 import { parseJsonRequestBody } from "@/lib/api-json";
 import {
   buildStructuredAuditLogCreateArgs,
@@ -9,6 +8,12 @@ import {
 import { committeeRoleOrderBy } from "@/lib/committee";
 import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/session-guards";
+import { clubContactSchema } from "@/lib/admin-content-api/settings";
+import { connectionJson } from "@/lib/mcp-connection-request";
+import {
+  CLUB_CONTACT_READ_CONNECTION_SHAPE,
+  CLUB_CONTACT_SAVED_CONNECTION_SHAPE,
+} from "@/lib/connection-shapes/content-settings";
 
 /**
  * Club Contact selector (Site Appearance & Content → Club Identity). Chooses
@@ -17,12 +22,6 @@ import { requireAdmin } from "@/lib/session-guards";
  * Returns the active committee roles alongside the current value so the panel
  * needs no membership-area access to populate its dropdown.
  */
-
-const bodySchema = z
-  .object({
-    contactCommitteeRoleKey: z.string().min(1).nullable(),
-  })
-  .strict();
 
 async function loadActiveRoles() {
   const roles = await prisma.committeeRole.findMany({
@@ -33,7 +32,7 @@ async function loadActiveRoles() {
   return roles;
 }
 
-export async function GET() {
+export async function GET(request: Request) {
   const guard = await requireAdmin({
     permission: { area: "content", level: "view" },
   });
@@ -47,10 +46,14 @@ export async function GET() {
     loadActiveRoles(),
   ]);
 
-  return NextResponse.json({
-    contactCommitteeRoleKey: settings?.contactCommitteeRoleKey ?? null,
-    roles,
-  });
+  return connectionJson(
+    request,
+    {
+      contactCommitteeRoleKey: settings?.contactCommitteeRoleKey ?? null,
+      roles,
+    },
+    CLUB_CONTACT_READ_CONNECTION_SHAPE,
+  );
 }
 
 export async function PUT(request: Request) {
@@ -64,7 +67,7 @@ export async function PUT(request: Request) {
   });
   if (!jsonBody.ok) return jsonBody.response;
   const body = jsonBody.body;
-  const parsed = bodySchema.safeParse(body);
+  const parsed = clubContactSchema.safeParse(body);
   if (!parsed.success) {
     return NextResponse.json({ error: "Invalid settings" }, { status: 400 });
   }
@@ -124,7 +127,9 @@ export async function PUT(request: Request) {
   });
 
   revalidatePath("/", "layout");
-  return NextResponse.json({
-    contactCommitteeRoleKey: settings.contactCommitteeRoleKey,
-  });
+  return connectionJson(
+    request,
+    { contactCommitteeRoleKey: settings.contactCommitteeRoleKey },
+    CLUB_CONTACT_SAVED_CONNECTION_SHAPE,
+  );
 }

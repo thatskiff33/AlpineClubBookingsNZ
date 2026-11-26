@@ -140,8 +140,8 @@ export function ApprovalForm({
                   included (owner decision, #5305 comment 7131483847). The app is told to
                   ask first by the server's instructions, which cover every change. */}
               {mayChange
-                ? "As a club officer, the app can also see the club records your admin role gives you, such as other members' bookings and details and the club's booking settings. If you choose View and change, it can change them too, and it is told to ask you first."
-                : "As a club officer, the app can also see the club records your admin role gives you, such as other members' bookings and details and the club's booking settings."}
+                ? "As a club officer, the app can also see the club records your admin role gives you, such as other members' bookings and details, the club's booking settings, and the public website's pages and settings. If you choose View and change, it can change them too, and it is told to ask you first."
+                : "As a club officer, the app can also see the club records your admin role gives you, such as other members' bookings and details, the club's booking settings, and the public website's pages and settings."}
             </li>
           ) : null}
           <li>Paying by card and changing your password or sign-in stay on this website.</li>

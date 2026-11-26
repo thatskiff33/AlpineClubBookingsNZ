@@ -79,7 +79,7 @@ describe("admin club-identity route — facebookUrl (C5 #1984)", () => {
   });
 
   it("GET serializes facebookUrl", async () => {
-    const response = await GET();
+    const response = await GET(new Request("http://localhost/api/admin/club-identity"));
     expect(await response.json()).toEqual({
       settings: {
         name: "Existing Club",
@@ -148,7 +148,7 @@ describe("admin club-identity route — invoice supplier (#5066)", () => {
   });
 
   it("GET returns the legal name and postal address", async () => {
-    const response = await GET();
+    const response = await GET(new Request("http://localhost/api/admin/club-identity"));
     expect(await response.json()).toMatchObject({
       settings: { legalName: "Existing Club Inc", postalAddress: "PO Box 1\nTown" },
     });

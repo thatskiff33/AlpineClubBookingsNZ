@@ -166,7 +166,7 @@ describe("Admin site banners API", () => {
     it("rejects unauthenticated list requests", async () => {
       mocks.auth.mockResolvedValue(null);
 
-      const response = await getSiteBanners();
+      const response = await getSiteBanners(new Request("http://localhost/api/admin/site-banners"));
 
       expect(response.status).toBe(401);
       expect(mocks.siteBannerFindMany).not.toHaveBeenCalled();
@@ -175,7 +175,7 @@ describe("Admin site banners API", () => {
     it("rejects non-admin list requests", async () => {
       mocks.auth.mockResolvedValue(memberSession);
 
-      const response = await getSiteBanners();
+      const response = await getSiteBanners(new Request("http://localhost/api/admin/site-banners"));
 
       expect(response.status).toBe(403);
       expect(mocks.siteBannerFindMany).not.toHaveBeenCalled();
@@ -423,7 +423,7 @@ describe("Admin site banners API", () => {
     });
 
     it("lists banner groups for admins", async () => {
-      const response = await getSiteBanners();
+      const response = await getSiteBanners(new Request("http://localhost/api/admin/site-banners"));
       const body = await response.json();
 
       expect(response.status).toBe(200);

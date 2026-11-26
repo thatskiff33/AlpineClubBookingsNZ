@@ -1,28 +1,14 @@
 import { revalidateAdminPage } from "@/lib/admin-page-revalidation";
 import { NextRequest, NextResponse } from "next/server";
 import { hostingCoverageParticipantRetryResponse } from "@/lib/adult-member-hosting-retry-response";
-import { z } from "zod";
 import { parseJsonRequestBody } from "@/lib/api-json";
+import { manualSubscriptionPaymentBodySchema } from "@/lib/manual-payment-request-schemas";
 import logger from "@/lib/logger";
 import { requireAdmin } from "@/lib/session-guards";
 import {
   applyManualSubscriptionPayment,
   ManualSubscriptionPaymentError,
-  MANUAL_PAYMENT_NOTE_MAX,
 } from "@/lib/manual-subscription-payment";
-
-const bodySchema = z
-  .object({
-    direction: z.enum(["paid", "unpaid"]),
-    note: z.string().max(MANUAL_PAYMENT_NOTE_MAX).optional().nullable(),
-    // Explicit confirmation so a manual money-state change is never a
-    // single-click accident.
-    confirmed: z.literal(true),
-    // #2260: the admin's "email the member or not" decision. Shape-checked
-    // here, contract-checked below — see the 422 branch.
-    notifyMember: z.boolean().optional(),
-  })
-  .strict();
 
 /**
  * POST /api/admin/subscriptions/[id]/manual-payment
@@ -55,7 +41,7 @@ export async function POST(
   if (!jsonBody.ok) return jsonBody.response;
   const body = jsonBody.body;
 
-  const parsed = bodySchema.safeParse(body);
+  const parsed = manualSubscriptionPaymentBodySchema.safeParse(body);
   if (!parsed.success) {
     return NextResponse.json(
       { error: "Invalid manual payment request.", details: parsed.error.flatten() },

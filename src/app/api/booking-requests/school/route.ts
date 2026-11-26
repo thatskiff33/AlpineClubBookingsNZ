@@ -15,11 +15,9 @@ import { generateSchoolGuests } from "@/lib/school-booking-constants";
 import { applyRateLimit, rateLimiters } from "@/lib/rate-limit";
 import { parsedDateOnlySchema } from "@/lib/date-only-schema";
 import { clubTodayDateOnlyInstant } from "@/lib/club-time/server";
-import { nameField } from "@/lib/zod-helpers";
+import { nameField, noCrlf } from "@/lib/zod-helpers";
 import logger from "@/lib/logger";
 import { parseJsonRequestBody } from "@/lib/api-json";
-
-const noCrlf = (value: string) => !/[\r\n]/.test(value);
 
 const schoolBookingRequestSchema = z.object({
   schoolName: z

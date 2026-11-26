@@ -147,9 +147,9 @@ import type {
   ErasureKind,
   ListedContactStatus,
 } from "@/lib/xero-erased-member-contact-review-shape";
-
-/** Rows returned. The counts are always the whole population. */
-export const DEFAULT_ERASED_CONTACT_ROW_LIMIT = 200;
+// Rows returned; the counts are always the whole population. Held with the
+// route's `limit` schema, which an AI app action also reads (ALP-721).
+import { DEFAULT_ERASED_CONTACT_ROW_LIMIT } from "@/lib/xero-contact-review-requests";
 
 /**
  * Which provider statuses mean "somebody has dealt with this one".

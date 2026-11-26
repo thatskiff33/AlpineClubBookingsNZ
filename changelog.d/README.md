@@ -9,9 +9,11 @@ of `## Unreleased`, concurrent lanes conflict on that file every single day
 request never conflicts. At release time the fragments are compiled into a real
 version section and deleted.
 
-The `CHANGELOG.md merge=union` declaration in `.gitattributes` (#2451) stays as
-belt-and-braces through the transition, so the pull requests that still edit
-`CHANGELOG.md` directly keep merging without a manual resolve.
+A code-bearing pull request carries either a fragment here or the no-entry
+marker described below; editing `CHANGELOG.md` directly does not count (#5263).
+Only the release compile writes `CHANGELOG.md`. The `CHANGELOG.md merge=union`
+declaration in `.gitattributes` (#2451) stays: the file is a flat list of
+released lines (see the table below).
 
 ## The general rule, of which this is one instance
 
@@ -61,7 +63,9 @@ routing row are for.
    top-level `- ` bullets in the house style below. Nothing else — no headings,
    no version number, no date.
 3. Commit it with the rest of the pull request. The `verify` job checks that a
-   code-bearing pull request carries one.
+   code-bearing pull request adds one (or carries the no-entry marker). A
+   changed or deleted fragment, an after-deploy `.deploy.md` file and a direct
+   edit to `CHANGELOG.md` do not count.
 
 ### Linking a doc from a fragment
 
@@ -159,6 +163,12 @@ the standard. Widening the definition instead would fail a large class of PRs
 that genuinely need no entry (every workflow tweak, every test-harness change),
 and the noise would train everyone to reach for the no-entry marker, which is
 the one outcome that switches the gate off in practice.
+
+The same definition is why the release-compile pull request passes. It edits
+`CHANGELOG.md`, `package.json` and the upgrade and release-notes documents and
+deletes fragments, but changes nothing under `src/` or `prisma/`, so it is not
+code-bearing. There is no label, body or path bypass for it: a release pull
+request that also changes application source needs its own fragment or marker.
 
 ## After-deploy steps: the `.deploy.md` suffix
 
@@ -319,7 +329,7 @@ them apart by marker rather than by position:
 - The pointer note ("entries live in `changelog.d/`") is wrapped in
   `<!-- changelog-pointer-note:start -->` / `<!-- changelog-pointer-note:end -->`.
   Leave those comments in place. They exist because `CHANGELOG.md` is
-  `merge=union`: a branch still writing its entry directly under
+  `merge=union`: a stray entry written directly under
   `## Unreleased` can land that entry *above* the note, and a compiler that
   guessed by position would then publish the note inside a release section and
   delete it from `## Unreleased` for good. Anchored, the note is recognised

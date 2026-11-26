@@ -9,6 +9,7 @@ import {
   FINANCE_SYNC_CRON_JOB_NAME,
   FINANCE_SYNC_CRON_SCHEDULE,
 } from "@/lib/finance-sync-cron-config";
+import { PAYMENTS_CRON_JOB_NAMES } from "@/lib/payments-cron-jobs";
 
 /**
  * CT-5 (#2869): every definition names the CLUB's persisted timezone, which the
@@ -295,6 +296,11 @@ describe("admin cron health", () => {
         staleAfterMinutes: 60,
         recordsRuns: true,
       });
+    }
+    // #5256: every task the runner names has exactly one row, so a task added
+    // to the names module without a health row, or listed twice, fails here.
+    for (const jobName of Object.values(PAYMENTS_CRON_JOB_NAMES)) {
+      expect(definitions.filter((definition) => definition.jobName === jobName)).toHaveLength(1);
     }
   });
 

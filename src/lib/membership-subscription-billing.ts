@@ -45,6 +45,7 @@ import { isBilledThroughFamily, resolveBillingFamilyMembership } from "@/lib/mem
 import { chargeAxisDisplayName, chargeFamilyAxisKey } from "@/lib/membership-charge-axis";
 import { subscriptionInvoiceOutboxRow } from "@/lib/xero-operation-outbox-payload";
 import { buildXeroIdempotencyKey, startXeroSyncOperation } from "@/lib/xero-sync";
+import { totalChargedCents } from "@/lib/subscription-billing-totals";
 import {
   CLOSED_FAMILY_MEMBER_NEEDS_DECISION_CODE,
   CLOSED_FAMILY_PARTLY_REVERSED_CODE,
@@ -262,10 +263,6 @@ function componentChargedCents(amountCents: number, prorate: boolean, coveredMon
   return prorate ? Math.floor((amountCents * coveredMonths + 6) / 12) : amountCents;
 }
 
-/** What a set of plan entries charges, in cents: the preview's total and the confirm audit's. */
-function totalChargedCents(entries: readonly Pick<SubscriptionBillingPlanEntry, "chargedAmountCents">[]): number {
-  return entries.reduce((sum, entry) => sum + entry.chargedAmountCents, 0);
-}
 
 /** Newest charge first; the id breaks a createdAt tie, so the order is total. */
 function newestChargeFirst(left: { createdAt: Date; id: string }, right: { createdAt: Date; id: string }): number {

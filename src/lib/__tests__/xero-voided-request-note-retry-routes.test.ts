@@ -116,7 +116,7 @@ beforeEach(() => {
 
 describe("#4214: no retry door re-raises a voided refund request note", () => {
   it("MUTATION: Retry all queues neither row, and says why", async () => {
-    const response = await retryAll();
+    const response = await retryAll(new Request("http://localhost/api/admin/xero/operations/retry-all", { method: "POST" }));
     const body = await response.json();
 
     expect(body).toMatchObject({ queued: 0, skipped: 2 });
