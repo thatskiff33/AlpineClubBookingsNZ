@@ -288,7 +288,6 @@ export async function POST(
         : "Not signed in (QR code in the lodge)",
     source: "LODGE_QR",
     hasPhoto: created.hasPhoto,
-    request,
   })
     .then((payload) => sendAdminMaintenanceReportAlert(payload))
     .catch((err) =>

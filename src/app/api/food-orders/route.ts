@@ -183,7 +183,7 @@ export async function POST(request: NextRequest) {
   }
 
   // AFTER the commit, and never awaited into the response.
-  void notifyFoodOfficerOfOrder(created.id, request).catch((err) =>
+  void notifyFoodOfficerOfOrder(created.id).catch((err) =>
     logger.error(
       { err, foodOrderId: created.id },
       "Failed to send the food order email",

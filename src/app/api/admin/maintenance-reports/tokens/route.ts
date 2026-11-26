@@ -129,10 +129,7 @@ export async function POST(request: NextRequest) {
         lodgeName: lodge.name,
         rotated: minted.rotated,
         // Shown once. See the module docblock for why there is no "show it again".
-        signUrl: buildMaintenanceReportSignUrl(
-          getAppBaseUrl(request.nextUrl.origin),
-          minted.token,
-        ),
+        signUrl: buildMaintenanceReportSignUrl(getAppBaseUrl(), minted.token),
       },
       { headers: { "Cache-Control": "no-store, no-cache, must-revalidate" } },
     );

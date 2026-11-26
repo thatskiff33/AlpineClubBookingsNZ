@@ -1,3 +1,4 @@
+import { getAppBaseUrl, rebaseOntoAppOrigin } from "@/lib/app-url";
 import { NextRequest, NextResponse } from "next/server";
 import type { IssueReportOrigin } from "@prisma/client";
 import { z } from "zod";
@@ -62,7 +63,9 @@ function summarizeReport(report: {
 
   return {
     id: report.id,
-    pageUrl: report.pageUrl,
+    // Held to the same rule as a new report: a row written before that rule
+    // existed may carry another host, and this is the link an officer clicks.
+    pageUrl: rebaseOntoAppOrigin(report.pageUrl) ?? getAppBaseUrl(),
     pageTitle: report.pageTitle,
     description: report.description,
     screenshot: {

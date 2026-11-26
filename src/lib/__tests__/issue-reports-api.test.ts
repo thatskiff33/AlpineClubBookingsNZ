@@ -172,7 +172,7 @@ describe("issue reports API", () => {
     });
   });
 
-  it("normalizes relative page URLs to same-origin absolute URLs", async () => {
+  it("never takes the site's address from the request when none is configured", async () => {
     await withNextAuthUrl(undefined, async () => {
       const req = new NextRequest("https://example.org/api/issue-reports", {
         method: "POST",
@@ -180,7 +180,7 @@ describe("issue reports API", () => {
         body: JSON.stringify({
           pageUrl: "/book?step=review",
           description:
-            "The relative page URL should be stored as an internal absolute link.",
+            "With no configured address the built-in default is used, not the request's.",
         }),
       });
 
@@ -189,71 +189,121 @@ describe("issue reports API", () => {
 
       expect(mockedIssueReportCreate).toHaveBeenCalledWith({
         data: expect.objectContaining({
-          pageUrl: "https://example.org/book?step=review",
+          pageUrl: "http://localhost:3000/book?step=review",
         }),
         select: { id: true },
       });
 
       expect(mockedSendAdminIssueReportAlert).toHaveBeenCalledWith(
         expect.objectContaining({
-          pageUrl: "https://example.org/book?step=review",
+          pageUrl: "http://localhost:3000/book?step=review",
+          issueReportUrl: "http://localhost:3000/admin/issue-reports?report=issue-1",
         })
       );
     });
   });
 
-  it("accepts public page URLs when the app is behind a local proxy origin", async () => {
-    const req = new NextRequest("http://127.0.0.1:3000/api/issue-reports", {
-      method: "POST",
+  // GHSA-q9f4-243m-6f54. A caller who can set `X-Forwarded-Host` (or `Host`)
+  // used to choose the origin of the link in the officers' alert and of the
+  // stored page address. Every case below sends headers and a body that name
+  // another site and asserts that only the configured origin comes out.
+  it.each([
+    {
+      name: "a forwarded host that matches the submitted page address",
+      requestUrl: "http://127.0.0.1:3000/api/issue-reports",
       headers: {
-        "Content-Type": "application/json",
-        "x-forwarded-host": "example.org",
+        "x-forwarded-host": "evil.example",
         "x-forwarded-proto": "https",
       },
-      body: JSON.stringify({
-        pageUrl: "https://example.org/admin/audit-log?page=2",
-        pageTitle: "Audit Log",
-        description: "The report should keep the public page URL from the browser.",
-      }),
-    });
-
-    const res = await POST(req);
-    expect(res.status).toBe(201);
-
-    expect(mockedIssueReportCreate).toHaveBeenCalledWith({
-      data: expect.objectContaining({
-        pageUrl: "https://example.org/admin/audit-log?page=2",
-      }),
-      select: { id: true },
-    });
-
-    expect(mockedSendAdminIssueReportAlert).toHaveBeenCalledWith(
-      expect.objectContaining({
-        pageUrl: "https://example.org/admin/audit-log?page=2",
-        issueReportUrl: "https://example.org/admin/issue-reports?report=issue-1",
-      })
-    );
-  });
-
-  it("does not trust spoofable origin headers as app origins", async () => {
-    const req = new NextRequest("http://127.0.0.1:3000/api/issue-reports", {
-      method: "POST",
+      pageUrl: "https://evil.example/admin/audit-log?page=2",
+      expected: "https://club.example/admin/audit-log?page=2",
+    },
+    {
+      name: "a Host header that matches the submitted page address",
+      requestUrl: "http://127.0.0.1:3000/api/issue-reports",
+      headers: { host: "evil.example" },
+      pageUrl: "https://evil.example/dashboard#top",
+      expected: "https://club.example/dashboard#top",
+    },
+    {
+      name: "a request whose own URL is on the submitted page address's host",
+      requestUrl: "https://evil.example/api/issue-reports",
+      headers: {},
+      pageUrl: "https://evil.example/bookings",
+      expected: "https://club.example/bookings",
+    },
+    {
+      name: "Origin and Referer headers naming another site",
+      requestUrl: "http://127.0.0.1:3000/api/issue-reports",
       headers: {
-        "Content-Type": "application/json",
         Origin: "https://evil.example",
         Referer: "https://evil.example/dashboard",
       },
-      body: JSON.stringify({
-        pageUrl: "https://evil.example/admin/audit-log?page=2",
-        description: "Client supplied origins must not be accepted as app origins.",
-      }),
-    });
+      pageUrl: "https://evil.example/admin/audit-log?page=2",
+      expected: "https://club.example/admin/audit-log?page=2",
+    },
+    {
+      name: "a path that starts with two slashes",
+      requestUrl: "http://127.0.0.1:3000/api/issue-reports",
+      headers: { "x-forwarded-host": "evil.example" },
+      pageUrl: "https://club.example//evil.example/phish",
+      expected: "https://club.example/evil.example/phish",
+    },
+    {
+      name: "a scheme-relative address",
+      requestUrl: "http://127.0.0.1:3000/api/issue-reports",
+      headers: {},
+      pageUrl: "//evil.example/phish",
+      expected: "https://club.example/phish",
+    },
+    {
+      name: "credentials and a port in the submitted address",
+      requestUrl: "http://127.0.0.1:3000/api/issue-reports",
+      headers: {},
+      pageUrl: "https://club.example:443@evil.example:8443/phish?x=1",
+      expected: "https://club.example/phish?x=1",
+    },
+  ])(
+    "keeps only the page of this site and links only to the configured origin: $name",
+    async ({ requestUrl, headers, pageUrl, expected }) => {
+      await withNextAuthUrl("https://club.example", async () => {
+        const req = new NextRequest(requestUrl, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", ...headers },
+          body: JSON.stringify({
+            pageUrl,
+            pageTitle: "Audit Log",
+            description: "No host from the request or its body may be kept.",
+          }),
+        });
 
-    const res = await POST(req);
-    expect(res.status).toBe(400);
-    expect(mockedIssueReportCreate).not.toHaveBeenCalled();
-    expect(mockedSendAdminIssueReportAlert).not.toHaveBeenCalled();
-  });
+        const res = await POST(req);
+        expect(res.status).toBe(201);
+
+        expect(mockedIssueReportCreate).toHaveBeenCalledWith({
+          data: expect.objectContaining({ pageUrl: expected }),
+          select: { id: true },
+        });
+        expect(mockedSendAdminIssueReportAlert).toHaveBeenCalledWith(
+          expect.objectContaining({
+            pageUrl: expected,
+            issueReportUrl:
+              "https://club.example/admin/issue-reports?report=issue-1",
+          })
+        );
+
+        const stored = JSON.stringify(mockedIssueReportCreate.mock.calls);
+        const emailed = JSON.stringify(
+          mockedSendAdminIssueReportAlert.mock.calls
+        );
+        const audited = JSON.stringify(mockedLogAudit.mock.calls);
+        for (const written of [stored, emailed, audited]) {
+          expect(written).not.toContain("//evil.example");
+          expect(written).not.toContain("@evil.example");
+        }
+      });
+    }
+  );
 
   it("stores screenshots for in-app review without emailing attachments", async () => {
     const screenshotDataUrl = `data:image/png;base64,${Buffer.from("png").toString("base64")}`;
@@ -290,20 +340,28 @@ describe("issue reports API", () => {
     );
   });
 
-  it("rejects external page URLs", async () => {
-    const req = new NextRequest("https://example.org/api/issue-reports", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        pageUrl: "https://evil.example/phish",
-        description: "This should be rejected because it points outside the app origin.",
-      }),
-    });
+  it.each([
+    "javascript:alert(1)",
+    "data:text/html,<script>alert(1)</script>",
+    "ftp://club.example/file",
+    "dashboard",
+    "\\\\evil.example\\phish",
+  ])("rejects a page address that is not a page of a website: %s", async (pageUrl) => {
+    await withNextAuthUrl("https://club.example", async () => {
+      const req = new NextRequest("https://club.example/api/issue-reports", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          pageUrl,
+          description: "This should be rejected because it names no page of this site.",
+        }),
+      });
 
-    const res = await POST(req);
-    expect(res.status).toBe(400);
-    expect(mockedIssueReportCreate).not.toHaveBeenCalled();
-    expect(mockedSendAdminIssueReportAlert).not.toHaveBeenCalled();
+      const res = await POST(req);
+      expect(res.status).toBe(400);
+      expect(mockedIssueReportCreate).not.toHaveBeenCalled();
+      expect(mockedSendAdminIssueReportAlert).not.toHaveBeenCalled();
+    });
   });
 
   it("rejects invalid screenshot payloads", async () => {

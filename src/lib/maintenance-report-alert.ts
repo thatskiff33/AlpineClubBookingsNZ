@@ -39,8 +39,6 @@ export type MaintenanceAlertInput = {
   reportedBy: string;
   source: MaintenanceReportSource;
   hasPhoto: boolean;
-  /** Used only to recover an origin when NEXTAUTH_URL is unset. */
-  request?: { nextUrl: { origin: string } };
 };
 
 export type MaintenanceAlertPayload = {
@@ -67,7 +65,7 @@ export async function resolveMaintenanceAlertPayload(
     },
   });
 
-  const baseUrl = getAppBaseUrl(input.request?.nextUrl.origin);
+  const baseUrl = getAppBaseUrl();
 
   return {
     lodgeName: input.lodgeName,

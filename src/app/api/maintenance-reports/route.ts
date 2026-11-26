@@ -213,7 +213,6 @@ export async function POST(request: NextRequest) {
     reportedBy: `${member.firstName} ${member.lastName}`.trim() || member.email,
     source: "MEMBER_PORTAL",
     hasPhoto: created.hasPhoto,
-    request,
   })
     .then((payload) => sendAdminMaintenanceReportAlert(payload))
     .catch((err) =>

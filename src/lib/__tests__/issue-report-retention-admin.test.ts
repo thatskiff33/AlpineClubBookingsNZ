@@ -198,6 +198,73 @@ describe("issue report retention and admin triage", () => {
     );
   });
 
+  // GHSA-q9f4-243m-6f54. A row written before new reports were held to the
+  // configured origin can carry another host. This is the link an officer
+  // clicks, so both readers apply the same rule on the way out.
+  it("shows a stored page address on the configured origin only, in the list and the detail", async () => {
+    adminSession();
+    const original = process.env.NEXTAUTH_URL;
+    process.env.NEXTAUTH_URL = "https://club.example";
+    try {
+      const poisoned = {
+        ...reportRecord(),
+        pageUrl: "https://evil.example/admin/members?tab=1#top",
+      };
+      mocks.issueReportFindMany.mockResolvedValue([poisoned]);
+      mocks.issueReportCount.mockResolvedValue(1);
+      mocks.issueReportFindUnique.mockResolvedValue(poisoned);
+
+      const list = await listIssueReports(
+        new NextRequest("http://localhost/api/admin/issue-reports?status=OPEN", {
+          headers: { "x-forwarded-host": "evil.example", host: "evil.example" },
+        })
+      );
+      const detail = await getIssueReport(
+        new NextRequest("http://localhost/api/admin/issue-reports/issue-1", {
+          headers: { "x-forwarded-host": "evil.example", host: "evil.example" },
+        }),
+        { params: Promise.resolve({ id: "issue-1" }) }
+      );
+      const listBody = await list.json();
+      const detailBody = await detail.json();
+
+      expect(listBody.reports[0].pageUrl).toBe(
+        "https://club.example/admin/members?tab=1#top"
+      );
+      expect(detailBody.report.pageUrl).toBe(
+        "https://club.example/admin/members?tab=1#top"
+      );
+      expect(JSON.stringify(listBody)).not.toContain("evil.example");
+      expect(JSON.stringify(detailBody)).not.toContain("evil.example");
+    } finally {
+      if (original === undefined) delete process.env.NEXTAUTH_URL;
+      else process.env.NEXTAUTH_URL = original;
+    }
+  });
+
+  it("falls back to the site's own address when a stored page address is not a web address", async () => {
+    adminSession();
+    const original = process.env.NEXTAUTH_URL;
+    process.env.NEXTAUTH_URL = "https://club.example";
+    try {
+      mocks.issueReportFindUnique.mockResolvedValue({
+        ...reportRecord(),
+        pageUrl: "javascript:alert(1)",
+      });
+
+      const detail = await getIssueReport(
+        new NextRequest("http://localhost/api/admin/issue-reports/issue-1"),
+        { params: Promise.resolve({ id: "issue-1" }) }
+      );
+      const body = await detail.json();
+
+      expect(body.report.pageUrl).toBe("https://club.example");
+    } finally {
+      if (original === undefined) delete process.env.NEXTAUTH_URL;
+      else process.env.NEXTAUTH_URL = original;
+    }
+  });
+
   it("deletes screenshots without deleting report metadata", async () => {
     adminSession();
     mocks.issueReportFindUnique

@@ -999,6 +999,38 @@ overwrite the header, and with no proxy the caller sets both headers freely.
 Not every audit row holds a visitor's address in that column: a scheduled job
 can record its own tag there, and a row written without a request has none.
 
+## The site's own address in links (GHSA-q9f4-243m-6f54)
+
+Audience: Operator, Developer.
+
+Every link the app emails, stores or shows is built from the configured origin,
+`NEXTAUTH_URL`, through `getAppBaseUrl()` in `src/lib/app-url.ts`. That function
+takes no argument. The address a request claims (`Host`, `X-Forwarded-Host`, and
+`request.nextUrl.origin`, which Next.js derives from them) is whatever the
+caller sent wherever a proxy does not overwrite it, so it is not used for a
+link. With no `NEXTAUTH_URL` set the origin is the built-in
+`http://localhost:3000`, not the request's.
+
+Where a member tells the app which page they were on (the issue-report widget
+posts the browser's address), `rebaseOntoAppOrigin()` keeps the path, query and
+fragment and places them on the configured origin. The host that was sent is
+discarded. The admin issue-report list and detail apply the same function when
+they read a stored report, so a row written before this rule is held to it as
+well.
+
+`src/lib/__tests__/request-origin-census.test.ts` fails on a new read of one of
+those three request values, outside the one file it lists with its reason: the
+Content-Security-Policy for the display pages, which adds the request's own
+origin to the response sent back to that same request.
+
+Before this rule, the issue-report route accepted an origin taken from
+`X-Forwarded-Host` or `Host`, and three other places fell back to the request's
+origin when `NEXTAUTH_URL` was unset. In a deployment where a caller could set
+those headers, a signed-in member could make the officers' issue-report alert,
+and the link in the admin issue-report page, point at another site. The
+reference deployment was not affected: its Caddy sets the forwarded headers
+itself.
+
 ## Token-bearing URL paths
 
 ### Context

@@ -20,10 +20,7 @@ import { prisma } from "@/lib/prisma";
  * create route refuses before anything is stored, so the early return here only
  * covers the setting being cleared in between; the order stays in the history.
  */
-export async function notifyFoodOfficerOfOrder(
-  orderId: string,
-  request?: { nextUrl: { origin: string } },
-): Promise<void> {
+export async function notifyFoodOfficerOfOrder(orderId: string): Promise<void> {
   const [settings, order, club] = await Promise.all([
     loadFoodOrderSettings(),
     prisma.foodOrder.findUnique({
@@ -48,7 +45,7 @@ export async function notifyFoodOfficerOfOrder(
   const orderedBy = order.member
     ? memberDisplayName(order.member)
     : "A former member";
-  const baseUrl = getAppBaseUrl(request?.nextUrl.origin);
+  const baseUrl = getAppBaseUrl();
 
   await sendFoodOrderPlacedEmail({
     to: settings.officerEmail,
