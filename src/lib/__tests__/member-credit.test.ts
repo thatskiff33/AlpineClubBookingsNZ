@@ -85,9 +85,9 @@ const plainDeductionReserve = async (tx: any, request: any) => ({
   }),
   correctionId: null,
 });
-const mockReserveNotedCreditDeduction = vi.fn(plainDeductionReserve);
+const mockReserveNotedCreditDeduction = vi.fn<(tx: any, request: any) => Promise<{ credit: any; correctionId: string | null }>>(plainDeductionReserve);
 vi.mock("@/lib/admin-credit-deduction-reserve", () => ({
-  reserveNotedCreditDeduction: (...args: unknown[]) => mockReserveNotedCreditDeduction(...args),
+  reserveNotedCreditDeduction: (tx: unknown, request: unknown) => mockReserveNotedCreditDeduction(tx, request),
 }));
 vi.mock("@/lib/xero-applied-credit-allocation-repair", () => ({
   repairLegacyAppliedCreditNoteAllocationsForBooking:

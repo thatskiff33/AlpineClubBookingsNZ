@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { CreditNote, Invoice, LineAmountTypes, type XeroClient } from "xero-node";
+import { CreditNote, CurrencyCode, Invoice, LineAmountTypes, type XeroClient } from "xero-node";
 import { XeroFake } from "@/test/providers/xero-fake";
 import { xeroTransport } from "@/test/providers/xero-transport";
 
@@ -113,7 +113,7 @@ describe("#5241 Xero credit deduction correction", () => {
   it("adopts an exact invoice by reference even when its create key is no longer available", async () => {
     const response = await session.xero.accountingApi.createInvoices(session.tenantId, { invoices: [{
       type: Invoice.TypeEnum.ACCREC, status: Invoice.StatusEnum.AUTHORISED, contact: { contactID: contactId },
-      reference: correction(1000).reference, currencyCode: "NZD", sentToContact: false,
+      reference: correction(1000).reference, currencyCode: CurrencyCode.NZD, sentToContact: false,
       lineAmountTypes: LineAmountTypes.Inclusive, lineItems: [line(10)],
     }] }, undefined, undefined, "expired-create-key");
     const result = await correctXeroCreditNote(correction(1000));
@@ -126,7 +126,7 @@ describe("#5241 Xero credit deduction correction", () => {
     const beforeMutation = vi.fn(async () => { throw new Error("worker claim lost"); });
     await expect(correctXeroCreditNote({ ...correction(1000), beforeMutation })).rejects.toThrow("worker claim lost");
     expect(fake.snapshot().invoices).toHaveLength(0);
-    beforeMutation.mockImplementation(async () => undefined);
+    beforeMutation.mockImplementation(async () => undefined as never);
     await correctXeroCreditNote({ ...correction(1000), beforeMutation });
     expect(beforeMutation).toHaveBeenCalledTimes(3); // rejected create fence, create fence, allocation fence
     await correctXeroCreditNote({ ...correction(1000), beforeMutation });

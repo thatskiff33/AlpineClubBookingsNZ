@@ -20,7 +20,7 @@ function store(initial: Row[], allocated: Row[] = [], queued: Row[] = []) {
   const credits = [...initial];
   const lines: Row[] = [];
   const corrections: Row[] = [];
-  const selectRows = (rows: Row[], where: unknown) => rows.filter((row) => matchesWhere(row, where));
+  const selectRows = (rows: Row[], where: unknown) => rows.filter((row) => matchesWhere(row, where as Record<string, unknown> | undefined));
   const group = (rows: Row[], by: string[], where: unknown) => {
     const grouped = new Map<string, Row[]>();
     for (const row of selectRows(rows, where)) {

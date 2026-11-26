@@ -262,6 +262,7 @@ export interface QueuedOutboxExpectedOperation {
     | "PaymentTransaction"
     | "MemberCredit"
     | "Organisation"
+    | "AdminCreditDeductionCorrection" // #5241
   >;
 }
 

@@ -2,6 +2,8 @@
 import { CreditNote, Invoice, LineAmountTypes, type XeroClient } from "xero-node";
 import { exactProviderAmountToCents } from "@/lib/money-provider-amount";
 import { callXeroApi, getAuthenticatedXeroClient } from "@/lib/xero-api-client";
+import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
+import { xeroDocumentDateForClubToday } from "@/lib/xero-provider-dates";
 
 type Session = { xero: XeroClient; tenantId: string };
 export interface XeroCreditNoteCorrectionInput {
@@ -61,6 +63,8 @@ export async function correctXeroCreditNote(input: XeroCreditNoteCorrectionInput
   const { xero, tenantId } = session;
   const note = await readNote(session, input.noteId);
   const key = (step: string) => `${input.keyBase}:${input.noteId}:${step}`;
+  // The club's calendar day (INV-DATE-019), read once: a retry under the same key sends the same date.
+  const documentDate = xeroDocumentDateForClubToday(await readClubTimeZoneOutsideRequest());
   const total = exactProviderAmountToCents(note.total);
   const remaining = exactProviderAmountToCents(note.remainingCredit);
   if (input.mode === "VOID") {
@@ -84,7 +88,7 @@ export async function correctXeroCreditNote(input: XeroCreditNoteCorrectionInput
   }
   const candidates = await findInvoices(session, input.reference);
   if (candidates.length > 1) throw new Error("CORRECTION_INVOICE_CHANGED: several invoices use the correction reference.");
-  let invoice = candidates[0];
+  let invoice: Invoice | undefined = candidates[0];
   if (!invoice) {
     if (note.status !== CreditNote.StatusEnum.AUTHORISED || remaining === null || remaining < input.cents) {
       throw new Error("NOTE_CHANGED_IN_XERO: the credit note has insufficient free credit for this deduction.");
@@ -96,6 +100,8 @@ export async function correctXeroCreditNote(input: XeroCreditNoteCorrectionInput
       contact: { contactID: note.contact!.contactID },
       reference: input.reference,
       sentToContact: false,
+      date: documentDate,
+      dueDate: documentDate,
       currencyCode: note.currencyCode,
       lineAmountTypes: note.lineAmountTypes === LineAmountTypes.NoTax ? LineAmountTypes.NoTax : LineAmountTypes.Inclusive,
       lineItems: [{ description: input.reference, quantity: 1, unitAmount: input.cents / 100, accountCode: first.accountCode, taxType: first.taxType }],
@@ -123,7 +129,7 @@ export async function correctXeroCreditNote(input: XeroCreditNoteCorrectionInput
   }
   await input.beforeMutation?.();
   const response = await apiCall("createCreditNoteAllocation", "ALLOCATION", () => xero.accountingApi.createCreditNoteAllocation(
-    tenantId, input.noteId, { allocations: [{ invoice: { invoiceID: invoiceId }, amount: input.cents / 100 }] }, undefined, key("allocation"),
+    tenantId, input.noteId, { allocations: [{ invoice: { invoiceID: invoiceId }, amount: input.cents / 100, date: documentDate }] }, undefined, key("allocation"),
   ));
   const allocation = response.body.allocations?.[0];
   if (!allocation?.allocationID || allocation.invoice?.invoiceID !== invoiceId || exactProviderAmountToCents(allocation.amount) !== input.cents) {

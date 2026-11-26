@@ -50,7 +50,7 @@ function readOnlyDb(store: Store) {
             calls.push(`${name}.${method}`);
             seen.push({ call: `${name}.${method}`, where: args.where });
             if (!READS.has(method)) throw new Error(`write attempted: ${name}.${method}`);
-            const rows = store[name].filter((row) => matchesWhere(row, args.where));
+            const rows = (store[name] ?? []).filter((row) => matchesWhere(row, args.where));
             // `orderBy` as PostgreSQL answers it (the engine's lot order is one).
             const keyOf = (value: unknown) => (value instanceof Date ? value.getTime() : (value as string | number));
             for (const order of [...(args.orderBy ?? [])].reverse()) {
