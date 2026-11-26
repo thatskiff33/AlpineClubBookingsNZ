@@ -73,7 +73,7 @@ afterEach(async () => {
 
 describe("Image Manager listings hide the copies", () => {
   it("lists folders without any copies folder", async () => {
-    const res = await directoriesRoute.GET();
+    const res = await directoriesRoute.GET(request("GET", "/api/admin/image-manager/directories"));
     const { directories } = (await res.json()) as { directories: string[] };
     expect(directories.filter((dir) => dir.startsWith(folder))).toEqual([
       folder,

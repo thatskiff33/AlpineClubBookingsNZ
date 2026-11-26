@@ -11,6 +11,15 @@ import {
   removeImageDerivatives,
 } from "@/lib/image-storage";
 import { revalidatePublicSite } from "@/lib/public-content-revalidation";
+import {
+  imageManagerDeleteImageSchema,
+  imageManagerListQuerySchema,
+} from "@/lib/admin-content-api/images";
+import { connectionJson } from "@/lib/mcp-connection-request";
+import {
+  IMAGE_CHANGE_DONE_CONNECTION_SHAPE,
+  IMAGE_MANAGER_PHOTOS_CONNECTION_SHAPE,
+} from "@/lib/connection-shapes/content-images";
 
 // GET /api/admin/image-manager/images?dir=<relative-path> – list images in a directory
 export async function GET(request: NextRequest) {
@@ -19,7 +28,11 @@ export async function GET(request: NextRequest) {
   });
   if (!guard.ok) return guard.response;
 
-  const dir = request.nextUrl.searchParams.get("dir") ?? "";
+  const query = imageManagerListQuerySchema.safeParse(Object.fromEntries(request.nextUrl.searchParams));
+  if (!query.success) {
+    return NextResponse.json({ error: "Invalid directory" }, { status: 400 });
+  }
+  const { dir } = query.data;
   // The website-sized copies folder (#4935) is never listed: its files are
   // managed through their originals only.
   const absDir = resolveAlbumPathInImagesRoot(dir);
@@ -33,7 +46,7 @@ export async function GET(request: NextRequest) {
   try {
     entries = await fs.readdir(absDir, { withFileTypes: true });
   } catch {
-    return NextResponse.json({ images: [] });
+    return connectionJson(request, { images: [] }, IMAGE_MANAGER_PHOTOS_CONNECTION_SHAPE);
   }
 
   const imageFiles = entries.filter(
@@ -59,7 +72,7 @@ export async function GET(request: NextRequest) {
   // Sort alphabetically
   images.sort((a, b) => a.filename.localeCompare(b.filename));
 
-  return NextResponse.json({ images });
+  return connectionJson(request, { images }, IMAGE_MANAGER_PHOTOS_CONNECTION_SHAPE);
 }
 
 // DELETE /api/admin/image-manager/images – delete a single image file
@@ -73,21 +86,11 @@ export async function DELETE(request: NextRequest) {
     error: "Invalid JSON",
   });
   if (!jsonBody.ok) return jsonBody.response;
-  const body = jsonBody.body;
-
-  // ONE read of each field, narrowed by `typeof`, rather than a `typeof` check
-  // on one read and the value taken from a second read through a
-  // `Record<string, string>` cast. Under stricter indexed access that cast's
-  // own lookup is `string | undefined` — the compiler pointing out that the
-  // two reads were never provably the same value (#2801). Net one cast fewer.
-  const bodyFields: Record<string, unknown> =
-    body !== null && typeof body === "object"
-      ? (body as Record<string, unknown>)
-      : {};
-  const rawDir = bodyFields.dir;
-  const rawFilename = bodyFields.filename;
-  const dir = typeof rawDir === "string" ? rawDir : "";
-  const filename = typeof rawFilename === "string" ? rawFilename : "";
+  const parsed = imageManagerDeleteImageSchema.safeParse(jsonBody.body);
+  if (!parsed.success) {
+    return NextResponse.json({ error: "Invalid filename" }, { status: 400 });
+  }
+  const { dir, filename } = parsed.data;
 
   if (!filename || /[/\\]/.test(filename)) {
     return NextResponse.json({ error: "Invalid filename" }, { status: 400 });
@@ -165,5 +168,5 @@ export async function DELETE(request: NextRequest) {
       { status: 500 },
     );
   }
-  return NextResponse.json({ ok: true });
+  return connectionJson(request, { ok: true }, IMAGE_CHANGE_DONE_CONNECTION_SHAPE);
 }
