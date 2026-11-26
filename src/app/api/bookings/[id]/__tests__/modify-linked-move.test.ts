@@ -86,11 +86,15 @@ const DEPENDENT = "bk-dependent-01";
 const ACCEPT_KEY = `v1:${"a".repeat(64)}`;
 const DECLINE_KEY = `v1:${"b".repeat(64)}`;
 
+const PRIMARY_FIGURES = { newFinalPriceCents: 12_500, priceDiffCents: 2_500, changeFeeCents: 1_000, netChargeCents: 3_500 };
+const DEPENDENT_FIGURES = { newFinalPriceCents: 8_800, priceDiffCents: -1_200, changeFeeCents: 1_000, netChargeCents: -200 };
+
 function quote(
   overrides: Partial<LinkedMoveQuote> = {},
 ): LinkedMoveQuote {
   return {
     primary: {
+      quotedFigures: PRIMARY_FIGURES,
       bookingId: PRIMARY,
       reference: "BK-PRIMA",
       proposedCheckIn: "2026-08-20",
@@ -110,6 +114,7 @@ function quote(
         proposedCheckOut: "2026-08-22",
         priceDiffCents: -1_200,
         changeFeeCents: 1_000,
+        quotedFigures: DEPENDENT_FIGURES,
       },
     ],
     combinedPriceDiffCents: 1_300,
@@ -219,6 +224,9 @@ for (const door of DOORS) {
       expect(body.combinedChangeFeeCents).toBe(2_000);
       expect(body.settlementMethodRequired).toBe(true);
       expect(body.bothChangeFeesCharged).toBe(true);
+      // #5238: each booking's figures, which an acceptance echoes back.
+      expect(body.primary.quotedFigures).toEqual(PRIMARY_FIGURES);
+      expect(body.linkedBookings[0].quotedFigures).toEqual(DEPENDENT_FIGURES);
       // And it is the OFFER, not a flattened refusal: the generic ApiError branch
       // would have answered `{ error }` alone.
       expect(Object.keys(body)).toContain("primary");

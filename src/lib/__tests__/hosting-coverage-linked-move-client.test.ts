@@ -13,6 +13,7 @@ import { linkedMoveStateKey } from "@/lib/adult-member-hosting-linked-move";
 import { strandedCoverageStateKey } from "@/lib/adult-member-hosting-same-owner";
 import {
   formatLinkedMoveMoneySentence,
+  hostingCoverageLinkedMoveAcceptedFigures,
   hostingCoverageLinkedMoveAnswer,
   readHostingCoverageLinkedMovePrompt,
   type LinkedMoveMoneyFacts,
@@ -406,6 +407,44 @@ describe("which key travels with which answer (#3232, INV-HOST-050)", () => {
  * minters alone leaves the readers silently discarding every offer the server
  * makes, so a member clicks a "Move both" button that can never work.
  */
+describe("the figures an acceptance echoes (#5238, INV-MOD-062)", () => {
+  const PRIMARY = { newFinalPriceCents: 11_000, priceDiffCents: 1000, changeFeeCents: 2500, netChargeCents: 3500 };
+  const LINKED = { newFinalPriceCents: 10_500, priceDiffCents: 500, changeFeeCents: 2500, netChargeCents: 3000 };
+  function withFigures(primary: unknown = PRIMARY, linked: unknown = LINKED) {
+    const offer = body();
+    return {
+      ...offer,
+      primary: { ...offer.primary, quotedFigures: primary },
+      linkedBookings: offer.linkedBookings.map((row) => ({ ...row, quotedFigures: linked })),
+    };
+  }
+
+  it("returns every booking's figures, keyed by booking", () => {
+    const prompt = readHostingCoverageLinkedMovePrompt(withFigures())!;
+    expect(hostingCoverageLinkedMoveAcceptedFigures(prompt)).toEqual({
+      quotedFigures: PRIMARY,
+      linkedQuotedFigures: [{ bookingId: "b-main", figures: LINKED }],
+    });
+  });
+
+  it("still reads an older server's offer, which carries none, and then echoes none", () => {
+    const prompt = readHostingCoverageLinkedMovePrompt(body());
+    expect(prompt).not.toBeNull();
+    expect(hostingCoverageLinkedMoveAcceptedFigures(prompt!)).toBeNull();
+  });
+
+  it("echoes none when any one booking's figures are missing", () => {
+    const offer = body();
+    const prompt = readHostingCoverageLinkedMovePrompt({ ...offer, primary: { ...offer.primary, quotedFigures: PRIMARY } })!;
+    expect(hostingCoverageLinkedMoveAcceptedFigures(prompt)).toBeNull();
+  });
+
+  it("fails closed on figures that are not integer cents", () => {
+    expect(readHostingCoverageLinkedMovePrompt(withFigures({ ...PRIMARY, changeFeeCents: 0.5 }))).toBeNull();
+    expect(readHostingCoverageLinkedMovePrompt(withFigures(PRIMARY, { ...LINKED, netChargeCents: "3000" }))).toBeNull();
+  });
+});
+
 describe("the hosting-coverage state-key format (#3232, INV-SSOT-001)", () => {
   const digest = "a".repeat(64);
 
