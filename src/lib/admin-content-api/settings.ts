@@ -34,6 +34,18 @@ export const publicContentSettingsSchema = z
 
 export type PublicContentSettingsValues = z.infer<typeof publicContentSettingsSchema>;
 
+/**
+ * What an AI app connection may send to the same save (ALP-723): every
+ * setting but how committee photos are shown. Showing them publishes
+ * committee members' photos on the public pages, which widens what others
+ * see of members (the spirit of the D-18 `privacy-posture` rule), so an
+ * officer changes it on the website. The route keeps the stored value, and
+ * a connection that sends the field is refused (lane decision on PR #5487).
+ */
+export const publicContentSettingsConnectionSchema = publicContentSettingsSchema.omit({
+  committeePhotoDisplay: true,
+});
+
 /** `PUT /api/admin/club-contact`: null restores the default booking-officer fallback. */
 export const clubContactSchema = z
   .object({

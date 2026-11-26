@@ -4,7 +4,8 @@
  * contract (`expectActionContract`): the connection gets exactly the action's
  * `returns` fields, whatever else the route's answer carries. An app's site
  * style save never writes the logo, never completes setup, and must send the
- * custom CSS rather than clear it by leaving it out.
+ * custom CSS rather than clear it by leaving it out. An app cannot change how
+ * committee photos are shown; the browser can (lane decision on PR #5487).
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -75,7 +76,7 @@ import { GET as getSiteStyle, PUT as updateSiteStyle } from "@/app/api/admin/sit
 import { NextRequest } from "next/server";
 
 import { buildActionRequest, expectActionContract, officerMemberSession } from "@/lib/__tests__/helpers/mcp-action-contract";
-import { findMcpAction } from "@/lib/mcp/catalogue";
+import { findMcpAction, splitMcpActionArguments } from "@/lib/mcp/catalogue";
 import { MCP_PRINCIPAL_HEADER } from "@/lib/mcp/principal";
 import { emptyWhakapapaSectionVisibility, type WhakapapaCurlData } from "@/lib/whakapapa-report";
 
@@ -195,12 +196,54 @@ describe("public content settings and privacy hosting actions", () => {
       pages: [{ id: "page-1", title: "Book", path: "/book-info" }],
     });
 
-    const saved = await expectActionContract({
-      actionId: "update_public_content_settings",
-      handler: updatePublicSettings,
-      args: publicSettingsRow,
-    });
-    expect(saved.connection).toEqual({ settings: publicSettingsRow });
+    // Built from the catalogue entry as the dispatcher builds it. Run as a
+    // connection only: the browser's save also sends committee photo display.
+    const appSettings: Partial<typeof publicSettingsRow> = { ...publicSettingsRow };
+    delete appSettings.committeePhotoDisplay;
+    const action = findMcpAction("update_public_content_settings")!;
+    const { request } = buildActionRequest(action, appSettings, true);
+    const response = await updatePublicSettings(request);
+    expect(response.status).toBe(200);
+    // The answer still says how photos are shown: the stored value, unchanged.
+    expect(await response.json()).toEqual({ settings: publicSettingsRow });
+    const upsert = h.prisma.publicContentSettings.upsert.mock.calls[0]![0] as {
+      update: Record<string, unknown>;
+      create: Record<string, unknown>;
+    };
+    expect(upsert.update).toMatchObject(appSettings);
+    expect(upsert.update).not.toHaveProperty("committeePhotoDisplay");
+    expect(upsert.create).not.toHaveProperty("committeePhotoDisplay");
+  });
+
+  it("an app cannot change how committee photos are shown; the browser can", async () => {
+    h.prisma.publicContentSettings.findUnique.mockResolvedValue({ ...publicSettingsRow, committeePhotoDisplay: "NONE" });
+    h.prisma.pageContent.findUnique.mockResolvedValue({ published: true });
+    h.prisma.publicContentSettings.upsert.mockResolvedValue(publicSettingsRow);
+    const action = findMcpAction("update_public_content_settings")!;
+
+    // The catalogue does not offer the field, so the dispatcher leaves it out
+    // of the body it sends, as it leaves out the logo for site style.
+    expect(splitMcpActionArguments(action, publicSettingsRow).body).not.toHaveProperty("committeePhotoDisplay");
+
+    // And the route refuses it from a connection, even when sent straight to it.
+    const put = (viaConnection: boolean) =>
+      updatePublicSettings(
+        new NextRequest("https://club.example.test/api/admin/public-content-settings", {
+          method: "PUT",
+          headers: {
+            "content-type": "application/json",
+            ...(viaConnection ? { [MCP_PRINCIPAL_HEADER]: "test-principal" } : {}),
+          },
+          body: JSON.stringify(publicSettingsRow),
+        }),
+      );
+    expect((await put(true)).status).toBe(400);
+    expect(h.prisma.publicContentSettings.upsert).not.toHaveBeenCalled();
+
+    const browser = await put(false);
+    expect(browser.status).toBe(200);
+    const upsert = h.prisma.publicContentSettings.upsert.mock.calls[0]![0] as { update: Record<string, unknown> };
+    expect(upsert.update).toMatchObject({ committeePhotoDisplay: "CIRCLE" });
   });
 
   it("get_privacy_hosting_disclosure and update_privacy_hosting_disclosure read and set the disclosure", async () => {

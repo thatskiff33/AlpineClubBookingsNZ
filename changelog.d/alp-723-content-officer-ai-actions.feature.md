@@ -12,7 +12,8 @@
   approval screen now names the public website's pages and settings too; an
   officer who has already approved an app does not need to approve it again.
 
-  Uploading a file (gallery photos, a library image or the site logo) and
-  finishing the site setup wizard stay on the website. The AI app connections
+  Uploading a file (gallery photos, a library image or the site logo),
+  finishing the site setup wizard, and choosing whether the public committee
+  roster shows members' photos stay on the website. The AI app connections
   guide (`docs/guides/mcp-server.md`) lists the new actions, and the `ai-apps`
   row of the recipient register says what the Content actions send.

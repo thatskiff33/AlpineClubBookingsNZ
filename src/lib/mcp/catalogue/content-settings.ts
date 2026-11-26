@@ -12,7 +12,7 @@ import {
 import {
   clubContactSchema,
   clubIdentitySchema,
-  publicContentSettingsSchema,
+  publicContentSettingsConnectionSchema,
 } from "@/lib/admin-content-api/settings";
 import { clubThemeConnectionUpdateSchema } from "@/lib/club-theme-update-schema";
 import {
@@ -95,10 +95,10 @@ export const CONTENT_SETTINGS_MCP_ACTIONS: readonly McpAction[] = [
     id: "update_public_content_settings",
     title: "Change which fee and policy sections the website shows",
     summary:
-      "Replaces every setting at once: read them with `get_public_content_settings` and send all back. With `bookNowTarget` `PAGE`, `bookNowPageId` must be a published page.",
+      "Replaces every setting at once except how committee photos are shown, which an officer changes on the website: read them with `get_public_content_settings` and send all back without `committeePhotoDisplay`. With `bookNowTarget` `PAGE`, `bookNowPageId` must be a published page.",
     method: "PUT",
     path: "/api/admin/public-content-settings",
-    body: publicContentSettingsSchema,
+    body: publicContentSettingsConnectionSchema,
     kind: "destructive",
     returns: PUBLIC_CONTENT_SETTINGS_SAVED_CONNECTION_SHAPE,
     core: false,

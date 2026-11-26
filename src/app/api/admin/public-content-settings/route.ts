@@ -6,8 +6,12 @@ import { buildStructuredAuditLogCreateArgs, getAuditRequestContext } from "@/lib
 import { DEFAULT_PUBLIC_CONTENT_SETTINGS } from "@/config/club-settings-defaults";
 import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/session-guards";
-import { publicContentSettingsSchema, type PublicContentSettingsValues } from "@/lib/admin-content-api/settings";
-import { connectionJson } from "@/lib/mcp-connection-request";
+import {
+  publicContentSettingsConnectionSchema,
+  publicContentSettingsSchema,
+  type PublicContentSettingsValues,
+} from "@/lib/admin-content-api/settings";
+import { arrivesAsMcpConnection, connectionJson } from "@/lib/mcp-connection-request";
 import {
   PUBLIC_CONTENT_SETTINGS_READ_CONNECTION_SHAPE,
   PUBLIC_CONTENT_SETTINGS_SAVED_CONNECTION_SHAPE,
@@ -90,7 +94,12 @@ export async function PUT(request: Request) {
   });
   if (!jsonBody.ok) return jsonBody.response;
   const body = jsonBody.body;
-  const parsed = publicContentSettingsSchema.safeParse(body);
+  // A browser sends every setting. An AI app connection (ALP-723) sends every
+  // setting but committee photo display, which stays as stored
+  // (`publicContentSettingsConnectionSchema`).
+  const parsed = arrivesAsMcpConnection(request)
+    ? publicContentSettingsConnectionSchema.safeParse(body)
+    : publicContentSettingsSchema.safeParse(body);
   if (!parsed.success) return NextResponse.json({ error: "Invalid settings" }, { status: 400 });
 
   // Book Now integrity: a PAGE target must name a published page. (Runtime also

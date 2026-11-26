@@ -873,8 +873,8 @@ out, so a long page is never cut off mid-list and saved back half-empty.
 | `update_club_identity` | Replaces those settings | destructive | `PUT /api/admin/club-identity` |
 | `get_contact_page_role` | Which committee role the Contact page lists, and the roles to choose from | read | `GET /api/admin/club-contact` |
 | `set_contact_page_role` | Chooses that role | destructive | `PUT /api/admin/club-contact` |
-| `get_public_content_settings` | Which fee and policy sections the public pages show, and where Book Now goes | read | `GET /api/admin/public-content-settings` |
-| `update_public_content_settings` | Replaces those settings | destructive | `PUT /api/admin/public-content-settings` |
+| `get_public_content_settings` | Which fee and policy sections the public pages show, where Book Now goes, and how committee photos are shown | read | `GET /api/admin/public-content-settings` |
+| `update_public_content_settings` | Replaces those settings, except how committee photos are shown, which stays as stored | destructive | `PUT /api/admin/public-content-settings` |
 | `get_privacy_hosting_disclosure` | The hosting company and data location the privacy page names | read | `GET /api/admin/privacy-hosting` |
 | `update_privacy_hosting_disclosure` | Sets them | destructive | `PUT /api/admin/privacy-hosting` |
 | `get_site_style` | Brand colours, fonts, custom CSS, which logo is in use and contrast warnings; never the inline logo's bytes | read | `GET /api/admin/site-style` |
@@ -902,7 +902,13 @@ is uploaded into it on the website.
 
 What stays on the website in this area: uploading photos into a folder, an
 image into the page image library, and the site logo (each is a file from the
-officer's browser); and finishing the site setup wizard.
+officer's browser); finishing the site setup wizard; and choosing whether, and how, the
+public committee roster shows members' photos. Turning photos on publishes
+committee members' photos on public pages, which widens what others see of
+members (the spirit of the D-18 `privacy-posture` rule), so an officer makes
+that change on the website. The app's save leaves it as stored, and the route
+refuses the field from a connection (lane decision on PR #5487, owner to
+confirm).
 
 ## What stays on the website, and why
 
