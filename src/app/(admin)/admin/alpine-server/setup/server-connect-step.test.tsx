@@ -190,6 +190,43 @@ describe("after the API key is saved", () => {
   });
 });
 
+describe("a lodge step that gets no answer (#5257)", () => {
+  /** The routes as `routes`, except the lodge-links call given never answers. */
+  function linkCallDrops(method: "POST" | "PUT") {
+    const answered = fetchMock.getMockImplementation();
+    fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
+      if (String(url).includes("/lodge-links") && init?.method === method) {
+        throw new TypeError("Failed to fetch");
+      }
+      return answered?.(url, init);
+    });
+  }
+
+  it("shows the page's own sentence for the download, never the browser's", async () => {
+    routes("registered");
+    linkCallDrops("POST");
+    await saveKey();
+    await waitFor(() =>
+      expect(document.getElementById("lodge-link-error")?.textContent).toBe("Could not download this club's lodges."),
+    );
+    expect(screen.queryByText("Failed to fetch")).toBeNull();
+  });
+
+  it("shows the dialog's own sentence for Save links, never the browser's", async () => {
+    routes("registered", {
+      kind: "choose",
+      lodges: [{ id: "l1", name: "Whakapapa", active: true, centralLodgeId: null, suggestedCentralLodgeId: "c_a" }],
+      owned: [{ id: "c_a", name: "Whakapapa Lodge", label: "Whakapapa Lodge" }],
+    });
+    linkCallDrops("PUT");
+    await saveKey();
+    const dialog = await screen.findByRole("dialog");
+    fireEvent.click(within(dialog).getByRole("button", { name: "Save links" }));
+    expect(await within(dialog).findByText("Could not save the links.")).toBeTruthy();
+    expect(screen.queryByText("Failed to fetch")).toBeNull();
+  });
+});
+
 describe("Other Clubs details", () => {
   it("links to every lodge's details", async () => {
     routes("registered");

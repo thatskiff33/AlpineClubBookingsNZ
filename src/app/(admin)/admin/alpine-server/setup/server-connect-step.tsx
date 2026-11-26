@@ -12,6 +12,7 @@ import {
 import { Label } from "@/components/ui/label";
 import { FocusedActionError } from "@/components/focused-action-error";
 import { useActionFailure } from "@/hooks/use-action-failure";
+import { apiRefusalFromResponse, refusalMessageOr } from "@/lib/api-error-message";
 import {
   Select,
   SelectContent,
@@ -68,6 +69,9 @@ export function registrationMessage(outcome: KeySaveRegistration | undefined): S
   }
 }
 
+const LODGE_DOWNLOAD_FAILED = "Could not download this club's lodges.";
+const LINKS_SAVE_FAILED = "Could not save the links.";
+
 type Choose = Extract<LodgeLinkStep, { kind: "choose" }>;
 // The "Not linked" item's value: the Select primitive refuses an empty-string
 // item value, and no central lodge id is this.
@@ -89,8 +93,8 @@ export function useLodgeLinkStep() {
     setStatus({ kind: "ok", text: "Downloading this club's lodges from the central server…" });
     try {
       const res = await fetch("/api/admin/alpine-server/lodge-links", { method: "POST" });
-      const data = (await res.json().catch(() => null)) as (LodgeLinkStepResult & { error?: string }) | null;
-      if (!res.ok || !data) throw new Error(data?.error ?? "Could not download this club's lodges.");
+      if (!res.ok) throw await apiRefusalFromResponse(res, LODGE_DOWNLOAD_FAILED);
+      const data = (await res.json()) as LodgeLinkStepResult;
       const step = data.step;
       switch (step.kind) {
         case "sharing-off":
@@ -115,7 +119,7 @@ export function useLodgeLinkStep() {
       }
     } catch (e) {
       setStatus(null);
-      failure.fail(e instanceof Error ? e.message : "Could not download this club's lodges.");
+      failure.fail(refusalMessageOr(e, LODGE_DOWNLOAD_FAILED));
     }
   }
 
@@ -178,11 +182,10 @@ export function LodgeLinkDialog({ step, onClose }: { step: Choose; onClose: (sav
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ links }),
       });
-      const data = (await res.json().catch(() => null)) as { error?: string } | null;
-      if (!res.ok) throw new Error(data?.error ?? "Could not save the links.");
+      if (!res.ok) throw await apiRefusalFromResponse(res, LINKS_SAVE_FAILED);
       onClose(true);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Could not save the links.");
+      setError(refusalMessageOr(e, LINKS_SAVE_FAILED));
     } finally {
       setSaving(false);
     }
