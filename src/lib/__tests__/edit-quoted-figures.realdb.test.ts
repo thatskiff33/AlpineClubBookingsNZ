@@ -1,6 +1,6 @@
 /**
- * Real-PostgreSQL proof for #4924 (`INV-MOD-062`): an edit settles only the
- * figures the member was shown.
+ * Real-PostgreSQL proof for #4924 and #5238 (`INV-MOD-062`): an edit settles
+ * only the figures the member was shown.
  *
  * THE SAVE IS THE REAL DOOR: `modifyBookingBatch`, under its real `lock(1)`,
  * lodge key and post-lock re-read. The stale state comes from the club day,
@@ -15,12 +15,17 @@
  *     guests and nights, payment rows, credit ledger, booking ledger, history,
  *     Xero outbox and email log are exactly as they were.
  *  3. Saving the fresh figures goes through and charges the fee it showed.
- *  4. A save with no figures (the blue-green compatibility window) saves as
- *     it always did.
+ *  4. A save with no figures is refused 409 at both HTTP doors, `/modify` and
+ *     `/modify-dates`, with nothing written; the services themselves still
+ *     price afresh for officer callers that have no preview to honour.
  *  5. An unchanged world means equal figures: the figures the REAL
  *     `modify-quote` route returns, sent back unchanged on the same club day,
  *     are accepted. Cases 1 to 4 use fixed figures, so only this one would
  *     catch the preview and the save drifting apart for an ordinary move.
+ *  6. The date-only writer (`modifyBookingDates`, the `/modify-dates` door)
+ *     binds the same way, through the real route as well as the service.
+ *
+ * Every refusal also shows that no Stripe client was ever asked for.
  *
  * Ordinary Vitest runs skip the whole file. It reuses the guarded, disposable
  * loopback PostgreSQL `concurrency-lock-races.realdb.test.ts` provisions
@@ -28,7 +33,7 @@
  * uniquely-namespaced `race-4924-` fixtures.
  */
 import { Role, type PrismaClient } from "@prisma/client";
-import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi, type MockInstance } from "vitest";
 import { releaseBookingJournalForTeardown } from "./support/booking-financial-history-teardown";
 
 import { CLUB_FORMAT_TEST } from "@/lib/__tests__/support/club-format-fixture";
@@ -77,6 +82,9 @@ let prisma: PrismaClient;
 let batchService: typeof import("@/lib/booking-batch-modification-service");
 let quotedFigures: typeof import("@/lib/edit-quoted-figures");
 let quoteRoute: typeof import("@/app/api/bookings/[id]/modify-quote/route");
+let modifyRoute: typeof import("@/app/api/bookings/[id]/modify/route");
+let modifyDatesRoute: typeof import("@/app/api/bookings/[id]/modify-dates/route");
+let stripeClient: MockInstance<typeof import("@/lib/stripe").getStripe>;
 // The save queues its Xero settlement fire-and-forget; drained before each
 // clean so a previous test's late write never lands in the next one's snapshot.
 const pendingXeroWork: Promise<unknown>[] = [];
@@ -220,6 +228,26 @@ async function previewThroughRoute(): Promise<EditQuotedFigures> {
   }
 }
 
+type SaveRoute = (request: import("next/server").NextRequest, context: { params: Promise<{ id: string }> }) => Promise<Response>;
+
+/** The officer's save through a real HTTP door, on the frozen club day. */
+async function putAsOfficer(handler: SaveRoute, door: "modify" | "modify-dates", body: object): Promise<Response> {
+  const { NextRequest } = await import("next/server");
+  raceSession.current = { user: { id: OFFICER_ID, role: "ADMIN", accessRoles: ["ADMIN"], canLogin: true } };
+  try {
+    return await handler(
+      new NextRequest(`http://localhost/api/bookings/${BOOKING_ID}/${door}`, {
+        method: "PUT",
+        body: JSON.stringify(body),
+        headers: { "content-type": "application/json" },
+      }),
+      { params: Promise.resolve({ id: BOOKING_ID }) },
+    );
+  } finally {
+    raceSession.current = null;
+  }
+}
+
 /** Every row a save could write, so a refusal can be shown to have written none. */
 async function everythingASaveTouches() {
   const localIds = [BOOKING_ID, PAYMENT_ID, ...(await modificationIds())];
@@ -262,6 +290,10 @@ async function theEdit() {
     batchService = await import("@/lib/booking-batch-modification-service");
     quotedFigures = await import("@/lib/edit-quoted-figures");
     quoteRoute = await import("@/app/api/bookings/[id]/modify-quote/route");
+    modifyRoute = await import("@/app/api/bookings/[id]/modify/route");
+    modifyDatesRoute = await import("@/app/api/bookings/[id]/modify-dates/route");
+    // Pass-through: every Stripe call starts by asking for the client.
+    stripeClient = vi.spyOn(await import("@/lib/stripe"), "getStripe");
     const editSettlement = await import("@/lib/xero-booking-edit-settlement");
     const queue = editSettlement.queueXeroBookingEditSettlement;
     // Pass-through: the harness imports every suite into one process.
@@ -330,6 +362,7 @@ async function theEdit() {
   beforeEach(async () => {
     await clean();
     await seed();
+    stripeClient.mockClear();
   });
 
   afterAll(async () => {
@@ -345,6 +378,7 @@ async function theEdit() {
       await prisma.member.deleteMany({ where: { id: { in: [OWNER_ID, OFFICER_ID] } } });
     } finally {
       restoreXeroQueue?.();
+      stripeClient?.mockRestore();
     }
   });
 
@@ -368,6 +402,7 @@ async function theEdit() {
     expect(refusal).toBeInstanceOf(quotedFigures.EditPriceChangedError);
     expect((refusal as InstanceType<typeof quotedFigures.EditPriceChangedError>).figures).toEqual(FRESH);
     expect(await everythingASaveTouches()).toEqual(before);
+    expect(stripeClient).not.toHaveBeenCalled();
   });
 
   it("saving the fresh figures goes through and charges the fee they showed", async () => {
@@ -409,9 +444,48 @@ async function theEdit() {
       ipAddress: "127.0.0.1",
     })).rejects.toMatchObject({ code: "EDIT_PRICE_CHANGED", figures: FRESH });
     expect(await everythingASaveTouches()).toEqual(before);
+    expect(stripeClient).not.toHaveBeenCalled();
   });
 
-  it("a save with no figures, from a panel older than #4924, saves as before", async () => {
+  it("PUT /modify-dates refuses an earlier fee band with the fresh figures and writes nothing (#5238)", async () => {
+    const before = await everythingASaveTouches();
+
+    const response = await putAsOfficer(modifyDatesRoute.PUT, "modify-dates", { ...MOVED, quotedFigures: PREVIEWED });
+
+    expect(response.status).toBe(409);
+    await expect(response.json()).resolves.toMatchObject({ code: "EDIT_PRICE_CHANGED", figures: FRESH });
+    expect(await everythingASaveTouches()).toEqual(before);
+    expect(stripeClient).not.toHaveBeenCalled();
+  });
+
+  it("PUT /modify-dates saves the real preview's figures on the same club day (#5238)", async () => {
+    const previewed = await previewThroughRoute();
+
+    const response = await putAsOfficer(modifyDatesRoute.PUT, "modify-dates", { ...MOVED, quotedFigures: previewed });
+
+    expect(response.status, await response.clone().text()).toBe(200);
+    expect((await theEdit()).changeFeeCents).toBe(FEE_CENTS);
+  });
+
+  it.each([
+    ["/modify", "modify"],
+    ["/modify-dates", "modify-dates"],
+  ] as const)("PUT %s refuses a save without figures and writes nothing (#5238)", async (_label, door) => {
+    const before = await everythingASaveTouches();
+
+    const response = await putAsOfficer(
+      door === "modify" ? modifyRoute.PUT : modifyDatesRoute.PUT,
+      door,
+      MOVED,
+    );
+
+    expect(response.status).toBe(409);
+    await expect(response.json()).resolves.toMatchObject({ code: "EDIT_FIGURES_REQUIRED" });
+    expect(await everythingASaveTouches()).toEqual(before);
+    expect(stripeClient).not.toHaveBeenCalled();
+  });
+
+  it("the service, called with no preview as an officer's approval does, still prices afresh", async () => {
     await save(SAVE_DAY);
 
     expect((await theEdit()).changeFeeCents).toBe(FEE_CENTS);
