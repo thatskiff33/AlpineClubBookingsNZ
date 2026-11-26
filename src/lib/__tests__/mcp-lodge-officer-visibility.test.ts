@@ -2,8 +2,9 @@
  * Who is offered the Lodge Operations officer actions (ALP-722): only someone
  * holding that admin area, at the level the route itself demands. Anyone else
  * never meets them in `tools/list`, `find_actions` or `describe_action`, and
- * cannot run one by name. Also pins their kinds: every change is
- * `destructive` (owner decision, #5305).
+ * cannot run one by name; nor does an officer whose connection lacks their
+ * approval for officer actions (`INV-MCP-009`). Also pins their kinds: every
+ * change is `destructive` (owner decision, #5305).
  */
 import type { Session } from "next-auth";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -17,8 +18,9 @@ vi.mock("@/lib/mcp/dispatch", () => ({
 }));
 
 import { getAdminRouteRequirement, type AdminPermissionMatrix } from "@/lib/admin-permissions";
-import { MCP_ACTIONS, mcpActionAdminRequirement } from "@/lib/mcp/catalogue";
+import { MCP_ACTIONS } from "@/lib/mcp/catalogue";
 import { LODGE_MCP_ACTIONS } from "@/lib/mcp/catalogue/lodge";
+import { MCP_OFFICER_RECONNECT_MESSAGE, mcpActionAdminRequirement } from "@/lib/mcp/officer-actions";
 import { callMcpTool, listMcpTools, type McpServerContext } from "@/lib/mcp/server";
 
 const NO_AREAS: AdminPermissionMatrix = {
@@ -26,12 +28,12 @@ const NO_AREAS: AdminPermissionMatrix = {
   lodge: "none", content: "none", support: "none",
 };
 
-/** An officer's connection, approved on the officer screen. */
-function context(matrix: Partial<AdminPermissionMatrix>): McpServerContext {
+/** An officer's connection, approved on the officer screen unless `officerConsent` says otherwise. */
+function context(matrix: Partial<AdminPermissionMatrix>, officerConsent = true): McpServerContext {
   return {
     caller: {
       grantId: "grant-1", memberId: "officer-1", clientName: "Example Assistant",
-      scope: "READ_WRITE", officerConsent: true, clientIp: "203.0.113.9", userAgent: null,
+      scope: "READ_WRITE", officerConsent, clientIp: "203.0.113.9", userAgent: null,
     },
     session: {
       user: {
@@ -106,6 +108,43 @@ describe("Lodge Operations officer actions: who is offered them", () => {
 
     await callMcpTool(ctx, "run_action", { id: "create_calendar_event", arguments: {} });
     expect(run).toHaveBeenCalledWith(expect.objectContaining({ id: "create_calendar_event" }), {}, ctx.caller);
+  });
+});
+
+// A connection approved before the officer screen existed, or by someone who
+// was not then an officer, runs no Lodge Operations action until its officer
+// approves again: the one gate in `officer-actions.ts` (`INV-MCP-009`). The
+// calendar edits, which sit outside `/api/admin`, are held the same way.
+describe("Lodge Operations officer actions: an officer approves again", () => {
+  it("shows a Lodge Operations editor's unapproved connection none of them, and says how to get them", async () => {
+    const ctx = context({ lodge: "edit" }, false);
+    expect(listMcpTools(ctx).filter((tool) => ids.has(tool.name))).toEqual([]);
+    const found = JSON.parse((await callMcpTool(ctx, "find_actions", {})).text) as {
+      actions: Array<{ id: string }>; officerActions?: string;
+    };
+    expect(found.actions.filter((action) => ids.has(action.id))).toEqual([]);
+    expect(found.officerActions).toBe(MCP_OFFICER_RECONNECT_MESSAGE);
+  });
+
+  it("refuses to describe or run each of them, by name or through run_action, and runs nothing", async () => {
+    const ctx = context({ lodge: "edit" }, false);
+    for (const action of LODGE_MCP_ACTIONS) {
+      for (const outcome of [
+        await callMcpTool(ctx, "describe_action", { id: action.id }),
+        await callMcpTool(ctx, "run_action", { id: action.id, arguments: {} }),
+        await callMcpTool(ctx, action.id, {}),
+      ]) {
+        expect(outcome, action.id).toEqual({ isError: true, text: MCP_OFFICER_RECONNECT_MESSAGE });
+      }
+    }
+    expect(run).not.toHaveBeenCalled();
+  });
+
+  it("keeps the officer's member calendar read working meanwhile", async () => {
+    const ctx = context({ lodge: "edit" }, false);
+    expect(await foundIds(ctx)).toContain("list_club_events");
+    await callMcpTool(ctx, "run_action", { id: "list_club_events", arguments: {} });
+    expect(run).toHaveBeenCalledWith(expect.objectContaining({ id: "list_club_events" }), {}, ctx.caller);
   });
 });
 

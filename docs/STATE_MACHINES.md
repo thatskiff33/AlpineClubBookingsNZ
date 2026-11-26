@@ -4553,6 +4553,89 @@ the notice silently, and a lapse of that offer counts as never told. A replay
 still pending when the offer ends is retired, not sent, unless the retry job
 had already claimed it (Waitlist Lifecycle).
 
+A card payment's confirmation (#5433 PR 3, owner decisions D1, D7 and D8) is
+the kind `booking-confirmed`. The three callers that send it (the Stripe
+webhook, the confirm-payment route and the confirm-pending job's saved-card
+charge) ask the settle to record it (`owesPaidConfirmation`);
+`settleAndPostBookingReceipts` writes the marker last in its transaction when
+the settle body returns a fresh `paid`, so a replayed settle that finds the
+booking already paid writes none. A booking id that cannot key a marker is an
+error log, never a throw: the payment settles and no confirmation is recorded.
+The other card doors (the charge-saved-method route, an officer's
+confirm-pending-guests, the create-payment-intent and payment-link recoveries)
+send no confirmation, or send one only on the officer's choice, and record none,
+as before. The caller queues the booking's Xero invoice first and then delivers
+the marker after its commit (the invoice queue is one outbox row, then an inline
+outbox kick when Xero is connected; no job re-queues a missed one, so it goes
+first). The wait is 30 minutes (a day after an officers' attempt that reached
+nobody), the event key `<bookingId>:<paidAtMs>`. The email is rendered from the
+booking as it stands then (`paid-booking-confirmation-email.ts`), stating any
+upward change since the payment that is not yet collected. It is cleared
+without sending when the booking is gone, deleted, or no longer `PAID` or
+`COMPLETED`: cancelled, with or without a refund, or its payment reversed. A
+partial refund that leaves it paid does not stop it. The sweep checks this,
+and every send reads the booking's status again, by primary key, just before
+it goes. The cut-off is the end of the check-in day in the club's time zone, or
+seven days after the payment if that comes first (D7). It is the sweep's only:
+the attempt right after the payment always sends, even for a payment recorded
+after the check-in day, as before #5433. Past it officers are alerted once with
+`admin-booking-confirmation-unsent`, unless the email did reach the owner after
+all. Every send is followed by a read of the email's row by the told rule the
+waitlist offer shares (`email/keyed-email-state.ts`): told (sent, or withheld
+by "No emails" or a non-production copy), cleared; held back by the
+installation's environment gate, cleared, because the gate already writes that
+row to the retry ceiling, where it waits in the email-failure review queue, as
+before #5433; otherwise (a provider failure, a bounce or suppressed address,
+a "No emails" switch that could not be read, or no address at all, a walk-in's
+placeholder or an organisation with none, D8) the officers get the alert, once
+per payment, through the notice's own durable claim. For an unreadable "No
+emails" switch the email core also sends its own `admin-email-failure` alert,
+to support-area editors rather than the booking-review officers, so officers
+can get both. That is accepted: the core's alert is not durable (it is
+throttled in memory, a failure to send it is only logged, and it is never
+retried), and the issue already accepts that officers may very rarely get an
+alert twice rather than a paid booking go unflagged. The confirmation's body is never kept, so the retry cron never
+replays one, and a booking cancelled after a failed send is not sent it later;
+it needs no "still wanted" check.
+
+The seven-day limit (D7) applies when every attempt has failed to send for a
+week after the payment while the check-in day is still further away: the sweep
+then stops, clears the marker and alerts officers once, as at the cut-off.
+
+The confirm-pending job's saved-card confirmation now goes through the same
+renderer as the webhook's: a split parent with a provisional child gets the
+paragraph about the separately charged guests, and an upward change still to
+pay shows as "Still Owing". The job no longer sends a second confirmation when
+the webhook settled the same charge first: before #5433 it sent on "already
+paid" too.
+
+**Stated limits for the confirmation.**
+
+- It can arrive hours late (D1): a recovered one goes on a sweep at least 30
+  minutes after the payment, and the email retry job sweeps every 30 minutes.
+- A cancel that commits between the status read just before a send and the
+  provider call is still sent the confirmation.
+- If the email's row was inserted but the app saw an error, the send is not
+  made and the marker stays; the sweep then finds the row `QUEUED` and counts
+  the owner as told, sending nothing. Before #5433 that confirmation was sent
+  anyway, its row left queued.
+- In the webhook and the confirm-payment route the member's email now waits
+  for the Xero invoice to be queued, which runs one pending outbox job inline
+  when Xero is connected (the oldest, not necessarily this booking's, and it
+  can make several Xero calls). The handler takes no longer in all than before,
+  but a stop during that call now loses the immediate send; the marker
+  recovers it on a sweep about half an hour later.
+- A booking edited downward after the payment is confirmed at its new worth,
+  as an officer's fresh copy is.
+- During a blue-green switch the previous release settles with no marker and
+  sends inline as before, and its confirm-pending job still sends its own
+  unkeyed copy on "already paid", so an owner can get two confirmations if that
+  job runs after this release's webhook sent the keyed one. A marker this
+  release wrote is swept only by a release that knows the kind, so after a
+  rollback it waits for this release to return: a rollback that outlasts the
+  seven days or the check-in day ends in the officers' alert when this release
+  returns, and past fourteen days the marker is cleared with only an error log.
+
 ```text
 change commits + markers -> claim -> send settled -> marker cleared
 change commits + markers -> claim -> send throws -> marker kept -> later sweep (a wait on) claims -> send -> cleared

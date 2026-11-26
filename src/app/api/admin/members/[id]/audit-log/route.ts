@@ -1,8 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
-import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/session-guards";
-import { adminListPageField } from "@/lib/admin-list-page";
+import { memberAuditLogQuerySchema } from "@/lib/member-audit-log-query";
+import { connectionJson } from "@/lib/mcp-connection-request";
+import { MEMBER_AUDIT_TIMELINE_CONNECTION_SHAPE } from "@/lib/connection-shapes/membership-members";
 import {
   buildAuditCategoryWhere,
   buildMemberAuditLogWhere,
@@ -15,12 +16,6 @@ import { clubFormatValues } from "@/lib/club-format-server";
 
 export const dynamic = "force-dynamic";
 
-const querySchema = z.object({
-  category: z.string().optional().default("all"),
-  page: adminListPageField,
-  pageSize: z.coerce.number().int().min(1).max(50).optional().default(10),
-});
-
 export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
@@ -29,7 +24,7 @@ export async function GET(
   if (!guard.ok) return guard.response;
   const { id } = await params;
   const { searchParams } = new URL(request.url);
-  const parsed = querySchema.safeParse({
+  const parsed = memberAuditLogQuerySchema.safeParse({
     category: searchParams.get("category") ?? undefined,
     page: searchParams.get("page") ?? undefined,
     pageSize: searchParams.get("pageSize") ?? undefined,
@@ -68,7 +63,9 @@ export async function GET(
       audience: "admin",
     });
 
-    return NextResponse.json(response);
+    // ALP-720: an AI app connection is sent when, what kind, the outcome and
+    // what happened for each entry; no request details, devices or metadata.
+    return connectionJson(request, response, MEMBER_AUDIT_TIMELINE_CONNECTION_SHAPE);
   } catch (err) {
     logger.error({ err, memberId: id }, "Failed to fetch member audit log");
     return NextResponse.json(

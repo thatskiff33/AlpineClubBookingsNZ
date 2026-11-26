@@ -27,6 +27,11 @@ import { UNASSIGNED_MEMBERSHIP_TYPE_VALUE } from "@/lib/membership-type-filter";
 import { subscriptionCategoryFilterWhere } from "@/lib/subscription-category-filter";
 import { serializeSubscriptionCategorySummary, subscriptionCategorySummarySelect } from "@/lib/subscription-categories";
 import {
+  ADMIN_MEMBER_CONTACTABILITY_FILTERS,
+  ADMIN_MEMBER_LIFECYCLE_FILTERS,
+  type AdminMembersQuery,
+} from "@/lib/admin-membership-api/members";
+import {
   effectiveSubscriptionBehavior,
   isSubscriptionNotRequiredForMembershipType,
   membershipTypeAgeExemption,
@@ -135,18 +140,6 @@ function jsonResult(body: unknown, init?: ResponseInit): JsonRouteResult {
   return { body, init };
 }
 
-const optionalSearchParam = z.string().optional();
-
-function parseClampedInt(
-  value: string | undefined,
-  fallback: number,
-  min: number,
-  max: number,
-) {
-  const parsed = parseInt(value || String(fallback), 10) || fallback;
-  return Math.min(max, Math.max(min, parsed));
-}
-
 export const createMemberSchema = z.object({
   email: z.string().email("Invalid email address"),
   title: titleEnum.optional().nullable(),
@@ -202,76 +195,12 @@ export const createMemberSchema = z.object({
   postalSameAsPhysical: z.boolean().optional(),
 });
 
-const SORT_BY_WHITELIST = [
-  "name",
-  "email",
-  "access",
-  "ageTier",
-  "active",
-  "createdAt",
-] as const;
 /**
  * How many excluded matches the dependant-link search explains when it finds no
  * eligible candidate (#2254). Enough to name the person the admin was looking
  * for, small enough that the extra query stays trivial.
  */
 const DEPENDENT_LINK_INELIGIBLE_EXPLANATION_LIMIT = 5;
-
-const MEMBER_LIFECYCLE_STATUS_FILTERS = [
-  "active",
-  "inactive",
-  "cancelled",
-  "archived",
-  "all",
-] as const;
-
-export const adminMembersQuerySchema = z
-  .object({
-    q: optionalSearchParam,
-    search: optionalSearchParam,
-    page: optionalSearchParam,
-    pageSize: optionalSearchParam,
-    sortBy: optionalSearchParam,
-    sortDir: optionalSearchParam,
-    inheritEmailEligible: optionalSearchParam,
-    excludeId: optionalSearchParam,
-    dependentLinkEligibleFor: optionalSearchParam,
-    parentLinkEligibleFor: optionalSearchParam,
-    partnerLinkEligibleFor: optionalSearchParam,
-    role: optionalSearchParam,
-    financeAccess: optionalSearchParam,
-    lifecycleStatus: optionalSearchParam,
-    includeArchived: optionalSearchParam,
-    active: optionalSearchParam,
-    ageTier: optionalSearchParam,
-    ageTierIn: optionalSearchParam,
-    membershipType: optionalSearchParam,
-    subscriptionCategory: optionalSearchParam,
-    xeroLinked: optionalSearchParam,
-    contactability: optionalSearchParam,
-    inviteStatus: optionalSearchParam,
-    subscription: optionalSearchParam,
-    familyGroup: optionalSearchParam,
-    xeroContactGroup: optionalSearchParam,
-  })
-  .transform((value) => {
-    const q = value.q || value.search || undefined;
-    const sortByRaw = value.sortBy || "name";
-    return {
-      ...value,
-      trimmedQuery: q?.trim(),
-      page: parseClampedInt(value.page, 1, 1, Number.MAX_SAFE_INTEGER),
-      pageSize: parseClampedInt(value.pageSize, 25, 1, 100),
-      sortBy: (SORT_BY_WHITELIST as readonly string[]).includes(sortByRaw)
-        ? sortByRaw
-        : "name",
-      sortDir: value.sortDir === "desc" ? "desc" : "asc",
-      inheritEmailEligible: value.inheritEmailEligible === "true",
-      includeArchived: value.includeArchived === "true",
-    };
-  });
-
-export type AdminMembersQuery = z.infer<typeof adminMembersQuerySchema>;
 
 export type CreateMemberInput = z.infer<typeof createMemberSchema>;
 
@@ -559,7 +488,7 @@ export async function listAdminMembers(
 
   const lifecycleStatus =
     lifecycleStatusFilter &&
-    (MEMBER_LIFECYCLE_STATUS_FILTERS as readonly string[]).includes(
+    (ADMIN_MEMBER_LIFECYCLE_FILTERS as readonly string[]).includes(
       lifecycleStatusFilter,
     )
       ? lifecycleStatusFilter
@@ -649,12 +578,9 @@ export async function listAdminMembers(
   // convenience. `unreachableMemberWhere` is the single definition of who
   // qualifies, shared with the stuck-states dashboard so the count on one screen
   // and the list on the other can never disagree.
-  if (contactabilityFilter === "unreachable") {
-    andConditions.push(unreachableMemberWhere());
-  } else if (contactabilityFilter === "inheritance-unresolved") {
-    andConditions.push(unreachableMemberWhere("inheritance-unresolved"));
-  } else if (contactabilityFilter === "placeholder-address") {
-    andConditions.push(unreachableMemberWhere("placeholder-address"));
+  const contactability = ADMIN_MEMBER_CONTACTABILITY_FILTERS.find((value) => value === contactabilityFilter);
+  if (contactability) {
+    andConditions.push(unreachableMemberWhere(contactability === "unreachable" ? undefined : contactability));
   }
 
   // Filter: login access stage. This mirrors the single Access-column stage the

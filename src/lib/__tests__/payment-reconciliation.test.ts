@@ -14,6 +14,8 @@ const CLUB_ZONE = "Pacific/Auckland";
 
 const mocks = vi.hoisted(() => ({
   releaseBookingPromoRedemptions: vi.fn(async () => 0),
+  // #5433 PR 3: the paid confirmation's owed marker, written in the settle.
+  owedNoticeCreateMany: vi.fn(async ({ data }: { data: unknown[] }) => ({ count: data.length })),
   transaction: vi.fn(),
   // #3864: nothing to give back unless a case says so.
   giveBackAppliedCredit: vi.fn<(...args: unknown[]) => Promise<{ appliedCreditCents: number; givenBackCents: number; payment: null }>>(
@@ -271,6 +273,7 @@ const tx = {
     upsert: (...args: unknown[]) => mocks.paymentUpsert(...args),
     update: (...args: unknown[]) => mocks.paymentUpdate(...args),
   },
+  owedNotice: { createMany: (args: { data: unknown[] }) => mocks.owedNoticeCreateMany(args) },
 };
 
 function makeStaggeredBooking() {
@@ -641,6 +644,76 @@ describe("markBookingPaymentSucceeded", () => {
         data: expect.objectContaining({ status: BookingStatus.PAID, savedCardClaimAt: null }),
       })
     );
+  });
+
+  /*
+    #5433 PR 3 (owner decision D1): a caller that sends the paid confirmation asks
+    the settle to record it as owed (`owesPaidConfirmation`). The marker is one
+    insert in the settle's own transaction, written only when the body returns a
+    fresh "paid" (its PAID claim), last, after the receipts, and handed back for
+    the delivery after the commit. A settle that finds the booking already paid,
+    or that a caller sending no confirmation ran, writes none.
+  */
+  describe("the paid confirmation's owed marker (#5433)", () => {
+    const settle = (owesPaidConfirmation?: boolean) =>
+      markBookingPaymentSucceeded({
+        format: CLUB_FORMAT_TEST,
+        bookingId: "booking-1",
+        paymentIntentId: "pi_owed",
+        amountCents: 10000,
+        paymentMethodId: "pm_1",
+        ...(owesPaidConfirmation === undefined ? {} : { owesPaidConfirmation }),
+      });
+
+    beforeEach(() => mocks.bookingFindMany.mockResolvedValue([]));
+
+    it("is written in the settle's transaction at a fresh PAID claim, last, and handed back", async () => {
+      const result = await settle(true);
+
+      expect(result.outcome).toBe("paid");
+      expect(mocks.owedNoticeCreateMany).toHaveBeenCalledTimes(1);
+      const [{ data, skipDuplicates }] = mocks.owedNoticeCreateMany.mock.calls[0] as unknown as [{ data: Array<Record<string, unknown>>; skipDuplicates: boolean }];
+      expect(skipDuplicates).toBe(true);
+      expect(data).toHaveLength(1);
+      const paidAt = data[0]!.eventAt as Date;
+      expect(data[0]).toMatchObject({ id: `booking-confirmed:booking-1:${paidAt.getTime()}`, kind: "booking-confirmed", subjectId: "booking-1", stampedAt: paidAt });
+      expect(result.paidConfirmation).toEqual({ id: data[0]!.id, kind: "booking-confirmed", subjectId: "booking-1", eventAt: paidAt, variant: null, payload: null });
+      // After the PAID claim and every existing write of the settle, the receipts included.
+      const claim = mocks.bookingUpdateMany.mock.calls.findIndex(([call]) => (call as { data?: { status?: string } })?.data?.status === BookingStatus.PAID);
+      expect(mocks.owedNoticeCreateMany.mock.invocationCallOrder[0]).toBeGreaterThan(mocks.bookingUpdateMany.mock.invocationCallOrder[claim]!);
+      expect(mocks.owedNoticeCreateMany.mock.invocationCallOrder[0]).toBeGreaterThan(journalDoors.postBookingReceipts.mock.invocationCallOrder[0]!);
+    });
+
+    it("is not written for a caller that sends no confirmation, as before #5433", async () => {
+      const result = await settle();
+
+      expect(result.outcome).toBe("paid");
+      expect(mocks.owedNoticeCreateMany).not.toHaveBeenCalled();
+      expect(result).not.toHaveProperty("paidConfirmation");
+    });
+
+    it("is not written by a replayed settle that finds the booking already paid (no PAID claim)", async () => {
+      mocks.bookingFindUnique.mockResolvedValue({ ...makeStaggeredBooking(), status: BookingStatus.PAID });
+      // Refund history on the arriving intent: the paid booking stays as it is.
+      mocks.findPaymentTransactionByIntentId.mockResolvedValue({ id: "txn-1", status: "PARTIALLY_REFUNDED" });
+
+      const result = await settle(true);
+
+      expect(result.outcome).toBe("already_paid");
+      expect(mocks.owedNoticeCreateMany).not.toHaveBeenCalled();
+      expect(result).not.toHaveProperty("paidConfirmation");
+    });
+
+    it("rolls back with the settle: a write after it in the transaction that fails takes the settle down with it", async () => {
+      journalDoors.postBookingReceipts.mockRejectedValueOnce(new Error("journal write failed"));
+
+      await expect(settle(true)).rejects.toThrow("journal write failed");
+
+      // The marker is the last write, so a failure anywhere before it writes none
+      // here; one after it cannot exist. On PostgreSQL the transaction is all or
+      // nothing either way (paid-booking-confirmation.realdb.test.ts).
+      expect(mocks.owedNoticeCreateMany).not.toHaveBeenCalled();
+    });
   });
 
   it("pays a staggered booking when only one bed is available on each active guest night", async () => {

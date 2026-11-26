@@ -61,6 +61,8 @@ export const POST_COMMIT_SEND_SCOPE: readonly RegExp[] = [
   /^src\/lib\/group-late-joiner\.ts$/,
   /^src\/lib\/waitlist\.ts$/,
   /^src\/app\/api\/webhooks\/.+\.ts$/,
+  // #5433 PR 3 (ST): the card confirmation's other half, beside the webhook.
+  /^src\/app\/api\/bookings\/\[id\]\/confirm-payment\/route\.ts$/,
 ];
 
 /** Calls that commit a transaction of their own. */

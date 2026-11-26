@@ -187,13 +187,14 @@ only the rules.
 - **An officer action runs only on a route its admin area gates, and is
   offered only to someone holding what the route's guard demands.**
   `mcpActionAdminRequirement` in
-  [`catalogue.ts`](../../src/lib/mcp/catalogue.ts) reads the requirement from
+  [`officer-actions.ts`](../../src/lib/mcp/officer-actions.ts), the one home
+  for officer reach, reads the requirement from
   the admin route map, or from the entry's `requires` where the handler's
   `requireAdmin` names its own permission; the census holds `requires` to
   that guard. Outside `/api/admin` (ALP-722: the calendar's edits), the
   census pins the route and the predicate its handler calls, and `requires`
-  is the admin leg that predicate always admits. The tool list, `find_actions`, `describe_action` and
-  `run_action` all ask it.
+  is the admin leg that predicate always admits. The tool list,
+  `find_actions`, `describe_action` and `run_action` all ask it.
 - **The route runs with the officer's real permissions** and its own guard
   decides, as for the browser, and answers through the projection. A
   step-up route stays website-only (`fresh-proof`, `INV-MCP-006`).
@@ -206,8 +207,15 @@ only the rules.
   before the member became an officer, carry no date. The screen's wording is
   general, so one date covers every admin area, later ones included; no
   wording version is stored.
-- **Every club-wide configuration change is `destructive`**, so the app asks
-  the officer first.
+- **Every club-wide or Membership configuration change is `destructive`**,
+  so the app asks the officer first (#5305 comments 7093303964, 7111359405).
+  A setting a route guards with a second permission keeps it: the
+  subscription-liability rule pair still needs Finance edit too, refused by
+  the settings route itself.
+- **An officer action that emails or notifies anyone, or overwrites another
+  person's record, is `destructive`** (#5305 item 2). Where the website lets
+  the officer choose whether a member is emailed, the app passes the same
+  choice.
 
 ## INV-MCP-007
 

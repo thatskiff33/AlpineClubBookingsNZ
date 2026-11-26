@@ -1,21 +1,15 @@
 import { NextRequest, NextResponse } from "next/server";
-import { z } from "zod";
+import {
+  replaceNominatorParamsSchema,
+  replaceNominatorSchema,
+} from "@/lib/admin-membership-api/requests";
 import { parseJsonRequestBody } from "@/lib/api-json";
+import { NOMINATOR_REPLACED_CONNECTION_SHAPE } from "@/lib/connection-shapes/membership-requests";
+import { connectionJson } from "@/lib/mcp-connection-request";
 import { MembershipApplicationError } from "@/lib/member-application-fields";
-import { type NominatorSlot, replaceMemberApplicationNominator } from "@/lib/nomination";
+import { replaceMemberApplicationNominator } from "@/lib/nomination";
 import { requireAdmin } from "@/lib/session-guards";
 import logger from "@/lib/logger";
-
-const replaceNominatorSchema = z.object({
-  memberId: z.string().min(1),
-});
-
-function parseSlot(slot: string): NominatorSlot | null {
-  if (slot === "nominator1" || slot === "nominator2") {
-    return slot;
-  }
-  return null;
-}
 
 export async function POST(
   req: NextRequest,
@@ -25,12 +19,12 @@ export async function POST(
     permission: { area: "membership", level: "edit" },
   });
   if (!guard.ok) return guard.response;
-  const { id, slot: rawSlot } = await params;
-  const slot = parseSlot(rawSlot);
+  const parsedParams = replaceNominatorParamsSchema.safeParse(await params);
 
-  if (!slot) {
+  if (!parsedParams.success) {
     return NextResponse.json({ error: "Invalid nominator slot" }, { status: 400 });
   }
+  const { id, slot } = parsedParams.data;
 
   const jsonBody = await parseJsonRequestBody(req, {
     error: "Invalid JSON payload",
@@ -57,11 +51,15 @@ export async function POST(
       adminMemberId: guard.session.user.id,
     });
 
-    return NextResponse.json({
-      success: true,
-      replacementNominatorId: result.replacementNominatorId,
-      warnings: result.emailWarnings,
-    });
+    return connectionJson(
+      req,
+      {
+        success: true,
+        replacementNominatorId: result.replacementNominatorId,
+        warnings: result.emailWarnings,
+      },
+      NOMINATOR_REPLACED_CONNECTION_SHAPE
+    );
   } catch (err) {
     if (err instanceof MembershipApplicationError) {
       return NextResponse.json({ error: err.message }, { status: err.status });

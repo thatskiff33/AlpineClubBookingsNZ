@@ -144,7 +144,7 @@ describe("Admin subscription categories API", () => {
       user: { id: "readonly-1", role: "ADMIN", accessRoles: [{ role: "ADMIN_READONLY" }] },
     });
     mocks.subscriptionCategoryFindMany.mockResolvedValue([]);
-    expect((await getSubscriptionCategories()).status).toBe(200);
+    expect((await getSubscriptionCategories(new NextRequest("http://localhost/api/admin/subscription-categories"))).status).toBe(200);
 
     const post = await createSubscriptionCategory(new NextRequest("http://localhost/api/admin/subscription-categories", {
       method: "POST", body: JSON.stringify({ name: "Couple" }),
@@ -168,14 +168,14 @@ describe("Admin subscription categories API", () => {
   it("prevents non-admin users from reading subscription categories", async () => {
     mocks.auth.mockResolvedValue(memberSession);
 
-    const response = await getSubscriptionCategories();
+    const response = await getSubscriptionCategories(new NextRequest("http://localhost/api/admin/subscription-categories"));
 
     expect(response.status).toBe(403);
     expect(mocks.subscriptionCategoryFindMany).not.toHaveBeenCalled();
   });
 
   it("returns subscription categories with assignment/fee counts for admins", async () => {
-    const response = await getSubscriptionCategories();
+    const response = await getSubscriptionCategories(new NextRequest("http://localhost/api/admin/subscription-categories"));
     const body = await response.json();
 
     expect(response.status).toBe(200);

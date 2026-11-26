@@ -21,14 +21,10 @@ import {
   getAdminRouteRequirement,
   type AdminPermissionMatrix,
 } from "@/lib/admin-permissions";
-import { MCP_ACTIONS, mcpActionAdminRequirement } from "@/lib/mcp/catalogue";
+import { MCP_ACTIONS } from "@/lib/mcp/catalogue";
 import { classifyMcpRoute } from "@/lib/mcp/exclusions";
-import {
-  callMcpTool,
-  listMcpTools,
-  MCP_OFFICER_RECONNECT_MESSAGE,
-  type McpServerContext,
-} from "@/lib/mcp/server";
+import { MCP_OFFICER_RECONNECT_MESSAGE, mcpActionAdminRequirement } from "@/lib/mcp/officer-actions";
+import { callMcpTool, listMcpTools, type McpServerContext } from "@/lib/mcp/server";
 
 // Every action on a Bookings & Beds route, and those of them the area alone
 // unlocks: a route may name a stricter permission of its own (`requires`).

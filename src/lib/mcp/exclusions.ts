@@ -43,6 +43,17 @@ export const MCP_PERMANENT_EXCLUSION_REASONS = {
     "Decides who may browse members' names, which an officer chooses on the website, never an AI app.",
   "unread-value":
     "Changes a value an AI app is never shown, such as a guest's allergy needs, so the app would be writing blind.",
+  // Officer reasons (ALP-720 onwards).
+  "changes-charges":
+    "Changes what a member owes or is invoiced, or previews such a change for an officer to confirm, which an officer reviews and confirms on the website.",
+  "ends-membership":
+    "Decides a request to archive, delete or cancel someone's membership, which cannot be undone from an app and is decided on the website.",
+  "sign-in-access":
+    "Sends someone a sign-in link or changes who signs in with an email address, which stays on the website.",
+  "mass-message": "Emails many members at once, which an officer composes, checks and sends on the website.",
+  "privacy-request":
+    "Part of answering a person's request for their own data, which a Full Admin does on the website after proving who they are again.",
+  "switched-off": "Does nothing but answer that it is switched off.",
 } as const;
 
 export type McpPermanentExclusionReason = keyof typeof MCP_PERMANENT_EXCLUSION_REASONS;
@@ -53,9 +64,10 @@ export type McpPermanentExclusionReason = keyof typeof MCP_PERMANENT_EXCLUSION_R
  * areas is unclassified until someone decides about it.
  *
  * - `bookings` (Bookings & Beds): ALP-719.
+ * - `membership` (Membership): ALP-720.
  * - `lodge` (Lodge Operations): ALP-722.
  */
-const MCP_DECIDED_ADMIN_AREAS = ["bookings", "lodge"] as const satisfies readonly AdminPermissionArea[];
+const MCP_DECIDED_ADMIN_AREAS = ["bookings", "membership", "lodge"] as const satisfies readonly AdminPermissionArea[];
 
 type McpDecidedAdminArea = (typeof MCP_DECIDED_ADMIN_AREAS)[number];
 
@@ -66,11 +78,9 @@ type McpNotYetAdminArea = Exclude<AdminPermissionArea, McpDecidedAdminArea>;
  * catalogue, by admin area not yet decided. Every member route is decided:
  * ALP-718 split them into five follow-ons, the last of which (ALP-797, groups
  * and whole-lodge) removed the member rule, so a new member route fails the
- * census until someone decides about it. ALP-719 decided Bookings & Beds and
- * ALP-722 Lodge Operations.
+ * census until someone decides about it.
  */
 export const MCP_NOT_YET_TASKS = {
-  membership: "ALP-720",
   finance: "ALP-721",
   content: "ALP-723",
   support: "ALP-724",
@@ -142,7 +152,7 @@ const PERMANENT_PREFIXES: ReadonlyArray<{
  * covered by its neighbour's reason and fails the census until decided.
  */
 const PERMANENT_ROUTES: ReadonlyArray<{
-  readonly reason: Exclude<McpPermanentExclusionReason, "fresh-proof">;
+  readonly reason: McpPermanentExclusionReason;
   readonly routes: readonly string[];
 }> = [
   // Booking edits that can take, move or refund money (ALP-794): the AI app
@@ -199,9 +209,120 @@ const PERMANENT_ROUTES: ReadonlyArray<{
       "POST /api/admin/organisations/[id]/contact/retry",
     ],
   },
-  // ALP-722: the kiosk's sign-in account, a hut leader's kiosk PIN, and the
-  // display screens' officer setup (layouts, templates, devices and their
-  // pairing codes, preview links), which belongs with the screens.
+  // Door codes and emergency access: never sent to an AI provider.
+  { reason: "access-secrets", routes: ["GET /api/lodge-instructions"] },
+  { reason: "site-helper", routes: ["POST /api/help/chat"] },
+  // Open member search widens the club's privacy (owner decision D-18): text
+  // an app read must never be able to talk it into that.
+  { reason: "privacy-posture", routes: ["PUT /api/admin/member-guest-settings"] },
+  // Dietary and allergy needs are never sent to an app (INV-PRIV-022), so an
+  // app could only overwrite or clear what the kitchen relies on unseen.
+  { reason: "unread-value", routes: ["PATCH /api/admin/bookings/[id]/guest-dietary"] },
+  {
+    reason: "public-visitor",
+    routes: [
+      "POST /api/contact",
+      "POST /api/applications",
+      // ALP-797: the non-member and school booking request forms, their price
+      // quote and settings, and a non-member's request to join a group. A
+      // member asks for the whole lodge with `request_whole_lodge` instead.
+      "POST /api/booking-requests",
+      "POST /api/booking-requests/quote",
+      "GET /api/booking-requests/settings",
+      "POST /api/booking-requests/school",
+      "POST /api/group-bookings/[code]/join-request",
+    ],
+  },
+  {
+    reason: "needs-browser",
+    routes: [
+      // The nominee confirms through a link emailed to them, as does each member
+      // named in a membership cancellation request.
+      "POST /api/applications/nominate",
+      "POST /api/member/membership-cancellation-requests/confirm",
+      // The chore roster is opened from the link in the roster email.
+      "GET /api/chores/[token]",
+      "PUT /api/chores/[token]",
+      // Message board pictures are files uploaded and shown in the browser.
+      "POST /api/club-posts/images",
+      "GET /api/club-posts/images/[publicId]",
+      // A problem report carries the page it was sent from and a screenshot.
+      "POST /api/issue-reports",
+      // The maintenance form opened from the lodge's QR code.
+      "GET /api/lodge-maintenance/[token]",
+      "POST /api/lodge-maintenance/[token]",
+      // Files: the invoice and credit note PDFs, and the booking's calendar entry.
+      "GET /api/bookings/[id]/invoice",
+      "GET /api/bookings/[id]/invoice/credit-notes/[creditNoteId]",
+      "GET /api/booking-calendar/[id]",
+      // A school confirms its attendees through the link emailed to it.
+      "POST /api/school-bookings/confirm-attendees",
+    ],
+  },
+
+  // --- Membership (ALP-720) ------------------------------------------------
+  // A member's seasonal membership type sets their subscription and age tier,
+  // and their subscription category how they are billed, and so what they
+  // owe; approving an application can raise an entrance-fee invoice. Each
+  // preview mints the token its save needs, so both stay together.
+  {
+    reason: "changes-charges",
+    routes: [
+      "POST /api/admin/members/[id]/seasonal-membership/preview",
+      "PATCH /api/admin/members/[id]/seasonal-membership",
+      "POST /api/admin/members/bulk-membership-type/preview",
+      "POST /api/admin/members/bulk-membership-type",
+      "POST /api/admin/members/bulk-subscription-category/preview",
+      "POST /api/admin/members/bulk-subscription-category",
+      "POST /api/admin/membership-types/roll-forward",
+      "POST /api/admin/members/[id]/joining-fee/preview",
+      "POST /api/admin/member-applications/[id]/approval-preview",
+      "PUT /api/admin/member-applications/[id]",
+    ],
+  },
+  // Approving archives or deletes the member, or ends their membership and
+  // its future bookings. Raising the request is an action: a second officer
+  // decides it here, on the website.
+  {
+    reason: "ends-membership",
+    routes: [
+      "PATCH /api/admin/member-lifecycle-action-requests/[requestId]",
+      "POST /api/admin/membership-cancellation-requests/[requestId]/participants/[participantId]",
+    ],
+  },
+  {
+    reason: "sign-in-access",
+    routes: [
+      "POST /api/admin/members/send-password-reset",
+      "POST /api/admin/members/send-setup-invite",
+      "POST /api/admin/family-groups/[id]/login-holder",
+    ],
+  },
+  // The recipient count is the compose screen's own preview of the send.
+  {
+    reason: "mass-message",
+    routes: ["GET /api/admin/communications/send", "POST /api/admin/communications/send"],
+  },
+  // Finds a guest's id for the subject access report, which is fresh-proof.
+  { reason: "privacy-request", routes: ["GET /api/admin/members/subject-access/guests"] },
+  // The merge's preview, whose merge is fresh-proof; the link dialogs'
+  // "whose mailbox would this reach" helper; and the member page's drawn
+  // family tree, whose links `get_member` already answers.
+  {
+    reason: "website-flow",
+    routes: [
+      "POST /api/admin/members/[id]/merge/preview",
+      "GET /api/admin/members/[id]/dependent-email-source",
+      "GET /api/admin/members/[id]/family-tree",
+    ],
+  },
+  // Direct deletion answers 405: deletion is a lifecycle request.
+  { reason: "switched-off", routes: ["DELETE /api/admin/members/[id]"] },
+
+  // --- Lodge Operations (ALP-722) ------------------------------------------
+  // The kiosk's sign-in account, a hut leader's kiosk PIN, and the display
+  // screens' officer setup (layouts, templates, devices and their pairing
+  // codes, preview links), which belongs with the screens.
   {
     reason: "kiosk",
     routes: [
@@ -230,78 +351,29 @@ const PERMANENT_ROUTES: ReadonlyArray<{
       "PUT /api/admin/display/templates/[id]",
     ],
   },
-  // Door codes and emergency access: never sent to an AI provider, nor
-  // written by one. Nor the links that let someone in: a maintenance QR
-  // sign's link, answered only when minted, and a meeting's host link.
+  // Door codes and emergency access, never written by an app either; and the
+  // links that let someone in: a maintenance QR sign's link, answered only
+  // when minted, and a meeting's host link.
   {
     reason: "access-secrets",
     routes: [
-      "GET /api/lodge-instructions",
       "GET /api/admin/lodge-instructions",
       "PUT /api/admin/lodge-instructions",
       "POST /api/admin/maintenance-reports/tokens",
       "POST /api/calendar/events/[id]/join",
     ],
   },
-  { reason: "site-helper", routes: ["POST /api/help/chat"] },
-  // Open member search widens the club's privacy (owner decision D-18): text
-  // an app read must never be able to talk it into that.
-  { reason: "privacy-posture", routes: ["PUT /api/admin/member-guest-settings"] },
-  // Dietary and allergy needs are never sent to an app (INV-PRIV-022), so an
-  // app could only overwrite or clear what the kitchen relies on unseen.
+  // The officer copy of the chore roster is a page made to be printed.
+  { reason: "needs-browser", routes: ["GET /api/chores/roster/[date]/print"] },
   // A connection reads only the member's own food orders (ALP-796), so an
-  // officer's app could price or tick off another member's order unseen.
+  // officer's app could price or tick off another member's order unseen; and
+  // the food officer's address the settings save writes is never sent to one.
   {
     reason: "unread-value",
     routes: [
-      "PATCH /api/admin/bookings/[id]/guest-dietary",
       "PATCH /api/food-orders/[id]/price",
       "POST /api/food-orders/[id]/received",
-      // ALP-722: the food officer's address is never sent to an app.
       "PUT /api/admin/food-orders/settings",
-    ],
-  },
-  {
-    reason: "public-visitor",
-    routes: [
-      "POST /api/contact",
-      "POST /api/applications",
-      // ALP-797: the non-member and school booking request forms, their price
-      // quote and settings, and a non-member's request to join a group. A
-      // member asks for the whole lodge with `request_whole_lodge` instead.
-      "POST /api/booking-requests",
-      "POST /api/booking-requests/quote",
-      "GET /api/booking-requests/settings",
-      "POST /api/booking-requests/school",
-      "POST /api/group-bookings/[code]/join-request",
-    ],
-  },
-  {
-    reason: "needs-browser",
-    routes: [
-      // The nominee confirms through a link emailed to them, as does each member
-      // named in a membership cancellation request.
-      "POST /api/applications/nominate",
-      "POST /api/member/membership-cancellation-requests/confirm",
-      // The chore roster is opened from the link in the roster email, and
-      // its officer copy is a page made to be printed.
-      "GET /api/chores/[token]",
-      "PUT /api/chores/[token]",
-      "GET /api/chores/roster/[date]/print",
-      // Message board pictures are files uploaded and shown in the browser.
-      "POST /api/club-posts/images",
-      "GET /api/club-posts/images/[publicId]",
-      // A problem report carries the page it was sent from and a screenshot.
-      "POST /api/issue-reports",
-      // The maintenance form opened from the lodge's QR code.
-      "GET /api/lodge-maintenance/[token]",
-      "POST /api/lodge-maintenance/[token]",
-      // Files: the invoice and credit note PDFs, and the booking's calendar entry.
-      "GET /api/bookings/[id]/invoice",
-      "GET /api/bookings/[id]/invoice/credit-notes/[creditNoteId]",
-      "GET /api/booking-calendar/[id]",
-      // A school confirms its attendees through the link emailed to it.
-      "POST /api/school-bookings/confirm-attendees",
     ],
   },
 ];

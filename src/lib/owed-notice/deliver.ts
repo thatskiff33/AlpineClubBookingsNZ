@@ -131,6 +131,16 @@ interface OfficersAudience<S> {
 export type OwedNoticeDeliverer<S = unknown> = OwedNoticeDelivererBase<S> & (MemberAudience<S> | OfficersAudience<S>);
 
 /**
+ * What the delivery right after the commit reads of a kind (`deliverOwedNotice`):
+ * no `load`, no `stillOwed`, no cut-off, which only a sweep applies. A kind
+ * whose subject the sweep reads with more than the delivery after the commit has
+ * (the paid confirmation's club time zone, #5433 PR 3) hands this its own
+ * narrower subject; every full deliverer is one too.
+ */
+export type OwedNoticeImmediateDeliverer<S = unknown> = Pick<OwedNoticeDelivererBase<S>, "kind" | "job" | "sweepAfterMs" | "unreachedRetryAfterMs"> &
+  (MemberAudience<S> | OfficersAudience<S>);
+
+/**
  * One owed marker as a sweep or a delivery handles it, whichever table holds
  * it. `marker` is null when the stored row cannot be read.
  */
@@ -170,7 +180,7 @@ export const owedNoticeTableSource: OwedNoticeSource = {
 };
 
 /** Send through the deliverer; a member's notice always with its event key. */
-function send<S>(deliverer: OwedNoticeDeliverer<S>, subject: S, marker: OwedNoticeMarker, run: OwedNoticeRun): Promise<OwedNoticeOutcome> {
+function send<S>(deliverer: OwedNoticeImmediateDeliverer<S>, subject: S, marker: OwedNoticeMarker, run: OwedNoticeRun): Promise<OwedNoticeOutcome> {
   return deliverer.audience === "member"
     ? deliverer.deliver(subject, marker, { ...run, idempotencyKey: deliverer.idempotencyKey(marker) })
     : deliverer.deliver(subject, marker, run);
@@ -182,7 +192,7 @@ function send<S>(deliverer: OwedNoticeDeliverer<S>, subject: S, marker: OwedNoti
  * this claim's stamp, so the sweep offers it again a full wait later.
  */
 async function settleByOutcome(
-  deliverer: OwedNoticeDeliverer,
+  deliverer: Pick<OwedNoticeImmediateDeliverer, "sweepAfterMs" | "unreachedRetryAfterMs">,
   ref: OwedNoticeRef,
   claimedAt: Date,
   outcome: OwedNoticeOutcome,
@@ -203,7 +213,7 @@ async function settleByOutcome(
  * failure is logged and the marker, if it still stands, is the sweep's.
  */
 export async function deliverOwedNotice<S>(
-  deliverer: OwedNoticeDeliverer<S>,
+  deliverer: OwedNoticeImmediateDeliverer<S>,
   marker: OwedNoticeMarker,
   subject: S,
 ): Promise<void> {

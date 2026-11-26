@@ -1,7 +1,6 @@
 import { NextResponse } from "next/server";
 import { revalidatePath } from "next/cache";
 import type { AgeTier, Prisma } from "@prisma/client";
-import { z } from "zod";
 import { parseJsonRequestBody } from "@/lib/api-json";
 import {
   buildStructuredAuditLogCreateArgs,
@@ -14,6 +13,10 @@ import {
 } from "@/lib/access-roles";
 import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/session-guards";
+import { membershipTypeMergeSchema } from "@/lib/admin-membership-api/config-structure";
+import { connectionJson } from "@/lib/mcp-connection-request";
+import { MEMBERSHIP_TYPE_MERGED_CONNECTION_SHAPE } from "@/lib/connection-shapes/membership-config";
+import { routeIdParamsSchema } from "@/lib/route-id-params";
 
 // Same shape the collection/[id] routes use so serializeMembershipType and the
 // merge guards see age tiers and the current assignment count.
@@ -38,16 +41,6 @@ const membershipTypeSelect = {
   _count: { select: { assignments: true, annualFees: true } },
 } satisfies Prisma.MembershipTypeSelect;
 
-const paramsSchema = z.object({
-  id: z.string().min(1),
-});
-
-const mergeSchema = z
-  .object({
-    targetId: z.string().trim().min(1),
-  })
-  .strict();
-
 export async function POST(
   request: Request,
   { params }: { params: Promise<{ id: string }> },
@@ -60,7 +53,7 @@ export async function POST(
   }
   const session = guard.session;
 
-  const parsedParams = paramsSchema.safeParse(await params);
+  const parsedParams = routeIdParamsSchema.safeParse(await params);
   if (!parsedParams.success) {
     return NextResponse.json(
       {
@@ -77,7 +70,7 @@ export async function POST(
   if (!jsonBody.ok) return jsonBody.response;
   const body = jsonBody.body;
 
-  const parsed = mergeSchema.safeParse(body);
+  const parsed = membershipTypeMergeSchema.safeParse(body);
   if (!parsed.success) {
     return NextResponse.json(
       { error: "Invalid input", details: parsed.error.flatten() },
@@ -292,10 +285,9 @@ export async function POST(
   });
 
   revalidatePath("/", "layout");
-  return NextResponse.json({
-    ok: true,
-    reassignedCount,
-    sourceId,
-    targetId,
-  });
+  return connectionJson(
+    request,
+    { ok: true, reassignedCount, sourceId, targetId },
+    MEMBERSHIP_TYPE_MERGED_CONNECTION_SHAPE,
+  );
 }
