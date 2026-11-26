@@ -1,19 +1,21 @@
 import { NextRequest, NextResponse } from "next/server";
 import type { IssueReportOrigin } from "@prisma/client";
-import { z } from "zod";
+import { issueReportListQuerySchema } from "@/lib/admin-support-api/system";
 import { logAudit } from "@/lib/audit";
+import {
+  ISSUE_REPORT_LIST_CONNECTION_SHAPE,
+  type IssueReportSummaryAnswer,
+} from "@/lib/connection-shapes/support-records";
+import { connectionJson } from "@/lib/mcp-connection-request";
 import { getClientIp } from "@/lib/rate-limit-http";
 import logger from "@/lib/logger";
 import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/session-guards";
 import { isFullAdmin } from "@/lib/access-roles";
 import { classifyIssueReportScreenshot } from "@/lib/issue-report-screenshot-access";
-import { adminListPageQueryFields } from "@/lib/admin-list-page";
 
-const querySchema = z.object({
-  status: z.enum(["OPEN", "RESOLVED", "ALL"]).optional().default("OPEN"),
-  ...adminListPageQueryFields,
-});
+// The query schema lives in admin-support-api/system.ts, which the AI app
+// action `list_issue_reports` offers too (ALP-724).
 
 /**
  * `viewerFullAdmin` is REQUIRED. The list is a read path like any other, so it
@@ -47,7 +49,7 @@ function summarizeReport(report: {
     lastName: string;
     email: string;
   };
-}, viewerFullAdmin: boolean) {
+}, viewerFullAdmin: boolean): IssueReportSummaryAnswer {
   // The same classification the detail read makes, from the same three stamps,
   // so the queue and the report cannot disagree about whether a screenshot is
   // still there or whether this officer may open it (`INV-PRIV-021`).
@@ -93,7 +95,7 @@ export async function GET(request: NextRequest) {
     return admin.response;
   }
 
-  const parsed = querySchema.safeParse(
+  const parsed = issueReportListQuerySchema.safeParse(
     Object.fromEntries(request.nextUrl.searchParams)
   );
   if (!parsed.success) {
@@ -163,13 +165,17 @@ export async function GET(request: NextRequest) {
       outcome: "success",
     });
 
-    return NextResponse.json({
-      reports: reports.map((report) => summarizeReport(report, viewerFullAdmin)),
-      total,
-      page,
-      pageSize,
-      totalPages: Math.ceil(total / pageSize),
-    });
+    return connectionJson(
+      request,
+      {
+        reports: reports.map((report) => summarizeReport(report, viewerFullAdmin)),
+        total,
+        page,
+        pageSize,
+        totalPages: Math.ceil(total / pageSize),
+      },
+      ISSUE_REPORT_LIST_CONNECTION_SHAPE,
+    );
   } catch (err) {
     logger.error({ err }, "Failed to list issue reports");
     return NextResponse.json({ error: "Failed to load issue reports" }, { status: 500 });

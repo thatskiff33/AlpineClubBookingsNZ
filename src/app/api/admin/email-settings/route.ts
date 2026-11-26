@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
-import { z } from "zod";
 import { parseJsonRequestBody } from "@/lib/api-json";
+import { emailMessageSettingsUpdateSchema } from "@/lib/admin-support-api/messages";
+import { EMAIL_SETTINGS_CONNECTION_SHAPE } from "@/lib/connection-shapes/support-messages";
+import { connectionJson } from "@/lib/mcp-connection-request";
 import {
   buildStructuredAuditLogCreateArgs,
   getAuditRequestContext,
@@ -9,45 +11,30 @@ import {
   EMAIL_MESSAGE_SETTINGS_ID,
   loadEmailMessageSettingsForLodge,
   loadPersistedEmailMessageSettings,
-  normalizeEmailMessagePublicUrl,
 } from "@/lib/email-message-settings";
 import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/session-guards";
 
-const settingsSchema = z
-  .object({
-    clubName: z.string().trim().min(1).max(200).nullable().optional(),
-    bookingsName: z.string().trim().min(1).max(200).nullable().optional(),
-    emailFromName: z.string().trim().min(1).max(200).nullable().optional(),
-    supportEmail: z.string().trim().email().max(320).nullable().optional(),
-    contactEmail: z.string().trim().email().max(320).nullable().optional(),
-    publicUrl: z
-      .string()
-      .trim()
-      .url()
-      .max(500)
-      .refine((value) => normalizeEmailMessagePublicUrl(value) !== null, {
-        message: "Public URL must use http or https",
-      })
-      .transform((value) => normalizeEmailMessagePublicUrl(value)!)
-      .nullable()
-      .optional(),
-  })
-  .strict();
+// The body schema lives in admin-support-api/messages.ts, which the AI app
+// action `update_email_settings` offers too (ALP-724).
 
-export async function GET() {
+export async function GET(request: NextRequest) {
   const guard = await requireAdmin({
     permission: { area: "support", level: "view" },
   });
   if (!guard.ok) return guard.response;
 
   const persisted = await loadPersistedEmailMessageSettings();
-  return NextResponse.json({
-    // Lodge identity in `settings` resolves from the default lodge (Lodge table),
-    // not from `persisted`, so the admin preview shows real default-lodge values.
-    settings: await loadEmailMessageSettingsForLodge(null),
-    persisted,
-  });
+  return connectionJson(
+    request,
+    {
+      // Lodge identity in `settings` resolves from the default lodge (Lodge table),
+      // not from `persisted`, so the admin preview shows real default-lodge values.
+      settings: await loadEmailMessageSettingsForLodge(null),
+      persisted,
+    },
+    EMAIL_SETTINGS_CONNECTION_SHAPE,
+  );
 }
 
 export async function PUT(request: NextRequest) {
@@ -63,7 +50,7 @@ export async function PUT(request: NextRequest) {
   if (!jsonBody.ok) return jsonBody.response;
   const body = jsonBody.body;
 
-  const parsed = settingsSchema.safeParse(body);
+  const parsed = emailMessageSettingsUpdateSchema.safeParse(body);
   if (!parsed.success) {
     return NextResponse.json(
       { error: "Invalid input", details: parsed.error.flatten() },
@@ -106,10 +93,14 @@ export async function PUT(request: NextRequest) {
     }),
   );
 
-  return NextResponse.json({
-    // Re-resolve from the default lodge so the response reflects real lodge
-    // identity, not just the club fields written above.
-    settings: await loadEmailMessageSettingsForLodge(null),
-    persisted: record,
-  });
+  return connectionJson(
+    request,
+    {
+      // Re-resolve from the default lodge so the response reflects real lodge
+      // identity, not just the club fields written above.
+      settings: await loadEmailMessageSettingsForLodge(null),
+      persisted: record,
+    },
+    EMAIL_SETTINGS_CONNECTION_SHAPE,
+  );
 }

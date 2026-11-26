@@ -100,6 +100,7 @@ import { FINANCE_MONEY_MCP_ACTIONS } from "./catalogue/finance-money";
 import { FINANCE_XERO_CONTACTS_MCP_ACTIONS } from "./catalogue/finance-xero-contacts";
 import { FINANCE_XERO_SYNC_MCP_ACTIONS } from "./catalogue/finance-xero-sync";
 import { LODGE_MCP_ACTIONS } from "./catalogue/lodge";
+import { SUPPORT_MCP_ACTIONS } from "./catalogue/support";
 
 /**
  * `read` changes none of the member's own data. A read may still touch shared
@@ -648,8 +649,7 @@ const MEMBER_ACTIONS: readonly McpAction[] = [
  */
 export const MCP_ACTIONS: readonly McpAction[] = [
   ...MEMBER_ACTIONS,
-  // Bookings & Beds (ALP-719), every route the `bookings` area guards bar the
-  // fresh-proof ones.
+  // Bookings & Beds (ALP-719), every route the `bookings` area guards bar the fresh-proof ones.
   ...BOOKINGS_BOOKING_MCP_ACTIONS,
   ...BOOKINGS_REQUEST_MCP_ACTIONS,
   ...BOOKINGS_REVIEW_QUEUE_MCP_ACTIONS,
@@ -663,8 +663,9 @@ export const MCP_ACTIONS: readonly McpAction[] = [
   ...FINANCE_MONEY_MCP_ACTIONS,
   ...FINANCE_XERO_SYNC_MCP_ACTIONS,
   ...FINANCE_XERO_CONTACTS_MCP_ACTIONS,
-  // Lodge Operations (ALP-722), in `catalogue/lodge.ts`.
+  // Lodge Operations (ALP-722); Support & System and Admin Overview (ALP-724).
   ...LODGE_MCP_ACTIONS,
+  ...SUPPORT_MCP_ACTIONS,
 ];
 
 export const MCP_WEBSITE_ONLY_ACTIONS: readonly McpWebsiteOnlyAction[] = [

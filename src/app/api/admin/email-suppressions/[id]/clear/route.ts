@@ -1,13 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
 import { parseOptionalJsonRequestBody } from "@/lib/api-json";
-import { z } from "zod";
+import { emailSuppressionClearSchema } from "@/lib/admin-support-api/messages";
+import {
+  EMAIL_SUPPRESSION_CLEARED_CONNECTION_SHAPE,
+  type EmailSuppressionClearedAnswer,
+} from "@/lib/connection-shapes/support-messages";
+import { connectionJson } from "@/lib/mcp-connection-request";
 import { requireAdmin } from "@/lib/session-guards";
 import { clearEmailSuppression } from "@/lib/email-suppression";
 import { logAudit } from "@/lib/audit";
-
-const clearSuppressionSchema = z.object({
-  reason: z.string().max(500).optional(),
-});
 
 export async function POST(
   request: NextRequest,
@@ -22,7 +23,7 @@ export async function POST(
   if (!jsonBody.ok) return jsonBody.response;
   const body = jsonBody.body;
 
-  const parsed = clearSuppressionSchema.safeParse(body);
+  const parsed = emailSuppressionClearSchema.safeParse(body);
   if (!parsed.success) {
     return NextResponse.json(
       { error: "Invalid input", details: parsed.error.flatten() },
@@ -50,12 +51,13 @@ export async function POST(
     }),
   });
 
-  return NextResponse.json({
+  const answer: EmailSuppressionClearedAnswer = {
     success: true,
     suppression: {
       id: suppression.id,
       email: suppression.email,
       clearedAt: suppression.clearedAt?.toISOString() ?? null,
     },
-  });
+  };
+  return connectionJson(request, answer, EMAIL_SUPPRESSION_CLEARED_CONNECTION_SHAPE);
 }

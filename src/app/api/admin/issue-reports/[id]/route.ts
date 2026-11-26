@@ -1,7 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import type { IssueReportOrigin } from "@prisma/client";
-import { z } from "zod";
+import { issueReportActionSchema } from "@/lib/admin-support-api/system";
 import { parseJsonRequestBody } from "@/lib/api-json";
+import {
+  ISSUE_REPORT_CONNECTION_SHAPE,
+  type IssueReportDetailAnswer,
+} from "@/lib/connection-shapes/support-records";
+import { connectionJson } from "@/lib/mcp-connection-request";
 import { logAudit } from "@/lib/audit";
 import { getClientIp } from "@/lib/rate-limit-http";
 import logger from "@/lib/logger";
@@ -13,19 +18,11 @@ import {
   type IssueReportScreenshotAccess,
 } from "@/lib/issue-report-screenshot-access";
 
-const actionSchema = z.discriminatedUnion("action", [
-  z.object({
-    action: z.literal("resolve"),
-    note: z.string().trim().max(1000).optional(),
-  }),
-  z.object({
-    action: z.literal("reopen"),
-  }),
-  z.object({
-    action: z.literal("deleteScreenshot"),
-    reason: z.string().trim().max(300).optional(),
-  }),
-]);
+// The decision schema lives in admin-support-api/system.ts, which the AI app
+// actions `resolve_issue_report`, `reopen_issue_report` and
+// `delete_issue_report_screenshot` offer one branch each of (ALP-724). A
+// connection's answers never carry the screenshot or the browser details
+// (`ISSUE_REPORT_CONNECTION_SHAPE`).
 
 type LoadedReport = {
   id: string;
@@ -84,7 +81,7 @@ function screenshotAccessFor(
   });
 }
 
-function mapReport(report: LoadedReport, access: IssueReportScreenshotAccess) {
+function mapReport(report: LoadedReport, access: IssueReportScreenshotAccess): IssueReportDetailAnswer {
   const now = new Date();
   const browserInfoRetained = Boolean(
     report.browserInfo &&
@@ -233,7 +230,7 @@ export async function GET(
     });
   }
 
-  return NextResponse.json({ report: mapReport(report, access) });
+  return connectionJson(request, { report: mapReport(report, access) }, ISSUE_REPORT_CONNECTION_SHAPE);
 }
 
 export async function PATCH(
@@ -254,7 +251,7 @@ export async function PATCH(
   if (!jsonBody.ok) return jsonBody.response;
   const body = jsonBody.body;
 
-  const parsed = actionSchema.safeParse(body);
+  const parsed = issueReportActionSchema.safeParse(body);
   if (!parsed.success) {
     return NextResponse.json(
       { error: "Invalid input", details: parsed.error.flatten() },
@@ -335,11 +332,13 @@ export async function PATCH(
     // admin-origin pixels the GET beside it refuses them.
     const report = await loadReport(id);
     if (!report) {
-      return NextResponse.json({ report: null });
+      return connectionJson(request, { report: null }, ISSUE_REPORT_CONNECTION_SHAPE);
     }
-    return NextResponse.json({
-      report: mapReport(report, screenshotAccessFor(report, admin.session.user)),
-    });
+    return connectionJson(
+      request,
+      { report: mapReport(report, screenshotAccessFor(report, admin.session.user)) },
+      ISSUE_REPORT_CONNECTION_SHAPE,
+    );
   } catch (err) {
     logger.error({ err, issueReportId: id }, "Failed to update issue report");
     return NextResponse.json({ error: "Failed to update issue report" }, { status: 500 });

@@ -38,7 +38,8 @@ export const MCP_PERMANENT_EXCLUSION_REASONS = {
   "website-flow": "Serves the website's own screens and steps, not something a member asks for.",
   "access-secrets":
     "Shows or changes lodge door codes, sign or meeting links that let someone in, or other access details, which stay on the website.",
-  "site-helper": "The website's own help assistant; the member's AI app answers them itself.",
+  "site-helper":
+    "The website's own AI assistants, page help and AI Diagnostics; the connected AI app answers the question itself.",
   "privacy-posture":
     "Decides who may browse members' names, which an officer chooses on the website, never an AI app.",
   "unread-value":
@@ -60,6 +61,10 @@ export const MCP_PERMANENT_EXCLUSION_REASONS = {
   "club-setup":
     "Sets up the club's money and its links to other services: the bank account members pay into, fees, tax settings, finance-report, accounting and item-code mappings, Xero contact grouping, integration credentials, the Xero and Stripe connections, the Xero member import and webhook health check, and the analytics, MiroTalk, Google and Alpine Central Server integration settings, which an officer changes on the website.",
   "service-export": "An export another system collects with its own shared key, not something a person asks for.",
+  // Support & System (ALP-724). The officer gate offers an action by admin
+  // area and level (`INV-MCP-009`); these routes admit only a Full Admin.
+  "full-admin":
+    "A setting only a Full Admin may see or change, such as the club's currency, time zone, or whether the site may send to real people, which stays on the website.",
 } as const;
 
 export type McpPermanentExclusionReason = keyof typeof MCP_PERMANENT_EXCLUSION_REASONS;
@@ -73,8 +78,16 @@ export type McpPermanentExclusionReason = keyof typeof MCP_PERMANENT_EXCLUSION_R
  * - `membership` (Membership): ALP-720.
  * - `finance` (Finance): ALP-721, including the `/api/finance` workspace.
  * - `lodge` (Lodge Operations): ALP-722.
+ * - `support` (Support & System) and `overview` (Admin Overview): ALP-724.
  */
-const MCP_DECIDED_ADMIN_AREAS = ["bookings", "membership", "finance", "lodge"] as const satisfies readonly AdminPermissionArea[];
+const MCP_DECIDED_ADMIN_AREAS = [
+  "bookings",
+  "membership",
+  "finance",
+  "lodge",
+  "support",
+  "overview",
+] as const satisfies readonly AdminPermissionArea[];
 
 type McpDecidedAdminArea = (typeof MCP_DECIDED_ADMIN_AREAS)[number];
 
@@ -89,8 +102,6 @@ type McpNotYetAdminArea = Exclude<AdminPermissionArea, McpDecidedAdminArea>;
  */
 export const MCP_NOT_YET_TASKS = {
   content: "ALP-723",
-  support: "ALP-724",
-  overview: "ALP-724",
 } as const satisfies Record<McpNotYetAdminArea, string>;
 
 function isNotYetAdminArea(area: AdminPermissionArea): area is McpNotYetAdminArea {
@@ -470,6 +481,49 @@ const PERMANENT_ROUTES: ReadonlyArray<{
       "POST /api/admin/xero/import-members",
     ],
   },
+  // --- Support & System and Admin Overview (ALP-724) ---------------------
+  // Handlers that admit only a Full Admin (`requireAdmin({ permission: false
+  // })`) although their path sits in the support area.
+  {
+    reason: "full-admin",
+    routes: [
+      "PUT /api/admin/club-format",
+      "GET /api/admin/club-time-zone",
+      "PUT /api/admin/club-time-zone",
+      "GET /api/admin/environment-safety",
+      "PATCH /api/admin/environment-safety",
+    ],
+  },
+  // AI Diagnostics answers a question with its own model.
+  { reason: "site-helper", routes: ["POST /api/admin/ai-diagnostics/ask"] },
+  // Configuration bundles are zip files uploaded and downloaded.
+  {
+    reason: "needs-browser",
+    routes: [
+      "POST /api/admin/config-transfer/export",
+      "POST /api/admin/config-transfer/plan",
+      "POST /api/admin/config-transfer/reseal",
+    ],
+  },
+  // Reissues a failed email with a fresh link: a member setup invite (a
+  // sign-in link, website-only as sending one is), a nomination or a
+  // membership cancellation confirmation. One handler serves all three.
+  { reason: "sign-in-access", routes: ["POST /api/admin/email-failures/[id]/reissue-token"] },
+  // The backup setup wizard's resume cursor, and the sidebar's role-menu
+  // cookie (whose other methods answer only 405).
+  {
+    reason: "website-flow",
+    routes: [
+      "GET /api/admin/backups/wizard-progress",
+      "POST /api/admin/backups/wizard-progress",
+      "GET /api/admin/menu-role",
+      "POST /api/admin/menu-role",
+      "PUT /api/admin/menu-role",
+      "PATCH /api/admin/menu-role",
+      "DELETE /api/admin/menu-role",
+    ],
+  },
+
   // Answers with a redirect into the old finance dashboard, not with data.
   { reason: "website-flow", routes: ["GET /api/finance/legacy-dashboard/auth"] },
   // Also needs the dashboard's shared bearer key, which no person holds.

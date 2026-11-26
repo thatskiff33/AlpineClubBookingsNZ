@@ -1,5 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
-import { z } from "zod";
+import { bookingMessageWordingSchema } from "@/lib/admin-support-api/messages";
+import {
+  BOOKING_MESSAGE_SAVED_CONNECTION_SHAPE,
+  BOOKING_MESSAGE_WORDING_LIST_CONNECTION_SHAPE,
+} from "@/lib/connection-shapes/support-messages";
+import { connectionJson } from "@/lib/mcp-connection-request";
 import {
   buildStructuredAuditLogCreateArgs,
   getAuditRequestContext,
@@ -17,22 +22,20 @@ import { parseJsonRequestBody } from "@/lib/api-json";
 
 const bookingMessageKeySet = new Set<string>(BOOKING_MESSAGE_KEYS);
 
-const updateSchema = z
-  .object({
-    messageKey: z.string().trim().min(1),
-    bodyText: z.string(),
-  })
-  .strict();
+// The body schema lives in admin-support-api/messages.ts, which the AI app
+// action `update_booking_message` offers too (ALP-724).
 
-export async function GET() {
+export async function GET(request: NextRequest) {
   const guard = await requireAdmin({
     permission: { area: "support", level: "view" },
   });
   if (!guard.ok) return guard.response;
 
-  return NextResponse.json({
-    messages: await loadEffectiveBookingMessages(),
-  });
+  return connectionJson(
+    request,
+    { messages: await loadEffectiveBookingMessages() },
+    BOOKING_MESSAGE_WORDING_LIST_CONNECTION_SHAPE,
+  );
 }
 
 export async function PUT(request: NextRequest) {
@@ -48,7 +51,7 @@ export async function PUT(request: NextRequest) {
   if (!jsonBody.ok) return jsonBody.response;
   const body = jsonBody.body;
 
-  const parsed = updateSchema.safeParse(body);
+  const parsed = bookingMessageWordingSchema.safeParse(body);
   if (!parsed.success) {
     return NextResponse.json(
       { error: "Invalid input", details: parsed.error.flatten() },
@@ -110,5 +113,5 @@ export async function PUT(request: NextRequest) {
     }),
   );
 
-  return NextResponse.json({ override: record });
+  return connectionJson(request, { override: record }, BOOKING_MESSAGE_SAVED_CONNECTION_SHAPE);
 }

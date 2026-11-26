@@ -1,5 +1,6 @@
 import { clubConfig } from "@/config/club";
 import { escapeHtml } from "@/lib/email-templates/escape";
+import { normalizeEmailMessagePublicUrl } from "@/lib/email-message-public-url";
 import { lodgeOrderBy } from "@/lib/lodges";
 import { prisma } from "@/lib/prisma";
 
@@ -94,24 +95,6 @@ export interface PersistedEmailMessageSettings {
 function trimOptional(value: string | null | undefined): string | null {
   const trimmed = value?.trim();
   return trimmed ? trimmed : null;
-}
-
-export function normalizeEmailMessagePublicUrl(
-  value: string | null | undefined,
-): string | null {
-  const trimmed = trimOptional(value);
-  if (!trimmed) return null;
-
-  try {
-    const parsed = new URL(trimmed);
-    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
-      return null;
-    }
-  } catch {
-    return null;
-  }
-
-  return trimmed.replace(/\/+$/, "");
 }
 
 function getDefaultEmailMessageSettings(): EmailMessageSettings {

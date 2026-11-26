@@ -59,14 +59,6 @@ export const DIAGNOSTICS_SETTINGS_ID = "default";
 export const DIAGNOSTICS_DEFAULT_MONTHLY_BUDGET_CENTS =
   AI_DIAGNOSTICS_DEFAULT_MONTHLY_BUDGET_CENTS;
 
-/**
- * Upper guard on the monthly budget a fat-finger can set (5,000.00 in the
- * club's currency). Diagnostics reasons over code with tools, so it can cost
- * materially more per session than a grounded page-help answer — the ceiling
- * is higher than page-help's 1,000.00, but still bounded.
- */
-export const DIAGNOSTICS_MAX_MONTHLY_BUDGET_CENTS = 500_000;
-
 const WARNING_THRESHOLDS = [0.7, 0.85, 0.95] as const;
 
 /**

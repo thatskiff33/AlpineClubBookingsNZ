@@ -17,7 +17,11 @@ import {
 import { dateOnlyStringSchema } from "@/lib/date-only-schema";
 import { adminListPageQueryFields } from "@/lib/admin-list-page";
 
-const adminAuditLogQuerySchema = z.object({
+/**
+ * `GET /api/admin/audit-log`'s query. Exported for the AI app action
+ * `search_audit_log` (ALP-724), which offers the same filters.
+ */
+export const adminAuditLogQuerySchema = z.object({
   eventType: z.string().max(160).optional(),
   action: z.string().max(160).optional(),
   category: z.string().optional().default("all"),

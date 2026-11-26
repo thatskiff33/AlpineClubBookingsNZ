@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
+import { normalizeEmailMessagePublicUrl } from "@/lib/email-message-public-url";
 import {
   formatEmailFromAddressWithSettings,
-  normalizeEmailMessagePublicUrl,
   normalizeEmailMessageSettings,
   type EmailMessageSettings,
 } from "@/lib/email-message-settings";

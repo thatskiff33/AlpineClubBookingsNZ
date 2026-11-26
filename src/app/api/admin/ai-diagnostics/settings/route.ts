@@ -1,6 +1,13 @@
 import { NextResponse } from "next/server";
-import { z } from "zod";
+import { AI_DIAGNOSTICS_MAX_MONTHLY_BUDGET_CENTS } from "@/config/ai-spend";
 import { parseJsonRequestBody } from "@/lib/api-json";
+import { diagnosticsBudgetUpdateSchema } from "@/lib/admin-support-api/ai-settings";
+import {
+  DIAGNOSTICS_SETTINGS_CONNECTION_SHAPE,
+  DIAGNOSTICS_SETTINGS_SAVED_CONNECTION_SHAPE,
+  type DiagnosticsSettingsAnswer,
+} from "@/lib/connection-shapes/support-ai";
+import { connectionJson } from "@/lib/mcp-connection-request";
 import { requireAdmin } from "@/lib/session-guards";
 import {
   buildStructuredAuditLogCreateArgs,
@@ -8,7 +15,6 @@ import {
 } from "@/lib/audit";
 import {
   DIAGNOSTICS_DEFAULT_MONTHLY_BUDGET_CENTS,
-  DIAGNOSTICS_MAX_MONTHLY_BUDGET_CENTS,
   DIAGNOSTICS_SETTINGS_ID,
   getDiagnosticsUsageSummary,
 } from "@/lib/ai-diagnostics-usage";
@@ -22,20 +28,12 @@ import { prisma } from "@/lib/prisma";
 // endpoint. The budget is a deployment-specific operational control; it does NOT
 // travel in a config bundle (see config-transfer club-settings.ts).
 
-const updateSchema = z
-  .object({
-    // Integer cents of the club's configured currency (#3354). 0 disables all
-    // paid diagnostics calls (hard-off, the ship default);
-    // DIAGNOSTICS_MAX_MONTHLY_BUDGET_CENTS is the fat-finger guard.
-    monthlyBudgetCents: z
-      .number()
-      .int()
-      .min(0)
-      .max(DIAGNOSTICS_MAX_MONTHLY_BUDGET_CENTS),
-  })
-  .strict();
+// The update schema (integer cents of the club's currency, #3354; 0 is
+// hard-off, the ship default; AI_DIAGNOSTICS_MAX_MONTHLY_BUDGET_CENTS is the
+// fat-finger guard) lives in admin-support-api/ai-settings.ts, which the AI
+// app action `update_ai_diagnostics_budget` offers too (ALP-724).
 
-export async function GET() {
+export async function GET(request: Request) {
   const guard = await requireAdmin({
     permission: { area: "support", level: "view" },
   });
@@ -48,14 +46,15 @@ export async function GET() {
     getDiagnosticsUsageSummary(),
   ]);
 
-  return NextResponse.json({
+  const answer: DiagnosticsSettingsAnswer = {
     monthlyBudgetCents:
       row?.monthlyBudgetCents ?? DIAGNOSTICS_DEFAULT_MONTHLY_BUDGET_CENTS,
-    maxMonthlyBudgetCents: DIAGNOSTICS_MAX_MONTHLY_BUDGET_CENTS,
+    maxMonthlyBudgetCents: AI_DIAGNOSTICS_MAX_MONTHLY_BUDGET_CENTS,
     updatedAt: row?.updatedAt?.toISOString() ?? null,
     updatedByMemberId: row?.updatedByMemberId ?? null,
     usage,
-  });
+  };
+  return connectionJson(request, answer, DIAGNOSTICS_SETTINGS_CONNECTION_SHAPE);
 }
 
 export async function PUT(request: Request) {
@@ -71,7 +70,7 @@ export async function PUT(request: Request) {
   if (!jsonBody.ok) return jsonBody.response;
   const body = jsonBody.body;
 
-  const parsed = updateSchema.safeParse(body);
+  const parsed = diagnosticsBudgetUpdateSchema.safeParse(body);
   if (!parsed.success) {
     return NextResponse.json(
       { error: "Invalid input", details: parsed.error.flatten() },
@@ -124,9 +123,10 @@ export async function PUT(request: Request) {
     return updated;
   });
 
-  return NextResponse.json({
+  const answer: DiagnosticsSettingsAnswer = {
     monthlyBudgetCents: row.monthlyBudgetCents,
     updatedAt: row.updatedAt.toISOString(),
     updatedByMemberId: row.updatedByMemberId,
-  });
+  };
+  return connectionJson(request, answer, DIAGNOSTICS_SETTINGS_SAVED_CONNECTION_SHAPE);
 }

@@ -1,6 +1,7 @@
-import { NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/session-guards";
 import { getAdminPendingCounts } from "@/lib/admin-pending-counts";
+import { ADMIN_PENDING_COUNTS_CONNECTION_SHAPE } from "@/lib/connection-shapes/support-system";
+import { connectionJson } from "@/lib/mcp-connection-request";
 
 /**
  * GET /api/admin/pending-counts
@@ -12,11 +13,11 @@ import { getAdminPendingCounts } from "@/lib/admin-pending-counts";
  * `getBookingRequestPendingCounts` (`admin-booking-request-pending-counts.ts`),
  * the one definition the Booking Requests page's tab badges read too (#4969).
  */
-export async function GET() {
+export async function GET(request: Request) {
   const guard = await requireAdmin();
   if (!guard.ok) return guard.response;
 
-  return NextResponse.json(await getAdminPendingCounts(), {
+  return connectionJson(request, await getAdminPendingCounts(), ADMIN_PENDING_COUNTS_CONNECTION_SHAPE, {
     headers: { "Cache-Control": "no-store" },
   });
 }

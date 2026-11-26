@@ -1,5 +1,10 @@
 import { NextResponse } from "next/server";
 import { getAppVersion } from "@/lib/app-version";
+import {
+  ADMIN_HEALTH_CONNECTION_SHAPE,
+  type AdminHealthAnswer,
+} from "@/lib/connection-shapes/support-system";
+import { connectionJson } from "@/lib/mcp-connection-request";
 import { requireAdmin } from "@/lib/session-guards";
 import { getDetailedHealthReport } from "@/lib/health-check";
 import { buildSentryDashboardInfo } from "@/lib/observability/sentry-dashboard-info";
@@ -122,7 +127,7 @@ function getCronJobDefinitionsForHealthReport(
  * - Webhook stats (24h)
  * - System info (version, Node version, uptime, memory)
  */
-export async function GET() {
+export async function GET(request: Request) {
   const guard = await requireAdmin();
   if (!guard.ok) return guard.response;
   try {
@@ -202,7 +207,7 @@ export async function GET() {
       ...buildSentryDashboardInfo(),
     };
 
-    return NextResponse.json({
+    const answer: AdminHealthAnswer = {
       health: healthResponse,
       cronJobs: cronByJob,
       cronHealth,
@@ -213,7 +218,8 @@ export async function GET() {
       adminAlertDelivery,
       tokenEmailRecovery,
       systemInfo,
-    });
+    };
+    return connectionJson(request, answer, ADMIN_HEALTH_CONNECTION_SHAPE);
   } catch (err) {
     logger.error({ err }, "Failed to fetch admin health data");
     return NextResponse.json(

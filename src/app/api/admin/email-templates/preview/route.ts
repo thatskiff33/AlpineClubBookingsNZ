@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
-import { z } from "zod";
+import { emailTemplatePreviewSchema } from "@/lib/admin-support-api/messages";
+import { EMAIL_TEMPLATE_PREVIEW_CONNECTION_SHAPE } from "@/lib/connection-shapes/support-messages";
+import { connectionJson } from "@/lib/mcp-connection-request";
 import {
   EMAIL_TEMPLATE_KEY_SET,
   getEmailTemplateDefinition,
@@ -17,21 +19,10 @@ import { bookingAddToCalendarHtmlRow } from "@/lib/calendar-links";
 import { requireAdmin } from "@/lib/session-guards";
 import { parseJsonRequestBody } from "@/lib/api-json";
 
-const previewSchema = z
-  .object({
-    templateName: z.string().trim().min(1),
-    subject: z.string().trim().min(1).max(500),
-    // Optional since fork #38: a rich preview sends bodyHtml instead.
-    bodyText: z.string().trim().min(1).max(10000).optional(),
-    // Fork #38: the rich-editor body. Sanitised before rendering, exactly as
-    // a save would, so the admin sees what a member receives.
-    bodyHtml: z.string().trim().max(20000).optional(),
-  })
-  .strict()
-  .refine(
-    (value) => Boolean(value.bodyText) || Boolean(value.bodyHtml),
-    "A bodyText or bodyHtml is required",
-  );
+// The body schema lives in admin-support-api/messages.ts, which the AI app
+// action `preview_email_template` offers too (ALP-724). `bodyText` is optional
+// since fork #38: a rich preview sends `bodyHtml`, sanitised before rendering
+// exactly as a save would, so the admin sees what a member receives.
 
 export async function POST(request: NextRequest) {
   // Preview renders a template with sample data and performs no mutation, so a
@@ -48,7 +39,7 @@ export async function POST(request: NextRequest) {
   if (!jsonBody.ok) return jsonBody.response;
   const body = jsonBody.body;
 
-  const parsed = previewSchema.safeParse(body);
+  const parsed = emailTemplatePreviewSchema.safeParse(body);
   if (!parsed.success) {
     return NextResponse.json(
       { error: "Invalid input", details: parsed.error.flatten() },
@@ -130,5 +121,5 @@ export async function POST(request: NextRequest) {
     templateData: sampleData,
   });
 
-  return NextResponse.json(preview);
+  return connectionJson(request, preview, EMAIL_TEMPLATE_PREVIEW_CONNECTION_SHAPE);
 }

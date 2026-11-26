@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
-import { z } from "zod";
+import { bookingMessageResetSchema } from "@/lib/admin-support-api/messages";
+import { BOOKING_MESSAGE_RESET_CONNECTION_SHAPE } from "@/lib/connection-shapes/support-messages";
+import { connectionJson } from "@/lib/mcp-connection-request";
 import {
   buildStructuredAuditLogCreateArgs,
   getAuditRequestContext,
@@ -15,12 +17,6 @@ import { parseJsonRequestBody } from "@/lib/api-json";
 
 const bookingMessageKeySet = new Set<string>(BOOKING_MESSAGE_KEYS);
 
-const resetSchema = z
-  .object({
-    messageKey: z.string().trim().min(1),
-  })
-  .strict();
-
 export async function POST(request: NextRequest) {
   const guard = await requireAdmin({
     permission: { area: "support", level: "edit" },
@@ -34,7 +30,7 @@ export async function POST(request: NextRequest) {
   if (!jsonBody.ok) return jsonBody.response;
   const body = jsonBody.body;
 
-  const parsed = resetSchema.safeParse(body);
+  const parsed = bookingMessageResetSchema.safeParse(body);
   if (!parsed.success) {
     return NextResponse.json(
       { error: "Invalid input", details: parsed.error.flatten() },
@@ -70,5 +66,5 @@ export async function POST(request: NextRequest) {
     }),
   );
 
-  return NextResponse.json({ reset: result.count > 0 });
+  return connectionJson(request, { reset: result.count > 0 }, BOOKING_MESSAGE_RESET_CONNECTION_SHAPE);
 }

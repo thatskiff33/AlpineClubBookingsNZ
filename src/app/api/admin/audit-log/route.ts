@@ -1,4 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
+import { hasAdminAreaAccess } from "@/lib/admin-permissions";
+import { auditCategoriesReadableWith } from "@/lib/audit-categories";
+import {
+  ADMIN_AUDIT_LOG_CONNECTION_SHAPE,
+  type AdminAuditLogAnswer,
+} from "@/lib/connection-shapes/support-records";
+import { arrivesAsMcpConnection, connectionJson } from "@/lib/mcp-connection-request";
 import { requireAdmin } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma";
 import { getAuditTimelinePage } from "@/lib/audit-query";
@@ -80,25 +87,45 @@ export async function GET(request: NextRequest) {
     );
   }
 
+  // An officer's AI app reads only the categories its officer's areas may
+  // correlate, as AI Diagnostics does (`audit-categories.ts`, ALP-724): the
+  // screen is read by a person, the connection by a model. A row with no
+  // category is in none of them.
+  const viaConnection = arrivesAsMcpConnection(request);
+  const where = viaConnection
+    ? {
+        AND: [
+          parsed.data.where,
+          {
+            category: {
+              in: auditCategoriesReadableWith((area) =>
+                hasAdminAreaAccess(guard.session.user, { area, level: "view" }),
+              ),
+            },
+          },
+        ],
+      }
+    : parsed.data.where;
+
   try {
     const response = await getAuditTimelinePage({
       db: prisma,
       format: await clubFormatValues(),
-      where: parsed.data.where,
+      where,
       page: parsed.data.page,
       pageSize: parsed.data.pageSize,
       category: parsed.data.category,
       audience: "admin",
     });
-    const facets = await getAuditFacets();
-
-    return NextResponse.json({
+    // The filter lists are drawn from every entry, so a connection gets none.
+    const facets = viaConnection ? null : await getAuditFacets();
+    const answer: AdminAuditLogAnswer = {
       ...response,
       eventType: parsed.data.eventType ?? "all",
       filters: parsed.data.filters,
-      facets,
-      actions: facets.eventTypes,
-    });
+      ...(facets ? { facets, actions: facets.eventTypes } : {}),
+    };
+    return connectionJson(request, answer, ADMIN_AUDIT_LOG_CONNECTION_SHAPE);
   } catch (err) {
     logger.error({ err }, "Error fetching audit log");
     return NextResponse.json(

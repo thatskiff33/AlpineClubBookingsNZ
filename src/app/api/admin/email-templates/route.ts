@@ -1,5 +1,18 @@
 import { NextRequest, NextResponse } from "next/server";
-import { z } from "zod";
+import {
+  emailTemplatesQuerySchema,
+  emailTemplateUpdateSchema,
+} from "@/lib/admin-support-api/messages";
+import {
+  EMAIL_TEMPLATE_CONNECTION_SHAPE,
+  EMAIL_TEMPLATE_LIST_CONNECTION_SHAPE,
+  EMAIL_TEMPLATE_SAVED_CONNECTION_SHAPE,
+  type EmailTemplateAnswer,
+  type EmailTemplateListAnswer,
+  type EmailTemplateOverrideAnswer,
+  type EmailTemplateStaleContent,
+} from "@/lib/connection-shapes/support-messages";
+import { connectionJson } from "@/lib/mcp-connection-request";
 import {
   buildStructuredAuditLogCreateArgs,
   getAuditRequestContext,
@@ -37,26 +50,13 @@ interface EmailTemplateOverrideRecord {
   updatedByMemberId: string | null;
 }
 
-const templateUpdateSchema = z
-  .object({
-    templateName: z.string().trim().min(1),
-    subject: z.string().trim().max(500).nullable().optional(),
-    bodyText: z.string().trim().max(10000).nullable().optional(),
-    // Fork #38: the rich-editor body. Sanitised server-side before storage;
-    // bodyText is DERIVED from it on save so audit, diffs and validation
-    // keep operating on text. A save that provides bodyText WITHOUT
-    // bodyHtml clears any stored bodyHtml — the text becomes authoritative,
-    // so a stale rich body can never shadow a scripted plain save.
-    bodyHtml: z.string().trim().max(20000).nullable().optional(),
-  })
-  .strict()
-  .refine(
-    (value) =>
-      value.subject !== undefined ||
-      value.bodyText !== undefined ||
-      value.bodyHtml !== undefined,
-    "A subject, bodyText or bodyHtml update is required",
-  );
+// The update schema lives in admin-support-api/messages.ts, which the AI app
+// action `update_email_template` offers too (ALP-724). Fork #38: its rich
+// `bodyHtml` is sanitised server-side before storage and `bodyText` DERIVED
+// from it on save, so audit, diffs and validation keep operating on text. A
+// save that provides bodyText WITHOUT bodyHtml clears any stored bodyHtml: the
+// text becomes authoritative, so a stale rich body can never shadow a
+// scripted plain save.
 
 async function loadOverrides() {
   const delegate = (prisma as unknown as {
@@ -155,7 +155,7 @@ async function loadAnnotationStripAudit(): Promise<
   return byTemplate;
 }
 
-function serializeOverride(override: EmailTemplateOverrideRecord) {
+function serializeOverride(override: EmailTemplateOverrideRecord): EmailTemplateOverrideAnswer {
   return {
     subject: override.subject,
     bodyText: override.bodyText,
@@ -165,11 +165,24 @@ function serializeOverride(override: EmailTemplateOverrideRecord) {
   };
 }
 
-export async function GET() {
+export async function GET(request: NextRequest) {
   const guard = await requireAdmin({
     permission: { area: "support", level: "view" },
   });
   if (!guard.ok) return guard.response;
+
+  // `?templateName=` answers that one template whole (ALP-724): every
+  // template's wording at once is more than an AI app's answer can carry.
+  const query = emailTemplatesQuerySchema.safeParse({
+    templateName: request.nextUrl.searchParams.get("templateName") ?? undefined,
+  });
+  if (!query.success) {
+    return NextResponse.json({ error: "Invalid query" }, { status: 400 });
+  }
+  const onlyTemplate = query.data.templateName;
+  if (onlyTemplate !== undefined && !EMAIL_TEMPLATE_KEY_SET.has(onlyTemplate)) {
+    return NextResponse.json({ error: "Unknown email template" }, { status: 404 });
+  }
 
   const overrides = await loadOverrides();
   const staleOverrides = overrides
@@ -278,21 +291,7 @@ export async function GET() {
     overrideByTemplate.size > 0
       ? await loadAnnotationStripAudit()
       : new Map<string, AnnotationStripRecord>();
-  const staleContentByTemplate = new Map<
-    string,
-    {
-      differsFromDefault: boolean;
-      subjectDiffersFromDefault: boolean;
-      bodyDiffersFromDefault: boolean;
-      reasons: string[];
-      missingRequiredTokens: string[];
-      retiredTokens: string[];
-      bracketAnnotations: string[];
-      danglingLines: string[];
-      strippedAnnotations: string[];
-      unconditionalLines: string[];
-    }
-  >();
+  const staleContentByTemplate = new Map<string, EmailTemplateStaleContent>();
   for (const definition of EMAIL_TEMPLATE_DEFINITIONS) {
     const override = overrideByTemplate.get(definition.key);
     if (!override) continue;
@@ -498,22 +497,28 @@ export async function GET() {
     })
     .filter((entry): entry is { templateName: string; tokens: string[] } => entry !== null);
 
-  return NextResponse.json({
-    templates: EMAIL_TEMPLATE_DEFINITIONS.map((definition) => {
-      const override = overrideByTemplate.get(definition.key);
-      return {
-        ...definition,
-        override: override ? serializeOverride(override) : null,
-        staleContent: staleContentByTemplate.get(definition.key) ?? null,
-      };
-    }),
+  const templates: EmailTemplateAnswer[] = EMAIL_TEMPLATE_DEFINITIONS.map((definition) => {
+    const override = overrideByTemplate.get(definition.key);
+    return {
+      ...definition,
+      override: override ? serializeOverride(override) : null,
+      staleContent: staleContentByTemplate.get(definition.key) ?? null,
+    };
+  });
+  if (onlyTemplate !== undefined) {
+    const template = templates.find((entry) => entry.key === onlyTemplate)!;
+    return connectionJson(request, { template }, EMAIL_TEMPLATE_CONNECTION_SHAPE);
+  }
+  const answer: EmailTemplateListAnswer = {
+    templates,
     staleOverrideCount: staleOverrides.length,
     staleOverrides,
     bracketAnnotationOverrides,
     strippedAnnotationOverrides,
     retiredTokenOverrides,
     missingRequiredTokenOverrides,
-  });
+  };
+  return connectionJson(request, answer, EMAIL_TEMPLATE_LIST_CONNECTION_SHAPE);
 }
 
 export async function PUT(request: NextRequest) {
@@ -529,7 +534,7 @@ export async function PUT(request: NextRequest) {
   if (!jsonBody.ok) return jsonBody.response;
   const body = jsonBody.body;
 
-  const parsed = templateUpdateSchema.safeParse(body);
+  const parsed = emailTemplateUpdateSchema.safeParse(body);
   if (!parsed.success) {
     return NextResponse.json(
       { error: "Invalid input", details: parsed.error.flatten() },
@@ -664,5 +669,5 @@ export async function PUT(request: NextRequest) {
     }),
   );
 
-  return NextResponse.json({ override: record });
+  return connectionJson(request, { override: record }, EMAIL_TEMPLATE_SAVED_CONNECTION_SHAPE);
 }

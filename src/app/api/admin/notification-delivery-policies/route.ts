@@ -1,6 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
-import { z } from "zod";
 import { parseJsonRequestBody } from "@/lib/api-json";
+import { notificationDeliveryPolicyUpdateSchema } from "@/lib/admin-support-api/messages";
+import {
+  NOTIFICATION_DELIVERY_POLICY_LIST_CONNECTION_SHAPE,
+  NOTIFICATION_DELIVERY_POLICY_SAVED_CONNECTION_SHAPE,
+} from "@/lib/connection-shapes/support-messages";
+import { connectionJson } from "@/lib/mcp-connection-request";
 import {
   buildStructuredAuditLogCreateArgs,
   getAuditRequestContext,
@@ -17,20 +22,20 @@ import {
 import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/session-guards";
 
-const updateSchema = z
-  .object({
-    templateName: z.string().trim().min(1),
-    mode: z.enum(["always", "content_only", "disabled"]),
-  })
-  .strict();
+// The body schema lives in admin-support-api/messages.ts, which the AI app
+// action `set_notification_delivery_policy` offers too (ALP-724).
 
-export async function GET() {
+export async function GET(request: NextRequest) {
   const guard = await requireAdmin({
     permission: { area: "support", level: "view" },
   });
   if (!guard.ok) return guard.response;
 
-  return NextResponse.json(await listNotificationDeliveryPolicySettings());
+  return connectionJson(
+    request,
+    await listNotificationDeliveryPolicySettings(),
+    NOTIFICATION_DELIVERY_POLICY_LIST_CONNECTION_SHAPE,
+  );
 }
 
 export async function PUT(request: NextRequest) {
@@ -46,7 +51,7 @@ export async function PUT(request: NextRequest) {
   if (!jsonBody.ok) return jsonBody.response;
   const body = jsonBody.body;
 
-  const parsed = updateSchema.safeParse(body);
+  const parsed = notificationDeliveryPolicyUpdateSchema.safeParse(body);
   if (!parsed.success) {
     return NextResponse.json(
       { error: "Invalid input", details: parsed.error.flatten() },
@@ -104,5 +109,5 @@ export async function PUT(request: NextRequest) {
     }),
   );
 
-  return NextResponse.json({ policy: record });
+  return connectionJson(request, { policy: record }, NOTIFICATION_DELIVERY_POLICY_SAVED_CONNECTION_SHAPE);
 }

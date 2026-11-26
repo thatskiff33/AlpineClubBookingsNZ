@@ -25,3 +25,14 @@ export const AI_ASSISTANT_DEFAULT_MONTHLY_BUDGET_CENTS = 1000;
  * so enabling the module can never, by itself, authorise spend.
  */
 export const AI_DIAGNOSTICS_DEFAULT_MONTHLY_BUDGET_CENTS = 0;
+
+/**
+ * The largest monthly cap an officer may set, a guard so a fat-finger cannot
+ * uncap spend. Page help: 1,000.00 in the club's currency. AI Diagnostics
+ * reasons over code with tools, so it can cost materially more per session
+ * than a grounded page-help answer: its ceiling is 5,000.00, still bounded.
+ * Read by each settings route's schema (`admin-support-api/ai-settings.ts`).
+ */
+export const AI_ASSISTANT_MAX_MONTHLY_BUDGET_CENTS = 100_000;
+
+export const AI_DIAGNOSTICS_MAX_MONTHLY_BUDGET_CENTS = 500_000;

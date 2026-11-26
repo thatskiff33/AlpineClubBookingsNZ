@@ -1,5 +1,12 @@
 import { NextResponse } from "next/server";
 import { hasAdminAreaAccess } from "@/lib/admin-permissions";
+import { privacyRetentionPreviewQuerySchema } from "@/lib/admin-support-api/system";
+import {
+  PRIVACY_RETENTION_CONNECTION_SHAPE,
+  PRIVACY_RETENTION_SAVED_CONNECTION_SHAPE,
+  type PrivacyRetentionAnswer,
+} from "@/lib/connection-shapes/support-system";
+import { connectionJson } from "@/lib/mcp-connection-request";
 import { parseJsonRequestBody } from "@/lib/api-json";
 import { getPrivacyRetentionPreview } from "@/lib/privacy-retention";
 import {
@@ -15,15 +22,22 @@ export async function GET(request: Request) {
   });
   if (!guard.ok) return guard.response;
 
+  // The query schema lives in admin-support-api/system.ts, which the AI app
+  // action `get_privacy_retention` offers too (ALP-724).
   const params = new URL(request.url).searchParams;
-  const page = Number(params.get("page") ?? 1);
-  const memberAfter = params.get("memberAfter") ?? undefined;
-  if (memberAfter !== undefined && (memberAfter.length === 0 || memberAfter.length > 200)) {
-    return NextResponse.json({ error: "Invalid member cursor." }, { status: 400 });
+  const query = privacyRetentionPreviewQuerySchema.safeParse({
+    page: params.get("page") ?? undefined,
+    memberAfter: params.get("memberAfter") ?? undefined,
+  });
+  if (!query.success) {
+    const pageInvalid = query.error.issues.some((issue) => issue.path[0] === "page");
+    return NextResponse.json(
+      { error: pageInvalid ? "Page must be a positive whole number." : "Invalid member cursor." },
+      { status: 400 },
+    );
   }
-  if (!Number.isSafeInteger(page) || page < 1) {
-    return NextResponse.json({ error: "Page must be a positive whole number." }, { status: 400 });
-  }
+  const page = query.data.page ?? 1;
+  const memberAfter = query.data.memberAfter;
   const canViewMembership = hasAdminAreaAccess(guard.session.user, {
     area: "membership", level: "view",
   });
@@ -31,7 +45,7 @@ export async function GET(request: Request) {
   const { settings, ...preview } = await getPrivacyRetentionPreview({
     page, pageSize, memberAfter, includeMembers: canViewMembership,
   });
-  return NextResponse.json({
+  const answer: PrivacyRetentionAnswer = {
     settings,
     clearedBookingDietary: preview.clearedBookingDietary,
     preview: {
@@ -51,7 +65,8 @@ export async function GET(request: Request) {
     page,
     pageSize,
     canViewMembership,
-  });
+  };
+  return connectionJson(request, answer, PRIVACY_RETENTION_CONNECTION_SHAPE);
 }
 
 export async function PUT(request: Request) {
@@ -83,5 +98,5 @@ export async function PUT(request: Request) {
   const settings = await savePrivacyRetentionSettings(parsed.data, guard.session.user.id);
   // #4914: stored CMS pages render {{email-log-retention}} from these settings.
   revalidatePublicSite();
-  return NextResponse.json({ settings });
+  return connectionJson(request, { settings }, PRIVACY_RETENTION_SAVED_CONNECTION_SHAPE);
 }

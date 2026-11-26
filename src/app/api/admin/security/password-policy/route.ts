@@ -20,6 +20,8 @@ import {
   SESSION_MAX_AGE_MIN_HOURS,
 } from "@/lib/session-max-age";
 import { requireRecentAuth } from "@/lib/require-recent-auth";
+import { PASSWORD_POLICY_CONNECTION_SHAPE } from "@/lib/connection-shapes/support-system";
+import { connectionJson } from "@/lib/mcp-connection-request";
 
 // Admin API for the club password-complexity policy (epic #2030, child #2033).
 // The Login & Security page's password-policy card reads GET and writes PUT.
@@ -61,11 +63,11 @@ const policyInputSchema = z
   })
   .strict();
 
-export async function GET() {
+export async function GET(request: Request) {
   const guard = await requireAdmin({ permission: { area: AREA, level: "view" } });
   if (!guard.ok) return guard.response;
 
-  return NextResponse.json(await loadLoginSecuritySettings());
+  return connectionJson(request, await loadLoginSecuritySettings(), PASSWORD_POLICY_CONNECTION_SHAPE);
 }
 
 export async function PUT(request: Request) {

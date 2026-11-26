@@ -15,6 +15,11 @@ import {
 import { detectLegacyProviderEnv } from "@/lib/xero-config";
 import { BACKUP_PROVIDER } from "@/lib/backup-config";
 import logger from "@/lib/logger";
+import {
+  BACKUP_STATUS_CONNECTION_SHAPE,
+  type BackupStatusAnswer,
+} from "@/lib/connection-shapes/support-system";
+import { connectionJson } from "@/lib/mcp-connection-request";
 
 // GET /api/admin/backups/status — metadata-only backup setup state + run history.
 //
@@ -29,7 +34,7 @@ function backupCronSchedule(): string {
   return process.env.BACKUP_CRON_SCHEDULE?.trim() || "0 3 * * *";
 }
 
-export async function GET() {
+export async function GET(request: Request) {
   const guard = await requireAdmin();
   if (!guard.ok) return guard.response;
 
@@ -87,7 +92,7 @@ export async function GET() {
   const legacyEnvUnmigrated =
     legacyEnvVars.length > 0 && (!state.enabled || !state.durable);
 
-  return NextResponse.json({
+  const answer: BackupStatusAnswer = {
     enabled: state.enabled,
     bucket: state.bucket,
     region: state.region,
@@ -113,5 +118,6 @@ export async function GET() {
     // Client uses this to gate the Full-Admin-only destination/credential
     // affordances; the write routes enforce it independently.
     canManageDestination: isFullAdmin(guard.session.user),
-  });
+  };
+  return connectionJson(request, answer, BACKUP_STATUS_CONNECTION_SHAPE);
 }

@@ -1,18 +1,21 @@
 import { NextRequest, NextResponse } from "next/server";
 import * as Sentry from "@sentry/nextjs";
-import { z } from "zod";
+import { providerTestSchema } from "@/lib/admin-support-api/system";
 import { logAudit } from "@/lib/audit";
+import {
+  PROVIDER_TEST_CONNECTION_SHAPE,
+  type ProviderTestAnswer,
+} from "@/lib/connection-shapes/support-system";
+import { connectionJson } from "@/lib/mcp-connection-request";
 import { requireAdmin } from "@/lib/session-guards";
 import { readXeroConnection } from "@/lib/xero-connection";
 import { getStripe } from "@/lib/stripe";
 import { getOperationalStripeSecretKey } from "@/lib/stripe-config";
 import { parseJsonRequestBody } from "@/lib/api-json";
 
-const providerTestSchema = z.object({
-  provider: z.enum(["stripe", "smtp", "sentry", "xero"]),
-});
-
-type Provider = z.infer<typeof providerTestSchema>["provider"];
+// The body schema lives in admin-support-api/system.ts, which the AI app
+// action `test_provider_connection` offers too (ALP-724).
+type Provider = ReturnType<typeof providerTestSchema.parse>["provider"];
 
 async function withTimeout<T>(label: string, promise: Promise<T>): Promise<T> {
   const timeoutMs = 10_000;
@@ -130,12 +133,13 @@ export async function POST(request: NextRequest) {
       summary: `Setup provider test succeeded: ${parsed.data.provider}`,
       metadata: { provider: parsed.data.provider },
     });
-    return NextResponse.json({
+    const answer: ProviderTestAnswer = {
       ok: true,
       provider: parsed.data.provider,
       checkedAt,
       message,
-    });
+    };
+    return connectionJson(request, answer, PROVIDER_TEST_CONNECTION_SHAPE);
   } catch (error) {
     // Provider SDK error messages can embed redacted credential fragments
     // (e.g. Stripe's "Invalid API Key provided: sk_test_****abcd"), so only
@@ -151,12 +155,13 @@ export async function POST(request: NextRequest) {
       summary: `Setup provider test failed: ${parsed.data.provider}`,
       metadata: { provider: parsed.data.provider, error: errorName },
     });
-    return NextResponse.json({
+    const answer: ProviderTestAnswer = {
       ok: false,
       provider: parsed.data.provider,
       checkedAt,
       message:
         "Provider test failed — the provider rejected the request. Check the stored credentials and try again.",
-    });
+    };
+    return connectionJson(request, answer, PROVIDER_TEST_CONNECTION_SHAPE);
   }
 }

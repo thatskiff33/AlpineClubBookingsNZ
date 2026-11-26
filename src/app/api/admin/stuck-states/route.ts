@@ -3,8 +3,10 @@ import logger from "@/lib/logger";
 import { hasAdminAreaAccess } from "@/lib/admin-permissions";
 import { requireAdmin } from "@/lib/session-guards";
 import { getStuckStateDashboard } from "@/lib/stuck-state-dashboard";
+import { STUCK_STATES_CONNECTION_SHAPE } from "@/lib/connection-shapes/support-system";
+import { connectionJson } from "@/lib/mcp-connection-request";
 
-export async function GET() {
+export async function GET(request: Request) {
   const guard = await requireAdmin();
   if (!guard.ok) return guard.response;
 
@@ -27,8 +29,10 @@ export async function GET() {
   });
 
   try {
-    return NextResponse.json(
+    return connectionJson(
+      request,
       await getStuckStateDashboard({ viewerCanViewMembership, viewerCanViewFinance }),
+      STUCK_STATES_CONNECTION_SHAPE,
     );
   } catch (error) {
     logger.error({ err: error }, "Failed to load stuck-state dashboard");

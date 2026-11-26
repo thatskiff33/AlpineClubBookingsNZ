@@ -1,6 +1,11 @@
 import { NextResponse } from "next/server";
-import { z } from "zod";
 import { parseJsonRequestBody } from "@/lib/api-json";
+import { aiSpendCurrencyUpdateSchema } from "@/lib/admin-support-api/ai-settings";
+import {
+  AI_SPEND_CURRENCY_CONNECTION_SHAPE,
+  type AiSpendCurrencyAnswer,
+} from "@/lib/connection-shapes/support-ai";
+import { connectionJson } from "@/lib/mcp-connection-request";
 import { requireAdmin } from "@/lib/session-guards";
 import {
   buildStructuredAuditLogCreateArgs,
@@ -55,16 +60,13 @@ import { isSingletonUpsertContention } from "@/lib/prisma-errors";
 /** Thrown inside the transaction when the club's currency moved under it. */
 class ClubCurrencyChangedError extends Error {}
 
-const updateSchema = z
-  .object({
-    // The decimal as typed ("0.92"): parsed server-side by the canonical
-    // parser, which is what rejects zero, a sign, a symbol, over-precision and
-    // anything above the bound — the client's check is a courtesy, not the gate.
-    clubUnitsPerNzd: z.string().trim().min(1).max(32),
-  })
-  .strict();
+// The update schema (the decimal as typed, "0.92", parsed below by the
+// canonical parser, which is what rejects zero, a sign, a symbol,
+// over-precision and anything above the bound; the client's check is a
+// courtesy, not the gate) lives in admin-support-api/ai-settings.ts, which the
+// AI app action `set_ai_spend_rate` offers too (ALP-724).
 
-function toResponse(currency: AiSpendCurrency) {
+function toResponse(currency: AiSpendCurrency): AiSpendCurrencyAnswer {
   return {
     clubCurrency: currency.clubCurrency,
     isNzd: currency.isNzd,
@@ -76,13 +78,13 @@ function toResponse(currency: AiSpendCurrency) {
   };
 }
 
-export async function GET() {
+export async function GET(request: Request) {
   const guard = await requireAdmin({
     permission: { area: "support", level: "view" },
   });
   if (!guard.ok) return guard.response;
 
-  return NextResponse.json(toResponse(await loadAiSpendCurrency()));
+  return connectionJson(request, toResponse(await loadAiSpendCurrency()), AI_SPEND_CURRENCY_CONNECTION_SHAPE);
 }
 
 export async function PUT(request: Request) {
@@ -112,7 +114,7 @@ export async function PUT(request: Request) {
   if (!jsonBody.ok) return jsonBody.response;
   const body = jsonBody.body;
 
-  const parsed = updateSchema.safeParse(body);
+  const parsed = aiSpendCurrencyUpdateSchema.safeParse(body);
   if (!parsed.success) {
     return NextResponse.json(
       { error: "Invalid input", details: parsed.error.flatten() },
@@ -212,7 +214,8 @@ export async function PUT(request: Request) {
     throw error;
   }
 
-  return NextResponse.json(
+  return connectionJson(
+    request,
     toResponse({
       clubCurrency: current.clubCurrency,
       isNzd: false,
@@ -221,5 +224,6 @@ export async function PUT(request: Request) {
       rateSetAt: row.rateSetAt,
       rateSetByMemberId: row.rateSetByMemberId,
     }),
+    AI_SPEND_CURRENCY_CONNECTION_SHAPE,
   );
 }
