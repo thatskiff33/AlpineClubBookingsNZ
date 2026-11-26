@@ -203,7 +203,8 @@ export async function retryFailedEmails(): Promise<{
   await getEmailTransporter(delivery.clearance);
 
   // #5298 (INV-INT-043): settle rows a crash left QUEUED first, so a row it
-  // hands back as FAILED is replayed by the selection below in this same run.
+  // hands back as FAILED is replayed by the selection below in this same run,
+  // unless 50 older-created failures fill it; then a later run replays it.
   await sweepStrandedQueuedEmails();
 
   // Backoff: don't retry emails until at least 15 minutes after the last attempt

@@ -4405,7 +4405,8 @@ selects, each run takes up to 50 rows `QUEUED` for more than 30 minutes (or
 guarded on the row as read:
 
 - `PENDING` at attempts 1, body kept: back to `FAILED`, attempts unchanged, and
-  replayed by the same run with its usual checks;
+  replayed with its usual checks by the same run, or a later one when 50 older
+  failures fill that run's batch;
 - `PENDING` at attempts 1, no body: `FAILED` at the ceiling, "never sent";
 - anything else (`STARTED`, null, or attempts above 1): `FAILED` at the
   ceiling and `UNCONFIRMED`, never sent again automatically. A keyed email's

@@ -21,6 +21,15 @@
  * disposable loopback PostgreSQL. It cleans its own `race-5298` rows. Officer
  * alerts may reach admins other suites left behind, so sends are counted by
  * this file's own recipients.
+ *
+ * The retry job replays the 50 oldest-created `FAILED` rows a run, and the
+ * suites before this one in the shared database can leave more than 50 behind.
+ * A row the sweep hands back is then replayed a run later, not in the same run,
+ * which the `Real-PostgreSQL suites (all)` job on #5496 hit (this file passed
+ * alone). So the rows under test are created first (`FIRST_CREATED`), ahead of
+ * anything another suite left, as `email-failure-requeue.realdb.test.ts` pins
+ * its rows to the head of the review queue. Neither the sweep nor the 7-day
+ * limit reads `createdAt`.
  */
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -56,6 +65,7 @@ const P = "race-5298";
 const SUBJECT = `${P} notice`;
 const TEMPLATE = "admin-unrecognised-stripe-payment";
 const THIRTY_ONE_MINUTES = 31 * 60_000;
+const FIRST_CREATED = new Date(Date.UTC(2000, 0, 1));
 
 let prisma: (typeof import("@/lib/prisma"))["prisma"];
 let sendEmail: (typeof import("@/lib/email/core"))["sendEmail"];
@@ -80,6 +90,7 @@ let retryFailedEmails: (typeof import("@/lib/cron-email-retry"))["retryFailedEma
         status: "QUEUED",
         handoverState: "PENDING",
         lastAttemptAt: new Date(Date.now() - ago),
+        createdAt: FIRST_CREATED,
         ...extra,
       },
     });
@@ -153,6 +164,7 @@ let retryFailedEmails: (typeof import("@/lib/cron-email-retry"))["retryFailedEma
 
     const [row] = await prisma.emailLog.findMany({ where: { subject: SUBJECT, to } });
     expect(row).toEqual(expect.objectContaining({ status: "QUEUED", handoverState: "PENDING", attempts: 1 }));
+    await prisma.emailLog.update({ where: { id: row!.id }, data: { createdAt: FIRST_CREATED } });
 
     // Inside the threshold the send may still be in flight, so it is left alone.
     await retryFailedEmails();

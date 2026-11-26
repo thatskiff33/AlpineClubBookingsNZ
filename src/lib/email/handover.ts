@@ -92,8 +92,9 @@ interface StrandedRow {
  * (and younger than `STRANDED_QUEUED_MAX_AGE_MS`), up to 50 a run:
  *
  * - never handed over, body kept: back to `FAILED` with its attempts unchanged,
- *   so the email retry job, which runs this first, replays it in the same run
- *   with all its usual checks;
+ *   so the email retry job, which runs this first, replays it with all its
+ *   usual checks: in the same run, or a later one when 50 older failures fill
+ *   that run's batch;
  * - never handed over, no body kept: `FAILED` at the retry ceiling, into the
  *   review queue, and officers are told it was never sent;
  * - anything else: `FAILED` at the ceiling and `UNCONFIRMED`, never sent again
