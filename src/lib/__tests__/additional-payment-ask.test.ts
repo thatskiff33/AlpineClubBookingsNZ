@@ -7,7 +7,6 @@ import {
   bookingLedgerCensusSql,
   bookingLedgerResidualCents,
   bookingLedgerResidualSql,
-  bookingLedgerVerdict,
   NO_ADDITIONAL_ASK,
   outstandingAdditionalAskCents,
   raiseReviewChargeAsk,
@@ -15,6 +14,7 @@ import {
   sizeReviewChargeAsk,
   type BookingLedgerIdentityRow,
 } from "@/lib/additional-payment-ask";
+import { bookingLedgerVerdict } from "@/lib/booking-ledger-verdict";
 import { applyPaymentAdjustments } from "@/lib/booking-modify-settlement";
 import { noReductionAgainstUnpaidAsk } from "@/lib/additional-ask-reduction";
 import type { CalendarDate } from "@/lib/club-time";

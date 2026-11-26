@@ -10,19 +10,21 @@ import {
   BOOKING_LEDGER_CENSUS_CAPTURED_PAYMENT_STATUSES,
   BOOKING_LEDGER_CENSUS_EXCLUDED_BOOKING_STATUSES,
   BOOKING_LEDGER_IDENTITY_TERMS,
-  BOOKING_XERO_BILLING_EVIDENCE,
-  BOOKING_XERO_BILLING_INVOICES,
-  bookingBilledInXeroSql,
   bookingLedgerCensusSql,
   bookingLedgerResidualCents,
   bookingLedgerResidualSql,
-  bookingLedgerVerdict,
   describeBookingLedgerResidual,
   sizeAdditionalAsk,
   sizeReviewChargeAsk,
   type BookingLedgerIdentityRow,
-  type BookingXeroBillingFacts,
 } from "@/lib/additional-payment-ask";
+import {
+  BOOKING_XERO_BILLING_EVIDENCE,
+  BOOKING_XERO_BILLING_INVOICES,
+  bookingBilledInXeroSql,
+  bookingLedgerVerdict,
+  type BookingXeroBillingFacts,
+} from "@/lib/booking-ledger-verdict";
 import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 import { CENSUS_TIMEOUT_MS } from "@/test/census-timeout";
 

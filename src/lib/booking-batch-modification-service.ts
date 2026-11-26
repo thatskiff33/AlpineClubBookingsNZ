@@ -2029,8 +2029,7 @@ export async function modifyBookingBatch({
       paymentSource: booking.payment?.source ?? null,
       paymentReference: booking.payment?.reference ?? null,
       xeroInvoiceNumber: booking.payment?.xeroInvoiceNumber ?? null,
-      zeroDollarAutoPaid: lifecycle.zeroDollarAutoPaid,
-      primaryInvoiceBillsIncrease: payments.primaryInvoiceBillsIncrease,
+      zeroDollarAutoPaid: lifecycle.zeroDollarAutoPaid, primaryInvoiceBillsIncrease: payments.primaryInvoiceBillsIncrease, // #5288
       supersededPrimaryPaymentIntents: lifecycle.supersededPrimaryPaymentIntents,
       xeroAdditionalAmountCents: payments.xeroAdditionalAmountCents,
       xeroRefundAmountCents: payments.xeroRefundAmountCents,
@@ -2449,8 +2448,7 @@ async function dispatchBatchPostTransactionSideEffects({
     // #3653: the organiser child refund raises the one note, after Stripe.
     organiserChildRefundOwnsCreditNote: result.organiserChildRefund !== null,
     settlementAmountCents: result.xeroRefundAmountCents,
-    createPrimaryInvoiceWhenMissing:
-      result.zeroDollarAutoPaid && !result.hasIssuedXeroInvoice,
+    createPrimaryInvoiceWhenMissing: result.zeroDollarAutoPaid && !result.hasIssuedXeroInvoice,
     primaryInvoiceBillsIncrease: result.primaryInvoiceBillsIncrease, // #5288
     requiresAdditionalStripePayment:
       result.xeroAdditionalAmountCents > 0 && result.hasSucceededPayment,

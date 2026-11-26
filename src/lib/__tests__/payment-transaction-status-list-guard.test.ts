@@ -234,6 +234,7 @@ const AGGREGATE_CAPTURED_STATUS_AUTHORITY_READERS = new Map([
   ["src/lib/credit-release-ask.ts", "payment.status: a booking whose payment has taken nothing owes its price as the PRIMARY payment, not a released-credit ask (#4253)"],
   ["src/lib/finance-booking-metrics.ts", "payment.status: a change fee is income only once captured (#3750, #3955 F9)"],
   ["src/lib/payment-net-collected.ts", "payment.status in netCollectedPaymentTookMoney (#3372)"],
+  ["src/lib/primary-invoice-bills-increase.ts", "payment.status: an unlinked bank increase is billed on the primary invoice (#5288)"],
   ["src/lib/refunded-total-shortfall-audit.ts", "Prisma payment.findMany status filter"],
   ["src/lib/xero-booking-edit-conditions.ts", "primary-invoice payment.status"],
   ["src/lib/xero-booking-invoices.ts", "booking.payment.status for allocation and invoice payment"],

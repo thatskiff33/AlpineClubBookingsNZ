@@ -289,7 +289,8 @@ describe("an unlinked Internet Banking increase is billed on the primary invoice
     expect(result.primaryInvoiceBillsIncrease).toBe(true);
     expect(result.additionalAmountCents).toBe(5_000);
     expect(result.additionalAsk.amountCents).toBe(0);
-    expect(result.xeroAdditionalAmountCents).toBe(0);
+    // Xero's share of it: the primary invoice the door raises bills it.
+    expect(result.xeroAdditionalAmountCents).toBe(5_000);
     // The claim and its fee write stand, so the invoice the door raises bills the fee.
     expect(result.settledAgainstPrimaryInvoice).toBe(true);
     expect(payment.updateMany).toHaveBeenCalledWith({

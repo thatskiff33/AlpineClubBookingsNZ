@@ -4,24 +4,26 @@
  * proofs read the same rows the same way. READ ONLY: it never writes and never
  * calls a provider.
  *
- * The arithmetic and the verdict are `additional-payment-ask.ts`'s
- * (`bookingLedgerResidualCents`, `bookingLedgerVerdict`); the Xero billing
- * evidence (#5288) is read through the invoices and statuses that module names,
- * the same ones its SQL twin (`bookingLedgerCensusSql`) folds in.
+ * The arithmetic is `additional-payment-ask.ts`'s (`bookingLedgerResidualCents`)
+ * and the verdict `booking-ledger-verdict.ts`'s; the Xero billing evidence
+ * (#5288) is read through the invoices and statuses that module names, the
+ * same ones the SQL twin (`bookingLedgerCensusSql`) folds in.
  */
 import type { PrismaClient } from "@prisma/client";
 
 import {
   BOOKING_LEDGER_CENSUS_CAPTURED_PAYMENT_STATUSES,
   BOOKING_LEDGER_CENSUS_EXCLUDED_BOOKING_STATUSES,
+  bookingLedgerResidualCents,
+  type BookingLedgerIdentityRow,
+} from "@/lib/additional-payment-ask";
+import {
   BOOKING_XERO_BILLING_INVOICES,
   BOOKING_XERO_BILLING_QUEUED_STATUSES,
-  bookingLedgerResidualCents,
   bookingLedgerVerdict,
-  type BookingLedgerIdentityRow,
   type BookingLedgerVerdict,
   type BookingXeroBillingFacts,
-} from "@/lib/additional-payment-ask";
+} from "@/lib/booking-ledger-verdict";
 import { prisma } from "@/lib/prisma";
 
 export interface BookingLedgerCensusRow extends BookingLedgerIdentityRow, BookingXeroBillingFacts {

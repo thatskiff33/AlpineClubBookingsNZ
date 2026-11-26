@@ -1,4 +1,4 @@
-import type { BookingXeroBillingFacts } from "@/lib/additional-payment-ask";
+import type { BookingXeroBillingFacts } from "@/lib/booking-ledger-verdict";
 
 /**
  * A card-paid booking's Xero billing facts (#5288): no Internet Banking

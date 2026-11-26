@@ -4577,10 +4577,11 @@ and what the primary invoice bills), **`INV-PAY-136`** (the edit's claim),
   full, whose primary Xero invoice is not linked. It has no card to ask and no
   invoice for a supplementary one to sit beside, so an edit raising its worth
   (a price increase or the late-notice fee) used to ask nobody.
-- **Who.** `billsIncreaseOnNewPrimaryInvoice` (`booking-payment-state.ts`):
-  settled status, captured payment status, Internet Banking source, no invoice
-  link, not marked paid by hand. `applyPaymentAdjustments` adds an increase, no
-  card ask and no organiser's place, and returns `primaryInvoiceBillsIncrease`.
+- **Who.** `billsIncreaseOnNewPrimaryInvoice`
+  (`primary-invoice-bills-increase.ts`): an increase, no card ask, settled
+  status, captured payment status, Internet Banking source, no invoice link,
+  not marked paid by hand, not an organiser's place. `applyPaymentAdjustments`
+  returns it as `primaryInvoiceBillsIncrease`.
 - **The ask.** The "Booking Modified" email says "An additional Internet
   Banking payment of $X is required" with the payment reference, as a linked
   booking's edit does. Nothing is minted.
