@@ -16,11 +16,25 @@ import {
   FORMER_MEMBER_ANONYMISATION_JOB_NAME,
   PRIVACY_DATA_PRUNE_JOB_NAME,
 } from "@/lib/privacy-retention-shared";
+import { PAYMENTS_CRON_JOB_NAMES, type PaymentsCronTask } from "@/lib/payments-cron-jobs";
 import { XERO_CRON_JOB_NAMES } from "@/lib/xero-cron-jobs";
 
 const DAILY_STALE_AFTER_MINUTES = 36 * 60;
 const THREE_HOURLY_STALE_AFTER_MINUTES = 6 * 60 + 30;
 const FIFTEEN_MINUTE_STALE_AFTER_MINUTES = 60;
+
+/** Each payments-cycle task's Cron Health row label, in row order (#5256). */
+const PAYMENTS_CRON_HEALTH_LABELS: Record<PaymentsCronTask, string> = {
+  onceEverAlertSweep: "Once-ever admin alert sweep",
+  recovery: "Stripe payment recovery",
+  internetBankingHoldRelease: "Expired Internet Banking hold release",
+  xeroOutboxReap: "Stale waiting Xero invoice reaper",
+  lateCaptureHeldAlert: "Held late payment alert",
+  duplicateCaptureKeptAlert: "Kept card payment alert",
+  combinedInvoiceCoverRelease: "Combined group invoice cover release",
+  // #4253: asks for credit released after a Xero credit note was spent, records its payment.
+  creditReleaseAsks: "Released credit payment requests",
+};
 const THIRTY_MINUTE_STALE_AFTER_MINUTES = 90;
 
 type CronHealthStatus =
@@ -352,21 +366,11 @@ export function getAdminCronJobDefinitions(
       },
       globalDisabledReason
     ),
-    // The 15-minute payments cycle (`payments-cron-runner`, #3663), each task under
-    // its own name so a missing run is visible: #5255's once-ever alert sweep, #3635's
-    // held late-capture alert, #4285's kept card payment alert, #4525's cover sweep.
-    ...([
-      ["once-ever-alert-sweep", "Once-ever admin alert sweep"],
-      ["payment-recovery", "Stripe payment recovery"],
-      ["internet-banking-hold-release", "Expired Internet Banking hold release"],
-      ["xero-waiting-invoice-reaper", "Stale waiting Xero invoice reaper"],
-      ["late-capture-held-alert", "Held late payment alert"],
-      ["duplicate-capture-kept-alert", "Kept card payment alert"],
-      ["combined-invoice-cover-release", "Combined group invoice cover release"],
-    ] as const).map(([jobName, label]) =>
+    // The 15-minute payments cycle (`payments-cron-runner`, #3663), each task under its own name.
+    ...Object.entries(PAYMENTS_CRON_HEALTH_LABELS).map(([task, label]) =>
       defineCronJob(
         {
-          jobName,
+          jobName: PAYMENTS_CRON_JOB_NAMES[task as PaymentsCronTask],
           label,
           schedule: "*/15 * * * *",
           timezone: clubTimeZone,
@@ -375,20 +379,6 @@ export function getAdminCronJobDefinitions(
         },
         globalDisabledReason
       )
-    ),
-    defineCronJob(
-      {
-        // #4253. The sixth task of the same cycle: asks members for credit released
-        // after a credit note was spent in Xero, records the card payment in Xero,
-        // and closes a request Xero shows paid.
-        jobName: "credit-release-asks",
-        label: "Released credit payment requests",
-        schedule: "*/15 * * * *",
-        timezone: clubTimeZone,
-        expectedLocalTime: `Every 15 minutes in ${clubTimeZone}`,
-        staleAfterMinutes: FIFTEEN_MINUTE_STALE_AFTER_MINUTES,
-      },
-      globalDisabledReason
     ),
     defineCronJob(
       {
