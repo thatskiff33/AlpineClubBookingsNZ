@@ -1,3 +1,4 @@
+import type { EditQuotedFigures } from "@/lib/edit-quoted-figures";
 // The batch edit's transaction result, moved verbatim from
 // `booking-batch-modification-service.ts` to keep that file under its size
 // ceiling (#5145). Types, and (#5149) two spreads that read off them, so that
@@ -32,6 +33,7 @@ export type BatchModificationTransactionResult =
     additionalAmountCents: number;
     billedToOrganiserCents: number; // #4299: invoiced to the group organiser, not asked of this member
     booking: ModifiedBooking;
+    quotedFigures: EditQuotedFigures;
     /** #3232: the deferred hosting reconciliation, when the caller asked for it. */
     pendingHostingReconcile?: () => Promise<void>;
     priceDiffCents: number;

@@ -1,4 +1,4 @@
-import { assertEditQuotedFigures } from "@/lib/edit-quoted-figures";
+import { assertEditQuotedFigures, type EditQuotedFigures } from "@/lib/edit-quoted-figures";
 import { queueOrganiserExtraForChange } from "@/lib/organiser-extra-invoice-queue";
 import { paidByOrganiserInternetBanking } from "@/lib/group-organiser-paid";
 import { isUnpaidConfirmedWholeLodge } from "@/lib/booking-payment-flow";
@@ -186,6 +186,7 @@ export const LINKED_MOVE_CHANGE_FEE_WAIVED_REASON =
 
 export type BatchModificationResponse = BatchModificationSettlementFacts & {
   booking: ModifiedBooking;
+  quotedFigures: EditQuotedFigures;
   /**
    * The `BookingModification` row this edit wrote (#3750), so a caller that
    * owns the transaction can link it — the finished-stay change-request
@@ -1426,7 +1427,8 @@ export async function modifyBookingBatch({
     // before anything leaves the transaction: the promo writes above roll back
     // with the refusal, and nothing durable or external has run yet.
     // `netChargeCents` is the pre-offset figure the preview reports.
-    assertEditQuotedFigures(input.quotedFigures, { newFinalPriceCents, priceDiffCents, changeFeeCents, netChargeCents });
+    const quotedFigures = { newFinalPriceCents, priceDiffCents, changeFeeCents, netChargeCents };
+    assertEditQuotedFigures(input.quotedFigures, quotedFigures);
     if (settlementOptions?.requiresSettlementMethod && !input.settlementMethod) {
       throw new BookingModificationSettlementMethodRequiredError();
     }
@@ -1978,6 +1980,7 @@ export async function modifyBookingBatch({
 
     return {
       booking: updatedBooking,
+      quotedFigures,
       pendingHostingReconcile:
         hostingReconcile === "CALLER" ? reconcileHosting : undefined,
       priceDiffCents,
@@ -2235,6 +2238,7 @@ export async function modifyBookingBatch({
 
     return {
       booking: result.booking,
+      quotedFigures: result.quotedFigures,
       bookingModificationId: result.bookingModificationId,
       priceDiffCents: result.priceDiffCents,
       changeFeeCents: result.changeFeeCents,
@@ -2279,6 +2283,7 @@ export async function modifyBookingBatch({
     // (`formatLinkedMoveMoneySentence`), rather than implying one payment step.
     return {
       booking: result.booking,
+      quotedFigures: result.quotedFigures,
       bookingModificationId: result.bookingModificationId,
       ...(result.pendingHostingReconcile
         ? { pendingHostingReconcile: result.pendingHostingReconcile }

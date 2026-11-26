@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { modifyQuoteSchema } from "@/lib/booking-modify-quote-request";
-import { editQuotedFiguresSchema } from "@/lib/edit-quoted-figures";
+import { editQuotedFiguresSchema, linkedQuotedFiguresSchema } from "@/lib/edit-quoted-figures";
 import { hostingCoverageOverrideSchema } from "@/lib/adult-member-hosting-same-owner";
 import { hostingCoverageLinkedMoveSchema } from "@/lib/adult-member-hosting-linked-move";
 
@@ -26,6 +26,7 @@ export const batchModifySchema = modifyQuoteSchema.extend({
   // change would actually strand another booking on their own account.
   hostingCoverageLinkedMove: hostingCoverageLinkedMoveSchema.optional(),
   // #4924 (`INV-MOD-062`): the preview's figures the member approved. Optional
-  // for the blue-green compatibility window: an older panel sends none.
+  // in the shape so an old panel receives a reload refusal, not a schema error.
   quotedFigures: editQuotedFiguresSchema.optional(),
+  linkedQuotedFigures: linkedQuotedFiguresSchema.optional(),
 });
