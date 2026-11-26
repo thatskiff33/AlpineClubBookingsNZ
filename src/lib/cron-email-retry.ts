@@ -553,7 +553,6 @@ export async function retryFailedEmails(): Promise<{
     }
 
     let result: SentMessageInfo;
-    const attachments = await retryCalendarRemovalAttachments(emailLog); // #5249
     try {
       result = await transporter.sendMail({
         from: formatEmailFromAddress(EMAIL_FROM),
@@ -561,7 +560,7 @@ export async function retryFailedEmails(): Promise<{
         subject: emailLog.subject,
         html: retryHtml,
         text: htmlToPlainText(retryHtml),
-        attachments,
+        attachments: await retryCalendarRemovalAttachments(emailLog), // #5249
       });
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : String(err);

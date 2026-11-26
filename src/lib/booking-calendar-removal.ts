@@ -22,7 +22,11 @@
 import { BOOKING_CONFIRMED_TEMPLATE_NAME } from "@/lib/email/booking-confirmed-template";
 import type { EmailAttachment } from "@/lib/email/internal";
 import { resolveBookingEmailLink } from "@/lib/booking-email-authority";
-import { buildBookingIcs, SERVABLE_BOOKING_STATUS } from "@/lib/calendar-links";
+import {
+  bookingCalendarSequence,
+  buildBookingIcs,
+  SERVABLE_BOOKING_STATUS,
+} from "@/lib/calendar-links";
 import { formatDateOnly } from "@/lib/date-only";
 import { calendarRemovalNote, calendarUpdateNote } from "@/lib/email-message-notes";
 import logger from "@/lib/logger";
@@ -121,11 +125,11 @@ export async function resolveBookingCalendarRemoval(
       return offeredRemoval(null);
     }
     const sentAt = new Date();
-    // Above every SEQUENCE the download route served (epoch seconds of an
-    // EARLIER `updatedAt`), so a calendar applies this as the newer revision.
+    // Above every SEQUENCE the download route served (an EARLIER revision's
+    // `updatedAt`), so a calendar applies this as the newer revision.
     const sequence = Math.max(
-      Math.floor(sentAt.getTime() / 1000),
-      Math.floor(booking.updatedAt.getTime() / 1000) + 1,
+      bookingCalendarSequence(sentAt),
+      bookingCalendarSequence(booking.updatedAt) + 1,
     );
     const ics = buildBookingIcs({
       stay: {

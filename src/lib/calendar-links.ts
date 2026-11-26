@@ -198,6 +198,15 @@ function bookingCalendarUid(bookingId: string): string {
 }
 
 /**
+ * A booking revision's SEQUENCE: epoch seconds of its `updatedAt`, so it rises
+ * with every booking update. The download route serves this, and the
+ * cancellation file (#5249) must go above it, so both read it here.
+ */
+export function bookingCalendarSequence(updatedAt: Date): number {
+  return Math.floor(updatedAt.getTime() / 1000);
+}
+
+/**
  * The .ics document for one stay. The UID is stable per booking and SEQUENCE
  * rises with every booking update (it is the epoch-seconds of `updatedAt`),
  * which together are what make a re-download after a date change UPDATE the

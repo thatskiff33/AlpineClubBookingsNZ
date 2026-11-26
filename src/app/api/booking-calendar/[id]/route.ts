@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import {
+  bookingCalendarSequence,
   buildBookingIcs,
   SERVABLE_BOOKING_STATUS,
   verifyBookingCalendarToken,
@@ -77,7 +78,7 @@ export async function GET(
     lodgeName: booking.lodge.name,
     // Rises with every booking update, so a re-downloaded file REPLACES the
     // event revision a calendar already holds (RFC 5545 SEQUENCE).
-    sequence: Math.floor(booking.updatedAt.getTime() / 1000),
+    sequence: bookingCalendarSequence(booking.updatedAt),
     generatedAt: new Date(),
   });
 

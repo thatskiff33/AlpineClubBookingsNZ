@@ -34,7 +34,7 @@ import {
   retryCalendarRemovalAttachments,
 } from "@/lib/booking-calendar-removal";
 import { calendarRemovalNote, calendarUpdateNote } from "@/lib/email-message-notes";
-import { buildBookingIcs } from "@/lib/calendar-links";
+import { bookingCalendarSequence, buildBookingIcs } from "@/lib/calendar-links";
 import { parseDateOnly } from "@/lib/date-only";
 
 const PARAMS = {
@@ -163,9 +163,8 @@ describe("resolveBookingCalendarRemoval", () => {
       const uid = published.split("\r\n").find((line) => line.startsWith("UID:"));
       expect(ics.split("\r\n")).toContain(uid);
       const sequence = Number(/SEQUENCE:(\d+)/.exec(ics)?.[1]);
-      expect(sequence).toBeGreaterThan(
-        Math.floor(LATER_UPDATED_AT.getTime() / 1000),
-      );
+      // Above the revision the download route serves for this booking.
+      expect(sequence).toBeGreaterThan(bookingCalendarSequence(LATER_UPDATED_AT));
     },
   );
 });
