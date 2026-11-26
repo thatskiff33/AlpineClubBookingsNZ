@@ -90,3 +90,15 @@ export const clubThemeUpdateSchema = z
   .strict();
 
 export type ClubThemeUpdateInput = z.infer<typeof clubThemeUpdateSchema>;
+
+/**
+ * What an AI app connection may send to the site style save (ALP-723): the
+ * colours, fonts and custom CSS. The logo is a file the officer uploads on the
+ * website, and completing setup is the setup wizard's last step, so neither is
+ * offered; the route keeps the stored logo for a connection's save.
+ */
+export const clubThemeConnectionUpdateSchema = clubThemeUpdateSchema.omit({
+  logoUrl: true,
+  logoDataUrl: true,
+  completeSetup: true,
+});

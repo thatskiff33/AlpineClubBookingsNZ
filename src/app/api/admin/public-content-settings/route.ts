@@ -1,45 +1,23 @@
 import { revalidatePath } from "next/cache";
 import { NextResponse } from "next/server";
 import { Prisma } from "@prisma/client";
-import { z } from "zod";
 import { parseJsonRequestBody } from "@/lib/api-json";
 import { buildStructuredAuditLogCreateArgs, getAuditRequestContext } from "@/lib/audit";
 import { DEFAULT_PUBLIC_CONTENT_SETTINGS } from "@/config/club-settings-defaults";
 import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/session-guards";
+import { publicContentSettingsSchema, type PublicContentSettingsValues } from "@/lib/admin-content-api/settings";
+import { connectionJson } from "@/lib/mcp-connection-request";
+import {
+  PUBLIC_CONTENT_SETTINGS_READ_CONNECTION_SHAPE,
+  PUBLIC_CONTENT_SETTINGS_SAVED_CONNECTION_SHAPE,
+} from "@/lib/connection-shapes/content-settings";
 
 // One message for both ways a chosen page can fail (checked up front, or gone by
 // the time the upsert's foreign key runs, #3852).
 const BOOK_NOW_PAGE_NOT_PUBLISHED = "The selected Book Now page is not published.";
 
-const settingsSchema = z.object({
-  membershipTypes: z.boolean(),
-  entranceFees: z.boolean(),
-  hutFees: z.boolean(),
-  bookingPolicySummary: z.boolean(),
-  cancellationPolicy: z.boolean(),
-  // Dedicated {{annual-fees}} double-opt-in gate (#1933, E7).
-  annualFees: z.boolean(),
-  // Configurable public Book Now button (E3 #1929).
-  showBookNow: z.boolean(),
-  bookNowTarget: z.enum(["BOOKING_FLOW", "PAGE"]),
-  bookNowPageId: z.string().min(1).nullable(),
-  // Committee-roster photo display + shape (MP5, #171).
-  committeePhotoDisplay: z.enum(["NONE", "CIRCLE", "SQUARE"]),
-}).strict();
-
-type Settings = {
-  membershipTypes: boolean;
-  entranceFees: boolean;
-  hutFees: boolean;
-  bookingPolicySummary: boolean;
-  cancellationPolicy: boolean;
-  annualFees: boolean;
-  showBookNow: boolean;
-  bookNowTarget: "BOOKING_FLOW" | "PAGE";
-  bookNowPageId: string | null;
-  committeePhotoDisplay: "NONE" | "CIRCLE" | "SQUARE";
-};
+type Settings = PublicContentSettingsValues;
 
 // What this GET synthesises for a club that has never saved the singleton. The
 // portable policy fields come from the ONE shared constant the public read path
@@ -90,14 +68,18 @@ async function loadPublishedPages() {
   return pages;
 }
 
-export async function GET() {
+export async function GET(request: Request) {
   const guard = await requireAdmin({ permission: { area: "content", level: "view" } });
   if (!guard.ok) return guard.response;
   const [settings, pages] = await Promise.all([
     prisma.publicContentSettings.findUnique({ where: { id: "default" }, select: settingsSelect }),
     loadPublishedPages(),
   ]);
-  return NextResponse.json({ settings: settings ? serializeSettings(settings) : defaults, pages });
+  return connectionJson(
+    request,
+    { settings: settings ? serializeSettings(settings) : defaults, pages },
+    PUBLIC_CONTENT_SETTINGS_READ_CONNECTION_SHAPE,
+  );
 }
 
 export async function PUT(request: Request) {
@@ -108,7 +90,7 @@ export async function PUT(request: Request) {
   });
   if (!jsonBody.ok) return jsonBody.response;
   const body = jsonBody.body;
-  const parsed = settingsSchema.safeParse(body);
+  const parsed = publicContentSettingsSchema.safeParse(body);
   if (!parsed.success) return NextResponse.json({ error: "Invalid settings" }, { status: 400 });
 
   // Book Now integrity: a PAGE target must name a published page. (Runtime also
@@ -169,5 +151,5 @@ export async function PUT(request: Request) {
     throw error;
   }
   revalidatePath("/", "layout");
-  return NextResponse.json({ settings: serializeSettings(settings) });
+  return connectionJson(request, { settings: serializeSettings(settings) }, PUBLIC_CONTENT_SETTINGS_SAVED_CONNECTION_SHAPE);
 }

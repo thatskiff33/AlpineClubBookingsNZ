@@ -19,6 +19,15 @@ import {
   fetchWhakapapaCurlData,
   findInvalidSelectorOverrides,
 } from "@/lib/whakapapa-report.server";
+import {
+  mountainConditionsReportSchema,
+  mountainConditionsUpdateSchema,
+} from "@/lib/admin-content-api/mountain-conditions";
+import { connectionJson } from "@/lib/mcp-connection-request";
+import {
+  MOUNTAIN_CONDITIONS_READ_CONNECTION_SHAPE,
+  MOUNTAIN_CONDITIONS_SAVED_CONNECTION_SHAPE,
+} from "@/lib/connection-shapes/content-settings";
 
 const WHAKAPAPA_SOURCE = "whakapapa-report";
 const ADMIN_FREEZE_TTL_MS = 12 * 60 * 60 * 1000;
@@ -101,7 +110,7 @@ function invalidSelectorResponse(
   );
 }
 
-async function saveConfig(rawConfig: unknown): Promise<NextResponse> {
+async function saveConfig(request: NextRequest, rawConfig: unknown): Promise<NextResponse> {
   const rawUrl =
     rawConfig && typeof rawConfig === "object"
       ? (rawConfig as { sourceUrl?: unknown }).sourceUrl
@@ -153,10 +162,11 @@ async function saveConfig(rawConfig: unknown): Promise<NextResponse> {
     },
   });
 
-  return NextResponse.json({
-    record: toResponseRecord(record),
-    message: "Source configuration saved.",
-  });
+  return connectionJson(
+    request,
+    { record: toResponseRecord(record), message: "Source configuration saved." },
+    MOUNTAIN_CONDITIONS_SAVED_CONNECTION_SHAPE,
+  );
 }
 
 async function getCurrentRecord() {
@@ -167,7 +177,7 @@ async function getCurrentRecord() {
   return record ? toResponseRecord(record) : null;
 }
 
-export async function GET() {
+export async function GET(request: NextRequest) {
   const guard = await requireAdmin({
     permission: { area: "content", level: "view" },
   });
@@ -175,9 +185,11 @@ export async function GET() {
     return guard.response;
   }
 
-  return NextResponse.json({
-    record: await getCurrentRecord(),
-  });
+  return connectionJson(
+    request,
+    { record: await getCurrentRecord() },
+    MOUNTAIN_CONDITIONS_READ_CONNECTION_SHAPE,
+  );
 }
 
 export async function PUT(request: NextRequest) {
@@ -192,12 +204,8 @@ export async function PUT(request: NextRequest) {
     error: "Invalid JSON",
   });
   if (!parsedJson.ok) return parsedJson.response;
-  const body = parsedJson.body;
-
-  const rawJson =
-    body && typeof body === "object" && "rawJson" in body
-      ? String((body as { rawJson?: unknown }).rawJson ?? "")
-      : "";
+  const report = mountainConditionsReportSchema.safeParse(parsedJson.body);
+  const rawJson = report.success ? report.data.rawJson : "";
 
   if (!rawJson.trim()) {
     return NextResponse.json({ error: "rawJson is required" }, { status: 400 });
@@ -239,10 +247,14 @@ export async function PUT(request: NextRequest) {
     },
   });
 
-  return NextResponse.json({
-    record: toResponseRecord(record),
-    message: "Mountain conditions saved. Auto refresh is paused for 12 hours.",
-  });
+  return connectionJson(
+    request,
+    {
+      record: toResponseRecord(record),
+      message: "Mountain conditions saved. Auto refresh is paused for 12 hours.",
+    },
+    MOUNTAIN_CONDITIONS_SAVED_CONNECTION_SHAPE,
+  );
 }
 
 export async function POST(request: NextRequest) {
@@ -357,10 +369,14 @@ export async function POST(request: NextRequest) {
     },
   });
 
-  return NextResponse.json({
-    record: toResponseRecord(record),
-    message: "Mountain conditions refreshed from Whakapapa.",
-  });
+  return connectionJson(
+    request,
+    {
+      record: toResponseRecord(record),
+      message: "Mountain conditions refreshed from Whakapapa.",
+    },
+    MOUNTAIN_CONDITIONS_SAVED_CONNECTION_SHAPE,
+  );
 }
 
 export async function PATCH(request: NextRequest) {
@@ -375,20 +391,17 @@ export async function PATCH(request: NextRequest) {
     error: "Invalid JSON",
   });
   if (!jsonBody.ok) return jsonBody.response;
-  const body = jsonBody.body;
+  const update = mountainConditionsUpdateSchema.safeParse(jsonBody.body);
 
   // A `{ config }` body saves the source URL + selector overrides, which live in
   // the separate `config` column so an upstream refresh never wipes them.
-  if (body && typeof body === "object" && "config" in body) {
-    return saveConfig((body as { config?: unknown }).config);
+  if (update.success && update.data.config) {
+    return saveConfig(request, update.data.config);
   }
 
-  const rawVisibility =
-    body && typeof body === "object" && "visibility" in body
-      ? (body as { visibility?: unknown }).visibility
-      : undefined;
+  const rawVisibility = update.success ? update.data.visibility : undefined;
 
-  if (!rawVisibility || typeof rawVisibility !== "object") {
+  if (!rawVisibility) {
     return NextResponse.json(
       { error: "visibility or config object is required" },
       { status: 400 },
@@ -435,8 +448,9 @@ export async function PATCH(request: NextRequest) {
     },
   });
 
-  return NextResponse.json({
-    record: toResponseRecord(record),
-    message: "Section visibility saved.",
-  });
+  return connectionJson(
+    request,
+    { record: toResponseRecord(record), message: "Section visibility saved." },
+    MOUNTAIN_CONDITIONS_SAVED_CONNECTION_SHAPE,
+  );
 }

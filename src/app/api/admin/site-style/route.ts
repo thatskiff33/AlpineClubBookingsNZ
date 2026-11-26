@@ -10,8 +10,10 @@ import {
 } from "@/lib/club-theme";
 import {
   LOGO_DATA_URL_WRITE_BUDGET_MESSAGE,
+  clubThemeConnectionUpdateSchema,
   clubThemeUpdateSchema,
   isLogoDataUrlWithinWriteBudget,
+  type ClubThemeUpdateInput,
 } from "@/lib/club-theme-update-schema";
 import { CLUB_THEME_ID } from "@/lib/club-theme-schema";
 import { prisma } from "@/lib/prisma";
@@ -21,15 +23,44 @@ import { requireAdmin } from "@/lib/session-guards";
 import { PUBLIC_LAYOUT_CACHE_TAGS } from "@/lib/public-layout-cache";
 import { revalidatePublicSite } from "@/lib/public-content-revalidation";
 import { isTransactionContention } from "@/lib/prisma-errors";
+import { arrivesAsMcpConnection, connectionJson } from "@/lib/mcp-connection-request";
+import { SITE_STYLE_CONNECTION_SHAPE } from "@/lib/connection-shapes/content-settings";
 
-export async function GET() {
+type ParsedThemeSave =
+  | { ok: true; data: ClubThemeUpdateInput }
+  | { ok: false; error: { flatten(): unknown } };
+
+/**
+ * The save as the route applies it. A browser sends the whole theme. An AI
+ * app connection (ALP-723) sends only the colours, fonts and custom CSS
+ * (`clubThemeConnectionUpdateSchema`): the stored logo is kept as it is, and
+ * setup is never completed from an app.
+ */
+async function parseThemeSave(request: Request, body: unknown): Promise<ParsedThemeSave> {
+  if (!arrivesAsMcpConnection(request)) {
+    const parsed = clubThemeUpdateSchema.safeParse(body);
+    return parsed.success ? { ok: true, data: parsed.data } : { ok: false, error: parsed.error };
+  }
+  const parsed = clubThemeConnectionUpdateSchema.safeParse(body);
+  if (!parsed.success) return { ok: false, error: parsed.error };
+  const stored = await prisma.clubTheme.findUnique({
+    where: { id: CLUB_THEME_ID },
+    select: { logoUrl: true, logoDataUrl: true },
+  });
+  return {
+    ok: true,
+    data: { ...parsed.data, logoUrl: stored?.logoUrl ?? null, logoDataUrl: stored?.logoDataUrl ?? null },
+  };
+}
+
+export async function GET(request: NextRequest) {
   const guard = await requireAdmin({
     permission: { area: "content", level: "view" },
   });
   if (!guard.ok) return guard.response;
 
   const theme = await getClubThemeForAdmin();
-  return NextResponse.json({ theme });
+  return connectionJson(request, { theme }, SITE_STYLE_CONNECTION_SHAPE);
 }
 
 export async function PUT(request: NextRequest) {
@@ -44,8 +75,8 @@ export async function PUT(request: NextRequest) {
   if (!jsonBody.ok) return jsonBody.response;
   const body = jsonBody.body;
 
-  const parsed = clubThemeUpdateSchema.safeParse(body);
-  if (!parsed.success) {
+  const parsed = await parseThemeSave(request, body);
+  if (!parsed.ok) {
     return NextResponse.json(
       { error: "Invalid input", details: parsed.error.flatten() },
       { status: 400 },
@@ -141,7 +172,7 @@ export async function PUT(request: NextRequest) {
       },
     });
 
-    return NextResponse.json({ theme });
+    return connectionJson(request, { theme }, SITE_STYLE_CONNECTION_SHAPE);
   } catch (error) {
     // A stale tab referencing a logo blob a newer save already replaced. Not a
     // server fault, and retrying the same payload will never work — the admin

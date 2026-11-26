@@ -4,6 +4,8 @@ import { requireAdmin } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma";
 import { logAudit } from "@/lib/audit";
 import { mediaImageServingUrl } from "@/lib/media-image";
+import { connectionJson } from "@/lib/mcp-connection-request";
+import { IMAGE_LIBRARY_DELETED_CONNECTION_SHAPE } from "@/lib/connection-shapes/content-images";
 
 /**
  * Deleting an image that is still referenced by page content is permitted:
@@ -13,7 +15,7 @@ import { mediaImageServingUrl } from "@/lib/media-image";
  * the admin confirms.
  */
 export async function DELETE(
-  _req: NextRequest,
+  request: NextRequest,
   { params }: { params: Promise<{ id: string }> },
 ) {
   const { id } = await params;
@@ -65,8 +67,12 @@ export async function DELETE(
     },
   });
 
-  return NextResponse.json({
-    success: true,
-    referencedBySlugs: referencingPages.map((page) => page.slug),
-  });
+  return connectionJson(
+    request,
+    {
+      success: true,
+      referencedBySlugs: referencingPages.map((page) => page.slug),
+    },
+    IMAGE_LIBRARY_DELETED_CONNECTION_SHAPE,
+  );
 }
