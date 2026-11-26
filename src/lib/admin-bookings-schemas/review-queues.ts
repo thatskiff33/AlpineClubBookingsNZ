@@ -10,7 +10,10 @@
 import { z } from "zod";
 
 import { adminListPageQueryFields, adminQueueFocusIdField } from "@/lib/admin-list-page";
-import { EXCEPTION_QUEUE_STATUS_FILTERS } from "@/lib/booking-exception-request-shared";
+import {
+  DEFAULT_EXCEPTION_QUEUE_STATUS_FILTER,
+  EXCEPTION_QUEUE_STATUS_FILTERS,
+} from "@/lib/booking-exception-request-shared";
 import { dateOnlyStringSchema } from "@/lib/date-only-schema";
 
 /** `GET /api/admin/booking-change-requests`: the locked-period change queue. */
@@ -34,7 +37,7 @@ export const adminBookingExceptionRequestQueueQuerySchema = z.object({
   status: z
     .enum(EXCEPTION_QUEUE_STATUS_FILTERS)
     .optional()
-    .default("REQUESTED")
+    .default(DEFAULT_EXCEPTION_QUEUE_STATUS_FILTER)
     .describe(
       "Which requests: `REQUESTED` (the default: waiting for a decision, oldest first), `APPROVED`, `REJECTED`, `CANCELLED`, `SUPERSEDED`, `EXPIRED` (the provisional hold ran out) or `ALL`. Every filter but `REQUESTED` lists newest first.",
     ),

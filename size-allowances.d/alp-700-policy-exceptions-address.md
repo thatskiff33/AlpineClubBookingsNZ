@@ -1,7 +1,7 @@
 # Size allowances for #5247
 
 file: src/components/admin/booking-requests/policy-exception-requests-panel.tsx
-lines: 1067
+lines: 1065
 reason: the Expired filter and the filter and page in the address add a label
   map and the `usePolicyExceptionQueueAddress` hook. The hook sits beside the
   panel, outside its already over-limit function, rather than in its own file,

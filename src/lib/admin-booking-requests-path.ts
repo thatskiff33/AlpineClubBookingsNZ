@@ -18,6 +18,7 @@ import type { BookingRequestPendingCounts } from "@/lib/admin-booking-request-pe
 import type { BookingRequestStatus } from "@prisma/client";
 import { adminHref } from "@/lib/admin-hubs";
 import {
+  DEFAULT_EXCEPTION_QUEUE_STATUS_FILTER,
   EXCEPTION_QUEUE_STATUS_FILTERS,
   type ExceptionQueueStatusFilter,
 } from "@/lib/booking-exception-request-shared";
@@ -202,8 +203,6 @@ export function readPublicBookingRequestFilter(
   return isPublicBookingRequestFilter(value) ? value : DEFAULT_PUBLIC_BOOKING_REQUEST_FILTER;
 }
 
-export const DEFAULT_POLICY_EXCEPTION_QUEUE_FILTER: ExceptionQueueStatusFilter = "REQUESTED";
-
 function isPolicyExceptionQueueFilter(value: string | null): value is ExceptionQueueStatusFilter {
   return value !== null && (EXCEPTION_QUEUE_STATUS_FILTERS as readonly string[]).includes(value);
 }
@@ -217,5 +216,5 @@ export function readPolicyExceptionQueueFilter(
   searchParams: Pick<URLSearchParams, "get">,
 ): ExceptionQueueStatusFilter {
   const value = searchParams.get(BOOKING_REQUESTS_STATUS_PARAM);
-  return isPolicyExceptionQueueFilter(value) ? value : DEFAULT_POLICY_EXCEPTION_QUEUE_FILTER;
+  return isPolicyExceptionQueueFilter(value) ? value : DEFAULT_EXCEPTION_QUEUE_STATUS_FILTER;
 }

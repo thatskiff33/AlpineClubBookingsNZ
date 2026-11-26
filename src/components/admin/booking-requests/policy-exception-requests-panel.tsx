@@ -26,14 +26,12 @@ import {
 import { useClubTime } from "@/components/club-time-provider";
 import { formatStayDateOrNull } from "@/lib/club-time";
 import {
+  DEFAULT_EXCEPTION_QUEUE_STATUS_FILTER,
   EXCEPTION_QUEUE_STATUS_FILTERS,
   formatPolicyExceptionRequestAge,
   type ExceptionQueueStatusFilter,
 } from "@/lib/booking-exception-request-shared";
-import {
-  DEFAULT_POLICY_EXCEPTION_QUEUE_FILTER,
-  readPolicyExceptionQueueFilter,
-} from "@/lib/admin-booking-requests-path";
+import { readPolicyExceptionQueueFilter } from "@/lib/admin-booking-requests-path";
 import { buildBookingRequestDatasetPath } from "@/lib/admin-dataset-reset-state";
 import { parseAdminListPageParam } from "@/lib/admin-list-page";
 import type { PolicyExceptionReasonCode } from "@/lib/booking-policy-exceptions";
@@ -215,7 +213,7 @@ function usePolicyExceptionQueueAddress(basePath: string) {
     currentSearch: searchParams.toString(),
     fixedSearchParams: Object.fromEntries(new URLSearchParams(baseQuery)),
     status: filter,
-    defaultStatus: DEFAULT_POLICY_EXCEPTION_QUEUE_FILTER,
+    defaultStatus: DEFAULT_EXCEPTION_QUEUE_STATUS_FILTER,
     recordKey: "requestId",
     recordId: null,
     page: queuePage.page,

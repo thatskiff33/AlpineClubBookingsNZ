@@ -61,6 +61,9 @@ export const EXCEPTION_QUEUE_STATUS_FILTERS = [
 /** One policy-exception queue filter: see `EXCEPTION_QUEUE_STATUS_FILTERS`. */
 export type ExceptionQueueStatusFilter = (typeof EXCEPTION_QUEUE_STATUS_FILTERS)[number];
 
+/** The filter the queue opens on, in the route and on the screen: the waiting requests. */
+export const DEFAULT_EXCEPTION_QUEUE_STATUS_FILTER: ExceptionQueueStatusFilter = "REQUESTED";
+
 // ---------------------------------------------------------------------------
 // Request age (officer queue)
 // ---------------------------------------------------------------------------
