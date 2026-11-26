@@ -429,41 +429,27 @@ async function readStalenessSignals(
 
 /**
  * The Group Trip freshness each card's `SAME_GROUP_TRIP` cover must match to be
- * shown, or no entry where sibling cover cannot be verified at all (#5239,
+ * shown, or no entry where sibling cover cannot be verified (#5239,
  * `INV-HOST-045`).
  *
- * THREE CONDITIONS BEFORE ANY READ, from the policy already resolved: the lodge
- * queues a re-evaluation from every seam that can change cover
- * (`hostingModeQueuesCoverageReevaluation` — `ENFORCED` only, so a review-only
- * lodge keeps the warning), and the club still lets a sibling count
- * (`hostScopes.sameGroupTrip`; a snapshot claiming sibling cover under a scope
- * that is now off is answering a rule no longer in force). Only cards whose
- * snapshot carries a freshness stamp are read for, because an unstamped one is
- * unverifiable whatever the reads say.
+ * NOTHING IS READ unless the lodge queues from every seam that can change cover
+ * (`hostingModeQueuesCoverageReevaluation`: `ENFORCED` only, so a review-only
+ * lodge keeps the warning) and still lets a sibling count; and only for cards
+ * whose snapshot carries a freshness stamp. THEN THREE READS, each failing to
+ * "unverifiable" rather than to the outer catch-all:
  *
- * THEN THREE READS, each failing to "unverifiable" rather than to the outer
- * catch-all, so a failure withholds the cover line instead of the whole
- * enrichment:
- *
- *  - the trips' current `coverageInvalidationRevision`, one query keyed on the
- *    primary key. It moves on every truncated fan-out and never goes back, so a
- *    card the fan-out missed stays behind until it is re-evaluated, however much
- *    the trip has shrunk since;
- *  - which stamped cards a sibling's fan-out reaches
- *    (`groupTripCoverageDependentWhere`) AND a policy change would re-queue
- *    (`hostingPolicyReconciliationCandidateWhere`, as of the club's today),
- *    with each card's snapshot re-read to catch a re-check that finished
- *    between the day list's read and the queue read.
- *    While the scope is off or the lodge is not `ENFORCED`, a sibling's change
- *    queues nothing for anyone, and when the window ends only those bookings
- *    are re-checked — so a card outside the set (a completed stay, or a
- *    departure-day card with no night left) may carry evidence from before such
- *    a window, and nothing would say so;
- *  - each card's own dependent population, through the same
- *    `groupTripCoverageDependentWhere` the fan-out reads. At or above
- *    `GROUP_TRIP_COVERAGE_DEPENDENT_LIMIT` a sibling's change would be truncated
- *    now, so nothing about this card's re-check can be promised. One count per
- *    stamped card, and stamped cards are the few with a recorded violation.
+ *  - the trips' current `coverageInvalidationRevision`. It moves on every
+ *    truncated fan-out and member merge and never goes back, so a card the
+ *    fan-out missed stays behind until re-evaluated, however small the trip is;
+ *  - which cards a sibling's fan-out reaches (`groupTripCoverageDependentWhere`)
+ *    AND a policy change would re-queue
+ *    (`hostingPolicyReconciliationCandidateWhere`, as of the club's today):
+ *    while the scope is off or the lodge is not `ENFORCED` nothing queues, and
+ *    when that window ends only those bookings are re-checked. Each snapshot is
+ *    re-read here, after the queue read, so a re-check that finished in between
+ *    withholds rather than shows the day list's earlier answer;
+ *  - each card's own dependent population, through the predicate the fan-out
+ *    reads: at its ceiling a sibling's change would be truncated now.
  */
 async function readKioskGroupTripCoverEvidence(
   db: KioskGroupTripDb,
