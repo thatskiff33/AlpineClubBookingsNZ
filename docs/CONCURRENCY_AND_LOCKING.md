@@ -6391,9 +6391,11 @@ so it writes no marker. No advisory key, no change of order or tier, no read,
 and no provider call or settings query is added; `createMany` with
 `skipDuplicates`, as above. The officers' kinds are at least once, the members'
 at most one `EmailLog` row per event. The sweep's recovery of a payment link
-re-issues it through `issueSplitGuestPaymentLink`, the booking page's own
-path: its transaction takes the lodge lock alone, as it always has, and the
-sweep holds nothing when it calls it.
+re-issues it through the booking page's own path
+(`prepareSplitGuestPaymentLinkReissue`): its transaction takes the lodge lock
+alone, as it always has, and records the new link's email as owed, one
+primary-key insert after the revoke-and-mint, as its last write. The sweep
+holds nothing when it calls it, and the email goes after that commit.
 
 Officer approval of a held generic request pre-reads only the held booking's immutable concrete
 `lodgeId`, then takes global -> that lodge -> the held booking's row (#4857,

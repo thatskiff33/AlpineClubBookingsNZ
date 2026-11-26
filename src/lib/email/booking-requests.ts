@@ -8,6 +8,7 @@ import {
   schoolAttendeeConfirmationTemplate,
   splitGuestPaymentLinkTemplate,
 } from "@/lib/email-templates/booking-requests";
+import { BOOKING_REQUEST_PAYMENT_EXPIRED_TEMPLATE } from "./owed-notice-templates";
 import {
   composeOptionalEmailLine,
 } from "../email-message-notes";
@@ -387,7 +388,7 @@ export async function sendBookingRequestPaymentExpiredEmail(params: {
       checkOut: params.checkOut,
     })),
     bookingContext: classifyBookingOwnerContext(params.bookingContext),
-    templateName: "booking-request-payment-expired",
+    templateName: BOOKING_REQUEST_PAYMENT_EXPIRED_TEMPLATE,
     templateData: {
       firstName: params.firstName,
       checkIn: emailCalendarDay(params.checkIn),

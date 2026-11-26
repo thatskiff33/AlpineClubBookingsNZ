@@ -108,6 +108,12 @@ const POST_COMMIT_SEND_REASONS: Readonly<Record<string, Entry>> = {
     after: ["resolveHoldWindowUnderLock"],
     reason: `${RECURRING_REMINDER} (B3, B4)`,
   },
+  "src/lib/cron-confirm-pending.ts#confirmPendingBookings#sendUnrecordedPaidBookingConfirmation": {
+    calls: 1,
+    after: ["resolveHoldWindowUnderLock"],
+    reason:
+      "#5433 PR 4 (round 1, item 5): the zero-balance confirmation's fallback when its marker cannot be keyed (unreachable with today's ids). It is sent once, unkeyed, exactly as before #5433, so it is never worse than before; an owed one goes through deliverPaidBookingConfirmation.",
+  },
   "src/lib/cron-confirm-pending.ts#confirmPendingBookings#sendAdminPaymentFailureAlert": {
     calls: 3,
     after: ["resolveHoldWindowUnderLock", "runSavedCardClaimRelease", "runSavedCardClaimRelease"],

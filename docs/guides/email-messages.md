@@ -564,9 +564,10 @@ you want both reworded; editing only one leaves the other on its built-in text.
 > - the member's **Split Guest Portion Cancelled** email and the officers'
 >   **Admin Split Settlement Cancelled** notice, when a
 >   split booking's guest portion is still unpaid then;
-> - the **Split Guest Payment Link** email. If it was never
->   sent, a later run replaces the link with a fresh one and sends that, at
->   most once per link;
+> - the **Split Guest Payment Link** email. If it was never sent, a later run
+>   replaces the link with a fresh one and sends that; each link is emailed at
+>   most once, and the fresh link is owed in its own right if that send is
+>   interrupted too;
 > - the **Saved Card Charge Failed** email and the officers' **Admin Payment
 >   Failure** alert when a saved card is found unusable. That alert now says the
 >   owner is emailed separately rather than that they have been emailed, and a
@@ -574,18 +575,28 @@ you want both reworded; editing only one leaves the other on its built-in text.
 >
 > A late email is not sent once the booking has moved on: a cancellation
 > notice once the booking is no longer cancelled, a payment link once the
-> booking is paid or cancelled, the link was used or replaced, or the
-> check-in day has ended, and a request for a new card once a card has been
-> saved or the booking is no longer pending. A cancellation notice is tried
-> until the end of the check-out day, the others until the end of the
-> check-in day, and none for more than seven days.
+> booking is no longer pending or the link was used or replaced, and a
+> request for a new card once a card has been saved or the booking is no
+> longer pending or awaiting its card (paid, cancelled or ended). A
+> cancellation notice is tried until the end of the check-out day, the others
+> until the end of the check-in day, and none for more than seven days (owner
+> decision, 27 Nov 2026); past that, officers are alerted once if the member
+> was not told.
 >
 > What an officer can notice: a new alert, **Booking email not sent**
 > (`admin-booking-notice-unsent`). It is sent once per email when one of the
 > member emails above (other than the confirmation, which has its own alert)
-> could not be sent in time, or did not reach the owner: the send failed, the
-> address bounced or is on the suppression list, or the owner has no address
-> that can be emailed. Its note says which email it was. It goes to officers
+> could not be sent in time, or, for the cancellation notices and the request
+> for a new card, did not reach the owner: the send failed, the address
+> bounced or is on the suppression list, or the owner has no address that can
+> be emailed at all (owner decision, 27 Nov 2026). For the payment link it is
+> sent only when the link could not be emailed in time; a link email that
+> fails is replaced on a later run instead. Its note says which email it was,
+> so it reads on its own; it can arrive moments before the routine notice
+> about the same booking, because the member's email goes first. A
+> zero-balance confirmation follows the card payment's rule and raises
+> **Booking confirmation not sent** for an owner who cannot be emailed (owner
+> decision, 27 Nov 2026). It goes to officers
 > who receive **Booking review required** alerts, and its wording is
 > editable like the others. No alert is sent for an email the booking's
 > **No emails** switch held back. The reminders officers get while a request

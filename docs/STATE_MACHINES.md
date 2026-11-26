@@ -4643,18 +4643,21 @@ paid" too.
 
 The rest of the confirm-pending job (#5433 PR 4) adds seven kinds, and puts the
 zero-balance confirmation on PR 3's `booking-confirmed` kind. Each marker is the
-last write of the transaction that commits its change, asked first whether it
-can be keyed (`owedNoticeInputProblem`): one that cannot is an error log, the
-change commits, and nothing is recorded or sent. A lost claim returns before
-any marker is written.
+last write of the transaction that commits its change, and is first asked
+whether it can be keyed (`recordOwedNoticesIfKeyable`). One that cannot is an
+error log and nothing recorded: the change commits and its notices are sent
+once, unkeyed, as before #5433 (unreachable with today's ids). A lost claim
+returns before any marker is written. Owner decisions D9, D10 and D11 (27 Nov
+2026) govern who is alerted and when these notices stop.
 
 - **Zero-balance confirmation (CP-1).** The `PENDING -> PAID` claim at a zero
   worth records `booking-confirmed`, keyed `<bookingId>:<paidAtMs>`, and the job
   delivers it after the `NON_MEMBER_CONFIRMED` event and the Xero invoice queue,
-  where it sent before. D1, D7 and D8 apply as for a card payment. The job's own
-  confirmation renderer is gone: the email is the shared one, so a split parent
-  with a provisional child gets the paragraph about the separately charged
-  guests, and an owner who cannot be emailed raises the officers' alert (D8).
+  where it sent before. D1 and D7 apply as for a card payment, and D11: an owner
+  who cannot be emailed at all raises the officers' alert, as D8 does for a card.
+  The job's own confirmation renderer is gone: the email is the shared one, so
+  a split parent with a provisional child gets the paragraph about the
+  separately charged guests.
 - **A request hold ending in cancellation (CP-4)** records
   `request-hold-cancelled-member` (the requester's
   `booking-request-payment-expired`) and `request-hold-cancelled-officers`
@@ -4665,26 +4668,32 @@ any marker is written.
   payload, which both wordings read; a payload that cannot be read is worded as
   unsettled. The member's event key is `<bookingId>:<cancelledAtMs>`. Cleared
   without sending when the booking is gone, deleted or no longer `CANCELLED`.
-  The member's cut-off is the end of the check-out day in the club's time zone,
-  or seven days after the cancel, whichever comes first; the officers' seven
-  days, with no alert past it. Delivered member first, then officers, before
-  the waitlist wake, as before.
+  D10: the member's notice stops at the end of the check-out day in the club's
+  time zone, or seven days after the cancel, whichever comes first; the
+  officers' after seven days, with no alert past it. Delivered member first,
+  then officers, before the waitlist wake, as before.
 - **A split guest portion's payment link (CP-6)** records
   `split-guest-payment-link`, keyed by the link's id with the booking in its
   payload; the raw token is never stored. The email is sent keyed by the link
-  (`email:split-guest-payment-link:<linkId>`); an email not delivered has its
-  link revoked by id as before, which clears the marker, because the job's next
-  extension re-mints and sends. The marker stays only when that revoke fails.
-  The sweep clears it without sending when the booking is gone, deleted or not
-  `PENDING`, the link was used or is gone, a newer link was minted for the
-  booking, or the link expired (the end of the check-in day, when CP-5 takes
-  over). Otherwise it reads the original link's row by the told rule: told or
-  in flight, cleared. Not told, it reads the recovery's row, keyed
-  `<linkId>:resend`: any row there, cleared, since the re-issue revokes a link
-  whose email failed and the next extension sends again; none, it revokes and
-  re-mints through the booking page's own re-issue (`issueSplitGuestPaymentLink`)
-  with that key. At most one recovery email per link. Past seven days with the
-  check-in day still to come, officers are alerted once.
+  (`email:split-guest-payment-link:<linkId>`). The first attempt decides from
+  what the send returned, as before #5433, not from the row: an email not
+  delivered has its link revoked by id, which clears the marker, because the
+  job's next extension re-mints and sends. The marker stays when that revoke
+  fails, or when the send threw before its keyed row was written (a failed row
+  insert throws once the send is keyed; the sweep then sends it within its
+  interval). The sweep clears it without sending when the booking is gone,
+  deleted or not `PENDING`, the link was used or is gone, or a newer link was
+  minted for the booking. Every link the job or this recovery mints is owed in
+  its own right, and a link the member sent themselves from the booking page
+  showed them the outcome. Otherwise it reads the original link's row by the
+  told rule: told or in flight, cleared. Not told, it re-issues through the
+  booking page's own path (`prepareSplitGuestPaymentLinkReissue`), which
+  revokes the link, mints a new one and records the new link's email as owed
+  in that same transaction, then delivers the new link as the job delivers
+  its own. So no state, short of the cut-off, leaves a live link that was never
+  emailed with no marker. D10: the cut-off is the link's own expiry (the end of
+  the check-in day), or seven days after the mint, whichever comes first; past
+  it, unless the email reached the member after all, officers are alerted once.
 - **A retired saved card** (`retireAndEscalateUnusableSavedCard`): the two
   clears now run in one transaction, with no advisory lock as before, whose
   last write records `saved-card-unusable-member` (`saved-card-charge-failed`,
@@ -4693,27 +4702,33 @@ any marker is written.
   whether the claim was handed back, the amount, and the provider's id-shaped
   codes). Stripe's own message is free text, which a payload never holds, so
   only the alert right after the clear quotes it; a recovered alert says it was
-  not kept. Cleared when the booking is gone, deleted, or neither `PENDING` nor
-  `CONFIRMED`, and for the member's email also when a card the job can charge
-  has been saved since. The member's cut-off is the end of the check-in day, or
-  seven days, whichever comes first; the officers' seven days. Before #5433 a
-  stop between the clear and the sends lost both for good: with the card
-  cleared, the next run takes the missing-payment-method path, which only logs.
+  not kept. A recovered alert words whether the booking is pending from the
+  booking's status when it is sent, not from the payload, so it cannot say the
+  booking is stuck after an officer has put it right. Cleared when the booking
+  is gone, deleted, or neither `PENDING` nor `CONFIRMED` (`CONFIRMED` is the
+  state a failed hand-back of the claim leaves), and for the member's email also
+  when a card the job can charge has been saved since. D10: the member's email
+  stops at the end of the check-in day, or seven days, whichever comes first;
+  the officers' after seven days. Before #5433 a stop between the clear and the
+  sends lost both for good: with the card cleared, the next run takes the
+  missing-payment-method path, which only logs.
 
-Every member kind here reads its email's row after a send by the told rule,
-through one helper the paid confirmation shares (`owed-notice/member-email.ts`):
-told (sent, or withheld by "No emails" or a non-production copy), or held back
-by the environment gate, cleared; held by the retry cron, kept for it; anything
-else (a failure nothing replays, a bounce or suppressed address, a "No emails"
-switch that could not be read, no address at all), officers are alerted once
-with **Booking email not sent** (`admin-booking-notice-unsent`), the same alert
-past a cut-off unless the email reached the member after all. The payment link
-alerts only past its cut-off. The wait for every kind here is 30 minutes (a day
-after an officers' attempt that reached nobody); the officer kinds share one
-answer to `sendToAdmins`' result (`owed-notice/officer-alert.ts`) with the bump
-and waitlist alerts. The recurring officer reminders (an extended request hold,
-an unpaid split guest portion) are not owed: the next due reminder goes out
-anyway.
+After a send, the member kinds other than the payment link's first attempt
+read their email's row by the told rule, through one helper the paid
+confirmation shares (`owed-notice/member-email.ts`): told (sent, or withheld by
+"No emails" or a non-production copy), or held back by the environment gate,
+cleared; held by the retry cron, kept for it; anything else (a failure nothing
+replays, a bounce or suppressed address, a "No emails" switch that could not be
+read, no address at all: D9), officers are alerted once with **Booking email
+not sent** (`admin-booking-notice-unsent`). The same alert goes past a cut-off,
+unless the email reached the member after all; a row the retry cron still holds
+past a cut-off keeps the marker rather than alerting, until the cron gives up
+or the hard ceiling clears it. The payment link alerts only past its cut-off.
+The wait for every kind here is 30 minutes (a day after an officers' attempt
+that reached nobody); the officer kinds share one answer to `sendToAdmins`'
+result (`owed-notice/officer-alert.ts`) with the bump and waitlist alerts. The
+recurring officer reminders (an extended request hold, an unpaid split guest
+portion) are not owed: the next due reminder goes out anyway.
 
 **Stated limits for PR 4's kinds.**
 
@@ -4721,13 +4736,25 @@ anyway.
   counts as cancelled, and is sent the notice.
 - A recovered payment link mints a new link, so the member can hold two link
   emails in all, the first never delivered.
+- **Booking email not sent** can reach officers moments before the routine
+  notice about the same booking (the officers' copy of the cancellation, say),
+  because the member's notice is delivered first, as before #5433. Its note
+  names the email it is about, so it stands alone.
 - The officers' saved-card alert now says the owner's email is sent
   separately, not that it has been sent, since the alert can go first.
+- The saved card's two clears now share a transaction. Under connection-pool
+  pressure that transaction can fail to start where two separate statements
+  would not; the card is then detached at Stripe but still on the rows, and the
+  next run's charge is refused and lands in the same branch, which relies on
+  the classifier recognising Stripe's refusal again.
 - During a blue-green switch the previous release commits these changes with
   no marker and sends inline as before. A marker this release wrote is swept
   only by a release that knows the kind, so after a rollback it waits for this
   release to return, and past twice its maximum age it is cleared with only an
-  error log.
+  error log. The previous release (PR 3) also delivers `booking-confirmed`
+  markers, so it can send a zero-balance confirmation this release recorded,
+  and its "Booking confirmation not sent" alert carries the older note, which
+  says the booking "was paid".
 
 ```text
 change commits + markers -> claim -> send settled -> marker cleared

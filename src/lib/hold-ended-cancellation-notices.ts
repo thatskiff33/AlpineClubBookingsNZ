@@ -28,18 +28,21 @@
  *   one cancel has one `EmailLog` row and the member can never be sent it
  *   twice; what became of it is read from that row
  *   (`owed-notice/member-email.ts`): not told (it failed for good, bounced, or
- *   the owner has no address that can be emailed), the officers are alerted
- *   once ("Booking email not sent");
+ *   the owner has no address that can be emailed at all: owner decision D9),
+ *   the officers are alerted once ("Booking email not sent"); one the retry
+ *   cron still holds is kept for it, past the cut-off too;
  * - "moved on": the booking is gone, deleted, or no longer CANCELLED. Stated
  *   limit: a booking reinstated and cancelled again in between still counts as
  *   cancelled, and is sent this notice;
- * - the cut-off (settled by the lane: cancellation notices until the check-out
- *   date): the member's email until the end of the check-out day in the
- *   club's time zone, or seven days after the cancel (owner decision D7's
- *   limit for a confirmation, applied here), whichever comes first; past it
- *   the officers are alerted once. The officers' alert: seven days, then
- *   cleared with an error log. The cut-off is the sweep's only: the attempt
- *   right after the cancel always sends, as before #5433.
+ * - the cut-off (owner decision D10): the member's email until the end of the
+ *   check-out day in the club's time zone, or seven days after the cancel,
+ *   whichever comes first; past it the officers are alerted once. The
+ *   officers' alert: seven days, then cleared with an error log. The cut-off
+ *   is the sweep's only: the attempt right after the cancel always sends, as
+ *   before #5433;
+ * - a cancellation whose markers cannot be keyed (unreachable with today's
+ *   ids) records none, and both notices are sent once, unkeyed, as before
+ *   #5433.
  *
  * Locks (`INV-LOCK-001`): the markers are one insert of two rows on primary
  * keys, under the `lock(1)` and lodge lock the cancel already holds, with no
@@ -59,7 +62,7 @@ import { bookingOwner } from "@/lib/booking-owner";
 import { formatBookingReference } from "@/lib/booking-reference";
 import type { ClubFormat } from "@/lib/club-format";
 import { clubFormatValues } from "@/lib/club-format-server";
-import { calendarDateOfDateOnlyInstant, endOfClubDayInclusive, type ClubTimeZone } from "@/lib/club-time";
+import { endOfStoredClubDay, type ClubTimeZone } from "@/lib/club-time";
 import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
 import {
   sendAdminBookingRequestHoldCancelledEmail,
@@ -68,10 +71,12 @@ import {
   sendSplitGuestPortionCancelledEmail,
 } from "@/lib/email";
 import { durableEmailLogId } from "@/lib/email/attempt-log";
+import { BOOKING_REQUEST_PAYMENT_EXPIRED_TEMPLATE, SPLIT_GUEST_PORTION_CANCELLED_TEMPLATE } from "@/lib/email/owed-notice-templates";
 import logger from "@/lib/logger";
 import {
   deliverOwedNotice,
   OWED_OFFICER_ALERT_MAX_AGE_MS,
+  owedOfficerAlertSendBy,
   type OwedNoticeDeliverer,
   type OwedNoticeImmediateDeliverer,
   type OwedNoticeOutcome,
@@ -88,9 +93,8 @@ import {
 import { owedOfficerAlertOutcome } from "@/lib/owed-notice/officer-alert";
 import {
   owedNoticeEventKey,
-  owedNoticeInputProblem,
   owedNoticeMarker,
-  recordOwedNotices,
+  recordOwedNoticesIfKeyable,
   type OwedNoticeInput,
   type OwedNoticeMarker,
 } from "@/lib/owed-notice/store";
@@ -108,55 +112,58 @@ const KIND: Record<HoldEnded, Record<Audience, OwedNoticeKind>> = {
   "split-guest": { member: "split-guest-cancelled-member", officers: "split-guest-cancelled-officers" },
 };
 
-/** The member email's template, for its `EmailLog` id. */
+/** The member email's template, for its `EmailLog` id: the sender's own constant. */
 const MEMBER_TEMPLATE: Record<HoldEnded, string> = {
-  request: "booking-request-payment-expired",
-  "split-guest": "split-guest-portion-cancelled",
+  request: BOOKING_REQUEST_PAYMENT_EXPIRED_TEMPLATE,
+  "split-guest": SPLIT_GUEST_PORTION_CANCELLED_TEMPLATE,
 };
 
 /** The payload field that carries `parentUnpaid` (1 or 0) for a split guest portion. */
 const PARENT_UNPAID = "parentUnpaid";
 
-/** One cancel's owed notices: which hold, the booking, the instant that keys and stamps them, and the split wording fact. */
-export interface OwedHoldEndedNotices {
-  ended: HoldEnded;
-  bookingId: string;
-  cancelledAt: Date;
-  /** The split guest portion's: whether the member's own booking was not settled. Null for a request booking. */
-  parentUnpaid: boolean | null;
-}
+/**
+ * Which hold ended, and what its wording needs: a split guest portion always
+ * says whether the member's own booking was settled (`parentUnpaid`), a
+ * request booking never does, so neither can be called the other way.
+ */
+export type HoldEndedCancellation = { ended: "request" } | { ended: "split-guest"; parentUnpaid: boolean };
+
+/**
+ * One cancel's notices: the cancellation, the booking, the instant that keys
+ * and stamps them, and whether they were recorded as owed (false only for an
+ * input that could not be keyed, which is then sent the way it was before
+ * #5433, unkeyed and with no marker).
+ */
+export type OwedHoldEndedNotices = HoldEndedCancellation & { bookingId: string; cancelledAt: Date; recorded: boolean };
 
 function holdEndedInput(audience: Audience, owed: OwedHoldEndedNotices): OwedNoticeInput {
   return {
     kind: KIND[owed.ended][audience],
     subjectId: owed.bookingId,
     eventAt: owed.cancelledAt,
-    payload: owed.parentUnpaid === null ? null : { [PARENT_UNPAID]: owed.parentUnpaid ? 1 : 0 },
+    payload: owed.ended === "split-guest" ? { [PARENT_UNPAID]: owed.parentUnpaid ? 1 : 0 } : null,
   };
 }
 
 /**
  * Inside the cancel's transaction, as its last write, under the locks it
  * already holds: record both notices as owed, and return the descriptor the
- * delivery claims with (`INV-SSOT-002`). Whether they can be written is asked
- * first (`owedNoticeInputProblem`), without a write: an input that cannot key
- * a marker is an error log, nothing is recorded and null comes back, so the
- * marker can never roll the cancel back for a reason of shape (a database
- * failure of the insert still rolls it back, like any write in it).
+ * delivery claims with (`INV-SSOT-002`). Inputs that cannot be keyed are an
+ * error log and nothing written (`recordOwedNoticesIfKeyable`), so the marker
+ * can never roll the cancel back for a reason of shape; the descriptor then
+ * says `recorded: false`.
  */
 export async function recordHoldEndedNoticesOwed(
   tx: Pick<Prisma.TransactionClient, "owedNotice">,
-  { ended, bookingId, parentUnpaid = null }: { ended: HoldEnded; bookingId: string; parentUnpaid?: boolean | null },
-): Promise<OwedHoldEndedNotices | null> {
-  const owed: OwedHoldEndedNotices = { ended, bookingId, cancelledAt: new Date(), parentUnpaid };
-  const inputs = AUDIENCES.map((audience) => holdEndedInput(audience, owed));
-  const problem = inputs.map(owedNoticeInputProblem).find((found) => found !== null);
-  if (problem) {
-    logger.error({ bookingId, problem }, "A cancelled hold cannot key its owed notices; the cancel commits and nothing is recorded as owed");
-    return null;
-  }
-  await recordOwedNotices(tx, inputs);
-  return owed;
+  cancellation: HoldEndedCancellation & { bookingId: string },
+): Promise<OwedHoldEndedNotices> {
+  const owed: OwedHoldEndedNotices = { ...cancellation, cancelledAt: new Date(), recorded: false };
+  const markers = await recordOwedNoticesIfKeyable(
+    tx,
+    AUDIENCES.map((audience) => holdEndedInput(audience, owed)),
+    { message: "A cancelled hold cannot key its owed notices; the cancel commits and they are sent unkeyed, as before #5433", context: { bookingId: owed.bookingId } },
+  );
+  return { ...owed, recorded: markers !== null };
 }
 
 /** The booking as a send needs it, and the club's format, read outside any transaction. */
@@ -186,8 +193,8 @@ function parentUnpaidOf(marker: OwedNoticeMarker): boolean {
   return true;
 }
 
-/** The member's email, from the booking as it stands, with the cancel's event key. Throws when the send does. */
-async function sendHoldEndedMemberEmail(booking: OwedBookingNotice, marker: OwedNoticeMarker, idempotencyKey: string): Promise<void> {
+/** The member's email, from the booking as it stands, with the cancel's event key (none for an unrecorded notice). Throws when the send does. */
+async function sendHoldEndedMemberEmail(booking: OwedBookingNotice, marker: OwedNoticeMarker, idempotencyKey: string | undefined): Promise<void> {
   const owner = bookingOwner(booking);
   if (endedOf(marker) === "request") {
     await sendBookingRequestPaymentExpiredEmail({
@@ -229,14 +236,11 @@ function holdEndedMemberEmail(booking: OwedBookingNotice, marker: OwedNoticeMark
   };
 }
 
-/** Send the member's email, then read what became of it. Never throws. */
-async function deliverHoldEndedMember(
-  { booking }: HoldEndedSubject,
-  marker: OwedNoticeMarker,
-  { idempotencyKey, job }: OwedNoticeRun & { idempotencyKey: string },
-): Promise<OwedNoticeOutcome> {
+/** Send the member's email, logging a failure as before #5433; true when it returned. Never throws. */
+async function trySendHoldEndedMemberEmail(booking: OwedBookingNotice, marker: OwedNoticeMarker, idempotencyKey: string | undefined, job: string): Promise<boolean> {
   try {
     await sendHoldEndedMemberEmail(booking, marker, idempotencyKey);
+    return true;
   } catch (err) {
     logger.error(
       { err, bookingId: booking.id, job },
@@ -244,8 +248,17 @@ async function deliverHoldEndedMember(
         ? "Failed to send requester payment-expired email for auto-cancelled request booking (#2012)"
         : "Failed to send member cancellation email for auto-cancelled split child (#1993)",
     );
-    return "threw";
+    return false;
   }
+}
+
+/** Send the member's email, then read what became of it. Never throws. */
+async function deliverHoldEndedMember(
+  { booking }: HoldEndedSubject,
+  marker: OwedNoticeMarker,
+  { idempotencyKey, job }: OwedNoticeRun & { idempotencyKey: string },
+): Promise<OwedNoticeOutcome> {
+  if (!(await trySendHoldEndedMemberEmail(booking, marker, idempotencyKey, job))) return "threw";
   return owedMemberEmailOutcome(holdEndedMemberEmail(booking, marker, idempotencyKey, job));
 }
 
@@ -274,9 +287,9 @@ export function holdEndedMovedOn(booking: Pick<OwedBookingNotice, "status" | "de
   return null;
 }
 
-/** The member's cut-off: the last instant of the check-out day in the club's time zone (the stored date-only night, through the kernel). */
+/** The member's cut-off (owner decision D10): the last instant of the check-out day in the club's time zone. */
 export function holdEndedMemberSendBy(checkOut: Date, zone: ClubTimeZone): Date {
-  return endOfClubDayInclusive(calendarDateOfDateOnlyInstant(checkOut), zone);
+  return endOfStoredClubDay(checkOut, zone);
 }
 
 async function loadHoldEndedSweepSubject(marker: OwedNoticeMarker): Promise<HoldEndedSweepSubject | null> {
@@ -329,7 +342,7 @@ function officersSweepDeliverer(ended: HoldEnded): OwedNoticeDeliverer<HoldEnded
     ...SWEEP_COMMON,
     kind: KIND[ended].officers,
     maxAgeMs: OWED_OFFICER_ALERT_MAX_AGE_MS,
-    sendBy: (_subject, marker) => new Date(marker.eventAt.getTime() + OWED_OFFICER_ALERT_MAX_AGE_MS),
+    sendBy: (_subject, marker) => owedOfficerAlertSendBy(marker),
   };
 }
 
@@ -348,12 +361,20 @@ function immediateDeliverer(audience: Audience, kind: OwedNoticeKind, job: strin
  * descriptor `recordHoldEndedNoticesOwed` returned inside the transaction, with
  * the booking as the transaction read it and the club format the caller
  * resolved before it. Each claim is taken on the stamp the transaction wrote,
- * so a sweep that already holds a marker wins and this sends nothing. Never
- * throws.
+ * so a sweep that already holds a marker wins and this sends nothing. Notices
+ * that were not recorded (an input that could not be keyed) are sent as before
+ * #5433: once, unkeyed, with nothing left for a later run. Never throws.
  */
 export async function deliverHoldEndedNotices(booking: OwedBookingNotice, owed: OwedHoldEndedNotices, format: ClubFormat, job: string): Promise<void> {
   for (const audience of AUDIENCES) {
     const input = holdEndedInput(audience, owed);
-    await deliverOwedNotice(immediateDeliverer(audience, input.kind, job), owedNoticeMarker(input), { booking, format });
+    const marker = owedNoticeMarker(input);
+    if (owed.recorded) {
+      await deliverOwedNotice(immediateDeliverer(audience, input.kind, job), marker, { booking, format });
+    } else if (audience === "member") {
+      await trySendHoldEndedMemberEmail(booking, marker, undefined, job);
+    } else {
+      await deliverHoldEndedOfficers({ booking, format }, marker, { job, now: new Date() });
+    }
   }
 }

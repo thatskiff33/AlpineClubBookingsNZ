@@ -12,46 +12,51 @@
  * check-in day. So the transaction that mints the link also records the email
  * as owed (`recordSplitGuestPaymentLinkOwed`), as its last write: one
  * `OwedNotice` marker keyed by the payment link's id. The raw token is never
- * stored.
+ * stored. Every link the job or this recovery mints is owed this way, so a
+ * live link that was never emailed always has a marker, until its cut-off.
  *
  * Right after the commit `deliverSplitGuestPaymentLink` sends the email, keyed
  * by the link's id (so its `EmailLog` row is `email:split-guest-payment-link:<linkId>`),
- * exactly as before #5433: an email that was not delivered has its link
- * revoked by id, so the job's next extension mints and sends a fresh one. The
- * marker is cleared once the email went or the link was revoked; it stays for
- * the sweep only when the revoke itself failed (an active link nobody has).
+ * and decides from what the send returned, as before #5433: an email that was
+ * not delivered has its link revoked by id, so the job's next extension mints
+ * and sends a fresh one. The marker is cleared once the email went or the link
+ * was revoked. It stays for the sweep when the revoke failed (a live link
+ * nobody has), or when the send threw before its row was written (round 1,
+ * item 2: with an event key a failed row insert throws, and before #5433 the
+ * unkeyed send went out regardless; now the sweep sends it within its interval
+ * instead of the member waiting up to two days for the next extension).
  *
  * The sweep (`drainOwedNotices`) handles what that attempt never finished:
  * - "moved on", cleared without a send: the booking is gone, deleted or no
- *   longer PENDING; the link was used or is gone; a newer link was minted for
- *   the booking since (by the job, or the member's own button on the booking
- *   page, each of which emails its own); or the link has expired, which is the
- *   end of the check-in day, when the job cancels the guest portion and owes
- *   that notice instead;
- * - the email row for the original link is read by the shared told rule
- *   (`owed-notice/member-email.ts`): told or still in flight (sent, queued,
- *   withheld by "No emails"), cleared;
- * - otherwise the link is revoked and a fresh one minted and sent through the
- *   booking page's own re-issue (`issueSplitGuestPaymentLink`), with the event
- *   key `<linkId>:resend`. That recovery's own row is read first, so a sweep
- *   that runs again after it sends at most one recovery email per link: told,
- *   cleared; written but not told (it failed, and the re-issue revoked its new
- *   link), cleared too, because the job's next extension mints and sends again
- *   as before #5433;
- * - the cut-off: the link's own expiry (the end of the check-in day), which is
- *   "moved on" above, or seven days after the mint (owner decision D7's limit
- *   for a confirmation, applied here); past the seven days the officers are
- *   alerted once ("Booking email not sent").
- * A member is never sent the same link twice by this: the original's send and
- * the recovery's each have one keyed row. The recovery mints a new link, so the
- * member can receive two links in all, the first never delivered.
+ *   longer PENDING; the link was used or is gone; or a newer link was minted
+ *   for the booking since. A newer link is either the job's or this
+ *   recovery's, each owed by a marker of its own, or one the member sent
+ *   themselves from the booking page, where they see the outcome;
+ * - otherwise the original link's email row is read by the shared told rule
+ *   (`owed-notice/member-email.ts`): told or in flight (sent, queued, withheld
+ *   by "No emails"), cleared;
+ * - otherwise the booking page's own re-issue revokes the link and mints a new
+ *   one (`prepareSplitGuestPaymentLinkReissue`), recording the new link's email
+ *   as owed in that same transaction (round 1, item 1), and the new link is
+ *   then delivered exactly as the job delivers its own. So a stop between the
+ *   re-issue's commit and its send leaves the new link's marker, never a live
+ *   link with none;
+ * - the cut-off (owner decision D10): the link's own expiry (the end of the
+ *   check-in day), or seven days after the mint, whichever comes first. Past it,
+ *   unless the email reached the member after all, the officers are alerted
+ *   once ("Booking email not sent"). A link that was used, or a booking no
+ *   longer pending, has moved on and raises no alert.
+ * One email per link: each link's email is keyed by that link. A member is
+ * sent a second link only after the first was never delivered.
+ *
+ * An input that cannot key a marker (unreachable with today's ids) is sent as
+ * before #5433: once, unkeyed, with main's revoke when it is not delivered.
  *
  * Locks (`INV-LOCK-001`): the marker is one insert on a primary key, under the
- * `lock(1)` and lodge lock the extension already holds, with no read, provider
- * call or settings query (`INV-INT-003`). The delivery and the sweep run after
- * the commit on the base client; the recovery's re-issue opens its own
- * transaction under the lodge lock alone, the existing on-demand path
- * (`payment-link-split-guest.ts`), and sends after it commits.
+ * `lock(1)` and lodge lock the extension already holds, or under the lodge lock
+ * the re-issue already holds; no read, provider call or settings query is
+ * added to either (`INV-INT-003`). The delivery and the sweep run after the
+ * commit on the base client.
  */
 import { BookingStatus, type Prisma } from "@prisma/client";
 
@@ -79,9 +84,9 @@ import {
   OWED_MEMBER_NOTICE_SWEEP_AFTER_MS,
   readOwedMemberEmail,
 } from "@/lib/owed-notice/member-email";
-import { owedNoticeInputProblem, recordOwedNotices, type OwedNoticeInput, type OwedNoticeMarker } from "@/lib/owed-notice/store";
+import { recordOwedNoticesIfKeyable, type OwedNoticeInput, type OwedNoticeMarker } from "@/lib/owed-notice/store";
 import {
-  issueSplitGuestPaymentLink,
+  prepareSplitGuestPaymentLinkReissue,
   SPLIT_GUEST_PAYMENT_LINK_TEMPLATE,
   type MintedSplitGuestPaymentLink,
 } from "@/lib/payment-link-split-guest";
@@ -92,9 +97,9 @@ export const SPLIT_GUEST_PAYMENT_LINK_KIND: OwedNoticeKind = "split-guest-paymen
 /** The payload field that carries the link's booking. */
 const BOOKING_ID = "bookingId";
 
-/** The recovery's event key: one recovery email per link. */
-export function splitGuestPaymentLinkRecoveryKey(paymentLinkId: string): string {
-  return `${paymentLinkId}:resend`;
+/** A link's email's `EmailLog` id: keyed by the link. */
+export function splitGuestPaymentLinkEmailLogId(paymentLinkId: string): string {
+  return durableEmailLogId(SPLIT_GUEST_PAYMENT_LINK_TEMPLATE, paymentLinkId);
 }
 
 /** Inside the minting transaction: the marker's input. */
@@ -103,25 +108,22 @@ function linkNoticeInput(bookingId: string, paymentLinkId: string, mintedAt: Dat
 }
 
 /**
- * Inside the extension's transaction, as its last write, right after the mint:
- * record the link's email as owed and return the marker for the delivery after
- * the commit (`INV-SSOT-002`). Asked first without a write
- * (`owedNoticeInputProblem`): an input that cannot key a marker is an error
- * log and null, so the marker can never roll the extension back for a reason
- * of shape.
+ * Inside the minting transaction (the job's extension, or the recovery's
+ * re-issue), as its last write, right after the mint: record the link's email
+ * as owed and return the marker for the delivery after the commit
+ * (`INV-SSOT-002`). An input that cannot be keyed is an error log, nothing
+ * written and null (`recordOwedNoticesIfKeyable`), so the marker can never
+ * roll the mint back for a reason of shape.
  */
 export async function recordSplitGuestPaymentLinkOwed(
   tx: Pick<Prisma.TransactionClient, "owedNotice">,
   { bookingId, paymentLinkId }: { bookingId: string; paymentLinkId: string },
 ): Promise<OwedNoticeMarker | null> {
-  const input = linkNoticeInput(bookingId, paymentLinkId, new Date());
-  const problem = owedNoticeInputProblem(input);
-  if (problem) {
-    logger.error({ bookingId, paymentLinkId, problem }, "A split guest payment link cannot key its owed email; the extension commits and nothing is recorded as owed");
-    return null;
-  }
-  const [marker] = await recordOwedNotices(tx, [input]);
-  return marker!;
+  const markers = await recordOwedNoticesIfKeyable(tx, [linkNoticeInput(bookingId, paymentLinkId, new Date())], {
+    message: "A split guest payment link cannot key its owed email; the mint commits and the email is sent unkeyed, as before #5433",
+    context: { bookingId, paymentLinkId },
+  });
+  return markers?.[0] ?? null;
 }
 
 /** What the email needs of the booking, as the minting transaction read it. */
@@ -129,27 +131,28 @@ type LinkEmailBooking = Pick<OwedBookingNotice, "id" | "memberId" | "member" | "
   payment: { changeFeeCents: number | null } | null;
 };
 
-/** The attempt right after the commit: the booking, the link with its raw token, and the club's format. */
+/** The attempt right after the mint: the booking, the link with its raw token, and the club's format. */
 export interface SplitGuestPaymentLinkSubject {
   booking: LinkEmailBooking;
   link: MintedSplitGuestPaymentLink;
   format: ClubFormat;
 }
 
+/** What one send of a link's email came to. */
+type LinkSendResult = "delivered" | "revoked" | "revoke-failed" | "threw-before-row";
+
 /**
- * The email with the raw token, keyed by the link, then main's own rule: an
- * email that was not delivered has its link revoked by id (so a concurrent
- * on-demand re-mint's newer link survives), and the job's next extension
- * re-mints and re-sends. Cleared once the email went or the link was revoked;
- * kept for the sweep when the revoke failed. Never throws.
+ * The email with the raw token, keyed by the link when it is owed, then main's
+ * own rule: an email that was not delivered has its link revoked by id (so a
+ * concurrent on-demand re-mint's newer link survives), and the job's next
+ * extension re-mints and re-sends. The returned status decides, as before
+ * #5433; only a send that threw is checked against the keyed row, which tells
+ * a failure before the row from one after it. Never throws.
  */
-async function deliverMintedSplitGuestPaymentLink(
-  { booking, link, format }: SplitGuestPaymentLinkSubject,
-  _marker: OwedNoticeMarker,
-  { idempotencyKey, job }: OwedNoticeRun & { idempotencyKey: string },
-): Promise<OwedNoticeOutcome> {
+async function sendLinkEmail({ booking, link, format }: SplitGuestPaymentLinkSubject, idempotencyKey: string | undefined, job: string): Promise<LinkSendResult> {
   const owner = bookingOwner(booking);
   let delivered = false;
+  let threw = false;
   try {
     const emailOutcome = await sendSplitGuestPaymentLinkEmail({
       bookingContext: { bookingId: booking.id, recipientMemberId: owner.memberId },
@@ -184,22 +187,45 @@ async function deliverMintedSplitGuestPaymentLink(
       );
     }
   } catch (emailErr) {
+    threw = true;
     logger.error(
       { err: emailErr, bookingId: booking.id, job },
       "Failed to send split-booking guest payment link email; revoking the link so the next settlement run re-mints",
     );
   }
-  if (delivered) return "settled";
+  if (delivered) return "delivered";
+  let revoked = true;
   try {
     await revokePaymentLinkById(link.paymentLinkId);
-    return "settled";
   } catch (revokeErr) {
+    revoked = false;
     logger.error(
       { err: revokeErr, bookingId: booking.id, paymentLinkId: link.paymentLinkId, job },
-      "Failed to revoke undelivered split guest payment link; its owed email stays for a later run, which re-mints and re-sends",
+      "Failed to revoke undelivered split guest payment link; a stale active link may block re-minting until it expires",
     );
-    return "threw";
   }
+  if (threw && idempotencyKey !== undefined && (await linkEmailNeverRecorded(link.paymentLinkId, booking.id, job))) return "threw-before-row";
+  return revoked ? "revoked" : "revoke-failed";
+}
+
+/** True when the link's keyed email has no row (or its row cannot be read, which the sweep then settles). Never throws. */
+async function linkEmailNeverRecorded(paymentLinkId: string, bookingId: string, job: string): Promise<boolean> {
+  try {
+    return (await readOwedMemberEmail(splitGuestPaymentLinkEmailLogId(paymentLinkId))).state === "not-sent";
+  } catch (err) {
+    logger.error({ err, bookingId, paymentLinkId, job }, "Failed to read a split guest payment link's email row after its send threw; it stays owed");
+    return true;
+  }
+}
+
+/** The send, answered for the mechanism: cleared once the email went or the link was revoked; kept otherwise. Never throws. */
+async function deliverMintedSplitGuestPaymentLink(
+  subject: SplitGuestPaymentLinkSubject,
+  _marker: OwedNoticeMarker,
+  { idempotencyKey, job }: OwedNoticeRun & { idempotencyKey: string },
+): Promise<OwedNoticeOutcome> {
+  const sent = await sendLinkEmail(subject, idempotencyKey, job);
+  return sent === "delivered" || sent === "revoked" ? "settled" : "threw";
 }
 
 const LINK_DELIVERY: OwedNoticeImmediateDeliverer<SplitGuestPaymentLinkSubject> = {
@@ -213,14 +239,19 @@ const LINK_DELIVERY: OwedNoticeImmediateDeliverer<SplitGuestPaymentLinkSubject> 
 };
 
 /**
- * After the extension commits: send the link's email from the marker its
- * transaction returned, with the raw token the mint handed back. The claim is
- * taken on the stamp the transaction wrote, so a sweep that already holds the
- * marker wins and this sends nothing (and the token dies with this run; the
- * sweep re-mints). Never throws.
+ * After a mint commits: send the link's email from the marker its transaction
+ * returned, with the raw token the mint handed back. The claim is taken on the
+ * stamp the transaction wrote, so a sweep that already holds the marker wins
+ * and this sends nothing (and the token dies with this run; the sweep
+ * re-mints). With no marker (an input that could not be keyed), the email is
+ * sent as before #5433, unkeyed. Never throws.
  */
-export async function deliverSplitGuestPaymentLink(marker: OwedNoticeMarker, subject: SplitGuestPaymentLinkSubject, job: string): Promise<void> {
-  await deliverOwedNotice({ ...LINK_DELIVERY, job }, marker, subject);
+export async function deliverSplitGuestPaymentLink(marker: OwedNoticeMarker | null, subject: SplitGuestPaymentLinkSubject, job: string): Promise<void> {
+  if (marker) {
+    await deliverOwedNotice({ ...LINK_DELIVERY, job }, marker, subject);
+    return;
+  }
+  await sendLinkEmail(subject, undefined, job);
 }
 
 // ---------------------------------------------------------------------------
@@ -260,40 +291,40 @@ async function loadSplitGuestPaymentLinkSweepSubject(marker: OwedNoticeMarker): 
   return { link, booking, newerLinkMinted: newer !== null, format: await clubFormatValues() };
 }
 
-/** Null when the link's email is still owed; otherwise why it moved on. */
-export function splitGuestPaymentLinkMovedOn(subject: Pick<SplitGuestPaymentLinkSweepSubject, "link" | "booking" | "newerLinkMinted">, now: Date): string | null {
+/**
+ * Null when the link's email is still owed; otherwise why it moved on. The
+ * link's expiry is not here: it is the notice's cut-off (`sendBy`), past which
+ * the officers are alerted once unless the member was told.
+ */
+export function splitGuestPaymentLinkMovedOn(subject: Pick<SplitGuestPaymentLinkSweepSubject, "link" | "booking" | "newerLinkMinted">): string | null {
   const { link, booking } = subject;
   if (booking.deletedAt) return "the booking was deleted";
   if (booking.status !== BookingStatus.PENDING) return `the booking is ${booking.status}`;
   if (link.usedAt) return "the link was used";
-  if (subject.newerLinkMinted) return "a newer payment link was minted for the booking";
-  if (link.expiresAt.getTime() <= now.getTime()) return "the link expired at the end of the check-in day";
+  if (subject.newerLinkMinted) return "a newer payment link was minted for the booking, owed in its own right";
   return null;
 }
 
+/** Whether the link's own keyed email says the member was told, or is in flight. */
+async function linkEmailTold(paymentLinkId: string): Promise<boolean> {
+  return isToldKeyedEmailState((await readOwedMemberEmail(splitGuestPaymentLinkEmailLogId(paymentLinkId))).state);
+}
+
 /**
- * Recover the email: told on the original link's row, cleared; a recovery
- * already written, cleared; otherwise revoke and re-mint through the booking
- * page's own re-issue and send that, keyed. Never throws.
+ * Recover the email: told on the original link's row, cleared; otherwise
+ * revoke and re-mint through the booking page's own re-issue, owing the new
+ * link's email in that transaction, and deliver it as the job delivers its
+ * own. Never throws.
  */
 async function recoverSplitGuestPaymentLink(
   { link, format }: SplitGuestPaymentLinkSweepSubject,
   marker: OwedNoticeMarker,
-  { idempotencyKey, job }: OwedNoticeRun & { idempotencyKey: string },
+  { job }: OwedNoticeRun & { idempotencyKey: string },
 ): Promise<OwedNoticeOutcome> {
   const log = { bookingId: link.bookingId, paymentLinkId: link.id, key: marker.id, job };
   try {
-    const original = await readOwedMemberEmail(durableEmailLogId(SPLIT_GUEST_PAYMENT_LINK_TEMPLATE, link.id));
-    if (isToldKeyedEmailState(original.state)) {
+    if (await linkEmailTold(link.id)) {
       logger.info(log, "The split guest payment link's email was sent, or is in flight; its owed notice is cleared");
-      return "settled";
-    }
-    const recovery = await readOwedMemberEmail(durableEmailLogId(SPLIT_GUEST_PAYMENT_LINK_TEMPLATE, idempotencyKey));
-    if (recovery.state !== "not-sent") {
-      logger.warn(
-        { ...log, state: recovery.state },
-        "A split guest payment link's recovery email was already attempted; its owed notice is cleared, and the job's next extension mints and sends a fresh link if that one did not go",
-      );
       return "settled";
     }
   } catch (err) {
@@ -301,8 +332,15 @@ async function recoverSplitGuestPaymentLink(
     return "threw";
   }
   try {
-    const reissued = await issueSplitGuestPaymentLink(link.bookingId, format, { idempotencyKey });
-    logger.info({ ...log, outcome: reissued.outcome }, "Recovered an owed split guest payment link email through the booking page's re-issue");
+    const reissued = await prepareSplitGuestPaymentLinkReissue(link.bookingId, (tx, minted) =>
+      recordSplitGuestPaymentLinkOwed(tx, { bookingId: link.bookingId, paymentLinkId: minted.paymentLinkId }),
+    );
+    if (reissued.kind !== "minted") {
+      logger.info({ ...log, outcome: reissued.kind }, "An owed split guest payment link was not re-issued; its owed notice is cleared");
+      return "settled";
+    }
+    logger.info({ ...log, newPaymentLinkId: reissued.minted.paymentLinkId }, "Re-issued an owed split guest payment link; the new link's email is owed in its own right");
+    await deliverSplitGuestPaymentLink(reissued.owed, { booking: reissued.booking, link: reissued.minted, format }, job);
     return "settled";
   } catch (err) {
     logger.error({ err, ...log }, "Failed to re-issue an owed split guest payment link; it stays owed");
@@ -311,9 +349,9 @@ async function recoverSplitGuestPaymentLink(
 }
 
 /**
- * Past the cut-off (seven days after the mint, with the check-in day still to
- * come): alert the officers once, unless the original email or its recovery
- * did reach the member after all. Never throws.
+ * Past the cut-off (owner decision D10: the link's expiry at the end of the
+ * check-in day, or seven days after the mint): alert the officers once, unless
+ * the email did reach the member after all. Never throws.
  */
 async function splitGuestPaymentLinkPastCutoff(
   { link, booking }: SplitGuestPaymentLinkSweepSubject,
@@ -322,9 +360,7 @@ async function splitGuestPaymentLinkPastCutoff(
 ): Promise<OwedNoticeOutcome> {
   const log = { bookingId: link.bookingId, paymentLinkId: link.id, key: marker.id, job };
   try {
-    for (const key of [link.id, splitGuestPaymentLinkRecoveryKey(link.id)]) {
-      if (isToldKeyedEmailState((await readOwedMemberEmail(durableEmailLogId(SPLIT_GUEST_PAYMENT_LINK_TEMPLATE, key))).state)) return "settled";
-    }
+    if (await linkEmailTold(link.id)) return "settled";
   } catch (err) {
     logger.error({ err, ...log }, "Failed to read a split guest payment link's email state past its cut-off");
     return "threw";
@@ -340,9 +376,9 @@ const SPLIT_GUEST_PAYMENT_LINK: OwedNoticeDeliverer<SplitGuestPaymentLinkSweepSu
   sweepAfterMs: OWED_MEMBER_NOTICE_SWEEP_AFTER_MS,
   unreachedRetryAfterMs: ALERT_NOBODY_ELIGIBLE_RETRY_MS,
   maxAgeMs: OWED_MEMBER_NOTICE_MAX_AGE_MS,
-  idempotencyKey: (marker) => splitGuestPaymentLinkRecoveryKey(marker.subjectId),
+  idempotencyKey: (marker) => marker.subjectId,
   load: loadSplitGuestPaymentLinkSweepSubject,
-  stillOwed: async (subject) => splitGuestPaymentLinkMovedOn(subject, new Date()) ?? true,
+  stillOwed: async (subject) => splitGuestPaymentLinkMovedOn(subject) ?? true,
   sendBy: ({ link }) => link.expiresAt,
   deliver: recoverSplitGuestPaymentLink,
   pastCutoff: splitGuestPaymentLinkPastCutoff,

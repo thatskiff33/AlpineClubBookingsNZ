@@ -64,7 +64,9 @@
  * confirm-payment route and the confirm-pending job's saved-card charge. The
  * other card doors send none, or only on an officer's choice, as before. The
  * confirm-pending job's zero-balance confirmation records the same marker at
- * its own PAID claim (#5433 PR 4, CP-1) and is delivered here too.
+ * its own PAID claim (#5433 PR 4, CP-1) and is delivered here too, on the same
+ * rules (owner decision D11: an owner who cannot be emailed at all raises the
+ * officers' alert, as D8 does for a card payment).
  *
  * Locks (`INV-LOCK-001`): nothing here runs inside a transaction or takes an
  * advisory key. The marker joins the settle's transaction under the locks it
@@ -75,7 +77,7 @@ import { bookingOwner } from "@/lib/booking-owner";
 import { isPaidLikeBookingStatus } from "@/lib/booking-status";
 import type { ClubFormat } from "@/lib/club-format";
 import { clubFormatValues } from "@/lib/club-format-server";
-import { calendarDateOfDateOnlyInstant, endOfClubDayInclusive, type ClubTimeZone } from "@/lib/club-time";
+import { endOfStoredClubDay, type ClubTimeZone } from "@/lib/club-time";
 import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
 import { sendAdminBookingConfirmationUnsentAlert } from "@/lib/email/admin-alerts-booking-confirmation-unsent";
 import { durableEmailLogId } from "@/lib/email/attempt-log";
@@ -143,7 +145,7 @@ export function paidConfirmationMovedOn(booking: Pick<PaidConfirmationBooking, "
 
 /** D1's cut-off: the last instant of the check-in day in the club's time zone (the stored date-only night, through the kernel). */
 export function paidConfirmationSendBy(checkIn: Date, zone: ClubTimeZone): Date {
-  return endOfClubDayInclusive(calendarDateOfDateOnlyInstant(checkIn), zone);
+  return endOfStoredClubDay(checkIn, zone);
 }
 
 /** The booking as it stands, read outside any transaction; null when it is gone. */
@@ -269,6 +271,22 @@ const PAID_CONFIRMATION: OwedNoticeDeliverer<PaidConfirmationSweepSubject> = {
 
 /** The confirmation's kind, as the registry lists it. */
 export const PAID_CONFIRMATION_NOTICE_DELIVERERS: readonly OwedNoticeDeliverer<PaidConfirmationSweepSubject>[] = [PAID_CONFIRMATION];
+
+/**
+ * A confirmation that could not be recorded as owed (a booking id that cannot
+ * key a marker; unreachable with today's ids): sent once as before #5433,
+ * unkeyed, with nothing left for a later run and no officers' alert. Used by
+ * the confirm-pending job's zero-balance claim (#5433 PR 4, round 1, item 5).
+ * Never throws.
+ */
+export async function sendUnrecordedPaidBookingConfirmation(bookingId: string, format: ClubFormat, job: string): Promise<void> {
+  try {
+    const booking = await loadPaidConfirmationBooking(bookingId);
+    if (booking) await sendPaidBookingConfirmation(booking, format, undefined);
+  } catch (err) {
+    logger.error({ err, bookingId, job }, "Failed to send confirmation email");
+  }
+}
 
 /**
  * After the settle commits: deliver the confirmation from the marker it

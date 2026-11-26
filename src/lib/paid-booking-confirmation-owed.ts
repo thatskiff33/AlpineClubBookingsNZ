@@ -23,9 +23,8 @@
  */
 import type { Prisma } from "@prisma/client";
 
-import logger from "@/lib/logger";
 import type { OwedNoticeKind } from "@/lib/owed-notice/kinds";
-import { owedNoticeInputProblem, recordOwedNotices, type OwedNoticeInput, type OwedNoticeMarker } from "@/lib/owed-notice/store";
+import { recordOwedNotices, recordOwedNoticesIfKeyable, type OwedNoticeInput, type OwedNoticeMarker } from "@/lib/owed-notice/store";
 import type { BookingSettlementSource } from "@/lib/payment-reconciliation-sources";
 
 /** The owed confirmation's kind. Named for the email, not the payment, so the zero-balance and bank-transfer confirmations can join it. */
@@ -83,11 +82,9 @@ export async function recordPaidConfirmationOwedUnlessUnkeyable(
   tx: Pick<Prisma.TransactionClient, "owedNotice">,
   bookingId: string,
 ): Promise<OwedNoticeMarker | null> {
-  const paidAt = new Date();
-  const problem = owedNoticeInputProblem(paidConfirmationInput(bookingId, paidAt));
-  if (problem) {
-    logger.error({ bookingId, problem }, "A paid booking cannot key an owed confirmation; the payment settles and no confirmation is recorded as owed");
-    return null;
-  }
-  return recordPaidBookingConfirmationOwed(tx, { bookingId, paidAt });
+  const markers = await recordOwedNoticesIfKeyable(tx, [paidConfirmationInput(bookingId, new Date())], {
+    message: "A paid booking cannot key an owed confirmation; the payment settles and no confirmation is recorded as owed",
+    context: { bookingId },
+  });
+  return markers?.[0] ?? null;
 }

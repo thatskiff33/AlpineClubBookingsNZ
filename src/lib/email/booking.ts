@@ -72,6 +72,7 @@ import { loadEmailMessageSettingsForLodge } from "@/lib/email-message-settings";
 import { loadEffectiveModuleFlags } from "@/lib/module-settings";
 import { sendEmail, type EmailSendOutcome } from "./core";
 import { BOOKING_CONFIRMED_TEMPLATE_NAME } from "./booking-confirmed-template";
+import { SAVED_CARD_CHARGE_FAILED_TEMPLATE, SPLIT_GUEST_PORTION_CANCELLED_TEMPLATE } from "./owed-notice-templates";
 import {
   bookingOwnerEmailContext,
   type BookingOwnerEmailSource,
@@ -939,7 +940,7 @@ export async function sendSplitGuestPortionCancelledEmail(params: {
       parentBookingReference: params.parentBookingReference ?? null,
     })),
     bookingContext: bookingOwnerEmailContext(params.bookingId, params.recipientMemberId),
-    templateName: "split-guest-portion-cancelled",
+    templateName: SPLIT_GUEST_PORTION_CANCELLED_TEMPLATE,
     templateData: {
       firstName: params.firstName,
       checkIn: emailCalendarDay(params.checkIn),
@@ -1851,7 +1852,7 @@ export async function sendSavedCardChargeFailedEmail(params: {
     subject: `Your Saved Card Needs Replacing - ${EMAIL_DEFAULT_LODGE_NAME}`,
     html: await renderEmailHtml(() => savedCardChargeFailedTemplate(params)),
     bookingContext: bookingOwnerEmailContext(params.bookingId, params.recipientMemberId),
-    templateName: "saved-card-charge-failed",
+    templateName: SAVED_CARD_CHARGE_FAILED_TEMPLATE,
     templateData: {
       firstName: params.firstName,
       checkIn: emailCalendarDay(params.checkIn),

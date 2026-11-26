@@ -82,12 +82,15 @@ vi.mock("../payment-reconciliation", () => ({
 // marker and delivers it through the owed notice (paid-booking-confirmation-notice.test.ts).
 const confirmation = vi.hoisted(() => ({
   deliver: vi.fn(),
+  // #5433 PR 4, round 1, item 5: a zero-balance confirmation that could not be keyed is sent as before.
+  sendUnrecorded: vi.fn(),
   marker: { id: "booking-confirmed:b1:1782864000000", kind: "booking-confirmed", subjectId: "b1", eventAt: new Date("2026-07-01T00:00:00.000Z"), variant: null, payload: null },
 }));
 // Partly: the job's own sweep reads the real deliverer from the registry.
 vi.mock("../paid-booking-confirmation-notice", async (importOriginal) => ({
   ...((await importOriginal()) as typeof import("../paid-booking-confirmation-notice")),
   deliverPaidBookingConfirmation: confirmation.deliver,
+  sendUnrecordedPaidBookingConfirmation: confirmation.sendUnrecorded,
 }));
 
 // #3267: the cron no longer records its charge through
@@ -4681,6 +4684,17 @@ describe("Cron: Confirm Pending Bookings", () => {
         expect(confirmation.deliver).not.toHaveBeenCalled();
       });
 
+      it("sends a confirmation that cannot be keyed as before #5433, with no marker (round 1, item 5)", async () => {
+        mockPendingBookings([makePendingBooking("b 1", { finalPriceCents: 0 })]);
+        room();
+
+        await confirmPendingBookings();
+
+        expect(markerKeysWrittenInTransaction).toEqual([]);
+        expect(confirmation.deliver).not.toHaveBeenCalled();
+        expect(confirmation.sendUnrecorded).toHaveBeenCalledWith("b 1", CLUB_FORMAT_TEST, "confirmPendingBookings");
+      });
+
       it("writes no marker when the PAID claim is lost", async () => {
         mockPendingBookings([makePendingBooking("b1", { finalPriceCents: 0 })]);
         room();
@@ -4906,6 +4920,39 @@ describe("Cron: Confirm Pending Bookings", () => {
 
         expect(mockRevokePaymentLinkById).toHaveBeenCalledWith(LINK);
         expect(owedNoticeStore.rows.size).toBe(0);
+      });
+
+      it("keeps the marker when the send throws before its keyed row was written, even with the link revoked: the sweep recovers it (round 1, item 2)", async () => {
+        extendChild();
+        mockSendSplitGuestPaymentLinkEmail.mockRejectedValueOnce(new Error("EmailLog insert failed"));
+        mockEmailLogFindUnique.mockResolvedValue(null);
+
+        await confirmPendingBookings();
+
+        expect(mockRevokePaymentLinkById).toHaveBeenCalledWith(LINK);
+        expect([...owedNoticeStore.rows.keys()]).toEqual([KEY]);
+      });
+
+      it("clears the marker when the send threw after its keyed row was written and the link was revoked: the next extension re-mints, as before", async () => {
+        extendChild();
+        mockSendSplitGuestPaymentLinkEmail.mockRejectedValueOnce(new Error("SMTP down"));
+        mockEmailLogFindUnique.mockResolvedValue({ ...SENT_EMAIL_ROW, status: "FAILED" });
+
+        await confirmPendingBookings();
+
+        expect(mockRevokePaymentLinkById).toHaveBeenCalledWith(LINK);
+        expect(owedNoticeStore.rows.size).toBe(0);
+      });
+
+      it("sends a link that cannot be keyed unkeyed, as before #5433, and does not revoke it once delivered (round 1, item 5)", async () => {
+        extendChild();
+        mockMintSplitGuestPaymentLinkIfAbsent.mockResolvedValue({ token: "tok_split_1", paymentLinkId: "pl bad", expiresAt: MINTED_LINK_EXPIRES_AT });
+
+        await confirmPendingBookings();
+
+        expect(markerKeysWrittenInTransaction).toEqual([]);
+        expect(mockSendSplitGuestPaymentLinkEmail).toHaveBeenCalledWith(expect.objectContaining({ token: "tok_split_1", idempotencyKey: undefined }), CLUB_FORMAT_TEST);
+        expect(mockRevokePaymentLinkById).not.toHaveBeenCalled();
       });
 
       it("keeps the marker for the sweep when the send throws and the revoke fails too: an active link nobody has", async () => {

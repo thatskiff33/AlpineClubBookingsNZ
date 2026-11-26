@@ -22,11 +22,11 @@ import { createOwedNoticeStore } from "./support/owed-notice-store";
 type EmailRow = { status: string; attempts: number; lastAttemptAt: Date; htmlBody: string | null; bookingRetryHtmlBody: string | null; deliveryBlockReason?: string | null };
 
 const owed = vi.hoisted(() => ({ store: null as unknown as ReturnType<typeof import("./support/owed-notice-store").createOwedNoticeStore> }));
+type LinkRow = { id: string; bookingId: string; usedAt: Date | null; revokedAt: Date | null; createdAt: Date; expiresAt: Date };
 const db = vi.hoisted(() => ({
   emailRows: new Map<string, EmailRow>(),
   booking: null as Record<string, unknown> | null,
-  link: null as Record<string, unknown> | null,
-  newerLink: false,
+  links: new Map<string, LinkRow>(),
 }));
 vi.mock("@/lib/prisma", () => ({
   prisma: {
@@ -36,8 +36,9 @@ vi.mock("@/lib/prisma", () => ({
     emailLog: { findUnique: async ({ where }: { where: { id: string } }) => db.emailRows.get(where.id) ?? null },
     booking: { findUnique: async ({ where }: { where: { id: string } }) => (db.booking && db.booking.id === where.id ? db.booking : null) },
     paymentLink: {
-      findUnique: async ({ where }: { where: { id: string } }) => (db.link && db.link.id === where.id ? db.link : null),
-      findFirst: async () => (db.newerLink ? { id: "pl_newer" } : null),
+      findUnique: async ({ where }: { where: { id: string } }) => db.links.get(where.id) ?? null,
+      findFirst: async ({ where }: { where: { bookingId: string; createdAt: { gt: Date } } }) =>
+        [...db.links.values()].find((row) => row.bookingId === where.bookingId && row.createdAt > where.createdAt.gt) ?? null,
     },
     alertCooldown: { findMany: async () => [] },
   },
@@ -60,15 +61,34 @@ const memberSend = vi.hoisted(
 );
 const SENT = { deliveryAllowed: true, recipients: 1, sent: 1, queuedForRetry: 0, notDelivered: 0, failedBeforeLogged: 0 };
 const officers = vi.hoisted(() => ({ requestCancelled: vi.fn(), splitCancelled: vi.fn(), paymentFailure: vi.fn() }));
-vi.mock("@/lib/email", () => ({
-  sendBookingRequestPaymentExpiredEmail: (params: Record<string, unknown>) =>
-    memberSend("booking-request-payment-expired")({ ...params, idempotencyKey: params.idempotencyKey }),
-  sendSplitGuestPortionCancelledEmail: memberSend("split-guest-portion-cancelled"),
-  sendSavedCardChargeFailedEmail: memberSend("saved-card-charge-failed"),
-  sendAdminBookingRequestHoldCancelledEmail: officers.requestCancelled,
-  sendAdminSplitSettlementCancelledAlert: officers.splitCancelled,
-  sendAdminPaymentFailureAlert: officers.paymentFailure,
-  sendSplitGuestPaymentLinkEmail: vi.fn(),
+/** The link email's stand-in: "sent" writes the keyed row, "throw-before-row" throws with no row, "withheld" writes a withheld row. */
+const linkCore = vi.hoisted(() => ({ next: "sent" as "sent" | "throw-before-row" | "withheld", sends: [] as Array<{ token: string; key: string | undefined }> }));
+vi.mock("@/lib/email", async () => {
+  // The senders' own template constants, so a renamed template fails here (round 1, item 6).
+  const templates = await import("@/lib/email/owed-notice-templates");
+  return {
+    sendBookingRequestPaymentExpiredEmail: memberSend(templates.BOOKING_REQUEST_PAYMENT_EXPIRED_TEMPLATE),
+    sendSplitGuestPortionCancelledEmail: memberSend(templates.SPLIT_GUEST_PORTION_CANCELLED_TEMPLATE),
+    sendSavedCardChargeFailedEmail: memberSend(templates.SAVED_CARD_CHARGE_FAILED_TEMPLATE),
+    sendAdminBookingRequestHoldCancelledEmail: officers.requestCancelled,
+    sendAdminSplitSettlementCancelledAlert: officers.splitCancelled,
+    sendAdminPaymentFailureAlert: officers.paymentFailure,
+    sendSplitGuestPaymentLinkEmail: async (params: { token: string; idempotencyKey?: string }) => {
+      linkCore.sends.push({ token: params.token, key: params.idempotencyKey });
+      if (linkCore.next === "throw-before-row") throw new Error("EmailLog insert failed");
+      const row = { attempts: 1, lastAttemptAt: new Date(), htmlBody: null, bookingRetryHtmlBody: null };
+      if (params.idempotencyKey) db.emailRows.set(`email:split-guest-payment-link:${params.idempotencyKey}`, { ...row, status: linkCore.next === "sent" ? "SENT" : "SKIPPED_NON_PRODUCTION" });
+      return linkCore.next === "sent" ? { status: "sent", emailLogId: "x" } : { status: "withheld_for_environment", emailLogId: "x", reason: "environment_non_production" };
+    },
+  };
+});
+vi.mock("@/lib/booking-amount-owed", () => ({ readBookingAmountOwed: async () => ({ owedCents: 12000, dueCents: 12000, appliedCreditCents: 0 }) }));
+vi.mock("@/lib/payment-link", () => ({
+  revokePaymentLinkById: vi.fn(async (id: string) => {
+    const row = db.links.get(id);
+    if (row) row.revokedAt = new Date();
+    return row ? 1 : 0;
+  }),
 }));
 const alerts = vi.hoisted(() => ({ unsent: vi.fn(), onceKeys: [] as string[] }));
 vi.mock("@/lib/email/admin-alerts-booking-notice-unsent", () => ({ sendAdminBookingNoticeUnsentAlert: alerts.unsent }));
@@ -81,10 +101,16 @@ vi.mock("@/lib/owed-notice/past-cutoff-once", async (importOriginal) => ({
     return "settled";
   },
 }));
-const reissue = vi.hoisted(() => ({ fn: vi.fn() }));
+/**
+ * The booking page's re-issue, its checks and its mint (proved in its own
+ * suite): by default it revokes the booking's live links, mints the next one
+ * into the link table and records its owed email with the caller's
+ * `recordOwed`, as the real one does inside its transaction.
+ */
+const reissue = vi.hoisted(() => ({ fn: vi.fn(), sequence: 0 }));
 vi.mock("@/lib/payment-link-split-guest", async (importOriginal) => ({
   ...((await importOriginal()) as typeof import("@/lib/payment-link-split-guest")),
-  issueSplitGuestPaymentLink: reissue.fn,
+  prepareSplitGuestPaymentLinkReissue: reissue.fn,
 }));
 vi.mock("@/lib/club-time-zone-runtime", () => ({ readClubTimeZoneOutsideRequest: async () => "Pacific/Auckland" }));
 vi.mock("@/lib/club-format-server", async () => ({
@@ -97,9 +123,16 @@ import { owedNoticeTableSource, type OwedNoticeDeliverer } from "@/lib/owed-noti
 import { HOLD_ENDED_NOTICE_DELIVERERS, holdEndedMemberSendBy, recordHoldEndedNoticesOwed } from "@/lib/hold-ended-cancellation-notices";
 import { recordSavedCardUnusableNoticesOwed, SAVED_CARD_UNUSABLE_NOTICE_DELIVERERS } from "@/lib/saved-card-unusable-notices";
 import {
+  BOOKING_REQUEST_PAYMENT_EXPIRED_TEMPLATE,
+  SAVED_CARD_CHARGE_FAILED_TEMPLATE,
+  SPLIT_GUEST_PORTION_CANCELLED_TEMPLATE,
+} from "@/lib/email/owed-notice-templates";
+import { deliverHoldEndedNotices } from "@/lib/hold-ended-cancellation-notices";
+import { deliverSavedCardUnusableNotices } from "@/lib/saved-card-unusable-notices";
+import {
   recordSplitGuestPaymentLinkOwed,
   SPLIT_GUEST_PAYMENT_LINK_NOTICE_DELIVERERS,
-  splitGuestPaymentLinkRecoveryKey,
+  splitGuestPaymentLinkEmailLogId,
 } from "@/lib/split-guest-payment-link-notice";
 import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
@@ -140,8 +173,10 @@ beforeEach(() => {
   owed.store = createOwedNoticeStore();
   db.emailRows.clear();
   db.booking = null;
-  db.link = null;
-  db.newerLink = false;
+  db.links.clear();
+  linkCore.next = "sent";
+  linkCore.sends = [];
+  reissue.sequence = 0;
   core.next = "SENT";
   core.sends = [];
   alerts.onceKeys = [];
@@ -149,13 +184,45 @@ beforeEach(() => {
   officers.requestCancelled.mockResolvedValue(SENT);
   officers.splitCancelled.mockResolvedValue(SENT);
   officers.paymentFailure.mockResolvedValue(SENT);
-  reissue.fn.mockResolvedValue({ outcome: "sent", emailLogId: "x", recipientMemberId: "m1", sentTo: "ada@example.test" });
+  reissue.fn.mockImplementation(async (bookingId: string, recordOwed: (tx: unknown, minted: { token: string; paymentLinkId: string; expiresAt: Date }) => Promise<unknown>) => {
+    for (const row of db.links.values()) if (row.bookingId === bookingId && !row.usedAt && !row.revokedAt) row.revokedAt = new Date();
+    reissue.sequence += 1;
+    const minted = { token: `tok_re_${reissue.sequence}`, paymentLinkId: `pl_re_${reissue.sequence}`, expiresAt: new Date("2026-07-20T11:59:59.999Z") };
+    db.links.set(minted.paymentLinkId, { id: minted.paymentLinkId, bookingId, usedAt: null, revokedAt: null, createdAt: new Date(Date.now() + reissue.sequence), expiresAt: minted.expiresAt });
+    const owedMarker = await recordOwed(tx(), minted);
+    return { kind: "minted", booking: { ...(db.booking as object), payment: null }, minted, owed: owedMarker };
+  });
 });
 
 describe("CP-4 and CP-5: the notices of a hold that ended in cancellation", () => {
-  it("records nothing and returns null when the cancel cannot key its markers, so the cancel still commits", async () => {
-    expect(await recordHoldEndedNoticesOwed(tx(), { ended: "request", bookingId: "not an id" })).toBeNull();
+  it("records nothing when the cancel cannot key its markers, so the cancel still commits, and sends both unkeyed as before #5433 (round 1, item 5)", async () => {
+    const owedNotices = await recordHoldEndedNoticesOwed(tx(), { ended: "split-guest", bookingId: "not an id", parentUnpaid: false });
+    expect(owedNotices.recorded).toBe(false);
     expect(owed.store.rows.size).toBe(0);
+
+    await deliverHoldEndedNotices(cancelledBooking({ id: "not an id" }) as never, owedNotices, CLUB_FORMAT_TEST, "test");
+
+    expect(core.sends.map((send) => [send.template, send.key, send.params.parentConfirmed])).toEqual([[SPLIT_GUEST_PORTION_CANCELLED_TEMPLATE, undefined, true]]);
+    expect(officers.splitCancelled).toHaveBeenCalledWith(expect.objectContaining({ parentUnpaid: false }), CLUB_FORMAT_TEST);
+    expect(owed.store.rows.size).toBe(0);
+  });
+
+  it("past its cut-off holds a notice the email retry cron still holds, instead of telling officers it will not be sent (round 1, item 4)", async () => {
+    // A one-night stay cancelled after its check-out day ended: the first send hits a provider error the retry cron will replay.
+    db.booking = cancelledBooking({ checkOut: new Date("2026-06-30T00:00:00.000Z") });
+    const memberKind = HOLD_ENDED_NOTICE_DELIVERERS.filter((d) => d.kind === "request-hold-cancelled-member");
+    const recorded = await recordHoldEndedNoticesOwed(tx(), { ended: "request", bookingId: "b1" });
+    // The attempt right after the cancel left a replayable FAILED row; the sweep then runs past the cut-off.
+    db.emailRows.set(`email:${BOOKING_REQUEST_PAYMENT_EXPIRED_TEMPLATE}:b1:${recorded.cancelledAt.getTime()}`, { status: "FAILED", attempts: 1, lastAttemptAt: NOW, htmlBody: "<p>kept</p>", bookingRetryHtmlBody: null });
+
+    await sweep(memberKind, new Date(NOW.getTime() + HOUR));
+    expect(alerts.unsent).not.toHaveBeenCalled();
+    expect([...owed.store.rows.values()].map((row) => row.kind)).toEqual(["request-hold-cancelled-member", "request-hold-cancelled-officers"]);
+
+    // The retry cron gives up: the row can no longer be replayed, and the alert goes.
+    db.emailRows.set(`email:${BOOKING_REQUEST_PAYMENT_EXPIRED_TEMPLATE}:b1:${recorded.cancelledAt.getTime()}`, { status: "FAILED", attempts: 3, lastAttemptAt: NOW, htmlBody: null, bookingRetryHtmlBody: null });
+    await sweep(memberKind, new Date(NOW.getTime() + 2 * HOUR));
+    expect(alerts.unsent).toHaveBeenCalledTimes(1);
   });
 
   it("sends a requester's notice a stopped run never sent, once, keyed by the cancel, after the wait and not before", async () => {
@@ -166,7 +233,7 @@ describe("CP-4 and CP-5: the notices of a hold that ended in cancellation", () =
     const swept = await sweep(HOLD_ENDED_NOTICE_DELIVERERS, new Date(NOW.getTime() + 31 * MINUTE));
 
     expect(swept).toEqual({ checked: 2, delivered: 2, cleared: 0, expired: 0 });
-    expect(core.sends.map((send) => [send.template, send.key])).toEqual([["booking-request-payment-expired", `b1:${recorded!.cancelledAt.getTime()}`]]);
+    expect(core.sends.map((send) => [send.template, send.key])).toEqual([[BOOKING_REQUEST_PAYMENT_EXPIRED_TEMPLATE, `b1:${recorded.cancelledAt.getTime()}`]]);
     expect(officers.requestCancelled).toHaveBeenCalledWith(
       { requesterName: "Ada Proof", checkIn: cancelledBooking().checkIn, checkOut: cancelledBooking().checkOut, guestCount: 2, totalCents: 14000 },
       CLUB_FORMAT_TEST,
@@ -246,8 +313,8 @@ describe("CP-4 and CP-5: the notices of a hold that ended in cancellation", () =
 
     // A second marker whose email did go: cleared past its cut-off, no alert.
     alerts.unsent.mockClear();
-    owed.store.seed({ id: "request-hold-cancelled-member:b1:2", kind: "request-hold-cancelled-member", subjectId: "b1", eventAt: new Date(recorded!.cancelledAt.getTime() + 1) });
-    db.emailRows.set(`email:booking-request-payment-expired:b1:${recorded!.cancelledAt.getTime() + 1}`, { status: "SENT", attempts: 1, lastAttemptAt: NOW, htmlBody: null, bookingRetryHtmlBody: null });
+    owed.store.seed({ id: "request-hold-cancelled-member:b1:2", kind: "request-hold-cancelled-member", subjectId: "b1", eventAt: new Date(recorded.cancelledAt.getTime() + 1) });
+    db.emailRows.set(`email:${BOOKING_REQUEST_PAYMENT_EXPIRED_TEMPLATE}:b1:${recorded.cancelledAt.getTime() + 1}`, { status: "SENT", attempts: 1, lastAttemptAt: NOW, htmlBody: null, bookingRetryHtmlBody: null });
     await sweep(HOLD_ENDED_NOTICE_DELIVERERS.filter((d) => d.kind === "request-hold-cancelled-member"), pastCheckOut);
     expect(alerts.unsent).not.toHaveBeenCalled();
     // Only the officers' marker, which this sweep did not take, is left.
@@ -289,20 +356,26 @@ describe("CP-4 and CP-5: the notices of a hold that ended in cancellation", () =
 describe("CP-6: a split guest portion's payment link", () => {
   const LINK = "pl_1";
   const childBooking = (overrides: Record<string, unknown> = {}) => cancelledBooking({ id: "child_1", status: "PENDING", ...overrides });
-  const activeLink = (overrides: Record<string, unknown> = {}) => ({
+  const linkRow = (overrides: Partial<LinkRow> = {}): LinkRow => ({
     id: LINK,
     bookingId: "child_1",
     usedAt: null,
+    revokedAt: null,
     createdAt: NOW,
     expiresAt: new Date("2026-07-20T11:59:59.999Z"),
     ...overrides,
   });
+  const live = () => [...db.links.values()].filter((row) => !row.usedAt && !row.revokedAt);
+  /** Every live link that was never emailed has a marker: the property round 1, item 1 asks for. */
+  const everyLiveUnemailedLinkIsOwed = () =>
+    live()
+      .filter((row) => !db.emailRows.has(splitGuestPaymentLinkEmailLogId(row.id)))
+      .every((row) => [...owed.store.rows.values()].some((marker) => marker.subjectId === row.id));
 
   async function owe() {
-    const marker = await recordSplitGuestPaymentLinkOwed(tx(), { bookingId: "child_1", paymentLinkId: LINK });
     db.booking = childBooking();
-    db.link = activeLink();
-    return marker!;
+    db.links.set(LINK, linkRow());
+    return (await recordSplitGuestPaymentLinkOwed(tx(), { bookingId: "child_1", paymentLinkId: LINK }))!;
   }
 
   it("records a marker keyed by the link, holding the booking and no token, and null for an input it cannot key", async () => {
@@ -313,7 +386,7 @@ describe("CP-6: a split guest portion's payment link", () => {
 
   it("clears without a re-issue when the original link's email was sent or is in flight", async () => {
     await owe();
-    db.emailRows.set(`email:split-guest-payment-link:${LINK}`, { status: "QUEUED", attempts: 1, lastAttemptAt: NOW, htmlBody: null, bookingRetryHtmlBody: null });
+    db.emailRows.set(splitGuestPaymentLinkEmailLogId(LINK), { status: "QUEUED", attempts: 1, lastAttemptAt: NOW, htmlBody: null, bookingRetryHtmlBody: null });
 
     const swept = await sweep(SPLIT_GUEST_PAYMENT_LINK_NOTICE_DELIVERERS, new Date(NOW.getTime() + HOUR));
 
@@ -321,71 +394,123 @@ describe("CP-6: a split guest portion's payment link", () => {
     expect(reissue.fn).not.toHaveBeenCalled();
   });
 
-  it("otherwise revokes and re-mints through the booking page's re-issue, keyed for one recovery per link, once", async () => {
+  it("otherwise re-issues through the booking page's own path, owing the new link in its transaction, and delivers it keyed by the new link", async () => {
     await owe();
+    vi.setSystemTime(new Date(NOW.getTime() + HOUR));
 
     await sweep(SPLIT_GUEST_PAYMENT_LINK_NOTICE_DELIVERERS, new Date(NOW.getTime() + HOUR));
 
     expect(reissue.fn).toHaveBeenCalledTimes(1);
-    expect(reissue.fn).toHaveBeenCalledWith("child_1", CLUB_FORMAT_TEST, { idempotencyKey: splitGuestPaymentLinkRecoveryKey(LINK) });
+    expect(reissue.fn).toHaveBeenCalledWith("child_1", expect.any(Function));
+    expect(linkCore.sends).toEqual([{ token: "tok_re_1", key: "pl_re_1" }]);
+    expect(db.links.get(LINK)!.revokedAt).not.toBeNull();
     expect(owed.store.rows.size).toBe(0);
     expect((await sweep(SPLIT_GUEST_PAYMENT_LINK_NOTICE_DELIVERERS, new Date(NOW.getTime() + 2 * HOUR))).checked).toBe(0);
   });
 
-  it("does not re-issue a second time when a recovery's row already exists, even one that did not reach the member", async () => {
+  it("two stops: the re-issue commits and the process stops before the new link's email, then the next sweep sends it, and no live unemailed link is ever left unowed", async () => {
     await owe();
-    db.emailRows.set(`email:split-guest-payment-link:${LINK}:resend`, { status: "FAILED", attempts: 1, lastAttemptAt: NOW, htmlBody: null, bookingRetryHtmlBody: null });
+    expect(everyLiveUnemailedLinkIsOwed()).toBe(true);
+    vi.setSystemTime(new Date(NOW.getTime() + HOUR));
+    // First stop: the re-issue's transaction (link and marker) commits, then the process dies.
+    const realReissue = reissue.fn.getMockImplementation()!;
+    reissue.fn.mockImplementationOnce(async (...args: Parameters<typeof realReissue>) => {
+      await realReissue(...args);
+      throw new Error("process stopped after the re-issue committed");
+    });
+    await sweep(SPLIT_GUEST_PAYMENT_LINK_NOTICE_DELIVERERS, new Date(NOW.getTime() + HOUR));
+    expect(live().map((row) => row.id)).toEqual(["pl_re_1"]);
+    expect(linkCore.sends).toEqual([]);
+    expect(everyLiveUnemailedLinkIsOwed()).toBe(true);
 
-    const swept = await sweep(SPLIT_GUEST_PAYMENT_LINK_NOTICE_DELIVERERS, new Date(NOW.getTime() + HOUR));
-
-    expect(swept.delivered).toBe(1);
-    expect(reissue.fn).not.toHaveBeenCalled();
+    // The next sweep: the old link's marker has moved on (a newer link, owed in its own right), and the new link's is recovered.
+    vi.setSystemTime(new Date(NOW.getTime() + 2 * HOUR));
+    await sweep(SPLIT_GUEST_PAYMENT_LINK_NOTICE_DELIVERERS, new Date(NOW.getTime() + 2 * HOUR));
+    expect(everyLiveUnemailedLinkIsOwed()).toBe(true);
+    expect(linkCore.sends).toEqual([{ token: "tok_re_2", key: "pl_re_2" }]);
+    expect(owed.store.rows.size).toBe(0);
   });
 
-  it("keeps the marker when the re-issue throws, for a later sweep", async () => {
+  it("a second stop on the new link's own send (it throws before its row) keeps that link's marker, and the next sweep sends again", async () => {
     await owe();
-    reissue.fn.mockRejectedValueOnce(new Error("SMTP down"));
+    vi.setSystemTime(new Date(NOW.getTime() + HOUR));
+    linkCore.next = "throw-before-row";
+    await sweep(SPLIT_GUEST_PAYMENT_LINK_NOTICE_DELIVERERS, new Date(NOW.getTime() + HOUR));
+    expect([...owed.store.rows.values()].map((row) => row.subjectId)).toEqual(["pl_re_1"]);
+    expect(everyLiveUnemailedLinkIsOwed()).toBe(true);
+
+    linkCore.next = "sent";
+    vi.setSystemTime(new Date(NOW.getTime() + 2 * HOUR));
+    await sweep(SPLIT_GUEST_PAYMENT_LINK_NOTICE_DELIVERERS, new Date(NOW.getTime() + 2 * HOUR));
+    expect(linkCore.sends.at(-1)).toEqual({ token: "tok_re_2", key: "pl_re_2" });
+    expect(owed.store.rows.size).toBe(0);
+  });
+
+  it.each([["not_payable"], ["just_sent"], ["withheld"]])("clears when the re-issue answers %s, with nothing minted", async (kind) => {
+    await owe();
+    reissue.fn.mockResolvedValueOnce({ kind });
+    vi.setSystemTime(new Date(NOW.getTime() + HOUR));
 
     await sweep(SPLIT_GUEST_PAYMENT_LINK_NOTICE_DELIVERERS, new Date(NOW.getTime() + HOUR));
-    expect(owed.store.rows.size).toBe(1);
 
-    await sweep(SPLIT_GUEST_PAYMENT_LINK_NOTICE_DELIVERERS, new Date(NOW.getTime() + 2 * HOUR));
-    expect(reissue.fn).toHaveBeenCalledTimes(2);
     expect(owed.store.rows.size).toBe(0);
+    expect(linkCore.sends).toEqual([]);
+  });
+
+  it("keeps the marker when the re-issue throws before committing, for a later sweep", async () => {
+    await owe();
+    reissue.fn.mockRejectedValueOnce(new Error("lock timeout"));
+    vi.setSystemTime(new Date(NOW.getTime() + HOUR));
+
+    await sweep(SPLIT_GUEST_PAYMENT_LINK_NOTICE_DELIVERERS, new Date(NOW.getTime() + HOUR));
+    expect([...owed.store.rows.values()].map((row) => row.subjectId)).toEqual([LINK]);
   });
 
   it.each([
     ["the booking is no longer PENDING", () => (db.booking = childBooking({ status: "PAID" }))],
     ["the booking was deleted", () => (db.booking = childBooking({ deletedAt: NOW }))],
-    ["the link was used", () => (db.link = activeLink({ usedAt: NOW }))],
-    ["a newer link was minted", () => (db.newerLink = true)],
-    ["the link expired at the end of the check-in day", () => (db.link = activeLink({ expiresAt: new Date(NOW.getTime() + 40 * MINUTE) }))],
-    ["the link is gone", () => (db.link = null)],
-  ])("clears without a re-issue when %s", async (_label, change) => {
+    ["the link was used", () => db.links.set(LINK, linkRow({ usedAt: NOW }))],
+    ["a newer link was minted", () => db.links.set("pl_newer", linkRow({ id: "pl_newer", createdAt: new Date(NOW.getTime() + MINUTE) }))],
+    ["the link is gone", () => db.links.delete(LINK)],
+  ])("clears without a re-issue or an alert when %s", async (_label, change) => {
     await owe();
     change();
-    // The sweep runs on the real clock: its "now" and the moved-on read agree.
     vi.setSystemTime(new Date(NOW.getTime() + HOUR));
 
     const swept = await sweep(SPLIT_GUEST_PAYMENT_LINK_NOTICE_DELIVERERS, new Date(NOW.getTime() + HOUR));
 
     expect(swept.cleared).toBe(1);
     expect(reissue.fn).not.toHaveBeenCalled();
+    expect(alerts.unsent).not.toHaveBeenCalled();
   });
 
-  it("past seven days, with the check-in day still to come, alerts the officers once, unless an email did reach the member", async () => {
+  it("at the link's expiry (the end of the check-in day) alerts the officers once when the member was not told, and stays quiet when they were (round 1, item 3; D10)", async () => {
     await owe();
-    const late = new Date(NOW.getTime() + 7 * DAY + HOUR);
+    db.links.set(LINK, linkRow({ expiresAt: new Date(NOW.getTime() + 40 * MINUTE) }));
+    vi.setSystemTime(new Date(NOW.getTime() + HOUR));
 
-    await sweep(SPLIT_GUEST_PAYMENT_LINK_NOTICE_DELIVERERS, late);
+    await sweep(SPLIT_GUEST_PAYMENT_LINK_NOTICE_DELIVERERS, new Date(NOW.getTime() + HOUR));
     expect(reissue.fn).not.toHaveBeenCalled();
+    expect(alerts.unsent).toHaveBeenCalledTimes(1);
     expect(alerts.unsent).toHaveBeenCalledWith(expect.objectContaining({ notice: "split-guest-payment-link", bookingId: "child_1" }));
 
     alerts.unsent.mockClear();
     await owe();
-    db.emailRows.set(`email:split-guest-payment-link:${LINK}:resend`, { status: "SENT", attempts: 1, lastAttemptAt: NOW, htmlBody: null, bookingRetryHtmlBody: null });
-    await sweep(SPLIT_GUEST_PAYMENT_LINK_NOTICE_DELIVERERS, late);
+    db.links.set(LINK, linkRow({ expiresAt: new Date(NOW.getTime() + 40 * MINUTE) }));
+    db.emailRows.set(splitGuestPaymentLinkEmailLogId(LINK), { status: "SENT", attempts: 1, lastAttemptAt: NOW, htmlBody: null, bookingRetryHtmlBody: null });
+    await sweep(SPLIT_GUEST_PAYMENT_LINK_NOTICE_DELIVERERS, new Date(NOW.getTime() + HOUR));
     expect(alerts.unsent).not.toHaveBeenCalled();
+  });
+
+  it("past seven days, with the check-in day still to come, alerts the officers once (D10)", async () => {
+    await owe();
+    const late = new Date(NOW.getTime() + 7 * DAY + HOUR);
+    vi.setSystemTime(late);
+
+    await sweep(SPLIT_GUEST_PAYMENT_LINK_NOTICE_DELIVERERS, late);
+
+    expect(reissue.fn).not.toHaveBeenCalled();
+    expect(alerts.unsent).toHaveBeenCalledWith(expect.objectContaining({ notice: "split-guest-payment-link", bookingId: "child_1" }));
   });
 });
 
@@ -397,11 +522,19 @@ describe("the retired saved card's notices", () => {
   async function owe(overrides: Partial<Parameters<typeof recordSavedCardUnusableNoticesOwed>[1]> = {}) {
     const recorded = await recordSavedCardUnusableNoticesOwed(tx(), { bookingId: "b1", facts, claimReleased: true, amountCents: 14000, paymentIntentId: "pi_1", ...overrides });
     db.booking = pendingBooking();
-    return recorded!;
+    return recorded;
   }
 
-  it("records nothing and returns null when the clear cannot key its markers, so the clear still commits", async () => {
-    expect(await recordSavedCardUnusableNoticesOwed(tx(), { bookingId: "not an id", facts, claimReleased: true, amountCents: 1, paymentIntentId: "pi_1" })).toBeNull();
+  it("records nothing when the clear cannot key its markers, so the clear still commits, and sends both unkeyed as before #5433 (round 1, item 5)", async () => {
+    const owedNotices = await recordSavedCardUnusableNoticesOwed(tx(), { bookingId: "not an id", facts, claimReleased: true, amountCents: 1, paymentIntentId: "pi_1" });
+    expect(owedNotices.recorded).toBe(false);
+    expect(owed.store.rows.size).toBe(0);
+
+    await deliverSavedCardUnusableNotices(pendingBooking({ id: "not an id" }) as never, owedNotices, CLUB_FORMAT_TEST);
+
+    expect(core.sends.map((send) => [send.template, send.key])).toEqual([[SAVED_CARD_CHARGE_FAILED_TEMPLATE, undefined]]);
+    const [alert] = officers.paymentFailure.mock.calls[0] as [{ errorMessage: string }];
+    expect(alert.errorMessage).toContain("Your card was declined.");
     expect(owed.store.rows.size).toBe(0);
   });
 
@@ -411,7 +544,7 @@ describe("the retired saved card's notices", () => {
     const swept = await sweep(SAVED_CARD_UNUSABLE_NOTICE_DELIVERERS, new Date(NOW.getTime() + HOUR));
 
     expect(swept.delivered).toBe(2);
-    expect(core.sends.map((send) => [send.template, send.key])).toEqual([["saved-card-charge-failed", `b1:${recorded.retiredAt.getTime()}`]]);
+    expect(core.sends.map((send) => [send.template, send.key])).toEqual([[SAVED_CARD_CHARGE_FAILED_TEMPLATE, `b1:${recorded.retiredAt.getTime()}`]]);
     const [alert] = officers.paymentFailure.mock.calls[0] as [{ errorMessage: string; amountCents: number; paymentIntentId: string; memberName: string }];
     expect(alert).toMatchObject({ amountCents: 14000, paymentIntentId: "pi_1", memberName: "Ada Proof" });
     expect(alert.errorMessage).toContain("the card issuer declined it for a reason a retry cannot fix");
@@ -449,12 +582,17 @@ describe("the retired saved card's notices", () => {
     expect(alerts.unsent).toHaveBeenCalledWith(expect.objectContaining({ notice: "saved-card-unusable", bookingId: "b1" }));
   });
 
-  it("names a claim that was not handed back in a recovered alert", async () => {
-    await owe({ claimReleased: false });
+  it.each([
+    ["CONFIRMED, though the clear recorded the claim handed back", "CONFIRMED", true, "still marked confirmed but unpaid", "stays pending"],
+    ["PENDING, though the clear recorded the claim not handed back (an officer put it right since)", "PENDING", false, "The booking stays pending", "confirmed but unpaid"],
+  ])("words a delayed alert from the booking's status when it is sent: %s (round 1, item 9)", async (_label, status, claimReleased, says, never) => {
+    await owe({ claimReleased });
+    db.booking = pendingBooking({ status });
 
     await sweep(SAVED_CARD_UNUSABLE_NOTICE_DELIVERERS.filter((d) => d.kind === "saved-card-unusable-officers"), new Date(NOW.getTime() + HOUR));
 
     const [alert] = officers.paymentFailure.mock.calls[0] as [{ errorMessage: string }];
-    expect(alert.errorMessage).toContain("still marked confirmed but unpaid");
+    expect(alert.errorMessage).toContain(says);
+    expect(alert.errorMessage).not.toContain(never);
   });
 });

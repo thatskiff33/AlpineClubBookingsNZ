@@ -31,6 +31,7 @@ import { releaseBookingFinancialHistoryForTeardown } from "./support/booking-fin
 import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 import { assertSafeRaceDbUrl } from "./support/race-db-url";
 import { resetStripeRaceHooks, stripeRaceHooks } from "./support/stripe-race-double";
+import type { HoldEndedCancellation } from "@/lib/hold-ended-cancellation-notices";
 
 /** The one shared double: the LAST file to register a factory wins, so every realdb file registers this same one. */
 vi.mock("@/lib/stripe", async (importOriginal) =>
@@ -121,6 +122,8 @@ let paidNotice: typeof import("@/lib/paid-booking-confirmation-notice");
 let drain: typeof import("@/lib/owed-notice/drain");
 let deliver: typeof import("@/lib/owed-notice/deliver");
 let harnessRole: { restore: () => void } | undefined;
+/** When this suite began writing, for the cleanup of rows nothing else identifies. */
+let suiteStartedAt = new Date();
 
 /** Whether a marker is this suite's: its subject, or (the payment link, keyed by the link) its payload's booking. */
 function isOurs(marker: { subjectId: string; payload: unknown } | null): boolean {
@@ -152,7 +155,7 @@ function isOurs(marker: { subjectId: string; payload: unknown } | null): boolean
       await prisma.payment.deleteMany({ where: { bookingId: { in: bookingIds } } });
       await prisma.bookingGuestNight.deleteMany({ where: { bookingGuest: { bookingId: { in: bookingIds } } } });
       await prisma.bookingGuest.deleteMany({ where: { bookingId: { in: bookingIds } } });
-      // The child first: its parent key restricts the parent's delete.
+      // The child first, so the parent's delete does not null the child's parent key (ON DELETE SET NULL) on a row about to go.
       await prisma.booking.deleteMany({ where: { id: ids.bookingId } });
       await prisma.booking.deleteMany({ where: { id: ids.parentId } });
     }
@@ -162,7 +165,13 @@ function isOurs(marker: { subjectId: string; payload: unknown } | null): boolean
       await prisma.emailLog.deleteMany({ where: { to: ADMIN_EMAIL } });
       // Any other officer in the shared database was sent the alerts too; their subjects name the owner.
       await prisma.emailLog.deleteMany({ where: { templateName: { startsWith: "admin-" }, subject: { contains: PREFIX } } });
-      await prisma.emailLog.deleteMany({ where: { templateName: "admin-payment-failure", htmlBody: { contains: PREFIX } } });
+      // The saved card's officers' alert names no booking in its subject, and a row
+      // this non-production copy withholds keeps no body, so neither can find it.
+      // Its rows are found by template and by the suite's own run window. No
+      // other real-database suite reads `admin-payment-failure` rows (checked by
+      // search when this was written), so removing a concurrent suite's copy in
+      // that window cannot change its result.
+      await prisma.emailLog.deleteMany({ where: { templateName: "admin-payment-failure", createdAt: { gte: suiteStartedAt } } });
       await prisma.emailSuppression.deleteMany({ where: { email: CASES.requestBounced.ownerEmail } });
       await prisma.memberAccessRole.deleteMany({ where: { memberId: ADMIN_ID } });
       await prisma.member.deleteMany({ where: { id: { in: [ADMIN_ID, ...Object.values(CASES).map((ids) => ids.ownerId)] } } });
@@ -263,13 +272,14 @@ function isOurs(marker: { subjectId: string; payload: unknown } | null): boolean
       prisma.emailLog.findMany({ where: { bookingId: ids.bookingId, templateName }, select: { id: true, status: true }, orderBy: { createdAt: "asc" } });
 
     /** The hold-ended cancel as the job commits it: the guarded claim, then the markers as the last write. */
-    function cancelHold(ids: CaseIds, ended: "request" | "split-guest", parentUnpaid: boolean | null = null, failAfter = false) {
+    function cancelHold(ids: CaseIds, cancellation: HoldEndedCancellation, failAfter = false) {
       return prisma.$transaction(async (tx) => {
         const claimed = await tx.booking.updateMany({ where: { id: ids.bookingId, status: "PENDING" }, data: { status: "CANCELLED", nonMemberHoldUntil: null } });
         expect(claimed.count).toBe(1);
-        const owed = await holdEnded.recordHoldEndedNoticesOwed(tx, { ended, bookingId: ids.bookingId, parentUnpaid });
+        const owed = await holdEnded.recordHoldEndedNoticesOwed(tx, { ...cancellation, bookingId: ids.bookingId });
+        expect(owed.recorded).toBe(true);
         if (failAfter) throw new Error("the cancel failed after its markers");
-        return owed!;
+        return owed;
       });
     }
 
@@ -280,6 +290,7 @@ function isOurs(marker: { subjectId: string; payload: unknown } | null): boolean
 
     beforeAll(async () => {
       assertSafeRaceDbUrl(RACE_DB_URL, "confirm-pending owed notices proof");
+      suiteStartedAt = new Date();
       process.env.DATABASE_URL = RACE_DB_URL;
       ({ prisma } = await import("@/lib/prisma"));
       const { declareEnvironmentRoleForSuite } = await import("./helpers/environment-role");
@@ -353,7 +364,7 @@ function isOurs(marker: { subjectId: string; payload: unknown } | null): boolean
     it("CP-4: the cancel commits both markers, and the delivery sends the requester's notice at its keyed row and the officers' notice, clearing both", async () => {
       const ids = CASES.requestSent;
       await seedBooking(ids);
-      const owed = await cancelHold(ids, "request");
+      const owed = await cancelHold(ids, { ended: "request" });
       expect(await markerKinds(ids)).toEqual(["request-hold-cancelled-member", "request-hold-cancelled-officers"]);
 
       await holdEnded.deliverHoldEndedNotices(await bookingForNotice(ids), owed, CLUB_FORMAT_TEST, "race-5433d");
@@ -369,7 +380,7 @@ function isOurs(marker: { subjectId: string; payload: unknown } | null): boolean
       const ids = CASES.requestRollback;
       await seedBooking(ids);
 
-      await expect(cancelHold(ids, "request", null, true)).rejects.toThrow("failed after its markers");
+      await expect(cancelHold(ids, { ended: "request" }, true)).rejects.toThrow("failed after its markers");
 
       expect(await markerKinds(ids)).toEqual([]);
       expect((await prisma.booking.findUniqueOrThrow({ where: { id: ids.bookingId } })).status).toBe("PENDING");
@@ -378,7 +389,7 @@ function isOurs(marker: { subjectId: string; payload: unknown } | null): boolean
     it("CP-4: after a stop between the commit and the sends, the sweep sends each notice exactly once, after its wait", async () => {
       const ids = CASES.requestStopped;
       await seedBooking(ids);
-      const owed = await cancelHold(ids, "request");
+      const owed = await cancelHold(ids, { ended: "request" });
 
       expect((await sweep(new Date(owed.cancelledAt.getTime() + 29 * MINUTE))).checked).toBe(0);
       expect(await sweep(new Date(owed.cancelledAt.getTime() + WAIT_PAST))).toMatchObject({ checked: 2, delivered: 2 });
@@ -393,7 +404,7 @@ function isOurs(marker: { subjectId: string; payload: unknown } | null): boolean
     it("CP-4: a requester's notice that does not reach them (a suppressed address, recorded BOUNCED) alerts the officers once and clears the marker", async () => {
       const ids = CASES.requestBounced;
       await seedBooking(ids);
-      const owed = await cancelHold(ids, "request");
+      const owed = await cancelHold(ids, { ended: "request" });
 
       await holdEnded.deliverHoldEndedNotices(await bookingForNotice(ids), owed, CLUB_FORMAT_TEST, "race-5433d");
 
@@ -405,7 +416,7 @@ function isOurs(marker: { subjectId: string; payload: unknown } | null): boolean
     it("CP-5: the split guest cancel's payload survives the commit, and the sweep words the recovered member notice from it, once", async () => {
       const ids = CASES.splitStopped;
       await seedBooking(ids, { split: true });
-      const owed = await cancelHold(ids, "split-guest", false);
+      const owed = await cancelHold(ids, { ended: "split-guest", parentUnpaid: false });
       const stored = await prisma.owedNotice.findMany({ where: { subjectId: ids.bookingId }, select: { kind: true, payload: true }, orderBy: { kind: "asc" } });
       expect(stored).toEqual([
         { kind: "split-guest-cancelled-member", payload: { parentUnpaid: 0 } },
@@ -452,7 +463,7 @@ function isOurs(marker: { subjectId: string; payload: unknown } | null): boolean
       expect((await prisma.paymentLink.findUniqueOrThrow({ where: { id: minted.paymentLinkId } })).revokedAt).not.toBeNull();
     });
 
-    it("CP-6: after a stop, the sweep re-issues through the booking page's own path once, keyed for one recovery per link, and the original link no longer stands", async () => {
+    it("CP-6: after a stop, the sweep re-issues through the booking page's own path, owing the new link in that transaction, and delivers it keyed by the new link; the original link no longer stands", async () => {
       const ids = CASES.linkStopped;
       await seedBooking(ids, { split: true });
       const { minted, marker } = await mintLink(ids);
@@ -461,11 +472,15 @@ function isOurs(marker: { subjectId: string; payload: unknown } | null): boolean
 
       expect(await sweep(new Date(marker.eventAt.getTime() + WAIT_PAST))).toMatchObject({ checked: 1, delivered: 1 });
 
+      // Both markers cleared: the original's as moved on to the new link, the new link's once delivered.
       expect(await markerKinds(ids)).toEqual([]);
-      expect((await memberEmails(ids, "split-guest-payment-link")).map((row) => row.id)).toEqual([
-        `email:split-guest-payment-link:${linkNotice.splitGuestPaymentLinkRecoveryKey(minted.paymentLinkId)}`,
-      ]);
-      expect((await prisma.paymentLink.findUniqueOrThrow({ where: { id: minted.paymentLinkId } })).revokedAt).not.toBeNull();
+      const links = await prisma.paymentLink.findMany({ where: { bookingId: ids.bookingId }, orderBy: { createdAt: "asc" }, select: { id: true, revokedAt: true } });
+      expect(links).toHaveLength(2);
+      expect(links[0]!.id).toBe(minted.paymentLinkId);
+      expect(links[0]!.revokedAt).not.toBeNull();
+      // The new link's email is keyed by the new link. Withheld on this copy, so (as before #5433) the new link is revoked too.
+      expect((await memberEmails(ids, "split-guest-payment-link")).map((row) => row.id)).toEqual([linkNotice.splitGuestPaymentLinkEmailLogId(links[1]!.id)]);
+      expect(links[1]!.revokedAt).not.toBeNull();
       expect((await sweep(new Date(marker.eventAt.getTime() + DAY))).checked).toBe(0);
     });
 

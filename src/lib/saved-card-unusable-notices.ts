@@ -20,22 +20,26 @@
  * - the owner's email carries the event key `<bookingId>:<retiredAtMs>`, so
  *   the owner can never be sent it twice for one clear; what became of it is
  *   read from its row (`owed-notice/member-email.ts`): not told (it failed
- *   for good, bounced, or the owner has no address that can be emailed), the
- *   officers are alerted once ("Booking email not sent");
+ *   for good, bounced, or the owner has no address that can be emailed at
+ *   all: owner decision D9), the officers are alerted once ("Booking email not
+ *   sent"); one the retry cron still holds is kept for it;
  * - "moved on": the booking is gone, deleted, or neither PENDING nor
  *   CONFIRMED (paid, cancelled or ended since); for the owner's email also a
  *   card the job can charge saved on the booking or its parent since;
- * - the cut-off: the owner's email until the end of the check-in day in the
- *   club's time zone (a card is no use after it), or seven days after the
- *   clear (owner decision D7's limit for a confirmation, applied here),
- *   whichever comes first; past it the officers are alerted once. The
- *   officers' alert: seven days, then cleared with an error log. The attempt
- *   right after the clear always sends, as before #5433;
+ * - the cut-off (owner decision D10): the owner's email until the end of the
+ *   check-in day in the club's time zone (a card is no use after it), or
+ *   seven days after the clear, whichever comes first; past it the officers
+ *   are alerted once. The officers' alert: seven days, then cleared with an
+ *   error log. The attempt right after the clear always sends, as before
+ *   #5433;
  * - the officers' alert's facts travel in its payload (the reason, whether the
  *   claim was handed back, the amount, and the provider's id-shaped codes).
  *   Stripe's own message is free text, which a payload never holds, so only
  *   the attempt right after the clear quotes it; a recovered alert says it
- *   was not kept.
+ *   was not kept, and words whether the booking is pending from its status
+ *   when it is sent;
+ * - notices whose markers cannot be keyed (unreachable with today's ids) are
+ *   sent once, unkeyed, as before #5433.
  *
  * Locks (`INV-LOCK-001`): the clear has always taken no advisory lock
  * (`retireUnusableSavedCard` says why); the markers join its transaction, one
@@ -50,14 +54,16 @@ import { alertOfficersBookingNoticeUnsent, OWED_BOOKING_NOTICE_SELECT, owedNotic
 import { bookingOwner } from "@/lib/booking-owner";
 import type { ClubFormat } from "@/lib/club-format";
 import { clubFormatValues } from "@/lib/club-format-server";
-import { calendarDateOfDateOnlyInstant, endOfClubDayInclusive, type ClubTimeZone } from "@/lib/club-time";
+import { endOfStoredClubDay, type ClubTimeZone } from "@/lib/club-time";
 import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
 import { sendAdminPaymentFailureAlert, sendSavedCardChargeFailedEmail } from "@/lib/email";
 import { durableEmailLogId } from "@/lib/email/attempt-log";
+import { SAVED_CARD_CHARGE_FAILED_TEMPLATE } from "@/lib/email/owed-notice-templates";
 import logger from "@/lib/logger";
 import {
   deliverOwedNotice,
   OWED_OFFICER_ALERT_MAX_AGE_MS,
+  owedOfficerAlertSendBy,
   type OwedNoticeDeliverer,
   type OwedNoticeImmediateDeliverer,
   type OwedNoticeOutcome,
@@ -75,9 +81,8 @@ import { owedOfficerAlertOutcome } from "@/lib/owed-notice/officer-alert";
 import {
   OWED_NOTICE_PAYLOAD_ID,
   owedNoticeEventKey,
-  owedNoticeInputProblem,
   owedNoticeMarker,
-  recordOwedNotices,
+  recordOwedNoticesIfKeyable,
   type OwedNoticeInput,
   type OwedNoticeMarker,
   type OwedNoticePayload,
@@ -88,7 +93,6 @@ import { savedPaymentMethodForBooking } from "@/lib/saved-payment-method";
 
 const MEMBER_KIND: OwedNoticeKind = "saved-card-unusable-member";
 const OFFICERS_KIND: OwedNoticeKind = "saved-card-unusable-officers";
-const SAVED_CARD_CHARGE_FAILED_TEMPLATE = "saved-card-charge-failed";
 
 /** What the officers' alert says about the failure: the classification's reason and codes, and Stripe's message when it is still in memory. */
 export interface UnusableSavedCardFacts {
@@ -137,7 +141,12 @@ export function describeTerminalSavedCardChargeFailure(facts: UnusableSavedCardF
   );
 }
 
-/** One clear's owed notices: the booking, the instant that keys and stamps them, and the officers' alert's facts. */
+/**
+ * One clear's notices: the booking, the instant that keys and stamps them, the
+ * officers' alert's facts, and whether they were recorded as owed (false only
+ * for an input that could not be keyed, which is then sent the way it was
+ * before #5433, unkeyed and with no marker).
+ */
 export interface OwedSavedCardUnusableNotices {
   bookingId: string;
   retiredAt: Date;
@@ -145,6 +154,7 @@ export interface OwedSavedCardUnusableNotices {
   claimReleased: boolean;
   amountCents: number;
   paymentIntentId: string;
+  recorded: boolean;
 }
 
 /** A provider value kept in the payload only when it is id-shaped (`"N/A"` is not); a recovered alert then shows what the immediate one would have had to guess. */
@@ -171,23 +181,20 @@ function savedCardInputs(owed: OwedSavedCardUnusableNotices): [OwedNoticeInput, 
 /**
  * Inside the card clear's transaction, as its last write: record both notices
  * as owed and return the descriptor the delivery claims with
- * (`INV-SSOT-002`). Asked first without a write (`owedNoticeInputProblem`): an
- * input that cannot key a marker is an error log and null, so the marker can
- * never roll the clear back for a reason of shape.
+ * (`INV-SSOT-002`). Inputs that cannot be keyed are an error log and nothing
+ * written (`recordOwedNoticesIfKeyable`), so the marker can never roll the
+ * clear back for a reason of shape; the descriptor then says `recorded: false`.
  */
 export async function recordSavedCardUnusableNoticesOwed(
   tx: Pick<Prisma.TransactionClient, "owedNotice">,
-  notice: Omit<OwedSavedCardUnusableNotices, "retiredAt">,
-): Promise<OwedSavedCardUnusableNotices | null> {
-  const owed: OwedSavedCardUnusableNotices = { ...notice, retiredAt: new Date() };
-  const inputs = savedCardInputs(owed);
-  const problem = inputs.map(owedNoticeInputProblem).find((found) => found !== null);
-  if (problem) {
-    logger.error({ bookingId: notice.bookingId, problem }, "A retired saved card cannot key its owed notices; the clear commits and nothing is recorded as owed");
-    return null;
-  }
-  await recordOwedNotices(tx, inputs);
-  return owed;
+  notice: Omit<OwedSavedCardUnusableNotices, "retiredAt" | "recorded">,
+): Promise<OwedSavedCardUnusableNotices> {
+  const owed: OwedSavedCardUnusableNotices = { ...notice, retiredAt: new Date(), recorded: false };
+  const markers = await recordOwedNoticesIfKeyable(tx, savedCardInputs(owed), {
+    message: "A retired saved card cannot key its owed notices; the clear commits and they are sent unkeyed, as before #5433",
+    context: { bookingId: notice.bookingId },
+  });
+  return { ...owed, recorded: markers !== null };
 }
 
 /** The booking fields the notices read: ids and dates, no more. */
@@ -203,11 +210,17 @@ export interface SavedCardUnusableBooking {
   organisation: { name: string; email: string | null } | null;
 }
 
-/** The attempt right after the clear: the booking, the club's format, and Stripe's message while it is still in memory. */
+/**
+ * What a send reads: the booking, the club's format, Stripe's message while it
+ * is still in memory, and the booking's status as the sweep read it (null right
+ * after the clear, when whether the claim was handed back is the fact the
+ * clear recorded, and is still true).
+ */
 interface SavedCardUnusableSubject {
   booking: SavedCardUnusableBooking;
   format: ClubFormat;
   stripeMessage: string | null;
+  statusNow: BookingStatus | null;
 }
 
 /** The owner's email as the shared reading takes it, and the alert it raises. */
@@ -220,12 +233,8 @@ function savedCardMemberEmail(booking: SavedCardUnusableBooking, marker: OwedNot
   };
 }
 
-/** The owner's email, with the clear's event key, then what became of it. Never throws. */
-async function deliverSavedCardMemberEmail(
-  { booking }: SavedCardUnusableSubject,
-  marker: OwedNoticeMarker,
-  { idempotencyKey, job }: OwedNoticeRun & { idempotencyKey: string },
-): Promise<OwedNoticeOutcome> {
+/** The owner's email, with the clear's event key (none for an unrecorded notice); true when it returned. Never throws. */
+async function trySendSavedCardMemberEmail(booking: SavedCardUnusableBooking, idempotencyKey: string | undefined, job: string): Promise<boolean> {
   const owner = bookingOwner(booking);
   try {
     await sendSavedCardChargeFailedEmail({
@@ -238,10 +247,20 @@ async function deliverSavedCardMemberEmail(
       lodgeId: booking.lodgeId,
       idempotencyKey,
     });
+    return true;
   } catch (emailErr) {
     logger.error({ err: emailErr, bookingId: booking.id, job }, "Failed to send the saved-card-charge-failed email to the member (#3268)");
-    return "threw";
+    return false;
   }
+}
+
+/** The owner's email, with the clear's event key, then what became of it. Never throws. */
+async function deliverSavedCardMemberEmail(
+  { booking }: SavedCardUnusableSubject,
+  marker: OwedNoticeMarker,
+  { idempotencyKey, job }: OwedNoticeRun & { idempotencyKey: string },
+): Promise<OwedNoticeOutcome> {
+  if (!(await trySendSavedCardMemberEmail(booking, idempotencyKey, job))) return "threw";
   return owedMemberEmailOutcome(savedCardMemberEmail(booking, marker, job));
 }
 
@@ -256,9 +275,15 @@ const textOf = (payload: PayloadRecord, field: string): string | null => (typeof
 
 const REASONS: readonly SavedCardChargeFailureReason[] = ["payment_method_unusable", "card_permanently_declined", "soft_decline_exhausted"];
 
-/** The officers' alert, from its payload and the booking as it stands, with Stripe's message when still known. Never throws. */
+/**
+ * The officers' alert, from its payload and the booking as it stands, with
+ * Stripe's message when still known. Whether the booking is pending is read
+ * at send time when the sweep sends it (round 1, item 9): a late copy must not
+ * say the booking is stuck after an officer has put it right, nor that it is
+ * pending when it is not. Never throws.
+ */
 function deliverSavedCardOfficersAlert(
-  { booking, format, stripeMessage }: SavedCardUnusableSubject,
+  { booking, format, stripeMessage, statusNow }: SavedCardUnusableSubject,
   marker: OwedNoticeMarker,
   { job }: OwedNoticeRun,
 ): Promise<OwedNoticeOutcome> {
@@ -272,7 +297,9 @@ function deliverSavedCardOfficersAlert(
       checkIn: booking.checkIn,
       checkOut: booking.checkOut,
       amountCents: typeof payload.amountCents === "number" ? payload.amountCents : booking.finalPriceCents,
-      errorMessage: describeTerminalSavedCardChargeFailure(facts, { claimReleased: payload.claimReleased === 1 }),
+      errorMessage: describeTerminalSavedCardChargeFailure(facts, {
+        claimReleased: statusNow === null ? payload.claimReleased === 1 : statusNow === BookingStatus.PENDING,
+      }),
       paymentIntentId: textOf(payload, "paymentIntentId") ?? "N/A",
     }, format),
   );
@@ -298,7 +325,7 @@ interface SavedCardUnusableSweepSubject extends SavedCardUnusableSubject {
 async function loadSavedCardUnusableSweepSubject(marker: OwedNoticeMarker): Promise<SavedCardUnusableSweepSubject | null> {
   const booking = await prisma.booking.findUnique({ where: { id: marker.subjectId }, select: SAVED_CARD_SWEEP_SELECT });
   if (!booking) return null;
-  return { booking, format: await clubFormatValues(), zone: await readClubTimeZoneOutsideRequest(), stripeMessage: null };
+  return { booking, format: await clubFormatValues(), zone: await readClubTimeZoneOutsideRequest(), stripeMessage: null, statusNow: booking.status };
 }
 
 /** Null when the booking still stands where the clear left it; otherwise why it moved on. */
@@ -313,9 +340,9 @@ export function savedCardUnusableMemberMovedOn(booking: Pick<SavedCardSweepBooki
   return savedCardUnusableBookingMovedOn(booking) ?? (savedPaymentMethodForBooking(booking) ? "a card the job can charge has been saved since" : null);
 }
 
-/** The owner's cut-off: the last instant of the check-in day in the club's time zone. */
+/** The owner's cut-off (owner decision D10): the last instant of the check-in day in the club's time zone. */
 export function savedCardUnusableMemberSendBy(checkIn: Date, zone: ClubTimeZone): Date {
-  return endOfClubDayInclusive(calendarDateOfDateOnlyInstant(checkIn), zone);
+  return endOfStoredClubDay(checkIn, zone);
 }
 
 const MEMBER_DELIVERY = {
@@ -351,7 +378,7 @@ const SAVED_CARD_OFFICERS: OwedNoticeDeliverer<SavedCardUnusableSweepSubject> = 
   maxAgeMs: OWED_OFFICER_ALERT_MAX_AGE_MS,
   load: loadSavedCardUnusableSweepSubject,
   stillOwed: async ({ booking }) => savedCardUnusableBookingMovedOn(booking) ?? true,
-  sendBy: (_subject, marker) => new Date(marker.eventAt.getTime() + OWED_OFFICER_ALERT_MAX_AGE_MS),
+  sendBy: (_subject, marker) => owedOfficerAlertSendBy(marker),
 };
 
 /** The two kinds, the owner's first, as the registry lists them. */
@@ -362,15 +389,22 @@ export const SAVED_CARD_UNUSABLE_NOTICE_DELIVERERS: readonly OwedNoticeDeliverer
  * descriptor `recordSavedCardUnusableNoticesOwed` returned inside the
  * transaction, with Stripe's message for the officers' alert. Each claim is
  * taken on the stamp the transaction wrote, so a sweep that already holds a
- * marker wins and this sends nothing. Never throws.
+ * marker wins and this sends nothing. Notices that were not recorded (an input
+ * that could not be keyed) are sent as before #5433: once, unkeyed, with
+ * nothing left for a later run. Never throws.
  */
 export async function deliverSavedCardUnusableNotices(
   booking: SavedCardUnusableBooking,
   owed: OwedSavedCardUnusableNotices,
   format: ClubFormat,
 ): Promise<void> {
-  const subject: SavedCardUnusableSubject = { booking, format, stripeMessage: owed.facts.message };
+  const subject: SavedCardUnusableSubject = { booking, format, stripeMessage: owed.facts.message, statusNow: null };
   const [memberInput, officersInput] = savedCardInputs(owed);
+  if (!owed.recorded) {
+    await trySendSavedCardMemberEmail(booking, undefined, MEMBER_DELIVERY.job);
+    await deliverSavedCardOfficersAlert(subject, owedNoticeMarker(officersInput), { job: OFFICERS_DELIVERY.job, now: new Date() });
+    return;
+  }
   await deliverOwedNotice<SavedCardUnusableSubject>(MEMBER_DELIVERY satisfies OwedNoticeImmediateDeliverer<SavedCardUnusableSubject>, owedNoticeMarker(memberInput), subject);
   await deliverOwedNotice<SavedCardUnusableSubject>(OFFICERS_DELIVERY satisfies OwedNoticeImmediateDeliverer<SavedCardUnusableSubject>, owedNoticeMarker(officersInput), subject);
 }

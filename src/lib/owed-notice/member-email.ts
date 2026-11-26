@@ -6,9 +6,12 @@
  * not proof the member was told: the email core returns without throwing for a
  * suppressed address (`BOUNCED`), a fail-closed "No emails" read or an
  * environment fault (`FAILED`), and an empty or placeholder address (no row at
- * all). So every kind that tells a member reads the row after its send, by the
+ * all). So a kind that tells a member reads the row after its send, by the
  * shared told rule (`email/keyed-email-state.ts`), and answers the mechanism
- * here, one rule for every kind (`INV-SSOT-001`):
+ * here, one rule for every kind that uses it (`INV-SSOT-001`). The split guest
+ * payment link's first attempt does not: it decides from what the send
+ * returned, as before #5433, revoking a link whose email was not delivered so
+ * the job's next extension sends a fresh one (`split-guest-payment-link-notice.ts`);
  * - told (sent, or withheld by "No emails" or a non-production copy): settled;
  * - held back by the installation's environment gate (an undeclared role, a
  *   misplaced capture transport): settled, as before #5433, because the gate
@@ -17,16 +20,17 @@
  * - held by the email retry cron (a replayable `FAILED` row, or one it is
  *   replaying): kept for it (`threw`), so a later sweep reads the row again;
  * - anything else (a failure nothing replays, a bounce or suppressed address,
- *   a fail-closed "No emails" read, no address at all): the kind's officers'
- *   alert, once per marker (`alertOfficersOncePastCutoff`).
+ *   a fail-closed "No emails" read, no address at all: owner decisions D8,
+ *   D9 and D11): the kind's officers' alert, once per marker
+ *   (`alertOfficersOncePastCutoff`).
  * Past a kind's cut-off the same reading decides whether the officers are
  * alerted at all: a notice that did reach the member after all, or waits in
- * the review queue, needs no alert.
+ * the review queue, needs no alert, and one the retry cron still holds waits.
  *
  * The wait and the maximum age every member kind of the confirm-pending job
  * shares are here too: the paid confirmation's (owner decision D7: after a
- * week of attempts, stop and alert officers once), applied to each member
- * notice the job owes.
+ * week of attempts, stop and alert officers once), which owner decision D10
+ * applies to each member notice the job owes.
  *
  * Reads only, outside any transaction, and never throws.
  */
@@ -97,12 +101,22 @@ export async function owedMemberEmailOutcome({ emailLogId, label, log, alertOffi
 
 /**
  * Past the kind's cut-off: alert the officers once, unless the email did reach
- * the member after all, or waits in the review queue. Never throws.
+ * the member after all, or waits in the review queue. An email the retry cron
+ * still holds (`retrying`) may yet go, so the marker is held for it, not
+ * alerted on: telling officers it "will not be sent automatically" would be
+ * false. The hard ceiling (`OWED_NOTICE_HARD_CEILING_MULTIPLE`) still clears
+ * it, and once the cron gives up the row reads undeliverable and the alert
+ * goes. A template whose body is never kept (`booking-confirmed`) is never
+ * `retrying`. Never throws.
  */
 export async function owedMemberEmailPastCutoff({ emailLogId, label, log, alertOfficers }: OwedMemberEmail): Promise<OwedNoticeOutcome> {
   try {
     const { state, heldByEnvironment } = await readOwedMemberEmail(emailLogId);
     if (isToldKeyedEmailState(state) || heldByEnvironment) return "settled";
+    if (state === "retrying") {
+      logger.info(log, `Past its cut-off, the email retry cron still holds this ${label}; the owed notice waits for it`);
+      return "threw";
+    }
   } catch (err) {
     logger.error({ err, ...log }, `Failed to read the ${label}'s state past its cut-off`);
     return "threw";

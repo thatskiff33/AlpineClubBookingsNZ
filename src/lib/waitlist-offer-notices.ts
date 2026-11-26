@@ -78,6 +78,7 @@ import type { SubscriptionLockoutMode } from "@/lib/membership-lockout-settings"
 import {
   deliverOwedNotice,
   OWED_OFFICER_ALERT_MAX_AGE_MS,
+  owedOfficerAlertSendBy,
   type OwedNoticeDeliverer,
   type OwedNoticeOutcome,
   type OwedNoticeRun,
@@ -556,7 +557,7 @@ const OFFICERS: OwedNoticeDeliverer<WaitlistOfferNotice> = {
   audience: "officers",
   maxAgeMs: OWED_OFFICER_ALERT_MAX_AGE_MS,
   stillOwed: async (notice, marker) => offerMovedOn(notice, marker) ?? true,
-  sendBy: (_notice, marker) => new Date(marker.eventAt.getTime() + OWED_OFFICER_ALERT_MAX_AGE_MS),
+  sendBy: (_notice, marker) => owedOfficerAlertSendBy(marker),
   deliver: alertOfficersOfOffer,
 };
 
