@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
 import { EditPriceChangedError } from "@/lib/edit-quoted-figures";
 
-// #4924 (`INV-MOD-062`): the save door's half of "an edit settles only the
+// #4924, #5238 (`INV-MOD-062`): the save door's half of "an edit settles only the
 // figures the member was shown". The comparison itself is pinned by
 // `booking-modify-quoted-figures.test.ts` and, against real writers, by
 // `edit-quoted-figures.realdb.test.ts`; this pins what the route carries in and
@@ -69,11 +69,25 @@ describe("PUT /api/bookings/[id]/modify-dates quoted figures (#4924)", () => {
     expect(h.modifyBookingDates.mock.calls[0]?.[0].input.quotedFigures).toEqual(previewed);
   });
 
-  it("saves without figures, as an older panel sends none", async () => {
+  it("refuses a save without figures, as an out-of-date page sends none (#5238)", async () => {
     const res = await PUT(req({ checkOut: "2026-08-03" }), { params });
 
-    expect(res.status).toBe(200);
-    expect(h.modifyBookingDates.mock.calls[0]?.[0].input.quotedFigures).toBeUndefined();
+    expect(res.status).toBe(409);
+    await expect(res.json()).resolves.toEqual({
+      code: "EDIT_FIGURES_REQUIRED",
+      error: "This page is out of date. Reload it, check the price and save again.",
+    });
+    expect(h.modifyBookingDates).not.toHaveBeenCalled();
+    expect(h.adminShiftBookingDates).not.toHaveBeenCalled();
+  });
+
+  it("refuses an admin date shift without figures too (#5238)", async () => {
+    h.authorizationRole.mockReturnValue("ADMIN");
+    const res = await PUT(req({ adminOverride: true, pricingMode: "shift", checkIn: "2026-09-12" }), { params });
+
+    expect(res.status).toBe(409);
+    await expect(res.json()).resolves.toMatchObject({ code: "EDIT_FIGURES_REQUIRED" });
+    expect(h.adminShiftBookingDates).not.toHaveBeenCalled();
   });
 
   it("answers a changed price with 409 EDIT_PRICE_CHANGED and the save's fresh figures", async () => {
@@ -114,5 +128,35 @@ describe("PUT /api/bookings/[id]/modify-dates quoted figures (#4924)", () => {
 
     expect(res.status).toBe(400);
     expect(h.modifyBookingDates).not.toHaveBeenCalled();
+  });
+
+  it("binds an admin recalculate override, refusing on a changed price (#5238)", async () => {
+    h.authorizationRole.mockReturnValue("ADMIN");
+    h.modifyBookingDates.mockRejectedValue(new EditPriceChangedError(fresh));
+
+    const res = await PUT(
+      req({ adminOverride: true, pricingMode: "recalculate", checkOut: "2026-08-03", quotedFigures: previewed }),
+      { params },
+    );
+
+    expect(h.modifyBookingDates.mock.calls[0]?.[0].input.quotedFigures).toEqual(previewed);
+    expect(res.status).toBe(409);
+    await expect(res.json()).resolves.toMatchObject({ code: "EDIT_PRICE_CHANGED", figures: fresh });
+  });
+
+  it("binds a member's decline of a linked move, refusing on a changed price (#5238)", async () => {
+    h.modifyBookingDates.mockRejectedValue(new EditPriceChangedError(fresh));
+    const decline = { choice: "LEAVE_UNCOVERED", acknowledged: true, stateKey: `v1:${"b".repeat(64)}` };
+
+    const res = await PUT(
+      req({ checkOut: "2026-08-03", quotedFigures: previewed, hostingCoverageLinkedMove: decline }),
+      { params },
+    );
+
+    const call = h.modifyBookingDates.mock.calls[0]?.[0];
+    expect(call.input.quotedFigures).toEqual(previewed);
+    expect(call.hostingCoverageLinkedMove).toEqual(decline);
+    expect(res.status).toBe(409);
+    await expect(res.json()).resolves.toMatchObject({ code: "EDIT_PRICE_CHANGED", figures: fresh });
   });
 });
