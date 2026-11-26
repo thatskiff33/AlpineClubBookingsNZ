@@ -25,7 +25,10 @@ import { clubTimeZone } from "@/lib/club-time/server";
 import { clubSeasonYear } from "@/lib/financial-year";
 import { membershipLockoutSettingsSchema } from "@/lib/admin-membership-api/config-settings";
 import { connectionJson } from "@/lib/mcp-connection-request";
-import { MEMBERSHIP_LOCKOUT_SETTINGS_CONNECTION_SHAPE } from "@/lib/connection-shapes/membership-config";
+import {
+  MEMBERSHIP_LOCKOUT_SETTINGS_CONNECTION_SHAPE,
+  MEMBERSHIP_LOCKOUT_SETTINGS_SAVE_CONNECTION_SHAPE,
+} from "@/lib/connection-shapes/membership-config";
 import {
   liabilityChoiceRefusal,
   liabilityChoiceToWrite,
@@ -216,8 +219,10 @@ export async function PUT(request: NextRequest) {
       settings: normalizeMembershipLockoutSettings(record),
       financialYear,
       persisted: record,
+      // #5190: how many "Not required" records the save reset (null: no clear-up ran).
+      clearedStaleRecords: clearedStaleRows?.clearedCount ?? null,
       ...(preview ?? {}),
     },
-    MEMBERSHIP_LOCKOUT_SETTINGS_CONNECTION_SHAPE,
+    MEMBERSHIP_LOCKOUT_SETTINGS_SAVE_CONNECTION_SHAPE,
   );
 }

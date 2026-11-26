@@ -5,6 +5,7 @@ import type {
   SubscriptionRequiredTypeAgeRule,
   SubscriptionStatus,
 } from "@prisma/client";
+import type { AdminAccessRequirement } from "@/lib/admin-permissions";
 import {
   addCalendarDays,
   dateOnlyInstantOf,
@@ -119,6 +120,19 @@ export function isChoosableLiabilityAgeSource(
     (CHOOSABLE_LIABILITY_AGE_SOURCES as readonly string[]).includes(value)
   );
 }
+
+/**
+ * Who may choose or change the liability rule (#5190, owner decision 23 Nov
+ * 2026,
+ * https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/5190#issuecomment-7088835754):
+ * membership edit AND finance edit, because the choice changes who the billing
+ * run invoices. The settings `PUT` enforces it and the admin section gates its
+ * editor on the same list; other lockout settings keep membership edit alone.
+ */
+export const LIABILITY_RULE_CHOICE_PERMISSIONS = [
+  { area: "membership", level: "edit" },
+  { area: "finance", level: "edit" },
+] as const satisfies readonly AdminAccessRequirement[];
 
 /** The club has chosen its rule: both answers set, to values open for choice. */
 export function hasChosenLiabilityRule(

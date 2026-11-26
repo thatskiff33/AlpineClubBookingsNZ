@@ -1,11 +1,16 @@
 import { NextRequest, NextResponse } from "next/server";
-import { z } from "zod";
 
 import {
   MAINTENANCE_REPORT_PHOTO_RETENTION_DAYS_MAX,
   MAINTENANCE_REPORT_PHOTO_RETENTION_DAYS_MIN,
 } from "@/config/club-settings-defaults";
+import { maintenanceReportSettingsBodySchema } from "@/lib/admin-lodge-schemas/maintenance";
 import { logAudit } from "@/lib/audit";
+import {
+  ADMIN_MAINTENANCE_SETTINGS_CONNECTION_SHAPE,
+  ADMIN_MAINTENANCE_SETTINGS_SAVED_CONNECTION_SHAPE,
+} from "@/lib/connection-shapes/lodge-maintenance";
+import { connectionJson } from "@/lib/mcp-connection-request";
 import { getClientIp } from "@/lib/rate-limit-http";
 import logger from "@/lib/logger";
 import {
@@ -32,34 +37,29 @@ import { parseJsonRequestBody } from "@/lib/api-json";
  * refused with a message; a read is a submit in progress and must not throw.
  */
 
-const putSchema = z
-  .object({
-    anonymousReportsEnabled: z.boolean(),
-    photosEnabled: z.boolean(),
-    anonymousPhotosEnabled: z.boolean(),
-    photoRetentionDays: z
-      .number()
-      .int()
-      .min(MAINTENANCE_REPORT_PHOTO_RETENTION_DAYS_MIN)
-      .max(MAINTENANCE_REPORT_PHOTO_RETENTION_DAYS_MAX),
-    anonymousContactPrompt: z.boolean(),
-  })
-  .strict();
+// The body schema (every field, each time; the retention window validated
+// here and clamped on the read path) lives in
+// admin-lodge-schemas/maintenance.ts so the AI app action
+// `update_maintenance_report_settings` offers the same fields (ALP-722).
 
-export async function GET() {
+export async function GET(request: Request) {
   const admin = await requireAdmin({
     permission: { area: "lodge", level: "view" },
   });
   if (!admin.ok) return admin.response;
 
   const settings = await loadMaintenanceReportSettings();
-  return NextResponse.json({
-    settings,
-    limits: {
-      photoRetentionDaysMin: MAINTENANCE_REPORT_PHOTO_RETENTION_DAYS_MIN,
-      photoRetentionDaysMax: MAINTENANCE_REPORT_PHOTO_RETENTION_DAYS_MAX,
+  return connectionJson(
+    request,
+    {
+      settings,
+      limits: {
+        photoRetentionDaysMin: MAINTENANCE_REPORT_PHOTO_RETENTION_DAYS_MIN,
+        photoRetentionDaysMax: MAINTENANCE_REPORT_PHOTO_RETENTION_DAYS_MAX,
+      },
     },
-  });
+    ADMIN_MAINTENANCE_SETTINGS_CONNECTION_SHAPE,
+  );
 }
 
 export async function PUT(request: NextRequest) {
@@ -74,7 +74,7 @@ export async function PUT(request: NextRequest) {
   if (!jsonBody.ok) return jsonBody.response;
   const body = jsonBody.body;
 
-  const parsed = putSchema.safeParse(body);
+  const parsed = maintenanceReportSettingsBodySchema.safeParse(body);
   if (!parsed.success) {
     return NextResponse.json(
       {
@@ -138,9 +138,11 @@ export async function PUT(request: NextRequest) {
       outcome: "success",
     });
 
-    return NextResponse.json({
-      settings: normalizeMaintenanceReportSettings(saved),
-    });
+    return connectionJson(
+      request,
+      { settings: normalizeMaintenanceReportSettings(saved) },
+      ADMIN_MAINTENANCE_SETTINGS_SAVED_CONNECTION_SHAPE,
+    );
   } catch (err) {
     logger.error({ err }, "Failed to save maintenance report settings");
     return NextResponse.json(

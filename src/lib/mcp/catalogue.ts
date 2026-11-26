@@ -99,6 +99,7 @@ import { MEMBERSHIP_MCP_ACTIONS } from "./catalogue/membership";
 import { FINANCE_MONEY_MCP_ACTIONS } from "./catalogue/finance-money";
 import { FINANCE_XERO_CONTACTS_MCP_ACTIONS } from "./catalogue/finance-xero-contacts";
 import { FINANCE_XERO_SYNC_MCP_ACTIONS } from "./catalogue/finance-xero-sync";
+import { LODGE_MCP_ACTIONS } from "./catalogue/lodge";
 
 /**
  * `read` changes none of the member's own data. A read may still touch shared
@@ -662,6 +663,8 @@ export const MCP_ACTIONS: readonly McpAction[] = [
   ...FINANCE_MONEY_MCP_ACTIONS,
   ...FINANCE_XERO_SYNC_MCP_ACTIONS,
   ...FINANCE_XERO_CONTACTS_MCP_ACTIONS,
+  // Lodge Operations (ALP-722), in `catalogue/lodge.ts`.
+  ...LODGE_MCP_ACTIONS,
 ];
 
 export const MCP_WEBSITE_ONLY_ACTIONS: readonly McpWebsiteOnlyAction[] = [

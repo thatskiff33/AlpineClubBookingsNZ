@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { z } from "zod";
+import { routeIdParamsSchema } from "@/lib/route-id-params";
 import {
   buildStructuredAuditLogCreateArgs,
   getAuditRequestContext,
@@ -7,8 +7,8 @@ import {
 import { hideUnlistedOtherLodge } from "@/lib/other-lodge-hide";
 import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/session-guards";
-
-const paramsSchema = z.object({ id: z.string().min(1) });
+import { ADMIN_OTHER_LODGE_HIDDEN_CONNECTION_SHAPE } from "@/lib/connection-shapes/lodge-setup";
+import { connectionJson } from "@/lib/mcp-connection-request";
 
 // POST /api/admin/other-lodges/:id/hide — hide an Other lodges row the central
 // server does not list (triyder/AlpineClubBookingsNZ#58). The rules are `hideUnlistedOtherLodge`'s; this
@@ -23,7 +23,7 @@ export async function POST(
   });
   if (!guard.ok) return guard.response;
 
-  const parsedParams = paramsSchema.safeParse(await params);
+  const parsedParams = routeIdParamsSchema.safeParse(await params);
   if (!parsedParams.success) {
     return NextResponse.json({ error: "Invalid lodge id" }, { status: 400 });
   }
@@ -47,5 +47,5 @@ export async function POST(
     }),
   );
 
-  return NextResponse.json({ ok: true });
+  return connectionJson(request, { ok: true }, ADMIN_OTHER_LODGE_HIDDEN_CONNECTION_SHAPE);
 }

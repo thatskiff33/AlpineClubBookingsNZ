@@ -1,5 +1,4 @@
 import { NextResponse } from "next/server";
-import { z } from "zod";
 import { parseJsonRequestBody } from "@/lib/api-json";
 import { createAuditLog } from "@/lib/audit";
 import {
@@ -8,6 +7,12 @@ import {
 } from "@/lib/lodge-settings";
 import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/session-guards";
+import {
+  hutLeaderLodgeQuerySchema,
+  schoolHutLeaderKindsBodySchema,
+} from "@/lib/admin-lodge-schemas/hut-leaders";
+import { ADMIN_SCHOOL_HUT_LEADER_KINDS_CONNECTION_SHAPE } from "@/lib/connection-shapes/lodge-hut-leaders";
+import { connectionJson } from "@/lib/mcp-connection-request";
 
 // "Who can be hut leader for school bookings" (#3819): one lodge's four kinds.
 // Per lodge, so the lodge is always named (lodge-scoping contract) and must be
@@ -22,21 +27,9 @@ async function findActiveLodge(lodgeId: string): Promise<boolean> {
   return lodge?.active === true;
 }
 
-const kindsSchema = z
-  .object({
-    teacherOnBooking: z.boolean(),
-    custodian: z.boolean(),
-    memberOnBooking: z.boolean(),
-    memberStayingSeparately: z.boolean(),
-  })
-  .strict();
-
-const putSchema = z
-  .object({
-    lodgeId: z.string().min(1),
-    kinds: kindsSchema,
-  })
-  .strict();
+// The schemas live in admin-lodge-schemas/hut-leaders.ts so the AI app
+// actions `get_school_hut_leader_kinds` and `update_school_hut_leader_kinds`
+// offer the same fields (ALP-722).
 
 function lodgeNotFound() {
   return NextResponse.json({ error: "Lodge not found or not active" }, { status: 400 });
@@ -48,10 +41,16 @@ export async function GET(request: Request) {
   });
   if (!guard.ok) return guard.response;
 
-  const lodgeId = new URL(request.url).searchParams.get("lodgeId");
-  if (!lodgeId || !(await findActiveLodge(lodgeId))) return lodgeNotFound();
+  const query = hutLeaderLodgeQuerySchema.safeParse({
+    lodgeId: new URL(request.url).searchParams.get("lodgeId") ?? undefined,
+  });
+  if (!query.success || !(await findActiveLodge(query.data.lodgeId))) return lodgeNotFound();
 
-  return NextResponse.json({ kinds: await loadSchoolHutLeaderKinds(prisma, lodgeId) });
+  return connectionJson(
+    request,
+    { kinds: await loadSchoolHutLeaderKinds(prisma, query.data.lodgeId) },
+    ADMIN_SCHOOL_HUT_LEADER_KINDS_CONNECTION_SHAPE,
+  );
 }
 
 export async function PUT(request: Request) {
@@ -62,7 +61,7 @@ export async function PUT(request: Request) {
 
   const json = await parseJsonRequestBody(request);
   if (!json.ok) return json.response;
-  const body = putSchema.safeParse(json.body);
+  const body = schoolHutLeaderKindsBodySchema.safeParse(json.body);
   if (!body.success) {
     return NextResponse.json(
       { error: "Invalid input", details: body.error.flatten() },
@@ -97,5 +96,5 @@ export async function PUT(request: Request) {
     },
   });
 
-  return NextResponse.json({ kinds: saved });
+  return connectionJson(request, { kinds: saved }, ADMIN_SCHOOL_HUT_LEADER_KINDS_CONNECTION_SHAPE);
 }

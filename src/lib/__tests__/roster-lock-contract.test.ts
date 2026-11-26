@@ -264,7 +264,8 @@ describe("roster-date lock source contract (#2586)", () => {
   })
 
   it("keeps the public admin mutation contract free of legacy immediate row actions", () => {
-    const contents = source("src/lib/admin-roster-service.ts")
+    // The PUT body schema lives beside the AI app's roster actions (ALP-722).
+    const contents = source("src/lib/admin-lodge-schemas/hut-leaders.ts")
     expect(contents).not.toContain('z.literal("reassign")')
     expect(contents).not.toContain('z.literal("add")')
     expect(contents).not.toContain('z.literal("remove")')

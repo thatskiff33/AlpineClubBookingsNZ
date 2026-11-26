@@ -3,10 +3,7 @@ import type { Prisma, PrismaClient } from "@prisma/client";
 import logger from "@/lib/logger";
 import { isSingletonUpsertContention } from "@/lib/prisma-errors";
 
-import {
-  hasAdminAreaAccess,
-  type AdminAccessRequirement,
-} from "@/lib/admin-permissions";
+import { hasAdminAreaAccess } from "@/lib/admin-permissions";
 
 import {
   clearStaleNotRequiredRows,
@@ -16,6 +13,7 @@ import { MEMBERSHIP_LOCKOUT_SETTINGS_ID } from "@/lib/membership-lockout-setting
 import {
   hasChosenLiabilityRule,
   isChoosableLiabilityAgeSource,
+  LIABILITY_RULE_CHOICE_PERMISSIONS,
   type SubscriptionLiabilitySettings,
 } from "@/lib/policies/subscription";
 import {
@@ -61,17 +59,6 @@ function liabilityChoiceError(
   }
   return null;
 }
-
-/**
- * Who may choose the liability rule (#5190, owner decision 23 Nov 2026,
- * https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/5190#issuecomment-7088835754):
- * membership edit AND finance edit, because the choice changes who the billing
- * run invoices. Other lockout settings keep membership edit alone.
- */
-const LIABILITY_RULE_CHOICE_PERMISSIONS = [
-  { area: "membership", level: "edit" },
-  { area: "finance", level: "edit" },
-] as const satisfies readonly AdminAccessRequirement[];
 
 /** Whether `user` holds every {@link LIABILITY_RULE_CHOICE_PERMISSIONS}. */
 function mayChooseLiabilityRule(

@@ -1,9 +1,15 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma";
-import { addDaysDateOnly, formatDateOnly, isDateOnlyString, parseDateOnly } from "@/lib/date-only";
+import { addDaysDateOnly, formatDateOnly, parseDateOnly } from "@/lib/date-only";
 import { OPERATIONALLY_PRESENT_GUEST_WHERE } from "@/lib/member-guest-consent";
 import { resolveOptionalActiveLodgeId } from "@/lib/lodges";
+import { hutLeaderCandidatesQuerySchema } from "@/lib/admin-lodge-schemas/hut-leaders";
+import {
+  ADMIN_HUT_LEADER_CANDIDATES_CONNECTION_SHAPE,
+  type AdminHutLeaderCandidateRow,
+} from "@/lib/connection-shapes/lodge-hut-leaders";
+import { connectionJson } from "@/lib/mcp-connection-request";
 import { getGuestBedNightKeys } from "@/lib/booking-guest-stay-ranges";
 import { loadHutLeaderNightCover, memberMayLeadNight } from "@/lib/hut-leader-night-cover";
 import {
@@ -23,9 +29,14 @@ type StayOnBooking = MemberStay & { bookingId: string };
 export async function GET(req: NextRequest) {
   const guard = await requireAdmin();
   if (!guard.ok) return guard.response;
+  // Shared with the AI app action `list_hut_leader_candidates` (ALP-722).
+  // The lodge is answered first, then the dates, with the page's own 400s.
   const { searchParams } = new URL(req.url);
-  const startDate = searchParams.get("startDate");
-  const endDate = searchParams.get("endDate");
+  const query = hutLeaderCandidatesQuerySchema.safeParse({
+    lodgeId: searchParams.get("lodgeId") ?? undefined,
+    startDate: searchParams.get("startDate") ?? undefined,
+    endDate: searchParams.get("endDate") ?? undefined,
+  });
   const requestedLodgeId = searchParams.get("lodgeId");
   const lodgeId = requestedLodgeId
     ? await resolveOptionalActiveLodgeId(prisma, requestedLodgeId)
@@ -34,9 +45,10 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: "A valid lodgeId is required." }, { status: 400 });
   }
 
-  if (!startDate || !endDate || !isDateOnlyString(startDate) || !isDateOnlyString(endDate)) {
+  if (!query.success) {
     return NextResponse.json({ error: "startDate and endDate are required (YYYY-MM-DD)" }, { status: 400 });
   }
+  const { startDate, endDate } = query.data;
 
   if (startDate > endDate) {
     return NextResponse.json({ error: "startDate must be before or equal to endDate" }, { status: 400 });
@@ -201,7 +213,7 @@ export async function GET(req: NextRequest) {
   };
 
   const members = Array.from(memberBookings.values())
-    .map((m) => {
+    .map((m): AdminHutLeaderCandidateRow => {
       // Find earliest checkIn and latest checkOut (the member's overall booking
       // span, shown as the booking dates — never offered as an assignment end).
       const earliestCheckIn = m.bookings.reduce((min, b) => b.checkIn < min ? b.checkIn : min, m.bookings[0].checkIn);
@@ -271,5 +283,5 @@ export async function GET(req: NextRequest) {
         `${a.lastName} ${a.firstName}`.localeCompare(`${b.lastName} ${b.firstName}`),
     );
 
-  return NextResponse.json({ members });
+  return connectionJson(req, { members }, ADMIN_HUT_LEADER_CANDIDATES_CONNECTION_SHAPE);
 }

@@ -4,6 +4,9 @@ import { resolveOptionalActiveLodgeId } from "@/lib/lodges"
 import { prisma } from "@/lib/prisma"
 import { getRosterMonthStatus } from "@/lib/roster-status"
 import { requireAdmin } from "@/lib/session-guards"
+import { adminRosterMonthStatusQuerySchema } from "@/lib/admin-lodge-schemas/hut-leaders"
+import { ADMIN_ROSTER_MONTH_STATUS_CONNECTION_SHAPE } from "@/lib/connection-shapes/lodge-hut-leaders"
+import { connectionJson } from "@/lib/mcp-connection-request"
 
 function unauthorizedResponse() {
   return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
@@ -33,12 +36,19 @@ export async function GET(req: NextRequest) {
   })
   if (!guard.ok) return guard.response
 
-  const parsedMonth = parseOccupancyMonth(req.nextUrl.searchParams.get("month"))
+  // The schema is shared with the AI app action `get_chore_roster_month_status`
+  // (ALP-722). Only a missing month fails it, which the month parser below
+  // answers with its own 400 as before.
+  const query = adminRosterMonthStatusQuerySchema.safeParse({
+    month: req.nextUrl.searchParams.get("month") ?? undefined,
+    lodgeId: req.nextUrl.searchParams.get("lodgeId") ?? undefined,
+  })
+  const parsedMonth = parseOccupancyMonth(query.success ? query.data.month : null)
   if (!parsedMonth.ok) {
     return NextResponse.json({ error: parsedMonth.error }, { status: 400 })
   }
 
-  const requestedLodgeId = req.nextUrl.searchParams.get("lodgeId")
+  const requestedLodgeId = query.success ? query.data.lodgeId : undefined
   let lodgeId: string | undefined
   if (requestedLodgeId) {
     const resolved = await resolveOptionalActiveLodgeId(prisma, requestedLodgeId)
@@ -52,5 +62,5 @@ export async function GET(req: NextRequest) {
   }
 
   const statuses = await getRosterMonthStatus({ month: parsedMonth.month, lodgeId })
-  return NextResponse.json({ month: parsedMonth.month, statuses })
+  return connectionJson(req, { month: parsedMonth.month, statuses }, ADMIN_ROSTER_MONTH_STATUS_CONNECTION_SHAPE)
 }

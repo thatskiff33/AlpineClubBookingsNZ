@@ -227,7 +227,7 @@ describe("GET /api/admin/other-lodges marks lodges the central server no longer 
         record({ id: "ol-old", name: "Ruapehu Lodge (old)", centralId: null }),
       ])
       .mockResolvedValueOnce([{ id: "ol-old", _count: { bookings: 2, bookingRequests: 1 } }]);
-    const data = await (await GET()).json();
+    const data = await (await GET(new Request("http://localhost/api/admin/other-lodges"))).json();
     expect(data.otherLodges[0]).not.toHaveProperty("notOnCentralServer");
     expect(data.otherLodges[1].notOnCentralServer).toEqual({ bookings: 2, bookingRequests: 1 });
     expect(mocks.findMany.mock.calls[1][0].where).toEqual({ id: { in: ["ol-old"] } });
@@ -235,7 +235,7 @@ describe("GET /api/admin/other-lodges marks lodges the central server no longer 
 
   it("never lists a HIDDEN lodge (triyder/AlpineClubBookingsNZ#58): it is kept only for the bookings that name it", async () => {
     mocks.findMany.mockResolvedValueOnce([record()]);
-    await GET();
+    await GET(new Request("http://localhost/api/admin/other-lodges"));
     expect(mocks.findMany.mock.calls[0][0].where).toEqual({ hiddenAt: null });
   });
 
@@ -244,7 +244,7 @@ describe("GET /api/admin/other-lodges marks lodges the central server no longer 
       record({ id: "ol-1", centralId: "c-1" }),
       record({ id: "ol-2", name: "Not yet matched", centralId: null }),
     ]);
-    const data = await (await GET()).json();
+    const data = await (await GET(new Request("http://localhost/api/admin/other-lodges"))).json();
     expect(data.otherLodges[1]).not.toHaveProperty("notOnCentralServer");
     expect(mocks.findMany).toHaveBeenCalledTimes(1);
   });
@@ -253,27 +253,27 @@ describe("GET /api/admin/other-lodges marks lodges the central server no longer 
     mocks.findMany.mockResolvedValueOnce([
       record({ id: "ol-1", centralId: "c-1" }),
     ]);
-    expect((await (await GET()).json()).otherLodges[0]).toMatchObject({ owned: true, renamable: true });
+    expect((await (await GET(new Request("http://localhost/api/admin/other-lodges"))).json()).otherLodges[0]).toMatchObject({ owned: true, renamable: true });
     // Not keyed yet: never ours, even under the owned lodge's name (triyder/AlpineClubBookingsNZ#69).
     mocks.findMany.mockResolvedValueOnce([record({ id: "ol-1", centralId: null })]);
-    expect((await (await GET()).json()).otherLodges[0]).toMatchObject({ owned: false, renamable: false });
+    expect((await (await GET(new Request("http://localhost/api/admin/other-lodges"))).json()).otherLodges[0]).toMatchObject({ owned: false, renamable: false });
   });
 });
 
 describe("GET /api/admin/other-lodges", () => {
   it("rejects unauthenticated callers", async () => {
     mocks.auth.mockResolvedValue(null);
-    expect((await GET()).status).toBe(401);
+    expect((await GET(new Request("http://localhost/api/admin/other-lodges"))).status).toBe(401);
   });
 
   it("rejects non-admin members", async () => {
     mocks.auth.mockResolvedValue(memberSession);
-    expect((await GET()).status).toBe(403);
+    expect((await GET(new Request("http://localhost/api/admin/other-lodges"))).status).toBe(403);
   });
 
   it("returns serialized other lodges", async () => {
     mocks.findMany.mockResolvedValue([record()]);
-    const response = await GET();
+    const response = await GET(new Request("http://localhost/api/admin/other-lodges"));
     expect(response.status).toBe(200);
     const data = await response.json();
     expect(data.otherLodges).toHaveLength(1);
@@ -288,7 +288,7 @@ describe("GET /api/admin/other-lodges", () => {
 
   it("serializes the lodge details, with season starts as calendar days and the amenity list", async () => {
     mocks.findMany.mockResolvedValue([record()]);
-    const data = await (await GET()).json();
+    const data = await (await GET(new Request("http://localhost/api/admin/other-lodges"))).json();
     expect(data.otherLodges[0]).toMatchObject({
       siteUrl: "https://ruapehu.test",
       freeWifi: true,
@@ -303,7 +303,7 @@ describe("GET /api/admin/other-lodges", () => {
 
   it("sends the owned lodge's officer phone and NOT another club's, and flags which is owned", async () => {
     mocks.findMany.mockResolvedValue([record(), theirs()]);
-    const data = await (await GET()).json();
+    const data = await (await GET(new Request("http://localhost/api/admin/other-lodges"))).json();
     const [ours, notOurs] = data.otherLodges;
     expect(ours).toMatchObject({
       name: "Ruapehu Ski Club",
@@ -323,7 +323,7 @@ describe("GET /api/admin/other-lodges", () => {
   it("sends no phone for any lodge, and `null` as the owned list, while the list is unknown", async () => {
     owning(null);
     mocks.findMany.mockResolvedValue([record(), theirs()]);
-    const data = await (await GET()).json();
+    const data = await (await GET(new Request("http://localhost/api/admin/other-lodges"))).json();
     for (const lodge of data.otherLodges) {
       expect(lodge.owned).toBe(false);
       expect(lodge).not.toHaveProperty("bookingOfficerPhone");
@@ -335,14 +335,14 @@ describe("GET /api/admin/other-lodges", () => {
   it("sends an empty owned list as `[]`", async () => {
     owning([]);
     mocks.findMany.mockResolvedValue([record()]);
-    const data = await (await GET()).json();
+    const data = await (await GET(new Request("http://localhost/api/admin/other-lodges"))).json();
     expect(data.ownedLodgeNames).toEqual([]);
     expect(data.otherLodges[0].owned).toBe(false);
   });
 
   it("reports the STORED server-version status so the panel can say syncing is paused (triyder/AlpineClubBookingsNZ#49)", async () => {
     mocks.findMany.mockResolvedValue([record()]);
-    expect((await (await GET()).json()).serverVersionStatus).toBe("match");
+    expect((await (await GET(new Request("http://localhost/api/admin/other-lodges"))).json()).serverVersionStatus).toBe("match");
 
     mocks.readStoredServerVersion.mockResolvedValue({
       status: "mismatch",
@@ -351,7 +351,7 @@ describe("GET /api/admin/other-lodges", () => {
       checkedAt: now.toISOString(),
       couldNotCheck: false,
     });
-    const data = await (await GET()).json();
+    const data = await (await GET(new Request("http://localhost/api/admin/other-lodges"))).json();
     expect(data.serverVersionStatus).toBe("mismatch");
     // The list itself is still served: the panel shows the rows AND the note.
     expect(data.otherLodges).toHaveLength(1);
@@ -806,7 +806,7 @@ describe("PATCH /api/admin/other-lodges/[id]: rates and dates from the Fees page
 
   it("sends the switch for this club's own lodge only, never another club's", async () => {
     mocks.findMany.mockResolvedValue([record({ ratesFromFees: true }), { ...theirs(), ratesFromFees: true }]);
-    const body = await (await GET()).json();
+    const body = await (await GET(new Request("http://localhost/api/admin/other-lodges"))).json();
     const [ours, other] = body.otherLodges;
     expect(ours.ratesFromFees).toBe(true);
     expect(other).not.toHaveProperty("ratesFromFees");
@@ -815,7 +815,7 @@ describe("PATCH /api/admin/other-lodges/[id]: rates and dates from the Fees page
   it("tells the editor why the Fees page cannot fill our lodge, and asks about no other", async () => {
     mocks.findMany.mockResolvedValue([record({ ratesFromFees: true }), { ...theirs(), ratesFromFees: true }]);
     mocks.otherLodgeFeesProblem.mockResolvedValue("Not filled: not linked.");
-    const [ours, other] = (await (await GET()).json()).otherLodges;
+    const [ours, other] = (await (await GET(new Request("http://localhost/api/admin/other-lodges"))).json()).otherLodges;
     expect(ours.feesProblem).toBe("Not filled: not linked.");
     expect(other).not.toHaveProperty("feesProblem");
     expect(mocks.otherLodgeFeesProblem).toHaveBeenCalledTimes(1);

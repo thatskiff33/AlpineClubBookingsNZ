@@ -19,6 +19,9 @@
  *    waits on a billing
  *    confirm — a real roll-forward, whose chunk holds lock(1), finishes while
  *    the season key is held, and no lock(1) holder is ever seen waiting.
+ *    The preview's stale-record list (`buildSubscriptionLiabilityImpact`) names
+ *    exactly the rows that save then resets, inactive and archived members'
+ *    included.
  * 4. THE SQL DATE-OF-BIRTH CHECK (`subscription-liability-where.ts`) agrees with
  *    the TS rule on PostgreSQL's own `date` comparison, for members born either
  *    side of every tier birthday at the season's start and end — including a
@@ -105,6 +108,7 @@ let seasonLock: typeof import("@/lib/subscription-billing-season-lock");
 let ruleLock: typeof import("@/lib/subscription-liability-rule-lock");
 let assignments: typeof import("@/lib/seasonal-membership-assignments");
 let where: typeof import("@/lib/subscription-liability-where");
+let impact: typeof import("@/lib/subscription-liability-impact");
 let membershipTypes: typeof import("@/lib/membership-types");
 let financialYear: typeof import("@/lib/financial-year");
 let clubTime: typeof import("@/lib/club-time");
@@ -324,6 +328,7 @@ let priorLockoutSettings: MembershipLockoutSettings | null = null;
       ruleLock = await import("@/lib/subscription-liability-rule-lock");
       assignments = await import("@/lib/seasonal-membership-assignments");
       where = await import("@/lib/subscription-liability-where");
+      impact = await import("@/lib/subscription-liability-impact");
       membershipTypes = await import("@/lib/membership-types");
       financialYear = await import("@/lib/financial-year");
       clubTime = await import("@/lib/club-time");
@@ -424,6 +429,65 @@ let priorLockoutSettings: MembershipLockoutSettings | null = null;
       await expect(optIn(CHOSEN_ALWAYS)).resolves.toMatchObject({
         clearedStaleRows: { clearedCount: 0, clearedMemberIds: [] },
       });
+    });
+
+    it("the preview's stale-record list is exactly the rows saving the rule resets, inactive and archived members included", async () => {
+      await prisma.membershipType.create({
+        data: { id: NOT_REQUIRED_TYPE_ID, key: `${PREFIX}not-required`, name: "Race 5190 Not Required", subscriptionBehavior: "NOT_REQUIRED" },
+      });
+      const cases = {
+        active: { typeId: REQUIRED_TYPE_ID, active: true, archivedAt: null, invoiced: false },
+        inactive: { typeId: REQUIRED_TYPE_ID, active: false, archivedAt: null, invoiced: false },
+        archived: { typeId: REQUIRED_TYPE_ID, active: true, archivedAt: DECISION_DATE, invoiced: false },
+        invoiced: { typeId: REQUIRED_TYPE_ID, active: true, archivedAt: null, invoiced: true },
+        exempt: { typeId: NOT_REQUIRED_TYPE_ID, active: true, archivedAt: null, invoiced: false },
+      } as const;
+      for (const [key, fixture] of Object.entries(cases)) {
+        const memberId = `${PREFIX}${key}`;
+        await createMember(memberId, "ADULT");
+        await prisma.member.update({
+          where: { id: memberId },
+          data: { active: fixture.active, archivedAt: fixture.archivedAt },
+        });
+        await assign(memberId, fixture.typeId);
+        await prisma.memberSubscription.create({
+          data: {
+            memberId,
+            seasonYear: SEASON_YEAR,
+            status: "NOT_REQUIRED",
+            xeroInvoiceId: fixture.invoiced ? `${PREFIX}inv` : null,
+          },
+        });
+      }
+      await assertNoForeignUntouchedRows();
+
+      const { staleRecords } = await impact.buildSubscriptionLiabilityImpact(prisma, {
+        seasonYear: SEASON_YEAR,
+        proposed: CHOSEN_ALWAYS,
+      });
+      const { clearedStaleRows } = await optIn(CHOSEN_ALWAYS);
+
+      expect(
+        staleRecords.map((stale) => [stale.memberId.replace(PREFIX, ""), stale.inBillingPopulation]),
+      ).toEqual([
+        // Sorted by name: every fixture is "Liability <key>".
+        ["active", true],
+        ["archived", false],
+        ["inactive", false],
+      ]);
+      expect(clearedStaleRows?.clearedMemberIds).toEqual(
+        staleRecords.map((stale) => stale.memberId).sort(),
+      );
+      // Owner decision 22 Nov 2026 (#5190): before the save the members list
+      // shows the active member as billing does, "Not invoiced" with the note;
+      // a member outside the billing population keeps the row's own status.
+      expect(
+        staleRecords.map((stale) => [stale.memberId.replace(PREFIX, ""), stale.listStatus, stale.listNote !== null]),
+      ).toEqual([
+        ["active", "NOT_INVOICED", true],
+        ["archived", "NOT_REQUIRED", false],
+        ["inactive", "NOT_REQUIRED", false],
+      ]);
     });
 
     describe("a billing confirm and the settings save serialise on the season key", () => {

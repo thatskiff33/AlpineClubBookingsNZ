@@ -38,7 +38,11 @@ const RECORD_DERIVED_OFFICER_PREDICATES = [
 
 /** Where each predicate is held back from a connection: `file#function`. */
 const GUARDED_SITES: Record<(typeof RECORD_DERIVED_OFFICER_PREDICATES)[number]["predicate"], string[]> = {
-  canManageCalendarEvents: ["src/app/api/calendar/events/route.ts#GET"],
+  canManageCalendarEvents: [
+    "src/app/api/calendar/events/route.ts#GET",
+    // ALP-722: a connection creates events on the Lodge edit leg alone.
+    "src/app/api/calendar/events/route.ts#POST",
+  ],
   resolveFoodOrderViewer: ["src/lib/food-order-route.ts#requireFoodOrderViewer"],
   hasActiveHutLeaderAssignment: ["src/lib/induction.ts#inductionSignerContext"],
   resolveSignerRole: [

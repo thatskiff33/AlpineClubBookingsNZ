@@ -5,6 +5,7 @@ import { isFullAdmin } from "@/lib/access-roles";
 import {
   canOpenAdminPath,
   hasAdminAreaAccess,
+  type AdminAccessRequirement,
   type AdminPermissionArea,
 } from "@/lib/admin-permissions";
 
@@ -60,6 +61,26 @@ export function useAdminAreaEditAccess(
     area,
     level: "edit",
   });
+}
+
+/**
+ * Tri-state gate for a control whose write route demands SEVERAL areas at once
+ * (#5190: choosing the subscription liability rule needs membership edit and
+ * finance edit). Pass the same requirement list the route checks, so the screen
+ * and the route cannot disagree. Same contract as
+ * {@link useAdminAreaEditAccess}: `undefined` while the session resolves.
+ */
+export function useAdminAccessToAll(
+  requirements: readonly AdminAccessRequirement[],
+): boolean | undefined {
+  const { data: session, status } = useSession();
+
+  if (status === "loading") return undefined;
+
+  if (!session?.user) return false;
+
+  const user = session.user;
+  return requirements.every((requirement) => hasAdminAreaAccess(user, requirement));
 }
 
 /**

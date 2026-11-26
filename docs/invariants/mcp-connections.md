@@ -190,9 +190,11 @@ only the rules.
   [`officer-actions.ts`](../../src/lib/mcp/officer-actions.ts), the one home
   for officer reach, reads the requirement from
   the admin route map, or from the entry's `requires` where the handler's
-  guard (`requireAdmin`, or the finance workspace's own) demands more; the
-  census holds `requires` to that guard. The tool list, `find_actions`, `describe_action` and
-  `run_action` all ask it.
+  guard (`requireAdmin`, or the finance workspace's own) names its own
+  permission; the census holds `requires` to that guard. Elsewhere outside
+  `/api/admin` the census pins each route's predicate, and `requires` is the
+  admin leg it always admits. The tool list, `find_actions`,
+  `describe_action` and `run_action` all ask it.
 - **The route runs with the officer's real permissions** and its own guard
   decides, as for the browser, and answers through the projection. A
   step-up route stays website-only (`fresh-proof`, `INV-MCP-006`).

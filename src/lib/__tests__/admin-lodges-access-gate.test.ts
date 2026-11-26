@@ -157,7 +157,7 @@ describe("GET /api/admin/lodges admits any admitted admin (#2925)", () => {
     async (role) => {
       signInAs(role);
 
-      const response = await GET();
+      const response = await GET(new Request("http://localhost/api/admin/lodges"));
 
       expect(response.status).toBe(200);
       const body = await response.json();
@@ -177,7 +177,7 @@ describe("GET /api/admin/lodges admits any admitted admin (#2925)", () => {
     async (role) => {
       signInAs(role);
 
-      const response = await GET();
+      const response = await GET(new Request("http://localhost/api/admin/lodges"));
       const body = await response.json();
 
       // 1. The wire. Asserted on the raw JSON text as well as the parsed keys,
@@ -213,7 +213,7 @@ describe("GET /api/admin/lodges admits any admitted admin (#2925)", () => {
   it("still gives a lodge:view holder the whole record", async () => {
     signInAs("ADMIN");
 
-    const response = await GET();
+    const response = await GET(new Request("http://localhost/api/admin/lodges"));
 
     expect(response.status).toBe(200);
     const body = await response.json();
@@ -233,7 +233,7 @@ describe("GET /api/admin/lodges admits any admitted admin (#2925)", () => {
   it("gives a read-only admin the whole record too — the split is lodge:view, not edit", async () => {
     signInAs("ADMIN_READONLY");
 
-    const response = await GET();
+    const response = await GET(new Request("http://localhost/api/admin/lodges"));
     const body = await response.json();
 
     expect(response.status).toBe(200);
@@ -243,7 +243,7 @@ describe("GET /api/admin/lodges admits any admitted admin (#2925)", () => {
   it("still refuses a caller who is not an admitted admin at all", async () => {
     signInAs("USER");
 
-    const response = await GET();
+    const response = await GET(new Request("http://localhost/api/admin/lodges"));
 
     expect(response.status).toBe(403);
     expect(mocks.lodgeFindMany).not.toHaveBeenCalled();
@@ -252,7 +252,7 @@ describe("GET /api/admin/lodges admits any admitted admin (#2925)", () => {
   it("still refuses an anonymous caller", async () => {
     mocks.auth.mockResolvedValue(null);
 
-    const response = await GET();
+    const response = await GET(new Request("http://localhost/api/admin/lodges"));
 
     expect(response.status).toBe(401);
     expect(mocks.lodgeFindMany).not.toHaveBeenCalled();
@@ -267,7 +267,7 @@ describe("GET /api/admin/lodges admits any admitted admin (#2925)", () => {
       accessRoles: [{ role: "FINANCE_ADMIN", roleDefinitionId: null, roleDefinition: null }],
     });
 
-    const response = await GET();
+    const response = await GET(new Request("http://localhost/api/admin/lodges"));
 
     expect(response.status).toBe(403);
     expect(mocks.lodgeFindMany).not.toHaveBeenCalled();
@@ -361,7 +361,7 @@ describe("the explicit permission is what opens the route, not the bare call", (
   it("and such a caller still gets the FULL record, because it holds lodge:view", async () => {
     signInWithGrid({ overviewLevel: "NONE", lodgeLevel: "VIEW" });
 
-    const response = await GET();
+    const response = await GET(new Request("http://localhost/api/admin/lodges"));
 
     expect(response.status).toBe(200);
     const body = await response.json();

@@ -299,13 +299,22 @@ describe("subscription lockout settings", () => {
     expect(h.saveLockout).not.toHaveBeenCalled();
   });
 
-  it("lets an officer with Membership and Finance edit change the liability rule", async () => {
+  it("lets an officer with Membership and Finance edit change the liability rule, and says how many records it reset", async () => {
+    h.saveLockout.mockImplementation(async (_db: unknown, { data }: { data: object }) => ({
+      record: { ...lockoutRow, ...data },
+      clearedStaleRows: { clearedCount: 2, clearedMemberIds: ["member-4", "member-5"] },
+    }));
     const { connection } = await expectActionContract({
       actionId: "update_membership_lockout_settings",
       handler: putLockoutSettings,
       args: { requiredTypeAgeRule: "ALWAYS_OWES", liabilityAgeSource: "SEASON_START" },
     });
-    expect(connection).toMatchObject({ settings: { requiredTypeAgeRule: "ALWAYS_OWES", liabilityAgeSource: "SEASON_START" } });
+    expect(connection).toMatchObject({
+      settings: { requiredTypeAgeRule: "ALWAYS_OWES", liabilityAgeSource: "SEASON_START" },
+      clearedStaleRecords: 2,
+    });
+    // The reset members' ids stay in the audit log, not the app's answer.
+    expect(JSON.stringify(connection)).not.toContain("member-4");
     expect(h.saveLockout).toHaveBeenCalled();
   });
 
@@ -317,7 +326,15 @@ describe("subscription lockout settings", () => {
       proposed: { requiredTypeAgeRule: "ALWAYS_OWES", liabilityAgeSource: "SEASON_START" },
       newlyOwing: [member],
       noLongerOwing: [{ ...member, memberId: "member-3", unpaidInvoiceNumber: "INV-0042" }],
-      staleRecords: [{ memberId: "member-4", name: "Kai Hale" }],
+      staleRecords: [
+        {
+          memberId: "member-4",
+          name: "Kai Hale",
+          inBillingPopulation: false,
+          listStatus: "NOT_REQUIRED",
+          listNote: null,
+        },
+      ],
     });
     const { connection, browser } = await expectActionContract({
       actionId: "preview_subscription_liability_rule",
@@ -325,6 +342,15 @@ describe("subscription lockout settings", () => {
       args: { requiredTypeAgeRule: "ALWAYS_OWES", liabilityAgeSource: "SEASON_START" },
     });
     expect(JSON.stringify(connection)).not.toContain("INV-0042");
+    // An inactive or archived member's record is reset but never invoiced; the
+    // app must hear that, and the members list's status, as the website shows.
+    expect(connection).toMatchObject({
+      impact: {
+        staleRecords: [
+          { memberId: "member-4", inBillingPopulation: false, listStatus: "NOT_REQUIRED", listNote: null },
+        ],
+      },
+    });
     expect(browser).toMatchObject({ impact: { noLongerOwing: [{ unpaidInvoiceNumber: "INV-0042" }] } });
   });
 });
