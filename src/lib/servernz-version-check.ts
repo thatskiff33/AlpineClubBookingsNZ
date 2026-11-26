@@ -91,12 +91,16 @@ export async function checkServerVersion(
 
 /**
  * The stored answer, with NO network call: the digest (which follows the
- * nightly sync) and the lodges panel read it this way.
+ * nightly sync), the lodges panel and the Needs Attention counter read it this
+ * way. `failOnError` makes a failed settings read throw instead of reading as
+ * the defaults ("unchecked"), for the counter (`loadServerNzSettings`).
  */
-export async function readStoredServerVersion(): Promise<ServerVersionCheck> {
+export async function readStoredServerVersion(
+  options: { failOnError?: boolean } = {},
+): Promise<ServerVersionCheck> {
   const [setup, settings] = await Promise.all([
     getServerNzSetupState(),
-    loadServerNzSettings(),
+    loadServerNzSettings(undefined, options),
   ]);
   return describe(settings, setup.apiKeySet);
 }

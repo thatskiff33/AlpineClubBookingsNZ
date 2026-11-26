@@ -66,9 +66,12 @@ const PENDING_COUNTERS = {
   xeroSilentWebhook: async () => ((await getXeroWebhookHealth()).silent ? 1 : 0),
   // The STORED answer only, as the Daily digest reads it: the sidebar asks on
   // every admin navigation and must never call the server. "mismatch" needs a
-  // stored API key, so an unlinked site never shows it.
+  // stored API key, so an unlinked site never shows it. `failOnError`: a failed
+  // read is named unavailable, never a quiet "versions fine" 0.
   alpineServerVersionMismatch: async () =>
-    (await readStoredServerVersion()).status === "mismatch" ? 1 : 0,
+    (await readStoredServerVersion({ failOnError: true })).status === "mismatch"
+      ? 1
+      : 0,
   familyRequests: () =>
     prisma.familyGroupJoinRequest.count({
       where: { status: "PENDING", type: { in: [...REVIEWED_REQUEST_TYPES] } },

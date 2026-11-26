@@ -48,6 +48,7 @@ import {
   type AdminPermissionMatrix,
 } from "@/lib/admin-permissions";
 import type { CalendarDate } from "@/lib/club-time";
+import { SERVER_VERSION_PAUSE_SUMMARY } from "@/lib/servernz-api-version";
 import {
   buildUnpaidFinishedStaysHref,
   buildUnsettledAdditionalStaysHref,
@@ -189,8 +190,10 @@ export const ADMIN_WORK_QUEUES: readonly AdminWorkQueue[] = [
     tone: "danger",
     card: {
       title: "Alpine Central Server Version Mismatch",
+      // The pause's one opening phrase; the setup page it links to names both
+      // numbers through `describeServerVersionPause`.
       describe: () =>
-        "This site and the Alpine Central Server are on different versions, so syncing with the server is paused. Update this site or the server so the two versions match.",
+        `${SERVER_VERSION_PAUSE_SUMMARY} because this site and the server are on different software versions. Update whichever side is behind; syncing resumes once the two match.`,
     },
   },
   {

@@ -180,6 +180,14 @@ describe("getAdminPendingCounts", () => {
     const counts = await getAdminPendingCounts();
     expect(counts.alpineServerVersionMismatch).toBe(expected);
     expect(counts.unavailable).toEqual([]);
+    expect(mocks.readStoredServerVersion).toHaveBeenCalledWith({ failOnError: true });
+  });
+
+  it("names the Alpine Central Server count unavailable when its stored answer cannot be read", async () => {
+    mocks.readStoredServerVersion.mockRejectedValue(new Error("database unavailable"));
+    const counts = await getAdminPendingCounts();
+    expect(counts.alpineServerVersionMismatch).toBe(0);
+    expect(counts.unavailable).toEqual(["alpineServerVersionMismatch"]);
   });
 
   it("returns every queue count keyed for the sidebar", async () => {
