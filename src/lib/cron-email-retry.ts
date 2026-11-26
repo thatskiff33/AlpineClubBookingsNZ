@@ -28,10 +28,8 @@ import {
   finalizeBookingEmailHtml,
   hasBookingDetailHref,
 } from "@/lib/booking-email-html";
-import { adminEmailDeliveryFailedTemplate } from "@/lib/email-templates/admin-ops";
-import { renderEmailHtml } from "@/lib/email-theme";
-
-const RETRY_FAILURE_ALERT_TEMPLATE = "admin-email-failure";
+import { alertOfficersOfUndeliveredEmail } from "@/lib/email/delivery-failed-alert";
+import { sweepStrandedQueuedEmails } from "@/lib/email/handover";
 
 /**
  * The guard on this job's pre-send claim (F33, #1885): the row is still
@@ -200,6 +198,10 @@ export async function retryFailedEmails(): Promise<{
     configuration check, not the send path's licence.
   */
   await getEmailTransporter(delivery.clearance);
+
+  // #5298 (INV-INT-043): settle rows a crash left QUEUED first, so a row it
+  // hands back as FAILED is replayed by the selection below in this same run.
+  await sweepStrandedQueuedEmails();
 
   // Backoff: don't retry emails until at least 15 minutes after the last attempt
   const backoffThreshold = new Date(Date.now() - EMAIL_RETRY_BACKOFF_MS);
@@ -507,6 +509,9 @@ export async function retryFailedEmails(): Promise<{
       where: emailRetryClaimWhere(emailLog),
       data: {
         status: "QUEUED",
+        // #5298 (INV-INT-043): this run may now reach the mail server, so a
+        // crash from here leaves a row the stranded-email sweep only flags.
+        handoverState: "STARTED",
         attempts: newAttempts,
         lastAttemptAt: new Date(),
         ...(retryHtml !== retainedHtml
@@ -608,40 +613,13 @@ export async function retryFailedEmails(): Promise<{
           );
         });
 
-      // Alert admin when email exhausts retries
-      if (
-        newAttempts >= EMAIL_RETRY_MAX_ATTEMPTS &&
-        emailLog.templateName !== RETRY_FAILURE_ALERT_TEMPLATE
-      ) {
-        try {
-          const { sendEmail, getAdminEmails } = await import("./email");
-          // #2548: the shared resolver, so this system-failure alert reaches
-          // the same audience as every other one — access-role resolved, with
-          // definition-backed custom roles included — instead of re-deriving it
-          // from the legacy `role: "ADMIN"` scalar.
-          const admins = await getAdminEmails();
-          for (const adminEmail of admins) {
-            await sendEmail({
-              to: adminEmail,
-              subject: "Email delivery permanently failed",
-              html: await renderEmailHtml(() => adminEmailDeliveryFailedTemplate({
-                recipient: emailLog.to,
-                templateName: emailLog.templateName,
-                attemptCount: newAttempts,
-              })),
-              // Admin failure alert: never withheld by a booking flag (#2258).
-              bookingContext: "none",
-              templateName: RETRY_FAILURE_ALERT_TEMPLATE,
-              templateData: {
-                originalRecipient: emailLog.to,
-                originalTemplateName: emailLog.templateName,
-                attemptCount: newAttempts,
-              },
-            }).catch(() => {}); // Don't let alert failure break the cron
-          }
-        } catch {
-          // Non-critical
-        }
+      // Alert officers when email exhausts retries
+      if (newAttempts >= EMAIL_RETRY_MAX_ATTEMPTS) {
+        await alertOfficersOfUndeliveredEmail({
+          recipient: emailLog.to,
+          templateName: emailLog.templateName,
+          attemptCount: newAttempts,
+        });
       }
 
       failed++;

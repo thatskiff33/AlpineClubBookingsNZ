@@ -289,11 +289,38 @@ export function adminEmailDeliveryFailedTemplate(data: {
   recipient: string;
   templateName: string;
   attemptCount: number;
+  /**
+   * #5298 (INV-INT-043): why the stranded-email sweep stopped it, when it did.
+   * `unconfirmed`: the send was interrupted after it may have reached the mail
+   * server, so the member may already have it. `never_sent`: it was interrupted
+   * before then, and no copy was kept to send again.
+   */
+  stranded?: "unconfirmed" | "never_sent";
 }): string {
+  const who = `Email to ${escapeHtml(data.recipient)} (template: ${escapeHtml(data.templateName)})`;
+  if (data.stranded === "unconfirmed") {
+    return layout(`
+      ${heading("Email Delivery Not Confirmed")}
+      ${paragraph(
+        `${who} was being sent when the app stopped, so it may or may not have been delivered. It will not be sent again automatically.`,
+      )}
+      ${paragraph(
+        "Check with the recipient before you press Try again in the email review queue: if it did arrive, they would get it twice.",
+      )}
+    `);
+  }
+  if (data.stranded === "never_sent") {
+    return layout(`
+      ${heading("Email Delivery Permanently Failed")}
+      ${paragraph(
+        `${who} was never sent: the app stopped before handing it to the mail server, and no copy was kept to send again. Send the recipient a fresh one.`,
+      )}
+    `);
+  }
   return layout(`
     ${heading("Email Delivery Permanently Failed")}
     ${paragraph(
-      `Email to ${escapeHtml(data.recipient)} (template: ${escapeHtml(data.templateName)}) has failed after ${data.attemptCount} attempts and will not be retried.`,
+      `${who} has failed after ${data.attemptCount} attempts and will not be retried.`,
     )}
   `);
 }

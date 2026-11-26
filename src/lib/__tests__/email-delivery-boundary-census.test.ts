@@ -528,9 +528,6 @@ describe("email delivery boundary census (INV-CONFIG-004)", () => {
       "src/lib/cron-quote-expiry-reminders.ts",
       // The mailer itself: it IS the thing that decides the outcome.
       "src/lib/email/core.ts",
-      // The retry cron reads the policy directly and returns before it claims a
-      // row, rather than reading a `sendEmail` outcome.
-      "src/lib/cron-email-retry.ts",
       // Asks `resolveXeroInvoiceEmailPolicy` and returns BEFORE the `emailSentAt`
       // write when it answers withhold, so the stamp is never reached.
       "src/lib/xero-subscription-invoices.ts",

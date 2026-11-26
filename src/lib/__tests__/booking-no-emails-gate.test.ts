@@ -24,7 +24,8 @@ const mocks = vi.hoisted(() => ({
 vi.mock("@/lib/prisma", () => ({
   prisma: {
     environmentSafetySettings: { findUnique: vi.fn().mockResolvedValue(null) },
-    emailLog: { create: mocks.emailLogCreate, update: mocks.emailLogUpdate },
+    // #5298: the sender's hand-over claim on its own row, always won here.
+    emailLog: { create: mocks.emailLogCreate, update: mocks.emailLogUpdate, updateMany: async () => ({ count: 1 }) },
     booking: { findUnique: mocks.bookingFindUnique },
   },
 }));

@@ -3,6 +3,7 @@ import { htmlToPlainText } from "../email-text";
 import logger from "@/lib/logger";
 import { prisma } from "@/lib/prisma";
 import { recordEmailAttempt } from "./attempt-log";
+import { claimEmailHandover } from "./handover";
 import {
   formatEmailFromAddressWithSettings,
 } from "@/lib/email-message-settings";
@@ -109,7 +110,23 @@ export type EmailSendOutcome =
       status: "withheld_for_environment";
       emailLogId: string | null;
       reason: EmailEnvironmentWithheldReason;
-    };
+    }
+  // #5298 (INV-INT-043): nothing was transmitted, because this send did not win
+  // its row's hand-over claim: the stranded-email sweep had taken the row, or
+  // the claim could not be written. Not terminal: the sweep re-sends the row
+  // once if it keeps a body, and reports it to officers otherwise, so a caller
+  // must not send its own second copy.
+  | { status: "handover_lost"; emailLogId: string };
+
+async function wonEmailHandover(emailLogId: string, templateName: string): Promise<boolean> {
+  try {
+    if (await claimEmailHandover(emailLogId)) return true;
+    logger.warn({ emailLogId, templateName }, "Email not sent: the stranded-email sweep had already taken its row (#5298)");
+  } catch (err) {
+    logger.error({ err, emailLogId, templateName }, "Email not sent: its hand-over could not be recorded; the stranded-email sweep sends it later if it can (#5298)");
+  }
+  return false;
+}
 
 function assertNoCrlf(value: string, field: string) {
   if (/[\r\n]/.test(value)) {
@@ -549,6 +566,13 @@ export async function sendEmail({
     const { transporter, modeLabel } = await getEmailTransporter(
       environmentGate.clearance,
     );
+    // #5298 (INV-INT-043): hand over only after winning this row's guarded
+    // claim, which the stranded-email sweep races. Lost, or unwritable: send
+    // nothing. The row is then the sweep's, which re-sends it once if it keeps
+    // a body, so this email is late rather than sent twice.
+    if (emailLogId && !(await wonEmailHandover(emailLogId, templateName))) {
+      return { status: "handover_lost", emailLogId };
+    }
     const result = await transporter.sendMail({
       from,
       to,

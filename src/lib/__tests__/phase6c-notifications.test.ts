@@ -11,6 +11,8 @@ const { mockPrisma, mockTransporter } = vi.hoisted(() => {
     emailLog: {
       create: vi.fn().mockResolvedValue({ id: "log-1" }),
       update: vi.fn().mockResolvedValue({}),
+      // #5298: the sender's hand-over claim on its own row, always won here.
+      updateMany: vi.fn().mockResolvedValue({ count: 1 }),
     },
     member: {
       findMany: vi.fn().mockResolvedValue([]),

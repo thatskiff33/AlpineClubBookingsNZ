@@ -1326,6 +1326,28 @@ const MOVED_SEND_SITE_CASES: EmailRenderCase[] = [
       }),
   },
   {
+    id: "adminEmailDeliveryFailedTemplate:stranded-unconfirmed",
+    fn: "adminEmailDeliveryFailedTemplate",
+    render: () =>
+      adminEmailDeliveryFailedTemplate({
+        recipient: "member@example.org",
+        templateName: "booking-confirmed",
+        attemptCount: 3,
+        stranded: "unconfirmed",
+      }),
+  },
+  {
+    id: "adminEmailDeliveryFailedTemplate:stranded-never-sent",
+    fn: "adminEmailDeliveryFailedTemplate",
+    render: () =>
+      adminEmailDeliveryFailedTemplate({
+        recipient: "member@example.org",
+        templateName: "password-reset",
+        attemptCount: 1,
+        stranded: "never_sent",
+      }),
+  },
+  {
     id: "adminEmailWithheldTemplate:minimal",
     fn: "adminEmailWithheldTemplate",
     render: () =>

@@ -70,6 +70,10 @@ export async function recordEmailAttempt(params: {
     // 15-minute backoff; no synchronous SMTP send can race that worker.
     status: deferDelivery ? "FAILED" : "QUEUED",
     ...(deferDelivery ? { errorMessage: "Delivery pending; queued for the email retry worker" } : {}),
+    // #5298 (INV-INT-043): not yet handed to the mail server. The sender must
+    // win `claimEmailHandover` before it sends, so a crash before then leaves a
+    // row the stranded-email sweep may safely send again.
+    ...(deferDelivery ? {} : { handoverState: "PENDING" as const }),
     lastAttemptAt: new Date(),
     // #2258: booking attribution on every booking-scoped message, not just
     // withheld ones — the retry cron re-evaluates the switch from this

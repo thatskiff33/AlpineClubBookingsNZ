@@ -19,6 +19,7 @@ const mocks = vi.hoisted(() => ({
   sendEmail: vi.fn(),
   getAdminEmails: vi.fn(),
   getActiveEmailSuppression: vi.fn(),
+  sweepStrandedQueuedEmails: vi.fn(),
 }));
 
 vi.mock("@/lib/prisma", () => ({
@@ -77,6 +78,13 @@ vi.mock("@/lib/email", () => ({
   // #2548: the retry-exhausted alert resolves its audience through the shared
   // access-role-aware helper instead of querying the legacy ADMIN scalar here.
   getAdminEmails: mocks.getAdminEmails,
+}));
+
+// #5298: the stranded-QUEUED sweep has its own suites (`handover.test.ts`, and
+// on PostgreSQL `stranded-queued-email.realdb.test.ts`); here it only has to run
+// before the selection, so its reads never consume this file's row fixtures.
+vi.mock("@/lib/email/handover", () => ({
+  sweepStrandedQueuedEmails: mocks.sweepStrandedQueuedEmails,
 }));
 
 import { retryFailedEmails } from "@/lib/cron-email-retry";
@@ -182,6 +190,21 @@ describe("retryFailedEmails (issue #820)", () => {
     );
   });
 
+  it("settles stranded QUEUED rows before it selects, so a row handed back is replayed in the same run (#5298)", async () => {
+    const order: string[] = [];
+    mocks.sweepStrandedQueuedEmails.mockImplementationOnce(async () => {
+      order.push("sweep");
+    });
+    mocks.findMany.mockImplementationOnce(async () => {
+      order.push("select");
+      return [];
+    });
+
+    await retryFailedEmails();
+
+    expect(order).toEqual(["sweep", "select"]);
+  });
+
   it("marks a successfully re-sent email as SENT and increments attempts", async () => {
     mocks.findMany.mockResolvedValue([failedEmail({ attempts: 1 })]);
     mocks.sendMail.mockResolvedValue({ messageId: "msg_1" });
@@ -199,7 +222,9 @@ describe("retryFailedEmails (issue #820)", () => {
         htmlBody: "<p>hello</p>",
         bookingRetryHtmlBody: null,
       },
-      data: expect.objectContaining({ status: "QUEUED", attempts: 2 }),
+      // #5298: and records that this run may reach the mail server, so a
+      // crash from here is flagged by the stranded sweep, never re-sent.
+      data: expect.objectContaining({ status: "QUEUED", attempts: 2, handoverState: "STARTED" }),
     });
     expect(mocks.sendMail).toHaveBeenCalledTimes(1);
     expect(mocks.update).toHaveBeenCalledWith(

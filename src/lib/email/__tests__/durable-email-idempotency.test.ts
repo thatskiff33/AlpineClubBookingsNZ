@@ -1,10 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
-  create: vi.fn(), findUnique: vi.fn(), update: vi.fn(), sendMail: vi.fn(),
+  create: vi.fn(), findUnique: vi.fn(), update: vi.fn(), updateMany: vi.fn(), sendMail: vi.fn(),
 }));
 vi.mock("@/lib/prisma", () => ({ prisma: { emailLog: {
-  create: mocks.create, findUnique: mocks.findUnique, update: mocks.update,
+  create: mocks.create, findUnique: mocks.findUnique, update: mocks.update, updateMany: mocks.updateMany,
 } } }));
 vi.mock("@/lib/logger", () => ({ default: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() } }));
 vi.mock("@/lib/email-sender", () => ({ EMAIL_FROM: "club@example.org" }));
@@ -40,6 +40,7 @@ beforeEach(() => {
   mocks.create.mockResolvedValue({ id: LOG_ID });
   mocks.findUnique.mockResolvedValue({ id: LOG_ID });
   mocks.update.mockResolvedValue({});
+  mocks.updateMany.mockResolvedValue({ count: 1 });
   mocks.sendMail.mockResolvedValue({ messageId: "message-1" });
 });
 
@@ -51,6 +52,8 @@ describe("durable email event identity", () => {
       errorMessage: "Delivery pending; queued for the email retry worker",
       bookingRetryHtmlBody: expect.stringContaining("INV-42"),
     }) });
+    // #5298: a deferred row is the retry job's from the start, never a hand-over the sweep waits on.
+    expect(mocks.create.mock.calls[0]![0].data).not.toHaveProperty("handoverState");
     expect(mocks.sendMail).not.toHaveBeenCalled();
     mocks.create.mockRejectedValueOnce({ code: "P2002" });
     await expect(sendEmail({ ...params, deferDelivery: true })).resolves.toEqual({ status: "already_recorded", emailLogId: LOG_ID });
@@ -73,8 +76,31 @@ describe("durable email event identity", () => {
       id: LOG_ID, status: "QUEUED", bookingId: "organiser-booking",
       bookingRecipientMemberId: "organiser-member", bookingBodyOverrideApplied: false,
       bookingRetryHtmlBody: expect.stringContaining("INV-42"), htmlBody: null,
+      handoverState: "PENDING",
     }) });
+    // #5298: the row is claimed for hand-over, and only then sent.
+    expect(mocks.updateMany).toHaveBeenCalledWith({
+      where: { id: LOG_ID, status: "QUEUED", handoverState: "PENDING" },
+      data: { handoverState: "STARTED", lastAttemptAt: new Date() },
+    });
+    expect(mocks.updateMany.mock.invocationCallOrder[0]).toBeLessThan(mocks.sendMail.mock.invocationCallOrder[0]!);
     expect(mocks.sendMail).toHaveBeenCalledTimes(1);
+  });
+
+  // #5298 (INV-INT-043): the stranded-email sweep may already own the row.
+  it("sends nothing when the stranded-email sweep has already taken the row", async () => {
+    mocks.updateMany.mockResolvedValueOnce({ count: 0 });
+    await expect(sendEmail(params)).resolves.toEqual({ status: "handover_lost", emailLogId: LOG_ID });
+    expect(mocks.sendMail).not.toHaveBeenCalled();
+    // Not a failure of its own: the row is left for the sweep and the retry job.
+    expect(mocks.update).not.toHaveBeenCalled();
+  });
+
+  it("sends nothing when the hand-over cannot be recorded, so the sweep can still safely re-send it", async () => {
+    mocks.updateMany.mockRejectedValueOnce(new Error("database unavailable"));
+    await expect(sendEmail(params)).resolves.toEqual({ status: "handover_lost", emailLogId: LOG_ID });
+    expect(mocks.sendMail).not.toHaveBeenCalled();
+    expect(mocks.update).not.toHaveBeenCalled();
   });
 
   it("leaves a provider failure retryable, then suppresses another business re-drive", async () => {
