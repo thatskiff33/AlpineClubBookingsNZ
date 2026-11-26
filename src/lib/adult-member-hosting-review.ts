@@ -24,6 +24,7 @@ import {
   tryLockHostingCoverageOwners,
 } from "@/lib/adult-member-hosting-coverage-lock";
 import { bookingOwner } from "@/lib/booking-owner";
+import { stableStringify } from "@/lib/stable-digest";
 import { lockAdultMemberHostingPolicySet } from "@/lib/adult-member-hosting-policy-set";
 import { enqueueHostingCoverageReevaluation } from "@/lib/adult-member-hosting-coverage-queue";
 import {
@@ -94,6 +95,7 @@ import {
   adultMemberHostingStateKey,
   evaluateAdultMemberHostingWithPolicy,
   hostingModeIsActive,
+  hostingModeQueuesCoverageReevaluation,
   resolveAdultMemberHostingPolicy,
   hostingModeCanRefuseStranding,
   type EffectiveAdultMemberHostingMode,
@@ -185,6 +187,9 @@ export type AdultMemberHostingReviewDb = AdultMemberHostingReadDb & Pick<
   | "hostingCoverageReevaluation"
   | "auditLog"
   | "$executeRaw"
+  // #5239: the trip's cover-invalidation revision, read under the trip key and
+  // stamped onto the snapshot (`GroupTripCoverFreshness`).
+  | "groupBooking"
 >;
 
 /** The narrow client the policy read needs on its own. */
@@ -1155,8 +1160,12 @@ export async function evaluateBookingAdultMemberHosting(
 ): Promise<{
   violation: AdultMemberHostingPolicyExceptionViolation | null;
   resolved: ResolvedAdultMemberHostingPolicy;
+  /** See `GroupTripCoverFreshness`; `null` when no trip key was taken. */
+  groupTripCoverFreshness: GroupTripCoverFreshness | null;
 }> {
-  return evaluateLoadedBookingAdultMemberHosting(
+  const acquireGroupKey = acquireHostingCoverageGroupKey(db);
+  let groupTripCoverFreshness: GroupTripCoverFreshness | null = null;
+  const evaluated = await evaluateLoadedBookingAdultMemberHosting(
     booking,
     db,
     async () => {
@@ -1168,8 +1177,83 @@ export async function evaluateBookingAdultMemberHosting(
         throw new HostingCoverageParticipantRetryError();
       }
     },
-    acquireHostingCoverageGroupKey(db),
+    // #5239: the revision is read UNDER the trip key and BEFORE any sibling is
+    // read as cover. A truncating fan-out bumps it while holding the same key,
+    // so either it committed first — and this evaluation reads both its
+    // revision and its booking changes — or it waits for this transaction, and
+    // the bump it then makes leaves this stamp behind. The stamp can be older
+    // than the facts this evaluation saw, never newer.
+    async (groupBookingId) => {
+      await acquireGroupKey(groupBookingId);
+      groupTripCoverFreshness = await readGroupTripCoverFreshness(
+        db,
+        groupBookingId,
+      );
+    },
   );
+  return { ...evaluated, groupTripCoverFreshness };
+}
+
+/**
+ * The Group Trip a stored snapshot's `SAME_GROUP_TRIP` cover was evaluated in,
+ * and that trip's cover-invalidation revision at the time (#5239,
+ * `INV-HOST-045`).
+ *
+ * `GroupBooking.coverageInvalidationRevision` moves on, by database trigger,
+ * every time a trip's re-evaluation fan-out is truncated at
+ * `GROUP_TRIP_COVERAGE_DEPENDENT_LIMIT` — the one way a dependent booking can be
+ * left without the queued re-check it was owed. A snapshot is written with the
+ * revision it was evaluated under, so a matching revision says no truncated
+ * fan-out has happened since, and the absence of a queued row then says
+ * nothing else changed either. The kiosk compares the two before it shows cover
+ * resting on a sibling (`deriveKioskAdultCoverSource`).
+ *
+ * INTERNAL EVIDENCE, NOT PART OF THE VIOLATION. It rides on the stored column
+ * beside the evaluator's snapshot, is never part of `adultMemberHostingStateKey`
+ * (so refreshing it reopens no review and sends no notice), and never reaches a
+ * refusal body, which is built from the evaluator's own violation.
+ */
+// A type alias, not an interface: Prisma's JSON input needs the implicit index
+// signature only an alias gets.
+export type GroupTripCoverFreshness = {
+  groupBookingId: string;
+  revision: number;
+};
+
+/** The stored column's shape: the evaluator's snapshot plus its freshness stamp. */
+type StoredHostingReview = AdultMemberHostingPolicyExceptionViolation & {
+  groupTripCoverFreshness?: GroupTripCoverFreshness;
+};
+
+async function readGroupTripCoverFreshness(
+  db: Pick<AdultMemberHostingReviewDb, "groupBooking">,
+  groupBookingId: string,
+): Promise<GroupTripCoverFreshness | null> {
+  const row = await db.groupBooking.findUnique({
+    where: { id: groupBookingId },
+    select: { coverageInvalidationRevision: true },
+  });
+  return row
+    ? { groupBookingId, revision: row.coverageInvalidationRevision }
+    : null;
+}
+
+/**
+ * Read a stored snapshot's freshness stamp without trusting it: anything but
+ * the exact shape is `null`, which every reader treats as "cannot be verified".
+ */
+export function readStoredGroupTripCoverFreshness(
+  review: unknown,
+): GroupTripCoverFreshness | null {
+  if (!review || typeof review !== "object" || Array.isArray(review)) return null;
+  const stamp = (review as Record<string, unknown>).groupTripCoverFreshness;
+  if (!stamp || typeof stamp !== "object" || Array.isArray(stamp)) return null;
+  const { groupBookingId, revision } = stamp as Record<string, unknown>;
+  if (typeof groupBookingId !== "string" || groupBookingId.length === 0) return null;
+  if (typeof revision !== "number" || !Number.isSafeInteger(revision) || revision < 0) {
+    return null;
+  }
+  return { groupBookingId, revision };
 }
 
 /**
@@ -1881,11 +1965,8 @@ export async function reconcileAdultMemberHostingReview(
     });
   }
 
-  const { violation, resolved } = await evaluateBookingAdultMemberHosting(
-    booking,
-    db,
-    failFastCoverageOwner,
-  );
+  const { violation, resolved, groupTripCoverFreshness } =
+    await evaluateBookingAdultMemberHosting(booking, db, failFastCoverageOwner);
   const mode = resolved.mode;
 
   // The ENFORCED consequence (#2569 §1): do not confirm a non-compliant booking.
@@ -1939,6 +2020,12 @@ export async function reconcileAdultMemberHostingReview(
     return { action: "cleared", violation: null, mode };
   }
 
+  // What the column holds: the evaluator's snapshot plus, where a trip key was
+  // taken, the freshness it was evaluated under (#5239).
+  const stored: StoredHostingReview = groupTripCoverFreshness
+    ? { ...violation, groupTripCoverFreshness }
+    : violation;
+
   if (!recorded) {
     const openedStatus = options.openedStatus ?? AdminReviewStatus.PENDING;
     const decision =
@@ -1955,7 +2042,7 @@ export async function reconcileAdultMemberHostingReview(
     await db.booking.update({
       where: { id: bookingId },
       data: {
-        adultMemberHostingReview: violation,
+        adultMemberHostingReview: stored,
         adultMemberHostingReviewStatus: openedStatus,
         adultMemberHostingReviewReason: decision?.reason ?? null,
         adultMemberHostingReviewedById: decision?.byMemberId ?? null,
@@ -1966,13 +2053,27 @@ export async function reconcileAdultMemberHostingReview(
   }
 
   if (!adultMemberHostingReviewChanged(previous, violation)) {
+    // The SAME hazard, so the officer's decision and every notice stand. But the
+    // evidence about it may have moved — a night now covered from a different
+    // scope, or a newer trip revision after a truncated fan-out — and the kiosk
+    // reads that evidence (#5239). Refresh the column alone, and only when its
+    // content differs: Postgres re-orders JSON keys, so compare canonically.
+    if (
+      stableStringify(booking.adultMemberHostingReview) !==
+      stableStringify(stored)
+    ) {
+      await db.booking.update({
+        where: { id: bookingId },
+        data: { adultMemberHostingReview: stored },
+      });
+    }
     return { action: "unchanged", violation, mode };
   }
 
   await db.booking.update({
     where: { id: bookingId },
     data: {
-      adultMemberHostingReview: violation,
+      adultMemberHostingReview: stored,
       adultMemberHostingReviewStatus: AdminReviewStatus.PENDING,
       adultMemberHostingReviewReason: null,
       adultMemberHostingReviewedById: null,
@@ -3708,7 +3809,7 @@ export async function enqueueOwnHostingCoverageReevaluation(
   if (!plannedBooking) return null;
 
   const resolved = await loadAdultMemberHostingPolicy(plannedBooking.lodgeId, db);
-  if (resolved.mode !== "ENFORCED") return null;
+  if (!hostingModeQueuesCoverageReevaluation(resolved.mode)) return null;
 
   const actorMemberId = context.actorMemberId ?? null;
   // #3039: THIS SEAM OWES THE GROUP FAN-OUT TOO, and the reaper is the case that
@@ -4011,8 +4112,10 @@ export async function enqueueHostingCoverageReevaluationForMember(
       await loadAdultMemberHostingPolicy(booking.lodgeId, db),
     );
   }
-  const enforcing = (booking: { lodgeId: string }): boolean =>
-    resolvedByLodge.get(booking.lodgeId)?.mode === "ENFORCED";
+  const enforcing = (booking: { lodgeId: string }): boolean => {
+    const resolved = resolvedByLodge.get(booking.lodgeId);
+    return resolved !== undefined && hostingModeQueuesCoverageReevaluation(resolved.mode);
+  };
   const plannedQueueOwners = plannedAttended
     .filter(enforcing)
     .map((booking) => bookingOwner(booking).memberId);

@@ -411,6 +411,26 @@ export function hostingModeCanRefuseStranding(
 }
 
 /**
+ * Does every seam that can change a booking's cover queue a re-evaluation at
+ * this mode? (#5239, `INV-HOST-045`.)
+ *
+ * ONLY `ENFORCED`, and that is a statement of what is VERIFIED rather than a
+ * policy choice. The booking-write fan-out runs whenever the rule is active,
+ * but the confirming seam (`enqueueOwnHostingCoverageReevaluation`) and the
+ * membership-standing seam (`enqueueHostingCoverageReevaluationForMember`)
+ * queue nothing under `ADMIN_REVIEW_REQUIRED`. So only under `ENFORCED` does
+ * "no queued row" mean "nothing has changed since the last evaluation", and
+ * only there may the kiosk show cover that rests on another booking. Those two
+ * seams and the kiosk read this one predicate, so widening the queue to the
+ * review mode moves the display with it rather than leaving it behind.
+ */
+export function hostingModeQueuesCoverageReevaluation(
+  mode: EffectiveAdultMemberHostingMode,
+): boolean {
+  return mode === "ENFORCED";
+}
+
+/**
  * Club-wide default with per-lodge override (ADR-001 resolved question 3), with
  * one difference from the minimum-stay policy SET: this policy is a single row
  * per scope, so a lodge overrides by holding a row whose mode is not INHERIT,

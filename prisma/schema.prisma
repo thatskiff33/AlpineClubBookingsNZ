@@ -2657,6 +2657,13 @@ model GroupBooking {
   maxJoiners         Int?
   createdAt          DateTime                @default(now())
   updatedAt          DateTime                @updatedAt
+  // #5239 (INV-HOST-045): bumped, by the AuditLog trigger in migration
+  // 20270106030000_group_trip_cover_freshness and nowhere else, each time a
+  // Group Trip cover re-evaluation fan-out is truncated at its ceiling. Hosting
+  // snapshots record the value they were evaluated under; the kiosk shows cover
+  // resting on a trip sibling only while the two still match. Internal: never
+  // shown, and independent of audit retention, so it never goes backwards.
+  coverageInvalidationRevision Int @default(0)
 
   organiserBooking Booking                 @relation("GroupBookingOrganiser", fields: [organiserBookingId], references: [id], onDelete: Cascade)
   organiserMember  Member                  @relation(fields: [organiserMemberId], references: [id], onDelete: Restrict)

@@ -1,17 +1,25 @@
-import type { PrismaClient } from "@prisma/client";
+import type { Prisma, PrismaClient } from "@prisma/client";
 
 import logger from "@/lib/logger";
+import { GROUP_TRIP_COVERAGE_DEPENDENT_LIMIT } from "@/lib/adult-member-hosting-coverage-ceilings";
 import {
   loadAdultMemberHostingPolicy,
   readInheritedSplitPairGroupTrips,
+  readStoredGroupTripCoverFreshness,
+  type GroupTripCoverFreshness,
 } from "@/lib/adult-member-hosting-review";
 import {
   deriveKioskAdultCoverSource,
   type KioskAdultCoverDecision,
   type KioskAdultCoverSource,
 } from "@/lib/kiosk-adult-cover";
-import { hostingModeIsActive } from "@/lib/policies/adult-member-hosting";
 import {
+  hostingModeIsActive,
+  hostingModeQueuesCoverageReevaluation,
+  type ResolvedAdultMemberHostingPolicy,
+} from "@/lib/policies/adult-member-hosting";
+import {
+  groupTripCoverageDependentWhere,
   groupTripIdentityOf,
   type GroupTripIdentity,
   type GroupTripIdentityRow,
@@ -140,13 +148,18 @@ export interface KioskGroupTripOrganiser {
  * impossible rather than made safe). `memberId` and `parentBookingId` are the
  * split-pair carve-out's inputs, and `adultMemberHostingReview` with
  * `adultMemberHostingReviewStatus` is the canonical cover evidence and the
- * officer decision taken on it. All required: a call site that forgot one is a
+ * officer decision taken on it. `lodgeId`, `checkIn` and `checkOut` place the
+ * card in its trip's dependent population, the set a sibling's re-evaluation
+ * fan-out reads (#5239). All required: a call site that forgot one is a
  * compile error rather than a card that quietly reports no Group Trip, or an
  * approved exception that reads as an unapproved violation.
  */
 export type KioskGroupTripBookingRow = GroupTripIdentityRow & {
   id: string;
   memberId: string;
+  lodgeId: string;
+  checkIn: Date;
+  checkOut: Date;
   parentBookingId: string | null;
   adultMemberHostingReview: unknown;
   adultMemberHostingReviewStatus: KioskAdultCoverDecision | null;
@@ -189,7 +202,9 @@ export type KioskGroupTripDb = Pick<
 >;
 
 /**
- * Is the club's adult-member-hosting requirement in force at this lodge?
+ * Is the club's adult-member-hosting requirement in force at this lodge? The
+ * resolved policy when it is, so the Group Trip freshness check below can read
+ * the mode and scope it was answered under; `null` when it is not.
  *
  * THIS GATES THE COVER-SOURCE TIER ONLY, AND IT IS NOT THE GROUP TRIP OPTION.
  * Owner decision D1 on #3040 settled that the ordinary linkage badge is not
@@ -233,12 +248,12 @@ export type KioskGroupTripDb = Pick<
 async function hostingRequirementInForce(
   db: KioskGroupTripDb,
   lodgeId: string,
-): Promise<boolean> {
+): Promise<ResolvedAdultMemberHostingPolicy | null> {
   try {
     const resolved = await loadAdultMemberHostingPolicy(lodgeId, db);
-    return hostingModeIsActive(resolved.mode);
+    return hostingModeIsActive(resolved.mode) ? resolved : null;
   } catch {
-    return false;
+    return null;
   }
 }
 
@@ -351,6 +366,19 @@ async function readOrganiserNames(
 }
 
 /**
+ * The queue rows that make a card's recorded cover pending (signal 1 on
+ * `KioskCoverEvidenceStatus`): unprocessed, at this lodge, for these owners.
+ * Exported so the fan-out contract tests can prove every row a sibling's change
+ * writes is one this predicate finds (#5239).
+ */
+export function kioskPendingReevaluationWhere(
+  lodgeId: string,
+  ownerIds: readonly string[],
+): Prisma.HostingCoverageReevaluationWhereInput {
+  return { processedAt: null, lodgeId, memberId: { in: [...ownerIds] } };
+}
+
+/**
  * The staleness signals, as two indexed reads over already-loaded ids.
  *
  * `HostingCoverageReevaluation` is keyed on `(memberId, lodgeId)` and carries an
@@ -364,16 +392,12 @@ async function readOrganiserNames(
  * incident reaches any payload — the issue forbids exposing incidents, and this
  * uses one solely to refuse to trust a snapshot that contradicts it.
  *
- * WHAT THIS READ IS BLIND TO, AND WHY THAT IS HANDLED ELSEWHERE. `ownerIds` are
- * the visible bookings' OWN owners, and every enqueue site writes the owner of
- * the booking that CHANGED. So when a Group Trip sibling in ANOTHER account
- * changes, the queue row names their owner and this read never sees it — the one
- * staleness class this epic itself introduces. Widening the read would not fix
- * it either, because #3039's fan-out does not exist to enqueue anything: there
- * is no row to find. The answer is therefore in
- * `deriveKioskAdultCoverSource`, which refuses to assert cover that RESTS on a
- * Group Trip sibling at all until #3039 lands. See the note there for what
- * #3039 must do before that refusal is removed.
+ * WHY THE OWN OWNER IS ENOUGH FOR A QUEUED ROW. A change to a Group Trip sibling
+ * on ANOTHER account owes this card a re-check, and #3039's fan-out records it
+ * under THIS card's owner and lodge (`settleGroupTripDependentCoverage`), so
+ * this read finds it. What it cannot see — a fan-out that was truncated before
+ * it reached this card, or a lodge whose seams do not all queue — is
+ * `readGroupTripCoverFreshness`'s job.
  */
 async function readStalenessSignals(
   db: KioskGroupTripDb,
@@ -384,7 +408,7 @@ async function readStalenessSignals(
   const bookingIds = rows.map((row) => row.id);
   const [queued, incidents] = await Promise.all([
     db.hostingCoverageReevaluation.findMany({
-      where: { processedAt: null, lodgeId, memberId: { in: ownerIds } },
+      where: kioskPendingReevaluationWhere(lodgeId, ownerIds),
       select: { memberId: true },
     }),
     db.hostingCoverageIncident.findMany({
@@ -396,6 +420,92 @@ async function readStalenessSignals(
     queuedOwners: new Set(queued.map((row) => row.memberId)),
     incidentBookings: new Set(incidents.map((row) => row.bookingId)),
   };
+}
+
+/**
+ * The Group Trip freshness each card's `SAME_GROUP_TRIP` cover must match to be
+ * shown, or no entry where sibling cover cannot be verified at all (#5239,
+ * `INV-HOST-045`).
+ *
+ * THREE CONDITIONS BEFORE ANY READ, from the policy already resolved: the lodge
+ * queues a re-evaluation from every seam that can change cover
+ * (`hostingModeQueuesCoverageReevaluation` — `ENFORCED` only, so a review-only
+ * lodge keeps the warning), and the club still lets a sibling count
+ * (`hostScopes.sameGroupTrip`; a snapshot claiming sibling cover under a scope
+ * that is now off is answering a rule no longer in force). Only cards whose
+ * snapshot carries a freshness stamp are read for, because an unstamped one is
+ * unverifiable whatever the reads say.
+ *
+ * THEN TWO READS, each failing to "unverifiable" rather than to the outer
+ * catch-all, so a failure withholds the cover line instead of the whole
+ * enrichment:
+ *
+ *  - the trips' current `coverageInvalidationRevision`, one query keyed on the
+ *    primary key. It moves on every truncated fan-out and never goes back, so a
+ *    card the fan-out missed stays behind until it is re-evaluated, however much
+ *    the trip has shrunk since;
+ *  - each card's own dependent population, through the same
+ *    `groupTripCoverageDependentWhere` the fan-out reads. At or above
+ *    `GROUP_TRIP_COVERAGE_DEPENDENT_LIMIT` a sibling's change would be truncated
+ *    now, so nothing about this card's re-check can be promised. One count per
+ *    stamped card, and stamped cards are the few with a recorded violation.
+ */
+async function readGroupTripCoverFreshness(
+  db: KioskGroupTripDb,
+  policy: ResolvedAdultMemberHostingPolicy,
+  rows: readonly KioskGroupTripBookingRow[],
+  identities: ReadonlyMap<string, GroupTripIdentity>,
+): Promise<Map<string, GroupTripCoverFreshness>> {
+  const verified = new Map<string, GroupTripCoverFreshness>();
+  if (
+    !hostingModeQueuesCoverageReevaluation(policy.mode) ||
+    !policy.hostScopes.sameGroupTrip
+  ) {
+    return verified;
+  }
+  const stamped = rows.flatMap((row) => {
+    const identity = identities.get(row.id);
+    return identity &&
+      readStoredGroupTripCoverFreshness(row.adultMemberHostingReview) !== null
+      ? [{ row, identity }]
+      : [];
+  });
+  if (stamped.length === 0) return verified;
+
+  const groupIds = [
+    ...new Set(stamped.map(({ identity }) => identity.groupBookingId)),
+  ];
+  let revisions: Map<string, number>;
+  try {
+    const groups = await db.groupBooking.findMany({
+      where: { id: { in: groupIds } },
+      select: { id: true, coverageInvalidationRevision: true },
+    });
+    revisions = new Map(
+      groups.map((group) => [group.id, group.coverageInvalidationRevision]),
+    );
+  } catch (err) {
+    logger.warn({ err }, "kiosk Group Trip cover freshness read failed; withholding sibling cover");
+    return verified;
+  }
+
+  await Promise.all(
+    stamped.map(async ({ row, identity }) => {
+      const revision = revisions.get(identity.groupBookingId);
+      if (revision === undefined) return;
+      try {
+        const population = await db.booking.count({
+          where: groupTripCoverageDependentWhere(row, identity),
+        });
+        if (population >= GROUP_TRIP_COVERAGE_DEPENDENT_LIMIT) return;
+      } catch (err) {
+        logger.warn({ err }, "kiosk Group Trip dependent count failed; withholding sibling cover");
+        return;
+      }
+      verified.set(row.id, { groupBookingId: identity.groupBookingId, revision });
+    }),
+  );
+  return verified;
 }
 
 /**
@@ -488,13 +598,17 @@ async function buildKioskGroupTripFields<T extends { bookingId: string }>(
   // all (the cover line goes on group cards only, so a day list with no group
   // on it asks the policy nothing), then the club's hosting mode.
   const coverRows = visibleRows.filter((row) => identities.has(row.id));
-  const coverSource =
-    context.capabilities.coverSource &&
-    coverRows.length > 0 &&
-    (await hostingRequirementInForce(context.db, context.lodgeId));
+  const coverPolicy =
+    context.capabilities.coverSource && coverRows.length > 0
+      ? await hostingRequirementInForce(context.db, context.lodgeId)
+      : null;
+  const coverSource = coverPolicy !== null;
   const signals = coverSource
     ? await readStalenessSignals(context.db, coverRows, context.lodgeId)
     : { queuedOwners: new Set<string>(), incidentBookings: new Set<string>() };
+  const groupTripCover = coverPolicy
+    ? await readGroupTripCoverFreshness(context.db, coverPolicy, coverRows, identities)
+    : new Map<string, GroupTripCoverFreshness>();
   const rowById = new Map(visibleRows.map((row) => [row.id, row]));
 
   return cards.map((card) => {
@@ -531,6 +645,7 @@ async function buildKioskGroupTripFields<T extends { bookingId: string }>(
               {
                 queuedReevaluation: signals.queuedOwners.has(row.memberId),
                 openIncident: signals.incidentBookings.has(row.id),
+                currentGroupTripCover: groupTripCover.get(row.id) ?? null,
               },
               row.adultMemberHostingReviewStatus,
             ),

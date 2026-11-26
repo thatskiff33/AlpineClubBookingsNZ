@@ -2,7 +2,11 @@ import {
   ADULT_MEMBER_HOST_SCOPES,
   type AdultMemberHostScope,
 } from "@/lib/booking-policy-exceptions";
-import { parseStoredHostingReview } from "@/lib/adult-member-hosting-review";
+import {
+  parseStoredHostingReview,
+  readStoredGroupTripCoverFreshness,
+  type GroupTripCoverFreshness,
+} from "@/lib/adult-member-hosting-review";
 
 /**
  * Reading a canonical adult-member-hosting snapshot as kiosk cover evidence
@@ -74,9 +78,8 @@ export type KioskCoverEvidenceStatus =
    *     clears the column. So a stored snapshot claiming full cover is one the
    *     world has moved past, and reporting it as current cover would be the
    *     precise failure `INV-HOST-045` exists to prevent;
-   *  4. a covered night resting on `SAME_GROUP_TRIP`, while #3039 is unbuilt.
-   *     See `deriveKioskAdultCoverSource` for why that claim is unverifiable
-   *     today and must therefore be withheld rather than shown.
+   *  4. a covered night resting on `SAME_GROUP_TRIP` that cannot be verified
+   *     as current. See `deriveKioskAdultCoverSource` for what verifies it.
    */
   | "STALE"
   /**
@@ -199,29 +202,43 @@ const NO_COVER_EVIDENCE = { nights: [], scopes: [] } as const;
  * this cannot read, and any snapshot that disagrees with its own `uncovered`
  * list, is `UNREADABLE`.
  *
- * ## SAME_GROUP_TRIP cover is withheld until #3039 lands
+ * ## SAME_GROUP_TRIP cover is shown only when it can be verified (#5239)
  *
- * A night covered by an adult in a SIBLING booking can be silently invalidated by
- * a change on that sibling's account, and nothing today notices: the
- * re-evaluation queue is keyed on the owner of the booking that changed, so the
- * row names the sibling's owner and `readStalenessSignals` — reading this
- * booking's own owner — never finds it. #3039 is the fan-out that fixes it.
- * Until it exists, a cover claim resting on a Group Trip sibling is
- * unverifiable, and `INV-HOST-045` forbids showing an unverifiable claim as
- * cover. So the whole snapshot reports `STALE`.
+ * A night covered by an adult in a SIBLING booking can be invalidated by a
+ * change on that sibling's account. #3039's fan-out queues a re-evaluation for
+ * every dependent booking under ITS OWN owner, so the own-owner queue read
+ * (signal 1) sees the pending re-check. Two gaps remain, and
+ * `currentGroupTripCover` is how the caller says both are closed for this card:
  *
- * WHAT #3039 MUST DO BEFORE THIS IS REMOVED. Either enqueue a re-evaluation row
- * for every DEPENDENT owner (not only the changed booking's owner), so this
- * booking's own-owner read finds it, or extend `readStalenessSignals` to the
- * owners of the whole group. Removing this refusal without one of those in place
- * restores exactly the hole it closes. It is deliberately whole-snapshot rather
- * than per-night: marking the night `covered: false` instead would put a
- * fabricated "Not covered: <date>" on a child-supervision screen, and a false
- * alarm there is how a screen gets ignored.
+ *  - the fan-out is capped at `GROUP_TRIP_COVERAGE_DEPENDENT_LIMIT`, so a
+ *    dependent past the cap gets no row at all. Every truncation moves the
+ *    trip's `coverageInvalidationRevision` on, and the writer stamps each
+ *    snapshot with the revision it was evaluated under
+ *    (`GroupTripCoverFreshness`); a stamp that is missing, malformed, from
+ *    another trip or from an older revision is unverifiable;
+ *  - only an `ENFORCED` lodge queues from every seam
+ *    (`hostingModeQueuesCoverageReevaluation`), and a lodge whose Group Trip
+ *    scope is now off is not answering with sibling cover any more. The caller
+ *    passes `null` in both cases, and while the trip is at the cap or its own
+ *    freshness reads failed.
+ *
+ * Any of those makes the WHOLE snapshot `STALE`, never just the night: marking
+ * the night `covered: false` instead would put a fabricated "Not covered:
+ * <date>" on a child-supervision screen, and a false alarm there is how a screen
+ * gets ignored.
  */
 export function deriveKioskAdultCoverSource(
   review: unknown,
-  signals: { queuedReevaluation: boolean; openIncident: boolean },
+  signals: {
+    queuedReevaluation: boolean;
+    openIncident: boolean;
+    /**
+     * The trip and revision this booking's `SAME_GROUP_TRIP` cover must have
+     * been evaluated under to be shown, or `null` when sibling cover cannot be
+     * verified for this card at all. Read only when the snapshot rests on it.
+     */
+    currentGroupTripCover: GroupTripCoverFreshness | null;
+  },
   decision: KioskAdultCoverDecision | null = null,
 ): KioskAdultCoverSource {
   const stale = { status: "STALE", ...NO_COVER_EVIDENCE } as const;
@@ -298,8 +315,10 @@ export function deriveKioskAdultCoverSource(
   // violation goes away, so its continued existence means the recorded answer is
   // behind the facts. Never the optimistic reading.
   if (derivedUncovered.size === 0) return stale;
-  // #3039 is unbuilt, so a claim resting on a sibling booking is unverifiable.
-  if (nights.some((night) => night.scopes.includes("SAME_GROUP_TRIP"))) {
+  if (
+    nights.some((night) => night.scopes.includes("SAME_GROUP_TRIP")) &&
+    !groupTripCoverIsCurrent(review, signals.currentGroupTripCover)
+  ) {
     return stale;
   }
 
@@ -311,4 +330,18 @@ export function deriveKioskAdultCoverSource(
     ),
     decision,
   };
+}
+
+/** Was this snapshot evaluated under exactly the trip revision now in force? */
+function groupTripCoverIsCurrent(
+  review: unknown,
+  current: GroupTripCoverFreshness | null,
+): boolean {
+  if (current === null) return false;
+  const stamp = readStoredGroupTripCoverFreshness(review);
+  return (
+    stamp !== null &&
+    stamp.groupBookingId === current.groupBookingId &&
+    stamp.revision === current.revision
+  );
 }

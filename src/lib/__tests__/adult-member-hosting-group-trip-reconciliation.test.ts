@@ -72,8 +72,11 @@ import {
   GROUP_TRIP_COVERAGE_SOURCE_SELECT,
   enqueueHostingCoverageReevaluationForMember,
   loadGroupTripCoverageDependentBookingIds,
+  readStoredGroupTripCoverFreshness,
+  reconcileAdultMemberHostingReview,
   reconcileAdultMemberHostingReviewWithSiblings,
 } from "@/lib/adult-member-hosting-review";
+import { kioskPendingReevaluationWhere } from "@/lib/kiosk-group-trip";
 import { CENSUS_TIMEOUT_MS } from "@/test/census-timeout";
 
 const LODGE = "lodge-a";
@@ -167,6 +170,8 @@ interface StoreOptions {
   onFirstDependentRead?: (rows: Map<string, FakeBooking>) => void;
   /** Fail the try-lock for this trip, as a conflicting transaction would. */
   contendedGroupKeys?: readonly string[];
+  /** `GroupBooking.coverageInvalidationRevision` per trip (#5239); 0 if absent. */
+  revisions?: Record<string, number>;
 }
 
 function makeStore(rows: FakeBooking[], options: StoreOptions = {}) {
@@ -176,6 +181,7 @@ function makeStore(rows: FakeBooking[], options: StoreOptions = {}) {
   const queued: Array<Record<string, unknown>> = [];
   const audits: Array<Record<string, unknown>> = [];
   const bookingWheres: Array<Record<string, unknown>> = [];
+  const revisionReadsAfterLock: boolean[] = [];
   let dependentReads = 0;
 
   function recordLock(sql: string, values: unknown[], blocking: boolean) {
@@ -283,9 +289,24 @@ function makeStore(rows: FakeBooking[], options: StoreOptions = {}) {
         return {};
       }),
     },
+    groupBooking: {
+      findUnique: vi.fn(async ({ where }: any) => {
+        // Read under the trip key, so it must come after it (#5239).
+        revisionReadsAfterLock.push(
+          locks.some(
+            (lock) =>
+              lock.namespace === HOSTING_COVERAGE_GROUP_LOCK_NAMESPACE_FOR_TESTS &&
+              lock.key === where.id,
+          ),
+        );
+        return {
+          coverageInvalidationRevision: options.revisions?.[where.id] ?? 0,
+        };
+      }),
+    },
   } as any;
 
-  return { db, locks, queued, bookingWheres, byId, audits };
+  return { db, locks, queued, bookingWheres, byId, audits, revisionReadsAfterLock };
 }
 
 /**
@@ -1221,3 +1242,156 @@ describe("the inline drain reaches the siblings' items (#3039)", () => {
     ).toBeGreaterThan(-1);
   });
 });
+
+// #5239: the kiosk now shows cover that rests on a trip sibling, on two promises
+// from this side: every dependent's re-check is queued where the kiosk's own-owner
+// read finds it, and every fresh evaluation records the trip revision it ran under.
+describe("what the kiosk relies on from the fan-out and the evaluator (#5239, INV-HOST-045)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  /** Owner of each fixture booking, from the fixture's own rows. */
+  function ownerOf(rows: FakeBooking[], id: string): string {
+    const row = rows.find((candidate) => candidate.id === id);
+    return row?.memberId as string;
+  }
+
+  for (const [label, change] of [
+    ["an edit that removes the trip's adult", (rows: FakeBooking[]) => {
+      rows[0] = { ...rows[0], guests: [] };
+    }],
+    ["a cancellation of the covering booking", (rows: FakeBooking[]) => {
+      rows[0] = { ...rows[0], status: "CANCELLED" };
+    }],
+  ] as const) {
+    it(`queues ${label} for every dependent owner, where the kiosk's pending read finds it`, async () => {
+      const rows = tripRows();
+      change(rows);
+      const { db, queued } = makeStore(rows);
+      await reconcileAdultMemberHostingReviewWithSiblings(
+        `organiser-${TRIP}`,
+        db,
+        OFFICER,
+      );
+      for (const dependent of ["joiner-a", "joiner-b"]) {
+        const owner = ownerOf(rows, dependent);
+        const found = queued.filter((item) =>
+          // A freshly written row is unprocessed: the column defaults to NULL.
+          matchesWhere({ processedAt: null, ...item }, kioskPendingReevaluationWhere(LODGE, [owner])),
+        );
+        expect(
+          found.map((item) => item.sourceBookingId),
+          `INV-HOST-045 (docs/invariants/adult-member-hosting.md): ${dependent}'s ` +
+            "owner must hold a pending row the kiosk's own-owner read can see",
+        ).toEqual([dependent]);
+      }
+    });
+  }
+
+  /** A joiner whose kid is covered on the 3rd by the organiser's adult only. */
+  function partlyCoveredTrip(): FakeBooking[] {
+    const rows = tripRows({
+      organiser: {
+        guests: [adultGuest("organiser-adult", ["2026-08-03"], "adult-source")],
+      },
+    });
+    return rows;
+  }
+
+  it("stamps a fresh evaluation with the trip revision it read under the trip key", async () => {
+    const rows = partlyCoveredTrip();
+    const { db, byId, revisionReadsAfterLock } = makeStore(rows, {
+      revisions: { [TRIP]: 3 },
+    });
+    const outcome = await reconcileAdultMemberHostingReview("joiner-a", db, {
+      enforcement: "REVIEW_ONLY",
+    });
+    expect(outcome.action).toBe("opened");
+    const stored = byId.get("joiner-a")?.adultMemberHostingReview;
+    expect(
+      readStoredGroupTripCoverFreshness(stored),
+      "INV-HOST-045: the snapshot records the trip revision it was evaluated under",
+    ).toEqual({ groupBookingId: TRIP, revision: 3 });
+    expect(
+      (stored as { requirements: { qualifyingHostsByNight: unknown } })
+        .requirements.qualifyingHostsByNight,
+    ).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          night: "2026-08-03",
+          coveredByScopes: ["SAME_GROUP_TRIP"],
+        }),
+      ]),
+    );
+    expect(
+      revisionReadsAfterLock,
+      "INV-LOCK-002: the revision is read only once the trip key is held",
+    ).toEqual([true]);
+    // Never part of the hazard's identity, so never in a refusal or a notice.
+    expect(outcome.violation).not.toHaveProperty("groupTripCoverFreshness");
+  });
+
+  it("refreshes the stamp on an unchanged hazard without reopening the officer's decision", async () => {
+    const rows = partlyCoveredTrip();
+    const first = makeStore(rows, { revisions: { [TRIP]: 3 } });
+    await reconcileAdultMemberHostingReview("joiner-a", first.db, {
+      enforcement: "REVIEW_ONLY",
+    });
+    // An officer approved it; then a truncated fan-out moved the revision on.
+    const decided = {
+      ...first.byId.get("joiner-a"),
+      adultMemberHostingReviewStatus: "APPROVED",
+      adultMemberHostingReviewReason: "Hut leader confirmed",
+    };
+    const later = makeStore(
+      rows.map((row) => (row.id === "joiner-a" ? decided : row)),
+      { revisions: { [TRIP]: 4 } },
+    );
+    const outcome = await reconcileAdultMemberHostingReview("joiner-a", later.db, {
+      enforcement: "REVIEW_ONLY",
+    });
+    expect(outcome.action).toBe("unchanged");
+    const row = later.byId.get("joiner-a");
+    expect(readStoredGroupTripCoverFreshness(row?.adultMemberHostingReview)).toEqual({
+      groupBookingId: TRIP,
+      revision: 4,
+    });
+    expect(
+      row?.adultMemberHostingReviewStatus,
+      "the same hazard keeps its decision: a refreshed stamp is evidence, not a new hazard",
+    ).toBe("APPROVED");
+    const updates = later.db.booking.update.mock.calls.map(
+      ([args]: [{ data: Record<string, unknown> }]) => Object.keys(args.data),
+    );
+    expect(updates).toEqual([["adultMemberHostingReview"]]);
+
+    // Up to date now, so a second pass writes nothing at all — even though
+    // Postgres hands the column back with its keys re-ordered.
+    const settled = makeStore(
+      rows.map((candidate) =>
+        candidate.id === "joiner-a"
+          ? { ...row, adultMemberHostingReview: reorderKeys(row?.adultMemberHostingReview) }
+          : candidate,
+      ),
+      { revisions: { [TRIP]: 4 } },
+    );
+    await reconcileAdultMemberHostingReview("joiner-a", settled.db, {
+      enforcement: "REVIEW_ONLY",
+    });
+    expect(settled.db.booking.update).not.toHaveBeenCalled();
+  });
+});
+
+/** Reverse every object's key order, as a JSONB round trip may. */
+function reorderKeys(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(reorderKeys);
+  if (value && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value as Record<string, unknown>)
+        .reverse()
+        .map(([key, entry]) => [key, reorderKeys(entry)]),
+    );
+  }
+  return value;
+}
