@@ -4392,8 +4392,30 @@ cron's next failure) does not count. Pinned by
 A copy that has explicitly declared a capture mailbox transmits into it normally
 and its rows are ordinary `SENT`.
 
+A `QUEUED` row a crash strands is settled by the retry job (#5298,
+`INV-INT-043`). `EmailLog.handoverState` records how far the send got: the
+sender writes `PENDING` with the row, and moves it to `STARTED` with one guarded
+`updateMany` (id, `QUEUED`, `PENDING`) before it calls the mail server; a lost
+or failed claim sends nothing (`handover_lost`). The retry job's own claim also
+writes `STARTED`. Null means the previous release wrote the row. Before it
+selects, each run takes up to 50 rows `QUEUED` for more than 30 minutes and
+less than 7 days, each with a write guarded on the row as read:
+
+- `PENDING` at attempts 1, body kept: back to `FAILED`, attempts unchanged, and
+  replayed by the same run with its usual checks;
+- `PENDING` at attempts 1, no body: `FAILED` at the ceiling, "never sent";
+- anything else (`STARTED`, null, or attempts above 1): `FAILED` at the
+  ceiling and `UNCONFIRMED`, never sent again automatically.
+
+Both ceiling outcomes alert officers through the exhausted-retry alert, and the
+review queue marks an `UNCONFIRMED` row "May already have been delivered"; its
+**Try again** warns that the member may receive it twice. Pinned by
+`handover.test.ts` and `stranded-queued-email.realdb.test.ts`.
+
 ```text
 email queued -> send attempted -> sent
+queued, never handed over, stranded 30 min -> failed (retried) or failed at the ceiling (no body)
+queued, hand-over started or unknown, stranded 30 min -> failed at the ceiling, unconfirmed (officer decides)
 confirmed copy -> environment-safety suppression (terminal, no provider contacted)
 unconfirmed role or capture-in-production -> retryable failure carrying a block reason
 send failure -> retryable failed -> suppression + booking authority rechecked

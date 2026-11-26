@@ -99,6 +99,9 @@ async function retireUnverifiableBookingEmail(params: {
  * Each row is claimed (FAILED -> QUEUED) with a guarded update before the
  * send so an interrupted or concurrent run can never deliver the same email
  * twice (F33, #1885).
+ * Rows a crash left QUEUED are settled first (#5298, INV-INT-043,
+ * `sweepStrandedQueuedEmails`): re-sent once if never handed over, flagged
+ * to officers otherwise.
  * Runs every 30 minutes.
  */
 export async function retryFailedEmails(): Promise<{

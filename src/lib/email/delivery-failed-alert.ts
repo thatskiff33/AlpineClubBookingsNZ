@@ -2,7 +2,7 @@ import { adminEmailDeliveryFailedTemplate } from "@/lib/email-templates/admin-op
 import { renderEmailHtml } from "@/lib/email-theme";
 
 /** The alert's own template: an alert about a failed alert is never raised. */
-export const DELIVERY_FAILED_ALERT_TEMPLATE = "admin-email-failure";
+const DELIVERY_FAILED_ALERT_TEMPLATE = "admin-email-failure";
 
 /**
  * Tell every officer that an email will not reach its recipient without them:

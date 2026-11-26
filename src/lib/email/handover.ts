@@ -55,7 +55,7 @@ export async function claimEmailHandover(emailLogId: string): Promise<boolean> {
 type StrandedOutcome = "requeued" | "never_sent" | "unconfirmed";
 
 /** Stranded rows settled this run, by outcome. */
-export type StrandedSweepResult = Record<StrandedOutcome, number>;
+type StrandedSweepResult = Record<StrandedOutcome, number>;
 
 interface StrandedRow {
   id: string;

@@ -88,6 +88,24 @@ What you can do next depends on whether the system kept a copy of the message:
    (a deleted booking has no link), or, where the row says so, reissue it from
    **Token Email Recovery**. Then choose **Archive**.
 
+**An email the app stopped while sending.** The app records each email just
+before it hands it to the mail server. If the app stops between the two (a
+crash, deploy or restart), the retry job finds the email within about an hour.
+If it had not reached the mail server, the retry job sends it, and you see
+nothing. Otherwise the row lands here, and every officer gets an email about
+it:
+
+- **May already have been delivered** on the row means the app stopped while
+  the email was being handed over, so the recipient may have it. It is not
+  sent again by itself. Ask the recipient, or check the booking, before you
+  choose **Try again**: the confirmation warns that they may receive it twice.
+  If they have it, choose **Archive**.
+- A failure reason starting **Never sent** means it never reached the mail
+  server and no copy was kept. Send a fresh one from the booking or member,
+  then archive the row.
+
+Emails the app stopped on more than seven days ago are not looked at.
+
 **Archive and Try again together.** Both are recorded in the audit log, and
 the newer of the two decides where a row shows. A row you archived and then
 tried again shows as active if it fails again; a row tried again and then
@@ -162,6 +180,8 @@ This is a monitoring page — it has no configuration. The figures it shows:
 | A nomination, account-setup or membership-cancellation email never arrived | The tokenised email failed | Reissue it from **Token Email Recovery** |
 | A booking confirmation, pre-arrival reminder or guest payment link failed and was not retried | It carries a door code or payment link, so no copy is kept to retry | Follow **Send a fresh copy from the booking** and send a fresh copy; the failure archives itself once the copy has gone. If the booking has been deleted there is no link: contact the member directly, then archive the failure |
 | An email failed after a provider outage and the row has **Try again** | The retry job used all its attempts during the outage | Once the provider is working, choose **Try again**; the next retry run sends it |
+| A row says **May already have been delivered** | The app stopped while it was handing that email to the mail server, so it cannot tell whether it arrived | Check with the recipient. Choose **Try again** only if they did not get it; otherwise archive the row |
+| A failure says **Never sent** | The app stopped before handing the email over, and the message kept no copy | Send the recipient a fresh one from the booking or member, then archive the row |
 | A failure says it was not retried because recipient authorization context predates #2362 | The legacy booking email was retired fail-closed; this is a security retirement, not three provider send attempts | Follow the displayed instruction: regenerate a fresh email through the current booking workflow, manually re-send it only if it is still needed, then archive the failure |
 | The action buttons are greyed out | Your role has support view, not edit | Ask a full admin for Support & System edit access |
 | Lots of exhausted failures at once | A provider outage or misconfiguration | Check email delivery config in [`../../CONFIGURATION.md`](../../CONFIGURATION.md#email-delivery); once resolved, try again the rows that offer it and archive the rest |

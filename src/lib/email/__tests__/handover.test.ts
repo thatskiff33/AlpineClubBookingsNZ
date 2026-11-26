@@ -138,23 +138,17 @@ describe("sweepStrandedQueuedEmails", () => {
     });
   });
 
-  it.each([
-    ["a sender that started its hand-over", { handoverState: "STARTED" as const }],
-    ["the previous release, which records nothing", { handoverState: null }],
-    ["the previous release's retry job, which claims without moving it off PENDING", { attempts: 2 }],
-  ])("flags, and never re-sends, a row from %s", async (_label, overrides) => {
-    given([stranded("maybe", overrides)], ["maybe"]);
+  it.each<[string, Pick<Row, "handoverState" | "attempts">]>([
+    ["a sender that started its hand-over", { handoverState: "STARTED", attempts: 1 }],
+    ["the previous release, which records nothing", { handoverState: null, attempts: 1 }],
+    ["the previous release's retry job, which claims without moving it off PENDING", { handoverState: "PENDING", attempts: 2 }],
+  ])("flags, and never re-sends, a row from %s", async (_label, state) => {
+    given([stranded("maybe", state)], ["maybe"]);
 
     await expect(sweepStrandedQueuedEmails(NOW)).resolves.toEqual({ requeued: 0, never_sent: 0, unconfirmed: 1 });
 
     const write = writeFor("maybe")!;
-    expect(write.where).toEqual({
-      id: "maybe",
-      status: "QUEUED",
-      handoverState: overrides.handoverState === undefined ? "PENDING" : overrides.handoverState,
-      attempts: overrides.attempts ?? 1,
-      lastAttemptAt: STRANDED_AT,
-    });
+    expect(write.where).toEqual({ id: "maybe", status: "QUEUED", ...state, lastAttemptAt: STRANDED_AT });
     expect(write.data).toEqual({
       status: "FAILED",
       attempts: EMAIL_RETRY_MAX_ATTEMPTS,

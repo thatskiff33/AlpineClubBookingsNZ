@@ -2871,6 +2871,33 @@ mispricing a booking.
   match the same unsent claim, and only one deletes it. Proved on PostgreSQL by
   `admin-alert-once-sweep.realdb.test.ts` (each order, behind a held row).
 
+#### Stranded QUEUED email sweep against the sender's hand-over (#5298)
+
+- **Email hand-over claim** — `src/lib/email/handover.ts`
+  (`claimEmailHandover`, `sweepStrandedQueuedEmails`, #5298, `INV-INT-043`),
+  called from `src/lib/email/core.ts` (`sendEmail`) and
+  `src/lib/cron-email-retry.ts` (`retryFailedEmails`, sweep first). The sender
+  moves its own `EmailLog` row from `handoverState` `PENDING` to `STARTED` with
+  one `updateMany` guarded on id, `QUEUED` and `PENDING`, and calls the mail
+  server only if it won. The sweep settles a row `QUEUED` for 30 minutes with
+  one `updateMany` guarded on the row exactly as read (status, hand-over state,
+  attempts, `lastAttemptAt`, and for a re-send a body kept), always moving it
+  off `QUEUED`. Both take the one row's lock; PostgreSQL re-checks the loser's
+  guard against the committed row, so it matches nothing: a late sender sends
+  nothing (`handover_lost`), and a sweep after the sender's claim leaves the row
+  alone. The retry job's own `FAILED -> QUEUED` claim now also writes `STARTED`,
+  so a crash after it is flagged, never re-sent. No transaction, advisory key,
+  tier or order (INV-LOCK-001, INV-LOCK-002); this entry is the site's
+  registration (INV-LOCK-003). The provider call stays outside any transaction.
+
+  Reconciled with #5255's once-ever alert row (`recordClaimedEmailAttempt`
+  writes the same `PENDING` row in its confirm transaction, then the sender
+  claims as above), #4669's `releaseUnreceivedAlertCopies` (touches only
+  `FAILED` rows at attempts 1; a sweep re-send keeps attempts at 1 and leaves
+  the body, so its count is unchanged) and #4963's Try again (a `FAILED` row
+  at the ceiling; the next retry claim writes `STARTED`). Proved on PostgreSQL
+  by `stranded-queued-email.realdb.test.ts` (each order, behind a held row).
+
 #### Member photo writer (epic #171)
 
 - **Member photo writer** — `src/app/api/members/[id]/photo/route.ts` (epic #171):
