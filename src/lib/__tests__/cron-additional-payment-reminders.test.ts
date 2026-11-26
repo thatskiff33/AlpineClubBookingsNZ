@@ -928,6 +928,19 @@ describe("sendAdditionalPaymentReminders", () => {
     expect(mockPrisma.payment.updateMany).toHaveBeenCalledTimes(1);
   });
 
+  it("keeps the stamp when the send lost its hand-over, because the stranded-email sweep sends that row (#5298)", async () => {
+    mockPrisma.booking.findMany.mockResolvedValue([booking()]);
+    mockSendAdditionalPaymentReminderEmail.mockResolvedValue({
+      status: "handover_lost",
+      emailLogId: "log-1",
+    });
+
+    await sendAdditionalPaymentReminders();
+
+    // One write only: the claim. Nothing was given back, so no second copy.
+    expect(mockPrisma.payment.updateMany).toHaveBeenCalledTimes(1);
+  });
+
   /*
     The pre-check is what makes the shared stamp rule affordable in a job that
     runs eight times a day: an unreachable member never reaches the claim, so

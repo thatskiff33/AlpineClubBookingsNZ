@@ -16,6 +16,7 @@ import { clubCalendarDateOf, dateOnlyInstantOf } from "@/lib/club-time";
 import { clubTimeZone } from "@/lib/club-time/server";
 import { sendAdditionalPaymentReminderEmail } from "@/lib/email";
 import type { EmailSendOutcome } from "@/lib/email/core";
+import { isLeftForTheEmailRetryJob } from "@/lib/email/send-outcome";
 import logger from "@/lib/logger";
 import { prisma } from "@/lib/prisma";
 import { getBookingTimingSettings } from "@/lib/booking-timing-settings";
@@ -381,20 +382,12 @@ export async function resendAdditionalPaymentEmail(params: {
       a silent withhold looks identical to a successful send, and the stamp we
       just wrote would also have spent the hour's cooldown on nothing.
 
-      The stamps go back for every case except an unreadable "No emails" switch,
-      which leaves a FAILED EmailLog the retry cron replays — restoring there
-      would risk the member getting a second copy.
+      The stamps go back for every case except one that leaves the message to
+      the email retry job (an unreadable "No emails" switch, an environment
+      fault, a lost hand-over): restoring there would risk the member getting a
+      second copy.
     */
-    const replayable =
-      (outcome.status === "withheld_for_booking" &&
-        outcome.reason === "booking_flag_unreadable") ||
-      // #3035: every environment-safety withhold EXCEPT the confirmed-copy one
-      // leaves a FAILED EmailLog the retry cron replays once the configuration is
-      // fixed, so handing the stamp back here would risk the member getting two
-      // copies. Written as "not the terminal one" rather than as a list of faults,
-      // so a fault added later is replayable by default.
-      (outcome.status === "withheld_for_environment" &&
-        outcome.reason !== "environment_non_production");
+    const replayable = isLeftForTheEmailRetryJob(outcome);
     if (!replayable) {
       await restoreStamps(outcome.status);
     }
@@ -578,6 +571,10 @@ function describeUntransmittedResend(outcome: EmailSendOutcome): string {
       // declares what this installation is, so telling an admin to try again
       // would only spend the hour's cooldown.
       return "This site has not been told whether it is the club's live site or a copy, so it held the message back rather than risk emailing a real member. It is queued and will go out on its own once that is set — do not re-send it by hand.";
+    case "handover_lost":
+      // #5298: the row keeps its body (see above), so the stranded-email sweep
+      // hands it to the retry job, which sends it.
+      return "The message could not be handed to the mail server just now. It is queued and will go out on its own within the hour — do not re-send it by hand.";
     case "suppressed":
       return "This member's email address is blocked after a bounce or spam complaint, so nothing was sent. Contact them another way, or clear the suppression first.";
     case "skipped_placeholder_recipient":
