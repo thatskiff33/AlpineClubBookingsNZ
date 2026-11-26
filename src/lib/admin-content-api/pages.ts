@@ -25,6 +25,12 @@ const pageFields = {
 // address a page on this collection route (#2352 D-B7(a)).
 const pageId = z.string().trim().min(1);
 
+/**
+ * `GET ?id=`: one page with its stored HTML. The list leaves the HTML out of
+ * an AI app's answer, so a long page is always read on its own (ALP-723).
+ */
+export const pageContentGetQuerySchema = z.object({ id: pageId });
+
 /** `POST`: a new page, published at once with an empty body. */
 export const pageContentCreateSchema = z.object(pageFields).strict();
 

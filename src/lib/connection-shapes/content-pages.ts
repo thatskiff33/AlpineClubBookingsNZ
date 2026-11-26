@@ -2,7 +2,7 @@
  * What the page content, footer section and site banner actions send an AI
  * app connection (ALP-723, `INV-MCP-006`).
  *
- * A page and a footer section carry their stored HTML (`contentHtml`,
+ * A single page and a footer section carry their stored HTML (`contentHtml`,
  * `headerText`), because the update actions replace it whole: an app editing
  * from a plain-text copy would strip the formatting on save. The footer
  * section list's `title` and `description` are the editor's labels for each
@@ -21,22 +21,31 @@ import type { SiteContentDocument } from "@/lib/site-content";
 // Pages
 // ---------------------------------------------------------------------------
 
-const PAGE_SHAPE = {
+/**
+ * A page in the list: everything but its HTML. One page may hold more than an
+ * app's answer can carry, so a cut-off list would hand back a page the app
+ * could save half of. A page is read whole on its own (`get_site_page`).
+ */
+const PAGE_LIST_SHAPE = {
   id: true,
   slug: true,
   caption: true,
   menuTitle: true,
   title: true,
-  headerText: true,
   path: true,
   sortOrder: true,
-  contentHtml: true,
   published: true,
   updatedAt: true,
   updatedByMemberId: true,
+} as const;
+
+const PAGE_SHAPE = {
+  ...PAGE_LIST_SHAPE,
+  headerText: true,
+  contentHtml: true,
 } as const satisfies CompleteConnectionShapeFor<EditablePageRecord>;
 
-export const PAGE_CONTENT_LIST_CONNECTION_SHAPE: ConnectionShape = { pages: PAGE_SHAPE };
+export const PAGE_CONTENT_LIST_CONNECTION_SHAPE: ConnectionShape = { pages: PAGE_LIST_SHAPE };
 
 export const PAGE_CONTENT_PAGE_CONNECTION_SHAPE: ConnectionShape = { page: PAGE_SHAPE };
 

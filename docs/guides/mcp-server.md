@@ -721,13 +721,15 @@ reached, and the route itself refuses anyone without the area. All are reached t
 
 HTML an app sends (a page's header and body, a footer section) goes through the
 same sanitiser as the website's editor (`sanitizePageContentHtml`) before it is
-saved; the app path adds no second one. The page and footer reads send the
-stored HTML, because their saves replace it whole.
+saved; the app path adds no second one. The single-page and footer reads send
+the stored HTML, because their saves replace it whole; the page list leaves it
+out, so a long page is never cut off mid-list and saved back half-empty.
 
 | Action | What it does | Kind | Route |
 | --- | --- | --- | --- |
 | **Pages, footer and banners** | | | |
-| `list_site_pages` | Every public page with its address, menu title, whether it is published and its stored HTML. Listed as its own tool | read | `GET /api/admin/page-content` |
+| `list_site_pages` | Every public page with its address, menu title and whether it is published; not its HTML, which can outgrow an app's answer. Listed as its own tool | read | `GET /api/admin/page-content` |
+| `get_site_page` | One page whole, with its stored HTML | read | `GET /api/admin/page-content` |
 | `create_site_page` | Adds a page, published at once with an empty body | destructive | `POST /api/admin/page-content` |
 | `update_site_page` | Replaces every field of a page, live on the site; a system page keeps its slug and menu order | destructive | `PUT /api/admin/page-content` |
 | `set_site_page_published` | Shows or hides a page the club added | destructive | `PATCH /api/admin/page-content` |

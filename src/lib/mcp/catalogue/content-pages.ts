@@ -10,6 +10,7 @@
 import {
   pageContentCreateSchema,
   pageContentDeleteSchema,
+  pageContentGetQuerySchema,
   pageContentPublishSchema,
   pageContentUpdateSchema,
 } from "@/lib/admin-content-api/pages";
@@ -39,12 +40,24 @@ export const CONTENT_PAGE_MCP_ACTIONS: readonly McpAction[] = [
     id: "list_site_pages",
     title: "List the website's pages",
     summary:
-      "Every page of the public website, in menu order, with its address (`path`), menu title, whether it is published, and its stored HTML (`headerText` and `contentHtml`). A page with a blank `menuTitle` is left out of the menu.",
+      "Every page of the public website, in menu order, with its `id`, address (`path`), menu title and whether it is published, but not its HTML: read one page's HTML with `get_site_page`. A page with a blank `menuTitle` is left out of the menu.",
     method: "GET",
     path: "/api/admin/page-content",
     kind: "read",
     returns: PAGE_CONTENT_LIST_CONNECTION_SHAPE,
     core: true,
+  },
+  {
+    id: "get_site_page",
+    title: "Show a website page",
+    summary:
+      "One page (`id` from `list_site_pages`) with every field `update_site_page` takes, including its stored HTML (`headerText` and `contentHtml`).",
+    method: "GET",
+    path: "/api/admin/page-content",
+    query: pageContentGetQuerySchema,
+    kind: "read",
+    returns: PAGE_CONTENT_PAGE_CONNECTION_SHAPE,
+    core: false,
   },
   {
     id: "create_site_page",
@@ -63,7 +76,7 @@ export const CONTENT_PAGE_MCP_ACTIONS: readonly McpAction[] = [
     id: "update_site_page",
     title: "Edit a website page",
     summary:
-      "Replaces every field of a page at once, live on the public site: read it with `list_site_pages`, then send all of its fields back, changing only what you mean to. Refused if a system page's slug or menu order changes, or the slug is reserved or taken by another page. " +
+      "Replaces every field of a page at once, live on the public site: read it with `get_site_page`, then send all of its fields back, changing only what you mean to. If that answer was cut short, do not save: edit the page on the website instead. Refused if a system page's slug or menu order changes, or the slug is reserved or taken by another page. " +
       SANITISED,
     method: "PUT",
     path: "/api/admin/page-content",
@@ -113,7 +126,7 @@ export const CONTENT_PAGE_MCP_ACTIONS: readonly McpAction[] = [
     id: "update_footer_section",
     title: "Edit a footer section",
     summary:
-      "Replaces one footer column's HTML (`key` from `list_footer_sections`), live on every public page. " +
+      "Replaces one footer column's HTML (`key` from `list_footer_sections`), live on every public page. If that list was cut short, do not save: edit the footer on the website instead. " +
       SANITISED,
     method: "PUT",
     path: "/api/admin/site-content",

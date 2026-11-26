@@ -6,6 +6,7 @@
  * sends goes through the route's own sanitiser, the same one the website's
  * editor relies on.
  */
+import { NextRequest } from "next/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("server-only", () => ({}));
@@ -112,12 +113,39 @@ beforeEach(() => {
 });
 
 describe("page actions", () => {
-  it("list_site_pages sends every page with its stored HTML", async () => {
-    const { connection } = await expectActionContract({ actionId: "list_site_pages", handler: listPages });
+  it("list_site_pages sends every page without its HTML, which can outgrow an app's answer", async () => {
+    const { browser, connection } = await expectActionContract({ actionId: "list_site_pages", handler: listPages });
 
     expect(connection).toEqual({
-      pages: [expect.objectContaining({ id: "page-1", contentHtml: "<p>Body</p>", updatedAt: UPDATED_AT.toISOString() })],
+      pages: [expect.objectContaining({ id: "page-1", path: "/trip-reports", updatedAt: UPDATED_AT.toISOString() })],
     });
+    const [page] = (connection as { pages: Record<string, unknown>[] }).pages;
+    expect(page).not.toHaveProperty("contentHtml");
+    expect(page).not.toHaveProperty("headerText");
+    // The website's editor still gets the whole page in its list.
+    expect(browser).toMatchObject({ pages: [{ contentHtml: "<p>Body</p>", headerText: "<p>Our trips</p>" }] });
+  });
+
+  it("get_site_page sends one page whole, with every field update_site_page takes", async () => {
+    h.prisma.pageContent.findUnique.mockResolvedValue(pageRow);
+
+    const { connection } = await expectActionContract({
+      actionId: "get_site_page",
+      handler: listPages,
+      args: { id: "page-1" },
+    });
+
+    expect(connection).toEqual({
+      page: expect.objectContaining({ id: "page-1", headerText: "<p>Our trips</p>", contentHtml: "<p>Body</p>" }),
+    });
+    expect(h.prisma.pageContent.findUnique).toHaveBeenCalledWith({ where: { id: "page-1" } });
+    expect(h.prisma.pageContent.findMany).not.toHaveBeenCalled();
+  });
+
+  it("get_site_page answers 404 for a page that does not exist", async () => {
+    h.prisma.pageContent.findUnique.mockResolvedValue(null);
+    const response = await listPages(new NextRequest("http://localhost/api/admin/page-content?id=missing"));
+    expect(response.status).toBe(404);
   });
 
   it("create_site_page adds the page at its slug", async () => {

@@ -25,6 +25,7 @@ import {
 } from "@/lib/page-content";
 import logger from "@/lib/logger";
 import {
+  getEditablePageContent,
   listEditablePageContent,
   sanitizePageContentHtml,
 } from "@/lib/page-content-html";
@@ -32,6 +33,7 @@ import { revalidatePublicPageContent } from "@/lib/public-content-revalidation";
 import {
   pageContentCreateSchema,
   pageContentDeleteSchema,
+  pageContentGetQuerySchema,
   pageContentPublishSchema,
   pageContentUpdateSchema,
 } from "@/lib/admin-content-api/pages";
@@ -70,6 +72,17 @@ export async function GET(request: NextRequest) {
   const guard = await requireAdmin(viewGuardOptions);
   if (!guard.ok) {
     return guard.response;
+  }
+
+  // `?id=` reads one page with its HTML; the AI app's `get_site_page` (ALP-723).
+  if (request.nextUrl.searchParams.has("id")) {
+    const query = pageContentGetQuerySchema.safeParse(Object.fromEntries(request.nextUrl.searchParams));
+    if (!query.success) {
+      return NextResponse.json({ error: "Invalid input", details: query.error.flatten() }, { status: 400 });
+    }
+    const page = await getEditablePageContent(query.data.id);
+    if (!page) return NextResponse.json({ error: PAGE_NOT_FOUND }, { status: 404 });
+    return connectionJson(request, { page }, PAGE_CONTENT_PAGE_CONNECTION_SHAPE);
   }
 
   const pages = await listEditablePageContent();
