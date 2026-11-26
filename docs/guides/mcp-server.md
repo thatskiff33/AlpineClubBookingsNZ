@@ -125,14 +125,16 @@ disconnect them under **Connections**. An app on the member's own computer
   the website; the app can be disconnected on the profile at any time.
 - **For an officer only**, a fourth: as a club officer, the app can also see
   the club records their admin role gives them, such as other members'
-  bookings and details and the club's booking settings; with **View and
-  change** it can change them too, and it is told to ask first (owner
-  decision,
+  bookings and details, the club's booking settings, and the public
+  website's pages and settings; with **View and change** it can change them
+  too, and it is told to ask first (owner decision,
   [#5305](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/5305#issuecomment-7093303964)).
   Approving this screen is what lets the connection run officer actions
   (below). The wording is general on purpose, so one approval covers every
   admin area the officer holds, including areas added later (owner decision,
   [#5305](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/5305#issuecomment-7131483847)).
+  The public website's pages and settings were named when the Content
+  actions arrived, under that same decision.
 
 The screen refuses, with a reason and nothing shared, when the app or its
 return address is not registered or not approved, when the account is a lodge

@@ -8,7 +8,9 @@
   images and photo folders. A view grant reaches the reads only. HTML an app
   sends is cleaned by the same sanitiser as the website's editor. Every change
   but adding an empty photo folder is marked destructive, so the app asks the
-  officer first and the call is logged as important.
+  officer first and the call is logged as important. The officer line on the
+  approval screen now names the public website's pages and settings too; an
+  officer who has already approved an app does not need to approve it again.
 
   Uploading a file (gallery photos, a library image or the site logo) and
   finishing the site setup wizard stay on the website. The AI app connections
