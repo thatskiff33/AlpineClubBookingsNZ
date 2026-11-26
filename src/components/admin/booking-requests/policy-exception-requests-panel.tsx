@@ -2,6 +2,7 @@
 import { fetchWithRecentAuth } from "@/components/confirm-its-you";
 
 import Link from "next/link";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { adminHref } from "@/lib/admin-hubs";
@@ -24,7 +25,17 @@ import {
 } from "@/lib/hosting-coverage-override-client";
 import { useClubTime } from "@/components/club-time-provider";
 import { formatStayDateOrNull } from "@/lib/club-time";
-import { formatPolicyExceptionRequestAge } from "@/lib/booking-exception-request-shared";
+import {
+  EXCEPTION_QUEUE_STATUS_FILTERS,
+  formatPolicyExceptionRequestAge,
+  type ExceptionQueueStatusFilter,
+} from "@/lib/booking-exception-request-shared";
+import {
+  DEFAULT_POLICY_EXCEPTION_QUEUE_FILTER,
+  readPolicyExceptionQueueFilter,
+} from "@/lib/admin-booking-requests-path";
+import { buildBookingRequestDatasetPath } from "@/lib/admin-dataset-reset-state";
+import { parseAdminListPageParam } from "@/lib/admin-list-page";
 import type { PolicyExceptionReasonCode } from "@/lib/booking-policy-exceptions";
 import { HostingCoverageOverridePrompt } from "@/components/hosting-coverage-override-prompt";
 import { notifyAdminQueueChanged } from "@/lib/admin-queue-events";
@@ -51,22 +62,17 @@ import { useAdminQueuePage } from "@/components/admin/use-admin-queue-page";
  *  - the last capacity conflict, when an approval has already been kept pending.
  */
 
-type StatusFilter =
-  | "REQUESTED"
-  | "APPROVED"
-  | "REJECTED"
-  | "CANCELLED"
-  | "SUPERSEDED"
-  | "ALL";
-
-const STATUS_FILTERS: StatusFilter[] = [
-  "REQUESTED",
-  "APPROVED",
-  "REJECTED",
-  "CANCELLED",
-  "SUPERSEDED",
-  "ALL",
-];
+// Keyed by the shared filter list (#5247), so a filter the queue route accepts
+// cannot reach the toolbar without a label: a new one fails typecheck here.
+const STATUS_FILTER_LABELS: Record<ExceptionQueueStatusFilter, string> = {
+  REQUESTED: "Requested",
+  APPROVED: "Approved",
+  REJECTED: "Rejected",
+  CANCELLED: "Cancelled",
+  SUPERSEDED: "Superseded",
+  EXPIRED: "Expired",
+  ALL: "All",
+};
 
 interface PolicyRef {
   reasonCode: string;
@@ -203,13 +209,38 @@ export function PolicyExceptionRequestsPanel({
    * read from the viewer's own clock.
    */
   const clubTime = useClubTime();
+  const router = useRouter();
+  const searchParams = useSearchParams();
   const [items, setItems] = useState<QueueItem[]>([]);
-  const [filter, setFilter] = useState<StatusFilter>("REQUESTED");
-  const [loadedFilter, setLoadedFilter] = useState<StatusFilter | null>(null);
-  // INV-OPS-020: the shared pager replaces the old fixed 100-row read. Like the
-  // status filter, the page lives in this panel's state, not the URL.
-  const queuePage = useAdminQueuePage({ filterKey: filter });
+  // #5247: the filter and page open from the address and are written back to
+  // it, like the other officer queues (INV-OPS-020), so a reload or a shared
+  // link lands on the same filter and page. An unknown filter opens Requested.
+  const [filter, setFilter] = useState<ExceptionQueueStatusFilter>(() =>
+    readPolicyExceptionQueueFilter(searchParams),
+  );
+  const [loadedFilter, setLoadedFilter] = useState<ExceptionQueueStatusFilter | null>(null);
+  const queuePage = useAdminQueuePage({
+    filterKey: filter,
+    initialPage: parseAdminListPageParam(searchParams.get("page")),
+  });
   const { page, receive } = queuePage;
+  // `basePath` carries the tab (`?tab=exceptions`); its query is held fixed and
+  // the filter and page are written beside it.
+  const [basePathname = basePath, baseQuery = ""] = basePath.split("?", 2);
+  const currentPath = buildBookingRequestDatasetPath({
+    basePath: basePathname,
+    currentSearch: searchParams.toString(),
+    fixedSearchParams: Object.fromEntries(new URLSearchParams(baseQuery)),
+    status: filter,
+    defaultStatus: DEFAULT_POLICY_EXCEPTION_QUEUE_FILTER,
+    recordKey: "requestId",
+    recordId: null,
+    page,
+  });
+
+  useEffect(() => {
+    router.replace(currentPath, { scroll: false });
+  }, [currentPath, router]);
   const [loading, setLoading] = useState(true);
   const [loadFailed, setLoadFailed] = useState(false);
   const [error, setError] = useState("");
@@ -538,7 +569,7 @@ export function PolicyExceptionRequestsPanel({
         </div>
 
         <div className="flex flex-wrap gap-2">
-          {STATUS_FILTERS.map((status) => (
+          {EXCEPTION_QUEUE_STATUS_FILTERS.map((status) => (
             <Button
               key={status}
               variant={filter === status ? "default" : "outline"}
@@ -549,9 +580,7 @@ export function PolicyExceptionRequestsPanel({
                 setFilter(status);
               }}
             >
-              {status === "ALL"
-                ? "All"
-                : status.charAt(0) + status.slice(1).toLowerCase()}
+              {STATUS_FILTER_LABELS[status]}
             </Button>
           ))}
         </div>
@@ -560,7 +589,7 @@ export function PolicyExceptionRequestsPanel({
           <div className="py-8 text-center">Loading...</div>
         ) : loadFailed ? null : items.length === 0 ? (
           <div className="py-8 text-center text-muted-foreground">
-            No {filter === "ALL" ? "" : `${filter.toLowerCase()} `}booking-policy
+            No {filter === "ALL" ? "" : `${STATUS_FILTER_LABELS[filter].toLowerCase()} `}booking-policy
             exception requests.
           </div>
         ) : (
@@ -771,7 +800,7 @@ export function PolicyExceptionRequestsPanel({
                         <Link
                           href={buildHrefWithReturnTo(
                             `/bookings/${item.bookingId}`,
-                            basePath,
+                            currentPath,
                           )}
                           className="text-info-11 hover:underline"
                         >
@@ -782,7 +811,7 @@ export function PolicyExceptionRequestsPanel({
                         <Link
                           href={buildHrefWithReturnTo(
                             `/bookings/${item.createdBookingId}`,
-                            basePath,
+                            currentPath,
                           )}
                           className="text-info-11 hover:underline"
                         >
@@ -793,7 +822,7 @@ export function PolicyExceptionRequestsPanel({
                         <Link
                           href={buildHrefWithReturnTo(
                             `${adminHref("member-detail", { id: item.requestedBy.id })}`,
-                            basePath,
+                            currentPath,
                           )}
                           className="text-info-11 hover:underline"
                         >

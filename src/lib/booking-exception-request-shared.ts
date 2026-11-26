@@ -4,8 +4,8 @@
  *
  * THIS MODULE IMPORTS NOTHING, AND THAT IS ITS ENTIRE POINT. It is not a
  * convenience grab-bag: it exists so that the two values a `"use client"`
- * component genuinely needs — the member-message cap and the queue's request-age
- * label — can be reached from the browser WITHOUT dragging
+ * component genuinely needs — the member-message cap, the queue's request-age
+ * label and the queue's status filters — can be reached from the browser WITHOUT dragging
  * `@/lib/booking-exception-requests` onto the client graph, and with it
  * `import { createHash } from "node:crypto"`.
  *
@@ -35,6 +35,31 @@
  * spelling of the same import is how a client finds its way back onto the server
  * graph.
  */
+
+// ---------------------------------------------------------------------------
+// Officer queue status filter
+// ---------------------------------------------------------------------------
+
+/**
+ * Every status filter the officer's policy-exception queue offers, in the
+ * order the screen shows them (#5247). The one list: the queue route's query
+ * schema, the queue reader's type and the screen's filter buttons all derive
+ * from it, so the screen cannot drop a filter the route accepts (#2553 left
+ * `EXPIRED` out of the screen's own copy). `EXPIRED` is a request whose
+ * deadline passed and which the hold reaper closed.
+ */
+export const EXCEPTION_QUEUE_STATUS_FILTERS = [
+  "REQUESTED",
+  "APPROVED",
+  "REJECTED",
+  "CANCELLED",
+  "SUPERSEDED",
+  "EXPIRED",
+  "ALL",
+] as const;
+
+/** One policy-exception queue filter: see `EXCEPTION_QUEUE_STATUS_FILTERS`. */
+export type ExceptionQueueStatusFilter = (typeof EXCEPTION_QUEUE_STATUS_FILTERS)[number];
 
 // ---------------------------------------------------------------------------
 // Request age (officer queue)
