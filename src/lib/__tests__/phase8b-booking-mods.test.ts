@@ -1,4 +1,11 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+// #5238: these cases pin the save's own writes, driven through the route, not
+// the door's rule that a save carries its preview's figures (pinned by
+// `modify-quoted-figures.test.ts`), so their figure-less bodies still reach it.
+vi.mock("@/lib/edit-quoted-figures", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/edit-quoted-figures")>()),
+  requireEditQuotedFigures: () => {},
+}));
 import { postModificationLedgerLines } from "@/lib/booking-ledger-modification-sync";
 import { NextRequest } from "next/server";
 

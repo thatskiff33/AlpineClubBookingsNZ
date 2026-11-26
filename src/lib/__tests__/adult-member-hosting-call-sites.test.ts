@@ -1205,12 +1205,15 @@ describe("the same-owner refusal and the escalation seam (#2576 §6, §8, §9)",
     // the deadlock the owner rejected. Both doors offer all three arms or neither
     // does, and this is the assertion that fails on a third date route that
     // forgets.
+    // #5238: the service also builds it, to carry the fresh offer inside the
+    // `EDIT_PRICE_CHANGED` refusal of an acceptance whose price moved.
     expect(
       sourceFilesNaming("buildSameOwnerCoverageLinkedMoveBody("),
     ).toEqual([
       "src/app/api/bookings/[id]/modify-dates/route.ts",
       "src/app/api/bookings/[id]/modify/route.ts",
       "src/lib/adult-member-hosting-linked-move.ts",
+      "src/lib/booking-linked-date-move-service.ts",
     ]);
     // The offer must be answerable, not merely raisable: a surface that shows the
     // three arms and cannot accept the answer refuses the member twice with the
