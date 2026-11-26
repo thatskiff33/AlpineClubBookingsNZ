@@ -539,7 +539,7 @@ describe("site-content page caps + system-page protections (admin route parity)"
 
 // ---- site-content keyed cap (admin route parity) ----------------------------
 // The keyed site-content route caps contentHtml at 200000 chars
-// (src/app/api/admin/site-content/route.ts, the shared SITE_CONTENT_LIMITS);
+// (src/lib/admin-content-api/site-content.ts, the shared SITE_CONTENT_LIMITS);
 // the importer must reject an over-cap keyed row the same way (issue #1727).
 
 describe("site-content keyed cap (admin route parity)", () => {
@@ -591,7 +591,7 @@ describe("site-content keyed cap (admin route parity)", () => {
 
 // ---- site-content keyed key validation (admin route parity) -----------------
 // The admin keyed site-content route validates key with
-// z.enum(SITE_CONTENT_KEYS) (src/app/api/admin/site-content/route.ts); the DB
+// z.enum(SITE_CONTENT_KEYS) (src/lib/admin-content-api/site-content.ts); the DB
 // key column is a Prisma enum, so a hand-edited bundle with an unknown key must
 // fail as a clean row error rather than letting the batch findMany throw a
 // PrismaClientValidationError against the enum column (issue #1736).

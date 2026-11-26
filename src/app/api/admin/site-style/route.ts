@@ -1,5 +1,6 @@
 import { revalidatePath } from "next/cache";
 import { NextRequest, NextResponse } from "next/server";
+import type { ZodError } from "zod";
 import { parseJsonRequestBody } from "@/lib/api-json";
 import { logAudit } from "@/lib/audit";
 import {
@@ -7,11 +8,15 @@ import {
   UncleanLogoError,
   getClubThemeForAdmin,
   saveClubTheme,
+  saveClubThemeStyle,
 } from "@/lib/club-theme";
 import {
   LOGO_DATA_URL_WRITE_BUDGET_MESSAGE,
+  clubThemeConnectionUpdateSchema,
   clubThemeUpdateSchema,
   isLogoDataUrlWithinWriteBudget,
+  type ClubThemeStyleInput,
+  type ClubThemeUpdateInput,
 } from "@/lib/club-theme-update-schema";
 import { CLUB_THEME_ID } from "@/lib/club-theme-schema";
 import { prisma } from "@/lib/prisma";
@@ -21,15 +26,36 @@ import { requireAdmin } from "@/lib/session-guards";
 import { PUBLIC_LAYOUT_CACHE_TAGS } from "@/lib/public-layout-cache";
 import { revalidatePublicSite } from "@/lib/public-content-revalidation";
 import { isTransactionContention } from "@/lib/prisma-errors";
+import { arrivesAsMcpConnection, connectionJson } from "@/lib/mcp-connection-request";
+import { SITE_STYLE_CONNECTION_SHAPE } from "@/lib/connection-shapes/content-settings";
 
-export async function GET() {
+/**
+ * The save as the route applies it. A browser sends the whole theme. An AI
+ * app connection (ALP-723) sends only the colours, fonts and custom CSS
+ * (`clubThemeConnectionUpdateSchema`), saved by `saveClubThemeStyle`, which
+ * never writes the logo or completes setup.
+ */
+type ThemeSave =
+  | { readonly from: "browser"; readonly data: ClubThemeUpdateInput }
+  | { readonly from: "connection"; readonly data: ClubThemeStyleInput };
+
+function parseThemeSave(request: Request, body: unknown): { ok: true; save: ThemeSave } | { ok: false; error: ZodError } {
+  if (arrivesAsMcpConnection(request)) {
+    const parsed = clubThemeConnectionUpdateSchema.safeParse(body);
+    return parsed.success ? { ok: true, save: { from: "connection", data: parsed.data } } : { ok: false, error: parsed.error };
+  }
+  const parsed = clubThemeUpdateSchema.safeParse(body);
+  return parsed.success ? { ok: true, save: { from: "browser", data: parsed.data } } : { ok: false, error: parsed.error };
+}
+
+export async function GET(request: NextRequest) {
   const guard = await requireAdmin({
     permission: { area: "content", level: "view" },
   });
   if (!guard.ok) return guard.response;
 
   const theme = await getClubThemeForAdmin();
-  return NextResponse.json({ theme });
+  return connectionJson(request, { theme }, SITE_STYLE_CONNECTION_SHAPE);
 }
 
 export async function PUT(request: NextRequest) {
@@ -44,8 +70,8 @@ export async function PUT(request: NextRequest) {
   if (!jsonBody.ok) return jsonBody.response;
   const body = jsonBody.body;
 
-  const parsed = clubThemeUpdateSchema.safeParse(body);
-  if (!parsed.success) {
+  const parsed = parseThemeSave(request, body);
+  if (!parsed.ok) {
     return NextResponse.json(
       { error: "Invalid input", details: parsed.error.flatten() },
       { status: 400 },
@@ -57,7 +83,8 @@ export async function PUT(request: NextRequest) {
   // it on every save — the wizard posts the whole theme — so a stateless check
   // would lock that club out of editing its colours. Byte-identical means
   // "unchanged", and the schema's 900KB read bound still applies to it.
-  const incomingLogoDataUrl = parsed.data.logoDataUrl;
+  const { save } = parsed;
+  const incomingLogoDataUrl = save.from === "browser" ? save.data.logoDataUrl : null;
   if (incomingLogoDataUrl) {
     const stored = await prisma.clubTheme.findUnique({
       where: { id: CLUB_THEME_ID },
@@ -87,7 +114,8 @@ export async function PUT(request: NextRequest) {
   // adjusted, not rejected, so the old blocking contrast gate is gone; the wizard
   // surfaces the before/after adjustment as a disclosure instead.
   try {
-    const theme = await saveClubTheme(parsed.data);
+    const theme = save.from === "browser" ? await saveClubTheme(save.data) : await saveClubThemeStyle(save.data);
+    const completedSetup = save.from === "browser" && Boolean(save.data.completeSetup);
     // #2352 F3. This save is the COMPLETE-SETUP transition as well as an ordinary
     // theme edit, and both need the full-route store cleared, not just the theme
     // tag:
@@ -123,8 +151,8 @@ export async function PUT(request: NextRequest) {
       memberId: guard.session.user.id,
       targetId: "default",
       category: "admin",
-      severity: parsed.data.completeSetup ? "important" : "info",
-      summary: parsed.data.completeSetup
+      severity: completedSetup ? "important" : "info",
+      summary: completedSetup
         ? "Completed public site style setup"
         : "Updated public site style setup",
       metadata: {
@@ -141,7 +169,7 @@ export async function PUT(request: NextRequest) {
       },
     });
 
-    return NextResponse.json({ theme });
+    return connectionJson(request, { theme }, SITE_STYLE_CONNECTION_SHAPE);
   } catch (error) {
     // A stale tab referencing a logo blob a newer save already replaced. Not a
     // server fault, and retrying the same payload will never work — the admin

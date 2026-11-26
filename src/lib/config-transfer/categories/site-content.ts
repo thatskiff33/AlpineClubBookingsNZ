@@ -474,7 +474,7 @@ function parsePageRow(
   const v = new RowValidator(PAGE_FILE, index, errors);
   const slug = v.custom("slug", strictPageSlug(raw.slug), "");
   // Field caps + system-page protections: parity with the admin route's zod
-  // schemas and PUT/PATCH guards (src/app/api/admin/page-content/route.ts),
+  // schemas (src/lib/admin-content-api/pages.ts) and PUT/PATCH guards (src/app/api/admin/page-content/route.ts),
   // through the shared PAGE_CONTENT_LIMITS / SYSTEM_PAGE_SLUGS /
   // canUnpublishPage. Violations are row errors that block apply. The trimmed
   // fields (caption/menuTitle/title) keep the validator's TRIMMED value — the

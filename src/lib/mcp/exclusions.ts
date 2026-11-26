@@ -73,8 +73,9 @@ export type McpPermanentExclusionReason = keyof typeof MCP_PERMANENT_EXCLUSION_R
  * - `membership` (Membership): ALP-720.
  * - `finance` (Finance): ALP-721, including the `/api/finance` workspace.
  * - `lodge` (Lodge Operations): ALP-722.
+ * - `content` (Content): ALP-723.
  */
-const MCP_DECIDED_ADMIN_AREAS = ["bookings", "membership", "finance", "lodge"] as const satisfies readonly AdminPermissionArea[];
+const MCP_DECIDED_ADMIN_AREAS = ["bookings", "membership", "finance", "lodge", "content"] as const satisfies readonly AdminPermissionArea[];
 
 type McpDecidedAdminArea = (typeof MCP_DECIDED_ADMIN_AREAS)[number];
 
@@ -88,7 +89,6 @@ type McpNotYetAdminArea = Exclude<AdminPermissionArea, McpDecidedAdminArea>;
  * census until someone decides about it.
  */
 export const MCP_NOT_YET_TASKS = {
-  content: "ALP-723",
   support: "ALP-724",
   overview: "ALP-724",
 } as const satisfies Record<McpNotYetAdminArea, string>;
@@ -385,6 +385,18 @@ const PERMANENT_ROUTES: ReadonlyArray<{
       "PATCH /api/food-orders/[id]/price",
       "POST /api/food-orders/[id]/received",
       "PUT /api/admin/food-orders/settings",
+    ],
+  },
+
+  // --- Content (ALP-723) ---------------------------------------------------
+  // File uploads from the officer's browser: photos into a gallery folder, an
+  // image into the page image library, and the site logo.
+  {
+    reason: "needs-browser",
+    routes: [
+      "POST /api/admin/image-manager/upload",
+      "POST /api/admin/image-library",
+      "POST /api/admin/site-style/logo",
     ],
   },
 
