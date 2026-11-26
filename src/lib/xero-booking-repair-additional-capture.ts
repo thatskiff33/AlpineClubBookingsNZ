@@ -666,26 +666,17 @@ export async function applyKeptChangeCaptureRecordAction(
   action.resultMessage = keptRecordResultMessage(plan, queuedId, alerted);
 }
 
-/** #5312: what the officer's email did, as the report says it; never "emailed" for a send that failed. */
+/** #5312: what the officer's email did, as the report says it; never "emailed" for a send that failed. A new outcome must be worded here before this compiles. */
+const OFFICER_EMAIL_CLAUSE = {
+  sent: "an officer was emailed",
+  "queued-for-retry": "the officer's email did not send and is queued to retry",
+  "skipped-by-policy": "no officer was emailed, because the club's email delivery settings skipped it",
+  "no-recipients": "no officer was emailed, because nobody receives Xero sync alerts",
+  undelivered: "the officer's email could not be sent",
+} satisfies Record<AdminAlertSendOutcome, string>;
+
 function officerEmailClause(alerted: AdminAlertSendOutcome | null): string {
-  switch (alerted) {
-    case "sent":
-      return "an officer was emailed";
-    case "queued-for-retry":
-      return "the officer's email did not send and is queued to retry";
-    case "skipped-by-policy":
-      return "no officer was emailed, because the club's email delivery settings skipped it";
-    case "no-recipients":
-      return "no officer was emailed, because nobody receives Xero sync alerts";
-    case "undelivered":
-    case null:
-      return "the officer's email could not be sent";
-    default: {
-      // A new outcome must be worded here before this compiles (#5312).
-      const unhandled: never = alerted;
-      return unhandled;
-    }
-  }
+  return OFFICER_EMAIL_CLAUSE[alerted ?? "undelivered"];
 }
 
 function keptRecordResultMessage(plan: KeptLateCaptureXeroPlan, queuedId: string | null, alerted: AdminAlertSendOutcome | null): string {
