@@ -1,0 +1,2 @@
+- **Keyboard focus stays on "Email me a payment link" and "Join …" after the request finishes (#5442).**
+  Both buttons are disabled while their request runs, and a browser drops focus from a disabled button to the page, so a keyboard or screen-reader user was left at the top of the page with no place to continue from. Focus now returns to the button once it is re-enabled, unless an error message has already taken it. This also fixes an intermittent CI failure in the test for these buttons, which now also runs every case against a slow reply.
