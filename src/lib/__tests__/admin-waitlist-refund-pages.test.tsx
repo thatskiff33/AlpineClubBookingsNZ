@@ -6,13 +6,17 @@ import type { ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import AdminWaitlistPage from "@/app/(admin)/admin/booking-desk/waitlist/page";
 import RefundRequestsPage from "@/app/(admin)/admin/finance/refund-requests/page";
+import { adminHref } from "@/lib/admin-hubs";
 import { expectRecoveryAlertToHoldFocus } from "@/lib/__tests__/helpers/focus";
 import { refundAppealCeilingParts } from "@/lib/manual-refund-task-settlement-rules";
 import { htmlErrorPage } from "@/lib/__tests__/support/failed-write-cases";
 
 const mocks = vi.hoisted(() => ({
   currentSearch: "",
+  currentPathname: "/",
   routerReplace: vi.fn(),
+  // One router for every render, as Next's is (#5295); built on first use.
+  router: null as null | { replace: (...args: unknown[]) => unknown; push: () => void },
   sessionUser: {
     id: "admin-2",
     role: "ADMIN",
@@ -27,11 +31,8 @@ const toastSuccess = vi.hoisted(() => vi.fn());
 vi.mock("sonner", () => ({ toast: { success: toastSuccess, error: vi.fn() } }));
 
 vi.mock("next/navigation", () => ({
-  usePathname: () => "/",
-  useRouter: () => ({
-    replace: mocks.routerReplace,
-    push: vi.fn(),
-  }),
+  usePathname: () => mocks.currentPathname,
+  useRouter: () => (mocks.router ??= { replace: mocks.routerReplace, push: vi.fn() }),
   useSearchParams: () => new URLSearchParams(mocks.currentSearch),
 }));
 
@@ -625,7 +626,46 @@ describe("Admin waitlist page", () => {
 describe("Admin refund and credit review page", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mocks.currentPathname = "/";
     global.fetch = fetchMock as typeof fetch;
+  });
+
+  // #5295: a replace to the address already shown is a soft navigation that
+  // drops the page's <title> until the server streams it back (#5155).
+  it.each([
+    ["no query", ""],
+    // A filter alone: an empty later page would step back a page, a real change.
+    ["a filter", "status=APPROVED"],
+  ])("replaces nothing when opened at its own address (%s), once after a filter change", async (_label, search) => {
+    mocks.currentPathname = adminHref("refund-requests");
+    mocks.currentSearch = search;
+    fetchMock.mockImplementation((input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.startsWith("/api/admin/refund-requests?")) {
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({ data: [], page: 1, pageSize: 25, total: 0 }),
+        });
+      }
+      if (url.startsWith("/api/admin/credit-approvals?")) {
+        return Promise.resolve({ ok: true, json: async () => [] });
+      }
+      return Promise.reject(new Error(`Unexpected fetch: ${url}`));
+    });
+
+    render(<RefundRequestsPage />);
+    await waitFor(() => expect(fetchMock).toHaveBeenCalled());
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(mocks.routerReplace).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole("button", { name: "Rejected" }));
+    await waitFor(() => expect(mocks.routerReplace).toHaveBeenCalled());
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(mocks.routerReplace).toHaveBeenCalledTimes(1);
+    expect(mocks.routerReplace).toHaveBeenCalledWith(
+      `${adminHref("refund-requests")}?status=REJECTED`,
+      { scroll: false },
+    );
   });
 
   it("links approved manual credits to the member credit ledger instead of showing raw ids", async () => {
