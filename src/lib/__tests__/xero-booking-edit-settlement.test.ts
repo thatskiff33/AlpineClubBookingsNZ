@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
+  enqueueXeroAppliedCreditAllocationOperation: vi.fn(),
   enqueueXeroBookingInvoiceOperation: vi.fn(),
   enqueueXeroBookingInvoiceUpdateOperation: vi.fn(),
   enqueueXeroModificationAccountCreditNoteOperation: vi.fn(),
@@ -12,6 +13,9 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock("@/lib/xero-operation-outbox", () => mocks);
+// #5288: the primary invoice an edit raises waits for the Xero module (`INV-INT-040`).
+const xeroInvoicingEnabled = vi.hoisted(() => vi.fn(async () => true));
+vi.mock("@/lib/xero-invoicing-guard", () => ({ isXeroInvoicingEnabled: xeroInvoicingEnabled }));
 vi.mock("@/lib/xero-supplementary-invoice-enqueue", () => ({
   enqueueXeroSupplementaryInvoiceOperation: mocks.enqueueXeroSupplementaryInvoiceOperation,
 }));
@@ -86,6 +90,19 @@ describe("wouldQueueCheckInDatedInvoiceUpdate (issue #1729)", () => {
 });
 
 describe("classifyXeroBookingEditSettlement", () => {
+  it("#5288: bills an unlinked Internet Banking increase on the primary invoice, never a supplementary one", () => {
+    const input = { hasIssuedXeroInvoice: false, originalPaymentStatus: "SUCCEEDED", priceDiffCents: 0, changeFeeCents: 5000 };
+    expect(classifyXeroBookingEditSettlement({ ...input, primaryInvoiceBillsIncrease: true }).financialAction).toMatchObject({
+      type: "primary-invoice",
+      allocateAppliedCredit: true,
+    });
+    expect(classifyXeroBookingEditSettlement(input).financialAction.type).toBe("none");
+    // Linked, the edit's own supplementary invoice bills it, as before.
+    expect(
+      classifyXeroBookingEditSettlement({ ...input, hasIssuedXeroInvoice: true, primaryInvoiceBillsIncrease: true }).financialAction,
+    ).toMatchObject({ type: "supplementary-invoice", changeFeeCents: 5000 });
+  });
+
   it("waits for confirmed additional Stripe payment before supplementary invoice payment recording", () => {
     const decision = classifyXeroBookingEditSettlement({
       hasIssuedXeroInvoice: true,
@@ -397,6 +414,10 @@ describe("queueXeroBookingEditSettlement (side effects)", () => {
     mocks.enqueueXeroBookingInvoiceOperation.mockResolvedValue({
       queueOperationId: "op-primary",
     });
+    mocks.enqueueXeroAppliedCreditAllocationOperation.mockResolvedValue({
+      queueOperationId: "op-allocation",
+    });
+    xeroInvoicingEnabled.mockResolvedValue(true);
     mocks.enqueueXeroBookingInvoiceUpdateOperation.mockResolvedValue({
       queueOperationId: "op-update",
     });
@@ -458,6 +479,63 @@ describe("queueXeroBookingEditSettlement (side effects)", () => {
     );
     expect(mocks.kickQueuedXeroOutboxOperationsIfConnected).toHaveBeenCalled();
     expect(followForIntent).toHaveBeenCalledWith("pi_additional");
+  });
+
+  /**
+   * #5288 (`INV-PAY-047`): an unlinked Internet Banking increase raises the
+   * primary invoice, which bills it, then allocates the applied credit against
+   * it, as the switch to Internet Banking queues them. F20's $0 auto-pay
+   * raises the invoice alone, as before.
+   */
+  it("#5288: an unlinked Internet Banking increase queues the primary invoice, then the credit allocation", async () => {
+    const decision = await queueXeroBookingEditSettlement({
+      bookingId: "booking_ib",
+      bookingModificationId: "mod_ib",
+      createdByMemberId: "admin_1",
+      hasIssuedXeroInvoice: false,
+      originalPaymentStatus: "SUCCEEDED",
+      priceDiffCents: 0,
+      changeFeeCents: 5000,
+      datesChanged: true,
+      primaryInvoiceBillsIncrease: true,
+    });
+    expect(decision.financialAction).toMatchObject({ type: "primary-invoice", allocateAppliedCredit: true });
+    expect(mocks.enqueueXeroBookingInvoiceOperation).toHaveBeenCalledWith("booking_ib", {
+      createdByMemberId: "admin_1",
+      invoiceEmailDelivery: null,
+    });
+    expect(mocks.enqueueXeroAppliedCreditAllocationOperation).toHaveBeenCalledWith("booking_ib", { createdByMemberId: "admin_1" });
+    expect(mocks.enqueueXeroBookingInvoiceOperation.mock.invocationCallOrder[0]).toBeLessThan(
+      mocks.enqueueXeroAppliedCreditAllocationOperation.mock.invocationCallOrder[0],
+    );
+    expect(mocks.enqueueXeroSupplementaryInvoiceOperation).not.toHaveBeenCalled();
+  });
+
+  it("#5288: F20's $0 auto-pay raises the primary invoice without an allocation", async () => {
+    await queueXeroBookingEditSettlement({
+      bookingId: "booking_zero",
+      bookingModificationId: "mod_zero",
+      hasIssuedXeroInvoice: false,
+      priceDiffCents: -2000,
+      createPrimaryInvoiceWhenMissing: true,
+    });
+    expect(mocks.enqueueXeroBookingInvoiceOperation).toHaveBeenCalledTimes(1);
+    expect(mocks.enqueueXeroAppliedCreditAllocationOperation).not.toHaveBeenCalled();
+  });
+
+  it("MUTATION #5288: queues no primary invoice or allocation while the Xero module is off", async () => {
+    xeroInvoicingEnabled.mockResolvedValue(false);
+    const decision = await queueXeroBookingEditSettlement({
+      bookingId: "booking_ib",
+      bookingModificationId: "mod_ib",
+      hasIssuedXeroInvoice: false,
+      priceDiffCents: 0,
+      changeFeeCents: 5000,
+      primaryInvoiceBillsIncrease: true,
+    });
+    expect(decision.financialAction.type).toBe("primary-invoice");
+    expect(mocks.enqueueXeroBookingInvoiceOperation).not.toHaveBeenCalled();
+    expect(mocks.enqueueXeroAppliedCreditAllocationOperation).not.toHaveBeenCalled();
   });
 
   it("#4299 N-b: records no primary-invoice update, queued or skipped, for an organiser-paid bank place", async () => {

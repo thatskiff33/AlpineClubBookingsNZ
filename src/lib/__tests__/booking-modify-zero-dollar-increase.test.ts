@@ -1,5 +1,6 @@
 import { BookingStatus, PaymentSource, PaymentStatus } from "@prisma/client";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { CARD_PAID_BILLING } from "./support/ledger-billing-facts";
 import { editDoorBooking, type EditDoorBookingOverrides } from "./support/edit-door-booking";
 
 import type { LoadedBookingForModify } from "@/lib/booking-modify-validation";
@@ -242,7 +243,7 @@ describe("#3502: the census reads the grown $0 booking (INV-PAY-047)", () => {
   it("was `unasked` before #3502: the $50 was owed by nobody", () => {
     const residual = bookingLedgerResidualCents(ledgerAfter({ askCents: 0, changeFeeRecordedCents: 0 }));
     expect(residual).toBe(5_000);
-    expect(bookingLedgerVerdict(residual)).toBe("unasked");
+    expect(bookingLedgerVerdict(residual, CARD_PAID_BILLING)).toBe("unasked");
   });
 
   it("MUTATION: is `balanced` once the door's own ask and fee are on the row", async () => {
@@ -254,7 +255,7 @@ describe("#3502: the census reads the grown $0 booking (INV-PAY-047)", () => {
     const residual = bookingLedgerResidualCents(
       ledgerAfter({ askCents: result.additionalAsk.amountCents, changeFeeRecordedCents: feeRecorded }),
     );
-    expect(bookingLedgerVerdict(residual)).toBe("balanced");
+    expect(bookingLedgerVerdict(residual, CARD_PAID_BILLING)).toBe("balanced");
   });
 });
 

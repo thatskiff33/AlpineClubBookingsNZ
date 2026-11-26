@@ -259,3 +259,57 @@ it("does not report a missing payment when there is no fee to record", async () 
   await writeEditOnPayment(tx, { payment: null, changeFeeCents: 0 });
   expect(logger.error).not.toHaveBeenCalled();
 });
+
+/**
+ * #5288 (`INV-PAY-047`, owner decision 20 Nov 2026): a PAID Internet Banking
+ * booking with no primary invoice linked - here one account credit paid in
+ * full - has no card to ask and no invoice for a supplementary one to sit
+ * beside. Its increase is named to the member and billed on the primary
+ * invoice the door now raises; nothing is minted.
+ */
+describe("an unlinked Internet Banking increase is billed on the primary invoice (#5288)", () => {
+  function creditPaidBankBooking(payment: Partial<NonNullable<LoadedBookingForModify["payment"]>> = {}): LoadedBookingForModify {
+    const booking = paidBooking(null);
+    return {
+      ...booking,
+      payment: {
+        ...booking.payment!,
+        source: PaymentSource.INTERNET_BANKING,
+        amountCents: 0,
+        creditAppliedCents: 20_000,
+        stripePaymentIntentId: null,
+        reference: "BOOKING-5288",
+        ...payment,
+      },
+    };
+  }
+
+  it("MUTATION: names the whole increase and asks Xero, not the card, for it", async () => {
+    const result = await adjust(creditPaidBankBooking(), 0, 5_000);
+    expect(result.primaryInvoiceBillsIncrease).toBe(true);
+    expect(result.additionalAmountCents).toBe(5_000);
+    expect(result.additionalAsk.amountCents).toBe(0);
+    expect(result.xeroAdditionalAmountCents).toBe(0);
+    // The claim and its fee write stand, so the invoice the door raises bills the fee.
+    expect(result.settledAgainstPrimaryInvoice).toBe(true);
+    expect(payment.updateMany).toHaveBeenCalledWith({
+      where: { id: "payment_1", xeroInvoiceId: null },
+      data: { changeFeeCents: { increment: 5_000 } },
+    });
+  });
+
+  it("also covers a bank-paid booking's increase while no invoice is linked", async () => {
+    const result = await adjust(creditPaidBankBooking({ amountCents: 20_000, creditAppliedCents: 0 }), 3_000);
+    expect(result.primaryInvoiceBillsIncrease).toBe(true);
+    expect(result.additionalAmountCents).toBe(3_000);
+  });
+
+  it.each([
+    ["the primary invoice is linked: the supplementary invoice bills it", { xeroInvoiceId: "inv_1" }],
+    ["it was settled outside the app: no invoice is raised for it", { manuallyMarkedPaidAt: new Date("2026-06-01T00:00:00.000Z") }],
+    ["it is not settled yet: its primary payment still owes the price", { status: PaymentStatus.PENDING }],
+  ] as const)("not when %s", async (_name, payment) => {
+    const result = await adjust(creditPaidBankBooking(payment), 0, 5_000);
+    expect(result.primaryInvoiceBillsIncrease).toBe(false);
+  });
+});

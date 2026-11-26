@@ -1,5 +1,6 @@
 import { PaymentSource, PaymentStatus } from "@prisma/client";
 import { describe, expect, it, vi } from "vitest";
+import { CARD_PAID_BILLING } from "./support/ledger-billing-facts";
 import { editDoorBooking } from "./support/edit-door-booking";
 
 import {
@@ -629,7 +630,7 @@ describe("the ledger identity, and its SQL twin", () => {
 
   it("balances when the ask covers everything the price still wants", () => {
     expect(bookingLedgerResidualCents(row())).toBe(0);
-    expect(bookingLedgerVerdict(0)).toBe("balanced");
+    expect(bookingLedgerVerdict(0, CARD_PAID_BILLING)).toBe("balanced");
   });
 
   it("reports the #3340 class as money nobody is asking for", () => {
@@ -638,7 +639,7 @@ describe("the ledger identity, and its SQL twin", () => {
       row({ additionalAmountCents: 7000 }),
     );
     expect(residual).toBe(7000);
-    expect(bookingLedgerVerdict(residual)).toBe("unasked");
+    expect(bookingLedgerVerdict(residual, CARD_PAID_BILLING)).toBe("unasked");
   });
 
   it("reads a collected ask as collected, not as an outstanding term", () => {
@@ -671,7 +672,7 @@ describe("the ledger identity, and its SQL twin", () => {
       }),
     );
     expect(residual).toBe(-5000);
-    expect(bookingLedgerVerdict(residual)).toBe("retained");
+    expect(bookingLedgerVerdict(residual, CARD_PAID_BILLING)).toBe("retained");
   });
 
   it("generates the SQL from the same term list, in the same order", () => {
