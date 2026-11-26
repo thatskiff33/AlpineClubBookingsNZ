@@ -2068,6 +2068,8 @@ const APPROVED_EMAIL_TEMPLATE_TOKENS = [
   // #5433: the waitlist alerts' notes: which email went unsent, and the offer's.
   "noticeNote",
   "offerNote",
+  // #5433 PR 4: which booking email went unsent ("Booking email not sent").
+  "unsentNote",
   // #4042: which hand-back a manual refund task alert is about - its body
   // paragraphs, its subject/heading phrase, and whom the money goes back to.
   "handBackNote",
