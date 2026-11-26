@@ -1,5 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
+import { membershipCancellationParticipantParamsSchema } from "@/lib/admin-membership-api/requests";
+import { MEMBERSHIP_CANCELLATION_REQUEST_RESULT_CONNECTION_SHAPE } from "@/lib/connection-shapes/membership-requests";
 import logger from "@/lib/logger";
+import { connectionJson } from "@/lib/mcp-connection-request";
 import {
   MembershipCancellationRequestError,
   reissueParticipantConfirmationToken,
@@ -16,7 +19,15 @@ export async function POST(
   const guard = await requireAdmin();
   if (!guard.ok) return guard.response;
   const session = guard.session;
-  const { requestId, participantId } = await params;
+  const parsedParams = membershipCancellationParticipantParamsSchema.safeParse(await params);
+  if (!parsedParams.success) {
+    // The service's own answer for an id that names no participant.
+    return NextResponse.json(
+      { error: "Membership cancellation participant not found" },
+      { status: 404 },
+    );
+  }
+  const { requestId, participantId } = parsedParams.data;
 
   try {
     const result = await reissueParticipantConfirmationToken({
@@ -25,7 +36,7 @@ export async function POST(
       adminMemberId: session.user.id,
       ipAddress: getClientIp(request),
     });
-    return NextResponse.json(result);
+    return connectionJson(request, result, MEMBERSHIP_CANCELLATION_REQUEST_RESULT_CONNECTION_SHAPE);
   } catch (err) {
     if (err instanceof MembershipCancellationRequestError) {
       return NextResponse.json(

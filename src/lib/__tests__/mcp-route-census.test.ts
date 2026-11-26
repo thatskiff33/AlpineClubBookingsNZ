@@ -1,14 +1,15 @@
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 
 import ts from "typescript";
 import { describe, expect, it } from "vitest";
 
+import { getAdminRouteRequirement } from "@/lib/admin-permissions";
 import {
   MCP_ACTIONS,
   MCP_WEBSITE_ONLY_ACTIONS,
-  mcpActionAdminRequirement,
   mcpActionRouteFile,
 } from "@/lib/mcp/catalogue";
+import { MEMBERSHIP_MCP_ACTIONS } from "@/lib/mcp/catalogue/membership";
 import {
   classifyMcpRoute,
   MCP_EXACT_EXCLUDED_ROUTES,
@@ -17,8 +18,9 @@ import {
   MCP_PERMANENT_EXCLUSION_REASONS,
   mcpPermanentExclusion,
 } from "@/lib/mcp/exclusions";
+import { mcpActionAdminRequirement } from "@/lib/mcp/officer-actions";
+import { MCP_STATIC_SIBLING_SEGMENTS } from "@/lib/mcp/static-route-segments";
 import { fileExists, hasExport, unwrap, walkDir } from "@/lib/step-up-route-census-ast";
-import { getAdminRouteRequirement } from "@/lib/admin-permissions";
 import { extractRouteGates, type HttpMethod } from "@/lib/__tests__/helpers/admin-route-explicit-permissions";
 import {
   adminRouteApiPath,
@@ -323,6 +325,28 @@ describe("AI app action census (ALP-653, INV-MCP-006)", { timeout: CENSUS_TIMEOU
     expect(waiting).toEqual([]);
   });
 
+  it("leaves no route waiting on ALP-720, which decided the Membership admin area", () => {
+    expect(Object.values(MCP_NOT_YET_TASKS)).not.toContain("ALP-720");
+    const membership = routeMethods.filter(
+      (route) => getAdminRouteRequirement(adminRouteApiPath(route.file), route.method)?.area === "membership",
+    );
+    expect(membership.length).toBeGreaterThan(100);
+    for (const route of membership) {
+      const result = classifyMcpRoute(route.file, route.method);
+      expect(result.kind, `${route.method} ${route.file}`).not.toBe("unclassified");
+      if (result.kind === "excluded") expect(result.reason, `${route.method} ${route.file}`).not.toMatch(/^not-yet:/);
+    }
+    // The area is finished: a new membership route has to be decided, not deferred.
+    expect(classifyMcpRoute("src/app/api/admin/lockers/brand-new/route.ts", "GET")).toEqual({ kind: "unclassified" });
+  });
+
+  it("runs every Membership action on a route the area gates, answering a connection through its shape", () => {
+    expect(MEMBERSHIP_MCP_ACTIONS.length).toBeGreaterThan(0);
+    for (const action of MEMBERSHIP_MCP_ACTIONS) {
+      expect(mcpActionAdminRequirement(action)?.area, action.id).toBe("membership");
+    }
+  });
+
   it("brings every Bookings & Beds officer route in, or keeps it website-only for a stated reason", () => {
     const bookingsRoutes = routeMethods.filter(
       (route) => getAdminRouteRequirement(adminRouteApiPath(route.file), route.method)?.area === "bookings",
@@ -508,6 +532,24 @@ describe("AI app action census (ALP-653, INV-MCP-006)", { timeout: CENSUS_TIMEOU
     for (const action of MCP_ACTIONS) {
       expect(Object.keys(action.returns).length, action.id).toBeGreaterThan(0);
     }
+  });
+
+  it("refuses as an address argument every static route name beside a folder an action fills", () => {
+    // `get_member` with an `id` of `export` would otherwise reach the export route.
+    const siblings = new Set<string>();
+    for (const action of MCP_ACTIONS) {
+      const segments = action.path.split("/").filter(Boolean);
+      segments.forEach((segment, index) => {
+        if (!/^\[.+\]$/.test(segment)) return;
+        const dir = `src/app/${segments.slice(0, index).join("/")}`;
+        for (const entry of readdirSync(dir, { withFileTypes: true })) {
+          if (entry.isDirectory() && !entry.name.startsWith("[") && entry.name !== "__tests__") {
+            siblings.add(entry.name);
+          }
+        }
+      });
+    }
+    expect([...MCP_STATIC_SIBLING_SEGMENTS].sort()).toEqual([...siblings].sort());
   });
 
   it("lists each permanently excluded member route by its exact method", () => {

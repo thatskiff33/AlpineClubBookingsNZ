@@ -7,26 +7,12 @@
  * (`waitlist-offer-email-visibility.ts`).
  *
  * The offer email carries the event key `<bookingId>:<offeredAtMs>`, so an
- * offer made by this release has at most one row, at a known id.
- *
- * - `sent`: `SENT`, or `QUEUED` on its first attempt (the stated
- *   crash-during-the-provider-call limit: the provider may have it);
- * - `withheld`: held back by design, the booking's "No emails" or a
- *   non-production copy. Told, for every decision but the admin page, which
- *   still shows a live offer nobody was told about;
- * - `retrying`: the email retry cron holds it: `FAILED` and replayable
- *   (`isReplayableFailedEmail`), or `QUEUED` past its first attempt and
- *   claimed within `replayInFlightWindowMs()` (the cron claims a row as
- *   `QUEUED` while it replays it; the window is the longest a replay can still
- *   be sending, from the transport timeouts). An older such row is left `QUEUED` by a
- *   replay whose `SENT` write failed after the provider accepted it, or that
- *   died mid-send, and nothing moves it on; it reads as `sent`, the same
- *   stated limit as a first attempt (round 3, item 1);
- * - `undeliverable`: `FAILED` with nothing left to replay it, or `BOUNCED`
- *   (including a bounce that arrived after `SENT`). It cannot be sent again
- *   under the same key;
- * - `not-sent`: no row.
- * Told means `sent` or `withheld`, and nothing else.
+ * offer made by this release has at most one row, at a known id. What that
+ * row's status says (`sent`, `withheld`, `retrying`, `undeliverable`,
+ * `not-sent`; told means `sent` or `withheld`, and nothing else) is the rule
+ * every keyed notice shares, in `email/keyed-email-state.ts` (#5433 PR 3);
+ * this module adds what only an offer has, under the names the offer's code
+ * has always used.
  *
  * An offer made by the release before #5433 has no keyed row: its email was
  * sent with no key, under a random id. Every reading here is by the keyed id,
@@ -34,18 +20,25 @@
  * counts as told, exactly as that release did; and the retry job replays its
  * row while the booking is still offered (`waitlistOfferEmailStillWanted`).
  */
-import { BookingStatus, EmailLogStatus, type Prisma } from "@prisma/client";
+import { BookingStatus, type Prisma } from "@prisma/client";
 
 import { durableEmailLogId } from "@/lib/email/attempt-log";
+import {
+  isKeyedEmailRowTold,
+  isToldKeyedEmailState,
+  KEYED_EMAIL_ROW_SELECT,
+  keyedEmailRowState,
+  readKeyedEmailState,
+  type KeyedEmailState,
+} from "@/lib/email/keyed-email-state";
 import { retireReplayableEmailRow } from "@/lib/email/retire-replayable";
-import { replayInFlightWindowMs } from "@/lib/email/replay-in-flight";
 import { isReplayableFailedEmail } from "@/lib/email/retry-selection";
 import { WAITLIST_OFFER_TEMPLATE_NAME } from "@/lib/email/waitlist-offer-template";
 import logger from "@/lib/logger";
 import { owedNoticeEventKey } from "@/lib/owed-notice/store";
 import { prisma } from "@/lib/prisma";
 
-export type OfferEmailState = "sent" | "withheld" | "retrying" | "undeliverable" | "not-sent";
+export type OfferEmailState = KeyedEmailState;
 
 /** The offer email's event key: one `EmailLog` row per offer, however often it is sent. */
 export function waitlistOfferEmailKey(bookingId: string, offeredAt: Date): string {
@@ -100,66 +93,19 @@ export function waitlistOfferMovedOn(
   return null;
 }
 
-/** What a row's status alone says; a `FAILED` row still needs its bodies to tell replayable from not. */
-type StatusReading = "sent" | "withheld" | "replaying" | "failed" | "undeliverable";
+/** Whether a row says the member was told: its status alone decides (`isKeyedEmailRowTold`). */
+export const isOfferEmailRowTold = isKeyedEmailRowTold;
 
-/** The fields of an offer email's row the reading needs. */
-export type OfferEmailRowStatus = { status: EmailLogStatus; attempts: number; lastAttemptAt: Date };
+/** A row's full state, or `not-sent` for none (`keyedEmailRowState`). */
+export const offerEmailRowState = keyedEmailRowState;
 
-function readStatus({ status, attempts, lastAttemptAt }: OfferEmailRowStatus, now: Date): StatusReading {
-  switch (status) {
-    case EmailLogStatus.SENT:
-      return "sent";
-    case EmailLogStatus.QUEUED:
-      return attempts > 1 && now.getTime() - lastAttemptAt.getTime() < replayInFlightWindowMs() ? "replaying" : "sent";
-    case EmailLogStatus.SKIPPED_NO_EMAILS:
-    case EmailLogStatus.SKIPPED_NON_PRODUCTION:
-      return "withheld";
-    case EmailLogStatus.FAILED:
-      return "failed";
-    case EmailLogStatus.BOUNCED:
-      return "undeliverable";
-    default: {
-      // A status added later fails to compile here until it is classified.
-      const unclassified: never = status;
-      return unclassified;
-    }
-  }
-}
+export const isToldOfferEmailState = isToldKeyedEmailState;
 
-/** Whether a row says the member was told: its status alone decides. */
-export function isOfferEmailRowTold(row: OfferEmailRowStatus, now: Date = new Date()): boolean {
-  const reading = readStatus(row, now);
-  return reading === "sent" || reading === "withheld";
-}
-
-/** A row's full state, or `not-sent` for none. */
-export function offerEmailRowState(
-  row: (OfferEmailRowStatus & { htmlBody: string | null; bookingRetryHtmlBody: string | null }) | null,
-  now: Date = new Date(),
-): OfferEmailState {
-  if (!row) return "not-sent";
-  const reading = readStatus(row, now);
-  switch (reading) {
-    case "sent":
-    case "withheld":
-    case "undeliverable":
-      return reading;
-    case "replaying":
-      return "retrying";
-    case "failed":
-      return isReplayableFailedEmail(row) ? "retrying" : "undeliverable";
-  }
-}
-
-export const isToldOfferEmailState = (state: OfferEmailState) => state === "sent" || state === "withheld";
-
-const OFFER_EMAIL_ROW_SELECT = { status: true, attempts: true, lastAttemptAt: true, htmlBody: true, bookingRetryHtmlBody: true } as const;
+const OFFER_EMAIL_ROW_SELECT = KEYED_EMAIL_ROW_SELECT;
 
 /** The offer email's state, read outside any transaction. */
-export async function readOfferEmailState(bookingId: string, offeredAt: Date): Promise<OfferEmailState> {
-  const row = await prisma.emailLog.findUnique({ where: { id: offerEmailLogId(bookingId, offeredAt) }, select: OFFER_EMAIL_ROW_SELECT });
-  return offerEmailRowState(row);
+export function readOfferEmailState(bookingId: string, offeredAt: Date): Promise<OfferEmailState> {
+  return readKeyedEmailState(offerEmailLogId(bookingId, offeredAt));
 }
 
 const retiredMessage = (why: string) => `Not replayed: the waitlist offer is over (${why}) (#5433)`;

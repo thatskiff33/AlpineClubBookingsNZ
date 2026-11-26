@@ -157,13 +157,13 @@ beforeEach(() => {
 describe("permission gating", () => {
   it("rejects unauthenticated list", async () => {
     mocks.auth.mockResolvedValue(null);
-    const res = await listNotices();
+    const res = await listNotices(new NextRequest("http://x/api/admin/notices"));
     expect(res.status).toBe(401);
   });
 
   it("rejects non-membership-admin list (403)", async () => {
     mocks.auth.mockResolvedValue(memberSession);
-    const res = await listNotices();
+    const res = await listNotices(new NextRequest("http://x/api/admin/notices"));
     expect(res.status).toBe(403);
     expect(mocks.noticeFindMany).not.toHaveBeenCalled();
   });

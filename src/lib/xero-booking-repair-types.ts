@@ -606,6 +606,8 @@ export interface BookingClassificationContext {
    * this, and nothing at all when it is zero.
    */
   refundNoteUncoveredCents: number | null;
+  /** #4328: the gap read's live-note coverage and late-capture exclusion (`readRefundNoteGaps`, which says when it is "unreadable"); null when not read. */
+  refundNoteCoverage: { coveredCents: number; lateCaptureExcludedCents: number } | "unreadable" | null;
   /**
    * #3643 (owner decision 28 Sep 2026, `INV-PAY-107`): the payments on this
    * booking whose part-payment review task a treasurer has closed. A review

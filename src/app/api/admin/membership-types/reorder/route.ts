@@ -1,7 +1,6 @@
 import { NextResponse } from "next/server";
 import { revalidatePath } from "next/cache";
 import { Prisma } from "@prisma/client";
-import { z } from "zod";
 import { parseJsonRequestBody } from "@/lib/api-json";
 import {
   buildStructuredAuditLogCreateArgs,
@@ -13,6 +12,9 @@ import {
 } from "@/lib/membership-types";
 import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/session-guards";
+import { membershipTypeReorderSchema } from "@/lib/admin-membership-api/config-structure";
+import { connectionJson } from "@/lib/mcp-connection-request";
+import { MEMBERSHIP_TYPES_REORDERED_CONNECTION_SHAPE } from "@/lib/connection-shapes/membership-config";
 
 const membershipTypeSelect = {
   id: true,
@@ -47,12 +49,6 @@ const membershipTypeSelect = {
   _count: { select: { assignments: true } },
 } satisfies Prisma.MembershipTypeSelect;
 
-const reorderSchema = z
-  .object({
-    orderedIds: z.array(z.string().min(1)).min(1),
-  })
-  .strict();
-
 export async function POST(request: Request) {
   const guard = await requireAdmin({
     permission: { area: "membership", level: "edit" },
@@ -68,7 +64,7 @@ export async function POST(request: Request) {
   if (!jsonBody.ok) return jsonBody.response;
   const body = jsonBody.body;
 
-  const parsed = reorderSchema.safeParse(body);
+  const parsed = membershipTypeReorderSchema.safeParse(body);
   if (!parsed.success) {
     return NextResponse.json(
       { error: "Invalid input", details: parsed.error.flatten() },
@@ -136,7 +132,9 @@ export async function POST(request: Request) {
   });
 
   revalidatePath("/", "layout");
-  return NextResponse.json({
-    membershipTypes: updated.map(serializeMembershipType),
-  });
+  return connectionJson(
+    request,
+    { membershipTypes: updated.map(serializeMembershipType) },
+    MEMBERSHIP_TYPES_REORDERED_CONNECTION_SHAPE,
+  );
 }

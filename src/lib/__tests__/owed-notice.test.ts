@@ -50,6 +50,7 @@ import {
   claimOwedNotice,
   deferOwedNotice,
   owedNoticeId,
+  owedNoticeInputProblem,
   owedNoticeMarker,
   recordOwedNotices,
   settleOwedNotice,
@@ -485,6 +486,17 @@ describe("a marker's identity cannot collide (#5433 review)", () => {
     expect(table.delegate.createMany).not.toHaveBeenCalled();
     // A cuid-shaped booking id and a one-letter variant, as the bump writes them, pass.
     await expect(recordOwedNotices(tx, [{ kind: KIND, subjectId: "cm1abc2def3ghi4jkl5mno6p", eventAt: EVENT_AT, variant: "g" }])).resolves.toHaveLength(1);
+  });
+});
+
+// #5433 PR 3 round 2 (F3): the one rule, asked without writing, by a caller that
+// must never roll its transaction back for an input it cannot write.
+describe("owedNoticeInputProblem: the write's rule, asked without throwing", () => {
+  it("names the identity or payload problem the write would throw on, and null for an input it writes", () => {
+    expect(owedNoticeInputProblem({ kind: KIND, subjectId: "s:123", eventAt: EVENT_AT })).toContain("subjectId");
+    expect(owedNoticeInputProblem({ kind: KIND, subjectId: "s", eventAt: EVENT_AT, variant: "4:56" })).toContain("variant");
+    expect(owedNoticeInputProblem({ kind: KIND, subjectId: "s", eventAt: EVENT_AT, payload: { cents: 1.5 } })).toContain("whole number or an id");
+    expect(owedNoticeInputProblem({ kind: KIND, subjectId: "cm1abc2def3ghi4jkl5mno6p", eventAt: EVENT_AT, variant: "g", payload: { position: 3 } })).toBeNull();
   });
 });
 

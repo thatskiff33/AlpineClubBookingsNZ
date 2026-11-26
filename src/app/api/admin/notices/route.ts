@@ -1,5 +1,4 @@
 import { NextResponse } from "next/server";
-import { z } from "zod";
 import { parseJsonRequestBody } from "@/lib/api-json";
 import {
   buildStructuredAuditLogCreateArgs,
@@ -19,40 +18,14 @@ import {
   validateNoticeAudienceTargets,
 } from "@/lib/notices-admin";
 import { sendNoticePublishedEmails } from "@/lib/notices-email";
+import { createNoticeSchema } from "@/lib/admin-membership-api/notices";
+import { connectionJson } from "@/lib/mcp-connection-request";
 import {
-  NOTICE_BODY_MAX_LENGTH,
-  NOTICE_TITLE_MAX_LENGTH,
-} from "@/lib/notices-shared";
+  NOTICE_SAVED_CONNECTION_SHAPE,
+  NOTICE_LIST_CONNECTION_SHAPE,
+} from "@/lib/connection-shapes/membership-notices";
 
-const audienceSchema = z.discriminatedUnion("kind", [
-  z.object({ kind: z.literal("ALL_MEMBERS") }).strict(),
-  z.object({ kind: z.literal("MEMBER"), memberId: z.string().min(1) }).strict(),
-  z
-    .object({ kind: z.literal("MEMBERSHIP_TYPE"), membershipTypeId: z.string().min(1) })
-    .strict(),
-  z.object({ kind: z.literal("LODGE"), lodgeId: z.string().min(1) }).strict(),
-  z
-    .object({ kind: z.literal("COMMITTEE_ROLE"), committeeRoleId: z.string().min(1) })
-    .strict(),
-]);
-
-const createSchema = z
-  .object({
-    title: z.string().trim().min(1).max(NOTICE_TITLE_MAX_LENGTH),
-    bodyHtml: z.string().max(NOTICE_BODY_MAX_LENGTH),
-    status: z.enum(["DRAFT", "PUBLISHED"]).optional().default("DRAFT"),
-    expiresAt: z.string().datetime().nullable().optional(),
-    pinned: z.boolean().optional().default(false),
-    requiresAcknowledgement: z.boolean().optional().default(false),
-    financialMembersOnly: z.boolean().optional().default(false),
-    // Optional email-on-publish. Only honoured when the notice is created
-    // PUBLISHED (a draft never emails).
-    sendEmail: z.boolean().optional().default(false),
-    audiences: z.array(audienceSchema).min(1),
-  })
-  .strict();
-
-export async function GET() {
+export async function GET(request: Request) {
   const guard = await requireAdmin({
     permission: { area: "membership", level: "view" },
   });
@@ -60,7 +33,7 @@ export async function GET() {
     return guard.response;
   }
 
-  return NextResponse.json(await listNoticesForAdmin());
+  return connectionJson(request, await listNoticesForAdmin(), NOTICE_LIST_CONNECTION_SHAPE);
 }
 
 export async function POST(request: Request) {
@@ -78,7 +51,7 @@ export async function POST(request: Request) {
   if (!jsonBody.ok) return jsonBody.response;
   const body = jsonBody.body;
 
-  const parsed = createSchema.safeParse(body);
+  const parsed = createNoticeSchema.safeParse(body);
   if (!parsed.success) {
     return NextResponse.json(
       { error: "Invalid input", details: parsed.error.flatten() },
@@ -152,5 +125,7 @@ export async function POST(request: Request) {
     }
   }
 
-  return NextResponse.json({ notice: { id: created.id } }, { status: 201 });
+  return connectionJson(request, { notice: { id: created.id } }, NOTICE_SAVED_CONNECTION_SHAPE, {
+    status: 201,
+  });
 }

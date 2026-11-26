@@ -5,6 +5,7 @@ import { isPrismaKnownUniqueConstraintError } from "@/lib/prisma-known-errors";
 import { UNUSABLE_PLACEHOLDER_PASSWORD_HASH } from "@/lib/password-hashing";
 import { prisma } from "@/lib/prisma";
 import { logAudit } from "@/lib/audit";
+import type { reviewFamilyGroupRequestSchema } from "@/lib/admin-membership-api/family-groups";
 import logger from "@/lib/logger";
 import {
   computeAgeTier,
@@ -80,27 +81,6 @@ function cleanOptionalString(value: string | null | undefined) {
 function jsonResult(body: unknown, init?: ResponseInit): JsonRouteResult {
   return { body, init };
 }
-
-export const reviewFamilyGroupRequestSchema = z.object({
-  requestId: z.string().min(1),
-  action: z.enum(["approve", "reject"]),
-  linkedMemberId: z.string().min(1).optional(),
-  // Empty string is intentionally allowed: the admin request-review UI's
-  // "Use child's own email" option sends inheritEmailFromId: "" (its
-  // <option value="">), which the approve path coerces to null (no inheritance,
-  // child keeps its own email) via `data.inheritEmailFromId?.trim() || null` and
-  // resolveParentNotificationSourceId. Do not tighten to reject "" without
-  // updating that client — a rolling deploy would 422 the old client's requests.
-  inheritEmailFromId: z.string().optional().nullable().or(z.literal("")),
-  createNewMember: z.boolean().optional(),
-  rejectionReason: z.string().max(500).optional(),
-  // #1789: admin per-decision member-email choice. Absent/undefined = notify
-  // (default), false = suppress the requester's decision email. Only gates the
-  // requester-facing CHILD_REQUEST and GROUP_CREATE decision emails; the
-  // token-bearing partner invite on GROUP_CREATE approval is always sent (the
-  // invited partner cannot join without it).
-  notifyMember: z.boolean().optional(),
-});
 
 export type ReviewFamilyGroupRequestInput = z.infer<
   typeof reviewFamilyGroupRequestSchema

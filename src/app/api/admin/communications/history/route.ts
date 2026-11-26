@@ -2,23 +2,22 @@
  * N-09: Bulk Communication History
  * GET /api/admin/communications/history
  * Returns one page of past bulk sends with stats, newest first, through the
- * shared admin list page keys (INV-OPS-020).
+ * shared admin list page keys (INV-OPS-020). An AI app connection is sent
+ * the `history` list once, without its `data` copy (ALP-720).
  */
 import { NextRequest, NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma";
-import { z } from "zod";
-import { adminListPage, adminListPageQueryFields } from "@/lib/admin-list-page";
-
-const querySchema = z.object({
-  ...adminListPageQueryFields,
-});
+import { adminListPage } from "@/lib/admin-list-page";
+import { communicationHistoryQuerySchema } from "@/lib/admin-membership-api/notices";
+import { connectionJson } from "@/lib/mcp-connection-request";
+import { COMMUNICATION_HISTORY_CONNECTION_SHAPE } from "@/lib/connection-shapes/membership-notices";
 
 export async function GET(request: NextRequest) {
   const guard = await requireAdmin();
   if (!guard.ok) return guard.response;
   const { searchParams } = new URL(request.url);
-  const parsed = querySchema.safeParse(Object.fromEntries(searchParams));
+  const parsed = communicationHistoryQuerySchema.safeParse(Object.fromEntries(searchParams));
 
   if (!parsed.success) {
     return NextResponse.json(
@@ -67,9 +66,13 @@ export async function GET(request: NextRequest) {
     };
   });
 
-  return NextResponse.json({
-    data: history,
-    history,
-    ...adminListPage({ page, pageSize, total }),
-  });
+  return connectionJson(
+    request,
+    {
+      data: history,
+      history,
+      ...adminListPage({ page, pageSize, total }),
+    },
+    COMMUNICATION_HISTORY_CONNECTION_SHAPE,
+  );
 }

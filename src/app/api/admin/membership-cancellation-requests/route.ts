@@ -1,36 +1,19 @@
-import { MembershipCancellationRequestStatus } from "@prisma/client";
 import { NextRequest, NextResponse } from "next/server";
-import { z } from "zod";
 import {
   getAdminMembershipCancellationRequests,
   type AdminCancellationStatusFilter,
 } from "@/lib/membership-cancellation-admin";
 import { hasAdminAreaAccess } from "@/lib/admin-permissions";
 import logger from "@/lib/logger";
-import {
-  adminListPageQueryFields,
-} from "@/lib/admin-list-page";
+import { membershipCancellationRequestListQuerySchema } from "@/lib/admin-membership-api/requests";
+import { MEMBERSHIP_CANCELLATION_REQUEST_LIST_CONNECTION_SHAPE } from "@/lib/connection-shapes/membership-requests";
+import { arrivesAsMcpConnection, connectionJson } from "@/lib/mcp-connection-request";
 import { requireAdmin } from "@/lib/session-guards";
-
-const querySchema = z.object({
-  status: z
-    .enum([
-      MembershipCancellationRequestStatus.REQUESTED,
-      MembershipCancellationRequestStatus.APPROVED,
-      MembershipCancellationRequestStatus.REJECTED,
-      MembershipCancellationRequestStatus.WITHDRAWN,
-      MembershipCancellationRequestStatus.COMPLETED,
-      "ALL",
-    ])
-    .optional()
-    .default(MembershipCancellationRequestStatus.REQUESTED),
-  ...adminListPageQueryFields,
-});
 
 export async function GET(request: NextRequest) {
   const guard = await requireAdmin();
   if (!guard.ok) return guard.response;
-  const parsed = querySchema.safeParse(
+  const parsed = membershipCancellationRequestListQuerySchema.safeParse(
     Object.fromEntries(request.nextUrl.searchParams),
   );
 
@@ -55,10 +38,13 @@ export async function GET(request: NextRequest) {
     // Inside the try so a throw here is logged and answered like any other
     // failure of this route, rather than escaping as a bare framework 500 with
     // nothing in the log to explain it.
-    const viewerCanApprove = hasAdminAreaAccess(guard.session.user, {
-      area: "membership",
-      level: "edit",
-    });
+    //
+    // An AI app connection never approves (website-only, ALP-720), so it never
+    // earns the check either: an app polling the queue cannot spend the
+    // club's Xero allowance.
+    const viewerCanApprove =
+      !arrivesAsMcpConnection(request) &&
+      hasAdminAreaAccess(guard.session.user, { area: "membership", level: "edit" });
 
     const data = await getAdminMembershipCancellationRequests({
       status: parsed.data.status as AdminCancellationStatusFilter,
@@ -70,12 +56,16 @@ export async function GET(request: NextRequest) {
     // The list envelope (page, pageSize, total, totalPages) is spread as the
     // service built it, so a key added to AdminListPage reaches the client.
     const { requests, pendingCount, ...envelope } = data;
-    return NextResponse.json({
-      data: requests,
-      requests,
-      pendingCount,
-      ...envelope,
-    });
+    return connectionJson(
+      request,
+      {
+        data: requests,
+        requests,
+        pendingCount,
+        ...envelope,
+      },
+      MEMBERSHIP_CANCELLATION_REQUEST_LIST_CONNECTION_SHAPE,
+    );
   } catch (err) {
     logger.error({ err }, "Failed to load membership cancellation requests");
     return NextResponse.json(

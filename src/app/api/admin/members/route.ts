@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
+import { adminMembersQuerySchema } from "@/lib/admin-membership-api/members";
 import {
-  adminMembersQuerySchema,
   createAdminMember,
   createMemberSchema,
   listAdminMembers,
@@ -12,6 +12,8 @@ import {
   isDietaryFieldEnabled,
 } from "@/lib/member-dietary";
 import { requireRecentAuth } from "@/lib/require-recent-auth";
+import { connectionJson } from "@/lib/mcp-connection-request";
+import { MEMBER_LIST_CONNECTION_SHAPE } from "@/lib/connection-shapes/membership-members";
 
 function unauthorizedResponse() {
   return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -23,7 +25,9 @@ const adminGuardOptions = {
 
 /**
  * GET /api/admin/members
- * List members with search, filtering, sorting, and pagination.
+ * List members with search, filtering, sorting, and pagination. An AI app
+ * connection is sent each member's identity and membership standing only
+ * (ALP-720).
  */
 export async function GET(req: NextRequest) {
   const guard = await requireAdmin({
@@ -32,34 +36,11 @@ export async function GET(req: NextRequest) {
   });
   if (!guard.ok) return guard.response;
 
-  const sp = req.nextUrl.searchParams;
-  const parsed = adminMembersQuerySchema.safeParse({
-    q: sp.get("q") ?? undefined,
-    search: sp.get("search") ?? undefined,
-    page: sp.get("page") ?? undefined,
-    pageSize: sp.get("pageSize") ?? undefined,
-    sortBy: sp.get("sortBy") ?? undefined,
-    sortDir: sp.get("sortDir") ?? undefined,
-    inheritEmailEligible: sp.get("inheritEmailEligible") ?? undefined,
-    excludeId: sp.get("excludeId") ?? undefined,
-    dependentLinkEligibleFor: sp.get("dependentLinkEligibleFor") ?? undefined,
-    parentLinkEligibleFor: sp.get("parentLinkEligibleFor") ?? undefined,
-    partnerLinkEligibleFor: sp.get("partnerLinkEligibleFor") ?? undefined,
-    role: sp.get("role") ?? undefined,
-    financeAccess: sp.get("financeAccess") ?? undefined,
-    lifecycleStatus: sp.get("lifecycleStatus") ?? undefined,
-    includeArchived: sp.get("includeArchived") ?? undefined,
-    active: sp.get("active") ?? undefined,
-    ageTier: sp.get("ageTier") ?? undefined,
-    ageTierIn: sp.get("ageTierIn") ?? undefined,
-    membershipType: sp.get("membershipType") ?? undefined,
-    subscriptionCategory: sp.get("subscriptionCategory") ?? undefined,
-    xeroLinked: sp.get("xeroLinked") ?? undefined,
-    inviteStatus: sp.get("inviteStatus") ?? undefined,
-    subscription: sp.get("subscription") ?? undefined,
-    familyGroup: sp.get("familyGroup") ?? undefined,
-    xeroContactGroup: sp.get("xeroContactGroup") ?? undefined,
-  });
+  // Every field the schema names, so a filter the screen sends cannot be
+  // dropped by a hand-kept list of keys (ALP-720: `contactability` was).
+  const parsed = adminMembersQuerySchema.safeParse(
+    Object.fromEntries(req.nextUrl.searchParams),
+  );
 
   if (!parsed.success) {
     return NextResponse.json(
@@ -69,7 +50,7 @@ export async function GET(req: NextRequest) {
   }
 
   const result = await listAdminMembers(parsed.data);
-  return NextResponse.json(result.body, result.init);
+  return connectionJson(req, result.body, MEMBER_LIST_CONNECTION_SHAPE, result.init);
 }
 
 /**

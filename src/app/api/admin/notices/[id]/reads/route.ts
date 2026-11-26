@@ -1,17 +1,16 @@
 import { NextResponse } from "next/server";
-import { z } from "zod";
 import { resolveNoticeAudienceMembers } from "@/lib/notices";
+import { noticeIdParamsSchema } from "@/lib/notices-shared";
 import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/session-guards";
-
-const paramsSchema = z.object({ id: z.string().min(1) });
-
-const DEFAULT_PAGE_SIZE = 50;
-const MAX_PAGE_SIZE = 200;
+import { noticeReadsQuerySchema } from "@/lib/admin-membership-api/notices";
+import { connectionJson } from "@/lib/mcp-connection-request";
+import { NOTICE_READS_CONNECTION_SHAPE } from "@/lib/connection-shapes/membership-notices";
 
 /**
  * Read-status report for one notice (view level). The notice's CURRENT effective
  * audience left-joined with its read receipts, paginated, plus summary counts.
+ * An AI app connection is not sent members' email addresses (ALP-720).
  */
 export async function GET(
   request: Request,
@@ -24,7 +23,7 @@ export async function GET(
     return guard.response;
   }
 
-  const parsedParams = paramsSchema.safeParse(await params);
+  const parsedParams = noticeIdParamsSchema.safeParse(await params);
   if (!parsedParams.success) {
     return NextResponse.json({ error: "Invalid route parameters" }, { status: 400 });
   }
@@ -38,16 +37,16 @@ export async function GET(
     return NextResponse.json({ error: "Notice not found" }, { status: 404 });
   }
 
-  const url = new URL(request.url);
-  const page = Math.max(1, Number.parseInt(url.searchParams.get("page") ?? "1", 10) || 1);
-  const pageSize = Math.min(
-    MAX_PAGE_SIZE,
-    Math.max(
-      1,
-      Number.parseInt(url.searchParams.get("pageSize") ?? `${DEFAULT_PAGE_SIZE}`, 10) ||
-        DEFAULT_PAGE_SIZE,
-    ),
+  const query = noticeReadsQuerySchema.safeParse(
+    Object.fromEntries(new URL(request.url).searchParams),
   );
+  if (!query.success) {
+    return NextResponse.json(
+      { error: "Invalid query parameters", details: query.error.flatten() },
+      { status: 400 },
+    );
+  }
+  const { page, pageSize } = query.data;
 
   const audience = await resolveNoticeAudienceMembers(noticeId);
   const receipts = await prisma.noticeReadReceipt.findMany({
@@ -78,15 +77,19 @@ export async function GET(
   const start = (page - 1) * pageSize;
   const pagedRows = rows.slice(start, start + pageSize);
 
-  return NextResponse.json({
-    requiresAcknowledgement: notice.requiresAcknowledgement,
-    rows: pagedRows,
-    page,
-    pageSize,
-    total: audienceCount,
-    totalPages: Math.max(1, Math.ceil(audienceCount / pageSize)),
-    audienceCount,
-    readCount,
-    acknowledgedCount,
-  });
+  return connectionJson(
+    request,
+    {
+      requiresAcknowledgement: notice.requiresAcknowledgement,
+      rows: pagedRows,
+      page,
+      pageSize,
+      total: audienceCount,
+      totalPages: Math.max(1, Math.ceil(audienceCount / pageSize)),
+      audienceCount,
+      readCount,
+      acknowledgedCount,
+    },
+    NOTICE_READS_CONNECTION_SHAPE,
+  );
 }
