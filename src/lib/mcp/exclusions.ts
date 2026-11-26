@@ -42,7 +42,7 @@ export const MCP_PERMANENT_EXCLUSION_REASONS = {
     "Decides who may browse members' names, which an officer chooses on the website, never an AI app.",
   "unread-value":
     "Changes a value an AI app is never shown, such as a guest's allergy needs, so the app would be writing blind.",
-  // Officer reasons (ALP-721 onwards).
+  // Officer reasons (ALP-720 onwards).
   "changes-charges":
     "Changes what a member owes or is invoiced, or previews such a change for an officer to confirm, which an officer reviews and confirms on the website.",
   "ends-membership":
