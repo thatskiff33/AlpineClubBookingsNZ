@@ -46,8 +46,10 @@ import { requireAdmin } from "@/lib/session-guards";
  */
 
 // The body schema (null clears the per-lodge choice and falls back to the
-// roster default) lives in admin-lodge-schemas/setup.ts so the AI app action
-// `update_lodge_roster_settings` offers the same field (ALP-722).
+// roster default) lives in admin-lodge-schemas/setup.ts beside the other
+// Lodge Operations setup schemas (ALP-722). The GET is the AI app action
+// `get_lodge_roster_settings`; the PUT is website-only (`privacy-posture` in
+// `src/lib/mcp/exclusions.ts`), since it decides what members see of each other.
 
 async function readSettings(lodgeId: string): Promise<LodgeRosterSettingsAnswer | null> {
   const lodge = await prisma.lodge.findUnique({

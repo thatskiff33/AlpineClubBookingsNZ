@@ -416,6 +416,10 @@ describe("AI app action census (ALP-653, INV-MCP-006)", { timeout: CENSUS_TIMEOU
     expect(reason("admin/lodge-instructions", "PUT")).toEqual({ kind: "excluded", reason: "access-secrets" });
     expect(reason("admin/maintenance-reports/tokens", "POST")).toEqual({ kind: "excluded", reason: "access-secrets" });
     expect(reason("admin/maintenance-reports/tokens", "PATCH").kind).toBe("action");
+    // How much of each name a lodge's roster shows is a privacy posture, as the
+    // member-guest save is (owner decision D-18): an app may read it, never save it.
+    expect(reason("admin/lodges/[id]/roster-settings", "GET").kind).toBe("action");
+    expect(reason("admin/lodges/[id]/roster-settings", "PUT")).toEqual({ kind: "excluded", reason: "privacy-posture" });
     // A new route in the decided area is not covered by a neighbour's decision.
     expect(classifyMcpRoute("src/app/api/admin/hut-leaders/brand-new/route.ts", "GET")).toEqual({
       kind: "unclassified",

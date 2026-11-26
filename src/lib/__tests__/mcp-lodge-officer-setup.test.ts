@@ -1,7 +1,8 @@
 /**
  * ALP-722 (`INV-MCP-006`): the Lodge Operations setup actions an officer's AI
  * app connection may run: the club's lodges, a lodge's central-server link
- * and roster name detail, the lodge settings, and the Other lodges registry.
+ * and roster name detail (read only: the save is website-only,
+ * `privacy-posture`), the lodge settings, and the Other lodges registry.
  * Each route answers the browser as before; the connection gets exactly the
  * action's `returns` fields (`expectActionContract`). Every handler runs
  * twice (connection, then browser), so the write mocks answer both runs.
@@ -101,7 +102,7 @@ vi.mock("@/lib/servernz-upload-after-save", () => ({ uploadOtherClubsAfterSave: 
 vi.mock("@/lib/other-lodge-hide", () => ({ hideUnlistedOtherLodge: h.hide }));
 
 import { GET as getCentralLink, PUT as putCentralLink } from "@/app/api/admin/lodges/[id]/central-lodge/route";
-import { GET as getRosterSettings, PUT as putRosterSettings } from "@/app/api/admin/lodges/[id]/roster-settings/route";
+import { GET as getRosterSettings } from "@/app/api/admin/lodges/[id]/roster-settings/route";
 import { PATCH as patchLodge } from "@/app/api/admin/lodges/[id]/route";
 import { GET as listLodges, POST as createLodge } from "@/app/api/admin/lodges/route";
 import { GET as getLodgeSettings, PUT as putLodgeSettings } from "@/app/api/admin/lodge-settings/route";
@@ -351,36 +352,6 @@ describe("get_lodge_roster_settings", () => {
       defaultRosterNameGranularity: expect.any(String),
       memberLodgeRosterEnabled: true,
     });
-    expect(browser).toEqual(connection);
-  });
-});
-
-describe("update_lodge_roster_settings", () => {
-  it("saves the level, audits which way it moved, and answers it", async () => {
-    h.prisma.lodge.findUnique
-      .mockResolvedValueOnce({ id: "lodge-1", rosterNameGranularity: null })
-      .mockResolvedValueOnce({ id: "lodge-1", name: "Whakapapa Lodge", rosterNameGranularity: "COUNTS_ONLY" })
-      .mockResolvedValueOnce({ id: "lodge-1", rosterNameGranularity: null })
-      .mockResolvedValueOnce({ id: "lodge-1", name: "Whakapapa Lodge", rosterNameGranularity: "COUNTS_ONLY" });
-    h.moduleFlags.mockResolvedValue({ memberLodgeRoster: false });
-
-    const { connection, browser } = await expectActionContract({
-      actionId: "update_lodge_roster_settings",
-      handler: putRosterSettings,
-      args: { id: "lodge-1", rosterNameGranularity: "COUNTS_ONLY" },
-    });
-
-    expect(h.prisma.lodge.update).toHaveBeenCalledWith({
-      where: { id: "lodge-1" },
-      data: { rosterNameGranularity: "COUNTS_ONLY" },
-    });
-    expect(h.createAuditLog).toHaveBeenCalledWith(
-      expect.objectContaining({
-        action: "LODGE_MEMBER_ROSTER_SETTINGS_UPDATED",
-        metadata: { before: { rosterNameGranularity: null }, after: { rosterNameGranularity: "COUNTS_ONLY" } },
-      }),
-    );
-    expect(connection).toMatchObject({ rosterNameGranularity: "COUNTS_ONLY", memberLodgeRosterEnabled: false });
     expect(browser).toEqual(connection);
   });
 });

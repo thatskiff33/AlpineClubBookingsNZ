@@ -113,7 +113,7 @@ export const lodgeCentralLinkBodySchema = z
   })
   .strict();
 
-/** `PUT /api/admin/lodges/[id]/roster-settings`. */
+/** `PUT /api/admin/lodges/[id]/roster-settings`, a website-only save (`privacy-posture`): no action offers it. */
 export const lodgeRosterSettingsBodySchema = z
   .object({
     // Null clears the per-lodge choice and falls back to the roster default.

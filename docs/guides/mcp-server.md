@@ -746,7 +746,9 @@ Bookings & Beds above.
 
 Website-only, and why (the reasons are listed below): the kiosk's sign-in
 account, a hut leader's kiosk PIN and the display screens' setup belong with
-the kiosk; the lodge instructions (door codes and emergency access), minting
+the kiosk; saving how much of each name a lodge's roster shows decides what
+members see of each other, so it is a privacy posture, as the member-guest
+save is (owner decision D-18), and an app may only read it; the lodge instructions (door codes and emergency access), minting
 or rotating a maintenance QR sign (its link is shown once) and a meeting's
 host link are access details; the printable chore roster needs the browser;
 pricing or receiving a food order is writing blind, since a connection reads
@@ -807,7 +809,6 @@ kiosk account ask for fresh proof.
 | `get_lodge_central_link` | Read a lodge's central-server link | read | view | `GET /api/admin/lodges/[id]/central-lodge` |
 | `set_lodge_central_link` | Link a lodge to the central server | destructive | edit | `PUT /api/admin/lodges/[id]/central-lodge` |
 | `get_lodge_roster_settings` | Read a lodge's roster name detail | read | view | `GET /api/admin/lodges/[id]/roster-settings` |
-| `update_lodge_roster_settings` | Change a lodge's roster name detail | destructive | edit | `PUT /api/admin/lodges/[id]/roster-settings` |
 | `get_lodge_settings` | Read lodge settings | read | view | `GET /api/admin/lodge-settings` |
 | `update_lodge_settings` | Change lodge settings | destructive | edit | `PUT /api/admin/lodge-settings` |
 | `list_other_lodges` | List Other lodges | read | view | `GET /api/admin/other-lodges` |
@@ -883,7 +884,8 @@ reasons are permanent — those routes are never actions:
 - **The website's help assistant** — the member's own AI app answers them
   instead.
 - **Privacy posture** — saving the member-guest settings, which decide who
-  may browse members' names. An officer chooses that on the website.
+  may browse members' names, and saving how much of each name a lodge's
+  member roster shows. An officer chooses that on the website.
 - **Writing blind** — changing a guest's dietary or allergy needs for a stay.
   An app is never sent those (`INV-PRIV-022`), so it could only overwrite or
   clear them unseen. So too pricing a food order or ticking its items

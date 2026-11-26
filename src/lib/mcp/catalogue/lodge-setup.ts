@@ -5,11 +5,13 @@
  * `MCP_ACTIONS`.
  *
  * Kinds: every change here is `destructive`. A lodge, its capacity, its
- * central-server link, how much of a name its roster shows, and this club's
- * entry in the shared Other lodges registry (uploaded to the Alpine Central
- * Server) are club-wide configuration, which an officer's app may change only
- * after asking the officer first (owner decision, #5305 comment 7093303964,
- * item 2).
+ * central-server link, and this club's entry in the shared Other lodges
+ * registry (uploaded to the Alpine Central Server) are club-wide
+ * configuration, which an officer's app may change only after asking the
+ * officer first (owner decision, #5305 comment 7093303964, item 2). How much
+ * of a name the roster shows is read only: its save decides what members see
+ * of each other, so it is website-only (`privacy-posture` in `exclusions.ts`),
+ * as the member-guest save is.
  *
  * The door code is never offered: the lodge create and update actions take
  * the route's schema without it, and their answers leave it out. The lodge
@@ -19,7 +21,6 @@ import { routeIdParamsSchema } from "@/lib/route-id-params";
 import {
   lodgeCentralLinkBodySchema,
   lodgeCreateConnectionBodySchema,
-  lodgeRosterSettingsBodySchema,
   lodgeSettingsBodySchema,
   lodgeSettingsQuerySchema,
   lodgeUpdateConnectionBodySchema,
@@ -117,19 +118,6 @@ export const LODGE_SETUP_MCP_ACTIONS: readonly McpAction[] = [
     path: "/api/admin/lodges/[id]/roster-settings",
     params: routeIdParamsSchema,
     kind: "read",
-    returns: ADMIN_LODGE_ROSTER_SETTINGS_CONNECTION_SHAPE,
-    core: false,
-  },
-  {
-    id: "update_lodge_roster_settings",
-    title: "Change a lodge's roster name detail",
-    summary:
-      "Officer: sets how much of each name the member lodge roster shows at a lodge (`id` from `list_lodges_for_officers`), or null for the default. This changes what members see of each other. Answers as `get_lodge_roster_settings`.",
-    method: "PUT",
-    path: "/api/admin/lodges/[id]/roster-settings",
-    params: routeIdParamsSchema,
-    body: lodgeRosterSettingsBodySchema,
-    kind: "destructive",
     returns: ADMIN_LODGE_ROSTER_SETTINGS_CONNECTION_SHAPE,
     core: false,
   },

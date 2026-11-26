@@ -214,7 +214,12 @@ const PERMANENT_ROUTES: ReadonlyArray<{
   { reason: "site-helper", routes: ["POST /api/help/chat"] },
   // Open member search widens the club's privacy (owner decision D-18): text
   // an app read must never be able to talk it into that.
-  { reason: "privacy-posture", routes: ["PUT /api/admin/member-guest-settings"] },
+  // A lodge roster's name detail decides how much members see of each other's
+  // names, which is the same choice (ALP-722).
+  {
+    reason: "privacy-posture",
+    routes: ["PUT /api/admin/member-guest-settings", "PUT /api/admin/lodges/[id]/roster-settings"],
+  },
   // Dietary and allergy needs are never sent to an app (INV-PRIV-022), so an
   // app could only overwrite or clear what the kitchen relies on unseen.
   { reason: "unread-value", routes: ["PATCH /api/admin/bookings/[id]/guest-dietary"] },
