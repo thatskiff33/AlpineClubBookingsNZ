@@ -4,7 +4,6 @@
  * GST the app sent, each line's sent and Xero cents, at `finance:view`. Clearing
  * them is `POST ./clear`, at `finance:edit`. Local state only: no Xero call.
  */
-import { NextResponse } from "next/server";
 
 import { XERO_TAX_OVERRIDE_MISMATCHES_CONNECTION_SHAPE } from "@/lib/connection-shapes/finance-xero-sync";
 import { connectionJson } from "@/lib/mcp-connection-request";
