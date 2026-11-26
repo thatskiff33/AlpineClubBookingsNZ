@@ -1742,6 +1742,36 @@ capacity or double-booking violation.
   `cross-lodge-waitlist-processor.test.ts`,
   `waitlist-queue-position.realdb.test.ts`.
 
+### INV-CAP-043
+
+- **An offer's window runs from the email that tells the member** (#5433,
+  owner decision D2, 23 Nov 2026). The offer email and the officers' alert are
+  owed notices, recorded in the offer's transaction and sent after the commit
+  (`waitlist-offer-notices.ts`). When a later run's sweep,
+  not that first attempt, sends the offer email, it first restarts the window,
+  once per offer: a full window from that send, capped at the start of the
+  check-in date in the club's time zone (D6), never earlier than the deadline
+  in force. The email states that deadline. The first attempt never moves the
+  window. No restart when no email can go: "No emails" (the withheld email
+  counts as told), or an address missing, a placeholder or suppressed
+  (officers alerted). Under the waitlist wait left, no offer email goes.
+- **The offer stays the same offer.** The restart moves only
+  `waitlistOfferExpiresAt`; `waitlistOfferedAt` keys the markers, the email's
+  event key and the "same offer" check, so the member is sent it once. Told
+  is read from that email's row after every send (`OfferEmailState`);
+  undeliverable or unrecorded, officers hear once.
+- **No "offer expired" email for an offer the member was never told
+  about**: its email's row not told, or, with no row, its notice still owed
+  or past its cut-off unsent. The lapse is otherwise unchanged (`INV-CAP-042`). Officers get one
+  owed alert instead (D5, 24 Nov 2026), through the offer email's own
+  once-ever claim, so the two go once (twice if both sent-stamp writes fail).
+- **Locks.** The restart is its own lock(1) and lodge-key transaction with a
+  claim guarded on the status, the offer and its original deadline
+  (`INV-LOCK-002`); a lost claim sends nothing.
+- Guards: `waitlist-offer-window.test.ts`,
+  `waitlist-offer-window-restart.test.ts`, `waitlist-offer-notices.test.ts`,
+  `waitlist.test.ts`, `waitlist-owed-notices.realdb.test.ts`.
+
 ### INV-LIFE-062
 
 A `HutLeaderAssignment` may additionally hold ONE bed (`bedId`), which makes it

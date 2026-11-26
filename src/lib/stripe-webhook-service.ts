@@ -19,7 +19,7 @@ import {
   sendAdminPaymentFailureAlert,
   sendSetupIntentFailedEmail,
 } from "@/lib/email";
-import { sendPaidBookingConfirmedEmail } from "@/lib/paid-booking-confirmation-email";
+import { deliverPaidBookingConfirmation } from "@/lib/paid-booking-confirmation-notice";
 import { recordWebhookLog } from "@/lib/webhook-log";
 import { recordRefusedCardRefund } from "@/lib/card-refund-status-sync";
 import { notifyXeroSyncError } from "@/lib/xero-error-alert";
@@ -303,7 +303,6 @@ async function adoptUnknownIntentsAttemptRow(
   paymentIntent: Stripe.PaymentIntent,
   event: Stripe.Event,
   bookingId: string,
-  onAdopted?: (newlyCaptured: boolean) => void, // #4285 review: the adoption wrote the capture just now
 ) {
   const adopted = await adoptSavedCardChargeAttemptForIntent({
     journal: await resolveBookingMoneyPostingContext(),
@@ -313,7 +312,6 @@ async function adoptUnknownIntentsAttemptRow(
     metadata: paymentIntent.metadata,
   });
   if (!adopted) return null;
-  onAdopted?.(adopted.newlyCaptured);
   return findPaymentTransactionByIntentId({ paymentIntentId: paymentIntent.id });
 }
 
@@ -373,11 +371,11 @@ async function handlePaymentIntentSucceeded(
     return;
   }
 
-  let recordedByCaller = false; // #4285 review: an adoption that just wrote the capture tells the settle it is new money
+  // #5240: an adoption that writes the capture flags it as new money for the settle below (`unsettled-capture-marker.ts`).
   // #4624 review: re-read after a failed adoption - a saved-card charge's own settle may just have written the intent on its row.
   const paymentTransaction =
     (await findPaymentTransactionByIntentId({ paymentIntentId: paymentIntent.id })) ??
-    (await adoptUnknownIntentsAttemptRow(paymentIntent, event, bookingId, (adopted) => (recordedByCaller = adopted))) ??
+    (await adoptUnknownIntentsAttemptRow(paymentIntent, event, bookingId)) ??
     (await findPaymentTransactionByIntentId({ paymentIntentId: paymentIntent.id }));
 
   // #4624 (`INV-INT-033`): the app's own intent, but no PRIMARY row to settle it with - money taken that nothing records.
@@ -490,13 +488,14 @@ async function handlePaymentIntentSucceeded(
   const reconciliation = await markBookingPaymentSucceeded({
     capturedAt: receiptCaptureTime(paymentIntent),
     format,
-    bookingId, recordedByCaller,
+    bookingId,
     paymentIntentId: paymentIntent.id,
     amountCents: paymentIntent.amount,
     paymentMethodId:
       typeof paymentIntent.payment_method === "string"
         ? paymentIntent.payment_method
         : paymentIntent.payment_method?.id ?? null,
+    owesPaidConfirmation: true,
   });
 
   if (
@@ -519,15 +518,10 @@ async function handlePaymentIntentSucceeded(
 
   logger.info({ bookingId, paymentIntentId: paymentIntent.id, outcome: reconciliation.outcome }, `PaymentIntent reconciled: ${reconciliation.outcome}`);
 
-  // Send confirmation email only on a fresh transition to PAID. An
-  // "already_paid" outcome means the synchronous confirm-payment route (or a
-  // prior delivery) already reconciled this payment and sent the email, so we
-  // skip here to keep the send exactly-once across both paths (issue #772).
-  if (reconciliation.outcome === "paid") {
-    await sendPaidBookingConfirmedEmail(bookingId, format);
-  }
-
   await queueXeroInvoiceForPaidBooking({ bookingId });
+  // After the invoice is queued (#5433 round 1): only a fresh PAID carries the owed
+  // marker, so the send stays once across both paths (#772); a stop leaves it to the sweep.
+  if (reconciliation.paidConfirmation) await deliverPaidBookingConfirmation(reconciliation.paidConfirmation, format, "stripe-webhook");
 }
 
 /**

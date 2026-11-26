@@ -12,6 +12,8 @@ import "server-only";
 import { McpGrantScope } from "@prisma/client";
 import { z } from "zod";
 
+import { hasAdminPortalAccess } from "@/lib/admin-permissions";
+
 import { MCP_CONNECTION_REFUSAL_MESSAGES, mcpConnectionRefusal } from "./connection-gate";
 import { buildMcpGrantSession } from "./grant-session";
 import {
@@ -31,6 +33,12 @@ export const mcpApprovalDecisionSchema = z.object({
   decision: z.enum(["approve", "deny"]),
   /** What the member chose. The club's limit is applied when it is recorded. */
   scope: z.enum(McpGrantScope),
+  /**
+   * The screen showed the officer line. An officer's approval counts for
+   * officer actions only when the screen they answered said so, even if they
+   * became an officer while it was open (`INV-MCP-009`).
+   */
+  officerNoticeShown: z.boolean().optional(),
   params: z.object(
     Object.fromEntries(MCP_AUTHORIZE_PARAM_NAMES.map((name) => [name, authorizeParam])) as Record<
       (typeof MCP_AUTHORIZE_PARAM_NAMES)[number],
@@ -74,6 +82,11 @@ export type McpApproval =
       readonly signIn: McpApprovingSignIn;
       /** Whether "view and change" is offered: the app asked and the club allows it. */
       readonly mayChange: boolean;
+      /**
+       * The member holds an admin area, so the screen says the app can also
+       * act as an officer, and approving records that (`INV-MCP-009`).
+       */
+      readonly officer: boolean;
     };
 
 /**
@@ -147,7 +160,19 @@ export async function resolveMcpApproval(
     settings,
     signIn,
     mayChange: check.request.wantsWrite && settings.maxScope === "READ_WRITE",
+    officer: hasAdminPortalAccess(preview.session.user),
   };
+}
+
+/**
+ * Whether this approval lets the connection run officer actions: the member
+ * holds an admin area now and the screen they answered told them so.
+ */
+export function approvalCoversOfficerActions(
+  approval: { readonly officer: boolean },
+  officerNoticeShown: boolean | undefined,
+): boolean {
+  return approval.officer && officerNoticeShown === true;
 }
 
 /** The scope recorded for a decision: never more than the screen offered. */

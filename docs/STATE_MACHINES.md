@@ -1958,9 +1958,8 @@ not reconciled. Before #4285 any success arriving on a COMPLETED booking threw
 "not payable" (or was refused as a stale amount), a 500 Stripe retried for
 three days. With no record and nothing else holding money, a lone capture keeps
 silently only as a replay of one the app had already recorded (its row was
-`SUCCEEDED` before this delivery, and not written by the caller itself, as a
-saved-card pre-record or the webhook's adoption of a lost-response attempt
-is); one never recorded before is new money, kept whatever its amount as
+`SUCCEEDED` before this delivery, with no "not yet settled" flag standing for
+it, below); one never recorded before is new money, kept whatever its amount as
 `duplicate_capture_kept` with the `new-capture` alert. That alert is owed from
 the settle's transaction (an `AlertCooldown` marker) until it is delivered: the
 capture's next arrival re-alerts while it stands, and the payments cron's
@@ -1993,9 +1992,47 @@ amount less the card refunds recorded against it (`sumRecordedRefundsForCapture`
 since a refund as account credit is placed on the capture's ledger row while
 the money stays on the card. Any delivered alert for the capture clears the marker. A
 send whose daily cooldown was claimed before a crash waits out that day, so the
-worst case is about 24 hours. A saved-card capture whose caller crashed or
-threw between its pre-record and the settle reads as a replay on its next
-arrival (a stated limit). Every other status the
+worst case is about 24 hours.
+
+Every saved-card path writes its capture `SUCCEEDED` on the attempt row before
+it settles the booking, and that write records a "not yet settled" flag
+(`unsettled-capture-marker.ts`, an `AlertCooldown` row keyed by the intent,
+#5240). The settle consumes it under `lock(1)`; a consumed flag makes the
+capture new money whatever its row's status, so a capture whose caller stopped
+or threw before the settle is still kept and alerted on its next arrival on a
+booking paid another way. A flag nothing consumes is checked by the same cron
+task an hour on, in a transaction that reads the payment's recorded settler and
+claims the flag by its delete: cleared for a capture gone, holding no money, or
+recorded as the settler. On a PAID or COMPLETED booking the guard judges it as
+its arrival would. Kept and told, for any reason: the flag becomes the owed
+alert, sent in that run with the guard's own reason (`not-recorded` and
+`settler-released` travel in the owed marker's key). Kept silently (the
+superseded or duplicate-capture machinery owns it, or a cancel in flight holds
+it): the flag waits and is judged again each run, since the cancel may die and
+leave the money kept and told; at seven days it is cleared. Refunded, because
+another payment is the settlement (a card, cash or a bank receipt, or the
+capture's own duplicate-capture refund is re-sent): the flag waits for the
+webhook, which refunds it, so nobody is told "kept" about money then refunded;
+at seven days Stripe's retries are over, so it becomes an owed
+`unsettled-saved-card` alert instead, as does a capture no longer `SUCCEEDED`.
+That alert is due an hour later, not in the same run, so an arrival that lost
+the flag to the cron and refunds the capture has committed its refund before
+the alert is judged, and no "kept" alert goes beside the refund. Known limits:
+a promoted alert that cannot go out in its run (a refund in flight, a send that
+throws, the day's cooldown) is retried by the drain, which keeps its reason; but
+a refund-verdict capture alerted at day seven can still be refunded by a later
+arrival (a manual redelivery from Stripe, or intent recovery), so the officers
+may see "kept" and then the refund. A flag on any other booking waits for its
+webhook. A waiting flag is never
+re-stamped; at seven days on any other booking the error is logged for a person
+to check, and only then is the flag cleared, so a crash between the two repeats
+the log rather than losing it. Every due flag is read on each run, a page at a
+time, so waiting flags never hide a newer one, and a failure of this step as a
+whole is logged and recorded in the run's result while the owed alerts are
+still drained. A duplicate-capture refund the retry finishes records the settler then
+recorded on the payment in its history entry, as the inline refund does.
+
+Every other status the
 settle cannot pay from (CANCELLED, BUMPED, WAITLISTED, WAITLIST_OFFERED,
 AWAITING_REVIEW) still throws, and the webhook's stale-amount check (#1161)
 still guards an unpaid booking; it skips a PAID or COMPLETED one, whose capture
@@ -2829,8 +2866,24 @@ still open on the same payment, wait for it) or cover it all (dismiss
 instead), read under `lock(1)` and the booking row, so the lost part
 is never paid twice. A legacy row with no `raisedAmountCents` records its
 original with the first reduction. A Stripe late win after a reduction leaves
-it reduced: a stated limit, with #5197. Reopened, it has no live R05, and Mark paid then
-posts its R14 unapplied, as for a task raised before M4d.
+it reduced: the won-after-loss alert names the cents now owed again (#5197).
+
+**#5197: DISMISSED -> OPEN by a late win.** When Stripe reports WON a dispute
+recorded LOST, the webhook (after the WON commit, while its alert is unsent)
+puts each dispute-loss hand-back the loss dismissed back OPEN, newest first,
+as far as the lost cents still recorded no longer cover what the payment's
+hand-backs applied (`lateWinOwedAgain`). The officer's reopen rules apply,
+with no actor (origin `STRIPE`), and the claim also posts the task's R05 again:
+a whole R05 the dismissal reversed is posted at its chain's next key, a
+reduced task's rest withdrawal is reversed exactly (`restoreHandBackObligation`),
+so the journal owes what the task does. An officer's reopen of a dispute-loss
+hand-back restores it the same way, and dismissing it again withdraws it again.
+A refused or timed-out reopen leaves it DISMISSED and the alert names it. An
+edit's hand-back dismissed on a cancelled booking (only a lost dispute allows
+it; the dismissal's audit row records the booking's status) with no
+cancellation since is spared the after-cancel reopen refusal; one dismissed
+before the cancellation is refused, and the alert says the cancellation
+counted it.
 
 **#3498: and one of the two terminal states is no longer terminal.** A DISMISSED
 row can be put back OPEN by an officer, which is the arm above; a COMPLETED row
@@ -3333,9 +3386,13 @@ confirm the updated figure; every revert to `WAITLISTED` clears the
 offered-lodge fields.
 
 The admin waitlist view decorates active `WAITLIST_OFFERED` rows with the latest
-`waitlist-offer` EmailLog status. Failed, exhausted, bounced, or missing delivery
+`waitlist-offer` EmailLog status, read by the same rule the owed notices use
+(`offerEmailRowState`, #5433). Failed, exhausted, bounced, or missing delivery
 records are surfaced beside the offer with a link to email-deliverability
-recovery, so state changes are not hidden behind best-effort email delivery.
+recovery, so state changes are not hidden behind best-effort email delivery; a
+`QUEUED` row past its first attempt shows as retrying, a `FAILED` row with no
+body to replay as exhausted, and a non-production copy's withheld email as held
+back, needing nothing.
 A booking carrying the per-booking "No emails" switch (#2258) is excluded from
 waitlist candidacy, so no NEW offer is made to a member who would not be told.
 The exclusion is not retroactive: a switch turned on while an offer is already
@@ -3378,6 +3435,138 @@ return to the waitlist) walks the plain order, so it can offer a still-free plac
 to a member who let it lapse earlier. In that one re-offer, a member ahead of
 the lapsed one who has not yet had the offer is considered after those behind
 it; they keep their place.
+
+**An offer's window runs from the email that tells the member (#5433,
+`INV-CAP-043`, owner decision D2).** The offer pass records the member's offer
+email and the officers' alert as owed notices in the offer's own transaction,
+and sends them after the commit; the lapse records its "offer expired" email
+the same way (Email Retry Lifecycle, below). Whether the member was told is
+read from the offer email's own row, one definition everywhere
+(`OfferEmailState`): `SENT`, `QUEUED` on its first attempt and a withhold by
+design ("No emails", a non-production copy) are told; a `FAILED` row the retry
+cron can still replay (`isReplayableFailedEmail`, the cron's own rule, which
+includes a fail-closed "No emails" read: it keeps its body) or a `QUEUED` row
+past its first attempt claimed within `replayInFlightWindowMs()` is the cron's
+(the longest a replay can still be sending: the transport's setup timeout plus
+ten inactivity timeouts, one per server reply after setup, never under
+`EMAIL_RETRY_BACKOFF_MS`; 20.5 minutes with the default timeouts, at most 110);
+an older such `QUEUED` row (a replay whose `SENT` write failed after the
+provider accepted it, or that died mid-send, which nothing moves on) counts as
+told, the same limit as a first attempt; any other `FAILED` row or a `BOUNCED`
+one is undeliverable; no row is never sent. Both the first attempt
+and the sweep read the row again after their send, because a send can return
+without reaching the member: a suppressed address is recorded `BOUNCED`, and
+an empty or placeholder address is recorded nowhere. Told, the notice clears;
+the cron's, it waits; otherwise the officers are alerted once. **Stated limit:** an
+email withheld by "No emails" counts as told, and turning emails back on
+sends nothing (`booking-no-emails-service.ts`), so a member whose emails are
+turned back on during a live offer is not told of it, though they are told if
+it expires; the officers' alert says so and asks them to contact the member
+or retract the offer. When the email retry job's sweep, not
+that first attempt, sends the offer email (only when it was never sent), it
+restarts the window first: a full window from the sweep's own clock, capped
+at the start of the check-in date in the club's time zone (owner decision D6)
+and never earlier than the deadline in force, in its own lock(1) and
+lodge-key transaction whose claim is guarded on the status, the offer's
+`waitlistOfferedAt` and its original deadline. So each offer is restarted at
+most once; a later sweep sends with the deadline then in force. Then it sends,
+stating that deadline. An offer whose deadline passed unread but which the
+expiry has not yet reverted is revived this way. The restart moves only
+`waitlistOfferExpiresAt`, so the offer keeps its identity and its one email,
+and the cross-lodge confirm's later phases treat it as the same offer. When
+less than the waitlist wait (`WAITLIST_NOTICE_SWEEP_AFTER_MS`) would remain,
+or no email can go, nothing is restarted. With too little left, or an owner
+address that is missing, a placeholder or on the SES suppression list (read
+before the restart, outside its transaction), no offer email goes and the
+officers are alerted instead; with the booking's "No emails", the email is
+recorded as withheld, which counts as told.
+
+```text
+WAITLIST_OFFERED, offer email owed -> first attempt sends -> window unchanged
+WAITLIST_OFFERED, offer email owed -> sweep: email told -> cleared, window unchanged
+WAITLIST_OFFERED, offer email owed -> sweep: email the retry cron's -> kept, window unchanged
+WAITLIST_OFFERED, offer email owed -> sweep: email undeliverable, or the address cannot be emailed -> officers alerted once, window unchanged
+WAITLIST_OFFERED, offer email owed -> any send returns, row not told -> officers alerted once (or kept while the retry cron has it)
+WAITLIST_OFFERED, offer email owed -> sweep: never sent -> restart once (lock(1) + lodge, guarded) -> send with the deadline in force
+WAITLIST_OFFERED, offer email owed -> sweep: under the waitlist wait left -> officers alerted once, nothing sent
+WAITLIST_OFFERED, offer email owed -> sweep: restart claim lost (confirmed, expired, re-offered) -> nothing sent
+WAITLIST_OFFERED, offer email never told -> expires -> WAITLISTED, no "offer expired" email, one officers' alert
+```
+
+A stop between the restart and its send, or a send that fails before its
+row, leaves the window restarted and the marker claimed; the next sweep, at
+least the waitlist wait on, finds the restarted deadline and sends with it.
+**Stated limit:** a member told on such a later attempt has the remainder of
+the restarted window, not a fresh one. The bound is exact: one restart, at a
+sweep no later than the member notice's cut-off (the later of the cap and the
+offer's own deadline, or seven days after the offer), so no deadline is ever
+later than the offer's original one or `min(cap, offer + seven days + one
+window)`, whichever is later. The expiry and the restart both take lock(1)
+and re-read, so they never both act on one offer: whichever goes second finds
+the other's result. That leaves a gap, stated as a limit: a restart commits,
+and its email then fails before its row, or a confirm or cancel commits
+between the restart and the send. The first leaves a restarted offer
+untold until the next sweep; the second sends an offer email for an offer
+that has just moved on (the "No emails" switch is set without lock(1) too, so
+the restart's read of it can be stale by a moment; the only effect is an
+extended window for an email then withheld). A lapsed offer counts as never
+told when its offer email's row is not told, whatever else remains (a
+`FAILED` row at that moment, or a bounce that arrived after `SENT`), or, with
+no row, when its notice still stands or passed its cut-off unsent; an offer
+made before #5433, which wrote neither, counts as told. Such a lapse sends no
+"offer expired" email; the revert, the re-offer pass and its rotation are
+unchanged (`INV-CAP-042`), so the member keeps their place and number and is
+considered last for that one re-offer. Instead the officers are owed one alert
+(owner decision D5, 24 Nov 2026), written in the revert's transaction in place
+of the member's email, so a person can step in. An offer email must not be
+replayed once its offer is over. The email retry job asks before it claims a
+`waitlist-offer` row whether it is still wanted (`email/retry-still-wanted.ts`):
+only while the booking is `WAITLIST_OFFERED` with the very offer the row is
+for (`waitlistOfferMovedOn`, the rule the owed notices' sweep uses too), which
+covers a confirm, a decline, a cancel, an admin force-confirm or return to the
+waitlist and a re-offer alike; otherwise it retires the row
+(`retireReplayableEmailRow`, which moves it to the email-failure review queue)
+and sends nothing. A row without this release's key, written by the release
+before #5433, has no offer time in its id: it is replayed while it could be
+the current offer's (the booking is offered and the row is dated no earlier
+than that offer less `WAITLIST_EMAIL_LOOKBACK_MS`, two minutes for the
+database and application clocks differing, the admin waitlist page's own
+rule), and retired otherwise. Such an offer has no owed notice, so it gets no
+restart and no "not sent" alert, and its lapse counts it as told. The lapse also retires a
+replayable row inside its own transaction, before it decides who was told, so
+the two agree. **Stated limit:** a replay the job had already claimed, between
+its check and its send, still goes, stating the old deadline; at the lapse such
+a row reads as the cron's, so the member counts as never told although the
+email may then arrive. The lapse notices are delivered after the re-offer passes (a stop
+during the sends costs no re-offer, and the markers cover a lost send), and
+not at all to a lapsed member those passes offered the place again: the
+statuses are read once more, outside any transaction, just before the sends.
+**Blue-green limit:** if a release before #5433 expires an offer this release
+made and never sent, it sends "offer expired" inline as before, and no
+officers' alert is raised; and that release's retry job has no "still wanted?"
+check, so during the overlap it can replay an ended offer's email.
+It is `admin-waitlist-notice-unsent`, sent through the once-ever claim of the
+offer email's own marker: if that email's past-cut-off step or a send that
+did not reach the member already alerted the officers, the lapse sends
+nothing, and the other way round. It runs through the once-ever takeover
+(`sendAdminAlertOnceEverWithTakeover`) with a sent stamp of its own: a claim
+whose alert went settles; one taken less than the waitlist wait ago may still
+be in flight, so that attempt retries later; an older one with no sent stamp
+(a holder that died, or whose alert reached nobody) is taken over and sent
+once more. The sent stamp is written twice before giving up; **stated limit:**
+if both writes fail, a later attempt takes the claim over and the officers may
+get the alert twice.
+
+Two more stated limits. (a) The mail provider's feedback handler
+(`email/ses-feedback.ts`) marks every earlier email to an address `BOUNCED`
+when any later one bounces or draws a complaint, a temporary bounce included,
+so a member who did receive the offer can read as never told at the lapse; the
+officers' "lapsed untold" wording says only that the email is not known to
+have reached them, which stays true. (b) An "offer expired" email that cannot
+be delivered settles with no officers' alert: nothing is at stake, as the
+member is simply back on the waitlist.
+The member's booking page shows the live offer and its deadline whether or
+not the email went.
 
 ## Bed Allocation Lifecycle
 
@@ -4326,6 +4515,127 @@ than closing it. A release before #5433 wrote the bump markers to
 key, so a bump is sent one member email whichever table holds its marker
 (`booking-bump-notice-owed.ts`).
 
+The waitlist (#5433, `INV-CAP-043`) adds four kinds: the member's
+`waitlist-offer` email and the officers' `admin-waitlist-offer` alert, recorded
+by the offer pass, and, recorded by `expireStaleOffers` for each lapse in one
+insert, the member's `waitlist-offer-expired` email or, for an offer the member
+was never told about, the officers' `waitlist-offer-lapsed-untold` alert
+(owner decision D5; the offer's time in its payload). Their wait is 30 minutes (a day after an
+officers' attempt that reached nobody). The offer email's event key is
+`<bookingId>:<offeredAtMs>`, the offer-expired email's `<bookingId>:<expiredAtMs>`.
+They are cleared without sending when the booking is gone or has moved on:
+no longer `WAITLIST_OFFERED`, or a different offer, for the offer; no longer
+`WAITLISTED`, or the stay ended, for the lapse's two. The offer email's cut-off
+is the later of the start of the check-in date in the club's time zone and the
+offer's own deadline, the
+offer-expired email's seven days; past it officers are alerted once with
+`admin-waitlist-notice-unsent` (`alertOfficersOncePastCutoff`), unless the
+offer email was told after all. The officers' offer alert, which says whether the
+offer email was sent, withheld or not delivered and states the deadline in
+force, waits only while that is unknown (the email is the retry cron's, or
+never sent and still owed), then goes, as it did before #5433, unless the offer
+has moved on meanwhile or seven days have passed; when the email did not reach
+the member the officers also get the "not sent" alert; it and the
+lapsed-untold alert last seven days, with no alert past it. The lapsed-untold
+alert shares the offer email's once-ever claim, so one offer alerts the
+officers once, bar the stamp limit above. The sweep's offer email restarts the offer window
+before it sends (Waitlist Lifecycle).
+
+**Stated limit: a failed offer email is replayed with the deadline it was
+rendered with.** A provider failure after the offer email's row was written is
+the retry cron's to replay, and the restart applies only to an email that
+never reached its row. The deadline this can cost the member is small when
+the replay succeeds: the retry cron makes at most `EMAIL_RETRY_MAX_ATTEMPTS`
+attempts, `EMAIL_RETRY_BACKOFF_MS` apart (`src/lib/email/retry-selection.ts`).
+It does not always succeed: a row that exhausts those attempts, or bounces,
+was never told. The sweep then alerts the officers once instead of clearing
+the notice silently, and a lapse of that offer counts as never told. A replay
+still pending when the offer ends is retired, not sent, unless the retry job
+had already claimed it (Waitlist Lifecycle).
+
+A card payment's confirmation (#5433 PR 3, owner decisions D1, D7 and D8) is
+the kind `booking-confirmed`. The three callers that send it (the Stripe
+webhook, the confirm-payment route and the confirm-pending job's saved-card
+charge) ask the settle to record it (`owesPaidConfirmation`);
+`settleAndPostBookingReceipts` writes the marker last in its transaction when
+the settle body returns a fresh `paid`, so a replayed settle that finds the
+booking already paid writes none. A booking id that cannot key a marker is an
+error log, never a throw: the payment settles and no confirmation is recorded.
+The other card doors (the charge-saved-method route, an officer's
+confirm-pending-guests, the create-payment-intent and payment-link recoveries)
+send no confirmation, or send one only on the officer's choice, and record none,
+as before. The caller queues the booking's Xero invoice first and then delivers
+the marker after its commit (the invoice queue is one outbox row, then an inline
+outbox kick when Xero is connected; no job re-queues a missed one, so it goes
+first). The wait is 30 minutes (a day after an officers' attempt that reached
+nobody), the event key `<bookingId>:<paidAtMs>`. The email is rendered from the
+booking as it stands then (`paid-booking-confirmation-email.ts`), stating any
+upward change since the payment that is not yet collected. It is cleared
+without sending when the booking is gone, deleted, or no longer `PAID` or
+`COMPLETED`: cancelled, with or without a refund, or its payment reversed. A
+partial refund that leaves it paid does not stop it. The sweep checks this,
+and every send reads the booking's status again, by primary key, just before
+it goes. The cut-off is the end of the check-in day in the club's time zone, or
+seven days after the payment if that comes first (D7). It is the sweep's only:
+the attempt right after the payment always sends, even for a payment recorded
+after the check-in day, as before #5433. Past it officers are alerted once with
+`admin-booking-confirmation-unsent`, unless the email did reach the owner after
+all. Every send is followed by a read of the email's row by the told rule the
+waitlist offer shares (`email/keyed-email-state.ts`): told (sent, or withheld
+by "No emails" or a non-production copy), cleared; held back by the
+installation's environment gate, cleared, because the gate already writes that
+row to the retry ceiling, where it waits in the email-failure review queue, as
+before #5433; otherwise (a provider failure, a bounce or suppressed address,
+a "No emails" switch that could not be read, or no address at all, a walk-in's
+placeholder or an organisation with none, D8) the officers get the alert, once
+per payment, through the notice's own durable claim. For an unreadable "No
+emails" switch the email core also sends its own `admin-email-failure` alert,
+to support-area editors rather than the booking-review officers, so officers
+can get both. That is accepted: the core's alert is not durable (it is
+throttled in memory, a failure to send it is only logged, and it is never
+retried), and the issue already accepts that officers may very rarely get an
+alert twice rather than a paid booking go unflagged. The confirmation's body is never kept, so the retry cron never
+replays one, and a booking cancelled after a failed send is not sent it later;
+it needs no "still wanted" check.
+
+The seven-day limit (D7) applies when every attempt has failed to send for a
+week after the payment while the check-in day is still further away: the sweep
+then stops, clears the marker and alerts officers once, as at the cut-off.
+
+The confirm-pending job's saved-card confirmation now goes through the same
+renderer as the webhook's: a split parent with a provisional child gets the
+paragraph about the separately charged guests, and an upward change still to
+pay shows as "Still Owing". The job no longer sends a second confirmation when
+the webhook settled the same charge first: before #5433 it sent on "already
+paid" too.
+
+**Stated limits for the confirmation.**
+
+- It can arrive hours late (D1): a recovered one goes on a sweep at least 30
+  minutes after the payment, and the email retry job sweeps every 30 minutes.
+- A cancel that commits between the status read just before a send and the
+  provider call is still sent the confirmation.
+- If the email's row was inserted but the app saw an error, the send is not
+  made and the marker stays; the sweep then finds the row `QUEUED` and counts
+  the owner as told, sending nothing. Before #5433 that confirmation was sent
+  anyway, its row left queued.
+- In the webhook and the confirm-payment route the member's email now waits
+  for the Xero invoice to be queued, which runs one pending outbox job inline
+  when Xero is connected (the oldest, not necessarily this booking's, and it
+  can make several Xero calls). The handler takes no longer in all than before,
+  but a stop during that call now loses the immediate send; the marker
+  recovers it on a sweep about half an hour later.
+- A booking edited downward after the payment is confirmed at its new worth,
+  as an officer's fresh copy is.
+- During a blue-green switch the previous release settles with no marker and
+  sends inline as before, and its confirm-pending job still sends its own
+  unkeyed copy on "already paid", so an owner can get two confirmations if that
+  job runs after this release's webhook sent the keyed one. A marker this
+  release wrote is swept only by a release that knows the kind, so after a
+  rollback it waits for this release to return: a rollback that outlasts the
+  seven days or the check-in day ends in the officers' alert when this release
+  returns, and past fourteen days the marker is cleared with only an error log.
+
 ```text
 change commits + markers -> claim -> send settled -> marker cleared
 change commits + markers -> claim -> send throws -> marker kept -> later sweep (a wait on) claims -> send -> cleared
@@ -4422,6 +4732,16 @@ resolves in Xero Operations.
 Refund notes target the invoice that held each paid share and wait for its
 unpaid-balance waiver to finish before payout. The organiser's app
 notice is a separate durable email row, sent by the email retry lifecycle.
+
+A school's corrected email and phone (#5245) queue one
+`ORGANISATION_CONTACT_DETAILS` row (CONTACT UPDATE, anchored on the
+`Organisation`) in the edit's own transaction, and only when the school already
+has a Xero contact. The row carries no details: the worker reads them when it
+runs and sends `contactID`, `emailAddress` and `phones`, never `name`. A row a
+later correction superseded closes `CANCELLED` unsent; a row that finds no
+contact closes `SUCCEEDED` as a no-op; a provider failure leaves it `FAILED` and
+replayable, and the officer's Retry (or Xero Operations') returns it to
+`PENDING` for the outbox.
 
 The outbox scan (`processQueuedXeroOutboxOperations`) and the retry scan
 (`processQueuedXeroOperationRetries`) read `PENDING` rows oldest first, ordered
@@ -4850,6 +5170,34 @@ capture's decision by `late-capture-kept-xero.test.ts`,
 `xero-kept-late-capture-ledger.test.ts` and, against real PostgreSQL,
 `kept-change-capture-record.realdb.test.ts` (#4324).
 
+### GST-override pause (#5208)
+
+New primary invoices carry the journal's GST on each line while the overrides
+are ON. The state is derived, never stored as a flag: the overrides are PAUSED
+while any `XeroTaxOverrideMismatch` row has `clearedAt IS NULL`.
+
+```mermaid
+stateDiagram-v2
+    [*] --> Open: Xero returns other line tax than was sent (create or update)
+    Open --> Cleared: finance editor ticks, writes a note, resumes
+    Cleared --> [*]
+```
+
+- **Open.** `recordXeroTaxOverrideMismatch` inserts one row per sync operation
+  (unique on `xeroSyncOperationId`; a second record is a no-op) with its audit
+  row, in one short transaction outside any provider call. The sync operation's
+  outcome does not change.
+- **Cleared.** `clearXeroTaxOverridePause` claims the listed rows with
+  `updateMany ... WHERE id IN (...) AND clearedAt IS NULL`, setting `clearedAt`,
+  `clearedByMemberId` and `clearNote`; a lost claim writes no audit row. A
+  cleared row never reopens.
+- The pause is read outside any transaction when each outbox run builds a
+  primary invoice's lines (`INV-LOCK-004`); a run already past that read still
+  sends with overrides. Clearing re-sends nothing.
+
+Pinned by `xero-tax-override-safeguard.test.ts`, `xero-booking-invoice.test.ts`
+and, against real PostgreSQL, `xero-tax-override-safeguard.realdb.test.ts`.
+
 ## Cron And Recovery Lifecycle
 
 ```text
@@ -4882,6 +5230,25 @@ erase another sender's sent stamp. No schema migration, money transition or
 additional lock is involved. As before,
 a crash after a send but before its sent stamp can repeat that alert when the
 ten-minute cooldown expires; the retry is at least once.
+
+### Once-ever admin alert claim (#5255)
+
+```text
+no claim -> claimed, awaiting send (awaitingSendSince = the claim's stamp)
+awaiting send -> first email row written -> kept, for good (mark cleared in the row's transaction)
+awaiting send -> send reached nobody -> deferred a day -> no claim
+awaiting send -> send threw, or recorded no email -> given back -> no claim
+awaiting send, 15 minutes on -> once-ever-alert-sweep gives it back -> no claim
+no claim -> the caller's next run claims and sends
+raised-once alert -> stored owed row -> sweep re-sends while no claim holds it
+  -> settled once kept; dropped with an error after 7 days
+```
+
+The give-back and the first email row race on the `AlertCooldown` row's lock:
+whichever commits first wins, and the loser changes nothing, so the sweep never
+makes a second send (`INV-INT-042`). A claim taken before #5255 has no mark and
+is never swept. Known limits, not owner-accepted: an alert raised while every
+database write fails (#5297), and an email row a crash left `QUEUED` (#5298).
 
 ### Shared Xero inbound run authority (#4432)
 
@@ -5019,7 +5386,9 @@ claim reads nothing outstanding, after its preflight records Stripe's list
   a refund on the row's intent carrying exactly its runner's metadata,
     recorded as made in the ledger                     -> report, then close
   none (another door's refund), or not recorded as made -> close, no notice
-report not settled (email not recorded, alert not sent) -> throws; row retried
+report not settled (email not recorded, no alert copy delivered or queued
+  and neither the club switched the alert off nor a non-live copy held it
+  back) -> throws; row retried
 alert claim held, no sent marker: younger than the stale threshold
   -> the row waits (attempt handed back: never terminal, no officer alert);
   older -> the dead attempt's claim is given back and the alert sent

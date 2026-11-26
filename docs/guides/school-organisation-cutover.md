@@ -413,6 +413,10 @@ SQL
   moves. The migration touches ownership and contact identity and nothing else.
 - **No money row is repaired.** If a school's invoice or payment was wrong before
   the cutover, it is wrong after it.
+- **Each school keeps the email address and phone number it is given here.**
+  A later booking does not change them. If one is wrong, an officer corrects it
+  with **Edit school details** beside the school's booking on **Bookings**, which also updates the
+  school's Xero contact ([`booking-requests.md`](booking-requests.md#correcting-a-schools-email-address-or-phone-number)).
 - **The old school member rows are not deleted.** They hold audit history, so
   they stay — as ordinary non-member contact rows carrying no authority. What
   becomes of them is a separate decision for the club.

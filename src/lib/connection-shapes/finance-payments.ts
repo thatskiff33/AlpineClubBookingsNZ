@@ -10,7 +10,6 @@
  * database.
  */
 import { connectionShapeFor } from "@/lib/connection-projection";
-import type { ApplyManualBookingPaymentResult } from "@/lib/manual-booking-payment";
 import type {
   DismissedManualRefundTaskPayload,
   OpenManualRefundTaskPayload,
@@ -432,28 +431,3 @@ export const REFUND_REQUESTS_CONNECTION_SHAPE = connectionShapeFor<{
   totalPages: true,
 });
 
-/** `POST /api/admin/bookings/[id]/mark-paid`: the settlement recorded or reversed, in integer cents. */
-export const MANUAL_BOOKING_PAYMENT_CONNECTION_SHAPE = connectionShapeFor<{
-  success: boolean;
-  booking: ApplyManualBookingPaymentResult;
-  message: string;
-}>({
-  success: true,
-  booking: {
-    bookingId: true,
-    paymentId: true,
-    direction: true,
-    memberNotified: true,
-    receipt: true,
-    amountCents: true,
-    bookingStatus: true,
-    creditElectionCents: true,
-    additional: {
-      outstandingCents: true,
-      settled: true,
-      recordedAmountCents: true,
-      payableOnline: true,
-    },
-  },
-  message: true,
-});

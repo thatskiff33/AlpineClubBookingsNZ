@@ -46,9 +46,9 @@ only the rules.
   profile card is not rendered.
 - **The member reads added for the actions are absent too.**
   `GET /api/bookings/mine`, `GET /api/bookings/[id]`, `GET /api/profile/summary`,
-  `GET /api/notices`, `GET /api/notices/[id]` and `GET /api/lodge-roster` sit
-  beside older routes, so no proxy prefix can cover them: each handler's own
-  `mcpModuleOffResponse` check is the gate.
+  `GET /api/notices`, `GET /api/notices/[id]`, `GET /api/lodge-roster` and
+  `GET /api/work-parties` sit beside older routes, so no proxy prefix can cover
+  them: each handler's own `mcpModuleOffResponse` check is the gate.
 - **Existing connections cannot be used while it is off**, because `/api/mcp`
   and the token endpoint answer 404 before reading a token. They are kept, not
   ended, and work again when the module is switched back on, subject to every
@@ -156,15 +156,14 @@ only the rules.
   [`mcp-route-census.test.ts`](../../src/lib/__tests__/mcp-route-census.test.ts)
   fails on anything unclassified, a catalogue entry whose route method is
   missing, and an action on a permanently excluded route.
-- **A permanent reason says a route is never an action.** The reasons are
-  the keys of `MCP_PERMANENT_EXCLUSION_REASONS`. `fresh-proof` is read from
-  `STEP_UP_ROUTES`, never copied, plus each handler that calls
-  `requireRecentAuth` itself, which the census finds. A member or officer
-  route's reason names its exact method and path. A permanent exclusion
-  beats a catalogue entry.
-- **A `not-yet:` reason names the follow-on task** from `MCP_NOT_YET_TASKS`;
-  that task adds its entries and removes its rule in one change. A route in
-  an undecided or finished area stays unclassified and fails the census.
+- **A permanent reason says a route is never an action.** Each is a key of
+  `MCP_PERMANENT_EXCLUSION_REASONS`. `fresh-proof` is read from
+  `STEP_UP_ROUTES`, never copied. A member or officer route's reason names
+  its exact method and path. A permanent exclusion beats a catalogue entry.
+- **A `not-yet:` reason names the officer stage** from `MCP_NOT_YET_TASKS`;
+  that stage's change adds its entries and removes its rule. No member route
+  has one. A route in an undecided or finished area stays unclassified,
+  failing the census.
 - **The catalogue adds no behaviour or permission.** An action's request
   schemas and `returns` shape are its route's, imported from lib modules
   ([`connection-shapes.ts`](../../src/lib/connection-shapes.ts) for shapes,
@@ -175,23 +174,48 @@ only the rules.
   at every depth; a refusal passes unchanged. Only a `POST` the census pins
   as side-effect free may run as a `preview` read.
 - **A member action acts as a member, never as an officer.** A route with an
-  officer branch decides with `memberOnlySessionUser`: role `USER`, no other
-  access role, an empty permission matrix. An on-behalf target or officer
-  override flag from a connection is refused. A reused member page keeps its
-  audience, as privacy register row `ai-apps` discloses: committee-role
-  notices (`notices.ts`) and the person's own account history.
+  officer branch decides with `memberOnlySessionUser`: no officer role, only
+  `USER`/`ORG` access roles, an empty permission matrix. Officer reach read
+  from records survives that, so the route also refuses it
+  (`arrivesAsMcpConnection`). An on-behalf target or officer override flag
+  from a connection is refused. A reused member page keeps its audience
+  (register row `ai-apps`): committee-role notices (`notices.ts`) and the
+  person's own account history.
+
 ## INV-MCP-009
 
 - **An officer action runs only on a route its admin area gates, and is
-  offered only to someone holding that area at the route's level.**
+  offered only to someone holding what the route's guard demands.**
   `mcpActionAdminRequirement` in
-  [`officer-actions.ts`](../../src/lib/mcp/officer-actions.ts) reads the requirement from
-  the admin route map, or, for `/api/finance`, from the entry's `requires`,
-  which the census holds to the guard the handler calls. The tool list,
-  `find_actions`, `describe_action` and `run_action` all ask it.
+  [`officer-actions.ts`](../../src/lib/mcp/officer-actions.ts), the one home
+  for officer reach, reads the requirement from
+  the admin route map, or from the entry's `requires` where the handler's
+  guard (`requireAdmin`, or the finance workspace's own) demands more; the
+  census holds `requires` to that guard. The tool list, `find_actions`, `describe_action` and
+  `run_action` all ask it.
 - **The route runs with the officer's real permissions** and its own guard
-  decides, as for the browser. A connection never holds a fresh proof
-  (`INV-MCP-005`), so a step-up route stays website-only (`INV-MCP-006`).
+  decides, as for the browser, and answers through the projection. A
+  step-up route stays website-only (`fresh-proof`, `INV-MCP-006`).
+- **An officer action needs the officer's own approval for officer actions**
+  (owner decision, #5305). `McpGrant.officerConsentAt` is set only when
+  someone holding an admin area approves on the screen that says the app can
+  also act as an officer. Without it, `mcpCallerMayUse` hides every officer
+  action and `describe_action` and `run_action` tell the app the officer must
+  reconnect; member actions keep working. Earlier approvals, and those given
+  before the member became an officer, carry no date. The screen's wording is
+  general, so one date covers every admin area, later ones included; no
+  wording version is stored.
+- **Every club-wide or Membership configuration change is `destructive`**,
+  so the app asks the officer first (#5305 comments 7093303964, 7111359405).
+  Finance setup is the recorded exception: website-only (`club-setup`,
+  comment 7131138226).
+  A setting a route guards with a second permission keeps it: the
+  subscription-liability rule pair still needs Finance edit too, refused by
+  the settings route itself.
+- **An officer action that emails or notifies anyone, or overwrites another
+  person's record, is `destructive`** (#5305 item 2). Where the website lets
+  the officer choose whether a member is emailed, the app passes the same
+  choice.
 
 ## INV-MCP-007
 
@@ -220,6 +244,8 @@ only the rules.
   not answer (`MCP_ACTION_CALLED`).
 - **A row never carries an action's arguments or its result**
   (`INV-PRIV-011`); it names the action, the app, the member and the outcome.
+  A member action's row names the member as its subject; an officer action's
+  names none; the route writes its own audit rows, as for the admin screen.
 - **Not audited, as built:** `read` action calls, and ends the system or the
   app causes (`app-revoked`, `replaced`, `refresh-reuse`, `code-reuse`,
   `session-ended`, `never-completed`), which are recorded only on the

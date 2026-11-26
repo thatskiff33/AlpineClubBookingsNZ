@@ -99,12 +99,18 @@ interface OwedNoticeDelivererBase<S> {
    * sends it through `alertOfficersOncePastCutoff` (`./past-cutoff-once.ts`),
    * a once-ever claim keyed on the marker's id.
    */
-  pastCutoff?(subject: S, marker: OwedNoticeMarker): Promise<OwedNoticeOutcome>;
+  pastCutoff?(subject: S, marker: OwedNoticeMarker, run: OwedNoticeRun): Promise<OwedNoticeOutcome>;
 }
 
-/** What a send is told about the run it is part of: the job, for its logs. */
+/**
+ * What a send is told about the run it is part of: the job, for its logs, and
+ * the run's own clock (the sweep's `now`, or the moment of the delivery right
+ * after the commit), so a deliverer that acts on time acts on the same instant
+ * the claim and the cut-off were judged on (#5433).
+ */
 export interface OwedNoticeRun {
   job: string;
+  now: Date;
 }
 
 /** A member's notice carries an event key, so the member can never receive it twice. */
@@ -123,6 +129,16 @@ interface OfficersAudience<S> {
 }
 
 export type OwedNoticeDeliverer<S = unknown> = OwedNoticeDelivererBase<S> & (MemberAudience<S> | OfficersAudience<S>);
+
+/**
+ * What the delivery right after the commit reads of a kind (`deliverOwedNotice`):
+ * no `load`, no `stillOwed`, no cut-off, which only a sweep applies. A kind
+ * whose subject the sweep reads with more than the delivery after the commit has
+ * (the paid confirmation's club time zone, #5433 PR 3) hands this its own
+ * narrower subject; every full deliverer is one too.
+ */
+export type OwedNoticeImmediateDeliverer<S = unknown> = Pick<OwedNoticeDelivererBase<S>, "kind" | "job" | "sweepAfterMs" | "unreachedRetryAfterMs"> &
+  (MemberAudience<S> | OfficersAudience<S>);
 
 /**
  * One owed marker as a sweep or a delivery handles it, whichever table holds
@@ -164,7 +180,7 @@ export const owedNoticeTableSource: OwedNoticeSource = {
 };
 
 /** Send through the deliverer; a member's notice always with its event key. */
-function send<S>(deliverer: OwedNoticeDeliverer<S>, subject: S, marker: OwedNoticeMarker, run: OwedNoticeRun): Promise<OwedNoticeOutcome> {
+function send<S>(deliverer: OwedNoticeImmediateDeliverer<S>, subject: S, marker: OwedNoticeMarker, run: OwedNoticeRun): Promise<OwedNoticeOutcome> {
   return deliverer.audience === "member"
     ? deliverer.deliver(subject, marker, { ...run, idempotencyKey: deliverer.idempotencyKey(marker) })
     : deliverer.deliver(subject, marker, run);
@@ -176,7 +192,7 @@ function send<S>(deliverer: OwedNoticeDeliverer<S>, subject: S, marker: OwedNoti
  * this claim's stamp, so the sweep offers it again a full wait later.
  */
 async function settleByOutcome(
-  deliverer: OwedNoticeDeliverer,
+  deliverer: Pick<OwedNoticeImmediateDeliverer, "sweepAfterMs" | "unreachedRetryAfterMs">,
   ref: OwedNoticeRef,
   claimedAt: Date,
   outcome: OwedNoticeOutcome,
@@ -197,18 +213,19 @@ async function settleByOutcome(
  * failure is logged and the marker, if it still stands, is the sweep's.
  */
 export async function deliverOwedNotice<S>(
-  deliverer: OwedNoticeDeliverer<S>,
+  deliverer: OwedNoticeImmediateDeliverer<S>,
   marker: OwedNoticeMarker,
   subject: S,
 ): Promise<void> {
   const ref = tableRef(marker);
   try {
-    const claimedAt = await ref.claim(marker.eventAt, new Date());
+    const now = new Date();
+    const claimedAt = await ref.claim(marker.eventAt, now);
     if (!claimedAt) {
       logger.info({ key: ref.key, job: deliverer.job }, "Another run holds this owed notice; not sending it here");
       return;
     }
-    await settleByOutcome(deliverer, ref, claimedAt, await send(deliverer, subject, marker, { job: deliverer.job }));
+    await settleByOutcome(deliverer, ref, claimedAt, await send(deliverer, subject, marker, { job: deliverer.job, now }));
   } catch (err) {
     logger.error(
       { err, key: ref.key, job: deliverer.job },
@@ -216,6 +233,12 @@ export async function deliverOwedNotice<S>(
     );
   }
 }
+
+/**
+ * How long an officers' alert stays owed (#5433, settled by the lane: officer
+ * alerts seven days), for a kind with no reason to differ.
+ */
+export const OWED_OFFICER_ALERT_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 
 export type OwedNoticeSweepOutcome = "delivered" | "kept" | "cleared" | "expired" | "claim-lost";
 
@@ -269,8 +292,8 @@ export async function sweepOwedNotice(
       await ref.settle(claimedAt);
       return "expired";
     }
-    const outcome = await deliverer.pastCutoff(subject, marker);
+    const outcome = await deliverer.pastCutoff(subject, marker, { job, now });
     return (await settleByOutcome(deliverer, ref, claimedAt, outcome)) === "delivered" ? "expired" : "kept";
   }
-  return settleByOutcome(deliverer, ref, claimedAt, await send(deliverer, subject, marker, { job }));
+  return settleByOutcome(deliverer, ref, claimedAt, await send(deliverer, subject, marker, { job, now }));
 }

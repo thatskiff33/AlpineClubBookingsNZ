@@ -1,6 +1,5 @@
 import { NextResponse } from "next/server";
 import { Prisma } from "@prisma/client";
-import { z } from "zod";
 import {
   buildStructuredAuditLogCreateArgs,
   getAuditRequestContext,
@@ -16,10 +15,13 @@ import { committeeRolePatchSchema } from "@/lib/forms/committee-role-schema";
 import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/session-guards";
 import { parseJsonRequestBody } from "@/lib/api-json";
+import { connectionJson } from "@/lib/mcp-connection-request";
+import { routeIdParamsSchema } from "@/lib/route-id-params";
+import {
+  COMMITTEE_ROLE_CONNECTION_SHAPE,
+  COMMITTEE_ROLE_DELETED_CONNECTION_SHAPE,
+} from "@/lib/connection-shapes/membership-committee";
 
-const paramsSchema = z.object({
-  id: z.string().min(1),
-});
 
 function auditActionForUpdate(
   before: { isActive: boolean },
@@ -53,7 +55,7 @@ export async function PATCH(
   if (!guard.ok) return guard.response;
   const session = guard.session;
 
-  const parsedParams = paramsSchema.safeParse(await params);
+  const parsedParams = routeIdParamsSchema.safeParse(await params);
   if (!parsedParams.success) {
     return NextResponse.json(
       { error: "Invalid route parameters", details: parsedParams.error.flatten() },
@@ -138,7 +140,11 @@ export async function PATCH(
     return role;
   });
 
-  return NextResponse.json({ role: serializeCommitteeRole(updated) });
+  return connectionJson(
+    request,
+    { role: serializeCommitteeRole(updated) },
+    COMMITTEE_ROLE_CONNECTION_SHAPE,
+  );
 }
 
 export async function DELETE(
@@ -151,7 +157,7 @@ export async function DELETE(
   if (!guard.ok) return guard.response;
   const session = guard.session;
 
-  const parsedParams = paramsSchema.safeParse(await params);
+  const parsedParams = routeIdParamsSchema.safeParse(await params);
   if (!parsedParams.success) {
     return NextResponse.json(
       { error: "Invalid route parameters", details: parsedParams.error.flatten() },
@@ -197,5 +203,5 @@ export async function DELETE(
     );
   });
 
-  return NextResponse.json({ ok: true });
+  return connectionJson(request, { ok: true }, COMMITTEE_ROLE_DELETED_CONNECTION_SHAPE);
 }

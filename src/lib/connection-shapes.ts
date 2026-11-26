@@ -15,7 +15,6 @@ import type { CancelBookingResult } from "@/lib/booking-cancel-result";
 import type { CancelPreviewAnswer } from "@/lib/cancel-preview-answer";
 import type { BookingMessageClubTokens } from "@/lib/booking-message-definitions";
 import type { serializePublicCommitteeAssignment } from "@/lib/committee";
-import type { AuditTimelineResponse } from "@/lib/audit-query";
 import {
   completeConnectionShapeFor,
   connectionShapeFor,
@@ -247,16 +246,6 @@ export const MEMBER_PROFILE_UPDATE_CONNECTION_SHAPE: ConnectionShape = MEMBER_PR
 export const NOTICE_READ_CONNECTION_SHAPE = connectionShapeFor<{ ok: boolean }>({ ok: true });
 
 export const MEMBER_NOTICE_CONNECTION_SHAPE: ConnectionShape = { notice: MEMBER_NOTICE_SHAPE };
-
-/** The member's own timeline: when, what kind and what happened. No request details or metadata. */
-export const MEMBER_ACCOUNT_ACTIVITY_CONNECTION_SHAPE = connectionShapeFor<AuditTimelineResponse>({
-  data: { createdAt: true, category: true, outcome: true, summary: true },
-  total: true,
-  page: true,
-  pageSize: true,
-  totalPages: true,
-  category: true,
-});
 
 /** Names and nights only, as the roster page shows them (`INV-PRIV-017`). */
 export const LODGE_ROSTER_CONNECTION_SHAPE = connectionShapeFor<MemberLodgeRoster>({

@@ -80,9 +80,10 @@ describe("every real-PostgreSQL suite runs in CI (#4458)", () => {
     expect(job).toContain("concurrency-race-postgres:");
     expect(job).toContain("CONCURRENCY_RACE_DATABASE_URL");
     expect(job).toContain("pnpm exec prisma migrate deploy");
-    // Measured at 9m02s in PR CI (#4476) and 16-18m on main by Nov 2026, when 20
-    // cancelled most runs (#4793); a hung run must still not hold a runner for 45.
-    expect(job).toMatch(/\n {4}timeout-minutes: 35\n/);
+    // Measured at 9m02s in PR CI (#4476), 16-18m on main by 8 Nov 2026, when 20
+    // cancelled most runs (#4793), and 32-35m by 25 Nov 2026, when 35 cancelled
+    // PR runs. 45 matches the test shards, so the shard gate's wait is unchanged.
+    expect(job).toMatch(/\n {4}timeout-minutes: 45\n/);
   });
 
   it("runs the files the script lists, in one vitest process, without skipping", () => {

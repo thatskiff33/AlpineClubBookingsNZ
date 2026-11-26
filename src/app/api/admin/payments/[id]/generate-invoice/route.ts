@@ -4,7 +4,7 @@ import {
   PAYMENT_INVOICE_GENERATED_CONNECTION_SHAPE,
 } from "@/lib/connection-shapes/finance-payments";
 import { connectionJson } from "@/lib/mcp-connection-request";
-import { recordIdParamsSchema } from "@/lib/route-id-params";
+import { routeIdParamsSchema } from "@/lib/route-id-params";
 import { requireAdmin } from "@/lib/session-guards";
 
 function forbiddenResponse() {
@@ -26,7 +26,7 @@ export async function POST(
   });
   if (!guard.ok) return guard.response;
 
-  const parsed = recordIdParamsSchema.safeParse(await params);
+  const parsed = routeIdParamsSchema.safeParse(await params);
   if (!parsed.success) {
     return NextResponse.json(
       { error: "Invalid route parameters", details: parsed.error.flatten() },

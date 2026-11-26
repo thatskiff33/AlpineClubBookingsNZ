@@ -7,20 +7,22 @@ import { z } from "zod";
 import { getFinanceBookingMetricsWindowDayCount } from "@/lib/finance-booking-metric-calculations";
 import { MAX_FINANCE_BOOKING_METRICS_WINDOW_DAYS } from "@/lib/finance-booking-metrics-query";
 import { formatDateOnly, parseDateOnly } from "@/lib/date-only";
-import { dateOnlyStringSchema } from "@/lib/date-only-schema";
-import { adminListPageQueryFields } from "@/lib/admin-list-page";
+import { adminWaitlistQuerySchema } from "@/lib/admin-bookings-schemas/review-queues";
+import {
+  ADMIN_WAITLIST_CONNECTION_SHAPE,
+  type AdminWaitlistAnswer,
+  type AdminWaitlistEntry,
+} from "@/lib/connection-shapes/bookings-review-queues";
+import { connectionJson } from "@/lib/mcp-connection-request";
 import { getWaitlistOfferEmailDeliveries } from "@/lib/waitlist-offer-email-visibility";
 import {
   WAITLIST_QUEUE_ORDER_BY,
   getDisplayedWaitlistPositions,
 } from "@/lib/waitlist-queue";
 
-const querySchema = z
-  .object({
-    from: dateOnlyStringSchema.optional(),
-    to: dateOnlyStringSchema.optional(),
-    ...adminListPageQueryFields,
-  })
+// The fields are the catalogue's (`adminWaitlistQuerySchema`); the window rule
+// reads the finance metrics module, a server one, so it is added here.
+const querySchema = adminWaitlistQuerySchema
   .superRefine((value, context) => {
     for (const field of ["from", "to"] as const) {
       if (!value[field]) continue;
@@ -57,6 +59,10 @@ const querySchema = z
     }
   });
 
+/**
+ * GET /api/admin/waitlist — waitlisted and offered bookings, in queue order.
+ * Also the AI app action `list_waitlist` (ALP-719).
+ */
 export async function GET(request: NextRequest) {
   const guard = await requireAdmin();
   if (!guard.ok) return guard.response;
@@ -108,7 +114,7 @@ export async function GET(request: NextRequest) {
   // or silenced entry.
   const positions = await getDisplayedWaitlistPositions(prisma, bookings);
 
-  const entries = bookings.map((b) => ({
+  const entries = bookings.map((b): AdminWaitlistEntry => ({
     id: b.id,
     memberName: `${bookingOwner(b).member.firstName} ${bookingOwner(b).member.lastName}`,
     memberEmail: bookingOwner(b).member.email,
@@ -140,5 +146,6 @@ export async function GET(request: NextRequest) {
     offerEmailDelivery: offerEmailDeliveries.get(b.id) ?? null,
   }));
 
-  return NextResponse.json({ data: entries, entries, page, pageSize, total });
+  const answer: AdminWaitlistAnswer = { data: entries, entries, page, pageSize, total };
+  return connectionJson(request, answer, ADMIN_WAITLIST_CONNECTION_SHAPE);
 }

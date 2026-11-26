@@ -92,7 +92,10 @@ vi.mock("@/lib/rate-limit", () => ({
 vi.mock("@/lib/logger", () => ({
   default: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }));
-vi.mock("@/lib/access-roles", () => ({
+// Partial: the real `resolveAccessRoles`, `isPrivilegedAccessRole` and
+// `legacyRoleFromAccessRoles` stay, because `memberOnlySessionUser` reads them.
+vi.mock("@/lib/access-roles", async (importOriginal) => ({
+  ...((await importOriginal()) as typeof import("@/lib/access-roles")),
   hasAdminAccess: h.hasAdminAccess,
   hasAccessRole: h.hasAccessRole,
 }));

@@ -42,7 +42,6 @@ import {
   CREDIT_ADJUSTMENT_REQUESTED_CONNECTION_SHAPE,
   CREDIT_ADJUSTMENT_REVIEWED_CONNECTION_SHAPE,
   CREDIT_APPROVALS_CONNECTION_SHAPE,
-  MANUAL_BOOKING_PAYMENT_CONNECTION_SHAPE,
   MANUAL_REFUND_TASKS_CONNECTION_SHAPE,
   MEMBER_CREDITS_CONNECTION_SHAPE,
   OPENING_CREDIT_BATCHES_CONNECTION_SHAPE,
@@ -66,12 +65,9 @@ import {
   SUBSCRIPTION_BILLING_FAMILY_MARKER_CONNECTION_SHAPE,
   SUBSCRIPTION_BILLING_REFRESHED_CONNECTION_SHAPE,
 } from "@/lib/connection-shapes/finance-subscriptions";
-import {
-  manualBookingPaymentBodySchema,
-  manualSubscriptionPaymentBodySchema,
-} from "@/lib/manual-payment-request-schemas";
+import { manualSubscriptionPaymentBodySchema } from "@/lib/manual-payment-request-schemas";
 import { MANUAL_PAYMENT_NOTE_MAX } from "@/lib/manual-payment-note";
-import { recordIdParamsSchema } from "@/lib/route-id-params";
+import { routeIdParamsSchema } from "@/lib/route-id-params";
 import { CLOSE_ALREADY_PAID_REASON_MAX } from "@/lib/subscription-charge-already-paid";
 import {
   closeAlreadyPaidFields,
@@ -110,7 +106,7 @@ export const FINANCE_MONEY_MCP_ACTIONS: readonly McpAction[] = [
       `Asks for a manual change to one member's account credit, in integer cents: positive adds credit and must name \`grantAccount\` (${ADMIN_CREDIT_GRANT_ACCOUNTS.map((account) => `\`${account}\``).join(" or ")}), negative deducts and names none. Nothing changes until a different officer approves it, and the requester can neither withdraw, approve nor reject it, so it cannot be undone from the app. \`idempotencyKey\` is a new UUID for each request; sending the same one again does not make a second request.`,
     method: "POST",
     path: "/api/admin/members/[id]/credits",
-    params: recordIdParamsSchema,
+    params: routeIdParamsSchema,
     body: adminCreditAdjustmentRequestSchema,
     kind: "destructive",
     returns: CREDIT_ADJUSTMENT_REQUESTED_CONNECTION_SHAPE,
@@ -135,7 +131,7 @@ export const FINANCE_MONEY_MCP_ACTIONS: readonly McpAction[] = [
       "One member's account credit: the balance they can spend, every credit and deduction on their ledger with the booking it came from or went to, and their adjustment requests still waiting for approval. `id` is the member. Amounts are integer cents.",
     method: "GET",
     path: "/api/admin/members/[id]/credits",
-    params: recordIdParamsSchema,
+    params: routeIdParamsSchema,
     kind: "read",
     returns: MEMBER_CREDITS_CONNECTION_SHAPE,
     core: false,
@@ -171,7 +167,7 @@ export const FINANCE_MONEY_MCP_ACTIONS: readonly McpAction[] = [
       "Raises the Xero invoice for one succeeded booking payment that has none. `id` is the payment (from `list_payments`). Answers `generated` with the invoice number, or `queued` when the Xero outbox will raise it shortly (or once Xero is reconnected). An invoice raised in Xero cannot be withdrawn from the app. Refused if the payment already has an invoice or did not succeed.",
     method: "POST",
     path: "/api/admin/payments/[id]/generate-invoice",
-    params: recordIdParamsSchema,
+    params: routeIdParamsSchema,
     kind: "destructive",
     returns: PAYMENT_INVOICE_GENERATED_CONNECTION_SHAPE,
     core: false,
@@ -183,7 +179,7 @@ export const FINANCE_MONEY_MCP_ACTIONS: readonly McpAction[] = [
       `Records that an officer has dealt with a bank-transfer refund whose Xero credit note was voided and that the nightly check could not match to one refund. \`id\` is the voided note's link from the stuck-states list. \`note\` (required, up to ${MANUAL_PAYMENT_NOTE_MAX} characters) says what was done; \`confirmed\` must be \`true\`, sent only after the officer confirms. It moves no money and changes nothing in Xero, but the item leaves the list for good.`,
     method: "POST",
     path: "/api/admin/payments/bank-refund-voids/[id]/answered",
-    params: recordIdParamsSchema,
+    params: routeIdParamsSchema,
     body: bankRefundVoidAnsweredBodySchema,
     kind: "destructive",
     returns: BANK_REFUND_VOID_ANSWERED_CONNECTION_SHAPE,
@@ -243,25 +239,13 @@ export const FINANCE_MONEY_MCP_ACTIONS: readonly McpAction[] = [
       `Marks one member subscription paid outside Xero (\`direction\` \`paid\`), or reverses an earlier manual mark (\`direction\` \`unpaid\`). \`id\` is the subscription (from \`list_subscriptions\`). Marking paid must say \`notifyMember\` (true emails the member a receipt); a reversal emails nobody and must not send it. \`note\` (up to ${MANUAL_PAYMENT_NOTE_MAX} characters) says how it was paid; \`confirmed\` must be \`true\`, sent only after the officer confirms. It never raises or voids a Xero invoice. It changes the member's money record straight away; a mistake is put right by reversing it.`,
     method: "POST",
     path: "/api/admin/subscriptions/[id]/manual-payment",
-    params: recordIdParamsSchema,
+    params: routeIdParamsSchema,
     body: manualSubscriptionPaymentBodySchema,
     kind: "destructive",
     returns: MANUAL_SUBSCRIPTION_PAYMENT_CONNECTION_SHAPE,
     core: false,
   },
-  {
-    id: "record_booking_manual_payment",
-    title: "Record a booking paid in cash or by bank transfer",
-    summary:
-      `Records one booking's payment as settled in cash or by a bank transfer that never reached Xero (\`direction\` \`paid\`), or reverses an earlier manual settlement (\`direction\` \`unpaid\`; the booking stays booked, unpaid again). \`id\` is the booking. Marking paid must send \`notifyMember\` (true emails the member a booking confirmation) and \`expectedAmountCents\`, the amount owing the officer read off the booking on the website, in integer cents (no AI app action reports it yet: never send \`list_payments\`' \`amountCents\`, which leaves out applied credit and change fees): the payment is refused if the amount has changed since. If the booking also has an extra payment owing, send \`additionalCoverage\` with \`covered\` (does this money cover the extra too?) and \`expectedAdditionalAmountCents\`, the extra shown. A reversal sends none of these. \`note\` (up to ${MANUAL_PAYMENT_NOTE_MAX} characters) says how it was paid; \`confirmed\` must be \`true\`, sent only after the officer confirms. It never raises or voids a Xero invoice.`,
-    method: "POST",
-    path: "/api/admin/bookings/[id]/mark-paid",
-    params: recordIdParamsSchema,
-    body: manualBookingPaymentBodySchema,
-    kind: "destructive",
-    returns: MANUAL_BOOKING_PAYMENT_CONNECTION_SHAPE,
-    core: false,
-  },
+
   {
     id: "get_subscription_billing",
     title: "Preview subscription billing",

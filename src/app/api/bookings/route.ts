@@ -10,7 +10,7 @@ import {
   decideBookingSplit,
   toGroupDiscountConfig,
 } from "@/lib/policies/booking-route-decisions";
-import { AgeTier, BookingStatus } from "@prisma/client";
+import { BookingStatus } from "@prisma/client";
 import { z } from "zod";
 import { ARRIVAL_TIME_ERROR_MESSAGE, ARRIVAL_TIME_PATTERN } from "@/lib/arrival-time";
 import { getLodgeCapacity } from "@/lib/lodge-capacity";
@@ -335,7 +335,6 @@ export async function POST(request: NextRequest) {
   // Resolve effective member: authorized on-behalf booking for another member.
   let effectiveMemberId = session.user.id;
   let isAuthorizedOnBehalf = false;
-  let effectiveMemberAgeTier: AgeTier | null = null;
   let paidUpAdultViolation: NonNullable<
     NonMemberPricingRequirements["violation"]
   > | null = null;
@@ -371,9 +370,8 @@ export async function POST(request: NextRequest) {
   if (!isAuthorizedOnBehalf) {
     const member = await prisma.member.findUnique({
       where: { id: session.user.id },
-      select: { emailVerified: true, xeroContactId: true, ageTier: true },
+      select: { emailVerified: true, xeroContactId: true },
     });
-    effectiveMemberAgeTier = member?.ageTier ?? null;
 
     if (!member?.emailVerified) {
       return NextResponse.json({ error: "Email not verified" }, { status: 403 });
@@ -696,7 +694,6 @@ export async function POST(request: NextRequest) {
     await requiresPaidSubscriptionForMemberForBooking(prisma, {
       memberId: effectiveMemberId,
       seasonYear: seasonYearOfStoredDate(checkIn),
-      ageTier: effectiveMemberAgeTier,
     })
   ) {
     const seasonYear = seasonYearOfStoredDate(checkIn);

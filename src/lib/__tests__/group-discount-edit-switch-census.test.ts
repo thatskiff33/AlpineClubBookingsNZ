@@ -384,8 +384,11 @@ describe("group-discount edit-time switch census (#2770, INV-MOD-026)", { timeou
     // and `enabled` to the literal `true`. `minGroupSize: true` is excluded
     // because that is a Prisma `select` projection, not a config — the public
     // fee-page tokens select exactly those three columns.
+    // The look-ahead sits before the whitespace: after it, `\s*` could match
+    // nothing and let " true" through as a value (ALP-719 found this on a
+    // connection shape, which is a projection like a select).
     const HAND_ROLLED_CONFIG =
-      /\bminGroupSize\s*:\s*(?!true\b)[^,;}]+[,;][\s\S]{0,400}?\benabled\s*:\s*true\b/;
+      /\bminGroupSize\s*:(?!\s*true\b)\s*[^,;}]+[,;][\s\S]{0,400}?\benabled\s*:\s*true\b/;
     const offenders = allSourceFiles(SRC_ROOT)
       .filter((absolute) => HAND_ROLLED_CONFIG.test(readSource(absolute)))
       .map(repoRelative)

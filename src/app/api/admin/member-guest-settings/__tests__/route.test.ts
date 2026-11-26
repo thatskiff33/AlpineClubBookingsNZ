@@ -1,3 +1,4 @@
+import { NextRequest } from "next/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 // Route tests for GET/PUT /api/admin/member-guest-settings (epic #2305, MG2
@@ -56,6 +57,10 @@ function makeReq(body: unknown, raw?: string) {
   });
 }
 
+function getReq() {
+  return new NextRequest("https://club.example.com/api/admin/member-guest-settings");
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
   mocks.requireAdmin.mockResolvedValue({
@@ -88,7 +93,7 @@ describe("GET /api/admin/member-guest-settings", () => {
       ok: false,
       response: new Response(null, { status: 401 }),
     });
-    const res = await GET();
+    const res = await GET(getReq());
     expect(res.status).toBe(401);
     expect(mocks.settingsFindUnique).not.toHaveBeenCalled();
   });
@@ -98,12 +103,12 @@ describe("GET /api/admin/member-guest-settings", () => {
       ok: false,
       response: new Response(null, { status: 403 }),
     });
-    const res = await GET();
+    const res = await GET(getReq());
     expect(res.status).toBe(403);
   });
 
   it("gates on bookings:view", async () => {
-    await GET();
+    await GET(getReq());
     expect(mocks.requireAdmin).toHaveBeenCalledWith({
       permission: { area: "bookings", level: "view" },
     });
@@ -111,7 +116,7 @@ describe("GET /api/admin/member-guest-settings", () => {
 
   it("returns the shipped defaults when the club has never saved, and creates no row", async () => {
     mocks.settingsFindUnique.mockResolvedValue(null);
-    const res = await GET();
+    const res = await GET(getReq());
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({
       settings: {
@@ -142,7 +147,7 @@ describe("GET /api/admin/member-guest-settings", () => {
       updatedAt: SAVED_AT,
       updatedByMemberId: "admin-9",
     });
-    const json = await (await GET()).json();
+    const json = await (await GET(getReq())).json();
     expect(json.settings).toEqual({
       approvalRequired: false,
       pendingHoldExpiryDays: 21,
@@ -155,7 +160,7 @@ describe("GET /api/admin/member-guest-settings", () => {
 
   it("signals `manage` to a bookings:edit admin", async () => {
     mocks.hasAdminAreaAccess.mockReturnValue(true);
-    const json = await (await GET()).json();
+    const json = await (await GET(getReq())).json();
     expect(json.access).toBe("manage");
     expect(mocks.hasAdminAreaAccess).toHaveBeenCalledWith(
       { id: "admin-1" },
@@ -167,7 +172,7 @@ describe("GET /api/admin/member-guest-settings", () => {
     // The tri-state's whole point: view-only is a state the GET REPORTS, never a
     // write path the admin discovers by being 403'd.
     mocks.hasAdminAreaAccess.mockReturnValue(false);
-    const json = await (await GET()).json();
+    const json = await (await GET(getReq())).json();
     expect(json.access).toBe("view");
     // ...and it is still a real 200 with the real values, not a stub.
     expect(json.settings.approvalRequired).toBe(true);

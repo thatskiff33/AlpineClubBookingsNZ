@@ -1,5 +1,4 @@
 import { NextRequest, NextResponse } from "next/server";
-import { z } from "zod";
 import { parseJsonRequestBody } from "@/lib/api-json";
 import {
   buildStructuredAuditLogCreateArgs,
@@ -8,18 +7,14 @@ import {
 import { serializeLodgeAccessRows } from "@/lib/lodge-access";
 import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/session-guards";
+import { memberLodgeAccessUpdateSchema } from "@/lib/admin-membership-api/members";
+import { connectionJson } from "@/lib/mcp-connection-request";
+import { MEMBER_LODGE_ACCESS_CONNECTION_SHAPE } from "@/lib/connection-shapes/membership-members";
 
 // Admin surface for managing a member's per-lodge access grants (phase 4 of
 // docs/multi-lodge/implementation-plan.md). BOOKING_RESTRICTION rows narrow
 // which lodges a member may book; STAFF rows bind a lodge-operational
 // (kiosk) account to a lodge. See src/lib/lodge-access.ts for enforcement.
-
-const putSchema = z
-  .object({
-    bookingRestrictionLodgeIds: z.array(z.string().min(1)).max(50),
-    staffLodgeIds: z.array(z.string().min(1)).max(50),
-  })
-  .strict();
 
 async function loadMember(memberId: string) {
   return prisma.member.findUnique({
@@ -29,7 +24,7 @@ async function loadMember(memberId: string) {
 }
 
 export async function GET(
-  _request: NextRequest,
+  request: NextRequest,
   { params }: { params: Promise<{ id: string }> },
 ) {
   const guard = await requireAdmin({
@@ -51,13 +46,17 @@ export async function GET(
 
   const serialized = serializeLodgeAccessRows(rows);
 
-  return NextResponse.json({
-    lodgeAccess: serialized,
-    bookingRestrictions: serialized.filter(
-      (row) => row.kind === "BOOKING_RESTRICTION",
-    ),
-    staffGrants: serialized.filter((row) => row.kind === "STAFF"),
-  });
+  return connectionJson(
+    request,
+    {
+      lodgeAccess: serialized,
+      bookingRestrictions: serialized.filter(
+        (row) => row.kind === "BOOKING_RESTRICTION",
+      ),
+      staffGrants: serialized.filter((row) => row.kind === "STAFF"),
+    },
+    MEMBER_LODGE_ACCESS_CONNECTION_SHAPE,
+  );
 }
 
 export async function PUT(
@@ -82,7 +81,7 @@ export async function PUT(
   if (!jsonBody.ok) return jsonBody.response;
   const body = jsonBody.body;
 
-  const parsed = putSchema.safeParse(body);
+  const parsed = memberLodgeAccessUpdateSchema.safeParse(body);
   if (!parsed.success) {
     return NextResponse.json(
       { error: "Invalid input", details: parsed.error.flatten() },
@@ -187,11 +186,15 @@ export async function PUT(
 
   const serialized = serializeLodgeAccessRows(updated);
 
-  return NextResponse.json({
-    lodgeAccess: serialized,
-    bookingRestrictions: serialized.filter(
-      (row) => row.kind === "BOOKING_RESTRICTION",
-    ),
-    staffGrants: serialized.filter((row) => row.kind === "STAFF"),
-  });
+  return connectionJson(
+    request,
+    {
+      lodgeAccess: serialized,
+      bookingRestrictions: serialized.filter(
+        (row) => row.kind === "BOOKING_RESTRICTION",
+      ),
+      staffGrants: serialized.filter((row) => row.kind === "STAFF"),
+    },
+    MEMBER_LODGE_ACCESS_CONNECTION_SHAPE,
+  );
 }

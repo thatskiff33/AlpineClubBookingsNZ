@@ -3,9 +3,10 @@ import { parseJsonRequestBody } from "@/lib/api-json";
 import { requireAdmin } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma";
 import type { AgeTier } from "@prisma/client";
-import { z } from "zod";
-import { ageTierEnum } from "@/lib/age-tier-schema";
+import { ageTierSettingsBodySchema } from "@/lib/admin-bookings-schemas/setup";
 import { logAudit } from "@/lib/audit";
+import { ADMIN_AGE_TIER_SETTINGS_CONNECTION_SHAPE } from "@/lib/connection-shapes/bookings-setup";
+import { connectionJson } from "@/lib/mcp-connection-request";
 import { clubTodayDateOnlyInstant } from "@/lib/club-time/server";
 import { revalidatePublicPageContent } from "@/lib/public-content-revalidation";
 import {
@@ -24,28 +25,10 @@ type AgeTierSettingInput = {
   sortOrder: number;
 };
 
-const putSchema = z.object({
-  settings: z
-    .array(
-      z.object({
-        // NOT_APPLICABLE is the organisation/school tier (#1440): it has no
-        // age range, no Xero group, and no subscription rule, so it never
-        // gets a settings row.
-        tier: ageTierEnum.refine((tier) => tier !== "NOT_APPLICABLE", {
-          message: "The N/A age tier is not configurable",
-        }),
-        minAge: z.number().int().min(0),
-        maxAge: z.number().int().min(0).nullable(),
-        label: z.string().min(1).max(100),
-        subscriptionRequiredForBooking: z.boolean(),
-        familyGroupRequestCreateMemberAllowed: z.boolean(),
-        sortOrder: z.number().int().min(0),
-      })
-    )
-    .min(1),
-});
+// The body schema lives in admin-bookings-schemas/setup.ts so the AI app
+// action `update_age_tier_settings` offers the same fields (ALP-719).
 
-export async function GET() {
+export async function GET(req: NextRequest) {
   const guard = await requireAdmin({
     permission: { area: "bookings", level: "view" },
   });
@@ -63,7 +46,11 @@ export async function GET() {
     },
   });
 
-  return NextResponse.json({ settings: normalizeAgeTierSettings(settings) });
+  return connectionJson(
+    req,
+    { settings: normalizeAgeTierSettings(settings) },
+    ADMIN_AGE_TIER_SETTINGS_CONNECTION_SHAPE,
+  );
 }
 
 export async function PUT(request: NextRequest) {
@@ -74,7 +61,7 @@ export async function PUT(request: NextRequest) {
   const session = guard.session;
   const jsonBody = await parseJsonRequestBody(request);
   if (!jsonBody.ok) return jsonBody.response;
-  const parsed = putSchema.safeParse(jsonBody.body);
+  const parsed = ageTierSettingsBodySchema.safeParse(jsonBody.body);
   if (!parsed.success) {
     return NextResponse.json({ error: "Invalid input", details: parsed.error.flatten() }, { status: 400 });
   }
@@ -281,5 +268,9 @@ export async function PUT(request: NextRequest) {
   });
 
   revalidatePublicPageContent();
-  return NextResponse.json({ settings: normalizeAgeTierSettings(updated) });
+  return connectionJson(
+    request,
+    { settings: normalizeAgeTierSettings(updated) },
+    ADMIN_AGE_TIER_SETTINGS_CONNECTION_SHAPE,
+  );
 }

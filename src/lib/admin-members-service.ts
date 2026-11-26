@@ -24,6 +24,13 @@ import {
 import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
 import { clubSeasonYear } from "@/lib/financial-year";
 import { UNASSIGNED_MEMBERSHIP_TYPE_VALUE } from "@/lib/membership-type-filter";
+import { subscriptionCategoryFilterWhere } from "@/lib/subscription-category-filter";
+import { serializeSubscriptionCategorySummary, subscriptionCategorySummarySelect } from "@/lib/subscription-categories";
+import {
+  ADMIN_MEMBER_CONTACTABILITY_FILTERS,
+  ADMIN_MEMBER_LIFECYCLE_FILTERS,
+  type AdminMembersQuery,
+} from "@/lib/admin-membership-api/members";
 import {
   effectiveSubscriptionBehavior,
   isSubscriptionNotRequiredForMembershipType,
@@ -81,12 +88,17 @@ import { ensureMemberAccessRoles } from "@/lib/member-access-role-writes";
 import { issueActionToken } from "@/lib/action-tokens";
 import { hasMemberCompletedAccountSetup } from "@/lib/password-reset";
 import { nameField } from "@/lib/zod-helpers";
+import { ROLE_VALUES, isRole } from "@/lib/member-roles";
+import { loadMembershipLockoutSettings } from "@/lib/membership-lockout-settings";
 import {
-  NON_MEMBER_ROLE_VALUES,
-  OPERATIONAL_ROLE_VALUES,
-  ROLE_VALUES,
-  isRole,
-} from "@/lib/member-roles";
+  memberListSubscriptionFilterConditions,
+  subscriptionNotRequiredMemberConditions,
+} from "@/lib/subscription-liability-where";
+import {
+  listSubscriptionStatus,
+  notRequiredRowBillingNote,
+  SEASON_ROW_STATE_SELECT,
+} from "@/lib/subscription-season-row-note";
 import {
   accessRoleChangeRequiresFullAdmin,
   accessRolesFromCompatibilityFields,
@@ -126,18 +138,6 @@ type JsonRouteResult = {
 
 function jsonResult(body: unknown, init?: ResponseInit): JsonRouteResult {
   return { body, init };
-}
-
-const optionalSearchParam = z.string().optional();
-
-function parseClampedInt(
-  value: string | undefined,
-  fallback: number,
-  min: number,
-  max: number,
-) {
-  const parsed = parseInt(value || String(fallback), 10) || fallback;
-  return Math.min(max, Math.max(min, parsed));
 }
 
 export const createMemberSchema = z.object({
@@ -195,81 +195,12 @@ export const createMemberSchema = z.object({
   postalSameAsPhysical: z.boolean().optional(),
 });
 
-const SORT_BY_WHITELIST = [
-  "name",
-  "email",
-  "access",
-  "ageTier",
-  "active",
-  "createdAt",
-] as const;
-const SUBSCRIPTION_STATUS_FILTERS = [
-  "PAID",
-  "UNPAID",
-  "OVERDUE",
-  "NOT_INVOICED",
-] as const;
 /**
  * How many excluded matches the dependant-link search explains when it finds no
  * eligible candidate (#2254). Enough to name the person the admin was looking
  * for, small enough that the extra query stays trivial.
  */
 const DEPENDENT_LINK_INELIGIBLE_EXPLANATION_LIMIT = 5;
-
-const MEMBER_LIFECYCLE_STATUS_FILTERS = [
-  "active",
-  "inactive",
-  "cancelled",
-  "archived",
-  "all",
-] as const;
-
-export const adminMembersQuerySchema = z
-  .object({
-    q: optionalSearchParam,
-    search: optionalSearchParam,
-    page: optionalSearchParam,
-    pageSize: optionalSearchParam,
-    sortBy: optionalSearchParam,
-    sortDir: optionalSearchParam,
-    inheritEmailEligible: optionalSearchParam,
-    excludeId: optionalSearchParam,
-    dependentLinkEligibleFor: optionalSearchParam,
-    parentLinkEligibleFor: optionalSearchParam,
-    partnerLinkEligibleFor: optionalSearchParam,
-    role: optionalSearchParam,
-    financeAccess: optionalSearchParam,
-    lifecycleStatus: optionalSearchParam,
-    includeArchived: optionalSearchParam,
-    active: optionalSearchParam,
-    ageTier: optionalSearchParam,
-    ageTierIn: optionalSearchParam,
-    membershipType: optionalSearchParam,
-    xeroLinked: optionalSearchParam,
-    contactability: optionalSearchParam,
-    inviteStatus: optionalSearchParam,
-    subscription: optionalSearchParam,
-    familyGroup: optionalSearchParam,
-    xeroContactGroup: optionalSearchParam,
-  })
-  .transform((value) => {
-    const q = value.q || value.search || undefined;
-    const sortByRaw = value.sortBy || "name";
-    return {
-      ...value,
-      trimmedQuery: q?.trim(),
-      page: parseClampedInt(value.page, 1, 1, Number.MAX_SAFE_INTEGER),
-      pageSize: parseClampedInt(value.pageSize, 25, 1, 100),
-      sortBy: (SORT_BY_WHITELIST as readonly string[]).includes(sortByRaw)
-        ? sortByRaw
-        : "name",
-      sortDir: value.sortDir === "desc" ? "desc" : "asc",
-      inheritEmailEligible: value.inheritEmailEligible === "true",
-      includeArchived: value.includeArchived === "true",
-    };
-  });
-
-export type AdminMembersQuery = z.infer<typeof adminMembersQuerySchema>;
 
 export type CreateMemberInput = z.infer<typeof createMemberSchema>;
 
@@ -314,6 +245,7 @@ export async function listAdminMembers(
     ageTier: ageTierFilter,
     ageTierIn: ageTierInFilter,
     membershipType: membershipTypeFilter,
+    subscriptionCategory: subscriptionCategoryFilter,
     xeroLinked: xeroLinkedFilter,
     contactability: contactabilityFilter,
     inviteStatus: inviteStatusFilter,
@@ -358,64 +290,19 @@ export async function listAdminMembers(
     await readClubTimeZoneOutsideRequest(),
     fixedClubClock(now),
   );
-  const ageTierSettings = await getAgeTierSettings();
-  const notRequiredAgeTiers = new Set(
-    ageTierSettings
-      .filter((setting) => setting.subscriptionRequiredForBooking === false)
-      .map((setting) => setting.tier),
-  );
-  // #2149: the SQL exempt-filter must derive from the SAME source as the
-  // displayed flag, so it cannot key off role alone. Membership type is the
-  // authority: a member is exempt when their assigned season type is NOT_REQUIRED,
-  // OR — with no season assignment — their role's DEFAULT built-in type is
-  // NOT_REQUIRED (the role→default-type fallback the resolver applies). Roles
-  // whose default type is NOT_REQUIRED are exactly OPERATIONAL + NON_MEMBER
-  // (ADMIN/LODGE/NON_MEMBER/SCHOOL); USER defaults to FULL (REQUIRED). Guarding
-  // the role clause on "no assignment" is what stops a fee-paying admin (role
-  // ADMIN with a REQUIRED assignment) from being wrongly filtered as exempt.
-  const notRequiredSubscriptionConditions = [
-    {
-      AND: [
-        {
-          seasonalMembershipAssignments: {
-            none: { seasonYear: currentSeasonYear },
-          },
-        },
-        { role: { in: [...OPERATIONAL_ROLE_VALUES, ...NON_MEMBER_ROLE_VALUES] }, },
-      ],
-    },
-    {
-      seasonalMembershipAssignments: {
-        some: {
-          seasonYear: currentSeasonYear,
-          membershipType: { subscriptionBehavior: "NOT_REQUIRED" },
-        },
-      },
-    },
-    // #2041/#2149: mirror the displayed flag's row-dominance branch. A
-    // BASED_ON_AGE_TIER assignment paired with a NOT_REQUIRED current-season
-    // subscription row is exempt even when the member's age tier is
-    // subscription-liable (the mid-season tier-promotion shape). This clause
-    // matches `isSubscriptionNotRequiredForMembershipType`'s
-    // `subscriptionBehavior === "BASED_ON_AGE_TIER" && hasNotRequiredSeasonRow`
-    // branch exactly — the assignment gate is required because a bare NOT_REQUIRED
-    // row does NOT exempt a REQUIRED type, and effective behavior is only
-    // BASED_ON_AGE_TIER when a season assignment carries it (no role default does).
-    {
-      seasonalMembershipAssignments: {
-        some: {
-          seasonYear: currentSeasonYear,
-          membershipType: { subscriptionBehavior: "BASED_ON_AGE_TIER" },
-        },
-      },
-      subscriptions: {
-        some: { seasonYear: currentSeasonYear, status: "NOT_REQUIRED" },
-      },
-    },
-    ...(notRequiredAgeTiers.size > 0
-      ? [{ ageTier: { in: Array.from(notRequiredAgeTiers) } }]
-      : []),
-  ];
+  const [ageTierSettings, lockoutSettings] = await Promise.all([
+    getAgeTierSettings(),
+    loadMembershipLockoutSettings(),
+  ]);
+  // #2149/#5190: the SQL exempt-filter derives from the SAME rule and settings as
+  // the displayed flag (`isSubscriptionNotRequiredForMembershipType`): the shared
+  // liability rule on the billing side until the club chooses (#5190 Q2). See
+  // `subscriptionNotRequiredMemberConditions`.
+  const notRequiredSubscriptionConditions = subscriptionNotRequiredMemberConditions({
+    seasonYear: currentSeasonYear,
+    ageTierSettings,
+    liabilitySettings: lockoutSettings,
+  });
 
   // Build where clause
   const where: Record<string, unknown> = {};
@@ -601,7 +488,7 @@ export async function listAdminMembers(
 
   const lifecycleStatus =
     lifecycleStatusFilter &&
-    (MEMBER_LIFECYCLE_STATUS_FILTERS as readonly string[]).includes(
+    (ADMIN_MEMBER_LIFECYCLE_FILTERS as readonly string[]).includes(
       lifecycleStatusFilter,
     )
       ? lifecycleStatusFilter
@@ -670,6 +557,10 @@ export async function listAdminMembers(
     });
   }
 
+  // Filter: subscription category, on the same current-season assignment (#5248).
+  const categoryWhere = subscriptionCategoryFilterWhere(subscriptionCategoryFilter, currentSeasonYear);
+  if (categoryWhere) andConditions.push(categoryWhere);
+
   // Filter: xeroLinked
   if (xeroLinkedFilter === "true") {
     andConditions.push({ xeroContactId: { not: null } });
@@ -687,12 +578,9 @@ export async function listAdminMembers(
   // convenience. `unreachableMemberWhere` is the single definition of who
   // qualifies, shared with the stuck-states dashboard so the count on one screen
   // and the list on the other can never disagree.
-  if (contactabilityFilter === "unreachable") {
-    andConditions.push(unreachableMemberWhere());
-  } else if (contactabilityFilter === "inheritance-unresolved") {
-    andConditions.push(unreachableMemberWhere("inheritance-unresolved"));
-  } else if (contactabilityFilter === "placeholder-address") {
-    andConditions.push(unreachableMemberWhere("placeholder-address"));
+  const contactability = ADMIN_MEMBER_CONTACTABILITY_FILTERS.find((value) => value === contactabilityFilter);
+  if (contactability) {
+    andConditions.push(unreachableMemberWhere(contactability === "unreachable" ? undefined : contactability));
   }
 
   // Filter: login access stage. This mirrors the single Access-column stage the
@@ -732,35 +620,14 @@ export async function listAdminMembers(
     );
   }
 
-  // Filter: subscription
-  if (subscriptionFilter === "NOT_REQUIRED") {
-    andConditions.push({ OR: notRequiredSubscriptionConditions });
-  } else if (subscriptionFilter === "NONE") {
-    // #2149: no separate role exclusion — the NOT_REQUIRED conditions above now
-    // exempt bare operational/non-member accounts via the assignment-aware
-    // fallback, so a fee-paying admin (REQUIRED assignment) correctly stays in
-    // the owing set instead of being dropped by a blanket role filter.
-    andConditions.push(
-      { NOT: { OR: notRequiredSubscriptionConditions } },
-      {
-        subscriptions: { none: { seasonYear: currentSeasonYear } },
-      },
-    );
-  } else if (
-    subscriptionFilter &&
-    (SUBSCRIPTION_STATUS_FILTERS as readonly string[]).includes(
-      subscriptionFilter,
-    )
-  ) {
-    andConditions.push(
-      { NOT: { OR: notRequiredSubscriptionConditions } },
-      {
-        subscriptions: {
-          some: { seasonYear: currentSeasonYear, status: subscriptionFilter },
-        },
-      },
-    );
-  }
+  // Filter: subscription. One definition with the CSV export (#2149, #5190):
+  // each value matches the members whose row shows that status.
+  andConditions.push(
+    ...memberListSubscriptionFilterConditions(subscriptionFilter, {
+      seasonYear: currentSeasonYear,
+      notRequiredConditions: notRequiredSubscriptionConditions,
+    }),
+  );
 
   // Filter: family group (via join table)
   if (familyGroupFilter === "none") {
@@ -880,7 +747,8 @@ export async function listAdminMembers(
     },
     subscriptions: {
       where: { seasonYear: currentSeasonYear },
-      select: { status: true, seasonYear: true, xeroInvoiceId: true },
+      // #5190: the row-state columns the billing note reads.
+      select: { ...SEASON_ROW_STATE_SELECT, seasonYear: true },
       take: 1,
     },
     seasonalMembershipAssignments: {
@@ -897,6 +765,7 @@ export async function listAdminMembers(
             allowedAgeTiers: { select: { ageTier: true } },
           },
         },
+        subscriptionCategory: { select: subscriptionCategorySummarySelect },
       },
       take: 1,
     },
@@ -1189,14 +1058,25 @@ export async function listAdminMembers(
     // assignment correctly owes a subscription). The current-season row (already
     // selected as m.subscriptions[0]) still lets a NOT_REQUIRED row dominate a
     // BASED_ON_AGE_TIER type after a mid-season tier promotion (#2041).
-    const subscriptionNotRequired = isSubscriptionNotRequiredForMembershipType({
+    const liabilityFacts = {
       subscriptionBehavior: effectiveSubscriptionBehavior(
         currentMembershipType?.subscriptionBehavior,
         m.role,
       ),
-      ageTier: m.ageTier,
-      notRequiredAgeTiers,
-      hasNotRequiredSeasonRow: m.subscriptions?.[0]?.status === "NOT_REQUIRED",
+      member: m,
+      seasonYear: currentSeasonYear,
+      ageTierSettings,
+      liabilitySettings: lockoutSettings,
+    };
+    const subscriptionNotRequired = isSubscriptionNotRequiredForMembershipType({
+      ...liabilityFacts,
+      seasonRowStatus: m.subscriptions?.[0]?.status,
+    });
+    // #5190 (owner decision 22 Nov 2026): a saved "Not required" row the
+    // billing treats as owing gets a plain note.
+    const subscriptionBillingNote = notRequiredRowBillingNote({
+      ...liabilityFacts,
+      seasonRow: m.subscriptions?.[0],
     });
 
     return {
@@ -1211,12 +1091,15 @@ export async function listAdminMembers(
       // visible warning; the refusals in
       // bulk update, member edit and the login providers are the enforcement.
       deletedAccount: isDeletedAccountRecord(m),
-      subscriptionStatus:
-        subscriptionNotRequired
-          ? "NOT_REQUIRED"
-          : (m.subscriptions[0]?.status ?? null),
+      // #5190: a noted row shows billing's status, as its filter matches.
+      subscriptionStatus: listSubscriptionStatus({
+        notRequired: subscriptionNotRequired,
+        seasonRowStatus: m.subscriptions?.[0]?.status,
+        billingNote: subscriptionBillingNote,
+      }),
       subscriptionXeroInvoiceId:
         m.subscriptions[0]?.xeroInvoiceId ?? null,
+      subscriptionBillingNote,
       currentMembershipType: currentMembershipType
         ? {
             id: currentMembershipType.id,
@@ -1231,6 +1114,9 @@ export async function listAdminMembers(
             ),
           }
         : null,
+      // The current season's billing category; null means Individual (#5248).
+      currentSubscriptionCategory: currentSeasonAssignment?.subscriptionCategory
+        ? serializeSubscriptionCategorySummary(currentSeasonAssignment.subscriptionCategory) : null,
       familyGroups: m.familyGroupMemberships.map((fg) => ({
         id: fg.familyGroup.id,
         name: fg.familyGroup.name,

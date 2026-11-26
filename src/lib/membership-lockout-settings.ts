@@ -2,39 +2,26 @@ import type { PrismaClient } from "@prisma/client";
 
 import { DEFAULT_MEMBERSHIP_LOCKOUT_SETTINGS } from "@/config/club-settings-defaults";
 import { prisma } from "@/lib/prisma";
+import {
+  isSubscriptionLiabilityAgeSource,
+  isSubscriptionRequiredTypeAgeRule,
+  type SubscriptionLiabilitySettings,
+} from "@/lib/policies/subscription";
+import { isSubscriptionLockoutMode, type SubscriptionLockoutMode } from "@/lib/subscription-lockout-modes";
 
 // Admin-configurable settings for the booking lockout that blocks members with
 // an unpaid annual subscription. Single-row table (id = "default"), same
 // pattern as membership-nomination-settings.ts.
 export const MEMBERSHIP_LOCKOUT_SETTINGS_ID = "default";
 
-/**
- * The three answers a club can give about a member whose season subscription is
- * required but unpaid (#2543). Mirrors the Prisma `SubscriptionLockoutMode`
- * enum without importing it, so the pure policy modules and the settings layer
- * can name one type.
- */
-export type SubscriptionLockoutMode =
-  | "NO_BLOCK"
-  | "HARD_BLOCK"
-  | "NON_MEMBER_PRICING";
+// The modes live in an import-free module the catalogue can load (ALP-720).
+export {
+  isSubscriptionLockoutMode,
+  SUBSCRIPTION_LOCKOUT_MODES,
+  type SubscriptionLockoutMode,
+} from "@/lib/subscription-lockout-modes";
 
-export const SUBSCRIPTION_LOCKOUT_MODES = [
-  "NO_BLOCK",
-  "HARD_BLOCK",
-  "NON_MEMBER_PRICING",
-] as const satisfies readonly SubscriptionLockoutMode[];
-
-export function isSubscriptionLockoutMode(
-  value: unknown,
-): value is SubscriptionLockoutMode {
-  return (
-    typeof value === "string" &&
-    (SUBSCRIPTION_LOCKOUT_MODES as readonly string[]).includes(value)
-  );
-}
-
-export interface MembershipLockoutSettings {
+export interface MembershipLockoutSettings extends SubscriptionLiabilitySettings {
   /**
    * How an unpaid member is treated at booking time (#2543):
    *  - `NO_BLOCK` — no subscription gate at all;
@@ -75,6 +62,12 @@ export interface PersistedMembershipLockoutSettings {
   financialYearEndMonthOverride: number | null;
   textFallbackEnabled: boolean | null;
   useFeeScheduleItemCodes: boolean | null;
+  /**
+   * #5190. Typed loosely for the same reason as `mode`: a bundle value may be
+   * hand-edited. Anything outside the closed vocabulary reads as NOT_CHOSEN.
+   */
+  requiredTypeAgeRule?: string | null;
+  liabilityAgeSource?: string | null;
   updatedByMemberId?: string | null;
   createdAt?: Date | string | null;
   updatedAt?: Date | string | null;
@@ -135,6 +128,17 @@ export function normalizeMembershipLockoutSettings(
       persisted?.textFallbackEnabled ?? defaults.textFallbackEnabled,
     useFeeScheduleItemCodes:
       persisted?.useFeeScheduleItemCodes ?? defaults.useFeeScheduleItemCodes,
+    // #5190: an unknown value is NOT_CHOSEN, the state that changes nobody.
+    requiredTypeAgeRule: isSubscriptionRequiredTypeAgeRule(
+      persisted?.requiredTypeAgeRule,
+    )
+      ? persisted.requiredTypeAgeRule
+      : defaults.requiredTypeAgeRule,
+    liabilityAgeSource: isSubscriptionLiabilityAgeSource(
+      persisted?.liabilityAgeSource,
+    )
+      ? persisted.liabilityAgeSource
+      : defaults.liabilityAgeSource,
   };
 }
 

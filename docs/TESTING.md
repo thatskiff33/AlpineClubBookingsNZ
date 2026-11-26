@@ -1950,9 +1950,10 @@ cannot show both is a claim rather than evidence:
 1. The failure text is vitest's own `Test timed out in Nms` — the per-test
    budget, 5,000ms unless the `it()` or its `describe` carries an inline one.
    Nothing else qualifies. A suite that fails on an **assertion** is never in this class,
-   whatever the machine: `page-content-starter-backfill.test.ts` (seed-copy
-   drift, the known-environmental failure this section is the home of) is a different
-   class, and #2886 removed two suites that had been excused as
+   whatever the machine: `page-content-starter-backfill.test.ts` failed on
+   Windows on an assertion, because it split a migration path on `/`, which
+   was a real defect and a different class (it reads the path through
+   `toPosix` since #5407), and #2886 removed two suites that had been excused as
    "load-sensitive" when they were failing deterministically on Windows for
    real reasons (the shell-out section above).
 2. An isolated re-run of that one file — `pnpm exec vitest run <path>` — passes.
@@ -2051,6 +2052,59 @@ the shared `CENSUS_TIMEOUT_MS` (90,000ms) instead; the loops keep 30,000ms.
   and the reviewed-importers scan over `src/`, `scripts/`, `e2e/` and `prisma/`)
   carry `CENSUS_TIMEOUT_MS` since #5439. The permission-grid loop reads no files
   and keeps its inline 30,000ms.
+
+Four more carry a budget on one case each since #5407, after lanes on
+that host saw them time out at 5,000ms in batches and pass alone. Measured
+23 November 2026 alone on the same host while other lanes ran, each slow case
+took the time below and every other case in its file under 700ms. The first
+three are route suites whose first case to call the route pays for loading its
+module graph (no module reset, so later cases do not) and carry an inline
+30,000ms; the fourth walks `src/` and carries the shared `CENSUS_TIMEOUT_MS`
+since #5439.
+
+- [`src/lib/__tests__/guests-add-notify-choice.test.ts`](../src/lib/__tests__/guests-add-notify-choice.test.ts)
+  — "emails the member and records no notify field on a member self-add
+  without the flag", 3,556ms alone.
+- [`src/lib/__tests__/phase8b-booking-mods.test.ts`](../src/lib/__tests__/phase8b-booking-mods.test.ts)
+  — "returns 401 for unauthenticated requests", 2,721ms alone; the route's
+  import in `beforeEach` took 0ms, so the cost is the handler's first call.
+- [`src/lib/__tests__/fix-mod-payment.test.ts`](../src/lib/__tests__/fix-mod-payment.test.ts)
+  — "stores the itemised lines behind the delta", 2,251ms alone.
+- [`src/app/api/bookings/[id]/__tests__/modify-quote-planner-stay-range-parity.test.ts`](../src/app/api/bookings/[id]/__tests__/modify-quote-planner-stay-range-parity.test.ts)
+  — "the resolver's rules live in one file, with only known callers", 1,331ms
+  alone.
+
+One more carries a 60,000ms budget on a whole `describe` since #5407: each of
+its ten cases builds a scratch repository and runs the deploy's release-tag
+guard, a run of `git` and `bash` spawns whose cost is the host's process
+start-up, not the test.
+
+- [`src/lib/__tests__/deploy-release-tag-guard-script-contract.test.ts`](../src/lib/__tests__/deploy-release-tag-guard-script-contract.test.ts)
+  — "refuses a lightweight vX.Y.Z tag" timed out at 5,000ms in a 47-file
+  by-name batch on 24 November 2026 and took 870ms alone; the slowest case
+  alone took 1,207ms.
+
+A second suite carries the same 60,000ms budget, on each `describe` whose
+cases build a throwaway repository (a bare origin, a seed and a clone) and run
+the release script, since #5472.
+
+- [`scripts/release/cut-release.test.mjs`](../scripts/release/cut-release.test.mjs)
+  — "prints the whole plan in a dry run and changes nothing" timed out at
+  5,000ms on a CI runner on 24 November 2026, in the push build of `main`, with
+  no assertion failing. Run alone on a busy Windows host on 25 November 2026,
+  thirteen of its repository cases exceeded 5,000ms and the slowest took
+  6,369ms.
+
+Two suites named with these are deliberately not listed.
+`reshaped-club-day-seams-contract.test.ts` timed out with them on its two
+tree-reading cases (909ms and 751ms alone) and carries the shared
+`CENSUS_TIMEOUT_MS` on its `describe` since #5439, but it runs in
+`pnpm run ci:fast-censuses`, and a suite listed in this section is kept out of
+that run (`run-fast-censuses.test.mjs`); with the budget it no longer needs
+to be. `deploy-email-transport-env-contract.test.ts` spawns `bash` and every
+case that does already carries its own budget (60,000ms, or 240,000ms for
+the provider matrix); alone on that host it took 195s, its matrix 95s and no
+other case over 9.4s, so nothing in it runs on the 5,000ms default.
 
 Of the entries above, the two 2026-09-19 batches covered the first five; they
 produced no timeout, so their figures show how close each suite runs to the

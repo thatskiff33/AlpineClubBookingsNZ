@@ -291,6 +291,8 @@ const tx = {
   alertCooldown: {
     findUnique: async ({ where }: { where: { key: string } }) => (mocks.owedMarkers.has(where.key) ? { key: where.key } : null),
     upsert: async ({ where }: { where: { key: string } }) => void mocks.owedMarkers.add(where.key),
+    // #5240: consuming a saved-card capture's "not yet settled" flag.
+    deleteMany: async ({ where }: { where: { key: string } }) => ({ count: mocks.owedMarkers.delete(where.key) ? 1 : 0 }),
   },
 };
 
@@ -2140,15 +2142,28 @@ describe("#4285 a capture arriving on a COMPLETED booking is judged as on a PAID
       expect(mocks.sendAdminDuplicateCaptureKeptAlert).not.toHaveBeenCalled();
     });
 
-    it("F1: a capture its caller wrote SUCCEEDED just before (a saved-card pre-record) is new money, not a replay", async () => {
+    it("F1 (#5240): a saved-card capture whose settle was interrupted, arriving after the booking was paid another way, is new money, not a replay - alerted once", async () => {
+      // The charging code wrote the row SUCCEEDED and flagged it unsettled, then
+      // stopped before the settle; the booking was since paid by other means.
       primeLedger([ledgerRow({ id: "txn-z", stripePaymentIntentId: OTHER_PI })]);
+      const flagKey = `saved-card-capture-unsettled:${OTHER_PI}`;
+      const owedKey = `duplicate-capture-new-capture-owed:booking-1:${OTHER_PI}`;
+      mocks.owedMarkers.add(flagKey);
+      const owedAtSend: boolean[] = [];
+      mocks.sendAdminDuplicateCaptureKeptAlert.mockImplementation(async () => void owedAtSend.push(mocks.owedMarkers.has(owedKey)));
 
-      const result = await markBookingPaymentSucceeded({
-        format: CLUB_FORMAT_TEST, bookingId: "booking-1", paymentIntentId: OTHER_PI, amountCents: 10000, paymentMethodId: "pm_1", recordedByCaller: true,
-      });
+      expect(await arriveAt(10000)).toEqual({ outcome: "duplicate_capture_kept", bookingId: "booking-1", bumpedBookingIds: [] });
+      expect(mocks.enqueueDuplicateCaptureRefundRecovery).not.toHaveBeenCalled();
+      expect(mocks.sendAdminDuplicateCaptureKeptAlert).toHaveBeenCalledWith(
+        expect.objectContaining({ paymentIntentId: OTHER_PI, reason: "new-capture" }),
+        CLUB_FORMAT_TEST,
+      );
+      expect(owedAtSend, "the alert was owed in the settle's transaction").toEqual([true]);
+      expect(mocks.owedMarkers.has(flagKey), "the flag is consumed").toBe(false);
 
-      expect(result.outcome).toBe("duplicate_capture_kept");
-      expect(mocks.sendAdminDuplicateCaptureKeptAlert).toHaveBeenCalledWith(expect.objectContaining({ reason: "new-capture" }), CLUB_FORMAT_TEST);
+      // Its next arrival that day is the replay of a capture now known.
+      expect((await arriveAt(10000)).outcome).toBe("already_paid");
+      expect(mocks.sendAdminDuplicateCaptureKeptAlert).toHaveBeenCalledTimes(1);
     });
 
     it("F2: the alert is owed in the settle's transaction and cleared once delivered", async () => {
@@ -2165,13 +2180,17 @@ describe("#4285 a capture arriving on a COMPLETED booking is judged as on a PAID
 
     it("F4: any delivered alert for the capture answers its owed one - here the no-record alert, once another payment holds money", async () => {
       const owedKey = `duplicate-capture-new-capture-owed:booking-1:${OTHER_PI}`;
+      // #5240 review (23 Nov, item 5): and any the payments cron promoted, whatever reason its key carries.
+      const promotedKeys = ["not-recorded", "settler-released", "unsettled-saved-card"].map((reason) => `duplicate-capture-promoted-owed:${reason}:booking-1:${OTHER_PI}`);
       mocks.owedMarkers.add(owedKey);
+      for (const key of promotedKeys) mocks.owedMarkers.add(key);
       primeLedger([ledgerRow({ id: "txn-y", stripePaymentIntentId: "pi_since" }), ledgerRow({ id: "txn-z", stripePaymentIntentId: OTHER_PI })]);
 
       expect((await arriveAt(10000)).outcome).toBe("duplicate_capture_kept");
 
       expect(mocks.sendAdminDuplicateCaptureKeptAlert).toHaveBeenCalledWith(expect.objectContaining({ reason: "not-recorded", otherPaymentIntentId: "pi_since" }), CLUB_FORMAT_TEST);
       expect(mocks.owedMarkers.has(owedKey), "the delivered alert cleared the owed new-capture marker").toBe(false);
+      expect(promotedKeys.filter((key) => mocks.owedMarkers.has(key)), "and every promoted one").toEqual([]);
     });
 
     it("F2: a send that throws leaves the alert owed, so the capture's replay alerts again; once delivered, a replay is silent", async () => {

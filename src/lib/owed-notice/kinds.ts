@@ -8,6 +8,14 @@
  * A leaf module, importing nothing, so any deliverer module can name its kind
  * without importing the registry or the drain.
  */
-export const OWED_NOTICE_KINDS = ["booking-bump-member", "booking-bump-officers"] as const;
+export const OWED_NOTICE_KINDS = [
+  "booking-bump-member",
+  "booking-bump-officers",
+  "waitlist-offer-member",
+  "waitlist-offer-officers",
+  "waitlist-offer-expired",
+  "waitlist-offer-lapsed-untold",
+  "booking-confirmed",
+] as const;
 
 export type OwedNoticeKind = (typeof OWED_NOTICE_KINDS)[number];

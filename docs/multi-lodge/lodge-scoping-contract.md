@@ -53,6 +53,7 @@ sequencing):
 | `BookingDefaults`                                                  | per-lodge row                                                      | converted from singleton                                                                                                                                                                                                                                                                                                                                |
 | `BookingRequestSettings`                                           | per-lodge row                                                      | converted from singleton                                                                                                                                                                                                                                                                                                                                |
 | `ServerNzSettings`                                                 | club-wide singleton (`id = "default"`)                             | NOT converted to a per-lodge row, deliberately: one club holds ONE connection to the central server (one base URL, one API key, one sync cursor), and the registry it exchanges is a list of other CLUBS rather than of this club's buildings. A per-lodge row would imply a lodge could sync independently, which the central server has no concept of; the one per-lodge fact it does hold, which of ITS lodges a club lodge is (`Lodge.centralLodgeId`, triyder/AlpineClubBookingsNZ#62), lives on `Lodge` |
+| `Organisation` (a school)                                          | club-wide, no `lodgeId`                                            | a school books across the club's lodges and has one Xero contact; its own email and phone, corrected by `/api/admin/organisations/[id]/contact` (#5245), are not lodge-scoped either |
 | Lodge identity fields (`lodgeName`, `doorCode`, `lodgeTravelNote`) | resolve from `Lodge` (default lodge when no `lodgeId` is in scope) | dropped from the `EmailMessageSetting` singleton (migration `20260709130000`)                                                                                                                                                                                                                                                                           |
 
 ## Privacy hosting disclosure
@@ -81,10 +82,11 @@ takes no lodge parameter.
 
 `MemberMoneyEvent`, `MemberMoneyJournal`, `MemberMoneyObligation`,
 `MemberMoneyApplication`, `MemberMoneySourceLink`, `MemberMoneySourcePosting`,
-`MemberMoneyRefundReservation`, `MemberMoneyRefundReservationRelease`, `MemberMoneyExportManifest`
-and `MemberMoneyExportCoverage` are club-wide economic
+`MemberMoneyRefundReservation`, `MemberMoneyRefundReservationRelease`, `MemberMoneyExportManifest`,
+`MemberMoneyExportCoverage` and `MemberMoneyExportCoverageRelease` are club-wide economic
 records: one receipt may cover several lodges. An export manifest names its
-booking, which identifies the lodge. A reservation names its obligation
+booking, which identifies the lodge; a combined group invoice's manifest names
+the organiser's booking, and its children's lodges are frozen in its mapping. A reservation names its obligation
 and its funding batch, which identify the booking; an application batch names
 one booking and takes that booking's Payment row. `MemberMoneyLine` carries optional
 `bookingId` and `lodgeId` dimensions with RESTRICT foreign keys and no update
@@ -115,6 +117,14 @@ club, not any lodge. A cash allocation names its booking as a bare id, the way
 `MemberCreditNoteAllocation` does, and the booking carries the lodge. A
 return row names a credit restoration and a slice, which identify the same
 booking. None of the three gets a `lodgeId`.
+
+## Xero GST-override pause (#5208)
+
+`XeroTaxOverrideMismatch` is club-wide: one row records a Xero invoice whose
+returned line tax differs from the journal's tax the app sent, and any
+uncleared row pauses the overrides for every lodge, because the club has one
+Xero organisation and one GST return. A row names its booking, which
+identifies the lodge, but carries no lodge key and is never filtered by one.
 
 ## Club-Wide Defaults With Per-Lodge Overrides
 

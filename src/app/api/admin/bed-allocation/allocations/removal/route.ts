@@ -1,89 +1,27 @@
 import { NextResponse } from "next/server";
-import { z } from "zod";
+import type { z } from "zod";
 import { parseJsonRequestBody } from "@/lib/api-json";
 import {
   applyBedAllocationRemoval,
-  BED_ALLOCATION_REMOVAL_CATEGORIES,
   BedAllocationRemovalError,
-  MAX_BED_ALLOCATION_REMOVAL_WINDOW_NIGHTS,
   previewBedAllocationRemoval,
   type BedAllocationRemovalApplyRequest,
   type BedAllocationRemovalRequest,
 } from "@/lib/bed-allocation-removal";
 import {
-  countNightsDateOnly,
-  isDateOnlyString,
-  parseDateOnly,
-} from "@/lib/date-only";
-import {
   bedAllocationErrorResponse,
   requireBedAllocationRead,
   requireBedAllocationWrite,
 } from "@/lib/admin-bed-allocation-routes";
-import { dateOnlyStringSchema } from "@/lib/date-only-schema";
-
-const anchorFields = {
-  allocationId: z.string().min(1),
-  bookingId: z.string().min(1),
-  bookingGuestId: z.string().min(1),
-  lodgeId: z.string().min(1),
-  stayDate: dateOnlyStringSchema,
-};
-
-const windowScopeSchema = z
-  .object({
-    type: z.literal("WINDOW"),
-    lodgeId: z.string().min(1),
-    from: dateOnlyStringSchema,
-    to: dateOnlyStringSchema,
-  })
-  .strict();
-
-const scopeSchema = z
-  .discriminatedUnion("type", [
-    z.object({ type: z.literal("ALLOCATION"), ...anchorFields }).strict(),
-    z.object({ type: z.literal("BOOKING_GUEST"), ...anchorFields }).strict(),
-    z.object({ type: z.literal("BOOKING"), ...anchorFields }).strict(),
-    windowScopeSchema,
-  ])
-  .superRefine((scope, context) => {
-    if (scope.type !== "WINDOW") return;
-    if (!isDateOnlyString(scope.from) || !isDateOnlyString(scope.to)) {
-      context.addIssue({ code: "custom", message: "Invalid removal window" });
-      return;
-    }
-    const nights = countNightsDateOnly(
-      parseDateOnly(scope.from),
-      parseDateOnly(scope.to),
-    );
-    if (nights < 1 || nights > MAX_BED_ALLOCATION_REMOVAL_WINDOW_NIGHTS) {
-      context.addIssue({
-        code: "custom",
-        message: `Removal window must cover 1 to ${MAX_BED_ALLOCATION_REMOVAL_WINDOW_NIGHTS} nights`,
-      });
-    }
-  });
-
-const categorySchema = z.enum(BED_ALLOCATION_REMOVAL_CATEGORIES);
-const categoriesSchema = z
-  .array(categorySchema)
-  .min(1)
-  .max(BED_ALLOCATION_REMOVAL_CATEGORIES.length)
-  .superRefine((categories, context) => {
-    if (new Set(categories).size !== categories.length) {
-      context.addIssue({
-        code: "custom",
-        message: "Duplicate categories are not allowed",
-      });
-    }
-  });
-
-const previewSchema = z
-  .object({ scope: scopeSchema, categories: categoriesSchema })
-  .strict();
-const applySchema = previewSchema
-  .extend({ previewDigest: z.string().regex(/^v1:[0-9a-f]{64}$/) })
-  .strict();
+import {
+  bedAllocationRemovalApplyBodySchema,
+  bedAllocationRemovalPreviewBodySchema,
+} from "@/lib/admin-bookings-schemas/beds";
+import {
+  ADMIN_BED_ALLOCATION_REMOVAL_CONNECTION_SHAPE,
+  ADMIN_BED_ALLOCATION_REMOVAL_PREVIEW_CONNECTION_SHAPE,
+} from "@/lib/connection-shapes/bookings-beds";
+import { connectionJson } from "@/lib/mcp-connection-request";
 
 function invalidInput(error: z.ZodError) {
   return NextResponse.json(
@@ -107,7 +45,10 @@ function removalErrorResponse(error: unknown) {
   return bedAllocationErrorResponse(error);
 }
 
-/** Preview only: explicit bookings:view is sufficient and nothing is written. */
+/**
+ * Preview only: explicit bookings:view is sufficient and nothing is written.
+ * Also the AI app action `preview_bed_allocation_removal` (ALP-719).
+ */
 export async function POST(request: Request) {
   const guard = await requireBedAllocationRead();
   if (!guard.ok) return guard.response;
@@ -115,18 +56,21 @@ export async function POST(request: Request) {
   try {
     const json = await parseJsonRequestBody(request);
     if (!json.ok) return json.response;
-    const parsed = previewSchema.safeParse(json.body);
+    const parsed = bedAllocationRemovalPreviewBodySchema.safeParse(json.body);
     if (!parsed.success) return invalidInput(parsed.error);
     const preview = await previewBedAllocationRemoval(
       parsed.data as BedAllocationRemovalRequest,
     );
-    return NextResponse.json(preview);
+    return connectionJson(request, preview, ADMIN_BED_ALLOCATION_REMOVAL_PREVIEW_CONNECTION_SHAPE);
   } catch (error) {
     return removalErrorResponse(error);
   }
 }
 
-/** Apply the exact reviewed preview; explicit bookings:edit is required. */
+/**
+ * Apply the exact reviewed preview; explicit bookings:edit is required.
+ * Also the AI app action `remove_bed_allocations` (ALP-719).
+ */
 export async function PUT(request: Request) {
   const guard = await requireBedAllocationWrite();
   if (!guard.ok) return guard.response;
@@ -134,13 +78,13 @@ export async function PUT(request: Request) {
   try {
     const json = await parseJsonRequestBody(request);
     if (!json.ok) return json.response;
-    const parsed = applySchema.safeParse(json.body);
+    const parsed = bedAllocationRemovalApplyBodySchema.safeParse(json.body);
     if (!parsed.success) return invalidInput(parsed.error);
     const result = await applyBedAllocationRemoval({
       request: parsed.data as BedAllocationRemovalApplyRequest,
       actorMemberId: guard.session.user.id,
     });
-    return NextResponse.json(result);
+    return connectionJson(request, result, ADMIN_BED_ALLOCATION_REMOVAL_CONNECTION_SHAPE);
   } catch (error) {
     return removalErrorResponse(error);
   }

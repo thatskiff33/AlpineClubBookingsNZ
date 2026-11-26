@@ -1,5 +1,4 @@
 import { NextRequest, NextResponse } from "next/server";
-import { z } from "zod";
 import { parseJsonRequestBody } from "@/lib/api-json";
 import { requireAdmin } from "@/lib/session-guards";
 import {
@@ -8,10 +7,9 @@ import {
 } from "@/lib/family-suggestions";
 import { logAudit } from "@/lib/audit";
 import logger from "@/lib/logger";
-
-const hideSuggestionSchema = z.object({
-  memberIds: z.array(z.string().min(1)).min(2, "At least 2 members required"),
-});
+import { hideFamilySuggestionSchema } from "@/lib/admin-membership-api/family-groups";
+import { connectionJson } from "@/lib/mcp-connection-request";
+import { FAMILY_SUGGESTION_HIDDEN_CONNECTION_SHAPE } from "@/lib/connection-shapes/membership-family-groups";
 
 /**
  * POST /api/admin/family-suggestions/hide
@@ -27,7 +25,7 @@ export async function POST(req: NextRequest) {
   if (!jsonBody.ok) return jsonBody.response;
   const body = jsonBody.body;
 
-  const parsed = hideSuggestionSchema.safeParse(body);
+  const parsed = hideFamilySuggestionSchema.safeParse(body);
   if (!parsed.success) {
     return NextResponse.json(
       { error: "Validation failed", details: parsed.error.flatten().fieldErrors },
@@ -57,10 +55,11 @@ export async function POST(req: NextRequest) {
       },
     });
 
-    return NextResponse.json({
-      message: "Family suggestion hidden.",
-      signature: result.signature,
-    });
+    return connectionJson(
+      req,
+      { message: "Family suggestion hidden.", signature: result.signature },
+      FAMILY_SUGGESTION_HIDDEN_CONNECTION_SHAPE,
+    );
   } catch (err) {
     logger.error(
       { err, memberIds: parsed.data.memberIds },

@@ -5,7 +5,17 @@ import type {
 } from "@prisma/client";
 
 import { getAgeTierSettings, type AgeTierSettingData } from "@/lib/age-tier";
-import { requiresPaidSubscriptionForAgeTier } from "@/lib/policies/subscription";
+import {
+  MEMBERSHIP_LOCKOUT_SETTINGS_ID,
+  loadMembershipLockoutSettingsStrict,
+  normalizeMembershipLockoutSettings,
+} from "@/lib/membership-lockout-settings";
+import {
+  NOT_CHOSEN_LIABILITY_SETTINGS,
+  liabilityRuleFor,
+  resolveMemberSubscriptionLiability,
+  type SubscriptionLiabilitySettings,
+} from "@/lib/policies/subscription";
 
 /**
  * "Does this member owe an unpaid season subscription?" — computed ONCE, for a
@@ -23,17 +33,25 @@ import { requiresPaidSubscriptionForAgeTier } from "@/lib/policies/subscription"
  *
  * So this module owns the batch answer, and `findUnpaidMemberGuests` is now a
  * thin presentation layer over it (names, Xero invoice links, the D-8
- * cross-family refusal). The rules encoded here are exactly the ones those two
- * functions already agreed on, kept verbatim:
+ * cross-family refusal). Whether a member owes one at all is the ONE liability
+ * rule billing also reads (`resolveMemberSubscriptionLiability`, #5190,
+ * `INV-LOCKOUT-020`), on the access side of the club's settings:
  *
  *  - a `NOT_REQUIRED` membership type never owes a subscription;
- *  - a `BASED_ON_AGE_TIER` type with a `NOT_REQUIRED` season row never owes one
- *    either — the row is authoritative and dominates a mid-season age promotion
- *    (#2041 decision Q4);
- *  - otherwise the per-age-tier `subscriptionRequiredForBooking` flag decides,
- *    read from the LIVE Member row;
+ *  - while the club has not chosen its rule (`NOT_CHOSEN`, every club on
+ *    upgrade), the pre-#5190 access rule holds exactly: a `BASED_ON_AGE_TIER`
+ *    type with a `NOT_REQUIRED` season row never owes one (#2041 decision Q4),
+ *    and otherwise the per-age-tier `subscriptionRequiredForBooking` flag
+ *    decides from the STORED `Member.ageTier`, for a `REQUIRED` type too;
+ *  - once chosen, the club's pair decides exactly as it does for billing, and
+ *    the season row exempts nobody (Edge 2, owner decision 18 Nov 2026);
  *  - a member id with no Member row is treated as OWING one. The safe direction:
  *    an id we cannot resolve must not silently price at member rates.
+ *
+ * And whether one they owe is SETTLED: a `PAID` row, or an active coverage
+ * claim on a `NO_INVOICE` charge (#5190). A no-invoice fee never sends an
+ * invoice, so its member could never reach PAID; the claim, not the row status
+ * (which the Xero sync may rewrite), is what proves they are covered.
  *
  * It deliberately does NOT consult the club's lockout mode. Whether the club
  * hard-blocks, reprices or ignores an unpaid member is the caller's decision;
@@ -47,15 +65,104 @@ export interface SubscriptionSettlementDb {
   memberSubscription: {
     findMany(args: {
       where: { memberId: { in: string[] }; seasonYear: number };
-      select: { memberId: true; status: true };
-    }): Promise<Array<{ memberId: string; status: SubscriptionStatus }>>;
+      select: {
+        memberId: true;
+        status: true;
+        chargeCoverage: typeof ACTIVE_NO_INVOICE_COVERAGE;
+      };
+    }): Promise<
+      Array<{
+        memberId: string;
+        status: SubscriptionStatus;
+        chargeCoverage: Array<{ id: string }>;
+      }>
+    >;
   };
   member: {
     findMany(args: {
       where: { id: { in: string[] } };
-      select: { id: true; ageTier: true };
-    }): Promise<Array<{ id: string; ageTier: AgeTier }>>;
+      select: { id: true; ageTier: true; dateOfBirth: true };
+    }): Promise<Array<{ id: string; ageTier: AgeTier; dateOfBirth: Date | null }>>;
   };
+  /**
+   * The club's liability rule (#5190), read on the CALLER'S client: inside a
+   * booking transaction that is the transaction's own connection and snapshot,
+   * never a second pool connection. Optional only so narrow test doubles fit;
+   * every Prisma client has it, and a client without it reads NOT_CHOSEN.
+   */
+  membershipLockoutSettings?: {
+    findUnique(args: {
+      where: { id: string };
+      select: { requiredTypeAgeRule: true; liabilityAgeSource: true };
+    }): Promise<{ requiredTypeAgeRule: string; liabilityAgeSource: string } | null>;
+  };
+}
+
+/**
+ * The coverage that settles a member without a payment: an ACTIVE claim
+ * (`releasedAt` null, the #2147 "already billed" rule) on a `NO_INVOICE` charge.
+ * One select, shared by every reader that decides "settled" (#5190).
+ */
+export const ACTIVE_NO_INVOICE_COVERAGE = {
+  where: { releasedAt: null, charge: { billingBasis: "NO_INVOICE" } },
+  take: 1,
+  select: { id: true },
+} as const;
+
+/** Whether a season row read with {@link ACTIVE_NO_INVOICE_COVERAGE} carries a claim. */
+export function hasActiveNoInvoiceCoverage(
+  row: { chargeCoverage?: ReadonlyArray<unknown> } | null | undefined,
+): boolean {
+  return (row?.chargeCoverage?.length ?? 0) > 0;
+}
+
+/**
+ * The club's liability settings, through the caller's client. A missing row is
+ * NOT_CHOSEN; a failed read REJECTS, so neither a booking gate nor an evidence
+ * path can judge an opted-in club by the default rule. A client with no
+ * `membershipLockoutSettings` delegate (only a narrow test double: every Prisma
+ * client has one) makes no read, so it reads NOT_CHOSEN rather than rejecting.
+ */
+export async function readSubscriptionLiabilitySettings(
+  db: Pick<SubscriptionSettlementDb, "membershipLockoutSettings">,
+): Promise<SubscriptionLiabilitySettings> {
+  if (!db.membershipLockoutSettings) return NOT_CHOSEN_LIABILITY_SETTINGS;
+  const row = await db.membershipLockoutSettings.findUnique({
+    where: { id: MEMBERSHIP_LOCKOUT_SETTINGS_ID },
+    select: { requiredTypeAgeRule: true, liabilityAgeSource: true },
+  });
+  const { requiredTypeAgeRule, liabilityAgeSource } =
+    normalizeMembershipLockoutSettings(row);
+  return { requiredTypeAgeRule, liabilityAgeSource };
+}
+
+/**
+ * Whether one member owes a subscription on the access side of the liability
+ * rule, reading the club's settings and age tiers itself (#5190). For the Xero
+ * sync (`checkMembershipStatus`), which judges one member outside any booking
+ * transaction: while the club has not chosen its rule that is the pre-#5190 sync
+ * rule exactly — a `BASED_ON_AGE_TIER` member whose season row is already
+ * `NOT_REQUIRED` stays not required (#2041 dominance, so a mid-season tier
+ * promotion cannot re-mint an invoice), and otherwise the stored tier decides.
+ * Once chosen, the club's pair decides and the row exempts nobody. The
+ * settings read is strict: a failed read rejects rather than falling back to
+ * NOT_CHOSEN, because the sync persists its answer as the season row.
+ */
+export async function owesSubscriptionForAccess(
+  input: Omit<
+    Parameters<typeof resolveMemberSubscriptionLiability>[0],
+    "rule" | "ageTierSettings"
+  >,
+): Promise<boolean> {
+  const [lockoutSettings, ageTierSettings] = await Promise.all([
+    loadMembershipLockoutSettingsStrict(),
+    getAgeTierSettings(),
+  ]);
+  return resolveMemberSubscriptionLiability({
+    ...input,
+    rule: liabilityRuleFor("access", lockoutSettings),
+    ageTierSettings,
+  }).owes;
 }
 
 /**
@@ -87,7 +194,10 @@ export interface SubscriptionSettlementDb {
 export type AgeTierSettingsReader = () => Promise<AgeTierSettingData[]>;
 
 export interface MemberSubscriptionSettlement {
-  /** The season gate says this member owes a paid subscription. */
+  /**
+   * The season gate says this member owes a paid subscription: the liability
+   * rule says they owe one, and no no-invoice fee already covers it (#5190).
+   */
   subscriptionRequired: boolean;
   /** A PAID season row exists for them. */
   subscriptionPaid: boolean;
@@ -120,41 +230,42 @@ export function subscriptionIsUnpaid(
  *
  * Both loaders below and `findUnpaidMemberGuests` call this and nothing else, so
  * the owner gate, the member-guest gate and the pricing reprice cannot drift
- * apart no matter how differently they read their rows. Keep every branch here
- * — a caller that "just adds one more condition" at its own call site is the
- * exact failure this function exists to prevent.
+ * apart no matter how differently they read their rows. Liability itself is
+ * `resolveMemberSubscriptionLiability`, the rule billing shares (#5190); keep
+ * every branch there or here — a caller that "just adds one more condition" at
+ * its own call site is the exact failure this function exists to prevent.
  */
 export function resolveMemberSubscriptionSettlement(input: {
   /** The member's effective membership-type subscription behaviour, if resolved. */
   subscriptionBehavior: MembershipTypeSubscriptionBehavior | null | undefined;
   /** Their season `MemberSubscription.status`, if a row exists. */
   subscriptionStatus: SubscriptionStatus | null | undefined;
+  /** An active coverage claim on a `NO_INVOICE` charge settles them (#5190). */
+  coveredByNoInvoiceCharge: boolean;
   /**
-   * The LIVE `Member.ageTier`, or `null` when no Member row resolved. Null means
-   * "owes one": an id we cannot resolve must never silently price at member
-   * rates.
+   * The LIVE Member row's tier and date of birth, or `null` when no Member row
+   * resolved. Null means "owes one": an id we cannot resolve must never
+   * silently price at member rates.
    */
-  ageTier: AgeTier | null | undefined;
+  member: { dateOfBirth: Date | null; ageTier: AgeTier } | null | undefined;
+  seasonYear: number;
   ageTierSettings: AgeTierSettingData[];
+  liabilitySettings: SubscriptionLiabilitySettings;
 }): MemberSubscriptionSettlement {
-  const subscriptionPaid = input.subscriptionStatus === "PAID";
-
-  if (input.subscriptionBehavior === "NOT_REQUIRED") {
-    return { subscriptionRequired: false, subscriptionPaid };
-  }
-  // #2041 decision Q4: a NOT_REQUIRED season row is authoritative for a
-  // tier-exempt member and dominates a mid-season age promotion. Scoped to
-  // BASED_ON_AGE_TIER so REQUIRED types are byte-unchanged.
-  if (
-    input.subscriptionBehavior === "BASED_ON_AGE_TIER" &&
-    input.subscriptionStatus === "NOT_REQUIRED"
-  ) {
-    return { subscriptionRequired: false, subscriptionPaid };
-  }
-  const subscriptionRequired =
-    input.ageTier == null ||
-    requiresPaidSubscriptionForAgeTier(input.ageTier, input.ageTierSettings);
-  return { subscriptionRequired, subscriptionPaid };
+  const { owes } = resolveMemberSubscriptionLiability({
+    subscriptionBehavior: input.subscriptionBehavior,
+    member: input.member,
+    seasonRowStatus: input.subscriptionStatus,
+    seasonYear: input.seasonYear,
+    rule: liabilityRuleFor("access", input.liabilitySettings),
+    ageTierSettings: input.ageTierSettings,
+  });
+  // A no-invoice fee settles the member without a payment: nothing is left for
+  // them to pay, so no paid subscription is required of them (#5190).
+  return {
+    subscriptionRequired: owes && !input.coveredByNoInvoiceCharge,
+    subscriptionPaid: input.subscriptionStatus === "PAID",
+  };
 }
 
 /**
@@ -188,6 +299,11 @@ export async function loadMemberSubscriptionSettlements(
      * club's own tier policy. See `AgeTierSettingsReader`.
      */
     readAgeTierSettings?: AgeTierSettingsReader;
+    /**
+     * The club's liability settings when the caller already holds them (#5190);
+     * otherwise read once through `db` (see `readSubscriptionLiabilitySettings`).
+     */
+    liabilitySettings?: SubscriptionLiabilitySettings;
   },
 ): Promise<Map<string, MemberSubscriptionSettlement>> {
   const memberIds = [
@@ -204,14 +320,19 @@ export async function loadMemberSubscriptionSettlements(
   // called before, so a writer's behaviour is byte-identical.
   const ageTierSettings = await (params.readAgeTierSettings ??
     getAgeTierSettings)();
-  const [subscriptions, members] = await Promise.all([
+  const [liabilitySettings, subscriptions, members] = await Promise.all([
+    params.liabilitySettings ?? readSubscriptionLiabilitySettings(db),
     db.memberSubscription.findMany({
       where: { memberId: { in: memberIds }, seasonYear: params.seasonYear },
-      select: { memberId: true, status: true },
+      select: {
+        memberId: true,
+        status: true,
+        chargeCoverage: ACTIVE_NO_INVOICE_COVERAGE,
+      },
     }),
     db.member.findMany({
       where: { id: { in: memberIds } },
-      select: { id: true, ageTier: true },
+      select: { id: true, ageTier: true, dateOfBirth: true },
     }),
   ]);
 
@@ -227,8 +348,13 @@ export async function loadMemberSubscriptionSettlements(
         subscriptionBehavior:
           params.subscriptionBehaviorByMember.get(memberId),
         subscriptionStatus: subscriptionByMember.get(memberId)?.status,
-        ageTier: memberById.get(memberId)?.ageTier ?? null,
+        coveredByNoInvoiceCharge: hasActiveNoInvoiceCoverage(
+          subscriptionByMember.get(memberId),
+        ),
+        member: memberById.get(memberId) ?? null,
+        seasonYear: params.seasonYear,
         ageTierSettings,
+        liabilitySettings,
       }),
     );
   }

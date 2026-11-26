@@ -25,6 +25,8 @@ export { postBookingReceipts, type BookingReceiptDecision } from "./internal/boo
 export { closeKeptCaptureReturn, postRefundObligation, withdrawRefundObligation, type RefundObligationDoor } from "./internal/refund-obligations";
 // #4516 (M4d): bank and cash hand-backs, and a late capture the treasurer keeps.
 export { postHandBackObligation, postHandBackPayment, postKeptCapture, reverseKeptCapture } from "./internal/hand-backs";
+// #5197: a dispute-loss hand-back reopened after a late win, or by an officer, owes its debt again.
+export { restoreHandBackObligation } from "./internal/hand-backs";
 export { reserveCardRefundSlice, type CardRefundObligationRef, type CardRefundReservationOutcome, type CardRefundSliceReservation } from "./internal/refund-reservations";
 export { postCardRefundCash } from "./internal/refund-cash";
 export { postPaidAnotherWayClose, type PaidAnotherWayJournalClose, type PaidAnotherWayRest } from "./internal/refund-closes";
@@ -41,3 +43,7 @@ export { recordRefundNoteManifest, recordRefundNotePaymentManifest, type RefundN
 export { recordCaptureReceiptManifest, type CaptureReceiptManifestInput } from "./internal/capture-receipt-manifest";
 // #4525 (M13): a failed-later refund's reversal invoice's export manifest, recorded after its operation completes.
 export { recordFailedLaterRefundReversalManifest } from "./internal/refund-note-manifest";
+// #4525 (ALP-437): the organiser's combined group invoice's manifest, recorded once the invoice is kept, and released when it is void or gone.
+export { recordCombinedGroupInvoiceManifest, releaseCombinedGroupInvoiceManifest } from "./internal/combined-group-invoice-manifest";
+// #4525 review: the payments cycle's sweep that releases a combined invoice's cover once its VOID has ended it.
+export { sweepVoidedCombinedGroupInvoiceCover, type CombinedCoverSweepResult } from "./internal/combined-group-invoice-manifest";

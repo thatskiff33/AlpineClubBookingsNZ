@@ -51,7 +51,7 @@ import {
   XERO_SYNC_NOW_RECORD_CONNECTION_SHAPE,
   XERO_USAGE_CONNECTION_SHAPE,
 } from "@/lib/connection-shapes/finance-xero-sync";
-import { recordIdParamsSchema } from "@/lib/route-id-params";
+import { routeIdParamsSchema } from "@/lib/route-id-params";
 import { SEASON_YEAR_MAX, SEASON_YEAR_MIN } from "@/lib/season-year-range";
 import { XERO_OPERATION_REASON_MAX, XERO_OPERATION_REASON_MIN } from "@/lib/xero-operation-resolution";
 import { XERO_LOCAL_MODELS } from "@/lib/xero-record-links";
@@ -122,7 +122,7 @@ export const FINANCE_XERO_SYNC_MCP_ACTIONS: readonly McpAction[] = [
       "Queues a failed or partly completed Xero operation (`id`, from `list_xero_operations`) to run again in the background, and answers with the queued retry's id. It runs the same work the operation tried, so it may create or update the document in Xero, which cannot be withdrawn from the app; the operation's own guards refuse one that is resolved by hand, non-replayable or already running. Harmless to repeat.",
     method: "POST",
     path: "/api/admin/xero/operations/[id]/retry",
-    params: recordIdParamsSchema,
+    params: routeIdParamsSchema,
     kind: "destructive",
     returns: XERO_OPERATION_QUEUED_CONNECTION_SHAPE,
     core: false,
@@ -134,7 +134,7 @@ export const FINANCE_XERO_SYNC_MCP_ACTIONS: readonly McpAction[] = [
       "Puts a Xero operation (`id`, from `list_xero_operations`) back on the background queue, as the operations panel's Requeue button does, and answers with the queued retry's id. The same guards as a retry apply. Harmless to repeat.",
     method: "POST",
     path: "/api/admin/xero/operations/[id]/requeue",
-    params: recordIdParamsSchema,
+    params: routeIdParamsSchema,
     kind: "destructive",
     returns: XERO_OPERATION_QUEUED_CONNECTION_SHAPE,
     core: false,
@@ -146,7 +146,7 @@ export const FINANCE_XERO_SYNC_MCP_ACTIONS: readonly McpAction[] = [
       `Marks one Xero operation (\`id\`) that has been stuck running past the staleness threshold (\`staleRunning\` in \`list_xero_operations\`) as failed, or an interrupted repair back to partly completed, with the officer's \`reason\` (${XERO_OPERATION_REASON_MIN} to ${XERO_OPERATION_REASON_MAX} characters) in the audit log. Refused while it may still be running. It cannot be undone; afterwards the operation can be retried.`,
     method: "POST",
     path: "/api/admin/xero/operations/[id]/mark-failed",
-    params: recordIdParamsSchema,
+    params: routeIdParamsSchema,
     body: xeroOperationReasonBodySchema,
     kind: "destructive",
     returns: XERO_OPERATION_MARKED_CONNECTION_SHAPE,
@@ -159,7 +159,7 @@ export const FINANCE_XERO_SYNC_MCP_ACTIONS: readonly McpAction[] = [
       `Marks one failed or partly completed Xero operation (\`id\`) as never to be retried, with the officer's \`reason\` (${XERO_OPERATION_REASON_MIN} to ${XERO_OPERATION_REASON_MAX} characters) in the audit log. No retry, requeue or retry-all will run it again. It cannot be undone from the app.`,
     method: "POST",
     path: "/api/admin/xero/operations/[id]/mark-non-replayable",
-    params: recordIdParamsSchema,
+    params: routeIdParamsSchema,
     body: xeroOperationReasonBodySchema,
     kind: "destructive",
     returns: XERO_OPERATION_MARKED_CONNECTION_SHAPE,
@@ -172,7 +172,7 @@ export const FINANCE_XERO_SYNC_MCP_ACTIONS: readonly McpAction[] = [
       `Records that an officer fixed a failed or partly completed Xero operation (\`id\`) directly in Xero, with their \`reason\` (${XERO_OPERATION_REASON_MIN} to ${XERO_OPERATION_REASON_MAX} characters). It drops off the active failure list and no repair path runs it again. A failed payment refund note's create asks for \`creditNoteNumber\`, the number of the credit note the officer made in Xero (\`resolveAsksCreditNoteNumber\` in \`list_xero_operations\`), which is checked in Xero and recorded against the payment; send it for no other row. It cannot be undone from the app.`,
     method: "POST",
     path: "/api/admin/xero/operations/[id]/resolve",
-    params: recordIdParamsSchema,
+    params: routeIdParamsSchema,
     body: xeroOperationResolveBodySchema,
     kind: "destructive",
     returns: XERO_OPERATION_MARKED_CONNECTION_SHAPE,
@@ -221,7 +221,7 @@ export const FINANCE_XERO_SYNC_MCP_ACTIONS: readonly McpAction[] = [
       "Processes one stored Xero inbound event (`id`, from `list_xero_inbound_events`) again now, as the club's background job would, bringing the linked bookings, payments and members into step with what Xero says. Refused while it is being processed. Answers with the run's counts and the event's new status. Harmless to repeat.",
     method: "POST",
     path: "/api/admin/xero/inbound-events/[id]/replay",
-    params: recordIdParamsSchema,
+    params: routeIdParamsSchema,
     kind: "destructive",
     returns: XERO_INBOUND_EVENT_REPLAYED_CONNECTION_SHAPE,
     core: false,

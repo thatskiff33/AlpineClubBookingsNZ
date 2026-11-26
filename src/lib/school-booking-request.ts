@@ -40,6 +40,10 @@ import {
   SchoolCateringPreference,
 } from "@prisma/client";
 import { z } from "zod";
+import {
+  memberWholeLodgeApprovalSchema,
+  type SchoolChildCounts,
+} from "@/lib/admin-bookings-schemas/requests";
 import { isEffectiveModuleEnabled } from "@/lib/admin-modules";
 import {
   resolveOrCreateSchoolOrganisation,
@@ -202,14 +206,6 @@ export async function assertSchoolGuestsWithinLodgeCapacity(input: {
 // ---------------------------------------------------------------------------
 
 type SchoolTeacherInput = z.infer<typeof schoolTeacherSchema>;
-
-export const schoolChildCountsSchema = z.object({
-  INFANT: z.number().int().min(0).max(200).optional(),
-  CHILD: z.number().int().min(0).max(200).optional(),
-  YOUTH: z.number().int().min(0).max(200).optional(),
-});
-
-export type SchoolChildCounts = z.infer<typeof schoolChildCountsSchema>;
 
 interface CreateSchoolBookingRequestInput {
   schoolName: string;
@@ -2079,35 +2075,9 @@ export async function approveSchoolBookingRequest(input: {
 
 /**
  * Admin override of the approved headcount, and the manual price, for a member
- * whole-lodge request (#2263). Validated in the approve route exactly like the
- * school `childCounts` override.
+ * whole-lodge request (#2263). The schema lives with the approve route's other
+ * request schemas (`admin-bookings-schemas/requests.ts`).
  */
-export const memberWholeLodgeApprovalSchema = z.object({
-  /**
-   * The headcount the officer is actually pricing and booking, after talking to
-   * the member. Omitted keeps the submitted approximate number.
-   */
-  pricedHeadcount: z.number().int().min(1).max(500).optional(),
-  /**
-   * Manual total price in integer cents. MANDATORY fallback when no active
-   * season covers the requested dates — without it the season-rate branch has
-   * nothing to price from and the approval 409s (the member-request path has no
-   * quote/price op to fall back on, so this field is the only way through).
-   * Split across the guest rows by splitPriceAcrossGuests.
-   */
-  priceOverrideCents: z.number().int().min(0).max(100_000_000).optional(),
-  /**
-   * The officer's per-approval pricing choice (#2338). When true and a flat
-   * whole-lodge rate is set for every night's covering season, the stay prices
-   * `nights x flat rate` and headcount is ignored; otherwise it falls back to
-   * per-guest pricing (owner decision 1 Aug 2026: the officer chooses per
-   * approval, it is NOT automatic on every whole-lodge booking). Omitted/false
-   * keeps today's per-guest behaviour so nothing changes silently. The manual
-   * `priceOverrideCents` still wins over both.
-   */
-  priceAsWholeLodge: z.boolean().optional(),
-});
-
 export type MemberWholeLodgeApprovalOverride = z.infer<
   typeof memberWholeLodgeApprovalSchema
 >;

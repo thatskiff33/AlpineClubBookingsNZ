@@ -758,7 +758,7 @@ describe("the CONTRIBUTING.md gate-limits table matches the workflows (#5362)", 
     let checked = 0;
     for (const step of gateSteps()) {
       const cell = rows.get(step.name).cells[2];
-      // `45 (`Test shard`; `Real-PostgreSQL suites (all)` is 35)`: the first name
+      // `45 (`Test shard`; `Real-PostgreSQL suites (all)` is 45)`: the first name
       // carries the leading figure, and any `<name>` is N carries its own.
       const first = cell.match(/^\d+ \(`([^`]+)`/)?.[1];
       expect(first, `${step.where}: the job the longest limit belongs to`).toBeDefined();

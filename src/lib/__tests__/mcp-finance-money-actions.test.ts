@@ -37,7 +37,6 @@ const h = vi.hoisted(() => ({
   buildRevenueSeries: vi.fn(),
   getXeroContactGroupMemberships: vi.fn(),
   applyManualSubscriptionPayment: vi.fn(),
-  applyManualBookingPayment: vi.fn(),
   buildSubscriptionBillingPreview: vi.fn(),
   confirmSubscriptionBillingPreview: vi.fn(),
   reconcileSubscriptionBillingExceptions: vi.fn(),
@@ -129,7 +128,6 @@ vi.mock("@/lib/manual-subscription-payment", async (importOriginal) => ({
   ...((await importOriginal()) as typeof import("@/lib/manual-subscription-payment")),
   applyManualSubscriptionPayment: h.applyManualSubscriptionPayment,
 }));
-vi.mock("@/lib/manual-booking-payment", () => ({ applyManualBookingPayment: h.applyManualBookingPayment }));
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 vi.mock("@/lib/membership-subscription-billing", () => ({
   buildSubscriptionBillingPreview: h.buildSubscriptionBillingPreview,
@@ -182,7 +180,6 @@ import { GET as listRefundRequests } from "@/app/api/admin/refund-requests/route
 import { GET as getFinanceReport } from "@/app/api/admin/reports/route";
 import { GET as listSubscriptions } from "@/app/api/admin/subscriptions/route";
 import { POST as recordSubscriptionPayment } from "@/app/api/admin/subscriptions/[id]/manual-payment/route";
-import { POST as recordBookingPayment } from "@/app/api/admin/bookings/[id]/mark-paid/route";
 import { GET as getSubscriptionBilling, POST as runSubscriptionBilling } from "@/app/api/admin/subscription-billing/route";
 import { GET as getFinanceBookingMetrics } from "@/app/api/finance/bookings/metrics/route";
 import { POST as backfillFinanceMonthlyFacts } from "@/app/api/finance/sync/backfill-monthly-facts/route";
@@ -827,58 +824,6 @@ describe("record_subscription_manual_payment", () => {
   it("cannot be sent without the officer's confirmation", () => {
     const schema = mcpActionInputSchema(findMcpAction("record_subscription_manual_payment")!);
     expect(schema.safeParse({ id: "sub-1", direction: "paid", notifyMember: true }).success).toBe(false);
-  });
-});
-
-describe("record_booking_manual_payment", () => {
-  const ARGS = {
-    id: "booking-1",
-    direction: "paid",
-    notifyMember: false,
-    expectedAmountCents: 42_000,
-    additionalCoverage: { covered: true, expectedAdditionalAmountCents: 5_000 },
-    note: "Cash at the lodge",
-    confirmed: true,
-  };
-
-  it("records the payment against the figure the officer was shown, in cents", async () => {
-    const RESULT = {
-      bookingId: "booking-1",
-      paymentId: "pay-1",
-      direction: "paid",
-      memberNotified: false,
-      receipt: "not_requested",
-      amountCents: 47_000,
-      bookingStatus: "PAID",
-      creditElectionCents: 1_000,
-      additional: { outstandingCents: 5_000, settled: true, recordedAmountCents: 47_000, payableOnline: false },
-    };
-    h.applyManualBookingPayment.mockResolvedValue(RESULT);
-    const { connection, browser } = await expectActionContract({
-      actionId: "record_booking_manual_payment",
-      handler: recordBookingPayment,
-      args: ARGS,
-    });
-    expect(connection).toEqual({ success: true, booking: RESULT, message: expect.stringContaining("Payment recorded.") });
-    expect(browser).toEqual(connection);
-    // The officer's figures reach the settle unchanged, so a moved price is refused there.
-    expect(h.applyManualBookingPayment).toHaveBeenCalledWith({
-      bookingId: "booking-1",
-      direction: "paid",
-      note: "Cash at the lodge",
-      actingMemberId: "treasurer-1",
-      notifyMember: false,
-      expectedAmountCents: 42_000,
-      additionalCoverage: { covered: true, expectedAdditionalAmountCents: 5_000 },
-    });
-  });
-
-  it("refuses a fractional amount before the route sees it", () => {
-    const schema = mcpActionInputSchema(findMcpAction("record_booking_manual_payment")!);
-    expect(schema.safeParse({ ...ARGS, expectedAmountCents: 420.5 }).success).toBe(false);
-    expect(
-      schema.safeParse({ ...ARGS, additionalCoverage: { covered: true, expectedAdditionalAmountCents: 50.25 } }).success,
-    ).toBe(false);
   });
 });
 

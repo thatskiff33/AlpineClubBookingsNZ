@@ -7,8 +7,9 @@
  * cannot become reachable, or stay unreachable, by accident.
  *
  * Two kinds of reason. A permanent one says the route is never an action. A
- * `not-yet:` one names the task that will add it; that task removes its rule
- * here in the same change that adds the catalogue entries.
+ * `not-yet:` one names the officer stage that will decide it; that task
+ * removes its rule here in the same change that adds the catalogue entries.
+ * Every member route is decided (ALP-797): an action or a permanent reason.
  *
  * A member route that is never an action is listed by its exact method and
  * path (`PERMANENT_ROUTES`), so the reason cannot spread to a neighbour.
@@ -29,8 +30,6 @@ export const MCP_PERMANENT_EXCLUSION_REASONS = {
   "needs-browser":
     "Needs the member's browser: card entry, a file, or a link sent to them by email.",
   infrastructure: "Health checks, deploy hooks and test-only helpers.",
-  // Declared here, first applied by ALP-794 to the booking edits that change
-  // what a booking costs.
   "moves-money":
     "Takes, moves or refunds money, or changes what a booking costs, which the member confirms on the website.",
   declaration:
@@ -39,41 +38,63 @@ export const MCP_PERMANENT_EXCLUSION_REASONS = {
   "website-flow": "Serves the website's own screens and steps, not something a member asks for.",
   "access-secrets": "Shows lodge door codes or other access details, which stay on the website.",
   "site-helper": "The website's own help assistant; the member's AI app answers them itself.",
-  // Officer reasons (ALP-721 onwards).
+  "privacy-posture":
+    "Decides who may browse members' names, which an officer chooses on the website, never an AI app.",
+  "unread-value":
+    "Changes a value an AI app is never shown, such as a guest's allergy needs, so the app would be writing blind.",
+  // Officer reasons (ALP-720 onwards).
+  "changes-charges":
+    "Changes what a member owes or is invoiced, or previews such a change for an officer to confirm, which an officer reviews and confirms on the website.",
+  "ends-membership":
+    "Decides a request to archive, delete or cancel someone's membership, which cannot be undone from an app and is decided on the website.",
+  "sign-in-access":
+    "Sends someone a sign-in link or changes who signs in with an email address, which stays on the website.",
+  "mass-message": "Emails many members at once, which an officer composes, checks and sends on the website.",
+  "privacy-request":
+    "Part of answering a person's request for their own data, which a Full Admin does on the website after proving who they are again.",
+  "switched-off": "Does nothing but answer that it is switched off.",
+  // Finance (ALP-721). Finance setup is a recorded exception to the rule that
+  // an officer area's configuration is an action (owner decision, #5305
+  // comment 7131138226, item 4).
   "club-setup":
-    "Sets up how the club runs: fees, tax, bank details, accounting mappings, membership types and rules, member fields, or connections to outside services, which an officer configures and checks on the website.",
+    "Sets up the club's money: the bank account members pay into, fees, tax settings, accounting and item-code mappings, integration credentials and the Xero connection, which an officer changes on the website.",
   "service-export": "An export another system collects with its own shared key, not something a person asks for.",
 } as const;
 
 export type McpPermanentExclusionReason = keyof typeof MCP_PERMANENT_EXCLUSION_REASONS;
 
 /**
- * The task that will bring each remaining group of routes into the catalogue.
- * The member keys are the follow-ons ALP-718 split its member routes into,
- * less those that have shipped (ALP-795, family and membership); the rest are
- * the officer areas. An area whose task has finished has no key: each of its
- * routes is an action or has a permanent reason, and a new one fails the
+ * Officer areas whose every route method has been decided: each is a
+ * catalogue action or has a permanent reason. A route added to one of these
+ * areas is unclassified until someone decides about it.
+ *
+ * - `bookings` (Bookings & Beds): ALP-719.
+ * - `membership` (Membership): ALP-720.
+ * - `finance` (Finance): ALP-721, including the `/api/finance` workspace.
+ */
+const MCP_DECIDED_ADMIN_AREAS = ["bookings", "membership", "finance"] as const satisfies readonly AdminPermissionArea[];
+
+type McpDecidedAdminArea = (typeof MCP_DECIDED_ADMIN_AREAS)[number];
+
+type McpNotYetAdminArea = Exclude<AdminPermissionArea, McpDecidedAdminArea>;
+
+/**
+ * The task that will bring each remaining group of officer routes into the
+ * catalogue, by admin area not yet decided. Every member route is decided:
+ * ALP-718 split them into five follow-ons, the last of which (ALP-797, groups
+ * and whole-lodge) removed the member rule, so a new member route fails the
  * census until someone decides about it.
  */
 export const MCP_NOT_YET_TASKS = {
-  memberBookings: "ALP-794",
-  memberLodgeLife: "ALP-796",
-  memberGroupsAndWholeLodge: "ALP-797",
-  bookings: "ALP-719",
-  membership: "ALP-720",
   lodge: "ALP-722",
   content: "ALP-723",
   support: "ALP-724",
   overview: "ALP-724",
-} as const satisfies Partial<Record<AdminPermissionArea | MemberNotYetGroup, string>>;
+} as const satisfies Record<McpNotYetAdminArea, string>;
 
-const NOT_YET_TASK_BY_GROUP: Partial<Record<AdminPermissionArea | MemberNotYetGroup, string>> =
-  MCP_NOT_YET_TASKS;
-
-type MemberNotYetGroup =
-  | "memberBookings"
-  | "memberLodgeLife"
-  | "memberGroupsAndWholeLodge";
+function isNotYetAdminArea(area: AdminPermissionArea): area is McpNotYetAdminArea {
+  return !(MCP_DECIDED_ADMIN_AREAS as readonly AdminPermissionArea[]).includes(area);
+}
 
 export type McpExclusionReason = McpPermanentExclusionReason | `not-yet:${string}`;
 
@@ -139,12 +160,34 @@ const PERMANENT_ROUTES: ReadonlyArray<{
   readonly reason: McpPermanentExclusionReason;
   readonly routes: readonly string[];
 }> = [
+  // Booking edits that can take, move or refund money (ALP-794): the AI app
+  // quotes them (`quote_booking_change`) and sends the member to the website.
+  {
+    reason: "moves-money",
+    routes: [
+      "PUT /api/bookings/[id]/modify",
+      "PUT /api/bookings/[id]/modify-dates",
+      "POST /api/bookings/[id]/guests",
+      "DELETE /api/bookings/[id]/guests/[guestId]",
+      "POST /api/bookings/[id]/confirm-draft",
+      "POST /api/bookings/[id]/send-guest-payment-link",
+      // ALP-797: joining a group creates the joiner's own booking and takes
+      // its payment, and settling an organiser-pays group holds its beds and
+      // opens one combined bill.
+      "POST /api/group-bookings/[code]/join",
+      "POST /api/group-bookings/[code]/settle",
+    ],
+  },
   {
     reason: "declaration",
     routes: [
       "POST /api/notices/[id]/acknowledge",
       "POST /api/member/onboarding/confirm",
       "POST /api/member/request-deletion",
+      // A member guest agreeing to be on someone else's booking (INV-GUEST).
+      "POST /api/bookings/[id]/guests/[guestId]/consent",
+      // Signing off another member's induction is the signer's own declaration.
+      "POST /api/inductions/[id]/sign-off",
       // ALP-795: joining a family group, confirming a partnership and asking
       // for memberships to be cancelled are the member's own decisions.
       "PUT /api/members/family/invitations",
@@ -160,23 +203,139 @@ const PERMANENT_ROUTES: ReadonlyArray<{
       "GET /api/member/onboarding",
       "GET /api/skifield-conditions",
       "GET /api/privacy/replay",
+      // The booking wizard's guest promo chips: which of the guests' own codes
+      // the booker may use (#3492). An app checks codes with `check_promo_code`.
+      "POST /api/promo-codes/guest-codes",
+      // The school contact editor (#5245), whose save is fresh-proof: its read
+      // loads the version that save checks, and its retry re-sends a failed
+      // save to Xero. No action names a school record, and re-running failed
+      // Xero work is left to the Finance actions (ALP-721).
+      "GET /api/admin/organisations/[id]/contact",
+      "POST /api/admin/organisations/[id]/contact/retry",
     ],
   },
   // Door codes and emergency access: never sent to an AI provider.
   { reason: "access-secrets", routes: ["GET /api/lodge-instructions"] },
   { reason: "site-helper", routes: ["POST /api/help/chat"] },
-  { reason: "public-visitor", routes: ["POST /api/contact", "POST /api/applications"] },
-  // The nominee confirms through a link emailed to them, as does each member
-  // named in a membership cancellation request.
+  // Open member search widens the club's privacy (owner decision D-18): text
+  // an app read must never be able to talk it into that.
+  { reason: "privacy-posture", routes: ["PUT /api/admin/member-guest-settings"] },
+  // Dietary and allergy needs are never sent to an app (INV-PRIV-022), so an
+  // app could only overwrite or clear what the kitchen relies on unseen.
+  { reason: "unread-value", routes: ["PATCH /api/admin/bookings/[id]/guest-dietary"] },
+  {
+    reason: "public-visitor",
+    routes: [
+      "POST /api/contact",
+      "POST /api/applications",
+      // ALP-797: the non-member and school booking request forms, their price
+      // quote and settings, and a non-member's request to join a group. A
+      // member asks for the whole lodge with `request_whole_lodge` instead.
+      "POST /api/booking-requests",
+      "POST /api/booking-requests/quote",
+      "GET /api/booking-requests/settings",
+      "POST /api/booking-requests/school",
+      "POST /api/group-bookings/[code]/join-request",
+    ],
+  },
   {
     reason: "needs-browser",
     routes: [
+      // The nominee confirms through a link emailed to them, as does each member
+      // named in a membership cancellation request.
       "POST /api/applications/nominate",
       "POST /api/member/membership-cancellation-requests/confirm",
+      // The chore roster is opened from the link in the roster email.
+      "GET /api/chores/[token]",
+      "PUT /api/chores/[token]",
+      // Message board pictures are files uploaded and shown in the browser.
+      "POST /api/club-posts/images",
+      "GET /api/club-posts/images/[publicId]",
+      // A problem report carries the page it was sent from and a screenshot.
+      "POST /api/issue-reports",
+      // The maintenance form opened from the lodge's QR code.
+      "GET /api/lodge-maintenance/[token]",
+      "POST /api/lodge-maintenance/[token]",
+      // Files: the invoice and credit note PDFs, and the booking's calendar entry.
+      "GET /api/bookings/[id]/invoice",
+      "GET /api/bookings/[id]/invoice/credit-notes/[creditNoteId]",
+      "GET /api/booking-calendar/[id]",
+      // A school confirms its attendees through the link emailed to it.
+      "POST /api/school-bookings/confirm-attendees",
     ],
   },
 
+  // --- Membership (ALP-720) ------------------------------------------------
+  // A member's seasonal membership type sets their subscription and age tier,
+  // and their subscription category how they are billed, and so what they
+  // owe; approving an application can raise an entrance-fee invoice. Each
+  // preview mints the token its save needs, so both stay together.
+  {
+    reason: "changes-charges",
+    routes: [
+      "POST /api/admin/members/[id]/seasonal-membership/preview",
+      "PATCH /api/admin/members/[id]/seasonal-membership",
+      "POST /api/admin/members/bulk-membership-type/preview",
+      "POST /api/admin/members/bulk-membership-type",
+      "POST /api/admin/members/bulk-subscription-category/preview",
+      "POST /api/admin/members/bulk-subscription-category",
+      "POST /api/admin/membership-types/roll-forward",
+      "POST /api/admin/members/[id]/joining-fee/preview",
+      "POST /api/admin/member-applications/[id]/approval-preview",
+      "PUT /api/admin/member-applications/[id]",
+    ],
+  },
+  // Approving archives or deletes the member, or ends their membership and
+  // its future bookings. Raising the request is an action: a second officer
+  // decides it here, on the website.
+  {
+    reason: "ends-membership",
+    routes: [
+      "PATCH /api/admin/member-lifecycle-action-requests/[requestId]",
+      "POST /api/admin/membership-cancellation-requests/[requestId]/participants/[participantId]",
+    ],
+  },
+  {
+    reason: "sign-in-access",
+    routes: [
+      "POST /api/admin/members/send-password-reset",
+      "POST /api/admin/members/send-setup-invite",
+      "POST /api/admin/family-groups/[id]/login-holder",
+    ],
+  },
+  // The recipient count is the compose screen's own preview of the send.
+  {
+    reason: "mass-message",
+    routes: ["GET /api/admin/communications/send", "POST /api/admin/communications/send"],
+  },
+  // Finds a guest's id for the subject access report, which is fresh-proof.
+  { reason: "privacy-request", routes: ["GET /api/admin/members/subject-access/guests"] },
+  // The merge's preview, whose merge is fresh-proof; the link dialogs'
+  // "whose mailbox would this reach" helper; and the member page's drawn
+  // family tree, whose links `get_member` already answers.
+  {
+    reason: "website-flow",
+    routes: [
+      "POST /api/admin/members/[id]/merge/preview",
+      "GET /api/admin/members/[id]/dependent-email-source",
+      "GET /api/admin/members/[id]/family-tree",
+    ],
+  },
+  // Direct deletion answers 405: deletion is a lifecycle request.
+  { reason: "switched-off", routes: ["DELETE /api/admin/members/[id]"] },
+
   // --- Finance (ALP-721) ---------------------------------------------------
+  // Money that goes through Stripe (owner decision, #5305 comment
+  // 7131138226, item 1): marking a booking paid cancels the member's open card
+  // checkouts and posts a receipt, and withdrawing an extra payment request
+  // cancels a card request and retires its ledger row.
+  {
+    reason: "moves-money",
+    routes: [
+      "POST /api/admin/bookings/[id]/mark-paid",
+      "POST /api/admin/bookings/[id]/additional-payment/withdraw",
+    ],
+  },
   // Handlers that call `requireRecentAuth` without being on `STEP_UP_ROUTES`
   // (which lists the destructive operations, #4619). A connection never holds
   // a fresh proof (`INV-MCP-005`); the census finds every such handler.
@@ -250,35 +409,34 @@ const PERMANENT_ROUTES: ReadonlyArray<{
 ];
 
 /**
- * Member and public areas not yet in the catalogue, by the follow-on task
- * that decides them. A route in an area listed nowhere fails the census until
- * someone decides about it.
+ * Officer powers on lodge-life routes outside `/api/admin` (ALP-796), by
+ * exact method and path, all for the lodge officer stage: editing the events
+ * calendar and minting a meeting's host link (Lodge edit,
+ * `hasCalendarManageViaAdmin`, as `/admin/calendar` is a Lodge page), pricing
+ * and receiving food orders and printing the chore roster. Their member
+ * neighbours are actions or permanent exclusions.
  */
-const MEMBER_NOT_YET_PREFIXES: Readonly<Record<MemberNotYetGroup, readonly string[]>> = {
-  memberBookings: [
-    "/api/availability/check",
-    "/api/booking-calendar",
-    "/api/booking-policies",
-    "/api/bookings",
-    "/api/promo-codes",
-  ],
-  memberLodgeLife: [
-    "/api/calendar",
-    "/api/chores",
-    "/api/club-posts",
-    "/api/food-orders",
-    "/api/inductions",
-    "/api/issue-reports",
-    "/api/lodge-maintenance",
-    "/api/maintenance-reports",
-    "/api/work-parties",
-  ],
-  memberGroupsAndWholeLodge: [
-    "/api/booking-requests",
-    "/api/group-bookings",
-    "/api/school-bookings",
+const OFFICER_NOT_YET_ROUTES: Readonly<Partial<Record<McpNotYetAdminArea, readonly string[]>>> = {
+  lodge: [
+    "POST /api/calendar/events",
+    "PATCH /api/calendar/events/[id]",
+    "DELETE /api/calendar/events/[id]",
+    "POST /api/calendar/events/[id]/join",
+    "PATCH /api/food-orders/[id]/price",
+    "POST /api/food-orders/[id]/received",
+    "GET /api/chores/roster/[date]/print",
   ],
 };
+
+/**
+ * Every exact `METHOD /api/path` an exclusion names, permanent or officer
+ * not-yet. The census checks each against a real route file and method, so an
+ * entry left behind by a moved or deleted route fails instead of lingering.
+ */
+export const MCP_EXACT_EXCLUDED_ROUTES: readonly string[] = [
+  ...PERMANENT_ROUTES.flatMap((rule) => rule.routes),
+  ...Object.values(OFFICER_NOT_YET_ROUTES).flatMap((routes) => routes ?? []),
+];
 
 function underPrefix(path: string, prefix: string): boolean {
   return path === prefix || path.startsWith(`${prefix}/`);
@@ -291,8 +449,7 @@ const STEP_UP_ROUTE_KEYS: ReadonlySet<string> = new Set(
 /**
  * The reason this route method can never be an action, or null. Fresh-proof
  * routes come from `STEP_UP_ROUTES` itself, whatever the club's officer
- * sign-in setting says: the list is never copied here. `PERMANENT_ROUTES`
- * names only the few handlers that ask for a fresh proof without being on it.
+ * sign-in setting says: the list is never copied here.
  */
 export function mcpPermanentExclusion(
   file: string,
@@ -319,11 +476,6 @@ export type McpRouteClassification =
   | { readonly kind: "excluded"; readonly reason: McpExclusionReason }
   | { readonly kind: "unclassified" };
 
-/** A finished area has no task left, so its undecided route is unclassified. */
-function notYet(task: string | undefined): McpRouteClassification {
-  return task ? { kind: "excluded", reason: `not-yet:${task}` } : { kind: "unclassified" };
-}
-
 /** Where one route method stands. `unclassified` fails the census. */
 export function classifyMcpRoute(file: string, method: string): McpRouteClassification {
   const permanent = mcpPermanentExclusion(file, method);
@@ -334,12 +486,18 @@ export function classifyMcpRoute(file: string, method: string): McpRouteClassifi
 
   const path = adminRouteApiPath(file);
   const adminArea = getAdminRouteRequirement(path, method)?.area;
-  if (adminArea) return notYet(NOT_YET_TASK_BY_GROUP[adminArea]);
-  for (const [group, prefixes] of Object.entries(MEMBER_NOT_YET_PREFIXES) as Array<
-    [MemberNotYetGroup, readonly string[]]
+  if (adminArea) {
+    // A route in a decided area has no `not-yet` to fall back on.
+    return isNotYetAdminArea(adminArea)
+      ? { kind: "excluded", reason: `not-yet:${MCP_NOT_YET_TASKS[adminArea]}` }
+      : { kind: "unclassified" };
+  }
+  const route = `${method} ${path}`;
+  for (const [area, routes] of Object.entries(OFFICER_NOT_YET_ROUTES) as Array<
+    [McpNotYetAdminArea, readonly string[]]
   >) {
-    if (prefixes.some((prefix) => underPrefix(path, prefix))) {
-      return notYet(NOT_YET_TASK_BY_GROUP[group]);
+    if (routes.includes(route)) {
+      return { kind: "excluded", reason: `not-yet:${MCP_NOT_YET_TASKS[area]}` };
     }
   }
   return { kind: "unclassified" };

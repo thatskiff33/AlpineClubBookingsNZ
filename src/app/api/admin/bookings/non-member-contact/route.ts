@@ -1,10 +1,17 @@
 import { NextRequest, NextResponse } from "next/server";
-import { z } from "zod";
 import { requireAdmin } from "@/lib/session-guards";
 import { parseJsonRequestBody } from "@/lib/api-json";
 import {
+  adminNonMemberContactQuerySchema,
+  nonMemberContactPostSchema,
+} from "@/lib/admin-bookings-schemas/bookings";
+import {
+  ADMIN_NON_MEMBER_CONTACT_CONNECTION_SHAPE,
+  ADMIN_NON_MEMBER_CONTACT_SUGGESTIONS_CONNECTION_SHAPE,
+} from "@/lib/connection-shapes/bookings-bookings";
+import { connectionJson } from "@/lib/mcp-connection-request";
+import {
   createNonMemberContact,
-  nonMemberContactCreateSchema,
   NonMemberContactError,
   reuseNonMemberContact,
   suggestNonMemberContacts,
@@ -26,6 +33,9 @@ import {
  *                        → create a new non-login owner (server-forced role /
  *                          canLogin:false / emailVerified:false / ageTier:ADULT).
  *  - POST { useExistingContactId } → validate + return a picked existing owner.
+ *
+ * Also the AI app actions `search_non_member_contacts` (GET) and
+ * `create_non_member_contact` (POST, create only) (ALP-719).
  */
 
 const BOOKINGS_EDIT = { area: "bookings", level: "edit" } as const;
@@ -34,17 +44,18 @@ export async function GET(request: NextRequest) {
   const guard = await requireAdmin({ permission: BOOKINGS_EDIT });
   if (!guard.ok) return guard.response;
 
-  const email = request.nextUrl.searchParams.get("email");
-  const name = request.nextUrl.searchParams.get("name");
+  // Both fields are optional strings, so every request parses; an absent one
+  // is passed on as null, as before.
+  const query = adminNonMemberContactQuerySchema.safeParse({
+    email: request.nextUrl.searchParams.get("email") ?? undefined,
+    name: request.nextUrl.searchParams.get("name") ?? undefined,
+  });
+  const email = (query.success ? query.data.email : undefined) ?? null;
+  const name = (query.success ? query.data.name : undefined) ?? null;
 
   const contacts = await suggestNonMemberContacts({ email, name });
-  return NextResponse.json({ contacts });
+  return connectionJson(request, { contacts }, ADMIN_NON_MEMBER_CONTACT_SUGGESTIONS_CONNECTION_SHAPE);
 }
-
-const postSchema = z.union([
-  z.object({ useExistingContactId: z.string().min(1) }),
-  nonMemberContactCreateSchema,
-]);
 
 export async function POST(request: NextRequest) {
   const guard = await requireAdmin({ permission: BOOKINGS_EDIT });
@@ -53,7 +64,7 @@ export async function POST(request: NextRequest) {
   const json = await parseJsonRequestBody(request);
   if (!json.ok) return json.response;
 
-  const parsed = postSchema.safeParse(json.body);
+  const parsed = nonMemberContactPostSchema.safeParse(json.body);
   if (!parsed.success) {
     return NextResponse.json(
       { error: "Invalid input", details: parsed.error.flatten() },
@@ -66,14 +77,18 @@ export async function POST(request: NextRequest) {
       const contact = await reuseNonMemberContact(
         parsed.data.useExistingContactId
       );
-      return NextResponse.json({ contact, reused: true }, { status: 200 });
+      return connectionJson(request, { contact, reused: true }, ADMIN_NON_MEMBER_CONTACT_CONNECTION_SHAPE, {
+        status: 200,
+      });
     }
 
     const contact = await createNonMemberContact({
       ...parsed.data,
       actorMemberId: guard.session.user.id,
     });
-    return NextResponse.json({ contact, reused: false }, { status: 201 });
+    return connectionJson(request, { contact, reused: false }, ADMIN_NON_MEMBER_CONTACT_CONNECTION_SHAPE, {
+      status: 201,
+    });
   } catch (err) {
     if (err instanceof NonMemberContactError) {
       return NextResponse.json(

@@ -43,3 +43,6 @@ export declare function releasedSectionStepsProblem(input: {
   untaggedHeading: string;
   previousTag: string | null;
 }): string | null;
+export declare const UPGRADE_DEPLOY_STEPS_HEADING: string;
+export declare function takeUpgradeDeploySteps(text: string, heading: string): { text: string; items: string[] };
+export declare function fileUpgradeDeploySteps(text: string, heading: string, items: string[]): string;

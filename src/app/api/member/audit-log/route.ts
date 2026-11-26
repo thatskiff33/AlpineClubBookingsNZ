@@ -4,7 +4,7 @@ import { prisma } from "@/lib/prisma";
 import { requireActiveSessionUser } from "@/lib/session-guards";
 import { memberAuditLogQuerySchema } from "@/lib/member-audit-log-query";
 import { connectionJson } from "@/lib/mcp-connection-request";
-import { MEMBER_ACCOUNT_ACTIVITY_CONNECTION_SHAPE } from "@/lib/connection-shapes";
+import { MEMBER_ACCOUNT_ACTIVITY_CONNECTION_SHAPE } from "@/lib/connection-shapes/account-activity";
 import {
   buildAuditCategoryWhere,
   buildMemberVisibleAuditLogWhere,

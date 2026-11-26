@@ -30,7 +30,6 @@ import {
   sumEditReviewChargeSharesByAnchor,
   type EditReviewChargeShareRow,
 } from "@/lib/edit-financial-review-charge-shape";
-import logger from "@/lib/logger";
 import { loadAdditionalCaptureReceiptEvidence, loadKeptChangeCaptureEvidence } from "./xero-booking-repair-additional-capture";
 import type { RepairDependencies } from "./xero-booking-repair-deps";
 import { makeLocalKey, parseRepairScopeDay } from "./xero-booking-repair-utils";
@@ -49,6 +48,7 @@ import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
 import { isPartPaymentReviewTask, NOT_NON_CANCELLATION_HAND_BACK_WHERE } from "@/lib/manual-refund-task-settlement-rules";
 import { refundPaymentLinkWhere } from "@/lib/xero-refund-note-settlement";
 import { refundNoteSetsForPayments } from "@/lib/xero-refund-note-status";
+import { readRefundNoteGaps } from "./xero-booking-repair-refund-note-coverage";
 
 /** A settled edit-review charge share, carrying the booking it was raised on. */
 type EditReviewChargeShareRecord = EditReviewChargeShareRow & {
@@ -536,29 +536,12 @@ export async function loadAuditData(
         )
       : [];
 
-  // #3635 (composed review): the refund cents a note may still answer, read
-  // through the one gap reader (`readRefundCreditNoteGap`: note-eligible cash
-  // less coverage, resolved notes included), so the missing-refund-note arm
-  // never asks for a late capture's refund no note may answer. #3880 round 3:
-  // every source, so a bank payment's per-refund notes - never its canonical
-  // note - still count as cover and a fully covered booking asks for nothing.
-  const refundNoteUncoveredCentsByPaymentId = new Map<string, number>();
-  for (const booking of bookings) {
-    const payment = booking.payment;
-    if (booking.status !== "CANCELLED" || !payment) continue;
-    if (payment.refundedAmountCents <= 0) continue;
-    try {
-      const gap = await deps.readRefundCreditNoteGap({
-        id: payment.id,
-        bookingId: booking.id,
-        refundedAmountCents: payment.refundedAmountCents,
-      });
-      // #3924 round 8: a CARD note's ask, so a close's own bank cash is left out.
-      refundNoteUncoveredCentsByPaymentId.set(payment.id, gap.uncoveredCents - gap.paidAnotherWayUncoveredCents);
-    } catch (err) {
-      logger.warn({ err, paymentId: payment.id }, "Could not read a payment's refund-note gap; sizing from the refunded total");
-    }
-  }
+  const { refundNoteUncoveredCentsByPaymentId, refundNoteCoverageByPaymentId } = await readRefundNoteGaps(
+    bookings,
+    deps,
+    (paymentId) => linksByLocalKey.get(makeLocalKey("Payment", paymentId)) ?? [],
+    cancelledRefundNoteIds,
+  );
 
   const handBackPaymentIdsByBookingId = new Map<string, Set<string>>();
   for (const task of handBackTasks) {
@@ -666,6 +649,7 @@ export async function loadAuditData(
     refundNoteUncoveredCents: booking.payment
       ? refundNoteUncoveredCentsByPaymentId.get(booking.payment.id) ?? null
       : null,
+    refundNoteCoverage: booking.payment ? refundNoteCoverageByPaymentId.get(booking.payment.id) ?? null : null,
     closedPartPaymentReviewPaymentIds:
       closedPartPaymentReviewIdsByBookingId.get(booking.id) ?? new Set<string>(),
     openPartPaymentReviewPaymentIds:

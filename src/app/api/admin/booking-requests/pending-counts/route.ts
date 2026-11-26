@@ -1,6 +1,9 @@
 import { NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/session-guards";
 import { getBookingRequestPendingCounts } from "@/lib/admin-booking-request-pending-counts";
+import { projectForConnection } from "@/lib/connection-projection";
+import { ADMIN_BOOKING_REQUEST_PENDING_COUNTS_CONNECTION_SHAPE } from "@/lib/connection-shapes/bookings-requests";
+import { servingMcpConnection } from "@/lib/mcp-connection-request";
 
 /**
  * GET /api/admin/booking-requests/pending-counts
@@ -10,6 +13,8 @@ import { getBookingRequestPendingCounts } from "@/lib/admin-booking-request-pend
  * cross-area `/api/admin/pending-counts` aggregate resolves to `overview` and
  * runs every sidebar query, when the page needs only these four. The sidebar
  * total is the sum of the same helper's counts, so the two always agree.
+ *
+ * Also the AI app action `get_booking_request_counts` (ALP-719).
  */
 export async function GET() {
   const guard = await requireAdmin({
@@ -17,5 +22,9 @@ export async function GET() {
   });
   if (!guard.ok) return guard.response;
 
-  return NextResponse.json(await getBookingRequestPendingCounts());
+  const counts = await getBookingRequestPendingCounts();
+  if (await servingMcpConnection()) {
+    return NextResponse.json(projectForConnection(counts, ADMIN_BOOKING_REQUEST_PENDING_COUNTS_CONNECTION_SHAPE));
+  }
+  return NextResponse.json(counts);
 }

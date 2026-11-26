@@ -6,18 +6,13 @@
 import type { BoundClubTime } from "@/lib/club-time";
 
 export type InductionStatus = "DRAFT" | "IN_PROGRESS" | "COMPLETED" | "VOIDED";
-export type InductionKind =
-  | "NEW_MEMBER"
-  | "HUT_LEADER"
-  | "YOUTH_TO_FULL"
-  | "RE_INDUCTION";
+/** Every induction kind, in the order the template screen offers them. */
+export const INDUCTION_KINDS = ["NEW_MEMBER", "HUT_LEADER", "YOUTH_TO_FULL", "RE_INDUCTION"] as const;
+export type InductionKind = (typeof INDUCTION_KINDS)[number];
 export type InductionSignerRole = "NOMINATOR" | "HUT_LEADER" | "ADMIN";
-export type InductionSectionPriority =
-  | "EMERGENCY"
-  | "SECURITY"
-  | "STARTUP"
-  | "SHUTDOWN"
-  | "GENERAL";
+/** Every checklist section priority, in the order the template screen offers them. */
+export const INDUCTION_SECTION_PRIORITIES = ["EMERGENCY", "SECURITY", "STARTUP", "SHUTDOWN", "GENERAL"] as const;
+export type InductionSectionPriority = (typeof INDUCTION_SECTION_PRIORITIES)[number];
 
 export const INDUCTION_STATUS_LABELS: Record<InductionStatus, string> = {
   DRAFT: "Draft",

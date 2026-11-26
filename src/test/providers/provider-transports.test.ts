@@ -66,6 +66,38 @@ describe("provider transport mapping", () => {
     expect(fake.snapshot().invoices).toHaveLength(2);
   });
 
+  it("keeps a sent line tax, works one out when none is sent, and ignores sent tax when told to recalculate (#5208)", async () => {
+    const session = xeroTransport(new XeroFake()); const { xero, tenantId } = session; const api = xero.accountingApi;
+    const c = (await api.createContacts(tenantId, { contacts: [{ name: "member-a" }] })).body.contacts![0].contactID!;
+    const lines: LineItem[] = [
+      { description: "a", quantity: 1, unitAmount: 80, taxType: "OUTPUT2", taxAmount: 10.44 },
+      { description: "b", quantity: 1, unitAmount: 80, taxType: "OUTPUT2" },
+      { description: "c", quantity: 1, unitAmount: -20, taxType: "OUTPUT2" },
+      { description: "d", quantity: 1, unitAmount: 40 },
+    ];
+    const tax = (body: { invoices?: Invoice[] }) => body.invoices![0].lineItems!.map((line) => line.taxAmount);
+    const created = await api.createInvoices(tenantId, { invoices: [{ ...invoice(c), lineItems: lines }] }, undefined, undefined, "k1");
+    // 8000c at 15% is 1043.48c; a promo's -2000c is -260.87c; an untyped line is not the fake's to tax.
+    expect(tax(created.body)).toEqual([10.44, 10.43, -2.61, undefined]);
+    const id = created.body.invoices![0].invoiceID!;
+    expect(tax((await api.getInvoice(tenantId, id)).body)).toEqual([10.44, 10.43, -2.61, undefined]);
+
+    session.recalculateTaxNext();
+    const recalculated = await api.createInvoices(tenantId, { invoices: [{ ...invoice(c), lineItems: lines }] }, undefined, undefined, "k2");
+    expect(tax(recalculated.body)).toEqual([10.43, 10.43, -2.61, undefined]);
+    // The switch is spent on one request.
+    expect(tax((await api.createInvoices(tenantId, { invoices: [{ ...invoice(c), lineItems: lines }] }, undefined, undefined, "k3")).body)[0]).toBe(10.44);
+
+    // An update keeps the tax sent on its lines unless told to recalculate, and never its total.
+    const update = (taxAmount: number) => api.updateInvoice(tenantId, id, { invoices: [{ ...invoice(c), lineItems: [{ ...lines[0]!, taxAmount }, ...lines.slice(1)] }] });
+    expect(tax((await update(10.45)).body)[0]).toBe(10.45);
+    session.recalculateTaxNext();
+    expect(tax((await update(10.45)).body)[0]).toBe(10.43);
+    await expect(api.updateInvoice(tenantId, id, { invoices: [invoice(c)] })).rejects.toThrow("keep the total");
+    await expect(api.createInvoices(tenantId, { invoices: [{ ...invoice(c), lineItems: [{ quantity: 1, unitAmount: 1, taxType: "OUTPUT9" }] }] }))
+      .rejects.toSatisfy((error: unknown) => getXeroErrorStatusCode(error) === 400);
+  });
+
   it("maps credit notes and allocations and preserves Xero validation failures", async () => {
     const fake = new XeroFake(); const { xero, tenantId } = xeroTransport(fake); const api = xero.accountingApi;
     const c = fake.createContact("contact", "member-a"); const i = fake.createInvoice("invoice", c.contactID, 8000);

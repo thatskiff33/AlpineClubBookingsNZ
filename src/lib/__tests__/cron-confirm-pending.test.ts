@@ -42,6 +42,7 @@ const cancellationLedger = vi.hoisted(() => ({
 // captured row, and where its refund stands; nothing here is superseded unless
 // a case says so (`supersededDoor.owned`, no refund started).
 const supersededDoor = vi.hoisted(() => ({ owned: new Set<string>(), handOff: vi.fn() }));
+
 vi.mock("@/lib/superseded-capture-ownership", async (importOriginal) => ({
   ...((await importOriginal()) as typeof import("@/lib/superseded-capture-ownership")),
   readSupersededOwnership: async () => ({
@@ -76,6 +77,17 @@ vi.mock("../xero-operation-outbox", () => ({
 vi.mock("../payment-reconciliation", () => ({
   markBookingPaymentSucceeded: (...args: unknown[]) =>
     mockMarkBookingPaymentSucceeded(...args),
+}));
+// #5433 PR 3: the saved-card success asks the settle for the confirmation's owed
+// marker and delivers it through the owed notice (paid-booking-confirmation-notice.test.ts).
+const confirmation = vi.hoisted(() => ({
+  deliver: vi.fn(),
+  marker: { id: "booking-confirmed:b1:1782864000000", kind: "booking-confirmed", subjectId: "b1", eventAt: new Date("2026-07-01T00:00:00.000Z"), variant: null, payload: null },
+}));
+// Partly: the job's own sweep reads the real deliverer from the registry.
+vi.mock("../paid-booking-confirmation-notice", async (importOriginal) => ({
+  ...((await importOriginal()) as typeof import("../paid-booking-confirmation-notice")),
+  deliverPaidBookingConfirmation: confirmation.deliver,
 }));
 
 // #3267: the cron no longer records its charge through
@@ -348,7 +360,8 @@ const mockLodgeCount = vi.fn().mockResolvedValue(2);
 // rolled-back bump leaves no marker, as in PostgreSQL.
 // `markerKeysWrittenInTransaction` lists the ids written through the
 // transaction client. The `AlertCooldown` double holds the legacy bump
-// markers the sweep still drains (none here).
+// markers the sweep still drains (none here) and, staged the same way, the
+// #5240 saved-card "not yet settled" flag.
 const alertCooldownStore = createAlertCooldownStore();
 const owedNoticeStore = createOwedNoticeStore();
 const markerKeysWrittenInTransaction: string[] = [];
@@ -735,6 +748,7 @@ describe("Cron: Confirm Pending Bookings", () => {
     mockPrismaTransaction.mockImplementation(async (arg: unknown) => {
       if (typeof arg === "function") {
         const stagedMarkers: Array<Parameters<typeof owedNoticeStore.delegate.createMany>[0]> = [];
+        const stagedCooldownMarkers: Array<Parameters<typeof alertCooldownStore.delegate.upsert>[0]> = [];
         // #2870: how many `clubTimeSettings` reads happened WHILE this callback
         // was running. Zero is the contract — the callback holds
         // `pg_advisory_xact_lock(1)` and the per-lodge capacity lock for its
@@ -791,12 +805,22 @@ describe("Cron: Confirm Pending Bookings", () => {
               return { count: args.data.length };
             },
           },
+          // #5240: a saved-card settle flags its capture "not yet settled" in
+          // `AlertCooldown`, by upsert only, committed with the settle.
+          alertCooldown: {
+            upsert: async (args: (typeof stagedCooldownMarkers)[number]) => {
+              markerKeysWrittenInTransaction.push(args.where.key);
+              stagedCooldownMarkers.push(args);
+              return args.create;
+            },
+          },
           });
           if (transactionCommit.failNext) {
             transactionCommit.failNext = false;
             throw new Error("Transaction commit failed");
           }
           for (const staged of stagedMarkers) await owedNoticeStore.delegate.createMany(staged);
+          for (const staged of stagedCooldownMarkers) await alertCooldownStore.delegate.upsert(staged);
           return result;
         } finally {
           zoneReadsInsideTransaction +=
@@ -810,6 +834,7 @@ describe("Cron: Confirm Pending Bookings", () => {
       outcome: "paid",
       bookingId: "b1",
       bumpedBookingIds: [],
+      paidConfirmation: confirmation.marker,
     });
     mockUpsertPaymentIntentTransaction.mockResolvedValue(undefined);
   });
@@ -1037,20 +1062,13 @@ describe("Cron: Confirm Pending Bookings", () => {
     ).toBeLessThan(mockMarkBookingPaymentSucceeded.mock.invocationCallOrder[0]!);
     expect(mockUpsertPaymentIntentTransaction).not.toHaveBeenCalled();
 
-    expect(mockSendConfirmedEmail).toHaveBeenCalledWith(
-      { bookingId: "b1", recipientMemberId: "member_b1" },
-      "b1@example.com",
-      "Test",
-      booking.checkIn,
-      booking.checkOut,
-      2,
-      10000,
-      CLUB_FORMAT_TEST,
-      // Multi-lodge phase 8: the options now carry the booking's lodge so
-      // the email renders that lodge's identity (undefined here because the
-      // fixture booking has no lodgeId).
-      { lodgeId: undefined }
-    );
+    // #5433 PR 3: the settle records the confirmation as owed; the job delivers the
+    // marker it handed back, after queueing the invoice, as it sent the email before.
+    expect(mockMarkBookingPaymentSucceeded).toHaveBeenCalledWith(expect.objectContaining({ bookingId: "b1", owesPaidConfirmation: true }));
+    expect(confirmation.deliver).toHaveBeenCalledTimes(1);
+    expect(confirmation.deliver).toHaveBeenCalledWith(confirmation.marker, CLUB_FORMAT_TEST, "confirmPendingBookings");
+    expect(confirmation.deliver.mock.invocationCallOrder[0]).toBeGreaterThan(mockEnqueueXeroBookingInvoiceOperation.mock.invocationCallOrder[0]!);
+    expect(mockSendConfirmedEmail).not.toHaveBeenCalled();
   });
 
   it("#3955 F2: charges the saved card the booking's worth — its price plus a recorded change fee", async () => {
@@ -1073,13 +1091,10 @@ describe("Cron: Confirm Pending Bookings", () => {
         update: expect.objectContaining({ amountCents: 12500 }),
       }),
     );
-    // #4357 (`INV-PAY-119`): the confirmation email quotes what was charged.
-    expect(mockSendConfirmedEmail).toHaveBeenCalledWith(
-      expect.anything(), expect.anything(), expect.anything(), expect.anything(), expect.anything(), expect.anything(),
-      12500,
-      CLUB_FORMAT_TEST,
-      expect.anything(),
-    );
+    // #4357 (`INV-PAY-119`): the confirmation quotes what was charged, the booking's
+    // worth; since #5433 PR 3 it is rendered by the owed notice from the booking as it
+    // stands (paid-booking-confirmation-email.test.ts pins the same figure).
+    expect(confirmation.deliver).toHaveBeenCalledTimes(1);
   });
 
   it("#4357: a $0 price carrying a recorded change fee is charged the fee, never confirmed at no charge", async () => {
@@ -3565,7 +3580,7 @@ describe("Cron: Confirm Pending Bookings", () => {
       expect(result.failedBookingIds).toHaveLength(0);
       // The settling link path already sent the confirmation email and queued
       // the Xero invoice — the duplicate outcome must not repeat either.
-      expect(mockSendConfirmedEmail).not.toHaveBeenCalled();
+      expect(confirmation.deliver).not.toHaveBeenCalled();
       expect(mockEnqueueXeroBookingInvoiceOperation).not.toHaveBeenCalled();
     });
 
@@ -3585,7 +3600,7 @@ describe("Cron: Confirm Pending Bookings", () => {
 
       expect(result.confirmedBookingIds).toEqual(["child_1"]);
       expect(result.failedBookingIds).toHaveLength(0);
-      expect(mockSendConfirmedEmail).not.toHaveBeenCalled();
+      expect(confirmation.deliver).not.toHaveBeenCalled();
       expect(mockEnqueueXeroBookingInvoiceOperation).not.toHaveBeenCalled();
     });
 
@@ -3598,7 +3613,7 @@ describe("Cron: Confirm Pending Bookings", () => {
 
       expect(result.confirmedBookingIds).toHaveLength(0);
       expect(result.failedBookingIds).toEqual(["child_1"]);
-      expect(mockSendConfirmedEmail).not.toHaveBeenCalled();
+      expect(confirmation.deliver).not.toHaveBeenCalled();
       expect(mockEnqueueXeroBookingInvoiceOperation).not.toHaveBeenCalled();
       // The money is going back, so the claim is released for the next run.
       expect(
@@ -3981,8 +3996,15 @@ describe("Cron: Confirm Pending Bookings", () => {
         },
       });
       expect(mockMarkBookingPaymentSucceeded).toHaveBeenCalledWith(
-        // #4285 review: the cron's pre-record wrote the capture just now - new money, not a replay.
-        expect.objectContaining({ paymentIntentId: "pi_admin", recordedByCaller: true })
+        expect.objectContaining({ paymentIntentId: "pi_admin" })
+      );
+      // #5240: the pre-record flagged the capture, committed, for that settle to consume.
+      const flagKey = "saved-card-capture-unsettled:pi_admin";
+      expect(markerKeysWrittenInTransaction).toEqual([flagKey]);
+      const flagCommitted = alertCooldownStore.delegate.upsert.mock.calls.findIndex(([call]) => call.where.key === flagKey);
+      expect(flagCommitted).toBeGreaterThanOrEqual(0);
+      expect(alertCooldownStore.delegate.upsert.mock.invocationCallOrder[flagCommitted]).toBeLessThan(
+        mockMarkBookingPaymentSucceeded.mock.invocationCallOrder[0]!,
       );
     });
 

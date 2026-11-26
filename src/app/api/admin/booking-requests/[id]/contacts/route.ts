@@ -1,7 +1,13 @@
 import { exactContains } from "@/lib/prisma-exact-prefix";
 import { NextRequest, NextResponse } from "next/server";
 import { Prisma } from "@prisma/client";
+import { adminBookingRequestContactsQuerySchema } from "@/lib/admin-bookings-schemas/requests";
 import { MAPPABLE_CONTACT_ROLES } from "@/lib/booking-request";
+import {
+  ADMIN_BOOKING_REQUEST_CONTACTS_CONNECTION_SHAPE,
+  type AdminBookingRequestContactsAnswer,
+} from "@/lib/connection-shapes/bookings-requests";
+import { connectionJson } from "@/lib/mcp-connection-request";
 import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/session-guards";
 
@@ -18,6 +24,8 @@ const RESULT_LIMIT = 8;
  * the endpoint returns likely matches for the request's own contact email / name
  * (a repeat email surfaces the existing contact); with `q` it free-text searches
  * the same scope. It never mutates anything and never forces a merge.
+ *
+ * Also the AI app action `list_booking_request_contacts` (ALP-719).
  */
 export async function GET(
   req: NextRequest,
@@ -27,6 +35,12 @@ export async function GET(
   if (!guard.ok) return guard.response;
 
   const { id } = await params;
+  const query = adminBookingRequestContactsQuerySchema.safeParse({
+    q: req.nextUrl.searchParams.get("q") ?? undefined,
+  });
+  if (!query.success) {
+    return NextResponse.json({ error: "Invalid query parameters" }, { status: 400 });
+  }
   const request = await prisma.bookingRequest.findUnique({
     where: { id },
     select: {
@@ -40,7 +54,7 @@ export async function GET(
     return NextResponse.json({ error: "Booking request not found" }, { status: 404 });
   }
 
-  const q = (req.nextUrl.searchParams.get("q") ?? "").trim();
+  const q = (query.data.q ?? "").trim();
 
   // Base scope: only non-login organisation/booking contacts, never archived.
   const scope: Prisma.MemberWhereInput = {
@@ -95,7 +109,7 @@ export async function GET(
     take: RESULT_LIMIT,
   });
 
-  return NextResponse.json({
+  const answer: AdminBookingRequestContactsAnswer = {
     contacts: contacts.map((contact) => ({
       id: contact.id,
       firstName: contact.firstName,
@@ -105,5 +119,6 @@ export async function GET(
       phoneNumber: contact.phoneNumber,
       bookingCount: contact._count.bookings,
     })),
-  });
+  };
+  return connectionJson(req, answer, ADMIN_BOOKING_REQUEST_CONTACTS_CONNECTION_SHAPE);
 }

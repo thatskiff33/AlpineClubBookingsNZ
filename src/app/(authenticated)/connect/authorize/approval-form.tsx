@@ -25,7 +25,9 @@ const FAILURE_FALLBACK =
  * the one fact the club checked: where the approval is sent. "View only" is
  * the choice already made when the screen opens, and "View and change" is
  * offered only when the app asked for it and the club allows it; the route
- * applies both limits again whatever this form sends.
+ * applies both limits again whatever this form sends. An officer is also told
+ * the app can act as an officer, and the form says it showed them that: only
+ * such an approval lets the connection run officer actions (`INV-MCP-009`).
  */
 export function ApprovalForm({
   appName,
@@ -33,6 +35,7 @@ export function ApprovalForm({
   onThisDevice,
   askedToChange,
   mayChange,
+  officer,
   params,
 }: {
   appName: string;
@@ -42,6 +45,8 @@ export function ApprovalForm({
   onThisDevice: boolean;
   askedToChange: boolean;
   mayChange: boolean;
+  /** The member holds an admin area: the screen says the app can also act as an officer. */
+  officer: boolean;
   /** The request exactly as it arrived, sent back so the route re-checks it. */
   params: McpAuthorizeParams;
 }) {
@@ -57,7 +62,7 @@ export function ApprovalForm({
         method: "POST",
         credentials: "same-origin",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ decision, scope, params }),
+        body: JSON.stringify({ decision, scope, officerNoticeShown: officer, params }),
       });
       const body = await readApiObjectOrEmpty(response);
       if (!response.ok || typeof body.redirectTo !== "string") {
@@ -129,6 +134,16 @@ export function ApprovalForm({
 
         <ul className="list-disc space-y-1 pl-5 text-muted-foreground">
           <li>The app acts as you. What you ask it, and what it reads, goes to the company that runs it.</li>
+          {officer ? (
+            <li data-testid="mcp-officer-notice">
+              {/* General on purpose: one approval covers every officer area, later ones
+                  included (owner decision, #5305 comment 7131483847). The app is told to
+                  ask first by the server's instructions, which cover every change. */}
+              {mayChange
+                ? "As a club officer, the app can also see the club records your admin role gives you, such as other members' bookings and details and the club's booking settings. If you choose View and change, it can change them too, and it is told to ask you first."
+                : "As a club officer, the app can also see the club records your admin role gives you, such as other members' bookings and details and the club's booking settings."}
+            </li>
+          ) : null}
           <li>Paying by card and changing your password or sign-in stay on this website.</li>
           <li>You can disconnect the app at any time on your profile, under Connected AI apps.</li>
         </ul>

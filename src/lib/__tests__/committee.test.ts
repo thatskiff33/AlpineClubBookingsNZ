@@ -147,7 +147,7 @@ describe("Committee Master Role API", () => {
     mockedAuth.mockResolvedValue(adminSession);
     vi.mocked(prisma.committeeRole.findMany).mockResolvedValue([sampleRole] as any);
 
-    const res = await listRoles();
+    const res = await listRoles(new Request("http://localhost/api/admin/committee/roles"));
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(body.roles).toHaveLength(1);

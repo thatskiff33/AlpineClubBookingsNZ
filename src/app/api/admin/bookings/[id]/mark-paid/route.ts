@@ -5,9 +5,7 @@ import { BOOKING_DETAIL_ROUTE_PATTERN } from "@/lib/page-route-patterns";
 import { NextRequest, NextResponse } from "next/server";
 import { hostingCoverageParticipantRetryResponse } from "@/lib/adult-member-hosting-retry-response";
 import logger from "@/lib/logger";
-import { MANUAL_BOOKING_PAYMENT_CONNECTION_SHAPE } from "@/lib/connection-shapes/finance-payments";
 import { manualBookingPaymentBodySchema } from "@/lib/manual-payment-request-schemas";
-import { connectionJson } from "@/lib/mcp-connection-request";
 import { requireAdmin } from "@/lib/session-guards";
 import { transactionContendedResponse } from "@/lib/transaction-contended-response";
 import { clubFormat } from "@/lib/club-format-server";
@@ -187,7 +185,7 @@ export async function POST(
     revalidateAdminPage("bookings");
     revalidatePath(BOOKING_DETAIL_ROUTE_PATTERN, "page");
     revalidateAdminPage("payments");
-    return connectionJson(request, {
+    return NextResponse.json({
       success: true,
       booking: result,
       // #2260: report what became of the confirmation, never a delivery claim
@@ -211,7 +209,7 @@ export async function POST(
         // #2397: what became of the booking's outstanding extra — reported the
         // same way and for the same reason as the credit election above.
         additionalNote(result.direction, result.additional, money),
-    }, MANUAL_BOOKING_PAYMENT_CONNECTION_SHAPE);
+    });
   } catch (error) {
     // `INV-LOCK-006`: the settle or reversal's one transaction rolled back.
     const contended = transactionContendedResponse(

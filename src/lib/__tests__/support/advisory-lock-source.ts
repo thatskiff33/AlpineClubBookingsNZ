@@ -3,7 +3,7 @@ import path from "node:path";
 import { blankLiteralsWithSpans, type BlankedSpan } from "./strip-comments";
 
 /** Shared raw transaction-lock spelling for inventories and isolation checks. */
-export const ADVISORY_LOCK_CALL = /pg_(?:try_)?advisory_xact_lock\s*\(/g;
+export const ADVISORY_LOCK_CALL = /pg_(?:try_)?advisory_xact_lock(?:_shared)?\s*\(/g;
 
 /**
  * Does this blanked run hold a RAW STATEMENT the census must be able to read,

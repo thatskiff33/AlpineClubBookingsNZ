@@ -32,7 +32,7 @@ import {
   XERO_MISSING_INVOICES_CONNECTION_SHAPE,
   XERO_MISSING_INVOICES_QUEUED_CONNECTION_SHAPE,
 } from "@/lib/connection-shapes/finance-xero-contacts";
-import { recordIdParamsSchema } from "@/lib/route-id-params";
+import { routeIdParamsSchema } from "@/lib/route-id-params";
 import { CONTACT_GROUP_MISMATCH_LIMIT } from "@/lib/xero-contact-group-mismatch-summary";
 import {
   erasedMemberContactReviewQuerySchema,
@@ -70,7 +70,7 @@ export const FINANCE_XERO_CONTACTS_MCP_ACTIONS: readonly McpAction[] = [
       "Links member `id` to the existing Xero contact `xeroContactId` (from `search_xero_contacts`), then clears and re-reads the member's subscription history from that contact. Refused if another member or organisation already holds the contact. Changes the member's accounting identity; undoing it needs `unlink_member_from_xero_contact` and a fresh link, and the history re-read is not reversed.",
     method: "POST",
     path: "/api/admin/members/[id]/xero-link",
-    params: recordIdParamsSchema,
+    params: routeIdParamsSchema,
     body: xeroMemberContactLinkBodySchema,
     kind: "destructive",
     returns: XERO_MEMBER_LINKED_CONNECTION_SHAPE,
@@ -83,7 +83,7 @@ export const FINANCE_XERO_CONTACTS_MCP_ACTIONS: readonly McpAction[] = [
       "Creates a new contact in Xero for member `id`, who must not be linked yet, and links them. If Xero already has contacts that look like the member it is refused and lists them (link one with `link_member_to_xero_contact`), unless `forceCreate` is true. `entranceFeeInvoiceDecision` `CREATE` also queues the joining fee invoice (`entranceFeeInvoiceAmountCents` in integer cents overrides the amount, `entranceFeeInvoiceNarration` its description); `SKIP` needs `entranceFeeInvoiceSkipReason`. A contact or invoice created in Xero cannot be removed from the app.",
     method: "POST",
     path: "/api/admin/members/[id]/xero-push",
-    params: recordIdParamsSchema,
+    params: routeIdParamsSchema,
     body: xeroMemberContactPushBodySchema,
     kind: "destructive",
     returns: XERO_MEMBER_PUSHED_CONNECTION_SHAPE,
@@ -96,7 +96,7 @@ export const FINANCE_XERO_CONTACTS_MCP_ACTIONS: readonly McpAction[] = [
       "Removes the link between member `id` and their Xero contact and clears the member's subscription history read from it. Nothing changes in Xero. Linking again needs the contact's id from `search_xero_contacts`; the cleared history is re-read only then.",
     method: "POST",
     path: "/api/admin/members/[id]/xero-unlink",
-    params: recordIdParamsSchema,
+    params: routeIdParamsSchema,
     kind: "destructive",
     returns: XERO_MEMBER_UNLINKED_CONNECTION_SHAPE,
     core: false,

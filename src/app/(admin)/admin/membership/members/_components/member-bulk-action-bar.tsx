@@ -45,6 +45,13 @@ export function MemberBulkActionBar({
       <Button
         size="sm"
         variant="outline"
+        onClick={() => onOpenBulkDialog("set-subscription-category")}
+      >
+        Set Subscription Category
+      </Button>
+      <Button
+        size="sm"
+        variant="outline"
         disabled={selectedPasswordActionCount === 0}
         onClick={onOpenPasswordActionDialog}
       >

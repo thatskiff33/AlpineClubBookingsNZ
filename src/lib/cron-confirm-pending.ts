@@ -35,6 +35,7 @@ import {
   type ClubTimeZone,
 } from "@/lib/payment-link-expiry";
 import { markBookingPaymentSucceeded } from "@/lib/payment-reconciliation";
+import { deliverPaidBookingConfirmation } from "@/lib/paid-booking-confirmation-notice";
 import { settledByAnotherCapture } from "@/lib/duplicate-capture-outcome";
 import { releaseBookingPromoRedemptions } from "@/lib/promo";
 import {
@@ -1627,7 +1628,7 @@ export async function confirmPendingBookings(): Promise<CronConfirmResult> {
       if (paymentIntent.status === "succeeded") {
         paymentSucceeded = true;
 
-        const { newlyCaptured } = await settleSavedCardChargeAttempt({
+        await settleSavedCardChargeAttempt({ // #5240: flags new money for the settle below to consume
             journal,
           attemptRowId: resolution.attempt.attemptRowId,
           paymentId: resolution.paymentId,
@@ -1636,11 +1637,11 @@ export async function confirmPendingBookings(): Promise<CronConfirmResult> {
 
         const reconciliation = await markBookingPaymentSucceeded({
       capturedAt: receiptCaptureTime(paymentIntent),
-          format, recordedByCaller: newlyCaptured, // #4285 review: new money, not a replay
+          format,
           bookingId: resolution.booking.id,
           paymentIntentId: paymentIntent.id,
           amountCents: paymentIntent.amount,
-          paymentMethodId,
+          paymentMethodId, owesPaidConfirmation: true, // #5433: delivered below, or by the sweep
         });
 
         if (
@@ -1693,7 +1694,7 @@ export async function confirmPendingBookings(): Promise<CronConfirmResult> {
 
         result.confirmedBookingIds.push(resolution.booking.id);
         await queueXeroInvoice(resolution.booking.id, "Xero invoice queued");
-        await sendConfirmationEmail(resolution.booking, format);
+        if (reconciliation.paidConfirmation) await deliverPaidBookingConfirmation(reconciliation.paidConfirmation, format, "confirmPendingBookings");
       } else {
         const releaseOutcome = await runSavedCardClaimRelease(async (tx) => {
           // #3267: record the intent Stripe answered with on the attempt row

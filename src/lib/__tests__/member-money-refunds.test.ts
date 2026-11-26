@@ -18,6 +18,7 @@ import {
   postRefundObligation,
   reserveCardRefundSlice,
   resolveCardRefundObligation,
+  restoreHandBackObligation,
   withdrawRefundObligation,
   type CardRefundObligationRef,
 } from "@/lib/member-money/doors";
@@ -781,6 +782,21 @@ describe("a refund debt reversed after its owner merged away (#5191)", () => {
     expect(residues(t)).toBe(2);
     expect(await dismiss(t)).toBe(false);
     expect(residues(t)).toBe(2);
+  });
+
+  it("a reduced, dismissed part to check restored after a late win: the withdrawal's reversal follows the merge too (#5197)", async () => {
+    const t = await cancelled();
+    await checkPart(t);
+    const before = receivable(t, A);
+    expect(await withdrawRefundObligation(t.db.tx, context, { bookingId: t.id, scope: "hand-back", id: "check-task", reason: "reduced",
+      senderKeyPrefix: "hand-back-reduce:check-task", part: { eventKey: keys.handBackReduced("check-task", ["dp_a"]), amountCents: 300, debtorRead: "booking-row" } })).toBe(true);
+    expect(await dismiss(t)).toBe(true);
+    await merge(t, A, B);
+    const restore = () => restoreHandBackObligation(t.db.tx, context, { bookingId: t.id, taskId: "check-task", amountCents: 400, origin: "STRIPE",
+      actorMemberId: null, reason: "late win" });
+    expect(await restore()).toBe("rest-restored");
+    await expectFollowed(t, [A], B, before - 300);
+    expect(residues(t)).toBe(1);
   });
 
   it("moves nothing without a merge, or when the merge came after the reversal and its snapshot netted it", async () => {

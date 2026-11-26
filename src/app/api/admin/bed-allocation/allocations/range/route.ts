@@ -1,45 +1,24 @@
 import { NextResponse } from "next/server";
-import { z } from "zod";
 import {
   assignBedRange,
 } from "@/lib/bed-allocation-range-assign";
-import {
-  MAX_BED_ALLOCATION_ASSIGN_RANGE_NIGHTS,
-} from "@/lib/bed-allocation-range-report";
 import {
   bedAllocationErrorResponse,
   requireBedAllocationWrite,
 } from "@/lib/admin-bed-allocation-routes";
 import { parseJsonRequestBody } from "@/lib/api-json";
-import { dateOnlyStringSchema } from "@/lib/date-only-schema";
+import { bedAllocationRangeBodySchema } from "@/lib/admin-bookings-schemas/beds";
+import {
+  ADMIN_BED_ALLOCATION_RANGE_CONNECTION_SHAPE,
+  type BedAllocationRangeAnswer,
+} from "@/lib/connection-shapes/bookings-beds";
+import { connectionJson } from "@/lib/mcp-connection-request";
 
 // requireAdmin() is enforced by requireBedAllocationWrite().
-const rangeAllocationSchema = z
-  .object({
-    bookingGuestId: z.string().min(1),
-    bedId: z.string().min(1),
-    // Date-only lodge nights: `from` is the first night, `to` the check-out
-    // date (exclusive), matching every other bed-allocation endpoint.
-    // Checked here so a malformed range is refused by the schema, before the
-    // lib is called at all (#2251 review C2): `.min(1)` accepted "9999999-01-01".
-    from: dateOnlyStringSchema,
-    to: dateOnlyStringSchema,
-    /*
-     * The admin's explicit SECOND action after a refusal (#2251): the exact
-     * nights they were shown as free and chose to assign. Never a default — the
-     * first attempt is always all-or-nothing — and never a flag the server
-     * re-interprets: it assigns this set or refuses it with a fresh report, so
-     * a night freed by someone else between the report and the click cannot be
-     * written without the admin ever seeing it.
-     */
-    nights: z
-      .array(dateOnlyStringSchema)
-      .min(1)
-      .max(MAX_BED_ALLOCATION_ASSIGN_RANGE_NIGHTS)
-      .optional(),
-  })
-  .strict();
+// The body's rules (date-only nights, the explicit second-try `nights`, #2251)
+// sit with the schema in `admin-bookings-schemas/beds.ts`.
 
+/** Also the AI app action `assign_guest_bed_range` (ALP-719). */
 export async function POST(request: Request) {
   const guard = await requireBedAllocationWrite();
   if (!guard.ok) return guard.response;
@@ -48,7 +27,7 @@ export async function POST(request: Request) {
     const json = await parseJsonRequestBody(request);
     if (!json.ok) return json.response;
 
-    const body = rangeAllocationSchema.safeParse(json.body);
+    const body = bedAllocationRangeBodySchema.safeParse(json.body);
     if (!body.success) {
       return NextResponse.json(
         { error: "Invalid input", details: body.error.flatten() },
@@ -72,7 +51,7 @@ export async function POST(request: Request) {
     // The refusal report names the occupying guest and member so the admin can
     // act on it. That detail stays HERE, in the answer to the admin who asked;
     // the audit row records counts, night runs and booking ids only.
-    const payload = {
+    const payload: BedAllocationRangeAnswer["result"] = {
       applied: result.applied,
       partialByConsent: result.partialByConsent,
       bookingId: result.bookingId,
@@ -90,7 +69,7 @@ export async function POST(request: Request) {
     };
 
     if (result.applied) {
-      return NextResponse.json({ result: payload });
+      return connectionJson(request, { result: payload }, ADMIN_BED_ALLOCATION_RANGE_CONNECTION_SHAPE);
     }
 
     /*

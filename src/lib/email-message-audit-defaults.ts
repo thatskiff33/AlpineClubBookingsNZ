@@ -3,6 +3,7 @@
 import { BOOKING_URL_TEMPLATE_NAMES } from "@/lib/booking-email-template-contract";
 
 import { adminHref } from "@/lib/admin-hubs";
+import { BOOKING_CONFIRMATION_UNSENT_NOTE } from "@/lib/booking-confirmation-unsent-note";
 
 const EMAIL_AUDIT_DEFAULTS_BASE = {
   "password-reset": {
@@ -119,7 +120,17 @@ const EMAIL_AUDIT_DEFAULTS_BASE = {
   },
   "admin-waitlist-offer": {
     "defaultSubject": "Waitlist Offer: {{memberName}}",
-    "defaultBody": "Waitlist Offer Made\n\nA waitlist offer has been sent to {{memberName}}.\n\nMember: {{memberName}}\nCheck-in: {{checkIn}}\nCheck-out: {{checkOut}}\nGuests: {{guestCount}}\nQueue Position: #{{position}}\n\nThe member has 48 hours to confirm their booking.\n\nView Waitlist: {{BASE_URL}}" + adminHref("waitlist")
+    "defaultBody": "Waitlist Offer Made\n\n{{offerNote}}\n\nMember: {{memberName}}\nCheck-in: {{checkIn}}\nCheck-out: {{checkOut}}\nGuests: {{guestCount}}\nQueue Position: #{{position}}\n\nThe member has until {{expiresAt}} to confirm their booking.\n\nView Waitlist: {{BASE_URL}}" + adminHref("waitlist")
+  },
+  // #5433: a waitlist email owed to a member passed its cut-off unsent.
+  "admin-waitlist-notice-unsent": {
+    "defaultSubject": "Waitlist email not sent: {{memberName}}",
+    "defaultBody": "Waitlist Email Not Sent\n\n{{noticeNote}}\n\nMember: {{memberName}}\nBooking: {{bookingReference}}\nCheck-in: {{checkIn}}\nCheck-out: {{checkOut}}\n\nOpen Booking: {{bookingUrl}}"
+  },
+  // #5433 (owner decision D1): a paid booking's confirmation did not reach its owner.
+  "admin-booking-confirmation-unsent": {
+    "defaultSubject": "Booking confirmation not sent: {{memberName}}",
+    "defaultBody": "Booking Confirmation Not Sent\n\n" + BOOKING_CONFIRMATION_UNSENT_NOTE + "\n\nOwner: {{memberName}}\nBooking: {{bookingReference}}\nCheck-in: {{checkIn}}\nCheck-out: {{checkOut}}\n\nOpen Booking: {{bookingUrl}}"
   },
   "nomination-request": {
     "defaultSubject": "Nomination request for {{applicantName}} — {{CLUB_NAME}}",

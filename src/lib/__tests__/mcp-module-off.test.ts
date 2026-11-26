@@ -15,7 +15,7 @@
  * is gated by the proxy rule its hub registry entry's `mcpServer` flag
  * generates, and its data comes only through the API routes gated below.
  */
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync, statSync } from "node:fs";
 import { resolve } from "node:path";
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -88,7 +88,9 @@ vi.mock("next/navigation", () => ({
 import { FEATURE_ROUTE_RULES, getDisabledFeatureForPath } from "@/config/feature-routes";
 import { MODULE_KEYS } from "@/config/modules";
 import type { FeatureFlags } from "@/config/schema";
+import { MCP_ACTIONS, mcpActionRouteFile } from "@/lib/mcp/catalogue";
 import { walkDir } from "@/lib/step-up-route-census-ast";
+import { CENSUS_TIMEOUT_MS } from "@/test/census-timeout";
 
 const HTTP_METHODS = ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"];
 
@@ -136,7 +138,76 @@ const MCP_READ_HANDLERS: Readonly<Record<string, readonly string[]>> = {
   "src/app/api/notices/[id]/route.ts": ["GET"],
   "src/app/api/notices/route.ts": ["GET"],
   "src/app/api/profile/summary/route.ts": ["GET"],
+  // ALP-796: the dashboard card's loader, for `list_work_parties`.
+  "src/app/api/work-parties/route.ts": ["GET"],
 };
+
+/**
+ * Catalogued action routes no website page calls that are nonetheless not the
+ * module's: each is older than it, so switching the module off must leave it
+ * as it was. Shrinks only; a new entry needs a reason a reviewer accepts.
+ */
+const PRE_MODULE_ROUTES_WITHOUT_WEBSITE_CALLER: Readonly<Record<string, string>> = {
+  "src/app/api/bookings/drafts/route.ts":
+    "draft bookings (Issue 7, April 2026), long before the module; its website caller has since gone",
+  "src/app/api/admin/booking-requests/[id]/price/route.ts":
+    "officer pricing of a booking request (#733, June 2026), long before the module; the quote workflow replaced its website caller",
+  "src/app/api/admin/membership-cancellation-requests/[requestId]/participants/[participantId]/resend-confirmation/route.ts":
+    "resending a cancellation confirmation link (May 2026), long before the module; no admin screen calls it today",
+  "src/app/api/admin/membership-lockout-settings/liability-impact/route.ts":
+    "the subscription-liability preview (#5190), built for the upgrade runbook and the liability screen still to come, not for the module",
+};
+
+/**
+ * The website files a catalogued path could be called from: everything under
+ * `src` but the API routes themselves, the module's own code, tests, and the
+ * proxy and route-flag tables that name a path without calling it.
+ */
+function websiteSources(): ReadonlyArray<readonly [string, string]> {
+  const found: string[] = [];
+  const walk = (dir: string) => {
+    for (const entry of readdirSync(dir)) {
+      const path = `${dir}/${entry}`;
+      if (statSync(path).isDirectory()) {
+        if (entry !== "__tests__") walk(path);
+      } else if (/\.tsx?$/.test(entry)) {
+        found.push(path);
+      }
+    }
+  };
+  walk("src");
+  return found
+    .filter(
+      (file) =>
+        !file.startsWith("src/app/api/") &&
+        !file.startsWith("src/lib/mcp/") &&
+        !file.startsWith("src/config/") &&
+        file !== "src/proxy.ts" &&
+        !/\.test\.tsx?$/.test(file),
+    )
+    .map((file) => [file, readFileSync(file, "utf8")] as const);
+}
+
+/**
+ * Whether any website file spells `path` as a string or template literal, a
+ * dynamic segment matching an interpolation or a literal value. Per path, not
+ * per method: a website caller of one method counts for every method.
+ */
+function hasWebsiteCaller(
+  path: string,
+  sources: ReadonlyArray<readonly [string, string]>,
+): boolean {
+  const body = path
+    .split("/")
+    .map((segment) =>
+      /^\[.+\]$/.test(segment)
+        ? "(?:\\$\\{[^}]+\\}|[^\"'`/?]+)"
+        : segment.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"),
+    )
+    .join("/");
+  const pattern = new RegExp(`["'\`]${body}(?:["'\`?]|\\$\\{)`);
+  return sources.some(([, text]) => pattern.test(text));
+}
 
 function underMcpPrefix(file: string): boolean {
   return mcpPrefixes.some((prefix) => underPrefix(urlPathOf(file), prefix));
@@ -191,7 +262,7 @@ function expectNoWork() {
   expect(recentAuth).not.toHaveBeenCalled();
 }
 
-describe("the mcpServer module's routes are discovered (INV-MCP-001)", () => {
+describe("the mcpServer module's routes are discovered (INV-MCP-001)", { timeout: CENSUS_TIMEOUT_MS }, () => {
   it("finds the module's rule and every route it added", () => {
     expect(mcpRule).toBeDefined();
     // The discovery is not vacuous: each route ALP-653 shipped is in it.
@@ -219,6 +290,29 @@ describe("the mcpServer module's routes are discovered (INV-MCP-001)", () => {
     expect(mcpRouteFiles.filter((file) => !underMcpPrefix(file))).toEqual(
       Object.keys(MCP_READ_HANDLERS).sort(),
     );
+  });
+
+  it("gates every catalogued action route no website page calls (ALP-796 review)", () => {
+    // Discovery by `@/lib/mcp/` import misses a read built only on
+    // `@/lib/mcp-connection-request`, so the catalogue is read directly: a
+    // route that exists for an AI app alone must be held to the module switch.
+    const sources = websiteSources();
+    // The scan is not blind either way.
+    expect(hasWebsiteCaller("/api/club-posts", sources)).toBe(true);
+    expect(hasWebsiteCaller("/api/bookings/[id]/cancel", sources)).toBe(true);
+    expect(hasWebsiteCaller("/api/profile/summary", sources)).toBe(false);
+
+    const ungated = MCP_ACTIONS.filter((action) => !hasWebsiteCaller(action.path, sources))
+      .map((action) => ({ file: mcpActionRouteFile(action), method: action.method }))
+      .filter(
+        ({ file, method }) =>
+          !(MCP_READ_HANDLERS[file]?.includes(method) ?? false) &&
+          !(file in PRE_MODULE_ROUTES_WITHOUT_WEBSITE_CALLER),
+      );
+    expect(ungated).toEqual([]);
+    for (const file of Object.keys(PRE_MODULE_ROUTES_WITHOUT_WEBSITE_CALLER)) {
+      expect(mcpRouteFiles, `${file} is the module's now: list it above`).not.toContain(file);
+    }
   });
 
   it("serves the metadata address the endpoint's 401 names, with the bare path's handler (RFC 9728)", async () => {

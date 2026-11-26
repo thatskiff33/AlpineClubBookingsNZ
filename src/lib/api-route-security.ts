@@ -356,9 +356,9 @@ export const mixedMethodApiRoutes = {
     },
   },
   // #2263 — recorded here for the RATIONALE, not because the file mixes
-  // boundaries. Both member whole-lodge routes are single-method and wholly
-  // member-boundary; the reason string is the documented home for a route whose
-  // response shape is deliberately uniform, and writing it down here keeps the
+  // boundaries. Both member whole-lodge routes are wholly
+  // member-boundary; the reason string is the documented home for the POSTs,
+  // whose response shape is deliberately uniform, and writing it down here keeps the
   // per-method guard enforced (every exported method must be documented and must
   // carry a session guard). They are POINTEDLY ABSENT from
   // `explicitPublicApiRoutes`: listing them there would EXEMPT them from the
@@ -366,6 +366,11 @@ export const mixedMethodApiRoutes = {
   // public-registered routes), which is the opposite of what is wanted.
   "src/app/api/booking-requests/whole-lodge/route.ts": {
     methods: {
+      GET: {
+        boundary: "member",
+        reason:
+          "Signed-in member lists their OWN whole-lodge requests (#2263; the AI app action list_my_whole_lodge_requests, ALP-797). requireActiveSession; scoped by requestedByMemberId from the session, read through the same loader My bookings uses and reduced by toMyWholeLodgeRequestItem to the four member-visible status words, so it says nothing about the calendar or the officer's pipeline. Rate limited.",
+      },
       POST: {
         boundary: "member",
         reason:

@@ -24,8 +24,6 @@ import { resolveSubscriptionLockoutMode } from "@/lib/member-subscription-eligib
 import { evaluateNonMemberPricingRequirements } from "@/lib/subscription-lockout-enforcement";
 import { seasonYearOfStoredDate } from "@/lib/financial-year";
 import { applyRateLimit, rateLimiters } from "@/lib/rate-limit";
-import { z } from "zod";
-import { bookableAgeTierEnum } from "@/lib/age-tier-schema";
 import { parseJsonRequestBody } from "@/lib/api-json";
 import {
   assertLinkedBookingMembersCanBeBooked,
@@ -41,10 +39,12 @@ import {
   type MemberGuestConsentGuestFields,
 } from "@/lib/member-guest-add-policy";
 import {
-  BOOKING_PARTY_GUESTS_MAX, BookingGuestStayRangeValidationError, guestRequestSchemaError,
-  guestStayFieldsSchema, type NormalizedBookingGuestStayRange, normalizeGuestStayRanges,
+  BookingGuestStayRangeValidationError, guestRequestSchemaError,
+  type NormalizedBookingGuestStayRange, normalizeGuestStayRanges,
 } from "@/lib/booking-guest-stay-range-input";
-import { parsedDateOnlySchema } from "@/lib/date-only-schema";
+import { bookingQuoteRequestSchema } from "@/lib/booking-quote-request";
+import { BOOKING_QUOTE_CONNECTION_SHAPE } from "@/lib/connection-shapes-bookings";
+import { connectionJson, memberOnlySessionUser } from "@/lib/mcp-connection-request";
 import { bookingManagementAuthorizationRole } from "@/lib/admin-permissions";
 import { refuseOnBehalfUnlessBookingOfficer } from "@/lib/on-behalf-booking";
 import {
@@ -59,22 +59,12 @@ import {
 } from "@/lib/member-guest-probe-guard";
 import { clubFormatValues } from "@/lib/club-format-server";
 
-const quoteSchema = z.object({
-  checkIn: parsedDateOnlySchema,
-  checkOut: parsedDateOnlySchema,
-  lodgeId: z.string().min(1).optional(),
-  guests: z.array(
-    z.object({
-      ageTier: bookableAgeTierEnum,
-      isMember: z.boolean(),
-      memberId: z.string().min(1).optional(),
-      // Date In and Date Out, or the night set of a multi date range stay (#713, #4199).
-      ...guestStayFieldsSchema.shape,
-    })
-  ).min(1).max(BOOKING_PARTY_GUESTS_MAX),
-  forMemberId: z.string().optional(),
-});
-
+/**
+ * The price of a stay before it is booked. Also the AI app preview
+ * `quote_booking` (ALP-794), which changes no booking and acts as the member
+ * only: the on-behalf check and every officer branch read the member-only
+ * user, so a connection's `forMemberId` is refused (403).
+ */
 export async function POST(request: NextRequest) {
   // #2388: read once, at the very top, so the response-timing floor on a
   // collapsed cross-family refusal covers the WHOLE request rather than only the
@@ -94,12 +84,13 @@ export async function POST(request: NextRequest) {
   // bookings:edit holders (Full Admin, Booking Officer, custom roles) may
   // quote on-behalf — aligned with booking create and the modification path
   // (#1313/#1442); `refuseOnBehalfUnlessBookingOfficer` below is the one check.
-  const actorRole = bookingManagementAuthorizationRole(session.user);
+  const memberAuthority = memberOnlySessionUser(request, session.user);
+  const actorRole = bookingManagementAuthorizationRole(memberAuthority);
 
   const json = await parseJsonRequestBody(request);
   if (!json.ok) return json.response;
 
-  const parsed = quoteSchema.safeParse(json.body);
+  const parsed = bookingQuoteRequestSchema.safeParse(json.body);
 
   if (!parsed.success) {
     return NextResponse.json(
@@ -127,7 +118,7 @@ export async function POST(request: NextRequest) {
   // A quote with forMemberId must never silently price the caller instead of
   // the target: unauthorized callers are rejected, mirroring create (#1442).
   if (parsed.data.forMemberId) {
-    const onBehalfRefusal = refuseOnBehalfUnlessBookingOfficer(session.user, parsed.data.forMemberId);
+    const onBehalfRefusal = refuseOnBehalfUnlessBookingOfficer(memberAuthority, parsed.data.forMemberId);
     if (onBehalfRefusal) return onBehalfRefusal;
     if (parsed.data.forMemberId === session.user.id) {
       return NextResponse.json(
@@ -415,7 +406,7 @@ export async function POST(request: NextRequest) {
       })),
     });
 
-    return NextResponse.json({
+    return connectionJson(request, {
       ...price,
       availableCreditCents,
       deferredGuestPortionCents,
@@ -439,7 +430,7 @@ export async function POST(request: NextRequest) {
         shouldBePending: holdDecision.shouldBePending,
         status: holdDecision.status,
       },
-    });
+    }, BOOKING_QUOTE_CONNECTION_SHAPE);
   } catch (err) {
     if (err instanceof MembershipTypeBookingPolicyError) {
       // Finding 2 (privacy re-review of MG3 #2308). The membership-type refusal

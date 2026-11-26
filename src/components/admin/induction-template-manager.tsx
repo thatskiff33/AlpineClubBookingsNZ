@@ -20,6 +20,8 @@ import {
   type InductionKind,
   type InductionSectionPriority,
   INDUCTION_KIND_LABELS,
+  INDUCTION_KINDS,
+  INDUCTION_SECTION_PRIORITIES,
 } from "@/lib/induction-display";
 import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access";
 import {
@@ -84,21 +86,6 @@ interface TemplateDraft {
   kind: InductionKind;
   sections: SectionDraft[];
 }
-
-const KINDS: InductionKind[] = [
-  "NEW_MEMBER",
-  "HUT_LEADER",
-  "YOUTH_TO_FULL",
-  "RE_INDUCTION",
-];
-
-const PRIORITIES: InductionSectionPriority[] = [
-  "EMERGENCY",
-  "SECURITY",
-  "STARTUP",
-  "SHUTDOWN",
-  "GENERAL",
-];
 
 export function InductionTemplateManager() {
   const [templates, setTemplates] = useState<TemplateSummary[]>([]);
@@ -534,7 +521,7 @@ export function InductionTemplateManager() {
                 onChange={(e) => setNewKind(e.target.value as InductionKind)}
                 className="h-9 rounded-md border bg-background px-2 text-sm"
               >
-                {KINDS.map((kind) => (
+                {INDUCTION_KINDS.map((kind) => (
                   <option key={kind} value={kind}>
                     {INDUCTION_KIND_LABELS[kind]}
                   </option>
@@ -618,7 +605,7 @@ export function InductionTemplateManager() {
                 }
                 className="h-9 rounded-md border bg-background px-2 text-sm"
               >
-                {KINDS.map((kind) => (
+                {INDUCTION_KINDS.map((kind) => (
                   <option key={kind} value={kind}>
                     {INDUCTION_KIND_LABELS[kind]}
                   </option>
@@ -650,7 +637,7 @@ export function InductionTemplateManager() {
                       }
                       className="h-9 rounded-md border bg-background px-2 text-sm"
                     >
-                      {PRIORITIES.map((p) => (
+                      {INDUCTION_SECTION_PRIORITIES.map((p) => (
                         <option key={p} value={p}>
                           {p}
                         </option>

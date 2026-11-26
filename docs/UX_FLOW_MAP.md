@@ -361,9 +361,9 @@ Journey: Choose recipients (the help line says who each reaches), choose the kin
 
 Screen: `/admin/message-board`.
 
-Shows: Club messages and moderation controls.
+Shows: Club messages, moderation controls and sharing problems.
 
-Journey: Read club posts and use the moderation actions allowed by the current role.
+Journey: Read club posts and use the moderation actions their role allows.
 
 [Guide](guides/message-board.md) · [History](UX_FLOW_HISTORY.md#club-message-board-2994-epic-2992)
 
@@ -445,7 +445,7 @@ Screen: `/admin/members`.
 
 Shows: A searchable member list and individual membership records.
 
-Journey: Search or filter members, open a profile, and use its permitted membership actions. A Full Admin answers an access request from a profile's Lifecycle & Deletion section: download that member's subject access report, or find someone else by email or a non-member guest by name. Merge preview and execution failures take focus and scroll into view.
+Journey: Search, filter or bulk-select members, open a profile, and use its permitted actions. A Full Admin answers an access request from a profile's Lifecycle & Deletion section: download that member's subject access report, or find someone else by email or a non-member guest by name. Merge preview and execution failures take focus and scroll into view.
 
 [Guide](guides/members.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
 

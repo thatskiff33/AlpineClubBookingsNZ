@@ -649,8 +649,8 @@ const OWNERSHIP_COMPARISON_SITES: readonly string[] = [
   "src/app/(authenticated)/bookings/[id]/page.tsx::(isAdmin || bookingOwner(booking).memberId === session.user.id);#0",
   "src/app/(authenticated)/bookings/page.tsx::bookingOwner(booking).memberId !== session.user.id#0",
   "src/app/api/bookings/[id]/additional-payment-secret/route.ts::bookingOwner(payment.booking).memberId !== session.user.id &&#0",
-  "src/app/api/bookings/[id]/arrival-time/route.ts::bookingOwner(booking).memberId !== session.user.id &&#0",
-  "src/app/api/bookings/[id]/arrival-time/route.ts::bookingOwner(booking).memberId !== session.user.id &&#1",
+  "src/app/api/bookings/[id]/arrival-time/route.ts::bookingOwner(booking).memberId !== user.id &&#0",
+  "src/app/api/bookings/[id]/arrival-time/route.ts::bookingOwner(booking).memberId !== user.id &&#1",
   "src/app/api/bookings/[id]/arrival-time/route.ts::onBehalf: bookingOwner(booking).memberId !== session.user.id,#0",
   "src/app/api/bookings/[id]/arrival-time/route.ts::onBehalf: bookingOwner(booking).memberId !== session.user.id,#1",
   "src/app/api/bookings/[id]/cancel-preview/route.ts::if (bookingOwner(booking).memberId !== session.user.id && !officerReach) {#0",
@@ -664,10 +664,10 @@ const OWNERSHIP_COMPARISON_SITES: readonly string[] = [
   "src/app/api/bookings/[id]/exception-requests/route.ts::if (bookingOwner(booking).memberId !== session.user.id && !isAdmin) {#0",
   "src/app/api/bookings/[id]/guests/route.ts::bookingOwner(booking).memberId !== session.user.id &&#0",
   "src/app/api/bookings/[id]/modify-quote/route.ts::if (bookingOwner(booking).memberId !== session.user.id && !isAdmin) {#0",
-  "src/app/api/bookings/[id]/notes/route.ts::bookingOwner(booking).memberId !== session.user.id &&#0",
-  "src/app/api/bookings/[id]/refund-request/route.ts::if (bookingOwner(booking).memberId !== session.user.id && !hasAdminAccess(session.user)) {#0",
-  "src/app/api/bookings/[id]/refund-request/route.ts::if (bookingOwner(booking).memberId !== session.user.id && !hasAdminAccess(session.user)) {#1",
-  "src/app/api/bookings/[id]/requested-room/options/route.ts::bookingOwner(booking).memberId !== session.user.id &&#0",
+  "src/app/api/bookings/[id]/notes/route.ts::bookingOwner(booking).memberId !== user.id &&#0",
+  "src/app/api/bookings/[id]/refund-request/route.ts::if (bookingOwner(booking).memberId !== session.user.id && !hasAdminAccess(memberOnlySessionUser(req, session.user))) {#0",
+  "src/app/api/bookings/[id]/refund-request/route.ts::if (bookingOwner(booking).memberId !== session.user.id && !hasAdminAccess(memberOnlySessionUser(req, session.user))) {#1",
+  "src/app/api/bookings/[id]/requested-room/options/route.ts::bookingOwner(booking).memberId !== user.id &&#0",
   "src/app/api/bookings/[id]/send-guest-payment-link/route.ts::if (bookingOwner(booking).memberId !== session.user.id && !isAdmin) {#0",
   "src/app/api/payments/create-payment-intent/route.ts::if (bookingOwner(booking).memberId !== session.user.id && !hasAdminAccess(session.user)) {#0",
   "src/app/api/payments/create-setup-intent/route.ts::if (bookingOwner(booking).memberId !== session.user.id && !hasAdminAccess(session.user)) {#0",
@@ -695,6 +695,7 @@ const OWNERSHIP_COMPARISON_SITES: readonly string[] = [
   "src/lib/waitlist-cross-lodge.ts::if (bookingOwner(entry).memberId !== memberId) {#0",
   "src/lib/waitlist.ts::bookingOwner(offerKind).memberId === memberId &&#0",
   "src/lib/waitlist.ts::if (bookingOwner(booking).memberId !== memberId) {#0",
+  "src/lib/waitlist.ts::if (options.crossLodgeOnWebsiteOnly && bookingOwner(offerKind).memberId === memberId) {#0",
   "src/lib/xero-applied-credit-spent-outside-app.ts::if (!current?.payment || current.payment.id !== paymentId || bookingOwner(current).memberId !== lockedOwnerId) {#0",
   "src/lib/xero-period-lock-guard.ts::bookingOwner(booking).memberId !== options?.actorMemberId#0",
 ];
@@ -704,12 +705,12 @@ const OPTIONAL_OWNER_READ_SITES: readonly string[] = [
   // Ten were traced. One — `roster-eligibility.ts` — really had the missing
   // projection and is fixed. Four were the same question spelled by hand,
   // "is there an address to send to?", and now ask `bookingOwnerEmail()`,
-  // which is where that chain belongs. These five remain, each loading the
-  // organisation and each guarding the named-but-unreadable member: the owner's
-  // age tier as a predicate input, the booker's display NAME, two durable
-  // records that store the owner's member id (null for a school), and one
-  // admin health snapshot that renders the address with its own `?? ""`.
-  "src/lib/diagnostics/tools/packs/booking-evidence.ts::ageTier: bookingOwner(booking).member?.ageTier ?? null,#0",
+  // which is where that chain belongs. Four remain (the fifth, the owner's age
+  // tier as a predicate input, went with #5190's settlement loader), each
+  // loading the organisation and each guarding the named-but-unreadable member:
+  // the booker's display NAME, two durable records that store the owner's
+  // member id (null for a school), and one admin health snapshot that renders
+  // the address with its own `?? ""`.
   "src/lib/member-guest-consent-service.ts::[bookingOwner(booking).member?.firstName, bookingOwner(booking).member?.lastName]#0",
   "src/lib/payment-recovery.ts::memberId: bookingOwner(booking).member?.id ?? null,#0",
   "src/lib/payment-recovery.ts::memberId: bookingOwner(booking).member?.id ?? null,#1",
@@ -1006,6 +1007,12 @@ const UNROOTED_ORGANISATION_SELECTIONS: readonly string[] = [
   // it in budget. Verified by hand: written through
   // `Prisma.validator<Prisma.ManualRefundTaskSelect>()`, and `organisation` sits
   // under its `booking` relation, which declares it.
+  // #5197: the reopen core's select, shared by an officer's reopen and a late
+  // win's. Verified by hand: written through
+  // `Prisma.validator<Prisma.ManualRefundTaskSelect>()` and read back through
+  // `Prisma.ManualRefundTaskGetPayload`, and `organisation` sits under its
+  // `booking` relation, which declares it.
+  "src/lib/manual-refund-task-reopen.ts::booking: { select: { memberId: true, status: true, organiserSettled: true, parentBookingId: true, payment: { select: { source: true } }, organisation: { select: { name: true, email: true } } } },#0",
   "src/lib/manual-refund-task-resolution-select.ts::organisation: { select: { name: true, email: true } },#0",
   // Added when the member lodge roster (#2942, from `main`) was routed through
   // `bookingOwner()` on the eighth epic sync. Verified by hand, which is what
@@ -1015,6 +1022,12 @@ const UNROOTED_ORGANISATION_SELECTIONS: readonly string[] = [
   // compile-checked and a relation this model did not declare would fail to
   // build. The walk cannot root it only because the literal names no delegate.
   "src/lib/member-lodge-roster.ts::organisation: { select: { name: true } },#0",
+  // #5433 PR 3: `PAID_CONFIRMATION_INCLUDE`, the paid confirmation's read of the
+  // booking as it stands (moved out of the old `findUnique` literal). Verified by
+  // hand: written through `Prisma.validator<Prisma.BookingInclude>()`, read back
+  // through `Prisma.BookingGetPayload<{ include: typeof … }>`, and passed as
+  // `include` to `booking.findUnique`; Booking declares `organisation`.
+  "src/lib/paid-booking-confirmation-email.ts::organisation: { select: { name: true, email: true } },#0",
   "src/lib/payment-link.ts::organisation: { select: { name: true; email: true } };#0",
   "src/lib/payment-reconciliation.ts::organisation: { select: { name: true; email: true } };#0",
   // The pre-arrival reminder's include, moved out of the daily cron so the
@@ -1024,6 +1037,17 @@ const UNROOTED_ORGANISATION_SELECTIONS: readonly string[] = [
   // and `booking.findUnique`; Booking declares `organisation`.
   "src/lib/pre-arrival-reminder-email.ts::organisation: { select: { name: true, email: true } },#0",
   "src/lib/stuck-state-dashboard.ts::organisation: { select: { name: true, email: true } },#0",
+  // #5433: `EXPIRED_NOTICE_SELECT` and `OFFER_NOTICE_SELECT`, what the
+  // waitlist offer-expired and offer notices' sweeps read again. Verified by
+  // hand: each written through `Prisma.validator<Prisma.BookingSelect>()` and
+  // passed as `select` to `booking.findUnique`; Booking declares `organisation`.
+  "src/lib/waitlist-offer-expired-notice.ts::organisation: { select: { name: true, email: true } },#0",
+  "src/lib/waitlist-offer-notices.ts::organisation: { select: { name: true, email: true } },#0",
+  // #5433 review: `RESTART_SELECT`, what the window restart re-reads under its
+  // locks to decide whether an email can go. Verified by hand: written through
+  // `Prisma.validator<Prisma.BookingSelect>()` and passed as `select` to
+  // `booking.findUnique`; Booking declares `organisation`.
+  "src/lib/waitlist-offer-window-restart.ts::organisation: { select: { name: true, email: true } },#0",
   "src/lib/xero-booking-repair-types.ts::organisation: { select: { name: true, email: true } },#0",
   "src/lib/xero-inbound/settlement-conflicts.ts::include: { booking: { include: { member: true, organisation: { select: { name: true, email: true } } } } };#0",
 ];
