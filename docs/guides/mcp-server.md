@@ -1314,6 +1314,10 @@ provider already received. The club's register row is `ai-apps` in
   member (`applyMemberScopedRateLimit`, such as a message-board post, a food
   order or a maintenance report) counts against the member's own limit,
   shared with the website; its looser backstop counts per connection.
+- The Finance routes that call Xero live count per officer, shared with the
+  website, so an app cannot spend the club's Xero minute budget:
+  `search_xero_contacts` 30 searches a minute, and the `sync_*_from_xero`
+  actions 3 a minute between them. Past it the route answers 429.
 
 ## The roadmap
 

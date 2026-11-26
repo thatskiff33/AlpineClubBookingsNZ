@@ -55,7 +55,7 @@ export const FINANCE_XERO_CONTACTS_MCP_ACTIONS: readonly McpAction[] = [
     id: "search_xero_contacts",
     title: "Search Xero contacts",
     summary:
-      "Up to 20 Xero contacts whose name or email address matches `q` (two characters at least), each with the `contactId` that `link_member_to_xero_contact` takes and whether it is already linked to a member, and to whom. Email addresses are not returned: to tell two contacts with the same name apart, search again with the member's email address as `q`.",
+      "Up to 20 Xero contacts whose name or email address matches `q` (two characters at least), each with the `contactId` that `link_member_to_xero_contact` takes and whether it is already linked to a member, and to whom. Email addresses are not returned: to tell two contacts with the same name apart, search again with the member's email address as `q`. Each search asks Xero live, so it is limited to 30 a minute per officer, shared with the website.",
     method: "GET",
     path: "/api/admin/xero/search-contacts",
     query: xeroContactSearchQuerySchema,

@@ -20,7 +20,9 @@
   members pay into, fees, tax settings, accounting and item-code mappings,
   integration credentials and the Xero connection). Amounts are always cents,
   and each answer leaves out email addresses, Stripe ids and Xero internal ids
-  other than a contact's id, which linking a member needs. The list is in the
+  other than a contact's id, which linking a member needs. Searching Xero
+  contacts, which asks Xero live each time, is now limited to 30 searches a
+  minute per officer, on the website and through an app alike. The list is in the
   AI app connections guide. If you named what an AI app receives in your
   privacy notice, the recipient register's `ai-apps` row now lists the
   finance information an officer's connection sends.
