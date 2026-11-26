@@ -40,7 +40,12 @@ import {
   useAdminAreaEditAccess,
   ADMIN_FULL_ADMIN_ONLY_ACTION_REASON,
 } from "@/hooks/use-admin-area-edit-access";
-import { registrationMessage, useLodgeLinkStep, type KeySaveRegistration } from "./server-connect-step";
+import {
+  registrationMessage,
+  useLodgeLinkStep,
+  type KeySaveRegistration,
+  type StatusMessage,
+} from "./server-connect-step";
 import { FocusedActionError } from "@/components/focused-action-error";
 import { useActionFailure, type ActionFailure } from "@/hooks/use-action-failure";
 import { apiErrorCodeFromBody, apiErrorMessageFromBody, readApiObjectOrEmpty } from "@/lib/api-error-message";
@@ -148,8 +153,6 @@ function downloadSummaryText(data: DownloadSummary): string {
   const stoppedText = data.stopped ? downloadStopText(data.stopped) : "";
   return `Downloaded ${entries}: ${data.created} added, ${data.updated} updated${renamed}, ${data.unchanged ?? 0} unchanged.${conflictText}${hiddenText}${stoppedText}`;
 }
-
-type StatusMessage = { kind: "ok" | "warn"; text: string };
 
 /**
  * The page's feedback, above the cards: a failure in the alert that takes

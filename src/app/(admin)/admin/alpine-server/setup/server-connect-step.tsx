@@ -32,7 +32,7 @@ import type { LodgeLinkStep, LodgeLinkStepResult } from "@/lib/servernz-lodge-li
 
 export type KeySaveRegistration = PushRegistrationOutcome | typeof SERVER_VERSION_MISMATCH_CODE;
 
-type StatusMessage = { kind: "ok" | "warn"; text: string };
+export type StatusMessage = { kind: "ok" | "warn"; text: string };
 
 /** The registration outcome in words, and whether the lodge step can follow. */
 export function registrationMessage(outcome: KeySaveRegistration | undefined): StatusMessage & { linkLodges: boolean } {
