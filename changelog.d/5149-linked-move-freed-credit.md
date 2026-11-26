@@ -1,5 +1,5 @@
 - **Moving two linked bookings together now shows all the credit that comes
-  back (fork #132).** When moving one booking would leave another of the
+  back (#5149).** When moving one booking would leave another of the
   member's own bookings without adult supervision, the member is offered to
   move both on one combined figure. If one of those bookings is not yet paid
   and has account credit applied, and the move lowers its price, the credit

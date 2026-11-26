@@ -9,7 +9,7 @@ const NONE = {
   refundedExcessCreditCents: 0,
 };
 
-describe("the money an edit hands back (INV-SSOT, fork triyder/AlpineClubBookingsNZ#132)", () => {
+describe("the money an edit hands back (INV-SSOT, the 18 Nov 2026 money review on #5149)", () => {
   it("is nothing when nothing comes back", () => {
     expect(editMoneyBackCents(NONE)).toBe(0);
     expect(editTotalMoneyBackCents(NONE)).toBe(0);
