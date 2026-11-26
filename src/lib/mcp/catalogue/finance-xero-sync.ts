@@ -376,7 +376,7 @@ export const FINANCE_XERO_SYNC_MCP_ACTIONS: readonly McpAction[] = [
     id: "resume_xero_tax_overrides",
     title: "Resume the club's GST overrides in Xero",
     summary:
-      "Clears the listed invoices (`ids`, from `list_xero_tax_override_mismatches`) once the officer has checked them in Xero, with `note` saying what they found; `confirmed` must be `true`, sent only after the officer confirms. Only those still listed are cleared, so one flagged since stays. When none remain, new members' invoices carry the club's own GST figures again. Answers with how many cleared and what is still listed. It cannot be undone from the app.",
+      "Clears the listed invoices (`ids`, from `list_xero_tax_override_mismatches`) once the officer has checked them in Xero, with `note` saying what they found; `confirmed` must be `true`, sent only after the officer confirms. Only those still listed are cleared, so one flagged since stays. When none remain, new invoices carry the club's own GST figures again. Answers with how many cleared and what is still listed. It cannot be undone from the app.",
     method: "POST",
     path: "/api/admin/xero/tax-override-pause/clear",
     body: xeroTaxOverridePauseClearBodySchema,
