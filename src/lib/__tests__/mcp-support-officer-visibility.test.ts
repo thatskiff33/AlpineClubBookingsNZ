@@ -134,6 +134,16 @@ describe("Support & System and Admin Overview officer actions: who is offered th
       ctx.caller,
     );
   });
+
+  it("refuses every change by name for a Support viewer, even on a read-write connection", async () => {
+    const ctx = context({ support: "view", overview: "view" });
+    for (const action of supportActions.filter((entry) => entry.kind !== "read")) {
+      expect((await callMcpTool(ctx, "describe_action", { id: action.id })).isError, action.id).toBe(true);
+      expect((await callMcpTool(ctx, "run_action", { id: action.id, arguments: {} })).isError, action.id).toBe(true);
+      expect((await callMcpTool(ctx, action.id, {})).isError, action.id).toBe(true);
+    }
+    expect(run).not.toHaveBeenCalled();
+  });
 });
 
 // A connection approved before the officer screen existed, or by someone who
