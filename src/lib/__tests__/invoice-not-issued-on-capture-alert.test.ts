@@ -50,6 +50,11 @@ describe("alertInvoiceNotIssuedOnCapture's outcome (#5312)", () => {
     await expect(alertInvoiceNotIssuedOnCapture(alert)).resolves.toBe("no-recipients");
   });
 
+  it("says when the club's delivery settings skipped it", async () => {
+    mocks.sendAdminXeroSyncErrorAlert.mockResolvedValue(result({ deliveryAllowed: false, recipients: 0 }));
+    await expect(alertInvoiceNotIssuedOnCapture(alert)).resolves.toBe("skipped-by-policy");
+  });
+
   it("a send that throws is undelivered, never thrown on", async () => {
     mocks.sendAdminXeroSyncErrorAlert.mockRejectedValue(new Error("SES down"));
     await expect(alertInvoiceNotIssuedOnCapture(alert)).resolves.toBe("undelivered");

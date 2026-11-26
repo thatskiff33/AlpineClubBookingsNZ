@@ -677,8 +677,14 @@ function officerEmailClause(alerted: AdminAlertSendOutcome | null): string {
       return "no officer was emailed, because the club's email delivery settings skipped it";
     case "no-recipients":
       return "no officer was emailed, because nobody receives Xero sync alerts";
-    default:
+    case "undelivered":
+    case null:
       return "the officer's email could not be sent";
+    default: {
+      // A new outcome must be worded here before this compiles (#5312).
+      const unhandled: never = alerted;
+      return unhandled;
+    }
   }
 }
 
