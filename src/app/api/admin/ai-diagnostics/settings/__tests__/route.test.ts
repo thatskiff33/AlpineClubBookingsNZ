@@ -66,13 +66,13 @@ beforeEach(() => {
 describe("GET /api/admin/ai-diagnostics/settings", () => {
   it("rejects a non-admin via the guard", async () => {
     mocks.requireAdmin.mockResolvedValue({ ok: false, response: new Response(null, { status: 403 }) });
-    const res = await GET();
+    const res = await GET(new Request("http://localhost/api/admin/ai-diagnostics/settings"));
     expect(res.status).toBe(403);
   });
 
   it("returns the NZ$0 default budget when no row is stored", async () => {
     mocks.settingsFindUnique.mockResolvedValue(null);
-    const res = await GET();
+    const res = await GET(new Request("http://localhost/api/admin/ai-diagnostics/settings"));
     const json = await res.json();
     expect(json.monthlyBudgetCents).toBe(0);
     expect(json.maxMonthlyBudgetCents).toBe(AI_DIAGNOSTICS_MAX_MONTHLY_BUDGET_CENTS);

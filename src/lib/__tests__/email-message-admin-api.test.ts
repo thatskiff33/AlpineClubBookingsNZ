@@ -401,7 +401,7 @@ describe("admin email message APIs", () => {
       },
     ]);
 
-    const response = await getEmailTemplates();
+    const response = await getEmailTemplates(new NextRequest("http://localhost/api/admin/email-templates"));
     const body = await response.json();
 
     expect(response.status).toBe(200);
@@ -450,7 +450,7 @@ describe("admin email message APIs", () => {
       },
     ]);
 
-    const response = await getEmailTemplates();
+    const response = await getEmailTemplates(new NextRequest("http://localhost/api/admin/email-templates"));
     const body = await response.json();
 
     expect(response.status).toBe(200);
@@ -502,7 +502,7 @@ describe("admin email message APIs", () => {
       },
     ]);
 
-    const response = await getEmailTemplates();
+    const response = await getEmailTemplates(new NextRequest("http://localhost/api/admin/email-templates"));
     const body = await response.json();
 
     expect(response.status).toBe(200);
@@ -533,7 +533,7 @@ describe("admin email message APIs", () => {
       },
     ]);
 
-    const response = await getEmailTemplates();
+    const response = await getEmailTemplates(new NextRequest("http://localhost/api/admin/email-templates"));
     const body = await response.json();
     expect(body.retiredTokenOverrides).toEqual([]);
   });
@@ -563,7 +563,7 @@ describe("admin email message APIs", () => {
     }
 
     async function staleContentFor(templateName: string) {
-      const response = await getEmailTemplates();
+      const response = await getEmailTemplates(new NextRequest("http://localhost/api/admin/email-templates"));
       const body = await response.json();
       return body.templates.find(
         (template: { key: string }) => template.key === templateName,
@@ -644,7 +644,7 @@ describe("admin email message APIs", () => {
       expect(staleContent.missingRequiredTokens).toEqual([]);
       expect(staleContent.reasons).not.toContain("missing_required_token");
 
-      const response = await getEmailTemplates();
+      const response = await getEmailTemplates(new NextRequest("http://localhost/api/admin/email-templates"));
       expect((await response.json()).missingRequiredTokenOverrides).toEqual([]);
 
       // It IS flagged for something else, and rightly: those hand-written
@@ -671,7 +671,7 @@ describe("admin email message APIs", () => {
       expect(staleContent.reasons).toContain("missing_required_token");
       expect(staleContent.missingRequiredTokens).toEqual(["promoSummary"]);
 
-      const response = await getEmailTemplates();
+      const response = await getEmailTemplates(new NextRequest("http://localhost/api/admin/email-templates"));
       expect((await response.json()).missingRequiredTokenOverrides).toEqual([
         { templateName: "booking-confirmed", tokens: ["promoSummary"] },
       ]);
@@ -718,7 +718,7 @@ describe("admin email message APIs", () => {
       expect(staleContent.retiredTokens).toEqual([]);
       expect(staleContent.reasons).toEqual([]);
 
-      const response = await getEmailTemplates();
+      const response = await getEmailTemplates(new NextRequest("http://localhost/api/admin/email-templates"));
       expect((await response.json()).retiredTokenOverrides).toEqual([]);
 
       // And the save it was blocking now goes through.
@@ -902,7 +902,7 @@ describe("admin email message APIs", () => {
       ]);
       mocks.auditLogFindMany.mockResolvedValue([stripAuditRow()]);
 
-      const response = await getEmailTemplates();
+      const response = await getEmailTemplates(new NextRequest("http://localhost/api/admin/email-templates"));
       const body = await response.json();
       expect(body.strippedAnnotationOverrides).toEqual([
         {
@@ -922,7 +922,7 @@ describe("admin email message APIs", () => {
       ]);
       mocks.auditLogFindMany.mockResolvedValue([stripAuditRow()]);
 
-      await getEmailTemplates();
+      await getEmailTemplates(new NextRequest("http://localhost/api/admin/email-templates"));
 
       const args = mocks.auditLogFindMany.mock.calls.at(-1)?.[0];
       expect(args.where).toEqual(
@@ -1056,7 +1056,7 @@ describe("admin email message APIs", () => {
   });
 
   it("lists every registered template from the authoritative TypeScript registry", async () => {
-    const response = await getEmailTemplates();
+    const response = await getEmailTemplates(new NextRequest("http://localhost/api/admin/email-templates"));
     const body = await response.json();
 
     expect(response.status).toBe(200);
@@ -1412,7 +1412,7 @@ describe("admin email message APIs", () => {
   });
 
   it("renders membership cancellation refund policy defaults through preview", async () => {
-    const templatesResponse = await getEmailTemplates();
+    const templatesResponse = await getEmailTemplates(new NextRequest("http://localhost/api/admin/email-templates"));
     const templatesBody = await templatesResponse.json();
     const confirmationTemplate = templatesBody.templates.find(
       (template: { key: string }) =>
@@ -1507,7 +1507,7 @@ describe("admin email message APIs", () => {
       },
     ]);
 
-    const response = await getDeliveryPolicies();
+    const response = await getDeliveryPolicies(new NextRequest("http://localhost/api/admin/notification-delivery-policies"));
     const body = await response.json();
 
     expect(response.status).toBe(200);

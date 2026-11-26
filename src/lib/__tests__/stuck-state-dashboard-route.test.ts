@@ -55,7 +55,7 @@ describe("GET /api/admin/stuck-states", () => {
   });
 
   it("returns the stuck-state dashboard for admins", async () => {
-    const response = await GET();
+    const response = await GET(new Request("http://localhost/api/admin/stuck-states"));
 
     expect(response.status).toBe(200);
     await expect(response.json()).resolves.toMatchObject({
@@ -69,7 +69,7 @@ describe("GET /api/admin/stuck-states", () => {
   // #2823: a Full Admin holds membership:view, so the named member /
   // booking-owner detail rows are requested.
   it("passes viewerCanViewMembership=true for a caller with membership:view", async () => {
-    await GET();
+    await GET(new Request("http://localhost/api/admin/stuck-states"));
 
     expect(mocks.getStuckStateDashboard).toHaveBeenCalledWith({
       viewerCanViewMembership: true,
@@ -91,7 +91,7 @@ describe("GET /api/admin/stuck-states", () => {
       },
     });
 
-    const response = await GET();
+    const response = await GET(new Request("http://localhost/api/admin/stuck-states"));
 
     expect(response.status).toBe(200);
     expect(mocks.getStuckStateDashboard).toHaveBeenCalledWith({
@@ -109,7 +109,7 @@ describe("GET /api/admin/stuck-states", () => {
       },
     });
 
-    const response = await GET();
+    const response = await GET(new Request("http://localhost/api/admin/stuck-states"));
 
     expect(response.status).toBe(403);
     expect(mocks.getStuckStateDashboard).not.toHaveBeenCalled();
@@ -118,7 +118,7 @@ describe("GET /api/admin/stuck-states", () => {
   it("returns a bounded failure if the dashboard cannot be built", async () => {
     mocks.getStuckStateDashboard.mockRejectedValue(new Error("database down"));
 
-    const response = await GET();
+    const response = await GET(new Request("http://localhost/api/admin/stuck-states"));
 
     expect(response.status).toBe(500);
     await expect(response.json()).resolves.toEqual({

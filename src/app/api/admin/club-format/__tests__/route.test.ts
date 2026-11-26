@@ -259,7 +259,7 @@ function put(body: unknown, raw?: string) {
 
 function get() {
   h.requestMethod.value = "GET";
-  return GET();
+  return GET(new Request("http://localhost/api/admin/club-format"));
 }
 
 function txDelegatesTouched(): string[] {

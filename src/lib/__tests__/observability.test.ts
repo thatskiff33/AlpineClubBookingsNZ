@@ -693,7 +693,7 @@ describe("OBS-07: GET /api/admin/health", () => {
     } as any);
 
     const { GET } = await import("@/app/api/admin/health/route");
-    const response = await GET();
+    const response = await GET(new Request("http://localhost/api/admin/health"));
 
     expect(response.status).toBe(403);
   });
@@ -702,7 +702,7 @@ describe("OBS-07: GET /api/admin/health", () => {
     vi.mocked(auth).mockResolvedValue(null as any);
 
     const { GET } = await import("@/app/api/admin/health/route");
-    const response = await GET();
+    const response = await GET(new Request("http://localhost/api/admin/health"));
 
     expect(response.status).toBe(401);
   });
@@ -747,7 +747,7 @@ describe("OBS-07: GET /api/admin/health", () => {
     });
 
     const { GET } = await import("@/app/api/admin/health/route");
-    const response = await GET();
+    const response = await GET(new Request("http://localhost/api/admin/health"));
     const data = await response.json();
 
     expect(response.status).toBe(200);
@@ -825,7 +825,7 @@ describe("OBS-07: GET /api/admin/health", () => {
     mockAdminHealthDependencies();
 
     const { GET } = await import("@/app/api/admin/health/route");
-    const response = await GET();
+    const response = await GET(new Request("http://localhost/api/admin/health"));
     const data = await response.json();
 
     expect(data.systemInfo.sentryConfigured).toBe(true);
@@ -843,7 +843,7 @@ describe("OBS-07: GET /api/admin/health", () => {
     mockAdminSession();
     mockAdminHealthDependencies();
     const { GET } = await import("@/app/api/admin/health/route");
-    const data = await (await GET()).json();
+    const data = await (await GET(new Request("http://localhost/api/admin/health"))).json();
     expect(data.systemInfo.sentryConfigured).toBe(true);
     expect(data.systemInfo.sentryConfigWarning).toContain("Browser Sentry is off");
     expect(data.systemInfo.sentryConfigWarning).toContain("runtime");
@@ -857,7 +857,7 @@ describe("OBS-07: GET /api/admin/health", () => {
     mockAdminHealthDependencies();
 
     const { GET } = await import("@/app/api/admin/health/route");
-    const response = await GET();
+    const response = await GET(new Request("http://localhost/api/admin/health"));
     const data = await response.json();
 
     expect(data.systemInfo.sentryConfigured).toBe(true);
@@ -919,7 +919,7 @@ describe("OBS-07: GET /api/admin/health", () => {
     });
 
     const { GET } = await import("@/app/api/admin/health/route");
-    const response = await GET();
+    const response = await GET(new Request("http://localhost/api/admin/health"));
     const data = await response.json();
 
     expect(data.cronJobs["confirm-pending"]).toHaveLength(5);
@@ -973,7 +973,7 @@ describe("OBS-07: GET /api/admin/health", () => {
     ) as never);
 
     const { GET } = await import("@/app/api/admin/health/route");
-    const response = await GET();
+    const response = await GET(new Request("http://localhost/api/admin/health"));
     const data = await response.json();
     const financeJob = data.cronHealth.jobs.find(
       (job: { jobName: string }) => job.jobName === "finance-daily-sync"
@@ -1014,7 +1014,7 @@ describe("OBS-07: GET /api/admin/health", () => {
     mockAdminHealthDependencies();
 
     const { GET } = await import("@/app/api/admin/health/route");
-    const data = await (await GET()).json();
+    const data = await (await GET(new Request("http://localhost/api/admin/health"))).json();
 
     expect(data.systemInfo.version).toBe(getAppVersion());
     expect(data.systemInfo.version).toBe("admin-health-build-under-test");
@@ -1044,7 +1044,7 @@ describe("OBS-07: GET /api/admin/health", () => {
     mockAdminHealthDependencies();
 
     const { GET } = await import("@/app/api/admin/health/route");
-    const response = await GET();
+    const response = await GET(new Request("http://localhost/api/admin/health"));
     const data = await response.json();
 
     expect(response.status).toBe(200);

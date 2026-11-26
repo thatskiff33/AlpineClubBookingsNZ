@@ -53,7 +53,6 @@ import { findMcpAction, splitMcpActionArguments } from "@/lib/mcp/catalogue";
 import { SUPPORT_RECORD_MCP_ACTIONS } from "@/lib/mcp/catalogue/support-records";
 
 const STAMP = new Date("2026-06-30T00:00:00.000Z");
-const ISO = STAMP.toISOString();
 
 function officerWith(matrix: Partial<AdminPermissionMatrix>): Session {
   return adminSession({

@@ -263,7 +263,7 @@ describe("Admin modules API", () => {
   it("prevents non-admin users from reading settings", async () => {
     mocks.auth.mockResolvedValue(memberSession);
 
-    const response = await GET();
+    const response = await GET(new Request("http://localhost/api/admin/modules"));
 
     expect(response.status).toBe(403);
     expect(mocks.clubModuleSettingsFindUnique).not.toHaveBeenCalled();
@@ -279,7 +279,7 @@ describe("Admin modules API", () => {
       updatedByMemberId: "admin-1",
     });
 
-    const response = await GET();
+    const response = await GET(new Request("http://localhost/api/admin/modules"));
     const body = await response.json();
 
     expect(response.status).toBe(200);
@@ -308,7 +308,7 @@ describe("Admin modules API", () => {
     vi.stubEnv("ADDY_API_KEY", "secret-addy-key");
     vi.stubEnv("ADDY_API_SECRET", "");
 
-    const response = await GET();
+    const response = await GET(new Request("http://localhost/api/admin/modules"));
     const body = await response.json();
     const addy = body.modules.find(
       (module: { key: string }) => module.key === "addressAutocomplete",
@@ -331,7 +331,7 @@ describe("Admin modules API", () => {
       updatedAt: new Date("2026-05-18T11:00:00.000Z"),
       updatedByMemberId: "admin-1",
     });
-    const response = await GET();
+    const response = await GET(new Request("http://localhost/api/admin/modules"));
     const body = await response.json();
     return body.modules.find(
       (module: { key: string }) => module.key === "analytics",

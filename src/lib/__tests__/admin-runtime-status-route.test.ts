@@ -41,7 +41,7 @@ describe("admin runtime status route", () => {
   it("rejects unauthenticated callers", async () => {
     mockAuth.mockResolvedValue(null);
 
-    const response = await GET();
+    const response = await GET(new Request("http://localhost/api/admin/runtime-status"));
 
     expect(response.status).toBe(401);
     await expect(response.json()).resolves.toEqual({ error: "Unauthorized" });
@@ -55,7 +55,7 @@ describe("admin runtime status route", () => {
       accessRoles: [{ role: "USER" }],
     });
 
-    const response = await GET();
+    const response = await GET(new Request("http://localhost/api/admin/runtime-status"));
 
     expect(response.status).toBe(403);
     await expect(response.json()).resolves.toEqual({ error: "Forbidden" });
@@ -72,7 +72,7 @@ describe("admin runtime status route", () => {
       accessRoles: [{ role: "ADMIN" }],
     });
 
-    const response = await GET();
+    const response = await GET(new Request("http://localhost/api/admin/runtime-status"));
 
     expect(response.status).toBe(403);
     await expect(response.json()).resolves.toEqual({
@@ -88,7 +88,7 @@ describe("admin runtime status route", () => {
       accessRoles: [{ role: "ADMIN" }],
     });
 
-    const response = await GET();
+    const response = await GET(new Request("http://localhost/api/admin/runtime-status"));
 
     expect(response.status).toBe(403);
     await expect(response.json()).resolves.toEqual({
@@ -99,7 +99,7 @@ describe("admin runtime status route", () => {
   it("returns runtime status for active admins", async () => {
     mockAuth.mockResolvedValue({ user: { id: "admin-1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] } });
 
-    const response = await GET();
+    const response = await GET(new Request("http://localhost/api/admin/runtime-status"));
 
     expect(response.status).toBe(200);
     await expect(response.json()).resolves.toEqual({

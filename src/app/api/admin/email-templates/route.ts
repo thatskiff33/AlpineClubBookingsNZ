@@ -1,17 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
+import { emailTemplateUpdateSchema } from "@/lib/admin-support-api/messages";
 import {
-  emailTemplatesQuerySchema,
-  emailTemplateUpdateSchema,
-} from "@/lib/admin-support-api/messages";
-import {
-  EMAIL_TEMPLATE_CONNECTION_SHAPE,
-  EMAIL_TEMPLATE_LIST_CONNECTION_SHAPE,
   EMAIL_TEMPLATE_SAVED_CONNECTION_SHAPE,
-  type EmailTemplateAnswer,
-  type EmailTemplateListAnswer,
   type EmailTemplateOverrideAnswer,
   type EmailTemplateStaleContent,
 } from "@/lib/connection-shapes/support-messages";
+import { answerTemplates, readTemplateQuery } from "@/lib/email-templates-route-answer";
 import { connectionJson } from "@/lib/mcp-connection-request";
 import {
   buildStructuredAuditLogCreateArgs,
@@ -171,18 +165,8 @@ export async function GET(request: NextRequest) {
   });
   if (!guard.ok) return guard.response;
 
-  // `?templateName=` answers that one template whole (ALP-724): every
-  // template's wording at once is more than an AI app's answer can carry.
-  const query = emailTemplatesQuerySchema.safeParse({
-    templateName: request.nextUrl.searchParams.get("templateName") ?? undefined,
-  });
-  if (!query.success) {
-    return NextResponse.json({ error: "Invalid query" }, { status: 400 });
-  }
-  const onlyTemplate = query.data.templateName;
-  if (onlyTemplate !== undefined && !EMAIL_TEMPLATE_KEY_SET.has(onlyTemplate)) {
-    return NextResponse.json({ error: "Unknown email template" }, { status: 404 });
-  }
+  const query = readTemplateQuery(request);
+  if (!query.ok) return query.response;
 
   const overrides = await loadOverrides();
   const staleOverrides = overrides
@@ -497,30 +481,23 @@ export async function GET(request: NextRequest) {
     })
     .filter((entry): entry is { templateName: string; tokens: string[] } => entry !== null);
 
-  const templates: EmailTemplateAnswer[] = EMAIL_TEMPLATE_DEFINITIONS.map((definition) => {
-    const override = overrideByTemplate.get(definition.key);
-    return {
-      ...definition,
-      override: override ? serializeOverride(override) : null,
-      staleContent: staleContentByTemplate.get(definition.key) ?? null,
-    };
-  });
-  if (onlyTemplate !== undefined) {
-    const template = templates.find((entry) => entry.key === onlyTemplate)!;
-    return connectionJson(request, { template }, EMAIL_TEMPLATE_CONNECTION_SHAPE);
-  }
-  const answer: EmailTemplateListAnswer = {
-    templates,
+  return answerTemplates(request, query.templateName, {
+    templates: EMAIL_TEMPLATE_DEFINITIONS.map((definition) => {
+      const override = overrideByTemplate.get(definition.key);
+      return {
+        ...definition,
+        override: override ? serializeOverride(override) : null,
+        staleContent: staleContentByTemplate.get(definition.key) ?? null,
+      };
+    }),
     staleOverrideCount: staleOverrides.length,
     staleOverrides,
     bracketAnnotationOverrides,
     strippedAnnotationOverrides,
     retiredTokenOverrides,
     missingRequiredTokenOverrides,
-  };
-  return connectionJson(request, answer, EMAIL_TEMPLATE_LIST_CONNECTION_SHAPE);
+  });
 }
-
 export async function PUT(request: NextRequest) {
   const guard = await requireAdmin({
     permission: { area: "support", level: "edit" },

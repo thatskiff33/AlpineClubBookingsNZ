@@ -68,13 +68,13 @@ describe("GET /api/admin/ai-assistant/settings", () => {
       ok: false,
       response: new Response(null, { status: 403 }),
     });
-    const res = await GET();
+    const res = await GET(new Request("http://localhost/api/admin/ai-assistant/settings"));
     expect(res.status).toBe(403);
   });
 
   it("returns the default budget when no row is stored", async () => {
     mocks.settingsFindUnique.mockResolvedValue(null);
-    const res = await GET();
+    const res = await GET(new Request("http://localhost/api/admin/ai-assistant/settings"));
     const json = await res.json();
     expect(json).toEqual({
       monthlyBudgetCents: 1000,
@@ -89,7 +89,7 @@ describe("GET /api/admin/ai-assistant/settings", () => {
       updatedAt: new Date("2026-07-23T10:00:00.000Z"),
       updatedByMemberId: "admin-9",
     });
-    const res = await GET();
+    const res = await GET(new Request("http://localhost/api/admin/ai-assistant/settings"));
     const json = await res.json();
     expect(json.monthlyBudgetCents).toBe(2500);
     expect(json.updatedByMemberId).toBe("admin-9");
