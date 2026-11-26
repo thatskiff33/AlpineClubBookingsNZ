@@ -159,6 +159,35 @@ describe("the page's own worded refusals take focus too", () => {
   });
 });
 
+describe("a success reply that is not JSON is a failure, not a blank save", () => {
+  const notJson = () => new Response("<html>OK</html>", { status: 200, headers: { "content-type": "text/html" } });
+
+  it("Save keeps the address and says it failed", async () => {
+    answerWrites(notJson);
+    render(<AlpineServerSetup initialState={initial()} />);
+    press("Save");
+    await waitFor(() => expect(alert()).toHaveTextContent("Failed to save base URL"));
+    expect(screen.getByLabelText("Server base URL")).toHaveValue("https://central.test");
+    expect(screen.queryByText("Base URL saved.")).toBeNull();
+  });
+
+  it("Disable keeps sharing on and says it failed", async () => {
+    answerWrites(notJson);
+    render(<AlpineServerSetup initialState={initial()} />);
+    press("Disable");
+    await waitFor(() => expect(alert()).toHaveTextContent("Failed to update"));
+    expect(screen.getByRole("button", { name: "Disable" })).toBeInTheDocument();
+  });
+
+  it("Upload says it failed rather than counting nothing", async () => {
+    answerWrites(notJson);
+    render(<AlpineServerSetup initialState={initial()} />);
+    press("Upload");
+    await waitFor(() => expect(alert()).toHaveTextContent("Failed to upload"));
+    expect(screen.queryByText(/^Uploaded/)).toBeNull();
+  });
+});
+
 describe("successes and notices stay passive", () => {
   it("a successful Save does not move focus to the alert, which stays empty", async () => {
     answerWrites(() => Response.json({ baseUrl: "https://central.test" }));

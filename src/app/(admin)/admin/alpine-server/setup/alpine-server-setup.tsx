@@ -40,15 +40,15 @@ import {
   useAdminAreaEditAccess,
   ADMIN_FULL_ADMIN_ONLY_ACTION_REASON,
 } from "@/hooks/use-admin-area-edit-access";
-import {
-  registrationMessage,
-  useLodgeLinkStep,
-  type KeySaveRegistration,
-  type StatusMessage,
-} from "./server-connect-step";
+import { registrationMessage, useLodgeLinkStep, type KeySaveRegistration, type StatusMessage } from "./server-connect-step";
 import { FocusedActionError } from "@/components/focused-action-error";
 import { useActionFailure, type ActionFailure } from "@/hooks/use-action-failure";
-import { apiErrorCodeFromBody, apiErrorMessageFromBody, readApiObjectOrEmpty } from "@/lib/api-error-message";
+import {
+  apiErrorCodeFromBody,
+  apiErrorMessageFromBody,
+  apiErrorMessageFromResponse,
+  readApiObjectOrEmpty,
+} from "@/lib/api-error-message";
 import { adminHref } from "@/lib/admin-hubs";
 
 interface InitialState {
@@ -116,11 +116,6 @@ function downloadStopText(reason: DownloadStopReason): string {
   }
 }
 
-/**
- * The Download result in one line. Renames (triyder/AlpineClubBookingsNZ#64) are counted, and a lodge the
- * download could not place is named (triyder/AlpineClubBookingsNZ#69): one sent without an id whose name
- * several lodges here share, or a new one whose id a concurrent download held.
- */
 type DownloadSummary = {
   fetched: number;
   created: number;
@@ -135,6 +130,11 @@ type DownloadSummary = {
 /** What the upload and download routes answer on success. */
 type SyncReply = DownloadSummary & { sent?: number; skipped?: number; ownedUnknown?: boolean };
 
+/**
+ * The Download result in one line. Renames (triyder/AlpineClubBookingsNZ#64) are counted, and a lodge the
+ * download could not place is named (triyder/AlpineClubBookingsNZ#69): one sent without an id whose name
+ * several lodges here share, or a new one whose id a concurrent download held.
+ */
 function downloadSummaryText(data: DownloadSummary): string {
   const entries = `${data.fetched} ${data.fetched === 1 ? "entry" : "entries"}`;
   const renamed = data.renamed ? ` (${data.renamed} renamed)` : "";
@@ -266,11 +266,11 @@ export function AlpineServerSetup({ initialState }: { initialState: InitialState
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ baseUrl }),
       });
-      const data = await readApiObjectOrEmpty(res);
-      if (!res.ok) return failure.fail(apiErrorMessageFromBody(data, fallback));
-      const saved = typeof data.baseUrl === "string" ? data.baseUrl : "";
-      setSavedBaseUrl(saved);
-      setBaseUrl(saved);
+      if (!res.ok) return failure.fail(await apiErrorMessageFromResponse(res, fallback));
+      // A success that is not JSON throws into the catch, never a blank save.
+      const data = (await res.json()) as { baseUrl?: string | null; apiKeyCleared?: boolean };
+      setSavedBaseUrl(data.baseUrl ?? "");
+      setBaseUrl(data.baseUrl ?? "");
       if (data.apiKeyCleared) setApiKeySet(false);
       setMessage({ kind: "ok", text: "Base URL saved." });
       // A moved address forgets the stored key and the stored version with
@@ -337,8 +337,8 @@ export function AlpineServerSetup({ initialState }: { initialState: InitialState
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ otherLodgesEnabled: next }),
       });
-      const data = await readApiObjectOrEmpty(res);
-      if (!res.ok) return failure.fail(apiErrorMessageFromBody(data, fallback));
+      if (!res.ok) return failure.fail(await apiErrorMessageFromResponse(res, fallback));
+      const data = (await res.json()) as { otherLodgesEnabled?: boolean };
       setEnabled(Boolean(data.otherLodgesEnabled));
     } catch {
       failure.fail(fallback);
@@ -357,8 +357,8 @@ export function AlpineServerSetup({ initialState }: { initialState: InitialState
         `/api/admin/alpine-server/other-lodges/${direction}`,
         { method: "POST" },
       );
-      const body = await readApiObjectOrEmpty(res);
       if (!res.ok) {
+        const body = await readApiObjectOrEmpty(res);
         const code = apiErrorCodeFromBody(body);
         // The route refused for version (triyder/AlpineClubBookingsNZ#49): it hands back both numbers, so
         // the page shows them in the status block below without a second
@@ -383,7 +383,7 @@ export function AlpineServerSetup({ initialState }: { initialState: InitialState
         }
         return failure.fail(apiErrorMessageFromBody(body, fallback));
       }
-      const data = body as unknown as SyncReply;
+      const data = (await res.json()) as SyncReply;
       if (direction === "upload" && data.ownedUnknown) {
         // Nothing was sent or recorded (triyder/AlpineClubBookingsNZ#69): the last-upload time stays.
         setMessage({
