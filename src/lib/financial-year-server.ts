@@ -16,8 +16,10 @@ import type { PrismaClient } from "@prisma/client";
 import { cache } from "react";
 import { isConnectedTenant, readXeroConnection } from "@/lib/xero-connection";
 
+import type { ClubClock, ClubTimeZone } from "@/lib/club-time";
 import {
   DEFAULT_FINANCIAL_YEAR_END_MONTH,
+  clubSeasonYear,
   setFinancialYearEndMonth,
 } from "@/lib/financial-year";
 import {
@@ -50,6 +52,18 @@ export async function refreshFinancialYearConfig(): Promise<number> {
  * reseeds the process cache, as every request-path resolution does.
  */
 export const clubFinancialYearEndMonth = cache(refreshFinancialYearConfig);
+
+/**
+ * The club's current season year, from its zone AND its resolved year-end: the
+ * server-side answer to the admin screens' `useClubSeason().currentSeasonYear()`,
+ * so a route defaulting a season cannot pick a different one from its screen.
+ */
+export async function clubCurrentSeasonYear(
+  zone: ClubTimeZone,
+  clock?: ClubClock,
+): Promise<number> {
+  return clubSeasonYear(zone, clock, await clubFinancialYearEndMonth());
+}
 
 /**
  * Resolve the effective year-end month without touching the cache. Returns the

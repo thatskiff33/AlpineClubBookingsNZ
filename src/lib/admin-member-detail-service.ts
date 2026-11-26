@@ -12,7 +12,7 @@ import { computeAgeTier, getSeasonStartDate } from "@/lib/age-tier";
 import { clubToday, dateOnlyInstantOf, parseCalendarDate, } from "@/lib/club-time";
 import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
 import { clubSeasonYear } from "@/lib/financial-year";
-import { refreshFinancialYearConfig } from "@/lib/financial-year-server";
+import { clubCurrentSeasonYear } from "@/lib/financial-year-server";
 import {
   getXeroContactGroupMemberships,
   syncManagedXeroContactGroupForMember,
@@ -682,12 +682,8 @@ export async function getAdminMemberDetail(params: {
   // INV-CONFIG-002). Two separate reads could straddle midnight in the club's
   // zone and describe two different seasons three lines apart on one screen,
   // which is the shape group D found on the admin dashboard.
-  // The year-end is resolved here too (#5259), so the season this payload
-  // names agrees with the one the admin screens bind from the same setting.
-  const currentSeasonYear = clubSeasonYear(
+  const currentSeasonYear = await clubCurrentSeasonYear(
     await readClubTimeZoneOutsideRequest(),
-    undefined,
-    await refreshFinancialYearConfig(),
   );
 
   return jsonResult({

@@ -151,8 +151,7 @@ export default async function ProfilePage({
   // carry a comment saying it deliberately stayed on the host's clock because no
   // call site could fix itself — which was true of the helper it called, and is
   // the reason the fix had to be a new zone-aware function rather than a better
-  // argument (CT-4 group F1, #2870). Its year-end is the club's resolved one
-  // (#5259), so the year and every season name below agree on one value.
+  // argument (CT-4 group F1, #2870). The year-end is the club's resolved one (#5259).
   const season = bindClubSeason(await clubFinancialYearEndMonth(), club);
   const currentSeasonYear = season.currentSeasonYear();
 

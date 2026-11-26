@@ -112,11 +112,10 @@ import {
 // 3. THE SELECT'S LABEL, the deferral this comment used to record. Both halves
 //    were literal text; `season-label.ts` derives both and says why.
 //
-// 2 AND 3 MOVED TOGETHER (#5259). The year-end month is resolved on the server
-// and reaches this page through `ClubSeasonProvider` in the admin layout
-// (`INV-OPS-013`), and `useClubSeason()` derives the selected season year and
-// its label from that one value, so the picker cannot name one season while
-// selecting another.
+// 2 AND 3 MOVED TOGETHER (#5259): the server-resolved year-end reaches this page
+// through `ClubSeasonProvider` (`INV-OPS-013`), and `useClubSeason()` derives the
+// selected season and its label from it, so the picker cannot name one season
+// while selecting another.
 
 interface Subscription {
   id: string;
@@ -253,8 +252,7 @@ export default function SubscriptionsPage() {
     xeroConnected === true,
   );
   const { confirm, confirmDialog } = useConfirm();
-  // The CLUB's current season and the five-year window around it. See the note at
-  // the top of this file: the zone and the year-end both arrive as data.
+  // The CLUB's current season and its five-year window; see the note above.
   const currentYear = season.currentSeasonYear();
   const yearOptions = useMemo(
     () => Array.from({ length: 5 }, (_, i) => currentYear - 2 + i),

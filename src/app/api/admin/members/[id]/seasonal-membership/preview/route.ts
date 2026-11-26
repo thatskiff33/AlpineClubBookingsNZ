@@ -4,8 +4,7 @@ import { parseJsonRequestBody } from "@/lib/api-json";
 import { getSeasonalMembershipChangePreview } from "@/lib/seasonal-membership-assignments";
 import { clubTimeZone } from "@/lib/club-time/server";
 import { clubToday, dateOnlyInstantOf } from "@/lib/club-time";
-import { clubSeasonYear } from "@/lib/financial-year";
-import { clubFinancialYearEndMonth } from "@/lib/financial-year-server";
+import { clubCurrentSeasonYear } from "@/lib/financial-year-server";
 import { requireAdmin } from "@/lib/session-guards";
 import { dateOnlyStringSchema } from "@/lib/date-only-schema";
 
@@ -66,9 +65,6 @@ export async function POST(
   // used to be defaulted inside the preview — the day from the ENVIRONMENT's
   // zone, which is a different day for a club configured behind its container.
   const clubZone = await clubTimeZone();
-  // The resolved year-end too (#5259): the save re-derives this preview with
-  // it, and the two must name the same current season.
-  const yearEndMonth = await clubFinancialYearEndMonth();
   const result = await getSeasonalMembershipChangePreview({
     memberId: parsedParams.data.id,
     seasonYear: parsedBody.data.seasonYear,
@@ -79,7 +75,8 @@ export async function POST(
     subscriptionCategoryId: parsedBody.data.subscriptionCategoryId,
     applyFrom: parsedBody.data.applyFrom ?? null,
     now: dateOnlyInstantOf(clubToday(clubZone)),
-    clubCurrentSeasonYear: clubSeasonYear(clubZone, undefined, yearEndMonth),
+    // Under the resolved year-end (#5259), as the save re-derives it.
+    clubCurrentSeasonYear: await clubCurrentSeasonYear(clubZone),
   });
 
   return NextResponse.json(result.body, result.init);

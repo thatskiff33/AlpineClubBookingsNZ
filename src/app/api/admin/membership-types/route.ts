@@ -19,8 +19,7 @@ import {
 import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/session-guards";
 import { clubTimeZone } from "@/lib/club-time/server";
-import { clubSeasonYear } from "@/lib/financial-year";
-import { clubFinancialYearEndMonth } from "@/lib/financial-year-server";
+import { clubCurrentSeasonYear } from "@/lib/financial-year-server";
 import { connectionJson } from "@/lib/mcp-connection-request";
 import { MEMBERSHIP_TYPE_LIST_CONNECTION_SHAPE } from "@/lib/connection-shapes/membership-members";
 import { MEMBERSHIP_TYPE_CONNECTION_SHAPE } from "@/lib/connection-shapes/membership-config";
@@ -59,11 +58,7 @@ async function loadMembershipTypes() {
     // #2107: expose the config-driven current season year so clients (the bulk
     // membership dialog) can default the season select correctly Jan–season-start
     // instead of guessing the calendar year.
-    currentSeasonYear: clubSeasonYear(
-      await clubTimeZone(),
-      undefined,
-      await clubFinancialYearEndMonth(),
-    ),
+    currentSeasonYear: await clubCurrentSeasonYear(await clubTimeZone()),
   };
 }
 

@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { ClubTimeZone } from "@/lib/club-time";
 
 vi.mock("@/lib/auth", () => ({ auth: vi.fn() }));
 const mockRequireActiveSessionUser = vi.fn<(...args: unknown[]) => Promise<Response | null>>(async () => null);
@@ -41,6 +42,8 @@ vi.mock("@/lib/module-settings", async (importOriginal) => {
 vi.mock("@/lib/financial-year-server", () => ({
   refreshFinancialYearConfig: vi.fn(async () => 3),
   clubFinancialYearEndMonth: vi.fn(async () => 3),
+  clubCurrentSeasonYear: async (zone: ClubTimeZone) =>
+    (await import("@/lib/financial-year")).clubSeasonYear(zone, undefined, 3),
 }));
 
 import { auth } from "@/lib/auth";
