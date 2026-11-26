@@ -67,6 +67,7 @@ const mocks = vi.hoisted(() => ({
   createXeroCardRefundReversalInvoice: vi.fn(),
   recordAdditionalCaptureReceipt: vi.fn(),
   createAdminGrantCreditNote: vi.fn(),
+  completeAdminCreditDeductionCorrection: vi.fn(),
   syncOrganisationContactDetails: vi.fn(),
   enqueueAdditionalCaptureReceiptOperation: vi.fn(),
   anchorCaptureHasReceipt: vi.fn(),
@@ -303,6 +304,9 @@ vi.mock("@/lib/organisation-xero-contact-details", () => ({
 
 vi.mock("@/lib/xero-admin-grant-credit-note", () => ({
   createAdminGrantCreditNote: mocks.createAdminGrantCreditNote,
+}));
+vi.mock("@/lib/xero-admin-credit-deduction-correction", () => ({
+  completeAdminCreditDeductionCorrection: mocks.completeAdminCreditDeductionCorrection,
 }));
 vi.mock("@/lib/additional-capture-receipt-enqueue", () => ({
   enqueueAdditionalCaptureReceiptOperation: mocks.enqueueAdditionalCaptureReceiptOperation,
@@ -2576,8 +2580,8 @@ describe("processQueuedXeroOutboxOperations", () => {
       // #5228: never a row whose request names no queue type.
       NOT: NAMES_NO_QUEUE_TYPE,
     });
-    // #4299, #4369, #4431 and #5245: the pinned types, the organiser extra, the reversal, the admin grant note, and a school's contact details.
-    expect(args.where.queueType.in).toHaveLength(22);
+    // #4299, #4369, #4431, #5241 and #5245: the pinned types, the organiser extra, the reversal, the admin grant note, the deduction correction, and a school's contact details.
+    expect(args.where.queueType.in).toHaveLength(23);
     expect(args.where.queueType.in).toContain("ORGANISER_EXTRA_ADJUSTMENT");
     expect(args.where.queueType.in).toContain("CARD_REFUND_REVERSAL_INVOICE");
     expect(args.where.queueType.in).toContain("ADMIN_GRANT_CREDIT_NOTE");
@@ -3970,6 +3974,17 @@ describe("processQueuedXeroOutboxOperations dispatch domain (#1272)", () => {
       },
       handler: mocks.createAdminGrantCreditNote,
     },
+    // #5241: the correction row is the anchor; the payload names it.
+    ADMIN_CREDIT_DEDUCTION_CORRECTION: {
+      op: {
+        id: "op_admin_deduction_1",
+        localId: "correction_1",
+        localModel: "AdminCreditDeductionCorrection",
+        createdByMemberId: "admin_1",
+        requestPayload: { queueType: "ADMIN_CREDIT_DEDUCTION_CORRECTION", correctionId: "correction_1" },
+      },
+      handler: mocks.completeAdminCreditDeductionCorrection,
+    },
     // #5245: the school is the row's anchor; the payload is its queue type alone.
     ORGANISATION_CONTACT_DETAILS: {
       op: {
@@ -4012,6 +4027,7 @@ describe("processQueuedXeroOutboxOperations dispatch domain (#1272)", () => {
     mocks.voidXeroInvoiceForCancelledGroupSettlement.mockResolvedValue(undefined);
     mocks.createXeroMembershipSubscriptionInvoice.mockResolvedValue("inv");
     mocks.createAdminGrantCreditNote.mockResolvedValue(undefined);
+    mocks.completeAdminCreditDeductionCorrection.mockResolvedValue(undefined);
     mocks.syncOrganisationContactDetails.mockResolvedValue(undefined);
   });
 

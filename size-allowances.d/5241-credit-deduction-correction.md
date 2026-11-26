@@ -12,16 +12,6 @@ reason: approval hands a deduction to the reservation under the ledger lock it
   disclosure census can read (the queued case is a separate call), and kicks
   the outbox for deductions too.
 
-file: src/lib/xero-operation-outbox.ts
-lines: 2657
-reason: the new queue type's import and its one dispatch branch, beside the
-  other queue types' branches.
-
-function: src/lib/xero-operation-outbox.ts#processQueuedXeroOutboxOperations
-lines: 490
-reason: the dispatch is one if-else chain over queue types; a new type is one
-  more branch there, and splitting the chain is a refactor of its own.
-
 file: src/app/(admin)/admin/membership/members/[id]/page.tsx
 lines: 1365
 reason: passes the reserved corrections and the cancel handler from the

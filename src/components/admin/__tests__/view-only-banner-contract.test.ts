@@ -322,6 +322,8 @@ const KEEPS_OWN_REASON: Readonly<Record<string, number>> = {
   "app/(admin)/admin/membership/members/[id]/_components/member-contact-group.tsx": 2,
   "app/(admin)/admin/membership/members/[id]/_components/member-credit-card.tsx": 4,
   "app/(admin)/admin/membership/members/[id]/_components/member-detail-header.tsx": 2,
+  // #5241: part of the credit card, split out for size; FINANCE-gated like it.
+  "app/(admin)/admin/membership/members/[id]/_components/pending-credit-corrections.tsx": 1,
   "app/(admin)/admin/membership/membership-types/page.tsx": 4,
   "app/(admin)/admin/stripe/setup/stripe-wizard-steps.tsx": 2,
   "app/(admin)/admin/system/backups/setup/backup-wizard-steps.tsx": 2,

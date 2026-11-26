@@ -1,5 +1,3 @@
-import { XERO_OUTBOX_ADMIN_CREDIT_DEDUCTION_CORRECTION_TYPE } from "@/lib/admin-credit-deduction-payload";
-import { completeAdminCreditDeductionCorrection } from "@/lib/xero-admin-credit-deduction-correction";
 import { bookingHasExternalSettlement, externalSettlementCause } from "@/lib/booking-external-settlement";
 import { ORGANISER_COMBINED_INVOICE_PLACE_MESSAGE, ORGANISER_COMBINED_INVOICE_PLACE_REFUSAL } from "@/lib/organiser-billing";
 import { paidByOrganiserInternetBanking } from "@/lib/group-organiser-paid";
@@ -64,7 +62,7 @@ import { createXeroCreditNoteForModification } from "@/lib/xero-modification-cre
 import { allocateAppliedCreditForBooking } from "@/lib/xero-applied-credit-allocation";
 import { scanSpacesAdminGrantNotesAwaitingRetry } from "@/lib/admin-grant-credit-note";
 import { scanSpacesGroupInvoiceEmailsDeferred } from "@/lib/xero-group-settlement-invoice-outbox";
-import { createAdminGrantCreditNote } from "@/lib/xero-admin-grant-credit-note";
+import { isAdminCreditQueuePayload, runAdminCreditQueueOperation } from "@/lib/xero-admin-credit-outbox";
 import { unallocatedAppliedCreditCentsByBooking } from "@/lib/xero-applied-credit-ledger-state";
 import { deallocateExcessAppliedCreditForBooking } from "@/lib/xero-applied-credit-deallocation";
 import { outboxScanLeavesAwaitingOwnNote, OWN_NOTE_EXPECTED_KEY } from "@/lib/unpaid-ask-billed-offset-order";
@@ -83,7 +81,6 @@ import { recordAdditionalCaptureReceipt } from "@/lib/additional-capture-xero-re
 import { outboxScanSpacesWaitingReceipts } from "@/lib/additional-capture-receipt-gate";
 import { scanSpacesRefundNotesAwaitingResolve } from "@/lib/xero-refund-note-in-flight";
 import { scanSpacesTaxCategoriesAwaitingMapping, xeroOutboxWaitOf } from "@/lib/xero-tax-category-hold";
-import { XERO_OUTBOX_ADMIN_GRANT_CREDIT_NOTE_TYPE } from "@/lib/admin-grant-credit-note-payload";
 import { organisationContactDetailsOrganisationId, XERO_OUTBOX_ORGANISATION_CONTACT_DETAILS_TYPE } from "@/lib/organisation-contact-details-payload";
 import { syncOrganisationContactDetails } from "@/lib/organisation-xero-contact-details";
 import { isXeroConnected } from "@/lib/xero-token-store";
@@ -2347,10 +2344,8 @@ export async function processQueuedXeroOutboxOperations(options?: {
           format,
           { createdByMemberId: queuedOperation.createdByMemberId ?? undefined, syncOperation: claimed, memberCreditId: payload.memberCreditId }
         );
-      } else if (payload?.queueType === XERO_OUTBOX_ADMIN_CREDIT_DEDUCTION_CORRECTION_TYPE) {
-        await completeAdminCreditDeductionCorrection({ syncOperation: claimed, payload });
-      } else if (payload?.queueType === XERO_OUTBOX_ADMIN_GRANT_CREDIT_NOTE_TYPE) {
-        await createAdminGrantCreditNote({ syncOperation: claimed, payload });
+      } else if (isAdminCreditQueuePayload(payload)) { // #4431 grant note, #5241 deduction correction
+        await runAdminCreditQueueOperation(claimed, payload);
       } else if (payload?.queueType === XERO_OUTBOX_ORGANISATION_CONTACT_DETAILS_TYPE && contactDetailsOrganisationId) { // #5245: read fresh at send time
         await syncOrganisationContactDetails({ organisationId: contactDetailsOrganisationId, syncOperation: claimed, createdByMemberId: queuedOperation.createdByMemberId ?? undefined });
       } else if (payload?.queueType === XERO_OUTBOX_MODIFICATION_ACCOUNT_CREDIT_NOTE_TYPE) {
