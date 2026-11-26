@@ -109,8 +109,9 @@ const DAY = 24 * HOUR;
 const NOW = new Date("2026-07-01T00:00:00.000Z");
 const tx = () => ({ owedNotice: owed.store.delegate }) as never;
 
-const sweep = (deliverers: readonly OwedNoticeDeliverer<never>[], now: Date) =>
-  drainOwedNotices(now, { deliverers: deliverers as readonly OwedNoticeDeliverer[], sources: [owedNoticeTableSource], job: "test-sweep" });
+function sweep<S>(deliverers: readonly OwedNoticeDeliverer<S>[], now: Date) {
+  return drainOwedNotices(now, { deliverers: deliverers as unknown as readonly OwedNoticeDeliverer[], sources: [owedNoticeTableSource], job: "test-sweep" });
+}
 
 function owner() {
   return { memberId: "m1", member: { firstName: "Ada", lastName: "Proof", email: "ada@example.test" }, organisation: null };

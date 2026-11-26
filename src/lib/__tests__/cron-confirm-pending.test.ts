@@ -4608,16 +4608,16 @@ describe("Cron: Confirm Pending Bookings", () => {
     const MS = RUN_AT.getTime();
     const LATER = new Date(MS + 3 * 60 * 60 * 1000);
     const room = () => mockCheckCapacityForGuestRanges.mockResolvedValue({ available: true, minAvailable: 5, nightDetails: [] });
-    const owedKinds = () => [...owedNoticeStore.rows.values()].map((row) => row.kind).sort();
     // A request booking whose check-in day has ended, with its check-out still to come.
     const requestBooking = () =>
       makePendingBooking("b1", { checkIn: "2026-07-08", checkOut: "2026-07-12", hasPaymentMethod: false, originBookingRequest: { id: "req_1" }, finalPriceCents: 14000, guestCount: 2 });
-    const splitChild = (parentBooking: Parameters<typeof makePendingBooking>[1]["parentBooking"] = IB_SETTLED_PARENT) =>
+    const splitChild = (parentBooking: NonNullable<Parameters<typeof makePendingBooking>[1]>["parentBooking"] = IB_SETTLED_PARENT) =>
       makePendingBooking("child_1", { checkIn: "2026-07-08", checkOut: "2026-07-12", hasPaymentMethod: false, parentBookingId: "parent_1", parentBooking, finalPriceCents: 12000, guestCount: 2 });
 
     describe("the BUMPED event", () => {
       it("is written through the bump's transaction client at the bump's own time, and not again after the commit", async () => {
-        mockPendingBookings([{ ...makePendingBooking("b1"), lodgeId: "lodge-1" }]);
+        const bumping = { ...makePendingBooking("b1"), lodgeId: "lodge-1" };
+        mockPendingBookings([bumping]);
         mockCheckCapacityForGuestRanges.mockResolvedValue({ available: false, minAvailable: 0, nightDetails: [] });
 
         await confirmPendingBookings();
@@ -4631,7 +4631,8 @@ describe("Cron: Confirm Pending Bookings", () => {
       });
 
       it("rolls back with the bump: no event, no marker, no notice", async () => {
-        mockPendingBookings([{ ...makePendingBooking("b1"), lodgeId: "lodge-1" }]);
+        const bumping = { ...makePendingBooking("b1"), lodgeId: "lodge-1" };
+        mockPendingBookings([bumping]);
         mockCheckCapacityForGuestRanges.mockResolvedValue({ available: false, minAvailable: 0, nightDetails: [] });
         transactionCommit.failNext = true;
 
