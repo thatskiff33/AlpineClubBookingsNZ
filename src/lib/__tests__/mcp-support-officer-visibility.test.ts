@@ -91,6 +91,20 @@ describe("Support & System and Admin Overview officer actions: who is offered th
     expect((await foundIds(context({}))).filter((id) => ids.has(id))).toEqual([]);
   });
 
+  it("stops offering and running actions when the officer loses the area after discovery", async () => {
+    const ctx = context({ support: "edit", overview: "view" });
+    expect((await foundIds(ctx)).filter((id) => ids.has(id))).toHaveLength(ids.size);
+
+    // A refreshed session no longer carries either area. Discovery must not
+    // become a cached permission to use an action later on this connection.
+    ctx.session.user.adminPermissionMatrix = { ...NO_AREAS };
+    expect((await foundIds(ctx)).filter((id) => ids.has(id))).toEqual([]);
+    for (const action of SUPPORT_MCP_ACTIONS) {
+      expect((await callMcpTool(ctx, "run_action", { id: action.id, arguments: {} })).isError, action.id).toBe(true);
+    }
+    expect(run).not.toHaveBeenCalled();
+  });
+
   it("offers Admin Overview alone only the work-queue counts", async () => {
     const found = new Set(await foundIds(context({ overview: "view" })));
     expect(SUPPORT_MCP_ACTIONS.filter((action) => found.has(action.id)).map((action) => action.id)).toEqual(
