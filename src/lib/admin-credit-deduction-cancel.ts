@@ -25,8 +25,6 @@ export async function cancelAdminCreditDeductionCorrection(input: {
   }
   await prisma.$transaction(async (tx) => {
     await lockMemberCreditLedger(input.memberId, tx);
-    const current = await tx.adminCreditDeductionCorrection.findUnique({ where: { id: correction.id } });
-    if (current?.status !== "RESERVED" || current.providerMutationStartedAt) throw new MemberCreditValidationError(RETRY);
     const operation = await tx.xeroSyncOperation.findFirst({
       where: { localModel: "AdminCreditDeductionCorrection", localId: correction.id, queueType: XERO_OUTBOX_ADMIN_CREDIT_DEDUCTION_CORRECTION_TYPE },
     });
@@ -36,6 +34,7 @@ export async function cancelAdminCreditDeductionCorrection(input: {
       data: { status: "CANCELLED", completedAt: new Date() },
     });
     if (claim.count !== 1) throw new MemberCreditValidationError("The Xero correction is running; wait for it to finish, then retry");
+    // The one locked recheck: a worker that reached Xero during the read above set the fence.
     const cancelled = await tx.adminCreditDeductionCorrection.updateMany({
       where: { id: correction.id, status: "RESERVED", providerMutationStartedAt: null },
       data: { status: "CANCELLED", cancelledById: input.adminId, cancelledAt: new Date() },

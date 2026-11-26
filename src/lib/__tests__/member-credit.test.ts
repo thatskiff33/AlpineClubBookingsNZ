@@ -76,6 +76,19 @@ vi.mock("@/lib/xero-sync", () => ({
 vi.mock("@/lib/xero-operation-outbox", () => ({
   kickQueuedXeroOutboxOperationsIfConnected: (...args: unknown[]) => mockKickQueuedXeroOutbox(...args),
 }));
+// #5241: a deduction's reservation (noted credit, its Xero correction) is proved in
+// `admin-credit-deduction-reserve.test.ts` and against Postgres. Here it writes the
+// plain deduction row, so these suites keep testing the approval around it.
+const plainDeductionReserve = async (tx: any, request: any) => ({
+  credit: await tx.memberCredit.create({
+    data: { memberId: request.memberId, amountCents: request.amountCents, type: "ADMIN_ADJUSTMENT", description: request.description, requestedById: request.requestedById, approvedById: request.approvedById, approvalRequestId: request.id },
+  }),
+  correctionId: null,
+});
+const mockReserveNotedCreditDeduction = vi.fn(plainDeductionReserve);
+vi.mock("@/lib/admin-credit-deduction-reserve", () => ({
+  reserveNotedCreditDeduction: (...args: unknown[]) => mockReserveNotedCreditDeduction(...args),
+}));
 vi.mock("@/lib/xero-applied-credit-allocation-repair", () => ({
   repairLegacyAppliedCreditNoteAllocationsForBooking:
     mockRepairLegacyAppliedCreditNoteAllocationsForBooking,
@@ -1740,24 +1753,43 @@ describe("admin grant credit note (#4431)", () => {
     expect(mockStartXeroSyncOperation).not.toHaveBeenCalled();
   });
 
-  it.each([
-    ["a note", { xeroCreditNoteId: "cn-1" }, []],
-    ["a queued grant note", { xeroCreditNoteId: null }, [{ id: "op-grant", status: "PENDING" }]],
-  ])("refuses a deduction while free credit has %s and leaves the request pending", async (_label, lot, operations) => {
+  it("#5241: approves a deduction through the reservation, withholds the member notice, and kicks the outbox", async () => {
+    const { prisma } = await import("@/lib/prisma");
+    vi.mocked(prisma.adminCreditAdjustmentRequest.findUnique).mockResolvedValue(
+      pendingRequest({ amountCents: -500, grantAccount: null, description: "Granted by mistake" }) as any,
+    );
+    vi.mocked(prisma.memberCredit.aggregate).mockResolvedValue(aggregateResult(2000));
+    vi.mocked(prisma.adminCreditAdjustmentRequest.updateMany).mockResolvedValue({ count: 1 } as any);
+    vi.mocked(prisma.auditLog.create).mockResolvedValue({} as any);
+    mockReserveNotedCreditDeduction.mockResolvedValueOnce({ credit: { id: "reserved-row" }, correctionId: "correction-1" });
+
+    const { reviewAdminAdjustmentRequest } = await import("@/lib/member-credit");
+    const result = await reviewAdminAdjustmentRequest("member-1", "req-1", "APPROVE", "admin-approver");
+    expect(result.correctionId).toBe("correction-1");
+    expect(mockReserveNotedCreditDeduction).toHaveBeenCalledWith(prisma, expect.objectContaining({ id: "req-1", amountCents: -500, approvedById: "admin-approver" }));
+    expect(prisma.memberCredit.create).not.toHaveBeenCalled();
+    const audit = vi.mocked(prisma.auditLog.create).mock.calls.at(-1)![0] as any;
+    expect(audit.data.details).toMatch(/^Xero correction queued\. /);
+    expect(JSON.stringify(audit.data)).not.toContain("member-facing");
+    await vi.waitFor(() => expect(mockKickQueuedXeroOutbox).toHaveBeenCalled());
+  });
+
+  it("#5241: a reservation refusal leaves the request pending", async () => {
     const { prisma } = await import("@/lib/prisma");
     vi.mocked(prisma.adminCreditAdjustmentRequest.findUnique).mockResolvedValue(
       pendingRequest({ amountCents: -500, grantAccount: null }) as any,
     );
-    vi.mocked(prisma.memberCredit.findMany).mockResolvedValue([
-      { id: "lot-1", memberId: "member-1", amountCents: 2000, type: "ADMIN_ADJUSTMENT", ...lot },
-    ] as any);
-    vi.mocked(prisma.xeroSyncOperation.findMany).mockResolvedValue(operations as any);
+    vi.mocked(prisma.memberCredit.aggregate).mockResolvedValue(aggregateResult(2000));
+    vi.mocked(prisma.adminCreditAdjustmentRequest.updateMany).mockResolvedValue({ count: 1 } as any);
+    const { MemberCreditValidationError } = await import("@/lib/policies/member-credit");
+    mockReserveNotedCreditDeduction.mockRejectedValueOnce(new MemberCreditValidationError("approve once its Xero note is raised"));
 
     const { reviewAdminAdjustmentRequest } = await import("@/lib/member-credit");
     await expect(
       reviewAdminAdjustmentRequest("member-1", "req-1", "APPROVE", "admin-approver"),
-    ).rejects.toThrow("already has a Xero credit note");
-    expect(prisma.adminCreditAdjustmentRequest.updateMany).not.toHaveBeenCalled();
+    ).rejects.toThrow("approve once its Xero note is raised");
+    expect(prisma.auditLog.create).not.toHaveBeenCalled();
+    expect(mockKickQueuedXeroOutbox).not.toHaveBeenCalled();
   });
 
   it("rejects a positive grant with no account on create, and a deduction that sends one", async () => {
@@ -1770,29 +1802,19 @@ describe("admin grant credit note (#4431)", () => {
     ).rejects.toThrow("A deduction does not choose a Xero account.");
   });
 
-  it.each([
-    ["a note", { xeroCreditNoteId: "cn-1" }, []],
-    ["a queued grant note", { xeroCreditNoteId: null }, [{ id: "op-grant", status: "PENDING" }]],
-  ])("refuses to request a deduction while free credit has %s", async (_label, lot, operations) => {
+  it("#5241: accepts a request to deduct credit that has a Xero note; approval reserves it", async () => {
     const { prisma } = await import("@/lib/prisma");
     vi.mocked(prisma.adminCreditAdjustmentRequest.findUnique).mockResolvedValue(null);
     vi.mocked(prisma.memberCredit.findMany).mockResolvedValue([
-      { id: "lot-1", memberId: "member-1", amountCents: 2000, type: "ADMIN_ADJUSTMENT", ...lot },
+      { id: "lot-1", memberId: "member-1", amountCents: 2000, type: "ADMIN_ADJUSTMENT", xeroCreditNoteId: "cn-1" },
     ] as any);
-    vi.mocked(prisma.xeroSyncOperation.findMany).mockResolvedValue(operations as any);
+    vi.mocked(prisma.adminCreditAdjustmentRequest.create).mockResolvedValue(pendingRequest({ amountCents: -500, grantAccount: null }) as any);
+    vi.mocked(prisma.auditLog.create).mockResolvedValue({} as any);
 
     const { createAdminAdjustmentRequest } = await import("@/lib/member-credit");
-    await expect(
-      createAdminAdjustmentRequest(
-        "member-1",
-        -500,
-        "Correction",
-        "admin-1",
-        "9a13b0af-7ffc-451b-a50b-81f6fb8630f4",
-        null,
-      ),
-    ).rejects.toThrow("already has a Xero credit note");
-    expect(prisma.adminCreditAdjustmentRequest.create).not.toHaveBeenCalled();
+    await createAdminAdjustmentRequest("member-1", -500, "Correction", "admin-1", "9a13b0af-7ffc-451b-a50b-81f6fb8630f4", null);
+    expect(prisma.adminCreditAdjustmentRequest.create).toHaveBeenCalledTimes(1);
+    expect(mockReserveNotedCreditDeduction).not.toHaveBeenCalled();
   });
 
   it("treats the same key with a different account as a conflict", async () => {

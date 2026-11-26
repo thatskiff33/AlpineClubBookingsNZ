@@ -159,6 +159,11 @@ let harnessRole: SuiteEnvironmentRoleDeclaration | undefined;
     const completed = await db.auditLog.findFirstOrThrow({ where: { action: "member.credit.deduction.xero_correction.complete", entityId: approved.request.id } });
     expect(completed.category).toBe("payment");
 
+    // A stale second run of a finished operation discloses nothing twice.
+    await db.xeroSyncOperation.updateMany({ where: { localModel: "AdminCreditDeductionCorrection", localId: reserved.id }, data: { status: "PENDING" } });
+    await runWorker(reserved.id);
+    expect(await db.auditLog.count({ where: { action: "member.credit.deduction.xero_correction.complete", entityId: approved.request.id } })).toBe(1);
+
     const evidence = { creditNoteId: noteId, status: "VOIDED", totalCents: 10_000, remainingCents: 0, allocations: [], payments: [], updatedAt: new Date("2026-06-01T00:00:00Z") };
     await expect(mirror.mirrorCreditNoteOutsideSpend(evidence)).resolves.toEqual({ acted: false, reason: "voided-by-deduction" });
   });
@@ -256,6 +261,45 @@ let harnessRole: SuiteEnvironmentRoleDeclaration | undefined;
     await expect(cancel.cancelAdminCreditDeductionCorrection({ memberId: MEMBER, correctionId: reserved.id, adminId: APPROVER })).rejects.toThrow();
     expect(await credit.getMemberCreditBalance(MEMBER)).toBe(10_000);
     expect(fake.snapshot().invoices).toHaveLength(0);
+  });
+
+  it("cancel refuses while a worker holds the operation, even before it writes to Xero", async () => {
+    await seedNotedGrant();
+    const approved = await approvedDeduction(2_000);
+    const reserved = await correctionOf(approved.request.id);
+    const operation = await db.xeroSyncOperation.findFirstOrThrow({ where: { localModel: "AdminCreditDeductionCorrection", localId: reserved.id } });
+    expect(await claim.claimXeroSyncOperationToRunning(operation.id, { direction: "OUTBOUND" })).not.toBeNull();
+    await expect(cancel.cancelAdminCreditDeductionCorrection({ memberId: MEMBER, correctionId: reserved.id, adminId: APPROVER })).rejects.toThrow(/running/i);
+    expect((await correctionOf(approved.request.id)).status).toBe("RESERVED");
+    expect(await credit.getMemberCreditBalance(MEMBER)).toBe(8_000);
+  });
+
+  it("cancel refuses when a worker reached Xero and failed while cancel was reading Xero", async () => {
+    await seedNotedGrant();
+    const approved = await approvedDeduction(10_000);
+    const reserved = await correctionOf(approved.request.id);
+    session.failNext({ statusCode: 400, body: { Message: "note read refused" } });
+    await expect(runWorker(reserved.id)).rejects.toThrow();
+    // During cancel's Xero read, a retried worker sets its fence, its void's reply is lost, and its run fails.
+    let interleaved = false;
+    const real = session.xero.accountingApi;
+    override.setXeroClientForTests({ tenantId: session.tenantId, xero: { accountingApi: new Proxy(real, {
+      get(target, name) {
+        const method = Reflect.get(target, name) as (...args: unknown[]) => Promise<unknown>;
+        if (name !== "getInvoices" || interleaved) return method;
+        return async (...args: unknown[]) => {
+          interleaved = true;
+          await db.adminCreditDeductionCorrection.update({ where: { id: reserved.id }, data: { providerMutationStartedAt: new Date() } });
+          await db.xeroSyncOperation.updateMany({ where: { localModel: "AdminCreditDeductionCorrection", localId: reserved.id }, data: { status: "FAILED" } });
+          return method.apply(target, args);
+        };
+      },
+    }) } as never });
+    await expect(cancel.cancelAdminCreditDeductionCorrection({ memberId: MEMBER, correctionId: reserved.id, adminId: APPROVER })).rejects.toThrow(/retry/i);
+    expect(interleaved).toBe(true);
+    expect((await correctionOf(approved.request.id)).status).toBe("RESERVED");
+    expect(await credit.getMemberCreditBalance(MEMBER)).toBe(0);
+    expect((await db.xeroSyncOperation.findFirstOrThrow({ where: { localModel: "AdminCreditDeductionCorrection", localId: reserved.id } })).status).toBe("FAILED");
   });
 
   it("two officers approving the same request leave one winner and one correction", async () => {
