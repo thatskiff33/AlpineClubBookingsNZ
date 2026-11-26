@@ -1,0 +1,175 @@
+/**
+ * #5249: removing a cancelled or bumped stay from a member's calendar.
+ *
+ * The booking-confirmed email offers an add-to-calendar entry (fork #35). Once
+ * the booking is cancelled or bumped the download route stops serving it, but
+ * an entry the member already saved stays. The cancelled and bumped emails
+ * therefore carry a calendar cancellation of that same event (same UID, higher
+ * SEQUENCE) and one sentence telling the member to remove the stay if it is
+ * still showing.
+ *
+ * Both are sent only where the member was OFFERED an entry: the booking's
+ * confirmation went out (a SENT `booking-confirmed` row for this recipient),
+ * and the same privacy decision that put the calendar links into that
+ * confirmation (`resolveBookingEmailLink`) still lets the booking id into
+ * outbound mail for this recipient. A non-login contact or an unauthorised
+ * address was never offered an entry and gets neither.
+ *
+ * Everything here only READS, after the cancel or bump has committed, and never
+ * aborts the send: a failed read means no attachment and no sentence, and a
+ * failed file build means the sentence without the attachment.
+ */
+import { BOOKING_CONFIRMED_TEMPLATE_NAME } from "@/lib/email/booking-confirmed-template";
+import type { EmailAttachment } from "@/lib/email/internal";
+import { resolveBookingEmailLink } from "@/lib/booking-email-authority";
+import { buildBookingIcs, SERVABLE_BOOKING_STATUS } from "@/lib/calendar-links";
+import { formatDateOnly } from "@/lib/date-only";
+import logger from "@/lib/logger";
+import { prisma } from "@/lib/prisma";
+
+interface BookingCalendarRemoval {
+  /** The member was offered a calendar entry, so the email carries the sentence. */
+  offered: boolean;
+  /** The cancellation file, or null when not offered or it could not be built. */
+  attachment: EmailAttachment | null;
+}
+
+const NOT_OFFERED: BookingCalendarRemoval = { offered: false, attachment: null };
+
+/** The templates that carry the cancellation file, here and on a retry. */
+const CALENDAR_REMOVAL_TEMPLATE_NAMES: ReadonlySet<string> = new Set([
+  "booking-cancelled",
+  "booking-bumped",
+]);
+
+interface CalendarOfferParams {
+  bookingId: string;
+  /** The booking owner the email goes to; null for an organisation owner. */
+  recipientMemberId: string | null;
+  deliveryAddress: string;
+  /** The email being sent; must be a booking-scoped template. */
+  templateName: string;
+}
+
+/**
+ * Whether this recipient was offered an add-to-calendar entry for the booking.
+ * Fails closed: any read error answers false, logged.
+ */
+export async function wasBookingCalendarEntryOffered(
+  params: CalendarOfferParams,
+): Promise<boolean> {
+  if (!params.recipientMemberId) return false;
+  try {
+    const confirmation = await prisma.emailLog.findFirst({
+      where: {
+        bookingId: params.bookingId,
+        templateName: BOOKING_CONFIRMED_TEMPLATE_NAME,
+        bookingRecipientMemberId: params.recipientMemberId,
+        status: "SENT",
+      },
+      select: { id: true },
+    });
+    if (!confirmation) return false;
+    // Fails closed on its own errors (no link), so it needs no catch here.
+    const link = await resolveBookingEmailLink({
+      bookingId: params.bookingId,
+      templateName: params.templateName,
+      recipient: { kind: "member", memberId: params.recipientMemberId },
+      deliveryAddress: params.deliveryAddress,
+    });
+    return link.bookingUrl !== null;
+  } catch (err) {
+    logger.error(
+      { err, bookingId: params.bookingId, templateName: params.templateName },
+      "Failed to read whether a calendar entry was offered; sending without the calendar note (#5249)",
+    );
+    return false;
+  }
+}
+
+/**
+ * The calendar note and cancellation file for a cancelled or bumped booking's
+ * email. The file is built only while the booking is in a state the download
+ * route refuses to serve, so it can never remove the entry of a stay that
+ * stands.
+ */
+export async function resolveBookingCalendarRemoval(
+  params: CalendarOfferParams,
+): Promise<BookingCalendarRemoval> {
+  if (!(await wasBookingCalendarEntryOffered(params))) return NOT_OFFERED;
+  try {
+    const booking = await prisma.booking.findUnique({
+      where: { id: params.bookingId },
+      select: {
+        checkIn: true,
+        checkOut: true,
+        status: true,
+        updatedAt: true,
+        lodge: { select: { name: true } },
+      },
+    });
+    if (!booking || SERVABLE_BOOKING_STATUS[booking.status]) {
+      return { offered: true, attachment: null };
+    }
+    const sentAt = new Date();
+    // Above every SEQUENCE the download route served (epoch seconds of an
+    // EARLIER `updatedAt`), so a calendar applies this as the newer revision.
+    const sequence = Math.max(
+      Math.floor(sentAt.getTime() / 1000),
+      Math.floor(booking.updatedAt.getTime() / 1000) + 1,
+    );
+    const ics = buildBookingIcs({
+      stay: {
+        bookingId: params.bookingId,
+        checkIn: booking.checkIn,
+        checkOut: booking.checkOut,
+      },
+      lodgeName: booking.lodge.name,
+      sequence,
+      generatedAt: sentAt,
+      cancelled: true,
+    });
+    // checkIn is date-only, so formatDateOnly is its encoder (INV-DATE-019).
+    const fileDate = formatDateOnly(booking.checkIn).replaceAll("-", "");
+    return {
+      offered: true,
+      attachment: {
+        filename: `lodge-stay-cancelled-${fileDate}.ics`,
+        content: Buffer.from(ics, "utf8"),
+        contentType: "text/calendar; charset=utf-8; method=CANCEL",
+      },
+    };
+  } catch (err) {
+    logger.error(
+      { err, bookingId: params.bookingId, templateName: params.templateName },
+      "Failed to build a calendar cancellation; sending the calendar note without it (#5249)",
+    );
+    return { offered: true, attachment: null };
+  }
+}
+
+/**
+ * The attachments a retried cancelled or bumped email carries: the retry cron
+ * replays the stored HTML, so the file is rebuilt here under the same rules.
+ * Empty for every other template and for a row without a booking.
+ */
+export async function retryCalendarRemovalAttachments(emailLog: {
+  templateName: string;
+  bookingId: string | null;
+  bookingRecipientMemberId: string | null;
+  to: string;
+}): Promise<EmailAttachment[]> {
+  if (
+    !emailLog.bookingId ||
+    !CALENDAR_REMOVAL_TEMPLATE_NAMES.has(emailLog.templateName)
+  ) {
+    return [];
+  }
+  const { attachment } = await resolveBookingCalendarRemoval({
+    bookingId: emailLog.bookingId,
+    recipientMemberId: emailLog.bookingRecipientMemberId,
+    deliveryAddress: emailLog.to,
+    templateName: emailLog.templateName,
+  });
+  return attachment ? [attachment] : [];
+}
