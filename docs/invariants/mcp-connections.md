@@ -191,9 +191,8 @@ only the rules.
   for officer reach, reads the requirement from
   the admin route map, or from the entry's `requires` where the handler's
   `requireAdmin` names its own permission; the census holds `requires` to
-  that guard. Outside `/api/admin` (ALP-722: the calendar's edits), the
-  census pins the route and the predicate its handler calls, and `requires`
-  is the admin leg that predicate always admits. The tool list,
+  that guard. Outside `/api/admin` the census pins each route's predicate,
+  and `requires` is the admin leg it always admits. The tool list,
   `find_actions`, `describe_action` and `run_action` all ask it.
 - **The route runs with the officer's real permissions** and its own guard
   decides, as for the browser, and answers through the projection. A
