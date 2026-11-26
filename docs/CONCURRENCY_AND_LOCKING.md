@@ -2879,7 +2879,7 @@ mispricing a booking.
   `src/lib/cron-email-retry.ts` (`retryFailedEmails`, sweep first). The sender
   moves its own `EmailLog` row from `handoverState` `PENDING` to `STARTED` with
   one `updateMany` guarded on id, `QUEUED` and `PENDING`, and calls the mail
-  server only if it won. The sweep settles a row `QUEUED` for 30 minutes with
+  server only if it won. The sweep settles a row `QUEUED` for 30 minutes or more with
   one `updateMany` guarded on the row exactly as read (status, hand-over state,
   attempts, `lastAttemptAt`, and for a re-send a body kept), always moving it
   off `QUEUED`. Both take the one row's lock; PostgreSQL re-checks the loser's

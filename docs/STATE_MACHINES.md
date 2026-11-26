@@ -4400,8 +4400,9 @@ sender writes `PENDING` with the row, and moves it to `STARTED` with one guarded
 `updateMany` (id, `QUEUED`, `PENDING`) before it calls the mail server; a lost
 or failed claim sends nothing (`handover_lost`). The retry job's own claim also
 writes `STARTED`. Null means the previous release wrote the row. Before it
-selects, each run takes up to 50 rows `QUEUED` for more than 30 minutes and
-less than 7 days, each with a write guarded on the row as read:
+selects, each run takes up to 50 rows `QUEUED` for more than 30 minutes (or
+`replayInFlightWindowMs()` if longer) and less than 7 days, each with a write
+guarded on the row as read:
 
 - `PENDING` at attempts 1, body kept: back to `FAILED`, attempts unchanged, and
   replayed by the same run with its usual checks;

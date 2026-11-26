@@ -1025,8 +1025,8 @@ sent twice (#5298, plan approved 27 Nov 2026).
   it sends nothing (`handover_lost`). The retry job's claim writes `STARTED`.
   Null is the previous release's row.
 - **The sweep.** `sweepStrandedQueuedEmails`, first in each 30-minute retry
-  run, takes up to 50 rows `QUEUED` 30 minutes to 7 days, each written once,
-  guarded on the row as read. `PENDING` at attempts 1 with a body goes back to
+  run, takes up to 50 rows `QUEUED` 30 minutes (`strandedQueuedAfterMs`) to
+  7 days, each written once, guarded on the row as read. `PENDING` at attempts 1 with a body goes back to
   `FAILED` and is replayed that run with the usual checks; without one it goes
   to the retry ceiling. Anything else goes to the ceiling as `UNCONFIRMED`.
   Both ceiling outcomes alert officers.
@@ -1036,7 +1036,7 @@ sent twice (#5298, plan approved 27 Nov 2026).
   the sweep's write race on one row, so one wins. An `UNCONFIRMED` row is sent
   again only by an officer's **Try again**, which warns of a duplicate.
 - **Callers.** `isLeftForTheEmailRetryJob` counts `handover_lost` as owed to
-  the retry job, so a caller keeps its stamp rather than send its own copy.
+  the retry job; an `UNCONFIRMED` keyed email reads as told.
 - **No new lock** (`INV-LOCK-001`, `INV-LOCK-002`); in the writer index
   (`INV-LOCK-003`).
 - **Known limits:** a row stranded over 7 days is left alone; a database fault

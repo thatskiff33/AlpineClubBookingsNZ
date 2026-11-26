@@ -2,6 +2,7 @@ import type { EmailHandoverState } from "@prisma/client";
 import logger from "@/lib/logger";
 import { prisma } from "@/lib/prisma";
 import { alertOfficersOfUndeliveredEmail } from "./delivery-failed-alert";
+import { replayInFlightWindowMs } from "./replay-in-flight";
 import { EMAIL_RETRY_MAX_ATTEMPTS, RETAINS_REPLAYABLE_EMAIL_BODY } from "./retry-selection";
 
 /**
@@ -22,11 +23,15 @@ import { EMAIL_RETRY_MAX_ATTEMPTS, RETAINS_REPLAYABLE_EMAIL_BODY } from "./retry
  */
 
 /**
- * How long after its last attempt a `QUEUED` row counts as stranded: three
- * times the mail transport's 10-minute socket timeout, so a send still in
- * flight is never mistaken for one a crash interrupted.
+ * How long after its last attempt a `QUEUED` row counts as stranded: 30
+ * minutes, or the longest a send can still be in flight under the configured
+ * transport timeouts (`replayInFlightWindowMs`, 20.5 minutes by default, at
+ * most 110) if that is longer, so a send still in flight is never mistaken for
+ * one a crash interrupted.
  */
-export const STRANDED_QUEUED_AFTER_MS = 30 * 60 * 1000;
+export function strandedQueuedAfterMs(): number {
+  return Math.max(30 * 60 * 1000, replayInFlightWindowMs());
+}
 
 /**
  * Older stranded rows are left alone: a week-old email is stale news, and
@@ -83,7 +88,7 @@ interface StrandedRow {
 }
 
 /**
- * Settle every `QUEUED` row stranded for longer than `STRANDED_QUEUED_AFTER_MS`
+ * Settle every `QUEUED` row stranded for longer than `strandedQueuedAfterMs()`
  * (and younger than `STRANDED_QUEUED_MAX_AGE_MS`), up to 50 a run:
  *
  * - never handed over, body kept: back to `FAILED` with its attempts unchanged,
@@ -106,7 +111,7 @@ export async function sweepStrandedQueuedEmails(now: Date = new Date()): Promise
       where: {
         status: "QUEUED",
         lastAttemptAt: {
-          lt: new Date(now.getTime() - STRANDED_QUEUED_AFTER_MS),
+          lt: new Date(now.getTime() - strandedQueuedAfterMs()),
           gte: new Date(now.getTime() - STRANDED_QUEUED_MAX_AGE_MS),
         },
       },

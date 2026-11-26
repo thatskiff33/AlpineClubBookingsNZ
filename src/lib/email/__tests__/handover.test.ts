@@ -19,14 +19,14 @@ vi.mock("@/lib/email/delivery-failed-alert", () => ({ alertOfficersOfUndelivered
 
 import {
   claimEmailHandover,
-  STRANDED_QUEUED_AFTER_MS,
   STRANDED_QUEUED_MAX_AGE_MS,
+  strandedQueuedAfterMs,
   sweepStrandedQueuedEmails,
 } from "@/lib/email/handover";
 import { EMAIL_RETRY_MAX_ATTEMPTS, RETAINS_REPLAYABLE_EMAIL_BODY } from "@/lib/email/retry-selection";
 
 const NOW = new Date("2026-07-01T00:00:00.000Z");
-const STRANDED_AT = new Date(NOW.getTime() - STRANDED_QUEUED_AFTER_MS - 60_000);
+const STRANDED_AT = new Date(NOW.getTime() - 31 * 60_000);
 
 type Row = {
   id: string;
@@ -83,6 +83,18 @@ describe("claimEmailHandover", () => {
   });
 });
 
+describe("strandedQueuedAfterMs", () => {
+  it("is 30 minutes, or longer when the transport timeouts let a send stay in flight longer", () => {
+    expect(strandedQueuedAfterMs()).toBe(30 * 60_000);
+    vi.stubEnv("EMAIL_SMTP_SOCKET_TIMEOUT_MS", "600000");
+    try {
+      expect(strandedQueuedAfterMs()).toBeGreaterThan(100 * 60_000);
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+});
+
 describe("sweepStrandedQueuedEmails", () => {
   it("looks only at QUEUED rows past the threshold and inside the week", async () => {
     given([], []);
@@ -91,7 +103,7 @@ describe("sweepStrandedQueuedEmails", () => {
       where: {
         status: "QUEUED",
         lastAttemptAt: {
-          lt: new Date(NOW.getTime() - STRANDED_QUEUED_AFTER_MS),
+          lt: new Date(NOW.getTime() - 30 * 60_000),
           gte: new Date(NOW.getTime() - STRANDED_QUEUED_MAX_AGE_MS),
         },
       },
