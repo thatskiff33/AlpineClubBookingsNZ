@@ -24,6 +24,7 @@ import {
   MEMBER_FIELDS_SETTINGS_CONNECTION_SHAPE,
   MEMBERSHIP_CANCELLATION_SETTINGS_CONNECTION_SHAPE,
   MEMBERSHIP_LOCKOUT_SETTINGS_CONNECTION_SHAPE,
+  MEMBERSHIP_LOCKOUT_SETTINGS_SAVE_CONNECTION_SHAPE,
   MEMBERSHIP_NOMINATION_SETTINGS_CONNECTION_SHAPE,
 } from "@/lib/connection-shapes/membership-config";
 
@@ -32,7 +33,7 @@ import type { McpAction } from "../catalogue";
 import { MESSAGE_BOARD_OFF } from "./membership-notices";
 
 const LIABILITY_RULE_NEEDS_FINANCE =
-  "Changing `requiredTypeAgeRule` or `liabilityAgeSource` (the subscription-liability rule, sent together) also needs Finance edit access; without it the save is refused (403) and nothing changes. Run `preview_subscription_liability_rule` first to see who it changes.";
+  "Changing `requiredTypeAgeRule` or `liabilityAgeSource` (the subscription-liability rule, sent together) also needs Finance edit access; without it the save is refused (403) and nothing changes. Run `preview_subscription_liability_rule` first to see who it changes; the answer's `clearedStaleRecords` says how many \"Not required\" records the save reset (null when the club has no rule chosen, so no clear-up ran).";
 
 export const MEMBERSHIP_CONFIG_SETTINGS_MCP_ACTIONS: readonly McpAction[] = [
   {
@@ -144,7 +145,7 @@ export const MEMBERSHIP_CONFIG_SETTINGS_MCP_ACTIONS: readonly McpAction[] = [
     path: "/api/admin/membership-lockout-settings",
     body: membershipLockoutSettingsSchema,
     kind: "destructive",
-    returns: MEMBERSHIP_LOCKOUT_SETTINGS_CONNECTION_SHAPE,
+    returns: MEMBERSHIP_LOCKOUT_SETTINGS_SAVE_CONNECTION_SHAPE,
     core: false,
   },
   {

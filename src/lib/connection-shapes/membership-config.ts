@@ -79,6 +79,12 @@ export const MEMBERSHIP_LOCKOUT_SETTINGS_CONNECTION_SHAPE = completeConnectionSh
   financialYear: { overrideMonth: true, xeroMonth: true, effectiveMonth: true },
 });
 
+/** A save's answer adds how many "Not required" records it reset (#5190); null when no clear-up ran. */
+export const MEMBERSHIP_LOCKOUT_SETTINGS_SAVE_CONNECTION_SHAPE = {
+  ...MEMBERSHIP_LOCKOUT_SETTINGS_CONNECTION_SHAPE,
+  clearedStaleRecords: true,
+} as const;
+
 const LIABILITY_RULE_SHAPE = { requiredTypeAgeRule: true, liabilityAgeSource: true } as const;
 const IMPACT_MEMBER_SHAPE = { memberId: true, name: true, billingChanges: true, accessChanges: true } as const;
 
