@@ -42,7 +42,7 @@ import {
   validateCreditApplicationAgainstBalance,
   validateNegativeAdjustmentAgainstBalance,
 } from "@/lib/policies/member-credit";
-import { reserveNotedCreditDeduction } from "@/lib/admin-credit-deduction-reserve";
+import { auditQueuedDeductionApproval, reserveNotedCreditDeduction } from "@/lib/admin-credit-deduction-reserve";
 import { cancellationCreditDescription } from "@/lib/cancellation-settled-money";
 
 const MEMBER_CREDIT_LOCK_NAMESPACE = "member-credit-ledger";
@@ -1180,21 +1180,8 @@ export async function reviewAdminAdjustmentRequest(
       },
       tx
     );
-    // #5241: a deduction that corrects a Xero note tells the member only once Xero
-    // agrees, from the correction's completion (`member.credit.deduction.xero_correction.complete`).
-    else await createAuditLog(
-      {
-        action: "member.credit.adjustment.approve",
-        category: "payment",
-        entityType: "AdminCreditAdjustmentRequest",
-        entityId: request.id,
-        memberId: adminId,
-        targetId: memberId,
-        details: `Xero correction queued. Approved admin credit adjustment ${request.id} as credit ${credit.id}: ${formatAdjustmentAmount(request.amountCents, format)}. Requested by ${request.requestedById}. Reason: ${request.description}.`,
-        ipAddress,
-      },
-      tx
-    );
+    // #5241: the member is told once Xero agrees, by the correction's completion.
+    else await auditQueuedDeductionApproval(tx, { request, adminId, creditId: credit.id, amount: formatAdjustmentAmount(request.amountCents, format), ipAddress });
 
     return {
       decision,

@@ -157,7 +157,7 @@ it("shows a reserved deduction and lets an officer cancel it", () => {
   })} />);
   expect(screen.getByText("Waiting for Xero correction")).toBeInTheDocument();
   expect(screen.getByText(/Mistaken grant/)).toBeInTheDocument();
-  expect(screen.getByRole("link", { name: "Retry in Xero operations" })).toHaveAttribute("href", "/admin/finance/xero?section=operations");
+  expect(screen.getByRole("link", { name: "Retry in Xero operations" })).toHaveAttribute("href", "/admin/xero?section=operations");
   fireEvent.click(screen.getByRole("button", { name: "Cancel correction" }));
   expect(onCancelCorrection).toHaveBeenCalledWith("correction-1");
 });

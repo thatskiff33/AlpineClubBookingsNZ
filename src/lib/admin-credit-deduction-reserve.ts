@@ -5,6 +5,7 @@ import { planAdminCreditDeduction, type DeductionLot } from "@/lib/admin-credit-
 import { MemberCreditValidationError } from "@/lib/policies/member-credit";
 import { loadFreeCreditLots } from "@/lib/xero-applied-credit-lots";
 import { buildXeroIdempotencyKey, startXeroSyncOperation } from "@/lib/xero-sync";
+import { createAuditLog } from "@/lib/audit";
 
 export interface DeductionRequest {
   id: string;
@@ -87,4 +88,29 @@ export async function reserveNotedCreditDeduction(
   }
   if (!firstCredit) throw new MemberCreditValidationError("The deduction has no available credit.");
   return { credit: firstCredit, correctionId };
+}
+
+/**
+ * The officers' record of approving a deduction whose Xero correction is queued.
+ * It declares no member disclosure: the member is told by the correction's
+ * completion (`member.credit.deduction.xero_correction.complete`), once Xero agrees.
+ */
+export async function auditQueuedDeductionApproval(
+  tx: Prisma.TransactionClient,
+  input: { request: Pick<DeductionRequest, "id" | "memberId" | "requestedById" | "description">; adminId: string; creditId: string; amount: string; ipAddress?: string },
+): Promise<void> {
+  const { request } = input;
+  await createAuditLog(
+    {
+      action: "member.credit.adjustment.approve",
+      category: "payment",
+      entityType: "AdminCreditAdjustmentRequest",
+      entityId: request.id,
+      memberId: input.adminId,
+      targetId: request.memberId,
+      details: `Xero correction queued. Approved admin credit adjustment ${request.id} as credit ${input.creditId}: ${input.amount}. Requested by ${request.requestedById}. Reason: ${request.description}.`,
+      ipAddress: input.ipAddress,
+    },
+    tx,
+  );
 }

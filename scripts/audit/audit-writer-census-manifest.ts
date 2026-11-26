@@ -1863,7 +1863,7 @@ export const MEMBER_FACING_AUDIT_WRITERS_2695: Readonly<
   // approval to the correction's completion so the member is told once Xero
   // agrees. PUBLISHES: the amount deducted, as money, and the officer's
   // `description`. Not a new disclosure: approval of such a deduction declares
-  // none (`reviewAdminAdjustmentRequest.result#2`).
+  // none (`auditQueuedDeductionApproval`).
   "src/lib/xero-admin-credit-deduction-correction.ts::completeAdminCreditDeductionCorrection#0":
     "member.credit.deduction.xero_correction.complete",
 

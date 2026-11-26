@@ -86,7 +86,8 @@ const plainDeductionReserve = async (tx: any, request: any) => ({
   correctionId: null,
 });
 const mockReserveNotedCreditDeduction = vi.fn<(tx: any, request: any) => Promise<{ credit: any; correctionId: string | null }>>(plainDeductionReserve);
-vi.mock("@/lib/admin-credit-deduction-reserve", () => ({
+vi.mock("@/lib/admin-credit-deduction-reserve", async (importOriginal) => ({
+  ...((await importOriginal()) as typeof import("@/lib/admin-credit-deduction-reserve")),
   reserveNotedCreditDeduction: (tx: unknown, request: unknown) => mockReserveNotedCreditDeduction(tx, request),
 }));
 vi.mock("@/lib/xero-applied-credit-allocation-repair", () => ({
