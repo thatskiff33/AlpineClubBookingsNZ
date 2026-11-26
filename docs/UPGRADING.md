@@ -410,8 +410,9 @@ membership type whose subscription is not required. If they should pay, leave
 them; the next billing run bills them as their fee says (a no-invoice fee, or
 a family fee billed through another member, sends them no invoice of their
 own). If a whole class of them should not pay (say, every child on an
-always-required type), the club can instead choose the liability rule *Age
-tier exempts them*, after reading its impact list. Nothing is billed or
+always-required type), the club can instead choose the liability rule *Their
+age group exempts them* under **Who owes a subscription** on the Subscription
+lockout page, after reading its preview. Nothing is billed or
 blocked by the upgrade itself.
 
 **How to check it worked.** Reload the list: a member you moved shows "Not

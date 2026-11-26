@@ -672,7 +672,7 @@ anyway. All are reached through `find_actions` except `list_members` and
 | `get_membership_nomination_settings` | The nomination rule for applicants | read | `GET /api/admin/membership-nomination-settings` |
 | `update_membership_nomination_settings` | Changes the nomination rule | destructive | `PUT /api/admin/membership-nomination-settings` |
 | `get_membership_lockout_settings` | The subscription lockout mode, financial year and subscription-liability rule; never the Finance-only item codes | read | `GET /api/admin/membership-lockout-settings` |
-| `update_membership_lockout_settings` | Changes the lockout settings; the liability rule also needs Finance edit, refused by the route otherwise | destructive | `PUT /api/admin/membership-lockout-settings` |
+| `update_membership_lockout_settings` | Changes the lockout settings; the liability rule also needs Finance edit, refused by the route otherwise; says how many "Not required" records the save reset | destructive | `PUT /api/admin/membership-lockout-settings` |
 | `preview_subscription_liability_rule` | Who a proposed liability rule changes, by name; never invoice numbers | read | `GET /api/admin/membership-lockout-settings/liability-impact` |
 | **Membership types, subscription categories and induction checklists** | | | |
 | `create_membership_type` | Adds a membership type with its rules | destructive | `POST /api/admin/membership-types` |
