@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 import { parsedDateOnlySchema } from "@/lib/date-only-schema";
+import { noCrlf } from "@/lib/zod-helpers";
 
 /**
  * The body of a member's "Book the whole lodge" request
@@ -9,8 +10,6 @@ import { parsedDateOnlySchema } from "@/lib/date-only-schema";
  * app action catalogue and its answer shapes read one description of each
  * (ALP-797, `INV-SSOT`). Client-safe: zod only.
  */
-
-const noCrlf = (value: string) => !/[\r\n]/.test(value);
 
 export const memberWholeLodgeRequestSchema = z.object({
   checkIn: parsedDateOnlySchema,
