@@ -1,4 +1,9 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
+import {
+  XERO_CASH_CREDITS_CONNECTION_SHAPE,
+  XERO_CASH_CREDITS_REFRESHED_CONNECTION_SHAPE,
+} from "@/lib/connection-shapes/finance-xero-contacts";
+import { connectionJson } from "@/lib/mcp-connection-request";
 import { requireAdmin } from "@/lib/session-guards";
 import { checkRateLimit, rateLimitedResponse } from "@/lib/rate-limit";
 import { createAuditLog } from "@/lib/audit";
@@ -14,13 +19,13 @@ import {
 // finance:edit, like the other officer-run Xero reads.
 const limiter = { id: "xero-cash-credits-refresh-post", limit: 3, windowSeconds: 60 };
 
-export async function GET() {
+export async function GET(request: NextRequest) {
   const guard = await requireAdmin({ permission: { area: "finance", level: "view" } });
   if (!guard.ok) return guard.response;
-  return NextResponse.json(await listXeroCashCreditQueue());
+  return connectionJson(request, await listXeroCashCreditQueue(), XERO_CASH_CREDITS_CONNECTION_SHAPE);
 }
 
-export async function POST() {
+export async function POST(request: NextRequest) {
   const guard = await requireAdmin({ permission: { area: "finance", level: "edit" } });
   if (!guard.ok) return guard.response;
   const limit = await checkRateLimit(limiter, guard.session.user.id);
@@ -46,5 +51,9 @@ export async function POST() {
       : "A refresh that started later had already been saved; nothing was changed.",
     metadata: { ...result },
   });
-  return NextResponse.json({ result, queue: await listXeroCashCreditQueue() });
+  return connectionJson(
+    request,
+    { result, queue: await listXeroCashCreditQueue() },
+    XERO_CASH_CREDITS_REFRESHED_CONNECTION_SHAPE,
+  );
 }

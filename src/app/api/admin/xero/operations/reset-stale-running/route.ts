@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
 import { createAuditLog } from "@/lib/audit";
 import { prisma } from "@/lib/prisma";
+import { XERO_STALE_RUNNING_RESET_CONNECTION_SHAPE } from "@/lib/connection-shapes/finance-xero-sync";
+import { connectionJson } from "@/lib/mcp-connection-request";
 import { requireAdmin } from "@/lib/session-guards";
 import {
   STALE_RUNNING_XERO_OPERATION_BULK_RESET_MESSAGE,
@@ -9,7 +11,7 @@ import {
 } from "@/lib/xero-stale-operations";
 import logger from "@/lib/logger";
 
-export async function POST() {
+export async function POST(request: Request) {
   const guard = await requireAdmin({
     permission: { area: "finance", level: "edit" },
   });
@@ -43,7 +45,7 @@ export async function POST() {
     });
     const total = count.failed + count.partial;
 
-    return NextResponse.json({
+    return connectionJson(request, {
       ok: true,
       count: total,
       failed: count.failed,
@@ -52,7 +54,7 @@ export async function POST() {
         total > 0
           ? `Reset ${describeReset(count, "stale running operation", "failed", "partly completed")}. Retry or resolve them from the list.`
           : "No stale running operations to reset.",
-    });
+    }, XERO_STALE_RUNNING_RESET_CONNECTION_SHAPE);
   } catch (error) {
     logger.error({ err: error }, "Failed to reset stale running Xero operations");
     return NextResponse.json(

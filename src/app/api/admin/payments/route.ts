@@ -3,6 +3,8 @@ import {
   adminPaymentsQuerySchema,
   listAdminPayments,
 } from "@/lib/admin-payments-service";
+import { ADMIN_PAYMENTS_CONNECTION_SHAPE } from "@/lib/connection-shapes/finance-payments";
+import { connectionJson } from "@/lib/mcp-connection-request";
 import { requireAdmin } from "@/lib/session-guards";
 
 /**
@@ -43,5 +45,5 @@ export async function GET(request: NextRequest) {
   }
 
   const result = await listAdminPayments(parsed.data);
-  return NextResponse.json(result.body, result.init);
+  return connectionJson(request, result.body, ADMIN_PAYMENTS_CONNECTION_SHAPE, result.init);
 }

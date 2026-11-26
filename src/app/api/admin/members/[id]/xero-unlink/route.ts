@@ -4,6 +4,8 @@ import { requireAdmin } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma";
 import { logAudit } from "@/lib/audit";
 import logger from "@/lib/logger";
+import { XERO_MEMBER_UNLINKED_CONNECTION_SHAPE } from "@/lib/connection-shapes/finance-xero-contacts";
+import { connectionJson } from "@/lib/mcp-connection-request";
 import { flushMemberSubscriptionHistory } from "@/lib/xero-membership-sync";
 import { deactivateXeroObjectLinks } from "@/lib/xero-sync";
 import {
@@ -16,7 +18,7 @@ import {
  * Unlink a member from their Xero contact (sets xeroContactId to null).
  */
 export async function POST(
-  _req: NextRequest,
+  req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   const guard = await requireAdmin({
@@ -96,11 +98,15 @@ export async function POST(
       "Unlinked member from Xero contact"
     );
 
-    return NextResponse.json({
-      success: true,
-      clearedSubscriptionHistoryCount:
-        flushedSubscriptionHistory.deletedCount,
-    });
+    return connectionJson(
+      req,
+      {
+        success: true,
+        clearedSubscriptionHistoryCount:
+          flushedSubscriptionHistory.deletedCount,
+      },
+      XERO_MEMBER_UNLINKED_CONNECTION_SHAPE,
+    );
   } catch (err) {
     const recovery = memberUnlinkCommitted
       ? unlinkedContactRecovery({
