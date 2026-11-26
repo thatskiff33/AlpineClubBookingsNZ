@@ -263,11 +263,25 @@ async function runLinkedDateMove(
     const organiserPaidIds = new Set(paidByOrganiser(before) ? [args.bookingId] : []), organiserBankIds = new Set(paidByOrganiserInternetBanking(before) ? [args.bookingId] : []);
     const choiceFor = (bookingId: string, method: typeof args.input.settlementMethod) =>
       method && !organiserPaidIds.has(bookingId) ? { settlementMethod: method } : {};
+    // #5238 (`INV-MOD-062`): `"quote"` prices the move afresh, so the member's
+    // earlier preview is not compared there; `"apply"` binds each booking to the
+    // figure the offer showed for it, and a moved price refuses inside this
+    // transaction before anything is written for either booking.
     const { settlementMethod: memberChoice, quotedFigures, ...inputWithoutChoice } = args.input;
+    const acceptedFigures = (bookingId: string) =>
+      mode === "apply"
+        ? bookingId === args.bookingId
+          ? quotedFigures
+          : args.linkedQuotedFigures?.find((row) => row.bookingId === bookingId)?.figures
+        : undefined;
     const primary = await modifyBookingBatch({
       bookingId: args.bookingId,
       actor: args.actor,
-      input: { ...inputWithoutChoice, ...(mode === "apply" ? { quotedFigures } : {}), ...choiceFor(args.bookingId, memberChoice) },
+      input: {
+        ...inputWithoutChoice,
+        quotedFigures: acceptedFigures(args.bookingId),
+        ...choiceFor(args.bookingId, memberChoice),
+      },
       ipAddress: args.ipAddress,
       todayAtClub: args.todayAtClub,
       format: args.format,
@@ -319,7 +333,7 @@ async function runLinkedDateMove(
           bookingId: dependent.bookingId,
           actor: args.actor,
           input: {
-            quotedFigures: mode === "apply" ? args.linkedQuotedFigures?.find(row => row.bookingId === dependent.bookingId)?.figures : undefined,
+            quotedFigures: acceptedFigures(dependent.bookingId),
             checkIn: target.checkIn,
             checkOut: target.checkOut,
             // ONE settlement choice covers both bookings — the member is asked
@@ -553,7 +567,10 @@ async function runLinkedDateMove(
       throw new LinkedMoveProbeComplete(quote, keys);
     }
 
-    if (!args.input.quotedFigures || linked.some(entry => !args.linkedQuotedFigures?.some(row => row.bookingId === entry.stranded.bookingId))) {
+    // #5238: an acceptance that matches the offer but did not echo a figure for
+    // every booking it moves was compared against nothing for that booking, so
+    // it is refused here, still inside the transaction, rather than committed.
+    if ([args.bookingId, ...linked.map((entry) => entry.stranded.bookingId)].some((id) => !acceptedFigures(id))) {
       throw new EditFiguresRequiredError();
     }
 
@@ -635,6 +652,9 @@ export async function applyLinkedDateMove(
       preTransaction,
     );
   } catch (error) {
+    // #5238: a booking's price moved since the offer, so nothing was committed.
+    // Re-price and carry the fresh offer inside the refusal: the member answers
+    // the new figures, never a silent substitute for the old ones.
     if (error instanceof EditPriceChangedError) {
       try {
         await offerLinkedDateMove(args);
