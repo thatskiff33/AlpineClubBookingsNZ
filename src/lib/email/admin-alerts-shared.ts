@@ -25,6 +25,7 @@ import {
   type AdminAlertRecipientDeliveryOutcome,
 } from "@/lib/email-admin-alert-escalation";
 import { sendEmail } from "./core";
+import { isLeftForTheEmailRetryJob } from "./send-outcome";
 import {
   type EmailAttachment,
   isCallerRetriedAlertTemplate,
@@ -240,11 +241,9 @@ export async function sendAdminAlertTo({
         // placeholders (#1935); fold the not-sent outcomes into "suppressed".
         // An environment FAULT (not a confirmed non-production copy) leaves a
         // FAILED row the retry cron sends once the installation is corrected,
+        // and a lost hand-over (#5298) a row the stranded-email sweep hands it,
         // but only if the row was written (#5407): without one it is lost.
-        const replayableFault =
-          outcome.status === "withheld_for_environment" &&
-          outcome.reason !== "environment_non_production" &&
-          failedRowIsReplayed;
+        const replayableFault = isLeftForTheEmailRetryJob(outcome) && failedRowIsReplayed;
         return {
           status: outcome.status === "sent" ? "sent" : "suppressed",
           queuedForRetry: replayableFault && logged,
@@ -446,7 +445,7 @@ export async function sendUnmuteableAdminAlert({
   // #5255: as `sendAdminAlertTo`, the once-ever claim goes to this alert's own rows only.
   const onceEverClaim = takeOnceEverClaim();
   const outcomes = await Promise.all(
-    emails.map(async (email): Promise<AdminAlertRecipientDeliveryOutcome & { claimRefused?: true }> => {
+    emails.map(async (email): Promise<AdminAlertRecipientDeliveryOutcome & { claimRefused?: true; handoverLost?: true }> => {
       try {
         const outcome = await sendEmail({
           to: email,
@@ -465,6 +464,7 @@ export async function sendUnmuteableAdminAlert({
         const heldOnACopy =
           outcome.status === "withheld_for_environment" &&
           outcome.reason === "environment_non_production";
+        if (outcome.status === "handover_lost") return { status: "suppressed", handoverLost: true };
         return { status: outcome.status === "sent" || heldOnACopy ? "sent" : "suppressed" };
       } catch (err) {
         if (err instanceof OnceEverClaimRefusedError) {
@@ -482,9 +482,14 @@ export async function sendUnmuteableAdminAlert({
   );
 
   const nobodyReceivedIt = outcomes.every((outcome) => outcome.status !== "sent");
+  // #5298: a lost hand-over left its row, body and all, to the stranded-email
+  // sweep, which re-sends it. Like a copy the cron holds, every copy is kept
+  // and the owner does not send it again.
+  const sweepHoldsACopy =
+    shouldPersistEmailHtml(templateName) && outcomes.some((outcome) => outcome.handoverLost);
   // Before anything else can fail, and before the owner can retry.
   const release =
-    nobodyReceivedIt && isCallerRetriedAlertTemplate(templateName)
+    nobodyReceivedIt && !sweepHoldsACopy && isCallerRetriedAlertTemplate(templateName)
       ? await releaseUnreceivedAlertCopies(attemptLogIds, templateName)
       : null;
 
@@ -509,7 +514,7 @@ export async function sendUnmuteableAdminAlert({
     );
   }
   if (!nobodyReceivedIt) return "sent";
-  return release === "cron-holds-a-copy" ? "queued-for-retry" : "undelivered";
+  return release === "cron-holds-a-copy" || sweepHoldsACopy ? "queued-for-retry" : "undelivered";
 }
 
 export async function shouldSendDirectAdminSystemEmail(templateName: string) {

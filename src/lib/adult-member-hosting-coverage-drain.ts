@@ -684,5 +684,8 @@ async function notifyOwnerOfLostCoverage(
   ) {
     return "retry";
   }
+  // #5298: a lost hand-over sent nothing, and this template keeps no copy for
+  // the stranded-email sweep to re-send, so the outbox tries again.
+  if (outcome.status === "handover_lost") return "retry";
   return "terminal";
 }

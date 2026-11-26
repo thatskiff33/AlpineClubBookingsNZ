@@ -10,6 +10,7 @@ import { SENSITIVE_EMAIL_LOG_TEMPLATES } from "@/lib/email/internal";
 import {
   EMAIL_RETRY_BACKOFF_MS,
   EMAIL_RETRY_MAX_ATTEMPTS,
+  isUnconfirmedDeliveryAwaitingOfficer,
   RETAINS_REPLAYABLE_EMAIL_BODY,
 } from "@/lib/email/retry-selection";
 import { prisma } from "@/lib/prisma";
@@ -261,7 +262,7 @@ export async function getExhaustedEmailFailureReviewQueue(limit = 25) {
       bookingRecipientMemberId: failure.bookingRecipientMemberId,
       recovery: recoveryFor(failure.templateName, canRequeue, freshCopyHref),
       freshCopyHref,
-      deliveryUnconfirmed: failure.handoverState === "UNCONFIRMED",
+      deliveryUnconfirmed: isUnconfirmedDeliveryAwaitingOfficer(failure),
       reviewedAt: review?.createdAt.toISOString() ?? null,
       reviewedById: review?.actorMemberId ?? review?.memberId ?? null,
       reviewNote: readReviewNote(review?.metadata),

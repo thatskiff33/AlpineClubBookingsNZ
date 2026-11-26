@@ -1061,6 +1061,24 @@ describe("hosting coverage drain claim fences (#2596)", () => {
     expect(mocks.complete).not.toHaveBeenCalled();
   });
 
+  // #5298: a lost hand-over sent nothing, and this template keeps no copy for
+  // the stranded-email sweep, so the outbox owns the retry.
+  it("fails and releases the exact claims when the email's hand-over was lost", async () => {
+    mocks.loadDependents.mockResolvedValue(["booking-1"]);
+    mocks.reconcile.mockResolvedValue({ action: "opened", incidentId: "incident-1", stateKey: "v1:state-a" });
+    mocks.claimNotification.mockResolvedValue({ incidentId: "incident-1", stateKey: "v1:state-a", claimToken: "notification-current" });
+    mocks.sendEmail.mockResolvedValue({ status: "handover_lost", emailLogId: "mail-1" });
+
+    const result = await drainHostingCoverageReevaluations({}, makeDb());
+
+    expect(result).toMatchObject({ claimed: 1, processed: 0, notified: 0, failed: 1 });
+    expect(mocks.releaseNotification).toHaveBeenCalledWith(
+      expect.objectContaining({ claimToken: "notification-current" }),
+      expect.anything(),
+    );
+    expect(mocks.complete).not.toHaveBeenCalled();
+  });
+
   it.each([
     ["missing email", { ...DELIVERY, email: "" }, undefined],
     [

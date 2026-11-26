@@ -360,6 +360,25 @@ describe("sendToAdmins reports each recipient's fate (#3672)", () => {
     });
   });
 
+  // #5298: a lost hand-over left the copy's row, body kept, to the stranded-email
+  // sweep, so the owner must not count it undelivered and send it again.
+  it("counts a copy whose hand-over was lost as queued for the retry job", async () => {
+    mocks.findMany.mockResolvedValue(treasurers.slice(0, 1));
+    mocks.sendEmail.mockImplementationOnce(async ({ onAttemptLogged }: { onAttemptLogged?: (id: string) => void }) => {
+      onAttemptLogged?.("email-log-1");
+      return { status: "handover_lost", emailLogId: "email-log-1" };
+    });
+
+    await expect(send()).resolves.toEqual({
+      deliveryAllowed: true,
+      recipients: 1,
+      sent: 0,
+      queuedForRetry: 1,
+      notDelivered: 0,
+      failedBeforeLogged: 0,
+    });
+  });
+
   // #5407 review: a fault's copy whose row write failed has nothing to replay.
   it("does not count an environment fault's copy as queued when its row was never written", async () => {
     mocks.findMany.mockResolvedValue(treasurers.slice(0, 1));
@@ -660,6 +679,22 @@ describe("unmuteable admin alerts (#2761)", () => {
       requirement: { area: "finance", level: "edit" },
     });
     expect(failed).toBe("undelivered");
+  });
+
+  // #5298: the stranded-email sweep re-sends a copy whose hand-over was lost, so
+  // the alert's owner is told it is queued and does not send its own.
+  it("reports a lost hand-over as queued for retry, not undelivered", async () => {
+    mocks.findMany.mockResolvedValue([enumRole("treasurer@club.test", "FINANCE_ADMIN")]);
+    mocks.sendEmail.mockResolvedValue({ status: "handover_lost", emailLogId: "log-1" });
+
+    await expect(
+      sendUnmuteableAdminAlert({
+        subject: "Stripe payment the app did not create",
+        html: "<p>alert</p>",
+        templateName: "admin-unrecognised-stripe-payment",
+        requirement: { area: "finance", level: "edit" },
+      }),
+    ).resolves.toBe("queued-for-retry");
   });
 
   it("does not escalate when somebody was reached", async () => {

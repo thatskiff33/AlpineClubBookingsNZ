@@ -3,7 +3,7 @@ import logger from "@/lib/logger";
 import { prisma } from "@/lib/prisma";
 import { alertOfficersOfUndeliveredEmail } from "./delivery-failed-alert";
 import { replayInFlightWindowMs } from "./replay-in-flight";
-import { EMAIL_RETRY_MAX_ATTEMPTS, RETAINS_REPLAYABLE_EMAIL_BODY } from "./retry-selection";
+import { EMAIL_RETRY_MAX_ATTEMPTS, FIRST_EMAIL_ATTEMPT, RETAINS_REPLAYABLE_EMAIL_BODY } from "./retry-selection";
 
 /**
  * #5298 (INV-INT-043): an email is recorded `QUEUED` before it is handed to the
@@ -149,7 +149,7 @@ async function settleStrandedRow(row: StrandedRow, keepsBody: boolean, now: Date
     attempts: row.attempts,
     lastAttemptAt: row.lastAttemptAt,
   };
-  const neverHandedOver = row.handoverState === "PENDING" && row.attempts === 1;
+  const neverHandedOver = row.handoverState === "PENDING" && row.attempts === FIRST_EMAIL_ATTEMPT;
   const outcome: StrandedOutcome = !neverHandedOver ? "unconfirmed" : keepsBody ? "requeued" : "never_sent";
 
   const data =
@@ -165,7 +165,7 @@ async function settleStrandedRow(row: StrandedRow, keepsBody: boolean, now: Date
             attempts: EMAIL_RETRY_MAX_ATTEMPTS,
             lastAttemptAt: now,
             errorMessage:
-              "Never sent: the app stopped before handing it to the mail server, and no copy was kept to send again. Send the recipient a fresh one (#5298).",
+              "Never sent: the app stopped before handing it to the mail server, and no copy was kept to send again. Some features send it again themselves, so check the recipient has not had a newer copy before you send a fresh one (#5298).",
           }
         : {
             status: "FAILED" as const,

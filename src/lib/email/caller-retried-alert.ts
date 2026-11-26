@@ -34,10 +34,7 @@
  */
 import logger from "@/lib/logger";
 import { prisma } from "@/lib/prisma";
-import { RETAINS_REPLAYABLE_EMAIL_BODY } from "./retry-selection";
-
-/** `EmailLog.attempts`'s default: a row no retry has claimed yet. */
-const FIRST_ATTEMPT = 1;
+import { FIRST_EMAIL_ATTEMPT as FIRST_ATTEMPT, RETAINS_REPLAYABLE_EMAIL_BODY } from "./retry-selection";
 
 /**
  * A few guarded updates and a count over one alert's rows (one per recipient).

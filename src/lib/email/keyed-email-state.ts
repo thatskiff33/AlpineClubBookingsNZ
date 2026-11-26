@@ -23,10 +23,11 @@
  *   (`isReplayableFailedEmail`), or `QUEUED` past its first attempt and
  *   claimed within `replayInFlightWindowMs()` (the cron claims a row as
  *   `QUEUED` while it replays it; the window is the longest a replay can still
- *   be sending, from the transport timeouts). An older such row is left `QUEUED` by a
- *   replay whose `SENT` write failed after the provider accepted it, or that
- *   died mid-send, and nothing moves it on; it reads as `sent`, the same
- *   stated limit as a first attempt (round 3, item 1). A template whose body
+ *   be sending, from the transport timeouts). An older such row is left
+ *   `QUEUED` by a replay whose `SENT` write failed after the provider accepted
+ *   it, or that died mid-send, until the stranded-email sweep flags it
+ *   (`INV-INT-043`); it reads as `sent`, the same stated limit as a first
+ *   attempt (round 3, item 1). A template whose body
  *   is never kept (`booking-confirmed`) is never replayed, so never `retrying`;
  * - `undeliverable`: `FAILED` with nothing left to replay it, or `BOUNCED`
  *   (including a bounce that arrived after `SENT`). It cannot be sent again
@@ -34,10 +35,10 @@
  * - `not-sent`: no row.
  * Told means `sent` or `withheld`, and nothing else.
  */
-import { EmailHandoverState, EmailLogStatus } from "@prisma/client";
+import { type EmailHandoverState, EmailLogStatus } from "@prisma/client";
 
 import { replayInFlightWindowMs } from "@/lib/email/replay-in-flight";
-import { EMAIL_RETRY_MAX_ATTEMPTS, isReplayableFailedEmail } from "@/lib/email/retry-selection";
+import { isReplayableFailedEmail, isUnconfirmedDeliveryAwaitingOfficer } from "@/lib/email/retry-selection";
 import { prisma } from "@/lib/prisma";
 
 export type KeyedEmailState = "sent" | "withheld" | "retrying" | "undeliverable" | "not-sent";
@@ -63,7 +64,7 @@ function readStatus({ status, attempts, lastAttemptAt, handoverState }: KeyedEma
     case EmailLogStatus.SKIPPED_NON_PRODUCTION:
       return "withheld";
     case EmailLogStatus.FAILED:
-      return handoverState === EmailHandoverState.UNCONFIRMED && attempts >= EMAIL_RETRY_MAX_ATTEMPTS ? "sent" : "failed";
+      return isUnconfirmedDeliveryAwaitingOfficer({ attempts, handoverState }) ? "sent" : "failed";
     case EmailLogStatus.BOUNCED:
       return "undeliverable";
     default: {

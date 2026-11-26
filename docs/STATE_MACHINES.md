@@ -4511,11 +4511,12 @@ claim (or two app instances' clocks differ by about that much) and a sweep
 claims the marker again. The member is still sent one email in both cases.
 
 **Stated limit, for every keyed notice.** A crash during the provider call
-itself leaves the member's row `QUEUED`. The retry cron selects `FAILED` rows
-only and nothing replays a `QUEUED` one, and the sweep's own send finds the
-row recorded and sends nothing. That is deliberate: for money-related notices
-a duplicate is worse than a missed email. The same holds for every inline
-send with an event key.
+itself leaves the member's row `QUEUED`, and the sweep's own send finds the
+row recorded and sends nothing. Since #5298 the stranded-email sweep
+(`INV-INT-043`) flags such a row to officers rather than send it again: for
+money-related notices a duplicate is worse than a missed email. A crash before
+the hand-over is sent again once. The same holds for every inline send with an
+event key.
 
 The confirm-pending cron's bump notices (#5407) are the first kinds on this
 mechanism: one marker for the member's email (`booking-bumped` or
@@ -5275,7 +5276,8 @@ The give-back and the first email row race on the `AlertCooldown` row's lock:
 whichever commits first wins, and the loser changes nothing, so the sweep never
 makes a second send (`INV-INT-042`). A claim taken before #5255 has no mark and
 is never swept. Known limits, not owner-accepted: an alert raised while every
-database write fails (#5297), and an email row a crash left `QUEUED` (#5298).
+database write fails (#5297). An email row a crash leaves `QUEUED` is settled
+by the stranded-email sweep (#5298, `INV-INT-043`).
 
 ### Shared Xero inbound run authority (#4432)
 

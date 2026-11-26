@@ -815,6 +815,32 @@ describe("checkAgeUpMembers", () => {
     });
   });
 
+  // #5298: the stranded-email sweep sends a handoff whose hand-over was lost, so
+  // it is recorded as handed off and the next run does not send a second copy.
+  it("records the parent handoff when its hand-over was lost, so the next run does not send it again", async () => {
+    mockedFindMany.mockResolvedValue([
+      {
+        id: "m3",
+        email: "child@placeholder.com",
+        firstName: "Charlie",
+        lastName: "Brown",
+        dateOfBirth: dobForAge(18),
+        parentMemberId: null,
+        inheritParentEmail: false,
+        inheritEmailFromId: "parent1",
+        inheritEmailFrom: { id: "parent1", email: "parent@example.com", firstName: "Pat", lastName: "Parent" },
+        parent: null,
+      },
+    ] as any);
+    mockedSendHandoffEmail.mockResolvedValue({ status: "handover_lost", emailLogId: "log-1" } as any);
+
+    await checkAgeUpMembers();
+
+    expect(mockedAuditLogCreate).toHaveBeenCalledWith({
+      data: expect.objectContaining({ action: "member.age_up.parent_email_handoff_sent", subjectMemberId: "m3" }),
+    });
+  });
+
   it("gives the handoff audit row an expiry instead of keeping it forever (#2581)", async () => {
     /*
       WHAT THIS CATCHES: this writer going back to a hand-built

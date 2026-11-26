@@ -313,7 +313,7 @@ export function adminEmailDeliveryFailedTemplate(data: {
     return layout(`
       ${heading("Email Delivery Permanently Failed")}
       ${paragraph(
-        `${who} was never sent: the app stopped before handing it to the mail server, and no copy was kept to send again. Send the recipient a fresh one.`,
+        `${who} was never sent: the app stopped before handing it to the mail server, and no copy was kept to send again. Some features send it again themselves, so check the recipient has not had a newer copy before you send a fresh one.`,
       )}
     `);
   }
