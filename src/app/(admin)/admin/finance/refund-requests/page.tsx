@@ -4,7 +4,8 @@ import { fetchWithRecentAuth } from "@/components/confirm-its-you"
 import Link from "next/link"
 import { useCallback, useEffect, useState } from "react"
 import { useSession } from "next-auth/react"
-import { useRouter, useSearchParams } from "next/navigation"
+import { useSearchParams } from "next/navigation"
+import { useAdminListUrlSync } from "@/hooks/use-admin-list-url-sync"
 import {
   adminCreditGrantAccountLabel,
   GRANT_ACCOUNT_MISSING_MESSAGE,
@@ -174,7 +175,6 @@ function formatDateTime(clubTime: BoundClubTime, value: string | null) {
 export default function RefundRequestsPage() {
   const format = useClubFormat()
   const clubTime = useClubTime()
-  const router = useRouter()
   const searchParams = useSearchParams()
   const initialFilter = searchParams.get("status")
   const { data: session } = useSession()
@@ -222,9 +222,7 @@ export default function RefundRequestsPage() {
     ? `${REFUND_REQUESTS_HREF}?${currentQuery}`
     : REFUND_REQUESTS_HREF
 
-  useEffect(() => {
-    router.replace(currentRefundRequestsPath, { scroll: false })
-  }, [currentRefundRequestsPath, router])
+  useAdminListUrlSync(currentRefundRequestsPath)
 
   const fetchRequests = useCallback(async () => {
     // A slower read for a page or filter the officer has left never replaces

@@ -14,8 +14,9 @@ Back to the [documentation hub](../README.md).
 A page-level table, list, queue, register, or report is included when its search,
 filters, explicit sort, page, or page-size state survives ordinary interaction
 with that dataset. The state may live in the URL or in React state. URL-backed
-datasets use `router.replace` for query-only churn and preserve unknown query
-keys for forward compatibility.
+datasets use `router.replace` for query-only churn, through
+`useAdminListUrlSync` so a page never replaces the address it is already on
+(#5295), and preserve unknown query keys for forward compatibility.
 
 The visible label is always **Reset**. It remains rendered at the true default
 and is disabled only when search, dataset filters, explicit sort, page, and
