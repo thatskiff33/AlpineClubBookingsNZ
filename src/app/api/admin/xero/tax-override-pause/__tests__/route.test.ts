@@ -51,7 +51,7 @@ const row = { id: "m1", createdAt: new Date("2026-07-01T00:00:00.000Z"), booking
 const get = () => {
   h.request.method = "GET";
   h.request.path = "/api/admin/xero/tax-override-pause";
-  return GET();
+  return GET(new Request("https://club.example.com/api/admin/xero/tax-override-pause"));
 };
 const clear = (body: unknown) => {
   h.request.method = "POST";

@@ -24,7 +24,6 @@ import { FORWARDED_FOR_HEADER } from "@/lib/rate-limit-http";
 
 import { recordMcpAudit } from "./audit";
 import {
-  mcpActionAdminRequirement,
   mcpActionInputSchema,
   mcpActionRouteFile,
   splitMcpActionArguments,
@@ -33,9 +32,11 @@ import {
 } from "./catalogue";
 import { MCP_PERMANENT_EXCLUSION_REASONS, mcpPermanentExclusion } from "./exclusions";
 import { sendMcpLoopbackRequest } from "./loopback";
+import { mcpActionAdminRequirement } from "./officer-actions";
 import { issueMcpPrincipal, MCP_PRINCIPAL_HEADER } from "./principal";
 import { MCP_SCOPE_LABELS } from "./scope-labels";
 import { mcpScopeAllows } from "./settings";
+import { MCP_STATIC_SIBLING_SEGMENTS } from "./static-route-segments";
 
 /**
  * What an argument that becomes part of an address must look like: one record
@@ -181,7 +182,8 @@ export async function runMcpAction(
   // them again, and a parsed date is no longer the string the route expects.
   const { params, query, body } = splitMcpActionArguments(action, args);
   const unsafe = Object.entries(params).find(
-    ([, value]) => typeof value !== "string" || !ADDRESS_ARGUMENT.test(value),
+    ([, value]) =>
+      typeof value !== "string" || !ADDRESS_ARGUMENT.test(value) || MCP_STATIC_SIBLING_SEGMENTS.has(value),
   );
   if (unsafe) {
     return refusal(`The \`${unsafe[0]}\` argument is not a record id, so nothing was done.`);

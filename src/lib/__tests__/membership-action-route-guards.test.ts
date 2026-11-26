@@ -88,7 +88,7 @@ describe("membership action route guards (#1997)", () => {
   });
 
   it("family-groups requests GET requires membership:view", async () => {
-    const res = await familyGet();
+    const res = await familyGet(req("GET"));
     expect(res.status).toBe(403);
     expect(mocks.requireAdmin).toHaveBeenCalledWith(
       expect.objectContaining({ permission: MEMBERSHIP_VIEW }),
@@ -134,7 +134,7 @@ describe("membership action route guards (#1997)", () => {
   });
 
   it("family-suggestions GET requires membership:view", async () => {
-    const res = await familySuggestionsGet();
+    const res = await familySuggestionsGet(req("GET"));
     expect(res.status).toBe(403);
     expect(mocks.requireAdmin).toHaveBeenCalledWith({
       permission: MEMBERSHIP_VIEW,
@@ -158,7 +158,7 @@ describe("membership action route guards (#1997)", () => {
   });
 
   it("family-suggestions reset POST requires membership:edit", async () => {
-    const res = await familySuggestionsResetPost();
+    const res = await familySuggestionsResetPost(req("POST"));
     expect(res.status).toBe(403);
     expect(mocks.requireAdmin).toHaveBeenCalledWith({
       permission: MEMBERSHIP_EDIT,

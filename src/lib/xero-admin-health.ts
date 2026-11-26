@@ -341,12 +341,20 @@ export async function readRefundCreditNoteGap(payment: {
   resolvedInXeroCents: number;
   uncoveredCents: number;
   paidAnotherWayUncoveredCents: number;
+  /**
+   * #4328 review: hand-resolved refund-note rows whose amount cannot be read,
+   * so `coveredCents` leaves them out. A caller that judges coverage must
+   * refuse on any (`sumRefundCreditNoteCoverageCents`' contract).
+   */
+  unreadableResolvedOperationIds: string[];
+  /** #4328: the refunded cents of late captures Xero never received, which no note may answer (`INV-PAY-110`). */
+  lateCaptureExcludedCents: number;
 }> {
   // #2902: cash evidence first — an account-credit-only cancellation resolves
   // to zero cash and is excluded before any coverage query runs. #3635 round-3
   // R1: the cash a note may answer, so a refund of a late capture Xero never
   // received is not a gap - the self-heal must not raise it a day later.
-  const { eligibleCashCents } = await resolveRefundNoteEligibleCash(payment);
+  const { eligibleCashCents, lateCaptureExcludedCents } = await resolveRefundNoteEligibleCash(payment);
   if (eligibleCashCents <= 0) {
     return {
       cashRefundCents: 0,
@@ -354,6 +362,8 @@ export async function readRefundCreditNoteGap(payment: {
       resolvedInXeroCents: 0,
       uncoveredCents: 0,
       paidAnotherWayUncoveredCents: 0,
+      unreadableResolvedOperationIds: [],
+      lateCaptureExcludedCents,
     };
   }
   const resolved = await readResolvedRefundCreditNoteCoverage(payment.id);
@@ -366,6 +376,8 @@ export async function readRefundCreditNoteGap(payment: {
     uncoveredCents,
     paidAnotherWayUncoveredCents:
       uncoveredCents > 0 ? Math.min(uncoveredCents, await readPaidAnotherWayUncoveredCents(prisma, payment.id)) : 0,
+    unreadableResolvedOperationIds: resolved.unreadableOperationIds,
+    lateCaptureExcludedCents,
   };
 }
 

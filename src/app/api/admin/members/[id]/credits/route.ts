@@ -1,7 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import { parseJsonRequestBody } from "@/lib/api-json";
+import {
+  CREDIT_ADJUSTMENT_REQUESTED_CONNECTION_SHAPE,
+  MEMBER_CREDITS_CONNECTION_SHAPE,
+} from "@/lib/connection-shapes/finance-payments";
+import { connectionJson } from "@/lib/mcp-connection-request";
 import { requireAdmin } from "@/lib/session-guards";
-import { z } from "zod";
+import { adminCreditAdjustmentRequestSchema } from "@/lib/admin-credit-adjustment-schemas";
 import {
   getMemberCreditBalance,
   getAdminMemberCreditHistory,
@@ -22,7 +27,7 @@ import {
  * Returns credit balance and history for a member (admin only).
  */
 export async function GET(
-  _request: NextRequest,
+  request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
@@ -38,7 +43,11 @@ export async function GET(
       getPendingAdminAdjustmentRequests(id),
     ]);
 
-    return NextResponse.json({ balanceCents, history, pendingRequests });
+    return connectionJson(
+      request,
+      { balanceCents, history, pendingRequests },
+      MEMBER_CREDITS_CONNECTION_SHAPE,
+    );
   } catch (error) {
     logger.error({ err: error }, "Error fetching member credit history");
     return NextResponse.json(
@@ -47,30 +56,6 @@ export async function GET(
     );
   }
 }
-
-const adjustmentSchema = z
-  .object({
-    amountCents: z.number().int().refine((v) => v !== 0, "Amount cannot be zero"),
-    description: z.string().min(1, "Description is required").max(500),
-    idempotencyKey: z.string().uuid("Idempotency key must be a UUID"),
-    grantAccount: z.enum(["MEMBER_OWN_MONEY", "GOODWILL"]).optional(),
-  })
-  .superRefine((value, ctx) => {
-    if (value.amountCents > 0 && !value.grantAccount) {
-      ctx.addIssue({
-        code: "custom",
-        path: ["grantAccount"],
-        message: "Choose which account this credit belongs to.",
-      });
-    }
-    if (value.amountCents < 0 && value.grantAccount) {
-      ctx.addIssue({
-        code: "custom",
-        path: ["grantAccount"],
-        message: "A deduction does not choose a Xero account.",
-      });
-    }
-  });
 
 /**
  * POST /api/admin/members/[id]/credits
@@ -89,8 +74,7 @@ export async function POST(
     const { id } = await params;
     const jsonBody = await parseJsonRequestBody(request);
     if (!jsonBody.ok) return jsonBody.response;
-    const body = jsonBody.body;
-    const parsed = adjustmentSchema.safeParse(body);
+    const parsed = adminCreditAdjustmentRequestSchema.safeParse(jsonBody.body);
 
     if (!parsed.success) {
       return NextResponse.json(
@@ -110,13 +94,17 @@ export async function POST(
       getClientIp(request)
     );
 
-    return NextResponse.json({
-      success: true,
-      requestId: result.request.id,
-      requestStatus: result.request.status,
-      replayed: result.replayed,
-      message: `Adjustment of ${parsed.data.amountCents > 0 ? "+" : ""}${formatCentsPlain(parsed.data.amountCents)} submitted for approval`,
-    });
+    return connectionJson(
+      request,
+      {
+        success: true,
+        requestId: result.request.id,
+        requestStatus: result.request.status,
+        replayed: result.replayed,
+        message: `Adjustment of ${parsed.data.amountCents > 0 ? "+" : ""}${formatCentsPlain(parsed.data.amountCents)} submitted for approval`,
+      },
+      CREDIT_ADJUSTMENT_REQUESTED_CONNECTION_SHAPE,
+    );
   } catch (error) {
     logger.error({ err: error }, "Error creating credit adjustment");
 

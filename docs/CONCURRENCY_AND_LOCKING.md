@@ -2731,6 +2731,13 @@ mispricing a booking.
     a bare `MediaImage` delete with no surrounding row lock, and is itself scoped
     to `kind: "CONTENT"`, so it can never touch a `LOGO` blob this protocol owns
     — disjoint in both direction and row set.
+  - **AI app site-style save** (`saveClubThemeStyle`, same file, ALP-723)
+    materialises the singleton the same way, then updates only the colour, font
+    and custom-CSS columns: no explicit row lock, no advisory lock, no
+    `MediaImage` row. It never reads or writes the logo columns, so it cannot
+    delete or orphan a blob, and a concurrent `saveClubTheme` keeps its logo;
+    its update's implicit row lock waits on the theme row like any writer, under
+    the same `maxWait`/`timeout` and 503 mapping.
   - **Member photo writer** (below) locks the `Member` row and touches only
     `MEMBER_PHOTO` blobs. The two protocols share the `MediaImage` table but
     never the same rows, and neither takes the other's parent row, so they are

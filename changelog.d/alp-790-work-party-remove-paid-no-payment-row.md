@@ -1,0 +1,2 @@
+- **Remove from work party is now refused on a booking marked paid with no payment record at all.**
+  Officers could remove the work party from such a booking, which would leave it paid and holding beds while owing what the work party took off. It is now refused like any booking marked paid with no money taken: cancel it, or ask the treasurer. No current path creates this shape, so only old or hand-edited data is affected (#5338).

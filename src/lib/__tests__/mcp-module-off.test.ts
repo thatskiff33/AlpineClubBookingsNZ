@@ -152,6 +152,21 @@ const PRE_MODULE_ROUTES_WITHOUT_WEBSITE_CALLER: Readonly<Record<string, string>>
     "draft bookings (Issue 7, April 2026), long before the module; its website caller has since gone",
   "src/app/api/admin/booking-requests/[id]/price/route.ts":
     "officer pricing of a booking request (#733, June 2026), long before the module; the quote workflow replaced its website caller",
+  "src/app/api/admin/membership-cancellation-requests/[requestId]/participants/[participantId]/resend-confirmation/route.ts":
+    "resending a cancellation confirmation link (May 2026), long before the module; no admin screen calls it today",
+  "src/app/api/admin/membership-lockout-settings/liability-impact/route.ts":
+    "the subscription-liability preview (#5190), built for the upgrade runbook and the liability screen still to come, not for the module",
+  // Finance (ALP-721): routes built long before the module.
+  "src/app/api/admin/payments/bank-refund-voids/[id]/answered/route.ts":
+    "answering a voided bank refund note (#4162, Oct 2026); its panel builds the address as `${pick ? \"pick\" : \"answered\"}`, which the scan cannot read",
+  "src/app/api/finance/bookings/metrics/route.ts":
+    "the finance workspace's booking metrics (Apr 2026), read by the separate finance dashboard",
+  "src/app/api/finance/sync/status/route.ts":
+    "the finance workspace's sync status (Apr 2026), read by the separate finance dashboard",
+  "src/app/api/finance/sync/backfill-monthly-facts/route.ts":
+    "the monthly finance facts backfill (Jul 2026), run by an operator or `pnpm run finance:backfill-monthly-facts`",
+  "src/app/api/admin/xero/operations/[id]/requeue/route.ts":
+    "requeuing a Xero operation (Apr 2026, the queued replay workflow); the operations panel's Retry superseded its button",
 };
 
 /**

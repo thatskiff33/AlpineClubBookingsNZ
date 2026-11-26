@@ -1,10 +1,16 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma";
-import { isDateOnlyString, parseDateOnly } from "@/lib/date-only";
+import { parseDateOnly } from "@/lib/date-only";
 import { isEffectiveModuleEnabled } from "@/lib/admin-modules";
 import { listCustodianBedOptions } from "@/lib/custodian-assignment";
 import { resolveOptionalActiveLodgeId } from "@/lib/lodges";
+import { hutLeaderBedOptionsQuerySchema } from "@/lib/admin-lodge-schemas/hut-leaders";
+import {
+  ADMIN_HUT_LEADER_BED_OPTIONS_CONNECTION_SHAPE,
+  type AdminHutLeaderBedRoom,
+} from "@/lib/connection-shapes/lodge-hut-leaders";
+import { connectionJson } from "@/lib/mcp-connection-request";
 
 /**
  * GET /api/admin/hut-leaders/available-beds
@@ -31,23 +37,22 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
 
+  // The schema is shared with the AI app action `list_hut_leader_bed_options`
+  // (ALP-722). Only the dates can fail it, and they answer the same 400.
   const { searchParams } = new URL(req.url);
-  const startDate = searchParams.get("startDate");
-  const endDate = searchParams.get("endDate");
-  if (
-    !startDate ||
-    !endDate ||
-    !isDateOnlyString(startDate) ||
-    !isDateOnlyString(endDate) ||
-    startDate > endDate
-  ) {
+  const query = hutLeaderBedOptionsQuerySchema.safeParse({
+    startDate: searchParams.get("startDate") ?? undefined,
+    endDate: searchParams.get("endDate") ?? undefined,
+    lodgeId: searchParams.get("lodgeId") ?? undefined,
+    assignmentId: searchParams.get("assignmentId") ?? undefined,
+  });
+  if (!query.success || query.data.startDate > query.data.endDate) {
     return NextResponse.json(
       { error: "startDate and endDate are required (YYYY-MM-DD, start <= end)" },
       { status: 400 },
     );
   }
-
-  const assignmentId = searchParams.get("assignmentId") ?? undefined;
+  const { startDate, endDate, assignmentId } = query.data;
   // #2678 surface 2: A NAMED ASSIGNMENT FIXES THE LODGE, AND THE SERVER OWNS IT.
   //
   // Same rule as `requested-room/options` (#2673), the booking wizard (#2677)
@@ -87,7 +92,7 @@ export async function GET(req: NextRequest) {
     eleventh screen somebody writes next year fails loudly here rather than
     quietly offering the wrong lodge's beds.
   */
-  const requestedLodgeId = assignmentLodgeId ?? searchParams.get("lodgeId");
+  const requestedLodgeId = assignmentLodgeId ?? query.data.lodgeId;
   if (!requestedLodgeId) {
     return NextResponse.json(
       { error: "A valid lodgeId is required." },
@@ -110,11 +115,7 @@ export async function GET(req: NextRequest) {
   });
 
   // Grouped by room so the picker reads the way the board does.
-  const rooms: Array<{
-    roomId: string;
-    roomName: string;
-    beds: typeof options;
-  }> = [];
+  const rooms: AdminHutLeaderBedRoom[] = [];
   for (const option of options) {
     let room = rooms.find((entry) => entry.roomId === option.roomId);
     if (!room) {
@@ -124,5 +125,5 @@ export async function GET(req: NextRequest) {
     room.beds.push(option);
   }
 
-  return NextResponse.json({ lodgeId, rooms });
+  return connectionJson(req, { lodgeId, rooms }, ADMIN_HUT_LEADER_BED_OPTIONS_CONNECTION_SHAPE);
 }

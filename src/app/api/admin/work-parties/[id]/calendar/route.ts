@@ -4,6 +4,8 @@ import { prisma } from "@/lib/prisma";
 import { logAudit } from "@/lib/audit";
 import { loadEffectiveModuleFlags } from "@/lib/module-settings";
 import { addWorkPartyToCalendar } from "@/lib/work-party-calendar";
+import { ADMIN_WORK_PARTY_CALENDAR_CONNECTION_SHAPE } from "@/lib/connection-shapes/lodge-chores-work-parties";
+import { connectionJson } from "@/lib/mcp-connection-request";
 
 /**
  * "Add to calendar" (#5148): put an existing work party on the Events
@@ -17,7 +19,7 @@ import { addWorkPartyToCalendar } from "@/lib/work-party-calendar";
  * calendar, it regenerates the same entries rather than adding a second set.
  */
 export async function POST(
-  _req: NextRequest,
+  req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params;
@@ -64,5 +66,5 @@ export async function POST(
     metadata: { name: workParty.name, entryCount },
   });
 
-  return NextResponse.json({ entryCount });
+  return connectionJson(req, { entryCount }, ADMIN_WORK_PARTY_CALENDAR_CONNECTION_SHAPE);
 }

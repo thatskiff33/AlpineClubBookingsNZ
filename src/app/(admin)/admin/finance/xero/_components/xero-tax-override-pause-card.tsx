@@ -47,6 +47,7 @@ type FlaggedInvoice = {
 type PauseView = { invoices: FlaggedInvoice[]; problem: string | null }
 
 const API_PATH = "/api/admin/xero/tax-override-pause"
+const CLEAR_PATH = "/api/admin/xero/tax-override-pause/clear"
 
 export function XeroTaxOverridePauseCard() {
   const clubFormat = useClubFormat()
@@ -94,7 +95,7 @@ export function XeroTaxOverridePauseCard() {
     setError(null)
     setForbiddenSave(false)
     try {
-      const response = await fetch(`${API_PATH}/clear`, {
+      const response = await fetch(CLEAR_PATH, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ ids: view.invoices.map((invoice) => invoice.id), note: note.trim(), confirmed: true }),

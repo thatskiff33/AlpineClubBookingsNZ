@@ -15,7 +15,6 @@ import type { CancelBookingResult } from "@/lib/booking-cancel-result";
 import type { CancelPreviewAnswer } from "@/lib/cancel-preview-answer";
 import type { BookingMessageClubTokens } from "@/lib/booking-message-definitions";
 import type { serializePublicCommitteeAssignment } from "@/lib/committee";
-import type { AuditTimelineResponse } from "@/lib/audit-query";
 import {
   completeConnectionShapeFor,
   connectionShapeFor,
@@ -40,6 +39,7 @@ import type { MemberBookingSummary, MemberProfileSummary } from "@/lib/member-se
 import type { MemberNoticeTextView } from "@/lib/member-notice-text";
 import type { AgeTierSettingData } from "@/lib/policies/age-tier";
 import type { WhakapapaCurlData } from "@/lib/whakapapa-report";
+import { WHAKAPAPA_REPORT_SHAPE } from "@/lib/connection-shapes/content-settings";
 
 // --- Stage 1 (ALP-653) ------------------------------------------------------
 
@@ -248,16 +248,6 @@ export const NOTICE_READ_CONNECTION_SHAPE = connectionShapeFor<{ ok: boolean }>(
 
 export const MEMBER_NOTICE_CONNECTION_SHAPE: ConnectionShape = { notice: MEMBER_NOTICE_SHAPE };
 
-/** The member's own timeline: when, what kind and what happened. No request details or metadata. */
-export const MEMBER_ACCOUNT_ACTIVITY_CONNECTION_SHAPE = connectionShapeFor<AuditTimelineResponse>({
-  data: { createdAt: true, category: true, outcome: true, summary: true },
-  total: true,
-  page: true,
-  pageSize: true,
-  totalPages: true,
-  category: true,
-});
-
 /** Names and nights only, as the roster page shows them (`INV-PRIV-017`). */
 export const LODGE_ROSTER_CONNECTION_SHAPE = connectionShapeFor<MemberLodgeRoster>({
   from: true,
@@ -292,35 +282,7 @@ export const COMMITTEE_CONNECTION_SHAPE = connectionShapeFor<{
 
 export const SKIFIELD_REPORT_CONNECTION_SHAPE = connectionShapeFor<
   WhakapapaCurlData & { error: string; stale: boolean }
->({
-  updated: true,
-  roadStatus: { name: true, status: true, wheelRequirements: true, roadContent: true },
-  facilities: { name: true, status: true },
-  foodAndDrink: { name: true, status: true },
-  lifts: { name: true, status: true },
-  conditions: {
-    name: true,
-    temperature: true,
-    wind: true,
-    snowBase: true,
-    snowfall24h: true,
-    snowfall7d: true,
-  },
-  trails: {
-    name: true,
-    trails: { name: true, status: true, groomed: true, difficulty: true, size: true },
-  },
-  visibility: {
-    roadStatus: true,
-    lifts: true,
-    facilities: true,
-    foodAndDrink: true,
-    conditions: true,
-    trails: true,
-  },
-  error: true,
-  stale: true,
-});
+>({ ...WHAKAPAPA_REPORT_SHAPE, error: true, stale: true });
 
 // --- Family and membership (ALP-795) ----------------------------------------
 

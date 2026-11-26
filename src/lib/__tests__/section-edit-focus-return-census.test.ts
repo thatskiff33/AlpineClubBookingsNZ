@@ -64,6 +64,7 @@ const SECTION_EDIT_ADOPTERS = [
   "src/components/admin/school-hut-leader-kinds-card.tsx",
   "src/components/admin/security/officer-two-factor-card.tsx",
   "src/components/admin/security/password-policy-card.tsx",
+  "src/components/admin/subscription-liability-rule-section.tsx",
 ];
 
 const LIST_EDITOR_ADOPTERS = [

@@ -386,6 +386,8 @@ describe("GET", () => {
   it("fork triyder/AlpineClubBookingsNZ#130: says whether the work party on the booking can be removed", async () => {
     h.bookingFindUnique.mockResolvedValue({
       ...ownBooking("member-1"),
+      // Money on the payment: a PAID booking with no payment row is refused (#5338).
+      payment: { id: "p-1", status: "SUCCEEDED", amountCents: 20_000, creditAppliedCents: 0, source: "STRIPE" },
       promoRedemptions: [
         { id: "r-1", applicationOrder: 0, promoCode: { workPartyEvent: { id: "wp-1", name: "Here" } } },
       ],

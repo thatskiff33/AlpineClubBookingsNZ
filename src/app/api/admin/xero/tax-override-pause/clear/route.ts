@@ -9,10 +9,11 @@
  * Nothing is re-sent; the next outbox run reads the pause afresh.
  */
 import { NextResponse } from "next/server";
-import { z } from "zod";
-
+import { xeroTaxOverridePauseClearBodySchema } from "@/lib/admin-xero-sync-schemas";
 import { parseJsonRequestBody } from "@/lib/api-json";
+import { XERO_TAX_OVERRIDES_RESUMED_CONNECTION_SHAPE } from "@/lib/connection-shapes/finance-xero-sync";
 import logger from "@/lib/logger";
+import { connectionJson } from "@/lib/mcp-connection-request";
 import { requireAdmin } from "@/lib/session-guards";
 import {
   clearXeroTaxOverridePause,
@@ -20,21 +21,13 @@ import {
   xeroTaxOverridePauseProblem,
 } from "@/lib/xero-tax-override-safeguard";
 
-const clearSchema = z
-  .object({
-    ids: z.array(z.string().min(1).max(64)).min(1).max(500),
-    note: z.string().trim().min(1).max(1000),
-    confirmed: z.literal(true),
-  })
-  .strict();
-
 export async function POST(request: Request) {
   const guard = await requireAdmin({ permission: { area: "finance", level: "edit" } });
   if (!guard.ok) return guard.response;
 
   const json = await parseJsonRequestBody(request);
   if (!json.ok) return json.response;
-  const parsed = clearSchema.safeParse(json.body);
+  const parsed = xeroTaxOverridePauseClearBodySchema.safeParse(json.body);
   if (!parsed.success) {
     return NextResponse.json(
       { error: "Tick that you have checked these invoices in Xero, and say what you found, before resuming." },
@@ -45,7 +38,11 @@ export async function POST(request: Request) {
   try {
     const { cleared } = await clearXeroTaxOverridePause(guard.session.user.id, parsed.data.ids, parsed.data.note);
     const invoices = await listOpenXeroTaxOverrideMismatches();
-    return NextResponse.json({ cleared, invoices, problem: xeroTaxOverridePauseProblem(invoices.length) });
+    return connectionJson(
+      request,
+      { cleared, invoices, problem: xeroTaxOverridePauseProblem(invoices.length) },
+      XERO_TAX_OVERRIDES_RESUMED_CONNECTION_SHAPE,
+    );
   } catch (error) {
     logger.error({ err: error }, "Could not clear the GST-override pause");
     return NextResponse.json({ error: "Could not resume the GST overrides. Try again." }, { status: 500 });

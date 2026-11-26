@@ -329,8 +329,6 @@ describe("the effective-capacity rule has one home (INV-SSOT-001)", () => {
     "src/app/(admin)/admin/lodge-ops/lodges/[id]/setup/_components/wizard-capacity.tsx",
     "src/app/(admin)/admin/lodge-ops/lodges/_components/add-lodge-capacity-field.tsx",
     "src/app/(admin)/admin/lodge-ops/lodges/page.tsx",
-    "src/app/api/admin/lodges/route.ts",
-    "src/app/api/admin/lodge-settings/route.ts",
     "src/components/admin/lodge-capacity-card.tsx",
     "src/components/admin/lodge-capacity-guidance.tsx",
     // #4199: the bound on a request list that carries a booking's whole party is
@@ -338,6 +336,9 @@ describe("the effective-capacity rule has one home (INV-SSOT-001)", () => {
     "src/lib/booking-guest-stay-range-input.ts",
     // #3407: a config import validates a bundle's capacity with the same bounds.
     "src/lib/config-transfer/categories/lodge-capacity.ts",
+    // ALP-722: the lodge create and lodge settings routes parse with the
+    // schemas here, which the AI app catalogue offers too.
+    "src/lib/admin-lodge-schemas/setup.ts",
     "src/lib/lodge-capacity.ts",
   ] as const;
 

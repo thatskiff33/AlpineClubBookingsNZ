@@ -45,22 +45,18 @@
  */
 import { NextRequest, NextResponse } from "next/server";
 
+import {
+  XERO_ERASED_MEMBER_CONTACTS_CHECKED_CONNECTION_SHAPE,
+  XERO_ERASED_MEMBER_CONTACTS_CONNECTION_SHAPE,
+} from "@/lib/connection-shapes/finance-xero-contacts";
 import logger from "@/lib/logger";
+import { connectionJson } from "@/lib/mcp-connection-request";
 import { requireAdmin } from "@/lib/session-guards";
 import { XeroDailyLimitError } from "@/lib/xero-api-client";
-import {
-  DEFAULT_ERASED_CONTACT_ROW_LIMIT,
-  getErasedMemberXeroContactReview,
-} from "@/lib/xero-erased-member-contact-review";
+import { erasedMemberContactReviewLimit } from "@/lib/xero-contact-review-requests";
+import { getErasedMemberXeroContactReview } from "@/lib/xero-erased-member-contact-review";
 import { checkErasedMemberContactStatuses } from "@/lib/xero-erased-member-contact-status-check";
 import { XeroResyncUnavailableError } from "@/lib/xero-mismatch-resync";
-
-function resolveLimit(raw: string | null): number {
-  const parsed = raw === null ? DEFAULT_ERASED_CONTACT_ROW_LIMIT : Number(raw);
-  return Number.isInteger(parsed) && parsed >= 1 && parsed <= 1000
-    ? parsed
-    : DEFAULT_ERASED_CONTACT_ROW_LIMIT;
-}
 
 export async function GET(request: NextRequest) {
   const guard = await requireAdmin({
@@ -69,9 +65,9 @@ export async function GET(request: NextRequest) {
   if (!guard.ok) return guard.response;
 
   const review = await getErasedMemberXeroContactReview({
-    limit: resolveLimit(request.nextUrl.searchParams.get("limit")),
+    limit: erasedMemberContactReviewLimit(request.nextUrl.searchParams),
   });
-  return NextResponse.json({ review });
+  return connectionJson(request, { review }, XERO_ERASED_MEMBER_CONTACTS_CONNECTION_SHAPE);
 }
 
 export async function POST(request: NextRequest) {
@@ -83,7 +79,7 @@ export async function POST(request: NextRequest) {
   });
   if (!guard.ok) return guard.response;
 
-  const limit = resolveLimit(request.nextUrl.searchParams.get("limit"));
+  const limit = erasedMemberContactReviewLimit(request.nextUrl.searchParams);
 
   try {
     /*
@@ -96,7 +92,7 @@ export async function POST(request: NextRequest) {
       before.rows.map((row) => row.xeroContactId),
     );
     const review = await getErasedMemberXeroContactReview({ limit });
-    return NextResponse.json({ review, check });
+    return connectionJson(request, { review, check }, XERO_ERASED_MEMBER_CONTACTS_CHECKED_CONNECTION_SHAPE);
   } catch (error) {
     if (error instanceof XeroResyncUnavailableError) {
       return NextResponse.json({ error: error.message }, { status: error.status });

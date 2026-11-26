@@ -105,6 +105,7 @@ import {
 import { formatDateOnly } from "@/lib/date-only";
 import { recordedPrimaryInvoiceSettlement } from "@/lib/booking-primary-invoice-claim";
 import { canonicalRefundNoteCandidates } from "@/lib/xero-refund-note-status";
+import { addRefundCreditNoteAmountFindings } from "./xero-booking-repair-refund-note-coverage";
 import {
   decideLateCapture,
   keptLateCaptureInvoiceAsked,
@@ -1497,31 +1498,8 @@ export function classifyBookingContext(
   if (payment) addUnsettledRefundCreditNoteFindings(findings, actionMap, booking.id, context.paymentRefundPaymentLinks, paymentOperations, paymentLinks);
   addRefundRequestNoteNotQueuedFindings({ findings, actionMap, context }); // #4231
   addAppliedCreditFindings(findings, actionMap, context); // #4220: and the early warning
-  if (payment && refundCreditNote) {
-    const refundAmountCents = getCashCancellationRefundCandidateCents(booking, paidBackRefundRequestCents(context), context.modificationOperationsById);
-    if (refundAmountCents !== null && refundAmountCents > 0) {
-      addXeroAmountMismatchFinding({
-        findings,
-        actionMap,
-        bookingId: booking.id,
-        expectedAmountCents: refundAmountCents,
-        resolved: refundCreditNote,
-        links: paymentLinks,
-        operations: paymentOperations,
-        xeroObjectType: "CREDIT_NOTE",
-        role: "REFUND_CREDIT_NOTE",
-        entityType: "CREDIT_NOTE",
-        operationType: "CREATE",
-        summary:
-          "The refund credit-note amount evidence does not match the local cash refund amount.",
-        details: {
-          paymentId: payment.id,
-          refundAmountCents,
-          paymentRefundedAmountCents: payment.refundedAmountCents,
-        },
-      });
-    }
-  }
+  // #4328 (`INV-ADDPAY-043`): a bank payment's several live notes are judged together.
+  if (payment && refundCreditNote) addRefundCreditNoteAmountFindings({ findings, actionMap, context, refundCreditNote });
 
   // #3639 review F6 (the #3535 composition): cash that arrived after an IB hold
   // was released retires the pending clearing note (`retirePendingClearingNote`

@@ -12,10 +12,14 @@ vi.mock("@/lib/xero-cash-credits", () => ({
   listXeroCashCreditQueue: h.list,
   XeroCashCreditReadError: class XeroCashCreditReadError extends Error {},
 }));
-import { GET, POST } from "@/app/api/admin/xero/cash-credits/route";
+import { NextRequest } from "next/server";
+import { GET as getQueue, POST as postRefresh } from "@/app/api/admin/xero/cash-credits/route";
 import { XeroCashCreditReadError } from "@/lib/xero-cash-credits";
 
 const queue = { refreshedAt: null, rows: [] };
+const CASH_CREDITS_URL = "http://localhost/api/admin/xero/cash-credits";
+const GET = () => getQueue(new NextRequest(CASH_CREDITS_URL));
+const POST = () => postRefresh(new NextRequest(CASH_CREDITS_URL, { method: "POST" }));
 
 describe("Xero cash-credit queue route (#5204)", () => {
   beforeEach(() => {

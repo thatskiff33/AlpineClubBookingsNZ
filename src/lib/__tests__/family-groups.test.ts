@@ -159,7 +159,7 @@ describe("Admin Family Groups API", () => {
     it("returns 403 for non-admin", async () => {
       mockedAuth.mockResolvedValue(memberSession);
       const { GET } = await import("@/app/api/admin/family-groups/route");
-      const res = await GET();
+      const res = await GET(makeReq("/api/admin/family-groups", "GET"));
       expect(res.status).toBe(403);
     });
 
@@ -182,7 +182,7 @@ describe("Admin Family Groups API", () => {
       ] as any);
 
       const { GET } = await import("@/app/api/admin/family-groups/route");
-      const res = await GET();
+      const res = await GET(makeReq("/api/admin/family-groups", "GET"));
       expect(res.status).toBe(200);
       const body = await res.json();
       expect(body.familyGroups).toHaveLength(1);
@@ -207,7 +207,7 @@ describe("Admin Family Groups API", () => {
       ] as any);
 
       const { GET } = await import("@/app/api/admin/family-groups/route");
-      const res = await GET();
+      const res = await GET(makeReq("/api/admin/family-groups", "GET"));
       expect(res.status).toBe(200);
       const body = await res.json();
       expect(body.familyGroups[0].memberCount).toBe(0);
@@ -1254,7 +1254,7 @@ describe("Admin Family Group Join Requests", () => {
         response: new Response(JSON.stringify({ error: "Unauthorized" }), { status: 401 }),
       });
       const { GET } = await import("@/app/api/admin/family-groups/requests/route");
-      const res = await GET();
+      const res = await GET(makeReq("/api/admin/family-groups/requests", "GET"));
       expect(res.status).toBe(401);
     });
 
@@ -1270,7 +1270,7 @@ describe("Admin Family Group Join Requests", () => {
       ] as any);
 
       const { GET } = await import("@/app/api/admin/family-groups/requests/route");
-      const res = await GET();
+      const res = await GET(makeReq("/api/admin/family-groups/requests", "GET"));
       expect(res.status).toBe(200);
       const body = await res.json();
       expect(body.requests).toHaveLength(1);
@@ -1315,7 +1315,7 @@ describe("Admin Family Group Join Requests", () => {
       ] as any);
 
       const { GET } = await import("@/app/api/admin/family-groups/requests/route");
-      const res = await GET();
+      const res = await GET(makeReq("/api/admin/family-groups/requests", "GET"));
       expect(res.status).toBe(200);
 
       const body = await res.json();
@@ -1357,7 +1357,7 @@ describe("Admin Family Group Join Requests", () => {
       mockedPrisma.member.findMany.mockResolvedValue([] as any);
 
       const { GET } = await import("@/app/api/admin/family-groups/requests/route");
-      const res = await GET();
+      const res = await GET(makeReq("/api/admin/family-groups/requests", "GET"));
       expect(res.status).toBe(200);
 
       const body = await res.json();

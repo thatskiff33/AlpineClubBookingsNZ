@@ -1499,6 +1499,27 @@ inside Testing Library's single drain. A loaded runner lost that race on `main`
 `render`. It first checks that "Loading…" is on screen, so it cannot pass
 without waiting if that copy changes.
 
+### A control disabled while busy loses focus on jsdom's own clock
+
+jsdom 31 runs the HTML "focus fixup" on a real 16 ms rendering timer, not on
+React's schedule. If that timer fires while the focused button is `disabled`
+for its request, focus drops to `<body>` and nothing returns it. A browser does
+the same, so this is a real keyboard and screen-reader defect, not a test
+artefact. An instant fetch mock usually replies before the tick, so the test
+passes; a loaded CI runner does not, and the guest payment link case failed
+that way (#5442).
+
+- Fix the component, not the test: `useActionFocusReturn()` in
+  `src/hooks/use-scroll-to-feedback.ts`, `capture()` before the busy flag is
+  set and `release()` in the `finally` that clears it. Focus goes back only if
+  it fell to the page, so a failure alert that took it keeps it.
+- Wait for the outcome; never assert it on the line after `act`. The reply
+  may still be in flight: `await waitFor(() => expect(status).toHaveTextContent(text))`.
+- Prove it with a slow-reply variant. `action-outcome-announcements.test.tsx`
+  runs every case against an instant reply and one delayed 50 ms of real time
+  (`REPLY_SPEEDS`), more than three ticks. The slow variant failed exactly the
+  two surfaces with the defect before the fix.
+
 ### Do not make the component's effect a layout effect
 
 It looks like the tidy fix — focus in the same commit as the message, no window

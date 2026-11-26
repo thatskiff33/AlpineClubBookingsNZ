@@ -411,7 +411,7 @@ describe("GET /api/admin/family-groups — the ROUTINE overview (#2568)", () => 
     ] as never);
 
     const { GET } = await import("@/app/api/admin/family-groups/route");
-    const body = await (await GET()).json();
+    const body = await (await GET(new Request("http://localhost/api/admin/family-groups"))).json();
 
     expect(body.familyGroups[0].members).toHaveLength(1);
     expect(serialise(body)).not.toContain("ageLabel");

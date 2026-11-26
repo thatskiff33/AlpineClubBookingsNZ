@@ -1,20 +1,12 @@
 import { NextResponse } from "next/server";
-import { z } from "zod";
 import { requireAdmin } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma";
 import { parseJsonRequestBody } from "@/lib/api-json";
 import { createAuditLog } from "@/lib/audit";
 import { resolveOptionalActiveLodgeId } from "@/lib/lodges";
-
-export const MAX_BULK_LOCKERS = 100;
-
-const bulkSchema = z
-  .object({
-    count: z.coerce.number().int().min(1).max(MAX_BULK_LOCKERS),
-    namePrefix: z.string().trim().min(1).max(80).optional(),
-    lodgeId: z.string().min(1).optional(),
-  })
-  .strict();
+import { bulkCreateLockersSchema } from "@/lib/admin-membership-api/lockers";
+import { connectionJson } from "@/lib/mcp-connection-request";
+import { LOCKER_BULK_CREATED_CONNECTION_SHAPE } from "@/lib/connection-shapes/membership-lockers";
 
 /**
  * POST /api/admin/lockers/bulk
@@ -33,7 +25,7 @@ export async function POST(request: Request) {
   const json = await parseJsonRequestBody(request);
   if (!json.ok) return json.response;
 
-  const parsed = bulkSchema.safeParse(json.body);
+  const parsed = bulkCreateLockersSchema.safeParse(json.body);
   if (!parsed.success) {
     return NextResponse.json(
       { error: "Invalid input", details: parsed.error.flatten() },
@@ -96,5 +88,10 @@ export async function POST(request: Request) {
     return names.length;
   });
 
-  return NextResponse.json({ createdCount: created }, { status: 201 });
+  return connectionJson(
+    request,
+    { createdCount: created },
+    LOCKER_BULK_CREATED_CONNECTION_SHAPE,
+    { status: 201 },
+  );
 }

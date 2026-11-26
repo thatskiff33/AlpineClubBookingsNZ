@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
 import { parseJsonRequestBody } from "@/lib/api-json";
-import { z } from "zod";
 
 import { logAudit } from "@/lib/audit";
 import { ClubPostValidationError } from "@/lib/club-posts";
@@ -20,6 +19,12 @@ import {
 import logger from "@/lib/logger";
 import { loadEffectiveModuleFlags } from "@/lib/module-settings";
 import { requireAdmin } from "@/lib/session-guards";
+import { moderateClubPostSchema } from "@/lib/admin-membership-api/notices";
+import { connectionJson } from "@/lib/mcp-connection-request";
+import {
+  CLUB_POST_MODERATED_CONNECTION_SHAPE,
+  CLUB_POST_REMOVED_CONNECTION_SHAPE,
+} from "@/lib/connection-shapes/membership-notices";
 
 /**
  * PATCH /api/admin/club-posts/:id — hide, unhide, or rewrite a post; withdraw
@@ -33,18 +38,6 @@ import { requireAdmin } from "@/lib/session-guards";
  * The module is re-checked before the permission guard, so an off module cannot
  * be probed by the difference between a 403 and a 404.
  */
-
-const patchSchema = z
-  .object({
-    hidden: z.boolean().optional(),
-    content: z.string().optional(),
-    withdrawSharedCopy: z.literal(true).optional(),
-    dismissShareProblem: z.literal(true).optional(),
-  })
-  .strict()
-  .refine((value) => Object.keys(value).length > 0, {
-    message: "No change was supplied.",
-  });
 
 async function guard() {
   const modules = await loadEffectiveModuleFlags();
@@ -93,7 +86,7 @@ export async function PATCH(
   const jsonBody = await parseJsonRequestBody(request);
   if (!jsonBody.ok) return jsonBody.response;
   const body = jsonBody.body;
-  const parsed = patchSchema.safeParse(body);
+  const parsed = moderateClubPostSchema.safeParse(body);
   if (!parsed.success) {
     return NextResponse.json(
       { error: "That change could not be read." },
@@ -116,7 +109,7 @@ export async function PATCH(
         // the same reasons a post is removed.
         details: `Withdrew a club message board post's copy from the central server (${serverPostIds.join(", ")}).`,
       });
-      return NextResponse.json({ status: "withdrawn" });
+      return connectionJson(request, { status: "withdrawn" }, CLUB_POST_MODERATED_CONNECTION_SHAPE);
     }
 
     if (parsed.data.dismissShareProblem) {
@@ -129,7 +122,7 @@ export async function PATCH(
         entityId: id,
         details: "Marked a club message board post's unrecorded share as dealt with.",
       });
-      return NextResponse.json({ status: "dismissed" });
+      return connectionJson(request, { status: "dismissed" }, CLUB_POST_MODERATED_CONNECTION_SHAPE);
     }
 
     if (parsed.data.content !== undefined) {
@@ -148,7 +141,11 @@ export async function PATCH(
         // write the audit row is the only place it still exists.
         details: `Edited a club message board post. Original text: ${before}`,
       });
-      return NextResponse.json({ status: "edited", length: after.length });
+      return connectionJson(
+        request,
+        { status: "edited", length: after.length },
+        CLUB_POST_MODERATED_CONNECTION_SHAPE,
+      );
     }
 
     if (parsed.data.hidden !== undefined) {
@@ -163,9 +160,11 @@ export async function PATCH(
           ? "Hid a club message board post from members."
           : "Restored a club message board post to members.",
       });
-      return NextResponse.json({
-        status: parsed.data.hidden ? "hidden" : "visible",
-      });
+      return connectionJson(
+        request,
+        { status: parsed.data.hidden ? "hidden" : "visible" },
+        CLUB_POST_MODERATED_CONNECTION_SHAPE,
+      );
     }
 
     return NextResponse.json(
@@ -203,7 +202,7 @@ export async function PATCH(
 }
 
 export async function DELETE(
-  _request: NextRequest,
+  request: NextRequest,
   { params }: { params: Promise<{ id: string }> },
 ) {
   const gate = await guard();
@@ -224,7 +223,7 @@ export async function DELETE(
       // outlives the post would defeat the removal.
       details: "Removed a club message board post.",
     });
-    return NextResponse.json({ status: "removed" });
+    return connectionJson(request, { status: "removed" }, CLUB_POST_REMOVED_CONNECTION_SHAPE);
   } catch (error) {
     const known = errorResponse(error);
     if (known) return known;

@@ -1,6 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 
+import {
+  maintenanceSignActiveBodySchema,
+  maintenanceSignLodgeIdSchema,
+} from "@/lib/admin-lodge-schemas/maintenance";
 import { getAppBaseUrl } from "@/lib/app-url";
 import { logAudit } from "@/lib/audit";
 import { getClientIp } from "@/lib/rate-limit-http";
@@ -14,6 +18,11 @@ import {
 import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/session-guards";
 import { parseJsonRequestBody } from "@/lib/api-json";
+import {
+  ADMIN_MAINTENANCE_SIGN_LIST_CONNECTION_SHAPE,
+  ADMIN_MAINTENANCE_SIGN_SWITCHED_CONNECTION_SHAPE,
+} from "@/lib/connection-shapes/lodge-maintenance";
+import { connectionJson } from "@/lib/mcp-connection-request";
 
 /**
  * QR sign management (#2780). Lodge Operations `view`/`edit`.
@@ -36,12 +45,13 @@ import { parseJsonRequestBody } from "@/lib/api-json";
  * a leaked sign has been given the wrong tool.
  */
 
-const postSchema = z.object({ lodgeId: z.string().trim().min(1).max(64) }).strict();
-const patchSchema = z
-  .object({ lodgeId: z.string().trim().min(1).max(64), active: z.boolean() })
-  .strict();
+// POST (mint or rotate) answers the sign's bearer link once, so it is never an
+// AI app action and keeps its schema here. The PATCH schema lives in
+// admin-lodge-schemas/maintenance.ts so the action
+// `set_maintenance_report_sign_active` offers the same fields (ALP-722).
+const postSchema = z.object({ lodgeId: maintenanceSignLodgeIdSchema }).strict();
 
-export async function GET() {
+export async function GET(request: Request) {
   const admin = await requireAdmin({
     permission: { area: "lodge", level: "view" },
   });
@@ -64,7 +74,8 @@ export async function GET() {
     })),
   );
 
-  return NextResponse.json({ signs });
+  // No token, hash or sign link exists here to send (ALP-722).
+  return connectionJson(request, { signs }, ADMIN_MAINTENANCE_SIGN_LIST_CONNECTION_SHAPE);
 }
 
 export async function POST(request: NextRequest) {
@@ -143,7 +154,7 @@ export async function PATCH(request: NextRequest) {
   if (!jsonBody.ok) return jsonBody.response;
   const body = jsonBody.body;
 
-  const parsed = patchSchema.safeParse(body);
+  const parsed = maintenanceSignActiveBodySchema.safeParse(body);
   if (!parsed.success) {
     return NextResponse.json({ error: "Invalid input" }, { status: 400 });
   }
@@ -176,5 +187,5 @@ export async function PATCH(request: NextRequest) {
     outcome: "success",
   });
 
-  return NextResponse.json({ ok: true });
+  return connectionJson(request, { ok: true }, ADMIN_MAINTENANCE_SIGN_SWITCHED_CONNECTION_SHAPE);
 }

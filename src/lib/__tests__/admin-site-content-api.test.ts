@@ -104,20 +104,20 @@ beforeEach(() => {
 describe("GET /api/admin/site-content", () => {
   it("denies an unauthenticated request", async () => {
     mocks.auth.mockResolvedValue(null);
-    const response = await GET();
+    const response = await GET(new NextRequest("http://localhost/api/admin/site-content"));
     expect(response.status).toBe(401);
   });
 
   it("denies a non-admin member", async () => {
     mocks.auth.mockResolvedValue(memberSession);
-    const response = await GET();
+    const response = await GET(new NextRequest("http://localhost/api/admin/site-content"));
     expect(response.status).toBe(403);
     expect(mocks.siteContentFindMany).not.toHaveBeenCalled();
   });
 
   it("allows a content:view-only admin to read (GET requires content:view)", async () => {
     mocks.auth.mockResolvedValue(contentViewerSession);
-    const response = await GET();
+    const response = await GET(new NextRequest("http://localhost/api/admin/site-content"));
     expect(response.status).toBe(200);
   });
 
@@ -125,7 +125,7 @@ describe("GET /api/admin/site-content", () => {
     mocks.auth.mockResolvedValue(adminSession);
     mocks.siteContentFindMany.mockResolvedValue([]);
 
-    const response = await GET();
+    const response = await GET(new NextRequest("http://localhost/api/admin/site-content"));
     expect(response.status).toBe(200);
     const body = await response.json();
     expect(
@@ -160,7 +160,7 @@ describe("GET /api/admin/site-content", () => {
       },
     ]);
 
-    const response = await GET();
+    const response = await GET(new NextRequest("http://localhost/api/admin/site-content"));
     const body = await response.json();
 
     expect(body.documents[2].contentHtml).toContain("{{facebook-url}}");
@@ -176,7 +176,7 @@ describe("GET /api/admin/site-content", () => {
       },
     ]);
 
-    const response = await GET();
+    const response = await GET(new NextRequest("http://localhost/api/admin/site-content"));
     const body = await response.json();
     expect(body.documents[0].contentHtml).toBe("<p>Hi</p>");
     expect(body.documents[0].updatedAt).toBe("2026-07-01T00:00:00.000Z");
@@ -192,7 +192,7 @@ describe("GET /api/admin/site-content", () => {
       },
     ]);
 
-    const response = await GET();
+    const response = await GET(new NextRequest("http://localhost/api/admin/site-content"));
     const body = await response.json();
     expect(body.documents[1].key).toBe("FOOTER_QUICK_LINKS");
     expect(body.documents[1].contentHtml).toBe("");

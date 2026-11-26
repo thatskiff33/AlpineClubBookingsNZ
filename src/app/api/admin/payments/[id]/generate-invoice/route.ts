@@ -1,11 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
-import { z } from "zod";
 import { generateAdminPaymentInvoice } from "@/lib/admin-payment-invoice-service";
+import {
+  PAYMENT_INVOICE_GENERATED_CONNECTION_SHAPE,
+} from "@/lib/connection-shapes/finance-payments";
+import { connectionJson } from "@/lib/mcp-connection-request";
+import { routeIdParamsSchema } from "@/lib/route-id-params";
 import { requireAdmin } from "@/lib/session-guards";
-
-const paramsSchema = z.object({
-  id: z.string().min(1),
-});
 
 function forbiddenResponse() {
   return NextResponse.json({ error: "Forbidden" }, { status: 403 });
@@ -16,7 +16,7 @@ function forbiddenResponse() {
  * Generates a Xero invoice for a payment that doesn't have one.
  */
 export async function POST(
-  _request: NextRequest,
+  request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   const guard = await requireAdmin({
@@ -26,7 +26,7 @@ export async function POST(
   });
   if (!guard.ok) return guard.response;
 
-  const parsed = paramsSchema.safeParse(await params);
+  const parsed = routeIdParamsSchema.safeParse(await params);
   if (!parsed.success) {
     return NextResponse.json(
       { error: "Invalid route parameters", details: parsed.error.flatten() },
@@ -38,5 +38,5 @@ export async function POST(
     paymentId: parsed.data.id,
     adminMemberId: guard.session.user.id,
   });
-  return NextResponse.json(result.body, result.init);
+  return connectionJson(request, result.body, PAYMENT_INVOICE_GENERATED_CONNECTION_SHAPE, result.init);
 }

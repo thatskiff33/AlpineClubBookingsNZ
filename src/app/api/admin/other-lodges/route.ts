@@ -1,4 +1,3 @@
-import { NextResponse } from "next/server";
 import {
   isNotOnCentralServer,
   otherLodgeOrderBy,
@@ -13,6 +12,8 @@ import { prisma } from "@/lib/prisma";
 import { loadServerNzSettings } from "@/lib/servernz-settings";
 import { readStoredServerVersion } from "@/lib/servernz-version-check";
 import { requireAdmin } from "@/lib/session-guards";
+import { ADMIN_OTHER_LODGE_LIST_CONNECTION_SHAPE } from "@/lib/connection-shapes/lodge-setup";
+import { connectionJson } from "@/lib/mcp-connection-request";
 
 // READ ONLY. The create handler that lived here was removed by triyder/AlpineClubBookingsNZ#52: a site
 // changes only the lodge(s) the central server says it owns, and those arrive
@@ -51,7 +52,7 @@ async function unkeyedLodgeReferences(
   );
 }
 
-export async function GET() {
+export async function GET(request: Request) {
   const guard = await requireAdmin({
     permission: { area: "lodge", level: "view" },
   });
@@ -86,5 +87,6 @@ export async function GET() {
     ownedLodgeNames: owned === null ? null : owned.map((l) => l.name),
     serverVersionStatus: version.status,
   };
-  return NextResponse.json(body);
+  // A connection is sent no booking officer's email address or phone (ALP-722).
+  return connectionJson(request, body, ADMIN_OTHER_LODGE_LIST_CONNECTION_SHAPE);
 }

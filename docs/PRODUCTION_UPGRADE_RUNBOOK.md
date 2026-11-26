@@ -66,10 +66,10 @@ Choosing a rule later clears the notes for the current season only; a record
 for another season keeps its note.
 Do not choose a liability rule until the old colour has fully drained: an
 old-colour billing run does not know the rule and would bill by the old one.
-Before choosing a rule afterwards, read the impact list
-(`GET /api/admin/membership-lockout-settings/liability-impact`) so you know who
-the choice will start or stop charging. Choosing needs Membership edit and
-Finance edit.
+Choose it afterwards on Admin → Subscription lockout → **Who owes a
+subscription**: its preview shows who the choice will start or stop charging,
+and which records it resets, before it can be saved. Choosing needs Membership
+edit and Finance edit.
 
 ---
 

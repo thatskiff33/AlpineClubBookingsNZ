@@ -1,24 +1,20 @@
 import { revalidateAdminPage } from "@/lib/admin-page-revalidation";
 import { NextRequest, NextResponse } from "next/server";
-import { z } from "zod";
 import { parseJsonRequestBody } from "@/lib/api-json";
+import { bankRefundVoidAnsweredBodySchema } from "@/lib/bank-refund-void-answered-body";
+import {
+  BANK_REFUND_VOID_ANSWERED_CONNECTION_SHAPE,
+} from "@/lib/connection-shapes/finance-payments";
+import { connectionJson } from "@/lib/mcp-connection-request";
 import logger from "@/lib/logger";
 import { requireAdmin } from "@/lib/session-guards";
 import { transactionContendedResponse } from "@/lib/transaction-contended-response";
-import { MANUAL_PAYMENT_NOTE_MAX } from "@/lib/manual-payment-note";
 import { normaliseManualPaymentNote } from "@/lib/manual-subscription-payment";
 import { isPostgresLockNotAvailable } from "@/lib/prisma-errors";
 import {
   BankRefundVoidAnswerRefusal,
   markUnmatchedBankRefundVoidAnswered,
 } from "@/lib/bank-refund-void-follow-up";
-
-const bodySchema = z
-  .object({
-    note: z.string().max(MANUAL_PAYMENT_NOTE_MAX),
-    confirmed: z.literal(true),
-  })
-  .strict();
 
 /**
  * POST /api/admin/payments/bank-refund-voids/[id]/answered
@@ -46,7 +42,7 @@ export async function POST(
   });
   if (!jsonBody.ok) return jsonBody.response;
   const body = jsonBody.body;
-  const parsed = bodySchema.safeParse(body);
+  const parsed = bankRefundVoidAnsweredBodySchema.safeParse(body);
   if (!parsed.success) {
     return NextResponse.json(
       { error: "Invalid request.", details: parsed.error.flatten() },
@@ -65,7 +61,7 @@ export async function POST(
       actingMemberId: guard.session.user.id,
     });
     revalidateAdminPage("stuck-states");
-    return NextResponse.json({ success: true, ...result });
+    return connectionJson(request, { success: true, ...result }, BANK_REFUND_VOID_ANSWERED_CONNECTION_SHAPE);
   } catch (error) {
     if (error instanceof BankRefundVoidAnswerRefusal) {
       return NextResponse.json({ error: error.message }, { status: error.status });

@@ -1,5 +1,7 @@
 import { NextResponse } from "next/server";
 import { logAudit } from "@/lib/audit";
+import { XERO_LINK_MAINTENANCE_CONNECTION_SHAPE } from "@/lib/connection-shapes/finance-xero-sync";
+import { connectionJson } from "@/lib/mcp-connection-request";
 import { requireAdmin } from "@/lib/session-guards";
 import {
   backfillHistoricalXeroObjectLinks,
@@ -7,7 +9,7 @@ import {
 } from "@/lib/xero-hardening";
 import logger from "@/lib/logger";
 
-export async function POST() {
+export async function POST(request: Request) {
   const guard = await requireAdmin();
   if (!guard.ok) return guard.response;
   const session = guard.session;
@@ -31,13 +33,13 @@ export async function POST() {
 
     // A completed run answers 200 so the panel can show what it did; a partial
     // heal failure comes back as `warning`, which the panel styles as one.
-    return NextResponse.json({
+    return connectionJson(request, {
       ok: failed === 0,
       backfill,
       cleanup,
       message: `Backfilled ${plural(backfill.totals.createdLinks, "missing canonical Xero link")}, ${cleanupSummary}, and preserved ${plural(cleanup.preservedStripeRefundCreditNoteLinks, "live per-refund note link")} (#2901, #3880, #4161).`,
       ...(warning ? { warning } : {}),
-    });
+    }, XERO_LINK_MAINTENANCE_CONNECTION_SHAPE);
   } catch (error) {
     logger.error({ err: error, adminMemberId: session.user.id }, "Failed to run Xero link ledger maintenance");
     return NextResponse.json(

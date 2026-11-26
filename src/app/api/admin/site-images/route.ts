@@ -2,6 +2,8 @@ import { promises as fs } from "node:fs";
 import path from "node:path";
 import { NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/session-guards";
+import { connectionJson } from "@/lib/mcp-connection-request";
+import { SITE_IMAGES_CONNECTION_SHAPE } from "@/lib/connection-shapes/content-images";
 
 const IMAGE_EXTENSIONS = new Set([
   ".png",
@@ -61,7 +63,7 @@ async function listImagesRecursively(
   return images;
 }
 
-export async function GET() {
+export async function GET(request: Request) {
   const guard = await requireAdmin(adminGuardOptions);
   if (!guard.ok) {
     return guard.response;
@@ -72,12 +74,14 @@ export async function GET() {
     const images = await listImagesRecursively(imagesDir);
     images.sort((a, b) => a.localeCompare(b));
 
-    return NextResponse.json({
-      images: images.map((webPath) => `/${SITE_IMAGES_DIR}${webPath}`),
-    });
+    return connectionJson(
+      request,
+      { images: images.map((webPath) => `/${SITE_IMAGES_DIR}${webPath}`) },
+      SITE_IMAGES_CONNECTION_SHAPE,
+    );
   } catch (error) {
     if ((error as NodeJS.ErrnoException)?.code === "ENOENT") {
-      return NextResponse.json({ images: [] });
+      return connectionJson(request, { images: [] }, SITE_IMAGES_CONNECTION_SHAPE);
     }
     console.error("Failed to list site images", error);
     return NextResponse.json(

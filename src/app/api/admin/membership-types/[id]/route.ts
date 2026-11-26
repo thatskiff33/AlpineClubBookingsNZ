@@ -1,7 +1,6 @@
 import { NextResponse } from "next/server";
 import { revalidatePath } from "next/cache";
 import { Prisma, type AgeTier } from "@prisma/client";
-import { z } from "zod";
 import {
   isOrganisationMember,
   resolveAccessRoleTokens,
@@ -13,9 +12,6 @@ import {
 } from "@/lib/audit";
 import { shallowChangedFields } from "@/lib/audit-changed-fields";
 import {
-  MEMBERSHIP_TYPE_BOOKING_BEHAVIORS,
-  MEMBERSHIP_TYPE_AGE_TIERS,
-  MEMBERSHIP_TYPE_SUBSCRIPTION_BEHAVIORS,
   canonicalKeyResolvedRateHolderBookingBehavior,
   membershipTypeForcedEditOffendingTiers,
   normalizeMembershipTypeAgeTiers,
@@ -28,6 +24,10 @@ import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/session-guards";
 import { clubTimeZone } from "@/lib/club-time/server";
 import { clubSeasonYear } from "@/lib/financial-year";
+import { membershipTypePatchSchema } from "@/lib/admin-membership-api/config-structure";
+import { connectionJson } from "@/lib/mcp-connection-request";
+import { CONFIG_OK_CONNECTION_SHAPE, MEMBERSHIP_TYPE_CONNECTION_SHAPE } from "@/lib/connection-shapes/membership-config";
+import { routeIdParamsSchema } from "@/lib/route-id-params";
 
 const membershipTypeSelect = {
   id: true,
@@ -60,26 +60,6 @@ class ForcedEditConflictError extends Error {
     this.name = "ForcedEditConflictError";
   }
 }
-
-const paramsSchema = z.object({
-  id: z.string().min(1),
-});
-
-const patchSchema = z
-  .object({
-    name: z.string().trim().min(1).max(120).optional(),
-    description: z.string().trim().max(1000).nullable().optional(),
-    publicDescription: z.string().trim().max(4000).nullable().optional(),
-    publiclyListed: z.boolean().optional(),
-    bookingBehavior: z.enum(MEMBERSHIP_TYPE_BOOKING_BEHAVIORS).optional(),
-    subscriptionBehavior: z
-      .enum(MEMBERSHIP_TYPE_SUBSCRIPTION_BEHAVIORS)
-      .optional(),
-    isActive: z.boolean().optional(),
-    sortOrder: z.number().int().min(0).max(100000).optional(),
-    allowedAgeTiers: z.array(z.enum(MEMBERSHIP_TYPE_AGE_TIERS)).optional(),
-  })
-  .strict();
 
 function auditActionForUpdate(
   before: { isActive: boolean },
@@ -115,7 +95,7 @@ export async function PATCH(
   }
   const session = guard.session;
 
-  const parsedParams = paramsSchema.safeParse(await params);
+  const parsedParams = routeIdParamsSchema.safeParse(await params);
   if (!parsedParams.success) {
     return NextResponse.json(
       { error: "Invalid route parameters", details: parsedParams.error.flatten() },
@@ -129,7 +109,7 @@ export async function PATCH(
   if (!jsonBody.ok) return jsonBody.response;
   const body = jsonBody.body;
 
-  const parsed = patchSchema.safeParse(body);
+  const parsed = membershipTypePatchSchema.safeParse(body);
   if (!parsed.success) {
     return NextResponse.json(
       { error: "Invalid input", details: parsed.error.flatten() },
@@ -384,9 +364,11 @@ export async function PATCH(
   }
   revalidatePath("/", "layout");
 
-  return NextResponse.json({
-    membershipType: serializeMembershipType(updated),
-  });
+  return connectionJson(
+    request,
+    { membershipType: serializeMembershipType(updated) },
+    MEMBERSHIP_TYPE_CONNECTION_SHAPE,
+  );
 }
 
 export async function DELETE(
@@ -401,7 +383,7 @@ export async function DELETE(
   }
   const session = guard.session;
 
-  const parsedParams = paramsSchema.safeParse(await params);
+  const parsedParams = routeIdParamsSchema.safeParse(await params);
   if (!parsedParams.success) {
     return NextResponse.json(
       { error: "Invalid route parameters", details: parsedParams.error.flatten() },
@@ -464,5 +446,5 @@ export async function DELETE(
   });
   revalidatePath("/", "layout");
 
-  return NextResponse.json({ ok: true });
+  return connectionJson(request, { ok: true }, CONFIG_OK_CONNECTION_SHAPE);
 }

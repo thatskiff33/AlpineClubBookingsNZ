@@ -36,12 +36,30 @@ export const MCP_PERMANENT_EXCLUSION_REASONS = {
     "Records the member's own declaration, consent or acknowledgement, which they make themselves on the website.",
   "public-visitor": "A form for visitors who are not signed in; a member's AI app has no use for it.",
   "website-flow": "Serves the website's own screens and steps, not something a member asks for.",
-  "access-secrets": "Shows lodge door codes or other access details, which stay on the website.",
+  "access-secrets":
+    "Shows or changes lodge door codes, sign or meeting links that let someone in, or other access details, which stay on the website.",
   "site-helper": "The website's own help assistant; the member's AI app answers them itself.",
   "privacy-posture":
     "Decides who may browse members' names, which an officer chooses on the website, never an AI app.",
   "unread-value":
     "Changes a value an AI app is never shown, such as a guest's allergy needs, so the app would be writing blind.",
+  // Officer reasons (ALP-720 onwards).
+  "changes-charges":
+    "Changes what a member owes or is invoiced, or previews such a change for an officer to confirm, which an officer reviews and confirms on the website.",
+  "ends-membership":
+    "Decides a request to archive, delete or cancel someone's membership, which cannot be undone from an app and is decided on the website.",
+  "sign-in-access":
+    "Sends someone a sign-in link or changes who signs in with an email address, which stays on the website.",
+  "mass-message": "Emails many members at once, which an officer composes, checks and sends on the website.",
+  "privacy-request":
+    "Part of answering a person's request for their own data, which a Full Admin does on the website after proving who they are again.",
+  "switched-off": "Does nothing but answer that it is switched off.",
+  // Finance (ALP-721). Finance setup is a recorded exception to the rule that
+  // an officer area's configuration is an action (owner decision, #5305
+  // comment 7131138226, item 4).
+  "club-setup":
+    "Sets up the club's money and its links to other services: the bank account members pay into, fees, tax settings, finance-report, accounting and item-code mappings, Xero contact grouping, integration credentials, the Xero and Stripe connections, the Xero member import and webhook health check, and the analytics, MiroTalk, Google and Alpine Central Server integration settings, which an officer changes on the website.",
+  "service-export": "An export another system collects with its own shared key, not something a person asks for.",
 } as const;
 
 export type McpPermanentExclusionReason = keyof typeof MCP_PERMANENT_EXCLUSION_REASONS;
@@ -52,8 +70,12 @@ export type McpPermanentExclusionReason = keyof typeof MCP_PERMANENT_EXCLUSION_R
  * areas is unclassified until someone decides about it.
  *
  * - `bookings` (Bookings & Beds): ALP-719.
+ * - `membership` (Membership): ALP-720.
+ * - `finance` (Finance): ALP-721, including the `/api/finance` workspace.
+ * - `lodge` (Lodge Operations): ALP-722.
+ * - `content` (Content): ALP-723.
  */
-const MCP_DECIDED_ADMIN_AREAS = ["bookings"] as const satisfies readonly AdminPermissionArea[];
+const MCP_DECIDED_ADMIN_AREAS = ["bookings", "membership", "finance", "lodge", "content"] as const satisfies readonly AdminPermissionArea[];
 
 type McpDecidedAdminArea = (typeof MCP_DECIDED_ADMIN_AREAS)[number];
 
@@ -67,10 +89,6 @@ type McpNotYetAdminArea = Exclude<AdminPermissionArea, McpDecidedAdminArea>;
  * census until someone decides about it.
  */
 export const MCP_NOT_YET_TASKS = {
-  membership: "ALP-720",
-  finance: "ALP-721",
-  lodge: "ALP-722",
-  content: "ALP-723",
   support: "ALP-724",
   overview: "ALP-724",
 } as const satisfies Record<McpNotYetAdminArea, string>;
@@ -140,7 +158,7 @@ const PERMANENT_PREFIXES: ReadonlyArray<{
  * covered by its neighbour's reason and fails the census until decided.
  */
 const PERMANENT_ROUTES: ReadonlyArray<{
-  readonly reason: Exclude<McpPermanentExclusionReason, "fresh-proof">;
+  readonly reason: McpPermanentExclusionReason;
   readonly routes: readonly string[];
 }> = [
   // Booking edits that can take, move or refund money (ALP-794): the AI app
@@ -202,7 +220,12 @@ const PERMANENT_ROUTES: ReadonlyArray<{
   { reason: "site-helper", routes: ["POST /api/help/chat"] },
   // Open member search widens the club's privacy (owner decision D-18): text
   // an app read must never be able to talk it into that.
-  { reason: "privacy-posture", routes: ["PUT /api/admin/member-guest-settings"] },
+  // A lodge roster's name detail decides how much members see of each other's
+  // names, which is the same choice (ALP-722).
+  {
+    reason: "privacy-posture",
+    routes: ["PUT /api/admin/member-guest-settings", "PUT /api/admin/lodges/[id]/roster-settings"],
+  },
   // Dietary and allergy needs are never sent to an app (INV-PRIV-022), so an
   // app could only overwrite or clear what the kitchen relies on unseen.
   { reason: "unread-value", routes: ["PATCH /api/admin/bookings/[id]/guest-dietary"] },
@@ -247,51 +270,230 @@ const PERMANENT_ROUTES: ReadonlyArray<{
       "POST /api/school-bookings/confirm-attendees",
     ],
   },
+
+  // --- Membership (ALP-720) ------------------------------------------------
+  // A member's seasonal membership type sets their subscription and age tier,
+  // and their subscription category how they are billed, and so what they
+  // owe; approving an application can raise an entrance-fee invoice. Each
+  // preview mints the token its save needs, so both stay together.
+  {
+    reason: "changes-charges",
+    routes: [
+      "POST /api/admin/members/[id]/seasonal-membership/preview",
+      "PATCH /api/admin/members/[id]/seasonal-membership",
+      "POST /api/admin/members/bulk-membership-type/preview",
+      "POST /api/admin/members/bulk-membership-type",
+      "POST /api/admin/members/bulk-subscription-category/preview",
+      "POST /api/admin/members/bulk-subscription-category",
+      "POST /api/admin/membership-types/roll-forward",
+      "POST /api/admin/members/[id]/joining-fee/preview",
+      "POST /api/admin/member-applications/[id]/approval-preview",
+      "PUT /api/admin/member-applications/[id]",
+    ],
+  },
+  // Approving archives or deletes the member, or ends their membership and
+  // its future bookings. Raising the request is an action: a second officer
+  // decides it here, on the website.
+  {
+    reason: "ends-membership",
+    routes: [
+      "PATCH /api/admin/member-lifecycle-action-requests/[requestId]",
+      "POST /api/admin/membership-cancellation-requests/[requestId]/participants/[participantId]",
+    ],
+  },
+  {
+    reason: "sign-in-access",
+    routes: [
+      "POST /api/admin/members/send-password-reset",
+      "POST /api/admin/members/send-setup-invite",
+      "POST /api/admin/family-groups/[id]/login-holder",
+    ],
+  },
+  // The recipient count is the compose screen's own preview of the send.
+  {
+    reason: "mass-message",
+    routes: ["GET /api/admin/communications/send", "POST /api/admin/communications/send"],
+  },
+  // Finds a guest's id for the subject access report, which is fresh-proof.
+  { reason: "privacy-request", routes: ["GET /api/admin/members/subject-access/guests"] },
+  // The merge's preview, whose merge is fresh-proof; the link dialogs'
+  // "whose mailbox would this reach" helper; and the member page's drawn
+  // family tree, whose links `get_member` already answers.
+  {
+    reason: "website-flow",
+    routes: [
+      "POST /api/admin/members/[id]/merge/preview",
+      "GET /api/admin/members/[id]/dependent-email-source",
+      "GET /api/admin/members/[id]/family-tree",
+    ],
+  },
+  // Direct deletion answers 405: deletion is a lifecycle request.
+  { reason: "switched-off", routes: ["DELETE /api/admin/members/[id]"] },
+
+  // --- Lodge Operations (ALP-722) ------------------------------------------
+  // The kiosk's sign-in account, a hut leader's kiosk PIN, and the display
+  // screens' officer setup (layouts, templates, devices and their pairing
+  // codes, preview links), which belongs with the screens.
+  {
+    reason: "kiosk",
+    routes: [
+      "PUT /api/admin/lodge",
+      "POST /api/admin/hut-leaders/[id]/pin",
+      "POST /api/admin/display/built-ins/restore",
+      "GET /api/admin/display/devices",
+      "POST /api/admin/display/devices",
+      "PATCH /api/admin/display/devices/[id]",
+      "POST /api/admin/display/devices/[id]/pairing",
+      "POST /api/admin/display/devices/[id]/revoke",
+      "GET /api/admin/display/layouts",
+      "POST /api/admin/display/layouts",
+      "DELETE /api/admin/display/layouts/[id]",
+      "GET /api/admin/display/layouts/[id]",
+      "PUT /api/admin/display/layouts/[id]",
+      "GET /api/admin/display/lodge-config",
+      "PUT /api/admin/display/lodge-config",
+      "GET /api/admin/display/preview",
+      "POST /api/admin/display/preview-grant",
+      "GET /api/admin/display/reference/conditions",
+      "GET /api/admin/display/templates",
+      "POST /api/admin/display/templates",
+      "DELETE /api/admin/display/templates/[id]",
+      "GET /api/admin/display/templates/[id]",
+      "PUT /api/admin/display/templates/[id]",
+    ],
+  },
+  // Door codes and emergency access, never written by an app either; and the
+  // links that let someone in: a maintenance QR sign's link, answered only
+  // when minted, and a meeting's host link.
+  {
+    reason: "access-secrets",
+    routes: [
+      "GET /api/admin/lodge-instructions",
+      "PUT /api/admin/lodge-instructions",
+      "POST /api/admin/maintenance-reports/tokens",
+      "POST /api/calendar/events/[id]/join",
+    ],
+  },
+  // The officer copy of the chore roster is a page made to be printed.
+  { reason: "needs-browser", routes: ["GET /api/chores/roster/[date]/print"] },
+  // A connection reads only the member's own food orders (ALP-796), so an
+  // officer's app could price or tick off another member's order unseen; and
+  // the food officer's address the settings save writes is never sent to one.
+  {
+    reason: "unread-value",
+    routes: [
+      "PATCH /api/food-orders/[id]/price",
+      "POST /api/food-orders/[id]/received",
+      "PUT /api/admin/food-orders/settings",
+    ],
+  },
+
+  // --- Content (ALP-723) ---------------------------------------------------
+  // File uploads from the officer's browser: photos into a gallery folder, an
+  // image into the page image library, and the site logo.
+  {
+    reason: "needs-browser",
+    routes: [
+      "POST /api/admin/image-manager/upload",
+      "POST /api/admin/image-library",
+      "POST /api/admin/site-style/logo",
+    ],
+  },
+
+  // --- Finance (ALP-721) ---------------------------------------------------
+  // Money that goes through Stripe (owner decision, #5305 comment
+  // 7131138226, item 1): marking a booking paid cancels the member's open card
+  // checkouts and posts a receipt, and withdrawing an extra payment request
+  // cancels a card request and retires its ledger row. Marking a member's
+  // subscription paid by hand, or reversing it, emails a receipt and moves
+  // their booking prices, so it stays with booking mark-paid (owner decision,
+  // #5305 comment 7200981104).
+  {
+    reason: "moves-money",
+    routes: [
+      "POST /api/admin/bookings/[id]/mark-paid",
+      "POST /api/admin/bookings/[id]/additional-payment/withdraw",
+      "POST /api/admin/subscriptions/[id]/manual-payment",
+    ],
+  },
+  // Handlers that call `requireRecentAuth` without being on `STEP_UP_ROUTES`
+  // (which lists the destructive operations, #4619). A connection never holds
+  // a fresh proof (`INV-MCP-005`); the census finds every such handler.
+  {
+    reason: "fresh-proof",
+    routes: [
+      "POST /api/admin/opening-credits/preview",
+      "POST /api/admin/opening-credits/confirm",
+      "POST /api/admin/opening-credits/[id]/reverse",
+    ],
+  },
+  // The finance area also holds the club's setup screens: fees, tax, bank
+  // details, accounting mappings, and the connections to Xero, Stripe,
+  // Google, MiroTalk, analytics and the Alpine Central Server. Credentials,
+  // OAuth hand-offs and mappings that every later invoice follows stay where
+  // an officer sees the whole screen. `import-members` is the one-off import
+  // that seeds the member list from Xero during setup.
+  {
+    reason: "club-setup",
+    routes: [
+      "GET /api/admin/alpine-server/version",
+      "POST /api/admin/alpine-server/lodge-links",
+      "PUT /api/admin/alpine-server/lodge-links",
+      "POST /api/admin/alpine-server/other-lodges/download",
+      "POST /api/admin/alpine-server/other-lodges/upload",
+      "GET /api/admin/club-tax",
+      "PUT /api/admin/club-tax",
+      "DELETE /api/admin/club-tax",
+      "GET /api/admin/fee-configuration",
+      "POST /api/admin/fee-configuration",
+      "GET /api/admin/integrations/analytics",
+      "PUT /api/admin/integrations/analytics",
+      "POST /api/admin/integrations/analytics/reconsent",
+      "GET /api/admin/integrations/credentials",
+      "GET /api/admin/integrations/google/status",
+      "POST /api/admin/integrations/google/verify/start",
+      "GET /api/admin/integrations/mirotalk",
+      "GET /api/admin/integrations/stripe/status",
+      "GET /api/admin/integrations/wizard-progress",
+      "POST /api/admin/integrations/wizard-progress",
+      "GET /api/admin/internet-banking-settings",
+      "PUT /api/admin/internet-banking-settings",
+      "GET /api/admin/setup/finance-report-mappings",
+      "PUT /api/admin/setup/finance-report-mappings",
+      "POST /api/admin/setup/finance-report-mappings/backfill",
+      "GET /api/admin/xero/account-mappings",
+      "PUT /api/admin/xero/account-mappings",
+      "GET /api/admin/xero/item-code-mappings",
+      "PUT /api/admin/xero/item-code-mappings",
+      "GET /api/admin/xero/tax-categories",
+      "PUT /api/admin/xero/tax-categories",
+      "DELETE /api/admin/xero/tax-categories",
+      "GET /api/admin/xero/chart-of-accounts",
+      "GET /api/admin/xero/items",
+      "GET /api/admin/xero/contact-groups",
+      "GET /api/admin/xero/organisation",
+      "GET /api/admin/xero/member-grouping",
+      "POST /api/admin/xero/member-grouping",
+      "GET /api/admin/xero/connect",
+      "GET /api/admin/xero/callback",
+      "GET /api/admin/xero/webhook-health",
+      "PUT /api/admin/xero/webhook-health",
+      "GET /api/admin/xero/webhook/verify-status",
+      "POST /api/admin/xero/import-members",
+    ],
+  },
+  // Answers with a redirect into the old finance dashboard, not with data.
+  { reason: "website-flow", routes: ["GET /api/finance/legacy-dashboard/auth"] },
+  // Also needs the dashboard's shared bearer key, which no person holds.
+  { reason: "service-export", routes: ["GET /api/finance/legacy-dashboard/bookings"] },
 ];
 
-/** Finance officer routes that sit outside `/api/admin`. */
-const FINANCE_NOT_YET_PREFIXES: readonly string[] = ["/api/finance"];
-
 /**
- * Money routes whose path the `bookings` area guards but which belong to the
- * Finance lane (ALP-721), as `METHOD /path`. Withdrawing an extra payment
- * request cancels a card request and retires its ledger row, and its handler
- * demands finance edit (owner decision, #5305 comment 7093303964, item 3).
- * Checked before the path's area, which is decided and has no `not-yet`.
- */
-export const MCP_FINANCE_NOT_YET_ROUTES: readonly string[] = [
-  "POST /api/admin/bookings/[id]/additional-payment/withdraw",
-];
-
-/**
- * Officer powers on lodge-life routes outside `/api/admin` (ALP-796), by
- * exact method and path, all for the lodge officer stage: editing the events
- * calendar and minting a meeting's host link (Lodge edit,
- * `hasCalendarManageViaAdmin`, as `/admin/calendar` is a Lodge page), pricing
- * and receiving food orders and printing the chore roster. Their member
- * neighbours are actions or permanent exclusions.
- */
-const OFFICER_NOT_YET_ROUTES: Readonly<Partial<Record<McpNotYetAdminArea, readonly string[]>>> = {
-  lodge: [
-    "POST /api/calendar/events",
-    "PATCH /api/calendar/events/[id]",
-    "DELETE /api/calendar/events/[id]",
-    "POST /api/calendar/events/[id]/join",
-    "PATCH /api/food-orders/[id]/price",
-    "POST /api/food-orders/[id]/received",
-    "GET /api/chores/roster/[date]/print",
-  ],
-};
-
-/**
- * Every exact `METHOD /api/path` an exclusion names, permanent or officer
- * not-yet. The census checks each against a real route file and method, so an
+ * Every exact `METHOD /api/path` a permanent exclusion names. The census checks each against a real route file and method, so an
  * entry left behind by a moved or deleted route fails instead of lingering.
  */
 export const MCP_EXACT_EXCLUDED_ROUTES: readonly string[] = [
   ...PERMANENT_ROUTES.flatMap((rule) => rule.routes),
-  ...Object.values(OFFICER_NOT_YET_ROUTES).flatMap((routes) => routes ?? []),
-  ...MCP_FINANCE_NOT_YET_ROUTES,
 ];
 
 function underPrefix(path: string, prefix: string): boolean {
@@ -341,26 +543,12 @@ export function classifyMcpRoute(file: string, method: string): McpRouteClassifi
   if (action) return { kind: "action", action };
 
   const path = adminRouteApiPath(file);
-  if (MCP_FINANCE_NOT_YET_ROUTES.includes(`${method} ${path}`)) {
-    return { kind: "excluded", reason: `not-yet:${MCP_NOT_YET_TASKS.finance}` };
-  }
   const adminArea = getAdminRouteRequirement(path, method)?.area;
   if (adminArea) {
     // A route in a decided area has no `not-yet` to fall back on.
     return isNotYetAdminArea(adminArea)
       ? { kind: "excluded", reason: `not-yet:${MCP_NOT_YET_TASKS[adminArea]}` }
       : { kind: "unclassified" };
-  }
-  if (FINANCE_NOT_YET_PREFIXES.some((prefix) => underPrefix(path, prefix))) {
-    return { kind: "excluded", reason: `not-yet:${MCP_NOT_YET_TASKS.finance}` };
-  }
-  const route = `${method} ${path}`;
-  for (const [area, routes] of Object.entries(OFFICER_NOT_YET_ROUTES) as Array<
-    [McpNotYetAdminArea, readonly string[]]
-  >) {
-    if (routes.includes(route)) {
-      return { kind: "excluded", reason: `not-yet:${MCP_NOT_YET_TASKS[area]}` };
-    }
   }
   return { kind: "unclassified" };
 }

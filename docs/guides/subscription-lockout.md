@@ -268,29 +268,56 @@ answers exactly.
 The rule is two answers, always chosen together:
 
 - **Does an exempt age tier exempt a member on an always-required membership
-  type?** *Always owes* (a child on a Full type is invoiced and must pay to book)
-  or *Age tier exempts them* (that child is neither invoiced nor blocked).
+  type?** *They still owe* (a child on a Full type is invoiced and must pay to
+  book) or *Their age group exempts them* (that child is neither invoiced nor
+  blocked).
 - **Which age decides the tier?** The age on the first day of the season, or on
   the last day. A member with no date of birth keeps their stored tier.
 
 Worked example: Sam is 11 on a Full (always-required) type, and Child is an
-exempt tier. Today Sam is invoiced but may book without paying. Under *Always
-owes*, Sam is invoiced and must pay to book; under *Age tier exempts them*, Sam
-is neither invoiced nor blocked.
+exempt tier. Today Sam is invoiced but may book without paying. Under *They
+still owe*, Sam is invoiced and must pay to book; under *Their age group
+exempts them*, Sam is neither invoiced nor blocked.
 
 Once chosen, a saved "Not required" season record no longer exempts anyone on its
-own; age decides. Choosing also updates any untouched "Not required" record whose
-member now owes. Before choosing, ask for the impact list, which names every
-member the choice would newly charge or stop charging:
+own; age decides. Choosing also resets any untouched "Not required" record whose
+member now owes to "Not invoiced", so the next billing run can invoice them.
+
+To choose or change the rule:
+
+1. On this page, find **Who owes a subscription**. It shows the club's rule in
+   plain English, or **Not chosen yet**.
+2. Click **Choose rule** (or **Change rule**) and answer both questions. Each
+   answer says what it means for a member, and the first question has a worked
+   example.
+3. Click **Preview changes**. Before anything is saved, the preview lists, for
+   the current season:
+   - who would **start owing**, and whether they would be newly invoiced, must
+     now pay before booking, or both;
+   - who would **stop owing**, with the number of any unpaid invoice they
+     already hold (shown only to an officer with Finance access). That invoice
+     stays in Xero: void it there if it should not be paid;
+   - which **"Not required" records would be reset** to "Not invoiced". The
+     save resets this same selection, as it stands when you save, including
+     members who are inactive or archived (marked as such: billing does not
+     invoice them unless they are made active again). Each row also says what
+     the members list shows for that member today, worked out the same way:
+     a member billing already treats as owing shows as "Not invoiced" with the
+     "Marked not required" note, and the save removes that note.
+4. Click **Save rule**. It stays unavailable until a preview of exactly your
+   answers is on screen; change an answer and you must preview again. The
+   confirmation says how many records were reset, and says so if records
+   changed after the preview and the number differs.
+
+Choosing, or changing, the rule needs both **Membership edit** and **Finance
+edit**, because it changes who is invoiced; an officer with Membership edit
+alone sees the rule but cannot change it, and can still change the other
+lockout settings. A chosen rule can be changed but not set back to *Not
+chosen*, and *age today* is not available yet. The same preview is available to
+scripts at
 `GET /api/admin/membership-lockout-settings/liability-impact?requiredTypeAgeRule=ALWAYS_OWES&liabilityAgeSource=SEASON_START`
-(membership view; the numbers of any unpaid invoices it lists are shown only to
-an officer who also has finance view). Choosing, or changing, the rule needs
-both **Membership edit** and **Finance edit**, because it changes who is
-invoiced; an officer with Membership edit alone can still change the other
-lockout settings. The screen for this choice arrives in a later release; until
-then it is made through the settings API or a configuration import (which only
-a full admin can run). A chosen
-rule cannot be set back to *Not chosen*, and *age today* is not available yet.
+(membership view), and a configuration import (full admin only) can also set the
+rule.
 
 A member covered by a no-invoice fee (for example a Life fee set up with no
 invoice) is now treated as paid for booking, whatever their record says. They
@@ -322,7 +349,7 @@ marked paid, never gets the note.
 | Subscription item code (optional) | Finance | A Xero item that also counts (the *fallback* code when look-through is on) | none | Requires Xero connected |
 | Item code matching | Membership | Single item code, or look-through to every fee-schedule item code | Single item code | Look-through resolves codes from [fee configuration](fees.md); overlap with other fee codes is warned |
 | Age-tier requirement | Bookings | Which age tiers must have a paid subscription | (read-only here) | Edit on [Age Groups](age-tier-settings.md) |
-| Required-type age rule | Membership and Finance (edit) | Whether an exempt age tier exempts a member on an always-required type | Not chosen | Chosen with the age source; cannot return to Not chosen (#5190) |
+| Required-type age rule | Membership and Finance (edit) | Whether an exempt age tier exempts a member on an always-required type | Not chosen | Chosen with the age source, after a preview of who it changes; cannot return to Not chosen (#5190) |
 | Liability age source | Membership and Finance (edit) | Which age decides a member's tier for liability | Not chosen | Season start or season end; age today not yet available (#5190) |
 
 ## Troubleshooting

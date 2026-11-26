@@ -14,13 +14,14 @@
  *
  * `mcp-route-census.test.ts` holds every route method in `src/app/api` to
  * either an entry here or a reasoned exclusion (`exclusions.ts`).
+ * Officer areas' actions live under `catalogue/` (gate: `officer-actions.ts`).
  */
 import { z } from "zod";
 
 import { availabilityQuerySchema } from "@/lib/availability-query-schema";
 import { bookingIdParamsSchema, cancelBookingMutationSchema } from "@/lib/booking-cancel-schema";
 import { bookingCreateCoreShape } from "@/lib/booking-create-fields";
-import { getAdminRouteRequirement, type AdminAccessRequirement } from "@/lib/admin-permissions";
+import type { AdminAccessRequirement } from "@/lib/admin-permissions";
 import type { ConnectionShape } from "@/lib/connection-projection";
 import {
   AGE_GROUPS_CONNECTION_SHAPE,
@@ -37,7 +38,6 @@ import {
   FAMILY_REQUEST_SUBMITTED_CONNECTION_SHAPE,
   LODGE_LIST_CONNECTION_SHAPE,
   LODGE_ROSTER_CONNECTION_SHAPE,
-  MEMBER_ACCOUNT_ACTIVITY_CONNECTION_SHAPE,
   MEMBER_BOOKING_CONNECTION_SHAPE,
   MEMBER_BOOKING_LIST_CONNECTION_SHAPE,
   MEMBER_DRAFT_LIST_CONNECTION_SHAPE,
@@ -58,6 +58,7 @@ import {
   SKIFIELD_REPORT_CONNECTION_SHAPE,
   SUBSCRIPTION_STATUS_CONNECTION_SHAPE,
 } from "@/lib/connection-shapes";
+import { MEMBER_ACCOUNT_ACTIVITY_CONNECTION_SHAPE } from "@/lib/connection-shapes/account-activity";
 import { MEMBER_AUDIT_TIMELINE_CATEGORY_OPTIONS } from "@/lib/audit-query";
 import { MCP_BOOKING_ACTIONS, MCP_BOOKING_WEBSITE_ONLY_ACTIONS } from "@/lib/mcp/catalogue-bookings";
 import {
@@ -94,6 +95,10 @@ import { BOOKINGS_BOOKING_MCP_ACTIONS } from "./catalogue/bookings-bookings";
 import { BOOKINGS_REQUEST_MCP_ACTIONS } from "./catalogue/bookings-requests";
 import { BOOKINGS_REVIEW_QUEUE_MCP_ACTIONS } from "./catalogue/bookings-review-queues";
 import { BOOKINGS_SETUP_MCP_ACTIONS } from "./catalogue/bookings-setup";
+import { CONTENT_MCP_ACTIONS } from "./catalogue/content";
+import { FINANCE_MCP_ACTIONS } from "./catalogue/finance";
+import { MEMBERSHIP_MCP_ACTIONS } from "./catalogue/membership";
+import { LODGE_MCP_ACTIONS } from "./catalogue/lodge";
 
 /**
  * `read` changes none of the member's own data. A read may still touch shared
@@ -104,9 +109,10 @@ import { BOOKINGS_SETUP_MCP_ACTIONS } from "./catalogue/bookings-setup";
  * `destructive` cannot be undone from the app, notifies other people, or
  * overwrites another person's record (owner decision, #5305): for an officer,
  * any email or notice, any change to a member's booking, request, waitlist
- * place, bed or promo code, and every change to club-wide configuration
- * (#5305 comment 7093303964). The app confirms first, and it is audited as
- * important. View-only runs `read` actions only.
+ * place, bed or promo code, a member's record, and every change to club-wide
+ * or Membership configuration (#5305 comments 7093303964, 7111359405). The
+ * app confirms first, and it is audited as important. View-only runs `read`
+ * actions only.
  */
 export type McpActionKind = "read" | "write" | "destructive";
 
@@ -635,7 +641,7 @@ const MEMBER_ACTIONS: readonly McpAction[] = [
 /**
  * Every action. An officer action is one whose route `getAdminRouteRequirement`
  * resolves to an admin area: it is offered only to someone holding that area
- * at that level (`mcpActionAdminRequirement`), and its route decides with the
+ * at that level (`officer-actions.ts`), and its route decides with the
  * officer's own permissions, exactly as on the admin screens. Each officer
  * area's actions live in a module of their own under `catalogue/`.
  */
@@ -648,6 +654,15 @@ export const MCP_ACTIONS: readonly McpAction[] = [
   ...BOOKINGS_REVIEW_QUEUE_MCP_ACTIONS,
   ...BOOKINGS_BEDS_MCP_ACTIONS,
   ...BOOKINGS_SETUP_MCP_ACTIONS,
+  // Membership (ALP-720), every route the `membership` area guards bar the
+  // fresh-proof ones and those with a permanent reason.
+  ...MEMBERSHIP_MCP_ACTIONS,
+  // Finance (ALP-721), in `catalogue/finance.ts`.
+  ...FINANCE_MCP_ACTIONS,
+  // Lodge Operations (ALP-722), in `catalogue/lodge.ts`.
+  ...LODGE_MCP_ACTIONS,
+  // Content (ALP-723), every route the `content` area guards bar file uploads.
+  ...CONTENT_MCP_ACTIONS,
 ];
 
 export const MCP_WEBSITE_ONLY_ACTIONS: readonly McpWebsiteOnlyAction[] = [
@@ -671,19 +686,6 @@ export const MCP_WEBSITE_ONLY_ACTIONS: readonly McpWebsiteOnlyAction[] = [
 /** `/api/bookings/[id]` → `src/app/api/bookings/[id]/route.ts`. */
 export function mcpActionRouteFile(action: Pick<McpAction, "path">): string {
   return `src/app${action.path}/route.ts`;
-}
-
-/**
- * The admin area and level an officer action needs, or null for a member
- * action: what the route itself demands. That is the route's explicit
- * `requireAdmin` permission where it names one (`requires`, pinned to the
- * handler by the census), else the path's rule in `admin-permissions.ts`
- * (`INV-MCP-009`).
- */
-export function mcpActionAdminRequirement(
-  action: Pick<McpAction, "path" | "method" | "requires">,
-): AdminAccessRequirement | null {
-  return action.requires ?? getAdminRouteRequirement(action.path, action.method);
 }
 
 export function findMcpAction(id: string): McpAction | undefined {

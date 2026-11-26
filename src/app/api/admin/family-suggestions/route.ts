@@ -1,5 +1,4 @@
 import { NextRequest, NextResponse } from "next/server";
-import { z } from "zod";
 import { parseJsonRequestBody } from "@/lib/api-json";
 import { requireAdmin } from "@/lib/session-guards";
 import {
@@ -9,19 +8,26 @@ import {
 } from "@/lib/family-suggestions";
 import { logAudit } from "@/lib/audit";
 import logger from "@/lib/logger";
+import { createFamilyGroupFromSuggestionSchema } from "@/lib/admin-membership-api/family-groups";
+import { connectionJson } from "@/lib/mcp-connection-request";
+import {
+  FAMILY_SUGGESTION_GROUP_CREATED_CONNECTION_SHAPE,
+  FAMILY_SUGGESTION_LIST_CONNECTION_SHAPE,
+} from "@/lib/connection-shapes/membership-family-groups";
 
 /**
  * GET /api/admin/family-suggestions
- * Returns suggested family groups based on ungrouped member analysis.
+ * Returns suggested family groups based on ungrouped member analysis. An AI
+ * app connection is sent no age, sign-in field or Xero contact id (ALP-720).
  */
-export async function GET() {
+export async function GET(request: Request) {
   const guard = await requireAdmin({
     permission: { area: "membership", level: "view" },
   });
   if (!guard.ok) return guard.response;
   try {
     const result = await suggestFamilyGroups();
-    return NextResponse.json(result);
+    return connectionJson(request, result, FAMILY_SUGGESTION_LIST_CONNECTION_SHAPE);
   } catch (err) {
     logger.error({ err }, "Failed to generate family group suggestions");
     return NextResponse.json(
@@ -30,11 +36,6 @@ export async function GET() {
     );
   }
 }
-
-const createGroupSchema = z.object({
-  name: z.string().min(1, "Group name required").max(100),
-  memberIds: z.array(z.string().min(1)).min(2, "At least 2 members required"),
-});
 
 /**
  * POST /api/admin/family-suggestions
@@ -50,7 +51,7 @@ export async function POST(req: NextRequest) {
   if (!jsonBody.ok) return jsonBody.response;
   const body = jsonBody.body;
 
-  const parsed = createGroupSchema.safeParse(body);
+  const parsed = createFamilyGroupFromSuggestionSchema.safeParse(body);
   if (!parsed.success) {
     return NextResponse.json(
       { error: "Validation failed", details: parsed.error.flatten().fieldErrors },
@@ -73,8 +74,10 @@ export async function POST(req: NextRequest) {
       details: JSON.stringify({ name, memberCount: result.memberCount, memberIds }),
     });
 
-    return NextResponse.json(
+    return connectionJson(
+      req,
       { message: `Family group "${name}" created with ${result.memberCount} members.`, groupId: result.groupId },
+      FAMILY_SUGGESTION_GROUP_CREATED_CONNECTION_SHAPE,
       { status: 201 }
     );
   } catch (err) {
