@@ -29,6 +29,7 @@ import {
   xeroSyncMembershipsQuerySchema,
   xeroSyncNowRecordFields,
   xeroSyncNowRequestSchema,
+  xeroTaxOverridePauseClearBodySchema,
 } from "@/lib/admin-xero-sync-schemas";
 import {
   XERO_FORCE_SYNC_CONTACT_CONNECTION_SHAPE,
@@ -49,6 +50,8 @@ import {
   XERO_SYNC_MEMBERSHIPS_CONNECTION_SHAPE,
   XERO_SYNC_NOW_CLUB_CONNECTION_SHAPE,
   XERO_SYNC_NOW_RECORD_CONNECTION_SHAPE,
+  XERO_TAX_OVERRIDE_MISMATCHES_CONNECTION_SHAPE,
+  XERO_TAX_OVERRIDES_RESUMED_CONNECTION_SHAPE,
   XERO_USAGE_CONNECTION_SHAPE,
 } from "@/lib/connection-shapes/finance-xero-sync";
 import { routeIdParamsSchema } from "@/lib/route-id-params";
@@ -354,6 +357,31 @@ export const FINANCE_XERO_SYNC_MCP_ACTIONS: readonly McpAction[] = [
     path: "/api/admin/xero/link-maintenance",
     kind: "destructive",
     returns: XERO_LINK_MAINTENANCE_CONNECTION_SHAPE,
+    core: false,
+  },
+
+  // --- GST overrides (#5208) -----------------------------------------------
+  {
+    id: "list_xero_tax_override_mismatches",
+    title: "List invoices whose GST Xero changed",
+    summary:
+      "The invoices whose GST Xero changed after the app sent it, oldest first: the booking, the invoice number, whether it was a new invoice or an update, and each line's GST the app sent and Xero kept, in integer cents. While any are listed, new invoices go to Xero without the club's own GST figures (`problem` says so). Reading it changes nothing.",
+    method: "GET",
+    path: "/api/admin/xero/tax-override-pause",
+    kind: "read",
+    returns: XERO_TAX_OVERRIDE_MISMATCHES_CONNECTION_SHAPE,
+    core: false,
+  },
+  {
+    id: "resume_xero_tax_overrides",
+    title: "Resume the club's GST overrides in Xero",
+    summary:
+      "Clears the listed invoices (`ids`, from `list_xero_tax_override_mismatches`) once the officer has checked them in Xero, with `note` saying what they found; `confirmed` must be `true`, sent only after the officer confirms. Only those still listed are cleared, so one flagged since stays. When none remain, new members' invoices carry the club's own GST figures again. Answers with how many cleared and what is still listed. It cannot be undone from the app.",
+    method: "POST",
+    path: "/api/admin/xero/tax-override-pause/clear",
+    body: xeroTaxOverridePauseClearBodySchema,
+    kind: "destructive",
+    returns: XERO_TAX_OVERRIDES_RESUMED_CONNECTION_SHAPE,
     core: false,
   },
 ];
