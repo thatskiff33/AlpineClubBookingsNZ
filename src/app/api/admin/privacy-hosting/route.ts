@@ -6,11 +6,13 @@ import { privacyHostingSchema, PRIVACY_HOSTING_DEFAULTS, PRIVACY_HOSTING_TEXT_RE
 import { getPrivacyHostingSettings, PRIVACY_HOSTING_SELECT } from "@/lib/privacy-hosting-settings";
 import { revalidatePublicPageContent } from "@/lib/public-content-revalidation";
 import { requireAdmin } from "@/lib/session-guards";
+import { connectionJson } from "@/lib/mcp-connection-request";
+import { PRIVACY_HOSTING_CONNECTION_SHAPE } from "@/lib/connection-shapes/content-settings";
 
-export async function GET() {
+export async function GET(request: Request) {
   const guard = await requireAdmin({ permission: { area: "content", level: "view" } });
   if (!guard.ok) return guard.response;
-  return NextResponse.json({ settings: await getPrivacyHostingSettings() });
+  return connectionJson(request, { settings: await getPrivacyHostingSettings() }, PRIVACY_HOSTING_CONNECTION_SHAPE);
 }
 
 export async function PUT(request: Request) {
@@ -43,5 +45,5 @@ export async function PUT(request: Request) {
     return saved;
   });
   revalidatePublicPageContent();
-  return NextResponse.json({ settings });
+  return connectionJson(request, { settings }, PRIVACY_HOSTING_CONNECTION_SHAPE);
 }
