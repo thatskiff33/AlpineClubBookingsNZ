@@ -1,15 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
+import { xeroSyncMembershipsQuerySchema } from "@/lib/admin-xero-sync-schemas";
+import { XERO_SYNC_MEMBERSHIPS_CONNECTION_SHAPE } from "@/lib/connection-shapes/finance-xero-sync";
+import { connectionJson } from "@/lib/mcp-connection-request";
 import { requireAdmin } from "@/lib/session-guards";
 import { refreshAllMembershipStatuses } from "@/lib/xero-membership-sync";
 import logger from "@/lib/logger";
-import { z } from "zod";
-
-const syncMembershipsQuerySchema = z.object({
-  seasonYear: z
-    .union([z.coerce.number().int().min(2020).max(2040), z.literal("")])
-    .optional(),
-  mode: z.enum(["incremental", "backfill"]).default("incremental"),
-});
 
 /**
  * POST /api/admin/xero/sync-memberships
@@ -24,7 +19,7 @@ export async function POST(request: NextRequest) {
     permission: { area: "finance", level: "edit" },
   });
   if (!guard.ok) return guard.response;
-  const parsed = syncMembershipsQuerySchema.safeParse({
+  const parsed = xeroSyncMembershipsQuerySchema.safeParse({
     seasonYear: request.nextUrl.searchParams.get("seasonYear") ?? undefined,
     mode: request.nextUrl.searchParams.get("mode") ?? undefined,
   });
@@ -42,10 +37,10 @@ export async function POST(request: NextRequest) {
     const result = await refreshAllMembershipStatuses(seasonYear, {
       includeBackfillCandidates: mode === "backfill",
     });
-    return NextResponse.json({
+    return connectionJson(request, {
       ...result,
       mode,
-    });
+    }, XERO_SYNC_MEMBERSHIPS_CONNECTION_SHAPE);
   } catch (error) {
     logger.error({ err: error }, "Membership sync failed");
     return NextResponse.json({ error: "Membership sync failed" }, { status: 500 });

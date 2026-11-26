@@ -1,7 +1,10 @@
-import { after, NextResponse } from "next/server";
+import { NextResponse } from "next/server";
+import { scheduleAfterResponse } from "@/lib/schedule-after-response";
 import { logAudit } from "@/lib/audit";
 import { getFailedXeroOperationOverview } from "@/lib/xero-admin-failures";
 import logger from "@/lib/logger";
+import { XERO_RETRY_ALL_CONNECTION_SHAPE } from "@/lib/connection-shapes/finance-xero-sync";
+import { connectionJson } from "@/lib/mcp-connection-request";
 import { requireAdmin } from "@/lib/session-guards";
 import {
   enqueueXeroSyncOperationRetry,
@@ -10,17 +13,7 @@ import {
 import { XeroOperationRetryError } from "@/lib/xero-operation-retry";
 import { clubFormatValues } from "@/lib/club-format-server";
 
-function scheduleAfterResponse(task: () => Promise<void>) {
-  try {
-    after(task);
-  } catch {
-    queueMicrotask(() => {
-      void task();
-    });
-  }
-}
-
-export async function POST() {
+export async function POST(request: Request) {
   const guard = await requireAdmin({
     permission: { area: "finance", level: "edit" },
   });
@@ -33,7 +26,7 @@ export async function POST() {
       .map((operation) => ({ id: operation.id }));
 
     if (failedOperations.length === 0) {
-      return NextResponse.json({
+      return connectionJson(request, {
         ok: true,
         found: 0,
         queued: 0,
@@ -43,7 +36,7 @@ export async function POST() {
           failedOperationOverview.legacyFailedCount > 0
             ? "No active failed Xero operations found. Remaining failed rows are already repaired or superseded."
             : "No active failed Xero operations found.",
-      });
+      }, XERO_RETRY_ALL_CONNECTION_SHAPE);
     }
 
     let queued = 0;
@@ -91,7 +84,8 @@ export async function POST() {
       details: `Queued ${queued} active Xero retries (${skipped} skipped, ${failedOperationOverview.legacyFailedCount} legacy hidden)`,
     });
 
-    return NextResponse.json(
+    return connectionJson(
+      request,
       {
         ok: true,
         found: failedOperations.length,
@@ -104,6 +98,7 @@ export async function POST() {
             ? `Queued ${queued} active failed Xero operation${queued === 1 ? "" : "s"} for background retry.`
             : "No active failed Xero operations could be queued for retry.",
       },
+      XERO_RETRY_ALL_CONNECTION_SHAPE,
       { status: queued > 0 ? 202 : 200 }
     );
   } catch (error) {

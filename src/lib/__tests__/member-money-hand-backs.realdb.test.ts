@@ -338,7 +338,7 @@ async function cleanup() {
     raceSession.current = { user: { id: ADMIN, role: "ADMIN" } };
     try {
       const { GET } = await import("@/app/api/admin/payments/manual-refund-tasks/route");
-      const body = await (await GET()).json() as { tasks: Array<{ id: string; journalHandBackDismissRefusal: string | null; disputedHandBackLost: boolean }> };
+      const body = await (await GET(new NextRequest("http://localhost/api/admin/payments/manual-refund-tasks"))).json() as { tasks: Array<{ id: string; journalHandBackDismissRefusal: string | null; disputedHandBackLost: boolean }> };
       return body.tasks.find((t) => t.id === taskId);
     } finally {
       raceSession.current = null;

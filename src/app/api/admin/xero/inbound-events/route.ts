@@ -1,13 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import type { Prisma } from "@prisma/client";
-import { z } from "zod";
 import { requireAdmin } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma";
 import logger from "@/lib/logger";
 import { buildXeroObjectUrl } from "@/lib/xero-links";
 import { getXeroOrgShortCode } from "@/lib/xero-link-short-code";
 import { canReplayXeroInboundEvent } from "@/lib/xero-stale-operations";
-import { adminListPageField } from "@/lib/admin-list-page";
 import {
   inboundEventCategoriesForXeroObjectType,
   inboundEventCategoryFilter,
@@ -19,22 +17,10 @@ import {
   type ClubTimeZone,
 } from "@/lib/club-time";
 import { clubTimeZone } from "@/lib/club-time/server";
-import { dateOnlyStringSchema } from "@/lib/date-only-schema";
+import { xeroInboundEventsQuerySchema } from "@/lib/admin-xero-sync-schemas";
+import { XERO_INBOUND_EVENTS_CONNECTION_SHAPE } from "@/lib/connection-shapes/finance-xero-sync";
+import { connectionJson } from "@/lib/mcp-connection-request";
 
-const querySchema = z.object({
-  status: z.string().optional().default("all"),
-  eventCategory: z.string().optional().default("all"),
-  source: z.string().optional().default("all"),
-  localModel: z.string().trim().optional().default("all"),
-  localId: z.string().trim().optional().default(""),
-  resourceId: z.string().trim().optional().default(""),
-  eventType: z.string().trim().optional().default("all"),
-  createdFrom: dateOnlyStringSchema.optional(),
-  createdTo: dateOnlyStringSchema.optional(),
-  limit: z.coerce.number().int().min(1).max(100).optional().default(25),
-  page: adminListPageField,
-  pageSize: z.coerce.number().int().min(1).max(100).optional(),
-});
 
 /**
  * An admin filter's `YYYY-MM-DD` bound as the instants that bracket that CLUB
@@ -59,7 +45,7 @@ function endOfInputDate(date: string, zone: ClubTimeZone) {
 export async function GET(request: NextRequest) {
   const guard = await requireAdmin();
   if (!guard.ok) return guard.response;
-  const parsed = querySchema.safeParse({
+  const parsed = xeroInboundEventsQuerySchema.safeParse({
     status: request.nextUrl.searchParams.get("status") ?? undefined,
     eventCategory: request.nextUrl.searchParams.get("eventCategory") ?? undefined,
     source: request.nextUrl.searchParams.get("source") ?? undefined,
@@ -134,7 +120,7 @@ export async function GET(request: NextRequest) {
       }
 
       if (linkTargets.length === 0) {
-        return NextResponse.json({ data: [], total: 0, page, pageSize });
+        return connectionJson(request, { data: [], total: 0, page, pageSize }, XERO_INBOUND_EVENTS_CONNECTION_SHAPE);
       }
 
       andFilters.push({ OR: linkTargets });
@@ -164,7 +150,7 @@ export async function GET(request: NextRequest) {
     // every link to the generic go.xero.com form rather than hiding it.
     const shortCode = await getXeroOrgShortCode();
 
-    return NextResponse.json({
+    return connectionJson(request, {
       data: events.map((event) => ({
         ...event,
         xeroObjectUrl:
@@ -178,7 +164,7 @@ export async function GET(request: NextRequest) {
       total,
       page,
       pageSize,
-    });
+    }, XERO_INBOUND_EVENTS_CONNECTION_SHAPE);
   } catch (err) {
     logger.error({ err }, "Failed to load Xero inbound events");
     return NextResponse.json(
