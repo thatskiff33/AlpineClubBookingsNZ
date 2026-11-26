@@ -2,8 +2,9 @@
  * ALP-723 (`INV-MCP-006`): the site settings, site style and mountain
  * conditions actions an officer's AI app connection may run, each held to its
  * contract (`expectActionContract`): the connection gets exactly the action's
- * `returns` fields and the browser's answer is unchanged. An app's site style
- * save keeps the stored logo and never completes setup.
+ * `returns` fields, whatever else the route's answer carries. An app's site
+ * style save never writes the logo, never completes setup, and must send the
+ * custom CSS rather than clear it by leaving it out.
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -12,6 +13,7 @@ vi.mock("server-only", () => ({}));
 const h = vi.hoisted(() => ({
   auth: vi.fn(),
   saveClubTheme: vi.fn(),
+  saveClubThemeStyle: vi.fn(),
   getClubThemeForAdmin: vi.fn(),
   fetchWhakapapaCurlData: vi.fn(),
   prisma: {
@@ -20,7 +22,6 @@ const h = vi.hoisted(() => ({
     pageContent: { findMany: vi.fn(), findUnique: vi.fn() },
     committeeRole: { findMany: vi.fn(), findFirst: vi.fn() },
     privacyHostingSettings: { findUnique: vi.fn(), upsert: vi.fn() },
-    clubTheme: { findUnique: vi.fn() },
     whakapapaReportCache: { findUnique: vi.fn(), upsert: vi.fn() },
     auditLog: { create: vi.fn() },
     $transaction: vi.fn(),
@@ -53,6 +54,7 @@ vi.mock("@/lib/club-theme", async (importOriginal) => ({
   ...((await importOriginal()) as typeof import("@/lib/club-theme")),
   getClubThemeForAdmin: h.getClubThemeForAdmin,
   saveClubTheme: h.saveClubTheme,
+  saveClubThemeStyle: h.saveClubThemeStyle,
 }));
 vi.mock("@/lib/whakapapa-report.server", async (importOriginal) => ({
   ...((await importOriginal()) as typeof import("@/lib/whakapapa-report.server")),
@@ -229,9 +231,8 @@ describe("site style actions", () => {
     expect(browser).toMatchObject({ theme: { logoDataUrl: "data:image/png;base64,AAAA" } });
   });
 
-  it("update_site_style changes colours, fonts and CSS, keeping the stored logo and never completing setup", async () => {
-    h.prisma.clubTheme.findUnique.mockResolvedValue({ logoUrl: "/api/images/logo-1", logoDataUrl: null });
-    h.saveClubTheme.mockResolvedValue(theme);
+  it("update_site_style saves only the colours, fonts and CSS, through the save that never writes the logo", async () => {
+    h.saveClubThemeStyle.mockResolvedValue(theme);
     const style = {
       brandGold: "#112233",
       brandDeep: "#1d3557",
@@ -251,15 +252,17 @@ describe("site style actions", () => {
     expect(Object.keys(answer).sort()).toEqual(Object.keys(action.returns).sort());
     expect(Object.keys(answer.theme).sort()).toEqual(Object.keys(action.returns.theme as object).sort());
 
-    expect(h.saveClubTheme.mock.calls[0]?.[0]).toEqual({
-      ...style,
-      logoUrl: "/api/images/logo-1",
-      logoDataUrl: null,
-    });
+    expect(h.saveClubThemeStyle).toHaveBeenCalledWith(style);
+    expect(h.saveClubTheme).not.toHaveBeenCalled();
   });
 
-  it("refuses a connection's attempt to change the logo or complete setup", async () => {
-    for (const extra of [{ logoUrl: "/api/images/other" }, { logoDataUrl: "data:image/png;base64,BBBB" }, { completeSetup: true }]) {
+  it("refuses a connection's save that would change the logo, complete setup, or clear the custom CSS by leaving it out", async () => {
+    for (const extra of [
+      { rawCss: "", logoUrl: "/api/images/other" },
+      { rawCss: "", logoDataUrl: "data:image/png;base64,BBBB" },
+      { rawCss: "", completeSetup: true },
+      {},
+    ]) {
       const response = await updateSiteStyle(
         new NextRequest("https://club.example.test/api/admin/site-style", {
           method: "PUT",
@@ -270,6 +273,7 @@ describe("site style actions", () => {
       expect(response.status, JSON.stringify(extra)).toBe(400);
     }
     expect(h.saveClubTheme).not.toHaveBeenCalled();
+    expect(h.saveClubThemeStyle).not.toHaveBeenCalled();
   });
 });
 

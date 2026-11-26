@@ -8,7 +8,16 @@
  */
 import { z } from "zod";
 
-import { WHAKAPAPA_SELECTOR_KEYS } from "@/lib/whakapapa-report";
+import {
+  WHAKAPAPA_SECTION_KEYS,
+  WHAKAPAPA_SELECTOR_KEYS,
+  type WhakapapaSectionVisibility,
+} from "@/lib/whakapapa-report";
+
+/** One optional flag per widget section, from the one section list. */
+const sectionFlags = Object.fromEntries(
+  WHAKAPAPA_SECTION_KEYS.map((key) => [key, z.boolean().optional()]),
+) as Record<keyof WhakapapaSectionVisibility, z.ZodOptional<z.ZodBoolean>>;
 
 /** `PUT`: the whole report as JSON text; auto refresh then pauses for 12 hours. */
 export const mountainConditionsReportSchema = z.object({
@@ -20,16 +29,7 @@ export const mountainConditionsReportSchema = z.object({
  * shown), or where the report is read from. With both, only `config` is saved.
  */
 export const mountainConditionsUpdateSchema = z.object({
-  visibility: z
-    .object({
-      roadStatus: z.boolean().optional(),
-      lifts: z.boolean().optional(),
-      facilities: z.boolean().optional(),
-      foodAndDrink: z.boolean().optional(),
-      conditions: z.boolean().optional(),
-      trails: z.boolean().optional(),
-    })
-    .optional(),
+  visibility: z.object(sectionFlags).optional(),
   config: z
     .object({
       sourceUrl: z.string(),

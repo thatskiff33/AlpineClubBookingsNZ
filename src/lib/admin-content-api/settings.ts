@@ -63,3 +63,13 @@ export const clubIdentitySchema = z
     postalAddress: clubPostalAddressSchema.nullable().optional(),
   })
   .strict();
+
+/** The club identity as stored and as the route answers with it: null uses the fallback. */
+export interface ClubIdentityValues {
+  name: string | null;
+  shortName: string | null;
+  hutLeaderLabel: string | null;
+  facebookUrl: string | null;
+  legalName: string | null;
+  postalAddress: string | null;
+}

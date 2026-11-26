@@ -5,6 +5,7 @@ import { prisma } from "@/lib/prisma";
 import { logAudit } from "@/lib/audit";
 import { mediaImageServingUrl } from "@/lib/media-image";
 import { connectionJson } from "@/lib/mcp-connection-request";
+import { routeIdParamsSchema } from "@/lib/route-id-params";
 import { IMAGE_LIBRARY_DELETED_CONNECTION_SHAPE } from "@/lib/connection-shapes/content-images";
 
 /**
@@ -18,12 +19,17 @@ export async function DELETE(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> },
 ) {
-  const { id } = await params;
   const guard = await requireAdmin({
     permission: { area: "content", level: "edit" },
   });
   if (!guard.ok) return guard.response;
   const session = guard.session;
+
+  const parsedParams = routeIdParamsSchema.safeParse(await params);
+  if (!parsedParams.success) {
+    return NextResponse.json({ error: "Image not found" }, { status: 404 });
+  }
+  const { id } = parsedParams.data;
 
   // Scope the lookup to CONTENT so a content admin can never reach a
   // MEMBER_PHOTO blob (which shares this table) from the media-library surface,

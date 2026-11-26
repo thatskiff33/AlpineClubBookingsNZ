@@ -63,7 +63,7 @@ export const CONTENT_PAGE_MCP_ACTIONS: readonly McpAction[] = [
     id: "update_site_page",
     title: "Edit a website page",
     summary:
-      "Replaces every field of a page at once, live on the public site: read it with `list_site_pages`, then send all of its fields back, changing only what you mean to. A system page keeps its slug and menu order. " +
+      "Replaces every field of a page at once, live on the public site: read it with `list_site_pages`, then send all of its fields back, changing only what you mean to. Refused if a system page's slug or menu order changes, or the slug is reserved or taken by another page. " +
       SANITISED,
     method: "PUT",
     path: "/api/admin/page-content",

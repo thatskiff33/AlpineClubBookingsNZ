@@ -10,7 +10,7 @@ import { storedPostalAddress } from "@/lib/postal-address-lines";
 import { prisma } from "@/lib/prisma";
 import { invalidatePublicClubIdentity } from "@/lib/public-layout-cache";
 import { requireAdmin } from "@/lib/session-guards";
-import { clubIdentitySchema } from "@/lib/admin-content-api/settings";
+import { clubIdentitySchema, type ClubIdentityValues } from "@/lib/admin-content-api/settings";
 import { connectionJson } from "@/lib/mcp-connection-request";
 import { CLUB_IDENTITY_CONNECTION_SHAPE } from "@/lib/connection-shapes/content-settings";
 
@@ -29,14 +29,7 @@ import { CLUB_IDENTITY_CONNECTION_SHAPE } from "@/lib/connection-shapes/content-
 // them. Sent blank, either clears to the fallback (club name; no address).
 // The address is stored one trimmed line per line (`storedPostalAddress`).
 
-type PersistedIdentity = {
-  name: string | null;
-  shortName: string | null;
-  hutLeaderLabel: string | null;
-  facebookUrl: string | null;
-  legalName: string | null;
-  postalAddress: string | null;
-};
+type PersistedIdentity = ClubIdentityValues;
 
 const defaults: PersistedIdentity = {
   name: null,

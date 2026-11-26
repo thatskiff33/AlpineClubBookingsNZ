@@ -15,7 +15,7 @@ import {
   type ConnectionShape,
 } from "@/lib/connection-projection";
 import type { PrivacyHostingValues } from "@/lib/privacy-hosting";
-import type { PublicContentSettingsValues } from "@/lib/admin-content-api/settings";
+import type { ClubIdentityValues, PublicContentSettingsValues } from "@/lib/admin-content-api/settings";
 import type {
   WhakapapaCurlData,
   WhakapapaSectionVisibility,
@@ -71,15 +71,6 @@ export const CLUB_CONTACT_SAVED_CONNECTION_SHAPE = completeConnectionShapeFor<{
 // ---------------------------------------------------------------------------
 // Club identity
 // ---------------------------------------------------------------------------
-
-interface ClubIdentityValues {
-  name: string | null;
-  shortName: string | null;
-  hutLeaderLabel: string | null;
-  facebookUrl: string | null;
-  legalName: string | null;
-  postalAddress: string | null;
-}
 
 export const CLUB_IDENTITY_CONNECTION_SHAPE = completeConnectionShapeFor<{ settings: ClubIdentityValues }>({
   settings: {

@@ -143,7 +143,7 @@ export const CONTENT_SETTINGS_MCP_ACTIONS: readonly McpAction[] = [
     id: "update_site_style",
     title: "Change the website's style",
     summary:
-      "Replaces the brand colours (6-digit hex), fonts and custom CSS together, across the website and its emails: read them with `get_site_style` and send all back. The logo is kept; changing it, and finishing setup, stay on the website.",
+      "Replaces the brand colours (6-digit hex), fonts and custom CSS together, across the website and its emails: read them with `get_site_style` and send every field back, `rawCss` included (\"\" clears it). The logo is never changed; changing it, and finishing setup, stay on the website.",
     method: "PUT",
     path: "/api/admin/site-style",
     body: clubThemeConnectionUpdateSchema,
@@ -179,7 +179,7 @@ export const CONTENT_SETTINGS_MCP_ACTIONS: readonly McpAction[] = [
     id: "replace_mountain_conditions_report",
     title: "Save a mountain conditions report by hand",
     summary:
-      "Replaces the stored report with `rawJson`, the whole report as JSON text in the shape `get_mountain_conditions_report` returns as `payload`, and pauses auto refresh for 12 hours.",
+      "Replaces the stored report with `rawJson`, the whole report as JSON text in the shape `get_mountain_conditions_report` returns as `payload`, and pauses auto refresh for 12 hours. Which sections show comes from the report's own `visibility`: left out, every section shows again.",
     method: "PUT",
     path: "/api/admin/mountain-conditions",
     body: mountainConditionsReportSchema,

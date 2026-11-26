@@ -715,7 +715,8 @@ on the area's own route with the officer's real permissions
 ([`catalogue/content.ts`](../../src/lib/mcp/catalogue/content.ts)): a **view**
 grant reaches the reads, an **edit** grant the changes too. Anyone without the
 area, or on a connection not approved for officer actions, is never shown these
-actions, and the route refuses them anyway. All are reached through
+actions: a call on an unapproved connection is refused before the route is
+reached, and the route itself refuses anyone without the area. All are reached through
 `find_actions` except `list_site_pages` and `list_site_banners`.
 
 HTML an app sends (a page's header and body, a footer section) goes through the
@@ -728,7 +729,7 @@ stored HTML, because their saves replace it whole.
 | **Pages, footer and banners** | | | |
 | `list_site_pages` | Every public page with its address, menu title, whether it is published and its stored HTML. Listed as its own tool | read | `GET /api/admin/page-content` |
 | `create_site_page` | Adds a page, published at once with an empty body | destructive | `POST /api/admin/page-content` |
-| `update_site_page` | Replaces every field of a page, live on the site | destructive | `PUT /api/admin/page-content` |
+| `update_site_page` | Replaces every field of a page, live on the site; a system page keeps its slug and menu order | destructive | `PUT /api/admin/page-content` |
 | `set_site_page_published` | Shows or hides a page the club added | destructive | `PATCH /api/admin/page-content` |
 | `delete_site_page` | Deletes a page the club added; names the pages and footer sections that still link to it | destructive | `DELETE /api/admin/page-content` |
 | `list_footer_sections` | The footer columns with their stored HTML | read | `GET /api/admin/site-content` |
@@ -747,10 +748,10 @@ stored HTML, because their saves replace it whole.
 | `get_privacy_hosting_disclosure` | The hosting company and data location the privacy page names | read | `GET /api/admin/privacy-hosting` |
 | `update_privacy_hosting_disclosure` | Sets them | destructive | `PUT /api/admin/privacy-hosting` |
 | `get_site_style` | Brand colours, fonts, custom CSS, which logo is in use and contrast warnings; never the inline logo's bytes | read | `GET /api/admin/site-style` |
-| `update_site_style` | Replaces the colours, fonts and custom CSS. The stored logo is kept, and setup is never completed from an app | destructive | `PUT /api/admin/site-style` |
+| `update_site_style` | Replaces the colours, fonts and custom CSS, all of which must be sent. Never writes the logo or completes setup | destructive | `PUT /api/admin/site-style` |
 | `get_mountain_conditions_report` | The stored ski field report, its source and its refresh pause | read | `GET /api/admin/mountain-conditions` |
 | `refresh_mountain_conditions_report` | Fetches the report from its source now, replacing the stored one | destructive | `POST /api/admin/mountain-conditions` |
-| `replace_mountain_conditions_report` | Saves a report by hand and pauses auto refresh for 12 hours | destructive | `PUT /api/admin/mountain-conditions` |
+| `replace_mountain_conditions_report` | Saves a report by hand, with its own section choices, and pauses auto refresh for 12 hours | destructive | `PUT /api/admin/mountain-conditions` |
 | `update_mountain_conditions_settings` | Which sections the widget shows, or the report's source and selectors | destructive | `PATCH /api/admin/mountain-conditions` |
 | **Public images** | | | |
 | `list_image_folders` | The Image Manager's photo folders | read | `GET /api/admin/image-manager/directories` |

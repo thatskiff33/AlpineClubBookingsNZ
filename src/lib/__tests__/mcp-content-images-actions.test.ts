@@ -175,6 +175,8 @@ describe("image library and branding image actions", () => {
   it("list_branding_images lists the built-in images by address", async () => {
     const { connection } = await expectActionContract({ actionId: "list_branding_images", handler: listBrandingImages });
 
-    expect((connection as { images: string[] }).images.every((image) => image.startsWith("/branding/"))).toBe(true);
+    const { images } = connection as { images: string[] };
+    expect(images.length).toBeGreaterThan(0);
+    expect(images.every((image) => image.startsWith("/branding/"))).toBe(true);
   });
 });

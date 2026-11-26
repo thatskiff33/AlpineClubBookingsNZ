@@ -2,7 +2,7 @@
  * ALP-723 (`INV-MCP-006`): the page, footer section and site banner actions
  * an officer's AI app connection may run, each held to its contract
  * (`expectActionContract`): the connection gets exactly the action's
- * `returns` fields and the browser's answer is unchanged. The HTML an app
+ * `returns` fields, whatever else the route's answer carries. The HTML an app
  * sends goes through the route's own sanitiser, the same one the website's
  * editor relies on.
  */

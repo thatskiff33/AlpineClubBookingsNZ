@@ -71,6 +71,9 @@ const logoUrlSchema = z
   .trim()
   .refine(isValidLogoUrl, "Logo URL must be an uploaded image path.");
 
+/** Custom CSS, sanitised as it is parsed. */
+const clubThemeRawCssSchema = z.string().max(50_000).transform(sanitiseRawCss);
+
 export const clubThemeUpdateSchema = z
   .object({
     brandGold: colourSchema,
@@ -84,7 +87,7 @@ export const clubThemeUpdateSchema = z
     logoDataUrl: z
       .union([logoDataUrlSchema, z.literal(""), z.null()])
       .transform((value) => value || null),
-    rawCss: z.string().max(50_000).default("").transform(sanitiseRawCss),
+    rawCss: clubThemeRawCssSchema.default(""),
     completeSetup: z.boolean().optional(),
   })
   .strict();
@@ -93,12 +96,13 @@ export type ClubThemeUpdateInput = z.infer<typeof clubThemeUpdateSchema>;
 
 /**
  * What an AI app connection may send to the site style save (ALP-723): the
- * colours, fonts and custom CSS. The logo is a file the officer uploads on the
- * website, and completing setup is the setup wizard's last step, so neither is
- * offered; the route keeps the stored logo for a connection's save.
+ * colours, fonts and custom CSS, all of them, so an app that leaves out the
+ * custom CSS is refused rather than clearing it. The logo is a file the
+ * officer uploads on the website, and completing setup is the setup wizard's
+ * last step, so neither is offered; `saveClubThemeStyle` never writes them.
  */
-export const clubThemeConnectionUpdateSchema = clubThemeUpdateSchema.omit({
-  logoUrl: true,
-  logoDataUrl: true,
-  completeSetup: true,
-});
+export const clubThemeConnectionUpdateSchema = clubThemeUpdateSchema
+  .omit({ logoUrl: true, logoDataUrl: true, completeSetup: true })
+  .extend({ rawCss: clubThemeRawCssSchema });
+
+export type ClubThemeStyleInput = z.infer<typeof clubThemeConnectionUpdateSchema>;
