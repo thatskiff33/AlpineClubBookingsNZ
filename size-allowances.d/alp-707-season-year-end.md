@@ -29,8 +29,3 @@ lines: 455
 reason: the forced-edit check runs again inside the write transaction, so its
   current season (zone and year-end, which may read Xero) is resolved once
   before that transaction rather than inside it.
-
-file: src/lib/admin-member-detail-service.ts
-lines: 1728
-reason: imports the resolved current-season helper the member detail payload
-  now takes its season from.
