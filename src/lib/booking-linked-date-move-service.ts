@@ -1,5 +1,3 @@
-import { EditPriceChangedError, EditFiguresRequiredError, type LinkedQuotedFigures } from "@/lib/edit-quoted-figures";
-import { buildSameOwnerCoverageLinkedMoveBody } from "@/lib/adult-member-hosting-linked-move";
 import type { Role } from "@prisma/client";
 
 import {
@@ -10,7 +8,13 @@ import {
 import { bookingOwner } from "@/lib/booking-owner";
 import { settleHostingCoverageAfterCommit } from "@/lib/adult-member-hosting-coverage-drain";
 import {
+  EditFiguresRequiredError,
+  EditPriceChangedError,
+  type LinkedQuotedFigures,
+} from "@/lib/edit-quoted-figures";
+import {
   SameOwnerCoverageLinkedMoveRequiredError,
+  buildSameOwnerCoverageLinkedMoveBody,
   combineLinkedMoveQuote,
   linkedMoveStateKey,
   linkedMoveTargetRange,

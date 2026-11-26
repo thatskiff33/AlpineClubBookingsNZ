@@ -1,4 +1,3 @@
-import { assertEditQuotedFigures, type EditQuotedFigures } from "@/lib/edit-quoted-figures";
 /**
  * #3232's linked move, at the service seam: two of a member's own bookings moved
  * together, atomically, on one combined figure they accept once.
@@ -52,6 +51,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { StrandedCoverageBooking } from "@/lib/adult-member-hosting-same-owner";
 import { stripComments } from "@/lib/__tests__/support/strip-comments";
+import { assertEditQuotedFigures, type EditQuotedFigures } from "@/lib/edit-quoted-figures";
 
 vi.mock("server-only", () => ({}));
 

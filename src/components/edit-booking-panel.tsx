@@ -55,7 +55,9 @@ import { PriceSummaryCard } from "@/components/edit-booking/price-summary-card";
 import { LinkedMoveSettlementMethod } from "@/components/edit-booking/linked-move-settlement-method";
 import {
   editPriceChangedMessage,
+  LINKED_MOVE_PRICE_CHANGED_MESSAGE,
   readEditPriceChangedFigures,
+  readEditPriceChangedLinkedMove,
 } from "@/components/edit-booking/edit-price-changed";
 import { useClubFormat } from "@/components/club-format-provider";
 import { hasSeveralPromoCodes, PromoCodeCard } from "@/components/edit-booking/promo-code-card";
@@ -91,6 +93,7 @@ import {
 } from "@/components/edit-booking/hooks/use-hosting-coverage-linked-move";
 import { HostingCoverageLinkedMovePrompt } from "@/components/hosting-coverage-linked-move-prompt";
 import {
+  hostingCoverageLinkedMoveAcceptedFigures,
   hostingCoverageLinkedMoveAnswer,
   readHostingCoverageLinkedMovePrompt,
 } from "@/lib/hosting-coverage-linked-move-client";
@@ -1325,7 +1328,8 @@ export function EditBookingPanel({
       // unchanged so the save refuses rather than settle a different amount.
       // Added after the signature, like the linked-move answers below: a
       // re-priced preview is not a different proposal and must not retire an
-      // open prompt. No preview, no figures — the save then prices as before.
+      // open prompt. No preview, no figures — the server then asks for a reload
+      // (#5238) rather than price a figure nobody was shown.
       const previewedFigures = quote?.quotedFigures ?? null;
       if (previewedFigures) body.quotedFigures = previewedFigures;
       if (overrideState) {
@@ -1361,6 +1365,13 @@ export function EditBookingPanel({
         if (linkedMoveChoice === "MOVE_BOTH" && linkedMoveSettlementMethod) {
           body.settlementMethod = linkedMoveSettlementMethod;
         }
+        // #5238 (`INV-MOD-062`): accepting binds every booking to the figure the
+        // offer showed for it, the primary's included, so either may refuse.
+        const accepted =
+          linkedMoveChoice === "MOVE_BOTH"
+            ? hostingCoverageLinkedMoveAcceptedFigures(linkedMoveState.prompt)
+            : null;
+        if (accepted) Object.assign(body, accepted);
       }
 
       const res = await fetch(`/api/bookings/${booking.id}/modify`, {
@@ -1371,6 +1382,20 @@ export function EditBookingPanel({
 
       const data = await res.json();
       if (!res.ok) {
+        // #5238: the linked move's price moved since the member accepted it, so
+        // neither booking was saved. Put the fresh offer up and ask again.
+        const freshOffer = readEditPriceChangedLinkedMove(data);
+        if (freshOffer) {
+          setLinkedMoveState({
+            prompt: freshOffer,
+            proposalSignature: refusedHostingProposalSignature,
+            notifyMemberChoice,
+          });
+          setLinkedMoveChoice(null);
+          setSaveError(LINKED_MOVE_PRICE_CHANGED_MESSAGE);
+          requote();
+          return;
+        }
         // #4924: the price moved since the preview, so nothing was saved. Say
         // what changed, keep the edit open and price it again.
         const freshFigures = readEditPriceChangedFigures(data);

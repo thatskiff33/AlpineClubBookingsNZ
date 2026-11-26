@@ -1,4 +1,3 @@
-import type { EditQuotedFigures } from "@/lib/edit-quoted-figures";
 import { createHash } from "node:crypto";
 
 import { z } from "zod";
@@ -8,6 +7,7 @@ import {
   type StrandedCoverageBooking,
 } from "@/lib/adult-member-hosting-same-owner";
 import { ApiError } from "@/lib/api-error";
+import type { EditQuotedFigures } from "@/lib/edit-quoted-figures";
 import { editTotalMoneyBackCents } from "@/lib/edit-money-back";
 import { editRefundRouteOf, type EditRefundRoute } from "@/lib/edit-refund-route";
 import { formatBookingReference } from "@/lib/booking-reference";

@@ -4,6 +4,10 @@ import {
   editQuotedFiguresSchema,
   type EditQuotedFigures,
 } from "@/lib/edit-quoted-figures";
+import {
+  readHostingCoverageLinkedMovePrompt,
+  type HostingCoverageLinkedMovePromptData,
+} from "@/lib/hosting-coverage-linked-move-client";
 import { formatCents } from "@/lib/utils";
 
 /**
@@ -17,6 +21,23 @@ export function readEditPriceChangedFigures(data: unknown): EditQuotedFigures | 
   const figures = editQuotedFiguresSchema.safeParse(record.figures);
   return figures.success ? figures.data : null;
 }
+
+/**
+ * #5238: the fresh linked-move offer a refused `MOVE_BOTH` acceptance carries,
+ * or null for any other body. The member answers the new offer; the old answer
+ * is never resent.
+ */
+export function readEditPriceChangedLinkedMove(
+  data: unknown,
+): HostingCoverageLinkedMovePromptData | null {
+  if (!data || typeof data !== "object") return null;
+  const record = data as { code?: unknown; linkedMove?: unknown };
+  if (record.code !== EDIT_PRICE_CHANGED_CODE) return null;
+  return readHostingCoverageLinkedMovePrompt(record.linkedMove);
+}
+
+export const LINKED_MOVE_PRICE_CHANGED_MESSAGE =
+  "The price of moving both bookings changed since you accepted it, so nothing was saved. Check the new figures and choose again.";
 
 function describeNetCharge(cents: number, format: ClubFormat): string {
   if (cents > 0) return `an extra charge of ${formatCents(cents, format)}`;

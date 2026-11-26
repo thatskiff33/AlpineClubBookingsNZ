@@ -1,4 +1,3 @@
-import { editQuotedFiguresSchema, type EditQuotedFigures } from "@/lib/edit-quoted-figures";
 /**
  * Browser-side half of #3232's linked-move offer.
  *
@@ -24,6 +23,11 @@ import { editQuotedFiguresSchema, type EditQuotedFigures } from "@/lib/edit-quot
  */
 
 import { formatCents } from "@/lib/utils";
+import {
+  editQuotedFiguresSchema,
+  type EditQuotedFigures,
+  type LinkedQuotedFigures,
+} from "@/lib/edit-quoted-figures";
 import { EDIT_REFUND_ROUTES, editRefundDestinationPhrase, type EditRefundRoute } from "@/lib/edit-refund-route";
 import { HOSTING_COVERAGE_STATE_KEY_PATTERN } from "@/lib/hosting-coverage-override-client";
 import { isCalendarDate } from "@/lib/club-time";
@@ -39,6 +43,11 @@ import type { ClubFormat } from "@/lib/club-format";
  * shape are two things that can disagree about what the server sends.
  */
 export interface HostingCoverageLinkedMoveBooking {
+  /**
+   * #5238 (`INV-MOD-062`): this booking's figures as the offer priced them,
+   * echoed on `MOVE_BOTH` so its save refuses rather than settle another amount.
+   * Absent when the move is not available, or from a server older than #5238.
+   */
   quotedFigures?: EditQuotedFigures;
   bookingId: string;
   /** The short handle the member sees, never the raw cuid alone. */
@@ -68,6 +77,7 @@ export interface HostingCoverageLinkedMoveBooking {
 }
 
 export interface HostingCoverageLinkedMovePromptData {
+  /** #5238: the primary booking's figures as the offer priced them. */
   quotedFigures?: EditQuotedFigures;
   message: string;
   /** The key `MOVE_BOTH` must return; bound to the moves AND the money. */
@@ -512,4 +522,23 @@ export function hostingCoverageLinkedMoveAnswer(
     return { choice, acknowledged: true, stateKey: prompt.acceptStateKey };
   }
   return { choice, acknowledged: true, stateKey: prompt.declineStateKey };
+}
+
+/**
+ * #5238 (`INV-MOD-062`): the figures a `MOVE_BOTH` acceptance sends back, the
+ * primary's and every other booking's exactly as the offer priced them. Empty
+ * when the offer came from a server older than #5238 and carried none: the
+ * save then sends no linked figures and the server asks for a reload rather
+ * than settle a figure the panel cannot vouch for.
+ */
+export function hostingCoverageLinkedMoveAcceptedFigures(
+  prompt: HostingCoverageLinkedMovePromptData,
+): { quotedFigures: EditQuotedFigures; linkedQuotedFigures: LinkedQuotedFigures } | null {
+  const linkedQuotedFigures: LinkedQuotedFigures = [];
+  for (const row of prompt.linkedBookings) {
+    if (!row.quotedFigures) return null;
+    linkedQuotedFigures.push({ bookingId: row.bookingId, figures: row.quotedFigures });
+  }
+  if (!prompt.quotedFigures) return null;
+  return { quotedFigures: prompt.quotedFigures, linkedQuotedFigures };
 }

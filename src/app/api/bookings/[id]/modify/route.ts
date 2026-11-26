@@ -3,7 +3,7 @@ import { parseJsonRequestBody } from "@/lib/api-json";
 import { hostingCoverageParticipantRetryResponse } from "@/lib/adult-member-hosting-retry-response";
 import { isDateOnlyOverrideViolation } from "@/lib/booking-modify-quote-request";
 import { batchModifySchema } from "@/lib/booking-modify-request";
-import { EditPriceChangedError, editPriceChangedBody } from "@/lib/edit-quoted-figures";
+import { editQuotedFiguresRefusal, requireEditQuotedFigures } from "@/lib/edit-quoted-figures";
 import {
   guestRequestSchemaError,
 } from "@/lib/booking-guest-stay-range-input";
@@ -182,6 +182,7 @@ export async function PUT(
   const format = await clubFormatValues();
 
   try {
+    requireEditQuotedFigures(parsed.data);
     const result =
       adminOverride && pricingMode === "shift"
         ? await adminShiftBookingDates({
@@ -217,12 +218,12 @@ export async function PUT(
 
     return NextResponse.json(result);
   } catch (err) {
-    // #4924 (`INV-MOD-062`): the save's own figures differ from the ones the
-    // member previewed. Thrown inside the save's transaction before its first
-    // write, so nothing was settled; the body carries the fresh figures.
-    if (err instanceof EditPriceChangedError) {
-      return NextResponse.json(editPriceChangedBody(err), { status: err.status });
-    }
+    // #4924, #5238 (`INV-MOD-062`): the save carried no figures, or its own
+    // figures differ from the ones the member previewed. Both are thrown before
+    // the first write, so nothing was settled; a price change carries the fresh
+    // figures, and on a linked move the fresh offer.
+    const figuresRefusal = editQuotedFiguresRefusal(err);
+    if (figuresRefusal) return NextResponse.json(figuresRefusal.body, { status: figuresRefusal.status });
     // The edit commits before its refund and additional-ask steps, so a
     // contended lock(1) transaction (INV-LOCK-006) asks for a status check.
     // The linked move answers its own LINKED_MOVE_CONTENDED 503 below.
