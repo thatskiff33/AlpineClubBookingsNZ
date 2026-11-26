@@ -36,6 +36,11 @@ const mocks = vi.hoisted(() => ({
   getStuckStateAffectedCount: vi.fn(),
   loggerError: vi.fn(),
   clubTimeSettingsFindUnique: vi.fn(),
+  readStoredServerVersion: vi.fn(),
+}));
+
+vi.mock("@/lib/servernz-version-check", () => ({
+  readStoredServerVersion: mocks.readStoredServerVersion,
 }));
 
 vi.mock("@/lib/stuck-state-affected-count", () => ({
@@ -138,6 +143,7 @@ describe("getAdminPendingCounts", () => {
     mocks.getPendingMemberDeleteReviewCount.mockResolvedValue(14);
     mocks.issueReportCount.mockResolvedValue(11);
     mocks.getStuckStateAffectedCount.mockResolvedValue(17);
+    mocks.readStoredServerVersion.mockResolvedValue({ status: "match" });
     // Uncovered lodge-nights (#2917), not bare dates: the SAME night at two
     // lodges is two rows, and the badge counts two — the sidebar number is
     // pieces of work, not calendar days.
@@ -161,9 +167,25 @@ describe("getAdminPendingCounts", () => {
     ]);
   });
 
+  // The linked Alpine Central Server's stored version answer (#49): only a
+  // recorded mismatch counts. No key ("no-key") and never asked ("unchecked")
+  // do not pause syncing, so they are not work for an officer.
+  it.each([
+    ["mismatch", 1],
+    ["match", 0],
+    ["unchecked", 0],
+    ["no-key", 0],
+  ] as const)("counts the Alpine Central Server version as %s -> %i", async (status, expected) => {
+    mocks.readStoredServerVersion.mockResolvedValue({ status });
+    const counts = await getAdminPendingCounts();
+    expect(counts.alpineServerVersionMismatch).toBe(expected);
+    expect(counts.unavailable).toEqual([]);
+  });
+
   it("returns every queue count keyed for the sidebar", async () => {
     expect(await getAdminPendingCounts()).toEqual({
       xeroSilentWebhook: 0,
+      alpineServerVersionMismatch: 0,
       familyRequests: 1,
       memberApplications: 2,
       refundAppeals: 3,

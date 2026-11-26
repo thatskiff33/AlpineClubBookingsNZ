@@ -388,7 +388,10 @@ with the two numbers), sharing and withdrawing board posts, the message-board
 pull, push registration, and the central server's own pushes (which are still
 accepted and answered, but not acted on). Nothing is sent or received until the
 versions match. The page carries one message naming both numbers, the Other
-lodges panel on **Lodges** says the list may be out of date, and the
+lodges panel on **Lodges** says the list may be out of date, the admin
+sidebar's **Needs Attention** shows **Alpine Server Out of Sync** (with a
+matching card on the [Admin Dashboard](dashboard.md)) linking back to this page,
+and the
 [Daily digest](notification-recipients.md) carries a *Central server version*
 entry every day until the two match — to the digest's own readers and to
 everyone with Lodge Operations edit access. A central server from before

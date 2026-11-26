@@ -1,5 +1,6 @@
 import logger from "@/lib/logger";
 import { getXeroWebhookHealth } from "@/lib/xero-webhook-health";
+import { readStoredServerVersion } from "@/lib/servernz-version-check";
 import { prisma } from "@/lib/prisma";
 import {
   getBookingRequestPendingCounts,
@@ -56,12 +57,18 @@ type PendingCounter = (context: PendingCounterContext) => Promise<number>;
  * membership-cancellation-requests,
  * member-lifecycle-action-requests (ARCHIVE and DELETE review queues),
  * deletion-requests, issue-reports,
- * hut-leaders/unassigned-dates, the silent Xero webhook, and Stuck States'
+ * hut-leaders/unassigned-dates, the silent Xero webhook, the Alpine Central
+ * Server version mismatch (the stored answer, no network call), and Stuck States'
  * affected-item headline (#4962)); update both together if a queue definition
  * changes.
  */
 const PENDING_COUNTERS = {
   xeroSilentWebhook: async () => ((await getXeroWebhookHealth()).silent ? 1 : 0),
+  // The STORED answer only, as the Daily digest reads it: the sidebar asks on
+  // every admin navigation and must never call the server. "mismatch" needs a
+  // stored API key, so an unlinked site never shows it.
+  alpineServerVersionMismatch: async () =>
+    (await readStoredServerVersion()).status === "mismatch" ? 1 : 0,
   familyRequests: () =>
     prisma.familyGroupJoinRequest.count({
       where: { status: "PENDING", type: { in: [...REVIEWED_REQUEST_TYPES] } },
