@@ -39,6 +39,15 @@ const NO_RESEND_GUIDANCE: Record<
 const UNCONFIRMED_DELIVERY_NOTE =
   "May already have been delivered: the app stopped while sending this email, so it may have reached the recipient. Check with them before you try again.";
 
+/** What **Try again** asks; #5298: it warns of a duplicate when the recipient may already have it. */
+function tryAgainDescription(to: string, deliveryUnconfirmed: boolean): string {
+  const handBack =
+    "It is handed back to the email retry job and goes out on its next run, usually within 30 minutes. The job checks the recipient, the suppression list and the booking's No emails setting again before it sends.";
+  return deliveryUnconfirmed
+    ? `${UNCONFIRMED_DELIVERY_NOTE} If it did arrive, ${to} will receive it twice. ${handBack}`
+    : handBack;
+}
+
 function EmailFailureLinks({ failure }: { failure: ExhaustedEmailFailure }) {
   if (!failure.bookingId && !failure.bookingRecipientMemberId) return null;
 
@@ -145,18 +154,12 @@ export function EmailDeliverabilitySection({
     }
   }
 
-  async function requeueEmailFailure(failure: ExhaustedEmailFailure) {
+  async function requeueEmailFailure(id: string, to: string, deliveryUnconfirmed: boolean) {
     if (!canEdit) return;
-    const { id, to } = failure;
-    const handBack =
-      "It is handed back to the email retry job and goes out on its next run, usually within 30 minutes. The job checks the recipient, the suppression list and the booking's No emails setting again before it sends.";
     if (
       !(await confirm({
         title: `Try sending the email to ${to} again?`,
-        // #5298: the recipient may already have it, so say so before sending again.
-        description: failure.deliveryUnconfirmed
-          ? `${UNCONFIRMED_DELIVERY_NOTE} If it did arrive, ${to} will receive it twice. ${handBack}`
-          : handBack,
+        description: tryAgainDescription(to, deliveryUnconfirmed),
         confirmLabel: "Try again",
       }))
     ) {
@@ -467,7 +470,7 @@ export function EmailDeliverabilitySection({
                         <Button
                           variant="secondary"
                           size="sm"
-                          onClick={() => requeueEmailFailure(failure)}
+                          onClick={() => requeueEmailFailure(failure.id, failure.to, failure.deliveryUnconfirmed)}
                           disabled={requeueingEmailFailureId === failure.id || !canEdit}
                           title={canEdit === false ? ADMIN_VIEW_ONLY_ACTION_REASON : undefined}
                           className="h-7 gap-1.5 px-2.5"

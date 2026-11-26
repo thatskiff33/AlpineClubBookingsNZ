@@ -51,6 +51,22 @@ export async function claimEmailHandover(emailLogId: string): Promise<boolean> {
   return claim.count === 1;
 }
 
+/**
+ * `claimEmailHandover` for the sender: true only when it may now send. A lost
+ * claim or a database error both answer false, and the row is then the sweep's,
+ * which re-sends it once if it keeps a body, so the email is late rather than
+ * sent twice.
+ */
+export async function wonEmailHandover(emailLogId: string, templateName: string): Promise<boolean> {
+  try {
+    if (await claimEmailHandover(emailLogId)) return true;
+    logger.warn({ emailLogId, templateName }, "Email not sent: the stranded-email sweep had already taken its row (#5298)");
+  } catch (err) {
+    logger.error({ err, emailLogId, templateName }, "Email not sent: its hand-over could not be recorded; the stranded-email sweep sends it later if it can (#5298)");
+  }
+  return false;
+}
+
 /** What the sweep did with one stranded row. */
 type StrandedOutcome = "requeued" | "never_sent" | "unconfirmed";
 

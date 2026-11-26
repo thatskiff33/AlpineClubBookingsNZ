@@ -3,7 +3,7 @@ import { htmlToPlainText } from "../email-text";
 import logger from "@/lib/logger";
 import { prisma } from "@/lib/prisma";
 import { recordEmailAttempt } from "./attempt-log";
-import { claimEmailHandover } from "./handover";
+import { wonEmailHandover } from "./handover";
 import {
   formatEmailFromAddressWithSettings,
 } from "@/lib/email-message-settings";
@@ -111,21 +111,33 @@ export type EmailSendOutcome =
       emailLogId: string | null;
       reason: EmailEnvironmentWithheldReason;
     }
-  // #5298 (INV-INT-043): nothing was transmitted, because this send did not win
-  // its row's hand-over claim: the stranded-email sweep had taken the row, or
-  // the claim could not be written. Not terminal: the sweep re-sends the row
-  // once if it keeps a body, and reports it to officers otherwise, so a caller
-  // must not send its own second copy.
+  // #5298 (INV-INT-043): not transmitted, because the send lost (or could not
+  // write) its row's hand-over claim. The stranded-email sweep owns the row, so
+  // a caller must not send a copy of its own (`isLeftForTheEmailRetryJob`).
   | { status: "handover_lost"; emailLogId: string };
 
-async function wonEmailHandover(emailLogId: string, templateName: string): Promise<boolean> {
+/** The provider accepted the message. A failed write is only logged: the email went out. */
+async function markEmailLogSent(emailLogId: string, messageId: string | null) {
   try {
-    if (await claimEmailHandover(emailLogId)) return true;
-    logger.warn({ emailLogId, templateName }, "Email not sent: the stranded-email sweep had already taken its row (#5298)");
+    await prisma.emailLog.update({
+      where: { id: emailLogId },
+      data: { status: "SENT", sentAt: new Date(), messageId },
+    });
   } catch (err) {
-    logger.error({ err, emailLogId, templateName }, "Email not sent: its hand-over could not be recorded; the stranded-email sweep sends it later if it can (#5298)");
+    logger.error({ err }, "Failed to update EmailLog to SENT");
   }
-  return false;
+}
+
+/** The provider refused or the transport failed: a FAILED row the retry job replays if it keeps a body. */
+async function markEmailLogFailed(emailLogId: string, err: unknown) {
+  try {
+    await prisma.emailLog.update({
+      where: { id: emailLogId },
+      data: { status: "FAILED", errorMessage: err instanceof Error ? err.message : String(err) },
+    });
+  } catch (logErr) {
+    logger.error({ err: logErr }, "Failed to update EmailLog to FAILED");
+  }
 }
 
 function assertNoCrlf(value: string, field: string) {
@@ -566,13 +578,8 @@ export async function sendEmail({
     const { transporter, modeLabel } = await getEmailTransporter(
       environmentGate.clearance,
     );
-    // #5298 (INV-INT-043): hand over only after winning this row's guarded
-    // claim, which the stranded-email sweep races. Lost, or unwritable: send
-    // nothing. The row is then the sweep's, which re-sends it once if it keeps
-    // a body, so this email is late rather than sent twice.
-    if (emailLogId && !(await wonEmailHandover(emailLogId, templateName))) {
-      return { status: "handover_lost", emailLogId };
-    }
+    // #5298 (INV-INT-043): lost or unwritable, send nothing; the sweep owns it.
+    if (emailLogId && !(await wonEmailHandover(emailLogId, templateName))) return { status: "handover_lost", emailLogId };
     const result = await transporter.sendMail({
       from,
       to,
@@ -590,41 +597,14 @@ export async function sendEmail({
       modeLabel,
     });
 
-    // Update EmailLog to SENT
-    if (emailLogId) {
-      try {
-        await prisma.emailLog.update({
-          where: { id: emailLogId },
-          data: {
-            status: "SENT",
-            sentAt: new Date(),
-            messageId: result.messageId || null,
-          },
-        });
-      } catch (err) {
-        logger.error({ err }, "Failed to update EmailLog to SENT");
-      }
-    }
+    if (emailLogId) await markEmailLogSent(emailLogId, result.messageId || null);
     return {
       status: "sent",
       emailLogId,
       messageId: result.messageId || null,
     };
   } catch (err) {
-    // Update EmailLog to FAILED
-    if (emailLogId) {
-      try {
-        await prisma.emailLog.update({
-          where: { id: emailLogId },
-          data: {
-            status: "FAILED",
-            errorMessage: err instanceof Error ? err.message : String(err),
-          },
-        });
-      } catch (logErr) {
-        logger.error({ err: logErr }, "Failed to update EmailLog to FAILED");
-      }
-    }
+    if (emailLogId) await markEmailLogFailed(emailLogId, err);
     if (!persistHtmlBody) {
       logger.warn(
         { templateName },
