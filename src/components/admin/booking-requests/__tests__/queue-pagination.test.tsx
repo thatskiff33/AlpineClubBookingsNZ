@@ -546,6 +546,7 @@ describe("PolicyExceptionRequestsPanel paging", () => {
     await screen.findByText("Showing 1–25 of 30");
     fireEvent.click(screen.getByRole("button", { name: "Next page" }));
     expect(await screen.findByText("Showing 26–30 of 30")).toBeInTheDocument();
+    expect(fetches.reads(route).at(-1)!.searchParams.get("status")).toBe("EXPIRED");
     await waitFor(() => expect(writtenAddress().searchParams.get("page")).toBe("2"));
 
     // Reload: a fresh mount on exactly the address the panel wrote.
