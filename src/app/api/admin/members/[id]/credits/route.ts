@@ -13,6 +13,7 @@ import {
   getPendingAdminAdjustmentRequests,
   createAdminAdjustmentRequest,
 } from "@/lib/member-credit";
+import { getPendingCreditDeductionCorrections } from "@/lib/admin-credit-deduction-queries";
 import { getClientIp } from "@/lib/rate-limit";
 import logger from "@/lib/logger";
 import { formatCentsPlain } from "@/lib/utils";
@@ -37,15 +38,16 @@ export async function GET(
     if (!guard.ok) return guard.response;
     const { id } = await params;
 
-    const [balanceCents, history, pendingRequests] = await Promise.all([
+    const [balanceCents, history, pendingRequests, pendingCorrections] = await Promise.all([
       getMemberCreditBalance(id),
       getAdminMemberCreditHistory(id),
       getPendingAdminAdjustmentRequests(id),
+      getPendingCreditDeductionCorrections(id),
     ]);
 
     return connectionJson(
       request,
-      { balanceCents, history, pendingRequests },
+      { balanceCents, history, pendingRequests, pendingCorrections },
       MEMBER_CREDITS_CONNECTION_SHAPE,
     );
   } catch (error) {

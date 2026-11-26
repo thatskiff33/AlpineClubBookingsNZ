@@ -5,7 +5,7 @@ import { xeroTransport } from "@/test/providers/xero-transport";
 
 vi.mock("@/lib/prisma", () => ({ prisma: {} }));
 vi.mock("@/lib/xero-api-usage", async (original) => ({
-  ...await original<typeof import("@/lib/xero-api-usage")>(),
+  ...((await original()) as typeof import("@/lib/xero-api-usage")),
   recordXeroApiUsage: vi.fn(async () => undefined),
   xeroDailyBudgetAllowsDeferrableCall: vi.fn(async () => true),
 }));
@@ -22,6 +22,7 @@ const correction = (cents: number, mode: "VOID" | "INVOICE" = "INVOICE") => ({ n
 const line = (unitAmount: number) => ({ description: "Original grant", quantity: 1, unitAmount, accountCode: "400", taxType: "OUTPUT2" });
 
 beforeEach(async () => {
+  vi.stubEnv("APP_ENVIRONMENT_ROLE", "non-production");
   fake = new XeroFake();
   session = xeroTransport(fake);
   setXeroClientForTests(session);
@@ -32,7 +33,7 @@ beforeEach(async () => {
   }] });
   noteId = response.body.creditNotes![0]!.creditNoteID!;
 });
-afterEach(() => { resetXeroClientForTests(); resetXeroRateLimitStateForTests(); });
+afterEach(() => { resetXeroClientForTests(); resetXeroRateLimitStateForTests(); vi.unstubAllEnvs(); });
 
 describe("#5241 Xero credit deduction correction", () => {
   it("voids a whole unused note and a retry is already complete", async () => {
@@ -107,6 +108,29 @@ describe("#5241 Xero credit deduction correction", () => {
     setXeroClientForTests({ tenantId: session.tenantId, xero: { accountingApi } as XeroClient });
     await expect(correctXeroCreditNote(correction(1000))).rejects.toThrow("NOTE_MIXED_LINES");
     expect(fake.snapshot().invoices).toHaveLength(0);
+  });
+
+  it("adopts an exact invoice by reference even when its create key is no longer available", async () => {
+    const response = await session.xero.accountingApi.createInvoices(session.tenantId, { invoices: [{
+      type: Invoice.TypeEnum.ACCREC, status: Invoice.StatusEnum.AUTHORISED, contact: { contactID: contactId },
+      reference: correction(1000).reference, currencyCode: "NZD", sentToContact: false,
+      lineAmountTypes: LineAmountTypes.Inclusive, lineItems: [line(10)],
+    }] }, undefined, undefined, "expired-create-key");
+    const result = await correctXeroCreditNote(correction(1000));
+    expect(result.xeroInvoiceId).toBe(response.body.invoices![0]!.invoiceID);
+    expect(fake.snapshot().invoices).toHaveLength(1);
+    expect(fake.snapshot().allocations).toHaveLength(1);
+  });
+
+  it("awaits the caller's durable fence before each mutation and a refused fence writes nothing", async () => {
+    const beforeMutation = vi.fn(async () => { throw new Error("worker claim lost"); });
+    await expect(correctXeroCreditNote({ ...correction(1000), beforeMutation })).rejects.toThrow("worker claim lost");
+    expect(fake.snapshot().invoices).toHaveLength(0);
+    beforeMutation.mockImplementation(async () => undefined);
+    await correctXeroCreditNote({ ...correction(1000), beforeMutation });
+    expect(beforeMutation).toHaveBeenCalledTimes(3); // rejected create fence, create fence, allocation fence
+    await correctXeroCreditNote({ ...correction(1000), beforeMutation });
+    expect(beforeMutation).toHaveBeenCalledTimes(3); // replay only reads
   });
 
   it("refuses an unrelated invoice carrying the correction reference", async () => {

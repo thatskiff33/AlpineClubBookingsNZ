@@ -168,7 +168,7 @@ const SPECIAL_ROUTE_AREA_PATTERNS: Array<{
 }> = [
   {
     area: "finance",
-    pattern: /^\/api\/admin\/members\/[^/]+\/credits(?:\/[^/]+)?$/,
+    pattern: /^\/api\/admin\/members\/[^/]+\/credits(?:\/[^/]+|\/corrections\/[^/]+)?$/,
   },
   {
     area: "finance",

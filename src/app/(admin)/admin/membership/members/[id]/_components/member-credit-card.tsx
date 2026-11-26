@@ -1,6 +1,7 @@
 "use client"
 
 import { useEffect, useState } from "react"
+import Link from "next/link"
 import { useSession } from "next-auth/react"
 import { formatStayDateOrNull } from "@/lib/club-time"
 import { ViewOnlyActionButton } from "@/components/admin/view-only-action"
@@ -28,6 +29,7 @@ import { useClubFormat } from "@/components/club-format-provider"
 import type {
   CreditHistoryItem,
   PendingCreditAdjustmentItem,
+  PendingCreditDeductionCorrectionItem,
 } from "../_types"
 
 interface MemberCreditCardProps {
@@ -36,6 +38,9 @@ interface MemberCreditCardProps {
   creditLoading: boolean
   creditError: string
   pendingAdjustmentRequests: PendingCreditAdjustmentItem[]
+  pendingCorrections: PendingCreditDeductionCorrectionItem[]
+  cancellingCorrectionId: string | null
+  onCancelCorrection: (correctionId: string) => void
   reviewingAdjustmentId: string | null
   showAdjustmentForm: boolean
   adjustmentError: string
@@ -56,6 +61,9 @@ export function MemberCreditCard({
   creditLoading,
   creditError,
   pendingAdjustmentRequests,
+  pendingCorrections,
+  cancellingCorrectionId,
+  onCancelCorrection,
   reviewingAdjustmentId,
   showAdjustmentForm,
   adjustmentError,
@@ -188,6 +196,33 @@ export function MemberCreditCard({
           <p className="text-sm text-danger-11">{creditError}</p>
         ) : (
           <>
+            {pendingCorrections.length > 0 && (
+              <div className="mb-4 rounded-md border border-warning-6 bg-warning-3 p-4">
+                <p className="text-sm font-medium text-warning-11">Waiting for Xero correction</p>
+                <p className="mb-3 text-xs text-warning-11">
+                  These approved deductions are reserved and cannot be spent. Cancel restores the credit only if Xero has not changed.
+                </p>
+                <ul className="space-y-3">
+                  {pendingCorrections.map((correction) => (
+                    <li key={correction.id} className="flex flex-wrap items-center justify-between gap-2 text-sm">
+                      <span>{formatSignedCents(correction.amountCents, format)}: {correction.description}</span>
+                      <ViewOnlyActionButton
+                        canEdit={canEditFinance}
+                        size="sm"
+                        variant="outline"
+                        disabled={cancellingCorrectionId !== null}
+                        onClick={() => onCancelCorrection(correction.id)}
+                      >
+                        {cancellingCorrectionId === correction.id ? "Checking Xero..." : "Cancel correction"}
+                      </ViewOnlyActionButton>
+                    </li>
+                  ))}
+                </ul>
+                <Link href="/admin/finance/xero?section=operations" className="mt-3 inline-block text-sm underline">
+                  Retry in Xero operations
+                </Link>
+              </div>
+            )}
             {pendingAdjustmentRequests.length > 0 && (
               <div className="mb-4 rounded-md border border-warning-6 bg-warning-3 p-4">
                 <div className="mb-3">

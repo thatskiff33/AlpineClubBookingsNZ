@@ -1,3 +1,5 @@
+import { XERO_OUTBOX_ADMIN_CREDIT_DEDUCTION_CORRECTION_TYPE } from "@/lib/admin-credit-deduction-payload";
+import { completeAdminCreditDeductionCorrection } from "@/lib/xero-admin-credit-deduction-correction";
 import { bookingHasExternalSettlement, externalSettlementCause } from "@/lib/booking-external-settlement";
 import { ORGANISER_COMBINED_INVOICE_PLACE_MESSAGE, ORGANISER_COMBINED_INVOICE_PLACE_REFUSAL } from "@/lib/organiser-billing";
 import { paidByOrganiserInternetBanking } from "@/lib/group-organiser-paid";
@@ -2345,6 +2347,8 @@ export async function processQueuedXeroOutboxOperations(options?: {
           format,
           { createdByMemberId: queuedOperation.createdByMemberId ?? undefined, syncOperation: claimed, memberCreditId: payload.memberCreditId }
         );
+      } else if (payload?.queueType === XERO_OUTBOX_ADMIN_CREDIT_DEDUCTION_CORRECTION_TYPE) {
+        await completeAdminCreditDeductionCorrection({ syncOperation: claimed, payload });
       } else if (payload?.queueType === XERO_OUTBOX_ADMIN_GRANT_CREDIT_NOTE_TYPE) {
         await createAdminGrantCreditNote({ syncOperation: claimed, payload });
       } else if (payload?.queueType === XERO_OUTBOX_ORGANISATION_CONTACT_DETAILS_TYPE && contactDetailsOrganisationId) { // #5245: read fresh at send time

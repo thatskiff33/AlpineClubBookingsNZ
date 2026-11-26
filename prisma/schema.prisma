@@ -783,6 +783,8 @@ model Member {
   // what food cost out of the history.
   foodOrdersPlaced                           FoodOrder[]                                @relation("FoodOrderMember")
   adminCreditAdjustmentRequests              AdminCreditAdjustmentRequest[]             @relation("AdminCreditAdjustmentTarget")
+  creditDeductionCorrections                 AdminCreditDeductionCorrection[] @relation("CreditDeductionTarget")
+  cancelledCreditDeductionCorrections        AdminCreditDeductionCorrection[] @relation("CreditDeductionCancelledBy")
   membershipCancellationRequestsRequested    MembershipCancellationRequest[]            @relation("MembershipCancellationRequestRequester")
   membershipCancellationRequestsReviewed     MembershipCancellationRequest[]            @relation("MembershipCancellationRequestReviewer")
   membershipCancellationParticipants         MembershipCancellationRequestParticipant[] @relation("MembershipCancellationParticipantMember")
@@ -8080,6 +8082,8 @@ model MemberCredit {
   // allocated to booking invoices as Xero credit notes. Empty for negative
   // BOOKING_APPLIED rows and for lots never used to reduce an IB invoice.
   noteAllocations           MemberCreditNoteAllocation[]  @relation("CreditLotAllocations")
+  deductionCorrectionLine  AdminCreditDeductionCorrectionLine? @relation("CreditDeductionReservation")
+  deductionSourceLines     AdminCreditDeductionCorrectionLine[] @relation("CreditDeductionSource")
   xeroCashCredit            XeroCashCredit?               @relation(fields: [xeroCashCreditId], references: [id], onDelete: Restrict, onUpdate: Restrict)
   // #5204: slices of THIS backed lot allocated to booking invoices as Xero
   // overpayment or prepayment allocations, and the restorations that hand
@@ -8188,6 +8192,7 @@ model AdminCreditAdjustmentRequest {
   requestedBy    Member        @relation("AdminCreditAdjustmentRequestsRequested", fields: [requestedById], references: [id])
   reviewedBy     Member?       @relation("AdminCreditAdjustmentRequestsReviewed", fields: [reviewedById], references: [id], onDelete: SetNull)
   approvedCredit MemberCredit? @relation("ApprovedAdminCreditAdjustment")
+  deductionCorrection AdminCreditDeductionCorrection?
   xeroCashCredit XeroCashCredit? @relation(fields: [xeroCashCreditId], references: [id], onDelete: Restrict, onUpdate: Restrict)
 
   @@unique([requestedById, idempotencyKey])
@@ -10320,4 +10325,60 @@ model FoodOrderItem {
   foodOrder FoodOrder @relation(fields: [foodOrderId], references: [id], onDelete: Cascade)
 
   @@index([foodOrderId, sortOrder])
+}
+
+
+// #5241: durable credit reservation and its Xero correction. Existing enums unchanged.
+enum AdminCreditDeductionCorrectionStatus {
+  RESERVED
+  COMPLETED
+  CANCELLED
+}
+
+enum AdminCreditDeductionCorrectionMode {
+  VOID
+  INVOICE
+}
+
+model AdminCreditDeductionCorrection {
+  id            String @id @default(cuid())
+  requestId     String @unique
+  memberId      String
+  status        AdminCreditDeductionCorrectionStatus @default(RESERVED)
+  cancelledById String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+  completedAt   DateTime?
+  cancelledAt   DateTime?
+  providerMutationStartedAt DateTime?
+
+  request     AdminCreditAdjustmentRequest @relation(fields: [requestId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  member      Member @relation("CreditDeductionTarget", fields: [memberId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  cancelledBy Member? @relation("CreditDeductionCancelledBy", fields: [cancelledById], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  lines       AdminCreditDeductionCorrectionLine[]
+
+  @@index([memberId, status])
+  @@index([cancelledById])
+}
+
+model AdminCreditDeductionCorrectionLine {
+  id                   String @id @default(cuid())
+  correctionId         String
+  /// The negative reservation row: unique, unlike the original lot, which may be deducted repeatedly.
+  memberCreditId       String @unique
+  sourceMemberCreditId String
+  xeroCreditNoteId     String
+  amountCents          Int
+  mode                 AdminCreditDeductionCorrectionMode
+  xeroInvoiceId        String?
+  xeroAllocationId     String?
+  completedAt          DateTime?
+
+  correction   AdminCreditDeductionCorrection @relation(fields: [correctionId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  memberCredit MemberCredit @relation("CreditDeductionReservation", fields: [memberCreditId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  sourceCredit MemberCredit @relation("CreditDeductionSource", fields: [sourceMemberCreditId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
+  @@index([correctionId])
+  @@index([sourceMemberCreditId])
+  @@index([xeroCreditNoteId])
 }

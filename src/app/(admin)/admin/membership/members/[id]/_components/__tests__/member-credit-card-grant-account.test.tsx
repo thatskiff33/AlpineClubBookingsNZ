@@ -58,6 +58,9 @@ function props(
     creditLoading: false,
     creditError: "",
     pendingAdjustmentRequests: [],
+    pendingCorrections: [],
+    cancellingCorrectionId: null,
+    onCancelCorrection: vi.fn(),
     reviewingAdjustmentId: null,
     showAdjustmentForm: true,
     adjustmentError: "",
@@ -142,4 +145,19 @@ describe("MemberCreditCard grant account (#4431)", () => {
     fireEvent.click(reject[1]);
     expect(onReviewAdjustment).toHaveBeenCalledWith("req-old", "REJECT");
   });
+});
+
+it("shows a reserved deduction and lets an officer cancel it", () => {
+  const onCancelCorrection = vi.fn();
+  render(<MemberCreditCard {...props({
+    showAdjustmentForm: false,
+    pendingCorrections: [{ id: "correction-1", requestId: "request-1", amountCents: -2500, description: "Mistaken grant", createdAt: "2026-07-01T00:00:00.000Z" }],
+    cancellingCorrectionId: null,
+    onCancelCorrection,
+  })} />);
+  expect(screen.getByText("Waiting for Xero correction")).toBeInTheDocument();
+  expect(screen.getByText(/Mistaken grant/)).toBeInTheDocument();
+  expect(screen.getByRole("link", { name: "Retry in Xero operations" })).toHaveAttribute("href", "/admin/finance/xero?section=operations");
+  fireEvent.click(screen.getByRole("button", { name: "Cancel correction" }));
+  expect(onCancelCorrection).toHaveBeenCalledWith("correction-1");
 });

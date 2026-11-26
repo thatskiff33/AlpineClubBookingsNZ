@@ -450,6 +450,9 @@ export default function MemberDetailPage({
     creditBalance,
     creditHistory,
     pendingAdjustmentRequests,
+    pendingCorrections,
+    cancellingCorrectionId,
+    handleCancelCorrection,
     creditLoading,
     creditError,
     showAdjustmentForm,
@@ -1053,6 +1056,9 @@ export default function MemberDetailPage({
               creditLoading={creditLoading}
               creditError={creditError}
               pendingAdjustmentRequests={pendingAdjustmentRequests}
+              pendingCorrections={pendingCorrections}
+              cancellingCorrectionId={cancellingCorrectionId}
+              onCancelCorrection={handleCancelCorrection}
               reviewingAdjustmentId={reviewingAdjustmentId}
               showAdjustmentForm={showAdjustmentForm}
               adjustmentError={adjustmentError}

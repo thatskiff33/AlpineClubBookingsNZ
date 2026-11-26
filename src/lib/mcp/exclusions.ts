@@ -279,6 +279,8 @@ const PERMANENT_ROUTES: ReadonlyArray<{
   {
     reason: "changes-charges",
     routes: [
+      // Restores reserved credit after a live Xero check; reviewed on the website.
+      "POST /api/admin/members/[id]/credits/corrections/[correctionId]",
       "POST /api/admin/members/[id]/seasonal-membership/preview",
       "PATCH /api/admin/members/[id]/seasonal-membership",
       "POST /api/admin/members/bulk-membership-type/preview",

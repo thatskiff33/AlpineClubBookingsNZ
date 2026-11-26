@@ -55,7 +55,9 @@ export async function PATCH(
     const balanceCents = await getMemberCreditBalance(id);
     const message =
       result.decision === "APPROVE"
-        ? "Adjustment approved and applied"
+        ? result.correctionId
+          ? "Adjustment approved; Xero correction queued"
+          : "Adjustment approved and applied"
         : "Adjustment rejected";
 
     return connectionJson(

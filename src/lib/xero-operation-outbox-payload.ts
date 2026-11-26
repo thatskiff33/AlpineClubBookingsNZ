@@ -1,3 +1,4 @@
+import { readAdminCreditDeductionPayload, XERO_OUTBOX_ADMIN_CREDIT_DEDUCTION_CORRECTION_TYPE, type AdminCreditDeductionPayload } from "@/lib/admin-credit-deduction-payload";
 import type { EntranceFeeCategory } from "@prisma/client";
 import { readAdminGrantCreditNotePayload, XERO_OUTBOX_ADMIN_GRANT_CREDIT_NOTE_TYPE, type AdminGrantCreditNotePayload } from "@/lib/admin-grant-credit-note-payload";
 import { readOrganiserExtraAdjustmentPayload, XERO_OUTBOX_ORGANISER_EXTRA_ADJUSTMENT_TYPE, type OrganiserExtraAdjustmentPayload } from "@/lib/organiser-extra-adjustment-payload";
@@ -54,6 +55,7 @@ export const XERO_OUTBOX_QUEUE_TYPES = [
   XERO_OUTBOX_ADDITIONAL_CAPTURE_RECEIPT_TYPE,
   XERO_OUTBOX_ORGANISER_EXTRA_ADJUSTMENT_TYPE, // #4299 (`INV-PAY-148`)
   XERO_OUTBOX_ADMIN_GRANT_CREDIT_NOTE_TYPE, // #4431
+  XERO_OUTBOX_ADMIN_CREDIT_DEDUCTION_CORRECTION_TYPE,
   XERO_OUTBOX_ORGANISATION_CONTACT_DETAILS_TYPE, // #5245: a school's corrected email and phone
 ] as const;
 
@@ -236,6 +238,7 @@ export type QueuedOutboxPayload =
   | QueuedKeptLateCaptureInvoiceOutboxPayload
   | QueuedCardRefundReversalInvoiceOutboxPayload
   | QueuedAdditionalCaptureReceiptOutboxPayload
+  | AdminCreditDeductionPayload
   | AdminGrantCreditNotePayload
   | OrganisationContactDetailsPayload;
 
@@ -314,6 +317,7 @@ export function readQueuedOutboxPayload(
   }
 
   if (queueType === XERO_OUTBOX_ORGANISER_EXTRA_ADJUSTMENT_TYPE) return readOrganiserExtraAdjustmentPayload(value);
+  if (queueType === XERO_OUTBOX_ADMIN_CREDIT_DEDUCTION_CORRECTION_TYPE) return readAdminCreditDeductionPayload(value);
   if (queueType === XERO_OUTBOX_ADMIN_GRANT_CREDIT_NOTE_TYPE) return readAdminGrantCreditNotePayload(value);
   if (queueType === XERO_OUTBOX_ORGANISATION_CONTACT_DETAILS_TYPE) return readOrganisationContactDetailsPayload(value);
   if (queueType === XERO_OUTBOX_BOOKING_INVOICE_TYPE) {
@@ -577,6 +581,7 @@ export function getQueuedOutboxExpectedOperation(
   }
 
   if (queueType === XERO_OUTBOX_ADDITIONAL_CAPTURE_RECEIPT_TYPE) return { entityType: "PAYMENT", operationType: "CREATE", localModels: ["PaymentTransaction"] };
+  if (queueType === XERO_OUTBOX_ADMIN_CREDIT_DEDUCTION_CORRECTION_TYPE) return { entityType: "CREDIT_NOTE", operationType: "UPDATE", localModels: ["AdminCreditDeductionCorrection"] };
   if (queueType === XERO_OUTBOX_ADMIN_GRANT_CREDIT_NOTE_TYPE) return { entityType: "CREDIT_NOTE", operationType: "CREATE", localModels: ["MemberCredit"] };
   if (queueType === XERO_OUTBOX_ORGANISATION_CONTACT_DETAILS_TYPE) return { entityType: "CONTACT", operationType: "UPDATE", localModels: ["Organisation"] };
   if (queueType === XERO_OUTBOX_GROUP_SETTLEMENT_INVOICE_VOID_TYPE) {

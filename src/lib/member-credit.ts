@@ -25,7 +25,7 @@ import {
   GRANT_ACCOUNT_MISSING_MESSAGE,
   type AdminCreditGrantAccount,
 } from "@/lib/admin-credit-grant-account";
-import { assertDeductionLeavesNotedCreditUntouched, enqueueAdminGrantCreditNote } from "@/lib/admin-grant-credit-note";
+import { enqueueAdminGrantCreditNote } from "@/lib/admin-grant-credit-note";
 import { buildXeroIdempotencyKey, startXeroSyncOperation } from "@/lib/xero-sync";
 import { XERO_OUTBOX_APPLIED_CREDIT_DEALLOCATION_TYPE } from "@/lib/xero-operation-outbox-payload";
 import { repairLegacyAppliedCreditNoteAllocationsForBooking } from "@/lib/xero-applied-credit-allocation-repair";
@@ -42,6 +42,7 @@ import {
   validateCreditApplicationAgainstBalance,
   validateNegativeAdjustmentAgainstBalance,
 } from "@/lib/policies/member-credit";
+import { reserveNotedCreditDeduction } from "@/lib/admin-credit-deduction-reserve";
 import { cancellationCreditDescription } from "@/lib/cancellation-settled-money";
 
 const MEMBER_CREDIT_LOCK_NAMESPACE = "member-credit-ledger";
@@ -947,7 +948,6 @@ export async function createAdminAdjustmentRequest(
   try {
     const request = await prisma.$transaction(async (tx) => {
       await lockMemberCreditLedger(memberId, tx);
-      await assertDeductionLeavesNotedCreditUntouched(memberId, amountCents, tx);
 
       const createdRequest = await tx.adminCreditAdjustmentRequest.create({
         data: {
@@ -1066,7 +1066,6 @@ export async function reviewAdminAdjustmentRequest(
     }
 
     if (decision === "APPROVE") {
-      await assertDeductionLeavesNotedCreditUntouched(request.memberId, request.amountCents, tx);
       validateAdjustmentAmount(request.amountCents);
       await validateNegativeAdjustmentBalance(
         request.memberId,
@@ -1116,10 +1115,15 @@ export async function reviewAdminAdjustmentRequest(
         decision,
         request,
         credit: null,
+        correctionId: null,
       };
     }
 
-    const credit = await tx.memberCredit.create({
+    const reservation = request.amountCents < 0
+      ? await reserveNotedCreditDeduction(tx, { ...request, approvedById: adminId })
+      : null;
+    const correctionId = reservation?.correctionId ?? null;
+    const credit = reservation?.credit ?? await tx.memberCredit.create({
       data: {
         memberId: request.memberId,
         amountCents: request.amountCents,
@@ -1147,7 +1151,7 @@ export async function reviewAdminAdjustmentRequest(
         entityId: request.id,
         memberId: adminId,
         targetId: memberId,
-        details: `Approved admin credit adjustment ${request.id} as credit ${credit.id}: ${formatAdjustmentAmount(request.amountCents, format)}. Requested by ${request.requestedById}. Reason: ${request.description}.${adminCreditGrantAuditClause(request.grantAccount)}`,
+        details: `${correctionId ? "Xero correction queued. " : ""}Approved admin credit adjustment ${request.id} as credit ${credit.id}: ${formatAdjustmentAmount(request.amountCents, format)}. Requested by ${request.requestedById}. Reason: ${request.description}.${adminCreditGrantAuditClause(request.grantAccount)}`,
         // #2695 (`INV-PRIV-018`) — DECLARED MEMBER-FACING, owner decision of
         // 9 August 2026. The only explanation a member ever gets for why their
         // credit balance moved, which is why both fixes the issue originally
@@ -1165,7 +1169,7 @@ export async function reviewAdminAdjustmentRequest(
         // audiences, so that one identifier does cross — as an opaque handle on
         // the member's own request, not as an explanation. Withholding it is a
         // change to every row on the timeline rather than to this sentence.
-        memberDisclosure: {
+        memberDisclosure: correctionId ? undefined : {
           visibility: "member-facing",
           text:
             request.amountCents >= 0
@@ -1181,6 +1185,7 @@ export async function reviewAdminAdjustmentRequest(
       decision,
       request,
       credit,
+      correctionId,
     };
   });
 
@@ -1197,7 +1202,7 @@ export async function reviewAdminAdjustmentRequest(
       : "Admin credit adjustment rejected"
   );
 
-  if (result.decision === "APPROVE" && result.request.amountCents > 0 && result.credit) {
+  if (result.decision === "APPROVE" && result.credit) {
     void import("@/lib/xero-operation-outbox")
       .then(({ kickQueuedXeroOutboxOperationsIfConnected }) => kickQueuedXeroOutboxOperationsIfConnected())
       .catch((error: unknown) => {

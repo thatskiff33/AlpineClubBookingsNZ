@@ -395,3 +395,12 @@ export interface PendingCreditAdjustmentItem {
   grantAccount: "MEMBER_OWN_MONEY" | "GOODWILL" | null;
   requestedBy: AdminActor;
 }
+
+/** An approved deduction whose Xero correction is still reserved. */
+export interface PendingCreditDeductionCorrectionItem {
+  id: string;
+  requestId: string;
+  amountCents: number;
+  description: string;
+  createdAt: string;
+}

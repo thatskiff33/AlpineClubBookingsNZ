@@ -24,6 +24,7 @@ const h = vi.hoisted(() => ({
   getMemberCreditBalance: vi.fn(),
   getAdminMemberCreditHistory: vi.fn(),
   getPendingAdminAdjustmentRequests: vi.fn(),
+  getPendingCreditDeductionCorrections: vi.fn(),
   reviewAdminAdjustmentRequest: vi.fn(),
   listOpeningCreditBatches: vi.fn(),
   generateAdminPaymentInvoice: vi.fn(),
@@ -65,6 +66,7 @@ const h = vi.hoisted(() => ({
   },
 }));
 
+vi.mock("@/lib/admin-credit-deduction-queries", () => ({ getPendingCreditDeductionCorrections: h.getPendingCreditDeductionCorrections }));
 vi.mock("@/lib/prisma", () => ({ prisma: h.prisma }));
 vi.mock("@/lib/admin-page-revalidation", () => ({ revalidateAdminPage: vi.fn() }));
 vi.mock("@/lib/admin-payment-invoice-service", () => ({ generateAdminPaymentInvoice: h.generateAdminPaymentInvoice }));
@@ -189,6 +191,7 @@ const financeOfficer = adminSession({ id: "treasurer-1", accessRoles: ["USER", "
 beforeEach(() => {
   vi.clearAllMocks();
   h.requireAdmin.mockResolvedValue({ ok: true, session: financeOfficer });
+  h.getPendingCreditDeductionCorrections.mockResolvedValue([]);
   h.requireFinanceViewerApiAccess.mockResolvedValue({ ok: true, member: { id: "treasurer-1" } });
   h.requireFinanceManagerApiAccess.mockResolvedValue({ ok: true, member: { id: "treasurer-1" } });
 });
@@ -414,9 +417,9 @@ describe("get_member_credits", () => {
       args: { id: "member-7" },
     });
     expect(JSON.stringify(connection)).not.toMatch(/xero-cn-uuid|cash-credit-row|4b1c2d3e/);
-    expect(browser).toEqual({ balanceCents: 4_000, history: HISTORY, pendingRequests: PENDING });
+    expect(browser).toEqual({ balanceCents: 4_000, history: HISTORY, pendingRequests: PENDING, pendingCorrections: [] });
     // Each read is for the member the app named, not the officer calling.
-    for (const read of [h.getMemberCreditBalance, h.getAdminMemberCreditHistory, h.getPendingAdminAdjustmentRequests]) {
+    for (const read of [h.getMemberCreditBalance, h.getAdminMemberCreditHistory, h.getPendingAdminAdjustmentRequests, h.getPendingCreditDeductionCorrections]) {
       expect(read).toHaveBeenCalledWith("member-7");
     }
   });

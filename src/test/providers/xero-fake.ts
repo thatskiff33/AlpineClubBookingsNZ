@@ -3,7 +3,7 @@ import { createReplayWriter } from "./replay-write";
 /** Stateful, cent-based subset of Xero Accounting. No transport or credentials. */
 type Contact = { contactID: string; memberId: string };
 type Invoice = {
-  invoiceID: string; contactID: string; totalCents: number;
+  invoiceID: string; contactID: string; totalCents: number; reference?: string;
   status: "AUTHORISED" | "PAID" | "VOIDED";
 };
 type CreditNote = {
@@ -59,11 +59,11 @@ export class XeroFake {
     });
   }
 
-  createInvoice(key: string, contactID: string, totalCents: number) {
-    return this.write(key, ["invoice", contactID, totalCents], () => {
+  createInvoice(key: string, contactID: string, totalCents: number, reference?: string) {
+    return this.write(key, ["invoice", contactID, totalCents, reference], () => {
       this.get(this.contacts, contactID);
       if (!Number.isSafeInteger(totalCents) || totalCents < 0) throw new XeroValidationError("Invoice total must be non-negative integer cents");
-      const invoice: Invoice = { invoiceID: `${this.idPrefix}invoice-${this.invoices.size + 1}`, contactID, totalCents, status: totalCents === 0 ? "PAID" : "AUTHORISED" };
+      const invoice: Invoice = { invoiceID: `${this.idPrefix}invoice-${this.invoices.size + 1}`, contactID, totalCents, reference, status: totalCents === 0 ? "PAID" : "AUTHORISED" };
       this.invoices.set(invoice.invoiceID, invoice);
       return invoice;
     });

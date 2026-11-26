@@ -45,6 +45,7 @@ export function xeroTransport(fake: XeroFake) {
   let sequence = 0;
   const key = (value?: string) => value ?? `transport:${++sequence}`;
   const failures: XeroHttpFailure[] = [];
+  const afterApplyFailures = new Map<string, XeroHttpFailure>();
   const invoiceInputs = new Map<string, Record<string, unknown>>();
   const contactInputs = new Map<string, Record<string, unknown>>();
   const noteInputs = new Map<string, Record<string, unknown>>();
@@ -55,7 +56,7 @@ export function xeroTransport(fake: XeroFake) {
     JSON.stringify({ response: { statusCode, headers, body }, body });
   // Every call first consumes an injected failure. A fake refusal leaves as
   // Xero's 400 ValidationException, carrying the fake's message.
-  const call = async <T>(model: string, build: () => object): Promise<T> => {
+  const call = async <T>(model: string, build: () => object, operation?: string): Promise<T> => {
     const failure = failures.shift();
     if (failure) throw reject(failure);
     let built: object;
@@ -66,6 +67,8 @@ export function xeroTransport(fake: XeroFake) {
         Elements: [{ ValidationErrors: [{ Message: error.message }] }],
       } });
     }
+    const lostReply = operation ? afterApplyFailures.get(operation) : undefined;
+    if (lostReply && operation) { afterApplyFailures.delete(operation); throw reject(lostReply); }
     return { response: { statusCode: 200, headers: {} }, body: ObjectSerializer.deserialize(built, model) } as T;
   };
   const cents = (amount: unknown) => {
@@ -129,6 +132,7 @@ export function xeroTransport(fake: XeroFake) {
       return {
         ...invoiceInputs.get(wire.InvoiceID), ...wire,
         Contact: { ContactID: invoice.contactID },
+        ...(invoice.reference === undefined ? {} : { Reference: invoice.reference }),
         AmountPaid: invoice.amountPaidCents / 100, AmountCredited: invoice.amountCreditedCents / 100,
         Payments: state.payments.filter(p => p.invoiceID === invoice.invoiceID && p.status !== "DELETED").map(paymentWire),
       };
@@ -177,18 +181,19 @@ export function xeroTransport(fake: XeroFake) {
     getInvoice: (...[, id]: Args<"getInvoice">) =>
       call("Invoices", () => ({ Invoices: invoices().filter(i => i.InvoiceID === id) })),
     getInvoices: (...[, , where, , iDs, , contactIDs, statuses, page, , , , , pageSize]: Args<"getInvoices">) => call("Invoices", () => {
-      if (where !== undefined) throw new Error(`The Xero test transport does not model the where clause ${where}`);
-      return { Invoices: paged(invoices().filter(i => (!iDs?.length || iDs.includes(i.InvoiceID)) && (!contactIDs?.length || contactIDs.includes(i.Contact.ContactID)) && (!statuses?.length || statuses.includes(i.Status))), page, pageSize) };
+      const reference = where === undefined ? undefined : /^Reference=="([^"\\]*)"$/.exec(where)?.[1];
+      if (where !== undefined && reference === undefined) throw new Error(`The Xero test transport does not model the where clause ${where}`);
+      return { Invoices: paged(invoices().filter(i => (reference === undefined || i.Reference === reference) && (!iDs?.length || iDs.includes(i.InvoiceID)) && (!contactIDs?.length || contactIDs.includes(i.Contact.ContactID)) && (!statuses?.length || statuses.includes(i.Status))), page, pageSize) };
     }),
     createInvoices: (...[, body, , , idempotencyKey]: Args<"createInvoices">) => call("Invoices", () => {
       const input = one(body.invoices);
       if (String(input.type) !== "ACCREC" || String(input.status) !== "AUTHORISED") throw new Error("Only authorised ACCREC invoices are modelled");
-      const invoice = fake.createInvoice(key(idempotencyKey), input.contact?.contactID ?? "", linesTotalCents(input));
+      const invoice = fake.createInvoice(key(idempotencyKey), input.contact?.contactID ?? "", linesTotalCents(input), input.reference);
       const recalculate = takeRecalculate();
       // A replay returns the original document, so only the first request's fields are kept.
       if (!invoiceInputs.has(invoice.invoiceID)) invoiceInputs.set(invoice.invoiceID, withLineTax(ObjectSerializer.serialize(input, "Invoice"), recalculate));
       return { Invoices: invoices().filter(i => i.InvoiceID === invoice.invoiceID) };
-    }),
+    }, "createInvoices"),
     updateInvoice: (...[, id, body]: Args<"updateInvoice">) => call("Invoices", () => {
       const input = one(body.invoices);
       const current = fake.snapshot().invoices.find(i => i.invoiceID === id);
@@ -233,6 +238,12 @@ export function xeroTransport(fake: XeroFake) {
       if (!noteInputs.has(note.creditNoteID)) noteInputs.set(note.creditNoteID, ObjectSerializer.serialize(input, "CreditNote"));
       return { CreditNotes: notes().filter(n => n.CreditNoteID === note.creditNoteID) };
     }),
+    updateCreditNote: (...[, id, body]: Args<"updateCreditNote">) => call("CreditNotes", () => {
+      const input = one(body.creditNotes);
+      if (String(input.status) !== "VOIDED") throw new Error("Only credit-note void updates are modelled");
+      fake.voidCreditNote(id);
+      return { CreditNotes: notes().filter(n => n.CreditNoteID === id) };
+    }, "updateCreditNote"),
     getOverpayments: (...[, , where, , page, , pageSize]: Args<"getOverpayments">) =>
       call("Overpayments", () => ({ Overpayments: paged(cashCredits("OVERPAYMENT").filter(statusWhere(where)), page, pageSize) })),
     getPrepayments: (...[, , where, , page, , pageSize]: Args<"getPrepayments">) =>
@@ -247,7 +258,7 @@ export function xeroTransport(fake: XeroFake) {
       const input = one(body.allocations);
       const allocation = fake.allocate(key(idempotencyKey), id, input.invoice.invoiceID ?? "", cents(input.amount));
       return { Allocations: [allocationWire(allocation)] };
-    }),
+    }, "createCreditNoteAllocation"),
   } satisfies Partial<Record<keyof Api, unknown>>;
 
   return {
@@ -255,6 +266,8 @@ export function xeroTransport(fake: XeroFake) {
     xero: strictTestClient<XeroClient>("Xero", { accountingApi: strictTestClient<Api>("Xero", api) }),
     /** Queue an HTTP failure for the next call, e.g. a 429 with `x-rate-limit-problem: day`. */
     failNext(failure: XeroHttpFailure) { failures.push(failure); },
+    /** The write lands, then the caller loses the reply; a later read sees the write. */
+    failAfterApply(operation: "createInvoices" | "createCreditNoteAllocation" | "updateCreditNote", failure: XeroHttpFailure) { afterApplyFailures.set(operation, failure); },
     /** Make the next invoice create or update work every line's tax out itself, ignoring any sent (#5208). */
     recalculateTaxNext() { recalculateTax = true; },
   };

@@ -14,6 +14,7 @@ import { parseSignedDecimalDollarsToCents } from "@/lib/money-input";
 import type {
   CreditHistoryItem,
   PendingCreditAdjustmentItem,
+  PendingCreditDeductionCorrectionItem,
 } from "../_types";
 
 export function useMemberCredits(id: string) {
@@ -22,6 +23,8 @@ export function useMemberCredits(id: string) {
   const [pendingAdjustmentRequests, setPendingAdjustmentRequests] = useState<
     PendingCreditAdjustmentItem[]
   >([]);
+  const [pendingCorrections, setPendingCorrections] = useState<PendingCreditDeductionCorrectionItem[]>([]);
+  const [cancellingCorrectionId, setCancellingCorrectionId] = useState<string | null>(null);
   const [creditLoading, setCreditLoading] = useState(true);
   const [creditError, setCreditError] = useState("");
   const [showAdjustmentForm, setShowAdjustmentForm] = useState(false);
@@ -49,6 +52,7 @@ export function useMemberCredits(id: string) {
       setCreditBalance(data.balanceCents);
       setCreditHistory(data.history);
       setPendingAdjustmentRequests(data.pendingRequests ?? []);
+      setPendingCorrections(data.pendingCorrections ?? []);
     } catch {
       setCreditError("Failed to load credits");
     } finally {
@@ -155,6 +159,21 @@ export function useMemberCredits(id: string) {
     }
   };
 
+  const handleCancelCorrection = async (correctionId: string) => {
+    setCancellingCorrectionId(correctionId);
+    setAdjustmentError("");
+    try {
+      const res = await fetch(`/api/admin/members/${id}/credits/corrections/${correctionId}`, { method: "POST" });
+      if (!res.ok) throw await apiRefusalFromResponse(res, "Failed to cancel Xero correction");
+      toast.success("Xero correction cancelled and credit restored");
+      await fetchCredits();
+    } catch (err) {
+      setAdjustmentError(refusalMessageOr(err, "Failed to cancel Xero correction"));
+    } finally {
+      setCancellingCorrectionId(null);
+    }
+  };
+
   useEffect(() => {
     fetchCredits();
   }, [id]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -163,6 +182,9 @@ export function useMemberCredits(id: string) {
     creditBalance,
     creditHistory,
     pendingAdjustmentRequests,
+    pendingCorrections,
+    cancellingCorrectionId,
+    handleCancelCorrection,
     creditLoading,
     creditError,
     showAdjustmentForm,

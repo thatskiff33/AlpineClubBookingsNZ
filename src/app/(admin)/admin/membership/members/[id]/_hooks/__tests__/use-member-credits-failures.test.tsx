@@ -33,6 +33,9 @@ function Harness() {
         value={credits.adjustmentDescription}
         onChange={(event) => credits.setAdjustmentDescription(event.target.value)}
       />
+      <button type="button" onClick={() => void credits.handleCancelCorrection("correction-1")}>
+        Cancel correction
+      </button>
       <button type="button" onClick={() => void credits.handleAdjustmentSubmit(null)}>
         Submit adjustment
       </button>
@@ -107,6 +110,26 @@ describe("member credit adjustments", () => {
 
       expect(await screen.findByText("Submitted for approval")).toBeInTheDocument();
       await vi.waitFor(() => expect(creditLoads(fetchMock)).toBe(2));
+    });
+  });
+
+  describe("cancelling a reserved Xero correction", () => {
+    itShowsEveryRefusal({
+      fallback: "Failed to cancel Xero correction",
+      submit: async (answer) => {
+        installFetch({ submit: answer });
+        render(<Harness />);
+        fireEvent.click(screen.getByRole("button", { name: "Cancel correction" }));
+      },
+    });
+
+    it("reloads the credits after cancellation", async () => {
+      const fetchMock = installFetch({});
+      render(<Harness />);
+      fireEvent.click(screen.getByRole("button", { name: "Cancel correction" }));
+      expect(await screen.findByText("Xero correction cancelled and credit restored")).toBeInTheDocument();
+      await vi.waitFor(() => expect(creditLoads(fetchMock)).toBe(2));
+      expect(fetchMock).toHaveBeenCalledWith("/api/admin/members/member-1/credits/corrections/correction-1", { method: "POST" });
     });
   });
 
