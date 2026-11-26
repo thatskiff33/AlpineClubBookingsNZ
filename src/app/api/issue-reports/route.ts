@@ -2,7 +2,11 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { parseJsonRequestBody } from "@/lib/api-json";
 import { auth } from "@/lib/auth";
-import { getAppBaseUrl, rebaseOntoAppOrigin } from "@/lib/app-url";
+import { getAppBaseUrl } from "@/lib/app-url";
+import {
+  ISSUE_REPORT_PAGE_URL_MAX_LENGTH,
+  issueReportPageUrlToStore,
+} from "@/lib/issue-report-page-url";
 import { MEMBER_PRIVILEGE_CHECK_SELECT } from "@/lib/access-role-definitions";
 import { deriveIssueReportScreenshotOrigin } from "@/lib/issue-report-screenshot-access";
 import { prisma } from "@/lib/prisma";
@@ -17,7 +21,7 @@ import { adminHref } from "@/lib/admin-hubs";
 const MAX_SCREENSHOT_BYTES = 900_000;
 
 const issueReportSchema = z.object({
-  pageUrl: z.string().trim().min(1).max(2048),
+  pageUrl: z.string().trim().min(1).max(ISSUE_REPORT_PAGE_URL_MAX_LENGTH),
   pageTitle: z.string().trim().max(300).optional(),
   description: z.string().trim().min(10).max(2000),
   screenshotDataUrl: z.string().max(2_000_000).optional(),
@@ -120,10 +124,10 @@ export async function POST(request: NextRequest) {
     // The widget posts `window.location.href`. Only its path, query and
     // fragment are kept, on the configured origin: no host from the body or
     // from a request header is stored, emailed or shown to an officer.
-    const pageUrl = rebaseOntoAppOrigin(parsed.data.pageUrl);
+    const pageUrl = issueReportPageUrlToStore(parsed.data.pageUrl);
     if (!pageUrl) {
       return NextResponse.json(
-        { error: "Page URL must point to this site" },
+        { error: "Page URL must be the address of a page on this site" },
         { status: 400 }
       );
     }
@@ -172,7 +176,7 @@ export async function POST(request: NextRequest) {
       // officer sees, and #2704 made that whole fields rather than a broken
       // fragment; this payload can exceed 1000, because `pageUrl` is capped at
       // 2048 and `pageTitle` at 300 by the schema above and
-      // `rebaseOntoAppOrigin` keeps the query string.
+      // `issueReportPageUrlToStore` keeps the query string.
       category: "privacy",
       memberId: member.id,
       targetId: issueReport.id,

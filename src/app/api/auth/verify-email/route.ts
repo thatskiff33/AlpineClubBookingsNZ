@@ -1,3 +1,4 @@
+import { getAppBaseUrl } from "@/lib/app-url";
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { prisma } from "@/lib/prisma";
@@ -15,7 +16,7 @@ export async function GET(request: NextRequest) {
     return rateLimited;
   }
 
-  const baseUrl = process.env.NEXTAUTH_URL || request.url;
+  const baseUrl = getAppBaseUrl();
   const tokenParam = request.nextUrl.searchParams.get("token");
   if (!tokenParam) {
     return NextResponse.redirect(new URL("/login?verifyError=missing", baseUrl));

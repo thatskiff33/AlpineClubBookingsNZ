@@ -47,24 +47,6 @@ function resolveUrlCandidate(input: string, baseUrl: string): URL | null {
   }
 }
 
-export function normalizeInternalAppUrl(
-  input: string,
-  options?: { baseUrl?: string }
-): string | null {
-  const baseUrl = options?.baseUrl || getAppBaseUrl();
-  const resolved = resolveUrlCandidate(input, baseUrl);
-
-  if (!resolved || !isHttpUrl(resolved)) {
-    return null;
-  }
-
-  if (resolved.origin !== new URL(baseUrl).origin) {
-    return null;
-  }
-
-  return resolved.toString();
-}
-
 /**
  * The page of THIS site that a caller-supplied address names: its path, query
  * and fragment, placed on the configured origin. The host the caller sent is

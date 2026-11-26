@@ -1,4 +1,5 @@
-import { NextRequest, NextResponse } from "next/server";
+import { getAppBaseUrl } from "@/lib/app-url";
+import { NextResponse } from "next/server";
 import { buildLoginPath } from "@/lib/auth-redirect";
 import { auth } from "@/lib/auth";
 import { hasFinanceViewerAccess } from "@/lib/admin-permissions";
@@ -8,19 +9,16 @@ import { factorGateRedirect } from "@/lib/two-factor-gate";
 
 const LEGACY_DASHBOARD_CALLBACK_PATH = "/finance-legacy/";
 
-function buildAbsoluteUrl(request: NextRequest, path: string) {
-  return new URL(path, process.env.NEXTAUTH_URL || request.url);
+function buildAbsoluteUrl(path: string) {
+  return new URL(path, getAppBaseUrl());
 }
 
-export async function GET(request: NextRequest) {
+export async function GET() {
   const session = await auth();
 
   if (!session?.user) {
     return NextResponse.redirect(
-      buildAbsoluteUrl(
-        request,
-        buildLoginPath(LEGACY_DASHBOARD_CALLBACK_PATH)
-      )
+      buildAbsoluteUrl(buildLoginPath(LEGACY_DASHBOARD_CALLBACK_PATH))
     );
   }
 
@@ -28,15 +26,12 @@ export async function GET(request: NextRequest) {
 
   if (!member || !member.active) {
     return NextResponse.redirect(
-      buildAbsoluteUrl(
-        request,
-        buildLoginPath(LEGACY_DASHBOARD_CALLBACK_PATH)
-      )
+      buildAbsoluteUrl(buildLoginPath(LEGACY_DASHBOARD_CALLBACK_PATH))
     );
   }
 
   if (member.forcePasswordChange) {
-    return NextResponse.redirect(buildAbsoluteUrl(request, "/change-password"));
+    return NextResponse.redirect(buildAbsoluteUrl("/change-password"));
   }
 
   const factorGate = factorGateRedirect({
@@ -46,14 +41,14 @@ export async function GET(request: NextRequest) {
     pathname: LEGACY_DASHBOARD_CALLBACK_PATH,
   });
   if (factorGate) {
-    return NextResponse.redirect(buildAbsoluteUrl(request, factorGate));
+    return NextResponse.redirect(buildAbsoluteUrl(factorGate));
   }
 
   if (!hasFinanceViewerAccess(member)) {
     if (hasLodgeAccess(member)) {
-      return NextResponse.redirect(buildAbsoluteUrl(request, "/lodge/kiosk"));
+      return NextResponse.redirect(buildAbsoluteUrl("/lodge/kiosk"));
     }
-    return NextResponse.redirect(buildAbsoluteUrl(request, "/dashboard"));
+    return NextResponse.redirect(buildAbsoluteUrl("/dashboard"));
   }
 
   return new NextResponse(null, { status: 204 });

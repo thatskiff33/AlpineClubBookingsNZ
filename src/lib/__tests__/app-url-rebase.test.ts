@@ -45,6 +45,11 @@ describe("the site's own origin", () => {
     ["https://club.example@evil.example/phish", "https://club.example/phish"],
     ["HTTPS://EVIL.EXAMPLE/Path", "https://club.example/Path"],
     ["  /book  ", "https://club.example/book"],
+    ["/\t/evil.example/x", "https://club.example/x"],
+    ["/%2f%2fevil.example/x", "https://club.example/%2f%2fevil.example/x"],
+    ["/..//evil.example/x", "https://club.example/evil.example/x"],
+    ["/%2e%2e//evil.example/x", "https://club.example/evil.example/x"],
+    ["/a?next=https://evil.example/#javascript:alert(1)", "https://club.example/a?next=https://evil.example/#javascript:alert(1)"],
   ])("keeps only the page of this site: %s", (input, expected) => {
     const rebased = rebaseOntoAppOrigin(input);
     expect(rebased).toBe(expected);

@@ -83,11 +83,7 @@ describe("finance manual sync route", () => {
   it("redirects unauthenticated requests to login", async () => {
     mockAuth.mockResolvedValue(null);
 
-    const response = await runFinanceSyncRoute(
-      new Request("https://example.org/api/finance/sync/run", {
-        method: "POST",
-      }) as never
-    );
+    const response = await runFinanceSyncRoute();
 
     expect(response.status).toBe(303);
     expect(response.headers.get("location")).toBe("https://example.org/login");
@@ -97,11 +93,7 @@ describe("finance manual sync route", () => {
   it("redirects FINANCE_USER viewers back to /finance", async () => {
     mockFindUnique.mockResolvedValue(viewerMember());
 
-    const response = await runFinanceSyncRoute(
-      new Request("https://example.org/api/finance/sync/run", {
-        method: "POST",
-      }) as never
-    );
+    const response = await runFinanceSyncRoute();
 
     expect(response.status).toBe(303);
     expect(response.headers.get("location")).toBe("https://example.org/finance");
@@ -125,11 +117,7 @@ describe("finance manual sync route", () => {
       },
     });
 
-    const response = await runFinanceSyncRoute(
-      new Request("https://example.org/api/finance/sync/run", {
-        method: "POST",
-      }) as never
-    );
+    const response = await runFinanceSyncRoute();
 
     expect(response.status).toBe(303);
     expect(response.headers.get("location")).toBe(
@@ -149,11 +137,7 @@ describe("finance manual sync route", () => {
       startedAt: new Date("2026-05-02T00:00:00.000Z"),
     });
 
-    const response = await runFinanceSyncRoute(
-      new Request("https://example.org/api/finance/sync/run", {
-        method: "POST",
-      }) as never
-    );
+    const response = await runFinanceSyncRoute();
 
     expect(response.status).toBe(303);
     expect(response.headers.get("location")).toBe(
@@ -179,11 +163,7 @@ describe("finance manual sync route", () => {
       },
     });
 
-    const response = await runFinanceSyncRoute(
-      new Request("https://example.org/api/finance/sync/run", {
-        method: "POST",
-      }) as never
-    );
+    const response = await runFinanceSyncRoute();
 
     expect(response.status).toBe(303);
     expect(response.headers.get("location")).toBe(
@@ -196,11 +176,7 @@ describe("finance manual sync route", () => {
       new Error("Finance Xero token is expired")
     );
 
-    const response = await runFinanceSyncRoute(
-      new Request("https://example.org/api/finance/sync/run", {
-        method: "POST",
-      }) as never
-    );
+    const response = await runFinanceSyncRoute();
 
     expect(response.status).toBe(303);
 

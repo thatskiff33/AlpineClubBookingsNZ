@@ -242,23 +242,26 @@ describe("issue report retention and admin triage", () => {
     }
   });
 
-  it("falls back to the site's own address when a stored page address is not a web address", async () => {
+  it("falls back to the site's own address when a stored page address is not a web address, in the list and the detail", async () => {
     adminSession();
     const original = process.env.NEXTAUTH_URL;
     process.env.NEXTAUTH_URL = "https://club.example";
     try {
-      mocks.issueReportFindUnique.mockResolvedValue({
-        ...reportRecord(),
-        pageUrl: "javascript:alert(1)",
-      });
+      const notAWebAddress = { ...reportRecord(), pageUrl: "javascript:alert(1)" };
+      mocks.issueReportFindUnique.mockResolvedValue(notAWebAddress);
+      mocks.issueReportFindMany.mockResolvedValue([notAWebAddress]);
+      mocks.issueReportCount.mockResolvedValue(1);
 
       const detail = await getIssueReport(
         new NextRequest("http://localhost/api/admin/issue-reports/issue-1"),
         { params: Promise.resolve({ id: "issue-1" }) }
       );
-      const body = await detail.json();
+      const list = await listIssueReports(
+        new NextRequest("http://localhost/api/admin/issue-reports?status=OPEN")
+      );
 
-      expect(body.report.pageUrl).toBe("https://club.example");
+      expect((await detail.json()).report.pageUrl).toBe("https://club.example");
+      expect((await list.json()).reports[0].pageUrl).toBe("https://club.example");
     } finally {
       if (original === undefined) delete process.env.NEXTAUTH_URL;
       else process.env.NEXTAUTH_URL = original;

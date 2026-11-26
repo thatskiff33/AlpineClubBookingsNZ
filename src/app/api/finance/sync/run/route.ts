@@ -1,16 +1,14 @@
+import { getAppBaseUrl } from "@/lib/app-url";
 import { revalidatePath } from "next/cache";
-import { NextRequest, NextResponse } from "next/server";
+import { NextResponse } from "next/server";
 import { requireFinanceManagerApiAccess } from "@/lib/finance-api-auth";
 import { runManualFinanceSync } from "@/lib/finance-sync-manual";
 import logger from "@/lib/logger";
 
 const FINANCE_REVALIDATE_PATHS = ["/finance"] as const;
 
-function buildFinanceRedirectUrl(
-  request: NextRequest,
-  params: Record<string, string>
-) {
-  const baseUrl = process.env.NEXTAUTH_URL || request.url;
+function buildFinanceRedirectUrl(params: Record<string, string>) {
+  const baseUrl = getAppBaseUrl();
   const url = new URL("/finance", baseUrl);
 
   for (const [key, value] of Object.entries(params)) {
@@ -20,11 +18,11 @@ function buildFinanceRedirectUrl(
   return url;
 }
 
-export async function POST(request: NextRequest) {
+export async function POST() {
   const authResult = await requireFinanceManagerApiAccess();
 
   if (!authResult.ok) {
-    const baseUrl = process.env.NEXTAUTH_URL || request.url;
+    const baseUrl = getAppBaseUrl();
     const destination =
       authResult.response.status === 401
         ? new URL("/login", baseUrl)
@@ -40,7 +38,7 @@ export async function POST(request: NextRequest) {
 
     if (result.outcome === "already-running") {
       return NextResponse.redirect(
-        buildFinanceRedirectUrl(request, { sync: "running" }),
+        buildFinanceRedirectUrl({ sync: "running" }),
         303
       );
     }
@@ -50,7 +48,7 @@ export async function POST(request: NextRequest) {
     }
 
     return NextResponse.redirect(
-      buildFinanceRedirectUrl(request, {
+      buildFinanceRedirectUrl({
         sync: result.execution.status === "SUCCEEDED" ? "completed" : "partial",
       }),
       303
@@ -59,7 +57,7 @@ export async function POST(request: NextRequest) {
     logger.error({ err: error }, "Manual finance sync failed");
 
     return NextResponse.redirect(
-      buildFinanceRedirectUrl(request, {
+      buildFinanceRedirectUrl({
         sync: "failed",
       }),
       303

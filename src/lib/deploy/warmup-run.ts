@@ -35,13 +35,13 @@ import type { PlannedWarmupRoute } from "@/lib/deploy/warmup-route-policy";
  * exactly, because an earlier version of this comment asserted a mechanism that
  * measurably does not run:
  *
- *  • `x-forwarded-host` (with `x-forwarded-proto`) is what arrives, and it is the
- *    header this codebase reads. `src/app/api/issue-reports/route.ts` is the only
- *    place in the tree that resolves a request host at all, and it prefers the
- *    forwarded value over `Host`. Neither `src/proxy.ts` nor any `(website)` page
- *    reads either one: absolute URLs and `metadataBase` come from `NEXTAUTH_URL`
- *    (`src/lib/app-url.ts`, `src/app/layout.tsx`). So rendering, canonical URLs and
- *    redirects already match real production traffic.
+ *  • `x-forwarded-host` (with `x-forwarded-proto`) is what arrives. Nothing on a
+ *    render path resolves a request host: the issue-report API was the one place
+ *    in the tree that did, and it no longer reads one (GHSA-q9f4-243m-6f54). Neither
+ *    `src/proxy.ts` nor any `(website)` page reads either header: absolute URLs
+ *    and `metadataBase` come from `NEXTAUTH_URL` (`src/lib/app-url.ts`,
+ *    `src/app/layout.tsx`). So rendering, canonical URLs and redirects already
+ *    match real production traffic.
  *  • `host` is set as well, and MEASURED not to reach the wire: an HTTP client writes
  *    `Host` from the URL authority, so a local Node server handed a request built
  *    exactly like the one below reported `host=127.0.0.1:3999` with

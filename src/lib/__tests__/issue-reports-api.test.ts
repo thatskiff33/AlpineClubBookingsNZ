@@ -269,7 +269,10 @@ describe("issue reports API", () => {
       await withNextAuthUrl("https://club.example", async () => {
         const req = new NextRequest(requestUrl, {
           method: "POST",
-          headers: { "Content-Type": "application/json", ...headers },
+          headers: {
+            "Content-Type": "application/json",
+            ...(headers as Record<string, string>),
+          },
           body: JSON.stringify({
             pageUrl,
             pageTitle: "Audit Log",
@@ -354,6 +357,28 @@ describe("issue reports API", () => {
         body: JSON.stringify({
           pageUrl,
           description: "This should be rejected because it names no page of this site.",
+        }),
+      });
+
+      const res = await POST(req);
+      expect(res.status).toBe(400);
+      expect(mockedIssueReportCreate).not.toHaveBeenCalled();
+      expect(mockedSendAdminIssueReportAlert).not.toHaveBeenCalled();
+    });
+  });
+
+  it("rejects a page address that no longer fits once it is placed on this site's origin", async () => {
+    await withNextAuthUrl("https://a-long-club-name.example", async () => {
+      // 2,048 characters as submitted, so the schema accepts it; longer than
+      // the column once the short host is replaced by the configured one.
+      const pageUrl = `http://a/${"x".repeat(2048 - "http://a/".length)}`;
+      expect(pageUrl).toHaveLength(2048);
+      const req = new NextRequest("https://a-long-club-name.example/api/issue-reports", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          pageUrl,
+          description: "A re-based address must still fit the stored column.",
         }),
       });
 
