@@ -717,4 +717,18 @@ describe("EditBookingPanel — accepting binds every booking's figures (#5238)",
       linkedQuotedFigures: [{ bookingId: "bk-dependent-01", figures: freshDependent }],
     });
   });
+
+  it("on a plain EDIT_PRICE_CHANGED retires the old offer and re-previews", async () => {
+    modifyResponse = () => jsonResponse(offerWithFigures(), 409);
+    render(<EditBookingPanel booking={makeBooking()} onDone={vi.fn()} />);
+    const saveButton = await saveIntoTheOffer();
+
+    modifyResponse = () =>
+      jsonResponse({ code: "EDIT_PRICE_CHANGED", error: "The price changed since you previewed it. Review and save again.", figures: PRIMARY_FIGURES }, 409);
+    fireEvent.click(screen.getByRole("radio", { name: /Move both bookings/ }));
+    fireEvent.click(saveButton);
+
+    expect(await screen.findByText(/The price changed since you previewed it/)).toBeInTheDocument();
+    await waitFor(() => expect(screen.queryByRole("radio", { name: /Move both bookings/ })).toBeNull());
+  });
 });

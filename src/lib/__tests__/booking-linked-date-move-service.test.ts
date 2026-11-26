@@ -1482,6 +1482,21 @@ describe("accepted per-booking figures (#5238)", () => {
     expect(h.settleAfterCommit).not.toHaveBeenCalled();
   });
 
+  it("refuses plainly, with no offer to answer, when the fresh offer would move no other booking", async () => {
+    const offer = await raiseOffer();
+    priceMovesOn(PRIMARY);
+    // By the re-pricing the other booking no longer relies on this one.
+    h.inspectStranding.mockResolvedValue([]);
+    h.events = [];
+
+    const thrown = await acceptWithFigures(offer).then(() => null, (error: unknown) => error);
+
+    expect(thrown).toMatchObject({ code: "EDIT_PRICE_CHANGED" });
+    expect((thrown as { linkedMove?: unknown }).linkedMove).toBeUndefined();
+    expect(h.events).not.toContain("tx:commit");
+    expect(h.settleAfterCommit).not.toHaveBeenCalled();
+  });
+
   it("refuses an acceptance whose key matches but carries no figures for the second booking", async () => {
     const offer = await raiseOffer();
     h.events = [];

@@ -1369,9 +1369,12 @@ export function EditBookingPanel({
       const data = await res.json();
       if (!res.ok) {
         // #4924: the price moved since the preview, so nothing was saved. Say
-        // what changed, keep the edit open and price it again.
+        // what changed, keep the edit open and price it again. An open linked-move
+        // answer was for the old price, so it goes too (#5238).
         const freshFigures = readEditPriceChangedFigures(data);
         if (freshFigures) {
+          setLinkedMoveState(null);
+          setLinkedMoveChoice(null);
           setSaveError(editPriceChangedMessage(previewedFigures, freshFigures, format));
           requote();
           return;

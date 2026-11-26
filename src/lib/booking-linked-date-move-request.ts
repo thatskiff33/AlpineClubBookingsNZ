@@ -73,7 +73,9 @@ export function requireLinkedMoveFigures(args: LinkedDateMoveArgs, movedBookingI
  * through `reoffer` and refuse with the fresh offer inside the
  * `EDIT_PRICE_CHANGED` refusal: the member answers the new figures, never a
  * silent substitute for the old ones. A real refusal the re-pricing hits
- * instead propagates as itself.
+ * instead propagates as itself. A fresh offer that moves no other booking is
+ * no offer to answer, so the plain refusal goes back and the member re-previews
+ * a single-booking edit.
  */
 export async function refuseWithFreshOffer(
   error: EditPriceChangedError,
@@ -82,9 +84,10 @@ export async function refuseWithFreshOffer(
   try {
     await reoffer();
   } catch (offer) {
-    if (offer instanceof SameOwnerCoverageLinkedMoveRequiredError) {
+    if (offer instanceof SameOwnerCoverageLinkedMoveRequiredError && offer.quote.linked.length > 0) {
       throw new EditPriceChangedError(error.figures, buildSameOwnerCoverageLinkedMoveBody(offer));
     }
+    if (offer instanceof SameOwnerCoverageLinkedMoveRequiredError) throw error;
     throw offer;
   }
   throw error;

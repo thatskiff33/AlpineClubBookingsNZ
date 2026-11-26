@@ -1,5 +1,7 @@
 import { z } from "zod";
 
+import type { HostingCoverageLinkedMoveChoice } from "@/lib/hosting-coverage-linked-move-client";
+
 /**
  * #4924, #5238 (`INV-MOD-062`): an edit settles only the figures the member was shown.
  *
@@ -55,7 +57,9 @@ export class EditPriceChangedError extends Error {
 
   /**
    * `linkedMove` is the fresh linked-move offer body (#5238), present only when
-   * an accepted linked move refused: the member re-answers the new offer.
+   * an accepted linked move refused: the member re-answers the new offer, which
+   * carries every booking's figures keyed by booking. `figures` are then those
+   * of whichever booking refused first, kept for the body's shape only.
    */
   constructor(
     public readonly figures: EditQuotedFigures,
@@ -118,7 +122,7 @@ export function unchangedPriceQuotedFigures(finalPriceCents: number): EditQuoted
 export function requireEditQuotedFigures(request: {
   quotedFigures?: EditQuotedFigures;
   linkedQuotedFigures?: LinkedQuotedFigures;
-  hostingCoverageLinkedMove?: { choice: string };
+  hostingCoverageLinkedMove?: { choice: HostingCoverageLinkedMoveChoice };
 }): void {
   if (!request.quotedFigures) throw new EditFiguresRequiredError();
   if (
