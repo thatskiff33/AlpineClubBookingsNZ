@@ -29,6 +29,10 @@
 import { describe, expect, it, vi } from "vitest";
 
 vi.mock("server-only", () => ({}));
+// The club's today for the policy re-queue cohort (#5239): the frozen test day.
+vi.mock("@/lib/club-time/server", () => ({
+  clubTodayDateOnlyInstant: async () => new Date("2026-07-01T00:00:00.000Z"),
+}));
 
 import { readFileSync } from "node:fs";
 import path from "node:path";
@@ -37,6 +41,7 @@ import { AgeTier } from "@prisma/client";
 
 import { stripComments } from "@/lib/__tests__/support/strip-comments";
 import { GROUP_TRIP_COVERAGE_DEPENDENT_LIMIT } from "@/lib/adult-member-hosting-coverage-ceilings";
+import { hostingPolicyReconciliationCandidateWhere } from "@/lib/adult-member-hosting-policy-reconciliation";
 import { groupTripCoverageDependentWhere } from "@/lib/group-trip-identity";
 import { deriveKioskAdultCoverSource } from "@/lib/kiosk-adult-cover";
 import {
@@ -242,6 +247,7 @@ interface FakeStore {
     reevaluationFindMany: number;
     incidentFindMany: number;
     dependentCountWheres: unknown[];
+    cohortWheres: unknown[];
   };
 }
 
@@ -259,6 +265,8 @@ function fakeStore(options: {
   revisions?: Record<string, number>;
   /** What the trip dependent count returns for every card (#5239). */
   dependentPopulation?: number;
+  /** Stamped cards a policy change would NOT re-queue (#5239). */
+  outsidePolicyCohort?: string[];
   /** Make the revision read or the dependent count throw. */
   failRevisionRead?: boolean;
   failDependentCount?: boolean;
@@ -271,6 +279,7 @@ function fakeStore(options: {
     reevaluationFindMany: 0,
     incidentFindMany: 0,
     dependentCountWheres: [] as unknown[],
+    cohortWheres: [] as unknown[],
   };
   const db = {
     adultMemberHostingPolicy: {
@@ -289,6 +298,19 @@ function fakeStore(options: {
     booking: {
       findMany: async (args: { where: Record<string, unknown> }) => {
         calls.bookingFindMany += 1;
+        // #5239's policy re-queue cohort read: `id IN stamped AND <cohort>`.
+        // The cohort clause is the reconciliation's own builder, asserted by
+        // value below, so the fake answers it from the test's own list.
+        if ("AND" in args.where) {
+          const [ids, cohort] = args.where.AND as [
+            { id: { in: string[] } },
+            unknown,
+          ];
+          calls.cohortWheres.push(cohort);
+          return ids.id.in
+            .filter((id) => !(options.outsidePolicyCohort ?? []).includes(id))
+            .map((id) => ({ id }));
+        }
         return bookings
           .filter((row) => matchBookingWhere(row, args.where))
           .map((row) => ({
@@ -1523,6 +1545,15 @@ describe("#5239 sibling cover is shown only when it can be verified (INV-HOST-04
     expect(payload, "INV-PRIV-016: the stamp's trip id never ships").not.toContain(TRIP);
   });
 
+  it("asks which cards a policy change re-queues through the reconciliation's own predicate", async () => {
+    const { calls } = await cover(siblingReview());
+    expect(calls.cohortWheres).toEqual([
+      hostingPolicyReconciliationCandidateWhere(
+        new Date("2026-07-01T00:00:00.000Z"),
+      ),
+    ]);
+  });
+
   it("counts the card's dependent population with the fan-out's own predicate", async () => {
     const { calls } = await cover(siblingReview());
     const [dependent] = rows();
@@ -1545,6 +1576,7 @@ describe("#5239 sibling cover is shown only when it can be verified (INV-HOST-04
     ["a revision mismatch", siblingReview({ ...STAMP, revision: 3 }), {}],
     ["a trip that shrank after a truncation", siblingReview({ ...STAMP, revision: 3 }), { revisions: { [TRIP]: 4 }, dependentPopulation: 1 }],
     ["a trip row that has gone", siblingReview(), { revisions: {} }],
+    ["a card no policy change would re-queue (a completed stay)", siblingReview(), { outsidePolicyCohort: ["b-dependent"] }],
   ] as const) {
     it(`withholds it under ${label}, with no rows or scopes in the payload`, async () => {
       const { source, attached } = await cover(review, options);

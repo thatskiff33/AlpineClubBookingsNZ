@@ -1,9 +1,14 @@
 import { describe, expect, it, vi } from "vitest";
 
+vi.mock("server-only", () => ({}));
+
+import { matchesWhere } from "@/lib/__tests__/support/prisma-where";
+import { GROUP_TRIP_COVERAGE_DEPENDENT_LIMIT } from "@/lib/adult-member-hosting-coverage-ceilings";
 import {
   enqueueActiveHostingIncidentPolicyReconciliation,
   type HostingPolicyReconciliationSnapshot,
 } from "@/lib/adult-member-hosting-policy-reconciliation";
+import { kioskPendingReevaluationWhere } from "@/lib/kiosk-group-trip";
 
 const club = (
   overrides: Partial<HostingPolicyReconciliationSnapshot> = {},
@@ -295,5 +300,91 @@ describe("adult-hosting policy incident reconciliation", () => {
         db,
       ),
     ).rejects.toThrow("queue unavailable");
+  });
+});
+
+// #5239: the kiosk shows Group Trip sibling cover again, and a policy window —
+// the scope off, or the lodge out of ENFORCED — is a time when a sibling's change
+// queues nothing. Closing the window must therefore leave a pending row the
+// kiosk's own-owner read can see for every booking it re-checks, however many.
+describe("policy windows end with a re-check the kiosk can see (#5239, INV-HOST-045)", () => {
+  /** Every created row, checked against the kiosk's pending-row predicate. */
+  function kioskSeesEveryRow(
+    rows: Array<Record<string, unknown>>,
+    candidates: ReturnType<typeof candidate>[],
+  ) {
+    expect(rows.map((row) => row.sourceBookingId)).toEqual(
+      candidates.map((booking) => booking.id),
+    );
+    for (const booking of candidates) {
+      const row = rows.find((item) => item.sourceBookingId === booking.id);
+      expect(
+        matchesWhere(
+          // A freshly written row is unprocessed: the column defaults to NULL.
+          { processedAt: null, ...row },
+          kioskPendingReevaluationWhere(booking.lodgeId, [booking.memberId]),
+        ),
+        `INV-HOST-045 (docs/invariants/adult-member-hosting.md): ${booking.id}'s ` +
+          "owner must hold a pending row the kiosk's own-owner read can see",
+      ).toBe(true);
+    }
+  }
+
+  it("re-queues every booking when the club turns Group Trip cover back on through an inheriting lodge", async () => {
+    const before = [club({ hostScopeSameGroupTrip: false }), lodge("lodge-a")];
+    const candidates = [candidate("a", "lodge-a"), candidate("b", "lodge-a")];
+    const { db, createMany } = dbDouble({
+      afterPolicies: [club({ version: 2, hostScopeSameGroupTrip: true }), lodge("lodge-a")],
+      candidates,
+    });
+    await enqueueActiveHostingIncidentPolicyReconciliation(
+      { beforePolicies: before, todayDateOnly: "2026-08-01" },
+      db,
+    );
+    kioskSeesEveryRow(createMany.mock.calls[0][0].data, candidates);
+  });
+
+  it("re-queues nothing at a lodge whose own override kept its scopes", async () => {
+    const override = lodge("lodge-b", {
+      mode: "ENFORCED",
+      hostScopeSameBooking: true,
+      hostScopeSameBookingOwner: false,
+      hostScopeSameGroupTrip: true,
+    });
+    const { db, createMany } = dbDouble({
+      afterPolicies: [club({ version: 2, hostScopeSameGroupTrip: true }), override],
+      candidates: [candidate("b", "lodge-b")],
+    });
+    await expect(
+      enqueueActiveHostingIncidentPolicyReconciliation(
+        { beforePolicies: [club(), override], todayDateOnly: "2026-08-01" },
+        db,
+      ),
+    ).resolves.toBe(0);
+    expect(createMany).not.toHaveBeenCalled();
+  });
+
+  it("re-queues past the Group Trip fan-out ceiling when a lodge returns to ENFORCED", async () => {
+    // The fan-out is capped; policy reconciliation is not, and must not be: a
+    // window that ends with some bookings un-queued would let the kiosk show
+    // their old evidence as current.
+    const candidates = Array.from(
+      { length: GROUP_TRIP_COVERAGE_DEPENDENT_LIMIT + 20 },
+      (_, index) => candidate(String(index).padStart(3, "0"), "lodge-a"),
+    );
+    const { db, createMany } = dbDouble({
+      afterPolicies: [club({ version: 2, mode: "ENFORCED", hostScopeSameGroupTrip: true })],
+      candidates,
+    });
+    await expect(
+      enqueueActiveHostingIncidentPolicyReconciliation(
+        {
+          beforePolicies: [club({ mode: "ADMIN_REVIEW_REQUIRED", hostScopeSameGroupTrip: true })],
+          todayDateOnly: "2026-08-01",
+        },
+        db,
+      ),
+    ).resolves.toBe(candidates.length);
+    kioskSeesEveryRow(createMany.mock.calls[0][0].data, candidates);
   });
 });

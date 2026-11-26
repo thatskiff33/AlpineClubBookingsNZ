@@ -34,6 +34,10 @@ const harness = vi.hoisted(() => ({
 }));
 const mockPrisma = harness.prisma;
 vi.mock("@/lib/prisma", () => ({ prisma: harness.prisma }));
+// The club's today for the policy re-queue cohort (#5239): the frozen test day.
+vi.mock("@/lib/club-time/server", () => ({
+  clubTodayDateOnlyInstant: async () => new Date("2026-07-01T00:00:00.000Z"),
+}));
 vi.mock("@/lib/lodge-auth", () => ({
   checkLodgeAuth: async () => ({ tier: harness.tier }),
   resolveKioskLodgeId: async () => "lodge-a",

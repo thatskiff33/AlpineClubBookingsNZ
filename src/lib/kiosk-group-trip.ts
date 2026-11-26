@@ -2,6 +2,8 @@ import type { Prisma, PrismaClient } from "@prisma/client";
 
 import logger from "@/lib/logger";
 import { GROUP_TRIP_COVERAGE_DEPENDENT_LIMIT } from "@/lib/adult-member-hosting-coverage-ceilings";
+import { hostingPolicyReconciliationCandidateWhere } from "@/lib/adult-member-hosting-policy-reconciliation";
+import { clubTodayDateOnlyInstant } from "@/lib/club-time/server";
 import {
   loadAdultMemberHostingPolicy,
   readInheritedSplitPairGroupTrips,
@@ -436,7 +438,7 @@ async function readStalenessSignals(
  * snapshot carries a freshness stamp are read for, because an unstamped one is
  * unverifiable whatever the reads say.
  *
- * THEN TWO READS, each failing to "unverifiable" rather than to the outer
+ * THEN THREE READS, each failing to "unverifiable" rather than to the outer
  * catch-all, so a failure withholds the cover line instead of the whole
  * enrichment:
  *
@@ -444,6 +446,13 @@ async function readStalenessSignals(
  *    primary key. It moves on every truncated fan-out and never goes back, so a
  *    card the fan-out missed stays behind until it is re-evaluated, however much
  *    the trip has shrunk since;
+ *  - which stamped cards a policy change would re-queue
+ *    (`hostingPolicyReconciliationCandidateWhere`, as of the club's today).
+ *    While the scope is off or the lodge is not `ENFORCED`, a sibling's change
+ *    queues nothing for anyone, and when the window ends only those bookings
+ *    are re-checked — so a card outside the set (a completed stay, or a
+ *    departure-day card with no night left) may carry evidence from before such
+ *    a window, and nothing would say so;
  *  - each card's own dependent population, through the same
  *    `groupTripCoverageDependentWhere` the fan-out reads. At or above
  *    `GROUP_TRIP_COVERAGE_DEPENDENT_LIMIT` a sibling's change would be truncated
@@ -476,14 +485,28 @@ async function readGroupTripCoverFreshness(
     ...new Set(stamped.map(({ identity }) => identity.groupBookingId)),
   ];
   let revisions: Map<string, number>;
+  let requeued: Set<string>;
   try {
-    const groups = await db.groupBooking.findMany({
-      where: { id: { in: groupIds } },
-      select: { id: true, coverageInvalidationRevision: true },
-    });
+    const today = await clubTodayDateOnlyInstant();
+    const [groups, cohort] = await Promise.all([
+      db.groupBooking.findMany({
+        where: { id: { in: groupIds } },
+        select: { id: true, coverageInvalidationRevision: true },
+      }),
+      db.booking.findMany({
+        where: {
+          AND: [
+            { id: { in: stamped.map(({ row }) => row.id) } },
+            hostingPolicyReconciliationCandidateWhere(today),
+          ],
+        },
+        select: { id: true },
+      }),
+    ]);
     revisions = new Map(
       groups.map((group) => [group.id, group.coverageInvalidationRevision]),
     );
+    requeued = new Set(cohort.map((booking) => booking.id));
   } catch (err) {
     logger.warn({ err }, "kiosk Group Trip cover freshness read failed; withholding sibling cover");
     return verified;
@@ -492,7 +515,7 @@ async function readGroupTripCoverFreshness(
   await Promise.all(
     stamped.map(async ({ row, identity }) => {
       const revision = revisions.get(identity.groupBookingId);
-      if (revision === undefined) return;
+      if (revision === undefined || !requeued.has(row.id)) return;
       try {
         const population = await db.booking.count({
           where: groupTripCoverageDependentWhere(row, identity),
