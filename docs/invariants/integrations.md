@@ -648,6 +648,41 @@ Pinned by `xero-admin-grant-credit-note.test.ts`, `member-credit.test.ts`,
 `xero-operation-outbox-payload.test.ts` and
 `xero-admin-grant-credit-note-contact-repair.realdb.test.ts`.
 
+## Deducting credit that has a Xero note (#5241)
+
+### INV-INT-043
+
+An approved deduction of credit with a Xero credit note corrects that note in
+Xero, and the member's free credit on the note then equals Xero's remaining
+credit to the cent. The correction never raises a second credit note.
+
+- **Reserved, then corrected.** Approval writes the deduction under the member's
+  credit-ledger lock as write-down rows stamped with the note
+  (`reserveNotedCreditDeduction`), so the cents cannot be spent, and queues one
+  `ADMIN_CREDIT_DEDUCTION_CORRECTION`. Noteless credit is taken first. A grant
+  note still queued refuses the deduction.
+- **Void or bill back.** A wholly unused note taken whole is voided. Otherwise
+  the app raises an unemailed invoice for only the cents taken back, with the
+  note's contact, account and tax rate, and allocates it to the note.
+  `correctXeroCreditNote` (`xero-credit-note-correction.ts`) is the one helper;
+  Ledger M5 (#4517) and #5204 reuse it.
+- **Applied once.** Each write has its own key. A retry reads the note and finds
+  the invoice by its reference before writing. A note that changed in Xero, or
+  has mixed lines, fails without a write.
+- **Cancel only when untouched.** Cancel reads Xero first and needs no invoice
+  with the reference and the note not voided. Under the lock it then claims the
+  operation and the correction with status-guarded updates, and writes restore
+  rows. Otherwise the officer retries. Never marked resolved.
+- **Readers wait.** The outside-spend mirror, the converge and the flag skip a
+  note while its correction is RESERVED (`admin-credit-deduction-note-guard.ts`).
+  A note voided by a completed correction raises no alert.
+- **Lock.** The member credit-ledger key only (`INV-LOCK-001`, `INV-LOCK-003`).
+
+Pinned by `admin-credit-deduction-plan.test.ts`,
+`admin-credit-deduction-reserve.test.ts`, `xero-credit-note-correction.test.ts`,
+`admin-credit-deduction-lifecycle.test.ts` and, against real PostgreSQL,
+`admin-credit-deduction-correction.realdb.test.ts`.
+
 ## One outcome per Xero operation row (#4356)
 
 ### INV-INT-029

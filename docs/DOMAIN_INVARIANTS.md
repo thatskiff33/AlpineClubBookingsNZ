@@ -983,6 +983,7 @@ File: [`invariants/integrations.md`](invariants/integrations.md). Prefix
 | `INV-INT-040` | No subscription or joining-fee invoice work while Xero is off |
 | `INV-INT-041` | A PENDING outbox row always holds a request the outbox can claim |
 | `INV-INT-042` | A once-ever alert claim with no email is given back |
+| `INV-INT-043` | A deduction of noted credit corrects its Xero note once |
 
 ## Operations
 

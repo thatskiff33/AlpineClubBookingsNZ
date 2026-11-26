@@ -134,10 +134,33 @@ payment not yet made (being retried, or stopped and listed on [Stuck States](stu
    request" — this is the two-person rule. A credit grant shows the Xero account
    the requester chose (the member's own money, or goodwill). You cannot change
    it. A grant requested before that choice existed has to be rejected and asked
-   for again. A deduction against credit that already has a Xero note is refused
-   and stays pending, because the note would stay at its full amount. An approved
-   adjustment is applied to the member's credit ledger. A grant also queues its
-   Xero credit note at that moment.
+   for again. An approved adjustment is applied to the member's credit ledger. A
+   grant also queues its Xero credit note at that moment.
+2. A deduction takes credit that has no Xero note first. If it must take credit
+   that already has a Xero credit note, approving it also corrects Xero
+   ([how](#deducting-credit-that-has-a-xero-note)). A deduction is refused while
+   the credit's own Xero note is still being raised: approve it once the note
+   exists.
+
+### Deducting credit that has a Xero note
+
+Approving the deduction takes the money off the member's balance at once, so
+it cannot be spent, and queues one Xero correction:
+
+- If the whole of an unused note is taken back, the note is **voided** in Xero.
+- Otherwise the app raises an invoice in Xero for **only the amount taken back**,
+  on the member's contact with the note's account and tax rate, and allocates it
+  against the note. Xero does not email it. The note's remaining credit then
+  matches the member's credit in the app to the cent. Earlier uses of the note
+  are kept.
+
+While the correction runs, the member's credit card shows **Waiting for Xero
+correction**. The member sees the deduction and its reason once Xero is
+corrected. If the correction fails it stays on the
+[Xero operations list](xero.md) and the credit stays held: **Retry** it once the
+cause is fixed in Xero. **Cancel** on the member's credit card gives the credit
+back, but only while Xero shows nothing changed; once a void or invoice may
+have reached Xero, retry instead. A correction cannot be marked resolved.
 
 ### Post or reverse opening credits
 
@@ -202,6 +225,7 @@ This is a review queue — its per-review inputs:
 | Admin Notes | Note visible to the member | Optional |
 | Notify choice (approve/reject) | Whether the member is emailed | Recorded in the audit log either way |
 | Approve / Reject (credit) | Action a manual credit adjustment | Two-person rule: the requester cannot approve |
+| Cancel (Waiting for Xero correction) | Stop a deduction's Xero correction and give the credit back | Finance edit; only while Xero shows no change |
 | Import opening credits | Preview and post a moving-in club's opening credit | Finance edit; one approval; up to 500 rows; a file posts once |
 | Reverse batch | Remove a whole opening-credit batch | Finance edit; a reason is required; refused once any of it is spent |
 
@@ -222,6 +246,10 @@ governed by the [cancellation policy](../CANCELLATIONS.md#refund-policy).
 | An opening-credit row says **Unmatched** | No member has that ID or email, or two members share the email and the name does not tell them apart | Fix the ID or email, or add **First Name** and **Last Name** |
 | Posting says the file was already posted | The same rows were posted as an earlier batch | If that batch still stands, nothing to do. If it was reversed, change the file (such as a description) so it posts as a new batch |
 | A row says the member already has an opening credit | An earlier batch that has not been reversed credited them | Reverse that batch, or leave the member out of this file |
+| A deduction says the credit's Xero note is still being raised | The grant's own credit note is queued for Xero | Approve once the note exists (the Xero operations list shows it) |
+| A credit correction failed with "NOTE_CHANGED_IN_XERO" | The note was used, changed or voided in Xero after the deduction was approved | **Cancel** it if offered, then request the deduction again against what is left |
+| A credit correction failed with "NOTE_MIXED_LINES" | The note has lines with different accounts or tax rates, so the app cannot bill it back | **Cancel** it and correct the note in Xero by hand |
+| **Cancel** on a correction says to retry | Xero may already hold the void or the invoice | **Retry** the correction; it finds what reached Xero and finishes it once |
 | **Reverse batch** is refused | A member has spent part of their opening credit, or had credit deducted since it posted | Correct that member with a credit adjustment instead |
 
 ## Related links

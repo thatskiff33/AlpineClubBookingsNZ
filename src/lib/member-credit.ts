@@ -1143,7 +1143,7 @@ export async function reviewAdminAdjustmentRequest(
       });
     }
 
-    await createAuditLog(
+    if (!correctionId) await createAuditLog(
       {
         action: "member.credit.adjustment.approve",
         category: "payment",
@@ -1151,7 +1151,7 @@ export async function reviewAdminAdjustmentRequest(
         entityId: request.id,
         memberId: adminId,
         targetId: memberId,
-        details: `${correctionId ? "Xero correction queued. " : ""}Approved admin credit adjustment ${request.id} as credit ${credit.id}: ${formatAdjustmentAmount(request.amountCents, format)}. Requested by ${request.requestedById}. Reason: ${request.description}.${adminCreditGrantAuditClause(request.grantAccount)}`,
+        details: `Approved admin credit adjustment ${request.id} as credit ${credit.id}: ${formatAdjustmentAmount(request.amountCents, format)}. Requested by ${request.requestedById}. Reason: ${request.description}.${adminCreditGrantAuditClause(request.grantAccount)}`,
         // #2695 (`INV-PRIV-018`) — DECLARED MEMBER-FACING, owner decision of
         // 9 August 2026. The only explanation a member ever gets for why their
         // credit balance moved, which is why both fixes the issue originally
@@ -1169,13 +1169,28 @@ export async function reviewAdminAdjustmentRequest(
         // audiences, so that one identifier does cross — as an opaque handle on
         // the member's own request, not as an explanation. Withholding it is a
         // change to every row on the timeline rather than to this sentence.
-        memberDisclosure: correctionId ? undefined : {
+        memberDisclosure: {
           visibility: "member-facing",
           text:
             request.amountCents >= 0
               ? `Credit of ${formatCents(request.amountCents, format)} added to your account. Reason: ${request.description}`
               : `Credit of ${formatCents(Math.abs(request.amountCents), format)} deducted from your account. Reason: ${request.description}`,
         },
+        ipAddress,
+      },
+      tx
+    );
+    // #5241: a deduction that corrects a Xero note tells the member only once Xero
+    // agrees, from the correction's completion (`member.credit.deduction.xero_correction.complete`).
+    else await createAuditLog(
+      {
+        action: "member.credit.adjustment.approve",
+        category: "payment",
+        entityType: "AdminCreditAdjustmentRequest",
+        entityId: request.id,
+        memberId: adminId,
+        targetId: memberId,
+        details: `Xero correction queued. Approved admin credit adjustment ${request.id} as credit ${credit.id}: ${formatAdjustmentAmount(request.amountCents, format)}. Requested by ${request.requestedById}. Reason: ${request.description}.`,
         ipAddress,
       },
       tx
