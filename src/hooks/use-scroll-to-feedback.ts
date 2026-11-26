@@ -5,6 +5,7 @@ import {
   useEffect,
   useMemo,
   useRef,
+  useState,
   type RefObject,
 } from "react";
 
@@ -625,4 +626,33 @@ export function useReturnAttention(
     anchorRef.current = null;
     returnFocus(recorded);
   }, [anchorRef, returnKey]);
+}
+
+/**
+ * RETURN after a single in-place action whose control is disabled while the
+ * request runs (#5442). A browser, and jsdom on its 16 ms rendering tick, drops
+ * focus from a disabled control to the page and never gives it back, so a
+ * keyboard or screen-reader user who pressed "Send" would be left on `<body>`.
+ *
+ *  - `capture()` from the action, before the render that disables the control;
+ *  - `release()` in the same update that re-enables it (a `finally`).
+ *
+ * The return goes through {@link returnFocus}, which acts only while focus is
+ * on the page: a failure alert that took focus in the same commit keeps it,
+ * and a user who moved on during the request is not pulled back. When the
+ * control is gone the anchor falls back to its section, as every return does.
+ *
+ * Not `useRowActionFocusReturn` (`use-row-action-focus-return.ts`): that one
+ * finds row buttons and a card by list markers and binds one anchor per write,
+ * which a lone button with nothing to re-aim at does not need.
+ */
+export function useActionFocusReturn() {
+  const anchorRef = useRef<FocusReturnAnchor | null>(null);
+  const [returnKey, setReturnKey] = useState(0);
+  useReturnAttention(anchorRef, returnKey);
+  const capture = useCallback(() => {
+    anchorRef.current = captureFocusReturn();
+  }, []);
+  const release = useCallback(() => setReturnKey((count) => count + 1), []);
+  return useMemo(() => ({ capture, release }), [capture, release]);
 }

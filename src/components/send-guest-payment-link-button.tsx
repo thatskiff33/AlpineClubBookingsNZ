@@ -4,6 +4,7 @@ import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { FocusedActionError } from "@/components/focused-action-error";
 import { StatusRegion } from "@/components/status-region";
+import { useActionFocusReturn } from "@/hooks/use-scroll-to-feedback";
 
 /**
  * Split-booking guest-portion affordance (#1967). Shown with the
@@ -23,8 +24,11 @@ export function SendGuestPaymentLinkButton({ bookingId }: { bookingId: string })
   const [error, setError] = useState("");
   const [done, setDone] = useState<string | null>(null);
   const [sentOnce, setSentOnce] = useState(false);
+  const focusReturn = useActionFocusReturn();
 
   async function sendLink() {
+    // A browser drops focus from a disabled control; hand it back when re-enabled (#5442).
+    focusReturn.capture();
     setBusy(true);
     setError("");
     setDone(null);
@@ -72,6 +76,7 @@ export function SendGuestPaymentLinkButton({ bookingId }: { bookingId: string })
       );
     } finally {
       setBusy(false);
+      focusReturn.release();
     }
   }
 
