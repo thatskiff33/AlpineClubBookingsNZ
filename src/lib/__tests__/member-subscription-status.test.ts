@@ -40,6 +40,7 @@ vi.mock("@/lib/module-settings", async (importOriginal) => {
 });
 vi.mock("@/lib/financial-year-server", () => ({
   refreshFinancialYearConfig: vi.fn(async () => 3),
+  clubFinancialYearEndMonth: vi.fn(async () => 3),
 }));
 
 import { auth } from "@/lib/auth";

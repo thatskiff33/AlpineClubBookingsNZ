@@ -18,6 +18,7 @@ const mocks = vi.hoisted(() => ({
   transaction: vi.fn(),
   clubTimeSettings: { findUnique: vi.fn() },
   refreshFinancialYearConfig: vi.fn(),
+  clubFinancialYearEndMonth: vi.fn(),
   closeAlreadyPaid: vi.fn(),
 }));
 
@@ -49,6 +50,7 @@ vi.mock("@/lib/membership-subscription-charge-close", async (importOriginal) => 
 // reaches Prisma and the provider, neither of which this route test stands up.
 vi.mock("@/lib/financial-year-server", () => ({
   refreshFinancialYearConfig: mocks.refreshFinancialYearConfig,
+  clubFinancialYearEndMonth: mocks.clubFinancialYearEndMonth,
 }));
 vi.mock("@/lib/prisma", () => ({
   prisma: {
@@ -104,6 +106,7 @@ describe("admin subscription billing route", () => {
     mocks.confirmPreview.mockResolvedValue({ chargeIds: ["charge-1"], exceptionCount: 0 });
     mocks.reconcile.mockResolvedValue({ resolvedCount: 0 });
     mocks.refreshFinancialYearConfig.mockResolvedValue(3);
+    mocks.clubFinancialYearEndMonth.mockResolvedValue(3);
     mocks.enqueue.mockResolvedValue({ queueOperationId: "op-1", message: "queued" });
     mocks.charges.findMany.mockResolvedValue([]);
     mocks.exceptions.findMany.mockResolvedValue([]);
@@ -120,6 +123,27 @@ describe("admin subscription billing route", () => {
     expect(response.status).toBe(200);
     expect(mocks.requireAdmin).toHaveBeenCalledWith({ permission: { area: "finance", level: "view" } });
   });
+
+  it.each([
+    [3, 2026],
+    [6, 2025],
+    [12, 2026],
+  ])(
+    "with no seasonYear, previews the decision date's season under a year-end of month %i (#5259)",
+    async (yearEndMonth, seasonYear) => {
+      // 15 June 2026: inside season 2026 for a March or December club, and the
+      // last month of season 2025 for a June club, which the Subscriptions
+      // screen now selects too.
+      mocks.clubFinancialYearEndMonth.mockResolvedValue(yearEndMonth);
+      const response = await GET(
+        new NextRequest("http://localhost/api/admin/subscription-billing?decisionDate=2026-06-15"),
+      );
+      expect(response.status).toBe(200);
+      expect(mocks.buildPreview).toHaveBeenCalledWith(
+        expect.objectContaining({ seasonYear }),
+      );
+    },
+  );
 
   it("returns the default 30 due days with preview and visible queues", async () => {
     const response = await GET(new NextRequest("http://localhost/api/admin/subscription-billing?seasonYear=2026&decisionDate=2026-07-13"));

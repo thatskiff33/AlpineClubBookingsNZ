@@ -137,7 +137,10 @@ vi.mock("@/lib/membership-subscription-charge-close", async (importOriginal) => 
   ...((await importOriginal()) as typeof import("@/lib/membership-subscription-charge-close")),
   closeAlreadyPaidSubscriptionCharge: h.closeAlreadyPaidSubscriptionCharge,
 }));
-vi.mock("@/lib/financial-year-server", () => ({ refreshFinancialYearConfig: async () => 3 }));
+vi.mock("@/lib/financial-year-server", () => ({
+  refreshFinancialYearConfig: async () => 3,
+  clubFinancialYearEndMonth: async () => 3,
+}));
 vi.mock("@/lib/audit", async (importOriginal) => ({
   ...((await importOriginal()) as typeof import("@/lib/audit")),
   createAuditLog: h.createAuditLog,
