@@ -289,9 +289,9 @@ describe("no admin active-state check compares raw hrefs", () => {
       why: string;
     }
   > = {
-    "src/app/(admin)/admin/membership/members/_hooks/use-members-query-state.ts": {
+    "src/hooks/use-admin-list-url-sync.ts": {
       kind: "served",
-      why: "compares the path with the canonical Members URL to skip a router.replace to the address already shown; both address forms of the page count as already there",
+      why: "the admin lists' address sync (Members, Payments, Subscriptions, Refund Requests, Member Applications, Membership Cancellations, Audit Log and the booking-request panels): compares the shown address with the adminHref-built target to skip a router.replace to it; both address forms of a page count as already there",
     },
     "src/components/admin-sidebar.tsx": {
       kind: "sidebar",

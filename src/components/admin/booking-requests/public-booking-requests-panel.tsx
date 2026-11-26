@@ -5,7 +5,8 @@ import { adminHref } from "@/lib/admin-hubs";
 import Link from "next/link";
 import { useClubFormat } from "@/components/club-format-provider";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useSearchParams } from "next/navigation";
+import { useAdminListUrlSync } from "@/hooks/use-admin-list-url-sync";
 import { Badge } from "@/components/ui/badge";
 import { toast } from "sonner";
 import { pluralHutLeaderLabel } from "@/config/hut-leader-label";
@@ -394,7 +395,6 @@ export function PublicBookingRequestsPanel({
   const { currencyCode } = format;
   const formatDateTime = useInstantFormatter();
   const { hutLeaderLabel } = useClubIdentity();
-  const router = useRouter();
   const searchParams = useSearchParams();
   const requestId = searchParams.get("requestId");
   /*
@@ -530,9 +530,7 @@ export function PublicBookingRequestsPanel({
     page,
   );
 
-  useEffect(() => {
-    router.replace(currentPath, { scroll: false });
-  }, [currentPath, router]);
+  useAdminListUrlSync(currentPath);
 
   const fetchRequests = useCallback(async () => {
     const isCurrent = beginLoad();
