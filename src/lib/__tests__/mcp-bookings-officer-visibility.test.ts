@@ -328,6 +328,13 @@ describe("every officer action in the catalogue: needs the officer's approval", 
     expect(OFFICER_ACTIONS.some((action) => action.kind === "read")).toBe(true);
     expect(OFFICER_ACTIONS.some((action) => action.kind !== "read")).toBe(true);
     expect(OFFICER_ACTIONS.some((action) => action.core)).toBe(true);
+    // Every decided officer area is in the loop below, reads and changes alike,
+    // so dropping the approval term fails it for each area's actions.
+    for (const area of ["bookings", "membership", "finance"]) {
+      const own = OFFICER_ACTIONS.filter((action) => mcpActionAdminRequirement(action)?.area === area);
+      expect(own.some((action) => action.kind === "read"), `${area} reads`).toBe(true);
+      expect(own.some((action) => action.kind !== "read"), `${area} changes`).toBe(true);
+    }
     // The same officer, approved, is offered every one, so the refusals below
     // come from the missing approval and nothing else.
     const found = await foundIds(context(EVERY_AREA_EDIT, true));

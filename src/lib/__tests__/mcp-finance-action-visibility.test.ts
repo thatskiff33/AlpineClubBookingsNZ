@@ -32,7 +32,8 @@ const FINANCE_ACTIONS = MCP_ACTIONS.filter((action) => mcpActionAdminRequirement
 const VIEW_ACTIONS = FINANCE_ACTIONS.filter((action) => mcpActionAdminRequirement(action)?.level === "view");
 const EDIT_ACTIONS = FINANCE_ACTIONS.filter((action) => mcpActionAdminRequirement(action)?.level === "edit");
 
-function context(session: Session): McpServerContext {
+/** A connection the officer approved for officer actions, unless `officerConsent` is false. */
+function context(session: Session, officerConsent = true): McpServerContext {
   return {
     session,
     caller: {
@@ -40,6 +41,7 @@ function context(session: Session): McpServerContext {
       memberId: session.user.id,
       clientName: "Test app",
       scope: "READ_WRITE",
+      officerConsent,
       clientIp: "203.0.113.9",
       userAgent: null,
     },
