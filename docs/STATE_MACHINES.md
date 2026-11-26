@@ -4680,20 +4680,31 @@ returns before any marker is written. Owner decisions D9, D10 and D11 (27 Nov
   delivered has its link revoked by id, which clears the marker, because the
   job's next extension re-mints and sends. The marker stays when that revoke
   fails, or when the send threw before its keyed row was written (a failed row
-  insert throws once the send is keyed; the sweep then sends it within its
-  interval). The sweep clears it without sending when the booking is gone,
-  deleted or not `PENDING`, the link was used or is gone, or a newer link was
-  minted for the booking. Every link the job or this recovery mints is owed in
-  its own right, and a link the member sent themselves from the booking page
-  showed them the outcome. Otherwise it reads the original link's row by the
-  told rule: told or in flight, cleared. Not told, it re-issues through the
-  booking page's own path (`prepareSplitGuestPaymentLinkReissue`), which
-  revokes the link, mints a new one and records the new link's email as owed
-  in that same transaction, then delivers the new link as the job delivers
-  its own. So no state, short of the cut-off, leaves a live link that was never
-  emailed with no marker. D10: the cut-off is the link's own expiry (the end of
-  the check-in day), or seven days after the mint, whichever comes first; past
-  it, unless the email reached the member after all, officers are alerted once.
+  insert throws once the send is keyed). Such a link is left live, not
+  revoked, so the job's next extension finds it active and mints no other; the
+  sweep re-issues it. The sweep clears the marker without sending when the
+  booking is gone, deleted or not `PENDING`, the link was used or is gone, or a
+  newer link was minted for the booking. Otherwise it reads the original
+  link's row by the told rule: told or in flight, cleared. Not told, it
+  re-issues through the booking page's own path
+  (`prepareSplitGuestPaymentLinkReissue`), which revokes the link, mints a new
+  one and records the new link's email as owed in that same transaction, then
+  delivers the new link as the job delivers its own. A re-issue answered "No
+  emails" mints nothing, so the original link is revoked by id, as the first
+  attempt does, and the job's next extension mints and sends once the switch is
+  off again. A chain of re-issues is one notice: each new link's marker carries
+  the chain's first mint (`originAt`) and its re-issue count (`recoveries`),
+  and a chain re-issues at most three times (`LINK_RECOVERY_LIMIT`), so a fault
+  that keeps every send failing mints at most four links in all; past the limit
+  the marker waits for its cut-off. So every link the job's extension or this
+  recovery mints, while live and never emailed, has a marker until it is told,
+  used, revoked or past its cut-off. A link the booking page's button or an
+  officer's fresh copy mints is not owed: as before #5433, a stop after its
+  commit and before its email leaves it live and unsent, and that person sees
+  the outcome and can send again. D10: the cut-off is the link's own expiry (the
+  end of the check-in day), or seven days after the chain's first mint,
+  whichever comes first; past it, unless the email reached the member after
+  all, officers are alerted once.
 - **A retired saved card** (`retireAndEscalateUnusableSavedCard`): the two
   clears now run in one transaction, with no advisory lock as before, whose
   last write records `saved-card-unusable-member` (`saved-card-charge-failed`,
@@ -4734,8 +4745,9 @@ portion) are not owed: the next due reminder goes out anyway.
 
 - A booking reinstated and cancelled again between a cancel and its sweep still
   counts as cancelled, and is sent the notice.
-- A recovered payment link mints a new link, so the member can hold two link
-  emails in all, the first never delivered.
+- A recovered payment link mints a new link, so the member can hold more than
+  one link email in all, each earlier one never delivered (at most four links
+  in one chain).
 - **Booking email not sent** can reach officers moments before the routine
   notice about the same booking (the officers' copy of the cancellation, say),
   because the member's notice is delivered first, as before #5433. Its note

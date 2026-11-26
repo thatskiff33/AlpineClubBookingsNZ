@@ -24,7 +24,6 @@ import { postCancellationLedgerLines } from "@/lib/booking-ledger-cancellation-s
 import { postStoredBookingConfirmationLedgerLines } from "@/lib/booking-ledger-confirmation-sync";
 import { resolveBookingMoneyPostingContext, type BookingJournalContext } from "@/lib/member-money/doors";
 import {
-  SPLIT_GUEST_PAYMENT_LINK_TEMPLATE,
   mintSplitGuestPaymentLinkIfAbsent,
   type MintedSplitGuestPaymentLink,
 } from "@/lib/payment-link-split-guest";
@@ -38,6 +37,7 @@ import { deliverPaidBookingConfirmation, sendUnrecordedPaidBookingConfirmation }
 import { recordPaidConfirmationOwedUnlessUnkeyable } from "@/lib/paid-booking-confirmation-owed";
 import { deliverHoldEndedNotices, recordHoldEndedNoticesOwed, type OwedHoldEndedNotices } from "@/lib/hold-ended-cancellation-notices";
 import { deliverSplitGuestPaymentLink, recordSplitGuestPaymentLinkOwed } from "@/lib/split-guest-payment-link-notice";
+import { SPLIT_GUEST_PAYMENT_LINK_TEMPLATE } from "@/lib/email/owed-notice-templates";
 import type { OwedNoticeMarker } from "@/lib/owed-notice/store";
 import { settledByAnotherCapture } from "@/lib/duplicate-capture-outcome";
 import { releaseBookingPromoRedemptions } from "@/lib/promo";
@@ -1575,6 +1575,8 @@ export async function confirmPendingBookings(): Promise<CronConfirmResult> {
         result.confirmedBookingIds.push(resolution.booking.id);
         await queueXeroInvoice(resolution.booking.id, "Xero invoice queued");
         if (reconciliation.paidConfirmation) await deliverPaidBookingConfirmation(reconciliation.paidConfirmation, format, "confirmPendingBookings");
+        // A fresh PAID whose marker could not be keyed (#5433 PR 4, round 2): sent as before #5433.
+        else if (reconciliation.outcome === "paid") await sendUnrecordedPaidBookingConfirmation(resolution.booking.id, format, "confirmPendingBookings");
       } else {
         const releaseOutcome = await runSavedCardClaimRelease(async (tx) => {
           // #3267: record the intent Stripe answered with on the attempt row

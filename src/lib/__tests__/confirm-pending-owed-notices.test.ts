@@ -77,7 +77,7 @@ vi.mock("@/lib/email", async () => {
       linkCore.sends.push({ token: params.token, key: params.idempotencyKey });
       if (linkCore.next === "throw-before-row") throw new Error("EmailLog insert failed");
       const row = { attempts: 1, lastAttemptAt: new Date(), htmlBody: null, bookingRetryHtmlBody: null };
-      if (params.idempotencyKey) db.emailRows.set(`email:split-guest-payment-link:${params.idempotencyKey}`, { ...row, status: linkCore.next === "sent" ? "SENT" : "SKIPPED_NON_PRODUCTION" });
+      if (params.idempotencyKey) db.emailRows.set(`email:${templates.SPLIT_GUEST_PAYMENT_LINK_TEMPLATE}:${params.idempotencyKey}`, { ...row, status: linkCore.next === "sent" ? "SENT" : "SKIPPED_NON_PRODUCTION" });
       return linkCore.next === "sent" ? { status: "sent", emailLogId: "x" } : { status: "withheld_for_environment", emailLogId: "x", reason: "environment_non_production" };
     },
   };
@@ -446,7 +446,7 @@ describe("CP-6: a split guest portion's payment link", () => {
     expect(owed.store.rows.size).toBe(0);
   });
 
-  it.each([["not_payable"], ["just_sent"], ["withheld"]])("clears when the re-issue answers %s, with nothing minted", async (kind) => {
+  it.each([["not_payable"], ["just_sent"]])("clears when the re-issue answers %s, with nothing minted", async (kind) => {
     await owe();
     reissue.fn.mockResolvedValueOnce({ kind });
     vi.setSystemTime(new Date(NOW.getTime() + HOUR));
@@ -455,6 +455,51 @@ describe("CP-6: a split guest portion's payment link", () => {
 
     expect(owed.store.rows.size).toBe(0);
     expect(linkCore.sends).toEqual([]);
+  });
+
+  it("revokes the original link when the re-issue answers \"No emails\", so the job's next extension mints and sends once the switch is off (round 2, item 2)", async () => {
+    await owe();
+    reissue.fn.mockResolvedValueOnce({ kind: "withheld" });
+    vi.setSystemTime(new Date(NOW.getTime() + HOUR));
+
+    await sweep(SPLIT_GUEST_PAYMENT_LINK_NOTICE_DELIVERERS, new Date(NOW.getTime() + HOUR));
+
+    expect(db.links.get(LINK)!.revokedAt).not.toBeNull();
+    expect(owed.store.rows.size).toBe(0);
+    expect(linkCore.sends).toEqual([]);
+  });
+
+  it("carries the chain's first mint and its re-issue count onto the new link's marker", async () => {
+    const first = await owe();
+    vi.setSystemTime(new Date(NOW.getTime() + HOUR));
+    linkCore.next = "throw-before-row";
+
+    await sweep(SPLIT_GUEST_PAYMENT_LINK_NOTICE_DELIVERERS, new Date(NOW.getTime() + HOUR));
+
+    const [next] = [...owed.store.rows.values()];
+    expect(next!.payload).toEqual({ bookingId: "child_1", originAt: first.eventAt.getTime(), recoveries: 1 });
+  });
+
+  it("a send that always throws before its row ends in exactly one officers' alert at seven days from the first mint, with at most three re-issues (round 2, item 1)", async () => {
+    const first = await owe();
+    linkCore.next = "throw-before-row";
+    const alertedAt: number[] = [];
+    alerts.unsent.mockImplementation(async () => {
+      alertedAt.push(Date.now());
+      return SENT;
+    });
+    // Sweep every half hour for eight days, as the email retry job does.
+    for (let at = NOW.getTime() + 31 * MINUTE; at <= NOW.getTime() + 8 * DAY; at += 30 * MINUTE) {
+      vi.setSystemTime(new Date(at));
+      await sweep(SPLIT_GUEST_PAYMENT_LINK_NOTICE_DELIVERERS, new Date(at));
+    }
+
+    expect(reissue.fn).toHaveBeenCalledTimes(3);
+    expect(db.links.size).toBe(4);
+    expect(alertedAt).toHaveLength(1);
+    expect(alertedAt[0]! - first.eventAt.getTime()).toBeGreaterThan(7 * DAY);
+    expect(alertedAt[0]! - first.eventAt.getTime()).toBeLessThanOrEqual(7 * DAY + 30 * MINUTE);
+    expect(owed.store.rows.size).toBe(0);
   });
 
   it("keeps the marker when the re-issue throws before committing, for a later sweep", async () => {

@@ -243,7 +243,7 @@ vi.mock("@/lib/payment-link", () => ({
   revokePaymentLinkById: (...args: unknown[]) =>
     mockRevokePaymentLinkById(...args),
 }));
-// Partial mock: the mint is stubbed, the real SPLIT_GUEST_PAYMENT_LINK_TEMPLATE
+// Partial mock: the mint is stubbed; the real SPLIT_GUEST_PAYMENT_LINK_TEMPLATE (`email/owed-notice-templates.ts`)
 // flows through so the withheld-row assertion below compares against the
 // production constant rather than a second literal (INV-SSOT-002).
 vi.mock("@/lib/payment-link-split-guest", async (importOriginal) => ({
@@ -1001,6 +1001,18 @@ describe("Cron: Confirm Pending Bookings", () => {
     );
   });
 
+  it("#5433 PR 4, round 2: a saved-card settle whose marker could not be keyed sends the confirmation unkeyed, as before #5433", async () => {
+    mockPendingBookings([makePendingBooking("b1")]);
+    mockCheckCapacityForGuestRanges.mockResolvedValue({ available: true, minAvailable: 10, nightDetails: [] });
+    mockChargePaymentMethod.mockResolvedValue({ id: "pi_auto_1", status: "succeeded", amount: 10000 });
+    mockMarkBookingPaymentSucceeded.mockResolvedValueOnce({ outcome: "paid", bookingId: "b1", bumpedBookingIds: [], paidConfirmation: null });
+
+    await confirmPendingBookings();
+
+    expect(confirmation.deliver).not.toHaveBeenCalled();
+    expect(confirmation.sendUnrecorded).toHaveBeenCalledWith("b1", CLUB_FORMAT_TEST, "confirmPendingBookings");
+  });
+
   it("confirms a booking when capacity is available and payment succeeds", async () => {
     const booking = makePendingBooking("b1");
     // #3267 (INV-PAY-055): the key is the attempt row's — booking id for the
@@ -1087,6 +1099,7 @@ describe("Cron: Confirm Pending Bookings", () => {
     expect(mockMarkBookingPaymentSucceeded).toHaveBeenCalledWith(expect.objectContaining({ bookingId: "b1", owesPaidConfirmation: true }));
     expect(confirmation.deliver).toHaveBeenCalledTimes(1);
     expect(confirmation.deliver).toHaveBeenCalledWith(confirmation.marker, CLUB_FORMAT_TEST, "confirmPendingBookings");
+    expect(confirmation.sendUnrecorded).not.toHaveBeenCalled();
     expect(confirmation.deliver.mock.invocationCallOrder[0]).toBeGreaterThan(mockEnqueueXeroBookingInvoiceOperation.mock.invocationCallOrder[0]!);
     expect(mockSendConfirmedEmail).not.toHaveBeenCalled();
   });
@@ -2875,7 +2888,7 @@ describe("Cron: Confirm Pending Bookings", () => {
     expect(mockSendSplitGuestPaymentLinkEmail).not.toHaveBeenCalled();
     expect(mockRevokePaymentLinkById).not.toHaveBeenCalled();
     const { SPLIT_GUEST_PAYMENT_LINK_TEMPLATE } = await import(
-      "@/lib/payment-link-split-guest"
+      "@/lib/email/owed-notice-templates"
     );
     expect(mockEmailLogCreate).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -4922,14 +4935,14 @@ describe("Cron: Confirm Pending Bookings", () => {
         expect(owedNoticeStore.rows.size).toBe(0);
       });
 
-      it("keeps the marker when the send throws before its keyed row was written, even with the link revoked: the sweep recovers it (round 1, item 2)", async () => {
+      it("keeps the marker and leaves the link live when the send throws before its keyed row was written: the sweep recovers it, and the next extension mints no other link (round 1, item 2; round 2, item 1)", async () => {
         extendChild();
         mockSendSplitGuestPaymentLinkEmail.mockRejectedValueOnce(new Error("EmailLog insert failed"));
         mockEmailLogFindUnique.mockResolvedValue(null);
 
         await confirmPendingBookings();
 
-        expect(mockRevokePaymentLinkById).toHaveBeenCalledWith(LINK);
+        expect(mockRevokePaymentLinkById).not.toHaveBeenCalled();
         expect([...owedNoticeStore.rows.keys()]).toEqual([KEY]);
       });
 

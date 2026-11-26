@@ -92,6 +92,8 @@ const LATE_CAPTURE_HOLD =
   "to trace under #5433: the treasurer's held-late-capture alert after the hold's task commits (late-capture-refund-hold.ts). A still-open task re-announces on the next notice for the same capture (#3635), on no schedule.";
 const CARD_REFUND_ALERTS =
   "to trace under #5433: the officers' card refund alerts after the refund rows commit (failed-later card refunds, refund cap overflow; payment-transactions.ts).";
+const UNKEYED_CONFIRMATION =
+  "#5433 PR 4 (rounds 1 and 2): a paid confirmation's fallback when its marker cannot be keyed (unreachable with today's ids). It is sent once, unkeyed, exactly as before #5433, so it is never worse than before; an owed one goes through deliverPaidBookingConfirmation.";
 const STRIPE_SWITCH =
   "False positive: another `switch` case of the one event dispatch; the earlier case's commit never runs before this handler, which the census reads as its own unit.";
 
@@ -109,10 +111,10 @@ const POST_COMMIT_SEND_REASONS: Readonly<Record<string, Entry>> = {
     reason: `${RECURRING_REMINDER} (B3, B4)`,
   },
   "src/lib/cron-confirm-pending.ts#confirmPendingBookings#sendUnrecordedPaidBookingConfirmation": {
-    calls: 1,
+    // The zero-balance confirmation and the saved-card charge's.
+    calls: 2,
     after: ["resolveHoldWindowUnderLock"],
-    reason:
-      "#5433 PR 4 (round 1, item 5): the zero-balance confirmation's fallback when its marker cannot be keyed (unreachable with today's ids). It is sent once, unkeyed, exactly as before #5433, so it is never worse than before; an owed one goes through deliverPaidBookingConfirmation.",
+    reason: UNKEYED_CONFIRMATION,
   },
   "src/lib/cron-confirm-pending.ts#confirmPendingBookings#sendAdminPaymentFailureAlert": {
     calls: 3,
@@ -121,6 +123,11 @@ const POST_COMMIT_SEND_REASONS: Readonly<Record<string, Entry>> = {
   },
 
   // stripe-webhook-service.ts
+  "src/lib/stripe-webhook-service.ts#handlePaymentIntentSucceeded#sendUnrecordedPaidBookingConfirmation": {
+    calls: 1,
+    after: ["markBookingPaymentSucceeded"],
+    reason: UNKEYED_CONFIRMATION,
+  },
   "src/lib/stripe-webhook-service.ts#handlePaymentIntentSucceeded#alertPaymentAmountMismatch": {
     calls: 2,
     after: ["handleCancelledBookingPaymentSucceeded"],
@@ -344,6 +351,11 @@ const POST_COMMIT_SEND_REASONS: Readonly<Record<string, Entry>> = {
     calls: 1,
     after: [OWN_COMMIT],
     reason: MARK_PAID_ALERTS,
+  },
+  "src/app/api/bookings/[id]/confirm-payment/route.ts#POST#sendUnrecordedPaidBookingConfirmation": {
+    calls: 1,
+    after: ["markBookingPaymentSucceeded"],
+    reason: UNKEYED_CONFIRMATION,
   },
   "src/app/api/bookings/[id]/confirm-payment/route.ts#POST#markBookingPaymentSucceeded": {
     calls: 1,

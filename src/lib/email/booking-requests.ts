@@ -8,7 +8,7 @@ import {
   schoolAttendeeConfirmationTemplate,
   splitGuestPaymentLinkTemplate,
 } from "@/lib/email-templates/booking-requests";
-import { BOOKING_REQUEST_PAYMENT_EXPIRED_TEMPLATE } from "./owed-notice-templates";
+import { BOOKING_REQUEST_PAYMENT_EXPIRED_TEMPLATE, SPLIT_GUEST_PAYMENT_LINK_TEMPLATE } from "./owed-notice-templates";
 import {
   composeOptionalEmailLine,
 } from "../email-message-notes";
@@ -230,7 +230,7 @@ export async function sendSplitGuestPaymentLinkEmail(params: {
       expiresAt: params.expiresAt,
     }, format)),
     bookingContext: classifyBookingOwnerContext(params.bookingContext),
-    templateName: "split-guest-payment-link",
+    templateName: SPLIT_GUEST_PAYMENT_LINK_TEMPLATE,
     templateData: {
       firstName: params.firstName,
       token: params.token,

@@ -567,7 +567,8 @@ you want both reworded; editing only one leaves the other on its built-in text.
 > - the **Split Guest Payment Link** email. If it was never sent, a later run
 >   replaces the link with a fresh one and sends that; each link is emailed at
 >   most once, and the fresh link is owed in its own right if that send is
->   interrupted too;
+>   interrupted too. A fault that keeps every send failing makes at most three
+>   fresh links, and the seven days below run from the first link;
 > - the **Saved Card Charge Failed** email and the officers' **Admin Payment
 >   Failure** alert when a saved card is found unusable. That alert now says the
 >   owner is emailed separately rather than that they have been emailed, and a
@@ -580,8 +581,9 @@ you want both reworded; editing only one leaves the other on its built-in text.
 > longer pending or awaiting its card (paid, cancelled or ended). A
 > cancellation notice is tried until the end of the check-out day, the others
 > until the end of the check-in day, and none for more than seven days (owner
-> decision, 27 Nov 2026); past that, officers are alerted once if the member
-> was not told.
+> decision, 27 Nov 2026), except while the email retry job is still retrying
+> a failed send, which it gives up within a few hours; past that, officers are
+> alerted once if the member was not told.
 >
 > What an officer can notice: a new alert, **Booking email not sent**
 > (`admin-booking-notice-unsent`). It is sent once per email when one of the

@@ -21,7 +21,7 @@ import {
 } from "@/lib/payment-link-expiry";
 import { sendSplitGuestPaymentLinkEmail } from "@/lib/email";
 import { recordWithheldBookingEmail } from "@/lib/booking-email-suppression";
-import type { EmailAuditTemplateName } from "@/lib/email-message-audit-defaults";
+import { SPLIT_GUEST_PAYMENT_LINK_TEMPLATE } from "@/lib/email/owed-notice-templates";
 import logger from "@/lib/logger";
 import { readBookingAmountOwed } from "@/lib/booking-amount-owed";
 import { revokePaymentLinkById } from "@/lib/payment-link";
@@ -120,15 +120,6 @@ export async function mintSplitGuestPaymentLinkIfAbsent(
   return mintFreshSplitGuestPaymentLink(tx, booking.id, expiresAt, now);
 }
 
-/**
- * Registry template the split-guest pay-link email ships as (#1967): one
- * constant for the withhold record's template name across the split-guest mint
- * and the settlement cron (#2956). The slug itself is a registry key, defined
- * by the sender and the email registry; `satisfies` makes a rename there a
- * compile error here rather than a silent mismatch in the withheld list.
- */
-export const SPLIT_GUEST_PAYMENT_LINK_TEMPLATE =
-  "split-guest-payment-link" satisfies EmailAuditTemplateName;
 
 export type IssueSplitGuestPaymentLinkResult =
   | { outcome: "sent"; emailLogId: string | null; recipientMemberId: string | null; sentTo: string }
