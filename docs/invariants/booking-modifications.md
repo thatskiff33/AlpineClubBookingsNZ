@@ -138,7 +138,8 @@ second ask for the same money. Not recorded means not raised.
   `quotedFigures` and the others' as `linkedQuotedFigures`, keyed by booking.
   Each booking's save compares its own in the one transaction, so a moved price
   on either rolls back both, and the refusal carries the fresh offer as
-  `linkedMove` for the member to answer again.
+  `linkedMove` for the member to answer again (none when the move would no
+  longer touch another booking).
 - **A save without figures is refused** (owner decision, 20 Nov 2026, #5238).
   `PUT /api/bookings/[id]/modify` and `/modify-dates` answer 409
   `EDIT_FIGURES_REQUIRED`, "please reload", before any service runs, as they do
