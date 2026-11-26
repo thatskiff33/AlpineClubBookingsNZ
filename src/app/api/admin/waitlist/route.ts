@@ -4,10 +4,8 @@ import { requireAdmin } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma";
 import { BookingStatus } from "@prisma/client";
 import { z } from "zod";
-import {
-  getFinanceBookingMetricsWindowDayCount,
-  MAX_FINANCE_BOOKING_METRICS_WINDOW_DAYS,
-} from "@/lib/finance-booking-metrics";
+import { getFinanceBookingMetricsWindowDayCount } from "@/lib/finance-booking-metric-calculations";
+import { MAX_FINANCE_BOOKING_METRICS_WINDOW_DAYS } from "@/lib/finance-booking-metrics-query";
 import { formatDateOnly, parseDateOnly } from "@/lib/date-only";
 import { adminWaitlistQuerySchema } from "@/lib/admin-bookings-schemas/review-queues";
 import {

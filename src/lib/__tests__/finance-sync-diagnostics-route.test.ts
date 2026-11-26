@@ -1,3 +1,4 @@
+import { NextRequest } from "next/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const {
@@ -26,7 +27,11 @@ vi.mock("@/lib/finance-sync-diagnostics", () => ({
   getFinanceSyncDiagnosticsStatus: mockGetFinanceSyncDiagnosticsStatus,
 }));
 
-import { GET as getFinanceSyncStatus } from "@/app/api/finance/sync/status/route";
+import { GET as getFinanceSyncStatusRoute } from "@/app/api/finance/sync/status/route";
+
+function getFinanceSyncStatus() {
+  return getFinanceSyncStatusRoute(new NextRequest("http://localhost/api/finance/sync/status"));
+}
 
 function managerSession() {
   return { user: { id: "finance-manager-1", role: "USER", accessRoles: [{ role: "USER" }] } };

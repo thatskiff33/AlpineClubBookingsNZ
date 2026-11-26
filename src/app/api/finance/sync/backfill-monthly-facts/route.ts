@@ -2,49 +2,15 @@ import { FinanceSyncRunStatus } from "@prisma/client";
 import { NextRequest, NextResponse } from "next/server";
 import { parseOptionalJsonRequestBody } from "@/lib/api-json";
 import { createAuditLog, getAuditRequestContext } from "@/lib/audit";
-import { requireFinanceManagerApiAccess } from "@/lib/finance-api-auth";
 import {
-  backfillFinanceMonthlyFacts,
-  DEFAULT_FINANCE_BACKFILL_MAX_CHUNKS,
-} from "@/lib/finance-monthly-fact-backfill";
-import { isMonthKey } from "@/lib/finance-monthly-facts";
+  FINANCE_BACKFILL_MONTHLY_FACTS_CONNECTION_SHAPE,
+} from "@/lib/connection-shapes/finance-reports";
+import { requireFinanceManagerApiAccess } from "@/lib/finance-api-auth";
+import { financeBackfillMonthlyFactsBodySchema } from "@/lib/finance-backfill-request";
+import { backfillFinanceMonthlyFacts } from "@/lib/finance-monthly-fact-backfill";
 import { getLatestFinanceSyncRun } from "@/lib/finance-sync-storage";
 import logger from "@/lib/logger";
-
-interface BackfillRequestBody {
-  fromMonth?: unknown;
-  maxChunks?: unknown;
-}
-
-class FinanceBackfillRequestError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = "FinanceBackfillRequestError";
-  }
-}
-
-function parseBody(body: BackfillRequestBody): {
-  fromMonth: string | null;
-  maxChunks: number;
-} {
-  const fromMonth =
-    typeof body.fromMonth === "string" && body.fromMonth.trim()
-      ? body.fromMonth.trim()
-      : null;
-  if (fromMonth && !isMonthKey(fromMonth)) {
-    throw new FinanceBackfillRequestError("fromMonth must be a YYYY-MM month key");
-  }
-
-  const maxChunks =
-    body.maxChunks === undefined || body.maxChunks === null
-      ? DEFAULT_FINANCE_BACKFILL_MAX_CHUNKS
-      : Number(body.maxChunks);
-  if (!Number.isInteger(maxChunks) || maxChunks < 1) {
-    throw new FinanceBackfillRequestError("maxChunks must be a positive integer");
-  }
-
-  return { fromMonth, maxChunks };
-}
+import { connectionJson } from "@/lib/mcp-connection-request";
 
 export async function POST(request: NextRequest) {
   const authResult = await requireFinanceManagerApiAccess();
@@ -61,18 +27,11 @@ export async function POST(request: NextRequest) {
     body = jsonBody.body;
   }
 
-  let options: { fromMonth: string | null; maxChunks: number };
-  try {
-    options = parseBody((body ?? {}) as BackfillRequestBody);
-  } catch (error) {
-    if (error instanceof FinanceBackfillRequestError) {
-      return NextResponse.json({ error: error.message }, { status: 400 });
-    }
-    return NextResponse.json(
-      { error: "Invalid request body" },
-      { status: 400 }
-    );
+  const parsed = financeBackfillMonthlyFactsBodySchema.safeParse(body);
+  if (!parsed.success) {
+    return NextResponse.json({ error: parsed.error.issues[0]?.message ?? "Invalid request body" }, { status: 400 });
   }
+  const options = parsed.data;
 
   // One finance sync at a time: replacing fact months while the daily sync is
   // also writing them serves no one.
@@ -122,13 +81,13 @@ export async function POST(request: NextRequest) {
       userAgent: auditRequest.userAgent ?? null,
     });
 
-    return NextResponse.json({
+    return connectionJson(request, {
       runId: execution.runId,
       status: execution.status,
       snapshotCount: execution.snapshotCount,
       totalRowCount: execution.totalRowCount,
       datasetResults: execution.datasetResults,
-    });
+    }, FINANCE_BACKFILL_MONTHLY_FACTS_CONNECTION_SHAPE);
   } catch (error) {
     logger.error({ err: error }, "Finance monthly fact backfill failed");
 

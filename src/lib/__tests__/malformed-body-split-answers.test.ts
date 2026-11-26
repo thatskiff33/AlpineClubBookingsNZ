@@ -44,7 +44,6 @@ vi.mock("@/lib/finance-sync-storage", () => ({
 }));
 vi.mock("@/lib/finance-monthly-fact-backfill", () => ({
   backfillFinanceMonthlyFacts: mocks.backfillFinanceMonthlyFacts,
-  DEFAULT_FINANCE_BACKFILL_MAX_CHUNKS: 3,
 }));
 vi.mock("@/lib/audit", () => ({
   createAuditLog: mocks.createAuditLog,
@@ -56,6 +55,7 @@ vi.mock("@/lib/logger", () => ({
 
 import { POST as requestCancellation } from "@/app/api/member/membership-cancellation-requests/route";
 import { POST as backfillMonthlyFacts } from "@/app/api/finance/sync/backfill-monthly-facts/route";
+import { DEFAULT_FINANCE_BACKFILL_MAX_CHUNKS } from "@/lib/finance-backfill-request";
 
 function post(path: string, body: string | undefined, contentType?: string) {
   return new NextRequest(`http://localhost${path}`, {
@@ -140,7 +140,7 @@ describe("POST /api/finance/sync/backfill-monthly-facts (#5407)", () => {
 
     expect(response.status).toBe(200);
     expect(mocks.backfillFinanceMonthlyFacts).toHaveBeenCalledWith(
-      expect.objectContaining({ fromMonth: null, maxChunks: 3 }),
+      expect.objectContaining({ fromMonth: null, maxChunks: DEFAULT_FINANCE_BACKFILL_MAX_CHUNKS }),
     );
   });
 

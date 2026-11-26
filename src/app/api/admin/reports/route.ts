@@ -3,7 +3,6 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma";
 import { resolveOptionalActiveLodgeId } from "@/lib/lodges";
-import { z } from "zod";
 import { BookingStatus, SubscriptionStatus } from "@prisma/client";
 import { isAdditionalPaymentOwed } from "@/lib/additional-payment-chase";
 import {
@@ -31,16 +30,9 @@ import { clubFormatValues } from "@/lib/club-format-server";
 import { addDaysDateOnly, eachDateOnlyInRange, formatDateOnly } from "@/lib/date-only";
 import { reportRangeLimitError } from "@/lib/date-range-presets";
 import { summarizeBookingMoneyReconciliations } from "@/lib/booking-money-reconciliation";
-import { dateOnlyStringSchema } from "@/lib/date-only-schema";
-
-const reportQuerySchema = z.object({
-  from: dateOnlyStringSchema,
-  to: dateOnlyStringSchema,
-  deleted: z.enum(["hide", "include", "only"]).default("hide"),
-  // Reporting lodge scope: omitted = all active lodges (occupancy denominator
-  // is the summed active-lodge capacity); a value scopes to that lodge.
-  lodgeId: z.string().min(1).optional(),
-});
+import { adminReportQuerySchema } from "@/lib/admin-reports-query";
+import { ADMIN_REPORTS_CONNECTION_SHAPE } from "@/lib/connection-shapes/finance-reports";
+import { connectionJson } from "@/lib/mcp-connection-request";
 
 const MAX_LOGGED_LEDGER_GAP_BOOKINGS = 20;
 
@@ -48,7 +40,7 @@ export async function GET(request: NextRequest) {
   const guard = await requireAdmin();
   if (!guard.ok) return guard.response;
   const { searchParams } = new URL(request.url);
-  const parsed = reportQuerySchema.safeParse({
+  const parsed = adminReportQuerySchema.safeParse({
     from: searchParams.get("from"),
     to: searchParams.get("to"),
     deleted: parseBookingDeletedVisibility(searchParams.get("deleted")),
@@ -330,7 +322,7 @@ export async function GET(request: NextRequest) {
       completed: bookings.filter((b) => b.status === BookingStatus.COMPLETED).length,
     };
 
-    return NextResponse.json({
+    return connectionJson(request, {
       summary: {
         totalBookings: bookings.length,
         moneyReconciliation: summarizeBookingMoneyReconciliations(bookings),
@@ -367,7 +359,7 @@ export async function GET(request: NextRequest) {
       revenueGranularity: revenueSeries.granularity,
       revenue: revenueSeries.data,
       trends: trendData,
-    });
+    }, ADMIN_REPORTS_CONNECTION_SHAPE);
   } catch (err) {
     logger.error({ err }, "Error generating reports");
     return NextResponse.json({ error: "Failed to generate reports" }, { status: 500 });

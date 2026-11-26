@@ -15,7 +15,7 @@ import { buildHrefWithReturnTo } from "@/lib/internal-return-path";
  * while the booking's audit trail already said the amount was being billed
  * (#3193 fix round).
  */
-const XERO_LOCAL_MODELS = [
+export const XERO_LOCAL_MODELS = [
   "Member",
   "Booking",
   "Payment",

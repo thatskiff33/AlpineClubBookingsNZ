@@ -10,9 +10,6 @@ import {
   isXeroInvoiceExpectedPaymentStatus,
   matchesSettlementFilter,
   matchesXeroStateFilter,
-  paymentApiSourceFilters,
-  settlementFilters,
-  xeroStateFilters,
   type SettlementKind,
   type XeroActivitySummary,
   type XeroState,
@@ -32,13 +29,13 @@ import { prisma } from "@/lib/prisma";
 import { readBookingInvoiceEvidenceForPayments } from "@/lib/xero-booking-invoice-evidence";
 import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
 import { readDisputesByBookingId } from "@/lib/stripe-dispute-hold";
+import { getCancellationSettlementBreakdown } from "@/lib/payment-status-display";
 import {
   endOfDateOnlyForTimeZone,
   parseDateOnly,
   startOfDateOnlyForTimeZone,
 } from "@/lib/date-only";
-import { dateOnlyStringSchema } from "@/lib/date-only-schema";
-import { adminListPageQueryFields } from "@/lib/admin-list-page";
+import { adminPaymentsFilterFields } from "@/lib/admin-payments-query";
 
 /**
  * An amount filter typed into the payments search box, in integer cents.
@@ -90,39 +87,11 @@ const amountSchema = z
     }
     return cents;
   });
-const sortBySchema = z
-  .enum([
-    "lastUpdated",
-    "checkIn",
-    "member",
-    "booking",
-    "amount",
-    "status",
-    "stripe",
-    "xeroInvoice",
-    "settlement",
-  ])
-  .optional()
-  .default("lastUpdated");
-
 export const adminPaymentsQuerySchema = z.object({
-  status: z.enum(["PENDING", "PROCESSING", "SUCCEEDED", "FAILED", "REFUNDED", "PARTIALLY_REFUNDED", "all"]).optional().default("all"),
-  source: z.enum(paymentApiSourceFilters).optional().default("all"),
-  xeroState: z.enum(xeroStateFilters).optional().default("all"),
-  settlement: z.enum(settlementFilters).optional().default("all"),
-  from: dateOnlyStringSchema.optional(),
-  to: dateOnlyStringSchema.optional(),
-  lastUpdatedFrom: dateOnlyStringSchema.optional(),
-  lastUpdatedTo: dateOnlyStringSchema.optional(),
-  checkInFrom: dateOnlyStringSchema.optional(),
-  checkInTo: dateOnlyStringSchema.optional(),
-  search: z.string().trim().max(100).optional(),
+  ...adminPaymentsFilterFields,
   amountExact: amountSchema.optional(),
   amountMin: amountSchema.optional(),
   amountMax: amountSchema.optional(),
-  sortBy: sortBySchema,
-  sortDir: z.enum(["asc", "desc"]).optional().default("desc"),
-  ...adminListPageQueryFields,
 }).superRefine((value, ctx) => {
   if (
     value.amountExact === undefined &&
@@ -303,7 +272,7 @@ function compareValues(left: string | number | Date | null, right: string | numb
   return String(normalizedLeft).localeCompare(String(normalizedRight));
 }
 
-function sortValue(payment: EnrichedPaymentCandidate, sortBy: z.infer<typeof sortBySchema>) {
+function sortValue(payment: EnrichedPaymentCandidate, sortBy: AdminPaymentsQuery["sortBy"]) {
   switch (sortBy) {
     case "checkIn":
       return payment.booking.checkIn;
@@ -662,13 +631,10 @@ export async function listAdminPayments(query: AdminPaymentsQuery): Promise<Json
             latestOperationStatus: null,
             latestOperationAt: null,
           },
-        xeroState:
-          filteredCandidateById.get(payment.id)?.xeroState ??
-          "none",
-        settlementKind:
-          filteredCandidateById.get(payment.id)?.settlementKind ??
-          "none",
+        xeroState: filteredCandidateById.get(payment.id)?.xeroState ?? "none",
+        settlementKind: filteredCandidateById.get(payment.id)?.settlementKind ?? "none",
         disputes: disputesByBookingId.get(payment.bookingId) ?? [],
+        cancellationSettlement: getCancellationSettlementBreakdown(payment.refundedAmountCents, payment.booking.creditsFromCancellation), // ALP-721: the screen's card-refund and account-credit split, so an AI app reads the same figures
       }));
 
     // #3372: "Net Collected" (once gross "Total Revenue", #773) is net over

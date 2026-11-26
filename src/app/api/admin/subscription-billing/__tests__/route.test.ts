@@ -82,6 +82,8 @@ const preview = {
   exemptMemberIds: [],
   exemptMembers: [],
   alreadyInvoiced: [],
+  alreadyInvoicedFamilies: [],
+  ungroupedCategoryMembers: [],
   totalCents: 0,
   confirmationToken: "a".repeat(64),
 };
