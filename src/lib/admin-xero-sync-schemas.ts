@@ -130,3 +130,15 @@ export const xeroForceSyncFields = {
 };
 
 export const xeroForceSyncBodySchema = z.object(xeroForceSyncFields);
+
+/**
+ * `POST /api/admin/xero/tax-override-pause/clear`: the flagged invoices the
+ * officer checked in Xero, what they found, and their confirmation (#5208).
+ */
+export const xeroTaxOverridePauseClearBodySchema = z
+  .object({
+    ids: z.array(z.string().min(1).max(64)).min(1).max(500),
+    note: z.string().trim().min(1).max(1000),
+    confirmed: z.literal(true),
+  })
+  .strict();

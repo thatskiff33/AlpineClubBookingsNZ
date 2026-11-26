@@ -25,6 +25,7 @@ import type { XeroConnectionProbeResult } from "@/lib/xero-connection-probe";
 import type { ProcessStoredXeroInboundEventsResult } from "@/lib/xero-inbound/types";
 import type { XeroCanonicalLinkCleanupResult, XeroHistoricalBackfillResult } from "@/lib/xero-hardening-types";
 import type { XeroRecordActivityData } from "@/lib/xero-record-types";
+import type { XeroTaxOverrideMismatchView } from "@/lib/xero-tax-override-safeguard";
 
 // --- Connection, health and usage -------------------------------------------
 
@@ -431,3 +432,34 @@ export const XERO_LINK_MAINTENANCE_CONNECTION_SHAPE = connectionShapeFor<{
     },
   },
 });
+
+/**
+ * The invoices whose GST Xero changed after the app sent it (#5208), each
+ * line's sent and Xero cents, and the sentence the screens show while they
+ * pause the club's GST overrides. Xero's own invoice id stays behind; the
+ * invoice number is what an officer looks up.
+ */
+const TAX_OVERRIDE_MISMATCH_FIELDS = {
+  invoices: {
+    id: true,
+    createdAt: true,
+    bookingId: true,
+    invoiceNumber: true,
+    documentKind: true,
+    lines: { index: true, sentCents: true, xeroCents: true },
+  },
+  problem: true,
+} as const;
+
+/** `GET /api/admin/xero/tax-override-pause`. */
+export const XERO_TAX_OVERRIDE_MISMATCHES_CONNECTION_SHAPE = connectionShapeFor<{
+  invoices: XeroTaxOverrideMismatchView[];
+  problem: string | null;
+}>(TAX_OVERRIDE_MISMATCH_FIELDS);
+
+/** `POST /api/admin/xero/tax-override-pause/clear`: how many cleared, and what still holds the pause. */
+export const XERO_TAX_OVERRIDES_RESUMED_CONNECTION_SHAPE = connectionShapeFor<{
+  cleared: number;
+  invoices: XeroTaxOverrideMismatchView[];
+  problem: string | null;
+}>({ cleared: true, ...TAX_OVERRIDE_MISMATCH_FIELDS });
