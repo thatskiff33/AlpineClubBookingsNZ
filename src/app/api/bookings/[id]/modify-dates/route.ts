@@ -1,3 +1,4 @@
+import { editQuotedFiguresSchema, linkedQuotedFiguresSchema, editQuotedFiguresRefusal } from "@/lib/edit-quoted-figures";
 import { NextRequest, NextResponse } from "next/server";
 import { parseJsonRequestBody } from "@/lib/api-json";
 import { hostingCoverageParticipantRetryResponse } from "@/lib/adult-member-hosting-retry-response";
@@ -54,6 +55,8 @@ import { clubFormatValues } from "@/lib/club-format-server";
 
 const modifyDatesSchema = z
   .object({
+    quotedFigures: editQuotedFiguresSchema.optional(),
+    linkedQuotedFigures: linkedQuotedFiguresSchema.optional(),
     checkIn: z.string().optional(),
     checkOut: z.string().optional(),
     settlementMethod: z.enum(["card", "credit"]).optional(),
@@ -208,6 +211,7 @@ export async function PUT(
               ? { hostingCoverageOverride: parsed.data.hostingCoverageOverride }
               : {}),
             input: {
+              quotedFigures: parsed.data.quotedFigures,
               checkIn: parsed.data.checkIn,
               checkOut: parsed.data.checkOut,
               confirmOverCapacity,
@@ -357,6 +361,8 @@ export async function PUT(
         { status: err.status },
       );
     }
+    const figuresRefusal = editQuotedFiguresRefusal(err);
+    if (figuresRefusal) return NextResponse.json(figuresRefusal.body, { status: figuresRefusal.status });
     if (err instanceof ApiError) {
       return NextResponse.json({ error: err.message }, { status: err.status });
     }

@@ -163,6 +163,7 @@ import { LOCK1_HOLDER_TRANSACTION_BUDGET } from "@/lib/db-transaction";
 import type { DateModificationResponse, DateModificationTransactionResult } from "@/lib/booking-date-modification-transaction-result";
 
 export type ModifyBookingDatesInput = {
+  quotedFigures?: EditQuotedFigures;
   checkIn?: string;
   checkOut?: string;
   settlementMethod?: BookingModificationSettlementMethod;
@@ -751,6 +752,7 @@ export async function modifyBookingDates({
     // member shorten a booking inside the cancellation window and recover more
     // than cancelling or removing guests for the same nights would return.
     const netChargeCents = priceDiffCents + changeFeeCents;
+    assertEditQuotedFigures(input.quotedFigures, { newFinalPriceCents, priceDiffCents, changeFeeCents, netChargeCents });
     // #3954: the unpaid ask, read ONCE for this edit and handed to both the
     // options and the save, so a capture between two reads cannot split them.
     const reduction = await readReductionAgainstUnpaidAsk(tx, booking, netChargeCents);

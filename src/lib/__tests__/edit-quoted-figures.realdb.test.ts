@@ -387,6 +387,30 @@ async function theEdit() {
     expect((await theEdit()).changeFeeCents).toBe(FEE_CENTS);
   });
 
+  it("the date-only writer accepts the real preview's figures on the same club day", async () => {
+    const previewed = await previewThroughRoute();
+    const { modifyBookingDates } = await import("@/lib/booking-date-modification-service");
+    await modifyBookingDates({
+      bookingId: BOOKING_ID,
+      actor: { id: OFFICER_ID, role: Role.ADMIN },
+      input: { ...MOVED, quotedFigures: previewed },
+      ipAddress: "127.0.0.1",
+    });
+    expect((await theEdit()).changeFeeCents).toBe(FEE_CENTS);
+  });
+
+  it("the date-only writer refuses an earlier fee band without writing anything", async () => {
+    const before = await everythingASaveTouches();
+    const { modifyBookingDates } = await import("@/lib/booking-date-modification-service");
+    await expect(modifyBookingDates({
+      bookingId: BOOKING_ID,
+      actor: { id: OFFICER_ID, role: Role.ADMIN },
+      input: { ...MOVED, quotedFigures: PREVIEWED },
+      ipAddress: "127.0.0.1",
+    })).rejects.toMatchObject({ code: "EDIT_PRICE_CHANGED", figures: FRESH });
+    expect(await everythingASaveTouches()).toEqual(before);
+  });
+
   it("a save with no figures, from a panel older than #4924, saves as before", async () => {
     await save(SAVE_DAY);
 
