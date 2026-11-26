@@ -664,7 +664,9 @@ describe("EditBookingPanel — accepting binds every booking's figures (#5238)",
     });
   });
 
-  it("sends no linked figures when declining", async () => {
+  it("declining sends the preview's own figures and no linked ones", async () => {
+    const previewed = { newFinalPriceCents: 10_000, priceDiffCents: 0, changeFeeCents: 1_000, netChargeCents: 1_000 };
+    quoteOverrides = { quotedFigures: previewed };
     modifyResponse = () => jsonResponse(offerWithFigures(), 409);
     render(<EditBookingPanel booking={makeBooking()} onDone={vi.fn()} />);
     const saveButton = await saveIntoTheOffer();
@@ -674,6 +676,7 @@ describe("EditBookingPanel — accepting binds every booking's figures (#5238)",
     fireEvent.click(saveButton);
 
     await waitFor(() => expect(modifyBodies).toHaveLength(2));
+    expect(modifyBodies[1]?.quotedFigures).toEqual(previewed);
     expect("linkedQuotedFigures" in (modifyBodies[1] ?? {})).toBe(false);
   });
 
