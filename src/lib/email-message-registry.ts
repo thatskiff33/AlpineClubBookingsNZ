@@ -1,5 +1,6 @@
 import { stripePaymentAlertSampleValue } from "@/lib/email-message-stripe-payment-samples";
 import { waitlistAlertSampleValue } from "@/lib/email-message-waitlist-samples";
+import { bookingChangeSampleValue } from "@/lib/email-message-booking-change-samples";
 import { OWED_NOTICE_ALERT_TRIGGERS } from "@/lib/email-message-owed-notice-triggers";
 import {
   EMAIL_AUDIT_DEFAULTS,
@@ -189,6 +190,7 @@ export const EXTRA_TEMPLATE_TOKENS: Partial<Record<EmailAuditTemplateName, strin
   // withdraw permission to use them in an override.
   "booking-modified": [
     "additionalPaymentMethod",
+    "calendarUpdateNote",
     "changeFee",
     "changeSummary",
     "newCheckIn",
@@ -1618,25 +1620,8 @@ export function sampleValue(token: string): string {
   // composed paragraph above (and previewed the admin manual-invoice alert's
   // "Payment reference:" line as a token name).
   if (token === "paymentReference") return "BOOKING-1234";
-  // #2267: one coherent booking-modified sample — a 2-guest stay whose dates
-  // moved from 1–3 Jul to 8–10 Jul and whose price rose from $123.45 to
-  // $150.00 with no change fee, leaving $26.55 to pay. Every token below tells
-  // that same story, including the per-piece ones a legacy override uses, so
-  // an admin's preview reconciles instead of mixing three unrelated amounts.
-  if (token === "modificationTypeLabel") return "Dates Changed";
-  if (token === "paymentNote") {
-    return "An additional payment of $26.55 is required.";
-  }
-  if (token === "changeSummary") {
-    return "Previous Dates: 1 Jul 2026 – 3 Jul 2026\nNew Dates: 8 Jul 2026 – 10 Jul 2026\nGuests: 2\nPrevious Total: $123.45\nNew Total: $150.00\n";
-  }
-  if (token === "oldCheckIn") return "1 Jul 2026";
-  if (token === "oldCheckOut") return "3 Jul 2026";
-  if (token === "newCheckIn") return "8 Jul 2026";
-  if (token === "newCheckOut") return "10 Jul 2026";
-  if (token === "oldTotal") return "$123.45";
-  if (token === "newTotal") return "$150.00";
-  if (token === "changeFee") return "$0.00";
+  const bookingChangeSample = bookingChangeSampleValue(token);
+  if (bookingChangeSample !== undefined) return bookingChangeSample;
   if (token === "promoAdjustment") return "-$30.00";
   if (token === "promoCode") return "PROMO2026";
   if (token === "discount") return "$30.00";
@@ -1852,6 +1837,9 @@ const APPROVED_EMAIL_TEMPLATE_TOKENS = [
   "bookingUrl",
   "bookingReferenceNote",
   "bumpedMemberName",
+  // #5249: composed calendar sentences, empty unless an entry was offered.
+  "calendarRemovalNote",
+  "calendarUpdateNote",
   "changeFee",
   // #2267: pre-composed block of the booking-modification rows that actually
   // changed (Previous/New pairs only where something moved).
