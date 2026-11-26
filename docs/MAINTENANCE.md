@@ -2707,7 +2707,14 @@ finalPrice + changeFees - (captured - refunded) - credit - uncollected ask
   the #3340 class, and it is what a delta-sized ask produced when it superseded
   an unpaid one: minting the replacement retired the first extra, so its unpaid
   balance simply stopped being owed. Investigate each one and invoice by hand —
-  **but read the Internet Banking caveat below first.**
+  **but read the Internet Banking caveat below first.** The report lists these
+  as "Money nobody is asking for".
+- **Positive, billed on a Xero invoice** (#5288) — an Internet Banking booking
+  whose primary invoice is linked, whose primary or supplementary invoice link is
+  active, or whose primary or supplementary invoice create is still queued or
+  running. Listed apart, as "Billed on a Xero invoice; check Xero before
+  invoicing by hand". A FAILED create is not evidence: that row stays in the
+  first list.
 - **Negative** — the club holds more than the price. Normal after a policy-tiered
   reduction (the retained slice is a charge, not a prepayment) or a reduction
   settled as account credit. Worth a glance, rarely worth an action.
@@ -2715,13 +2722,15 @@ finalPrice + changeFees - (captured - refunded) - credit - uncollected ask
 **AN INTERNET BANKING BOOKING'S PRICE INCREASE IS AN EXPECTED POSITIVE, AND
 INVOICING IT BY HAND WOULD BILL THE MEMBER TWICE.** The identity's "uncollected
 ask" term reads the Stripe ask columns. An Internet Banking edit does not raise
-one: it bills through a SUPPLEMENTARY XERO INVOICE, which lives in the Xero
-outbox and leaves no ADDITIONAL `PaymentTransaction` behind. So an IB booking
-with a paid primary that takes a +$70 edit gains $70 of price, no captured cash
-and no ask — and the census reports +7000 as `unasked`, when the club is already
-asking for it on an invoice. **Before acting on any positive residual, check the
-booking's payment source and its Xero supplementary invoices.** A card booking's
-positive residual is the real thing; an IB one almost never is.
+one: it bills through a Xero invoice - a supplementary one once the primary is
+linked, or the primary itself, which the edit raises when none is linked yet
+(#5288, [`INV-PAY-163`](invariants/payment-and-settlement.md)) - and leaves no
+ADDITIONAL `PaymentTransaction` behind. So an IB booking that takes a +$70 edit
+gains $70 of price, no captured cash and no ask. The census now reads the Xero
+evidence and lists such a row as billed on a Xero invoice rather than as
+nobody's. **Before acting on a row in either positive list, check the booking's
+payment source and its Xero invoices.** A card booking's positive residual is
+the real thing; an IB one is real only when Xero holds no invoice for it.
 
 **A CREDIT-PAID ($0) BOOKING THAT GREW BEFORE #3502 IS USUALLY A REAL POSITIVE.**
 A booking paid wholly with account credit has a $0 captured payment and no card
@@ -2757,11 +2766,10 @@ retention, look at the booking's changes: an increase, then a reduction, with an
 ADDITIONAL card payment captured after the reduction. Report them to the owner;
 the census never repairs.
 
-That gap is not closed in the arithmetic on purpose. A term reading the Xero
-outbox would make the identity depend on an external system's queue state, and a
-queued-but-unsent invoice, a failed one and a sent one are three different
-answers to "is the club asking for this?" that only a person can weigh. The
-census is a report; this is one of the things the person reading it has to know.
+That gap is not closed in the arithmetic on purpose: the identity reads no Xero
+state. The verdict reads it instead, so the report sorts rows, but a queued
+invoice, a failed one and a sent one still need a person to weigh. The census is
+a report; this is one of the things the person reading it has to know.
 
 ```bash
 DATABASE_URL=<non-prod copy> pnpm run payments:audit-booking-ledger
