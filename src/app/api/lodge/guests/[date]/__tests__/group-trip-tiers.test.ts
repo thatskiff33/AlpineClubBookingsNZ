@@ -23,12 +23,14 @@ vi.mock("server-only", () => ({}));
 const harness = vi.hoisted(() => ({
   prisma: {
     adultMemberHostingPolicy: { findMany: vi.fn() },
-    booking: { findMany: vi.fn() },
+    booking: { findMany: vi.fn(), count: vi.fn() },
     groupBooking: { findMany: vi.fn() },
     hostingCoverageReevaluation: { findMany: vi.fn() },
     hostingCoverageIncident: { findMany: vi.fn() },
   },
   tier: "staying-guest",
+  /** `GroupBooking.coverageInvalidationRevision` for TRIP, as stored now. */
+  tripRevision: 3,
 }));
 const mockPrisma = harness.prisma;
 vi.mock("@/lib/prisma", () => ({ prisma: harness.prisma }));
@@ -111,6 +113,54 @@ const HOSTING_VIOLATION = {
   },
 };
 
+/** The same club, ENFORCED: the only mode whose re-check queue is verified. */
+const ENFORCED_POLICY = { ...SCOPE_ON_POLICY, mode: "ENFORCED" };
+
+/**
+ * A snapshot whose covered night rests on a Group Trip sibling, as the writer
+ * persists it: stamped with the trip and the trip's cover-invalidation revision
+ * read under the trip key (`null` = a snapshot written before the stamp existed).
+ */
+function siblingCoveredReview(
+  revision: number | null,
+  nights: { first: "SAME_GROUP_TRIP" | null } = { first: "SAME_GROUP_TRIP" },
+) {
+  const firstCovered = nights.first !== null;
+  return {
+    ...HOSTING_VIOLATION,
+    requirements: {
+      ...HOSTING_VIOLATION.requirements,
+      uncoveredNonMemberGuestNights: firstCovered ? 1 : 2,
+      uncovered: [
+        ...(firstCovered ? [] : [{ night: DAY, guestRef: "g1", guestName: "Gwen" }]),
+        { night: "2026-08-02", guestRef: "g1", guestName: "Gwen" },
+      ],
+      qualifyingHostsByNight: [
+        firstCovered
+          ? { night: DAY, memberIds: ["adult-secret"], coveredByScopes: ["SAME_GROUP_TRIP"] }
+          : { night: DAY, memberIds: [], coveredByScopes: [] },
+        { night: "2026-08-02", memberIds: [], coveredByScopes: [] },
+      ],
+    },
+    ...(revision === null
+      ? {}
+      : { groupTripCoverFreshness: { groupBookingId: TRIP, revision } }),
+  };
+}
+
+/** What a hut leader sees for `siblingCoveredReview` once it is verified. */
+const SIBLING_FIGURES = {
+  status: "EVALUATED",
+  nights: [
+    { night: DAY, covered: true, scopes: ["SAME_GROUP_TRIP"] },
+    { night: "2026-08-02", covered: false, scopes: [] },
+  ],
+  scopes: ["SAME_GROUP_TRIP"],
+  decision: null,
+};
+
+const STALE = { status: "STALE", nights: [], scopes: [] };
+
 function booking(
   id: string,
   identity: Record<string, unknown>,
@@ -167,12 +217,16 @@ beforeEach(() => {
           id: TRIP,
           joinCode: JOIN_CODE,
           organiserMember: { firstName: "Olivia", lastName: "Organiser" },
+          coverageInvalidationRevision: harness.tripRevision,
         },
       ];
     },
   );
   mockPrisma.hostingCoverageReevaluation.findMany.mockResolvedValue([]);
   mockPrisma.hostingCoverageIncident.findMany.mockResolvedValue([]);
+  // The trip's dependent population around each card: the other card only.
+  mockPrisma.booking.count.mockResolvedValue(1);
+  harness.tripRevision = 3;
 });
 
 describe("#3040 GET /api/lodge/guests/[date] — Group Trip disclosure by tier", () => {
@@ -258,32 +312,18 @@ describe("#3040 GET /api/lodge/guests/[date] — Group Trip disclosure by tier",
     ).not.toContain("adult-secret");
   });
 
-  it("withholds a cover claim resting on a Group Trip sibling, and says so plainly", async () => {
-    // THE STALENESS CLASS THIS EPIC ITSELF INTRODUCES. Every enqueue site writes
-    // the owner of the booking that CHANGED, so a queued re-evaluation caused by
-    // a sibling in ANOTHER account names that sibling's owner — and the kiosk's
-    // staleness read looks up the visible bookings' own owners. This test used to
-    // assert the opposite: it queued a re-evaluation for the organiser's owner
-    // and required the joiner's card to keep reporting positive
-    // `SAME_GROUP_TRIP` cover. That is the behaviour INV-HOST-045 forbids, and
-    // the assertion pinned it as correct.
+  it("withholds sibling cover while the sibling's change is still queued for re-checking", async () => {
+    // THE STALENESS CLASS THIS EPIC ITSELF INTRODUCES. A change to a sibling in
+    // ANOTHER account owes this card a re-check (#3039's fan-out queues it under
+    // THIS card's owner), and until the drain has run the recorded answer is
+    // behind the facts.
     harness.tier = "admin";
+    mockPrisma.adultMemberHostingPolicy.findMany.mockResolvedValue([
+      ENFORCED_POLICY,
+    ]);
     mockPrisma.booking.findMany.mockResolvedValue([
       booking("b-organiser", organiser, {
-        adultMemberHostingReview: {
-          ...HOSTING_VIOLATION,
-          requirements: {
-            ...HOSTING_VIOLATION.requirements,
-            qualifyingHostsByNight: [
-              {
-                night: DAY,
-                memberIds: ["adult-secret"],
-                coveredByScopes: ["SAME_GROUP_TRIP"],
-              },
-              { night: "2026-08-02", memberIds: [], coveredByScopes: [] },
-            ],
-          },
-        },
+        adultMemberHostingReview: siblingCoveredReview(3),
       }),
       booking("b-joiner", joiner),
     ]);
@@ -294,8 +334,8 @@ describe("#3040 GET /api/lodge/guests/[date] — Group Trip disclosure by tier",
     expect(
       body.bookings[0].adultCoverSource,
       "INV-HOST-045 (docs/invariants/adult-member-hosting.md): a cover claim " +
-        "resting on a sibling booking cannot be checked for freshness until " +
-        "#3039 lands, so it is not shown as cover",
+        "resting on a sibling booking with a re-check still queued is not shown " +
+        "as cover",
     ).toEqual({ status: "STALE", nights: [], scopes: [] });
     expect(
       JSON.stringify(body),
@@ -416,5 +456,150 @@ describe("#3040 GET /api/lodge/guests/[date] — Group Trip disclosure by tier",
       scopes: ["SAME_BOOKING"],
       decision: null,
     });
+  });
+});
+
+// #5239: #3039's fan-out shipped, so sibling cover is shown once it can be
+// verified as current, and withheld whenever it cannot. Each scenario walks a
+// real history: the state while the re-check is owed, then the state after it
+// has run. The second half is what keeps the first from passing vacuously — a
+// kiosk that still withheld every sibling claim would fail every recovery.
+describe("#5239 Group Trip sibling cover on the kiosk (INV-HOST-045)", () => {
+  function day(review: unknown, overrides: Record<string, unknown> = {}) {
+    mockPrisma.booking.findMany.mockResolvedValue([
+      booking("b-organiser", organiser, {
+        adultMemberHostingReview: review,
+        ...overrides,
+      }),
+      booking("b-joiner", joiner),
+    ]);
+  }
+  const queuedFor = (owner: string) =>
+    mockPrisma.hostingCoverageReevaluation.findMany.mockResolvedValue([
+      { memberId: owner },
+    ]);
+  const drained = () =>
+    mockPrisma.hostingCoverageReevaluation.findMany.mockResolvedValue([]);
+
+  beforeEach(() => {
+    harness.tier = "hut-leader";
+    mockPrisma.adultMemberHostingPolicy.findMany.mockResolvedValue([
+      ENFORCED_POLICY,
+    ]);
+  });
+
+  it("shows real figures for a night a sibling covers, once verified current", async () => {
+    day(siblingCoveredReview(3));
+    const body = await callRoute();
+    expect(
+      body.bookings[0].adultCoverSource,
+      "INV-HOST-045: verified sibling cover is shown as N of M nights covered",
+    ).toEqual(SIBLING_FIGURES);
+    const payload = JSON.stringify(body);
+    expect(payload, "INV-PRIV-016: the freshness stamp never ships").not.toContain(TRIP);
+    expect(payload).not.toContain("groupTripCoverFreshness");
+    expect(payload).not.toContain("adult-secret");
+  });
+
+  it("withholds while a sibling's edit is queued, then shows the re-checked figures", async () => {
+    day(siblingCoveredReview(3));
+    queuedFor("owner-of-b-organiser");
+    expect((await callRoute()).bookings[0].adultCoverSource).toEqual(STALE);
+
+    drained();
+    expect((await callRoute()).bookings[0].adultCoverSource).toEqual(
+      SIBLING_FIGURES,
+    );
+  });
+
+  it("withholds while a sibling's cancellation is queued, then shows the night as uncovered", async () => {
+    day(siblingCoveredReview(3));
+    queuedFor("owner-of-b-organiser");
+    expect((await callRoute()).bookings[0].adultCoverSource).toEqual(STALE);
+
+    // The drain re-evaluated: the cancelled sibling no longer covers DAY.
+    drained();
+    day(siblingCoveredReview(3, { first: null }), {
+      adultMemberHostingReviewStatus: "PENDING",
+    });
+    expect((await callRoute()).bookings[0].adultCoverSource).toEqual({
+      status: "EVALUATED",
+      nights: [
+        { night: DAY, covered: false, scopes: [] },
+        { night: "2026-08-02", covered: false, scopes: [] },
+      ],
+      scopes: [],
+      decision: "PENDING",
+    });
+  });
+
+  it("withholds under review-only mode, and shows again once ENFORCED is re-checked", async () => {
+    // Review-only lodges keep the warning: their confirming and membership
+    // seams queue nothing, so a matching stamp proves nothing there.
+    day(siblingCoveredReview(3));
+    mockPrisma.adultMemberHostingPolicy.findMany.mockResolvedValue([
+      SCOPE_ON_POLICY,
+    ]);
+    expect((await callRoute()).bookings[0].adultCoverSource).toEqual(STALE);
+
+    // Back to ENFORCED: policy reconciliation queues every affected booking.
+    mockPrisma.adultMemberHostingPolicy.findMany.mockResolvedValue([
+      ENFORCED_POLICY,
+    ]);
+    queuedFor("owner-of-b-organiser");
+    expect((await callRoute()).bookings[0].adultCoverSource).toEqual(STALE);
+
+    drained();
+    expect((await callRoute()).bookings[0].adultCoverSource).toEqual(
+      SIBLING_FIGURES,
+    );
+  });
+
+  it("withholds sibling cover while the Group Trip scope is off, and shows it once back on and re-checked", async () => {
+    day(siblingCoveredReview(3));
+    mockPrisma.adultMemberHostingPolicy.findMany.mockResolvedValue([
+      { ...ENFORCED_POLICY, hostScopeSameGroupTrip: false },
+    ]);
+    expect((await callRoute()).bookings[0].adultCoverSource).toEqual(STALE);
+    // The scope only gates SIBLING claims: a same-booking snapshot still shows.
+    expect((await callRoute()).bookings[1].adultCoverSource).toMatchObject({
+      status: "EVALUATED",
+    });
+
+    mockPrisma.adultMemberHostingPolicy.findMany.mockResolvedValue([
+      ENFORCED_POLICY,
+    ]);
+    queuedFor("owner-of-b-organiser");
+    expect((await callRoute()).bookings[0].adultCoverSource).toEqual(STALE);
+    drained();
+    expect((await callRoute()).bookings[0].adultCoverSource).toEqual(
+      SIBLING_FIGURES,
+    );
+  });
+
+  it("keeps withholding after a truncated fan-out even once the trip has shrunk, until re-checked", async () => {
+    // A fan-out hit the ceiling and bumped the trip's revision; the trip has
+    // since shrunk, so its present size proves nothing about who was missed.
+    day(siblingCoveredReview(3));
+    harness.tripRevision = 4;
+    mockPrisma.booking.count.mockResolvedValue(1);
+    expect((await callRoute()).bookings[0].adultCoverSource).toEqual(STALE);
+
+    // A canonical re-evaluation stamped the new revision.
+    day(siblingCoveredReview(4));
+    expect((await callRoute()).bookings[0].adultCoverSource).toEqual(
+      SIBLING_FIGURES,
+    );
+  });
+
+  it("withholds while the trip is at the fan-out ceiling, whatever the stamp says", async () => {
+    day(siblingCoveredReview(3));
+    mockPrisma.booking.count.mockResolvedValue(100);
+    expect((await callRoute()).bookings[0].adultCoverSource).toEqual(STALE);
+  });
+
+  it("withholds a snapshot written before the freshness stamp existed", async () => {
+    day(siblingCoveredReview(null));
+    expect((await callRoute()).bookings[0].adultCoverSource).toEqual(STALE);
   });
 });
