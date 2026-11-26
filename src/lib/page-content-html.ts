@@ -352,6 +352,12 @@ export async function listEditablePageContent() {
   return records.map(toEditablePageRecord);
 }
 
+/** One page as the editor sees it, or null when no page has that id. */
+export async function getEditablePageContent(id: string) {
+  const record = await prisma.pageContent.findUnique({ where: { id } });
+  return record ? toEditablePageRecord(record) : null;
+}
+
 /**
  * The pages the public header and mobile drawer link to.
  *

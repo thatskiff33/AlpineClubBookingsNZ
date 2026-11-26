@@ -18,7 +18,7 @@ export type EditablePageRecord = {
 /**
  * Field limits for admin-editable PageContent rows. Single source of truth for
  * the admin page-content route's zod schemas
- * (src/app/api/admin/page-content/route.ts) and the config-transfer importer
+ * (src/lib/admin-content-api/pages.ts) and the config-transfer importer
  * (src/lib/config-transfer/categories/site-content.ts) so the two write paths
  * can never drift apart.
  */
@@ -38,7 +38,7 @@ export const PAGE_CONTENT_LIMITS = {
  * A distinct cap from PAGE_CONTENT_LIMITS — the keyed site-content route owns
  * its own limit and the two must be free to diverge — but the single source of
  * truth for BOTH the admin site-content route's zod schema
- * (src/app/api/admin/site-content/route.ts) and the config-transfer importer
+ * (src/lib/admin-content-api/site-content.ts) and the config-transfer importer
  * (src/lib/config-transfer/categories/site-content.ts) so those two write paths
  * can never drift apart. Lives here alongside PAGE_CONTENT_LIMITS to keep the
  * config-transfer importer graph free of the prisma-loading @/lib/site-content.
@@ -51,7 +51,7 @@ export const SITE_CONTENT_LIMITS = {
  * Canonical keys for the admin-editable keyed SiteContent rows (currently the
  * three public footer columns; future chrome sections extend this list). Single
  * source of truth for the admin site-content route's zod enum
- * (src/app/api/admin/site-content/route.ts), the @/lib/site-content display
+ * (src/lib/admin-content-api/site-content.ts), the @/lib/site-content display
  * helpers, and the config-transfer importer
  * (src/lib/config-transfer/categories/site-content.ts). Lives here alongside
  * SITE_CONTENT_LIMITS — again to keep the config-transfer importer graph free
