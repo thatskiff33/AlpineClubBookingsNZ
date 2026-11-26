@@ -264,7 +264,7 @@ of claiming cover:
 | What you see | What it means |
 | --- | --- |
 | *Adult cover: 2 of 3 nights covered* | The rule found a problem with this booking, and this is what it found. There is always at least one night it could not cover — a booking with no problem has nothing recorded at all, so you will never see "3 of 3" |
-| *Adult cover: needs re-checking — the last check is out of date* | The last answer may no longer be right — because a related booking changed, because the recorded answer is waiting to be worked out again, or because the cover rested on another booking in the trip and we cannot yet confirm that booking has not changed |
+| *Adult cover: needs re-checking — the last check is out of date* | The last answer may no longer be right — because a related booking changed and the re-check has not run yet, or because the cover rests on another booking in the trip and the kiosk cannot confirm that booking has not changed since (see below) |
 | *Adult cover: last check could not be read* | The stored answer is not in a shape the kiosk can read — worth telling a Booking Officer |
 | *Adult cover: no issue recorded for this booking* | Nothing has been recorded against this booking. That is the normal state for most bookings, and it is why this line is quiet grey rather than a warning. It is **not** a guarantee of cover |
 
@@ -274,10 +274,30 @@ has approved this*, or *a Booking Officer declined this*. Without that line an
 arrangement an officer has already approved looks exactly like one nobody has
 dealt with.
 
-Until the Group Trip re-checking work is finished, cover that comes from another
-booking in the same trip is reported as *needs re-checking* rather than as
-cover. That is deliberate: the kiosk cannot yet tell whether that other booking
-has changed, and it will not claim supervision it cannot stand behind.
+**Cover from another booking in the same trip.** When your club lets an adult in
+one booking count for children in another booking of the same Group Trip, the
+cover line shows those nights like any others — *2 of 3 nights covered*, from
+*another booking in the same Group Trip*. Whenever a booking in the trip changes
+(dates, guests, a cancellation, a payment falling through, or the adult's
+membership lapsing), every other booking in the trip that might have relied on
+it is queued to be checked again, and until that check has run the card says
+*needs re-checking*. The check usually runs straight after the change, and at
+the latest within a few hours. The kiosk also says *needs re-checking*, rather
+than showing cover it cannot stand behind, when:
+
+- the lodge's adult cover rule is set to **send to a Booking Officer** rather
+  than **stop the booking** — at that setting not every change queues a re-check,
+  so the kiosk cannot tell whether one is owed;
+- the Group Trip cover option has been switched off, or was switched off and
+  back on and the re-check has not reached this booking yet;
+- the trip is very large (100 or more overlapping bookings at the lodge), or a
+  change to it once was, so that some bookings may have been missed. That stays
+  until the booking itself is checked again, even if the trip has since shrunk;
+- the booking was last checked before this release, or the stay is already
+  finished — there is nothing left to re-check it against.
+
+Cover from the booking itself, or from another booking on the same account, is
+not affected by any of this.
 
 **The cover line only appears at all where your club's adult member hosting
 requirement is switched on.** If your club does not use that requirement, or has

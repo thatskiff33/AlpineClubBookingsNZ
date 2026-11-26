@@ -912,18 +912,19 @@ compliant indefinitely.
   invalidates an absent snapshot as much as a present one, night list not
   intersected; (2) an open `HostingCoverageIncident` with NO snapshot (with one,
   the snapshot stands), never in any payload; (3) a readable snapshot with
-  nothing uncovered; (4) a covered night resting on `SAME_GROUP_TRIP`, which
-  makes the whole snapshot `STALE`, never a night uncovered: before that refusal
-  is removed, #3039 must enqueue a row for every DEPENDENT owner or extend
-  `readStalenessSignals` to the whole group's owners. The policy revision is NOT
-  a signal: `incidentPolicyChanged` compares mode and enabled scopes, and a
-  material change reaches signal 1.
+  nothing uncovered; (4) an unverified covered night resting on
+  `SAME_GROUP_TRIP`, making the whole snapshot `STALE`, never a night uncovered.
+  Verified means: an `ENFORCED` lodge (`hostingModeQueuesCoverageReevaluation`),
+  the scope on, a card `hostingPolicyReconciliationCandidateWhere` matches, below
+  `GROUP_TRIP_COVERAGE_DEPENDENT_LIMIT`, and a `groupTripCoverFreshness` stamp
+  naming its trip's current `coverageInvalidationRevision`; a failed read is
+  unverified. The policy revision is NOT a signal: a material change reaches
+  signal 1.
 
   **A partially readable snapshot is `UNREADABLE`**: no malformed night row is
-  skipped; the per-night evidence and the `uncovered` list must name the same
-  uncovered nights; duplicate nights, a covered night with no supplying scope
-  and a scope list naming nothing this deployment has are rejected, each guard
-  mutation-verified.
+  skipped; evidence and `uncovered` must name the same uncovered nights;
+  duplicate nights, a covered night with no supplying scope and unknown scopes
+  are rejected, each guard mutation-verified.
 
   **No requirement in force means no cover line.** Where the resolved MODE
   (never the scope set) is not a consequence — `DISABLED`, no row, or a
@@ -940,8 +941,9 @@ compliant indefinitely.
   `SAME_BOOKING` (`QualifyingHostsForNight`), EMPTY is `UNREADABLE`. The kiosk
   drops the member ids in `qualifyingHostsByNight` (`INV-PRIV-016`).
 
-  Enforced by `kiosk-group-trip-privacy.test.ts`, `group-trip-tiers.test.ts` and
-  `kiosk-group-trip-card.test.tsx`. History: #3040.
+  Enforced by `kiosk-group-trip-privacy.test.ts`, `group-trip-tiers.test.ts`,
+  `kiosk-group-trip-card.test.tsx` and `kiosk-group-trip-freshness.realdb.test.ts`.
+  History: #3040, #5239.
 
 ### INV-HOST-046
 
@@ -968,17 +970,17 @@ compliant indefinitely.
   one `HostingCoverageReevaluation` item: itself as `sourceBookingId`, its owner
   as `memberId`, the lodge, its OWN nights, cause `SYSTEM_CHANGE` even after an
   officer override. `assertHostingCoverageQueueParticipantsLocked` refuses an
-  item unless one proof source's `bookingId` and `ownerMemberId` are its
-  `sourceBookingId` and `memberId`. The drain always adds each dependent's split
+  item whose `sourceBookingId` and `memberId` match no proof source's `bookingId`
+  and `ownerMemberId`. The drain always adds each dependent's split
   halves (`hostingSiblingWhere`, `INV-HOST-043`).
 
   **`GROUP_TRIP_COVERAGE_DEPENDENT_LIMIT`** (own constant, source ceiling's
-  number) caps the items. When it binds, the fan-out (not the dependent read)
-  writes beside the log line, in that transaction and once per trip, a
-  `reportGroupTripDependentCeilingBound` audit row
-  (`booking.hostingCoverage.groupTripFanoutTruncated`, keyed on the
-  `GroupBooking`, `severity: "important"`) saying the rest were not re-evaluated
-  and may lack their required adult.
+  number) caps the items. When it binds, the fan-out writes, in that transaction
+  and once per trip, a `reportGroupTripDependentCeilingBound` audit row
+  (`booking.hostingCoverage.groupTripFanoutTruncated` on the `GroupBooking`,
+  `severity: "important"`). An `AuditLog` trigger bumps that trip's
+  `coverageInvalidationRevision`; snapshots carry the revision read under the
+  trip key, so a missed dependent stays unverified (`INV-HOST-045`).
 
   **The fan-out lives in the three seams**, so every writer reaching the hosting
   rule participates (`INV-SSOT-001`):
@@ -987,8 +989,7 @@ compliant indefinitely.
   refused) and `enqueueHostingCoverageReevaluationForMember` (membership
   lifecycle: a change in host standing, `participantQualifiesAsHost`, removes
   cover from every booking relying on that person). The last plans each trip
-  once before its participant fence, takes trip keys before owner keys and
-  records through `settleGroupTripDependentCoverage`. A fourth seam joins the
+  once before its participant fence and takes trip keys before owner keys. A fourth seam joins the
   census first.
 
   **Closing, reopening and deleting need no hook.** `GroupBooking.status`
@@ -1000,7 +1001,7 @@ compliant indefinitely.
 
   Enforced by `adult-member-hosting-group-trip-reconciliation.test.ts`,
   `adult-member-hosting-group-trip-races.realdb.test.ts` and
-  `adult-member-hosting-call-sites.test.ts`. History: #3039.
+  `adult-member-hosting-call-sites.test.ts`. History: #3039, #5239.
 
 ### INV-HOST-049
 

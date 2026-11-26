@@ -82,7 +82,7 @@ the legacy `hashtext(<memberId>)` contact-link key's in
 | Lock family | Read |
 | --- | --- |
 | Per-owner hosting coverage | [The key (#2576)](#same-owner-coverage-takes-a-per-owner-key-2576) · [drain and incidents](#same-owner-coverage-the-drain-and-incident-reconciliation) · [across accounts](#same-owner-coverage-across-accounts-the-participant-fence-3039) · [claims and lease](#same-owner-coverage-drain-claims-and-the-owner-notification-lease) |
-| Per-trip hosting coverage | [Group Trip (#3039)](#group-trip-coverage-takes-a-per-trip-key-above-the-owner-key-3039) |
+| Per-trip hosting coverage | [Group Trip (#3039)](#group-trip-coverage-takes-a-per-trip-key-above-the-owner-key-3039) · [cover-invalidation revision (#5239)](#the-trips-cover-invalidation-revision-rides-the-trip-key-5239) |
 | Per-member credit ledger | [Global, lodge, member credit (#2262)](#three-tier-composition-global--lodge--member-credit-2262) · [credit restoration (#1636)](#credit-restoration-exactly-once-is-now-structural-1636) |
 | Membership application and applicant | [Approval mapping (E10)](#composition-application-approval-mapping-e10-1936) |
 | Roster date | [Roster writers (#2586)](#composition-roster-date-writers-2586) |
@@ -1953,6 +1953,43 @@ beside it would be dead code no group read could exercise.
 locking rule, and are stated there: one bounded item per dependent booking naming
 that booking as its own source, cause `SYSTEM_CHANGE`, no refusal of any kind, and no
 sibling identity in the actor's answer.
+
+#### The trip's cover-invalidation revision rides the trip key (#5239)
+
+The kiosk shows cover resting on a Group Trip sibling only while the booking's
+hosting snapshot carries its trip's current `GroupBooking.coverageInvalidationRevision`
+(`INV-HOST-045`). **No advisory key is added, moved or re-ordered**
+(`INV-LOCK-001`..`INV-LOCK-003`); the protocol is two statements placed under the
+existing per-trip key:
+
+- **The increment is a database trigger, not application code.**
+  `AuditLog_bump_group_trip_coverage_invalidation` fires AFTER INSERT of a
+  `booking.hostingCoverage.groupTripFanoutTruncated` row on a `GroupBooking`, and
+  updates that trip's row in the inserting transaction. The only writer of that audit
+  row is `reportGroupTripDependentCeilingBound`, called by
+  `settleGroupTripDependentCoverage` after `lockAndVerifyGroupTripCoverageDependents`
+  took the trip key, so the bump is made under the key and rolls back with the
+  fan-out. A deployed old colour writes the same row the same way, so it bumps too.
+- **The read is inside the evaluator's trip-key callback.**
+  `evaluateBookingAdultMemberHosting` reads the revision immediately after
+  `acquireHostingCoverageGroupKey` and before any sibling is read as cover. The key
+  is fail-fast, so an evaluation never waits on, and never reads under, an
+  uncommitted bump: either the truncating fan-out committed first (the evaluation
+  reads its revision AND its booking changes), or it waits for the evaluation and
+  its bump leaves the stamp behind. The stamp can be older than the facts, never
+  newer. `kiosk-group-trip-freshness.realdb.test.ts` forces both orders.
+
+**The trigger's row lock adds no wait-for cycle.** It takes a row lock on one
+`GroupBooking` row while the fan-out already holds the trip key. The other
+`GroupBooking` row writers — the join-status writer in `group-booking.ts` and the
+cancellation fence in `group-cancel.ts` — take `lock(1)` first, update the row and
+commit without waiting on anything else, and every booking writer that can reach a
+truncating fan-out holds `lock(1)` as well (#3038's write-skew argument above), so
+those writers are serialised before the row is reached. A future `GroupBooking`
+writer that waits on a hosting key while holding the row must reconcile this first.
+
+The kiosk's own reads (revision, the policy re-queue cohort and each card's
+dependent count) are plain reads with no lock: a wrong answer can only withhold.
 
 #### Which client reads the subscription-lockout mode (#2543)
 
