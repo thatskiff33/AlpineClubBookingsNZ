@@ -4,6 +4,7 @@ import { requireActiveSessionUser } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma";
 import { clubTimeZone } from "@/lib/club-time/server";
 import { clubSeasonYear } from "@/lib/financial-year";
+import { clubFinancialYearEndMonth } from "@/lib/financial-year-server";
 import {
   requiresPaidSubscriptionForMemberForBooking,
   resolveMembershipTypePolicyForMember,
@@ -24,7 +25,11 @@ export async function GET() {
     return inactiveResponse;
   }
 
-  const seasonYear = clubSeasonYear(await clubTimeZone());
+  const seasonYear = clubSeasonYear(
+    await clubTimeZone(),
+    undefined,
+    await clubFinancialYearEndMonth(),
+  );
   const seasonDisplay = `${seasonYear}/${seasonYear + 1}`;
 
   const subscriptionSelect = {

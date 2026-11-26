@@ -13,6 +13,7 @@
  */
 
 import type { PrismaClient } from "@prisma/client";
+import { cache } from "react";
 import { isConnectedTenant, readXeroConnection } from "@/lib/xero-connection";
 
 import {
@@ -37,6 +38,18 @@ export async function refreshFinancialYearConfig(): Promise<number> {
   setFinancialYearEndMonth(month);
   return month;
 }
+
+/**
+ * The club's year-end month for THIS render pass, for a server component that
+ * hands it to the browser (#5259) or names a season itself.
+ *
+ * React `cache()` for the reason `club-time/server.ts` gives for the zone:
+ * request-scoped, so the admin layout and a page beneath it resolve once
+ * between them, and the next request reads a changed override with nothing to
+ * invalidate. Outside a render pass it is the uncached refresh. It still
+ * reseeds the process cache, as every request-path resolution does.
+ */
+export const clubFinancialYearEndMonth = cache(refreshFinancialYearConfig);
 
 /**
  * Resolve the effective year-end month without touching the cache. Returns the

@@ -31,7 +31,10 @@ import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/session-guards";
 import { subscriptionBillingPreviewSummary } from "@/lib/subscription-billing-preview-summary";
 import { seasonYearOfStoredDate } from "@/lib/financial-year";
-import { refreshFinancialYearConfig } from "@/lib/financial-year-server";
+import {
+  clubFinancialYearEndMonth,
+  refreshFinancialYearConfig,
+} from "@/lib/financial-year-server";
 import { enqueueMembershipSubscriptionChargeOperation } from "@/lib/xero-subscription-invoices";
 import { assertSubscriptionInvoicingEnabled, isXeroInvoicingEnabled } from "@/lib/xero-invoicing-guard";
 import { XERO_SWITCHED_OFF_DURING_CONFIRM_MESSAGE, XeroInvoicingOffError } from "@/lib/xero-invoicing-off";
@@ -118,7 +121,8 @@ export async function GET(request: NextRequest) {
   // what the retired `getSeasonYear` did, put the whole of 1 April in the previous
   // season for any host behind Greenwich (CT-4, #2870).
   const seasonYear =
-    parsed.data.seasonYear ?? seasonYearOfStoredDate(decisionDate);
+    parsed.data.seasonYear ??
+    seasonYearOfStoredDate(decisionDate, await clubFinancialYearEndMonth());
   try {
     return connectionJson(request, await loadBillingData(seasonYear, decisionDate), SUBSCRIPTION_BILLING_CONNECTION_SHAPE);
   } catch (error) {

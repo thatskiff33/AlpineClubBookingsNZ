@@ -25,6 +25,8 @@ import { getWebsiteThemeRenderState } from "@/lib/club-theme";
 import { getDefaultLodgeCapacity } from "@/lib/lodge-capacity";
 import { clubFormatValues } from "@/lib/club-format-server";
 import { CardPaymentsRefusedBanner } from "@/components/admin/card-payments-refused-banner";
+import { ClubSeasonProvider } from "@/components/club-season-provider";
+import { clubFinancialYearEndMonth } from "@/lib/financial-year-server";
 
 export default async function AdminLayout({
   children,
@@ -65,14 +67,23 @@ export default async function AdminLayout({
       )
     : null;
   const showOnboardingWizard = guard.showOnboardingWizard;
-  const [effectiveModules, theme, lodgeCapacity, clubIdentity, clubFormat] =
-    await Promise.all([
-      loadEffectiveModuleFlags(),
-      getWebsiteThemeRenderState(),
-      getDefaultLodgeCapacity(),
-      getCachedClubIdentity(),
-      clubFormatValues(),
-    ]);
+  // The year-end month reaches every admin season picker and label as data
+  // (#5259; INV-OPS-013): `club-season-provider.tsx` has the reasoning.
+  const [
+    effectiveModules,
+    theme,
+    lodgeCapacity,
+    clubIdentity,
+    clubFormat,
+    yearEndMonth,
+  ] = await Promise.all([
+    loadEffectiveModuleFlags(),
+    getWebsiteThemeRenderState(),
+    getDefaultLodgeCapacity(),
+    getCachedClubIdentity(),
+    clubFormatValues(),
+    clubFinancialYearEndMonth(),
+  ]);
   const liveClubIdentity = { ...clubIdentity, lodgeCapacity };
 
   // Paid AI free-text path: module on AND a usable Anthropic key stored. Budget
@@ -83,6 +94,7 @@ export default async function AdminLayout({
 
   return (
     <AppProviders clubIdentity={liveClubIdentity} nonce={nonce}>
+      <ClubSeasonProvider yearEndMonth={yearEndMonth}>
       <div
         className={`${clubThemeFontVariableClassName} app-theme-scope min-h-screen flex flex-col bg-background text-foreground`}
       >
@@ -159,6 +171,7 @@ export default async function AdminLayout({
         />
         </HelpWidgetProvider>
       </div>
+      </ClubSeasonProvider>
     </AppProviders>
   );
 }

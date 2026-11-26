@@ -6,6 +6,7 @@ import { prisma } from "@/lib/prisma";
 import { computeAgeTier, getSeasonStartDate } from "@/lib/age-tier";
 import { clubTimeZone } from "@/lib/club-time/server";
 import { clubSeasonYear } from "@/lib/financial-year";
+import { clubFinancialYearEndMonth } from "@/lib/financial-year-server";
 import { isXeroConnected } from "@/lib/xero-token-store";
 import { syncManagedXeroContactGroupForMember } from "@/lib/xero-contact-groups";
 import { updateXeroContact } from "@/lib/xero-contacts";
@@ -220,7 +221,11 @@ export async function PUT(req: NextRequest) {
     // ONE season for both halves of this decision, from the club's PERSISTED zone
     // (CT-4, #2870): the tier the date of birth implies and the exemption that may
     // override it must be judged in the same season.
-    const clubCurrentSeasonYear = clubSeasonYear(await clubTimeZone());
+    const clubCurrentSeasonYear = clubSeasonYear(
+      await clubTimeZone(),
+      undefined,
+      await clubFinancialYearEndMonth(),
+    );
     const dobDerivedTier = await computeAgeTier(
       updateData.dateOfBirth as Date,
       getSeasonStartDate(clubCurrentSeasonYear),

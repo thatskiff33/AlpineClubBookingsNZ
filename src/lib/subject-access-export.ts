@@ -5,6 +5,7 @@ import { calendarDateOfDateOnlyInstant } from "@/lib/club-time";
 import { clubTime } from "@/lib/club-time/server";
 import { getClubFormat } from "@/lib/club-format-settings";
 import { seasonSelectLabel } from "@/lib/season-label";
+import { clubFinancialYearEndMonth } from "@/lib/financial-year-server";
 import { buildMemberVisibleAuditLogWhere } from "@/lib/audit-query";
 import { readDeclaredMemberText } from "@/lib/audit-member-disclosure";
 import { readMemberDietaryRequirements, readOwnBookingGuestDietaryForExport, type DietaryAccessGrant } from "@/lib/member-dietary";
@@ -251,8 +252,12 @@ async function readMemberRecords(memberId: string, exportGrant: DietaryAccessGra
     },
   });
 
-  // The club's own season-label format (#2870, INV-CONFIG-002).
-  const club = await clubTime();
+  // The club's own season-label format (#2870, INV-CONFIG-002) and its
+  // resolved financial year-end (#5259).
+  const [club, yearEndMonth] = await Promise.all([
+    clubTime(),
+    clubFinancialYearEndMonth(),
+  ]);
   return {
     profile: {
       title: member.title,
@@ -353,7 +358,7 @@ async function readMemberRecords(memberId: string, exportGrant: DietaryAccessGra
     ],
     subscriptions: subscriptions.map((s) => ({
       seasonYear: s.seasonYear,
-      seasonLabel: seasonSelectLabel(s.seasonYear, club.format),
+      seasonLabel: seasonSelectLabel(s.seasonYear, club.format, yearEndMonth),
       status: s.status,
       paidAt: s.paidAt ? s.paidAt.toISOString() : null,
       createdAt: s.createdAt.toISOString(),

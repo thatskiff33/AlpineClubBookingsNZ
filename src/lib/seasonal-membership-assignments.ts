@@ -25,6 +25,7 @@ import { getAuthSecret, requireAuthSecret } from "@/lib/runtime-config";
 import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
 import { clubToday, dateOnlyInstantOf } from "@/lib/club-time";
 import { clubSeasonYear } from "@/lib/financial-year";
+import { refreshFinancialYearConfig } from "@/lib/financial-year-server";
 import { computeAgeTier, getSeasonStartDate } from "@/lib/age-tier";
 import {
   isOrganisationMember,
@@ -971,6 +972,9 @@ export async function saveSeasonalMembershipAssignment(params: {
   // one season for the whole save, so the re-derived preview cannot differ from
   // the one the admin was shown for a reason nobody can see.
   const clubZone = await readClubTimeZoneOutsideRequest();
+  // The club's resolved year-end, read once beside the zone and for the same
+  // reasons (#5259): the preview route derives the season it signed from it.
+  const yearEndMonth = await refreshFinancialYearConfig();
   const clubTodayDateOnly = dateOnlyInstantOf(clubToday(clubZone));
   const previewResult = await getSeasonalMembershipChangePreview({
     memberId: params.memberId,
@@ -979,7 +983,7 @@ export async function saveSeasonalMembershipAssignment(params: {
     subscriptionCategoryId: params.subscriptionCategoryId,
     applyFrom: params.applyFrom,
     now: clubTodayDateOnly,
-    clubCurrentSeasonYear: clubSeasonYear(clubZone),
+    clubCurrentSeasonYear: clubSeasonYear(clubZone, undefined, yearEndMonth),
     db,
   });
   if (previewResult.init?.status && previewResult.init.status >= 400) {
@@ -1201,7 +1205,7 @@ export async function saveSeasonalMembershipAssignment(params: {
   // the current season's assignment can alter a member's effective grouping —
   // future-season edits are left for their own trigger/bulk run. Non-fatal,
   // idempotent, and a no-op unless grouping is enabled.
-  const clubCurrentSeasonYear = clubSeasonYear(clubZone);
+  const clubCurrentSeasonYear = clubSeasonYear(clubZone, undefined, yearEndMonth);
   if (
     params.seasonYear === clubCurrentSeasonYear &&
     !params.skipXeroContactGroupSync
@@ -1405,7 +1409,11 @@ export async function bulkSaveSeasonalMembershipAssignments(params: {
   // timeout mid-reconcile cannot lose a committed change (the nightly reconcile
   // finishes any group sync the daily API budget or a timeout left undone).
   let xeroReconcile: BulkSeasonalMembershipXeroReconcile | null = null;
-  const clubCurrentSeasonYear = clubSeasonYear(await readClubTimeZoneOutsideRequest());
+  const clubCurrentSeasonYear = clubSeasonYear(
+    await readClubTimeZoneOutsideRequest(),
+    undefined,
+    await refreshFinancialYearConfig(),
+  );
   if (changedMemberIds.length > 0 && params.seasonYear === clubCurrentSeasonYear) {
     const reconcileResult = await reconcileMembersXeroContactGroups(
       changedMemberIds,
@@ -1530,7 +1538,11 @@ export async function rollForwardSeasonalMembershipAssignments(params: {
   // "is the target the current season?" differently at its start and its end,
   // and the age-tier reconcile below reads its reference day from the same value.
   const clubZone = await readClubTimeZoneOutsideRequest();
-  const clubCurrentSeasonYear = clubSeasonYear(clubZone);
+  const clubCurrentSeasonYear = clubSeasonYear(
+    clubZone,
+    undefined,
+    await refreshFinancialYearConfig(),
+  );
   // #3123 — and from the SAME read, one club day for every chunk below. Each
   // chunk opens its own transaction and takes the global cohort key plus every
   // affected lodge key, so the day cannot be resolved in there

@@ -24,6 +24,7 @@ import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/session-guards";
 import { clubTimeZone } from "@/lib/club-time/server";
 import { clubSeasonYear } from "@/lib/financial-year";
+import { clubFinancialYearEndMonth } from "@/lib/financial-year-server";
 import { membershipTypePatchSchema } from "@/lib/admin-membership-api/config-structure";
 import { connectionJson } from "@/lib/mcp-connection-request";
 import { CONFIG_OK_CONNECTION_SHAPE, MEMBERSHIP_TYPE_CONNECTION_SHAPE } from "@/lib/connection-shapes/membership-config";
@@ -245,6 +246,14 @@ export async function PATCH(
   // only serialises the type-config write); that surface is admin-only and
   // self-heals at the enforcement sites, so a briefly-inconsistent tier is
   // corrected on the next member/assignment write rather than persisted silently.
+  //
+  // The year-end is resolved HERE, once, because the check also runs inside
+  // that transaction and the resolution may read Xero (#5259): no provider call
+  // inside a transaction.
+  const forcedEditYearEndMonth =
+    parsed.data.allowedAgeTiers === undefined
+      ? undefined
+      : await clubFinancialYearEndMonth();
   const buildForcedEditOffendingTiers = async (
     db: Pick<Prisma.TransactionClient, "seasonalMembershipAssignment">,
   ): Promise<AgeTier[]> => {
@@ -254,7 +263,13 @@ export async function PATCH(
     const affectedAssignments = await db.seasonalMembershipAssignment.findMany({
       where: {
         membershipTypeId: existing.id,
-        seasonYear: { gte: clubSeasonYear(await clubTimeZone()) },
+        seasonYear: {
+          gte: clubSeasonYear(
+            await clubTimeZone(),
+            undefined,
+            forcedEditYearEndMonth,
+          ),
+        },
       },
       select: {
         member: {

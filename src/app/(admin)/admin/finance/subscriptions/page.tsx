@@ -5,9 +5,8 @@ import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import type { ReactNode } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useClubTime } from "@/components/club-time-provider";
+import { useClubSeason } from "@/components/club-season-provider";
 import { requireInstant } from "@/lib/club-time";
-import { clubSeasonYear } from "@/lib/financial-year";
-import { seasonSelectLabel } from "@/lib/season-label";
 import { subscriptionStatusLabel } from "@/lib/status-colors";
 import {
   resetSubscriptionsDatasetSearchParams,
@@ -100,8 +99,8 @@ import {
 //    `TZ || NEXT_PUBLIC_TZ || "Pacific/Auckland"` and `next.config.ts` passes no
 //    `TZ` into the bundle, so what it actually read was the BUILD's zone — the
 //    same wrong answer for every viewer, which is harder to notice, not easier.
-//    It is now `clubSeasonYear(clubTime.zone)` inside the component, where the
-//    zone is the one the SERVER read from `ClubTimeSettings` and handed to the
+//    It is now `useClubSeason().currentSeasonYear()` inside the component, where
+//    the zone is the one the SERVER read from `ClubTimeSettings` and handed to the
 //    provider. It could not be fixed by passing a better `Date` in: the helper
 //    read the argument's host-local components, and measured across a host x club
 //    matrix that made a behind-UTC deployment WORSE.
@@ -113,10 +112,11 @@ import {
 // 3. THE SELECT'S LABEL, the deferral this comment used to record. Both halves
 //    were literal text; `season-label.ts` derives both and says why.
 //
-// NEITHER 2 NOR 3 MOVES A PIXEL YET, for ONE reason rather than two: the year-end
-// month reaches no client, so `currentYear` below and the label both read the
-// March default. `INV-OPS-013` prescribes the remedy rather than forbidding it,
-// and plumbing the LABEL alone would name one season while selecting another.
+// 2 AND 3 MOVED TOGETHER (#5259). The year-end month is resolved on the server
+// and reaches this page through `ClubSeasonProvider` in the admin layout
+// (`INV-OPS-013`), and `useClubSeason()` derives the selected season year and
+// its label from that one value, so the picker cannot name one season while
+// selecting another.
 
 interface Subscription {
   id: string;
@@ -239,6 +239,7 @@ export default function SubscriptionsPage() {
   // getters, so a treasurer abroad saw their own day rather than the club's
   // (CT-4, #2870; INV-CONFIG-002). The "16 Apr 2026" shape is unchanged.
   const clubTime = useClubTime();
+  const season = useClubSeason();
   const router = useRouter();
   const searchParams = useSearchParams();
   const ageTierOptions = useAgeTierOptions();
@@ -253,8 +254,8 @@ export default function SubscriptionsPage() {
   );
   const { confirm, confirmDialog } = useConfirm();
   // The CLUB's current season and the five-year window around it. See the note at
-  // the top of this file: the zone is the persisted one, arriving as data.
-  const currentYear = clubSeasonYear(clubTime.zone);
+  // the top of this file: the zone and the year-end both arrive as data.
+  const currentYear = season.currentSeasonYear();
   const yearOptions = useMemo(
     () => Array.from({ length: 5 }, (_, i) => currentYear - 2 + i),
     [currentYear],
@@ -604,7 +605,7 @@ export default function SubscriptionsPage() {
                 <SelectTrigger id="subscriptions-filter-season" className="w-48"><SelectValue /></SelectTrigger>
                 <SelectContent>
                   {yearOptions.map((y) => (
-                    <SelectItem key={y} value={String(y)}>{seasonSelectLabel(y, clubTime.format)}</SelectItem>
+                    <SelectItem key={y} value={String(y)}>{season.selectLabel(y)}</SelectItem>
                   ))}
                 </SelectContent>
               </Select>

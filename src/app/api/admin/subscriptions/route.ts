@@ -4,6 +4,7 @@ import { requireAdmin } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma";
 import { clubTimeZone } from "@/lib/club-time/server";
 import { clubSeasonYear } from "@/lib/financial-year";
+import { clubFinancialYearEndMonth } from "@/lib/financial-year-server";
 import logger from "@/lib/logger";
 import { getAgeTierSettings } from "@/lib/age-tier";
 import {
@@ -144,8 +145,15 @@ export async function GET(request: NextRequest) {
   }
 
   const { status, ageTier, xeroContactGroup, sortBy, sortDir, page, pageSize } = parsed.data;
+  // The default season is the one the Subscriptions picker centres on: the
+  // club's zone and its resolved year-end (#5259).
   const seasonYear =
-    parsed.data.seasonYear ?? clubSeasonYear(await clubTimeZone());
+    parsed.data.seasonYear ??
+    clubSeasonYear(
+      await clubTimeZone(),
+      undefined,
+      await clubFinancialYearEndMonth(),
+    );
 
   try {
     const [ageTierSettings, lockoutSettings] = await Promise.all([
