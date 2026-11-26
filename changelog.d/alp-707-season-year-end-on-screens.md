@@ -7,9 +7,12 @@
   15 June 2026 a June club's Subscriptions screen opens on "2025 - 2026
   (Jul-Jun)", the season it is still in. This covers Subscriptions, Membership
   Types roll-forward, a member's seasonal membership card, summary strip and
-  subscription history, the bulk membership dialog (which now starts on the
-  current season rather than the calendar year), the member profile and the
-  member data export, and the routes those screens call.
+  subscription history, the two bulk membership dialogs, the member profile
+  and the member data export. The routes behind them, and the member imports,
+  now default to that same season too.
 
-  Clubs whose year ends in March, which is every club running today, see no
-  change.
+  Clubs whose year ends in March, which is every club running today, see the
+  same seasons and names as before. One small difference: between January and
+  March, the two bulk membership dialogs briefly showed the calendar year as
+  the current season while they loaded. They now show the club's season year
+  from the start, which is the value they settle on anyway.
