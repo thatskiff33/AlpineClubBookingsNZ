@@ -81,7 +81,7 @@ import { CENSUS_TIMEOUT_MS } from "@/test/census-timeout";
 type Entry = { calls: number; after: readonly string[]; reason: string };
 
 const RECURRING_REMINDER =
-  "Recurring officer reminder, left uncovered by decision (#5433, settled by the lane): the booking stays PENDING with its hold extended, so the next due reminder goes out anyway.";
+  "Recurring officer reminder, left uncovered by decision (#5433, settled by the lane; PR 4 converted the rest of the job and left these): the booking stays PENDING with its hold extended, so the next due reminder goes out anyway.";
 const SAVED_CARD_RETRY =
   "Not a notice a committed change owes: a refused or failed saved-card charge leaves the booking PENDING (or its claim handed back), so a later run reaches it again and alerts on the refusal cadence (`shouldAlertOnSavedCardChargeRefusal`). #5433's plan traced this as not this shape.";
 const MARK_PAID_ALERTS =
@@ -98,43 +98,6 @@ const STRIPE_SWITCH =
 /** Every post-commit send the scan finds that does not go through the owed-notice mechanism. */
 const POST_COMMIT_SEND_REASONS: Readonly<Record<string, Entry>> = {
   // cron-confirm-pending.ts
-  "src/lib/cron-confirm-pending.ts#confirmPendingBookings#sendConfirmationEmail": {
-    calls: 1,
-    after: ["resolveHoldWindowUnderLock"],
-    reason:
-      "#5433 PR 4 (CP-1): the zero-balance confirmation, after the hold window's own commit, onto the booking-confirmed kind PR 3 added for the saved-card confirmation (CP-2), which goes through deliverPaidBookingConfirmation.",
-  },
-  "src/lib/cron-confirm-pending.ts#confirmPendingBookings#sendBookingRequestPaymentExpiredEmail": {
-    calls: 1,
-    after: ["resolveHoldWindowUnderLock"],
-    reason: "#5433 PR 4 (CP-4): the requester's email when a request hold ends in cancellation.",
-  },
-  "src/lib/cron-confirm-pending.ts#confirmPendingBookings#sendAdminBookingRequestHoldCancelledEmail": {
-    calls: 1,
-    after: ["resolveHoldWindowUnderLock"],
-    reason: "#5433 PR 4 (CP-4): the officers' notice when a request hold ends in cancellation.",
-  },
-  "src/lib/cron-confirm-pending.ts#confirmPendingBookings#sendSplitGuestPortionCancelledEmail": {
-    calls: 1,
-    after: ["resolveHoldWindowUnderLock"],
-    reason: "#5433 PR 4 (CP-5): the member's email when a split child is cancelled at the end of the check-in day.",
-  },
-  "src/lib/cron-confirm-pending.ts#confirmPendingBookings#sendAdminSplitSettlementCancelledAlert": {
-    calls: 1,
-    after: ["resolveHoldWindowUnderLock"],
-    reason: "#5433 PR 4 (CP-5): the officers' alert when a split child is cancelled at the end of the check-in day.",
-  },
-  "src/lib/cron-confirm-pending.ts#confirmPendingBookings#sendSplitGuestPaymentLinkEmail": {
-    calls: 1,
-    after: ["resolveHoldWindowUnderLock"],
-    reason: "#5433 PR 4 (CP-6): the split child's payment link, keyed by link, with an email-row check before any re-mint.",
-  },
-  "src/lib/cron-confirm-pending.ts#confirmPendingBookings#retireAndEscalateUnusableSavedCard": {
-    calls: 1,
-    after: [OWN_COMMIT],
-    reason:
-      "#5433, a path the plan missed (to convert with PR 4, confirm-pending): the card-unusable email to the member and alert to officers after the card clear commits. A crash between them loses both: the next run takes the missing-payment-method path, which only logs.",
-  },
   "src/lib/cron-confirm-pending.ts#confirmPendingBookings#sendAdminBookingRequestHoldExpiredEmail": {
     calls: 1,
     after: ["resolveHoldWindowUnderLock"],
@@ -606,17 +569,23 @@ describe("the post-commit send reader", () => {
   });
 
   it("counts a listed commit-then-send helper as a site of its own, and an imported helper SENDS_THROUGH names as a send", () => {
-    expect(
-      scan(`
+    // `COMMITS_THEN_SENDS` is empty since #5433 PR 4, so the rule is read through a fixture list.
+    const code = `
         export async function run() {
-          await retireAndEscalateUnusableSavedCard({});
+          await commitThenTellFixture({});
           await prisma.$transaction(async () => {});
           await finaliseMemberGuestConsentTransition({});
-        }`),
+        }`;
+    const listed = { commitThenTellFixture: { module: "src/lib/fixture.ts", reason: "fixture" } };
+    expect(
+      [...scanPostCommitSends("src/lib/cron-x.ts", code, new Map(), listed)].map(
+        ([key, site]) => `${key.split("#").slice(1).join("#")}x${site.calls} after ${site.afterEach.map((names) => [...names].join(",")).join(" | ")}`,
+      ),
     ).toEqual([
-      `run#retireAndEscalateUnusableSavedCardx1 after ${OWN_COMMIT}`,
+      `run#commitThenTellFixturex1 after ${OWN_COMMIT}`,
       "run#finaliseMemberGuestConsentTransitionx1 after $transaction",
     ]);
+    expect(scan(code)).toEqual(["run#finaliseMemberGuestConsentTransitionx1 after $transaction"]);
   });
 
   it("counts an imported helper outside the scope that commits and sends as a site of its own, and one inside the scope not", () => {
