@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import type { ZodError } from "zod";
 import { parseJsonRequestBody } from "@/lib/api-json";
 import { requireAdmin } from "@/lib/session-guards";
 import { revalidatePublicSite } from "@/lib/public-content-revalidation";
@@ -23,6 +24,10 @@ import {
   IMAGE_CHANGE_DONE_CONNECTION_SHAPE,
   IMAGE_FOLDERS_CONNECTION_SHAPE,
 } from "@/lib/connection-shapes/content-images";
+
+function invalidInput(error: ZodError) {
+  return NextResponse.json({ error: "Invalid input", details: error.flatten() }, { status: 400 });
+}
 
 async function collectDirs(absDir: string, relBase: string): Promise<string[]> {
   let entries;
@@ -70,12 +75,7 @@ export async function POST(request: NextRequest) {
   });
   if (!bodyResult.ok) return bodyResult.response;
   const parsed = imageManagerCreateFolderSchema.safeParse(bodyResult.body);
-  if (!parsed.success) {
-    return NextResponse.json(
-      { error: "Invalid input", details: parsed.error.flatten() },
-      { status: 400 },
-    );
-  }
+  if (!parsed.success) return invalidInput(parsed.error);
   const { name, parent } = parsed.data;
 
   if (!isSafeDirectoryName(name)) {
@@ -158,12 +158,7 @@ export async function PATCH(request: NextRequest) {
   });
   if (!parsedJson.ok) return parsedJson.response;
   const parsed = imageManagerRenameFolderSchema.safeParse(parsedJson.body);
-  if (!parsed.success) {
-    return NextResponse.json(
-      { error: "Invalid input", details: parsed.error.flatten() },
-      { status: 400 },
-    );
-  }
+  if (!parsed.success) return invalidInput(parsed.error);
   const { path: rel, newName } = parsed.data;
 
   if (!rel) {
@@ -220,12 +215,7 @@ export async function DELETE(request: NextRequest) {
   });
   if (!jsonBody.ok) return jsonBody.response;
   const parsed = imageManagerDeleteFolderSchema.safeParse(jsonBody.body);
-  if (!parsed.success) {
-    return NextResponse.json(
-      { error: "Invalid input", details: parsed.error.flatten() },
-      { status: 400 },
-    );
-  }
+  if (!parsed.success) return invalidInput(parsed.error);
   const { path: rel } = parsed.data;
 
   if (!rel) {

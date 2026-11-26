@@ -82,6 +82,11 @@ function toResponseRecord(record: WhakapapaReportCacheRecord) {
   };
 }
 
+/** A save's answer: the stored row and what happened, projected for a connection. */
+function savedAnswer(request: NextRequest, record: WhakapapaReportCacheRecord, message: string) {
+  return connectionJson(request, { record: toResponseRecord(record), message }, MOUNTAIN_CONDITIONS_SAVED_CONNECTION_SHAPE);
+}
+
 function configToInputJson(config: WhakapapaSourceConfig): Prisma.InputJsonValue {
   return config as unknown as Prisma.InputJsonValue;
 }
@@ -162,11 +167,7 @@ async function saveConfig(request: NextRequest, rawConfig: unknown): Promise<Nex
     },
   });
 
-  return connectionJson(
-    request,
-    { record: toResponseRecord(record), message: "Source configuration saved." },
-    MOUNTAIN_CONDITIONS_SAVED_CONNECTION_SHAPE,
-  );
+  return savedAnswer(request, record, "Source configuration saved.");
 }
 
 async function getCurrentRecord() {
@@ -185,11 +186,7 @@ export async function GET(request: NextRequest) {
     return guard.response;
   }
 
-  return connectionJson(
-    request,
-    { record: await getCurrentRecord() },
-    MOUNTAIN_CONDITIONS_READ_CONNECTION_SHAPE,
-  );
+  return connectionJson(request, { record: await getCurrentRecord() }, MOUNTAIN_CONDITIONS_READ_CONNECTION_SHAPE);
 }
 
 export async function PUT(request: NextRequest) {
@@ -247,14 +244,7 @@ export async function PUT(request: NextRequest) {
     },
   });
 
-  return connectionJson(
-    request,
-    {
-      record: toResponseRecord(record),
-      message: "Mountain conditions saved. Auto refresh is paused for 12 hours.",
-    },
-    MOUNTAIN_CONDITIONS_SAVED_CONNECTION_SHAPE,
-  );
+  return savedAnswer(request, record, "Mountain conditions saved. Auto refresh is paused for 12 hours.");
 }
 
 export async function POST(request: NextRequest) {
@@ -369,14 +359,7 @@ export async function POST(request: NextRequest) {
     },
   });
 
-  return connectionJson(
-    request,
-    {
-      record: toResponseRecord(record),
-      message: "Mountain conditions refreshed from Whakapapa.",
-    },
-    MOUNTAIN_CONDITIONS_SAVED_CONNECTION_SHAPE,
-  );
+  return savedAnswer(request, record, "Mountain conditions refreshed from Whakapapa.");
 }
 
 export async function PATCH(request: NextRequest) {
@@ -448,9 +431,5 @@ export async function PATCH(request: NextRequest) {
     },
   });
 
-  return connectionJson(
-    request,
-    { record: toResponseRecord(record), message: "Section visibility saved." },
-    MOUNTAIN_CONDITIONS_SAVED_CONNECTION_SHAPE,
-  );
+  return savedAnswer(request, record, "Section visibility saved.");
 }
