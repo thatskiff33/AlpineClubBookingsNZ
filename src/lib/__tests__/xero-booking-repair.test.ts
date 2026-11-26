@@ -11687,6 +11687,29 @@ describe("a bank payment's several live refund notes are judged together (#4328,
   };
   const severalNotes = [canonicalNote(4000), perRefundNote("cn_back_1", 3000), perRefundNote("cn_back_2", 3000)];
 
+  it("MUTATION: only a bank-transfer payment takes the several-notes path; a card payment keeps the canonical note's own comparison", async () => {
+    const cancelledCard = makeBooking({
+      status: "CANCELLED",
+      payment: { ...cancelledBank().payment, source: "STRIPE" },
+    });
+    const deps = createDependencies({ bookings: [cancelledCard], links: severalNotes, operations: [makePrimaryInvoiceCreateOperation()] });
+    deps.readRefundCreditNoteGap = vi.fn().mockResolvedValue({
+      cashRefundCents: 10000,
+      coveredCents: 10000,
+      resolvedInXeroCents: 0,
+      uncoveredCents: 0,
+      paidAnotherWayUncoveredCents: 0,
+      unreadableResolvedOperationIds: [],
+      lateCaptureExcludedCents: 0,
+    });
+    const report = await runBookingXeroRepair(CLUB_FORMAT_TEST, { dependencies: deps, scope: { all: true } });
+    const mismatches = report.passes[0].bookings[0].findings.filter((finding) => finding.code === "XERO_AMOUNT_MISMATCH");
+    // The several-notes path would find 10,000 covered and say nothing; the card
+    // path compares the canonical note (4,000) alone, as before #4328.
+    expect(mismatches).toHaveLength(1);
+    expect(mismatches[0].details).not.toHaveProperty("otherRefundNotes");
+  });
+
   it("notes that together cover the cash refund raise no mismatch, queue and resize", async () => {
     const { deps, booking, mismatches } = await run({ links: severalNotes, coveredCents: 10000 });
     expect(mismatches).toEqual([]);

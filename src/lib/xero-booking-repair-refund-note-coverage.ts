@@ -82,7 +82,7 @@ export async function readRefundNoteGaps(
       );
     } catch (err) {
       refundNoteCoverageByPaymentId.set(payment.id, "unreadable");
-      logger.warn({ err, paymentId: payment.id }, "Could not read a payment's refund-note gap; sizing from the refunded total");
+      logger.warn({ err, paymentId: payment.id }, "Could not read a payment's refund-note gap; the missing-note check sizes from the refunded total and the several-notes comparison is reported for manual review");
     }
   }
   return { refundNoteUncoveredCentsByPaymentId, refundNoteCoverageByPaymentId };
