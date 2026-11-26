@@ -40,6 +40,7 @@ import { CLUB_FORMAT_TEST } from "@/lib/__tests__/support/club-format-fixture";
 import { assertSafeRaceDbUrl } from "@/lib/__tests__/support/race-db-url";
 import { raceSession } from "@/lib/__tests__/support/race-session-double";
 import type { EditQuotedFigures } from "@/lib/edit-quoted-figures";
+import type { NextRequest as RouteRequest } from "next/server";
 
 // The quote route reads the session through `@/lib/auth`: the harness's one
 // shared double, set per call on `raceSession` and put back to signed out.
@@ -228,7 +229,7 @@ async function previewThroughRoute(): Promise<EditQuotedFigures> {
   }
 }
 
-type SaveRoute = (request: import("next/server").NextRequest, context: { params: Promise<{ id: string }> }) => Promise<Response>;
+type SaveRoute = (request: RouteRequest, context: { params: Promise<{ id: string }> }) => Promise<Response>;
 
 /** The officer's save through a real HTTP door, on the frozen club day. */
 async function putAsOfficer(handler: SaveRoute, door: "modify" | "modify-dates", body: object): Promise<Response> {

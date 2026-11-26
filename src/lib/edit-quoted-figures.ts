@@ -37,7 +37,7 @@ export const linkedQuotedFiguresSchema = z
 export type LinkedQuotedFigures = z.infer<typeof linkedQuotedFiguresSchema>;
 
 export const EDIT_PRICE_CHANGED_CODE = "EDIT_PRICE_CHANGED";
-export const EDIT_FIGURES_REQUIRED_CODE = "EDIT_FIGURES_REQUIRED";
+const EDIT_FIGURES_REQUIRED_CODE = "EDIT_FIGURES_REQUIRED";
 
 export class EditPriceChangedError extends Error {
   readonly code = EDIT_PRICE_CHANGED_CODE;
@@ -71,15 +71,6 @@ export class EditFiguresRequiredError extends Error {
   }
 }
 
-export function editPriceChangedBody(error: EditPriceChangedError) {
-  return {
-    code: error.code,
-    error: error.message,
-    figures: error.figures,
-    ...(error.linkedMove ? { linkedMove: error.linkedMove } : {}),
-  };
-}
-
 /**
  * The wire answer for either figures refusal, or null for any other error. One
  * reader for both edit doors, tested ahead of their generic `ApiError` branch.
@@ -88,7 +79,13 @@ export function editQuotedFiguresRefusal(
   error: unknown,
 ): { body: Record<string, unknown>; status: number } | null {
   if (error instanceof EditPriceChangedError) {
-    return { body: editPriceChangedBody(error), status: error.status };
+    const body = {
+      code: error.code,
+      error: error.message,
+      figures: error.figures,
+      ...(error.linkedMove ? { linkedMove: error.linkedMove } : {}),
+    };
+    return { body, status: error.status };
   }
   if (error instanceof EditFiguresRequiredError) {
     return { body: { code: error.code, error: error.message }, status: error.status };

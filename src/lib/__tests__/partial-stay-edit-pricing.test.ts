@@ -17,7 +17,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 // the door's rule that a save carries its preview's figures (pinned by
 // `modify-quoted-figures.test.ts`), so their figure-less bodies still reach it.
 vi.mock("@/lib/edit-quoted-figures", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("@/lib/edit-quoted-figures")>()),
+  ...((await importOriginal()) as typeof import("@/lib/edit-quoted-figures")),
   requireEditQuotedFigures: () => {},
 }));
 import { NextRequest } from "next/server";
