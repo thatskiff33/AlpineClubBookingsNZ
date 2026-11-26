@@ -114,10 +114,11 @@ describe("Bookings & Beds officer actions: who is offered them", () => {
     expect(viewOnly.has("preview_bed_allocation_removal")).toBe(true);
   });
 
-  it("leaves withdrawing an extra payment request to the Finance lane, even for a Finance editor", async () => {
-    // Owner decision, #5305 comment 7093303964, item 3: a money action, ALP-721.
+  it("keeps withdrawing an extra payment request website-only, even for a Finance editor", async () => {
+    // It cancels a Stripe payment request: website-only (#5305 comment
+    // 7131138226, item 1, settling comment 7093303964's item 3).
     expect(classifyMcpRoute("src/app/api/admin/bookings/[id]/additional-payment/withdraw/route.ts", "POST")).toEqual({
-      kind: "excluded", reason: "not-yet:ALP-721",
+      kind: "excluded", reason: "moves-money",
     });
     const found = await foundIds(context({ bookings: "edit", finance: "edit" }));
     // The officer's own member actions (ALP-794) withdraw their own requests; no officer action withdraws.
