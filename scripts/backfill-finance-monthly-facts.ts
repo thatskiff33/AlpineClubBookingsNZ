@@ -9,10 +9,8 @@
  */
 import "dotenv/config";
 import process from "node:process";
-import {
-  backfillFinanceMonthlyFacts,
-  DEFAULT_FINANCE_BACKFILL_MAX_CHUNKS,
-} from "../src/lib/finance-monthly-fact-backfill";
+import { DEFAULT_FINANCE_BACKFILL_MAX_CHUNKS } from "../src/lib/finance-backfill-request";
+import { backfillFinanceMonthlyFacts } from "../src/lib/finance-monthly-fact-backfill";
 import { isMonthKey } from "../src/lib/finance-monthly-facts";
 import { prisma } from "../src/lib/prisma";
 

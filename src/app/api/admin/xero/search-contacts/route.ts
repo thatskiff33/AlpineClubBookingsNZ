@@ -4,11 +4,10 @@ import { callXeroApi, getAuthenticatedXeroClient } from "@/lib/xero-api-client";
 import { getXeroApiErrorInfo } from "@/lib/xero-api-errors";
 import { prisma } from "@/lib/prisma";
 import logger from "@/lib/logger";
-import { z } from "zod";
-
-const xeroContactSearchQuerySchema = z.object({
-  q: z.string().trim().min(2),
-});
+import { XERO_CONTACT_SEARCH_CONNECTION_SHAPE } from "@/lib/connection-shapes/finance-xero-contacts";
+import { connectionJson } from "@/lib/mcp-connection-request";
+import { checkRateLimit, rateLimitedResponse } from "@/lib/rate-limit";
+import { xeroContactSearchQuerySchema } from "@/lib/xero-member-contact-requests";
 
 function getContactNameParts(contact: {
   name?: string | null;
@@ -35,12 +34,23 @@ function getNameKey(firstName: string | null | undefined, lastName: string | nul
 }
 
 /**
+ * Each search is a live Xero `getContacts` call, against the club's Xero
+ * minute budget. Counted per officer, as `xero-sync-now` is, so a browser tab
+ * and that officer's AI app connection share one budget. 30 a minute leaves
+ * room for the screens' search-as-you-type (250 ms debounce) while one
+ * officer, or one app looping, cannot spend the club's whole Xero allowance.
+ */
+const limiter = { id: "xero-search-contacts", limit: 30, windowSeconds: 60 };
+
+/**
  * GET /api/admin/xero/search-contacts?q=searchterm
  * Search Xero contacts by name or email.
  */
 export async function GET(request: NextRequest) {
   const guard = await requireAdmin();
   if (!guard.ok) return guard.response;
+  const limit = await checkRateLimit(limiter, guard.session.user.id);
+  if (!limit.success) return rateLimitedResponse(limit);
   const parsed = xeroContactSearchQuerySchema.safeParse({
     q: request.nextUrl.searchParams.get("q"),
   });
@@ -154,7 +164,7 @@ export async function GET(request: NextRequest) {
       };
     });
 
-    return NextResponse.json({ contacts: results });
+    return connectionJson(request, { contacts: results }, XERO_CONTACT_SEARCH_CONNECTION_SHAPE);
   } catch (err) {
     const xeroError = getXeroApiErrorInfo(err, "Failed to search Xero contacts");
     if (!xeroError.handled) {

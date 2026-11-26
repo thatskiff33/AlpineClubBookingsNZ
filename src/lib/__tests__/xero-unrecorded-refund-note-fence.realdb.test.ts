@@ -322,7 +322,7 @@ let prisma: (typeof import("@/lib/prisma"))["prisma"];
 
       // 3. Retry all skips row A with its reason, queueing no retry; a single Retry is refused.
       const { POST: retryAll } = await import("@/app/api/admin/xero/operations/retry-all/route");
-      const retried = (await (await retryAll()).json()) as { skippedOperations?: Array<{ id: string; reason: string }> };
+      const retried = (await (await retryAll(new Request("http://localhost/api/admin/xero/operations/retry-all", { method: "POST" }))).json()) as { skippedOperations?: Array<{ id: string; reason: string }> };
       expect(retried.skippedOperations).toContainEqual({ id: rowA, reason: expect.stringContaining("Do not retry") });
       const { XERO_REQUEUE_OPERATION_TYPE } = await import("@/lib/xero-hardening-shared");
       expect(await prisma.xeroSyncOperation.count({ where: { localId: PAYMENT_ID, operationType: XERO_REQUEUE_OPERATION_TYPE } })).toBe(0);

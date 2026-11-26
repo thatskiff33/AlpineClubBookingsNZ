@@ -1,5 +1,6 @@
 import { recordXeroWebhookReceived } from "@/lib/xero-webhook-health";
-import { after, NextRequest, NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
+import { scheduleAfterResponse } from "@/lib/schedule-after-response";
 import { createHmac, timingSafeEqual } from "crypto";
 import { recordWebhookLog } from "@/lib/webhook-log";
 import logger from "@/lib/logger";
@@ -73,16 +74,6 @@ function isXeroWebhookEventPayload(
     isNonEmptyString(value.resourceId) &&
     isValidOptionalDateString(value.eventDateUtc)
   );
-}
-
-function scheduleAfterResponse(task: () => Promise<void>) {
-  try {
-    after(task);
-  } catch {
-    queueMicrotask(() => {
-      void task();
-    });
-  }
 }
 
 /**

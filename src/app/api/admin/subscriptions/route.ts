@@ -2,7 +2,6 @@ import { NextRequest, NextResponse } from "next/server";
 import { Prisma } from "@prisma/client";
 import { requireAdmin } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma";
-import { z } from "zod";
 import { clubTimeZone } from "@/lib/club-time/server";
 import { clubSeasonYear } from "@/lib/financial-year";
 import logger from "@/lib/logger";
@@ -22,45 +21,23 @@ import {
   subscriptionsListBillingNote,
 } from "@/lib/subscriptions-list-liability";
 import { serializeSubscriptionMemberLoginStage } from "@/lib/subscription-member-login-stage";
-import { adminListPageQueryFields } from "@/lib/admin-list-page";
+import {
+  ADMIN_SUBSCRIPTION_LIST_STATUSES,
+  adminSubscriptionSortBySchema,
+  adminSubscriptionsQuerySchema,
+} from "@/lib/admin-subscriptions-query";
+import {
+  ADMIN_SUBSCRIPTIONS_CONNECTION_SHAPE,
+} from "@/lib/connection-shapes/finance-subscriptions";
+import { connectionJson } from "@/lib/mcp-connection-request";
+import type { z } from "zod";
 
-const subscriptionStatuses = [
-  "PAID",
-  "UNPAID",
-  "OVERDUE",
-  "NOT_INVOICED",
-  "NOT_REQUIRED",
-] as const;
-const subscriptionStatusFilterValues = [...subscriptionStatuses, "all"] as const;
-const subscriptionSortBySchema = z
-  .enum([
-    "member",
-    "email",
-    "ageTier",
-    "xeroContactGroup",
-    "status",
-    "xeroInvoice",
-    "paidAt",
-  ])
-  .optional()
-  .default("member");
-
-const querySchema = z.object({
-  seasonYear: z.coerce.number().int().min(2020).max(2040).optional(),
-  status: z.enum(subscriptionStatusFilterValues).optional().default("all"),
-  ageTier: z.enum(["INFANT", "CHILD", "YOUTH", "ADULT", "all"]).optional().default("all"),
-  xeroContactGroup: z.string().trim().min(1).max(100).optional(),
-  sortBy: subscriptionSortBySchema,
-  sortDir: z.enum(["asc", "desc"]).optional().default("asc"),
-  ...adminListPageQueryFields,
-});
-
-type SubscriptionSortBy = z.infer<typeof subscriptionSortBySchema>;
+type SubscriptionSortBy = z.infer<typeof adminSubscriptionSortBySchema>;
 type SubscriptionCandidate = {
   id: string;
   memberId: string;
   seasonYear: number;
-  status: (typeof subscriptionStatuses)[number];
+  status: (typeof ADMIN_SUBSCRIPTION_LIST_STATUSES)[number];
   xeroInvoiceId: string | null;
   xeroInvoiceNumber: string | null;
   paidAt: Date | null;
@@ -148,7 +125,7 @@ export async function GET(request: NextRequest) {
   const guard = await requireAdmin();
   if (!guard.ok) return guard.response;
   const { searchParams } = new URL(request.url);
-  const parsed = querySchema.safeParse({
+  const parsed = adminSubscriptionsQuerySchema.safeParse({
     seasonYear: searchParams.get("seasonYear") ?? undefined,
     status: searchParams.get("status") ?? undefined,
     ageTier: searchParams.get("ageTier") ?? undefined,
@@ -372,14 +349,11 @@ export async function GET(request: NextRequest) {
       else if (row.status === "NOT_REQUIRED") counts.notRequired += 1;
     }
 
-    return NextResponse.json({
-      data,
-      total,
-      page,
-      pageSize,
-      summary: counts,
-      xeroContactGroupsLoaded,
-    });
+    return connectionJson(
+      request,
+      { data, total, page, pageSize, summary: counts, xeroContactGroupsLoaded },
+      ADMIN_SUBSCRIPTIONS_CONNECTION_SHAPE,
+    );
   } catch (err) {
     logger.error({ err }, "Error fetching subscriptions");
     return NextResponse.json({ error: "Failed to fetch subscriptions" }, { status: 500 });
