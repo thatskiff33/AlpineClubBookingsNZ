@@ -24,6 +24,7 @@
  * booking can never verify for another.
  */
 import { createHmac, timingSafeEqual } from "crypto";
+import type { BookingStatus } from "@prisma/client";
 import { getAppBaseUrl, sanitizeEmailHref } from "@/lib/app-url";
 import { escapeHtml } from "@/lib/email-templates/escape";
 import { emailPalette } from "@/lib/email-theme";
@@ -164,12 +165,50 @@ function icsTimestamp(instant: Date): string {
   return `${utcDay}T${pad(instant.getUTCHours())}${pad(instant.getUTCMinutes())}${pad(instant.getUTCSeconds())}Z`;
 }
 
+// Whether each booking state still describes a stay that stands. Total over
+// BookingStatus BY CONSTRUCTION (`satisfies Record<...>`), so adding an enum
+// member without deciding its row here is a compile error rather than a
+// silently-servable default. The confirmation email is only sent past the
+// false states, so a valid emailed link only meets one after the booking was
+// later cancelled or bumped. The download route serves only the true states
+// (serving the rest would put a stay that no longer exists into someone's
+// calendar), and the cancellation file (#5249) is built only for the false
+// ones (sending it for a standing stay would remove a real entry).
+export const SERVABLE_BOOKING_STATUS = {
+  DRAFT: false,
+  PENDING: true,
+  PAYMENT_PENDING: true,
+  CONFIRMED: true,
+  PAID: true,
+  BUMPED: false,
+  CANCELLED: false,
+  COMPLETED: true,
+  WAITLISTED: false,
+  WAITLIST_OFFERED: false,
+  AWAITING_REVIEW: true,
+} satisfies Record<BookingStatus, boolean>;
+
+/**
+ * The event id every calendar file for one booking carries. One helper, so the
+ * cancellation file (#5249) can never name a different event from the entry it
+ * is meant to remove.
+ */
+function bookingCalendarUid(bookingId: string): string {
+  return `booking-${bookingId}@${new URL(getAppBaseUrl()).hostname}`;
+}
+
 /**
  * The .ics document for one stay. The UID is stable per booking and SEQUENCE
  * rises with every booking update (it is the epoch-seconds of `updatedAt`),
  * which together are what make a re-download after a date change UPDATE the
  * existing event in the recipient's calendar instead of duplicating it or
  * being ignored as a same-revision duplicate (RFC 5545 §3.8.7.4).
+ *
+ * `cancelled` (#5249) builds the cancellation of that same event for the
+ * cancelled and bumped emails: `METHOD:CANCEL` and `STATUS:CANCELLED` under the
+ * same UID, with a higher SEQUENCE than any revision the download route served.
+ * Like the original it names no ORGANIZER or ATTENDEE, so a calendar app may
+ * still decline to apply it; the email's sentence says what to do then.
  */
 export function buildBookingIcs(input: {
   stay: BookingCalendarStay;
@@ -178,28 +217,35 @@ export function buildBookingIcs(input: {
   sequence: number;
   /** DTSTAMP instant; callers pass `new Date()` at generation time. */
   generatedAt: Date;
+  /** Build the cancellation of the stay's event instead of the event (#5249). */
+  cancelled?: boolean;
 }): string {
   const { startIso, endExclusiveIso } = stayDates(
     input.stay.checkIn,
     input.stay.checkOut,
   );
-  const host = new URL(getAppBaseUrl()).hostname;
+  const cancelled = input.cancelled === true;
   const lines = [
     "BEGIN:VCALENDAR",
     "VERSION:2.0",
     "PRODID:-//AlpineClubBookingsNZ//Booking Calendar//EN",
     "CALSCALE:GREGORIAN",
-    "METHOD:PUBLISH",
+    cancelled ? "METHOD:CANCEL" : "METHOD:PUBLISH",
     "BEGIN:VEVENT",
-    `UID:booking-${input.stay.bookingId}@${host}`,
+    `UID:${bookingCalendarUid(input.stay.bookingId)}`,
     `SEQUENCE:${Math.max(0, Math.floor(input.sequence))}`,
     `DTSTAMP:${icsTimestamp(input.generatedAt)}`,
     `DTSTART;VALUE=DATE:${compactDate(startIso)}`,
     `DTEND;VALUE=DATE:${compactDate(endExclusiveIso)}`,
-    `SUMMARY:${escapeIcsText(`${input.lodgeName} stay`)}`,
+    ...(cancelled ? ["STATUS:CANCELLED"] : []),
+    `SUMMARY:${escapeIcsText(
+      cancelled ? `Cancelled: ${input.lodgeName} stay` : `${input.lodgeName} stay`,
+    )}`,
     `LOCATION:${escapeIcsText(input.lodgeName)}`,
     `DESCRIPTION:${escapeIcsText(
-      `Lodge booking from ${startIso} to checkout. Manage your booking: ${getAppBaseUrl()}/bookings`,
+      cancelled
+        ? `This lodge booking from ${startIso} was cancelled. Manage your bookings: ${getAppBaseUrl()}/bookings`
+        : `Lodge booking from ${startIso} to checkout. Manage your booking: ${getAppBaseUrl()}/bookings`,
     )}`,
     "END:VEVENT",
     "END:VCALENDAR",
