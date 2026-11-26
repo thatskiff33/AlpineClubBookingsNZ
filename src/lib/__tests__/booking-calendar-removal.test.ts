@@ -53,7 +53,7 @@ const BOOKING = {
   lodge: { name: "Example Lodge" },
 };
 
-function icsText(attachment: { content: Buffer } | null): string {
+function icsText(attachment: { content: Buffer } | null | undefined): string {
   return attachment ? attachment.content.toString("utf8") : "";
 }
 

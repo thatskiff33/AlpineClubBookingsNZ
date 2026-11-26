@@ -53,8 +53,10 @@ interface SentEmail {
 }
 
 function lastSent(): SentEmail {
-  const calls = mocks.sendEmail.mock.calls as unknown as [[SentEmail]];
-  return calls[calls.length - 1][0];
+  const calls = mocks.sendEmail.mock.calls as unknown as [SentEmail][];
+  const last = calls.at(-1);
+  if (!last) throw new Error("sendEmail was not called");
+  return last[0];
 }
 
 function defaultBody(templateName: string, data: EmailTemplateData): string {

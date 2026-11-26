@@ -24,6 +24,7 @@ import {
   resolveBookingEmailGate,
 } from "@/lib/booking-email-suppression";
 import { resolveBookingEmailLink } from "@/lib/booking-email-authority";
+import { retryCalendarRemovalAttachments } from "@/lib/booking-calendar-removal";
 import {
   finalizeBookingEmailHtml,
   hasBookingDetailHref,
@@ -552,6 +553,9 @@ export async function retryFailedEmails(): Promise<{
     }
 
     let result: SentMessageInfo;
+    // #5249: a cancelled or bumped email's calendar cancellation is not stored
+    // with the row, so the replay rebuilds it under the same rules.
+    const attachments = await retryCalendarRemovalAttachments(emailLog);
     try {
       result = await transporter.sendMail({
         from: formatEmailFromAddress(EMAIL_FROM),
@@ -559,6 +563,7 @@ export async function retryFailedEmails(): Promise<{
         subject: emailLog.subject,
         html: retryHtml,
         text: htmlToPlainText(retryHtml),
+        attachments,
       });
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : String(err);

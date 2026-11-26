@@ -19,6 +19,8 @@ const mocks = vi.hoisted(() => ({
   sendEmail: vi.fn(),
   getAdminEmails: vi.fn(),
   getActiveEmailSuppression: vi.fn(),
+  // #5249: what the replay asks for a cancelled or bumped email's calendar file.
+  retryCalendarRemovalAttachments: vi.fn(async () => [] as unknown[]),
 }));
 
 vi.mock("@/lib/prisma", () => ({
@@ -77,6 +79,10 @@ vi.mock("@/lib/email", () => ({
   // #2548: the retry-exhausted alert resolves its audience through the shared
   // access-role-aware helper instead of querying the legacy ADMIN scalar here.
   getAdminEmails: mocks.getAdminEmails,
+}));
+
+vi.mock("@/lib/booking-calendar-removal", () => ({
+  retryCalendarRemovalAttachments: mocks.retryCalendarRemovalAttachments,
 }));
 
 import { retryFailedEmails } from "@/lib/cron-email-retry";
@@ -413,6 +419,28 @@ describe('retryFailedEmails and the per-booking "No emails" switch (#2258)', () 
     expect(mocks.update).not.toHaveBeenCalled();
     expect(mocks.updateMany).not.toHaveBeenCalled();
     expect(result).toEqual({ retried: 0, succeeded: 0, failed: 0 });
+  });
+
+  // #5249: the calendar cancellation is not stored with the row, so a replay of
+  // a cancelled or bumped email must rebuild it; without this the member whose
+  // first send failed gets the sentence naming an attachment that is missing.
+  it("replays a cancelled email with the calendar file the removal rules rebuild", async () => {
+    const row = failedEmail({ templateName: "booking-cancelled" });
+    const attachment = {
+      filename: "lodge-stay-cancelled-20260801.ics",
+      content: Buffer.from("METHOD:CANCEL"),
+      contentType: "text/calendar; charset=utf-8; method=CANCEL",
+    };
+    mocks.findMany.mockResolvedValue([row]);
+    mocks.retryCalendarRemovalAttachments.mockResolvedValueOnce([attachment]);
+
+    const result = await retryFailedEmails();
+
+    expect(result.succeeded).toBe(1);
+    expect(mocks.retryCalendarRemovalAttachments).toHaveBeenCalledWith(
+      expect.objectContaining({ id: "email_1", templateName: "booking-cancelled", bookingId: "bk_1" }),
+    );
+    expect(mocks.sendMail.mock.calls[0][0].attachments).toEqual([attachment]);
   });
 
   it("replays normally when the booking's switch is off", async () => {
