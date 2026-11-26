@@ -7,6 +7,21 @@ import { completeXeroSyncOperation, failXeroSyncOperation, upsertXeroObjectLink 
 import { createAuditLog } from "@/lib/audit";
 import { clubFormatValues } from "@/lib/club-format-server";
 import { formatCents } from "@/lib/utils";
+import { getXeroErrorStatusCode } from "@/lib/xero-error-shape";
+
+/**
+ * Xero refused the write outright (a 4xx other than a timeout or rate limit), so
+ * nothing landed: lift the "a write may have landed" fence, but only while no line
+ * has completed. Cancel still reads Xero itself before restoring any cents.
+ */
+async function releaseFenceAfterRefusal(correctionId: string, error: unknown): Promise<void> {
+  const status = getXeroErrorStatusCode(error);
+  if (status === undefined || status < 400 || status > 499 || status === 408 || status === 429) return;
+  await prisma.adminCreditDeductionCorrection.updateMany({
+    where: { id: correctionId, status: "RESERVED", providerMutationStartedAt: { not: null }, lines: { none: { completedAt: { not: null } } } },
+    data: { providerMutationStartedAt: null },
+  }).catch(() => undefined);
+}
 
 /** Provider work is outside transactions; each durable record uses the member's existing ledger key. */
 export async function completeAdminCreditDeductionCorrection(input: {
@@ -76,6 +91,7 @@ export async function completeAdminCreditDeductionCorrection(input: {
       await completeXeroSyncOperation(syncOperation, {}, { store: tx });
     });
   } catch (error) {
+    await releaseFenceAfterRefusal(payload.correctionId, error);
     await failXeroSyncOperation(syncOperation, error);
     throw error;
   }
