@@ -4946,6 +4946,17 @@ describe("Cron: Confirm Pending Bookings", () => {
         expect([...owedNoticeStore.rows.keys()]).toEqual([KEY]);
       });
 
+      it("treats a row that cannot be read after the send threw as 'do not know': the link stays live and owed, not revoked (round 3, item 3)", async () => {
+        extendChild();
+        mockSendSplitGuestPaymentLinkEmail.mockRejectedValueOnce(new Error("SMTP down"));
+        mockEmailLogFindUnique.mockRejectedValue(new Error("db down"));
+
+        await confirmPendingBookings();
+
+        expect(mockRevokePaymentLinkById).not.toHaveBeenCalled();
+        expect([...owedNoticeStore.rows.keys()]).toEqual([KEY]);
+      });
+
       it("clears the marker when the send threw after its keyed row was written and the link was revoked: the next extension re-mints, as before", async () => {
         extendChild();
         mockSendSplitGuestPaymentLinkEmail.mockRejectedValueOnce(new Error("SMTP down"));

@@ -567,8 +567,14 @@ you want both reworded; editing only one leaves the other on its built-in text.
 > - the **Split Guest Payment Link** email. If it was never sent, a later run
 >   replaces the link with a fresh one and sends that; each link is emailed at
 >   most once, and the fresh link is owed in its own right if that send is
->   interrupted too. A fault that keeps every send failing makes at most three
->   fresh links, and the seven days below run from the first link;
+>   interrupted too. Fresh links are spaced out: the first after about half an
+>   hour, then 6 hours, 24 hours and every 48 hours after the one before, so a
+>   fault that keeps every send failing makes five fresh links (six in all),
+>   and the seven days below run from the first link. At the end the unsent
+>   link is cancelled before officers are alerted. A send that is refused
+>   rather than interrupted (a suppressed address, or a test environment's
+>   send gate) cancels its link with no alert, and the job's next two-day
+>   extension sends a new one, as before;
 > - the **Saved Card Charge Failed** email and the officers' **Admin Payment
 >   Failure** alert when a saved card is found unusable. That alert now says the
 >   owner is emailed separately rather than that they have been emailed, and a

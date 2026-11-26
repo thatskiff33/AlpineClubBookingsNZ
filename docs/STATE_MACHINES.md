@@ -4693,18 +4693,31 @@ returns before any marker is written. Owner decisions D9, D10 and D11 (27 Nov
   emails" mints nothing, so the original link is revoked by id, as the first
   attempt does, and the job's next extension mints and sends once the switch is
   off again. A chain of re-issues is one notice: each new link's marker carries
-  the chain's first mint (`originAt`) and its re-issue count (`recoveries`),
-  and a chain re-issues at most three times (`LINK_RECOVERY_LIMIT`), so a fault
-  that keeps every send failing mints at most four links in all; past the limit
-  the marker waits for its cut-off. So every link the job's extension or this
-  recovery mints, while live and never emailed, has a marker until it is told,
-  used, revoked or past its cut-off. A link the booking page's button or an
-  officer's fresh copy mints is not owed: as before #5433, a stop after its
-  commit and before its email leaves it live and unsent, and that person sees
-  the outcome and can send again. D10: the cut-off is the link's own expiry (the
-  end of the check-in day), or seven days after the chain's first mint,
-  whichever comes first; past it, unless the email reached the member after
-  all, officers are alerted once.
+  the chain's first mint (`originAt`) and its re-issue count (`recoveries`).
+  Re-issues are spaced from the previous mint by a schedule that grows with the
+  count (`linkReissueSpacingMs`): the first at the sweep's usual 30 minutes,
+  the next 6 hours after the previous mint, the next 24 hours after it, and
+  each later one 48 hours after it, the job's own extension cadence. There is
+  no fixed count; a marker whose next re-issue is not due yet is held, not
+  cleared. A fault that keeps every send throwing before its row mints six
+  links in the seven days (five re-issues), and a fault that clears is retried
+  at the next due re-issue. A failure that does not throw (a suppressed
+  address, the environment's send gate) is not kept: its link is revoked, the
+  marker clears with no alert, and the job's next two-day extension mints and
+  sends again, as before #5433. A row that cannot be read after a send threw
+  counts as "do not know": the link stays live and owed, and the sweep reads
+  the row again before any re-issue, so it never revokes a link whose email is
+  sent or queued; a read that fails there too holds the marker for a later
+  sweep. So every link the job's extension or this recovery mints, while live
+  and never emailed, has a marker until it is told, used, revoked or past its
+  cut-off. A link the booking page's button or an officer's fresh copy mints
+  is not owed: as before #5433, a stop after its commit and before its email
+  leaves it live and unsent, and that person sees the outcome and can send
+  again. D10: the cut-off is the link's own expiry (the end of the check-in
+  day), or seven days after the chain's first mint, whichever comes first;
+  past it, unless the email reached the member after all, the chain's current
+  link is revoked by id and officers are alerted once. A revoke that fails
+  keeps the marker, and the next sweep revokes again before the alert.
 - **A retired saved card** (`retireAndEscalateUnusableSavedCard`): the two
   clears now run in one transaction, with no advisory lock as before, whose
   last write records `saved-card-unusable-member` (`saved-card-charge-failed`,
@@ -4746,8 +4759,10 @@ portion) are not owed: the next due reminder goes out anyway.
 - A booking reinstated and cancelled again between a cancel and its sweep still
   counts as cancelled, and is sent the notice.
 - A recovered payment link mints a new link, so the member can hold more than
-  one link email in all, each earlier one never delivered (at most four links
-  in one chain).
+  one link email in all, each earlier one never delivered (at most six links
+  in one chain's seven days, on the spacing above). A failure that does not
+  throw is re-sent at each two-day extension until the booking ends, as before
+  #5433, with no officers' alert.
 - **Booking email not sent** can reach officers moments before the routine
   notice about the same booking (the officers' copy of the cancellation, say),
   because the member's notice is delivered first, as before #5433. Its note

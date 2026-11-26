@@ -13,10 +13,11 @@
   What members notice: an email that was missed arrives late, usually within
   an hour. A late confirmation is built from the booking as it is when it goes.
   A payment link that was never emailed is replaced by a new one before it is
-  sent, at most three times. Late sending stops after seven days, or earlier at
-  the booking's own date: the end of the check-in day for a confirmation, a
-  payment link and a new-card request, and the end of the check-out day for a
-  cancellation notice.
+  sent, at growing intervals (half an hour, then 6, 24 and every 48 hours), so
+  at most six links in seven days. Late sending stops after seven days, or
+  earlier at the booking's own date: the end of the check-in day for a
+  confirmation, a payment link and a new-card request, and the end of the
+  check-out day for a cancellation notice.
 
   What officers notice, by owner decision: a new alert, "Booking email not
   sent", on the "Booking review required" preference. It is sent once when one

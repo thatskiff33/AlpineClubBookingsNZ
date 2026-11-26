@@ -25,6 +25,7 @@ const owed = vi.hoisted(() => ({ store: null as unknown as ReturnType<typeof imp
 type LinkRow = { id: string; bookingId: string; usedAt: Date | null; revokedAt: Date | null; createdAt: Date; expiresAt: Date };
 const db = vi.hoisted(() => ({
   emailRows: new Map<string, EmailRow>(),
+  emailReadFails: false,
   booking: null as Record<string, unknown> | null,
   links: new Map<string, LinkRow>(),
 }));
@@ -33,7 +34,12 @@ vi.mock("@/lib/prisma", () => ({
     get owedNotice() {
       return owed.store.delegate;
     },
-    emailLog: { findUnique: async ({ where }: { where: { id: string } }) => db.emailRows.get(where.id) ?? null },
+    emailLog: {
+      findUnique: async ({ where }: { where: { id: string } }) => {
+        if (db.emailReadFails) throw new Error("db down");
+        return db.emailRows.get(where.id) ?? null;
+      },
+    },
     booking: { findUnique: async ({ where }: { where: { id: string } }) => (db.booking && db.booking.id === where.id ? db.booking : null) },
     paymentLink: {
       findUnique: async ({ where }: { where: { id: string } }) => db.links.get(where.id) ?? null,
@@ -129,6 +135,7 @@ import {
 } from "@/lib/email/owed-notice-templates";
 import { deliverHoldEndedNotices } from "@/lib/hold-ended-cancellation-notices";
 import { deliverSavedCardUnusableNotices } from "@/lib/saved-card-unusable-notices";
+import { revokePaymentLinkById } from "@/lib/payment-link";
 import {
   recordSplitGuestPaymentLinkOwed,
   SPLIT_GUEST_PAYMENT_LINK_NOTICE_DELIVERERS,
@@ -172,6 +179,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   owed.store = createOwedNoticeStore();
   db.emailRows.clear();
+  db.emailReadFails = false;
   db.booking = null;
   db.links.clear();
   linkCore.next = "sent";
@@ -423,15 +431,21 @@ describe("CP-6: a split guest portion's payment link", () => {
     expect(linkCore.sends).toEqual([]);
     expect(everyLiveUnemailedLinkIsOwed()).toBe(true);
 
-    // The next sweep: the old link's marker has moved on (a newer link, owed in its own right), and the new link's is recovered.
+    // The next sweep: the old link's marker has moved on (a newer link, owed in its own right); the new link's waits for its re-issue, due six hours after its mint.
     vi.setSystemTime(new Date(NOW.getTime() + 2 * HOUR));
     await sweep(SPLIT_GUEST_PAYMENT_LINK_NOTICE_DELIVERERS, new Date(NOW.getTime() + 2 * HOUR));
+    expect(everyLiveUnemailedLinkIsOwed()).toBe(true);
+    expect(linkCore.sends).toEqual([]);
+    expect([...owed.store.rows.values()].map((row) => row.subjectId)).toEqual(["pl_re_1"]);
+
+    vi.setSystemTime(new Date(NOW.getTime() + 7 * HOUR));
+    await sweep(SPLIT_GUEST_PAYMENT_LINK_NOTICE_DELIVERERS, new Date(NOW.getTime() + 7 * HOUR));
     expect(everyLiveUnemailedLinkIsOwed()).toBe(true);
     expect(linkCore.sends).toEqual([{ token: "tok_re_2", key: "pl_re_2" }]);
     expect(owed.store.rows.size).toBe(0);
   });
 
-  it("a second stop on the new link's own send (it throws before its row) keeps that link's marker, and the next sweep sends again", async () => {
+  it("a second stop on the new link's own send (it throws before its row) keeps that link's marker, and its re-issue sends again when due", async () => {
     await owe();
     vi.setSystemTime(new Date(NOW.getTime() + HOUR));
     linkCore.next = "throw-before-row";
@@ -440,8 +454,8 @@ describe("CP-6: a split guest portion's payment link", () => {
     expect(everyLiveUnemailedLinkIsOwed()).toBe(true);
 
     linkCore.next = "sent";
-    vi.setSystemTime(new Date(NOW.getTime() + 2 * HOUR));
-    await sweep(SPLIT_GUEST_PAYMENT_LINK_NOTICE_DELIVERERS, new Date(NOW.getTime() + 2 * HOUR));
+    vi.setSystemTime(new Date(NOW.getTime() + 7 * HOUR));
+    await sweep(SPLIT_GUEST_PAYMENT_LINK_NOTICE_DELIVERERS, new Date(NOW.getTime() + 7 * HOUR));
     expect(linkCore.sends.at(-1)).toEqual({ token: "tok_re_2", key: "pl_re_2" });
     expect(owed.store.rows.size).toBe(0);
   });
@@ -480,26 +494,85 @@ describe("CP-6: a split guest portion's payment link", () => {
     expect(next!.payload).toEqual({ bookingId: "child_1", originAt: first.eventAt.getTime(), recoveries: 1 });
   });
 
-  it("a send that always throws before its row ends in exactly one officers' alert at seven days from the first mint, with at most three re-issues (round 2, item 1)", async () => {
+  /** Sweep every half hour, as the email retry job does, from the first due sweep to `untilMs` after the first mint; `clearAfterMs` ends the fault then. */
+  async function sweepEveryHalfHour(untilMs: number, clearAfterMs = Number.POSITIVE_INFINITY) {
+    for (let at = NOW.getTime() + 31 * MINUTE; at <= NOW.getTime() + untilMs; at += 30 * MINUTE) {
+      linkCore.next = at - NOW.getTime() >= clearAfterMs ? "sent" : "throw-before-row";
+      vi.setSystemTime(new Date(at));
+      await sweep(SPLIT_GUEST_PAYMENT_LINK_NOTICE_DELIVERERS, new Date(at));
+    }
+  }
+  const deliveredAt = () => {
+    const sent = [...db.emailRows.entries()].find(([, row]) => row.status === "SENT");
+    return sent ? sent[1].lastAttemptAt.getTime() - NOW.getTime() : null;
+  };
+
+  it("a permanent fault (every send throws before its row) mints six links in seven days on the schedule, ends in exactly one officers' alert at seven days from the first mint, and leaves no live link (round 3, item 1)", async () => {
     const first = await owe();
-    linkCore.next = "throw-before-row";
     const alertedAt: number[] = [];
     alerts.unsent.mockImplementation(async () => {
       alertedAt.push(Date.now());
       return SENT;
     });
-    // Sweep every half hour for eight days, as the email retry job does.
-    for (let at = NOW.getTime() + 31 * MINUTE; at <= NOW.getTime() + 8 * DAY; at += 30 * MINUTE) {
-      vi.setSystemTime(new Date(at));
-      await sweep(SPLIT_GUEST_PAYMENT_LINK_NOTICE_DELIVERERS, new Date(at));
-    }
 
-    expect(reissue.fn).toHaveBeenCalledTimes(3);
-    expect(db.links.size).toBe(4);
+    await sweepEveryHalfHour(8 * DAY);
+
+    // Re-issues at 31 minutes, then 6, 24, 48 and 48 hours after each previous mint: 0.5 h, 6.5 h, 30.5 h, 78.5 h and 126.5 h.
+    expect(reissue.fn).toHaveBeenCalledTimes(5);
+    expect(db.links.size).toBe(6);
     expect(alertedAt).toHaveLength(1);
     expect(alertedAt[0]! - first.eventAt.getTime()).toBeGreaterThan(7 * DAY);
     expect(alertedAt[0]! - first.eventAt.getTime()).toBeLessThanOrEqual(7 * DAY + 30 * MINUTE);
+    expect(live()).toEqual([]);
     expect(owed.store.rows.size).toBe(0);
+  });
+
+  it("a fault that clears after 3 hours: the member is emailed at the 6-hour re-issue", async () => {
+    await owe();
+
+    await sweepEveryHalfHour(2 * DAY, 3 * HOUR);
+
+    expect(reissue.fn).toHaveBeenCalledTimes(2);
+    expect(linkCore.sends.at(-1)).toEqual({ token: "tok_re_2", key: "pl_re_2" });
+    expect(deliveredAt()).toBe(6 * HOUR + 31 * MINUTE);
+    expect(alerts.unsent).not.toHaveBeenCalled();
+    expect(owed.store.rows.size).toBe(0);
+  });
+
+  it("a fault that clears after 30 hours: the member is emailed at the next due re-issue after it clears", async () => {
+    await owe();
+
+    await sweepEveryHalfHour(4 * DAY, 30 * HOUR);
+
+    expect(reissue.fn).toHaveBeenCalledTimes(3);
+    expect(linkCore.sends.at(-1)).toEqual({ token: "tok_re_3", key: "pl_re_3" });
+    expect(deliveredAt()).toBe(30 * HOUR + 31 * MINUTE);
+    expect(alerts.unsent).not.toHaveBeenCalled();
+  });
+
+  it("an email row that cannot be read is 'do not know': the marker is held and nothing is re-issued or revoked this sweep (round 3, item 3)", async () => {
+    await owe();
+    db.emailReadFails = true;
+    vi.setSystemTime(new Date(NOW.getTime() + HOUR));
+    await sweep(SPLIT_GUEST_PAYMENT_LINK_NOTICE_DELIVERERS, new Date(NOW.getTime() + HOUR));
+
+    expect(reissue.fn).not.toHaveBeenCalled();
+    expect(revokePaymentLinkById).not.toHaveBeenCalled();
+    expect(alerts.unsent).not.toHaveBeenCalled();
+    expect([...owed.store.rows.values()].map((row) => row.subjectId)).toEqual([LINK]);
+  });
+
+  it("holds a marker whose next re-issue is not yet due, without clearing it", async () => {
+    await owe();
+    linkCore.next = "throw-before-row";
+    vi.setSystemTime(new Date(NOW.getTime() + HOUR));
+    await sweep(SPLIT_GUEST_PAYMENT_LINK_NOTICE_DELIVERERS, new Date(NOW.getTime() + HOUR));
+
+    vi.setSystemTime(new Date(NOW.getTime() + 3 * HOUR));
+    await sweep(SPLIT_GUEST_PAYMENT_LINK_NOTICE_DELIVERERS, new Date(NOW.getTime() + 3 * HOUR));
+
+    expect(reissue.fn).toHaveBeenCalledTimes(1);
+    expect([...owed.store.rows.values()].map((row) => row.subjectId)).toEqual(["pl_re_1"]);
   });
 
   it("keeps the marker when the re-issue throws before committing, for a later sweep", async () => {
@@ -538,6 +611,8 @@ describe("CP-6: a split guest portion's payment link", () => {
     expect(reissue.fn).not.toHaveBeenCalled();
     expect(alerts.unsent).toHaveBeenCalledTimes(1);
     expect(alerts.unsent).toHaveBeenCalledWith(expect.objectContaining({ notice: "split-guest-payment-link", bookingId: "child_1" }));
+    // Round 3, item 1: the never-emailed link is revoked, so it cannot stop the job's next extension.
+    expect(db.links.get(LINK)!.revokedAt).not.toBeNull();
 
     alerts.unsent.mockClear();
     await owe();
@@ -545,6 +620,24 @@ describe("CP-6: a split guest portion's payment link", () => {
     db.emailRows.set(splitGuestPaymentLinkEmailLogId(LINK), { status: "SENT", attempts: 1, lastAttemptAt: NOW, htmlBody: null, bookingRetryHtmlBody: null });
     await sweep(SPLIT_GUEST_PAYMENT_LINK_NOTICE_DELIVERERS, new Date(NOW.getTime() + HOUR));
     expect(alerts.unsent).not.toHaveBeenCalled();
+  });
+
+  it("at the cut-off, a revoke that fails keeps the marker and sends no alert yet; the next sweep revokes and alerts once (round 3, item 1)", async () => {
+    await owe();
+    const late = new Date(NOW.getTime() + 7 * DAY + HOUR);
+    vi.setSystemTime(late);
+    vi.mocked(revokePaymentLinkById).mockRejectedValueOnce(new Error("db down"));
+
+    await sweep(SPLIT_GUEST_PAYMENT_LINK_NOTICE_DELIVERERS, late);
+    expect(alerts.unsent).not.toHaveBeenCalled();
+    expect([...owed.store.rows.values()].map((row) => row.subjectId)).toEqual([LINK]);
+
+    const later = new Date(late.getTime() + HOUR);
+    vi.setSystemTime(later);
+    await sweep(SPLIT_GUEST_PAYMENT_LINK_NOTICE_DELIVERERS, later);
+    expect(alerts.unsent).toHaveBeenCalledTimes(1);
+    expect(db.links.get(LINK)!.revokedAt).not.toBeNull();
+    expect(owed.store.rows.size).toBe(0);
   });
 
   it("past seven days, with the check-in day still to come, alerts the officers once (D10)", async () => {

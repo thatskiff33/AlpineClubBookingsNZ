@@ -52,15 +52,21 @@
  *   and the job's next extension mints and sends once the switch is off again;
  * - a chain of re-issues is one notice (round 2, item 1): each new link's marker
  *   carries the chain's first mint (`originAt`) and how many re-issues it has
- *   had (`recoveries`). A chain re-issues at most `LINK_RECOVERY_LIMIT` (3)
- *   times, so a fault that keeps every send failing mints at most four links
- *   in all, not one each half hour; past the limit the marker waits for its
- *   cut-off, and officers are alerted then;
+ *   had (`recoveries`). Re-issues are spaced on a schedule that grows with the
+ *   chain (`linkReissueSpacingMs`, round 3, item 1): the first at the sweep's
+ *   usual wait, then 6 hours, 24 hours and 48 hours after the previous mint,
+ *   and every 48 hours after that. A marker whose next re-issue is not yet due
+ *   is held, not cleared. So a fault that keeps every send failing mints six
+ *   links in seven days, not one each half hour, and a fault that clears after
+ *   hours or days is retried within a day or two of clearing;
  * - the cut-off (owner decision D10): the link's own expiry (the end of the
  *   check-in day), or seven days after the chain's first mint, whichever comes
- *   first. Past it, unless the email reached the member after all, the
- *   officers are alerted once ("Booking email not sent"). A link that was used,
- *   or a booking no longer pending, has moved on and raises no alert.
+ *   first. Past it, unless the email reached the member after all, the chain's
+ *   current link is revoked by id and the officers are alerted once ("Booking
+ *   email not sent"), so no live, never-emailed, unowed link is left to stop the
+ *   job's next extension from minting and sending one, as before #5433 (round
+ *   3, item 1). A link that was used, or a booking no longer pending, has moved
+ *   on and raises no alert.
  * One email per link: each link's email is keyed by that link. A member is
  * sent a second link only after the first was never delivered.
  *
@@ -114,8 +120,22 @@ const BOOKING_ID = "bookingId";
 const ORIGIN_AT = "originAt";
 const RECOVERIES = "recoveries";
 
-/** How many times one chain may re-issue its link. */
-export const LINK_RECOVERY_LIMIT = 3;
+/**
+ * How long after the chain's previous mint (this marker's `eventAt`) its next
+ * re-issue may happen, by how many re-issues the chain has had already. The
+ * first waits only the sweep's usual 30 minutes (most failures are one-off);
+ * then 6 hours and 24 hours, so a fault lasting hours or a day is retried soon
+ * after it clears without minting a link each half hour; then 48 hours, the
+ * job's own hold-extension cadence (`REQUEST_HOLD_EXTENSION_MS`), at which it
+ * re-minted before #5433. One schedule, no fixed count: the cut-off (seven
+ * days, or the link's expiry) is what ends a chain.
+ */
+const LINK_REISSUE_SPACING_MS: readonly number[] = [0, 6 * 60 * 60 * 1000, 24 * 60 * 60 * 1000];
+const LINK_REISSUE_SPACING_AFTER_MS = 48 * 60 * 60 * 1000;
+
+export function linkReissueSpacingMs(recoveries: number): number {
+  return LINK_REISSUE_SPACING_MS[recoveries] ?? LINK_REISSUE_SPACING_AFTER_MS;
+}
 
 /** A chain of links owed as one notice: when its first link was minted, and how many re-issues followed. */
 export interface SplitGuestPaymentLinkChain {
@@ -187,7 +207,7 @@ export interface SplitGuestPaymentLinkSubject {
 }
 
 /** What one send of a link's email came to. */
-type LinkSendResult = "delivered" | "revoked" | "revoke-failed" | "threw-before-row";
+type LinkSendResult = "delivered" | "revoked" | "revoke-failed" | "kept-live";
 
 /**
  * The email with the raw token, keyed by the link when it is owed, then main's
@@ -244,7 +264,10 @@ async function sendLinkEmail({ booking, link, format }: SplitGuestPaymentLinkSub
   if (delivered) return "delivered";
   // Round 2, item 1: thrown before its keyed row, the link stays live and owed;
   // the sweep's re-issue revokes it, and the job's extension mints no other.
-  if (threw && idempotencyKey !== undefined && (await linkEmailNeverRecorded(link.paymentLinkId, booking.id, job))) return "threw-before-row";
+  // Round 3, item 3: a row that cannot be read is "do not know": also kept live
+  // and owed, and the sweep reads the row again before it re-issues anything,
+  // so an email that did go (its row SENT, or QUEUED) is never revoked by it.
+  if (threw && idempotencyKey !== undefined && (await linkEmailRowAfterThrow(link.paymentLinkId, booking.id, job)) !== "recorded") return "kept-live";
   let revoked = true;
   try {
     await revokePaymentLinkById(link.paymentLinkId);
@@ -258,13 +281,13 @@ async function sendLinkEmail({ booking, link, format }: SplitGuestPaymentLinkSub
   return revoked ? "revoked" : "revoke-failed";
 }
 
-/** True when the link's keyed email has no row (or its row cannot be read, which the sweep then settles). Never throws. */
-async function linkEmailNeverRecorded(paymentLinkId: string, bookingId: string, job: string): Promise<boolean> {
+/** After a send threw: whether the link's keyed email has a row, has none, or cannot be read ("unknown"). Never throws. */
+async function linkEmailRowAfterThrow(paymentLinkId: string, bookingId: string, job: string): Promise<"recorded" | "none" | "unknown"> {
   try {
-    return (await readOwedMemberEmail(splitGuestPaymentLinkEmailLogId(paymentLinkId))).state === "not-sent";
+    return (await readOwedMemberEmail(splitGuestPaymentLinkEmailLogId(paymentLinkId))).state === "not-sent" ? "none" : "recorded";
   } catch (err) {
-    logger.error({ err, bookingId, paymentLinkId, job }, "Failed to read a split guest payment link's email row after its send threw; it stays owed");
-    return true;
+    logger.error({ err, bookingId, paymentLinkId, job }, "Failed to read a split guest payment link's email row after its send threw; the link stays live and owed, and a later run reads it again");
+    return "unknown";
   }
 }
 
@@ -369,7 +392,7 @@ async function linkEmailTold(paymentLinkId: string): Promise<boolean> {
 async function recoverSplitGuestPaymentLink(
   { link, format }: SplitGuestPaymentLinkSweepSubject,
   marker: OwedNoticeMarker,
-  { job }: OwedNoticeRun & { idempotencyKey: string },
+  { job, now }: OwedNoticeRun & { idempotencyKey: string },
 ): Promise<OwedNoticeOutcome> {
   const chain = splitGuestPaymentLinkChainOf(marker);
   const log = { bookingId: link.bookingId, paymentLinkId: link.id, key: marker.id, recoveries: chain.recoveries, job };
@@ -382,9 +405,9 @@ async function recoverSplitGuestPaymentLink(
     logger.error({ err, ...log }, "Failed to read a split guest payment link's email state; it stays owed");
     return "threw";
   }
-  const held = linkRecoveryHeld(chain);
+  const held = linkRecoveryHeld(chain, marker, now);
   if (held) {
-    logger.warn({ ...log, why: held }, "An owed split guest payment link is not re-issued yet; it stays owed until its cut-off");
+    logger.info({ ...log, why: held }, "An owed split guest payment link's next re-issue is not due yet; it stays owed");
     return "threw";
   }
   try {
@@ -413,15 +436,20 @@ async function recoverSplitGuestPaymentLink(
   }
 }
 
-/** Why a chain may not re-issue again, or null when it may: at most `LINK_RECOVERY_LIMIT` re-issues. */
-export function linkRecoveryHeld(chain: SplitGuestPaymentLinkChain): string | null {
-  return chain.recoveries >= LINK_RECOVERY_LIMIT ? `the chain has been re-issued ${chain.recoveries} times` : null;
+/** Why the chain's next re-issue is not due yet, or null when it is: spaced from the previous mint (this marker's) by `linkReissueSpacingMs`. */
+export function linkRecoveryHeld(chain: SplitGuestPaymentLinkChain, marker: Pick<OwedNoticeMarker, "eventAt">, now: Date): string | null {
+  const dueAt = marker.eventAt.getTime() + linkReissueSpacingMs(chain.recoveries);
+  return now.getTime() < dueAt ? `re-issue ${chain.recoveries + 1} is due at ${new Date(dueAt).toISOString()}` : null;
 }
 
 /**
  * Past the cut-off (owner decision D10: the link's expiry at the end of the
- * check-in day, or seven days after the chain's first mint): alert the officers once, unless
- * the email did reach the member after all. Never throws.
+ * check-in day, or seven days after the chain's first mint): unless the email
+ * did reach the member after all, revoke the chain's current link by id, so no
+ * live, never-emailed, unowed link stops the job's next extension from minting
+ * and sending one, then alert the officers once. A revoke that fails keeps the
+ * marker for the next sweep, which revokes again (the alert's once-ever claim
+ * stops a second alert). Never throws.
  */
 async function splitGuestPaymentLinkPastCutoff(
   { link, booking }: SplitGuestPaymentLinkSweepSubject,
@@ -435,7 +463,13 @@ async function splitGuestPaymentLinkPastCutoff(
     logger.error({ err, ...log }, "Failed to read a split guest payment link's email state past its cut-off");
     return "threw";
   }
-  logger.error(log, "A split guest payment link's email passed its cut-off unsent; alerting the officers once");
+  try {
+    await revokePaymentLinkById(link.id);
+  } catch (err) {
+    logger.error({ err, ...log }, "Failed to revoke an owed split guest payment link at its cut-off; it stays owed for the next run");
+    return "threw";
+  }
+  logger.error(log, "A split guest payment link's email passed its cut-off unsent; its link is revoked and the officers are alerted once");
   return alertOfficersBookingNoticeUnsent(marker, "split-guest-payment-link", booking);
 }
 
