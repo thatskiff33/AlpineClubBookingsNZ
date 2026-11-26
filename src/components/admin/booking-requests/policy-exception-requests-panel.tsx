@@ -191,6 +191,43 @@ function statusBadgeClass(status: string) {
   return "border-border bg-muted text-muted-foreground";
 }
 
+/**
+ * The queue's filter and page, opened from the address and written back to it
+ * (#5247), like the other officer queues (INV-OPS-020): a reload or a shared
+ * link lands on the same filter and page, and an unknown filter opens
+ * Requested. `currentPath` is that address, for Back links off a card.
+ */
+function usePolicyExceptionQueueAddress(basePath: string) {
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const [filter, setFilter] = useState<ExceptionQueueStatusFilter>(() =>
+    readPolicyExceptionQueueFilter(searchParams),
+  );
+  const queuePage = useAdminQueuePage({
+    filterKey: filter,
+    initialPage: parseAdminListPageParam(searchParams.get("page")),
+  });
+  // `basePath` carries the tab (`?tab=exceptions`); its query is held fixed and
+  // the filter and page are written beside it.
+  const [basePathname = basePath, baseQuery = ""] = basePath.split("?", 2);
+  const currentPath = buildBookingRequestDatasetPath({
+    basePath: basePathname,
+    currentSearch: searchParams.toString(),
+    fixedSearchParams: Object.fromEntries(new URLSearchParams(baseQuery)),
+    status: filter,
+    defaultStatus: DEFAULT_POLICY_EXCEPTION_QUEUE_FILTER,
+    recordKey: "requestId",
+    recordId: null,
+    page: queuePage.page,
+  });
+
+  useEffect(() => {
+    router.replace(currentPath, { scroll: false });
+  }, [currentPath, router]);
+
+  return { filter, setFilter, queuePage, currentPath };
+}
+
 export interface PolicyExceptionRequestsPanelProps {
   basePath?: string;
   showHeading?: boolean;
@@ -209,38 +246,10 @@ export function PolicyExceptionRequestsPanel({
    * read from the viewer's own clock.
    */
   const clubTime = useClubTime();
-  const router = useRouter();
-  const searchParams = useSearchParams();
   const [items, setItems] = useState<QueueItem[]>([]);
-  // #5247: the filter and page open from the address and are written back to
-  // it, like the other officer queues (INV-OPS-020), so a reload or a shared
-  // link lands on the same filter and page. An unknown filter opens Requested.
-  const [filter, setFilter] = useState<ExceptionQueueStatusFilter>(() =>
-    readPolicyExceptionQueueFilter(searchParams),
-  );
+  const { filter, setFilter, queuePage, currentPath } = usePolicyExceptionQueueAddress(basePath);
   const [loadedFilter, setLoadedFilter] = useState<ExceptionQueueStatusFilter | null>(null);
-  const queuePage = useAdminQueuePage({
-    filterKey: filter,
-    initialPage: parseAdminListPageParam(searchParams.get("page")),
-  });
   const { page, receive } = queuePage;
-  // `basePath` carries the tab (`?tab=exceptions`); its query is held fixed and
-  // the filter and page are written beside it.
-  const [basePathname = basePath, baseQuery = ""] = basePath.split("?", 2);
-  const currentPath = buildBookingRequestDatasetPath({
-    basePath: basePathname,
-    currentSearch: searchParams.toString(),
-    fixedSearchParams: Object.fromEntries(new URLSearchParams(baseQuery)),
-    status: filter,
-    defaultStatus: DEFAULT_POLICY_EXCEPTION_QUEUE_FILTER,
-    recordKey: "requestId",
-    recordId: null,
-    page,
-  });
-
-  useEffect(() => {
-    router.replace(currentPath, { scroll: false });
-  }, [currentPath, router]);
   const [loading, setLoading] = useState(true);
   const [loadFailed, setLoadFailed] = useState(false);
   const [error, setError] = useState("");
