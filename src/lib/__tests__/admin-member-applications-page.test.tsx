@@ -29,6 +29,7 @@ vi.mock("next-auth/react", () => ({
 // #4960: the page mirrors its filter and page into the URL.
 const navigation = vi.hoisted(() => ({ search: "", replace: vi.fn() }));
 vi.mock("next/navigation", () => ({
+  usePathname: () => "/",
   useRouter: () => ({ replace: navigation.replace, push: vi.fn() }),
   useSearchParams: () => new URLSearchParams(navigation.search),
 }));

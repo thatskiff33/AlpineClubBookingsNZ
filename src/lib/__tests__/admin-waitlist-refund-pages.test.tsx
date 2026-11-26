@@ -27,6 +27,7 @@ const toastSuccess = vi.hoisted(() => vi.fn());
 vi.mock("sonner", () => ({ toast: { success: toastSuccess, error: vi.fn() } }));
 
 vi.mock("next/navigation", () => ({
+  usePathname: () => "/",
   useRouter: () => ({
     replace: mocks.routerReplace,
     push: vi.fn(),

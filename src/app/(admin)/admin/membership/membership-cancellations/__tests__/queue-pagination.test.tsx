@@ -14,6 +14,7 @@ import type { ChangeEvent, ReactNode } from "react";
 const navigation = vi.hoisted(() => ({ search: "", replace: vi.fn() }));
 
 vi.mock("next/navigation", () => ({
+  usePathname: () => "/",
   useRouter: () => ({ replace: navigation.replace, push: vi.fn(), refresh: vi.fn() }),
   useSearchParams: () => new URLSearchParams(navigation.search),
 }));

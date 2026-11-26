@@ -34,6 +34,7 @@ const replace = vi.fn((path: string) => {
 const push = vi.fn();
 
 vi.mock("next/navigation", () => ({
+  usePathname: () => "/",
   useRouter: () => ({ replace, push }),
   useSearchParams: () => currentSearchParams,
 }));

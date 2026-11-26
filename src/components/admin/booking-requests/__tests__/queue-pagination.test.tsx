@@ -20,6 +20,7 @@ import { PINNED_QUEUE_RECORD_NOTE } from "@/lib/admin-list-page";
 const navigation = vi.hoisted(() => ({ search: "" }));
 
 vi.mock("next/navigation", () => ({
+  usePathname: () => "/",
   useRouter: () => ({ replace: vi.fn(), push: vi.fn(), refresh: vi.fn() }),
   useSearchParams: () => new URLSearchParams(navigation.search),
 }));
