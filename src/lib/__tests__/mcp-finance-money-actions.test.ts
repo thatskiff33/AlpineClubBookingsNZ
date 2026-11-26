@@ -411,13 +411,15 @@ describe("get_member_credits", () => {
     h.getMemberCreditBalance.mockResolvedValue(4_000);
     h.getAdminMemberCreditHistory.mockResolvedValue(HISTORY);
     h.getPendingAdminAdjustmentRequests.mockResolvedValue(PENDING);
+    const corrections = [{ id: "correction-1", requestId: "adj-3", amountCents: -2_500, description: "Granted by mistake", createdAt: "2026-06-30T04:00:00.000Z" }];
+    h.getPendingCreditDeductionCorrections.mockResolvedValue(corrections);
     const { connection, browser } = await expectActionContract({
       actionId: "get_member_credits",
       handler: getMemberCredits,
       args: { id: "member-7" },
     });
     expect(JSON.stringify(connection)).not.toMatch(/xero-cn-uuid|cash-credit-row|4b1c2d3e/);
-    expect(browser).toEqual({ balanceCents: 4_000, history: HISTORY, pendingRequests: PENDING, pendingCorrections: [] });
+    expect(browser).toEqual({ balanceCents: 4_000, history: HISTORY, pendingRequests: PENDING, pendingCorrections: corrections });
     // Each read is for the member the app named, not the officer calling.
     for (const read of [h.getMemberCreditBalance, h.getAdminMemberCreditHistory, h.getPendingAdminAdjustmentRequests, h.getPendingCreditDeductionCorrections]) {
       expect(read).toHaveBeenCalledWith("member-7");
