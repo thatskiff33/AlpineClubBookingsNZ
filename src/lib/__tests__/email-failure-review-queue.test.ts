@@ -25,6 +25,7 @@ type EmailRow = {
   bookingRetryHtmlBody: string | null;
   bookingId: string | null;
   bookingRecipientMemberId: string | null;
+  handoverState: "PENDING" | "STARTED" | "UNCONFIRMED" | null;
 };
 type AuditRow = {
   action: string;
@@ -105,6 +106,7 @@ function exhausted(id: string, minutes: number, overrides: Partial<EmailRow> = {
     bookingRetryHtmlBody: null,
     bookingId: null,
     bookingRecipientMemberId: null,
+    handoverState: null,
     ...overrides,
   };
 }
@@ -273,6 +275,22 @@ describe("getExhaustedEmailFailureReviewQueue (#4963)", () => {
       "no-booking": "retired",
       "booking-deleted": "retired",
     });
+  });
+
+  // #5298 (INV-INT-043): the stranded-email sweep's flag reaches the officer.
+  it("says which rows may already have reached their recipient", async () => {
+    store.emails.push(
+      exhausted("unconfirmed", 60, { handoverState: "UNCONFIRMED" }),
+      exhausted("never-sent", 50, { handoverState: "PENDING", htmlBody: null }),
+      exhausted("retried", 40, { handoverState: "STARTED" }),
+      exhausted("legacy", 30),
+    );
+
+    const queue = await getExhaustedEmailFailureReviewQueue();
+
+    expect(
+      Object.fromEntries(queue.failures.map((failure) => [failure.id, failure.deliveryUnconfirmed])),
+    ).toEqual({ unconfirmed: true, "never-sent": false, retried: false, legacy: false });
   });
 
   it("never reads a retained body into the queue", async () => {

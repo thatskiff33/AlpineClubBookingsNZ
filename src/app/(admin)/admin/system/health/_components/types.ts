@@ -103,6 +103,8 @@ interface ExhaustedEmailFailure {
   recovery: ExhaustedEmailFailureRecovery;
   /** Booking page link for a never-kept booking email; null otherwise. */
   freshCopyHref: string | null;
+  /** #5298: the app stopped while sending it, so it may already have arrived. */
+  deliveryUnconfirmed: boolean;
   reviewedAt: string | null;
   reviewedById: string | null;
   reviewNote: string | null;

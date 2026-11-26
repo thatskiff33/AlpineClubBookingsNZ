@@ -35,6 +35,10 @@ const NO_RESEND_GUIDANCE: Record<
     "This message can't be resent from here: no copy of it was kept, its recipient was hidden in the log, the booking it was about has been deleted, or it was retired for safety (such as an old booking email that names no booking). Follow the failure reason, and contact the member directly if they still need it.",
 };
 
+/** #5298 (INV-INT-043): a send the app stopped part-way through. */
+const UNCONFIRMED_DELIVERY_NOTE =
+  "May already have been delivered: the app stopped while sending this email, so it may have reached the recipient. Check with them before you try again.";
+
 function EmailFailureLinks({ failure }: { failure: ExhaustedEmailFailure }) {
   if (!failure.bookingId && !failure.bookingRecipientMemberId) return null;
 
@@ -141,13 +145,18 @@ export function EmailDeliverabilitySection({
     }
   }
 
-  async function requeueEmailFailure(id: string, to: string) {
+  async function requeueEmailFailure(failure: ExhaustedEmailFailure) {
     if (!canEdit) return;
+    const { id, to } = failure;
+    const handBack =
+      "It is handed back to the email retry job and goes out on its next run, usually within 30 minutes. The job checks the recipient, the suppression list and the booking's No emails setting again before it sends.";
     if (
       !(await confirm({
         title: `Try sending the email to ${to} again?`,
-        description:
-          "It is handed back to the email retry job and goes out on its next run, usually within 30 minutes. The job checks the recipient, the suppression list and the booking's No emails setting again before it sends.",
+        // #5298: the recipient may already have it, so say so before sending again.
+        description: failure.deliveryUnconfirmed
+          ? `${UNCONFIRMED_DELIVERY_NOTE} If it did arrive, ${to} will receive it twice. ${handBack}`
+          : handBack,
         confirmLabel: "Try again",
       }))
     ) {
@@ -458,7 +467,7 @@ export function EmailDeliverabilitySection({
                         <Button
                           variant="secondary"
                           size="sm"
-                          onClick={() => requeueEmailFailure(failure.id, failure.to)}
+                          onClick={() => requeueEmailFailure(failure)}
                           disabled={requeueingEmailFailureId === failure.id || !canEdit}
                           title={canEdit === false ? ADMIN_VIEW_ONLY_ACTION_REASON : undefined}
                           className="h-7 gap-1.5 px-2.5"
@@ -563,6 +572,11 @@ function EmailFailureRowNotes({ failure }: { failure: ExhaustedEmailFailure }) {
   return (
     <>
       <EmailFailureLinks failure={failure} />
+      {failure.deliveryUnconfirmed ? (
+        <p className="col-span-full text-xs font-medium text-warning-11">
+          {UNCONFIRMED_DELIVERY_NOTE}
+        </p>
+      ) : null}
       {failure.recovery === "fresh_copy" && failure.freshCopyHref ? (
         <p className="col-span-full text-xs text-muted-foreground">
           This email carries a door code or payment link, so it cannot be retried.{" "}
