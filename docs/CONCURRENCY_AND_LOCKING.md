@@ -6225,12 +6225,16 @@ Since #4993 the release half is shared (`runSavedCardClaimRelease` with
 settle and response around it (`INV-PAY-158`).
 
 The same cron's terminal branch for a permanently unusable saved card (#3268,
-`INV-PAY-054`) runs AFTER `releaseChargeClaim` has committed and holds no lock
-at all: the Stripe detach is a plain provider call outside any transaction that
-gates what follows (a detach failure other than `invalid_request_error` rethrows
-before either write), and the two `updateMany` clears
-(`Payment.stripePaymentMethodId`, `PaymentTransaction.paymentMethodId`, both
-matched by the exact pm id) are unlocked single-field writes: the setup-intent
+`INV-PAY-054`) runs AFTER `releaseChargeClaim` has committed and holds no
+advisory lock at all: the Stripe detach is a plain provider call outside any
+transaction that gates what follows (a detach failure other than
+`invalid_request_error` rethrows before either write), and the two `updateMany`
+clears (`Payment.stripePaymentMethodId`, `PaymentTransaction.paymentMethodId`,
+both matched by the exact pm id) are single-field writes that take no advisory
+key. Since #5433 PR 4 they run in one short transaction whose last write is the
+two notices' owed markers (`recordSavedCardUnusableNoticesOwed`), with no read,
+provider call or settings query in it, so the notices commit or roll back with
+the clear; the transaction's row locks are the two updates' own. The setup-intent
 route already writes `Payment.stripePaymentMethodId` unlocked, and nothing
 writes `PaymentTransaction.paymentMethodId` after the row is created. The race
 that matters is harmless: a charge that read the pm a moment before the clear is
@@ -6320,7 +6324,11 @@ switch-to-internet-banking hold, the officer's held-request conversion
 `xero-inbound/invoice-paid-effects.ts` is the in-tree precedent for this
 composition.
 
-The confirm-pending cron's capacity bump (`resolveHoldWindowUnderLock`) also
+The confirm-pending cron's capacity bump (`resolveHoldWindowUnderLock`) writes
+its `BUMPED` booking event inside its own transaction since #5433 PR 4: one
+direct, un-swallowed `bookingEvent.create` with `occurredAt` set to the bump's
+own time, after the guarded claim and the cancellation ledger lines and before
+the markers, so it commits or rolls back with the bump. It also
 records its two notices as owed (#5407, moved to the owed-notice mechanism by
 #5433, `recordBumpNoticesOwed`): one `OwedNotice` insert of two rows on
 primary keys derived from the kind, the booking, the bump time and the
@@ -6366,6 +6374,26 @@ captured payment for a reason of shape (a database failure of the insert still
 rolls the transaction back, like any write in it). Delivery after the commit and
 the sweep are the bump's, above, with the member's event key
 `<bookingId>:<paidAtMs>`.
+
+The rest of `resolveHoldWindowUnderLock` records its notices the same way
+(#5433 PR 4), each as the last write of the branch that commits the change,
+after its status-guarded claim and every write the branch already made, under
+the `lock(1)` and lodge lock it already holds: the zero-balance `PENDING ->
+PAID` claim, one row of the paid confirmation's kind
+(`recordPaidConfirmationOwedUnlessUnkeyable`); the request-origin and split
+child `PENDING -> CANCELLED` terminal cancels, two rows each
+(`recordHoldEndedNoticesOwed`); and the split child's hold extension, one row
+keyed by the payment link it just minted (`recordSplitGuestPaymentLinkOwed`),
+written only when the mint returned a link. Each asks the store's rule first
+without a write, so an input that cannot key a marker is an error log and the
+branch commits. A lost claim returns `already_processed` before any of them,
+so it writes no marker. No advisory key, no change of order or tier, no read,
+and no provider call or settings query is added; `createMany` with
+`skipDuplicates`, as above. The officers' kinds are at least once, the members'
+at most one `EmailLog` row per event. The sweep's recovery of a payment link
+re-issues it through `issueSplitGuestPaymentLink`, the booking page's own
+path: its transaction takes the lodge lock alone, as it always has, and the
+sweep holds nothing when it calls it.
 
 Officer approval of a held generic request pre-reads only the held booking's immutable concrete
 `lodgeId`, then takes global -> that lodge -> the held booking's row (#4857,

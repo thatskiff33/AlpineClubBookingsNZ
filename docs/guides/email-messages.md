@@ -539,11 +539,62 @@ you want both reworded; editing only one leaves the other on its built-in text.
 >
 > Nothing changes for the other ways a booking is confirmed: an officer's
 > charge of a saved card, an officer's confirmation of pending guests (which
-> still sends only when the officer asks), a zero-balance confirmation, a bank
-> transfer, and the recovery of a card payment found already taken. During the
+> still sends only when the officer asks), a bank transfer, and the recovery
+> of a card payment found already taken. A zero-balance confirmation follows
+> the same rules since the next note. During the
 > switch to this version a server still running the version before it sends
 > the confirmation as it always did, so an owner can be sent two: one by this
 > version after Stripe's notice, and one by the older server's scheduled job.
+
+> **Upgrade note (#5433, the rest of the hold-deadline job).** The job that
+> acts on pending bookings when their hold runs out no longer loses an email
+> if the app is interrupted after the booking change is saved and before the
+> email goes. A later run of the email retry job (every 30 minutes) sends it
+> instead, so it can arrive late, usually within an hour, and the member is not
+> sent it twice. That covers:
+>
+> - the **Booking Confirmed** email for a booking confirmed with nothing to
+>   pay, now on the same rules as a card payment's (above), and built by the
+>   same email: a booking whose non-member guests are charged separately gets
+>   the paragraph about them, and an owner who cannot be emailed raises the
+>   **Booking confirmation not sent** alert;
+> - the requester's **Booking Request Payment Expired** email and the
+>   officers' **Admin Booking Request Hold Cancelled** notice, when an approved
+>   request booking is still unpaid at the end of its check-in day;
+> - the member's **Split Guest Portion Cancelled** email and the officers'
+>   **Admin Split Settlement Cancelled** notice, when a
+>   split booking's guest portion is still unpaid then;
+> - the **Split Guest Payment Link** email. If it was never
+>   sent, a later run replaces the link with a fresh one and sends that, at
+>   most once per link;
+> - the **Saved Card Charge Failed** email and the officers' **Admin Payment
+>   Failure** alert when a saved card is found unusable. That alert now says the
+>   owner is emailed separately rather than that they have been emailed, and a
+>   delayed copy says Stripe's own message was not kept.
+>
+> A late email is not sent once the booking has moved on: a cancellation
+> notice once the booking is no longer cancelled, a payment link once the
+> booking is paid or cancelled, the link was used or replaced, or the
+> check-in day has ended, and a request for a new card once a card has been
+> saved or the booking is no longer pending. A cancellation notice is tried
+> until the end of the check-out day, the others until the end of the
+> check-in day, and none for more than seven days.
+>
+> What an officer can notice: a new alert, **Booking email not sent**
+> (`admin-booking-notice-unsent`). It is sent once per email when one of the
+> member emails above (other than the confirmation, which has its own alert)
+> could not be sent in time, or did not reach the owner: the send failed, the
+> address bounced or is on the suppression list, or the owner has no address
+> that can be emailed. Its note says which email it was. It goes to officers
+> who receive **Booking review required** alerts, and its wording is
+> editable like the others. No alert is sent for an email the booking's
+> **No emails** switch held back. The reminders officers get while a request
+> booking or a guest portion stays unpaid are unchanged: the next one goes out
+> anyway.
+>
+> During the switch to this version, a server still running the version
+> before it sends these emails as it always did, with nothing kept for a
+> later run.
 
 ## Settings reference
 

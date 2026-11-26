@@ -62,7 +62,9 @@
  * Who owes it: only the three callers that send the confirmation ask the
  * settle to record it (`owesPaidConfirmation`): the Stripe webhook, the
  * confirm-payment route and the confirm-pending job's saved-card charge. The
- * other card doors send none, or only on an officer's choice, as before.
+ * other card doors send none, or only on an officer's choice, as before. The
+ * confirm-pending job's zero-balance confirmation records the same marker at
+ * its own PAID claim (#5433 PR 4, CP-1) and is delivered here too.
  *
  * Locks (`INV-LOCK-001`): nothing here runs inside a transaction or takes an
  * advisory key. The marker joins the settle's transaction under the locks it
