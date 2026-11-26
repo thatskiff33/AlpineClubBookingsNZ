@@ -453,7 +453,6 @@ export async function sendAdminBookingRequestHoldCancelledEmail(data: {
   const baseUrl = process.env.NEXTAUTH_URL || "http://localhost:3000";
   const reviewUrl = `${baseUrl}${adminHref("bookings")}`;
 
-  // #5433 PR 4: returned so the owed notice can tell a reached alert from one nothing will replay.
   return sendToAdmins({
     subject: `Request booking auto-cancelled — unpaid past check-in: ${data.requesterName}`,
     html: await renderEmailHtml(() => adminBookingRequestHoldCancelledTemplate({
@@ -556,7 +555,6 @@ export async function sendAdminSplitSettlementCancelledAlert(data: {
   const baseUrl = process.env.NEXTAUTH_URL || "http://localhost:3000";
   const reviewUrl = `${baseUrl}${adminHref("bookings")}`;
 
-  // #5433 PR 4: returned so the owed notice can tell a reached alert from one nothing will replay.
   return sendToAdmins({
     subject: `Split booking guest portion auto-cancelled — unpaid past check-in: ${data.memberName}`,
     html: await renderEmailHtml(() => adminSplitSettlementCancelledTemplate({

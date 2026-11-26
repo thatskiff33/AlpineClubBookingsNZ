@@ -1,11 +1,23 @@
 /**
- * The email registry's trigger metadata for the officers' alerts raised when
- * an owed notice did not reach the member it was owed to (#5433). Moved out of
+ * The email registry's metadata for the officers' alerts raised when an owed
+ * notice did not reach the member it was owed to (#5433): the tokens an edited
+ * body must keep, and when each alert goes and how often, as the template
+ * editor shows it. Moved out of `REQUIRED_TEMPLATE_TOKENS` and
  * `TEMPLATE_TRIGGER_METADATA` in `email-message-registry.ts`, which is past its
- * size ceiling; that object spreads this one in. Each entry says when the
- * alert goes and how often, as the template editor shows it.
+ * size ceiling; those objects spread these in.
  */
 import type { EmailAuditTemplateName } from "@/lib/email-message-audit-defaults";
+
+/**
+ * The member and the booking link are what an officer acts on; a note token
+ * says which email went unsent and what to do (`{{noticeNote}}` for the
+ * waitlist's, `{{unsentNote}}` for the hold-deadline job's, #5433 PR 4).
+ */
+export const OWED_NOTICE_ALERT_REQUIRED_TOKENS: Partial<Record<EmailAuditTemplateName, string[]>> = {
+  "admin-waitlist-notice-unsent": ["noticeNote", "memberName", "bookingUrl"],
+  "admin-booking-confirmation-unsent": ["memberName", "bookingUrl"],
+  "admin-booking-notice-unsent": ["unsentNote", "memberName", "bookingUrl"],
+};
 
 export const OWED_NOTICE_ALERT_TRIGGERS: Partial<
   Record<EmailAuditTemplateName, { triggerSummary: string; frequency: string }>

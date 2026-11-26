@@ -412,6 +412,22 @@ async function queueXeroInvoice(bookingId: string, logMessage: string) {
   }
 }
 
+/**
+ * #5433 PR 4: the bump's BUMPED event (issue #740), a decision record written
+ * inside the bump's own transaction with a direct, un-swallowed insert (the
+ * `booking-events.ts` exception), so it commits or rolls back with the bump and
+ * a stop after the commit can no longer lose it. Its time is the bump's, set
+ * explicitly (the column's default is the transaction's start), and returned so
+ * the bump's owed notices are keyed and stamped with the same instant.
+ */
+async function writeBumpedEvent(tx: Prisma.TransactionClient, bookingId: string, flagged: boolean): Promise<Date> {
+  const bumpedAt = new Date();
+  await tx.bookingEvent.create({
+    data: { bookingId, type: BookingEventType.BUMPED, occurredAt: bumpedAt, reason: bookingBumpReason(flagged), snapshot: { flagged } },
+  });
+  return bumpedAt;
+}
+
 function triggerWaitlistProcessing(booking: PendingBooking, format: ClubFormat) {
   processWaitlistForDates({
     checkIn: booking.checkIn,
@@ -537,21 +553,7 @@ async function resolveHoldWindowUnderLock(
       // #3611: nothing was paid, so nothing is kept; the stay's ledger lines are
       // reversed if a reversed mark-paid left it confirmed there (lock(1) above).
       await postCancellationLedgerLines({ store: tx, journal, bookingId: booking.id, lodgeId: booking.lodgeId, keptCents: 0, site: "confirm-pending:capacity-bump" });
-      // #5433 PR 4: the BUMPED event (issue #740) is a decision record, written
-      // in the bump's own transaction with a direct, un-swallowed insert (the
-      // `booking-events.ts` exception), so it commits or rolls back with the
-      // bump and a stop after the commit can no longer lose it. Its time is the
-      // bump's, set explicitly: the column's default is the transaction's start.
-      const bumpedAt = new Date();
-      await tx.bookingEvent.create({
-        data: {
-          bookingId: booking.id,
-          type: BookingEventType.BUMPED,
-          occurredAt: bumpedAt,
-          reason: bookingBumpReason(booking.cancelIfGuestsBumped),
-          snapshot: { flagged: booking.cancelIfGuestsBumped },
-        },
-      });
+      const bumpedAt = await writeBumpedEvent(tx, booking.id, booking.cancelIfGuestsBumped);
       // #5407: both notices are owed from this commit until sent; the last write.
       const owed = await recordBumpNoticesOwed(tx, { bookingId: booking.id, flagged: booking.cancelIfGuestsBumped, bumpedAt });
 
@@ -592,8 +594,7 @@ async function resolveHoldWindowUnderLock(
       await writeZeroWorthConfirmPayment(tx, booking.id);
       // #4738: the $0 booking's nights post once, under the won claim's locks.
       await postStoredBookingConfirmationLedgerLines(tx, booking.id, journal);
-      // #5433 PR 4 (CP-1): the confirmation is owed from this commit until
-      // sent, on the card confirmation's kind (owner decision D1); the last write.
+      // #5433 PR 4 (CP-1): owed until sent, on the card confirmation's kind; the last write.
       const paidConfirmation = await recordPaidConfirmationOwedUnlessUnkeyable(tx, booking.id);
 
       return { type: "confirmed_zero", booking, paidConfirmation };
@@ -628,9 +629,8 @@ async function resolveHoldWindowUnderLock(
         // (RELEASE), promo cleanup and link revocation, all in this tx —
         // mirroring the capacity-releasing `bumped` path above. The CANCELLED
         // narrative event and the waitlist wake fire post-commit (the event
-        // must not sit in-tx — see booking-events.ts); the requester email and
-        // one final admin notice are recorded as owed in this tx and delivered
-        // post-commit (#5433 PR 4). A PAID/CONFIRMED booking is never here (not
+        // must not sit in-tx — see booking-events.ts); the two notices are
+        // owed from this tx (#5433 PR 4). A PAID/CONFIRMED booking is never here (not
         // PENDING); the CONVERTED request row is left as the historical record.
         const checkInDayEnded =
           paymentLinkExpiryForCheckIn(booking.checkIn, clubZone).getTime() <=
@@ -739,12 +739,11 @@ async function resolveHoldWindowUnderLock(
         // capacity, so this is bookkeeping + notification: a guarded
         // PENDING -> CANCELLED CAS (count 0 => a payment won the lock seconds
         // earlier: already_processed, safe), then link revocation and bed
-        // reconcile, all in this tx, with the member email and one final admin
-        // notice recorded as owed (#5433 PR 4). The CANCELLED narrative event
-        // fires post-commit (the event must not sit in-tx — see
-        // booking-events.ts), and the owed notices are delivered after it. A
-        // PAID child is never here (not PENDING); the parent is never touched;
-        // no Xero void (an unsettled child has no invoice).
+        // reconcile, all in this tx, with the two notices recorded as owed
+        // (#5433 PR 4). The CANCELLED narrative event fires post-commit (the
+        // event must not sit in-tx — see booking-events.ts). A PAID child is
+        // never here (not PENDING); the parent is never touched; no Xero void
+        // (an unsettled child has no invoice).
         const checkInDayEnded =
           paymentLinkExpiryForCheckIn(booking.checkIn, clubZone).getTime() <=
           now.getTime();
@@ -773,8 +772,7 @@ async function resolveHoldWindowUnderLock(
           // #3611: nothing was paid, so nothing is kept; the stay's ledger lines are
           // reversed if a reversed mark-paid left it confirmed there (lock(1) above).
           await postCancellationLedgerLines({ store: tx, journal, bookingId: booking.id, lodgeId: booking.lodgeId, keptCents: 0, site: "confirm-pending:child-hold-ended" });
-          // #5433 PR 4 (CP-5): both notices are owed from this commit until
-          // sent, with the wording fact in their payload; the last write.
+          // #5433 PR 4 (CP-5): both owed until sent, the wording fact in their payload; the last write.
           const parentUnpaid = !parentSettledWithoutCard;
           const owed = await recordHoldEndedNoticesOwed(tx, { ended: "split-guest", bookingId: booking.id, parentUnpaid });
 
@@ -784,8 +782,7 @@ async function resolveHoldWindowUnderLock(
           // inside a Postgres transaction aborts the whole transaction — an
           // in-tx narrative failure would poison this tx and block the cancel.
           // The sibling terminal paths' narrative events (confirmed_zero, the
-          // group settlement reaper) record post-commit; match them. (The
-          // bump's BUMPED event is a decision record, written in its tx.)
+          // group settlement reaper) record post-commit; match them.
           return {
             type: "split_child_terminal_cancelled",
             booking,
@@ -846,11 +843,8 @@ async function resolveHoldWindowUnderLock(
           { id: booking.id, checkIn: booking.checkIn },
           clubZone
         );
-        // #5433 PR 4 (CP-6): the minted link's email is owed from this commit
-        // until sent, keyed by the link (never its raw token); the last write.
-        const owedLink = mintedLink
-          ? await recordSplitGuestPaymentLinkOwed(tx, { bookingId: booking.id, paymentLinkId: mintedLink.paymentLinkId })
-          : null;
+        // #5433 PR 4 (CP-6): the link's email is owed until sent, keyed by the link (never its token); the last write.
+        const owedLink = mintedLink && (await recordSplitGuestPaymentLinkOwed(tx, { bookingId: booking.id, paymentLinkId: mintedLink.paymentLinkId }));
 
         return {
           type: "split_child_payment_link",

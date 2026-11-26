@@ -926,7 +926,6 @@ export async function sendSplitGuestPortionCancelledEmail(params: {
   parentBookingReference?: string | null;
   // Booking's lodge (multi-lodge phase 8): see sendBookingConfirmedEmail.
   lodgeId?: string | null;
-  /** #5433: an owed notice's event key; the email's `EmailLog` row is then durable, so a later run cannot send it twice. */
   idempotencyKey?: string;
 }) {
   await sendEmail({
@@ -1845,7 +1844,6 @@ export async function sendSavedCardChargeFailedEmail(params: {
   checkIn: Date;
   checkOut: Date;
   lodgeId?: string | null;
-  /** #5433: an owed notice's event key; the email's `EmailLog` row is then durable, so a later run cannot send it twice. */
   idempotencyKey?: string;
 }) {
   await sendEmail({
