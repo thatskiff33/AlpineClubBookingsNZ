@@ -58,7 +58,7 @@ export const MCP_PERMANENT_EXCLUSION_REASONS = {
   // an officer area's configuration is an action (owner decision, #5305
   // comment 7131138226, item 4).
   "club-setup":
-    "Sets up the club's money: the bank account members pay into, fees, tax settings, accounting and item-code mappings, integration credentials and the Xero connection, which an officer changes on the website.",
+    "Sets up the club's money and its links to other services: the bank account members pay into, fees, tax settings, finance-report, accounting and item-code mappings, Xero contact grouping, integration credentials, the Xero and Stripe connections, and the analytics, MiroTalk, Google and Alpine Central Server integration settings, which an officer changes on the website.",
   "service-export": "An export another system collects with its own shared key, not something a person asks for.",
 } as const;
 
