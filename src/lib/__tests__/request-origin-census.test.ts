@@ -14,9 +14,12 @@
  * origin instead, or list the exact expression here and say why it is safe.
  *
  * What it does not see, stated so nobody takes it for more than it is: a header
- * name held in a constant, a loop over every header, and `request.url` handed
- * whole to a helper. `request.url` is read in many routes for its query string
- * alone, which is why only its use as a base address is matched.
+ * name held in a constant, a loop over every header, the request's address
+ * copied to a variable first or read through another name (`r.url`,
+ * `ctx.req.url`), the request's address inside a template string, and
+ * `new URL(request.url)` changed and then redirected to. `request.url` is read
+ * in many routes for its query string alone, which is why only its use as a
+ * base address, as a fallback, or for its host is matched.
  */
 import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
@@ -32,6 +35,12 @@ const ALLOWED: ReadonlyArray<{ file: string; expression: string; reason: string 
     expression: "selfOrigin: request.nextUrl.origin",
     reason:
       "Adds the request's own origin to `connect-src` in the Content-Security-Policy of the response to that same request, on the display pages only. It reaches no other visitor, no email and no stored row.",
+  },
+  {
+    file: "src/app/api/auth/[...nextauth]/route.ts",
+    expression: "authRateLimitedResponse(rateLimitResponse, request.url)",
+    reason:
+      "The sign-in rate-limit answer carries a login address built from the request's own URL, returned in the body of the response to that same request. It reaches no other visitor, no email and no stored row.",
   },
 ];
 
@@ -57,8 +66,16 @@ const READS: ReadonlyArray<{ what: string; pattern: RegExp }> = [
     pattern: /(?:\|\||\?\?)\s*(?:request|req)\s*\.\s*url\b/,
   },
   {
-    what: "request.url as the base of a new address",
-    pattern: /new URL\([^()]*,\s*(?:request|req)\s*\.\s*url\s*\)/,
+    what: "the request's address as the base of a new address, or handed to a helper as one",
+    pattern: /,\s*(?:request|req)\s*\??\.\s*(?:url|nextUrl)\s*\)/,
+  },
+  {
+    what: "a copy of request.nextUrl, which carries the request's host",
+    pattern: /\bnextUrl\s*\??\.\s*clone\s*\(/,
+  },
+  {
+    what: "the origin, host or href of the request's own URL",
+    pattern: /new URL\(\s*(?:request|req)\s*\??\.\s*url\s*\)\s*\.\s*(?:origin|host|hostname|href)\b/,
   },
 ];
 
@@ -130,6 +147,12 @@ describe("the request's claimed origin is not read", () => {
       "const baseUrl = process.env.NEXTAUTH_URL || request.url;",
       "const baseUrl = configured ?? req.url;",
       'new URL("/login", request.url)',
+      'NextResponse.redirect(new URL(buildLoginPath("/x"), request.url))',
+      'new URL("/login", request.nextUrl)',
+      "const url = request.nextUrl.clone();",
+      "const { origin } = { origin: new URL(request.url).origin };",
+      "const host = new URL(req.url).host;",
+      "authRateLimitedResponse(denial, request.url)",
       'p.replace(/\\//g, "_"); const o = req.nextUrl.origin;',
       'const glob = "src/*"; const h = request.headers.get("host"); const end = "*/";',
     ];
@@ -145,6 +168,8 @@ describe("the request's claimed origin is not read", () => {
       "const { searchParams } = new URL(request.url);",
       "const page = request.nextUrl.searchParams.get('page');",
       "const path = request.nextUrl.pathname;",
+      "const protocol = new URL(request.url).protocol;",
+      "getExpiredXeroOAuthStateCookieOptions(request.url)",
     ];
     for (const sample of harmless) {
       expect(readsFound(stripComments(sample)), sample).toEqual([]);

@@ -1019,19 +1019,18 @@ stored and again when the admin list and detail read one, so a row written
 before this rule is held to it as well.
 
 `src/lib/__tests__/request-origin-census.test.ts` fails on a new read of the
-request's host, or of `request.url` as a base address, outside the one
-expression it lists with its reason: the Content-Security-Policy for the
-display pages adds the request's own origin to the response sent back to that
-same request. The census matches text and names in its header what it cannot
-see.
+request's host, or of the request's address as a base address, outside the two
+expressions it lists with their reasons. Both send the value back only to the
+caller who supplied it: the Content-Security-Policy for the display pages adds
+the request's own origin, and the sign-in rate-limit answer carries a login
+address built from the request's own URL. The census matches text and names in
+its header what it cannot see.
 
 What this does not cover:
 
 - Many email builders read `NEXTAUTH_URL` directly instead of calling
   `getAppBaseUrl()`. They use the configured value, not the request's.
 - Pages in the browser build share links from the address the browser is on.
-- The sign-in rate-limit response returns a login address built from the
-  request's own URL to that same caller.
 - A member's own words in an alert (a page title, a description) are shown as
   escaped text. The app makes none of it a link, but a mail client may turn an
   address a member typed into one.
