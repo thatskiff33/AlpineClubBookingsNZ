@@ -15,7 +15,7 @@ import { prisma } from "@/lib/prisma";
  * Facts the change worked out in its transaction that cannot be rebuilt
  * reliably later. Ids and whole numbers only, never personal data: the row is
  * operational and sits outside the subject-access export. Enforced on write
- * (`assertPayload`): at most `OWED_NOTICE_PAYLOAD_MAX_KEYS` keys, each a short
+ * (`owedNoticeInputProblem`): at most `OWED_NOTICE_PAYLOAD_MAX_KEYS` keys, each a short
  * identifier, each value a safe whole number or an id (`OWED_NOTICE_PAYLOAD_ID`).
  */
 export type OwedNoticePayload = Readonly<Record<string, string | number>>;
@@ -66,35 +66,48 @@ export function owedNoticeId(kind: string, subjectId: string, eventAt: Date, var
 }
 
 /**
- * Refuse a payload that is not ids and whole numbers. It throws before any
- * write, so inside the change's transaction it rolls the change back: a
- * programming error a test catches, never a runtime state.
+ * A payload that is not ids and whole numbers: why, or null when it is.
  */
-function assertPayload(kind: string, payload: OwedNoticePayload): void {
+function payloadProblem(kind: string, payload: OwedNoticePayload): string | null {
   const entries = Object.entries(payload);
   if (entries.length > OWED_NOTICE_PAYLOAD_MAX_KEYS) {
-    throw new Error(`Owed notice ${kind}: a payload holds at most ${OWED_NOTICE_PAYLOAD_MAX_KEYS} fields`);
+    return `Owed notice ${kind}: a payload holds at most ${OWED_NOTICE_PAYLOAD_MAX_KEYS} fields`;
   }
   for (const [field, value] of entries) {
-    if (!PAYLOAD_KEY.test(field)) throw new Error(`Owed notice ${kind}: payload field name ${JSON.stringify(field)} is not an identifier`);
+    if (!PAYLOAD_KEY.test(field)) return `Owed notice ${kind}: payload field name ${JSON.stringify(field)} is not an identifier`;
     if (typeof value === "number" ? !Number.isSafeInteger(value) : typeof value !== "string" || !OWED_NOTICE_PAYLOAD_ID.test(value)) {
-      throw new Error(`Owed notice ${kind}: payload field ${field} must be a whole number or an id`);
+      return `Owed notice ${kind}: payload field ${field} must be a whole number or an id`;
     }
   }
+  return null;
 }
 
 /**
- * Refuse identity parts the id cannot keep apart: each of the kind, the
- * subject and the variant must be an id (`OWED_NOTICE_PAYLOAD_ID`, so no
- * colon). Otherwise subject `s:123` at 456 ms and subject `s` at 123 ms with
- * variant `456` would share an id, and the second marker would be silently
- * skipped as a duplicate. Throws before any write, like `assertPayload`.
+ * Identity parts the id cannot keep apart: each of the kind, the subject and
+ * the variant must be an id (`OWED_NOTICE_PAYLOAD_ID`, so no colon). Otherwise
+ * subject `s:123` at 456 ms and subject `s` at 123 ms with variant `456` would
+ * share an id, and the second marker would be silently skipped as a duplicate.
  */
-function assertIdentity({ kind, subjectId, variant }: OwedNoticeInput): void {
+function identityProblem({ kind, subjectId, variant }: OwedNoticeInput): string | null {
   for (const [part, value] of [["kind", kind], ["subjectId", subjectId], ["variant", variant]] as const) {
     if (value === undefined || value === null) continue;
-    if (!OWED_NOTICE_PAYLOAD_ID.test(value)) throw new Error(`Owed notice ${kind}: ${part} ${JSON.stringify(value)} is not an id`);
+    if (!OWED_NOTICE_PAYLOAD_ID.test(value)) return `Owed notice ${kind}: ${part} ${JSON.stringify(value)} is not an id`;
   }
+  return null;
+}
+
+/**
+ * THE rule for whether an input can be written as a marker: why it cannot
+ * (its identity first, then its payload), or null when it can. Never throws.
+ * `recordOwedNotices` throws on a problem before any write, so inside the
+ * change's transaction it rolls the change back: a programming error a test
+ * catches. A caller that must never roll its transaction back for one (a card
+ * settle that has captured money, #5433 PR 3) asks here first and skips the
+ * write instead (`paid-booking-confirmation-owed.ts`), so a rule added here
+ * reaches it too.
+ */
+export function owedNoticeInputProblem(input: OwedNoticeInput): string | null {
+  return identityProblem(input) ?? (input.payload ? payloadProblem(input.kind, input.payload) : null);
 }
 
 /** The stored marker for an input, as `recordOwedNotices` writes it (`kind` is the stored text, which may be one this release does not know). */
@@ -124,8 +137,8 @@ export async function recordOwedNotices(
   notices: readonly OwedNoticeInput[],
 ): Promise<OwedNoticeMarker[]> {
   const markers = notices.map((notice) => {
-    assertIdentity(notice);
-    if (notice.payload) assertPayload(notice.kind, notice.payload);
+    const problem = owedNoticeInputProblem(notice);
+    if (problem) throw new Error(problem);
     return owedNoticeMarker(notice);
   });
   if (markers.length === 0) return markers;

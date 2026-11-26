@@ -114,6 +114,14 @@ vi.mock("@/lib/email", () => ({
   sendBookingConfirmedEmail: mocks.sendBookingConfirmedEmail,
 }));
 
+// #5433 PR 3: the route asks the settle for the confirmation's owed marker and
+// delivers it through the owed notice (proved in paid-booking-confirmation-notice.test.ts).
+const confirmation = vi.hoisted(() => ({
+  deliver: vi.fn(),
+  marker: { id: "booking-confirmed:booking-1:1782864000000", kind: "booking-confirmed", subjectId: "booking-1", eventAt: new Date("2026-07-01T00:00:00.000Z"), variant: null, payload: null },
+}));
+vi.mock("@/lib/paid-booking-confirmation-notice", () => ({ deliverPaidBookingConfirmation: confirmation.deliver }));
+
 vi.mock("@/lib/xero-booking-invoice-queue", () => ({
   queueXeroInvoiceForPaidBooking: mocks.queueXeroInvoiceForPaidBooking,
 }));
@@ -1848,6 +1856,7 @@ describe("payment intent routes", () => {
       amountCents: 12500,
       paymentMethodId: "pm_123",
       format: CLUB_FORMAT_TEST,
+      owesPaidConfirmation: true,
     });
     expect(mocks.queueXeroInvoiceForPaidBooking).toHaveBeenCalledWith({
       bookingId: "booking-1",
@@ -2040,16 +2049,20 @@ describe("confirm-payment route: booking confirmation email (issue #772)", () =>
       error: "Payment succeeded, but lodge capacity is no longer available for this booking.",
       status: "CANCELLED", refunded: outcome === "cancelled_refunded", capacityRefund,
     });
-    expect(mocks.sendBookingConfirmedEmail).not.toHaveBeenCalled();
+    expect(confirmation.deliver).not.toHaveBeenCalled();
     expect(mocks.queueXeroInvoiceForPaidBooking).not.toHaveBeenCalled();
   });
 
+  // #5433 PR 3: a fresh "paid" settle hands back the owed marker it committed; the
+  // route delivers it once, after it queues the invoice. What the email says is
+  // the renderer's (paid-booking-confirmation-email.test.ts).
   it("sends exactly one confirmation email on a fresh paid outcome", async () => {
     setupConfirmPayment();
     mocks.markBookingPaymentSucceeded.mockResolvedValue({
       outcome: "paid",
       bookingId: "booking-1",
       bumpedBookingIds: [],
+      paidConfirmation: confirmation.marker,
     });
 
     const res = await confirmPaymentRoute(makeRequest(), {
@@ -2057,21 +2070,11 @@ describe("confirm-payment route: booking confirmation email (issue #772)", () =>
     });
 
     expect(res.status).toBe(200);
-    expect(mocks.sendBookingConfirmedEmail).toHaveBeenCalledTimes(1);
-    expect(mocks.sendBookingConfirmedEmail).toHaveBeenCalledWith(
-      { bookingId: "booking-1" },
-      "member@example.com",
-      "Test",
-      expect.any(Date),
-      expect.any(Date),
-      2,
-      12500,
-      CLUB_FORMAT_TEST,
-      // Multi-lodge phase 8: the options now carry the booking's lodge so
-      // the email renders that lodge's identity (undefined here because the
-      // fixture booking has no lodgeId).
-      { lodgeId: undefined }
-    );
+    expect(mocks.markBookingPaymentSucceeded).toHaveBeenCalledWith(expect.objectContaining({ owesPaidConfirmation: true }));
+    expect(confirmation.deliver).toHaveBeenCalledTimes(1);
+    expect(confirmation.deliver).toHaveBeenCalledWith(confirmation.marker, CLUB_FORMAT_TEST, "confirm-payment");
+    // #5433 round 1: the invoice is queued first, so a stop during the delivery never leaves a paid booking with no queued invoice.
+    expect(confirmation.deliver.mock.invocationCallOrder[0]).toBeGreaterThan(mocks.queueXeroInvoiceForPaidBooking.mock.invocationCallOrder[0]!);
   });
 
   it("does not send when the webhook already reconciled (already_paid)", async () => {
@@ -2087,17 +2090,18 @@ describe("confirm-payment route: booking confirmation email (issue #772)", () =>
     });
 
     expect(res.status).toBe(200);
-    expect(mocks.sendBookingConfirmedEmail).not.toHaveBeenCalled();
+    expect(confirmation.deliver).not.toHaveBeenCalled();
   });
 
   it("sends exactly once when both paths run: the first wins, the second is a no-op", async () => {
     setupConfirmPayment();
 
-    // First caller wins the advisory-locked transition and gets "paid".
+    // First caller wins the advisory-locked transition and gets "paid", with the marker its settle committed.
     mocks.markBookingPaymentSucceeded.mockResolvedValueOnce({
       outcome: "paid",
       bookingId: "booking-1",
       bumpedBookingIds: [],
+      paidConfirmation: confirmation.marker,
     });
     // Second caller (e.g. webhook arriving after the sync confirm) sees the
     // booking already PAID and gets "already_paid".
@@ -2114,19 +2118,20 @@ describe("confirm-payment route: booking confirmation email (issue #772)", () =>
       params: Promise.resolve({ id: "booking-1" }),
     });
 
-    expect(mocks.sendBookingConfirmedEmail).toHaveBeenCalledTimes(1);
+    expect(confirmation.deliver).toHaveBeenCalledTimes(1);
   });
 
-  it("does not fail the request if the confirmation email throws", async () => {
+  // #5433 round 1: the delivery never throws (a send that fails is logged inside it and
+  // stays owed for the sweep), so the route answers success once it has handed it over.
+  it("answers success once the confirmation is handed to its owed notice", async () => {
     setupConfirmPayment();
     mocks.markBookingPaymentSucceeded.mockResolvedValue({
       outcome: "paid",
       bookingId: "booking-1",
       bumpedBookingIds: [],
+      paidConfirmation: confirmation.marker,
     });
-    mocks.sendBookingConfirmedEmail.mockRejectedValueOnce(
-      new Error("SMTP unavailable")
-    );
+    confirmation.deliver.mockResolvedValueOnce(undefined);
 
     const res = await confirmPaymentRoute(makeRequest(), {
       params: Promise.resolve({ id: "booking-1" }),
@@ -2134,6 +2139,7 @@ describe("confirm-payment route: booking confirmation email (issue #772)", () =>
 
     expect(res.status).toBe(200);
     await expect(res.json()).resolves.toEqual({ success: true });
+    expect(confirmation.deliver).toHaveBeenCalledWith(confirmation.marker, CLUB_FORMAT_TEST, "confirm-payment");
   });
 });
 

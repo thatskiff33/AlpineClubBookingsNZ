@@ -71,6 +71,7 @@ import { formatCents as formatMoneyCents } from "@/lib/utils";
 import { loadEmailMessageSettingsForLodge } from "@/lib/email-message-settings";
 import { loadEffectiveModuleFlags } from "@/lib/module-settings";
 import { sendEmail, type EmailSendOutcome } from "./core";
+import { BOOKING_CONFIRMED_TEMPLATE_NAME } from "./booking-confirmed-template";
 import {
   bookingOwnerEmailContext,
   type BookingOwnerEmailSource,
@@ -98,8 +99,10 @@ export async function sendBookingConfirmedEmail(
   // than a bare string so it can never be transposed with one of the sibling
   // string arguments. Every message in this file is unambiguously
   // booking-scoped, so `"none"` is not offered here: the per-booking "No
-  // emails" switch must be able to withhold all of them.
-  bookingContext: BookingOwnerEmailSource,
+  // emails" switch must be able to withhold all of them. #5433: only an owed paid
+  // confirmation adds its event key (`<bookingId>:<paidAtMs>`), so a recovered
+  // send finds the first one's row; every other caller's send is unchanged.
+  bookingContext: BookingOwnerEmailSource & { idempotencyKey?: string },
   email: string,
   firstName: string,
   checkIn: Date,
@@ -202,7 +205,7 @@ export async function sendBookingConfirmedEmail(
     // still goes out.
     resolveBookingEmailLink({
       bookingId: bookingContext.bookingId,
-      templateName: "booking-confirmed",
+      templateName: BOOKING_CONFIRMED_TEMPLATE_NAME,
       // #3369: a school has no member to name, and the non-login
       // public-contact kind is what it has effectively always been.
       recipient: bookingContext.recipientMemberId
@@ -461,7 +464,7 @@ export async function sendBookingConfirmedEmail(
       bookingContext.bookingId,
       bookingContext.recipientMemberId,
     ),
-    templateName: "booking-confirmed",
+    templateName: BOOKING_CONFIRMED_TEMPLATE_NAME,
     templateData: {
       firstName,
       checkIn: emailCalendarDay(checkIn),
@@ -543,6 +546,7 @@ export async function sendBookingConfirmedEmail(
       icalHtml: icalHtmlRow,
     },
     lodgeId: options?.lodgeId,
+    ...(bookingContext.idempotencyKey ? { idempotencyKey: bookingContext.idempotencyKey } : {}),
   });
 }
 
