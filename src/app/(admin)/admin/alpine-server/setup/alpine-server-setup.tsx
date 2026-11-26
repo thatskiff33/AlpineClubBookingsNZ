@@ -41,6 +41,9 @@ import {
   ADMIN_FULL_ADMIN_ONLY_ACTION_REASON,
 } from "@/hooks/use-admin-area-edit-access";
 import { registrationMessage, useLodgeLinkStep, type KeySaveRegistration } from "./server-connect-step";
+import { FocusedActionError } from "@/components/focused-action-error";
+import { useActionFailure } from "@/hooks/use-action-failure";
+import { apiErrorCodeFromBody, apiErrorMessageFromBody, readApiObjectOrEmpty } from "@/lib/api-error-message";
 import { adminHref } from "@/lib/admin-hubs";
 
 interface InitialState {
@@ -113,7 +116,7 @@ function downloadStopText(reason: DownloadStopReason): string {
  * download could not place is named (triyder/AlpineClubBookingsNZ#69): one sent without an id whose name
  * several lodges here share, or a new one whose id a concurrent download held.
  */
-function downloadSummaryText(data: {
+type DownloadSummary = {
   fetched: number;
   created: number;
   updated: number;
@@ -122,7 +125,12 @@ function downloadSummaryText(data: {
   nameConflicts?: Array<{ lodge: string | null; wanted: string }>;
   hiddenLodges?: string[];
   stopped?: DownloadStopReason | null;
-}): string {
+};
+
+/** What the upload and download routes answer on success. */
+type SyncReply = DownloadSummary & { sent?: number; skipped?: number; ownedUnknown?: boolean };
+
+function downloadSummaryText(data: DownloadSummary): string {
   const entries = `${data.fetched} ${data.fetched === 1 ? "entry" : "entries"}`;
   const renamed = data.renamed ? ` (${data.renamed} renamed)` : "";
   const conflicts = (data.nameConflicts ?? []).map((c) => `"${c.wanted}"`);
@@ -167,9 +175,12 @@ export function AlpineServerSetup({ initialState }: { initialState: InitialState
   );
 
   const [busy, setBusy] = useState<string | null>(null);
-  const [message, setMessage] = useState<{ kind: "ok" | "warn" | "err"; text: string } | null>(
+  // Successes and notices: a passive status line that never moves focus.
+  const [message, setMessage] = useState<{ kind: "ok" | "warn"; text: string } | null>(
     null,
   );
+  // Failures: the page's alert, which takes focus, again on a repeat (#4975).
+  const failure = useActionFailure();
 
   const connectionReady = apiKeySet && savedBaseUrl.length > 0;
   // A key belongs to the server that issued it (#4470). While the address
@@ -228,23 +239,26 @@ export function AlpineServerSetup({ initialState }: { initialState: InitialState
   async function saveBaseUrl() {
     setBusy("baseUrl");
     setMessage(null);
+    failure.clear();
+    const fallback = "Failed to save base URL";
     try {
       const res = await fetchWithRecentAuth("/api/admin/alpine-server/settings", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ baseUrl }),
       });
-      const data = await res.json().catch(() => null);
-      if (!res.ok) throw new Error(data?.error ?? "Failed to save base URL");
-      setSavedBaseUrl(data.baseUrl ?? "");
-      setBaseUrl(data.baseUrl ?? "");
+      const data = await readApiObjectOrEmpty(res);
+      if (!res.ok) return failure.fail(apiErrorMessageFromBody(data, fallback));
+      const saved = typeof data.baseUrl === "string" ? data.baseUrl : "";
+      setSavedBaseUrl(saved);
+      setBaseUrl(saved);
       if (data.apiKeyCleared) setApiKeySet(false);
       setMessage({ kind: "ok", text: "Base URL saved." });
       // A moved address forgets the stored key and the stored version with
       // it; ask again so the numbers shown match what is now stored.
       void refreshVersion();
-    } catch (e) {
-      setMessage({ kind: "err", text: e instanceof Error ? e.message : "Failed" });
+    } catch {
+      failure.fail(fallback);
     } finally {
       setBusy(null);
     }
@@ -254,6 +268,8 @@ export function AlpineServerSetup({ initialState }: { initialState: InitialState
     if (!apiKey.trim()) return;
     setBusy("apiKey");
     setMessage(null);
+    failure.clear();
+    const fallback = "Failed to save API key";
     try {
       const res = await fetchWithRecentAuth("/api/admin/integrations/credentials", {
         method: "POST",
@@ -268,23 +284,23 @@ export function AlpineServerSetup({ initialState }: { initialState: InitialState
           expectedBaseUrl: savedBaseUrl || null,
         }),
       });
-      const data = await res.json().catch(() => null);
-      if (res.status === 409 && data?.code === SERVERNZ_ADDRESS_CHANGED_CODE) {
+      const data = await readApiObjectOrEmpty(res);
+      if (res.status === 409 && apiErrorCodeFromBody(data) === SERVERNZ_ADDRESS_CHANGED_CODE) {
         // Nothing was saved. The address shown here is out of date, so the
         // page cannot offer a retry that means anything: reload, then decide.
-        throw new Error(SERVERNZ_ADDRESS_CHANGED_MESSAGE);
+        return failure.fail(SERVERNZ_ADDRESS_CHANGED_MESSAGE);
       }
-      if (!res.ok) throw new Error(data?.error ?? "Failed to save API key");
+      if (!res.ok) return failure.fail(apiErrorMessageFromBody(data, fallback));
       setApiKeySet(true);
       setApiKey("");
       // The route registered this site's address; then the lodges are linked.
-      const registered = registrationMessage(data?.pushRegistration as KeySaveRegistration | undefined);
+      const registered = registrationMessage(data.pushRegistration as KeySaveRegistration | undefined);
       setMessage({ kind: registered.kind, text: registered.text });
       // A new key means a (possibly different) server can now be asked.
       void refreshVersion();
       if (registered.linkLodges) await lodgeLinks.run();
-    } catch (e) {
-      setMessage({ kind: "err", text: e instanceof Error ? e.message : "Failed" });
+    } catch {
+      failure.fail(fallback);
     } finally {
       setBusy(null);
     }
@@ -293,18 +309,20 @@ export function AlpineServerSetup({ initialState }: { initialState: InitialState
   async function toggleEnabled() {
     setBusy("enable");
     setMessage(null);
+    failure.clear();
     const next = !enabled;
+    const fallback = "Failed to update";
     try {
       const res = await fetchWithRecentAuth("/api/admin/alpine-server/settings", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ otherLodgesEnabled: next }),
       });
-      const data = await res.json().catch(() => null);
-      if (!res.ok) throw new Error(data?.error ?? "Failed to update");
+      const data = await readApiObjectOrEmpty(res);
+      if (!res.ok) return failure.fail(apiErrorMessageFromBody(data, fallback));
       setEnabled(Boolean(data.otherLodgesEnabled));
-    } catch (e) {
-      setMessage({ kind: "err", text: e instanceof Error ? e.message : "Failed" });
+    } catch {
+      failure.fail(fallback);
     } finally {
       setBusy(null);
     }
@@ -313,35 +331,40 @@ export function AlpineServerSetup({ initialState }: { initialState: InitialState
   async function syncOtherLodges(direction: "upload" | "download") {
     setBusy(direction);
     setMessage(null);
+    failure.clear();
+    const fallback = `Failed to ${direction}`;
     try {
       const res = await fetch(
         `/api/admin/alpine-server/other-lodges/${direction}`,
         { method: "POST" },
       );
-      const data = await res.json().catch(() => null);
+      const body = await readApiObjectOrEmpty(res);
       if (!res.ok) {
+        const code = apiErrorCodeFromBody(body);
         // The route refused for version (triyder/AlpineClubBookingsNZ#49): it hands back both numbers, so
         // the page shows them in the status block below without a second
         // server call - and the message points there rather than repeating
         // the same sentence twice.
-        if (data?.code === SERVER_VERSION_MISMATCH_CODE && typeof data.serverVersion === "string") {
+        const reported = body.serverVersion;
+        if (code === SERVER_VERSION_MISMATCH_CODE && typeof reported === "string") {
           setVersion((current) => ({
             ...current,
-            serverVersion: data.serverVersion,
+            serverVersion: reported,
             couldNotCheck: false,
           }));
-          throw new Error(
+          return failure.fail(
             `${direction === "upload" ? "Upload" : "Download"} paused: the server is on a different software version - see Server software version above.`,
           );
         }
         // Another sync holds the claim (triyder/AlpineClubBookingsNZ#66): nothing failed and nothing was
         // sent, so it is a notice, not an error.
-        if (data?.code === OTHER_LODGES_SYNC_RUNNING_CODE && typeof data.error === "string") {
-          setMessage({ kind: "warn", text: data.error });
+        if (code === OTHER_LODGES_SYNC_RUNNING_CODE && typeof body.error === "string") {
+          setMessage({ kind: "warn", text: body.error });
           return;
         }
-        throw new Error(data?.error ?? `Failed to ${direction}`);
+        return failure.fail(apiErrorMessageFromBody(body, fallback));
       }
+      const data = body as unknown as SyncReply;
       if (direction === "upload" && data.ownedUnknown) {
         // Nothing was sent or recorded (triyder/AlpineClubBookingsNZ#69): the last-upload time stays.
         setMessage({
@@ -361,8 +384,8 @@ export function AlpineServerSetup({ initialState }: { initialState: InitialState
           text: downloadSummaryText(data),
         });
       }
-    } catch (e) {
-      setMessage({ kind: "err", text: e instanceof Error ? e.message : "Failed" });
+    } catch {
+      failure.fail(fallback);
     } finally {
       setBusy(null);
     }
@@ -372,15 +395,10 @@ export function AlpineServerSetup({ initialState }: { initialState: InitialState
 
   return (
     <div className="space-y-6">
+      <FocusedActionError id="alpine-server-action-error" error={failure.error} attentionKey={failure.attentionKey} />
       {message ? (
         <p
-          className={`text-sm ${
-            message.kind === "ok"
-              ? "text-success-11"
-              : message.kind === "warn"
-                ? "text-warning-11"
-                : "text-destructive"
-          }`}
+          className={`text-sm ${message.kind === "ok" ? "text-success-11" : "text-warning-11"}`}
           role="status"
         >
           {message.text}

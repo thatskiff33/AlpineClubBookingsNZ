@@ -75,6 +75,19 @@ function alert() {
   return document.getElementById(ALERT_ID);
 }
 
+/**
+ * Counts every time the alert receives focus. A disabled-while-busy button can
+ * lose focus to `<body>` on its own, so "focus stayed on the button" is not the
+ * contract; "the alert never took it" is.
+ */
+function watchAlertFocus() {
+  const seen = { count: 0 };
+  alert()?.addEventListener("focus", () => {
+    seen.count += 1;
+  });
+  return seen;
+}
+
 const ACTIONS = [
   { name: "Save", fallback: "Failed to save base URL", enabled: true },
   { name: "Save key", fallback: "Failed to save API key", enabled: true },
@@ -147,15 +160,16 @@ describe("the page's own worded refusals take focus too", () => {
 });
 
 describe("successes and notices stay passive", () => {
-  it("a successful Save leaves focus on the button and the alert empty", async () => {
+  it("a successful Save does not move focus to the alert, which stays empty", async () => {
     answerWrites(() => Response.json({ baseUrl: "https://central.test" }));
     render(<AlpineServerSetup initialState={initial()} />);
+    const focused = watchAlertFocus();
     const save = screen.getByRole("button", { name: "Save" });
     press("Save");
     expect(await screen.findByText("Base URL saved.")).toHaveAttribute("role", "status");
     await waitFor(() => expect(save).toBeEnabled());
     expect(alert()).toHaveTextContent("");
-    expect(document.activeElement).toBe(save);
+    expect(focused.count).toBe(0);
   });
 
   it("a success after a failure empties the alert", async () => {
@@ -180,11 +194,12 @@ describe("successes and notices stay passive", () => {
       Response.json({ error: "Another sync is running.", code: OTHER_LODGES_SYNC_RUNNING_CODE }, { status: 409 }),
     );
     render(<AlpineServerSetup initialState={initial()} />);
+    const focused = watchAlertFocus();
     const upload = screen.getByRole("button", { name: "Upload" });
     press("Upload");
     expect(await screen.findByText("Another sync is running.")).toHaveAttribute("role", "status");
     await waitFor(() => expect(upload).toBeEnabled());
     expect(alert()).toHaveTextContent("");
-    expect(document.activeElement).toBe(upload);
+    expect(focused.count).toBe(0);
   });
 });
