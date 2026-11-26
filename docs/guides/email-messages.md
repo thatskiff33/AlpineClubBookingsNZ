@@ -255,7 +255,9 @@ would add a second entry beside the stale one.
 Both tokens are empty, and no file is attached, unless the member was sent the
 Booking Confirmed message and is still allowed the booking link it carried, so a
 school contact or a member who never had the calendar links sees nothing. If the
-file cannot be built the sentence drops its mention of an attachment. The
+file cannot be built the sentence drops its mention of an attachment, including
+when a failed email is retried. Retries adjust only this standard sentence;
+your surrounding wording is kept. The
 shipped default wording places each token on a line of its own. A club that
 saved its own wording for these messages keeps it unchanged: the file is still
 attached, but the sentence shows only after you add the token to your wording.

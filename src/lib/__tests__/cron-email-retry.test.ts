@@ -81,10 +81,12 @@ vi.mock("@/lib/email", () => ({
   getAdminEmails: mocks.getAdminEmails,
 }));
 
-vi.mock("@/lib/booking-calendar-removal", () => ({
+vi.mock("@/lib/booking-calendar-removal", async (importOriginal) => ({
+  ...(await importOriginal()) as typeof import("@/lib/booking-calendar-removal"),
   retryCalendarRemovalAttachments: mocks.retryCalendarRemovalAttachments,
 }));
 
+import { calendarRemovalNote } from "@/lib/email-message-notes";
 import { retryFailedEmails } from "@/lib/cron-email-retry";
 import { declareEnvironmentRole } from "@/lib/__tests__/helpers/environment-role";
 
@@ -419,6 +421,19 @@ describe('retryFailedEmails and the per-booking "No emails" switch (#2258)', () 
     expect(mocks.update).not.toHaveBeenCalled();
     expect(mocks.updateMany).not.toHaveBeenCalled();
     expect(result).toEqual({ retried: 0, succeeded: 0, failed: 0 });
+  });
+
+
+  it.each([true, false])("matches rebuilt attachment availability (%s)", async (attached) => {
+    const html = `<p>Club wording. ${calendarRemovalNote(!attached)}</p>`;
+    mocks.findMany.mockResolvedValue([failedEmail({ templateName: "booking-cancelled", htmlBody: html, subject: calendarRemovalNote(!attached) })]);
+    mocks.retryCalendarRemovalAttachments.mockResolvedValueOnce(attached ? [{ filename: "stay.ics" }] : []);
+    await retryFailedEmails();
+    expect(mocks.sendMail).toHaveBeenCalledWith(expect.objectContaining({
+      subject: calendarRemovalNote(attached),
+      html: expect.stringContaining(`<p>Club wording. ${calendarRemovalNote(attached)}</p>`),
+      text: expect.stringContaining(`<p>Club wording. ${calendarRemovalNote(attached)}</p>`),
+    }));
   });
 
   // #5249: the calendar cancellation is not stored with the row, so a replay of

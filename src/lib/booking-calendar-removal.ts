@@ -205,3 +205,13 @@ export async function retryCalendarRemovalAttachments(emailLog: {
   });
   return attachments;
 }
+
+/** Rebind only the system sentence; keep the club's surrounding wording. */
+export function calendarRemovalRetryHtml(
+  html: string,
+  templateName: string,
+  attached: boolean,
+): string {
+  if (!CALENDAR_REMOVAL_TEMPLATE_NAMES.has(templateName)) return html;
+  return html.replaceAll(calendarRemovalNote(!attached), calendarRemovalNote(attached));
+}

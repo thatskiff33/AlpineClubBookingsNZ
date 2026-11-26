@@ -9,9 +9,10 @@ at the one place it hands the message to the mail provider; splitting
 #5298, which the plan keeps this change clear of.
 
 function: src/lib/cron-email-retry.ts#retryFailedEmails
-lines: 576
+lines: 578
 reason: replays a cancelled or bumped email with its calendar cancellation
-  file, rebuilt by booking-calendar-removal; one argument at the send call.
+  file, rebuilt by booking-calendar-removal; the delivery copy also matches
+  the standard calendar sentence to whether that retry has an attachment.
 
 file: src/lib/email/booking.ts
 lines: 1889

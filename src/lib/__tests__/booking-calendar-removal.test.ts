@@ -29,6 +29,7 @@ vi.mock("@/lib/logger", () => ({
 }));
 
 import {
+  calendarRemovalRetryHtml,
   resolveBookingCalendarRemoval,
   resolveCalendarUpdateNote,
   retryCalendarRemovalAttachments,
@@ -234,5 +235,15 @@ describe("retryCalendarRemovalAttachments", () => {
   it("returns no attachment where the member was never offered an entry", async () => {
     mocks.emailLogFindFirst.mockResolvedValue(null);
     await expect(retryCalendarRemovalAttachments(ROW)).resolves.toEqual([]);
+  });
+});
+
+
+describe("calendarRemovalRetryHtml", () => {
+  it("preserves custom wording without the token and unrelated templates", () => {
+    const custom = "<p>Please check your diary.</p>";
+    expect(calendarRemovalRetryHtml(custom, "booking-cancelled", true)).toBe(custom);
+    const other = `<p>${calendarRemovalNote(true)}</p>`;
+    expect(calendarRemovalRetryHtml(other, "booking-confirmed", false)).toBe(other);
   });
 });
