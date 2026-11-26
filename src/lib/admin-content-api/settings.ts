@@ -6,9 +6,11 @@
  * club's name and details in the site chrome (`/api/admin/club-identity`).
  * Each save replaces every field it names.
  */
+import { BookNowTarget, CommitteePhotoDisplay } from "@prisma/client";
 import { z } from "zod";
 
 import { clubLegalNameSchema, clubPostalAddressSchema } from "@/lib/club-invoice-supplier-fields";
+import type { PersistedClubIdentity } from "@/lib/club-identity-settings";
 import { isHttpUrl } from "@/lib/http-url";
 
 /** `PUT /api/admin/public-content-settings`. */
@@ -23,10 +25,10 @@ export const publicContentSettingsSchema = z
     annualFees: z.boolean(),
     // Configurable public Book Now button (E3 #1929).
     showBookNow: z.boolean(),
-    bookNowTarget: z.enum(["BOOKING_FLOW", "PAGE"]),
+    bookNowTarget: z.enum(BookNowTarget),
     bookNowPageId: z.string().min(1).nullable(),
     // Committee-roster photo display + shape (MP5, #171).
-    committeePhotoDisplay: z.enum(["NONE", "CIRCLE", "SQUARE"]),
+    committeePhotoDisplay: z.enum(CommitteePhotoDisplay),
   })
   .strict();
 
@@ -65,11 +67,7 @@ export const clubIdentitySchema = z
   .strict();
 
 /** The club identity as stored and as the route answers with it: null uses the fallback. */
-export interface ClubIdentityValues {
-  name: string | null;
-  shortName: string | null;
-  hutLeaderLabel: string | null;
-  facebookUrl: string | null;
+export interface ClubIdentityValues extends PersistedClubIdentity {
   legalName: string | null;
   postalAddress: string | null;
 }

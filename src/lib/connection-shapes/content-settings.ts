@@ -129,7 +129,8 @@ const VISIBILITY_SHAPE = {
 
 const FACILITY_SHAPE = { name: true, status: true } as const;
 
-const REPORT_SHAPE = {
+/** The ski field report, as both the officer's actions and the member's `get_skifield_report` send it. */
+export const WHAKAPAPA_REPORT_SHAPE = {
   updated: true,
   roadStatus: { name: true, status: true, wheelRequirements: true, roadContent: true },
   facilities: FACILITY_SHAPE,
@@ -166,7 +167,7 @@ interface MountainConditionsRecord {
 
 const RECORD_SHAPE = {
   source: true,
-  payload: REPORT_SHAPE,
+  payload: WHAKAPAPA_REPORT_SHAPE,
   config: SOURCE_CONFIG_SHAPE,
   fetchedAt: true,
   frozenUntil: true,

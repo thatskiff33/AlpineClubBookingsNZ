@@ -293,8 +293,10 @@ describe("mountain conditions actions", () => {
   });
 
   it("refresh_mountain_conditions_report fetches from the stored source and never runs the website's preview", async () => {
-    await expectActionContract({ actionId: "refresh_mountain_conditions_report", handler: refreshMountain });
+    const { connection } = await expectActionContract({ actionId: "refresh_mountain_conditions_report", handler: refreshMountain });
 
+    // The preview answers `{ preview }` and stores nothing; the refresh stores.
+    expect(connection).not.toHaveProperty("preview");
     expect(h.prisma.whakapapaReportCache.upsert).toHaveBeenCalled();
     expect(h.fetchWhakapapaCurlData).toHaveBeenCalledWith(
       expect.objectContaining({ sourceUrl: "https://www.whakapapa.com/report" }),
