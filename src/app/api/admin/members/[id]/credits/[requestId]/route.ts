@@ -1,7 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { parseJsonRequestBody } from "@/lib/api-json";
 import { requireAdmin } from "@/lib/session-guards";
-import { z } from "zod";
+import { adminCreditAdjustmentReviewSchema } from "@/lib/admin-credit-adjustment-schemas";
+import {
+  CREDIT_ADJUSTMENT_REVIEWED_CONNECTION_SHAPE,
+} from "@/lib/connection-shapes/finance-payments";
+import { connectionJson } from "@/lib/mcp-connection-request";
 import {
   getMemberCreditBalance,
   reviewAdminAdjustmentRequest,
@@ -9,10 +13,6 @@ import {
 import { getClientIp } from "@/lib/rate-limit";
 import logger from "@/lib/logger";
 import { MemberCreditValidationError } from "@/lib/policies/member-credit";
-
-const reviewSchema = z.object({
-  decision: z.enum(["APPROVE", "REJECT"]),
-});
 
 /**
  * PATCH /api/admin/members/[id]/credits/[requestId]
@@ -35,8 +35,7 @@ export async function PATCH(
     const { id, requestId } = await params;
     const jsonBody = await parseJsonRequestBody(request);
     if (!jsonBody.ok) return jsonBody.response;
-    const body = jsonBody.body;
-    const parsed = reviewSchema.safeParse(body);
+    const parsed = adminCreditAdjustmentReviewSchema.safeParse(jsonBody.body);
 
     if (!parsed.success) {
       return NextResponse.json(
@@ -59,11 +58,11 @@ export async function PATCH(
         ? "Adjustment approved and applied"
         : "Adjustment rejected";
 
-    return NextResponse.json({
-      success: true,
-      balanceCents,
-      message,
-    });
+    return connectionJson(
+      request,
+      { success: true, balanceCents, message },
+      CREDIT_ADJUSTMENT_REVIEWED_CONNECTION_SHAPE,
+    );
   } catch (error) {
     logger.error({ err: error }, "Error reviewing credit adjustment");
 

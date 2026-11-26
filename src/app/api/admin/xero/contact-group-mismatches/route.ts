@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
 import { parseOptionalJsonRequestBody } from "@/lib/api-json";
-import { z } from "zod";
 import { requireAdmin } from "@/lib/session-guards";
 import { getXeroMemberGroupingSnapshot } from "@/lib/xero-member-grouping-resync";
 import {
@@ -9,16 +8,20 @@ import {
 } from "@/lib/xero-mismatch-resync";
 import { XeroDailyLimitError } from "@/lib/xero-api-client";
 import logger from "@/lib/logger";
-import { CONTACT_GROUP_MISMATCH_LIMIT } from "@/lib/xero-contact-group-mismatch-summary";
-
-const querySchema = z.object({
-  limit: z.coerce.number().int().min(1).max(500).optional(),
-});
+import {
+  XERO_CONTACT_GROUP_MISMATCHES_CONNECTION_SHAPE,
+  XERO_CONTACT_GROUP_MISMATCHES_RESYNCED_CONNECTION_SHAPE,
+} from "@/lib/connection-shapes/finance-xero-contacts";
+import { connectionJson } from "@/lib/mcp-connection-request";
+import {
+  xeroContactGroupMismatchResyncBodySchema,
+  xeroContactMismatchQuerySchema,
+} from "@/lib/xero-contact-review-requests";
 
 export async function GET(request: NextRequest) {
   const guard = await requireAdmin();
   if (!guard.ok) return guard.response;
-  const parsed = querySchema.safeParse({
+  const parsed = xeroContactMismatchQuerySchema.safeParse({
     limit: request.nextUrl.searchParams.get("limit") ?? undefined,
   });
   if (!parsed.success) {
@@ -30,7 +33,7 @@ export async function GET(request: NextRequest) {
 
   try {
     const snapshot = await getXeroMemberGroupingSnapshot(parsed.data);
-    return NextResponse.json(snapshot);
+    return connectionJson(request, snapshot, XERO_CONTACT_GROUP_MISMATCHES_CONNECTION_SHAPE);
   } catch (error) {
     logger.error({ err: error }, "Failed to load Xero contact group mismatch snapshot");
     return NextResponse.json(
@@ -39,10 +42,6 @@ export async function GET(request: NextRequest) {
     );
   }
 }
-
-const resyncBodySchema = z.object({
-  limit: z.number().int().min(1).max(500).default(CONTACT_GROUP_MISMATCH_LIMIT),
-});
 
 // Resync-from-Xero (#1441): re-fetch the currently flagged contacts from
 // Xero, rewrite their cache rows, then recompute. Page load stays the cached
@@ -53,7 +52,7 @@ export async function POST(request: NextRequest) {
 
   const jsonBody = await parseOptionalJsonRequestBody(request, { whenAbsent: {} });
   if (!jsonBody.ok) return jsonBody.response;
-  const parsed = resyncBodySchema.safeParse(jsonBody.body);
+  const parsed = xeroContactGroupMismatchResyncBodySchema.safeParse(jsonBody.body);
   if (!parsed.success) {
     return NextResponse.json(
       { error: "Invalid request body", details: parsed.error.flatten() },
@@ -94,7 +93,11 @@ export async function POST(request: NextRequest) {
       [...before.mismatches, ...before.informational].map((entry) => entry.xeroContactId)
     ).size;
     const snapshot = await getXeroMemberGroupingSnapshot(parsed.data);
-    return NextResponse.json({ ...snapshot, resync: { ...resync, flaggedContacts } });
+    return connectionJson(
+      request,
+      { ...snapshot, resync: { ...resync, flaggedContacts } },
+      XERO_CONTACT_GROUP_MISMATCHES_RESYNCED_CONNECTION_SHAPE,
+    );
   } catch (error) {
     if (error instanceof XeroResyncUnavailableError) {
       return NextResponse.json({ error: error.message }, { status: error.status });

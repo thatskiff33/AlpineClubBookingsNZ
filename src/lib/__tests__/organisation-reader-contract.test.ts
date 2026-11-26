@@ -417,6 +417,10 @@ describe("#3366: no existing query changes its result", () => {
  * directory it is CI-caught by design.
  */
 const DECLARED_FILES: Record<string, string> = {
+  // ALP-721: the payments list's AI app shape names the owner by name only,
+  // as the screen does; it reads nothing and decides nothing about a school.
+  "src/lib/connection-shapes/finance-payments.ts":
+    "the payments list sent to an officer's AI app keeps the organisation owner's name and drops its email",
   // #4627 (Ledger M3b): the journal posts an organisation-owned booking's
   // charges to the organisation as debtor, through `bookingOwnerProviderMetadata`.
   "src/lib/member-money/internal/booking-posting.ts":

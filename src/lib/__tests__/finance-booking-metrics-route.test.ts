@@ -33,7 +33,6 @@ vi.mock("@/lib/finance-booking-metrics", async () => {
   return {
     getFinanceBookingMetrics: mockGetFinanceBookingMetrics,
     getFinanceBookingMetricsWindowDayCount,
-    MAX_FINANCE_BOOKING_METRICS_WINDOW_DAYS: 366,
   };
 });
 

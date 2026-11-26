@@ -13,7 +13,9 @@ import { refreshXeroContactCachesFromContact } from "@/lib/xero-contact-cache";
 import { logAudit } from "@/lib/audit";
 import { getXeroApiErrorInfo } from "@/lib/xero-api-errors";
 import logger from "@/lib/logger";
-import { z } from "zod";
+import { XERO_MEMBER_LINKED_CONNECTION_SHAPE } from "@/lib/connection-shapes/finance-xero-contacts";
+import { connectionJson } from "@/lib/mcp-connection-request";
+import { xeroMemberContactLinkBodySchema } from "@/lib/xero-member-contact-requests";
 import { buildXeroContactUrl } from "@/lib/xero-links";
 import { getXeroOrgShortCode } from "@/lib/xero-link-short-code";
 import { clubTimeZone } from "@/lib/club-time/server";
@@ -31,10 +33,6 @@ import {
 } from "@/lib/xero-contact-create-recovery";
 import { commitManualXeroContactLink } from "@/lib/xero-manual-contact-link";
 import { findXeroContactLinkConflict } from "@/lib/xero-contact-home";
-
-const linkSchema = z.object({
-  xeroContactId: z.string().min(1),
-});
 
 /**
  * POST /api/admin/members/[id]/xero-link
@@ -83,7 +81,7 @@ export async function POST(
   if (!jsonBody.ok) return jsonBody.response;
   const body = jsonBody.body;
 
-  const parsed = linkSchema.safeParse(body);
+  const parsed = xeroMemberContactLinkBodySchema.safeParse(body);
   if (!parsed.success) {
     return NextResponse.json({ error: "xeroContactId is required" }, { status: 400 });
   }
@@ -196,7 +194,7 @@ export async function POST(
 
     logger.info({ memberId: id, xeroContactId: parsed.data.xeroContactId }, "Manually linked member to Xero contact");
 
-    return NextResponse.json({
+    return connectionJson(req, {
       xeroContactId: parsed.data.xeroContactId,
       contactName: contact.name,
       // #2314: the RETURNED link carries the organisation short code so the
@@ -208,7 +206,7 @@ export async function POST(
         shortCode: await getXeroOrgShortCode(),
       }),
       ...(warning ? { warning } : {}),
-    });
+    }, XERO_MEMBER_LINKED_CONNECTION_SHAPE);
   } catch (err) {
     if (err instanceof XeroContactCreateInProgressError) {
       return NextResponse.json(
