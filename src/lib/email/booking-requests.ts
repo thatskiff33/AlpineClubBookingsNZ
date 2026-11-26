@@ -207,6 +207,8 @@ export async function sendSplitGuestPaymentLinkEmail(params: {
   bookingId: string;
   expiresAt: Date;
   lodgeId?: string | null;
+  /** #5433: an owed notice's event key; the email's `EmailLog` row is then durable, so a later run cannot send it twice. */
+  idempotencyKey?: string;
 },
   format: ClubFormat,
 ): Promise<EmailSendOutcome> {
@@ -244,6 +246,7 @@ export async function sendSplitGuestPaymentLinkEmail(params: {
       // above. Same value, same override branch, same defect.
       expiresAt: emailClubDateTime(params.expiresAt),
     },
+    idempotencyKey: params.idempotencyKey,
   });
 }
 
@@ -371,6 +374,8 @@ export async function sendBookingRequestPaymentExpiredEmail(params: {
   // Lodge the request is for (multi-lodge): overlays that lodge's
   // identity via prepareEmailMessage; null keeps club-wide identity.
   lodgeId?: string | null;
+  /** #5433: an owed notice's event key; the email's `EmailLog` row is then durable, so a later run cannot send it twice. */
+  idempotencyKey?: string;
 }) {
   await sendEmail({
     to: params.email,
@@ -388,6 +393,7 @@ export async function sendBookingRequestPaymentExpiredEmail(params: {
       checkIn: emailCalendarDay(params.checkIn),
       checkOut: emailCalendarDay(params.checkOut),
     },
+    idempotencyKey: params.idempotencyKey,
   });
 }
 

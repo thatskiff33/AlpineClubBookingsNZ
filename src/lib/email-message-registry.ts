@@ -1,6 +1,7 @@
 import { stripePaymentAlertSampleValue } from "@/lib/email-message-stripe-payment-samples";
 import { waitlistAlertSampleValue } from "@/lib/email-message-waitlist-samples";
 import { OWED_NOTICE_ALERT_TRIGGERS } from "@/lib/email-message-owed-notice-triggers";
+import { BOOKING_NOTICE_UNSENT_NOTE } from "@/lib/booking-notice-unsent-note";
 import {
   EMAIL_AUDIT_DEFAULTS,
   type EmailAuditTemplateName,
@@ -453,6 +454,8 @@ const REQUIRED_TEMPLATE_TOKENS: Partial<Record<EmailAuditTemplateName, string[]>
   "admin-waitlist-notice-unsent": ["noticeNote", "memberName", "bookingUrl"],
   // #5433 (D1): the owner and the booking link are what an officer acts on.
   "admin-booking-confirmation-unsent": ["memberName", "bookingUrl"],
+  // #5433 PR 4: {{unsentNote}} says which email went unsent and what to do.
+  "admin-booking-notice-unsent": ["unsentNote", "memberName", "bookingUrl"],
   // #5433: {{offerNote}} says whether the offer email reached the member; an
   // override without it would tell officers nothing about that.
   "admin-waitlist-offer": ["offerNote"],
@@ -1469,6 +1472,7 @@ export function sampleValue(token: string): string {
   }
   const waitlistSample = waitlistAlertSampleValue(token);
   if (waitlistSample !== undefined) return waitlistSample;
+  if (token === "unsentNote") return BOOKING_NOTICE_UNSENT_NOTE["request-hold-cancelled"];
   // #4042: previewed as the cash arm, what the shipped default always said.
   if (token === "handBackNote") return manualRefundTaskAlertNote("cash-cancellation");
   if (token === "handBackLabel") return manualRefundTaskAlertLabel("cash-cancellation");

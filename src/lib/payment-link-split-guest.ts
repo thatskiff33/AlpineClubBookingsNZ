@@ -168,7 +168,13 @@ export type IssueSplitGuestPaymentLinkResult =
 export async function issueSplitGuestPaymentLink(
   childBookingId: string,
   /** The club's format (#3565), resolved once by the caller — never per child. */
-  format: ClubFormat
+  format: ClubFormat,
+  /**
+   * #5433 PR 4: the owed payment link's recovery (`split-guest-payment-link-notice.ts`)
+   * sends with an event key, so its `EmailLog` row is durable and a later
+   * sweep can never send a second recovery. The booking page's button sends none.
+   */
+  options: { idempotencyKey?: string } = {}
 ): Promise<IssueSplitGuestPaymentLinkResult> {
   const booking = await prisma.booking.findUnique({
     where: { id: childBookingId },
@@ -330,6 +336,7 @@ export async function issueSplitGuestPaymentLink(
       bookingId: booking.id,
       expiresAt: minted.expiresAt, // the row's own instant, not a re-derivation
       lodgeId: booking.lodgeId ?? null,
+      idempotencyKey: options.idempotencyKey,
     }, format);
   } catch (err) {
     // The raw token dies with this request; clear the sentinel so a retry

@@ -7,7 +7,6 @@ import { BookingEventType, BookingStatus, PaymentSource, PaymentStatus, PaymentT
 import { OPEN_INTENT_TRANSACTION_STATUS_LIST } from "@/lib/payment-transaction-status";
 
 import { bookingOwner } from "@/lib/booking-owner";
-import { formatBookingReference } from "@/lib/booking-reference";
 import { deliverBumpNotices, recordBumpNoticesOwed, type OwedBumpNotice } from "@/lib/booking-bump-notice-owed";
 import { CONFIRM_PENDING_OWED_NOTICE_CAP, drainOwedNotices, type OwedNoticeSweepResult } from "@/lib/owed-notice/drain";
 import { bookingBumpReason } from "@/lib/booking-bump-reason";
@@ -36,6 +35,10 @@ import {
 } from "@/lib/payment-link-expiry";
 import { markBookingPaymentSucceeded } from "@/lib/payment-reconciliation";
 import { deliverPaidBookingConfirmation } from "@/lib/paid-booking-confirmation-notice";
+import { recordPaidConfirmationOwedUnlessUnkeyable } from "@/lib/paid-booking-confirmation-owed";
+import { deliverHoldEndedNotices, recordHoldEndedNoticesOwed, type OwedHoldEndedNotices } from "@/lib/hold-ended-cancellation-notices";
+import { deliverSplitGuestPaymentLink, recordSplitGuestPaymentLinkOwed } from "@/lib/split-guest-payment-link-notice";
+import type { OwedNoticeMarker } from "@/lib/owed-notice/store";
 import { settledByAnotherCapture } from "@/lib/duplicate-capture-outcome";
 import { releaseBookingPromoRedemptions } from "@/lib/promo";
 import {
@@ -66,18 +69,10 @@ import {
   kickQueuedXeroOutboxOperationsIfConnected,
 } from "./xero-operation-outbox";
 import {
-  sendAdminBookingRequestHoldCancelledEmail,
   sendAdminBookingRequestHoldExpiredEmail,
   sendAdminPaymentFailureAlert,
-  sendAdminSplitSettlementCancelledAlert,
   sendAdminSplitSettlementUnpaidAlert,
-  sendBookingConfirmedEmail,
-  sendBookingRequestPaymentExpiredEmail,
-  sendSplitGuestPaymentLinkEmail,
-  sendSplitGuestPortionCancelledEmail,
 } from "./email";
-import { readBookingAmountOwed } from "@/lib/booking-amount-owed";
-import { bookingPromoEmailOptions } from "./booking-promo-email-options";
 import { getNonMemberHoldDays } from "./cancellation";
 import { nonMemberHoldEnd } from "@/lib/non-member-hold-end";
 import { processWaitlistForDates } from "./waitlist";
@@ -225,7 +220,8 @@ type HoldResolution =
   | { type: "already_processed" }
   // #5407: `owed` is what the transaction recorded as owed, for the delivery to claim.
   | { type: "bumped"; booking: PendingBooking; flagged: boolean; owed: OwedBumpNotice }
-  | { type: "confirmed_zero"; booking: PendingBooking }
+  // #5433 PR 4 (CP-1): the confirmation the claim recorded as owed (null when it could not be keyed).
+  | { type: "confirmed_zero"; booking: PendingBooking; paidConfirmation: OwedNoticeMarker | null }
   | {
       type: "extended_request_hold";
       booking: PendingBooking;
@@ -245,8 +241,11 @@ type HoldResolution =
       // that a booking was created); the booking's own CANCELLED status is the
       // capacity source of truth. A PAID/CONFIRMED booking is never reached (it
       // is not PENDING) — a concurrent /pay settlement wins the CAS cleanly.
+      // #5433 PR 4 (CP-4): the email and the officers' notice are recorded as
+      // owed in the cancel's transaction (null when they could not be keyed).
       type: "request_hold_terminal_cancelled";
       booking: PendingBooking;
+      owed: OwedHoldEndedNotices | null;
     }
   | { type: "missing_payment_method"; booking: PendingBooking }
   // #3567 re-review: the charge would be refused here before Stripe is called
@@ -263,6 +262,9 @@ type HoldResolution =
       // already existed — the member was emailed on a prior run, so the
       // caller sends no member email; the admin alert fires either way.
       mintedLink: MintedSplitGuestPaymentLink | null;
+      // #5433 PR 4 (CP-6): the minted link's email, recorded as owed in the
+      // same transaction (null with no mint, or when it could not be keyed).
+      owedLink: OwedNoticeMarker | null;
       // #2258: the booking's "No emails" switch withheld the link email, so
       // nothing was minted at all. The hold extension and the admin alert still
       // run — an operator must still learn the guest portion is unpaid — but no
@@ -288,15 +290,18 @@ type HoldResolution =
       // check-in day has ended. The child holds no capacity, so this is
       // bookkeeping + notification, not a capacity change: the guarded
       // PENDING -> CANCELLED CAS, link revocation and bed reconcile commit
-      // inside the lock transaction; the CANCELLED narrative event, the member
-      // cancellation email and ONE final admin notice fire post-commit (the
-      // event write must not sit in-tx — see booking-events.ts).
+      // inside the lock transaction; the CANCELLED narrative event fires
+      // post-commit (the event write must not sit in-tx — see
+      // booking-events.ts). #5433 PR 4 (CP-5): the member cancellation email
+      // and ONE final admin notice are recorded as owed in that transaction
+      // and delivered post-commit (null when they could not be keyed).
       // A PAID child is never reached (it is not PENDING); the parent is never
       // touched; there is no Xero void (an unsettled child has no invoice).
-      // `parentUnpaid` only selects the admin-notice wording.
+      // `parentUnpaid` only selects the wording, and travels in the markers.
       type: "split_child_terminal_cancelled";
       booking: PendingBooking;
       parentUnpaid: boolean;
+      owed: OwedHoldEndedNotices | null;
     }
   | {
       type: "claimed_for_charge";
@@ -403,28 +408,6 @@ async function queueXeroInvoice(bookingId: string, logMessage: string) {
     logger.error(
       { err: xeroErr, bookingId, job: "confirmPendingBookings" },
       "Failed to queue Xero invoice"
-    );
-  }
-}
-
-async function sendConfirmationEmail(booking: PendingBooking, format: ClubFormat) {
-  try {
-    await sendBookingConfirmedEmail(
-      { bookingId: booking.id, recipientMemberId: bookingOwner(booking).memberId },
-      bookingOwner(booking).member.email,
-      bookingOwner(booking).member.firstName,
-      booking.checkIn,
-      booking.checkOut,
-      booking.guests.length,
-      // #4357 (`INV-PAY-119`): confirmation emails quote worth, what was charged.
-      savedCardChargeCents(booking),
-      format,
-      bookingPromoEmailOptions(booking)
-    );
-  } catch (emailErr) {
-    logger.error(
-      { err: emailErr, bookingId: booking.id, job: "confirmPendingBookings" },
-      "Failed to send confirmation email"
     );
   }
 }
@@ -554,8 +537,23 @@ async function resolveHoldWindowUnderLock(
       // #3611: nothing was paid, so nothing is kept; the stay's ledger lines are
       // reversed if a reversed mark-paid left it confirmed there (lock(1) above).
       await postCancellationLedgerLines({ store: tx, journal, bookingId: booking.id, lodgeId: booking.lodgeId, keptCents: 0, site: "confirm-pending:capacity-bump" });
-      // #5407: both notices are owed from this commit until sent.
-      const owed = await recordBumpNoticesOwed(tx, { bookingId: booking.id, flagged: booking.cancelIfGuestsBumped });
+      // #5433 PR 4: the BUMPED event (issue #740) is a decision record, written
+      // in the bump's own transaction with a direct, un-swallowed insert (the
+      // `booking-events.ts` exception), so it commits or rolls back with the
+      // bump and a stop after the commit can no longer lose it. Its time is the
+      // bump's, set explicitly: the column's default is the transaction's start.
+      const bumpedAt = new Date();
+      await tx.bookingEvent.create({
+        data: {
+          bookingId: booking.id,
+          type: BookingEventType.BUMPED,
+          occurredAt: bumpedAt,
+          reason: bookingBumpReason(booking.cancelIfGuestsBumped),
+          snapshot: { flagged: booking.cancelIfGuestsBumped },
+        },
+      });
+      // #5407: both notices are owed from this commit until sent; the last write.
+      const owed = await recordBumpNoticesOwed(tx, { bookingId: booking.id, flagged: booking.cancelIfGuestsBumped, bumpedAt });
 
       return { type: "bumped", booking, flagged: owed.flagged, owed };
     }
@@ -594,8 +592,11 @@ async function resolveHoldWindowUnderLock(
       await writeZeroWorthConfirmPayment(tx, booking.id);
       // #4738: the $0 booking's nights post once, under the won claim's locks.
       await postStoredBookingConfirmationLedgerLines(tx, booking.id, journal);
+      // #5433 PR 4 (CP-1): the confirmation is owed from this commit until
+      // sent, on the card confirmation's kind (owner decision D1); the last write.
+      const paidConfirmation = await recordPaidConfirmationOwedUnlessUnkeyable(tx, booking.id);
 
-      return { type: "confirmed_zero", booking };
+      return { type: "confirmed_zero", booking, paidConfirmation };
     }
 
     // #3269 (`INV-PAY-053`): own row first, then the split parent's, each
@@ -626,9 +627,10 @@ async function resolveHoldWindowUnderLock(
         // seconds earlier: already_processed, safe), then bed reconcile
         // (RELEASE), promo cleanup and link revocation, all in this tx —
         // mirroring the capacity-releasing `bumped` path above. The CANCELLED
-        // narrative event, the requester email, one final admin notice and the
-        // waitlist wake fire post-commit (the event must not sit in-tx — see
-        // booking-events.ts). A PAID/CONFIRMED booking is never here (not
+        // narrative event and the waitlist wake fire post-commit (the event
+        // must not sit in-tx — see booking-events.ts); the requester email and
+        // one final admin notice are recorded as owed in this tx and delivered
+        // post-commit (#5433 PR 4). A PAID/CONFIRMED booking is never here (not
         // PENDING); the CONVERTED request row is left as the historical record.
         const checkInDayEnded =
           paymentLinkExpiryForCheckIn(booking.checkIn, clubZone).getTime() <=
@@ -663,8 +665,10 @@ async function resolveHoldWindowUnderLock(
           // #3611: nothing was paid, so nothing is kept; the stay's ledger lines are
           // reversed if a reversed mark-paid left it confirmed there (lock(1) above).
           await postCancellationLedgerLines({ store: tx, journal, bookingId: booking.id, lodgeId: booking.lodgeId, keptCents: 0, site: "confirm-pending:request-hold-ended" });
+          // #5433 PR 4 (CP-4): both notices are owed from this commit until sent; the last write.
+          const owed = await recordHoldEndedNoticesOwed(tx, { ended: "request", bookingId: booking.id });
 
-          return { type: "request_hold_terminal_cancelled", booking };
+          return { type: "request_hold_terminal_cancelled", booking, owed };
         }
 
         const extendedHoldUntil = new Date(
@@ -735,11 +739,12 @@ async function resolveHoldWindowUnderLock(
         // capacity, so this is bookkeeping + notification: a guarded
         // PENDING -> CANCELLED CAS (count 0 => a payment won the lock seconds
         // earlier: already_processed, safe), then link revocation and bed
-        // reconcile, all in this tx. The CANCELLED narrative event, the member
-        // email and one final admin notice fire post-commit (the event must not
-        // sit in-tx — see booking-events.ts). A PAID child is never here (not
-        // PENDING); the parent is never touched; no Xero void (an unsettled
-        // child has no invoice).
+        // reconcile, all in this tx, with the member email and one final admin
+        // notice recorded as owed (#5433 PR 4). The CANCELLED narrative event
+        // fires post-commit (the event must not sit in-tx — see
+        // booking-events.ts), and the owed notices are delivered after it. A
+        // PAID child is never here (not PENDING); the parent is never touched;
+        // no Xero void (an unsettled child has no invoice).
         const checkInDayEnded =
           paymentLinkExpiryForCheckIn(booking.checkIn, clubZone).getTime() <=
           now.getTime();
@@ -768,18 +773,24 @@ async function resolveHoldWindowUnderLock(
           // #3611: nothing was paid, so nothing is kept; the stay's ledger lines are
           // reversed if a reversed mark-paid left it confirmed there (lock(1) above).
           await postCancellationLedgerLines({ store: tx, journal, bookingId: booking.id, lodgeId: booking.lodgeId, keptCents: 0, site: "confirm-pending:child-hold-ended" });
+          // #5433 PR 4 (CP-5): both notices are owed from this commit until
+          // sent, with the wording fact in their payload; the last write.
+          const parentUnpaid = !parentSettledWithoutCard;
+          const owed = await recordHoldEndedNoticesOwed(tx, { ended: "split-guest", bookingId: booking.id, parentUnpaid });
 
           // The CANCELLED narrative event is recorded POST-COMMIT (below), not
           // here: booking-events.ts documents recordBookingEvent as a
           // post-commit write on the base client, because a failed INSERT
           // inside a Postgres transaction aborts the whole transaction — an
           // in-tx narrative failure would poison this tx and block the cancel.
-          // Every sibling terminal path (bumped/confirmed_zero, the group
-          // settlement reaper) records post-commit; match them.
+          // The sibling terminal paths' narrative events (confirmed_zero, the
+          // group settlement reaper) record post-commit; match them. (The
+          // bump's BUMPED event is a decision record, written in its tx.)
           return {
             type: "split_child_terminal_cancelled",
             booking,
-            parentUnpaid: !parentSettledWithoutCard,
+            parentUnpaid,
+            owed,
           };
         }
 
@@ -822,6 +833,7 @@ async function resolveHoldWindowUnderLock(
             booking,
             extendedHoldUntil,
             mintedLink: null,
+            owedLink: null,
             emailWithheld: true,
             noEmailsAt: emailGate.noEmailsAt,
           };
@@ -834,12 +846,18 @@ async function resolveHoldWindowUnderLock(
           { id: booking.id, checkIn: booking.checkIn },
           clubZone
         );
+        // #5433 PR 4 (CP-6): the minted link's email is owed from this commit
+        // until sent, keyed by the link (never its raw token); the last write.
+        const owedLink = mintedLink
+          ? await recordSplitGuestPaymentLinkOwed(tx, { bookingId: booking.id, paymentLinkId: mintedLink.paymentLinkId })
+          : null;
 
         return {
           type: "split_child_payment_link",
           booking,
           extendedHoldUntil,
           mintedLink,
+          owedLink,
           emailWithheld: false,
           noEmailsAt: null,
         };
@@ -1114,11 +1132,19 @@ async function cancelSupersededLinkIntentsBestEffort(
  *    later run if this one stops first (#5407, #5433, `owed-notice/`).
  * 3. If beds are available and a saved payment method exists, claim capacity,
  *    charge off-session, then move to PAID and queue the booking's Xero invoice.
+ *    A booking with nothing to pay moves straight to PAID. Either way the
+ *    member's confirmation is recorded as owed with the PAID claim (#5433).
  * 4. If the booking is request-origin and has no saved card, keep the #707
  *    payment-link path alive by extending the follow-up hold and alerting admins
  *    on a capped cadence — until the check-in day has ended, at which point the
  *    still-unpaid booking is auto-cancelled, its held capacity released, and the
  *    requester + admins are given a terminal notice (#2012).
+ *
+ * Every notice a committed change here owes the member, and every one-off
+ * officers' notice, is recorded as owed in that change's own transaction and
+ * swept by a later run if this one stops first (#5433, `owed-notice/`). The
+ * recurring officer reminders (an extended request hold, an unpaid split guest
+ * portion) are not: the next due reminder goes out anyway.
  */
 export async function confirmPendingBookings(): Promise<CronConfirmResult> {
   // The club's format (#3565), resolved once, before any transaction or
@@ -1181,16 +1207,7 @@ export async function confirmPendingBookings(): Promise<CronConfirmResult> {
 
       if (resolution.type === "bumped") {
         result.bumpedBookingIds.push(resolution.booking.id);
-        // Durable fact (issue #740): these dates filled up before the
-        // provisional guests were confirmed; the booking was released, no
-        // payment taken. This is what lets the narrative tell a bumped booking
-        // apart from a member-initiated cancellation — both end up CANCELLED.
-        await recordBookingEvent({
-          bookingId: resolution.booking.id,
-          type: BookingEventType.BUMPED,
-          reason: bookingBumpReason(resolution.flagged),
-          snapshot: { flagged: resolution.flagged },
-        });
+        // The BUMPED event (issue #740) committed with the bump (#5433 PR 4).
         triggerWaitlistProcessing(resolution.booking, format);
         await deliverBumpNotices(resolution.booking, resolution.owed);
         continue;
@@ -1207,7 +1224,8 @@ export async function confirmPendingBookings(): Promise<CronConfirmResult> {
           resolution.booking.id,
           "Xero invoice queued for $0 booking"
         );
-        await sendConfirmationEmail(resolution.booking, format);
+        // #5433 PR 4 (CP-1): delivered from the owed marker the claim wrote, or by a later sweep.
+        if (resolution.paidConfirmation) await deliverPaidBookingConfirmation(resolution.paidConfirmation, format, "confirmPendingBookings");
         continue;
       }
 
@@ -1257,7 +1275,9 @@ export async function confirmPendingBookings(): Promise<CronConfirmResult> {
         // the requester their approved booking was released (nothing charged),
         // send ONE dedicated final admin notice, and wake the waitlist for the
         // freed beds. None of the four is load-bearing for the transition — a
-        // failure is logged, never retried into a double-cancel.
+        // failure is logged, never retried into a double-cancel. The two
+        // notices are owed notices (#5433 PR 4): a later sweep sends either
+        // one this run did not.
         result.cancelledBookingIds.push(resolution.booking.id);
 
         await recordBookingEvent({
@@ -1268,47 +1288,9 @@ export async function confirmPendingBookings(): Promise<CronConfirmResult> {
           snapshot: { autoCancelledPastCheckIn: true },
         });
 
-        try {
-          await sendBookingRequestPaymentExpiredEmail({
-            bookingContext: {
-              bookingId: resolution.booking.id,
-              recipientMemberId: bookingOwner(resolution.booking).memberId,
-            },
-            email: bookingOwner(resolution.booking).member.email,
-            firstName: bookingOwner(resolution.booking).member.firstName,
-            checkIn: resolution.booking.checkIn,
-            checkOut: resolution.booking.checkOut,
-            lodgeId: resolution.booking.lodgeId,
-          });
-        } catch (emailErr) {
-          logger.error(
-            {
-              err: emailErr,
-              bookingId: resolution.booking.id,
-              job: "confirmPendingBookings",
-            },
-            "Failed to send requester payment-expired email for auto-cancelled request booking (#2012)"
-          );
-        }
-
-        try {
-          await sendAdminBookingRequestHoldCancelledEmail({
-            requesterName: `${bookingOwner(resolution.booking).member.firstName} ${bookingOwner(resolution.booking).member.lastName}`,
-            checkIn: resolution.booking.checkIn,
-            checkOut: resolution.booking.checkOut,
-            guestCount: resolution.booking.guests.length,
-            totalCents: resolution.booking.finalPriceCents,
-          }, format);
-        } catch (alertErr) {
-          logger.error(
-            {
-              err: alertErr,
-              bookingId: resolution.booking.id,
-              job: "confirmPendingBookings",
-            },
-            "Failed to send final admin notice for auto-cancelled request booking (#2012)"
-          );
-        }
+        // #5433 PR 4 (CP-4): the requester's email, then the officers' notice,
+        // from the markers the cancel wrote; a later sweep sends what this misses.
+        if (resolution.owed) await deliverHoldEndedNotices(resolution.booking, resolution.owed, format, "confirmPendingBookings");
 
         triggerWaitlistProcessing(resolution.booking, format);
         continue;
@@ -1323,7 +1305,8 @@ export async function confirmPendingBookings(): Promise<CronConfirmResult> {
         // provisional guest portion was cancelled (nothing ever charged; their
         // own booking untouched), and send ONE dedicated final admin notice.
         // None of the three is load-bearing for the transition — a failure is
-        // logged, never retried into a double-cancel.
+        // logged, never retried into a double-cancel. The two notices are owed
+        // notices (#5433 PR 4): a later sweep sends either one this run did not.
         result.cancelledBookingIds.push(resolution.booking.id);
 
         await recordBookingEvent({
@@ -1334,51 +1317,9 @@ export async function confirmPendingBookings(): Promise<CronConfirmResult> {
           snapshot: { autoCancelledPastCheckIn: true },
         });
 
-        try {
-          await sendSplitGuestPortionCancelledEmail({
-            bookingId: resolution.booking.id,
-            recipientMemberId: bookingOwner(resolution.booking).memberId,
-            email: bookingOwner(resolution.booking).member.email,
-            firstName: bookingOwner(resolution.booking).member.firstName,
-            checkIn: resolution.booking.checkIn,
-            checkOut: resolution.booking.checkOut,
-            // parentUnpaid conflates unpaid/cancelled/bumped parents, so only
-            // promise "your own booking remains confirmed" when the parent is
-            // genuinely settled (parentUnpaid === false).
-            parentConfirmed: !resolution.parentUnpaid,
-            parentBookingReference: resolution.booking.parentBookingId && formatBookingReference(resolution.booking.parentBookingId),
-            lodgeId: resolution.booking.lodgeId,
-          });
-        } catch (emailErr) {
-          logger.error(
-            {
-              err: emailErr,
-              bookingId: resolution.booking.id,
-              job: "confirmPendingBookings",
-            },
-            "Failed to send member cancellation email for auto-cancelled split child (#1993)"
-          );
-        }
-
-        try {
-          await sendAdminSplitSettlementCancelledAlert({
-            memberName: `${bookingOwner(resolution.booking).member.firstName} ${bookingOwner(resolution.booking).member.lastName}`,
-            checkIn: resolution.booking.checkIn,
-            checkOut: resolution.booking.checkOut,
-            guestCount: resolution.booking.guests.length,
-            totalCents: resolution.booking.finalPriceCents,
-            parentUnpaid: resolution.parentUnpaid,
-          }, format);
-        } catch (alertErr) {
-          logger.error(
-            {
-              err: alertErr,
-              bookingId: resolution.booking.id,
-              job: "confirmPendingBookings",
-            },
-            "Failed to send final admin notice for auto-cancelled split child (#1993)"
-          );
-        }
+        // #5433 PR 4 (CP-5): the member's email, then the officers' notice,
+        // from the markers the cancel wrote; a later sweep sends what this misses.
+        if (resolution.owed) await deliverHoldEndedNotices(resolution.booking, resolution.owed, format, "confirmPendingBookings");
 
         triggerWaitlistProcessing(resolution.booking, format);
         continue;
@@ -1389,10 +1330,12 @@ export async function confirmPendingBookings(): Promise<CronConfirmResult> {
         // null mintedLink means an active link exists and the member was
         // emailed on a prior run — idempotent across cron re-runs). If the
         // send throws or is suppressed, the raw token dies with this run, so
-        // revoke the just-minted link (by id, so a concurrent on-demand
+        // the just-minted link is revoked (by id, so a concurrent on-demand
         // re-mint's newer link survives) — the next extension run then
         // re-mints and re-sends instead of stalling forever behind a stale
-        // active-link sentinel.
+        // active-link sentinel. Since #5433 PR 4 the email is owed from the
+        // mint's commit, so a stop before it is sent is recovered by a later
+        // sweep (`split-guest-payment-link-notice.ts`).
         if (resolution.emailWithheld) {
           // #2258: nothing minted, nothing sent. Record the withhold ONCE per
           // booking (this cron re-drives every run, and a per-run row would
@@ -1418,75 +1361,26 @@ export async function confirmPendingBookings(): Promise<CronConfirmResult> {
             { bookingId: resolution.booking.id, job: "confirmPendingBookings" },
             'Skipped minting a split guest payment link: the booking has "No emails" turned on'
           );
+        } else if (resolution.mintedLink && resolution.owedLink) {
+          // #5433 PR 4 (CP-6): sent from the owed marker the mint wrote, keyed
+          // by the link; an undelivered email has its link revoked as before,
+          // and a later sweep re-mints one whose first attempt never finished.
+          await deliverSplitGuestPaymentLink(
+            resolution.owedLink,
+            { booking: resolution.booking, link: resolution.mintedLink, format },
+            "confirmPendingBookings"
+          );
         } else if (resolution.mintedLink) {
-          // `expiresAt` comes back FROM the mint, so the email states the row's
-          // own instant rather than deriving the boundary a second time.
-          const { token, paymentLinkId, expiresAt } = resolution.mintedLink;
-          let delivered = false;
-          let withheld = false;
-          try {
-            const emailOutcome = await sendSplitGuestPaymentLinkEmail({
-              bookingContext: {
-                bookingId: resolution.booking.id,
-                recipientMemberId: bookingOwner(resolution.booking).memberId,
-              },
-              email: bookingOwner(resolution.booking).member.email,
-              firstName: bookingOwner(resolution.booking).member.firstName,
-              token,
-              checkIn: resolution.booking.checkIn,
-              checkOut: resolution.booking.checkOut,
-              guestCount: resolution.booking.guests.length,
-              priceCents: resolution.booking.finalPriceCents,
-              amountDueCents: (await readBookingAmountOwed(resolution.booking)).dueCents,
-              bookingId: resolution.booking.id,
-              expiresAt,
-              lodgeId: resolution.booking.lodgeId ?? null,
-            }, format);
-            delivered = emailOutcome.status === "sent";
-            // #2258: the switch can be flipped between the pre-mint gate and this
-            // send. The token is revoked below either way, but a DELIBERATE
-            // withhold must not be reported as a retryable delivery failure, while
-            // a fail-closed one (the setting could not be READ) is transient and
-            // keeps retry semantics. The else-branch names NO cause: it said
-            // "(suppressed recipient)", false for an environment withhold (#3035).
-            withheld =
-              emailOutcome.status === "withheld_for_booking" &&
-              emailOutcome.reason === "booking_no_emails";
-            if (!delivered) {
-              logger.warn(
-                {
-                  bookingId: resolution.booking.id,
-                  emailStatus: emailOutcome.status,
-                  job: "confirmPendingBookings",
-                },
-                withheld
-                  ? "Split-booking guest payment link email withheld by the booking's email gate; revoking the link"
-                  : "Split-booking guest payment link email not delivered; revoking the link so the next settlement run re-mints. emailStatus says why"
-              );
-            }
-          } catch (emailErr) {
+          // The link could not key an owed marker (logged where it was minted):
+          // revoke it, so its unsent token cannot stand as the "member was
+          // emailed" sign, and the next extension re-mints.
+          const { paymentLinkId } = resolution.mintedLink;
+          await revokePaymentLinkById(paymentLinkId).catch((revokeErr) =>
             logger.error(
-              {
-                err: emailErr,
-                bookingId: resolution.booking.id,
-                job: "confirmPendingBookings",
-              },
-              "Failed to send split-booking guest payment link email; revoking the link so the next settlement run re-mints"
-            );
-          }
-          if (!delivered) {
-            await revokePaymentLinkById(paymentLinkId).catch((revokeErr) =>
-              logger.error(
-                {
-                  err: revokeErr,
-                  bookingId: resolution.booking.id,
-                  paymentLinkId,
-                  job: "confirmPendingBookings",
-                },
-                "Failed to revoke undelivered split guest payment link; a stale active link may block re-minting until it expires"
-              )
-            );
-          }
+              { err: revokeErr, bookingId: resolution.booking.id, paymentLinkId, job: "confirmPendingBookings" },
+              "Failed to revoke a split guest payment link whose email could not be recorded as owed"
+            )
+          );
         }
 
         // Admin alert: #1993 Part B caps the previously-every-run cadence to

@@ -32,16 +32,17 @@
  * idempotency chain (#3266) depends on the previous id staying put, and the
  * customer is still the member's customer.
  */
-import { bookingOwner } from "@/lib/booking-owner";
+import type { Prisma } from "@prisma/client";
 import logger from "@/lib/logger";
 import { prisma } from "./prisma";
 import { detachPaymentMethod } from "./stripe";
 import { readStripeErrorFields, stripeErrorApiType } from "./stripe-errors";
 import { isLocalChargeRefusal } from "./stripe-charge-currency";
 import {
-  sendAdminPaymentFailureAlert,
-  sendSavedCardChargeFailedEmail,
-} from "./email";
+  deliverSavedCardUnusableNotices,
+  recordSavedCardUnusableNoticesOwed,
+  type SavedCardUnusableBooking,
+} from "./saved-card-unusable-notices";
 import type { ClubFormat } from "@/lib/club-format";
 
 export type SavedCardChargeFailureReason =
@@ -266,11 +267,19 @@ export function classifySavedCardChargeFailure(
  * in this same terminal branch — the second clear matches zero rows and the
  * second detach fails with `invalid_request_error`, which is swallowed.
  * Idempotent by construction (INV-PAY-027).
+ *
+ * #5433 PR 4: the two clears run in one transaction, which takes no advisory
+ * lock (as above), so a caller can record in it, as its last write, the
+ * notices the clear owes (`recordOwed`): they commit or roll back with the
+ * clear, and a stop after the commit leaves them for a later run's sweep.
  */
-export async function retireUnusableSavedCard(params: {
-  paymentMethodId: string;
-  bookingId: string;
-}): Promise<{ clearedPaymentRows: number; clearedLedgerRows: number }> {
+export async function retireUnusableSavedCard<Owed = null>(
+  params: {
+    paymentMethodId: string;
+    bookingId: string;
+  },
+  recordOwed?: (tx: Prisma.TransactionClient) => Promise<Owed>,
+): Promise<{ clearedPaymentRows: number; clearedLedgerRows: number; owed: Owed | null }> {
   try {
     await detachPaymentMethod(params.paymentMethodId);
   } catch (detachErr) {
@@ -288,70 +297,21 @@ export async function retireUnusableSavedCard(params: {
     );
   }
 
-  const clearedPayments = await prisma.payment.updateMany({
-    where: { stripePaymentMethodId: params.paymentMethodId },
-    data: { stripePaymentMethodId: null },
+  return prisma.$transaction(async (tx) => {
+    const clearedPayments = await tx.payment.updateMany({
+      where: { stripePaymentMethodId: params.paymentMethodId },
+      data: { stripePaymentMethodId: null },
+    });
+    const clearedLedger = await tx.paymentTransaction.updateMany({
+      where: { paymentMethodId: params.paymentMethodId },
+      data: { paymentMethodId: null },
+    });
+    return {
+      clearedPaymentRows: clearedPayments.count,
+      clearedLedgerRows: clearedLedger.count,
+      owed: recordOwed ? await recordOwed(tx) : null,
+    };
   });
-  const clearedLedger = await prisma.paymentTransaction.updateMany({
-    where: { paymentMethodId: params.paymentMethodId },
-    data: { paymentMethodId: null },
-  });
-
-  return {
-    clearedPaymentRows: clearedPayments.count,
-    clearedLedgerRows: clearedLedger.count,
-  };
-}
-
-/**
- * Plain-English admin alert body for a terminal failure. Says what happened,
- * what the system did about it, what the member has been asked to do, and
- * quotes Stripe's own words so the operator can look it up.
- *
- * `claimReleased` is whether `releaseChargeClaim` succeeded. It normally does,
- * and the booking is back to PENDING with its beds unheld; when it did not, the
- * booking is stuck CONFIRMED and unpaid with no card, and the alert must say
- * that rather than assert a pending state the row is not in.
- */
-export function describeTerminalSavedCardChargeFailure(
-  classification: Extract<SavedCardChargeFailureClassification, { outcome: "terminal" }>,
-  { claimReleased }: { claimReleased: boolean }
-): string {
-  const why =
-    classification.reason === "payment_method_unusable"
-      ? "Stripe reported the saved card can no longer be charged"
-      : classification.reason === "card_permanently_declined"
-        ? "the card issuer declined it for a reason a retry cannot fix"
-        : "the card has kept declining for two days after the charge first became due";
-  const stripeDetail = [
-    classification.stripeCode ? `code ${classification.stripeCode}` : null,
-    classification.declineCode ? `decline ${classification.declineCode}` : null,
-  ]
-    .filter((part): part is string => part !== null)
-    .join(", ");
-  return (
-    `The saved card for this booking was found unusable: ${why}. ` +
-    "It has been removed from the booking, and the member has been emailed asking them to save a new card. " +
-    (claimReleased
-      ? "The booking stays pending; no further automatic charge will be attempted until a card is saved. "
-      : "The booking could NOT be returned to pending after the failed charge and is still marked confirmed but unpaid, with no card on file — it needs an administrator to correct it. ") +
-    `Stripe said: "${classification.message}"${stripeDetail ? ` (${stripeDetail})` : ""}.`
-  );
-}
-
-/** The booking fields the terminal escalation reads — ids and dates, no more. */
-export interface TerminalSavedCardChargeBooking {
-  id: string;
-  /** The booking OWNER, null when it is owned by an Organisation (#3369). */
-  memberId: string | null;
-  lodgeId: string | null;
-  checkIn: Date;
-  checkOut: Date;
-  finalPriceCents: number;
-  /** Null for an organisation-owned booking; read through `bookingOwner()`. */
-  member: { email: string; firstName: string; lastName: string } | null;
-  /** #3369: the owner may be an Organisation; `bookingOwner()` reads both. */
-  organisation: { name: string; email: string | null } | null;
 }
 
 /**
@@ -362,21 +322,26 @@ export interface TerminalSavedCardChargeBooking {
  * carried it, so the next run never reaches the charge arm for this card: a
  * split child takes the #1967 payment-link path (its own capped admin
  * cadence), a plain booking takes `missing_payment_method`, which only logs.
- * Rerunning THIS run — a crash between the clear and the emails — re-classifies
- * the same error and re-sends, which is the ordinary at-least-once shape every
- * cron notice here accepts (INV-INT-001).
+ * That is also why the two notices cannot wait for a later run of this branch:
+ * since #5433 PR 4 they are owed notices, recorded in the clear's own
+ * transaction (`saved-card-unusable-notices.ts`). Right after the commit they
+ * are delivered, the member's first; a stop before either is sent leaves it
+ * for a later run's sweep, which sends it from the booking as it stands.
  *
  * `retireUnusableSavedCard` may THROW (a detach failure Stripe did not call
- * `invalid_request_error`): nothing has been cleared and no notice has gone,
- * and the caller's catch falls back to the ordinary retry alert.
+ * `invalid_request_error`): nothing has been cleared, nothing is owed and no
+ * notice has gone, and the caller's catch falls back to the ordinary retry
+ * alert. A failure of the clear's transaction throws the same way, with the
+ * card detached at Stripe but still on the rows: the next run's charge is
+ * refused by Stripe and lands here again.
  *
  * The member email is best-effort: a send failure is logged and never thrown,
- * and it cannot undo the clear, which has already committed. The admin alert
- * carries the plain-English account and Stripe's own words. Log fields are
- * ids and provider codes only (INV-INT-005).
+ * it leaves the notice owed, and it cannot undo the clear, which has already
+ * committed. The admin alert carries the plain-English account and Stripe's
+ * own words. Log fields are ids and provider codes only (INV-INT-005).
  */
 export async function retireAndEscalateUnusableSavedCard(params: {
-  booking: TerminalSavedCardChargeBooking;
+  booking: SavedCardUnusableBooking;
   paymentMethodId: string;
   paymentIntentId: string;
   failure: Extract<SavedCardChargeFailureClassification, { outcome: "terminal" }>;
@@ -387,10 +352,17 @@ export async function retireAndEscalateUnusableSavedCard(params: {
 }): Promise<void> {
   const { format } = params;
   const { booking, failure } = params;
-  const { clearedPaymentRows, clearedLedgerRows } = await retireUnusableSavedCard({
-    paymentMethodId: params.paymentMethodId,
-    bookingId: booking.id,
-  });
+  const { clearedPaymentRows, clearedLedgerRows, owed } = await retireUnusableSavedCard(
+    { paymentMethodId: params.paymentMethodId, bookingId: booking.id },
+    (tx) =>
+      recordSavedCardUnusableNoticesOwed(tx, {
+        bookingId: booking.id,
+        facts: { reason: failure.reason, stripeCode: failure.stripeCode, declineCode: failure.declineCode, message: failure.message },
+        claimReleased: params.claimReleased,
+        amountCents: booking.finalPriceCents,
+        paymentIntentId: params.paymentIntentId,
+      }),
+  );
 
   logger.error(
     {
@@ -408,38 +380,5 @@ export async function retireAndEscalateUnusableSavedCard(params: {
     "Saved card is permanently unusable; retired it and stopped retrying (#3268)"
   );
 
-  try {
-    await sendSavedCardChargeFailedEmail({
-      bookingId: booking.id,
-      recipientMemberId: bookingOwner(booking).memberId,
-      email: bookingOwner(booking).member.email,
-      firstName: bookingOwner(booking).member.firstName,
-      checkIn: booking.checkIn,
-      checkOut: booking.checkOut,
-      lodgeId: booking.lodgeId,
-    });
-  } catch (emailErr) {
-    logger.error(
-      { err: emailErr, bookingId: booking.id, job: "confirmPendingBookings" },
-      "Failed to send the saved-card-charge-failed email to the member (#3268)"
-    );
-  }
-
-  try {
-    await sendAdminPaymentFailureAlert({
-      memberName: `${bookingOwner(booking).member.firstName} ${bookingOwner(booking).member.lastName}`,
-      checkIn: booking.checkIn,
-      checkOut: booking.checkOut,
-      amountCents: booking.finalPriceCents,
-      errorMessage: describeTerminalSavedCardChargeFailure(failure, {
-        claimReleased: params.claimReleased,
-      }),
-      paymentIntentId: params.paymentIntentId,
-    }, format);
-  } catch (alertErr) {
-    logger.error(
-      { err: alertErr, bookingId: booking.id, job: "confirmPendingBookings" },
-      "Failed to send admin payment failure alert"
-    );
-  }
+  if (owed) await deliverSavedCardUnusableNotices(booking, owed, format);
 }

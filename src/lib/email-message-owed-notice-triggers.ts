@@ -16,8 +16,13 @@ export const OWED_NOTICE_ALERT_TRIGGERS: Partial<
       "Once per unsent notice, and once per offer for its email and its lapse together, guarded by a cross-instance claim. The claim is kept once any admin is sent it or has a copy queued for the email retry cron, held for a day when no admin can receive it, and given back when the send throws before reaching anyone",
   },
   "admin-booking-confirmation-unsent": {
-    triggerSummary: "A booking paid by card owed its owner a confirmation email that did not reach them: it could not be sent by the end of the check-in day (or within seven days of the payment), it failed or bounced, or the owner's address cannot be emailed (#5433, owner decision D1)",
+    triggerSummary: "A booking paid by card, or confirmed at no charge by the hold-deadline job, owed its owner a confirmation email that did not reach them: it could not be sent by the end of the check-in day (or within seven days of the payment), it failed or bounced, or the owner's address cannot be emailed (#5433, owner decision D1)",
     frequency:
       "Once per paid booking, guarded by a cross-instance claim. The claim is kept once any admin is sent it or has a copy queued for the email retry cron, held for a day when no admin can receive it, and given back when the send throws before reaching anyone",
+  },
+  "admin-booking-notice-unsent": {
+    triggerSummary: "An email the hold-deadline job owed a booking's owner did not reach them: the requester's notice that an unpaid request booking was released, the member's notice that their guests' unpaid provisional place was cancelled, or the request to save a new card after a saved card was found unusable, each when it could not be sent in time (within seven days, and for a cancellation by the check-out date) or did not reach them (it failed or bounced, or the owner's address cannot be emailed); or the link to pay for a member's guests, when it could not be sent within seven days (#5433)",
+    frequency:
+      "Once per unsent email, guarded by a cross-instance claim. The claim is kept once any admin is sent it or has a copy queued for the email retry cron, held for a day when no admin can receive it, and given back when the send throws before reaching anyone",
   },
 };
