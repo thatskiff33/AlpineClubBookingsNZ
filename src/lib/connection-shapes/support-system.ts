@@ -38,7 +38,7 @@ import type { PrivacyRetentionSettingsValues } from "@/lib/privacy-retention-sha
 import type { SetupProgressState, SetupReadiness } from "@/lib/setup-readiness";
 import type { StuckStateDashboard } from "@/lib/stuck-state-dashboard";
 
-import { EMAIL_FAILURE_SHAPE } from "./support-messages";
+import { EMAIL_FAILURE_SHAPE } from "@/lib/connection-shapes/support-messages";
 
 // ---------------------------------------------------------------------------
 // Health

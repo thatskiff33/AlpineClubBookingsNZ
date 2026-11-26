@@ -107,12 +107,12 @@ describe("get_email_template", () => {
   });
 
   it("answers 404 for a template the club does not have", async () => {
-    const { request, context } = buildActionRequest(
+    const { request } = buildActionRequest(
       findMcpAction("get_email_template")!,
       { templateName: "no-such-template" },
       true,
     );
-    const response = await getTemplates(request as never, context as never);
+    const response = await getTemplates(request as never);
     expect(response.status).toBe(404);
   });
 });

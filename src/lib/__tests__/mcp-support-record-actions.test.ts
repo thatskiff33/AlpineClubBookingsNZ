@@ -157,8 +157,8 @@ describe("search_audit_log", () => {
   it("searches a Support-only connection in admin, security and system alone, whatever the app filters on", async () => {
     h.requireAdmin.mockResolvedValue({ ok: true, session: officerWith({ support: "view" }) });
     const action = findMcpAction("search_audit_log")!;
-    const { request, context } = buildActionRequest(action, { category: "communication" }, true);
-    const response = await getAuditLog(request as never, context as never);
+    const { request } = buildActionRequest(action, { category: "communication" }, true);
+    const response = await getAuditLog(request as never);
     expect(response.status).toBe(200);
     expect(pageWheres()[0]).toEqual({
       AND: [expect.anything(), { category: { in: ["admin", "security", "system"] } }],
