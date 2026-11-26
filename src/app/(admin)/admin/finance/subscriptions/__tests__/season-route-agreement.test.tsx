@@ -17,7 +17,7 @@ import { NextRequest } from "next/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const db = vi.hoisted(() => ({
-  memberSubscriptionFindMany: vi.fn(async (_args: unknown): Promise<unknown[]> => []),
+  memberSubscriptionFindMany: vi.fn<(args: unknown) => Promise<unknown[]>>(async () => []),
 }));
 
 vi.mock("@/lib/prisma", () => ({

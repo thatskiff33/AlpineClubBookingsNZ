@@ -79,7 +79,7 @@ vi.mock("@/components/ui/select", () => ({
   SelectValue: () => null,
 }));
 
-const fetchMock = vi.fn(async (_input: RequestInfo | URL) =>
+const fetchMock = vi.fn<(input: RequestInfo | URL) => Promise<Response>>(async () =>
   Response.json({
     data: [],
     total: 0,
