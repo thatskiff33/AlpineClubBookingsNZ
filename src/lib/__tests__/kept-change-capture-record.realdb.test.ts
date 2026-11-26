@@ -1109,10 +1109,13 @@ async function holdLock(lock: (tx: Prisma.TransactionClient) => Promise<unknown>
     await seed("OPEN", { marked: false });
     const operationId = await seedRetiredChangeInvoice({ recordPayment: false });
 
-    /** Whether another session can take this row now; NOWAIT fails at once on a held row lock. */
-    const rowFree = (table: "Booking" | "Payment", id: string) =>
+    /**
+     * Whether another session can take this row now; NOWAIT fails at once on a held row lock. NO KEY UPDATE
+     * conflicts with a held row lock or an uncommitted update, never with a foreign key's KEY SHARE.
+     */
+    const rowFree = (table: "Booking" | "Payment" | "ManualRefundTask", id: string) =>
       observerClient
-        .$transaction((tx) => tx.$queryRawUnsafe(`SELECT id FROM "${table}" WHERE id = $1 FOR UPDATE NOWAIT`, id))
+        .$transaction((tx) => tx.$queryRawUnsafe(`SELECT id FROM "${table}" WHERE id = $1 FOR NO KEY UPDATE NOWAIT`, id))
         .then(() => true, () => false);
 
     const holder = await holdLock((tx) => supplementary.lockSupplementaryInvoiceAnchor(tx, MODIFICATION_ID));
@@ -1135,8 +1138,8 @@ async function holdLock(lock: (tx: Prisma.TransactionClient) => Promise<unknown>
       expect(lockOne!.held).toBe(1);
       await expect(rowFree("Booking", BOOKING_ID)).resolves.toBe(false);
       await expect(rowFree("Payment", PAYMENT_ID)).resolves.toBe(false);
-      // The task is still OPEN to everyone else: the claim follows the anchor.
-      await expect(prisma.manualRefundTask.findUniqueOrThrow({ where: { id: TASK_ID } })).resolves.toMatchObject({ status: "OPEN" });
+      // The claim follows the anchor: its uncommitted OPEN -> DISMISSED update would hold the task row.
+      await expect(rowFree("ManualRefundTask", TASK_ID)).resolves.toBe(true);
 
       holder.release();
       await holder.done;
