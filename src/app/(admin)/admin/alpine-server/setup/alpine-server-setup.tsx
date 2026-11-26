@@ -42,7 +42,7 @@ import {
 } from "@/hooks/use-admin-area-edit-access";
 import { registrationMessage, useLodgeLinkStep, type KeySaveRegistration } from "./server-connect-step";
 import { FocusedActionError } from "@/components/focused-action-error";
-import { useActionFailure } from "@/hooks/use-action-failure";
+import { useActionFailure, type ActionFailure } from "@/hooks/use-action-failure";
 import { apiErrorCodeFromBody, apiErrorMessageFromBody, readApiObjectOrEmpty } from "@/lib/api-error-message";
 import { adminHref } from "@/lib/admin-hubs";
 
@@ -149,6 +149,26 @@ function downloadSummaryText(data: DownloadSummary): string {
   return `Downloaded ${entries}: ${data.created} added, ${data.updated} updated${renamed}, ${data.unchanged ?? 0} unchanged.${conflictText}${hiddenText}${stoppedText}`;
 }
 
+type StatusMessage = { kind: "ok" | "warn"; text: string };
+
+/**
+ * The page's feedback, above the cards: a failure in the alert that takes
+ * focus, again on a word-for-word repeat (#4975, #5257); a success or a notice
+ * in the passive status line, which moves nothing.
+ */
+function ActionFeedback({ failure, message }: { failure: ActionFailure; message: StatusMessage | null }) {
+  return (
+    <>
+      <FocusedActionError id="alpine-server-action-error" error={failure.error} attentionKey={failure.attentionKey} />
+      {message ? (
+        <p className={`text-sm ${message.kind === "ok" ? "text-success-11" : "text-warning-11"}`} role="status">
+          {message.text}
+        </p>
+      ) : null}
+    </>
+  );
+}
+
 export function AlpineServerSetup({ initialState }: { initialState: InitialState }) {
   const clubTime = useClubTime();
   // Two different permissions, and the page says which is which rather than
@@ -175,11 +195,7 @@ export function AlpineServerSetup({ initialState }: { initialState: InitialState
   );
 
   const [busy, setBusy] = useState<string | null>(null);
-  // Successes and notices: a passive status line that never moves focus.
-  const [message, setMessage] = useState<{ kind: "ok" | "warn"; text: string } | null>(
-    null,
-  );
-  // Failures: the page's alert, which takes focus, again on a repeat (#4975).
+  const [message, setMessage] = useState<StatusMessage | null>(null);
   const failure = useActionFailure();
 
   const connectionReady = apiKeySet && savedBaseUrl.length > 0;
@@ -395,15 +411,7 @@ export function AlpineServerSetup({ initialState }: { initialState: InitialState
 
   return (
     <div className="space-y-6">
-      <FocusedActionError id="alpine-server-action-error" error={failure.error} attentionKey={failure.attentionKey} />
-      {message ? (
-        <p
-          className={`text-sm ${message.kind === "ok" ? "text-success-11" : "text-warning-11"}`}
-          role="status"
-        >
-          {message.text}
-        </p>
-      ) : null}
+      <ActionFeedback failure={failure} message={message} />
       {lodgeLinks.statusLine}
       {lodgeLinks.dialog}
 
