@@ -17,6 +17,7 @@
  *   half-open), which is `workPartyCheckOutDay`.
  */
 import type { Prisma } from "@prisma/client";
+import { MAX_OCCURRENCES } from "@/lib/calendar-recurrence";
 import {
   addCalendarDays,
   calendarDateOfDateOnlyInstant,
@@ -24,6 +25,13 @@ import {
   countClubNights,
   type CalendarDate,
 } from "@/lib/club-time";
+
+/**
+ * The longest window a work party may have: the calendar's series cap, since
+ * the calendar shows a work party as one entry per night. The save refuses a
+ * longer new window, and the AI app action states the same limit.
+ */
+export const MAX_WORK_PARTY_NIGHTS = MAX_OCCURRENCES;
 
 export const OPEN_WORK_PARTY_EVENT_WHERE = {
   active: true,

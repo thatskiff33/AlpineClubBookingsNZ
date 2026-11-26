@@ -4,7 +4,6 @@ import { requireAdmin } from "@/lib/session-guards";
 import { transactionContendedResponse } from "@/lib/transaction-contended-response";
 import { isDateOnlyString, parseDateOnly } from "@/lib/date-only";
 import { prisma } from "@/lib/prisma";
-import { z } from "zod";
 import logger from "@/lib/logger";
 import { getAuditRequestContext } from "@/lib/audit";
 import {
@@ -15,30 +14,15 @@ import { custodianBedHoldErrorResponse } from "@/lib/custodian-assignment-routes
 import { isEffectiveModuleEnabled } from "@/lib/admin-modules";
 import { isCustodianOccupancy } from "@/lib/custodian-occupancy";
 import { readSavedHutLeaderSchoolNightsWarning } from "@/lib/hut-leader-school-nights-warning";
-import { dateOnlyStringSchema } from "@/lib/date-only-schema";
+import { hutLeaderAssignmentUpdateBodySchema } from "@/lib/admin-lodge-schemas/hut-leaders";
+import {
+  ADMIN_LODGE_DONE_CONNECTION_SHAPE,
+  ADMIN_HUT_LEADER_UPDATED_CONNECTION_SHAPE,
+} from "@/lib/connection-shapes/lodge-hut-leaders";
+import { connectionJson } from "@/lib/mcp-connection-request";
 
-const updateSchema = z.object({
-  startDate: dateOnlyStringSchema.optional(),
-  endDate: dateOnlyStringSchema.optional(),
-  lodgeId: z.string().min(1).optional(),
-  // Custodian bed hold (#2286), THREE-state and deliberately so:
-  //   absent          -> leave the bed exactly as it is
-  //   null            -> CLEAR the bed (back to role only; the bed is bookable
-  //                      again from the moment this commits)
-  //   a bed id string -> set/replace the bed
-  // `.nullable()` as well as `.optional()` is what makes "clear" expressible at
-  // all — without it there would be no way to undo a hold except deleting the
-  // whole assignment.
-  bedId: z.string().min(1).nullable().optional(),
-  isCustodian: z.boolean().optional(), // #3817 custodian tick; absent = unchanged
-  // #1668-style explicit override of the over-capacity warning.
-  confirmOverCapacity: z.boolean().optional(),
-  // #2698 ordering case: the officer's EXPLICIT acceptance that holding this
-  // bed narrows an existing whole-lodge hold's represented bed set. Absent is
-  // decline-by-default — 409 CUSTODIAN_OVERLAPS_WHOLE_LODGE_HOLD, nothing
-  // written on either side.
-  amendOverlappingHolds: z.boolean().optional(),
-});
+// The body schema lives in admin-lodge-schemas/hut-leaders.ts so the AI app
+// action `update_hut_leader_assignment` offers the same fields (ALP-722).
 
 /**
  * PUT /api/admin/hut-leaders/[id]
@@ -59,7 +43,7 @@ export async function PUT(
   if (!jsonBody.ok) return jsonBody.response;
   const body = jsonBody.body;
 
-  const parsed = updateSchema.safeParse(body);
+  const parsed = hutLeaderAssignmentUpdateBodySchema.safeParse(body);
   if (!parsed.success) {
     return NextResponse.json(
       { error: "Invalid input", details: parsed.error.flatten() },
@@ -185,7 +169,7 @@ export async function PUT(
     }
     // #3821: the create's school-nights advisory, of the row as saved.
     const schoolNightsWarning = await readSavedHutLeaderSchoolNightsWarning(prisma, id);
-    return NextResponse.json({ success: true, schoolNightsWarning });
+    return connectionJson(req, { success: true, schoolNightsWarning }, ADMIN_HUT_LEADER_UPDATED_CONNECTION_SHAPE);
   } catch (err) {
     const custodianResponse = custodianBedHoldErrorResponse(err);
     if (custodianResponse) return custodianResponse;
@@ -239,7 +223,7 @@ export async function DELETE(
       );
     }
     logger.info({ assignmentId: id }, "Hut leader assignment deleted");
-    return NextResponse.json({ success: true });
+    return connectionJson(req, { success: true }, ADMIN_LODGE_DONE_CONNECTION_SHAPE);
   } catch (err) {
     logger.error({ err }, "Error deleting hut leader assignment");
     return NextResponse.json({ error: "Failed to delete assignment" }, { status: 500 });

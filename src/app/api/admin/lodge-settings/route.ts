@@ -1,15 +1,20 @@
 import { NextResponse } from "next/server";
-import { z } from "zod";
 import { parseJsonRequestBody } from "@/lib/api-json";
+import {
+  lodgeSettingsBodySchema,
+  lodgeSettingsQuerySchema,
+} from "@/lib/admin-lodge-schemas/setup";
 import { createAuditLog } from "@/lib/audit";
+import {
+  ADMIN_LODGE_SETTINGS_CONNECTION_SHAPE,
+  ADMIN_LODGE_SETTINGS_SAVED_CONNECTION_SHAPE,
+  type LodgeSettingsAnswer,
+  type LodgeSettingsSavedAnswer,
+} from "@/lib/connection-shapes/lodge-setup";
 import {
   CLUB_CONFIG_LODGE_CAPACITY,
   getLodgeCapacityStatus,
 } from "@/lib/lodge-capacity";
-import {
-  MAX_CONFIGURED_LODGE_CAPACITY,
-  MIN_CONFIGURED_LODGE_CAPACITY,
-} from "@/lib/lodge-effective-capacity";
 import { isLodgeSetUpForBookings } from "@/lib/lodge-booking-readiness";
 import {
   loadLodgeSettings,
@@ -18,6 +23,7 @@ import {
 import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/session-guards";
 import { revalidatePublicSite } from "@/lib/public-content-revalidation";
+import { connectionJson } from "@/lib/mcp-connection-request";
 
 // Per-lodge scope (lodge-scoping contract): an explicit lodgeId must name
 // an active lodge; omitted keeps the legacy single-row behaviour.
@@ -39,28 +45,10 @@ async function validateLodgeScope(lodgeId: string | null | undefined) {
   return { ok: true as const };
 }
 
-const settingsSchema = z
-  .object({
-    // Null clears the override. Since #1982 nothing falls back to the club
-    // config bed total at runtime: a cleared lodge resolves from its active
-    // beds, or to 0 (`unconfigured_lodge`) when it has none.
-    // The bounds are the shared ones (#2724, INV-SSOT-001), so the lodge
-    // configuration screen can tell an officer whether a typed figure will be
-    // accepted here without keeping its own copy of the limits.
-    capacity: z
-      .number()
-      .int()
-      .min(MIN_CONFIGURED_LODGE_CAPACITY)
-      .max(MAX_CONFIGURED_LODGE_CAPACITY)
-      .nullable(),
-    hutLeaderLookaheadDays: z.number().int().min(1).max(365).optional(),
-    // Per-lodge school-group soft cap; null clears it to the code default.
-    schoolGroupSoftCap: z.number().int().positive().max(100000).nullable().optional(),
-    // Lodge whose per-lodge settings are edited; the lookahead stays
-    // club-wide regardless.
-    lodgeId: z.string().min(1).optional(),
-  })
-  .strict();
+// The query and body schemas (capacity bounds shared with every editor of the
+// field, #2724) live in admin-lodge-schemas/setup.ts so the AI app actions
+// `get_lodge_settings` and `update_lodge_settings` offer the same fields
+// (ALP-722).
 
 export async function GET(request: Request) {
   const guard = await requireAdmin({
@@ -68,7 +56,15 @@ export async function GET(request: Request) {
   });
   if (!guard.ok) return guard.response;
 
-  const lodgeId = new URL(request.url).searchParams.get("lodgeId");
+  // A string or nothing always parses, and an empty value reads the club-wide
+  // row as it always has; the 400 is only a backstop.
+  const query = lodgeSettingsQuerySchema.safeParse({
+    lodgeId: new URL(request.url).searchParams.get("lodgeId") ?? undefined,
+  });
+  if (!query.success) {
+    return NextResponse.json({ error: "Invalid query" }, { status: 400 });
+  }
+  const lodgeId = query.data.lodgeId ?? null;
   const scope = await validateLodgeScope(lodgeId);
   if (!scope.ok) return scope.response;
 
@@ -87,7 +83,7 @@ export async function GET(request: Request) {
     resolvedCapacity === undefined
       ? undefined
       : isLodgeSetUpForBookings(resolvedCapacity);
-  return NextResponse.json({
+  const answer: LodgeSettingsAnswer = {
     capacity: settings.capacity,
     hutLeaderLookaheadDays: settings.hutLeaderLookaheadDays,
     schoolGroupSoftCap: settings.schoolGroupSoftCap,
@@ -95,7 +91,8 @@ export async function GET(request: Request) {
     ...(setUpForBookings === undefined
       ? {}
       : { setUpForBookings, resolvedCapacity }),
-  });
+  };
+  return connectionJson(request, answer, ADMIN_LODGE_SETTINGS_CONNECTION_SHAPE);
 }
 
 export async function PUT(request: Request) {
@@ -107,7 +104,7 @@ export async function PUT(request: Request) {
   const json = await parseJsonRequestBody(request);
   if (!json.ok) return json.response;
 
-  const body = settingsSchema.safeParse(json.body);
+  const body = lodgeSettingsBodySchema.safeParse(json.body);
   if (!body.success) {
     return NextResponse.json(
       { error: "Invalid input", details: body.error.flatten() },
@@ -159,10 +156,11 @@ export async function PUT(request: Request) {
     },
   });
 
-  return NextResponse.json({
+  const saved: LodgeSettingsSavedAnswer = {
     capacity: settings.capacity,
     hutLeaderLookaheadDays: settings.hutLeaderLookaheadDays,
     schoolGroupSoftCap: settings.schoolGroupSoftCap,
     clubConfigCapacity: CLUB_CONFIG_LODGE_CAPACITY,
-  });
+  };
+  return connectionJson(request, saved, ADMIN_LODGE_SETTINGS_SAVED_CONNECTION_SHAPE);
 }

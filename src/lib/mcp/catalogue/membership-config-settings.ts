@@ -24,6 +24,7 @@ import {
   MEMBER_FIELDS_SETTINGS_CONNECTION_SHAPE,
   MEMBERSHIP_CANCELLATION_SETTINGS_CONNECTION_SHAPE,
   MEMBERSHIP_LOCKOUT_SETTINGS_CONNECTION_SHAPE,
+  MEMBERSHIP_LOCKOUT_SETTINGS_SAVE_CONNECTION_SHAPE,
   MEMBERSHIP_NOMINATION_SETTINGS_CONNECTION_SHAPE,
 } from "@/lib/connection-shapes/membership-config";
 
@@ -32,7 +33,7 @@ import type { McpAction } from "../catalogue";
 import { MESSAGE_BOARD_OFF } from "./membership-notices";
 
 const LIABILITY_RULE_NEEDS_FINANCE =
-  "Changing `requiredTypeAgeRule` or `liabilityAgeSource` (the subscription-liability rule, sent together) also needs Finance edit access; without it the save is refused (403) and nothing changes. Run `preview_subscription_liability_rule` first to see who it changes.";
+  "Changing `requiredTypeAgeRule` or `liabilityAgeSource` (the subscription-liability rule, sent together) also needs Finance edit access; without it the save is refused (403) and nothing changes. Run `preview_subscription_liability_rule` first to see who it changes; the answer's `clearedStaleRecords` says how many \"Not required\" records the save reset (null when the club has no rule chosen, so no clear-up ran).";
 
 export const MEMBERSHIP_CONFIG_SETTINGS_MCP_ACTIONS: readonly McpAction[] = [
   {
@@ -144,14 +145,14 @@ export const MEMBERSHIP_CONFIG_SETTINGS_MCP_ACTIONS: readonly McpAction[] = [
     path: "/api/admin/membership-lockout-settings",
     body: membershipLockoutSettingsSchema,
     kind: "destructive",
-    returns: MEMBERSHIP_LOCKOUT_SETTINGS_CONNECTION_SHAPE,
+    returns: MEMBERSHIP_LOCKOUT_SETTINGS_SAVE_CONNECTION_SHAPE,
     core: false,
   },
   {
     id: "preview_subscription_liability_rule",
     title: "Preview a subscription-liability rule",
     summary:
-      "Who a proposed subscription-liability rule would change this season, by name: who would newly owe a subscription, who would no longer owe one, and members whose season subscription record says \"Not required\" but who would owe, whose record saving the rule resets. Send both `requiredTypeAgeRule` and `liabilityAgeSource`. Changes nothing.",
+      "Who a proposed subscription-liability rule would change this season, by name: who would newly owe a subscription, who would no longer owe one, and members whose season subscription record says \"Not required\" but who would owe, whose record saving the rule resets (`inBillingPopulation` false: inactive or archived, so reset but not invoiced unless made active again). Send both `requiredTypeAgeRule` and `liabilityAgeSource`. Changes nothing.",
     method: "GET",
     path: "/api/admin/membership-lockout-settings/liability-impact",
     query: liabilityImpactQuerySchema,

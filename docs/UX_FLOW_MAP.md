@@ -495,9 +495,9 @@ Journey: Create or edit a category and its flat fee, then assign members from th
 
 Screen: `/admin/subscription-lockout`.
 
-Shows: Lapsed-subscription rules and related notification settings.
+Shows: Lapsed-subscription rules, notifications, liability rule.
 
-Journey: Review the lapsed-subscription rules and member-facing wording.
+Journey: Review rules; preview a liability rule before saving.
 
 [Guide](guides/subscription-lockout.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
 

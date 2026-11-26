@@ -159,19 +159,19 @@ describe("Food Orders settings API", () => {
 
   it("view access reads but cannot save", async () => {
     mocks.allowedLevel = "view";
-    expect((await GET()).status).toBe(200);
+    expect((await GET(new Request("http://localhost/api/admin/food-orders/settings"))).status).toBe(200);
     expect((await put({ officerEmail: "a@b.co", officerLabel: "Food officer" })).status).toBe(403);
     expect(mocks.upsert).not.toHaveBeenCalled();
   });
 
   it("no Lodge Operations access cannot read", async () => {
     mocks.allowedLevel = "none";
-    expect((await GET()).status).toBe(403);
+    expect((await GET(new Request("http://localhost/api/admin/food-orders/settings"))).status).toBe(403);
   });
 
   it("answers 404 for both methods while the module is off", async () => {
     mocks.modules = { foodOrders: false };
-    expect((await GET()).status).toBe(404);
+    expect((await GET(new Request("http://localhost/api/admin/food-orders/settings"))).status).toBe(404);
     expect((await put({ officerEmail: "a@b.co", officerLabel: "Food officer" })).status).toBe(404);
     expect(mocks.upsert).not.toHaveBeenCalled();
   });

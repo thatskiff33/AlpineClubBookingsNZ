@@ -59,6 +59,7 @@ function classify(proposed: { requiredTypeAgeRule: "ALWAYS_OWES" | "AGE_TIER_EXE
     proposed,
     ageTierSettings: AGE_TIER_SETTINGS,
     members,
+    staleRecords: [],
   });
 }
 
@@ -79,17 +80,16 @@ describe("classifyLiabilityImpact (#5190)", () => {
     expect(ageExempts.newlyOwing).toEqual([]);
   });
 
-  it("Edge 2: a saved NOT_REQUIRED row on a liable age-based member stops exempting them, and is a stale record", () => {
+  it("Edge 2: a saved NOT_REQUIRED row on a liable age-based member stops exempting them", () => {
     const youth = facts("youth", "BASED_ON_AGE_TIER", "YOUTH", { status: "NOT_REQUIRED" });
     const impact = classify({ requiredTypeAgeRule: "AGE_TIER_EXEMPTS", liabilityAgeSource: "SEASON_START" }, [youth]);
 
     expect(impact.newlyOwing).toEqual([
       { memberId: "youth", name: "youth", billingChanges: false, accessChanges: true },
     ]);
-    expect(impact.staleRecords).toEqual([{ memberId: "youth", name: "youth" }]);
   });
 
-  it("lists nobody whose answers do not move, and never a covered, invoiced or marked row as stale", () => {
+  it("lists nobody whose answers do not move", () => {
     const members = [
       facts("adult", "REQUIRED", "ADULT", { status: "PAID" }),
       facts("life", "NOT_REQUIRED", "ADULT", { status: "NOT_REQUIRED" }),
@@ -101,7 +101,6 @@ describe("classifyLiabilityImpact (#5190)", () => {
 
     expect(impact.newlyOwing.map((member) => member.memberId)).toEqual(["covered", "invoiced", "marked"]);
     expect(impact.noLongerOwing).toEqual([]);
-    expect(impact.staleRecords).toEqual([]);
   });
 });
 

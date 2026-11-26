@@ -3,6 +3,7 @@ import { z } from "zod";
 
 import { parseJsonRequestBody } from "@/lib/api-json";
 import { createAuditLog } from "@/lib/audit";
+import { ADMIN_FOOD_ORDER_SETTINGS_CONNECTION_SHAPE } from "@/lib/connection-shapes/lodge-maintenance";
 import {
   FOOD_ORDER_NOT_FOUND,
   foodOrderAuditContext,
@@ -16,6 +17,7 @@ import {
   normaliseFoodOrderSettings,
 } from "@/lib/food-order-settings";
 import logger from "@/lib/logger";
+import { connectionJson } from "@/lib/mcp-connection-request";
 import { isSingletonUpsertContention } from "@/lib/prisma-errors";
 import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/session-guards";
@@ -30,6 +32,10 @@ import { requireAdmin } from "@/lib/session-guards";
  * ordering is not set up: the order page says so and the API refuses orders.
  */
 
+// The read is the AI app action `get_food_order_settings` (ALP-722), which a
+// connection answers without the officer's address. The save is website-only
+// (`unread-value`): an app that never sees the address must not overwrite it.
+
 const putSchema = z
   .object({
     // "" clears it; anything else must be a valid address.
@@ -38,7 +44,7 @@ const putSchema = z
   })
   .strict();
 
-export async function GET() {
+export async function GET(request: Request) {
   if (await foodOrderModuleOff()) {
     return NextResponse.json(FOOD_ORDER_NOT_FOUND, { status: 404 });
   }
@@ -47,7 +53,11 @@ export async function GET() {
   });
   if (!admin.ok) return admin.response;
 
-  return NextResponse.json({ settings: await loadFoodOrderSettings() });
+  return connectionJson(
+    request,
+    { settings: await loadFoodOrderSettings() },
+    ADMIN_FOOD_ORDER_SETTINGS_CONNECTION_SHAPE,
+  );
 }
 
 export async function PUT(request: NextRequest) {

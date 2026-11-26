@@ -24,6 +24,7 @@ describe("the liability opt-in real-database proof stays wired into CI (#5190)",
     );
     expect(suite).toContain('process.env.RUN_CONCURRENCY_RACE_TESTS === "1"');
     expect(suite).toContain("opting in flips only the untouched and the covered-then-released row");
+    expect(suite).toContain("the preview's stale-record list is exactly the rows saving the rule resets");
     expect(suite).toContain("confirm queued first");
     expect(suite).toContain("save queued first");
     expect(suite).toContain("the SQL date-of-birth check agrees with the TS rule");

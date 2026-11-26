@@ -4,15 +4,20 @@ import { prisma } from "@/lib/prisma";
 import { parseJsonRequestBody } from "@/lib/api-json";
 import { logAudit } from "@/lib/audit";
 import { formatDateOnly } from "@/lib/date-only";
+import { workPartyEventDatesError } from "@/lib/work-party";
+import { workPartyEventSchema } from "@/lib/admin-lodge-schemas/chores-work-parties";
+import { ADMIN_LODGE_DONE_CONNECTION_SHAPE } from "@/lib/connection-shapes/lodge-hut-leaders";
 import {
-  workPartyEventDatesError,
-  workPartyEventSchema,
-} from "@/lib/work-party";
+  ADMIN_WORK_PARTY_DETAIL_CONNECTION_SHAPE,
+  ADMIN_WORK_PARTY_UPDATED_CONNECTION_SHAPE,
+  type AdminWorkPartyDetail,
+} from "@/lib/connection-shapes/lodge-chores-work-parties";
+import { connectionJson } from "@/lib/mcp-connection-request";
 import { updateWorkPartyWithCalendar } from "@/lib/work-party-calendar";
 import { removeWorkPartyCalendarEventsInTransaction } from "@/lib/calendar-work-party-entries";
 
 export async function GET(
-  _req: NextRequest,
+  req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params;
@@ -57,14 +62,15 @@ export async function GET(
   }
 
   const { promoCode, ...eventFields } = event;
-  return NextResponse.json({
+  // A connection gets each attending member without their email address.
+  return connectionJson(req, {
     event: eventFields,
     attendingBookings: promoCode.redemptions,
     totalDiscountCents: promoCode.redemptions.reduce(
       (sum, redemption) => sum + redemption.discountCents,
       0
     ),
-  });
+  } satisfies AdminWorkPartyDetail, ADMIN_WORK_PARTY_DETAIL_CONNECTION_SHAPE);
 }
 
 export async function PUT(
@@ -153,11 +159,11 @@ export async function PUT(
     },
   });
 
-  return NextResponse.json({ event });
+  return connectionJson(req, { event }, ADMIN_WORK_PARTY_UPDATED_CONNECTION_SHAPE);
 }
 
 export async function DELETE(
-  _req: NextRequest,
+  req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params;
@@ -208,5 +214,5 @@ export async function DELETE(
     metadata: { name: existing.name },
   });
 
-  return NextResponse.json({ success: true });
+  return connectionJson(req, { success: true }, ADMIN_LODGE_DONE_CONNECTION_SHAPE);
 }

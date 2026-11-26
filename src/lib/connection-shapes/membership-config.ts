@@ -79,8 +79,27 @@ export const MEMBERSHIP_LOCKOUT_SETTINGS_CONNECTION_SHAPE = completeConnectionSh
   financialYear: { overrideMonth: true, xeroMonth: true, effectiveMonth: true },
 });
 
+/** A save's answer adds how many "Not required" records it reset (#5190); null when no clear-up ran. */
+export const MEMBERSHIP_LOCKOUT_SETTINGS_SAVE_CONNECTION_SHAPE = {
+  ...MEMBERSHIP_LOCKOUT_SETTINGS_CONNECTION_SHAPE,
+  clearedStaleRecords: true,
+} as const;
+
 const LIABILITY_RULE_SHAPE = { requiredTypeAgeRule: true, liabilityAgeSource: true } as const;
 const IMPACT_MEMBER_SHAPE = { memberId: true, name: true, billingChanges: true, accessChanges: true } as const;
+/**
+ * A stale record as the website's preview shows it: the members list's status
+ * and note today, and whether billing would invoice the member at all. The list
+ * includes inactive and archived members (#5190), so without
+ * `inBillingPopulation` an assistant could say every one of them is invoiced.
+ */
+const STALE_RECORD_SHAPE = {
+  memberId: true,
+  name: true,
+  inBillingPopulation: true,
+  listStatus: true,
+  listNote: true,
+} as const;
 
 /** Who a proposed rule changes, by name; never the unpaid invoice numbers. */
 export const LIABILITY_IMPACT_CONNECTION_SHAPE = connectionShapeFor<{ impact: SubscriptionLiabilityImpact }>({
@@ -90,7 +109,7 @@ export const LIABILITY_IMPACT_CONNECTION_SHAPE = connectionShapeFor<{ impact: Su
     proposed: LIABILITY_RULE_SHAPE,
     newlyOwing: IMPACT_MEMBER_SHAPE,
     noLongerOwing: IMPACT_MEMBER_SHAPE,
-    staleRecords: { memberId: true, name: true },
+    staleRecords: STALE_RECORD_SHAPE,
   },
 });
 

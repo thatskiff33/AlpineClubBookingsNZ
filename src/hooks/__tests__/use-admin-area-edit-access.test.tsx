@@ -14,6 +14,7 @@ vi.mock("next-auth/react", () => ({
 }));
 
 import {
+  useAdminAccessToAll,
   useAdminAreaEditAccess,
   useAdminAreaViewAccess,
   useCanOpenAdminPath,
@@ -115,5 +116,35 @@ describe("useCanOpenAdminPath (#4581)", () => {
 
     setSession("authenticated", matrix({ membership: "view", lodge: "none" }));
     expect(renderHook(() => useCanOpenAdminPath("/admin/lockers")).result.current).toBe(true);
+  });
+});
+
+describe("useAdminAccessToAll: a control that needs several areas at once (#5190)", () => {
+  const BOTH = [
+    { area: "membership", level: "edit" },
+    { area: "finance", level: "edit" },
+  ] as const;
+
+  it("is undefined while the session resolves", () => {
+    setSession("loading");
+    expect(renderHook(() => useAdminAccessToAll(BOTH)).result.current).toBeUndefined();
+  });
+
+  it("is true only when every requirement is held", () => {
+    setSession("authenticated", matrix({ membership: "edit", finance: "edit" }));
+    expect(renderHook(() => useAdminAccessToAll(BOTH)).result.current).toBe(true);
+  });
+
+  it.each([
+    ["membership edit alone", { membership: "edit" as const, finance: "view" as const }],
+    ["finance edit alone", { membership: "view" as const, finance: "edit" as const }],
+  ])("is false with %s", (_label, granted) => {
+    setSession("authenticated", matrix(granted));
+    expect(renderHook(() => useAdminAccessToAll(BOTH)).result.current).toBe(false);
+  });
+
+  it("is false with no signed-in user", () => {
+    setSession("unauthenticated");
+    expect(renderHook(() => useAdminAccessToAll(BOTH)).result.current).toBe(false);
   });
 });
