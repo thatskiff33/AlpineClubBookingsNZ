@@ -30,6 +30,11 @@ function Harness() {
           filters: state.filters,
         })}
       </output>
+      <input
+        type="search"
+        value={state.search}
+        onChange={(event) => state.setSearch(event.target.value)}
+      />
       <button type="button" onClick={state.resetDataset}>Reset members</button>
     </>
   )
@@ -132,6 +137,50 @@ describe("useMembersQueryState URL sync on mount", () => {
 
     await waitFor(() =>
       expect(navigation.replace).toHaveBeenCalledWith(adminHref("members"), { scroll: false }),
+    )
+  })
+})
+
+// #5295: the search box waits 300 ms before it searches, and the wait also ran
+// once on opening, sending `?page=3` back to page 1 although nobody typed.
+describe("useMembersQueryState search wait", () => {
+  function shownState() {
+    return JSON.parse(screen.getByTestId("state").textContent ?? "{}")
+  }
+
+  it("keeps the page the address opened on past the wait", async () => {
+    navigation.currentSearch = "page=3"
+
+    render(<Harness />)
+    await new Promise((resolve) => setTimeout(resolve, 400))
+
+    expect(shownState().page).toBe(3)
+    expect(navigation.replace).not.toHaveBeenCalled()
+  })
+
+  it("keeps the page with a search in the address too", async () => {
+    navigation.currentSearch = "q=Aroha&page=3"
+
+    render(<Harness />)
+    await new Promise((resolve) => setTimeout(resolve, 400))
+
+    expect(shownState()).toMatchObject({ search: "Aroha", page: 3 })
+    expect(navigation.replace).not.toHaveBeenCalled()
+  })
+
+  it("returns to page 1 when the officer types a new search", async () => {
+    navigation.currentSearch = "page=3"
+
+    render(<Harness />)
+    fireEvent.change(screen.getByRole("searchbox"), { target: { value: "Aroha" } })
+    expect(shownState().page).toBe(3)
+
+    await waitFor(() => expect(shownState().page).toBe(1))
+    await waitFor(() =>
+      expect(navigation.replace).toHaveBeenLastCalledWith(
+        `${adminHref("members")}?q=Aroha`,
+        { scroll: false },
+      ),
     )
   })
 })

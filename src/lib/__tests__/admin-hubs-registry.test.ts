@@ -2069,6 +2069,14 @@ describe("the registry is inert", () => {
   const IMPORTERS: Record<string, string> = {
     "e2e/admin-roles.spec.ts": "#5155: registry paths and page labels identify settled admin destinations",
     "src/app/(admin)/admin/membership/members/_hooks/use-members-query-state.test.tsx": "#5155: registry Members path defines the canonical URL for no-op replacement tests",
+    "src/hooks/use-admin-list-url-sync.ts": "#5295: compares the address shown in served form (servedAdminPathname) before an admin list's router.replace",
+    "src/hooks/__tests__/use-admin-list-url-sync.test.tsx": "#5295: registry Payments paths, old and hub, are the addresses the no-op replace tests open at",
+    "src/app/(admin)/admin/finance/__tests__/list-address-sync.test.tsx": "#5295: registry Payments and Subscriptions paths are the addresses the no-op replace tests open at",
+    "src/app/(admin)/admin/membership/membership-cancellations/__tests__/queue-pagination.test.tsx": "#5295: the registry Requests tab path is the address the no-op replace test opens at",
+    "src/app/(admin)/admin/system/audit-log/__tests__/page-member-filter-url.test.tsx": "#5295: the registry Audit Log path is the address the no-op replace test opens at",
+    "src/components/admin/booking-requests/__tests__/queue-pagination.test.tsx": "#5295: the registry Booking Requests path is the address each panel writes",
+    "src/lib/__tests__/admin-member-applications-page.test.tsx": "#5295: the registry Member Applications path is the address the no-op replace test opens at",
+    "src/lib/__tests__/admin-waitlist-refund-pages.test.tsx": "#5295: the registry Refund Requests path is the address the no-op replace test opens at",
     "src/app/(admin)/admin/booking-desk/bed-allocation/page.tsx": "#4972: the empty-lodge alert links to Lodges",
     "src/app/(admin)/admin/finance/xero/setup/xero-setup-wizard.tsx": "#4972: shares the step parameter and the webhooks and mapping step ids with the shortcuts",
     "src/lib/admin-permissions.ts":

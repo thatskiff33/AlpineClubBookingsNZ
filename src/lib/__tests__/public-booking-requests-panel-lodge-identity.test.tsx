@@ -7,6 +7,7 @@ import { PublicBookingRequestsPanel } from "@/components/admin/booking-requests/
 
 // next/navigation: the panel replaces the URL in an effect and reads params.
 vi.mock("next/navigation", () => ({
+  usePathname: () => "/",
   useRouter: () => ({ replace: vi.fn(), push: vi.fn() }),
   useSearchParams: () => ({ get: () => null }),
 }));

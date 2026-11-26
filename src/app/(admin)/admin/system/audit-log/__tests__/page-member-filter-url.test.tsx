@@ -32,9 +32,13 @@ const replace = vi.fn((path: string) => {
   currentSearchParams = new URLSearchParams(String(path).split("?")[1] ?? "");
 });
 const push = vi.fn();
+// One router for every render, as Next's is (#5295).
+const router = { replace, push };
+let currentPathname = "/";
 
 vi.mock("next/navigation", () => ({
-  useRouter: () => ({ replace, push }),
+  usePathname: () => currentPathname,
+  useRouter: () => router,
   useSearchParams: () => currentSearchParams,
 }));
 
@@ -275,6 +279,7 @@ beforeEach(() => {
   membersLookupDefault = { kind: "ok", members: [PREFIX_SIBLING, JANE] };
   reflectReplaceIntoSearchParams = false;
   currentSearchParams = new URLSearchParams();
+  currentPathname = "/";
   stubFetch();
 });
 
@@ -594,5 +599,31 @@ describe("admin audit log member filter URL (#2733)", () => {
     await waitFor(() => expect(memberChipLabel()).toBe(CHIP_UNRESOLVED));
     expect(memberChipLabel()).not.toBe(CHIP_LOADING);
     expect(labelLookupUrls()).toHaveLength(2);
+  });
+});
+
+// #5295: a replace to the address already shown is a soft navigation that drops
+// the page's <title> until the server streams it back (#5155).
+describe("admin audit log address sync (#5295)", () => {
+  it.each([
+    ["no query", ""],
+    ["a search and page", "q=lodge&page=2"],
+  ])("replaces nothing when opened at its own address (%s), once after a filter change", async (_label, search) => {
+    const { adminHref } = await import("@/lib/admin-hubs");
+    currentPathname = adminHref("audit-log");
+    currentSearchParams = new URLSearchParams(search);
+    await renderAuditLogPage();
+
+    await waitFor(() => expect(auditRequestUrls().length).toBeGreaterThan(0));
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(replace).not.toHaveBeenCalled();
+
+    fireEvent.change(screen.getByPlaceholderText("Action, summary, request, entity"), {
+      target: { value: "booking" },
+    });
+    await waitFor(() => expect(replace).toHaveBeenCalled());
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(replace).toHaveBeenCalledTimes(1);
+    expect(replace).toHaveBeenCalledWith(`${adminHref("audit-log")}?q=booking`, { scroll: false });
   });
 });
