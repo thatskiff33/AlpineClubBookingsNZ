@@ -559,7 +559,7 @@ export async function retryFailedEmails(): Promise<{
       result = await transporter.sendMail({
         from: formatEmailFromAddress(EMAIL_FROM),
         to: emailLog.to,
-        subject: calendarRemovalRetryHtml(emailLog.subject, emailLog.templateName, attachments.length > 0),
+        subject: emailLog.subject,
         html: deliveryHtml,
         text: htmlToPlainText(deliveryHtml),
         attachments,

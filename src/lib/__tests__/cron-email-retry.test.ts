@@ -426,11 +426,11 @@ describe('retryFailedEmails and the per-booking "No emails" switch (#2258)', () 
 
   it.each([true, false])("matches rebuilt attachment availability (%s)", async (attached) => {
     const html = `<p>Club wording. ${calendarRemovalNote(!attached)}</p>`;
-    mocks.findMany.mockResolvedValue([failedEmail({ templateName: "booking-cancelled", htmlBody: html, subject: calendarRemovalNote(!attached) })]);
+    mocks.findMany.mockResolvedValue([failedEmail({ templateName: "booking-cancelled", htmlBody: html, subject: "Your booking has been cancelled" })]);
     mocks.retryCalendarRemovalAttachments.mockResolvedValueOnce(attached ? [{ filename: "stay.ics" }] : []);
     await retryFailedEmails();
     expect(mocks.sendMail).toHaveBeenCalledWith(expect.objectContaining({
-      subject: calendarRemovalNote(attached),
+      subject: "Your booking has been cancelled",
       html: expect.stringContaining(`<p>Club wording. ${calendarRemovalNote(attached)}</p>`),
       text: expect.stringContaining(`<p>Club wording. ${calendarRemovalNote(attached)}</p>`),
     }));
