@@ -71,8 +71,12 @@ export const OPTIONAL_TEMPLATE_TOKENS: Record<string, readonly string[]> = {
   // The credit-restored sentence is composed whole by the sender and empty
   // when no applied credit was restored (#1164 D7) — declared for the same
   // reason as booking-confirmed's doorCodeNote above.
-  "booking-cancelled": ["creditRestoredMessage"],
-  "booking-modified": ["paymentNote"],
+  "booking-cancelled": ["creditRestoredMessage", "calendarRemovalNote"],
+  // #5249: the calendar sentences are composed whole by the sender and EMPTY
+  // unless the member was offered an add-to-calendar entry (and, on a
+  // modification, unless the dates moved).
+  "booking-bumped": ["calendarRemovalNote"],
+  "booking-modified": ["paymentNote", "calendarUpdateNote"],
   // #2268 sweep. Each of these was an "[only when …]" annotated line.
   "checkin-reminder": ["choreListNote"],
   // #2350 adds a third: the outstanding-additional-payment sentence is composed

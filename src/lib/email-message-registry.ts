@@ -30,6 +30,8 @@ import {
   secondInstrumentConflictOutcomeParagraph,
   splitGuestPortionOwnBookingLine,
   wholeLodgeGuestNamesUrgencyNote,
+  calendarRemovalNote,
+  calendarUpdateNote,
 } from "@/lib/email-message-notes";
 import { bookingPaymentDueNote } from "@/lib/email-payment-due-note";
 import { FALLBACK_LODGE_CAPACITY } from "@/lib/lodge-capacity";
@@ -189,6 +191,8 @@ export const EXTRA_TEMPLATE_TOKENS: Partial<Record<EmailAuditTemplateName, strin
   // withdraw permission to use them in an override.
   "booking-modified": [
     "additionalPaymentMethod",
+    // #5249: the stale-calendar sentence on a date change.
+    "calendarUpdateNote",
     "changeFee",
     "changeSummary",
     "newCheckIn",
@@ -1445,6 +1449,10 @@ export function sampleValue(token: string): string {
   // has always rendered; the non-login contact variant is the sender's other
   // branch of bookingBumpedRebookAction.
   if (token === "rebookLabel") return "Book Again";
+  // #5249: previewed as the attached-file arm, the one a member offered an
+  // entry normally receives.
+  if (token === "calendarRemovalNote") return calendarRemovalNote(true);
+  if (token === "calendarUpdateNote") return calendarUpdateNote();
   if (token === "rebookPath") return "/book";
   // #3827 (D-3813-7): previewed as the card arm, which is what the shipped
   // default always said; the bank-transfer arms are the sender's other branches.
@@ -1852,6 +1860,11 @@ const APPROVED_EMAIL_TEMPLATE_TOKENS = [
   "bookingUrl",
   "bookingReferenceNote",
   "bumpedMemberName",
+  // #5249: the calendar sentences, composed by `calendarRemovalNote` and
+  // `calendarUpdateNote` and EMPTY unless the member was offered an
+  // add-to-calendar entry with their confirmation.
+  "calendarRemovalNote",
+  "calendarUpdateNote",
   "changeFee",
   // #2267: pre-composed block of the booking-modification rows that actually
   // changed (Previous/New pairs only where something moved).

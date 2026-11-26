@@ -10,6 +10,10 @@ import {
 } from "@/lib/booking-modified-email-copy";
 import { resolveBookingEmailLink } from "@/lib/booking-email-authority";
 import {
+  resolveBookingCalendarRemoval,
+  wasBookingCalendarEntryOffered,
+} from "@/lib/booking-calendar-removal";
+import {
   type BookingCalendarLinks,
   bookingAddToCalendarBlock,
   bookingAddToCalendarHtmlRow,
@@ -50,6 +54,8 @@ import {
 } from "@/lib/email-templates/booking-reminders";
 import {
   bookingBumpedRebookAction,
+  calendarRemovalNote,
+  calendarUpdateNote,
   checkoutDayChoreNote,
   composeChoreLine,
   composeOptionalEmailLine,
@@ -78,6 +84,7 @@ import {
   type KeyedBookingEmailSource,
 } from "@/lib/booking-email-contract";
 import { renderEmailHtml } from "@/lib/email-theme";
+import { formatDateOnly } from "@/lib/date-only";
 import { emailCalendarDay, emailClubDate, emailClubDateTime } from "@/lib/email-templates-club-time";
 import type { ClubFormat } from "@/lib/club-format";
 import type { BankTransferRefundPayee } from "@/lib/group-organiser-paid";
@@ -780,6 +787,16 @@ export async function sendBookingBumpedEmail(
   recipientCanBookOnline: boolean,
 ): Promise<EmailSendOutcome> {
   const rebook = bookingBumpedRebookAction(recipientCanBookOnline);
+  // #5249: a member offered a calendar entry gets its cancellation and a note.
+  const calendar = await resolveBookingCalendarRemoval({
+    bookingId: bookingContext.bookingId,
+    recipientMemberId: bookingContext.recipientMemberId,
+    deliveryAddress: email,
+    templateName: "booking-bumped",
+  });
+  const calendarNote = calendar.offered
+    ? calendarRemovalNote(calendar.attachment !== null)
+    : "";
   return sendEmail({
     to: email,
     subject: `Booking Update - ${EMAIL_DEFAULT_LODGE_NAME}`,
@@ -795,6 +812,7 @@ export async function sendBookingBumpedEmail(
       checkOut,
       guestCount,
       recipientCanBookOnline,
+      calendarNote,
     )),
     bookingContext: bookingOwnerEmailContext(bookingContext.bookingId, bookingContext.recipientMemberId),
     templateName: "booking-bumped",
@@ -807,7 +825,9 @@ export async function sendBookingBumpedEmail(
       // the path so the club's own configured public URL still resolves it.
       rebookLabel: rebook.label,
       rebookPath: rebook.path,
+      calendarRemovalNote: calendarNote,
     },
+    ...(calendar.attachment ? { attachments: [calendar.attachment] } : {}),
     lodgeId,
     idempotencyKey: bookingContext.idempotencyKey,
   });
@@ -861,6 +881,16 @@ export async function sendBookingCancelledEmail(
   // #4097: the parts of an own-card refund its card refund could not carry; the refund line names each.
   shortfall: { bankCents: number; checkCents: number } = { bankCents: 0, checkCents: 0 },
 ) {
+  // #5249: a member offered a calendar entry gets its cancellation and a note.
+  const calendar = await resolveBookingCalendarRemoval({
+    bookingId: bookingContext.bookingId,
+    recipientMemberId: bookingContext.recipientMemberId,
+    deliveryAddress: email,
+    templateName: "booking-cancelled",
+  });
+  const calendarNote = calendar.offered
+    ? calendarRemovalNote(calendar.attachment !== null)
+    : "";
   await sendEmail({
     to: email,
     subject: `Booking Cancelled - ${EMAIL_DEFAULT_LODGE_NAME}`,
@@ -875,6 +905,7 @@ export async function sendBookingCancelledEmail(
       creditRestoredBasis,
       refundSentenceCents,
       shortfall,
+      calendarNote,
     )),
     bookingContext: bookingOwnerEmailContext(bookingContext.bookingId, bookingContext.recipientMemberId),
     templateName: "booking-cancelled",
@@ -895,7 +926,9 @@ export async function sendBookingCancelledEmail(
         creditRestoredCents > 0
           ? `${formatMoneyCents(creditRestoredCents, format)}${creditRestoredSentenceTail(creditRestoredBasis)}`
           : "",
+      calendarRemovalNote: calendarNote,
     },
+    ...(calendar.attachment ? { attachments: [calendar.attachment] } : {}),
     lodgeId,
   });
 }
@@ -1573,11 +1606,28 @@ export async function sendBookingModifiedEmail(params: {
   const giveBackNote = appliedCreditGiveBackNote(params.appliedCreditGivenBackCents, format);
   const askCancelledNote = unpaidAskCancelledNote(params.unpaidAskCancelled);
   const paymentNote = [reviewNote, settlementNote, giveBackNote, askCancelledNote].filter(Boolean).join(" ");
+  // #5249: moved dates leave a saved calendar entry stale. Only a sentence: an
+  // update file would duplicate the entry in apps that ignore the event id.
+  const datesMoved =
+    formatDateOnly(params.oldCheckIn) !== formatDateOnly(params.newCheckIn) ||
+    formatDateOnly(params.oldCheckOut) !== formatDateOnly(params.newCheckOut);
+  const calendarNote =
+    datesMoved &&
+    (await wasBookingCalendarEntryOffered({
+      bookingId: params.bookingId,
+      recipientMemberId: params.recipientMemberId,
+      deliveryAddress: params.email,
+      templateName: "booking-modified",
+    }))
+      ? calendarUpdateNote()
+      : "";
 
   await sendEmail({
     to: params.email,
     subject: `Booking Modified - ${EMAIL_DEFAULT_LODGE_NAME}`,
-    html: await renderEmailHtml(() => bookingModifiedTemplate(params, format)),
+    html: await renderEmailHtml(() =>
+      bookingModifiedTemplate({ ...params, calendarUpdateNote: calendarNote }, format),
+    ),
     bookingContext: bookingOwnerEmailContext(params.bookingId, params.recipientMemberId),
     templateName: "booking-modified",
     templateData: {
@@ -1608,6 +1658,7 @@ export async function sendBookingModifiedEmail(params: {
       paymentReference: params.paymentReference ?? "",
       xeroInvoiceNumber: params.xeroInvoiceNumber ?? "",
       paymentNote,
+      calendarUpdateNote: calendarNote,
     },
     lodgeId: params.lodgeId,
   });
