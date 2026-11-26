@@ -1,5 +1,7 @@
 import { z } from "zod";
 
+import { noCrlf } from "@/lib/zod-helpers";
+
 /**
  * The rules for the two Club identity fields the generated booking invoice
  * prints as its supplier (#5066): one home the admin save
@@ -18,7 +20,7 @@ export const clubLegalNameSchema = z
   .string()
   .trim()
   .max(CLUB_LEGAL_NAME_LIMIT)
-  .refine((value) => !/[\r\n]/.test(value), { message: "legalName must be one line" });
+  .refine(noCrlf, { message: "legalName must be one line" });
 
 export const clubPostalAddressSchema = z.string().trim().max(CLUB_POSTAL_ADDRESS_LIMIT);
 

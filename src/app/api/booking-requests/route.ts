@@ -11,12 +11,10 @@ import { getDefaultLodgeCapacity, getLodgeCapacity } from "@/lib/lodge-capacity"
 import { applyRateLimit, rateLimiters } from "@/lib/rate-limit";
 import { parsedDateOnlySchema } from "@/lib/date-only-schema";
 import { clubTodayDateOnlyInstant } from "@/lib/club-time/server";
-import { nameField } from "@/lib/zod-helpers";
+import { nameField, noCrlf } from "@/lib/zod-helpers";
 import logger from "@/lib/logger";
 import { lodgeGuestLimitMessage } from "@/lib/lodge-booking-readiness";
 import { parseJsonRequestBody } from "@/lib/api-json";
-
-const noCrlf = (value: string) => !/[\r\n]/.test(value);
 
 const bookingRequestSchema = z.object({
   contactFirstName: nameField(),
