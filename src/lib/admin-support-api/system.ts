@@ -34,12 +34,25 @@ export const setupProgressSchema = z.discriminatedUnion("action", [
   z.object({ action: z.enum(["finish", "reset"]) }),
 ]);
 
-/** `POST /api/admin/setup/provider-test`. Each test reads or checks; none sends to a member. */
+/** `POST /api/admin/setup/provider-test`. None sends to a member. */
 export const providerTestSchema = z.object({
   provider: z
     .enum(["stripe", "smtp", "sentry", "xero"])
     .describe(
       "`stripe` reads the card account's balance, `smtp` checks the email connection without sending, `sentry` sends one diagnostic event, `xero` checks the accounting connection's token.",
+    ),
+});
+
+/**
+ * The provider tests that only read or check, so an AI app may run them
+ * without asking. `sentry` sends an event to the club's monitoring, which can
+ * alert whoever watches it, so it is an action of its own.
+ */
+export const providerCheckSchema = z.object({
+  provider: providerTestSchema.shape.provider
+    .exclude(["sentry"])
+    .describe(
+      "`stripe` reads the card account's balance, `smtp` checks the email connection without sending, `xero` checks the accounting connection's token.",
     ),
 });
 

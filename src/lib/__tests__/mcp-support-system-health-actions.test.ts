@@ -50,6 +50,7 @@ const h = vi.hoisted(() => {
     localBackups: vi.fn(),
     diskSpace: vi.fn(),
     createAuditLog: vi.fn(),
+    sentryCapture: vi.fn(),
   };
 });
 
@@ -100,6 +101,7 @@ vi.mock("@/lib/backup-run", () => ({
   runManagedBackup: h.runBackup,
 }));
 vi.mock("@/lib/backup-local", () => ({ listLocalBackups: h.localBackups, getLocalBackupDiskSpace: h.diskSpace }));
+vi.mock("@sentry/nextjs", () => ({ captureMessage: h.sentryCapture, flush: async () => true }));
 vi.mock("@/lib/xero-config", () => ({ detectLegacyProviderEnv: () => [] }));
 
 import { POST as runBackup } from "@/app/api/admin/backups/run/route";
@@ -254,6 +256,21 @@ describe("get_system_health", () => {
     // The officer must know whose mail failed, as on the website.
     expect(sent).toContain("member@example.test");
     expect(JSON.stringify(browser)).toContain("webhook-1");
+  });
+
+  it("redacts a failed check's provider message for a connection only", async () => {
+    const report = await h.healthReport();
+    h.healthReport.mockResolvedValue({
+      ...report,
+      report: {
+        ...report.report,
+        checks: { ...report.report.checks, smtp: { status: "error", latencyMs: 4, error: "Rejected: Bearer abc123SecretToken" } },
+      },
+    });
+    const { connection, browser } = await expectActionContract({ actionId: "get_system_health", handler: getHealth });
+    expect(JSON.stringify(connection)).not.toContain("abc123SecretToken");
+    expect(JSON.stringify(connection)).toContain("Rejected: Bearer");
+    expect(JSON.stringify(browser)).toContain("abc123SecretToken");
   });
 });
 
@@ -422,6 +439,30 @@ describe("test_provider_connection", () => {
     });
     expect(connection).toMatchObject({ ok: true, provider: "xero" });
   });
+
+  it("leaves the monitoring event to its own destructive action", () => {
+    const check = findMcpAction("test_provider_connection")!;
+    expect(mcpActionInputSchema(check).safeParse({ provider: "sentry" }).success).toBe(false);
+    const sentry = findMcpAction("send_monitoring_test_event")!;
+    expect(sentry.kind).toBe("destructive");
+    expect(splitMcpActionArguments(sentry, {}).body).toEqual({ provider: "sentry" });
+  });
+});
+
+describe("send_monitoring_test_event", () => {
+  it("sends the diagnostic event and answers whether monitoring accepted it", async () => {
+    vi.stubEnv("SENTRY_DSN", "https://key@example.test/1");
+    try {
+      const { connection } = await expectActionContract({
+        actionId: "send_monitoring_test_event",
+        handler: testProvider,
+      });
+      expect(connection).toMatchObject({ ok: true, provider: "sentry" });
+      expect(h.sentryCapture).toHaveBeenCalled();
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -468,6 +509,33 @@ describe("get_backup_status", () => {
     expect(sent).not.toContain("club-backups");
     expect(sent).not.toContain("backups/2026-06-30.sql.gz");
     expect(JSON.stringify(browser)).toContain("/srv/backups");
+  });
+
+  it("says the directory could not be read without naming it", async () => {
+    h.backupState.mockResolvedValue({
+      enabled: true,
+      bucket: "club-backups",
+      region: "ap-southeast-2",
+      retentionDays: 30,
+      accessKeyIdSet: true,
+      secretAccessKeySet: true,
+      restoreValidationUrlSet: false,
+      localEnabled: true,
+      localPath: "/srv/backups",
+      localPathFromEnv: false,
+      anyDestinationEnabled: true,
+      durable: true,
+      needsReentry: false,
+    });
+    h.recentRuns.mockResolvedValue([RUN]);
+    h.activeRun.mockResolvedValue({ ...RUN, id: "backup-run-2", status: "RUNNING", completedAt: null });
+    h.localBackups.mockImplementation(() => {
+      throw new Error("ENOENT: no such file or directory, scandir '/srv/backups'");
+    });
+    h.diskSpace.mockReturnValue({ availableBytes: 1000, totalBytes: 2000, level: "ok" });
+    const { connection, browser } = await expectActionContract({ actionId: "get_backup_status", handler: backupStatus });
+    expect(connection).toMatchObject({ localError: "Could not read the backup directory." });
+    expect(JSON.stringify(browser)).toContain("scandir '/srv/backups'");
   });
 });
 

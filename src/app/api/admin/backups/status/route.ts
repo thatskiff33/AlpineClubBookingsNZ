@@ -19,7 +19,7 @@ import {
   BACKUP_STATUS_CONNECTION_SHAPE,
   type BackupStatusAnswer,
 } from "@/lib/connection-shapes/support-system";
-import { connectionJson } from "@/lib/mcp-connection-request";
+import { arrivesAsMcpConnection, connectionJson } from "@/lib/mcp-connection-request";
 
 // GET /api/admin/backups/status — metadata-only backup setup state + run history.
 //
@@ -69,8 +69,12 @@ export async function GET(request: Request) {
     try {
       localBackups = listLocalBackups(state.localPath);
     } catch (err) {
+      // The filesystem's message names the directory, which an AI app is
+      // never sent (ALP-724); the officer's screen shows it whole.
       localError =
-        err instanceof Error ? err.message : "Could not read the backup directory.";
+        err instanceof Error && !arrivesAsMcpConnection(request)
+          ? err.message
+          : "Could not read the backup directory.";
     }
     try {
       localDiskSpace = getLocalBackupDiskSpace(state.localPath);

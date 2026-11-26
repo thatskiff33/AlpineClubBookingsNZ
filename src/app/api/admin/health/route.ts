@@ -4,9 +4,10 @@ import {
   ADMIN_HEALTH_CONNECTION_SHAPE,
   type AdminHealthAnswer,
 } from "@/lib/connection-shapes/support-system";
-import { connectionJson } from "@/lib/mcp-connection-request";
+import { arrivesAsMcpConnection, connectionJson } from "@/lib/mcp-connection-request";
+import { redactSensitiveText } from "@/lib/redact-sensitive-json";
 import { requireAdmin } from "@/lib/session-guards";
-import { getDetailedHealthReport } from "@/lib/health-check";
+import { getDetailedHealthReport, type DetailedHealthReport } from "@/lib/health-check";
 import { buildSentryDashboardInfo } from "@/lib/observability/sentry-dashboard-info";
 import { prisma } from "@/lib/prisma";
 import { getWebhookStats } from "@/lib/webhook-log";
@@ -120,6 +121,21 @@ function getCronJobDefinitionsForHealthReport(
 }
 
 /**
+ * A failed check's error can be a provider or driver message naming a host,
+ * an account or a key fragment. The officer's screen shows it whole; an AI app
+ * gets it through the redactor the backup run errors use (ALP-724).
+ */
+function withRedactedCheckErrors(report: DetailedHealthReport): DetailedHealthReport {
+  const checks = Object.fromEntries(
+    Object.entries(report.checks).map(([name, check]) => [
+      name,
+      check?.error ? { ...check, error: redactSensitiveText(check.error) } : check,
+    ]),
+  ) as DetailedHealthReport["checks"];
+  return { ...report, checks };
+}
+
+/**
  * GET /api/admin/health
  * Returns system health data for the admin dashboard including:
  * - Health check results (from /api/health)
@@ -208,7 +224,9 @@ export async function GET(request: Request) {
     };
 
     const answer: AdminHealthAnswer = {
-      health: healthResponse,
+      health: arrivesAsMcpConnection(request)
+        ? withRedactedCheckErrors(healthResponse)
+        : healthResponse,
       cronJobs: cronByJob,
       cronHealth,
       webhookStats,

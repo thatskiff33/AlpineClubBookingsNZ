@@ -4,9 +4,11 @@
  * catalogue entry and the route's `connectionJson` both read these
  * (`INV-SSOT`).
  *
- * Kept: what an officer reads to follow up a report or an event. Dropped: the
- * email addresses and roles of the people an entry or report names, an
- * entry's raw metadata, IP address, browser details and website links, the
+ * Kept: what an officer reads to follow up a report or an event, including an
+ * entry's title, description and details text as the screen shows them (these
+ * can name an address an email went to). Dropped: the email addresses and
+ * roles on the people an entry or report names, an entry's structured
+ * metadata, IP address, browser details and website links, the
  * filter lists drawn from every entry, a report's screenshot (never sent: it
  * is a picture of someone's screen) and the reporter's browser details.
  *

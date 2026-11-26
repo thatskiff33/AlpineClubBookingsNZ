@@ -274,7 +274,7 @@ describe("delivery policies", () => {
       handler: putPolicy,
       args: { templateName: editable.key, mode: "disabled" },
     });
-    expect(connection).toEqual({ policy: { templateName: editable.key, mode: "DISABLED", updatedAt: STAMP.toISOString() } });
+    expect(connection).toEqual({ policy: { templateName: editable.key, mode: "disabled", updatedAt: STAMP.toISOString() } });
   });
 });
 

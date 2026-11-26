@@ -195,6 +195,7 @@ describe("Support & System officer actions: kinds", () => {
     "update_email_template",
     "update_privacy_retention",
     "reset_setup_progress",
+    "send_monitoring_test_event",
   ])("marks %s destructive", (id) => {
     expect(SUPPORT_MCP_ACTIONS.find((action) => action.id === id)?.kind).toBe("destructive");
   });

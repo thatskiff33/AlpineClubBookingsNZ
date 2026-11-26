@@ -1057,16 +1057,18 @@ Bookings & Beds above.
   AI caps and rate, and privacy retention are club-wide configuration whose
   effect reaches members; an officer's alerts are another person's record;
   clearing a stopped address lets mail reach it again; retrying a failed email
-  sends it; a problem report is the member's; resetting the setup checklist
-  and deleting a report's screenshot cannot be undone. All of these are
+  sends it; the monitoring test event can alert whoever watches monitoring;
+  a problem report is the member's; resetting the setup checklist and
+  deleting a report's screenshot cannot be undone. All of these are
   `destructive` (owner decisions,
   [#5305](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/5305#issuecomment-7092977781)).
-  Ticking a setup step, finishing the checklist, testing a provider and
-  starting a backup change only the club's own housekeeping, so they are
-  `write`.
+  Ticking a setup step, finishing the checklist, checking the Stripe, email
+  or Xero connection and starting a backup change only the club's own
+  housekeeping, so they are `write`.
 - **One route, several actions.** A problem report's change takes one of
-  three decisions (resolve, reopen, delete the screenshot) and the setup
-  progress save a step or the whole checklist. Each is its own action with
+  three decisions (resolve, reopen, delete the screenshot), the setup
+  progress save a step or the whole checklist, and the provider test checks
+  a connection or sends a monitoring event. Each is its own action with
   the route's `action` fixed, so the app names what it means to do.
   `get_email_template` reads one template whole (`?templateName=`), because
   every template's wording at once is more than an answer can carry;
@@ -1083,8 +1085,10 @@ Bookings & Beds above.
 - **What is never sent.** A problem report's screenshot and the reporter's
   browser details, the lodge's door code (the email settings carry it for the
   emails that print it), a backup's credentials, directory and file names,
-  the audit log's IP addresses, browser details and raw metadata, and
-  anyone's email address in the audit log or on a problem report.
+  the audit log's IP addresses, browser details and structured metadata, and
+  the email addresses on the people an audit entry or problem report names.
+  An audit entry's own title, description and details text are sent as the
+  screen shows them, so they can still name an address an email went to.
 
 Website-only, and why (the reasons are listed below): the AI app connection
 settings and their list of connections, for good; backup restore, the
@@ -1110,6 +1114,7 @@ resume step and the sidebar's role menu, which serve the website's screens.
 | `finish_setup` | Mark the setup checklist finished | write | edit | `PATCH /api/admin/setup/progress` (`action: "finish"`) |
 | `reset_setup_progress` | Start the setup checklist again | destructive | edit | `PATCH /api/admin/setup/progress` (`action: "reset"`) |
 | `test_provider_connection` | Test a provider connection | write | edit | `POST /api/admin/setup/provider-test` |
+| `send_monitoring_test_event` | Send a test event to monitoring | destructive | edit | `POST /api/admin/setup/provider-test` |
 | `get_backup_status` | Read the database backup status | read | view | `GET /api/admin/backups/status` |
 | `run_backup_now` | Start a database backup now | write | edit | `POST /api/admin/backups/run` |
 | `list_modules` | List the club's modules | read | view | `GET /api/admin/modules` |

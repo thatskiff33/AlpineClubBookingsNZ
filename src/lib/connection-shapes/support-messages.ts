@@ -22,7 +22,7 @@ import {
   type ConnectionShapeFor,
 } from "@/lib/connection-projection";
 import type { getExhaustedEmailFailureReviewQueue } from "@/lib/email-failure-review";
-import type { EmailTemplateDefinition } from "@/lib/email-message-registry";
+import type { EmailTemplateDefinition, NotificationDeliveryModeValue } from "@/lib/email-message-registry";
 import type { renderEmailTemplatePreview } from "@/lib/email-message-renderer";
 import type { EmailMessageSettings, PersistedEmailMessageSettings } from "@/lib/email-message-settings";
 import type { getEmailDeliverabilityTelemetry } from "@/lib/email-suppression";
@@ -240,7 +240,7 @@ export const NOTIFICATION_DELIVERY_POLICY_LIST_CONNECTION_SHAPE =
 /** The saved policy row the update route answers with. */
 export interface NotificationDeliveryPolicySavedRow {
   templateName: string;
-  mode: string;
+  mode: NotificationDeliveryModeValue;
   updatedAt: Date;
   updatedByMemberId: string | null;
 }

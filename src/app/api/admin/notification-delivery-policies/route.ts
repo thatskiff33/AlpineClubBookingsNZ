@@ -13,7 +13,6 @@ import {
 import {
   getEmailTemplateDefinition,
   isAdminSystemTemplate,
-  type NotificationDeliveryModeValue,
 } from "@/lib/email-message-registry";
 import {
   listNotificationDeliveryPolicySettings,
@@ -73,7 +72,7 @@ export async function PUT(request: NextRequest) {
   const before = await prisma.notificationDeliveryPolicy.findUnique({
     where: { templateName: parsed.data.templateName },
   });
-  const mode = modeToDb(parsed.data.mode as NotificationDeliveryModeValue);
+  const mode = modeToDb(parsed.data.mode);
 
   const record = await prisma.notificationDeliveryPolicy.upsert({
     where: { templateName: parsed.data.templateName },
@@ -109,5 +108,10 @@ export async function PUT(request: NextRequest) {
     }),
   );
 
-  return connectionJson(request, { policy: record }, NOTIFICATION_DELIVERY_POLICY_SAVED_CONNECTION_SHAPE);
+  // Answer the mode as the list and the request spell it, not the stored enum.
+  return connectionJson(
+    request,
+    { policy: { ...record, mode: parsed.data.mode } },
+    NOTIFICATION_DELIVERY_POLICY_SAVED_CONNECTION_SHAPE,
+  );
 }

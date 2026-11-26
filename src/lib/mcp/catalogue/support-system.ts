@@ -5,20 +5,21 @@
  * retention; and Admin Overview's work-queue counts. Part of the Support &
  * System officer actions (ALP-724): spread into `MCP_ACTIONS`.
  *
- * Kinds. The checklist ticks, the provider tests and starting a backup are
+ * Kinds. The checklist ticks, the provider checks and starting a backup are
  * `write`: each changes only the club's own housekeeping, notifies no one and
- * overwrites no one's record, and a tick can be undone. Resetting the whole
- * checklist cannot be undone from the app, and the retention save decides
- * when members' data is deleted, so both are `destructive` (owner decision,
- * #5305 comment 7093303964). Switching modules, changing the sign-in rules
- * and the access roles, and the Full Admin settings (currency, time zone,
- * environment safety) are website-only (`exclusions.ts`); this file only
- * reads them.
+ * overwrites no one's record, and a tick can be undone. The monitoring test
+ * event can alert whoever watches monitoring; resetting the whole checklist
+ * cannot be undone from the app; and the retention save decides when members'
+ * data is deleted; so all three are `destructive` (owner decisions, #5305
+ * comments 7092977781 and 7093303964). Switching modules, changing the
+ * sign-in rules and the access roles, and the Full Admin settings (currency,
+ * time zone, environment safety) are website-only (`exclusions.ts`); this
+ * file only reads them.
  */
 import {
   PRIVACY_RETENTION_PREVIEW_PAGE_SIZE,
   privacyRetentionPreviewQuerySchema,
-  providerTestSchema,
+  providerCheckSchema,
   setupStepProgressSchema,
 } from "@/lib/admin-support-api/system";
 import {
@@ -141,11 +142,23 @@ export const SUPPORT_SYSTEM_MCP_ACTIONS: readonly McpAction[] = [
     id: "test_provider_connection",
     title: "Test a provider connection",
     summary:
-      "Officer: checks one outside service the site relies on (`stripe`, `smtp` email, `sentry` monitoring or `xero`) with the stored settings, and answers `ok` and what it found. Nothing is sent to a member; a failure message stays generic so no key detail is shown.",
+      "Officer: checks one outside service the site relies on (`stripe`, `smtp` email or `xero`) with the stored settings, and answers `ok` and what it found. Nothing is sent to anyone; a failure message stays generic so no key detail is shown. Testing monitoring is `send_monitoring_test_event`.",
     method: "POST",
     path: "/api/admin/setup/provider-test",
-    body: providerTestSchema,
+    body: providerCheckSchema,
     kind: "write",
+    returns: PROVIDER_TEST_CONNECTION_SHAPE,
+    core: false,
+  },
+  {
+    id: "send_monitoring_test_event",
+    title: "Send a test event to monitoring",
+    summary:
+      "Officer: sends one diagnostic event to the club's error monitoring (Sentry) and answers `ok` once it is accepted. Whoever watches monitoring may be alerted by it. A failure message stays generic so no key detail is shown.",
+    method: "POST",
+    path: "/api/admin/setup/provider-test",
+    fixedBody: { provider: "sentry" },
+    kind: "destructive",
     returns: PROVIDER_TEST_CONNECTION_SHAPE,
     core: false,
   },

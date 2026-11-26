@@ -14,7 +14,8 @@ import { getOperationalStripeSecretKey } from "@/lib/stripe-config";
 import { parseJsonRequestBody } from "@/lib/api-json";
 
 // The body schema lives in admin-support-api/system.ts, which the AI app
-// action `test_provider_connection` offers too (ALP-724).
+// actions `test_provider_connection` and `send_monitoring_test_event` offer
+// too (ALP-724).
 type Provider = ReturnType<typeof providerTestSchema.parse>["provider"];
 
 async function withTimeout<T>(label: string, promise: Promise<T>): Promise<T> {
