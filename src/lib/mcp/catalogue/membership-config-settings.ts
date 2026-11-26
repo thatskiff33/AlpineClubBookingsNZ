@@ -152,7 +152,7 @@ export const MEMBERSHIP_CONFIG_SETTINGS_MCP_ACTIONS: readonly McpAction[] = [
     id: "preview_subscription_liability_rule",
     title: "Preview a subscription-liability rule",
     summary:
-      "Who a proposed subscription-liability rule would change this season, by name: who would newly owe a subscription, who would no longer owe one, and members whose season subscription record says \"Not required\" but who would owe, whose record saving the rule resets. Send both `requiredTypeAgeRule` and `liabilityAgeSource`. Changes nothing.",
+      "Who a proposed subscription-liability rule would change this season, by name: who would newly owe a subscription, who would no longer owe one, and members whose season subscription record says \"Not required\" but who would owe, whose record saving the rule resets (`inBillingPopulation` false: inactive or archived, so reset but not invoiced unless made active again). Send both `requiredTypeAgeRule` and `liabilityAgeSource`. Changes nothing.",
     method: "GET",
     path: "/api/admin/membership-lockout-settings/liability-impact",
     query: liabilityImpactQuerySchema,
