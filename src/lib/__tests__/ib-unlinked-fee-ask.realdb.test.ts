@@ -480,14 +480,15 @@ async function expectFeeAskedOnNewPrimaryInvoice(): Promise<void> {
   it("a later edit after the link bills only its own increase, on a supplementary invoice", async () => {
     await moveByDates();
     await drainXeroWork();
+    const [first] = await modificationIds();
     await linkInvoice();
 
     await moveByDates(MOVED_LONGER);
     await drainXeroWork();
 
+    // The frozen clock stamps both edits alike, so the later one is the other row.
     const later = await prisma.bookingModification.findFirstOrThrow({
-      where: { bookingId: BOOKING_ID },
-      orderBy: { createdAt: "desc" },
+      where: { bookingId: BOOKING_ID, id: { not: first } },
       select: { id: true, changeFeeCents: true },
     });
     const supplementary = await supplementaryInvoiceOps();

@@ -100,6 +100,7 @@ export type BatchModificationTransactionResult =
     paymentReference: string | null;
     xeroInvoiceNumber: string | null;
     zeroDollarAutoPaid: boolean;
+    primaryInvoiceBillsIncrease: boolean; // #5288: the Xero leg raises the primary invoice, which bills it
     supersededPrimaryPaymentIntents: { length: number };
     xeroAdditionalAmountCents: number;
     xeroRefundAmountCents: number;

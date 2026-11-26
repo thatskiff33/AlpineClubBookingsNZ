@@ -41,6 +41,7 @@ import {
 import {
   bookingAmountOwedCents,
   bookingWorthCents,
+  billsIncreaseOnNewPrimaryInvoice,
   canAskCardForIncrease,
   hasCapturedPayment,
   hasIssuedPrimaryXeroInvoice,
@@ -109,6 +110,13 @@ export type PaymentAdjustmentResult = {
   foldedWaitingAsks: FoldedWaitingAsks;
   /** #3980: read no invoice link and claimed it (`writeEditOnPayment`); the door marks its history row. */
   settledAgainstPrimaryInvoice: boolean;
+  /**
+   * #5288 (`INV-PAY-047`): an Internet Banking increase with no primary invoice
+   * linked (`billsIncreaseOnNewPrimaryInvoice`). `additionalAmountCents` names
+   * it to the member, and the door's Xero leg raises the primary invoice, which
+   * bills it; nothing is minted and no supplementary invoice is raised.
+   */
+  primaryInvoiceBillsIncrease: boolean;
   /**
    * Always 0. An ordinary edit no longer adds a late-notice fee to an unpaid
    * booking's amount owed (owner decision, 10 Nov 2026). The field stays so
@@ -292,6 +300,15 @@ export async function applyPaymentAdjustments(
       : 0;
   const xeroAdditionalAmountCents =
     hasIssuedXeroInvoice && netAmountCents > 0 ? netAmountCents : 0;
+  // #5288 (owner decision 20 Nov 2026): with no invoice to sit beside and no
+  // card to ask, the increase is asked like any Internet Banking top-up and
+  // billed on the primary invoice the door raises now.
+  const primaryInvoiceBillsIncrease =
+    netAmountCents > 0 &&
+    !hasSucceededPayment &&
+    !hasIssuedXeroInvoice &&
+    !paidByOrganiserInternetBanking(booking) &&
+    billsIncreaseOnNewPrimaryInvoice(booking);
   // #4299 (`INV-PAY-148`): the organiser is invoiced for the increase, so the
   // joiner is asked for nothing; the emails and responses say who was billed.
   const billedToOrganiserCents = organiserBilling ? xeroAdditionalAmountCents : 0;
@@ -383,10 +400,14 @@ export async function applyPaymentAdjustments(
           foldedWaitingAskCents: foldedWaitingAsks.cents,
         });
         additionalAmountCents = additionalAsk.amountCents;
+      } else if (primaryInvoiceBillsIncrease) {
+        additionalAmountCents = netAmountCents;
       } else {
         additionalAmountCents = xeroAdditionalAmountCents - billedToOrganiserCents;
       }
     }
+  } else if (primaryInvoiceBillsIncrease) {
+    additionalAmountCents = netAmountCents;
   } else if (xeroAdditionalAmountCents > 0) {
     additionalAmountCents = xeroAdditionalAmountCents - billedToOrganiserCents;
   }
@@ -438,6 +459,7 @@ export async function applyPaymentAdjustments(
     organiserChildRefund,
     foldedWaitingAsks,
     settledAgainstPrimaryInvoice,
+    primaryInvoiceBillsIncrease,
     changeFeeAddedToAmountOwedCents: 0,
     feeRecordedHereCents,
     billedToOrganiserCents,

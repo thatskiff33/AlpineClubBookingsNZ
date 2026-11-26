@@ -205,6 +205,39 @@ export function canAskCardForIncrease(booking: {
   );
 }
 
+/** The `Payment.source` whose increases Xero bills, checked by the compiler. */
+const INTERNET_BANKING_PAYMENT_SOURCE = "INTERNET_BANKING" satisfies PaymentSource;
+
+/**
+ * #5288 (`INV-PAY-047`, owner decision 20 Nov 2026): may an edit that RAISES
+ * this booking's worth be billed by raising its primary Xero invoice now? The
+ * Internet Banking counterpart of `canAskCardForIncrease`: a settled booking on
+ * a settled Internet Banking payment - typically one account credit paid in
+ * full - with no primary invoice linked yet. It has no card to ask and no
+ * invoice for a supplementary one to sit beside, so the primary invoice, which
+ * bills the price plus every recorded fee, carries the increase.
+ *
+ * Not a booking settled outside the app (`manuallyMarkedPaidAt`): the invoice
+ * enqueue refuses those (#2262), so the member would be told of an invoice
+ * that never comes. The caller adds what only it knows - an increase, no card
+ * asked, no invoice issued, not an organiser's place.
+ */
+export function billsIncreaseOnNewPrimaryInvoice(booking: {
+  status: string;
+  payment:
+    | { status: string; source: PaymentSource; xeroInvoiceId: string | null; manuallyMarkedPaidAt: Date | null }
+    | null
+    | undefined;
+}): boolean {
+  return (
+    isSettledBookingStatus(booking.status) &&
+    isCapturedPaymentStatus(booking.payment?.status ?? "") &&
+    booking.payment?.source === INTERNET_BANKING_PAYMENT_SOURCE &&
+    !booking.payment.xeroInvoiceId &&
+    !booking.payment.manuallyMarkedPaidAt
+  );
+}
+
 /**
  * #4272 (`INV-PAY-112`, owner decision 21 Oct 2026): a review charge on a
  * CANCELLED booking is REFUSED. Its ask is one the member cannot pay — every

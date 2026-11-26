@@ -1307,6 +1307,7 @@ export async function modifyBookingDates({
       ownCardRefund,
       organiserChildRefund: payments.organiserChildRefund,
       zeroDollarAutoPaid,
+      primaryInvoiceBillsIncrease: payments.primaryInvoiceBillsIncrease,
       paymentId: booking.payment?.id ?? null,
       paymentCustomerId: booking.payment?.stripeCustomerId ?? null,
       memberEmail: bookingOwner(booking).member.email,
@@ -1497,6 +1498,8 @@ async function dispatchDatePostTransactionSideEffects({
     // (mirrors the batch modify path).
     createPrimaryInvoiceWhenMissing:
       result.zeroDollarAutoPaid && !result.hasIssuedXeroInvoice,
+    // #5288: an unlinked Internet Banking increase is billed on that invoice.
+    primaryInvoiceBillsIncrease: result.primaryInvoiceBillsIncrease,
     requiresAdditionalStripePayment:
       result.xeroAdditionalAmountCents > 0 && result.hasSucceededPayment,
     additionalPaymentIntentId: additionalMint.additionalPaymentIntentId,

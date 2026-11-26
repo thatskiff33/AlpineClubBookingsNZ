@@ -886,6 +886,10 @@ import "./xero-account-credit-note-stamp.realdb.test";
 // line under the edit at the settle. Skipped unless RUN_CONCURRENCY_RACE_TESTS=1;
 // it owns and cleans its own `race-4661-` fixtures.
 import "./unpaid-edit-change-fee-owed.realdb.test";
+// #5288 reuses it to prove an unlinked Internet Banking booking's edit increase
+// is asked for and billed once, on the primary invoice the edit raises.
+// Skipped unless RUN_CONCURRENCY_RACE_TESTS=1; it owns its `race-5288-` fixtures.
+import "./ib-unlinked-fee-ask.realdb.test";
 // #4924 reuses it to prove a save carrying figures its preview showed before the
 // club day crossed a change-fee band is refused with the fresh figures and writes
 // nothing. Skipped unless RUN_CONCURRENCY_RACE_TESTS=1; it owns and cleans its

@@ -55,6 +55,8 @@ export type DateModificationTransactionResult =
     // F20 (#1887): the reprice landed the booking fully credit-covered and it
     // was auto-confirmed at $0, so the primary Xero invoice must be created.
     zeroDollarAutoPaid: boolean;
+    // #5288: the Xero leg raises the unlinked primary invoice, which bills this increase.
+    primaryInvoiceBillsIncrease: boolean;
   };
 
 export type DateModificationResponse = {

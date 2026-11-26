@@ -2030,6 +2030,7 @@ export async function modifyBookingBatch({
       paymentReference: booking.payment?.reference ?? null,
       xeroInvoiceNumber: booking.payment?.xeroInvoiceNumber ?? null,
       zeroDollarAutoPaid: lifecycle.zeroDollarAutoPaid,
+      primaryInvoiceBillsIncrease: payments.primaryInvoiceBillsIncrease,
       supersededPrimaryPaymentIntents: lifecycle.supersededPrimaryPaymentIntents,
       xeroAdditionalAmountCents: payments.xeroAdditionalAmountCents,
       xeroRefundAmountCents: payments.xeroRefundAmountCents,
@@ -2450,6 +2451,7 @@ async function dispatchBatchPostTransactionSideEffects({
     settlementAmountCents: result.xeroRefundAmountCents,
     createPrimaryInvoiceWhenMissing:
       result.zeroDollarAutoPaid && !result.hasIssuedXeroInvoice,
+    primaryInvoiceBillsIncrease: result.primaryInvoiceBillsIncrease, // #5288
     requiresAdditionalStripePayment:
       result.xeroAdditionalAmountCents > 0 && result.hasSucceededPayment,
     additionalPaymentIntentId: additionalMint.additionalPaymentIntentId,
