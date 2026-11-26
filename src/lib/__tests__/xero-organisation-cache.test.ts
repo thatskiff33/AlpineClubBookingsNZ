@@ -18,6 +18,16 @@ vi.mock("@/lib/xero-api-client", () => ({
 vi.mock("@/lib/logger", () => ({
   default: { warn: vi.fn(), error: vi.fn(), info: vi.fn(), debug: vi.fn() },
 }));
+// The year-end resolver's module imports the client; nothing here reaches it.
+vi.mock("@/lib/prisma", () => ({ prisma: {} }));
+// No stored override, so the club's year-end resolver goes on to read Xero.
+vi.mock("@/lib/membership-lockout-settings", async (importOriginal) => {
+  const actual = (await importOriginal()) as typeof import("@/lib/membership-lockout-settings");
+  return {
+    ...actual,
+    loadMembershipLockoutSettings: async () => actual.normalizeMembershipLockoutSettings(null),
+  };
+});
 
 import type { MeteredXeroCallOptions } from "@/lib/xero-api-client";
 import {
@@ -27,6 +37,7 @@ import {
   resetXeroOrganisationCachesForTests,
 } from "@/lib/xero-organisation";
 import { invalidateXeroOrganisationCaches } from "@/lib/xero-organisation-cache-bus";
+import { clubFinancialYearEndMonth } from "@/lib/financial-year-server";
 
 // CORRECTNESS-F1: the connected-org summary is cached in-process for hours. A
 // disconnect → reconnect to a DIFFERENT org must not keep serving the OLD org's
@@ -965,6 +976,19 @@ describe("financial year-end month: single flight + retry caps (#2283)", () => {
     vi.setSystemTime(new Date(Date.now() + 16_000));
     expect(await getXeroFinancialYearEndMonth()).toBeNull();
     expect(live.getAuthenticatedXeroClient).toHaveBeenCalledTimes(2);
+  });
+
+  it("lets admin renders inside the window after a failure share ONE Xero call (#5259)", async () => {
+    // Every admin page render resolves the year-end for the browser, so after a
+    // failure the throttle is what keeps a click-through from calling Xero per
+    // page. Each render answers March meanwhile.
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-07-29T00:00:00.000Z"));
+    live.getAuthenticatedXeroClient.mockRejectedValue(new Error("429"));
+
+    expect(await clubFinancialYearEndMonth()).toBe(3);
+    expect(await clubFinancialYearEndMonth()).toBe(3);
+    expect(live.getAuthenticatedXeroClient).toHaveBeenCalledTimes(1);
   });
 
   // #2423 review F1. Arming the process-global breaker was ALSO what suppressed
