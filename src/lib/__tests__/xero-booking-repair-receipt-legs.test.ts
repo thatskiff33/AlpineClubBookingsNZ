@@ -13,8 +13,8 @@ import {
   addKeptChangeCaptureFinding,
   addUnrecordedAdditionalCaptureFindings,
   type AdditionalCaptureReceiptEvidence,
-  type KeptChangeCaptureRepairEvidence,
 } from "@/lib/xero-booking-repair-additional-capture";
+import type { KeptChangeCaptureRepairEvidence } from "@/lib/xero-booking-repair-kept-change-evidence";
 import { XERO_OUTBOX_ADDITIONAL_CAPTURE_RECEIPT_TYPE } from "@/lib/additional-capture-receipt-payload";
 import type { XeroOperationRecord } from "@/lib/xero-booking-repair-types";
 
@@ -100,15 +100,17 @@ function changeCaptureFindings(operations: XeroOperationRecord[], links: { metad
 function keptCaptureFindings(operations: XeroOperationRecord[], links: { metadata: unknown }[]): Finding[] {
   const findings: Finding[] = [];
   const found: KeptChangeCaptureRepairEvidence = {
-    evidence: { answeredByChangeInvoice: false, changeId: "mod_change", settledAgainstPrimary: false, changeInvoices: "none", billedByGapInvoice: true, primaryMissedChange: false },
+    changeId: "mod_change",
     route: "receipt",
+    liveKeptInvoice: false,
     receiptOperations: operations,
     receiptLinked: links.length > 0,
     receiptLinks: links,
+    receiptStoodDown: false,
     recordedElsewhere: false,
     alreadyRecordedCents: 0,
     primaryInvoiceIdSynced: true,
-  } as unknown as KeptChangeCaptureRepairEvidence;
+  };
   addKeptChangeCaptureFinding({
     findings: findings as never,
     actionMap: new Map(),

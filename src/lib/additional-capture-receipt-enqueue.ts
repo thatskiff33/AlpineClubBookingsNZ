@@ -38,7 +38,7 @@ import { CAPTURED_TRANSACTION_STATUS_LIST, isCapturedTransactionStatus } from "@
 import { LEDGER_ROWS_OLDEST_FIRST } from "@/lib/payment-ledger-order";
 import { startXeroSyncOperation } from "@/lib/xero-sync";
 import { lockSupplementaryInvoiceAnchor } from "@/lib/xero-supplementary-invoice-enqueue";
-import { XERO_OUTBOX_ADDITIONAL_CAPTURE_RECEIPT_TYPE } from "@/lib/additional-capture-receipt-payload";
+import { RECORDED_BY_ANOTHER_WRITER_PREFIX, XERO_OUTBOX_ADDITIONAL_CAPTURE_RECEIPT_TYPE } from "@/lib/additional-capture-receipt-payload";
 import { additionalCaptureReceiptKey } from "@/lib/additional-capture-xero-receipt";
 import { readCaptureRecorder } from "@/lib/additional-capture-recorder";
 import { captureChangeId } from "@/lib/additional-capture-receipt-link";
@@ -142,7 +142,7 @@ async function refusalUnderAnchor(
     },
     tx,
   );
-  if (recorder.kind !== "receipt") return `recorded-by-${recorder.kind}`;
+  if (recorder.kind !== "receipt") return `${RECORDED_BY_ANOTHER_WRITER_PREFIX}${recorder.kind}`;
   // A release losing another caller's refusal can say already-released.
   // Under this same anchor, require the recorder's live unpaid change target;
   // falling back to the primary would pay an invoice that never billed it.

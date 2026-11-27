@@ -8,7 +8,8 @@ import type { PaidAnotherWayXeroNote } from "@/lib/manual-refund-task-settlement
 import type { PaidAnotherWayReceiptState } from "@/lib/paid-another-way-receipt-note";
 import type { PaidBackRefundRequest } from "@/lib/xero-inbound/refund-request-paid-back";
 import { LEDGER_ROWS_OLDEST_FIRST } from "@/lib/payment-ledger-order";
-import type { AdditionalCaptureReceiptEvidence, KeptChangeCaptureRepairEvidence } from "./xero-booking-repair-additional-capture";
+import type { AdditionalCaptureReceiptEvidence } from "./xero-booking-repair-additional-capture";
+import type { KeptChangeCaptureRepairEvidence } from "./xero-booking-repair-kept-change-evidence";
 import type { CreditNoteSpentOutsideApp } from "@/lib/xero-credit-note-spent-outside-flag";
 
 export const XERO_BOOKING_REPAIR_FINDING_CODES = [
@@ -571,6 +572,8 @@ export interface BookingClassificationContext {
          * (`PaidAnotherWayReceiptState.cardNoteMayBeInXeroCents`).
          */
         cardNoteMayBeInXeroLabel?: string;
+        /** #4381: what every close of the capture paid back, formatted, for a close with no note raised or queued. */
+        paidBackLabel?: string;
       };
     }
   >;

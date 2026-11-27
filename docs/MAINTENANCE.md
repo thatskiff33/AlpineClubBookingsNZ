@@ -1860,12 +1860,20 @@ queued nothing for it, so record the payment and its bank refund by hand. One
 whose booking lacks its synced invoice id is reported "cannot tell yet", as
 above. Only a change whose own unsent invoice names the payment still gets the
 kept-payment invoice for the whole payment, under the finding below. Where
-another Xero document already records the whole payment (the credit-release
-sweep's share or hold, the booking's invoice when it was linked, or another
-invoice covering the change), the tool raises nothing and the app queues no
-bank-transfer note for the close, although the close's dialog said one would
-follow: record that refund note by hand in Xero (for the sweep, until #4380
-lands). A close made before #4381 that already raised a kept-payment invoice
+one invoice already in Xero records the whole payment (the booking's invoice,
+when the payment was part of what it recorded at its link, or another invoice
+covering the change without naming the payment), the close queues its
+bank-transfer note against that invoice straight away, and the tool queues
+one a close made before that change still waits for
+(`PAID_ANOTHER_WAY_REFUND_NOTE_NOT_QUEUED`). Where other documents record it
+but no one invoice in Xero can be named for certain, the close queues nothing
+and its dialog says to record the refund by hand. Wherever a close has no
+bank-transfer note raised and none queued - that case, a close that planned
+none, or the credit-release sweep holding the payment (until #4380) - the tool
+reports `PAID_ANOTHER_WAY_REFUND_NOTE_RECORD_BY_HAND` with what was paid back:
+record that refund by hand in Xero against the invoice that records the
+payment. It is report-only and keeps appearing after you do. A close made
+before #4381 that already raised a kept-payment invoice
 beside the invoice billing the change is not found by the tool; correct it in
 Xero by hand. When the receipt row failed before reaching
 Xero, or none was queued, `PAID_ANOTHER_WAY_LATE_CAPTURE_WITHOUT_XERO_RECEIPT`

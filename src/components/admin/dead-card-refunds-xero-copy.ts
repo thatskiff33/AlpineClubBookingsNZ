@@ -20,7 +20,7 @@ export function xeroRefundNotePromise(
   cardNoteCovers = "",
 ): string {
   if (xeroRefundNote === "now") {
-    return `A Xero refund credit note for the amount, worded "${bankNoteWording}", is queued when you close it.`;
+    return `Closing this queues a Xero refund credit note for the amount, worded "${bankNoteWording}". If an invoice already records the payment, the note credits that invoice.`;
   }
   // #4104: a refund Stripe failed later - its card note, raised while it counted, is in Xero.
   // Delta review (D4): said for a close of any amount, in full or in part.

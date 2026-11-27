@@ -98,7 +98,7 @@ describe("the Paid another way dialog", () => {
     expect(screen.getByText("$150.00 is still owed.")).toBeInTheDocument();
     // Round 7 (SSOT): the note's wording is the one home's, never spelled here.
     expect(
-      screen.getByText(`A Xero refund credit note for the amount, worded "${BANK_NOTE_WORDING}", is queued when you close it.`),
+      screen.getByText(`Closing this queues a Xero refund credit note for the amount, worded "${BANK_NOTE_WORDING}". If an invoice already records the payment, the note credits that invoice.`),
     ).toBeInTheDocument();
     // #4368 (decision 7): settled here, never with a new Stripe dashboard refund; the old "wait for it" is gone.
     expect(screen.getByText("Settle it here, not with a new refund in the Stripe dashboard.")).toBeInTheDocument();

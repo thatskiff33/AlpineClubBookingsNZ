@@ -27,7 +27,7 @@ import {
 import { createCountMap } from "./xero-booking-repair-utils";
 import { getCapturedRepairTransactions } from "./xero-booking-repair-payments";
 import { readLateCaptureRefundsPaidAnotherWay } from "@/lib/late-capture-paid-another-way";
-import { loadKeptChangeCaptureEvidence } from "./xero-booking-repair-additional-capture";
+import { loadKeptChangeCaptureEvidence } from "./xero-booking-repair-kept-change-evidence";
 import type { ClubFormat } from "@/lib/club-format";
 import { formatCents } from "@/lib/utils";
 import { labelPaidBackRefundRequests } from "./xero-booking-repair-request-notes";
@@ -66,7 +66,7 @@ async function withPaidAnotherWayCloses(
       // close's finding, not the kept invoice's, answers its capture.
       const receiptState = await deps.readPaidAnotherWayReceiptState(intent);
       // #4381 (`INV-PAY-144`): a closed change capture is split by its change's evidence, as a kept one is.
-      await withKeptChangeCaptureEvidence(context, intent, deps);
+      await withKeptChangeCaptureEvidence(context, { paymentIntentId: intent, taskId: task.taskId }, deps);
       task.paidAnotherWayClose = {
         ...close,
         receiptState,
@@ -75,6 +75,8 @@ async function withPaidAnotherWayCloses(
         amountLabel: formatCents(receiptState.recordByHandCents, format),
         // Round 14: named apart, to check in Xero first.
         cardNoteMayBeInXeroLabel: formatCents(receiptState.cardNoteMayBeInXeroCents, format),
+        // #4381: named by the finding for a close with no note raised and none queued.
+        paidBackLabel: formatCents(receiptState.close?.amountCents ?? 0, format),
       };
     }
   }
@@ -89,10 +91,11 @@ async function withPaidAnotherWayCloses(
  */
 async function withKeptChangeCaptureEvidence(
   context: Awaited<ReturnType<typeof loadAuditData>>[number],
-  paymentIntentId: string,
+  { paymentIntentId, taskId }: { paymentIntentId: string; taskId: string },
   deps: RepairDependencies,
 ): Promise<void> {
-  const loaded = await loadKeptChangeCaptureEvidence(deps.prisma, [context.booking], new Map([[context.booking.id, new Map([[paymentIntentId, true]])]]));
+  const tasks = new Map([[context.booking.id, new Map([[paymentIntentId, { id: taskId }]])]]);
+  const loaded = await loadKeptChangeCaptureEvidence(deps.prisma, [context.booking], tasks);
   const found = loaded.get(context.booking.id)?.get(paymentIntentId);
   if (!found) return;
   context.keptChangeCaptures = new Map([...(context.keptChangeCaptures ?? []), [paymentIntentId, found]]);

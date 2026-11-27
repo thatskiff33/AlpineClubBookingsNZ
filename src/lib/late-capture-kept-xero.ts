@@ -22,6 +22,7 @@ import { keptCaptureAnchorId } from "@/lib/kept-late-capture-change-receipt";
 import { creditBackLateCaptureRefunds } from "@/lib/late-capture-refund-credit-note";
 import { enqueueAdditionalCaptureReceiptOperation } from "@/lib/additional-capture-receipt-enqueue";
 import { additionalCaptureReceiptKey } from "@/lib/additional-capture-xero-receipt";
+import { RECORDED_BY_ANOTHER_WRITER_PREFIX, additionalCaptureReceiptStoodDown } from "@/lib/additional-capture-receipt-payload";
 import { captureChangeId } from "@/lib/additional-capture-receipt-link";
 import { supplementaryInvoicesMovedOffIntentWhere } from "@/lib/supplementary-invoice-parked-from";
 import { readCreditReleaseCaptureShare } from "@/lib/credit-release-capture-share";
@@ -271,19 +272,44 @@ type KeptChangeCaptureReading = {
   primaryInvoiceId: string | null;
 };
 
-/** The capture's own receipt row (`ADDITIONAL_CAPTURE_RECEIPT`) in any status but CANCELLED, the newest. */
-export type KeptCaptureReceiptRow = { id: string; status: string; manuallyResolvedAt: Date | null; requestPayload: Prisma.JsonValue };
+/**
+ * The capture's own receipt row (`ADDITIONAL_CAPTURE_RECEIPT`) in any status
+ * but CANCELLED, the newest. `stoodDown` (#4381): it finished without sending,
+ * because another writer records the capture (`additionalCaptureReceiptStoodDown`),
+ * so it is not the capture's record and no receipt is on its way.
+ */
+export type KeptCaptureReceiptRow = {
+  id: string;
+  status: string;
+  manuallyResolvedAt: Date | null;
+  requestPayload: Prisma.JsonValue;
+  stoodDown: boolean;
+};
 
+/** What {@link readKeptCaptureRecord} reads when it takes no lock: the repair tool's snapshot and the dialog's promise. */
+export type KeptCaptureRecordStore = RecorderStore & Pick<Prisma.TransactionClient, "payment" | "xeroObjectLink" | "xeroSyncOperation">;
+
+type KeptCaptureRecordInput = {
+  bookingId: string;
+  paymentIntentId: string;
+  manualRefundTaskId: string;
+  capture: KeptCaptureFacts;
+  /**
+   * False only for a read that decides nothing, which holds no lock: the
+   * paid-another-way dialog's promise, and the repair tool's snapshot (whose
+   * apply decides again under the locks).
+   */
+  lockAnchor: boolean;
+};
+
+export async function readKeptCaptureRecord(store: Prisma.TransactionClient, input: KeptCaptureRecordInput): Promise<KeptCaptureRecordReading>;
 export async function readKeptCaptureRecord(
-  store: Prisma.TransactionClient,
-  input: {
-    bookingId: string;
-    paymentIntentId: string;
-    manualRefundTaskId: string;
-    capture: KeptCaptureFacts;
-    /** False only for a read that decides nothing (the paid-another-way dialog's promise), which holds no lock. */
-    lockAnchor: boolean;
-  },
+  store: KeptCaptureRecordStore,
+  input: KeptCaptureRecordInput & { lockAnchor: false },
+): Promise<KeptCaptureRecordReading>;
+export async function readKeptCaptureRecord(
+  store: KeptCaptureRecordStore | Prisma.TransactionClient,
+  input: KeptCaptureRecordInput,
 ): Promise<KeptCaptureRecordReading> {
   const { capture, paymentIntentId } = input;
   const payment = await store.payment.findUnique({ where: { id: capture.paymentId }, select: { xeroInvoiceId: true } });
@@ -299,7 +325,7 @@ export async function readKeptCaptureRecord(
 
   const changeId = captureChangeId(capture);
   const anchorId = keptCaptureAnchorId(capture, input.bookingId);
-  if (input.lockAnchor) await lockSupplementaryInvoiceAnchor(store, anchorId);
+  if (input.lockAnchor) await lockSupplementaryInvoiceAnchor(store as Prisma.TransactionClient, anchorId);
   // Review A-UNSYNCED-KEEP: the active link's id where the field drifted, so the full reading runs.
   const primaryInvoiceId = payment?.xeroInvoiceId ?? paymentLinks[0]?.xeroObjectId ?? null;
   const reading: KeptChangeCaptureReading = { firstCut, anchorId, changeId, primaryInvoiceId };
@@ -308,9 +334,13 @@ export async function readKeptCaptureRecord(
   const receiptRow = await store.xeroSyncOperation.findFirst({
     where: { correlationKey: additionalCaptureReceiptKey(paymentIntentId), status: { not: "CANCELLED" } },
     orderBy: { createdAt: "desc" },
-    select: { id: true, status: true, manuallyResolvedAt: true, requestPayload: true },
+    select: { id: true, status: true, manuallyResolvedAt: true, requestPayload: true, responsePayload: true },
   });
-  if (receiptRow) return { ...reading, liveKeptInvoice: null, receiptRow, decided: null };
+  if (receiptRow) {
+    const { responsePayload, ...row } = receiptRow;
+    const stoodDown = additionalCaptureReceiptStoodDown({ status: row.status, responsePayload });
+    return { ...reading, liveKeptInvoice: null, receiptRow: { ...row, stoodDown }, decided: null };
+  }
   const route = keptChangeCaptureRoute(
     await readKeptChangeCaptureEvidence(store, { paymentIntentId, changeId, bookingId: input.bookingId, primaryInvoiceId }),
   );
@@ -466,7 +496,7 @@ async function reviveKeptCaptureChangeInvoice(
     // document records the payment, the revived invoice may go to Xero unpaid, so that is a warning.
     const context = { paymentIntentId: params.paymentIntentId, manualRefundTaskId: params.manualRefundTaskId, reason: receipt.reason };
     const message = "A kept late card payment's revived change invoice has no receipt queued beside it; the reason says why";
-    if (receipt.reason.startsWith("recorded-by-")) logger.info(context, message);
+    if (receipt.reason.startsWith(RECORDED_BY_ANOTHER_WRITER_PREFIX)) logger.info(context, message);
     // No primary invoice id beside an active link is drift, as on the receipt route below.
     else if (receipt.reason === "no-primary-invoice") logger.error(context, message);
     else logger.warn(context, message);

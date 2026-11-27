@@ -90,6 +90,7 @@ import {
   sameInvoiceIds,
 } from "@/lib/additional-capture-receipt-legs";
 import {
+  RECORDED_BY_ANOTHER_WRITER_PREFIX,
   readAdditionalCaptureReceiptPayload,
   type AdditionalCaptureReceiptPlan,
   type AdditionalCaptureReceiptTarget,
@@ -414,12 +415,12 @@ export async function recordAdditionalCaptureReceipt(
       bookingModificationId: captureChangeId(transaction),
     });
     if (recorder.kind === "primary-invoice") {
-      return standDown("SUCCEEDED", "recorded-by-primary-invoice", { primaryInvoiceId });
+      return standDown("SUCCEEDED", `${RECORDED_BY_ANOTHER_WRITER_PREFIX}primary-invoice`, { primaryInvoiceId });
     }
     if (recorder.kind === "supplementary-invoice" || recorder.kind === "kept-late-capture-invoice") {
-      return standDown("SUCCEEDED", `recorded-by-${recorder.kind}`, { operationId: recorder.operationId });
+      return standDown("SUCCEEDED", `${RECORDED_BY_ANOTHER_WRITER_PREFIX}${recorder.kind}`, { operationId: recorder.operationId });
     }
-    if (recorder.kind === "credit-release-sweep") return standDown("SUCCEEDED", "recorded-by-credit-release-sweep");
+    if (recorder.kind === "credit-release-sweep") return standDown("SUCCEEDED", `${RECORDED_BY_ANOTHER_WRITER_PREFIX}credit-release-sweep`);
     if (recorder.namingUnreadable) return refuse("naming-unreadable");
     const { gap, targets, alreadyRecordedCents } = recorder;
     // Only the part no other writer recorded. #4434: what is left is split
@@ -581,7 +582,7 @@ export async function recordAdditionalCaptureReceipt(
     if (stored === "lost-claim") {
       throw waitFor("This run no longer holds the receipt's claim; nothing was stored or sent");
     }
-    if (stored !== "stored") return standDown("SUCCEEDED", `recorded-by-${stored}`, { decidedAgainUnderLock: true });
+    if (stored !== "stored") return standDown("SUCCEEDED", `${RECORDED_BY_ANOTHER_WRITER_PREFIX}${stored}`, { decidedAgainUnderLock: true });
     return plan;
   }
 

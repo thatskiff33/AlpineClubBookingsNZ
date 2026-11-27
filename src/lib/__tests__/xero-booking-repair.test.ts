@@ -15,11 +15,8 @@ import { modificationNoteWording, readModificationNoteWording } from "@/lib/xero
 import { buildAdditionalIntentRecoveryIdempotencyKey, buildEditFinancialReviewChargeReason, buildLateCaptureApprovalRefundRecoveryIdempotencyKey } from "@/lib/payment-recovery-keys";
 import { compareLedgerRowsNewestFirst } from "@/lib/payment-ledger-order";
 import { cardRefundPaidAnotherWayOccurrenceKey } from "@/lib/manual-refund-task-settlement-rules";
-import {
-  addKeptChangeCaptureFinding,
-  keptInvoiceBillsChange,
-  type KeptChangeCaptureRepairEvidence,
-} from "@/lib/xero-booking-repair-additional-capture";
+import { addKeptChangeCaptureFinding, keptInvoiceBillsChange } from "@/lib/xero-booking-repair-additional-capture";
+import type { KeptChangeCaptureRepairEvidence } from "@/lib/xero-booking-repair-kept-change-evidence";
 import { CREDIT_RELEASE_ASK_REASON } from "@/lib/credit-release-ask-keys";
 import { XERO_PARTIAL_REPAIR_RUNNING_CODE } from "@/lib/xero-stale-operations";
 import { REDACTED_SECRET } from "@/lib/redact-sensitive-json";
@@ -551,6 +548,18 @@ function createDependencies(state: {
         // so), and `readCaptureRecorder`'s supplementary-invoice reads, matched
         // as the real queries match them.
         findFirst: vi.fn().mockImplementation(async ({ where }: any = {}) => {
+          // The capture's own receipt row, as the keep's reading asks for it (`readKeptCaptureRecord`): the
+          // one per capture by its key, whose fixtures name the intent in their payload.
+          if (String(where?.correlationKey ?? "").includes("additional-capture-receipt")) {
+            return (
+              operations.find(
+                (op: any) =>
+                  op.queueType === "ADDITIONAL_CAPTURE_RECEIPT" &&
+                  op.status !== "CANCELLED" &&
+                  String(where.correlationKey).includes(String(op.requestPayload?.paymentIntentId)),
+              ) ?? null
+            );
+          }
           if (where?.correlationKey) return state.primaryInvoiceFiguresOperation ?? null;
           const live = operations.filter((op: any) => op.queueType === where?.queueType && op.status !== "CANCELLED");
           if (where?.localId) return live.find((op: any) => op.localModel === where.localModel && op.localId === where.localId) ?? null;
@@ -686,6 +695,11 @@ function createDependencies(state: {
         }),
       },
       payment: {
+        // The keep's reading (`readKeptCaptureRecord`) reads the payment's primary invoice id.
+        findUnique: vi.fn().mockImplementation(async ({ where }: any) => {
+          const booking = state.bookings.find((item) => item.payment?.id === where?.id);
+          return booking?.payment ? { ...booking.payment, bookingId: booking.id } : null;
+        }),
         update: vi.fn().mockImplementation(async ({ where, data }: any) => {
           const booking = state.bookings.find((item) => item.payment?.id === where.id);
           if (booking?.payment) {
@@ -6321,9 +6335,12 @@ describe("runBookingXeroRepair", () => {
           sweep?: "share" | "held";
           /** #4381: the approval was COMPLETED and its card refund closed paid another way, the note waiting for the receipt - or (`none`) the close planned no Xero record. */
           closedPaidAnotherWay?: true | "none";
+          /** #4381: the close's note was already asked for. */
+          noteAsked?: true;
         } = {},
       ) => {
         const deps = createDependencies({
+          ...(options.noteAsked ? { paidAnotherWayNoteAsked: true } : {}),
           bookings: [booking],
           operations: options.operations ?? [],
           links: options.links ?? [],
@@ -6522,11 +6539,13 @@ describe("runBookingXeroRepair", () => {
           return findings;
         };
         const unknown = (recordedElsewhere: boolean): KeptChangeCaptureRepairEvidence => ({
-          evidence: { answeredByChangeInvoice: false, changeId: null, settledAgainstPrimary: false, changeInvoices: "none", billedByGapInvoice: false, primaryMissedChange: false },
+          changeId: null,
           route: "change-unknown",
+          liveKeptInvoice: false,
           receiptOperations: [],
           receiptLinked: false,
           receiptLinks: [],
+          receiptStoodDown: false,
           recordedElsewhere,
           alreadyRecordedCents: 0,
           primaryInvoiceIdSynced: true,
@@ -6603,6 +6622,11 @@ describe("runBookingXeroRepair", () => {
       describe("#4381: the same capture, its approved refund closed paid another way", () => {
         const closeFinding = (bookingReport: { findings: { code: string }[] }) =>
           bookingReport.findings.find((finding) => finding.code === "PAID_ANOTHER_WAY_LATE_CAPTURE_WITHOUT_XERO_RECEIPT");
+        // #4381 (owner, 28 Nov 2026): a close with no note raised and none queued.
+        const noNoteFinding = (bookingReport: { findings: { code: string }[] }) =>
+          bookingReport.findings.find((finding) => finding.code === "PAID_ANOTHER_WAY_REFUND_NOTE_RECORD_BY_HAND") as
+            | { severity: string; safeToAutoApply: boolean; summary: string; details: Record<string, unknown> }
+            | undefined;
 
         it("MUTATION: the primary invoice bills the change - its receipt, by the close's own split on --apply, and no kept-capture invoice", async () => {
           const { bookingReport } = await runChange(changeBooking(), { closedPaidAnotherWay: true });
@@ -6637,11 +6661,17 @@ describe("runBookingXeroRepair", () => {
           expect(bookingReport.actions.some((a) => a.type === "QUEUE_KEPT_LATE_CAPTURE_INVOICE" || a.type === "QUEUE_KEPT_LATE_CAPTURE_RECORD")).toBe(false);
         });
 
-        it("control: a close that planned no Xero record for a change that can be read queues no receipt with no note to follow it", async () => {
+        it("MUTATION #4381 (owner, 28 Nov 2026): a close that planned no Xero record for a change that can be read queues no receipt, and is named for an officer to record by hand", async () => {
           const { bookingReport } = await runChange(changeBooking(), { closedPaidAnotherWay: "none" });
           expect(changeFinding(bookingReport)).toBeUndefined();
           expect(closeFinding(bookingReport)).toBeUndefined();
           expect(bookingReport.actions.some((a) => a.type === "QUEUE_KEPT_LATE_CAPTURE_INVOICE" || a.type === "QUEUE_KEPT_LATE_CAPTURE_RECORD")).toBe(false);
+          expect(noNoteFinding(bookingReport)).toMatchObject({
+            severity: "warning",
+            safeToAutoApply: false,
+            details: expect.objectContaining({ noRefundNote: "none", recordByHandCents: 6000 }),
+          });
+          expect(noNoteFinding(bookingReport)?.summary).toMatch(/Record the \$60\.00 paid back as a refund by hand in Xero/);
         });
 
         it("MUTATION nothing bills the change: the kept-capture invoice net of what the sweep records, by the close's own split on --apply", async () => {
@@ -6664,7 +6694,7 @@ describe("runBookingXeroRepair", () => {
           expect(closeFinding(bookingReport)).toBeUndefined();
         });
 
-        it("MUTATION the sweep holds all of it: nothing queued and no finding - the note waits (#4380)", async () => {
+        it("MUTATION the sweep holds all of it: nothing queued, and (#4381, owner 28 Nov 2026) the close with no note is named to record by hand", async () => {
           const { bookingReport } = await runChange(changeBooking(), {
             closedPaidAnotherWay: true,
             marked: false,
@@ -6674,6 +6704,21 @@ describe("runBookingXeroRepair", () => {
           expect(changeFinding(bookingReport)).toBeUndefined();
           expect(closeFinding(bookingReport)).toBeUndefined();
           expect(bookingReport.actions.some((a) => a.type === "QUEUE_KEPT_LATE_CAPTURE_INVOICE" || a.type === "QUEUE_KEPT_LATE_CAPTURE_RECORD")).toBe(false);
+          expect(noNoteFinding(bookingReport)).toMatchObject({
+            severity: "warning",
+            safeToAutoApply: false,
+            details: expect.objectContaining({ noRefundNote: "recorded-elsewhere", recordByHandCents: 6000 }),
+          });
+
+          // Once its note was asked for, nothing is named.
+          const asked = await runChange(changeBooking(), {
+            closedPaidAnotherWay: true,
+            marked: false,
+            operations: [changeOperation("CANCELLED", "WITHDRAWN_BY_OFFICER", "pi_superseded")],
+            sweep: "held",
+            noteAsked: true,
+          });
+          expect(noNoteFinding(asked.bookingReport)).toBeUndefined();
         });
 
         it("the change's own invoice names the capture and was never sent: the kept-capture invoice for the gross capture, as before", async () => {
@@ -6757,11 +6802,13 @@ describe("runBookingXeroRepair", () => {
 
         it("review I11: one predicate - a kept invoice bills the change only where it is asked for, or this pass raises it", () => {
           const found = (over: Partial<KeptChangeCaptureRepairEvidence> = {}): KeptChangeCaptureRepairEvidence => ({
-            evidence: { answeredByChangeInvoice: false, changeId: "mod_change", settledAgainstPrimary: false, changeInvoices: "withdrawn", billedByGapInvoice: false, primaryMissedChange: false },
+            changeId: "mod_change",
             route: "kept-invoice",
+            liveKeptInvoice: false,
             receiptOperations: [],
             receiptLinked: false,
             receiptLinks: [],
+            receiptStoodDown: false,
             recordedElsewhere: false,
             alreadyRecordedCents: 0,
             primaryInvoiceIdSynced: true,
@@ -7349,17 +7396,27 @@ describe("runBookingXeroRepair", () => {
             expect(bookingReport.actions.find((a) => a.type === "REQUEUE_XERO_OPERATION")).toBeUndefined();
           });
 
-          it.each(["now", "none"] as const)(
-            "MUTATION: note will follow - a close planned %s with its receipt in Xero gets no record-by-hand finding",
-            async (plan) => {
-              const bookingReport = await runClosed(plan, [resolvedKept], refunded(), {
-                paidAnotherWayReceipt: { kind: "recorded", invoiceId: "inv_kept" },
-                paidAnotherWayNoteAsked: plan === "now",
-              });
-              expect(keptByHand(bookingReport)).toBeUndefined();
-              expect(closeByHand(bookingReport)).toBeUndefined();
-            },
-          );
+          it("MUTATION: note will follow - a close planned now with its receipt in Xero gets no record-by-hand finding", async () => {
+            const bookingReport = await runClosed("now", [resolvedKept], refunded(), {
+              paidAnotherWayReceipt: { kind: "recorded", invoiceId: "inv_kept" },
+              paidAnotherWayNoteAsked: true,
+            });
+            expect(keptByHand(bookingReport)).toBeUndefined();
+            expect(closeByHand(bookingReport)).toBeUndefined();
+          });
+
+          // #4381 (owner, 28 Nov 2026): a close that planned no note has none raised and none queued, so it is
+          // named - never as a receipt resolved by hand, which it is not.
+          it("MUTATION: a close planned none with no note asked is named for an officer to record by hand", async () => {
+            const bookingReport = await runClosed("none", [resolvedKept], refunded(), {
+              paidAnotherWayReceipt: { kind: "recorded", invoiceId: "inv_kept" },
+              paidAnotherWayNoteAsked: false,
+            });
+            expect(keptByHand(bookingReport)).toBeUndefined();
+            expect(closeByHand(bookingReport)).toMatchObject({ details: expect.objectContaining({ noRefundNote: "none" }) });
+            expect(closeByHand(bookingReport)?.summary).toMatch(/has no Xero refund credit note, and none is queued/);
+            expect(closeByHand(bookingReport)?.summary).not.toMatch(/resolved by hand in Xero, so/);
+          });
 
           it.each(["after-receipt", "none"] as const)(
             "MUTATION: record by hand - resolved before the app sent it (close planned %s): the close's finding, sized from the capture's refunds less its notes",

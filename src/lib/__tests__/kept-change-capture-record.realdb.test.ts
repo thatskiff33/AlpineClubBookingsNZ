@@ -63,6 +63,7 @@
  * uniquely-namespaced `race-4324-` fixtures.
  */
 import type { Prisma, PrismaClient } from "@prisma/client";
+import { CREDIT_RELEASE_ASK_REASON } from "@/lib/credit-release-ask-keys";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { releaseBookingJournalForTeardown } from "./support/booking-financial-history-teardown";
 
@@ -109,6 +110,7 @@ let invoiceKey: typeof import("@/lib/xero-booking-invoice-key");
 let refundNote: typeof import("@/lib/late-capture-refund-credit-note");
 let door: typeof import("@/lib/manual-refund-task-resolution");
 let receiptVerdict: typeof import("@/lib/late-capture-xero-receipt");
+let receiptNote: typeof import("@/lib/paid-another-way-receipt-note");
 let eligibleCash: typeof import("@/lib/refund-note-eligible-cash");
 let CLUB_FORMAT_TEST: (typeof import("@/lib/__tests__/support/club-format-fixture"))["CLUB_FORMAT_TEST"];
 
@@ -341,6 +343,7 @@ async function holdLock(lock: (tx: Prisma.TransactionClient) => Promise<unknown>
     refundNote = await import("@/lib/late-capture-refund-credit-note");
     door = await import("@/lib/manual-refund-task-resolution");
     receiptVerdict = await import("@/lib/late-capture-xero-receipt");
+    receiptNote = await import("@/lib/paid-another-way-receipt-note");
     eligibleCash = await import("@/lib/refund-note-eligible-cash");
     ({ CLUB_FORMAT_TEST } = await import("@/lib/__tests__/support/club-format-fixture"));
     const [{ PrismaClient: SeparatePrismaClient }, { createPrismaPgAdapter }] = await Promise.all([
@@ -1127,6 +1130,296 @@ async function holdLock(lock: (tx: Prisma.TransactionClient) => Promise<unknown>
     expect(await prisma.xeroSyncOperation.findUnique({ where: { id: failed.id }, select: { status: true } })).toEqual({ status: "RUNNING" });
     expect((await receiptRows()).filter((row) => row.status !== "CANCELLED")).toHaveLength(1);
     expect(await liveKeptInvoices()).toBe(0);
+  });
+
+  /**
+   * #4381 (owner decision 28 Nov 2026 on #4381, "automate it now";
+   * `INV-PAY-144`): another Xero document already records the whole change
+   * capture. The close's bank note credits THAT document, for what was paid
+   * back, and nothing else records the capture a second time.
+   */
+  describe("#4381: a close of a capture another Xero document already records", () => {
+    const CHANGE_INVOICE_XERO_ID = "race-4381-change-invoice";
+
+    async function carryReleaseAsk(cents: number) {
+      await prisma.paymentTransaction.create({ data: {
+        paymentId: PAYMENT_ID, kind: "ADDITIONAL", source: "STRIPE", status: "FAILED",
+        amountCents: cents, reason: CREDIT_RELEASE_ASK_REASON, createdAt: new Date("2026-06-19T00:00:00Z"),
+      } });
+      await prisma.paymentTransaction.update({ where: { id: CHANGE_TX_ID }, data: {
+        carriedAskCents: cents, createdAt: new Date("2026-06-20T00:00:00Z"),
+      } });
+    }
+
+    it("M3: a refused receipt on a bank-paid booking does not prevent the close or promise a note", async () => {
+      await seed("COMPLETED");
+      await seedDeadApprovalRefund();
+      await prisma.payment.update({ where: { id: PAYMENT_ID }, data: { source: "INTERNET_BANKING" } });
+      await expect(closePaidAnotherWay()).resolves.toMatchObject({ xeroQueued: "nothing" });
+      expect((await closeRecord()).occurrenceKey).toBe(`card-refund-paid-another-way:${REFUND_OPERATION_ID}:no-xero-note`);
+      expect(await receiptRows()).toEqual([]);
+      expect(await refundNotes()).toEqual([]);
+      expect(await liveKeptInvoices()).toBe(0);
+    });
+
+    it("M3b: a receipt refused because the sweep holds the whole capture leaves a waiting close", async () => {
+      await seed("COMPLETED");
+      await seedDeadApprovalRefund();
+      await carryReleaseAsk(8_000);
+      await expect(closePaidAnotherWay()).resolves.toMatchObject({ xeroQueued: "nothing" });
+      expect((await closeRecord()).occurrenceKey).toBe(`card-refund-paid-another-way:${REFUND_OPERATION_ID}:note-after-receipt`);
+      expect(await receiptRows()).toEqual([]);
+      expect(await refundNotes()).toEqual([]);
+      expect(await liveKeptInvoices()).toBe(0);
+    });
+
+    it("M7: a kept invoice excludes the $30 of the $80 capture recorded by the sweep", async () => {
+      await seed("COMPLETED", { marked: false });
+      await seedDeadApprovalRefund();
+      await carryReleaseAsk(3_000);
+      const withdrawn = await supplementary.enqueueXeroSupplementaryInvoiceOperation(
+        { bookingId: BOOKING_ID, bookingModificationId: MODIFICATION_ID, priceDiffCents: 5_000, changeFeeCents: 0 },
+        { paymentIntentId: "pi_race_4381_superseded", waitForConfirmedAdditionalPayment: true },
+      );
+      await prisma.xeroSyncOperation.update({ where: { id: withdrawn.queueOperationId! }, data: {
+        status: "CANCELLED", completedAt: new Date(), lastErrorCode: withdraw.ADDITIONAL_ASK_WITHDRAWN_XERO_ERROR_CODE,
+      } });
+      await expect(closePaidAnotherWay()).resolves.toMatchObject({ xeroQueued: "receipt-then-refund-note" });
+      expect(await prisma.xeroSyncOperation.findMany({ where: { localId: TASK_ID, queueType: "KEPT_LATE_CAPTURE_INVOICE" }, select: { requestPayload: true } }))
+        .toEqual([{ requestPayload: expect.objectContaining({ capturedCents: 5_000, paymentIntentId: CHANGE_INTENT }) }]);
+      expect(await receiptRows()).toEqual([]);
+    });
+
+    /** The booking's primary create, its figures saying the cash it recorded at the link covered the change capture too. */
+    async function seedPrimaryRecordedCaptureAtLink(): Promise<void> {
+      const key = invoiceKey.buildXeroBookingInvoiceCorrelationKey(BOOKING_ID);
+      await prisma.xeroSyncOperation.create({
+        data: {
+          direction: "OUTBOUND",
+          entityType: "INVOICE",
+          operationType: "CREATE",
+          localModel: "Payment",
+          localId: PAYMENT_ID,
+          status: "SUCCEEDED",
+          correlationKey: key,
+          idempotencyKey: key,
+          xeroObjectId: INVOICE_ID,
+          requestPayload: {
+            primaryInvoiceBilledFee: {
+              xeroInvoiceId: INVOICE_ID,
+              billedChangeFeeCents: 0,
+              billedTotalCents: 38_000,
+              recordedChangeFeeCentsAtLink: 0,
+              primaryInvoiceCashCents: 38_000,
+              paymentIntentIdsRecordedAtLink: [PRIMARY_INTENT, CHANGE_INTENT],
+            },
+          },
+        },
+      });
+    }
+
+    /** The change's own invoice, sent and paid in Xero, naming no payment intent, billing `billedCents`. */
+    async function seedPaidChangeInvoice(billedCents: number): Promise<void> {
+      const key = `race-4381-change-invoice-${billedCents}`;
+      await prisma.xeroSyncOperation.create({
+        data: {
+          direction: "OUTBOUND",
+          entityType: "INVOICE",
+          operationType: "CREATE",
+          localModel: "BookingModification",
+          localId: MODIFICATION_ID,
+          queueType: "SUPPLEMENTARY_INVOICE",
+          status: "SUCCEEDED",
+          correlationKey: key,
+          idempotencyKey: key,
+          xeroObjectId: CHANGE_INVOICE_XERO_ID,
+          requestPayload: {
+            queueType: "SUPPLEMENTARY_INVOICE",
+            bookingId: BOOKING_ID,
+            bookingModificationId: MODIFICATION_ID,
+            priceDiffCents: billedCents,
+            changeFeeCents: 0,
+            recordPayment: true,
+          },
+        },
+      });
+    }
+
+    const closeRecord = () =>
+      prisma.manualRefundTask.findFirstOrThrow({
+        where: { bookingId: BOOKING_ID, kind: "CANCELLED_BOOKING_HAND_BACK" },
+        select: { id: true, occurrenceKey: true, completedAt: true },
+      });
+
+    /** No second record: no receipt, no kept-capture invoice, the card verdict untouched, and the note step adds no second note. */
+    async function expectRecordedOnce(creditsInvoiceId: string): Promise<void> {
+      expect((await receiptRows()).filter((row) => row.status !== "CANCELLED")).toEqual([]);
+      expect(await liveKeptInvoices()).toBe(0);
+      // The bank note never counts as the capture's card note: the card verdict still reads no receipt of the app's.
+      await expect(receiptVerdict.readLateCaptureXeroReceipt(CHANGE_INTENT)).resolves.toEqual({ kind: "none" });
+      const again = await prisma.$transaction((tx) =>
+        refundNote.notePaidAnotherWayCloseOnReceipt({ paymentIntentId: CHANGE_INTENT, receiptInvoiceId: creditsInvoiceId, clubZone: ZONE as never, store: tx }),
+      );
+      expect(again).toEqual([]);
+      expect(await refundNotes()).toHaveLength(1);
+    }
+
+    it("MUTATION #4381: the primary invoice recorded the capture when it was linked - the close's note credits the primary invoice for the $80 paid back", { timeout: 30_000 }, async () => {
+      await seed("COMPLETED");
+      await seedDeadApprovalRefund();
+      await seedPrimaryRecordedCaptureAtLink();
+      await expect(receiptVerdict.readPaidAnotherWayLateCaptureXeroReceipt(CHANGE_INTENT)).resolves.toEqual({
+        kind: "recorded",
+        invoiceId: INVOICE_ID,
+        recordedCents: 8_000,
+        recordedElsewhere: true,
+      });
+
+      await expect(closePaidAnotherWay()).resolves.toMatchObject({ xeroQueued: "refund-note" });
+      const record = await closeRecord();
+      // The `now` key: the note is queued with the close, never left waiting for a receipt that will not come.
+      expect(record.occurrenceKey).toBe(`card-refund-paid-another-way:${REFUND_OPERATION_ID}`);
+      expect(await refundNotes()).toEqual([
+        {
+          requestPayload: expect.objectContaining({
+            refundAmountCents: 8_000,
+            refundMethod: "internet-banking",
+            paidAnotherWayTaskId: record.id,
+            creditsInvoiceId: INVOICE_ID,
+          }),
+        },
+      ]);
+      await expectRecordedOnce(INVOICE_ID);
+    });
+
+    /** The capture's own receipt row as its worker left it when it stood down for another writer: SUCCEEDED, nothing sent. */
+    async function seedStoodDownReceipt(skipped: string): Promise<string> {
+      const key = worker.additionalCaptureReceiptKey(CHANGE_INTENT);
+      const row = await prisma.xeroSyncOperation.create({
+        data: {
+          direction: "OUTBOUND",
+          entityType: "PAYMENT",
+          operationType: "CREATE",
+          localModel: "PaymentTransaction",
+          localId: CHANGE_TX_ID,
+          queueType: "ADDITIONAL_CAPTURE_RECEIPT",
+          status: "SUCCEEDED",
+          completedAt: new Date(),
+          idempotencyKey: key,
+          correlationKey: key,
+          requestPayload: {
+            queueType: "ADDITIONAL_CAPTURE_RECEIPT",
+            bookingId: BOOKING_ID,
+            paymentId: PAYMENT_ID,
+            paymentTransactionId: CHANGE_TX_ID,
+            paymentIntentId: CHANGE_INTENT,
+          },
+          responsePayload: { skipped },
+        },
+        select: { id: true },
+      });
+      return row.id;
+    }
+
+    it("MUTATION #4381: a close left waiting gets its note from the note step once one invoice records the capture - one $80 note on the primary, however often it is asked", { timeout: 30_000 }, async () => {
+      await seed("COMPLETED");
+      await seedDeadApprovalRefund();
+      // The sweep holds the capture, so the close waits with nothing queued (M3b) - as a close made before #4381 waits.
+      await carryReleaseAsk(8_000);
+      await expect(closePaidAnotherWay()).resolves.toMatchObject({ xeroQueued: "nothing" });
+      const record = await closeRecord();
+      expect(record.occurrenceKey).toBe(`card-refund-paid-another-way:${REFUND_OPERATION_ID}:note-after-receipt`);
+      await expect(receiptNote.queueWaitingPaidAnotherWayNote(CHANGE_INTENT)).resolves.toBe(0);
+      expect(await refundNotes()).toEqual([]);
+
+      // The hold is gone and the primary invoice's link records the capture: the nightly retry's note step names it.
+      await prisma.paymentTransaction.deleteMany({ where: { paymentId: PAYMENT_ID, reason: CREDIT_RELEASE_ASK_REASON } });
+      await prisma.paymentTransaction.update({ where: { id: CHANGE_TX_ID }, data: { carriedAskCents: 0 } });
+      await seedPrimaryRecordedCaptureAtLink();
+      await expect(receiptNote.queueWaitingPaidAnotherWayNotesForPayment(PAYMENT_ID)).resolves.toBe(1);
+      await expect(receiptNote.queueWaitingPaidAnotherWayNote(CHANGE_INTENT)).resolves.toBe(0);
+      expect(await refundNotes()).toEqual([
+        {
+          requestPayload: expect.objectContaining({
+            refundAmountCents: 8_000,
+            refundMethod: "internet-banking",
+            paidAnotherWayTaskId: record.id,
+            creditsInvoiceId: INVOICE_ID,
+          }),
+        },
+      ]);
+      // No second record of the capture, and the card verdict still reads no receipt of the app's.
+      expect(await receiptRows()).toEqual([]);
+      expect(await liveKeptInvoices()).toBe(0);
+      await expect(receiptVerdict.readLateCaptureXeroReceipt(CHANGE_INTENT)).resolves.toEqual({ kind: "none" });
+    });
+
+    it("MUTATION (lane review of #5534): the capture's receipt row stood down for the primary invoice - the close's note credits the primary, and the row is neither a receipt on its way nor re-queued", { timeout: 30_000 }, async () => {
+      await seed("COMPLETED");
+      await seedDeadApprovalRefund();
+      await seedPrimaryRecordedCaptureAtLink();
+      const stoodDown = await seedStoodDownReceipt("recorded-by-primary-invoice");
+
+      await expect(closePaidAnotherWay()).resolves.toMatchObject({ xeroQueued: "refund-note" });
+      const record = await closeRecord();
+      expect(record.occurrenceKey).toBe(`card-refund-paid-another-way:${REFUND_OPERATION_ID}`);
+      expect(await refundNotes()).toEqual([
+        {
+          requestPayload: expect.objectContaining({
+            refundAmountCents: 8_000,
+            paidAnotherWayTaskId: record.id,
+            creditsInvoiceId: INVOICE_ID,
+          }),
+        },
+      ]);
+      expect((await receiptRows()).map((row) => ({ id: row.id, status: row.status }))).toEqual([{ id: stoodDown, status: "SUCCEEDED" }]);
+      expect(await liveKeptInvoices()).toBe(0);
+    });
+
+    it("MUTATION (lane review of #5534): the receipt row stood down for the credit-release sweep - the close waits as a refused enqueue's does, with nothing queued", { timeout: 30_000 }, async () => {
+      await seed("COMPLETED");
+      await seedDeadApprovalRefund();
+      await carryReleaseAsk(8_000);
+      const stoodDown = await seedStoodDownReceipt("recorded-by-credit-release-sweep");
+
+      await expect(closePaidAnotherWay()).resolves.toMatchObject({ xeroQueued: "nothing" });
+      expect((await closeRecord()).occurrenceKey).toBe(`card-refund-paid-another-way:${REFUND_OPERATION_ID}:note-after-receipt`);
+      expect(await refundNotes()).toEqual([]);
+      expect((await receiptRows()).map((row) => ({ id: row.id, status: row.status }))).toEqual([{ id: stoodDown, status: "SUCCEEDED" }]);
+      expect(await liveKeptInvoices()).toBe(0);
+    });
+
+    it("MUTATION #4381: the change's own paid invoice covers the change without naming the payment - the note credits that invoice", { timeout: 30_000 }, async () => {
+      await seed("COMPLETED", { marked: false });
+      await seedDeadApprovalRefund();
+      await seedPaidChangeInvoice(8_000);
+
+      await expect(closePaidAnotherWay()).resolves.toMatchObject({ xeroQueued: "refund-note" });
+      const record = await closeRecord();
+      expect(await refundNotes()).toEqual([
+        {
+          requestPayload: expect.objectContaining({
+            refundAmountCents: 8_000,
+            paidAnotherWayTaskId: record.id,
+            creditsInvoiceId: CHANGE_INVOICE_XERO_ID,
+          }),
+        },
+      ]);
+      await expectRecordedOnce(CHANGE_INVOICE_XERO_ID);
+    });
+
+    it("MUTATION #4381: that invoice bills less than the capture, so no one document records it for certain - none, nothing queued, the treasurer records it by hand", { timeout: 30_000 }, async () => {
+      await seed("COMPLETED", { marked: false });
+      await seedDeadApprovalRefund();
+      await seedPaidChangeInvoice(5_000);
+
+      await expect(closePaidAnotherWay()).resolves.toMatchObject({ xeroQueued: "nothing" });
+      const record = await closeRecord();
+      expect(record.occurrenceKey).toBe(`card-refund-paid-another-way:${REFUND_OPERATION_ID}:no-xero-note`);
+      expect(await refundNotes()).toEqual([]);
+      expect((await receiptRows()).filter((row) => row.status !== "CANCELLED")).toEqual([]);
+      expect(await liveKeptInvoices()).toBe(0);
+    });
   });
 
   it("#4382: a retired change invoice is re-queued in the keep's commit, and a rolled-back keep leaves it retired", async () => {
