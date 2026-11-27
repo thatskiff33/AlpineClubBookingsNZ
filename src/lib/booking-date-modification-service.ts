@@ -41,9 +41,6 @@ import {
   executeBookingModificationRefund,
 } from "@/lib/booking-modification-settlement";
 import {
-  assertNoPendingEditFinancialReview,
-} from "@/lib/edit-financial-review";
-import {
   editedBookingTotalCents,
   refuseNegativeStoredGuestTotals,
   valuedNightLocksForGuest,
@@ -54,7 +51,6 @@ import {
   repricedNightPriceSources,
   requiredNightPriceSourceToWrite,
 } from "@/lib/stored-night-price-write";
-import { bookingHasOpenFinancialReview } from "@/lib/booking-financial-review-visibility";
 import {
   acquireLodgeCapacityLock,
   checkCapacity,
@@ -361,18 +357,6 @@ export async function modifyBookingDates({
       throw new ApiError("Forbidden", 403);
     }
     await assertBookingNotQuotePriced(tx, bookingId);
-
-    // #3032 (epic #2797): a date change always reprices - it is the path this
-    // fence exists for. Taken under both locks, on the post-lock re-read, and
-    // before any write, so a refused edit leaves the booking untouched. There is
-    // no identity-only shape here to exempt: `adminShiftBookingDates` is the
-    // price-preserving date path (`priceDiffCents: 0`, no refund, no credit) and
-    // is deliberately NOT fenced.
-    await assertNoPendingEditFinancialReview({
-      bookingId,
-      moneyAffecting: true,
-      store: tx,
-    });
 
     // Under an admin override the fully-past COMPLETED status is editable too
     // (issue #1668); the standard path keeps the active-lifecycle allowlist.
@@ -1523,33 +1507,6 @@ async function dispatchDatePostTransactionSideEffects({
     firstName: result.memberFirstName,
   };
   if (result.notifyMember) {
-    /*
-      #3032 (epic #2797): whether the club is still working out an amount on
-      this booking as the email is written. The booking's CURRENT state rather
-      than something this edit decided, read through the same
-      `bookingHasOpenFinancialReview` the booking-detail banner and the My
-      Bookings row use, so the email and the page the member clicks through to
-      cannot disagree (`INV-SSOT`).
-
-      #3166 CHANGED WHAT THIS READ FINDS, and the paragraph that used to sit
-      here said the opposite. It said a date change "dispatches no review of its
-      own, so there is nothing of this edit's to carry out", and that a review
-      was therefore never open when this path emailed. Both were true of #3032's
-      date path and are false of this one: an unpriceable date change now parks
-      and raises a task inside the transaction that just committed, so this read
-      finds THIS edit's own review and the member is told about it in the same
-      email that tells them their dates moved. That is the intended outcome — it
-      is why the read was never hard-coded — but a stale claim at a live read
-      site is how the next reader concludes the branch is dead.
-
-      The pending-review fence above (`moneyAffecting: true`) still turns away a
-      SECOND repricing date change while a review is open, so what this cannot
-      find is a review some earlier edit left open.
-    */
-    const financialReviewPending = await bookingHasOpenFinancialReview(
-      result.booking.id,
-    );
-
     sendBookingModifiedEmail({
       addedGuests: [], // #4030: a date change adds nobody
       bookingId: result.booking.id,
@@ -1577,7 +1534,6 @@ async function dispatchDatePostTransactionSideEffects({
       xeroInvoiceNumber: result.xeroInvoiceNumber,
       // #2390: same words as the edit preview and the booking history.
       promoCoverageNote: result.promoCoverage?.message ?? null,
-      financialReviewPending,
       refundDestination,
       refundByBankTransfer: editRefundBankTransferPayee(result, result.booking), // #3949: the member or the group organiser
       lodgeId: result.booking.lodgeId,
@@ -1667,8 +1623,7 @@ export async function adminShiftBookingDates({
     // IT MOVES NO MONEY. Every exit from this function reports
     // `priceDiffCents: 0` with no refund, no account credit, no additional
     // charge and no Xero delta; the cents are frozen by construction, which is
-    // what separates it from `modifyBookingDates` above and is why #3032's
-    // pending-review fence deliberately does not stand in front of it. It still
+    // what separates it from `modifyBookingDates` above. It still
     // takes lock(1) so its status/date commit can never clobber a booking a
     // concurrent cancel just terminated. (This comment used to say the shift
     // "can move money (recalculate mode)"; the recalculate mode belongs to
@@ -2095,20 +2050,6 @@ export async function adminShiftBookingDates({
   // Owner decision (#1668 review): the admin explicitly chose in the override
   // dialog whether to send the change email; the choice is audited above.
   if (notifyMember) {
-    /*
-      #3032 (epic #2797). This path is DELIBERATELY not fenced - an admin date
-      shift preserves the price, so it never prices against money under review
-      and is never turned away by one. That makes it the one modified-email path
-      where an open review is genuinely reachable: a booking can sit under
-      review and still have its dates moved. Telling that member their booking
-      changed while saying nothing about the amount the club still owes them a
-      figure for is exactly the silent money section #3033 removed, so the read
-      belongs here more than anywhere else on this file.
-    */
-    const financialReviewPending = await bookingHasOpenFinancialReview(
-      result.booking.id,
-    );
-
     sendBookingModifiedEmail({
       addedGuests: [], // #4030: a date change adds nobody
       bookingId: result.booking.id,
@@ -2133,7 +2074,6 @@ export async function adminShiftBookingDates({
       additionalPaymentMethod: undefined,
       paymentReference: result.paymentReference,
       xeroInvoiceNumber: result.xeroInvoiceNumber,
-      financialReviewPending,
       refundDestination: "own",
       // A shift keeps the price, so nothing is refunded.
       refundByBankTransfer: null,

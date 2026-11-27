@@ -64,7 +64,6 @@ import {
 import { EDIT_DOOR_BOOKING_INCLUDE } from "@/lib/booking-modify-validation";
 import { creditGiveBackHistory } from "@/lib/booking-credit-give-back-marker";
 import type { SupersededPrimaryPaymentIntent } from "@/lib/booking-payment-cleanup";
-import {
   assertNoPendingEditFinancialReview,
   findOpenEditFinancialReviewTask,
 } from "@/lib/edit-financial-review";
@@ -172,12 +171,6 @@ export type RemoveBookingGuestResult = {
   bookingModificationId: string;
   /** #3530: the itemised lines the removal stored, or null when it stored none. */
   priceLines: ModificationLine[] | null;
-  /**
-   * #3032: whether an `EDIT_FINANCIAL_REVIEW` task raised before #4317 is
-   * still open on this booking, read inside the transaction that removed the
-   * guest, for the member's email. A removal raises none since #4317.
-   */
-  financialReviewPending: boolean;
   zeroDollarAutoPaid: boolean;
   supersededPrimaryPaymentIntents: SupersededPrimaryPaymentIntent[];
   // #1372: this removal newly dropped a paid (capacity-holding) booking into the
@@ -452,36 +445,6 @@ export async function removeBookingGuestInTransaction({
   if (!isOwnerOrAdmin && !isSelfRemoval) {
     throw new BookingGuestRemovalError("Forbidden", 403);
   }
-
-  /**
-   * #3032 (epic #2797): refuse a second money-affecting edit while this booking's
-   * last one is still under financial review. Taken under both locks, on the
-   * post-lock re-read, and before any write, so a refused removal leaves the
-   * booking exactly as it was.
-   *
-   * THE CONSENT-AUTHORITY EXEMPTION IS NOT A CLAIM THAT THE REMOVAL MOVES NO
-   * MONEY. It does - it gives nights back like any other removal. It is owner
-   * decision D-14: a member who never consented must always be able to come off
-   * a booking, and holding that behind a pricing question nobody has answered
-   * would trap them for as long as the review stayed open. So the structural
-   * removal proceeds even while the earlier review is unresolved.
-   *
-   * WHAT THIS BRANCH DOES ABOUT THE MONEY THAT REMOVAL OWES. It prices it,
-   * like every removal (#4317): the departing guest's stored total is credited
-   * from the booking's own data (`INV-MOD-028`). The open review it passes is
-   * left exactly as it was, for its own settle. This exemption's only effect is
-   * that such a removal is not turned away by the fence.
-   *
-   * DELIBERATELY BELOW THE AUTHORISATION CHECKS. A caller with no business
-   * touching this booking must get the same 403 they got before this issue -
-   * telling a stranger that the club is reviewing a booking's money is a leak,
-   * and a 409 where a 403 belongs is also a wrong answer.
-   */
-  await assertNoPendingEditFinancialReview({
-    bookingId,
-    moneyAffecting: !consentAuthorityApplies,
-    store: tx,
-  });
 
   // #3245: derived, not restated. A self-removal answers a different question
   // and keeps its own named set (`SELF_REMOVABLE_GUEST_BOOKING_STATUSES`).
@@ -1024,18 +987,6 @@ export async function removeBookingGuestInTransaction({
     settled: paymentImpact,
   });
 
-  /**
-   * Whether this booking's money still sits under an earlier review as the
-   * member's email is written: a review task raised before #4317 that is still
-   * open (waves B and C retire them). This removal raises none — it priced.
-   * Only a consent removal can get here with one open, because every other
-   * removal is fenced on exactly that question above; it is asked under the
-   * locks this transaction holds, so the answer is the one it committed beside.
-   */
-  const financialReviewPending = consentAuthorityApplies
-    ? (await findOpenEditFinancialReviewTask(bookingId, tx)) !== null
-    : false;
-
   if (paymentImpact.accountCreditAmountCents > 0) {
     await createBookingModificationCredit(
       requireMemberCreditRecipient(bookingOwner(booking).memberId),
@@ -1112,7 +1063,6 @@ export async function removeBookingGuestInTransaction({
     oldGuestCount: booking.guests.length,
     bookingModificationId: bookingModification.id,
     priceLines,
-    financialReviewPending,
     zeroDollarAutoPaid: lifecycle.zeroDollarAutoPaid,
     supersededPrimaryPaymentIntents: lifecycle.supersededPrimaryPaymentIntents,
     minorsOnlyReviewNewlyFlagged,

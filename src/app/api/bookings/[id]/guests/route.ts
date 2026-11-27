@@ -56,17 +56,12 @@ import { refuseOrganiserBankChildPriceChangeInGroupCancel } from "@/lib/group-ca
 import { logAudit } from "@/lib/audit";
 import { getClientIp } from "@/lib/rate-limit-http";
 import { sendBookingModifiedEmail } from "@/lib/email";
-import { bookingHasOpenFinancialReview } from "@/lib/booking-financial-review-visibility";
 import {
   editedBookingTotalCents,
   refuseNegativeStoredGuestTotals,
   valuedNightLocksForGuest,
   withUnattachedStrandMoney,
 } from "@/lib/edit-night-valuation";
-import {
-  assertNoPendingEditFinancialReview,
-  EditFinancialReviewPendingError,
-} from "@/lib/edit-financial-review";
 import { queueXeroBookingEditSettlement } from "@/lib/xero-booking-edit-settlement";
 import {
   NO_ADDITIONAL_ASK,
@@ -356,38 +351,6 @@ export async function POST(
           400
         );
       }
-
-      /**
-       * #3032 (epic #2797): the FOURTH money-affecting door, and it was the one
-       * with no fence on it.
-       *
-       * ADDING A GUEST IS UNCONDITIONALLY MONEY-AFFECTING - there is no
-       * identity-only shape here to exempt, which is why `moneyAffecting` is a
-       * literal rather than a predicate. This route reprices EVERY existing guest
-       * (`allGuestsForPricing` below), computes `priceDiffCents` against
-       * `booking.finalPriceCents`, charges on a positive delta, and then WRITES
-       * the new `finalPriceCents` back.
-       *
-       * What that does to a booking under review is worse than an ordinary
-       * compounding: an unreadable strand carries no locked night prices, so the
-       * reprice revalues it at today's rate - the #3031 defect - and the overstated
-       * total the review exists to hold gets silently absorbed into the stored
-       * figure. The admin then completes the review and credits the member against
-       * a total that has already had the same money taken out of it, so it leaves
-       * twice.
-       *
-       * PLACED LIKE THE OTHER THREE DOORS: inside the transaction, after
-       * `pg_advisory_xact_lock(1)` and `acquireLodgeCapacityLock`, after the
-       * post-lock re-read, and BEFORE any write - so a refused addition changes
-       * nothing at all. And below the 403 above, deliberately: telling a stranger
-       * that the club is reviewing a booking's money is a leak, and a 409 where a
-       * 403 belongs is a wrong answer besides.
-       */
-      await assertNoPendingEditFinancialReview({
-        bookingId,
-        moneyAffecting: true,
-        store: tx,
-      });
 
       const lodgeCapacity = await getLodgeCapacity(bookingLodgeId, tx);
       if (booking.guests.length + newGuests.length > lodgeCapacity) {
@@ -1338,25 +1301,6 @@ export async function POST(
       firstName: result.memberFirstName,
     };
     if (notifyMember !== false) {
-      /*
-        #3032 (epic #2797): whether the club is still working out an amount on
-        this booking as the email is written. The booking's CURRENT state, read
-        through the same `bookingHasOpenFinancialReview` the booking-detail
-        banner and the My Bookings row use, so the email and the page the member
-        clicks through to cannot disagree (`INV-SSOT`).
-
-        #3166: this used to say "adding a guest raises no review of its own",
-        and that is no longer true. An add to a booking whose price history
-        cannot be read now parks and raises a task inside the transaction that
-        just committed, so this read finds THIS edit's own review and the member
-        is told in the same email that tells them the guest was added. Left as a
-        live read rather than a hard-coded value precisely so a change like this
-        one could not make it a lie.
-      */
-      const financialReviewPending = await bookingHasOpenFinancialReview(
-        result.booking.id,
-      );
-
       sendBookingModifiedEmail({
         bookingId: result.booking.id,
         recipientMemberId: result.memberId,
@@ -1385,7 +1329,6 @@ export async function POST(
         // #2390: same words as the edit preview and the booking history.
         promoCoverageNote: result.promoCoverage?.message ?? null,
         addedGuests: result.addedGuests, // #4030: named in the change rows
-        financialReviewPending,
         refundDestination: "own",
         lodgeId: result.booking.lodgeId,
       }, format).catch((err) =>
@@ -1406,32 +1349,6 @@ export async function POST(
       promoCoverage: result.promoCoverage,
     });
   } catch (err) {
-    /**
-     * #3032: the pending-review 409, ABOVE every other branch in this chain.
-     *
-     * `EditFinancialReviewPendingError` extends the SHARED `ApiError`, so the
-     * `SharedApiError` branch far below would answer it with the right status and
-     * the right sentence and NO `code` - and the surface that can offer "the club
-     * is pricing your last change" would show a bare error instead. Nothing would
-     * fail and nothing would log. It sits at the top rather than merely above that
-     * branch so no future subclass branch can be inserted in front of it.
-     */
-    /**
-     * #3032: the pending-review 409, ABOVE every other branch in this chain.
-     *
-     * `EditFinancialReviewPendingError` extends the SHARED `ApiError`, so the
-     * `SharedApiError` branch far below would answer it with the right status and
-     * the right sentence and NO `code` - and the surface that can offer "the club
-     * is pricing your last change" would show a bare error instead. Nothing would
-     * fail and nothing would log. It sits at the top rather than merely above that
-     * branch so no future subclass branch can be inserted in front of it.
-     */
-    if (err instanceof EditFinancialReviewPendingError) {
-      return NextResponse.json(
-        { error: err.message, code: err.code },
-        { status: err.status },
-      );
-    }
     // The add commits before its notifications and additional-ask steps, so a
     // contended lock(1) transaction (INV-LOCK-006) asks for a status check.
     const contended = transactionContendedResponse(

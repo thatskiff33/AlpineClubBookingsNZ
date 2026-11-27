@@ -48,10 +48,6 @@ import { creditGiveBackHistory } from "@/lib/booking-credit-give-back-marker";
 import { requestIsOtherLodgeRateElectionOnly } from "@/lib/booking-other-lodge-rate";
 import { classifyModificationRequest } from "@/lib/booking-edit-price-class";
 import { acquireLodgeCapacityLock } from "@/lib/capacity";
-import {
-  assertNoPendingEditFinancialReview,
-} from "@/lib/edit-financial-review";
-import { bookingHasOpenFinancialReview } from "@/lib/booking-financial-review-visibility";
 import { linkModificationToOutstandingChangeRequest } from "@/lib/booking-change-request-linkage";
 import { getDefaultLodgeId } from "@/lib/lodges";
 import { assertBookingEnvelopeInvariants } from "@/lib/booking-envelope-invariants";
@@ -1131,31 +1127,6 @@ export async function modifyBookingBatch({
     // at `pricePreserving` only, so the quote-priced exemptions above keep the
     // meaning `modify-quote` gives them.
     const pricePreservingModification = priceClass.pricePreserving;
-
-    // #3032 (epic #2797): refuse a second money-affecting edit while this
-    // booking's last one is still under financial review. Taken here - under both
-    // locks, on the post-lock re-read, and BEFORE `calculateModifiedPricing`
-    // below or any write - so a refused edit changes nothing at all.
-    //
-    // THE PREDICATE IS `pricePreservingModification` ITSELF, not a second
-    // expression that agrees with it today. An earlier revision fenced on
-    // `!identityOnly && !creditElectionOnly` and repriced on that pair MINUS the
-    // other-lodge term, so one request carrying `guestUpdates` AND
-    // `otherLodgeMemberGuestIds` - a shape the route's schema accepts - skipped
-    // the fence and then re-rated its guests off stored money that was under
-    // review. #2978 fixed the identical drift on the neighbouring predicate one
-    // revision earlier; two expressions for one question is the defect, so there
-    // is now exactly one (`INV-SSOT`).
-    //
-    // A name correction and a credit election pass through: neither reads the
-    // booking's stored money, so neither can compound an unresolved amount. The
-    // rule itself, and why it is this narrow, are in
-    // `assertNoPendingEditFinancialReview`.
-    await assertNoPendingEditFinancialReview({
-      bookingId,
-      moneyAffecting: !pricePreservingModification,
-      store: tx,
-    });
 
     const pricingResult = pricePreservingModification
       ? buildIdentityOnlyPricing(booking)
@@ -2470,28 +2441,6 @@ async function dispatchBatchPostTransactionSideEffects({
     firstName: result.memberFirstName,
   };
 
-  /*
-    #3032 (epic #2797): does this booking's money sit under review as this email
-    is written?
-
-    NOT "did this edit park money" - no edit parks money since #4317, so a
-    value derived from THIS edit would be a constant `false` dressed up as a
-    computation. What it reads is a review task raised before #4317 that is
-    still open (waves B and C retire it). The question the member is owed is the one
-    every other member-facing surface answers: is the club still working out an
-    amount on this booking. Read from `bookingHasOpenFinancialReview`, the same
-    reader behind the booking-detail banner and the My Bookings row, so the
-    email cannot say one thing while the page the member opens says another
-    (`INV-SSOT`).
-
-    Read after the transaction commits, deliberately: this edit decided nothing
-    about the review, so the honest answer is the booking's state now, not a
-    value captured earlier in a transaction that never touched it.
-  */
-  const financialReviewPending = await bookingHasOpenFinancialReview(
-    result.booking.id,
-  );
-
   sendBookingModifiedEmail({
     bookingId: result.booking.id,
     recipientMemberId: result.memberId,
@@ -2524,7 +2473,6 @@ async function dispatchBatchPostTransactionSideEffects({
     // who closed the panel without reading the banner still has this.
     promoChangeNotAppliedNote: result.promoChangeNotApplied?.message ?? null,
     addedGuests: result.addedGuests, // #4030: named in the change rows
-    financialReviewPending,
     refundDestination,
     refundByBankTransfer: editRefundBankTransferPayee(result, result.booking), // #3949: the member or the group organiser
     lodgeId: result.booking.lodgeId,
