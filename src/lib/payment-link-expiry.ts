@@ -42,8 +42,7 @@
  */
 
 import {
-  calendarDateOfDateOnlyInstant,
-  endOfClubDayInclusive,
+  endOfStoredClubDay,
   type ClubTimeZone,
   type Instant,
 } from "@/lib/club-time";
@@ -55,7 +54,7 @@ export function paymentLinkExpiryForCheckIn(
   checkIn: Instant,
   zone: ClubTimeZone,
 ): Instant {
-  return endOfClubDayInclusive(calendarDateOfDateOnlyInstant(checkIn), zone);
+  return endOfStoredClubDay(checkIn, zone);
 }
 
 /**

@@ -1,11 +1,23 @@
 /**
- * The email registry's trigger metadata for the officers' alerts raised when
- * an owed notice did not reach the member it was owed to (#5433). Moved out of
+ * The email registry's metadata for the officers' alerts raised when an owed
+ * notice did not reach the member it was owed to (#5433): the tokens an edited
+ * body must keep, and when each alert goes and how often, as the template
+ * editor shows it. Moved out of `REQUIRED_TEMPLATE_TOKENS` and
  * `TEMPLATE_TRIGGER_METADATA` in `email-message-registry.ts`, which is past its
- * size ceiling; that object spreads this one in. Each entry says when the
- * alert goes and how often, as the template editor shows it.
+ * size ceiling; those objects spread these in.
  */
 import type { EmailAuditTemplateName } from "@/lib/email-message-audit-defaults";
+
+/**
+ * The member and the booking link are what an officer acts on; a note token
+ * says which email went unsent and what to do (`{{noticeNote}}` for the
+ * waitlist's, `{{unsentNote}}` for the hold-deadline job's, #5433 PR 4).
+ */
+export const OWED_NOTICE_ALERT_REQUIRED_TOKENS: Partial<Record<EmailAuditTemplateName, string[]>> = {
+  "admin-waitlist-notice-unsent": ["noticeNote", "memberName", "bookingUrl"],
+  "admin-booking-confirmation-unsent": ["memberName", "bookingUrl"],
+  "admin-booking-notice-unsent": ["unsentNote", "memberName", "bookingUrl"],
+};
 
 export const OWED_NOTICE_ALERT_TRIGGERS: Partial<
   Record<EmailAuditTemplateName, { triggerSummary: string; frequency: string }>
@@ -16,8 +28,13 @@ export const OWED_NOTICE_ALERT_TRIGGERS: Partial<
       "Once per unsent notice, and once per offer for its email and its lapse together, guarded by a cross-instance claim. The claim is kept once any admin is sent it or has a copy queued for the email retry cron, held for a day when no admin can receive it, and given back when the send throws before reaching anyone",
   },
   "admin-booking-confirmation-unsent": {
-    triggerSummary: "A booking paid by card owed its owner a confirmation email that did not reach them: it could not be sent by the end of the check-in day (or within seven days of the payment), it failed or bounced, or the owner's address cannot be emailed (#5433, owner decision D1)",
+    triggerSummary: "A booking paid by card, or confirmed at no charge by the hold-deadline job, owed its owner a confirmation email that did not reach them: it could not be sent by the end of the check-in day (or within seven days of the payment), it failed or bounced, or the owner's address cannot be emailed (#5433, owner decision D1)",
     frequency:
       "Once per paid booking, guarded by a cross-instance claim. The claim is kept once any admin is sent it or has a copy queued for the email retry cron, held for a day when no admin can receive it, and given back when the send throws before reaching anyone",
+  },
+  "admin-booking-notice-unsent": {
+    triggerSummary: "An email the hold-deadline job owed a booking's owner did not reach them: the requester's notice that an unpaid request booking was released, the member's notice that their guests' unpaid provisional place was cancelled, or the request to save a new card after a saved card was found unusable, each when it could not be sent in time (within seven days, and by the end of the check-out day for a cancellation or the check-in day for a new card) or did not reach them (it failed or bounced, or the owner's address cannot be emailed at all); or the link to pay for a member's guests, when it could not be sent by the end of the check-in day or within seven days (#5433, owner decisions D9 and D10)",
+    frequency:
+      "Once per unsent email, guarded by a cross-instance claim. The claim is kept once any admin is sent it or has a copy queued for the email retry cron, held for a day when no admin can receive it, and given back when the send throws before reaching anyone",
   },
 };
