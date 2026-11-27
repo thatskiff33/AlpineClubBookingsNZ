@@ -20,7 +20,10 @@
  *    sweeps racing for one row settle it once, and a caller-retried alert is
  *    released to its owner, not re-sent; a copy of one its sender handed to
  *    the retry job is replayed once. A late sender cannot claim a row the
- *    previous release's retry job claimed.
+ *    previous release's retry job claimed. A takeover alert is released like
+ *    a caller-retried one (#5496 re-review), and a sender or a replay that
+ *    stalls inside its hand-over past the threshold is flagged, and its late
+ *    SENT or FAILED write leaves the flag.
  *
  * Only the delivery policy and the mail transport are replaced (a harness is
  * never the club's live site, and no provider is contacted). Ordinary Vitest

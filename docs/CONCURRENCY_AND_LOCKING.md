@@ -2912,16 +2912,21 @@ mispricing a booking.
   writes the same `PENDING` row in its confirm transaction, then the sender
   claims as above), #4669's `releaseUnreceivedAlertCopies` (touches only
   `FAILED` rows at attempts 1; a sweep re-send keeps attempts at 1 and leaves
-  the body, so its count is unchanged; a stranded caller-retried alert is never
-  re-sent by the sweep but released the same way, `FAILED` at attempts 1 with
-  no body, because its owner sends it again, and `sendUnmuteableAdminAlert`
-  reports its lost hand-over as undelivered so that owner does; when another
+  the body, so its count is unchanged; a stranded owner-retried alert
+  (`isOwnerRetriedAlertTemplate`: a caller-retried alert, or one sent through
+  `sendAdminAlertOnceEverWithTakeover`, whose owner takes a held claim with no
+  sent marker over; `admin-alert-once-census.test.ts` pins that set to the
+  takeover callers) is never re-sent by the sweep but released the same way,
+  `FAILED` at attempts 1 with no body, because its owner sends it again, and
+  neither admin alert sender reports its lost hand-over as queued, so that
+  owner does; when another
   recipient received the alert the owner has stopped, so the sender fails the
   lost copy with its body kept, guarded like the claim, and the retry job
   replays it) and #4963's Try again (a `FAILED` row
   at the ceiling; the next retry claim writes `STARTED`). Proved on PostgreSQL
   by `stranded-queued-email.realdb.test.ts` (each order, behind a held row; a
-  stalled sender resuming through the real `sendEmail`; two racing sweeps).
+  stalled sender resuming through the real `sendEmail`; a sender and a replay
+  stalled inside the hand-over; two racing sweeps; a stranded takeover alert).
 
 #### Member photo writer (epic #171)
 

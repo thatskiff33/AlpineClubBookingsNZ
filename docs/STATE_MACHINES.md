@@ -4411,10 +4411,12 @@ guarded on the row as read:
   replayed with its usual checks by the same run, or a later one when 50 older
   failures fill that run's batch;
 - `PENDING` at attempts 1, an alert its owner sends again when nobody got it
-  (`isCallerRetriedAlertTemplate`, #4669): released to that owner, `FAILED`
+  (`isOwnerRetriedAlertTemplate`: #4669's caller-retried alerts, and the
+  takeover alerts, whose owner takes a held claim with no sent marker over):
+  released to that owner, `FAILED`
   at attempts 1 with no body, and not sent by the retry job. When another
   recipient did get that alert, its owner has stopped, so
-  `sendUnmuteableAdminAlert` fails the lost copy with its body kept before it
+  `sendUnmuteableAdminAlert` or `sendAdminAlertTo` fails the lost copy with its body kept before it
   returns (`handLostHandoversToTheRetryJob`) and the retry job replays it;
 - `PENDING` at attempts 1, no body: `FAILED` at the ceiling, "never sent";
 - anything else (`STARTED`, null, or attempts above 1): `FAILED` at the

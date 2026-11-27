@@ -93,8 +93,9 @@ before it hands it to the mail server. If the app stops between the two (a
 crash, deploy or restart), the retry job finds the email within about an hour
 with the default mail settings (longer if the mail server timeouts have been
 raised, up to about two and a half hours). If it had not reached the mail
-server, the retry job sends it, and you see nothing. A payment or Stripe alert
-that its own feature sends again is left to that feature instead. Otherwise the row lands here, and every officer gets an email about
+server, the retry job sends it, and you see nothing. An officer alert that its
+own feature sends again (a payment, refund, Stripe or unsent-notice alert) is
+left to that feature instead. Otherwise the row lands here, and every officer gets an email about
 it:
 
 - **May already have been delivered** on the row means the app stopped while

@@ -1027,8 +1027,8 @@ sent twice (#5298).
 - **The sweep.** `sweepStrandedQueuedEmails`, first in each 30-minute retry
   run, settles up to 50 rows `QUEUED` past `strandedQueuedAfterMs()` and
   under 7 days, each guarded as read. `PENDING` at attempts 1 with
-  a body is replayed that run or, when the batch is full, a later one; a
-  caller-retried alert is released to its owner; without a body it goes to
+  a body is replayed that run or, when the batch is full, a later one; an
+  owner-retried alert is released to its owner; without a body it goes to
   the retry ceiling. Anything else goes there as `UNCONFIRMED`. Both
   ceiling outcomes alert officers.
 - **Why never twice.** SES takes no idempotency key and reports only bounces
