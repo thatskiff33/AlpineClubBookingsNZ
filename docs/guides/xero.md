@@ -308,6 +308,11 @@ accounts** and **Expense accounts**:
 - an **expense** account shows refunds as their own cost line and leaves income
   gross.
 
+The same account takes the nights a booking edit removes, on whichever invoice
+or credit note the edit raises. With an expense account, an edit that removes
+some nights and adds others therefore shows the removed nights as a cost and
+the added nights as income, not one net figure.
+
 Which is right is your treasurer's or accountant's call. Either way the credit
 note carries the same GST as the invoice it refunds. Xero decides which tax
 rates may be used on an expense account, so if your club is GST-registered and

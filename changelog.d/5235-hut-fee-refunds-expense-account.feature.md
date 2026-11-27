@@ -3,8 +3,11 @@
   Refunds** list now offers both kinds, under **Revenue accounts** and
   **Expense accounts** headings. A revenue account shows refunds as a reduction
   of hut fee income; an expense account shows them as their own cost line and
-  leaves income gross. Which is right is your treasurer's call. The default is
-  unchanged (`200`), so a club that changes nothing sees no change.
+  leaves income gross. The same account takes the nights a booking edit
+  removes, so with an expense account an edit that swaps nights shows a cost
+  and new income, not one net figure. Which is right is your treasurer's call.
+  The default is unchanged (`200`), so a club that changes nothing sees no
+  change.
 
   Refund credit notes carry the same GST whichever account you choose. Xero
   decides which tax rates may be used on an expense account, so the Xero check
@@ -19,6 +22,8 @@
   a message naming the mapping, and nothing is saved. A configuration import is
   held to the same rule. A code already stored is left alone when you save
   other mappings; the setup checklist and the mapping row point it out instead.
+  The **Subscription account code** list on the subscription lockout screen
+  now offers revenue accounts only, the kind that mapping accepts.
 
   Saving the account mappings is now one step that either saves everything or
   nothing (#5391). If someone else changes the same account code while your save is
