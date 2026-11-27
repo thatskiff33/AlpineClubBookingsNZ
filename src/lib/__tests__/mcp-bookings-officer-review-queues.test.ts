@@ -64,6 +64,7 @@ import {
   expectActionContract,
   officerMemberSession,
 } from "@/lib/__tests__/helpers/mcp-action-contract";
+import { adminBookingExceptionRequestQueueQuerySchema } from "@/lib/admin-bookings-schemas/review-queues";
 import { projectForConnection } from "@/lib/connection-projection";
 import { findMcpAction, type McpAction } from "@/lib/mcp/catalogue";
 
@@ -428,6 +429,15 @@ describe("list_booking_exception_requests", () => {
     expect(row).not.toHaveProperty("version");
     expect(row?.requestedBy).not.toHaveProperty("email");
     expect(browser).toMatchObject({ data: [{ version: 1, proposalHash: "f".repeat(64) }] });
+  });
+
+  // #5247: the route and the AI app action take the officer screen's Expired
+  // filter, and still refuse a status the queue does not know.
+  it("accepts the EXPIRED filter and rejects an unknown one", () => {
+    expect(adminBookingExceptionRequestQueueQuerySchema.parse({ status: "EXPIRED" })).toMatchObject({
+      status: "EXPIRED",
+    });
+    expect(adminBookingExceptionRequestQueueQuerySchema.safeParse({ status: "BOGUS" }).success).toBe(false);
   });
 });
 

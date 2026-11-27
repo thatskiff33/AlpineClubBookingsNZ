@@ -947,8 +947,15 @@ test("moving one booking offers to move the other, and both really move (#3232)"
   //    other one. Before #3232 this either silently stranded the dependent or -
   //    once the read was widened - refused with nowhere to go.
   const move = { checkIn: target, checkOut: shiftDateOnly(target, 2) };
-  const offered = await member.put(`/api/bookings/${sourceBooking.id}/modify`, {
+  // #5238 (`INV-MOD-062`): a save carries the figures its preview showed, so
+  // the member previews the move first, as the edit panel does.
+  const previewed = await member.post(`/api/bookings/${sourceBooking.id}/modify-quote`, {
     data: move,
+  });
+  expect(previewed.ok(), `preview the move (${previewed.status()}): ${await previewed.text()}`).toBe(true);
+  const { quotedFigures } = (await previewed.json()) as { quotedFigures: Record<string, number> };
+  const offered = await member.put(`/api/bookings/${sourceBooking.id}/modify`, {
+    data: { ...move, quotedFigures },
   });
   expect(
     offered.status(),
@@ -961,11 +968,13 @@ test("moving one booking offers to move the other, and both really move (#3232)"
     acceptStateKey?: string;
     declineStateKey?: string;
     linkedMoveAvailable?: boolean;
+    primary?: { quotedFigures?: Record<string, number> };
     linkedBookings?: Array<{
       bookingId: string;
       proposedCheckIn: string;
       proposedCheckOut: string;
       uncoveredNights: string[];
+      quotedFigures?: Record<string, number>;
     }>;
     combinedAmountDueCents?: number;
     combinedRefundCents?: number;
@@ -989,6 +998,16 @@ test("moving one booking offers to move the other, and both really move (#3232)"
   expect(offer.acceptStateKey).toMatch(/^v1:[0-9a-f]{64}$/);
   expect(offer.declineStateKey).toMatch(/^v1:[0-9a-f]{64}$/);
   expect(offer.acceptStateKey).not.toBe(offer.declineStateKey);
+  // #5238: each booking's figures, which the acceptance echoes back.
+  expect(offer.primary?.quotedFigures).toBeDefined();
+  expect(offer.linkedBookings?.[0]?.quotedFigures).toBeDefined();
+  const acceptedFigures = {
+    quotedFigures: offer.primary?.quotedFigures,
+    linkedQuotedFigures: (offer.linkedBookings ?? []).map((booking) => ({
+      bookingId: booking.bookingId,
+      figures: booking.quotedFigures,
+    })),
+  };
   // Integer cents, every one of them.
   for (const cents of [
     offer.combinedAmountDueCents,
@@ -1008,6 +1027,7 @@ test("moving one booking offers to move the other, and both really move (#3232)"
     {
       data: {
         ...move,
+        ...acceptedFigures,
         hostingCoverageLinkedMove: {
           choice: "MOVE_BOTH",
           acknowledged: true,
@@ -1025,6 +1045,7 @@ test("moving one booking offers to move the other, and both really move (#3232)"
   const applied = await member.put(`/api/bookings/${sourceBooking.id}/modify`, {
     data: {
       ...move,
+      ...acceptedFigures,
       hostingCoverageLinkedMove: {
         choice: "MOVE_BOTH",
         acknowledged: true,

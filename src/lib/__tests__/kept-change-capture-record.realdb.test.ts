@@ -46,10 +46,16 @@
  *     queues one receipt (c); a reopen then approval withdraws the revived
  *     row and its receipt (e).
  *
- * The dismissal is driven as `resolveManualRefundTask` drives it - the
- * `OPEN -> DISMISSED` guarded `updateMany`, then `planKeptLateCaptureXeroRecord`
- * on the same transaction - rather than through the whole door, whose other
- * arms (settlement routes, audits) are this proof's noise.
+ * 10. (#5312.) The keep through the REAL dismissal door: it waits on the
+ *     change's anchor holding lock(1), the booking row and the Payment row,
+ *     then revives the retired change invoice and commits its receipt.
+ *
+ * Elsewhere the dismissal is driven as `resolveManualRefundTask` drives it -
+ * the `OPEN -> DISMISSED` guarded `updateMany`, then
+ * `planKeptLateCaptureXeroRecord` on the same transaction - rather than through
+ * the whole door, whose other arms (settlement routes, audits) are those
+ * proofs' noise. Case 10 runs the door itself, so the receipt's enqueue is
+ * exercised inside the door's real lock order.
  *
  * Ordinary Vitest runs skip the whole file. It reuses the guarded, disposable
  * loopback PostgreSQL `concurrency-lock-races.realdb.test.ts` provisions
@@ -101,9 +107,13 @@ let paidAnotherWay: typeof import("@/lib/card-refund-paid-another-way");
 let gapCheck: typeof import("@/lib/xero-primary-invoice-fee-gap");
 let invoiceKey: typeof import("@/lib/xero-booking-invoice-key");
 let refundNote: typeof import("@/lib/late-capture-refund-credit-note");
+let door: typeof import("@/lib/manual-refund-task-resolution");
+let CLUB_FORMAT_TEST: (typeof import("@/lib/__tests__/support/club-format-fixture"))["CLUB_FORMAT_TEST"];
 
 async function clean(): Promise<void> {
-  await prisma.auditLog.deleteMany({ where: { OR: [{ entityId: REFUND_OPERATION_ID }, { targetId: BOOKING_ID }] } });
+  await prisma.auditLog.deleteMany({ where: { OR: [{ entityId: { in: [REFUND_OPERATION_ID, TASK_ID] } }, { targetId: BOOKING_ID }] } });
+  // #5312: the real dismissal door records the booking's event.
+  await prisma.bookingEvent.deleteMany({ where: { bookingId: BOOKING_ID } });
   // #4627: the doors post journal batches bridged to these lines; release them first.
   await releaseBookingJournalForTeardown(prisma, [BOOKING_ID]);
   await prisma.bookingLedgerLine.deleteMany({ where: { bookingId: BOOKING_ID } });
@@ -327,6 +337,8 @@ async function holdLock(lock: (tx: Prisma.TransactionClient) => Promise<unknown>
     gapCheck = await import("@/lib/xero-primary-invoice-fee-gap");
     invoiceKey = await import("@/lib/xero-booking-invoice-key");
     refundNote = await import("@/lib/late-capture-refund-credit-note");
+    door = await import("@/lib/manual-refund-task-resolution");
+    ({ CLUB_FORMAT_TEST } = await import("@/lib/__tests__/support/club-format-fixture"));
     const [{ PrismaClient: SeparatePrismaClient }, { createPrismaPgAdapter }] = await Promise.all([
       import("@prisma/client"),
       import("@/lib/prisma-adapter"),
@@ -1083,6 +1095,72 @@ async function holdLock(lock: (tx: Prisma.TransactionClient) => Promise<unknown>
     await keep.finishKeptLateCaptureXeroRecord(plan as never);
     expect(await receiptRows()).toHaveLength(1);
     expect(await supplementaryRows()).toEqual([expect.objectContaining({ id: operationId, status: "PENDING" })]);
+  });
+
+  /**
+   * #5312: the same keep as (d), through the REAL dismissal door rather than
+   * the copy above. Another session holds the change's anchor, so the door is
+   * caught waiting there: by then it holds lock(1), the booking row and the
+   * Payment row, the order the receipt's enqueue must keep joining. Once the
+   * anchor frees, the door revives the invoice and commits its receipt, and
+   * no step of it deadlocks or loses its claim.
+   */
+  it("#5312: a keep through the real dismissal door waits on the anchor under lock(1), the booking row and the Payment row, then commits the revival and its receipt", { timeout: 30_000 }, async () => {
+    await seed("OPEN", { marked: false });
+    const operationId = await seedRetiredChangeInvoice({ recordPayment: false });
+
+    /**
+     * Whether another session can take this row now; NOWAIT fails at once on a held row lock. NO KEY UPDATE
+     * conflicts with a held row lock or an uncommitted update, never with a foreign key's KEY SHARE.
+     */
+    const rowFree = (table: "Booking" | "Payment" | "ManualRefundTask", id: string) =>
+      observerClient
+        .$transaction((tx) => tx.$queryRawUnsafe(`SELECT id FROM "${table}" WHERE id = $1 FOR NO KEY UPDATE NOWAIT`, id))
+        .then(() => true, () => false);
+
+    const holder = await holdLock((tx) => supplementary.lockSupplementaryInvoiceAnchor(tx, MODIFICATION_ID));
+    let closing: ReturnType<typeof door.resolveManualRefundTask> | undefined;
+    try {
+      closing = door.resolveManualRefundTask(
+        { taskId: TASK_ID, resolution: "dismissed", note: "kept (#5312 door proof)", actingMemberId: OWNER_ID, recordedNightPrices: null },
+        CLUB_FORMAT_TEST,
+      );
+      expect(await untilQueuedBehind(holder.pid, 1)).toBe(1);
+      const [waiter] = await observerClient.$queryRaw<Array<{ pid: number }>>`
+        SELECT pid FROM pg_stat_activity
+        WHERE datname = current_database() AND ${holder.pid}::int = ANY(pg_blocking_pids(pid))
+      `;
+      // lock(1) is the one-bigint advisory key: classid 0, objid 1, objsubid 1.
+      const [lockOne] = await observerClient.$queryRaw<Array<{ held: number }>>`
+        SELECT COUNT(*)::int AS held FROM pg_locks
+        WHERE locktype = 'advisory' AND granted AND pid = ${waiter!.pid}::int AND classid = 0 AND objid = 1 AND objsubid = 1
+      `;
+      expect(lockOne!.held).toBe(1);
+      await expect(rowFree("Booking", BOOKING_ID)).resolves.toBe(false);
+      await expect(rowFree("Payment", PAYMENT_ID)).resolves.toBe(false);
+      // The claim follows the anchor: its uncommitted OPEN -> DISMISSED update would hold the task row.
+      await expect(rowFree("ManualRefundTask", TASK_ID)).resolves.toBe(true);
+
+      holder.release();
+      await holder.done;
+      await closing;
+    } finally {
+      holder.release();
+      await holder.done.catch(() => undefined);
+      await closing?.catch(() => undefined);
+    }
+
+    await expect(prisma.manualRefundTask.findUniqueOrThrow({ where: { id: TASK_ID } })).resolves.toMatchObject({ status: "DISMISSED" });
+    const receipts = await receiptRows();
+    expect(receipts).toEqual([expect.objectContaining({ status: "PENDING", requestPayload: expect.objectContaining({ paymentIntentId: CHANGE_INTENT }) })]);
+    // Queued by the keep inside the door, which names the officer; the after-commit step's own enqueue names nobody.
+    await expect(prisma.xeroSyncOperation.findUniqueOrThrow({ where: { id: receipts[0]!.id } })).resolves.toMatchObject({ createdByMemberId: OWNER_ID });
+    expect(await supplementaryRows()).toEqual([
+      expect.objectContaining({ id: operationId, status: "PENDING", requestPayload: expect.objectContaining({ recordPayment: false }) }),
+    ]);
+    // The door's own after-commit step and a repair-tool replay add nothing beside it.
+    await expect(repairRecord()).resolves.toEqual({ kind: "receipt-queued", queueOperationId: receipts[0]!.id });
+    expect(await receiptRows()).toHaveLength(1);
   });
 
   /**

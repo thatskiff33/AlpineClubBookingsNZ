@@ -87,6 +87,8 @@ function stubFetch(input: {
   putStatus?: number;
   putBody?: unknown;
   clearedStaleRecords?: number | null;
+  /** Hold the save's reply this long, on a real timer, as a loaded server would. */
+  saveDelayMs?: number;
 } = {}) {
   let stored = { mode: "HARD_BLOCK", ...NOT_CHOSEN, ...input.stored };
   const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
@@ -100,6 +102,7 @@ function stubFetch(input: {
       });
     }
     if (url === ENDPOINT && method === "PUT") {
+      if (input.saveDelayMs) await new Promise((resolve) => setTimeout(resolve, input.saveDelayMs));
       if (input.putStatus && input.putStatus !== 200) {
         return json(input.putBody ?? { error: "Refused" }, input.putStatus);
       }
@@ -122,6 +125,26 @@ async function openEditor() {
 
 function choose(label: string) {
   fireEvent.click(screen.getByRole("radio", { name: new RegExp(label, "i") }));
+}
+
+/**
+ * Press Preview, then Save the moment the preview is on screen: in the
+ * microtask after React draws it, before React's passive effects have had a
+ * task to run. A test that awaits `findByText` first usually gives them one,
+ * and under CI load sometimes does not, so this pins the worst case (ALP-808).
+ */
+async function previewThenSaveAtOnce() {
+  const saved = new Promise<void>((resolve) => {
+    const observer = new MutationObserver(() => {
+      if (!screen.queryByText("Sam Small")) return;
+      observer.disconnect();
+      fireEvent.click(screen.getByRole("button", { name: "Save rule" }));
+      resolve();
+    });
+    observer.observe(document.body, { childList: true, subtree: true });
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Preview changes" }));
+  await saved;
 }
 
 describe("SubscriptionLiabilityRuleSection (#5190)", () => {
@@ -207,7 +230,13 @@ describe("SubscriptionLiabilityRuleSection (#5190)", () => {
     expect(save().disabled).toBe(false);
 
     fireEvent.click(save());
-    expect(await screen.findByText(/Rule saved.*2 "Not required" records were reset/)).toBeTruthy();
+    // The whole sentence: a count the save did not compare against the
+    // preview's would add "The preview listed …".
+    expect(
+      await screen.findByText(
+        'Rule saved. Billing and booking now both follow it. 2 "Not required" records were reset to Not Invoiced.',
+      ),
+    ).toBeTruthy();
 
     const puts = putCalls(fetchMock);
     expect(puts).toHaveLength(1);
@@ -270,17 +299,35 @@ describe("SubscriptionLiabilityRuleSection (#5190)", () => {
     expect(screen.queryByText(/needs both Membership edit and Finance edit/)).toBeNull();
   });
 
-  it("says so when the save reset a different number of records than the preview listed", async () => {
-    stubFetch({ clearedStaleRecords: 3 });
+  it.each([
+    ["an immediate reply", 0],
+    ["a slow reply", 50],
+  ])(
+    "says so when the save reset a different number of records than the preview listed, Save pressed the moment the preview shows, with %s",
+    async (_label, saveDelayMs) => {
+      stubFetch({ clearedStaleRecords: 3, saveDelayMs });
+      render(<SubscriptionLiabilityRuleSection />);
+      await openEditor();
+      choose("They still owe");
+      choose("first day of the season");
+      await previewThenSaveAtOnce();
+      expect(
+        await screen.findByText(/3 "Not required" records were reset.*The preview listed 2:/),
+      ).toBeTruthy();
+    },
+  );
+
+  it("names the previewed count when Save is pressed the moment the preview shows and the counts agree", async () => {
+    stubFetch({ clearedStaleRecords: 2 });
     render(<SubscriptionLiabilityRuleSection />);
     await openEditor();
     choose("They still owe");
     choose("first day of the season");
-    fireEvent.click(screen.getByRole("button", { name: "Preview changes" }));
-    await screen.findByText("Sam Small");
-    fireEvent.click(screen.getByRole("button", { name: "Save rule" }));
+    await previewThenSaveAtOnce();
     expect(
-      await screen.findByText(/3 "Not required" records were reset.*The preview listed 2/),
+      await screen.findByText(
+        'Rule saved. Billing and booking now both follow it. 2 "Not required" records were reset to Not Invoiced.',
+      ),
     ).toBeTruthy();
   });
 

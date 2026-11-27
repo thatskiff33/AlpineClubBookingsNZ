@@ -1,12 +1,13 @@
 // The batch edit's transaction result, moved verbatim from
 // `booking-batch-modification-service.ts` to keep that file under its size
-// ceiling (#5145). Types, and (#5149) two spreads that read off them, so that
-// file adds no line for the facts they carry. `ModifiedBooking` has one home for
+// ceiling (#5145). Types, and (#5149, #5238) the spreads that read off them, so
+// that file adds no line for the facts they carry. `ModifiedBooking` has one home for
 // both edit services, `booking-modification-modified-booking.ts` (#4516 merge,
 // `INV-SSOT`); it is re-exported here so each service keeps one import line.
 import type { BookingGuest, PaymentSource, PaymentStatus } from "@prisma/client";
 
 import type { ModifiedBooking } from "@/lib/booking-modification-modified-booking";
+import type { EditQuotedFigures } from "@/lib/edit-quoted-figures";
 import type { BookingModificationPaymentContext } from "@/lib/booking-modification-settlement";
 import type { BookingModificationSettlementMethod, ResolvedGuestNameUpdate } from "@/lib/booking-modify";
 import type { FinishedStayChangeFeeRule, FinishedStayCorrection } from "@/lib/booking-finished-stay-correction";
@@ -32,6 +33,8 @@ export type BatchModificationTransactionResult =
     additionalAmountCents: number;
     billedToOrganiserCents: number; // #4299: invoiced to the group organiser, not asked of this member
     booking: ModifiedBooking;
+    /** #5238 (`INV-MOD-062`): the figures the save compared with its caller's. */
+    quotedFigures: EditQuotedFigures;
     /** #3232: the deferred hosting reconciliation, when the caller asked for it. */
     pendingHostingReconcile?: () => Promise<void>;
     priceDiffCents: number;
@@ -147,7 +150,7 @@ export type BatchModificationSettlementFacts = {
 };
 
 /** The response's settlement facts, read off the transaction result in one spread. */
-export function batchModificationSettlementFacts(
+function batchModificationSettlementFacts(
   result: Pick<BatchModificationTransactionResult, "policyRetainedAmountCents" | "unpaidAskOffsetCents" | "refundHeldForDispute" | "hasSucceededPayment">,
 ): BatchModificationSettlementFacts & { policyRetainedAmountCents: number } {
   return {
@@ -155,6 +158,37 @@ export function batchModificationSettlementFacts(
     unpaidAskOffsetCents: result.unpaidAskOffsetCents,
     refundHeldForDispute: result.refundHeldForDispute,
     reductionRefundsToCard: result.hasSucceededPayment,
+  };
+}
+
+/**
+ * The response fields both of the batch edit's returns read straight off the
+ * transaction result, in one spread (#5238): the caller-owned-commit return a
+ * linked move compares figures from and the self-committed one carry the same.
+ */
+export function batchModificationResultFacts(result: BatchModificationTransactionResult) {
+  return {
+    booking: result.booking,
+    quotedFigures: result.quotedFigures,
+    bookingModificationId: result.bookingModificationId,
+    priceDiffCents: result.priceDiffCents,
+    changeFeeCents: result.changeFeeCents,
+    refundAmountCents: result.refundAmountCents,
+    accountCreditAmountCents: result.accountCreditAmountCents,
+    appliedCreditGivenBackCents: result.appliedCreditGivenBackCents,
+    refundedExcessCreditCents: result.refundedExcessCreditCents,
+    additionalAmountCents: result.additionalAmountCents,
+    billedToOrganiserCents: result.billedToOrganiserCents,
+    settlementMethod: result.settlementMethod,
+    requiresSettlementMethod: result.requiresSettlementMethod,
+    promoRemoved: result.promoRemoved,
+    promoChanged: result.promoChanged,
+    promoCoverage: result.promoCoverage,
+    promoChangeNotApplied: result.promoChangeNotApplied,
+    choreWarnings: result.choreWarnings,
+    creditElectionCents: result.creditElectionCents,
+    ...batchModificationSettlementFacts(result),
+    capacityOverridden: result.capacityOverridden,
   };
 }
 

@@ -20,6 +20,7 @@ vi.mock("@/hooks/use-admin-area-edit-access", () => ({
 // keeps that sync inert here.
 const router = { replace: vi.fn(), push: vi.fn() };
 vi.mock("next/navigation", () => ({
+  usePathname: () => "/",
   useRouter: () => router,
   useSearchParams: () => new URLSearchParams(),
 }));

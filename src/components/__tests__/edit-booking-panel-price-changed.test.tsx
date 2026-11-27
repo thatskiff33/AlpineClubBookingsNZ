@@ -209,4 +209,15 @@ describe("EditBookingPanel — the save binds the previewed figures (#4924)", ()
     await waitFor(() => expect(modifyCalls()).toHaveLength(1));
     expect(modifyCalls()[0].body).toMatchObject({ quotedFigures: SECOND });
   });
+
+  it("on EDIT_FIGURES_REQUIRED (#5238) shows the reload sentence and stays open", async () => {
+    const sentence = "This page is out of date. Reload it, check the price and save again.";
+    modifyResponses = [() => jsonResponse({ code: "EDIT_FIGURES_REQUIRED", error: sentence }, 409)];
+    const onDone = vi.fn();
+    render(<EditBookingPanel booking={booking} onDone={onDone} />);
+    await removeGuestAndSave();
+
+    expect(await screen.findByText(sentence)).toBeInTheDocument();
+    expect(onDone).not.toHaveBeenCalled();
+  });
 });

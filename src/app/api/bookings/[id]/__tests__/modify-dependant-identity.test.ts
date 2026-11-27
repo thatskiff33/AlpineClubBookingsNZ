@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { withSaveFigures } from "@/lib/__tests__/support/edit-save-figures";
 import { NextRequest } from "next/server";
 import {
   DEPENDANT_IDENTITY_DECLARATION_INVALID_CODE,
@@ -88,7 +89,7 @@ import { PUT } from "@/app/api/bookings/[id]/modify/route";
 function req(body: unknown) {
   return new NextRequest("http://localhost/api/bookings/b1/modify", {
     method: "PUT",
-    body: JSON.stringify(body),
+    body: JSON.stringify(withSaveFigures(body)),
     headers: { "content-type": "application/json" },
   });
 }
