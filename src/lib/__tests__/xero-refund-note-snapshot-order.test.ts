@@ -10,13 +10,13 @@ import {
   judgedRefundNoteReading,
   judgeRefundNoteWrite,
   keepStoredRefundNoteVoid,
-  readingIsCurrent,
   readRefundNoteSnapshotAt,
   REFUND_NOTE_LINK_ROLES,
   REFUND_NOTE_SNAPSHOT_AT_KEY,
   withoutVoidedRefundNoteLinks,
   xeroCreditNoteSnapshotMetadata,
 } from "@/lib/xero-refund-note-status";
+import { readingIsCurrent } from "@/lib/xero-account-credit-note-reading";
 
 const at = (status: string, iso?: string) => ({ status, total: 200, ...(iso ? { [REFUND_NOTE_SNAPSHOT_AT_KEY]: iso } : {}) });
 const EARLY = "2026-06-30T11:00:00.000Z";

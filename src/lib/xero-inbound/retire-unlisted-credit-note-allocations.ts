@@ -27,11 +27,11 @@ import { NOTE_ALLOCATION_ROLE, ROLELESS_ALLOCATION_ROLE } from "@/lib/xero-clear
 import {
   type XeroCreditNoteSnapshotSource,
   isIncludedRefundCreditNoteStatus,
-  readingIsCurrent,
   readRefundNoteSnapshotAt,
   REFUND_NOTE_SNAPSHOT_AT_KEY,
   xeroCreditNoteSnapshotMetadata,
 } from "@/lib/xero-refund-note-status";
+import { readingIsCurrent } from "@/lib/xero-account-credit-note-reading";
 import { type BankTransferFloorAlert, sendBankTransferFloorAlert } from "./credit-note-bank-transfer-floor";
 import { decideLinkedRefundedTotalCents } from "./linked-refunded-total";
 import { decideXeroRefundedColumns } from "./xero-refunded-columns";

@@ -1,7 +1,7 @@
 import { APPLIED_CREDIT_ALLOCATION_ROLE } from "@/lib/xero-applied-credit-link-roles";
 import { storedShortBookingId } from "@/lib/booking-reference";
 import { type CreditNote as XeroCreditNote } from "xero-node";
-import { CreditType, PaymentSource, PaymentStatus, type Prisma } from "@prisma/client";
+import { CreditType, PaymentSource, PaymentStatus } from "@prisma/client";
 import { bookingOwner } from "@/lib/booking-owner";
 import { syncBookingLedgerCredits } from "@/lib/booking-ledger-credit-sync";
 import { prisma } from "@/lib/prisma";
@@ -9,8 +9,8 @@ import { lockPaymentForRefundedTotal, PAYMENT_ROW_WAIT_TRANSACTION_OPTIONS } fro
 import logger from "@/lib/logger";
 import { type AccountCreditAllocationRepairResult, type AccountCreditAllocationTarget, type RefundedPaymentBusinessStateRepairResult } from "./types";
 import { getCreditNoteAmountCents, getJsonRecord, getRefundContributionCentsFromCreditNoteMetadata } from "./amounts";
-import { accountCreditNoteReadingIsCurrent, isIncludedRefundCreditNoteStatus, readRefundNoteRowsByPayment, REFUND_CREDIT_NOTE_LINK_WHERE } from "@/lib/xero-refund-note-status";
-import { ACCOUNT_CREDIT_NOTE_ROLE } from "@/lib/xero-booking-credit-note-link-roles";
+import { isIncludedRefundCreditNoteStatus } from "@/lib/xero-refund-note-status";
+import { accountCreditNoteReadingIsCurrent, type CountedNoteRow, readCountedNoteRows } from "@/lib/xero-account-credit-note-reading";
 import { findActiveXeroObjectLinks } from "./object-links";
 import { notifyXeroSyncError } from "@/lib/xero-error-alert";
 import { sendBankTransferFloorAlert } from "./credit-note-bank-transfer-floor";
@@ -124,21 +124,6 @@ async function includeDeletedAppliedCreditAllocationTargets(
   return [...targetsByInvoiceId.values()];
 }
 
-type CurrentNoteRow = { active: boolean; metadata: unknown };
-
-/**
- * #4288, #4347: the rows through which each payment counts the note being
- * synced - its refund-note row, then its account-credit row - read NOW on the
- * caller's client, one statement at a time. A payment with neither has no entry.
- */
-async function readCountedNoteRows(creditNoteId: string, paymentIds: readonly string[], db: Pick<Prisma.TransactionClient, "xeroObjectLink">) {
-  const byPayment = new Map<string, CurrentNoteRow[]>();
-  for (const role of [REFUND_CREDIT_NOTE_LINK_WHERE.role, ACCOUNT_CREDIT_NOTE_ROLE] as const) {
-    for (const [paymentId, row] of await readRefundNoteRowsByPayment(creditNoteId, paymentIds, db, role)) byPayment.set(paymentId, [...(byPayment.get(paymentId) ?? []), row]);
-  }
-  return byPayment;
-}
-
 /** #4288: named so this recount is not read as a transaction wrapper - it opens one, but this callback never runs in it. */
 type RecomputeModificationRefundAmounts = () => Promise<Map<string, number>>;
 
@@ -206,7 +191,7 @@ export async function repairRefundedPaymentBusinessState(input: {
   // #4347: and its account-credit row, the same way.
   const [linkedRefundedCentsByPaymentId, currentNoteRows] = await Promise.all([
     decideLinkedRefundedTotalCents(prisma, payments, { excludeCreditNoteId: input.creditNoteId }),
-    input.creditNoteId === null ? new Map<string, CurrentNoteRow[]>() : readCountedNoteRows(input.creditNoteId, paymentIds, prisma),
+    input.creditNoteId === null ? new Map<string, CountedNoteRow[]>() : readCountedNoteRows(input.creditNoteId, paymentIds, prisma),
   ]);
 
   // #4288, #4347: each payment's current note as its own refund-note and account-credit rows hold it NOW (read above, after
@@ -616,12 +601,7 @@ export async function resolveAppliedCreditPaymentsFromLocalProvenance(
 export async function repairAccountCreditAllocationBusinessState(
   creditNoteId: string,
   allocationTargets: AccountCreditAllocationTarget[],
-  /**
-   * #4347: the reading these targets came from (`xeroCreditNoteSnapshotMetadata`).
-   * Under the member's credit lock, a reading the note's account-credit row
-   * refuses now (a stored void, or a newer snapshot) posts nothing.
-   */
-  readingMetadata?: unknown,
+  readingMetadata?: unknown, // #4347: the targets' reading; one the note's account-credit row refuses posts nothing
 ): Promise<AccountCreditAllocationRepairResult> {
   // Resolve once before the per-target transaction and credit-ledger lock.
   const format = await getClubFormat();
@@ -736,11 +716,10 @@ export async function repairAccountCreditAllocationBusinessState(
       // key, which is an `INV-LOCK` hazard visible only under concurrency.
       if (!creditLedgerMemberId) return;
       await lockMemberCreditLedger(creditLedgerMemberId, tx);
-      // #4347: decided on the account-credit row as it stands under the lock, a plain read after it (no new lock).
+      // #4347: judged on the account-credit row as stored under the lock (a plain read; no new lock).
       if (readingMetadata !== undefined && !(await accountCreditNoteReadingIsCurrent(creditNoteId, readingMetadata, tx))) {
         skippedAllocations += 1;
-        logger.warn({ creditNoteId, invoiceId: target.invoiceId, bookingId: payment.bookingId }, "Skipping account-credit allocation repair: the reading is older than the note's stored snapshot, or the note is voided (#4347)");
-        return;
+        return logger.warn({ creditNoteId, invoiceId: target.invoiceId }, "Skipping account-credit allocation repair: the note's stored snapshot refuses this reading (#4347)");
       }
       await assertNoAppliedCreditDeallocationFence(payment.id, tx);
       // #3792 (INV-PAY-019): a cancelled booking whose applied credit was

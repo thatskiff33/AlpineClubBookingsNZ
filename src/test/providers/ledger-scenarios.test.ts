@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { observeInvoicePayables } from "@/lib/xero-invoice-payable-observation";
-import { judgeRefundNoteWrite, keepStoredRefundNoteVoid, readingIsCurrent, xeroCreditNoteSnapshotMetadata } from "@/lib/xero-refund-note-status";
+import { judgeRefundNoteWrite, keepStoredRefundNoteVoid, xeroCreditNoteSnapshotMetadata } from "@/lib/xero-refund-note-status";
+import { readingIsCurrent } from "@/lib/xero-account-credit-note-reading";
 import { XeroFake } from "./xero-fake";
 import { StripeFake } from "./stripe-fake";
 import { ingestProviders, invoiceWire, RoundTripJournal } from "./round-trip-harness";

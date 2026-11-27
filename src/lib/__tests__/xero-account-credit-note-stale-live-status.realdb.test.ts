@@ -76,6 +76,11 @@ function reading(kind: Kind, status: string, updatedAt: string, allocations: Arr
     async function deletePaymentState() {
       await prisma.xeroSyncOperation.deleteMany({ where: { localId: { in: PAYMENTS } } });
       await prisma.xeroObjectLink.deleteMany({ where: { localId: { in: PAYMENTS } } });
+      // The applied-credit allocation links a current reading writes sit on the member's credit rows, not a payment.
+      const notes = [...Object.values(NOTE), REFUND_NOTE];
+      await prisma.xeroObjectLink.deleteMany({
+        where: { OR: [{ xeroObjectId: { in: notes } }, ...notes.map((note) => ({ metadata: { path: ["creditNoteId"], equals: note } }))] },
+      });
       await prisma.memberCreditNoteAllocation.deleteMany({ where: { memberCredit: { memberId: MEMBER_ID } } });
       await prisma.bookingLedgerLine.deleteMany({ where: { bookingId: { in: BOOKINGS } } });
       await prisma.memberCredit.deleteMany({ where: { memberId: MEMBER_ID } });

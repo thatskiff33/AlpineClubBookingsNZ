@@ -356,33 +356,6 @@ export async function readRefundNoteRowsByPayment(
 }
 
 /**
- * #4447, #4347: true when no stored snapshot of the note refuses this reading -
- * `judgeRefundNoteWrite` answers "apply" against every one. A reading a newer
- * stored snapshot or a stored void beat is not current, and nothing that
- * acts on its figures (allocations, the member's credit) may act on it.
- */
-export function readingIsCurrent(readingMetadata: unknown, storedSnapshots: readonly unknown[]): boolean {
-  return storedSnapshots.every((metadata) => judgeRefundNoteWrite(readingMetadata, metadata) === "apply");
-}
-
-/**
- * #4347: `readingIsCurrent` against the note's account-credit rows as stored
- * NOW, read on the caller's client. True for a note with no such row, so every
- * other note keeps its behaviour from before #4347.
- */
-export async function accountCreditNoteReadingIsCurrent(
-  creditNoteId: string,
-  readingMetadata: unknown,
-  db: Pick<Prisma.TransactionClient, "xeroObjectLink">,
-): Promise<boolean> {
-  const rows = (await db.xeroObjectLink.findMany({
-    where: { ...REFUND_CREDIT_NOTE_LINK_WHERE, role: ACCOUNT_CREDIT_NOTE_ROLE, xeroObjectId: creditNoteId },
-    select: { metadata: true },
-  })) ?? [];
-  return readingIsCurrent(readingMetadata, rows.map((row) => row.metadata));
-}
-
-/**
  * #4288: these links, less every one a payment holds through a refund-note row
  * (either role) for this note that is VOIDED/DELETED now, read fresh on the
  * caller's client. A live reading's allocation and refund-payment links are
