@@ -134,7 +134,12 @@ export function factorGateRedirect(params: {
   if (isTwoFactorSessionBlocked(params)) {
     return buildTwoFactorGatePath(params);
   }
+  // A forced password change comes first (#4620): enrolment refuses until it
+  // is done, so the officer gate must not refuse the change itself.
+  const passwordChangeFirst =
+    params.allowForcePasswordChange === true && params.member?.forcePasswordChange === true;
   if (
+    !passwordChangeFirst &&
     isOfficerEnrolmentSessionBlocked({
       sessionUser: params.sessionUser,
       pathname: params.pathname ?? params.callbackPath ?? null,
