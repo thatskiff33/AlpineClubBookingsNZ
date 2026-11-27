@@ -72,6 +72,7 @@ import { NOT_A_SETTLEMENT_MARKER_WHERE } from "@/lib/manual-settlement-reversal-
 import {
   deliverOwedNotice,
   OWED_OFFICER_ALERT_MAX_AGE_MS,
+  owedOfficerAlertSendBy,
   type OwedNoticeDeliverer,
   type OwedNoticeOutcome,
   type OwedNoticeRef,
@@ -260,7 +261,7 @@ const BUMP_KIND_COMMON = {
   load: (marker: OwedNoticeMarker) =>
     prisma.booking.findUnique({ where: { id: marker.subjectId }, select: BUMP_NOTICE_BOOKING_SELECT }),
   stillOwed: bumpNoticeStillOwed,
-  sendBy: (_booking: BumpNoticeBooking, marker: OwedNoticeMarker) => new Date(marker.eventAt.getTime() + BUMP_NOTICE_MAX_AGE_MS),
+  sendBy: (_booking: BumpNoticeBooking, marker: OwedNoticeMarker) => owedOfficerAlertSendBy(marker),
 };
 
 const BUMP_DELIVERER: Record<BumpNoticeKind, OwedNoticeDeliverer<BumpNoticeBooking>> = {

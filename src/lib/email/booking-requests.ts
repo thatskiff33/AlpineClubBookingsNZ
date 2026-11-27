@@ -8,6 +8,7 @@ import {
   schoolAttendeeConfirmationTemplate,
   splitGuestPaymentLinkTemplate,
 } from "@/lib/email-templates/booking-requests";
+import { BOOKING_REQUEST_PAYMENT_EXPIRED_TEMPLATE, SPLIT_GUEST_PAYMENT_LINK_TEMPLATE } from "./owed-notice-templates";
 import {
   composeOptionalEmailLine,
 } from "../email-message-notes";
@@ -207,6 +208,8 @@ export async function sendSplitGuestPaymentLinkEmail(params: {
   bookingId: string;
   expiresAt: Date;
   lodgeId?: string | null;
+  /** #5433: an owed notice's event key; the email's `EmailLog` row is then durable, so a later run cannot send it twice. */
+  idempotencyKey?: string;
 },
   format: ClubFormat,
 ): Promise<EmailSendOutcome> {
@@ -227,7 +230,7 @@ export async function sendSplitGuestPaymentLinkEmail(params: {
       expiresAt: params.expiresAt,
     }, format)),
     bookingContext: classifyBookingOwnerContext(params.bookingContext),
-    templateName: "split-guest-payment-link",
+    templateName: SPLIT_GUEST_PAYMENT_LINK_TEMPLATE,
     templateData: {
       firstName: params.firstName,
       token: params.token,
@@ -244,6 +247,7 @@ export async function sendSplitGuestPaymentLinkEmail(params: {
       // above. Same value, same override branch, same defect.
       expiresAt: emailClubDateTime(params.expiresAt),
     },
+    idempotencyKey: params.idempotencyKey,
   });
 }
 
@@ -371,6 +375,8 @@ export async function sendBookingRequestPaymentExpiredEmail(params: {
   // Lodge the request is for (multi-lodge): overlays that lodge's
   // identity via prepareEmailMessage; null keeps club-wide identity.
   lodgeId?: string | null;
+  /** #5433: an owed notice's event key; the email's `EmailLog` row is then durable, so a later run cannot send it twice. */
+  idempotencyKey?: string;
 }) {
   await sendEmail({
     to: params.email,
@@ -382,12 +388,13 @@ export async function sendBookingRequestPaymentExpiredEmail(params: {
       checkOut: params.checkOut,
     })),
     bookingContext: classifyBookingOwnerContext(params.bookingContext),
-    templateName: "booking-request-payment-expired",
+    templateName: BOOKING_REQUEST_PAYMENT_EXPIRED_TEMPLATE,
     templateData: {
       firstName: params.firstName,
       checkIn: emailCalendarDay(params.checkIn),
       checkOut: emailCalendarDay(params.checkOut),
     },
+    idempotencyKey: params.idempotencyKey,
   });
 }
 

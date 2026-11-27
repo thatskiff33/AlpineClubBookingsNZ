@@ -18,6 +18,7 @@ const navigation = vi.hoisted(() => ({ search: "" }));
 
 vi.mock("next/navigation", () => ({
   usePathname: () => "/admin/xero",
+  useRouter: () => ({ refresh: vi.fn(), push: vi.fn(), replace: vi.fn() }),
   useSearchParams: () => new URLSearchParams(navigation.search),
 }));
 
