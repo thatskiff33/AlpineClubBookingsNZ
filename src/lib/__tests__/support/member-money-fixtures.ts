@@ -180,6 +180,7 @@ export async function createMemberMoneyScratchDatabase(
     await owner.query(readFileSync("prisma/migrations/20261223050000_member_money_capture_receipt_manifest/migration.sql", "utf8"));
     await owner.query(readFileSync("prisma/migrations/20270105100000_member_money_export_combined_group_role/migration.sql", "utf8"));
     await owner.query(readFileSync("prisma/migrations/20270105100100_member_money_export_coverage_release/migration.sql", "utf8"));
+    await owner.query(readFileSync("prisma/migrations/20270107010000_member_money_modification_credit_note_manifest/migration.sql", "utf8"));
     const statements = buildDatabaseRolesSql({
       databaseName: name,
       migrator: { roleName: roles.migrator, password: "m".repeat(28) },
