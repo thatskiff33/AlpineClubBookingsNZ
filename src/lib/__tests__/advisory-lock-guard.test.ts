@@ -1817,6 +1817,12 @@ const ROW_LOCK_SITE_INVENTORY: Record<string, number> = {
   // A kept void tries Payment without waiting (the xero-sync entry below).
   // Keyed on the link's immutable unique key; no advisory lock. See docs/CONCURRENCY_AND_LOCKING.md ->
   // "Refund-note link writes racing a void (#4195, #4223)".
+  // #4347: a payment's ACCOUNT_CREDIT_NOTE link write joins through the same
+  // statement and takes ONLY its own row: no Payment row, no sibling, no
+  // pointer, in the link write's own transaction, which commits before the
+  // inbound recount locks the Payment and before the allocation repair takes the
+  // member key. No Payment-first writer (#4200's explicit void, #4279's
+  // adopting completion) writes that row. Pinned below; no new statement.
   "src/lib/xero-refund-note-status.ts": 1,
   // #4223, #4288: after keeping a stored void, pointer maintenance tries the
   // immutable Payment row FOR NO KEY UPDATE SKIP LOCKED. A Payment-first enqueue
@@ -2093,6 +2099,28 @@ describe("advisory lock guard (#182 / H1 regression class)", { timeout: CENSUS_T
       "completeAdoptingCanonicalRefundNote(prisma, completion.canonicalRefundNote, options, completeWithClient)",
       ": await prisma.$transaction(completeWithClient)",
     ]);
+  });
+
+  // #4347 (INV-LOCK-001, INV-LOCK-002, INV-LOCK-003): an account-credit link
+  // write returns from the funnel's normaliser on its own row lock, before any
+  // refund-note branch that reads or locks Payment; the explicit-void Payment
+  // lock stays the refund-note role's alone. The recount re-reads both roles'
+  // rows only after the Payment row, and the allocation repair re-judges the
+  // reading only after the member key: each a plain read under the lock it holds.
+  it("keeps an account-credit link write on its own row, and its re-reads under the Payment row and member key", () => {
+    const text = (rel: string) => stripComments(sources.find((source) => source.rel === rel)?.text ?? "");
+    const inOrder = (body: string, markers: string[]) => {
+      const at = markers.map((marker) => body.indexOf(marker));
+      markers.forEach((marker, i) => expect(at[i], `${marker} is missing`).toBeGreaterThanOrEqual(0));
+      for (let i = 1; i < at.length; i += 1) expect(at[i], `${markers[i]} must follow ${markers[i - 1]}`).toBeGreaterThan(at[i - 1]);
+    };
+    const sync = text("src/lib/xero-sync.ts");
+    const normalise = sync.slice(sync.indexOf("async function normalizePaymentRefundLinkWithClient("), sync.indexOf("function isSingleActiveCanonicalLinkScope("));
+    inOrder(normalise, ["if (isAccountCreditNoteLinkOf(link)) return keepStoredRefundNoteVoid(client, link);", "REFUND_NOTE_LINK_ROLES.some(", "client.payment.findUnique("]);
+    expect(sync).toContain("return isRefundNoteLinkOf(link) && isRefundCreditNoteLinkCancelledInXero(link.metadata);");
+    const repairs = text("src/lib/xero-inbound/credit-note-repairs.ts");
+    inOrder(repairs, ["await lockPaymentForRefundedTotal(tx, payment.id);", "readCountedNoteRows(input.creditNoteId, [payment.id], tx)"]);
+    inOrder(repairs, ["await lockMemberCreditLedger(creditLedgerMemberId, tx);", "accountCreditNoteReadingIsCurrent(creditNoteId, readingMetadata, tx)", "assertNoAppliedCreditDeallocationFence(payment.id, tx)"]);
   });
 
   // #4449 (INV-LOCK-002, INV-LOCK-003): the credit-note allocation write is a

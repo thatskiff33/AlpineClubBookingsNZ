@@ -481,6 +481,12 @@ import "./xero-refund-note-void-lock-order.realdb.test";
 // Skipped unless RUN_CONCURRENCY_RACE_TESTS=1; it owns and cleans its own
 // `race-4288-` fixtures.
 import "./xero-refund-note-stale-live-status.realdb.test";
+// #4347 applies that rule to a payment's account-credit note: an older live
+// reading never revives one a later reading recorded VOIDED nor counts its
+// refund again, the allocation repair posts nothing from it, and the link write
+// commits before the recount takes the Payment row. It owns and cleans its own
+// `race-4347-` fixtures.
+import "./xero-account-credit-note-stale-live-status.realdb.test";
 // #4215 reuses it to prove the inbound repair of a bank-transfer payment's
 // canonical refund note keeps the cash a refund request paid back through the
 // real completion - queued, raised or voided, and with the canonical note

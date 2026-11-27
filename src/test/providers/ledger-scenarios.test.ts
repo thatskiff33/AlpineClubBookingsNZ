@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { observeInvoicePayables } from "@/lib/xero-invoice-payable-observation";
-import { judgeRefundNoteWrite, xeroCreditNoteSnapshotMetadata } from "@/lib/xero-refund-note-status";
+import { judgeRefundNoteWrite, keepStoredRefundNoteVoid, readingIsCurrent, xeroCreditNoteSnapshotMetadata } from "@/lib/xero-refund-note-status";
 import { XeroFake } from "./xero-fake";
 import { StripeFake } from "./stripe-fake";
 import { ingestProviders, invoiceWire, RoundTripJournal } from "./round-trip-harness";
@@ -32,6 +32,23 @@ describe("ledger-switch scenarios against stateful providers", () => {
     expect(judgeRefundNoteWrite(old, current)).toBe("keep-stored-snapshot");
     expect(old.status).toBe("AUTHORISED");
     expect(current.status).toBe("VOIDED");
+  });
+
+  it("#4347: an account-credit note voided in Xero stays voided and uncounted when an older reading arrives afterwards", async () => {
+    const xero = new XeroFake();
+    const c = xero.createContact("contact", "member-a");
+    const n = xero.createCreditNote("account-credit", c.contactID, 10000);
+    const old = xeroCreditNoteSnapshotMetadata({ ...xero.snapshot().creditNotes[0], total: 100, updatedDateUTC: new Date() });
+    xero.voidCreditNote(n.creditNoteID);
+    const current = xeroCreditNoteSnapshotMetadata({ ...xero.snapshot().creditNotes[0], total: 100, updatedDateUTC: new Date() });
+    // The production link funnel's judgement for the payment's account-credit row, on the row as stored under its lock.
+    const lockedRow = { xeroObjectLink: { createMany: async () => ({ count: 0 }), findUnique: async () => ({ metadata: current, active: true }) }, $executeRaw: async () => 1 } as never;
+    const written = await keepStoredRefundNoteVoid(lockedRow, {
+      localModel: "Payment", localId: "payment-a", xeroObjectType: "CREDIT_NOTE", xeroObjectId: n.creditNoteID, role: "ACCOUNT_CREDIT_NOTE", metadata: old, mergeMetadata: true,
+    });
+    // The void stands with the row's own active flag, and the older reading is not current for any money writer.
+    expect(written).toMatchObject({ active: true, metadata: { status: "VOIDED" } });
+    expect(readingIsCurrent(old, [current])).toBe(false);
   });
 
   it("#4434: an $80 receipt needs two invoices when the first has only $50 room", () => {
