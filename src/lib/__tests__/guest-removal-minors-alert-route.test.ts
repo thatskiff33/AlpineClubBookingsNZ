@@ -160,7 +160,6 @@ import {
   recordingBookingDouble,
 } from "@/lib/__tests__/support/hosting-participant-fence-double";
 import { DELETE } from "@/app/api/bookings/[id]/guests/[guestId]/route";
-import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
 const CHECK_IN = new Date("2027-07-15");
 const CHECK_OUT = new Date("2027-07-17");
