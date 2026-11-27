@@ -10,8 +10,10 @@
  *
  * - #4279: a refund note adopted as the payment's one refund note
  *   (`canonicalRefundNote`), only in a retry claim's own completion;
- * - #5289 B: an edit's or clearing note's own allocation to an invoice
- *   (`NOTE_ALLOCATION_ROLE`): the invoice's one bank-transfer payment, by the
+ * - #5289 B: an edit's or clearing note's own allocation to an invoice, by
+ *   the readers' rule (`isClearingAllocationLinkRoleAndAnchor`: the note's own
+ *   role, or the role-less one a generic allocation retry writes on the note's
+ *   anchor): the invoice's one bank-transfer payment, by the
  *   settle's rule (`bankTransferPaymentIdsOfInvoices`), whose whole refunded
  *   total is decided after the links under that row
  *   (`decideBankTransferRefundedTotal`), moving its `updatedAt`, exactly as the
@@ -28,21 +30,22 @@ import type { Prisma } from "@prisma/client";
 import logger from "@/lib/logger";
 import { asRecord, readString } from "@/lib/xero-json";
 import type { CanonicalRefundNoteAdoption } from "@/lib/xero-refund-note-adoption";
-import { NOTE_ALLOCATION_ROLE } from "@/lib/xero-note-allocation-link-roles";
+import { isClearingAllocationLinkRoleAndAnchor } from "@/lib/xero-note-allocation-link-roles";
 
 /** #5289 B: the invoices a completion's own note allocations name, and the note. */
 export type NoteAllocationIntent = { creditNoteId: string | null; invoiceIds: string[] };
 
 /** A completion's extra link, in the fields this reads. */
-type CompletionLink = { xeroObjectType: string; role: string; active?: boolean; metadata?: unknown };
+type CompletionLink = { localModel: string; xeroObjectType: string; role: string; active?: boolean; metadata?: unknown };
 
 /**
- * #5289 B: the note allocations a completion writes on (its `extraLinks` with
- * the note's own allocation role, active), or null when it writes none.
+ * #5289 B: the note allocations a completion writes on (its active
+ * `extraLinks` the refunded-total readers would count as a note's allocation),
+ * or null when it writes none.
  */
 export function noteAllocationIntentOf(extraLinks: readonly CompletionLink[] | undefined): NoteAllocationIntent | null {
   const allocations = (extraLinks ?? []).filter(
-    (link) => link.xeroObjectType === "ALLOCATION" && link.role === NOTE_ALLOCATION_ROLE && link.active !== false,
+    (link) => link.xeroObjectType === "ALLOCATION" && isClearingAllocationLinkRoleAndAnchor(link) && link.active !== false,
   );
   const invoiceIds = [...new Set(allocations.map((link) => readString(asRecord(link.metadata)?.invoiceId)).filter((id): id is string => id !== null))];
   if (invoiceIds.length === 0) return null;

@@ -60,17 +60,24 @@ beforeEach(() => {
 });
 
 describe("noteAllocationIntentOf (#5289 B)", () => {
-  const link = (role: string, invoiceId: string, active?: boolean) => ({
-    xeroObjectType: "ALLOCATION", role, ...(active === undefined ? {} : { active }), metadata: { creditNoteId: "cn-1", invoiceId, amountCents: 1_000 },
+  const link = (role: string, invoiceId: string, options: { active?: boolean; localModel?: string } = {}) => ({
+    localModel: options.localModel ?? "BookingModification",
+    xeroObjectType: "ALLOCATION", role, ...(options.active === undefined ? {} : { active: options.active }), metadata: { creditNoteId: "cn-1", invoiceId, amountCents: 1_000 },
   });
 
   it("reads the invoices of a note's own active allocation links, and the note", () => {
-    expect(noteAllocationIntentOf([{ xeroObjectType: "CREDIT_NOTE", role: "MODIFICATION_CREDIT_NOTE" }, link("MODIFICATION_CREDIT_NOTE_ALLOCATION", "inv-1")])).toEqual({ creditNoteId: "cn-1", invoiceIds: ["inv-1"] });
+    expect(noteAllocationIntentOf([{ localModel: "BookingModification", xeroObjectType: "CREDIT_NOTE", role: "MODIFICATION_CREDIT_NOTE" }, link("MODIFICATION_CREDIT_NOTE_ALLOCATION", "inv-1")])).toEqual({ creditNoteId: "cn-1", invoiceIds: ["inv-1"] });
   });
 
-  it("MUTATION: none for a refund note's allocation (another role), an inactive link, or no links", () => {
-    expect(noteAllocationIntentOf([link("CREDIT_NOTE_ALLOCATION", "inv-1")])).toBeNull();
-    expect(noteAllocationIntentOf([link("MODIFICATION_CREDIT_NOTE_ALLOCATION", "inv-1", false)])).toBeNull();
+  it("MUTATION (review): a role-less allocation on the note's own anchor is one the refunded total counts, so it names its invoice too", () => {
+    expect(noteAllocationIntentOf([link("CREDIT_NOTE_ALLOCATION", "inv-1")])).toEqual({ creditNoteId: "cn-1", invoiceIds: ["inv-1"] });
+    expect(noteAllocationIntentOf([link("CREDIT_NOTE_ALLOCATION", "inv-1", { localModel: "Booking" })])).toEqual({ creditNoteId: "cn-1", invoiceIds: ["inv-1"] });
+  });
+
+  it("MUTATION: none for a refund note's allocation (role-less on the payment), another role, an inactive link, or no links", () => {
+    expect(noteAllocationIntentOf([link("CREDIT_NOTE_ALLOCATION", "inv-1", { localModel: "Payment" })])).toBeNull();
+    expect(noteAllocationIntentOf([link("APPLIED_CREDIT_ALLOCATION", "inv-1")])).toBeNull();
+    expect(noteAllocationIntentOf([link("MODIFICATION_CREDIT_NOTE_ALLOCATION", "inv-1", { active: false })])).toBeNull();
     expect(noteAllocationIntentOf(undefined)).toBeNull();
   });
 });
