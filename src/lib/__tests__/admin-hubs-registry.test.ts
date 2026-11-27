@@ -2124,8 +2124,8 @@ describe("the registry is inert", () => {
       "C8: the Messages & email links are adminLink; " +
       "C9: the Members links and badges are adminLink and adminHref; " +
       "C10: the Bookings links and the Booking Requests badge are adminLink and adminHref; " +
-      "C11 (#4808): the Lodge Operations links are adminLink; " +
-      "C11 part 1 (#4808): the Lobby Display and Lodges links are adminLink",
+      "C11 part 1 (#4808): the Lobby Display and Lodges links are adminLink; " +
+      "C11 (#4808): and the other Lodge Operations links",
     "src/lib/admin-work-queues.ts":
       "#4962: each officer work queue's link and label are adminLink and adminHref",
     "src/lib/__tests__/admin-work-queues.test.tsx":
