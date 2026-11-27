@@ -209,8 +209,10 @@ export async function createPasskeyRegistrationOptions(input: {
     userDisplayName: input.displayName,
     userID: new TextEncoder().encode(input.memberId),
     attestationType: "none",
+    // Discoverable passkeys only (#4614 decision, 10 Nov 2026): a key that
+    // cannot store one fails the ceremony instead of saving an unusable row.
     authenticatorSelection: {
-      residentKey: "preferred",
+      residentKey: "required",
       userVerification: "required",
     },
     timeout: TWO_FACTOR_SESSION_CHALLENGE_TTL_MS,
@@ -221,6 +223,23 @@ export async function createPasskeyRegistrationOptions(input: {
   });
   await storeChallenge(input.memberId, options.challenge, "registration");
   return { ok: true as const, options };
+}
+
+const NON_DISCOVERABLE_PASSKEY_ERROR =
+  "That key can't save a passkey for signing in. Try a different device or key.";
+
+/**
+ * The browser's `credProps` result says the credential is not discoverable.
+ * Absent means unknown: not every browser reports it, so that is accepted.
+ */
+function reportsNonDiscoverableCredential(response: unknown): boolean {
+  if (typeof response !== "object" || response === null) return false;
+  const extensions = (response as { clientExtensionResults?: unknown })
+    .clientExtensionResults;
+  if (typeof extensions !== "object" || extensions === null) return false;
+  const credProps = (extensions as { credProps?: unknown }).credProps;
+  if (typeof credProps !== "object" || credProps === null) return false;
+  return (credProps as { rk?: unknown }).rk === false;
 }
 
 export async function verifyPasskeyRegistration(input: {
@@ -264,6 +283,9 @@ export async function verifyPasskeyRegistration(input: {
   }
   if (!verified.verified) {
     return { ok: false, status: 400, error: "That passkey didn't work. Try again." };
+  }
+  if (reportsNonDiscoverableCredential(input.response)) {
+    return { ok: false, status: 400, error: NON_DISCOVERABLE_PASSKEY_ERROR };
   }
 
   const credential = verified.registrationInfo.credential;

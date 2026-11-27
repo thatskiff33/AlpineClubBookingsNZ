@@ -219,6 +219,9 @@ This file holds only the rules.
 - **The relying party comes from `NEXTAUTH_URL`.** The id is its hostname and
   the expected origin is its origin. A missing or unparseable URL throws. No
   host is hardcoded (`INV-CONFIG-001`).
+- **Only a discoverable passkey can be added** (#4614). Registration asks for
+  `residentKey: "required"`, and a browser reporting `credProps.rk` false is
+  refused. An unreported `rk` is accepted.
 - **A challenge is single-use and lasts two minutes,** the same duration as a
   two-factor session challenge. The plaintext is stored. The row is claimed
   with `deleteMany` before the signature is checked, and the claim succeeds

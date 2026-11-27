@@ -1,0 +1,2 @@
+- **Two fixes found while composing officer sign-in (#4620).**
+  Only a discoverable passkey can now be added: a security key that cannot store one fails at registration instead of saving a passkey that cannot later sign in on its own. And once officer sign-in is switched on, an officer whose set-up grace has ended and who must also change their password can now change it first, instead of being refused by both screens. Officer sign-in itself is still switched off in this release.
