@@ -31,8 +31,8 @@ import { describe, expect, it } from "vitest";
 
   There is no allowance list: ALP-649 converged the last files other lanes
   were still editing when this census landed, so any hit, in any file, is red.
-  Besides `src/app/(admin)` it scans the one admin component ALP-749 fixed,
-  the password policy card; #5323 widens it to all of `src/components/admin`.
+  It scans `src/app/(admin)` and, since #5323, all of `src/components/admin`
+  (ALP-749 first added the password policy card alone).
 
   What it does NOT see: only `await x.json()` with a plain identifier receiver
   is counted. A `.then((r) => r.json())` chain, or a receiver that is not an
@@ -46,10 +46,7 @@ import { describe, expect, it } from "vitest";
 
 const SCANNED_DIR = join(process.cwd(), "src", "app", "(admin)");
 
-/** Admin components scanned one by one until #5323 scans their whole directory. */
-const SCANNED_FILES = [
-  join(process.cwd(), "src", "components", "admin", "security", "password-policy-card.tsx"),
-];
+const ADMIN_COMPONENTS_DIR = join(process.cwd(), "src", "components", "admin");
 
 type Hit = { line: number; kind: "failure-branch" | "parse-before-check" };
 
@@ -219,7 +216,7 @@ function walk(dir: string, files: string[] = []): string[] {
   return files;
 }
 
-const measured = [...walk(SCANNED_DIR), ...SCANNED_FILES]
+const measured = [...walk(SCANNED_DIR), ...walk(ADMIN_COMPONENTS_DIR)]
   .map((file) => ({
     rel: relative(process.cwd(), file).split(sep).join("/"),
     hits: unguardedFailureReads(readFileSync(file, "utf8"), file),
@@ -345,7 +342,8 @@ describe("admin failed-response JSON reads (#4976, ALP-589)", () => {
     expect(
       over,
       "read a failed response through apiErrorMessageFromResponse (or " +
-        "readApiErrorBody) from src/lib/api-error-message.ts, never a bare " +
+        "readApiErrorBody) from src/lib/api-error-message.ts, or a refused " +
+        "write through saveRefusalFromResponse, never a bare " +
         "`await res.json()`: an HTML error page from the proxy throws a JSON " +
         "parse error the officer then reads as the refusal",
     ).toEqual([]);
