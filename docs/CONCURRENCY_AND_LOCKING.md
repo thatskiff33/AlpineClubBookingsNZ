@@ -7422,7 +7422,15 @@ writers (`INV-LOCK-001`–`003`). Each mutation and its tiers:
   `lock(1)`, booking row and Payment row before its claim, reverses an unpaid,
   unreserved capture-return R05 an automatic refund posted (review M5), then
   posts the keep. The reversal reads the owner under the booking row it already
-  holds (#5191; taken again, a no-op).
+  holds (#5191; taken again, a no-op). Its keep takes the capture's
+  supplementary-invoice anchor (`lockKeptCaptureAnchor`) after the Payment row
+  and before the claim, so the door's order is lock(1) → booking row → Payment
+  row → anchor → task claim; the plan after the claim re-takes the anchor, and
+  the revived invoice's receipt enqueue re-takes it again (#5220). Every other
+  task-row-then-anchor writer either holds `lock(1)` first or, on a task still
+  OPEN, returns before the anchor, so no cycle. Proven through the real door,
+  caught waiting on the anchor, by `kept-change-capture-record.realdb.test.ts`
+  (#5312).
 - **A #2700 hand-back** of a late capture (no approval intent) takes the same
   Payment row before it reads what its capture still holds, then claims
   (#4838). Nothing between takes a lodge, member-credit or task-row lock: the

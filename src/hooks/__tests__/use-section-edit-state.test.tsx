@@ -17,7 +17,7 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import { useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   expectRevealed,
   expectToHoldFocus,
@@ -343,6 +343,60 @@ describe("useSectionEditState", () => {
       await result.current.save();
     });
     expect(save).toHaveBeenCalledTimes(1);
+  });
+
+  it("runs the save of the render a click landed on, before React's passive effects run (ALP-808)", async () => {
+    // A section's `save` reads its own state (the liability rule reads the
+    // preview it showed). Pressing Save the moment an async update is drawn,
+    // before React has run that commit's passive effects, must still run the
+    // callback of the render the officer saw, not the one before it.
+    const seenBySave: string[] = [];
+    let arrive!: (value: string) => void;
+    const arrival = new Promise<string>((resolve) => {
+      arrive = resolve;
+    });
+    function Probe() {
+      const [shown, setShown] = useState("nothing yet");
+      const section = useSectionEditState<Draft>({
+        initial: INITIAL,
+        save: async (draft) => {
+          seenBySave.push(shown);
+          return draft;
+        },
+        successMessage: "Saved",
+        saveErrorFallback: SAVE_FALLBACK,
+      });
+      useEffect(() => {
+        section.startEditing();
+        section.setDraft({ minGroupSize: 9 });
+        void arrival.then(setShown);
+        // Once, on mount.
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+      }, []);
+      return (
+        <div>
+          <p>Shown: {shown}</p>
+          <button type="button" onClick={() => void section.save()}>
+            Save
+          </button>
+        </div>
+      );
+    }
+    render(<Probe />);
+    await screen.findByText("Shown: nothing yet");
+    const clicked = new Promise<void>((resolve) => {
+      const observer = new MutationObserver(() => {
+        if (!screen.queryByText("Shown: the preview")) return;
+        observer.disconnect();
+        fireEvent.click(screen.getByRole("button", { name: "Save" }));
+        resolve();
+      });
+      observer.observe(document.body, { childList: true, subtree: true, characterData: true });
+    });
+    arrive("the preview");
+    await clicked;
+
+    await waitFor(() => expect(seenBySave).toEqual(["the preview"]));
   });
 
   it("honours a custom dirty comparator for non-scalar drafts", () => {

@@ -41,6 +41,7 @@ const router = { replace, push, refresh: vi.fn() };
 vi.mock("next/navigation", async () => {
   const { useMemo, useSyncExternalStore } = await import("react");
   return {
+    usePathname: () => "/",
     useRouter: () => router,
     useSearchParams: () => {
       const query = useSyncExternalStore(nav.subscribe, () => nav.query);
@@ -291,6 +292,22 @@ describe("BookingRequestsPage tab counts and landing tab (#4969)", () => {
     await countsLoaded();
     expect(nav.query).toBe("tab=changes");
     expect(tab(/^Changes/)).toHaveAttribute("aria-selected", "true");
+  });
+
+  // #5247: the policy exception queue's filter and page live in the address
+  // now; another tab never opens on them.
+  it.each([
+    [/^Public Requests/, "public"],
+    [/^Approvals/, "approvals"],
+  ])("leaving Policy Exceptions drops its filter and page (%s)", async (name, nextTab) => {
+    serveCounts({});
+    nav.setQuery("tab=exceptions&status=CANCELLED&page=3");
+    render(<BookingRequestsPage />);
+    await countsLoaded();
+    expect(tab(/^Policy Exceptions/)).toHaveAttribute("aria-selected", "true");
+
+    fireEvent.mouseDown(tab(name), { button: 0 });
+    await waitFor(() => expect(nav.query).toBe(`tab=${nextTab}`));
   });
 
   it("decides the landing tab once: the sidebar link followed from this page opens Approvals", async () => {

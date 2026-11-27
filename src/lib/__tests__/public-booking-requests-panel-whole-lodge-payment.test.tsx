@@ -20,6 +20,7 @@ import { toast } from "sonner";
 
 const replace = vi.fn();
 vi.mock("next/navigation", () => ({
+  usePathname: () => "/",
   useRouter: () => ({ replace, push: vi.fn() }),
   useSearchParams: () => new URLSearchParams(),
 }));

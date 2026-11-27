@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { SAVE_FIGURES } from "@/lib/__tests__/support/edit-save-figures";
 import { NextRequest } from "next/server";
 
 // ---------------------------------------------------------------------------
@@ -224,7 +225,7 @@ describe("PUT /api/bookings/[id]/modify — role mapping (#1313 A2)", () => {
       new NextRequest("http://localhost/api/bookings/booking-1/modify", {
         method: "PUT",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({}),
+        body: JSON.stringify({ quotedFigures: SAVE_FIGURES }),
       }),
       { params: Promise.resolve({ id: "booking-1" }) },
     );
