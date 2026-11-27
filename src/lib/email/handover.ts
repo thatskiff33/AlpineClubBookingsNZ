@@ -1,7 +1,8 @@
-import type { EmailHandoverState } from "@prisma/client";
+import type { EmailHandoverState, Prisma } from "@prisma/client";
 import logger from "@/lib/logger";
 import { prisma } from "@/lib/prisma";
 import { alertOfficersOfUndeliveredEmail } from "./delivery-failed-alert";
+import { isCallerRetriedAlertTemplate } from "./internal";
 import { replayInFlightWindowMs } from "./replay-in-flight";
 import { EMAIL_RETRY_MAX_ATTEMPTS, FIRST_EMAIL_ATTEMPT, RETAINS_REPLAYABLE_EMAIL_BODY } from "./retry-selection";
 
@@ -43,37 +44,80 @@ const STRANDED_QUEUED_BATCH = 50;
 
 /**
  * The sender's licence to hand this row to the mail server: moves it from
- * PENDING to STARTED, and is true only for the one caller whose write landed.
- * Also restarts the stranded clock, so a send that was slow to get here is not
- * swept while it is in flight. Throws on a database error; the caller then
- * sends nothing.
+ * PENDING to STARTED, and answers the stamp it wrote only for the one caller
+ * whose write landed (null when it lost). The stamp restarts the stranded
+ * clock, so a send that was slow to get here is not swept while it is in
+ * flight, and it identifies this claim to the writes that follow it. Throws on
+ * a database error; the caller then sends nothing.
  */
-export async function claimEmailHandover(emailLogId: string): Promise<boolean> {
+export async function claimEmailHandover(emailLogId: string): Promise<Date | null> {
+  const claimedAt = new Date();
   const claim = await prisma.emailLog.updateMany({
     where: { id: emailLogId, status: "QUEUED", handoverState: "PENDING" },
-    data: { handoverState: "STARTED", lastAttemptAt: new Date() },
+    data: { handoverState: "STARTED", lastAttemptAt: claimedAt },
   });
-  return claim.count === 1;
+  return claim.count === 1 ? claimedAt : null;
 }
 
 /**
- * `claimEmailHandover` for the sender: true only when it may now send. A lost
- * claim or a database error both answer false, and the row is then the sweep's,
- * which re-sends it once if it keeps a body, so the email is late rather than
- * sent twice.
+ * The row one `sendEmail` call recorded, written to only while it is still
+ * that sender's (#5298, `INV-INT-043`). Before the hand-over a write is guarded
+ * on `QUEUED` and `PENDING`, after it on the claim (`STARTED` at the claim's
+ * stamp), so a sender that stalls past `strandedQueuedAfterMs()` cannot undo
+ * the sweep: the row the sweep handed to the retry job, or flagged, is no
+ * longer the sender's, and its late gate, failure or SENT write matches
+ * nothing. A deferred row is the retry job's from the start and never swept,
+ * so it is written by id, as before.
  */
-export async function wonEmailHandover(emailLogId: string, templateName: string): Promise<boolean> {
-  try {
-    if (await claimEmailHandover(emailLogId)) return true;
-    logger.warn({ emailLogId, templateName }, "Email not sent: the stranded-email sweep had already taken its row (#5298)");
-  } catch (err) {
-    logger.error({ err, emailLogId, templateName }, "Email not sent: its hand-over could not be recorded; the stranded-email sweep sends it later if it can (#5298)");
-  }
-  return false;
+export interface SenderEmailRow {
+  readonly id: string;
+  /**
+   * Write `data` while the row is still this sender's; false when it is not,
+   * or the write failed (both logged with `what`). Never throws.
+   */
+  write(data: Prisma.EmailLogUpdateManyMutationInput, what: string): Promise<boolean>;
+  /**
+   * `claimEmailHandover`: true only when this sender may now send. A lost
+   * claim or a database error both answer false, and the row is then the
+   * sweep's, so the email is late rather than sent twice.
+   */
+  claimHandover(templateName: string): Promise<boolean>;
+}
+
+export function senderEmailRow(id: string, options: { deferred: boolean }): SenderEmailRow {
+  let guard: Prisma.EmailLogWhereInput = options.deferred
+    ? { id }
+    : { id, status: "QUEUED", handoverState: "PENDING" };
+  return {
+    id,
+    async write(data, what) {
+      try {
+        const { count } = await prisma.emailLog.updateMany({ where: guard, data });
+        if (count === 1) return true;
+        logger.warn({ emailLogId: id, what }, "Left an email row as it is: the stranded-email sweep had already settled it (#5298)");
+      } catch (err) {
+        logger.error({ err, emailLogId: id }, `Failed to update EmailLog: ${what}`);
+      }
+      return false;
+    },
+    async claimHandover(templateName) {
+      try {
+        const claimedAt = await claimEmailHandover(id);
+        if (claimedAt) {
+          guard = { id, status: "QUEUED", handoverState: "STARTED", lastAttemptAt: claimedAt };
+          return true;
+        }
+        logger.warn({ emailLogId: id, templateName }, "Email not sent: the stranded-email sweep had already taken its row (#5298)");
+      } catch (err) {
+        logger.error({ err, emailLogId: id, templateName }, "Email not sent: its hand-over could not be recorded; the stranded-email sweep settles it later (#5298)");
+      }
+      return false;
+    },
+  };
 }
 
 /** What the sweep did with one stranded row. */
-type StrandedOutcome = "requeued" | "never_sent" | "unconfirmed";
+type StrandedOutcome = "requeued" | "released_to_owner" | "never_sent" | "unconfirmed";
 
 /** Stranded rows settled this run, by outcome. */
 type StrandedSweepResult = Record<StrandedOutcome, number>;
@@ -91,6 +135,10 @@ interface StrandedRow {
  * Settle every `QUEUED` row stranded for longer than `strandedQueuedAfterMs()`
  * (and younger than `STRANDED_QUEUED_MAX_AGE_MS`), up to 50 a run:
  *
+ * - never handed over, an alert its owner sends again when nobody received it
+ *   (`isCallerRetriedAlertTemplate`, #4669): released to that owner the way
+ *   `releaseUnreceivedAlertCopies` releases one, `FAILED` at its first attempt
+ *   with no body, so the owner's retry is the only one; officers are not told;
  * - never handed over, body kept: back to `FAILED` with its attempts unchanged,
  *   so the email retry job, which runs this first, replays it with all its
  *   usual checks: in the same run, or a later one when 50 older failures fill
@@ -106,7 +154,7 @@ interface StrandedRow {
  * sender's claim and another sweep, and only one wins. Never throws.
  */
 export async function sweepStrandedQueuedEmails(now: Date = new Date()): Promise<StrandedSweepResult> {
-  const result: StrandedSweepResult = { requeued: 0, never_sent: 0, unconfirmed: 0 };
+  const result: StrandedSweepResult = { requeued: 0, released_to_owner: 0, never_sent: 0, unconfirmed: 0 };
   try {
     const rows = await prisma.emailLog.findMany({
       where: {
@@ -151,10 +199,24 @@ async function settleStrandedRow(row: StrandedRow, keepsBody: boolean, now: Date
     lastAttemptAt: row.lastAttemptAt,
   };
   const neverHandedOver = row.handoverState === "PENDING" && row.attempts === FIRST_EMAIL_ATTEMPT;
-  const outcome: StrandedOutcome = !neverHandedOver ? "unconfirmed" : keepsBody ? "requeued" : "never_sent";
+  const outcome: StrandedOutcome = !neverHandedOver
+    ? "unconfirmed"
+    : isCallerRetriedAlertTemplate(row.templateName)
+      ? "released_to_owner"
+      : keepsBody
+        ? "requeued"
+        : "never_sent";
 
   const data =
-    outcome === "requeued"
+    outcome === "released_to_owner"
+      ? {
+          status: "FAILED" as const,
+          htmlBody: null,
+          bookingRetryHtmlBody: null,
+          errorMessage:
+            "No recipient received this alert: the app stopped before handing it to the mail server, so the alert's own retry sends it again, not the email retry job (#5298).",
+        }
+      : outcome === "requeued"
       ? {
           status: "FAILED" as const,
           errorMessage:
@@ -186,7 +248,7 @@ async function settleStrandedRow(row: StrandedRow, keepsBody: boolean, now: Date
     { emailLogId: row.id, templateName: row.templateName, handoverState: row.handoverState, outcome },
     "Settled an email a crash left QUEUED (#5298)",
   );
-  if (outcome !== "requeued") {
+  if (outcome === "never_sent" || outcome === "unconfirmed") {
     await alertOfficersOfUndeliveredEmail({
       recipient: row.to,
       templateName: row.templateName,

@@ -19,6 +19,7 @@ vi.mock("@/lib/email/delivery-failed-alert", () => ({ alertOfficersOfUndelivered
 
 import {
   claimEmailHandover,
+  senderEmailRow,
   STRANDED_QUEUED_MAX_AGE_MS,
   strandedQueuedAfterMs,
   sweepStrandedQueuedEmails,
@@ -70,7 +71,7 @@ beforeEach(() => {
 
 describe("claimEmailHandover", () => {
   it("moves only a QUEUED row still PENDING to STARTED, and restarts its stranded clock", async () => {
-    await expect(claimEmailHandover("log-1")).resolves.toBe(true);
+    await expect(claimEmailHandover("log-1")).resolves.toEqual(NOW);
     expect(mocks.updateMany).toHaveBeenCalledWith({
       where: { id: "log-1", status: "QUEUED", handoverState: "PENDING" },
       data: { handoverState: "STARTED", lastAttemptAt: NOW },
@@ -79,7 +80,45 @@ describe("claimEmailHandover", () => {
 
   it("is lost when the sweep or another sender moved the row first", async () => {
     mocks.updateMany.mockResolvedValueOnce({ count: 0 });
-    await expect(claimEmailHandover("log-1")).resolves.toBe(false);
+    await expect(claimEmailHandover("log-1")).resolves.toBeNull();
+  });
+});
+
+// #5298: a sender that stalls past the threshold must not undo the sweep.
+describe("senderEmailRow", () => {
+  it("writes before the hand-over only while the row is still QUEUED and PENDING", async () => {
+    const row = senderEmailRow("log-1", { deferred: false });
+    mocks.updateMany.mockResolvedValueOnce({ count: 0 });
+
+    await expect(row.write({ status: "FAILED" }, "a failed send")).resolves.toBe(false);
+    expect(mocks.updateMany).toHaveBeenCalledWith({
+      where: { id: "log-1", status: "QUEUED", handoverState: "PENDING" },
+      data: { status: "FAILED" },
+    });
+  });
+
+  it("writes after the hand-over only while the row is as this sender claimed it", async () => {
+    const row = senderEmailRow("log-1", { deferred: false });
+    await expect(row.claimHandover("booking-modified")).resolves.toBe(true);
+
+    await row.write({ status: "SENT" }, "a sent email");
+    expect(mocks.updateMany).toHaveBeenLastCalledWith({
+      where: { id: "log-1", status: "QUEUED", handoverState: "STARTED", lastAttemptAt: NOW },
+      data: { status: "SENT" },
+    });
+  });
+
+  it("does not send when the claim is lost or cannot be written, and never throws", async () => {
+    mocks.updateMany.mockResolvedValueOnce({ count: 0 }).mockRejectedValueOnce(new Error("database unavailable"));
+    await expect(senderEmailRow("log-1", { deferred: false }).claimHandover("t")).resolves.toBe(false);
+    await expect(senderEmailRow("log-2", { deferred: false }).claimHandover("t")).resolves.toBe(false);
+    mocks.updateMany.mockRejectedValueOnce(new Error("database unavailable"));
+    await expect(senderEmailRow("log-3", { deferred: false }).write({ status: "BOUNCED" }, "a suppressed email")).resolves.toBe(false);
+  });
+
+  it("writes a deferred row by id, as the retry job owns it and the sweep never touches it", async () => {
+    await senderEmailRow("log-1", { deferred: true }).write({ status: "BOUNCED" }, "a suppressed email");
+    expect(mocks.updateMany).toHaveBeenCalledWith({ where: { id: "log-1" }, data: { status: "BOUNCED" } });
   });
 });
 
@@ -116,7 +155,7 @@ describe("sweepStrandedQueuedEmails", () => {
   it("hands a never-sent row with a body back to the retry job, attempts and backoff unchanged, without an alert", async () => {
     given([stranded("resend")], ["resend"]);
 
-    await expect(sweepStrandedQueuedEmails(NOW)).resolves.toEqual({ requeued: 1, never_sent: 0, unconfirmed: 0 });
+    await expect(sweepStrandedQueuedEmails(NOW)).resolves.toEqual({ requeued: 1, released_to_owner: 0, never_sent: 0, unconfirmed: 0 });
 
     const write = writeFor("resend")!;
     expect(write.where).toEqual({
@@ -134,7 +173,7 @@ describe("sweepStrandedQueuedEmails", () => {
   it("puts a never-sent row with no body at the retry ceiling and tells officers it was never sent", async () => {
     given([stranded("bodiless", { templateName: "password-reset" })], []);
 
-    await expect(sweepStrandedQueuedEmails(NOW)).resolves.toEqual({ requeued: 0, never_sent: 1, unconfirmed: 0 });
+    await expect(sweepStrandedQueuedEmails(NOW)).resolves.toEqual({ requeued: 0, released_to_owner: 0, never_sent: 1, unconfirmed: 0 });
 
     expect(writeFor("bodiless")!.data).toEqual({
       status: "FAILED",
@@ -150,6 +189,22 @@ describe("sweepStrandedQueuedEmails", () => {
     });
   });
 
+  // #5298 review: such an alert's owner sends it again when nobody received it
+  // (#4669), so a re-send by the retry job as well would be a second copy.
+  it("releases a never-sent caller-retried alert to its owner: body dropped, no re-send, no officer alert", async () => {
+    given([stranded("owned", { templateName: "admin-bank-transfer-settlement-figure" })], ["owned"]);
+
+    await expect(sweepStrandedQueuedEmails(NOW)).resolves.toEqual({ requeued: 0, released_to_owner: 1, never_sent: 0, unconfirmed: 0 });
+
+    expect(writeFor("owned")!.data).toEqual({
+      status: "FAILED",
+      htmlBody: null,
+      bookingRetryHtmlBody: null,
+      errorMessage: expect.stringContaining("the alert's own retry sends it again"),
+    });
+    expect(mocks.alert).not.toHaveBeenCalled();
+  });
+
   it.each<[string, Pick<Row, "handoverState" | "attempts">]>([
     ["a sender that started its hand-over", { handoverState: "STARTED", attempts: 1 }],
     ["the previous release, which records nothing", { handoverState: null, attempts: 1 }],
@@ -157,7 +212,7 @@ describe("sweepStrandedQueuedEmails", () => {
   ])("flags, and never re-sends, a row from %s", async (_label, state) => {
     given([stranded("maybe", state)], ["maybe"]);
 
-    await expect(sweepStrandedQueuedEmails(NOW)).resolves.toEqual({ requeued: 0, never_sent: 0, unconfirmed: 1 });
+    await expect(sweepStrandedQueuedEmails(NOW)).resolves.toEqual({ requeued: 0, released_to_owner: 0, never_sent: 0, unconfirmed: 1 });
 
     const write = writeFor("maybe")!;
     expect(write.where).toEqual({ id: "maybe", status: "QUEUED", ...state, lastAttemptAt: STRANDED_AT });
@@ -175,17 +230,17 @@ describe("sweepStrandedQueuedEmails", () => {
     given([stranded("raced", { handoverState: "STARTED" })], []);
     mocks.updateMany.mockResolvedValueOnce({ count: 0 });
 
-    await expect(sweepStrandedQueuedEmails(NOW)).resolves.toEqual({ requeued: 0, never_sent: 0, unconfirmed: 0 });
+    await expect(sweepStrandedQueuedEmails(NOW)).resolves.toEqual({ requeued: 0, released_to_owner: 0, never_sent: 0, unconfirmed: 0 });
     expect(mocks.alert).not.toHaveBeenCalled();
   });
 
   it("never throws: a failed read is logged, and one row's failed write does not stop the rest", async () => {
     mocks.findMany.mockRejectedValueOnce(new Error("database unavailable"));
-    await expect(sweepStrandedQueuedEmails(NOW)).resolves.toEqual({ requeued: 0, never_sent: 0, unconfirmed: 0 });
+    await expect(sweepStrandedQueuedEmails(NOW)).resolves.toEqual({ requeued: 0, released_to_owner: 0, never_sent: 0, unconfirmed: 0 });
 
     given([stranded("broken"), stranded("fine")], ["broken", "fine"]);
     mocks.updateMany.mockRejectedValueOnce(new Error("deadlock"));
-    await expect(sweepStrandedQueuedEmails(NOW)).resolves.toEqual({ requeued: 1, never_sent: 0, unconfirmed: 0 });
+    await expect(sweepStrandedQueuedEmails(NOW)).resolves.toEqual({ requeued: 1, released_to_owner: 0, never_sent: 0, unconfirmed: 0 });
     expect(mocks.logError).toHaveBeenCalledTimes(2);
   });
 });

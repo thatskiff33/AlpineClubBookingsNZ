@@ -30,8 +30,9 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock("@/lib/prisma", () => ({
   prisma: {
-    // #5298: the sender's hand-over claim on its own row, always won here.
-    emailLog: { create: mocks.emailLogCreate, update: mocks.emailLogUpdate, updateMany: async () => ({ count: 1 }) },
+    // #5298: every row write is a guarded `updateMany` on the sender's own row
+    // (`senderEmailRow`), including the hand-over claim, always won here.
+    emailLog: { create: mocks.emailLogCreate, updateMany: mocks.emailLogUpdate },
     booking: { findUnique: mocks.bookingFindUnique },
     environmentSafetySettings: { findUnique: mocks.environmentSafetyFindUnique },
   },
@@ -93,7 +94,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   vi.unstubAllEnvs();
   mocks.emailLogCreate.mockResolvedValue({ id: "log_1" });
-  mocks.emailLogUpdate.mockResolvedValue({});
+  mocks.emailLogUpdate.mockResolvedValue({ count: 1 });
   mocks.getActiveEmailSuppression.mockResolvedValue(null);
   mocks.environmentSafetyFindUnique.mockResolvedValue(null);
   mocks.sendMail.mockResolvedValue({ messageId: "msg_1" });
@@ -131,7 +132,7 @@ describe("confirmed PRODUCTION", () => {
     expect(mocks.getEmailTransporter).toHaveBeenCalledTimes(1);
     expect(mocks.getEmailTransporter.mock.calls[0]?.[0]).toBeTruthy();
     expect(mocks.emailLogUpdate).toHaveBeenCalledWith({
-      where: { id: "log_1" },
+      where: expect.objectContaining({ id: "log_1" }),
       data: expect.objectContaining({ status: "SENT" }),
     });
   });
@@ -154,7 +155,7 @@ describe("confirmed PRODUCTION", () => {
       reason: "booking_no_emails",
     });
     expect(mocks.emailLogUpdate).toHaveBeenCalledWith({
-      where: { id: "log_1" },
+      where: expect.objectContaining({ id: "log_1" }),
       data: expect.objectContaining({ status: "SKIPPED_NO_EMAILS" }),
     });
     expect(mocks.sendMail).not.toHaveBeenCalled();
@@ -170,7 +171,7 @@ describe("confirmed PRODUCTION", () => {
 
     expect(outcome.status).toBe("suppressed");
     expect(mocks.emailLogUpdate).toHaveBeenCalledWith({
-      where: { id: "log_1" },
+      where: expect.objectContaining({ id: "log_1" }),
       data: expect.objectContaining({ status: "BOUNCED" }),
     });
     expect(mocks.getEmailTransporter).not.toHaveBeenCalled();
@@ -210,7 +211,7 @@ describe("confirmed NON_PRODUCTION", () => {
     expect(mocks.getEmailTransporter).not.toHaveBeenCalled();
     expect(mocks.sendMail).not.toHaveBeenCalled();
     expect(mocks.emailLogUpdate).toHaveBeenCalledWith({
-      where: { id: "log_1" },
+      where: expect.objectContaining({ id: "log_1" }),
       data: {
         status: "SKIPPED_NON_PRODUCTION",
         htmlBody: null,
@@ -254,7 +255,7 @@ describe("confirmed NON_PRODUCTION", () => {
 
     expect(outcome.status).toBe("withheld_for_booking");
     expect(mocks.emailLogUpdate).toHaveBeenCalledWith({
-      where: { id: "log_1" },
+      where: expect.objectContaining({ id: "log_1" }),
       data: expect.objectContaining({ status: "SKIPPED_NO_EMAILS" }),
     });
   });
@@ -299,7 +300,7 @@ describe("a declared local capture mailbox", () => {
     // calling it suppressed would be false — and it would inflate the
     // withheld-email count the admin panel reads.
     expect(mocks.emailLogUpdate).toHaveBeenCalledWith({
-      where: { id: "log_1" },
+      where: expect.objectContaining({ id: "log_1" }),
       data: expect.objectContaining({ status: "SENT" }),
     });
     for (const call of mocks.emailLogUpdate.mock.calls) {
@@ -346,7 +347,7 @@ describe("a declared local capture mailbox", () => {
     expect(mocks.getEmailTransporter).not.toHaveBeenCalled();
     expect(mocks.sendMail).not.toHaveBeenCalled();
     expect(mocks.emailLogUpdate).toHaveBeenCalledWith({
-      where: { id: "log_1" },
+      where: expect.objectContaining({ id: "log_1" }),
       data: {
         status: "FAILED",
         deliveryBlockReason: "CAPTURE_TRANSPORT_IN_PRODUCTION",
@@ -388,7 +389,7 @@ describe("UNKNOWN environment", () => {
     expect(mocks.getEmailTransporter).not.toHaveBeenCalled();
     expect(mocks.sendMail).not.toHaveBeenCalled();
     expect(mocks.emailLogUpdate).toHaveBeenCalledWith({
-      where: { id: "log_1" },
+      where: expect.objectContaining({ id: "log_1" }),
       data: {
         status: "FAILED",
         deliveryBlockReason: "ENVIRONMENT_DECLARATION_MISSING",

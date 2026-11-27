@@ -24,8 +24,9 @@ const mocks = vi.hoisted(() => ({
 vi.mock("@/lib/prisma", () => ({
   prisma: {
     environmentSafetySettings: { findUnique: vi.fn().mockResolvedValue(null) },
-    // #5298: the sender's hand-over claim on its own row, always won here.
-    emailLog: { create: mocks.emailLogCreate, update: mocks.emailLogUpdate, updateMany: async () => ({ count: 1 }) },
+    // #5298: every row write is a guarded `updateMany` on the sender's own row
+    // (`senderEmailRow`), including the hand-over claim, always won here.
+    emailLog: { create: mocks.emailLogCreate, updateMany: mocks.emailLogUpdate },
     booking: { findUnique: mocks.bookingFindUnique },
   },
 }));
@@ -90,7 +91,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   vi.unstubAllEnvs();
   mocks.emailLogCreate.mockResolvedValue({ id: "log_1" });
-  mocks.emailLogUpdate.mockResolvedValue({});
+  mocks.emailLogUpdate.mockResolvedValue({ count: 1 });
   mocks.getActiveEmailSuppression.mockResolvedValue(null);
   mocks.sendMail.mockResolvedValue({ messageId: "msg_1" });
   mocks.bookingFindUnique.mockResolvedValue({ noEmails: false });
@@ -142,7 +143,7 @@ describe('sendEmail gate: booking "No emails" switch on', () => {
       // The withhold is auditable, attributed to the booking, and retains no
       // body (nothing was sent, and the retry cron only replays retained bodies).
       expect(mocks.emailLogUpdate).toHaveBeenCalledWith({
-        where: { id: "log_1" },
+        where: expect.objectContaining({ id: "log_1" }),
         data: expect.objectContaining({
           status: "SKIPPED_NO_EMAILS",
           htmlBody: null,
@@ -323,7 +324,7 @@ describe("sendEmail gate: fail closed", () => {
     });
     expect(mocks.sendMail).not.toHaveBeenCalled();
     expect(mocks.emailLogUpdate).toHaveBeenCalledWith({
-      where: { id: "log_1" },
+      where: expect.objectContaining({ id: "log_1" }),
       data: expect.objectContaining({ status: "FAILED" }),
     });
     // Deliberately the OPPOSITE of the SES bounce check, which fails open.
@@ -361,7 +362,7 @@ describe("sendEmail gate: fail closed", () => {
 
     expect(outcome.status).toBe("withheld_for_booking");
     expect(mocks.emailLogUpdate).not.toHaveBeenCalledWith({
-      where: { id: "log_1" },
+      where: expect.objectContaining({ id: "log_1" }),
       data: expect.objectContaining({ status: "SENT" }),
     });
   });

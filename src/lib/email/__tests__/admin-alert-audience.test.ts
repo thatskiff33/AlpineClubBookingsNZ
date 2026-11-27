@@ -682,19 +682,21 @@ describe("unmuteable admin alerts (#2761)", () => {
   });
 
   // #5298: the stranded-email sweep re-sends a copy whose hand-over was lost, so
-  // the alert's owner is told it is queued and does not send its own.
-  it("reports a lost hand-over as queued for retry, not undelivered", async () => {
+  // the alert's owner is told it is queued and does not send its own; but it
+  // releases a caller-retried alert's copy to its owner, so that owner retries.
+  it("reports a lost hand-over as queued for retry, unless the alert's owner retries it", async () => {
     mocks.findMany.mockResolvedValue([enumRole("treasurer@club.test", "FINANCE_ADMIN")]);
     mocks.sendEmail.mockResolvedValue({ status: "handover_lost", emailLogId: "log-1" });
-
-    await expect(
+    const send = (templateName: string) =>
       sendUnmuteableAdminAlert({
-        subject: "Stripe payment the app did not create",
+        subject: "Alert",
         html: "<p>alert</p>",
-        templateName: "admin-unrecognised-stripe-payment",
+        templateName,
         requirement: { area: "finance", level: "edit" },
-      }),
-    ).resolves.toBe("queued-for-retry");
+      });
+
+    await expect(send("admin-late-capture-auto-refund")).resolves.toBe("queued-for-retry");
+    await expect(send("admin-unrecognised-stripe-payment")).resolves.toBe("undelivered");
   });
 
   it("does not escalate when somebody was reached", async () => {

@@ -88,6 +88,76 @@ async function retireUnverifiableBookingEmail(params: {
 }
 
 /**
+ * A replay the provider refused or the transport failed. The row goes back to
+ * `FAILED` for the next run, or to the review queue with an officer alert at
+ * the ceiling, only while it is still as this run claimed it (#5298,
+ * `INV-INT-043`): a replay that outlasted `strandedQueuedAfterMs()` may have
+ * been flagged `UNCONFIRMED` at the ceiling by the stranded-email sweep, which
+ * has told officers already, and an unguarded write would set its attempts
+ * back below the ceiling and have it sent again.
+ */
+async function recordReplayFailure({ emailLog, newAttempts, claimedAt, err }: {
+  emailLog: Pick<EmailLog, "id" | "to" | "templateName">;
+  newAttempts: number;
+  claimedAt: Date;
+  err: unknown;
+}): Promise<void> {
+  const errorMessage = err instanceof Error ? err.message : String(err);
+  logger.error({ err, emailLogId: emailLog.id, attempt: newAttempts }, "Email retry failed");
+  const restored = await prisma.emailLog
+    .updateMany({
+      where: { id: emailLog.id, status: "QUEUED", handoverState: "STARTED", attempts: newAttempts, lastAttemptAt: claimedAt },
+      data: {
+        // Restore FAILED (the claim moved the row to QUEUED) — will
+        // retry again if attempts < MAX.
+        status: "FAILED",
+        attempts: newAttempts,
+        lastAttemptAt: new Date(),
+        errorMessage,
+        /*
+          AND CLEAR THE ENVIRONMENT BLOCK REASON (#3035 review). This row may
+          have been failed by the environment gate earlier — undeclared role,
+          or a live site in capture mode — and `deliveryBlockReason` was
+          written nowhere else and cleared nowhere at all. So once an operator
+          repaired the configuration and the replay then hit a genuine provider
+          failure, the row kept the stale block reason for the life of the
+          installation: counted forever by
+          `readWithheldApplicationEmail`, which selects
+          `FAILED` + `deliveryBlockReason NOT NULL`. Admin -> Environment would
+          go on telling a healthy live club it was holding mail back, which
+          breaks owner decision 1 — the count has to DRAIN after the repair,
+          because a count that never drains cannot distinguish anything.
+
+          It also falsifies the column's own documented contract in
+          `schema.prisma` ("NULL for … a genuine transport failure") and
+          INV-CONFIG-004's promise that a safety block is distinguishable from a
+          transport failure by more than a message string. This write is now
+          exactly that: a transport failure, so the reason is NULL and the
+          message string is the provider's.
+        */
+        deliveryBlockReason: null,
+      },
+    })
+    .catch((updateErr) => {
+      logger.error({ err: updateErr, emailLogId: emailLog.id }, "Failed to update EmailLog after retry failure");
+      return null;
+    });
+  if (restored?.count === 0) {
+    logger.warn({ emailLogId: emailLog.id }, "A failed replay found its row already settled by the stranded-email sweep; left as it is (#5298)");
+    return;
+  }
+
+  // Alert officers when email exhausts retries
+  if (newAttempts >= EMAIL_RETRY_MAX_ATTEMPTS) {
+    await alertOfficersOfUndeliveredEmail({
+      recipient: emailLog.to,
+      templateName: emailLog.templateName,
+      attemptCount: newAttempts,
+    });
+  }
+}
+
+/**
  * N-11: Retry failed emails with backoff.
  * Queries EmailLog for FAILED records with attempts below
  * EMAIL_RETRY_MAX_ATTEMPTS and re-sends.
@@ -510,6 +580,7 @@ export async function retryFailedEmails(): Promise<{
     // row is no longer FAILED, the claim finds nothing, and we never
     // double-send. Two overlapping cron runs race the same guarded update and
     // only one wins.
+    const claimedAt = new Date();
     const claim = await prisma.emailLog.updateMany({
       where: emailRetryClaimWhere(emailLog),
       data: {
@@ -518,7 +589,7 @@ export async function retryFailedEmails(): Promise<{
         // crash from here leaves a row the stranded-email sweep only flags.
         handoverState: "STARTED",
         attempts: newAttempts,
-        lastAttemptAt: new Date(),
+        lastAttemptAt: claimedAt,
         ...(retryHtml !== retainedHtml
           ? usesBookingRetryBody
             ? { bookingRetryHtmlBody: retryHtml }
@@ -574,62 +645,7 @@ export async function retryFailedEmails(): Promise<{
         attachments,
       });
     } catch (err) {
-      const errorMessage = err instanceof Error ? err.message : String(err);
-      logger.error(
-        { err, emailLogId: emailLog.id, attempt: newAttempts },
-        "Email retry failed",
-      );
-
-      await prisma.emailLog
-        .update({
-          where: { id: emailLog.id },
-          data: {
-            // Restore FAILED (the claim moved the row to QUEUED) — will
-            // retry again if attempts < MAX.
-            status: "FAILED",
-            attempts: newAttempts,
-            lastAttemptAt: new Date(),
-            errorMessage,
-            /*
-              AND CLEAR THE ENVIRONMENT BLOCK REASON (#3035 review). This row may
-              have been failed by the environment gate earlier — undeclared role,
-              or a live site in capture mode — and `deliveryBlockReason` was
-              written nowhere else and cleared nowhere at all. So once an operator
-              repaired the configuration and the replay then hit a genuine provider
-              failure, the row kept the stale block reason for the life of the
-              installation: counted forever by
-              `readWithheldApplicationEmail`, which selects
-              `FAILED` + `deliveryBlockReason NOT NULL`. Admin -> Environment would
-              go on telling a healthy live club it was holding mail back, which
-              breaks owner decision 1 — the count has to DRAIN after the repair,
-              because a count that never drains cannot distinguish anything.
-
-              It also falsifies the column's own documented contract in
-              `schema.prisma` ("NULL for … a genuine transport failure") and
-              INV-CONFIG-004's promise that a safety block is distinguishable from a
-              transport failure by more than a message string. This write is now
-              exactly that: a transport failure, so the reason is NULL and the
-              message string is the provider's.
-            */
-            deliveryBlockReason: null,
-          },
-        })
-        .catch((updateErr) => {
-          logger.error(
-            { err: updateErr, emailLogId: emailLog.id },
-            "Failed to update EmailLog after retry failure",
-          );
-        });
-
-      // Alert officers when email exhausts retries
-      if (newAttempts >= EMAIL_RETRY_MAX_ATTEMPTS) {
-        await alertOfficersOfUndeliveredEmail({
-          recipient: emailLog.to,
-          templateName: emailLog.templateName,
-          attemptCount: newAttempts,
-        });
-      }
-
+      await recordReplayFailure({ emailLog, newAttempts, claimedAt, err });
       failed++;
       continue;
     }

@@ -74,7 +74,7 @@
  */
 
 import logger from "@/lib/logger";
-import { prisma } from "@/lib/prisma";
+import type { SenderEmailRow } from "@/lib/email/handover";
 import { EMAIL_RETRY_MAX_ATTEMPTS } from "@/lib/email/retry-selection";
 import {
   describeDeliveryDecision,
@@ -125,7 +125,8 @@ export type EmailEnvironmentWithheldReason =
  * this module does not second-guess that.
  */
 export async function resolveEmailEnvironmentGate(params: {
-  emailLogId: string | null;
+  /** The sender's row (#5298: written only while it is still the sender's), or none. */
+  emailLog: SenderEmailRow | null;
   templateName: string;
   logRecipient: string;
   /**
@@ -197,53 +198,44 @@ export async function resolveEmailEnvironmentGate(params: {
     }
   })();
 
-  if (params.emailLogId) {
-    try {
-      await prisma.emailLog.update({
-        where: { id: params.emailLogId },
-        data: suppressed
-          ? {
-              status: "SKIPPED_NON_PRODUCTION",
-              htmlBody: null,
-              bookingRetryHtmlBody: null,
-              errorMessage,
-            }
-          : {
-              status: "FAILED",
-              deliveryBlockReason: blockReason,
-              errorMessage,
-              /*
-                A ROW NOTHING CAN REPLAY IS PUT WHERE A PERSON WILL SEE IT
-                (#3035 review). Left at `attempts: 1` such a row surfaced
-                NOWHERE: the retry cron requires a retained body, and the
-                operator review queue selects
-                `attempts >= EMAIL_RETRY_MAX_ATTEMPTS`. So the message was
-                silently and permanently lost, while seven places in this
-                codebase told the operator it would go out by itself.
+  await params.emailLog?.write(
+    suppressed
+      ? {
+          status: "SKIPPED_NON_PRODUCTION",
+          htmlBody: null,
+          bookingRetryHtmlBody: null,
+          errorMessage,
+        }
+      : {
+          status: "FAILED",
+          deliveryBlockReason: blockReason,
+          errorMessage,
+          /*
+            A ROW NOTHING CAN REPLAY IS PUT WHERE A PERSON WILL SEE IT
+            (#3035 review). Left at `attempts: 1` such a row surfaced
+            NOWHERE: the retry cron requires a retained body, and the
+            operator review queue selects
+            `attempts >= EMAIL_RETRY_MAX_ATTEMPTS`. So the message was
+            silently and permanently lost, while seven places in this
+            codebase told the operator it would go out by itself.
 
-                Pushing attempts to the ceiling is the retry cron's own remedy
-                for the same shape — see `cron-email-retry.ts`, which does
-                exactly this to a booking email it cannot verify and says why:
-                it "drops it out of the query and lands it in the review queue,
-                which is what the operator needs". Retaining the body instead is
-                not an option; these templates are excluded from retention
-                precisely because they carry live tokens, door codes and payment
-                links.
-              */
-              ...(params.bodyRetainedForReplay
-                ? {}
-                : { attempts: EMAIL_RETRY_MAX_ATTEMPTS }),
-            },
-      });
-    } catch (err) {
-      logger.error(
-        { err, to: params.logRecipient, templateName: params.templateName },
-        suppressed
-          ? "Failed to record an email held back because this installation is a copy"
-          : "Failed to record an email held back because this installation's environment role is unknown",
-      );
-    }
-  }
+            Pushing attempts to the ceiling is the retry cron's own remedy
+            for the same shape — see `cron-email-retry.ts`, which does
+            exactly this to a booking email it cannot verify and says why:
+            it "drops it out of the query and lands it in the review queue,
+            which is what the operator needs". Retaining the body instead is
+            not an option; these templates are excluded from retention
+            precisely because they carry live tokens, door codes and payment
+            links.
+          */
+          ...(params.bodyRetainedForReplay
+            ? {}
+            : { attempts: EMAIL_RETRY_MAX_ATTEMPTS }),
+        },
+    suppressed
+      ? "an email held back because this installation is a copy"
+      : "an email held back because this installation's environment role is unknown",
+  );
 
   if (suppressed) {
     logger.info(

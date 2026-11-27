@@ -484,9 +484,12 @@ export async function sendUnmuteableAdminAlert({
   const nobodyReceivedIt = outcomes.every((outcome) => outcome.status !== "sent");
   // #5298: a lost hand-over left its row, body and all, to the stranded-email
   // sweep, which re-sends it. Like a copy the cron holds, every copy is kept
-  // and the owner does not send it again.
+  // and the owner does not send it again. Not a caller-retried alert: the sweep
+  // releases that one to its owner, whose retry is then the only one.
   const sweepHoldsACopy =
-    shouldPersistEmailHtml(templateName) && outcomes.some((outcome) => outcome.handoverLost);
+    shouldPersistEmailHtml(templateName) &&
+    !isCallerRetriedAlertTemplate(templateName) &&
+    outcomes.some((outcome) => outcome.handoverLost);
   // Before anything else can fail, and before the owner can retry.
   const release =
     nobodyReceivedIt && !sweepHoldsACopy && isCallerRetriedAlertTemplate(templateName)

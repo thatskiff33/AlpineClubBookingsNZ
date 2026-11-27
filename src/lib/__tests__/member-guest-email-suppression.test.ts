@@ -51,8 +51,9 @@ const mocks = vi.hoisted(() => ({
 vi.mock("@/lib/prisma", () => ({
   prisma: {
     environmentSafetySettings: { findUnique: vi.fn().mockResolvedValue(null) },
-    // #5298: the sender's hand-over claim on its own row, always won here.
-    emailLog: { create: mocks.emailLogCreate, update: mocks.emailLogUpdate, updateMany: async () => ({ count: 1 }) },
+    // #5298: every row write is a guarded `updateMany` on the sender's own row
+    // (`senderEmailRow`), including the hand-over claim, always won here.
+    emailLog: { create: mocks.emailLogCreate, updateMany: mocks.emailLogUpdate },
     booking: { findUnique: mocks.bookingFindUnique },
     member: { findUnique: mocks.memberFindUnique },
     // Present so a stray preference read would be a REJECTED promise rather
@@ -229,7 +230,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   vi.unstubAllEnvs();
   mocks.emailLogCreate.mockResolvedValue({ id: "log_1" });
-  mocks.emailLogUpdate.mockResolvedValue({});
+  mocks.emailLogUpdate.mockResolvedValue({ count: 1 });
   mocks.getActiveEmailSuppression.mockResolvedValue(null);
   mocks.sendMail.mockResolvedValue({ messageId: "msg_1" });
   mocks.bookingFindUnique.mockImplementation(
@@ -346,7 +347,7 @@ describe('the per-booking "No emails" switch withholds every covered sender (#23
         }),
       );
       expect(mocks.emailLogUpdate).toHaveBeenCalledWith({
-        where: { id: "log_1" },
+        where: expect.objectContaining({ id: "log_1" }),
         data: expect.objectContaining({
           status: "SKIPPED_NO_EMAILS",
           htmlBody: null,
@@ -375,7 +376,7 @@ describe('the per-booking "No emails" switch withholds every covered sender (#23
       // FAILED, not SKIPPED_NO_EMAILS: the fault is transient, so the retry cron
       // re-evaluates the switch later instead of the row being terminal.
       expect(mocks.emailLogUpdate).toHaveBeenCalledWith({
-        where: { id: "log_1" },
+        where: expect.objectContaining({ id: "log_1" }),
         data: expect.objectContaining({ status: "FAILED" }),
       });
     },

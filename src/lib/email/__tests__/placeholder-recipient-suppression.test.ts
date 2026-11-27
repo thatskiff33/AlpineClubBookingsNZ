@@ -11,8 +11,9 @@ const mocks = vi.hoisted(() => ({
 vi.mock("@/lib/prisma", () => ({
   prisma: {
     environmentSafetySettings: { findUnique: vi.fn().mockResolvedValue(null) },
-    // #5298: the sender's hand-over claim on its own row, always won here.
-    emailLog: { create: mocks.emailLogCreate, update: mocks.emailLogUpdate, updateMany: async () => ({ count: 1 }) },
+    // #5298: every row write is a guarded `updateMany` on the sender's own row
+    // (`senderEmailRow`), including the hand-over claim, always won here.
+    emailLog: { create: mocks.emailLogCreate, updateMany: mocks.emailLogUpdate },
   },
 }));
 vi.mock("@/lib/logger", () => ({ default: mocks.logger }));
@@ -46,7 +47,7 @@ import { declareEnvironmentRole } from "@/lib/__tests__/helpers/environment-role
 beforeEach(() => {
   vi.clearAllMocks();
   mocks.emailLogCreate.mockResolvedValue({ id: "log_1" });
-  mocks.emailLogUpdate.mockResolvedValue({});
+  mocks.emailLogUpdate.mockResolvedValue({ count: 1 });
   mocks.getActiveEmailSuppression.mockResolvedValue(null);
   // Dev short-circuit marks SENT without a real transporter — enough to prove
   // a real recipient reaches the EmailLog + suppression path.

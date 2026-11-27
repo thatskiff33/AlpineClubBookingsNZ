@@ -106,7 +106,11 @@ describe("durable email event identity", () => {
   it("leaves a provider failure retryable, then suppresses another business re-drive", async () => {
     mocks.sendMail.mockRejectedValueOnce(new Error("provider down"));
     await expect(sendEmail(params)).rejects.toThrow("provider down");
-    expect(mocks.update).toHaveBeenCalledWith({ where: { id: LOG_ID }, data: { status: "FAILED", errorMessage: "provider down" } });
+    // #5298: written only while the row is as this sender claimed it.
+    expect(mocks.updateMany).toHaveBeenLastCalledWith({
+      where: { id: LOG_ID, status: "QUEUED", handoverState: "STARTED", lastAttemptAt: new Date() },
+      data: { status: "FAILED", errorMessage: "provider down" },
+    });
     mocks.create.mockRejectedValueOnce({ code: "P2002" });
     await expect(sendEmail(params)).resolves.toEqual({ status: "already_recorded", emailLogId: LOG_ID });
     expect(mocks.sendMail).toHaveBeenCalledTimes(1);

@@ -253,9 +253,26 @@ describe("retryFailedEmails (issue #820)", () => {
     expect(result).toEqual({ retried: 1, succeeded: 0, failed: 1 });
     // attempts incremented, status restored to FAILED for the next run
     // (the pre-send claim moved it to QUEUED).
-    const updateArg = mocks.update.mock.calls[0][0];
+    // #5298: guarded on the row as this run claimed it (the claim is the first write).
+    const updateArg = mocks.updateMany.mock.calls[1][0];
+    expect(updateArg.where).toMatchObject({ id: "email_1", status: "QUEUED", handoverState: "STARTED", attempts: 1 });
     expect(updateArg.data.attempts).toBe(1);
     expect(updateArg.data.status).toBe("FAILED");
+    expect(mocks.sendEmail).not.toHaveBeenCalled();
+  });
+
+  // #5298: a replay that outlasted the stranded threshold may have been flagged
+  // UNCONFIRMED at the ceiling; its late failure must not put it back below.
+  it("leaves a row the stranded-email sweep flagged meanwhile, and does not alert again", async () => {
+    mocks.findMany.mockResolvedValue([failedEmail({ attempts: 2 })]);
+    mocks.sendMail.mockRejectedValue(new Error("smtp 421"));
+    mocks.updateMany.mockResolvedValueOnce({ count: 1 }).mockResolvedValueOnce({ count: 0 });
+    mocks.getAdminEmails.mockResolvedValue(["admin@example.test"]);
+
+    await retryFailedEmails();
+
+    expect(mocks.updateMany).toHaveBeenCalledTimes(2);
+    expect(mocks.update).not.toHaveBeenCalled();
     expect(mocks.sendEmail).not.toHaveBeenCalled();
   });
 
@@ -942,8 +959,12 @@ describe("retryFailedEmails clears a stale environment block reason (#3035)", ()
   });
 
   /** The last write this cron made to the row. */
+  // The last row write, by either delegate (#5298: a failed replay's write is a guarded `updateMany`).
   function lastWrite() {
-    return mocks.update.mock.calls.at(-1)?.[0] as {
+    const writes = [...mocks.update.mock.calls, ...mocks.updateMany.mock.calls]
+      .map(([args], index) => ({ args, order: [...mocks.update.mock.invocationCallOrder, ...mocks.updateMany.mock.invocationCallOrder][index]! }))
+      .sort((a, b) => a.order - b.order);
+    return writes.at(-1)?.args as {
       data: Record<string, unknown>;
     };
   }
