@@ -194,12 +194,12 @@ describe("every admin page is registered exactly once", () => {
   });
 
   it("expects a moved page at its hub path, not its old path", () => {
-    // A page that has not moved yet, played against a synthetic tree. Lodges
-    // moved in C11 part 1 (#4808), so the specimen is Chores.
+    // A page that has not moved yet, played against a synthetic tree. The
+    // Lodge hub moved whole in C11 (#4808), so the specimen is a Settings page.
     const pages = ADMIN_PAGES.map((page) =>
-      page.id === "chores" ? { ...page, moved: true } : page,
+      page.id === "modules" ? { ...page, moved: true } : page,
     );
-    const specimen = pages.find((page) => page.id === "chores")!;
+    const specimen = pages.find((page) => page.id === "modules")!;
     const afterMove = ON_DISK_PAGE_PATHS.filter((p) => p !== specimen.oldPath).concat(
       specimen.hubPath,
     );
@@ -209,12 +209,12 @@ describe("every admin page is registered exactly once", () => {
     // old path is unregistered.
     expect(diskCensus(pages, ON_DISK_PAGE_PATHS)).toEqual([
       `${PAGE_FILE_BY_PATH.get(specimen.oldPath)} (${specimen.oldPath}) has no registry entry`,
-      `chores is moved, but no page.tsx serves ${specimen.hubPath}`,
+      `modules is moved, but no page.tsx serves ${specimen.hubPath}`,
     ]);
     // Moved on disk, but the registry was not told.
     expect(diskCensus(ADMIN_PAGES, afterMove)).toEqual([
       `${specimen.hubPath} (${specimen.hubPath}) has no registry entry`,
-      `chores is not moved, but no page.tsx serves ${specimen.oldPath}`,
+      `modules is not moved, but no page.tsx serves ${specimen.oldPath}`,
     ]);
   });
 
@@ -685,10 +685,11 @@ describe("the hub prefix census", () => {
     expect(unowned).toMatch(/the route-map prefix \/admin\/booking-desk\/bookings sits under it/);
   });
 
-  it("lets the Lodge hub own Lobby Display and Lodges, and none of its unmoved pages (C11 part 1 #4808)", () => {
-    // C11 part 1 moved the Lodges and Lobby Display trees under `/admin/lodge-ops`.
-    // The prefix is not `lodge`: `/admin/lodge` is the kiosk page and a kiosk
-    // module prefix. The other eleven Lodge pages wait for part 2.
+  it("lets the Lodge hub own every one of its pages and the rules generated beneath it (C11 #4808)", () => {
+    // C11 moved every Lodge page under `/admin/lodge-ops`. The prefix is not
+    // `lodge`: `/admin/lodge` is the kiosk page and a kiosk module prefix, and
+    // the kiosk moved to `/admin/lodge-ops/lodge`. The root stays the overview
+    // catch-all. Each page's module gate followed it and is owned with it.
     const owned = ownedPagePaths("lodge-ops");
     expect(owned).toEqual([
       "/admin/lodge-ops/lodges",
@@ -697,6 +698,16 @@ describe("the hub prefix census", () => {
       "/admin/lodge-ops/lodges/[id]/display",
       "/admin/lodge-ops/lodges/[id]/roster",
       "/admin/lodge-ops/lodges/[id]/setup",
+      "/admin/lodge-ops/rooms-beds",
+      "/admin/lodge-ops/lodge",
+      "/admin/lodge-ops/hut-leaders",
+      "/admin/lodge-ops/roster",
+      "/admin/lodge-ops/roster/[date]/print",
+      "/admin/lodge-ops/chores",
+      "/admin/lodge-ops/work-parties",
+      "/admin/lodge-ops/lodge-instructions",
+      "/admin/lodge-ops/maintenance-reports",
+      "/admin/lodge-ops/food-orders",
       "/admin/lodge-ops/display",
       "/admin/lodge-ops/display/builder",
       "/admin/lodge-ops/display/devices",
@@ -706,19 +717,21 @@ describe("the hub prefix census", () => {
       "/admin/lodge-ops/display/settings",
       "/admin/lodge-ops/display/setup",
       "/admin/lodge-ops/display/templates",
+      "/admin/lodge-ops/lockers",
+      "/admin/lodge-ops/calendar",
     ]);
     expect(owned).not.toContain("/admin/lodge-ops");
-    for (const page of ADMIN_PAGES.filter((entry) => entry.hub === "lodge-ops" && !entry.moved)) {
-      expect(owned).not.toContain(page.hubPath);
-    }
-    expect(owned).not.toContain("/admin/lodge-ops/rooms-beds");
-    expect(owned).not.toContain("/admin/lodge-ops/lodge");
+    expect(ADMIN_PAGES.filter((entry) => entry.hub === "lodge-ops" && !entry.moved)).toEqual([]);
+    expect(getAdminRouteRequirement("/admin/lodge-ops", "GET")?.area).toBe("overview");
     expect(hubPrefixCollisions("lodge-ops", ownedBy("lodge-ops"))).toEqual([]);
     expect(adminHubOwnedPaths("lodge-ops")).not.toContain("/admin/lodge-ops");
     expect(TODAYS_SOURCES.routeMapPrefixes).not.toContain("/admin/lodge-ops");
     const unowned = hubPrefixCollisions("lodge-ops").join("\n");
     expect(unowned).toMatch(/the existing page \/admin\/lodge-ops\/display sits under it/);
-    expect(unowned).toMatch(/the existing page \/admin\/lodge-ops\/lodges sits under it/);
+    expect(unowned).toMatch(/the existing page \/admin\/lodge-ops\/lodge sits under it/);
+    expect(unowned).toMatch(/\/admin\/lodge-ops\/lodge \(kiosk prefix\) sits under it/);
+    expect(unowned).toMatch(/\/admin\/lodge-ops\/lockers \(lockers prefix\) sits under it/);
+    expect(unowned).toMatch(/the route-map prefix \/admin\/lodge-ops\/rooms-beds sits under it/);
   });
 
   /**
@@ -778,7 +791,7 @@ describe("the entries' shape", () => {
     expect(roots).toEqual(["dashboard"]);
   });
 
-  it("has moved the Website, Finance, Fees & booking rules, Help & system, Messages & email, Bookings and Members hubs, Lobby Display and Lodges, and nothing else (C4 #4801, C5 #4802, C6 #4803, C7 #4804, C8 #4805, C9 #4806, C10 #4807, C11 part 1 #4808)", () => {
+  it("has moved the Website, Finance, Fees & booking rules, Help & system, Messages & email, Bookings, Members and Lodge hubs, and nothing else (C4 #4801, C5 #4802, C6 #4803, C7 #4804, C8 #4805, C9 #4806, C10 #4807, C11 #4808)", () => {
     expect(
       ADMIN_PAGES.filter((page) => page.moved)
         .map((page) => page.id)
@@ -808,6 +821,8 @@ describe("the entries' shape", () => {
       "booking-requests",
       "bookings",
       "bookings-setup",
+      "calendar",
+      "chores",
       "club-identity",
       "committee",
       "communications",
@@ -826,19 +841,25 @@ describe("the entries' shape", () => {
       "family-groups",
       "fee-configuration",
       "fees",
+      "food-orders",
       "health",
+      "hut-leaders",
       "image-manager",
       "induction",
       "induction-print",
       "induction-settings",
       "internet-banking",
       "issue-reports",
+      "lockers",
       "lodge-central-lodge",
       "lodge-detail",
       "lodge-display",
+      "lodge-instructions",
+      "lodge-kiosk",
       "lodge-roster",
       "lodge-setup",
       "lodges",
+      "maintenance-reports",
       "member-applications",
       "member-detail",
       "member-fields",
@@ -860,6 +881,9 @@ describe("the entries' shape", () => {
       "promo-codes",
       "refund-requests",
       "reports",
+      "rooms-beds",
+      "roster",
+      "roster-print",
       "seasons",
       "site-banners",
       "site-content",
@@ -870,6 +894,7 @@ describe("the entries' shape", () => {
       "subscriptions",
       "testing-route-error",
       "waitlist",
+      "work-parties",
       "xero",
       "xero-member-grouping",
       "xero-record",
@@ -879,30 +904,11 @@ describe("the entries' shape", () => {
     expect(new Set(ADMIN_PAGES.filter((page) => page.moved).map((page) => page.hub))).toEqual(
       new Set(["website", "finance", "rules", "messages", "system", "bookings", "members", "lodge-ops"]),
     );
-    // Each of those hubs but Lodge moved whole: no page of theirs was left behind.
+    // Each of those hubs moved whole: no page of theirs was left behind. The
+    // only unmoved pages are Home's and Settings'.
     expect(
-      ADMIN_PAGES.filter((page) => ["website", "finance", "rules", "messages", "system", "bookings", "members"].includes(page.hub) && !page.moved).map(
-        (page) => page.id,
-      ),
-    ).toEqual([]);
-    // Lodge is part-moved (C11 part 1 #4808): Lobby Display and Lodges have
-    // moved; these twelve wait for part 2.
-    expect(
-      ADMIN_PAGES.filter((page) => page.hub === "lodge-ops" && !page.moved).map((page) => page.id),
-    ).toEqual([
-      "rooms-beds",
-      "lodge-kiosk",
-      "hut-leaders",
-      "roster",
-      "roster-print",
-      "chores",
-      "work-parties",
-      "lodge-instructions",
-      "maintenance-reports",
-      "food-orders",
-      "lockers",
-      "calendar",
-    ]);
+      new Set(ADMIN_PAGES.filter((page) => !page.moved).map((page) => page.hub)),
+    ).toEqual(new Set(["dashboard", "settings"]));
   });
 
   /**
@@ -1738,14 +1744,14 @@ async function walkRegistry(
 }
 
 describe("buildAdminUrlRules", () => {
-  it("returns the retired redirects and the Website, Finance, Rules, Help & system, Messages, Bookings, Members, Lobby Display and Lodges pages' move rules", () => {
+  it("returns the retired redirects and the Website, Finance, Rules, Help & system, Messages, Bookings, Members and Lodge pages' move rules", () => {
     // C4 (#4801) moved the Website pages under `/admin/website`, C5 (#4802)
     // the Finance pages under `/admin/finance`, C6 (#4803) the Fees & booking
     // rules pages under `/admin/rules`, C7 (#4804) the Help & system pages
     // under `/admin/system`, C8 (#4805) the Messages & email pages under
     // `/admin/messages`, C9 (#4806) the Members pages under `/admin/membership`,
-    // C10 (#4807) the Bookings pages under `/admin/booking-desk` and C11 part 1
-    // (#4808) the Lobby Display and Lodges pages under `/admin/lodge-ops`. Off: each hub URL redirects to the old URL, and a
+    // C10 (#4807) the Bookings pages under `/admin/booking-desk` and C11
+    // (#4808) the Lodge pages under `/admin/lodge-ops`. Off: each hub URL redirects to the old URL, and a
     // beforeFiles rewrite serves the old URL from the moved file. On: the old
     // URL redirects to the hub URL, and there are no rewrites. Retired pages
     // still come first. Bookings Setup, System Health, and the three retired
@@ -1815,6 +1821,8 @@ describe("buildAdminUrlRules", () => {
       ["/admin/booking-requests", "/admin/booking-desk/booking-requests"],
       ["/admin/bookings", "/admin/booking-desk/bookings"],
       ["/admin/bookings-setup", "/admin/rules/bookings-setup"],
+      ["/admin/calendar", "/admin/lodge-ops/calendar"],
+      ["/admin/chores", "/admin/lodge-ops/chores"],
       ["/admin/committee", "/admin/membership/committee"],
       ["/admin/communications", "/admin/messages/communications"],
       ["/admin/deletion-requests", "/admin/membership/deletion-requests"],
@@ -1832,13 +1840,19 @@ describe("buildAdminUrlRules", () => {
       ["/admin/family-groups", "/admin/membership/family-groups"],
       ["/admin/fee-configuration", "/admin/rules/fee-configuration"],
       ["/admin/fees", "/admin/rules/fees"],
+      ["/admin/food-orders", "/admin/lodge-ops/food-orders"],
       ["/admin/health", "/admin/system/health"],
+      ["/admin/hut-leaders", "/admin/lodge-ops/hut-leaders"],
       ["/admin/image-manager", "/admin/website/image-manager"],
       ["/admin/induction", "/admin/membership/induction"],
       ["/admin/induction/settings", "/admin/membership/induction/settings"],
       ["/admin/internet-banking", "/admin/finance/internet-banking"],
       ["/admin/issue-reports", "/admin/system/issue-reports"],
+      ["/admin/lockers", "/admin/lodge-ops/lockers"],
+      ["/admin/lodge", "/admin/lodge-ops/lodge"],
+      ["/admin/lodge-instructions", "/admin/lodge-ops/lodge-instructions"],
       ["/admin/lodges", "/admin/lodge-ops/lodges"],
+      ["/admin/maintenance-reports", "/admin/lodge-ops/maintenance-reports"],
       ["/admin/member-applications", "/admin/membership/member-applications"],
       ["/admin/member-fields", "/admin/membership/member-fields"],
       ["/admin/members", "/admin/membership/members"],
@@ -1857,6 +1871,8 @@ describe("buildAdminUrlRules", () => {
       ["/admin/promo-codes", "/admin/rules/promo-codes"],
       ["/admin/refund-requests", "/admin/finance/refund-requests"],
       ["/admin/reports", "/admin/finance/reports"],
+      ["/admin/rooms-beds", "/admin/lodge-ops/rooms-beds"],
+      ["/admin/roster", "/admin/lodge-ops/roster"],
       ["/admin/seasons", "/admin/rules/seasons"],
       ["/admin/site-banners", "/admin/website/site-banners"],
       ["/admin/site-content", "/admin/website/site-content"],
@@ -1867,12 +1883,14 @@ describe("buildAdminUrlRules", () => {
       ["/admin/subscriptions", "/admin/finance/subscriptions"],
       ["/admin/testing/route-error", "/admin/system/testing/route-error"],
       ["/admin/waitlist", "/admin/booking-desk/waitlist"],
+      ["/admin/work-parties", "/admin/lodge-ops/work-parties"],
       ["/admin/xero", "/admin/finance/xero"],
       ["/admin/xero/member-grouping", "/admin/finance/xero/member-grouping"],
       ["/admin/xero/setup", "/admin/finance/xero/setup"],
       ["/admin/xero/unallocated-payments", "/admin/finance/xero/unallocated-payments"],
     ] as const;
     const inductionPrint = ["/admin/induction/[id]/print", "/admin/membership/induction/[id]/print"] as const;
+    const rosterPrint = ["/admin/roster/[date]/print", "/admin/lodge-ops/roster/[date]/print"] as const;
     const lodgePages = (["", "/central-lodge", "/display", "/roster", "/setup"] as const).map(
       (rest) => [`/admin/lodges/[id]${rest}`, `/admin/lodge-ops/lodges/[id]${rest}`] as const,
     );
@@ -1888,7 +1906,7 @@ describe("buildAdminUrlRules", () => {
         .map((page) => [page.oldPath, page.hubPath])
         .sort((a, b) => a[0].localeCompare(b[0])),
     ).toEqual(
-      [...staticMoves, inductionPrint, ...lodgePages, memberDetail, memberMerge, noticeDetail, xeroRecord].sort((a, b) =>
+      [...staticMoves, inductionPrint, ...lodgePages, memberDetail, memberMerge, noticeDetail, rosterPrint, xeroRecord].sort((a, b) =>
         a[0].localeCompare(b[0]),
       ),
     );
@@ -1903,6 +1921,7 @@ describe("buildAdminUrlRules", () => {
       ["/admin/members/:id", "/admin/membership/members/:id"],
       ["/admin/members/:id/merge", "/admin/membership/members/:id/merge"],
       ["/admin/notices/:id", "/admin/messages/notices/:id"],
+      ["/admin/roster/:date/print", "/admin/lodge-ops/roster/:date/print"],
       [
         "/admin/xero/records/:localModel/:localId",
         "/admin/finance/xero/records/:localModel/:localId",
