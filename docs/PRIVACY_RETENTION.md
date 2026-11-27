@@ -209,6 +209,7 @@ kinds stay as they were either way:
 | `MembershipSubscriptionCharge` | Member billing, invoice snapshots and billing decisions | Kept with booking / financial records for reconciliation and evidence; no new automatic deletion | Keep |
 | `MembershipSubscriptionChargeComponent` | Member billing, invoice snapshots and billing decisions | Kept with booking / financial records for reconciliation and evidence; no new automatic deletion | Keep |
 | `MembershipSubscriptionChargeCoverage` | Member billing, invoice snapshots and billing decisions | Kept with booking / financial records for reconciliation and evidence; no new automatic deletion | Keep |
+| `MemberSubscriptionAgeUpAdjustment` | Member billing: a mid-season age-up's part-season top-up or credit (#5190) | Kept with booking / financial records for reconciliation and evidence; no new automatic deletion | Keep |
 | `FamilyGroupSeasonInvoiceMarker` | Member billing, invoice snapshots and billing decisions | Kept with booking / financial records for reconciliation and evidence; no new automatic deletion | Keep |
 | `MembershipBillingException` | Member billing, invoice snapshots and billing decisions | Kept with booking / financial records for reconciliation and evidence; no new automatic deletion | Keep |
 | `MembershipSubscriptionBillingSettings` | Club configuration and last updating officer | While configuration is in use; keep updater attribution for administration | Keep |

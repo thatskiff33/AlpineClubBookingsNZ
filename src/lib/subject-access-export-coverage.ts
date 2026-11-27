@@ -76,6 +76,7 @@ export const SUBJECT_ACCESS_EXPORT_COVERAGE = {
   MembershipSubscriptionCharge: SHARED,
   MembershipSubscriptionChargeComponent: SHARED,
   MembershipSubscriptionChargeCoverage: "additionalRecords.MembershipSubscriptionChargeCoverage",
+  MemberSubscriptionAgeUpAdjustment: "additionalRecords.MemberSubscriptionAgeUpAdjustment",
   FamilyGroupSeasonInvoiceMarker: SHARED,
   MembershipBillingException: "additionalRecords.MembershipBillingException",
   MembershipSubscriptionBillingSettings: CLUB_CONFIG,

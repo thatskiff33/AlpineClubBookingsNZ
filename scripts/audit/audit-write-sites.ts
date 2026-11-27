@@ -464,6 +464,7 @@ export const AUDIT_WRITE_SITES: Readonly<Record<string, AuditWriteSiteLedgerEntr
   "src/lib/manual-subscription-payment.ts::applyManualSubscriptionPayment#1": {"category":"payment","sink":"createAuditLog","action":"membership-subscription.manual-payment.mark-unpaid"},
   "src/lib/mcp/audit.ts::recordMcpAudit#0": {"category":"security","sink":"createStructuredAuditLog","action":"(dynamic) event.action"},
   "src/lib/member-credit.ts::createAdminAdjustmentRequest.request#0": {"category":"payment","sink":"createAuditLog","action":"member.credit.adjustment.request","reviewed":["2581-applied"]},
+  "src/lib/member-credit.ts::postAgeUpCreditLot#0": {"category":"payment","sink":"createAuditLog","action":"member.credit.age_up_credit"},
   "src/lib/member-credit.ts::reviewAdminAdjustmentRequest.result#0": {"category":"payment","sink":"createAuditLog","action":"member.credit.adjustment.reject","reviewed":["2581-applied"]},
   "src/lib/member-credit.ts::reviewAdminAdjustmentRequest.result#1": {"category":"payment","sink":"createAuditLog","action":"member.credit.adjustment.approve","reviewed":["2581-applied","2695-member-facing"]},
   "src/lib/member-email-inheritance.ts::auditEmailInheritanceSourceChange#0": {"category":"family","sink":"createStructuredAuditLog","action":"(dynamic) EMAIL_INHERITANCE_SOURCE_CHANGED_ACTION"},

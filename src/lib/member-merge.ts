@@ -861,7 +861,7 @@ const MEANINGFUL_SUBSCRIPTION_OR: Prisma.MemberSubscriptionWhereInput["OR"] = [
   { paidAt: { not: null } },
   // #2147: chargeCoverage is now a list — ANY coverage row (active or a retained
   // released one) makes the loser subscription meaningful for merge-collision.
-  { chargeCoverage: { some: {} } },
+  { chargeCoverage: { some: {} } }, { ageUpAdjustments: { some: {} } }, // #5190 PR 3: age-up rows too
 ];
 
 /**

@@ -884,10 +884,6 @@ export async function postAgeUpCreditLot(
       entityId: input.adjustmentId,
       targetId: input.memberId,
       details: `Posted age-up credit ${credit.id} for adjustment ${input.adjustmentId}: ${formatAdjustmentAmount(input.amountCents, input.format)}. ${input.description}.`,
-      memberDisclosure: {
-        visibility: "member-facing",
-        text: `Credit of ${formatCents(input.amountCents, input.format)} added to your account. Reason: ${input.description}`,
-      },
     },
     tx,
   );

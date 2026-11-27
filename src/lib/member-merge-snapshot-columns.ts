@@ -83,6 +83,11 @@ export const MEMBER_MERGE_SNAPSHOT_SCALAR_COLUMNS: readonly string[] = [
   // settings-audit scalar as the column above.
   "McpSettings.updatedByMemberId",
   "MembershipSubscriptionChargeCoverage.memberId",
+  // #5190 PR 3: whom a mid-season age-up top-up or credit was raised for, a
+  // snapshot like the coverage row's. The adjustment hangs off the season row
+  // (`memberSubscriptionId`), which is what follows a merge; the credit worker
+  // reads the member through it, never through this column.
+  "MemberSubscriptionAgeUpAdjustment.memberId",
   "AuditLog.actorMemberId",
   "AuditLog.subjectMemberId",
   "AuditLog.memberId",
