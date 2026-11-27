@@ -874,6 +874,8 @@ describe("xero target-org binding", () => {
             .fn()
             .mockResolvedValue(tenantId ? { tenantId, expiresAt: new Date() } : null),
         },
+        // No stored chart of accounts, so there is no kind of account to judge (#5235).
+        xeroAdminCache: { findUnique: vi.fn().mockResolvedValue(null) },
       }) as unknown as ReadDb;
 
     const disconnected = await buildImportPlan(dbWithTenant(null), zip, { format: CLUB_FORMAT_TEST, mode: "merge" });

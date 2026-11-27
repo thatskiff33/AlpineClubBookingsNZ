@@ -293,6 +293,29 @@ export async function getCachedChartOfAccounts(): Promise<XeroAdminCacheRecord<X
   );
 }
 
+/**
+ * The connected organisation's chart of accounts as last stored, read through
+ * the CALLER's client: for a reader that may be inside a transaction. The
+ * configuration import plans a second time inside its apply (`INV-LOCK-004`),
+ * where `getCachedChartOfAccounts` would read through the module client on
+ * another connection. Every refresh stores the chart as it fills the
+ * per-process copy, so the two readers answer alike. Null when Xero is not
+ * connected, nothing is stored, or the stored chart has expired. A failed read
+ * is thrown, not swallowed: inside a transaction it has already ended it.
+ */
+export async function readStoredChartOfAccounts(
+  db: Pick<Prisma.TransactionClient, "xeroAdminCache" | "xeroConnection">,
+): Promise<XeroAccount[] | null> {
+  const tenantId = (await readXeroConnection(db))?.tenantId ?? null;
+  if (!tenantId) return null;
+  const record = await db.xeroAdminCache.findUnique({
+    where: { cacheKey_tenantId: { cacheKey: CHART_OF_ACCOUNTS_CACHE_KEY, tenantId } },
+    select: { payload: true, expiresAt: true },
+  });
+  if (!record || record.expiresAt.getTime() <= Date.now()) return null;
+  return isXeroAccountArray(record.payload) ? record.payload : null;
+}
+
 export async function setCachedChartOfAccounts(
   tenantId: string,
   accounts: XeroAccount[]
