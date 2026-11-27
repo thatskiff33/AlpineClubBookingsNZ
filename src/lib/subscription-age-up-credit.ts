@@ -16,7 +16,9 @@
  *     shares), and the adjustment ends CREDITED_ON_INVOICE. A retry of a
  *     reserved credit stays on that invoice, whatever it owes by then: Xero
  *     may hold a note this app never recorded, so the lot route is closed. A
- *     balance Xero did not send is an error, never read as nothing owed.
+ *     balance Xero did not send is an error, never read as nothing owed; and
+ *     an invoice Xero holds voided, deleted or not yet approved owes nothing
+ *     without having been paid, so the credit goes on waiting (step 1).
  *  3. Otherwise (the invoice is paid, or owes less) the credit becomes a
  *     positive member credit lot with its own Xero note queued
  *     (`postAgeUpCreditLot`), spent later through `applyCreditToBooking`, which
@@ -32,6 +34,7 @@
  * booking or settlement money, so no global or season key, `INV-LOCK-001`).
  * The provider call is never inside that transaction.
  */
+import { Invoice } from "xero-node";
 import type { AgeUpCreditPayload } from "@/lib/age-up-credit-payload";
 import { AGE_UP_ADJUSTMENT_LOCAL_MODEL, buildAgeUpCreditPayload } from "@/lib/age-up-credit-payload";
 import { clubFormatValues } from "@/lib/club-format-server";
@@ -190,25 +193,33 @@ export async function createAgeUpCredit(input: {
   const season = adjustment.creditInvoiceId
     ? { kind: "invoice" as const, invoiceId: adjustment.creditInvoiceId }
     : seasonInvoiceOf(subscription);
-  if (season.kind === "wait") {
-    // Returned to PENDING by the outbox and looked at again later; nothing was sent.
-    throw new XeroAppliedCreditOperationBusyError(
+  // Returned to PENDING by the outbox and looked at again later; nothing was sent.
+  const awaitingSeasonInvoice = () =>
+    new XeroAppliedCreditOperationBusyError(
       "This age-group change credit waits until the member's season invoice is raised in Xero.",
       null,
       AGE_UP_CREDIT_AWAITING_SEASON_INVOICE_CODE,
     );
-  }
+  if (season.kind === "wait") throw awaitingSeasonInvoice();
 
+  let route: SeasonInvoiceRoute = "lot";
   try {
     if (season.kind === "invoice") {
-      const credited = await creditOnSeasonInvoice({
+      route = await creditOnSeasonInvoice({
         adjustment: { ...adjustment, memberId: subscription.memberId, subscriptionId: subscription.id },
         invoiceId: season.invoiceId,
         memberXeroContactId: subscription.member.xeroContactId,
         syncOperation,
       });
-      if (credited) return;
     }
+  } catch (error) {
+    await failXeroSyncOperation(syncOperation, error);
+    throw error;
+  }
+  if (route === "credited") return;
+  if (route === "wait") throw awaitingSeasonInvoice();
+
+  try {
     const lot = await creditAgeUpAdjustmentToAccount(adjustment.id);
     await completeXeroSyncOperation(syncOperation, {
       responsePayload: lot
@@ -227,10 +238,24 @@ export async function createAgeUpCredit(input: {
 }
 
 /**
- * The allocate route. True when the credit note was raised (or found) and
- * allocated; false when the invoice owes less than the credit, so the caller
- * takes the lot route instead. Nothing has been raised when it returns false.
+ * What the season invoice in Xero makes of the credit: `credited` when the
+ * note was raised (or found) and allocated to it; `lot` when the invoice is
+ * paid or owes less than the credit, so the caller takes the lot route; `wait`
+ * when Xero does not hold it as an issued invoice. Nothing has been raised or
+ * reserved for `lot` and `wait`.
  */
+type SeasonInvoiceRoute = "credited" | "lot" | "wait";
+
+/**
+ * Whether Xero holds the invoice issued, so its balance says what was paid. A
+ * voided, deleted, draft or unapproved invoice owes nothing, or everything,
+ * with no payment behind the figure.
+ */
+function isIssuedInvoiceStatus(status: Invoice.StatusEnum | undefined): boolean {
+  return status === Invoice.StatusEnum.AUTHORISED || status === Invoice.StatusEnum.PAID;
+}
+
+/** The allocate route; see {@link SeasonInvoiceRoute}. */
 async function creditOnSeasonInvoice(input: {
   adjustment: {
     id: string;
@@ -244,7 +269,7 @@ async function creditOnSeasonInvoice(input: {
   invoiceId: string;
   memberXeroContactId: string | null;
   syncOperation: XeroOperationClaim;
-}): Promise<boolean> {
+}): Promise<SeasonInvoiceRoute> {
   const { adjustment, invoiceId } = input;
   const existingNote = await prisma.xeroObjectLink.findFirst({
     where: {
@@ -270,7 +295,13 @@ async function creditOnSeasonInvoice(input: {
   // A reserved credit, or one whose note is already recorded, is allocated
   // whatever is owed now: a second note, or a lot beside it, would credit twice.
   if (!adjustment.creditInvoiceId) {
-    if (!existingNote && amountDueCents < adjustment.amountCents) return false;
+    if (!existingNote) {
+      if (!invoice.status) throw new Error(`Xero returned no status for season invoice ${invoiceId}.`);
+      // The membership sync voids the charge of a voided invoice, and the
+      // credit then waits for the season to be invoiced again.
+      if (!isIssuedInvoiceStatus(invoice.status)) return "wait";
+      if (amountDueCents < adjustment.amountCents) return "lot";
+    }
     if (!(await reserveAgeUpCreditInvoice(adjustment.id, invoiceId))) {
       throw new Error("Another worker claimed this age-group credit; recheck its outcome.");
     }
@@ -375,5 +406,5 @@ async function creditOnSeasonInvoice(input: {
       },
     ],
   });
-  return true;
+  return "credited";
 }
