@@ -361,9 +361,6 @@ function buildTx(
     },
     season: { findMany: vi.fn().mockResolvedValue([]) },
     groupDiscountSetting: { findUnique: vi.fn().mockResolvedValue(null) },
-    // #3032: the pending-review fence reads this under the booking-edit locks.
-    // Empty by default - no financial review is open - so every pre-#3032 test
-    // asserts exactly what it asserted before.
     // #3032: `findUnique` and `create` are the raise's find-then-create pair on
     // the occurrence-key index. Null means "not on file", so a parked removal
     // takes the create branch.
@@ -523,17 +520,11 @@ describe("DELETE guest removal - no stored per-night record is priced, not parke
     const written = tx.booking.update.mock.calls[0][0].data;
     expect(written.totalPriceCents).toBe(4000);
     expect(written.finalPriceCents).toBe(4000);
-    // And the member is not told a review is open, because none is.
-    expect(mocks.sendBookingModifiedEmail).toHaveBeenCalledWith(
-      expect.objectContaining({ financialReviewPending: false }),
-      CLUB_FORMAT_TEST,
-    );
   });
 
-  it("hands the fence's own machine code back to the caller, not a bare 409", async () => {
-    // The refusal that still reaches this route: a review raised before #4317
-    // is still open on this booking (waves B and C retire them), so a second
-    // money-affecting removal waits for it.
+  it("removes the guest while an old edit review is still open (#4344 wave C2)", async () => {
+    // The retired pending-review fence refused this with a 409. An OPEN row is
+    // arranged where it read, so putting it back would turn this into a refusal.
     const tx = buildTx([ADULT, CHILD], preEditBooking([ADULT, CHILD]));
     tx.manualRefundTask.findFirst.mockResolvedValue({
       id: "task-open",
@@ -550,22 +541,11 @@ describe("DELETE guest removal - no stored per-night record is priced, not parke
       params: Promise.resolve({ id: "b1", guestId: "g-child" }),
     });
 
-    expect(res.status).toBe(409);
-    expect((await res.json()).code).toBe("EDIT_FINANCIAL_REVIEW_PENDING");
-    // Refused before anything was written.
-    expect(tx.bookingGuest.delete).not.toHaveBeenCalled();
-    expect(tx.manualRefundTask.create).not.toHaveBeenCalled();
-  });
-
-  it("says nothing about a review on a removal that priced normally", async () => {
-    const res = await runRemoval("g-child", [ADULT, CHILD]);
-
     expect(res.status).toBe(200);
+    expect(tx.bookingGuest.delete).toHaveBeenCalledWith({ where: { id: "g-child" } });
+    expect(mocks.applyPaymentAdjustments).toHaveBeenCalledTimes(1);
+    expect(tx.manualRefundTask.create).not.toHaveBeenCalled();
     expect(mocks.sendBookingModifiedEmail).toHaveBeenCalledTimes(1);
-    expect(mocks.sendBookingModifiedEmail).toHaveBeenCalledWith(
-      expect.objectContaining({ financialReviewPending: false }),
-      CLUB_FORMAT_TEST,
-    );
   });
 
   it("settles normally, and raises nothing, when every strand's rows reconcile", async () => {
