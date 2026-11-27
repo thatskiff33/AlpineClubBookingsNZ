@@ -56,10 +56,6 @@ vi.mock("@/lib/admin-permissions", () => ({
 }));
 vi.mock("@/lib/prisma", () => ({
   prisma: {
-    // #3032: the preview half of the pending-review fence reads this. Empty by
-    // default - no financial review is open - so this suite asserts exactly what
-    // it asserted before.
-    manualRefundTask: { findFirst: vi.fn().mockResolvedValue(null) },
     booking: { findUnique: h.bookingFindUnique },
     season: { findMany: h.seasonFindMany },
     groupDiscountSetting: { findUnique: h.groupDiscountFindUnique },
@@ -85,8 +81,8 @@ vi.mock("@/lib/lodges", () => ({
   getDefaultLodgeId: h.getDefaultLodgeId,
   lodgeNullTolerantScope: () => ({}),
 }));
-// #3032: PARTIAL mock. The pending-review fence added an import to
-// `modify-quote/route.ts`, which widened this suite's module graph until
+// #3032: PARTIAL mock. An import once added to
+// `modify-quote/route.ts` widened this suite's module graph until
 // `club-identity.ts` read `FALLBACK_LODGE_CAPACITY` at import time and the whole
 // file died before a single test ran. `importOriginal` keeps every other export
 // real, so the next widening cannot break it the same way (docs/TESTING.md).

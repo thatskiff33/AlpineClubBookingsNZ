@@ -41,14 +41,6 @@ vi.mock("@/lib/stripe-dispute-hold", async (importOriginal) => ({
 }));
 vi.mock("@/lib/prisma", () => ({
   prisma: {
-    /*
-      #3032: the modified email asks whether the club is still working out an
-      amount on this booking, through `bookingHasOpenFinancialReview`. That
-      reads the GLOBAL client after the transaction commits, which is a
-      different read from the fence's in-transaction `findFirst`. Empty by
-      default - no review is open - so every pre-#3032 assertion in this file
-      means exactly what it meant before.
-    */
     // #3954: no increase is waiting on its mint's recovery for a reduction to net off.
     paymentRecoveryOperation: { findMany: vi.fn(async () => []) },
     manualRefundTask: { aggregate: vi.fn(async () => ({ _sum: { amountCents: null } })), findMany: vi.fn().mockResolvedValue([]) },
@@ -559,19 +551,12 @@ function makeTx(
       deleteMany: vi.fn().mockResolvedValue({ count: 0 }),
       createMany: vi.fn().mockResolvedValue({ count: 0 }),
     },
-    // #3032: the pending-review fence reads this under the booking-edit locks.
-    // Empty by default - no financial review is open - so every pre-#3032 test
-    // asserts exactly what it asserted before.
     // #3954: no increase is waiting on its mint's recovery for a reduction to net off.
     paymentRecoveryOperation: { findMany: vi.fn(async () => []) },
     manualRefundTask: {
       // #3827 (`INV-PAY-117`): no open edit refund hand-back on file.
       aggregate: vi.fn(async () => ({ _sum: { amountCents: null } })),
       findFirst: vi.fn().mockResolvedValue(null),
-      // #3032: the modified email asks whether the club is still working
-      // out an amount on this booking (`bookingHasOpenFinancialReview`).
-      // Empty by default - no review is open - so every pre-#3032
-      // assertion in this file means exactly what it meant before.
       findMany: vi.fn().mockResolvedValue([]),
     },
     bookingModification: { create: vi.fn().mockResolvedValue({ id: "mod1" }) },

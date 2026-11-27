@@ -84,10 +84,6 @@ vi.mock("@/lib/prisma", () => ({
       // #3827 (`INV-PAY-117`): no open edit refund hand-back on file.
       aggregate: vi.fn(async () => ({ _sum: { amountCents: null } })),
       findFirst: vi.fn().mockResolvedValue(null),
-      // #3032: the modified email asks whether the club is still working
-      // out an amount on this booking (`bookingHasOpenFinancialReview`).
-      // Empty by default - no review is open - so every pre-#3032
-      // assertion in this file means exactly what it meant before.
       findMany: vi.fn().mockResolvedValue([]),
       // #3827 (D-3813-6): an internet-banking reduction's officer refund task.
       createMany: vi.fn().mockResolvedValue({ count: 1 }),
@@ -561,10 +557,6 @@ function makeTx(booking: ReturnType<typeof makeBooking>) {
       // #3827 (`INV-PAY-117`): no open edit refund hand-back on file.
       aggregate: vi.fn(async () => ({ _sum: { amountCents: null } })),
       findFirst: vi.fn().mockResolvedValue(null),
-      // #3032: the modified email asks whether the club is still working
-      // out an amount on this booking (`bookingHasOpenFinancialReview`).
-      // Empty by default - no review is open - so every pre-#3032
-      // assertion in this file means exactly what it meant before.
       findMany: vi.fn().mockResolvedValue([]),
       // #3827 (D-3813-6): an internet-banking reduction's officer refund task.
       createMany: vi.fn().mockResolvedValue({ count: 1 }),

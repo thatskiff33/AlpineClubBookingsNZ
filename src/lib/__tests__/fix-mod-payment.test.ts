@@ -107,9 +107,6 @@ vi.mock("@/lib/prisma", () => ({
     // route's early getDefaultLodgeCapacity guard reads it off the singleton).
     lodgeSettings: { findUnique: async () => ({ capacity: 100 }) },
     bookingGuest: { create: mockBookingGuestCreate, update: mockBookingGuestUpdate },
-    // #3032: the pending-review fence reads this under the booking-edit locks.
-    // Empty by default - no financial review is open - so every pre-#3032 test
-    // asserts exactly what it asserted before.
     // #3954: no increase is waiting on its mint's recovery for a reduction to net off.
     // Final review: a re-issuing door reads its recovery back after commit
     // (`readReissuedAskRecovery`); none by default.
@@ -122,10 +119,6 @@ vi.mock("@/lib/prisma", () => ({
       // #3827 (`INV-PAY-117`): no open edit refund hand-back on file.
       aggregate: vi.fn(async () => ({ _sum: { amountCents: null } })),
       findFirst: vi.fn().mockResolvedValue(null),
-      // #3032: the modified email asks whether the club is still working
-      // out an amount on this booking (`bookingHasOpenFinancialReview`).
-      // Empty by default - no review is open - so every pre-#3032
-      // assertion in this file means exactly what it meant before.
       findMany: vi.fn().mockResolvedValue([]),
       // #3166: the two calls `raiseEditFinancialReviewTask` makes when the date
       // path parks. Present on every double rather than only the parking cases,
@@ -626,9 +619,6 @@ function makeTx(booking: ReturnType<typeof makeBooking>) {
       deleteMany: vi.fn().mockResolvedValue({ count: 0 }),
       createMany: vi.fn().mockResolvedValue({ count: 0 }),
     },
-    // #3032: the pending-review fence reads this under the booking-edit locks.
-    // Empty by default - no financial review is open - so every pre-#3032 test
-    // asserts exactly what it asserted before.
     // #3954: no increase is waiting on its mint's recovery for a reduction to net off.
     paymentRecoveryOperation: { findMany: vi.fn(async () => []) },
     manualRefundTask: {
@@ -637,10 +627,6 @@ function makeTx(booking: ReturnType<typeof makeBooking>) {
       findFirst: vi.fn().mockResolvedValue(null),
       // #4516 (M4d): the internet-banking reduction's task, read back for its R05.
       findUniqueOrThrow: vi.fn().mockResolvedValue({ id: "hand-back-1", amountCents: 3000 }),
-      // #3032: the modified email asks whether the club is still working
-      // out an amount on this booking (`bookingHasOpenFinancialReview`).
-      // Empty by default - no review is open - so every pre-#3032
-      // assertion in this file means exactly what it meant before.
       findMany: vi.fn().mockResolvedValue([]),
       // #3166: the two calls `raiseEditFinancialReviewTask` makes when the date
       // path parks. Present on every double rather than only the parking cases,

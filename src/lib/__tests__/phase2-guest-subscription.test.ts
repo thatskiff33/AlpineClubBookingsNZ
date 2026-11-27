@@ -45,9 +45,6 @@ vi.mock("@/lib/prisma", () => ({
     // #2364: the hosting review is reconciled inside the booking write, so
     // every prisma/tx double a booking path runs against needs this client.
     adultMemberHostingPolicy: { findMany: vi.fn().mockResolvedValue([]) },
-    // #3032: the preview half of the pending-review fence reads this. Empty by
-    // default - no financial review is open - so this suite asserts exactly what
-    // it asserted before.
     // #3954: no increase is waiting on its mint's recovery for a reduction to net off.
     paymentRecoveryOperation: { findMany: vi.fn(async () => []) },
     // #5061 follow-up: a card payment's reduction reads its captures for a dispute hold; none is disputed.
