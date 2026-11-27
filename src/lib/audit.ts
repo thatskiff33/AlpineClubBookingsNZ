@@ -60,9 +60,8 @@ export type { AuditMemberDisclosure };
 
 export const AUDIT_SEVERITIES = ["info", "important", "critical"] as const;
 export type AuditSeverity = (typeof AUDIT_SEVERITIES)[number];
-// The auth-bounce diagnostics (#1669) store their classification reason in
-// the outcome column so bounce records stay queryable via the existing
-// (outcome, createdAt) index.
+// The auth-bounce diagnostics (#1669) store their classification reason in the
+// outcome column, so bounce records stay queryable via the (outcome, createdAt) index.
 type AuditOutcome =
   | "success"
   | "failure"
