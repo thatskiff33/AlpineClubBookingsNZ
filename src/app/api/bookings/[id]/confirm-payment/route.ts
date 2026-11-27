@@ -235,12 +235,8 @@ export async function POST(
 
     // #5433: the invoice first, then the owed confirmation a fresh PAID carries (once whichever path wins, #772; a stop
     // leaves it to the sweep), or the unkeyed fallback.
-    await queueInvoiceAndDeliverPaidConfirmation(reconciliation, {
-      bookingId,
-      format,
-      job: "confirm-payment",
-      queueInvoice: () => queueXeroInvoiceForPaidBooking({ bookingId, createdByMemberId: session.user.id }),
-    });
+    await queueInvoiceAndDeliverPaidConfirmation(reconciliation, { bookingId, format, job: "confirm-payment",
+      queueInvoice: () => queueXeroInvoiceForPaidBooking({ bookingId, createdByMemberId: session.user.id }) });
 
     logAudit({
       action: "booking.payment.confirmed",

@@ -12,7 +12,7 @@ import { getDefaultLodgeId } from "@/lib/lodges";
 import { prisma } from "@/lib/prisma";
 import { createPaymentIntent, findOrCreateCustomer, getPaymentIntent } from "@/lib/stripe";
 import { markBookingPaymentSucceeded } from "@/lib/payment-reconciliation";
-import { queueInvoiceAndDeliverPaidConfirmation, type CardSettleConfirmationResult } from "@/lib/paid-booking-confirmation-after-commit";
+import { queueInvoiceAndDeliverPaidConfirmation } from "@/lib/paid-booking-confirmation-after-commit";
 import { CreatePaymentIntentSchema } from "@/types/payments";
 import { auth } from "@/lib/auth";
 import { requireActiveSessionUser } from "@/lib/session-guards";
@@ -603,50 +603,40 @@ export async function POST(request: NextRequest) {
 
         if (!refundedHistory && !supersededCapture) {
           receivedPaymentIntentId = existingIntent.id;
-          // #5433 (the card recovery doors): null when the payment was already recorded and nothing settles here.
-          let reconciliation: CardSettleConfirmationResult | null = null;
+          let reconciliation: Awaited<ReturnType<typeof markBookingPaymentSucceeded>> | null = null; // #5433: null, nothing settled here
           if (booking.payment.status !== "SUCCEEDED") {
-            const settled = await markBookingPaymentSucceeded({
+            reconciliation = await markBookingPaymentSucceeded({
       capturedAt: receiptCaptureTime(existingIntent),
               format,
               bookingId: booking.id,
               paymentIntentId: existingIntent.id,
               amountCents: existingIntent.amount,
               paymentMethodId: getStripePaymentMethodId(existingIntent),
-              // #5433: this recovery settles a capture whose webhook was missed; that webhook, arriving later, finds
-              // the booking paid and sends nothing, so the confirmation is owed here.
-              owesPaidConfirmation: true,
+              owesPaidConfirmation: true, // #5433: the missed webhook, arriving later, finds the booking paid and sends nothing
             });
-            reconciliation = settled;
-
             if (
-              settled.outcome === "cancelled_refunded" ||
-              settled.outcome === "cancelled_refund_failed"
+              reconciliation.outcome === "cancelled_refunded" ||
+              reconciliation.outcome === "cancelled_refund_failed"
             ) {
               return NextResponse.json(
                 {
                   error:
                     "Payment succeeded, but lodge capacity is no longer available for this booking.",
                   status: BookingStatus.CANCELLED,
-                  refunded: settled.outcome === "cancelled_refunded",
-                  capacityRefund: settled.capacityRefund,
+                  refunded: reconciliation.outcome === "cancelled_refunded",
+                  capacityRefund: reconciliation.capacityRefund,
                 },
                 { status: 409 }
               );
             }
             // #4300: the settle's own check under lock(1) found it superseded.
-            if (settled.outcome === "superseded_capture") {
+            if (reconciliation.outcome === "superseded_capture") {
               return NextResponse.json({ ...SUPERSEDED_CARD_PAYMENT_REFUNDING_BODY, creditElection }, { status: 409 });
             }
           }
 
-          // #5433: the invoice first, as before, then the owed confirmation (or the unkeyed fallback).
-          await queueInvoiceAndDeliverPaidConfirmation(reconciliation, {
-            bookingId: booking.id,
-            format,
-            job: "create-payment-intent",
-            queueInvoice: () => queueXeroInvoiceForPaidBooking({ bookingId: booking.id, createdByMemberId: session.user.id }),
-          });
+          await queueInvoiceAndDeliverPaidConfirmation(reconciliation, { bookingId: booking.id, format, job: "create-payment-intent", // #5433: invoice, then confirmation
+            queueInvoice: () => queueXeroInvoiceForPaidBooking({ bookingId: booking.id, createdByMemberId: session.user.id }) });
 
           return NextResponse.json({
             alreadyPaid: true,

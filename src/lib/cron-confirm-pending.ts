@@ -1575,12 +1575,8 @@ export async function confirmPendingBookings(): Promise<CronConfirmResult> {
 
         result.confirmedBookingIds.push(resolution.booking.id);
         // #5433: the invoice first, then the owed confirmation, or the unkeyed fallback (PR 4, round 2).
-        await queueInvoiceAndDeliverPaidConfirmation(reconciliation, {
-          bookingId: resolution.booking.id,
-          format,
-          job: "confirmPendingBookings",
-          queueInvoice: () => queueXeroInvoice(resolution.booking.id, "Xero invoice queued"),
-        });
+        await queueInvoiceAndDeliverPaidConfirmation(reconciliation, { bookingId: resolution.booking.id, format, job: "confirmPendingBookings",
+          queueInvoice: () => queueXeroInvoice(resolution.booking.id, "Xero invoice queued") });
       } else {
         const releaseOutcome = await runSavedCardClaimRelease(async (tx) => {
           // #3267: record the intent Stripe answered with on the attempt row

@@ -30,7 +30,7 @@ import { logAudit } from "@/lib/audit";
 import { getClientIp } from "@/lib/rate-limit-http";
 import { BookingStatus } from "@prisma/client";
 import { markBookingPaymentSucceeded } from "@/lib/payment-reconciliation";
-import { queueInvoiceAndDeliverPaidConfirmation, type CardSettleConfirmationResult } from "@/lib/paid-booking-confirmation-after-commit";
+import { queueInvoiceAndDeliverPaidConfirmation } from "@/lib/paid-booking-confirmation-after-commit";
 import {
   acquireLodgeCapacityLock,
   checkCapacityForGuestRanges,
@@ -427,8 +427,7 @@ export async function POST(request: NextRequest) {
       card,
     });
 
-    // #5433: the settle's result, for the confirmation delivered after the invoice below.
-    let reconciliation: CardSettleConfirmationResult | null = null;
+    let reconciliation: Awaited<ReturnType<typeof markBookingPaymentSucceeded>> | null = null; // #5433: for the confirmation below
     if (paymentIntent.status === "succeeded") {
       paymentSucceeded = true;
       capturedPaymentIntentId = paymentIntent.id;
@@ -453,7 +452,7 @@ export async function POST(request: NextRequest) {
           "Failed to pre-record captured saved-method charge",
         );
       }
-      const settled = await markBookingPaymentSucceeded({
+      reconciliation = await markBookingPaymentSucceeded({
       capturedAt: receiptCaptureTime(paymentIntent),
         format,
         bookingId,
@@ -461,29 +460,25 @@ export async function POST(request: NextRequest) {
         amountCents: paymentIntent.amount,
         paymentMethodId:
           stripeReferenceId(paymentIntent.payment_method),
-        // #5433: this charge confirms the booking by itself; the webhook for the same intent, arriving later, finds
-        // it paid and sends nothing, so the confirmation is owed here (delivered after the invoice below).
-        owesPaidConfirmation: true,
+        owesPaidConfirmation: true, // #5433: the webhook for this intent, arriving later, finds the booking paid and sends nothing
       });
-      reconciliation = settled;
-
       if (
-        settled.outcome === "cancelled_refunded" ||
-        settled.outcome === "cancelled_refund_failed"
+        reconciliation.outcome === "cancelled_refunded" ||
+        reconciliation.outcome === "cancelled_refund_failed"
       ) {
         return NextResponse.json(
           {
             error:
               "Payment succeeded, but lodge capacity is no longer available for this booking.",
             status: "CANCELLED",
-            refunded: settled.outcome === "cancelled_refunded",
+            refunded: reconciliation.outcome === "cancelled_refunded",
           },
           { status: 409 }
         );
       }
 
       // #4300 (`INV-PAY-138`): superseded, so going back; nothing paid, so the claim is released.
-      if (settled.outcome === "superseded_capture") {
+      if (reconciliation.outcome === "superseded_capture") {
         claimReleaser = null;
         await releaseChargeClaim().catch((err) => logger.error({ err, bookingId }, "Could not release the claim of a refused superseded charge (#4300)"));
         return NextResponse.json({ success: false, ...SUPERSEDED_CHARGE_NOT_SETTLED_BODY, paymentIntentId: paymentIntent.id }, { status: 409 });
@@ -548,29 +543,19 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Queue the invoice durably and try to kick the worker when payment succeeds; then (#5433) deliver the owed
-    // confirmation a fresh PAID carries, or the unkeyed fallback. An already-paid booking is sent nothing here.
+    // Queue the invoice durably and try to kick the worker when payment succeeds; then the owed confirmation (#5433).
     if (paymentIntent.status === "succeeded" && finalCapacityClaimed) {
-      await queueInvoiceAndDeliverPaidConfirmation(reconciliation, {
-        bookingId: booking.id,
-        format,
-        job: "charge-saved-method",
-        queueInvoice: async () => {
-          try {
-            const queuedInvoice = await enqueueXeroBookingInvoiceOperation(booking.id, {
-              createdByMemberId: session?.user?.id,
-              invoiceEmailDelivery: null,
-            });
-
-            if (queuedInvoice.queueOperationId) {
-              await kickQueuedXeroOutboxOperationsIfConnected({ limit: 1 });
-              logger.info({ bookingId: booking.id }, "Xero invoice queued for booking");
-            }
-          } catch (xeroErr) {
-            logger.error({ err: xeroErr, bookingId: booking.id }, "Failed to queue Xero invoice for booking");
+      await queueInvoiceAndDeliverPaidConfirmation(reconciliation, { bookingId: booking.id, format, job: "charge-saved-method", queueInvoice: async () => {
+        try {
+          const queuedInvoice = await enqueueXeroBookingInvoiceOperation(booking.id, { createdByMemberId: session?.user?.id, invoiceEmailDelivery: null });
+          if (queuedInvoice.queueOperationId) {
+            await kickQueuedXeroOutboxOperationsIfConnected({ limit: 1 });
+            logger.info({ bookingId: booking.id }, "Xero invoice queued for booking");
           }
-        },
-      });
+        } catch (xeroErr) {
+          logger.error({ err: xeroErr, bookingId: booking.id }, "Failed to queue Xero invoice for booking");
+        }
+      } });
     }
 
     return NextResponse.json({
