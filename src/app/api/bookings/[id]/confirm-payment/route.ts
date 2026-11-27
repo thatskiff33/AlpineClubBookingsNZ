@@ -8,7 +8,7 @@ import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { getPaymentIntent } from "@/lib/stripe";
 import { markBookingPaymentSucceeded } from "@/lib/payment-reconciliation";
-import { deliverPaidBookingConfirmation, sendUnrecordedPaidBookingConfirmation } from "@/lib/paid-booking-confirmation-notice";
+import { queueInvoiceAndDeliverPaidConfirmation } from "@/lib/paid-booking-confirmation-after-commit";
 import { logAudit } from "@/lib/audit";
 import { getClientIp } from "@/lib/rate-limit-http";
 import logger from "@/lib/logger";
@@ -233,13 +233,14 @@ export async function POST(
       return NextResponse.json(SUPERSEDED_CARD_PAYMENT_REFUNDING_BODY, { status: 409 });
     }
 
-    await queueXeroInvoiceForPaidBooking({
+    // #5433: the invoice first, then the owed confirmation a fresh PAID carries (once whichever path wins, #772; a stop
+    // leaves it to the sweep), or the unkeyed fallback.
+    await queueInvoiceAndDeliverPaidConfirmation(reconciliation, {
       bookingId,
-      createdByMemberId: session.user.id,
+      format,
+      job: "confirm-payment",
+      queueInvoice: () => queueXeroInvoiceForPaidBooking({ bookingId, createdByMemberId: session.user.id }),
     });
-    // After the invoice is queued (#5433 round 1): only a fresh PAID carries the owed marker, so the email goes once
-    // whichever path wins (#772); a stop leaves it to the sweep; one whose marker could not be keyed is sent unkeyed (PR 4).
-    if (reconciliation.paidConfirmation) await deliverPaidBookingConfirmation(reconciliation.paidConfirmation, format, "confirm-payment"); else if (reconciliation.outcome === "paid") await sendUnrecordedPaidBookingConfirmation(bookingId, format, "confirm-payment");
 
     logAudit({
       action: "booking.payment.confirmed",

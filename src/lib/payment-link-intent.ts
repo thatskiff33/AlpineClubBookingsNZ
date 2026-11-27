@@ -18,6 +18,7 @@ import { sendAdminPaymentFailureAlert } from "@/lib/email";
 import { formatCents } from "@/lib/utils";
 import logger from "@/lib/logger";
 import { markBookingPaymentSucceeded } from "@/lib/payment-reconciliation";
+import { queueInvoiceAndDeliverPaidConfirmation, type CardSettleConfirmationResult } from "@/lib/paid-booking-confirmation-after-commit";
 import { getStripePaymentMethodId, queueSupersededPaymentIntentRefundRecovery } from "@/lib/payment-recovery";
 import { supersededIntentReuseRefusal } from "@/lib/superseded-capture-ownership";
 import { isSupersededCaptureOfBooking } from "@/lib/superseded-paid-intent";
@@ -233,30 +234,42 @@ export async function createPaymentIntentForPaymentLink(
       // nothing at all, so an earlier run through that same door has already
       // dealt with it.
         try {
+          // #5433 (the card recovery doors): null when the payment was already recorded and nothing settles here.
+          let reconciliation: CardSettleConfirmationResult | null = null;
           if (booking.payment.status !== PaymentStatus.SUCCEEDED) {
-            const reconciliation = await markBookingPaymentSucceeded({
+            const settled = await markBookingPaymentSucceeded({
       capturedAt: receiptCaptureTime(existingIntent),
               format,
               bookingId: booking.id,
               paymentIntentId: existingIntent.id,
               amountCents: existingIntent.amount,
               paymentMethodId: getStripePaymentMethodId(existingIntent),
+              // #5433: this recovery settles a capture whose webhook was missed; that webhook, arriving later, finds
+              // the booking paid and sends nothing, so the confirmation is owed here.
+              owesPaidConfirmation: true,
             });
+            reconciliation = settled;
 
-            if (reconciliation.outcome === "cancelled_refunded") {
+            if (settled.outcome === "cancelled_refunded") {
               throw new PaymentLinkPaymentRecoveryError("cancelled_refunded");
             }
-            if (reconciliation.outcome === "cancelled_refund_failed") {
+            if (settled.outcome === "cancelled_refund_failed") {
               throw new PaymentLinkPaymentRecoveryError(
                 "cancelled_refund_pending",
               );
             }
-            if (reconciliation.outcome === "superseded_capture") {
+            if (settled.outcome === "superseded_capture") {
               throw new PaymentLinkPaymentRecoveryError("superseded_capture_refunding");
             }
           }
 
-          await queueXeroInvoiceForPaidBooking({ bookingId: booking.id });
+          // #5433: the invoice first, as before, then the owed confirmation (or the unkeyed fallback). Neither throws.
+          await queueInvoiceAndDeliverPaidConfirmation(reconciliation, {
+            bookingId: booking.id,
+            format,
+            job: "payment-link",
+            queueInvoice: () => queueXeroInvoiceForPaidBooking({ bookingId: booking.id }),
+          });
         } catch (error) {
           if (error instanceof PaymentLinkPaymentRecoveryError) throw error;
           logger.error(

@@ -19,7 +19,7 @@ import {
   sendAdminPaymentFailureAlert,
   sendSetupIntentFailedEmail,
 } from "@/lib/email";
-import { deliverPaidBookingConfirmation, sendUnrecordedPaidBookingConfirmation } from "@/lib/paid-booking-confirmation-notice";
+import { queueInvoiceAndDeliverPaidConfirmation } from "@/lib/paid-booking-confirmation-after-commit";
 import { recordWebhookLog } from "@/lib/webhook-log";
 import { recordRefusedCardRefund } from "@/lib/card-refund-status-sync";
 import { notifyXeroSyncError } from "@/lib/xero-error-alert";
@@ -518,10 +518,9 @@ async function handlePaymentIntentSucceeded(
 
   logger.info({ bookingId, paymentIntentId: paymentIntent.id, outcome: reconciliation.outcome }, `PaymentIntent reconciled: ${reconciliation.outcome}`);
 
-  await queueXeroInvoiceForPaidBooking({ bookingId });
-  // After the invoice is queued (#5433 round 1): only a fresh PAID carries the owed marker, so the send stays once
-  // across both paths (#772); a stop leaves it to the sweep; one whose marker could not be keyed is sent unkeyed (PR 4).
-  if (reconciliation.paidConfirmation) await deliverPaidBookingConfirmation(reconciliation.paidConfirmation, format, "stripe-webhook"); else if (reconciliation.outcome === "paid") await sendUnrecordedPaidBookingConfirmation(bookingId, format, "stripe-webhook");
+  // #5433: the invoice first, then the owed confirmation a fresh PAID carries (once across every door, #772; a stop
+  // leaves it to the sweep), or the unkeyed fallback; an already-paid booking is sent nothing here.
+  await queueInvoiceAndDeliverPaidConfirmation(reconciliation, { bookingId, format, job: "stripe-webhook", queueInvoice: () => queueXeroInvoiceForPaidBooking({ bookingId }) });
 }
 
 /**

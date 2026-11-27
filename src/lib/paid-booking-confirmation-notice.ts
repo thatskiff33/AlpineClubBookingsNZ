@@ -59,10 +59,17 @@
  * own alert, to a different group; that one is not durable (round 2, F1), so
  * officers may get both, the trade-off the issue already accepts.
  *
- * Who owes it: only the three callers that send the confirmation ask the
- * settle to record it (`owesPaidConfirmation`): the Stripe webhook, the
- * confirm-payment route and the confirm-pending job's saved-card charge. The
- * other card doors send none, or only on an officer's choice, as before. The
+ * Who owes it: every card door that confirms a booking by itself asks the
+ * settle to record it (`owesPaidConfirmation`) and, after the commit, calls
+ * `queueInvoiceAndDeliverPaidConfirmation`
+ * (`paid-booking-confirmation-after-commit.ts`): the Stripe webhook, the
+ * confirm-payment route, the confirm-pending job's saved-card charge, and
+ * (#5433, the card recovery doors) the create-payment-intent and payment-link
+ * recoveries of a capture whose webhook was missed and the charge-saved-method
+ * route. Before that change those three sent none, and a webhook arriving after
+ * their settle found the booking already paid and sent none either. An
+ * officer's confirm-pending-guests sends only on the officer's choice and
+ * records none, as before (#5470). The
  * confirm-pending job's zero-balance confirmation records the same marker at
  * its own PAID claim (#5433 PR 4, CP-1) and is delivered here too, on the same
  * rules (owner decision D11: an owner who cannot be emailed at all raises the

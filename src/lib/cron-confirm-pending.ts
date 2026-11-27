@@ -34,6 +34,7 @@ import {
 } from "@/lib/payment-link-expiry";
 import { markBookingPaymentSucceeded } from "@/lib/payment-reconciliation";
 import { deliverPaidBookingConfirmation, sendUnrecordedPaidBookingConfirmation } from "@/lib/paid-booking-confirmation-notice";
+import { queueInvoiceAndDeliverPaidConfirmation } from "@/lib/paid-booking-confirmation-after-commit";
 import { recordPaidConfirmationOwedUnlessUnkeyable } from "@/lib/paid-booking-confirmation-owed";
 import { deliverHoldEndedNotices, recordHoldEndedNoticesOwed, type OwedHoldEndedNotices } from "@/lib/hold-ended-cancellation-notices";
 import { deliverSplitGuestPaymentLink, recordSplitGuestPaymentLinkOwed } from "@/lib/split-guest-payment-link-notice";
@@ -1573,10 +1574,13 @@ export async function confirmPendingBookings(): Promise<CronConfirmResult> {
         }
 
         result.confirmedBookingIds.push(resolution.booking.id);
-        await queueXeroInvoice(resolution.booking.id, "Xero invoice queued");
-        if (reconciliation.paidConfirmation) await deliverPaidBookingConfirmation(reconciliation.paidConfirmation, format, "confirmPendingBookings");
-        // A fresh PAID whose marker could not be keyed (#5433 PR 4, round 2): sent as before #5433.
-        else if (reconciliation.outcome === "paid") await sendUnrecordedPaidBookingConfirmation(resolution.booking.id, format, "confirmPendingBookings");
+        // #5433: the invoice first, then the owed confirmation, or the unkeyed fallback (PR 4, round 2).
+        await queueInvoiceAndDeliverPaidConfirmation(reconciliation, {
+          bookingId: resolution.booking.id,
+          format,
+          job: "confirmPendingBookings",
+          queueInvoice: () => queueXeroInvoice(resolution.booking.id, "Xero invoice queued"),
+        });
       } else {
         const releaseOutcome = await runSavedCardClaimRelease(async (tx) => {
           // #3267: record the intent Stripe answered with on the attempt row

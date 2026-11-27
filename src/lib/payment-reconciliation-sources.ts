@@ -74,9 +74,11 @@ export type StripeSettlementSource = {
   /**
    * #5433 (owner decision D1): the caller sends the member the paid
    * confirmation, so a fresh PAID claim records it as owed in this settle's
-   * transaction. Set by the three callers that send it (the Stripe webhook,
-   * the confirm-payment route, the confirm-pending job's saved-card charge);
-   * every other card door sends none, or only on an officer's choice, and
+   * transaction. Set by every card door that confirms a booking by itself:
+   * the Stripe webhook, the confirm-payment route, the confirm-pending job's
+   * saved-card charge, the create-payment-intent and payment-link recoveries
+   * and the charge-saved-method route (`paid-booking-confirmation-after-commit.ts`).
+   * An officer's confirm-pending-guests sends only on the officer's choice and
    * writes no marker.
    */
   owesPaidConfirmation?: boolean;
