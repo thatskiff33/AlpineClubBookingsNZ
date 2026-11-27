@@ -307,7 +307,7 @@ vi.mock("@/lib/xero-admin-grant-credit-note", () => ({
 }));
 // #5190 PR 3: the worker is mocked; its scan spacing is the real one.
 vi.mock("@/lib/subscription-age-up-credit", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("@/lib/subscription-age-up-credit")>()),
+  ...((await importOriginal()) as typeof import("@/lib/subscription-age-up-credit")),
   createAgeUpCredit: mocks.createAgeUpCredit,
 }));
 vi.mock("@/lib/additional-capture-receipt-enqueue", () => ({
