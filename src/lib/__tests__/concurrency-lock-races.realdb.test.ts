@@ -597,6 +597,12 @@ import "./prisma-exact-prefix.realdb.test";
 // Skipped unless RUN_CONCURRENCY_RACE_TESTS=1; it owns and cleans its own
 // `race-4165` rows.
 import "./audit-query-exact-prefix.realdb.test";
+// #5265 reuses it to prove the owner-run expiry backfill for older audit
+// entries: apply with the census's numbers, then the real prune deletes only
+// rows over seven years old, keeps an incident-preserved one under ten, and
+// leaves a keep-for-ever row and every other column alone. Skipped unless
+// RUN_CONCURRENCY_RACE_TESTS=1; it owns and cleans its own `race-5265` rows.
+import "./audit-expiry-backfill.realdb.test";
 // #4162 reuses it to prove "undo, then ask once" for a voided bank-transfer
 // refund note: the inbound floor, the nightly undo (allocation, line, total and
 // one follow-up together), a spare note, a create in flight, #4161's heal, two
