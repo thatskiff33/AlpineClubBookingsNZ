@@ -37,6 +37,7 @@ const STRANDED = [
 function quote(overrides: Partial<LinkedMoveQuote> = {}): LinkedMoveQuote {
   return {
     primary: {
+      quotedFigures: { newFinalPriceCents: 11_000, priceDiffCents: 1000, changeFeeCents: 2500, netChargeCents: 3500 },
       bookingId: "b-source",
       reference: "BK-SOURCE",
       proposedCheckIn: "2026-08-20",
@@ -67,6 +68,7 @@ function quote(overrides: Partial<LinkedMoveQuote> = {}): LinkedMoveQuote {
     combinedOrganiserRefundCents: 0,
     combinedOrganiserBankTransferRefundCents: 0,
     settlementMethodRequired: false,
+    refundRoute: "CARD",
     settlementMethodChosen: false,
     bothChangeFeesCharged: true,
     feasibility: "AVAILABLE",

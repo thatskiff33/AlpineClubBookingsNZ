@@ -1,7 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 
+import { parseJsonRequestBody } from "@/lib/api-json";
 import { createAuditLog } from "@/lib/audit";
+import { ADMIN_FOOD_ORDER_SETTINGS_CONNECTION_SHAPE } from "@/lib/connection-shapes/lodge-maintenance";
 import {
   FOOD_ORDER_NOT_FOUND,
   foodOrderAuditContext,
@@ -15,19 +17,24 @@ import {
   normaliseFoodOrderSettings,
 } from "@/lib/food-order-settings";
 import logger from "@/lib/logger";
-import { isPrismaUniqueConstraintError, isTransactionContention } from "@/lib/prisma-errors";
+import { connectionJson } from "@/lib/mcp-connection-request";
+import { isSingletonUpsertContention } from "@/lib/prisma-errors";
 import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/session-guards";
 
 /**
- * The Food Orders settings card (fork #121): the food officer's email address
+ * The Food Orders settings card (fork triyder/AlpineClubBookingsNZ#121): the food officer's email address
  * and what the club calls them. Lodge Operations `view` to read, `edit` to save.
  * 404 while the `foodOrders` module is off, here as well as in the proxy.
  *
- * The address is checked ONLY as a valid email (fork #121 owner decision 10) — never
+ * The address is checked ONLY as a valid email (fork triyder/AlpineClubBookingsNZ#121 owner decision 10) — never
  * against members or committee roles. An empty address is allowed and means
  * ordering is not set up: the order page says so and the API refuses orders.
  */
+
+// The read is the AI app action `get_food_order_settings` (ALP-722), which a
+// connection answers without the officer's address. The save is website-only
+// (`unread-value`): an app that never sees the address must not overwrite it.
 
 const putSchema = z
   .object({
@@ -37,7 +44,7 @@ const putSchema = z
   })
   .strict();
 
-export async function GET() {
+export async function GET(request: Request) {
   if (await foodOrderModuleOff()) {
     return NextResponse.json(FOOD_ORDER_NOT_FOUND, { status: 404 });
   }
@@ -46,7 +53,11 @@ export async function GET() {
   });
   if (!admin.ok) return admin.response;
 
-  return NextResponse.json({ settings: await loadFoodOrderSettings() });
+  return connectionJson(
+    request,
+    { settings: await loadFoodOrderSettings() },
+    ADMIN_FOOD_ORDER_SETTINGS_CONNECTION_SHAPE,
+  );
 }
 
 export async function PUT(request: NextRequest) {
@@ -58,12 +69,11 @@ export async function PUT(request: NextRequest) {
   });
   if (!admin.ok) return admin.response;
 
-  let body: unknown;
-  try {
-    body = await request.json();
-  } catch {
-    return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
-  }
+  const jsonBody = await parseJsonRequestBody(request, {
+    error: "Invalid JSON",
+  });
+  if (!jsonBody.ok) return jsonBody.response;
+  const body = jsonBody.body;
   const parsed = putSchema.safeParse(body);
   if (!parsed.success) {
     return NextResponse.json(
@@ -129,7 +139,12 @@ export async function PUT(request: NextRequest) {
     );
     return NextResponse.json({ settings });
   } catch (err) {
-    if (isTransactionContention(err) || isPrismaUniqueConstraintError(err)) {
+    // P2002 counts as contention here: the only unique keys this transaction
+    // can hit are FoodOrderSettings' constant id (a racing first save's create
+    // arm, which wrote nothing) and the audit row's per-row cuid. AuditLog has no
+    // other unique constraint and the audit builder makes no nested create. Add
+    // either, and a real bug would be answered "try again".
+    if (isSingletonUpsertContention(err)) {
       return NextResponse.json(
         { error: "Somebody else saved these settings at the same moment. Please try again." },
         { status: 503 },

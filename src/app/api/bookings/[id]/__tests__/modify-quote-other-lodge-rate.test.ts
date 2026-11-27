@@ -59,7 +59,7 @@ vi.mock("@/lib/prisma", () => ({
     // it asserted before.
     manualRefundTask: { findFirst: vi.fn().mockResolvedValue(null) },
     booking: { findUnique: h.bookingFindUnique },
-    // `findFirst` (#58): a newly chosen lodge must also be visible.
+    // `findFirst` (triyder/AlpineClubBookingsNZ#58): a newly chosen lodge must also be visible.
     otherLodge: { findUnique: h.otherLodgeFindUnique, findFirst: h.otherLodgeFindUnique },
     season: { findMany: h.seasonFindMany },
     groupDiscountSetting: { findUnique: h.groupDiscountFindUnique },
@@ -603,7 +603,7 @@ describe("modify-quote — other-lodge member rate", () => {
     expect(h.resolveOtherLodgeRateEligible).not.toHaveBeenCalled();
   });
 
-  it("still quotes an unrelated change on a booking whose stored lodge is HIDDEN (#58)", async () => {
+  it("still quotes an unrelated change on a booking whose stored lodge is HIDDEN (triyder/AlpineClubBookingsNZ#58)", async () => {
     h.bookingFindUnique.mockResolvedValue(booking({ otherLodgeId: "lodge-hidden" }));
     h.otherLodgeFindUnique.mockResolvedValue(null); // hidden: not offered anew
 
@@ -613,7 +613,7 @@ describe("modify-quote — other-lodge member rate", () => {
     expect(h.otherLodgeFindUnique).not.toHaveBeenCalled();
   });
 
-  it("still quotes a tick-only change that keeps the booking's HIDDEN lodge (#58)", async () => {
+  it("still quotes a tick-only change that keeps the booking's HIDDEN lodge (triyder/AlpineClubBookingsNZ#58)", async () => {
     h.bookingFindUnique.mockResolvedValue(booking({ otherLodgeId: "lodge-hidden" }));
     h.otherLodgeFindUnique.mockResolvedValue(null);
 

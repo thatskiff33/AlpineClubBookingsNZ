@@ -5,12 +5,12 @@ import {
 } from "@/lib/booking-request";
 
 /**
- * Hidden Other lodges (#58): deleted on the central server or hidden by an
+ * Hidden Other lodges (triyder/AlpineClubBookingsNZ#58): deleted on the central server or hidden by an
  * administrator, they are not offered to choose, but a record already naming
  * one keeps it.
  */
 
-describe("getPublicOtherLodges (#58)", () => {
+describe("getPublicOtherLodges (triyder/AlpineClubBookingsNZ#58)", () => {
   it("offers only visible lodges", async () => {
     const findMany = vi.fn().mockResolvedValue([]);
     await getPublicOtherLodges({ otherLodge: { findMany } } as never);
@@ -25,7 +25,7 @@ describe("getPublicOtherLodges (#58)", () => {
     });
   });
 
-  it("labels two lodges of the same name with their locations, and sends no location (#69)", async () => {
+  it("labels two lodges of the same name with their locations, and sends no location (triyder/AlpineClubBookingsNZ#69)", async () => {
     const findMany = vi.fn().mockResolvedValue([
       { id: "a", name: "Ruapehu Lodge", location: "Whakapapa" },
       { id: "b", name: "Ruapehu Lodge", location: "Turoa" },
@@ -41,7 +41,7 @@ describe("getPublicOtherLodges (#58)", () => {
   });
 });
 
-describe("assertRequestedOtherLodgeExists (#58)", () => {
+describe("assertRequestedOtherLodgeExists (triyder/AlpineClubBookingsNZ#58)", () => {
   it("refuses a hidden lodge for a new request", async () => {
     const findFirst = vi.fn().mockResolvedValue(null);
     await expect(

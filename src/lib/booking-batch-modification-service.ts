@@ -1,4 +1,4 @@
-import { assertEditQuotedFigures } from "@/lib/edit-quoted-figures";
+import { assertEditQuotedFigures, type EditQuotedFigures } from "@/lib/edit-quoted-figures";
 import { queueOrganiserExtraForChange } from "@/lib/organiser-extra-invoice-queue";
 import { paidByOrganiserInternetBanking } from "@/lib/group-organiser-paid";
 import { isUnpaidConfirmedWholeLodge } from "@/lib/booking-payment-flow";
@@ -132,7 +132,7 @@ import {
 } from "@/lib/roster-lock";
 import { formatDateOnly } from "@/lib/date-only";
 import { loadCancellationPolicy } from "@/lib/cancellation";
-import { calculateFullReductionSettlementOptions, editReductionDisputeHold, refundableCashForModification } from "@/lib/booking-modify-settlement-options";
+import { calculateFullReductionSettlementOptions, fullReductionLockedReads, refundableCashForModification } from "@/lib/booking-modify-settlement-options";
 import { buildIdentityOnlyPricing } from "@/lib/booking-identity-only-pricing";
 import { assertOfficerWorkPartyCorrectionCall, workPartyCorrectionCodeDay, workPartyCorrectionRecord, workPartyCorrectionSkipsBedCheck, type OfficerWorkPartyCorrection } from "@/lib/booking-batch-work-party-correction";
 import { bookingFinalPriceCents } from "@/lib/booking-final-price";
@@ -166,7 +166,7 @@ import {
   type FinishedStayChangeFeeRule,
   type FinishedStayCorrection,
 } from "@/lib/booking-finished-stay-correction";
-import { batchModificationSettlementFacts, unpaidAskResultFacts, type BatchModificationSettlementFacts, type BatchModificationTransactionResult, type ModifiedBooking } from "@/lib/booking-batch-modification-transaction-result";
+import { batchModificationResultFacts, unpaidAskResultFacts, type BatchModificationSettlementFacts, type BatchModificationTransactionResult, type ModifiedBooking } from "@/lib/booking-batch-modification-transaction-result";
 
 /**
  * WHY a change fee on this booking was waived, as it is stored (#3232 D2).
@@ -186,6 +186,7 @@ export const LINKED_MOVE_CHANGE_FEE_WAIVED_REASON =
 
 export type BatchModificationResponse = BatchModificationSettlementFacts & {
   booking: ModifiedBooking;
+  quotedFigures: EditQuotedFigures;
   /**
    * The `BookingModification` row this edit wrote (#3750), so a caller that
    * owns the transaction can link it — the finished-stay change-request
@@ -617,7 +618,7 @@ export async function modifyBookingBatch({
    * second fee told the member it was waived and charged it anyway.
    */
   waiveChangeFee?: boolean;
-  /** Fork #119: a SERVICE argument, like `waiveChangeFee`; see its type. */
+  /** Fork triyder/AlpineClubBookingsNZ#119: a SERVICE argument, like `waiveChangeFee`; see its type. */
   officerWorkPartyCorrection?: OfficerWorkPartyCorrection;
   /**
    * The work that has to happen BEFORE the transaction, done by the caller that
@@ -953,7 +954,7 @@ export async function modifyBookingBatch({
       input,
       today: clubTodayDateOnly,
       finishedStayCorrection: Boolean(finishedStayCorrection),
-      workPartyCorrection: Boolean(officerWorkPartyCorrection), // Fork #127/#130: a started stay is priced whole
+      workPartyCorrection: Boolean(officerWorkPartyCorrection), // Fork triyder/AlpineClubBookingsNZ#127/triyder/AlpineClubBookingsNZ#130: a started stay is priced whole
     });
     if (finishedStayCorrection) {
       // The flag only ASKS for the mode. A stay that has not finished took its
@@ -1175,7 +1176,7 @@ export async function modifyBookingBatch({
           // borrows ADMIN only for the reviewed minimum-stay override) prices
           // the party under the family boundary it was actually planned under.
           skipAuthorization: guestPlan.guestAuthorizationIsAdmin,
-          skipBookingLifecycleRules: dates.skipBookingLifecycleRules || workPartyCorrectionSkipsBedCheck(officerWorkPartyCorrection, booking.status), // Fork #127/#130: no bed claimed on a booking already holding its beds
+          skipBookingLifecycleRules: dates.skipBookingLifecycleRules || workPartyCorrectionSkipsBedCheck(officerWorkPartyCorrection, booking.status), // Fork triyder/AlpineClubBookingsNZ#127/triyder/AlpineClubBookingsNZ#130: no bed claimed on a booking already holding its beds
           // Multi-lodge: season rates are resolved for the booking's lodge.
           seasonRateData: await loadActiveSeasonRates(tx, bookingLodgeId),
           // Issue #1668: over-capacity warns-and-confirms under admin override.
@@ -1228,9 +1229,9 @@ export async function modifyBookingBatch({
           guestNightRates: pricingResult.guestNightRates,
           // #3750 (F1): a finished stay's codes are judged on its check-in day,
           // as its fee tiers are — on the real today an expired code would be
-          // released and its discount billed back to the member. Fork #127: so are a correction's on a started stay.
+          // released and its discount billed back to the member. Fork triyder/AlpineClubBookingsNZ#127: so are a correction's on a started stay.
           todayAtClub: finishedStayCorrection ? finishedStayNoticeDay(booking) : workPartyCorrectionCodeDay(officerWorkPartyCorrection, finishedStayNoticeDay(booking), todayAtClub),
-          officerWorkPartyCorrection: officerWorkPartyCorrection ?? null, // the code an Add admits, or (fork #130) a Remove drops
+          officerWorkPartyCorrection: officerWorkPartyCorrection ?? null, // the code an Add admits, or (fork triyder/AlpineClubBookingsNZ#130) a Remove drops
         });
 
     /**
@@ -1326,7 +1327,7 @@ export async function modifyBookingBatch({
       finishedStayChangeFeeRule !== null && finishedStayRemovalIsCharged(finishedStayChangeFeeRule);
     // #4533: and a correction that applies a promo code returns its reduction
     // in full too — the same untiered settlement, with no removal fee.
-    // Fork #119: so does an officer's work-party correction (see the argument).
+    // Fork triyder/AlpineClubBookingsNZ#119: so does an officer's work-party correction (see the argument).
     const finishedStayReductionInFull =
       Boolean(officerWorkPartyCorrection) ||
       (finishedStayChangeFeeRule !== null &&
@@ -1356,7 +1357,7 @@ export async function modifyBookingBatch({
     // #3750 (owner, 7 Oct 2026, "Same-day fee on removed nights"): a finished-
     // stay correction is charged ONLY the same-day retention on what it removes
     // — never the ordinary late-change fee across the whole booking.
-    // Fork #119: an officer's work-party correction charges none either.
+    // Fork triyder/AlpineClubBookingsNZ#119: an officer's work-party correction charges none either.
     const chargeableChangeFeeCents =
       officerWorkPartyCorrection ||
       finishedStayChangeFeeRule === "ADD_ONLY_NO_FEE" || finishedStayChangeFeeRule === "PROMO_ONLY_NO_FEE"
@@ -1411,8 +1412,8 @@ export async function modifyBookingBatch({
             netChargeCents: reduction.netChargeLeftCents,
             refundableCashCents: await refundableCashForModification(tx, booking.payment, reduction),
             todayAtClub: moneyTierDay,
-            // #5061 follow-up (`INV-PAY-154`): read under this edit's locks.
-            refundHeldForDispute: (await editReductionDisputeHold(tx, booking)).cents > 0,
+            // #5061 follow-up (`INV-PAY-154`), #5303: read under this edit's locks.
+            ...(await fullReductionLockedReads(tx, booking)),
           })
         : await calculateModificationSettlementOptions({
       booking,
@@ -1426,7 +1427,8 @@ export async function modifyBookingBatch({
     // before anything leaves the transaction: the promo writes above roll back
     // with the refusal, and nothing durable or external has run yet.
     // `netChargeCents` is the pre-offset figure the preview reports.
-    assertEditQuotedFigures(input.quotedFigures, { newFinalPriceCents, priceDiffCents, changeFeeCents, netChargeCents });
+    const quotedFigures = { newFinalPriceCents, priceDiffCents, changeFeeCents, netChargeCents };
+    assertEditQuotedFigures(input.quotedFigures, quotedFigures);
     if (settlementOptions?.requiresSettlementMethod && !input.settlementMethod) {
       throw new BookingModificationSettlementMethodRequiredError();
     }
@@ -1799,7 +1801,7 @@ export async function modifyBookingBatch({
                 capacityOverridden: capacityOverridden,
               }
             : {}),
-          // Fork #119: an officer's work-party correction, and its money rule.
+          // Fork triyder/AlpineClubBookingsNZ#119: an officer's work-party correction, and its money rule.
           ...(officerWorkPartyCorrection
             ? { officerWorkPartyCorrection: workPartyCorrectionRecord(officerWorkPartyCorrection) }
             : {}),
@@ -1978,6 +1980,7 @@ export async function modifyBookingBatch({
 
     return {
       booking: updatedBooking,
+      quotedFigures,
       pendingHostingReconcile:
         hostingReconcile === "CALLER" ? reconcileHosting : undefined,
       priceDiffCents,
@@ -2234,28 +2237,9 @@ export async function modifyBookingBatch({
     });
 
     return {
-      booking: result.booking,
-      bookingModificationId: result.bookingModificationId,
-      priceDiffCents: result.priceDiffCents,
-      changeFeeCents: result.changeFeeCents,
-      refundAmountCents: result.refundAmountCents,
-      accountCreditAmountCents: result.accountCreditAmountCents,
-      appliedCreditGivenBackCents: result.appliedCreditGivenBackCents,
-      refundedExcessCreditCents: result.refundedExcessCreditCents,
-      additionalAmountCents: result.additionalAmountCents,
-      billedToOrganiserCents: result.billedToOrganiserCents,
-      settlementMethod: result.settlementMethod,
-      requiresSettlementMethod: result.requiresSettlementMethod,
+      ...batchModificationResultFacts(result),
       additionalPaymentClientSecret: additionalMint.additionalPaymentClientSecret ?? null,
       stripeRefundId: refund.stripeRefundId ?? null,
-      promoRemoved: result.promoRemoved,
-      promoChanged: result.promoChanged,
-      promoCoverage: result.promoCoverage,
-      promoChangeNotApplied: result.promoChangeNotApplied,
-      choreWarnings: result.choreWarnings,
-      creditElectionCents: result.creditElectionCents,
-      ...batchModificationSettlementFacts(result),
-      capacityOverridden: result.capacityOverridden,
     };
   };
 
@@ -2278,31 +2262,12 @@ export async function modifyBookingBatch({
     // amount is payable ACROSS the bookings and settles on each separately
     // (`formatLinkedMoveMoneySentence`), rather than implying one payment step.
     return {
-      booking: result.booking,
-      bookingModificationId: result.bookingModificationId,
+      ...batchModificationResultFacts(result),
       ...(result.pendingHostingReconcile
         ? { pendingHostingReconcile: result.pendingHostingReconcile }
         : {}),
-      priceDiffCents: result.priceDiffCents,
-      changeFeeCents: result.changeFeeCents,
-      refundAmountCents: result.refundAmountCents,
-      accountCreditAmountCents: result.accountCreditAmountCents,
-      appliedCreditGivenBackCents: result.appliedCreditGivenBackCents,
-      refundedExcessCreditCents: result.refundedExcessCreditCents,
-      additionalAmountCents: result.additionalAmountCents,
-      billedToOrganiserCents: result.billedToOrganiserCents,
-      settlementMethod: result.settlementMethod,
-      requiresSettlementMethod: result.requiresSettlementMethod,
       additionalPaymentClientSecret: null,
       stripeRefundId: null,
-      promoRemoved: result.promoRemoved,
-      promoChanged: result.promoChanged,
-      promoCoverage: result.promoCoverage,
-      promoChangeNotApplied: result.promoChangeNotApplied,
-      choreWarnings: result.choreWarnings,
-      creditElectionCents: result.creditElectionCents,
-      ...batchModificationSettlementFacts(result),
-      capacityOverridden: result.capacityOverridden,
       deferredPostCommit: async () => {
         await runPostCommit();
       },
@@ -2376,7 +2341,7 @@ async function dispatchBatchPostTransactionSideEffects({
     // opted out — members always notify), so every suppressed edit is auditable.
     // #3750: the change request this executed and its fee rule, so the audit
     // trail answers "why did a finished stay change" on its own.
-    // Fork #119: the work party an officer added the booking to, and its money rule (why no fee, in full).
+    // Fork triyder/AlpineClubBookingsNZ#119: the work party an officer added the booking to, and its money rule (why no fee, in full).
     ...(result.officerWorkPartyCorrection
       ? { officerWorkPartyCorrection: workPartyCorrectionRecord(result.officerWorkPartyCorrection) }
       : {}),

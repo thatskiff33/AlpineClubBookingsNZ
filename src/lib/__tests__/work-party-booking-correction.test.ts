@@ -23,9 +23,10 @@ import {
 import { PROMO_WORK_PARTY_EXCLUSION_OFFICER_MESSAGE } from "@/lib/promo-code-list-rules";
 import { editTotalMoneyBackCents, workPartyAskAbsorbedSentence, workPartyAskPartlyAbsorbedSentence } from "@/lib/edit-money-back";
 import { CLUB_FORMAT_TEST } from "@/lib/__tests__/support/club-format-fixture";
+import { CENSUS_TIMEOUT_MS } from "@/test/census-timeout";
 
 /**
- * Fork #119: the eligibility rule for "Add booking to work party", one case per
+ * Fork triyder/AlpineClubBookingsNZ#119: the eligibility rule for "Add booking to work party", one case per
  * refusal, and the census that keeps the officer-only internal-code admission
  * reachable from exactly one place. The money paths are proved on real
  * PostgreSQL in `work-party-booking-correction.realdb.test.ts`. Today is the
@@ -65,7 +66,7 @@ const refusal = (pattern: RegExp | string) => ({
   reason: typeof pattern === "string" ? pattern : expect.stringMatching(pattern),
 });
 
-describe("workPartyRemovalEligibility (fork #130)", () => {
+describe("workPartyRemovalEligibility (fork triyder/AlpineClubBookingsNZ#130)", () => {
   const onBooking = {
     status: BookingStatus.PAID,
     checkOut: d("2026-08-04"),
@@ -158,7 +159,7 @@ describe("workPartyBookingEligibility", () => {
     );
   });
 
-  it("fork #127: accepts a stay that has started, nights already slept included", () => {
+  it("fork triyder/AlpineClubBookingsNZ#127: accepts a stay that has started, nights already slept included", () => {
     expect(
       workPartyBookingEligibility(
         { ...booking, checkIn: d("2026-06-28"), checkOut: d("2026-07-03") },
@@ -168,7 +169,7 @@ describe("workPartyBookingEligibility", () => {
     ).toEqual({ ok: true });
   });
 
-  it("fork #127: accepts a stay on its check-out day (still in progress)", () => {
+  it("fork triyder/AlpineClubBookingsNZ#127: accepts a stay on its check-out day (still in progress)", () => {
     expect(
       workPartyBookingEligibility(
         { ...booking, checkIn: d("2026-06-28"), checkOut: d("2026-07-01") },
@@ -198,7 +199,7 @@ describe("workPartyBookingEligibility", () => {
     ).toEqual({ ok: true });
   });
 
-  it("no longer has an organiser-paid refusal (fork #129 decision 5)", () => {
+  it("no longer has an organiser-paid refusal (triyder/AlpineClubBookingsNZ#129 decision 5)", () => {
     // The rule takes no organiser-paid input: such a joiner is eligible on the
     // same terms as any booking, and its money goes back to the organiser.
     expect(Object.keys(booking)).not.toContain("paidByOrganiser");
@@ -315,7 +316,7 @@ describe("actorIsMemberOrFamily (the member-guest family boundary)", () => {
   });
 });
 
-describe("workPartySettlementOptions and the settlement guard (fork #129, upstream owner decision 15 Nov 2026)", () => {
+describe("workPartySettlementOptions and the settlement guard (triyder/AlpineClubBookingsNZ#129, upstream owner decision 15 Nov 2026)", () => {
   const paidCard = {
     status: BookingStatus.PAID,
     organiserSettled: false,
@@ -472,9 +473,9 @@ describe("the officer-only internal-code admission (census)", () => {
     // hands it on to the promo engine in the plan; the correction module is
     // the one file that passes it in.
     expect(callers).toEqual(["src/lib/work-party-booking-correction.ts"]);
-  });
+  }, CENSUS_TIMEOUT_MS);
 
-  it("only the batch service hands the correction to the promo engine (Add admits, fork #130 Remove drops)", () => {
+  it("only the batch service hands the correction to the promo engine (Add admits, fork triyder/AlpineClubBookingsNZ#130 Remove drops)", () => {
     const service = readFileSync(path.join(root, "lib", "booking-batch-modification-service.ts"), "utf8");
     const plan = readFileSync(path.join(root, "lib", "booking-modify-plan.ts"), "utf8");
     expect(service).toContain("officerWorkPartyCorrection: officerWorkPartyCorrection ?? null,");
@@ -507,7 +508,7 @@ describe("the officer-only internal-code admission (census)", () => {
       .filter((file) => /officerWorkParty/.test(readFileSync(file, "utf8")))
       .map(rel);
     expect(offenders).toEqual([]);
-  });
+  }, CENSUS_TIMEOUT_MS);
 
   it("still refuses every other internal code in applyPromoCodeChanges", () => {
     const plan = readFileSync(path.join(root, "lib", "booking-modify-plan.ts"), "utf8");
@@ -559,6 +560,12 @@ describe("workPartyPaidWithNoMoneyTaken (owner decisions of 18 and 20 Nov 2026)"
       expect(await workPartyPaidWithNoMoneyTaken(ledger(rows), paid({ creditAppliedCents: 10_000 }))).toBe(false);
     },
   );
+
+  it("is true for a PAID booking with no payment row at all, failing safe (#5338)", async () => {
+    const noRow = (status: BookingStatus) => ({ status, payment: null }) as unknown as Parameters<typeof workPartyPaidWithNoMoneyTaken>[1];
+    expect(await workPartyPaidWithNoMoneyTaken(ledger([]), noRow(BookingStatus.PAID))).toBe(true);
+    expect(await workPartyPaidWithNoMoneyTaken(ledger([]), noRow(BookingStatus.CONFIRMED))).toBe(false);
+  });
 
   it("does not count an intent never captured (failed, or still pending)", async () => {
     const rows = [{ paymentId: "pay-1", amountCents: 20_000, status: "FAILED" }, { paymentId: "pay-1", amountCents: 20_000, status: "PENDING" }];

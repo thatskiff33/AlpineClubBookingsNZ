@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { readFileSync } from "fs";
 import {
   MembershipTypeBookingPolicyError,
@@ -9,8 +9,27 @@ import {
   resolveMembershipTypePoliciesForMembers,
 } from "@/lib/membership-type-policy";
 
+// The club enforces subscriptions; each test may set its liability rule (#5190).
+const lockoutPolicy = vi.hoisted(() => ({
+  liabilitySettings: {
+    requiredTypeAgeRule: "NOT_CHOSEN",
+    liabilityAgeSource: "NOT_CHOSEN",
+  } as { requiredTypeAgeRule: string; liabilityAgeSource: string },
+}));
 vi.mock("@/lib/member-subscription-eligibility", () => ({
-  requiresPaidSubscriptionForBooking: vi.fn(async () => true),
+  resolveSubscriptionLockoutPolicy: vi.fn(async () => ({
+    mode: "HARD_BLOCK",
+    liabilitySettings: lockoutPolicy.liabilitySettings,
+  })),
+}));
+// ADULT and YOUTH owe a subscription; CHILD is age-exempt.
+vi.mock("@/lib/age-tier", async (importOriginal) => ({
+  ...((await importOriginal()) as typeof import("@/lib/age-tier")),
+  getAgeTierSettings: vi.fn(async () => [
+    { tier: "CHILD", minAge: 5, maxAge: 12, label: "Child", sortOrder: 1, subscriptionRequiredForBooking: false },
+    { tier: "YOUTH", minAge: 13, maxAge: 17, label: "Youth", sortOrder: 2, subscriptionRequiredForBooking: true },
+    { tier: "ADULT", minAge: 18, maxAge: null, label: "Adult", sortOrder: 3, subscriptionRequiredForBooking: true },
+  ]),
 }));
 
 function readRepoFile(path: string) {
@@ -22,8 +41,8 @@ type PolicyMember = {
   firstName: string;
   lastName: string;
   email: string;
-  role: "MEMBER" | "LIFE" | "ADMIN";
-  ageTier: "ADULT";
+  role: "MEMBER" | "LIFE" | "LODGE" | "ADMIN";
+  ageTier: "ADULT" | "YOUTH" | "CHILD";
 };
 
 type PolicyType = {
@@ -171,19 +190,19 @@ describe("membership type booking and subscription policy", () => {
 
   it("falls back to built-in role defaults when the type row is missing", async () => {
     const db = makePolicyDb({
-      members: [makeMember({ id: "life-1", role: "LIFE" })],
+      members: [makeMember({ id: "lodge-1", role: "LODGE" })],
       membershipTypes: [],
     });
 
     const policies = await resolveMembershipTypePoliciesForMembers(db, {
-      memberIds: ["life-1"],
+      memberIds: ["lodge-1"],
       seasonYear: 2026,
     });
 
-    expect(policies.get("life-1")).toMatchObject({
+    expect(policies.get("lodge-1")).toMatchObject({
       source: "built_in_default",
       subscriptionBehavior: "NOT_REQUIRED",
-      membershipType: { key: "LIFE" },
+      membershipType: { key: "LODGE" },
     });
   });
 
@@ -338,7 +357,6 @@ describe("membership type booking and subscription policy", () => {
       requiresPaidSubscriptionForMemberForBooking(db, {
         memberId: "member-1",
         seasonYear: 2026,
-        ageTier: "ADULT",
       }),
     ).resolves.toBe(false);
   });
@@ -378,7 +396,6 @@ describe("membership type booking and subscription policy", () => {
         requiresPaidSubscriptionForMemberForBooking(db, {
           memberId: "member-1",
           seasonYear: 2026,
-          ageTier: "ADULT",
         }),
       ).resolves.toBe(true);
     });
@@ -394,7 +411,6 @@ describe("membership type booking and subscription policy", () => {
         requiresPaidSubscriptionForMemberForBooking(db, {
           memberId: "member-1",
           seasonYear: 2026,
-          ageTier: "ADULT",
         }),
       ).resolves.toBe(false);
     });
@@ -429,7 +445,6 @@ describe("membership type booking and subscription policy", () => {
         requiresPaidSubscriptionForMemberForBooking(seasonBoundaryDb, {
           memberId: "lodge-1",
           seasonYear: 2027,
-          ageTier: "ADULT",
         }),
       ).resolves.toBe(false);
     });
@@ -446,64 +461,101 @@ describe("membership type booking and subscription policy", () => {
       subscriptionBehavior: "BASED_ON_AGE_TIER",
     };
 
-    // requiresPaidSubscriptionForBooking is mocked to always return true, so a
-    // BASED_ON_AGE_TIER member with no NOT_REQUIRED row defers to it (required).
-    function makeDbWithSubscription(notRequiredRow: { id: string } | null) {
-      const findFirst = vi.fn(async () => notRequiredRow);
+    function makeDbWithSubscription(input: {
+      membershipType: PolicyType;
+      ageTier: PolicyMember["ageTier"];
+      seasonRow?: { status: "NOT_REQUIRED" | "NOT_INVOICED"; noInvoiceCoverage?: boolean };
+    }) {
+      const findMany = vi.fn(async () =>
+        input.seasonRow
+          ? [
+              {
+                memberId: "member-1",
+                status: input.seasonRow.status,
+                chargeCoverage: input.seasonRow.noInvoiceCoverage ? [{ id: "cov-1" }] : [],
+              },
+            ]
+          : [],
+      );
       const db = {
         ...makePolicyDb({
-          members: [makeMember()],
+          members: [makeMember({ ageTier: input.ageTier })],
           assignments: [
-            { memberId: "member-1", seasonYear: 2026, membershipType: ageTierType },
+            { memberId: "member-1", seasonYear: 2026, membershipType: input.membershipType },
           ],
         }),
-        memberSubscription: { findFirst },
+        memberSubscription: { findMany },
       };
-      return { db, findFirst };
+      return { db, findMany };
     }
+    const gate = (db: unknown) =>
+      requiresPaidSubscriptionForMemberForBooking(db, {
+        memberId: "member-1",
+        seasonYear: 2026,
+      });
+    const chooseRule = (requiredTypeAgeRule: string) => {
+      lockoutPolicy.liabilitySettings = {
+        requiredTypeAgeRule,
+        liabilityAgeSource: "SEASON_START",
+      };
+    };
+    afterEach(() => {
+      lockoutPolicy.liabilitySettings = {
+        requiredTypeAgeRule: "NOT_CHOSEN",
+        liabilityAgeSource: "NOT_CHOSEN",
+      };
+    });
 
     it("defers to the per-age-tier flag when no NOT_REQUIRED row exists", async () => {
-      const { db, findFirst } = makeDbWithSubscription(null);
-      await expect(
-        requiresPaidSubscriptionForMemberForBooking(db, {
-          memberId: "member-1",
-          seasonYear: 2026,
-          ageTier: "YOUTH",
-        }),
-      ).resolves.toBe(true);
-      expect(findFirst).toHaveBeenCalledTimes(1);
+      const { db, findMany } = makeDbWithSubscription({
+        membershipType: ageTierType,
+        ageTier: "YOUTH",
+      });
+      await expect(gate(db)).resolves.toBe(true);
+      expect(findMany).toHaveBeenCalledTimes(1);
     });
 
-    it("a NOT_REQUIRED season row dominates even when the stored tier would require one (mid-season age-up)", async () => {
-      const { db } = makeDbWithSubscription({ id: "sub-1" });
-      await expect(
-        requiresPaidSubscriptionForMemberForBooking(db, {
-          memberId: "member-1",
-          seasonYear: 2026,
-          ageTier: "YOUTH",
-        }),
-      ).resolves.toBe(false);
+    it("Edge 2, while NOT_CHOSEN: a NOT_REQUIRED season row dominates a liable stored tier (#2041)", async () => {
+      const { db } = makeDbWithSubscription({
+        membershipType: ageTierType,
+        ageTier: "YOUTH",
+        seasonRow: { status: "NOT_REQUIRED" },
+      });
+      await expect(gate(db)).resolves.toBe(false);
     });
 
-    it("REQUIRED types never query the subscription row (byte-unchanged path)", async () => {
-      const findFirst = vi.fn(async () => null);
-      const db = {
-        ...makePolicyDb({
-          members: [makeMember()],
-          assignments: [
-            { memberId: "member-1", seasonYear: 2026, membershipType: fullType },
-          ],
-        }),
-        memberSubscription: { findFirst },
-      };
-      await expect(
-        requiresPaidSubscriptionForMemberForBooking(db, {
-          memberId: "member-1",
-          seasonYear: 2026,
-          ageTier: "ADULT",
-        }),
-      ).resolves.toBe(true);
-      expect(findFirst).not.toHaveBeenCalled();
+    it("Edge 2, once the club has chosen: the season row exempts nobody and age decides", async () => {
+      chooseRule("AGE_TIER_EXEMPTS");
+      const { db } = makeDbWithSubscription({
+        membershipType: ageTierType,
+        ageTier: "YOUTH",
+        seasonRow: { status: "NOT_REQUIRED" },
+      });
+      await expect(gate(db)).resolves.toBe(true);
+    });
+
+    it("Edge 1, while NOT_CHOSEN: a REQUIRED-type member whose stored tier is exempt may book (pre-#5190 access rule)", async () => {
+      const { db } = makeDbWithSubscription({ membershipType: fullType, ageTier: "CHILD" });
+      await expect(gate(db)).resolves.toBe(false);
+    });
+
+    it("Edge 1, once the club has chosen: the club's rule decides for a REQUIRED-type child", async () => {
+      chooseRule("ALWAYS_OWES");
+      const always = makeDbWithSubscription({ membershipType: fullType, ageTier: "CHILD" });
+      await expect(gate(always.db)).resolves.toBe(true);
+
+      chooseRule("AGE_TIER_EXEMPTS");
+      const exempts = makeDbWithSubscription({ membershipType: fullType, ageTier: "CHILD" });
+      await expect(gate(exempts.db)).resolves.toBe(false);
+    });
+
+    it("a member covered by a no-invoice fee is not required to hold a PAID row, whatever the row status (#5190)", async () => {
+      const { db } = makeDbWithSubscription({
+        membershipType: fullType,
+        ageTier: "ADULT",
+        seasonRow: { status: "NOT_INVOICED", noInvoiceCoverage: true },
+      });
+      await expect(gate(db)).resolves.toBe(false);
     });
   });
 });

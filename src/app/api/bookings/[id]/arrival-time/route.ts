@@ -1,9 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
+import { parseJsonRequestBody } from "@/lib/api-json";
 import { bookingOwner } from "@/lib/booking-owner";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { requireActiveSessionUser } from "@/lib/session-guards";
-import { z } from "zod";
 import {
   calendarDateOfDateOnlyInstant,
   compareCalendarDates,
@@ -11,7 +11,10 @@ import {
 import { clubTime } from "@/lib/club-time/server";
 import { hasAdminAccess } from "@/lib/access-roles";
 import { hasAdminAreaAccess } from "@/lib/admin-permissions";
-import { ARRIVAL_TIME_ERROR_MESSAGE, ARRIVAL_TIME_PATTERN } from "@/lib/arrival-time";
+import { ARRIVAL_TIME_ERROR_MESSAGE } from "@/lib/arrival-time";
+import { arrivalTimeUpdateSchema } from "@/lib/booking-detail-edit-schemas";
+import { ARRIVAL_TIME_CONNECTION_SHAPE } from "@/lib/connection-shapes-bookings";
+import { connectionJson, memberOnlySessionUser } from "@/lib/mcp-connection-request";
 import { logAudit } from "@/lib/audit";
 import { getClientIp } from "@/lib/rate-limit";
 
@@ -47,15 +50,14 @@ import { getClientIp } from "@/lib/rate-limit";
 // field itself is unchanged — the two admins still end with one of the two
 // times, and now the audit trail says truthfully which order they landed in.
 
-// #2621: the accepted-value rule is `ARRIVAL_TIME_PATTERN`, imported rather
-// than re-spelled here. The literal that used to live on this line read
-// `[0-5]0` and so accepted :10/:20/:40/:50 while the message beside it promised
-// 30-minute increments.
-const arrivalTimeSchema = z.object({
-  expectedArrivalTime: z
-    .string()
-    .regex(ARRIVAL_TIME_PATTERN, ARRIVAL_TIME_ERROR_MESSAGE),
-});
+// #2621: the accepted-value rule is `ARRIVAL_TIME_PATTERN`, composed into
+// `arrivalTimeUpdateSchema` rather than re-spelled here. The literal that used
+// to live here read `[0-5]0` and so accepted :10/:20/:40/:50 while the message
+// beside it promised 30-minute increments.
+//
+// ALP-794: also the AI app actions `set_my_arrival_time` and
+// `clear_my_arrival_time`, which act as the member only. The officer reach
+// (#1313 option A2) below reads the member-only user.
 
 /**
  * #2674 — a soft-deleted booking is not a booking this route will write to.
@@ -136,10 +138,11 @@ export async function PUT(
   // Only booking owner or admin can update
   // Issue #1313 (option A2): owner, Full Admin, or Booking Officer
   // (bookings:edit) may set/clear the expected arrival time on any booking.
+  const user = memberOnlySessionUser(req, session.user);
   if (
-    bookingOwner(booking).memberId !== session.user.id &&
-    !hasAdminAccess(session.user) &&
-    !hasAdminAreaAccess(session.user, { area: "bookings", level: "edit" })
+    bookingOwner(booking).memberId !== user.id &&
+    !hasAdminAccess(user) &&
+    !hasAdminAreaAccess(user, { area: "bookings", level: "edit" })
   ) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
@@ -173,14 +176,11 @@ export async function PUT(
     );
   }
 
-  let body: unknown;
-  try {
-    body = await req.json();
-  } catch {
-    return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
-  }
+  const jsonBody = await parseJsonRequestBody(req, { error: "Invalid JSON" });
+  if (!jsonBody.ok) return jsonBody.response;
+  const body = jsonBody.body;
 
-  const parsed = arrivalTimeSchema.safeParse(body);
+  const parsed = arrivalTimeUpdateSchema.safeParse(body);
   if (!parsed.success) {
     // #2621: this used to answer a refused time with the bare word "Invalid
     // input" and bury `ARRIVAL_TIME_ERROR_MESSAGE` in `details`, which no caller
@@ -250,7 +250,7 @@ export async function PUT(
     ipAddress: getClientIp(req),
   });
 
-  return NextResponse.json(updated);
+  return connectionJson(req, updated, ARRIVAL_TIME_CONNECTION_SHAPE);
 }
 
 /**
@@ -294,10 +294,11 @@ export async function DELETE(
 
   // Issue #1313 (option A2): owner, Full Admin, or Booking Officer
   // (bookings:edit) may set/clear the expected arrival time on any booking.
+  const user = memberOnlySessionUser(req, session.user);
   if (
-    bookingOwner(booking).memberId !== session.user.id &&
-    !hasAdminAccess(session.user) &&
-    !hasAdminAreaAccess(session.user, { area: "bookings", level: "edit" })
+    bookingOwner(booking).memberId !== user.id &&
+    !hasAdminAccess(user) &&
+    !hasAdminAreaAccess(user, { area: "bookings", level: "edit" })
   ) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
@@ -369,5 +370,5 @@ export async function DELETE(
     ipAddress: getClientIp(req),
   });
 
-  return NextResponse.json(updated);
+  return connectionJson(req, updated, ARRIVAL_TIME_CONNECTION_SHAPE);
 }

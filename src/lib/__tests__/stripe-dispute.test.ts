@@ -36,6 +36,9 @@ const mocks = vi.hoisted(() => ({
   /** Every merge write (stamps excluded). */
   mergeWrites: vi.fn(),
   lockedIds: vi.fn(),
+  /** #5197: every raw statement, in order, as its SQL text. */
+  statements: [] as string[],
+  settleLateWin: vi.fn<(...args: unknown[]) => Promise<LateWinHandBackReport>>(async () => ({ kind: "read", reopened: [], alreadyOpen: [], notReopened: [], countedByCancellation: [], reduced: [] })),
 }));
 
 vi.mock("@/lib/prisma", () => {
@@ -97,8 +100,11 @@ vi.mock("@/lib/prisma", () => {
     booking: {
       findUnique: async ({ where }: { where: { id: string } }) => state.bookings.get(where.id) ?? null,
     },
-    $executeRaw: async (_strings: TemplateStringsArray, ...values: unknown[]) => {
-      mocks.lockedIds(...values);
+    $executeRaw: async (strings: TemplateStringsArray | { strings: string[] }, ...values: unknown[]) => {
+      // A tagged template, or a `Prisma.sql` object (`setTransactionLockTimeout`).
+      const sql = ("strings" in strings ? strings.strings : strings).join("?");
+      mocks.statements.push(sql);
+      if (sql.includes('"StripeDispute"')) mocks.lockedIds(...values);
       return 1;
     },
     alertCooldown: {
@@ -170,6 +176,8 @@ vi.mock("@/lib/admin-alert-once", async (importOriginal) => {
   };
 });
 
+// #5197: the late win's reopen and its report, proved against PostgreSQL in `stripe-dispute-late-win.realdb.test.ts`.
+vi.mock("@/lib/stripe-dispute-late-win", () => ({ settleLateWinHandBacks: (...args: unknown[]) => mocks.settleLateWin(...args) }));
 vi.mock("@/lib/logger", () => ({ default: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() } }));
 
 import logger from "@/lib/logger";
@@ -181,14 +189,13 @@ import {
   mergeDisputeSnapshot,
   recordStripeDispute,
   STRIPE_DISPUTE_CHARGE_READ_TIMEOUT_MS,
-  stripeDisputeAlertKey,
   stripeDisputeAlertSentKey,
   StripeDisputeAlertNotSentError,
-  stripeDisputeWonAfterLossOwedKey,
   type DisputeSnapshot,
 } from "@/lib/stripe-dispute";
-import { STRIPE_DISPUTE_NEXT_STEP, STRIPE_DISPUTE_WON_AFTER_LOSS_NEXT_STEP } from "@/lib/stripe-dispute-note";
-import { UNRECOGNISED_ALERT_IN_FLIGHT_MS } from "@/lib/unrecognised-stripe-payment";
+import { stripeDisputeAlertKey, stripeDisputeWonAfterLossOwedKey } from "@/lib/stripe-dispute-keys";
+import { STRIPE_DISPUTE_NEXT_STEP, stripeDisputeWonAfterLossNextStep, type LateWinHandBackReport } from "@/lib/stripe-dispute-note";
+import { UNRECOGNISED_ALERT_IN_FLIGHT_MS, unrecognisedPaymentAmountLabel } from "@/lib/unrecognised-stripe-payment";
 import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
 /** Stripe's seconds: the dispute opened, then each later event a minute on. */
@@ -243,7 +250,12 @@ function reset() {
   state.beforeClaim = null;
   mocks.sendAlert.mockResolvedValue("sent");
   mocks.getChargePaymentIntentId.mockResolvedValue(null);
+  mocks.statements.length = 0;
+  mocks.settleLateWin.mockResolvedValue(NOTHING_OWED_AGAIN);
 }
+
+const NOTHING_OWED_AGAIN: LateWinHandBackReport = { kind: "read", reopened: [], alreadyOpen: [], notReopened: [], countedByCancellation: [], reduced: [] };
+const money = (cents: number) => unrecognisedPaymentAmountLabel(cents, "nzd", CLUB_FORMAT_TEST);
 
 describe("recordStripeDispute (#4911)", () => {
   beforeEach(reset);
@@ -603,7 +615,7 @@ describe("a lost dispute later won (#5061 follow-up, INV-PAY-154)", () => {
     expect(sentAlerts().map((fields) => [fields.stage, fields.outcome, fields.disputeNextStep])).toEqual([
       ["opened", "open", STRIPE_DISPUTE_NEXT_STEP.OPEN],
       ["closed", "lost", STRIPE_DISPUTE_NEXT_STEP.LOST],
-      ["won-after-loss", "won", STRIPE_DISPUTE_WON_AFTER_LOSS_NEXT_STEP],
+      ["won-after-loss", "won", stripeDisputeWonAfterLossNextStep(NOTHING_OWED_AGAIN, money)],
     ]);
     // The closed alert's key is untouched; the extra alert is claimed under its own.
     expect(state.heldKeys.has(stripeDisputeAlertKey("dp_1", "closed"))).toBe(true);
@@ -631,6 +643,51 @@ describe("a lost dispute later won (#5061 follow-up, INV-PAY-154)", () => {
 
     expect(sentAlerts().map((fields) => fields.stage)).toEqual(["opened", "closed", "won-after-loss", "won-after-loss"]);
     expect(state.heldKeys.has(stripeDisputeWonAfterLossOwedKey("dp_1"))).toBe(false);
+  });
+
+  it("#5197: settles the hand-backs once, after the move to WON, and the alert names what it did", async () => {
+    matchedCapture();
+    const report: LateWinHandBackReport = { kind: "read", reopened: [{ taskId: "task_1", cents: 30000, taskCents: 30000 }], alreadyOpen: [],
+      notReopened: [{ taskId: "task_2", cents: 10000, reason: "The booking was busy with another change, so the app did not wait for it." }],
+      countedByCancellation: [], reduced: [{ taskId: "task_3", cents: 5000 }] };
+    mocks.settleLateWin.mockResolvedValue(report);
+    await lost();
+    expect(mocks.settleLateWin).not.toHaveBeenCalled();
+    await won();
+
+    expect(mocks.settleLateWin).toHaveBeenCalledTimes(1);
+    expect(mocks.settleLateWin).toHaveBeenCalledWith(expect.objectContaining({ stripeDisputeId: "dp_1", status: "WON" }));
+    const step = sentAlerts().at(-1)!.disputeNextStep;
+    expect(step).toBe(stripeDisputeWonAfterLossNextStep(report, money));
+    expect(step).toMatch(/reopened the refund tasks .*task task_1 \(\$300\.00\)/);
+    expect(step).toMatch(/could not reopen them: task task_2 \(\$100\.00\): The booking was busy/);
+    expect(step).toMatch(/owed to the member again: task task_3 \(\$50\.00\)/);
+
+    // Sent: a redelivery reopens nothing more.
+    await won();
+    expect(mocks.settleLateWin).toHaveBeenCalledTimes(1);
+  });
+
+  it("#5197: a redelivery after an alert nobody received settles again, so a refused reopen is retried", async () => {
+    await lost();
+    mocks.sendAlert.mockResolvedValueOnce("undelivered");
+    await expect(won()).rejects.toEqual(expect.objectContaining({ stage: "won-after-loss" }));
+    await won();
+
+    expect(mocks.settleLateWin).toHaveBeenCalledTimes(2);
+  });
+
+  it("#5197 MUTATION: a WON event takes lock(1), bounded, before the row lock; no other event takes it", async () => {
+    await lost();
+    expect(mocks.statements.some((sql) => sql.includes("pg_advisory_xact_lock"))).toBe(false);
+    mocks.statements.length = 0;
+
+    await won();
+
+    const [timeout, global, row] = mocks.statements;
+    expect(timeout).toContain("lock_timeout");
+    expect(global).toContain("pg_advisory_xact_lock(1)");
+    expect(row).toContain('"StripeDispute"');
   });
 
   it("sends none for a dispute won straight from open", async () => {

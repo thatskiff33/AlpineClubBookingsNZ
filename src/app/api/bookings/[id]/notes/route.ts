@@ -1,21 +1,21 @@
 import { NextRequest, NextResponse } from "next/server";
-import { z } from "zod";
+import { parseJsonRequestBody } from "@/lib/api-json";
 import { bookingOwner } from "@/lib/booking-owner";
 import { auth } from "@/lib/auth";
-import { htmlToPlainText } from "@/lib/email-text";
 import { prisma } from "@/lib/prisma";
 import { requireActiveSessionUser } from "@/lib/session-guards";
 import { hasAdminAccess } from "@/lib/access-roles";
 import { hasAdminAreaAccess } from "@/lib/admin-permissions";
 import { isMemberCancellableBookingStatus } from "@/lib/booking-cancel-eligibility";
+import { bookingNotesUpdateSchema } from "@/lib/booking-detail-edit-schemas";
+import { BOOKING_NOTE_CONNECTION_SHAPE } from "@/lib/connection-shapes-bookings";
+import { connectionJson, memberOnlySessionUser } from "@/lib/mcp-connection-request";
 
-const notesSchema = z.object({
-  notes: z
-    .string()
-    .max(500, "Notes must be 500 characters or fewer")
-    .transform((val) => htmlToPlainText(val).trim()),
-});
-
+/**
+ * The note on a booking. Also the AI app action `set_my_booking_note`
+ * (ALP-794), which acts as the member only: an officer's reach to another
+ * member's booking reads the member-only user.
+ */
 export async function PUT(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
@@ -29,7 +29,8 @@ export async function PUT(
   if (inactiveResponse) {
     return inactiveResponse;
   }
-  const isAdmin = hasAdminAccess(session.user);
+  const user = memberOnlySessionUser(req, session.user);
+  const isAdmin = hasAdminAccess(user);
 
   const { id } = await params;
 
@@ -45,9 +46,9 @@ export async function PUT(
   // Issue #1313 (option A2): owner, Full Admin, or Booking Officer
   // (bookings:edit) may edit the admin notes on any booking.
   if (
-    bookingOwner(booking).memberId !== session.user.id &&
+    bookingOwner(booking).memberId !== user.id &&
     !isAdmin &&
-    !hasAdminAreaAccess(session.user, { area: "bookings", level: "edit" })
+    !hasAdminAreaAccess(user, { area: "bookings", level: "edit" })
   ) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
@@ -63,14 +64,11 @@ export async function PUT(
     );
   }
 
-  let body: unknown;
-  try {
-    body = await req.json();
-  } catch {
-    return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
-  }
+  const jsonBody = await parseJsonRequestBody(req, { error: "Invalid JSON" });
+  if (!jsonBody.ok) return jsonBody.response;
+  const body = jsonBody.body;
 
-  const parsed = notesSchema.safeParse(body);
+  const parsed = bookingNotesUpdateSchema.safeParse(body);
   if (!parsed.success) {
     return NextResponse.json(
       { error: "Validation failed", details: parsed.error.flatten().fieldErrors },
@@ -84,5 +82,5 @@ export async function PUT(
     select: { id: true, notes: true },
   });
 
-  return NextResponse.json(updated);
+  return connectionJson(req, updated, BOOKING_NOTE_CONNECTION_SHAPE);
 }

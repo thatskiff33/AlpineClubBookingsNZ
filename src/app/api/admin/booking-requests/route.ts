@@ -1,8 +1,6 @@
 import { loadEffectiveModuleFlags } from "@/lib/module-settings";
 import { memberWholeLodgeChoosesPaymentMethod } from "@/lib/booking-payment-flow";
 import { NextRequest, NextResponse } from "next/server";
-import { z } from "zod";
-import { BookingRequestStatus } from "@prisma/client";
 import {
   buildBookingRequestListWhere,
   readBookingRequestGuestsForDisplay,
@@ -18,21 +16,22 @@ import { loadSchoolGroupSoftCap } from "@/lib/lodge-settings";
 import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/session-guards";
 import logger from "@/lib/logger";
-import { adminListPage, adminListPageQueryFields, adminQueueCreatedOrder, adminQueueFocusIdField } from "@/lib/admin-list-page";
+import { adminListPage, adminQueueCreatedOrder } from "@/lib/admin-list-page";
+import { adminBookingRequestQueueQuerySchema } from "@/lib/admin-bookings-schemas/requests";
+import {
+  ADMIN_BOOKING_REQUEST_QUEUE_CONNECTION_SHAPE,
+  type AdminBookingRequestQueueAnswer,
+  type AdminBookingRequestQueueRow,
+} from "@/lib/connection-shapes/bookings-requests";
+import { connectionJson } from "@/lib/mcp-connection-request";
 
-const statusFilterValues = [...Object.values(BookingRequestStatus), "QUEUE", "ALL"] as const;
-
-const querySchema = z.object({
-  status: z.enum(statusFilterValues).optional().default("QUEUE"),
-  ...adminListPageQueryFields,
-  requestId: adminQueueFocusIdField,
-});
-
+/** The officer queue of group, school and whole-lodge requests; also the AI
+ * app action `list_booking_requests` (ALP-719). */
 export async function GET(req: NextRequest) {
   const guard = await requireAdmin();
   if (!guard.ok) return guard.response;
 
-  const parsed = querySchema.safeParse(Object.fromEntries(req.nextUrl.searchParams));
+  const parsed = adminBookingRequestQueueQuerySchema.safeParse(Object.fromEntries(req.nextUrl.searchParams));
   if (!parsed.success) {
     return NextResponse.json(
       { error: "Invalid query parameters", details: parsed.error.flatten() },
@@ -56,7 +55,7 @@ export async function GET(req: NextRequest) {
       // default lodge (pre-multi-lodge rows and single-lodge submissions).
       // otherLodge name (#2749) drives the "Member of another Lodge" line and
       // the Full-member rate pre-fill in the pricing panel; its location tells
-      // two lodges of one name apart (#69).
+      // two lodges of one name apart (triyder/AlpineClubBookingsNZ#69).
       include: {
         lodge: { select: { name: true } },
         otherLodge: { select: { name: true, location: true } },
@@ -184,7 +183,7 @@ export async function GET(req: NextRequest) {
     );
   }
 
-  const data = requests.map((request) => {
+  const data = requests.map((request): AdminBookingRequestQueueRow => {
     const quote = latestQuoteByRequestId.get(request.id) ?? null;
     // #2342: the third stored blob this page parses per row, and — once the
     // guest list and the member links were made tolerant — the last one that
@@ -242,8 +241,9 @@ export async function GET(req: NextRequest) {
     };
   });
 
-  return NextResponse.json({
+  const answer: AdminBookingRequestQueueAnswer = {
     data, ...adminListPage({ page, pageSize, total }),
     memberWholeLodgeChoosesPaymentMethod: memberWholeLodgeChoosesPaymentMethod(await loadEffectiveModuleFlags()),
-  });
+  };
+  return connectionJson(req, answer, ADMIN_BOOKING_REQUEST_QUEUE_CONNECTION_SHAPE);
 }

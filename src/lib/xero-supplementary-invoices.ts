@@ -13,6 +13,7 @@ import {
   Payment as XeroPayment,
 } from "xero-node";
 import { prisma } from "./prisma";
+import { storedShortBookingId } from "@/lib/booking-reference";
 import { resolveOrganiserBilling, resolveOrganiserXeroContact } from "@/lib/organiser-billing";
 import { sendGroupOrganiserExtraInvoiceEmail } from "@/lib/email/groups";
 import { ORGANISER_EXTRA_WAIVED_UNRAISED_CODE, organiserExtraWaivedBeforeRaised, readOrganiserExtraState } from "@/lib/organiser-extra-state";
@@ -248,8 +249,8 @@ export async function createXeroSupplementaryInvoice(params: {
        * policy is not a hard-coded string (`INV-CONFIG-001`).
        */
       description: shortfallReviewTaskId
-        ? `Further amount for a booking change (Booking ${bookingId.slice(0, 8)}). The invoice for this change had already been sent when this part of it was finalised, so this covers the remainder rather than replacing it.`
-        : `Booking modification - price adjustment (Booking ${bookingId.slice(0, 8)})`,
+        ? `Further amount for a booking change (Booking ${storedShortBookingId(bookingId)}). The invoice for this change had already been sent when this part of it was finalised, so this covers the remainder rather than replacing it.`
+        : `Booking modification - price adjustment (Booking ${storedShortBookingId(bookingId)})`,
       quantity: 1,
       unitAmount: priceDiffCents / 100,
       ...xeroLineTax(taxRendering),
@@ -317,10 +318,10 @@ export async function createXeroSupplementaryInvoice(params: {
     date: supplementaryInvoiceIssueDate,
     dueDate: supplementaryInvoiceDueDate,
     reference: organiserBilling
-      ? `Group place ${bookingId.slice(0, 8)} extra (combined invoice: ${originalInvoiceId})`
+      ? `Group place ${storedShortBookingId(bookingId)} extra (combined invoice: ${originalInvoiceId})`
       : shortfallReviewTaskId
-      ? `Further supplementary for booking ${bookingId.slice(0, 8)}${booking.payment?.xeroInvoiceId ? ` (original: ${booking.payment.xeroInvoiceId})` : ""}`
-      : `Supplementary for booking ${bookingId.slice(0, 8)}${booking.payment?.xeroInvoiceId ? ` (original: ${booking.payment.xeroInvoiceId})` : ""}`,
+      ? `Further supplementary for booking ${storedShortBookingId(bookingId)}${booking.payment?.xeroInvoiceId ? ` (original: ${booking.payment.xeroInvoiceId})` : ""}`
+      : `Supplementary for booking ${storedShortBookingId(bookingId)}${booking.payment?.xeroInvoiceId ? ` (original: ${booking.payment.xeroInvoiceId})` : ""}`,
     status: Invoice.StatusEnum.AUTHORISED,
     lineAmountTypes: taxRendering.lineAmountTypes,
   });
@@ -484,7 +485,7 @@ export async function createXeroSupplementaryInvoice(params: {
     if (recordPayment) {
       try {
         const stripeBankCode = (await getAccountMapping("stripeBankAccount")) ?? "606";
-        const paymentReference = `Stripe payment for booking modification ${bookingId.slice(0, 8)}`;
+        const paymentReference = `Stripe payment for booking modification ${storedShortBookingId(bookingId)}`;
         // The recorded payment is the NET — exactly what the additional
         // Stripe PaymentIntent captured (#1356). Recording anything larger
         // than the capture overstates the Stripe clearing account.

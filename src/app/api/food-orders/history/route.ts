@@ -7,7 +7,10 @@ import {
 } from "@/lib/club-time";
 import { clubTime } from "@/lib/club-time/server";
 import { requireFoodOrderViewer } from "@/lib/food-order-route";
-import { FOOD_ORDER_STATUSES } from "@/lib/food-order-rules";
+import {
+  FOOD_ORDER_HISTORY_FILTER_ERRORS,
+  foodOrderHistoryQuerySchema,
+} from "@/lib/food-order-schema";
 import { loadFoodOrderSettings } from "@/lib/food-order-settings";
 import {
   findFoodOrderHistoryRow,
@@ -16,9 +19,11 @@ import {
 } from "@/lib/food-orders";
 import { prisma } from "@/lib/prisma";
 import { requireActiveSession } from "@/lib/session-guards";
+import { FOOD_ORDER_HISTORY_CONNECTION_SHAPE } from "@/lib/connection-shapes-lodge-life";
+import { connectionJson } from "@/lib/mcp-connection-request";
 
 /**
- * The food-order history (fork #121). A member gets their own orders; committee
+ * The food-order history (fork triyder/AlpineClubBookingsNZ#121). A member gets their own orders; committee
  * and Lodge Operations view get every order, and a current hut leader the
  * orders at the lodges they lead (`foodOrderVisibility`). All can filter by lodge, status and a
  * needed-by date range, paged, with the order count and price total for the
@@ -32,50 +37,51 @@ import { requireActiveSession } from "@/lib/session-guards";
  * one order, whichever page it falls on, when the viewer may see it, and null
  * otherwise. An order they may not see and one that does not exist answer the
  * same null, so the parameter cannot confirm another member's order exists.
+ *
+ * Also the AI app action `list_my_food_orders` (ALP-796): a connection sees
+ * the member's own orders only (`requireFoodOrderViewer`), without the names
+ * of who ticked or priced them or the management flags.
  */
 
 function parseFilters(
   params: URLSearchParams,
 ): FoodOrderHistoryFilters | { error: string } {
-  const filters: FoodOrderHistoryFilters = { page: 1 };
-
-  const lodgeId = params.get("lodgeId")?.trim();
-  if (lodgeId) {
-    if (lodgeId.length > 64) return { error: "Unknown lodge filter." };
-    filters.lodgeId = lodgeId;
+  // The first value of each filter, as `URLSearchParams.get` reads it; an
+  // empty value is no filter, as the history page sends it.
+  const present: Record<string, string> = {};
+  for (const key of Object.keys(foodOrderHistoryQuerySchema.shape)) {
+    const value = params.get(key)?.trim();
+    if (value) present[key] = value;
+  }
+  const parsed = foodOrderHistoryQuerySchema.safeParse(present);
+  if (!parsed.success) {
+    const field = parsed.error.issues[0]?.path[0];
+    return {
+      error:
+        typeof field === "string" && field in FOOD_ORDER_HISTORY_FILTER_ERRORS
+          ? FOOD_ORDER_HISTORY_FILTER_ERRORS[field as keyof typeof FOOD_ORDER_HISTORY_FILTER_ERRORS]
+          : "Unknown filter.",
+    };
   }
 
-  const status = params.get("status")?.trim();
-  if (status) {
-    const match = FOOD_ORDER_STATUSES.find((value) => value === status);
-    if (!match) return { error: "Unknown status filter." };
-    filters.status = match;
-  }
-
-  for (const [key, field] of [
-    ["from", "neededFrom"],
-    ["to", "neededTo"],
+  const { lodgeId, status, from, to, page } = parsed.data;
+  const filters: FoodOrderHistoryFilters = { page: page ?? 1 };
+  if (lodgeId) filters.lodgeId = lodgeId;
+  if (status) filters.status = status;
+  for (const [raw, field, key] of [
+    [from, "neededFrom", "from"],
+    [to, "neededTo", "to"],
   ] as const) {
-    const raw = params.get(key)?.trim();
     if (!raw) continue;
     const date = parseCalendarDate(raw);
-    if (!date) return { error: "Dates must be in YYYY-MM-DD form." };
+    if (!date) return { error: FOOD_ORDER_HISTORY_FILTER_ERRORS[key] };
     filters[field] = dateOnlyInstantOf(date);
-  }
-
-  const page = params.get("page");
-  if (page) {
-    const value = Number(page);
-    if (!Number.isInteger(value) || value < 1 || value > 100_000) {
-      return { error: "Unknown page." };
-    }
-    filters.page = value;
   }
   return filters;
 }
 
 export async function GET(request: NextRequest) {
-  const guard = await requireFoodOrderViewer(() => requireActiveSession());
+  const guard = await requireFoodOrderViewer(request, () => requireActiveSession());
   if (!guard.ok) return guard.response;
 
   const filters = parseFilters(request.nextUrl.searchParams);
@@ -97,7 +103,7 @@ export async function GET(request: NextRequest) {
     clubTime(),
   ]);
 
-  return NextResponse.json({
+  return connectionJson(request, {
     ...history,
     linkedOrder,
     // The club's own year today (club-time kernel): this year and later show
@@ -105,5 +111,5 @@ export async function GET(request: NextRequest) {
     currentYear: calendarDateParts(club.today()).year,
     officerLabel: settings.officerLabel,
     lodges,
-  });
+  }, FOOD_ORDER_HISTORY_CONNECTION_SHAPE);
 }

@@ -1,7 +1,9 @@
 import { NextResponse } from "next/server";
 
+import { parseJsonRequestBody } from "@/lib/api-json";
 import { getAuditRequestContext } from "@/lib/audit";
 import {
+  approvalCoversOfficerActions,
   approvedMcpScope,
   MCP_SIGN_IN_AGAIN_MESSAGE,
   mcpApprovalDecisionSchema,
@@ -54,12 +56,11 @@ export async function POST(request: Request) {
   if (!guard.ok) return guard.response;
   const { user } = guard.session;
 
-  let body: unknown;
-  try {
-    body = await request.json();
-  } catch {
-    return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
-  }
+  const jsonBody = await parseJsonRequestBody(request, {
+    error: "Invalid JSON",
+  });
+  if (!jsonBody.ok) return jsonBody.response;
+  const body = jsonBody.body;
   const parsed = mcpApprovalDecisionSchema.safeParse(body);
   if (!parsed.success) {
     return NextResponse.json({ error: "Invalid input" }, { status: 400 });
@@ -79,6 +80,7 @@ export async function POST(request: Request) {
     return NextResponse.json({ redirectTo: buildMcpDenyRedirect(approval.request) });
   }
 
+  const officerConsent = approvalCoversOfficerActions(approval, parsed.data.officerNoticeShown);
   let approved: Awaited<ReturnType<typeof approveMcpConnection>>;
   try {
     approved = await approveMcpConnection({
@@ -88,6 +90,7 @@ export async function POST(request: Request) {
       settings: approval.settings,
       sessionIssuedAt: approval.signIn.sessionIssuedAt,
       twoFactorVerified: approval.signIn.twoFactorVerified,
+      officerConsent,
     });
   } catch (err) {
     if (err instanceof McpApprovalAccountChangedError) {
@@ -106,6 +109,7 @@ export async function POST(request: Request) {
       clientName: approval.request.clientName,
       redirectHost: approval.request.redirectHost,
       scope: approved.scope,
+      officerActions: officerConsent,
     },
     request: getAuditRequestContext(request),
   });

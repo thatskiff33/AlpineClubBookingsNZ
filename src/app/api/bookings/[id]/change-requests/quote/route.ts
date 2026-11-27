@@ -1,23 +1,22 @@
 import { NextRequest, NextResponse } from "next/server";
-import { z } from "zod";
-
+import { parseJsonRequestBody } from "@/lib/api-json";
 import { auth } from "@/lib/auth";
 import { bookingOwner } from "@/lib/booking-owner";
 import { bookingManagementAuthorizationRole } from "@/lib/admin-permissions";
 import { requireActiveSessionUser } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma";
-import {
-  changeRequestAddGuestsSchema,
-  changeRequestValidationMessage,
-} from "@/lib/booking-change-request-guests";
+import { changeRequestValidationMessage } from "@/lib/booking-change-request-guests";
 import {
   changeRequestDeltaSchema,
+  changeRequestEstimateSchema,
   mergeChangeRequestGuests,
   unknownChangeRequestGuestRefusal,
   validateChangeRequestDatesAndNights,
 } from "@/lib/booking-change-request-input";
 import { estimateChangeRequestAddedGuests } from "@/lib/booking-change-request-estimate";
 import { checkRateLimit, rateLimiters } from "@/lib/rate-limit";
+import { CHANGE_REQUEST_ESTIMATE_CONNECTION_SHAPE } from "@/lib/connection-shapes-bookings";
+import { connectionJson, memberOnlySessionUser } from "@/lib/mcp-connection-request";
 
 /**
  * #4030 Part A: the price estimate an in-progress stay's change-request card
@@ -28,13 +27,10 @@ import { checkRateLimit, rateLimiters } from "@/lib/rate-limit";
  * Member guests are listed but never priced here — see
  * `booking-change-request-estimate.ts` for why that is a privacy boundary, not a
  * gap.
+ *
+ * Also the AI app preview `quote_booking_change_request` (ALP-794), which acts
+ * as the member only.
  */
-const estimateSchema = z.object({
-  // Only the card guests are priced; the full proposal is validated below.
-  addGuests: changeRequestAddGuestsSchema.nonempty(),
-  editorChanges: changeRequestDeltaSchema.optional(),
-});
-
 export async function POST(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> },
@@ -45,7 +41,7 @@ export async function POST(
   }
   const inactiveResponse = await requireActiveSessionUser(session.user.id);
   if (inactiveResponse) return inactiveResponse;
-  const isAdmin = bookingManagementAuthorizationRole(session.user) === "ADMIN";
+  const isAdmin = bookingManagementAuthorizationRole(memberOnlySessionUser(req, session.user)) === "ADMIN";
 
   const { id: bookingId } = await params;
   const booking = await prisma.booking.findUnique({
@@ -96,13 +92,10 @@ export async function POST(
     );
   }
 
-  let body: unknown;
-  try {
-    body = await req.json();
-  } catch {
-    return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
-  }
-  const parsed = estimateSchema.safeParse(body);
+  const jsonBody = await parseJsonRequestBody(req, { error: "Invalid JSON" });
+  if (!jsonBody.ok) return jsonBody.response;
+  const body = jsonBody.body;
+  const parsed = changeRequestEstimateSchema.safeParse(body);
   if (!parsed.success) {
     return NextResponse.json(
       { error: changeRequestValidationMessage(parsed.error), details: parsed.error.flatten() },
@@ -140,5 +133,5 @@ export async function POST(
     parsed.data.addGuests,
     parsed.data.editorChanges,
   );
-  return NextResponse.json({ estimate });
+  return connectionJson(req, { estimate }, CHANGE_REQUEST_ESTIMATE_CONNECTION_SHAPE);
 }

@@ -14,7 +14,9 @@ import { strandedCoverageStateKey } from "@/lib/adult-member-hosting-same-owner"
 import {
   formatLinkedMoveMoneySentence,
   hostingCoverageLinkedMoveAnswer,
+  hostingCoverageLinkedMoveAnswerFields,
   readHostingCoverageLinkedMovePrompt,
+  readLinkedMoveRefusal,
   type LinkedMoveMoneyFacts,
 } from "@/lib/hosting-coverage-linked-move-client";
 import {
@@ -85,6 +87,14 @@ describe("reading the linked-move offer (#3232)", () => {
     expect(prompt?.linkedMoveAvailable).toBe(true);
     expect(prompt?.combinedAmountDueCents).toBe(6500);
     expect(prompt?.linkedBookings[0]?.proposedCheckIn).toBe("2026-08-20");
+  });
+
+  it("#5303: reads where the one choice's refund goes, the card when an older server omits it", () => {
+    expect(readHostingCoverageLinkedMovePrompt(body({ refundRoute: "BANK_TRANSFER" }))?.refundRoute).toBe("BANK_TRANSFER");
+    expect(readHostingCoverageLinkedMovePrompt(body({ refundRoute: "CARD_AND_BANK_TRANSFER" }))?.refundRoute).toBe("CARD_AND_BANK_TRANSFER");
+    expect(readHostingCoverageLinkedMovePrompt(body())?.refundRoute).toBe("CARD");
+    // A value the panel cannot word is not an offer it can render honestly.
+    expect(readHostingCoverageLinkedMovePrompt(body({ refundRoute: "CHEQUE" }))).toBeNull();
   });
 
   it("reads the not-enough-beds form, which is an offer with one arm", () => {
@@ -185,6 +195,7 @@ describe("what the offer says about the money (#3232)", () => {
       combinedOrganiserRefundCents: 0,
       combinedOrganiserBankTransferRefundCents: 0,
       settlementMethodRequired: false,
+      refundRoute: "CARD",
       settlementMethodChosen: false,
       bothChangeFeesCharged: true,
       linkedCount: 1,
@@ -308,7 +319,7 @@ describe("what the offer says about the money (#3232)", () => {
     expect(alreadyChosen).not.toMatch(/You will be asked once/);
   });
 
-  it("fork #132: names the freed applied credit inside the one total, and keeps it out of the card-or-credit choice", () => {
+  it("the 18 Nov 2026 money review on #5149: names the freed applied credit inside the one total, and keeps it out of the card-or-credit choice", () => {
     // All of it freed credit: the total is still the one figure, the share is
     // named, and the card-or-credit sentence cannot describe it.
     const freedOnly = formatLinkedMoveMoneySentence(
@@ -397,6 +408,85 @@ describe("which key travels with which answer (#3232, INV-HOST-050)", () => {
  * minters alone leaves the readers silently discarding every offer the server
  * makes, so a member clicks a "Move both" button that can never work.
  */
+describe("the figures an acceptance echoes (#5238, INV-MOD-062)", () => {
+  const PRIMARY = { newFinalPriceCents: 11_000, priceDiffCents: 1000, changeFeeCents: 2500, netChargeCents: 3500 };
+  const LINKED = { newFinalPriceCents: 10_500, priceDiffCents: 500, changeFeeCents: 2500, netChargeCents: 3000 };
+  function withFigures(primary: unknown = PRIMARY, linked: unknown = LINKED) {
+    const offer = body();
+    return {
+      ...offer,
+      primary: { ...offer.primary, quotedFigures: primary },
+      linkedBookings: offer.linkedBookings.map((row) => ({ ...row, quotedFigures: linked })),
+    };
+  }
+
+  it("accepting sends the answer with every booking's figures, keyed by booking", () => {
+    const prompt = readHostingCoverageLinkedMovePrompt(withFigures())!;
+    expect(hostingCoverageLinkedMoveAnswerFields(prompt, "MOVE_BOTH")).toEqual({
+      hostingCoverageLinkedMove: { choice: "MOVE_BOTH", acknowledged: true, stateKey: KEY_A },
+      quotedFigures: PRIMARY,
+      linkedQuotedFigures: [{ bookingId: "b-main", figures: LINKED }],
+    });
+  });
+
+  it("declining sends the answer alone, leaving the preview's own figures in place", () => {
+    const prompt = readHostingCoverageLinkedMovePrompt(withFigures())!;
+    expect(hostingCoverageLinkedMoveAnswerFields(prompt, "LEAVE_UNCOVERED")).toEqual({
+      hostingCoverageLinkedMove: { choice: "LEAVE_UNCOVERED", acknowledged: true, stateKey: KEY_B },
+    });
+  });
+
+  it("sends nothing on an arm with no answer to give", () => {
+    const prompt = readHostingCoverageLinkedMovePrompt({ ...withFigures(), linkedMoveAvailable: false })!;
+    expect(hostingCoverageLinkedMoveAnswerFields(prompt, "MOVE_BOTH")).toEqual({});
+  });
+
+  it("still reads an older server's offer, which carries none, and then echoes none", () => {
+    const prompt = readHostingCoverageLinkedMovePrompt(body());
+    expect(prompt).not.toBeNull();
+    expect(hostingCoverageLinkedMoveAnswerFields(prompt!, "MOVE_BOTH")).not.toHaveProperty("linkedQuotedFigures");
+  });
+
+  it("echoes none when any one booking's figures are missing", () => {
+    const offer = body();
+    const prompt = readHostingCoverageLinkedMovePrompt({ ...offer, primary: { ...offer.primary, quotedFigures: PRIMARY } })!;
+    expect(hostingCoverageLinkedMoveAnswerFields(prompt, "MOVE_BOTH")).not.toHaveProperty("linkedQuotedFigures");
+  });
+
+  it("fails closed on figures that are not integer cents", () => {
+    expect(readHostingCoverageLinkedMovePrompt(withFigures({ ...PRIMARY, changeFeeCents: 0.5 }))).toBeNull();
+    expect(readHostingCoverageLinkedMovePrompt(withFigures(PRIMARY, { ...LINKED, netChargeCents: "3000" }))).toBeNull();
+  });
+});
+
+describe("the offer a refused save carries (#3232, #5238)", () => {
+  it("reads the first offer and asks for a choice", () => {
+    expect(readLinkedMoveRefusal(body())).toMatchObject({
+      priceChanged: false,
+      message: "Choose whether to move both bookings or only this one, then save again.",
+      prompt: { acceptStateKey: KEY_A },
+    });
+  });
+
+  it("reads the fresh offer inside a price-changed refusal and says nothing was saved", () => {
+    const refusal = readLinkedMoveRefusal({
+      code: "EDIT_PRICE_CHANGED",
+      error: "The price changed since you previewed it. Review and save again.",
+      figures: { newFinalPriceCents: 1, priceDiffCents: 0, changeFeeCents: 0, netChargeCents: 0 },
+      linkedMove: body({ acceptStateKey: `v1:${"c".repeat(64)}` }),
+    });
+    expect(refusal?.priceChanged).toBe(true);
+    expect(refusal?.prompt.acceptStateKey).toBe(`v1:${"c".repeat(64)}`);
+    expect(refusal?.message).toMatch(/so nothing was saved/);
+  });
+
+  it("reads nothing from a plain price change or any other refusal", () => {
+    expect(readLinkedMoveRefusal({ code: "EDIT_PRICE_CHANGED", figures: {} })).toBeNull();
+    expect(readLinkedMoveRefusal({ code: "EDIT_FIGURES_REQUIRED", error: "Reload" })).toBeNull();
+    expect(readLinkedMoveRefusal(null)).toBeNull();
+  });
+});
+
 describe("the hosting-coverage state-key format (#3232, INV-SSOT-001)", () => {
   const digest = "a".repeat(64);
 

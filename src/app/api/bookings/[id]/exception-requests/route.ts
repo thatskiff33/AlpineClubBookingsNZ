@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { z } from "zod";
-
+import { parseJsonRequestBody } from "@/lib/api-json";
 import { bookingOwner } from "@/lib/booking-owner";
 import { auth } from "@/lib/auth";
 import { logAudit } from "@/lib/audit";
@@ -10,14 +9,10 @@ import { storedDateOnly } from "@/lib/stored-calendar-day";
 import { requireActiveSessionUser } from "@/lib/session-guards";
 import { checkRateLimit, getClientIp, rateLimiters } from "@/lib/rate-limit";
 import { sendAdminBookingChangeRequestAlert } from "@/lib/email";
-import { bookableAgeTierEnum } from "@/lib/age-tier-schema";
-import { nameField } from "@/lib/zod-helpers";
-import {
-  GUEST_CHANGE_LIST_BOUND, BOOKING_PARTY_GUESTS_MAX, guestRequestSchemaError, guestStayFieldsSchema,
-} from "@/lib/booking-guest-stay-range-input";
-import {
-  dependantIdentityDeclarationSchema,
-} from "@/lib/booking-dependant-identity";
+import { guestRequestSchemaError } from "@/lib/booking-guest-stay-range-input";
+import { modificationExceptionRequestSchema } from "@/lib/booking-exception-request-schemas";
+import { CREATED_EXCEPTION_REQUEST_CONNECTION_SHAPE } from "@/lib/connection-shapes-bookings";
+import { connectionJson, memberOnlySessionUser } from "@/lib/mcp-connection-request";
 import {
   dependantIdentitySpeaksOnBehalf,
 } from "@/lib/booking-dependant-identity-doors";
@@ -40,52 +35,12 @@ import { BookingGuestValidationError } from "@/lib/booking-guests";
 import { transactionContendedResponse } from "@/lib/transaction-contended-response";
 
 /*
- * A guest's explicit night set (#713) rides in `guestStayFieldsSchema`, as on `/modify`.
- *
- * REQUIRED here, not a nicety (#2562 review). The edit panel's grid mode sends
- * `guestStayRanges: [{ guestId, nights }]` and `addGuests: [{ ..., nights }]`, and
- * zod STRIPS unknown keys — so without this field every entry arrived carrying no
- * range at all, the shared resolver's global range-input mode went false, and the
- * frozen proposal was either the whole envelope for every guest (when the dates
- * moved) or byte-identical to the live booking (when they did not). Both are
- * proposals the member never made.
+ * Ask an officer to allow an edit the club's rules would refuse. Also the AI
+ * app action `request_booking_change_exception` (ALP-794), which acts as the
+ * member only: the officer role below reads the member-only user, so a
+ * connection never asks on another member's booking or under an officer's
+ * edit policy.
  */
-
-const createSchema = z.object({
-  checkIn: z.string().optional(),
-  checkOut: z.string().optional(),
-  addGuests: z
-    .array(
-      z.object({
-        firstName: nameField(),
-        lastName: nameField(),
-        ageTier: bookableAgeTierEnum,
-        isMember: z.boolean(),
-        memberId: z.string().trim().min(1).optional(),
-        ...guestStayFieldsSchema.shape,
-      }),
-    )
-    .max(...GUEST_CHANGE_LIST_BOUND)
-    .optional(),
-  removeGuestIds: z.array(z.string().trim().min(1)).max(...GUEST_CHANGE_LIST_BOUND).optional(),
-  guestStayRanges: z
-    .array(
-      z.object({
-        guestId: z.string().trim().min(1),
-        ...guestStayFieldsSchema.shape,
-      }),
-    )
-    .max(BOOKING_PARTY_GUESTS_MAX)
-    .optional(),
-  // #3451 (`INV-GUEST-019`): the edit panel's answers about an added guest who
-  // shares a name with one of the owner's dependants, re-verified by the service.
-  dependantIdentityDeclarations: z
-    .array(dependantIdentityDeclarationSchema)
-    .max(50)
-    .optional(),
-  memberMessage: z.string().max(5000),
-  supersedeRequestId: z.string().trim().min(1).optional(),
-});
 
 export async function POST(
   req: NextRequest,
@@ -100,7 +55,7 @@ export async function POST(
   }
   const inactiveResponse = await requireActiveSessionUser(session.user.id);
   if (inactiveResponse) return inactiveResponse;
-  const actorRole = bookingManagementAuthorizationRole(session.user);
+  const actorRole = bookingManagementAuthorizationRole(memberOnlySessionUser(req, session.user));
   const isAdmin = actorRole === "ADMIN";
 
   const rl = await checkRateLimit(
@@ -157,13 +112,10 @@ export async function POST(
     );
   }
 
-  let body: unknown;
-  try {
-    body = await req.json();
-  } catch {
-    return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
-  }
-  const parsed = createSchema.safeParse(body);
+  const jsonBody = await parseJsonRequestBody(req, { error: "Invalid JSON" });
+  if (!jsonBody.ok) return jsonBody.response;
+  const body = jsonBody.body;
+  const parsed = modificationExceptionRequestSchema.safeParse(body);
   if (!parsed.success) {
     return NextResponse.json(
       { error: guestRequestSchemaError(parsed.error, "Validation failed"), details: parsed.error.flatten() },
@@ -305,7 +257,7 @@ export async function POST(
       ),
     );
 
-    return NextResponse.json(created, { status: 201 });
+    return connectionJson(req, created, CREATED_EXCEPTION_REQUEST_CONNECTION_SHAPE, { status: 201 });
   } catch (error) {
     // The request is created in one lock(1) transaction (INV-LOCK-006).
     const contended = transactionContendedResponse(

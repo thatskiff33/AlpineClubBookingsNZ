@@ -100,7 +100,12 @@ the journey's assertions settle streaming content first; no fixed sleeps or
 finite CSS transitions and animations finish (capped at two seconds; infinite
 ones such as spinners are ignored), so a toast fading in or an overlay fading
 out is measured at its settled colours, and waits (with the same cap) for the
-`<title>` Next streams in after an in-app navigation. Results are collected until teardown so a failure
+`<title>` Next streams in after an in-app navigation. That wait cannot see a
+`router.refresh()` still on its way: if the title is present when the audit
+starts and the refresh then replaces it, axe reports `document-title`. A step
+that refreshes before the next audit waits for the refresh's own server-rendered
+outcome and then `toHaveTitle`, as `membership-application.spec.ts` does after
+"Agree to Nominate" (#5407). Results are collected until teardown so a failure
 does not interrupt the journey's cleanup. Serious and critical violations tagged
 `wcag2a`, `wcag2aa` or `wcag22aa` fail the test. The `axe-report` JSON attachment
 contains the full axe result for each failing page, or an audit execution error.
@@ -653,7 +658,15 @@ Four rules follow, and a new spec must satisfy all four:
   (`cancelMemberBookingsOnDate`, `deactivateMinimumStayPolicies`,
   `cancelOpenExceptionRequests`, `resetXeroSetupWizard`); they drive the product's
   own admin API, so no spec needs direct database access and no test-only
-  endpoint is added. A clean first attempt is a no-op.
+  endpoint is added. A clean first attempt is a no-op. The one exception is
+  state no admin route can rewind: `resetSeededMembershipApplication` and
+  `resetSeededMappingApplication`
+  ([`membership-application-reset.ts`](../e2e/helpers/membership-application-reset.ts))
+  put the seeded membership applications back through `E2E_DATABASE_URL`, as
+  the pre-setup project does (#5407). Nothing Playwright loads may import a
+  `server-only` module, the seed writers included: Playwright's loader has no
+  `react-server` condition, so one such import fails every spec that reaches
+  it at load (`e2e-server-only-reach-census.test.ts`).
 
   `bed-allocation.spec.ts` now carries that repair in its serial setup (#2594,
   #2595):
@@ -1100,8 +1113,10 @@ reported `document-title` on the Members page in every attempt, although the
 fixture already waits up to 2 seconds for a title (`settleTitle`) before it
 scans. That is the observed symptom. The likely cause, inferred and not
 reproduced in a browser, is that the page replaced its URL with the URL it was
-already on at mount, and that soft navigation dropped the `<title>`. The page
-no longer makes that no-op replace.
+already on at mount, and that soft navigation dropped the `<title>`. No admin
+list makes that no-op replace any more: Members and the other lists that keep
+their filters in the address share `useAdminListUrlSync`, which replaces only
+when the address shown differs (#5295).
 
 Before a spec leaves a page, assert three things: the URL, the page's own
 content in place of the loading skeleton (no `[data-route-loading]` left, and a

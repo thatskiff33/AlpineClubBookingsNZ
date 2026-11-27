@@ -133,7 +133,7 @@ vi.mock("@/lib/email", () => ({
   sendPasswordResetEmail: vi.fn().mockResolvedValue(undefined),
 }));
 vi.mock("@/lib/verification-tokens", () => ({
-  createEmailVerificationToken: vi.fn().mockResolvedValue("token123"),
+  createEmailVerificationToken: vi.fn().mockResolvedValue({ token: "token123", expiresAt: new Date("2026-07-03T00:00:00.000Z") }),
 }));
 vi.mock("@/lib/rate-limit", () => ({
   applyRateLimit: vi.fn().mockReturnValue(null),
@@ -166,6 +166,8 @@ import {
   withDefaultNzCountry,
   normalizeAddressValue,
   NZ_COUNTRY_NAME,
+  pickMemberAddressValues,
+  pickMemberPhoneValues,
 } from "@/lib/member-address";
 import { DEPENDENT_PARENT_CREATE_ERRORS } from "@/lib/dependent-link-eligibility";
 import { NO_INHERITABLE_EMAIL_SOURCE_MESSAGE } from "@/lib/member-parent-links";
@@ -344,6 +346,27 @@ describe("member-address utilities", () => {
     expect(normalizeAddressValue("  test  ")).toBe("test");
     expect(normalizeAddressValue(null)).toBe("");
     expect(normalizeAddressValue(undefined)).toBe("");
+  });
+
+  // #5398: the pickers copy exactly the member's columns, never a wider
+  // source's extra keys (an application's postalSameAsPhysical, a contact's id).
+  it("pickMemberAddressValues and pickMemberPhoneValues copy only the member columns", () => {
+    const address = {
+      streetAddressLine1: "1 Main", streetAddressLine2: null, streetCity: "Ohakune",
+      streetRegion: "Manawatu-Whanganui", streetPostalCode: "4625", streetCountry: "New Zealand",
+      postalAddressLine1: "PO Box 1", postalAddressLine2: null, postalCity: "Ohakune",
+      postalRegion: null, postalPostalCode: "4660", postalCountry: "New Zealand",
+    };
+    const phone = { phoneCountryCode: "64", phoneAreaCode: "27", phoneNumber: "123 4567" };
+    // Wider sources, as the writers hand them over (not fresh literals).
+    const application = { ...address, postalSameAsPhysical: true };
+    const contact = { ...phone, contactId: "c-1" };
+    expect(pickMemberAddressValues(application)).toEqual(address);
+    expect(pickMemberPhoneValues(contact)).toEqual(phone);
+    // An absent field reads back undefined, as `values.field` did.
+    const withoutLine2: Partial<typeof address> = { ...address };
+    delete withoutLine2.streetAddressLine2;
+    expect(pickMemberAddressValues(withoutLine2)).toEqual({ ...address, streetAddressLine2: undefined });
   });
 });
 

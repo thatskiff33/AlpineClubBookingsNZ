@@ -1,8 +1,22 @@
+import { isPrismaUniqueConstraintError } from "@/lib/prisma-errors";
 import { revalidateAdminPage } from "@/lib/admin-page-revalidation";
 import { NextRequest, NextResponse } from "next/server";
-import { z } from "zod";
+import { parseJsonRequestBody } from "@/lib/api-json";
 import { createAuditLog } from "@/lib/audit";
-import { DEFAULT_FAMILY_BILLING_MODE, FAMILY_BILLING_MODES } from "@/lib/authoritative-fees";
+import { DEFAULT_FAMILY_BILLING_MODE } from "@/lib/authoritative-fees";
+import {
+  SUBSCRIPTION_BILLING_ANNUAL_BATCH_CONFIRMED_CONNECTION_SHAPE,
+  SUBSCRIPTION_BILLING_CHARGE_CLOSED_CONNECTION_SHAPE,
+  SUBSCRIPTION_BILLING_CHARGE_RETRIED_CONNECTION_SHAPE,
+  SUBSCRIPTION_BILLING_CONNECTION_SHAPE,
+  SUBSCRIPTION_BILLING_FAMILY_MARKER_CONNECTION_SHAPE,
+  SUBSCRIPTION_BILLING_REFRESHED_CONNECTION_SHAPE,
+} from "@/lib/connection-shapes/finance-subscriptions";
+import { connectionJson } from "@/lib/mcp-connection-request";
+import {
+  subscriptionBillingMutationSchema,
+  subscriptionBillingQuerySchema,
+} from "@/lib/subscription-billing-request-schemas";
 import { dateOnlyInstantOf } from "@/lib/club-time";
 import { clubTime } from "@/lib/club-time/server";
 import { isDateOnlyString, parseDateOnly } from "@/lib/date-only";
@@ -15,71 +29,16 @@ import {
 import logger from "@/lib/logger";
 import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/session-guards";
+import { subscriptionBillingPreviewSummary } from "@/lib/subscription-billing-preview-summary";
 import { seasonYearOfStoredDate } from "@/lib/financial-year";
 import { refreshFinancialYearConfig } from "@/lib/financial-year-server";
 import { enqueueMembershipSubscriptionChargeOperation } from "@/lib/xero-subscription-invoices";
-import {
-  assertSubscriptionInvoicingEnabled,
-  isXeroInvoicingEnabled,
-} from "@/lib/xero-invoicing-guard";
+import { assertSubscriptionInvoicingEnabled, isXeroInvoicingEnabled } from "@/lib/xero-invoicing-guard";
 import { XERO_SWITCHED_OFF_DURING_CONFIRM_MESSAGE, XeroInvoicingOffError } from "@/lib/xero-invoicing-off";
 import {
   closeAlreadyPaidSubscriptionCharge,
   CloseAlreadyPaidChargeError,
 } from "@/lib/membership-subscription-charge-close";
-import { CLOSE_ALREADY_PAID_REASON_MAX } from "@/lib/subscription-charge-already-paid";
-
-const querySchema = z.object({
-  seasonYear: z.coerce.number().int().min(2020).max(2040).optional(),
-  decisionDate: z.string().optional(),
-});
-const mutationSchema = z.discriminatedUnion("action", [
-  z.object({
-    action: z.literal("CONFIRM_ANNUAL_BATCH"),
-    seasonYear: z.number().int().min(2020).max(2040),
-    decisionDate: z.string(),
-    confirmationToken: z.string().length(64),
-    confirmed: z.literal(true),
-  }).strict(),
-  z.object({ action: z.literal("RETRY_CHARGE"), chargeId: z.string().min(1) }).strict(),
-  // #4098: close a charge in CONFLICT because every subscription it covers is
-  // already PAID. Finance edit (the POST guard); the reason is required.
-  z.object({
-    action: z.literal("CLOSE_ALREADY_PAID"),
-    chargeId: z.string().min(1),
-    reason: z.string().trim().min(1).max(CLOSE_ALREADY_PAID_REASON_MAX),
-  }).strict(),
-  // #2148 (D2): edit-gated preview refresh. Reconciles stale persisted
-  // exceptions (auto-resolves any OPEN row the fresh whole-club preview no
-  // longer regenerates) and returns the refreshed billing data. The read-only
-  // GET never mutates; this action is the documented way stale rows clear.
-  z.object({
-    action: z.literal("REFRESH_PREVIEW"),
-    seasonYear: z.number().int().min(2020).max(2040),
-    decisionDate: z.string(),
-  }).strict(),
-  z.object({
-    action: z.literal("UPDATE_SETTINGS"),
-    invoiceDueDays: z.number().int().min(1).max(365),
-    // Optional so the existing due-days save path stays a single-field write;
-    // when present it switches the club-level family billing model.
-    familyBillingMode: z.enum(FAMILY_BILLING_MODES).optional(),
-  }).strict(),
-  // #2161 (D2): operator "already invoiced" family marker. MARK creates an active
-  // marker; UNMARK sets releasedAt (row retained for audit). Both finance:edit
-  // gated (the POST guard) and idempotent.
-  z.object({
-    action: z.literal("MARK_FAMILY_INVOICED"),
-    seasonYear: z.number().int().min(2020).max(2040),
-    familyGroupId: z.string().min(1),
-    note: z.string().max(500).optional(),
-  }).strict(),
-  z.object({
-    action: z.literal("UNMARK_FAMILY_INVOICED"),
-    seasonYear: z.number().int().min(2020).max(2040),
-    familyGroupId: z.string().min(1),
-  }).strict(),
-]);
 
 // Charges whose invoice the Xero outbox still has to raise or email.
 const CHARGE_STATUSES_AWAITING_XERO = ["QUEUED", "PROCESSING", "INVOICE_CREATED"] as const;
@@ -128,6 +87,9 @@ async function loadBillingData(seasonYear: number, decisionDate: Date) {
         where: { seasonYear, status: { in: [...CHARGE_STATUSES_AWAITING_XERO] } },
       });
   return {
+    // What confirming would invoice in all; the connection shape sends it first,
+    // so an AI app's answer cut at its length limit still carries it.
+    summary: subscriptionBillingPreviewSummary(preview),
     preview,
     charges,
     exceptions: visiblePersistentExceptions,
@@ -142,7 +104,7 @@ async function loadBillingData(seasonYear: number, decisionDate: Date) {
 export async function GET(request: NextRequest) {
   const guard = await requireAdmin({ permission: { area: "finance", level: "view" } });
   if (!guard.ok) return guard.response;
-  const parsed = querySchema.safeParse(Object.fromEntries(new URL(request.url).searchParams));
+  const parsed = subscriptionBillingQuerySchema.safeParse(Object.fromEntries(new URL(request.url).searchParams));
   if (!parsed.success) return NextResponse.json({ error: "Invalid billing preview query." }, { status: 400 });
   // No explicit decision date means "today": the club's calendar day from the PERSISTED
   // timezone (CT-4, #2870), as the UTC-midnight value an explicit date parses to.
@@ -158,7 +120,7 @@ export async function GET(request: NextRequest) {
   const seasonYear =
     parsed.data.seasonYear ?? seasonYearOfStoredDate(decisionDate);
   try {
-    return NextResponse.json(await loadBillingData(seasonYear, decisionDate));
+    return connectionJson(request, await loadBillingData(seasonYear, decisionDate), SUBSCRIPTION_BILLING_CONNECTION_SHAPE);
   } catch (error) {
     if (error instanceof SubscriptionBillingError) {
       return NextResponse.json({ error: error.message }, { status: 409 });
@@ -174,9 +136,10 @@ export async function GET(request: NextRequest) {
 export async function POST(request: Request) {
   const guard = await requireAdmin({ permission: { area: "finance", level: "edit" } });
   if (!guard.ok) return guard.response;
-  let body: unknown;
-  try { body = await request.json(); } catch { return NextResponse.json({ error: "Invalid JSON." }, { status: 400 }); }
-  const parsed = mutationSchema.safeParse(body);
+  const jsonBody = await parseJsonRequestBody(request, { error: "Invalid JSON." });
+  if (!jsonBody.ok) return jsonBody.response;
+  const body = jsonBody.body;
+  const parsed = subscriptionBillingMutationSchema.safeParse(body);
   if (!parsed.success) return NextResponse.json({ error: "Invalid subscription billing action.", details: parsed.error.flatten() }, { status: 400 });
   try {
     if (parsed.data.action === "UPDATE_SETTINGS") {
@@ -225,7 +188,7 @@ export async function POST(request: Request) {
         details: JSON.stringify(result),
       });
       invalidate();
-      return NextResponse.json({ success: true, ...result });
+      return connectionJson(request, { success: true, ...result }, SUBSCRIPTION_BILLING_CHARGE_RETRIED_CONNECTION_SHAPE);
     }
     if (parsed.data.action === "CLOSE_ALREADY_PAID") {
       // The service writes its own audit row inside the close's transaction,
@@ -236,7 +199,7 @@ export async function POST(request: Request) {
         actorMemberId: guard.session.user.id,
       });
       invalidate();
-      return NextResponse.json({ success: true, ...result });
+      return connectionJson(request, { success: true, ...result }, SUBSCRIPTION_BILLING_CHARGE_CLOSED_CONNECTION_SHAPE);
     }
     if (parsed.data.action === "MARK_FAMILY_INVOICED") {
       // #2161 (D2): mark a family as already invoiced for the season, suppressing
@@ -261,9 +224,8 @@ export async function POST(request: Request) {
           created = true;
         });
       } catch (error) {
-        // A concurrent mark lost the race to the partial unique index — the family
-        // is now marked either way, so the action is idempotently satisfied.
-        if (!(error && typeof error === "object" && "code" in error && error.code === "P2002")) throw error;
+        // A concurrent mark lost the race to the partial unique index: the family is marked either way.
+        if (!isPrismaUniqueConstraintError(error)) throw error;
       }
       if (created) {
         await createAuditLog({
@@ -277,10 +239,10 @@ export async function POST(request: Request) {
         });
       }
       invalidate();
-      return NextResponse.json({
+      return connectionJson(request, {
         success: true,
         message: created ? "Family marked as already invoiced for this season." : "Family is already marked as invoiced.",
-      });
+      }, SUBSCRIPTION_BILLING_FAMILY_MARKER_CONNECTION_SHAPE);
     }
     if (parsed.data.action === "UNMARK_FAMILY_INVOICED") {
       // #2161 (D2): release the active marker (row retained for audit). Idempotent:
@@ -302,10 +264,10 @@ export async function POST(request: Request) {
         });
       }
       invalidate();
-      return NextResponse.json({
+      return connectionJson(request, {
         success: true,
         message: released.count > 0 ? "Family marker removed; it can be billed again." : "Family was not marked as invoiced.",
-      });
+      }, SUBSCRIPTION_BILLING_FAMILY_MARKER_CONNECTION_SHAPE);
     }
     if (parsed.data.action === "REFRESH_PREVIEW") {
       if (!isDateOnlyString(parsed.data.decisionDate)) {
@@ -331,14 +293,14 @@ export async function POST(request: Request) {
       }
       const data = await loadBillingData(seasonYear, decisionDate);
       invalidate();
-      return NextResponse.json({
+      return connectionJson(request, {
         success: true,
         message: reconciled.resolvedCount > 0
           ? `Preview refreshed. ${reconciled.resolvedCount} stale exception${reconciled.resolvedCount === 1 ? "" : "s"} auto-resolved.`
           : "Preview refreshed.",
         reconciledCount: reconciled.resolvedCount,
         ...data,
-      });
+      }, SUBSCRIPTION_BILLING_REFRESHED_CONNECTION_SHAPE);
     }
     // CONFIRM_ANNUAL_BATCH. #4986: refused while Xero is off BEFORE the confirm
     // writes, because its charges are immutable and the enqueue below would be
@@ -371,21 +333,21 @@ export async function POST(request: Request) {
       // enqueue. The charges and their outbox rows are already committed, so
       // say so truthfully rather than answer "refused" (`INV-INT-040`).
       invalidate();
-      return NextResponse.json({
+      return connectionJson(request, {
         success: true,
         message: `${createdMessage} ${XERO_SWITCHED_OFF_DURING_CONFIRM_MESSAGE}`,
         ...result,
         queued: [],
         xeroSwitchedOffDuringConfirm: true,
-      });
+      }, SUBSCRIPTION_BILLING_ANNUAL_BATCH_CONFIRMED_CONNECTION_SHAPE);
     }
     invalidate();
-    return NextResponse.json({
+    return connectionJson(request, {
       success: true,
       message: createdMessage,
       ...result,
       queued,
-    });
+    }, SUBSCRIPTION_BILLING_ANNUAL_BATCH_CONFIRMED_CONNECTION_SHAPE);
   } catch (error) {
     if (error instanceof SubscriptionBillingError) {
       return NextResponse.json({ error: error.message }, { status: 409 });

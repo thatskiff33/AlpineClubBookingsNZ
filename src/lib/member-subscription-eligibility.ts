@@ -1,10 +1,6 @@
-import type { AgeTier, PrismaClient } from "@prisma/client";
+import type { PrismaClient } from "@prisma/client";
 
 import { prisma } from "@/lib/prisma";
-import {
-  getAgeTierSettings,
-  type AgeTierSettingData,
-} from "@/lib/age-tier";
 import { refreshFinancialYearConfig } from "@/lib/financial-year-server";
 import {
   loadMembershipLockoutSettings,
@@ -15,27 +11,16 @@ import {
   loadEffectiveModuleFlags,
   loadEffectiveModuleFlagsStrict,
 } from "@/lib/module-settings";
-import { requiresPaidSubscriptionForAgeTier as requiresPaidSubscriptionForAgeTierRule } from "@/lib/policies/subscription";
+import {
+  NOT_CHOSEN_LIABILITY_SETTINGS,
+  type SubscriptionLiabilitySettings,
+} from "@/lib/policies/subscription";
 
 /** The two relations the strict mode read needs; a transaction client satisfies it. */
 export type StrictLockoutModeDb = Pick<
   PrismaClient,
   "clubModuleSettings" | "membershipLockoutSettings"
 >;
-
-export function requiresPaidSubscriptionForAgeTier(
-  ageTier: AgeTier | null | undefined,
-  settings: AgeTierSettingData[]
-): boolean {
-  return requiresPaidSubscriptionForAgeTierRule(ageTier, settings);
-}
-
-export async function requiresPaidSubscriptionForAgeTierFromSettings(
-  ageTier: AgeTier | null | undefined
-): Promise<boolean> {
-  const settings = await getAgeTierSettings();
-  return requiresPaidSubscriptionForAgeTier(ageTier, settings);
-}
 
 /**
  * The club's effective subscription-lockout policy for booking (#2543).
@@ -55,6 +40,16 @@ export async function requiresPaidSubscriptionForAgeTierFromSettings(
  * inconsistency #2543 exists to remove.
  */
 export async function resolveSubscriptionLockoutMode(): Promise<SubscriptionLockoutMode> {
+  return (await resolveSubscriptionLockoutPolicy()).mode;
+}
+
+/**
+ * The club's lockout mode AND its subscription-liability settings (#5190), from
+ * the ONE settings read `resolveSubscriptionLockoutMode` makes — so a gate that
+ * needs both cannot pair a mode and a liability rule from two different reads.
+ * Reseeds the financial-year cache exactly as `resolveSubscriptionLockoutMode`.
+ */
+export async function resolveSubscriptionLockoutPolicy(): Promise<SubscriptionLockoutPolicy> {
   const policy = await readSubscriptionLockoutPolicy();
   if (policy.xeroModuleEnabled) {
     // Reseed the in-process financial-year cache (cheap; uses cached Xero value).
@@ -73,7 +68,12 @@ export async function resolveSubscriptionLockoutMode(): Promise<SubscriptionLock
     // from the correct one. Restored to the pre-#2543 condition.
     await refreshFinancialYearConfig();
   }
-  return policy.mode;
+  return { mode: policy.mode, liabilitySettings: policy.liabilitySettings };
+}
+
+export interface SubscriptionLockoutPolicy {
+  mode: SubscriptionLockoutMode;
+  liabilitySettings: SubscriptionLiabilitySettings;
 }
 
 /**
@@ -84,17 +84,27 @@ export async function resolveSubscriptionLockoutMode(): Promise<SubscriptionLock
  * NO_BLOCK", so a caller reading only the mode cannot tell them apart — which is
  * precisely the conflation that broke the financial-year reseed above.
  */
-async function readSubscriptionLockoutPolicy(): Promise<{
-  xeroModuleEnabled: boolean;
-  mode: SubscriptionLockoutMode;
-}> {
+async function readSubscriptionLockoutPolicy(): Promise<
+  SubscriptionLockoutPolicy & { xeroModuleEnabled: boolean }
+> {
   const flags = await loadEffectiveModuleFlags();
   if (!flags.xeroIntegration) {
-    return { xeroModuleEnabled: false, mode: "NO_BLOCK" };
+    // No gate applies, so nothing reads the liability rule: the default stands
+    // in rather than spending a settings read on it.
+    return {
+      xeroModuleEnabled: false,
+      mode: "NO_BLOCK",
+      liabilitySettings: NOT_CHOSEN_LIABILITY_SETTINGS,
+    };
   }
+  const settings = await loadMembershipLockoutSettings();
   return {
     xeroModuleEnabled: true,
-    mode: (await loadMembershipLockoutSettings()).mode,
+    mode: settings.mode,
+    liabilitySettings: {
+      requiredTypeAgeRule: settings.requiredTypeAgeRule,
+      liabilityAgeSource: settings.liabilityAgeSource,
+    },
   };
 }
 
@@ -165,18 +175,4 @@ export async function peekSubscriptionLockoutModeStrict(
  */
 export async function isSubscriptionEnforcementActive(): Promise<boolean> {
   return (await resolveSubscriptionLockoutMode()) !== "NO_BLOCK";
-}
-
-/**
- * Booking-time subscription gate: the age-tier rule applies only while the
- * Xero module is effectively enabled. Booking-time policy check sites use
- * this instead of the raw age-tier rule so the Xero-off bypass is consistent.
- */
-export async function requiresPaidSubscriptionForBooking(
-  ageTier: AgeTier | null | undefined
-): Promise<boolean> {
-  if (!(await isSubscriptionEnforcementActive())) {
-    return false;
-  }
-  return requiresPaidSubscriptionForAgeTierFromSettings(ageTier);
 }

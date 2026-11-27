@@ -1,10 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
+import { parseJsonRequestBody } from "@/lib/api-json";
 import { bookingOwner } from "@/lib/booking-owner";
 import { hostingCoverageParticipantRetryResponse } from "@/lib/adult-member-hosting-retry-response";
 import { z } from "zod";
 import { AdminReviewStatus, BookingStatus, type Prisma } from "@prisma/client";
 
 import { logAudit } from "@/lib/audit";
+import { getClientIp } from "@/lib/rate-limit-http";
 import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/session-guards";
 import {
@@ -134,13 +136,11 @@ export async function PATCH(
   const { id: bookingId } = await params;
   const recent = await requireRecentAuth();
   if (!recent.ok) return recent.response;
-  const body = await req.json().catch(() => ({}));
-  const parsed = reviewSchema.safeParse(body);
+  const jsonBody = await parseJsonRequestBody(req);
+  if (!jsonBody.ok) return jsonBody.response;
+  const parsed = reviewSchema.safeParse(jsonBody.body);
   if (!parsed.success) {
-    return NextResponse.json(
-      { error: "Validation failed", details: parsed.error.flatten() },
-      { status: 400 },
-    );
+    return NextResponse.json({ error: "Validation failed", details: parsed.error.flatten() }, { status: 400 });
   }
 
   const booking = await prisma.booking.findUnique({
@@ -163,8 +163,7 @@ export async function PATCH(
     );
   }
   const reviewedAt = new Date();
-  const ipAddress =
-    req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? "unknown";
+  const ipAddress = getClientIp(req);
   // The club's format (#3565), resolved once, before any transaction or
   // lock below — never per amount and never inside a transaction.
   const format = await clubFormatValues();

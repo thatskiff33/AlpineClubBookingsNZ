@@ -49,6 +49,28 @@ migration may rescale, round or re-time either.
 Reconciliation totals before and after the upgrade must match to the cent
 (see the [§3 spot-check](#3-post-upgrade-checklist)).
 
+Who owes a subscription does not change on upgrade either (#5190,
+`INV-CONFIG-009`): every club arrives on the **Not chosen** liability rule, which
+keeps billing and booking access on their old answers. The one change is that a
+member covered by a no-invoice fee may now book, since they were never sent an
+invoice to pay. The admin members list, its export and the subscriptions list
+now follow billing until a rule is chosen: a member on an always-required type
+with an exempt age tier counts as owing there, though booking still lets them
+book. An active member with a saved "Not required" record whom billing treats
+as owing shows as "Not invoiced", with the note "Marked not required, but
+billing treats this member as owing" (export column **Subscription Note**);
+after the upgrade an officer checks those rows and moves anyone who should be
+exempt to a membership type whose subscription is not required
+([UPGRADING.md](UPGRADING.md#check-members-marked-not-required-that-billing-treats-as-owing-5190)).
+Choosing a rule later clears the notes for the current season only; a record
+for another season keeps its note.
+Do not choose a liability rule until the old colour has fully drained: an
+old-colour billing run does not know the rule and would bill by the old one.
+Choose it afterwards on Admin → Subscription lockout → **Who owes a
+subscription**: its preview shows who the choice will start or stop charging,
+and which records it resets, before it can be saved. Choosing needs Membership
+edit and Finance edit.
+
 ---
 
 ## 1. Pre-flight

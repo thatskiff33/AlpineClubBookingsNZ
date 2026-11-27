@@ -3,9 +3,11 @@ import { MembershipApplicationError } from "@/lib/member-application-fields";
 import { refreshMemberApplicationNominations } from "@/lib/nomination";
 import { requireAdmin } from "@/lib/session-guards";
 import logger from "@/lib/logger";
+import { NOMINATIONS_REFRESHED_CONNECTION_SHAPE } from "@/lib/connection-shapes/membership-requests";
+import { connectionJson } from "@/lib/mcp-connection-request";
 
 export async function POST(
-  _req: Request,
+  req: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
   const guard = await requireAdmin({
@@ -20,11 +22,15 @@ export async function POST(
       guard.session.user.id
     );
 
-    return NextResponse.json({
-      success: true,
-      refreshedCount: result.refreshedCount,
-      warnings: result.emailWarnings,
-    });
+    return connectionJson(
+      req,
+      {
+        success: true,
+        refreshedCount: result.refreshedCount,
+        warnings: result.emailWarnings,
+      },
+      NOMINATIONS_REFRESHED_CONNECTION_SHAPE
+    );
   } catch (err) {
     if (err instanceof MembershipApplicationError) {
       return NextResponse.json({ error: err.message }, { status: err.status });

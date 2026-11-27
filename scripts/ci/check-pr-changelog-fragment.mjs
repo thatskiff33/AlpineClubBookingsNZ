@@ -12,9 +12,12 @@
  *      `prisma/`) — docs-only, test-only and workflow-only PRs need no entry;
  *   2. it adds at least one `changelog.d/*.md` fragment;
  *   3. its body carries the explicit no-entry marker (`changelog: none`) on its
- *      own line, mirroring how a docs-only PR skips the entry today;
- *   4. TRANSITION ONLY — it edits `CHANGELOG.md` directly (see the note on
- *      `editsChangelogDirectly` below).
+ *      own line, mirroring how a docs-only PR skips the entry today.
+ *
+ * A direct `CHANGELOG.md` edit satisfies none of these, so a code-bearing PR
+ * cannot carry its entry that way (#5263). The release-compile PR, which folds
+ * fragments into `CHANGELOG.md`, passes under condition 1: it changes no
+ * application source.
  *
  * Runs before `pnpm install --frozen-lockfile` in the `verify` job, so it uses Node built-ins only.
  */
@@ -41,8 +44,11 @@ const CODE_PATH = /^(?:src|prisma)\//;
  */
 const TEST_FILE = /(?:^|\/)__tests__\/|\.(?:test|spec)\.[cm]?[jt]sx?$/i;
 
-/** A compilable fragment: any `changelog.d/*.md` except the convention README. */
-const FRAGMENT_PATH = /^changelog\.d\/(?!README\.md$)[^/]+\.md$/i;
+/**
+ * A compilable fragment: any `changelog.d/*.md` except the convention README
+ * and an after-deploy step (`*.deploy.md`, #5379), which is not an entry.
+ */
+const FRAGMENT_PATH = /^changelog\.d\/(?!README\.md$)(?![^/]*\.deploy\.md$)[^/]+\.md$/i;
 
 /**
  * The explicit no-entry escape. Must start its own line (optionally inside a
@@ -79,21 +85,16 @@ export function validateChangelogFragment(body, changes = []) {
     return { outcome: "none-marker" };
   }
 
-  // TRANSITION GRACE (#2452, adopted 1 Aug 2026). Pull requests opened before
-  // the fragment convention landed carry their entry as a direct `CHANGELOG.md`
-  // edit, and failing them would be a gate breaking work it was never meant to
-  // judge. TIGHTEN LATER: once every PR open at adoption has merged or rebased,
-  // delete this branch and its test ("accepts a direct CHANGELOG.md edit during
-  // the transition") so a direct edit no longer satisfies the gate.
-  if (changedFiles.some((file) => file === "CHANGELOG.md")) {
-    return { outcome: "legacy-changelog-edit" };
-  }
-
+  // Name the direct edit when there is one, so its author learns why it did not count.
+  const directEditNote = changedFiles.includes("CHANGELOG.md")
+    ? " Editing CHANGELOG.md directly does not count: only the release compile writes it."
+    : "";
   throw new Error(
     "This PR changes application source, so it needs a changelog entry. Add a fragment file " +
       "(changelog.d/<pr-number>-<slug>.md — see changelog.d/README.md), or, if the change " +
       "genuinely needs no entry, put the no-entry marker documented in changelog.d/README.md " +
-      "on its own line in the PR body.",
+      "on its own line in the PR body." +
+      directEditNote,
   );
 }
 
@@ -101,9 +102,6 @@ const OUTCOME_MESSAGES = {
   "not-code-bearing": "no application source changed, so no changelog entry is required.",
   "fragment-added": "the PR adds a changelog.d fragment.",
   "none-marker": "the PR body declares that no changelog entry is needed.",
-  "legacy-changelog-edit":
-    "the PR edits CHANGELOG.md directly (accepted during the #2452 transition; " +
-    "prefer a changelog.d fragment).",
 };
 
 if (isMainModule(import.meta.url)) {

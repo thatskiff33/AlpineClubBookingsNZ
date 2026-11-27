@@ -206,7 +206,7 @@
  * cannot see it will confidently advise admitting somebody else.
  *
  * WHAT THE SUMMARY DROPPED, and where the evidence actually lives:
- *   lodgeName, waitlistPosition, requiresAdminReview, adminCapacityHoldAt,
+ *   lodgeName, requiresAdminReview, adminCapacityHoldAt,
  *   capacityOverriddenAt        → all on the `diagnostics.booking_search` row
  *                                 for the same booking (`kind: "booking_id"`),
  *                                 under the same `bookings:view` permission.
@@ -389,10 +389,7 @@
 
 import "server-only";
 
-import type {
-  BookingChangeRequestKind,
-  BookingChangeRequestStatus,
-} from "@prisma/client";
+import type { BookingChangeRequestKind, BookingChangeRequestStatus } from "@prisma/client";
 import { z } from "zod";
 
 import { auditCategoriesForCorrelationDomain } from "@/lib/audit-categories";
@@ -400,6 +397,7 @@ import { classifyDoubleBedSharingFacts } from "@/lib/double-bed-sharing";
 import { classifyMemberGuestConsent } from "@/lib/member-guest-consent";
 
 import { defuseRoleLabels, foldUntrustedText } from "../../untrusted-text";
+import { SHORT_BOOKING_ID_LENGTH } from "@/lib/booking-reference";
 import { defineDiagnosticsTool, type DiagnosticsToolEntry } from "../define";
 import {
   AID6B_ALLOCATION_ROW_LIMIT,
@@ -575,7 +573,7 @@ export function lodgeLabelOrNull(value: unknown): string | null {
  */
 const BOOKING_SUMMARY_SQL = `SELECT
   b."id" AS booking_ref,
-  pg_catalog.upper(pg_catalog.left(b."id", 8)) AS booking_reference,
+  pg_catalog.upper(pg_catalog.left(b."id", ${SHORT_BOOKING_ID_LENGTH})) AS booking_reference,
   b."memberId" AS owner_member_ref,
   b."lodgeId" AS lodge_ref,
   b."status"::text AS booking_status,
@@ -605,9 +603,9 @@ const bookingSummary = defineDiagnosticsTool<BookingIdArgs>({
   id: DIAGNOSTICS_BOOKING_SUMMARY_TOOL_ID,
   source: "select_only_sql",
   label: "Booking diagnostic summary",
-  description: `Returns the core stored state of ONE booking: its record id and the eight-character reference a member sees, the owner's member id, the lodge id, the status, the check-in and check-out New Zealand nights and how many nights that is, how many guests are on it, the prices in integer cents (total, discount, promotional adjustment, final) and the stored account-credit election, whether the party includes non-members and when their hold runs out, the parent booking id if it is a linked child, when a draft expires, the admin-review and adult-member-hosting-review statuses, the STORED whole-lodge-hold flag as it was requested (not whether the hold is in effect now — diagnostics.booking_capacity_by_night answers that), and when it was deleted, created and last changed. Use it after finding a booking. It returns NO booking notes, no review notes, no member review justification, no hosting-review snapshot, no cancellation reason and no member names — the party names are on diagnostics.booking_party_state. For the waitlist position, the admin-capacity-hold and capacity-override flags and the lodge NAME, read the diagnostics.booking_search row for the same booking id. ${AID6B_DESCRIPTION_TAIL}`,
+  description: `Returns the core stored state of ONE booking: its record id and the eight-character reference a member sees, the owner's member id, the lodge id, the status, the check-in and check-out New Zealand nights and how many nights that is, how many guests are on it, the prices in integer cents (total, discount, promotional adjustment, final) and the stored account-credit election, whether the party includes non-members and when their hold runs out, the parent booking id if it is a linked child, when a draft expires, the admin-review and adult-member-hosting-review statuses, the STORED whole-lodge-hold flag as it was requested (not whether the hold is in effect now — diagnostics.booking_capacity_by_night answers that), and when it was deleted, created and last changed. Use it after finding a booking. It returns NO booking notes, no review notes, no member review justification, no hosting-review snapshot, no cancellation reason and no member names — the party names are on diagnostics.booking_party_state. For the admin-capacity-hold and capacity-override flags and the lodge NAME, read the diagnostics.booking_search row for the same booking id. ${AID6B_DESCRIPTION_TAIL}`,
   requiredAreas: ["bookings"],
-  evidenceScope: `The stored state of ONE booking record, as twenty-four fields chosen from the forty-nine the row carries — the substrate caps a row at twenty-four, so this is a deliberate subset and not everything known about the booking. nightCount is checkOut minus checkIn, which is the number of lodge NIGHTS because checkOut is the departure day. creditElectionCents has THREE meanings and they are different answers: null means no credit election is outstanding, 0 means the member explicitly chose to use none, and a positive value is the amount they asked to apply — it is NOT credit already applied, which lives in the member credit ledger and needs finance access. Not reported here, and not readable by any tool in this pack: the booking's notes, the admin-review notes and reason, the member's review justification, the hosting-review snapshot and the deletion reason — those are Admin > Booking detail. Not reported here but available under the same permission: the waitlist POSITION, the admin-capacity-hold and capacity-override flags and the lodge name, all on the diagnostics.booking_search row for this same booking id. wholeLodgeHoldFlagStored IS reported here, and it is the STORED REQUEST rather than a current effect: a cancelled, bumped or deleted booking can carry the flag and hold nothing, so never call it an active exclusive hold. Whether a hold is in effect on a given night is diagnostics.booking_capacity_by_night, which reports the effective figure. The waitlist OFFER detail — when it was made, when it expires, and whether it is an offer of a DIFFERENT lodge at a DIFFERENT price — is deliberately absent in full rather than in part, because half of it would have you describing an offer for this booking's own lodge; that is Admin > Waitlist. ${AID6B_SCOPE_TAIL} ${AID6B_UNTRUSTED_EVIDENCE_DISCLOSURE}`,
+  evidenceScope: `The stored state of ONE booking record, as twenty-four fields chosen from the forty-nine the row carries — the substrate caps a row at twenty-four, so this is a deliberate subset and not everything known about the booking. nightCount is checkOut minus checkIn, which is the number of lodge NIGHTS because checkOut is the departure day. creditElectionCents has THREE meanings and they are different answers: null means no credit election is outstanding, 0 means the member explicitly chose to use none, and a positive value is the amount they asked to apply — it is NOT credit already applied, which lives in the member credit ledger and needs finance access. Not reported here, and not readable by any tool in this pack: the booking's notes, the admin-review notes and reason, the member's review justification, the hosting-review snapshot and the deletion reason — those are Admin > Booking detail. Not reported here but available under the same permission: the admin-capacity-hold and capacity-override flags and the lodge name, all on the diagnostics.booking_search row for this same booking id. No tool in this pack reports a waitlist position; it is worked out from the live queue and shown on Admin > Waitlist. wholeLodgeHoldFlagStored IS reported here, and it is the STORED REQUEST rather than a current effect: a cancelled, bumped or deleted booking can carry the flag and hold nothing, so never call it an active exclusive hold. Whether a hold is in effect on a given night is diagnostics.booking_capacity_by_night, which reports the effective figure. The waitlist OFFER detail — when it was made, when it expires, and whether it is an offer of a DIFFERENT lodge at a DIFFERENT price — is deliberately absent in full rather than in part, because half of it would have you describing an offer for this booking's own lodge; that is Admin > Waitlist. ${AID6B_SCOPE_TAIL} ${AID6B_UNTRUSTED_EVIDENCE_DISCLOSURE}`,
   argsSchema: bookingIdArgsSchema,
   inputSchema: bookingIdInputSchema,
   sql: BOOKING_SUMMARY_SQL,
@@ -667,7 +665,7 @@ const BOOKING_LINKED_STATE_SQL = `SELECT
     ELSE 'child'
   END AS relation_type,
   related."id" AS booking_ref,
-  pg_catalog.upper(pg_catalog.left(related."id", 8)) AS booking_reference,
+  pg_catalog.upper(pg_catalog.left(related."id", ${SHORT_BOOKING_ID_LENGTH})) AS booking_reference,
   related."status"::text AS booking_status,
   ${dateOnly('related."checkIn"')} AS check_in,
   ${dateOnly('related."checkOut"')} AS check_out,

@@ -1,5 +1,6 @@
 export { DEFAULTS_INTENTIONALLY_PARTIAL, COMMON_EXCLUDED_COLUMNS, excludedColumnsFor } from "./singleton-exclusions";
 import { privacyHostingSchema, PRIVACY_HOSTING_DEFAULTS, PRIVACY_HOSTING_TEXT_REFUSAL } from "@/lib/privacy-hosting";
+import { CLUB_INVOICE_SUPPLIER_IMPORT_CONSTRAINTS } from "@/lib/club-invoice-supplier-fields";
 import { strToU8, strFromU8 } from "fflate";
 import { Prisma } from "@prisma/client";
 
@@ -33,6 +34,10 @@ import {
 import type { BundleEntry } from "../bundle";
 import { registerEntity } from "../registry";
 import { prismaEnumValues } from "../values";
+import {
+  reconcileMembershipLockoutBundle,
+  validateLiabilityAgeSource,
+} from "./membership-lockout-bundle";
 import type { CategoryExporter, ExportContext } from "../export-types";
 import {
   changedFields,
@@ -104,9 +109,8 @@ export interface SingletonSpec {
   excluded?: Record<string, string>;
   /**
    * Explicit Prisma `select` for reads of this singleton. Only set where a
-   * shared select already exists (e.g. CLUB_MODULE_SETTINGS_COLUMN_SELECT) to
-   * keep a retired-but-not-yet-dropped column out of the generated SQL — see
-   * the doc comment on that constant. Other singletons keep a bare read.
+   * shared select exists (CLUB_MODULE_SETTINGS_COLUMN_SELECT); it narrows the
+   * SELECT and RETURNING, not an upsert's INSERT (INV-OPS-005). Others: none.
    */
   select?: Record<string, boolean>;
   /**
@@ -233,7 +237,7 @@ export const SINGLETONS: SingletonSpec[] = [
       // nothing leaves the building. The retention window that deletes posts is
       // equally non-travelling -- see ClubPostSettings in MODEL_LEVEL_EXCLUSIONS.
       "commsPortal",
-      // foodOrders SHOULD-TRAVEL (fork #121): a capability flag; the officer address
+      // foodOrders SHOULD-TRAVEL (fork triyder/AlpineClubBookingsNZ#121): a capability flag; the officer address
       // (FoodOrderSettings) is instance-local, so a target with none takes no orders.
       "foodOrders",
     ],
@@ -257,9 +261,8 @@ export const SINGLETONS: SingletonSpec[] = [
         "travelling and reasoned that not inheriting the source's dial was " +
         "the safe direction; it is the opposite, because the fallback is the " +
         "most permissive value rather than the least",
-      multiLodge:
-        "retired-but-not-yet-dropped flag; kept out of every read via " +
-        "CLUB_MODULE_SETTINGS_COLUMN_SELECT and awaiting a contract DROP (#139)",
+      // No entry for the retired multiLodge column: `@ignore`d (#5396), so this
+      // category cannot see it (drop: hoppers99/AlpineClubBookingsNZ#139).
       // OWNER JUDGEMENT (#2178): the two auth-provider sign-in toggles do not
       // travel today, unlike EVERY other module flag (incl. twoFactor,
       // analytics, xeroIntegration) which does. (This read "the other 19
@@ -493,11 +496,9 @@ export const SINGLETONS: SingletonSpec[] = [
       lodgeId:
         "soft-link FK for the phase-7 per-lodge conversion, unused by runtime " +
         "reads today; a source lodge id is not portable across installs",
-      assignSchoolTeachersAsHutLeaders:
-        "retired by #3819: #3416's club-wide switch, replaced by the per-lodge " +
-        "school hut-leader ticks that travel in each lodge.json; a later contract " +
-        "release drops the column. An older bundle's value is not written here: " +
-        "the lodge-config importer maps it onto every imported lodge's teacher tick",
+      // No entry for the retired assignSchoolTeachersAsHutLeaders (#3819):
+      // `@ignore`d (#5396), so this category cannot see it. An older bundle's
+      // value is mapped onto each lodge's teacher tick by the lodge importer.
     },
     defaults: () => DEFAULT_BOOKING_REQUEST_SETTINGS,
   },
@@ -571,16 +572,15 @@ export const SINGLETONS: SingletonSpec[] = [
     defaults: () => DEFAULT_INTERNET_BANKING_PAYMENT_SETTINGS,
   },
   {
-    // DB-first club identity (E3 #1929). Singleton row id="default"; all fields
-    // nullable and served through the runtime fallback chain, so exporting/
-    // importing them moves only the admin-set overrides.
+    // DB-first club identity (E3 #1929; legalName/postalAddress: #5066's invoice supplier). Singleton row
+    // id="default"; all fields nullable overrides of the runtime fallback chain, so only admin-set ones move.
     entity: "club-identity-settings",
     delegate: "clubIdentitySettings",
-    fields: ["name", "shortName", "hutLeaderLabel", "facebookUrl"],
+    fields: ["name", "shortName", "hutLeaderLabel", "facebookUrl", "legalName", "postalAddress"],
     // No override saved = every column null, which is what the admin GET
     // synthesises. See DEFAULTS_INTENTIONALLY_PARTIAL.
-    // No `constraints`: every column is nullable (String?), so null is a
-    // legitimate value — nothing to require (#2200 nullability audit).
+    // Null is always allowed (#2200); the #5066 supplier fields take the admin save's rules.
+    constraints: CLUB_INVOICE_SUPPLIER_IMPORT_CONSTRAINTS,
     defaults: () => ({}),
   },
   {
@@ -683,10 +683,10 @@ export const SINGLETONS: SingletonSpec[] = [
     // added here per the #2178 audit (should-travel).
     // #2543/#2561: `mode` replaced the legacy `enabled` boolean, and that COLUMN is
     // gone — so `enabled` is not a field here. It is still a BUNDLE KEY, though, and
-    // that distinction is the whole of the hook below.
+    // that distinction is the whole of the hook below (as is #5190's liability pair).
     fields: [
       "mode", "financialYearEndMonthOverride", "textFallbackEnabled",
-      "useFeeScheduleItemCodes",
+      "useFeeScheduleItemCodes", "requiredTypeAgeRule", "liabilityAgeSource",
     ],
     // financialYearEndMonthOverride is nullable (Int?) — null (= follow Xero's
     // accounting year) is a legitimate value, so it carries no `required`; its
@@ -713,6 +713,8 @@ export const SINGLETONS: SingletonSpec[] = [
       mode: { required: true },
       textFallbackEnabled: { required: true },
       useFeeScheduleItemCodes: { required: true },
+      requiredTypeAgeRule: { required: true },
+      liabilityAgeSource: { required: true, validate: validateLiabilityAgeSource }, // no CURRENT_AGE yet
     },
     defaults: () => DEFAULT_MEMBERSHIP_LOCKOUT_SETTINGS,
     // BUNDLE-FORMAT compatibility, which outlives the column (#2543/#2561).
@@ -743,23 +745,16 @@ export const SINGLETONS: SingletonSpec[] = [
     // That is also why the test is written out here rather than deferred to
     // `isSubscriptionLockoutMode`: the two answers differ on exactly the strings
     // this branch must not touch.
-    reconcile: (incoming) => {
-      const stated = "mode" in incoming && incoming.mode !== null;
-      if (stated) {
-        return incoming;
-      }
-      if (typeof incoming.enabled === "boolean") {
-        return {
-          ...incoming,
-          mode: incoming.enabled ? "HARD_BLOCK" : "NO_BLOCK",
-        };
-      }
-      // `mode` is absent or null with nothing to derive from. Absent means "this
-      // bundle says nothing about the policy", which merge mode honours by leaving
-      // the target's own mode alone; a present null is a broken file, and
-      // `constraints.mode.required` above fails the dry-run on it.
-      return incoming;
-    },
+    //
+    // #5190: the subscription-liability pair is the second job of this hook. A
+    // club opts in by choosing BOTH answers together and can never go back to
+    // NOT_CHOSEN (`INV-CONFIG-009`), so a bundle carries the pair only when it
+    // states both and neither is NOT_CHOSEN. Otherwise both keys are dropped: an
+    // older bundle, a never-chosen source or a hand-trimmed half pair says nothing
+    // about the rule, and the target keeps its own in either import mode — a
+    // bundle's NOT_CHOSEN never overwrites a chosen target. A present null or an
+    // unknown string is left in place for the validation loop to refuse.
+    reconcile: reconcileMembershipLockoutBundle,
   },
   {
     entity: "membership-cancellation-setting",

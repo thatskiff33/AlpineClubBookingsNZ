@@ -39,6 +39,7 @@ import {
   getXeroAdminHealthSnapshot,
   type XeroAdminHealthSnapshot,
 } from "@/lib/xero-admin-health";
+import { xeroTaxOverridePauseProblem } from "@/lib/xero-tax-override-safeguard";
 
 import { MAX_PAYMENT_RECOVERY_ATTEMPTS } from "@/lib/payment-recovery-constants";
 import {
@@ -58,6 +59,7 @@ import {
 } from "@/lib/stuck-state-payment-signals";
 
 import { adminHref, adminAnchorHref } from "@/lib/admin-hubs";
+import { describeContactGroupMismatchStuckState } from "@/lib/xero-contact-group-mismatch-summary";
 const BED_ALLOCATION_LOOKAHEAD_DAYS = 7;
 
 export type StuckStateSeverity = "critical" | "warning" | "info";
@@ -393,6 +395,8 @@ function buildPaymentItems(
 }
 
 function addXeroItems(items: StuckStateItem[], snapshot: XeroAdminHealthSnapshot) {
+  addItem(items, { id: "xero-tax-overrides-paused", domain: "xero", title: "GST overrides paused", severity: "critical", owner: "Finance", // #5208
+    count: snapshot.taxOverridePause.count, href: adminHref("xero"), summary: xeroTaxOverridePauseProblem(snapshot.taxOverridePause.count) ?? "" });
   addItem(items, {
     id: "xero-silent-webhook", domain: "xero", title: "Silent Xero webhook",
     severity: "warning", owner: "Finance", count: snapshot.webhookHealth?.silent ? 1 : 0,
@@ -470,7 +474,7 @@ function addXeroItems(items: StuckStateItem[], snapshot: XeroAdminHealthSnapshot
     severity: "warning",
     owner: "Finance",
     count: snapshot.contactLinkMismatches.count,
-    href: adminHref("xero"),
+    href: `${adminHref("xero")}?section=contactLinkMismatches`,
     summary: `${snapshot.contactLinkMismatches.count} member/Xero contact ${plural(
       snapshot.contactLinkMismatches.count,
       "link",
@@ -483,11 +487,8 @@ function addXeroItems(items: StuckStateItem[], snapshot: XeroAdminHealthSnapshot
     severity: "warning",
     owner: "Finance",
     count: snapshot.contactGroupMismatches.count,
-    href: adminHref("xero"),
-    summary: `${snapshot.contactGroupMismatches.count} active member ${plural(
-      snapshot.contactGroupMismatches.count,
-      "contact group",
-    )} need Xero age-tier group repair.`,
+    href: `${adminHref("xero")}?section=contactGroupMismatches`,
+    summary: describeContactGroupMismatchStuckState(snapshot.contactGroupMismatches),
   });
 
   if (

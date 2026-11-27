@@ -101,7 +101,7 @@ vi.mock("@/lib/cancellation", () => ({
 vi.mock("@/lib/booking-cancel", () => ({
   paymentEligibleForPaidCancelPath: mocks.paymentEligibleForPaidCancelPath,
   // #3809 (F2): these payments never captured, so their credit comes back whole.
-  paymentHasCaptureEvidence: vi.fn().mockResolvedValue(false),
+  queryPaymentCaptureEvidence: vi.fn().mockResolvedValue(false),
 }));
 vi.mock("@/lib/logger", () => ({
   default: { error: vi.fn(), warn: vi.fn(), info: vi.fn() },

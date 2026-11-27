@@ -1,52 +1,20 @@
 import { revalidatePath } from "next/cache";
 import { revalidateAdminPage } from "@/lib/admin-page-revalidation";
+import { parseJsonRequestBody } from "@/lib/api-json";
 import { BOOKING_DETAIL_ROUTE_PATTERN } from "@/lib/page-route-patterns";
 import { NextRequest, NextResponse } from "next/server";
 import { hostingCoverageParticipantRetryResponse } from "@/lib/adult-member-hosting-retry-response";
-import { z } from "zod";
 import logger from "@/lib/logger";
+import { manualBookingPaymentBodySchema } from "@/lib/manual-payment-request-schemas";
 import { requireAdmin } from "@/lib/session-guards";
 import { transactionContendedResponse } from "@/lib/transaction-contended-response";
 import { clubFormat } from "@/lib/club-format-server";
 import type { BoundClubFormat } from "@/lib/club-format-bound";
 import {
   applyManualBookingPayment,
-  MANUAL_PAYMENT_NOTE_MAX,
   type ManualBookingAdditionalOutcome,
 } from "@/lib/manual-booking-payment";
 import { ManualBookingPaymentError } from "@/lib/manual-booking-payment-error";
-
-const bodySchema = z
-  .object({
-    direction: z.enum(["paid", "unpaid"]),
-    note: z.string().max(MANUAL_PAYMENT_NOTE_MAX).optional().nullable(),
-    // Explicit confirmation so a manual money-state change is never a
-    // single-click accident.
-    confirmed: z.literal(true),
-    // #2260: the admin's "email the member or not" decision. Shape-checked
-    // here, contract-checked below — see the 422 branches.
-    notifyMember: z.boolean().optional(),
-    // The amount owing the dialog showed. NOT the settlement amount — that is
-    // recomputed under the locks — but a mismatch means the price or the
-    // applied credit moved, so the settle is refused rather than recorded at a
-    // figure the admin never agreed to.
-    expectedAmountCents: z.number().int().optional(),
-    // #2397: the admin's answer to "does this cash cover the outstanding
-    // extra?", sent ONLY when the dialog showed one. Absent means "the dialog
-    // showed no extra" — a claim the settle re-checks under its locks, not a
-    // default — so the common no-extra screen keeps its exact request shape.
-    additionalCoverage: z
-      .object({
-        covered: z.boolean(),
-        // The figure the dialog showed. Not the settled amount — that is
-        // re-derived under the locks — but a mismatch means the extra moved
-        // since the dialog rendered, so the settle is refused.
-        expectedAdditionalAmountCents: z.number().int().positive(),
-      })
-      .strict()
-      .optional(),
-  })
-  .strict();
 
 /**
  * The credit-election receipt appended to the admin's toast (#2265, #2262 door
@@ -133,14 +101,13 @@ export async function POST(
   const { id } = await params;
   const money = await clubFormat();
 
-  let body: unknown;
-  try {
-    body = await request.json();
-  } catch {
-    return NextResponse.json({ error: "Invalid JSON." }, { status: 400 });
-  }
+  const jsonBody = await parseJsonRequestBody(request, {
+    error: "Invalid JSON.",
+  });
+  if (!jsonBody.ok) return jsonBody.response;
+  const body = jsonBody.body;
 
-  const parsed = bodySchema.safeParse(body);
+  const parsed = manualBookingPaymentBodySchema.safeParse(body);
   if (!parsed.success) {
     return NextResponse.json(
       { error: "Invalid manual payment request.", details: parsed.error.flatten() },

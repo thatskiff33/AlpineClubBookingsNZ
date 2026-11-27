@@ -54,6 +54,12 @@ export interface Member {
     | "NOT_REQUIRED"
     | null;
   subscriptionXeroInvoiceId: string | null;
+  /**
+   * #5190 (owner decision 22 Nov 2026): set when the row's saved season status
+   * says "Not required" but billing treats this member as owing
+   * (`hasNotRequiredRowBillingNote`); null otherwise.
+   */
+  subscriptionBillingNote?: string | null;
   currentMembershipType: {
     id: string;
     key: string;
@@ -62,6 +68,13 @@ export interface Member {
     // #2106: age-exemption of the current-season type — FORCED (N/A only),
     // ALLOWED (N/A hand-pickable), or DISALLOWED (no N/A).
     ageExemption: MembershipTypeAgeExemption;
+  } | null;
+  // The current season's subscription category; null means Individual.
+  currentSubscriptionCategory: {
+    id: string;
+    key: string;
+    name: string;
+    isActive: boolean;
   } | null;
   createdAt: string;
   joinedDate: string | null;
@@ -132,6 +145,8 @@ export interface Filters {
   financeAccess: string;
   lifecycleStatus: string;
   membershipType: string;
+  /** A SubscriptionCategory id, or the no-category sentinel. */
+  subscriptionCategory: string;
   ageTier: string;
   familyGroup: string;
   inviteStatus: string;
@@ -157,6 +172,9 @@ export interface ImportResult {
   skippedRows?: Array<{ row: number; email: string; reason: string }>;
   rowNotes?: Array<{ row: number; email: string; note: string }>;
   errors: Array<{ row: number; errors: string[] }>;
+  familyGroupsCreated?: number;
+  membershipTypesAssigned?: number;
+  membershipTypeFailures?: Array<{ row: number; email: string; error: string }>;
   total?: number;
 }
 
@@ -192,4 +210,5 @@ export type BulkAction =
   | "deactivate"
   | "reactivate"
   | "set-role"
-  | "set-membership-type";
+  | "set-membership-type"
+  | "set-subscription-category";

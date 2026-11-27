@@ -1,8 +1,10 @@
 import fs, { readFileSync } from "fs";
 import path from "path";
 import { describe, expect, it } from "vitest";
+import { toPosix } from "../../../scripts/audit/ts-call-site-scan";
 import { balancedBrackets } from "./support/balanced-brackets";
 import { blankLiterals, stripComments } from "./support/strip-comments";
+import { CENSUS_TIMEOUT_MS } from "@/test/census-timeout";
 
 function source(relativePath: string): string {
   return readFileSync(path.resolve(process.cwd(), relativePath), "utf8");
@@ -391,8 +393,10 @@ describe("bed allocation lock topology", () => {
     ];
     const sites: string[] = [];
     for (const full of walkSources(path.resolve(process.cwd(), "src"))) {
-      const rel = path.relative(process.cwd(), full);
-      if (isTestFile(rel) || rel === path.join("src", "lib", "member-credit.ts")) continue;
+      // Repo-relative POSIX, so the reviewed population below reads the same on
+      // Windows and Linux.
+      const rel = toPosix(path.relative(process.cwd(), full));
+      if (isTestFile(rel) || rel === "src/lib/member-credit.ts") continue;
       const text = stripComments(readFileSync(full, "utf8"));
       if (!text.includes(CALL)) continue;
       // Calls and enclosing transactions are found over masked text: a mention
@@ -458,7 +462,10 @@ describe("bed allocation lock topology", () => {
       "src/lib/payment-reconciliation.ts",
       "src/lib/xero-inbound/invoice-paid-effects.ts",
     ]);
-  });
+    // Walks and masks every file under src/, so it has its own budget, as the
+    // other tree-scanning censuses do (docs/TESTING.md, "Suites that time out
+    // under load and pass alone").
+  }, CENSUS_TIMEOUT_MS);
 
   it.each([
     ["src/lib/group-settlement.ts", "const candidateChildren"],
@@ -560,11 +567,15 @@ describe("bed allocation lock topology", () => {
     expectInOrder(phaseThree, [
       "pg_advisory_xact_lock(1)",
       "acquireLodgeCapacityLock",
+      // #5433 review A: the entry is re-read under both locks, and only a
+      // window restart since Phase 1 (its deadline and updatedAt) is still
+      // this offer; every other field is still Phase 1's.
+      "offerSnapshotAcrossWindowRestart(tx, entry)",
       "booking.updateMany",
       "status: BookingStatus.WAITLIST_OFFERED",
-      "updatedAt: entry.updatedAt",
+      "updatedAt: snapshot.updatedAt",
       "waitlistOfferedAt: entry.waitlistOfferedAt",
-      "waitlistOfferExpiresAt: entry.waitlistOfferExpiresAt",
+      "waitlistOfferExpiresAt: snapshot.waitlistOfferExpiresAt",
       "waitlistOfferedLodgeId: entry.waitlistOfferedLodgeId",
       "waitlistOfferedPriceCents: entry.waitlistOfferedPriceCents",
       "cancelled.count === 0",
@@ -625,7 +636,7 @@ describe("bed allocation lock topology", () => {
   it("keeps Booking.lodgeId immutable: no writer moves a booking between lodges", () => {
     const offenders: string[] = [];
     for (const file of walkSources(path.resolve(process.cwd(), "src"))) {
-      const rel = path.relative(process.cwd(), file).split(path.sep).join("/");
+      const rel = toPosix(path.relative(process.cwd(), file));
       if (isTestFile(rel)) continue;
       const text = fs.readFileSync(file, "utf8");
 
@@ -678,5 +689,5 @@ describe("bed allocation lock topology", () => {
         "deadlock pass in docs/CONCURRENCY_AND_LOCKING.md -> " +
         '"Merge joins the bed-allocation cohort".',
     ).toEqual([]);
-  });
+  }, CENSUS_TIMEOUT_MS);
 });

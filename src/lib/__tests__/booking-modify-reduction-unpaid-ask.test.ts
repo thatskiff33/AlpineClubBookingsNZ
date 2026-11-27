@@ -740,6 +740,7 @@ describe("#3954: the save refuses options sized before the offset", () => {
           requiresSettlementMethod: true,
           returnsToOrganiser: false,
           organiserRefundByBankTransfer: false,
+          refundByBankTransfer: false,
           refundHeldForDispute: false,
         },
         settlementMethod: "card",

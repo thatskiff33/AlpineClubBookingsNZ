@@ -44,7 +44,7 @@ interface LinkedGuestLabel {
   stayEnd: string
 }
 
-interface LinkedGuestBookings {
+export interface LinkedGuestBookings {
   count: number
   truncatedCount?: number
   list?: LinkedGuestLabel[]
@@ -137,7 +137,8 @@ function linkedGuestLabel(booking: LinkedGuestLabel): string {
   return `${booking.stayStart} → ${booking.stayEnd}`
 }
 
-function LinkedGuestBookingList({
+// Shared with the bulk subscription-category dialog, which shows the same block.
+export function LinkedGuestBookingList({
   bookings,
 }: {
   bookings: LinkedGuestBookings | undefined

@@ -7,6 +7,10 @@ import { BookingEventType, BookingStatus, PaymentSource, PaymentStatus, PaymentT
 import { OPEN_INTENT_TRANSACTION_STATUS_LIST } from "@/lib/payment-transaction-status";
 
 import { bookingOwner } from "@/lib/booking-owner";
+import { formatBookingReference } from "@/lib/booking-reference";
+import { deliverBumpNotices, recordBumpNoticesOwed, type OwedBumpNotice } from "@/lib/booking-bump-notice-owed";
+import { CONFIRM_PENDING_OWED_NOTICE_CAP, drainOwedNotices, type OwedNoticeSweepResult } from "@/lib/owed-notice/drain";
+import { bookingBumpReason } from "@/lib/booking-bump-reason";
 import { settleHostingCoverageAfterCommit } from "@/lib/adult-member-hosting-coverage-drain";
 import { enqueueOwnHostingCoverageReevaluation } from "@/lib/adult-member-hosting-review";
 import {
@@ -31,6 +35,7 @@ import {
   type ClubTimeZone,
 } from "@/lib/payment-link-expiry";
 import { markBookingPaymentSucceeded } from "@/lib/payment-reconciliation";
+import { deliverPaidBookingConfirmation } from "@/lib/paid-booking-confirmation-notice";
 import { settledByAnotherCapture } from "@/lib/duplicate-capture-outcome";
 import { releaseBookingPromoRedemptions } from "@/lib/promo";
 import {
@@ -66,9 +71,7 @@ import {
   sendAdminPaymentFailureAlert,
   sendAdminSplitSettlementCancelledAlert,
   sendAdminSplitSettlementUnpaidAlert,
-  sendBookingBumpedEmail,
   sendBookingConfirmedEmail,
-  sendBookingGuestsCancelledEmail,
   sendBookingRequestPaymentExpiredEmail,
   sendSplitGuestPaymentLinkEmail,
   sendSplitGuestPortionCancelledEmail,
@@ -76,6 +79,7 @@ import {
 import { readBookingAmountOwed } from "@/lib/booking-amount-owed";
 import { bookingPromoEmailOptions } from "./booking-promo-email-options";
 import { getNonMemberHoldDays } from "./cancellation";
+import { nonMemberHoldEnd } from "@/lib/non-member-hold-end";
 import { processWaitlistForDates } from "./waitlist";
 import { clubFormatValues } from "@/lib/club-format-server";
 import { localChargeRefusal } from "@/lib/stripe-charge-currency";
@@ -84,8 +88,6 @@ import { LOCK1_HOLDER_TRANSACTION_BUDGET } from "@/lib/db-transaction";
 
 /** How long to extend the hold for request-origin bookings (no saved card) at hold expiry. */
 const REQUEST_HOLD_EXTENSION_MS = 2 * 24 * 60 * 60 * 1000;
-
-const DAY_MS = 24 * 60 * 60 * 1000;
 
 /**
  * #1993 Part B — derived admin-alert cadence for a split child's unpaid
@@ -221,7 +223,8 @@ type PendingBooking = Prisma.BookingGetPayload<{
 
 type HoldResolution =
   | { type: "already_processed" }
-  | { type: "bumped"; booking: PendingBooking; flagged: boolean }
+  // #5407: `owed` is what the transaction recorded as owed, for the delivery to claim.
+  | { type: "bumped"; booking: PendingBooking; flagged: boolean; owed: OwedBumpNotice }
   | { type: "confirmed_zero"; booking: PendingBooking }
   | {
       type: "extended_request_hold";
@@ -321,6 +324,8 @@ export interface CronConfirmResult {
   // members-only amount to settle here. Always empty.
   partialBumpedBookingIds: string[];
   failedBookingIds: string[];
+  // #5407, #5433: what this run's sweep did with the notices earlier runs left owed.
+  owedNotices: OwedNoticeSweepResult;
 }
 
 /**
@@ -346,7 +351,7 @@ async function resolveOriginalHoldExpiry(
   booking: PendingBooking
 ): Promise<Date> {
   const holdDays = await getNonMemberHoldDays(booking.checkIn, booking.lodgeId);
-  const scheduledFirstExpiry = booking.checkIn.getTime() - holdDays * DAY_MS;
+  const scheduledFirstExpiry = nonMemberHoldEnd(booking.checkIn, holdDays).getTime();
   return new Date(Math.max(scheduledFirstExpiry, booking.createdAt.getTime()));
 }
 
@@ -420,47 +425,6 @@ async function sendConfirmationEmail(booking: PendingBooking, format: ClubFormat
     logger.error(
       { err: emailErr, bookingId: booking.id, job: "confirmPendingBookings" },
       "Failed to send confirmation email"
-    );
-  }
-}
-
-async function sendBumpedEmail(booking: PendingBooking, flagged: boolean) {
-  try {
-    if (flagged) {
-      await sendBookingGuestsCancelledEmail(
-        { bookingId: booking.id, recipientMemberId: bookingOwner(booking).memberId },
-        bookingOwner(booking).member.email,
-        bookingOwner(booking).member.firstName,
-        booking.checkIn,
-        booking.checkOut,
-        booking.lodgeId
-      );
-    } else {
-      await sendBookingBumpedEmail(
-        { bookingId: booking.id, recipientMemberId: bookingOwner(booking).memberId },
-        bookingOwner(booking).member.email,
-        bookingOwner(booking).member.firstName,
-        booking.checkIn,
-        booking.checkOut,
-        booking.guests.length,
-        booking.lodgeId,
-        // #2430: the only send site of this template, and it reaches two
-        // recipient classes. A club member (their own pending booking, or a
-        // split guest child) can sign in and rebook; the non-login
-        // NON_MEMBER/SCHOOL contact who owns a booking converted from a public
-        // booking request (#707) — or any non-login contact an admin booked for
-        // — cannot, so the notice points them at the club contact page instead
-        // of the members-only booking flow.
-        // #3369: an organisation never signs in, so the notice points a school
-        // at the club contact page — the same branch the non-login school
-        // contact already took.
-        bookingOwner(booking).member.canLogin ?? false
-      );
-    }
-  } catch (emailErr) {
-    logger.error(
-      { err: emailErr, bookingId: booking.id, job: "confirmPendingBookings" },
-      "Failed to send bumped email"
     );
   }
 }
@@ -590,12 +554,10 @@ async function resolveHoldWindowUnderLock(
       // #3611: nothing was paid, so nothing is kept; the stay's ledger lines are
       // reversed if a reversed mark-paid left it confirmed there (lock(1) above).
       await postCancellationLedgerLines({ store: tx, journal, bookingId: booking.id, lodgeId: booking.lodgeId, keptCents: 0, site: "confirm-pending:capacity-bump" });
+      // #5407: both notices are owed from this commit until sent.
+      const owed = await recordBumpNoticesOwed(tx, { bookingId: booking.id, flagged: booking.cancelIfGuestsBumped });
 
-      return {
-        type: "bumped",
-        booking,
-        flagged: booking.cancelIfGuestsBumped,
-      };
+      return { type: "bumped", booking, flagged: owed.flagged, owed };
     }
 
     // Zero-dollar booking: skip Stripe, just confirm with a SUCCEEDED Payment.
@@ -1147,7 +1109,9 @@ async function cancelSupersededLinkIntentsBestEffort(
  * For each PENDING booking where nonMemberHoldUntil <= now():
  * 1. Re-check bed availability under the booking advisory lock.
  * 2. If beds are unavailable, cancel the provisional booking, revoke payment
- *    links, and send the appropriate no-charge bump/cancellation email.
+ *    links, and send the no-charge bump/cancellation email and the officers'
+ *    alert, both recorded as owed in the cancel's transaction and swept by a
+ *    later run if this one stops first (#5407, #5433, `owed-notice/`).
  * 3. If beds are available and a saved payment method exists, claim capacity,
  *    charge off-session, then move to PAID and queue the booking's Xero invoice.
  * 4. If the booking is request-origin and has no saved card, keep the #707
@@ -1190,6 +1154,7 @@ export async function confirmPendingBookings(): Promise<CronConfirmResult> {
     cancelledBookingIds: [],
     partialBumpedBookingIds: [],
     failedBookingIds: [...recovery.failedBookingIds],
+    owedNotices: await drainOwedNotices(now, { ...CONFIRM_PENDING_OWED_NOTICE_CAP, job: "confirmPendingBookings" }),
   };
 
   for (const candidate of pendingBookings) {
@@ -1223,13 +1188,11 @@ export async function confirmPendingBookings(): Promise<CronConfirmResult> {
         await recordBookingEvent({
           bookingId: resolution.booking.id,
           type: BookingEventType.BUMPED,
-          reason: resolution.flagged
-            ? "Released because the whole party could not be confirmed (only-if-guests-come)."
-            : "These dates filled up before the provisional guests were confirmed.",
+          reason: bookingBumpReason(resolution.flagged),
           snapshot: { flagged: resolution.flagged },
         });
-        await sendBumpedEmail(resolution.booking, resolution.flagged);
         triggerWaitlistProcessing(resolution.booking, format);
+        await deliverBumpNotices(resolution.booking, resolution.owed);
         continue;
       }
 
@@ -1383,7 +1346,7 @@ export async function confirmPendingBookings(): Promise<CronConfirmResult> {
             // promise "your own booking remains confirmed" when the parent is
             // genuinely settled (parentUnpaid === false).
             parentConfirmed: !resolution.parentUnpaid,
-            parentBookingReference: resolution.booking.parentBookingId,
+            parentBookingReference: resolution.booking.parentBookingId && formatBookingReference(resolution.booking.parentBookingId),
             lodgeId: resolution.booking.lodgeId,
           });
         } catch (emailErr) {
@@ -1475,7 +1438,7 @@ export async function confirmPendingBookings(): Promise<CronConfirmResult> {
               guestCount: resolution.booking.guests.length,
               priceCents: resolution.booking.finalPriceCents,
               amountDueCents: (await readBookingAmountOwed(resolution.booking)).dueCents,
-              bookingReference: resolution.booking.id,
+              bookingId: resolution.booking.id,
               expiresAt,
               lodgeId: resolution.booking.lodgeId ?? null,
             }, format);
@@ -1665,7 +1628,7 @@ export async function confirmPendingBookings(): Promise<CronConfirmResult> {
       if (paymentIntent.status === "succeeded") {
         paymentSucceeded = true;
 
-        const { newlyCaptured } = await settleSavedCardChargeAttempt({
+        await settleSavedCardChargeAttempt({ // #5240: flags new money for the settle below to consume
             journal,
           attemptRowId: resolution.attempt.attemptRowId,
           paymentId: resolution.paymentId,
@@ -1674,11 +1637,11 @@ export async function confirmPendingBookings(): Promise<CronConfirmResult> {
 
         const reconciliation = await markBookingPaymentSucceeded({
       capturedAt: receiptCaptureTime(paymentIntent),
-          format, recordedByCaller: newlyCaptured, // #4285 review: new money, not a replay
+          format,
           bookingId: resolution.booking.id,
           paymentIntentId: paymentIntent.id,
           amountCents: paymentIntent.amount,
-          paymentMethodId,
+          paymentMethodId, owesPaidConfirmation: true, // #5433: delivered below, or by the sweep
         });
 
         if (
@@ -1731,7 +1694,7 @@ export async function confirmPendingBookings(): Promise<CronConfirmResult> {
 
         result.confirmedBookingIds.push(resolution.booking.id);
         await queueXeroInvoice(resolution.booking.id, "Xero invoice queued");
-        await sendConfirmationEmail(resolution.booking, format);
+        if (reconciliation.paidConfirmation) await deliverPaidBookingConfirmation(reconciliation.paidConfirmation, format, "confirmPendingBookings");
       } else {
         const releaseOutcome = await runSavedCardClaimRelease(async (tx) => {
           // #3267: record the intent Stripe answered with on the attempt row

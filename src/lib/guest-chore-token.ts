@@ -6,14 +6,6 @@ const TOKEN_EXPIRY_HOURS = 48;
 
 const MILLISECONDS_PER_HOUR = 3_600_000;
 
-// test seam
-/**
- * Generate a secure, URL-safe token for guest chore access.
- */
-export function generateChoreToken(): string {
-  return issueActionToken().token;
-}
-
 /**
  * Create a GuestChoreToken for a booking guest on a specific date.
  * Returns the token string for embedding in emails.

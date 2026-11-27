@@ -37,11 +37,14 @@ import { isPostgresLockNotAvailable } from "@/lib/prisma-errors";
  * raw statement in this module does: nothing reads the returned row, only that
  * the statement succeeded.
  *
- * Only ever called inside a savepoint that is then rolled back, which restores
+ * Merge calls it only inside a savepoint that is then rolled back, which restores
  * the value in force before it exactly — a database- or role-level bound
  * included (#2623 F4). So there is no undo to get wrong: not `0`, which means
  * "wait forever", and not `RESET`, which is session-scoped and survives the
  * commit on a pooled connection (both measured on real PostgreSQL in #2623).
+ * #5197: a Stripe dispute's WON event and a late win's hand-back reopen call it
+ * as their transaction's first statement, to bound every wait in it; the
+ * commit or rollback ends it the same way.
  */
 export async function setTransactionLockTimeout(
   db: Pick<PrismaClient, "$executeRaw">,

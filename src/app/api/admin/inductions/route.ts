@@ -1,3 +1,4 @@
+import { parseJsonRequestBody } from "@/lib/api-json";
 import { exactContains } from "@/lib/prisma-exact-prefix";
 import { NextRequest, NextResponse } from "next/server";
 import type { Prisma } from "@prisma/client";
@@ -10,38 +11,35 @@ import logger from "@/lib/logger";
 import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/session-guards";
 import { sendInductionSignOffRequestEmail } from "@/lib/email";
-import { z } from "zod";
-
-const INDUCTION_STATUSES = ["DRAFT", "IN_PROGRESS", "COMPLETED", "VOIDED"] as const;
-const INDUCTION_KINDS = [
-  "NEW_MEMBER",
-  "HUT_LEADER",
-  "YOUTH_TO_FULL",
-  "RE_INDUCTION",
-] as const;
-
-const createSchema = z.object({
-  memberId: z.string().min(1),
-  kind: z.enum(INDUCTION_KINDS).optional(),
-  signerMemberIds: z.array(z.string().min(1)).max(10).optional(),
-});
+import {
+  createInductionSchema,
+  INDUCTION_REGISTER_LIMIT,
+  inductionListQuerySchema,
+} from "@/lib/admin-membership-api/inductions";
+import { connectionJson } from "@/lib/mcp-connection-request";
+import {
+  INDUCTION_CREATED_CONNECTION_SHAPE,
+  INDUCTION_LIST_CONNECTION_SHAPE,
+} from "@/lib/connection-shapes/membership-committee";
 
 export async function GET(request: NextRequest) {
   const guard = await requireAdmin();
   if (!guard.ok) return guard.response;
 
-  const { searchParams } = new URL(request.url);
-  const statusParam = searchParams.get("status");
-  const kindParam = searchParams.get("kind");
-  const search = searchParams.get("search")?.trim();
+  const query = inductionListQuerySchema.safeParse(
+    Object.fromEntries(new URL(request.url).searchParams),
+  );
+  if (!query.success) {
+    return NextResponse.json(
+      { error: "Invalid query parameters", details: query.error.flatten() },
+      { status: 400 },
+    );
+  }
+  const { status, kind, search } = query.data;
 
   const where: Prisma.MemberInductionWhereInput = {};
-  if (statusParam && (INDUCTION_STATUSES as readonly string[]).includes(statusParam)) {
-    where.status = statusParam as (typeof INDUCTION_STATUSES)[number];
-  }
-  if (kindParam && (INDUCTION_KINDS as readonly string[]).includes(kindParam)) {
-    where.kind = kindParam as (typeof INDUCTION_KINDS)[number];
-  }
+  if (status) where.status = status;
+  if (kind) where.kind = kind;
   if (search) {
     where.member = {
       OR: [
@@ -55,7 +53,7 @@ export async function GET(request: NextRequest) {
   const inductions = await prisma.memberInduction.findMany({
     where,
     orderBy: { createdAt: "desc" },
-    take: 500,
+    take: INDUCTION_REGISTER_LIMIT,
     include: {
       member: {
         select: {
@@ -77,7 +75,7 @@ export async function GET(request: NextRequest) {
     },
   });
 
-  return NextResponse.json({
+  return connectionJson(request, {
     inductions: inductions.map((induction) => ({
       id: induction.id,
       kind: induction.kind,
@@ -96,21 +94,20 @@ export async function GET(request: NextRequest) {
         emailSentAt: signer.emailSentAt,
       })),
     })),
-  });
+  }, INDUCTION_LIST_CONNECTION_SHAPE);
 }
 
 export async function POST(request: NextRequest) {
   const guard = await requireAdmin();
   if (!guard.ok) return guard.response;
 
-  let body: unknown;
-  try {
-    body = await request.json();
-  } catch {
-    return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
-  }
+  const jsonBody = await parseJsonRequestBody(request, {
+    error: "Invalid JSON",
+  });
+  if (!jsonBody.ok) return jsonBody.response;
+  const body = jsonBody.body;
 
-  const parsed = createSchema.safeParse(body);
+  const parsed = createInductionSchema.safeParse(body);
   if (!parsed.success) {
     return NextResponse.json(
       { error: "Invalid input", details: parsed.error.flatten() },
@@ -170,7 +167,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    return NextResponse.json({ induction }, { status: 201 });
+    return connectionJson(request, { induction }, INDUCTION_CREATED_CONNECTION_SHAPE, { status: 201 });
   } catch (err) {
     if (err instanceof InductionError) {
       return NextResponse.json({ error: err.message }, { status: err.status });

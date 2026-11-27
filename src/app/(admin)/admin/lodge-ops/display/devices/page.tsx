@@ -19,7 +19,7 @@ import {
 } from "@/components/admin/view-only-action";
 import { adminLink } from "@/lib/admin-hubs";
 
-// Lobby display device management (fork issue #33, epic #25): list devices
+// Lobby display device management (fork issue hoppers99/AlpineClubBookingsNZ#33, epic hoppers99/AlpineClubBookingsNZ#25): list devices
 // with pairing/last-seen state, create a device, arm pairing by entering the
 // code shown on the TV (ADR-001 admin bind), assign a registry template,
 // revoke. The lobbyDisplay module flag gates this page at the proxy.
@@ -286,7 +286,7 @@ export default function AdminDisplayDevicesPage() {
           on the TV, then enter the code it shows to pair. Devices are
           read-only and individually revocable.
         </p>
-        {/* LTV-035 (#81): the per-lodge display config (name granularity,
+        {/* LTV-035 (hoppers99/AlpineClubBookingsNZ#81): the per-lodge display config (name granularity,
             committee notice, {{config:key}} values) moved to each lodge's own
             configuration page. Point admins arriving from the old Display
             Settings location at the new home. */}

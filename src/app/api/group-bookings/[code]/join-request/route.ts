@@ -3,7 +3,7 @@ import { z } from "zod";
 import { applyRateLimit, rateLimiters } from "@/lib/rate-limit";
 import { parseJsonRequestBody } from "@/lib/api-json";
 import { bookableAgeTierEnum } from "@/lib/age-tier-schema";
-import { nameField } from "@/lib/zod-helpers";
+import { nameField, noCrlf } from "@/lib/zod-helpers";
 import {
   createNonMemberJoinRequest,
   GroupBookingError,
@@ -18,8 +18,6 @@ const NEUTRAL_JOIN_REQUEST_ERROR_CODES = new Set([
   "GROUP_BOOKING_INACTIVE",
   "USE_MEMBER_LOGIN",
 ]);
-
-const noCrlf = (value: string) => !/[\r\n]/.test(value);
 
 const joinRequestSchema = z
   .object({

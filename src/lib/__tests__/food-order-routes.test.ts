@@ -6,7 +6,7 @@ import { dateOnlyInstantOf, requireCalendarDate } from "@/lib/club-time";
 import { fakeDb, fakePrisma, resetFakeDb } from "./support/food-order-fake-db";
 
 /**
- * Fork #121: the food-order member routes end to end over an in-memory
+ * Fork triyder/AlpineClubBookingsNZ#121: the food-order member routes end to end over an in-memory
  * database — the access matrix for Received and price, creating an order, the
  * module gate, the Received claim under concurrent requests, price audit, and
  * the history's scope, filters, paging and totals.
@@ -70,6 +70,7 @@ import { GET as historyGet } from "@/app/api/food-orders/history/route";
 import { PATCH as pricePatch } from "@/app/api/food-orders/[id]/price/route";
 import { POST as receivedPost } from "@/app/api/food-orders/[id]/received/route";
 import { GET as formGet, POST as orderPost } from "@/app/api/food-orders/route";
+import { foodOrderHistoryQuerySchema } from "@/lib/food-order-schema";
 
 const day = (value: string) => dateOnlyInstantOf(requireCalendarDate(value));
 
@@ -296,7 +297,7 @@ describe("the module gate", () => {
     mocks.modules = { foodOrders: false };
     for (const session of [ROLES.lodgeEditAdmin(), null]) {
       mocks.session = session;
-      expect((await formGet()).status).toBe(404);
+      expect((await formGet(new NextRequest("http://localhost/api/food-orders"))).status).toBe(404);
       expect((await placeOrder()).status).toBe(404);
       expect(
         (await historyGet(jsonRequest("/api/food-orders/history", "GET"))).status,
@@ -346,13 +347,13 @@ describe("placing an order", () => {
     expect(fakeDb.orders).toHaveLength(0);
     expect(mocks.sendFoodOrderPlacedEmail).not.toHaveBeenCalled();
 
-    const form = await (await formGet()).json();
+    const form = await (await formGet(new NextRequest("http://localhost/api/food-orders"))).json();
     expect(form.ready).toBe(false);
   });
 
   it("reports ready, the label and the club's today to the form when set up", async () => {
     fakeDb.settings = { officerEmail: "food@club.test", officerLabel: "Catering officer" };
-    const form = await (await formGet()).json();
+    const form = await (await formGet(new NextRequest("http://localhost/api/food-orders"))).json();
     expect(form).toMatchObject({ ready: true, officerLabel: "Catering officer", today: "2026-07-01" });
     expect(JSON.stringify(form)).not.toContain("food@club.test");
   });
@@ -407,7 +408,7 @@ describe("placing an order", () => {
   // Owner answer on PR #5143, question 6: ordering follows booking eligibility.
   it("offers and accepts only the lodges a booking-restricted member may book", async () => {
     fakeDb.bookingRestrictions.push({ memberId: "member-1", lodgeId: "lodge-b" });
-    const form = await (await formGet()).json();
+    const form = await (await formGet(new NextRequest("http://localhost/api/food-orders"))).json();
     expect(form.lodges.map((lodge: { id: string }) => lodge.id)).toEqual(["lodge-b"]);
 
     const refused = await placeOrder({ ...VALID_ORDER, lodgeId: "lodge-a" });
@@ -420,7 +421,7 @@ describe("placing an order", () => {
   });
 
   it("offers every active lodge to a member with no booking restriction", async () => {
-    const form = await (await formGet()).json();
+    const form = await (await formGet(new NextRequest("http://localhost/api/food-orders"))).json();
     expect(form.lodges.map((lodge: { id: string }) => lodge.id)).toEqual(["lodge-a", "lodge-b"]);
   });
 
@@ -450,7 +451,7 @@ describe("placing an order", () => {
   it("refuses an organisation account", async () => {
     mocks.session = ROLES.organisation();
     expect((await placeOrder()).status).toBe(403);
-    expect((await formGet()).status).toBe(403);
+    expect((await formGet(new NextRequest("http://localhost/api/food-orders"))).status).toBe(403);
     expect(fakeDb.orders).toHaveLength(0);
   });
 
@@ -841,6 +842,17 @@ describe("the history", () => {
     expect((await history("?status=CLOSED")).status).toBe(400);
     expect((await history("?from=01/07/2026")).status).toBe(400);
     expect((await history("?page=0")).status).toBe(400);
+  });
+
+  it("refuses a needed-by day that does not exist, such as 30 February", async () => {
+    mocks.session = ROLES.committee();
+    for (const query of ["?from=2026-02-30", "?to=2026-02-30"]) {
+      const answer = await history(query);
+      expect(answer.status).toBe(400);
+      expect(answer.body.error).toBe("Dates must be in YYYY-MM-DD form.");
+    }
+    expect(foodOrderHistoryQuerySchema.safeParse({ from: "2026-02-30" }).success).toBe(false);
+    expect(foodOrderHistoryQuerySchema.safeParse({ to: "2026-02-28" }).success).toBe(true);
   });
 
   it("pages 25 at a time, with the count and total across every page", async () => {

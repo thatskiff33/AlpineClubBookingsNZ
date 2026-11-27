@@ -17,6 +17,7 @@
  */
 
 import { FinanceSyncRunTrigger, Prisma } from "@prisma/client";
+import { DEFAULT_FINANCE_BACKFILL_MAX_CHUNKS } from "@/lib/finance-backfill-request";
 import { shiftMonthKey, isMonthKey } from "@/lib/finance-monthly-facts";
 import { loadFinanceMonthlyChartContext } from "@/lib/finance-monthly-fact-store";
 import {
@@ -41,12 +42,6 @@ const FINANCE_SYNC_XERO_PROFIT_AND_LOSS_BY_MONTH_BACKFILL_DATASET_KEY =
   "xero-profit-and-loss-by-month-backfill";
 const FINANCE_SYNC_XERO_BALANCE_SHEET_BY_MONTH_BACKFILL_DATASET_KEY =
   "xero-balance-sheet-by-month-backfill";
-
-/**
- * Upper bound on 12-month chunks walked per report (30 years). A runaway
- * backstop only — real runs stop at organisation pre-history first.
- */
-export const DEFAULT_FINANCE_BACKFILL_MAX_CHUNKS = 30;
 
 export interface BackfillFinanceMonthlyFactsInput {
   requestedByMemberId?: string | null;

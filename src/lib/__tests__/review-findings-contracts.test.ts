@@ -37,6 +37,7 @@ import {
   bashFixturePath,
   bashGateArgs,
 } from "./helpers/bash-fixture-path";
+import { CENSUS_TIMEOUT_MS } from "@/test/census-timeout";
 
 function readRepoFile(relativePath: string) {
   // Test helper: reads a fixed repo file under process.cwd(); relativePath is test-controlled, not user input.
@@ -605,7 +606,7 @@ describe("review finding source/schema contracts", () => {
         ).toBeLessThan(guardOffset);
       });
     }
-  });
+  }, CENSUS_TIMEOUT_MS);
 
   it("keeps guest chore token links read-only", () => {
     const source = readRepoFile("src/app/api/chores/[token]/route.ts");
@@ -1893,10 +1894,11 @@ describe("review finding source/schema contracts", () => {
 
   it("serializes stale waitlist-offer expiry and re-offer selection behind a transaction", () => {
     const source = readRepoFile("src/lib/waitlist.ts");
+    // #5402: the last function in the file since the uncalled
+    // `updateWaitlistPositions` after it was deleted, so it runs to the end.
     const expireStaleOffersBlock = sliceFrom(
       source,
       "export async function expireStaleOffers",
-      "// test seam"
     );
 
     expect(expireStaleOffersBlock).toContain("prisma.$transaction");

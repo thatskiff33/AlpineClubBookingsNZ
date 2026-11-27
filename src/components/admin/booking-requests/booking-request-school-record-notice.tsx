@@ -20,6 +20,7 @@
  */
 
 import { Button } from "@/components/ui/button";
+import { SchoolContactEditor } from "@/components/admin/school-contact-editor";
 
 export type SchoolRecord = {
   normalisedName: string;
@@ -96,6 +97,15 @@ export function SchoolRecordNotice(props: {
               : ""}
             .
           </p>
+          {/* #5245: the record's own email and phone are corrected on the
+              record, never by this request. Only an officer who can edit
+              bookings sees this form at all. */}
+          {record.schoolRecordId && !record.schoolRecordArchived ? (
+            <SchoolContactEditor
+              organisationId={record.schoolRecordId}
+              schoolName={record.schoolRecordName ?? undefined}
+            />
+          ) : null}
           {record.currentContactNames.length > 0 ? (
             <p>
               The people it names today are{" "}

@@ -1,6 +1,7 @@
-import { LATE_CAPTURE_REFUNDED_OUTSIDE_APP_NOTE } from "@/lib/late-capture-outside-app-note";
-import { UNMATCHED_APP_LEDGER_MATCH_LABEL, UNMATCHED_APP_STRIPE_PAYMENT_NOTE, UNRECOGNISED_STRIPE_PAYMENT_NOTE } from "@/lib/unrecognised-stripe-payment-note";
-import { STRIPE_DISPUTE_HOLD_NOTE, STRIPE_DISPUTE_NEXT_STEP, stripeDisputeSubjectLabel } from "@/lib/stripe-dispute-note";
+import { stripePaymentAlertSampleValue } from "@/lib/email-message-stripe-payment-samples";
+import { waitlistAlertSampleValue } from "@/lib/email-message-waitlist-samples";
+import { bookingChangeSampleValue } from "@/lib/email-message-booking-change-samples";
+import { OWED_NOTICE_ALERT_TRIGGERS } from "@/lib/email-message-owed-notice-triggers";
 import {
   EMAIL_AUDIT_DEFAULTS,
   type EmailAuditTemplateName,
@@ -35,6 +36,7 @@ import { bookingPaymentDueNote } from "@/lib/email-payment-due-note";
 import { FALLBACK_LODGE_CAPACITY } from "@/lib/lodge-capacity";
 import { BOOKING_URL_TEMPLATE_NAMES } from "@/lib/booking-email-template-contract";
 import { bookingModificationTypeLabel } from "@/lib/booking-money-lines";
+import { bookingBumpReason } from "@/lib/booking-bump-reason";
 import {
   organiserJoinerAppealRefundSentence,
   refundRequestApprovedRefundSentence,
@@ -96,8 +98,9 @@ const GLOBAL_EMAIL_TEMPLATE_TOKENS = [
 // #2268 keeps rendering and keeps re-saving.
 // Exported as a test seam (#2268): the supplied-token approval guard reads it.
 export const EXTRA_TEMPLATE_TOKENS: Partial<Record<EmailAuditTemplateName, string[]>> = {
-  // Lodge the warning is about; empty for single-lodge clubs (ADR-002).
+  // The lodge the alert is about; empty for single-lodge clubs (ADR-002).
   "admin-capacity-warning": ["lodgeName"],
+  "admin-booking-bumped": ["lodgeName"],
   // #49: the raw numbers behind the composed {{serverVersionNote}} - the version
   // this site is built for and the one the server reports - both empty on a day
   // the versions match. A Lodge Operations editor who does not receive the
@@ -187,6 +190,7 @@ export const EXTRA_TEMPLATE_TOKENS: Partial<Record<EmailAuditTemplateName, strin
   // withdraw permission to use them in an override.
   "booking-modified": [
     "additionalPaymentMethod",
+    "calendarUpdateNote",
     "changeFee",
     "changeSummary",
     "newCheckIn",
@@ -301,7 +305,7 @@ const REQUIRED_TOKEN_ALTERNATIVES: Partial<
 };
 
 const REQUIRED_TEMPLATE_TOKENS: Partial<Record<EmailAuditTemplateName, string[]>> = {
-  // Fork #121: an override that dropped the item list would send an empty order.
+  // Fork triyder/AlpineClubBookingsNZ#121: an override that dropped the item list would send an empty order.
   "food-order-placed": ["itemsText"],
   "booking-confirmed": [
     "CLUB_LODGE_TRAVEL_NOTE",
@@ -446,6 +450,14 @@ const REQUIRED_TEMPLATE_TOKENS: Partial<Record<EmailAuditTemplateName, string[]>
   // #1992/#2007: memberName identifies the affected member and reviewUrl is the
   // admin action link (the payments board), mirroring the other admin alerts.
   "admin-duplicate-capture-refund": ["memberName", "reviewUrl"],
+  // #5433: {{noticeNote}} says which waitlist email went unsent and what to
+  // do; the member and the booking link are what an officer acts on.
+  "admin-waitlist-notice-unsent": ["noticeNote", "memberName", "bookingUrl"],
+  // #5433 (D1): the owner and the booking link are what an officer acts on.
+  "admin-booking-confirmation-unsent": ["memberName", "bookingUrl"],
+  // #5433: {{offerNote}} says whether the offer email reached the member; an
+  // override without it would tell officers nothing about that.
+  "admin-waitlist-offer": ["offerNote"],
   // #3672: the organiser's booking, and each waiting joiner linked to the
   // booking whose admin tools record their payment.
   "admin-group-joiner-started-stay": [
@@ -1129,6 +1141,7 @@ const TEMPLATE_TRIGGER_METADATA: Partial<
       "Organiser settled a joiner's spot as part of a combined group payment",
     frequency: "One email per joiner booking covered by the settled payment",
   },
+  ...OWED_NOTICE_ALERT_TRIGGERS,
   "admin-group-joiner-started-stay": {
     triggerSummary:
       "A paid organiser-pays group had joiners its bill did not cover whose stay had started; they were switched to paying for themselves without an email, so the treasurer collects by hand (#3672)",
@@ -1456,6 +1469,8 @@ export function sampleValue(token: string): string {
   if (token === "holdKeptNote") {
     return internetBankingHoldKeptParagraph("part-paid");
   }
+  const waitlistSample = waitlistAlertSampleValue(token);
+  if (waitlistSample !== undefined) return waitlistSample;
   // #4042: previewed as the cash arm, what the shipped default always said.
   if (token === "handBackNote") return manualRefundTaskAlertNote("cash-cancellation");
   if (token === "handBackLabel") return manualRefundTaskAlertLabel("cash-cancellation");
@@ -1481,23 +1496,8 @@ export function sampleValue(token: string): string {
   if (token === "settlementFigureNote") {
     return ibSettlementFigureParagraph({ keptReason: "folded-refund", owed: null, hasSupplementaryInvoice: false });
   }
-  if (token === "outsideAppRefundNote") return LATE_CAPTURE_REFUNDED_OUTSIDE_APP_NOTE;
-  // #4532: the one passage, and the Stripe ids an unrecognised payment names.
-  if (token === "unrecognisedPaymentNote") return UNRECOGNISED_STRIPE_PAYMENT_NOTE;
-  // #4624: the unmatched app payment's instruction, and what the app found for it.
-  if (token === "unmatchedAppPaymentNote") return UNMATCHED_APP_STRIPE_PAYMENT_NOTE;
-  if (token === "ledgerMatch") return UNMATCHED_APP_LEDGER_MATCH_LABEL.APP_INTENT_NO_TRANSACTION;
-  if (token === "chargeId") return "ch_example";
-  // #4911: previewed as the opened alert, the one every dispute sends first.
-  if (token === "disputeSubjectLabel") return stripeDisputeSubjectLabel("opened", "open");
-  if (token === "disputeNextStep") return STRIPE_DISPUTE_NEXT_STEP.OPEN;
-  if (token === "disputeHoldNote") return STRIPE_DISPUTE_HOLD_NOTE;
-  if (token === "outcome") return "open";
-  if (token === "disputeId") return "dp_example";
-  if (token === "bookingOwner") return "Sam Member";
-  if (token === "checkoutSessionId") return "cs_example";
-  if (token === "paymentLinkId") return "plink_example";
-  if (token === "stripeDashboardUrl") return "https://dashboard.stripe.com/payments/pi_example";
+  const stripePaymentSample = stripePaymentAlertSampleValue(token);
+  if (stripePaymentSample !== undefined) return stripePaymentSample;
   // #4211: previewed as the no-record arm, the case every booking paid before
   // the record existed meets; the released-settler arm is the guard's other reason.
   if (token === "duplicateCaptureKeptNote") {
@@ -1620,25 +1620,8 @@ export function sampleValue(token: string): string {
   // composed paragraph above (and previewed the admin manual-invoice alert's
   // "Payment reference:" line as a token name).
   if (token === "paymentReference") return "BOOKING-1234";
-  // #2267: one coherent booking-modified sample — a 2-guest stay whose dates
-  // moved from 1–3 Jul to 8–10 Jul and whose price rose from $123.45 to
-  // $150.00 with no change fee, leaving $26.55 to pay. Every token below tells
-  // that same story, including the per-piece ones a legacy override uses, so
-  // an admin's preview reconciles instead of mixing three unrelated amounts.
-  if (token === "modificationTypeLabel") return "Dates Changed";
-  if (token === "paymentNote") {
-    return "An additional payment of $26.55 is required.";
-  }
-  if (token === "changeSummary") {
-    return "Previous Dates: 1 Jul 2026 – 3 Jul 2026\nNew Dates: 8 Jul 2026 – 10 Jul 2026\nGuests: 2\nPrevious Total: $123.45\nNew Total: $150.00\n";
-  }
-  if (token === "oldCheckIn") return "1 Jul 2026";
-  if (token === "oldCheckOut") return "3 Jul 2026";
-  if (token === "newCheckIn") return "8 Jul 2026";
-  if (token === "newCheckOut") return "10 Jul 2026";
-  if (token === "oldTotal") return "$123.45";
-  if (token === "newTotal") return "$150.00";
-  if (token === "changeFee") return "$0.00";
+  const bookingChangeSample = bookingChangeSampleValue(token);
+  if (bookingChangeSample !== undefined) return bookingChangeSample;
   if (token === "promoAdjustment") return "-$30.00";
   if (token === "promoCode") return "PROMO2026";
   if (token === "discount") return "$30.00";
@@ -1709,10 +1692,9 @@ const TEMPLATE_SAMPLE_VALUE_OVERRIDES: Partial<
   "group-organiser-joiner-refund": {
     refundSentence: organiserJoinerAppealRefundSentence("$123.45", "Sam Joiner"),
   },
-  // #4911: Stripe's reason code as the sender words it, not the bare token name.
-  "admin-stripe-dispute": {
-    reason: "fraudulent",
-  },
+  // #4911 / #5403: each sender's own reason wording, not the bare token name.
+  "admin-stripe-dispute": { reason: "fraudulent" },
+  "admin-booking-bumped": { reason: bookingBumpReason(false) },
   "group-organiser-extra-invoice": {
     joinerName: "Sam Joiner",
     // The sender's own wording of a change (`bookingModificationTypeLabel`).
@@ -1855,6 +1837,9 @@ const APPROVED_EMAIL_TEMPLATE_TOKENS = [
   "bookingUrl",
   "bookingReferenceNote",
   "bumpedMemberName",
+  // #5249: composed calendar sentences, empty unless an entry was offered.
+  "calendarRemovalNote",
+  "calendarUpdateNote",
   "changeFee",
   // #2267: pre-composed block of the booking-modification rows that actually
   // changed (Previous/New pairs only where something moved).
@@ -2064,6 +2049,9 @@ const APPROVED_EMAIL_TEMPLATE_TOKENS = [
   "handBackConflictNote",
   // #3643: why an expired internet banking hold was kept, not released.
   "holdKeptNote",
+  // #5433: the waitlist alerts' notes: which email went unsent, and the offer's.
+  "noticeNote",
+  "offerNote",
   // #4042: which hand-back a manual refund task alert is about - its body
   // paragraphs, its subject/heading phrase, and whom the money goes back to.
   "handBackNote",
@@ -2194,7 +2182,6 @@ const APPROVED_EMAIL_TEMPLATE_TOKENS = [
   "totalDue",
   "paymentDueNote",
   "totalPaid",
-  "triggeringMemberName",
   // #2550: how many of the party still carry a generated placeholder name.
   "unnamedGuestCount",
   // #2576: the NZ lodge-nights on which a booking's non-member guests have no
@@ -2222,7 +2209,7 @@ const APPROVED_EMAIL_TEMPLATE_TOKENS = [
   "summary",
   "answersText",
   "maintenanceReportUrl",
-  // Fork #121: the food-order email's tokens; none carries a bearer token or secret.
+  // Fork triyder/AlpineClubBookingsNZ#121: the food-order email's tokens; none carries a bearer token or secret.
   "officerLabel",
   "neededBy",
   "orderedBy",

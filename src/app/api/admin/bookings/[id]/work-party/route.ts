@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { parseJsonRequestBody } from "@/lib/api-json";
 import { requireAdmin } from "@/lib/session-guards";
 import { requireRecentAuth } from "@/lib/require-recent-auth";
 import { prisma } from "@/lib/prisma";
@@ -25,15 +26,21 @@ import {
   workPartyRemovalEligibility,
 } from "@/lib/work-party-booking-correction";
 import { workPartyCorrectionBodySchema as bodySchema } from "@/lib/work-party-correction-request";
+import {
+  ADMIN_BOOKING_WORK_PARTY_OPTIONS_CONNECTION_SHAPE,
+  type AdminBookingWorkPartyOptionsAnswer,
+} from "@/lib/connection-shapes/bookings-bookings";
+import { connectionJson } from "@/lib/mcp-connection-request";
 
 /**
- * The work parties this booking could be added to (fork #119): every open work
+ * The work parties this booking could be added to (fork triyder/AlpineClubBookingsNZ#119): every open work
  * party whose window overlaps the stay, each with the shared eligibility rule's
  * answer, so the admin booking page lists them with the reason a refused one
- * cannot be chosen. Booking Officers and Full Admins (`bookings:view`).
+ * cannot be chosen. Booking Officers and Full Admins (`bookings:view`). Also the
+ * AI app action `get_booking_work_party_options` (ALP-719).
  */
 export async function GET(
-  _req: NextRequest,
+  req: NextRequest,
   { params }: { params: Promise<{ id: string }> },
 ) {
   const guard = await requireAdmin({ permission: { area: "bookings", level: "view" } });
@@ -62,10 +69,10 @@ export async function GET(
   ]);
   const current = facts.current;
 
-  // fork #130: whether the work party on the booking can be taken off it.
+  // fork triyder/AlpineClubBookingsNZ#130: whether the work party on the booking can be taken off it.
   const removal = current ? workPartyRemovalEligibility(facts.remove, { today }, current.id) : null;
 
-  return NextResponse.json({
+  const answer: AdminBookingWorkPartyOptionsAnswer = {
     currentWorkParty: current,
     removal: removal && { eligible: removal.ok, reason: removal.ok ? null : removal.reason },
     workParties: events.map((event) => {
@@ -85,14 +92,15 @@ export async function GET(
         reason: eligibility.ok ? null : eligibility.reason,
       };
     }),
-  });
+  };
+  return connectionJson(req, answer, ADMIN_BOOKING_WORK_PARTY_OPTIONS_CONNECTION_SHAPE);
 }
 
 /**
- * "Add booking to work party" (fork #119), and with `action: "remove"`
- * "Remove from work party" (fork #130). `mode: "preview"` runs the whole
+ * "Add booking to work party" (fork triyder/AlpineClubBookingsNZ#119), and with `action: "remove"`
+ * "Remove from work party" (fork triyder/AlpineClubBookingsNZ#130). `mode: "preview"` runs the whole
  * change and rolls it back, returning the figures and the settlement methods
- * offered (`settlementOptions`, fork #129) for the confirm dialog;
+ * offered (`settlementOptions`, triyder/AlpineClubBookingsNZ#129) for the confirm dialog;
  * `mode: "apply"` saves it, refusing if the figures moved since the preview.
  * Booking Officers and Full Admins (`bookings:edit`); the service re-authorises
  * the officer under its locks. The work and the money rules are in
@@ -116,12 +124,9 @@ export async function POST(
   const recent = await requireRecentAuth();
   if (!recent.ok) return recent.response;
 
-  let body: unknown;
-  try {
-    body = await req.json();
-  } catch {
-    return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
-  }
+  const jsonBody = await parseJsonRequestBody(req, { error: "Invalid JSON" });
+  if (!jsonBody.ok) return jsonBody.response;
+  const body = jsonBody.body;
   const parsed = bodySchema.safeParse(body);
   if (!parsed.success) {
     return NextResponse.json(

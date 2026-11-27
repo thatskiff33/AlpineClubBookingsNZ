@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
+import { parseJsonRequestBody } from "@/lib/api-json";
 import { getSeasonalMembershipChangePreview } from "@/lib/seasonal-membership-assignments";
 import { clubTimeZone } from "@/lib/club-time/server";
 import { clubToday, dateOnlyInstantOf } from "@/lib/club-time";
@@ -44,12 +45,11 @@ export async function POST(
     );
   }
 
-  let body: unknown;
-  try {
-    body = await request.json();
-  } catch {
-    return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
-  }
+  const jsonBody = await parseJsonRequestBody(request, {
+    error: "Invalid JSON",
+  });
+  if (!jsonBody.ok) return jsonBody.response;
+  const body = jsonBody.body;
 
   const parsedBody = previewSchema.safeParse(body);
   if (!parsedBody.success) {

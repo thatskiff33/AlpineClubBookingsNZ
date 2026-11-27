@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
+import { parseJsonRequestBody } from "@/lib/api-json";
 import {
   buildStructuredAuditLogCreateArgs,
   getAuditRequestContext,
@@ -66,14 +67,13 @@ export async function POST(request: Request) {
     );
   }
 
-  let body: unknown;
   const recent = await requireRecentAuth();
   if (!recent.ok) return recent.response;
-  try {
-    body = await request.json();
-  } catch {
-    return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
-  }
+  const jsonBody = await parseJsonRequestBody(request, {
+    error: "Invalid JSON",
+  });
+  if (!jsonBody.ok) return jsonBody.response;
+  const body = jsonBody.body;
 
   const parsed = createSchema.safeParse(body);
   if (!parsed.success) {

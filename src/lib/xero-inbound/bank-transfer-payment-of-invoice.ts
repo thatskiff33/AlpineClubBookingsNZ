@@ -13,8 +13,8 @@
  *   payment named only by its link included.
  *
  * Which invoice's allocations a payment's total counts is one invoice per
- * payment (`decisionInvoiceIdOf`): the payment's own invoice, or the one its
- * only active link names while none is stamped. The kept settle passes the
+ * payment (`decisionInvoiceIdsOf`): the payment's own invoice, or, for a bank
+ * transfer, the one its only active link names while none is stamped. The kept settle passes the
  * invoice it settles instead.
  *
  * Reads only, on the caller's client; it takes no lock.
@@ -87,11 +87,12 @@ export async function bankTransferPaymentIdsOfInvoices(invoiceIds: readonly stri
 }
 
 /**
- * The invoice whose allocations a bank-transfer payment's refunded total
- * counts (`decideLinkedRefundedTotalCents`): its own invoice id, or, while none
- * is stamped, the invoice its only active primary-invoice link names. One
- * invoice per payment, so an older invoice it was once linked to is never
- * added. Null for any other payment, or when no single invoice names it.
+ * The invoice whose allocations a payment's refunded total counts
+ * (`decideLinkedRefundedTotalCents`): its own invoice id, whatever its source
+ * (#4444), or, for a bank transfer while none is stamped, the invoice its only
+ * active primary-invoice link names (the settle's rule). One invoice per
+ * payment, so an older invoice it was once linked to is never added. Absent
+ * when no single invoice names it.
  */
 export async function decisionInvoiceIdsOf(
   payments: ReadonlyArray<{ id: string; source: PaymentSource; xeroInvoiceId: string | null }>,
@@ -100,9 +101,8 @@ export async function decisionInvoiceIdsOf(
   const decided = new Map<string, string>();
   const unstamped: string[] = [];
   for (const payment of payments) {
-    if (payment.source !== PaymentSource.INTERNET_BANKING) continue;
     if (payment.xeroInvoiceId) decided.set(payment.id, payment.xeroInvoiceId);
-    else unstamped.push(payment.id);
+    else if (payment.source === PaymentSource.INTERNET_BANKING) unstamped.push(payment.id);
   }
   if (unstamped.length === 0) return decided;
   const links = await db.xeroObjectLink.findMany({

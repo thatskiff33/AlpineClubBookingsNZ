@@ -1,5 +1,4 @@
 import { NextResponse } from "next/server";
-import { z } from "zod";
 import {
   buildStructuredAuditLogCreateArgs,
   getAuditRequestContext,
@@ -14,40 +13,16 @@ import {
 import { syncBookingOfficerForRole } from "@/lib/committee-booking-officer-sync";
 import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/session-guards";
-
-const assignmentSchema = z
-  .object({
-    memberId: z.string().min(1),
-    committeeRoleId: z.string().min(1),
-    blurb: z.string().trim().max(1000).nullable().optional(),
-    sortOrder: z.number().int().min(0).max(100000).optional().default(0),
-    published: z.boolean().optional().default(false),
-    showPhone: z.boolean().optional().default(false),
-    contactable: z.boolean().optional().default(false),
-    contactEmailMode: z
-      .enum(["ROLE", "MEMBER", "CUSTOM"])
-      .optional()
-      .default("ROLE"),
-    contactEmailOverride: z
-      .string()
-      .trim()
-      .max(320)
-      .email("Invalid committee email")
-      .nullable()
-      .optional(),
-    isActive: z.boolean().optional().default(true),
-  })
-  .strict()
-  .superRefine((value, ctx) => {
-    if (value.contactEmailMode === "CUSTOM" && !value.contactEmailOverride) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ["contactEmailOverride"],
-        message:
-          "A custom committee email is required when contact email mode is CUSTOM",
-      });
-    }
-  });
+import { parseJsonRequestBody } from "@/lib/api-json";
+import {
+  committeeAssignmentCreateSchema,
+  committeeAssignmentListQuerySchema,
+} from "@/lib/admin-membership-api/committee";
+import { connectionJson } from "@/lib/mcp-connection-request";
+import {
+  COMMITTEE_ASSIGNMENT_CONNECTION_SHAPE,
+  COMMITTEE_ASSIGNMENT_LIST_CONNECTION_SHAPE,
+} from "@/lib/connection-shapes/membership-committee";
 
 export async function GET(request: Request) {
   const guard = await requireAdmin({
@@ -55,10 +30,17 @@ export async function GET(request: Request) {
   });
   if (!guard.ok) return guard.response;
 
-  const url = new URL(request.url);
-  const memberId = url.searchParams.get("memberId");
-  const roleId = url.searchParams.get("committeeRoleId");
-  const includeInactive = url.searchParams.get("includeInactive") === "1";
+  const query = committeeAssignmentListQuerySchema.safeParse(
+    Object.fromEntries(new URL(request.url).searchParams),
+  );
+  if (!query.success) {
+    return NextResponse.json(
+      { error: "Invalid query parameters", details: query.error.flatten() },
+      { status: 400 },
+    );
+  }
+  const { memberId, committeeRoleId: roleId } = query.data;
+  const includeInactive = query.data.includeInactive === "1";
 
   const assignments = await prisma.committeeAssignment.findMany({
     where: {
@@ -70,9 +52,11 @@ export async function GET(request: Request) {
     select: committeeAssignmentSelect,
   });
 
-  return NextResponse.json({
-    assignments: assignments.map(serializeCommitteeAssignment),
-  });
+  return connectionJson(
+    request,
+    { assignments: assignments.map(serializeCommitteeAssignment) },
+    COMMITTEE_ASSIGNMENT_LIST_CONNECTION_SHAPE,
+  );
 }
 
 export async function POST(request: Request) {
@@ -82,14 +66,13 @@ export async function POST(request: Request) {
   if (!guard.ok) return guard.response;
   const session = guard.session;
 
-  let body: unknown;
-  try {
-    body = await request.json();
-  } catch {
-    return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
-  }
+  const jsonBody = await parseJsonRequestBody(request, {
+    error: "Invalid JSON",
+  });
+  if (!jsonBody.ok) return jsonBody.response;
+  const body = jsonBody.body;
 
-  const parsed = assignmentSchema.safeParse(body);
+  const parsed = committeeAssignmentCreateSchema.safeParse(body);
   if (!parsed.success) {
     return NextResponse.json(
       { error: "Invalid input", details: parsed.error.flatten() },
@@ -195,8 +178,10 @@ export async function POST(request: Request) {
     return assignment;
   });
 
-  return NextResponse.json(
+  return connectionJson(
+    request,
     { assignment: serializeCommitteeAssignment(saved) },
+    COMMITTEE_ASSIGNMENT_CONNECTION_SHAPE,
     { status: 201 },
   );
 }

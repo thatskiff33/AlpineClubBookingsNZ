@@ -1,9 +1,16 @@
 import type { DisplayNameGranularity } from "@prisma/client";
 import { NextResponse } from "next/server";
-import { z } from "zod";
+import { parseJsonRequestBody } from "@/lib/api-json";
+import type { z } from "zod";
 
+import { routeIdParamsSchema } from "@/lib/route-id-params";
+import { lodgeRosterSettingsBodySchema } from "@/lib/admin-lodge-schemas/setup";
 import { createAuditLog } from "@/lib/audit";
-import { DISPLAY_NAME_GRANULARITY_VALUES } from "@/lib/display-name-granularity";
+import {
+  ADMIN_LODGE_ROSTER_SETTINGS_CONNECTION_SHAPE,
+  type LodgeRosterSettingsAnswer,
+} from "@/lib/connection-shapes/lodge-setup";
+import { connectionJson } from "@/lib/mcp-connection-request";
 import { DEFAULT_ROSTER_NAME_GRANULARITY } from "@/lib/member-lodge-roster";
 import { loadEffectiveModuleFlags } from "@/lib/module-settings";
 import { prisma } from "@/lib/prisma";
@@ -38,18 +45,13 @@ import { requireAdmin } from "@/lib/session-guards";
  * re-check of the flag.
  */
 
-const paramsSchema = z.object({ id: z.string().min(1) });
+// The body schema (null clears the per-lodge choice and falls back to the
+// roster default) lives in admin-lodge-schemas/setup.ts beside the other
+// Lodge Operations setup schemas (ALP-722). The GET is the AI app action
+// `get_lodge_roster_settings`; the PUT is website-only (`privacy-posture` in
+// `src/lib/mcp/exclusions.ts`), since it decides what members see of each other.
 
-const putSchema = z
-  .object({
-    // Null clears the per-lodge choice and falls back to the roster default.
-    rosterNameGranularity: z
-      .enum(DISPLAY_NAME_GRANULARITY_VALUES)
-      .nullable(),
-  })
-  .strict();
-
-async function readSettings(lodgeId: string) {
+async function readSettings(lodgeId: string): Promise<LodgeRosterSettingsAnswer | null> {
   const lodge = await prisma.lodge.findUnique({
     where: { id: lodgeId },
     select: { id: true, name: true, rosterNameGranularity: true },
@@ -69,7 +71,7 @@ async function readSettings(lodgeId: string) {
 }
 
 export async function GET(
-  _request: Request,
+  request: Request,
   { params }: { params: Promise<{ id: string }> },
 ) {
   const guard = await requireAdmin({
@@ -77,7 +79,7 @@ export async function GET(
   });
   if (!guard.ok) return guard.response;
 
-  const parsedParams = paramsSchema.safeParse(await params);
+  const parsedParams = routeIdParamsSchema.safeParse(await params);
   if (!parsedParams.success) {
     return NextResponse.json({ error: "Invalid lodge id" }, { status: 400 });
   }
@@ -86,7 +88,7 @@ export async function GET(
   if (!settings) {
     return NextResponse.json({ error: "Lodge not found" }, { status: 404 });
   }
-  return NextResponse.json(settings);
+  return connectionJson(request, settings, ADMIN_LODGE_ROSTER_SETTINGS_CONNECTION_SHAPE);
 }
 
 export async function PUT(
@@ -98,14 +100,16 @@ export async function PUT(
   });
   if (!guard.ok) return guard.response;
 
-  const parsedParams = paramsSchema.safeParse(await params);
+  const parsedParams = routeIdParamsSchema.safeParse(await params);
   if (!parsedParams.success) {
     return NextResponse.json({ error: "Invalid lodge id" }, { status: 400 });
   }
 
-  let body: z.infer<typeof putSchema>;
+  let body: z.infer<typeof lodgeRosterSettingsBodySchema>;
+  const jsonBody = await parseJsonRequestBody(request);
+  if (!jsonBody.ok) return jsonBody.response;
   try {
-    body = putSchema.parse(await request.json());
+    body = lodgeRosterSettingsBodySchema.parse(jsonBody.body);
   } catch {
     return NextResponse.json({ error: "Invalid request" }, { status: 400 });
   }
@@ -174,5 +178,5 @@ export async function PUT(
   if (!settings) {
     return NextResponse.json({ error: "Lodge not found" }, { status: 404 });
   }
-  return NextResponse.json(settings);
+  return connectionJson(request, settings, ADMIN_LODGE_ROSTER_SETTINGS_CONNECTION_SHAPE);
 }

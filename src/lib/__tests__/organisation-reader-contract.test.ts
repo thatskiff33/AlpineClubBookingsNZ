@@ -8,6 +8,7 @@ import {
   relativeSource,
   sourceFiles,
 } from "@/lib/__tests__/support/booking-guest-night-writer-scan";
+import { CENSUS_TIMEOUT_MS } from "@/test/census-timeout";
 
 /**
  * WHO READS A SCHOOL'S ORGANISATION RECORD — programme #2912, stages 1 and 2.
@@ -416,6 +417,10 @@ describe("#3366: no existing query changes its result", () => {
  * directory it is CI-caught by design.
  */
 const DECLARED_FILES: Record<string, string> = {
+  // ALP-721: the payments list's AI app shape names the owner by name only,
+  // as the screen does; it reads nothing and decides nothing about a school.
+  "src/lib/connection-shapes/finance-payments.ts":
+    "the payments list sent to an officer's AI app keeps the organisation owner's name and drops its email",
   // #4627 (Ledger M3b): the journal posts an organisation-owned booking's
   // charges to the organisation as debtor, through `bookingOwnerProviderMetadata`.
   "src/lib/member-money/internal/booking-posting.ts":
@@ -523,6 +528,47 @@ const DECLARED_FILES: Record<string, string> = {
     "answers who owns a booking, and its docblock is where the decision that " +
     "an OrganisationContact role is NOT yet entitled to act on a school's " +
     "booking is written down (INV-SSOT-005)",
+  // ---- added by #5245 (an officer corrects a school's email and phone) --
+  "src/lib/school-organisation-contact-edit.ts":
+    "the ONE writer of a school's own email and phone after creation: reads " +
+    "and updates the Organisation under its Xero contact key, audits it and " +
+    "queues the correction; never the name or the teachers",
+  "src/lib/organisation-xero-contact-details.ts":
+    "sends that correction to the school's Xero contact: reads the record " +
+    "fresh at send time and picks only the email and phone, never the name",
+  "src/lib/organisation-contact-details-payload.ts":
+    "the leaf naming that queue type and reading its row's Organisation " +
+    "anchor; it reads no row and decides nothing about a school",
+  "src/lib/xero-operation-outbox-payload.ts":
+    "registers the contact-details queue type and its expected Organisation " +
+    "anchor; it reads no row and decides nothing about a school",
+  "src/lib/xero-operation-outbox.ts":
+    "dispatches a contact-details row to its sender by the row's Organisation " +
+    "anchor; it decides nothing about a school",
+  "src/lib/xero-operation-retry.ts":
+    "hands a failed contact-details row back to the outbox with its stored " +
+    "payload; it decides nothing about a school",
+  "src/lib/step-up-routes.ts":
+    "lists the contact edit as a step-up operation by file and export name; " +
+    "it reads no row",
+  "src/app/api/admin/organisations/[id]/contact/route.ts":
+    "parses and delegates the officer's read and correction of a school's " +
+    "email and phone to school-organisation-contact-edit.ts",
+  "src/app/api/admin/organisations/[id]/contact/retry/route.ts":
+    "retries the school's latest failed contact-details row through the Xero " +
+    "operations retry; it decides nothing about a school",
+  "src/components/admin/school-contact-editor.tsx":
+    "the Edit school details dialog: takes a school's id and calls the routes " +
+    "above; every rule is the server's",
+  "src/components/admin/booking-requests/booking-request-school-record-notice.tsx":
+    "mounts the Edit school details dialog for the school record a request " +
+    "already names",
+  "src/app/(admin)/admin/booking-desk/bookings/page.tsx":
+    "mounts the Edit school details dialog in a school booking's owner cell, " +
+    "by the booking's organisationId",
+  "scripts/audit/audit-write-sites.ts":
+    "the generated audit write-site ledger names updateSchoolOrganisationContact " +
+    "as a key; it reads no row and decides nothing about a school",
 };
 
 /**
@@ -563,6 +609,10 @@ const OWNER_PROJECTION = [
   /organisation: \{ select: \{ name: true,? \} \},?/g,
   // The same thing declared in a `GetPayload` type argument.
   /organisation: \{ select: \{ name: true; email: true;? \} \};?/g,
+  // An AI app connection shape (ALP-719) sending the owner's name, as the
+  // admin screen shows it: an allow-list of what a connection is sent, never
+  // a select. Without `select:` it is not valid Prisma, so it cannot hide one.
+  /organisation: \{ name: true \},?/g,
   // And declared as a plain TypeScript field by a caller that wrote its own
   // row shape rather than deriving one.
   /organisation: \{ name: string; email: string \| null \}(?: \| null)?;?/g,
@@ -773,7 +823,7 @@ describe("#3367: each declared reader still plays its declared part", () => {
       )
       .map(({ path }) => path);
     expect(callers).toEqual(["src/lib/school-booking-request.ts"]);
-  });
+  }, CENSUS_TIMEOUT_MS);
 
   it("derives the named people from the organisation's own contact rows", () => {
     // The reason the split half is declared: it is the reader of

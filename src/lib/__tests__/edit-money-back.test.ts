@@ -9,7 +9,7 @@ const NONE = {
   refundedExcessCreditCents: 0,
 };
 
-describe("the money an edit hands back (INV-SSOT, fork #132)", () => {
+describe("the money an edit hands back (INV-SSOT, the 18 Nov 2026 money review on #5149)", () => {
   it("is nothing when nothing comes back", () => {
     expect(editMoneyBackCents(NONE)).toBe(0);
     expect(editTotalMoneyBackCents(NONE)).toBe(0);
@@ -42,7 +42,7 @@ describe("the money an edit hands back (INV-SSOT, fork #132)", () => {
   });
 });
 
-describe("workPartyCreditBackCents (fork #129)", () => {
+describe("workPartyCreditBackCents (triyder/AlpineClubBookingsNZ#129)", () => {
   it("adds every credit route and never the refund", () => {
     const figures = {
       refundAmountCents: 9_000,

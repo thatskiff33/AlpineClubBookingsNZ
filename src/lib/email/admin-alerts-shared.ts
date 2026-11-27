@@ -13,6 +13,7 @@ import {
 } from "@/lib/admin-permissions";
 import { CLUB_SUPPORT_EMAIL } from "@/config/club-identity";
 import logger from "@/lib/logger";
+import { OnceEverClaimRefusedError, takeOnceEverClaim } from "@/lib/once-ever-claim-context";
 import { prisma } from "@/lib/prisma";
 import { loadEmailMessageSettings } from "@/lib/email-message-settings";
 import { type EmailTemplateData } from "@/lib/email-message-renderer";
@@ -30,7 +31,7 @@ import {
   shouldPersistEmailHtml,
 } from "./internal";
 import {
-  type AdminAlertSendResult,
+  type AdminAlertRecipientsResult,
   type UnmuteableAdminAlertOutcome,
 } from "./admin-alert-send-result";
 import { releaseUnreceivedAlertCopies } from "./caller-retried-alert";
@@ -109,26 +110,32 @@ export async function getAdminAlertEmails(
     .map((admin) => admin.email);
 }
 
+/** What one admin alert says. */
+type AdminAlertContent = {
+  subject: string;
+  html: string;
+  templateData?: EmailTemplateData;
+  attachments?: EmailAttachment[];
+};
+
 /**
  * Send an email to all active admins who opted into the alert category, and
  * say what happened to each recipient (`AdminAlertSendResult`). Callers that
  * do not hold a claim ignore the result.
+ *
+ * The content is given either directly or as `build`, which is called only
+ * once the policy allows the alert and someone is opted in to it (#5407): a
+ * sender whose content needs a live provider read (the Xero organisation
+ * stamp) then makes none for an alert that is switched off or has nobody to go
+ * to. Either way the result is the same.
  */
-export async function sendToAdmins({
-  subject,
-  html,
-  templateName,
-  preferenceKey,
-  templateData,
-  attachments,
-}: {
-  subject: string;
-  html: string;
-  templateName: string;
-  preferenceKey: AdminNotificationPreferenceKey;
-  templateData?: EmailTemplateData;
-  attachments?: EmailAttachment[];
-}): Promise<AdminAlertSendResult> {
+export async function sendToAdmins(
+  input: {
+    templateName: string;
+    preferenceKey: AdminNotificationPreferenceKey;
+  } & (AdminAlertContent | { build: () => Promise<AdminAlertContent> }),
+): Promise<AdminAlertRecipientsResult> {
+  const { templateName, preferenceKey } = input;
   const delivery = await shouldSendAdminSystemEmail({ templateName });
   if (!delivery.send) {
     logger.info(
@@ -141,18 +148,27 @@ export async function sendToAdmins({
       sent: 0,
       queuedForRetry: 0,
       notDelivered: 0,
+      failedBeforeLogged: 0,
     };
   }
 
   const emails = await getAdminAlertEmails(preferenceKey);
+  // An empty audience sends nothing, so a builder is not called for it; the
+  // delivery half still answers its own empty result.
+  const content: AdminAlertContent =
+    "build" in input
+      ? emails.length === 0
+        ? { subject: "", html: "" }
+        : await input.build()
+      : input;
   return sendAdminAlertTo({
     emails,
-    subject,
-    html,
+    subject: content.subject,
+    html: content.html,
     templateName,
     preferenceKey,
-    templateData,
-    attachments,
+    templateData: content.templateData,
+    attachments: content.attachments,
   });
 }
 
@@ -181,14 +197,26 @@ export async function sendAdminAlertTo({
   preferenceKey: AdminNotificationPreferenceKey;
   templateData?: EmailTemplateData;
   attachments?: EmailAttachment[];
-}): Promise<AdminAlertSendResult> {
+}): Promise<AdminAlertRecipientsResult> {
   // A FAILED row is replayed only when it kept its body (`core.ts`); a
   // sensitive template's does not, and goes to the review queue instead.
   const failedRowIsReplayed = shouldPersistEmailHtml(templateName);
+  // #5255: the once-ever claim this alert is sent under, if any; every
+  // recipient's row confirms it, and a later alert in the same send gets none.
+  const onceEverClaim = takeOnceEverClaim();
   const outcomes = await Promise.all(
     emails.map(async (email): Promise<
-      AdminAlertRecipientDeliveryOutcome & { queuedForRetry: boolean }
+      AdminAlertRecipientDeliveryOutcome & {
+        queuedForRetry: boolean;
+        logged: boolean;
+        lostForWantOfARow: boolean;
+        claimRefused?: true;
+      }
     > => {
+      // Whether this copy's EmailLog row was written (`onAttemptLogged`, as
+      // `sendUnmuteableAdminAlert` tracks it): only a logged copy can be
+      // marked FAILED and replayed by the retry cron.
+      let logged = false;
       try {
         const outcome = await sendEmail({
           to: email,
@@ -202,41 +230,60 @@ export async function sendAdminAlertTo({
           templateName,
           templateData,
           attachments,
+          onAttemptLogged: () => {
+            logged = true;
+          },
+          ...(onceEverClaim ? { onceEverClaim } : {}),
         });
 
         // Admin alert recipients are real admin addresses, never walk-in
         // placeholders (#1935); fold the not-sent outcomes into "suppressed".
         // An environment FAULT (not a confirmed non-production copy) leaves a
-        // FAILED row the retry cron sends once the installation is corrected.
+        // FAILED row the retry cron sends once the installation is corrected,
+        // but only if the row was written (#5407): without one it is lost.
+        const replayableFault =
+          outcome.status === "withheld_for_environment" &&
+          outcome.reason !== "environment_non_production" &&
+          failedRowIsReplayed;
         return {
           status: outcome.status === "sent" ? "sent" : "suppressed",
-          queuedForRetry:
-            outcome.status === "withheld_for_environment" &&
-            outcome.reason !== "environment_non_production" &&
-            failedRowIsReplayed,
+          queuedForRetry: replayableFault && logged,
+          logged,
+          lostForWantOfARow: replayableFault && !logged,
         };
       } catch (err) {
+        if (err instanceof OnceEverClaimRefusedError) {
+          // #5255: nothing was recorded or sent, and the claim helper or the
+          // sweep has the next run send it: not a delivery failure, so it
+          // neither counts as queued nor escalates as undeliverable.
+          logger.warn({ err, to: email, templateName }, "Admin alert not sent: its once-ever claim was refused");
+          return { status: "suppressed", queuedForRetry: false, logged: false, lostForWantOfARow: false, claimRefused: true };
+        }
         logger.error(
           { err, to: email, templateName },
           "Failed to send admin alert",
         );
         // A transport failure marks this recipient's EmailLog row FAILED for
-        // the retry cron. Stated limit: a throw before that row exists (the
-        // message settings unreadable) is counted the same, and its
-        // undeliverable escalation below is then the only trail.
-        return { status: "failed", queuedForRetry: failedRowIsReplayed };
+        // the retry cron. A throw before that row exists (a render that threw,
+        // for example on a stored override, or a log write that failed and was
+        // swallowed before a transport failure) leaves nothing to replay: it is
+        // not queued, and is counted in `failedBeforeLogged` (#5407).
+        return { status: "failed", queuedForRetry: failedRowIsReplayed && logged, logged, lostForWantOfARow: !logged };
       }
     }),
   );
 
+  // A recipient whose once-ever claim was refused is retried by its next run,
+  // so it is left out of the undeliverable escalation (#5255).
+  const escalatable = outcomes.filter((outcome) => !outcome.claimRefused);
   if (
-    outcomes.length > 0 &&
+    escalatable.length > 0 &&
     outcomes.every((outcome) => outcome.status !== "sent")
   ) {
     await recordAdminAlertDeliveryEscalation({
       templateName,
       preferenceKey,
-      outcomes: outcomes.map(({ status }) => ({ status })),
+      outcomes: escalatable.map(({ status }) => ({ status })),
     }).catch((err) =>
       logger.error(
         { err, templateName },
@@ -254,6 +301,7 @@ export async function sendAdminAlertTo({
     sent,
     queuedForRetry,
     notDelivered: outcomes.length - sent - queuedForRetry,
+    failedBeforeLogged: outcomes.filter((outcome) => outcome.lostForWantOfARow).length,
   };
 }
 
@@ -395,8 +443,10 @@ export async function sendUnmuteableAdminAlert({
   }
 
   const attemptLogIds: string[] = [];
+  // #5255: as `sendAdminAlertTo`, the once-ever claim goes to this alert's own rows only.
+  const onceEverClaim = takeOnceEverClaim();
   const outcomes = await Promise.all(
-    emails.map(async (email): Promise<AdminAlertRecipientDeliveryOutcome> => {
+    emails.map(async (email): Promise<AdminAlertRecipientDeliveryOutcome & { claimRefused?: true }> => {
       try {
         const outcome = await sendEmail({
           to: email,
@@ -407,6 +457,7 @@ export async function sendUnmuteableAdminAlert({
           templateName,
           templateData,
           onAttemptLogged: (emailLogId) => attemptLogIds.push(emailLogId),
+          ...(onceEverClaim ? { onceEverClaim } : {}),
         });
         // A confirmed copy holds the message back and records that. Nothing is
         // wrong and nothing should retry, so a once-ever caller keeps its claim.
@@ -416,6 +467,11 @@ export async function sendUnmuteableAdminAlert({
           outcome.reason === "environment_non_production";
         return { status: outcome.status === "sent" || heldOnACopy ? "sent" : "suppressed" };
       } catch (err) {
+        if (err instanceof OnceEverClaimRefusedError) {
+          // #5255: as `sendAdminAlertTo`, a refused claim is retried, not undeliverable.
+          logger.warn({ err, to: email, templateName }, "Unmuteable admin alert not sent: its once-ever claim was refused");
+          return { status: "suppressed", claimRefused: true };
+        }
         logger.error(
           { err, to: email, templateName },
           "Failed to send unmuteable admin alert",
@@ -432,7 +488,10 @@ export async function sendUnmuteableAdminAlert({
       ? await releaseUnreceivedAlertCopies(attemptLogIds, templateName)
       : null;
 
-  if (nobodyReceivedIt) {
+  // Recipients refused for their once-ever claim are retried, not escalated (#5255).
+  const escalatable = outcomes.filter((outcome) => !outcome.claimRefused);
+  const everyRecipientRefused = outcomes.length > 0 && escalatable.length === 0;
+  if (nobodyReceivedIt && !everyRecipientRefused) {
     // No `outcomes.length > 0` guard, unlike sendToAdmins: an empty set is
     // impossible here by construction, so if one ever appears it is a defect and
     // must escalate rather than pass as "nothing to do".
@@ -441,7 +500,7 @@ export async function sendUnmuteableAdminAlert({
       // There is no preference key — that is the point of this path — and the
       // escalation record says so rather than naming one that does not gate it.
       preferenceKey: "none (delivery-locked)",
-      outcomes,
+      outcomes: escalatable.map(({ status }) => ({ status })),
     }).catch((err) =>
       logger.error(
         { err, templateName },

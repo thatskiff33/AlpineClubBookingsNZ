@@ -57,10 +57,8 @@ vi.mock("@/lib/email", () => ({ sendMemberSetupInviteEmail: vi.fn() }));
 
 
 import { prisma } from "@/lib/prisma";
-import {
-  adminMembersQuerySchema,
-  listAdminMembers,
-} from "@/lib/admin-members-service";
+import { adminMembersQuerySchema } from "@/lib/admin-membership-api/members";
+import { listAdminMembers } from "@/lib/admin-members-service";
 
 interface FakeMember {
   id: string;

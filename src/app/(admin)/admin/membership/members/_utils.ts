@@ -2,12 +2,9 @@ import type { Filters, MemberForm } from "./_types";
 import { ACCESS_ROLE_LABELS } from "@/lib/access-roles";
 import { LOGIN_STAGE_LABELS } from "@/lib/member-login-stage";
 import { UNASSIGNED_MEMBERSHIP_TYPE_VALUE } from "@/lib/membership-type-filter";
+import { NO_SUBSCRIPTION_CATEGORY_VALUE } from "@/lib/subscription-category-filter";
 import { defaultMembershipTypeNameForRole } from "@/lib/membership-types";
-import {
-  NON_MEMBER_ROLE_VALUES,
-  ROLE_LABELS,
-  type AppRole,
-} from "@/lib/member-roles";
+import { isNonMemberRole, ROLE_LABELS } from "@/lib/member-roles";
 
 export const emptyForm: MemberForm = {
   title: "",
@@ -51,6 +48,7 @@ export const emptyFilters: Filters = {
   financeAccess: "",
   lifecycleStatus: "",
   membershipType: "",
+  subscriptionCategory: "",
   ageTier: "",
   familyGroup: "",
   inviteStatus: "",
@@ -65,6 +63,7 @@ export const filterLabelMap: Record<keyof Filters, string> = {
   financeAccess: "Finance",
   lifecycleStatus: "Status",
   membershipType: "Membership Type",
+  subscriptionCategory: "Subscription Category",
   ageTier: "Age Tier",
   familyGroup: "Family Group",
   inviteStatus: "Login Access",
@@ -102,6 +101,9 @@ export const filterValueLabels: Partial<
   // name in the toolbar via the membership-type options) or the Unassigned
   // sentinel; only the sentinel has a static friendly label here.
   membershipType: { [UNASSIGNED_MEMBERSHIP_TYPE_VALUE]: "Unassigned" },
+  // A category id resolves to its name in the toolbar; only the no-category
+  // sentinel has a static label.
+  subscriptionCategory: { [NO_SUBSCRIPTION_CATEGORY_VALUE]: "Individual (no category)" },
   familyGroup: { any: "Yes", none: "No" },
   // The `inviteStatus` param carries the four mutually-exclusive login stages
   // (#1444); the three login-on values stay the historical action kinds.
@@ -151,9 +153,8 @@ function fallbackTypeNameForNonMemberRole(
   role: string | null | undefined,
   clubMembershipTypes?: ReadonlyArray<{ key: string; name: string }>,
 ): string | null {
-  if (!role) return null;
-  if (!(NON_MEMBER_ROLE_VALUES as readonly string[]).includes(role)) return null;
-  return defaultMembershipTypeNameForRole(role as AppRole, clubMembershipTypes);
+  if (!isNonMemberRole(role)) return null;
+  return defaultMembershipTypeNameForRole(role, clubMembershipTypes);
 }
 
 /**

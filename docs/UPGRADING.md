@@ -22,10 +22,12 @@ It complements the two documents next to it and does not repeat them:
    post-upgrade actions. If you must catch up several releases, apply each
    release's notes in order.
 
-   The deploy script enforces this (#4978): it refuses a commit that no
-   annotated `vX.Y.Z` tag on `origin` points at, unless
+   The deploy script enforces the first half of this (#4978): it refuses a
+   commit that no annotated `vX.Y.Z` tag on `origin` points at, unless
    `ALLOW_UNTAGGED_DEPLOY_COMMIT=1` and a written
-   `UNTAGGED_DEPLOY_COMMIT_REASON` are set. Deploy with
+   `UNTAGGED_DEPLOY_COMMIT_REASON` are set. It checks that the target is a
+   published release, not that it is the next one after the release you run,
+   so it does not stop you skipping releases. Deploy with
    `DEPLOY_REF=<tag>` after `git fetch origin tag <tag>`. **A fork** checks
    tags on its own `origin`, so a fork that does not tag either tags its own
    releases (`pnpm run release:cut` works in a fork) or sets the override on
@@ -54,6 +56,25 @@ It complements the two documents next to it and does not repeat them:
    migrations are written to stay old-code-compatible so the old color keeps
    working during the drain. A few are not (see below) — those need a quiet
    window or a deferral.
+5. **A one-off upgrade tool leaves `main` two minor releases after the
+   upgrade it serves** (owner decisions, 22 Nov 2026, #5404). Only minor
+   releases count; patch releases do not. A tool that serves only the upgrade
+   to 0.14.0 ships in every 0.14.x and 0.15.x release and is gone from 0.16.0.
+   The count starts from the later of that release and the release that first
+   shipped the tool, so a tool that arrives in a patch after it still gets its
+   two minor releases: a tool for the upgrade to 0.14.0 first shipped in 0.15.0
+   is gone from 0.17.0. Releases are cut from `main`, so the change that
+   removes a tool merges only once the next release cut will be that minor
+   release; merged earlier, a patch release in between would lose a tool the
+   rule says it still ships. Two rather than one because a club can skip a
+   release, and the deploy script does not stop it (principle 1). When the tool goes,
+   its documentation becomes a short note naming the release tag that still
+   carries it, and any invariant that names it is reworded in the same change.
+   A club that still needs it runs it from that tag. It has not been tested
+   against any later schema; run it against a copy of your database first. The
+   rule does not apply to a tool that is still a current remedy, a rollback
+   check, or a step to run before switching a setting on: those stay while the
+   remedy, rollback or setting does.
 
 ## How to read `docs/BLUE_GREEN_MIGRATION_SAFETY.tsv`
 
@@ -253,7 +274,156 @@ before this release skips a privacy body that exactly matches the replaced
 starter text and warns in the preview (#2511), but can set the "Last updated"
 date back; re-check `/privacy` after any import.
 
+### Re-provision the AI Diagnostics role after the upgrade (#5402)
+
+**Who needs it.** A deployment that has AI Diagnostics turned on with its
+read-only database role (`AI_DIAGNOSTICS_DATABASE_URL`). Others can skip this.
+
+**What changes.** The booking search no longer reports a waitlist position,
+because positions are now read from the live queue and the stored column is
+being retired. Its grant on `Booking."waitlistPosition"` leaves the allowlist.
+The diagnostics privilege check refuses a role that can read any column the
+allowlist does not name. Until the role is re-provisioned, **Admin → AI
+Diagnostics** shows the database role as `over_privileged` with the blocker
+`database_role_unsafe`, and every SQL-backed diagnostics tool answers "The
+diagnostics database credential does not have the restricted, read-only
+privileges this feature requires, so no tool was run." Nothing else is
+affected.
+
+**What to do, once, after the new colour is serving.** Re-run the provisioning
+from the live app's environment, with the same settings you used the first
+time: the same password the role's connection string already uses (it sets the
+password every time), and the same `AI_DIAGNOSTICS_DB_ROLE` and
+`AI_DIAGNOSTICS_DB_PRESERVE_TEMP_ROLES` if you set them. Without the role name,
+the command refreshes the default `ai_diagnostics_ro` role and leaves a custom
+one holding the old grant.
+
+```bash
+AI_DIAGNOSTICS_DB_PASSWORD='<the existing password>'   AI_DIAGNOSTICS_DB_ROLE='<your role, if not ai_diagnostics_ro>'   pnpm run diagnostics:provision-role
+```
+
+Use `AI_DIAGNOSTICS_PROVISION_DATABASE_URL` set to the operator connection if
+your deployment uses the least-privilege database roles
+([deployment guide](ai-diagnostics/deployment.md#provisioning)). Do it after
+cutover, not before: the previous release still expects the old grant.
+
+**Rollback.** An older release run against a role provisioned by this one
+shows the database role as `under_provisioned` with the blocker
+`database_grants_missing`, and its tools answer "The diagnostics database
+credential is missing one or more required read-only grants, so no tool was
+run." Re-run the same command, with the same settings, from the old release.
+
+### Owed notices get their own table (#5433)
+
+Nothing to do: the usual migration step creates the `OwedNotice` table. A
+rollback to the previous release leaves any notice this release recorded and
+had not yet sent until you upgrade again, when it is sent, or cleared if it
+is more than seven days old.
+
+**Owed notices of an unknown kind.** If the log shows, at most once a day,
+"Owed notices of a kind this release does not deliver have waited over a
+week", rows in `OwedNotice` belong to a kind the running release does not
+know: usually a newer release wrote them and you rolled back. They are kept
+on purpose, because deleting them would lose that release's notices. Rolling
+forward to the release that knows the kind delivers them (or clears them if
+they are past their age). Only if you are staying on this release for good,
+remove the kinds the log names, one kind at a time, from the live
+environment's database:
+
+```sql
+DELETE FROM "OwedNotice" WHERE "kind" = '<kind from the log>';
+```
+
+Those notices are then never sent; nothing else references the rows.
+
+### Four unused columns leave the app's queries (#5396, #5407)
+
+**What changes.** No migration runs and nothing administrators or members see
+changes. The app stops naming `ClubModuleSettings.multiLodge`,
+`NotificationPreference.bookingWaitlist` and
+`BookingRequestSettings.assignSchoolTeachersAsHutLeaders` in any query,
+including the INSERTs behind saving the Modules page and the booking-request
+settings, importing a configuration bundle and creating a member's notification
+preferences. All three columns stay in the database with their defaults
+(`false`, `true` and `false`), so the previous release keeps working while it
+drains.
+
+`ServerNzSettings.otherLodgesOwnedNames` (#5407), the lodge-name list older
+central-server versions sent, goes the same way. v0.14.0 already stopped
+reading it, but still cleared it when an administrator removed or replaced the
+central-server key or moved its address. This release neither reads nor writes
+it. The column is nullable with no default and stays in the database, so a new
+row simply leaves it empty, and v0.14.0 clearing it while it drains is
+harmless.
+
+**Why it matters for a later upgrade.** A later release (#5415) drops these
+columns. That drop is safe during a blue-green deploy only when the release it
+replaces is this one or newer: an older release names the first three columns
+in its INSERTs, so its settings saves would fail between the migration and
+cutover, and v0.14.0's central-server settings writes (upserts with no
+`select`) name `otherLodgesOwnedNames` in the columns they return, so they
+would fail the same way. Deploy this release before the one that drops them,
+as the tag-to-tag rule above already requires.
+
+**Do not drop any of these columns yourself.** Earlier code comments said that
+dropping `multiLodge` was blue-green safe because every query selects named
+columns. That holds for reads, not INSERTs (`INV-OPS-005`), and the comments
+are corrected. A
+fork that tracks the drop (`multiLodge` is hoppers99/AlpineClubBookingsNZ#139)
+should take the upstream contract migration rather than write its own.
+
+**Subject-access exports.** A member's export no longer lists
+`bookingWaitlist` among their notification preferences. No release let a member
+or administrator set it.
+
+**Rollback.** Nothing to undo: no database change. A rolled-back release names
+the columns again, and they still exist.
+
 ---
+
+### Check members marked "Not required" that billing treats as owing (#5190)
+
+**Who needs it.** Every club. The migration adds the club's subscription
+liability rule as **Not chosen**, which keeps who is billed and who may book as
+they were. The admin members list, its export and the subscriptions list now
+show billing's answer, so some active members who have a saved "Not required"
+record for the season, but whom billing treats as owing, now show as **Not
+invoiced** (and sit under that filter and count) with the note "Marked not
+required, but billing treats this member as owing". The members export shows
+the same status and puts the note in a new last column, **Subscription Note**. Two kinds of
+member usually get it: a child on an always-required membership type, and a
+member on an age-based type whose age tier now owes.
+
+A second group changes with **no note**: an active member on an
+always-required membership type whose stored age tier is exempt (say, a child
+on a Full type) and who has no saved record for the season, or a "Not invoiced"
+one. The lists used to show them as "Not required";
+they now show them as owing (no status, or **Not invoiced**), because billing
+invoices them. Booking is unchanged: they can still book. To find them, filter
+the members list by **Not invoiced** and by no subscription record, and look at
+the age tier and membership type.
+
+**What to do, once, after the upgrade.** Open the admin members list (or
+export the list and filter the **Subscription Note** column) and look at each
+noted row, and at each member of the second group. If the member should not pay a subscription, move them to a
+membership type whose subscription is not required. If they should pay, leave
+them; the next billing run bills them as their fee says (a no-invoice fee, or
+a family fee billed through another member, sends them no invoice of their
+own). If a whole class of them should not pay (say, every child on an
+always-required type), the club can instead choose the liability rule *Their
+age group exempts them* under **Who owes a subscription** on the Subscription
+lockout page, after reading its preview. Nothing is billed or
+blocked by the upgrade itself.
+
+**How to check it worked.** Reload the list: a member you moved shows "Not
+required" with no note. Any note left is a member you decided should pay. For
+the current season, the notes go once the club chooses its liability rule
+(`INV-CONFIG-009`), because the member then either stops owing or their record
+is updated to "Not invoiced". The choice's clear-up runs only for the current
+season, so a record for another season keeps its note.
+
+**Rollback.** Nothing to undo: the note is display only, and moving a member's
+membership type is an ordinary edit.
 
 ## v0.13.2 → v0.14.0
 
@@ -3556,7 +3726,10 @@ fully justified in `docs/BLUE_GREEN_MIGRATION_SAFETY.tsv`:
   into `XeroContactGroupRule` at E8, `20260716140000_xero_member_grouping`).
   This one is legal **only** because `v0.12.2` narrowed the reads and Release A
   (#2130 STEP 1.5) narrowed the writes on both models, so the draining colour
-  names none of these columns in a `SELECT` or an implicit `RETURNING`.
+  names none of these columns in a `SELECT` or an implicit `RETURNING`. The
+  narrowing alone does not make a drop safe (`INV-OPS-005`): it sufficed here
+  because all three columns are nullable with no default, so no `INSERT` named
+  them.
 
 **Before deploying Release B**
 
@@ -4274,10 +4447,12 @@ None required.
 **Optional cleanup:** if your fork ever ran a pre-`v0.10.0` build (any build
 older than PR #1489), booking cancellations may have flattened captured
 `(PARTIALLY_)REFUNDED` payments' stored `status` to `FAILED`. The read path
-already compensates, so this is cosmetic-only for the stored rows. You can
-restore them with `pnpm run payments:backfill-cancel-flattened` (dry-run by
-default; review the report before re-running with `--apply`). See "Backfill
-cancel-flattened payment statuses" in `docs/MAINTENANCE.md`.
+already compensates, so this is cosmetic-only for the stored rows. The
+one-off that restored them, `payments:backfill-cancel-flattened`, has left
+`main` under the one-off retirement rule in [Principles](#principles) (#5404).
+It remains in the `v0.14.0` tag, with its instructions in that tag's
+`docs/MAINTENANCE.md` under "Backfill cancel-flattened payment statuses
+(#1473 / #1506)"; it was not tested against any later schema.
 
 ---
 

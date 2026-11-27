@@ -1,10 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
+import { parseJsonRequestBody } from "@/lib/api-json";
 import { PaymentSource } from "@prisma/client";
 import { bookingOwner } from "@/lib/booking-owner";
 import { requireAdmin } from "@/lib/session-guards";
 import { transactionContendedResponse } from "@/lib/transaction-contended-response";
 import { prisma } from "@/lib/prisma";
 import { createAuditLog } from "@/lib/audit";
+import { getClientIp } from "@/lib/rate-limit-http";
 import { isXeroConnected } from "@/lib/xero-token-store";
 import { kickQueuedXeroOutboxOperationsIfConnected } from "@/lib/xero-operation-outbox";
 import { sendEmail } from "@/lib/email";
@@ -88,13 +90,11 @@ export async function PUT(
     );
   }
 
-  const body = await req.json();
-  const parsed = reviewSchema.safeParse(body);
+  const jsonBody = await parseJsonRequestBody(req);
+  if (!jsonBody.ok) return jsonBody.response;
+  const parsed = reviewSchema.safeParse(jsonBody.body);
   if (!parsed.success) {
-    return NextResponse.json(
-      { error: "Validation failed", details: parsed.error.flatten() },
-      { status: 400 }
-    );
+    return NextResponse.json({ error: "Validation failed", details: parsed.error.flatten() }, { status: 400 });
   }
 
   const { status, adminNotes, approvedAmountCents, notifyMember } = parsed.data;
@@ -460,14 +460,11 @@ export async function PUT(
         await prisma
           .$transaction(async (tx) => {
             await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
+            // #5191: the booking row next, as the approval orders it (#4516 review F1), so the withdrawals read the owner under it.
+            await lockBookingRowForOwnerRead(tx, booking.id);
             const released = await tx.refundRequest.updateMany({
               where: { id, status: "APPROVED" },
-              data: {
-                status: "PENDING",
-                approvedAmountCents: null,
-                reviewedBy: null,
-                reviewedAt: null,
-              },
+              data: { status: "PENDING", approvedAmountCents: null, reviewedBy: null, reviewedAt: null },
             });
             if (released.count === 1) {
               const handBack = await tx.manualRefundTask.findFirst({
@@ -575,7 +572,7 @@ export async function PUT(
         ...cardRefund, // #4117: what the card refund left unmade; the list reads it when no row was written
         ...notifyAuditFields,
       },
-      ipAddress: req.headers.get("x-forwarded-for") ?? "unknown",
+      ipAddress: getClientIp(req),
     });
 
     // #3956: where the refund goes to the organiser's card, the joiner is told
@@ -699,7 +696,7 @@ export async function PUT(
         adminNotes: adminNotes ?? null,
         ...notifyAuditFields,
       },
-      ipAddress: req.headers.get("x-forwarded-for") ?? "unknown",
+      ipAddress: getClientIp(req),
     });
 
     // Email the member unless the admin chose not to notify (#1792).

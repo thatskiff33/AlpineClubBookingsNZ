@@ -9,8 +9,8 @@
  *   only that figure (#5289 E, owner decision D3, the rule before #4449);
  * - a card payment's ledger is never lowered by it: the raise-only floor (F5,
  *   #1353) keeps the stored total, logged at warn, its `refund-ledger-divergence`
- *   alert returned, then (#3653, `INV-PAY-114`) an organiser child's mirror is
- *   capped at the refunds Stripe recorded for it. Nothing clamps after the floor,
+ *   alert returned, then (#3653, #4444, `INV-PAY-126`) it is capped at the
+ *   refunds Stripe recorded for it, never below the stored total. Nothing clamps after the floor,
  *   so a card total stored above the payment's amount stays as stored;
  * - a bank transfer is held at its own refund detail plus the corrections the
  *   links count (`bankTransferFloorCents`, `INV-ADDPAY-021`);
@@ -27,7 +27,7 @@
 import { PaymentSource, PaymentStatus, type Prisma } from "@prisma/client";
 import type { ClubFormat } from "@/lib/club-format";
 import logger from "@/lib/logger";
-import { capOrganiserChildMirrorAtStripeRefunds } from "@/lib/organiser-child-refund";
+import { capCardRefundedTotalAtStripeRefunds } from "@/lib/organiser-child-refund";
 import { formatCents } from "@/lib/utils";
 import { notifyXeroSyncError } from "@/lib/xero-error-alert";
 import { type BankTransferFloorAlert, bankTransferFloorCents } from "./credit-note-bank-transfer-floor";
@@ -49,7 +49,7 @@ export async function decideXeroRefundedColumns(
   store: Prisma.TransactionClient,
   input: {
     /** `status` is the one the writer leaves the payment in (the kept settle: SUCCEEDED, as it captures). */
-    /** `booking` is read only when a total falls to nothing on a refunded payment (`refundedTotalStatus`), or to cap an organiser child. */
+    /** `booking` is read only when a total falls to nothing on a refunded payment (`refundedTotalStatus`). */
     payment: {
       id: string;
       bookingId: string;
@@ -82,8 +82,9 @@ export async function decideXeroRefundedColumns(
       cardFloorAlert = { paymentId: payment.id, creditNoteId: input.creditNoteId, xeroDerivedCents: clamped, ledgerCents: payment.refundedAmountCents };
       cents = payment.refundedAmountCents;
     }
-    // #3653 (`INV-PAY-114`): a Xero note never raises an organiser child's cash mirror past the refunds Stripe recorded for it.
-    if (payment.booking.organiserSettled) cents = await capOrganiserChildMirrorAtStripeRefunds(store, payment, cents);
+    // #3653 (`INV-PAY-114`), #4444 (`INV-PAY-126`, owner decision 23 Nov 2026): a Xero note never raises a card
+    // payment's total past the refunds Stripe recorded for it, so two notes for one refund cannot.
+    cents = await capCardRefundedTotalAtStripeRefunds(store, payment, cents);
   }
   const floored = await bankTransferFloorCents(store, {
     payment,

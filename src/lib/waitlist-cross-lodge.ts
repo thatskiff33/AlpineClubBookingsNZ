@@ -1,4 +1,4 @@
-import type { AgeTier, Prisma, WaitlistCrossLodgeOrder } from "@prisma/client";
+import type { AgeTier, Prisma } from "@prisma/client";
 import { bookingPromoRedemptions } from "@/lib/booking-promo-redemptions";
 import { BookingEventType, BookingStatus } from "@prisma/client";
 import {
@@ -58,36 +58,16 @@ import {
   carryBookingGuestDietaryFrom,
   resolveBookingGuestDietarySeeding,
 } from "@/lib/member-dietary-booking-writes";
-import { DEFAULT_BOOKING_DEFAULTS } from "@/config/club-settings-defaults";
 import type { ClubFormat } from "@/lib/club-format";
 import { LOCK1_HOLDER_TRANSACTION_BUDGET } from "@/lib/db-transaction";
+import { offerSnapshotAcrossWindowRestart } from "@/lib/waitlist-offer-epoch";
 
 // Cross-lodge waitlist support (ADR-004). The processor consults these
-// helpers when a member has opted into alternate lodges: the queue-order
-// policy decides who is considered first, and the quote decides whether an
-// alternate lodge can actually host the entry and at what price. The quoted
-// price is persisted on the offer and re-checked at confirm time, so both
-// sides must price the same way.
-
-type CrossLodgeDb = Pick<Prisma.TransactionClient, "bookingDefaults">;
-
-/**
- * Club-wide queue-order policy (ADR-004 owner decision 1). Missing settings
- * row falls back to the schema default so pre-seed databases behave like
- * OWN_LODGE_FIRST.
- */
-export async function getWaitlistCrossLodgeOrder(
-  db: CrossLodgeDb,
-): Promise<WaitlistCrossLodgeOrder> {
-  const defaults = await db.bookingDefaults.findUnique({
-    where: { id: "default" },
-    select: { waitlistCrossLodgeOrder: true },
-  });
-  return (
-    defaults?.waitlistCrossLodgeOrder ??
-    DEFAULT_BOOKING_DEFAULTS.waitlistCrossLodgeOrder
-  );
-}
+// helpers when a member has opted into alternate lodges: the quote decides
+// whether an alternate lodge can actually host the entry and at what price.
+// The quoted price is persisted on the offer and re-checked at confirm time,
+// so both sides must price the same way. The queue-order policy, which decides
+// who is considered first, lives in `waitlist-queue.ts` (#5402).
 
 export interface WaitlistQuoteGuest {
   ageTier: AgeTier;
@@ -827,7 +807,8 @@ export async function confirmCrossLodgeWaitlistOffer(
         for (const lodgeId of [offeredLodgeId, entry.lodgeId].sort()) {
           await acquireLodgeCapacityLock(tx, lodgeId);
         }
-        return revertOfferToWaitlisted(tx, entry);
+        // #5433 review A: a window restart since Phase 1 is still this offer, here and below.
+        return revertOfferToWaitlisted(tx, await offerSnapshotAcrossWindowRestart(tx, entry));
       }, LOCK1_HOLDER_TRANSACTION_BUDGET);
       if (!reverted) {
         return {
@@ -875,13 +856,14 @@ export async function confirmCrossLodgeWaitlistOffer(
         // the cover gone. Through the system-cancellation seam because a price
         // drift has no actor to refuse.
         await reconcileHostingReviewForSystemCancellation(newBooking.id, tx);
+        const snapshot = await offerSnapshotAcrossWindowRestart(tx, entry);
         const refreshedOffer = await tx.booking.updateMany({
           where: {
             id: entry.id,
             status: BookingStatus.WAITLIST_OFFERED,
-            updatedAt: entry.updatedAt,
+            updatedAt: snapshot.updatedAt,
             waitlistOfferedAt: entry.waitlistOfferedAt,
-            waitlistOfferExpiresAt: entry.waitlistOfferExpiresAt,
+            waitlistOfferExpiresAt: snapshot.waitlistOfferExpiresAt,
             waitlistOfferedLodgeId: entry.waitlistOfferedLodgeId,
             waitlistOfferedPriceCents: entry.waitlistOfferedPriceCents,
           },
@@ -927,13 +909,14 @@ export async function confirmCrossLodgeWaitlistOffer(
     const cancelledEntry = await prisma.$transaction(async (tx) => {
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
       await acquireLodgeCapacityLock(tx, entry.lodgeId);
+      const snapshot = await offerSnapshotAcrossWindowRestart(tx, entry);
       const cancelled = await tx.booking.updateMany({
         where: {
           id: entry.id,
           status: BookingStatus.WAITLIST_OFFERED,
-          updatedAt: entry.updatedAt,
+          updatedAt: snapshot.updatedAt,
           waitlistOfferedAt: entry.waitlistOfferedAt,
-          waitlistOfferExpiresAt: entry.waitlistOfferExpiresAt,
+          waitlistOfferExpiresAt: snapshot.waitlistOfferExpiresAt,
           waitlistOfferedLodgeId: entry.waitlistOfferedLodgeId,
           waitlistOfferedPriceCents: entry.waitlistOfferedPriceCents,
         },

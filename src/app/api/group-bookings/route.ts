@@ -1,6 +1,4 @@
 import { NextRequest, NextResponse } from "next/server";
-import { z } from "zod";
-import { GroupBookingPaymentMode } from "@prisma/client";
 import { auth } from "@/lib/auth";
 import { requireActiveSessionUser } from "@/lib/session-guards";
 import { applyRateLimit, rateLimiters } from "@/lib/rate-limit";
@@ -9,22 +7,22 @@ import {
   createGroupBooking,
   GroupBookingError,
 } from "@/lib/group-booking";
-import { parsedDateOnlySchema } from "@/lib/date-only-schema";
+import {
+  createGroupBookingSchema,
+  type GroupBookingCreatedResponse,
+} from "@/lib/group-booking-request-schemas";
+import { GROUP_BOOKING_CREATED_CONNECTION_SHAPE } from "@/lib/connection-shapes-groups";
+import { connectionJson } from "@/lib/mcp-connection-request";
 import logger from "@/lib/logger";
-
-const createGroupBookingSchema = z
-  .object({
-    organiserBookingId: z.string().min(1),
-    paymentMode: z.nativeEnum(GroupBookingPaymentMode),
-    // Optional date-only deadline after which no new joins are accepted.
-    joinDeadline: parsedDateOnlySchema.optional().nullable(),
-    maxJoiners: z.number().int().min(1).max(200).optional().nullable(),
-  })
-  .strict();
 
 /**
  * Open a group on one of the caller's own bookings and return the join code.
  * Members only; the service enforces booking ownership and an eligible state.
+ * The owner check reads the session's member id and nothing else, so it has
+ * no officer branch to narrow for an AI app.
+ *
+ * Also the AI app action `open_group_booking` (ALP-797), answered with the
+ * join code and settings but not the group's internal id.
  */
 export async function POST(request: NextRequest) {
   const rateLimited = await applyRateLimit(rateLimiters.groupBookingCreate, request);
@@ -61,17 +59,15 @@ export async function POST(request: NextRequest) {
       session.user.id
     );
 
-    return NextResponse.json(
-      {
-        id: group.id,
-        joinCode: group.joinCode,
-        paymentMode: group.paymentMode,
-        status: group.status,
-        joinDeadline: group.joinDeadline?.toISOString() ?? null,
-        maxJoiners: group.maxJoiners,
-      },
-      { status: 201 }
-    );
+    const created: GroupBookingCreatedResponse = {
+      id: group.id,
+      joinCode: group.joinCode,
+      paymentMode: group.paymentMode,
+      status: group.status,
+      joinDeadline: group.joinDeadline?.toISOString() ?? null,
+      maxJoiners: group.maxJoiners,
+    };
+    return connectionJson(request, created, GROUP_BOOKING_CREATED_CONNECTION_SHAPE, { status: 201 });
   } catch (err) {
     if (err instanceof GroupBookingError) {
       return NextResponse.json({ error: err.message }, { status: err.status });

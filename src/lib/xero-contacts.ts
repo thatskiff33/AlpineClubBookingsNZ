@@ -59,6 +59,7 @@ import {
   ambiguousMemberContactCreateReservationWhere,
   assertMemberAvailableForXeroContactChange,
   closeProviderCreatedContactRecoveryForLinkedContact,
+  completeMemberContactOperation,
   lockMemberForXeroContactLink,
   recordProviderCreatedContactPendingLocalLink,
   XeroContactAlreadyLinkedError,
@@ -338,23 +339,6 @@ export async function reserveMemberContactUpdateOperation<T>(
     });
     return { operation, value: plan.value };
   });
-}
-
-export async function completeMemberContactUpdateOperation(
-  memberId: string,
-  expectedXeroContactId: string,
-  operation: XeroOperationClaim,
-  completion: Parameters<typeof completeXeroSyncOperation>[1],
-  db: typeof prisma = prisma,
-): Promise<void> {
-  const completed = await db.$transaction(async (tx) => {
-    const locked = await lockMemberForXeroContactLink(tx, memberId);
-    if (locked.xeroContactId !== expectedXeroContactId) {
-      throw new XeroContactLinkChangedError();
-    }
-    return completeXeroSyncOperation(operation, completion, { store: tx });
-  });
-  await completed?.deferredPostCommit?.();
 }
 
 export interface XeroContactUpdateData {
@@ -2053,7 +2037,7 @@ export async function updateXeroContact(
           : [],
     };
     if (memberId) {
-      await completeMemberContactUpdateOperation(
+      await completeMemberContactOperation(
         memberId,
         xeroContactId,
         operation,

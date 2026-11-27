@@ -67,6 +67,7 @@ const mocks = vi.hoisted(() => ({
   createXeroCardRefundReversalInvoice: vi.fn(),
   recordAdditionalCaptureReceipt: vi.fn(),
   createAdminGrantCreditNote: vi.fn(),
+  syncOrganisationContactDetails: vi.fn(),
   enqueueAdditionalCaptureReceiptOperation: vi.fn(),
   anchorCaptureHasReceipt: vi.fn(),
   bookingHasUnattributedCaptures: vi.fn(),
@@ -296,6 +297,10 @@ vi.mock("@/lib/xero-kept-late-capture-invoice", () => ({
 vi.mock("@/lib/xero-card-refund-reversal-invoice", () => ({
   createXeroCardRefundReversalInvoice: mocks.createXeroCardRefundReversalInvoice,
 }));
+vi.mock("@/lib/organisation-xero-contact-details", () => ({
+  syncOrganisationContactDetails: mocks.syncOrganisationContactDetails,
+}));
+
 vi.mock("@/lib/xero-admin-grant-credit-note", () => ({
   createAdminGrantCreditNote: mocks.createAdminGrantCreditNote,
 }));
@@ -2559,8 +2564,9 @@ describe("processQueuedXeroOutboxOperations", () => {
       status: "PENDING",
       direction: "OUTBOUND",
       queueType: { in: [...XERO_OUTBOX_QUEUE_TYPES] },
-      // #3954 round 8, #3953 round 3, #4692 review, #4431 and #4919: rows waiting their turn are spaced out.
+      // #3954 round 8, #3953 round 3, #4692 review, #4431, #4919 and #4988: rows waiting their turn are spaced out.
       AND: [
+        expect.objectContaining({ OR: expect.any(Array) }),
         expect.objectContaining({ OR: expect.any(Array) }),
         expect.objectContaining({ OR: expect.any(Array) }),
         expect.objectContaining({ OR: expect.any(Array) }),
@@ -2570,11 +2576,12 @@ describe("processQueuedXeroOutboxOperations", () => {
       // #5228: never a row whose request names no queue type.
       NOT: NAMES_NO_QUEUE_TYPE,
     });
-    // #4299, #4369 and #4431: the pinned types, the organiser extra, the reversal, and the admin grant note.
-    expect(args.where.queueType.in).toHaveLength(21);
+    // #4299, #4369, #4431 and #5245: the pinned types, the organiser extra, the reversal, the admin grant note, and a school's contact details.
+    expect(args.where.queueType.in).toHaveLength(22);
     expect(args.where.queueType.in).toContain("ORGANISER_EXTRA_ADJUSTMENT");
     expect(args.where.queueType.in).toContain("CARD_REFUND_REVERSAL_INVOICE");
     expect(args.where.queueType.in).toContain("ADMIN_GRANT_CREDIT_NOTE");
+    expect(args.where.queueType.in).toContain("ORGANISATION_CONTACT_DETAILS");
     // The legacy `requestPayload->>'queueType'` OR predicate is gone; the
     // payload is read only to leave out the rows #5228's report owns.
     expect(args.where.OR).toBeUndefined();
@@ -2687,6 +2694,8 @@ describe("processQueuedXeroOutboxOperations", () => {
     const { ADMIN_GRANT_NOTE_AWAITING_RETRY_RECHECK_MS } = await import("@/lib/admin-grant-credit-note");
     const { ADMIN_GRANT_NOTE_AWAITING_RETRY_CODE, GROUP_SETTLEMENT_INVOICE_EMAIL_DEFERRED_CODE } = await import("@/lib/xero-operation-error-codes");
     const { GROUP_SETTLEMENT_INVOICE_EMAIL_DEFERRED_RECHECK_MS } = await import("@/lib/xero-group-settlement-invoice-outbox");
+    const { XERO_TAX_CATEGORY_AWAITING_MAPPING_CODE } = await import("@/lib/xero-operation-error-codes");
+    const { XERO_TAX_CATEGORY_AWAITING_MAPPING_RECHECK_MS } = await import("@/lib/xero-tax-category-hold");
     mocks.findManyOperations.mockResolvedValue([
       {
         id: "op_dealloc_waiting",
@@ -2749,7 +2758,55 @@ describe("processQueuedXeroOutboxOperations", () => {
           { updatedAt: { lte: new Date(Date.now() - GROUP_SETTLEMENT_INVOICE_EMAIL_DEFERRED_RECHECK_MS) } },
         ],
       },
+      // #4988: an operation held for a tax category Xero cannot carry yet.
+      {
+        OR: [
+          { lastErrorCode: null },
+          { lastErrorCode: { not: XERO_TAX_CATEGORY_AWAITING_MAPPING_CODE } },
+          { updatedAt: { lte: new Date(Date.now() - XERO_TAX_CATEGORY_AWAITING_MAPPING_RECHECK_MS) } },
+        ],
+      },
     ]);
+  });
+
+  describe("#4988: an applied-credit allocation whose Exempt line Xero cannot carry is held, not failed", () => {
+    const heldRow = {
+      id: "op_alloc_exempt",
+      localId: "payment_1",
+      localModel: "Payment",
+      createdByMemberId: null,
+      requestPayload: { queueType: "APPLIED_CREDIT_ALLOCATION", bookingId: "booking_1" },
+    };
+
+    it("MUTATION: hands the row back to PENDING under the tax category wait code, with the sentence that says what to map", async () => {
+      const { XeroTaxCategoryUnavailableError } = await import("@/lib/xero-tax-categories");
+      const { XERO_TAX_CATEGORY_AWAITING_MAPPING_CODE } = await import("@/lib/xero-operation-error-codes");
+      mocks.findManyOperations.mockResolvedValue([heldRow]);
+      mocks.allocateAppliedCreditForBooking.mockRejectedValue(new XeroTaxCategoryUnavailableError("EXEMPT", "unmapped"));
+
+      const result = await processQueuedXeroOutboxOperations({ limit: 5 });
+
+      expect(mocks.updateManyOperation).toHaveBeenCalledWith({
+        where: givenBackWhere("op_alloc_exempt", { status: "RUNNING", startedAt: TEST_XERO_CLAIMED_AT, ...NOT_A_XERO_REPAIR_CLAIM }),
+        data: expect.objectContaining({
+          status: "PENDING",
+          lastErrorCode: XERO_TAX_CATEGORY_AWAITING_MAPPING_CODE,
+          lastErrorMessage: "The Exempt tax category is not mapped to a Xero tax rate; map it on the Xero setup screen.",
+        }),
+      });
+      // Held, so neither failed nor counted as done.
+      expect(mocks.failXeroSyncOperation).not.toHaveBeenCalled();
+      expect(result).toMatchObject({ skipped: 1, succeeded: 0, failed: 0 });
+    });
+
+    it("still fails an allocation that stops for any other reason", async () => {
+      mocks.findManyOperations.mockResolvedValue([heldRow]);
+      mocks.allocateAppliedCreditForBooking.mockRejectedValue(new Error("Xero refused the credit note"));
+
+      const result = await processQueuedXeroOutboxOperations({ limit: 5 });
+
+      expect(result).toMatchObject({ skipped: 0, failed: 1 });
+    });
   });
 
   describe("#4692 review (finding 1): a refund note held by an unrecorded one never stalls the outbox", () => {
@@ -3913,6 +3970,17 @@ describe("processQueuedXeroOutboxOperations dispatch domain (#1272)", () => {
       },
       handler: mocks.createAdminGrantCreditNote,
     },
+    // #5245: the school is the row's anchor; the payload is its queue type alone.
+    ORGANISATION_CONTACT_DETAILS: {
+      op: {
+        id: "op_org_contact_1",
+        localId: "org_1",
+        localModel: "Organisation",
+        createdByMemberId: "admin_1",
+        requestPayload: { queueType: "ORGANISATION_CONTACT_DETAILS" },
+      },
+      handler: mocks.syncOrganisationContactDetails,
+    },
   };
 
   beforeEach(() => {
@@ -3944,6 +4012,7 @@ describe("processQueuedXeroOutboxOperations dispatch domain (#1272)", () => {
     mocks.voidXeroInvoiceForCancelledGroupSettlement.mockResolvedValue(undefined);
     mocks.createXeroMembershipSubscriptionInvoice.mockResolvedValue("inv");
     mocks.createAdminGrantCreditNote.mockResolvedValue(undefined);
+    mocks.syncOrganisationContactDetails.mockResolvedValue(undefined);
   });
 
   it("has one dispatch fixture for every queue type and no extras", () => {

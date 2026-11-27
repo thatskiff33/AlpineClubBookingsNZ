@@ -32,6 +32,7 @@ import * as assetNotFoundRoute from "@/app/asset-not-found/route";
 import nextConfig from "../../../next.config";
 import { ADMIN_PAGES } from "@/lib/admin-hubs";
 import { config, getFeatureFlagBlockResponse } from "../../proxy";
+import { CENSUS_TIMEOUT_MS } from "@/test/census-timeout";
 
 /**
  * The standing invariant this file exists to hold (#2404):
@@ -451,7 +452,7 @@ describe("the shipped next.config.ts, through Next's own pipeline", () => {
  * and `Caddyfile`'s `/images/*` rewrite onto the same route). Every uploaded
  * `.jpg`, `.png`, `.gif` and `.webp` answered a JSON 404.
  */
-describe("the rewrites cannot shadow a route that really serves the URL", () => {
+describe("the rewrites cannot shadow a route that really serves the URL", { timeout: CENSUS_TIMEOUT_MS }, () => {
   const APP_DIR = join(process.cwd(), "src/app");
 
   /** Every `route.ts` under `src/app`, as its URL pattern. */

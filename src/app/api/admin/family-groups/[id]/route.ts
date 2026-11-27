@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { z } from "zod";
+import { parseJsonRequestBody } from "@/lib/api-json";
 import { requireAdmin } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma";
 import { logAudit } from "@/lib/audit";
@@ -7,11 +7,13 @@ import logger from "@/lib/logger";
 import { hasMemberCompletedAccountSetup } from "@/lib/password-reset";
 import { formatMemberIdentityAge } from "@/lib/member-age";
 import { clubTime } from "@/lib/club-time/server";
-
-const updateFamilyGroupSchema = z.object({
-  name: z.string().min(1).max(200).optional(),
-  memberIds: z.array(z.string()).min(1).max(10).optional(),
-});
+import { updateFamilyGroupSchema } from "@/lib/admin-membership-api/family-groups";
+import { connectionJson } from "@/lib/mcp-connection-request";
+import {
+  FAMILY_GROUP_DETAIL_CONNECTION_SHAPE,
+  FAMILY_GROUP_SUCCESS_CONNECTION_SHAPE,
+  FAMILY_GROUP_UPDATED_CONNECTION_SHAPE,
+} from "@/lib/connection-shapes/membership-family-groups";
 
 /**
  * GET /api/admin/family-groups/[id]
@@ -31,9 +33,12 @@ const updateFamilyGroupSchema = z.object({
  * `dateOfBirth` reached the browser even though the mapping below strips all
  * four. A whitelist cannot leak a field a later `select` adds; a spread can, and
  * did.
+ *
+ * An AI app connection is sent each member's id, name, age tier and active
+ * state only: no email, age or sign-in field (ALP-720).
  */
 export async function GET(
-  _req: NextRequest,
+  req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   const guard = await requireAdmin({
@@ -96,7 +101,7 @@ export async function GET(
   // reader is the right one here.
   const clubToday = (await clubTime()).today();
 
-  return NextResponse.json({
+  return connectionJson(req, {
     id: group.id,
     name: group.name,
     createdAt: group.createdAt,
@@ -124,7 +129,7 @@ export async function GET(
           lastLoginAt: member.lastLoginAt,
         }),
     })),
-  });
+  }, FAMILY_GROUP_DETAIL_CONNECTION_SHAPE);
 }
 
 /**
@@ -140,14 +145,10 @@ export async function PUT(
   const session = guard.session;
   const { id } = await params;
 
-  let body: unknown;
-  try {
-    body = await req.json();
-  } catch {
-    return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
-  }
+  const jsonBody = await parseJsonRequestBody(req, { error: "Invalid JSON" });
+  if (!jsonBody.ok) return jsonBody.response;
 
-  const parsed = updateFamilyGroupSchema.safeParse(body);
+  const parsed = updateFamilyGroupSchema.safeParse(jsonBody.body);
   if (!parsed.success) {
     return NextResponse.json(
       { error: "Validation failed", details: parsed.error.flatten().fieldErrors },
@@ -244,19 +245,16 @@ export async function PUT(
   // Field by field, for the same reason as the GET above: a spread of the row
   // would re-export the raw `memberships` relation beside the flattened
   // `members` array. Nothing reads the duplicate.
-  return NextResponse.json({
-    id,
-    name: updated?.name ?? null,
-    createdAt: updated?.createdAt ?? null,
-    members: updated?.memberships.map((m) => m.member) ?? [],
-  });
+  const members = updated?.memberships.map((m) => m.member) ?? [];
+  const group = { id, name: updated?.name ?? null, createdAt: updated?.createdAt ?? null, members };
+  return connectionJson(req, group, FAMILY_GROUP_UPDATED_CONNECTION_SHAPE);
 }
 
 /**
  * DELETE /api/admin/family-groups/[id]
  */
 export async function DELETE(
-  _req: NextRequest,
+  req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   const guard = await requireAdmin();
@@ -299,5 +297,5 @@ export async function DELETE(
 
   logger.info({ groupId: id }, "Family group deleted");
 
-  return NextResponse.json({ success: true });
+  return connectionJson(req, { success: true }, FAMILY_GROUP_SUCCESS_CONNECTION_SHAPE);
 }

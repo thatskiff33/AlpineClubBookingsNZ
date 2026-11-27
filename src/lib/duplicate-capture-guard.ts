@@ -20,9 +20,11 @@
  * capture whose refund failed later (#4227) each looked like "another capture
  * holding money", so a REPLAY of the real settlement was refunded. Nor does
  * "the arriving row was already SUCCEEDED" alone tell a replay apart: every
- * saved-card path writes its attempt row SUCCEEDED before it settles, so those
- * callers say they did (`recordedByCaller`, #4285 review), and the guard reads
- * that answer only where no other payment holds money (rule 3).
+ * saved-card path writes its attempt row SUCCEEDED before it settles, so that
+ * write flags the capture as not yet settled and the settle consumes the flag
+ * (`unsettled-capture-marker.ts`, #5240) - even on a later arrival after the
+ * caller stopped between the two - and the guard reads that answer only where
+ * no other payment holds money (rule 3).
  *
  * 1. **The recorded settler is never refunded.** Its replay is kept whatever
  *    else holds money on the booking.
@@ -51,9 +53,10 @@
  *    or a failed send is retried by a replay or the payments cron's drain until
  *    an alert is delivered. Every such alert names the other payment by the
  *    telling reading (`readTellingWhere`, #4285 review) and shows what the
- *    kept capture's card still holds; the verdict never reads either. Limit:
- *    a saved-card capture whose caller crashed or threw between its
- *    pre-record and the settle reads as a replay on its next arrival.
+ *    kept capture's card still holds; the verdict never reads either. A
+ *    saved-card capture whose settle never ran is new money on its next
+ *    arrival (#5240), and the payments cron's drain turns a flag no arrival
+ *    consumes on a paid booking into this alert.
  *
  * Every read runs under the lock(1) every caller of `markBookingPaymentSucceeded`
  * holds, so the check-then-enqueue cannot interleave with another settlement,
@@ -76,6 +79,7 @@ import { LEDGER_ROWS_OLDEST_FIRST } from "@/lib/payment-ledger-order";
 import { findPaymentTransactionByIntentId, sumRecordedRefundsForCapture } from "@/lib/payment-transactions";
 import { CAPTURED_NOT_FULLY_REFUNDED_TRANSACTION_STATUS_LIST } from "@/lib/payment-transaction-status";
 import { heldStripeCapturesWhere, readSupersededOwnership } from "@/lib/superseded-capture-ownership";
+import { PROMOTED_KEPT_REASONS, promotedCaptureAlertOwedKey, type PromotedKeptReason } from "@/lib/unsettled-capture-marker";
 import {
   listDuplicateRefundIntentIdsOwningCaptures,
   listLiveSupersededIntentIds,
@@ -234,14 +238,23 @@ export async function judgeCaptureOnPaidBooking(
   input: {
     bookingId: string;
     paymentId: string;
-    /** `Payment.settledByTransactionId`, read under the caller's lock(1). */
+    /**
+     * `Payment.settledByTransactionId`, read under the caller's lock(1) - or
+     * (#5240, the payments cron's flag step) in the transaction that then claims
+     * the saved-card capture's "not yet settled" flag, with no lock(1). There
+     * the flag's delete, not the lock, picks one actor: the only write that
+     * could make that capture the settler is its own settle, which consumes the
+     * flag first, and the owed alert the cron records is re-judged before it
+     * is sent.
+     */
     recordedSettlerId: string | null;
     paymentIntentId: string;
     amountCents: number;
     /**
      * #4285 review: the arriving capture's row was SUCCEEDED before this delivery
      * - a replay of a capture already recorded - rather than new money. Read by
-     * the caller before it wrote the row.
+     * the caller before it wrote the row; (#5240) false while the saved-card
+     * "not yet settled" flag stood, which the caller consumed.
      */
     arrivingAlreadyCaptured: boolean;
   },
@@ -352,13 +365,16 @@ export function newCaptureAlertOwedKey(bookingId: string, paymentIntentId: strin
  * leaves a trigger: the capture's next arrival re-alerts while the marker
  * stands (rule 3), and the payments cron drains what nothing re-delivers
  * (`drainOwedNewCaptureAlerts`). Cleared only once an alert is delivered.
- * Under the caller's lock(1), so a plain upsert cannot race.
+ * Under the caller's lock(1), or (#5240, the payments cron's promotion) after
+ * winning the flag's guarded delete in the same transaction, so a plain upsert
+ * cannot race.
  */
 export async function recordNewCaptureAlertOwed(
   tx: Pick<Prisma.TransactionClient, "alertCooldown">,
-  { bookingId, paymentIntentId, now = new Date() }: { bookingId: string; paymentIntentId: string; now?: Date },
+  { bookingId, paymentIntentId, now = new Date(), reason }: { bookingId: string; paymentIntentId: string; now?: Date; reason?: PromotedKeptReason },
 ): Promise<void> {
-  const key = newCaptureAlertOwedKey(bookingId, paymentIntentId);
+  // #5240 review: a promoted flag keeps its reason in its own marker's key.
+  const key = reason ? promotedCaptureAlertOwedKey(reason, bookingId, paymentIntentId) : newCaptureAlertOwedKey(bookingId, paymentIntentId);
   await tx.alertCooldown.upsert({ where: { key }, create: { key, lastAlertedAt: now }, update: {} });
 }
 
@@ -374,7 +390,8 @@ export async function recordNewCaptureAlertOwed(
  * cannot be read (`claimAlertCooldownFailOpen`), and the claim is given back if
  * the send throws so the next repeat tries again (`releaseAlertCooldown`, as
  * `internet-banking-hold-kept.ts`). Any delivered alert for the capture clears
- * its owed `new-capture` marker (#4285 review). Never throws; says what happened.
+ * its owed `new-capture` marker (#4285 review), and any the payments cron
+ * promoted under its reason (#5240 review). Never throws; says what happened.
  */
 export async function alertCaptureKeptWithoutRecordedSettler({
   booking,
@@ -433,7 +450,8 @@ export async function alertCaptureKeptWithoutRecordedSettler({
   }
   // #4285 review: ANY delivered alert for this capture answers an owed one, so
   // the drain never later sends "no other payment holds money" once untrue.
-  await settleOwedAlert({ key: newCaptureAlertOwedKey(booking.id, paymentIntentId) }).catch((err) =>
+  const owedKeys = [newCaptureAlertOwedKey(booking.id, paymentIntentId), ...PROMOTED_KEPT_REASONS.map((owed) => promotedCaptureAlertOwedKey(owed, booking.id, paymentIntentId))];
+  await Promise.all(owedKeys.map((owedKey) => settleOwedAlert({ key: owedKey }))).catch((err) =>
     logger.error({ err, ...context }, "Failed to clear a delivered kept-capture alert's owed marker; it may be sent again (#4285)"),
   );
   return "sent";

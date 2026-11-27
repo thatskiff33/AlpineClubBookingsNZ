@@ -266,6 +266,13 @@ export interface SettlementOptions {
   returnsToOrganiser: boolean;
   /** #3949: by bank transfer, the organiser having paid by Internet Banking; else to their card. */
   organiserRefundByBankTransfer: boolean;
+  /**
+   * #5303: the member's own refund is a bank transfer the treasurer sends (an
+   * Internet Banking payment, or a card payment Stripe holds no record of), not
+   * a refund to the card. Optional only because an older server omits it
+   * during a blue-green cutover; absent reads as the card, as it did before.
+   */
+  refundByBankTransfer?: boolean;
   /** #5061 follow-up (`INV-PAY-154`): the card payment is disputed, so the treasurer hands the reduction back; no choice. */
   refundHeldForDispute: boolean;
 }

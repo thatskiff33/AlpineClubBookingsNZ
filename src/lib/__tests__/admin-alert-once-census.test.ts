@@ -3,20 +3,36 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 
 import { stripComments } from "./support/strip-comments";
+import { CENSUS_TIMEOUT_MS } from "@/test/census-timeout";
 
 /**
- * #4696 (`INV-SSOT`): the caller census in `admin-alert-once.ts` is the one
- * list of `sendAdminAlertOnceEver`'s callers, grouped by whether anything sends
- * an alert again once its uncertain claim is given back. This suite holds that
- * list to the code: it walks `src/` for every production file that names the
- * boolean helper outside a comment and fails when the set differs from the
- * census, so a new caller cannot arrive without someone deciding its group.
+ * #4696, #5255 (`INV-SSOT`, `INV-INT-042`): the caller census in
+ * `admin-alert-once.ts` is the one list of the once-ever helpers' callers,
+ * grouped by what sends an alert again once its claim is given back. This
+ * suite holds that list to the code: it walks `src/` for every production file
+ * that names a helper outside a comment, and fails when a file is missing
+ * from its group, or sits in the other one. A caller retried by its own next
+ * run calls `sendAdminAlertOnceEver`, `sendAdminAlertOnceEverClaim` or the
+ * takeover sequence `sendAdminAlertOnceEverWithTakeover` (itself a helper, so
+ * its callers are listed, not it); one raised only once calls
+ * `sendReplayableAdminAlertOnceEver`, so the sweep re-sends its stored alert.
+ * A new caller cannot arrive without someone deciding which it is.
  * Disk-scanning: run by name (`pnpm run test:named`).
  */
 const ROOT = process.cwd();
-const HELPER = "src/lib/admin-alert-once.ts";
+const HELPERS = new Set([
+  "src/lib/admin-alert-once.ts",
+  "src/lib/admin-alert-once-replayable.ts",
+  "src/lib/admin-alert-once-takeover.ts",
+]);
+const CENSUS = "src/lib/admin-alert-once.ts";
 const CALLER_DIR = "src/lib";
-const NAMES_THE_HELPER = /\bsendAdminAlertOnceEver\b/;
+const RETRIED = "Retried by its next run (cron, or a webhook or request then cron)";
+const REPLAYED = "Raised once; the sweep re-sends its stored alert";
+const NAMES = {
+  [RETRIED]: /\bsendAdminAlertOnceEver(?:Claim|WithTakeover)?\b/,
+  [REPLAYED]: /\bsendReplayableAdminAlertOnceEver\b/,
+};
 
 function walk(dir: string, out: string[] = []): string[] {
   for (const name of readdirSync(dir)) {
@@ -33,7 +49,7 @@ function walk(dir: string, out: string[] = []): string[] {
 
 /** The census block's `- <file>` lines, by group heading, as repo paths. */
 function readCensus(): Map<string, string[]> {
-  const source = readFileSync(path.join(ROOT, HELPER), "utf8");
+  const source = readFileSync(path.join(ROOT, CENSUS), "utf8");
   const start = source.indexOf("#4696 CENSUS");
   expect(start, "the census block in admin-alert-once.ts").toBeGreaterThan(-1);
   // The block runs to the first empty line, which follows its closing line.
@@ -57,27 +73,44 @@ function readCensus(): Map<string, string[]> {
   return groups;
 }
 
-describe("#4696: the once-ever helper's caller census matches the code", () => {
-  it("lists every production caller of sendAdminAlertOnceEver, and nothing else", () => {
-    const callers = walk(path.join(ROOT, "src"))
+let productionSources: Map<string, string> | null = null;
+
+/** Every production file under `src/` but the helpers, comments stripped, read once per run. */
+function readProductionSources(): Map<string, string> {
+  productionSources ??= new Map(
+    walk(path.join(ROOT, "src"))
       .map((file) => path.relative(ROOT, file).split(path.sep).join("/"))
-      .filter((file) => file !== HELPER)
-      .filter((file) => NAMES_THE_HELPER.test(stripComments(readFileSync(path.join(ROOT, file), "utf8"))))
-      .sort();
-    const listed = [...readCensus().values()].flat().sort();
+      .filter((file) => !HELPERS.has(file))
+      .map((file) => [file, stripComments(readFileSync(path.join(ROOT, file), "utf8"))]),
+  );
+  return productionSources;
+}
 
-    expect(callers.length, "the scan found no caller at all").toBeGreaterThan(0);
-    expect(
-      listed,
-      "a caller was added or removed: put it in admin-alert-once.ts's #4696 census under the group that says whether its alert is sent again",
-    ).toEqual(callers);
-  });
+function callersNaming(name: RegExp): string[] {
+  return [...readProductionSources()]
+    .filter(([, source]) => name.test(source))
+    .map(([file]) => file)
+    .sort();
+}
 
-  it("puts each caller in exactly one group, and leaves no group empty", () => {
+describe("#4696, #5255: the once-ever helpers' caller census matches the code", () => {
+  it("has exactly the two groups, each non-empty, with no file in both", () => {
     const groups = readCensus();
-    expect([...groups.keys()]).toHaveLength(3);
+    expect([...groups.keys()]).toEqual([RETRIED, REPLAYED]);
     for (const [heading, files] of groups) expect(files.length, heading).toBeGreaterThan(0);
     const listed = [...groups.values()].flat();
     expect(new Set(listed).size).toBe(listed.length);
   });
+
+  it.each([RETRIED, REPLAYED] as const)("lists under \"%s\" exactly the files that call its helper", (heading) => {
+    expect(readCensus().get(heading)?.slice().sort(), `put the caller in admin-alert-once.ts's census under "${heading}", or switch it to the other helper`).toEqual(
+      callersNaming(NAMES[heading]),
+    );
+  }, CENSUS_TIMEOUT_MS);
+
+  it("finds no file calling both helpers, so each caller's retry is one answer", () => {
+    const replayed = new Set(callersNaming(NAMES[REPLAYED]));
+    const both = callersNaming(NAMES[RETRIED]).filter((file) => replayed.has(file));
+    expect(both).toEqual([]);
+  }, CENSUS_TIMEOUT_MS);
 });

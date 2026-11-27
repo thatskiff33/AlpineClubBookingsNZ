@@ -1,5 +1,6 @@
-import { NextResponse } from "next/server";
-import { z } from "zod";
+import { NextRequest, NextResponse } from "next/server";
+import { memberGuestSettingsBodySchema } from "@/lib/admin-bookings-schemas/setup";
+import { parseJsonRequestBody } from "@/lib/api-json";
 import {
   buildStructuredAuditLogCreateArgs,
   getAuditRequestContext,
@@ -13,6 +14,11 @@ import {
   MEMBER_GUEST_SETTINGS_ID,
   normalizeMemberGuestSettings,
 } from "@/lib/member-guest-settings";
+import {
+  ADMIN_MEMBER_GUEST_SETTINGS_CONNECTION_SHAPE,
+  type MemberGuestSettingsAnswer,
+} from "@/lib/connection-shapes/bookings-setup";
+import { connectionJson } from "@/lib/mcp-connection-request";
 import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/session-guards";
 
@@ -38,7 +44,7 @@ import { requireAdmin } from "@/lib/session-guards";
 /**
  * Inclusive bounds echoed to the card so the number input can render its own
  * min/max without a second copy of the two constants in client code. The card,
- * the config-transfer dry-run, and the validator below all read the same pair
+ * the config-transfer dry-run, and the body schema all read the same pair
  * from src/config/club-settings-defaults.ts.
  */
 const BOUNDS = {
@@ -46,51 +52,11 @@ const BOUNDS = {
   pendingHoldExpiryDaysMax: MEMBER_GUEST_PENDING_HOLD_EXPIRY_DAYS_MAX,
 } as const;
 
-/**
- * One plain-English sentence covers every way `pendingHoldExpiryDays` can be
- * wrong — a string, a fraction, null, 0, 61 — because from an admin's point of
- * view they are all the same mistake, and the field-level zod defaults ("Invalid
- * input", "Too small: expected number to be >=1") are not sentences an operator
- * should ever be shown.
- */
-const PENDING_HOLD_EXPIRY_DAYS_MESSAGE =
-  `Hold expiry must be a whole number of days between ` +
-  `${MEMBER_GUEST_PENDING_HOLD_EXPIRY_DAYS_MIN} and ` +
-  `${MEMBER_GUEST_PENDING_HOLD_EXPIRY_DAYS_MAX}.`;
-
-function booleanField(name: string) {
-  // Strict booleans: no "true"/1/"on" coercion. A card that posts a string has a
-  // bug worth surfacing, and silently coercing it would let a typo turn a
-  // privacy toggle on.
-  return z.boolean({ error: `${name} must be true or false.` });
-}
-
-// All four fields are required, as on the precedent route: the card owns the
-// whole form and posts it whole, so there is no partial-update shape to merge
-// and no read-modify-write race to reason about. `.strict()` REJECTS unknown
-// keys with a 400 rather than ignoring them, which is what stops a renamed or
-// mistyped field from looking like a successful save.
-const updateSchema = z
-  .object({
-    // D-3: ask-first is the shipped default; notify-only is an explicit opt-down
-    // by the club's admin, never a value that arrives by accident.
-    approvalRequired: booleanField("Approval required"),
-    pendingHoldExpiryDays: z
-      .number({ error: PENDING_HOLD_EXPIRY_DAYS_MESSAGE })
-      .int(PENDING_HOLD_EXPIRY_DAYS_MESSAGE)
-      .min(MEMBER_GUEST_PENDING_HOLD_EXPIRY_DAYS_MIN, PENDING_HOLD_EXPIRY_DAYS_MESSAGE)
-      .max(MEMBER_GUEST_PENDING_HOLD_EXPIRY_DAYS_MAX, PENDING_HOLD_EXPIRY_DAYS_MESSAGE),
-    // The two privacy toggles. Turning the first on makes the club's membership
-    // name list browsable to anyone who can start a booking; the second decides
-    // whether children appear in that list. Both ship OFF, and per owner
-    // decision D-18 neither ever travels in a config bundle — an import must not
-    // be able to widen a target club's member privacy. This route is therefore
-    // the ONLY way either value can change, which is why the audit entry below
-    // records both before and after.
-    openMemberSearchEnabled: booleanField("Open member search"),
-    openMemberSearchIncludesMinors: booleanField("Include minors in open member search"),
-  })
-  .strict();
+// The body schema (`memberGuestSettingsBodySchema`: all four fields required,
+// `.strict()`, one plain-English sentence for every hold-expiry fault) lives in
+// admin-bookings-schemas/setup.ts beside the settings' other schemas. The PUT
+// is never an AI app action (`privacy-posture` in src/lib/mcp/exclusions.ts):
+// widening who can browse member names stays an officer's choice on the website.
 
 /**
  * The capability signal the settings card renders its three states from.
@@ -112,20 +78,6 @@ const updateSchema = z
  */
 type MemberGuestSettingsAdminAccess = "manage" | "view" | "none";
 
-type MemberGuestSettingsAdminPayload = {
-  settings: {
-    approvalRequired: boolean;
-    pendingHoldExpiryDays: number;
-    openMemberSearchEnabled: boolean;
-    openMemberSearchIncludesMinors: boolean;
-  };
-  /** ISO 8601, or null while the club has never saved the singleton. */
-  updatedAt: string | null;
-  updatedByMemberId: string | null;
-  access: Exclude<MemberGuestSettingsAdminAccess, "none">;
-  bounds: typeof BOUNDS;
-};
-
 function buildPayload(
   record: {
     approvalRequired: boolean;
@@ -136,7 +88,7 @@ function buildPayload(
     updatedByMemberId: string | null;
   } | null,
   access: Exclude<MemberGuestSettingsAdminAccess, "none">,
-): MemberGuestSettingsAdminPayload {
+): MemberGuestSettingsAnswer {
   return {
     settings: normalizeMemberGuestSettings(record),
     updatedAt: record?.updatedAt?.toISOString() ?? null,
@@ -146,7 +98,7 @@ function buildPayload(
   };
 }
 
-export async function GET() {
+export async function GET(req: NextRequest) {
   const guard = await requireAdmin({
     permission: { area: "bookings", level: "view" },
   });
@@ -160,13 +112,15 @@ export async function GET() {
     where: { id: MEMBER_GUEST_SETTINGS_ID },
   });
 
-  return NextResponse.json(
+  return connectionJson(
+    req,
     buildPayload(
       record,
       hasAdminAreaAccess(guard.session.user, { area: "bookings", level: "edit" })
         ? "manage"
         : "view",
     ),
+    ADMIN_MEMBER_GUEST_SETTINGS_CONNECTION_SHAPE,
   );
 }
 
@@ -180,14 +134,13 @@ export async function PUT(request: Request) {
   if (!guard.ok) return guard.response;
   const session = guard.session;
 
-  let body: unknown;
-  try {
-    body = await request.json();
-  } catch {
-    return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
-  }
+  const jsonBody = await parseJsonRequestBody(request, {
+    error: "Invalid JSON",
+  });
+  if (!jsonBody.ok) return jsonBody.response;
+  const body = jsonBody.body;
 
-  const parsed = updateSchema.safeParse(body);
+  const parsed = memberGuestSettingsBodySchema.safeParse(body);
   if (!parsed.success) {
     return NextResponse.json(
       { error: "Invalid input", details: parsed.error.flatten() },

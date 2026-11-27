@@ -1,6 +1,6 @@
 import { BookingStatus, PaymentSource } from "@prisma/client";
 import { createAuditLog } from "@/lib/audit";
-import { isAdditionalPaymentOwed } from "@/lib/additional-payment-chase";
+import { confirmationOutstandingBalance } from "@/lib/booking-confirmation-outstanding";
 import { readBookingNoEmails } from "@/lib/booking-email-suppression";
 import {
   BOOKING_FRESH_COPY_TEMPLATES,
@@ -433,14 +433,9 @@ async function sendFreshConfirmation(
           }
         : { payOnline: true as const }
       : null;
-  // A settled booking with an uncollected upward change says so (#2397). Not
-  // payable online: the club's own chase sends the member to the right door, so
-  // this copy under-promises rather than naming one that may not open.
-  const outstandingBalance =
-    !paymentDue &&
-    isAdditionalPaymentOwed({ bookingStatus: booking.status, payment: booking.payment })
-      ? { amountCents: booking.payment?.additionalAmountCents ?? 0, payableOnline: false }
-      : null;
+  // A settled booking with an uncollected upward change says so (#2397), by
+  // the one rule the paid confirmation shares (`confirmationOutstandingBalance`).
+  const outstandingBalance = paymentDue ? null : confirmationOutstandingBalance(booking);
 
   const sendStartedAt = new Date();
   const outcome = await sendBookingConfirmedEmail(
@@ -456,7 +451,7 @@ async function sendFreshConfirmation(
       lodgeId: booking.lodgeId,
       ...(provisionalGuests ? { provisionalGuests } : {}),
       ...(paymentDue ? { paymentDue } : {}),
-      ...(outstandingBalance && outstandingBalance.amountCents > 0 ? { outstandingBalance } : {}),
+      ...(outstandingBalance ? { outstandingBalance } : {}),
       ...bookingPromoEmailFields(booking),
     },
   );

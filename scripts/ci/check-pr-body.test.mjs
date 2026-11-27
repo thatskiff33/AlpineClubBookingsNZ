@@ -359,4 +359,53 @@ describe("pr:check offline gate runner", () => {
       expect(ci.output).toContain(`cannot use N/A for sensitive paths: ${file}`);
     }
   });
+
+  /*
+    #5379: the after-deploy step gate, judged by both runners over one
+    repository and one body each. Each runner reads the fragment at the head
+    of its own range, so the wiring is what could differ.
+  */
+  const deployGate = join(repoRoot, "scripts", "ci", "check-pr-deploy-fragment.mjs");
+  const STEP = "## Who\n\nowner\n\n## What to do\n\nRun the report once.\n\n## How to check it worked\n\nIt lists no rows.\n";
+  const withStep = `${BODY_WITHOUT_FRAGMENT}\n## Manual Checks Required\n\n- After deploy, the owner runs the report once.\n`;
+
+  function runCiDeployGate(repo, body) {
+    const git = (...args) => execFileSync("git", args, { cwd: repo, encoding: "utf8" }).trim();
+    const result = spawnSync(process.execPath, [deployGate], {
+      cwd: repo,
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        PR_BODY: body,
+        PR_BASE_SHA: git("rev-parse", "base"),
+        PR_HEAD_SHA: git("rev-parse", "HEAD"),
+        PR_NUMBER: "",
+        GITHUB_TOKEN: "",
+        GH_TOKEN: "",
+        GITHUB_REPOSITORY: "",
+      },
+    });
+    return { ...result, output: `${result.stdout ?? ""}${result.stderr ?? ""}` };
+  }
+
+  it.each([
+    ["a step written as its fragment", { "docs/note.md": "x\n", "changelog.d/1234-report.deploy.md": STEP }, withStep, "PASS"],
+    ["a step with no fragment", { "docs/note.md": "x\n" }, withStep, "FAIL"],
+    ["a malformed fragment", { "changelog.d/1234-report.deploy.md": STEP.replace("owner", "everyone") }, BODY_WITHOUT_FRAGMENT, "FAIL"],
+    ["no step at all", { "docs/note.md": "x\n" }, BODY_WITHOUT_FRAGMENT, "PASS"],
+  ])("pr:check and the CI gate agree on after-deploy steps: %s", (_label, files, body, verdict) => {
+    root = makeRepo(files);
+    const offline = runGate(root, body);
+    const ci = runCiDeployGate(root, body);
+    expect(offline.output).toContain(`${verdict}  After-deploy steps`);
+    expect(ci.status).toBe(verdict === "PASS" ? 0 : 1);
+  });
+
+  it("refuses the after-deploy step check when it cannot resolve the diff", () => {
+    root = makeRepo({ "docs/note.md": "x\n" });
+    const { status, output } = runGateWithUnresolvableBase(root, BODY_WITHOUT_FRAGMENT);
+    expect(output).toContain("FAIL  After-deploy steps");
+    expect(output).toContain("The PR diff is unknown");
+    expect(status).toBe(1);
+  });
 });

@@ -20,6 +20,7 @@ import {
   type StructuredAuditEvent,
 } from "@/lib/audit";
 import { prisma } from "@/lib/prisma";
+import { getDisplayedWaitlistPositions } from "@/lib/waitlist-queue";
 import { getAuthSecret, requireAuthSecret } from "@/lib/runtime-config";
 import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
 import { clubToday, dateOnlyInstantOf } from "@/lib/club-time";
@@ -44,12 +45,27 @@ import {
 } from "@/lib/bed-allocation-lifecycle";
 import { sendAdminPartnerShareSweptAlert } from "@/lib/email";
 import logger from "@/lib/logger";
+import {
+  bulkSummaryAuditOutcome,
+  countBulkOutcomes,
+  runBulkSeasonalSave,
+  type BulkSeasonalMembershipOutcome,
+} from "@/lib/bulk-seasonal-save";
+import { memberDisplayName } from "@/lib/member-serialization";
 import { acquireMemberLifecycleLocks } from "@/lib/member-lifecycle-lock";
 import {
   reconcileMembersXeroContactGroups,
   triggerMemberXeroContactGroupSync,
 } from "@/lib/xero-contact-groups";
 import { LOCK1_HOLDER_TRANSACTION_BUDGET } from "@/lib/db-transaction";
+// Subscription-category decoupling: the independent billing axis, resolved
+// alongside membershipType but never affecting it (booking rights/rate stay
+// governed by membershipType alone).
+import {
+  serializeSubscriptionCategorySummary,
+  subscriptionCategorySummarySelect,
+  type SubscriptionCategorySummary,
+} from "@/lib/subscription-categories";
 
 // test seam
 export const SEASONAL_MEMBERSHIP_ASSIGNMENT_CHANGED_ACTION =
@@ -92,20 +108,9 @@ const membershipTypeSelect = {
   sortOrder: true,
 } satisfies Prisma.MembershipTypeSelect;
 
-// Subscription-category decoupling: the independent billing axis, resolved
-// alongside membershipType but never affecting it (booking rights/rate stay
-// governed by membershipType alone).
-const subscriptionCategorySelect = {
-  id: true,
-  key: true,
-  name: true,
-  isActive: true,
-  isBuiltIn: true,
-} satisfies Prisma.SubscriptionCategorySelect;
-
 const assignmentInclude = {
   membershipType: { select: membershipTypeSelect },
-  subscriptionCategory: { select: subscriptionCategorySelect },
+  subscriptionCategory: { select: subscriptionCategorySummarySelect },
 } satisfies Prisma.SeasonalMembershipAssignmentInclude;
 
 const assignmentWithMemberInclude = {
@@ -151,13 +156,6 @@ type MembershipTypeSummary = {
   sortOrder: number;
 };
 
-type SubscriptionCategorySummary = {
-  id: string;
-  key: string;
-  name: string;
-  isActive: boolean;
-};
-
 type SeasonalAssignmentWithType = {
   id: string;
   memberId: string;
@@ -178,7 +176,6 @@ type BookingPreviewRecord = {
   checkOut: Date;
   status: BookingStatus;
   finalPriceCents: number;
-  waitlistPosition?: number | null;
   waitlistOfferedAt?: Date | null;
   waitlistOfferExpiresAt?: Date | null;
   _count: { guests: number };
@@ -302,15 +299,6 @@ function serializeMembershipTypeSummary(type: MembershipTypeSummary) {
   };
 }
 
-function serializeSubscriptionCategorySummary(category: SubscriptionCategorySummary) {
-  return {
-    id: category.id,
-    key: category.key,
-    name: category.name,
-    isActive: category.isActive,
-  };
-}
-
 export function serializeSeasonalMembershipAssignment(
   assignment: SeasonalAssignmentWithType,
 ) {
@@ -335,7 +323,7 @@ export function serializeSeasonalMembershipAssignment(
   };
 }
 
-function serializeBookingSummary(booking: BookingPreviewRecord) {
+function serializeBookingSummary(booking: BookingPreviewRecord, waitlistPosition: number | null) {
   return {
     id: booking.id,
     checkIn: formatDateOnly(booking.checkIn),
@@ -343,18 +331,18 @@ function serializeBookingSummary(booking: BookingPreviewRecord) {
     status: booking.status,
     finalPriceCents: booking.finalPriceCents,
     guestCount: booking._count.guests,
-    waitlistPosition: booking.waitlistPosition ?? null,
+    waitlistPosition, // #5402: read from the live queue by the caller
     waitlistOfferedAt: booking.waitlistOfferedAt?.toISOString() ?? null,
     waitlistOfferExpiresAt:
       booking.waitlistOfferExpiresAt?.toISOString() ?? null,
   };
 }
 
-function summarizeBookings(bookings: BookingPreviewRecord[]) {
+function summarizeBookings(bookings: BookingPreviewRecord[], positions: ReadonlyMap<string, number | null> = new Map()) {
   return {
     count: bookings.length,
     truncatedCount: Math.max(0, bookings.length - BOOKING_SUMMARY_LIMIT),
-    list: bookings.slice(0, BOOKING_SUMMARY_LIMIT).map(serializeBookingSummary),
+    list: bookings.slice(0, BOOKING_SUMMARY_LIMIT).map((b) => serializeBookingSummary(b, positions.get(b.id) ?? null)),
   };
 }
 
@@ -512,7 +500,7 @@ async function resolveSubscriptionCategoryChange(input: {
   const newSubscriptionCategory = newSubscriptionCategoryId
     ? await db.subscriptionCategory.findUnique({
         where: { id: newSubscriptionCategoryId },
-        select: subscriptionCategorySelect,
+        select: subscriptionCategorySummarySelect,
       })
     : null;
 
@@ -730,9 +718,9 @@ export async function getSeasonalMembershipChangePreview(params: {
     checkOut: true,
     status: true,
     finalPriceCents: true,
-    waitlistPosition: true,
     waitlistOfferedAt: true,
     waitlistOfferExpiresAt: true,
+    lodgeId: true, createdAt: true, noEmails: true, // #5402: the position reader's key
     _count: { select: { guests: true } },
   } satisfies Prisma.BookingSelect;
 
@@ -818,6 +806,8 @@ export async function getSeasonalMembershipChangePreview(params: {
     }),
   ]);
 
+  // #5402: live queue positions, one batch on this function's own (maybe transaction) client.
+  const waitlistPositions = await getDisplayedWaitlistPositions(db, waitlistRecords);
   const currentSubscription = subscriptions.find(
     (subscription) => subscription.seasonYear === params.seasonYear,
   );
@@ -876,9 +866,7 @@ export async function getSeasonalMembershipChangePreview(params: {
       futureConfirmedBookings as BookingPreviewRecord[],
     ),
     draftBookings: summarizeBookings(draftBookings as BookingPreviewRecord[]),
-    waitlistRecords: summarizeBookings(
-      waitlistRecords as BookingPreviewRecord[],
-    ),
+    waitlistRecords: summarizeBookings(waitlistRecords as BookingPreviewRecord[], waitlistPositions),
     currentSeasonSubscription: {
       seasonYear: params.seasonYear,
       status: currentSubscription?.status ?? "NO_RECORD",
@@ -1149,9 +1137,9 @@ export async function saveSeasonalMembershipAssignment(params: {
     // "Not Required" while the booking gate treats it as owing. Idempotent and
     // status-guarded (never touches a paid/invoiced/covered/manual row), it runs
     // in this transaction so the row flips atomically with the assignment and
-    // makes no provider calls. BASED_ON_AGE_TIER / NOT_REQUIRED types are left
-    // untouched (the #2041 NOT_REQUIRED-row dominance already keeps them
-    // consistent).
+    // makes no provider calls. #5190: the liability rule decides (REQUIRED only
+    // while NOT_CHOSEN); it takes the rule key shared, last, never the billing
+    // season key, so this transaction never waits on a billing confirm.
     await reconcileSeasonSubscriptionForAssignment(tx, {
       memberId: params.memberId,
       seasonYear: params.seasonYear,
@@ -1233,12 +1221,15 @@ export async function saveSeasonalMembershipAssignment(params: {
   });
 }
 
-export type BulkSeasonalMembershipOutcome =
-  | "changed"
-  | "unchanged"
-  | "stale"
-  | "blocked_linked_guests"
-  | "error";
+export type { BulkSeasonalMembershipOutcome };
+
+const BULK_SEASONAL_OUTCOMES: readonly BulkSeasonalMembershipOutcome[] = [
+  "changed",
+  "unchanged",
+  "stale",
+  "blocked_linked_guests",
+  "error",
+];
 
 export type BulkSeasonalMembershipMemberResult = {
   memberId: string;
@@ -1342,98 +1333,39 @@ export async function bulkSaveSeasonalMembershipAssignments(params: {
       continue;
     }
 
-    let saveResult: JsonRouteResult;
-    try {
-      saveResult = await saveSeasonalMembershipAssignment({
-        memberId,
-        seasonYear: params.seasonYear,
-        membershipTypeId: params.membershipTypeId,
-        applyFrom: params.applyFrom ?? null,
-        adminMemberId: params.adminMemberId,
-        reason,
-        previewToken,
-        request: params.request,
-        db,
-        // #2107: suppress the per-member sync; batch-reconcile once after the loop.
-        skipXeroContactGroupSync: true,
-      });
-    } catch (err) {
-      // A THROWN save (DB deadlock, P2025, a partner-share sweep failure) must
-      // never abort the batch: isolate it as this member's `error` outcome and
-      // keep processing the rest. The summary audit + response still happen.
-      logger.error(
-        {
-          err,
+    // #2107: suppress the per-member sync; batch-reconcile once after the loop.
+    // A thrown save is isolated as this member's `error` (bulk-seasonal-save).
+    const classified = await runBulkSeasonalSave<LinkedGuestBookingSummary>(
+      () =>
+        saveSeasonalMembershipAssignment({
           memberId,
           seasonYear: params.seasonYear,
           membershipTypeId: params.membershipTypeId,
-        },
-        "Bulk seasonal membership save threw for a member (isolated, continuing)",
-      );
-      results.push({
-        memberId,
-        name: nameFor(memberId),
-        outcome: "error",
-        error:
-          err instanceof Error
-            ? err.message
-            : "The membership change failed unexpectedly for this member.",
-      });
-      continue;
-    }
-
-    const status = saveResult.init?.status;
-    const body = saveResult.body as {
-      changed?: boolean;
-      error?: string;
-      linkedGuestBookings?: LinkedGuestBookingSummary;
-    };
-
-    if (status && status >= 400) {
-      if (status === 409 && body.linkedGuestBookings) {
-        results.push({
-          memberId,
-          name: nameFor(memberId),
-          outcome: "blocked_linked_guests",
-          status,
-          error: body.error,
-          linkedGuestBookings: body.linkedGuestBookings,
-        });
-      } else if (status === 409) {
-        results.push({
-          memberId,
-          name: nameFor(memberId),
-          outcome: "stale",
-          status,
-          error: body.error,
-        });
-      } else {
-        results.push({
-          memberId,
-          name: nameFor(memberId),
-          outcome: "error",
-          status,
-          error: body.error,
-        });
-      }
-      continue;
-    }
-
-    if (body.changed) {
-      results.push({ memberId, name: nameFor(memberId), outcome: "changed", status });
-      changedMemberIds.push(memberId);
-    } else {
-      results.push({ memberId, name: nameFor(memberId), outcome: "unchanged", status });
-    }
+          applyFrom: params.applyFrom ?? null,
+          adminMemberId: params.adminMemberId,
+          reason,
+          previewToken,
+          request: params.request,
+          db,
+          skipXeroContactGroupSync: true,
+        }),
+      { memberId, seasonYear: params.seasonYear, membershipTypeId: params.membershipTypeId },
+      "Bulk seasonal membership save threw for a member (isolated, continuing)",
+    );
+    results.push({
+      memberId,
+      name: nameFor(memberId),
+      outcome: classified.outcome,
+      status: classified.status,
+      ...(classified.error !== undefined ? { error: classified.error } : {}),
+      ...(classified.linkedGuestBookings
+        ? { linkedGuestBookings: classified.linkedGuestBookings }
+        : {}),
+    });
+    if (classified.outcome === "changed") changedMemberIds.push(memberId);
   }
 
-  const outcomeCounts = results.reduce<Record<BulkSeasonalMembershipOutcome, number>>(
-    (counts, entry) => {
-      counts[entry.outcome] += 1;
-      return counts;
-    },
-    { changed: 0, unchanged: 0, stale: 0, blocked_linked_guests: 0, error: 0 },
-  );
+  const outcomeCounts = countBulkOutcomes(results, BULK_SEASONAL_OUTCOMES);
 
   // One important-severity summary audit for the whole run (the per-member
   // critical rows live inside each single save).
@@ -1447,7 +1379,7 @@ export async function bulkSaveSeasonalMembershipAssignments(params: {
       },
       category: "admin",
       severity: "important",
-      outcome: "success",
+      outcome: bulkSummaryAuditOutcome(outcomeCounts),
       summary: "Seasonal membership type changed in bulk",
       metadata: {
         seasonYear: params.seasonYear,
@@ -1497,14 +1429,6 @@ export async function bulkSaveSeasonalMembershipAssignments(params: {
     results,
     xeroReconcile,
   });
-}
-
-function memberDisplayName(member: {
-  firstName: string;
-  lastName: string;
-  email: string;
-}) {
-  return `${member.firstName} ${member.lastName}`.trim() || member.email;
 }
 
 export async function rollForwardSeasonalMembershipAssignments(params: {
@@ -1833,8 +1757,8 @@ export async function rollForwardSeasonalMembershipAssignments(params: {
             // #2149 F1: a REQUIRED type copied into the CURRENT season supersedes
             // any stale creation-seeded NOT_REQUIRED row, exactly as the single
             // save path does. Idempotent + status-guarded; keyed off the copied
-            // type's behaviour so BASED_ON_AGE_TIER / NOT_REQUIRED rows are left
-            // to the #2041 dominance rule.
+            // type's behaviour and the liability rule (#5190); rule key shared,
+            // last, never the season key, so no wait on a billing confirm.
             for (const [memberId, subscriptionBehavior] of behaviorByMemberId) {
               await reconcileSeasonSubscriptionForAssignment(tx, {
                 memberId,

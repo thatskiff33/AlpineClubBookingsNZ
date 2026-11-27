@@ -862,7 +862,7 @@ describe("#27: Duplicate scan route surfaces Xero rate limits", () => {
     });
 
     const { GET } = await import("@/app/api/admin/xero/duplicate-contacts/route");
-    const res = await GET();
+    const res = await GET(new NextRequest("http://localhost/api/admin/xero/duplicate-contacts"));
 
     expect(res.status).toBe(429);
     await expect(res.json()).resolves.toEqual({

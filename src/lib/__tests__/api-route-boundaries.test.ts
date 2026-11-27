@@ -7,6 +7,8 @@ import {
   type MixedMethodApiRouteMetadata,
 } from "@/lib/api-route-security";
 import { SHARED_ADMIN_GUARD_WRAPPERS } from "@/lib/__tests__/helpers/admin-route-explicit-permissions";
+import { stripComments } from "@/lib/__tests__/support/strip-comments";
+import { CENSUS_TIMEOUT_MS } from "@/test/census-timeout";
 
 function listRouteFiles(dir: string): string[] {
   return fs.readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
@@ -26,25 +28,71 @@ function routeContents(filePath: string) {
   return fs.readFileSync(path.join(process.cwd(), filePath), "utf8");
 }
 
-const issue675MalformedJsonRoutes = [
-  "src/app/api/admin/bed-allocation/allocations/range/route.ts",
-  "src/app/api/admin/bed-allocation/allocations/route.ts",
-  "src/app/api/admin/bed-allocation/auto-allocate/route.ts",
-  "src/app/api/admin/bed-allocation/approve/route.ts",
-  "src/app/api/admin/bed-allocation/beds/[id]/route.ts",
-  "src/app/api/admin/bed-allocation/beds/route.ts",
-  "src/app/api/admin/bed-allocation/rooms/[id]/route.ts",
-  "src/app/api/admin/bed-allocation/rooms/route.ts",
-  "src/app/api/admin/bed-allocation/settings/route.ts",
-  "src/app/api/admin/promo-codes/[id]/route.ts",
-  "src/app/api/admin/promo-codes/route.ts",
-  "src/app/api/bookings/[id]/guests/route.ts",
-  "src/app/api/bookings/[id]/modify-quote/route.ts",
-  "src/app/api/bookings/quote/route.ts",
-  "src/app/api/bookings/route.ts",
-  "src/app/api/payments/create-payment-intent/route.ts",
-  "src/app/api/promo-codes/validate/route.ts",
-] as const;
+// `request.json()` on the incoming request, or on its `clone()`, however the
+// call is awaited.
+const DIRECT_REQUEST_JSON_READ =
+  /\b(?:request|req)\s*\??\.\s*(?:clone\(\)\s*\??\.\s*)?json\(\)/;
+// Receivers of a `.json()` call that a route file may contain: the incoming
+// request (the two names routes use) and a provider's `response`.
+const JSON_RECEIVER_NAMES = new Set(["request", "req", "response"]);
+// The body read as text, or as bytes, on the incoming request or its clone.
+const DIRECT_REQUEST_RAW_READ =
+  /\b(?:request|req)\s*\??\.\s*(?:clone\(\)\s*\??\.\s*)?(?:text|arrayBuffer|blob)\(\)/;
+// A body read on a clone of anything: a route never needs one.
+const CLONED_BODY_READ =
+  /\.\s*clone\(\)\s*\??\.\s*(?:json|text|arrayBuffer|blob|formData)\(\)/;
+// Receivers a route may call `text()`, `arrayBuffer()` or `blob()` on, none of
+// them the request. Each needs a reason; a new name fails the census.
+const RAW_READ_RECEIVERS: Record<string, string> = {
+  upstream: "skifield-conditions reads the upstream provider's answer as text",
+  response: "a provider's answer, the same receiver name the JSON census allows",
+  file: "an uploaded File taken from formData(); its bytes are the upload, not a JSON body",
+};
+
+/**
+ * Route files that still call `request.json()` themselves instead of the shared
+ * readers in `src/lib/api-json.ts` (#5400, #5407). The census below derives the
+ * set of such files from the tree and requires it to equal this list exactly: a
+ * route that reads the body directly and is not listed fails, and so does a
+ * listed route that no longer does.
+ *
+ * Every route reads its JSON body through `parseJsonRequestBody` when the body
+ * is required, or `parseOptionalJsonRequestBody` when it may be empty. Either
+ * way a body that is present but not valid JSON answers 400, never a 500 and
+ * never "no body" (#5407 items 26 to 28). What is left here is permanent
+ * exceptions, each group with its reason.
+ *
+ * Do not add a route to dodge the census: a new route uses a shared reader.
+ * Comments are removed before matching (`stripComments`, INV-SSOT-004), so a
+ * comment that mentions `request.json()` is not a read and a commented-out
+ * read does not keep an entry alive.
+ *
+ * The optional reader reads `text()`, so the second census below fails any
+ * route that reads the request, or a clone of it, as text or bytes itself: a
+ * route cannot parse a body by hand beside the shared readers. A body read on
+ * any `clone()` fails too. The signed-webhook routes (Stripe, Xero, SES SNS,
+ * ServerNZ posts) read the raw bounded text on purpose, because the signature
+ * covers the exact bytes, through `readBoundedWebhookText`; `mcp` and
+ * `mcp/oauth/register` use the same bounded reader. `JSON_RECEIVER_NAMES` and
+ * `RAW_READ_RECEIVERS` fail on a new receiver name.
+ *
+ * Stated limits: `formData()` on the request (the upload routes use it on
+ * purpose) and stream readers (`request.body`, `getReader()`) are not
+ * matched, and neither is a read through a helper defined outside the route.
+ */
+const directJsonReadAllowlist: Record<
+  string,
+  { reason: string; routes: string[] }
+> = {
+  intentionalExtraResponse: {
+    reason:
+      "Permanent exception, not pending work. The invalid-JSON 400 carries something on purpose that the shared reader's bare answer cannot. admin/roster/[date]: a machine-readable `code` (ROSTER_JSON_INVALID) beside a roster-specific message, the same shape as that route's sibling answers (ROSTER_PARAMS_INVALID and others); no client reading this code was found, so the reason recorded is consistency with its siblings. lodge-maintenance/[token]: the `no-store` and `noindex` headers its docblock requires on every response of the unauthenticated token door, so a tokenised page is never cached or indexed.",
+    routes: [
+      "src/app/api/admin/roster/[date]/route.ts",
+      "src/app/api/lodge-maintenance/[token]/route.ts",
+    ],
+  },
+};
 
 // Shared cross-file wrappers that perform requireAdmin internally. Keep this
 // closed list synchronized with the exported route guards; the defining module
@@ -129,7 +177,7 @@ function hasWebhookSignatureBoundary(routePath: string, contents: string) {
     routePath.endsWith("/webhooks/servernz-posts/route.ts") ||
     routePath.endsWith("/webhooks/servernz-availability/route.ts")
   ) {
-    // Epic #2992 and #62: HMAC with the registration-issued secret, compared in
+    // Epic #2992 and triyder/AlpineClubBookingsNZ#62: HMAC with the registration-issued secret, compared in
     // constant time, through the ONE shared verifier. The route must call it;
     // the verifier's own constant-time compare is pinned below
     // ("the shared Alpine Central Server verifier keeps its constant-time compare").
@@ -235,13 +283,13 @@ describe("API route boundary metadata", () => {
     });
 
     expect(violations).toEqual([]);
-  });
+  }, CENSUS_TIMEOUT_MS);
 
   it("the shared Alpine Central Server verifier keeps its constant-time compare", () => {
     // Both servernz webhook routes are accepted above because they call
     // verifyServerNzSignature; this pins that the verifier itself still checks
     // the signature header in constant time with its length guard, so a refactor
-    // that lost either cannot leave both routes "verifying" (#2992, #62).
+    // that lost either cannot leave both routes "verifying" (#2992, triyder/AlpineClubBookingsNZ#62).
     const verifier = fs.readFileSync(
       path.join(process.cwd(), "src/lib/servernz-signature.ts"),
       "utf8",
@@ -566,21 +614,93 @@ describe("API route boundary metadata", () => {
     expect(violations).toEqual([]);
   });
 
-  it("keeps issue #675 JSON-consuming routes on the controlled malformed JSON path", () => {
-    const violations = issue675MalformedJsonRoutes.flatMap((routePath) => {
-      const contents = routeContents(routePath);
-      const directParse = /\bawait\s+(?:req|request)\.json\(\)/.test(contents);
+  it("reads a request body through the shared JSON reader unless the route is listed with a reason", () => {
+    const allowlisted = Object.values(directJsonReadAllowlist).flatMap(
+      (group) => group.routes,
+    );
+    const routes = listRouteFiles(path.join(process.cwd(), "src/app/api")).map(
+      relativeRoutePath,
+    );
+    const code = (routePath: string) => stripComments(routeContents(routePath));
+    const directReaders = routes.filter((routePath) =>
+      DIRECT_REQUEST_JSON_READ.test(code(routePath)),
+    );
 
-      if (!contents.includes("parseJsonRequestBody(")) {
-        return [`${routePath}: route does not use controlled JSON parsing`];
-      }
-      if (directParse) {
-        return [`${routePath}: route still directly awaits request.json()`];
-      }
-      return [];
+    const duplicated = allowlisted.filter(
+      (routePath, index) => allowlisted.indexOf(routePath) !== index,
+    );
+    const unlisted = directReaders.filter(
+      (routePath) => !allowlisted.includes(routePath),
+    );
+    const stale = allowlisted.filter(
+      (routePath) => !directReaders.includes(routePath),
+    );
+    // A request parameter under another name would slip past the pattern above.
+    const otherReceivers = routes.flatMap((routePath) =>
+      [...code(routePath).matchAll(/\b(\w+)\s*\??\.\s*json\(\)/g)]
+        .map((match) => match[1] ?? "")
+        .filter((name) => !JSON_RECEIVER_NAMES.has(name))
+        .map((name) => `${routePath}: ${name}.json()`),
+    );
+
+    expect({
+      duplicated,
+      unlisted,
+      stale,
+      otherReceivers,
+    }).toEqual({
+      duplicated: [],
+      unlisted: [],
+      stale: [],
+      otherReceivers: [],
     });
+  }, CENSUS_TIMEOUT_MS);
 
-    expect(violations).toEqual([]);
+  it("never reads a request body as text or bytes in a route; the shared readers do it", () => {
+    const routes = listRouteFiles(path.join(process.cwd(), "src/app/api")).map(
+      relativeRoutePath,
+    );
+    const code = (routePath: string) => stripComments(routeContents(routePath));
+
+    const rawReaders = routes.filter((routePath) =>
+      DIRECT_REQUEST_RAW_READ.test(code(routePath)),
+    );
+    const clonedReaders = routes.filter((routePath) =>
+      CLONED_BODY_READ.test(code(routePath)),
+    );
+    // A request parameter under another name would slip past the pattern above.
+    const otherRawReceivers = routes.flatMap((routePath) =>
+      [...code(routePath).matchAll(/\b(\w+)\s*\??\.\s*(text|arrayBuffer|blob)\(\)/g)]
+        .filter((match) => !Object.hasOwn(RAW_READ_RECEIVERS, match[1] ?? ""))
+        .map((match) => `${routePath}: ${match[1]}.${match[2]}()`),
+    );
+
+    expect({ rawReaders, clonedReaders, otherRawReceivers }).toEqual({
+      rawReaders: [],
+      clonedReaders: [],
+      otherRawReceivers: [],
+    });
+  });
+
+  it("binds a shared reader's result to an ordinary name, never a global it would shadow", () => {
+    // #5400's conversion script once bound a result to `undefined`, which
+    // compiles and shadows the global for the rest of the handler (#5407).
+    const shadowing = new Set(["undefined", "NaN", "Infinity", "arguments", "eval"]);
+    const routes = listRouteFiles(path.join(process.cwd(), "src/app/api")).map(
+      relativeRoutePath,
+    );
+    const badBindings = routes.flatMap((routePath) =>
+      [
+        ...stripComments(routeContents(routePath)).matchAll(
+          /\b(?:const|let|var)\s+(\w+)\s*=\s*await\s+parse(?:Optional)?JsonRequestBody\(/g,
+        ),
+      ]
+        .map((match) => match[1] ?? "")
+        .filter((name) => shadowing.has(name))
+        .map((name) => `${routePath}: ${name}`),
+    );
+
+    expect(badBindings).toEqual([]);
   });
 
   it("does not allow SVG uploads through the static image-manager route (stored XSS)", () => {

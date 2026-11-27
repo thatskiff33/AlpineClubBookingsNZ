@@ -90,11 +90,14 @@ function linkedMoveOffer(
 }
 
 let modifyResponse: () => Response;
+/** Overrides on the `/modify-quote` body; the default quote is an increase with no choice. */
+let quoteOverrides: Record<string, unknown>;
 /** Every body this panel PUT to `/modify`, in order. */
 let modifyBodies: Array<Record<string, unknown>>;
 
 function installFetch() {
   modifyBodies = [];
+  quoteOverrides = {};
   modifyResponse = () => jsonResponse(linkedMoveOffer(), 409);
   global.fetch = vi.fn(async (input: unknown, init?: RequestInit) => {
     const url = String(input);
@@ -122,6 +125,7 @@ function installFetch() {
         promoCoverage: null,
         promoValidation: null,
         itemizedChanges: [],
+        ...quoteOverrides,
       });
     }
     if (url.endsWith(`/api/bookings/${BOOKING_ID}/modify`)) {
@@ -343,6 +347,87 @@ describe("EditBookingPanel — the linked-move offer (#3232)", () => {
     });
   });
 
+  /**
+   * #5303: the Return-method choice names where the refund really goes - each
+   * booking's own settlement route, carried on the offer as `refundRoute` - so a
+   * refund the treasurer sends by bank transfer (Internet Banking, or a card
+   * payment Stripe holds no record of) is never offered as the original card.
+   */
+  async function returnMethodLabels(overrides: Record<string, unknown>) {
+    modifyResponse = () =>
+      jsonResponse(linkedMoveOffer({ combinedRefundCents: 1_200, settlementMethodRequired: true, ...overrides }), 409);
+    render(<EditBookingPanel booking={makeBooking()} onDone={vi.fn()} />);
+    await saveIntoTheOffer();
+    const chooser = screen.getByTestId("linked-move-settlement-method");
+    return Array.from(chooser.querySelectorAll("label")).map((label) => label.textContent);
+  }
+
+  it("#5303: offers a bank-transfer refund as a bank transfer, never the card", async () => {
+    const labels = await returnMethodLabels({ refundRoute: "BANK_TRANSFER" });
+    expect(labels).toEqual(["Refund by bank transfer", "Hold as account credit"]);
+    expect(screen.getByTestId("linked-move-settlement-method").textContent).not.toMatch(/card/);
+  });
+
+  it("#5303: names both routes where the one choice covers a card and a bank transfer", async () => {
+    const labels = await returnMethodLabels({ refundRoute: "CARD_AND_BANK_TRANSFER" });
+    expect(labels[0]).toBe("Refund to original card, or by bank transfer for a booking that can't be refunded to a card");
+  });
+
+  it("#5303 control: a refund Stripe can return still goes to the card", async () => {
+    expect(await returnMethodLabels({ refundRoute: "CARD" })).toEqual(["Refund to original card", "Hold as account credit"]);
+  });
+
+  it("#5303: an older server that omits the route reads as the card, as before", async () => {
+    expect((await returnMethodLabels({}))[0]).toBe("Refund to original card");
+  });
+
+  it("#5303: this booking's own refund choice, covering the linked booking too, names both routes", async () => {
+    // This booking is card-paid with a Stripe record and its own quote asks, so
+    // the linked control stays hidden and the price summary's one radio answers
+    // for both bookings. The dependent is refunded by bank transfer (the offer's
+    // route covers every booking needing the choice), so the radio must say so.
+    quoteOverrides = {
+      priceDiffCents: -2_000,
+      netChargeCents: -1_000,
+      settlementOptions: {
+        basisAmountCents: 1_000,
+        cardRefundAmountCents: 1_000,
+        cardRefundPercentage: 100,
+        accountCreditAmountCents: 1_000,
+        accountCreditPercentage: 100,
+        daysUntilCheckIn: 30,
+        requiresSettlementMethod: true,
+        returnsToOrganiser: false,
+        organiserRefundByBankTransfer: false,
+        refundHeldForDispute: false,
+        refundByBankTransfer: false,
+      },
+    };
+    modifyResponse = () =>
+      jsonResponse(
+        linkedMoveOffer({ combinedRefundCents: 2_200, settlementMethodRequired: true, refundRoute: "CARD_AND_BANK_TRANSFER" }),
+        409,
+      );
+    render(<EditBookingPanel booking={makeBooking()} onDone={vi.fn()} />);
+    fireEvent.change(screen.getByLabelText(/Check-in/i), { target: { value: "2026-09-05" } });
+    const refundChoice = () => screen.getByRole("radio", { name: /^Refund/ }).closest("label")?.textContent;
+    await waitFor(() => expect(refundChoice()).toBe("Refund to original card: $10.00 (100%)"), { timeout: 2500 });
+    fireEvent.click(screen.getByRole("radio", { name: /^Refund/ }));
+    const saveButton = screen.getByRole("button", { name: "Save Changes" });
+    await waitFor(() => expect(saveButton).not.toBeDisabled(), { timeout: 2500 });
+    fireEvent.click(saveButton);
+    await screen.findByText(/Another of your bookings needs an adult on the nights below/);
+
+    expect(screen.queryByTestId("linked-move-settlement-method")).toBeNull();
+    expect(refundChoice()).toBe(
+      "Refund to original card, or by bank transfer for a booking that can't be refunded to a card: $10.00 (100%)",
+    );
+
+    // Moving only this booking leaves the choice covering this booking alone.
+    fireEvent.click(screen.getByRole("radio", { name: /Move only this booking/ }));
+    expect(refundChoice()).toBe("Refund to original card: $10.00 (100%)");
+  });
+
   it("does not ask where money goes on the arm where none moves", async () => {
     /*
       #3232 fix round. The Return-method question belongs to the OTHER booking's
@@ -545,5 +630,125 @@ describe("EditBookingPanel — the linked-move offer (#3232)", () => {
 
     await screen.findByText(/is relying on this booking for adult supervision/);
     expect(screen.queryAllByRole("radio")).toEqual([]);
+  });
+});
+
+describe("EditBookingPanel — accepting binds every booking's figures (#5238)", () => {
+  const PRIMARY_FIGURES = { newFinalPriceCents: 10_000, priceDiffCents: 0, changeFeeCents: 1_000, netChargeCents: 1_000 };
+  const DEPENDENT_FIGURES = { newFinalPriceCents: 8_800, priceDiffCents: -1_200, changeFeeCents: 1_000, netChargeCents: -200 };
+  const FRESH_ACCEPT_KEY = `v1:${"c".repeat(64)}`;
+
+  function offerWithFigures(dependent = DEPENDENT_FIGURES, acceptStateKey = ACCEPT_KEY) {
+    const offer = linkedMoveOffer({ acceptStateKey });
+    const [row] = offer.linkedBookings as Array<Record<string, unknown>>;
+    return {
+      ...offer,
+      primary: { ...(offer.primary as object), quotedFigures: PRIMARY_FIGURES },
+      linkedBookings: [{ ...row, quotedFigures: dependent }],
+    };
+  }
+
+  it("sends the offer's figures for the primary and for each other booking", async () => {
+    modifyResponse = () => jsonResponse(offerWithFigures(), 409);
+    render(<EditBookingPanel booking={makeBooking()} onDone={vi.fn()} />);
+    const saveButton = await saveIntoTheOffer();
+
+    modifyResponse = () => jsonResponse({ booking: { id: BOOKING_ID } });
+    fireEvent.click(screen.getByRole("radio", { name: /Move both bookings/ }));
+    fireEvent.click(saveButton);
+
+    await waitFor(() => expect(modifyBodies).toHaveLength(2));
+    expect(modifyBodies[1]).toMatchObject({
+      quotedFigures: PRIMARY_FIGURES,
+      linkedQuotedFigures: [{ bookingId: "bk-dependent-01", figures: DEPENDENT_FIGURES }],
+    });
+  });
+
+  it("declining sends the preview's own figures and no linked ones", async () => {
+    const previewed = { newFinalPriceCents: 10_000, priceDiffCents: 0, changeFeeCents: 1_000, netChargeCents: 1_000 };
+    quoteOverrides = { quotedFigures: previewed };
+    modifyResponse = () => jsonResponse(offerWithFigures(), 409);
+    render(<EditBookingPanel booking={makeBooking()} onDone={vi.fn()} />);
+    const saveButton = await saveIntoTheOffer();
+
+    modifyResponse = () => jsonResponse({ booking: { id: BOOKING_ID } });
+    fireEvent.click(screen.getByRole("radio", { name: /Move only this booking/ }));
+    fireEvent.click(saveButton);
+
+    await waitFor(() => expect(modifyBodies).toHaveLength(2));
+    expect(modifyBodies[1]?.quotedFigures).toEqual(previewed);
+    expect("linkedQuotedFigures" in (modifyBodies[1] ?? {})).toBe(false);
+  });
+
+  it("on EDIT_PRICE_CHANGED puts up the fresh offer, clears the answer and says nothing was saved", async () => {
+    const freshDependent = { ...DEPENDENT_FIGURES, changeFeeCents: 2_500, netChargeCents: 1_300 };
+    modifyResponse = () => jsonResponse(offerWithFigures(), 409);
+    const onDone = vi.fn();
+    render(<EditBookingPanel booking={makeBooking()} onDone={onDone} />);
+    const saveButton = await saveIntoTheOffer();
+
+    modifyResponse = () =>
+      jsonResponse(
+        {
+          code: "EDIT_PRICE_CHANGED",
+          error: "The price changed since you previewed it. Review and save again.",
+          figures: freshDependent,
+          linkedMove: offerWithFigures(freshDependent, FRESH_ACCEPT_KEY),
+        },
+        409,
+      );
+    fireEvent.click(screen.getByRole("radio", { name: /Move both bookings/ }));
+    fireEvent.click(saveButton);
+
+    expect(
+      await screen.findByText(/The price of moving both bookings changed since you accepted it, so nothing was saved/),
+    ).toBeInTheDocument();
+    expect(onDone).not.toHaveBeenCalled();
+    for (const radio of screen.getAllByRole("radio", { name: /Move/ })) expect(radio).not.toBeChecked();
+
+    // The next acceptance answers the NEW offer, at its figures.
+    modifyResponse = () => jsonResponse({ booking: { id: BOOKING_ID } });
+    fireEvent.click(screen.getByRole("radio", { name: /Move both bookings/ }));
+    await waitFor(() => expect(saveButton).not.toBeDisabled(), { timeout: 2500 });
+    fireEvent.click(saveButton);
+    await waitFor(() => expect(modifyBodies).toHaveLength(3));
+    expect(modifyBodies[2]).toMatchObject({
+      hostingCoverageLinkedMove: { choice: "MOVE_BOTH", stateKey: FRESH_ACCEPT_KEY },
+      linkedQuotedFigures: [{ bookingId: "bk-dependent-01", figures: freshDependent }],
+    });
+  });
+
+  it("on a plain EDIT_PRICE_CHANGED retires the old offer and re-previews", async () => {
+    modifyResponse = () => jsonResponse(offerWithFigures(), 409);
+    render(<EditBookingPanel booking={makeBooking()} onDone={vi.fn()} />);
+    const saveButton = await saveIntoTheOffer();
+
+    modifyResponse = () =>
+      jsonResponse({ code: "EDIT_PRICE_CHANGED", error: "The price changed since you previewed it. Review and save again.", figures: PRIMARY_FIGURES }, 409);
+    fireEvent.click(screen.getByRole("radio", { name: /Move both bookings/ }));
+    fireEvent.click(saveButton);
+
+    expect(await screen.findByText(/The price changed since you previewed it/)).toBeInTheDocument();
+    await waitFor(() => expect(screen.queryByRole("radio", { name: /Move both bookings/ })).toBeNull());
+  });
+
+  it("names no amounts when a refused acceptance's figures may be the other booking's", async () => {
+    // The member previewed a $10.00 charge on this booking; the refusal carries
+    // the dependent's fresh figures, which are not comparable with it.
+    quoteOverrides = { quotedFigures: PRIMARY_FIGURES };
+    modifyResponse = () => jsonResponse(offerWithFigures(), 409);
+    render(<EditBookingPanel booking={makeBooking()} onDone={vi.fn()} />);
+    const saveButton = await saveIntoTheOffer();
+
+    const freshDependent = { ...DEPENDENT_FIGURES, netChargeCents: -200 };
+    modifyResponse = () =>
+      jsonResponse({ code: "EDIT_PRICE_CHANGED", error: "The price changed since you previewed it. Review and save again.", figures: freshDependent }, 409);
+    fireEvent.click(screen.getByRole("radio", { name: /Move both bookings/ }));
+    fireEvent.click(saveButton);
+
+    expect(
+      await screen.findByText("The price changed since you previewed it. Review the new figures and save again."),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/is now/)).toBeNull();
   });
 });

@@ -139,6 +139,7 @@ const baseMember: Member = {
   postalCountry: null,
   familyGroups: [],
   currentMembershipType: null,
+  currentSubscriptionCategory: null,
 };
 
 function renderInClubZone(members: Member[], zone: string = CLUB_ZONE) {

@@ -25,6 +25,14 @@ export const ADMIN_SYSTEM_TEMPLATE_NAMES = new Set<EmailAuditTemplateName>([
   // preference like its reconcile-by-hand siblings; not delivery-locked,
   // because no money moved.
   "admin-group-joiner-started-stay",
+  // #5433: a waitlist email owed to a member passed its cut-off unsent.
+  // sendToAdmins on the adminWaitlistOffer preference; not delivery-locked,
+  // because no money moved.
+  "admin-waitlist-notice-unsent",
+  // #5433 (D1): a paid booking's confirmation did not reach its owner.
+  // sendToAdmins on the adminBookingReviewRequired preference; not
+  // delivery-locked, because no money moved.
+  "admin-booking-confirmation-unsent",
   // #3663: an expired internet banking hold left alone because the stay has
   // started. sendToAdmins on the adminPaymentFailure preference like its
   // reconcile-by-hand siblings; not delivery-locked, because no money moved.
@@ -107,7 +115,7 @@ export const ADMIN_SYSTEM_TEMPLATE_NAMES = new Set<EmailAuditTemplateName>([
   // LOCKED_DELIVERY_TEMPLATE_NAMES: no money moves, and a club that would rather
   // read the queue than the mail must be allowed to mute it.
   "admin-maintenance-report",
-  // Fork #121: a food order, to the Food Orders settings address. Mutable, not
+  // Fork triyder/AlpineClubBookingsNZ#121: a food order, to the Food Orders settings address. Mutable, not
   // delivery-locked: no money moves and every order stays in the history.
   "food-order-placed",
   // #49 (owner decision "second template"): the version-only notice a Lodge

@@ -165,19 +165,19 @@ beforeEach(() => {
 describe("GET /api/admin/lodges", () => {
   it("rejects unauthenticated callers", async () => {
     mocks.auth.mockResolvedValue(null);
-    const response = await GET();
+    const response = await GET(new Request("http://localhost/api/admin/lodges"));
     expect(response.status).toBe(401);
   });
 
   it("rejects non-admin members", async () => {
     mocks.auth.mockResolvedValue(memberSession);
-    const response = await GET();
+    const response = await GET(new Request("http://localhost/api/admin/lodges"));
     expect(response.status).toBe(403);
   });
 
   it("returns serialized lodges for admins", async () => {
     mocks.lodgeFindMany.mockResolvedValue([lodgeRecord()]);
-    const response = await GET();
+    const response = await GET(new Request("http://localhost/api/admin/lodges"));
     expect(response.status).toBe(200);
     const data = await response.json();
     expect(data.lodges).toHaveLength(1);

@@ -6,6 +6,7 @@
  */
 import type { CapacityCancellationRefund } from "@/lib/booking-card-refund-copy";
 import type { ClubFormat } from "@/lib/club-format";
+import type { OwedNoticeMarker } from "@/lib/owed-notice/store";
 
 export type MarkBookingPaymentSucceededResult = {
   outcome:
@@ -32,6 +33,27 @@ export type MarkBookingPaymentSucceededResult = {
   bumpedBookingIds: string[];
   refundError?: string;
   capacityRefund?: CapacityCancellationRefund;
+  /**
+   * #5433 (owner decision D1): the paid confirmation's owed marker, which the
+   * settle committed with a fresh "paid" when the caller asked for it
+   * (`owesPaidConfirmation`). The caller hands it to
+   * `deliverPaidBookingConfirmation` after the commit; absent on every other
+   * outcome, and on "paid" for a caller that sends no confirmation.
+   */
+  paidConfirmation?: OwedNoticeMarker;
+};
+
+/** The card settle door's input (`markBookingPaymentSucceeded`), here with the other settlement types (#5005, #5433). */
+export type MarkBookingPaymentSucceededInput = {
+  bookingId: string;
+  paymentIntentId: string;
+  amountCents: number;
+  paymentMethodId: string | null;
+  /** The club's format (#3565), resolved before any transaction by the caller. */
+  format: ClubFormat;
+  capturedAt?: Date;
+  /** #5433: the caller delivers the paid confirmation (`StripeSettlementSource.owesPaidConfirmation`). */
+  owesPaidConfirmation?: boolean;
 };
 
 /**
@@ -49,8 +71,15 @@ export type StripeSettlementSource = {
   paymentMethodId: string | null;
   /** #3864: for the applied-credit give-back, resolved before the transaction. */
   format: ClubFormat;
-  /** #4285 review: the caller wrote this capture SUCCEEDED just before (`newlyCaptured`), so it is not a replay. */
-  recordedByCaller?: boolean;
+  /**
+   * #5433 (owner decision D1): the caller sends the member the paid
+   * confirmation, so a fresh PAID claim records it as owed in this settle's
+   * transaction. Set by the three callers that send it (the Stripe webhook,
+   * the confirm-payment route, the confirm-pending job's saved-card charge);
+   * every other card door sends none, or only on an officer's choice, and
+   * writes no marker.
+   */
+  owesPaidConfirmation?: boolean;
 };
 
 /**

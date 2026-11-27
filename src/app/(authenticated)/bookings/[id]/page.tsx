@@ -20,13 +20,15 @@ import { BookingConsentCards } from "./_components/booking-consent-cards";
 import { BookingStatusSection } from "./_components/booking-status-section";
 import { BookingAdminToolsSection } from "./_components/booking-admin-tools-section";
 import { BookingGuestDietaryCard } from "./_components/booking-guest-dietary-card";
-import { loadBookingDetail } from "./_lib/load-booking-detail";
+import { RemovedBookingNotice } from "@/components/removed-booking-notice";
+import { resolveBookingDetailEntry } from "./_lib/booking-detail-entry";
 import { resolveBookingDetailViewer } from "./_lib/booking-detail-viewer";
 import { resolveBookingDetailConsent } from "./_lib/booking-detail-consent";
 import { loadBookingDetailHistory } from "./_lib/booking-detail-history";
 import { resolveBookingDetailEditAccess } from "./_lib/booking-detail-edit-access";
 import { resolveBookingDetailPayment } from "./_lib/booking-detail-payment";
 import { loadOrganiserCardAppealCeiling, loadSupersededHeldBackCents } from "./_lib/booking-detail-organiser-card-appeal";
+import { loadBookingDetailWaitlistPosition } from "./_lib/booking-detail-waitlist-position";
 import { resolveBookingDetailLinkedParty } from "./_lib/booking-detail-linked-party";
 import { buildBookingDetailEditorData } from "./_lib/booking-detail-editor-data";
 import { renderBookingDetailMessages } from "./_lib/booking-detail-messages";
@@ -91,6 +93,34 @@ const BOOKING_SECTIONS: SectionNavItem[] = [
   { id: "transaction-history", label: "Transaction History" },
 ];
 
+/**
+ * The page's one level-1 heading, shared by the full detail and the removed
+ * booking notice, so the page file keeps exactly one `<h1>` (#5372).
+ */
+function BookingDetailHeading() {
+  return <h1 className="text-3xl font-bold">Booking Details</h1>;
+}
+
+/**
+ * #5266 (`INV-ADDPAY-034`): what the booking's owner, or a member guest on it,
+ * sees once the club has removed it. Everybody else gets the plain `notFound()`
+ * — `resolveBookingDetailEntry` decides which — and a Full Admin still gets the
+ * record, through the deleted-booking guard below.
+ */
+function RemovedBookingDetail() {
+  return (
+    <div className="mx-auto max-w-2xl space-y-6">
+      <BookingDetailHeading />
+      <RemovedBookingNotice
+        links={[
+          { href: "/bookings", label: "My bookings" },
+          { href: "/dashboard", label: "Back to the dashboard" },
+        ]}
+      />
+    </div>
+  );
+}
+
 export default async function BookingDetailPage({
   params,
   searchParams,
@@ -126,9 +156,9 @@ export default async function BookingDetailPage({
   // offered a member a self-removal control the very next check refused.
   const clubTodayDateOnly = dateOnlyInstantOf(club.today());
 
-  const booking = await loadBookingDetail(id);
-
-  if (!booking) notFound();
+  const entry = await resolveBookingDetailEntry({ id, session });
+  if (entry.kind === "REMOVED_FOR_VIEWER") return <RemovedBookingDetail />;
+  const booking = entry.kind === "FOUND" ? entry.booking : notFound();
   const viewer = resolveBookingDetailViewer({ session, booking });
   const {
     isAdmin,
@@ -315,7 +345,7 @@ export default async function BookingDetailPage({
         cancellationHasNoPayment={cancellationHasNoPayment}
       />
       <div className="flex items-center justify-between">
-        <h1 className="text-3xl font-bold">Booking Details</h1>
+        <BookingDetailHeading />
         <div className="flex items-center gap-2">
           <Button asChild variant="outline">
             <Link href={backHref}>Back to Bookings</Link>
@@ -397,6 +427,7 @@ export default async function BookingDetailPage({
 
       <BookingPaymentCards
         booking={booking}
+        waitlistPosition={await loadBookingDetailWaitlistPosition(booking)}
         club={club}
         money={money}
         viewer={viewer}

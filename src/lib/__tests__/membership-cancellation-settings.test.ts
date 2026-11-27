@@ -159,7 +159,7 @@ describe("membership cancellation settings", () => {
   });
 
   it("returns default settings from the admin API when no row exists", async () => {
-    const response = await getMembershipCancellationSettings();
+    const response = await getMembershipCancellationSettings(new NextRequest("http://localhost/api/admin/membership-cancellation-settings"));
     const body = await response.json();
 
     expect(response.status).toBe(200);

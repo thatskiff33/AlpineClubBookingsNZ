@@ -1,33 +1,33 @@
 import { NextResponse } from "next/server";
 import { revalidatePath } from "next/cache";
 import { Prisma } from "@prisma/client";
-import { z } from "zod";
+import { parseJsonRequestBody } from "@/lib/api-json";
 import {
   buildStructuredAuditLogCreateArgs,
   getAuditRequestContext,
 } from "@/lib/audit";
+import { shallowChangedFields } from "@/lib/audit-changed-fields";
 import {
   normalizeSubscriptionCategoryText,
   serializeSubscriptionCategory,
   subscriptionCategoryAuditActionForUpdate,
-  subscriptionCategoryChangedFields,
   subscriptionCategorySelect,
 } from "@/lib/subscription-categories";
 import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/session-guards";
+import { subscriptionCategoryPatchSchema } from "@/lib/admin-membership-api/config-structure";
+import { connectionJson } from "@/lib/mcp-connection-request";
+import {
+  CONFIG_OK_CONNECTION_SHAPE,
+  SUBSCRIPTION_CATEGORY_CONNECTION_SHAPE,
+} from "@/lib/connection-shapes/membership-config";
+import { routeIdParamsSchema } from "@/lib/route-id-params";
 
-const paramsSchema = z.object({
-  id: z.string().min(1),
-});
-
-const patchSchema = z
-  .object({
-    name: z.string().trim().min(1).max(120).optional(),
-    description: z.string().trim().max(1000).nullable().optional(),
-    isActive: z.boolean().optional(),
-    sortOrder: z.number().int().min(0).max(100000).optional(),
-  })
-  .strict();
+/**
+ * PATCH|DELETE /api/admin/subscription-categories/[id]. Also the AI app
+ * actions `update_subscription_category` and `delete_subscription_category`
+ * (ALP-720).
+ */
 
 export async function PATCH(
   request: Request,
@@ -41,7 +41,7 @@ export async function PATCH(
   }
   const session = guard.session;
 
-  const parsedParams = paramsSchema.safeParse(await params);
+  const parsedParams = routeIdParamsSchema.safeParse(await params);
   if (!parsedParams.success) {
     return NextResponse.json(
       { error: "Invalid route parameters", details: parsedParams.error.flatten() },
@@ -49,14 +49,13 @@ export async function PATCH(
     );
   }
 
-  let body: unknown;
-  try {
-    body = await request.json();
-  } catch {
-    return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
-  }
+  const jsonBody = await parseJsonRequestBody(request, {
+    error: "Invalid JSON",
+  });
+  if (!jsonBody.ok) return jsonBody.response;
+  const body = jsonBody.body;
 
-  const parsed = patchSchema.safeParse(body);
+  const parsed = subscriptionCategoryPatchSchema.safeParse(body);
   if (!parsed.success) {
     return NextResponse.json(
       { error: "Invalid input", details: parsed.error.flatten() },
@@ -141,7 +140,7 @@ export async function PATCH(
         outcome: "success",
         summary: auditAction.summary,
         metadata: {
-          changedFields: subscriptionCategoryChangedFields(existing, data as Record<string, unknown>),
+          changedFields: shallowChangedFields(existing, data as Record<string, unknown>),
           previousSubscriptionCategory: serializeSubscriptionCategory(existing),
           newSubscriptionCategory: serializeSubscriptionCategory(subscriptionCategory),
         },
@@ -153,9 +152,11 @@ export async function PATCH(
   });
   revalidatePath("/", "layout");
 
-  return NextResponse.json({
-    subscriptionCategory: serializeSubscriptionCategory(updated),
-  });
+  return connectionJson(
+    request,
+    { subscriptionCategory: serializeSubscriptionCategory(updated) },
+    SUBSCRIPTION_CATEGORY_CONNECTION_SHAPE,
+  );
 }
 
 export async function DELETE(
@@ -170,7 +171,7 @@ export async function DELETE(
   }
   const session = guard.session;
 
-  const parsedParams = paramsSchema.safeParse(await params);
+  const parsedParams = routeIdParamsSchema.safeParse(await params);
   if (!parsedParams.success) {
     return NextResponse.json(
       { error: "Invalid route parameters", details: parsedParams.error.flatten() },
@@ -233,5 +234,5 @@ export async function DELETE(
   });
   revalidatePath("/", "layout");
 
-  return NextResponse.json({ ok: true });
+  return connectionJson(request, { ok: true }, CONFIG_OK_CONNECTION_SHAPE);
 }

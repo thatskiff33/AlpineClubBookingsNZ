@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
+import { parseOptionalJsonRequestBody } from "@/lib/api-json";
 import { auth } from "@/lib/auth";
 import { bookingIdParamsSchema } from "@/lib/booking-cancel-schema";
 import { deleteBooking } from "@/lib/booking-delete";
@@ -10,25 +11,14 @@ import { getClientIp } from "@/lib/rate-limit";
 import { requireActiveSessionUser } from "@/lib/session-guards";
 import { authorizationRoleFromAccessRoles } from "@/lib/access-roles";
 import { transactionContendedResponse } from "@/lib/transaction-contended-response";
+import { DRAFT_DELETED_CONNECTION_SHAPE } from "@/lib/connection-shapes-bookings";
+import { connectionJson, memberOnlySessionUser } from "@/lib/mcp-connection-request";
 
 const deleteBookingBodySchema = z
   .object({
     reason: z.string().trim().min(3).max(500).optional(),
   })
   .strict();
-
-async function readDeleteBody(request: NextRequest) {
-  const text = await request.text();
-  if (!text.trim()) {
-    return {};
-  }
-
-  try {
-    return JSON.parse(text) as unknown;
-  } catch {
-    return null;
-  }
-}
 
 /**
  * GET /api/bookings/[id]
@@ -38,6 +28,11 @@ async function readDeleteBody(request: NextRequest) {
  *
  * Added for AI app connections (ALP-653), so it is absent while that module is
  * off (`INV-MCP-001`). DELETE below is older and is not.
+ *
+ * DELETE is also the AI app action `delete_my_draft_booking` (ALP-794). Its
+ * role is read from the member-only user, so a connection deletes only the
+ * member's own draft: a cancelled booking's soft delete is an officer's
+ * (`deleteBooking`).
  */
 export async function GET(
   _request: NextRequest,
@@ -89,18 +84,11 @@ export async function DELETE(
       return inactiveResponse;
     }
 
-    const body = await readDeleteBody(request);
-    if (body === null) {
-      return NextResponse.json(
-        {
-          error: "Invalid JSON",
-          details: { body: ["Request body must be valid JSON"] },
-        },
-        { status: 400 }
-      );
-    }
+    // The reason is optional: an empty body deletes without one.
+    const jsonBody = await parseOptionalJsonRequestBody(request, { whenAbsent: {} });
+    if (!jsonBody.ok) return jsonBody.response;
 
-    const parsedBody = deleteBookingBodySchema.safeParse(body);
+    const parsedBody = deleteBookingBodySchema.safeParse(jsonBody.body);
     if (!parsedBody.success) {
       return NextResponse.json(
         { error: "Invalid input", details: parsedBody.error.flatten() },
@@ -112,14 +100,14 @@ export async function DELETE(
       bookingId: parsedParams.data.id,
       actor: {
         memberId: session.user.id,
-        role: authorizationRoleFromAccessRoles(session.user),
+        role: authorizationRoleFromAccessRoles(memberOnlySessionUser(request, session.user)),
         ipAddress: getClientIp(request),
       },
       reason: parsedBody.data.reason,
     });
 
     if (result.status === 200) {
-      return NextResponse.json(result.data);
+      return connectionJson(request, result.data, DRAFT_DELETED_CONNECTION_SHAPE);
     }
 
     return NextResponse.json(

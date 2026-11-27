@@ -9,9 +9,11 @@ of `## Unreleased`, concurrent lanes conflict on that file every single day
 request never conflicts. At release time the fragments are compiled into a real
 version section and deleted.
 
-The `CHANGELOG.md merge=union` declaration in `.gitattributes` (#2451) stays as
-belt-and-braces through the transition, so the pull requests that still edit
-`CHANGELOG.md` directly keep merging without a manual resolve.
+A code-bearing pull request carries either a fragment here or the no-entry
+marker described below; editing `CHANGELOG.md` directly does not count (#5263).
+Only the release compile writes `CHANGELOG.md`. The `CHANGELOG.md merge=union`
+declaration in `.gitattributes` (#2451) stays: the file is a flat list of
+released lines (see the table below).
 
 ## The general rule, of which this is one instance
 
@@ -61,7 +63,24 @@ routing row are for.
    top-level `- ` bullets in the house style below. Nothing else — no headings,
    no version number, no date.
 3. Commit it with the rest of the pull request. The `verify` job checks that a
-   code-bearing pull request carries one.
+   code-bearing pull request adds one (or carries the no-entry marker). A
+   changed or deleted fragment, an after-deploy `.deploy.md` file and a direct
+   edit to `CHANGELOG.md` do not count.
+
+### Linking a doc from a fragment
+
+Write a relative link the way it works from this directory, so it is correct
+where you write it: `[the guide](../docs/guides/club-time.md)`. When the
+compiler copies the fragment into `CHANGELOG.md` at the repository root, it
+rewrites each relative link to resolve from there instead
+(`docs/guides/club-time.md`), so `docs:linkcheck` passes both before and after
+a release (#5214). That covers a link whose text wraps onto the next line,
+both targets of an image used as a link (`[![alt](../img.png)](../docs/A.md)`)
+or of a link inside an image's alt text, and reference definitions, including
+`[ref]: <../docs/a file.md>`. Absolute URLs, `#anchor` links and links shown
+inside code are left alone. A link that climbs out of the repository
+(`../../x.md`) has no root-relative form; `changelog-fragment-shape` refuses
+it, and so does the compiler.
 
 ## Patch or minor: the `.feature.md` suffix
 
@@ -145,6 +164,118 @@ that genuinely need no entry (every workflow tweak, every test-harness change),
 and the noise would train everyone to reach for the no-entry marker, which is
 the one outcome that switches the gate off in practice.
 
+The same definition is why the release-compile pull request passes. It edits
+`CHANGELOG.md`, `package.json` and the upgrade and release-notes documents and
+deletes fragments, but changes nothing under `src/` or `prisma/`, so it is not
+code-bearing. There is no label, body or path bypass for it: a release pull
+request that also changes application source needs its own fragment or marker.
+
+## After-deploy steps: the `.deploy.md` suffix
+
+A change that needs someone to act once its release is deployed — run a
+report, map a setting, check a page — writes that step as its own fragment,
+`changelog.d/<pr-number>-<short-slug>.deploy.md` (#5379, owner decisions D1 and
+D4, 22 Nov 2026). **The pull request's author, human or agent, adds it in the
+same pull request.** Before, such steps lived only in pull request
+descriptions, and a release's checklist had to be collected from them by hand
+(#5378). A pull request with two steps writes two fragments.
+
+The file is exactly three headings, once each, in this order, with nothing
+above the first and no other heading:
+
+```markdown
+## Who
+
+operator
+
+## What to do
+
+Before or during the deploy, check that your Stripe webhook endpoint sends the
+four `charge.dispute.*` events, as `DEPLOYMENT.md` lists them.
+
+## How to check it worked
+
+The endpoint's event list in the Stripe dashboard includes all four.
+```
+
+- **Who** is one line naming one role: `owner` (the club's owner, for a
+  production action only they may take), `operator` (whoever runs the
+  servers and the release) or `officer` (a lodge officer with admin access,
+  for a check in the app).
+- **What to do** and **How to check it worked** each open with a sentence,
+  not a list, quote, table or code block; more paragraphs, lists or code may
+  follow. Say "before or during the deploy" in What to do when the step cannot
+  wait until after: the filed list tells the reader to do such a step before
+  deploying.
+- Every link, Markdown or HTML (`<a href>`, `<img src>`), is an absolute
+  `https://` URL or a `mailto:` address; write a repository path in backticks
+  instead. A step is copied into the upgrade guide, the notes page and a
+  GitHub issue, where a relative or same-page link points somewhere different
+  in each, so a relative link, or any other scheme, is refused.
+- The name is lower-case letters, digits and hyphens. It normally opens with
+  the pull request's number, which the checklist links; a lane that names its
+  files before the pull request exists may use its lane name and rename it
+  once the number is known.
+
+`scripts/lib/deploy-fragments.mjs` is the one definition of the format. A
+`.deploy.md` file is not a changelog entry: the compiler never puts it in
+`CHANGELOG.md`, and it does not satisfy the changelog gate, so a code-bearing
+pull request still writes its ordinary fragment too.
+
+What happens to it:
+
+- **`verify` and `pnpm run pr:check`** fail a pull request whose "Manual Checks
+  Required" or "Migration Or Deployment Impact" answer names a time after
+  the deploy or the release ("after deploy", "after the next deploy",
+  "post-deploy", "after release", "after the new release", "post-release",
+  "after this release's deploy", "after the new colour", "after upgrading",
+  "after the upgrade", "after cutover", "once this ships", "once deployed",
+  "once it is live", "once the new release is serving", "once released") or
+  says "the owner runs" or "should run", in any case and even wrapped onto
+  the next line, while its diff adds or changes no
+  `.deploy.md` fragment, and fail any `.deploy.md` it adds or changes that is
+  malformed (`scripts/ci/check-pr-deploy-fragment.mjs`).
+  A pull request with no such step answers "None. No after-deploy step." The
+  gate reads a negated answer as no step: "no", "none" or "nothing" before
+  the time, with only words such as "step", "is", "needed" or "to do"
+  between ("None after deploy.", "Nothing to do after release."), or the time
+  then "nothing" or "none" ("After deploy: nothing"). Only those words are
+  set aside: the rest of the sentence is read as usual, so "None. After
+  deploy, run the census." and "After deploy nothing breaks, and the owner
+  should run the census." fail. A negation may wrap onto the next line only
+  where that line finishes it ("None. No" then "after-deploy step."), not
+  where it opens with a capital (a new sentence) or goes on to a step ("None"
+  then "after deploy run the census." fails). A negation whose clause goes on
+  with "unless", "if", "but" or "except" is no negation: "No step is needed
+  after deploy unless SMTP is set." and "After deploy, nothing changes for
+  members, but run the backfill." both fail. A clause ends at a full stop, a
+  semicolon or the line's end.
+
+  There is no escape marker or phrase (owner decision, 25 Nov 2026, #5379):
+  a sentence that only describes behaviour after the deploy trips the gate
+  too, and its author rewords it to name no time after the deploy. For
+  example, "Just after deploy one extra alert can go out" becomes "One extra
+  alert can go out while the two releases overlap."
+
+  The release-prep pull request, which deletes the fragments it files and
+  changes nothing but the files `release:cut prepare` writes, is exempt.
+- **`pnpm run release:cut prepare`** refuses to cut, changing nothing, while any
+  `.deploy.md` is malformed. Otherwise it files every step, one checkbox each,
+  under "After deploying this release" at the end of the release's section of
+  `docs/UPGRADING.md` and in its notes page `docs/releases/v<version>.md`, and
+  deletes the fragments with the others. `--amend` adds late steps to both.
+  `compile-changelog.mjs` run on its own validates them but leaves them in
+  place.
+- **`pnpm run release:cut publish`** opens a "v<version> post-deploy checklist"
+  issue from the notes page's steps, labelled `post-deploy-checklist`, and links
+  it from the GitHub release. It is assigned to the repository's owner (owner
+  decision D2 on #5379), or to `--checklist-assignee <login>` when given; when
+  an organisation owns the repository, or GitHub cannot say, it is assigned to
+  whoever publishes (`@me`) and the plan says why. A re-run finds the issue by
+  its label and reuses it. If it cannot be opened, the release is still
+  published, linking the notes page instead, and the exact `gh` commands are
+  printed. A release with no steps opens no issue.
+
 ## Compiling a release
 
 `pnpm run release:cut prepare --execute` runs the compiler for you on a new
@@ -173,6 +304,17 @@ and fragments for a safe retry; if restoration itself fails, stop and inspect
 the files named by the error. The compiler cannot prove an unfetched remote
 update does not exist, so refresh `origin/main` before running it.
 
+Straight after a release, this directory and `size-allowances.d/` hold only
+their `README.md`. That is their normal state, so a check that reads either
+directory must pass when it is empty: assert that it read the right directory,
+never that it found a fragment. `changelog-fragment-shape` tests this itself:
+its rules pass on a directory holding only a `README.md` and still flag a bad
+fragment in a populated one. These other checks read either directory from
+disk and must pass when it is empty: `late-capture-decision-provenance`,
+`cli-server-only-reach-census`, `additive-artifact-fragments`,
+`agent-workflow-contract`, and the two censuses that scan
+`live-doc-surfaces` (`audit-writer-census`, `view-only-banner-contract`).
+
 A version that already has a section is refused — except with `--append`,
 which adds the fragments (and any direct `## Unreleased` entries) to the end of
 that existing section and keeps its heading and date. It refuses any section
@@ -187,7 +329,7 @@ them apart by marker rather than by position:
 - The pointer note ("entries live in `changelog.d/`") is wrapped in
   `<!-- changelog-pointer-note:start -->` / `<!-- changelog-pointer-note:end -->`.
   Leave those comments in place. They exist because `CHANGELOG.md` is
-  `merge=union`: a branch still writing its entry directly under
+  `merge=union`: a stray entry written directly under
   `## Unreleased` can land that entry *above* the note, and a compiler that
   guessed by position would then publish the note inside a release section and
   delete it from `## Unreleased` for good. Anchored, the note is recognised

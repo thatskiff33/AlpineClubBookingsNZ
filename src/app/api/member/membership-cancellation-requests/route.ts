@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { parseJsonRequestBody } from "@/lib/api-json";
 import { z } from "zod";
 import { auth } from "@/lib/auth";
 import {
@@ -9,6 +10,8 @@ import {
 import { getClientIp, rateLimiters, checkRateLimit } from "@/lib/rate-limit";
 import { requireActiveSessionUser } from "@/lib/session-guards";
 import logger from "@/lib/logger";
+import { connectionJson } from "@/lib/mcp-connection-request";
+import { MEMBERSHIP_CANCELLATION_OPTIONS_CONNECTION_SHAPE } from "@/lib/connection-shapes";
 
 const createRequestSchema = z.object({
   participantMemberIds: z.array(z.string().trim().min(1)).min(1).max(20),
@@ -31,7 +34,14 @@ function errorResponse(error: unknown) {
   );
 }
 
-export async function GET() {
+/**
+ * The member's cancellation options: who they may ask to cancel, the club's
+ * warning, and their open requests. Also the AI app action
+ * `get_membership_cancellation_options` (ALP-795), sent without anyone's email
+ * address. Submitting a request (POST) is the member's own declaration, made
+ * on the website.
+ */
+export async function GET(request: Request) {
   const session = await auth();
   if (!session?.user?.id) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -43,8 +53,10 @@ export async function GET() {
   }
 
   try {
-    return NextResponse.json(
+    return connectionJson(
+      request,
       await getMembershipCancellationOverview(session.user.id),
+      MEMBERSHIP_CANCELLATION_OPTIONS_CONNECTION_SHAPE,
     );
   } catch (error) {
     return errorResponse(error);
@@ -78,8 +90,10 @@ export async function POST(request: NextRequest) {
   }
 
   let parsed: z.infer<typeof createRequestSchema>;
+  const jsonBody = await parseJsonRequestBody(request);
+  if (!jsonBody.ok) return jsonBody.response;
   try {
-    parsed = createRequestSchema.parse(await request.json());
+    parsed = createRequestSchema.parse(jsonBody.body);
   } catch {
     return NextResponse.json(
       { error: "Invalid cancellation request payload" },

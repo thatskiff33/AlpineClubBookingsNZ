@@ -41,8 +41,8 @@ import {
   refreshXeroContactCachesFromContact,
   type CachedXeroContact,
 } from "./xero-contact-cache";
+import { completeMemberContactOperation } from "./xero-contact-create-recovery";
 import {
-  completeMemberContactUpdateOperation,
   getContactFirstInvoiceDate,
   reserveMemberContactUpdateOperation,
 } from "./xero-contacts";
@@ -116,7 +116,7 @@ function addNameMismatchToSyncReport(
   });
 }
 
-function getSafeXeroContactAuditChanges(changes: string[]) {
+export function xeroContactChangedFields(changes: string[]) {
   const fields = new Set<string>();
 
   for (const change of changes) {
@@ -147,7 +147,7 @@ async function writeXeroContactSyncAudit(input: {
   changes: string[];
   source: string;
 }) {
-  const changedFields = getSafeXeroContactAuditChanges(input.changes);
+  const changedFields = xeroContactChangedFields(input.changes);
 
   try {
     await createAuditLog({
@@ -251,7 +251,7 @@ async function repairXeroContactNameOrderIfNeeded(input: {
     const completedContactId =
       response.body.contacts?.[0]?.contactID ?? contactId;
 
-    await completeMemberContactUpdateOperation(
+    await completeMemberContactOperation(
       input.member.id,
       contactId,
       operation,

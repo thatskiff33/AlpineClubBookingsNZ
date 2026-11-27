@@ -3,6 +3,7 @@
 import {
   useCallback,
   useEffect,
+  useLayoutEffect,
   useRef,
   useState,
   type RefObject,
@@ -290,10 +291,13 @@ export function useSectionEditState<T extends object>(
   // Callbacks are held in a latest-ref so a caller does not have to memoise
   // them: the mount-time load must run exactly once regardless of the identity
   // churn of an inline arrow function. The ref is seeded at first render and
-  // refreshed after every commit (this effect is declared before the load
-  // effect, so it has already run by the time the load fires).
+  // refreshed inside every commit, so it has run before the load effect and
+  // before any click on what that commit drew. It must stay a LAYOUT effect: a
+  // passive one runs in a later task, and a Save pressed in between ran the
+  // previous render's `save`, which read state from before the click's own
+  // render (ALP-808: the liability rule's "The preview listed 0").
   const callbacks = useRef(options);
-  useEffect(() => {
+  useLayoutEffect(() => {
     callbacks.current = options;
   });
 

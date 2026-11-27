@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
-import { z } from "zod";
 import type { Prisma } from "@prisma/client";
 import { MEMBER_ACCESS_ROLE_SELECT } from "@/lib/access-role-definitions";
+import { parseJsonRequestBody } from "@/lib/api-json";
 import { createAuditLog } from "@/lib/audit";
 import { isFullAdmin, memberHoldsPrivilegedRole } from "@/lib/access-roles";
 import {
@@ -41,14 +41,9 @@ import {
   acquireMemberParentPartnerPairLocks,
   isMemberParentPartnerExclusionViolation,
 } from "@/lib/member-parent-partner-exclusivity";
-
-const linkDependentSchema = z.object({
-  memberId: z.string().min(1, "Member is required"),
-  inheritEmail: z.boolean(),
-  disableLogin: z.boolean(),
-  inheritEmailFromId: z.string().optional().nullable().or(z.literal("")),
-  addToFamilyGroupIds: z.array(z.string()).default([]),
-});
+import { linkDependentSchema } from "@/lib/admin-membership-api/members";
+import { connectionJson } from "@/lib/mcp-connection-request";
+import { DEPENDENT_LINKED_CONNECTION_SHAPE } from "@/lib/connection-shapes/membership-members";
 
 class LinkDependentError extends Error {
   constructor(
@@ -107,12 +102,9 @@ export async function POST(
   const session = guard.session;
   const { id: parentId } = await params;
 
-  let body: unknown;
-  try {
-    body = await req.json();
-  } catch {
-    return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
-  }
+  const jsonBody = await parseJsonRequestBody(req, { error: "Invalid JSON" });
+  if (!jsonBody.ok) return jsonBody.response;
+  const body = jsonBody.body;
 
   const parsed = linkDependentSchema.safeParse(body);
   if (!parsed.success) {
@@ -443,7 +435,7 @@ export async function POST(
       return updated;
     });
 
-    return NextResponse.json({ member: linkedMember });
+    return connectionJson(req, { member: linkedMember }, DEPENDENT_LINKED_CONNECTION_SHAPE);
   } catch (error) {
     if (isMemberParentPartnerExclusionViolation(error)) {
       return NextResponse.json(

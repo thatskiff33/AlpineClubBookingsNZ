@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { withSaveFigures } from "@/lib/__tests__/support/edit-save-figures";
 import { NextRequest } from "next/server";
 
 // #2363. PUT /api/bookings/[id]/modify is the save endpoint the member edit
@@ -44,7 +45,7 @@ import {
 function req(body: unknown) {
   return new NextRequest("http://localhost/api/bookings/b1/modify", {
     method: "PUT",
-    body: JSON.stringify(body),
+    body: JSON.stringify(withSaveFigures(body)),
     headers: { "content-type": "application/json" },
   });
 }

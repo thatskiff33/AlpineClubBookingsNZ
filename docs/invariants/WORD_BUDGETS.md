@@ -110,7 +110,7 @@ while exceptions are proposed on their deciding issues (#2576, #3040, #3039,
 | `INV-ADDPAY-038` | 1025 |
 | `INV-CONFIG-002` | 874 |
 | `INV-MONEY-003` | 867 |
-| `INV-ADDPAY-034` | 828 |
+| `INV-ADDPAY-034` | 583 |
 | `INV-MOD-026` | 828 |
 | `INV-PRIV-011` | 809 |
 | `INV-DATE-013` | 780 |
@@ -152,14 +152,13 @@ while exceptions are proposed on their deciding issues (#2576, #3040, #3039,
 | `INV-DATE-024` | 350 |
 | `INV-MONEY-024` | 348 |
 | `INV-PAY-025` | 348 |
-| `INV-PAY-023` | 335 |
+| `INV-PAY-023` | 332 |
 | `INV-ADDPAY-035` | 340 |
 | `INV-LIFE-018` | 338 |
 | `INV-CAP-030` | 337 |
 | `INV-ADDPAY-009` | 333 |
 | `INV-CAP-032` | 331 |
 | `INV-LIFE-065` | 325 |
-| `INV-MONEY-017` | 323 |
 | `INV-MOD-016` | 319 |
 | `INV-DATE-027` | 316 |
 | `INV-PAY-046` | 308 |

@@ -80,6 +80,17 @@ describe("GET /api/admin/occupancy", () => {
     expect(mocks.prisma.booking.findMany).not.toHaveBeenCalled();
   });
 
+  it("names the missing month or lodge in the refusal, as the page has always been told", async () => {
+    const { GET } = await import("@/app/api/admin/occupancy/route");
+    const noMonth = await GET(new NextRequest("http://localhost/api/admin/occupancy?lodgeId=lodge-1"));
+    const noLodge = await GET(new NextRequest("http://localhost/api/admin/occupancy?month=2026-07"));
+
+    expect(noMonth.status).toBe(400);
+    expect(await noMonth.json()).toEqual({ error: "month is required as YYYY-MM" });
+    expect(noLodge.status).toBe(400);
+    expect(await noLodge.json()).toEqual({ error: "A valid lodgeId is required." });
+  });
+
   it("queries operational bookings for the month window and counts guest nights", async () => {
     mocks.prisma.booking.findMany.mockResolvedValue([
       booking({

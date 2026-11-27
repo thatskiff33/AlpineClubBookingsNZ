@@ -1,15 +1,20 @@
 import { bookingOwner } from "@/lib/booking-owner";
+import { formatBookingReference } from "@/lib/booking-reference";
 import { NextRequest, NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma";
-import { z } from "zod";
 import { endOfClubDayInclusive, requireCalendarDate, startOfClubDay } from "@/lib/club-time";
 import { clubTimeZone } from "@/lib/club-time/server";
 import { formatDateOnly } from "@/lib/date-only";
-import { dateOnlyStringSchema } from "@/lib/date-only-schema";
 import type { Prisma } from "@prisma/client";
 import { createAuditLog } from "@/lib/audit";
-import { adminListPageField } from "@/lib/admin-list-page";
+import { adminPromoRedemptionsQuerySchema } from "@/lib/admin-bookings-schemas/promo-codes";
+import {
+  ADMIN_PROMO_REDEMPTIONS_CONNECTION_SHAPE,
+  type AdminPromoRedemptionReport,
+  type AdminPromoRedemptionRow,
+} from "@/lib/connection-shapes/bookings-review-queues";
+import { connectionJson } from "@/lib/mcp-connection-request";
 import {
   BENEFICIAL_PROMO_ALLOCATION_FILTER,
   isBeneficialPromoAllocation,
@@ -22,25 +27,12 @@ const EXPORT_MAX_ROWS = 10_000;
 
 // Redeemed-date range (`from`/`to` are inclusive club-timezone days), an
 // optional lodge filter, and page/pageSize pagination mirroring the waitlist
-// admin route. Filtering never changes the all-time totals — those always cover
-// every redemption of the code.
-const redemptionsQuerySchema = z.object({
-  from: dateOnlyStringSchema.optional(),
-  to: dateOnlyStringSchema.optional(),
-  lodgeId: z.string().min(1).optional(),
-  page: adminListPageField,
-  pageSize: z.coerce.number().int().min(1).max(200).default(50),
-});
+// admin route: `adminPromoRedemptionsQuerySchema`, which the AI app action
+// `get_promo_code_redemptions` offers too (ALP-719). Filtering never changes
+// the all-time totals — those always cover every redemption of the code.
 
 function memberName(member: { firstName: string; lastName: string }): string {
   return `${member.firstName} ${member.lastName}`.trim();
-}
-
-// Human-friendly booking reference derived from the cuid (bookings carry no
-// separate reference column). Uppercased tail, matching the shortId convention
-// used elsewhere in the admin surface; the link always uses the full id.
-function bookingReference(id: string): string {
-  return id.slice(-8).toUpperCase();
 }
 
 // checkIn/checkOut are `@db.Date` values (stored at UTC midnight), so the night
@@ -50,6 +42,12 @@ function nightCount(checkIn: Date, checkOut: Date): number {
   return Math.max(0, Math.round(ms / 86_400_000));
 }
 
+/**
+ * GET /api/admin/promo-codes/[id]/redemptions — one code's uses report.
+ * Also the AI app action `get_promo_code_redemptions` (ALP-719), which offers
+ * the paged report only: `export` is not one of its fields, so a connection
+ * never takes the bulk CSV export.
+ */
 export async function GET(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
@@ -61,7 +59,7 @@ export async function GET(
   if (!guard.ok) return guard.response;
 
   const { searchParams } = new URL(req.url);
-  const parsed = redemptionsQuerySchema.safeParse({
+  const parsed = adminPromoRedemptionsQuerySchema.safeParse({
     from: searchParams.get("from") ?? undefined,
     to: searchParams.get("to") ?? undefined,
     lodgeId: searchParams.get("lodgeId") ?? undefined,
@@ -242,7 +240,7 @@ export async function GET(
     useIndexById.set(row.id, next);
   }
 
-  const rows = redemptions.map((r) => ({
+  const rows = redemptions.map((r): AdminPromoRedemptionRow => ({
     id: r.id,
     createdAt: r.createdAt.toISOString(),
     // #3369: the party shown is the booking's OWNER — a member, or the school
@@ -257,7 +255,7 @@ export async function GET(
     },
     booking: {
       id: r.booking.id,
-      reference: bookingReference(r.booking.id),
+      reference: formatBookingReference(r.booking.id), // the site's one short reference (#5407)
       lodgeId: r.booking.lodge.id,
       lodgeName: r.booking.lodge.name,
       checkIn: formatDateOnly(r.booking.checkIn),
@@ -332,7 +330,7 @@ export async function GET(
     });
   }
 
-  return NextResponse.json({
+  const answer: AdminPromoRedemptionReport = {
     code: {
       id: promoCode.id,
       code: promoCode.code,
@@ -393,5 +391,6 @@ export async function GET(
         }
       : null,
     rows,
-  });
+  };
+  return connectionJson(req, answer, ADMIN_PROMO_REDEMPTIONS_CONNECTION_SHAPE);
 }

@@ -14,12 +14,44 @@ import {
   validateApprovedTemplateTokens,
   validateEmailTemplateContent,
 } from "@/lib/email-message-renderer";
+import { calendarRemovalNote, calendarUpdateNote } from "@/lib/email-message-notes";
 import {
   ALWAYS_BOOKING_SCOPED_TEMPLATE_NAMES,
   isBookingSuppressibleTemplate,
 } from "@/lib/booking-email-suppression";
 
 describe("email message registry", () => {
+  // #5249: a club that customised these emails keeps its wording. The calendar
+  // sentence is an optional token, so a stored override without it still saves
+  // and sends, and one that adds it is accepted.
+  it.each([
+    ["booking-cancelled", "calendarRemovalNote", calendarRemovalNote(true)],
+    ["booking-bumped", "calendarRemovalNote", calendarRemovalNote(true)],
+    ["booking-modified", "calendarUpdateNote", calendarUpdateNote()],
+  ] as const)("offers %s an optional {{%s}} previewed from its composer (#5249)", (templateName, token, sample) => {
+    const definition = getEmailTemplateDefinition(templateName)!;
+    expect(definition.allowedTokens).toContain(token);
+    expect(definition.requiredTokens).not.toContain(token);
+    expect(definition.defaultBody).toContain(`{{${token}}}`);
+    expect(definition.sampleData[token]).toBe(sample);
+    const subject = definition.defaultSubject;
+    const withoutToken = definition.defaultBody.replace(`{{${token}}}`, "");
+    expect(validateEmailTemplateContent({ templateName, subject, bodyText: withoutToken }).valid).toBe(true);
+    expect(validateEmailTemplateContent({ templateName, subject, bodyText: `${withoutToken}\n\n{{${token}}}` }).valid).toBe(true);
+  });
+
+  it("requires {{offerNote}} in the officers' waitlist offer alert, as its sibling requires {{noticeNote}} (#5433 round 3, item 5)", () => {
+    for (const [templateName, token] of [["admin-waitlist-offer", "offerNote"], ["admin-waitlist-notice-unsent", "noticeNote"]] as const) {
+      const definition = getEmailTemplateDefinition(templateName)!;
+      expect(definition.requiredTokens).toContain(token);
+      expect(definition.defaultBody).toContain(`{{${token}}}`);
+      // A saved override that drops it is refused at save; the shipped default passes.
+      const dropped = validateEmailTemplateContent({ templateName, subject: definition.defaultSubject, bodyText: definition.defaultBody.replace(`{{${token}}}`, "") });
+      expect(dropped.missingRequiredTokens).toEqual([token]);
+      expect(validateEmailTemplateContent({ templateName, subject: definition.defaultSubject, bodyText: definition.defaultBody }).valid).toBe(true);
+    }
+  });
+
   it("uses content-only defaults for noisy scheduled report emails", () => {
     expect(getDefaultDeliveryMode("admin-daily-digest")).toBe("content_only");
     expect(getDefaultDeliveryMode("admin-xero-reconciliation-report")).toBe(
@@ -939,7 +971,7 @@ describe("#2320 review — per-template preview samples match the real sends", (
     expect(rendered).toContain("This was not something you did wrong");
     expect(rendered).toContain("your offer did not run out");
     expect(rendered).toContain("You do not need to do anything");
-    expect(rendered).toContain("New Position: #");
+    expect(rendered).toContain("Your Position: #");
 
     // And never the expiry template's story — that is the defect this template
     // exists to fix, in the subject as well as the body.

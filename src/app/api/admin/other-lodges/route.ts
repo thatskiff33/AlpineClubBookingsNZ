@@ -1,4 +1,3 @@
-import { NextResponse } from "next/server";
 import {
   isNotOnCentralServer,
   otherLodgeOrderBy,
@@ -13,8 +12,10 @@ import { prisma } from "@/lib/prisma";
 import { loadServerNzSettings } from "@/lib/servernz-settings";
 import { readStoredServerVersion } from "@/lib/servernz-version-check";
 import { requireAdmin } from "@/lib/session-guards";
+import { ADMIN_OTHER_LODGE_LIST_CONNECTION_SHAPE } from "@/lib/connection-shapes/lodge-setup";
+import { connectionJson } from "@/lib/mcp-connection-request";
 
-// READ ONLY. The create handler that lived here was removed by #52: a site
+// READ ONLY. The create handler that lived here was removed by triyder/AlpineClubBookingsNZ#52: a site
 // changes only the lodge(s) the central server says it owns, and those arrive
 // by download — nothing is created here. A POST now answers 405 from Next.js.
 //
@@ -23,13 +24,13 @@ import { requireAdmin } from "@/lib/session-guards";
 // row's `owned` flag is the route's own `ownsOtherLodge` answer. Another club's
 // booking officer PHONE is not sent at all (`serializeOtherLodgeForAdmin`).
 //
-// A HIDDEN lodge (#58) is not listed at all: deleted on the central server, or
+// A HIDDEN lodge (triyder/AlpineClubBookingsNZ#58) is not listed at all: deleted on the central server, or
 // hidden by an administrator, it is kept only for the bookings and requests
 // that name it, where it still shows.
 //
-// A row the central server does not list (`isNotOnCentralServer`, #64) is
+// A row the central server does not list (`isNotOnCentralServer`, triyder/AlpineClubBookingsNZ#64) is
 // marked, with what still cites it, so an administrator can assess it and hide
-// it (#58): usually a duplicate left by a rename before #64, or a lodge deleted
+// it (triyder/AlpineClubBookingsNZ#58): usually a duplicate left by a rename before triyder/AlpineClubBookingsNZ#64, or a lodge deleted
 // there before it told clubs about deletions. Before a whole-registry download
 // has keyed the registry (a site not yet downloaded since upgrading) nothing is
 // marked.
@@ -51,7 +52,7 @@ async function unkeyedLodgeReferences(
   );
 }
 
-export async function GET() {
+export async function GET(request: Request) {
   const guard = await requireAdmin({
     permission: { area: "lodge", level: "view" },
   });
@@ -64,7 +65,7 @@ export async function GET() {
       select: otherLodgeSelect,
     }),
     loadServerNzSettings(),
-    // The STORED answer (#49): no network call from a list read.
+    // The STORED answer (triyder/AlpineClubBookingsNZ#49): no network call from a list read.
     readStoredServerVersion(),
   ]);
   const owned = settings.otherLodgesOwnedLodges;
@@ -77,14 +78,15 @@ export async function GET() {
     otherLodges: await Promise.all(
       otherLodges.map(async (lodge) => {
         const row = serializeOtherLodgeForAdmin(lodge, owned, notOnCentralServer.get(lodge.id));
-        // Why the Fees page cannot fill our own lodge now (#77), for its editor.
+        // Why the Fees page cannot fill our own lodge now (triyder/AlpineClubBookingsNZ#77), for its editor.
         const feesProblem = row.owned ? await otherLodgeFeesProblem(lodge, owned) : null;
         return feesProblem ? { ...row, feesProblem } : row;
       }),
     ),
-    // The panel's notes name the owned lodges; the rows carry `owned` (#69).
+    // The panel's notes name the owned lodges; the rows carry `owned` (triyder/AlpineClubBookingsNZ#69).
     ownedLodgeNames: owned === null ? null : owned.map((l) => l.name),
     serverVersionStatus: version.status,
   };
-  return NextResponse.json(body);
+  // A connection is sent no booking officer's email address or phone (ALP-722).
+  return connectionJson(request, body, ADMIN_OTHER_LODGE_LIST_CONNECTION_SHAPE);
 }

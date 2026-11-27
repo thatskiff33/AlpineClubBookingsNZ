@@ -1,5 +1,4 @@
 import { NextRequest, NextResponse } from "next/server";
-import { z } from "zod";
 import { auth } from "@/lib/auth";
 import { requireActiveSessionUser } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma";
@@ -24,7 +23,6 @@ import {
   getMissingMemberProfileFieldDetails,
 } from "@/lib/member-profile-completeness";
 import logger from "@/lib/logger";
-import { nameField } from "@/lib/zod-helpers";
 import {
   isOrganisationMember,
   resolveAccessRoleTokens,
@@ -34,14 +32,11 @@ import {
   resolveEnforcedAgeTier,
 } from "@/lib/age-tier-enforcement";
 import { reconcileEmailInheritanceForMemberChange } from "@/lib/member-email-inheritance";
-import { dateOfBirthStringSchema } from "@/lib/date-only-schema";
-
-const delegatedDetailsSchema = z.object({
-  firstName: nameField({ required: "First name required" }),
-  lastName: nameField({ required: "Last name required" }),
-  dateOfBirth: dateOfBirthStringSchema,
-  inheritContactFromSelf: z.literal(true),
-});
+import { parseJsonRequestBody } from "@/lib/api-json";
+import { delegatedFamilyDetailsSchema, familyMemberIdParamsSchema } from "@/lib/family-group-request-schemas";
+import { applyRateLimit, rateLimiters } from "@/lib/rate-limit";
+import { connectionJson } from "@/lib/mcp-connection-request";
+import { FAMILY_MEMBER_DETAILS_CONNECTION_SHAPE } from "@/lib/connection-shapes";
 
 const DELEGATED_MEMBER_SELECT = {
   id: true,
@@ -120,6 +115,7 @@ function serializeStatus(
  * (`src/lib/member-partner-link.ts`), any such adult can, in effect, become the
  * voucher. That is intended under #2284's invariant — but it is why no code may
  * treat this pointer as identifying a single, lead-appointed responsible adult.
+ * Also the AI app action `confirm_family_member_details` (ALP-795).
  */
 export async function PUT(
   req: NextRequest,
@@ -134,16 +130,18 @@ export async function PUT(
     return inactiveResponse;
   }
 
-  const { memberId } = await params;
+  const rateLimited = await applyRateLimit(rateLimiters.api, req);
+  if (rateLimited) return rateLimited;
 
-  let body: unknown;
-  try {
-    body = await req.json();
-  } catch {
-    return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
-  }
+  const parsedParams = familyMemberIdParamsSchema.safeParse(await params);
+  if (!parsedParams.success) return NextResponse.json({ error: "Family member not found" }, { status: 404 });
+  const { memberId } = parsedParams.data;
 
-  const parsed = delegatedDetailsSchema.safeParse(body);
+  const jsonBody = await parseJsonRequestBody(req, { error: "Invalid JSON" });
+  if (!jsonBody.ok) return jsonBody.response;
+  const body = jsonBody.body;
+
+  const parsed = delegatedFamilyDetailsSchema.safeParse(body);
   if (!parsed.success) {
     return NextResponse.json(
       {
@@ -389,7 +387,7 @@ export async function PUT(
     }
   }
 
-  return NextResponse.json({
+  return connectionJson(req, {
     member: {
       id: updated.id,
       firstName: updated.firstName,
@@ -398,5 +396,5 @@ export async function PUT(
       canLogin: updated.canLogin,
     },
     profileStatus: serializeStatus(updated),
-  });
+  }, FAMILY_MEMBER_DETAILS_CONNECTION_SHAPE);
 }

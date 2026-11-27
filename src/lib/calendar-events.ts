@@ -28,6 +28,22 @@ export const recurrenceInputSchema = z.object({
   count: z.number().int().min(1).max(MAX_OCCURRENCES).nullish(),
 });
 
+/**
+ * The query of `GET /api/calendar/events`: the window to list, as ISO date-time
+ * bounds. Shared with the AI app action `list_club_events` (ALP-796,
+ * `INV-SSOT`). A bound that is not a date is ignored and its default used,
+ * as the calendar page has always been answered.
+ */
+/** The days before now `GET /api/calendar/events` lists when `from` is absent. */
+export const CALENDAR_EVENT_LIST_DEFAULT_DAYS_BACK = 90;
+/** The days after now it lists when `to` is absent. */
+export const CALENDAR_EVENT_LIST_DEFAULT_DAYS_AHEAD = 275;
+
+export const calendarEventListQuerySchema = z.object({
+  from: z.string().optional(),
+  to: z.string().optional(),
+});
+
 export const calendarEventInputSchema = z.object({
   title: z.string().trim().min(1, "Title is required").max(200),
   location: z.string().trim().max(200).nullish(),
@@ -44,6 +60,34 @@ export type CalendarEventInput = z.infer<typeof calendarEventInputSchema>;
 /** Which occurrences a series-event edit or delete applies to. */
 export const calendarEditScopeSchema = z.enum(["single", "series"]);
 export type CalendarEditScope = z.infer<typeof calendarEditScopeSchema>;
+
+const CALENDAR_EDIT_SCOPE_DESCRIPTION =
+  "For a repeating event: `single` (the default) changes this occurrence only, `series` every occurrence.";
+
+/**
+ * The body of `PATCH /api/calendar/events/[id]`: the event, and which
+ * occurrences the edit changes. Shared with the AI app action
+ * `update_calendar_event` (ALP-722, `INV-SSOT`).
+ */
+export const calendarEventUpdateSchema = calendarEventInputSchema.extend({
+  scope: calendarEditScopeSchema.default("single").describe(CALENDAR_EDIT_SCOPE_DESCRIPTION),
+});
+
+/**
+ * The query of `DELETE /api/calendar/events/[id]`, shared with the AI app
+ * action `delete_calendar_event` (ALP-722, `INV-SSOT`). `exceptions` matters
+ * only for a whole-series delete: `keep` (the default) turns occurrences
+ * edited on their own into standalone events, `delete` removes them too.
+ */
+export const calendarEventDeleteQuerySchema = z.object({
+  scope: calendarEditScopeSchema.default("single").describe(CALENDAR_EDIT_SCOPE_DESCRIPTION),
+  exceptions: z
+    .enum(["keep", "delete"])
+    .default("keep")
+    .describe(
+      "With `scope: series`: `keep` (the default) keeps occurrences edited on their own as standalone events, `delete` removes them too.",
+    ),
+});
 
 /**
  * Parse and range-check the ISO date strings. Returns concrete Dates, or an

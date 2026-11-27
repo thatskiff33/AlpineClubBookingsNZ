@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { NextRequest, NextResponse } from "next/server";
+import { expectDefaultInvalidJsonAnswer, MALFORMED_JSON_BODY } from "./helpers/invalid-json-body";
 import {
   BookingRequestPricingMode,
   BookingRequestQuoteStatus,
@@ -44,21 +45,6 @@ vi.mock("@/lib/booking-request-quotes", () => {
 
   return {
     BookingRequestQuoteError,
-    bookingRequestQuoteInputSchema: {
-      safeParse: (value: unknown) => {
-        const body = value as {
-          pricingMode?: string;
-          options?: unknown[];
-        };
-        if (!body?.pricingMode || !Array.isArray(body.options)) {
-          return {
-            success: false,
-            error: { flatten: () => ({ fieldErrors: { pricingMode: ["Required"] } }) },
-          };
-        }
-        return { success: true, data: value };
-      },
-    },
     parseBookingRequestQuoteOptions: (raw: unknown) => raw,
     createBookingRequestQuote: (...args: unknown[]) =>
       routeMocks.mockCreateQuote(...args),
@@ -82,7 +68,7 @@ function jsonRequest(url: string, body: unknown) {
   return new NextRequest(url, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
+    body: typeof body === "string" ? body : JSON.stringify(body),
   });
 }
 
@@ -165,6 +151,44 @@ describe("admin booking request quote routes", () => {
       requestId: "req-1",
       adminMemberId: "admin-1",
     });
+  });
+
+  // #5407 item 27: the send body is optional (the panel sends none unless an
+  // officer mapped a contact or changed child counts). An empty body still
+  // sends, as the case above shows; a body that is present but not JSON used to
+  // be swallowed as "no body" and now answers the shared invalid-JSON 400.
+  it("refuses a send body that is not JSON and sends nothing", async () => {
+    const res = await sendQuoteRoute(
+      jsonRequest("http://localhost/api/admin/booking-requests/req-1/send-quote", MALFORMED_JSON_BODY),
+      { params: Promise.resolve({ id: "req-1" }) }
+    );
+
+    await expectDefaultInvalidJsonAnswer(res);
+    expect(mockSendQuote).not.toHaveBeenCalled();
+  });
+
+  it.each(["null", "[]"])("refuses the non-object send body %s with a 400 and sends nothing", async (raw) => {
+    const res = await sendQuoteRoute(
+      jsonRequest("http://localhost/api/admin/booking-requests/req-1/send-quote", raw),
+      { params: Promise.resolve({ id: "req-1" }) }
+    );
+
+    expect(res.status).toBe(400);
+    await expect(res.json()).resolves.toMatchObject({ error: "Invalid request body" });
+    expect(mockSendQuote).not.toHaveBeenCalled();
+  });
+
+  it("keeps its own answer for a send body of the wrong shape", async () => {
+    const res = await sendQuoteRoute(
+      jsonRequest("http://localhost/api/admin/booking-requests/req-1/send-quote", {
+        ownerContactMemberId: 7,
+      }),
+      { params: Promise.resolve({ id: "req-1" }) }
+    );
+
+    expect(res.status).toBe(422);
+    expect(await res.json()).toEqual({ error: "Invalid contact selection" });
+    expect(mockSendQuote).not.toHaveBeenCalled();
   });
 });
 

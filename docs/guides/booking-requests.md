@@ -57,8 +57,8 @@ previous and next arrows with page numbers when there is more. On **Approvals**,
 lists the oldest request first, so the one that has waited longest is at the top; decided and **All**
 filters list the newest first, and **All** on Approvals keeps every pending
 booking ahead of the decided ones. Changing the filter or tab, or pressing
-**Reset**, returns to page 1; the page stays in the address (except on
-**Policy Exceptions**, which keeps its filter and page on screen only); and if deciding the last request on a page
+**Reset**, returns to page 1; the filter and page stay in the address, so a
+reload or a shared link opens the same view; and if deciding the last request on a page
 empties it, the list steps back a page. A link that opens one booking or
 request — from an email, **Needs Attention** or the Bookings Review chip —
 shows that record pinned above the list, with a note, when it is not on the
@@ -622,7 +622,8 @@ being refused. Those asks land here.
 
 1. Open **Booking Requests → Policy Exceptions**. The tab shows a count of
    everything waiting. Filter by **Requested** (default), **Approved**,
-   **Rejected**, **Cancelled**, **Superseded**, or **All**.
+   **Rejected**, **Cancelled**, **Superseded**, **Expired** (the request was
+   holding beds and its hold ran out before anyone decided), or **All**.
 2. Each card tells you: who asked and **how long ago**, what they proposed
    (dates, how many guests, and for a change, what they want changed), which
    rules it breaks — named, with the policy and version that was reviewed —
@@ -733,7 +734,7 @@ therefore keeps its **All** context rather than disappearing from view.
 | --- | --- | --- |
 | Approvals | Pending (default), Approved, Rejected, All | Approve; Reject and cancel (Admin notes required to reject) |
 | Changes | Requested (default), Approved, Rejected, All | Acknowledge as approved (stay still running) or Approve and apply (stay finished, #3750), with **Promo code to apply** and, on a promo-only correction, the member email choice (#4533); Reject. Both need the member-facing explanation; optional internal note the member never sees; optional linked modification id (acknowledgement only) |
-| Policy Exceptions | Requested (default), Approved, Rejected, Cancelled, Superseded, All | Approve and apply (confirmation required; member-facing explanation required for an adult-member hosting override); Refuse (member-facing explanation required). Both actions also take an optional internal note the member never sees |
+| Policy Exceptions | Requested (default), Approved, Rejected, Cancelled, Superseded, Expired, All | Approve and apply (confirmation required; member-facing explanation required for an adult-member hosting override); Refuse (member-facing explanation required). Both actions also take an optional internal note the member never sees |
 | Public Requests | Queue (default), Awaiting verification, Verified, Priced, Quoted, Quote sent, Query, Modify, Accepted, Approved, Declined, Cancelled, Converted, All | Save quote; Send quote; Approve & send payment link / Approve & invoice school; Decline; Hold slots (school) |
 
 Notes and constraints:
@@ -811,6 +812,47 @@ accounting rules forbid. A school that has genuinely changed its name is an
 officer's decision: rename it in Xero, and tell support so the club's own record
 matches.
 
+### Correcting a school's email address or phone number
+
+The school's own email address and phone number are recorded the first time the
+school books. A later booking request never changes them, even if it types
+different ones: the club's record of a school outranks what one request said.
+When the school's office address or number really has changed, or the first
+request had a typo, correct it in the app:
+
+1. On **Bookings**, find one of the school's bookings and press **Edit school
+   details** under the school's name, or open **Correct this request** on one of
+   its requests and press **Edit school details** under the school notice.
+2. Change the email address or phone number and press **Save**. Leave a field
+   empty to clear it.
+
+You need **edit** access to bookings, and you may be asked to confirm it is you.
+The school's name and teachers are not edited here: the name is its Xero
+contact's name, and the teachers are set by its bookings.
+
+What happens next:
+
+- **Emails and invoices to the school use the new details from now on.**
+  Anything already sent is not changed or re-sent. Emails to a teacher or to
+  the person who made a request still go to them.
+- **Xero is updated for you.** The dialog says whether the change is queued,
+  sent, or failed. If Xero refused it, the dialog shows Xero's reason and a
+  **Retry sending to Xero** button; the details stay saved in the app either
+  way. The same failure is on the Xero operations screen, where a finance
+  officer can retry it too.
+- **Clearing the school's email address sends a teacher's to Xero instead.**
+  Xero gets the newest teacher's address (or another named contact's) as the
+  contact's main email, as when the contact was first created; it is blank only
+  when none of them has one.
+- **A school Xero has not met yet** (no invoice raised so far) is not sent
+  anything now. Its Xero contact is created with the corrected details on its
+  first invoice.
+- **If someone else saved the school's details while you had the dialog open,**
+  your save is refused with "Changed by someone else". Press **Reload**, check
+  their change, and save again if yours is still needed. Nobody's change is
+  overwritten without being seen.
+- The change is recorded in the audit log with the old and new values.
+
 ### The teacher's name goes to Xero
 
 Approving a school booking sends the teacher's name and email address to Xero as
@@ -864,6 +906,9 @@ cannot, so that is an ordinary bit of tidying rather than something to report.
 | Approve is greyed out on a policy exception | You have not ticked the confirmation, or an adult-member hosting override needs a written reason | Write the reason and tick the confirmation |
 | Cannot price/approve anything | Your role is view-only for bookings | Ask a full admin for bookings edit access |
 | A school's Xero contact names a teacher who has left | The teacher on the contact is refreshed when the club next raises something against that school | Approve the school's next booking and it corrects itself, or edit the contact person in Xero now |
+| A school's email address or phone number is wrong | It was recorded from the school's first request, and later requests never change it | Press **Edit school details** beside one of the school's bookings on **Bookings**, or under the school notice in **Correct this request**, and save the right details. Xero is updated for you |
+| **Edit school details** says "Changed by someone else" | Another officer saved the school's details after you opened the dialog | Press **Reload**, check what they saved, and save yours again if it is still needed |
+| **Edit school details** says Xero did not take the last change | Xero refused the update; the reason is shown | Fix what the reason names (often the email address), then press **Retry sending to Xero**. The details are already saved in the app |
 | A returning school's invoice went to the Xero contact it always used | Correct. The school's own record took that contact over; it is the same customer with the same history | Nothing to do. The hand-over is in the audit log if you want to see it |
 | A school has two contacts in Xero | Something created a second one — usually a name that was typed differently | Merge the two contacts in Xero. This application cannot merge them for you |
 | A request says **Saved details need attention** and its buttons are greyed out | Some saved data could not be read back, so quote, price, hold, and approve controls are disabled in this panel; school approval also refuses unreadable teachers | Confirm what the group wants with the requester, then **Decline** so they can submit again — or ask support to repair the stored row. **Correct this request** is deliberately not offered here: your corrected list would silently become the whole truth about a party nobody can check it against |

@@ -154,7 +154,7 @@ export const explicitPublicApiRoutes = {
   "src/app/api/display/state/route.ts": {
     boundary: "public",
     reason:
-      "Display-token-authenticated lobby display data feed (#28): sessionless hashed-token credential resolves to one device's lodge; the payload is privacy-reduced in the serialiser (names at configured granularity, minors never individually named, no money/contact/member ids). A full-admin session may alternatively preview via ?previewDevice / ?preview[&templateId&previewLodge] / ?preview (#52, LTV-036) — GET-only, same reduced payload, never stamps lastSeenAt, and may pass ?previewDate=YYYY-MM-DD to simulate the window's start date (#60, preview-only; device fetches ignore it). Additionally a ?previewGrant=<token> — an HMAC-signed, 5-minute, single-purpose blob minted by the admin-only preview-grant endpoint (LTV-036, ADR-003 §5) — authorises exactly one template/lodge preview so an authoring page can embed it inside a sandboxed (opaque-origin) iframe without the admin session; the grant is not a display token, stamps no lastSeenAt, authorises no other route, and its cross-origin (opaque) response carries a permissive CORS header (no credentials sent). Rate limited; module-flag gated at the proxy.",
+      "Display-token-authenticated lobby display data feed (hoppers99/AlpineClubBookingsNZ#28): sessionless hashed-token credential resolves to one device's lodge; the payload is privacy-reduced in the serialiser (names at configured granularity, minors never individually named, no money/contact/member ids). A full-admin session may alternatively preview via ?previewDevice / ?preview[&templateId&previewLodge] / ?preview (#52, LTV-036) — GET-only, same reduced payload, never stamps lastSeenAt, and may pass ?previewDate=YYYY-MM-DD to simulate the window's start date (#60, preview-only; device fetches ignore it). Additionally a ?previewGrant=<token> — an HMAC-signed, 5-minute, single-purpose blob minted by the admin-only preview-grant endpoint (LTV-036, ADR-003 §5) — authorises exactly one template/lodge preview so an authoring page can embed it inside a sandboxed (opaque-origin) iframe without the admin session; the grant is not a display token, stamps no lastSeenAt, authorises no other route, and its cross-origin (opaque) response carries a permissive CORS header (no credentials sent). Rate limited; module-flag gated at the proxy.",
   },
   "src/app/api/display/pair/route.ts": {
     boundary: "public",
@@ -282,7 +282,7 @@ export const explicitPublicApiRoutes = {
   "src/app/api/webhooks/servernz-availability/route.ts": {
     boundary: "webhook",
     reason:
-      "Alpine Central Server signed availability question (#62): verifyServerNzSignature (HMAC with the registration-issued push secret, constant-time compare, 5-minute window) over `availability` + the parsed lodge id and dates. Read-only; answers free-bed counts only, per night (up to 30) and their minimum (#79), for one owned, linked, active lodge and stay, and an identical 404 for every other lodge.",
+      "Alpine Central Server signed availability question (triyder/AlpineClubBookingsNZ#62): verifyServerNzSignature (HMAC with the registration-issued push secret, constant-time compare, 5-minute window) over `availability` + the parsed lodge id and dates. Read-only; answers free-bed counts only, per night (up to 30) and their minimum (#79), for one owned, linked, active lodge and stay, and an identical 404 for every other lodge.",
   },
   "src/app/api/webhooks/servernz-posts/route.ts": {
     boundary: "webhook",
@@ -356,9 +356,9 @@ export const mixedMethodApiRoutes = {
     },
   },
   // #2263 — recorded here for the RATIONALE, not because the file mixes
-  // boundaries. Both member whole-lodge routes are single-method and wholly
-  // member-boundary; the reason string is the documented home for a route whose
-  // response shape is deliberately uniform, and writing it down here keeps the
+  // boundaries. Both member whole-lodge routes are wholly
+  // member-boundary; the reason string is the documented home for the POSTs,
+  // whose response shape is deliberately uniform, and writing it down here keeps the
   // per-method guard enforced (every exported method must be documented and must
   // carry a session guard). They are POINTEDLY ABSENT from
   // `explicitPublicApiRoutes`: listing them there would EXEMPT them from the
@@ -366,6 +366,11 @@ export const mixedMethodApiRoutes = {
   // public-registered routes), which is the opposite of what is wanted.
   "src/app/api/booking-requests/whole-lodge/route.ts": {
     methods: {
+      GET: {
+        boundary: "member",
+        reason:
+          "Signed-in member lists their OWN whole-lodge requests (#2263; the AI app action list_my_whole_lodge_requests, ALP-797). requireActiveSession; scoped by requestedByMemberId from the session, read through the same loader My bookings uses and reduced by toMyWholeLodgeRequestItem to the four member-visible status words, so it says nothing about the calendar or the officer's pipeline. Rate limited.",
+      },
       POST: {
         boundary: "member",
         reason:

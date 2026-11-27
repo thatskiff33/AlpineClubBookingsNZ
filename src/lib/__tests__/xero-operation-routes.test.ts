@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
+import { expectDefaultInvalidJsonAnswer, MALFORMED_JSON_BODY } from "./helpers/invalid-json-body";
 
 const mocks = vi.hoisted(() => ({
   after: vi.fn((callback: () => Promise<void> | void) => {
@@ -917,7 +918,7 @@ describe("Xero operation admin retry routes", () => {
       count: where.lastErrorCode === "PARTIAL_REPAIR_RUNNING" || where.lastErrorCode === "REFUND_NOTE_UNRECORDED" ? 0 : 3,
     }));
 
-    const response = await resetStaleRunning();
+    const response = await resetStaleRunning(new Request("http://localhost/api/admin/xero/operations/reset-stale-running", { method: "POST" }));
 
     expect(response.status).toBe(200);
     expect(mocks.xeroOperationUpdateMany).toHaveBeenCalledWith(
@@ -984,7 +985,7 @@ describe("Xero operation admin retry routes", () => {
     });
     mocks.createAuditLog.mockRejectedValue(new Error("audit insert failed"));
 
-    const response = await resetStaleRunning();
+    const response = await resetStaleRunning(new Request("http://localhost/api/admin/xero/operations/reset-stale-running", { method: "POST" }));
 
     expect(response.status).toBe(500);
     expect(row.status).toBe("RUNNING");
@@ -995,7 +996,7 @@ describe("Xero operation admin retry routes", () => {
   it("writes no audit row when no operation was stale", async () => {
     mocks.xeroOperationUpdateMany.mockResolvedValue({ count: 0 });
 
-    const response = await resetStaleRunning();
+    const response = await resetStaleRunning(new Request("http://localhost/api/admin/xero/operations/reset-stale-running", { method: "POST" }));
 
     expect(response.status).toBe(200);
     expect(mocks.createAuditLog).not.toHaveBeenCalled();
@@ -1006,7 +1007,7 @@ describe("Xero operation admin retry routes", () => {
       count: where.lastErrorCode === "PARTIAL_REPAIR_RUNNING" ? 1 : where.lastErrorCode === "REFUND_NOTE_UNRECORDED" ? 0 : 2,
     }));
 
-    const response = await resetStaleRunning();
+    const response = await resetStaleRunning(new Request("http://localhost/api/admin/xero/operations/reset-stale-running", { method: "POST" }));
 
     await expect(response.json()).resolves.toMatchObject({
       count: 3,
@@ -1252,6 +1253,31 @@ describe("Xero operation admin retry routes", () => {
       expect((await markFailedOperation(markRequest(), params)).status).toBe(404);
       expect((await markFailedOperation(markRequest({}), params)).status).toBe(400);
       expect(mocks.xeroOperationUpdateMany).not.toHaveBeenCalled();
+    });
+
+    // #5407 item 27: the reason is required. A body that is not JSON used to be
+    // swallowed into an empty one and refused as "no reason"; it now gets the
+    // shared invalid-JSON 400, before the operation is read. A well-formed body
+    // with no reason keeps the route's own answer.
+    it("answers a body that is not JSON with the shared 400 and reads nothing (#5407)", async () => {
+      const response = await markFailedOperation(
+        new NextRequest("http://localhost/api/admin/xero/operations/op_stuck/mark-failed", {
+          method: "POST",
+          body: MALFORMED_JSON_BODY,
+        }),
+        params,
+      );
+
+      await expectDefaultInvalidJsonAnswer(response);
+      expect(mocks.xeroOperationFindUnique).not.toHaveBeenCalled();
+      expect(mocks.xeroOperationUpdateMany).not.toHaveBeenCalled();
+    });
+
+    it("keeps its own answer for a body with no reason (#5407)", async () => {
+      const response = await markFailedOperation(markRequest({}), params);
+
+      expect(response.status).toBe(400);
+      await expect(response.json()).resolves.toMatchObject({ error: "Invalid mark-failed payload" });
     });
 
     it("flags a stale RUNNING row in the operations list so the panel offers Mark failed", async () => {

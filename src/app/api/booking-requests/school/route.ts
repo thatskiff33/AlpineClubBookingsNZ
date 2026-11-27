@@ -8,17 +8,16 @@ import {
 import {
   assertSchoolGuestsWithinLodgeCapacity,
   createSchoolBookingRequest,
-  schoolChildCountsSchema,
   schoolTeacherSchema,
 } from "@/lib/school-booking-request";
+import { schoolChildCountsSchema } from "@/lib/admin-bookings-schemas/requests";
 import { generateSchoolGuests } from "@/lib/school-booking-constants";
 import { applyRateLimit, rateLimiters } from "@/lib/rate-limit";
 import { parsedDateOnlySchema } from "@/lib/date-only-schema";
 import { clubTodayDateOnlyInstant } from "@/lib/club-time/server";
-import { nameField } from "@/lib/zod-helpers";
+import { nameField, noCrlf } from "@/lib/zod-helpers";
 import logger from "@/lib/logger";
-
-const noCrlf = (value: string) => !/[\r\n]/.test(value);
+import { parseJsonRequestBody } from "@/lib/api-json";
 
 const schoolBookingRequestSchema = z.object({
   schoolName: z
@@ -59,12 +58,11 @@ export async function POST(request: NextRequest) {
   const rateLimited = await applyRateLimit(rateLimiters.bookingRequest, request);
   if (rateLimited) return rateLimited;
 
-  let body: unknown;
-  try {
-    body = await request.json();
-  } catch {
-    return NextResponse.json({ error: "Invalid JSON payload" }, { status: 400 });
-  }
+  const jsonBody = await parseJsonRequestBody(request, {
+    error: "Invalid JSON payload",
+  });
+  if (!jsonBody.ok) return jsonBody.response;
+  const body = jsonBody.body;
 
   const parsed = schoolBookingRequestSchema.safeParse(body);
   if (!parsed.success) {

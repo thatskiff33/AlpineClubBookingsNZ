@@ -1,7 +1,5 @@
 import { NextResponse } from "next/server";
-import { z } from "zod";
 import {
-  BED_ALLOCATION_MOVE_SCOPES,
   BedAllocationMoveError,
   previewBedAllocationMove,
   type BedAllocationMoveRequest,
@@ -11,14 +9,9 @@ import {
   requireBedAllocationRead,
 } from "@/lib/admin-bed-allocation-routes";
 import { parseJsonRequestBody } from "@/lib/api-json";
-
-const previewSchema = z
-  .object({
-    anchorAllocationId: z.string().min(1),
-    destinationBedId: z.string().min(1),
-    scope: z.enum(BED_ALLOCATION_MOVE_SCOPES),
-  })
-  .strict();
+import { bedAllocationMovePreviewBodySchema } from "@/lib/admin-bookings-schemas/beds";
+import { ADMIN_BED_ALLOCATION_MOVE_PREVIEW_CONNECTION_SHAPE } from "@/lib/connection-shapes/bookings-beds";
+import { connectionJson } from "@/lib/mcp-connection-request";
 
 function moveErrorResponse(error: unknown) {
   if (error instanceof BedAllocationMoveError) {
@@ -36,7 +29,10 @@ function moveErrorResponse(error: unknown) {
   return bedAllocationErrorResponse(error);
 }
 
-/** Read-only authoritative preview; explicit bookings:view is sufficient. */
+/**
+ * Read-only authoritative preview; explicit bookings:view is sufficient.
+ * Also the AI app action `preview_bed_allocation_move` (ALP-719).
+ */
 export async function POST(request: Request) {
   const guard = await requireBedAllocationRead();
   if (!guard.ok) return guard.response;
@@ -44,15 +40,17 @@ export async function POST(request: Request) {
   try {
     const json = await parseJsonRequestBody(request);
     if (!json.ok) return json.response;
-    const parsed = previewSchema.safeParse(json.body);
+    const parsed = bedAllocationMovePreviewBodySchema.safeParse(json.body);
     if (!parsed.success) {
       return NextResponse.json(
         { error: "Invalid input", details: parsed.error.flatten() },
         { status: 400 },
       );
     }
-    return NextResponse.json(
+    return connectionJson(
+      request,
       await previewBedAllocationMove(parsed.data as BedAllocationMoveRequest),
+      ADMIN_BED_ALLOCATION_MOVE_PREVIEW_CONNECTION_SHAPE,
     );
   } catch (error) {
     return moveErrorResponse(error);

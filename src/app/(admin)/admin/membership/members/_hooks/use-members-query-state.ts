@@ -1,7 +1,8 @@
 "use client"
 
 import { useCallback, useEffect, useState } from "react"
-import { usePathname, useRouter, useSearchParams } from "next/navigation"
+import { useSearchParams } from "next/navigation"
+import { useAdminListUrlSync } from "@/hooks/use-admin-list-url-sync"
 import {
   ADMIN_LIST_DEFAULT_PAGE_SIZE,
   parseAdminListPageParam,
@@ -10,7 +11,7 @@ import {
 import type { Filters } from "../_types"
 import { emptyFilters, getInitialLifecycleStatus } from "../_utils"
 
-import { adminHref, servedAdminPathname } from "@/lib/admin-hubs";
+import { adminHref } from "@/lib/admin-hubs";
 const MEMBERS_DATASET_QUERY_KEYS = [
   "q",
   "page",
@@ -21,9 +22,6 @@ const MEMBERS_DATASET_QUERY_KEYS = [
 ] as const
 
 export function useMembersQueryState() {
-  const router = useRouter()
-  // The served form, so either address of the Members page counts as being on it.
-  const pathname = servedAdminPathname(usePathname())
   const searchParams = useSearchParams()
   const [search, setSearch] = useState(searchParams.get("q") || "")
   const [debouncedSearch, setDebouncedSearch] = useState(search)
@@ -38,6 +36,7 @@ export function useMembersQueryState() {
     financeAccess: searchParams.get("financeAccess") || "",
     lifecycleStatus: getInitialLifecycleStatus(searchParams),
     membershipType: searchParams.get("membershipType") || "",
+    subscriptionCategory: searchParams.get("subscriptionCategory") || "",
     ageTier: searchParams.get("ageTier") || "",
     familyGroup: searchParams.get("familyGroup") || "",
     inviteStatus: searchParams.get("inviteStatus") || "",
@@ -47,13 +46,17 @@ export function useMembersQueryState() {
     contactability: searchParams.get("contactability") || "",
   })
 
+  // A search the officer typed returns the list to page 1. The wait also runs
+  // once on opening, when the search is the one the address opened with, so it
+  // changes nothing then: `?page=3` stays on page 3 (#5295).
   useEffect(() => {
+    if (search === debouncedSearch) return
     const timer = setTimeout(() => {
       setDebouncedSearch(search)
       setPage(1)
     }, 300)
     return () => clearTimeout(timer)
-  }, [search])
+  }, [debouncedSearch, search])
 
   const buildMembersSearchParams = useCallback(() => {
     const params = new URLSearchParams(searchParams.toString())
@@ -74,15 +77,8 @@ export function useMembersQueryState() {
     return queryString ? `${adminHref("members")}?${queryString}` : adminHref("members")
   }, [buildMembersSearchParams])
 
-  // Replace only when the URL is not already the canonical one. A replace to
-  // the URL the officer is already on is still a soft navigation, which the
-  // E2E accessibility audit intermittently caught without a <title> (#5155).
-  useEffect(() => {
-    const target = buildMembersListPath()
-    const currentSearch = searchParams.toString()
-    const current = currentSearch ? `${pathname}?${currentSearch}` : pathname
-    if (target !== current) router.replace(target, { scroll: false })
-  }, [buildMembersListPath, pathname, router, searchParams])
+  // Replaces only when the address is not already this one (#5155, #5295).
+  useAdminListUrlSync(buildMembersListPath())
 
   const setFilter = useCallback((key: keyof Filters, value: string) => {
     setFilters((current) => ({ ...current, [key]: value }))

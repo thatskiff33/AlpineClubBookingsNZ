@@ -1,23 +1,28 @@
 import { NextResponse } from "next/server";
+import { parseJsonRequestBody } from "@/lib/api-json";
 import { buildStructuredAuditLogCreateArgs, getAuditRequestContext } from "@/lib/audit";
 import { prisma } from "@/lib/prisma";
 import { privacyHostingSchema, PRIVACY_HOSTING_DEFAULTS, PRIVACY_HOSTING_TEXT_REFUSAL } from "@/lib/privacy-hosting";
 import { getPrivacyHostingSettings, PRIVACY_HOSTING_SELECT } from "@/lib/privacy-hosting-settings";
 import { revalidatePublicPageContent } from "@/lib/public-content-revalidation";
 import { requireAdmin } from "@/lib/session-guards";
+import { connectionJson } from "@/lib/mcp-connection-request";
+import { PRIVACY_HOSTING_CONNECTION_SHAPE } from "@/lib/connection-shapes/content-settings";
 
-export async function GET() {
+export async function GET(request: Request) {
   const guard = await requireAdmin({ permission: { area: "content", level: "view" } });
   if (!guard.ok) return guard.response;
-  return NextResponse.json({ settings: await getPrivacyHostingSettings() });
+  return connectionJson(request, { settings: await getPrivacyHostingSettings() }, PRIVACY_HOSTING_CONNECTION_SHAPE);
 }
 
 export async function PUT(request: Request) {
   const guard = await requireAdmin({ permission: { area: "content", level: "edit" } });
   if (!guard.ok) return guard.response;
-  let body: unknown;
-  try { body = await request.json(); }
-  catch { return NextResponse.json({ error: "Invalid JSON" }, { status: 400 }); }
+  const jsonBody = await parseJsonRequestBody(request, {
+    error: "Invalid JSON",
+  });
+  if (!jsonBody.ok) return jsonBody.response;
+  const body = jsonBody.body;
   const parsed = privacyHostingSchema.safeParse(body);
   if (!parsed.success) return NextResponse.json({ error: `${PRIVACY_HOSTING_TEXT_REFUSAL} in each field.` }, { status: 400 });
   const settings = await prisma.$transaction(async tx => {
@@ -40,5 +45,5 @@ export async function PUT(request: Request) {
     return saved;
   });
   revalidatePublicPageContent();
-  return NextResponse.json({ settings });
+  return connectionJson(request, { settings }, PRIVACY_HOSTING_CONNECTION_SHAPE);
 }

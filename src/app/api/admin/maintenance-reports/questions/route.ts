@@ -1,7 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
-import { z } from "zod";
 
+import { maintenanceQuestionsBodySchema } from "@/lib/admin-lodge-schemas/maintenance";
 import { logAudit } from "@/lib/audit";
+import {
+  ADMIN_MAINTENANCE_QUESTIONS_CONNECTION_SHAPE,
+  ADMIN_MAINTENANCE_QUESTIONS_SAVED_CONNECTION_SHAPE,
+} from "@/lib/connection-shapes/lodge-maintenance";
+import { connectionJson } from "@/lib/mcp-connection-request";
+import { getClientIp } from "@/lib/rate-limit-http";
 import logger from "@/lib/logger";
 import {
   MAX_MAINTENANCE_QUESTION_CHOICE_LENGTH,
@@ -12,6 +18,7 @@ import {
 } from "@/lib/maintenance-reports";
 import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/session-guards";
+import { parseJsonRequestBody } from "@/lib/api-json";
 
 /**
  * The BOUNDED question-set editor (#2780, owner decision 2 — "a bounded editor,
@@ -33,33 +40,10 @@ import { requireAdmin } from "@/lib/session-guards";
  * second line of defence, not the first.
  */
 
-const questionInputSchema = z
-  .object({
-    // Absent on a question being added; present on one being edited. A client
-    // cannot invent an id that is not already in the set — see the PUT handler.
-    id: z.string().trim().max(64).optional(),
-    label: z.string().trim().min(1).max(MAX_MAINTENANCE_QUESTION_LABEL_LENGTH),
-    helpText: z
-      .string()
-      .trim()
-      .max(MAX_MAINTENANCE_QUESTION_HELP_LENGTH)
-      .optional()
-      .nullable(),
-    type: z.enum(["SHORT_TEXT", "LONG_TEXT", "YES_NO", "SINGLE_CHOICE"]),
-    required: z.boolean(),
-    choices: z
-      .array(z.string().trim().min(1).max(MAX_MAINTENANCE_QUESTION_CHOICE_LENGTH))
-      .max(MAX_MAINTENANCE_QUESTION_CHOICES)
-      .optional()
-      .default([]),
-  })
-  .strict();
-
-const putSchema = z
-  .object({
-    questions: z.array(questionInputSchema).max(MAX_MAINTENANCE_QUESTIONS),
-  })
-  .strict();
+// The body schema (at most `MAX_MAINTENANCE_QUESTIONS` questions, four answer
+// types, bounded lengths; an id is optional on a question being added) lives
+// in admin-lodge-schemas/maintenance.ts so the AI app action
+// `update_maintenance_report_questions` offers the same fields (ALP-722).
 
 const QUESTION_SELECT = {
   id: true,
@@ -72,7 +56,7 @@ const QUESTION_SELECT = {
   active: true,
 } as const;
 
-export async function GET() {
+export async function GET(request: Request) {
   const admin = await requireAdmin({
     permission: { area: "lodge", level: "view" },
   });
@@ -84,16 +68,20 @@ export async function GET() {
     select: QUESTION_SELECT,
   });
 
-  return NextResponse.json({
-    questions,
-    limits: {
-      maxQuestions: MAX_MAINTENANCE_QUESTIONS,
-      maxLabelLength: MAX_MAINTENANCE_QUESTION_LABEL_LENGTH,
-      maxHelpLength: MAX_MAINTENANCE_QUESTION_HELP_LENGTH,
-      maxChoices: MAX_MAINTENANCE_QUESTION_CHOICES,
-      maxChoiceLength: MAX_MAINTENANCE_QUESTION_CHOICE_LENGTH,
+  return connectionJson(
+    request,
+    {
+      questions,
+      limits: {
+        maxQuestions: MAX_MAINTENANCE_QUESTIONS,
+        maxLabelLength: MAX_MAINTENANCE_QUESTION_LABEL_LENGTH,
+        maxHelpLength: MAX_MAINTENANCE_QUESTION_HELP_LENGTH,
+        maxChoices: MAX_MAINTENANCE_QUESTION_CHOICES,
+        maxChoiceLength: MAX_MAINTENANCE_QUESTION_CHOICE_LENGTH,
+      },
     },
-  });
+    ADMIN_MAINTENANCE_QUESTIONS_CONNECTION_SHAPE,
+  );
 }
 
 export async function PUT(request: NextRequest) {
@@ -102,14 +90,13 @@ export async function PUT(request: NextRequest) {
   });
   if (!admin.ok) return admin.response;
 
-  let body: unknown;
-  try {
-    body = await request.json();
-  } catch {
-    return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
-  }
+  const jsonBody = await parseJsonRequestBody(request, {
+    error: "Invalid JSON",
+  });
+  if (!jsonBody.ok) return jsonBody.response;
+  const body = jsonBody.body;
 
-  const parsed = putSchema.safeParse(body);
+  const parsed = maintenanceQuestionsBodySchema.safeParse(body);
   if (!parsed.success) {
     return NextResponse.json(
       { error: "Please check the questions and try again." },
@@ -201,8 +188,7 @@ export async function PUT(request: NextRequest) {
         questionCount: parsed.data.questions.length,
         deactivated: [...existingIds].filter((id) => !keptIds.has(id)).length,
       }),
-      ipAddress:
-        request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? "unknown",
+      ipAddress: getClientIp(request),
       outcome: "success",
     });
 
@@ -212,7 +198,7 @@ export async function PUT(request: NextRequest) {
       select: QUESTION_SELECT,
     });
 
-    return NextResponse.json({ questions });
+    return connectionJson(request, { questions }, ADMIN_MAINTENANCE_QUESTIONS_SAVED_CONNECTION_SHAPE);
   } catch (err) {
     logger.error({ err }, "Failed to save maintenance report questions");
     return NextResponse.json(

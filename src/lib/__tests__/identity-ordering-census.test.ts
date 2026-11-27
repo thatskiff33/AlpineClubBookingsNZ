@@ -5,6 +5,7 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 
 import { stripComments, stripCommentsAndStrings } from "./support/strip-comments";
+import { CENSUS_TIMEOUT_MS } from "@/test/census-timeout";
 
 /**
  * #3252 — an order that is part of an IDENTITY is ordered by code unit, in one
@@ -64,6 +65,8 @@ const CANONICAL_SPECIFIER = "@/lib/ordinal-order";
  * path-keyed guard goes quietly green (`docs/TESTING.md`).
  */
 const IDENTITY_MODULES = [
+  // Opening-credit file identity and member ledger lock order.
+  "src/lib/opening-credit-batch.ts",
   // The proposal fingerprint #3252 was filed about, and the frozen evidence and
   // violation orders that approval re-derives and compares.
   "src/lib/booking-exception-requests.ts",
@@ -134,7 +137,7 @@ function codeWithStrings(file: string): string {
   return stripComments(readFileSync(path.join(REPO_ROOT, file), "utf8"));
 }
 
-describe("identity ordering census (#3252)", () => {
+describe("identity ordering census (#3252)", { timeout: CENSUS_TIMEOUT_MS }, () => {
   const sources = trackedSources();
 
   it("scans a real, non-trivial share of the tree", () => {

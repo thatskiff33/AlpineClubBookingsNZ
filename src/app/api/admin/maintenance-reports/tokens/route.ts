@@ -1,8 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 
+import {
+  maintenanceSignActiveBodySchema,
+  maintenanceSignLodgeIdSchema,
+} from "@/lib/admin-lodge-schemas/maintenance";
 import { getAppBaseUrl } from "@/lib/app-url";
 import { logAudit } from "@/lib/audit";
+import { getClientIp } from "@/lib/rate-limit-http";
 import logger from "@/lib/logger";
 import {
   buildMaintenanceReportSignUrl,
@@ -12,6 +17,12 @@ import {
 } from "@/lib/maintenance-report-tokens";
 import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/session-guards";
+import { parseJsonRequestBody } from "@/lib/api-json";
+import {
+  ADMIN_MAINTENANCE_SIGN_LIST_CONNECTION_SHAPE,
+  ADMIN_MAINTENANCE_SIGN_SWITCHED_CONNECTION_SHAPE,
+} from "@/lib/connection-shapes/lodge-maintenance";
+import { connectionJson } from "@/lib/mcp-connection-request";
 
 /**
  * QR sign management (#2780). Lodge Operations `view`/`edit`.
@@ -34,16 +45,13 @@ import { requireAdmin } from "@/lib/session-guards";
  * a leaked sign has been given the wrong tool.
  */
 
-const postSchema = z.object({ lodgeId: z.string().trim().min(1).max(64) }).strict();
-const patchSchema = z
-  .object({ lodgeId: z.string().trim().min(1).max(64), active: z.boolean() })
-  .strict();
+// POST (mint or rotate) answers the sign's bearer link once, so it is never an
+// AI app action and keeps its schema here. The PATCH schema lives in
+// admin-lodge-schemas/maintenance.ts so the action
+// `set_maintenance_report_sign_active` offers the same fields (ALP-722).
+const postSchema = z.object({ lodgeId: maintenanceSignLodgeIdSchema }).strict();
 
-function clientIp(request: NextRequest) {
-  return request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? "unknown";
-}
-
-export async function GET() {
+export async function GET(request: Request) {
   const admin = await requireAdmin({
     permission: { area: "lodge", level: "view" },
   });
@@ -66,7 +74,8 @@ export async function GET() {
     })),
   );
 
-  return NextResponse.json({ signs });
+  // No token, hash or sign link exists here to send (ALP-722).
+  return connectionJson(request, { signs }, ADMIN_MAINTENANCE_SIGN_LIST_CONNECTION_SHAPE);
 }
 
 export async function POST(request: NextRequest) {
@@ -75,12 +84,11 @@ export async function POST(request: NextRequest) {
   });
   if (!admin.ok) return admin.response;
 
-  let body: unknown;
-  try {
-    body = await request.json();
-  } catch {
-    return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
-  }
+  const jsonBody = await parseJsonRequestBody(request, {
+    error: "Invalid JSON",
+  });
+  if (!jsonBody.ok) return jsonBody.response;
+  const body = jsonBody.body;
 
   const parsed = postSchema.safeParse(body);
   if (!parsed.success) {
@@ -110,7 +118,7 @@ export async function POST(request: NextRequest) {
       // that a sign for this lodge was created or replaced, which is the auditable
       // fact; the secret itself is the thing the audit log must not hold.
       details: JSON.stringify({ lodgeId: lodge.id, rotated: minted.rotated }),
-      ipAddress: clientIp(request),
+      ipAddress: getClientIp(request),
       severity: "important",
       outcome: "success",
     });
@@ -140,14 +148,13 @@ export async function PATCH(request: NextRequest) {
   });
   if (!admin.ok) return admin.response;
 
-  let body: unknown;
-  try {
-    body = await request.json();
-  } catch {
-    return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
-  }
+  const jsonBody = await parseJsonRequestBody(request, {
+    error: "Invalid JSON",
+  });
+  if (!jsonBody.ok) return jsonBody.response;
+  const body = jsonBody.body;
 
-  const parsed = patchSchema.safeParse(body);
+  const parsed = maintenanceSignActiveBodySchema.safeParse(body);
   if (!parsed.success) {
     return NextResponse.json({ error: "Invalid input" }, { status: 400 });
   }
@@ -175,10 +182,10 @@ export async function PATCH(request: NextRequest) {
       lodgeId: parsed.data.lodgeId,
       active: parsed.data.active,
     }),
-    ipAddress: clientIp(request),
+    ipAddress: getClientIp(request),
     severity: "important",
     outcome: "success",
   });
 
-  return NextResponse.json({ ok: true });
+  return connectionJson(request, { ok: true }, ADMIN_MAINTENANCE_SIGN_SWITCHED_CONNECTION_SHAPE);
 }

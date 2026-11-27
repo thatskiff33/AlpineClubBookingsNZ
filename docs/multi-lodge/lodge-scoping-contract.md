@@ -33,7 +33,7 @@ sequencing):
 | `MaintenanceReport` | direct `lodgeId` | a reported physical fault belongs to one building (#2780); `onDelete: Cascade` — a deleted lodge takes its fault history with it |
 | `LodgeMaintenanceReportToken` | direct `lodgeId` (`@unique`) | one live QR-sign bearer token per lodge (#2780); rotating overwrites in place, `onDelete: Cascade` |
 | `MaintenanceReportAnswer` | via `MaintenanceReport` | no direct FK; answers store the question label as asked, so they carry the report's lodge |
-| `FoodOrder` | direct `lodgeId` | a food order is for one building's supplies (fork #121); every list, total and both hut-leader rules (`foodOrderVisibility` and `canManageFoodOrder`: a hut leader sees and manages only orders at the lodges their access window covers today, owner decision on PR #5143) read it; ordering follows booking eligibility (`getEligibleLodgeIdsForMember`). `onDelete: Cascade`, like `MaintenanceReport` |
+| `FoodOrder` | direct `lodgeId` | a food order is for one building's supplies (fork triyder/AlpineClubBookingsNZ#121); every list, total and both hut-leader rules (`foodOrderVisibility` and `canManageFoodOrder`: a hut leader sees and manages only orders at the lodges their access window covers today, owner decision on PR #5143) read it; ordering follows booking eligibility (`getEligibleLodgeIdsForMember`). `onDelete: Cascade`, like `MaintenanceReport` |
 | `FoodOrderItem` | via `FoodOrder` | no direct FK; an item line carries its order's lodge |
 | Model                                                              | Scoping                                                            | Notes                                                                                                                                                                                                                                                                                                                                                   |
 | ------------------------------------------------------------------ | ------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -53,6 +53,7 @@ sequencing):
 | `BookingDefaults`                                                  | per-lodge row                                                      | converted from singleton                                                                                                                                                                                                                                                                                                                                |
 | `BookingRequestSettings`                                           | per-lodge row                                                      | converted from singleton                                                                                                                                                                                                                                                                                                                                |
 | `ServerNzSettings`                                                 | club-wide singleton (`id = "default"`)                             | NOT converted to a per-lodge row, deliberately: one club holds ONE connection to the central server (one base URL, one API key, one sync cursor), and the registry it exchanges is a list of other CLUBS rather than of this club's buildings. A per-lodge row would imply a lodge could sync independently, which the central server has no concept of; the one per-lodge fact it does hold, which of ITS lodges a club lodge is (`Lodge.centralLodgeId`, triyder/AlpineClubBookingsNZ#62), lives on `Lodge` |
+| `Organisation` (a school)                                          | club-wide, no `lodgeId`                                            | a school books across the club's lodges and has one Xero contact; its own email and phone, corrected by `/api/admin/organisations/[id]/contact` (#5245), are not lodge-scoped either |
 | Lodge identity fields (`lodgeName`, `doorCode`, `lodgeTravelNote`) | resolve from `Lodge` (default lodge when no `lodgeId` is in scope) | dropped from the `EmailMessageSetting` singleton (migration `20260709130000`)                                                                                                                                                                                                                                                                           |
 
 ## Privacy hosting disclosure
@@ -81,10 +82,11 @@ takes no lodge parameter.
 
 `MemberMoneyEvent`, `MemberMoneyJournal`, `MemberMoneyObligation`,
 `MemberMoneyApplication`, `MemberMoneySourceLink`, `MemberMoneySourcePosting`,
-`MemberMoneyRefundReservation`, `MemberMoneyRefundReservationRelease`, `MemberMoneyExportManifest`
-and `MemberMoneyExportCoverage` are club-wide economic
+`MemberMoneyRefundReservation`, `MemberMoneyRefundReservationRelease`, `MemberMoneyExportManifest`,
+`MemberMoneyExportCoverage` and `MemberMoneyExportCoverageRelease` are club-wide economic
 records: one receipt may cover several lodges. An export manifest names its
-booking, which identifies the lodge. A reservation names its obligation
+booking, which identifies the lodge; a combined group invoice's manifest names
+the organiser's booking, and its children's lodges are frozen in its mapping. A reservation names its obligation
 and its funding batch, which identify the booking; an application batch names
 one booking and takes that booking's Payment row. `MemberMoneyLine` carries optional
 `bookingId` and `lodgeId` dimensions with RESTRICT foreign keys and no update
@@ -115,6 +117,14 @@ club, not any lodge. A cash allocation names its booking as a bare id, the way
 `MemberCreditNoteAllocation` does, and the booking carries the lodge. A
 return row names a credit restoration and a slice, which identify the same
 booking. None of the three gets a `lodgeId`.
+
+## Xero GST-override pause (#5208)
+
+`XeroTaxOverrideMismatch` is club-wide: one row records a Xero invoice whose
+returned line tax differs from the journal's tax the app sent, and any
+uncleared row pauses the overrides for every lodge, because the club has one
+Xero organisation and one GST return. A row names its booking, which
+identifies the lodge, but carries no lodge key and is never filtered by one.
 
 ## Club-Wide Defaults With Per-Lodge Overrides
 
@@ -549,9 +559,11 @@ operational documents (which may carry door/emergency access details).
 - **Stateful booking responses and queue positions keep their lodge owner**
   (#2701/#2887). The admin booking wizard owns each availability response by
   request and lodge, so a late Lodge A response cannot advance or resize a Lodge
-  B booking. Initial waitlist positions are counted under the selected lodge's
-  capacity lock using only older overlapping entries at that lodge, matching
-  every later waitlist position calculation and the member's confirmation email.
+  B booking. A waitlist position belongs to the entry's own lodge: the
+  confirmation email reads it under the selected lodge's capacity lock, and
+  every screen reads it from that lodge's live queue through
+  `getWaitlistPositions` (#5402, `INV-CAP-041`); entries at other lodges count
+  only as `MERGED` opt-ins that named this lodge.
 - **Booking admission and lodge deactivation share one lodge lock** (#2701).
   Draft, confirmed and waitlist creation take the selected lodge's immutable
   capacity key before re-reading active status, member access and requested-room
@@ -638,6 +650,9 @@ new ADR:
   `finance-dashboard/decisions/ADR-005-single-operational-xero-connection.md`.
 - Email, notifications, audit log, webhooks, cron state, page content,
   media, committee, module settings (`ClubModuleSettings` stays one row).
+  `OwedNotice` (#5433) is a notice a committed change still owes; it names
+  its subject (a booking today) as a plain id with no relation, and the
+  subject carries the lodge, so the marker has none.
 - Inductions (`InductionChecklistTemplate`/`MemberInduction*`, all kinds
   including `HUT_LEADER`): inductions certify the member, not a building
   (recorded 2026-07-03). If hut-leader inductions ever diverge per lodge,
@@ -653,7 +668,7 @@ new ADR:
   question set at every lodge, and the photo/retention/anonymous-QR policy is a
   club decision (#2780). The reports and their per-lodge QR signs above are
   lodge-scoped; the questions asked and the policy governing them are not.
-- Food-order settings (`FoodOrderSettings` singleton, fork #121): one food
+- Food-order settings (`FoodOrderSettings` singleton, fork triyder/AlpineClubBookingsNZ#121): one food
   officer email and one officer label for the club. The orders above are
   lodge-scoped; who buys the food and what the club calls them is a club
   decision. A per-lodge officer would be a new setting, not a widening of this
@@ -696,7 +711,7 @@ new ADR:
   a lodge on this row: it would be a restriction junction in the shape of
   `PromoCodeLodge` above.
 - Other lodges (`OtherLodge`, and `Amenity`, which hangs off it by
-  `otherLodgeId` with cascade delete, added by #50): the registry of **other
+  `otherLodgeId` with cascade delete, added by triyder/AlpineClubBookingsNZ#50): the registry of **other
   clubs'** lodges — the names the public booking-request form offers under "Are
   you a member of another lodge?", the counterpart a booking officer picks when
   charging a visiting club's members, and the entries the Alpine Central Server

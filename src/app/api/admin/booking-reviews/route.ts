@@ -1,5 +1,4 @@
 import { NextRequest, NextResponse } from "next/server";
-import { z } from "zod";
 import type { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/session-guards";
@@ -8,27 +7,23 @@ import {
   bookingReviewReasonCodes,
   bookingReviewReasonSentences,
 } from "@/lib/booking-review";
+import { adminListPage, adminQueueCreatedOrder } from "@/lib/admin-list-page";
+import { adminBookingReviewQueueQuerySchema } from "@/lib/admin-bookings-schemas/review-queues";
 import {
-  adminListPage,
-  adminQueueCreatedOrder,
-  adminListPageQueryFields,
-  adminQueueFocusIdField,
-} from "@/lib/admin-list-page";
+  ADMIN_BOOKING_REVIEW_QUEUE_CONNECTION_SHAPE,
+  type AdminBookingReviewQueueAnswer,
+} from "@/lib/connection-shapes/bookings-review-queues";
+import { connectionJson } from "@/lib/mcp-connection-request";
 
-const querySchema = z.object({
-  status: z.enum(["PENDING", "APPROVED", "REJECTED", "ALL"]).optional().default("PENDING"),
-  ...adminListPageQueryFields,
-  // A focused deep link (`?bookingId=`) reads its one booking, inside the same
-  // review scope, so the panel can pin it when it is not on the page
-  // (INV-OPS-020).
-  bookingId: adminQueueFocusIdField,
-});
-
+/**
+ * GET /api/admin/booking-reviews — bookings held for an officer's review.
+ * Also the AI app action `list_booking_reviews` (ALP-719).
+ */
 export async function GET(req: NextRequest) {
   const guard = await requireAdmin();
   if (!guard.ok) return guard.response;
 
-  const parsed = querySchema.safeParse(Object.fromEntries(req.nextUrl.searchParams));
+  const parsed = adminBookingReviewQueueQuerySchema.safeParse(Object.fromEntries(req.nextUrl.searchParams));
   if (!parsed.success) {
     return NextResponse.json(
       { error: "Invalid query parameters", details: parsed.error.flatten() },
@@ -137,5 +132,6 @@ export async function GET(req: NextRequest) {
     };
   });
 
-  return NextResponse.json({ data, ...adminListPage({ page, pageSize, total }) });
+  const answer: AdminBookingReviewQueueAnswer = { data, ...adminListPage({ page, pageSize, total }) };
+  return connectionJson(req, answer, ADMIN_BOOKING_REVIEW_QUEUE_CONNECTION_SHAPE);
 }

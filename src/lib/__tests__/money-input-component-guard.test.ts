@@ -5,6 +5,7 @@ import ts from "typescript";
 import { describe, expect, it, vi } from "vitest";
 
 import { jsxSourceFiles, REQUIRED_SCANNED_SUBTREES } from "./support/money-number-input-scan";
+import { CENSUS_TIMEOUT_MS } from "@/test/census-timeout";
 
 // The older number-input guard enforces INV-MONEY-003's text boundary. This
 // guard keeps the editing affordance in one component (INV-SSOT-001, #3414).
@@ -27,7 +28,7 @@ function unsharedMoneyInputs(file: string, source: string): string[] {
       const isExchangeRate =
         file === "src/components/admin/ai-spend-currency-card.tsx" &&
         literalText("data-testid") === "spend-currency-input";
-      // A food-order quantity (fork #121) is a decimal count of grams, loaves
+      // A food-order quantity (fork triyder/AlpineClubBookingsNZ#121) is a decimal count of grams, loaves
       // or packets, not money: it has its own parser in food-order-rules.ts.
       const isFoodOrderQuantity =
         file === "src/components/food-orders/food-order-form.tsx" &&
@@ -80,7 +81,7 @@ describe("one shared money box (INV-SSOT-001, #3414)", () => {
       ),
     );
     expect(hits).toEqual([]);
-  });
+  }, CENSUS_TIMEOUT_MS);
 
   it("catches a reintroduced spread on an input, including the quote price box", () => {
     expect(

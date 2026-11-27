@@ -1,4 +1,5 @@
 import { APPLIED_CREDIT_ALLOCATION_ROLE } from "@/lib/xero-applied-credit-link-roles";
+import { storedShortBookingId } from "@/lib/booking-reference";
 import { type CreditNote as XeroCreditNote } from "xero-node";
 import { CreditType, PaymentStatus } from "@prisma/client";
 import { bookingOwner } from "@/lib/booking-owner";
@@ -7,7 +8,7 @@ import { prisma } from "@/lib/prisma";
 import { lockPaymentForRefundedTotal, PAYMENT_ROW_WAIT_TRANSACTION_OPTIONS } from "@/lib/payment-transactions";
 import logger from "@/lib/logger";
 import { type AccountCreditAllocationRepairResult, type AccountCreditAllocationTarget, type RefundedPaymentBusinessStateRepairResult } from "./types";
-import { buildBookingAppliedCreditDescription, getCreditNoteAmountCents, getJsonRecord, getRefundContributionCentsFromCreditNoteMetadata } from "./amounts";
+import { getCreditNoteAmountCents, getJsonRecord, getRefundContributionCentsFromCreditNoteMetadata } from "./amounts";
 import { isIncludedRefundCreditNoteStatus, readRefundNoteRowsByPayment } from "@/lib/xero-refund-note-status";
 import { findActiveXeroObjectLinks } from "./object-links";
 import { notifyXeroSyncError } from "@/lib/xero-error-alert";
@@ -15,6 +16,7 @@ import { sendBankTransferFloorAlert } from "./credit-note-bank-transfer-floor";
 import { decideXeroRefundedColumns, sendCardLedgerFloorAlert } from "./xero-refunded-columns";
 import { createAuditLog } from "@/lib/audit";
 import { lockMemberCreditLedger } from "@/lib/member-credit";
+import { buildBookingAppliedCreditDescription, isBookingAppliedCreditDescription } from "@/lib/member-credit-booking-rows";
 import { repairLegacyAppliedCreditNoteAllocationsForBooking } from "@/lib/xero-applied-credit-allocation-repair";
 import { assertNoAppliedCreditDeallocationFence } from "@/lib/xero-applied-credit-operation-serialization";
 import { getClubFormat } from "@/lib/club-format-settings";
@@ -219,10 +221,10 @@ export async function repairRefundedPaymentBusinessState(input: {
 
   type RepairedPayment = (typeof payments)[number];
   const repairOne = async (payment: RepairedPayment): Promise<"updated" | "unchanged" | "lost" | "recount"> => {
-    const currentDirectRefundContributionCents =
-      currentDirectRefundPaymentId === payment.id ? currentCreditNoteAmountCents(payment.id) ?? 0 : 0;
-    const currentModificationRefundContributionCents =
-      includesCurrentCreditNoteContribution(payment.id)
+    const countedDirectRefundCents = currentDirectRefundPaymentId === payment.id ? currentCreditNoteAmountCents(payment.id) : null;
+    const currentDirectRefundContributionCents = countedDirectRefundCents ?? 0;
+    const currentModificationRefundContributionCents = // #4444: a note counted above as the payment's own (amount read) is not counted again by its allocation
+      includesCurrentCreditNoteContribution(payment.id) && countedDirectRefundCents === null
         ? input.modificationRefundAmountsByPaymentId.get(payment.id) ?? 0
         : 0;
 
@@ -247,7 +249,7 @@ export async function repairRefundedPaymentBusinessState(input: {
 
     // #4449 (`INV-SSOT`), #5289 E: the one step every writer from Xero takes. The Xero-derived figure
     // is clamped, and only it; then a card ledger is never lowered (F5 #1353's raise-only floor, its
-    // alert returned) and an organiser child's mirror is capped at Stripe's refunds (#3653); a bank
+    // alert returned) and capped at Stripe's refunds (#3653, #4444, `INV-PAY-126`); a bank
     // transfer is held at its own refund detail plus the corrections counted (#4162, `INV-ADDPAY-021`);
     // then the status rule (F5: never un-refund a card payment; #3979: a total falling to nothing on a
     // payment never captured returns it to its uncaptured state).
@@ -654,9 +656,7 @@ export async function repairAccountCreditAllocationBusinessState(
 
     matchedPayments += 1;
     const expectedAmountCents = -target.amountCents;
-    const expectedDescription = buildBookingAppliedCreditDescription(
-      payment.bookingId
-    );
+    const expectedDescription = buildBookingAppliedCreditDescription(payment.bookingId);
     // Serialize each payment's applied-credit repair on the PER-MEMBER credit
     // ledger lock (#1881) so the existing-credit read, the create/link, the
     // aggregate, and the creditAppliedCents write commit atomically AND mutually
@@ -730,7 +730,7 @@ export async function repairAccountCreditAllocationBusinessState(
           description?: string;
         } = {};
 
-        if (appliedCredit.description !== expectedDescription && appliedCredit.outsideSpendConvergedAt === null) {
+        if (!isBookingAppliedCreditDescription(appliedCredit.description, payment.bookingId) && appliedCredit.outsideSpendConvergedAt === null) {
           updates.description = expectedDescription;
         }
 
@@ -748,7 +748,7 @@ export async function repairAccountCreditAllocationBusinessState(
         // intentional append-only record. The precise slice reconciler below,
         // not destructive rewrites of those rows, determines provider truth.
         // #4219: a row the credit-note convergence wrote keeps the description that says why.
-        const staleDescriptions = linkedAppliedCredits.filter((credit) => credit.description !== expectedDescription && credit.outsideSpendConvergedAt === null);
+        const staleDescriptions = linkedAppliedCredits.filter((credit) => !isBookingAppliedCreditDescription(credit.description, payment.bookingId) && credit.outsideSpendConvergedAt === null);
         if (staleDescriptions.length > 0) {
           await tx.memberCredit.updateMany({
             where: { id: { in: staleDescriptions.map((credit) => credit.id) } },
@@ -772,7 +772,7 @@ export async function repairAccountCreditAllocationBusinessState(
             },
             data: {
               xeroCreditNoteId: creditNoteId,
-              description: expectedDescription,
+              description: isBookingAppliedCreditDescription(onlyUnlinkedCredit.description, payment.bookingId) ? onlyUnlinkedCredit.description : expectedDescription,
             },
           });
           updatedAppliedCredits += 1;
@@ -869,7 +869,7 @@ export async function repairAccountCreditAllocationBusinessState(
             memberId: creditLedgerMemberId,
             amountCents: -ledgerDeltaCents,
             type: CreditType.BOOKING_APPLIED,
-            description: `Xero allocation reconciliation for booking ${payment.bookingId.slice(0, 8)}`,
+            description: `Xero allocation reconciliation for booking ${storedShortBookingId(payment.bookingId)}`,
             appliedToBookingId: payment.bookingId,
             xeroCreditNoteId: creditNoteId,
           },

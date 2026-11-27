@@ -2771,7 +2771,7 @@ WHERE n.nspname = 'public'
        OR NOT pg_catalog.has_table_privilege(:'app_role', c.oid, 'SELECT')
        OR (c.relkind IN ('v', 'm')
            AND pg_catalog.has_table_privilege(:'app_role', c.oid, 'INSERT, UPDATE, DELETE'))
-       OR (c.relname IN ('BookingLedgerLine', 'AuditLog', 'MemberMoneyEvent', 'MemberMoneyJournal', 'MemberMoneyLine', 'MemberMoneyObligation', 'MemberMoneyApplication', 'MemberMoneySourceLink', 'MemberMoneySourcePosting', 'MemberMoneyRefundReservation', 'MemberMoneyRefundReservationRelease', 'MemberMoneyExportManifest', 'MemberMoneyExportCoverage', 'StripeBalanceTransactionEvidence')
+       OR (c.relname IN ('BookingLedgerLine', 'AuditLog', 'MemberMoneyEvent', 'MemberMoneyJournal', 'MemberMoneyLine', 'MemberMoneyObligation', 'MemberMoneyApplication', 'MemberMoneySourceLink', 'MemberMoneySourcePosting', 'MemberMoneyRefundReservation', 'MemberMoneyRefundReservationRelease', 'MemberMoneyExportManifest', 'MemberMoneyExportCoverage', 'MemberMoneyExportCoverageRelease', 'StripeBalanceTransactionEvidence')
            AND (pg_catalog.has_table_privilege(:'app_role', c.oid, 'UPDATE, DELETE, TRUNCATE, TRIGGER, REFERENCES')
                 OR pg_catalog.has_any_column_privilege(:'app_role', c.oid, 'UPDATE'))));
 SQL
@@ -3493,20 +3493,17 @@ verify_cron_registration() {
   assert_logs_contain_any \
     "$logs" \
     "finance sync registration" \
-    "Scheduled daily finance sync" \
-    "Finance sync cron registration skipped because the module is off"
+    "Scheduled daily finance sync"
 
   assert_logs_contain_any \
     "$logs" \
     "waitlist processor registration" \
-    "Scheduled waitlist processor" \
-    "Waitlist cron registration skipped because the module is off"
+    "Scheduled waitlist processor"
 
   assert_logs_contain_any \
     "$logs" \
     "Xero membership refresh registration" \
-    "Scheduled Xero membership refresh" \
-    "Xero cron registration skipped because the module is off" \
+    "Scheduled Xero membership safety-net refresh" \
     "Xero membership refresh disabled by XERO_ENABLE_DAILY_MEMBERSHIP_REFRESH"
 }
 

@@ -1,23 +1,24 @@
 import { readFileSync } from "fs";
 import path from "path";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, expectTypeOf, it, vi } from "vitest";
 import {
   BUILT_IN_MEMBERSHIP_TYPES,
   DEFAULT_MEMBERSHIP_TYPE_AGE_TIERS,
   MEMBERSHIP_TYPE_AGE_TIERS,
   backfillCurrentSeasonMembershipAssignments,
-  canonicalMembershipTypeKey,
+  buildUniqueMembershipTypeKey,
   defaultMembershipTypeKeyForRole,
+  defaultMembershipTypeNameForRole,
   effectiveSubscriptionBehavior,
   ensureBuiltInMembershipTypes,
   isSubscriptionNotRequiredForMembershipType,
   membershipTypeAgeExemption,
   membershipTypeForcedEditOffendingTiers,
   normalizeMembershipTypeAgeTiers,
-  normalizeMembershipTypeKey,
   validateMembershipTypeRuleConfiguration,
 } from "@/lib/membership-types";
 import { ROLE_VALUES } from "@/lib/member-roles";
+import { Role as RoleEnum, type Role } from "@prisma/client";
 
 function readRepoFile(relativePath: string) {
   // Test helper: reads a fixed repo file under process.cwd(); relativePath is test-controlled, not user input.
@@ -47,14 +48,12 @@ function makeDb() {
         { id: "member-1", role: "USER" },
         { id: "admin-1", role: "ADMIN" },
         { id: "lodge-1", role: "LODGE" },
-        { id: "associate-1", role: "ASSOCIATE" },
-        { id: "life-1", role: "LIFE" },
         { id: "school-1", role: "SCHOOL" },
         { id: "non-member-1", role: "NON_MEMBER" },
       ]),
     },
     seasonalMembershipAssignment: {
-      createMany: vi.fn().mockResolvedValue({ count: 7 }),
+      createMany: vi.fn().mockResolvedValue({ count: 5 }),
     },
   };
 }
@@ -155,7 +154,7 @@ describe("built-in membership type seed helpers", () => {
 
     const result = await backfillCurrentSeasonMembershipAssignments(db, 2026);
 
-    expect(result).toEqual({ createdCount: 7, seasonYear: 2026 });
+    expect(result).toEqual({ createdCount: 5, seasonYear: 2026 });
     expect(db.seasonalMembershipAssignment.createMany).toHaveBeenCalledWith({
       data: [
         { memberId: "member-1", seasonYear: 2026, membershipTypeId: "type-full" },
@@ -163,12 +162,6 @@ describe("built-in membership type seed helpers", () => {
         // NOT_REQUIRED types rather than the billable FULL type.
         { memberId: "admin-1", seasonYear: 2026, membershipTypeId: "type-admin" },
         { memberId: "lodge-1", seasonYear: 2026, membershipTypeId: "type-lodge" },
-        {
-          memberId: "associate-1",
-          seasonYear: 2026,
-          membershipTypeId: "type-associate",
-        },
-        { memberId: "life-1", seasonYear: 2026, membershipTypeId: "type-life" },
         {
           memberId: "school-1",
           seasonYear: 2026,
@@ -186,21 +179,41 @@ describe("built-in membership type seed helpers", () => {
 
   it("keeps role-to-type defaults separate from access role semantics", () => {
     expect(defaultMembershipTypeKeyForRole("USER")).toBe("FULL");
-    expect(defaultMembershipTypeKeyForRole("MEMBER")).toBe("FULL");
     // #2149: operational roles fall back to their own NOT_REQUIRED types.
     expect(defaultMembershipTypeKeyForRole("ADMIN")).toBe("ADMIN");
     expect(defaultMembershipTypeKeyForRole("LODGE")).toBe("LODGE");
-    expect(defaultMembershipTypeKeyForRole("ASSOCIATE")).toBe("ASSOCIATE");
-    expect(defaultMembershipTypeKeyForRole("RESERVE")).toBe("ASSOCIATE");
-    expect(defaultMembershipTypeKeyForRole("LIFE")).toBe("LIFE");
     expect(defaultMembershipTypeKeyForRole("SCHOOL")).toBe("SCHOOL");
     expect(defaultMembershipTypeKeyForRole("NON_MEMBER")).toBe("NON_MEMBER");
-    expect(canonicalMembershipTypeKey("RESERVE")).toBe("ASSOCIATE");
+  });
+
+  it("accepts only a Role, so an unknown string cannot fall through to the billable FULL type (#5407)", () => {
+    // Type-level: `pnpm run typecheck` checks these. Widening any of the three
+    // back to `Role | string` fails them.
+    expectTypeOf(defaultMembershipTypeKeyForRole).parameter(0).toEqualTypeOf<Role>();
+    expectTypeOf(defaultMembershipTypeNameForRole).parameter(0).toEqualTypeOf<Role>();
+    expectTypeOf(effectiveSubscriptionBehavior).parameter(1).toEqualTypeOf<Role>();
+    // @ts-expect-error a membership-type key is not a Role
+    expect(defaultMembershipTypeKeyForRole("MEMBER")).toBe("FULL");
+  });
+
+  it("maps every Role explicitly, so a new one cannot default to the billable FULL type (#5407)", () => {
+    // The switch's `never` check fails `pnpm run typecheck` when a Role has no
+    // case; this pins today's answer for each, and its key list fails at run
+    // time if the generated enum grows.
+    const expected: Record<Role, string> = {
+      USER: "FULL",
+      ADMIN: "ADMIN",
+      LODGE: "LODGE",
+      NON_MEMBER: "NON_MEMBER",
+      SCHOOL: "SCHOOL",
+    };
+    expect(Object.values(RoleEnum).sort()).toEqual(Object.keys(expected).sort());
+    for (const role of Object.values(RoleEnum)) {
+      expect(defaultMembershipTypeKeyForRole(role)).toBe(expected[role]);
+    }
   });
 
   describe("shared subscription-required derivation (#2149)", () => {
-    const noExemptTiers = new Set<string>();
-
     it("resolves the effective behaviour from the assignment, else the role default", () => {
       // Assignment wins.
       expect(effectiveSubscriptionBehavior("REQUIRED", "ADMIN")).toBe("REQUIRED");
@@ -213,13 +226,45 @@ describe("built-in membership type seed helpers", () => {
       expect(effectiveSubscriptionBehavior(null, "USER")).toBe("REQUIRED");
     });
 
+    // The access side of the shared liability rule (#5190), on a club that has
+    // not chosen its rule: the pre-#5190 display answer.
+    const tiers = (exempt: ReadonlyArray<string>) =>
+      (["INFANT", "CHILD", "YOUTH", "ADULT"] as const).map((tier, index) => ({
+        tier,
+        minAge: [0, 5, 13, 18][index]!,
+        maxAge: [4, 12, 17, null][index]!,
+        label: tier,
+        sortOrder: index,
+        subscriptionRequiredForBooking: !exempt.includes(tier),
+      }));
+    const judge = (input: {
+      subscriptionBehavior: Parameters<
+        typeof isSubscriptionNotRequiredForMembershipType
+      >[0]["subscriptionBehavior"];
+      ageTier: "CHILD" | "YOUTH" | "ADULT" | "NOT_APPLICABLE";
+      exemptTiers?: ReadonlyArray<string>;
+      seasonRowStatus?: "NOT_REQUIRED";
+      liabilitySettings?: Parameters<
+        typeof isSubscriptionNotRequiredForMembershipType
+      >[0]["liabilitySettings"];
+    }) =>
+      isSubscriptionNotRequiredForMembershipType({
+        subscriptionBehavior: input.subscriptionBehavior,
+        member: { ageTier: input.ageTier, dateOfBirth: null },
+        seasonRowStatus: input.seasonRowStatus ?? null,
+        seasonYear: 2026,
+        ageTierSettings: tiers(input.exemptTiers ?? []),
+        liabilitySettings: input.liabilitySettings ?? {
+          requiredTypeAgeRule: "NOT_CHOSEN",
+          liabilityAgeSource: "NOT_CHOSEN",
+        },
+      });
+
     it("treats a fee-paying admin (REQUIRED assignment) as owing", () => {
       expect(
-        isSubscriptionNotRequiredForMembershipType({
+        judge({
           subscriptionBehavior: effectiveSubscriptionBehavior("REQUIRED", "ADMIN"),
           ageTier: "ADULT",
-          notRequiredAgeTiers: noExemptTiers,
-          hasNotRequiredSeasonRow: false,
         }),
       ).toBe(false);
     });
@@ -227,50 +272,92 @@ describe("built-in membership type seed helpers", () => {
     it("treats a bare ADMIN/LODGE account (no assignment) as not required", () => {
       for (const role of ["ADMIN", "LODGE"] as const) {
         expect(
-          isSubscriptionNotRequiredForMembershipType({
+          judge({
             subscriptionBehavior: effectiveSubscriptionBehavior(null, role),
             ageTier: "ADULT",
-            notRequiredAgeTiers: noExemptTiers,
-            hasNotRequiredSeasonRow: false,
           }),
         ).toBe(true);
       }
     });
 
-    it("exempts an age-tier-exempt member regardless of type, and honours a BASED_ON_AGE_TIER NOT_REQUIRED row", () => {
-      // Age-tier exemption applies even to a REQUIRED type.
+    it("while NOT_CHOSEN, follows billing (#5190 Q2): a REQUIRED type owes whatever the tier, and a saved NOT_REQUIRED row exempts nobody", () => {
+      // Billing never tier-exempts a REQUIRED type while the club has not chosen.
       expect(
-        isSubscriptionNotRequiredForMembershipType({
+        judge({ subscriptionBehavior: "REQUIRED", ageTier: "CHILD", exemptTiers: ["CHILD"] }),
+      ).toBe(false);
+      // Billing ignores a saved NOT_REQUIRED row on a BASED_ON_AGE_TIER type.
+      expect(
+        judge({
+          subscriptionBehavior: "BASED_ON_AGE_TIER",
+          ageTier: "YOUTH",
+          seasonRowStatus: "NOT_REQUIRED",
+        }),
+      ).toBe(false);
+      // BASED_ON_AGE_TIER defers to the tier: exempt here, liable below.
+      expect(
+        judge({ subscriptionBehavior: "BASED_ON_AGE_TIER", ageTier: "CHILD", exemptTiers: ["CHILD"] }),
+      ).toBe(true);
+      expect(
+        judge({ subscriptionBehavior: "BASED_ON_AGE_TIER", ageTier: "YOUTH" }),
+      ).toBe(false);
+    });
+
+    it("shows an organisation or school account (NOT_APPLICABLE tier) on a REQUIRED type as owing while NOT_CHOSEN, then follows the club's choice (#5190 Q2)", () => {
+      const organisation = {
+        subscriptionBehavior: "REQUIRED",
+        ageTier: "NOT_APPLICABLE",
+      } as const;
+      expect(judge(organisation)).toBe(false);
+      expect(
+        judge({
+          ...organisation,
+          liabilitySettings: {
+            requiredTypeAgeRule: "AGE_TIER_EXEMPTS",
+            liabilityAgeSource: "SEASON_START",
+          },
+        }),
+      ).toBe(true);
+      expect(
+        judge({
+          ...organisation,
+          liabilitySettings: {
+            requiredTypeAgeRule: "ALWAYS_OWES",
+            liabilityAgeSource: "SEASON_START",
+          },
+        }),
+      ).toBe(false);
+    });
+
+    it("once the club has chosen, shows the club's rule: the row exempts nobody, and ALWAYS_OWES keeps a REQUIRED child owing", () => {
+      const alwaysOwes = {
+        requiredTypeAgeRule: "ALWAYS_OWES",
+        liabilityAgeSource: "SEASON_START",
+      } as const;
+      expect(
+        judge({
           subscriptionBehavior: "REQUIRED",
           ageTier: "CHILD",
-          notRequiredAgeTiers: new Set(["CHILD"]),
-          hasNotRequiredSeasonRow: false,
+          exemptTiers: ["CHILD"],
+          liabilitySettings: alwaysOwes,
         }),
-      ).toBe(true);
-      // BASED_ON_AGE_TIER + NOT_REQUIRED row dominates a promoted stored tier.
+      ).toBe(false);
       expect(
-        isSubscriptionNotRequiredForMembershipType({
+        judge({
           subscriptionBehavior: "BASED_ON_AGE_TIER",
           ageTier: "YOUTH",
-          notRequiredAgeTiers: noExemptTiers,
-          hasNotRequiredSeasonRow: true,
-        }),
-      ).toBe(true);
-      // BASED_ON_AGE_TIER without a row defers to the tier (here liable).
-      expect(
-        isSubscriptionNotRequiredForMembershipType({
-          subscriptionBehavior: "BASED_ON_AGE_TIER",
-          ageTier: "YOUTH",
-          notRequiredAgeTiers: noExemptTiers,
-          hasNotRequiredSeasonRow: false,
+          seasonRowStatus: "NOT_REQUIRED",
+          liabilitySettings: alwaysOwes,
         }),
       ).toBe(false);
     });
   });
 
-  it("derives stable custom keys without relying on display words for policy", () => {
-    expect(normalizeMembershipTypeKey(" Social member ")).toBe("SOCIAL_MEMBER");
-    expect(normalizeMembershipTypeKey("")).toBe("CUSTOM");
+  it("derives stable custom keys without relying on display words for policy", async () => {
+    const freeKeys = { membershipType: { findUnique: vi.fn().mockResolvedValue(null) } };
+    await expect(buildUniqueMembershipTypeKey(freeKeys, " Social member ")).resolves.toBe(
+      "SOCIAL_MEMBER",
+    );
+    await expect(buildUniqueMembershipTypeKey(freeKeys, "")).resolves.toBe("CUSTOM");
   });
 
   it("validates age-tier eligibility (Xero grouping moved to the grouping surface, #1934)", () => {

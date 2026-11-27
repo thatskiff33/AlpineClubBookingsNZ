@@ -1930,7 +1930,7 @@ action; scoped admins cannot merge.
 | `APP_RUNTIME_ROLE`                 | Runtime label used by health/status reporting, usually set by Compose (`web-blue`, `web-green`, `cron-leader`, `staging`). Names which container **slot** this is. **Never read to decide whether this installation is production** — that is `APP_ENVIRONMENT_ROLE` above (`INV-CONFIG-003`). |
 | `NODE_ENV`                         | Runtime mode set by Node/Next.                                                                       |
 | `NEXT_RUNTIME`                     | Runtime marker set by Next.js instrumentation.                                                       |
-| `APP_VERSION`                      | **Not a runtime variable; do not set it (#4985).** The app's version is stamped at build time from `package.json` by `next.config.ts`, so changing it means building a new image. Health checks, **System Health**, config-transfer exports, support-evidence packs and server Sentry events all report it. It replaces the version variable npm and pnpm set only when they launch a script, which the production image (`node server.js`) never had, so health checks and server Sentry events reported "0.1.0" and exports and evidence packs reported "unknown". |
+| `APP_VERSION`                      | **Not a runtime variable; do not set it (#4985).** The app's version is stamped at build time from `package.json` by `next.config.ts`, so changing it means building a new image. Health checks, **System Health**, config-transfer exports, support-evidence packs and Sentry events from the server and members' browsers (#5262) all report it, as the Sentry `release`; the edge layer's Sentry setting carries it too and takes effect once an edge route exists (none runs on the edge today). The version is stamped at build time rather than sent at runtime (owner decision of 22 Nov 2026 on #5262), because a browser tab should report the code it is actually running. The version is public, so stamping it into the browser bundle exposes nothing secret; only the browser's Sentry DSN is read at runtime (#4982), so one image reports the same version wherever it runs. Tagging only: browser Sentry's session tracking (`BrowserSession`) is switched off, so a release adds no per-page-load session report. It replaces the version variable npm and pnpm set only when they launch a script, which the production image (`node server.js`) never had, so health checks and server Sentry events reported "0.1.0" and exports and evidence packs reported "unknown". |
 
 ## Environment Role
 
@@ -2783,6 +2783,9 @@ read `MemberAccessRole` rows.
 | `EMAIL_SERVER_USER`                      | SMTP relay username (required when `USE_SMTP_RELAY=true` or `USE_LOCAL_CAPTURE=true`).                                                                        |
 | `EMAIL_SERVER_PASSWORD`                  | SMTP relay password (required when `USE_SMTP_RELAY=true` or `USE_LOCAL_CAPTURE=true`).                                                                        |
 | `EMAIL_CAPTURE_ALLOW_PUBLIC_HOST`        | Boolean toggle (`true`/`false`, default `false`). Allows `USE_LOCAL_CAPTURE=true` when `EMAIL_SERVER_HOST` names a host on the **public internet**, which is otherwise **refused** with every send held back (#3071 review). The refusal exists because that combination was a live defect: an installation already running `USE_SMTP_RELAY` against a real relay, told to "set `USE_LOCAL_CAPTURE=true`", flipped the one flag and kept its live relay host — so a copy emailed the club's real members while the log recorded that the message reached nobody. Accepted **without** this flag: a container or service name (`mailpit`, `mailhog`), `localhost`, any loopback/RFC1918/CGNAT/link-local/unique-local address, and the reserved suffixes `.local`, `.internal`, `.home.arpa`, `.test`, `.invalid`, `.example`. Set this `true` only for a sink that genuinely forwards nothing but has a public name — **nothing verifies that, and nothing can**: a mail server on a private address can relay outward too, so the declaration is what carries it. |
+| `EMAIL_SMTP_CONNECTION_TIMEOUT_MS`       | The whole budget for setting up a mail connection, in milliseconds (#5407): the DNS lookup, the TCP connect, the server's greeting and the STARTTLS upgrade together. Default `30000` (the mail library's own is two minutes); accepted `1000` to `600000`. Applies to every provider (AWS SES is reached through its SMTP endpoint). A value outside the range, or not a whole number, is ignored with a warning in the setup readiness checks and the default is used, so a mistyped timeout never stops the club's mail. |
+| `EMAIL_SMTP_GREETING_TIMEOUT_MS`         | A cap on waiting for the server's greeting (and for the STARTTLS upgrade) inside the setup budget above, in milliseconds. Default `30000`, equal to the setup budget and to the mail library's own, so it changes nothing unless set lower; accepted `1000` to `600000`; same fallback. Each of those waits gets the smaller of this cap and what is left of the setup budget, so the cap only matters when it is lower than `EMAIL_SMTP_CONNECTION_TIMEOUT_MS`. A value you set above it has no effect, and the setup readiness checks warn about it; lowering only the connection timeout needs no greeting change. |
+| `EMAIL_SMTP_SOCKET_TIMEOUT_MS`           | How long an open mail connection may sit idle waiting for the server, in milliseconds. Default `120000` (the library's own is ten minutes); accepted `1000` to `600000`; same fallback. Together these keep a stuck send well inside the hour the recovery of a lost booking-bumped notice assumes. A socket timeout after the message body has been sent but before the server's final reply marks the send failed, and the email retry sends it again (for a message whose body is kept for retry), as with any transport error after sending, so the recipient can get it twice. |
 | `EMAIL_FROM`                             | Envelope / Return-Path sender address (bootstrap; must be a provider-verified SES address in production). The ONLY email-identity env var besides transport secrets — from display name, support address, and contact-form recipient are admin-managed DB-first (Admin > Email Messages). |
 | `SES_SNS_TOPIC_ARN`                      | SNS topic ARN for SES bounce/complaint webhooks (required for full SES feedback handling when `USE_AWS_SES=true`).                                           |
 | `SES_SNS_ALLOW_UNSAFE_MISSING_TOPIC_ARN` | Local/dev escape hatch only; never enable for deployed SES feedback ingestion.                                                                               |
@@ -2836,6 +2839,21 @@ from `/api/observability/browser-config` before initializing browser reporting.
 Failed or empty configuration leaves reporting and replay off. Errors before
 that fetch completes are not reported. Replay still needs the separate club
 privacy opt-in; its default remains off.
+
+**Neither the server nor the browser sends session data (#5262).** Server and
+browser events carry the installed version as their Sentry `release` (see
+`APP_VERSION`), for tagging only. Sentry's session tracking, which it uses for
+release health and crash-free rates, is switched off on both. On the server,
+`src/lib/sentry-server-integrations.ts` turns off the per-request counting in
+the SDK's `Http` integration and drops its `ProcessSession` integration. In the
+browser, `src/instrumentation-client.ts` drops the SDK's `BrowserSession`
+integration. The edge SDK has no session tracking. Sentry therefore gets no
+session data for those figures. Before this change, a server with `SENTRY_DSN`
+set sent Sentry a count of requests by outcome for each minute, with the
+release and environment, and session updates for the server process when an
+error was reported before its first request, or when it exited without
+serving one. Error events and performance
+traces are unchanged. Nothing to set.
 
 **Upgrade action:** before deploying the first release with runtime browser
 Sentry, set `NEXT_PUBLIC_SENTRY_DSN` in `.env` if browser reports are wanted.
@@ -2996,9 +3014,10 @@ Public forks should keep live provider credentials out of GitHub Actions. Use
 Stripe test mode, Xero demo tenants, SES sandbox credentials, and non-production
 databases for validation.
 
-The status board reads one repository variable (Settings, then Secrets and
-variables, then Actions):
+The status board and the budget gate each read one repository variable
+(Settings, then Secrets and variables, then Actions):
 
 | Variable | Description |
 | --- | --- |
+| `QUALITY_BUDGET_UPSTREAM_REPO` | Optional, and for a deployment fork only: leave it unset in this repository. The `owner/repo` on github.com the fork syncs down from, such as `thatskiff33/AlpineClubBookingsNZ`. When set, CI's file-size budget step fetches that repository's `main` and trusts it, so a sync-down is not refused for upstream's own reviewed code (#5196); see [Syncing a fork from upstream](docs/MAINTENANCE.md#syncing-a-fork-from-upstream). The upstream must be public; the fetch needs no extra credentials. A malformed value or a failed fetch fails the step. |
 | `STATUS_BOARD_ISSUE` | Optional. The number of the issue whose body `.github/workflows/status-board.yml` overwrites hourly with the generated lane status board (#4464). Only the repository owner can set it; see [status board setup](docs/agents/COORDINATION.md#the-status-board). While unset, the job warns and writes nothing. It refuses an issue that is a pull request or whose body is neither empty nor an earlier board. |

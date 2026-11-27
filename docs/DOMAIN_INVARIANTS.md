@@ -125,7 +125,7 @@ File: [`invariants/money.md`](invariants/money.md). Prefix `INV-MONEY`.
 | `INV-MONEY-046` | Subscription category is a second billing axis, independent of membership type |
 | `INV-MONEY-015` | Approval stands when billing setup is incomplete; billing records a visible exception |
 | `INV-MONEY-016` | Membership type governs liability, including archived role defaults; role grants no exemption |
-| `INV-MONEY-017` | Paid-up: NOT_REQUIRED type, PAID current-season row, exempt tier; nomination honours first |
+| `INV-MONEY-017` | Paid-up: liability rule, PAID row or no-invoice cover; nomination stricter |
 | `INV-MONEY-018` | Manual subscription mark-paid is cash-only, never clobbered; a Xero link reclaims authority |
 | `INV-MONEY-019` | Opt-in item-code look-through detects paid subscriptions from every fee-schedule component code |
 | `INV-MONEY-020` | Look-through on: subscription-invoice selection strong-first, settled, earliest; off keeps first-match |
@@ -136,6 +136,10 @@ File: [`invariants/money.md`](invariants/money.md). Prefix `INV-MONEY`.
 | `INV-MONEY-043` | Money lines, credit links and group settlements refuse booking deletion |
 | `INV-MONEY-044` | Booking doors post their legacy charge lines into the journal once |
 | `INV-MONEY-045` | Bank-transfer charges post at binding; confirmation links, never recharges |
+| `INV-MONEY-047` | Cash writers post exact receipts; collection is a separate capped application |
+| `INV-MONEY-048` | Card refund debts post at their doors; slices reserve before Stripe |
+| `INV-MONEY-049` | Bank and cash hand-backs post debt and payment; censuses check them |
+| `INV-MONEY-050` | Caps C1–C4 refuse by code; cash trims, reservations stop before Stripe |
 
 ## Booking Dates And Capacity
 
@@ -199,6 +203,9 @@ number and prefix, and it is listed at the end of the table below.
 | `INV-CAP-037` | At most one live payment link per booking; never both settle |
 | `INV-CAP-038` | A whole-lodge hold excludes custodian-held bed-nights; the reverse asks, then amends atomically |
 | `INV-CAP-040` | An import claims beds under the lodge lock, never overbooks |
+| `INV-CAP-041` | A waitlist position is read from the live queue, never stored |
+| `INV-CAP-042` | A lapsed offer's place goes on down the queue |
+| `INV-CAP-043` | An offer's window runs from the email that tells the member |
 | `INV-CAP-011` | Waitlisted and offered bookings hold no capacity until confirmed |
 | `INV-CAP-012` | A waitlist offer reprices at current rates and states what is payable |
 | `INV-CAP-013` | A member is present on only one live booking per lodge night |
@@ -381,6 +388,7 @@ Prefix `INV-PAY`.
 | `INV-PAY-159` | Cash cover is read from cash records by one reader |
 | `INV-PAY-160` | An edit refunds a card only where Stripe holds a record |
 | `INV-PAY-161` | An imported paid booking is settled manually in its creating transaction |
+| `INV-PAY-162` | An opening-credit file posts once, from one approval; reversal needs it unspent |
 | `INV-PAY-031` | Organiser-pays settlement applies only if payment matches the settleable children |
 | `INV-PAY-032` | Group children confirmed before payment have a reaper releasing beds and notifying |
 | `INV-PAY-033` | Reverted group children end terminally: a second reap window cancels once |
@@ -655,7 +663,7 @@ Prefix `INV-LOCKOUT`.
 | `INV-LOCKOUT-057` | Every withhold writes a `SKIPPED_NO_EMAILS` `EmailLog` row with no retained body |
 | `INV-LOCKOUT-058` | The retry cron re-reads the switch and booking authority before every replay |
 | `INV-LOCKOUT-059` | Waitlist candidacy excludes a silenced booking; two residual cases surfaced, not denied |
-| `INV-LOCKOUT-060` | A silenced waitlist entry keeps its place and quoted position |
+| `INV-LOCKOUT-060` | A silenced waitlist entry shows no position and is not counted |
 | `INV-LOCKOUT-061` | Xero-sent invoice emails are gated too, superseding the #1705 always-send carve-out |
 | `INV-LOCKOUT-062` | Enabling the switch requires an acknowledgement; both set and clear are audited |
 | `INV-LOCKOUT-063` | The acknowledgement is a two-button dialog, never a checkbox; `bookings:edit` |
@@ -974,6 +982,7 @@ File: [`invariants/integrations.md`](invariants/integrations.md). Prefix
 | `INV-INT-039` | A dead webhook attempt is taken over past the lease |
 | `INV-INT-040` | No subscription or joining-fee invoice work while Xero is off |
 | `INV-INT-041` | A PENDING outbox row always holds a request the outbox can claim |
+| `INV-INT-042` | A once-ever alert claim with no email is given back |
 
 ## Operations
 
@@ -1012,7 +1021,7 @@ the row-locking rules it is the sibling of.
 | `INV-OPS-017` | Third-party deployment and workflow container images require digest pins |
 | `INV-OPS-018` | First Bootstrap provisions restricted roles and a separate data key |
 | `INV-OPS-019` | Production deploys only a published annotated release tag, or a recorded override |
-| `INV-OPS-021` | Every main push run completes; releases tag only published commits |
+| `INV-OPS-021` | Newer merges replace main's queued runs; releases tag published commits |
 | `INV-OPS-022` | The documented Docker first install, seed included, is what CI runs |
 
 ## Product Configuration
@@ -1035,6 +1044,7 @@ headings the index keeps verbatim.
 | `INV-CONFIG-006` | One persisted currency and locale; the environment seeds them once |
 | `INV-CONFIG-007` | One GST schedule, dated periods; Xero and the journal resolve it |
 | `INV-CONFIG-008` | Tax categories map to the club's own Xero rates; none hard-coded |
+| `INV-CONFIG-009` | One chosen liability rule for billing and access; NOT_CHOSEN changes nobody |
 
 ## Single Source Of Truth
 
@@ -1084,7 +1094,7 @@ headings the index keeps verbatim.
 | `INV-AUTH-010` | Listed admin routes require a fresh proof first |
 | `INV-AUTH-011` | Address sign-in limits exempt signout/session; refusals show a network wait |
 | `INV-AUTH-012` | Officers use an app or passkey after grace |
-| `INV-AUTH-013` | Password work leaves the event loop; placeholders use one unusable hash |
+| `INV-AUTH-013` | Password work off the event loop; unusable placeholders; proof-time upgrade; refusal top-up |
 
 ## AI App Connections
 
@@ -1105,3 +1115,4 @@ headings the index keeps verbatim.
 | `INV-MCP-006` | Every API route method is an action or has a stated exclusion |
 | `INV-MCP-007` | Actions reach routes over loopback; scope enforced before dispatch |
 | `INV-MCP-008` | Which connection events and action calls write an audit row |
+| `INV-MCP-009` | Officer actions need the route's admin area and the officer's own approval |

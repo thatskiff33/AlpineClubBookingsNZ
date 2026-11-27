@@ -1,7 +1,7 @@
 "use client"
 
 import { WebhookHealthPanel } from "./_components/webhook-health-panel"
-import { useEffect, useState } from "react"
+import { useEffect, useRef, useState } from "react"
 import Link from "next/link"
 import { usePathname, useSearchParams } from "next/navigation"
 import { adminHref, servedAdminPathname } from "@/lib/admin-hubs"
@@ -21,6 +21,7 @@ import {
   SyncResultsPanel,
   TaxCategoryMappingCard,
   UsagePanel,
+  XeroTaxOverridePauseCard,
   xeroLinkState,
 } from "./_components/panels"
 import { FocusedActionError } from "@/components/focused-action-error"
@@ -73,12 +74,18 @@ export default function XeroPage() {
     if (message) setUsageRefreshToken((value) => value + 1)
   }
 
+  // A `?section=` link (Stuck States, #5234) opens that section and scrolls to
+  // it. The sections render only after the status read, so the reveal waits
+  // for it, and runs once per requested section so later renders leave the
+  // operator's scroll position alone.
+  const requestedSection = searchParams.get("section")
+  const revealedSectionRef = useRef<string | null>(null)
   useEffect(() => {
-    const section = searchParams.get("section")
-    if (section && section in SECTION_DEFAULTS) {
-      setSectionState(section as SectionKey, true)
-    }
-  }, [searchParams, setSectionState])
+    if (loading || !requestedSection || !(requestedSection in SECTION_DEFAULTS)) return
+    if (revealedSectionRef.current === requestedSection) return
+    revealedSectionRef.current = requestedSection
+    scrollToSection(requestedSection as SectionKey)
+  }, [loading, requestedSection, scrollToSection])
 
   if (loading) {
     return (
@@ -125,6 +132,8 @@ export default function XeroPage() {
 
       {/* Shown connected or not: the club's tax treatment is read without Xero, and a change checks its code against Xero (#4632). */}
       <ClubTaxCard />
+      {/* #5208: read from local state, so shown connected or not, beside the treatment it carries. */}
+      <XeroTaxOverridePauseCard />
 
       {connected && (
         <>

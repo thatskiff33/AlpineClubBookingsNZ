@@ -2,6 +2,7 @@ import type { AgeTier } from "@prisma/client"
 import type { XeroAccount, XeroItem } from "@/lib/xero-admin-cache"
 import type { XeroMappingWritableKey } from "@/lib/xero-account-mapping-keys"
 import type { XeroReentryCause } from "@/lib/xero-token-store"
+import type { ContactGroupResyncCounts } from "@/lib/xero-contact-group-mismatch-summary"
 
 export interface XeroStatus {
   connected: boolean
@@ -273,7 +274,7 @@ export interface XeroHealthSnapshot {
   pendingOperations: { count: number }
   lastMembershipRefresh: { at: string | null; lastCronStatus: string | null; lastCronStartedAt: string | null }
   missingInvoices: { count: number }
-  contactGroupMismatches: { count: number; cacheReady: boolean }
+  contactGroupMismatches: { count: number; resyncCount?: number; reviewByHandCount?: number; cacheReady: boolean } // #5234 split; optional while an older server answers
   contactLinkMismatches: { count: number; cacheReady: boolean }
   creditNotesSpentOutsideApp?: { count: number } // #4220; optional while an older server answers
   apiBudget: { status: "healthy" | "warning" | "critical" | "exhausted" | "unknown"; usagePercent: number | null; totalCalls: number | null; failedCalls: number | null }
@@ -321,6 +322,11 @@ interface ContactCacheResyncSummary {
   resyncedAt: string
 }
 
+// The group endpoint also says how many distinct contacts are flagged in all.
+interface ContactGroupResyncSummary extends ContactGroupResyncCounts {
+  resyncedAt: string
+}
+
 // Information-only residue: a member no rule matches who still sits in
 // managed-universe group(s). Never written to by any sync path.
 interface ContactGroupInformationalEntry {
@@ -330,6 +336,7 @@ interface ContactGroupInformationalEntry {
   ageTier: AgeTier
   xeroContactId: string
   unexpectedManagedGroupIds: string[]
+  unexpectedManagedGroups?: Array<{ id: string; name: string | null }> // #5234; optional while an older server answers
 }
 
 export interface ContactGroupMismatchResponse {
@@ -346,7 +353,7 @@ export interface ContactGroupMismatchResponse {
   mismatches: ContactGroupMismatch[]
   informationalCount: number
   informational: ContactGroupInformationalEntry[]
-  resync?: ContactCacheResyncSummary
+  resync?: ContactGroupResyncSummary
 }
 
 interface ContactLinkMismatch {

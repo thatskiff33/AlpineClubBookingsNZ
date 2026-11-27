@@ -113,8 +113,12 @@ that never runs working bees sees no empty card.
    those bookings on the work party's card afterwards, and no officer confirms
    them first.
 
-Only **members** see the card, the page and the button — not organisation
-accounts (schools), non-member logins, or kiosk or admin-only accounts. A
+Only **members** see the card, the page, the button and the "I am attending
+a working bee" choice in Book a Stay — not organisation accounts (schools),
+non-member logins, or kiosk or admin-only accounts. Anyone else booking those
+nights sees no work party to choose, and books as usual. The choice lists
+work parties up to two years ahead of the club's today (the booking horizon).
+A
 finished work party has no Join button, and an inactive one (or one whose internal
 promo code has been switched off or archived) is not shown at all.
 
@@ -271,7 +275,8 @@ What happens:
   100% work party brought to nothing, which was then marked paid and given its
   beds. Removing the work party would leave it paid and holding beds while
   owing what the work party took off, so **cancel the booking, or ask the
-  treasurer**;
+  treasurer**. A booking marked paid with no payment record at all (only old
+  or hand-edited data) is refused the same way;
 - it is marked paid with account credit alone, and no money taken: for example
   an unpaid $200 booking with $100 of credit applied, which a 50% work party
   brought down to the credit, so it was marked paid. For the same reason,
@@ -289,7 +294,7 @@ What happens:
 | Discount % | Percent off nights in the window | 100 | Whole number 1–100 |
 | Start date | First night in the discount window | — | NZ date-only |
 | End date (last discounted night) | Last night in the discount window | — | NZ date-only; inclusive |
-| Description | A note shown to members on the work party page and the calendar, and in the booking form to anyone booking those nights | — | Optional; up to 1000 characters |
+| Description | A note shown to members on the work party page and the calendar, and in the booking form to a member booking those nights | — | Optional; up to 1000 characters |
 | Lodge | Which lodge the working bee is at | All lodges (club-wide) | Only shown with more than one active lodge |
 | Active | Whether members can select the event when booking | on | Inactive events cannot be selected |
 

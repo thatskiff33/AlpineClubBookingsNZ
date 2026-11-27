@@ -485,19 +485,30 @@ describe("config-transfer booking policies (#2363)", () => {
       join(process.cwd(), "src/lib/config-transfer/apply.ts"),
       "utf8",
     );
-    const configLock = source.indexOf("await acquireConfigImportLock(tx)");
-    const minimumStayPolicyLock = source.indexOf(
+    // The apply takes every category's keys through one helper, called after
+    // the singleton and before the re-plan; the helper holds their order.
+    const applyFn = source.slice(source.indexOf("export async function applyConfigImport"));
+    const configLock = applyFn.indexOf("await acquireConfigImportLock(tx)");
+    const categoryKeys = applyFn.indexOf(
+      "await lockSelectedCategoryKeys(tx, parsed, params.selectedCategories)",
+    );
+    const replan = applyFn.indexOf("const replan = await buildImportPlanFromParsed");
+    const categoryApply = applyFn.indexOf("await importer.apply(applyCtx)");
+    const keyHelper = source.slice(
+      source.indexOf("async function lockSelectedCategoryKeys"),
+      source.indexOf("export type BootstrapBackupSkip"),
+    );
+    const minimumStayPolicyLock = keyHelper.indexOf(
       "await lockMinimumStayPolicySet(tx)",
     );
-    const hostingPolicyLock = source.indexOf(
+    const hostingPolicyLock = keyHelper.indexOf(
       "await lockAdultMemberHostingPolicySet(tx)",
     );
-    const replan = source.indexOf("const replan = await buildImportPlanFromParsed");
-    const categoryApply = source.indexOf("await importer.apply(applyCtx)");
     expect(configLock).toBeGreaterThan(-1);
-    expect(minimumStayPolicyLock).toBeGreaterThan(configLock);
-    expect(hostingPolicyLock).toBeGreaterThan(minimumStayPolicyLock);
-    expect(replan).toBeGreaterThan(hostingPolicyLock);
+    expect(categoryKeys).toBeGreaterThan(configLock);
+    expect(replan).toBeGreaterThan(categoryKeys);
     expect(categoryApply).toBeGreaterThan(replan);
+    expect(minimumStayPolicyLock).toBeGreaterThan(-1);
+    expect(hostingPolicyLock).toBeGreaterThan(minimumStayPolicyLock);
   });
 });

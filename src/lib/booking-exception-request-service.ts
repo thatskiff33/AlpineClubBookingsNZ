@@ -1,4 +1,6 @@
 import { Prisma } from "@prisma/client";
+import { isPrismaKnownUniqueConstraintError } from "@/lib/prisma-known-errors";
+import { describeUniqueConstraintTarget, isPrismaUniqueConstraintError } from "@/lib/prisma-errors";
 
 import { bookingOwner } from "@/lib/booking-owner";
 import { prisma } from "@/lib/prisma";
@@ -75,6 +77,7 @@ import {
   type ProposalGuest,
   type ProposalParty,
 } from "@/lib/booking-exception-requests";
+import type { ExceptionQueueStatusFilter } from "@/lib/booking-exception-request-shared";
 import { LOCK1_HOLDER_TRANSACTION_BUDGET } from "@/lib/db-transaction";
 import { optionalDateOnly, optionalNightList } from "@/lib/booking-exception-delta-values";
 
@@ -1181,23 +1184,16 @@ function freezeProposal(
   };
 }
 
+// Read with describeUniqueConstraintTarget, as the driver never fills meta.target (#5407). Unreadable counts as
+// the slot: it is the only key a request create can realistically hit, and the transaction rolls back either way.
 function isOpenSlotUniqueViolation(error: unknown): boolean {
-  if (
-    error instanceof Prisma.PrismaClientKnownRequestError &&
-    error.code === "P2002"
-  ) {
-    const target = error.meta?.target;
-    if (Array.isArray(target)) {
-      return target.some((column) => String(column).includes("openStateKey"));
-    }
-    return true;
+  if (isPrismaKnownUniqueConstraintError(error)) {
+    const slot = Prisma.BookingChangeRequestScalarFieldEnum.openStateKey satisfies typeof Prisma.NewBookingPolicyExceptionRequestScalarFieldEnum.openStateKey;
+    const target = describeUniqueConstraintTarget(error);
+    return target === null || target.includes(slot.toLowerCase());
   }
   // Test seam / defensive: a plain P2002-coded object still maps to the conflict.
-  return (
-    typeof error === "object" &&
-    error !== null &&
-    (error as { code?: unknown }).code === "P2002"
-  );
+  return isPrismaUniqueConstraintError(error);
 }
 
 // ---------------------------------------------------------------------------
@@ -1934,18 +1930,6 @@ export async function cancelModificationExceptionRequest(input: {
 const ACTOR_SELECT = {
   select: { id: true, firstName: true, lastName: true, email: true },
 } as const;
-
-export type ExceptionQueueStatusFilter =
-  | "REQUESTED"
-  | "APPROVED"
-  | "REJECTED"
-  | "CANCELLED"
-  | "SUPERSEDED"
-  // #2553: a request the hold reaper closed. Accepted by the admin queue route's
-  // own filter too, so the type and the route agree; the officer SCREEN that
-  // surfaces an "Expired" tab is #2526.
-  | "EXPIRED"
-  | "ALL";
 
 /** One covered policy as frozen into the evidence, for the officer queue. */
 export interface ExceptionQueuePolicyRef {

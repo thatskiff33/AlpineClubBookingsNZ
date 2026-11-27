@@ -33,6 +33,7 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 
 import { stripComments } from "@/lib/__tests__/support/strip-comments";
+import { CENSUS_TIMEOUT_MS } from "@/test/census-timeout";
 
 const SECTION_EDIT_ADOPTERS = [
   "src/app/(admin)/admin/finance/xero/_components/webhook-health-panel.tsx",
@@ -63,6 +64,7 @@ const SECTION_EDIT_ADOPTERS = [
   "src/components/admin/school-hut-leader-kinds-card.tsx",
   "src/components/admin/security/officer-two-factor-card.tsx",
   "src/components/admin/security/password-policy-card.tsx",
+  "src/components/admin/subscription-liability-rule-section.tsx",
 ];
 
 const LIST_EDITOR_ADOPTERS = [
@@ -158,7 +160,7 @@ function listEditorInstances(source: string): string[] {
   );
 }
 
-describe("staged sections wire their focus return (#4087)", () => {
+describe("staged sections wire their focus return (#4087)", { timeout: CENSUS_TIMEOUT_MS }, () => {
   const sources = trackedSources().map((file) => ({ file, source: read(file) }));
 
   const sectionAdopters = sources.filter(

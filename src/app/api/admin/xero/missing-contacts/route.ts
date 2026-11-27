@@ -12,18 +12,24 @@
  * against, which the engine re-computes and compares before it touches anybody.
  */
 import { NextRequest, NextResponse } from "next/server";
-import { z } from "zod";
+import { parseJsonRequestBody } from "@/lib/api-json";
 
 import { logAudit } from "@/lib/audit";
+import {
+  XERO_MISSING_CONTACTS_CONNECTION_SHAPE,
+  XERO_MISSING_CONTACTS_RUN_CONNECTION_SHAPE,
+} from "@/lib/connection-shapes/finance-xero-contacts";
+import { connectionJson } from "@/lib/mcp-connection-request";
 import { requireAdmin } from "@/lib/session-guards";
 import { isXeroConnected } from "@/lib/xero-token-store";
 import { XeroContactEnvironmentUnknownError } from "@/lib/xero-environment-write-gate";
 import { getXeroMissingContactSnapshot } from "@/lib/xero-missing-contact-seeding";
 import { runXeroMissingContactSeedingChunk } from "@/lib/xero-missing-contact-seeding-run";
 import { SeedingPlanChangedError } from "@/lib/xero-missing-contact-seeding-shape";
-
-/** Rows returned per bucket. The counts are always the full population. */
-const DEFAULT_ROW_LIMIT = 500;
+import {
+  xeroMissingContactCensusLimit,
+  xeroMissingContactRunBodySchema,
+} from "@/lib/xero-contact-review-requests";
 
 const CACHE_NOT_READY =
   "Xero contacts have never been synced into this application, so a dry run " +
@@ -39,50 +45,23 @@ export async function GET(request: NextRequest) {
   });
   if (!guard.ok) return guard.response;
 
-  const rawLimit = request.nextUrl.searchParams.get("limit");
-  const parsedLimit = rawLimit === null ? DEFAULT_ROW_LIMIT : Number(rawLimit);
-  const limit =
-    Number.isInteger(parsedLimit) && parsedLimit >= 1 && parsedLimit <= 2000
-      ? parsedLimit
-      : DEFAULT_ROW_LIMIT;
+  // Rows returned per bucket; the counts are always the full population.
+  const limit = xeroMissingContactCensusLimit(request.nextUrl.searchParams);
 
   const snapshot = await getXeroMissingContactSnapshot({ limit });
-  return NextResponse.json({
-    snapshot,
-    // Said by the server rather than assembled in the panel, so the one
-    // condition that makes every count meaningless reads the same everywhere.
-    notReadyMessage: snapshot.cacheReady ? null : CACHE_NOT_READY,
-  });
+  return connectionJson(
+    request,
+    {
+      snapshot,
+      // Said by the server rather than assembled in the panel, so the one
+      // condition that makes every count meaningless reads the same everywhere.
+      notReadyMessage: snapshot.cacheReady ? null : CACHE_NOT_READY,
+    },
+    XERO_MISSING_CONTACTS_CONNECTION_SHAPE,
+  );
 }
 
-const postSchema = z.object({
-  /*
-    The operator's explicit confirmation, and the reviewed set it applies to.
-
-    `memberIds` is NOT the authority for what gets pushed — the engine
-    recomputes the pushable set and processes the intersection — so a forged id
-    buys nothing. What posting the set DOES buy is the other half of the rule:
-    a member who became eligible between the review and the run is absent from
-    it, and is therefore never touched by a confirmation nobody gave for them.
-  */
-  confirmReviewed: z.literal(true),
-  memberIds: z.array(z.string().min(1)).min(1).max(5000),
-  /*
-    The digest of the plan those ids were reviewed against. It is what closes
-    the door `memberIds` cannot: a member can stay pushable while what would
-    HAPPEN to them changes — the operator approves "link Jane to the contact
-    Xero already has", the contact sync archives it underneath them, and the
-    member is still pushable, now as a create. Required, because a client that
-    omitted it would be asking for exactly the unguarded run this field exists
-    to prevent.
-  */
-  plannedDigest: z.string().min(1),
-  // Capped low: each member costs two to four Xero calls depending on whether
-  // contact grouping is on, and a small chunk is what lets an operator stop a
-  // run that is going wrong. Omitted, the engine derives it from that cost.
-  limit: z.number().int().min(1).max(100).optional(),
-});
-
+// The run's request, and why each field is there: `xeroMissingContactRunBodySchema`.
 export async function POST(request: NextRequest) {
   const guard = await requireAdmin({
     permission: { area: "finance", level: "edit" },
@@ -90,8 +69,9 @@ export async function POST(request: NextRequest) {
   if (!guard.ok) return guard.response;
   const session = guard.session;
 
-  const body = await request.json().catch(() => null);
-  const parsed = postSchema.safeParse(body);
+  const jsonBody = await parseJsonRequestBody(request);
+  if (!jsonBody.ok) return jsonBody.response;
+  const parsed = xeroMissingContactRunBodySchema.safeParse(jsonBody.body);
   if (!parsed.success) {
     return NextResponse.json(
       { error: "Invalid request", details: parsed.error.flatten() },
@@ -170,5 +150,5 @@ export async function POST(request: NextRequest) {
     }),
   });
 
-  return NextResponse.json({ result });
+  return connectionJson(request, { result }, XERO_MISSING_CONTACTS_RUN_CONNECTION_SHAPE);
 }

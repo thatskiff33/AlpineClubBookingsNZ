@@ -1,16 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
-import { z } from "zod";
 
+import { parseJsonRequestBody } from "@/lib/api-json";
 import { logAudit } from "@/lib/audit";
+import { getClientIp } from "@/lib/rate-limit-http";
 import { sendAdminMaintenanceReportAlert } from "@/lib/email";
 import logger from "@/lib/logger";
-import {
-  MAX_MAINTENANCE_PHOTO_DATA_URL_LENGTH,
-} from "@/lib/maintenance-report-photo";
 import { loadMaintenanceReportSettings } from "@/lib/maintenance-report-settings";
 import { loadEffectiveModuleFlags } from "@/lib/module-settings";
 import {
-  MAX_MAINTENANCE_QUESTIONS,
   MAX_MAINTENANCE_SUMMARY_LENGTH,
   MaintenanceReportValidationError,
   createMaintenanceReport,
@@ -20,6 +17,15 @@ import { prisma } from "@/lib/prisma";
 import { applyMemberScopedRateLimit, rateLimiters } from "@/lib/rate-limit";
 import { requireActiveSession } from "@/lib/session-guards";
 import { resolveMaintenanceAlertPayload } from "@/lib/maintenance-report-alert";
+import {
+  memberMaintenanceReportConnectionSchema,
+  memberMaintenanceReportSchema,
+} from "@/lib/maintenance-report-schema";
+import {
+  MAINTENANCE_REPORT_CREATED_CONNECTION_SHAPE,
+  MAINTENANCE_REPORT_FORM_CONNECTION_SHAPE,
+} from "@/lib/connection-shapes-lodge-life";
+import { arrivesAsMcpConnection, connectionJson } from "@/lib/mcp-connection-request";
 
 /**
  * The SIGNED-IN maintenance-report door (#2780), deliberately a separate file
@@ -42,6 +48,11 @@ import { resolveMaintenanceAlertPayload } from "@/lib/maintenance-report-alert";
  * shipped bypassed once already on the sibling QR route — so both GET and POST
  * re-check the flag directly (defence in depth, #2780 security review) and 404 an
  * off module. `loadEffectiveModuleFlags` fails closed on a read error.
+ *
+ * Both methods are also AI app actions (ALP-796): `get_maintenance_report_form`
+ * and `report_maintenance_issue`. A connection reports without a photo
+ * (`memberMaintenanceReportConnectionSchema`), so it is not told whether
+ * photos are on.
  */
 
 /**
@@ -57,32 +68,8 @@ async function maintenanceModuleGate() {
   return null;
 }
 
-const submitSchema = z
-  .object({
-    lodgeId: z.string().trim().min(1).max(64),
-    summary: z.string().trim().min(1).max(MAX_MAINTENANCE_SUMMARY_LENGTH),
-    answers: z
-      .array(
-        z.object({
-          questionId: z.string().trim().min(1).max(64),
-          // Bounded here only so an oversized payload is refused before the
-          // service walks it; the real per-type limits live in the service, which
-          // is the half both doors share.
-          value: z.string().max(4000),
-        }),
-      )
-      .max(MAX_MAINTENANCE_QUESTIONS)
-      .optional()
-      .default([]),
-    photoDataUrl: z
-      .string()
-      .max(MAX_MAINTENANCE_PHOTO_DATA_URL_LENGTH)
-      .optional()
-      .nullable(),
-  })
-  .strict();
 
-export async function GET() {
+export async function GET(request: NextRequest) {
   const guard = await requireActiveSession();
   if (!guard.ok) return guard.response;
 
@@ -99,14 +86,14 @@ export async function GET() {
     }),
   ]);
 
-  return NextResponse.json({
+  return connectionJson(request, {
     questions,
     lodges,
     // Only the two facts the member form can act on. `anonymousReportsEnabled`
     // and the retention window are admin policy and are deliberately absent.
     photosEnabled: settings.photosEnabled,
     summaryMaxLength: MAX_MAINTENANCE_SUMMARY_LENGTH,
-  });
+  }, MAINTENANCE_REPORT_FORM_CONNECTION_SHAPE);
 }
 
 export async function POST(request: NextRequest) {
@@ -127,14 +114,16 @@ export async function POST(request: NextRequest) {
   );
   if (limited) return limited;
 
-  let body: unknown;
-  try {
-    body = await request.json();
-  } catch {
-    return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
-  }
+  const jsonBody = await parseJsonRequestBody(request, {
+    error: "Invalid JSON",
+  });
+  if (!jsonBody.ok) return jsonBody.response;
+  const body = jsonBody.body;
 
-  const parsed = submitSchema.safeParse(body);
+  const schema = arrivesAsMcpConnection(request)
+    ? memberMaintenanceReportConnectionSchema
+    : memberMaintenanceReportSchema;
+  const parsed = schema.safeParse(body);
   if (!parsed.success) {
     return NextResponse.json({ error: "Invalid input" }, { status: 400 });
   }
@@ -173,7 +162,10 @@ export async function POST(request: NextRequest) {
         lodgeId: lodge.id,
         summary: parsed.data.summary,
         answers: parsed.data.answers,
-        photoDataUrl: parsed.data.photoDataUrl ?? null,
+        photoDataUrl:
+          "photoDataUrl" in parsed.data && typeof parsed.data.photoDataUrl === "string"
+            ? parsed.data.photoDataUrl
+            : null,
       },
       settings,
       questions,
@@ -209,8 +201,7 @@ export async function POST(request: NextRequest) {
       answerCount: created.answerCount,
       hasPhoto: created.hasPhoto,
     }),
-    ipAddress:
-      request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? "unknown",
+    ipAddress: getClientIp(request),
   });
 
   // AFTER the transaction, and never awaited into the response: a slow mail
@@ -232,5 +223,10 @@ export async function POST(request: NextRequest) {
       ),
     );
 
-  return NextResponse.json({ id: created.id }, { status: 201 });
+  return connectionJson(
+    request,
+    { id: created.id },
+    MAINTENANCE_REPORT_CREATED_CONNECTION_SHAPE,
+    { status: 201 },
+  );
 }

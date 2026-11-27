@@ -63,6 +63,7 @@ import {
 } from "@/lib/admin-hubs/security-map";
 import { stripComments } from "@/lib/__tests__/support/strip-comments";
 import { BANK_REFUND_VOIDS_ANCHOR } from "@/components/admin/bank-refund-voids-to-answer-panel";
+import { CENSUS_TIMEOUT_MS } from "@/test/census-timeout";
 
 // ---------------------------------------------------------------------------
 // The admin hub registry (epic #4468, C1 #4798).
@@ -322,7 +323,7 @@ describe("each entry's admission is what today's code gives its old path", () =>
       }
     }
     expect(drift).toEqual([]);
-  });
+  }, 30_000);
 
   it("records every module flag the path needs today", () => {
     const drift = ADMIN_PAGES.flatMap((page) => {
@@ -1554,7 +1555,7 @@ describe("retired pages", () => {
         retiredPattern.test(stripComments(fs.readFileSync(path.join(process.cwd(), file), "utf8"))),
     );
     expect(linking).toEqual([]);
-  });
+  }, CENSUS_TIMEOUT_MS);
 });
 
 // ---------------------------------------------------------------------------
@@ -2068,6 +2069,14 @@ describe("the registry is inert", () => {
   const IMPORTERS: Record<string, string> = {
     "e2e/admin-roles.spec.ts": "#5155: registry paths and page labels identify settled admin destinations",
     "src/app/(admin)/admin/membership/members/_hooks/use-members-query-state.test.tsx": "#5155: registry Members path defines the canonical URL for no-op replacement tests",
+    "src/hooks/use-admin-list-url-sync.ts": "#5295: compares the address shown in served form (servedAdminPathname) before an admin list's router.replace",
+    "src/hooks/__tests__/use-admin-list-url-sync.test.tsx": "#5295: registry Payments paths, old and hub, are the addresses the no-op replace tests open at",
+    "src/app/(admin)/admin/finance/__tests__/list-address-sync.test.tsx": "#5295: registry Payments and Subscriptions paths are the addresses the no-op replace tests open at",
+    "src/app/(admin)/admin/membership/membership-cancellations/__tests__/queue-pagination.test.tsx": "#5295: the registry Requests tab path is the address the no-op replace test opens at",
+    "src/app/(admin)/admin/system/audit-log/__tests__/page-member-filter-url.test.tsx": "#5295: the registry Audit Log path is the address the no-op replace test opens at",
+    "src/components/admin/booking-requests/__tests__/queue-pagination.test.tsx": "#5295: the registry Booking Requests path is the address each panel writes",
+    "src/lib/__tests__/admin-member-applications-page.test.tsx": "#5295: the registry Member Applications path is the address the no-op replace test opens at",
+    "src/lib/__tests__/admin-waitlist-refund-pages.test.tsx": "#5295: the registry Refund Requests path is the address the no-op replace test opens at",
     "src/app/(admin)/admin/booking-desk/bed-allocation/page.tsx": "#4972: the empty-lodge alert links to Lodges",
     "src/app/(admin)/admin/finance/xero/setup/xero-setup-wizard.tsx": "#4972: shares the step parameter and the webhooks and mapping step ids with the shortcuts",
     "src/lib/admin-permissions.ts":
@@ -2194,6 +2203,10 @@ describe("the registry is inert", () => {
     "src/app/(admin)/admin/finance/internet-banking/page.tsx": "C5: its back link is adminLink",
     "src/app/(admin)/admin/finance/xero/_components/health-diagnostics-panel.tsx":
       "C5: the member-grouping link is adminHref",
+    "src/app/(admin)/admin/finance/xero/_components/contact-group-mismatch-panel.tsx":
+      "#5234: the member-grouping and member links are adminHref",
+    "src/app/(admin)/admin/finance/xero/_components/__tests__/health-diagnostics-review-by-hand.test.tsx":
+      "#5234: it asserts the member links are adminHref",
     "src/app/(admin)/admin/finance/xero/_components/webhook-amber-badge.tsx":
       "C5: the webhook setup link is adminHref; #4972: it is built by the shared Xero Setup step helper",
     "src/app/(admin)/admin/finance/xero/_components/xero-setup-page-client.tsx":
@@ -2202,7 +2215,8 @@ describe("the registry is inert", () => {
       "C5: the Xero admin link is adminHref",
     "src/app/(admin)/admin/integrations/page.tsx":
       "C5: the Xero setup card is adminHref; C7: and the backup setup and AI assistant cards",
-    "src/app/(admin)/admin/modules/page.tsx": "C5: the Xero module setup link is adminHref",
+    "src/app/(admin)/admin/modules/_components/module-card.tsx":
+      "C5: the Xero module setup link is adminHref; #5243: moved here from the Modules page",
     "src/app/(admin)/admin/setup/finance/page.tsx":
       "#4968: its heading is the registry label and its back link adminLink; its cards moved to setup/hub-cards.ts",
     "src/app/(admin)/admin/stripe/setup/page.tsx": "C5: the payments link is adminHref",
@@ -2542,7 +2556,7 @@ describe("the registry is inert", () => {
     );
     // Both directions: an unreviewed importer fails, and so does a stale entry.
     expect(importers.sort()).toEqual(Object.keys(IMPORTERS).sort());
-  });
+  }, CENSUS_TIMEOUT_MS);
 
   it("uses only relative imports inside the registry, so next.config.ts can load it", () => {
     const aliased = sourceFiles(REGISTRY_DIR.slice(0, -1)).filter((file) =>

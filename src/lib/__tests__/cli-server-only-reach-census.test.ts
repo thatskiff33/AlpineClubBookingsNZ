@@ -2,6 +2,15 @@ import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import path from "node:path";
 
 import { describe, expect, it } from "vitest";
+import { CENSUS_TIMEOUT_MS } from "@/test/census-timeout";
+
+import {
+  EXTENSIONS,
+  REPO_ROOT,
+  describeTrail,
+  findReach,
+  relative,
+} from "./helpers/import-graph";
 
 /**
  * AN OPERATOR SCRIPT MAY REACH A `server-only` MODULE ONLY IF EVERY PUBLISHED
@@ -81,9 +90,6 @@ import { describe, expect, it } from "vitest";
  * `client-server-boundary-census.test.ts` has always counted them.
  */
 
-const REPO_ROOT = path.resolve(process.cwd());
-const SRC = path.join(REPO_ROOT, "src");
-const EXTENSIONS = [".ts", ".tsx", ".js", ".jsx", ".mjs"];
 
 /**
  * Every entrypoint a person runs directly under `tsx`. Directories rather than
@@ -128,18 +134,6 @@ const ALWAYS_FORBIDDEN_SPECIFIERS = new Set(["next/headers"]);
 
 /** The one spelling of the flag this repository publishes. */
 const REACT_SERVER_CONDITION = "--conditions=react-server";
-
-/**
- * Runtime module specifiers, static and dynamic.
- *
- * `import type` / `export type` are erased before anything executes. The
- * negative lookahead is `type[\s{]` rather than `type\s` because TypeScript
- * accepts `import type{ Session } from …` with no space — the same spelling
- * `client-server-boundary-census.test.ts` and the matching Semgrep rule use.
- */
-const STATIC_IMPORT =
-  /^[ \t]*(?:import|export)\s+(?!type[\s{])(?:[^;'"]*?\bfrom\s+)?["']([^"']+)["']/gm;
-const DYNAMIC_IMPORT = /(?:\bimport|\brequire)\s*\(\s*["']([^"']+)["']\s*\)/g;
 
 /**
  * The `tsx` binary, and NOTHING ELSE — the arguments are read from the text
@@ -210,70 +204,6 @@ function walk(dir: string, out: string[] = []): string[] {
     }
   }
   return out;
-}
-
-function relative(file: string): string {
-  return path.relative(REPO_ROOT, file).split(path.sep).join("/");
-}
-
-const specifierCache = new Map<string, string[]>();
-function specifiersOf(file: string): string[] {
-  const cached = specifierCache.get(file);
-  if (cached) return cached;
-  const text = readFileSync(file, "utf8");
-  const value = [
-    ...[...text.matchAll(STATIC_IMPORT)].map((match) => match[1]),
-    ...[...text.matchAll(DYNAMIC_IMPORT)].map((match) => match[1]),
-  ];
-  specifierCache.set(file, value);
-  return value;
-}
-
-/** Resolve a specifier to a file inside this repository, or `null`. */
-function resolveSpecifier(fromFile: string, specifier: string): string | null {
-  let base: string;
-  if (specifier.startsWith("@/")) {
-    base = path.join(SRC, specifier.slice(2));
-  } else if (specifier.startsWith(".")) {
-    base = path.resolve(path.dirname(fromFile), specifier);
-  } else {
-    return null;
-  }
-  for (const extension of ["", ...EXTENSIONS]) {
-    const candidate = base + extension;
-    if (existsSync(candidate) && statSync(candidate).isFile()) return candidate;
-  }
-  for (const extension of EXTENSIONS) {
-    const candidate = path.join(base, `index${extension}`);
-    if (existsSync(candidate)) return candidate;
-  }
-  return null;
-}
-
-/** Breadth-first, so the reported path is the shortest one that exists. */
-function findReach(entry: string, targets: Set<string>): string[] | null {
-  const seen = new Set<string>([entry]);
-  const queue: Array<{ file: string; trail: string[] }> = [
-    { file: entry, trail: [entry] },
-  ];
-  while (queue.length > 0) {
-    const { file, trail } = queue.shift()!;
-    for (const specifier of specifiersOf(file)) {
-      if (targets.has(specifier)) return [...trail, specifier];
-      const next = resolveSpecifier(file, specifier);
-      if (next !== null && !seen.has(next)) {
-        seen.add(next);
-        queue.push({ file: next, trail: [...trail, next] });
-      }
-    }
-  }
-  return null;
-}
-
-function describeTrail(trail: string[]): string {
-  return trail
-    .map((step) => (step.startsWith(REPO_ROOT) ? relative(step) : step))
-    .join("\n    -> ");
 }
 
 /** Files under one directory with one extension, recursively. */
@@ -591,7 +521,7 @@ describe("CLI entrypoints and the `server-only` boundary", () => {
         "caller that has a request (CT-5, #2869).\n\n" +
         violations.join("\n\n"),
     ).toEqual([]);
-  });
+  }, CENSUS_TIMEOUT_MS);
 
   it("publishes every `server-only`-reaching command with the condition", () => {
     const violations: string[] = [];
@@ -661,7 +591,7 @@ describe("CLI entrypoints and the `server-only` boundary", () => {
         "`--help` text and docblock (#2850).\n\n" +
         unswept.join("\n"),
     ).toEqual([]);
-  });
+  }, CENSUS_TIMEOUT_MS);
 
   it("would see a raw invocation printed in a script's own usage text", () => {
     // The mutation this guard exists to catch, run as a fixture rather than
@@ -790,7 +720,7 @@ describe("CLI entrypoints and the `server-only` boundary", () => {
     // this drives the same search over a synthetic root: `club-time/server`
     // carries `import "server-only"`. Proving the search WORKS is what stops a
     // silent all-clean.
-    const serverBinding = path.join(SRC, "lib", "club-time", "server.ts");
+    const serverBinding = path.join(REPO_ROOT, "src", "lib", "club-time", "server.ts");
     expect(existsSync(serverBinding)).toBe(true);
     expect(findReach(serverBinding, CONDITION_EXCUSED_SPECIFIERS)).toEqual([
       serverBinding,

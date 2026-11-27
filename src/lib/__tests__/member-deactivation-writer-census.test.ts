@@ -3,6 +3,13 @@ import { join, relative } from "node:path";
 import ts from "typescript";
 import { describe, expect, it } from "vitest";
 import { enclosingFunction } from "./support/function-scope";
+import {
+  MEMBER_ADDRESS_FIELDS,
+  MEMBER_PHONE_FIELDS,
+  pickMemberAddressValues,
+  pickMemberPhoneValues,
+  type MemberAddressField,
+} from "@/lib/member-address";
 
 // Discover Member write payloads, following local aliases, spreads, conditional
 // branches and property assignments. A new writer fails by identity instead of
@@ -143,6 +150,12 @@ const OPAQUE_PAYLOADS = {
   "createAdminMember: buildDietaryRequirementsPatch()": "single dietary column patch",
   "executeMemberMerge: fieldOutcome.patch": "explicit scalar allowlist excludes lifecycle fields; mergeMemberFields regression test",
   "src/app/api/admin/deletion-requests/[id]/route.ts: DIETARY_ERASURE_PATCH": "erases dietary text only",
+  // #5398: the member-address pickers return only their fixed column lists;
+  // "the pickers carry no lifecycle field" below asserts their keys.
+  "approveMemberApplication: pickMemberAddressValues()": "the twelve address columns only, from STREET_ADDRESS_FIELDS and POSTAL_ADDRESS_FIELDS",
+  "approveMemberApplication: pickMemberPhoneValues()": "the three phone columns only, from MEMBER_PHONE_FIELDS",
+  "importMembersFromXeroGroups: pickMemberAddressValues()": "the twelve address columns only, from STREET_ADDRESS_FIELDS and POSTAL_ADDRESS_FIELDS",
+  "importMembersFromXeroGroups: pickMemberPhoneValues()": "the three phone columns only, from MEMBER_PHONE_FIELDS",
 };
 
 const WRITERS = [
@@ -195,6 +208,28 @@ describe("Member deactivation writers record the departure in the same write (#4
     const found = writers(parse(`function change() { ${fixture} }`));
     expect(found).toHaveLength(1);
     expect(found[0]?.fields.leavingDate).toHaveLength(0);
+  });
+
+  // #5398: the picker entries above are proved, not taken on trust. Handed a
+  // source that carries every lifecycle field, each picker returns exactly its
+  // fixed column list, and that list names no lifecycle field.
+  it("the pickers carry no lifecycle field", () => {
+    const lifecycle = { active: false, cancelledAt: new Date(0), leavingDate: new Date(0) };
+    const address = Object.fromEntries(
+      MEMBER_ADDRESS_FIELDS.map((field) => [field, "x"]),
+    ) as Record<MemberAddressField, string>;
+    const source = {
+      ...lifecycle,
+      ...address,
+      phoneCountryCode: "64",
+      phoneAreaCode: "27",
+      phoneNumber: "123",
+    };
+    expect(Object.keys(pickMemberAddressValues(source)).sort()).toEqual([...MEMBER_ADDRESS_FIELDS].sort());
+    expect(Object.keys(pickMemberPhoneValues(source)).sort()).toEqual([...MEMBER_PHONE_FIELDS].sort());
+    for (const field of Object.keys(lifecycle)) {
+      expect([...MEMBER_ADDRESS_FIELDS, ...MEMBER_PHONE_FIELDS] as string[]).not.toContain(field);
+    }
   });
 
   it("surfaces computed helper payloads instead of silently considering them safe", () => {

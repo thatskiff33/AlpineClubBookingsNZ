@@ -1,5 +1,6 @@
 import "server-only";
 import { Prisma } from "@prisma/client";
+import { isPrismaKnownUniqueConstraintError } from "@/lib/prisma-known-errors";
 import { usableCentralId } from "@/lib/other-lodge-central-id";
 import {
   OTHER_LODGE_DATA_SELECT,
@@ -21,10 +22,10 @@ import type { ServerNzAnswerWrite } from "@/lib/servernz-version-record";
  * Merging ONE lodge from the central server's pull into the local Other
  * lodges registry (`downloadOtherClubsFromServer` runs it for each).
  *
- * WHICH ROW (#64). By the central server's permanent id (`centralId`) first,
+ * WHICH ROW (triyder/AlpineClubBookingsNZ#64). By the central server's permanent id (`centralId`) first,
  * so a lodge renamed there is the same row here. A lodge whose row has no id
  * yet is matched by NAME once, and that match fills the id in (the backfill).
- * Two lodges may share a name (#69), so the name is only a fallback, and only
+ * Two lodges may share a name (triyder/AlpineClubBookingsNZ#69), so the name is only a fallback, and only
  * when exactly ONE row could be the lodge; otherwise the lodge is new here.
  *
  * NAMES. Another club's lodge takes the server's name: a rename there renames
@@ -43,7 +44,7 @@ import type { ServerNzAnswerWrite } from "@/lib/servernz-version-record";
  * save, or a second download creating the same central id) is DEFERRED; the
  * caller retries the deferred lodges after the rest of the pull, then runs one
  * FINAL pass, where what still misses is reported. A name never collides: it
- * is not unique (#69).
+ * is not unique (triyder/AlpineClubBookingsNZ#69).
  *
  * TWO RULES keep `updatedAt` honest as a sync signal, because the upload
  * watermark is derived from it:
@@ -54,7 +55,7 @@ import type { ServerNzAnswerWrite } from "@/lib/servernz-version-record";
  *     upload dutifully sends it back.
  *
  *  2. A remote row OLDER than the local copy is not applied — for a lodge this
- *     club may edit (#52). Upload runs before download in the same pass, so an
+ *     club may edit (triyder/AlpineClubBookingsNZ#52). Upload runs before download in the same pass, so an
  *     admin editing a row in between would otherwise have their edit
  *     overwritten by the copy the server was already holding. Newest wins, and
  *     the next upload carries the club's edit. Another club's lodge has no
@@ -76,7 +77,7 @@ const MERGE_SELECT = {
 /**
  * A lodge this download could not place: `lodge` is the local row's name, or
  * `null` for a lodge new to this site, which was not added; `wanted` is the
- * server's name. Since #69 only a lodge that could not be created (a
+ * server's name. Since triyder/AlpineClubBookingsNZ#69 only a lodge that could not be created (a
  * concurrent writer holding its central id on the final pass), or one the
  * server sent without an id whose name several local lodges share.
  */
@@ -100,7 +101,7 @@ export type MergeOutcome =
   | { kind: "conflict"; nameConflict: NameConflict };
 
 function isUniqueViolation(error: unknown): boolean {
-  return error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002";
+  return isPrismaKnownUniqueConstraintError(error);
 }
 
 /**
@@ -109,7 +110,7 @@ function isUniqueViolation(error: unknown): boolean {
  * which reports a collision instead of deferring it.
  *
  * `byNameAllowed` says whether a lodge WITH a usable id may key an unkeyed row
- * by its name (#69): the caller allows it only on a whole-registry download,
+ * by its name (triyder/AlpineClubBookingsNZ#69): the caller allows it only on a whole-registry download,
  * and only when the name is the registry's alone (#4262 review: not for our
  * own lodge either when another lodge shares its name), so a row is never
  * keyed to another lodge of the same name. Even then, two or more local rows
@@ -139,10 +140,10 @@ export async function mergeDistributedLodge(
     : null;
   let existing = byId;
   if (!existing && (centralId === null || byNameAllowed)) {
-    // By NAME, among VISIBLE lodges only (#58: a hidden lodge is a deleted one
+    // By NAME, among VISIBLE lodges only (triyder/AlpineClubBookingsNZ#58: a hidden lodge is a deleted one
     // kept for the bookings that name it, never matched to another lodge). A
     // row keyed to a DIFFERENT central lodge is another lodge of the same name
-    // (#69) and never merged into — unless a whole download shows that its id
+    // (triyder/AlpineClubBookingsNZ#69) and never merged into — unless a whole download shows that its id
     // is not the server's at all (stale, see above). A pulled lodge with no
     // usable id may match any row of its name.
     const candidates = (
@@ -170,8 +171,8 @@ export async function mergeDistributedLodge(
   // server that does not yet carry it leaves the local value alone.
   const data = otherLodgeDataColumns(lodge);
   // Another club's lodge, once the owned list is known — by the pulled
-  // lodge's central id, or by this row's own key (#69). Its booking officer's
-  // PHONE is never stored here (#52): overridden to null, the one deliberate
+  // lodge's central id, or by this row's own key (triyder/AlpineClubBookingsNZ#69). Its booking officer's
+  // PHONE is never stored here (triyder/AlpineClubBookingsNZ#52): overridden to null, the one deliberate
   // exception to "a field the server did not send is left alone".
   const theirs =
     owned !== null &&
@@ -242,7 +243,7 @@ export async function mergeDistributedLodge(
   }
 
   // A rename: only another club's lodge, only one matched by id. The new
-  // name may be one another lodge has (#69).
+  // name may be one another lodge has (triyder/AlpineClubBookingsNZ#69).
   const renameTo = theirs && byId !== null && row.name !== lodge.name ? lodge.name : null;
 
   // Amenities are part of "differs": a lodge whose only change is its amenity
@@ -282,11 +283,11 @@ export async function mergeDistributedLodge(
 }
 
 /**
- * The central server deleted the lodge with this central id (#58, API 2.4,
+ * The central server deleted the lodge with this central id (triyder/AlpineClubBookingsNZ#58, API 2.4,
  * owner decision): the local row is HIDDEN, never removed. It keeps its data
  * and its central id, so every booking and booking request that names it keeps
  * it, and it leaves the Other lodges list and every drop-down. Any club lodge
- * linked to it (#62) is unlinked. Returns the lodge's name when this call hid it
+ * linked to it (triyder/AlpineClubBookingsNZ#62) is unlinked. Returns the lodge's name when this call hid it
  * (`null` when there is no such row, or it was already hidden: a repeated
  * deletion is a no-op), and how many club lodges it unlinked. Raw, so `updatedAt`
  * stays put: hiding is not an edit to upload.
@@ -334,7 +335,7 @@ export async function hideDeletedLodges(
 }
 
 /**
- * The record step's second unlink (#58): a club lodge linked to a deleted
+ * The record step's second unlink (triyder/AlpineClubBookingsNZ#58): a club lodge linked to a deleted
  * central lodge in the moments since the hides (an administrator's Central
  * lodge save) is unlinked again, on the record step's fenced transaction, with
  * its own audit row when it unlinked any (one row per step, #4262 review).
@@ -350,7 +351,7 @@ export async function unlinkDeletedCentralLodges(
 }
 
 /**
- * THE ONE UNLINK of club lodges from deleted central lodges (#62, #58): a club
+ * THE ONE UNLINK of club lodges from deleted central lodges (triyder/AlpineClubBookingsNZ#62, triyder/AlpineClubBookingsNZ#58): a club
  * lodge LINKED to a deleted central lodge ("Central lodge") points at nothing
  * now, so the link is cleared, and it answers nothing until an administrator
  * links it again (#4262: always explicitly). Raw: not an administrator's edit.

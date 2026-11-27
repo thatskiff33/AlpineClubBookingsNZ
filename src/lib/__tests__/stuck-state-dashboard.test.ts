@@ -154,8 +154,9 @@ function buildDeps(overrides?: Partial<StuckStateDashboardDependencies>) {
       },
       missingInvoices: { count: 0 },
       refundsMissingCreditNotes: { count: 0, graceHours: 24 },
-      contactGroupMismatches: { count: 0, cacheReady: true },
+      contactGroupMismatches: { count: 0, resyncCount: 0, reviewByHandCount: 0, cacheReady: true },
       contactLinkMismatches: { count: 0, cacheReady: true },
+      taxOverridePause: { count: 0 },
       apiBudget: {
         status: "healthy",
         usagePercent: 10,
@@ -289,8 +290,9 @@ describe("getStuckStateDashboard", () => {
         },
         missingInvoices: { count: 9 },
         refundsMissingCreditNotes: { count: 10, graceHours: 24 },
-        contactGroupMismatches: { count: 12, cacheReady: true },
+        contactGroupMismatches: { count: 12, resyncCount: 12, reviewByHandCount: 0, cacheReady: true },
         contactLinkMismatches: { count: 11, cacheReady: true },
+        taxOverridePause: { count: 3 },
         apiBudget: {
           status: "warning",
           usagePercent: 85,
@@ -376,6 +378,15 @@ describe("getStuckStateDashboard", () => {
           severity: "critical",
           owner: "Finance",
           count: 10,
+        }),
+        // #5208: Xero changed the GST sent on invoices; the overrides are paused.
+        expect.objectContaining({
+          id: "xero-tax-overrides-paused",
+          severity: "critical",
+          owner: "Finance",
+          count: 3,
+          summary: "Xero changed the GST on 3 invoices after the app sent it. Until someone in finance checks them and resumes, "
+            + "new invoices go to Xero without the club's own GST figures and Xero works the GST out itself.",
         }),
         expect.objectContaining({
           id: "email-token-recovery",
@@ -1043,6 +1054,45 @@ describe("voided bank refund notes to answer (#4162)", () => {
     });
     const support = await getStuckStateDashboard({ deps, now: new Date("2026-06-22T00:00:00.000Z") });
     expect(support.items.find((item) => item.id === "xero-bank-refund-voids-to-answer")?.href).toBe("/admin/xero");
+  });
+});
+
+describe("Xero contact mismatch items (#5234)", () => {
+  async function dashboardWith(
+    overrides: Partial<Awaited<ReturnType<StuckStateDashboardDependencies["getXeroAdminHealthSnapshot"]>>>,
+  ) {
+    const deps = buildDeps();
+    const base = await deps.getXeroAdminHealthSnapshot();
+    vi.mocked(deps.getXeroAdminHealthSnapshot).mockResolvedValue({ ...base, ...overrides });
+    return getStuckStateDashboard({ deps, now: new Date("2026-06-22T00:00:00.000Z") });
+  }
+
+  it("keeps an information-only group entry in the count and says it is reviewed by hand, not repaired", async () => {
+    const dashboard = await dashboardWith({
+      contactGroupMismatches: { count: 1, resyncCount: 0, reviewByHandCount: 1, cacheReady: true },
+    });
+    const item = dashboard.items.find((entry) => entry.id === "xero-contact-group-mismatches");
+    expect(item).toMatchObject({ count: 1, href: `${adminHref("xero")}?section=contactGroupMismatches` });
+    expect(item?.summary).toContain("1 to review by hand");
+    expect(item?.summary).toContain("the re-sync never changes them");
+    expect(item?.summary).not.toContain("to re-sync");
+    expect(item?.summary).not.toMatch(/repair/i);
+  });
+
+  it("splits a mixed group count into entries to re-sync and entries to review by hand", async () => {
+    const dashboard = await dashboardWith({
+      contactGroupMismatches: { count: 3, resyncCount: 2, reviewByHandCount: 1, cacheReady: true },
+    });
+    const item = dashboard.items.find((entry) => entry.id === "xero-contact-group-mismatches");
+    expect(item?.count).toBe(3);
+    expect(item?.summary).toContain("2 to re-sync, 1 to review by hand");
+  });
+
+  it("links contact link mismatches to their own section", async () => {
+    const dashboard = await dashboardWith({ contactLinkMismatches: { count: 2, cacheReady: true } });
+    expect(dashboard.items.find((entry) => entry.id === "xero-contact-link-mismatches")?.href).toBe(
+      `${adminHref("xero")}?section=contactLinkMismatches`,
+    );
   });
 });
 

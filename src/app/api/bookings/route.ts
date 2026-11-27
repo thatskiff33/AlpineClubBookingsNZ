@@ -10,7 +10,7 @@ import {
   decideBookingSplit,
   toGroupDiscountConfig,
 } from "@/lib/policies/booking-route-decisions";
-import { AgeTier, BookingStatus } from "@prisma/client";
+import { BookingStatus } from "@prisma/client";
 import { z } from "zod";
 import { ARRIVAL_TIME_ERROR_MESSAGE, ARRIVAL_TIME_PATTERN } from "@/lib/arrival-time";
 import { getLodgeCapacity } from "@/lib/lodge-capacity";
@@ -139,8 +139,8 @@ import {
 } from "@/lib/access-roles";
 import { bookingManagementAuthorizationRole } from "@/lib/admin-permissions";
 import { refuseOnBehalfUnlessBookingOfficer } from "@/lib/on-behalf-booking";
-import { arrivesAsMcpConnection } from "@/lib/mcp-connection-request";
-import { getMemberDraftSummary } from "@/lib/member-draft-summary";
+import { arrivesAsMcpConnection, memberOnlySessionUser } from "@/lib/mcp-connection-request";
+import { draftCreatedForConnection, refuseConnectionUnlessOwnDraft } from "@/lib/booking-create-connection";
 import { clubFormatValues } from "@/lib/club-format-server";
 import { resolveBookingMoneyPostingContext } from "@/lib/member-money/doors";
 import { lodgeGuestLimitMessage } from "@/lib/lodge-booking-readiness";
@@ -234,16 +234,6 @@ function bookingCreateContendedResponse(
   return transactionContendedResponse(err, logMessage, { code: BOOKING_CREATE_CONTENDED_CODE });
 }
 
-/**
- * ALP-653: `create_draft_booking` (an AI app connection, which only reaches
- * the draft branch) is sent the draft's narrow summary, with no dietary,
- * consent or internal columns; the website's answer is unchanged.
- */
-async function draftCreatedForConnection(memberId: string, bookingId: string) {
-  const summary = await getMemberDraftSummary(memberId, bookingId);
-  return NextResponse.json(summary ?? { id: bookingId }, { status: 201 });
-}
-
 export async function POST(request: NextRequest) {
   // #2388: taken at the top so the collapsed-refusal timing floor covers the
   // whole request, not only the part after the refusal was detected.
@@ -259,14 +249,12 @@ export async function POST(request: NextRequest) {
   if (inactiveResponse) {
     return inactiveResponse;
   }
-  const isAdmin = hasAdminAccess(session.user);
+  const memberAuthority = memberOnlySessionUser(request, session.user);
+  const isAdmin = hasAdminAccess(memberAuthority);
   // Dual-hat detection: a USER token alongside admin roles means this account
   // books for itself through the member flow under full member rules (#1442).
-  const isMember = hasAccessRole(session.user, "USER");
-  // bookings:edit holders may create on-behalf bookings (#1313; the one check is
-  // `refuseOnBehalfUnlessBookingOfficer` below). An AI app connection never carries
-  // that reach (ALP-653, INV-MCP-006): it books and sees night clashes as a member.
-  const actorRole = arrivesAsMcpConnection(request) ? "USER" : bookingManagementAuthorizationRole(session.user);
+  const isMember = hasAccessRole(memberAuthority, "USER");
+  const actorRole = bookingManagementAuthorizationRole(memberAuthority);
 
   const json = await parseJsonRequestBody(request);
   if (!json.ok) return json.response;
@@ -279,6 +267,8 @@ export async function POST(request: NextRequest) {
       { status: 400 }
     );
   }
+  const connectionRefusal = refuseConnectionUnlessOwnDraft(request, isMember, parsed.data.draft);
+  if (connectionRefusal) return connectionRefusal;
 
   // Retroactive-create + email-choice gating (issue #1695), mirroring the
   // #1668 modify-dates override gating: any of the three flags present (even a
@@ -345,7 +335,6 @@ export async function POST(request: NextRequest) {
   // Resolve effective member: authorized on-behalf booking for another member.
   let effectiveMemberId = session.user.id;
   let isAuthorizedOnBehalf = false;
-  let effectiveMemberAgeTier: AgeTier | null = null;
   let paidUpAdultViolation: NonNullable<
     NonMemberPricingRequirements["violation"]
   > | null = null;
@@ -360,7 +349,7 @@ export async function POST(request: NextRequest) {
   }
 
   if (parsed.data.forMemberId) {
-    const onBehalfRefusal = refuseOnBehalfUnlessBookingOfficer(session.user, parsed.data.forMemberId);
+    const onBehalfRefusal = refuseOnBehalfUnlessBookingOfficer(memberAuthority, parsed.data.forMemberId);
     if (onBehalfRefusal) return onBehalfRefusal;
     // Separation of duties: no on-behalf actor may target themselves — their
     // own bookings go through the member flow and normal payment paths.
@@ -381,9 +370,8 @@ export async function POST(request: NextRequest) {
   if (!isAuthorizedOnBehalf) {
     const member = await prisma.member.findUnique({
       where: { id: session.user.id },
-      select: { emailVerified: true, xeroContactId: true, ageTier: true },
+      select: { emailVerified: true, xeroContactId: true },
     });
-    effectiveMemberAgeTier = member?.ageTier ?? null;
 
     if (!member?.emailVerified) {
       return NextResponse.json({ error: "Email not verified" }, { status: 403 });
@@ -706,7 +694,6 @@ export async function POST(request: NextRequest) {
     await requiresPaidSubscriptionForMemberForBooking(prisma, {
       memberId: effectiveMemberId,
       seasonYear: seasonYearOfStoredDate(checkIn),
-      ageTier: effectiveMemberAgeTier,
     })
   ) {
     const seasonYear = seasonYearOfStoredDate(checkIn);
@@ -1547,7 +1534,7 @@ export async function POST(request: NextRequest) {
       });
       await notifyMemberGuestAdds(newBooking);
       await notifyFamilyAdds(newBooking);
-      return arrivesAsMcpConnection(request) ? draftCreatedForConnection(effectiveMemberId, newBooking.id) : NextResponse.json(newBooking, { status: 201 });
+      return arrivesAsMcpConnection(request) ? draftCreatedForConnection(request, effectiveMemberId, newBooking.id) : NextResponse.json(newBooking, { status: 201 });
     } catch (err) {
       const deferred = deferredServiceRefusal(err);
       if (deferred) return deferred;

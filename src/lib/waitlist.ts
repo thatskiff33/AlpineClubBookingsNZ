@@ -3,20 +3,38 @@ import { bookingPromoRedemptions } from "@/lib/booking-promo-redemptions";
 import { BookingStatus, type AgeTier, type Prisma } from "@prisma/client";
 import { acquireLodgeCapacityLock, checkCapacityForGuestRanges } from "./capacity";
 import { bookingOwner } from "@/lib/booking-owner";
-import { addDaysDateOnly } from "@/lib/date-only";
+import { nonMemberHoldEnd } from "@/lib/non-member-hold-end";
 import { getDefaultLodgeId } from "@/lib/lodges";
 import { isMemberEligibleToBookLodge } from "@/lib/lodge-access";
 import {
   confirmCrossLodgeWaitlistOffer,
-  getWaitlistCrossLodgeOrder,
   quoteWaitlistEntryAtLodge,
 } from "@/lib/waitlist-cross-lodge";
+import {
+  WAITLIST_QUEUE_ORDER_BY,
+  compareWaitlistJoinOrder,
+  getWaitlistCrossLodgeOrder,
+  getWaitlistPositionOf,
+  getWaitlistPositions,
+  orderWaitlistOffers,
+  splitWaitlistOpportunities,
+  waitlistCandidateWhere,
+  type WaitlistLapse,
+} from "@/lib/waitlist-queue";
 import { getNonMemberHoldPolicy } from "./cancellation";
 import {
-  sendWaitlistOfferEmail,
-  sendWaitlistOfferExpiredEmail,
-  sendAdminWaitlistOfferAlert,
-} from "./email";
+  deliverWaitlistOfferNotices,
+  findNeverToldWaitlistOffers,
+  recordWaitlistOfferNoticesOwed,
+  type OwedWaitlistOffer,
+  type WaitlistOfferNotice,
+} from "@/lib/waitlist-offer-notices";
+import {
+  deliverWaitlistLapseNotice,
+  recordWaitlistLapseNoticesOwed,
+} from "@/lib/waitlist-offer-expired-notice";
+import { waitlistOfferExpiresAt } from "@/lib/waitlist-offer-window";
+import { retireReplayableOfferEmails } from "@/lib/waitlist-offer-email-state";
 import { logAudit } from "./audit";
 import logger from "@/lib/logger";
 import { isTransactionContention } from "@/lib/prisma-errors";
@@ -60,68 +78,10 @@ import {
 } from "@/lib/night-adjustment-write";
 import { bookingFinalPriceCents } from "@/lib/booking-final-price";
 import type { ClubFormat } from "@/lib/club-format";
+import { WAITLIST_CROSS_LODGE_WEBSITE_ONLY_CODE } from "@/lib/waitlist-confirm-recovery-contract";
 import { LOCK1_HOLDER_TRANSACTION_BUDGET } from "@/lib/db-transaction";
 
-export const WAITLIST_OFFER_HOURS =
-  Number(process.env.WAITLIST_OFFER_HOURS) || 48;
-
-// test seam
-/**
- * Get the FIFO position for a waitlisted booking.
- * Counts WAITLISTED bookings with overlapping dates created before this one.
- */
-export async function getWaitlistPosition(bookingId: string): Promise<number> {
-  const booking = await prisma.booking.findUnique({
-    where: { id: bookingId },
-    select: { checkIn: true, checkOut: true, createdAt: true, status: true, lodgeId: true },
-  });
-
-  if (!booking || (booking.status !== BookingStatus.WAITLISTED && booking.status !== BookingStatus.WAITLIST_OFFERED)) {
-    return 0;
-  }
-
-  const ahead = await prisma.booking.count({
-    where: {
-      status: BookingStatus.WAITLISTED,
-      // Positions are per-lodge: each lodge runs its own FIFO queue, so only
-      // count entries waiting for the same lodge (multi-lodge).
-      lodgeId: booking.lodgeId,
-      checkIn: { lt: booking.checkOut },
-      checkOut: { gt: booking.checkIn },
-      createdAt: { lt: booking.createdAt },
-    },
-  });
-
-  return ahead + 1;
-}
-
-// test seam
-/**
- * Get all WAITLISTED bookings for one lodge overlapping a date range, ordered
- * FIFO. Scoped to a single lodge because each lodge runs its own queue
- * (multi-lodge).
- */
-export async function getWaitlistForDates(
-  checkIn: Date,
-  checkOut: Date,
-  lodgeId: string
-) {
-  return prisma.booking.findMany({
-    where: {
-      status: BookingStatus.WAITLISTED,
-      lodgeId,
-      checkIn: { lt: checkOut },
-      checkOut: { gt: checkIn },
-    },
-    include: {
-      guests: true,
-      member: { select: { id: true, email: true, firstName: true, lastName: true } },
-      // #3369: the owner may be an Organisation; bookingOwner() reads both.
-      organisation: { select: { name: true, email: true } },
-    },
-    orderBy: { createdAt: "asc" },
-  });
-}
+export { WAITLIST_OFFER_HOURS } from "@/lib/waitlist-offer-window";
 
 type WaitlistCandidateForReprice = Prisma.BookingGetPayload<{
   include: {
@@ -407,6 +367,9 @@ async function repriceWaitlistCandidate(
  * lodge's own queue under OWN_LODGE_FIRST, or purely by join order under
  * MERGED. Same-lodge offers behave exactly as before; callers that omit
  * lodgeId get the pre-ADR-004 behaviour against the default lodge.
+ *
+ * `lapse` (#5410, `INV-CAP-042`): passed only by `expireStaleOffers`; others walk
+ * the plain order. `failed`: the transaction failed and was logged (#5410).
  */
 export async function processWaitlistForDates(freedDates: {
   checkIn: Date;
@@ -414,31 +377,11 @@ export async function processWaitlistForDates(freedDates: {
   lodgeId?: string | null;
 },
   format: ClubFormat,
-): Promise<{ offeredBookingId: string | null }> {
+  lapse?: WaitlistLapse,
+): Promise<{ offeredBookingId: string | null; failed?: true }> {
   let offeredBookingId: string | null = null;
-  type OfferDetails = {
-    email: string;
-    firstName: string;
-    checkIn: Date;
-    checkOut: Date;
-    guestCount: number;
-    expiresAt: Date;
-    bookingId: string;
-    memberId: string;
-    memberName: string;
-    position: number;
-    lodgeId: string | null;
-    // Price the member pays on confirmation: the offer-time reprice
-    // (upstream #1035) for own-lodge offers, or the offered lodge's quote
-    // for cross-lodge offers (ADR-004).
-    finalPriceCents: number;
-    // Set only for a cross-lodge offer: the alternate lodge being offered
-    // and the price quoted for it (ADR-004).
-    offeredLodgeId: string | null;
-    offeredLodgeName: string | null;
-    offeredPriceCents: number | null;
-  };
-  let offerDetails = null as OfferDetails | null;
+  // #5433: what the offer's owed notices say, and their markers' descriptor.
+  let offered = null as { notice: WaitlistOfferNotice; owed: OwedWaitlistOffer } | null;
 
   // #2543 — resolved ONCE, before the transaction below takes the per-lodge
   // capacity lock. `resolveSubscriptionLockoutMode` can refresh the
@@ -450,7 +393,8 @@ export async function processWaitlistForDates(freedDates: {
   // while every active lodge's capacity key is held (`INV-LOCK-004`). The
   // runtime reader, not `club-time/server`: this module is reachable from
   // `src/instrumentation.node.ts` through `cron-waitlist.ts`.
-  const todayAtClub = clubToday(await readClubTimeZoneOutsideRequest());
+  const clubZone = await readClubTimeZoneOutsideRequest();
+  const todayAtClub = clubToday(clubZone);
 
   try {
     await prisma.$transaction(async (tx) => {
@@ -483,22 +427,11 @@ export async function processWaitlistForDates(freedDates: {
       }
 
       const candidates = await tx.booking.findMany({
-        where: {
-          status: BookingStatus.WAITLISTED,
-          checkIn: { lt: freedDates.checkOut },
-          checkOut: { gt: freedDates.checkIn },
-          // #2258: a waitlist entry with the "No emails" switch on is NOT a
-          // candidate. Making an offer stamps waitlistOfferExpiresAt inside this
-          // transaction and starts the offer clock; the offer email goes out
-          // un-awaited after commit. If that email were withheld, the entry
-          // would hold a bed for the whole offer window with the member never
-          // told, then lapse via expireStaleOffers() — and the admin board would
-          // render it as a missing/undeliverable offer email, indistinguishable
-          // from a bounce. Excluding the entry means the clock never starts: the
-          // place goes to the next candidate and the suppressed entry keeps its
-          // WAITLISTED position for when the switch is cleared.
-          noEmails: false,
-        },
+        // The queue's candidate filter and join order live in
+        // `waitlist-queue.ts` (#5402), so the position members are shown is
+        // read from the same queue this pass walks. #2258: the filter leaves
+        // out entries with the "No emails" switch on; see its note.
+        where: waitlistCandidateWhere(freedDates),
         include: {
           guests: { include: { nights: true } }, // per-night sets (issue #713)
           member: { select: { id: true, email: true, firstName: true, lastName: true } },
@@ -516,53 +449,18 @@ export async function processWaitlistForDates(freedDates: {
             },
           },
         },
-        orderBy: { createdAt: "asc" },
+        orderBy: WAITLIST_QUEUE_ORDER_BY,
       });
 
-      // One "opportunity" is a candidate considered at one lodge. Every
-      // candidate gets an own-lodge opportunity (pre-ADR-004 behaviour);
-      // candidates from other lodges who opted into the freed lodge also
-      // get a cross-lodge opportunity there.
-      type Opportunity = {
-        candidate: (typeof candidates)[number];
-        offerLodgeId: string;
-        cross: boolean;
-      };
-      const ownOpportunities: Opportunity[] = candidates.map((candidate) => ({
-        candidate,
-        offerLodgeId: candidate.lodgeId ?? defaultLodgeId,
-        cross: false,
-      }));
-      const crossOpportunities: Opportunity[] = candidates
-        .filter(
-          (candidate) =>
-            (candidate.lodgeId ?? defaultLodgeId) !== freedLodgeId &&
-            candidate.waitlistAlternateLodges.some(
-              (alternate) => alternate.lodgeId === freedLodgeId,
-            ),
-        )
-        .map((candidate) => ({
-          candidate,
-          offerLodgeId: freedLodgeId,
-          cross: true,
-        }));
-
-      let opportunities: Opportunity[];
-      if (crossOpportunities.length === 0) {
-        opportunities = ownOpportunities;
-      } else {
-        const order = await getWaitlistCrossLodgeOrder(tx);
-        opportunities =
-          order === "MERGED"
-            ? [...ownOpportunities, ...crossOpportunities].sort(
-                (a, b) =>
-                  a.candidate.createdAt.getTime() -
-                    b.candidate.createdAt.getTime() ||
-                  // Same entry considered at two lodges: its own lodge first.
-                  Number(a.cross) - Number(b.cross),
-              )
-            : [...ownOpportunities, ...crossOpportunities];
-      }
+      // One "opportunity" is a candidate considered at one lodge, walked in
+      // `waitlist-queue.ts`'s order (#5402, rotated after a lapse by #5410);
+      // the cross-lodge order is read only when a cross-lodge one exists.
+      const split = splitWaitlistOpportunities(candidates, {
+        freedLodgeId,
+        defaultLodgeId,
+      });
+      const crossOrder = split.cross.length === 0 ? null : await getWaitlistCrossLodgeOrder(tx);
+      const opportunities = orderWaitlistOffers(split, crossOrder, lapse);
 
       for (const { candidate, offerLodgeId, cross } of opportunities) {
         // Check if ALL nights in the candidate's range have capacity
@@ -628,13 +526,27 @@ export async function processWaitlistForDates(freedDates: {
           );
         }
 
-        const expiresAt = new Date(Date.now() + WAITLIST_OFFER_HOURS * 60 * 60 * 1000);
+        // One instant: the offer's identity, its owed markers' event time and
+        // the start of its window (#5433).
+        const offeredAt = new Date();
+        const expiresAt = waitlistOfferExpiresAt(offeredAt);
+
+        // The place the officer's alert and the audit row quote: the entry's
+        // own lodge's queue, read before it leaves it, under this pass's locks
+        // (#5402, `INV-CAP-041`).
+        const position = await getWaitlistPositionOf(tx, {
+          id: candidate.id,
+          lodgeId: candidate.lodgeId ?? defaultLodgeId,
+          checkIn: candidate.checkIn,
+          checkOut: candidate.checkOut,
+          createdAt: candidate.createdAt,
+        });
 
         await tx.booking.update({
           where: { id: candidate.id },
           data: {
             status: BookingStatus.WAITLIST_OFFERED,
-            waitlistOfferedAt: new Date(),
+            waitlistOfferedAt: offeredAt,
             waitlistOfferExpiresAt: expiresAt,
             waitlistOfferedLodgeId: offeredLodgeId,
             waitlistOfferedPriceCents: offeredPriceCents,
@@ -649,139 +561,71 @@ export async function processWaitlistForDates(freedDates: {
           },
         });
 
-                offeredBookingId = candidate.id;
-
-        // Count position (how many were ahead in queue). Per-lodge: the
-        // position shown to the member counts only entries waiting for their
-        // own lodge, matching the per-lodge FIFO queue (multi-lodge).
-        const position = await tx.booking.count({
-          where: {
-            status: BookingStatus.WAITLISTED,
-            lodgeId: candidate.lodgeId ?? defaultLodgeId,
-            checkIn: { lt: candidate.checkOut },
-            checkOut: { gt: candidate.checkIn },
-            createdAt: { lt: candidate.createdAt },
+        offeredBookingId = candidate.id;
+        const owner = bookingOwner(candidate);
+        offered = {
+          // #5433 (WL-1): the member's email and the officers' alert are owed
+          // from this commit; delivered after it, and swept if never sent.
+          owed: await recordWaitlistOfferNoticesOwed(tx, { bookingId: candidate.id, offeredAt, position }),
+          notice: {
+            bookingId: candidate.id,
+            status: BookingStatus.WAITLIST_OFFERED,
+            offeredAt,
+            expiresAt,
+            checkIn: candidate.checkIn,
+            checkOut: candidate.checkOut,
+            guestCount: candidate.guests.length,
+            recipientMemberId: owner.memberId ?? "",
+            email: owner.member.email,
+            firstName: owner.member.firstName,
+            memberName: `${owner.member.firstName} ${owner.member.lastName}`,
+            // The offer-time reprice (upstream #1035), or the offered lodge's
+            // quote for a cross-lodge offer (ADR-004).
+            priceCents: offerPriceCents,
+            lodgeId: candidate.lodgeId,
+            offeredLodgeId,
+            offeredLodgeName,
+            zone: clubZone,
+            format,
+            lockoutMode: subscriptionLockoutMode,
           },
-        });
-
-        offerDetails = {
-          email: bookingOwner(candidate).member.email,
-          firstName: bookingOwner(candidate).member.firstName,
-          checkIn: candidate.checkIn,
-          checkOut: candidate.checkOut,
-          guestCount: candidate.guests.length,
-          expiresAt,
-          bookingId: candidate.id,
-          memberId: bookingOwner(candidate).memberId ?? "",
-          memberName: `${bookingOwner(candidate).member.firstName} ${bookingOwner(candidate).member.lastName}`,
-          position: position + 1,
-          lodgeId: candidate.lodgeId,
-          finalPriceCents: offerPriceCents,
-          offeredLodgeId,
-          offeredLodgeName,
-          offeredPriceCents,
         };
 
         break; // Only offer to the top candidate
       }
     }, LOCK1_HOLDER_TRANSACTION_BUDGET);
   } catch (err) {
-    logger.error({ err }, "Failed to process waitlist for dates");
-    return { offeredBookingId: null };
+    logger.error({ err, ...freedDates, lapsedBookingId: lapse?.key.id }, "Failed to process waitlist for dates");
+    return { offeredBookingId: null, failed: true };
   }
 
-  // Send emails after transaction commits
-  if (offerDetails) {
-    // #2543 — "tell them why", on the surface the member actually reads BEFORE
-    // deciding. The reprice above can raise a stored waitlisted price by the whole
-    // member/non-member spread, and the offer email states that number; without
-    // this the member is shown a bigger figure and no reason for it. Evaluated
-    // after the commit, on the module client, so no read is added under the
-    // capacity lock; a failure degrades to the old wording rather than losing the
-    // offer, because an offer must never be blocked by an explanatory sentence.
-    let subscriptionMemberRateNotice: string | null = null;
-    try {
-      const nonMemberPricing = await evaluateNonMemberPricingRequirements(prisma, {
-        mode: subscriptionLockoutMode,
-        lodgeId: offerDetails.offeredLodgeId ?? offerDetails.lodgeId ?? "",
-        seasonYear: seasonYearOfStoredDate(offerDetails.checkIn),
-        checkIn: offerDetails.checkIn,
-        checkOut: offerDetails.checkOut,
-        // Owner decision, 3 Aug 2026. Threaded for consistency with the confirm
-        // path below, which is where the refusal lives; this call reads only the
-        // rate notice, and that notice is keyed on an actual reprice, so an
-        // unfinancial owner who holds no bed changes nothing here.
-        bookingOwnerMemberId: bookingOwner(offerDetails).memberId,
-        participants: toSubscriptionLockoutParticipants(
-          await prisma.bookingGuest.findMany({
-            where: { bookingId: offerDetails.bookingId },
-          }),
-        ),
-      });
-      subscriptionMemberRateNotice = nonMemberPricing?.memberRateNotice ?? null;
-    } catch (err) {
-      logger.error(
-        { err, bookingId: offerDetails.bookingId },
-        "Failed to resolve the #2543 member-rate notice for a waitlist offer",
-      );
-    }
-
-    sendWaitlistOfferEmail(
-      {
-        bookingId: offerDetails.bookingId,
-        recipientMemberId: bookingOwner(offerDetails).memberId,
-      },
-      offerDetails.email,
-      offerDetails.firstName,
-      offerDetails.checkIn,
-      offerDetails.checkOut,
-      offerDetails.guestCount,
-      offerDetails.expiresAt,
-      offerDetails.bookingId,
-      // Price the member pays on confirmation (upstream #1035): the
-      // offer-time reprice, or the offered lodge's quote for cross offers.
-      offerDetails.finalPriceCents,
-      // A cross-lodge offer speaks with the offered lodge's identity and
-      // must name that lodge (ADR-004 owner decision 2).
-      format,
-      offerDetails.offeredLodgeId ?? offerDetails.lodgeId,
-      offerDetails.offeredLodgeId
-        ? { lodgeName: offerDetails.offeredLodgeName }
-        : null,
-      // #2543 — why the price is what it is, when somebody on this booking is
-      // being priced as a non-member. Null for every other offer.
-      subscriptionMemberRateNotice
-    ).catch((err) => logger.error({ err }, "Failed to send waitlist offer email"));
-
-    sendAdminWaitlistOfferAlert({
-      memberName: offerDetails.memberName,
-      checkIn: offerDetails.checkIn,
-      checkOut: offerDetails.checkOut,
-      guestCount: offerDetails.guestCount,
-      position: offerDetails.position,
-    }).catch((err) => logger.error({ err }, "Failed to send admin waitlist offer alert"));
+  // #5433: the owed notices, sent after the commit and awaited, so a stop
+  // before them is the sweep's to recover (`waitlist-offer-notices.ts`).
+  if (offered) {
+    const { notice, owed } = offered;
+    await deliverWaitlistOfferNotices(notice, owed);
 
     logAudit({
       action: "waitlist.offer_sent",
       memberId: null,
-      targetId: offerDetails.bookingId,
-      subjectMemberId: bookingOwner(offerDetails).memberId,
+      targetId: notice.bookingId,
+      subjectMemberId: notice.recipientMemberId,
       entityType: "Booking",
-      entityId: offerDetails.bookingId,
+      entityId: notice.bookingId,
       category: "booking",
       outcome: "success",
       summary: "Waitlist offer sent",
-      details: `Waitlist offer sent to ${offerDetails.memberName}`,
+      details: `Waitlist offer sent to ${notice.memberName}`,
       metadata: {
-        checkIn: offerDetails.checkIn.toISOString(),
-        checkOut: offerDetails.checkOut.toISOString(),
-        guestCount: offerDetails.guestCount,
-        position: offerDetails.position,
-        expiresAt: offerDetails.expiresAt.toISOString(),
-        ...(offerDetails.offeredLodgeId
+        checkIn: notice.checkIn.toISOString(),
+        checkOut: notice.checkOut.toISOString(),
+        guestCount: notice.guestCount,
+        position: owed.position,
+        expiresAt: notice.expiresAt!.toISOString(),
+        ...(notice.offeredLodgeId
           ? {
-              offeredLodgeId: offerDetails.offeredLodgeId,
-              offeredPriceCents: offerDetails.offeredPriceCents,
+              offeredLodgeId: notice.offeredLodgeId,
+              offeredPriceCents: notice.priceCents,
             }
           : {}),
       },
@@ -849,6 +693,13 @@ const WAITLIST_MINIMUM_STAY_ERROR =
 const WAITLIST_CONFIRM_RETRY_ERROR =
   "This offer was updated a moment ago. Please try confirming it again.";
 
+/** A connection's cross-lodge accept (`WAITLIST_CROSS_LODGE_WEBSITE_ONLY_CODE`). */
+const WAITLIST_CROSS_LODGE_WEBSITE_ONLY_REFUSAL = Object.freeze({
+  success: false,
+  error: "Accept this offer at another lodge on the club website.",
+  code: WAITLIST_CROSS_LODGE_WEBSITE_ONLY_CODE,
+});
+
 /**
  * Confirm a waitlist offer. Re-checks capacity and transitions to
  * PAYMENT_PENDING or PENDING based on member/non-member rules.
@@ -856,6 +707,12 @@ const WAITLIST_CONFIRM_RETRY_ERROR =
  * A cross-lodge offer (ADR-004, waitlistOfferedLodgeId set) takes the
  * create-and-cancel path instead: a fresh booking at the offered lodge and
  * the entry cancelled, with `newBookingId` pointing at the replacement.
+ *
+ * ALP-794: an AI app connection (`crossLodgeOnWebsiteOnly`) is refused a
+ * cross-lodge offer with nothing written, since the app cannot show the
+ * offered lodge or price. Only the offer's own member is told so; anyone else
+ * gets the cross-lodge path's own refusal. An offer that turns cross-lodge
+ * after the dispatch read is sent back to it by the CONFIRM_RETRY backstop.
  *
  * #2363: both paths re-check the CURRENT minimum-stay policy set before the
  * offer is turned into held capacity. An offer lives 48 hours, and an admin or
@@ -873,7 +730,8 @@ export async function confirmWaitlistOffer(
   bookingId: string,
   memberId: string,
   /** The club's format (#3565), resolved once by the request, before any transaction. */
-  format: ClubFormat
+  format: ClubFormat,
+  options: { crossLodgeOnWebsiteOnly?: boolean } = {},
 ): Promise<{
   success: boolean;
   newStatus?: BookingStatus;
@@ -926,6 +784,9 @@ export async function confirmWaitlistOffer(
     },
   });
   if (offerKind?.waitlistOfferedLodgeId) {
+    if (options.crossLodgeOnWebsiteOnly && bookingOwner(offerKind).memberId === memberId) {
+      return { ...WAITLIST_CROSS_LODGE_WEBSITE_ONLY_REFUSAL };
+    }
     return confirmCrossLodgeWaitlistOffer(bookingId, memberId, format);
   }
 
@@ -1185,8 +1046,8 @@ export async function confirmWaitlistOffer(
       };
 
       if (newStatus === BookingStatus.PENDING) {
-        // INV-DATE-014: calendar arithmetic, never the host's clock face.
-        const holdDate = addDaysDateOnly(booking.checkIn, -holdPolicy.holdDays);
+        // INV-DATE-014: whole 24-hour (UTC-day) spans, never the host's clock face.
+        const holdDate = nonMemberHoldEnd(booking.checkIn, holdPolicy.holdDays);
         updateData.nonMemberHoldUntil = holdDate;
       }
 
@@ -1272,8 +1133,8 @@ export async function confirmWaitlistOffer(
   // drain it: a queue row with nobody draining it turns the owner's "immediate
   // re-evaluation" into "within three hours", which is how long an officer-created
   // booking that has just RESTORED cover would leave a critical incident standing,
-  // or one that removed it would leave the owner un-notified. Best-effort and
-  // scoped to this booking's owner; the cron sweep is the authority on completion.
+  // or one that removed it would leave the owner un-notified. Best-effort, for this
+  // booking and its Group Trip siblings (#3039); the cron sweep is the authority.
   if (result.success) {
     await settleHostingCoverageAfterCommit({ bookingId });
   }
@@ -1306,14 +1167,31 @@ export async function confirmWaitlistOffer(
     : result;
 }
 
+/** Of these bookings, the ones still WAITLISTED: one read, outside any transaction; none when it fails. */
+async function stillWaitlistedIds(ids: string[]): Promise<Set<string>> {
+  if (ids.length === 0) return new Set();
+  try {
+    const rows = await prisma.booking.findMany({
+      where: { id: { in: ids }, status: BookingStatus.WAITLISTED },
+      select: { id: true },
+    });
+    return new Set(rows.map((row) => row.id));
+  } catch (err) {
+    logger.error({ err, count: ids.length }, "Failed to re-read lapsed waitlist entries; their notices are left for the sweep");
+    return new Set();
+  }
+}
+
 /**
  * Expire stale WAITLIST_OFFERED bookings and re-offer to next candidates.
+ * `failedReofferCount`: re-offer passes that failed (#5410); the cron surfaces it.
  */
 export async function expireStaleOffers(format: ClubFormat): Promise<{
   expiredCount: number;
   reofferedCount: number;
+  failedReofferCount: number;
 }> {
-  const { staleOffers, affectedRanges } = await prisma.$transaction(async (tx) => {
+  const { staleOffers } = await prisma.$transaction(async (tx) => {
     await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
     const candidates = await tx.booking.findMany({
       where: {
@@ -1321,7 +1199,7 @@ export async function expireStaleOffers(format: ClubFormat): Promise<{
         waitlistOfferExpiresAt: { lt: new Date() },
       },
       include: {
-        member: { select: { email: true, firstName: true } },
+        member: { select: { email: true, firstName: true, lastName: true } },
         // #3369: the owner may be an Organisation; bookingOwner() reads both.
         organisation: { select: { name: true, email: true } },
       },
@@ -1371,57 +1249,51 @@ export async function expireStaleOffers(format: ClubFormat): Promise<{
       offers.push(candidate);
     }
 
-    return {
-      staleOffers: offers.map((offer) => ({
-        ...offer,
-        newPosition:
-          offers.filter(
-            (entry) =>
-              // Per-lodge queue: only same-lodge expiring offers count toward
-              // the position quoted in the expiry email (same scoping as M6).
-              entry.lodgeId === offer.lodgeId &&
-              entry.checkIn < offer.checkOut &&
-              entry.checkOut > offer.checkIn &&
-              entry.createdAt < offer.createdAt
-          ).length + 1,
+    // The place each expiry email quotes, read after every revert, so it
+    // counts the entries already waiting ahead as well as the other lapsed
+    // offers (#5402, `INV-CAP-041`). The revert keeps `createdAt`, so each
+    // entry takes its original place back.
+    const newPositions = await getWaitlistPositions(
+      tx,
+      offers.map((offer) => ({
+        id: offer.id,
+        lodgeId: offer.lodgeId ?? defaultLodgeId,
+        checkIn: offer.checkIn,
+        checkOut: offer.checkOut,
+        createdAt: offer.createdAt,
       })),
-      affectedRanges: Array.from(
-        new Map(
-          offers.map((offer) => {
-            // The freed spot is at the lodge whose place was being offered
-            // (the offered lodge for a cross-lodge offer, else the entry's
-            // own lodge). Read from the in-memory pre-revert snapshot: the
-            // revert above nulled these fields in the DB, not on this object.
-            const freedLodgeId = offer.waitlistOfferedLodgeId ?? offer.lodgeId;
-            return [
-              // Key by lodge as well as range so two lodges' same-range
-              // expiries do not collapse into one processing call.
-              `${freedLodgeId}_${offer.checkIn.toISOString()}_${offer.checkOut.toISOString()}`,
-              {
-                checkIn: offer.checkIn,
-                checkOut: offer.checkOut,
-                lodgeId: freedLodgeId,
-              },
-            ];
-          })
-        ).values()
-      ),
+    );
+
+    // #5433 (WL-2): each lapse's notice is owed from this commit: the member's
+    // "offer expired" email, or, for an offer the member was never told about,
+    // no email (owner decision D2) and one officers' alert instead (D5). Read
+    // and written under this transaction's locks; the lapse is unchanged. A
+    // lapsed offer is over, so an offer email the retry cron could still replay
+    // is retired first, in this transaction, so the decision below and the
+    // retirement agree (round 3, item 2): a database-only write by primary key.
+    const lapsedOffers = offers.map((offer) => ({ bookingId: offer.id, offeredAt: offer.waitlistOfferedAt }));
+    await retireReplayableOfferEmails(tx, lapsedOffers, "the offer lapsed");
+    const neverTold = await findNeverToldWaitlistOffers(tx, lapsedOffers);
+    const expiredAt = new Date();
+    const lapses = offers.map((offer) => ({
+      bookingId: offer.id,
+      expiredAt,
+      untoldOfferedAt: neverTold.has(offer.id) ? offer.waitlistOfferedAt : null,
+    }));
+    await recordWaitlistLapseNoticesOwed(tx, lapses);
+
+    return {
+      staleOffers: offers.map((offer, index) => ({
+        ...offer,
+        newPosition: newPositions.get(offer.id)!,
+        lapse: lapses[index]!,
+      })),
     };
   }, LOCK1_HOLDER_TRANSACTION_BUDGET);
 
   let reofferedCount = 0;
 
   for (const offer of staleOffers) {
-    sendWaitlistOfferExpiredEmail(
-      { bookingId: offer.id, recipientMemberId: bookingOwner(offer).memberId },
-      bookingOwner(offer).member.email,
-      bookingOwner(offer).member.firstName,
-      offer.checkIn,
-      offer.checkOut,
-      offer.newPosition,
-      offer.lodgeId
-    ).catch((err) => logger.error({ err }, "Failed to send waitlist offer expired email"));
-
     logAudit({
       action: "waitlist.offer_expired",
       memberId: null,
@@ -1441,46 +1313,55 @@ export async function expireStaleOffers(format: ClubFormat): Promise<{
     });
   }
 
-  for (const range of affectedRanges) {
-    const { offeredBookingId } = await processWaitlistForDates(range, format);
-    if (offeredBookingId) {
-      reofferedCount++;
+  // #5410 (`INV-CAP-042`): one offer pass per lapsed offer, in join order, each
+  // told whose place lapsed and what else lapsed in this run. The place is at
+  // the offered lodge (cross-lodge) or the entry's own, from the pre-revert
+  // snapshot (the revert nulled `waitlistOfferedLodgeId` in the database only).
+  // A pass that fails (it throws, or its transaction failed: `failed`) is logged
+  // and counted, and the rest still run; the reverts are already committed.
+  const lapses = staleOffers
+    .map((offer) => ({ offer, key: { id: offer.id, createdAt: offer.createdAt, offeredLodgeId: offer.waitlistOfferedLodgeId ?? offer.lodgeId } }))
+    .sort((a, b) => compareWaitlistJoinOrder(a.key, b.key));
+  const run = lapses.map(({ key }) => key);
+  let failedReofferCount = 0;
+  for (const { offer, key } of lapses) {
+    const freed = { checkIn: offer.checkIn, checkOut: offer.checkOut, lodgeId: key.offeredLodgeId };
+    try {
+      const pass = await processWaitlistForDates(freed, format, { key, run });
+      if (pass.offeredBookingId) reofferedCount++;
+      if (pass.failed) failedReofferCount++;
+    } catch (err) {
+      failedReofferCount++;
+      logger.error({ err, bookingId: offer.id, lodgeId: key.offeredLodgeId }, "Failed to re-offer a lapsed waitlist place; continuing with the next");
     }
   }
 
-  return { expiredCount: staleOffers.length, reofferedCount };
-}
-
-// test seam
-/**
- * Recalculate and update waitlistPosition for all WAITLISTED bookings
- * overlapping the given date range. Positions are numbered per-lodge: each
- * lodge runs its own FIFO queue, so a booking's position counts only entries
- * waiting for the same lodge (multi-lodge).
- */
-export async function updateWaitlistPositions(
-  checkIn: Date,
-  checkOut: Date
-): Promise<void> {
-  const waitlisted = await prisma.booking.findMany({
-    where: {
-      status: BookingStatus.WAITLISTED,
-      checkIn: { lt: checkOut },
-      checkOut: { gt: checkIn },
-    },
-    orderBy: { createdAt: "asc" },
-    select: { id: true, lodgeId: true },
-  });
-
-  // Number each lodge's queue independently, preserving the FIFO createdAt
-  // order the query already applied.
-  const positionByLodge = new Map<string, number>();
-  for (const booking of waitlisted) {
-    const nextPosition = (positionByLodge.get(booking.lodgeId) ?? 0) + 1;
-    positionByLodge.set(booking.lodgeId, nextPosition);
-    await prisma.booking.update({
-      where: { id: booking.id },
-      data: { waitlistPosition: nextPosition },
-    });
+  // #5433: each lapse's owed notice, after the re-offer passes (review F): a
+  // stop during these sends loses nothing (the markers stand for the sweep),
+  // and a stop before them no longer costs the re-offers. Only to a booking
+  // still WAITLISTED, read once here outside any transaction (round 2, item
+  // 8): these passes, another caller's offer pass or the member's own cancel
+  // may have moved it on since the revert, and the sweep clears that notice
+  // as moved on. A failed read sends nothing here; the sweep sends what is owed.
+  const stillWaitlisted = await stillWaitlistedIds(staleOffers.map((offer) => offer.id));
+  for (const offer of staleOffers) {
+    if (!stillWaitlisted.has(offer.id)) continue;
+    const owner = bookingOwner(offer);
+    await deliverWaitlistLapseNotice(
+      {
+        bookingId: offer.id,
+        status: BookingStatus.WAITLISTED,
+        checkIn: offer.checkIn,
+        checkOut: offer.checkOut,
+        recipientMemberId: owner.memberId,
+        email: owner.member.email,
+        firstName: owner.member.firstName,
+        memberName: `${owner.member.firstName} ${owner.member.lastName}`,
+        lodgeId: offer.lodgeId,
+        position: offer.newPosition,
+      },
+      offer.lapse,
+    );
   }
+  return { expiredCount: staleOffers.length, reofferedCount, failedReofferCount };
 }

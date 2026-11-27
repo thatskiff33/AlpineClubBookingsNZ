@@ -23,7 +23,7 @@ vi.mock("@/lib/prisma", () => ({
       update: vi.fn(),
     },
     // Booking Officer → OtherLodge sync (runs inside the assignment routes'
-    // transaction). Default to no lodges and no owned-lodge list (#52: the sync
+    // transaction). Default to no lodges and no owned-lodge list (triyder/AlpineClubBookingsNZ#52: the sync
     // reads the settings row first) so it is a harmless no-op here; the sync
     // itself is covered by committee-booking-officer-sync.test.ts.
     serverNzSettings: { findUnique: vi.fn().mockResolvedValue(null) },
@@ -147,7 +147,7 @@ describe("Committee Master Role API", () => {
     mockedAuth.mockResolvedValue(adminSession);
     vi.mocked(prisma.committeeRole.findMany).mockResolvedValue([sampleRole] as any);
 
-    const res = await listRoles();
+    const res = await listRoles(new Request("http://localhost/api/admin/committee/roles"));
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(body.roles).toHaveLength(1);
@@ -884,7 +884,7 @@ describe("Committee Public API - GET /api/committee", () => {
       },
     ] as any);
 
-    const res = await GET();
+    const res = await GET(new Request("https://club.example.test/api/x"));
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(body.members).toHaveLength(2);
@@ -948,7 +948,7 @@ describe("Committee Public API - GET /api/committee", () => {
     vi.mocked(prisma.publicContentSettings.findUnique).mockResolvedValue({
       committeePhotoDisplay: "CIRCLE",
     } as any);
-    const on = await (await GET()).json();
+    const on = await (await GET(new Request("https://club.example.test/api/x"))).json();
     expect(on.photoDisplay).toBe("CIRCLE");
     expect(on.members[0].photo).toEqual({
       memberId: "mem-photo",
@@ -957,7 +957,7 @@ describe("Committee Public API - GET /api/committee", () => {
 
     // Disabled (NONE / unset): no photo metadata is exposed at all.
     vi.mocked(prisma.publicContentSettings.findUnique).mockResolvedValue(null);
-    const off = await (await GET()).json();
+    const off = await (await GET(new Request("https://club.example.test/api/x"))).json();
     expect(off.photoDisplay).toBe("NONE");
     expect(off.members[0].photo).toBeNull();
     expect(JSON.stringify(off)).not.toContain("mem-photo");

@@ -20,6 +20,7 @@ const h = vi.hoisted(() => ({ search: "", replace: vi.fn() }));
 
 // next/navigation: the panel replaces the URL in an effect and reads params.
 vi.mock("next/navigation", () => ({
+  usePathname: () => "/",
   useRouter: () => ({ replace: h.replace, push: vi.fn() }),
   useSearchParams: () => new URLSearchParams(h.search),
 }));

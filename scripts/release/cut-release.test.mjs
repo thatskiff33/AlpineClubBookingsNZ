@@ -6,7 +6,6 @@ import { execFileSync, spawnSync } from "node:child_process";
 import {
   bumpPackageJson,
   bumpVersion,
-  CI_WORKFLOW_FILE,
   computeRelease,
   FEATURE_FRAGMENT_SUFFIX,
   fragmentBump,
@@ -24,6 +23,7 @@ import {
 } from "./cut-release.mjs";
 import { releaseSection } from "./compile-changelog.mjs";
 import { parseWorkflowYaml } from "../ci/check-workflow-suite-checkout-depth.mjs";
+import { CI_WORKFLOW_FILE } from "../lib/ci-workflow.mjs";
 import {
   NO_UPGRADE_STEPS,
   RUNBOOK_RELEASE_AGNOSTIC_MARKER,
@@ -123,6 +123,15 @@ const READY_DOCS = { "docs/UPGRADING.md": UPGRADING_READY, "docs/PRODUCTION_UPGR
  * A bare origin holding one release-tagged commit plus pending fragments, and a
  * clean clone of it. Returns `{ origin, repo }`.
  */
+/**
+ * The budget for a case that calls makeFixture (#5472). Each builds a bare
+ * origin, a seed and a clone and then runs the release script: a run of `git`
+ * spawns whose cost is the host's process start-up, not the test. On a busy CI
+ * runner the first such case exceeded vitest's 5,000ms default and turned
+ * `main` red; the same budget as the deploy release-tag guard's suite.
+ */
+const FIXTURE_REPOSITORY_BUDGET = { timeout: 60_000 };
+
 function makeFixture({
   fragments = { "4400-a-fix.md": "- **A fix (#4400).** Body.\n" },
   tags = ["v0.13.2"],
@@ -162,7 +171,11 @@ function makeFixture({
   git(seed, "push", "-q", "origin", "main", "--tags");
 
   const repo = path.join(tempDir("release-cut-clone-"), "repo");
-  execFileSync("git", ["clone", "-q", origin, repo], { stdio: "ignore" });
+  // `-c` sets autocrlf in the clone before its checkout (#5407 item 35): set
+  // afterwards by `configure`, a host whose own git config converts line
+  // endings has already checked out CRLF files over an LF index, and every
+  // file reads as modified.
+  execFileSync("git", ["clone", "-q", "-c", "core.autocrlf=false", origin, repo], { stdio: "ignore" });
   configure(repo);
   git(repo, "config", "remote.origin.url", GITHUB_URL);
   git(repo, "config", `url.${origin}.insteadOf`, GITHUB_URL);
@@ -182,8 +195,13 @@ const ciJob = (id, name, conclusion = "success") => ({ id, name, status: conclus
 const PUBLISHED_JOBS = ciJobs(ciJob(1, "Verify"), ciJob(2, PUBLISH_IMAGES_JOB_NAME));
 
 /** What `gh` answers when a test does not say otherwise. */
+/** The post-deploy checklist issues GitHub lists by label (#5379), and who owns the repository. */
+const GH_CHECKLISTS = "gh api --hostname github.com repos/fixture-owner/fixture-repo/issues?labels=post-deploy-checklist&state=all";
+const GH_OWNER_TYPE = "gh api --hostname github.com users/fixture-owner --jq .type";
+
 const GH_DEFAULTS = {
   "gh repo view": { status: 0, stdout: "fixture-owner/fixture-repo\n", stderr: "" },
+  [GH_OWNER_TYPE]: { status: 0, stdout: "User\n", stderr: "" },
   "gh release view": { status: 1, stdout: "", stderr: "release not found" },
   [GH_RUNS]: ciRuns(ciRun(101)),
   [GH_JOBS]: PUBLISHED_JOBS,
@@ -323,6 +341,12 @@ describe("argument parsing", () => {
     expect(() => parseArgs(["prepare", "--date", "31/10/2026"])).toThrow(/YYYY-MM-DD/);
     expect(() => parseArgs(["prepare", "--commit", "abc"])).toThrow(/belong to publish/);
     expect(() => parseArgs(["prepare", "--carry-late-fragments"])).toThrow(/belong to publish/);
+    expect(() => parseArgs(["prepare", "--checklist-assignee", "someone"])).toThrow(/belong to publish/);
+    expect(parseArgs(["publish", "--checklist-assignee", "club-owner"])).toMatchObject({ checklistAssignee: "club-owner" });
+    expect(parseArgs(["publish", "--checklist-assignee", "@me"])).toMatchObject({ checklistAssignee: "@me" });
+    expect(parseArgs(["publish"])).toMatchObject({ checklistAssignee: null });
+    expect(() => parseArgs(["publish", "--checklist-assignee", "two words"])).toThrow(/GitHub login or @me/);
+    expect(() => parseArgs(["publish", "--checklist-assignee", "-dash"])).toThrow(/GitHub login or @me/);
     expect(() => parseArgs(["prepare", "--amend", "--bump", "minor"])).toThrow(/--amend keeps the prepared version/);
     expect(() => parseArgs(["publish", "--amend"])).toThrow(/belong to prepare/);
     expect(parseArgs(["prepare", "--amend", "--execute"])).toMatchObject({ amend: true, execute: true });
@@ -409,7 +433,7 @@ describe("package.json, remote and release-body helpers", () => {
   });
 });
 
-describe("release:cut prepare on a fixture repository", () => {
+describe("release:cut prepare on a fixture repository", FIXTURE_REPOSITORY_BUDGET, () => {
   it("prints the whole plan in a dry run and changes nothing", () => {
     const { origin, repo } = makeFixture({
       fragments: { "4400-a-fix.md": "- **A fix (#4400).**\n", "4465-cut.feature.md": "- **Cut releases (#4465).**\n" },
@@ -724,7 +748,7 @@ function lateFragmentFixture({ lateName = "4500-late.md", bump = null, docs = {}
   return { ...fixture, prep, merge: git(fixture.repo, "rev-parse", "HEAD") };
 }
 
-describe("late fragments: release:cut prepare --amend and publish --carry-late-fragments", () => {
+describe("late fragments: release:cut prepare --amend and publish --carry-late-fragments", FIXTURE_REPOSITORY_BUDGET, () => {
   it("refuses the merge commit, offers both paths, and refuses the prep commit CI never built", () => {
     const { repo, prep, merge } = lateFragmentFixture();
 
@@ -888,7 +912,7 @@ describe("late fragments: release:cut prepare --amend and publish --carry-late-f
   });
 });
 
-describe("release documents: the upgrade guide and notes page (#4983)", () => {
+describe("release documents: the upgrade guide and notes page (#4983)", FIXTURE_REPOSITORY_BUDGET, () => {
   /** Commit `edit(repo)` straight to origin/main, as a merged pull request. */
   function mergeToMain(repo, message, edit) {
     git(repo, "switch", "-q", "--detach", "origin/main");
@@ -1169,7 +1193,7 @@ describe("release documents: the upgrade guide and notes page (#4983)", () => {
   });
 });
 
-describe("release:cut publish on a fixture repository", () => {
+describe("release:cut publish on a fixture repository", FIXTURE_REPOSITORY_BUDGET, () => {
   it("prints the plan in a dry run, checks gh read-only, and creates nothing", () => {
     const { repo, merged } = mergedReleaseFixture();
     const run = fixtureRunner(repo);
@@ -1673,6 +1697,8 @@ describe("release:cut publish asks GitHub whether CI published the commit's imag
       /run 4242/,
     );
     expect(cancelled.recovery).toContain("gh run rerun 4242 --repo fixture-owner/fixture-repo");
+    // A re-run replaces main's pending run (INV-OPS-021), so the hint says to check first.
+    expect(cancelled.recovery).toContain("gh run list --workflow ci.yml --branch main --status pending --repo fixture-owner/fixture-repo");
     const absent = expectRefusal(() => publishRelease({ repoRoot: repo, run: fixtureRunner(repo, { [GH_RUNS]: ciRuns() }), log: silentLog() }), /no such run/);
     expect(absent.recovery).toBe("Nothing was created. Tag a main commit whose ci.yml run published its images.");
   });
@@ -1794,5 +1820,342 @@ describe("release:cut publish asks GitHub whether CI published the commit's imag
       new RegExp(`^${merged.slice(0, 12)} has no ci\\.yml push run`),
     );
     expect(run.sideEffects()).toEqual([]);
+  });
+});
+
+describe("after-deploy steps: filed by prepare, opened as a checklist by publish (#5379)", () => {
+  const step = (who, what, check) => `## Who\n\n${who}\n\n## What to do\n\n${what}\n\n## How to check it worked\n\n${check}\n`;
+  const STUCK = step("owner", "Run `pnpm run xero:stuck-queued-report` once.", "It lists no rows, or you released the ones it listed.");
+  const SPOT = step("officer", "Open the finance queue.", "The review settle box is gone.");
+  const DEPLOY_FRAGMENTS = {
+    "4400-a-fix.md": "- **A fix (#4400).** Body.\n",
+    "5309-stuck-report.deploy.md": STUCK,
+    "5275-finance-queue.deploy.md": SPOT,
+  };
+  const ISSUE_URL = "https://github.com/fixture-owner/fixture-repo/issues/77";
+  const TITLE = "v0.13.3 post-deploy checklist";
+
+  /** Finish the notes page as a maintainer would: write the overview, keep the after-deploy list. */
+  function finishNotesKeepingSteps(repo, version) {
+    const file = path.join(repo, "docs", "releases", `v${version}.md`);
+    const stub = fs.readFileSync(file, "utf8");
+    const steps = stub.slice(stub.indexOf("## After deploying this release"));
+    fs.writeFileSync(file, `# Release v${version}\n\nWhat this release changes, written by a maintainer.\n\n${steps}`);
+    git(repo, "commit", "-qam", `docs: write the v${version} release notes`);
+  }
+
+  function preparedFixture(fragments = DEPLOY_FRAGMENTS) {
+    const fixture = makeFixture({ fragments });
+    const plan = prepareRelease({ repoRoot: fixture.repo, execute: true, date: "2026-10-31", run: fixtureRunner(fixture.repo), log: silentLog() });
+    return { ...fixture, plan };
+  }
+
+  function mergedDeployFixture(fragments = DEPLOY_FRAGMENTS) {
+    const fixture = preparedFixture(fragments);
+    finishNotesKeepingSteps(fixture.repo, fixture.plan.version);
+    git(fixture.repo, "push", "-q", "origin", "HEAD:main");
+    return { ...fixture, merged: git(fixture.repo, "rev-parse", "HEAD") };
+  }
+
+  /** A notes writer that keeps every file it was asked for, by name. */
+  function namedWriter() {
+    const dir = tempDir("release-bodies-");
+    const written = {};
+    const writeNotes = (name, text) => {
+      const file = path.join(dir, `${name}.md`);
+      fs.writeFileSync(file, text);
+      written[name] = { file, text };
+      return file;
+    };
+    writeNotes.written = written;
+    return writeNotes;
+  }
+
+  const read = (repo, relative) => fs.readFileSync(path.join(repo, relative), "utf8");
+
+  it("files the steps at the end of the release's upgrade section and in the notes stub, and deletes their fragments", () => {
+    const { repo, plan } = preparedFixture();
+
+    expect(plan.version).toBe("0.13.3");
+    const guide = read(repo, "docs/UPGRADING.md");
+    const section = guide.slice(guide.indexOf("## v0.13.2 → v0.13.3"), guide.indexOf("## v0.13.1 → v0.13.2"));
+    expect(section).toMatch(/^## v0\.13\.2 → v0\.13\.3\n\n### Reconnect Xero once \(#4400\)[\s\S]*\n### After deploying this release\n\n.*\n\n<!-{2} deploy-steps:start -->\n/);
+    expect(section).toContain(
+      [
+        "- [ ] **Officer:** Open the finance queue.",
+        "",
+        "  How to check it worked: The review settle box is gone.",
+        "",
+        "  From [#5275](https://github.com/fixture-owner/fixture-repo/pull/5275).",
+        "",
+        "- [ ] **Owner:** Run `pnpm run xero:stuck-queued-report` once.",
+      ].join("\n"),
+    );
+    expect(section.trimEnd().endsWith("<!-- deploy-steps:end -->\n\n---")).toBe(true);
+    const notes = read(repo, "docs/releases/v0.13.3.md");
+    expect(notes).toContain(RELEASE_NOTES_UNFINISHED_MARKER);
+    expect(notes).toMatch(/## After deploying this release\n\n.*\n\n<!-{2} deploy-steps:start -->\n- \[ \] \*\*Officer:\*\*/);
+    expect(git(repo, "show", "--name-status", "--format=", "HEAD").split("\n")).toEqual(
+      expect.arrayContaining(["D\tchangelog.d/5275-finance-queue.deploy.md", "D\tchangelog.d/5309-stuck-report.deploy.md"]),
+    );
+    expect(fs.readdirSync(path.join(repo, "changelog.d"))).toEqual(["README.md"]);
+    expect(read(repo, "CHANGELOG.md")).not.toContain("finance queue");
+  });
+
+  it("links a lane-named step to the pull request whose merge brought it to main", () => {
+    const { repo } = makeFixture();
+    git(repo, "switch", "-q", "-c", "lane/alp-1");
+    fs.writeFileSync(path.join(repo, "changelog.d", "alp-1-map-setting.deploy.md"), SPOT);
+    git(repo, "add", "--all");
+    git(repo, "commit", "-qm", "Add the step");
+    git(repo, "switch", "-q", "main");
+    git(repo, "merge", "-q", "--no-ff", "-m", "Merge pull request #4600 from fixture-owner/lane/alp-1", "lane/alp-1");
+    git(repo, "push", "-q", "origin", "main");
+    git(repo, "branch", "-q", "-D", "lane/alp-1");
+
+    prepareRelease({ repoRoot: repo, execute: true, date: "2026-10-31", run: fixtureRunner(repo), log: silentLog() });
+
+    expect(read(repo, "docs/releases/v0.13.3.md")).toContain("  From [#4600](https://github.com/fixture-owner/fixture-repo/pull/4600).");
+  });
+
+  it("refuses a malformed step before switching branch or changing any file, dry run included", () => {
+    const { repo } = makeFixture({ fragments: { ...DEPLOY_FRAGMENTS, "5310-bad.deploy.md": step("everyone", "Run it.", "It ran.") } });
+    const before = snapshot(repo);
+
+    for (const execute of [false, true]) {
+      const run = fixtureRunner(repo);
+      const error = expectRefusal(
+        () => prepareRelease({ repoRoot: repo, execute, date: "2026-10-31", run, log: silentLog() }),
+        /1 after-deploy step fragment\(s\) in changelog\.d\/ are malformed[\s\S]*5310-bad\.deploy\.md: .*one of owner, operator, officer/,
+      );
+      expect(error.recovery).toMatch(/^Nothing was changed/);
+      expect(run.calls.some((call) => call.startsWith("git switch"))).toBe(false);
+    }
+    expect(snapshot(repo)).toEqual(before);
+  });
+
+  it("adds late steps after the filed ones on --amend, in the guide and the notes page", () => {
+    const { repo, plan } = preparedFixture();
+    finishNotesKeepingSteps(repo, plan.version);
+    const prep = git(repo, "rev-parse", "HEAD");
+    git(repo, "switch", "-q", "--detach", "origin/main");
+    git(repo, "merge", "-q", "--no-ff", "-m", `Merge pull request #4501 from ${plan.branch}`, prep);
+    fs.writeFileSync(path.join(repo, "changelog.d", "4700-late-check.deploy.md"), step("operator", "Watch one main run.", "It is green."));
+    git(repo, "add", "--all");
+    git(repo, "commit", "-qm", "Merge pull request #4700");
+    git(repo, "push", "-q", "origin", "HEAD:main");
+
+    prepareRelease({ repoRoot: repo, amend: true, execute: true, run: fixtureRunner(repo), log: silentLog() });
+
+    expect(git(repo, "show", "--name-status", "--format=", "HEAD").split("\n").sort()).toEqual([
+      "D\tchangelog.d/4700-late-check.deploy.md",
+      "M\tdocs/UPGRADING.md",
+      "M\tdocs/releases/v0.13.3.md",
+    ]);
+    for (const relative of ["docs/UPGRADING.md", "docs/releases/v0.13.3.md"]) {
+      const text = read(repo, relative);
+      const order = ["**Officer:** Open the finance queue.", "**Owner:** Run `pnpm", "**Operator:** Watch one main run."].map((item) => text.indexOf(item));
+      expect(order.every((at) => at > 0), relative).toBe(true);
+      expect([...order].sort((a, b) => a - b), relative).toEqual(order);
+      expect(text.match(/<!-{2} deploy-steps:start -->/g), relative).toHaveLength(1);
+    }
+    expect(read(repo, "docs/UPGRADING.md").match(/### After deploying this release/g)).toHaveLength(1);
+  });
+
+  it("keeps filed steps last when --amend folds only late upgrade steps, so none lands under the after-deploy heading", () => {
+    const { repo, plan } = preparedFixture();
+    finishNotesKeepingSteps(repo, plan.version);
+    const prep = git(repo, "rev-parse", "HEAD");
+    git(repo, "switch", "-q", "--detach", "origin/main");
+    git(repo, "merge", "-q", "--no-ff", "-m", `Merge pull request #4501 from ${plan.branch}`, prep);
+    const late = "### Run the pre-deploy check (#4610)\n\nRun it before deploying.";
+    fs.writeFileSync(
+      path.join(repo, "docs", "UPGRADING.md"),
+      read(repo, "docs/UPGRADING.md").replace("## Unreleased\n\n", `## Unreleased\n\n${late}\n\n`),
+    );
+    git(repo, "add", "--all");
+    git(repo, "commit", "-qm", "Merge pull request #4610");
+    git(repo, "push", "-q", "origin", "HEAD:main");
+
+    prepareRelease({ repoRoot: repo, amend: true, execute: true, run: fixtureRunner(repo), log: silentLog() });
+
+    const guide = read(repo, "docs/UPGRADING.md");
+    const section = guide.slice(guide.indexOf("## v0.13.2 → v0.13.3"), guide.indexOf("## v0.13.1 → v0.13.2"));
+    const order = ["### Reconnect Xero once (#4400)", "### Run the pre-deploy check (#4610)", "### After deploying this release", "**Owner:** Run `pnpm"];
+    const at = order.map((text) => section.indexOf(text));
+    expect(at.every((index) => index > 0), section).toBe(true);
+    expect([...at].sort((a, b) => a - b), section).toEqual(at);
+    expect(section.match(/<!-{2} deploy-steps:start -->/g)).toHaveLength(1);
+    expect(section.trimEnd().endsWith("<!-- deploy-steps:end -->\n\n---")).toBe(true);
+  });
+
+  it("opens the labelled checklist issue assigned to the repository's owner before the release, and the release body links it", () => {
+    const { repo } = mergedDeployFixture();
+    const run = fixtureRunner(repo, {
+      [GH_CHECKLISTS]: json([
+        { number: 12, title: "v0.13.2 post-deploy checklist", html_url: "https://github.com/x/y/issues/12" },
+        { number: 13, title: TITLE, html_url: "https://github.com/x/y/pull/13", pull_request: {} },
+      ]),
+      "gh issue create": { status: 0, stdout: `${ISSUE_URL}\n`, stderr: "" },
+    });
+    const writeNotes = namedWriter();
+
+    const result = publishRelease({ repoRoot: repo, execute: true, run, writeNotes, log: silentLog() });
+
+    const checklistFile = writeNotes.written["v0.13.3-post-deploy-checklist"].file;
+    const remote = run.calls.filter((call) => /^(git push|gh (issue create|release create))/.test(call));
+    expect(remote).toEqual([
+      "git push origin refs/tags/v0.13.3",
+      `gh issue create --repo fixture-owner/fixture-repo --title ${TITLE} --body-file ${checklistFile} --label post-deploy-checklist --assignee fixture-owner`,
+      expect.stringMatching(/^gh release create v0\.13\.3 /),
+    ]);
+    expect(run.calls.filter((call) => call.startsWith("gh label create"))).toEqual([
+      expect.stringMatching(/^gh label create post-deploy-checklist --repo fixture-owner\/fixture-repo --force /),
+    ]);
+    const checklist = writeNotes.written["v0.13.3-post-deploy-checklist"].text;
+    expect(checklist).toContain("- Release: https://github.com/fixture-owner/fixture-repo/releases/tag/v0.13.3");
+    expect(checklist).toContain(
+      "[docs/releases/v0.13.3.md](https://github.com/fixture-owner/fixture-repo/blob/v0.13.3/docs/releases/v0.13.3.md#after-deploying-this-release)",
+    );
+    expect(checklist.match(/^- \[ \] /gm)).toHaveLength(2);
+    expect(checklist).toContain("From [#5309](https://github.com/fixture-owner/fixture-repo/pull/5309).");
+    const body = fs.readFileSync(run.calls.find((call) => call.startsWith("gh release create")).split("--notes-file ")[1], "utf8");
+    expect(body).toBe(
+      `- **A fix (#4400).** Body.\n\n## After deploying this release\n\n2 step(s) to do once v0.13.3 is deployed: work through [the ${TITLE}](${ISSUE_URL}).\n`,
+    );
+    expect(result.checklist).toEqual({ url: ISSUE_URL });
+  });
+
+  it("reuses the checklist issue a previous run opened, and still checks it when the release already exists", () => {
+    const { repo } = mergedDeployFixture();
+    const existing = json([{ number: 77, title: TITLE, html_url: ISSUE_URL }]);
+    const run = fixtureRunner(repo, { [GH_CHECKLISTS]: existing });
+    const log = silentLog();
+
+    publishRelease({ repoRoot: repo, execute: true, run, writeNotes: namedWriter(), log });
+
+    expect(run.calls.some((call) => call.startsWith("gh issue create"))).toBe(false);
+    expect(log.text()).toContain(`Post-deploy checklist: reusing ${ISSUE_URL}.`);
+
+    git(repo, "push", "-q", "origin", "refs/tags/v0.13.3"); // the first run's push, which the runner only recorded
+    const again = fixtureRunner(repo, {
+      [GH_CHECKLISTS]: json([]),
+      "gh issue create": { status: 0, stdout: `${ISSUE_URL}\n`, stderr: "" },
+      "gh release view": { status: 0, stdout: "v0.13.3\n", stderr: "" },
+    });
+    const done = publishRelease({ repoRoot: repo, execute: true, run: again, writeNotes: namedWriter(), log: silentLog() });
+    expect(done.state).toBe("published");
+    expect(again.calls.filter((call) => call.startsWith("gh issue create"))).toHaveLength(1);
+    expect(again.calls.some((call) => call.startsWith("gh release create"))).toBe(false);
+  });
+
+  it("still publishes when the issue cannot be opened, printing the command and linking the notes page instead", () => {
+    const { repo } = mergedDeployFixture();
+    const run = fixtureRunner(repo, {
+      [GH_CHECKLISTS]: json([]),
+      "gh issue create": { status: 1, stdout: "", stderr: "could not assign fixture-owner" },
+    });
+    const writeNotes = namedWriter();
+    const log = silentLog();
+
+    const result = publishRelease({ repoRoot: repo, execute: true, run, writeNotes, log });
+
+    expect(result).toMatchObject({ executed: true, checklist: { url: null } });
+    const checklistFile = writeNotes.written["v0.13.3-post-deploy-checklist"].file;
+    expect(log.text()).toContain(`The "${TITLE}" issue was NOT opened: gh issue create failed: could not assign fixture-owner.`);
+    expect(log.text()).toContain(
+      `gh issue create --repo fixture-owner/fixture-repo --title "${TITLE}" --body-file ${checklistFile} --label post-deploy-checklist --assignee fixture-owner`,
+    );
+    expect(writeNotes.written["v0.13.3"].text).toContain(
+      "work through [the list in this release's notes page](https://github.com/fixture-owner/fixture-repo/blob/v0.13.3/docs/releases/v0.13.3.md#after-deploying-this-release).",
+    );
+    expect(run.calls.some((call) => call.startsWith("gh release create"))).toBe(true);
+  });
+
+  it("prints the checklist's title and body in a dry run and opens nothing", () => {
+    const { repo } = mergedDeployFixture();
+    const run = fixtureRunner(repo, { [GH_CHECKLISTS]: json([]) });
+    const log = silentLog();
+
+    publishRelease({ repoRoot: repo, run, log });
+
+    expect(log.text()).toContain(
+      `Post-deploy checklist: would open "${TITLE}", labelled post-deploy-checklist and assigned to fixture-owner, with this body:`,
+    );
+    expect(log.text()).toContain("assigned to fixture-owner (the owner of fixture-owner/fixture-repo)");
+    expect(log.text()).toContain("    | - [ ] **Owner:** Run `pnpm run xero:stuck-queued-report` once.");
+    expect(run.calls.some((call) => /^gh (issue create|release create)/.test(call))).toBe(false);
+  });
+
+  it("opens no issue for a release without after-deploy steps", () => {
+    const { repo } = mergedReleaseFixture();
+    const run = fixtureRunner(repo);
+    const log = silentLog();
+
+    publishRelease({ repoRoot: repo, execute: true, run, writeNotes: notesWriter(), log });
+
+    expect(run.calls.some((call) => call.startsWith("gh issue"))).toBe(false);
+    expect(log.text()).toContain("Post-deploy checklist: none");
+  });
+
+  it.each([
+    ["--checklist-assignee when given", { checklistAssignee: "club-secretary" }, {}, "club-secretary", "(--checklist-assignee)"],
+    [
+      "@me, saying why, when an organisation owns the repository",
+      {},
+      { [GH_OWNER_TYPE]: { status: 0, stdout: "Organization\n", stderr: "" } },
+      "@me",
+      "fixture-owner, which is not a person's account",
+    ],
+    [
+      "@me, saying why, when GitHub cannot say who owns it",
+      {},
+      { [GH_OWNER_TYPE]: { status: 1, stdout: "", stderr: "HTTP 401" } },
+      "@me",
+      "gh could not say whether fixture-owner is a person's account",
+    ],
+  ])("assigns the checklist issue to %s", (_case, options, stubs, login, why) => {
+    const { repo } = mergedDeployFixture();
+    const created = { status: 0, stdout: `${ISSUE_URL}\n`, stderr: "" };
+    const run = fixtureRunner(repo, { [GH_CHECKLISTS]: json([]), "gh issue create": created, ...stubs });
+    const log = silentLog();
+
+    publishRelease({ repoRoot: repo, execute: true, run, writeNotes: namedWriter(), log, ...options });
+
+    expect(run.calls.find((call) => call.startsWith("gh issue create"))).toMatch(new RegExp(` --assignee ${login}$`));
+    expect(log.text()).toContain(why);
+    expect(run.calls.some((call) => call.startsWith(GH_OWNER_TYPE))).toBe(!options.checklistAssignee);
+  });
+
+  it("opens no issue when the label cannot be made, and prints both commands", () => {
+    const { repo } = mergedDeployFixture();
+    const run = fixtureRunner(repo, {
+      [GH_CHECKLISTS]: json([]),
+      "gh label create": { status: 1, stdout: "", stderr: "HTTP 403" },
+    });
+    const writeNotes = namedWriter();
+    const log = silentLog();
+
+    const result = publishRelease({ repoRoot: repo, execute: true, run, writeNotes, log });
+
+    expect(result).toMatchObject({ executed: true, checklist: { url: null } });
+    expect(run.calls.some((call) => call.startsWith("gh issue create"))).toBe(false);
+    expect(log.text()).toContain(`The "${TITLE}" issue was NOT opened: gh label create failed: HTTP 403.`);
+    expect(log.text()).toMatch(/!! {3}gh label create post-deploy-checklist /);
+    expect(log.text()).toMatch(/!! {3}gh issue create .* --label post-deploy-checklist --assignee fixture-owner/);
+    expect(run.calls.some((call) => call.startsWith("gh release create"))).toBe(true);
+  });
+
+  it("refuses a deploy step that merged after the release-prep commit, like any late fragment", () => {
+    const { repo } = mergedReleaseFixture();
+    fs.writeFileSync(path.join(repo, "changelog.d", "4800-late.deploy.md"), SPOT);
+    git(repo, "add", "--all");
+    git(repo, "commit", "-qm", "Merge pull request #4800");
+    git(repo, "push", "-q", "origin", "HEAD:main");
+
+    expectRefusal(
+      () => publishRelease({ repoRoot: repo, run: fixtureRunner(repo), log: silentLog() }),
+      /holds 1 fragment\(s\) that merged after the release-prep commit \(4800-late\.deploy\.md\)/,
+    );
   });
 });

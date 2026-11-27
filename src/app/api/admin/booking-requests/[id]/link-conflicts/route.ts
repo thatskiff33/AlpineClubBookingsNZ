@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
-import { z } from "zod";
+import { adminBookingRequestLinkConflictsBodySchema } from "@/lib/admin-bookings-schemas/requests";
+import { parseJsonRequestBody } from "@/lib/api-json";
 import {
   BookingRequestQuoteError,
   findLinkedGuestMemberNightConflicts,
@@ -7,18 +8,8 @@ import {
 import { BookingRequestError } from "@/lib/booking-request";
 import { clubTodayDateOnlyInstant } from "@/lib/club-time/server";
 import { requireAdmin } from "@/lib/session-guards";
-
-const linkConflictsInputSchema = z.object({
-  links: z
-    .array(
-      z.object({
-        guestIndex: z.number().int().min(0),
-        memberId: z.string().min(1),
-      })
-    )
-    .max(200)
-    .default([]),
-});
+import { ADMIN_BOOKING_REQUEST_LINK_CONFLICTS_CONNECTION_SHAPE } from "@/lib/connection-shapes/bookings-requests";
+import { connectionJson } from "@/lib/mcp-connection-request";
 
 /**
  * Advisory-only member-night conflict pre-check for the admin linking step
@@ -26,6 +17,9 @@ const linkConflictsInputSchema = z.object({
  * overlapping member-night conflicts so the linking UI can warn early. This
  * never blocks: the authoritative 409 hard block stays at approve/hold time
  * (assertNoBookingMemberNightConflicts).
+ *
+ * Changes nothing, so the AI app action `check_booking_request_member_links`
+ * (ALP-719) runs it as a read.
  */
 export async function POST(
   req: NextRequest,
@@ -36,14 +30,13 @@ export async function POST(
   const session = guard.session;
 
   const { id } = await params;
-  let body: unknown;
-  try {
-    body = await req.json();
-  } catch {
-    return NextResponse.json({ error: "Invalid JSON payload" }, { status: 400 });
-  }
+  const jsonBody = await parseJsonRequestBody(req, {
+    error: "Invalid JSON payload",
+  });
+  if (!jsonBody.ok) return jsonBody.response;
+  const body = jsonBody.body;
 
-  const parsed = linkConflictsInputSchema.safeParse(body);
+  const parsed = adminBookingRequestLinkConflictsBodySchema.safeParse(body);
   if (!parsed.success) {
     return NextResponse.json(
       { error: "Invalid input", details: parsed.error.flatten().fieldErrors },
@@ -62,7 +55,7 @@ export async function POST(
       // callers reach it mid-transaction (`INV-LOCK-004`).
       today: await clubTodayDateOnlyInstant(),
     });
-    return NextResponse.json({ conflicts });
+    return connectionJson(req, { conflicts }, ADMIN_BOOKING_REQUEST_LINK_CONFLICTS_CONNECTION_SHAPE);
   } catch (err) {
     if (
       err instanceof BookingRequestError ||

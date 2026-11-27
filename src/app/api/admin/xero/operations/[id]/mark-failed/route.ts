@@ -1,17 +1,15 @@
 import { NextRequest, NextResponse } from "next/server";
-import { z } from "zod";
-import { XERO_OPERATION_REASON_MAX, XERO_OPERATION_REASON_MIN } from "@/lib/xero-operation-resolution";
+import { parseJsonRequestBody } from "@/lib/api-json";
+import { xeroOperationReasonBodySchema } from "@/lib/admin-xero-sync-schemas";
 import { createAuditLog } from "@/lib/audit";
+import { XERO_OPERATION_MARKED_CONNECTION_SHAPE } from "@/lib/connection-shapes/finance-xero-sync";
+import { connectionJson } from "@/lib/mcp-connection-request";
 import { requireAdmin } from "@/lib/session-guards";
 import {
   markStaleRunningXeroOperationFailed,
   STALE_RUNNING_XERO_OPERATION_MINUTES,
 } from "@/lib/xero-stale-operations";
 import logger from "@/lib/logger";
-
-const markFailedSchema = z.object({
-  reason: z.string().trim().min(XERO_OPERATION_REASON_MIN).max(XERO_OPERATION_REASON_MAX),
-});
 
 /**
  * #3462: **Mark failed** on one stale RUNNING Xero operation - the runbook's
@@ -29,8 +27,9 @@ export async function POST(
   });
   if (!guard.ok) return guard.response;
   const session = guard.session;
-  const body = await request.json().catch(() => ({}));
-  const parsed = markFailedSchema.safeParse(body);
+  const jsonBody = await parseJsonRequestBody(request);
+  if (!jsonBody.ok) return jsonBody.response;
+  const parsed = xeroOperationReasonBodySchema.safeParse(jsonBody.body);
   if (!parsed.success) {
     return NextResponse.json(
       { error: "Invalid mark-failed payload", details: parsed.error.flatten() },
@@ -87,14 +86,14 @@ export async function POST(
       );
     }
 
-    return NextResponse.json({
+    return connectionJson(request, {
       ok: true,
       // #4256: an interrupted PARTIAL repair goes back to PARTIAL, not FAILED.
       message:
         result.returnedTo === "PARTIAL"
           ? "The interrupted repair was returned to PARTIAL with an audit record. Retry it to repair it again."
           : "Xero operation marked failed with an audit record. Fix the cause, then retry or requeue it.",
-    });
+    }, XERO_OPERATION_MARKED_CONNECTION_SHAPE);
   } catch (error) {
     logger.error({ err: error, operationId: id }, "Failed to mark stale Xero operation failed");
     return NextResponse.json(

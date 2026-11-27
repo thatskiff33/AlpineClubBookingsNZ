@@ -52,6 +52,7 @@ import {
   renamedGuestsForDependantCheck,
 } from "@/lib/booking-dependant-identity-doors";
 import { PriceSummaryCard } from "@/components/edit-booking/price-summary-card";
+import { LinkedMoveSettlementMethod } from "@/components/edit-booking/linked-move-settlement-method";
 import {
   editPriceChangedMessage,
   readEditPriceChangedFigures,
@@ -90,8 +91,8 @@ import {
 } from "@/components/edit-booking/hooks/use-hosting-coverage-linked-move";
 import { HostingCoverageLinkedMovePrompt } from "@/components/hosting-coverage-linked-move-prompt";
 import {
-  hostingCoverageLinkedMoveAnswer,
-  readHostingCoverageLinkedMovePrompt,
+  hostingCoverageLinkedMoveAnswerFields,
+  readLinkedMoveRefusal,
 } from "@/lib/hosting-coverage-linked-move-client";
 import { useMemberGuestFinder } from "@/components/edit-booking/hooks/use-member-guest-finder";
 import { useOtherLodgeRate } from "@/components/edit-booking/hooks/use-other-lodge-rate";
@@ -1324,7 +1325,7 @@ export function EditBookingPanel({
       // unchanged so the save refuses rather than settle a different amount.
       // Added after the signature, like the linked-move answers below: a
       // re-priced preview is not a different proposal and must not retire an
-      // open prompt. No preview, no figures — the save then prices as before.
+      // open prompt. No preview, no figures: the server asks for a reload (#5238).
       const previewedFigures = quote?.quotedFigures ?? null;
       if (previewedFigures) body.quotedFigures = previewedFigures;
       if (overrideState) {
@@ -1339,13 +1340,10 @@ export function EditBookingPanel({
       // stranded set — so the key comes off the prompt rather than being picked
       // here. A null answer means the arm is not answerable (the offer said there
       // are not beds for both), and the save then carries no answer at all so the
-      // server re-prompts rather than acting on half of one.
+      // server re-prompts rather than acting on half of one. Accepting also binds
+      // every booking to the figure the offer showed for it (#5238).
       if (linkedMoveState && linkedMoveChoice) {
-        const answer = hostingCoverageLinkedMoveAnswer(
-          linkedMoveState.prompt,
-          linkedMoveChoice,
-        );
-        if (answer) body.hostingCoverageLinkedMove = answer;
+        Object.assign(body, hostingCoverageLinkedMoveAnswerFields(linkedMoveState.prompt, linkedMoveChoice));
         // #3232: and the return method for the other booking's refund, added HERE
         // rather than in the payload builder for the reason its state slot gives —
         // in the builder it would change the proposal signature and retire this
@@ -1370,29 +1368,32 @@ export function EditBookingPanel({
 
       const data = await res.json();
       if (!res.ok) {
-        // #4924: the price moved since the preview, so nothing was saved. Say
-        // what changed, keep the edit open and price it again.
+        // #4924: the price moved since the preview, so nothing was saved. Say what
+        // changed (no amounts after an accepted move: the figures may be the other
+        // booking's), keep the edit open and price it again; the answer goes (#5238).
         const freshFigures = readEditPriceChangedFigures(data);
         if (freshFigures) {
-          setSaveError(editPriceChangedMessage(previewedFigures, freshFigures, format));
+          setLinkedMoveState(null);
+          setLinkedMoveChoice(null);
+          setSaveError(editPriceChangedMessage(linkedMoveState && linkedMoveChoice === "MOVE_BOTH" ? null : previewedFigures, freshFigures, format));
           requote();
           return;
         }
         // #3232, BEFORE the officer's override prompt: a linked-move offer is
         // raised for the BOOKING'S OWN MEMBER, admin or not, so it must not be
         // gated on `actingAsAdmin` the way the override prompt is. The two bodies
-        // carry different codes, so only one reader can ever match.
-        const linkedMovePrompt = readHostingCoverageLinkedMovePrompt(data);
-        if (linkedMovePrompt) {
+        // carry different codes, so only one reader can ever match. #5238: the
+        // fresh offer of an acceptance whose price moved arrives the same way.
+        const linkedMoveRefusal = readLinkedMoveRefusal(data);
+        if (linkedMoveRefusal) {
           setLinkedMoveState({
-            prompt: linkedMovePrompt,
+            prompt: linkedMoveRefusal.prompt,
             proposalSignature: refusedHostingProposalSignature,
             notifyMemberChoice,
           });
           setLinkedMoveChoice(null);
-          setSaveError(
-            "Choose whether to move both bookings or only this one, then save again.",
-          );
+          setSaveError(linkedMoveRefusal.message);
+          if (linkedMoveRefusal.priceChanged) requote();
           return;
         }
         const hostingPrompt = actingAsAdmin
@@ -1603,6 +1604,17 @@ export function EditBookingPanel({
   const linkedMoveSettlementRequired =
     Boolean(activeLinkedMoveState?.prompt.settlementMethodRequired) &&
     !settlementRequired;
+  /**
+   * #5303 review: the mirror case. This booking's own quote asks, so the linked
+   * control above stays hidden and the price summary's one radio answers for the
+   * linked bookings too; its label must cover their refund route as well.
+   */
+  const priceSummaryLinkedRefundRoute =
+    settlementRequired &&
+    activeLinkedMoveState?.prompt.settlementMethodRequired &&
+    linkedMoveChoice !== "LEAVE_UNCOVERED"
+      ? activeLinkedMoveState.prompt.refundRoute
+      : null;
 
   // Issue #1668: over-capacity under an admin override is a confirmable warning,
   // not a hard block. The signal can come from the quote (preview) or from a
@@ -1829,6 +1841,7 @@ export function EditBookingPanel({
           settlementMethod={settlementMethod}
           onConfirmOverCapacityChange={setConfirmOverCapacity}
           onSettlementMethodChange={setSettlementMethod}
+          linkedMoveRefundRoute={priceSummaryLinkedRefundRoute}
         />
       )}
 
@@ -1909,40 +1922,12 @@ export function EditBookingPanel({
         <>
           {linkedMoveSettlementRequired &&
           linkedMoveChoice !== "LEAVE_UNCOVERED" ? (
-            <div
-              className="space-y-2 rounded-md border p-3 text-sm"
-              role="status"
-              data-testid="linked-move-settlement-method"
-            >
-              <p className="font-medium">Return method</p>
-              <p className="text-xs text-muted-foreground">
-                Moving both bookings brings money back on the other booking.{(activeLinkedMoveState?.prompt.combinedOrganiserRefundCents ?? 0) > 0 ? " Choose where yours goes; the same choice covers every booking you paid for. A group organiser's refund goes back to them." : " Choose where it goes; the same choice covers both."}
-              </p>
-              <label className="flex cursor-pointer items-start gap-2">
-                <input
-                  type="radio"
-                  name="linkedMoveSettlementMethod"
-                  value="card"
-                  className="mt-1"
-                  checked={linkedMoveSettlementMethod === "card"}
-                  disabled={saving}
-                  onChange={() => setLinkedMoveSettlementMethod("card")}
-                />
-                <span>Refund to the original card</span>
-              </label>
-              <label className="flex cursor-pointer items-start gap-2">
-                <input
-                  type="radio"
-                  name="linkedMoveSettlementMethod"
-                  value="credit"
-                  className="mt-1"
-                  checked={linkedMoveSettlementMethod === "credit"}
-                  disabled={saving}
-                  onChange={() => setLinkedMoveSettlementMethod("credit")}
-                />
-                <span>Hold as account credit</span>
-              </label>
-            </div>
+            <LinkedMoveSettlementMethod
+              prompt={activeLinkedMoveState?.prompt ?? null}
+              method={linkedMoveSettlementMethod}
+              disabled={saving}
+              onChange={setLinkedMoveSettlementMethod}
+            />
           ) : null}
           <HostingCoverageLinkedMovePrompt
             prompt={activeLinkedMoveState ? activeLinkedMoveState.prompt : null}

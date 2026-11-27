@@ -1,7 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
-import { z } from "zod";
 
+import { maintenanceReportActionBodySchema } from "@/lib/admin-lodge-schemas/maintenance";
 import { logAudit } from "@/lib/audit";
+import { ADMIN_MAINTENANCE_REPORT_CONNECTION_SHAPE } from "@/lib/connection-shapes/lodge-maintenance";
+import { arrivesAsMcpConnection, connectionJson } from "@/lib/mcp-connection-request";
+import { getClientIp } from "@/lib/rate-limit-http";
 import logger from "@/lib/logger";
 import {
   MAINTENANCE_REPORT_DETAIL_SELECT,
@@ -9,6 +12,7 @@ import {
 } from "@/lib/maintenance-report-admin";
 import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/session-guards";
+import { parseJsonRequestBody } from "@/lib/api-json";
 
 /**
  * One maintenance report: read it (including the photo), move its status, or
@@ -16,21 +20,10 @@ import { requireAdmin } from "@/lib/session-guards";
  * PATCH, resolved from the path by `getAdminRouteRequirement`.
  */
 
-const actionSchema = z.discriminatedUnion("action", [
-  z.object({
-    action: z.literal("setStatus"),
-    status: z.enum(["OPEN", "IN_PROGRESS", "RESOLVED"]),
-    note: z.string().trim().max(1000).optional(),
-  }),
-  z.object({
-    action: z.literal("deletePhoto"),
-    reason: z.string().trim().max(300).optional(),
-  }),
-]);
-
-function clientIp(request: NextRequest) {
-  return request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? "unknown";
-}
+// The body schema (`setStatus` or `deletePhoto`) lives in
+// admin-lodge-schemas/maintenance.ts so the AI app actions
+// `set_maintenance_report_status` and `delete_maintenance_report_photo` offer
+// the same fields (ALP-722).
 
 async function loadDetail(id: string) {
   return prisma.maintenanceReport.findUnique({
@@ -67,12 +60,18 @@ export async function GET(
     targetId: id,
     entityType: "MaintenanceReport",
     entityId: id,
-    details: JSON.stringify({ photoOpened: Boolean(mapped.photo.dataUrl) }),
-    ipAddress: clientIp(request),
+    // An AI app connection is never sent the photo (ALP-722), so its read
+    // opened nothing.
+    details: JSON.stringify({
+      photoOpened: Boolean(mapped.photo.dataUrl) && !arrivesAsMcpConnection(request),
+    }),
+    ipAddress: getClientIp(request),
     outcome: "success",
   });
 
-  return NextResponse.json({ report: mapped });
+  // A connection is sent neither the photo's bytes nor any contact detail
+  // (ALP-722).
+  return connectionJson(request, { report: mapped }, ADMIN_MAINTENANCE_REPORT_CONNECTION_SHAPE);
 }
 
 export async function PATCH(
@@ -86,14 +85,13 @@ export async function PATCH(
 
   const { id } = await params;
 
-  let body: unknown;
-  try {
-    body = await request.json();
-  } catch {
-    return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
-  }
+  const jsonBody = await parseJsonRequestBody(request, {
+    error: "Invalid JSON",
+  });
+  if (!jsonBody.ok) return jsonBody.response;
+  const body = jsonBody.body;
 
-  const parsed = actionSchema.safeParse(body);
+  const parsed = maintenanceReportActionBodySchema.safeParse(body);
   if (!parsed.success) {
     return NextResponse.json({ error: "Invalid input" }, { status: 400 });
   }
@@ -138,7 +136,7 @@ export async function PATCH(
           to: parsed.data.status,
           hasNote: Boolean(parsed.data.note),
         }),
-        ipAddress: clientIp(request),
+        ipAddress: getClientIp(request),
         outcome: "success",
       });
     } else {
@@ -166,7 +164,7 @@ export async function PATCH(
           entityType: "MaintenanceReport",
           entityId: id,
           details: parsed.data.reason || "Deleted by admin",
-          ipAddress: clientIp(request),
+          ipAddress: getClientIp(request),
           severity: "important",
           outcome: "success",
         });
@@ -174,9 +172,11 @@ export async function PATCH(
     }
 
     const report = await loadDetail(id);
-    return NextResponse.json({
-      report: report ? mapMaintenanceReportForDetail(report) : null,
-    });
+    return connectionJson(
+      request,
+      { report: report ? mapMaintenanceReportForDetail(report) : null },
+      ADMIN_MAINTENANCE_REPORT_CONNECTION_SHAPE,
+    );
   } catch (err) {
     logger.error({ err, reportId: id }, "Failed to update maintenance report");
     return NextResponse.json({ error: "Failed to update report" }, { status: 500 });

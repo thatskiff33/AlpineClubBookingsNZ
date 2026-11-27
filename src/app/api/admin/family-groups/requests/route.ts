@@ -2,9 +2,15 @@ import { NextRequest, NextResponse } from "next/server";
 import {
   listAdminFamilyGroupRequests,
   reviewAdminFamilyGroupRequest,
-  reviewFamilyGroupRequestSchema,
 } from "@/lib/admin-family-group-requests-service";
+import { reviewFamilyGroupRequestSchema } from "@/lib/admin-membership-api/family-groups";
+import { parseJsonRequestBody } from "@/lib/api-json";
 import { requireAdmin } from "@/lib/session-guards";
+import { connectionJson } from "@/lib/mcp-connection-request";
+import {
+  FAMILY_GROUP_REQUEST_LIST_CONNECTION_SHAPE,
+  FAMILY_GROUP_REQUEST_REVIEWED_CONNECTION_SHAPE,
+} from "@/lib/connection-shapes/membership-family-groups";
 
 function unauthorizedResponse() {
   return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -18,7 +24,7 @@ const adminGuardOptions = {
  * GET /api/admin/family-groups/requests
  * List pending family group change requests.
  */
-export async function GET() {
+export async function GET(request: Request) {
   const guard = await requireAdmin({
     ...adminGuardOptions,
     permission: { area: "membership", level: "view" },
@@ -26,7 +32,7 @@ export async function GET() {
   if (!guard.ok) return guard.response;
 
   const result = await listAdminFamilyGroupRequests();
-  return NextResponse.json(result.body, result.init);
+  return connectionJson(request, result.body, FAMILY_GROUP_REQUEST_LIST_CONNECTION_SHAPE, result.init);
 }
 
 /**
@@ -40,12 +46,9 @@ export async function PUT(req: NextRequest) {
   });
   if (!guard.ok) return guard.response;
 
-  let body: unknown;
-  try {
-    body = await req.json();
-  } catch {
-    return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
-  }
+  const jsonBody = await parseJsonRequestBody(req, { error: "Invalid JSON" });
+  if (!jsonBody.ok) return jsonBody.response;
+  const body = jsonBody.body;
 
   const parsed = reviewFamilyGroupRequestSchema.safeParse(body);
   if (!parsed.success) {
@@ -59,5 +62,5 @@ export async function PUT(req: NextRequest) {
     adminMemberId: guard.session.user.id,
     data: parsed.data,
   });
-  return NextResponse.json(result.body, result.init);
+  return connectionJson(req, result.body, FAMILY_GROUP_REQUEST_REVIEWED_CONNECTION_SHAPE, result.init);
 }

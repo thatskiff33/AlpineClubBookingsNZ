@@ -14,9 +14,15 @@ import {
 import { committeeRoleCreateSchema } from "@/lib/forms/committee-role-schema";
 import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/session-guards";
+import { parseJsonRequestBody } from "@/lib/api-json";
+import { connectionJson } from "@/lib/mcp-connection-request";
+import {
+  COMMITTEE_ROLE_CONNECTION_SHAPE,
+  COMMITTEE_ROLE_LIST_CONNECTION_SHAPE,
+} from "@/lib/connection-shapes/membership-committee";
 
 
-export async function GET() {
+export async function GET(request: Request) {
   const guard = await requireAdmin({
     permission: { area: "membership", level: "view" },
   });
@@ -27,9 +33,11 @@ export async function GET() {
     select: committeeRoleSelect,
   });
 
-  return NextResponse.json({
-    roles: roles.map(serializeCommitteeRole),
-  });
+  return connectionJson(
+    request,
+    { roles: roles.map(serializeCommitteeRole) },
+    COMMITTEE_ROLE_LIST_CONNECTION_SHAPE,
+  );
 }
 
 export async function POST(request: Request) {
@@ -39,12 +47,11 @@ export async function POST(request: Request) {
   if (!guard.ok) return guard.response;
   const session = guard.session;
 
-  let body: unknown;
-  try {
-    body = await request.json();
-  } catch {
-    return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
-  }
+  const jsonBody = await parseJsonRequestBody(request, {
+    error: "Invalid JSON",
+  });
+  if (!jsonBody.ok) return jsonBody.response;
+  const body = jsonBody.body;
 
   const parsed = committeeRoleCreateSchema.safeParse(body);
   if (!parsed.success) {
@@ -91,8 +98,10 @@ export async function POST(request: Request) {
     return role;
   });
 
-  return NextResponse.json(
+  return connectionJson(
+    request,
     { role: serializeCommitteeRole(created) },
+    COMMITTEE_ROLE_CONNECTION_SHAPE,
     { status: 201 },
   );
 }

@@ -48,6 +48,17 @@ export type BookingOwnerEmailSource = {
 export type BookingEmailSourceContext = BookingOwnerEmailSource | "none";
 
 /**
+ * An owed notice's booking and its event's key (#5407, #5433): the bump notices
+ * and the waitlist offer and offer-expired emails. The key makes the notice's
+ * EmailLog row durable (`email:<template>:<key>`), so a later run can send it
+ * again after an interruption and the member still has exactly one row per
+ * event: a second send finds the row and sends nothing (`already_recorded`).
+ */
+export type KeyedBookingEmailSource = BookingOwnerEmailSource & {
+  idempotencyKey: string;
+};
+
+/**
  * The recipient identity for a message addressed to whoever owns a booking.
  *
  * NULL IS NOT AN ERROR HERE, IT IS THE SCHOOL (#3369, stage 4 of programme

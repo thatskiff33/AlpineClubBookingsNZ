@@ -44,8 +44,10 @@ export function linkedMoveQuoteInput(input: {
   checkIn?: string;
   checkOut?: string;
   settlementMethod?: BatchModifyInput["settlementMethod"];
+  quotedFigures?: BatchModifyInput["quotedFigures"];
 }): BatchModifyInput {
   return {
+    ...(input.quotedFigures ? { quotedFigures: input.quotedFigures } : {}),
     ...(input.checkIn !== undefined ? { checkIn: input.checkIn } : {}),
     ...(input.checkOut !== undefined ? { checkOut: input.checkOut } : {}),
     ...(input.settlementMethod

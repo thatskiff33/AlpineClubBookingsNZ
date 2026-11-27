@@ -76,7 +76,7 @@ Journey: Choose lodge and nights, add guests, review the price and rules, then c
 
 Screen: `/bookings`, `/bookings/[id]`.
 
-Journey: Find a stay and open its detail. Review lodge, status, guests and amounts before paying, requesting a change or cancelling. Stay Details always names the lodge; list rows do once a second lodge is active, and always for a booking at an archived lodge (`INV-CAP-039`). Pending consent appears on the booking for an eligible invited member. With Xero on, **Download invoice** beside Edit Booking gives the booker and officers Xero's PDF of the booking's invoice, and an **Invoice and credits** card under Payment lists each Xero credit note raised against the booking (each downloadable) with a summary from the app's own records and a plain-words line when the invoice in Xero does not show the latest change; a booking that may have more than one invoice asks the booker to contact the club for copies (an officer or admin on someone else's booking is told to check the club's accounts), and a guest on someone else's booking sees none of these.
+Journey: Find a stay and open its detail. Review lodge, status, guests and amounts before paying, requesting a change or cancelling. Stay Details always names the lodge; list rows do once a second lodge is active, and always for a booking at an archived lodge (`INV-CAP-039`). Pending consent appears on the booking for an eligible invited member. **Download invoice** beside Edit Booking gives the booker and officers the invoice PDF ([Xero's or the app's](user-guide/paying-for-your-stay.md)), and an **Invoice and credits** card under Payment lists each Xero credit note raised against the booking with a summary from the app's own records and a plain-words line when the invoice in Xero does not show the latest change; a booking that may have more than one invoice asks the booker to contact the club for copies (an officer or admin on someone else's booking is told to check the club's accounts), and a guest on someone else's booking sees none of these.
 
 [Guide](user-guide/changing-or-cancelling-a-booking.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
 
@@ -171,7 +171,7 @@ Journey: When enabled, open Order food from the dashboard, choose the lodge (onl
 
 Screen: `/admin/ai-diagnostics`.
 
-Shows: Diagnostic access, provisioning and deployment information.
+Shows: Access, provisioning, deployment and "Where your data goes".
 
 Journey: Inspect diagnostic access and follow the deployment guide to provision it.
 
@@ -361,9 +361,9 @@ Journey: Choose recipients (the help line says who each reaches), choose the kin
 
 Screen: `/admin/message-board`.
 
-Shows: Club messages and moderation controls.
+Shows: Club messages, moderation controls and sharing problems.
 
-Journey: Read club posts and use the moderation actions allowed by the current role.
+Journey: Read club posts and use the moderation actions their role allows.
 
 [Guide](guides/message-board.md) · [History](UX_FLOW_HISTORY.md#club-message-board-2994-epic-2992)
 
@@ -445,7 +445,7 @@ Screen: `/admin/members`.
 
 Shows: A searchable member list and individual membership records.
 
-Journey: Search or filter members, open a profile, and use its permitted membership actions. A Full Admin answers an access request from a profile's Lifecycle & Deletion section: download that member's subject access report, or find someone else by email or a non-member guest by name. Merge preview and execution failures take focus and scroll into view.
+Journey: Search, filter or bulk-select members, open a profile, and use its permitted actions. A Full Admin answers an access request from a profile's Lifecycle & Deletion section: download that member's subject access report, or find someone else by email or a non-member guest by name. Merge preview and execution failures take focus and scroll into view.
 
 [Guide](guides/members.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
 
@@ -495,9 +495,9 @@ Journey: Create or edit a category and its flat fee, then assign members from th
 
 Screen: `/admin/subscription-lockout`.
 
-Shows: Lapsed-subscription rules and related notification settings.
+Shows: Lapsed-subscription rules, notifications, liability rule.
 
-Journey: Review the lapsed-subscription rules and member-facing wording.
+Journey: Review rules; preview a liability rule before saving.
 
 [Guide](guides/subscription-lockout.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
 

@@ -73,6 +73,7 @@ import {
 } from "@/lib/email/admin-alerts-settlement";
 import {
   sendBookingBumpedEmail,
+  sendBookingGuestsCancelledEmail,
   sendSplitGuestPortionCancelledEmail,
 } from "@/lib/email/booking";
 import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
@@ -898,6 +899,22 @@ describe("#2320 review — senders supply the composed notes their defaults rend
     expect(later).not.toContain("previous app version");
     expect(stray).not.toContain("refund the other one");
     expect(stray).toContain("refund it by hand only if the booking should not be paid by it");
+
+    // #5240 review (23 Nov, item 5): a saved-card capture left unsettled for seven days says so, never "account credit".
+    for (const [other, said, action] of [
+      [{ otherPaymentIntentId: "pi_settler", otherHoldsMoney: true }, "Card payment pi_settler on it holds money, so this payment may be extra.", "refund the other one by hand."],
+      [{ otherPaymentIntentId: null, otherHoldsMoney: true }, "A cash or bank payment on it holds money, so this payment may be extra.", "refund the other one by hand."],
+      [{ otherPaymentIntentId: null, otherHoldsMoney: false }, "The app counts no other payment on it as settling it, so this payment may be extra, or may be what should pay for the booking.", "refund it by hand only if the booking should not be paid by it."],
+    ] as const) {
+      mocks.sendUnmuteableAdminAlert.mockClear();
+      await sendAdminDuplicateCaptureKeptAlert({ ...alert, reason: "unsettled-saved-card", ...other }, CLUB_FORMAT_TEST);
+      const unsettled = renderDefaultBody("admin-duplicate-capture-kept", capturedUnmuteableTemplateData());
+      expect(unsettled).toContain("A saved-card payment was taken on this booking, but the app stopped before settling the booking with it, and in seven days nothing finished settling it.");
+      expect(unsettled).toContain(said);
+      expect(unsettled).toContain(action);
+      expect(unsettled).not.toContain("account credit");
+      expect(unsettled).not.toContain("previous app version");
+    }
   });
 
   it("admin-superseded-capture-refused: {{supersededCaptureNote}} says it was not applied, worded by the booking's status (#4300)", async () => {
@@ -976,7 +993,7 @@ describe("#2430 booking-bumped points each recipient class somewhere it can go",
     recipientCanBookOnline: boolean,
   ): Promise<EmailTemplateData> {
     await sendBookingBumpedEmail(
-      { bookingId: "booking_1", recipientMemberId: "member_1" },
+      { bookingId: "booking_1", recipientMemberId: "member_1", idempotencyKey: "booking_1:0" },
       "someone@example.org",
       "Alice",
       new Date("2026-07-10"),
@@ -1055,5 +1072,54 @@ We apologise for the inconvenience.`,
       expect(rendered).not.toMatch(/:\s*$/m);
       expect(rendered).not.toContain("{{");
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// #5407: a bump notice carries the bump's event key, so the email core keeps
+// one EmailLog row per bump however often the cron sends it, and the sender
+// hands the core's outcome back for the cron to act on.
+// ---------------------------------------------------------------------------
+describe("#5407 the bump notices carry the bump's event key", () => {
+  const OUTCOME = { status: "already_recorded", emailLogId: "email:booking-bumped:booking_1:0" } as const;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.sendEmail.mockResolvedValue(OUTCOME);
+  });
+
+  it("passes the key to the email core for the bumped notice and returns its outcome", async () => {
+    await expect(
+      sendBookingBumpedEmail(
+        { bookingId: "booking_1", recipientMemberId: "member_1", idempotencyKey: "booking_1:0" },
+        "someone@example.org",
+        "Alice",
+        new Date("2026-07-10"),
+        new Date("2026-07-12"),
+        2,
+        null,
+        true,
+      ),
+    ).resolves.toBe(OUTCOME);
+    expect(mocks.sendEmail).toHaveBeenCalledWith(
+      expect.objectContaining({ templateName: "booking-bumped", idempotencyKey: "booking_1:0" }),
+    );
+    expect(mocks.sendEmail.mock.calls[0]![0]).not.toHaveProperty("deferDelivery");
+  });
+
+  it("passes the key to the email core for the guests-cancelled notice and returns its outcome", async () => {
+    await expect(
+      sendBookingGuestsCancelledEmail(
+        { bookingId: "booking_1", recipientMemberId: "member_1", idempotencyKey: "booking_1:0" },
+        "someone@example.org",
+        "Alice",
+        new Date("2026-07-10"),
+        new Date("2026-07-12"),
+        null,
+      ),
+    ).resolves.toBe(OUTCOME);
+    expect(mocks.sendEmail).toHaveBeenCalledWith(
+      expect.objectContaining({ templateName: "booking-guests-cancelled", idempotencyKey: "booking_1:0" }),
+    );
   });
 });

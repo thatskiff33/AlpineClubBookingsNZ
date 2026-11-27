@@ -112,10 +112,17 @@ describe("decisionInvoiceIdsOf (#5289 C)", () => {
     ).resolves.toEqual(new Map([["pay-1", "inv-1"]]));
   });
 
-  it("decides no invoice for a card payment", async () => {
-    const { db, linkFindMany } = store([], []);
-    await expect(decisionInvoiceIdsOf([{ id: "pay-1", source: "STRIPE" as never, xeroInvoiceId: "inv-1" }], db)).resolves.toEqual(new Map());
-    expect(linkFindMany).not.toHaveBeenCalled();
+  it("MUTATION (#4444): a card payment counts its own invoice; with none stamped, no linked one (the settle's rule is bank-transfer only)", async () => {
+    const { db } = store([], [invoiceLink("pay-2", "inv-2")]);
+    await expect(
+      decisionInvoiceIdsOf(
+        [
+          { id: "pay-1", source: "STRIPE" as never, xeroInvoiceId: "inv-1" },
+          { id: "pay-2", source: "STRIPE" as never, xeroInvoiceId: null },
+        ],
+        db,
+      ),
+    ).resolves.toEqual(new Map([["pay-1", "inv-1"]]));
   });
 });
 

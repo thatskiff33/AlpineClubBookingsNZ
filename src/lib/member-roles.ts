@@ -54,6 +54,15 @@ export const NON_MEMBER_ROLE_VALUES = [
   "SCHOOL",
 ] as const satisfies readonly Role[];
 
+export type NonMemberRole = (typeof NON_MEMBER_ROLE_VALUES)[number];
+
+/** Narrows a stored or served role string to a non-member category (#5407). */
+export function isNonMemberRole(
+  role: string | null | undefined,
+): role is NonMemberRole {
+  return NON_MEMBER_ROLE_VALUES.includes(role as NonMemberRole);
+}
+
 export const MEMBER_IMPORT_ROLE_VALUES = [
   "USER",
   "ADMIN",
@@ -132,14 +141,6 @@ export function isLodgeKioskAccount(
 ): boolean {
   return (
     classifyAccountRecord({ role, accessRoles, financeAccessLevel }) === "lodge"
-  );
-}
-
-export function isOperationalRole(
-  role: string | null | undefined,
-): role is (typeof OPERATIONAL_ROLE_VALUES)[number] {
-  return OPERATIONAL_ROLE_VALUES.includes(
-    role as (typeof OPERATIONAL_ROLE_VALUES)[number],
   );
 }
 

@@ -819,13 +819,18 @@ echo "$GHCR_READ_TOKEN" | docker login ghcr.io -u <owner> --password-stdin
 
 Do not store that token in the repository or `.env`.
 
-Every push to `main` gets a CI run of its own that runs to completion; a later
-merge never cancels or replaces it (`INV-OPS-021`). So a `main` commit has
-images exactly when its run's `Publish GHCR images` job succeeded — not merely
-because it is on `main`. A run whose `Publish GHCR images` job did not succeed
-(skipped after a failed gate, failed, or cancelled by hand) published nothing;
-re-run it with `gh run rerun <run-id>`. `pnpm run release:cut publish`
-asks GitHub for that job's result and will not tag a commit without images.
+A `main` commit has images exactly when its CI run's `Publish GHCR images`
+job succeeded, not merely because it is on `main`. A newer merge may replace
+`main`'s queued run, so an intermediate `main` commit can have no run and no
+images; a run that has started always finishes, and the newest `main` commit
+normally gets one (a manual re-run can replace its pending run; `INV-OPS-021`,
+#5356). A run whose `Publish GHCR images` job did not succeed (replaced while
+queued, skipped after a failed gate, failed, or cancelled by hand) published
+nothing; re-run it with `gh run rerun <run-id>`. A re-run joins `main`'s queue
+and replaces whatever is pending there, so start it only when nothing is
+pending on `main` (`gh run list --workflow ci.yml --branch main --status pending`).
+`pnpm run release:cut publish` tags `origin/main` by default, asks GitHub for
+that job's result, and will not tag a commit without images.
 
 ### Supply chain
 
@@ -835,9 +840,9 @@ workflow and composite-action references, including `docker://` actions.
 External images in the Dockerfile and Compose files keep readable tags and pin
 the multi-architecture index digest. Dependabot proposes Action and Docker
 updates for review. The pnpm minimum release age matches the npm Dependabot
-cooldown: seven days (`10080` minutes).
-The already-locked `nodemailer@10.2.1` has an exact-version exception so frozen
-installs work during rollout; remove it after the next Nodemailer update.
+cooldown: seven days (`10080` minutes). No version is exempt from it: the
+exact-version exception made during rollout, for the already-locked
+`nodemailer@10.2.1`, was removed once `main` had moved to a later Nodemailer.
 
 Both published images include a BuildKit SBOM and maximum build provenance,
 plus a GitHub build provenance attestation tied to the pushed image digest.
@@ -1290,7 +1295,7 @@ image stops the engine before image inspection; it never guesses a local tag.
 ## Public Rate Limits And Proxy Headers
 
 Public route rate limits are process-local sliding windows keyed by
-`getClientIp()` in `src/lib/rate-limit.ts`. This is acceptable for the supported
+`getClientIp()` in `src/lib/rate-limit-http.ts`. This is acceptable for the supported
 production shape because Caddy is the only public listener and routes traffic to
 one active web slot at a time.
 
@@ -1319,15 +1324,32 @@ connections and the TLS certificate cache. If `validate` fails, fix the file
 before reloading — the running config stays in place until a reload succeeds.
 
 The app trusts proxy-derived client IP headers only under that Caddy boundary.
-`getClientIp()` uses the rightmost `X-Forwarded-For` value, which is the peer
-Caddy appended closest to the app container, then falls back to `X-Real-IP`.
+Caddy replaces `X-Forwarded-For` with its resolved client IP (`header_up
+X-Forwarded-For {client_ip}` in `deploy/caddy/tacbookings-active.caddy`), which
+is the connecting peer when Caddy is the edge and, in `CADDY_TLS_MODE=local`,
+the address the trusted proxy forwarded — see "Client IPs behind the proxy"
+below. The app therefore normally sees one address. `getClientIp()` takes the
+last `X-Forwarded-For` address, or `X-Real-IP` when that header is absent. The
+last-address rule is for a proxy that appends to the header instead of
+replacing it, where the first address is whatever the caller sent.
+
+The audit log records the same address as the rate limits: every route that
+writes a caller's IP takes it from `getClientIp()`, and lint refuses a direct
+read of a client-address header anywhere else (#5399). It is the address the hop
+nearest the app saw, so it is the visitor's only in the supported shape:
+
+- **Behind more than one proxy** (a CDN in front of another proxy, say), the
+  hop nearest the app must resolve the visitor's address and overwrite the
+  header. That is the reference Caddy in local mode, with
+  `CADDY_TRUSTED_PROXIES` covering every hop in front of it. Otherwise the last
+  address is the next hop's own peer, such as a CDN edge address many visitors
+  share, and both the audit log and the per-address rate limits see that.
+- **With no proxy at all**, the caller sets `X-Forwarded-For` and `X-Real-IP`
+  freely, so neither the audit address nor a rate-limit key can be trusted.
+
 Do not expose app containers directly to the Internet or through another proxy
 that preserves attacker-supplied `X-Forwarded-For` values without appending its
 own trusted peer address.
-Caddy sets that header to its resolved client IP (`header_up X-Forwarded-For
-{client_ip}` in `deploy/caddy/tacbookings-active.caddy`), which is the connecting
-peer when Caddy is the edge and, in `CADDY_TLS_MODE=local`, the address the
-trusted proxy forwarded — see "Client IPs behind the proxy" below.
 
 ### Hostnames and DNS records
 
@@ -2272,9 +2294,13 @@ alert, "Lost card payment dispute now won". If you recorded the loss in Xero:
    referencing the booking and the Stripe dispute id, and a second for the fee
    if Stripe returned it.
 3. Reconcile both against that payout.
-4. A treasurer task the app raised while the dispute held stays open. If you
-   already dismissed it, the member's refund or credit is now owed again: pay
-   it as the task would have.
+4. A treasurer task the app raised while the dispute held stays open. One
+   dismissed for the loss is put back on the queue by the app, its refund
+   owed to the member again, and the alert names it (#5197); pay it as usual.
+   The alert also names any task it could not reopen (reopen it under
+   Finance → Payments) and any reduction made for the loss, now owed to the
+   member again: the app leaves a reduced task as it is, so pay that amount by
+   bank transfer and record it in Xero as you record the task's payment.
 
 If Stripe webhook delivery was missed while the endpoint, DNS, TLS, or the
 signing secret stored under **Admin > Integrations > Stripe** was wrong (it is
@@ -2635,7 +2661,7 @@ truth. The public POST endpoints are:
 | Endpoint | Task(s) | Typical cadence | Recorded `CronJobRun.jobName` |
 | -------- | ------- | --------------- | ----------------------------- |
 | `POST /api/cron` | General cron cycle: pending booking confirmation, group-settlement reaper, abandoned policy-exception capacity-hold reaper, pre-arrival reminders, booking-request retention purge, quote-expiry reminders, school attendee confirmations, and placeholder guest-name reminders. | Every 3 hours in the cron leader. | `confirm-pending`, `group-settlement-reaper`, `placeholder-guest-name-reminders`, `policy-exception-hold-reaper`, `pre-arrival-reminders`, `purge-booking-requests`, `quote-expiry-reminders`, `school-attendee-confirmations` |
-| `POST /api/cron/payments?task=recovery` | The payments cycle: durable Stripe payment recovery (with a read-back of card refunds still recorded pending, so one Stripe failed is owed again, #4104), expired Internet Banking hold release, stale `WAITING_PAYMENT` Xero outbox reaping, a retry of the held late-capture alert for any approval still open, and delivery of an owed alert for a card payment kept on a paid booking that nothing else paid for (#4285), and the released-credit requests (raise, record the card payment in Xero, close when Xero shows paid; raising is off until an operator enables it, see `docs/xero/ARCHITECTURE.md`). The cron leader runs the same cycle itself (`src/lib/payments-cron-runner.ts`), so no external scheduler is needed; each task is error-isolated and records its own run. | Every 15 minutes in the cron leader. | `payment-recovery`, `internet-banking-hold-release`, `xero-waiting-invoice-reaper`, `late-capture-held-alert`, `credit-release-asks`, `duplicate-capture-kept-alert` |
+| `POST /api/cron/payments?task=recovery` | The payments cycle: a sweep that gives back a once-ever admin alert claim with no email behind it and re-sends a raised-once alert (#5255), durable Stripe payment recovery (with a read-back of card refunds still recorded pending, so one Stripe failed is owed again, #4104), expired Internet Banking hold release, stale `WAITING_PAYMENT` Xero outbox reaping, a retry of the held late-capture alert for any approval still open, and delivery of an owed alert for a card payment kept on a paid booking that nothing else paid for (#4285), and the released-credit requests (raise, record the card payment in Xero, close when Xero shows paid; raising is off until an operator enables it, see `docs/xero/ARCHITECTURE.md`), and the release of a combined group invoice's ledger cover once its void has finished (#4525). The cron leader runs the same cycle itself (`src/lib/payments-cron-runner.ts`), so no external scheduler is needed; each task is error-isolated and records its own run. | Every 15 minutes in the cron leader. | `once-ever-alert-sweep`, `payment-recovery`, `internet-banking-hold-release`, `xero-waiting-invoice-reaper`, `late-capture-held-alert`, `credit-release-asks`, `duplicate-capture-kept-alert`, `combined-invoice-cover-release` |
 | `POST /api/cron/xero?task=memberships` | Optional Xero-backed membership status refresh. | Daily when `XERO_ENABLE_DAILY_MEMBERSHIP_REFRESH=true` and the Xero module is effectively enabled. | `xero-membership-refresh` |
 | `POST /api/cron/xero?task=outbox` | Process queued outbound Xero operations. | Every 15 minutes when the Xero module is effectively enabled. | `xero-outbox` |
 | `POST /api/cron/xero?task=retries` | Replay failed retryable Xero operations. | Every 15 minutes when the Xero module is effectively enabled. | `xero-operation-replay` |

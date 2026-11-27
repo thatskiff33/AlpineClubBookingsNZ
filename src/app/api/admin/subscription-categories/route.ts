@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { revalidatePath } from "next/cache";
-import { z } from "zod";
+import { parseJsonRequestBody } from "@/lib/api-json";
 import {
   buildStructuredAuditLogCreateArgs,
   getAuditRequestContext,
@@ -14,15 +14,17 @@ import {
 } from "@/lib/subscription-categories";
 import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/session-guards";
+import { subscriptionCategoryCreateSchema } from "@/lib/admin-membership-api/config-structure";
+import { connectionJson } from "@/lib/mcp-connection-request";
+import {
+  SUBSCRIPTION_CATEGORY_CONNECTION_SHAPE,
+  SUBSCRIPTION_CATEGORY_LIST_CONNECTION_SHAPE,
+} from "@/lib/connection-shapes/membership-config";
 
-const createSchema = z
-  .object({
-    name: z.string().trim().min(1).max(120),
-    description: z.string().trim().max(1000).nullable().optional(),
-    isActive: z.boolean().optional().default(true),
-    sortOrder: z.number().int().min(0).max(100000).optional(),
-  })
-  .strict();
+/**
+ * GET|POST /api/admin/subscription-categories. Also the AI app actions
+ * `list_subscription_categories` and `create_subscription_category` (ALP-720).
+ */
 
 async function loadSubscriptionCategories() {
   const subscriptionCategories = await prisma.subscriptionCategory.findMany({
@@ -35,7 +37,7 @@ async function loadSubscriptionCategories() {
   };
 }
 
-export async function GET() {
+export async function GET(request: Request) {
   const guard = await requireAdmin({
     permission: { area: "membership", level: "view" },
   });
@@ -43,7 +45,7 @@ export async function GET() {
     return guard.response;
   }
 
-  return NextResponse.json(await loadSubscriptionCategories());
+  return connectionJson(request, await loadSubscriptionCategories(), SUBSCRIPTION_CATEGORY_LIST_CONNECTION_SHAPE);
 }
 
 export async function POST(request: Request) {
@@ -55,14 +57,13 @@ export async function POST(request: Request) {
   }
   const session = guard.session;
 
-  let body: unknown;
-  try {
-    body = await request.json();
-  } catch {
-    return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
-  }
+  const jsonBody = await parseJsonRequestBody(request, {
+    error: "Invalid JSON",
+  });
+  if (!jsonBody.ok) return jsonBody.response;
+  const body = jsonBody.body;
 
-  const parsed = createSchema.safeParse(body);
+  const parsed = subscriptionCategoryCreateSchema.safeParse(body);
   if (!parsed.success) {
     return NextResponse.json(
       { error: "Invalid input", details: parsed.error.flatten() },
@@ -126,10 +127,10 @@ export async function POST(request: Request) {
   });
   revalidatePath("/", "layout");
 
-  return NextResponse.json(
-    {
-      subscriptionCategory: serializeSubscriptionCategory(created),
-    },
+  return connectionJson(
+    request,
+    { subscriptionCategory: serializeSubscriptionCategory(created) },
+    SUBSCRIPTION_CATEGORY_CONNECTION_SHAPE,
     { status: 201 },
   );
 }

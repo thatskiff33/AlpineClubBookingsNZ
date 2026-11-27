@@ -1,10 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
+import { parseJsonRequestBody } from "@/lib/api-json";
 import { bookingOwner } from "@/lib/booking-owner";
 import { auth } from "@/lib/auth";
 import { requireActiveSessionUser } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma";
-import { z } from "zod";
 import { logAudit } from "@/lib/audit";
+import { getClientIp } from "@/lib/rate-limit-http";
 import { sendAdminRefundRequestAlert } from "@/lib/email";
 import {
   getRemainingRefundableCents,
@@ -17,11 +18,23 @@ import { clubFormat } from "@/lib/club-format-server";
 import { organiserCardAppealCeilingFor } from "@/lib/organiser-child-refund";
 import { readSupersededCaptureHeldBack } from "@/lib/superseded-capture-hold-back";
 import { ORGANISER_CARD_APPEAL_PENDING_MEMBER_NOTE } from "@/lib/group-organiser-paid";
+import { refundAppealRequestSchema } from "@/lib/refund-appeal-request";
+import {
+  REFUND_APPEAL_CONNECTION_SHAPE,
+  REFUND_APPEAL_LIST_CONNECTION_SHAPE,
+} from "@/lib/connection-shapes-bookings";
+import {
+  arrivesAsMcpConnection,
+  connectionJson,
+  memberOnlySessionUser,
+} from "@/lib/mcp-connection-request";
 
-const createSchema = z.object({
-  reason: z.string().min(10).max(2000),
-  requestedAmountCents: z.number().int().min(1).optional(),
-});
+/*
+ * Refund appeals on a cancelled booking. Also the AI app actions
+ * `request_refund_review` (POST) and `list_my_refund_reviews` (GET), ALP-794.
+ * Both act as the member only: a Full Admin's reach to another member's
+ * booking reads the member-only user.
+ */
 
 export async function POST(
   req: NextRequest,
@@ -47,7 +60,7 @@ export async function POST(
     return NextResponse.json({ error: "Booking not found" }, { status: 404 });
   }
 
-  if (bookingOwner(booking).memberId !== session.user.id && !hasAdminAccess(session.user)) {
+  if (bookingOwner(booking).memberId !== session.user.id && !hasAdminAccess(memberOnlySessionUser(req, session.user))) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
@@ -134,13 +147,11 @@ export async function POST(
     );
   }
 
-  const body = await req.json();
-  const parsed = createSchema.safeParse(body);
+  const jsonBody = await parseJsonRequestBody(req);
+  if (!jsonBody.ok) return jsonBody.response;
+  const parsed = refundAppealRequestSchema.safeParse(jsonBody.body);
   if (!parsed.success) {
-    return NextResponse.json(
-      { error: "Validation failed", details: parsed.error.flatten() },
-      { status: 400 }
-    );
+    return NextResponse.json({ error: "Validation failed", details: parsed.error.flatten() }, { status: 400 });
   }
 
   const { reason, requestedAmountCents } = parsed.data;
@@ -226,7 +237,7 @@ export async function POST(
       requestedAmountCents: requestedAmountCents ?? null,
       maxRefundableCents: maxRefundable,
     },
-    ipAddress: req.headers.get("x-forwarded-for") ?? "unknown",
+    ipAddress: getClientIp(req),
   });
 
   // Notify admins
@@ -241,11 +252,11 @@ export async function POST(
     refundedAmountCents: booking.payment.refundedAmountCents,
   }, money.format).catch(() => {});
 
-  return NextResponse.json(refundRequest, { status: 201 });
+  return connectionJson(req, refundRequest, REFUND_APPEAL_CONNECTION_SHAPE, { status: 201 });
 }
 
 export async function GET(
-  _req: NextRequest,
+  req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   const session = await auth();
@@ -270,7 +281,7 @@ export async function GET(
     return NextResponse.json({ error: "Booking not found" }, { status: 404 });
   }
 
-  if (bookingOwner(booking).memberId !== session.user.id && !hasAdminAccess(session.user)) {
+  if (bookingOwner(booking).memberId !== session.user.id && !hasAdminAccess(memberOnlySessionUser(req, session.user))) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
@@ -302,5 +313,10 @@ export async function GET(
     orderBy: { createdAt: "desc" },
   });
 
+  // A connection is answered `{ refundReviews }`, an object its allow-list can
+  // project; the website's answer is the bare list, unchanged.
+  if (arrivesAsMcpConnection(req)) {
+    return connectionJson(req, { refundReviews: requests }, REFUND_APPEAL_LIST_CONNECTION_SHAPE);
+  }
   return NextResponse.json(requests);
 }

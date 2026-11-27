@@ -1,8 +1,9 @@
 import { NextRequest } from "next/server";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import type { PrismaClient } from "@prisma/client";
-import { postBookingReceipts, postHandBackObligation, withdrawRefundObligation } from "@/lib/member-money/doors";
-import { memberMoneyEventKeys, postMemberMoneyEvent } from "@/lib/member-money";
+import { postBookingReceipts, postHandBackObligation, postMemberMergeTransfer, postRefundObligation, withdrawRefundObligation } from "@/lib/member-money/doors";
+import { buildLateCaptureApprovalRefundRecoveryIdempotencyKey } from "@/lib/payment-recovery-keys";
+import { HAND_BACK_CENSUS_CLASSES, memberMoneyEventKeys, postMemberMoneyEvent, readBookingReceiptCensus, readBookingRefundCensus } from "@/lib/member-money";
 import { readMemberMoneyApplicationState } from "@/lib/member-money/internal/application-read";
 import { memberMoneyApplicationTotals, memberMoneyConservationProblems } from "@/lib/member-money/internal/application-state";
 import { syncBookingLedgerSettlements } from "@/lib/booking-ledger-settlement-sync";
@@ -99,6 +100,7 @@ const resolve = (taskId: string, outcome: "completed" | "dismissed") => outcome 
 const state = (id: string) => db.$transaction((tx) => readMemberMoneyApplicationState(tx, id));
 const family = async (id: string, key: string) => memberMoneyApplicationTotals(await state(id)).families.get(key) ?? { funded: 0, paid: 0, reserved: 0 };
 const ADMIN = `${PREFIX}admin`;
+const MERGE_MEMBERS = `${PREFIX}x-`;
 /** Signed balance (debit positive) of one account on the booking's journal lines. */
 const balance = async (bookingId: string, account: string) => (await db.memberMoneyLine.findMany({ where: { bookingId, account: account as never }, select: { side: true, amountCents: true } }))
   .reduce((sum, l) => sum + (l.side === "DEBIT" ? 1 : -1) * l.amountCents, 0);
@@ -110,16 +112,16 @@ const r14Lines = async (taskId: string) => (await eventOf(memberMoneyEventKeys.h
 const r14Applied = async (taskId: string) => (await eventOf(memberMoneyEventKeys.handBackPaid(taskId)))?.journal?.applications.reduce((sum, a) => sum + a.amountCents, 0);
 
 /** A booking whose R01 is in the journal and whose charges are collected: one row per [source, cents]. */
-async function chargedBooking(charges: ReadonlyArray<["STRIPE" | "INTERNET_BANKING", number]>, cancelled = true) {
+async function chargedBooking(charges: ReadonlyArray<["STRIPE" | "INTERNET_BANKING", number]>, cancelled = true, memberId = names.memberId) {
   const id = `${PREFIX}${++sequence}`;
   const total = charges.reduce((sum, [, cents]) => sum + cents, 0);
   const where = { bookingId: id, lodgeId: names.lodgeId };
-  await createHistoryBooking(db, names, id, { payment: { amountCents: total, source: charges[0]![0] } });
+  await createHistoryBooking(db, { ...names, memberId }, id, { payment: { amountCents: total, source: charges[0]![0] } });
   await db.$transaction((tx) => postMemberMoneyEvent(tx, context, {
     kind: "CHARGE", eventKey: memberMoneyEventKeys.bookingCharge(id), origin: "APP", source: { kind: "BOOKING", id, version: "1" }, reason: "Synthetic R01",
-    obligations: [{ key: memberMoneyEventKeys.bookingCharge(id), kind: "CHARGE", debtor: { kind: "MEMBER", memberId: names.memberId }, faceCents: total, evidence: {} }],
+    obligations: [{ key: memberMoneyEventKeys.bookingCharge(id), kind: "CHARGE", debtor: { kind: "MEMBER", memberId }, faceCents: total, evidence: {} }],
     legs: [
-      { type: "amount", account: "MEMBER_RECEIVABLE", side: "DEBIT", amountCents: total, booking: where, debtor: { kind: "MEMBER", memberId: names.memberId }, obligationKey: memberMoneyEventKeys.bookingCharge(id), evidence: {} },
+      { type: "amount", account: "MEMBER_RECEIVABLE", side: "DEBIT", amountCents: total, booking: where, debtor: { kind: "MEMBER", memberId }, obligationKey: memberMoneyEventKeys.bookingCharge(id), evidence: {} },
       { type: "revenue", account: "BOOKING_REVENUE", side: "CREDIT", grossCents: total, booking: where, chargeIdentity: `booking:${id}:test`, taxAnchorDate: MEMBER_MONEY_TEST_TAX_ANCHOR, evidence: {} },
     ] }));
   const rows: { id: string }[] = [];
@@ -144,6 +146,7 @@ async function cleanup() {
   await db.auditLog.deleteMany({ where: { OR: [{ actorMemberId: ADMIN }, { memberId: ADMIN }] } });
   await db.memberAccessRole.deleteMany({ where: { memberId: ADMIN } });
   await db.member.deleteMany({ where: { id: ADMIN } });
+  await db.member.deleteMany({ where: { id: { startsWith: MERGE_MEMBERS } } });
 }
 
 (RUN ? describe : describe.skip)("M4d bank and cash hand-backs on PostgreSQL: dismissal refused for now (#4516)", { timeout: 60_000 }, () => {
@@ -263,6 +266,38 @@ async function cleanup() {
     expect(memberMoneyConservationProblems(await state(id))).toEqual([]);
   });
 
+  it("#5191: a part to check dismissed after its owner merged away: its reversal's receivable follows the merge to the survivor", async () => {
+    const [from, to] = [`${MERGE_MEMBERS}${++sequence}`, `${MERGE_MEMBERS}${++sequence}`];
+    for (const memberId of [from, to]) {
+      await db.member.create({ data: { id: memberId, email: `${memberId}@example.invalid`, passwordHash: "not-a-real-password", firstName: "Merge", lastName: "Proof", ageTier: "ADULT" } });
+    }
+    const id = await chargedBooking([["STRIPE", 14_000], ["INTERNET_BANKING", 6_000]], true, from);
+    const { raiseCancelCardShortfallHandBack } = await import("@/lib/cancel-card-refund-shortfall");
+    const shortfall = await db.$transaction(async (tx) => {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
+      return raiseCancelCardShortfallHandBack(tx, { bookingId: id, paymentId: `${id}-payment`, refundAmountCents: 20_000, plannedCardRefundCents: 0, format: CLUB_FORMAT_TEST, journal: context, actorMemberId: names.officerId });
+    });
+    const check = shortfall!.check!;
+    const receivable = async (memberId: string) => (await db.memberMoneyLine.findMany({ where: { bookingId: id, account: "MEMBER_RECEIVABLE", debtorKind: "MEMBER", memberId }, select: { side: true, amountCents: true } }))
+      .reduce((sum, l) => sum + (l.side === "DEBIT" ? 1 : -1) * l.amountCents, 0);
+    const before = await receivable(from);
+    // Member merge's order: the owner move, then the D4 transfer of the merged-away member's balances.
+    await db.$transaction(async (tx) => {
+      await tx.booking.update({ where: { id }, data: { memberId: to } });
+      await postMemberMergeTransfer(tx, context, { fromMemberId: from, toMemberId: to, actorMemberId: names.officerId });
+    });
+
+    await resolve(check.taskId, "dismissed");
+
+    expect((await eventOf(memberMoneyEventKeys.refundObligation("hand-back", check.taskId)))?.journal?.reversedBy).not.toBeNull();
+    // MUTATION: deleting the residue move in `reverseRefundObligation` leaves -14000 on the merged-away member here.
+    expect(await receivable(from)).toBe(0);
+    expect(await receivable(to)).toBe(before - 14_000);
+    expect(await db.memberMoneyEvent.count({ where: { eventKey: { startsWith: "merge-residue:" }, sourceIdentity: id } })).toBe(1);
+    expect((await db.$transaction((tx) => readBookingReceiptCensus(tx, `${id}-payment`))).filter((f) => f.kind === "MERGED_DEBTOR_BALANCE")).toEqual([]);
+    expect(memberMoneyConservationProblems(await state(id))).toEqual([]);
+  });
+
   /** A card booking settled for real, its capture disputed (`status`), cancelled by a member asking for a card refund (#5061). */
   async function disputedCancel(status: "OPEN" | "LOST", disputedCents = 20_000) {
     const id = `${PREFIX}${++sequence}`;
@@ -303,7 +338,7 @@ async function cleanup() {
     raceSession.current = { user: { id: ADMIN, role: "ADMIN" } };
     try {
       const { GET } = await import("@/app/api/admin/payments/manual-refund-tasks/route");
-      const body = await (await GET()).json() as { tasks: Array<{ id: string; journalHandBackDismissRefusal: string | null; disputedHandBackLost: boolean }> };
+      const body = await (await GET(new NextRequest("http://localhost/api/admin/payments/manual-refund-tasks"))).json() as { tasks: Array<{ id: string; journalHandBackDismissRefusal: string | null; disputedHandBackLost: boolean }> };
       return body.tasks.find((t) => t.id === taskId);
     } finally {
       raceSession.current = null;
@@ -578,5 +613,111 @@ async function cleanup() {
     expect(await balance(id, "GOODWILL")).toBe(10_000);
     expect(await balance(id, "REFUND_PAYABLE")).toBe(-10_000);
     expect(memberMoneyConservationProblems(await state(id))).toEqual([]);
+  });
+
+  describe("#5185: the hand-back census and report v3 over this file's bookings", () => {
+    const HAND_BACK_KINDS: readonly string[] = HAND_BACK_CENSUS_CLASSES;
+    /** The census's evaluations of this file's bookings, from one read-only repeatable-read snapshot, as the census reads them. */
+    const census = async () => {
+      const { evaluateBookingLedgerPages } = await import("@/lib/booking-ledger-projection-census-store");
+      const evaluations = await db.$transaction(async (tx) => {
+        await tx.$executeRaw`SET TRANSACTION READ ONLY`;
+        return evaluateBookingLedgerPages(tx);
+      }, { isolationLevel: "RepeatableRead", timeout: 60_000 });
+      return evaluations.filter((evaluation) => evaluation.bookingId.startsWith(PREFIX));
+    };
+    const handBackFindings = async () => (await census()).flatMap((evaluation) => evaluation.integrity.filter((finding) => HAND_BACK_KINDS.includes(finding.kind)))
+      .map((finding) => `${finding.kind} ${finding.lineId}`);
+    const refundPayable = async (bookingId: string) => (await census()).find((evaluation) => evaluation.bookingId === bookingId)!
+      .identities.find((identity) => identity.identity === "JOURNAL_REFUND_PAYABLE")!;
+    const refundCensusKinds = async (bookingId: string) => db.$transaction((tx) => readBookingRefundCensus(tx, `${bookingId}-payment`))
+      .then((findings) => findings.filter((finding) => HAND_BACK_KINDS.includes(finding.kind)).map((finding) => `${finding.kind} ${finding.identity}`));
+    /** A journal hand-back task written straight to the table, as a door that skipped its R05 would leave it. */
+    const bareTask = (id: string, data: { status?: "OPEN" | "COMPLETED"; completedAt?: Date } = {}) => db.manualRefundTask.create({ data: {
+      bookingId: id, paymentId: `${id}-payment`, amountCents: 3_000, raisedAmountCents: 3_000, kind: "CANCELLED_BOOKING_HAND_BACK",
+      reason: `Booking ${id} cancelled, refund by hand.`, ...data } });
+
+    it("every scenario above reads consistent: no hand-back class, and v3 agrees on every booking whose R01 is in the journal", async () => {
+      expect(await handBackFindings()).toEqual([]);
+      const refunds = (await census()).flatMap((evaluation) => evaluation.identities.filter((identity) => identity.identity === "JOURNAL_REFUND_PAYABLE"));
+      expect(refunds.length).toBeGreaterThan(0);
+      expect(refunds.filter((identity) => identity.status !== "AGREE")).toEqual([]);
+      // A booking holding hand-back debts reads non-zero on both sides, so v3 is no zero-equals-zero comparison.
+      expect(refunds.some((identity) => identity.columnCents > 0)).toBe(true);
+    });
+
+    it("reports a raise that skipped its R05, then its unapplied payment, in the census and the refund command", async () => {
+      const id = await chargedBooking([["INTERNET_BANKING", 10_000]]);
+      const task = await bareTask(id);
+      expect(await handBackFindings()).toEqual([`HAND_BACK_WITHOUT_EVENT ${task.id}`]);
+      await markPaid(task.id); // no debt in the journal, so its R14 posts unapplied
+      expect(await r14Applied(task.id)).toBe(0);
+      expect(await handBackFindings()).toEqual([`HAND_BACK_WITHOUT_EVENT ${task.id}`, `UNAPPLIED_HAND_BACK ${task.id}`]);
+      expect(await refundCensusKinds(id)).toEqual([`HAND_BACK_WITHOUT_EVENT ${task.id}`, `UNAPPLIED_HAND_BACK ${task.id}`]);
+      await db.manualRefundTask.delete({ where: { id: task.id } });
+    });
+
+    it("reports a hand-back completed with no payment in the journal", async () => {
+      const id = await chargedBooking([["INTERNET_BANKING", 10_000]]);
+      const taskId = await raiseHandBack(id);
+      await db.manualRefundTask.update({ where: { id: taskId }, data: { status: "COMPLETED", completedAt: new Date(), completedByMemberId: names.officerId } });
+      const findings = await handBackFindings();
+      expect(findings).toContain(`HAND_BACK_PAID_WITHOUT_EVENT ${taskId}`);
+      // Its debt is still open while its task is closed: drift too, and v3 disagrees by the debt.
+      expect(findings).toContain(`HAND_BACK_OBLIGATION_DRIFT ${taskId}`);
+      expect(await refundPayable(id)).toMatchObject({ status: "DISAGREE", columnCents: 8_000, ledgerCents: 0 });
+      await db.manualRefundTask.update({ where: { id: taskId }, data: { status: "OPEN", completedAt: null, completedByMemberId: null } });
+      expect(await handBackFindings()).toEqual([]);
+    });
+
+    it("reports a debt that drifted from its task's amount, and an open debt whose task row is gone (#5212)", async () => {
+      const id = await chargedBooking([["INTERNET_BANKING", 10_000]]);
+      const taskId = await raiseHandBack(id);
+      await db.manualRefundTask.update({ where: { id: taskId }, data: { amountCents: 5_000 } });
+      expect(await handBackFindings()).toEqual([`HAND_BACK_OBLIGATION_DRIFT ${taskId}`]);
+      expect(await refundPayable(id)).toMatchObject({ status: "DISAGREE", columnCents: 8_000, ledgerCents: 5_000 });
+      await db.manualRefundTask.delete({ where: { id: taskId } }); // as `release_claim` would, without withdrawing the R05
+      expect(await handBackFindings()).toEqual([`HAND_BACK_OBLIGATION_DRIFT ${taskId}`]);
+      expect(await refundPayable(id)).toMatchObject({ status: "DISAGREE", columnCents: 8_000, ledgerCents: 0 });
+      await db.$transaction((tx) => withdrawRefundObligation(tx, context, { bookingId: id, scope: "hand-back", id: taskId, actorMemberId: ADMIN, reason: "census test", senderKeyPrefix: `census-${taskId}` }));
+      expect(await handBackFindings()).toEqual([]);
+    });
+
+    it("(review fix 1) a late capture whose automatic refund Stripe refused agrees while held, with a failed row on its debt, and once kept", async () => {
+      const id = await chargedBooking([["STRIPE", 10_000]]);
+      const intent = `pi_${id}_refused`;
+      await db.paymentTransaction.create({ data: { paymentId: `${id}-payment`, source: "STRIPE", kind: "ADDITIONAL", status: "SUCCEEDED", amountCents: 2_500, stripePaymentIntentId: intent } });
+      // The automatic refund's reservation step posts the capture-return R05 (`ensureFaceCents`); Stripe's refusal
+      // releases only the reservation, so the R05 alone is what it leaves. Posted here through the same door.
+      await db.$transaction((tx) => postRefundObligation(tx, context, { bookingId: id, scope: "capture-return", id: intent, amountCents: 2_500, origin: "APP", debtorRead: "plain" }));
+      // The refusal holds the capture on an OPEN approval task (`holdLateCaptureForTreasurerIfRequired`).
+      const task = await db.manualRefundTask.create({ data: { bookingId: id, paymentId: `${id}-payment`, amountCents: 2_500, raisedAmountCents: 2_500,
+        kind: "DELETED_BOOKING_LATE_CAPTURE", lateCaptureApprovalIntentId: intent, reason: "A late card charge held for the treasurer.", status: "OPEN" } });
+      expect(await refundPayable(id)).toMatchObject({ status: "AGREE", columnCents: 2_500, ledgerCents: 2_500 });
+      // A card refund row left FAILED on the same debt is counted once: the row, not the task beside it.
+      await db.paymentRecoveryOperation.create({ data: { type: "REFUND_BOOKING_MODIFICATION", status: "FAILED", attempts: 9, bookingId: id, paymentId: `${id}-payment`,
+        paymentIntentId: intent, amountCents: 2_500, idempotencyKey: buildLateCaptureApprovalRefundRecoveryIdempotencyKey(intent) } });
+      expect(await refundPayable(id)).toMatchObject({ status: "AGREE", columnCents: 2_500, ledgerCents: 2_500 });
+      // Held OPEN, the task is no keep yet: only a dismissed task's intent is read for one.
+      expect(await handBackFindings()).toEqual([]);
+      // The treasurer keeps it through the real door: the debt is reversed (`closeKeptCaptureReturn`) and the keep posts.
+      await resolve(task.id, "dismissed");
+      expect(await db.manualRefundTask.findUniqueOrThrow({ where: { id: task.id }, select: { status: true } })).toEqual({ status: "DISMISSED" });
+      expect(await refundPayable(id)).toMatchObject({ status: "AGREE", columnCents: 0, ledgerCents: 0 });
+      expect(await handBackFindings()).toEqual([]);
+      await db.paymentRecoveryOperation.deleteMany({ where: { bookingId: id } });
+    });
+
+    it("reports a late capture kept with no keep in the journal", async () => {
+      const id = await chargedBooking([["STRIPE", 10_000]]);
+      const intent = `pi_${id}_late`;
+      await db.paymentTransaction.create({ data: { paymentId: `${id}-payment`, source: "STRIPE", kind: "ADDITIONAL", status: "SUCCEEDED", amountCents: 2_500, stripePaymentIntentId: intent } });
+      const task = await db.manualRefundTask.create({ data: { bookingId: id, paymentId: `${id}-payment`, amountCents: 2_500, raisedAmountCents: 2_500,
+        kind: "DELETED_BOOKING_LATE_CAPTURE", lateCaptureApprovalIntentId: intent, reason: "A late card charge held for the treasurer.",
+        status: "DISMISSED", completedAt: new Date(), completedByMemberId: names.officerId } });
+      expect(await handBackFindings()).toEqual([`KEEP_WITHOUT_EVENT ${task.id}`]);
+      expect(await refundCensusKinds(id)).toEqual([`KEEP_WITHOUT_EVENT ${task.id}`]);
+      await db.manualRefundTask.delete({ where: { id: task.id } });
+    });
   });
 });

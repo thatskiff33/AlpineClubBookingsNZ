@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { z } from "zod";
+import { parseJsonRequestBody } from "@/lib/api-json";
 import {
   buildStructuredAuditLogCreateArgs,
   getAuditRequestContext,
@@ -11,28 +11,28 @@ import {
 } from "@/lib/membership-nomination-settings";
 import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/session-guards";
+import { membershipNominationSettingsSchema } from "@/lib/admin-membership-api/config-settings";
+import { connectionJson } from "@/lib/mcp-connection-request";
+import { MEMBERSHIP_NOMINATION_SETTINGS_CONNECTION_SHAPE } from "@/lib/connection-shapes/membership-config";
 
-const settingsSchema = z
-  .object({
-    gateEnabled: z.boolean().optional(),
-    minimumMembershipMonths: z.number().int().min(0).max(600).optional(),
-    minimumNights: z.number().int().min(0).max(3650).optional(),
-    requiredSignOffs: z.number().int().min(1).max(10).optional(),
-    gateEffectiveFrom: z.string().datetime().nullable().optional(),
-  })
-  .strict();
-
-export async function GET() {
+/**
+ * GET|PUT /api/admin/membership-nomination-settings. Also the AI app actions
+ * `get_membership_nomination_settings` and
+ * `update_membership_nomination_settings` (ALP-720): a connection is sent the
+ * settings, never the stored row with who saved it.
+ */
+export async function GET(request: NextRequest) {
   const guard = await requireAdmin({
     permission: { area: "membership", level: "view" },
   });
   if (!guard.ok) return guard.response;
 
   const persisted = await loadPersistedMembershipNominationSettings();
-  return NextResponse.json({
-    settings: normalizeMembershipNominationSettings(persisted),
-    persisted,
-  });
+  return connectionJson(
+    request,
+    { settings: normalizeMembershipNominationSettings(persisted), persisted },
+    MEMBERSHIP_NOMINATION_SETTINGS_CONNECTION_SHAPE,
+  );
 }
 
 export async function PUT(request: NextRequest) {
@@ -42,14 +42,13 @@ export async function PUT(request: NextRequest) {
   if (!guard.ok) return guard.response;
   const session = guard.session;
 
-  let body: unknown;
-  try {
-    body = await request.json();
-  } catch {
-    return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
-  }
+  const jsonBody = await parseJsonRequestBody(request, {
+    error: "Invalid JSON",
+  });
+  if (!jsonBody.ok) return jsonBody.response;
+  const body = jsonBody.body;
 
-  const parsed = settingsSchema.safeParse(body);
+  const parsed = membershipNominationSettingsSchema.safeParse(body);
   if (!parsed.success) {
     return NextResponse.json(
       { error: "Invalid input", details: parsed.error.flatten() },
@@ -110,8 +109,9 @@ export async function PUT(request: NextRequest) {
     })
   );
 
-  return NextResponse.json({
-    settings: normalizeMembershipNominationSettings(record),
-    persisted: record,
-  });
+  return connectionJson(
+    request,
+    { settings: normalizeMembershipNominationSettings(record), persisted: record },
+    MEMBERSHIP_NOMINATION_SETTINGS_CONNECTION_SHAPE,
+  );
 }

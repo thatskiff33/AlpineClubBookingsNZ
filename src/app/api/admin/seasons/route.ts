@@ -1,43 +1,42 @@
 import { NextRequest, NextResponse } from "next/server"
+import { parseJsonRequestBody } from "@/lib/api-json"
 import { requireAdmin } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma"
-import { z } from "zod"
 import { logAudit } from "@/lib/audit"
 import { parseDateOnly } from "@/lib/date-only"
-import { dateOnlyStringSchema } from "@/lib/date-only-schema"
+import {
+  adminSeasonsQuerySchema,
+  seasonCreateBodySchema,
+} from "@/lib/admin-bookings-schemas/setup"
+import {
+  ADMIN_SEASON_CONNECTION_SHAPE,
+  ADMIN_SEASON_LIST_CONNECTION_SHAPE,
+} from "@/lib/connection-shapes/bookings-setup"
+import { connectionJson, connectionListJson } from "@/lib/mcp-connection-request"
 import {
   lodgeNullTolerantScope,
   resolveOptionalActiveLodgeId,
 } from "@/lib/lodges"
 import { revalidatePublicPageContent } from "@/lib/public-content-revalidation"
 import { syncOwnOtherLodgesFromFees } from "@/lib/other-lodge-fees-sync"
-import {
-  membershipTypeSeasonRateInputSchema,
-  validateMembershipTypeSeasonRates,
-} from "@/lib/season-rate-editor"
+import { validateMembershipTypeSeasonRates } from "@/lib/season-rate-editor"
 
-// Rates are keyed by membership type (#1930, E4); the legacy boolean-keyed
-// SeasonRate table was dropped by #2129 step 2.
-const seasonSchema = z.object({
-  name: z.string().min(1, "Name is required"),
-  type: z.enum(["WINTER", "SUMMER"]),
-  startDate: dateOnlyStringSchema,
-  endDate: dateOnlyStringSchema,
-  active: z.boolean().default(true),
-  membershipTypeRates: membershipTypeSeasonRateInputSchema,
-  // Flat whole-lodge night rate for this season, in integer cents (#2338).
-  // Nullable/optional: null or omitted means "no flat rate", so a whole-lodge
-  // approval prices per guest as before.
-  flatWholeLodgeNightCents: z.number().int().min(0).nullable().optional(),
-  lodgeId: z.string().min(1).optional(),
-})
+// The body schema lives in admin-bookings-schemas/setup.ts so the AI app
+// actions `list_seasons` and `create_season` offer the same fields (ALP-719).
 
 export async function GET(req: NextRequest) {
   const guard = await requireAdmin();
   if (!guard.ok) return guard.response;
   // Null-tolerant filter: rows without a lodgeId (pre-backfill or written by
   // a draining old colour during the expand deploy) show under every lodge.
-  const lodgeId = req.nextUrl.searchParams.get("lodgeId")
+  // A string or nothing always parses; the 400 is only a backstop.
+  const query = adminSeasonsQuerySchema.safeParse({
+    lodgeId: req.nextUrl.searchParams.get("lodgeId") ?? undefined,
+  })
+  if (!query.success) {
+    return NextResponse.json({ error: query.error.issues[0]?.message }, { status: 400 })
+  }
+  const lodgeId = query.data.lodgeId
   const seasons = await prisma.season.findMany({
     where: lodgeId ? lodgeNullTolerantScope(lodgeId) : undefined,
     // membershipTypeRates is the authoritative pricing table the editor
@@ -48,15 +47,18 @@ export async function GET(req: NextRequest) {
     orderBy: { startDate: "desc" },
   })
 
-  return NextResponse.json(seasons)
+  // The browser keeps the bare array; a connection gets it under `seasons`.
+  return connectionListJson(req, seasons, "seasons", ADMIN_SEASON_LIST_CONNECTION_SHAPE)
 }
 
 export async function POST(req: NextRequest) {
   const guard = await requireAdmin();
   if (!guard.ok) return guard.response;
   const session = guard.session;
-  const body = await req.json()
-  const parsed = seasonSchema.safeParse(body)
+  const jsonBody = await parseJsonRequestBody(req)
+  if (!jsonBody.ok) return jsonBody.response
+  const body = jsonBody.body
+  const parsed = seasonCreateBodySchema.safeParse(body)
 
   if (!parsed.success) {
     return NextResponse.json(
@@ -158,5 +160,5 @@ export async function POST(req: NextRequest) {
   await syncOwnOtherLodgesFromFees("fees season created", session.user.id)
   revalidatePublicPageContent()
 
-  return NextResponse.json(season, { status: 201 })
+  return connectionJson(req, season, ADMIN_SEASON_CONNECTION_SHAPE, { status: 201 })
 }

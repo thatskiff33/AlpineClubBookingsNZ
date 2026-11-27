@@ -2,11 +2,11 @@ import { NextRequest, NextResponse } from "next/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 /**
- * Fork #121: the Food Orders settings card's API and the settings reader.
+ * Fork triyder/AlpineClubBookingsNZ#121: the Food Orders settings card's API and the settings reader.
  *
  * - Any valid email address saves; an invalid one is refused; an empty one
  *   clears it (ordering then reads as not set up). It is never checked against
- *   members (fork #121 owner decision 10).
+ *   members (fork triyder/AlpineClubBookingsNZ#121 owner decision 10).
  * - Lodge Operations view reads, edit saves; the module being off is a 404.
  * - Every failure of the reader is closed: no row, a bad stored value or a
  *   database error reads as "no officer email".
@@ -159,19 +159,19 @@ describe("Food Orders settings API", () => {
 
   it("view access reads but cannot save", async () => {
     mocks.allowedLevel = "view";
-    expect((await GET()).status).toBe(200);
+    expect((await GET(new Request("http://localhost/api/admin/food-orders/settings"))).status).toBe(200);
     expect((await put({ officerEmail: "a@b.co", officerLabel: "Food officer" })).status).toBe(403);
     expect(mocks.upsert).not.toHaveBeenCalled();
   });
 
   it("no Lodge Operations access cannot read", async () => {
     mocks.allowedLevel = "none";
-    expect((await GET()).status).toBe(403);
+    expect((await GET(new Request("http://localhost/api/admin/food-orders/settings"))).status).toBe(403);
   });
 
   it("answers 404 for both methods while the module is off", async () => {
     mocks.modules = { foodOrders: false };
-    expect((await GET()).status).toBe(404);
+    expect((await GET(new Request("http://localhost/api/admin/food-orders/settings"))).status).toBe(404);
     expect((await put({ officerEmail: "a@b.co", officerLabel: "Food officer" })).status).toBe(404);
     expect(mocks.upsert).not.toHaveBeenCalled();
   });

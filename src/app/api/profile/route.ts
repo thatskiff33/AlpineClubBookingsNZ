@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
-import { z } from "zod";
+import type { z } from "zod";
+import { parseJsonRequestBody } from "@/lib/api-json";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { computeAgeTier, getSeasonStartDate } from "@/lib/age-tier";
@@ -15,7 +16,13 @@ import {
 } from "@/lib/xero-contact-sync";
 import logger from "@/lib/logger";
 import { requireActiveSessionUser } from "@/lib/session-guards";
-import { copyStreetAddressToPostal } from "@/lib/member-address";
+import {
+  copyStreetAddressToPostal,
+  MEMBER_ADDRESS_FIELDS,
+  MEMBER_PHONE_FIELDS,
+  POSTAL_ADDRESS_FIELDS,
+  STREET_ADDRESS_FIELDS,
+} from "@/lib/member-address";
 import { parseDateOnly } from "@/lib/date-only";
 import { dateOnlyInstantOf } from "@/lib/club-time";
 import { clubTime } from "@/lib/club-time/server";
@@ -24,7 +31,10 @@ import {
   buildStructuredAuditLogCreateArgs,
   getAuditRequestContext,
 } from "@/lib/audit";
-import { nameField } from "@/lib/zod-helpers";
+import {
+  hasAnyField,
+  normalizedChangedFields,
+} from "@/lib/audit-changed-fields";
 import { loadMemberFieldsFlags } from "@/lib/member-fields-settings";
 import {
   hasAccessRole,
@@ -36,84 +46,49 @@ import {
   resolveEnforcedAgeTier,
 } from "@/lib/age-tier-enforcement";
 import { reconcileEmailInheritanceForMemberChange } from "@/lib/member-email-inheritance";
-import { dietaryRequirementsInputSchema } from "@/lib/member-dietary-field";
 import {
   buildDietaryRequirementsPatch,
   dietaryRequirementsChanged,
   grantSelfDietaryAccess,
   readMemberDietaryRequirements,
 } from "@/lib/member-dietary";
-import { dateOfBirthStringSchema } from "@/lib/date-only-schema";
+import {
+  memberProfileConnectionUpdateSchema,
+  memberProfileUpdateSchema,
+} from "@/lib/member-profile-update-schema";
+import { arrivesAsMcpConnection, connectionJson } from "@/lib/mcp-connection-request";
+import { MEMBER_PROFILE_UPDATE_CONNECTION_SHAPE } from "@/lib/connection-shapes";
 
-const maxStr = (len: number) => z.string().max(len).optional().nullable();
-
-const profileSchema = z.object({
-  firstName: nameField({ required: "First name is required" }),
-  lastName: nameField({ required: "Last name is required" }),
-  phoneCountryCode: z.string().max(5).optional().nullable(),
-  phoneAreaCode: z.string().max(5).optional().nullable(),
-  phoneNumber: z.string().max(15).optional().nullable(),
-  dateOfBirth: dateOfBirthStringSchema
-    .optional()
-    .nullable()
-    .or(z.literal("")),
-  // Physical address
-  streetAddressLine1: maxStr(200),
-  streetAddressLine2: maxStr(200),
-  streetCity: maxStr(200),
-  streetRegion: maxStr(200),
-  streetPostalCode: maxStr(20),
-  streetCountry: maxStr(100),
-  // Postal address
-  postalAddressLine1: maxStr(200),
-  postalAddressLine2: maxStr(200),
-  postalCity: maxStr(200),
-  postalRegion: maxStr(200),
-  postalPostalCode: maxStr(20),
-  postalCountry: maxStr(100),
-  occupation: z.string().max(100).optional().nullable().or(z.literal("")),
-  // #2941: any age tier, only while the club has the field ON; blank clears.
-  dietaryRequirements: dietaryRequirementsInputSchema,
-  // #126 / #37: member opt-in to show their phone on the PUBLIC lobby display
-  // (the serialiser also requires lodge config on + adult). The kiosk staff
-  // check-in view is exempt from this toggle.
-  lodgeScreenPhoneOptIn: z.boolean().optional(),
-  postalSameAsPhysical: z.boolean().optional(),
-});
-
-const PHONE_FIELDS = [
-  "phoneCountryCode",
-  "phoneAreaCode",
-  "phoneNumber",
-] as const;
-const STREET_FIELDS = [
-  "streetAddressLine1",
-  "streetAddressLine2",
-  "streetCity",
-  "streetRegion",
-  "streetPostalCode",
-  "streetCountry",
-] as const;
-const POSTAL_FIELDS = [
-  "postalAddressLine1",
-  "postalAddressLine2",
-  "postalCity",
-  "postalRegion",
-  "postalPostalCode",
-  "postalCountry",
-] as const;
 const PROFILE_AUDIT_FIELDS = [
   "firstName",
   "lastName",
-  ...PHONE_FIELDS,
+  ...MEMBER_PHONE_FIELDS,
   "dateOfBirth",
   "ageTier",
-  ...STREET_FIELDS,
-  ...POSTAL_FIELDS,
+  ...MEMBER_ADDRESS_FIELDS,
   "occupation",
   "lodgeScreenPhoneOptIn",
   "profileCompletedAt",
 ] as const;
+/**
+ * Postal same as physical: the postal address copied from the street address
+ * as it will be saved, sent fields over stored ones. The profile form sends
+ * every street field; an AI app (ALP-718) may send the flag alone, which must
+ * copy the stored street address rather than blank the postal one.
+ */
+function postalCopiedFromStreet(
+  updateData: Record<string, unknown>,
+  existing: Partial<Record<(typeof STREET_ADDRESS_FIELDS)[number], string | null>>,
+): Record<(typeof POSTAL_ADDRESS_FIELDS)[number], string | null> {
+  const street = Object.fromEntries(
+    STREET_ADDRESS_FIELDS.map((field) => [field, (field in updateData ? updateData[field] : existing[field]) as string | null | undefined]),
+  ) as Record<(typeof STREET_ADDRESS_FIELDS)[number], string | null | undefined>;
+  const postalAddress = copyStreetAddressToPostal(street);
+  return Object.fromEntries(
+    POSTAL_ADDRESS_FIELDS.map((field) => [field, postalAddress[field]?.trim() || null]),
+  ) as Record<(typeof POSTAL_ADDRESS_FIELDS)[number], string | null>;
+}
+
 const PROFILE_XERO_SYNC_SELECT = {
   id: true,
   canLogin: true,
@@ -145,39 +120,6 @@ const PROFILE_XERO_SYNC_SELECT = {
   profileCompletedAt: true,
 } as const;
 
-function normalizeAuditValue(value: unknown): unknown {
-  if (value instanceof Date) {
-    return value.getTime();
-  }
-  if (value === undefined || value === "") {
-    return null;
-  }
-  return value;
-}
-
-function getChangedFields(
-  before: Record<string, unknown>,
-  updateData: Record<string, unknown>,
-  fields: readonly string[],
-): string[] {
-  return fields.filter((field) => {
-    if (!Object.prototype.hasOwnProperty.call(updateData, field)) {
-      return false;
-    }
-    return (
-      normalizeAuditValue(before[field]) !==
-      normalizeAuditValue(updateData[field])
-    );
-  });
-}
-
-function hasAnyField(
-  changedFields: readonly string[],
-  fields: readonly string[],
-): boolean {
-  return fields.some((field) => changedFields.includes(field));
-}
-
 export async function PUT(req: NextRequest) {
   const session = await auth();
   if (!session?.user?.id) {
@@ -189,25 +131,25 @@ export async function PUT(req: NextRequest) {
     return inactiveResponse;
   }
 
-  let body: unknown;
-  try {
-    body = await req.json();
-  } catch {
-    return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
-  }
+  const jsonBody = await parseJsonRequestBody(req, { error: "Invalid JSON" });
+  if (!jsonBody.ok) return jsonBody.response;
+  const body = jsonBody.body;
 
-  const parsed = profileSchema.safeParse(body);
+  // ALP-718: a connection sends only its allow-list; dietary needs and the
+  // lobby phone opt-in are refused, not silently dropped.
+  const parsed = (
+    arrivesAsMcpConnection(req) ? memberProfileConnectionUpdateSchema.strict() : memberProfileUpdateSchema
+  ).safeParse(body);
   if (!parsed.success) {
+    // formErrors carries what is not one field's fault, such as a key a connection may not send.
+    const { fieldErrors, formErrors } = parsed.error.flatten();
     return NextResponse.json(
-      {
-        error: "Validation failed",
-        details: parsed.error.flatten().fieldErrors,
-      },
+      { error: "Validation failed", details: fieldErrors, ...(formErrors.length > 0 ? { formErrors } : {}) },
       { status: 422 },
     );
   }
 
-  const data = parsed.data;
+  const data: z.infer<typeof memberProfileUpdateSchema> = parsed.data;
 
   const updateData: Record<string, unknown> = {
     firstName: data.firstName.trim(),
@@ -215,29 +157,14 @@ export async function PUT(req: NextRequest) {
   };
 
   // Phone fields
-  for (const f of PHONE_FIELDS) {
+  for (const f of MEMBER_PHONE_FIELDS) {
     updateData[f] = data[f]?.trim() || null;
   }
 
   // Address fields
-  for (const f of [...STREET_FIELDS, ...POSTAL_FIELDS]) {
+  for (const f of MEMBER_ADDRESS_FIELDS) {
     if (data[f] !== undefined) {
       updateData[f] = data[f]?.trim() || null;
-    }
-  }
-
-  if (data.postalSameAsPhysical) {
-    const postalAddress = copyStreetAddressToPostal({
-      streetAddressLine1: data.streetAddressLine1,
-      streetAddressLine2: data.streetAddressLine2,
-      streetCity: data.streetCity,
-      streetRegion: data.streetRegion,
-      streetPostalCode: data.streetPostalCode,
-      streetCountry: data.streetCountry,
-    });
-
-    for (const field of POSTAL_FIELDS) {
-      updateData[field] = postalAddress[field]?.trim() || null;
     }
   }
 
@@ -283,6 +210,10 @@ export async function PUT(req: NextRequest) {
     return NextResponse.json({ error: "Member not found" }, { status: 404 });
   }
 
+  if (data.postalSameAsPhysical) {
+    Object.assign(updateData, postalCopiedFromStreet(updateData, existing));
+  }
+
   // #2106: apply age-tier enforcement to a DOB change. Only touch the tier when
   // the member supplied a DOB (self-service edits never submit a tier directly).
   if (dobProvided) {
@@ -317,12 +248,13 @@ export async function PUT(req: NextRequest) {
 
   // Occupation: adult-only and gated behind the admin showOccupation flag.
   // Use the freshly computed ageTier when DOB was supplied, otherwise the
-  // member's existing ageTier. If not adult or the flag is off, leave the
-  // stored occupation untouched.
+  // member's existing ageTier. If not adult, the flag is off, or the field was
+  // not sent, leave the stored occupation untouched: the profile form always
+  // sends it, and an AI app saving other fields must not clear it (ALP-718).
   const flags = await loadMemberFieldsFlags();
   const effectiveAgeTier =
     (updateData.ageTier as string | undefined) ?? existing.ageTier;
-  if (flags.showOccupation && effectiveAgeTier === "ADULT") {
+  if (flags.showOccupation && effectiveAgeTier === "ADULT" && data.occupation !== undefined) {
     updateData.occupation = data.occupation?.trim() || null;
   }
 
@@ -352,32 +284,30 @@ export async function PUT(req: NextRequest) {
   }
 
   if (existing.canLogin && hasAccessRole(existing, "USER")) {
+    // Judged on the record as it will be saved: what was sent over what is
+    // stored. The profile form sends every field, so for it this is what was
+    // sent; an AI app (ALP-718) may leave out a field it cannot read, such as
+    // the date of birth, and that field is kept rather than read as missing.
+    const saved = { ...existing, ...updateData };
     const profileCompleteness = evaluateSelfServiceProfilePayload({
-      firstName: updateData.firstName as string | null | undefined,
-      lastName: updateData.lastName as string | null | undefined,
-      phoneCountryCode: updateData.phoneCountryCode as
-        string | null | undefined,
-      phoneAreaCode: updateData.phoneAreaCode as string | null | undefined,
-      phoneNumber: updateData.phoneNumber as string | null | undefined,
-      dateOfBirth: updateData.dateOfBirth as Date | null | undefined,
-      streetAddressLine1: updateData.streetAddressLine1 as
-        string | null | undefined,
-      streetAddressLine2: updateData.streetAddressLine2 as
-        string | null | undefined,
-      streetCity: updateData.streetCity as string | null | undefined,
-      streetRegion: updateData.streetRegion as string | null | undefined,
-      streetPostalCode: updateData.streetPostalCode as
-        string | null | undefined,
-      streetCountry: updateData.streetCountry as string | null | undefined,
-      postalAddressLine1: updateData.postalAddressLine1 as
-        string | null | undefined,
-      postalAddressLine2: updateData.postalAddressLine2 as
-        string | null | undefined,
-      postalCity: updateData.postalCity as string | null | undefined,
-      postalRegion: updateData.postalRegion as string | null | undefined,
-      postalPostalCode: updateData.postalPostalCode as
-        string | null | undefined,
-      postalCountry: updateData.postalCountry as string | null | undefined,
+      firstName: saved.firstName as string | null | undefined,
+      lastName: saved.lastName as string | null | undefined,
+      phoneCountryCode: saved.phoneCountryCode as string | null | undefined,
+      phoneAreaCode: saved.phoneAreaCode as string | null | undefined,
+      phoneNumber: saved.phoneNumber as string | null | undefined,
+      dateOfBirth: saved.dateOfBirth as Date | null | undefined,
+      streetAddressLine1: saved.streetAddressLine1 as string | null | undefined,
+      streetAddressLine2: saved.streetAddressLine2 as string | null | undefined,
+      streetCity: saved.streetCity as string | null | undefined,
+      streetRegion: saved.streetRegion as string | null | undefined,
+      streetPostalCode: saved.streetPostalCode as string | null | undefined,
+      streetCountry: saved.streetCountry as string | null | undefined,
+      postalAddressLine1: saved.postalAddressLine1 as string | null | undefined,
+      postalAddressLine2: saved.postalAddressLine2 as string | null | undefined,
+      postalCity: saved.postalCity as string | null | undefined,
+      postalRegion: saved.postalRegion as string | null | undefined,
+      postalPostalCode: saved.postalPostalCode as string | null | undefined,
+      postalCountry: saved.postalCountry as string | null | undefined,
       postalSameAsPhysical: data.postalSameAsPhysical,
     });
 
@@ -397,7 +327,7 @@ export async function PUT(req: NextRequest) {
   }
 
   try {
-    const changedFields = getChangedFields(
+    const changedFields = normalizedChangedFields(
       existing as unknown as Record<string, unknown>,
       updateData,
       PROFILE_AUDIT_FIELDS,
@@ -445,11 +375,8 @@ export async function PUT(req: NextRequest) {
             changedFieldCount: changedFields.length,
             fieldGroups: {
               name: hasAnyField(changedFields, ["firstName", "lastName"]),
-              phone: hasAnyField(changedFields, PHONE_FIELDS),
-              address: hasAnyField(changedFields, [
-                ...STREET_FIELDS,
-                ...POSTAL_FIELDS,
-              ]),
+              phone: hasAnyField(changedFields, MEMBER_PHONE_FIELDS),
+              address: hasAnyField(changedFields, MEMBER_ADDRESS_FIELDS),
               dateOfBirth: changedFields.includes("dateOfBirth"),
               ageTier: changedFields.includes("ageTier"),
               occupation: changedFields.includes("occupation"),
@@ -519,7 +446,8 @@ export async function PUT(req: NextRequest) {
       }
     }
 
-    return NextResponse.json(updated);
+    // ALP-718: a connection gets the `get_my_profile` fields, not the columns above.
+    return connectionJson(req, updated, MEMBER_PROFILE_UPDATE_CONNECTION_SHAPE);
   } catch {
     return NextResponse.json(
       { error: "Failed to update profile" },

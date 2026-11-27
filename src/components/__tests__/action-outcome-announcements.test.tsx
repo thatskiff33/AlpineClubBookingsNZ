@@ -5,7 +5,7 @@
 // request. One case per surface the issue names.
 
 import "@testing-library/jest-dom/vitest";
-import { act, fireEvent, render, screen } from "@/lib/__tests__/support/club-time-render";
+import { act, fireEvent, render, screen, waitFor } from "@/lib/__tests__/support/club-time-render";
 import type { ReactElement } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -33,13 +33,31 @@ const FAILURE = "The club could not do that just now.";
 
 type Reply = { ok: boolean; status?: number; body: unknown };
 
-// With `load`, a GET only loads the surface's initial state and answers it;
-// every other request is the action under test and answers `action`.
-function installFetch(action: Reply, load?: unknown) {
+// A reply slower than three of jsdom's 16 ms rendering ticks (#5442). jsdom runs
+// its focus fixup on that wall-clock tick, so a control disabled while busy
+// loses focus to <body> only when the reply outlasts one; an instant mock
+// usually beats it, and a loaded CI runner does not.
+const SLOW_REPLY_MS = 50;
+
+// Every case runs against an instant and a slow reply, so an outcome asserted
+// before it can have arrived fails here rather than on a loaded runner.
+const REPLY_SPEEDS = [
+  { speed: "instant", delayMs: 0 },
+  { speed: "slow", delayMs: SLOW_REPLY_MS },
+];
+
+// With `load`, a GET only loads the surface's initial state and answers it at
+// once; every other request is the action under test and answers `action`
+// after `delayMs` of real time.
+function installFetch(
+  action: Reply,
+  { load, delayMs = 0 }: { load?: unknown; delayMs?: number } = {},
+) {
   vi.stubGlobal(
     "fetch",
     vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
       const isLoad = load !== undefined && (!init?.method || init.method === "GET");
+      if (!isLoad && delayMs > 0) await new Promise((resolve) => setTimeout(resolve, delayMs));
       const reply = isLoad ? { ok: true, body: load } : action;
       const { ok, status = ok ? 200 : 500, body } = reply;
       return { ok, status, json: async () => body } as Response;
@@ -58,7 +76,9 @@ async function press(name: RegExp) {
 async function expectFailureAnnounced(id: string) {
   const alert = document.getElementById(id);
   expect(alert).toHaveAttribute("role", "alert");
-  expect(alert).toHaveTextContent(FAILURE);
+  // The reply may still be in flight: wait for the failure, never assume it.
+  await waitFor(() => expect(alert).toHaveTextContent(FAILURE));
+  expect(document.getElementById(id)).toBe(alert);
   await expectRecoveryAlertToHoldFocus(alert);
 }
 
@@ -151,28 +171,31 @@ const failures: Array<{
 ];
 
 describe("action failures land in a recovery alert that takes focus (#4949)", () => {
-  it.each(failures)("$surface", async ({ ui, alertId, steps, failsWith, load }) => {
-    installFetch(failsWith ?? { ok: false, body: { error: FAILURE } }, load);
-    render(ui);
-    for (const step of steps) await press(step);
+  describe.each(REPLY_SPEEDS)("$speed reply", ({ delayMs }) => {
+    it.each(failures)("$surface", async ({ ui, alertId, steps, failsWith, load }) => {
+      installFetch(failsWith ?? { ok: false, body: { error: FAILURE } }, { load, delayMs });
+      render(ui);
+      for (const step of steps) await press(step);
 
-    if (failsWith) {
-      // Surfaces that word the failure themselves: hold the wording, not FAILURE.
-      const alert = document.getElementById(alertId);
-      expect(alert).toHaveAttribute("role", "alert");
-      expect(alert?.textContent).not.toBe("");
-      await expectRecoveryAlertToHoldFocus(alert);
-      return;
-    }
-    await expectFailureAnnounced(alertId);
-  });
+      if (failsWith) {
+        // Surfaces that word the failure themselves: hold the wording, not FAILURE.
+        const alert = document.getElementById(alertId);
+        expect(alert).toHaveAttribute("role", "alert");
+        await waitFor(() => expect(alert?.textContent).not.toBe(""));
+        expect(document.getElementById(alertId)).toBe(alert);
+        await expectRecoveryAlertToHoldFocus(alert);
+        return;
+      }
+      await expectFailureAnnounced(alertId);
+    });
 
-  it("delete cancelled booking", async () => {
-    installFetch({ ok: false, body: { error: FAILURE } });
-    render(<DeleteBookingButton bookingId="bk_1" mode="cancelled" returnHref="/bookings" />);
-    fireEvent.change(screen.getByLabelText(/reason/i), { target: { value: "Duplicate" } });
-    await press(/Delete Cancelled Booking/);
-    await expectFailureAnnounced("delete-booking-bk_1-error");
+    it("delete cancelled booking", async () => {
+      installFetch({ ok: false, body: { error: FAILURE } }, { delayMs });
+      render(<DeleteBookingButton bookingId="bk_1" mode="cancelled" returnHref="/bookings" />);
+      fireEvent.change(screen.getByLabelText(/reason/i), { target: { value: "Duplicate" } });
+      await press(/Delete Cancelled Booking/);
+      await expectFailureAnnounced("delete-booking-bk_1-error");
+    });
   });
 });
 
@@ -222,35 +245,40 @@ const successes: Array<{
 ];
 
 describe("action results fill a status region mounted before the request (#4949)", () => {
-  it.each(successes)("$surface", async ({ ui, trigger, reply, text, focus }) => {
-    installFetch({ ok: true, body: reply });
-    render(ui);
-    const status = screen.getByRole("status");
-    expect(status).toHaveTextContent("");
+  describe.each(REPLY_SPEEDS)("$speed reply", ({ delayMs }) => {
+    it.each(successes)("$surface", async ({ ui, trigger, reply, text, focus }) => {
+      installFetch({ ok: true, body: reply }, { delayMs });
+      render(ui);
+      const status = screen.getByRole("status");
+      expect(status).toHaveTextContent("");
 
-    await press(trigger);
+      await press(trigger);
 
-    expect(screen.getByRole("status")).toBe(status);
-    expect(status).toHaveTextContent(text);
-    if (focus === "status") {
-      await expectToHoldFocus(status, "the recorded outcome");
-    } else {
-      await expectToHoldFocus(screen.getByRole("button"), "the control that stayed");
-    }
-  });
+      // The reply may still be in flight: wait for the outcome, never assume it.
+      await waitFor(() => expect(status).toHaveTextContent(text));
+      expect(screen.getByRole("status")).toBe(status);
+      if (focus === "status") {
+        await expectToHoldFocus(status, "the recorded outcome");
+      } else {
+        await expectToHoldFocus(screen.getByRole("button"), "the control that stayed");
+      }
+    });
 
-  it("account deletion request", async () => {
-    installFetch({ ok: true, body: {} });
-    render(<DeleteAccountButton />);
-    const status = screen.getByRole("status");
-    expect(status).toHaveTextContent("");
+    it("account deletion request", async () => {
+      installFetch({ ok: true, body: {} }, { delayMs });
+      render(<DeleteAccountButton />);
+      const status = screen.getByRole("status");
+      expect(status).toHaveTextContent("");
 
-    await press(/Request Account Deletion/);
-    await press(/Submit Deletion Request/);
+      await press(/Request Account Deletion/);
+      await press(/Submit Deletion Request/);
 
-    expect(screen.getByRole("status")).toBe(status);
-    expect(status).toHaveTextContent("Your deletion request has been submitted.");
-    // The trigger is gone, so the dialog hands focus to the confirmation.
-    await expectToHoldFocus(status, "the confirmation");
+      await waitFor(() =>
+        expect(status).toHaveTextContent("Your deletion request has been submitted."),
+      );
+      expect(screen.getByRole("status")).toBe(status);
+      // The trigger is gone, so the dialog hands focus to the confirmation.
+      await expectToHoldFocus(status, "the confirmation");
+    });
   });
 });

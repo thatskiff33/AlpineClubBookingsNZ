@@ -59,6 +59,7 @@ import {
   relativeSource,
   sourceFiles,
 } from "@/lib/__tests__/support/booking-guest-night-writer-scan";
+import { CENSUS_TIMEOUT_MS } from "@/test/census-timeout";
 
 const ORDER_HOME = "src/lib/payment-ledger-order.ts";
 const LEDGER_ORDERS = new Set(["LEDGER_ROWS_OLDEST_FIRST", "LEDGER_ROWS_NEWEST_FIRST"]);
@@ -78,6 +79,8 @@ const UNORDERED_ROW_SETS: Record<string, string> = {
     "the ids of the captured bank rows (by the claim's precondition, only the row it just wrote) handed to the receipt hook as a set (`includes`).",
   "src/lib/member-money/internal/booking-receipts.ts > postBookingReceipts":
     "the payment's rows are looked up by id (`find` on a settlement line's anchor); the hook walks the settlement lines in their own posted order.",
+  "src/lib/member-money/internal/hand-back-census.ts > readBookingHandBackJournal":
+    "#5185: reads only which kept late-capture intents have a captured row, a membership test (`.some`) by intent id; the order cannot matter.",
   "src/lib/member-money/internal/receipt-census.ts > readBookingReceiptCensus":
     "each captured row is judged on its own (its line, its event, its amount); the findings are a set, not a sequence.",
   "src/lib/payment-reconciliation.ts > settleBookingPaymentInTransaction":
@@ -109,8 +112,6 @@ const UNORDERED_ROW_SETS: Record<string, string> = {
   "src/lib/booking-payment-cleanup.ts > queueSupersededPrimaryIntentCancellations":
     "queues a durable cancellation for EVERY superseded pending PRIMARY intent; each is keyed by its own " +
     "intent, so the order only changes the order they are queued in.",
-  "src/lib/cancel-flattened-payment-backfill.ts > CANDIDATE_PAYMENT_SELECT":
-    "reads only each row's status to ask whether ANY row was captured (`.some`).",
   "src/lib/cron-confirm-pending.ts > cancelSupersededLinkIntentsBestEffort":
     "cancels EVERY other in-flight link intent, best effort, each by its own intent id; the order only " +
     "changes the order the cancellations are sent in.",
@@ -177,7 +178,7 @@ const EXISTENCE_READS: Record<string, string> = {
     "#4299: tests !primary to write the combined share's row once, before any extra-invoice cash; no row id is consumed.",
   "src/lib/booking-cancel.ts > paymentEligibleForPaidCancelPath > capturedTransaction":
     "returns Boolean(capturedTransaction) to choose the paid cancellation path; no row id is consumed.",
-  "src/lib/booking-cancel.ts > paymentHasCaptureEvidence > capturedTransaction":
+  "src/lib/booking-cancel.ts > queryPaymentCaptureEvidence > capturedTransaction":
     "passes Boolean(capturedTransaction) to paymentShowsCaptureEvidence; no row id is consumed.",
   "src/lib/manual-booking-payment-state.ts > getBookingManualPaymentState > [stampedTransaction, activeLink, mintOperation]":
     "uses stampedTransaction only in Boolean(stampedTransaction || activeLink || mintOperation) for the Xero block.",
@@ -512,7 +513,7 @@ describe("every capture-ledger read is ordered by the ledger's order, or declare
         "Use compareLedgerRowsOldestFirst / compareLedgerRowsNewestFirst from payment-ledger-order.ts, or " +
         "declare it in CREATED_AT_ONLY_COMPARATORS with the reason a tie cannot matter.",
     ).toEqual(Object.keys(CREATED_AT_ONLY_COMPARATORS).sort());
-  });
+  }, CENSUS_TIMEOUT_MS);
 
   it("keeps a reason against every entry", () => {
     for (const [entry, reason] of Object.entries({
@@ -535,7 +536,7 @@ describe("every capture-ledger read is ordered by the ledger's order, or declare
     expect(home, `INV-PAY-133: LEDGER_ROWS_NEWEST_FIRST in ${ORDER_HOME} must be createdAt desc, then insertionSeq desc.`).toMatch(
       /export const LEDGER_ROWS_NEWEST_FIRST = \[\s*\{ createdAt: "desc" \},\s*\{ insertionSeq: "desc" \},\s*\]/,
     );
-  });
+  }, CENSUS_TIMEOUT_MS);
 
   it("finds no raw SQL that orders PaymentTransaction by createdAt without insertionSeq", () => {
     expect(
@@ -543,7 +544,7 @@ describe("every capture-ledger read is ordered by the ledger's order, or declare
       'INV-PAY-133: raw SQL orders PaymentTransaction by "createdAt" with no "insertionSeq" tiebreak. Add one, ' +
         "or declare the file in RAW_SQL_WITHOUT_INSERTION_SEQ with the reason the order cannot matter.",
     ).toEqual(Object.keys(RAW_SQL_WITHOUT_INSERTION_SEQ).sort());
-  });
+  }, CENSUS_TIMEOUT_MS);
 });
 
 describe("unordered first-read scanner regressions (#4180, INV-PAY-133)", () => {

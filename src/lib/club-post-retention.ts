@@ -28,6 +28,9 @@ export interface ClubPostSettingsValues {
   lastCleanupDeleted: number;
 }
 
+/** The refusal for a retention period not on the offered list. */
+export const RETENTION_CHOICE_REFUSAL = "Choose one of the retention periods offered.";
+
 export class ClubPostSettingsValidationError extends Error {
   constructor(message: string) {
     super(message);
@@ -39,14 +42,10 @@ export class ClubPostSettingsValidationError extends Error {
 export function assertValidRetentionDays(raw: unknown): number {
   const days = typeof raw === "number" ? raw : Number.NaN;
   if (!Number.isInteger(days)) {
-    throw new ClubPostSettingsValidationError(
-      "Choose one of the retention periods offered.",
-    );
+    throw new ClubPostSettingsValidationError(RETENTION_CHOICE_REFUSAL);
   }
   if (!RETENTION_CHOICES.some((choice) => choice.days === days)) {
-    throw new ClubPostSettingsValidationError(
-      "Choose one of the retention periods offered.",
-    );
+    throw new ClubPostSettingsValidationError(RETENTION_CHOICE_REFUSAL);
   }
   return days;
 }

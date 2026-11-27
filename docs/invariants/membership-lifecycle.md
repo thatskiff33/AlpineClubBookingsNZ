@@ -139,10 +139,10 @@ lockout: `MembershipType.bookingBehavior`/`subscriptionBehavior` keep deciding
 those, and `src/lib/subscription-lockout-facts.ts`'s
 `resolveMemberSubscriptionSettlement` never reads a category — it only ever
 reads `MembershipType.subscriptionBehavior` and `MemberSubscription.status`.
-Billing does not call that resolver: both billing axes share
-`resolveSubscriptionTierExemption`, so a member whose type exempts them is
-never billed through a category (`INV-MONEY-046` states the rule and the
-pre-existing edge where it and booking access differ).
+Whether a member owes at all is the one liability rule both billing axes and
+that resolver share (`resolveMemberSubscriptionLiability`, `INV-CONFIG-009`), so
+a member whose type exempts them is never billed through a category
+(`INV-MONEY-046`).
 Two members of the same `MembershipType` (same booking rights/rate) can be
 assigned different subscription categories (or none), and two members sharing
 one category can hold different `MembershipType`s (e.g. a Senior + a Life
@@ -449,9 +449,7 @@ each gated on `bookings:edit` and returning exactly one member's family group
 via the shared `resolveMemberFamily` helper. This decoupling means a club that
 customises the Booking Officer role to drop `membership:view` can still attach
 the correct member identity — and therefore correct member pricing — instead of
-silently re-adding the member as a mispriced non-member. The member-scoped
-`GET /api/admin/members/[id]/family` remains gated on `membership:view` for
-membership surfaces.
+silently re-adding the member as a mispriced non-member.
 
 ## INV-LIFE-068
 

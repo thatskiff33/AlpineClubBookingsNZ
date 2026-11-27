@@ -15,6 +15,7 @@ import {
   auditResolvedGuardCoverage,
   PRODUCTION_GUARD_ROSTER,
 } from "./support/eslint-guard-coverage";
+import { CENSUS_TIMEOUT_MS } from "@/test/census-timeout";
 
 /**
  * #2684 — the date-only ENCODING guard, second arm.
@@ -102,7 +103,7 @@ const ROOT = process.cwd();
  * here.
  */
 const CANONICAL_ENCODERS = new Set([
-  // `@/lib/date-only` — the compatibility adapters CT-6 (#2991) retires.
+  // `@/lib/date-only` — the compatibility adapters #2991 (CT-6) closed with, kept as reviewed adapters.
   "formatDateOnly",
   "formatMonthOnly",
   "dateOnlyFromIsoString",
@@ -1325,7 +1326,9 @@ describe("an instant is never encoded as a calendar day by accident (#2684)", ()
         "listSourceFiles AND to resolveModule's candidate list — the two have " +
         "to agree, or a module resolves to a file that was never parsed.",
     ).toEqual([]);
-  });
+    // Two walks of all of src/ inside the case: the shared whole-tree budget,
+    // not this file's CASE_TIMEOUT_MS (#5439).
+  }, CENSUS_TIMEOUT_MS);
 
   it("routes every clock read through the club's calendar, or records why not", () => {
     const unlisted = ENCODINGS.filter((e) => e.kind === "clock")

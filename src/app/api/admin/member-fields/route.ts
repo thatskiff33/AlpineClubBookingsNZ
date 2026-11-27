@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { z } from "zod";
+import { parseJsonRequestBody } from "@/lib/api-json";
 import { requireAdmin } from "@/lib/session-guards";
 import {
   buildStructuredAuditLogCreateArgs,
@@ -13,24 +13,18 @@ import {
 } from "@/lib/member-fields-settings";
 import {
   MEMBER_FIELD_KEYS,
-  type MemberFieldKey,
   type MemberFieldsSettingsValues,
 } from "@/config/member-fields";
 import { prisma } from "@/lib/prisma";
+import { memberFieldsUpdateSchema } from "@/lib/admin-membership-api/config-settings";
+import { connectionJson } from "@/lib/mcp-connection-request";
+import { MEMBER_FIELDS_SETTINGS_CONNECTION_SHAPE } from "@/lib/connection-shapes/membership-config";
 
-const fieldSettingsSchema = z
-  .object(
-    Object.fromEntries(
-      MEMBER_FIELD_KEYS.map((key) => [key, z.boolean()]),
-    ) as Record<MemberFieldKey, z.ZodBoolean>,
-  )
-  .strict();
-
-const updateSchema = z
-  .object({
-    settings: fieldSettingsSchema,
-  })
-  .strict();
+/**
+ * GET|PUT /api/admin/member-fields — which optional profile fields the club
+ * collects. Also the AI app actions `get_member_field_settings` and
+ * `update_member_field_settings` (ALP-720), answered through the shape.
+ */
 
 function getChanges(
   before: MemberFieldsSettingsValues,
@@ -41,7 +35,7 @@ function getChanges(
   );
 }
 
-export async function GET() {
+export async function GET(request: Request) {
   const guard = await requireAdmin({
     permission: { area: "membership", level: "view" },
   });
@@ -49,7 +43,7 @@ export async function GET() {
     return guard.response;
   }
 
-  return NextResponse.json(await loadMemberFieldsSettings());
+  return connectionJson(request, await loadMemberFieldsSettings(), MEMBER_FIELDS_SETTINGS_CONNECTION_SHAPE);
 }
 
 export async function PUT(request: Request) {
@@ -61,14 +55,13 @@ export async function PUT(request: Request) {
   }
   const session = guard.session;
 
-  let body: unknown;
-  try {
-    body = await request.json();
-  } catch {
-    return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
-  }
+  const jsonBody = await parseJsonRequestBody(request, {
+    error: "Invalid JSON",
+  });
+  if (!jsonBody.ok) return jsonBody.response;
+  const body = jsonBody.body;
 
-  const parsed = updateSchema.safeParse(body);
+  const parsed = memberFieldsUpdateSchema.safeParse(body);
   if (!parsed.success) {
     return NextResponse.json(
       { error: "Invalid input", details: parsed.error.flatten() },
@@ -125,5 +118,5 @@ export async function PUT(request: Request) {
         )[0]
       : await write;
 
-  return NextResponse.json(buildMemberFieldsSettingsPayload(record));
+  return connectionJson(request, buildMemberFieldsSettingsPayload(record), MEMBER_FIELDS_SETTINGS_CONNECTION_SHAPE);
 }

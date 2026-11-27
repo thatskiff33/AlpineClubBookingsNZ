@@ -88,7 +88,7 @@ vi.mock("node-cron", () => ({
   },
 }));
 
-// #3663: the three tasks of the 15-minute payments cycle, doubled so the leader
+// #3663: the tasks of the 15-minute payments cycle, doubled so the leader
 // test below can prove the cron leader reaches every one of them through the
 // shared payments runner (which is NOT doubled).
 const paymentsCycleTasks = vi.hoisted(() => ({
@@ -98,6 +98,18 @@ const paymentsCycleTasks = vi.hoisted(() => ({
   reannounceHeldLateCaptures: vi.fn(),
   runCreditReleaseAskSweep: vi.fn(),
   drainOwedNewCaptureAlerts: vi.fn(),
+  sweepOnceEverAlerts: vi.fn(),
+  sweepVoidedCombinedGroupInvoiceCover: vi.fn(),
+}));
+
+// #4525 review: the combined group invoice cover-release sweep, doubled like the others.
+vi.mock("@/lib/member-money/doors", async (importOriginal) => ({
+  ...((await importOriginal()) as typeof import("@/lib/member-money/doors")),
+  sweepVoidedCombinedGroupInvoiceCover: paymentsCycleTasks.sweepVoidedCombinedGroupInvoiceCover,
+}));
+
+vi.mock("@/lib/admin-alert-once-sweep", () => ({
+  sweepOnceEverAlerts: paymentsCycleTasks.sweepOnceEverAlerts,
 }));
 
 vi.mock("@/lib/credit-release-ask-sweep", () => ({
@@ -466,7 +478,9 @@ describe("OBS-03: cron job run recording", { timeout: 30_000 }, () => {
     );
     paymentsCycleTasks.reannounceHeldLateCaptures.mockResolvedValue({ checked: 0, announced: 0 });
     paymentsCycleTasks.runCreditReleaseAskSweep.mockResolvedValue({ enqueued: 0, payments: null, closes: null });
+    paymentsCycleTasks.sweepOnceEverAlerts.mockResolvedValue({ released: 0, resent: 0, settled: 0, dropped: 0, failed: 0 });
     paymentsCycleTasks.drainOwedNewCaptureAlerts.mockResolvedValue({ checked: 0, sent: 0 });
+    paymentsCycleTasks.sweepVoidedCombinedGroupInvoiceCover.mockResolvedValue({ checked: 0, released: 0, releaseFailures: 0, truncated: false, failed: false });
     paymentsCycleTasks.reapStaleWaitingPaymentXeroOutboxOperations.mockResolvedValue({
       reaped: 0,
       released: 0,
@@ -488,6 +502,7 @@ describe("OBS-03: cron job run recording", { timeout: 30_000 }, () => {
       .mocked(prisma.cronJobRun.create)
       .mock.calls.map(([arg]) => (arg as { data: { jobName: string; status: string } }).data);
     expect(runs).toEqual([
+      expect.objectContaining({ jobName: "once-ever-alert-sweep", status: "SUCCESS" }),
       expect.objectContaining({ jobName: "payment-recovery", status: "SUCCESS" }),
       expect.objectContaining({
         jobName: "internet-banking-hold-release",
@@ -498,6 +513,7 @@ describe("OBS-03: cron job run recording", { timeout: 30_000 }, () => {
       expect.objectContaining({ jobName: "late-capture-held-alert", status: "SUCCESS" }),
       expect.objectContaining({ jobName: "credit-release-asks", status: "SUCCESS" }),
       expect.objectContaining({ jobName: "duplicate-capture-kept-alert", status: "SUCCESS" }),
+      expect.objectContaining({ jobName: "combined-invoice-cover-release", status: "SUCCESS" }),
     ]);
   });
 

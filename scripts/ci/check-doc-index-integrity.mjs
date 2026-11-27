@@ -80,6 +80,7 @@
  */
 import { scanMarkdownBlocks, scannableLines, markdownProseLines, literalAuditLines } from "../lib/markdown-blocks.mjs";
 export { SETEXT_HEADING_UNDERLINE_PATTERN, scanMarkdownFenceLines, scannableLines, fencedLines, literalAuditLines } from "../lib/markdown-blocks.mjs";
+import { inlineLinkTargets, refDefTargets } from "../lib/markdown-links.mjs";
 import { userGuideScreenshotNames } from "../lib/user-guide-screenshots.mjs";
 import { execFileSync, spawnSync } from "node:child_process";
 import fs from "node:fs";
@@ -368,10 +369,6 @@ function hexByte(codePoint) {
   return `0x${codePoint.toString(16).padStart(2, "0")}`;
 }
 
-// Inline links/images: ![alt](target) and [text](target).
-const INLINE_LINK = /!?\[[^\]]*\]\(\s*(<[^>]+>|[^)\s]+)/g;
-// Reference definitions at line start: [label]: target
-const REF_DEF = /^\s*\[[^\]]+\]:\s*(\S+)/;
 
 // Upper bound on the inline-tag stripping loop in stripInlineHtmlTags. Each pass
 // must strip at least one `<...>` to continue, so a heading cannot need more
@@ -422,9 +419,7 @@ export function markdownLinkTargets(fromPath, text) {
   const targets = [];
   for (const { text: scannable } of markdownProseLines(text)) {
     const raw = [];
-    for (const match of scannable.matchAll(INLINE_LINK)) raw.push(match[1]);
-    const refMatch = scannable.match(REF_DEF);
-    if (refMatch) raw.push(refMatch[1]);
+    for (const { target } of [...inlineLinkTargets(scannable), ...refDefTargets(scannable)]) raw.push(target);
 
     for (let target of raw) {
       if (target.startsWith("//") || /^[a-z][a-z0-9+.-]*:/i.test(target)) continue;
@@ -2644,8 +2639,11 @@ function pullRequestBranchPoint(repoRoot, head, prBase) {
  *
  * Pull requests compare with the merge base of `HEAD` and the immutable base SHA
  * from their event (#5156; see {@link pullRequestBranchPoint}). Pushes to
- * `main` and to an `epic/**` integration branch (#3002) compare with the event's
- * immutable pre-push SHA — except the push that CREATES an epic branch, which
+ * `main` and to an `epic/**` integration branch (#3002) compare with the
+ * immutable `PUSH_BASE_SHA` — on `main` the last judged main commit, which
+ * `ci.yml` resolves because a newer merge may have replaced the previous
+ * commit's queued run (#5356, INV-OPS-021), and on an epic branch the event's
+ * pre-push SHA — except the push that CREATES an epic branch, which
  * carries no such SHA and compares with the branch point instead. Local feature
  * branches compare with their merge-base against `origin/main` (or `main`).
  * Every event/explicit ref fails closed when missing; `HEAD^1` is not a safe

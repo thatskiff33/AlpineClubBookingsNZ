@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { parseJsonRequestBody } from "@/lib/api-json";
 import { hostingCoverageParticipantRetryResponse } from "@/lib/adult-member-hosting-retry-response";
 import { z } from "zod";
 
@@ -17,8 +18,10 @@ import {
 } from "@/lib/adult-member-hosting-linked-move";
 import { modifyBookingDatesWithLinkedMoveSupport } from "@/lib/booking-linked-date-move-arms";
 import { ApiError } from "@/lib/api-error";
+import { editQuotedFiguresRefusal, editSaveFiguresShape, requireEditQuotedFigures } from "@/lib/edit-quoted-figures";
 import { MinimumStayPolicyViolationError } from "@/lib/booking-policy-exceptions";
 import { auth } from "@/lib/auth";
+import { getClientIp } from "@/lib/rate-limit-http";
 import { clubTime } from "@/lib/club-time/server";
 import { adminShiftBookingDates } from "@/lib/booking-date-modification-service";
 import { OverCapacityConfirmationRequiredError } from "@/lib/over-capacity-confirmation";
@@ -52,6 +55,7 @@ import { clubFormatValues } from "@/lib/club-format-server";
 
 const modifyDatesSchema = z
   .object({
+    ...editSaveFiguresShape, // #5238 (`INV-MOD-062`)
     checkIn: z.string().optional(),
     checkOut: z.string().optional(),
     settlementMethod: z.enum(["card", "credit"]).optional(),
@@ -118,20 +122,10 @@ export async function PUT(
 
   const { id: bookingId } = await params;
 
-  let body: unknown;
-  try {
-    body = await request.json();
-  } catch {
-    return NextResponse.json(
-      {
-        error: "Invalid JSON",
-        details: { body: ["Request body must be valid JSON"] },
-      },
-      { status: 400 },
-    );
-  }
+  const json = await parseJsonRequestBody(request);
+  if (!json.ok) return json.response;
 
-  const parsed = modifyDatesSchema.safeParse(body);
+  const parsed = modifyDatesSchema.safeParse(json.body);
   if (!parsed.success) {
     return NextResponse.json(
       { error: "Invalid input", details: parsed.error.flatten() },
@@ -139,8 +133,7 @@ export async function PUT(
     );
   }
 
-  const ipAddress =
-    request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? "unknown";
+  const ipAddress = getClientIp(request);
 
   // Issue #1668: admin-only date override gating. The booking-management role
   // (Booking Officer / Full Admin → ADMIN) applies ONLY when the override is
@@ -208,6 +201,7 @@ export async function PUT(
   const format = await clubFormatValues();
 
   try {
+    requireEditQuotedFigures(parsed.data);
     const result =
       adminOverride && pricingMode === "shift"
         ? await adminShiftBookingDates({
@@ -217,6 +211,7 @@ export async function PUT(
               ? { hostingCoverageOverride: parsed.data.hostingCoverageOverride }
               : {}),
             input: {
+              quotedFigures: parsed.data.quotedFigures,
               checkIn: parsed.data.checkIn,
               checkOut: parsed.data.checkOut,
               confirmOverCapacity,
@@ -234,6 +229,7 @@ export async function PUT(
             ...(parsed.data.hostingCoverageLinkedMove
               ? { linkedMove: parsed.data.hostingCoverageLinkedMove }
               : {}),
+            linkedQuotedFigures: parsed.data.linkedQuotedFigures,
             input: parsed.data,
             ipAddress,
             todayAtClub,
@@ -366,6 +362,9 @@ export async function PUT(
         { status: err.status },
       );
     }
+    // #5238 (`INV-MOD-062`): thrown before the first write, so nothing was settled.
+    const figuresRefusal = editQuotedFiguresRefusal(err);
+    if (figuresRefusal) return NextResponse.json(figuresRefusal.body, { status: figuresRefusal.status });
     if (err instanceof ApiError) {
       return NextResponse.json({ error: err.message }, { status: err.status });
     }

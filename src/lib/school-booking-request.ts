@@ -40,6 +40,10 @@ import {
   SchoolCateringPreference,
 } from "@prisma/client";
 import { z } from "zod";
+import {
+  memberWholeLodgeApprovalSchema,
+  type SchoolChildCounts,
+} from "@/lib/admin-bookings-schemas/requests";
 import { isEffectiveModuleEnabled } from "@/lib/admin-modules";
 import {
   resolveOrCreateSchoolOrganisation,
@@ -87,6 +91,10 @@ import {
   toPipelineGuestCreateData,
   type OwnerSubstitution,
 } from "@/lib/booking-request-shared";
+import {
+  findHeldApprovalLodge,
+  notifyMemberGuestsAfterApproval,
+} from "@/lib/booking-request-approval-shared";
 import {
   loadMemberGuestAddPolicy,
   matchMemberGuestNotificationRows,
@@ -198,14 +206,6 @@ export async function assertSchoolGuestsWithinLodgeCapacity(input: {
 // ---------------------------------------------------------------------------
 
 type SchoolTeacherInput = z.infer<typeof schoolTeacherSchema>;
-
-export const schoolChildCountsSchema = z.object({
-  INFANT: z.number().int().min(0).max(200).optional(),
-  CHILD: z.number().int().min(0).max(200).optional(),
-  YOUTH: z.number().int().min(0).max(200).optional(),
-});
-
-export type SchoolChildCounts = z.infer<typeof schoolChildCountsSchema>;
 
 interface CreateSchoolBookingRequestInput {
   schoolName: string;
@@ -791,22 +791,13 @@ export async function approveSchoolBookingRequest(input: {
     );
   }
 
-  // A held booking has already materialised the request's null/default lodge
-  // semantics into an immutable concrete Booking.lodgeId. Read only that lock
-  // key before the transaction; the full request and booking are re-read after
-  // global -> lodge locks below. Fresh-create approvals need no extra lookup.
-  const expectedHeldBookingId = request.heldBookingId ?? null;
-  const heldLodgeLocator = expectedHeldBookingId
-    ? await prisma.booking.findUnique({
-        where: { id: expectedHeldBookingId },
-        select: { lodgeId: true },
-      })
-    : null;
-  if (expectedHeldBookingId && !heldLodgeLocator) {
+  // The held booking's immutable lodge, read before the transaction; the full
+  // request and booking are re-read after global -> lodge locks below.
+  const heldApproval = await findHeldApprovalLodge(request);
+  if (!heldApproval) {
     throw new BookingRequestError("Held booking was not found", 409);
   }
-  const expectedHeldLodgeId = heldLodgeLocator?.lodgeId ?? null;
-  const approvalLodgeId = expectedHeldLodgeId ?? request.lodgeId ?? null;
+  const { expectedHeldBookingId, expectedHeldLodgeId, approvalLodgeId } = heldApproval;
 
   // #3819: the booking's lodge decides whether its teachers become hut leaders
   // ("Who can be hut leader for school bookings" ticks teachers). It replaces
@@ -1822,40 +1813,14 @@ export async function approveSchoolBookingRequest(input: {
   // when a hold was set at approval. Informational only (decision 1).
   let exclusiveHoldConflicts: HoldConflictBooking[] = [];
   if (!conversion.alreadyConverted) {
-    // MG4-D-b (#2309), AFTER the commit and outside both advisory locks. Two
-    // directions, because an approval can do both at once: a swap adds one
-    // member guest and drops another, and telling only the newcomer would leave
-    // the person who was dropped believing they still have a bed.
-    if (
-      conversion.memberGuestNotificationRows.length > 0 ||
-      conversion.displacedMemberGuestIds.length > 0
-    ) {
-      const {
-        sendMemberGuestAddNotifications,
-        sendMemberGuestWithdrawnNotifications,
-      } = await import("@/lib/member-guest-consent-notifications");
-      try {
-        if (conversion.memberGuestNotificationRows.length > 0) {
-          await sendMemberGuestAddNotifications({
-            bookingId: conversion.bookingId,
-            rows: conversion.memberGuestNotificationRows,
-            actor: memberGuestActor,
-          });
-        }
-        if (conversion.displacedMemberGuestIds.length > 0) {
-          await sendMemberGuestWithdrawnNotifications({
-            bookingId: conversion.bookingId,
-            targetMemberIds: conversion.displacedMemberGuestIds,
-            context: "BOOKING_REQUEST_REPLACED",
-          });
-        }
-      } catch (err) {
-        logger.error(
-          { err, bookingId: conversion.bookingId, bookingRequestId: request.id },
-          "Failed to dispatch member-guest notifications after a school booking-request approval",
-        );
-      }
-    }
+    // MG4-D-b (#2309), AFTER the commit and outside both advisory locks.
+    await notifyMemberGuestsAfterApproval({
+      conversion,
+      actor: memberGuestActor,
+      bookingRequestId: request.id,
+      failureLogMessage:
+        "Failed to dispatch member-guest notifications after a school booking-request approval",
+    });
 
     // Teacher PIN emails (after commit; failures are logged, not fatal).
     for (const assignment of conversion.teacherAssignments) {
@@ -2110,35 +2075,9 @@ export async function approveSchoolBookingRequest(input: {
 
 /**
  * Admin override of the approved headcount, and the manual price, for a member
- * whole-lodge request (#2263). Validated in the approve route exactly like the
- * school `childCounts` override.
+ * whole-lodge request (#2263). The schema lives with the approve route's other
+ * request schemas (`admin-bookings-schemas/requests.ts`).
  */
-export const memberWholeLodgeApprovalSchema = z.object({
-  /**
-   * The headcount the officer is actually pricing and booking, after talking to
-   * the member. Omitted keeps the submitted approximate number.
-   */
-  pricedHeadcount: z.number().int().min(1).max(500).optional(),
-  /**
-   * Manual total price in integer cents. MANDATORY fallback when no active
-   * season covers the requested dates — without it the season-rate branch has
-   * nothing to price from and the approval 409s (the member-request path has no
-   * quote/price op to fall back on, so this field is the only way through).
-   * Split across the guest rows by splitPriceAcrossGuests.
-   */
-  priceOverrideCents: z.number().int().min(0).max(100_000_000).optional(),
-  /**
-   * The officer's per-approval pricing choice (#2338). When true and a flat
-   * whole-lodge rate is set for every night's covering season, the stay prices
-   * `nights x flat rate` and headcount is ignored; otherwise it falls back to
-   * per-guest pricing (owner decision 1 Aug 2026: the officer chooses per
-   * approval, it is NOT automatic on every whole-lodge booking). Omitted/false
-   * keeps today's per-guest behaviour so nothing changes silently. The manual
-   * `priceOverrideCents` still wins over both.
-   */
-  priceAsWholeLodge: z.boolean().optional(),
-});
-
 export type MemberWholeLodgeApprovalOverride = z.infer<
   typeof memberWholeLodgeApprovalSchema
 >;

@@ -25,19 +25,26 @@ const CLUB_WIDE_ONLY_FIELDS = [
 
 const bookingTimingDays = z.number().int().min(BOOKING_TIMING_DAYS_MIN).max(BOOKING_TIMING_DAYS_MAX)
 
+/**
+ * One cancellation tier, as the cancellation policy and every booking period
+ * take it: from `daysBeforeStay` days out, the card and credit refund and fee.
+ */
+export const cancellationTierSchema = z.object({
+  daysBeforeStay: z.number().int().min(0),
+  refundPercentage: z.number().int().min(0).max(100),
+  creditRefundPercentage: z.number().int().min(0).max(100).optional(),
+  fixedFeeCents: z.number().int().min(0).optional(),
+  creditFixedFeeCents: z.number().int().min(0).optional(),
+})
+
+/** How many days a non-member's booking is held, for the policy and each period. */
+export const nonMemberHoldDaysSchema = z.number().int().min(1).max(365)
+
 export const policySchema = z
   .object({
-    rules: z.array(
-      z.object({
-        daysBeforeStay: z.number().int().min(0),
-        refundPercentage: z.number().int().min(0).max(100),
-        creditRefundPercentage: z.number().int().min(0).max(100).optional(),
-        fixedFeeCents: z.number().int().min(0).optional(),
-        creditFixedFeeCents: z.number().int().min(0).optional(),
-      })
-    ),
+    rules: z.array(cancellationTierSchema),
     nonMemberHoldEnabled: z.boolean().optional(),
-    nonMemberHoldDays: z.number().int().min(1).max(365).optional(),
+    nonMemberHoldDays: nonMemberHoldDaysSchema.optional(),
     // Cross-lodge waitlist queue order (ADR-004 owner decision 1).
     // Club-wide, like hold days: queue fairness is a club policy.
     waitlistCrossLodgeOrder: z.enum(["OWN_LODGE_FIRST", "MERGED"]).optional(),

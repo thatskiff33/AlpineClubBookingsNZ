@@ -1,12 +1,11 @@
-import { assertEditQuotedFigures, unchangedPriceQuotedFigures } from "@/lib/edit-quoted-figures";
-import type { EditQuotedFigures } from "@/lib/edit-quoted-figures";
+import { assertEditQuotedFigures, unchangedPriceQuotedFigures, type EditQuotedFigures } from "@/lib/edit-quoted-figures";
 import { queueOrganiserExtraForChange } from "@/lib/organiser-extra-invoice-queue";
 import { paidByOrganiserInternetBanking } from "@/lib/group-organiser-paid";
 import { postStoredBookingConfirmationLedgerLines } from "@/lib/booking-ledger-confirmation-sync";
 import { resolveBookingMoneyPostingContext } from "@/lib/member-money/doors";
 import { isUnpaidConfirmedWholeLodge } from "@/lib/booking-payment-flow";
 import { bookingAmountOwedCents, bookingWorthCents, feeOwedAfterEditCents } from "@/lib/booking-payment-state";
-import { type AgeTier, PaymentStatus, type Role } from "@prisma/client";
+import { type AgeTier, type BookingStatus, PaymentStatus, type Role } from "@prisma/client";
 
 import { bookingPromoCodeLabel, bookingPromoRedemptions } from "@/lib/booking-promo-redemptions";
 import { repriceBookingPromotions } from "@/lib/booking-promotions";
@@ -95,6 +94,7 @@ import {
 } from "@/lib/member-credit";
 import { clearStaleCreditElection } from "@/lib/booking-credit-election";
 import { getNonMemberHoldPolicy } from "@/lib/cancellation";
+import { nonMemberHoldEnd } from "@/lib/non-member-hold-end";
 import { lateNoticeChangeFee } from "@/lib/late-notice-change-fee";
 import {
   cleanupChoreAssignmentsForDateChange,
@@ -162,6 +162,8 @@ import { LOCK1_HOLDER_TRANSACTION_BUDGET } from "@/lib/db-transaction";
 import type { DateModificationResponse, DateModificationTransactionResult } from "@/lib/booking-date-modification-transaction-result";
 
 export type ModifyBookingDatesInput = {
+  /** #5238 (`INV-MOD-062`): the preview's figures, compared before any settlement. */
+  quotedFigures?: EditQuotedFigures;
   checkIn?: string;
   checkOut?: string;
   settlementMethod?: BookingModificationSettlementMethod;
@@ -177,6 +179,48 @@ export type ModifyBookingDatesInput = {
   // the member receives the change-notification email. Absent = notify.
   notifyMember?: boolean;
 };
+
+/**
+ * The non-member hold after a date change (#5398), shared by the member edit
+ * and the admin date shift: the hold window, and whether a PENDING booking is
+ * released to PAYMENT_PENDING, both key off the new check-in. A booking with no
+ * non-member guests holds nothing. The status itself is written by each caller,
+ * as a literal the sale-status census can read.
+ */
+async function recalculateNonMemberHold(
+  booking: {
+    guests: ReadonlyArray<{ isMember: boolean }>;
+    nonMemberHoldUntil: Date | null;
+    status: BookingStatus;
+    lodgeId: string | null;
+  },
+  newCheckIn: Date,
+  // Required: the policy read runs on the caller's transaction, never the
+  // module client while the global and lodge keys are held (INV-LOCK-004).
+  tx: NonNullable<Parameters<typeof getNonMemberHoldPolicy>[2]>,
+): Promise<{ nonMemberHoldUntil: Date | null; releasesToPaymentPending: boolean }> {
+  const hasNonMembers = booking.guests.some((guest) => !guest.isMember);
+  let newNonMemberHoldUntil = booking.nonMemberHoldUntil;
+  let releasesToPaymentPending = false;
+  if (hasNonMembers) {
+    const holdPolicy = await getNonMemberHoldPolicy(newCheckIn, booking.lodgeId, tx);
+    const holdDecision = calculateBookingHoldDecision({
+      hasNonMembers,
+      checkIn: newCheckIn,
+      holdDays: holdPolicy.holdDays,
+      holdEnabled: holdPolicy.enabled,
+    });
+    if (holdDecision.shouldBePending) {
+      newNonMemberHoldUntil = nonMemberHoldEnd(newCheckIn, holdPolicy.holdDays);
+    } else {
+      newNonMemberHoldUntil = null;
+      releasesToPaymentPending = booking.status === "PENDING";
+    }
+  } else {
+    newNonMemberHoldUntil = null;
+  }
+  return { nonMemberHoldUntil: newNonMemberHoldUntil, releasesToPaymentPending };
+}
 
 export async function modifyBookingDates({
   bookingId,
@@ -708,6 +752,7 @@ export async function modifyBookingDates({
     // member shorten a booking inside the cancellation window and recover more
     // than cancelling or removing guests for the same nights would return.
     const netChargeCents = priceDiffCents + changeFeeCents;
+    assertEditQuotedFigures(input.quotedFigures, { newFinalPriceCents, priceDiffCents, changeFeeCents, netChargeCents });
     // #3954: the unpaid ask, read ONCE for this edit and handed to both the
     // options and the save, so a capture between two reads cannot split them.
     const reduction = await readReductionAgainstUnpaidAsk(tx, booking, netChargeCents);
@@ -752,32 +797,9 @@ export async function modifyBookingDates({
       xeroAdditionalAmountCents,
     } = payments;
 
-    const hasNonMembers = booking.guests.some((g) => !g.isMember);
-    let newNonMemberHoldUntil = booking.nonMemberHoldUntil;
-    let newStatus = booking.status;
-
-    if (hasNonMembers) {
-      const holdPolicy = await getNonMemberHoldPolicy(newCheckIn, booking.lodgeId, tx);
-      const holdDecision = calculateBookingHoldDecision({
-        hasNonMembers,
-        checkIn: newCheckIn,
-        holdDays: holdPolicy.holdDays,
-        holdEnabled: holdPolicy.enabled,
-      });
-
-      if (holdDecision.shouldBePending) {
-        newNonMemberHoldUntil = new Date(
-          newCheckIn.getTime() - holdPolicy.holdDays * 24 * 60 * 60 * 1000,
-        );
-      } else {
-        newNonMemberHoldUntil = null;
-        if (booking.status === "PENDING") {
-          newStatus = "PAYMENT_PENDING";
-        }
-      }
-    } else {
-      newNonMemberHoldUntil = null;
-    }
+    const recalculatedHold = await recalculateNonMemberHold(booking, newCheckIn, tx);
+    const newNonMemberHoldUntil = recalculatedHold.nonMemberHoldUntil;
+    let newStatus = recalculatedHold.releasesToPaymentPending ? "PAYMENT_PENDING" : booking.status;
 
     // F20 (#1887): a date change that reduces the price can drop finalPriceCents
     // below the account credit applied at booking-create. Refund the
@@ -1852,10 +1874,7 @@ export async function adminShiftBookingDates({
     // #4924 (`INV-MOD-062`): a shift moves no money, so the officer's preview
     // can only go stale if the stored price moved since; checked on the
     // post-lock re-read, before the first write below.
-    assertEditQuotedFigures(
-      input.quotedFigures,
-      unchangedPriceQuotedFigures(booking.finalPriceCents),
-    );
+    assertEditQuotedFigures(input.quotedFigures, unchangedPriceQuotedFigures(booking.finalPriceCents));
 
     // #3276: a shift moves every night by the same delta and no money moves, so
     // the recorded build-up moves with it — captured before the rewrite below
@@ -1890,33 +1909,12 @@ export async function adminShiftBookingDates({
       writer: "the admin date shift",
     });
 
-    // Non-member hold recalculation, mirroring modifyBookingDates: the hold
+    // Non-member hold recalculation, shared with modifyBookingDates: the hold
     // window and the PENDING → PAYMENT_PENDING release both key off the new
     // check-in. Status is otherwise unchanged.
-    const hasNonMembers = booking.guests.some((guest) => !guest.isMember);
-    let newNonMemberHoldUntil = booking.nonMemberHoldUntil;
-    let newStatus = booking.status;
-    if (hasNonMembers) {
-      const holdPolicy = await getNonMemberHoldPolicy(newCheckIn, booking.lodgeId, tx);
-      const holdDecision = calculateBookingHoldDecision({
-        hasNonMembers,
-        checkIn: newCheckIn,
-        holdDays: holdPolicy.holdDays,
-        holdEnabled: holdPolicy.enabled,
-      });
-      if (holdDecision.shouldBePending) {
-        newNonMemberHoldUntil = new Date(
-          newCheckIn.getTime() - holdPolicy.holdDays * 24 * 60 * 60 * 1000,
-        );
-      } else {
-        newNonMemberHoldUntil = null;
-        if (booking.status === "PENDING") {
-          newStatus = "PAYMENT_PENDING";
-        }
-      }
-    } else {
-      newNonMemberHoldUntil = null;
-    }
+    const recalculatedHold = await recalculateNonMemberHold(booking, newCheckIn, tx);
+    const newNonMemberHoldUntil = recalculatedHold.nonMemberHoldUntil;
+    const newStatus = recalculatedHold.releasesToPaymentPending ? "PAYMENT_PENDING" : booking.status;
 
     // Update the booking envelope ONLY — every price field is left as booked.
     const updatedBooking = await tx.booking.update({

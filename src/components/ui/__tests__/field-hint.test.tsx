@@ -15,6 +15,7 @@ import {
 import { stripCommentsAndStrings } from "@/lib/__tests__/support/strip-comments";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { CENSUS_TIMEOUT_MS } from "@/test/census-timeout";
 
 // #2257 — the point of this primitive is the ASSISTIVE-TECH association, not
 // the grey text. A hint that merely sits below an input is invisible to a
@@ -199,7 +200,7 @@ function countAcrossSrc(needle: string): number {
   );
 }
 
-describe("FieldHint wiring contract", () => {
+describe("FieldHint wiring contract", { timeout: CENSUS_TIMEOUT_MS }, () => {
   it("matches every useFieldHint() with one fieldProps and one hintProps spread", () => {
     const hooks = countAcrossSrc("useFieldHint(");
     const fieldProps = countAcrossSrc(".fieldProps");
@@ -214,7 +215,7 @@ describe("FieldHint wiring contract", () => {
       hintProps,
       "a useFieldHint() whose hintProps never reaches a FieldHint points aria-describedby at nothing",
     ).toBe(hooks);
-  });
+  }, CENSUS_TIMEOUT_MS);
 
   it("keeps the .map() sites on describedByFieldHint, counted in the same total", () => {
     // Rows inside a `.map()` cannot call the hook, so they do not appear in the

@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 /**
- * Fork #119: `/api/admin/bookings/[id]/work-party` — the access matrix (view
+ * Fork triyder/AlpineClubBookingsNZ#119: `/api/admin/bookings/[id]/work-party` — the access matrix (view
  * to list, edit to preview or apply), the request shape, and how the service's
  * outcomes reach the officer. The money itself is proved in
  * `work-party-booking-correction.realdb.test.ts`.
@@ -191,7 +191,7 @@ describe("POST", () => {
   });
 });
 
-describe("POST settlement method (fork #129)", () => {
+describe("POST settlement method (triyder/AlpineClubBookingsNZ#129)", () => {
   const settlementOptions = { methods: ["credit", "card"], paidByOrganiser: false };
 
   it("returns the methods offered with the preview", async () => {
@@ -233,7 +233,7 @@ describe("POST settlement method (fork #129)", () => {
   });
 });
 
-describe("POST action remove (fork #130)", () => {
+describe("POST action remove (fork triyder/AlpineClubBookingsNZ#130)", () => {
   const removal = {
     ...figures,
     previousFinalPriceCents: 25_000,
@@ -383,9 +383,11 @@ describe("GET", () => {
     expect(JSON.stringify(body)).not.toMatch(/WORKPARTY-/);
   });
 
-  it("fork #130: says whether the work party on the booking can be removed", async () => {
+  it("fork triyder/AlpineClubBookingsNZ#130: says whether the work party on the booking can be removed", async () => {
     h.bookingFindUnique.mockResolvedValue({
       ...ownBooking("member-1"),
+      // Money on the payment: a PAID booking with no payment row is refused (#5338).
+      payment: { id: "p-1", status: "SUCCEEDED", amountCents: 20_000, creditAppliedCents: 0, source: "STRIPE" },
       promoRedemptions: [
         { id: "r-1", applicationOrder: 0, promoCode: { workPartyEvent: { id: "wp-1", name: "Here" } } },
       ],

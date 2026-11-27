@@ -234,7 +234,7 @@ covered?": many rows were stamped through the leader's check-out day.
 
 ### INV-DATE-006
 
-- **The lobby wall is deliberately mixed and stays fenced** (issue #58): it asks
+- **The lobby wall is deliberately mixed and stays fenced** (issue hoppers99/AlpineClubBookingsNZ#58): it asks
   BOTH models, each for its own job, and keeps its own code path
   (`src/lib/lodge-display-state.ts`). Its guest-name privacy gate
   (sole-occupancy detection) is a NIGHT count. Everything a viewer reads — who
@@ -1681,7 +1681,97 @@ capacity or double-booking violation.
   promises a row the writer would refuse for a reason it could have seen.
 - **A Booking Ref imports once per lodge**, across every batch: checked under
   the lodge lock and backed by the partial unique index on IMPORTED rows.
-- Proven by `booking-import-plan.test.ts` and `booking-import.realdb.test.ts`.
+- Proven by `booking-import-plan.test.ts`, `booking-import-plan-decisions.test.ts`
+  and `booking-import.realdb.test.ts`.
+
+### INV-CAP-041
+
+- **A waitlist position is derived on read from the offer order, and nothing
+  stores it** (#5402, owner decision 22 Nov 2026). `src/lib/waitlist-queue.ts`
+  owns the queue: the candidate filter (`WAITLISTED`, "No emails" off,
+  half-open overlap), the join order `(createdAt, id)`, and the own-lodge
+  versus cross-lodge ordering `processWaitlistForDates` walks. Every screen,
+  API field, email and audit row that shows a position reads it through
+  `getWaitlistPositions` (one booking: `getWaitlistPositionOf`) or
+  `getDisplayedWaitlistPositions`.
+- **The number:** one plus the opportunities the offer pass would consider
+  before the entry's own if a bed freed at its lodge on all its nights. Under
+  `MERGED` that includes older entries from other lodges that named this lodge;
+  under `OWN_LODGE_FIRST` it does not. An offered or silenced entry shows none
+  (`INV-LOCKOUT-060`). It is an upper bound, not a promise: a smaller party
+  behind can be offered first. A lapsed offer changes no number: the reordering
+  in `INV-CAP-042` is applied only by the pass that re-offers that place.
+- **`Booking.waitlistPosition` is retired.** No path writes a non-null value
+  and none reads it; exits keep writing `null` until the column is dropped.
+- **Reads take no lock.** A writer passes its own `tx` after its locks; a
+  screen passes `prisma`. No advisory key, order or transaction changed. A
+  quoted figure can be one place out when an unexcluded change commits at the
+  same moment (a "No emails" flip, another lodge's opt-in under `MERGED`, two
+  same-lodge creates); screens correct on the next read and nothing branches on
+  it (`docs/CONCURRENCY_AND_LOCKING.md`).
+- Guards: `waitlist-queue.test.ts` (the order against the old inline code, the
+  reader against the offer pass's walk), `waitlist-position-census.test.ts`,
+  `waitlist-queue-position.realdb.test.ts`.
+
+### INV-CAP-042
+
+- **A lapsed offer's place goes on down the queue** (#5410, owner decisions
+  22 Nov 2026). `expireStaleOffers` makes one offer pass per lapsed offer, in
+  join order, handing it that lapse and every other lapse of the same run. The
+  pass walks `orderWaitlistOffers`: the `INV-CAP-041` order, started just after
+  the lapsed opportunity and wrapped to the front, then any opportunity of
+  another booking that lapsed in the run, then the lapsed opportunity, so two
+  members who lapse together cannot pass the places between them. A queue of
+  one is re-offered.
+- **Only the opportunity at the offered lodge moves.** Under `OWN_LODGE_FIRST`
+  each part rotates separately, but the lapses go after both: a member who just
+  lapsed is behind every opt-in too (owner decision, 23 Nov 2026).
+- **Nothing is stored.** Every other caller of `processWaitlistForDates` walks
+  the plain order. The lapsed booking keeps its join time and number.
+- **Limits.** Offers hold no capacity (`INV-CAP-011`), so: a later, unrelated
+  pass can offer a still-free place to a member who let it lapse; several
+  lapses on the same nights can put out more offers than free beds (never more
+  than were out before), and the second to confirm is told the place has gone.
+  A member ahead of the lapsed one who has not had this offer is considered
+  after those behind it, for that re-offer only. Two sweeps at once each know
+  only their own lapses, so two members can be offered each other's places for
+  one round; production runs one cron instance.
+- **No lock changed.** Each pass takes the same locks in its own transaction
+  (`INV-LOCK-001`, `INV-LOCK-002`); a pass that fails is counted and the rest
+  run.
+- Guards: `waitlist-queue.test.ts`, `waitlist.test.ts`,
+  `cross-lodge-waitlist-processor.test.ts`,
+  `waitlist-queue-position.realdb.test.ts`.
+
+### INV-CAP-043
+
+- **An offer's window runs from the email that tells the member** (#5433,
+  owner decision D2, 23 Nov 2026). The offer email and the officers' alert are
+  owed notices, recorded in the offer's transaction and sent after the commit
+  (`waitlist-offer-notices.ts`). When a later run's sweep,
+  not that first attempt, sends the offer email, it first restarts the window,
+  once per offer: a full window from that send, capped at the start of the
+  check-in date in the club's time zone (D6), never earlier than the deadline
+  in force. The email states that deadline. The first attempt never moves the
+  window. No restart when no email can go: "No emails" (the withheld email
+  counts as told), or an address missing, a placeholder or suppressed
+  (officers alerted). Under the waitlist wait left, no offer email goes.
+- **The offer stays the same offer.** The restart moves only
+  `waitlistOfferExpiresAt`; `waitlistOfferedAt` keys the markers, the email's
+  event key and the "same offer" check, so the member is sent it once. Told
+  is read from that email's row after every send (`OfferEmailState`);
+  undeliverable or unrecorded, officers hear once.
+- **No "offer expired" email for an offer the member was never told
+  about**: its email's row not told, or, with no row, its notice still owed
+  or past its cut-off unsent. The lapse is otherwise unchanged (`INV-CAP-042`). Officers get one
+  owed alert instead (D5, 24 Nov 2026), through the offer email's own
+  once-ever claim, so the two go once (twice if both sent-stamp writes fail).
+- **Locks.** The restart is its own lock(1) and lodge-key transaction with a
+  claim guarded on the status, the offer and its original deadline
+  (`INV-LOCK-002`); a lost claim sends nothing.
+- Guards: `waitlist-offer-window.test.ts`,
+  `waitlist-offer-window-restart.test.ts`, `waitlist-offer-notices.test.ts`,
+  `waitlist.test.ts`, `waitlist-owed-notices.realdb.test.ts`.
 
 ### INV-LIFE-062
 

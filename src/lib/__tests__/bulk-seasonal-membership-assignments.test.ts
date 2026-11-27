@@ -34,14 +34,32 @@ vi.mock("@/lib/bed-allocation-lifecycle", () => ({
 vi.mock("@/lib/email", () => ({
   sendAdminPartnerShareSweptAlert: vi.fn().mockResolvedValue(undefined),
 }));
+const mockLoggerError = vi.fn();
 vi.mock("@/lib/logger", () => ({
-  default: { error: vi.fn(), info: vi.fn(), warn: vi.fn(), debug: vi.fn() },
+  default: {
+    error: (...args: unknown[]) => mockLoggerError(...args),
+    info: vi.fn(),
+    warn: vi.fn(),
+    debug: vi.fn(),
+  },
 }));
-vi.mock("@/lib/age-tier", () => ({
-  computeAgeTier: vi.fn().mockResolvedValue("ADULT"),
-  getSeasonStartDate: vi.fn(() => new Date("2026-04-01")),
-}));
+// The season-row reconcile reads the club's age-tier settings for the shared
+// liability rule (#5190); with no rows the real reader returns the documented
+// defaults, so the mock does the same.
+vi.mock("@/lib/age-tier", async () => {
+  const { AGE_TIER_DEFAULTS, cloneAgeTierSettings } = (await vi.importActual(
+    "@/lib/policies/age-tier",
+  )) as typeof import("@/lib/policies/age-tier");
+  return {
+    computeAgeTier: vi.fn().mockResolvedValue("ADULT"),
+    getSeasonStartDate: vi.fn(() => new Date("2026-04-01")),
+    getAgeTierSettingsStrict: vi.fn(async () =>
+      cloneAgeTierSettings(AGE_TIER_DEFAULTS),
+    ),
+  };
+});
 
+import { BULK_SEASONAL_SAVE_THREW_MESSAGE } from "@/lib/bulk-seasonal-save";
 import {
   bulkSaveSeasonalMembershipAssignments,
   getSeasonalMembershipChangePreview,
@@ -215,6 +233,8 @@ function makeBulkDb(members: Record<string, MemberConfig>) {
       findUnique: vi.fn().mockResolvedValue(null),
       updateMany: vi.fn().mockResolvedValue({ count: 0 }),
     },
+    // #5190: the club's liability rule; a missing row is NOT_CHOSEN.
+    membershipLockoutSettings: { findUnique: vi.fn().mockResolvedValue(null) },
     auditLog: {
       create: vi.fn().mockResolvedValue({}),
     },
@@ -517,7 +537,13 @@ describe("bulkSaveSeasonalMembershipAssignments", () => {
     const throwEntry = body.results.find((r: any) => r.memberId === "m-throw");
     expect(throwEntry.outcome).toBe("error");
     expect(throwEntry.name).toBe("Member m-throw");
-    expect(throwEntry.error).toMatch(/deadlock/i);
+    // The admin sees a generic message; the thrown detail goes to the log only.
+    expect(throwEntry.error).toBe(BULK_SEASONAL_SAVE_THREW_MESSAGE);
+    expect(throwEntry.error).not.toMatch(/deadlock/i);
+    expect(mockLoggerError).toHaveBeenCalledWith(
+      expect.objectContaining({ memberId: "m-throw", err: expect.any(Error) }),
+      expect.any(String),
+    );
     const afterEntry = body.results.find((r: any) => r.memberId === "m-after");
     expect(afterEntry.outcome).toBe("changed");
 

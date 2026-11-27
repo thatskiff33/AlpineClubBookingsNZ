@@ -20,8 +20,6 @@ import { prisma } from "@/lib/prisma";
 import { normalizeBaseUrl } from "@/lib/servernz-base-url";
 import {
   SERVERNZ_SETTINGS_ID,
-  clearOtherLodgesOwnedNames,
-  clearServerVersionCheck,
   forgetServerConnectionAnswers,
   loadServerNzSettings,
   serverNzDefaultBaseUrl,
@@ -34,6 +32,7 @@ import {
   type ServerNzAnswerTx,
   type ServerNzConnectionTx,
 } from "@/lib/servernz-settings";
+import { CENSUS_TIMEOUT_MS } from "@/test/census-timeout";
 
 // The mocked global client standing in for the answer fence's transaction:
 // only `withCurrentServerNzConnection` mints the type in production (#4470).
@@ -205,7 +204,7 @@ describe("recordOtherLodgesDownload", () => {
   });
 });
 
-describe("the server's reported API version (#49)", () => {
+describe("the server's reported API version (triyder/AlpineClubBookingsNZ#49)", () => {
   it("reads the stored answer and when it was asked", async () => {
     mocks.findUnique.mockResolvedValue({
       otherLodgesEnabled: false,
@@ -230,12 +229,6 @@ describe("the server's reported API version (#49)", () => {
     });
   });
 
-  it("forgets the answer back to NULL (never asked), not to a mismatch", async () => {
-    await clearServerVersionCheck();
-    const [args] = mocks.upsert.mock.calls[0];
-    expect(args.update).toEqual({ serverVersion: null, serverVersionCheckedAt: null });
-  });
-
   it("forgets the owned list, transfer cursors AND the version in ONE write when the connection ends", async () => {
     // The writer's own write, on the mocked client. Only the connection fence
     // mints this type in production (#4436); `servernz-config.test.ts` covers it.
@@ -245,7 +238,6 @@ describe("the server's reported API version (#49)", () => {
     const [args] = mocks.upsert.mock.calls[0];
     expect(args.where).toEqual({ id: SERVERNZ_SETTINGS_ID });
     expect(args.update).toEqual({
-      otherLodgesOwnedNames: Prisma.DbNull,
       otherLodgesOwnedNamesAt: null,
       otherLodgesOwnedLodges: Prisma.DbNull,
       otherLodgesLastUploadAt: null,
@@ -256,15 +248,20 @@ describe("the server's reported API version (#49)", () => {
       commsLastSyncAt: null,
       commsPoisonChangeId: null,
       commsPoisonCount: 0,
-      // A new connection keys the registry again with a whole download (#64).
+      // A new connection keys the registry again with a whole download (triyder/AlpineClubBookingsNZ#64).
       otherLodgesKeyedAt: null,
       serverVersion: null,
       serverVersionCheckedAt: null,
     });
+    // toEqual does not tell Prisma.DbNull from Prisma.JsonNull, so pin identity:
+    // DbNull reads back as "never told"; a JSON null would read as unreadable.
+    expect(args.update.otherLodgesOwnedLodges).toBe(Prisma.DbNull);
+    // The retired name-only list is neither read nor written (#5407): it is
+    // `@ignore`d, and retired-columns-ignored.test.ts pins the client shape.
   });
 });
 
-describe("the owned lodge list, by central id (#52, #62, #69)", () => {
+describe("the owned lodge list, by central id (triyder/AlpineClubBookingsNZ#52, triyder/AlpineClubBookingsNZ#62, triyder/AlpineClubBookingsNZ#69)", () => {
   const AORANGI = [{ id: "ol_a", name: "Aorangi Ski Club" }];
 
   it("reads a stored list back", async () => {
@@ -284,7 +281,7 @@ describe("the owned lodge list, by central id (#52, #62, #69)", () => {
     expect((await loadServerNzSettings()).otherLodgesOwnedLodges).toEqual([]);
   });
 
-  it("ignores the name-only list stored by API 2.4 and earlier (#69)", async () => {
+  it("ignores the name-only list stored by API 2.4 and earlier (triyder/AlpineClubBookingsNZ#69)", async () => {
     mocks.findUnique.mockResolvedValue({
       otherLodgesOwnedNames: ["Aorangi Ski Club"],
       otherLodgesEnabled: false,
@@ -328,28 +325,12 @@ describe("the owned lodge list, by central id (#52, #62, #69)", () => {
     expect(mocks.findUnique).not.toHaveBeenCalled();
   });
 
-  it("forgets the list with a database NULL, never a JSON null, and clears its timestamp", async () => {
-    await clearOtherLodgesOwnedNames();
-    const [args] = mocks.upsert.mock.calls[0];
-    expect(args.where).toEqual({ id: SERVERNZ_SETTINGS_ID });
-    // DbNull reads back as "never told"; a JSON null would read as unreadable.
-    expect(args.update.otherLodgesOwnedLodges).toBe(Prisma.DbNull);
-    expect(args.update.otherLodgesOwnedNames).toBe(Prisma.DbNull);
-    expect(args.update.otherLodgesOwnedNamesAt).toBeNull();
-    // Nothing else on the row is touched.
-    expect(Object.keys(args.update).sort()).toEqual([
-      "otherLodgesOwnedLodges",
-      "otherLodgesOwnedNames",
-      "otherLodgesOwnedNamesAt",
-    ]);
-  });
-
   it("stores the list the download carried with its timestamp, and leaves the old name-only list alone", async () => {
     await recordOtherLodgesDownload("c-900", AORANGI, { db: answerTx });
     const [args] = mocks.upsert.mock.calls[0];
     expect(args.update.otherLodgesOwnedLodges).toEqual(AORANGI);
     expect(args.update.otherLodgesOwnedNamesAt).toBeInstanceOf(Date);
-    // The draining colour of a blue/green deploy still reads it (#69).
+    // Retired: unread since triyder/AlpineClubBookingsNZ#69, unwritten since #5407.
     expect(args.update).not.toHaveProperty("otherLodgesOwnedNames");
     expect(args.create.otherLodgesOwnedLodges).toEqual(AORANGI);
   });
@@ -382,9 +363,9 @@ describe("the version column has one writer (#4366)", () => {
       .map((file) => file.split("\\").join("/"))
       .sort();
     expect(callers).toEqual(["lib/servernz-settings.ts", "lib/servernz-version-record.ts"]);
-  });
+  }, CENSUS_TIMEOUT_MS);
 });
-describe("recordOtherLodgesDownload: the keyed marker (#64)", () => {
+describe("recordOtherLodgesDownload: the keyed marker (triyder/AlpineClubBookingsNZ#64)", () => {
   it("sets otherLodgesKeyedAt only when told the whole registry merged", async () => {
     await recordOtherLodgesDownload("c-1", undefined, { keyed: true, db: answerTx });
     expect(mocks.upsert.mock.calls[0][0].update.otherLodgesKeyedAt).toBeInstanceOf(Date);

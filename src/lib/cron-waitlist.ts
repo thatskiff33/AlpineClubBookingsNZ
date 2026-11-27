@@ -1,7 +1,6 @@
 import { prisma } from "./prisma";
 import { BookingStatus } from "@prisma/client";
 import { expireStaleOffers } from "./waitlist";
-import { clubToday, dateOnlyInstantOf } from "@/lib/club-time";
 import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
 import logger from "@/lib/logger";
 import { reconcileBedAllocationsForBookingWithLodgeLockHeld } from "@/lib/bed-allocation-lifecycle";
@@ -9,6 +8,7 @@ import { acquireLodgeCapacityLock } from "@/lib/capacity";
 import { releaseBookingPromoRedemptions } from "@/lib/promo";
 import { clubFormatValues } from "@/lib/club-format-server";
 import { LOCK1_HOLDER_TRANSACTION_BUDGET } from "@/lib/db-transaction";
+import { clubTodayAsStoredDate, waitlistStayEndedWhere, waitlistStayHasEnded } from "@/lib/waitlist-stay-ended";
 
 const DEFAULT_WAITLIST_TRANSACTION_RETRY_ATTEMPTS = 3;
 const DEFAULT_WAITLIST_TRANSACTION_RETRY_DELAY_MS = 500;
@@ -58,6 +58,27 @@ export type WaitlistProcessorCronResult =
       reason: string;
     };
 
+/** What the expiry sweeps of every attempt in one cron run did (#5410). */
+type ReofferTally = { failedReoffers: number; expiredOffers: number; newOffers: number };
+
+/**
+ * #5410: some lapsed places could not be re-offered (each failure is logged
+ * with its booking and lodge). Thrown by `processWaitlistCron` after its retry
+ * loop, so it is never retried: a retry would find nothing left to re-offer, and
+ * those places wait for the next offer pass that covers their nights.
+ */
+class WaitlistReofferFailedError extends Error {
+  constructor(tally: ReofferTally, autoCancelled: number) {
+    super(
+      `${tally.failedReoffers} waitlist re-offer pass(es) failed after their offers lapsed; ` +
+        "those places were not offered on. The rest of the run completed: " +
+        `${tally.expiredOffers} offer(s) expired, ${tally.newOffers} new offer(s), ` +
+        `${autoCancelled} past-date booking(s) cancelled.`,
+    );
+    this.name = "WaitlistReofferFailedError";
+  }
+}
+
 function isTransactionStartFailure(error: unknown) {
   const message =
     error instanceof Error
@@ -71,7 +92,7 @@ function isTransactionStartFailure(error: unknown) {
   );
 }
 
-async function processWaitlistCronOnce(): Promise<{
+async function processWaitlistCronOnce(tally: ReofferTally): Promise<{
   expiredOffers: number;
   newOffers: number;
   autoCancelled: number;
@@ -81,7 +102,12 @@ async function processWaitlistCronOnce(): Promise<{
   const format = await clubFormatValues();
 
   // 1. Expire stale offers and re-offer
-  const { expiredCount, reofferedCount } = await expireStaleOffers(format);
+  const { expiredCount, reofferedCount, failedReofferCount } = await expireStaleOffers(format);
+  // Recorded before step 2, so a retryable failure later in this attempt cannot
+  // lose it (#5410).
+  tally.failedReoffers += failedReofferCount;
+  tally.expiredOffers += expiredCount;
+  tally.newOffers += reofferedCount;
 
   // 2. Auto-cancel waitlisted bookings where all dates are in the past.
   // checkOut is @db.Date (the NZ calendar date stored at UTC midnight), so
@@ -91,12 +117,12 @@ async function processWaitlistCronOnce(): Promise<{
   // checking out today until tomorrow — a day late. The stay whose dates are all
   // in the past includes one checking out today, so it must cancel today
   // (F32, #1888).
-  const today = dateOnlyInstantOf(clubToday(await readClubTimeZoneOutsideRequest()));
+  const today = clubTodayAsStoredDate(await readClubTimeZoneOutsideRequest());
 
   const candidates = await prisma.booking.findMany({
     where: {
       status: { in: [BookingStatus.WAITLISTED, BookingStatus.WAITLIST_OFFERED] },
-      checkOut: { lte: today },
+      ...waitlistStayEndedWhere(today),
     },
     select: { id: true },
   });
@@ -123,7 +149,7 @@ async function processWaitlistCronOnce(): Promise<{
         !booking ||
         (booking.status !== BookingStatus.WAITLISTED &&
           booking.status !== BookingStatus.WAITLIST_OFFERED) ||
-        booking.checkOut > today
+        !waitlistStayHasEnded(booking.checkOut, today)
       ) {
         return null;
       }
@@ -131,7 +157,7 @@ async function processWaitlistCronOnce(): Promise<{
         where: {
           id: booking.id,
           status: { in: [BookingStatus.WAITLISTED, BookingStatus.WAITLIST_OFFERED] },
-          checkOut: { lte: today },
+          ...waitlistStayEndedWhere(today),
         },
         data: {
           status: BookingStatus.CANCELLED,
@@ -185,10 +211,15 @@ export async function processWaitlistCron(): Promise<{
 }> {
   const maxAttempts = getWaitlistTransactionRetryAttempts();
   const delayMs = getWaitlistTransactionRetryDelayMs();
+  // #5410: summed across attempts, and judged only after the loop, so a failed
+  // re-offer in an attempt that is later retried still fails the run, and that
+  // failure is never itself retried.
+  const tally: ReofferTally = { failedReoffers: 0, expiredOffers: 0, newOffers: 0 };
+  let result: Awaited<ReturnType<typeof processWaitlistCronOnce>> | undefined;
 
-  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+  for (let attempt = 1; attempt <= maxAttempts && result === undefined; attempt += 1) {
     try {
-      return await processWaitlistCronOnce();
+      result = await processWaitlistCronOnce(tally);
     } catch (error) {
       if (!isTransactionStartFailure(error) || attempt >= maxAttempts) {
         throw error;
@@ -205,7 +236,11 @@ export async function processWaitlistCron(): Promise<{
     }
   }
 
-  return processWaitlistCronOnce();
+  result ??= await processWaitlistCronOnce(tally);
+  if (tally.failedReoffers > 0) {
+    throw new WaitlistReofferFailedError(tally, result.autoCancelled);
+  }
+  return result;
 }
 
 export async function runWaitlistProcessorCron(

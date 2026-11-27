@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import type { Prisma } from "@prisma/client";
+import { parseJsonRequestBody, parseOptionalJsonRequestBody } from "@/lib/api-json";
 import { requireAdmin } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma";
 import logger from "@/lib/logger";
@@ -18,6 +19,15 @@ import {
   fetchWhakapapaCurlData,
   findInvalidSelectorOverrides,
 } from "@/lib/whakapapa-report.server";
+import {
+  mountainConditionsReportSchema,
+  mountainConditionsUpdateSchema,
+} from "@/lib/admin-content-api/mountain-conditions";
+import { connectionJson } from "@/lib/mcp-connection-request";
+import {
+  MOUNTAIN_CONDITIONS_READ_CONNECTION_SHAPE,
+  MOUNTAIN_CONDITIONS_SAVED_CONNECTION_SHAPE,
+} from "@/lib/connection-shapes/content-settings";
 
 const WHAKAPAPA_SOURCE = "whakapapa-report";
 const ADMIN_FREEZE_TTL_MS = 12 * 60 * 60 * 1000;
@@ -72,6 +82,11 @@ function toResponseRecord(record: WhakapapaReportCacheRecord) {
   };
 }
 
+/** A save's answer: the stored row and what happened, projected for a connection. */
+function savedAnswer(request: NextRequest, record: WhakapapaReportCacheRecord, message: string) {
+  return connectionJson(request, { record: toResponseRecord(record), message }, MOUNTAIN_CONDITIONS_SAVED_CONNECTION_SHAPE);
+}
+
 function configToInputJson(config: WhakapapaSourceConfig): Prisma.InputJsonValue {
   return config as unknown as Prisma.InputJsonValue;
 }
@@ -100,7 +115,7 @@ function invalidSelectorResponse(
   );
 }
 
-async function saveConfig(rawConfig: unknown): Promise<NextResponse> {
+async function saveConfig(request: NextRequest, rawConfig: unknown): Promise<NextResponse> {
   const rawUrl =
     rawConfig && typeof rawConfig === "object"
       ? (rawConfig as { sourceUrl?: unknown }).sourceUrl
@@ -152,10 +167,7 @@ async function saveConfig(rawConfig: unknown): Promise<NextResponse> {
     },
   });
 
-  return NextResponse.json({
-    record: toResponseRecord(record),
-    message: "Source configuration saved.",
-  });
+  return savedAnswer(request, record, "Source configuration saved.");
 }
 
 async function getCurrentRecord() {
@@ -166,7 +178,7 @@ async function getCurrentRecord() {
   return record ? toResponseRecord(record) : null;
 }
 
-export async function GET() {
+export async function GET(request: NextRequest) {
   const guard = await requireAdmin({
     permission: { area: "content", level: "view" },
   });
@@ -174,9 +186,7 @@ export async function GET() {
     return guard.response;
   }
 
-  return NextResponse.json({
-    record: await getCurrentRecord(),
-  });
+  return connectionJson(request, { record: await getCurrentRecord() }, MOUNTAIN_CONDITIONS_READ_CONNECTION_SHAPE);
 }
 
 export async function PUT(request: NextRequest) {
@@ -187,17 +197,12 @@ export async function PUT(request: NextRequest) {
     return guard.response;
   }
 
-  let body: unknown;
-  try {
-    body = await request.json();
-  } catch {
-    return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
-  }
-
-  const rawJson =
-    body && typeof body === "object" && "rawJson" in body
-      ? String((body as { rawJson?: unknown }).rawJson ?? "")
-      : "";
+  const parsedJson = await parseJsonRequestBody(request, {
+    error: "Invalid JSON",
+  });
+  if (!parsedJson.ok) return parsedJson.response;
+  const report = mountainConditionsReportSchema.safeParse(parsedJson.body);
+  const rawJson = report.success ? report.data.rawJson : "";
 
   if (!rawJson.trim()) {
     return NextResponse.json({ error: "rawJson is required" }, { status: 400 });
@@ -239,10 +244,7 @@ export async function PUT(request: NextRequest) {
     },
   });
 
-  return NextResponse.json({
-    record: toResponseRecord(record),
-    message: "Mountain conditions saved. Auto refresh is paused for 12 hours.",
-  });
+  return savedAnswer(request, record, "Mountain conditions saved. Auto refresh is paused for 12 hours.");
 }
 
 export async function POST(request: NextRequest) {
@@ -257,13 +259,9 @@ export async function POST(request: NextRequest) {
   // parses with the supplied (unsaved) config so an admin can test a URL /
   // selector change before committing it. An empty body refreshes from the
   // stored config and persists as usual.
-  let body: unknown = null;
-  try {
-    const text = await request.text();
-    body = text ? JSON.parse(text) : null;
-  } catch {
-    return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
-  }
+  const jsonBody = await parseOptionalJsonRequestBody(request, { error: "Invalid JSON", objectOnly: true });
+  if (!jsonBody.ok) return jsonBody.response;
+  const body = jsonBody.body;
 
   const isPreview = Boolean(
     body && typeof body === "object" && (body as { preview?: unknown }).preview,
@@ -361,10 +359,7 @@ export async function POST(request: NextRequest) {
     },
   });
 
-  return NextResponse.json({
-    record: toResponseRecord(record),
-    message: "Mountain conditions refreshed from Whakapapa.",
-  });
+  return savedAnswer(request, record, "Mountain conditions refreshed from Whakapapa.");
 }
 
 export async function PATCH(request: NextRequest) {
@@ -375,25 +370,21 @@ export async function PATCH(request: NextRequest) {
     return guard.response;
   }
 
-  let body: unknown;
-  try {
-    body = await request.json();
-  } catch {
-    return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
-  }
+  const jsonBody = await parseJsonRequestBody(request, {
+    error: "Invalid JSON",
+  });
+  if (!jsonBody.ok) return jsonBody.response;
+  const update = mountainConditionsUpdateSchema.safeParse(jsonBody.body);
 
   // A `{ config }` body saves the source URL + selector overrides, which live in
   // the separate `config` column so an upstream refresh never wipes them.
-  if (body && typeof body === "object" && "config" in body) {
-    return saveConfig((body as { config?: unknown }).config);
+  if (update.success && update.data.config) {
+    return saveConfig(request, update.data.config);
   }
 
-  const rawVisibility =
-    body && typeof body === "object" && "visibility" in body
-      ? (body as { visibility?: unknown }).visibility
-      : undefined;
+  const rawVisibility = update.success ? update.data.visibility : undefined;
 
-  if (!rawVisibility || typeof rawVisibility !== "object") {
+  if (!rawVisibility) {
     return NextResponse.json(
       { error: "visibility or config object is required" },
       { status: 400 },
@@ -440,8 +431,5 @@ export async function PATCH(request: NextRequest) {
     },
   });
 
-  return NextResponse.json({
-    record: toResponseRecord(record),
-    message: "Section visibility saved.",
-  });
+  return savedAnswer(request, record, "Section visibility saved.");
 }

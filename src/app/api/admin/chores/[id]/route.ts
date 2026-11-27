@@ -1,27 +1,17 @@
 import { NextRequest, NextResponse } from "next/server"
+import { parseJsonRequestBody } from "@/lib/api-json"
 import { requireAdmin } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma"
-import { z } from "zod"
 import { createAuditLog } from "@/lib/audit"
 import { acquireLodgeCapacityLock } from "@/lib/capacity"
 import { getDefaultLodgeId } from "@/lib/lodges"
+import { choreUpdateBodySchema } from "@/lib/admin-lodge-schemas/chores-work-parties"
+import { ADMIN_CHORE_CONNECTION_SHAPE } from "@/lib/connection-shapes/lodge-chores-work-parties"
+import { ADMIN_LODGE_DONE_CONNECTION_SHAPE } from "@/lib/connection-shapes/lodge-hut-leaders"
+import { connectionJson } from "@/lib/mcp-connection-request"
 
-const updateSchema = z.object({
-  name: z.string().min(1).optional(),
-  description: z.string().optional(),
-  recommendedPeopleMin: z.number().int().min(1).optional(),
-  recommendedPeopleMax: z.number().int().min(1).optional(),
-  isEssential: z.boolean().optional(),
-  ageRestriction: z.enum(["ANY", "ADULTS_ONLY", "MIXED_PREFERRED", "ADULT_SUPERVISED"]).optional(),
-  conditionalNote: z.string().nullable().optional(),
-  minAge: z.number().int().min(0).optional(),
-  sortOrder: z.number().int().optional(),
-  timeOfDay: z.enum(["MORNING", "EVENING", "ANYTIME"]).optional(),
-  frequencyMode: z.enum(["DAILY", "EVERY_X_DAYS", "SPECIFIC_DAYS"]).optional(),
-  frequencyDays: z.number().int().min(2).nullable().optional(),
-  frequencyDaysOfWeek: z.array(z.number().int().min(1).max(7)).optional(),
-  active: z.boolean().optional(),
-})
+// The body schema lives in admin-lodge-schemas/chores-work-parties.ts so the
+// AI app action `update_chore_template` offers the same fields (ALP-722).
 
 export async function PUT(
   req: NextRequest,
@@ -32,8 +22,10 @@ export async function PUT(
   });
   if (!guard.ok) return guard.response;
   const { id } = await params
-  const body = await req.json()
-  const parsed = updateSchema.safeParse(body)
+  const jsonBody = await parseJsonRequestBody(req)
+  if (!jsonBody.ok) return jsonBody.response
+  const body = jsonBody.body
+  const parsed = choreUpdateBodySchema.safeParse(body)
   if (!parsed.success) {
     return NextResponse.json(
       { error: "Validation failed", details: parsed.error.flatten() },
@@ -106,11 +98,11 @@ export async function PUT(
     },
   })
 
-  return NextResponse.json(chore)
+  return connectionJson(req, chore, ADMIN_CHORE_CONNECTION_SHAPE)
 }
 
 export async function DELETE(
-  _req: NextRequest,
+  req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   const guard = await requireAdmin({
@@ -154,5 +146,5 @@ export async function DELETE(
     },
   })
 
-  return NextResponse.json({ success: true })
+  return connectionJson(req, { success: true }, ADMIN_LODGE_DONE_CONNECTION_SHAPE)
 }

@@ -1,14 +1,17 @@
 import { NextRequest, NextResponse } from "next/server";
-import { z } from "zod";
+import { parseJsonRequestBody } from "@/lib/api-json";
+import { xeroOperationResolveBodySchema } from "@/lib/admin-xero-sync-schemas";
 import { createAuditLog } from "@/lib/audit";
 import { prisma } from "@/lib/prisma";
+import { XERO_OPERATION_MARKED_CONNECTION_SHAPE } from "@/lib/connection-shapes/finance-xero-sync";
+import { connectionJson } from "@/lib/mcp-connection-request";
 import { requireAdmin } from "@/lib/session-guards";
 import {
   TRANSACTION_CONTENDED_STATUS_CHECK_MESSAGE,
   transactionContendedResponse,
 } from "@/lib/transaction-contended-response";
 import logger from "@/lib/logger";
-import { isResolvedInXero, XERO_OPERATION_REASON_MAX, XERO_OPERATION_REASON_MIN } from "@/lib/xero-operation-resolution";
+import { isResolvedInXero } from "@/lib/xero-operation-resolution";
 import { reconcileHandMadeNoteAfterRecording, type VerifiedHandMadeRefundNote } from "@/lib/bank-refund-void-answer";
 import {
   answerExistingResolveMark,
@@ -16,7 +19,7 @@ import {
   resolveRecordingRefundNote,
   withdrawRecordedNoteOrAlert,
 } from "@/lib/xero-resolve-refund-note";
-import { HAND_MADE_CREDIT_NOTE_NUMBER_MAX, RESOLVE_NOTE_NOT_ASKED_MESSAGE } from "@/lib/bank-refund-void-follow-up-copy";
+import { RESOLVE_NOTE_NOT_ASKED_MESSAGE } from "@/lib/bank-refund-void-follow-up-copy";
 import {
   claimResolvedInXeroMark,
   findRetryOverlappingMark,
@@ -24,14 +27,6 @@ import {
   retryRunningRefusal,
   withdrawResolvedInXeroMark,
 } from "@/lib/xero-operation-resolve-guards";
-
-const resolveSchema = z.object({
-  reason: z.string().trim().min(XERO_OPERATION_REASON_MIN).max(XERO_OPERATION_REASON_MAX),
-  // #4421: the Xero credit note the officer made, asked of a FAILED payment
-  // refund note's create that names no note of its own
-  // (`refundNoteResolveShape`). Refused for every other row (review, money F5).
-  creditNoteNumber: z.string().trim().max(HAND_MADE_CREDIT_NOTE_NUMBER_MAX).optional(),
-});
 
 export async function POST(
   request: NextRequest,
@@ -42,8 +37,9 @@ export async function POST(
   });
   if (!guard.ok) return guard.response;
   const session = guard.session;
-  const body = await request.json().catch(() => ({}));
-  const parsed = resolveSchema.safeParse(body);
+  const jsonBody = await parseJsonRequestBody(request);
+  if (!jsonBody.ok) return jsonBody.response;
+  const parsed = xeroOperationResolveBodySchema.safeParse(jsonBody.body);
   if (!parsed.success) {
     return NextResponse.json(
       { error: "Invalid resolve payload", details: parsed.error.flatten() },
@@ -93,7 +89,7 @@ export async function POST(
   };
   const answerMark = async (mark: { manuallyResolvedAt: Date; xeroObjectNumber: string | null }) => {
     const answer = await answerExistingResolveMark(id, mark, offeredNumber);
-    return "refused" in answer ? refuse(answer.refused.status, answer.refused.message) : NextResponse.json({ ok: true, message: answer.message });
+    return "refused" in answer ? refuse(answer.refused.status, answer.refused.message) : connectionJson(request, { ok: true, message: answer.message }, XERO_OPERATION_MARKED_CONNECTION_SHAPE);
   };
 
   try {
@@ -221,12 +217,12 @@ export async function POST(
       },
     });
 
-    return NextResponse.json({
+    return connectionJson(request, {
       ok: true,
       message: recordedNote
         ? `Xero operation marked resolved, recording credit note ${recordedNote.creditNoteNumber}; it will drop off the active failure list.`
         : "Xero operation marked resolved; it will drop off the active failure list.",
-    });
+    }, XERO_OPERATION_MARKED_CONNECTION_SHAPE);
   } catch (error) {
     const contended = transactionContendedResponse(
       error,

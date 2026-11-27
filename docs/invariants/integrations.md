@@ -674,9 +674,9 @@ attempt's claim. Two callers can share one row (#1354).
   outcome (`retryClaim`), lands there.
 - **A success lands on any row no claim holds,** even one resolved in Xero
   (#4374): the mark stays; a recorded object alerts officers once per
-  operation after commit (one reaching nobody retries only on another
-  success). Late notes under `INV-INT-028` and `INV-INT-034` keep out:
-  audited and alerted.
+  operation after commit, re-sent by the sweep until out (`INV-INT-042`).
+  Late notes under `INV-INT-028` and `INV-INT-034` keep out: audited and
+  alerted.
 - **A refused write leaves the row:** null; the outbox counts refused
   failures skipped. A missing row throws, or logs for a guarded caller. A
   success refused for a later claim records its links, warned.
@@ -814,7 +814,7 @@ must reach its handler with the same arguments as the payload it was queued
 with. The retry is pinned by `xero-operation-retry.test.ts` and, against a real
 database, `xero-subscription-invoice-retry.realdb.test.ts`.
 
-## Alpine Central Server API version (#49)
+## Alpine Central Server API version (triyder/AlpineClubBookingsNZ#49)
 
 ### INV-INT-027
 
@@ -946,27 +946,67 @@ or alerts.
   `readQueuedOutboxRequestFor`. It never routes on another queue type.
 - **One guarded write.** Every give-back, Retry requeue and kept-capture
   requeue writes PENDING through `returnOutboxRowToPending`. A still-queued
-  request stays (a handler's checkpoint); over an execution request the queued
-  request the dispatch claimed is laid back, keeping only stored keys that
-  leave its reading unchanged, replacing a claimed value only with an
+  request stays (a handler's checkpoint); over an execution request the
+  dispatch's claimed queued request is laid back, keeping only stored keys
+  that leave its reading unchanged, replacing a claimed value only with an
   execution record, in one compare-and-set on the stored request; with
-  neither, nothing is written, and the row fails or Retry answers 409. WAITING_PAYMENT releases flip only never-dispatched rows.
-  `xero-pending-writer-census.test.ts` names every writer.
+  neither, nothing is written: the row fails or Retry answers 409.
+- **Two more writers, on never-dispatched rows.** WAITING_PAYMENT releases,
+  and the supplementary-invoice revive (CANCELLED to PENDING), which refuses a
+  request not reading as queued for its column.
 - **Stuck rows are not sent from a guess.** The scan leaves out a PENDING row
-  whose request names no queue type (`NAMES_NO_QUEUE_TYPE`), so it never holds
-  up the rows behind it; the run counts it (`unclaimableRequest`) and the cron
-  run warns. The owner's `pnpm run xero:stuck-queued-report --release` fails
-  exactly the listed rows still as listed (`QUEUED_REQUEST_RELEASED`), keeping
-  request, response, Xero ids and keys. A refund note's Retry then bills only
-  what is still uncovered.
+  whose request names no queue type (`NAMES_NO_QUEUE_TYPE`), so nothing waits
+  behind it; the run counts it (`unclaimableRequest`) and the cron run warns.
+  The owner's `pnpm run xero:stuck-queued-report --release` fails exactly the
+  rows still as listed (`QUEUED_REQUEST_RELEASED`), keeping request, response,
+  Xero ids and keys. A refund note's Retry bills only what is still
+  uncovered.
 - **No new lock.** Each write is a status- and claim-guarded compare-and-set
-  on the row (`INV-LOCK-001`); no new key or order (`INV-LOCK-002`); no new
-  site (`INV-LOCK-003`).
+  (`INV-LOCK-001`), with no new key, order (`INV-LOCK-002`) or site
+  (`INV-LOCK-003`).
 
 Pinned by `xero-outbox-fail-fast.test.ts`, `xero-operation-retry.test.ts`,
-`xero-pending-writer-census.test.ts`, `xero-cron-runner.test.ts` and, against
-a real database, `xero-cooldown-giveback-queued-request.realdb.test.ts`,
+`xero-pending-writer-census.test.ts` (every writer), `xero-cron-runner.test.ts`
+and, on PostgreSQL, `xero-cooldown-giveback-queued-request.realdb.test.ts`,
 `xero-pending-request-transitions.realdb.test.ts`,
 `xero-stuck-queued-request.realdb.test.ts`,
 `xero-released-refund-current-cap.realdb.test.ts` and
 `xero-stale-request-recovery.realdb.test.ts`.
+
+## Once-ever admin alerts held with nothing sent (#5255)
+
+### INV-INT-042
+
+A once-ever admin alert whose claim is held with no email behind it is given
+back within 30 minutes, and the sweep never makes it go out twice (owner
+decision, 18 Nov 2026).
+
+- **The mark.** `sendAdminAlertOnceEver` claims with `awaitingSendSince` set.
+  The alert's own admin emails take the claim once (`takeOnceEverClaim`); each
+  writes its `EmailLog` row in one transaction with `confirmAlertCooldownSend`,
+  clearing the mark under the claim's stamp. Claim gone: no row, nothing sent.
+  A send whose emails recorded nothing gives the claim back.
+- **The sweep.** `once-ever-alert-sweep`, first task of the 15-minute payments
+  cycle, deletes a claim still marked after 15 minutes, only while its stamp
+  and mark stand. The row lock orders that delete against the confirm. So
+  #4696's two lost cases (both give-backs fail; the write commits after the
+  give-back) are sent by the caller's next run.
+- **Raised-once callers** use `sendReplayableAdminAlertOnceEver`, which stores
+  the alert as `once-ever-owed:<key>` first. The sweep re-sends it through the
+  same claim while none holds it, settles it once kept, and drops it with an
+  error after 7 days. `admin-alert-once.ts`'s census puts each caller in one
+  group.
+- **No new lock.** No advisory key, tier or order (`INV-LOCK-001`,
+  `INV-LOCK-002`); the `AlertCooldown` row lock serialises, registered in the
+  writer index (`INV-LOCK-003`). The confirm holds no provider call.
+- **Known limits, not owner-accepted:** an alert raised while every database
+  write fails is only logged (#5297); an email row a crash left `QUEUED` is
+  never sent (#5298); if one recipient's row write fails while another's
+  commits, the claim is kept and that recipient gets nothing, with no `FAILED`
+  row to retry.
+
+Pinned by `admin-alert-once-lost-cases.test.ts`, `admin-alert-once.test.ts`,
+`admin-alert-once-sweep.test.ts`, `admin-alert-once-replayable.test.ts`,
+`admin-alert-once-census.test.ts`, `alert-cooldown.test.ts`,
+`attempt-log-once-ever-claim.test.ts` and, against real PostgreSQL,
+`admin-alert-once-sweep.realdb.test.ts`.

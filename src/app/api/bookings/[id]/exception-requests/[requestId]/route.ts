@@ -1,15 +1,20 @@
 import { NextRequest, NextResponse } from "next/server";
-import { z } from "zod";
-
+import { parseJsonRequestBody } from "@/lib/api-json";
 import { auth } from "@/lib/auth";
 import { logAudit } from "@/lib/audit";
 import { getClientIp } from "@/lib/rate-limit";
 import { requireActiveSessionUser } from "@/lib/session-guards";
 import { cancelModificationExceptionRequest } from "@/lib/booking-exception-request-service";
 import { transactionContendedResponse } from "@/lib/transaction-contended-response";
+import { exceptionRequestWithdrawSchema } from "@/lib/booking-exception-request-schemas";
+import { WITHDRAWN_EXCEPTION_REQUEST_CONNECTION_SHAPE } from "@/lib/connection-shapes-bookings";
+import { connectionJson } from "@/lib/mcp-connection-request";
 
-const patchSchema = z.object({ action: z.literal("cancel") });
-
+/**
+ * Withdraw the member's own exception request on a booking. Also the AI app
+ * action `withdraw_booking_change_exception_request` (ALP-794): scoped to the
+ * signed-in member's own request, with no officer branch.
+ */
 export async function PATCH(
   req: NextRequest,
   { params }: { params: Promise<{ id: string; requestId: string }> },
@@ -21,13 +26,10 @@ export async function PATCH(
   const inactiveResponse = await requireActiveSessionUser(session.user.id);
   if (inactiveResponse) return inactiveResponse;
 
-  let body: unknown;
-  try {
-    body = await req.json();
-  } catch {
-    return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
-  }
-  const parsed = patchSchema.safeParse(body);
+  const jsonBody = await parseJsonRequestBody(req, { error: "Invalid JSON" });
+  if (!jsonBody.ok) return jsonBody.response;
+  const body = jsonBody.body;
+  const parsed = exceptionRequestWithdrawSchema.safeParse(body);
   if (!parsed.success) {
     return NextResponse.json(
       { error: "Only { action: \"cancel\" } is supported here" },
@@ -83,5 +85,5 @@ export async function PATCH(
     ipAddress: getClientIp(req),
   });
 
-  return NextResponse.json({ id: requestId, status: "CANCELLED" });
+  return connectionJson(req, { id: requestId, status: "CANCELLED" }, WITHDRAWN_EXCEPTION_REQUEST_CONNECTION_SHAPE);
 }

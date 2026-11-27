@@ -1,8 +1,4 @@
 import { NextResponse } from "next/server";
-import { z } from "zod";
-import {
-  MAX_BED_ALLOCATION_RANGE_NIGHTS,
-} from "@/lib/bed-allocation-date-range";
 import {
   manuallyAllocateBed,
   moveBedAllocationsSameDate,
@@ -16,43 +12,20 @@ import { parseJsonRequestBody } from "@/lib/api-json";
 import { createAuditLog } from "@/lib/audit";
 import {
   applyBedAllocationMove,
-  BED_ALLOCATION_MOVE_SCOPES,
   BedAllocationMoveError,
   type BedAllocationMoveApplyRequest,
 } from "@/lib/bed-allocation-move";
+import {
+  bedAllocationManualBodySchema,
+  bedAllocationMoveRequestSchema,
+} from "@/lib/admin-bookings-schemas/beds";
+import {
+  ADMIN_BED_ALLOCATION_CONNECTION_SHAPE,
+  ADMIN_BED_ALLOCATION_MOVE_CONNECTION_SHAPE,
+} from "@/lib/connection-shapes/bookings-beds";
+import { connectionJson } from "@/lib/mcp-connection-request";
 
 // requireAdmin() is enforced by requireBedAllocationWrite().
-const manualAllocationSchema = z
-  .object({
-    bookingGuestId: z.string().min(1),
-    bedId: z.string().min(1),
-    stayDate: z.string().min(1),
-  })
-  .strict();
-
-const moveAllocationSchema = z
-  .object({
-    allocationIds: z
-      .array(z.string().min(1))
-      .min(1)
-      .max(MAX_BED_ALLOCATION_RANGE_NIGHTS),
-    bedId: z.string().min(1),
-  })
-  .strict();
-
-const typedMoveAllocationSchema = z
-  .object({
-    anchorAllocationId: z.string().min(1),
-    destinationBedId: z.string().min(1),
-    scope: z.enum(BED_ALLOCATION_MOVE_SCOPES),
-    previewDigest: z.string().regex(/^v1:[0-9a-f]{64}$/),
-  })
-  .strict();
-
-const moveRequestSchema = z.union([
-  moveAllocationSchema,
-  typedMoveAllocationSchema,
-]);
 
 function moveErrorResponse(error: unknown) {
   if (error instanceof BedAllocationMoveError) {
@@ -70,6 +43,7 @@ function moveErrorResponse(error: unknown) {
   return bedAllocationErrorResponse(error);
 }
 
+/** Also the AI app action `allocate_guest_bed_night` (ALP-719). */
 export async function POST(request: Request) {
   const guard = await requireBedAllocationWrite();
   if (!guard.ok) return guard.response;
@@ -78,7 +52,7 @@ export async function POST(request: Request) {
     const json = await parseJsonRequestBody(request);
     if (!json.ok) return json.response;
 
-    const body = manualAllocationSchema.safeParse(json.body);
+    const body = bedAllocationManualBodySchema.safeParse(json.body);
     if (!body.success) {
       return NextResponse.json(
         { error: "Invalid input", details: body.error.flatten() },
@@ -126,12 +100,17 @@ export async function POST(request: Request) {
       });
     }
 
-    return NextResponse.json({ allocation });
+    return connectionJson(request, { allocation }, ADMIN_BED_ALLOCATION_CONNECTION_SHAPE);
   } catch (error) {
     return bedAllocationErrorResponse(error);
   }
 }
 
+/**
+ * Also the AI app action `move_bed_allocation` (ALP-719), which offers the
+ * typed, previewed move only. The older id-list move answers a connection
+ * through the same projection, so it too sends only `noop`.
+ */
 export async function PATCH(request: Request) {
   const guard = await requireBedAllocationWrite();
   if (!guard.ok) return guard.response;
@@ -140,7 +119,7 @@ export async function PATCH(request: Request) {
     const json = await parseJsonRequestBody(request);
     if (!json.ok) return json.response;
 
-    const body = moveRequestSchema.safeParse(json.body);
+    const body = bedAllocationMoveRequestSchema.safeParse(json.body);
     if (!body.success) {
       return NextResponse.json(
         { error: "Invalid input", details: body.error.flatten() },
@@ -149,11 +128,13 @@ export async function PATCH(request: Request) {
     }
 
     if ("anchorAllocationId" in body.data) {
-      return NextResponse.json(
+      return connectionJson(
+        request,
         await applyBedAllocationMove({
           request: body.data as BedAllocationMoveApplyRequest,
           actorMemberId: guard.session.user.id,
         }),
+        ADMIN_BED_ALLOCATION_MOVE_CONNECTION_SHAPE,
       );
     }
 
@@ -165,7 +146,7 @@ export async function PATCH(request: Request) {
       actorMemberId: guard.session.user.id,
     });
 
-    return NextResponse.json({
+    return connectionJson(request, {
       noop: result.noop,
       allocations: result.allocations.map((allocation) => ({
         id: allocation.id,
@@ -176,7 +157,7 @@ export async function PATCH(request: Request) {
         stayDate: formatDateOnly(allocation.stayDate),
         source: allocation.source,
       })),
-    });
+    }, ADMIN_BED_ALLOCATION_MOVE_CONNECTION_SHAPE);
   } catch (error) {
     return moveErrorResponse(error);
   }

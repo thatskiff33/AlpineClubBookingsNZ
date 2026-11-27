@@ -1,33 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
-import type { BookingStatus } from "@prisma/client";
 import {
+  bookingCalendarSequence,
   buildBookingIcs,
+  SERVABLE_BOOKING_STATUS,
   verifyBookingCalendarToken,
 } from "@/lib/calendar-links";
 import { formatDateOnly } from "@/lib/date-only";
 import { prisma } from "@/lib/prisma";
 import { applyRateLimit, rateLimiters } from "@/lib/rate-limit";
-
-// Whether each booking state still describes a stay that stands. Total over
-// BookingStatus BY CONSTRUCTION (`satisfies Record<...>`), so adding an enum
-// member without deciding its row here is a compile error rather than a
-// silently-servable default. The confirmation email is only sent past the
-// false states, so a valid emailed link only meets one after the booking was
-// later cancelled or bumped — serving those would put a stay that no longer
-// exists into someone's calendar.
-const SERVABLE_BOOKING_STATUS = {
-  DRAFT: false,
-  PENDING: true,
-  PAYMENT_PENDING: true,
-  CONFIRMED: true,
-  PAID: true,
-  BUMPED: false,
-  CANCELLED: false,
-  COMPLETED: true,
-  WAITLISTED: false,
-  WAITLIST_OFFERED: false,
-  AWAITING_REVIEW: true,
-} satisfies Record<BookingStatus, boolean>;
 
 /**
  * Sessionless .ics download for one booking's stay (fork issue #35).
@@ -98,7 +78,7 @@ export async function GET(
     lodgeName: booking.lodge.name,
     // Rises with every booking update, so a re-downloaded file REPLACES the
     // event revision a calendar already holds (RFC 5545 SEQUENCE).
-    sequence: Math.floor(booking.updatedAt.getTime() / 1000),
+    sequence: bookingCalendarSequence(booking.updatedAt),
     generatedAt: new Date(),
   });
 

@@ -23,6 +23,13 @@
  */
 
 import { formatCents } from "@/lib/utils";
+import {
+  EDIT_PRICE_CHANGED_CODE,
+  editQuotedFiguresSchema,
+  type EditQuotedFigures,
+  type LinkedQuotedFigures,
+} from "@/lib/edit-quoted-figures";
+import { EDIT_REFUND_ROUTES, editRefundDestinationPhrase, type EditRefundRoute } from "@/lib/edit-refund-route";
 import { HOSTING_COVERAGE_STATE_KEY_PATTERN } from "@/lib/hosting-coverage-override-client";
 import { isCalendarDate } from "@/lib/club-time";
 import type { ClubFormat } from "@/lib/club-format";
@@ -37,6 +44,12 @@ import type { ClubFormat } from "@/lib/club-format";
  * shape are two things that can disagree about what the server sends.
  */
 export interface HostingCoverageLinkedMoveBooking {
+  /**
+   * #5238 (`INV-MOD-062`): this booking's figures as the offer priced them,
+   * echoed on `MOVE_BOTH` so its save refuses rather than settle another amount.
+   * Absent when the move is not available, or from a server older than #5238.
+   */
+  quotedFigures?: EditQuotedFigures;
   bookingId: string;
   /** The short handle the member sees, never the raw cuid alone. */
   reference: string;
@@ -65,6 +78,8 @@ export interface HostingCoverageLinkedMoveBooking {
 }
 
 export interface HostingCoverageLinkedMovePromptData {
+  /** #5238: the primary booking's figures as the offer priced them. */
+  quotedFigures?: EditQuotedFigures;
   message: string;
   /** The key `MOVE_BOTH` must return; bound to the moves AND the money. */
   acceptStateKey: string;
@@ -77,13 +92,15 @@ export interface HostingCoverageLinkedMovePromptData {
   linkedBookings: HostingCoverageLinkedMoveBooking[];
   combinedAmountDueCents: number;
   combinedRefundCents: number;
-  /** fork #132: the freed applied credit inside `combinedRefundCents`, for the wording only. */
+  /** the 18 Nov 2026 money review on #5149: the freed applied credit inside `combinedRefundCents`, for the wording only. */
   combinedFreedCreditCents: number;
   combinedChangeFeeCents: number;
   combinedPolicyRetainedCents: number;
   combinedOrganiserRefundCents: number;
   combinedOrganiserBankTransferRefundCents: number;
   settlementMethodRequired: boolean;
+  /** #5303: where the one choice's refund goes; an older server omits it, read as the card. */
+  refundRoute: EditRefundRoute;
   settlementMethodChosen: boolean;
   bothChangeFeesCharged: boolean;
 }
@@ -101,11 +118,11 @@ export interface HostingCoverageLinkedMovePromptData {
  */
 export interface LinkedMoveMoneyFacts {
   combinedAmountDueCents: number;
-  /** Every cent coming back to the member, freed applied credit included (`combineLinkedMoveQuote`, fork #132). */
+  /** Every cent coming back to the member, freed applied credit included (`combineLinkedMoveQuote`, the 18 Nov 2026 money review on #5149). */
   combinedRefundCents: number;
   /**
    * The part of `combinedRefundCents` that is an unpaid booking's applied credit
-   * freed by a lower price (fork #132). It always returns to account credit, so it is
+   * freed by a lower price (the 18 Nov 2026 money review on #5149). It always returns to account credit, so it is
    * never part of the card-or-credit choice; the sentences below say so. Copy only:
    * the one total the member consents to stays `combinedRefundCents`.
    */
@@ -128,6 +145,8 @@ export interface LinkedMoveMoneyFacts {
   combinedOrganiserRefundCents: number;
   combinedOrganiserBankTransferRefundCents: number;
   settlementMethodRequired: boolean;
+  /** #5303: where that choice's refund goes (`LinkedMoveQuote.refundRoute`). */
+  refundRoute: EditRefundRoute;
   /**
    * True when the request that produced this quote ALREADY carried a card-or-credit
    * choice, so nobody is going to be asked anything.
@@ -136,6 +155,30 @@ export interface LinkedMoveMoneyFacts {
   bothChangeFeesCharged: boolean;
   /** How many OTHER bookings the offer would move. At least one. */
   linkedCount: number;
+}
+
+/** The combined money every linked-move offer carries: the facts above bar the count. */
+type LinkedMoveCombinedMoney = Omit<LinkedMoveMoneyFacts, "linkedCount">;
+
+/**
+ * Those facts picked off a quote, the 409 body or the prompt, in ONE place, so
+ * the offer's sentence, the body the client parses and the prompt it draws
+ * cannot drift apart over which facts they carry (`INV-SSOT-001`).
+ */
+export function linkedMoveCombinedMoney(source: LinkedMoveCombinedMoney): LinkedMoveCombinedMoney {
+  return {
+    combinedAmountDueCents: source.combinedAmountDueCents,
+    combinedRefundCents: source.combinedRefundCents,
+    combinedFreedCreditCents: source.combinedFreedCreditCents,
+    combinedChangeFeeCents: source.combinedChangeFeeCents,
+    combinedPolicyRetainedCents: source.combinedPolicyRetainedCents,
+    combinedOrganiserRefundCents: source.combinedOrganiserRefundCents,
+    combinedOrganiserBankTransferRefundCents: source.combinedOrganiserBankTransferRefundCents,
+    settlementMethodRequired: source.settlementMethodRequired,
+    refundRoute: source.refundRoute,
+    settlementMethodChosen: source.settlementMethodChosen,
+    bothChangeFeesCharged: source.bothChangeFeesCharged,
+  };
 }
 
 /** "both bookings" / "all 3 bookings" — the primary plus its dependents. */
@@ -216,7 +259,7 @@ export function formatLinkedMoveMoneySentence(
 ): string {
   const all = linkedMoveAllBookingsPhrase(facts.linkedCount);
   const parts: string[] = [];
-  // fork #132: the settlement's share (`editMoneyBackCents`) is what the card-or-credit
+  // the 18 Nov 2026 money review on #5149: the settlement's share (`editMoneyBackCents`) is what the card-or-credit
   // choice covers; freed applied credit goes back to account credit regardless.
   const settlementShareCents = facts.combinedRefundCents - facts.combinedFreedCreditCents;
   const freed =
@@ -293,7 +336,7 @@ export function formatLinkedMoveMoneySentence(
     const settledShare = facts.combinedFreedCreditCents > 0 ? "the rest" : "that";
     parts.push(
       settlementShareCents > 0
-        ? `You will be asked once whether ${settledShare} comes back to your card or as ` +
+        ? `You will be asked once whether ${settledShare} comes back ${editRefundDestinationPhrase(facts.refundRoute)} or as ` +
             `account credit; the one choice covers ` +
             // #3949: never a booking the group organiser paid for, whose refund is the organiser's.
             `${facts.combinedOrganiserRefundCents > 0 ? "every booking you paid for" : all}.`
@@ -376,7 +419,10 @@ function readBooking(value: unknown): HostingCoverageLinkedMoveBooking | null {
   ) {
     return null;
   }
+  const figures = editQuotedFiguresSchema.optional().safeParse(row.quotedFigures);
+  if (!figures.success) return null;
   return {
+    ...(figures.data ? { quotedFigures: figures.data } : {}),
     bookingId: row.bookingId,
     reference: row.reference,
     lodgeName: row.lodgeName,
@@ -416,6 +462,7 @@ export function readHostingCoverageLinkedMovePrompt(
     !isCents(record.combinedPolicyRetainedCents) ||
     !isCents(record.combinedOrganiserRefundCents ?? 0) ||
     !isCents(record.combinedOrganiserBankTransferRefundCents ?? 0) ||
+    !(record.refundRoute === undefined || EDIT_REFUND_ROUTES.includes(record.refundRoute as EditRefundRoute)) ||
     !Array.isArray(record.linkedBookings) ||
     record.linkedBookings.length === 0
   ) {
@@ -429,7 +476,11 @@ export function readHostingCoverageLinkedMovePrompt(
     linkedBookings.push(row);
   }
 
+  const primary = record.primary as { quotedFigures?: unknown } | undefined;
+  const figures = editQuotedFiguresSchema.optional().safeParse(primary?.quotedFigures);
+  if (!figures.success) return null;
   return {
+    ...(figures.data ? { quotedFigures: figures.data } : {}),
     message: record.error,
     acceptStateKey: record.acceptStateKey,
     declineStateKey: record.declineStateKey,
@@ -444,6 +495,8 @@ export function readHostingCoverageLinkedMovePrompt(
     combinedOrganiserRefundCents: (record.combinedOrganiserRefundCents as number | undefined) ?? 0,
     combinedOrganiserBankTransferRefundCents: (record.combinedOrganiserBankTransferRefundCents as number | undefined) ?? 0,
     settlementMethodRequired: record.settlementMethodRequired,
+    // #5303: a blue-green cutover's older server omits it; the card, as before.
+    refundRoute: (record.refundRoute as EditRefundRoute | undefined) ?? "CARD",
     settlementMethodChosen: record.settlementMethodChosen,
     bothChangeFeesCharged: record.bothChangeFeesCharged,
   };
@@ -470,4 +523,61 @@ export function hostingCoverageLinkedMoveAnswer(
     return { choice, acknowledged: true, stateKey: prompt.acceptStateKey };
   }
   return { choice, acknowledged: true, stateKey: prompt.declineStateKey };
+}
+
+/**
+ * #5238 (`INV-MOD-062`): the figures a `MOVE_BOTH` acceptance sends back, the
+ * primary's and every other booking's exactly as the offer priced them. Null
+ * when the offer came from a server older than #5238 and carried none: the
+ * save then sends no linked figures and the server asks for a reload rather
+ * than settle a figure the panel cannot vouch for.
+ */
+function acceptedFigures(
+  prompt: HostingCoverageLinkedMovePromptData,
+): { quotedFigures: EditQuotedFigures; linkedQuotedFigures: LinkedQuotedFigures } | null {
+  const linkedQuotedFigures: LinkedQuotedFigures = [];
+  for (const row of prompt.linkedBookings) {
+    if (!row.quotedFigures) return null;
+    linkedQuotedFigures.push({ bookingId: row.bookingId, figures: row.quotedFigures });
+  }
+  if (!prompt.quotedFigures) return null;
+  return { quotedFigures: prompt.quotedFigures, linkedQuotedFigures };
+}
+
+/**
+ * What the retry adds to the save body for the arm the member chose: the answer
+ * (`hostingCoverageLinkedMoveAnswer`) and, on `MOVE_BOTH`, every booking's
+ * figures from the offer (#5238), which replace the primary's own preview
+ * figures because the offer is what the member accepted. Nothing when the arm
+ * has no answer to give.
+ */
+export function hostingCoverageLinkedMoveAnswerFields(
+  prompt: HostingCoverageLinkedMovePromptData,
+  choice: HostingCoverageLinkedMoveChoice,
+): Record<string, unknown> {
+  const answer = hostingCoverageLinkedMoveAnswer(prompt, choice);
+  if (!answer) return {};
+  return { hostingCoverageLinkedMove: answer, ...(choice === "MOVE_BOTH" ? acceptedFigures(prompt) : null) };
+}
+
+/**
+ * The linked-move offer a refused save carries, with what to tell the member:
+ * the first offer (#3232), or a fresh one after an acceptance refused because a
+ * booking's price moved (#5238, 409 `EDIT_PRICE_CHANGED` with `linkedMove`),
+ * when nothing was saved for either booking. Null for any other refusal.
+ */
+export function readLinkedMoveRefusal(
+  data: unknown,
+): { prompt: HostingCoverageLinkedMovePromptData; priceChanged: boolean; message: string } | null {
+  const record = data && typeof data === "object" ? (data as { code?: unknown; linkedMove?: unknown }) : null;
+  const priceChanged = record?.code === EDIT_PRICE_CHANGED_CODE;
+  const prompt = readHostingCoverageLinkedMovePrompt(priceChanged ? record?.linkedMove : data);
+  if (!prompt) return null;
+  return {
+    prompt,
+    priceChanged,
+    message: priceChanged
+      ? "The price of moving both bookings changed since you accepted it, so nothing was saved. Check the new figures and choose again."
+      : "Choose whether to move both bookings or only this one, then save again.",
+  };
 }

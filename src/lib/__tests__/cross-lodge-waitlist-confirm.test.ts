@@ -768,6 +768,55 @@ describe("confirmCrossLodgeWaitlistOffer paid-up-adult requirement (#2543)", () 
     );
   });
 
+  // #5433 review A: the owed offer notice's sweep can restart the offer's
+  // window (owner decision D2) between Phase 1 and Phase 3. It writes only the
+  // deadline and `updatedAt`, so Phase 3 still claims the same offer.
+  it("still cancels the entry when only a window restart changed it since Phase 1, claiming on the restarted columns", async () => {
+    letPhase1Pass();
+    mocks.createConfirmedBooking.mockResolvedValue(createdBooking());
+    const restarted = offeredEntry({
+      updatedAt: new Date("2026-08-07T00:00:00.000Z"),
+      waitlistOfferExpiresAt: new Date(Date.now() + 2 * 86_400_000),
+    });
+    // Phase 1's read, then Phase 3's re-read under its locks.
+    mocks.bookingFindUnique.mockResolvedValueOnce(offeredEntry()).mockResolvedValueOnce(restarted);
+
+    const result = await confirmCrossLodgeWaitlistOffer("entry-1", "member-1", CLUB_FORMAT_TEST);
+
+    expect(result.success).toBe(true);
+    expect(mocks.bookingUpdateMany.mock.calls[0][0].where).toEqual(
+      expect.objectContaining({
+        id: "entry-1",
+        status: BookingStatus.WAITLIST_OFFERED,
+        updatedAt: restarted.updatedAt,
+        waitlistOfferedAt: new Date("2026-08-06T00:00:00.000Z"),
+        waitlistOfferExpiresAt: restarted.waitlistOfferExpiresAt,
+        waitlistOfferedLodgeId: "lodge-b",
+        waitlistOfferedPriceCents: 34_000,
+      }),
+    );
+    expect(mocks.logAudit).toHaveBeenCalledWith(
+      expect.objectContaining({ metadata: expect.objectContaining({ waitlistEntryCleanupCompleted: true }) }),
+    );
+  });
+
+  it("still claims on Phase 1's row when anything besides a window restart changed the entry", async () => {
+    letPhase1Pass();
+    mocks.createConfirmedBooking.mockResolvedValue(createdBooking());
+    const edited = offeredEntry({
+      updatedAt: new Date("2026-08-07T00:00:00.000Z"),
+      waitlistOfferExpiresAt: new Date(Date.now() + 2 * 86_400_000),
+      notes: "an officer's note",
+    });
+    mocks.bookingFindUnique.mockResolvedValueOnce(offeredEntry()).mockResolvedValueOnce(edited);
+    mocks.bookingUpdateMany.mockResolvedValue({ count: 0 });
+
+    await confirmCrossLodgeWaitlistOffer("entry-1", "member-1", CLUB_FORMAT_TEST);
+
+    expectOfferEpochFence(mocks.bookingUpdateMany.mock.calls[0][0].where);
+    expect(mocks.bookingUpdateMany.mock.calls[0][0].where.waitlistOfferExpiresAt).not.toEqual(edited.waitlistOfferExpiresAt);
+  });
+
   it("keeps a changed offer intact when Phase 3 loses its epoch claim", async () => {
     letPhase1Pass();
     mocks.createConfirmedBooking.mockResolvedValue(createdBooking());

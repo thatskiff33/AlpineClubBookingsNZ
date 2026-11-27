@@ -520,6 +520,13 @@ import "./xero-bt-per-refund-notes.realdb.test";
 // as a bank refund. Skipped unless RUN_CONCURRENCY_RACE_TESTS=1; it owns and
 // cleans its own `race-4312-` fixtures.
 import "./xero-bt-card-refund-notes.realdb.test";
+// #4328 reuses it to prove the booking repair tool judges a bank-transfer
+// payment's refund by all its live refund notes - canonical, a later hand-back's
+// and a card refund's, raised through the real writers against a fake Xero - with
+// no mismatch when they cover the refund, and one manual-review finding, queuing
+// nothing, when one is short. Skipped unless RUN_CONCURRENCY_RACE_TESTS=1; it
+// owns and cleans its own `race-4328-` fixtures.
+import "./xero-bt-repair-amount-mismatch.realdb.test";
 // #4098 reuses it to prove closing a subscription charge as already paid: two
 // closes at once close it once (one audit row, each voidGeneration bumped
 // once), and a manual reversal committing while the close waits for the
@@ -532,6 +539,13 @@ import "./membership-subscription-charge-close.realdb.test";
 // index that still refuses a second LIVE family charge. Skipped unless
 // RUN_CONCURRENCY_RACE_TESTS=1; it owns and cleans its own `race-4110-` fixtures.
 import "./membership-family-rebill.realdb.test";
+// #5190 reuses it to prove a club's subscription-liability opt-in moves only
+// untouched NOT_REQUIRED rows, that billing confirm, the settings save and the
+// seasonal-assignment reconcile serialise on the billing season key in both
+// orders, and that the SQL date-of-birth filter agrees with the TS rule at every
+// tier birthday. Skipped unless RUN_CONCURRENCY_RACE_TESTS=1; it owns and cleans
+// its own `race-5190-` fixtures.
+import "./subscription-liability-opt-in.realdb.test";
 // #4131 reuses it to prove the booking's own payment captured after its booking
 // was cancelled is refunded from its own charge through the real webhook
 // processor: never a fee the cancel kept on another charge, and only what a part
@@ -890,6 +904,11 @@ import "./edit-quoted-figures.realdb.test";
 // changed underneath it (no side effect, retried), and two writers forced to meet
 // at the claim. It owns and cleans its own `race-4456` credential rows.
 import "./data-encryption-key-ring.realdb.test";
+// #4988 reuses it to prove an opening-credit file posts once when two officers
+// confirm it together, queues behind a member's credit-ledger lock, and
+// reverses only while every credit in it is unspent. Skipped unless
+// RUN_CONCURRENCY_RACE_TESTS=1; it owns and cleans its own `race-4988-` fixtures.
+import "./opening-credit-batch.realdb.test";
 // #4911 reuses it to prove a paid cancel of a booking whose card capture the
 // cardholder disputes (a lost dispute) issues no card refund and no account
 // credit, by either refund method, and raises one treasurer task naming the

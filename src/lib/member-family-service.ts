@@ -2,7 +2,7 @@ import type { AgeTier } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import {
   formatMemberProfileMissingField,
-  getMemberProfileCompleteness,
+  evaluateMemberProfileCompleteness,
   type MemberProfileCompletenessInput,
   type MemberProfileCompletenessResult,
 } from "@/lib/member-profile-completeness";
@@ -583,7 +583,7 @@ export async function getMemberFamily(memberId: string): Promise<JsonRouteResult
     if (seen.has(member.id)) return;
     seen.add(member.id);
 
-    const profileStatus = getMemberProfileCompleteness(member, {
+    const profileStatus = evaluateMemberProfileCompleteness(member, {
       delegatedConfirmationValid: hasValidDelegatedConfirmation(member),
     });
     const sharedFamilyGroupIds = getFamilyGroupMemberships(member)

@@ -17,6 +17,7 @@ import { describe, expect, it } from "vitest";
 import { MEMBER_MONEY_RELATIONS } from "@/lib/member-money-tables";
 import { delegateUsesBeyondReads, productionSourceFiles } from "./support/prisma-delegate-read-scan";
 import { stripComments } from "./support/strip-comments";
+import { CENSUS_TIMEOUT_MS } from "@/test/census-timeout";
 
 const ROOT = process.cwd();
 
@@ -70,8 +71,13 @@ const READERS: Record<string, { reason: string; importOnly: boolean }> = {
     importOnly: false,
   },
   "src/lib/booking-ledger-projection-census-journal.ts": {
-    reason: "the pure JOURNAL comparison of the journal's charges with the bridged lines",
+    reason: "the pure JOURNAL comparison of the journal's charges with the bridged lines, and report v3 over its refund debts (#5185)",
     importOnly: false,
+  },
+  // #5185 (M4d): the hand-back classes join the census's integrity kinds, defined once with the refund census.
+  "src/lib/booking-ledger-projection-census.ts": {
+    reason: "the census's integrity kinds include the hand-back classes the refund census defines (a constant import)",
+    importOnly: true,
   },
   // #4915: the subject access export copies the subject's own journal lines and obligations into their file.
   "src/lib/subject-access-export-sections.ts": {
@@ -80,6 +86,11 @@ const READERS: Record<string, { reason: string; importOnly: boolean }> = {
   },
   "src/lib/subject-access-export-additional.ts": {
     reason: "the face value of the subject's own obligations for their privacy access file (read-only)",
+    importOnly: false,
+  },
+  // #5208: the GST safeguard compares the journal's planned line tax with Xero's reply.
+  "src/lib/xero-tax-override-safeguard.ts": {
+    reason: "the line tax overrides a primary invoice sent, compared with Xero's reply (a type import)",
     importOnly: false,
   },
 };
@@ -108,7 +119,7 @@ const DOORS: Record<string, string> = {
   "src/app/api/admin/refund-requests/[id]/route.ts": "R05 (with its concession) for an approved appeal; withdrawn with release_claim",
   "src/lib/manual-refund-task-resolution.ts": "R05 for an edit review's card refund",
   // #4516 (M4d): moved out of the resolution for its size budget; the same steps, called from the same transaction.
-  "src/lib/manual-refund-task-hand-back-journal.ts": "R14 for a hand-back paid by hand (and a by-hand review's R05); an allowed dismissal (a part to check, a disputed hand-back once lost) withdraws its R05, and a reduction withdraws part of it",
+  "src/lib/manual-refund-task-hand-back-journal.ts": "R14 for a hand-back paid by hand (and a by-hand review's R05); an allowed dismissal (a part to check, a disputed hand-back once lost) withdraws its R05, and a reduction withdraws part of it; a dispute-loss hand-back's reopen restores it (#5197)",
   "src/lib/late-capture-refund-approval.ts": "R05 for a treasurer-approved late capture's return",
   "src/lib/card-refund-paid-another-way-rest.ts": "R14 for a paid-another-way close, its reservations closed, a kept rest's close-out",
   "scripts/member-money-refund-reservations.ts": "dry-run-first refund census; exact reconciliation of reservations",
@@ -134,6 +145,10 @@ const DOORS: Record<string, string> = {
   "src/lib/xero-kept-late-capture-invoice.ts": "M13: a kept late capture's payment, its capture receipt",
   "src/lib/capture-receipt-senders.ts": "M13: the primary invoice's Stripe payment (raised or replayed) and a PARTIAL repair's payment, their capture receipts",
   "src/lib/xero-card-refund-reversal-invoice.ts": "M13: a failed-later refund reversal invoice's export manifest, after its operation completes",
+  // #4525 (ALP-437): the organiser's combined group invoice.
+  "src/lib/xero-group-settlement-invoices.ts": "M13: the combined group invoice's export manifest, after a kept bind, and replayed on its already-bound returns",
+  "src/lib/xero-group-settlement-invoice-voids.ts": "M13: a combined group invoice's coverage released once Xero holds it void or holds no such invoice",
+  "src/lib/payments-cron-runner.ts": "M13: the payments cycle's sweep releasing a combined invoice's coverage once its finished VOID ended it",
 };
 /**
  * M3b (#4627): the doors' callers, which resolve the posting context BEFORE
@@ -144,6 +159,9 @@ const DOORS: Record<string, string> = {
 const CONTEXT_RESOLVERS: readonly string[] = [
   // #4516: the disputed hand-back's reduction resolves the journal; its part withdrawal posts through the hand-back journal door.
   "src/lib/manual-refund-task-dispute-reduction.ts",
+  // #5197: a dispute-loss hand-back's reopen (an officer's, or a late win's) resolves the journal; its restored R05
+  // posts through the hand-back journal door.
+  "src/lib/manual-refund-task-reopen.ts",
   "src/app/api/bookings/[id]/confirm-modification-payment/route.ts",
   "src/app/api/bookings/[id]/guests/route.ts",
   "src/app/api/bookings/[id]/guests/[guestId]/route.ts",
@@ -191,8 +209,8 @@ const BOUNDARY = "src/lib/member-money/";
 const WRITER = "src/lib/member-money/internal/store.ts";
 /** The command's entry points: nothing outside the boundary calls them; M3b's doors go through `./doors`. */
 const POSTING_COMMAND = /\b(postMemberMoneyEvent|reverseMemberMoneyJournal|writeMemberMoneyBatch)\b/;
-/** M3b's door entry points (#4627), M3c's pending charge (#4628), M4's hand-back and kept capture (#4516), and M13's invoice, refund-note, capture-receipt and failed-later reversal manifests (#4525). */
-const DOOR_COMMAND = /\b(postBookingLedgerJournal|postMemberMergeTransfer|postPendingBookingJournal|postBookingReceipts|postRefundObligation|withdrawRefundObligation|reserveCardRefundSlice|postCardRefundCash|postPaidAnotherWayClose|reconcileMadeRefundReservations|releaseReservationByOperator|closeKeptCaptureReturn|postHandBackObligation|postHandBackPayment|postKeptCapture|reverseKeptCapture|planPrimaryInvoiceManifest|recordPrimaryInvoiceManifest|recordPrimaryInvoiceUpdateManifest|recordSupplementaryInvoiceManifest|recordRefundNoteManifest|recordRefundNotePaymentManifest|recordCaptureReceiptManifest|recordFailedLaterRefundReversalManifest)\b/;
+/** M3b's door entry points (#4627), M3c's pending charge (#4628), M4's hand-back and kept capture (#4516), and M13's invoice, refund-note, capture-receipt, failed-later reversal and combined group invoice manifests (#4525). */
+const DOOR_COMMAND = /\b(postBookingLedgerJournal|postMemberMergeTransfer|postPendingBookingJournal|postBookingReceipts|postRefundObligation|withdrawRefundObligation|reserveCardRefundSlice|postCardRefundCash|postPaidAnotherWayClose|reconcileMadeRefundReservations|releaseReservationByOperator|closeKeptCaptureReturn|postHandBackObligation|postHandBackPayment|postKeptCapture|reverseKeptCapture|planPrimaryInvoiceManifest|recordPrimaryInvoiceManifest|recordPrimaryInvoiceUpdateManifest|recordSupplementaryInvoiceManifest|recordRefundNoteManifest|recordRefundNotePaymentManifest|recordCaptureReceiptManifest|recordFailedLaterRefundReversalManifest|recordCombinedGroupInvoiceManifest|releaseCombinedGroupInvoiceManifest|sweepVoidedCombinedGroupInvoiceCover)\b/;
 const DELEGATE_WRITE = /\.memberMoney\w*\s*\.\s*(create|update|upsert|delete)/;
 /**
  * Every name that reaches a journal row through Prisma: each relation's
@@ -358,7 +376,7 @@ describe("member money journal writer and reader boundaries (#4513, #4627)", () 
     const callers = productionSourceFiles(ROOT).filter((file) => !file.startsWith(BOUNDARY) && command.test(readFileSync(join(ROOT, file), "utf8")));
     expect(callers, "a door calls the reservation engine directly; M4c's senders go through ./doors").toEqual([]);
     expect('reserveMemberMoneyRefund(tx, plan)').toMatch(command);
-  });
+  }, CENSUS_TIMEOUT_MS);
 
   it("admits exactly the M3b and M3c doors as posting callers (#4627, #4628)", () => {
     const callers = found.filter((file) => !file.startsWith(BOUNDARY)

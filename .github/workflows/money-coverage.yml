@@ -68,13 +68,15 @@ on:
 permissions:
   contents: read
 
-# Pull-request runs share a group per ref and cancel superseded runs. Each push
-# run gets a group of its own, keyed on ref and commit: GitHub replaces a PENDING run
-# in a shared group even without cancel-in-progress, and every push commit must
-# finish its run. Why: INV-OPS-021 (docs/invariants/operations.md, #4989).
-# Pinned by scripts/ci/main-push-runs-complete.test.ts.
+# Pull-request runs share a group per ref and cancel superseded runs. Pushes to
+# main share one group that never cancels a run in progress: GitHub keeps one
+# running and one pending run in it, so a newer merge replaces only main's
+# QUEUED run, a started run still reports, and the newest main commit always
+# gets its full set (owner decision, #5356). Pushes to epic/** keep a group per
+# commit. Why: INV-OPS-021 (docs/invariants/operations.md).
+# Pinned by scripts/ci/main-push-superseded-runs.test.ts.
 concurrency:
-  group: money-coverage-${{ github.workflow }}-${{ github.ref }}-${{ github.event_name == 'push' && github.sha || 'shared' }}
+  group: money-coverage-${{ github.workflow }}-${{ github.ref }}-${{ github.event_name == 'push' && github.ref != 'refs/heads/main' && github.sha || github.event_name }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:

@@ -3,7 +3,6 @@ import { checkLodgeAuth, kioskLodgeAuthErrorResponse, resolveKioskLodgeId } from
 import { formatDateOnly, parseDateOnly } from "@/lib/date-only";
 import { lodgeNullTolerantScope } from "@/lib/lodges";
 import { prisma } from "@/lib/prisma";
-import { dateOnlyStringSchema } from "@/lib/date-only-schema";
 
 /**
  * GET /api/lodge/roster/[date]/frequency-info
@@ -25,14 +24,8 @@ export async function GET(
       { status: authResult.status! },
     );
   }
-  if (!dateOnlyStringSchema.safeParse(dateStr).success) {
-    return NextResponse.json({ error: "Invalid date format" }, { status: 400 });
-  }
 
   const date = parseDateOnly(dateStr);
-  if (isNaN(date.getTime())) {
-    return NextResponse.json({ error: "Invalid date" }, { status: 400 });
-  }
 
   // Frequency history is per lodge: last-rostered dates only consider
   // assignments of this kiosk's lodge's chore templates.

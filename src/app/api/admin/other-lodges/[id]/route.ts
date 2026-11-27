@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
 import type { Prisma } from "@prisma/client";
-import { z } from "zod";
+import { parseJsonRequestBody } from "@/lib/api-json";
+import { routeIdParamsSchema } from "@/lib/route-id-params";
+import { otherLodgeUpdateBodySchema } from "@/lib/admin-lodge-schemas/setup";
 import {
   buildStructuredAuditLogCreateArgs,
   getAuditRequestContext,
@@ -9,12 +11,9 @@ import {
   OTHER_LODGE_DATE_FIELDS,
   OTHER_LODGE_NOT_OWNED_CODE,
   OTHER_LODGE_RATE_FIELDS,
-  amenitiesInputSchema,
   otherLodgeAmenitiesDiffer,
   otherLodgeDataColumns,
   otherLodgeDataDiffers,
-  otherLodgeDataShape,
-  otherLodgeNameSchema,
   otherLodgeSelect,
   canRenameOtherLodge,
   ownsOtherLodge,
@@ -23,45 +22,24 @@ import {
   serializeOtherLodgeForAdmin,
   visibleOtherLodgeWhere,
 } from "@/lib/other-lodges";
-import { isSafeHttpUrl, SAFE_HTTP_URL_MESSAGE } from "@/lib/http-url";
 import { FEES_FILL_PROBLEM_TEXT, syncOwnOtherLodgesFromFees } from "@/lib/other-lodge-fees-sync";
 import { seasonDatesProblem } from "@/lib/other-lodge-seasons";
 import { prisma } from "@/lib/prisma";
 import { loadServerNzSettings } from "@/lib/servernz-settings";
 import { uploadOtherClubsAfterSave } from "@/lib/servernz-upload-after-save";
 import { requireAdmin } from "@/lib/session-guards";
+import { ADMIN_OTHER_LODGE_SAVED_CONNECTION_SHAPE } from "@/lib/connection-shapes/lodge-setup";
+import { connectionJson } from "@/lib/mcp-connection-request";
 
-const paramsSchema = z.object({ id: z.string().min(1) });
+// The body schema (strict; every data column named in the shared
+// `otherLodgeDataShape`; a rename only once the row carries the central id)
+// lives in admin-lodge-schemas/setup.ts so the AI app action
+// `update_other_lodge` offers the same fields (ALP-722).
 
-// Strict: an unknown key is a 400, so every data column has to be named in the
-// shared `otherLodgeDataShape` (the one field list) to be accepted here. A key
-// left out leaves that column alone; `amenities`, when present, replaces the
-// lodge's whole set. `name` may be sent (the panel sends the whole form); a
-// DIFFERENT name renames the lodge (#64), but only once the row carries the
-// central server's id: the upload then sends that id, and the server renames
-// its lodge. Before the id is known a new name would reach the server as a
-// second lodge and strand the first (#52), so it is refused.
-const patchSchema = z
-  .object({
-    name: otherLodgeNameSchema.optional(),
-    ...otherLodgeDataShape,
-    // Stricter than the pull's: the address must be one the central server
-    // accepts (#55). A request that leaves it out leaves the stored one alone.
-    siteUrl: otherLodgeDataShape.siteUrl.refine(
-      (v) => v == null || isSafeHttpUrl(v),
-      SAFE_HTTP_URL_MESSAGE,
-    ),
-    amenities: amenitiesInputSchema.optional(),
-    // This club's own lodge only (#77): fill its rates and season dates from
-    // the Fees page. While on, rates and dates sent here are ignored.
-    ratesFromFees: z.boolean().optional(),
-  })
-  .strict();
-
-// The delete handler that lived here was removed by #52 along with create: a
+// The delete handler that lived here was removed by triyder/AlpineClubBookingsNZ#52 along with create: a
 // site changes only the lodge(s) the central server says it owns, and it never
 // removes an entry from the shared registry. A DELETE now answers 405. Nothing
-// removes a row: `./hide` (#58) hides one the server does NOT list.
+// removes a row: `./hide` (triyder/AlpineClubBookingsNZ#58) hides one the server does NOT list.
 
 export async function PATCH(
   request: Request,
@@ -73,19 +51,18 @@ export async function PATCH(
   if (!guard.ok) return guard.response;
   const session = guard.session;
 
-  const parsedParams = paramsSchema.safeParse(await params);
+  const parsedParams = routeIdParamsSchema.safeParse(await params);
   if (!parsedParams.success) {
     return NextResponse.json({ error: "Invalid lodge id" }, { status: 400 });
   }
 
-  let body: unknown;
-  try {
-    body = await request.json();
-  } catch {
-    return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
-  }
+  const jsonBody = await parseJsonRequestBody(request, {
+    error: "Invalid JSON",
+  });
+  if (!jsonBody.ok) return jsonBody.response;
+  const body = jsonBody.body;
 
-  const parsed = patchSchema.safeParse(body);
+  const parsed = otherLodgeUpdateBodySchema.safeParse(body);
   if (!parsed.success) {
     return NextResponse.json(
       { error: "Invalid input", details: parsed.error.flatten() },
@@ -93,7 +70,7 @@ export async function PATCH(
     );
   }
 
-  // A hidden lodge (#58) is kept only for the bookings that name it: not edited.
+  // A hidden lodge (triyder/AlpineClubBookingsNZ#58) is kept only for the bookings that name it: not edited.
   const existing = await prisma.otherLodge.findFirst({
     where: { id: parsedParams.data.id, ...visibleOtherLodgeWhere },
     select: otherLodgeSelect,
@@ -102,7 +79,7 @@ export async function PATCH(
     return NextResponse.json({ error: "Lodge not found" }, { status: 404 });
   }
 
-  // OWNERSHIP, enforced here and not only by hiding buttons (#52). The one rule
+  // OWNERSHIP, enforced here and not only by hiding buttons (triyder/AlpineClubBookingsNZ#52). The one rule
   // is `ownsOtherLodge` over the list the central server last sent; an unknown
   // list (never received) refuses everything, because "we have not been told"
   // is not "we own it". The `code` lets the panel show this text rather than
@@ -128,14 +105,14 @@ export async function PATCH(
       { status: 403 },
     );
   }
-  // While the switch is on (#77) the Fees page owns the rates and dates, so the
+  // While the switch is on (triyder/AlpineClubBookingsNZ#77) the Fees page owns the rates and dates, so the
   // ones the form sends (shown read-only) are dropped, not saved over them.
   const { ratesFromFees, ...input } = parsed.data;
   const fromFees = ratesFromFees ?? existing.ratesFromFees;
   if (fromFees) {
     for (const field of [...OTHER_LODGE_RATE_FIELDS, ...OTHER_LODGE_DATE_FIELDS]) delete input[field];
   }
-  // The seasons as this save would leave them (#75): the dates it sends over
+  // The seasons as this save would leave them (triyder/AlpineClubBookingsNZ#75): the dates it sends over
   // the stored ones. The central server applies the same rule to the upload.
   const stored = serializeOtherLodge(existing);
   const seasons = Object.fromEntries(
@@ -174,16 +151,20 @@ export async function PATCH(
   if (changedFields.length === 0 && !fromFees) {
     // The panel shows what it is handed, so the row goes back in the LIST shape
     // (with its `owned` flag), not the bare serializer the audit row uses.
-    return NextResponse.json({ otherLodge: serializeOtherLodgeForAdmin(existing, owned) });
+    return connectionJson(
+      request,
+      { otherLodge: serializeOtherLodgeForAdmin(existing, owned) },
+      ADMIN_OTHER_LODGE_SAVED_CONNECTION_SHAPE,
+    );
   }
-  if (changedFields.length === 0) return respondSaved(await filledFromFees(existing.id, owned, session.user.id), session.user);
+  if (changedFields.length === 0) return respondSaved(request, await filledFromFees(existing.id, owned, session.user.id), session.user);
 
   // An amenity-only edit changes no column on the lodge row, so `@updatedAt`
   // would not fire — and the central-server upload watermark is keyed on this
   // column, so the edit would never be sent. Moved explicitly.
   if (amenitiesChanged) data.updatedAt = new Date();
 
-  // A plain edit, a rename included, is one write (#69: the owned list is kept
+  // A plain edit, a rename included, is one write (triyder/AlpineClubBookingsNZ#69: the owned list is kept
   // by central id, so a rename touches nothing else). With amenities, one
   // transaction: the lodge row FIRST (its lock makes a concurrent amenity
   // replacement of the same lodge — the nightly download, an admin's Download
@@ -216,7 +197,7 @@ export async function PATCH(
       summary: "Other lodge updated",
       metadata: {
         changedFields,
-        // A local setting, so not in the serialized lodge (#77): recorded here.
+        // A local setting, so not in the serialized lodge (triyder/AlpineClubBookingsNZ#77): recorded here.
         ratesFromFees: { previous: existing.ratesFromFees, next: updated.ratesFromFees },
         previousOtherLodge: serializeOtherLodge(existing),
         newOtherLodge: serializeOtherLodge(updated),
@@ -226,16 +207,25 @@ export async function PATCH(
   );
 
   const saved = fromFees ? await filledFromFees(updated.id, owned, session.user.id) : { otherLodge: serializeOtherLodgeForAdmin(updated, owned) };
-  return respondSaved(saved, session.user);
+  return respondSaved(request, saved, session.user);
 }
 
 /** Answer a committed save, after uploading it (for an administrator who may press Upload). */
-async function respondSaved(body: { otherLodge: unknown }, user: Parameters<typeof uploadOtherClubsAfterSave>[0]) {
-  return NextResponse.json({ ...body, upload: await uploadOtherClubsAfterSave(user) });
+async function respondSaved(
+  request: Request,
+  body: { otherLodge: unknown },
+  user: Parameters<typeof uploadOtherClubsAfterSave>[0],
+) {
+  // A connection is sent no booking officer's email address or phone (ALP-722).
+  return connectionJson(
+    request,
+    { ...body, upload: await uploadOtherClubsAfterSave(user) },
+    ADMIN_OTHER_LODGE_SAVED_CONNECTION_SHAPE,
+  );
 }
 
 /**
- * Fill the lodge from the Fees page (#77; audited there), then answer with the
+ * Fill the lodge from the Fees page (triyder/AlpineClubBookingsNZ#77; audited there), then answer with the
  * row as it is now, and why it could not be filled, when it could not.
  */
 async function filledFromFees(id: string, owned: Parameters<typeof serializeOtherLodgeForAdmin>[1], actor: string) {

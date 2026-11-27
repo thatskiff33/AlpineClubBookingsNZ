@@ -68,20 +68,57 @@ export function isPostgresLockNotAvailable(
  * record, `waitlist-confirm/route.ts`, `admin/site-style/route.ts`, the
  * deletion release, the return to the waitlist, the group invoice email
  * fence (#4919) and the booking create route (#4933) all ask it. This list is
- * a sample, not the census: search for the callers. Four writers
- * keep their own set - `admin/club-time-zone/route.ts`,
- * `admin/club-format/route.ts`, `admin/ai-spend-currency/route.ts` and
- * `environment-safety-override-write.ts` - because theirs also carries
- * `P2002`: a racing first insert of a singleton row, retried as contention
- * there, which is a unique-constraint violation everywhere else.
+ * a sample, not the census: search for the callers. A few settings writers ask
+ * `isSingletonUpsertContention` below instead, because theirs also counts
+ * `P2002`.
  */
 export function isTransactionContention(error: unknown): boolean {
   const code = (error as { code?: unknown } | null)?.code;
   return code === "P2028" || code === "P2034";
 }
 
+/**
+ * `isTransactionContention` plus `P2002`, for the settings writers where a
+ * unique-constraint violation can only mean a concurrent save won a race (the
+ * create arm of a constant-id singleton upsert, or club-tax's same-date
+ * period) and the loser wrote nothing, so it is retried as contention there.
+ * Everywhere else `P2002` is a real unique-constraint violation.
+ *
+ * Whether `P2002` is safe depends on every table that transaction writes, so
+ * each caller states its own reason (or a pointer to it) directly above the
+ * call, and must stop using this if that reason stops holding. Find the callers
+ * with `git grep -n "isSingletonUpsertContention("` rather than a list here.
+ */
+export function isSingletonUpsertContention(error: unknown): boolean {
+  return (
+    isTransactionContention(error) ||
+    (error as { code?: unknown } | null)?.code === "P2002"
+  );
+}
+
+/**
+ * Any object whose `code` is `P2002`, recognised by shape rather than class, so
+ * a test double or an error that crossed a module boundary still counts.
+ *
+ * One of two spellings of the test (#5407 item 6). A site that requires
+ * Prisma's own error class asks `isPrismaKnownUniqueConstraintError` in
+ * `prisma-known-errors.ts` instead: the same code test plus the class, kept
+ * there because this module imports nothing. Moving such a site here would
+ * widen what it catches. Three sites add a condition of their own on top of
+ * the class and code (the `joinCode` collision in `group-booking.ts`, the
+ * occurrence key in `edit-financial-review.ts`, the open-slot key in
+ * `booking-exception-request-service.ts`), and the bed range assignment
+ * retries a set of codes; `prisma-p2002-census.test.ts` lists what it allows.
+ * A site that must know which constraint collided reads
+ * `describeUniqueConstraintTarget` below.
+ */
 export function isPrismaUniqueConstraintError(error: unknown) {
   return hasPrismaErrorCode(error, "P2002");
+}
+
+/** `P2025`: an `update`/`delete` whose `where` matched no row. */
+export function isPrismaRecordNotFoundError(error: unknown) {
+  return hasPrismaErrorCode(error, "P2025");
 }
 
 /**

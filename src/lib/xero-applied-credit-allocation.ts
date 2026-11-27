@@ -20,6 +20,7 @@
  * outbox worker, outside the ledger transactions.
  */
 import { CreditNote } from "xero-node";
+import { storedShortBookingId } from "@/lib/booking-reference";
 import { CreditType, Prisma } from "@prisma/client";
 import { appliedCreditSettledByCancel, unallocatedAppliedCents } from "./xero-applied-credit-ledger-state";
 import { prisma } from "./prisma";
@@ -50,6 +51,8 @@ import {
 import { bookingOwner } from "@/lib/booking-owner";
 import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
 import { resolveXeroTaxRendering } from "@/lib/xero-tax-anchors";
+import { resolveXeroCategoryLineTax } from "@/lib/xero-tax-category-mappings";
+import { OPENING_CREDITS_MAPPING_KEY } from "@/lib/xero-account-mapping-keys";
 import { xeroDocumentDateForClubToday } from "@/lib/xero-provider-dates";
 import logger from "@/lib/logger";
 import { getClubFormat } from "@/lib/club-format-settings";
@@ -112,6 +115,72 @@ async function existingRemainderNoteId(paymentId: string): Promise<string | null
 // ---------------------------------------------------------------------------
 
 /**
+ * The coded shares of a remainder note and the tax its lines carry. Reads
+ * only: the account mappings, the booking's tax treatment and, for an Exempt
+ * share, the club's Exempt mapping checked against Xero's rates.
+ *
+ * THE EXEMPT LINE (#4988; owner, 17 Nov 2026). A spent opening credit coded to
+ * the club's mapped Opening Credits account is in the Exempt tax category
+ * (`codeMintLine`). Its tax field comes from `resolveXeroCategoryLineTax`, the
+ * one resolver (#5209, `INV-CONFIG-008`): the club's mapped Exempt rate while a
+ * registered period applies, no tax type otherwise. A registered club whose
+ * Exempt category Xero cannot carry gets `XeroTaxCategoryUnavailableError` from
+ * here, and there is no fallback code. Every caller runs this BEFORE its first
+ * provider write, so nothing reaches Xero for an operation that must wait.
+ *
+ * With no Exempt share the resolver is not asked, so a club that has not mapped
+ * Opening Credits reads exactly what it read before.
+ */
+async function resolveMintLines(bookingId: string, mintGroups: readonly PlannedMintGroup[]) {
+  // Resolve each destination once; `mintLineItems` merges shares whose coding is
+  // identical, which is what makes an unset `goodwillWriteOffs` a no-op.
+  const codings = [];
+  for (const group of mintGroups) {
+    // A failed read of the Opening Credits mapping must not look like "unset":
+    // the share would go out on the refund account under the income code. It
+    // fails the operation instead, before any provider write.
+    const mapping = await getResolvedAccountMappingWithFallback(group.mappingKey, prisma, {
+      throwOnReadError: group.mappingKey === OPENING_CREDITS_MAPPING_KEY,
+    });
+    codings.push(codeMintLine(mapping, group.amountCents));
+  }
+  // #4632: the note settles the booking's invoice, so it carries the booking's treatment.
+  const anchor = { kind: "booking", bookingId } as const;
+  const taxRendering = await resolveXeroTaxRendering(anchor);
+  const exemptLineTax = codings.some((coding) => coding.taxCategory === "EXEMPT")
+    ? await resolveXeroCategoryLineTax(anchor, "EXEMPT")
+    : undefined;
+  return { codings, taxRendering, exemptLineTax };
+}
+
+/**
+ * What must hold before the operation's FIRST provider write for a plan that
+ * mints. Either refusal leaves Xero untouched and the operation waiting.
+ *
+ * A grant queued at approval is not minted again, even before its note id
+ * lands (`assertMintSlicesWaitForAdminGrantNotes`, #4431).
+ *
+ * #4988: the Exempt line's tax is asked for here, not only at the mint.
+ * Without this a booking that also spends a credit holding its own floating
+ * note would allocate that note, then stop at the mint, and sit part-allocated
+ * for as long as the Exempt category stays unavailable. Asked only when an
+ * opening-credit share is planned and its note is not minted yet, so every
+ * other operation reads nothing extra and a retry that already holds its note
+ * is never stopped here.
+ */
+async function assertMintMayProceed(
+  bookingId: string,
+  paymentId: string,
+  mintSlices: Parameters<typeof planMintGroups>[0] & Parameters<typeof assertMintSlicesWaitForAdminGrantNotes>[0],
+): Promise<void> {
+  await assertMintSlicesWaitForAdminGrantNotes(mintSlices);
+  const mintGroups = planMintGroups(mintSlices);
+  if (!mintGroups.some((group) => group.mappingKey === OPENING_CREDITS_MAPPING_KEY)) return;
+  if (await existingRemainderNoteId(paymentId)) return;
+  await resolveMintLines(bookingId, mintGroups);
+}
+
+/**
  * Mint a fresh ACCRECCREDIT note for the noteless remainder. Idempotent: reuses
  * an existing `APPLIED_CREDIT_REMAINDER_NOTE` link for the payment. Returns the
  * note id.
@@ -171,23 +240,18 @@ async function mintAppliedCreditRemainderNote(params: {
     return existingLink.xeroObjectId;
   }
 
-  const { xero, tenantId } = await getAuthenticatedXeroClient();
-  const contactId = await findOrCreateXeroContact(memberId, { createdByMemberId });
-
-  // Resolve each destination once; `mintLineItems` merges shares whose coding is
-  // identical, which is what makes an unset `goodwillWriteOffs` a no-op.
-  const codings = [];
-  for (const group of mintGroups) {
-    const mapping = await getResolvedAccountMappingWithFallback(group.mappingKey);
-    codings.push(codeMintLine(mapping, group.amountCents));
-  }
-  // #4632: the note settles the booking's invoice, so it carries the booking's treatment.
-  const taxRendering = await resolveXeroTaxRendering({ kind: "booking", bookingId });
+  // Before the contact lookup, which can create a Xero contact: a line whose
+  // tax Xero cannot carry is refused with nothing written (#4988).
+  const { codings, taxRendering, exemptLineTax } = await resolveMintLines(bookingId, mintGroups);
   const lineItems = mintLineItems(
     codings,
-    `Account credit applied to booking ${bookingId.slice(0, 8)}`,
+    `Account credit applied to booking ${storedShortBookingId(bookingId)}`,
     taxRendering,
+    exemptLineTax,
   );
+
+  const { xero, tenantId } = await getAuthenticatedXeroClient();
+  const contactId = await findOrCreateXeroContact(memberId, { createdByMemberId });
 
   // Club calendar day: the note's date decides its GST period, and the UTC day
   // is still yesterday all New Zealand morning (INV-DATE-019, #2834). Read once,
@@ -200,7 +264,7 @@ async function mintAppliedCreditRemainderNote(params: {
     date: remainderNoteDate,
     lineAmountTypes: taxRendering.lineAmountTypes,
     lineItems,
-    reference: `Applied credit - Booking ${bookingId.slice(0, 8)}`,
+    reference: `Applied credit - Booking ${storedShortBookingId(bookingId)}`,
     status: CreditNote.StatusEnum.AUTHORISED,
   });
 
@@ -437,8 +501,8 @@ export async function allocateAppliedCreditForBooking(
     return;
   }
 
-  // A grant queued at approval is not minted again, even before its note id lands.
-  await assertMintSlicesWaitForAdminGrantNotes(plan.mintSlices);
+  // A queued grant note (#4431), or an Exempt line Xero cannot carry (#4988), stops the operation here, whole.
+  await assertMintMayProceed(bookingId, payment.id, plan.mintSlices);
 
   // 2) Allocate each existing floating note against the invoice (idempotent per
   // join row via its completion link).

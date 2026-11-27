@@ -222,16 +222,31 @@ member is told the club will arrange their refund.
    the member by bank while the dispute was open and it was then lost, they have
    had that money twice and the app cannot record your payment: take it to the
    treasurer. In rare cases Stripe turns a
-   lost dispute into a "late win" and returns the money to the club; the app
-   sends Finance a "Lost card payment dispute now won" alert but does not yet
-   reopen the task itself (#5197 will), so reopen the dismissed task (the
-   recently dismissed list offers it for 30 days; after that, take it to the
-   treasurer) and pay the member. A booking change's refund dismissed for a
-   lost dispute after its booking was cancelled cannot be reopened in the app
-   yet: the treasurer handles it by hand until #5197 ships. A late win after a
-   reduction is the same limit: the reduction stays, so take the restored
-   amount to the treasurer.
-   A task dismissed before this change can still be reopened.
+   lost dispute into a "late win" and returns the money to the club (#5197).
+   The app then puts every task dismissed for that loss back on the queue,
+   with the member's refund owed again, and sends Finance a "Lost card payment
+   dispute now won" alert naming each one: pay them as usual. If another lost
+   dispute still covers part of a reopened task, the alert says so: reduce it
+   again before paying. A task the app could not reopen (the booking was busy, for
+   example) is named with the reason: reopen it here (the recently dismissed
+   list offers it for 30 days; after that, take it to the treasurer). A
+   booking change's refund dismissed before its booking was cancelled is named
+   as counted by the cancellation, whose own refund already includes it. A
+   reduction made for the loss stays as it is: the alert names the amount now
+   owed again, so pay the member that by bank transfer with the rest and take
+   it to the treasurer to record. A booking change's refund dismissed for a
+   lost dispute after its booking was cancelled can be reopened like any other,
+   if it was dismissed after this change. An earlier dismissal did not record
+   whether the booking was already cancelled, so the alert names it as not
+   reopened, to check by hand: the app cannot tell whether the cancellation's
+   refund included it, and reopening it here is refused for the same reason.
+   Like the lost-dispute allocation itself, a
+   late win counts a refund task dismissed for another reason by older code as
+   dismissed for the loss, so it may reopen it: take such a task to the
+   treasurer.
+   A task dismissed before these dismissal rules (#4516) can still be
+   reopened, except the older booking change's refund above, which is
+   refused as above.
 
 **The same task for a booking change (#3827).** When a member or an officer
 changes a booking that was paid by internet banking or in cash, and the change
@@ -249,6 +264,12 @@ One kind of card payment is treated like a bank payment here (#5212): a booking
 recorded as paid by card that Stripe holds no record of, so there is nothing
 for a card refund to be made against. A change that lowers its price raises the
 same task and sends the same email, and no card refund is promised or tried.
+The edit screen's price summary offers that refund as **Refund by bank
+transfer**, as it does for an Internet Banking booking, never as a refund to
+the original card (#5303). So does the **Return method** choice when moving a
+linked booking, and the offer's own sentence about where the money goes; where
+that one choice covers a card booking and a bank-transfer booking, it names
+both.
 For now, **Mark paid back** is refused on most of these tasks, because the
 payment has no card charge on record for the refund to be recorded against.
 
@@ -810,7 +831,7 @@ against the hand-back you recorded, and recover the difference if there is one.
 Neither email can be switched off.
 
 There is no **View booking** link on these rows. A deleted booking's page opens only
-for a Full Admin, and a cancelled booking's page needs Bookings access that a
+for a Full Admin (its owner and guests see only a note that it was removed), and a cancelled booking's page needs Bookings access that a
 Finance Viewer does not have, so the booking's identifier is printed as text for you
 to quote instead of a link that would not work for you.
 

@@ -1,15 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { hasActiveHutLeaderAssignment } from "@/lib/hut-leader";
+import { parseJsonRequestBody } from "@/lib/api-json";
 import {
   addSignOff,
   canSignOff,
   getInductionById,
+  inductionSignerContext,
   InductionError,
-  type SignerContext,
 } from "@/lib/induction";
 import logger from "@/lib/logger";
-import { hasAccessRole, hasAdminAccess } from "@/lib/access-roles";
 import { prisma } from "@/lib/prisma";
 import { requireActiveSession } from "@/lib/session-guards";
 
@@ -30,12 +29,9 @@ export async function POST(
   if (!guard.ok) return guard.response;
   const { id } = await params;
 
-  let body: unknown;
-  try {
-    body = await req.json();
-  } catch {
-    return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
-  }
+  const jsonBody = await parseJsonRequestBody(req, { error: "Invalid JSON" });
+  if (!jsonBody.ok) return jsonBody.response;
+  const body = jsonBody.body;
 
   const parsed = signOffSchema.safeParse(body);
   if (!parsed.success) {
@@ -46,13 +42,7 @@ export async function POST(
   }
 
   const memberId = guard.session.user.id;
-  const ctx: SignerContext = {
-    memberId,
-    isAdmin: hasAdminAccess(guard.session.user),
-    isHutLeader:
-      hasAccessRole(guard.session.user, "USER") &&
-      (await hasActiveHutLeaderAssignment(memberId)),
-  };
+  const ctx = await inductionSignerContext(req, guard.session.user);
 
   const induction = await getInductionById(id);
   if (!induction) {

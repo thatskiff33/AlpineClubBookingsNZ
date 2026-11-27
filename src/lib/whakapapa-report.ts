@@ -10,12 +10,6 @@ export interface WhakapapaFacilityItem {
   status: string;
 }
 
-/**
- * @deprecated Retained as an alias for {@link WhakapapaFacilityItem}. The
- * Whakapapa report now groups items into Facilities, Food & Drink, and Lifts.
- */
-export type WhakapapaChairlift = WhakapapaFacilityItem;
-
 export interface WhakapapaCondition {
   name: string;
   temperature: string;
@@ -77,6 +71,11 @@ export function emptyWhakapapaSectionVisibility(): WhakapapaSectionVisibility {
     trails: true,
   };
 }
+
+/** The widget's sections: the keys of `WhakapapaSectionVisibility`, from its one default. */
+export const WHAKAPAPA_SECTION_KEYS = Object.keys(
+  emptyWhakapapaSectionVisibility(),
+) as Array<keyof WhakapapaSectionVisibility>;
 
 export function coerceWhakapapaSectionVisibility(
   value: unknown,

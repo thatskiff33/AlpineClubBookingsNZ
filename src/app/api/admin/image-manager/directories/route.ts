@@ -1,4 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
+import type { ZodError } from "zod";
+import { parseJsonRequestBody } from "@/lib/api-json";
 import { requireAdmin } from "@/lib/session-guards";
 import { revalidatePublicSite } from "@/lib/public-content-revalidation";
 import fs from "fs/promises";
@@ -12,23 +14,19 @@ import {
   resolveAlbumPathInImagesRoot,
   storageUnavailableMessage,
 } from "@/lib/image-storage";
+import {
+  imageManagerCreateFolderSchema,
+  imageManagerDeleteFolderSchema,
+  imageManagerRenameFolderSchema,
+} from "@/lib/admin-content-api/images";
+import { connectionJson } from "@/lib/mcp-connection-request";
+import {
+  IMAGE_CHANGE_DONE_CONNECTION_SHAPE,
+  IMAGE_FOLDERS_CONNECTION_SHAPE,
+} from "@/lib/connection-shapes/content-images";
 
-/**
- * Read one string field from a parsed JSON body, or "" when it is missing or not
- * a string. Extracted in #2841: five call sites below repeated the same
- * seven-line narrowing, and that repetition is what put this file over its size
- * budget once the path-containment reasoning was written down. `trim` is
- * per-field on purpose — a directory name is trimmed, a path is not.
- */
-function readStringField(
-  body: unknown,
-  field: string,
-  options: { trim?: boolean } = {},
-): string {
-  if (body === null || typeof body !== "object" || !(field in body)) return "";
-  const value = (body as Record<string, unknown>)[field];
-  if (typeof value !== "string") return "";
-  return options.trim ? value.trim() : value;
+function invalidInput(error: ZodError) {
+  return NextResponse.json({ error: "Invalid input", details: error.flatten() }, { status: 400 });
 }
 
 async function collectDirs(absDir: string, relBase: string): Promise<string[]> {
@@ -54,7 +52,7 @@ async function collectDirs(absDir: string, relBase: string): Promise<string[]> {
 }
 
 // GET /api/admin/image-manager/directories – list all directories
-export async function GET() {
+export async function GET(request: NextRequest) {
   const guard = await requireAdmin({
     permission: { area: "content", level: "view" },
   });
@@ -62,7 +60,7 @@ export async function GET() {
 
   await ensureImagesRootForRead();
   const dirs = await collectDirs(IMAGES_ROOT, "");
-  return NextResponse.json({ directories: ["", ...dirs] });
+  return connectionJson(request, { directories: ["", ...dirs] }, IMAGE_FOLDERS_CONNECTION_SHAPE);
 }
 
 // POST /api/admin/image-manager/directories – create a new directory
@@ -72,15 +70,13 @@ export async function POST(request: NextRequest) {
   });
   if (!guard.ok) return guard.response;
 
-  let body: unknown;
-  try {
-    body = await request.json();
-  } catch {
-    return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
-  }
-
-  const name = readStringField(body, "name", { trim: true });
-  const parent = readStringField(body, "parent");
+  const bodyResult = await parseJsonRequestBody(request, {
+    error: "Invalid JSON",
+  });
+  if (!bodyResult.ok) return bodyResult.response;
+  const parsed = imageManagerCreateFolderSchema.safeParse(bodyResult.body);
+  if (!parsed.success) return invalidInput(parsed.error);
+  const { name, parent } = parsed.data;
 
   if (!isSafeDirectoryName(name)) {
     return NextResponse.json(
@@ -118,7 +114,7 @@ export async function POST(request: NextRequest) {
     // recursive delete changes what a `{{photo-gallery:<dir>}}` token resolves to
     // just as much as an upload does.
     revalidatePublicSite();
-    return NextResponse.json({ ok: true });
+    return connectionJson(request, { ok: true }, IMAGE_CHANGE_DONE_CONNECTION_SHAPE);
   } catch (err) {
     const e = err as NodeJS.ErrnoException;
     if (e.code === "EEXIST") {
@@ -157,15 +153,13 @@ export async function PATCH(request: NextRequest) {
   });
   if (!guard.ok) return guard.response;
 
-  let body: unknown;
-  try {
-    body = await request.json();
-  } catch {
-    return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
-  }
-
-  const rel = readStringField(body, "path");
-  const newName = readStringField(body, "newName", { trim: true });
+  const parsedJson = await parseJsonRequestBody(request, {
+    error: "Invalid JSON",
+  });
+  if (!parsedJson.ok) return parsedJson.response;
+  const parsed = imageManagerRenameFolderSchema.safeParse(parsedJson.body);
+  if (!parsed.success) return invalidInput(parsed.error);
+  const { path: rel, newName } = parsed.data;
 
   if (!rel) {
     return NextResponse.json(
@@ -200,7 +194,7 @@ export async function PATCH(request: NextRequest) {
   try {
     await fs.rename(oldAbs, newAbs);
     revalidatePublicSite();
-    return NextResponse.json({ ok: true });
+    return connectionJson(request, { ok: true }, IMAGE_CHANGE_DONE_CONNECTION_SHAPE);
   } catch {
     return NextResponse.json(
       { error: "Failed to rename directory" },
@@ -216,14 +210,13 @@ export async function DELETE(request: NextRequest) {
   });
   if (!guard.ok) return guard.response;
 
-  let body: unknown;
-  try {
-    body = await request.json();
-  } catch {
-    return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
-  }
-
-  const rel = readStringField(body, "path");
+  const jsonBody = await parseJsonRequestBody(request, {
+    error: "Invalid JSON",
+  });
+  if (!jsonBody.ok) return jsonBody.response;
+  const parsed = imageManagerDeleteFolderSchema.safeParse(jsonBody.body);
+  if (!parsed.success) return invalidInput(parsed.error);
+  const { path: rel } = parsed.data;
 
   if (!rel) {
     return NextResponse.json(
@@ -240,7 +233,7 @@ export async function DELETE(request: NextRequest) {
   try {
     await fs.rm(absPath, { recursive: true });
     revalidatePublicSite();
-    return NextResponse.json({ ok: true });
+    return connectionJson(request, { ok: true }, IMAGE_CHANGE_DONE_CONNECTION_SHAPE);
   } catch {
     return NextResponse.json(
       { error: "Failed to delete directory" },

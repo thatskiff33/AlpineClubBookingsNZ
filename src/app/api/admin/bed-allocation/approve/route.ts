@@ -1,5 +1,4 @@
 import { NextResponse } from "next/server";
-import { z } from "zod";
 import {
   approveBedAllocations,
 } from "@/lib/bed-allocation-approval";
@@ -14,36 +13,15 @@ import { parseJsonRequestBody } from "@/lib/api-json";
 import { prisma } from "@/lib/prisma";
 import { resolveOptionalActiveLodgeId } from "@/lib/lodges";
 import { clubTime } from "@/lib/club-time/server";
+import { bedAllocationApproveBodySchema } from "@/lib/admin-bookings-schemas/beds";
+import { ADMIN_BED_ALLOCATION_APPROVE_CONNECTION_SHAPE } from "@/lib/connection-shapes/bookings-beds";
+import { connectionJson } from "@/lib/mcp-connection-request";
 
 // requireAdmin() is enforced by requireBedAllocationWrite().
-/*
-  #2887 (owner decision 7): approve must name its lodge. Always.
+// #2887 (owner decision 7): approve must name its lodge, always. The reason
+// sits with the schema in `admin-bookings-schemas/beds.ts`.
 
-  This was the last board mutation with no server-side lodge refusal — its
-  sibling `auto-allocate` already required one. Omitting `lodgeId` made the
-  service lock EVERY lodge plus the global key and approve across all of them.
-
-  I first required it only for the broad `from`/`to` sweep, reasoning that
-  `allocationIds` and `bookingId` have already enumerated the rows they touch
-  so a lodge adds no authorization safety. That reasoning is correct and it is
-  also beside the point: absent a lodge the service still takes every lodge's
-  key plus the global one, so ANY `bookings:edit` admin could stop the whole
-  club's booking and allocation writers with a hand-made body naming two row
-  ids. Contention, not authorization, is what makes it required — and it costs
-  callers nothing, because every caller already sends it.
-*/
-const approveSchema = z
-  .object({
-    allocationIds: z.array(z.string().min(1)).max(250).optional(),
-    from: z.string().optional(),
-    to: z.string().optional(),
-    // One booking's draft rows; sufficient without either broader selector.
-    bookingId: z.string().min(1).optional(),
-    // Board lodge scope. Required — see above.
-    lodgeId: z.string().min(1),
-  })
-  .strict();
-
+/** Also the AI app action `approve_bed_allocations` (ALP-719). */
 export async function POST(request: Request) {
   const guard = await requireBedAllocationWrite();
   if (!guard.ok) return guard.response;
@@ -52,7 +30,7 @@ export async function POST(request: Request) {
     const json = await parseJsonRequestBody(request);
     if (!json.ok) return json.response;
 
-    const body = approveSchema.safeParse(json.body);
+    const body = bedAllocationApproveBodySchema.safeParse(json.body);
     if (!body.success) {
       return NextResponse.json(
         { error: "Invalid input", details: body.error.flatten() },
@@ -94,7 +72,11 @@ export async function POST(request: Request) {
       lodgeId,
     });
 
-    return NextResponse.json({ approvedCount: result.count });
+    return connectionJson(
+      request,
+      { approvedCount: result.count },
+      ADMIN_BED_ALLOCATION_APPROVE_CONNECTION_SHAPE,
+    );
   } catch (error) {
     return bedAllocationErrorResponse(error);
   }

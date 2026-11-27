@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 /**
- * Fork #121: the food-order email to the food officer.
+ * Fork triyder/AlpineClubBookingsNZ#121: the food-order email to the food officer.
  *
  * It goes to the ONE configured address, lists every item with its quantity
  * (in the HTML and in the `itemsText` an override renders from), escapes what

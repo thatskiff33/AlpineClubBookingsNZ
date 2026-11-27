@@ -3,6 +3,7 @@ import path from "path";
 import { describe, expect, it } from "vitest";
 import { blankLiterals } from "./support/strip-comments";
 import { balancedBrackets } from "./support/balanced-brackets";
+import { CENSUS_TIMEOUT_MS } from "@/test/census-timeout";
 
 // #2130 guard (same shape as club-module-settings-select-guard.test.ts): every
 // read AND write of XeroItemCodeMapping and AgeTierSetting must name its
@@ -10,7 +11,10 @@ import { balancedBrackets } from "./support/balanced-brackets";
 // findUnique/findFirst/findMany/create/update/upsert makes Prisma name EVERY
 // scalar column in the SELECT or in a write's implicit RETURNING, so a
 // draining old colour issuing that SQL after a column drop gets Postgres 42703
-// ("column ... does not exist").
+// ("column ... does not exist"). A select does NOT reach an INSERT's column
+// list, which still names every column with a static default, so it never makes
+// a drop safe on its own: that takes the field's `@ignore` in the release
+// before (INV-OPS-005).
 //
 // ORIGINAL RATIONALE, NOW SPENT: this guard was added by the #2130 STEP 1.5
 // runtime-prep release to protect three specific doomed columns —
@@ -24,8 +28,8 @@ import { balancedBrackets } from "./support/balanced-brackets";
 // selects are the house rule for both models and this is the only thing that
 // enforces it repo-wide; (2) these two tables are the standing legacy-column
 // surface — E4/E8 alone left three doomed columns on them, and the next
-// contraction will want exactly this guard already in place rather than
-// reintroduced under time pressure; (3) it is a cheap read-only static scan
+// contraction will want this guard for reads and RETURNING already in place
+// (its INSERTs still need the `@ignore`, INV-OPS-005); (3) it is a cheap read-only static scan
 // with no runtime or fixture cost. Deleting it would silently re-permit a bare
 // findMany, which is the precise regression the #2130 two-step existed to
 // prevent.
@@ -137,5 +141,5 @@ describe("doomed-column models are read and written with an explicit select", ()
     // vacuously forever.
     expect(scanned.length).toBeGreaterThan(0);
     expect(offenders).toEqual([]);
-  });
+  }, CENSUS_TIMEOUT_MS);
 });

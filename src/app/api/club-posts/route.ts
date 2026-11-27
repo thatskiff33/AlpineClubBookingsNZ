@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 
+import { parseJsonRequestBody } from "@/lib/api-json";
 import { logAudit } from "@/lib/audit";
 import {
   CLUB_POST_PAGE_SIZE,
@@ -14,6 +15,15 @@ import { isServerNzConfigured } from "@/lib/servernz-config";
 import { prisma } from "@/lib/prisma";
 import { applyMemberScopedRateLimit, rateLimiters } from "@/lib/rate-limit";
 import { requireActiveSession } from "@/lib/session-guards";
+import {
+  clubPostConnectionCreateSchema,
+  clubPostListQuerySchema,
+} from "@/lib/club-post-schema";
+import {
+  CLUB_POST_CREATED_CONNECTION_SHAPE,
+  CLUB_POST_PAGE_CONNECTION_SHAPE,
+} from "@/lib/connection-shapes-lodge-life";
+import { arrivesAsMcpConnection, connectionJson } from "@/lib/mcp-connection-request";
 
 /**
  * The club message board's member door (#2994, epic #2992).
@@ -28,6 +38,12 @@ import { requireActiveSession } from "@/lib/session-guards";
  * but a module gate that lived only in middleware shipped bypassed once already
  * on a sibling route (#2780 security review), so both methods re-check the flag
  * directly. `loadEffectiveModuleFlags` fails closed on a read error.
+ *
+ * Both methods are also AI app actions (ALP-796): `list_message_board_posts`
+ * and `post_to_message_board`. A connection reads each post's plain text
+ * without the author's member id or the rich body, and posts plain text only:
+ * no pictures and never shared with other clubs
+ * (`clubPostConnectionCreateSchema`).
  */
 
 const MODULE_OFF = () =>
@@ -46,8 +62,18 @@ export async function GET(request: NextRequest) {
   const memberId = gate.session.user.id;
 
   const url = new URL(request.url);
-  const beforeRaw = url.searchParams.get("before");
-  const beforeId = url.searchParams.get("beforeId") ?? undefined;
+  const query = clubPostListQuerySchema.safeParse({
+    before: url.searchParams.get("before") ?? undefined,
+    beforeId: url.searchParams.get("beforeId") ?? undefined,
+  });
+  if (!query.success) {
+    return NextResponse.json(
+      { error: "That page marker is not one this board gave out." },
+      { status: 400 },
+    );
+  }
+  const beforeRaw = query.data.before;
+  const beforeId = query.data.beforeId || undefined;
 
   let before: Date | undefined;
   if (beforeRaw) {
@@ -76,7 +102,7 @@ export async function GET(request: NextRequest) {
     take: CLUB_POST_PAGE_SIZE,
   });
 
-  return NextResponse.json(page);
+  return connectionJson(request, page, CLUB_POST_PAGE_CONNECTION_SHAPE);
 }
 
 export async function POST(request: NextRequest) {
@@ -93,12 +119,22 @@ export async function POST(request: NextRequest) {
   );
   if (limited) return limited;
 
-  let body: unknown;
-  try {
-    body = await request.json();
-  } catch {
+  const jsonBody = await parseJsonRequestBody(request, {
+    error: "That post could not be read.",
+  });
+  if (!jsonBody.ok) return jsonBody.response;
+  const body = jsonBody.body;
+
+  // A connection posts plain text, never pictures and never to other clubs.
+  if (
+    arrivesAsMcpConnection(request) &&
+    !clubPostConnectionCreateSchema.safeParse(body).success
+  ) {
     return NextResponse.json(
-      { error: "That post could not be read." },
+      {
+        error:
+          "An AI app may post plain text only (`content`), not pictures or formatting, and never shared with other clubs.",
+      },
       { status: 400 },
     );
   }
@@ -170,7 +206,12 @@ export async function POST(request: NextRequest) {
       details: `Posted ${stored.length} characters to the club message board.`,
     });
 
-    return NextResponse.json({ id: post.id }, { status: 201 });
+    return connectionJson(
+      request,
+      { id: post.id },
+      CLUB_POST_CREATED_CONNECTION_SHAPE,
+      { status: 201 },
+    );
   } catch (error) {
     if (error instanceof ClubPostValidationError) {
       return NextResponse.json({ error: error.message }, { status: 400 });

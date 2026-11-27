@@ -7,7 +7,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({ floor: vi.fn(), rows: vi.fn(), cap: vi.fn(), warn: vi.fn(), notify: vi.fn() }));
 vi.mock("@/lib/prisma", () => ({ prisma: {} }));
 vi.mock("@/lib/xero-inbound/credit-note-bank-transfer-floor", () => ({ bankTransferFloorCents: mocks.floor }));
-vi.mock("@/lib/organiser-child-refund", () => ({ capOrganiserChildMirrorAtStripeRefunds: mocks.cap }));
+vi.mock("@/lib/organiser-child-refund", () => ({ capCardRefundedTotalAtStripeRefunds: mocks.cap }));
 vi.mock("@/lib/logger", () => ({ default: { warn: mocks.warn, info: vi.fn(), error: vi.fn(), debug: vi.fn() } }));
 vi.mock("@/lib/xero-error-alert", () => ({ notifyXeroSyncError: mocks.notify }));
 // The status rule is the real one (`refundedTotalStatus`), reading the payment's rows on the caller's client.
@@ -38,6 +38,8 @@ function decide(decidedCents: number, overrides: Record<string, unknown> = {}, o
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // Stripe backs whatever is proposed unless a case says otherwise.
+  mocks.cap.mockImplementation(async (_store: unknown, _payment: unknown, proposedCents: number) => proposedCents);
   mocks.floor.mockImplementation(async (_store: unknown, input: { xeroDerivedCents: number }) => ({ cents: input.xeroDerivedCents, alert: null }));
   // A captured receipt: a total falling to nothing returns the payment to SUCCEEDED.
   mocks.rows.mockResolvedValue([{ ...pendingPrimary[0], status: "SUCCEEDED" }]);
@@ -103,10 +105,13 @@ describe("decideXeroRefundedColumns (#4449)", () => {
       await expect(decide(8_000, { ...card, amountCents: 30_000, refundedAmountCents: 5_000, status: "PARTIALLY_REFUNDED" })).resolves.toMatchObject({ refundedAmountCents: 8_000, cardFloorAlert: null });
     });
 
-    it("#3653: an organiser child's mirror is capped at Stripe's refunds after the floor", async () => {
+    it("MUTATION (#3653, #4444): any card total is capped at Stripe's refunds after the floor; a bank transfer is not", async () => {
       mocks.cap.mockResolvedValue(3_000);
-      await expect(decide(8_000, { ...card, amountCents: 30_000, refundedAmountCents: 1_000, status: "PARTIALLY_REFUNDED" }, true)).resolves.toMatchObject({ refundedAmountCents: 3_000 });
+      await expect(decide(8_000, { ...card, amountCents: 30_000, refundedAmountCents: 1_000, status: "PARTIALLY_REFUNDED" })).resolves.toMatchObject({ refundedAmountCents: 3_000 });
       expect(mocks.cap).toHaveBeenCalledWith(store, expect.objectContaining({ id: "pay-1" }), 8_000);
+      mocks.cap.mockClear();
+      await expect(decide(8_000)).resolves.toMatchObject({ refundedAmountCents: 8_000 });
+      expect(mocks.cap).not.toHaveBeenCalled();
     });
 
     it("the floor's alert, sent by the writer, names the payment, both figures and #1353", async () => {

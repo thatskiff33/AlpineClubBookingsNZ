@@ -5,7 +5,8 @@ import { adminHref } from "@/lib/admin-hubs";
 
 import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useSearchParams } from "next/navigation";
+import { useAdminListUrlSync } from "@/hooks/use-admin-list-url-sync";
 import { DiagnosticsRecordButton } from "@/components/help-widget/diagnostics-record-button";
 import { Badge } from "@/components/ui/badge";
 import { toast } from "sonner";
@@ -128,7 +129,6 @@ export function BookingApprovalsPanel({
    * data through `ClubTimeProvider` and is never read from the viewer's clock.
    */
   const clubTime = useClubTime();
-  const router = useRouter();
   const searchParams = useSearchParams();
   const initialFilter = searchParams.get(BOOKING_REQUESTS_STATUS_PARAM);
   const focusedBookingId = searchParams.get("bookingId");
@@ -210,9 +210,7 @@ export function BookingApprovalsPanel({
     fetchBookings();
   }, [fetchBookings]);
 
-  useEffect(() => {
-    router.replace(currentPath, { scroll: false });
-  }, [currentPath, router]);
+  useAdminListUrlSync(currentPath);
 
   function showActionError(message: string) {
     setError(message);

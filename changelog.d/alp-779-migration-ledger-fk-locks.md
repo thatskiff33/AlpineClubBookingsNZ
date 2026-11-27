@@ -1,0 +1,2 @@
+- **The migration safety ledger now states the right lock for a new foreign key (#5353).**
+  Nine rows of `docs/BLUE_GREEN_MIGRATION_SAFETY.tsv` said adding a foreign key takes only a light `ROW SHARE` lock on the table it points to. It actually takes `SHARE ROW EXCLUSIVE` there, so writes to that table (for example `Member` or `Lodge`) wait until the migration commits; reads do not. The rows are corrected; no migration changed. `INV-CAP-040` now also lists `booking-import-plan-decisions.test.ts` among the tests that prove it.

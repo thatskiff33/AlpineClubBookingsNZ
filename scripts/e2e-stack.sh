@@ -58,8 +58,10 @@ HOST_DATABASE_URL="postgresql://tac:${DB_PASSWORD}@localhost:${STAGING_POSTGRES_
 # Same view, exported for the Playwright process (#2420). The pre-setup project
 # has to put the stack into a state no admin API can reach: `saveClubTheme()`
 # deliberately never clears `ClubTheme.completedAt`, so setup can be completed
-# through the app but never un-completed. Only the `pre-setup` project uses it,
-# and it restores the row afterwards; every other spec drives the app over HTTP.
+# through the app but never un-completed. The `pre-setup` project uses it and
+# restores the row afterwards; the two-factor fixtures and the seeded
+# membership-application resets (e2e/helpers/membership-application-reset.ts)
+# use it for state no admin route can reach. Everything else drives the app over HTTP.
 export E2E_DATABASE_URL="$HOST_DATABASE_URL"
 
 # Heap ceiling for `next build` when `prepare` builds the app image (#5164).
@@ -130,8 +132,9 @@ prepare() {
   DATABASE_URL="$HOST_DATABASE_URL" pnpm exec tsx --conditions=react-server e2e/setup/seed-stripe-credentials.ts
 
   # Multi-lodge project only (E2E_MULTI_LODGE=1): provision a second active
-  # lodge and enable the multiLodge module. Skipped by default, so the default
-  # single-lodge suite is seeded byte-identically.
+  # lodge. Multi-lodge is core (ADR-005), so there is no module to enable.
+  # Skipped by default, so the default single-lodge suite is seeded
+  # byte-identically.
   if [[ "${E2E_MULTI_LODGE:-}" == "1" ]]; then
     echo "==> Provisioning second lodge (E2E_MULTI_LODGE=1)"
     DATABASE_URL="$HOST_DATABASE_URL" pnpm exec tsx --conditions=react-server e2e/setup/seed-second-lodge.ts

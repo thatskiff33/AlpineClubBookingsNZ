@@ -1,29 +1,28 @@
 import { NextRequest, NextResponse } from "next/server"
+import { parseJsonRequestBody } from "@/lib/api-json"
 import { revalidatePublicPageContent } from "@/lib/public-content-revalidation"
 import { requireAdmin } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma"
 import { z } from "zod"
 import { logAudit } from "@/lib/audit"
 import { parseDateOnly } from "@/lib/date-only"
-import { dateOnlyStringSchema } from "@/lib/date-only-schema"
+import {
+  adminPolicyLodgeQuerySchema,
+  minimumStayCreateBodySchema,
+} from "@/lib/admin-bookings-schemas/setup"
+import {
+  ADMIN_MINIMUM_STAY_POLICY_CONNECTION_SHAPE,
+  ADMIN_MINIMUM_STAY_POLICY_LIST_CONNECTION_SHAPE,
+} from "@/lib/connection-shapes/bookings-setup"
+import { connectionJson, connectionListJson } from "@/lib/mcp-connection-request"
 import {
   DUPLICATE_MINIMUM_STAY_POLICY_NAME_MESSAGE,
   lockMinimumStayPolicySet,
 } from "@/lib/minimum-stay-policy-set"
 
-const createSchema = z.object({
-  name: z.string().min(1).max(200),
-  startDate: dateOnlyStringSchema,
-  endDate: dateOnlyStringSchema,
-  triggerDays: z.array(z.number().int().min(0).max(6)).min(1, "At least one trigger day is required"),
-  minimumNights: z.number().int().min(2, "Minimum nights must be at least 2"),
-  capacityMode: z.enum(["HOLD", "NO_HOLD"]),
-  active: z.boolean().optional(),
-  // Per-lodge override partition (ADR-001 resolved question 3). Omitted =
-  // club-wide (null lodgeId). Any rows for a lodge REPLACE the club-wide
-  // set at runtime for that lodge.
-  lodgeId: z.string().min(1).optional(),
-})
+// The schemas live in admin-bookings-schemas/setup.ts so the AI app actions
+// `list_minimum_stay_policies` and `create_minimum_stay_policy` offer the same
+// fields (ALP-719).
 
 function canonicalTriggerDays(days: number[]): number[] {
   return [...new Set(days)].sort((a, b) => a - b)
@@ -36,13 +35,20 @@ export async function GET(request: NextRequest) {
   if (!guard.ok) return guard.response;
   // Exact partition, not null-tolerant: null rows are the club-wide rules
   // and a lodge's rows are its override set (replace, never merge).
-  const lodgeId = request.nextUrl.searchParams.get("lodgeId")
+  // A string or nothing always parses; the 400 is only a backstop.
+  const query = adminPolicyLodgeQuerySchema.safeParse({
+    lodgeId: request.nextUrl.searchParams.get("lodgeId") ?? undefined,
+  })
+  if (!query.success) {
+    return NextResponse.json({ error: query.error.issues[0]?.message }, { status: 400 })
+  }
   const policies = await prisma.minimumStayPolicy.findMany({
-    where: { lodgeId: lodgeId ?? null },
+    where: { lodgeId: query.data.lodgeId ?? null },
     orderBy: { startDate: "desc" },
   })
 
-  return NextResponse.json(policies)
+  // The browser keeps the bare array; a connection gets it under `policies`.
+  return connectionListJson(request, policies, "policies", ADMIN_MINIMUM_STAY_POLICY_LIST_CONNECTION_SHAPE)
 }
 
 export async function POST(request: NextRequest) {
@@ -51,9 +57,11 @@ export async function POST(request: NextRequest) {
   });
   if (!guard.ok) return guard.response;
   const session = guard.session;
+  const jsonBody = await parseJsonRequestBody(request);
+  if (!jsonBody.ok) return jsonBody.response;
   try {
-    const body = await request.json()
-    const data = createSchema.parse(body)
+    const body = jsonBody.body
+    const data = minimumStayCreateBodySchema.parse(body)
 
     const startDate = parseDateOnly(data.startDate)
     const endDate = parseDateOnly(data.endDate)
@@ -117,7 +125,7 @@ export async function POST(request: NextRequest) {
     })
 
     revalidatePublicPageContent()
-    return NextResponse.json(policy, { status: 201 })
+    return connectionJson(request, policy, ADMIN_MINIMUM_STAY_POLICY_CONNECTION_SHAPE, { status: 201 })
   } catch (error) {
     if (error instanceof DuplicatePolicyNameError) {
       return NextResponse.json(

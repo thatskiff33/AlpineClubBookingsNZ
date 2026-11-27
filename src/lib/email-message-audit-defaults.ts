@@ -3,6 +3,7 @@
 import { BOOKING_URL_TEMPLATE_NAMES } from "@/lib/booking-email-template-contract";
 
 import { adminHref } from "@/lib/admin-hubs";
+import { BOOKING_CONFIRMATION_UNSENT_NOTE } from "@/lib/booking-confirmation-unsent-note";
 
 const EMAIL_AUDIT_DEFAULTS_BASE = {
   "password-reset": {
@@ -47,7 +48,7 @@ const EMAIL_AUDIT_DEFAULTS_BASE = {
   },
   "booking-bumped": {
     "defaultSubject": "Booking Update - {{CLUB_LODGE_NAME}}",
-    "defaultBody": "Booking Update\n\nHi {{firstName}}, unfortunately your pending lodge booking has been bumped due to member demand.\n\nCheck-in: {{checkIn}}\nCheck-out: {{checkOut}}\nGuests: {{guestCount}}\n\nYour card has not been charged.\n\nAs a non-member booking, priority is given to club members when the lodge reaches capacity. You're welcome to rebook for different dates where availability exists.\n\n{{rebookLabel}}: {{BASE_URL}}{{rebookPath}}\n\nIf you have any questions, contact the club at {{SUPPORT_EMAIL}}.\n\nWe apologise for the inconvenience."
+    "defaultBody": "Booking Update\n\nHi {{firstName}}, unfortunately your pending lodge booking has been bumped due to member demand.\n\nCheck-in: {{checkIn}}\nCheck-out: {{checkOut}}\nGuests: {{guestCount}}\n\nYour card has not been charged.\n\n{{calendarRemovalNote}}\n\nAs a non-member booking, priority is given to club members when the lodge reaches capacity. You're welcome to rebook for different dates where availability exists.\n\n{{rebookLabel}}: {{BASE_URL}}{{rebookPath}}\n\nIf you have any questions, contact the club at {{SUPPORT_EMAIL}}.\n\nWe apologise for the inconvenience."
   },
   "booking-guests-cancelled": {
     "defaultSubject": "Booking Cancelled - {{CLUB_LODGE_NAME}}",
@@ -55,7 +56,7 @@ const EMAIL_AUDIT_DEFAULTS_BASE = {
   },
   "booking-cancelled": {
     "defaultSubject": "Booking Cancelled - {{CLUB_LODGE_NAME}}",
-    "defaultBody": "Booking Cancelled\n\nHi {{firstName}}, your lodge booking has been cancelled.\n\nCheck-in: {{checkIn}}\nCheck-out: {{checkOut}}\n\n{{refundMessage}}\n\n{{creditRestoredMessage}}\n\nYou can make a new booking at any time from your account.\n\nMake a New Booking: {{BASE_URL}}/book"
+    "defaultBody": "Booking Cancelled\n\nHi {{firstName}}, your lodge booking has been cancelled.\n\nCheck-in: {{checkIn}}\nCheck-out: {{checkOut}}\n\n{{refundMessage}}\n\n{{creditRestoredMessage}}\n\n{{calendarRemovalNote}}\n\nYou can make a new booking at any time from your account.\n\nMake a New Booking: {{BASE_URL}}/book"
   },
   "booking-policy-exception-approved": {
     "defaultSubject": "Your Request Was Approved - {{CLUB_LODGE_NAME}}",
@@ -63,7 +64,7 @@ const EMAIL_AUDIT_DEFAULTS_BASE = {
   },
   "booking-modified": {
     "defaultSubject": "Booking Modified - {{CLUB_LODGE_NAME}}",
-    "defaultBody": "Booking Modified\n\nHi {{firstName}}, your booking has been updated.\n\n{{modificationTypeLabel}}\n\n{{changeSummary}}\n{{paymentNote}}\n\nYou can view your updated booking details from your account.\n\nView Booking: {{BASE_URL}}/bookings"
+    "defaultBody": "Booking Modified\n\nHi {{firstName}}, your booking has been updated.\n\n{{modificationTypeLabel}}\n\n{{changeSummary}}\n{{paymentNote}}\n\n{{calendarUpdateNote}}\n\nYou can view your updated booking details from your account.\n\nView Booking: {{BASE_URL}}/bookings"
   },
   "checkin-reminder": {
     "defaultSubject": "Check-in Reminder - {{CLUB_LODGE_NAME}}",
@@ -111,15 +112,25 @@ const EMAIL_AUDIT_DEFAULTS_BASE = {
   },
   "waitlist-offer-expired": {
     "defaultSubject": "Waitlist Offer Expired - {{CLUB_LODGE_NAME}}",
-    "defaultBody": "Waitlist Offer Expired\n\nHi {{firstName}}, your waitlist offer for the dates below has expired.\n\nCheck-in: {{checkIn}}\nCheck-out: {{checkOut}}\nNew Position: #{{position}}\n\nYou've been returned to the waitlist. We'll notify you again if another spot opens up.\n\nView Booking: {{BASE_URL}}/bookings"
+    "defaultBody": "Waitlist Offer Expired\n\nHi {{firstName}}, your waitlist offer for the dates below has expired.\n\nCheck-in: {{checkIn}}\nCheck-out: {{checkOut}}\nYour Position: #{{position}}\n\nA place that is not taken up is offered to the next person on the waitlist, so this one may go to someone behind you. You keep your place in the queue, and we'll email you again if a place opens up for you.\n\nView Booking: {{BASE_URL}}/bookings"
   },
   "waitlist-place-restored": {
     "defaultSubject": "Your Waitlist Place Is Back - {{CLUB_LODGE_NAME}}",
-    "defaultBody": "Your Waitlist Place Is Back\n\nHi {{firstName}}, your booking for the dates below could not be finished, so we have put you back on the waitlist. This was not something you did wrong, and your offer did not run out — you confirmed in time and our system could not complete it.\n\nCheck-in: {{checkIn}}\nCheck-out: {{checkOut}}\nNew Position: #{{position}}\n\nYou do not need to do anything. We will email you again as soon as a spot opens up for these nights.\n\nView Booking: {{BASE_URL}}/bookings"
+    "defaultBody": "Your Waitlist Place Is Back\n\nHi {{firstName}}, your booking for the dates below could not be finished, so we have put you back on the waitlist. This was not something you did wrong, and your offer did not run out — you confirmed in time and our system could not complete it.\n\nCheck-in: {{checkIn}}\nCheck-out: {{checkOut}}\nYour Position: #{{position}}\n\nYou do not need to do anything. We will email you again as soon as a spot opens up for these nights.\n\nView Booking: {{BASE_URL}}/bookings"
   },
   "admin-waitlist-offer": {
     "defaultSubject": "Waitlist Offer: {{memberName}}",
-    "defaultBody": "Waitlist Offer Made\n\nA waitlist offer has been sent to {{memberName}}.\n\nMember: {{memberName}}\nCheck-in: {{checkIn}}\nCheck-out: {{checkOut}}\nGuests: {{guestCount}}\nQueue Position: #{{position}}\n\nThe member has 48 hours to confirm their booking.\n\nView Waitlist: {{BASE_URL}}" + adminHref("waitlist")
+    "defaultBody": "Waitlist Offer Made\n\n{{offerNote}}\n\nMember: {{memberName}}\nCheck-in: {{checkIn}}\nCheck-out: {{checkOut}}\nGuests: {{guestCount}}\nQueue Position: #{{position}}\n\nThe member has until {{expiresAt}} to confirm their booking.\n\nView Waitlist: {{BASE_URL}}" + adminHref("waitlist")
+  },
+  // #5433: a waitlist email owed to a member passed its cut-off unsent.
+  "admin-waitlist-notice-unsent": {
+    "defaultSubject": "Waitlist email not sent: {{memberName}}",
+    "defaultBody": "Waitlist Email Not Sent\n\n{{noticeNote}}\n\nMember: {{memberName}}\nBooking: {{bookingReference}}\nCheck-in: {{checkIn}}\nCheck-out: {{checkOut}}\n\nOpen Booking: {{bookingUrl}}"
+  },
+  // #5433 (owner decision D1): a paid booking's confirmation did not reach its owner.
+  "admin-booking-confirmation-unsent": {
+    "defaultSubject": "Booking confirmation not sent: {{memberName}}",
+    "defaultBody": "Booking Confirmation Not Sent\n\n" + BOOKING_CONFIRMATION_UNSENT_NOTE + "\n\nOwner: {{memberName}}\nBooking: {{bookingReference}}\nCheck-in: {{checkIn}}\nCheck-out: {{checkOut}}\n\nOpen Booking: {{bookingUrl}}"
   },
   "nomination-request": {
     "defaultSubject": "Nomination request for {{applicantName}} — {{CLUB_NAME}}",
@@ -401,8 +412,8 @@ const EMAIL_AUDIT_DEFAULTS_BASE = {
     "defaultBody": "Pending Bookings Approaching Deadline\n\n{{count}} pending booking(s) will reach their hold deadline within 48 hours.\n\nMember | Dates | Guests | Deadline | Remaining\n{{memberName}} | {{checkIn}} – {{checkOut}} | {{guestCount}} | {{deadline}} | {{hoursRemaining}}h\n...\n\nView Bookings: {{BASE_URL}}" + adminHref("bookings")
   },
   "admin-booking-bumped": {
-    "defaultSubject": "Booking Bumped: {{bumpedMemberName}}",
-    "defaultBody": "Booking Bumped\n\nA pending booking has been bumped due to a member booking.\n\nBumped Member: {{bumpedMemberName}}\nCheck-in: {{checkIn}}\nCheck-out: {{checkOut}}\nGuests: {{guestCount}}\nTriggered By: {{triggeringMemberName}}\n\nView Bookings: {{BASE_URL}}" + adminHref("bookings")
+    "defaultSubject": "Booking Bumped: {{bumpedMemberName}}, {{checkIn}} to {{checkOut}} ({{bookingReference}})",
+    "defaultBody": "Booking Bumped\n\nA pending booking was released at its hold deadline because there was no longer room for its party.\n\nBumped Member: {{bumpedMemberName}}\nBooking: {{bookingReference}}\nCheck-in: {{checkIn}}\nCheck-out: {{checkOut}}\nGuests: {{guestCount}}\nReason: {{reason}}\n\nView Bookings: {{BASE_URL}}" + adminHref("bookings")
   },
   "admin-capacity-warning": {
     "defaultSubject": "Capacity Warning: {{count}} high-occupancy day{{s}} ahead",

@@ -1,5 +1,4 @@
 import { NextRequest, NextResponse } from "next/server";
-import { z } from "zod";
 import { auth } from "@/lib/auth";
 import { requireActiveSessionUser } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma";
@@ -7,10 +6,10 @@ import { applyRateLimit, rateLimiters } from "@/lib/rate-limit";
 import { logAudit } from "@/lib/audit";
 import logger from "@/lib/logger";
 import { sendAdminFamilyGroupRequestAlert, sendJoinRequestConfirmationEmail } from "@/lib/email";
-
-const requestJoinSchema = z.object({
-  targetEmail: z.string().email("Invalid email address"),
-});
+import { parseJsonRequestBody } from "@/lib/api-json";
+import { familyJoinRequestSchema } from "@/lib/family-group-request-schemas";
+import { connectionJson } from "@/lib/mcp-connection-request";
+import { FAMILY_REQUEST_SUBMITTED_CONNECTION_SHAPE } from "@/lib/connection-shapes";
 
 /**
  * POST /api/members/family/request-join
@@ -30,14 +29,11 @@ export async function POST(req: NextRequest) {
   const rateLimited = await applyRateLimit(rateLimiters.familyGroupJoinRequest, req);
   if (rateLimited) return rateLimited;
 
-  let body: unknown;
-  try {
-    body = await req.json();
-  } catch {
-    return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
-  }
+  const jsonBody = await parseJsonRequestBody(req, { error: "Invalid JSON" });
+  if (!jsonBody.ok) return jsonBody.response;
+  const body = jsonBody.body;
 
-  const parsed = requestJoinSchema.safeParse(body);
+  const parsed = familyJoinRequestSchema.safeParse(body);
   if (!parsed.success) {
     return NextResponse.json(
       { error: "Validation failed", details: parsed.error.flatten().fieldErrors },
@@ -217,11 +213,14 @@ export async function POST(req: NextRequest) {
     logger.error({ err, requestId: joinRequest.id }, "Failed to send admin family group request alert");
   });
 
-  return NextResponse.json(
+  // Also the AI app action `request_to_join_family_group` (ALP-795).
+  return connectionJson(
+    req,
     {
       message: "Join request submitted. An admin will review your request.",
       requestId: joinRequest.id,
     },
+    FAMILY_REQUEST_SUBMITTED_CONNECTION_SHAPE,
     { status: 201 }
   );
 }

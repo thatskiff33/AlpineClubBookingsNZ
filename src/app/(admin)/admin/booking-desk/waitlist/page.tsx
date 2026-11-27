@@ -58,7 +58,7 @@ import {
 const PAGE_SIZE_OPTIONS = [10, 25, 50, 100] as const;
 
 interface OfferEmailDelivery {
-  status: "QUEUED" | "SENT" | "FAILED" | "BOUNCED" | "SKIPPED_NO_EMAILS" | "MISSING";
+  status: "QUEUED" | "SENT" | "FAILED" | "BOUNCED" | "SKIPPED_NO_EMAILS" | "SKIPPED_NON_PRODUCTION" | "MISSING";
   emailLogId: string | null;
   attempts: number | null;
   lastAttemptAt: string | null;
@@ -73,6 +73,7 @@ interface OfferEmailDelivery {
     | "suppressed"
     // #2258: silenced AND still holding a live offer — an operator must act.
     | "suppressed_live_offer"
+    | "withheld_non_production" // #5433: held back, this is not the live site
     | "missing";
   needsOperatorAction: boolean;
 }
@@ -170,13 +171,12 @@ function getWaitlistActionContext(clubTime: BoundClubTime, entry: WaitlistEntry)
 
   // #2258: a silenced entry is deliberately excluded from offers, so it will sit
   // here indefinitely. Say so plainly — otherwise it reads as an ordinary entry
-  // waiting its turn, and an officer wonders why it is never offered. It still
-  // occupies its place in the queue and still counts toward the position shown
-  // to the members behind it (see docs/DOMAIN_INVARIANTS.md).
+  // waiting its turn, and an officer wonders why it is never offered. While
+  // silenced it shows no position and is not counted in the positions of the
+  // members behind it; clearing the switch puts it back in its original place
+  // (owner decision, 22 Nov 2026, #5402; `INV-LOCKOUT-060`).
   if (entry.noEmails) {
-    return entry.waitlistPosition
-      ? `Position #${entry.waitlistPosition} — silenced, will not be offered`
-      : "Silenced — will not be offered while emails are off";
+    return "Silenced — will not be offered while emails are off";
   }
 
   if (entry.waitlistPosition) {
@@ -202,11 +202,14 @@ function getOfferEmailSummary(delivery: OfferEmailDelivery) {
       return "Offer email withheld (No emails)";
     case "suppressed_live_offer":
       return "Offer live but emails are off — member not told";
+    case "withheld_non_production":
+      return "Offer email held back (not the live site)";
     case "missing":
       return "Offer email log missing";
   }
 }
 
+const withheldOfferNextStep = (delivery: OfferEmailDelivery) => delivery.status === "MISSING" ? "Open the booking — turning emails back on lets a still-owed offer email go; otherwise contact the member directly or retract the offer" : "Open the booking — turning emails back on will not send the withheld offer email; contact the member directly or retract the offer";
 function getOfferEmailBadgeClass(delivery: OfferEmailDelivery) {
   if (delivery.needsOperatorAction) {
     return "bg-danger-muted text-danger";
@@ -218,7 +221,7 @@ function getOfferEmailBadgeClass(delivery: OfferEmailDelivery) {
 
   // #2258: deliberate silence is neither a success nor a problem — render it
   // neutral so it never reads as "the member was told".
-  if (delivery.retryState === "suppressed") {
+  if (delivery.retryState === "suppressed" || delivery.retryState === "withheld_non_production") {
     return "bg-muted text-muted-foreground";
   }
 
@@ -946,7 +949,7 @@ export default function AdminWaitlistPage() {
                           "suppressed_live_offer" ? (
                             // #2258: nothing failed to deliver, so email
                             // recovery is the wrong place to send an officer.
-                            // The fix is on the booking itself.
+                            // #5433: a withheld email is never sent later; no row yet can still go.
                             <Link
                               href={buildHrefWithReturnTo(
                                 buildBookingDetailPath(entry.id),
@@ -954,8 +957,7 @@ export default function AdminWaitlistPage() {
                               )}
                               className="block text-xs text-primary hover:underline"
                             >
-                              Open the booking — turn emails back on or retract
-                              the offer
+                              {withheldOfferNextStep(entry.offerEmailDelivery)}
                             </Link>
                           ) : (
                             <Link

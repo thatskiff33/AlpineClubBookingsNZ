@@ -18,7 +18,7 @@ import {
   resolveBookingEmailGate,
   type EmailBookingContext,
 } from "@/lib/booking-email-suppression";
-import { isPlaceholderContactEmail } from "@/lib/placeholder-contact-email";
+import { canReceiveEmail } from "@/lib/placeholder-contact-email";
 import { resolveBookingEmailLink } from "@/lib/booking-email-authority";
 import {
   finalizeBookingEmailHtml,
@@ -246,6 +246,7 @@ export async function sendEmail({
   idempotencyKey,
   deferDelivery,
   onAttemptLogged,
+  onceEverClaim,
 }: {
   to: string;
   subject: string;
@@ -266,6 +267,7 @@ export async function sendEmail({
   bookingContext: EmailBookingContext;
   // This attempt's EmailLog id once written, which a throw cannot return (#4669).
   onAttemptLogged?: (emailLogId: string) => void;
+  onceEverClaim?: Parameters<typeof recordEmailAttempt>[0]["onceEverClaim"]; // #5255: an admin alert's claim, confirmed by its row
 } & (
   // Stable business-event identity makes logging mandatory before delivery;
   // the EmailLog primary key serializes concurrent re-drives. Deferred mail
@@ -322,11 +324,11 @@ export async function sendEmail({
   // thrown, because nearly every booking send is an un-awaited `.catch(log)`.
   // `.invalid` is a walk-in placeholder owner (#1935), stored so `Member.email`
   // stays non-nullable; that skip ignores any per-booking notify choice.
-  if (normalizedRecipient === "") {
-    logger.warn({ templateName, bookingContext }, "Skipped email with no recipient address (#3369)");
-    return { status: "skipped_no_recipient", emailLogId: null, reason: "no_recipient" };
-  }
-  if (isPlaceholderContactEmail(normalizedRecipient)) {
+  if (!canReceiveEmail(normalizedRecipient)) {
+    if (normalizedRecipient === "") {
+      logger.warn({ templateName, bookingContext }, "Skipped email with no recipient address (#3369)");
+      return { status: "skipped_no_recipient", emailLogId: null, reason: "no_recipient" };
+    }
     logger.info({ templateName }, "Skipped email to walk-in placeholder recipient");
     return { status: "skipped_placeholder_recipient", emailLogId: null, reason: "placeholder_recipient" };
   }
@@ -353,6 +355,7 @@ export async function sendEmail({
     hasAttachments: Boolean(attachments?.length),
     idempotencyKey,
     deferDelivery,
+    onceEverClaim,
   });
   if (recorded.kind === "already_recorded") {
     return { status: "already_recorded", emailLogId: recorded.emailLogId };
@@ -610,48 +613,26 @@ export async function sendEmail({
 
 /**
  * N-08: Check notification preferences before sending a member email.
- * Maps template categories to preference fields.
- * Admin alerts bypass preferences entirely.
+ * Only the two member emails with an opt-out ask here: the check-in reminder
+ * and the chore roster. Both preferences default on, so a member with no
+ * preference record is sent the email. The bulk categories (club notices,
+ * newsletter) are decided by `bulk-audience.ts` (INV-PRIV-026), and admin
+ * alerts bypass preferences entirely.
  */
-const CATEGORY_TO_PREFERENCE: Record<
-  string,
-  keyof Omit<
-    import("@prisma/client").NotificationPreference,
-    "id" | "memberId" | "createdAt" | "updatedAt"
-  >
-> = {
-  bookingConfirmation: "bookingConfirmation",
-  bookingReminder: "bookingReminder",
-  bookingBumped: "bookingBumped",
-  bookingCancelled: "bookingCancelled",
-  choreRoster: "choreRoster",
-  bookingWaitlist: "bookingWaitlist",
-  clubNotices: "clubNotices",
-  marketingEmails: "marketingEmails",
-};
+type MemberEmailPreferenceCategory = "bookingReminder" | "choreRoster";
 
-// test seam
 export async function shouldSendEmail(
   memberId: string,
-  category: string,
+  category: MemberEmailPreferenceCategory,
 ): Promise<boolean> {
-  const prefField = CATEGORY_TO_PREFERENCE[category];
-  if (!prefField) {
-    // Unknown category — default to sending
-    return true;
-  }
-
   const pref = await prisma.notificationPreference.findUnique({
     where: { memberId },
   });
 
-  if (!pref) {
-    // No preference record = defaults (all true except marketingEmails, the
-    // opt-in newsletter flag; clubNotices is opt-out, #4987).
-    return category !== "marketingEmails";
-  }
+  // No preference record: both categories default to sending.
+  if (!pref) return true;
 
-  return Boolean(pref[prefField]);
+  return Boolean(pref[category]);
 }
 
 /**

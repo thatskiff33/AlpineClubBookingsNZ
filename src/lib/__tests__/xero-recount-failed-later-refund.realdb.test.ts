@@ -20,7 +20,8 @@
  *   the bank cash and the later $30 - and writes nothing;
  * - the reversal voided in Xero (`retiredCardRefundReversalLink`): it stops being
  *   taken off, as #4369's net coverage reads it, and the failure record does
- *   not take its place;
+ *   not take its place; since #4444 the card total stays capped at Stripe's
+ *   refunds and the ledger, the $110 that went back;
  * - never reversed: the failure record takes the $80 off once, and never more
  *   than its notes cover above the cash - nothing for a failure never noted;
  * - re-sent by the runner and made: the new refund's note covers cash that went
@@ -312,7 +313,7 @@ let refundCreatedSeconds = 0;
       expect(divergenceAlerts).toEqual([]);
     });
 
-    it("the reversal voided in Xero stops being taken off, as #4369's net coverage reads it, and the failure record does not take its place", async () => {
+    it("the reversal voided in Xero stops being taken off, as #4369's net coverage reads it, and the failure record does not take its place - the card total capped at Stripe's refunds (#4444)", async () => {
       const row = await failTheRefund();
       await closeWithReversal(row.id);
       await laterRefund();
@@ -326,8 +327,17 @@ let refundCreatedSeconds = 0;
 
       await inbound(LATER_NOTE, LATER_CENTS);
 
-      // Every note counted again: $80 + $80 + $30.
-      expect(await payment()).toEqual({ refundedAmountCents: 2 * FAILED_CENTS + LATER_CENTS, status: "PARTIALLY_REFUNDED" });
+      // The notes read $80 + $80 + $30 = $190 with the reversal no longer taken
+      // off. Since #4444 (owner decision 23 Nov 2026) a card payment's recount
+      // never rises above Stripe's refunds: Stripe made $30 (the $80 failed and
+      // is left out) and the ledger holds $110 ($80 by bank + $30 by card), so
+      // $110 stands - the money that went back. $190 would have told a later
+      // cancel that $80 more had gone back than did. No alert: the floor alerts
+      // only below the ledger. The cap hides whether the failure record took
+      // the reversal's place; the unit twin in xero-credit-note-repairs.test.ts
+      // (#4370 suite, cap set aside) proves it does not.
+      expect(await payment()).toEqual({ refundedAmountCents: FAILED_CENTS + LATER_CENTS, status: "PARTIALLY_REFUNDED" });
+      expect(divergenceAlerts).toEqual([]);
     });
 
     it("MUTATION (never reversed): the failure record takes the $80 off once - no write, no alert", async () => {

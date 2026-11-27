@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { z } from "zod";
+import { parseJsonRequestBody } from "@/lib/api-json";
 import { requireAdmin } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma";
 import {
@@ -7,22 +7,20 @@ import {
   getAuditRequestContext,
 } from "@/lib/audit";
 import { sanitizePageContentHtml } from "@/lib/page-content-html";
-import { SITE_CONTENT_KEYS, SITE_CONTENT_LIMITS } from "@/lib/page-content";
+import { siteContentUpdateSchema } from "@/lib/admin-content-api/site-content";
+import { connectionJson } from "@/lib/mcp-connection-request";
+import {
+  SITE_CONTENT_LIST_CONNECTION_SHAPE,
+  SITE_CONTENT_SAVED_CONNECTION_SHAPE,
+} from "@/lib/connection-shapes/content-pages";
 import { revalidatePublicPageContent } from "@/lib/public-content-revalidation";
 import { getSiteContentForAdmin } from "@/lib/site-content";
-
-const updateSchema = z
-  .object({
-    key: z.enum(SITE_CONTENT_KEYS),
-    contentHtml: z.string().max(SITE_CONTENT_LIMITS.contentHtmlMax),
-  })
-  .strict();
 
 /**
  * GET /api/admin/site-content
  * Lists the site content sections (footer columns) for the admin editor.
  */
-export async function GET() {
+export async function GET(request: NextRequest) {
   const guard = await requireAdmin({
     permission: { area: "content", level: "view" },
   });
@@ -33,7 +31,7 @@ export async function GET() {
   // Editor surface: keep tokens unresolved so admins see and can edit the
   // literal {{facebook-url}} placeholders (round-trip safety).
   const documents = await getSiteContentForAdmin();
-  return NextResponse.json({ documents });
+  return connectionJson(request, { documents }, SITE_CONTENT_LIST_CONNECTION_SHAPE);
 }
 
 /**
@@ -49,14 +47,13 @@ export async function PUT(request: NextRequest) {
     return guard.response;
   }
 
-  let body: unknown;
-  try {
-    body = await request.json();
-  } catch {
-    return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
-  }
+  const jsonBody = await parseJsonRequestBody(request, {
+    error: "Invalid JSON",
+  });
+  if (!jsonBody.ok) return jsonBody.response;
+  const body = jsonBody.body;
 
-  const parsed = updateSchema.safeParse(body);
+  const parsed = siteContentUpdateSchema.safeParse(body);
   if (!parsed.success) {
     return NextResponse.json(
       { error: "Invalid input", details: parsed.error.flatten() },
@@ -111,11 +108,15 @@ export async function PUT(request: NextRequest) {
   // clear the full-route store as well as the tagged caches (#3852).
   revalidatePublicPageContent();
 
-  return NextResponse.json({
-    document: {
-      key: updated.key,
-      contentHtml: updated.contentHtml,
-      updatedAt: updated.updatedAt.toISOString(),
+  return connectionJson(
+    request,
+    {
+      document: {
+        key: updated.key,
+        contentHtml: updated.contentHtml,
+        updatedAt: updated.updatedAt.toISOString(),
+      },
     },
-  });
+    SITE_CONTENT_SAVED_CONNECTION_SHAPE,
+  );
 }

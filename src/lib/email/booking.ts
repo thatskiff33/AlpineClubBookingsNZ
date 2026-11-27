@@ -9,6 +9,7 @@ import {
   organiserBilledSentence,
 } from "@/lib/booking-modified-email-copy";
 import { resolveBookingEmailLink } from "@/lib/booking-email-authority";
+import { resolveBookingCalendarRemoval, resolveCalendarUpdateNote } from "@/lib/booking-calendar-removal";
 import {
   type BookingCalendarLinks,
   bookingAddToCalendarBlock,
@@ -70,10 +71,12 @@ import { supersededRefundOwingSentence } from "@/lib/superseded-additional-refun
 import { formatCents as formatMoneyCents } from "@/lib/utils";
 import { loadEmailMessageSettingsForLodge } from "@/lib/email-message-settings";
 import { loadEffectiveModuleFlags } from "@/lib/module-settings";
-import { sendEmail } from "./core";
+import { sendEmail, type EmailSendOutcome } from "./core";
+import { BOOKING_CONFIRMED_TEMPLATE_NAME } from "./booking-confirmed-template";
 import {
   bookingOwnerEmailContext,
   type BookingOwnerEmailSource,
+  type KeyedBookingEmailSource,
 } from "@/lib/booking-email-contract";
 import { renderEmailHtml } from "@/lib/email-theme";
 import { emailCalendarDay, emailClubDate, emailClubDateTime } from "@/lib/email-templates-club-time";
@@ -97,8 +100,10 @@ export async function sendBookingConfirmedEmail(
   // than a bare string so it can never be transposed with one of the sibling
   // string arguments. Every message in this file is unambiguously
   // booking-scoped, so `"none"` is not offered here: the per-booking "No
-  // emails" switch must be able to withhold all of them.
-  bookingContext: BookingOwnerEmailSource,
+  // emails" switch must be able to withhold all of them. #5433: only an owed paid
+  // confirmation adds its event key (`<bookingId>:<paidAtMs>`), so a recovered
+  // send finds the first one's row; every other caller's send is unchanged.
+  bookingContext: BookingOwnerEmailSource & { idempotencyKey?: string },
   email: string,
   firstName: string,
   checkIn: Date,
@@ -201,7 +206,7 @@ export async function sendBookingConfirmedEmail(
     // still goes out.
     resolveBookingEmailLink({
       bookingId: bookingContext.bookingId,
-      templateName: "booking-confirmed",
+      templateName: BOOKING_CONFIRMED_TEMPLATE_NAME,
       // #3369: a school has no member to name, and the non-login
       // public-contact kind is what it has effectively always been.
       recipient: bookingContext.recipientMemberId
@@ -460,7 +465,7 @@ export async function sendBookingConfirmedEmail(
       bookingContext.bookingId,
       bookingContext.recipientMemberId,
     ),
-    templateName: "booking-confirmed",
+    templateName: BOOKING_CONFIRMED_TEMPLATE_NAME,
     templateData: {
       firstName,
       checkIn: emailCalendarDay(checkIn),
@@ -542,6 +547,7 @@ export async function sendBookingConfirmedEmail(
       icalHtml: icalHtmlRow,
     },
     lodgeId: options?.lodgeId,
+    ...(bookingContext.idempotencyKey ? { idempotencyKey: bookingContext.idempotencyKey } : {}),
   });
 }
 
@@ -752,8 +758,8 @@ export async function sendBookingPolicyExceptionRefusedEmail(params: {
 }
 
 export async function sendBookingBumpedEmail(
-  // Booking this message belongs to (#2258); see sendBookingConfirmedEmail.
-  bookingContext: BookingOwnerEmailSource,
+  // Booking this message belongs to (#2258), and the bump's key (#5407).
+  bookingContext: KeyedBookingEmailSource,
   email: string,
   firstName: string,
   checkIn: Date,
@@ -773,9 +779,16 @@ export async function sendBookingBumpedEmail(
   // let a future send site mail a login-less contact a members-only link
   // without anyone noticing (#2430 review).
   recipientCanBookOnline: boolean,
-) {
+): Promise<EmailSendOutcome> {
   const rebook = bookingBumpedRebookAction(recipientCanBookOnline);
-  await sendEmail({
+  // #5249: a member offered a calendar entry gets its cancellation and a note.
+  const calendar = await resolveBookingCalendarRemoval({
+    bookingId: bookingContext.bookingId,
+    recipientMemberId: bookingContext.recipientMemberId,
+    deliveryAddress: email,
+    templateName: "booking-bumped",
+  });
+  return sendEmail({
     to: email,
     subject: `Booking Update - ${EMAIL_DEFAULT_LODGE_NAME}`,
     // Both halves of the #2430 / #2473 overlap are load-bearing and compose:
@@ -790,11 +803,9 @@ export async function sendBookingBumpedEmail(
       checkOut,
       guestCount,
       recipientCanBookOnline,
+      calendar.note,
     )),
-    bookingContext: bookingOwnerEmailContext(
-      bookingContext.bookingId,
-      bookingContext.recipientMemberId,
-    ),
+    bookingContext: bookingOwnerEmailContext(bookingContext.bookingId, bookingContext.recipientMemberId),
     templateName: "booking-bumped",
     templateData: {
       firstName,
@@ -805,22 +816,25 @@ export async function sendBookingBumpedEmail(
       // the path so the club's own configured public URL still resolves it.
       rebookLabel: rebook.label,
       rebookPath: rebook.path,
+      calendarRemovalNote: calendar.note,
     },
+    attachments: calendar.attachments,
     lodgeId,
+    idempotencyKey: bookingContext.idempotencyKey,
   });
 }
 
 export async function sendBookingGuestsCancelledEmail(
-  // Booking this message belongs to (#2258); see sendBookingConfirmedEmail.
-  bookingContext: BookingOwnerEmailSource,
+  // Booking this message belongs to (#2258), and the bump's key (#5407).
+  bookingContext: KeyedBookingEmailSource,
   email: string,
   firstName: string,
   checkIn: Date,
   checkOut: Date,
   // Booking's lodge (multi-lodge phase 8): see sendBookingConfirmedEmail.
   lodgeId?: string | null,
-) {
-  await sendEmail({
+): Promise<EmailSendOutcome> {
+  return sendEmail({
     to: email,
     subject: `Booking Cancelled - ${EMAIL_DEFAULT_LODGE_NAME}`,
     html: await renderEmailHtml(() => bookingGuestsCancelledTemplate(firstName, checkIn, checkOut)),
@@ -832,6 +846,7 @@ export async function sendBookingGuestsCancelledEmail(
       checkOut: emailCalendarDay(checkOut),
     },
     lodgeId,
+    idempotencyKey: bookingContext.idempotencyKey,
   });
 }
 
@@ -857,6 +872,13 @@ export async function sendBookingCancelledEmail(
   // #4097: the parts of an own-card refund its card refund could not carry; the refund line names each.
   shortfall: { bankCents: number; checkCents: number } = { bankCents: 0, checkCents: 0 },
 ) {
+  // #5249: a member offered a calendar entry gets its cancellation and a note.
+  const calendar = await resolveBookingCalendarRemoval({
+    bookingId: bookingContext.bookingId,
+    recipientMemberId: bookingContext.recipientMemberId,
+    deliveryAddress: email,
+    templateName: "booking-cancelled",
+  });
   await sendEmail({
     to: email,
     subject: `Booking Cancelled - ${EMAIL_DEFAULT_LODGE_NAME}`,
@@ -871,6 +893,7 @@ export async function sendBookingCancelledEmail(
       creditRestoredBasis,
       refundSentenceCents,
       shortfall,
+      calendar.note,
     )),
     bookingContext: bookingOwnerEmailContext(bookingContext.bookingId, bookingContext.recipientMemberId),
     templateName: "booking-cancelled",
@@ -891,7 +914,9 @@ export async function sendBookingCancelledEmail(
         creditRestoredCents > 0
           ? `${formatMoneyCents(creditRestoredCents, format)}${creditRestoredSentenceTail(creditRestoredBasis)}`
           : "",
+      calendarRemovalNote: calendar.note,
     },
+    attachments: calendar.attachments,
     lodgeId,
   });
 }
@@ -1569,11 +1594,19 @@ export async function sendBookingModifiedEmail(params: {
   const giveBackNote = appliedCreditGiveBackNote(params.appliedCreditGivenBackCents, format);
   const askCancelledNote = unpaidAskCancelledNote(params.unpaidAskCancelled);
   const paymentNote = [reviewNote, settlementNote, giveBackNote, askCancelledNote].filter(Boolean).join(" ");
+  // #5249: moved dates leave a saved calendar entry stale; a sentence, no file.
+  const calendarNote = await resolveCalendarUpdateNote({
+    ...params,
+    deliveryAddress: params.email,
+    templateName: "booking-modified",
+  });
 
   await sendEmail({
     to: params.email,
     subject: `Booking Modified - ${EMAIL_DEFAULT_LODGE_NAME}`,
-    html: await renderEmailHtml(() => bookingModifiedTemplate(params, format)),
+    html: await renderEmailHtml(() =>
+      bookingModifiedTemplate({ ...params, calendarUpdateNote: calendarNote }, format),
+    ),
     bookingContext: bookingOwnerEmailContext(params.bookingId, params.recipientMemberId),
     templateName: "booking-modified",
     templateData: {
@@ -1604,6 +1637,7 @@ export async function sendBookingModifiedEmail(params: {
       paymentReference: params.paymentReference ?? "",
       xeroInvoiceNumber: params.xeroInvoiceNumber ?? "",
       paymentNote,
+      calendarUpdateNote: calendarNote,
     },
     lodgeId: params.lodgeId,
   });

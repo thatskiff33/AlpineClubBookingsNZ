@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { parseJsonRequestBody } from "@/lib/api-json";
 import {
   bookingOwner,
   bookingOwnerProviderMetadata,
@@ -26,7 +27,9 @@ export async function POST(request: NextRequest) {
       return inactiveResponse;
     }
 
-    const body = await request.json();
+    const jsonBody = await parseJsonRequestBody(request);
+    if (!jsonBody.ok) return jsonBody.response;
+    const body = jsonBody.body;
     const parsed = CreateSetupIntentSchema.safeParse(body);
 
     if (!parsed.success) {

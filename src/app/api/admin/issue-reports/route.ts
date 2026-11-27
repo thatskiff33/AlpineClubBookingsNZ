@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import type { IssueReportOrigin } from "@prisma/client";
 import { z } from "zod";
 import { logAudit } from "@/lib/audit";
+import { getClientIp } from "@/lib/rate-limit-http";
 import logger from "@/lib/logger";
 import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/session-guards";
@@ -157,8 +158,7 @@ export async function GET(request: NextRequest) {
       action: "issue_report.admin_listed",
       memberId: admin.session.user.id,
       details: JSON.stringify({ status, page, pageSize }),
-      ipAddress:
-        request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? "unknown",
+      ipAddress: getClientIp(request),
       category: "privacy",
       outcome: "success",
     });

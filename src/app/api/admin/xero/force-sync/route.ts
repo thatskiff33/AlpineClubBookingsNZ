@@ -1,8 +1,16 @@
-import { after, NextRequest, NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
+import { scheduleAfterResponse } from "@/lib/schedule-after-response";
+import { xeroForceSyncBodySchema } from "@/lib/admin-xero-sync-schemas";
+import { parseJsonRequestBody } from "@/lib/api-json";
 import { bookingOwner } from "@/lib/booking-owner";
 import { hostingCoverageParticipantRetryResponse } from "@/lib/adult-member-hosting-retry-response";
-import { z } from "zod";
 import { logAudit } from "@/lib/audit";
+import {
+  XERO_FORCE_SYNC_CONTACT_CONNECTION_SHAPE,
+  XERO_FORCE_SYNC_INVOICE_CONNECTION_SHAPE,
+  XERO_FORCE_SYNC_MEMBERSHIP_CONNECTION_SHAPE,
+} from "@/lib/connection-shapes/finance-xero-sync";
+import { connectionJson } from "@/lib/mcp-connection-request";
 import logger from "@/lib/logger";
 import { prisma } from "@/lib/prisma";
 import { exactPrefix } from "@/lib/prisma-exact-prefix";
@@ -20,11 +28,6 @@ import {
   processQueuedXeroOutboxOperations,
 } from "@/lib/xero-operation-outbox";
 
-const forceSyncSchema = z.object({
-  syncType: z.enum(["CONTACT", "INVOICE", "MEMBERSHIP"]),
-  query: z.string().trim().min(1, "Query is required"),
-});
-
 class ForceSyncLookupError extends Error {
   status: number;
 
@@ -35,15 +38,7 @@ class ForceSyncLookupError extends Error {
   }
 }
 
-function scheduleAfterResponse(task: () => Promise<void>) {
-  try {
-    after(task);
-  } catch {
-    queueMicrotask(() => {
-      void task();
-    });
-  }
-}
+const FORCE_SYNC_MEMBER_SELECT = { id: true, firstName: true, lastName: true, email: true } as const;
 
 async function resolveMember(query: string) {
   if (query.includes("@")) {
@@ -54,12 +49,7 @@ async function resolveMember(query: string) {
           mode: "insensitive",
         },
       },
-      select: {
-        id: true,
-        firstName: true,
-        lastName: true,
-        email: true,
-      },
+      select: FORCE_SYNC_MEMBER_SELECT,
       take: 3,
     });
 
@@ -81,12 +71,7 @@ async function resolveMember(query: string) {
       // #4146: an id typed with `_` or `%` is text, not a pattern that could resolve another record.
       id: exactPrefix(query),
     },
-    select: {
-      id: true,
-      firstName: true,
-      lastName: true,
-      email: true,
-    },
+    select: FORCE_SYNC_MEMBER_SELECT,
     take: 3,
   });
 
@@ -136,14 +121,13 @@ export async function POST(request: NextRequest) {
   const guard = await requireAdmin();
   if (!guard.ok) return guard.response;
   const session = guard.session;
-  let body: unknown;
-  try {
-    body = await request.json();
-  } catch {
-    return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
-  }
+  const jsonBody = await parseJsonRequestBody(request, {
+    error: "Invalid JSON",
+  });
+  if (!jsonBody.ok) return jsonBody.response;
+  const body = jsonBody.body;
 
-  const parsed = forceSyncSchema.safeParse(body);
+  const parsed = xeroForceSyncBodySchema.safeParse(body);
   if (!parsed.success) {
     return NextResponse.json(
       { error: "Validation failed", details: parsed.error.flatten().fieldErrors },
@@ -183,14 +167,14 @@ export async function POST(request: NextRequest) {
           },
         });
 
-        return NextResponse.json({
+        return connectionJson(request, {
           ok: true,
           syncType,
           message: `Synced Xero contact for ${member.firstName} ${member.lastName}.`,
           memberId: member.id,
           memberEmail: member.email,
           xeroContactId,
-        });
+        }, XERO_FORCE_SYNC_CONTACT_CONNECTION_SHAPE);
       }
 
       const result = await checkMembershipStatus(member.id, undefined, {
@@ -215,7 +199,7 @@ export async function POST(request: NextRequest) {
         },
       });
 
-      return NextResponse.json({
+      return connectionJson(request, {
         ok: true,
         syncType,
         message: `Refreshed membership status for ${member.firstName} ${member.lastName}.`,
@@ -230,7 +214,7 @@ export async function POST(request: NextRequest) {
               shortCode: await getXeroOrgShortCode(),
             })
           : null,
-      });
+      }, XERO_FORCE_SYNC_MEMBERSHIP_CONNECTION_SHAPE);
     }
 
     const booking = await resolveBooking(query);
@@ -304,7 +288,8 @@ export async function POST(request: NextRequest) {
       },
     });
 
-    return NextResponse.json(
+    return connectionJson(
+      request,
       {
         ok: true,
         syncType,
@@ -312,6 +297,7 @@ export async function POST(request: NextRequest) {
         queueOperationId: queueResult.queueOperationId,
         message: queueResult.message,
       },
+      XERO_FORCE_SYNC_INVOICE_CONNECTION_SHAPE,
       { status: queueResult.queueOperationId ? 202 : 200 }
     );
   } catch (error) {

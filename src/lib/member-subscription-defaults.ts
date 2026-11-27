@@ -2,8 +2,34 @@ import type {
   MembershipTypeSubscriptionBehavior,
   Prisma,
   Role,
+  SubscriptionStatus,
 } from "@prisma/client";
-import { effectiveSubscriptionBehavior } from "@/lib/membership-types";
+import { getAgeTierSettingsStrict } from "@/lib/age-tier";
+import { loadMembershipLockoutSettingsStrict } from "@/lib/membership-lockout-settings";
+import { resolveMembershipTypePoliciesForMembers } from "@/lib/membership-type-policy";
+import {
+  effectiveSubscriptionBehavior,
+  isSubscriptionNotRequiredForMembershipType,
+} from "@/lib/membership-types";
+import { memberDisplayName } from "@/lib/member-serialization";
+import {
+  hasChosenLiabilityRule,
+  liabilityRuleFor,
+  resolveMemberSubscriptionLiability,
+  type SubscriptionLiabilitySettings,
+} from "@/lib/policies/subscription";
+import { isInSubscriptionBillingPopulation } from "@/lib/subscription-billing-population";
+import { lockSubscriptionBillingSeason } from "@/lib/subscription-billing-season-lock";
+import {
+  lockSubscriptionLiabilityRuleExclusive,
+  lockSubscriptionLiabilityRuleShared,
+} from "@/lib/subscription-liability-rule-lock";
+import {
+  isUntouchedNotRequiredRow,
+  listSubscriptionStatus,
+  notRequiredRowBillingNote,
+  UNTOUCHED_NOT_REQUIRED_ROW,
+} from "@/lib/subscription-season-row-note";
 
 // Structural client type so the helper works with PrismaClient, a transaction
 // client, and the seed script alike.
@@ -63,6 +89,46 @@ export async function ensureDefaultSeasonSubscriptionForNewMember(
   });
 }
 
+type LiabilityReadDb = Pick<
+  Prisma.TransactionClient,
+  "membershipLockoutSettings" | "member" | "ageTierSetting"
+>;
+
+/**
+ * Whether the member owes a subscription for the season on the billing side of
+ * the shared liability rule (#5190), read through the caller's transaction.
+ * Once the club has chosen, the rule is the same on both sides, so this is the
+ * answer billing and booking access both act on; while it is NOT_CHOSEN it is
+ * the annual-fee sweep's answer.
+ */
+async function owesOnBillingSide(
+  db: LiabilityReadDb,
+  params: {
+    memberId: string;
+    seasonYear: number;
+    subscriptionBehavior: MembershipTypeSubscriptionBehavior;
+    settings: Parameters<typeof liabilityRuleFor>[1];
+  },
+): Promise<boolean> {
+  const [member, ageTierSettings] = await Promise.all([
+    db.member.findUnique({
+      where: { id: params.memberId },
+      select: { ageTier: true, dateOfBirth: true },
+    }),
+    getAgeTierSettingsStrict(db),
+  ]);
+  return resolveMemberSubscriptionLiability({
+    subscriptionBehavior: params.subscriptionBehavior,
+    member,
+    // The row being reconciled is the NOT_REQUIRED one; billing's side of the
+    // rule ignores it, chosen or not.
+    seasonRowStatus: "NOT_REQUIRED",
+    seasonYear: params.seasonYear,
+    rule: liabilityRuleFor("billing", params.settings),
+    ageTierSettings,
+  }).owes;
+}
+
 /**
  * Reconcile a member's MemberSubscription row for one season after a seasonal
  * membership-type ASSIGNMENT change, so a stale creation-seeded NOT_REQUIRED row
@@ -76,8 +142,9 @@ export async function ensureDefaultSeasonSubscriptionForNewMember(
  * disagree until the next Xero sync / sweep re-derives (and never, if enforcement
  * is off). This flips the row to the sweep's canonical un-invoiced status.
  *
- * Scope — deliberately ONLY the REQUIRED direction (mirrors the annual-fee sweep,
- * does not exceed it):
+ * While the club has NOT chosen its liability rule (#5190, every club on
+ * upgrade), the scope is deliberately ONLY the REQUIRED direction (mirrors the
+ * annual-fee sweep, does not exceed it):
  *   - REQUIRED: the sweep bills EVERY member on a REQUIRED type as NOT_INVOICED
  *     (its `create` status is `NOT_INVOICED`, independent of age tier), and the
  *     booking gate treats them as owing. Flipping the stale NOT_REQUIRED row to
@@ -91,23 +158,61 @@ export async function ensureDefaultSeasonSubscriptionForNewMember(
  *     fix, and flipping it would destroy that exemption.
  *   - NOT_REQUIRED: already consistent; nothing to do.
  *
- * The write is a narrow, idempotent, status-guarded `updateMany` — the same
- * classification as the Xero sync's `writeXeroDerivedSubscriptionState`: no
- * advisory lock is required because the WHERE guard makes clobbering structurally
- * impossible (it never touches a paid, invoiced, actively charge/family-covered
- * — releasedAt IS NULL, the #2147 "already billed" rule — or manually-marked
- * row) and a second run matches nothing. It performs NO provider
- * calls, so it is safe to run inside the caller's assignment transaction.
+ * Once the club HAS chosen, a saved NOT_REQUIRED row exempts nobody (Edge 2,
+ * owner decision 18 Nov 2026), so the row is flipped whenever the shared rule
+ * says the member owes — for a BASED_ON_AGE_TIER type too — and left alone when
+ * it says they do not (a REQUIRED-type child under AGE_TIER_EXEMPTS).
+ *
+ * The write is a narrow, idempotent, status-guarded `updateMany`: the WHERE
+ * guard makes clobbering a paid, invoiced, actively charge/family-covered
+ * (releasedAt IS NULL, the #2147 "already billed" rule) or manually-marked row
+ * structurally impossible, and a second run matches nothing.
+ *
+ It takes the liability-rule key SHARED first (#5190), before it reads the
+ * club's liability rule. Without it, an assignment committing while a club opts
+ * in could read the old (NOT_CHOSEN) rule, skip its row, and commit after the
+ * clear-up had already passed that row — leaving a stale NOT_REQUIRED row the
+ * chosen rule says should read NOT_INVOICED. The clear-up takes the same key
+ * exclusive, so the reconcile runs wholly before it (and the clear-up then sees
+ * the row) or wholly after it (and reads the chosen rule).
+ *
+ * It deliberately does NOT take the billing season key. Its callers already
+ * hold `lock(1)`, lodge and member keys, and a billing confirm holds the season
+ * key for up to its whole re-preview; waiting on it here would stall every
+ * cancel, capture, refund and bed-allocation writer behind that confirm. The
+ * clear-up takes the season key BEFORE the rule key, so the rule key is never
+ * held by anyone waiting on a confirm. Order: global `1` -> lodge -> member ->
+ * rule key (shared), last (docs/CONCURRENCY_AND_LOCKING.md, writer index). It
+ * performs NO provider calls, so it is safe to run inside the caller's
+ * assignment transaction.
  */
 export async function reconcileSeasonSubscriptionForAssignment(
-  db: Pick<Prisma.TransactionClient, "memberSubscription">,
+  db: Pick<Prisma.TransactionClient, "memberSubscription" | "$executeRaw"> &
+    LiabilityReadDb,
   params: {
     memberId: string;
     seasonYear: number;
     subscriptionBehavior: MembershipTypeSubscriptionBehavior;
   }
 ): Promise<{ reconciled: boolean }> {
-  if (params.subscriptionBehavior !== "REQUIRED") {
+  if (params.subscriptionBehavior === "NOT_REQUIRED") {
+    return { reconciled: false };
+  }
+  await lockSubscriptionLiabilityRuleShared(db);
+  const settings = await loadMembershipLockoutSettingsStrict(db);
+  // Deliberate scope rule while NOT_CHOSEN (#2041, see above): a
+  // BASED_ON_AGE_TIER member's NOT_REQUIRED row is the season-start exemption
+  // booking access still honours, so it is never flipped, whatever billing says.
+  if (
+    !hasChosenLiabilityRule(settings) &&
+    params.subscriptionBehavior === "BASED_ON_AGE_TIER"
+  ) {
+    return { reconciled: false };
+  }
+  // Otherwise the billing side of the shared rule decides (#5190 review), as
+  // the annual-fee sweep and the clear-up read it.
+  const owes = await owesOnBillingSide(db, { ...params, settings });
+  if (!owes) {
     return { reconciled: false };
   }
 
@@ -141,13 +246,7 @@ export async function reconcileSeasonSubscriptionForAssignment(
   // Only the untouched creation/seed default is reconciled: a paid, invoiced,
   // actively charge/family-covered, or manually-marked row is real billing
   // state and is left alone.
-  if (
-    !existing ||
-    existing.status !== "NOT_REQUIRED" ||
-    existing.xeroInvoiceId !== null ||
-    existing.manuallyMarkedPaidAt !== null ||
-    existing.chargeCoverage.length > 0
-  ) {
+  if (!isUntouchedNotRequiredRow(existing)) {
     return { reconciled: false };
   }
 
@@ -157,17 +256,251 @@ export async function reconcileSeasonSubscriptionForAssignment(
       seasonYear: params.seasonYear,
       // Re-assert the read guard at write time so a concurrent writer that
       // moved the row between the read above and here still cannot be clobbered.
-      status: "NOT_REQUIRED",
-      xeroInvoiceId: null,
-      manuallyMarkedPaidAt: null,
-      // #2179: the coverage guard must be re-asserted relationally too — a
-      // NO_INVOICE billing confirm creates an ACTIVE coverage claim while
-      // leaving the row NOT_REQUIRED, so the scalar guards alone cannot
-      // exclude a claim that landed between the read above and this write.
-      chargeCoverage: { none: { releasedAt: null } },
+      ...UNTOUCHED_NOT_REQUIRED_ROW,
     },
     data: { status: "NOT_INVOICED" },
   });
 
   return { reconciled: result.count > 0 };
+}
+
+/** One untouched `NOT_REQUIRED` season row whose member owes under a rule. */
+export interface StaleNotRequiredRow {
+  memberId: string;
+  name: string;
+  /**
+   * Whether the member is in the billing population (active, not archived).
+   * A member outside it still has their row reset, but no billing run will
+   * invoice them until they are made active again.
+   */
+  inBillingPopulation: boolean;
+  /**
+   * The status the admin members list, its CSV export and the subscriptions
+   * list show for this member today, under `listSettings` (#5190, owner
+   * decision 22 Nov 2026): billing's "Not invoiced" when the row carries the
+   * "Marked not required" note, else "Not required". Worked out with the lists'
+   * own helpers (`listSubscriptionStatus`), so the preview never names a status
+   * the members list does not show.
+   */
+  listStatus: SubscriptionStatus | null;
+  /** The members list's note on this row today, or null. */
+  listNote: string | null;
+}
+
+/** An untouched `NOT_REQUIRED` row's state, as the stale selection reads it. */
+const UNTOUCHED_NOT_REQUIRED_ROW_STATE = {
+  status: UNTOUCHED_NOT_REQUIRED_ROW.status,
+  xeroInvoiceId: UNTOUCHED_NOT_REQUIRED_ROW.xeroInvoiceId,
+  manuallyMarkedPaidAt: UNTOUCHED_NOT_REQUIRED_ROW.manuallyMarkedPaidAt,
+  chargeCoverage: [],
+} as const;
+
+/**
+ * Which season rows the liability clear-up would reset under `settings`
+ * (#5190): every untouched `NOT_REQUIRED` row ({@link UNTOUCHED_NOT_REQUIRED_ROW})
+ * whose member the rule's billing side says owes, for any member, active or not.
+ * A member whose type cannot be resolved is left out, and a rule that is not
+ * chosen selects nobody. Sorted by surname, first name, then id.
+ *
+ * The one selection the clear-up writes from and the admin preview lists
+ * (`INV-SSOT`), so the list an officer reads before saving is the list the save
+ * resets. Read-only; the clear-up takes its locks before calling it.
+ */
+export async function findStaleNotRequiredRows(
+  db: Pick<
+    Prisma.TransactionClient,
+    | "memberSubscription"
+    | "member"
+    | "ageTierSetting"
+    | "seasonalMembershipAssignment"
+    | "membershipType"
+  >,
+  input: {
+    seasonYear: number;
+    settings: SubscriptionLiabilitySettings;
+    /**
+     * The club's stored settings, which the members list reads today; only
+     * `listStatus` and `listNote` use them. The selection itself reads
+     * `settings` alone.
+     */
+    listSettings: SubscriptionLiabilitySettings;
+  },
+): Promise<StaleNotRequiredRow[]> {
+  const { seasonYear, settings, listSettings } = input;
+  if (!hasChosenLiabilityRule(settings)) {
+    return [];
+  }
+  const rows = await db.memberSubscription.findMany({
+    where: { seasonYear, ...UNTOUCHED_NOT_REQUIRED_ROW },
+    select: { memberId: true },
+  });
+  if (rows.length === 0) {
+    return [];
+  }
+  const memberIds = rows.map((row) => row.memberId);
+  const [policies, members, ageTierSettings] = await Promise.all([
+    resolveMembershipTypePoliciesForMembers(db, { memberIds, seasonYear }),
+    db.member.findMany({
+      where: { id: { in: memberIds } },
+      select: {
+        id: true,
+        ageTier: true,
+        dateOfBirth: true,
+        firstName: true,
+        lastName: true,
+        active: true,
+        archivedAt: true,
+        // The members list's own type derivation, for `listStatus`.
+        role: true,
+        seasonalMembershipAssignments: {
+          where: { seasonYear },
+          take: 1,
+          select: { membershipType: { select: { subscriptionBehavior: true } } },
+        },
+      },
+    }),
+    getAgeTierSettingsStrict(db),
+  ]);
+  const rule = liabilityRuleFor("billing", settings);
+  const stale: typeof members = [];
+  for (const member of members) {
+    const policy = policies.get(member.id);
+    if (
+      policy !== undefined &&
+      resolveMemberSubscriptionLiability({
+        subscriptionBehavior: policy.subscriptionBehavior,
+        member,
+        seasonRowStatus: "NOT_REQUIRED",
+        seasonYear,
+        rule,
+        ageTierSettings,
+      }).owes
+    ) {
+      stale.push(member);
+    }
+  }
+  // Surname order, as the preview's other lists (`buildSubscriptionLiabilityImpact`).
+  const byText = (a: string | null, b: string | null) => (a ?? "").localeCompare(b ?? "");
+  return stale
+    .sort(
+      (a, b) =>
+        byText(a.lastName, b.lastName) ||
+        byText(a.firstName, b.firstName) ||
+        a.id.localeCompare(b.id),
+    )
+    .map((member) => {
+      // As `admin-members-service.ts` derives a list row's status and note.
+      const listFacts = {
+        subscriptionBehavior: effectiveSubscriptionBehavior(
+          member.seasonalMembershipAssignments[0]?.membershipType.subscriptionBehavior,
+          member.role,
+        ),
+        member,
+        seasonYear,
+        ageTierSettings,
+        liabilitySettings: listSettings,
+      };
+      const listNote = notRequiredRowBillingNote({
+        ...listFacts,
+        seasonRow: UNTOUCHED_NOT_REQUIRED_ROW_STATE,
+      });
+      return {
+        memberId: member.id,
+        name: memberDisplayName(member),
+        inBillingPopulation: isInSubscriptionBillingPopulation(member),
+        listStatus: listSubscriptionStatus({
+          notRequired: isSubscriptionNotRequiredForMembershipType({
+            ...listFacts,
+            seasonRowStatus: UNTOUCHED_NOT_REQUIRED_ROW.status,
+          }),
+          seasonRowStatus: UNTOUCHED_NOT_REQUIRED_ROW.status,
+          billingNote: listNote,
+        }),
+        listNote,
+      };
+    });
+}
+
+/**
+ * The liability clear-up (#5190): once the club has chosen its liability rule,
+ * flip every untouched `NOT_REQUIRED` row for the season whose member the rule
+ * says owes a subscription to `NOT_INVOICED` — the annual-fee sweep's canonical
+ * un-invoiced status. The rows are {@link findStaleNotRequiredRows}'s, the
+ * selection the admin preview lists.
+ *
+ * Why it exists: before the choice, the sweep wrote `NOT_REQUIRED` for a member
+ * who was tier-exempt at season start, and booking access honoured that row.
+ * Once chosen, the row exempts nobody (Edge 2, owner decision 18 Nov 2026), so a
+ * row left saying "Not required" for a member who now owes would contradict the
+ * gate on every display surface and in the Xero sync.
+ *
+ * Runs in the CALLER'S transaction and first takes the billing season key, so it
+ * serialises with billing confirm, then the liability-rule key exclusive, so it
+ * serialises with the seasonal-assignment reconcile (`INV-LOCK-003`; writer
+ * index in docs/CONCURRENCY_AND_LOCKING.md). The write is one status-guarded `updateMany`
+ * over {@link UNTOUCHED_NOT_REQUIRED_ROW}, so a paid, invoiced, covered
+ * (including a `NO_INVOICE` claim) or manually-marked row is never touched, and
+ * a second run matches nothing. A member whose type cannot be resolved is left
+ * alone. While the club has not chosen it does nothing. No provider calls.
+ */
+export async function clearStaleNotRequiredRows(
+  tx: Prisma.TransactionClient,
+  seasonYear: number,
+): Promise<StaleNotRequiredClearUp> {
+  const nothingCleared: StaleNotRequiredClearUp = { clearedCount: 0, clearedMemberIds: [] };
+  await lockSubscriptionBillingSeason(tx, seasonYear);
+  // Season key first, then the rule key: a reconcile holding `lock(1)` waits on
+  // the rule key only for this clear-up's own writes, never for a confirm.
+  await lockSubscriptionLiabilityRuleExclusive(tx);
+  const settings = await loadMembershipLockoutSettingsStrict(tx);
+  const owingMemberIds = (
+    await findStaleNotRequiredRows(tx, { seasonYear, settings, listSettings: settings })
+  ).map((row) => row.memberId);
+  if (owingMemberIds.length === 0) {
+    return nothingCleared;
+  }
+  // `AndReturn` so the audit names the rows the guarded write actually moved,
+  // not the ones the read proposed: a writer outside the season key (the Xero
+  // sync, an invoice write) can move a row in between.
+  const flipped = await tx.memberSubscription.updateManyAndReturn({
+    where: {
+      seasonYear,
+      memberId: { in: owingMemberIds },
+      ...UNTOUCHED_NOT_REQUIRED_ROW,
+    },
+    data: { status: "NOT_INVOICED" },
+    select: { memberId: true },
+  });
+  return {
+    clearedCount: flipped.length,
+    clearedMemberIds: flipped.map((row) => row.memberId).sort(),
+  };
+}
+
+/** What one clear-up moved. `clearedMemberIds` is every flipped member, sorted. */
+export interface StaleNotRequiredClearUp {
+  clearedCount: number;
+  clearedMemberIds: string[];
+}
+
+/** The most member ids one clear-up audit row names; the total is always kept. */
+export const CLEARED_ROWS_AUDIT_MEMBER_ID_LIMIT = 50;
+
+/**
+ * The audit metadata for one clear-up (#5190): the total, and the flipped
+ * member ids capped at {@link CLEARED_ROWS_AUDIT_MEMBER_ID_LIMIT} so one row
+ * stays bounded however large the club. The settings `PUT` and the config
+ * import both record it, so either path can be traced to the members it moved.
+ */
+export function clearedRowsAuditMetadata(
+  clearUp: StaleNotRequiredClearUp,
+  seasonYear: number,
+) {
+  return {
+    seasonYear,
+    total: clearUp.clearedCount,
+    memberIds: clearUp.clearedMemberIds.slice(0, CLEARED_ROWS_AUDIT_MEMBER_ID_LIMIT),
+    memberIdsTruncated:
+      clearUp.clearedMemberIds.length > CLEARED_ROWS_AUDIT_MEMBER_ID_LIMIT,
+  };
 }

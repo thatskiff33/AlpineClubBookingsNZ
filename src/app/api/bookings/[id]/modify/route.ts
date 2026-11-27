@@ -1,8 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
+import { parseJsonRequestBody } from "@/lib/api-json";
 import { hostingCoverageParticipantRetryResponse } from "@/lib/adult-member-hosting-retry-response";
 import { isDateOnlyOverrideViolation } from "@/lib/booking-modify-quote-request";
 import { batchModifySchema } from "@/lib/booking-modify-request";
-import { EditPriceChangedError, editPriceChangedBody } from "@/lib/edit-quoted-figures";
+import { editQuotedFiguresRefusal, requireEditQuotedFigures } from "@/lib/edit-quoted-figures";
 import {
   guestRequestSchemaError,
 } from "@/lib/booking-guest-stay-range-input";
@@ -16,6 +17,7 @@ import {
 } from "@/lib/adult-member-hosting-same-owner";
 import { ApiError } from "@/lib/api-error";
 import { auth } from "@/lib/auth";
+import { getClientIp } from "@/lib/rate-limit-http";
 import {
   OwnDependantIdentityRefusedError,
 } from "@/lib/booking-dependant-identity";
@@ -97,20 +99,10 @@ export async function PUT(
 
   const { id: bookingId } = await params;
 
-  let body: unknown;
-  try {
-    body = await request.json();
-  } catch {
-    return NextResponse.json(
-      {
-        error: "Invalid JSON",
-        details: { body: ["Request body must be valid JSON"] },
-      },
-      { status: 400 },
-    );
-  }
+  const json = await parseJsonRequestBody(request);
+  if (!json.ok) return json.response;
 
-  const parsed = batchModifySchema.safeParse(body);
+  const parsed = batchModifySchema.safeParse(json.body);
   if (!parsed.success) {
     return NextResponse.json(
       { error: guestRequestSchemaError(parsed.error, "Invalid input"), details: parsed.error.flatten() },
@@ -118,8 +110,7 @@ export async function PUT(
     );
   }
 
-  const ipAddress =
-    request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? "unknown";
+  const ipAddress = getClientIp(request);
 
   // Issue #1313 (option A2): a Booking Officer (bookings:edit) resolves to ADMIN
   // so they receive the SAME admin-on-behalf modify authority as a Full Admin.
@@ -191,6 +182,7 @@ export async function PUT(
   const format = await clubFormatValues();
 
   try {
+    requireEditQuotedFigures(parsed.data);
     const result =
       adminOverride && pricingMode === "shift"
         ? await adminShiftBookingDates({
@@ -218,6 +210,7 @@ export async function PUT(
             ...(parsed.data.hostingCoverageLinkedMove
               ? { linkedMove: parsed.data.hostingCoverageLinkedMove }
               : {}),
+            linkedQuotedFigures: parsed.data.linkedQuotedFigures,
             input: parsed.data,
             ipAddress,
             todayAtClub,
@@ -225,12 +218,10 @@ export async function PUT(
 
     return NextResponse.json(result);
   } catch (err) {
-    // #4924 (`INV-MOD-062`): the save's own figures differ from the ones the
-    // member previewed. Thrown inside the save's transaction before its first
-    // write, so nothing was settled; the body carries the fresh figures.
-    if (err instanceof EditPriceChangedError) {
-      return NextResponse.json(editPriceChangedBody(err), { status: err.status });
-    }
+    // #4924, #5238 (`INV-MOD-062`): no figures, or figures the save no longer
+    // matches; thrown before the first write, so nothing was settled.
+    const figuresRefusal = editQuotedFiguresRefusal(err);
+    if (figuresRefusal) return NextResponse.json(figuresRefusal.body, { status: figuresRefusal.status });
     // The edit commits before its refund and additional-ask steps, so a
     // contended lock(1) transaction (INV-LOCK-006) asks for a status check.
     // The linked move answers its own LINKED_MOVE_CONTENDED 503 below.

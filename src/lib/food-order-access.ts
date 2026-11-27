@@ -9,7 +9,7 @@ import { isOrganisationAccount } from "@/lib/organisation-account";
 import { prisma } from "@/lib/prisma";
 
 /**
- * Who may do what with food orders (fork #121). The ONE access module every
+ * Who may do what with food orders (fork triyder/AlpineClubBookingsNZ#121). The ONE access module every
  * food-order page, API route and UI control uses (INV-SSOT): a control is shown
  * from the flags the server computed here, never from a rule of its own.
  *
@@ -96,6 +96,24 @@ export async function resolveFoodOrderViewer(
       area: "lodge",
       level: "edit",
     }),
+  };
+}
+
+/**
+ * The viewer an AI app connection decides with (ALP-796, `INV-MCP-006`): the
+ * member's own orders and nothing more. A connection never acts as an officer,
+ * so the committee, hut-leader and Lodge Operations facts that widen what a
+ * person sees or manages on the website are cleared; whether the account is an
+ * organisation is kept, since that takes away rather than grants.
+ */
+export function ownOrdersOnlyFoodOrderViewer(viewer: FoodOrderViewer): FoodOrderViewer {
+  return {
+    memberId: viewer.memberId,
+    isOrganisation: viewer.isOrganisation,
+    isCommitteeMember: false,
+    hutLeaderLodgeIds: new Set(),
+    hasLodgeOperationsView: false,
+    hasLodgeOperationsEdit: false,
   };
 }
 

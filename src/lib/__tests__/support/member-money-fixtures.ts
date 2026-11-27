@@ -27,6 +27,7 @@ import type { MemberMoneyEventKey } from "@/lib/member-money/internal/keys";
 import { FROZEN_TEST_CLOCK_BASE_ISO } from "../helpers/clock";
 import { CLUB_FORMAT_TEST } from "./club-format-fixture";
 import { assertSafeRaceDbUrl } from "./race-db-url";
+import { runEveryTeardownStep } from "./teardown-steps";
 
 export const MEMBER_MONEY_JOURNAL_MIGRATION = "prisma/migrations/20261127010000_member_money_journal/migration.sql";
 
@@ -118,6 +119,11 @@ export interface MemberMoneyScratchDatabase {
   owner: Client;
   /** A URL for the scratch database as the INSERT/SELECT-only application role. */
   appUrl: string;
+  /**
+   * Ends the owner connection, drops the database and each role, and ends the
+   * admin connection, attempting every step even after one fails; it logs and
+   * then throws what it could not do (#5349).
+   */
   drop(): Promise<void>;
 }
 
@@ -148,12 +154,12 @@ export async function createMemberMoneyScratchDatabase(
   ownerUrl.pathname = `/${name}`;
   const owner = new Client({ connectionString: ownerUrl.toString() });
   let connected = false;
-  const drop = async () => {
-    if (connected) await owner.end();
-    await admin.query(`DROP DATABASE IF EXISTS "${name}" WITH (FORCE)`);
-    for (const role of Object.values(roles)) await admin.query(`DROP ROLE IF EXISTS "${role}"`);
-    await admin.end();
-  };
+  const drop = () => runEveryTeardownStep(`member-money scratch ${name}`, [
+    { what: "end the owner connection", run: () => (connected ? owner.end() : undefined) },
+    { what: `drop database "${name}"`, run: () => admin.query(`DROP DATABASE IF EXISTS "${name}" WITH (FORCE)`) },
+    ...Object.values(roles).map((role) => ({ what: `drop role "${role}"`, run: () => admin.query(`DROP ROLE IF EXISTS "${role}"`) })),
+    { what: "end the admin connection", run: () => admin.end() },
+  ]);
   try {
     await admin.query(`CREATE DATABASE "${name}"`);
     await owner.connect();
@@ -161,6 +167,7 @@ export async function createMemberMoneyScratchDatabase(
     await owner.query(`CREATE TABLE "Lodge" (id text PRIMARY KEY);
       CREATE TABLE "Booking" (id text PRIMARY KEY, "lodgeId" text REFERENCES "Lodge"(id));
       CREATE TABLE "BookingLedgerLine" (id text PRIMARY KEY);
+      CREATE TABLE "GroupBookingSettlement" (id text PRIMARY KEY);
       CREATE TABLE "AuditLog" (id text PRIMARY KEY, "ipAddress" text, "userAgent" text)`);
     await owner.query(`CREATE TABLE "Payment" (id text PRIMARY KEY, "bookingId" text UNIQUE REFERENCES "Booking"(id));
       CREATE TABLE "PaymentTransaction" (id text PRIMARY KEY, "paymentId" text REFERENCES "Payment"(id), "stripePaymentIntentId" text);
@@ -171,6 +178,8 @@ export async function createMemberMoneyScratchDatabase(
     await owner.query(readFileSync("prisma/migrations/20261222050000_member_money_export_supplementary/migration.sql", "utf8"));
     await owner.query(readFileSync("prisma/migrations/20261223010000_member_money_refund_note_manifest/migration.sql", "utf8"));
     await owner.query(readFileSync("prisma/migrations/20261223050000_member_money_capture_receipt_manifest/migration.sql", "utf8"));
+    await owner.query(readFileSync("prisma/migrations/20270105100000_member_money_export_combined_group_role/migration.sql", "utf8"));
+    await owner.query(readFileSync("prisma/migrations/20270105100100_member_money_export_coverage_release/migration.sql", "utf8"));
     const statements = buildDatabaseRolesSql({
       databaseName: name,
       migrator: { roleName: roles.migrator, password: "m".repeat(28) },
@@ -186,8 +195,9 @@ export async function createMemberMoneyScratchDatabase(
       throw error;
     }
   } catch (error) {
-    // Nothing a half-built scratch database made may outlive the failure.
-    await drop();
+    // Nothing a half-built scratch database made may outlive the failure. A
+    // clean-up failure is logged by drop() and must not hide the set-up error.
+    await drop().catch(() => {});
     throw error;
   }
   const appUrl = new URL(ownerUrl);

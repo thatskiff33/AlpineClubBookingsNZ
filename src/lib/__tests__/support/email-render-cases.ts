@@ -205,6 +205,8 @@ import {
   familyMemberBookingAddedTemplate,
 } from "@/lib/email-templates/family-booking";
 import { adminGroupJoinerStartedStayTemplate } from "@/lib/email-templates/admin-group-joiner-started-stay";
+import { adminWaitlistNoticeUnsentTemplate } from "@/lib/email-templates/admin-waitlist-notice-unsent";
+import { adminBookingConfirmationUnsentTemplate } from "@/lib/email-templates/admin-booking-confirmation-unsent";
 import {
   groupJoinCancelledTemplate,
   groupJoinPaySelfTemplate,
@@ -902,7 +904,7 @@ const GENERATED_CASES: EmailRenderCase[] = [
   { id: "adminPendingDeadlineTemplate:minimal", fn: "adminPendingDeadlineTemplate", render: () =>
     adminPendingDeadlineTemplate([{ memberName: "memberName-1", checkIn: new Date("2026-03-03T00:00:00.000Z"), checkOut: new Date("2026-03-04T00:00:00.000Z"), guestCount: 104, deadline: new Date("2026-03-06T00:00:00.000Z"), hoursRemaining: 106 }]) },
   { id: "adminBookingBumpedTemplate:minimal", fn: "adminBookingBumpedTemplate", render: () =>
-    adminBookingBumpedTemplate({ bumpedMemberName: "bumpedMemberName-1", checkIn: new Date("2026-03-03T00:00:00.000Z"), checkOut: new Date("2026-03-04T00:00:00.000Z"), guestCount: 104, triggeringMemberName: "triggeringMemberName-5" }) },
+    adminBookingBumpedTemplate({ bumpedMemberName: "bumpedMemberName-1", bookingReference: "bookingReference-2", lodgeName: "lodgeName-3", checkIn: new Date("2026-03-04T00:00:00.000Z"), checkOut: new Date("2026-03-05T00:00:00.000Z"), guestCount: 106, reason: "reason-7" }) },
   { id: "adminXeroSyncErrorTemplate:minimal", fn: "adminXeroSyncErrorTemplate", render: () =>
     adminXeroSyncErrorTemplate({ errorType: "errorType-1", operation: "operation-2", errorMessage: "errorMessage-3", timestamp: new Date("2026-03-05T00:00:00.000Z") }) },
   { id: "adminXeroRepeatedFailureTemplate:minimal", fn: "adminXeroRepeatedFailureTemplate", render: () =>
@@ -1090,7 +1092,11 @@ const GENERATED_CASES: EmailRenderCase[] = [
   { id: "waitlistPlaceRestoredTemplate:minimal", fn: "waitlistPlaceRestoredTemplate", render: () =>
     waitlistPlaceRestoredTemplate("firstName-1", new Date("2026-03-03T00:00:00.000Z"), new Date("2026-03-04T00:00:00.000Z"), 104) },
   { id: "adminWaitlistOfferTemplate:minimal", fn: "adminWaitlistOfferTemplate", render: () =>
-    adminWaitlistOfferTemplate({ memberName: "memberName-1", checkIn: new Date("2026-03-03T00:00:00.000Z"), checkOut: new Date("2026-03-04T00:00:00.000Z"), guestCount: 104, position: 105 }) },
+    adminWaitlistOfferTemplate({ memberName: "memberName-1", checkIn: new Date("2026-03-03T00:00:00.000Z"), checkOut: new Date("2026-03-04T00:00:00.000Z"), guestCount: 104, position: 105, expiresAt: new Date("2026-03-01T00:00:00.000Z"), offerEmail: "sent" }) },
+  { id: "adminWaitlistOfferTemplate:withheld", fn: "adminWaitlistOfferTemplate", render: () =>
+    adminWaitlistOfferTemplate({ memberName: "memberName-1 <b>", checkIn: new Date("2026-03-03T00:00:00.000Z"), checkOut: new Date("2026-03-04T00:00:00.000Z"), guestCount: 104, position: 105, expiresAt: null, offerEmail: "withheld" }) },
+  { id: "adminWaitlistOfferTemplate:not-delivered", fn: "adminWaitlistOfferTemplate", render: () =>
+    adminWaitlistOfferTemplate({ memberName: "memberName-1", checkIn: new Date("2026-03-03T00:00:00.000Z"), checkOut: new Date("2026-03-04T00:00:00.000Z"), guestCount: 104, position: 105, expiresAt: new Date("2026-03-01T00:00:00.000Z"), offerEmail: "not-delivered" }) },
   { id: "setupIntentFailedTemplate:minimal", fn: "setupIntentFailedTemplate", render: () =>
     setupIntentFailedTemplate({ firstName: "firstName-1", checkIn: new Date("2026-03-03T00:00:00.000Z"), checkOut: new Date("2026-03-04T00:00:00.000Z") }) },
   { id: "supersededPaymentRefundedTemplate:owing", fn: "supersededPaymentRefundedTemplate", render: () =>
@@ -1150,6 +1156,14 @@ const GENERATED_CASES: EmailRenderCase[] = [
     adminGroupJoinerStartedStayTemplate({ organiserName: "organiserName-1", organiserBookingId: "organiserBookingId-2", organiserBookingUrl: "https://example.test/bookings/organiserBookingId-2", checkIn: new Date("2026-03-04T00:00:00.000Z"), joiners: [{ name: "name-3", bookingUrl: "https://example.test/bookings/bookingId-4" }] }) },
   { id: "adminGroupJoinerStartedStayTemplate:two-joiners", fn: "adminGroupJoinerStartedStayTemplate", render: () =>
     adminGroupJoinerStartedStayTemplate({ organiserName: "organiserName-1", organiserBookingId: "organiserBookingId-2", organiserBookingUrl: "https://example.test/bookings/organiserBookingId-2", checkIn: new Date("2026-03-04T00:00:00.000Z"), joiners: [{ name: "name-3 <b>", bookingUrl: "https://example.test/bookings/bookingId-4" }, { name: "name-5", bookingUrl: "https://example.test/bookings/bookingId-6" }] }) },
+  { id: "adminBookingConfirmationUnsentTemplate:minimal", fn: "adminBookingConfirmationUnsentTemplate", render: () =>
+    adminBookingConfirmationUnsentTemplate({ memberName: "memberName-1 <b>", bookingId: "bookingId-2", bookingUrl: "https://example.test/bookings/bookingId-2", checkIn: new Date("2026-03-04T00:00:00.000Z"), checkOut: new Date("2026-03-05T00:00:00.000Z") }) },
+  { id: "adminWaitlistNoticeUnsentTemplate:offer", fn: "adminWaitlistNoticeUnsentTemplate", render: () =>
+    adminWaitlistNoticeUnsentTemplate({ notice: "offer", memberName: "memberName-1 <b>", bookingId: "bookingId-2", bookingUrl: "https://example.test/bookings/bookingId-2", checkIn: new Date("2026-03-04T00:00:00.000Z"), checkOut: new Date("2026-03-05T00:00:00.000Z") }) },
+  { id: "adminWaitlistNoticeUnsentTemplate:offer-expired", fn: "adminWaitlistNoticeUnsentTemplate", render: () =>
+    adminWaitlistNoticeUnsentTemplate({ notice: "offer-expired", memberName: "memberName-1", bookingId: "bookingId-2", bookingUrl: "https://example.test/bookings/bookingId-2", checkIn: new Date("2026-03-04T00:00:00.000Z"), checkOut: new Date("2026-03-05T00:00:00.000Z") }) },
+  { id: "adminWaitlistNoticeUnsentTemplate:offer-lapsed-untold", fn: "adminWaitlistNoticeUnsentTemplate", render: () =>
+    adminWaitlistNoticeUnsentTemplate({ notice: "offer-lapsed-untold", memberName: "memberName-1", bookingId: "bookingId-2", bookingUrl: "https://example.test/bookings/bookingId-2", checkIn: new Date("2026-03-04T00:00:00.000Z"), checkOut: new Date("2026-03-05T00:00:00.000Z") }) },
   { id: "groupJoinPaySelfTemplate:minimal", fn: "groupJoinPaySelfTemplate", render: () =>
     groupJoinPaySelfTemplate({ firstName: "firstName-1", organiserName: "organiserName-2", checkIn: new Date("2026-03-04T00:00:00.000Z"), checkOut: new Date("2026-03-05T00:00:00.000Z") }) },
   { id: "bookingRequestApprovedTemplate:minimal", fn: "bookingRequestApprovedTemplate", render: () =>

@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { parseJsonRequestBody } from "@/lib/api-json";
 import { Prisma } from "@prisma/client";
 import { z } from "zod";
 import { requireAdmin } from "@/lib/session-guards";
@@ -14,7 +15,7 @@ import { isBuiltInDisplayTemplateKey } from "@/lib/lodge-display/built-in-seeds"
 // (not this route), so this guard does not affect them.
 const BUILT_IN_READ_ONLY = "Built-in boards are read-only — duplicate to customise";
 
-// Admin lobby-display TEMPLATE read / update / delete (fork issue #79, LTV-033):
+// Admin lobby-display TEMPLATE read / update / delete (fork issue hoppers99/AlpineClubBookingsNZ#79, LTV-033):
 //  • GET    — the full authored row PLUS its layout's areas, so the editor can
 //             build one slot box per declared slot seeded from the layout.
 //  • PUT    — update the authored fields, re-validated by the save contract
@@ -94,12 +95,11 @@ export async function PUT(
   });
   if (!guard.ok) return guard.response;
 
-  let body: z.infer<typeof putSchema>;
-  try {
-    body = putSchema.parse(await req.json());
-  } catch {
-    return NextResponse.json({ error: "Invalid request" }, { status: 400 });
-  }
+  const jsonBody = await parseJsonRequestBody(req);
+  if (!jsonBody.ok) return jsonBody.response;
+  const parsedBody = putSchema.safeParse(jsonBody.body);
+  if (!parsedBody.success) return NextResponse.json({ error: "Invalid request" }, { status: 400 });
+  const body = parsedBody.data;
 
   const { id } = await params;
   const existing = await prisma.displayTemplate.findUnique({

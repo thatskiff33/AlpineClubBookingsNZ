@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
+import { upstreamTrustFor } from "../lib/budget-upstream-ref";
 import { ALLOWANCE_DIR, readSizeAllowances } from "../lib/file-size-allowances";
 import { evaluateFunctionLengthRatchet } from "../lib/function-length-ratchet";
 
@@ -30,8 +31,8 @@ function git(root: string, ...args: string[]): string {
 }
 
 /** A function `name` spanning exactly `lines` lines. */
-function fn(name: string, lines: number): string {
-  const body = Array.from({ length: lines - 2 }, () => "  n += 1;");
+function fn(name: string, lines: number, statement = "n += 1;"): string {
+  const body = Array.from({ length: lines - 2 }, () => `  ${statement}`);
   return [`export function ${name}(n: number) {`, ...body, "}"].join("\n");
 }
 
@@ -54,7 +55,7 @@ function newRepo() {
     git(root, "commit", "--quiet", "-m", msg);
     return git(root, "rev-parse", "HEAD").trim();
   };
-  const judge = (baseRef: string) => {
+  const judge = (baseRef: string, upstreamRef?: string) => {
     const declared = readSizeAllowances(root);
     return evaluateFunctionLengthRatchet({
       root,
@@ -63,6 +64,7 @@ function newRepo() {
       isProductionFile: (file) => file.startsWith("src/") && file.endsWith(".ts"),
       allowances: declared.functionAllowances,
       allowanceProblems: declared.problems,
+      upstream: upstreamTrustFor(root, baseRef, upstreamRef),
     });
   };
   return { root, write, allow, remove, commit, judge };
@@ -255,5 +257,172 @@ describe("evaluateFunctionLengthRatchet — fails closed", () => {
     const result = repo.judge("origin/does-not-exist");
     expect(kinds(result)).toEqual(["base-unresolvable null"]);
     expect(result.baseSha).toBeNull();
+  });
+});
+
+describe("evaluateFunctionLengthRatchet — a fork syncing down from a trusted upstream (#5196)", () => {
+  const reason = "reason: the guard belongs inside the claim it protects, said out loud.\n";
+
+  /**
+   * A fork and its upstream, both cut from one commit. Upstream then takes
+   * `cancel` over the limit (before any ratchet could refuse it), grows the
+   * already-long `big` under its own allowance, and adds a new long `panel`.
+   * The fork merges that upstream tip into a sync branch off its own base.
+   */
+  function syncFixture() {
+    const repo = newRepo();
+    repo.write("src/door.ts", fn("cancel", 5));
+    repo.write("src/big.ts", fn("big", 40));
+    repo.commit("common");
+    git(repo.root, "branch", "-M", "fork");
+    git(repo.root, "checkout", "--quiet", "-b", "upstream");
+    repo.write("src/door.ts", fn("cancel", 40));
+    repo.write("src/big.ts", fn("big", 45));
+    repo.write("src/panel.ts", fn("panel", 40));
+    repo.allow("100-big.md", `function: src/big.ts#big\nlines: 45\n${reason}`);
+    const upstreamTip = repo.commit("upstream work");
+    git(repo.root, "checkout", "--quiet", "fork");
+    repo.write("src/fork-only.ts", fn("local", 3));
+    const base = repo.commit("fork work");
+    git(repo.root, "checkout", "--quiet", "-b", "sync");
+    git(repo.root, "merge", "--quiet", "--no-ff", "--no-edit", "upstream");
+    return { ...repo, base, upstreamTip };
+  }
+
+  it("passes over-limit functions identical to upstream with no allowance, and fails them without trust", () => {
+    const repo = syncFixture();
+    // Without trust, upstream's fragment is live and applies to `big`; the
+    // other two arrive looking new or crossing, which no allowance may cover.
+    expect(kinds(repo.judge(repo.base))).toEqual([
+      "crossed-limit src/door.ts#cancel",
+      "new-over-limit src/panel.ts#panel",
+    ]);
+
+    const trusted = repo.judge(repo.base, "upstream");
+    expect(trusted.findings).toEqual([]);
+    expect(trusted.trustedUpstream).toMatchObject({
+      sha: repo.upstreamTip,
+      subject: "upstream work",
+      lifted: 3,
+      ignoredFragments: 1,
+    });
+  });
+
+  it("still refuses a function the fork lengthens beyond upstream, unless the fork declares it", () => {
+    const repo = syncFixture();
+    repo.write("src/door.ts", fn("cancel", 41));
+    const grown = repo.judge(repo.base, "upstream");
+    expect(kinds(grown)).toEqual(["grown-beyond-base src/door.ts#cancel"]);
+    expect(grown.findings[0]?.previous).toBe(
+      `40 lines on trusted upstream ${repo.upstreamTip.slice(0, 12)}`,
+    );
+
+    repo.allow("900-fork.md", `function: src/door.ts#cancel\nlines: 41\n${reason}`);
+    const declared = repo.judge(repo.base, "upstream");
+    expect(declared.findings).toEqual([]);
+    expect(declared.allowancesApplied.map((a) => a.source)).toEqual([`${ALLOWANCE_DIR}/900-fork.md`]);
+  });
+
+  it("still refuses a function the fork itself takes over the limit", () => {
+    const repo = syncFixture();
+    repo.write("src/fork-only.ts", fn("local", LIMIT + 1));
+    expect(kinds(repo.judge(repo.base, "upstream"))).toEqual(["crossed-limit src/fork-only.ts#local"]);
+  });
+
+  it("keeps upstream's length for a file upstream moved where git no longer sees a rename", () => {
+    // The #4800 regrouping's shape: the cumulative diff reads the move as one
+    // deletion and one addition, because the rest of the file changed too.
+    const repo = newRepo();
+    repo.write("src/old/tab.ts", fn("tab", 40), fn("a", 6), fn("b", 6), fn("c", 6));
+    repo.commit("common");
+    git(repo.root, "branch", "-M", "fork");
+    git(repo.root, "checkout", "--quiet", "-b", "upstream");
+    repo.remove("src/old/tab.ts");
+    repo.write("src/new/tab.ts", fn("tab", 45, "n -= 2;"), fn("x", 6, "n *= 3;"), fn("y", 6, "n *= 3;"));
+    repo.commit("upstream regroups admin");
+    git(repo.root, "checkout", "--quiet", "fork");
+    repo.write("src/fork-only.ts", fn("local", 3));
+    const base = repo.commit("fork work");
+    git(repo.root, "checkout", "--quiet", "-b", "sync");
+    git(repo.root, "merge", "--quiet", "--no-ff", "--no-edit", "upstream");
+
+    const renames = git(repo.root, "diff", "-M", "--name-status", "--diff-filter=R", base);
+    expect(renames).toBe("");
+    expect(kinds(repo.judge(base))).toEqual(["grown-beyond-base src/new/tab.ts#tab"]);
+    expect(repo.judge(base, "upstream").findings).toEqual([]);
+  });
+
+  it("judges a fragment the fork edited, and does not collide upstream's with the fork's", () => {
+    const repo = syncFixture();
+    // Upstream's fragment plus a fork fragment for the same function: only the
+    // fork's is live, so there is no "one function, one allowance" collision.
+    repo.write("src/big.ts", fn("big", 46));
+    repo.allow("900-fork.md", `function: src/big.ts#big\nlines: 46\n${reason}`);
+    const both = repo.judge(repo.base, "upstream");
+    expect(both.findings).toEqual([]);
+    expect(both.trustedUpstream?.ignoredFragments).toBe(1);
+
+    // Two fork fragments for one function still collide.
+    repo.allow("901-fork.md", `function: src/big.ts#big\nlines: 46\n${reason}`);
+    expect(kinds(repo.judge(repo.base, "upstream"))).toContain("allowance-malformed src/big.ts#big");
+
+    // An upstream fragment the fork edited is the fork's declaration again.
+    const edited = syncFixture();
+    edited.allow("100-big.md", `function: src/big.ts#big\nlines: 44\n${reason}`);
+    expect(kinds(edited.judge(edited.base, "upstream"))).toEqual(["allowance-unused src/big.ts#big"]);
+  });
+
+  it("ignores trust that resolves to HEAD, returning exactly the ordinary result", () => {
+    // On the upstream branch itself U is HEAD: no fork change to separate out.
+    const repo = syncFixture();
+    git(repo.root, "checkout", "--quiet", "upstream");
+    const common = git(repo.root, "merge-base", "upstream", "fork").trim();
+    const ordinary = repo.judge(common);
+    expect(kinds(ordinary)).toEqual([
+      "crossed-limit src/door.ts#cancel",
+      "new-over-limit src/panel.ts#panel",
+    ]);
+    expect(ordinary.allowancesApplied.map((a) => a.key)).toEqual(["src/big.ts#big"]);
+    expect(repo.judge(common, "upstream")).toStrictEqual(ordinary);
+    expect(repo.judge(common, undefined)).toStrictEqual(ordinary);
+  });
+
+  it("judges a merged upstream side commit against the first-parent commit beneath it", () => {
+    // Upstream's pull request branch first takes `cancel` to 60 lines and then
+    // splits it back to 40 before merging. A fork that merges only that first
+    // commit gets no trust for the 60: upstream's main never carried it.
+    const repo = newRepo();
+    repo.write("src/door.ts", fn("cancel", 5));
+    repo.commit("common");
+    git(repo.root, "branch", "-M", "fork");
+    git(repo.root, "checkout", "--quiet", "-b", "upstream");
+    repo.write("src/door.ts", fn("cancel", 40));
+    const upstreamMain = repo.commit("upstream main");
+    git(repo.root, "checkout", "--quiet", "-b", "upstream-pr");
+    repo.write("src/door.ts", fn("cancel", 60));
+    const sideCommit = repo.commit("pr: first draft");
+    repo.write("src/door.ts", fn("cancel", 40), fn("rest", 5));
+    repo.commit("pr: split it");
+    git(repo.root, "checkout", "--quiet", "upstream");
+    git(repo.root, "merge", "--quiet", "--no-ff", "--no-edit", "upstream-pr");
+    git(repo.root, "checkout", "--quiet", "fork");
+    repo.write("src/fork-only.ts", fn("local", 3));
+    const base = repo.commit("fork work");
+    git(repo.root, "checkout", "--quiet", "-b", "sync");
+    git(repo.root, "merge", "--quiet", "--no-ff", "--no-edit", sideCommit);
+
+    const result = repo.judge(base, "upstream");
+    expect(result.trustedUpstream?.sha).toBe(upstreamMain);
+    expect(kinds(result)).toEqual(["grown-beyond-base src/door.ts#cancel"]);
+    expect(result.findings[0]?.previous).toBe(
+      `40 lines on trusted upstream ${upstreamMain.slice(0, 12)}`,
+    );
+  });
+
+  it("fails when the named upstream cannot be resolved, rather than judging without it", () => {
+    const repo = syncFixture();
+    const result = repo.judge(repo.base, "upstream/does-not-exist");
+    expect(kinds(result)).toEqual(["upstream-unusable null"]);
+    expect(result.findings[0]?.problem).toContain("--upstream-ref");
   });
 });

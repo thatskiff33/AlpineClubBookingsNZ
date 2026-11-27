@@ -19,7 +19,7 @@ const mocks = vi.hoisted(() => ({
   confirmCrossLodgeWaitlistOffer: vi.fn(),
   sendWaitlistOfferEmail: vi.fn().mockResolvedValue(undefined),
   sendWaitlistOfferExpiredEmail: vi.fn().mockResolvedValue(undefined),
-  sendAdminWaitlistOfferAlert: vi.fn().mockResolvedValue(undefined),
+  sendAdminWaitlistOfferAlert: vi.fn().mockResolvedValue({ deliveryAllowed: true, recipients: 1, sent: 1, queuedForRetry: 0, notDelivered: 0, failedBeforeLogged: 0 }),
   logAudit: vi.fn(),
 }));
 
@@ -33,6 +33,12 @@ vi.mock("@/lib/prisma", () => ({
     // keeps this suite from exercising the graceful-degradation branch instead of
     // the real read.
     bookingGuest: { findMany: async () => [] },
+    // #5433: the offer's owed notices are claimed and cleared on this client
+    // after the commit.
+    owedNotice: { updateMany: async () => ({ count: 1 }), deleteMany: async () => ({ count: 1 }) },
+    // #5433 review L: the officers' offer alert goes once the offer email's row
+    // says it went (every fixture's send succeeds).
+    emailLog: { findUnique: async () => ({ status: "SENT", attempts: 1 }), count: async () => 1 },
   },
 }));
 vi.mock("@/lib/lodges", () => ({
@@ -53,9 +59,14 @@ vi.mock("@/lib/lodge-access", () => ({
   isMemberEligibleToBookLodge: mocks.isMemberEligibleToBookLodge,
 }));
 vi.mock("@/lib/waitlist-cross-lodge", () => ({
-  getWaitlistCrossLodgeOrder: mocks.getWaitlistCrossLodgeOrder,
   quoteWaitlistEntryAtLodge: mocks.quoteWaitlistEntryAtLodge,
   confirmCrossLodgeWaitlistOffer: mocks.confirmCrossLodgeWaitlistOffer,
+}));
+// #5402: the queue-order setting moved to the leaf queue module; the ordering
+// itself stays real.
+vi.mock("@/lib/waitlist-queue", async (importOriginal) => ({
+  ...((await importOriginal()) as typeof import("@/lib/waitlist-queue")),
+  getWaitlistCrossLodgeOrder: mocks.getWaitlistCrossLodgeOrder,
 }));
 vi.mock("@/lib/email", () => ({
   sendWaitlistOfferEmail: mocks.sendWaitlistOfferEmail,
@@ -99,6 +110,10 @@ function candidate(input: {
 function makeTx(candidates: ReturnType<typeof candidate>[]) {
   return {
     $executeRaw: vi.fn().mockResolvedValue(1),
+    // #5402: the offer-time position read takes the club's cross-lodge order
+    // from here when another lodge's entry named the offered entry's lodge. A
+    // missing row is OWN_LODGE_FIRST.
+    bookingDefaults: { findUnique: vi.fn().mockResolvedValue(null) },
     lodge: {
       findMany: vi.fn().mockResolvedValue([{ id: "lodge-a" }, { id: "lodge-b" }]),
       findUnique: vi.fn().mockResolvedValue({ name: "River Lodge" }),
@@ -108,6 +123,8 @@ function makeTx(candidates: ReturnType<typeof candidate>[]) {
       update: vi.fn().mockImplementation(async (args) => args),
       count: vi.fn().mockResolvedValue(0),
     },
+    // #5433: the offer records its owed notices in this transaction.
+    owedNotice: { createMany: vi.fn().mockResolvedValue({ count: 2 }) },
   };
 }
 
@@ -165,8 +182,9 @@ describe("processWaitlistForDates cross-lodge pass", () => {
 
   // #2258: a suppressed booking must never enter candidacy. If it did, the
   // offer transaction would stamp waitlistOfferExpiresAt and start the offer
-  // clock, the offer email would then be withheld, and the entry would hold a
-  // bed for the whole window with the member never told — then lapse.
+  // clock, the offer email would then be withheld, and the offer would run its
+  // whole window with the member never told, then lapse. (An offer holds no
+  // capacity, INV-CAP-011.)
   it("excludes bookings with the No emails switch from waitlist candidacy", async () => {
     const own = candidate({
       id: "entry-b",
@@ -277,21 +295,25 @@ describe("processWaitlistForDates cross-lodge pass", () => {
     expect(currentTx.booking.update).not.toHaveBeenCalled();
   });
 
-  it("counts the offered candidate's queue position per-lodge, not club-wide (M6)", async () => {
-    // The candidate is first in line at lodge B. Older overlapping WAITLISTED
-    // entries exist at lodge A; club-wide counting would report position 4,
-    // but the per-lodge count makes it position 1.
+  it("counts the offered candidate's queue position per-lodge, not club-wide (M6, #5402)", async () => {
+    // The candidate is first in line at lodge B. Three older overlapping
+    // WAITLISTED entries wait at lodge A and named no alternate; club-wide
+    // counting would report position 4, but the per-lodge queue makes it 1.
     const ownCandidate = candidate({
       id: "entry-b",
       lodgeId: "lodge-b",
       createdAt: "2026-07-02T10:00:00Z",
     });
+    const olderAtA = ["a1", "a2", "a3"].map((id, index) =>
+      candidate({ id, lodgeId: "lodge-a", createdAt: `2026-07-01T0${index}:00:00Z` }),
+    );
     currentTx = makeTx([ownCandidate]);
-    // Only lodge-B entries count toward this candidate's position; the three
-    // older lodge-A entries do not.
-    currentTx.booking.count.mockImplementation(async (args: {
-      where: { lodgeId?: string };
-    }) => (args.where.lodgeId === "lodge-b" ? 0 : 3));
+    // #5402: the position is read from the live queue, not counted. The
+    // candidate read returns the offered entry; the position read returns the
+    // whole queue the reader would see, older lodge-A entries included.
+    currentTx.booking.findMany
+      .mockResolvedValueOnce([ownCandidate])
+      .mockResolvedValueOnce([...olderAtA, ownCandidate]);
     mocks.checkCapacityForGuestRanges.mockResolvedValue({ available: true });
 
     const result = await processWaitlistForDates({
@@ -301,17 +323,55 @@ describe("processWaitlistForDates cross-lodge pass", () => {
     }, CLUB_FORMAT_TEST);
 
     expect(result.offeredBookingId).toBe("entry-b");
-    // The position count is scoped to the candidate's own lodge.
-    expect(currentTx.booking.count).toHaveBeenCalledWith(
-      expect.objectContaining({
-        where: expect.objectContaining({ status: "WAITLISTED", lodgeId: "lodge-b" }),
-      }),
+    // The position read is scoped to the candidate's own lodge.
+    expect(currentTx.booking.findMany.mock.calls[1]![0].where.OR).toEqual(
+      expect.arrayContaining([{ lodgeId: { in: ["lodge-b"] } }]),
     );
     // The admin alert (and audit metadata) report position 1, not 4.
     expect(mocks.sendAdminWaitlistOfferAlert).toHaveBeenCalledWith(
       expect.objectContaining({ position: 1 }),
     );
   });
+
+  describe.each(["OWN_LODGE_FIRST", "MERGED"] as const)(
+    "a cross-lodge offer that lapsed (#5410, INV-CAP-042, %s)",
+    (mode) => {
+      // Both wait at lodge A and named lodge B; only lodge B has room.
+      const older = () => candidate({ id: "entry-a", lodgeId: "lodge-a", createdAt: "2026-07-01T10:00:00Z", alternates: ["lodge-b"] });
+      const newer = () => candidate({ id: "entry-c", lodgeId: "lodge-a", createdAt: "2026-07-03T10:00:00Z", alternates: ["lodge-b"] });
+      const freedAtB = { checkIn: CHECK_IN, checkOut: CHECK_OUT, lodgeId: "lodge-b" };
+      const keyFor = (offeredLodgeId: string) => ({
+        id: "entry-a",
+        createdAt: new Date("2026-07-01T10:00:00Z"),
+        offeredLodgeId,
+      });
+
+      beforeEach(() => {
+        currentTx = makeTx([older(), newer()]);
+        mocks.getWaitlistCrossLodgeOrder.mockResolvedValue(mode);
+        mocks.checkCapacityForGuestRanges.mockImplementation(async (lodgeId: string) => ({
+          available: lodgeId === "lodge-b",
+        }));
+      });
+
+      it("with no lapse passed, offers lodge B to the older entry as before", async () => {
+        expect((await processWaitlistForDates(freedAtB, CLUB_FORMAT_TEST)).offeredBookingId).toBe("entry-a");
+      });
+
+      it("moves the lapsed entry's opportunity at lodge B last, so the next opt-in is offered lodge B", async () => {
+        const key = keyFor("lodge-b");
+        const result = await processWaitlistForDates(freedAtB, CLUB_FORMAT_TEST, { key, run: [key] });
+        expect(result.offeredBookingId).toBe("entry-c");
+        expect(currentTx.booking.update.mock.calls[0][0].data.waitlistOfferedLodgeId).toBe("lodge-b");
+      });
+
+      it("a lapse at the entry's own lodge does not move its opportunity at lodge B", async () => {
+        const key = keyFor("lodge-a");
+        const result = await processWaitlistForDates(freedAtB, CLUB_FORMAT_TEST, { key, run: [key] });
+        expect(result.offeredBookingId).toBe("entry-a");
+      });
+    },
+  );
 
   it("never builds a cross-lodge opportunity for a candidate who did not opt into the freed lodge", async () => {
     const nonOptIn = candidate({

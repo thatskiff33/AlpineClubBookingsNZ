@@ -731,7 +731,7 @@ describe("the SELECT-only grant allowlist matches what the statements read", () 
         0,
       ),
       "update docs/ai-diagnostics/deployment.md and tool-pack-booking-membership.md in the same commit",
-    ).toBe(244);
+    ).toBe(243);
   });
 
   it("pins the documented column census for every relation, not only the total", () => {
@@ -749,7 +749,7 @@ describe("the SELECT-only grant allowlist matches what the statements read", () 
       XeroObjectLink: 10,
       XeroSyncOperation: 17,
       Member: 24,
-      Booking: 25,
+      Booking: 24,
       Lodge: 2,
       BookingGuest: 15,
       MemberPartnerLink: 3,

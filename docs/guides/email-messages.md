@@ -240,6 +240,36 @@ that blocks images shows the three service names instead — members never see
 the written-out addresses. Place the token on its own line inside your
 wording and Preview to see the row in place.
 
+When a booking whose confirmation offered those calendar links is later
+cancelled or bumped, the download link stops working, but an entry the member
+already saved stays in their calendar (#5249). So the **Booking Cancelled** and
+**Booking Update** (bumped) messages carry a calendar file that cancels the same
+entry, and **`{{calendarRemovalNote}}`** renders one sentence: "If you added
+this stay to your calendar, open the attached calendar file to remove it, and
+delete the entry yourself if it is still showing." The **Booking Modified**
+message carries **`{{calendarUpdateNote}}`** when the dates moved: "If you added
+this stay to your calendar, it still shows the old dates, so please update it."
+No file is attached to that one, because a calendar that ignores the entry's id
+would add a second entry beside the stale one.
+
+Both tokens are empty, and no file is attached, unless the member was sent the
+Booking Confirmed message and is still allowed the booking link it carried, so a
+school contact or a member who never had the calendar links sees nothing. If the
+file cannot be built the sentence drops its mention of an attachment, including
+when a failed email is retried. Retries adjust only this standard sentence;
+your surrounding wording is kept. The
+shipped default wording places each token on a line of its own. A club that
+saved its own wording for these messages keeps it unchanged: the file is still
+attached, but the sentence shows only after you add the token to your wording.
+
+**What the file can and cannot do.** Calendar apps differ in how they treat a
+cancellation for an entry that was added from a downloaded file: one may remove
+the entry, another may show a cancelled copy or ignore the file. Which app does
+what has not been tested yet, so do not promise members that opening the file
+removes the stay. An entry added through the Google Calendar or Outlook.com
+link has no connection to the file at all, so no file can remove it. That is
+why the sentence always ends with removing the entry by hand.
+
 A second, related pair works the other way round: **`{{rebookLabel}}` and
 `{{rebookPath}}`** in the **Booking Update** (bumped) message. That email goes to
 two very different people — a club member whose pending booking lost its beds,
@@ -363,6 +393,188 @@ you want both reworded; editing only one leaves the other on its built-in text.
 > needing cleanup. Re-apply your wording to whichever of the two you want to
 > change.
 
+> **Upgrade note (#5403).** The officers' **Admin Booking Bumped** alert is sent
+> again. The pending-booking job sends it, once per booking, when it releases a
+> pending booking at its hold deadline because there is no longer room for its
+> party. Its subject names the member, the stay dates and the booking reference
+> (`{{bookingReference}}`), so officers can tell two bumps for the same member
+> apart. A subject your club saved on an earlier version has no booking
+> reference: restore the default subject, or add `{{bookingReference}}` to
+> yours. Since #5407 the Daily digest counts each alert once however many
+> officers receive it, and no longer folds alerts that share a subject, so a
+> saved subject does not change any digest count while the officers receiving
+> the alert stay the same. The built-in wording
+> gives the reason (`{{reason}}`), which also says when the member had asked
+> for the whole booking to be cancelled if their guests could not come.
+>
+> The built-in email also adds a Lodge line when the club has more than one
+> active lodge, or when the booking's lodge has been archived, as the capacity
+> warning does. That line is not part of the editable wording the editor shows,
+> so a saved copy of your own does not include it: a club with more than one
+> lodge should add `{{lodgeName}}` on a line of its own. It is empty in a
+> one-lodge club, which is why it should not sit after a label.
+>
+> The alert no longer offers `{{triggeringMemberName}}`, because the job has no
+> triggering booking to name. If a saved copy still uses that token, a warning
+> at the top of this page names the template and the token, and the template
+> itself says your saved copy uses a token it no longer supplies: swap it for
+> the chips now shown and save, or restore the default.
+
+> **Upgrade note (#5407).** A bump's notices are no longer lost if the
+> pending-booking job is interrupted, for example by a restart, between
+> releasing the booking and sending them. The member's email (subject
+> **Booking Update**, or **Booking Cancelled** when the booking was cancelled
+> because its guests could not come) and the officers' **Admin Booking Bumped**
+> alert are then sent by a later run of the same job or, since #5433, of the
+> email retry job (every 30 minutes), so a recovered notice arrives an hour or
+> more late, and a send that keeps failing before its email record is written is
+> retried about every hour to hour and a half, where it was every three hours (a
+> provider failure is still replayed by the failed-email retry). When the officers' alert could not be recorded for any
+> of them (for example when writing the email log failed and sending then
+> failed too, or the message could not be built from a saved template), it is
+> tried again a day later. The member never receives it twice. Very rarely the officers may
+> receive their alert twice: when the interruption falls just after it was
+> sent, or when sending it takes longer than an hour. Nothing about the
+> wording changed.
+
+> **Upgrade note (#5433, waitlist offers).** A waitlist offer's emails are no
+> longer lost if the job making the offer is interrupted between saving the
+> offer and sending them. The member's **Spot Available!** email and the
+> officers' **Admin Waitlist Offer** alert, and the member's **Waitlist Offer
+> Expired** email after an offer lapses, are then sent by a later run of the
+> email retry job (every 30 minutes), usually within an hour. The member never
+> receives any of them twice; officers very rarely may.
+>
+> What a member can notice: when an offer email arrives late like this, the
+> offer gets a full window from when it arrives, up to the start of the
+> check-in date in the club's time zone (owner decisions, 23 and 24 Nov 2026),
+> and the email states that new deadline. The booking page shows the same
+> deadline. The window is restarted once per offer: if that late email also
+> fails and goes out on a later run, it states the deadline already set, so the
+> member has what is left of that window. When too little of a window would be
+> left to be worth telling them (less than half an hour), or the member's
+> address cannot be emailed (none, a placeholder, or one on the bounce and
+> complaint suppression list), no offer email goes and the window is not
+> restarted; the officers are alerted instead. If an offer lapses before its
+> email reached the member (never sent, failed, bounced, or recorded but
+> refused for a suppressed address), the member is not sent a **Waitlist
+> Offer Expired** email for it: they were never told about the offer. A failed
+> offer email still waiting to be retried when the offer ends is not retried:
+> it would state a deadline that has passed. Their booking goes back on the waitlist as with any lapsed
+> offer: they keep their place, but for that place everyone else waiting for
+> the same nights is considered before them.
+>
+> What an officer can notice: a new alert, **Waitlist email not sent**
+> (`admin-waitlist-notice-unsent`). It is sent once when a member's offer email
+> could not be sent, did not reach them (for example a suppressed or
+> placeholder address), or failed and could not be retried, before it stopped
+> being useful (the later of the start of the check-in date and the offer's
+> own deadline, and at most seven days after the offer); when a member's
+> **Waitlist Offer Expired** email could not be sent within seven days; and
+> when an offer lapses with its email not known to have reached the member,
+> so a person can step in for the place the member missed (owner decision,
+> 24 Nov 2026). Officers get it once per offer, not once for the unsent email
+> and again for the lapse (very rarely twice, if recording that it went
+> fails twice). It names the member and the booking so an officer can contact
+> them. It goes to officers who receive waitlist offer alerts (the **Waitlist
+> offers** preference, which mutes both), and its wording is editable like the
+> others. Its `{{noticeNote}}` token holds the whole instruction for that
+> email. The **Admin Waitlist Offer** alert still goes for every offer, once
+> what became of the offer email is known (it may wait while a failed send is
+> retried). It says which in the new `{{offerNote}}` token: sent, withheld by
+> the booking's **No emails** switch, or not delivered (alongside the
+> **Waitlist email not sent** alert). It states the deadline in force with
+> `{{expiresAt}}`, in place of a fixed "48 hours". `{{offerNote}}` is now a
+> required token. A saved copy of that template written before this version
+> keeps sending exactly as saved, in its old wording; this page flags it as
+> missing a required token, and it cannot be saved again until you add
+> `{{offerNote}}` back or restore the default. Nothing is blocked until then.
+>
+> Three limits officers should know. The offer email is withheld if **No
+> emails** is on for the booking when the email is sent, and turning emails
+> back on later does not send it: the member is not told of the offer by
+> email. They are told if the offer expires only if emails are on at that
+> moment. So contact them directly, or retract the offer.
+> When the mail provider reports a bounce or
+> a complaint for a member's address, every earlier email to that address is
+> marked bounced too, so a member who did receive their offer can still be
+> reported in a **Waitlist email not sent** alert when it lapses; that alert
+> says only that the email is not known to have reached them. And a **Waitlist
+> Offer Expired** email that cannot be delivered raises no alert: the member
+> is simply back on the waitlist.
+>
+> During the switch to this version, a server still running the version
+> before it that expires an offer this version made and never sent sends the
+> member the **Waitlist Offer Expired** email as before, and no officers'
+> alert is raised for it.
+>
+> Offers made before the upgrade carry on as they did. Their offer email was
+> recorded without the key this version uses, so this version matches it to
+> an offer by time instead: a failed one is still retried while the booking
+> holds a live offer made no later than the email (give or take two minutes
+> for clock differences), as the admin waitlist page already matches them;
+> otherwise it is not sent and moves to the email-failure review queue. It gets no window restart and no
+> "not sent" alert; and if such an offer lapses, the member is sent **Waitlist
+> Offer Expired** as before.
+
+> **Upgrade note (#5433, card-payment confirmations).** A member's **Booking
+> Confirmed** email after paying by card is no longer lost if the payment is
+> saved and the app is interrupted before the email goes. That applies to a
+> card payment on the booking page, one confirmed by Stripe's notice to the
+> app, and the scheduled charge of a saved card. A later run of the email
+> retry job (every 30 minutes) sends it instead, so it can arrive late,
+> usually within an hour (owner decision, 23 Nov 2026). The member is not sent
+> it twice by this version; during the switch to it, a server still running the
+> version before can send its own copy as well (below). It is built from the
+> booking as it is when it goes: its dates, guests, lodge and door code then,
+> and, if the price was raised since and the extra not yet paid, the amount
+> still owing. It is not sent once the booking is cancelled (with or without a
+> refund), deleted, or its payment reversed; a partial refund that leaves the
+> booking paid does not stop it.
+>
+> A late confirmation is tried until the end of the check-in day, or for seven
+> days after the payment if that comes first (owner decision, 25 Nov 2026):
+> the seven days matter only when every attempt has failed for a week while
+> check-in is further away. Then it stops and the officers are alerted once.
+> This limit is only on the late retries: a payment recorded after the
+> check-in day still gets its confirmation straight away, as before.
+>
+> The scheduled saved-card charge's confirmation now looks like the one sent
+> after a card payment on the booking page: a booking whose non-member guests
+> are charged separately gets the paragraph about them, and an extra still to
+> pay shows as "Still Owing". It no longer sends a second confirmation when
+> Stripe's notice settled the same charge first. After a card payment on the
+> booking page or Stripe's notice, the email now goes once the booking's Xero
+> invoice is queued; if the app stops while Xero is being called, the email
+> goes on a later run, about half an hour later.
+>
+> What an officer can notice: a new alert, **Booking confirmation not sent**
+> (`admin-booking-confirmation-unsent`). It is sent once per paid booking when
+> its confirmation could not be sent in time (as above), or did not reach the
+> owner: the send failed, the address bounced or is on the suppression list,
+> or the owner has no address that can be emailed (a walk-in with a placeholder
+> address, or an organisation with none; owner decision, 25 Nov 2026). It names
+> the owner and the booking so an officer can contact them, or, while the
+> booking is not yet completed and the owner has an address, send a fresh
+> confirmation from the booking page. It goes to officers who receive
+> **Booking review required** alerts, and its wording is editable like the
+> others. No alert is sent for a confirmation the booking's **No emails**
+> switch held back, as before, nor for one this installation held back because
+> its environment is not declared (or a capture mailbox is set where it must
+> not be): that one waits in the email-failure review queue, as before. When
+> the **No emails** switch could not be read, this alert is sent as well as
+> the existing **An email to a member could not be sent** alert, which goes to
+> a different group of officers; the existing one is not retried if it fails,
+> so this one makes sure the booking-review officers hear.
+>
+> Nothing changes for the other ways a booking is confirmed: an officer's
+> charge of a saved card, an officer's confirmation of pending guests (which
+> still sends only when the officer asks), a zero-balance confirmation, a bank
+> transfer, and the recovery of a card payment found already taken. During the
+> switch to this version a server still running the version before it sends
+> the confirmation as it always did, so an owner can be sent two: one by this
+> version after Stripe's notice, and one by the older server's scheduled job.
+
 ## Settings reference
 
 Shared email variables (top card):
@@ -455,7 +667,9 @@ Two consequences worth knowing before you edit one:
   alert it is and, once closed, how it ended. A subject typed by hand would
   title a closed dispute as a new one. `{{disputeNextStep}}` is what the
   treasurer does now (respond in Stripe, record a lost dispute in Xero by hand,
-  or reverse that entry when a lost dispute is won), `{{disputeHoldNote}}` says
+  or reverse that entry when a lost dispute is won; that last one also names
+  each refund task the app reopened, any it could not reopen and why, and any
+  reduction now owed to the member again, #5197), `{{disputeHoldNote}}` says
   the app gives no card refund or account credit for the payment while the
   dispute is open or lost, and `{{outcome}}` is the dispute's status. The
   message is locked to always send.

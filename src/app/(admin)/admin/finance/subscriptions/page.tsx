@@ -4,6 +4,7 @@ import type { AgeTier, SubscriptionStatus } from "@prisma/client";
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import type { ReactNode } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
+import { useAdminListUrlSync } from "@/hooks/use-admin-list-url-sync";
 import { useClubTime } from "@/components/club-time-provider";
 import { requireInstant } from "@/lib/club-time";
 import { clubSeasonYear } from "@/lib/financial-year";
@@ -40,6 +41,7 @@ import {
 import { Alert } from "@/components/ui/alert";
 import { MemberLoginStageChip } from "@/components/admin/member-login-stage-chip";
 import { MemberDetailLink } from "@/components/admin/member-detail-link";
+import { SubscriptionBillingNote } from "@/components/admin/subscription-billing-note";
 import { AdminPageHeader } from "@/components/admin/admin-page-header";
 import { AdminLoadError } from "@/components/admin/admin-load-error";
 import { AdminDataTable } from "@/components/admin/admin-data-table";
@@ -127,6 +129,7 @@ interface Subscription {
   paidAt: string | null;
   manuallyMarkedPaidAt: string | null;
   manualPaymentNote: string | null;
+  billingNote?: string | null; // #5190: "Not required" row billing treats as owing
   xeroContactGroupsLoaded: boolean;
   xeroContactGroups: Array<{ id: string; name: string }>;
   member: {
@@ -427,10 +430,7 @@ export default function SubscriptionsPage() {
     ? `${SUBSCRIPTIONS_HREF}?${subscriptionsQuery}`
     : SUBSCRIPTIONS_HREF;
 
-  useEffect(() => {
-    const query = buildSubscriptionsSearchParams().toString();
-    router.replace(query ? `${SUBSCRIPTIONS_HREF}?${query}` : SUBSCRIPTIONS_HREF, { scroll: false });
-  }, [buildSubscriptionsSearchParams, router]);
+  useAdminListUrlSync(currentSubscriptionsPath);
 
   const fetchData = useCallback(async () => {
     // #4961: a failed read clears the previous query's rows and counts, so last
@@ -813,19 +813,14 @@ export default function SubscriptionsPage() {
                     kind="subscription"
                     value={sub.status as SubscriptionStatus}
                     label={sub.manuallyMarkedPaidAt ? `${subscriptionStatusLabel(sub.status)} (manual)` : undefined}
-                    title={
-                      sub.manuallyMarkedPaidAt
-                        ? `Marked paid manually${sub.manualPaymentNote ? `: ${sub.manualPaymentNote}` : ""}`
-                        : undefined
-                    }
+                    title={sub.manuallyMarkedPaidAt ? `Marked paid manually${sub.manualPaymentNote ? `: ${sub.manualPaymentNote}` : ""}` : undefined}
                   />
+                  <SubscriptionBillingNote note={sub.billingNote} />
                 </TableCell>
                 <TableCell>
                   {sub.xeroInvoiceId ? (
                     <a
-                      href={buildXeroInvoiceUrl(sub.xeroInvoiceId, {
-                        shortCode: xeroOrgShortCode,
-                      })}
+                      href={buildXeroInvoiceUrl(sub.xeroInvoiceId, { shortCode: xeroOrgShortCode })}
                       target="_blank"
                       rel="noopener noreferrer"
                       className="inline-flex items-center gap-1 rounded-sm text-xs text-primary hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"

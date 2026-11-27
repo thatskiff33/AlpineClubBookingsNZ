@@ -5,6 +5,9 @@ import { parseOccupancyMonth } from "@/lib/admin-occupancy";
 import { addDaysDateOnly, isDateOnlyString, parseDateOnly } from "@/lib/date-only";
 import { prisma } from "@/lib/prisma";
 import { resolveOptionalActiveLodgeId } from "@/lib/lodges";
+import { hutLeaderUnassignedNightsQuerySchema } from "@/lib/admin-lodge-schemas/hut-leaders";
+import { ADMIN_HUT_LEADER_UNASSIGNED_NIGHTS_CONNECTION_SHAPE } from "@/lib/connection-shapes/lodge-hut-leaders";
+import { connectionJson } from "@/lib/mcp-connection-request";
 import {
   listHutLeaderNightLeaders,
   loadHutLeaderNightCover,
@@ -41,13 +44,21 @@ export async function GET(req: NextRequest) {
   const guard = await requireAdmin();
   if (!guard.ok) return guard.response;
 
+  // The schema is shared with the AI app action
+  // `list_nights_without_hut_leader` (ALP-722). Only a missing lodge fails it,
+  // with the same 400; the month and window keep their own checks below.
   const searchParams = new URL(req.url).searchParams;
   const month = searchParams.get("month");
   const from = searchParams.get("from");
   const to = searchParams.get("to");
-  const requestedLodgeId = searchParams.get("lodgeId");
-  const lodgeId = requestedLodgeId
-    ? await resolveOptionalActiveLodgeId(prisma, requestedLodgeId)
+  const query = hutLeaderUnassignedNightsQuerySchema.safeParse({
+    lodgeId: searchParams.get("lodgeId") ?? undefined,
+    month: month ?? undefined,
+    from: from ?? undefined,
+    to: to ?? undefined,
+  });
+  const lodgeId = query.success
+    ? await resolveOptionalActiveLodgeId(prisma, query.data.lodgeId)
     : null;
   if (!lodgeId) {
     return NextResponse.json({ error: "A valid lodgeId is required." }, { status: 400 });
@@ -81,9 +92,9 @@ export async function GET(req: NextRequest) {
 
   const scope = { kind: "lodge", lodgeId } as const;
   if (!window) {
-    return NextResponse.json({
+    return connectionJson(req, {
       unassignedDates: await getUnassignedHutLeaderDates({ scope }),
-    });
+    }, ADMIN_HUT_LEADER_UNASSIGNED_NIGHTS_CONNECTION_SHAPE);
   }
 
   // ONE cover per request, reaching back one night for the labels and lent to
@@ -96,11 +107,11 @@ export async function GET(req: NextRequest) {
     withNames: true,
   });
   const unassignedDates = await getUnassignedHutLeaderDates({ ...window, scope, cover });
-  return NextResponse.json({
+  return connectionJson(req, {
     unassignedDates,
     coveredNights: listHutLeaderNightLeaders(cover, {
       from: coverFrom,
       to: window.to,
     }).map(({ date, leaders }) => ({ date, leaders })),
-  });
+  }, ADMIN_HUT_LEADER_UNASSIGNED_NIGHTS_CONNECTION_SHAPE);
 }

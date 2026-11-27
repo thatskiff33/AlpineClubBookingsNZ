@@ -1,6 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
 
+/** #5240: the saved-card capture's "not yet settled" flag, written by the adoption's settle. */
+const mockAlertCooldownUpsert = vi.hoisted(() => vi.fn<(...args: unknown[]) => Promise<object>>(async () => ({})));
+
 const {
   mockConstructWebhookEvent,
   mockProcessedWebhookCreate,
@@ -337,6 +340,10 @@ vi.mock("@/lib/prisma", () => ({
       updateMany: (...args: unknown[]) => mockPaymentTransactionUpdateMany(...args),
       deleteMany: (...args: unknown[]) => mockPaymentTransactionDeleteMany(...args),
     },
+    // #5240: the adoption's "captured, not yet settled" flag.
+    alertCooldown: {
+      upsert: (...args: unknown[]) => mockAlertCooldownUpsert(...args),
+    },
     $transaction: (...args: unknown[]) => mockTransaction(...args),
   },
 }));
@@ -394,6 +401,14 @@ const mockFindAdditionalCaptureReceiptInvoiceId = vi.hoisted(() => vi.fn<(...arg
 vi.mock("@/lib/additional-capture-receipt-link", () => ({
   findAdditionalCaptureReceiptInvoiceId: (...args: unknown[]) => mockFindAdditionalCaptureReceiptInvoiceId(...args),
 }));
+
+// #5433 PR 3: a fresh "paid" settle hands back the confirmation's owed marker, and the
+// webhook delivers it through the owed notice (proved in paid-booking-confirmation-notice.test.ts).
+const confirmation = vi.hoisted(() => ({
+  deliver: vi.fn(),
+  marker: { id: "booking-confirmed:booking-1:1782864000000", kind: "booking-confirmed", subjectId: "booking-1", eventAt: new Date("2026-07-01T00:00:00.000Z"), variant: null, payload: null },
+}));
+vi.mock("@/lib/paid-booking-confirmation-notice", () => ({ deliverPaidBookingConfirmation: confirmation.deliver }));
 
 vi.mock("@/lib/xero-error-alert", () => ({
   notifyXeroSyncError: (...args: unknown[]) => mockNotifyXeroSyncError(...args),
@@ -522,6 +537,7 @@ describe("Stripe webhook Xero alerting", () => {
       outcome: "paid",
       bookingId: "booking-1",
       bumpedBookingIds: [],
+      paidConfirmation: confirmation.marker,
     });
     mockMarkBookingSetupIntentSucceeded.mockResolvedValue({ stamped: true });
     mockListRefundsForCharge.mockResolvedValue([]);
@@ -690,9 +706,10 @@ describe("Stripe webhook Xero alerting", () => {
       paymentIntentId: "pi_primary",
       amountCents: 5000,
       paymentMethodId: "pm_123",
-      // #4285 review: found by its intent, not adopted - nothing this delivery wrote.
-      recordedByCaller: false,
+      owesPaidConfirmation: true,
     });
+    // #5240: found by its intent, not adopted - this delivery wrote no capture, so flags none.
+    expect(mockAlertCooldownUpsert).not.toHaveBeenCalled();
     expect(mockNotifyXeroSyncError).toHaveBeenCalledWith({
       errorType: "INVOICE_CREATION",
       operation: "Queue invoice for booking booking-1",
@@ -705,6 +722,61 @@ describe("Stripe webhook Xero alerting", () => {
         status: "success",
       })
     );
+  });
+
+  // #772, #5398, #5433 PR 3: the webhook is one of the two racing halves of the
+  // paid confirmation. It asks the settle to record the confirmation as owed, and
+  // a fresh "paid" settle hands back the marker, which the webhook delivers once,
+  // after it queues the invoice; the "already_paid" and superseded cases below
+  // carry no marker and deliver nothing. What the email says is the renderer's
+  // (paid-booking-confirmation-email.test.ts).
+  it("sends the paid confirmation exactly once on a fresh paid settle (#772)", async () => {
+    mockConstructWebhookEvent.mockReturnValue({
+      id: "evt_paid_confirmation",
+      type: "payment_intent.succeeded",
+      data: {
+        object: {
+          id: "pi_primary",
+          amount: 5000,
+          metadata: { bookingId: "booking-1" },
+          payment_method: "pm_123",
+        },
+      },
+    } as any);
+    mockFindPaymentTransactionByIntentId.mockResolvedValue({
+      id: "txn-1",
+      paymentId: "payment-1",
+      bookingId: "booking-1",
+      kind: "PRIMARY",
+      amountCents: 5000,
+      status: "PENDING",
+    });
+    const checkIn = new Date("2026-07-01");
+    const checkOut = new Date("2026-07-03");
+    mockBookingFindUnique.mockResolvedValue({
+      id: "booking-1",
+      memberId: "member-1",
+      lodgeId: "lodge-1",
+      status: "CONFIRMED",
+      checkIn,
+      checkOut,
+      finalPriceCents: 5000,
+      discountCents: 0,
+      guests: [{ id: "g1" }, { id: "g2" }],
+      member: { id: "member-1", firstName: "Alice", lastName: "Example", email: "alice@example.com" },
+      organisation: null,
+      promoRedemptions: [],
+      payment: { changeFeeCents: null },
+    });
+
+    const response = await POST(makeRequest());
+
+    expect(response.status).toBe(200);
+    expect(mockMarkBookingPaymentSucceeded).toHaveBeenCalledWith(expect.objectContaining({ bookingId: "booking-1", owesPaidConfirmation: true }));
+    expect(confirmation.deliver).toHaveBeenCalledTimes(1);
+    expect(confirmation.deliver).toHaveBeenCalledWith(confirmation.marker, CLUB_FORMAT_TEST, "stripe-webhook");
+    // #5433 round 1: the invoice is queued first, so a stop during the delivery never leaves a paid booking with no queued invoice.
+    expect(confirmation.deliver.mock.invocationCallOrder[0]).toBeGreaterThan(mockEnqueueXeroBookingInvoiceOperation.mock.invocationCallOrder[0]!);
   });
 
   it("alerts and refuses a capture whose amount no longer matches the booking total (#1161)", async () => {
@@ -819,7 +891,7 @@ describe("Stripe webhook Xero alerting", () => {
     // Answered 200: the refusal is final, so Stripe is not sent back to retry for days.
     expect(response.status).toBe(200);
     expect(mockMarkBookingPaymentSucceeded).toHaveBeenCalledWith(expect.objectContaining({ paymentIntentId: "pi_raced" }));
-    expect(mockSendBookingConfirmedEmail).not.toHaveBeenCalled();
+    expect(confirmation.deliver).not.toHaveBeenCalled();
     expect(mockEnqueueXeroBookingInvoiceOperation).not.toHaveBeenCalled();
   });
 
@@ -1405,7 +1477,7 @@ describe("Stripe webhook Xero alerting", () => {
       expect.objectContaining({ id: "pi_superseded_succeeded", amount: 6000, payment_method: "pm_superseded" }),
     );
     expect(mockMarkBookingPaymentSucceeded).not.toHaveBeenCalled();
-    expect(mockSendBookingConfirmedEmail).not.toHaveBeenCalled();
+    expect(confirmation.deliver).not.toHaveBeenCalled();
     expect(mockEnqueueXeroBookingInvoiceOperation).not.toHaveBeenCalled();
   });
 
@@ -1508,9 +1580,13 @@ describe("Stripe webhook Xero alerting", () => {
         paymentIntentId: "pi_lost",
         amountCents: 5000,
         paymentMethodId: "pm_123",
-        // #4285 review: the adoption wrote the capture just now - new money, not a replay.
-        recordedByCaller: true,
+        owesPaidConfirmation: true,
       });
+      // #5240: the adoption flags the capture as new money before the settle,
+      // which consumes the flag - a paid booking keeps and alerts it, never a replay.
+      const flagKey = "saved-card-capture-unsettled:pi_lost";
+      expect(mockAlertCooldownUpsert).toHaveBeenCalledWith({ where: { key: flagKey }, create: { key: flagKey, lastAlertedAt: expect.any(Date) }, update: {} });
+      expect(mockAlertCooldownUpsert.mock.invocationCallOrder[0]).toBeLessThan(mockMarkBookingPaymentSucceeded.mock.invocationCallOrder[0]!);
     });
 
     it("payment_intent.payment_failed for an unknown intent: the attempt row is adopted and ends FAILED now, rather than sitting PENDING until its key expires", async () => {
@@ -1598,7 +1674,7 @@ describe("Stripe webhook Xero alerting", () => {
         where: { id: "txn_attempt_1", status: { notIn: ["REFUNDED", "PARTIALLY_REFUNDED"] }, stripePaymentIntentId: null },
         data: { stripePaymentIntentId: "pi_async", status: "SUCCEEDED", amountCents: 5000, paymentMethodId: "pm_123" },
       });
-      expect(mockMarkBookingPaymentSucceeded).toHaveBeenCalledWith(expect.objectContaining({ paymentIntentId: "pi_async", recordedByCaller: true }));
+      expect(mockMarkBookingPaymentSucceeded).toHaveBeenCalledWith(expect.objectContaining({ paymentIntentId: "pi_async" }));
       expect(mockRecordUnmatchedAppStripePayment).not.toHaveBeenCalled();
     });
 
@@ -1852,7 +1928,7 @@ describe("Stripe webhook Xero alerting", () => {
     expect(mockFindPaymentTransactionByIntentId).not.toHaveBeenCalled();
     expect(mockMarkBookingPaymentSucceeded).not.toHaveBeenCalled();
     expect(mockEnqueueXeroBookingInvoiceOperation).not.toHaveBeenCalled();
-    expect(mockSendBookingConfirmedEmail).not.toHaveBeenCalled();
+    expect(confirmation.deliver).not.toHaveBeenCalled();
 
     // The existing claim is left intact (it belongs to the first delivery) and
     // the early return happens before the success webhook log is recorded.
@@ -4460,7 +4536,7 @@ describe("Stripe webhook Xero alerting", () => {
       expect(mockFindPaymentTransactionByIntentId).not.toHaveBeenCalled();
       expect(mockApplyGroupSettlementSucceeded).not.toHaveBeenCalled();
       expect(mockQueueSupersededPaymentIntentRefundRecovery).not.toHaveBeenCalled();
-      expect(mockSendBookingConfirmedEmail).not.toHaveBeenCalled();
+      expect(confirmation.deliver).not.toHaveBeenCalled();
       expect(mockProcessedWebhookUpdateMany).toHaveBeenCalledWith(
         expect.objectContaining({ data: expect.objectContaining({ status: "COMPLETED" }) }),
       );
@@ -4506,7 +4582,7 @@ describe("Stripe webhook Xero alerting", () => {
 
     function expectCompletedWithoutSettling() {
       expect(mockMarkBookingPaymentSucceeded).not.toHaveBeenCalled();
-      expect(mockSendBookingConfirmedEmail).not.toHaveBeenCalled();
+      expect(confirmation.deliver).not.toHaveBeenCalled();
       expect(mockEnqueueXeroBookingInvoiceOperation).not.toHaveBeenCalled();
       expect(mockProcessedWebhookUpdateMany).toHaveBeenCalledWith(
         expect.objectContaining({ data: expect.objectContaining({ status: "COMPLETED" }) }),
@@ -4579,7 +4655,7 @@ describe("Stripe webhook Xero alerting", () => {
       expect(mockFindPaymentTransactionByIntentId).toHaveBeenCalledTimes(2);
       expect(mockRecordUnmatchedAppStripePayment).not.toHaveBeenCalled();
       expect(mockMarkBookingPaymentSucceeded).toHaveBeenCalledWith(
-        expect.objectContaining({ bookingId: "booking-1", paymentIntentId: "pi_app", recordedByCaller: false }),
+        expect.objectContaining({ bookingId: "booking-1", paymentIntentId: "pi_app" }),
       );
     });
 

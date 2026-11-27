@@ -2,7 +2,6 @@ import { NextRequest, NextResponse } from "next/server";
 import { Prisma } from "@prisma/client";
 import { requireAdmin } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma";
-import { z } from "zod";
 import { clubTimeZone } from "@/lib/club-time/server";
 import { clubSeasonYear } from "@/lib/financial-year";
 import logger from "@/lib/logger";
@@ -11,59 +10,45 @@ import {
   getXeroContactGroupMemberships,
   getXeroContactIdsForGroup,
 } from "@/lib/xero-contact-groups";
+import { loadMembershipLockoutSettings } from "@/lib/membership-lockout-settings";
+import { subscriptionNotRequiredMemberConditions } from "@/lib/subscription-liability-where";
 import {
-  NON_MEMBER_ROLE_VALUES,
-  OPERATIONAL_ROLE_VALUES,
-} from "@/lib/member-roles";
+  listSubscriptionStatus,
+  SEASON_ROW_STATE_SELECT,
+} from "@/lib/subscription-season-row-note";
 import {
-  effectiveSubscriptionBehavior,
-  isSubscriptionNotRequiredForMembershipType,
-} from "@/lib/membership-types";
+  isSubscriptionsListMemberNotRequired,
+  subscriptionsListBillingNote,
+} from "@/lib/subscriptions-list-liability";
 import { serializeSubscriptionMemberLoginStage } from "@/lib/subscription-member-login-stage";
-import { adminListPageQueryFields } from "@/lib/admin-list-page";
+import {
+  ADMIN_SUBSCRIPTION_LIST_STATUSES,
+  adminSubscriptionSortBySchema,
+  adminSubscriptionsQuerySchema,
+} from "@/lib/admin-subscriptions-query";
+import {
+  ADMIN_SUBSCRIPTIONS_CONNECTION_SHAPE,
+} from "@/lib/connection-shapes/finance-subscriptions";
+import { connectionJson } from "@/lib/mcp-connection-request";
+import type { z } from "zod";
 
-const subscriptionStatuses = [
-  "PAID",
-  "UNPAID",
-  "OVERDUE",
-  "NOT_INVOICED",
-  "NOT_REQUIRED",
-] as const;
-const subscriptionStatusFilterValues = [...subscriptionStatuses, "all"] as const;
-const subscriptionSortBySchema = z
-  .enum([
-    "member",
-    "email",
-    "ageTier",
-    "xeroContactGroup",
-    "status",
-    "xeroInvoice",
-    "paidAt",
-  ])
-  .optional()
-  .default("member");
-
-const querySchema = z.object({
-  seasonYear: z.coerce.number().int().min(2020).max(2040).optional(),
-  status: z.enum(subscriptionStatusFilterValues).optional().default("all"),
-  ageTier: z.enum(["INFANT", "CHILD", "YOUTH", "ADULT", "all"]).optional().default("all"),
-  xeroContactGroup: z.string().trim().min(1).max(100).optional(),
-  sortBy: subscriptionSortBySchema,
-  sortDir: z.enum(["asc", "desc"]).optional().default("asc"),
-  ...adminListPageQueryFields,
-});
-
-type SubscriptionSortBy = z.infer<typeof subscriptionSortBySchema>;
+type SubscriptionSortBy = z.infer<typeof adminSubscriptionSortBySchema>;
 type SubscriptionCandidate = {
   id: string;
   memberId: string;
   seasonYear: number;
-  status: (typeof subscriptionStatuses)[number];
+  status: (typeof ADMIN_SUBSCRIPTION_LIST_STATUSES)[number];
   xeroInvoiceId: string | null;
   xeroInvoiceNumber: string | null;
   paidAt: Date | null;
   manuallyMarkedPaidAt: Date | null;
   manualPaymentNote: string | null;
+  /**
+   * #5190 (owner decision 22 Nov 2026): set when the saved season row says
+   * "Not required" but billing treats this member as owing
+   * (`hasNotRequiredRowBillingNote`); null otherwise.
+   */
+  billingNote: string | null;
   xeroContactGroupsLoaded: boolean;
   xeroContactGroups: Array<{ id: string; name: string }>;
   member: {
@@ -81,32 +66,6 @@ type SubscriptionCandidate = {
     }>;
   };
 };
-
-function isNotRequiredMember(
-  member: {
-    role: string;
-    ageTier: string;
-    seasonalMembershipAssignments?: Array<{
-      membershipType: { subscriptionBehavior: string };
-    }>;
-  },
-  notRequiredAgeTiers: Set<string>,
-  seasonSubscriptionStatus?: string
-) {
-  // #2149: membership type is the sole authority (role carries no exemption).
-  // Uses the shared derivation so this admin list agrees with the members list,
-  // export, profile, and the booking gate.
-  return isSubscriptionNotRequiredForMembershipType({
-    subscriptionBehavior: effectiveSubscriptionBehavior(
-      member.seasonalMembershipAssignments?.[0]?.membershipType
-        .subscriptionBehavior as never,
-      member.role
-    ),
-    ageTier: member.ageTier,
-    notRequiredAgeTiers,
-    hasNotRequiredSeasonRow: seasonSubscriptionStatus === "NOT_REQUIRED",
-  });
-}
 
 function compareValues(left: string | number | Date | null, right: string | number | Date | null) {
   const normalizedLeft = left instanceof Date ? left.getTime() : left ?? "";
@@ -166,7 +125,7 @@ export async function GET(request: NextRequest) {
   const guard = await requireAdmin();
   if (!guard.ok) return guard.response;
   const { searchParams } = new URL(request.url);
-  const parsed = querySchema.safeParse({
+  const parsed = adminSubscriptionsQuerySchema.safeParse({
     seasonYear: searchParams.get("seasonYear") ?? undefined,
     status: searchParams.get("status") ?? undefined,
     ageTier: searchParams.get("ageTier") ?? undefined,
@@ -189,12 +148,11 @@ export async function GET(request: NextRequest) {
     parsed.data.seasonYear ?? clubSeasonYear(await clubTimeZone());
 
   try {
-    const ageTierSettings = await getAgeTierSettings();
-    const notRequiredAgeTiers = new Set(
-      ageTierSettings
-        .filter((setting) => setting.subscriptionRequiredForBooking === false)
-        .map((setting) => setting.tier)
-    );
+    const [ageTierSettings, lockoutSettings] = await Promise.all([
+      getAgeTierSettings(),
+      loadMembershipLockoutSettings(),
+    ]);
+    const liabilityRule = { seasonYear, ageTierSettings, liabilitySettings: lockoutSettings };
     const memberWhere: Prisma.MemberWhereInput = { archivedAt: null };
 
     if (ageTier !== "all") {
@@ -211,47 +169,34 @@ export async function GET(request: NextRequest) {
       summaryWhere.member = memberWhere;
     }
 
-    // #2149: membership type is the authority — exempt when the assigned season
-    // type is NOT_REQUIRED, or (no assignment) the role's default built-in type
-    // is NOT_REQUIRED. Guarding the role clause on "no assignment" keeps a
-    // fee-paying admin (REQUIRED assignment) out of this not-required set.
+    // #2149/#5190: the members the shared liability rule exempts, built from the
+    // same settings as the per-row flag. A saved row is judged per row below,
+    // so the row clause is left out here.
     const notRequiredWhere: Prisma.MemberWhereInput = {
       ...memberWhere,
-      OR: [
-        {
-          AND: [
-            { seasonalMembershipAssignments: { none: { seasonYear } } },
-            {
-              role: {
-                in: [...OPERATIONAL_ROLE_VALUES, ...NON_MEMBER_ROLE_VALUES],
-              },
-            },
-          ],
-        },
-        {
-          seasonalMembershipAssignments: {
-            some: {
-              seasonYear,
-              membershipType: { subscriptionBehavior: "NOT_REQUIRED" },
-            },
-          },
-        },
-        ...(notRequiredAgeTiers.size > 0
-          ? [{ ageTier: { in: Array.from(notRequiredAgeTiers) } }]
-          : []),
-      ],
+      OR: subscriptionNotRequiredMemberConditions({
+        ...liabilityRule,
+        includeSeasonRowExemption: false,
+      }),
     };
 
     const [subscriptions, notRequiredMembers] = await Promise.all([
       prisma.memberSubscription.findMany({
         where: summaryWhere,
         include: {
+          // #5190: the active-claim test the billing note reads.
+          chargeCoverage: SEASON_ROW_STATE_SELECT.chargeCoverage,
           member: {
             select: {
               firstName: true,
               lastName: true,
               email: true,
               ageTier: true,
+              // #5190: read by the liability rule only; never serialised.
+              dateOfBirth: true,
+              // #5190: the billing note speaks only for the billing population.
+              active: true,
+              archivedAt: true,
               role: true,
               canLogin: true,
               passwordChangedAt: true,
@@ -308,13 +253,18 @@ export async function GET(request: NextRequest) {
 
     const candidatesByMemberId = new Map<string, SubscriptionCandidate>();
     for (const subscription of subscriptions) {
-      const displayStatus = isNotRequiredMember(
-        subscription.member,
-        notRequiredAgeTiers,
-        subscription.status
-      )
-        ? "NOT_REQUIRED"
-        : subscription.status;
+      const billingNote = subscriptionsListBillingNote(subscription, liabilityRule);
+      // #5190: the members list's status; a noted row shows billing's status,
+      // so the status filter and the counts below place it where it reads.
+      const displayStatus = listSubscriptionStatus({
+        notRequired: isSubscriptionsListMemberNotRequired(
+          subscription.member,
+          liabilityRule,
+          subscription.status
+        ),
+        seasonRowStatus: subscription.status,
+        billingNote,
+      });
       candidatesByMemberId.set(subscription.memberId, {
         id: subscription.id,
         memberId: subscription.memberId,
@@ -325,6 +275,7 @@ export async function GET(request: NextRequest) {
         paidAt: subscription.paidAt,
         manuallyMarkedPaidAt: subscription.manuallyMarkedPaidAt,
         manualPaymentNote: subscription.manualPaymentNote,
+        billingNote,
         xeroContactGroupsLoaded: true,
         xeroContactGroups: [],
         member: serializeSubscriptionMemberLoginStage(subscription.member),
@@ -342,6 +293,8 @@ export async function GET(request: NextRequest) {
         paidAt: null,
         manuallyMarkedPaidAt: null,
         manualPaymentNote: null,
+        // The rule exempts this member, so billing invoices nobody here.
+        billingNote: null,
         xeroContactGroupsLoaded: true,
         xeroContactGroups: [],
         member: serializeSubscriptionMemberLoginStage(member),
@@ -396,14 +349,11 @@ export async function GET(request: NextRequest) {
       else if (row.status === "NOT_REQUIRED") counts.notRequired += 1;
     }
 
-    return NextResponse.json({
-      data,
-      total,
-      page,
-      pageSize,
-      summary: counts,
-      xeroContactGroupsLoaded,
-    });
+    return connectionJson(
+      request,
+      { data, total, page, pageSize, summary: counts, xeroContactGroupsLoaded },
+      ADMIN_SUBSCRIPTIONS_CONNECTION_SHAPE,
+    );
   } catch (err) {
     logger.error({ err }, "Error fetching subscriptions");
     return NextResponse.json({ error: "Failed to fetch subscriptions" }, { status: 500 });

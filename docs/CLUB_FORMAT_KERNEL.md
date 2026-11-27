@@ -218,11 +218,7 @@ cancellation, edit, and cron callers pass their pre-lock format into the legacy
 repair helper rather than
 reading club settings inside a transaction. Because a bare interpolation has no
 distinctive suffix, this census is deliberately scoped to those message sources
-and must be extended when another operator repair message is added. The
-rounding-drift diagnostic deliberately pairs formatted currency with signed
-raw-cent drift; only its direct formatter return in
-`xero-invoice-rounding-audit.ts` has a file-scoped c-suffix lint exception, pinned
-by the guard test. It is not a general exemption for Xero reports.
+and must be extended when another operator repair message is added.
 
 These repair messages use the club's current display format. The booking and
 credit amounts read by these repair paths do not carry a currency per amount,

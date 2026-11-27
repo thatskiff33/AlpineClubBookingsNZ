@@ -147,7 +147,7 @@ const ORACLE_ROUTE_AREAS: ReadonlyArray<{
       "/admin/calendar",
       "/admin/display",
       "/admin/maintenance-reports",
-      // Fork #121: the Food Orders settings card.
+      // Fork triyder/AlpineClubBookingsNZ#121: the Food Orders settings card.
       "/admin/food-orders",
     ],
   },

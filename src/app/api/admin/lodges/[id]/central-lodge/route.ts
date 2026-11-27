@@ -1,19 +1,27 @@
 import { NextResponse } from "next/server";
-import { z } from "zod";
+import { parseJsonRequestBody } from "@/lib/api-json";
+import type { z } from "zod";
+
+import { routeIdParamsSchema } from "@/lib/route-id-params";
+import { lodgeCentralLinkBodySchema } from "@/lib/admin-lodge-schemas/setup";
 
 import { createAuditLog } from "@/lib/audit";
 import { centralLinkStatus, labelOwnedLodges, saveCentralLodgeLinks } from "@/lib/central-lodge-link";
 import { getIntegrationCredentialValue } from "@/lib/integration-credentials";
 import { syncOwnOtherLodgesFromFees } from "@/lib/other-lodge-fees-sync";
-import { OWNED_CENTRAL_LODGE_ID_MAX } from "@/lib/other-lodges";
 import { prisma } from "@/lib/prisma";
 import { SERVERNZ_CREDENTIAL_KEYS, SERVERNZ_PROVIDER } from "@/lib/servernz-config";
 import { loadServerNzSettings } from "@/lib/servernz-settings";
 import { requireAdmin } from "@/lib/session-guards";
+import {
+  ADMIN_LODGE_CENTRAL_LINK_CONNECTION_SHAPE,
+  type LodgeCentralLinkAnswer,
+} from "@/lib/connection-shapes/lodge-setup";
+import { connectionJson } from "@/lib/mcp-connection-request";
 
 /**
  * GET|PUT /api/admin/lodges/[id]/central-lodge — which lodge in the Alpine
- * Central Server's registry THIS lodge is (#62, owner decision D5).
+ * Central Server's registry THIS lodge is (triyder/AlpineClubBookingsNZ#62, owner decision D5).
  *
  * The central server asks this site how many beds are free at one of the
  * lodges it says the club owns, naming it by its permanent central id. This
@@ -39,17 +47,10 @@ import { requireAdmin } from "@/lib/session-guards";
  * "Central lodge link writer".
  */
 
-const paramsSchema = z.object({ id: z.string().min(1) });
+// The body schema lives in admin-lodge-schemas/setup.ts so the AI app action
+// `set_lodge_central_link` offers the same field (ALP-722).
 
-const putSchema = z
-  .object({
-    // Null clears the link, and the lodge then answers nothing (#4262: every
-    // club links explicitly; there is no one-lodge default).
-    centralLodgeId: z.string().trim().min(1).max(OWNED_CENTRAL_LODGE_ID_MAX).nullable(),
-  })
-  .strict();
-
-async function readSettings(lodgeId: string) {
+async function readSettings(lodgeId: string): Promise<LodgeCentralLinkAnswer | null> {
   const lodge = await prisma.lodge.findUnique({
     where: { id: lodgeId },
     select: { id: true, name: true, active: true, centralLodgeId: true },
@@ -95,7 +96,7 @@ async function readSettings(lodgeId: string) {
 }
 
 export async function GET(
-  _request: Request,
+  request: Request,
   { params }: { params: Promise<{ id: string }> },
 ) {
   const guard = await requireAdmin({
@@ -103,7 +104,7 @@ export async function GET(
   });
   if (!guard.ok) return guard.response;
 
-  const parsedParams = paramsSchema.safeParse(await params);
+  const parsedParams = routeIdParamsSchema.safeParse(await params);
   if (!parsedParams.success) {
     return NextResponse.json({ error: "Invalid lodge id" }, { status: 400 });
   }
@@ -112,7 +113,7 @@ export async function GET(
   if (!settings) {
     return NextResponse.json({ error: "Lodge not found" }, { status: 404 });
   }
-  return NextResponse.json(settings);
+  return connectionJson(request, settings, ADMIN_LODGE_CENTRAL_LINK_CONNECTION_SHAPE);
 }
 
 export async function PUT(
@@ -124,14 +125,16 @@ export async function PUT(
   });
   if (!guard.ok) return guard.response;
 
-  const parsedParams = paramsSchema.safeParse(await params);
+  const parsedParams = routeIdParamsSchema.safeParse(await params);
   if (!parsedParams.success) {
     return NextResponse.json({ error: "Invalid lodge id" }, { status: 400 });
   }
 
-  let body: z.infer<typeof putSchema>;
+  let body: z.infer<typeof lodgeCentralLinkBodySchema>;
+  const jsonBody = await parseJsonRequestBody(request);
+  if (!jsonBody.ok) return jsonBody.response;
   try {
-    body = putSchema.parse(await request.json());
+    body = lodgeCentralLinkBodySchema.parse(jsonBody.body);
   } catch {
     return NextResponse.json({ error: "Invalid request" }, { status: 400 });
   }
@@ -210,5 +213,5 @@ export async function PUT(
   if (!settings) {
     return NextResponse.json({ error: "Lodge not found" }, { status: 404 });
   }
-  return NextResponse.json(settings);
+  return connectionJson(request, settings, ADMIN_LODGE_CENTRAL_LINK_CONNECTION_SHAPE);
 }

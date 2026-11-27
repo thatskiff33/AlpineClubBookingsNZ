@@ -2,9 +2,11 @@ import { NextResponse } from "next/server";
 
 import {
   canPlaceFoodOrder,
+  ownOrdersOnlyFoodOrderViewer,
   resolveFoodOrderViewer,
   type FoodOrderViewer,
 } from "@/lib/food-order-access";
+import { arrivesAsMcpConnection } from "@/lib/mcp-connection-request";
 import { loadEffectiveModuleFlags } from "@/lib/module-settings";
 import { getClientIp, type RateLimitConfig } from "@/lib/rate-limit";
 import type { requireActiveSession } from "@/lib/session-guards";
@@ -22,7 +24,7 @@ export const FOOD_ORDER_MEMBER_RATE_LIMIT: RateLimitConfig = {
 };
 
 /**
- * The guard every member food-order route opens with (fork #121), so the four
+ * The guard every member food-order route opens with (fork triyder/AlpineClubBookingsNZ#121), so the four
  * handlers cannot apply it in different orders.
  *
  * 1. THE MODULE, FIRST. With `foodOrders` off the route answers the same 404 the
@@ -34,6 +36,9 @@ export const FOOD_ORDER_MEMBER_RATE_LIMIT: RateLimitConfig = {
  *    `requireActiveSession()` itself (the per-method boundary census,
  *    `api-route-boundaries.test.ts`) while the module is still checked first.
  * 3. Not an organisation account (issue item 10): 403.
+ * 4. An AI app connection (ALP-796) decides with the member's own orders only
+ *    (`ownOrdersOnlyFoodOrderViewer`), whatever officer or hut-leader reach the
+ *    person has on the website.
  */
 
 export const FOOD_ORDER_NOT_FOUND = { error: "Not found" } as const;
@@ -48,6 +53,7 @@ export type FoodOrderGuardResult =
   | { ok: false; response: NextResponse };
 
 export async function requireFoodOrderViewer(
+  request: Request,
   requireSession: () => ReturnType<typeof requireActiveSession>,
 ): Promise<FoodOrderGuardResult> {
   if (await foodOrderModuleOff()) {
@@ -74,7 +80,11 @@ export async function requireFoodOrderViewer(
     };
   }
 
-  return { ok: true, viewer, memberId: guard.session.user.id };
+  return {
+    ok: true,
+    viewer: arrivesAsMcpConnection(request) ? ownOrdersOnlyFoodOrderViewer(viewer) : viewer,
+    memberId: guard.session.user.id,
+  };
 }
 
 /** The address the audit row records, as the rate limiter reads it. */

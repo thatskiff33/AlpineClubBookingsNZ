@@ -155,6 +155,37 @@ folders, the club logo or a member photo may still carry hidden details until
 it is uploaded again; [`image-manager.md`](guides/image-manager.md#cleaning-an-older-image)
 says how.
 
+**A photo stored sideways needs its original file.** JPEG, PNG and WebP
+photos were already cleaned before #5244, and that earlier cleaning removed a
+photo's rotation setting with the rest of its EXIF, so a phone portrait could
+be stored sideways. The stored copy no longer has the setting, so uploading
+that copy again leaves it sideways; uploading the original file keeps the
+setting, and the photo shows upright.
+
+**Uploading an image again does not reach older copies.** A library image
+uploaded again is stored as a new image: the older one stays in the app, still
+served at its old link, until it is deleted from the picker. An Image Manager
+image, the club logo and a member photo are replaced. Older copies of these
+kinds stay as they were either way:
+
+- **Copies in browsers.** A browser that has already downloaded an image can go
+  on showing its own copy. Library images and the club logo are served to be
+  kept for up to a year under their link; uploading one again gives it a new
+  link, so a page pointed at the new copy fetches the cleaned file. Image
+  Manager images keep their link, and are served to be checked again after five
+  minutes. Publicly shown member photos are served the same way; the committee
+  page's link to a photo changes when the photo is replaced, so the page fetches
+  the new one. A member photo that is not shown publicly is served with an
+  instruction not to keep it.
+- **Copies in backups.** A [database backup](guides/backups.md) holds library
+  images, club logos and member photos as they were when it was taken, until it
+  is pruned or deleted. Image Manager images are files on the server's disk,
+  not in the database, so the database backup never holds them; any copy the
+  host keeps of that folder is outside the app.
+- **Copies in configuration exports.** A configuration export made earlier
+  holds the library images and club logo it carried, as they were when it was
+  made. A restore cleans them as it loads them.
+
 ## Model schedule
 
 | Prisma model | Purpose / personal data | Retention period or retained purpose | End action |
@@ -216,7 +247,8 @@ says how.
 | `StripeDispute` | A cardholder's dispute (chargeback) of a card payment: Stripe references, amounts, Stripe's reason code and outcome, and the matched payment and booking ids | Kept with booking / financial records for reconciliation and evidence; no new automatic deletion | Keep |
 | `RateLimitCounter` | Pseudonymous requester keys for abuse prevention | Until counter reset / existing rate-limit cleanup | Delete through existing cleanup |
 | `LoginThrottle` | Pseudonymous per-account keys (an HMAC of the sign-in email, never the address) and a count of recent password attempts, for abuse prevention (#4609) | Until a valid password or a completed password reset; once idle for an hour, until the next daily `data-pruning` run at the latest | Delete on that sign-in or reset, by the daily `data-pruning` job, and sooner by a ten-minute sweep in a process handling password sign-ins |
-| `AlertCooldown` | Alert deduplication keys that may reference an entity | Kept for the operational purpose while needed; no new automatic deletion | Keep |
+| `AlertCooldown` | Alert deduplication keys that may reference an entity; on a `once-ever-owed:` row (#5255), a stored admin alert: booking, payment or Xero operation ids, an amount and the alert's message, never a member's name | Kept for the operational purpose while needed; an owed alert row until its alert is sent or for 7 days | Keep; the payments cron's `once-ever-alert-sweep` deletes an owed alert row once sent or after 7 days |
+| `OwedNotice` | A notice a committed change still owes: its kind, the subject's id (a booking today), the event time, and ids and whole numbers only (#5433) | Until the notice is sent, its subject has moved on, or it passes its cut-off (seven days at most for the bump notices), and never past twice its kind's maximum age. A marker of a kind the running release does not deliver is left in place, since a newer release may own it, and reported in an error log once it is over a week old | Delete by its own sweep; a marker of an unknown kind is deleted by the release that knows it, or by an operator (`docs/UPGRADING.md`); no new retention job |
 | `PaymentRecoveryOperation` | Payment, refund, recovery and officer decision evidence | Kept with booking / financial records for reconciliation and evidence; no new automatic deletion | Keep |
 | `PromoRedemption` | Member promotion entitlement, guest targets and applied discounts | Kept with booking / financial records for reconciliation and evidence; no new automatic deletion | Keep |
 | `PromoRedemptionAllocation` | Member promotion entitlement, guest targets and applied discounts | Kept with booking / financial records for reconciliation and evidence; no new automatic deletion | Keep |
@@ -302,6 +334,7 @@ says how.
 | `MemberCredit` | Member credit ledger, allocations and reviewer decisions | Kept with booking / financial records for reconciliation and evidence; no new automatic deletion | Keep |
 | `MemberCreditNoteAllocation` | Member credit ledger, allocations and reviewer decisions | Kept with booking / financial records for reconciliation and evidence; no new automatic deletion | Keep |
 | `AdminCreditAdjustmentRequest` | Member credit ledger, allocations and reviewer decisions | Kept with booking / financial records for reconciliation and evidence; no new automatic deletion | Keep |
+| `OpeningCreditBatch` | Opening-credit batch: the posting and reversing officer, totals and the reversal reason (#4988) | Kept with the credit rows it tags, for reconciliation and evidence; no new automatic deletion | Keep |
 | `XeroCashCredit` | Snapshot of a Xero contact's unallocated overpayment or prepayment, for the finance queue and backed credit | Kept with financial records while credit may name it; refreshed from Xero, never deleted automatically | Keep |
 | `MemberCreditCashAllocation` | Member credit ledger, allocations and reviewer decisions | Kept with booking / financial records for reconciliation and evidence; no new automatic deletion | Keep |
 | `MemberCreditCashReturn` | Member credit ledger, allocations and reviewer decisions | Kept with booking / financial records for reconciliation and evidence; no new automatic deletion | Keep |
@@ -320,7 +353,7 @@ says how.
 | `MaintenanceReport` | Reporter / contact, fault description, answers and supporting evidence | Photo / IP hash: stamped expiry from maintenance settings; report / answers retained for maintenance history | Anonymise expired photo / IP fields; keep report and answers |
 | `MaintenanceReportAnswer` | Reporter / contact, fault description, answers and supporting evidence | Photo / IP hash: stamped expiry from maintenance settings; report / answers retained for maintenance history | Anonymise expired photo / IP fields; keep report and answers |
 | `FoodOrderSettings` | Club configuration (food officer email) and last updating officer | While configuration is in use; keep updater attribution for administration | Keep |
-| `FoodOrder` | Ordering member, needed-by date, note, receiving and pricing officers, recorded price (fork #121) | Retained as the club's food-cost history; a deleted member's orders keep their cost with the member link cleared | Keep; member link set null when the member is deleted |
+| `FoodOrder` | Ordering member, needed-by date, note, receiving and pricing officers, recorded price (fork triyder/AlpineClubBookingsNZ#121) | Retained as the club's food-cost history; a deleted member's orders keep their cost with the member link cleared | Keep; member link set null when the member is deleted |
 | `FoodOrderItem` | The ordering member's item descriptions and quantities, and who received each item and when | Retained with its order | Keep with the order |
 | `LodgeMaintenanceReportToken` | Report access token and creating / rotating officer | While token / report intake administration requires it; rotation revokes old access | Keep |
 | `EnvironmentSafetySettings` | Club configuration and last updating officer | While configuration is in use; keep updater attribution for administration | Keep |
@@ -340,7 +373,9 @@ says how.
 | `MemberMoneyRefundReservationRelease` | Release evidence for reserved refund amounts | Kept for financial records | Keep |
 | `MemberMoneySourcePosting` | Exact financial source and journal-line coverage | Kept for financial records | Keep |
 | `MemberMoneyExportManifest` | Booking, sent Xero invoice id and what its lines cover | Kept for financial records | Keep |
+| `XeroTaxOverrideMismatch` | Booking, Xero invoice, the tax sent and returned per line, and the finance officer who cleared it with their note | Kept for financial records; keep clearer attribution for the tax record | Keep |
 | `MemberMoneyExportCoverage` | Journal components a sent invoice bills | Kept for financial records | Keep |
+| `MemberMoneyExportCoverageRelease` | When and why a sent invoice stopped covering its components (voided or gone from Xero) | Kept for financial records | Keep |
 | `McpGrant` | A member's connection to an AI app: which app, what it may do, when it was approved and last used | While the connection is in use, and after it ends as the member's connection history; deleted with the member. A connection whose app stopped renewing leaves the connected lists once its last refresh token lapses (30 days), and its row is kept as history. No scheduled sweep | Delete on member erasure or merge |
 | `McpAuthCode` | Single-use sign-in code for an AI app connection, stored as a hash, with its PKCE challenge and return address | Usable for five minutes; kept for the life of the connection, marked used once the app collects it, because it records the approved return address that every use is checked against and the connection lists show; deleted when the connection ends or with the member. No scheduled sweep | Delete with the connection |
 | `McpToken` | Access and refresh tokens for an AI app connection, stored as hashes | An access token lasts one hour and a refresh token a fixed 30 days; a refresh token is marked used when it is renewed. Expired tokens are deleted at the connection's next token issue, and every token when the connection ends or with the member. No scheduled sweep | Delete with the connection |

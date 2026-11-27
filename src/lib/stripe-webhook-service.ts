@@ -5,7 +5,6 @@ import { isCardRefundReservationRefusal } from "@/lib/member-money";
 import { bookingAmountOwedCents, bookingWorthCents } from "@/lib/booking-payment-state";
 import { bookingOwner, bookingOwnerEmail } from "@/lib/booking-owner";
 import { isPaidLikeBookingStatus } from "@/lib/booking-status";
-import { bookingPromoEmailFields } from "@/lib/booking-promo-email-options";
 import { prisma } from "@/lib/prisma";
 import { listRefundsForCharge, listRefundsForPaymentIntent, processRefund } from "@/lib/stripe";
 import { markBookingPaymentSucceeded, markBookingSetupIntentSucceeded } from "@/lib/payment-reconciliation";
@@ -17,11 +16,10 @@ import { queueRecordedCardRefundNotes, RecordedCardRefundNoteEnqueueError } from
 import { isLateCaptureRefundedBookingStatus } from "@/lib/additional-payment-chase";
 import { reportWebhookError } from "@/lib/observability-bridge";
 import {
-  sendBookingConfirmedEmail,
   sendAdminPaymentFailureAlert,
   sendSetupIntentFailedEmail,
 } from "@/lib/email";
-import { getProvisionalNonMemberChildSummary } from "@/lib/booking-split-summary";
+import { deliverPaidBookingConfirmation } from "@/lib/paid-booking-confirmation-notice";
 import { recordWebhookLog } from "@/lib/webhook-log";
 import { recordRefusedCardRefund } from "@/lib/card-refund-status-sync";
 import { notifyXeroSyncError } from "@/lib/xero-error-alert";
@@ -305,7 +303,6 @@ async function adoptUnknownIntentsAttemptRow(
   paymentIntent: Stripe.PaymentIntent,
   event: Stripe.Event,
   bookingId: string,
-  onAdopted?: (newlyCaptured: boolean) => void, // #4285 review: the adoption wrote the capture just now
 ) {
   const adopted = await adoptSavedCardChargeAttemptForIntent({
     journal: await resolveBookingMoneyPostingContext(),
@@ -315,7 +312,6 @@ async function adoptUnknownIntentsAttemptRow(
     metadata: paymentIntent.metadata,
   });
   if (!adopted) return null;
-  onAdopted?.(adopted.newlyCaptured);
   return findPaymentTransactionByIntentId({ paymentIntentId: paymentIntent.id });
 }
 
@@ -375,11 +371,11 @@ async function handlePaymentIntentSucceeded(
     return;
   }
 
-  let recordedByCaller = false; // #4285 review: an adoption that just wrote the capture tells the settle it is new money
+  // #5240: an adoption that writes the capture flags it as new money for the settle below (`unsettled-capture-marker.ts`).
   // #4624 review: re-read after a failed adoption - a saved-card charge's own settle may just have written the intent on its row.
   const paymentTransaction =
     (await findPaymentTransactionByIntentId({ paymentIntentId: paymentIntent.id })) ??
-    (await adoptUnknownIntentsAttemptRow(paymentIntent, event, bookingId, (adopted) => (recordedByCaller = adopted))) ??
+    (await adoptUnknownIntentsAttemptRow(paymentIntent, event, bookingId)) ??
     (await findPaymentTransactionByIntentId({ paymentIntentId: paymentIntent.id }));
 
   // #4624 (`INV-INT-033`): the app's own intent, but no PRIMARY row to settle it with - money taken that nothing records.
@@ -492,13 +488,14 @@ async function handlePaymentIntentSucceeded(
   const reconciliation = await markBookingPaymentSucceeded({
     capturedAt: receiptCaptureTime(paymentIntent),
     format,
-    bookingId, recordedByCaller,
+    bookingId,
     paymentIntentId: paymentIntent.id,
     amountCents: paymentIntent.amount,
     paymentMethodId:
       typeof paymentIntent.payment_method === "string"
         ? paymentIntent.payment_method
         : paymentIntent.payment_method?.id ?? null,
+    owesPaidConfirmation: true,
   });
 
   if (
@@ -521,58 +518,10 @@ async function handlePaymentIntentSucceeded(
 
   logger.info({ bookingId, paymentIntentId: paymentIntent.id, outcome: reconciliation.outcome }, `PaymentIntent reconciled: ${reconciliation.outcome}`);
 
-  // Send confirmation email only on a fresh transition to PAID. An
-  // "already_paid" outcome means the synchronous confirm-payment route (or a
-  // prior delivery) already reconciled this payment and sent the email, so we
-  // skip here to keep the send exactly-once across both paths (issue #772).
-  if (reconciliation.outcome === "paid") {
-    try {
-      const booking = await prisma.booking.findUnique({
-        where: { id: bookingId },
-        // #3369: the owner may be an Organisation; bookingOwner() reads both.
-        include: {
-          member: true,
-          organisation: { select: { name: true, email: true } },
-          guests: true,
-          promoRedemptions: { include: { promoCode: true } },
-          // #3750: a change fee recorded on the payment was paid too.
-          payment: { select: { changeFeeCents: true } },
-        },
-      });
-      if (booking) {
-        // Split-booking parent (#738): describe the provisional non-member
-        // child so the confirmation explains the separate later charge.
-        const provisionalGuests = await getProvisionalNonMemberChildSummary({
-          id: booking.id,
-          memberId: bookingOwner(booking).memberId,
-        });
-        await sendBookingConfirmedEmail(
-          { bookingId: booking.id, recipientMemberId: bookingOwner(booking).memberId },
-          bookingOwner(booking).member.email,
-          bookingOwner(booking).member.firstName,
-          booking.checkIn,
-          booking.checkOut,
-          booking.guests.length,
-          // #3955 review F8: what the member paid for — the booking's worth,
-          // its price plus a recorded change fee (the email nets credit).
-          bookingWorthCents({
-            finalPriceCents: booking.finalPriceCents,
-            changeFeeCents: booking.payment?.changeFeeCents ?? null,
-          }),
-          format,
-          {
-            lodgeId: booking.lodgeId,
-            ...(provisionalGuests ? { provisionalGuests } : {}),
-            ...bookingPromoEmailFields(booking),
-          }
-        );
-      }
-    } catch (emailErr) {
-      logger.error({ err: emailErr, bookingId }, "Failed to send confirmation email");
-    }
-  }
-
   await queueXeroInvoiceForPaidBooking({ bookingId });
+  // After the invoice is queued (#5433 round 1): only a fresh PAID carries the owed
+  // marker, so the send stays once across both paths (#772); a stop leaves it to the sweep.
+  if (reconciliation.paidConfirmation) await deliverPaidBookingConfirmation(reconciliation.paidConfirmation, format, "stripe-webhook");
 }
 
 /**

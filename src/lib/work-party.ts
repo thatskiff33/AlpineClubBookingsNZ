@@ -13,7 +13,6 @@
  */
 import { randomInt } from "crypto";
 import { Prisma, PromoCodeType } from "@prisma/client";
-import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import logger from "@/lib/logger";
 import {
@@ -24,13 +23,12 @@ import {
   addDaysDateOnly,
   formatDateOnly,
 } from "@/lib/date-only";
-import { parsedDateOnlySchema } from "@/lib/date-only-schema";
 import {
   isOpenWorkPartyEvent,
+  MAX_WORK_PARTY_NIGHTS,
   OPEN_WORK_PARTY_EVENT_WHERE,
   workPartyNightCount,
 } from "@/lib/work-party-rules";
-import { MAX_OCCURRENCES } from "@/lib/calendar-recurrence";
 
 type WorkPartyDbClient = typeof prisma | Prisma.TransactionClient;
 
@@ -196,7 +194,7 @@ export async function findActiveWorkPartyEventsForRange(
       discountPercent: true,
       lodgeId: true,
       lodge: { select: { name: true } },
-      // Fork #119: what `workPartyEventRefusal` reads, so a caller can judge
+      // Fork triyder/AlpineClubBookingsNZ#119: what `workPartyEventRefusal` reads, so a caller can judge
       // a listed event with the one rule rather than trust the filter.
       active: true,
       promoCode: { select: { active: true, archivedAt: true } },
@@ -264,7 +262,7 @@ export type WorkPartyEventRefusal = "inactive" | "no-overlap" | "other-lodge";
  * Whether a work party can discount this stay, as a reason code — the ONE rule
  * for "this event applies to this booking" (INV-SSOT). The member's booking
  * create (`resolveWorkPartyEventPromoForBooking`) and the officer's "Add
- * booking to work party" (fork #119) each word the reason for their own reader.
+ * booking to work party" (fork triyder/AlpineClubBookingsNZ#119) each word the reason for their own reader.
  * A lodge-bound event discounts only stays at that lodge; a club-wide one
  * (null lodge) any lodge.
  */
@@ -288,34 +286,21 @@ export function workPartyEventRefusal(
   return null;
 }
 
-// Shared by the admin work-parties create and update routes.
-export const workPartyEventSchema = z
-  .object({
-    name: z.string().trim().min(1).max(200),
-    description: z.string().trim().max(1000).optional().nullable(),
-    startDate: parsedDateOnlySchema,
-    endDate: parsedDateOnlySchema,
-    discountPercent: z.number().int().min(1).max(100).default(100),
-    active: z.boolean().default(true),
-    // Lodge the working bee is held at; null/omitted = club-wide event.
-    lodgeId: z.string().min(1).optional().nullable(),
-  })
-  .strict();
-
-/** The longest window a work party may have: the calendar's series cap. */
-const MAX_WORK_PARTY_NIGHTS = MAX_OCCURRENCES;
+// The admin create and update schema, `workPartyEventSchema`, lives in
+// `admin-lodge-schemas/chores-work-parties.ts` (ALP-722) so the AI app
+// catalogue can offer it without loading this server module.
 
 /**
  * Why a work party's dates cannot be saved, or null. `existing` is the row an
  * edit changes (omit it on create).
  *
  * #5148: the calendar shows a work party as one entry per night, and a
- * calendar series holds at most MAX_OCCURRENCES of them, so a NEW window
+ * calendar series holds at most MAX_WORK_PARTY_NIGHTS of them, so a NEW window
  * longer than that is refused rather than cut short on the calendar without a
  * word. The cap applies only when the dates themselves change: a work party
  * saved longer before the cap existed can still be deactivated, renamed or
  * re-described with its dates as they are (its calendar shows its first
- * MAX_OCCURRENCES nights), and is refused only when its dates are edited.
+ * MAX_WORK_PARTY_NIGHTS nights), and is refused only when its dates are edited.
  */
 export function workPartyEventDatesError(
   data: { startDate: Date; endDate: Date },

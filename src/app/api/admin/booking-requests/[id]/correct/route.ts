@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 
+import { parseJsonRequestBody } from "@/lib/api-json";
 import { BookingRequestError, bookingRequestGuestSchema, serializeBookingRequestForAdmin } from "@/lib/booking-request";
 import { BookingRequestCorrectionCommittedError } from "@/lib/booking-request-correction-hold";
 import { correctBookingRequest } from "@/lib/booking-request-corrections";
@@ -12,10 +13,11 @@ import {
   EmptySchoolNameError,
   SchoolRecordAcknowledgementError,
 } from "@/lib/school-organisation-preview";
-import { schoolChildCountsSchema, schoolTeacherSchema } from "@/lib/school-booking-request";
+import { schoolChildCountsSchema } from "@/lib/admin-bookings-schemas/requests";
+import { schoolTeacherSchema } from "@/lib/school-booking-request";
 import { requireAdmin } from "@/lib/session-guards";
 import { transactionContendedResponse } from "@/lib/transaction-contended-response";
-import { nameField } from "@/lib/zod-helpers";
+import { nameField, noCrlf } from "@/lib/zod-helpers";
 import { requireRecentAuth } from "@/lib/require-recent-auth";
 
 /**
@@ -30,8 +32,6 @@ import { requireRecentAuth } from "@/lib/require-recent-auth";
  * `/api/admin/booking-requests` is `{ area: "bookings", level: "edit" }`, the
  * same gate price, hold, approve and decline sit behind.
  */
-
-const noCrlf = (value: string) => !/[\r\n]/.test(value);
 
 const schoolRecordAcknowledgementSchema = z.object({
   outcome: z.enum(["existing", "new"]),
@@ -88,14 +88,13 @@ export async function POST(
   const session = guard.session;
 
   const { id } = await params;
-  let body: unknown;
   const recent = await requireRecentAuth();
   if (!recent.ok) return recent.response;
-  try {
-    body = await req.json();
-  } catch {
-    return NextResponse.json({ error: "Invalid JSON payload" }, { status: 400 });
-  }
+  const jsonBody = await parseJsonRequestBody(req, {
+    error: "Invalid JSON payload",
+  });
+  if (!jsonBody.ok) return jsonBody.response;
+  const body = jsonBody.body;
 
   const parsed = correctionSchema.safeParse(body);
   if (!parsed.success) {

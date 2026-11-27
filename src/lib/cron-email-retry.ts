@@ -10,8 +10,10 @@ import {
 import {
   EMAIL_RETRY_BACKOFF_MS,
   EMAIL_RETRY_MAX_ATTEMPTS,
-  RETAINS_REPLAYABLE_EMAIL_BODY,
+  REPLAYABLE_FAILED_EMAIL_WHERE,
 } from "@/lib/email/retry-selection";
+import { retireReplayableEmailRow } from "@/lib/email/retire-replayable";
+import { replayStillWanted } from "@/lib/email/retry-still-wanted";
 import {
   describeDeliveryDecision,
   resolveDeliveryPolicy,
@@ -22,6 +24,7 @@ import {
   resolveBookingEmailGate,
 } from "@/lib/booking-email-suppression";
 import { resolveBookingEmailLink } from "@/lib/booking-email-authority";
+import { calendarRemovalRetryHtml, retryCalendarRemovalAttachments } from "@/lib/booking-calendar-removal";
 import {
   finalizeBookingEmailHtml,
   hasBookingDetailHref,
@@ -60,28 +63,13 @@ async function retireUnverifiableBookingEmail(params: {
   errorMessage: string;
   logMessage: string;
 }): Promise<void> {
-  const retired = await prisma.emailLog
-    .updateMany({
-      where: {
-        id: params.emailLogId,
-        status: "FAILED",
-        attempts: params.expectedAttempts,
-        htmlBody: params.expectedHtmlBody,
-        bookingRetryHtmlBody: params.expectedBookingRetryHtmlBody,
-      },
-      data: {
-        attempts: EMAIL_RETRY_MAX_ATTEMPTS,
-        lastAttemptAt: new Date(),
-        htmlBody: null,
-        bookingRetryHtmlBody: null,
-        errorMessage: params.errorMessage,
-        // #3035: whatever held this row back before, it is now retired for a
-        // different reason and `errorMessage` says which. A stale
-        // `deliveryBlockReason` would keep it inside the environment-withheld
-        // count for the life of the installation.
-        deliveryBlockReason: null,
-      },
-    })
+  const retired = await retireReplayableEmailRow({
+    id: params.emailLogId,
+    attempts: params.expectedAttempts,
+    htmlBody: params.expectedHtmlBody,
+    bookingRetryHtmlBody: params.expectedBookingRetryHtmlBody,
+    errorMessage: params.errorMessage,
+  })
     .catch((err) => {
       logger.error(
         { err, emailLogId: params.emailLogId, bookingId: params.bookingId },
@@ -223,9 +211,7 @@ export async function retryFailedEmails(): Promise<{
       // this job for good (#3035): `SKIPPED_NON_PRODUCTION` is terminal and is
       // not in this filter, and the guarded claim below re-asserts `FAILED`
       // before any send. Do not widen this to a status list.
-      status: "FAILED",
-      attempts: { lt: EMAIL_RETRY_MAX_ATTEMPTS },
-      ...RETAINS_REPLAYABLE_EMAIL_BODY,
+      ...REPLAYABLE_FAILED_EMAIL_WHERE,
       lastAttemptAt: { not: { gte: backoffThreshold } },
     },
     orderBy: { createdAt: "asc" },
@@ -436,6 +422,8 @@ export async function retryFailedEmails(): Promise<{
         continue;
       }
 
+      if (!(await replayStillWanted(emailLog))) continue; // #5433: an ended waitlist offer is retired, not sent
+
       if (ALWAYS_BOOKING_SCOPED_TEMPLATE_NAMES.has(emailLog.templateName)) {
         // #2362: `bookingId` is not enough to repeat the privacy decision. An
         // email address is not authority, and old rows do not record the member
@@ -566,12 +554,15 @@ export async function retryFailedEmails(): Promise<{
 
     let result: SentMessageInfo;
     try {
+      const attachments = await retryCalendarRemovalAttachments(emailLog);
+      const deliveryHtml = calendarRemovalRetryHtml(retryHtml, emailLog.templateName, attachments.length > 0);
       result = await transporter.sendMail({
         from: formatEmailFromAddress(EMAIL_FROM),
         to: emailLog.to,
         subject: emailLog.subject,
-        html: retryHtml,
-        text: htmlToPlainText(retryHtml),
+        html: deliveryHtml,
+        text: htmlToPlainText(deliveryHtml),
+        attachments,
       });
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : String(err);

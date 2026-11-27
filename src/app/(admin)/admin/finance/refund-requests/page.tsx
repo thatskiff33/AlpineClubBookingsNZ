@@ -4,7 +4,8 @@ import { fetchWithRecentAuth } from "@/components/confirm-its-you"
 import Link from "next/link"
 import { useCallback, useEffect, useState } from "react"
 import { useSession } from "next-auth/react"
-import { useRouter, useSearchParams } from "next/navigation"
+import { useSearchParams } from "next/navigation"
+import { useAdminListUrlSync } from "@/hooks/use-admin-list-url-sync"
 import {
   adminCreditGrantAccountLabel,
   GRANT_ACCOUNT_MISSING_MESSAGE,
@@ -15,6 +16,7 @@ import { Button } from "@/components/ui/button"
 import { FocusedActionError } from "@/components/focused-action-error"
 import { useActionFailure } from "@/hooks/use-action-failure"
 import { DatasetResetButton } from "@/components/admin/dataset-reset-button"
+import { OpeningCreditBatchesCard } from "@/components/admin/opening-credit-batches-card"
 import { Pagination } from "@/components/admin/admin-pagination"
 import { useAdminQueuePage } from "@/components/admin/use-admin-queue-page"
 import { parseAdminListPageParam, setAdminListPageParam } from "@/lib/admin-list-page"
@@ -173,7 +175,6 @@ function formatDateTime(clubTime: BoundClubTime, value: string | null) {
 export default function RefundRequestsPage() {
   const format = useClubFormat()
   const clubTime = useClubTime()
-  const router = useRouter()
   const searchParams = useSearchParams()
   const initialFilter = searchParams.get("status")
   const { data: session } = useSession()
@@ -221,9 +222,7 @@ export default function RefundRequestsPage() {
     ? `${REFUND_REQUESTS_HREF}?${currentQuery}`
     : REFUND_REQUESTS_HREF
 
-  useEffect(() => {
-    router.replace(currentRefundRequestsPath, { scroll: false })
-  }, [currentRefundRequestsPath, router])
+  useAdminListUrlSync(currentRefundRequestsPath)
 
   const fetchRequests = useCallback(async () => {
     // A slower read for a page or filter the officer has left never replaces
@@ -461,8 +460,8 @@ export default function RefundRequestsPage() {
   */
   const viewOnlyBanner = (
     <AdminViewOnlySectionBanner canEdit={canEditFinance} className="mb-6">
-      Your admin role can view refund appeals and credit approvals but cannot
-      approve, reject, or process them.
+      Your admin role can view refund appeals, credit approvals and opening
+      credits but cannot approve, reject, process, import or reverse them.
     </AdminViewOnlySectionBanner>
   )
 
@@ -950,6 +949,10 @@ export default function RefundRequestsPage() {
           </section>
         )}
       </div>
+
+      {/* #4988: the moving-in club's opening credit balances, gated finance:edit
+          and covered by this page's finance banner above. */}
+      <OpeningCreditBatchesCard canEdit={canEditFinance} ancestorRendersViewOnlyBanner />
 
       {/* #1792: per-action member-email choice, mirroring the #1695/#1705/#1769a
           pattern. The refund decision is applied either way; the choice is

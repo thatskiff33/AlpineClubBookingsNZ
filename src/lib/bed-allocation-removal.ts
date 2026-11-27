@@ -11,17 +11,15 @@ import {
 } from "@/lib/date-only";
 import { prisma } from "@/lib/prisma";
 import { LOCK1_HOLDER_TRANSACTION_BUDGET } from "@/lib/db-transaction";
+// The categories and the window limit are the request schema's, held with it (ALP-719).
+import {
+  BED_ALLOCATION_REMOVAL_CATEGORIES,
+  MAX_BED_ALLOCATION_REMOVAL_WINDOW_NIGHTS,
+} from "@/lib/admin-bookings-schemas/beds";
 
 export const BED_ALLOCATION_REMOVAL_DIGEST_VERSION = "v1" as const;
-export const MAX_BED_ALLOCATION_REMOVAL_WINDOW_NIGHTS = 31;
 const MAX_AUDIT_IDENTITIES = 50;
 export const BED_ALLOCATION_REMOVAL_QUERY_CHUNK_SIZE = 10_000;
-
-export const BED_ALLOCATION_REMOVAL_CATEGORIES = [
-  "AUTO_DRAFT",
-  "MANUAL_DRAFT",
-  "APPROVED",
-] as const;
 
 export type BedAllocationRemovalCategory =
   (typeof BED_ALLOCATION_REMOVAL_CATEGORIES)[number];

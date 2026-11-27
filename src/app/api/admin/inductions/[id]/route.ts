@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { z } from "zod";
+import { parseJsonRequestBody } from "@/lib/api-json";
 import {
   getInductionById,
   InductionError,
@@ -10,24 +10,15 @@ import {
 import { INDUCTION_SIGN_OFF_DECLARATION } from "@/lib/induction-checklist-template";
 import logger from "@/lib/logger";
 import { requireAdmin } from "@/lib/session-guards";
-
-const patchSchema = z.discriminatedUnion("action", [
-  z.object({
-    action: z.literal("OVERRIDE_COMPLETE"),
-    comments: z.string().trim().max(2000).optional().nullable(),
-  }),
-  z.object({
-    action: z.literal("VOID"),
-    reason: z.string().trim().min(3).max(2000),
-  }),
-  z.object({
-    action: z.literal("REASSIGN_SIGNERS"),
-    signerMemberIds: z.array(z.string().min(1)).max(10),
-  }),
-]);
+import { inductionPatchSchema } from "@/lib/admin-membership-api/inductions";
+import { connectionJson } from "@/lib/mcp-connection-request";
+import {
+  INDUCTION_DETAIL_CONNECTION_SHAPE,
+  INDUCTION_UPDATED_CONNECTION_SHAPE,
+} from "@/lib/connection-shapes/membership-committee";
 
 export async function GET(
-  _req: NextRequest,
+  req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   const guard = await requireAdmin();
@@ -39,10 +30,11 @@ export async function GET(
     return NextResponse.json({ error: "Induction not found" }, { status: 404 });
   }
 
-  return NextResponse.json({
-    induction,
-    declaration: INDUCTION_SIGN_OFF_DECLARATION,
-  });
+  return connectionJson(
+    req,
+    { induction, declaration: INDUCTION_SIGN_OFF_DECLARATION },
+    INDUCTION_DETAIL_CONNECTION_SHAPE,
+  );
 }
 
 export async function PATCH(
@@ -53,14 +45,11 @@ export async function PATCH(
   if (!guard.ok) return guard.response;
   const { id } = await params;
 
-  let body: unknown;
-  try {
-    body = await req.json();
-  } catch {
-    return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
-  }
+  const jsonBody = await parseJsonRequestBody(req, { error: "Invalid JSON" });
+  if (!jsonBody.ok) return jsonBody.response;
+  const body = jsonBody.body;
 
-  const parsed = patchSchema.safeParse(body);
+  const parsed = inductionPatchSchema.safeParse(body);
   if (!parsed.success) {
     return NextResponse.json(
       { error: "Invalid input", details: parsed.error.flatten() },
@@ -88,7 +77,7 @@ export async function PATCH(
         signerMemberIds: parsed.data.signerMemberIds,
       });
     }
-    return NextResponse.json({ ok: true });
+    return connectionJson(req, { ok: true }, INDUCTION_UPDATED_CONNECTION_SHAPE);
   } catch (err) {
     if (err instanceof InductionError) {
       return NextResponse.json({ error: err.message }, { status: err.status });

@@ -72,9 +72,11 @@ set the contracts every implementation child (#2371–#2379) is built against.
 - **A dedicated fail-closed control plane:** own monthly integer-cent budget,
   per-round-trip reserve, bounded tool loop, per-IP/per-admin/global rate limits
   (ADR-005).
-- **Deployment-local and fork-safe:** provider/data-residency disclosure, optional
-  zero-retention, a generic deployment-owned private overlay (never Tokoroa
-  paths), config that does not travel between deployments (ADR-006).
+- **Deployment-local and fork-safe:** a provider/data-residency disclosure the
+  administrator acknowledges before switching Diagnostics on, retention arranged
+  with the provider on the club's own account, a generic deployment-owned private
+  overlay (never Tokoroa paths), config that does not travel between deployments
+  (ADR-006).
 - **A dedicated non-superuser SELECT-only database credential** — never the app's
   superuser `DATABASE_URL` (ADR-007).
 - **The rendered answer is inert text under a strict CSP.** The model's answer is
@@ -149,7 +151,7 @@ repository-wide documents each one extends are linked in the right-hand column.
 | **Tool substrate** | [`tools.md`](tools.md) — the server-owned typed registry, the twelve fail-closed gates, per-invocation authorization, bounds, untrusted-evidence render, approved audit metadata, and the rules for adding a tool (AID-5 #2374, **delivered**) | [ADR-001](decisions/ADR-001-separate-admin-only-diagnostics-product.md), [ADR-002](decisions/ADR-002-admission-and-per-tool-authorization-lattice.md), [ADR-004](decisions/ADR-004-sensitive-context-retention-redaction-audit-metadata.md), [ADR-007](decisions/ADR-007-least-privilege-select-only-database-credential.md) |
 | **Page context** | [`page-context.md`](page-context.md) — the typed selector, the route registry, the permission-checked server re-fetch, the personal-detail opt-in, and the evidence block (AID-4 #2373, **delivered**) | [ADR-002](decisions/ADR-002-admission-and-per-tool-authorization-lattice.md), [ADR-003](decisions/ADR-003-untrusted-evidence-classes.md), [ADR-004](decisions/ADR-004-sensitive-context-retention-redaction-audit-metadata.md) |
 | **Security / privacy** | This hub's [threat model](threat-model.md) and [ADRs](decisions/) (AID-1, this issue); release hardening notes (AID-8 #2379) | [`SECURITY.md`](../SECURITY.md), [`SECURITY-ATTACK-SURFACE.md`](../SECURITY-ATTACK-SURFACE.md), [`agents/PROMPT_INJECTION_GUIDE.md`](../agents/PROMPT_INJECTION_GUIDE.md) |
-| **Deployment / operator** | [`deployment.md`](deployment.md) — setup order, provisioning and rotating the SELECT-only DB role, the credential, budget/limits, and reading readiness (AID-2 #2371 / AID-5 #2374, **delivered**); the generic private deployment overlay is **delivered** through #2861 / PR #2866, while provider disclosure and the optional zero-retention provider posture remain documented as **deferred, not implemented** (AID-8 #2379) | [`../../DEPLOYMENT.md`](../../DEPLOYMENT.md), [`adopters/upstream-contributions.md`](../adopters/upstream-contributions.md) |
+| **Deployment / operator** | [`deployment.md`](deployment.md) — setup order, provisioning and rotating the SELECT-only DB role, the credential, budget/limits, and reading readiness (AID-2 #2371 / AID-5 #2374, **delivered**); the generic private deployment overlay is **delivered** through #2861 / PR #2866, and the provider disclosure through #5243; there is no retention setting — retention is arranged with the provider on the club's account (owner decision on #5243) | [`../../DEPLOYMENT.md`](../../DEPLOYMENT.md), [`adopters/upstream-contributions.md`](../adopters/upstream-contributions.md) |
 | **UX** | [`ux.md`](ux.md) — the two surfaces, the Diagnostics tab, the per-question consent ticks, choosing the record under investigation, the nineteen failure states, and keyboard/screen-reader/narrow-viewport behaviour (AID-7 #2378, **delivered**) | [`UX_FLOW_MAP.md`](../UX_FLOW_MAP.md) |
 | **E2E test matrix** | [`e2e-matrix.md`](e2e-matrix.md) — the security verification matrix: admission, per-tool auth, fresh revocation, consent, injection inertness across every channel, SELECT-only reads and the server_owned seam, no-mutation, secret/PII leakage, budget/rate/recovery, and the deployment artifact — each with its test files and proof tier, and the live browser/model gaps stated plainly (AID-8 #2379, **delivered**) | [`END_TO_END_TEST_MATRIX.md`](../END_TO_END_TEST_MATRIX.md) |
 | **Operator help** | Operator guidance for the Diagnostics surface (AID-7 #2378 / AID-8 #2379) | [`guides/ai-help.md`](../guides/ai-help.md) |
@@ -194,8 +196,9 @@ above**; AID-2 implements them as follows.
    Diagnostics uses its own Anthropic key under provider `anthropic-diagnostics`
    — a physically distinct `IntegrationCredential` slot, never the page-help
    `anthropic` key and no fallback to it. This lets a deployment point
-   diagnostics at a separate Anthropic workspace/key (separate billing, spend
-   limits, and zero-retention posture) and rotate or revoke it without touching
+   diagnostics at a separate Anthropic workspace/key (separate billing and spend
+   limits, and whatever retention the club arranges on that account) and rotate
+   or revoke it without touching
    member-facing Page help, and guarantees a page-help key can never silently
    authorise diagnostics spend.
 

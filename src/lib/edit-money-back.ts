@@ -16,7 +16,7 @@
  * COMPLETED, the clamp only on one that is still pending (PENDING,
  * PAYMENT_PENDING, or an unpaid confirmed whole-lodge hold), and no edit moves
  * a paid booking back to pending. `BatchModificationResponse` carries all four.
- * The hosting linked-move quote (`combineLinkedMoveQuote`, fork #132) and
+ * The hosting linked-move quote (`combineLinkedMoveQuote`, the 18 Nov 2026 money review on #5149) and
  * "Add to work party" (Remove's guard, and the absorbed-ask test, #5149) both count every
  * cent, so what the member is told comes back matches their balance change.
  * Client-safe: no imports.

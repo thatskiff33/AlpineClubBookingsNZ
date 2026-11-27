@@ -1,17 +1,18 @@
 import { NextResponse } from "next/server";
-import { z } from "zod";
+import { parseJsonRequestBody } from "@/lib/api-json";
 import {
   buildStructuredAuditLogCreateArgs,
   getAuditRequestContext,
 } from "@/lib/audit";
 import { parseDateOnly } from "@/lib/date-only";
-import { dateOnlyStringSchema } from "@/lib/date-only-schema";
 import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/session-guards";
+import { siteBannerCreateSchema } from "@/lib/admin-content-api/banners";
+import { connectionJson } from "@/lib/mcp-connection-request";
 import {
-  SITE_BANNER_MESSAGE_MAX_LENGTH,
-  SITE_BANNER_PRIORITIES,
-} from "@/lib/site-banner-shared";
+  SITE_BANNER_CONNECTION_SHAPE,
+  SITE_BANNER_LIST_CONNECTION_SHAPE,
+} from "@/lib/connection-shapes/content-pages";
 import {
   listSiteBannersForAdmin,
   serializeAdminSiteBanner,
@@ -20,17 +21,7 @@ import {
 import { PUBLIC_LAYOUT_CACHE_TAGS } from "@/lib/public-layout-cache";
 import { revalidatePublicSite } from "@/lib/public-content-revalidation";
 
-const createSchema = z
-  .object({
-    message: z.string().trim().min(1).max(SITE_BANNER_MESSAGE_MAX_LENGTH),
-    priority: z.enum(SITE_BANNER_PRIORITIES),
-    startDate: dateOnlyStringSchema,
-    endDate: dateOnlyStringSchema,
-    active: z.boolean().optional().default(true),
-  })
-  .strict();
-
-export async function GET() {
+export async function GET(request: Request) {
   const guard = await requireAdmin({
     permission: { area: "content", level: "view" },
   });
@@ -38,7 +29,7 @@ export async function GET() {
     return guard.response;
   }
 
-  return NextResponse.json(await listSiteBannersForAdmin());
+  return connectionJson(request, await listSiteBannersForAdmin(), SITE_BANNER_LIST_CONNECTION_SHAPE);
 }
 
 export async function POST(request: Request) {
@@ -50,14 +41,13 @@ export async function POST(request: Request) {
   }
   const session = guard.session;
 
-  let body: unknown;
-  try {
-    body = await request.json();
-  } catch {
-    return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
-  }
+  const jsonBody = await parseJsonRequestBody(request, {
+    error: "Invalid JSON",
+  });
+  if (!jsonBody.ok) return jsonBody.response;
+  const body = jsonBody.body;
 
-  const parsed = createSchema.safeParse(body);
+  const parsed = siteBannerCreateSchema.safeParse(body);
   if (!parsed.success) {
     return NextResponse.json(
       { error: "Invalid input", details: parsed.error.flatten() },
@@ -116,8 +106,10 @@ export async function POST(request: Request) {
   // a visitor could see.
   revalidatePublicSite(PUBLIC_LAYOUT_CACHE_TAGS.banners);
 
-  return NextResponse.json(
+  return connectionJson(
+    request,
     { banner: serializeAdminSiteBanner(banner) },
+    SITE_BANNER_CONNECTION_SHAPE,
     { status: 201 },
   );
 }

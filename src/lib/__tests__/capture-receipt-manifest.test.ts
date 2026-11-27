@@ -12,7 +12,7 @@ const mocks = vi.hoisted(() => {
   const tx = {
     $executeRaw: vi.fn(),
     memberMoneyEvent: { findUnique: vi.fn() },
-    memberMoneyExportCoverage: { aggregate: vi.fn(), createMany: vi.fn() },
+    memberMoneyExportCoverage: { aggregate: vi.fn(), createMany: vi.fn(), findFirst: vi.fn() },
     memberMoneyExportManifest: { findUnique: vi.fn(), createMany: vi.fn() },
   };
   return {
@@ -53,6 +53,8 @@ beforeEach(() => {
   mocks.tx.memberMoneyExportManifest.findUnique.mockResolvedValue(null);
   mocks.tx.memberMoneyExportManifest.createMany.mockResolvedValue({ count: 1 });
   mocks.tx.memberMoneyExportCoverage.createMany.mockResolvedValue({ count: 1 });
+  // #4525 (ALP-437): no released generation of the capture, so each row is generation 0.
+  mocks.tx.memberMoneyExportCoverage.findFirst.mockResolvedValue(null);
   mocks.xeroSyncOperation.findFirst.mockResolvedValue(null);
 });
 

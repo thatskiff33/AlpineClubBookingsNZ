@@ -1,8 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
+import { parseJsonRequestBody } from "@/lib/api-json";
 import { requireAdmin } from "@/lib/session-guards";
 import { transactionContendedResponse } from "@/lib/transaction-contended-response";
 import { prisma } from "@/lib/prisma";
-import { z } from "zod";
 import logger from "@/lib/logger";
 import { formatDateOnly, isDateOnlyString, parseDateOnly } from "@/lib/date-only";
 import { sendHutLeaderAssignmentEmail } from "@/lib/email";
@@ -35,30 +35,21 @@ import {
   HutLeaderNightsNotStayedError,
   isHutLeaderStayCheckExempt,
 } from "@/lib/hut-leader-stayed-nights";
-import { dateOnlyStringSchema } from "@/lib/date-only-schema";
+import {
+  hutLeaderAssignmentCreateBodySchema,
+  hutLeaderLodgeQuerySchema,
+} from "@/lib/admin-lodge-schemas/hut-leaders";
+import {
+  ADMIN_HUT_LEADER_CREATED_CONNECTION_SHAPE,
+  ADMIN_HUT_LEADER_LIST_CONNECTION_SHAPE,
+  type AdminHutLeaderAssignmentRow,
+} from "@/lib/connection-shapes/lodge-hut-leaders";
+import { connectionJson } from "@/lib/mcp-connection-request";
 import { LOCK1_HOLDER_TRANSACTION_BUDGET } from "@/lib/db-transaction";
 
-const createSchema = z.object({
-  memberId: z.string().min(1),
-  startDate: dateOnlyStringSchema,
-  endDate: dateOnlyStringSchema,
-  lodgeId: z.string().min(1),
-  // Custodian bed hold (#2286). Optional AND nullable: absent or null is the
-  // default "No bed — role only", which behaves exactly as it did before this
-  // feature and has zero capacity effect.
-  bedId: z.string().min(1).nullable().optional(),
-  // #3817: the "Custodian (lives on site)" tick. Absent is false.
-  isCustodian: z.boolean().optional(),
-  // #1668-style explicit override of the over-capacity warning.
-  confirmOverCapacity: z.boolean().optional(),
-  // #2698 ordering case: the officer's EXPLICIT acceptance that holding this
-  // bed narrows an existing whole-lodge hold's represented bed set. Absent is
-  // decline-by-default — the request is refused with 409
-  // CUSTODIAN_OVERLAPS_WHOLE_LODGE_HOLD and nothing is written.
-  amendOverlappingHolds: z.boolean().optional(),
-}).refine((data) => data.startDate <= data.endDate, {
-  message: "startDate must be before or equal to endDate",
-});
+// The schemas live in admin-lodge-schemas/hut-leaders.ts so the AI app
+// actions `list_hut_leaders` and `create_hut_leader_assignment` offer the
+// same fields (ALP-722); the answers' connection shapes beside them.
 
 class HutLeaderOverlapError extends Error {
   constructor(message: string) {
@@ -76,9 +67,12 @@ export async function GET(req: NextRequest) {
     permission: { area: "lodge", level: "view" },
   });
   if (!guard.ok) return guard.response;
-  const requestedLodgeId = new URL(req.url).searchParams.get("lodgeId");
-  const lodgeId = requestedLodgeId
-    ? await resolveOptionalActiveLodgeId(prisma, requestedLodgeId)
+  // Only a missing lodge fails the parse, and it answers the same 400.
+  const query = hutLeaderLodgeQuerySchema.safeParse({
+    lodgeId: new URL(req.url).searchParams.get("lodgeId") ?? undefined,
+  });
+  const lodgeId = query.success
+    ? await resolveOptionalActiveLodgeId(prisma, query.data.lodgeId)
     : null;
   if (!lodgeId) {
     return NextResponse.json({ error: "A valid lodgeId is required." }, { status: 400 });
@@ -101,10 +95,11 @@ export async function GET(req: NextRequest) {
     orderBy: { startDate: "desc" },
   });
 
-  return NextResponse.json({
+  // A connection gets the rows without the leader's email or the row stamp.
+  return connectionJson(req, {
     // #3817: the page offers "Hold a bed" only while bed allocation is on.
     bedAllocationEnabled: await isEffectiveModuleEnabled("bedAllocation"),
-    assignments: assignments.map((a) => ({
+    assignments: assignments.map((a): AdminHutLeaderAssignmentRow => ({
       id: a.id,
       memberId: a.memberId,
       memberName: `${a.member.firstName} ${a.member.lastName}`,
@@ -123,7 +118,7 @@ export async function GET(req: NextRequest) {
       // #3821: a teacher row is never offered the custodian tick.
       source: a.source,
     })),
-  });
+  }, ADMIN_HUT_LEADER_LIST_CONNECTION_SHAPE);
 }
 
 /**
@@ -136,14 +131,11 @@ export async function POST(req: NextRequest) {
   });
   if (!guard.ok) return guard.response;
   const session = guard.session;
-  let body: unknown;
-  try {
-    body = await req.json();
-  } catch {
-    return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
-  }
+  const jsonBody = await parseJsonRequestBody(req, { error: "Invalid JSON" });
+  if (!jsonBody.ok) return jsonBody.response;
+  const body = jsonBody.body;
 
-  const parsed = createSchema.safeParse(body);
+  const parsed = hutLeaderAssignmentCreateBodySchema.safeParse(body);
   if (!parsed.success) {
     return NextResponse.json(
       { error: "Invalid input", details: parsed.error.flatten() },
@@ -419,8 +411,7 @@ export async function POST(req: NextRequest) {
       isCustodian,
     });
 
-    return NextResponse.json(
-      {
+    return connectionJson(req, {
         id: assignment.id,
         emailSent,
         // #2286 privacy guard: a minor custodian (bed or tick, #3817) is never individually
@@ -432,9 +423,7 @@ export async function POST(req: NextRequest) {
             ? "This member is a minor, so the lodge screen will show the custodian role only and never their name."
             : null,
         schoolNightsWarning,
-      },
-      { status: 201 }
-    );
+      }, ADMIN_HUT_LEADER_CREATED_CONNECTION_SHAPE, { status: 201 });
   } catch (err) {
     if (err instanceof HutLeaderOverlapError) {
       return NextResponse.json({ error: err.message }, { status: 409 });

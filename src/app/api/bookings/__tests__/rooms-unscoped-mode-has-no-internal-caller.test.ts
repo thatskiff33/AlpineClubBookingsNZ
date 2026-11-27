@@ -7,8 +7,10 @@ import { describe, expect, it } from "vitest";
 // deliberately still reads the RAW source — it is the sweep that reads exactly
 // the part the other one throws away.
 import { stripComments } from "@/lib/__tests__/support/strip-comments";
+import { MCP_ACTIONS } from "@/lib/mcp/catalogue";
 import { readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
+import { CENSUS_TIMEOUT_MS } from "@/test/census-timeout";
 
 /**
  * `INV-INT-016` — the no-`lodgeId` mode of `GET /api/bookings/rooms` is kept for
@@ -42,6 +44,9 @@ import path from "node:path";
  */
 
 const ROUTE = "/api/bookings/rooms";
+
+/** The modules that hold the AI app's actions (`MCP_ACTIONS`). */
+const MCP_CATALOGUE_FILES = new Set(["src/lib/mcp/catalogue.ts", "src/lib/mcp/catalogue-bookings.ts"]);
 
 function sourceFiles({ includeTests = false } = {}): string[] {
   const files: string[] = [];
@@ -89,6 +94,10 @@ describe("INV-INT-016: /api/bookings/rooms unscoped mode (#2678)", () => {
       // The endpoint's own handler names its path in a URL only incidentally;
       // it is the thing being called, not a caller.
       if (file === "src/app/api/bookings/rooms/route.ts") continue;
+      // The AI app catalogue names the route's path, not a URL: whether its
+      // action can call the route unscoped is decided by the action's query
+      // schema, which the next case checks (ALP-794).
+      if (MCP_CATALOGUE_FILES.has(file)) continue;
       const code = stripComments(readFileSync(file, "utf8"));
       // Every literal reference to the route, with whatever query string is
       // attached, up to the closing quote or template backtick.
@@ -109,6 +118,15 @@ describe("INV-INT-016: /api/bookings/rooms unscoped mode (#2678)", () => {
         "FORKED and EXTERNAL consumers only — see INV-INT-016 in " +
         "docs/invariants/integrations.md.",
     ).toEqual([]);
+  }, CENSUS_TIMEOUT_MS);
+
+  it("offers an AI app no action that calls it without a lodgeId (ALP-794)", () => {
+    const actions = MCP_ACTIONS.filter((action) => action.path === ROUTE);
+    // Not vacuous: `list_lodge_rooms` reads this route.
+    expect(actions.map((action) => action.id)).toContain("list_lodge_rooms");
+    for (const action of actions) {
+      expect(action.query?.safeParse({}).success, `${action.id} must require lodgeId`).toBe(false);
+    }
   });
 
   it("still SERVES the unscoped mode, so a fork's pre-multi-lodge call keeps working", () => {
@@ -161,5 +179,5 @@ describe("INV-INT-016: /api/bookings/rooms unscoped mode (#2678)", () => {
         "live claim that it does not. Rewrite it in the past tense and cite the " +
         "rule — docs/invariants/integrations.md, INV-INT-016.",
     ).toEqual([]);
-  });
+  }, CENSUS_TIMEOUT_MS);
 });

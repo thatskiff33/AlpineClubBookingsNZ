@@ -2,6 +2,7 @@ import { readdirSync, readFileSync } from "node:fs";
 import { join, relative, sep } from "node:path";
 import ts from "typescript";
 import { describe, expect, it } from "vitest";
+import { AST_CENSUS_TIMEOUT_MS } from "@/test/census-timeout";
 
 /*
   #2263 / ADR-001 (dated entry, 2026-07-30) — the sanctioned front-doors that may
@@ -144,6 +145,7 @@ function eachNode(node: ts.Node, visit: (node: ts.Node) => void) {
  * the list would stop meaning anything.
  */
 function isWriteAssignment(node: ts.PropertyAssignment): boolean {
+  if (isConnectionShapeEntry(node)) return false;
   let cursor: ts.Node | undefined = node.parent;
   while (cursor) {
     if (
@@ -156,6 +158,40 @@ function isWriteAssignment(node: ts.PropertyAssignment): boolean {
     cursor = cursor.parent;
   }
   return true;
+}
+
+const CONNECTION_SHAPE_BUILDERS = new Set(["connectionShapeFor", "completeConnectionShapeFor"]);
+const CONNECTION_SHAPE_TYPES = new Set(["ConnectionShapeFor", "CompleteConnectionShapeFor"]);
+
+/**
+ * True for `exclusivityRequested: true` inside an AI app connection shape
+ * (ALP-719): an allow-list of the fields a connection is SENT, a read of the
+ * value like a Prisma `select`. Only the literal `true`, and only inside a
+ * `connectionShapeFor(...)` argument or a `satisfies ConnectionShapeFor<…>`
+ * literal, so a real payload cannot borrow the exemption.
+ */
+function isConnectionShapeEntry(node: ts.PropertyAssignment): boolean {
+  if (node.initializer.kind !== ts.SyntaxKind.TrueKeyword) return false;
+  let cursor: ts.Node | undefined = node.parent;
+  while (cursor) {
+    if (
+      ts.isCallExpression(cursor) &&
+      ts.isIdentifier(cursor.expression) &&
+      CONNECTION_SHAPE_BUILDERS.has(cursor.expression.text)
+    ) {
+      return true;
+    }
+    if (
+      ts.isSatisfiesExpression(cursor) &&
+      ts.isTypeReferenceNode(cursor.type) &&
+      ts.isIdentifier(cursor.type.typeName) &&
+      CONNECTION_SHAPE_TYPES.has(cursor.type.typeName.text)
+    ) {
+      return true;
+    }
+    cursor = cursor.parent;
+  }
+  return false;
 }
 
 function countWriteSites(file: string): number {
@@ -264,7 +300,7 @@ function scanWriteSites(): Record<string, number> {
 // The scan parses every .ts/.tsx file under src/, prisma/ and scripts/, which
 // takes well past the 5s default on a loaded box. Memoised above, so this budget
 // covers one pass.
-describe("whole-lodge exclusivity request write sites (#2263, ADR-001)", { timeout: 120_000 }, () => {
+describe("whole-lodge exclusivity request write sites (#2263, ADR-001)", { timeout: AST_CENSUS_TIMEOUT_MS }, () => {
   it("has exactly the sanctioned front-doors and no others, across src, prisma and scripts", () => {
     const found = Object.keys(scanWriteSites()).sort();
 

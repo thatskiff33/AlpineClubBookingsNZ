@@ -2,6 +2,7 @@ import { releaseSavedCardChargeClaim, runSavedCardClaimRelease } from "@/lib/sav
 import { receiptCaptureTime } from "@/lib/stripe-capture-date";
 import { resolveBookingMoneyPostingContext } from "@/lib/member-money/doors";
 import { NextRequest, NextResponse } from "next/server";
+import { parseJsonRequestBody } from "@/lib/api-json";
 import { handOffSupersededCaptureAfterRefusal } from "@/lib/superseded-paid-intent";
 import { bookingOwner } from "@/lib/booking-owner";
 import { hostingCoverageParticipantRetryResponse } from "@/lib/adult-member-hosting-retry-response";
@@ -26,6 +27,7 @@ import { z } from "zod";
 import logger from "@/lib/logger";
 import { sendAdminPaymentFailureAlert } from "@/lib/email";
 import { logAudit } from "@/lib/audit";
+import { getClientIp } from "@/lib/rate-limit-http";
 import { BookingStatus } from "@prisma/client";
 import { markBookingPaymentSucceeded } from "@/lib/payment-reconciliation";
 import {
@@ -128,14 +130,12 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Unauthorised" }, { status: 401 });
     }
 
-    const body = await request.json();
-    const parsed = ChargeSavedMethodSchema.safeParse(body);
+    const jsonBody = await parseJsonRequestBody(request);
+    if (!jsonBody.ok) return jsonBody.response;
+    const parsed = ChargeSavedMethodSchema.safeParse(jsonBody.body);
 
     if (!parsed.success) {
-      return NextResponse.json(
-        { error: "Invalid input", details: parsed.error.flatten() },
-        { status: 400 }
-      );
+      return NextResponse.json({ error: "Invalid input", details: parsed.error.flatten() }, { status: 400 });
     }
 
     const { bookingId } = parsed.data;
@@ -437,14 +437,13 @@ export async function POST(request: NextRequest) {
         amountCents: paymentIntent.amount,
       };
       // Record the capture BEFORE reconciliation, so the webhook (finding the row by intent id) can always finish a failed
-      // promotion; non-fatal, reconciliation upserts the same row. #4285 review: `newlyCaptured` means new money, not a replay.
-      let recordedByCaller = false;
+      // promotion; non-fatal, reconciliation upserts the same row. #5240: new money is flagged for the settle to consume.
       try {
-        ({ newlyCaptured: recordedByCaller } = await settleSavedCardChargeAttempt({ journal: receiptJournal,
+        await settleSavedCardChargeAttempt({ journal: receiptJournal,
           attemptRowId: claim.attempt.attemptRowId,
           paymentId,
           paymentIntent,
-        }));
+        });
       } catch (recordError) {
         logger.error(
           { err: recordError, bookingId, paymentIntentId: paymentIntent.id },
@@ -454,7 +453,7 @@ export async function POST(request: NextRequest) {
       const reconciliation = await markBookingPaymentSucceeded({
       capturedAt: receiptCaptureTime(paymentIntent),
         format,
-        bookingId, recordedByCaller,
+        bookingId,
         paymentIntentId: paymentIntent.id,
         amountCents: paymentIntent.amount,
         paymentMethodId:
@@ -499,9 +498,7 @@ export async function POST(request: NextRequest) {
           amountCents: paymentIntent.amount,
           source: isAuthorizedCron ? "cron" : "admin",
         }),
-        ipAddress:
-          request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ??
-          "unknown",
+        ipAddress: getClientIp(request),
       });
     } else {
       // The intent exists but did not capture (3DS challenge outstanding, still
@@ -660,9 +657,7 @@ export async function POST(request: NextRequest) {
               ? error.message
               : "Failed to charge saved payment method",
         }),
-        ipAddress:
-            request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ??
-            "unknown",
+        ipAddress: getClientIp(request),
       });
     }
 

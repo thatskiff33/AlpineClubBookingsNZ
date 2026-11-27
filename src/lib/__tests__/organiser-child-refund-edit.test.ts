@@ -12,7 +12,7 @@ import {
   calculateModificationSettlementOptions,
   organiserChildChargeRefusal,
 } from "@/lib/booking-modify-settlement";
-import { paymentEligibleForPaidCancelPath, paymentHasCaptureEvidence } from "@/lib/booking-cancel";
+import { paymentEligibleForPaidCancelPath, queryPaymentCaptureEvidence } from "@/lib/booking-cancel";
 import { ORGANISER_CHILD_CHARGE_REFUSAL } from "@/lib/group-organiser-paid";
 import { GROUP_CANCEL_IN_PROGRESS_PRICE_MESSAGE, organiserBankChildPriceChangeRefusal } from "@/lib/group-cancel-in-progress";
 import { ORGANISER_COMBINED_INVOICE_MISSING_MESSAGE, organiserCombinedInvoiceRefusal } from "@/lib/organiser-billing";
@@ -81,6 +81,7 @@ const ORGANISER_OPTIONS: BookingModificationSettlementOptions = {
   requiresSettlementMethod: false,
   returnsToOrganiser: true,
   organiserRefundByBankTransfer: false,
+  refundByBankTransfer: false,
   refundHeldForDispute: false,
 };
 
@@ -262,7 +263,7 @@ describe("an organiser child's reduction at the edit door (#3653)", () => {
     expect(ib).toMatchObject({ returnsToOrganiser: true, organiserRefundByBankTransfer: true, requiresSettlementMethod: false, accountCreditAmountCents: 0, accountCreditPercentage: 0 });
     expect(ib?.cardRefundAmountCents).toBe(card?.cardRefundAmountCents);
     // The untiered options (a guest's acceptance) answer the same way.
-    const full = calculateFullReductionSettlementOptions({ booking: ibChild(), netChargeCents: -1500, refundableCashCents: 4500, todayAtClub, refundHeldForDispute: false });
+    const full = calculateFullReductionSettlementOptions({ booking: ibChild(), netChargeCents: -1500, refundableCashCents: 4500, todayAtClub, refundHeldForDispute: false, hasCardToReturnTo: false });
     expect(full).toMatchObject({ returnsToOrganiser: true, organiserRefundByBankTransfer: true, requiresSettlementMethod: false, accountCreditAmountCents: 0, cardRefundAmountCents: 1500 });
   });
 
@@ -467,18 +468,18 @@ describe("an organiser child's reduction at the edit door (#3653)", () => {
   });
 
   it("#3949 review H1: an Internet Banking organiser child's mirror is capture evidence, refunded in full or not; an ordinary one's is not", async () => {
-    const noLedger = { paymentTransaction: { findFirst: vi.fn().mockResolvedValue(null) } } as unknown as Parameters<typeof paymentHasCaptureEvidence>[1];
+    const noLedger = { paymentTransaction: { findFirst: vi.fn().mockResolvedValue(null) } } as unknown as Parameters<typeof queryPaymentCaptureEvidence>[1];
     const child = (status: PaymentStatus, organiserSettled = true) => ({
       organiserSettled,
       parentBookingId: organiserSettled ? "organiser_booking" : null,
       payment: { id: "payment_1", source: PaymentSource.INTERNET_BANKING, status, refundedAmountCents: 1500 },
     });
     for (const status of [PaymentStatus.SUCCEEDED, PaymentStatus.PARTIALLY_REFUNDED, PaymentStatus.REFUNDED]) {
-      await expect(paymentHasCaptureEvidence(child(status), noLedger), status).resolves.toBe(true);
+      await expect(queryPaymentCaptureEvidence(child(status), noLedger), status).resolves.toBe(true);
     }
-    await expect(paymentHasCaptureEvidence(child(PaymentStatus.PENDING), noLedger)).resolves.toBe(false);
+    await expect(queryPaymentCaptureEvidence(child(PaymentStatus.PENDING), noLedger)).resolves.toBe(false);
     // The folded never-paid Internet Banking mirror (#3630) is still not cash.
-    await expect(paymentHasCaptureEvidence(child(PaymentStatus.PARTIALLY_REFUNDED, false), noLedger)).resolves.toBe(false);
+    await expect(queryPaymentCaptureEvidence(child(PaymentStatus.PARTIALLY_REFUNDED, false), noLedger)).resolves.toBe(false);
   });
 
   it("every door that settles an edit through applyPaymentAdjustments writes the child's refund debt before it commits", () => {

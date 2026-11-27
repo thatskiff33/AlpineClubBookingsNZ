@@ -54,6 +54,7 @@ import { ApiError as SharedApiError } from "@/lib/api-error";
 import { ORGANISER_CHILD_CHARGE_REFUSAL, paidByOrganiserCard, paidByOrganiserInternetBanking } from "@/lib/group-organiser-paid";
 import { refuseOrganiserBankChildPriceChangeInGroupCancel } from "@/lib/group-cancel-in-progress";
 import { logAudit } from "@/lib/audit";
+import { getClientIp } from "@/lib/rate-limit-http";
 import { sendBookingModifiedEmail } from "@/lib/email";
 import { bookingHasOpenFinancialReview } from "@/lib/booking-financial-review-visibility";
 import {
@@ -83,6 +84,7 @@ import logger from "@/lib/logger";
 import { requiredNightPriceCents } from "@/lib/required-price-cents";
 import { parseJsonRequestBody } from "@/lib/api-json";
 import { getNonMemberHoldPolicy } from "@/lib/cancellation";
+import { nonMemberHoldEnd } from "@/lib/non-member-hold-end";
 import { requireActiveSessionUser } from "@/lib/session-guards";
 import {
   assertLinkedBookingMembersCanBeBooked,
@@ -221,8 +223,7 @@ export async function POST(
   // transaction below, under the lodge's capacity lock.
   const { guests: newGuests } = parsed.data;
 
-  const ipAddress =
-    request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? "unknown";
+  const ipAddress = getClientIp(request);
 
   // "+ Add Member Guest" (epic #2305, MG2 #2307). Read the module flag and the
   // policy singleton HERE, OUTSIDE the transaction below.
@@ -897,10 +898,7 @@ export async function POST(
           holdEnabled: holdPolicy.enabled,
         });
         if (holdDecision.shouldBePending && booking.status === "PENDING") {
-          nonMemberHoldUntil = new Date(
-            new Date(booking.checkIn).getTime() -
-              holdPolicy.holdDays * 24 * 60 * 60 * 1000
-          );
+          nonMemberHoldUntil = nonMemberHoldEnd(booking.checkIn, holdPolicy.holdDays);
         } else {
           nonMemberHoldUntil = null;
           if (booking.status === "PENDING") {

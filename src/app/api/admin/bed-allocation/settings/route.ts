@@ -1,5 +1,4 @@
 import { NextResponse } from "next/server";
-import { z } from "zod";
 import {
   getEffectiveBedAllocationSettings,
   updateBedAllocationSettings,
@@ -12,45 +11,35 @@ import {
 import { parseJsonRequestBody } from "@/lib/api-json";
 import { createAuditLog } from "@/lib/audit";
 import {
-  parseBedAllocationPriorityOrder,
-  type BedAllocationSettingsWriteBody,
-} from "@/lib/bed-allocation-settings";
+  bedAllocationSettingsBodySchema,
+  bedAllocationSettingsQuerySchema,
+} from "@/lib/admin-bookings-schemas/beds";
+import { parseBedAllocationPriorityOrder } from "@/lib/bed-allocation-settings";
+import { ADMIN_BED_ALLOCATION_SETTINGS_CONNECTION_SHAPE } from "@/lib/connection-shapes/bookings-beds";
+import { connectionJson } from "@/lib/mcp-connection-request";
 import { resolveOptionalActiveLodgeId } from "@/lib/lodges";
 import { prisma } from "@/lib/prisma";
 
 // Explicit bookings:view / bookings:edit is enforced by the split guards.
-//
-// The `satisfies` is a compile-time proof that this schema and the write
-// contract the editor builds name the SAME fields (#2931). `Record` requires
-// every contract field to be present, and the object literal's excess-property
-// check refuses any field the contract does not have — so adding a field on
-// either side, or dropping one, fails `pnpm run typecheck` rather than failing
-// in a browser as a 400 "Invalid input" that nobody could read. The write
-// contract was previously stated twice, here and by hand in the editor's save.
-const settingsSchema = z
-  .object({
-    autoAllocationEnabled: z.boolean(),
-    allocationPriorityOrder: z.array(z.unknown()),
-    lodgeId: z.string().min(1),
-  } satisfies Record<keyof BedAllocationSettingsWriteBody, z.ZodType>)
-  .strict();
+// The PUT schema's compile-time tie to the editor's write contract (#2931)
+// lives with the schema in `admin-bookings-schemas/beds.ts`.
 
+/** Also the AI app action `get_bed_allocation_settings` (ALP-719). */
 export async function GET(request: Request) {
   const guard = await requireBedAllocationRead();
   if (!guard.ok) return guard.response;
 
   try {
-    const lodgeIdResult = z
-      .string()
-      .min(1)
-      .safeParse(new URL(request.url).searchParams.get("lodgeId"));
+    const lodgeIdResult = bedAllocationSettingsQuerySchema.safeParse({
+      lodgeId: new URL(request.url).searchParams.get("lodgeId") ?? undefined,
+    });
     if (!lodgeIdResult.success) {
       return NextResponse.json(
         { error: "A lodgeId is required." },
         { status: 400 },
       );
     }
-    const lodgeId = lodgeIdResult.data;
+    const lodgeId = lodgeIdResult.data.lodgeId;
     if (!(await resolveOptionalActiveLodgeId(prisma, lodgeId))) {
       return NextResponse.json(
         { error: "Lodge not found or not active" },
@@ -58,12 +47,13 @@ export async function GET(request: Request) {
       );
     }
     const settings = await getEffectiveBedAllocationSettings(undefined, lodgeId);
-    return NextResponse.json({ settings });
+    return connectionJson(request, { settings }, ADMIN_BED_ALLOCATION_SETTINGS_CONNECTION_SHAPE);
   } catch (error) {
     return bedAllocationErrorResponse(error);
   }
 }
 
+/** Also the AI app action `update_bed_allocation_settings` (ALP-719). */
 export async function PUT(request: Request) {
   const guard = await requireBedAllocationWrite();
   if (!guard.ok) return guard.response;
@@ -72,7 +62,7 @@ export async function PUT(request: Request) {
     const json = await parseJsonRequestBody(request);
     if (!json.ok) return json.response;
 
-    const body = settingsSchema.safeParse(json.body);
+    const body = bedAllocationSettingsBodySchema.safeParse(json.body);
     if (!body.success) {
       return NextResponse.json(
         { error: "Invalid input", details: body.error.flatten() },
@@ -114,7 +104,7 @@ export async function PUT(request: Request) {
       metadata: settings,
     });
 
-    return NextResponse.json({ settings });
+    return connectionJson(request, { settings }, ADMIN_BED_ALLOCATION_SETTINGS_CONNECTION_SHAPE);
   } catch (error) {
     return bedAllocationErrorResponse(error);
   }

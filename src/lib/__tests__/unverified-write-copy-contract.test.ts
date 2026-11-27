@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 import { unverifiedWriteMessage } from "@/lib/unverified-write-copy";
 
 import { stripComments } from "./support/strip-comments";
+import { CENSUS_TIMEOUT_MS } from "@/test/census-timeout";
 
 /**
  * Unverified-write copy — contract (#2668).
@@ -305,15 +306,7 @@ function networkFailureBranches(source: string): Array<{ line: number; text: str
   return branches;
 }
 
-/**
- * Blank comments so a `// this used to say "was not saved"` note is not a
- * finding, WITHOUT collapsing lines — a finding has to point at the real line
- * number or the message sends the next reader to the wrong place.
- */
-function blankComments(source: string): string {
-  return stripComments(source);
-}
-
+// `stripComments` preserves newlines, so a reported line number stays right.
 describe("unverified-write copy contract (#2668)", () => {
   it("no browser-side network-failure branch claims the stored record did not move", () => {
     const findings: string[] = [];
@@ -326,7 +319,7 @@ describe("unverified-write copy contract (#2668)", () => {
       if (!/\bfetch\s*\(/.test(source)) continue;
       const exemptions = HONEST_CLAIMS.filter((allowed) => allowed.file === file);
 
-      for (const branch of networkFailureBranches(blankComments(source))) {
+      for (const branch of networkFailureBranches(stripComments(source))) {
         // Branch-scoped, not file-scoped: the rest of an allowlisted file is
         // walked exactly like everything else.
         if (
@@ -348,7 +341,7 @@ describe("unverified-write copy contract (#2668)", () => {
     }
 
     expect(findings).toEqual([]);
-  });
+  }, CENSUS_TIMEOUT_MS);
 
   it("each honest 'nothing changed' claim still reads before it writes", () => {
     for (const allowed of HONEST_CLAIMS) {
@@ -381,7 +374,7 @@ describe("unverified-write copy contract (#2668)", () => {
     const CLAIM = 'setError("Nothing was saved.")';
     function findingsIn(source: string): string[] {
       const found: string[] = [];
-      for (const branch of networkFailureBranches(blankComments(source))) {
+      for (const branch of networkFailureBranches(stripComments(source))) {
         for (const claim of RECORD_UNCHANGED_CLAIMS) {
           if (claim.pattern.test(branch.text)) found.push(claim.label);
         }
@@ -568,7 +561,7 @@ describe("unverified-write copy contract (#2668)", () => {
     ];
 
     for (const fixed of FIXED) {
-      const source = blankComments(readFileSync(repoPath(fixed.file), "utf8"));
+      const source = stripComments(readFileSync(repoPath(fixed.file), "utf8"));
       if (fixed.outcome !== undefined) {
         expect(
           source.includes(`"${fixed.outcome}"`),

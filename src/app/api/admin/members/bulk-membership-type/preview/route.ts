@@ -1,8 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import type { AgeTier } from "@prisma/client";
 import { z } from "zod";
+import { parseJsonRequestBody } from "@/lib/api-json";
 import { prisma } from "@/lib/prisma";
 import { getSeasonalMembershipChangePreview } from "@/lib/seasonal-membership-assignments";
+import { BULK_LINKED_GUEST_LABEL_LIMIT } from "@/lib/bulk-seasonal-save";
 import { requireAdmin } from "@/lib/session-guards";
 import { clubTimeZone } from "@/lib/club-time/server";
 import { clubToday, dateOnlyInstantOf } from "@/lib/club-time";
@@ -11,7 +13,6 @@ import { dateOnlyStringSchema } from "@/lib/date-only-schema";
 
 // Preview divergence from the single-member flow (#2107, documented): archived
 // members are excluded and reported by id rather than previewed.
-const LINKED_GUEST_LABEL_LIMIT = 3;
 
 const previewSchema = z
   .object({
@@ -52,12 +53,11 @@ export async function POST(request: NextRequest) {
   });
   if (!guard.ok) return guard.response;
 
-  let body: unknown;
-  try {
-    body = await request.json();
-  } catch {
-    return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
-  }
+  const jsonBody = await parseJsonRequestBody(request, {
+    error: "Invalid JSON",
+  });
+  if (!jsonBody.ok) return jsonBody.response;
+  const body = jsonBody.body;
 
   const parsed = previewSchema.safeParse(body);
   if (!parsed.success) {
@@ -200,9 +200,9 @@ export async function POST(request: NextRequest) {
         count: preview.linkedGuestBookings.count,
         truncatedCount: Math.max(
           0,
-          preview.linkedGuestBookings.count - LINKED_GUEST_LABEL_LIMIT,
+          preview.linkedGuestBookings.count - BULK_LINKED_GUEST_LABEL_LIMIT,
         ),
-        list: preview.linkedGuestBookings.list.slice(0, LINKED_GUEST_LABEL_LIMIT),
+        list: preview.linkedGuestBookings.list.slice(0, BULK_LINKED_GUEST_LABEL_LIMIT),
       },
     });
   }

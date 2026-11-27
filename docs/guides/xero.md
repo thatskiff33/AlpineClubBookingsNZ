@@ -54,6 +54,17 @@ does not record a refund (#4315).
    > what did and did not reach Xero. A booking whose records hold neither is
    > listed, and **Trigger All Missing** raises an invoice for it.
 
+   > **Group mismatches** counts two kinds of entry (#5234). One *to re-sync*
+   > is a member a grouping rule matches whose Xero contact sits in the wrong
+   > managed group; the bulk re-sync on **Xero member grouping** repairs it.
+   > One *to review by hand* is a member no rule matches (often an
+   > organisation) whose contact still sits in a managed group. The re-sync
+   > never touches those, so the panel names each one with the group it sits
+   > in: remove the contact from that group in Xero, or add a grouping rule
+   > that covers the member, then press the panel's **Refresh**, which
+   > re-fetches both kinds from Xero. Stuck States counts both kinds and its
+   > link opens the panel.
+
    > The whole Xero area (`/admin/xero`, `/admin/xero/*`, `/admin/internet-banking`)
    > is gated by the **Xero integration** module (`src/config/feature-routes.ts`)
    > and returns *Not Found* when it is off. The demo seed leaves Xero disabled,
@@ -383,7 +394,12 @@ never change; only how much of each price is GST does.
    Other officers see the card read-only.
 2. A GST-registered treatment is checked against Xero's tax rates before it is
    saved, so the tax code must be active in Xero and usable on revenue. If Xero
-   cannot be read, the change waits until the connection works.
+   cannot be read, the change waits until the connection works. A
+   registration is saved even while the **Opening Credits** account is mapped
+   and **Exempt** has no usable rate; the health check then warns, and spent
+   opening credits wait until Exempt is mapped. On a card booking, the
+   booking's Xero invoice operation fails instead; retry it from the **Xero
+   Operations** list once Exempt is mapped.
 3. Bookings, subscriptions and entrance fees made on or after the date use the
    new treatment. A booking already made keeps the treatment in force when it
    was made for its whole life, including later edits, credit notes and
@@ -394,8 +410,14 @@ never change; only how much of each price is GST does.
    are both in the audit log.
 
 The Xero health check warns if the tax code in force is missing or inactive in
-Xero, its rate differs, Xero's GST registration disagrees with the card, or a
-mapped tax category's rate has gone. How
+Xero, its rate differs, Xero's GST registration disagrees with the card, a
+mapped tax category's rate has gone, the **Opening Credits** account is
+mapped while a GST-registered club has no usable **Exempt** rate, or the
+**Opening Credits** account is stored on the Xero account another mapping
+uses. The account mapping refuses to save that last one, so it appears only
+if two people saved mappings, or one saved while a configuration import ran,
+at the same moment; choose an account for **Opening Credits** that no other
+mapping uses. How
 it works: [Tax treatment](../xero/ARCHITECTURE.md#tax-treatment).
 It checks only today's treatment. Bookings made under an earlier treatment
 still use that treatment's tax code on their later edits, credit notes and
@@ -421,6 +443,11 @@ Xero organisation provides, so the app never assumes a Xero tax code:
    are active in Xero and suit the category: Exempt and Zero rated must be 0%,
    and Sales tax on expenses must be usable on expenses.
 2. **Clear** removes a mapping. Saving and clearing are both in the audit log.
+   **Exempt** cannot be cleared while the **Opening Credits** account is
+   mapped and the club is, or is scheduled to be, GST-registered: unset that
+   account on the account mapping first. That holds while Xero is disconnected
+   too, so the mapping is still there when you reconnect; only a mapping
+   chosen in a different Xero organisation from the one connected now clears.
 3. A mapping belongs to the Xero organisation it was chosen in. If you connect
    a different organisation, the card and the health check say so; map the
    category again.
@@ -431,9 +458,54 @@ whose rate Xero has removed, made inactive or changed so it no longer suits the
 category (an Exempt rate edited to a non-zero percentage, say) — is held back
 with an error, not sent with a guessed code. **If your club is GST-registered and is moving in
 with opening credits, map Exempt before you map the Opening Credits account.**
+The account mapping refuses to save **Opening Credits** until you do, and
+refuses it on an account another mapping already uses, naming that mapping. A
+spent opening credit that cannot be sent waits in the Xero queue with a message
+naming the category, and is tried again by itself every few minutes; where it
+is part of a card booking's invoice operation, that operation fails with the
+same message and is retried by hand once the category is mapped
+([Moving in](moving-in.md#6-credit-post-the-opening-credits)).
 Nothing changes on upgrade: until you map a category, every document is sent
 exactly as before. How it works:
 [`INV-CONFIG-008`](../invariants/product-configuration.md#inv-config-008).
+
+**The app checks a rate against its own copy of Xero's tax rates, which can be
+up to 15 minutes old** (#5375). When the app sends a line in a mapped category,
+such as the Exempt line of a spent opening credit, it reads Xero's tax rates
+from a copy it keeps for up to 15 minutes (`CACHE_TTL_MS` in
+`src/lib/xero-tax-rates.ts`); it does not ask Xero each time. So for up to 15
+minutes after a rate is changed or archived in Xero, the app can still send a
+line with that rate. Once the copy is renewed, a line with that rate is no
+longer sent: it waits in the Xero queue or, on a card booking, the booking's
+invoice operation fails, as described above. This card, the **GST / tax
+treatment** card and the Xero health check also read a copy of that age, so
+they can take as long to show the change. A save does not use a copy: mapping
+a category on this card, saving a GST-registered treatment, and the Exempt
+check made when the **Opening Credits** account is saved each read Xero's
+rates fresh. A copy belongs to the Xero organisation it was read from, so
+after you connect a different organisation it is not used.
+
+### Resume the club's GST figures after Xero changed them
+
+A new booking invoice tells Xero the GST on each line, shared out from the
+club's own figure, so Xero's GST and the club's records agree to the cent. After
+each booking invoice is raised or updated, the app checks Xero kept it.
+
+If Xero changed the GST on any line, the app pauses: new invoices go to Xero
+without the club's GST figures and Xero works the GST out itself. **GST
+overrides paused** appears on the Finance dashboard and in the Xero health
+check, and the **GST overrides** card on **Finance → Xero** lists each invoice
+with the GST sent and the GST Xero holds on each line.
+
+1. Open each listed invoice in Xero and check its GST.
+2. On the card, tick **I've checked these invoices in Xero** and write what you
+   found.
+3. Choose **I've checked these, resume**. This needs finance edit access.
+
+Resuming changes nothing in Xero and re-sends nothing; the next new invoices
+carry the club's figures again. An invoice flagged after you opened the card
+keeps the pause on until it is checked too. How it works:
+[The journal's GST on each line](../xero/ARCHITECTURE.md#the-journals-gst-on-each-line-5208).
 
 ## Settings reference
 

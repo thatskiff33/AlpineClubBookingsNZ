@@ -37,6 +37,7 @@ export const ROUTE_AREA_PREFIXES: Array<{
       "/api/admin/subscription-billing",
       "/api/admin/fee-configuration",
       "/api/admin/credit-approvals",
+      "/api/admin/opening-credits",
       "/api/admin/setup/finance-report-mappings",
       "/api/finance",
     ],
@@ -46,6 +47,9 @@ export const ROUTE_AREA_PREFIXES: Array<{
     prefixes: [
       "/api/admin/bookings",
       "/api/admin/booking-requests",
+      // A school's own record (#5245): reached from its booking requests and
+      // bookings, and corrected under the same bookings:edit gate as a request.
+      "/api/admin/organisations",
       "/api/admin/booking-reviews",
       "/api/admin/booking-change-requests",
       // Unified officer exception-request queue (#2524): same class of
@@ -105,7 +109,7 @@ export const ROUTE_AREA_PREFIXES: Array<{
       "/api/admin/lodge",
       "/api/admin/lodges",
       // Registry of other clubs' lodges (#2749), downloaded from the central
-      // server; only the club's own entry is editable (#52). Distinct prefix from
+      // server; only the club's own entry is editable (triyder/AlpineClubBookingsNZ#52). Distinct prefix from
       // "/api/admin/lodges" so it does not fall through to the overview catch-all.
       "/api/admin/other-lodges",
       "/api/admin/work-parties",
@@ -120,7 +124,7 @@ export const ROUTE_AREA_PREFIXES: Array<{
       // audience is `{ area: "lodge", level: "edit" }` — see
       // ADMIN_NOTIFICATION_PREFERENCE_REQUIREMENT.
       "/api/admin/maintenance-reports",
-      // Food orders settings (fork #121), Lodge Operations like maintenance.
+      // Food orders settings (fork triyder/AlpineClubBookingsNZ#121), Lodge Operations like maintenance.
       "/api/admin/food-orders",
     ],
   },

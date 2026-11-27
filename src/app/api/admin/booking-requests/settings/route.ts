@@ -1,33 +1,25 @@
 import { NextRequest, NextResponse } from "next/server";
-import { z } from "zod";
+import { bookingRequestSettingsBodySchema } from "@/lib/admin-bookings-schemas/setup";
+import { parseJsonRequestBody } from "@/lib/api-json";
 import {
   getBookingRequestSettings,
   updateBookingRequestSettings,
 } from "@/lib/booking-request";
+import { ADMIN_BOOKING_REQUEST_SETTINGS_CONNECTION_SHAPE } from "@/lib/connection-shapes/bookings-setup";
+import { connectionJson } from "@/lib/mcp-connection-request";
 import { requireAdmin } from "@/lib/session-guards";
 
-const settingsSchema = z
-  .object({
-    showPricingToNonMembers: z.boolean(),
-    quoteResponseTtlDays: z.number().int().min(1).max(60),
-    quoteReminderLeadDays: z.number().int().min(0).max(30),
-    attendeeConfirmationLeadDays: z.number().int().min(0).max(90),
-    attendeeConfirmationReminderDays: z.number().int().min(1).max(30),
-  })
-  .refine((value) => value.quoteReminderLeadDays < value.quoteResponseTtlDays, {
-    message:
-      "The reminder lead time must be shorter than the quote response window.",
-    path: ["quoteReminderLeadDays"],
-  });
+// The body schema lives in admin-bookings-schemas/setup.ts so the AI app
+// action `update_booking_request_settings` offers the same fields (ALP-719).
 
-export async function GET() {
+export async function GET(req: NextRequest) {
   const guard = await requireAdmin({
     permission: { area: "bookings", level: "view" },
   });
   if (!guard.ok) return guard.response;
 
   const settings = await getBookingRequestSettings();
-  return NextResponse.json(settings);
+  return connectionJson(req, settings, ADMIN_BOOKING_REQUEST_SETTINGS_CONNECTION_SHAPE);
 }
 
 export async function PUT(req: NextRequest) {
@@ -37,14 +29,13 @@ export async function PUT(req: NextRequest) {
   if (!guard.ok) return guard.response;
   const session = guard.session;
 
-  let body: unknown;
-  try {
-    body = await req.json();
-  } catch {
-    return NextResponse.json({ error: "Invalid JSON payload" }, { status: 400 });
-  }
+  const jsonBody = await parseJsonRequestBody(req, {
+    error: "Invalid JSON payload",
+  });
+  if (!jsonBody.ok) return jsonBody.response;
+  const body = jsonBody.body;
 
-  const parsed = settingsSchema.safeParse(body);
+  const parsed = bookingRequestSettingsBodySchema.safeParse(body);
   if (!parsed.success) {
     return NextResponse.json(
       { error: "Invalid input", details: parsed.error.flatten() },
@@ -62,5 +53,5 @@ export async function PUT(req: NextRequest) {
     adminMemberId: session.user.id,
   });
 
-  return NextResponse.json(settings);
+  return connectionJson(req, settings, ADMIN_BOOKING_REQUEST_SETTINGS_CONNECTION_SHAPE);
 }

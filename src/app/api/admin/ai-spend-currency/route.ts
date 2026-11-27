@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
+import { parseJsonRequestBody } from "@/lib/api-json";
 import { requireAdmin } from "@/lib/session-guards";
 import {
   buildStructuredAuditLogCreateArgs,
@@ -17,6 +18,7 @@ import {
   loadAiSpendCurrency,
 } from "@/lib/ai-spend-currency-settings";
 import { prisma } from "@/lib/prisma";
+import { isSingletonUpsertContention } from "@/lib/prisma-errors";
 
 // GET/PUT /api/admin/ai-spend-currency — the administrator-set NZD -> club-
 // currency conversion rate for AI spend (#3354, INV-CONFIG-001). ONE setting
@@ -38,15 +40,17 @@ import { prisma } from "@/lib/prisma";
 // the transaction below re-reads it and refuses on a mismatch, and runs
 // Serializable so the re-read and the club-format save cannot interleave.
 
-/**
+/*
  * Retryable failures of the Serializable transaction below, answered 503: P2028
  * (transaction API error) and P2034 (the serialisation failure Serializable
  * provokes when a club-format save commits across this one). The same codes
  * `/api/admin/club-format` treats as contention, minus P2002, which an upsert
  * of this constant-id singleton can only raise by losing a first-write race —
  * retryable too, so it is included.
+ *
+ * The set and the predicate are `isSingletonUpsertContention`
+ * (`@/lib/prisma-errors`); this comment is why `P2002` is safe for this writer.
  */
-const TRANSACTION_CONTENTION_CODES = new Set(["P2002", "P2028", "P2034"]);
 
 /** Thrown inside the transaction when the club's currency moved under it. */
 class ClubCurrencyChangedError extends Error {}
@@ -102,12 +106,11 @@ export async function PUT(request: Request) {
     );
   }
 
-  let body: unknown;
-  try {
-    body = await request.json();
-  } catch {
-    return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
-  }
+  const jsonBody = await parseJsonRequestBody(request, {
+    error: "Invalid JSON",
+  });
+  if (!jsonBody.ok) return jsonBody.response;
+  const body = jsonBody.body;
 
   const parsed = updateSchema.safeParse(body);
   if (!parsed.success) {
@@ -197,8 +200,9 @@ export async function PUT(request: Request) {
         { status: 409 },
       );
     }
-    const code = (error as { code?: unknown } | null)?.code;
-    if (typeof code === "string" && TRANSACTION_CONTENTION_CODES.has(code)) {
+    // P2002 counts as contention for this writer; the reason is the
+    // "Retryable failures" comment near the top of this file.
+    if (isSingletonUpsertContention(error)) {
       logger.warn({ err: error }, "AI spend rate save hit write contention");
       return NextResponse.json(
         { error: "Another update is in progress — try again shortly." },

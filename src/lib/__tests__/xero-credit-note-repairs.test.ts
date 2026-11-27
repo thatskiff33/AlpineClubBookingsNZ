@@ -104,12 +104,23 @@ beforeEach(() => {
   // #4370: no card refund Stripe failed later unless a suite says so.
   mocks.paymentRecoveryOperationFindMany.mockResolvedValue([]);
   mocks.paymentRefundFindMany.mockResolvedValue([]);
+  // #4444 (owner decision 23 Nov 2026): no Stripe refund recorded unless a suite says so, so a card payment's recount raises nothing.
+  mocks.paymentRefundAggregate.mockResolvedValue({ _sum: { amountCents: null } });
   aboveCash.read.mockResolvedValue(0);
   // No refund detail by default, so the #4162 floor has nothing to keep.
   mocks.paymentTransactionAggregate.mockResolvedValue({ _sum: { refundedAmountCents: 0 } });
   // #5289 D: no outbound note rows unless a suite says so (the recount asks whether the note being synced is a correction).
   mocks.xeroSyncOperationFindMany.mockResolvedValue([]);
 });
+
+/**
+ * #4444 (owner decision 23 Nov 2026): the refunds Stripe recorded for the card
+ * payment, the most a recount may raise its total to. A suite proving what the
+ * links count sets this to the whole payment, so the cap does not hide it.
+ */
+function stripeRecorded(cents: number | null) {
+  mocks.paymentRefundAggregate.mockResolvedValue({ _sum: { amountCents: cents } });
+}
 
 // #4786: the recount reads a payment's allocations with the note's own role,
 // and by its invoice the role-less one too; each link carries its role.
@@ -219,7 +230,8 @@ describe("repairRefundedPaymentBusinessState raise-only Stripe ledger floor (#13
     );
   });
 
-  it("still raises refundedAmountCents for a STRIPE payment when Xero shows more", async () => {
+  it("still raises refundedAmountCents for a STRIPE payment when Xero shows more, as far as Stripe recorded", async () => {
+    stripeRecorded(3000);
     const result = await runRepair({
       paymentRow: payment({
         refundedAmountCents: 1000,
@@ -233,6 +245,30 @@ describe("repairRefundedPaymentBusinessState raise-only Stripe ledger floor (#13
       data: { refundedAmountCents: 3000 },
     });
     expect(result).toEqual({ matchedPayments: 1, updatedPayments: 1 });
+    expect(mocks.notifyXeroSyncError).not.toHaveBeenCalled();
+  });
+
+  it("MUTATION (#4444 cap): never raises a STRIPE payment past the refunds Stripe recorded, and raises no alert", async () => {
+    // Xero reads $30; Stripe recorded $20 of refunds; the ledger holds $10.
+    stripeRecorded(2000);
+    await runRepair({
+      paymentRow: payment({ refundedAmountCents: 1000, status: PaymentStatus.PARTIALLY_REFUNDED }),
+      creditNote: { status: "AUTHORISED", total: 30 },
+    });
+
+    expect(mocks.paymentUpdate).toHaveBeenCalledWith({ where: { id: "pay-1" }, data: { refundedAmountCents: 2000 } });
+    expect(mocks.notifyXeroSyncError).not.toHaveBeenCalled();
+  });
+
+  it("MUTATION (#4444 cap): with no Stripe refund beyond the ledger, the recount waits for Stripe and writes nothing", async () => {
+    stripeRecorded(null);
+    const result = await runRepair({
+      paymentRow: payment({ refundedAmountCents: 1000, status: PaymentStatus.PARTIALLY_REFUNDED }),
+      creditNote: { status: "AUTHORISED", total: 30 },
+    });
+
+    expect(mocks.paymentUpdate).not.toHaveBeenCalled();
+    expect(result).toEqual({ matchedPayments: 1, updatedPayments: 0 });
     expect(mocks.notifyXeroSyncError).not.toHaveBeenCalled();
   });
 
@@ -591,6 +627,15 @@ describe("a modification note's allocations are summed per note, each allocation
     });
   const refundedWrites = () =>
     mocks.paymentUpdate.mock.calls.map((call) => call[0].data.refundedAmountCents).filter((cents) => cents !== undefined);
+  // The payment also links cn-refund directly as its refund note, with this metadata.
+  const linkAsRefundNote = (metadata: Record<string, unknown>) => {
+    const findLinks = mocks.xeroObjectLinkFindMany.getMockImplementation()!;
+    mocks.xeroObjectLinkFindMany.mockImplementation(async (args: { where: { role?: { in: string[] } } }) =>
+      args.where.role && typeof args.where.role === "object" && args.where.role.in?.includes("REFUND_CREDIT_NOTE")
+        ? [{ localId: "pay-1", xeroObjectId: "cn-refund", metadata }]
+        : findLinks(args),
+    );
+  };
 
   it("MUTATION: a note applied as $60 and $40 counts 6000 + 4000 = 10000, never one part", async () => {
     // Two allocations, one per invoice, on the payment's own (older) links: the
@@ -611,6 +656,15 @@ describe("a modification note's allocations are summed per note, each allocation
     expect(refundedWrites()).toEqual([6000]);
   });
 
+  it("MUTATION: a bank note the payment links as its refund note and holds an allocation of counts once, by that link", async () => {
+    mocks.paymentFindMany.mockResolvedValue([payment({ source: PaymentSource.INTERNET_BANKING, amountCents: 30_000, xeroInvoiceId: "inv-1" })]);
+    paymentLinks = [allocation("alloc-60", "inv-1", 6000)];
+    linkAsRefundNote({ amountCents: 6000, status: "AUTHORISED", total: 60 });
+
+    await recount();
+    expect(refundedWrites()).toEqual([6000]);
+  });
+
   it("MUTATION: an older amount left active beside the re-synced allocation counts the newest only, never both", async () => {
     // Applied at $60 by the app, then raised to $100 in Xero: the sync writes a
     // new link (its id carries the amount) and the $60 one stays active.
@@ -619,6 +673,122 @@ describe("a modification note's allocations are summed per note, each allocation
 
     await recount();
     expect(refundedWrites()).toEqual([10_000]);
+  });
+
+  // #4444 (`INV-PAY-126`): a card payment's earlier edit notes are found by its
+  // invoice too, as a bank transfer's are; only the floors differ by source.
+  // Against a real database: card-recount-earlier-edit-note.realdb.test.ts.
+  describe("a card payment's earlier edit note found by its invoice (#4444)", () => {
+    const CARD_PAYMENT = (refundedAmountCents: number) =>
+      payment({ amountCents: 40_000, xeroInvoiceId: "inv-1", refundedAmountCents, status: PaymentStatus.PARTIALLY_REFUNDED });
+    // A later edit's $30 note being synced, allocated to the same invoice.
+    const recountWithLaterNote = () =>
+      repairRefundedPaymentBusinessState({
+        creditNoteId: "cn-current",
+        creditNote: { status: "AUTHORISED", total: 30 } as never,
+        directPaymentIds: [],
+        modificationRefundAmountsByPaymentId: new Map([["pay-1", 3000]]),
+      });
+
+    beforeEach(() => {
+      mocks.notifyXeroSyncError.mockResolvedValue(undefined);
+      // The cap at Stripe's refunds out of the way unless a case sets it, so what the links count shows.
+      stripeRecorded(40_000);
+      mocks.xeroSyncOperationFindMany.mockResolvedValue([{ xeroObjectId: "cn-refund", requestPayload: { refundMethod: "card" } }]);
+      // The earlier edit's $50 note, on the edit.
+      invoiceLinks = [onEdit(allocation("alloc-50", "inv-1", 5000))];
+    });
+
+    it("MUTATION: Stripe holds $80 - the recount reads $50 + $30, writes nothing and raises no divergence alert", async () => {
+      mocks.paymentFindMany.mockResolvedValue([CARD_PAYMENT(8000)]);
+
+      await recountWithLaterNote();
+      expect(refundedWrites()).toEqual([]);
+      expect(mocks.notifyXeroSyncError).not.toHaveBeenCalled();
+    });
+
+    it("MUTATION: Stripe has recorded only the $50 - the recount reads $80 but waits for Stripe: no write, no divergence alert", async () => {
+      mocks.paymentFindMany.mockResolvedValue([CARD_PAYMENT(5000)]);
+      stripeRecorded(5000);
+
+      await recountWithLaterNote();
+      // Owner decision 23 Nov 2026 (#4444): never above what Stripe recorded. Reading $30 alone would alert.
+      expect(refundedWrites()).toEqual([]);
+      expect(mocks.notifyXeroSyncError).not.toHaveBeenCalled();
+
+      // Stripe's refunds reach $80 before its sync moved the ledger: the total follows them.
+      stripeRecorded(8000);
+      await recountWithLaterNote();
+      expect(refundedWrites()).toEqual([8000]);
+      expect(mocks.notifyXeroSyncError).not.toHaveBeenCalled();
+    });
+
+    it("MUTATION: an earlier note the payment also links as its refund note counts once, by that link", async () => {
+      mocks.paymentFindMany.mockResolvedValue([CARD_PAYMENT(5000)]);
+      linkAsRefundNote({ amountCents: 5000, status: "AUTHORISED", total: 50 });
+
+      await recountWithLaterNote();
+      expect(refundedWrites()).toEqual([8000]);
+    });
+
+    it("MUTATION: a refund-note link whose amount can't be read counts nothing, so the note's allocation still counts it once", async () => {
+      mocks.paymentFindMany.mockResolvedValue([CARD_PAYMENT(5000)]);
+      linkAsRefundNote({ status: "AUTHORISED" });
+
+      await recountWithLaterNote();
+      expect(refundedWrites()).toEqual([8000]);
+    });
+
+    it("MUTATION: an earlier edit note voided in Xero counts nothing", async () => {
+      mocks.paymentFindMany.mockResolvedValue([
+        payment({ amountCents: 40_000, xeroInvoiceId: "inv-1", refundedAmountCents: 0, status: PaymentStatus.SUCCEEDED }),
+      ]);
+      const findLinks = mocks.xeroObjectLinkFindMany.getMockImplementation()!;
+      mocks.xeroObjectLinkFindMany.mockImplementation(async (args: { where: LinkWhere }) =>
+        args.where.role === "MODIFICATION_CREDIT_NOTE"
+          ? [{ xeroObjectId: "cn-refund", metadata: { status: "VOIDED" } }]
+          : findLinks(args),
+      );
+
+      await recountWithLaterNote();
+      expect(refundedWrites()).toEqual([3000]);
+    });
+
+    it("MUTATION: a card note being synced that the payment links as its refund note counts once, never again by its allocation", async () => {
+      mocks.paymentFindMany.mockResolvedValue([payment({ amountCents: 40_000, xeroInvoiceId: "inv-1" })]);
+      invoiceLinks = [];
+
+      await repairRefundedPaymentBusinessState({
+        creditNoteId: "cn-current",
+        creditNote: { status: "AUTHORISED", total: 50 } as never,
+        directPaymentIds: ["pay-1"],
+        modificationRefundAmountsByPaymentId: new Map([["pay-1", 5000]]),
+      });
+      expect(refundedWrites()).toEqual([5000]);
+    });
+
+    it("MUTATION: a card note being synced whose refund-note link has no readable amount still counts once, by its allocation", async () => {
+      mocks.paymentFindMany.mockResolvedValue([payment({ amountCents: 40_000, xeroInvoiceId: "inv-1" })]);
+      invoiceLinks = [];
+      const findLinks = mocks.xeroObjectLinkFindMany.getMockImplementation()!;
+      // The payment's own refund-note row for the note being synced, its amount unreadable.
+      const ownRow = { localId: "pay-1", xeroObjectId: "cn-current", active: true, metadata: { status: "AUTHORISED" } };
+      mocks.xeroObjectLinkFindMany.mockImplementation(async (args: { where: { role?: unknown; xeroObjectId?: string } }) =>
+        args.where.role === "REFUND_CREDIT_NOTE" && args.where.xeroObjectId === "cn-current" ? [ownRow] : findLinks(args),
+      );
+      // #4288: with that row the write is decided under the Payment row lock, re-reading it there.
+      mocks.transaction.mockImplementation(async (callback: (tx: unknown) => Promise<unknown>) =>
+        callback({ $executeRaw: vi.fn(async () => 1), xeroObjectLink: { findMany: vi.fn(async () => [ownRow]) }, payment: { updateMany: mocks.paymentUpdateMany } }),
+      );
+
+      await repairRefundedPaymentBusinessState({
+        creditNoteId: "cn-current",
+        creditNote: { status: "AUTHORISED", total: 50 } as never,
+        directPaymentIds: ["pay-1"],
+        modificationRefundAmountsByPaymentId: new Map([["pay-1", 5000]]),
+      });
+      expect(refundedWrites()).toEqual([5000]);
+    });
   });
 
   // #4786: an older repair could link a note's allocation role-less
@@ -1152,6 +1322,7 @@ describe("#4288: the claim and the re-read of the note's own row, under the Paym
     mocks.paymentUpdate.mockResolvedValue({});
     mocks.notifyXeroSyncError.mockResolvedValue(undefined);
     mocks.xeroObjectLinkFindMany.mockImplementation(async ({ where }: { where: { xeroObjectId?: string; role?: string } }) => linkReads(where));
+    stripeRecorded(10_000); // the #4444 cap out of the way: these cases prove the claim
   });
 
   it("MUTATION (bounded): a note that stops counting under the lock on every pass is retried once, then handed back unsettled (#4095)", async () => {
@@ -1296,6 +1467,7 @@ describe("#4370: a card refund Stripe failed later is taken off the recount once
       where.stripeRefundId.in.includes(FAILED_REFUND) ? [{ paymentId: "pay-1", amountCents: 8000 }] : [],
     );
     aboveCash.read.mockResolvedValue(input.aboveCashCents ?? 0);
+    stripeRecorded(10_000); // the #4444 cap out of the way: these cases prove the subtraction
   }
 
   async function recount(source: PaymentSource) {

@@ -132,6 +132,8 @@ export async function POST(request: Request) {
       memberId: grant.memberId,
       clientName: grant.client.name,
       scope: use.scope,
+      // Fails closed: only a recorded date is an officer's approval (`INV-MCP-009`).
+      officerConsent: grant.officerConsentAt instanceof Date,
       clientIp: getClientIp(request),
       userAgent: request.headers.get("user-agent"),
     },

@@ -27,6 +27,7 @@ import { emailPalette } from "@/lib/email-theme";
 import { FALLBACK_LODGE_CAPACITY } from "@/lib/lodge-capacity";
 import { emailCalendarDay, emailClubDateTime } from "@/lib/email-templates-club-time";
 import type { ClubFormat } from "@/lib/club-format";
+import { waitlistOfferAlertNote, type WaitlistOfferEmailOutcome } from "@/lib/waitlist-offer-alert-note";
 
 // ---- N-02: Admin Alert — New Booking ----
 
@@ -220,22 +221,29 @@ export function adminPendingDeadlineTemplate(bookings: Array<{
 
 // ---- N-07: Admin Alert — Booking Bumped ----
 
+// #5403: the lodge row follows the ADR-002 rule the capacity warning uses
+// (`bookingListLodgeLabel`): left out in a one-lodge club unless the booking's
+// lodge is archived. The reason also marks the guests-cancelled variant.
 export function adminBookingBumpedTemplate(data: {
   bumpedMemberName: string;
+  bookingReference: string;
+  lodgeName: string | null;
   checkIn: Date;
   checkOut: Date;
   guestCount: number;
-  triggeringMemberName: string;
+  reason: string;
 }): string {
   return layout(`
     ${heading("Booking Bumped")}
-    ${alertBox("A pending booking has been bumped due to a member booking.", "warning")}
+    ${alertBox("A pending booking was released at its hold deadline because there was no longer room for its party.", "warning")}
     ${infoTable([
       { label: "Bumped Member", value: escapeHtml(data.bumpedMemberName) },
+      { label: "Booking", value: escapeHtml(data.bookingReference) },
+      ...(data.lodgeName ? [{ label: "Lodge", value: escapeHtml(data.lodgeName) }] : []),
       { label: "Check-in", value: emailCalendarDay(data.checkIn) },
       { label: "Check-out", value: emailCalendarDay(data.checkOut) },
       { label: "Guests", value: String(data.guestCount) },
-      { label: "Triggered By", value: escapeHtml(data.triggeringMemberName) },
+      { label: "Reason", value: escapeHtml(data.reason) },
     ])}
     ${button("View Bookings", BASE_URL + adminHref("bookings"))}
   `);
@@ -288,10 +296,14 @@ export function adminWaitlistOfferTemplate(data: {
   checkOut: Date;
   guestCount: number;
   position: number;
+  /** #5433: the deadline in force, which a restart may have moved; null leaves the sentence out. */
+  expiresAt: Date | null;
+  /** #5433: whether the offer email went or was withheld by design. */
+  offerEmail: WaitlistOfferEmailOutcome;
 }): string {
   return layout(`
     ${heading("Waitlist Offer Made")}
-    ${paragraph("A waitlist offer has been sent to " + escapeHtml(data.memberName) + ".")}
+    ${paragraph(escapeHtml(waitlistOfferAlertNote(data.memberName, data.offerEmail)))}
     ${infoTable([
       { label: "Member", value: escapeHtml(data.memberName) },
       { label: "Check-in", value: emailCalendarDay(data.checkIn) },
@@ -299,7 +311,7 @@ export function adminWaitlistOfferTemplate(data: {
       { label: "Guests", value: String(data.guestCount) },
       { label: "Queue Position", value: "#" + String(data.position) },
     ])}
-    ${paragraph("The member has 48 hours to confirm their booking.")}
+    ${data.expiresAt ? paragraph(`The member has until ${emailClubDateTime(data.expiresAt)} to confirm their booking.`) : ""}
     ${button("View Waitlist", BASE_URL + adminHref("waitlist"))}
   `);
 }

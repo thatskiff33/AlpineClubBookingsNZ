@@ -52,7 +52,6 @@ import {
   FINANCE_SYNC_CRON_MONITOR_SLUG,
   FINANCE_SYNC_CRON_SCHEDULE,
   financeSyncCronCheckinConfig,
-  registerDailyFinanceSyncCron,
   resetFinanceSyncCronRunnerForTests,
   runDailyFinanceSyncCron,
 } from "@/lib/finance-sync-cron";
@@ -94,31 +93,6 @@ describe("finance-sync-cron", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     resetFinanceSyncCronRunnerForTests();
-  });
-
-  it("registers the daily finance sync schedule with the expected timezone", () => {
-    const schedule = vi.fn();
-    const logger = {
-      info: vi.fn(),
-      warn: vi.fn(),
-      error: vi.fn(),
-    };
-
-    registerDailyFinanceSyncCron({ schedule }, "Pacific/Auckland", { logger });
-
-    expect(schedule).toHaveBeenCalledWith(
-      FINANCE_SYNC_CRON_SCHEDULE,
-      expect.any(Function),
-      { timezone: "Pacific/Auckland" }
-    );
-    expect(logger.info).toHaveBeenCalledWith(
-      {
-        job: FINANCE_SYNC_CRON_JOB_NAME,
-        schedule: FINANCE_SYNC_CRON_SCHEDULE,
-        timezone: "Pacific/Auckland",
-      },
-      "Scheduled daily finance sync"
-    );
   });
 
   it("runs the scheduled finance sync through the service boundary and records success", async () => {

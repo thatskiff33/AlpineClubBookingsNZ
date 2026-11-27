@@ -1,4 +1,5 @@
 import { prisma } from "./prisma";
+import { storedShortBookingId } from "@/lib/booking-reference";
 import { ApiError } from "@/lib/api-error";
 import {
   AdminCreditAdjustmentRequestStatus,
@@ -9,7 +10,7 @@ import {
   Prisma,
 } from "@prisma/client";
 import { syncBookingLedgerCredits } from "@/lib/booking-ledger-credit-sync";
-import { RESTORED_CREDIT_PREFIX, bookingAppliedCreditWhere } from "@/lib/member-credit-booking-rows";
+import { RESTORED_CREDIT_PREFIX, bookingAppliedCreditWhere, buildBookingAppliedCreditDescription } from "@/lib/member-credit-booking-rows";
 import { createAuditLog } from "./audit";
 import { isPrismaUniqueConstraintError } from "./prisma-errors";
 import { withStoreTransaction } from "@/lib/db-transaction";
@@ -24,10 +25,7 @@ import {
   GRANT_ACCOUNT_MISSING_MESSAGE,
   type AdminCreditGrantAccount,
 } from "@/lib/admin-credit-grant-account";
-import {
-  assertDeductionLeavesNotedCreditUntouched,
-  enqueueAdminGrantCreditNote,
-} from "@/lib/admin-grant-credit-note";
+import { assertDeductionLeavesNotedCreditUntouched, enqueueAdminGrantCreditNote } from "@/lib/admin-grant-credit-note";
 import { buildXeroIdempotencyKey, startXeroSyncOperation } from "@/lib/xero-sync";
 import { XERO_OUTBOX_APPLIED_CREDIT_DEALLOCATION_TYPE } from "@/lib/xero-operation-outbox-payload";
 import { repairLegacyAppliedCreditNoteAllocationsForBooking } from "@/lib/xero-applied-credit-allocation-repair";
@@ -262,7 +260,7 @@ export async function createBookingModificationCredit(
           memberId,
           amountCents,
           type: CreditType.BOOKING_MODIFICATION_REFUND,
-          description: `Booking reduction credit for booking ${bookingId.slice(0, 8)}`,
+          description: `Booking reduction credit for booking ${storedShortBookingId(bookingId)}`,
           sourceBookingId: bookingId,
           sourceBookingModificationId: bookingModificationId,
           xeroCreditNoteId: xeroCreditNoteId ?? null,
@@ -448,7 +446,7 @@ export async function clampAppliedCreditToBookingPrice(
     memberId,
     bookingId,
     giveBackCentsOf: (applied) => applied - Math.max(0, newWorthCents),
-    description: `Applied credit returned after booking ${bookingId.slice(0, 8)} reprice`,
+    description: `Applied credit returned after booking ${storedShortBookingId(bookingId)} reprice`,
     format,
   }, tx);
 
@@ -593,7 +591,7 @@ export async function applyCreditToBooking(
       memberId,
       amountCents: calculateAppliedCreditAmount(amountCents),
       type: CreditType.BOOKING_APPLIED,
-      description: options?.description ?? `Applied to booking ${bookingId.slice(0, 8)}`,
+      description: options?.description ?? buildBookingAppliedCreditDescription(bookingId),
       appliedToBookingId: bookingId,
     },
   });
@@ -684,7 +682,7 @@ export async function restoreCreditFromBooking(
         memberId,
         amountCents: amount,
         type: CreditType.CANCELLATION_REFUND,
-        description: `${RESTORED_CREDIT_PREFIX} ${bookingId.slice(0, 8)}`,
+        description: `${RESTORED_CREDIT_PREFIX} ${storedShortBookingId(bookingId)}`,
         sourceBookingId: bookingId,
         restoredFromBookingId: bookingId,
       },
@@ -812,6 +810,70 @@ async function validateNegativeAdjustmentBalance(
     const balance = await getMemberCreditBalance(memberId, tx);
     validateNegativeAdjustmentAgainstBalance(amountCents, balance, format);
   }
+}
+
+/**
+ * Opening-credit rows (#4988, `INV-PAY-162`), kept here so this module stays
+ * the one place that creates `MemberCredit` rows. The caller is the batch
+ * transaction in `opening-credit-batch.ts`: it holds every member's
+ * `lockMemberCreditLedger`, sorted (`INV-LOCK-002`), and has claimed the batch.
+ * Neither writer queues a Xero note, sends an email or needs a second approver:
+ * the batch total is the one approval.
+ */
+export type OpeningCreditRowInput = { memberId: string; amountCents: number; description: string };
+
+/** What a member sees on a reversal row; the officer's reason stays on the batch. */
+export const OPENING_CREDIT_REVERSED_DESCRIPTION = "Opening credit reversed";
+
+export async function postOpeningCreditRows(
+  tx: Prisma.TransactionClient,
+  input: { batchId: string; approvedById: string; credits: readonly OpeningCreditRowInput[] },
+) {
+  for (const credit of input.credits) {
+    if (!Number.isSafeInteger(credit.amountCents) || credit.amountCents <= 0) {
+      throw new MemberCreditValidationError("An opening credit must be a positive whole number of cents");
+    }
+  }
+  await tx.memberCredit.createMany({
+    data: input.credits.map((credit) => ({
+      memberId: credit.memberId,
+      amountCents: credit.amountCents,
+      type: CreditType.ADMIN_ADJUSTMENT,
+      description: credit.description,
+      approvedById: input.approvedById,
+      openingCreditBatchId: input.batchId,
+    })),
+  });
+}
+
+/**
+ * One negative row per credit of a reversed batch. Every deduction must pass the
+ * same balance rule as an approved negative adjustment before any row is
+ * written; one that does not throws `MemberCreditValidationError` and writes
+ * nothing, and the caller's transaction rolls back its claim.
+ */
+export async function reverseOpeningCreditRows(
+  tx: Prisma.TransactionClient,
+  input: {
+    batchId: string;
+    approvedById: string;
+    credits: readonly { memberId: string; amountCents: number }[];
+    format: ClubFormat;
+  },
+) {
+  for (const credit of input.credits) {
+    await validateNegativeAdjustmentBalance(credit.memberId, -credit.amountCents, input.format, tx);
+  }
+  await tx.memberCredit.createMany({
+    data: input.credits.map((credit) => ({
+      memberId: credit.memberId,
+      amountCents: -credit.amountCents,
+      type: CreditType.ADMIN_ADJUSTMENT,
+      description: OPENING_CREDIT_REVERSED_DESCRIPTION,
+      approvedById: input.approvedById,
+      openingCreditBatchId: input.batchId,
+    })),
+  });
 }
 
 async function findAdminAdjustmentRequestByIdempotencyKey(

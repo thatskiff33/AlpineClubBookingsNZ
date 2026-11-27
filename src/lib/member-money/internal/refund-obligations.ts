@@ -9,8 +9,8 @@ import { memberMoneyApplicationKeys, memberMoneyEventKeys, type MemberMoneyEvent
 import { MemberMoneyPlanError, type MemberMoneyDebtor, type MemberMoneyEvidence, type MemberMoneyLegPlan, type MemberMoneyPostingContext } from "./plan";
 import { postMemberMoneyEvent, releaseMemberMoneyRefundReservation, reverseMemberMoneyJournal } from "./post";
 import { isStripeKeyOfSenderPrefix } from "../../payment-recovery-keys";
-import { refundFamily, refundFamilyOpenCents, refundFamilyTip, refundObligationChain, stripeKeyOfReservation } from "./refund-family";
-import { lineDebtor } from "./booking-receipts";
+import { memberMoneyChainTip, refundFamily, refundFamilyOpenCents, refundFamilyTip, refundObligationChain, stripeKeyOfReservation, type RefundBooking } from "./refund-family";
+import { lineDebtor, moveMergedDebtorResidue } from "./booking-receipts";
 
 /**
  * R05 AT THE CARD-REFUND DOORS (#4516, Ledger M4c). After the door's price or retention decision has posted
@@ -103,6 +103,10 @@ export async function postRefundObligation(tx: Db, context: BookingJournalContex
  * holds a reservation on (#4516 review F3), cannot be withdrawn: that refusal rolls the release back, never
  * caught. A retry of the door posts a fresh R05 under the chain's next key, and its slices reserve their keys'
  * next generation (`reservationGenerationKey`, review F4).
+ *
+ * The caller already holds `lock(1)` and then the booking row (#5191): this takes the Payment row, and the owner read
+ * under the booking row comes after it (`lockedRefundBooking`, or a part's `debtorRead: "booking-row"`), so a caller
+ * that had not taken that row first would take it after the Payment row.
  */
 export async function withdrawRefundObligation(tx: Db, context: BookingJournalContext, input: {
   bookingId: string; scope: RefundObligationScope; id: string; actorMemberId?: string | null; reason: string;
@@ -143,7 +147,7 @@ export async function withdrawRefundObligation(tx: Db, context: BookingJournalCo
     await releaseMemberMoneyRefundReservation(tx, context, { bookingId: input.bookingId, reservationId: reservation.id, reason: "SUPERSEDED_KEY",
       source: { kind: "BOOKING", id: input.bookingId, version: `withdraw:${reservation.attemptKey}` } });
   }
-  await reverseRefundObligation(tx, context, { bookingId: input.bookingId, live, actorMemberId: input.actorMemberId ?? null, reason: input.reason });
+  await reverseRefundObligation(tx, context, { booking: await lockedRefundBooking(tx, input.bookingId), live, actorMemberId: input.actorMemberId ?? null, reason: input.reason });
   return true;
 }
 
@@ -159,7 +163,10 @@ async function withdrawRefundObligationPart(tx: Db, context: MemberMoneyPostingC
   const { part } = input;
   const open = Math.max(0, refundFamilyOpenCents(input.state, input.live));
   const cents = part.amountCents === "open" ? open : Math.min(part.amountCents, open);
-  if (await eventPosted(tx, part.eventKey)) {
+  // #5197: a rest withdrawal a late win reversed (`restoreHandBackObligation`) is followed by its chain's next key,
+  // so dismissing the reopened task again withdraws the restored rest again; a replay still finds its own tip.
+  const eventKey = part.amountCents === "open" ? await memberMoneyChainTip(tx, part.eventKey) : part.eventKey;
+  if (await eventPosted(tx, eventKey)) {
     if (part.amountCents === "open") return false;
     // A reduction's key names the lost disputes it counted; posted already, a new reduction under it means a
     // dispute's amount changed since. Refused, so the door rolls back rather than lowering the task alone.
@@ -173,19 +180,46 @@ async function withdrawRefundObligationPart(tx: Db, context: MemberMoneyPostingC
   const debtor = lineDebtor(tip);
   const evidence = { withdrawnFrom: input.live, cents };
   const leg = { type: "amount" as const, amountCents: cents, booking, evidence };
-  await postMemberMoneyEvent(tx, context, { kind: "ADJUSTMENT", eventKey: part.eventKey, origin: "OFFICER", actorMemberId: input.actorMemberId,
-    source: { kind: "BOOKING", id: input.bookingId, version: part.eventKey }, reason: input.reason,
+  await postMemberMoneyEvent(tx, context, { kind: "ADJUSTMENT", eventKey, origin: "OFFICER", actorMemberId: input.actorMemberId,
+    source: { kind: "BOOKING", id: input.bookingId, version: eventKey }, reason: input.reason,
     legs: [{ ...leg, account: "REFUND_PAYABLE", side: "DEBIT", debtor, obligationKey: tip.key }, { ...leg, account: "MEMBER_RECEIVABLE", side: "CREDIT", debtor }],
-    applications: [{ key: memberMoneyApplicationKeys.application(part.eventKey, input.bookingId, tip.key), source: { leg: 0 }, obligationKey: tip.key, amountCents: cents }] });
+    applications: [{ key: memberMoneyApplicationKeys.application(eventKey, input.bookingId, tip.key), source: { leg: 0 }, obligationKey: tip.key, amountCents: cents }] });
   return true;
 }
 
+/**
+ * The booking's owner read under its row, and its lodge, for a whole reversal. Every caller already holds that row
+ * after `lock(1)` (an appeal's `release_claim` takes it first, #5191; the keep and a hand-back's dismissal take it
+ * at the completion's start), so taking it here again is a no-op, never a booking row after the Payment row. Under
+ * it a member merge's owner move has committed or waits, so the owner read is the one the residue move follows to.
+ */
+async function lockedRefundBooking(tx: Db, bookingId: string): Promise<OwnedRefundBooking> {
+  const owner = await refundDebtor(tx, bookingId, "booking-row");
+  const { lodgeId } = await tx.booking.findUniqueOrThrow({ where: { id: bookingId }, select: { lodgeId: true } });
+  return { bookingId, lodgeId, owner };
+}
+
+type OwnedRefundBooking = RefundBooking & { owner: MemberMoneyDebtor };
+
+/**
+ * The exact mirror of the R05, on the debtor it named. A debtor merged away since leaves that receivable stray, so
+ * the R05's own receivable, when the merge snapshot missed it, and then the mirror's are carried along the committed
+ * merge chain to the owner, as a reversed receipt's is (D4, #5191); a merge after this commits nets it in its own
+ * snapshot instead, and with no merge nothing moves.
+ */
 async function reverseRefundObligation(tx: Db, context: MemberMoneyPostingContext, input: {
-  bookingId: string; live: MemberMoneyEventKey; actorMemberId: string | null; reason: string;
+  booking: OwnedRefundBooking; live: MemberMoneyEventKey; actorMemberId: string | null; reason: string;
 }): Promise<void> {
+  const { bookingId, lodgeId, owner } = input.booking;
+  // The debt itself first: a reservation reads its debtor unlocked (`refund-reservations.ts`), so an R05 can land on
+  // a member after that member's merge snapshot. Its receivable is then carried too, or the mirror's move alone would
+  // leave the debt behind; an R05 the snapshot counted is skipped, and a replay posts nothing.
+  await moveMergedDebtorResidue(tx, context, { bookingId, lodgeId }, owner, input.live);
   const r05 = await tx.memberMoneyEvent.findUniqueOrThrow({ where: { eventKey: input.live }, select: { journal: { select: { id: true } } } });
+  const reversal = memberMoneyEventKeys.reversal(r05.journal!.id);
   await reverseMemberMoneyJournal(tx, context, { reversesJournalId: r05.journal!.id, origin: "OFFICER", actorMemberId: input.actorMemberId,
-    source: { kind: "BOOKING", id: input.bookingId, version: memberMoneyEventKeys.reversal(r05.journal!.id) }, reason: input.reason });
+    source: { kind: "BOOKING", id: bookingId, version: reversal }, reason: input.reason });
+  await moveMergedDebtorResidue(tx, context, { bookingId, lodgeId }, owner, reversal);
 }
 
 /**
@@ -194,6 +228,9 @@ async function reverseRefundObligation(tx: Db, context: MemberMoneyPostingContex
  * released only that reservation. The keep, in its own transaction under the Payment row, reverses that R05 while
  * nothing has paid it or holds a reservation on it. One that something paid or still reserves is left as it is
  * and said: that money is moving or moved, and the keep cannot undo it.
+ *
+ * The caller already holds `lock(1)` and then the booking row (#5191; the completion takes both before the Payment
+ * row), because `lockedRefundBooking` reads the owner under the booking row after this has taken the Payment row.
  */
 export async function closeKeptCaptureReturn(tx: Db, context: BookingJournalContext, input: {
   bookingId: string; paymentIntentId: string; actorMemberId: string | null;
@@ -210,7 +247,7 @@ export async function closeKeptCaptureReturn(tx: Db, context: BookingJournalCont
       "A kept late capture's refund debt is paid or reserved, so the keep leaves it open (#4516)");
     return false;
   }
-  await reverseRefundObligation(tx, context, { bookingId: input.bookingId, live, actorMemberId: input.actorMemberId,
+  await reverseRefundObligation(tx, context, { booking: await lockedRefundBooking(tx, input.bookingId), live, actorMemberId: input.actorMemberId,
     reason: "Late capture kept by the treasurer: nothing is owed back" });
   return true;
 }

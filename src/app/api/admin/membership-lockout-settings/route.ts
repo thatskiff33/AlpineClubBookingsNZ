@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
-import { z } from "zod";
 import { hasAdminAreaAccess } from "@/lib/admin-permissions";
+import { parseJsonRequestBody } from "@/lib/api-json";
+import { clearedRowsAuditMetadata } from "@/lib/member-subscription-defaults";
 import {
   buildStructuredAuditLogCreateArgs,
   getAuditRequestContext,
@@ -11,7 +12,6 @@ import {
 } from "@/lib/financial-year-server";
 import {
   MEMBERSHIP_LOCKOUT_SETTINGS_ID,
-  SUBSCRIPTION_LOCKOUT_MODES,
   loadPersistedMembershipLockoutSettings,
   normalizeMembershipLockoutSettings,
 } from "@/lib/membership-lockout-settings";
@@ -21,30 +21,19 @@ import {
 } from "@/lib/xero-mappings";
 import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/session-guards";
-
-const settingsSchema = z
-  .object({
-    /**
-     * #2543 — the three-way lockout policy replaced the old `enabled` boolean,
-     * which no longer exists as a column (#2561).
-     *
-     * Deliberately still `.strict()`, so an old client that sends the boolean is
-     * REFUSED rather than silently ignored. A silent ignore is the dangerous
-     * direction here — an admin would see their "turn the lockout off" click
-     * succeed while the club carried on hard-blocking members.
-     */
-    mode: z.enum(SUBSCRIPTION_LOCKOUT_MODES).optional(),
-    financialYearEndMonthOverride: z
-      .number()
-      .int()
-      .min(1)
-      .max(12)
-      .nullable()
-      .optional(),
-    textFallbackEnabled: z.boolean().optional(),
-    useFeeScheduleItemCodes: z.boolean().optional(),
-  })
-  .strict();
+import { clubTimeZone } from "@/lib/club-time/server";
+import { clubSeasonYear } from "@/lib/financial-year";
+import { membershipLockoutSettingsSchema } from "@/lib/admin-membership-api/config-settings";
+import { connectionJson } from "@/lib/mcp-connection-request";
+import {
+  MEMBERSHIP_LOCKOUT_SETTINGS_CONNECTION_SHAPE,
+  MEMBERSHIP_LOCKOUT_SETTINGS_SAVE_CONNECTION_SHAPE,
+} from "@/lib/connection-shapes/membership-config";
+import {
+  liabilityChoiceRefusal,
+  liabilityChoiceToWrite,
+  saveLockoutSettingsUnlessBusy,
+} from "@/lib/subscription-liability-settings-write";
 
 /**
  * Compute the fee-schedule detection preview (#2109): the resolved item-code set
@@ -84,7 +73,15 @@ async function buildFeeScheduleItemCodePreviewForViewer(
   return buildFeeScheduleItemCodePreview();
 }
 
-export async function GET() {
+/**
+ * GET|PUT /api/admin/membership-lockout-settings. Also the AI app actions
+ * `get_membership_lockout_settings` and `update_membership_lockout_settings`
+ * (ALP-720). A connection is sent the settings and the financial year, never
+ * the stored row or the Finance-only item-code preview. A change to the
+ * liability rule pair is refused here, for the browser and the app alike,
+ * unless the caller also holds Finance edit (`liabilityChoiceRefusal`).
+ */
+export async function GET(request: NextRequest) {
   const guard = await requireAdmin({
     permission: { area: "membership", level: "view" },
   });
@@ -95,12 +92,16 @@ export async function GET() {
   const preview = await buildFeeScheduleItemCodePreviewForViewer(
     guard.session.user
   );
-  return NextResponse.json({
-    settings: normalizeMembershipLockoutSettings(persisted),
-    financialYear,
-    persisted,
-    ...(preview ?? {}),
-  });
+  return connectionJson(
+    request,
+    {
+      settings: normalizeMembershipLockoutSettings(persisted),
+      financialYear,
+      persisted,
+      ...(preview ?? {}),
+    },
+    MEMBERSHIP_LOCKOUT_SETTINGS_CONNECTION_SHAPE,
+  );
 }
 
 export async function PUT(request: NextRequest) {
@@ -110,14 +111,13 @@ export async function PUT(request: NextRequest) {
   if (!guard.ok) return guard.response;
   const session = guard.session;
 
-  let body: unknown;
-  try {
-    body = await request.json();
-  } catch {
-    return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
-  }
+  const jsonBody = await parseJsonRequestBody(request, {
+    error: "Invalid JSON",
+  });
+  if (!jsonBody.ok) return jsonBody.response;
+  const body = jsonBody.body;
 
-  const parsed = settingsSchema.safeParse(body);
+  const parsed = membershipLockoutSettingsSchema.safeParse(body);
   if (!parsed.success) {
     return NextResponse.json(
       { error: "Invalid input", details: parsed.error.flatten() },
@@ -128,14 +128,24 @@ export async function PUT(request: NextRequest) {
   const before = await prisma.membershipLockoutSettings.findUnique({
     where: { id: MEMBERSHIP_LOCKOUT_SETTINGS_ID },
   });
+  const stored = normalizeMembershipLockoutSettings(before);
+  // #5190: a rule change needs membership and finance edit (owner decision
+  // 23 Nov 2026), and the pair is chosen whole.
+  const refusal = liabilityChoiceRefusal(parsed.data, stored, session.user);
+  if (refusal) {
+    return NextResponse.json({ error: refusal.error }, { status: refusal.status });
+  }
 
   // #2543. A save that does not name a mode must PRESERVE the stored one, so
   // saving any other field on this panel cannot move the club's booking policy.
   // Routed through `normalizeMembershipLockoutSettings` rather than reading
   // `before.mode` raw so the closed vocabulary is enforced in exactly one place,
   // and so a missing row resolves to the same default the rest of the app sees.
-  const mode = parsed.data.mode ?? normalizeMembershipLockoutSettings(before).mode;
+  const mode = parsed.data.mode ?? stored.mode;
 
+  // #5190: the liability pair is written only when the save changes the rule
+  // `stored` holds, so an echo of an earlier read never writes a rule back.
+  const liabilityChoice = liabilityChoiceToWrite(parsed.data, stored);
   const data = {
     mode,
     financialYearEndMonthOverride:
@@ -148,14 +158,24 @@ export async function PUT(request: NextRequest) {
       parsed.data.useFeeScheduleItemCodes ??
       before?.useFeeScheduleItemCodes ??
       false,
+    ...liabilityChoice,
     updatedByMemberId: session.user.id,
   };
-
-  const record = await prisma.membershipLockoutSettings.upsert({
-    where: { id: MEMBERSHIP_LOCKOUT_SETTINGS_ID },
-    create: { id: MEMBERSHIP_LOCKOUT_SETTINGS_ID, ...data },
-    update: data,
+  // #5190: a save that leaves the club on a chosen rule also runs the stale-row
+  // clear-up, in the same transaction (`saveLockoutSettings`).
+  const seasonYear = clubSeasonYear(await clubTimeZone());
+  const saved = await saveLockoutSettingsUnlessBusy(prisma, {
+    data,
+    liabilityAfterSave: liabilityChoice ?? stored,
+    seasonYear,
   });
+  if (saved === null) {
+    return NextResponse.json(
+      { error: "Another update is in progress — try again shortly." },
+      { status: 503 }
+    );
+  }
+  const { record, clearedStaleRows } = saved;
 
   // Reseed the financial-year cache so the change takes effect immediately on
   // this instance.
@@ -173,7 +193,18 @@ export async function PUT(request: NextRequest) {
       severity: "important",
       outcome: "success",
       summary: "Membership booking lockout settings updated",
-      metadata: { previousSettings: before, newSettings: data },
+      metadata: {
+        previousSettings: before,
+        newSettings: data,
+        ...(clearedStaleRows === null
+          ? {}
+          : {
+              clearedStaleNotRequiredRows: clearedRowsAuditMetadata(
+                clearedStaleRows,
+                seasonYear,
+              ),
+            }),
+      },
       request: getAuditRequestContext(request),
     })
   );
@@ -182,10 +213,16 @@ export async function PUT(request: NextRequest) {
   const preview = await buildFeeScheduleItemCodePreviewForViewer(
     session.user
   );
-  return NextResponse.json({
-    settings: normalizeMembershipLockoutSettings(record),
-    financialYear,
-    persisted: record,
-    ...(preview ?? {}),
-  });
+  return connectionJson(
+    request,
+    {
+      settings: normalizeMembershipLockoutSettings(record),
+      financialYear,
+      persisted: record,
+      // #5190: how many "Not required" records the save reset (null: no clear-up ran).
+      clearedStaleRecords: clearedStaleRows?.clearedCount ?? null,
+      ...(preview ?? {}),
+    },
+    MEMBERSHIP_LOCKOUT_SETTINGS_SAVE_CONNECTION_SHAPE,
+  );
 }

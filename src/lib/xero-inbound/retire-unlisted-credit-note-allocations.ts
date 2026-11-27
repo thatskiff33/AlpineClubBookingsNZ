@@ -215,7 +215,10 @@ export async function decideBankTransferRefundedTotal(
  * #4449 (`INV-PAY-126`): for a modification note, the payment each allocated
  * invoice names: the one bank-transfer payment the settle matches it to
  * (#5289 C, `bankTransferPaymentIdsOfInvoices`: its own invoice id or an active
- * invoice link, exactly one). Read before the lock;
+ * invoice link, exactly one). Only a bank transfer's total is decided here:
+ * a card payment's is Stripe-led, decided by the recount alone under its
+ * raise-only floor (#1353), though the shared decision finds its invoice
+ * allocations too (#4444). Read before the lock;
  * `decideBankTransferRefundedTotal` re-checks it under it.
  */
 async function bankTransferPaymentIdsByInvoiceId(

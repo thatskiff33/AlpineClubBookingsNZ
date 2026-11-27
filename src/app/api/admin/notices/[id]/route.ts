@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { z } from "zod";
+import { parseJsonRequestBody } from "@/lib/api-json";
 import {
   buildStructuredAuditLogCreateArgs,
   getAuditRequestContext,
@@ -18,41 +18,17 @@ import {
   validateNoticeAudienceTargets,
 } from "@/lib/notices-admin";
 import { sendNoticePublishedEmails } from "@/lib/notices-email";
+import { noticeIdParamsSchema } from "@/lib/notices-shared";
+import { updateNoticeSchema } from "@/lib/admin-membership-api/notices";
+import { connectionJson } from "@/lib/mcp-connection-request";
 import {
-  NOTICE_BODY_MAX_LENGTH,
-  NOTICE_TITLE_MAX_LENGTH,
-} from "@/lib/notices-shared";
-
-const paramsSchema = z.object({ id: z.string().min(1) });
-
-const audienceSchema = z.discriminatedUnion("kind", [
-  z.object({ kind: z.literal("ALL_MEMBERS") }).strict(),
-  z.object({ kind: z.literal("MEMBER"), memberId: z.string().min(1) }).strict(),
-  z
-    .object({ kind: z.literal("MEMBERSHIP_TYPE"), membershipTypeId: z.string().min(1) })
-    .strict(),
-  z.object({ kind: z.literal("LODGE"), lodgeId: z.string().min(1) }).strict(),
-  z
-    .object({ kind: z.literal("COMMITTEE_ROLE"), committeeRoleId: z.string().min(1) })
-    .strict(),
-]);
-
-const patchSchema = z
-  .object({
-    title: z.string().trim().min(1).max(NOTICE_TITLE_MAX_LENGTH).optional(),
-    bodyHtml: z.string().max(NOTICE_BODY_MAX_LENGTH).optional(),
-    status: z.enum(["DRAFT", "PUBLISHED", "ARCHIVED"]).optional(),
-    expiresAt: z.string().datetime().nullable().optional(),
-    pinned: z.boolean().optional(),
-    requiresAcknowledgement: z.boolean().optional(),
-    financialMembersOnly: z.boolean().optional(),
-    sendEmail: z.boolean().optional(),
-    audiences: z.array(audienceSchema).min(1).optional(),
-  })
-  .strict();
+  NOTICE_CONNECTION_SHAPE,
+  NOTICE_DELETED_CONNECTION_SHAPE,
+  NOTICE_SAVED_CONNECTION_SHAPE,
+} from "@/lib/connection-shapes/membership-notices";
 
 export async function GET(
-  _request: Request,
+  request: Request,
   { params }: { params: Promise<{ id: string }> },
 ) {
   const guard = await requireAdmin({
@@ -62,7 +38,7 @@ export async function GET(
     return guard.response;
   }
 
-  const parsedParams = paramsSchema.safeParse(await params);
+  const parsedParams = noticeIdParamsSchema.safeParse(await params);
   if (!parsedParams.success) {
     return NextResponse.json({ error: "Invalid route parameters" }, { status: 400 });
   }
@@ -71,7 +47,7 @@ export async function GET(
   if (!notice) {
     return NextResponse.json({ error: "Notice not found" }, { status: 404 });
   }
-  return NextResponse.json({ notice });
+  return connectionJson(request, { notice }, NOTICE_CONNECTION_SHAPE);
 }
 
 export async function PATCH(
@@ -86,19 +62,18 @@ export async function PATCH(
   }
   const session = guard.session;
 
-  const parsedParams = paramsSchema.safeParse(await params);
+  const parsedParams = noticeIdParamsSchema.safeParse(await params);
   if (!parsedParams.success) {
     return NextResponse.json({ error: "Invalid route parameters" }, { status: 400 });
   }
 
-  let body: unknown;
-  try {
-    body = await request.json();
-  } catch {
-    return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
-  }
+  const jsonBody = await parseJsonRequestBody(request, {
+    error: "Invalid JSON",
+  });
+  if (!jsonBody.ok) return jsonBody.response;
+  const body = jsonBody.body;
 
-  const parsed = patchSchema.safeParse(body);
+  const parsed = updateNoticeSchema.safeParse(body);
   if (!parsed.success) {
     return NextResponse.json(
       { error: "Invalid input", details: parsed.error.flatten() },
@@ -194,7 +169,7 @@ export async function PATCH(
     }
   }
 
-  return NextResponse.json({ notice: { id: updated.id } });
+  return connectionJson(request, { notice: { id: updated.id } }, NOTICE_SAVED_CONNECTION_SHAPE);
 }
 
 export async function DELETE(
@@ -209,7 +184,7 @@ export async function DELETE(
   }
   const session = guard.session;
 
-  const parsedParams = paramsSchema.safeParse(await params);
+  const parsedParams = noticeIdParamsSchema.safeParse(await params);
   if (!parsedParams.success) {
     return NextResponse.json({ error: "Invalid route parameters" }, { status: 400 });
   }
@@ -240,5 +215,5 @@ export async function DELETE(
     );
   });
 
-  return NextResponse.json({ ok: true });
+  return connectionJson(request, { ok: true }, NOTICE_DELETED_CONNECTION_SHAPE);
 }
