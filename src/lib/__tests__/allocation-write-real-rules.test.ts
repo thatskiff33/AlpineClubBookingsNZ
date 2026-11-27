@@ -28,7 +28,9 @@ vi.mock("@/lib/xero-inbound/credit-note-bank-transfer-floor", async (importOrigi
   sendBankTransferFloorAlert: mocks.sendFloorAlert,
 }));
 // #5289 C: the invoice names pay-1 by the settle's rule (pinned in its own suite), before the lock and under it.
-vi.mock("@/lib/xero-inbound/bank-transfer-payment-of-invoice", () => ({
+vi.mock("@/lib/xero-inbound/bank-transfer-payment-of-invoice", async (importOriginal) => ({
+  // The real one-invoice-per-payment rule, so the shared figure reads as the writers do.
+  decisionInvoiceIdsOf: (await importOriginal<typeof import("@/lib/xero-inbound/bank-transfer-payment-of-invoice")>()).decisionInvoiceIdsOf,
   bankTransferPaymentIdsOfInvoices: async (invoiceIds: string[]) => new Map(invoiceIds.filter((id) => id === "inv-1").map((id) => [id, "pay-1"])),
   bankTransferPaymentsOfNoteAllocations: async () => [{ link: allocation, invoiceId: "inv-1", paymentId: "pay-1" }],
 }));
