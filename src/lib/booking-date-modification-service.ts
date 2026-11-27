@@ -1,5 +1,4 @@
-import { assertEditQuotedFigures, unchangedPriceQuotedFigures } from "@/lib/edit-quoted-figures";
-import type { EditQuotedFigures } from "@/lib/edit-quoted-figures";
+import { assertEditQuotedFigures, unchangedPriceQuotedFigures, type EditQuotedFigures } from "@/lib/edit-quoted-figures";
 import { queueOrganiserExtraForChange } from "@/lib/organiser-extra-invoice-queue";
 import { paidByOrganiserInternetBanking } from "@/lib/group-organiser-paid";
 import { postStoredBookingConfirmationLedgerLines } from "@/lib/booking-ledger-confirmation-sync";
@@ -163,6 +162,8 @@ import { LOCK1_HOLDER_TRANSACTION_BUDGET } from "@/lib/db-transaction";
 import type { DateModificationResponse, DateModificationTransactionResult } from "@/lib/booking-date-modification-transaction-result";
 
 export type ModifyBookingDatesInput = {
+  /** #5238 (`INV-MOD-062`): the preview's figures, compared before any settlement. */
+  quotedFigures?: EditQuotedFigures;
   checkIn?: string;
   checkOut?: string;
   settlementMethod?: BookingModificationSettlementMethod;
@@ -751,6 +752,7 @@ export async function modifyBookingDates({
     // member shorten a booking inside the cancellation window and recover more
     // than cancelling or removing guests for the same nights would return.
     const netChargeCents = priceDiffCents + changeFeeCents;
+    assertEditQuotedFigures(input.quotedFigures, { newFinalPriceCents, priceDiffCents, changeFeeCents, netChargeCents });
     // #3954: the unpaid ask, read ONCE for this edit and handed to both the
     // options and the save, so a capture between two reads cannot split them.
     const reduction = await readReductionAgainstUnpaidAsk(tx, booking, netChargeCents);
@@ -1872,10 +1874,7 @@ export async function adminShiftBookingDates({
     // #4924 (`INV-MOD-062`): a shift moves no money, so the officer's preview
     // can only go stale if the stored price moved since; checked on the
     // post-lock re-read, before the first write below.
-    assertEditQuotedFigures(
-      input.quotedFigures,
-      unchangedPriceQuotedFigures(booking.finalPriceCents),
-    );
+    assertEditQuotedFigures(input.quotedFigures, unchangedPriceQuotedFigures(booking.finalPriceCents));
 
     // #3276: a shift moves every night by the same delta and no money moves, so
     // the recorded build-up moves with it — captured before the rewrite below

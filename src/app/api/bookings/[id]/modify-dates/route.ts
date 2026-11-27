@@ -18,6 +18,7 @@ import {
 } from "@/lib/adult-member-hosting-linked-move";
 import { modifyBookingDatesWithLinkedMoveSupport } from "@/lib/booking-linked-date-move-arms";
 import { ApiError } from "@/lib/api-error";
+import { editQuotedFiguresRefusal, editSaveFiguresShape, requireEditQuotedFigures } from "@/lib/edit-quoted-figures";
 import { MinimumStayPolicyViolationError } from "@/lib/booking-policy-exceptions";
 import { auth } from "@/lib/auth";
 import { getClientIp } from "@/lib/rate-limit-http";
@@ -54,6 +55,7 @@ import { clubFormatValues } from "@/lib/club-format-server";
 
 const modifyDatesSchema = z
   .object({
+    ...editSaveFiguresShape, // #5238 (`INV-MOD-062`)
     checkIn: z.string().optional(),
     checkOut: z.string().optional(),
     settlementMethod: z.enum(["card", "credit"]).optional(),
@@ -199,6 +201,7 @@ export async function PUT(
   const format = await clubFormatValues();
 
   try {
+    requireEditQuotedFigures(parsed.data);
     const result =
       adminOverride && pricingMode === "shift"
         ? await adminShiftBookingDates({
@@ -208,6 +211,7 @@ export async function PUT(
               ? { hostingCoverageOverride: parsed.data.hostingCoverageOverride }
               : {}),
             input: {
+              quotedFigures: parsed.data.quotedFigures,
               checkIn: parsed.data.checkIn,
               checkOut: parsed.data.checkOut,
               confirmOverCapacity,
@@ -225,6 +229,7 @@ export async function PUT(
             ...(parsed.data.hostingCoverageLinkedMove
               ? { linkedMove: parsed.data.hostingCoverageLinkedMove }
               : {}),
+            linkedQuotedFigures: parsed.data.linkedQuotedFigures,
             input: parsed.data,
             ipAddress,
             todayAtClub,
@@ -357,6 +362,9 @@ export async function PUT(
         { status: err.status },
       );
     }
+    // #5238 (`INV-MOD-062`): thrown before the first write, so nothing was settled.
+    const figuresRefusal = editQuotedFiguresRefusal(err);
+    if (figuresRefusal) return NextResponse.json(figuresRefusal.body, { status: figuresRefusal.status });
     if (err instanceof ApiError) {
       return NextResponse.json({ error: err.message }, { status: err.status });
     }

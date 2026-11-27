@@ -77,6 +77,7 @@ import {
   type ProposalGuest,
   type ProposalParty,
 } from "@/lib/booking-exception-requests";
+import type { ExceptionQueueStatusFilter } from "@/lib/booking-exception-request-shared";
 import { LOCK1_HOLDER_TRANSACTION_BUDGET } from "@/lib/db-transaction";
 import { optionalDateOnly, optionalNightList } from "@/lib/booking-exception-delta-values";
 
@@ -1929,18 +1930,6 @@ export async function cancelModificationExceptionRequest(input: {
 const ACTOR_SELECT = {
   select: { id: true, firstName: true, lastName: true, email: true },
 } as const;
-
-export type ExceptionQueueStatusFilter =
-  | "REQUESTED"
-  | "APPROVED"
-  | "REJECTED"
-  | "CANCELLED"
-  | "SUPERSEDED"
-  // #2553: a request the hold reaper closed. Accepted by the admin queue route's
-  // own filter too, so the type and the route agree; the officer SCREEN that
-  // surfaces an "Expired" tab is #2526.
-  | "EXPIRED"
-  | "ALL";
 
 /** One covered policy as frozen into the evidence, for the officer queue. */
 export interface ExceptionQueuePolicyRef {

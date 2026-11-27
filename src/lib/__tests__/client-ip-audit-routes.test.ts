@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { NextRequest } from "next/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { SAVE_FIGURES } from "@/lib/__tests__/support/edit-save-figures";
 
 import { stripComments } from "./support/strip-comments";
 
@@ -171,7 +172,10 @@ describe("#5399: one route per family records the address the proxy saw", () => 
     const response = await modifyBooking(
       request("http://localhost/api/bookings/bk1/modify", {
         method: "PUT",
-        body: { addGuests: [{ firstName: "New", lastName: "Guest", ageTier: "ADULT", isMember: true }] },
+        body: {
+          addGuests: [{ firstName: "New", lastName: "Guest", ageTier: "ADULT", isMember: true }],
+          quotedFigures: SAVE_FIGURES,
+        },
       }),
       { params: Promise.resolve({ id: "bk1" }) },
     );

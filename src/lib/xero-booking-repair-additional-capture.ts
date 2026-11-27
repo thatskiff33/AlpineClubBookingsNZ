@@ -31,6 +31,7 @@ import { readCaptureRecorder, type RecorderStore } from "@/lib/additional-captur
 import { asRecord } from "@/lib/xero-json";
 import type { PaymentStatus } from "@prisma/client";
 import { readKeptCaptureRecordedElsewhere, readKeptChangeCaptureEvidence, type KeptLateCaptureXeroPlan } from "@/lib/late-capture-kept-xero";
+import type { AdminAlertSendOutcome } from "@/lib/email/admin-alert-send-result";
 import {
   decideLateCapture,
   keptChangeCaptureRoute,
@@ -654,7 +655,7 @@ export async function applyKeptChangeCaptureRecordAction(
     }),
   );
   // #5220: a retired change invoice this run refused was stamped in it; its officer email follows the commit.
-  await deps.alertKeptCaptureRefusal(plan);
+  const alerted = await deps.alertKeptCaptureRefusal(plan);
   const queuedId =
     plan.kind === "receipt-queued" || plan.kind === "kept-invoice-queued"
       ? plan.queueOperationId
@@ -662,10 +663,23 @@ export async function applyKeptChangeCaptureRecordAction(
         ? (plan.receiptQueueOperationId ?? null)
         : null;
   action.status = queuedId ? "queued" : "skipped";
-  action.resultMessage = keptRecordResultMessage(plan, queuedId);
+  action.resultMessage = keptRecordResultMessage(plan, queuedId, alerted);
 }
 
-function keptRecordResultMessage(plan: KeptLateCaptureXeroPlan, queuedId: string | null): string {
+/** #5312: what the officer's email did, as the report says it; never "emailed" for a send that failed. A new outcome must be worded here before this compiles. */
+const OFFICER_EMAIL_CLAUSE = {
+  sent: "an officer was emailed",
+  "queued-for-retry": "the officer's email did not send and is queued to retry",
+  "skipped-by-policy": "no officer was emailed, because the club's email delivery settings skipped it",
+  "no-recipients": "no officer was emailed, because nobody receives Xero sync alerts",
+  undelivered: "the officer's email could not be sent",
+} satisfies Record<AdminAlertSendOutcome, string>;
+
+function officerEmailClause(alerted: AdminAlertSendOutcome | null): string {
+  return OFFICER_EMAIL_CLAUSE[alerted ?? "undelivered"];
+}
+
+function keptRecordResultMessage(plan: KeptLateCaptureXeroPlan, queuedId: string | null, alerted: AdminAlertSendOutcome | null): string {
   if (queuedId) {
     return plan.kind === "kept-invoice-queued"
       ? `The kept card payment's Xero invoice is queued or sent (operation ${queuedId}).`
@@ -676,6 +690,6 @@ function keptRecordResultMessage(plan: KeptLateCaptureXeroPlan, queuedId: string
   }
   // #5220: this run stamped the change's retired invoice captured rather than re-issuing it.
   return plan.refusalAlert
-    ? `Nothing queued: the change's retired Xero invoice (operation ${plan.refusalAlert.operationId}) could not be re-issued for this payment, so it was marked captured and an officer emailed; check Xero has an invoice naming the payment.`
+    ? `Nothing queued: the change's retired Xero invoice (operation ${plan.refusalAlert.operationId}) could not be re-issued for this payment, so it was marked captured and ${officerEmailClause(alerted)}; check Xero has an invoice naming the payment.`
     : "Nothing queued: a change invoice already answers this payment, and the late-success release owns it.";
 }

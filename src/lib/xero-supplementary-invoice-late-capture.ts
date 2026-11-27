@@ -14,6 +14,7 @@ import {
   type LateCaptureRefundState,
 } from "@/lib/late-capture-kept-xero-rules";
 import { sendAdminXeroSyncErrorAlert } from "@/lib/email";
+import { adminAlertSendOutcome, type AdminAlertSendOutcome } from "@/lib/email/admin-alert-send-result";
 import { supplementaryInvoiceBilledCents } from "@/lib/xero-operation-outbox-payload";
 import {
   billedByOthers,
@@ -574,9 +575,11 @@ export type InvoiceNotIssuedAlert = {
 /**
  * Best-effort; never throws. The operation's own stamp is the durable record.
  * Sent only by the caller whose `STALE_WAITING_PAYMENT_CAPTURED` claim won,
- * after that claim committed; never inside a transaction.
+ * after that claim committed; never inside a transaction. Returns what the
+ * send did (#5312), so a caller that reports the email says what happened; a
+ * send that threw is `undelivered`.
  */
-export async function alertInvoiceNotIssuedOnCapture(params: InvoiceNotIssuedAlert): Promise<void> {
+export async function alertInvoiceNotIssuedOnCapture(params: InvoiceNotIssuedAlert): Promise<AdminAlertSendOutcome> {
   const when = params.wasRetired
     ? "after its waiting Xero supplementary invoice had been retired, and the invoice was not re-issued automatically"
     : "and its waiting Xero supplementary invoice was not issued automatically";
@@ -586,16 +589,19 @@ export async function alertInvoiceNotIssuedOnCapture(params: InvoiceNotIssuedAle
     "Captured additional payment met a Xero supplementary invoice that could not be issued",
   );
   try {
-    await sendAdminXeroSyncErrorAlert({
-      errorType: "SUPPLEMENTARY_INVOICE_NOT_ISSUED_ON_CAPTURE",
-      operation: `Supplementary invoice for captured payment ${params.paymentIntentId}`,
-      errorMessage,
-      timestamp: new Date(),
-    });
+    return adminAlertSendOutcome(
+      await sendAdminXeroSyncErrorAlert({
+        errorType: "SUPPLEMENTARY_INVOICE_NOT_ISSUED_ON_CAPTURE",
+        operation: `Supplementary invoice for captured payment ${params.paymentIntentId}`,
+        errorMessage,
+        timestamp: new Date(),
+      }),
+    );
   } catch (err) {
     logger.error(
       { err, operationId: params.operationId },
       "Failed to send the supplementary-invoice capture alert",
     );
+    return "undelivered";
   }
 }

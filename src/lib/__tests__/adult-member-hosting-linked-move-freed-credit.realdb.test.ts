@@ -375,8 +375,13 @@ async function bookingRows() {
     expect(await bookingRows()).toEqual(before);
     expect(await memberCredit.getMemberCreditBalance(OWNER_ID)).toBe(0);
 
+    // #5238: the acceptance echoes each booking's figures exactly as offered,
+    // and the real saves accept them, so the offer and the apply price alike.
+    const args = await moveArgs();
     await linkedMove.applyLinkedDateMove({
-      ...(await moveArgs()),
+      ...args,
+      input: { ...args.input, quotedFigures: shown.quote.primary.quotedFigures },
+      linkedQuotedFigures: shown.quote.linked.map((booking) => ({ bookingId: booking.bookingId, figures: booking.quotedFigures! })),
       linkedMove: { choice: "MOVE_BOTH", acknowledged: true, stateKey: shown.acceptStateKey },
     });
 
