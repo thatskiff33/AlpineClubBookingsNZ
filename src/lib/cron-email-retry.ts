@@ -91,7 +91,7 @@ async function retireUnverifiableBookingEmail(params: {
 }
 
 /** #5469: the retry job's suppression read failed; the row waits for the next run. */
-const SUPPRESSION_UNREADABLE = Symbol("suppression-unreadable");
+const SUPPRESSION_UNREADABLE: unique symbol = Symbol("suppression-unreadable");
 
 /**
  * N-11: Retry failed emails with backoff.
@@ -268,7 +268,7 @@ export async function retryFailedEmails(): Promise<{
     // reason string and drops the retained body. #5469: a read that fails
     // skips the row, unclaimed, for the next run, since no bounce rewrites the
     // address's pending rows any more (the core still proceeds on a failed read).
-    const activeSuppression = await getActiveEmailSuppression(emailLog.to).catch((err: unknown) => {
+    const activeSuppression = await getActiveEmailSuppression(emailLog.to).catch((err: unknown): typeof SUPPRESSION_UNREADABLE => {
       logger.error({ err, emailLogId: emailLog.id }, "Failed to check email suppression state before retry; left for the next run");
       return SUPPRESSION_UNREADABLE;
     });

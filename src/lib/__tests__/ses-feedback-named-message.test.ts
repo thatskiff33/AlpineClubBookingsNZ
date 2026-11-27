@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { EmailLogStatus } from "@prisma/client";
+import type { EmailComplaintReplayAlert } from "@/lib/admin-alert-once-replayable";
 
 /*
   #5469: what one bounce or complaint report does, through the SES adapter and
@@ -49,7 +50,7 @@ type Suppression = {
   [key: string]: unknown;
 };
 
-type OwedAlert = { kind: "email-complaint"; suppressionId: string; complaintType: string; complainedEmailLogId: string | null };
+type OwedAlert = EmailComplaintReplayAlert;
 
 const store = vi.hoisted(() => ({
   rows: [] as Row[],
