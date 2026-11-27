@@ -309,7 +309,6 @@ export default async function BookingDetailPage({
     modules,
     viewer,
     access,
-    history,
   });
 
   const { cancellationSchedule, cancellationHasNoPayment } =

@@ -64,17 +64,9 @@ export type GuestSelfRemovalEligibility = {
  * the guest comes off and the amount is held for the club to confirm. There is no
  * 409 left there to predict.
  *
- * What replaced it is the pending-review FENCE
- * (`assertNoPendingEditFinancialReview`, `EDIT_FINANCIAL_REVIEW_PENDING`): a
- * money-affecting change is refused while an EARLIER change to the same booking
- * is still being priced. A self-removal is money-affecting, so it can meet that
- * 409 — and predicting it is no more possible here than the gate it replaced,
- * because it needs a live `ManualRefundTask` lookup on every surface that offers
- * the action, including the member-night guard, which runs inside a booking-write
- * transaction and must not add a per-conflict query. Its 409 carries its own
- * member-facing sentence and is surfaced the same way. Both are
- * DECLINED-with-an-explanation rather than a silently missing control, which is
- * the property that matters.
+ * The pending-review fence that later refused such a removal while an earlier
+ * change was still being priced was retired too (#4344 wave C2), so there is no
+ * review 409 to predict either.
  *
  * The quote-priced refusal (`isQuotePricedBooking`) IS predictable — one
  * indexed lookup — and callers that can afford it pass `isQuotePriced`. It

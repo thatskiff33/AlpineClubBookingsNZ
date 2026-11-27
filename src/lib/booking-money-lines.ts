@@ -524,8 +524,7 @@ export function bookingModificationSummaryRows(params: {
    * #4030: the people this change ADDED to the booking, named, so the member is
    * told who was added rather than only that the count went up (the owner's
    * decision: "the usual change email listing the guests and amount").
-   * REQUIRED, with no default, for the reason `financialReviewPending` is: a
-   * default would let the one path that adds guests forget to say so. Every
+   * REQUIRED, with no default: a default would let the one path that adds guests forget to say so. Every
    * path that adds nobody passes `[]`.
    *
    * Names only, and only of guests on this booking — which its owner, the one

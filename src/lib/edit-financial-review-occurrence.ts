@@ -236,7 +236,7 @@ function occurrenceKeyForRecurrence(
  * guest to a booking whose history cannot be read, park, an officer prices and
  * completes the task; add a second $320 guest, and the raise finds the COMPLETED
  * row, creates nothing, and every downstream reader is filtered on OPEN - so
- * there is no banner, no email flag, and no fence on the third add. Ten guests
+ * there is no banner, no email flag, and nothing stops the third add. Ten guests
  * over a season is $3,200 the club never sees and never hears about.
  *
  * ## What "already raised" now means
@@ -267,23 +267,20 @@ function occurrenceKeyForRecurrence(
  * within the same request, long before any officer can settle anything. So a
  * replay finds OPEN, or it finds nothing.
  *
- * A TERMINAL ROW IS ALWAYS A NEW EDIT, and the pending-review FENCE is what
- * makes that airtight rather than merely likely. Every money-affecting door
- * takes `pg_advisory_xact_lock(1)` and then calls
- * `assertNoPendingEditFinancialReview` before it writes anything, so a new edit
- * cannot even reach this walk while ANY `EDIT_FINANCIAL_REVIEW` task on that
- * booking is OPEN. Reaching here and finding the base key COMPLETED or DISMISSED
- * therefore means: an officer answered that question, the fence then let a
- * FURTHER edit through, and that further edit is the one in front of us. It is
- * owed its own review.
+ * A TERMINAL ROW IS ALWAYS A NEW EDIT. While edits could still raise reviews,
+ * the pending-review fence (retired by #4344 wave C2, after #4317 stopped edits
+ * raising them) refused every money-affecting edit while ANY
+ * `EDIT_FINANCIAL_REVIEW` task on the booking was OPEN, so finding the base key
+ * COMPLETED or DISMISSED meant an officer answered that question and a FURTHER
+ * edit came through afterwards. It is owed its own review.
  *
  * WHICH FAILURE EACH READING WOULD BUY. Treating a terminal row as a replay is
  * the money this walk closes - silent, and unbounded: no task, no charge, no
  * banner, repeating for every guest added after the first. Treating an OPEN row
  * as a new edit would buy the opposite - two tasks for one edit, which an
  * officer sees on one booking and can dismiss. Neither is acceptable and neither
- * has to be accepted, because the fence and the transaction boundary between
- * them leave no case where the two readings both apply.
+ * has to be accepted, because status and the transaction boundary leave no
+ * case where the two readings both apply.
  *
  * Pinned against a real server by
  * `edit-financial-review-races.realdb.test.ts`, which asserts BOTH directions -
@@ -303,8 +300,7 @@ function occurrenceKeyForRecurrence(
  * TERMINAL ROWS ARE NEVER TOUCHED. Nothing here reopens, amends or re-reads a
  * settled task; the audit of what an officer decided the first time stays
  * exactly as they left it, and the new question gets its own row. A booking
- * legitimately holding more than one review is already the model
- * (`booking-financial-review-visibility.ts` says so in as many words).
+ * legitimately holding more than one review is already the model.
  *
  * Walked one indexed unique lookup at a time rather than with a `startsWith`
  * scan, because `occurrenceKey`'s btree serves equality under any collation and

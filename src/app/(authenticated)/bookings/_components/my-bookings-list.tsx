@@ -53,14 +53,6 @@ export interface MyBookingItem {
    * handed. Required, so a caller cannot omit the question.
    */
   moneyReconciliation: BookingMoneyReconciliationView;
-  /**
-   * #3033 (epic #2797): a change to this booking saved and the refund or credit
-   * for it has not been worked out yet, so `finalPriceCents` above is not the
-   * whole story. Optional so a caller that has not asked stays on the unqualified
-   * row it has always rendered rather than making a claim about money it has not
-   * checked.
-   */
-  financialReviewPending?: boolean;
   status: BookingStatus;
   // Split-booking (#738) labelling, pre-computed on the server.
   linkLabel: "linked-parent" | "provisional-child" | "guest-linked" | null;
@@ -133,16 +125,7 @@ function BookingSummary({
         <p className="text-sm text-muted-foreground">
           {booking.guestCount} guest{booking.guestCount !== 1 ? "s" : ""} &middot;{" "}
           {formatCents(booking.finalPriceCents, format)}
-          {/*
-            #3033: the qualifier, not a replacement. The total IS what the
-            booking is priced at after the change; what it does not include is
-            an adjustment the club has not been able to work out. Hiding the
-            figure would leave the member with no number at all, and inventing a
-            corrected one is the thing this epic exists to forbid — so the
-            figure stays and stops claiming to be the last word.
-          */}
           {bookingMoneyReviewSuffix(booking.moneyReconciliation)}
-          {booking.financialReviewPending ? " · being checked" : ""}
         </p>
         {showLinkLabel ? <LinkLabelText linkLabel={booking.linkLabel} /> : null}
       </div>
@@ -150,23 +133,6 @@ function BookingSummary({
         <Badge variant="secondary" className={bookingStatusClass(booking.status)}>
           {bookingStatusLabel(booking.status)}
         </Badge>
-        {/*
-          #3033: a second chip beside the status, not instead of it. The booking
-          status is unchanged and still true — the stay is confirmed — so
-          overwriting it would misstate the booking to say something about the
-          money. `MiniChip` is the house primitive for a non-status signal
-          alongside a status and shares `StatusChip`'s tone map through
-          `@/lib/chip-tones`, so the pair reads as one family; `StatusChip`
-          itself cannot render this, because its props are a discriminated union
-          over five Prisma enums and this is not one of them.
-
-          INFO, not warning: nothing is wrong and the member has nothing to fix.
-        */}
-        {booking.financialReviewPending ? (
-          <MiniChip tone="info" icon={Scale}>
-            Adjustment being checked
-          </MiniChip>
-        ) : null}
         {bookingMoneyNeedsOfficerReview(booking.moneyReconciliation) ? (
           // Tone follows the kind, as it does on the other three surfaces
           // (#3547). Hardcoding `info` here meant a booking promoted to a

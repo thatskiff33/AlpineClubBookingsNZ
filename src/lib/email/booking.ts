@@ -64,7 +64,6 @@ import { CLUB_NAME } from "@/config/club-identity";
 import { paymentRequestCauseSentence, preArrivalOutstandingNote, type AdditionalAskCause } from "@/lib/additional-ask-cause";
 import { bankTransferNoteText, type BankTransferOffer } from "@/lib/credit-release-bank-transfer";
 import { EMAIL_DEFAULT_LODGE_NAME } from "@/lib/email-message-settings";
-import { financialReviewNote } from "@/lib/booking-financial-review-copy";
 import { appliedCreditGiveBackNote, unpaidAskCancelledNote } from "@/lib/booking-credit-give-back-copy";
 import { supersededPaymentRefundedTemplate } from "@/lib/email-templates/refunds";
 import { supersededRefundOwingSentence } from "@/lib/superseded-additional-refund-event";
@@ -1454,8 +1453,8 @@ export async function sendBookingModifiedEmail(params: {
   /**
    * #3809: applied credit this change gave back - the booking was paid with
    * account credit, and the reduction returned it, tiered like a card refund.
-   * REQUIRED for the reason `financialReviewPending` is: a default answers the
-   * question wrongly for every caller that has a figure. 0 where none was.
+   * REQUIRED with no default: a default answers the question wrongly for
+   * every caller that has a figure. 0 where none was.
    */
   appliedCreditGivenBackCents: number;
   additionalAmountCents: number;
@@ -1463,8 +1462,8 @@ export async function sendBookingModifiedEmail(params: {
   billedToOrganiserCents?: number;
   /**
    * #3954: this edit's price drop cancelled the member's unpaid additional payment
-   * outright (`unpaidAskOffsetCents > 0` and nothing re-issued). REQUIRED, as
-   * `financialReviewPending` is: every sender answers it.
+   * outright (`unpaidAskOffsetCents > 0` and nothing re-issued). REQUIRED, so
+   * every sender answers it.
    */
   unpaidAskCancelled: boolean;
   additionalPaymentMethod?: "STRIPE" | "INTERNET_BANKING";
@@ -1481,10 +1480,8 @@ export async function sendBookingModifiedEmail(params: {
    * email, the admin-editable body, the edit panel and the booking's history
    * all carry the identical sentence.
    *
-   * OPTIONAL, unlike `financialReviewPending` below, and the difference is not
-   * an oversight. That flag is a question every caller of this sender can be in
-   * the middle of, so a default silently answered it wrongly for all of them.
-   * This one has exactly ONE caller that can ever have a value - the batch
+   * OPTIONAL, unlike the required flags here, and the difference is not an
+   * oversight. This one has exactly ONE caller that can ever have a value - the batch
    * modify service - because it is the only edit door whose request schema
    * accepts `promoCode`/`removePromoCode` at all. The guest-add, guest-remove
    * and date-change senders have no promo input to drop, so asking them the
@@ -1492,27 +1489,12 @@ export async function sendBookingModifiedEmail(params: {
    */
   promoChangeNotAppliedNote?: string | null;
   addedGuests: ReadonlyArray<BookingModificationAddedGuest>; // #4030: named in the change rows; `[]` = nobody
-  /**
-   * #3033 (epic #2797): this change saved and its refund or credit could not be
-   * worked out from stored history, so the club is deciding it.
-   *
-   * REQUIRED, with no default (#3032). It arrived optional-and-false so that
-   * #3033 could land the rendering without touching this lane's files, and that
-   * left the fix INERT: every production caller took the default, so the member
-   * whose adjustment was under review still got the silent money section the
-   * flag exists to prevent. A default here is not a convenience, it is a wrong
-   * answer that no call site has to look at - which is why this follows
-   * `confirmedAmountCents` and `assertNoPendingEditFinancialReview`'s
-   * `moneyAffecting` in making the compiler ask every caller the question
-   * instead (`INV-SSOT`, "prefer unrepresentable over policed").
-   */
-  financialReviewPending: boolean;
   /** #3916, #4057: REQUIRED; the answer `executeBookingModificationRefund` gives after the refund ran, never recomputed. */
   refundDestination: BookingModifiedRefundDestination;
   /**
    * #3827 (D-3813-6, `INV-PAY-117`): the refund is a bank transfer the club
-   * still has to send. REQUIRED, as `financialReviewPending` is; the template's
-   * own field says why. #3949: who it goes to, member or group organiser.
+   * still has to send. REQUIRED; the template's own field
+   * says why. #3949: who it goes to, member or group organiser.
    */
   refundByBankTransfer: BankTransferRefundPayee | null;
   // Booking's lodge (multi-lodge phase 8): see sendBookingConfirmedEmail.
@@ -1534,37 +1516,6 @@ export async function sendBookingModifiedEmail(params: {
     : " A Xero invoice and payment reference will be used for payment.";
   const paymentReferenceContext = params.paymentReference
     ? ` Payment reference: ${params.paymentReference}.`
-    : "";
-  /*
-    #3033: TWO NOTES, COMPOSED. Kept in step with `bookingModifiedTemplate`,
-    which composes the same two for the same member out of the same shared
-    clauses — a change made to one and not the other means the HTML email and
-    the admin-editable body disagree about money.
-
-    Before this, an unresolved adjustment fell through all three settlement
-    tests (each of which requires a positive amount, which it has none of by
-    construction) and {{paymentNote}} rendered EMPTY — a "Booking Modified"
-    email with a silent money section, on precisely the change where the member
-    most needs to hear that a figure is coming.
-
-    The review note does not REPLACE a settlement note, because both can be
-    true: the same edit can surrender nights that cannot be valued while adding
-    nights that price normally, and suppressing the payment instruction would
-    tell a member to do nothing while money went uncollected. The three
-    settlement notes stay mutually exclusive among themselves, exactly as
-    before.
-
-    No amount is named in the review half, because there is not one to name. Not
-    zero, not the booking's new total, not an estimate.
-  */
-  const reviewNote = params.financialReviewPending
-    ? financialReviewNote({
-        // The two PAST-TENSE settlement arms below. "Nothing has been refunded
-        // or charged for it yet" cannot stand beside "a refund has been
-        // processed" in one email about one change.
-        moneyAlreadyMoved:
-          params.refundAmountCents > 0 || accountCreditAmountCents > 0 || params.appliedCreditGivenBackCents > 0,
-      })
     : "";
   // #3827: the refund sentence is the template's own (D-3813-6), and a split
   // payment's credit share follows it (D-3813-5).
@@ -1593,7 +1544,7 @@ export async function sendBookingModifiedEmail(params: {
   // composed with the settlement note rather than one of its arms.
   const giveBackNote = appliedCreditGiveBackNote(params.appliedCreditGivenBackCents, format);
   const askCancelledNote = unpaidAskCancelledNote(params.unpaidAskCancelled);
-  const paymentNote = [reviewNote, settlementNote, giveBackNote, askCancelledNote].filter(Boolean).join(" ");
+  const paymentNote = [settlementNote, giveBackNote, askCancelledNote].filter(Boolean).join(" ");
   // #5249: moved dates leave a saved calendar entry stale; a sentence, no file.
   const calendarNote = await resolveCalendarUpdateNote({
     ...params,

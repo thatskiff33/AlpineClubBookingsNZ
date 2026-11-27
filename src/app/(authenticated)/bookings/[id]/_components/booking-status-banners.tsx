@@ -21,10 +21,6 @@ const NARRATIVE_BANNER_STATES = new Set<BookingNarrativeState>([
   "cancelled_pre_payment",
   "cancelled_post_payment",
   "declined",
-  // #3033: a self-contained outcome like the five above — the stay change is
-  // settled and the money is with the club — so it belongs in the banner rather
-  // than in one of the active states' dedicated UI.
-  "financial_review_pending",
 ]);
 
 const narrativeBannerClasses: Record<string, string> = {
@@ -33,11 +29,6 @@ const narrativeBannerClasses: Record<string, string> = {
   cancelled_pre_payment: "border-warning-6 bg-warning-3 text-warning-11",
   cancelled_post_payment: "border-warning-6 bg-warning-3 text-warning-11",
   declined: "border-danger-6 bg-danger-3 text-danger-11",
-  // #3033: INFO, not warning or danger. Nothing is wrong with this booking and
-  // the member has nothing to fix — the club owes them a figure. A warning tone
-  // beside a saved stay change is exactly the alarm owner decision D1 said the
-  // wording had to avoid.
-  financial_review_pending: "border-info-6 bg-info-3 text-info-11",
 };
 
 /**
@@ -78,10 +69,9 @@ export function BookingStatusBanners({
   } = party;
   const { showCompletePaymentCard } = payment;
   const { bookingNarrative } = history;
-  const neutralFinancialNarrative = !viewer.canSeeOwnerCredit && ["paid", "financial_review_pending"].includes(bookingNarrative.state);
+  const neutralFinancialNarrative = !viewer.canSeeOwnerCredit && bookingNarrative.state === "paid";
   const stayConfirmed = isPaidLikeBookingStatus(booking.status) || booking.status === "CONFIRMED";
-  const { paymentRequiredDescription, financialReviewPendingDescription } =
-    messages;
+  const { paymentRequiredDescription } = messages;
   return (
     <>
       {/* #3278: the audience gate is the LOADER's, not this component's. It
@@ -128,15 +118,6 @@ export function BookingStatusBanners({
         >
           <p className="font-medium">{neutralFinancialNarrative ? stayConfirmed ? "Booking confirmed" : "Booking awaiting confirmation" : bookingNarrative.headline}</p>
           <p>{neutralFinancialNarrative ? stayConfirmed ? "This stay is confirmed." : "This booking is awaiting confirmation." : bookingNarrative.message}</p>
-          {/* #3033: the club's configurable explanation, inside the banner and
-              between the facts and the next step, which is where a member reads
-              it as part of one message rather than as a second notice. */}
-          {viewer.canSeeOwnerCredit && bookingNarrative.state === "financial_review_pending" &&
-          financialReviewPendingDescription ? (
-            <p data-testid="booking-financial-review-description">
-              {financialReviewPendingDescription}
-            </p>
-          ) : null}
           {!neutralFinancialNarrative ? <p>{bookingNarrative.nextStep}</p> : null}
         </div>
       ) : null}

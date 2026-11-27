@@ -66,7 +66,6 @@ const MEMBER_BOOKING_SUMMARY_SHAPE = completeConnectionShapeFor<MemberBookingSum
   checkOut: true,
   lodge: { id: true, name: true },
   finalPriceCents: true,
-  priceBeingChecked: true,
   madeByMe: true,
   notes: true,
   guests: { firstName: true, lastName: true, ageTier: true, isMember: true },

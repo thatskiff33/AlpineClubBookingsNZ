@@ -11,7 +11,6 @@ import "server-only";
 
 import type { Prisma } from "@prisma/client";
 
-import { bookingsWithOpenFinancialReview } from "@/lib/booking-financial-review-visibility";
 import { bookingOwner } from "@/lib/booking-owner";
 import { calendarDateOfDateOnlyInstant } from "@/lib/club-time";
 import { prisma } from "@/lib/prisma";
@@ -57,12 +56,6 @@ export interface MemberBookingSummary {
   readonly lodge: { readonly id: string; readonly name: string };
   /** Null when the member is a guest on someone else's booking: not theirs to see. */
   readonly finalPriceCents: number | null;
-  /**
-   * True while a change to the booking has money held for an officer to check
-   * (#3033), so the price is not yet the last word. The bookings page says
-   * "being checked" beside the same figure.
-   */
-  readonly priceBeingChecked: boolean;
   /** False when the member is a guest on someone else's booking. */
   readonly madeByMe: boolean;
   readonly notes: string | null;
@@ -77,7 +70,6 @@ export interface MemberBookingSummary {
 function toSummary(
   row: MemberBookingRow,
   memberId: string,
-  underFinancialReview: ReadonlySet<string>,
 ): MemberBookingSummary {
   const madeByMe = bookingOwner(row).memberId === memberId;
   return {
@@ -88,7 +80,6 @@ function toSummary(
     lodge: row.lodge,
     // The price and the organiser's note belong to the member who booked.
     finalPriceCents: madeByMe ? row.finalPriceCents : null,
-    priceBeingChecked: madeByMe && underFinancialReview.has(row.id),
     madeByMe,
     notes: madeByMe ? row.notes : null,
     guests: row.guests,
@@ -112,9 +103,8 @@ export async function listMemberBookingSummaries(memberId: string): Promise<Memb
     take: MEMBER_BOOKING_LIST_LIMIT + 1,
   });
   const rows = found.slice(0, MEMBER_BOOKING_LIST_LIMIT);
-  const underFinancialReview = await bookingsWithOpenFinancialReview(rows.map((row) => row.id));
   return {
-    bookings: rows.map((row) => toSummary(row, memberId, underFinancialReview)),
+    bookings: rows.map((row) => toSummary(row, memberId)),
     truncated: found.length > MEMBER_BOOKING_LIST_LIMIT,
   };
 }
@@ -129,7 +119,7 @@ export async function getMemberBookingSummary(
     select: MEMBER_BOOKING_SUMMARY_SELECT,
   });
   if (!row) return null;
-  return toSummary(row, memberId, await bookingsWithOpenFinancialReview([row.id]));
+  return toSummary(row, memberId);
 }
 
 const MEMBER_PROFILE_SUMMARY_SELECT = {

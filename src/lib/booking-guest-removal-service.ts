@@ -64,9 +64,6 @@ import {
 import { EDIT_DOOR_BOOKING_INCLUDE } from "@/lib/booking-modify-validation";
 import { creditGiveBackHistory } from "@/lib/booking-credit-give-back-marker";
 import type { SupersededPrimaryPaymentIntent } from "@/lib/booking-payment-cleanup";
-  assertNoPendingEditFinancialReview,
-  findOpenEditFinancialReviewTask,
-} from "@/lib/edit-financial-review";
 import {
   editedBookingTotalCents,
   refuseNegativeStoredGuestTotals,

@@ -205,7 +205,7 @@ const MEMBER_ACTIONS: readonly McpAction[] = [
     id: "list_my_bookings",
     title: "List my bookings",
     summary:
-      "The signed-in member's bookings, newest stay first: the ones they made and the ones they are a guest on. `truncated` is true when there are older ones than the 200 listed. `finalPriceCents` is null on a booking someone else made, and `priceBeingChecked` means the club has not yet confirmed the figure.",
+      "The signed-in member's bookings, newest stay first: the ones they made and the ones they are a guest on. `truncated` is true when there are older ones than the 200 listed. `finalPriceCents` is null on a booking someone else made.",
     method: "GET",
     path: "/api/bookings/mine",
     kind: "read",
@@ -216,7 +216,7 @@ const MEMBER_ACTIONS: readonly McpAction[] = [
     id: "get_my_booking",
     title: "Read one of my bookings",
     summary:
-      "A summary of one booking the signed-in member made or is a guest on: dates, lodge, status, party and, for a booking they made, the price and their note. `priceBeingChecked` means the club has not yet confirmed the figure.",
+      "A summary of one booking the signed-in member made or is a guest on: dates, lodge, status, party and, for a booking they made, the price and their note.",
     method: "GET",
     path: "/api/bookings/[id]",
     params: bookingIdParams,

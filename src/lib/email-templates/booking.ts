@@ -23,7 +23,6 @@ import {
   unpaidMoneySummaryRows,
 } from "@/lib/booking-money-lines";
 import type { PromoCodeAdjustment } from "@/lib/booking-promo-redemptions";
-import { financialReviewNote } from "@/lib/booking-financial-review-copy";
 import { bookingCancelledRefundMade, bookingCancelledRefundSentence, type BookingCancelledRefundMethod } from "@/lib/booking-modified-email-copy";
 import { type BookingModifiedRefundDestination, bookingModifiedRefundPending, bookingModifiedRefundSentence, organiserBilledSentence } from "@/lib/booking-modified-email-copy";
 import { appliedCreditGiveBackNote, unpaidAskCancelledNote } from "@/lib/booking-credit-give-back-copy";
@@ -447,11 +446,11 @@ export function bookingModifiedTemplate(params: {
   changeFeeCents: number;
   refundAmountCents: number;
   accountCreditAmountCents?: number;
-  /** #3809: applied credit this change gave back (0 if none). Required, as `financialReviewPending` is. */
+  /** #3809: applied credit this change gave back (0 if none). Required, so every sender answers it. */
   appliedCreditGivenBackCents: number;
   additionalAmountCents: number;
   billedToOrganiserCents?: number; // #4299: invoiced to the group organiser instead (see `sendBookingModifiedEmail`)
-  unpaidAskCancelled: boolean; // #3954: the drop cancelled the unpaid additional payment; required, like financialReviewPending
+  unpaidAskCancelled: boolean; // #3954: the drop cancelled the unpaid additional payment; required
   additionalPaymentMethod?: "STRIPE" | "INTERNET_BANKING";
   paymentReference?: string | null;
   xeroInvoiceNumber?: string | null;
@@ -463,27 +462,9 @@ export function bookingModifiedTemplate(params: {
   // the ones to disagree about what the member asked for.
   promoChangeNotAppliedNote?: string | null;
   addedGuests: ReadonlyArray<BookingModificationAddedGuest>; // #4030: named in the shared rows; `[]` = nobody
-  /**
-   * #3033 (epic #2797): this change saved and its refund or credit could not be
-   * worked out from what the booking has stored, so the club is deciding it.
-   *
-   * It exists because without it the money section is SILENT. Every one of the
-   * three branches below tests a positive amount, and an unresolved adjustment
-   * has none by construction — so a member whose booking was edited received a
-   * "Booking Modified" email whose money section rendered as nothing at all,
-   * which reads as "no money is involved" on the one change where that is most
-   * conspicuously untrue.
-   *
-   * REQUIRED, with no default (#3032). #3033 landed it optional so it could add
-   * the rendering without editing the three services that call the sender, and
-   * the consequence was a fix that never fired in production: every caller took
-   * the default. The compiler now asks each one whether this change is under
-   * review, the way `confirmedAmountCents` is asked for (`INV-SSOT`).
-   */
-  financialReviewPending: boolean;
   refundDestination: BookingModifiedRefundDestination; // #3916, #4057: see `sendBookingModifiedEmail`
   /** #3827 (D-3813-6, `INV-PAY-117`): a bank transfer the club must still send.
-   * REQUIRED, as `financialReviewPending` is (`bookingModifiedRefundSentence`).
+   * REQUIRED, with no default (`bookingModifiedRefundSentence`).
    * #3949: WHO it goes to - the member, or the group organiser who paid by
    * internet banking (`editRefundBankTransferPayee`); null when none is sent. */
   refundByBankTransfer: BankTransferRefundPayee | null;
@@ -512,7 +493,6 @@ export function bookingModifiedTemplate(params: {
     xeroInvoiceNumber,
     promoCoverageNote,
     promoChangeNotAppliedNote,
-    financialReviewPending,
   } = params;
 
   // The change rows come from the shared helper the flat {{changeSummary}}
@@ -534,40 +514,6 @@ export function bookingModifiedTemplate(params: {
     label: escapeHtml(row.label),
     value: escapeHtml(row.value),
   }));
-
-  /*
-    TWO NOTES, COMPOSED — not one exclusive box (#3033).
-
-    A booking whose adjustment is unresolved can still carry a positive
-    additional amount from the priced half of the same edit: new nights are
-    priced normally under current policy while the surrendered ones are what
-    cannot be valued. The first shape of this checked `financialReviewPending`
-    as a fourth arm of the existing three-way chain, and that is wrong whichever
-    end it is put at — last, the payment instruction shadows the honest
-    sentence; first, the honest sentence suppresses a real instruction to pay,
-    and the member is told there is nothing to do while $45 goes uncollected and
-    the hold expires under them.
-
-    The question was never which branch wins. Both facts are true at once, so
-    both are rendered: the review note, then whichever settlement note applies.
-    The settlement notes remain mutually exclusive exactly as they always were.
-    `FINANCIAL_REVIEW_NOTHING_TO_DO` is scoped to the change rather than to the
-    email, which is what lets a "payment required" box sit under it without
-    contradiction.
-  */
-  const reviewNote = financialReviewPending
-    ? alertBox(
-        financialReviewNote({
-          // The two PAST-TENSE settlement arms below. "Nothing has been refunded
-          // or charged for it yet" cannot stand beside "a refund has been
-          // processed" in one email about one change. The additional-payment
-          // arms are compatible and leave the sentence in place.
-          moneyAlreadyMoved:
-            refundAmountCents > 0 || accountCreditAmountCents > 0 || appliedCreditGivenBackCents > 0,
-        }),
-        "info",
-      )
-    : "";
 
   let settlementNote = "";
   if (refundAmountCents > 0) {
@@ -615,7 +561,7 @@ export function bookingModifiedTemplate(params: {
   const giveBackSentence = appliedCreditGiveBackNote(appliedCreditGivenBackCents, format);
   const giveBackNote = giveBackSentence ? alertBox(giveBackSentence, "success") : "";
   const askCancelled = unpaidAskCancelledNote(params.unpaidAskCancelled); // #3954, beside any refund
-  const paymentNote = `${reviewNote}${settlementNote}${giveBackNote}${askCancelled ? alertBox(askCancelled, "success") : ""}`;
+  const paymentNote = `${settlementNote}${giveBackNote}${askCancelled ? alertBox(askCancelled, "success") : ""}`;
 
   return layout(`
     ${heading("Booking Modified")}

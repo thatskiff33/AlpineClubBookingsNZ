@@ -100,34 +100,23 @@ import { setTransactionLockTimeout } from "@/lib/member-merge-booking-lock";
  * CALL at all, so that exception has nothing to apply to - and the two
  * transitions are not mirror images in the way that phrasing suggests.
  *
- * A closure moves `OPEN -> terminal`, which only RELAXES
- * `assertNoPendingEditFinancialReview`: an edit that read the fence and proceeded
- * was entitled to. A reopen moves `DISMISSED -> OPEN`, which TIGHTENS the same
- * fence RETROACTIVELY, against edits already in flight. Unlocked, this
- * interleaves: a member's date change takes `lock(1)`, reads the fence (this task
- * is DISMISSED, so it proceeds) and runs a long edit that issues a credit under
- * its own modification M2; mid-window an officer reopens this task; both commit.
- * The task is now OPEN on a booking whose edit has already settled, its context
- * still points at M1, and the `MemberCredit.sourceBookingModificationId` anchor
- * for M1 is free - so completing it credits the member a second time.
- *
- * Taking the global key first is what closes that: the reopen either lands before
- * the edit reads the fence (and the edit is then refused, correctly) or after the
- * edit has committed (and the officer is reopening against a booking whose state
- * they can see). One tier, taken first, composing with nothing - `INV-LOCK-002`'s
+ * The global key is still taken first. A reopen puts a settled money question
+ * back on the queue (and, for a dispute-loss hand-back, restores its debt), so
+ * it joins the settlement cohort that cancel, capture and refund serialise on.
+ * It used to have a second reason: a reopened edit review re-armed the
+ * pending-review fence against edits in flight. Edit reviews can no longer be
+ * reopened (#4343) and the fence is gone (#4344 wave C2), so only the first
+ * remains. One tier, taken first, composing with nothing - `INV-LOCK-002`'s
  * global -> lodge -> member order is satisfied trivially.
  *
  * The status-fenced `updateMany` stays, and still carries the two-officers case:
- * the lock serialises them, and the fence is what tells the loser the row moved
- * rather than writing over the winner.
+ * the lock serialises them, and the status guard is what tells the loser the
+ * row moved rather than writing over the winner.
  *
  * ## What reopening SETS IN MOTION, which is nothing sudden
  *
- * The row becomes OPEN, so it is back on the finance queue and back inside
- * `assertNoPendingEditFinancialReview` - a further money-affecting edit to that
- * booking is fenced again, which is correct: the club has said the money is an
- * open question once more. The member-facing review banner returns for the same
- * reason. Both follow from the status and neither is written here.
+ * The row becomes OPEN, so it is back on the finance queue. That follows from
+ * the status and is not written here.
  */
 export const REOPEN_NOTE_REQUIRED_MESSAGE =
   "Say why this is being put back on the queue — a note is required.";
@@ -154,8 +143,8 @@ export const REOPEN_RACED_MESSAGE =
   "This item changed while you were putting it back — refresh and try again.";
 
 /**
- * #4343: edit reviews are retired. Reopening one would put it back on the
- * queue and fence every later edit of that booking. Officer-dismissed and
+ * #4343: edit reviews are retired. Reopening one would put a retired money
+ * question back on the finance queue. Officer-dismissed and
  * machine-dismissed rows are both refused, before the status claim.
  */
 export const REOPEN_EDIT_REVIEW_RETIRED_MESSAGE =
@@ -308,9 +297,8 @@ async function reopenInTransaction(
 ): Promise<ReopenTask | "already-open"> {
   /*
     `INV-LOCK-001`/`INV-LOCK-002`: the global settlement cohort, taken FIRST and
-    before the read, because `DISMISSED -> OPEN` re-arms the pending-review fence
-    against money-affecting edits already in flight. The module docblock works
-    the interleaving through. No provider call happens inside this transaction,
+    before the read, because `DISMISSED -> OPEN` puts settlement money back in
+    question. The module docblock says why. No provider call happens inside this transaction,
     so the bounded-exception rule that keeps the CLOSURE path lock-free has
     nothing to apply to here.
   */
