@@ -79,6 +79,9 @@ let censusStore: typeof import("@/lib/booking-ledger-projection-census-store");
 let census: typeof import("@/lib/booking-ledger-projection-census");
 let xeroHealth: typeof import("@/lib/xero-admin-health");
 let xeroRetry: typeof import("@/lib/xero-operation-retry");
+let paidTwice: typeof import("@/lib/card-refund-paid-twice");
+let lateCaptureCloses: typeof import("@/lib/late-capture-paid-another-way");
+let voidScan: typeof import("@/lib/bank-refund-void-scan");
 let legacyKey: (settlementId: string) => string;
 let CLUB_FORMAT_TEST: (typeof import("@/lib/__tests__/support/club-format-fixture"))["CLUB_FORMAT_TEST"];
 let realElapsedMs: (typeof import("@/lib/__tests__/helpers/clock"))["realElapsedMs"];
@@ -284,6 +287,28 @@ function stripeRefund(input: { id: string; intent: string; amount: number; key?:
       expect(gap).toMatchObject({ uncoveredCents: cents, paidAnotherWayUncoveredCents: cents });
     }
 
+    /**
+     * #5267: the readers a close keyed `now` could newly reach, each leaving a
+     * group close alone. The paid-back-twice list names no group row
+     * (`INV-PAY-153`'s limit). The repair tool's close findings are a late
+     * capture's, joined by its refund rows' keys, never the organiser's intent.
+     * The bank-refund void scan reads bank-transfer payments only, in its
+     * candidate list and again in its classifier, so a joiner's card payment
+     * whose bank note was voided in Xero is undone by nobody.
+     */
+    async function expectOtherReadersLeaveCloseAlone(group: Group, operationId: string, paymentIds: readonly string[]) {
+      expect((await paidTwice.listCardRefundsPaidTwice()).filter((row) => row.operationId === operationId)).toEqual([]);
+      expect([...(await lateCaptureCloses.readLateCaptureRefundsPaidAnotherWay([group.intent], prisma)).keys()]).toEqual([]);
+      for (const paymentId of paymentIds) {
+        const voided = await prisma.xeroObjectLink.create({ data: {
+          localModel: "Payment", localId: paymentId, xeroObjectType: "CREDIT_NOTE", xeroObjectId: `cn_${paymentId}_voided`,
+          role: "REFUND_CREDIT_NOTE", active: false, metadata: { status: "VOIDED" },
+        } });
+        expect(await voidScan.readVoidedBankRefundNoteLinkIds(prisma, { includeHandled: true })).not.toContain(voided.id);
+        expect((await voidScan.classifyVoidedBankRefundNote(prisma, voided.id))?.classification).toEqual({ kind: "not-in-scope" });
+      }
+    }
+
     const closeAudits = (operationId: string) =>
       prisma.auditLog.findMany({ where: { entityId: operationId, action: "booking-payment.card-refund.paid-another-way" } });
 
@@ -349,6 +374,9 @@ function stripeRefund(input: { id: string; intent: string; amount: number; key?:
       census = await import("@/lib/booking-ledger-projection-census");
       xeroHealth = await import("@/lib/xero-admin-health");
       xeroRetry = await import("@/lib/xero-operation-retry");
+      paidTwice = await import("@/lib/card-refund-paid-twice");
+      lateCaptureCloses = await import("@/lib/late-capture-paid-another-way");
+      voidScan = await import("@/lib/bank-refund-void-scan");
       ({ buildGroupSettlementRefundRecoveryIdempotencyKey: legacyKey } = await import("@/lib/payment-recovery-keys"));
       ({ CLUB_FORMAT_TEST } = await import("@/lib/__tests__/support/club-format-fixture"));
       ({ realElapsedMs } = await import("@/lib/__tests__/helpers/clock"));
@@ -465,6 +493,7 @@ function stripeRefund(input: { id: string; intent: string; amount: number; key?:
       });
       await expect(enqueueXeroSyncOperationRetry(failed.id)).rejects.toMatchObject({ status: 409 });
       expect(await noteRows(group.payments[0]!)).toEqual([expect.objectContaining({ id: failed.id, idempotencyKey: notes[0]!.idempotencyKey })]);
+      await expectOtherReadersLeaveCloseAlone(group, row.id, [group.payments[0]!]);
     });
 
     it("reverses a reopened joiner's existing card credit before crediting the bank refund", async () => {
@@ -662,6 +691,7 @@ function stripeRefund(input: { id: string; intent: string; amount: number; key?:
       await expect(groupClose.closeGroupCardRefundPaidAnotherWay(closeInput(row.id, total))).rejects.toMatchObject({ status: 409 });
       expect(await closeAudits(row.id)).toHaveLength(1);
       expect(await prisma.manualRefundTask.count({ where: { bookingId: { in: group.children } } })).toBe(2);
+      await expectOtherReadersLeaveCloseAlone(group, row.id, group.payments);
     });
   },
 );
