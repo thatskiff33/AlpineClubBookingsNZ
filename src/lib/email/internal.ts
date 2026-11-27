@@ -295,6 +295,7 @@ export const TAKEOVER_RETRIED_ALERT_TEMPLATES: ReadonlySet<string> = new Set([
   "admin-stripe-dispute",
   "admin-superseded-payment-refund",
   "admin-booking-confirmation-unsent",
+  "admin-booking-notice-unsent",
   "admin-waitlist-notice-unsent",
 ]);
 

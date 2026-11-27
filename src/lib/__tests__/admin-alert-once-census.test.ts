@@ -132,6 +132,7 @@ const TAKEOVER_SENDERS: Record<string, string[]> = {
   "src/lib/stripe-dispute.ts": ["sendAdminStripeDisputeAlert"],
   "src/lib/superseded-additional-refund.ts": ["sendAdminSupersededPaymentRefundAlert"],
   "src/lib/paid-booking-confirmation-notice.ts": ["sendAdminBookingConfirmationUnsentAlert"],
+  "src/lib/booking-notice-unsent-alert.ts": ["sendAdminBookingNoticeUnsentAlert"],
   "src/lib/waitlist-offer-notices.ts": ["sendAdminWaitlistNoticeUnsentAlert"],
 };
 
@@ -161,7 +162,12 @@ describe("#5298: the takeover-retried alert templates match the takeover callers
     for (const [file, senders] of Object.entries(TAKEOVER_SENDERS)) {
       const source = readProductionSources().get(file)!;
       for (const sender of senders) {
-        expect(source, `${file} calls ${sender}`).toMatch(new RegExp(`\\b${sender}\\s*\\(`));
+        // Only its takeover caller calls it: any other caller would not send it
+        // again, and the copy the sweep released to "its owner" would be lost.
+        expect(
+          callersNaming(new RegExp(`\\b${sender}\\s*\\(`)).filter((caller) => !caller.startsWith("src/lib/email/")),
+          `${sender} is sent only by its takeover caller`,
+        ).toEqual([file]);
         const templates = templatesSentBy(sender);
         expect(templates.length, `${sender} names its template`).toBeGreaterThan(0);
         for (const template of templates) sent.add(template);
