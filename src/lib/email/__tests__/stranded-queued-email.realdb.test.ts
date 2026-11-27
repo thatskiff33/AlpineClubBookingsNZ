@@ -86,6 +86,7 @@ const SUBJECT = `${P} notice`;
 // released to their owner rather than re-sent, and have a case of their own.
 const TEMPLATE = "admin-payment-failure";
 const CALLER_RETRIED_TEMPLATE = "admin-bank-transfer-settlement-figure";
+const TAKEOVER_TEMPLATE = "admin-superseded-payment-refund";
 const THIRTY_ONE_MINUTES = 31 * 60_000;
 const FIRST_CREATED = new Date(Date.UTC(2000, 0, 1));
 
@@ -274,6 +275,70 @@ let retryFailedEmails: (typeof import("@/lib/cron-email-retry"))["retryFailedEma
     expect(sendsTo(to)).toBe(1);
   });
 
+  /** Make the next `sendMail` hang until `finish` says how it ends: a hand-over that stalls. */
+  function stallNextSendMail() {
+    const stalled: { finish?: (outcome: "throws" | "returns") => void } = {};
+    transport.sendMail.mockImplementationOnce(
+      () =>
+        new Promise((resolve, reject) => {
+          stalled.finish = (outcome) =>
+            outcome === "throws" ? reject(new Error("race-5298 smtp timeout")) : resolve({ messageId: `${P}-late` });
+        }),
+    );
+    return stalled;
+  }
+
+  // #5496 re-review, small item 1: the post-claim guard. A sender that stalls in
+  // the hand-over itself past the threshold is flagged; its late SENT or FAILED
+  // write must leave the flag, so nothing sends it again.
+  it.each(["throws", "returns"] as const)("keeps the flag on a sender that stalled inside its hand-over past the threshold, whose send then %s", async (outcome) => {
+    const to = `stalled-send-${outcome}@${P}.test`;
+    const stalled = stallNextSendMail();
+    const sender = sendEmail({ to, subject: SUBJECT, html: "<p>Your payment failed</p>", templateName: TEMPLATE, bookingContext: "none" });
+    await vi.waitFor(() => expect(stalled.finish).toBeDefined(), { timeout: 30_000 });
+    const [row] = await prisma.emailLog.findMany({ where: { subject: SUBJECT, to } });
+    expect(row).toEqual(expect.objectContaining({ status: "QUEUED", handoverState: "STARTED" }));
+
+    moveClock(THIRTY_ONE_MINUTES);
+    await retryFailedEmails();
+    const flagged = await read(row!.id);
+    expect(flagged).toEqual(expect.objectContaining({ status: "FAILED", attempts: 3, handoverState: "UNCONFIRMED" }));
+
+    stalled.finish!(outcome);
+    if (outcome === "throws") await expect(sender).rejects.toThrow("race-5298 smtp timeout");
+    else await expect(sender).resolves.toMatchObject({ status: "sent" });
+    expect(await read(row!.id)).toEqual(flagged);
+
+    moveClock(THIRTY_ONE_MINUTES);
+    await retryFailedEmails();
+    expect(sendsTo(to)).toBe(1);
+  });
+
+  // The same for the retry job's own replay (`recordReplayFailure`): a replay
+  // that stalls past the threshold is flagged by the next run's sweep, and its
+  // late failure must not set its attempts back below the ceiling.
+  it("keeps the flag on a replay that stalled past the threshold and then failed", async () => {
+    const to = `stalled-replay@${P}.test`;
+    const row = await recorded(to, { status: "FAILED" });
+    const stalled = stallNextSendMail();
+    const firstRun = retryFailedEmails();
+    await vi.waitFor(() => expect(stalled.finish).toBeDefined(), { timeout: 30_000 });
+    expect(await read(row.id)).toEqual(expect.objectContaining({ status: "QUEUED", handoverState: "STARTED", attempts: 2 }));
+
+    moveClock(THIRTY_ONE_MINUTES);
+    await retryFailedEmails();
+    const flagged = await read(row.id);
+    expect(flagged).toEqual(expect.objectContaining({ status: "FAILED", attempts: 3, handoverState: "UNCONFIRMED" }));
+
+    stalled.finish!("throws");
+    await firstRun;
+    expect(await read(row.id)).toEqual(flagged);
+
+    moveClock(THIRTY_ONE_MINUTES);
+    await retryFailedEmails();
+    expect(sendsTo(to)).toBe(1);
+  });
+
   it("settles a row once when two sweeps race for it", async () => {
     const to = `two-sweeps@${P}.test`;
     const row = await recorded(to);
@@ -290,9 +355,14 @@ let retryFailedEmails: (typeof import("@/lib/cron-email-retry"))["retryFailedEma
     expect(sendsTo(to)).toBe(1);
   });
 
-  // #5496 review, item 2: the alert's owner sends it again when nobody got it.
-  it("releases a never-handed-over caller-retried alert to its owner and sends it to nobody", async () => {
-    const owned = await recorded(`owned@${P}.test`, { templateName: CALLER_RETRIED_TEMPLATE });
+  // #5496 review, item 2, and the takeover alerts (re-review): the alert's owner
+  // sends it again when nobody got it - a caller-retried alert by its owner's
+  // retry, a takeover alert by taking its held claim over - so the sweep must not.
+  it.each([
+    ["a caller-retried alert", CALLER_RETRIED_TEMPLATE],
+    ["a takeover alert", TAKEOVER_TEMPLATE],
+  ])("releases %s never handed over to its owner and sends it to nobody", async (_label, templateName) => {
+    const owned = await recorded(`owned-${templateName}@${P}.test`, { templateName });
 
     await retryFailedEmails();
     moveClock(THIRTY_ONE_MINUTES);
