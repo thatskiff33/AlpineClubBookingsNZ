@@ -189,7 +189,7 @@ This file holds only the rules.
 - **A password proof writes the stamp only when no authenticator factor is
   still owed.** An email factor does not count as owed, so that password step
   writes it and the later emailed code does not. An authenticator-app consume
-  writes it, including enrolment. An emailed link, Google, a recovery code,
+  writes it, including enrolment, and so does a passkey sign-in. An emailed link, Google, a recovery code,
   and an emailed code do not, and none of them clears a stamp already there.
   The `jwt` callback in [`auth.ts`](../../src/lib/auth.ts) decides this from
   server-side facts: the credentials provider, the member row after reload,
