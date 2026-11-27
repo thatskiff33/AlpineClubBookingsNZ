@@ -12,7 +12,8 @@ import {
 import type { PaidAnotherWayXeroNote } from "@/lib/manual-refund-task-settlement-rules";
 import { lateCaptureIntentOfCardRefundOperation } from "@/lib/late-capture-paid-another-way";
 import { cardRefundSliceFailedRefundIds, parseRefundAllocationPlan } from "@/lib/open-card-refund-owed";
-import { cardRefundFailedLaterRefundId } from "@/lib/payment-recovery-keys";
+import { organiserChildRefundWasReopened } from "@/lib/organiser-child-refund";
+import { cardRefundFailedLaterRefundId, isOrganiserChildRefundKey } from "@/lib/payment-recovery-keys";
 import { readRefundNoteCoverageAboveCashCents } from "@/lib/refund-note-coverage-above-cash";
 import {
   enqueueXeroKeptLateCaptureInvoiceOperation,
@@ -222,9 +223,17 @@ async function paidAnotherWayXeroRoute(
 /** What `failedLaterCardNoteCoverCents` reads of the row being closed. */
 type CardNoteCoverOperation = { idempotencyKey: string; amountCents: number; allocationPlan?: Prisma.JsonValue };
 
-/** The cents a row owes for refunds Stripe failed later: all of a failed-later row, or the slices recording one. */
+/**
+ * The cents a row owes for refunds Stripe failed later: all of a failed-later
+ * row, or the slices recording one. #5267: all of a joiner's refund out of the
+ * organiser's card that the cron reopened after Stripe failed the refund it had
+ * recorded (`organiserChildRefundWasReopened`) - its card note went to the
+ * joiner's invoice while the refund counted.
+ */
 function failedRefundCentsOf(operation: CardNoteCoverOperation): number {
-  return cardRefundFailedLaterRefundId(operation.idempotencyKey) !== null
+  const reopenedJoinerRefund =
+    isOrganiserChildRefundKey(operation.idempotencyKey) && organiserChildRefundWasReopened(operation.allocationPlan ?? null);
+  return cardRefundFailedLaterRefundId(operation.idempotencyKey) !== null || reopenedJoinerRefund
     ? operation.amountCents
     : (parseRefundAllocationPlan(operation.allocationPlan ?? null) ?? [])
         // Every slice that recorded one, made again since or not - unlike
