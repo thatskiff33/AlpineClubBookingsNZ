@@ -843,7 +843,7 @@ describe("#4851: a dead refund out of the group organiser's card", () => {
     expect(mocks.toastSuccess).toHaveBeenCalledWith(`The bank payment is recorded. Its Xero refund credit note, worded "${BANK_NOTE_WORDING}", is queued.`);
   });
 
-  it("an old whole-group close whose joiners are not all in Xero says which were credited", async () => {
+  it("an old whole-group close whose joiners are not all in Xero says the rest need checking", async () => {
     openDialog(row({ settleKind: "legacy-group", wholeAmountOnly: true, xeroRefundNote: "some-joiners", tryCardAgainRefusal: LEGACY_GROUP_CARD_REFUND_TRY_AGAIN_REFUSAL }));
     expect(screen.getByRole("dialog")).toHaveTextContent("Some joiners have no Xero invoice; no note is queued for them.");
     fireEvent.click(fullChoice());
@@ -852,7 +852,7 @@ describe("#4851: a dead refund out of the group organiser's card", () => {
     fireEvent.click(closeButton());
     await waitFor(() => expect(mocks.toastSuccess).toHaveBeenCalled());
     const said = String(mocks.toastSuccess.mock.calls[0]?.[0]);
-    expect(said).toContain(`A Xero refund credit note, worded "${BANK_NOTE_WORDING}", is queued on the invoice of each joiner whose booking has one.`);
+    expect(said).toContain(`A Xero refund credit note, worded "${BANK_NOTE_WORDING}", is queued on some joiners' invoices. None was queued for the others`);
     expect(said).not.toMatch(/emailed/);
   });
 

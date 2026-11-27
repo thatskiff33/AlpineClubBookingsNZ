@@ -312,16 +312,18 @@ async function perJoinerSettlement(paymentId: string, bookingId: string): Promis
 
 type Locked = Awaited<ReturnType<typeof lockDeadCardRefundRow>>;
 
-/** #5267: what a bank close's audit summary says it queued in Xero. */
+/**
+ * #5267: what a bank close's audit summary says it queued in Xero. A joiner
+ * with no note may have no invoice, or its note may have been refused at the
+ * queue, so the summary says no note was queued, never why.
+ */
 function bankCloseXeroSentence(kind: "organiser-child" | "legacy-group", queued: GroupCardRefundXeroQueued): string {
   const whose = kind === "organiser-child" ? "the joiner's invoice" : "each joiner's invoice";
   if (queued === "refund-note") return `A Xero refund credit note worded as a bank transfer is queued on ${whose}.`;
   if (queued === "some-refund-notes") {
-    return "A Xero refund credit note worded as a bank transfer is queued on the invoice of each joiner whose booking has one; the others have no Xero invoice to credit.";
+    return "A Xero refund credit note worded as a bank transfer is queued on some joiners' invoices; none was queued for the others, so check their refunds are recorded in Xero.";
   }
-  return kind === "organiser-child"
-    ? "The joiner's booking has no Xero invoice to credit, so no Xero refund credit note was queued."
-    : "No joiner's booking has a Xero invoice to credit, so no Xero refund credit note was queued.";
+  return "No Xero refund credit note was queued: check the refund is recorded in Xero.";
 }
 
 /** The audit row's summary for each outcome of the close. */

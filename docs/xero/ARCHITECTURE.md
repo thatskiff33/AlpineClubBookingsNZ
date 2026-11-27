@@ -3310,7 +3310,10 @@ Stated limits:
   whole-group refund one per joiner (`:child:<booking>`), whose notes add up to
   the bank refund. A joiner with no invoice in Xero gets none, as any close.
   No officer is emailed. Closes made before this release were left to an
-  officer by hand, and nothing raises their notes now.
+  officer by hand, and no code revisits them. An old whole-group close from
+  then wrote no record, so the nightly check can read its bank money as card
+  cash and raise a card note beside the officer's: the release note asks
+  officers to check and void one.
 - **A re-send whose final attempt loses its answer after `charge.refunded`
   left it to that attempt is noted by nobody.** The webhook defers to a row
   still mid-attempt; when that attempt's answer is lost (a timeout, a crash the

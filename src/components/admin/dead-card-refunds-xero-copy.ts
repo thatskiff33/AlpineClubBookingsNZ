@@ -77,11 +77,12 @@ export function xeroQueuedMessage(xeroQueued: PaidAnotherWayXeroQueued | undefin
 /**
  * #5267: what the message after a group card refund's bank close says it
  * queued in Xero - each joiner's own note, worded as any close's - and, for an
- * old whole-group refund whose joiners are not all in Xero, which were not.
+ * old whole-group refund where only some joiners got a note, that the rest
+ * need checking in Xero.
  */
 export function groupXeroQueuedMessage(xeroQueued: GroupCardRefundXeroQueued | undefined, bankNoteWording: string): string {
   if (xeroQueued === "some-refund-notes") {
-    return `A Xero refund credit note, worded "${bankNoteWording}", is queued on the invoice of each joiner whose booking has one. The others have no Xero invoice to credit: check Xero, and record their refunds there by hand if they need one.`;
+    return `A Xero refund credit note, worded "${bankNoteWording}", is queued on some joiners' invoices. None was queued for the others, for example because their booking has no Xero invoice: check their refunds are recorded in Xero.`;
   }
   return xeroQueuedMessage(xeroQueued, bankNoteWording);
 }
