@@ -31,7 +31,7 @@ import {
 import { computeAgeTier, getSeasonStartDate } from "@/lib/age-tier";
 import { dateOnlyInstantOf } from "@/lib/club-time";
 import { clubTime } from "@/lib/club-time/server";
-import { clubSeasonYear } from "@/lib/financial-year";
+import { clubCurrentSeasonYear as resolveClubCurrentSeasonYear } from "@/lib/financial-year-server";
 import {
   AdminAccountGuardError,
   LAST_FULL_ADMIN_BULK_GUARD_MESSAGE,
@@ -313,8 +313,10 @@ export async function POST(req: NextRequest) {
       const today = dateOnlyInstantOf((await clubTime()).today());
       // ONE season for the whole batch, from the club's PERSISTED zone (CT-4,
       // #2870). Read once outside the loop: an age tier decides a price band, so
-      // a bulk run must never be able to judge two members in two seasons.
-      const clubCurrentSeasonYear = clubSeasonYear((await clubTime()).zone);
+      // a bulk run must never be able to judge two members in two seasons. The
+      // club's resolved year-end, not the process cache (#5259), and before the
+      // transaction below: with no override it may read Xero.
+      const clubCurrentSeasonYear = await resolveClubCurrentSeasonYear((await clubTime()).zone);
       const clubCurrentSeasonStart = getSeasonStartDate(clubCurrentSeasonYear);
       for (const { member, nextAccessRoles } of setRoleTargets) {
         const wasOrg = isOrganisationMember({

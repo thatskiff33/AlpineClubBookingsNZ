@@ -1,6 +1,7 @@
 "use client"
 import { fetchWithRecentAuth } from "@/components/confirm-its-you"
 
+import { useRouter } from "next/navigation"
 import { useCallback, useEffect, useState } from "react"
 import { useActionFailure } from "@/hooks/use-action-failure"
 import { revealEditor } from "@/hooks/use-scroll-to-feedback"
@@ -8,6 +9,7 @@ import { toSafeXeroOAuthCallbackMessage } from "@/lib/xero-oauth-callback-messag
 import { SECTION_DEFAULTS, SECTION_STORAGE_KEY, xeroSectionId, type SectionKey, type XeroStatus } from "../_components/types"
 
 export function useXeroConnection() {
+  const router = useRouter()
   const [status, setStatus] = useState<XeroStatus | null>(null)
   const [loading, setLoading] = useState(true)
   // `error` is what the page found on arrival — a failed status read or the
@@ -62,10 +64,14 @@ export function useXeroConnection() {
       const res = await fetchWithRecentAuth("/api/admin/xero/disconnect", { method: "POST" })
       if (!res.ok) throw new Error("Failed to disconnect")
       setStatus({ connected: false, needsReentry: false, tenantId: null, tokenExpiresAt: null })
+      // With no override, the club's year-end came from Xero (#5259 review):
+      // re-render the kept admin layout so its season provider resolves afresh.
+      // Connecting needs no refresh: it leaves the page for Xero and comes back.
+      router.refresh()
     } catch {
       failDisconnect("Failed to disconnect Xero")
     }
-  }, [clearDisconnectError, failDisconnect])
+  }, [clearDisconnectError, failDisconnect, router])
 
   useEffect(() => {
     void fetchStatus()

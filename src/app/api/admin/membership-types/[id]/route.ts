@@ -23,7 +23,7 @@ import {
 import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/session-guards";
 import { clubTimeZone } from "@/lib/club-time/server";
-import { clubSeasonYear } from "@/lib/financial-year";
+import { clubCurrentSeasonYear } from "@/lib/financial-year-server";
 import { membershipTypePatchSchema } from "@/lib/admin-membership-api/config-structure";
 import { connectionJson } from "@/lib/mcp-connection-request";
 import { CONFIG_OK_CONNECTION_SHAPE, MEMBERSHIP_TYPE_CONNECTION_SHAPE } from "@/lib/connection-shapes/membership-config";
@@ -245,16 +245,21 @@ export async function PATCH(
   // only serialises the type-config write); that surface is admin-only and
   // self-heals at the enforcement sites, so a briefly-inconsistent tier is
   // corrected on the next member/assignment write rather than persisted silently.
+  // Resolved once, outside the transaction the check also runs in (#5259).
+  const forcedEditFromSeasonYear =
+    parsed.data.allowedAgeTiers === undefined
+      ? null
+      : await clubCurrentSeasonYear(await clubTimeZone());
   const buildForcedEditOffendingTiers = async (
     db: Pick<Prisma.TransactionClient, "seasonalMembershipAssignment">,
   ): Promise<AgeTier[]> => {
-    if (parsed.data.allowedAgeTiers === undefined) {
+    if (forcedEditFromSeasonYear === null) {
       return [];
     }
     const affectedAssignments = await db.seasonalMembershipAssignment.findMany({
       where: {
         membershipTypeId: existing.id,
-        seasonYear: { gte: clubSeasonYear(await clubTimeZone()) },
+        seasonYear: { gte: forcedEditFromSeasonYear },
       },
       select: {
         member: {

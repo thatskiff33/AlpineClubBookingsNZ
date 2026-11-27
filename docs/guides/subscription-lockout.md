@@ -147,7 +147,9 @@ later edit re-prices the rest of the stay.
 1. In **Financial year**, leave **Financial year-end month** on **Follow Xero**
    unless your membership year differs from your accounting year. Choosing an
    explicit month changes how every subscription season is calculated (existing
-   records are not migrated).
+   records are not migrated). The season pickers and season names on the admin
+   screens and the member profile follow it too: with a June year-end, 15 June
+   2026 is in the season shown as "2025 - 2026 (Jul-Jun)".
 
 ### Configure paid-subscription detection (finance)
 
