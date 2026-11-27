@@ -342,7 +342,8 @@ describe("admin failed-response JSON reads (#4976, ALP-589)", () => {
     expect(
       over,
       "read a failed response through apiErrorMessageFromResponse (or " +
-        "readApiErrorBody) from src/lib/api-error-message.ts, never a bare " +
+        "readApiErrorBody) from src/lib/api-error-message.ts, or a refused " +
+        "write through saveRefusalFromResponse, never a bare " +
         "`await res.json()`: an HTML error page from the proxy throws a JSON " +
         "parse error the officer then reads as the refusal",
     ).toEqual([]);

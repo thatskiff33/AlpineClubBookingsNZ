@@ -64,9 +64,7 @@ import { useAdminQueuePage } from "@/components/admin/use-admin-queue-page";
 
 // Keyed by the shared filter list (#5247), so a filter the queue route accepts
 // cannot reach the toolbar without a label: a new one fails typecheck here.
-/** Shown for a failed queue load the route did not word (#5323). */
 const LOAD_FALLBACK = "Failed to load exception requests";
-
 const STATUS_FILTER_LABELS: Record<ExceptionQueueStatusFilter, string> = {
   REQUESTED: "Requested",
   APPROVED: "Approved",
@@ -368,7 +366,6 @@ export function PolicyExceptionRequestsPanel({
     );
     try {
       const response = await fetch(`/api/admin/booking-exception-requests/${id}`);
-      // A failed read only marks the party "error"; its body is never shown.
       if (!response.ok) throw new Error("Failed to load the proposal");
       const data = await response.json();
       setPartyById((current) => ({

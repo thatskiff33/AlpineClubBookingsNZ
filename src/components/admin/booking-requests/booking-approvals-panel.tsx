@@ -39,9 +39,7 @@ import { notifyAdminQueueChanged } from "@/lib/admin-queue-events";
 
 type ReviewFilter = "PENDING" | "APPROVED" | "REJECTED" | "ALL";
 
-/** Shown for a failed queue load the route did not word (#5323). */
 const LOAD_FALLBACK = "Failed to load booking reviews";
-
 const reviewFilters = new Set<ReviewFilter>(["PENDING", "APPROVED", "REJECTED", "ALL"]);
 
 function isReviewFilter(value: string | null): value is ReviewFilter {

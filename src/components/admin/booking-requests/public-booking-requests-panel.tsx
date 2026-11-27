@@ -74,9 +74,7 @@ import {
 import { notifyAdminQueueChanged } from "@/lib/admin-queue-events";
 import { FILTER_LABELS } from "./public-booking-request-filters";
 
-/** Shown for a failed queue load the route did not word (#5323). */
 const LOAD_FALLBACK = "Failed to load booking requests";
-
 const SCHOOL_CHILD_TIER_LABELS: Record<SchoolChildTier, string> = {
   INFANT: "Infants",
   CHILD: "Children",
