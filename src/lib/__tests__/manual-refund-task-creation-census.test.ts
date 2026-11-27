@@ -19,7 +19,8 @@ import { CENSUS_TIMEOUT_MS } from "@/test/census-timeout";
  * - `not a debt`: the task records no member-money refund debt, or one a later milestone owns.
  *
  * Re-counted on main after #4998 merged (#5185): sixteen sites under `src/`, as #4516's plan counted, though one
- * of them is new since (`card-refund-group-paid-another-way.ts`, #4851) and is not a debt; plus the demo seed.
+ * of them is new since (#4851's group close, written by `card-refund-group-paid-another-way-xero.ts` since #5267) and
+ * is not a debt; plus the demo seed.
  */
 type Entry =
   | { class: "posts R05"; reason: string }
@@ -45,7 +46,8 @@ const SITES: Record<string, Entry> = {
     ],
     reason: "a late capture held for the treasurer: approving it posts the capture-return R05, keeping it closes that R05 and posts the keep (kept-capture)",
   },
-  "src/lib/card-refund-group-paid-another-way.ts|closePerJoiner|create|1": { class: "not a debt", reason: "an organiser child's card refund closed by bank: organiser shares are M6's, so no R14" },
+  // #5267: both group kinds' bank close records, per-joiner and one per joiner of an old whole-group refund, are written here.
+  "src/lib/card-refund-group-paid-another-way-xero.ts|recordGroupCardRefundBankClose|create|1": { class: "not a debt", reason: "an organiser child's card refund closed by bank: organiser shares are M6's, so no R14" },
   "src/lib/edit-financial-review.ts|raiseEditFinancialReviewTask|create|1": { class: "not a debt", reason: "an edit financial review: its closure posts R21, or R05 scope review when closed by hand" },
   "src/lib/internet-banking-part-payment-at-cancel.ts|raisePartPaymentReviewTask|create|1": { class: "not a debt", reason: "a part-payment review records money settled in Xero, never an amount owed back" },
   "src/lib/deleted-booking-modification-payment.ts|raiseDeletedBookingModificationRefundTask|create|1": { class: "not a debt", reason: "#2700's change payment captured on a deleted booking: a late capture's own question" },
