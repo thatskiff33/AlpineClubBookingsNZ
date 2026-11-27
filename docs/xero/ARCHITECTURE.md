@@ -1619,23 +1619,31 @@ landing after a void put the refund back. Now:
   voided account-credit link stays as active as it was before #4347;
 - every writer that records the note's Xero status stamps `providerUpdatedAt`:
   the inbound reconcile, and the outbound create (`createUnappliedXeroCreditNote`),
-  which records the status and `UpdatedDateUTC` Xero answered its create with,
-  but no amounts, so what the link counts still arrives with the first inbound
-  reading, as before. The other writers record no
+  which records Xero's whole answer to its create (status, amounts and
+  `UpdatedDateUTC`) when that answer carries a timestamp, and stays status-less
+  when it does not. Recording the amounts matters: an inbound reading of the same
+  snapshot may have landed first, and an equal-stamped write that named only a
+  status would null its figures. The other writers record no
   reading and keep the stored stamp: the #4712 link repair only turns `active`
   off, and the booking repair's link backfill and the outbox's "already linked"
   completion write no status. A modification's account-credit note keeps its
   status-less link (out of scope);
 - the recount counts the note being synced from each payment's own rows as they
-  stand now, its refund-note row and its account-credit row, and only while
-  every such row is active and live (the amount from the refund-note row first);
-  it decides under the Payment row lock as above;
+  stand now, its refund-note row and its account-credit row
+  (`countedNoteRowsCount`): the first row (the refund-note row when there is one)
+  must be active, and no row may be VOIDED/DELETED, so an account-credit row
+  beside a refund-note row vetoes only by its status. The amount comes from the
+  first row. It decides under the Payment row lock as above;
 - a reading the note's account-credit row refuses (`readingIsCurrent`, the
   #4447 test: any stored snapshot would keep itself over the reading) does not
   stamp the member's cancellation credit, is not mirrored as outside spend
-  (#4270), and posts no allocation to the member's ledger: the allocation repair
-  re-checks it after taking the member's credit lock. A note with no
-  account-credit row keeps its behaviour from before #4347.
+  (#4270), and posts no allocation to the member's ledger. The mirror and the
+  allocation repair re-check it after taking the member's credit lock, so a void
+  committing after the reconcile's own check still stops them. The stamp is
+  checked once, without that lock: it records which note funds a credit, never
+  an amount, and a void landing just after it is the ordinary "stamped, then
+  voided" order. A note with no account-credit row keeps its behaviour from
+  before #4347.
 
 Stated limits: a Xero reading with no `UpdatedDateUTC`, and a link written
 before the stamp existed, order only by "a stored void wins"; no timestamp is

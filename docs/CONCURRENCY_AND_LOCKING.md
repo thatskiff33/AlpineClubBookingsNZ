@@ -9026,8 +9026,10 @@ Transaction boundaries, traced on `main` after #5231 and #5302 (#4279):
 - the inbound reconcile writes each link in its own `upsertXeroObjectLink`
   transaction, which commits before the recount starts. The recount's locked
   decision then takes the Payment row and plain-reads both roles' rows of the
-  note; the allocation repair, later, takes the member's credit key
-  (`lockMemberCreditLedger`) and plain-reads the note's account-credit rows. No
+  note; the allocation repair and the outside-spend mirror (#4270), later, each
+  take the member's credit key (`lockMemberCreditLedger`) and plain-read the
+  note's account-credit rows under it (the mirror through its
+  `readingIsCurrent` dependency). No
   transaction holds the account-credit row while it waits on Payment or the
   member key, so the order is link, commit, then Payment or member
   (`INV-LOCK-002`);

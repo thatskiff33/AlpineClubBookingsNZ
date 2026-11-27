@@ -38,7 +38,7 @@ reason: the same completion link literal, inside this function, which was
   already over its limit before this change.
 
 function: src/lib/xero-inbound/credit-note.ts#reconcileXeroCreditNote
-lines: 530
+lines: 529
 reason: the stamp and mirror gates must read the account-credit row after this
   function's own link writes and before its stamp and mirror calls; splitting
   the reconcile is a refactor of its own, not part of this fix.

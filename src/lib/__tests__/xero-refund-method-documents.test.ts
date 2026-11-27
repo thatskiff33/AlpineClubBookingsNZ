@@ -575,6 +575,41 @@ describe("the account-credit note (createUnappliedXeroCreditNote)", () => {
       "Account Credit - Booking cmbookin - booking change cmmodifi",
     );
   });
+
+  // #4347 (`INV-ADDPAY-041`): the payment's account-credit link records Xero's whole answer to the
+  // create - status, amounts and UpdatedDateUTC - so the funnel orders it against inbound readings,
+  // and an equal-stamped write never nulls figures an inbound reading already stored.
+  const answer = (extra: Record<string, unknown>) =>
+    mocks.retryXeroWriteWithContactRepair.mockImplementation(async (options: { buildRequestPayload: (id: string) => unknown }) => {
+      options.buildRequestPayload("contact_1");
+      return { body: { creditNotes: [{ creditNoteID: "cn_1", creditNoteNumber: "CN-0001", ...extra }] } };
+    });
+  const accountLink = () => (completion().extraLinks as Array<Record<string, unknown>>)[0];
+
+  it("MUTATION (#4347): stamps the payment's account-credit link with Xero's answer, amounts included", async () => {
+    mocks.paymentFindUnique.mockResolvedValue(paymentRow(PaymentSource.INTERNET_BANKING));
+    answer({ status: "AUTHORISED", total: 50, appliedAmount: 0, remainingCredit: 50, updatedDateUTC: new Date("2026-06-30T11:00:00.000Z") });
+
+    await createUnappliedXeroCreditNote(PAYMENT_ID, 5000, CLUB_FORMAT_TEST);
+
+    expect(accountLink()).toMatchObject({
+      role: "ACCOUNT_CREDIT_NOTE",
+      mergeMetadata: true,
+      metadata: { status: "AUTHORISED", total: 50, appliedAmount: 0, remainingCredit: 50, providerUpdatedAt: "2026-06-30T11:00:00.000Z" },
+    });
+  });
+
+  it("#4347: writes no metadata when Xero's answer has no UpdatedDateUTC, or for a booking change's note", async () => {
+    mocks.paymentFindUnique.mockResolvedValue(paymentRow(PaymentSource.INTERNET_BANKING));
+    answer({ status: "AUTHORISED", total: 50 });
+    await createUnappliedXeroCreditNote(PAYMENT_ID, 5000, CLUB_FORMAT_TEST);
+    expect(accountLink()).not.toHaveProperty("metadata");
+
+    answer({ status: "AUTHORISED", total: 50, updatedDateUTC: new Date("2026-06-30T11:00:00.000Z") });
+    await createUnappliedXeroCreditNote(PAYMENT_ID, 5000, CLUB_FORMAT_TEST, { bookingModificationId: "cmmodification01" });
+    expect(accountLink()).toMatchObject({ role: "MODIFICATION_ACCOUNT_CREDIT_NOTE" });
+    expect(accountLink()).not.toHaveProperty("metadata");
+  });
 });
 
 describe("#4685 (PR #4706 review): the account-credit note's executed payload keeps the credit it names", () => {

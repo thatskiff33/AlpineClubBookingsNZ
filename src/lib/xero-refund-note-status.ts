@@ -115,22 +115,19 @@ export function isRefundNoteLinkOf(
   return isPaymentNoteLinkOf(link, role);
 }
 
-function isPaymentNoteLinkOf(link: { localModel: string; xeroObjectType: string; role: string }, role: JudgedNoteLinkRole): boolean {
-  return link.localModel === REFUND_CREDIT_NOTE_LINK_WHERE.localModel && link.xeroObjectType === REFUND_CREDIT_NOTE_LINK_WHERE.xeroObjectType && link.role === role;
-}
+const isPaymentNoteLinkOf = (link: { localModel: string; xeroObjectType: string; role: string }, role: JudgedNoteLinkRole): boolean =>
+  link.localModel === REFUND_CREDIT_NOTE_LINK_WHERE.localModel && link.xeroObjectType === REFUND_CREDIT_NOTE_LINK_WHERE.xeroObjectType && link.role === role;
 
 /**
- * #4347 (`INV-ADDPAY-041`): a payment's account-credit note link. Its writes are
- * judged like a refund note's (`keepStoredRefundNoteVoid`), but it is never one
- * of `REFUND_NOTE_LINK_ROLES`: no canonical pointer, no sibling retirement, and
- * a kept write leaves its `active` flag as the row holds it.
+ * #4347 (`INV-ADDPAY-041`): a payment's account-credit note link, judged like a refund note's
+ * (`keepStoredRefundNoteVoid`) but never one of `REFUND_NOTE_LINK_ROLES`: no pointer, no
+ * sibling retirement, and a kept write leaves its `active` flag as the row holds it.
  */
 export function isAccountCreditNoteLinkOf(link: { localModel: string; xeroObjectType: string; role: string }): boolean {
   return isPaymentNoteLinkOf(link, ACCOUNT_CREDIT_NOTE_ROLE);
 }
 
-/** #4347: the Payment note-link roles whose recorded snapshot is judged and read fresh: the refund-note roles and the account-credit role. */
-type JudgedNoteLinkRole = (typeof REFUND_NOTE_LINK_ROLES)[number] | typeof ACCOUNT_CREDIT_NOTE_ROLE;
+type JudgedNoteLinkRole = (typeof REFUND_NOTE_LINK_ROLES)[number] | typeof ACCOUNT_CREDIT_NOTE_ROLE; // #4347: the Payment note roles judged and read fresh
 
 /**
  * The refund-note links of one payment (or several), active or not: the one
@@ -446,8 +443,7 @@ export async function keepStoredRefundNoteVoid<L extends {
   });
   const verdict = judgeRefundNoteWrite(link.metadata, stored?.metadata);
   if (verdict === "apply") return link;
-  // #4347: a kept write to an account-credit link leaves its active flag as the
-  // row holds it; the outbox's "already linked" check reads that flag.
+  // #4347: a kept account-credit write keeps the row's active flag (the outbox's "already linked" check reads it).
   const keepsStoredActive = isAccountCreditNoteLinkOf(link);
   if (verdict === "keep-stored-status") {
     // Preserve the stored figures and provenance even when the retry has some
