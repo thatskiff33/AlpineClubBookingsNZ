@@ -4,7 +4,7 @@ import type { CreditRowLinks } from "@/lib/admin-credit-deduction-reserve";
 import { lockMemberCreditLedger } from "@/lib/member-credit";
 import { MemberCreditValidationError } from "@/lib/policies/member-credit";
 import { assertXeroCreditNoteCorrectionUntouched } from "@/lib/xero-credit-note-correction";
-import { adminCreditDeductionReference, XERO_OUTBOX_ADMIN_CREDIT_DEDUCTION_CORRECTION_TYPE } from "@/lib/admin-credit-deduction-payload";
+import { adminCreditDeductionOperationWhere, adminCreditDeductionReference } from "@/lib/admin-credit-deduction-payload";
 import { createAuditLog } from "@/lib/audit";
 
 const RETRY = "This correction may already have changed Xero. Retry it; its reserved credit cannot be restored.";
@@ -27,9 +27,7 @@ export async function cancelAdminCreditDeductionCorrection(input: {
   }
   await prisma.$transaction(async (tx) => {
     await lockMemberCreditLedger(input.memberId, tx);
-    const operation = await tx.xeroSyncOperation.findFirst({
-      where: { localModel: "AdminCreditDeductionCorrection", localId: correction.id, queueType: XERO_OUTBOX_ADMIN_CREDIT_DEDUCTION_CORRECTION_TYPE },
-    });
+    const operation = await tx.xeroSyncOperation.findFirst({ where: adminCreditDeductionOperationWhere(correction.id) });
     if (!operation) throw new MemberCreditValidationError("Credit correction operation not found");
     const claim = await tx.xeroSyncOperation.updateMany({
       where: { id: operation.id, status: { in: ["PENDING", "FAILED"] } },

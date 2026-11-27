@@ -22,9 +22,10 @@ export const GRANT_ACCOUNT_MISSING_MESSAGE =
   "This request was made before an account was chosen; reject it and ask for a new one.";
 
 /**
- * A deduction against credit that already has a Xero note, or is waiting for
- * the note queued at approval. Taking the balance down would leave that note
- * at its full amount.
+ * An opening-credit reversal against credit that already has a Xero note, or is
+ * waiting for the note queued at approval. Taking the balance down would leave
+ * that note at its full amount. An officer's deduction corrects the note
+ * instead (#5241).
  */
 export const NOTED_CREDIT_DEDUCTION_MESSAGE =
   "This deduction cannot be approved while the member has credit that already has a Xero credit note, because the note would stay at its full amount; reject the request.";

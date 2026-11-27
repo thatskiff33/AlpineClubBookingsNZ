@@ -2,11 +2,11 @@ import { prisma } from "@/lib/prisma";
 import { lockMemberCreditLedger } from "@/lib/member-credit";
 import { correctXeroCreditNote } from "@/lib/xero-credit-note-correction";
 import { adminCreditDeductionReference, type AdminCreditDeductionPayload } from "@/lib/admin-credit-deduction-payload";
+import { creditDeductedDisclosureText } from "@/lib/admin-credit-deduction-reserve";
 import { ownRunningClaim, type XeroOperationClaim } from "@/lib/xero-operation-outcome-guard";
 import { completeXeroSyncOperation, failXeroSyncOperation, upsertXeroObjectLink } from "@/lib/xero-sync";
 import { createAuditLog } from "@/lib/audit";
 import { clubFormatValues } from "@/lib/club-format-server";
-import { formatCents } from "@/lib/utils";
 import { getXeroErrorStatusCode } from "@/lib/xero-error-shape";
 
 /**
@@ -86,7 +86,7 @@ export async function completeAdminCreditDeductionCorrection(input: {
           entityType: "AdminCreditAdjustmentRequest", entityId: correction.requestId,
           targetId: correction.memberId, memberId: correction.request.reviewedById ?? undefined,
           details: "Approved credit deduction completed in Xero.",
-          memberDisclosure: { visibility: "member-facing", text: `Credit of ${formatCents(Math.abs(correction.request.amountCents), format)} deducted from your account. Reason: ${correction.request.description}` },
+          memberDisclosure: { visibility: "member-facing", text: creditDeductedDisclosureText(correction.request, format) },
         }, tx);
       }
       return completeXeroSyncOperation(syncOperation, {}, { store: tx });

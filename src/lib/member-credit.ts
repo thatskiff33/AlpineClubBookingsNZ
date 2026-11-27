@@ -42,7 +42,7 @@ import {
   validateCreditApplicationAgainstBalance,
   validateNegativeAdjustmentAgainstBalance,
 } from "@/lib/policies/member-credit";
-import { auditQueuedDeductionApproval, reserveNotedCreditDeduction } from "@/lib/admin-credit-deduction-reserve";
+import { auditQueuedDeductionApproval, creditDeductedDisclosureText, reserveNotedCreditDeduction } from "@/lib/admin-credit-deduction-reserve";
 import { cancellationCreditDescription } from "@/lib/cancellation-settled-money";
 
 const MEMBER_CREDIT_LOCK_NAMESPACE = "member-credit-ledger";
@@ -1174,13 +1174,13 @@ export async function reviewAdminAdjustmentRequest(
           text:
             request.amountCents >= 0
               ? `Credit of ${formatCents(request.amountCents, format)} added to your account. Reason: ${request.description}`
-              : `Credit of ${formatCents(Math.abs(request.amountCents), format)} deducted from your account. Reason: ${request.description}`,
+              : creditDeductedDisclosureText(request, format),
         },
         ipAddress,
       },
       tx
     );
-    // #5241: the member is told once Xero agrees, by the correction's completion.
+    // #5241: the member's timeline entry is written once Xero agrees, by the correction's completion.
     else await auditQueuedDeductionApproval(tx, { request, adminId, creditId: credit.id, amount: formatAdjustmentAmount(request.amountCents, format), ipAddress });
 
     return {

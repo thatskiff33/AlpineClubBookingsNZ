@@ -14,6 +14,10 @@ export function readAdminCreditDeductionPayload(value: unknown): AdminCreditDedu
   return row?.queueType === XERO_OUTBOX_ADMIN_CREDIT_DEDUCTION_CORRECTION_TYPE && correctionId
     ? buildAdminCreditDeductionPayload({ correctionId }) : null;
 }
+/** The one outbox operation that corrects Xero for this deduction. */
+export function adminCreditDeductionOperationWhere(correctionId: string) {
+  return { localModel: "AdminCreditDeductionCorrection", localId: correctionId, queueType: XERO_OUTBOX_ADMIN_CREDIT_DEDUCTION_CORRECTION_TYPE } as const;
+}
 /** Immutable identifiers keep a lost reply discoverable even if an officer renumbers the note. */
 export function adminCreditDeductionReference(requestId: string, noteId: string): string {
   return `Credit deduction ${requestId} / ${noteId}`;

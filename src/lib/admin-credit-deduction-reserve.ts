@@ -1,11 +1,14 @@
 /** Reserve a manual deduction on the caller's member-credit ledger lock (#5241). */
 import { CreditType, type MemberCredit, type Prisma } from "@prisma/client";
 import { adminGrantCreditNoteOperationWhere } from "@/lib/admin-grant-credit-note";
+import { buildAdminCreditDeductionPayload } from "@/lib/admin-credit-deduction-payload";
 import { planAdminCreditDeduction, type DeductionLot } from "@/lib/admin-credit-deduction-plan";
 import { MemberCreditValidationError } from "@/lib/policies/member-credit";
 import { loadFreeCreditLots } from "@/lib/xero-applied-credit-lots";
 import { buildXeroIdempotencyKey, startXeroSyncOperation } from "@/lib/xero-sync";
 import { createAuditLog } from "@/lib/audit";
+import type { ClubFormat } from "@/lib/club-format";
+import { formatCents } from "@/lib/utils";
 
 /** The non-money links a reserve or restore row may carry beside its literal admin-adjustment fields. */
 export interface CreditRowLinks {
@@ -94,17 +97,23 @@ export async function reserveNotedCreditDeduction(
       direction: "OUTBOUND", entityType: "CREDIT_NOTE", operationType: "UPDATE",
       localModel: "AdminCreditDeductionCorrection", localId: correctionId, status: "PENDING",
       idempotencyKey: key, correlationKey: key, createdByMemberId: request.approvedById,
-      requestPayload: { queueType: "ADMIN_CREDIT_DEDUCTION_CORRECTION", correctionId }, store: tx,
+      requestPayload: buildAdminCreditDeductionPayload({ correctionId }), store: tx,
     });
   }
   if (!firstCredit) throw new MemberCreditValidationError("The deduction has no available credit.");
   return { credit: firstCredit, correctionId };
 }
 
+/** The member's timeline sentence for a deduction, written at approval or, with a Xero correction, at its completion. */
+export function creditDeductedDisclosureText(request: Pick<DeductionRequest, "amountCents" | "description">, format: ClubFormat): string {
+  return `Credit of ${formatCents(Math.abs(request.amountCents), format)} deducted from your account. Reason: ${request.description}`;
+}
+
 /**
  * The officers' record of approving a deduction whose Xero correction is queued.
- * It declares no member disclosure: the member is told by the correction's
- * completion (`member.credit.deduction.xero_correction.complete`), once Xero agrees.
+ * It declares no member disclosure: the member's timeline entry is written by the
+ * correction's completion (`member.credit.deduction.xero_correction.complete`),
+ * once Xero agrees. Their credit balance already shows the reserved cents.
  */
 export async function auditQueuedDeductionApproval(
   tx: Prisma.TransactionClient,
