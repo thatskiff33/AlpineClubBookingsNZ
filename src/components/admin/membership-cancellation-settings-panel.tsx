@@ -13,7 +13,15 @@ import {
   AdminViewOnlySectionBanner,
   ViewOnlyActionButton,
 } from "@/components/admin/view-only-action";
-import { apiErrorMessageFromBody } from "@/lib/api-error-message";
+import {
+  apiErrorMessageFromBody,
+  ApiRefusalError,
+  readApiObjectOrNull,
+  refusalMessageOr,
+  wordedForbiddenRefusal,
+} from "@/lib/api-error-message";
+
+const LOAD_FALLBACK = "Failed to load membership cancellation settings";
 
 interface XeroGroup {
   groupId: string;
@@ -65,21 +73,17 @@ export function MembershipCancellationSettingsPanel() {
       const response = await fetch("/api/admin/membership-cancellation-settings", {
         credentials: "same-origin",
       });
-      const body = (await response.json()) as
-        | { settings: MembershipCancellationSettings }
-        | { error?: string };
-      if (!response.ok || !("settings" in body)) {
-        throw new Error(
-          apiErrorMessageFromBody(body, "Failed to load membership cancellation settings"),
-        );
+      // One read decides both: a refusal, or a 2xx that is not the promised
+      // shape, shows the route's sentence or the fallback, never a parse error.
+      const body = (await readApiObjectOrNull(response)) as {
+        settings?: MembershipCancellationSettings;
+      } | null;
+      if (!response.ok || !body?.settings) {
+        throw new ApiRefusalError(apiErrorMessageFromBody(body, LOAD_FALLBACK));
       }
       setSettings(toEditableSettings(body.settings));
     } catch (error) {
-      toast.error(
-        error instanceof Error
-          ? error.message
-          : "Failed to load membership cancellation settings",
-      );
+      toast.error(refusalMessageOr(error, LOAD_FALLBACK));
     } finally {
       setLoading(false);
     }
@@ -153,7 +157,8 @@ export function MembershipCancellationSettingsPanel() {
       if (!response.ok) {
         // Stale-tab / narrowed-permission save surfaces a persistent inline
         // error, not only a transient toast (#1940).
-        if (response.status === 403) setForbiddenSave(true);
+        // A worded 403 ("Two-factor verification required") is its own reason.
+        if (response.status === 403 && !wordedForbiddenRefusal(body)) setForbiddenSave(true);
         throw new Error(
           apiErrorMessageFromBody(body, "Failed to save membership cancellation settings"),
         );

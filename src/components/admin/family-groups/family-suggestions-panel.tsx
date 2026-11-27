@@ -12,6 +12,7 @@ import {
   ViewOnlyActionButton,
 } from "@/components/admin/view-only-action"
 import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access"
+import { saveErrorMessage, saveRefusalFromResponse } from "@/hooks/use-section-edit-state"
 import { AGE_UNAVAILABLE_LABEL } from "@/lib/member-age"
 import {
   TableBody,
@@ -20,6 +21,10 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table"
+
+const CREATE_FALLBACK = "Failed to create group"
+const HIDE_FALLBACK = "Failed to hide suggestion"
+const RESET_FALLBACK = "Failed to reset hidden suggestions"
 
 interface SuggestedMember {
   id: string
@@ -112,11 +117,10 @@ export function FamilySuggestionsPanel() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ name, memberIds }),
       })
-      const json = await res.json()
-      if (!res.ok) throw new Error(json.error || "Failed to create group")
+      if (!res.ok) throw await saveRefusalFromResponse(res, CREATE_FALLBACK)
       setCreated((prev) => new Set(prev).add(suggestion.signature))
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to create group")
+      setError(saveErrorMessage(err, CREATE_FALLBACK))
     } finally {
       setCreating(null)
     }
@@ -134,14 +138,13 @@ export function FamilySuggestionsPanel() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ memberIds }),
       })
-      const json = await res.json()
-      if (!res.ok) throw new Error(json.error || "Failed to hide suggestion")
+      if (!res.ok) throw await saveRefusalFromResponse(res, HIDE_FALLBACK)
       setHidden((prev) => new Set(prev).add(suggestion.signature))
       setData((prev) =>
         prev ? { ...prev, hiddenCount: prev.hiddenCount + 1 } : prev
       )
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to hide suggestion")
+      setError(saveErrorMessage(err, HIDE_FALLBACK))
     } finally {
       setHiding(null)
     }
@@ -164,13 +167,10 @@ export function FamilySuggestionsPanel() {
       const res = await fetch("/api/admin/family-suggestions/reset", {
         method: "POST",
       })
-      const json = await res.json()
-      if (!res.ok) {
-        throw new Error(json.error || "Failed to reset hidden suggestions")
-      }
+      if (!res.ok) throw await saveRefusalFromResponse(res, RESET_FALLBACK)
       await fetchSuggestions()
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to reset hidden suggestions")
+      setError(saveErrorMessage(err, RESET_FALLBACK))
     } finally {
       setResetting(false)
     }

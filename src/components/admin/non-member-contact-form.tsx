@@ -7,6 +7,10 @@ import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { ViewOnlyActionButton } from "@/components/admin/view-only-action";
 import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access";
+import {
+  saveErrorMessage,
+  saveRefusalFromResponse,
+} from "@/hooks/use-section-edit-state";
 
 /**
  * Inline non-member booking owner (issue #1935, E9).
@@ -43,6 +47,8 @@ interface Props {
 }
 
 const ENDPOINT = "/api/admin/bookings/non-member-contact";
+const REUSE_FALLBACK = "Could not use that contact";
+const CREATE_FALLBACK = "Could not create the contact";
 
 export function NonMemberContactForm({ onSelected }: Props) {
   // Reuse/create writes /api/admin/bookings/non-member-contact (bookings area,
@@ -106,14 +112,11 @@ export function NonMemberContactForm({ onSelected }: Props) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ useExistingContactId: contactId }),
       });
+      if (!res.ok) throw await saveRefusalFromResponse(res, REUSE_FALLBACK);
       const data = await res.json();
-      if (!res.ok) {
-        setError(data.error || "Could not use that contact");
-        return;
-      }
       onSelected(data.contact as NonMemberOwner);
-    } catch {
-      setError("Could not use that contact");
+    } catch (err) {
+      setError(saveErrorMessage(err, REUSE_FALLBACK));
     } finally {
       setSubmitting(false);
     }
@@ -143,14 +146,11 @@ export function NonMemberContactForm({ onSelected }: Props) {
           noEmail,
         }),
       });
+      if (!res.ok) throw await saveRefusalFromResponse(res, CREATE_FALLBACK);
       const data = await res.json();
-      if (!res.ok) {
-        setError(data.error || "Could not create the contact");
-        return;
-      }
       onSelected(data.contact as NonMemberOwner);
-    } catch {
-      setError("Could not create the contact");
+    } catch (err) {
+      setError(saveErrorMessage(err, CREATE_FALLBACK));
     } finally {
       setSubmitting(false);
     }
