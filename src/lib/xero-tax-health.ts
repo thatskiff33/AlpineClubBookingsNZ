@@ -5,7 +5,7 @@ import { prisma } from "@/lib/prisma";
 import { normalizeXeroAccountClass } from "@/lib/xero-account-class";
 import { MAPPING_LABELS, normalizeMappingCode } from "@/lib/xero-account-mapping-keys";
 import { getCachedChartOfAccounts } from "@/lib/xero-admin-cache";
-import { applyHutFeeLineCodes } from "@/lib/xero-hut-fee-line-codes";
+import { hutFeeRefundLineCodes } from "@/lib/xero-hut-fee-line-codes";
 import { getResolvedAccountMapping } from "@/lib/xero-mappings";
 import {
   openingCreditsExemptHealthProblem,
@@ -96,7 +96,7 @@ export async function readXeroTaxHealth(): Promise<XeroTaxHealth> {
  * per rate which kinds of account it may sit on, and rejects a document that
  * pairs a rate with an account outside them. The problem is reported when all
  * three hold: a registered period is in force, the account the refund line
- * names (`applyHutFeeLineCodes`) is an expense account in the cached chart, and
+ * names (`hutFeeRefundLineCodes`) is an expense account in the cached chart, and
  * Xero says the period's rate cannot be used on expenses.
  *
  * Null whenever one of them cannot be established: no cached chart, a code the
@@ -115,16 +115,7 @@ async function hutFeeRefundsExpenseAccountProblem(
     getResolvedAccountMapping("hutFeeRefunds"),
     getCachedChartOfAccounts(),
   ]);
-  const lineAccount = normalizeMappingCode(
-    applyHutFeeLineCodes(
-      {},
-      {
-        itemCode: mapping.itemCode,
-        accountCode: mapping.code ?? "200",
-        accountCodeExplicitlyConfigured: mapping.codeExplicitlyConfigured,
-      },
-    ).accountCode,
-  );
+  const lineAccount = normalizeMappingCode(hutFeeRefundLineCodes(mapping).accountCode);
   const account = chart?.values.find((row) => normalizeMappingCode(row.code) === lineAccount);
   if (!lineAccount || !account || normalizeXeroAccountClass(account.class) !== "EXPENSE") return null;
   return `${MAPPING_LABELS.hutFeeRefunds} is mapped to an expense account, and Xero's tax rate ${rate.taxType} (${rate.name}) cannot be used on expenses, so Xero would reject refund credit notes. Map ${MAPPING_LABELS.hutFeeRefunds} to a revenue account, or ask your accountant which account and tax rate refunds should use.`;
