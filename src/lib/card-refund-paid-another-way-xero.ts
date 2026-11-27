@@ -148,7 +148,12 @@ export function paidAnotherWayXeroPromise(plan: PaidAnotherWayXeroPlan): PaidAno
  *   an invoiced booking, the capture's own receipt on the invoice that bills
  *   the change, never a kept-capture invoice beside it. Recorded and resolved by hand in Xero: `none`,
  *   the officer records its refunds by hand too (`INV-INT-025`). Never the
- *   booking's cleared pre-cancel invoice;
+ *   booking's cleared pre-cancel invoice, unless (#4381, owner decision
+ *   28 Nov 2026) that verdict reads it, or a gap or paid change invoice, as
+ *   the one invoice in Xero recording the whole capture: the note is queued
+ *   `now` against it, never for more than it records
+ *   (`readLateCaptureRecordedElsewhere`); the credit-release sweep's hold
+ *   waits with nothing queued until #4380 (`creditReleaseSweep`);
  * - any other: the payment's kept late-capture invoice, else its own invoice
  *   (`findKeptLateCaptureInvoiceIdForPayment` ?? `payment.xeroInvoiceId`):
  *   `now`, or `none` without one.
