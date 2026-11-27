@@ -15,13 +15,13 @@ import { sendToAdmins } from "./admin-alerts-shared";
 import type { AdminAlertRecipientsResult } from "./admin-alert-send-result";
 import type { DeliveryFeedbackEvent } from "./delivery-feedback";
 
-export const EMAIL_COMPLAINT_TEMPLATE_NAME = "admin-email-complaint";
+const EMAIL_COMPLAINT_TEMPLATE_NAME = "admin-email-complaint";
 
 /** At most this many member names are listed for one address. */
 const MAX_MEMBER_NAMES = 5;
 
 /** Thrown so the webhook answers with an error and the mail service delivers the report again. */
-export class EmailComplaintAlertNotSentError extends Error {
+class EmailComplaintAlertNotSentError extends Error {
   constructor(key: string) {
     super(`The officers' alert for email complaint ${key} was not sent; the report will be delivered again`);
     this.name = "EmailComplaintAlertNotSentError";
@@ -29,7 +29,7 @@ export class EmailComplaintAlertNotSentError extends Error {
 }
 
 /** One complaint, one alert: the service, its id for the report (or the message), and the address. */
-export function emailComplaintAlertKey(event: DeliveryFeedbackEvent, recipient: string): string {
+function emailComplaintAlertKey(event: DeliveryFeedbackEvent, recipient: string): string {
   const reportKey = event.reportId ?? event.providerMessageId ?? "no-report-id";
   return `email-complaint:${event.service}:${reportKey}:${recipient}`;
 }
