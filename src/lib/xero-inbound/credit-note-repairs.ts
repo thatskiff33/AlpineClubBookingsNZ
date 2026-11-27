@@ -199,8 +199,8 @@ export async function repairRefundedPaymentBusinessState(input: {
   // VOIDED/DELETED, its amount from the first (the refund-note row); no row, the reading; no note being synced (#4095), nothing.
   const includesCurrentCreditNoteContribution = (paymentId: string, rows = currentNoteRows.get(paymentId)) =>
     input.creditNoteId !== null && (rows ? rows.every((row) => row.active && isIncludedRefundCreditNoteStatus(getJsonRecord(row.metadata)?.status)) : isIncludedRefundCreditNoteStatus(input.creditNote.status));
-  const currentCreditNoteAmountCents = (paymentId: string, rows = currentNoteRows.get(paymentId)) =>
-    !includesCurrentCreditNoteContribution(paymentId) ? null : rows?.[0] ? getRefundContributionCentsFromCreditNoteMetadata(rows[0].metadata) : getCreditNoteAmountCents(input.creditNote);
+  const currentCreditNoteAmountCents = (paymentId: string, row = currentNoteRows.get(paymentId)?.[0]) =>
+    !includesCurrentCreditNoteContribution(paymentId) ? null : row ? getRefundContributionCentsFromCreditNoteMetadata(row.metadata) : getCreditNoteAmountCents(input.creditNote);
   const currentDirectRefundPaymentId = directPaymentIds.length === 1 ? directPaymentIds[0] : null;
 
   if (directPaymentIds.length > 1 && directPaymentIds.some((paymentId) => currentCreditNoteAmountCents(paymentId) !== null)) {

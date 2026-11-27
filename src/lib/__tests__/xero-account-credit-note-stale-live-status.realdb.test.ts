@@ -416,11 +416,11 @@ function reading(kind: Kind, status: string, updatedAt: string, allocations: Arr
       const backstop = setTimeout(mayWrite, 15_000);
       // Record when the stale reconcile's account-credit link write commits.
       const original = syncLinks.upsertXeroObjectLink;
-      let linkWrittenAfterMs: number | null = null;
+      const timing: { linkWrittenAfterMs: number | null } = { linkWrittenAfterMs: null };
       const startedAt = process.hrtime.bigint();
       const spy = vi.spyOn(syncLinks, "upsertXeroObjectLink").mockImplementation(async (...args: Parameters<typeof original>) => {
         const written = await original(...args);
-        if (args[0].role === "ACCOUNT_CREDIT_NOTE" && linkWrittenAfterMs === null) linkWrittenAfterMs = realElapsedMs(startedAt);
+        if (args[0].role === "ACCOUNT_CREDIT_NOTE" && timing.linkWrittenAfterMs === null) timing.linkWrittenAfterMs = realElapsedMs(startedAt);
         return written;
       });
       try {
@@ -429,8 +429,8 @@ function reading(kind: Kind, status: string, updatedAt: string, allocations: Arr
         void stale.catch(() => undefined);
         // The recount, not the link write, is what waits on the held Payment row.
         await waitForBlockedBy(pid, '%SELECT 1 FROM "Payment"%FOR NO KEY UPDATE%');
-        expect(linkWrittenAfterMs).not.toBeNull();
-        expect(linkWrittenAfterMs!).toBeLessThan(5_000);
+        expect(timing.linkWrittenAfterMs).not.toBeNull();
+        expect(timing.linkWrittenAfterMs ?? Number.POSITIVE_INFINITY).toBeLessThan(5_000);
         mayWrite();
         await expect(paymentFirst).resolves.toBeDefined();
         await stale;
