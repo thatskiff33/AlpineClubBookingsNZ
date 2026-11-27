@@ -7,6 +7,13 @@ import { loadFreeCreditLots } from "@/lib/xero-applied-credit-lots";
 import { buildXeroIdempotencyKey, startXeroSyncOperation } from "@/lib/xero-sync";
 import { createAuditLog } from "@/lib/audit";
 
+/** The non-money links a reserve or restore row may carry beside its literal admin-adjustment fields. */
+export interface CreditRowLinks {
+  approvalRequestId?: string;
+  xeroCreditNoteId?: string;
+  outsideSpendConvergedAt?: Date;
+}
+
 export interface DeductionRequest {
   id: string;
   memberId: string;
@@ -57,11 +64,15 @@ export async function reserveNotedCreditDeduction(
   const plan = planAdminCreditDeduction(-request.amountCents, balance._sum.amountCents ?? 0, Math.max(0, cash._sum.amountCents ?? 0), lots);
   let firstCredit: MemberCredit | undefined;
   const writeCredit = async (amountCents: number, noteId?: string) => {
+    // Links only, typed so the spread cannot carry money; the row is a literal ADMIN_ADJUSTMENT and
+    // names no booking, so it has no booking-ledger leg to sync (INV-MONEY-035).
+    const links: CreditRowLinks = {};
+    if (!firstCredit) links.approvalRequestId = request.id;
+    if (noteId) Object.assign(links, { xeroCreditNoteId: noteId, outsideSpendConvergedAt: new Date() });
     const row = await tx.memberCredit.create({ data: {
+      ...links,
       memberId: request.memberId, amountCents: -amountCents, type: CreditType.ADMIN_ADJUSTMENT,
       description: request.description, requestedById: request.requestedById, approvedById: request.approvedById,
-      ...(!firstCredit ? { approvalRequestId: request.id } : {}),
-      ...(noteId ? { xeroCreditNoteId: noteId, outsideSpendConvergedAt: new Date() } : {}),
     } });
     firstCredit ??= row;
     return row;

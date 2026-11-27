@@ -1,4 +1,6 @@
+import { CreditType } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
+import type { CreditRowLinks } from "@/lib/admin-credit-deduction-reserve";
 import { lockMemberCreditLedger } from "@/lib/member-credit";
 import { MemberCreditValidationError } from "@/lib/policies/member-credit";
 import { assertXeroCreditNoteCorrectionUntouched } from "@/lib/xero-credit-note-correction";
@@ -42,11 +44,15 @@ export async function cancelAdminCreditDeductionCorrection(input: {
     if (cancelled.count !== 1) throw new MemberCreditValidationError(RETRY);
     const at = new Date();
     const notelessCents = -correction.request.amountCents - correction.lines.reduce((sum, line) => sum + line.amountCents, 0);
-    const restore = (amountCents: number, noteId?: string) => tx.memberCredit.create({ data: {
-      memberId: input.memberId, amountCents, type: "ADMIN_ADJUSTMENT", approvedById: input.adminId,
-      description: `Credit deduction cancelled: ${correction.request.description}`,
-      ...(noteId ? { xeroCreditNoteId: noteId, outsideSpendConvergedAt: at } : {}),
-    } });
+    // A literal ADMIN_ADJUSTMENT names no booking, so it has no booking-ledger leg to sync (INV-MONEY-035).
+    const restore = (amountCents: number, noteId?: string) => {
+      const links: CreditRowLinks = noteId === undefined ? {} : { xeroCreditNoteId: noteId, outsideSpendConvergedAt: at };
+      return tx.memberCredit.create({ data: {
+        ...links,
+        memberId: input.memberId, amountCents, type: CreditType.ADMIN_ADJUSTMENT, approvedById: input.adminId,
+        description: `Credit deduction cancelled: ${correction.request.description}`,
+      } });
+    };
     if (notelessCents > 0) await restore(notelessCents);
     for (const line of correction.lines) await restore(line.amountCents, line.xeroCreditNoteId);
     await createAuditLog({
