@@ -2118,6 +2118,8 @@ describe("the registry is inert", () => {
     "src/lib/__tests__/coverage-matrix-areas.test.ts":
       "takes COVERAGE_MATRIX.md's areas from the registry's old paths",
     "next.config.ts": "C3: the redirects and beforeFiles rewrites are generated",
+    "scripts/diagnose-calendar-access.ts":
+      "C11 (#4808): the operator diagnostic prints the admin Calendar address as adminHref",
     "src/components/admin-sidebar.tsx":
       "C3: the active link is the registry's activeAdminHref; S2: the palette index is ADMIN_MENU_DESTINATIONS; " +
       "C7: the Help & system links and the Issue Reports badge are adminLink and adminHref; " +
