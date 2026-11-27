@@ -19,7 +19,6 @@ import { BookingEventType } from "@prisma/client";
 
 const mocks = vi.hoisted(() => ({
   memberCreditAggregate: vi.fn(),
-  openFinancialReview: vi.fn(),
   bookingEvents: vi.fn(),
   recoveryRows: vi.fn(),
   recoveryRow: vi.fn(),
@@ -43,9 +42,6 @@ vi.mock("@/lib/prisma", () => ({
 vi.mock("@/lib/booking-history", () => ({
   buildBookingHistoryItems: vi.fn().mockReturnValue([]),
 }));
-vi.mock("@/lib/booking-financial-review-visibility", () => ({
-  bookingHasOpenFinancialReview: mocks.openFinancialReview,
-}));
 vi.mock("@/lib/rate-membership-label", () => ({
   loadRateMembershipLabelResolver: vi.fn(),
 }));
@@ -54,10 +50,6 @@ import { loadBookingDetailHistory } from "../_lib/booking-detail-history";
 import { resolveBookingDetailPayment } from "../_lib/booking-detail-payment";
 import { renderBookingDetailMessages } from "../_lib/booking-detail-messages";
 import { bindClubFormat } from "@/lib/club-format-bound";
-import {
-  FINANCIAL_REVIEW_AMOUNT_PREDATES_THE_CHANGE,
-  FINANCIAL_REVIEW_NOTHING_TO_PAY_PREDATES_THE_CHANGE,
-} from "@/lib/booking-financial-review-copy";
 import { bindClubTime, requireClubTimeZone } from "@/lib/club-time";
 import { bookingAppliedCreditWhere } from "@/lib/member-credit-booking-rows";
 import { CLUB_FORMAT_TEST } from "@/lib/__tests__/support/club-format-fixture";
@@ -131,7 +123,6 @@ async function narrativeFor(booking: never, viewer = OWNER) {
 beforeEach(() => {
   vi.clearAllMocks();
   ledgerCredit(0);
-  mocks.openFinancialReview.mockResolvedValue(false);
   mocks.bookingEvents.mockResolvedValue([]);
   mocks.recoveryRows.mockResolvedValue([]);
   mocks.recoveryRow.mockResolvedValue(null);
@@ -260,37 +251,6 @@ describe("booking page history narrative quotes the amount owed (#3991, INV-PAY-
 });
 
 /*
-  #3991 review: the one combination the booking page actually RENDERS with an
-  amount. Its banner shows the narrative only for settled outcomes and an open
-  financial review (`booking-status-banners.tsx`), so a payable booking's figure
-  reaches the member there only beside a review.
-*/
-describe("booking page history narrative with an open financial review (#3991)", () => {
-  beforeEach(() => mocks.openFinancialReview.mockResolvedValue(true));
-
-  it("quotes the amount owed and says it predates the change", async () => {
-    ledgerCredit(5000);
-    const narrative = await narrativeFor(bookingWith({ changeFeeCents: 2500 }));
-    expect(narrative.state).toBe("financial_review_pending");
-    expect(narrative.message).toContain("$175.00 is due");
-    expect(narrative.message).toContain(FINANCIAL_REVIEW_AMOUNT_PREDATES_THE_CHANGE);
-  });
-
-  it("at nothing owed, uses the sentence that needs no figure, and no bookings-page next step", async () => {
-    ledgerCredit(22500);
-    const narrative = await narrativeFor(bookingWith({ changeFeeCents: 2500 }));
-    expect(narrative.state).toBe("financial_review_pending");
-    expect(narrative.headline).toBe("Nothing to pay");
-    expect(narrative.message).toContain("has nothing left to pay");
-    expect(narrative.message).toContain(FINANCIAL_REVIEW_NOTHING_TO_PAY_PREDATES_THE_CHANGE);
-    expect(narrative.message).not.toContain(FINANCIAL_REVIEW_AMOUNT_PREDATES_THE_CHANGE);
-    expect(narrative.message).not.toMatch(/\$\d/);
-    expect(narrative.nextStep).not.toMatch(/bookings page/i);
-    expect(narrative.nextStep).toContain("There is nothing you need to do about that change.");
-  });
-});
-
-/*
   #3991 review: a linked guest is not told about the owner's credit — the
   credit-election notice and every other money surface on the page withhold it
   from them. The amount they could already see stays.
@@ -327,7 +287,6 @@ describe("booking page history narrative for a linked guest (#3991)", () => {
 describe("booking page data: the card, the {amountDue} token and the narrative agree (#3991)", () => {
   it("sizes all three from the ledger read the history loader returns", async () => {
     ledgerCredit(5000);
-    mocks.openFinancialReview.mockResolvedValue(true);
     const booking = bookingWith({ changeFeeCents: 2500, creditAppliedCents: 9000 });
     const viewer = { ...OWNER, canManageBooking: true, isBookingOwner: true, nonOwnerAdminViewer: false };
     const history = await historyFor(booking, viewer);

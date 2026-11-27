@@ -30,9 +30,6 @@ vi.mock("@/lib/booking-history", () => ({
 vi.mock("@/lib/booking-narrative", () => ({
   resolveBookingNarrative: vi.fn().mockReturnValue({ state: "paid" }),
 }));
-vi.mock("@/lib/booking-financial-review-visibility", () => ({
-  bookingHasOpenFinancialReview: vi.fn().mockResolvedValue(false),
-}));
 vi.mock("@/lib/rate-membership-label", () => ({
   loadRateMembershipLabelResolver: vi.fn(),
 }));
