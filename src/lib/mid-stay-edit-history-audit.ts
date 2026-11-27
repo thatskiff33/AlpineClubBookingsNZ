@@ -24,11 +24,20 @@
  * to"); and a give-back on a party of two or more may hide a re-billed guest
  * inside its credit, an amount nothing records. An officer's date override
  * (`pricingMode: "recalculate"`, through the batch service or the date-change
- * service) re-priced the whole stay at the rates of the day, so every one made
- * mid-stay is listed for a person. Shift-mode overrides moved no money
- * (`ADMIN_DATE_SHIFT`), name corrections re-price nothing, and a guest-to-member
- * link was refused beside any other change (it applies only to quote-priced
- * whole-lodge bookings): none of them is examined.
+ * service) re-priced the stay outside the mid-stay rules: a date change put
+ * every guest on the full new dates (#1093), one whose nights had ended
+ * included, and nights with no stored price took the rates of the day (#1036
+ * kept the rest). So every one made mid-stay is listed for a person.
+ *
+ * A name edit (`GUEST_UPDATE`) is examined too: until #1099 (4 Jul 2026) it ran
+ * the same pricing, so one saved mid-stay could re-bill an ended guest; since
+ * then it echoes the stored price and reads as clear. Not examined: shift-mode
+ * overrides (`ADMIN_DATE_SHIFT`), which moved no money; a paid booking's
+ * spelling fix (`GUEST_TYPO_FIX`, #1386), which began after #1099 and has
+ * always echoed the price; a guest-to-member link (`GUEST_MEMBER_LINK`), refused
+ * beside any other change because it applies only to quote-priced whole-lodge
+ * bookings; and `GUEST_ADD` and `GUEST_REMOVE`, whose services refused a stay
+ * under way.
  *
  * WHICH EDITS. Edits created before the cut-off - when this install took the
  * fixes - whose club calendar day falls within the stay before the edit,
@@ -70,11 +79,11 @@ const CUT_OFF_GRACE_MS = 24 * 60 * 60 * 1000;
 const ADDED_GUEST_MATCH_MS = 60 * 1000;
 
 /**
- * The row types an edit that could re-price a stay under way wrote. Name and
- * link corrections (`GUEST_UPDATE`, `GUEST_TYPO_FIX`, `GUEST_MEMBER_LINK`) and
- * shift-mode overrides (`ADMIN_DATE_SHIFT`) are not examined.
+ * The row types an edit that could re-price a stay under way wrote; the header
+ * says why each other type is left out. `GUEST_UPDATE` is here for the name
+ * edits made before #1099, which still ran the pricing.
  */
-export const EXAMINED_MODIFICATION_TYPES = ["BATCH_MODIFY", "CREDIT_ELECTION", "DATE_CHANGE"] as const;
+export const EXAMINED_MODIFICATION_TYPES = ["BATCH_MODIFY", "CREDIT_ELECTION", "DATE_CHANGE", "GUEST_UPDATE"] as const;
 
 export type MidStayEditShape =
   | "officer-recalculated"
@@ -105,7 +114,7 @@ export const MID_STAY_EDIT_SHAPES: Record<
     issue: null,
     certainty: "possible",
     amount: "net change",
-    label: "Officer override re-priced the stay at the rates of the day",
+    label: "Officer override re-priced the stay",
   },
   "rebilled-nothing-bought": {
     issue: "#2743",
@@ -209,7 +218,7 @@ export interface MidStayEditFacts {
   addedGuestsPriceCents: number | null;
 }
 
-/** An officer re-priced the whole stay: the batch service flags it; the date-change service only names the mode. */
+/** An officer override re-priced the stay: the batch service flags it; the date-change service only names the mode. */
 export function isOfficerRecalculate(next: Pick<MidStayEditFacts["next"], "adminOverride" | "pricingMode">): boolean {
   if (next.pricingMode === "shift") return false;
   return next.adminOverride || next.pricingMode === "recalculate";
@@ -226,7 +235,8 @@ export function classifyMidStayEdit(facts: MidStayEditFacts): MidStayEditFinding
       {
         shape: "officer-recalculated",
         atStakeCents: Math.abs(d),
-        reason: "An officer override re-priced every night at the rates of the day; compare with the rates the member booked at.",
+        reason:
+          "An officer override re-priced the stay: a date change put every guest on the full new dates, and nights with no stored price took the rates of the day. Compare with what the member booked.",
       },
     ];
   }
@@ -242,7 +252,8 @@ export function classifyMidStayEdit(facts: MidStayEditFacts): MidStayEditFinding
     findings.push({
       shape: "rebilled-nothing-bought",
       atStakeCents: d,
-      reason: "The price rose though the edit added no nights or guests: a guest whose stay had ended was billed again.",
+      // A give-back's credit is netted off the rise, so the rise is then a floor.
+      reason: `The price rose though the edit added no nights or guests: a guest whose stay had ended was billed again${gaveBack ? ", for at least this much, since the edit also gave nights back" : ""}.`,
     });
   } else if (addOnly && d > 0) {
     if (facts.addedGuestsPriceCents === null) {

@@ -58,7 +58,8 @@ const BOOKINGS: Record<string, string> = {
   officer: "steady",
   unreadable: "steady",
   clean: "steady",
-  name_fix: "steady",
+  name_edit: "steady",
+  typo_fix: "steady",
   repriced: "repriced",
 };
 
@@ -132,7 +133,9 @@ const BOOKINGS: Record<string, string> = {
         oldWriterRow("unreadable", { previous: { totalPriceCents: null } }),
         oldWriterRow("repriced", { next: { checkOut: "2026-07-13", totalPriceCents: 42000 } }),
         oldWriterRow("clean", { next: { checkOut: "2026-07-13", totalPriceCents: 30000 } }),
-        oldWriterRow("name_fix", { type: "GUEST_UPDATE", next: { totalPriceCents: 60000 } }),
+        // A name edit made before #1099 still ran the pricing; a paid booking's spelling fix never did.
+        oldWriterRow("name_edit", { type: "GUEST_UPDATE", next: { totalPriceCents: 60000 } }),
+        oldWriterRow("typo_fix", { type: "GUEST_TYPO_FIX", next: { totalPriceCents: 60000 } }),
       ],
     });
   }, 30_000);
@@ -146,7 +149,7 @@ const BOOKINGS: Record<string, string> = {
     await db.lodge.deleteMany({ where: { id: { startsWith: PREFIX } } });
   });
 
-  it("lists each pre-fix mid-stay edit by its shape, and leaves the clean and identity-only ones off", async () => {
+  it("lists each pre-fix mid-stay edit by its shape, a name edit included, and leaves the spelling fix out", async () => {
     const result = await audit({ db, zone: ZONE });
 
     // Cut off by this database's own record of the marker migration.
@@ -169,6 +172,7 @@ const BOOKINGS: Record<string, string> = {
       unreadable: [["unreadable", null]],
       repriced: [["give-back-repriced", 8000]],
       clean: [],
+      name_edit: [["rebilled-nothing-bought", 10000]],
     });
     expect(ours.every((edit) => edit.memberId === PREFIX + "member" && edit.editedOn === "2026-07-12")).toBe(true);
     expect(JSON.stringify(ours)).not.toContain(NAME.firstName);
