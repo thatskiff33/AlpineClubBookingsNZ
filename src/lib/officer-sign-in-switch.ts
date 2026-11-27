@@ -8,5 +8,9 @@
  * reset route answers 404 and the break-glass command writes nothing. The
  * policy's database default is already on, so flipping this is the only edit
  * #4620 makes for #4618; do not also change that column default.
+ *
+ * #4620's composed review (ALP-638) kept it off: an enrolled officer is not
+ * yet challenged at sign-in while the club-wide module is off, and adding a
+ * new factor can satisfy "Confirm it's you". Both are fixed first.
  */
-export const OFFICER_SIGN_IN_ENFORCED = true;
+export const OFFICER_SIGN_IN_ENFORCED = false;
