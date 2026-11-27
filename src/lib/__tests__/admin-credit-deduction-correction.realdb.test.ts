@@ -194,6 +194,24 @@ let harnessRole: SuiteEnvironmentRoleDeclaration | undefined;
     expect(await credit.getMemberCreditBalance(MEMBER)).toBe(7_499);
   });
 
+  it("exports correction details only to the credit owner, without provider identifiers", async () => {
+    const { lotId } = await seedNotedGrant();
+    const { correctionId, request } = await approvedDeduction(2_501);
+    await runWorker(correctionId!);
+    const { readAdditionalSubjectRecords } = await import("@/lib/subject-access-export-additional");
+    const own = await readAdditionalSubjectRecords(MEMBER);
+    expect(own.AdminCreditDeductionCorrection).toEqual([{
+      id: correctionId, requestId: request.id, status: "COMPLETED", createdAt: expect.any(Date),
+      completedAt: expect.any(Date), cancelledAt: null,
+    }]);
+    expect(own.AdminCreditDeductionCorrectionLine).toEqual([{
+      correctionId, sourceMemberCreditId: lotId, amountCents: 2_501, mode: "INVOICE", completedAt: expect.any(Date),
+    }]);
+    const other = await readAdditionalSubjectRecords(APPROVER);
+    expect(other.AdminCreditDeductionCorrection).toEqual([]);
+    expect(other.AdminCreditDeductionCorrectionLine).toEqual([]);
+  });
+
   it("a note already part spent keeps its earlier allocation and the correction takes only free cents", async () => {
     const { noteId } = await seedNotedGrant();
     const earlier = fake.createInvoice("earlier-invoice", contactId, 4_000);
