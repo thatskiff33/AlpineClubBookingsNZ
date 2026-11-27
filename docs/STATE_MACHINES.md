@@ -5669,10 +5669,22 @@ receipt's worker queues the note after it records the receipt's link (owner,
 8 Oct 2026: "Record receipt, then credit"). When the receipt is already on its
 way - a change's supplementary invoice for the capture, queued, sending or
 FAILED - the close queues nothing and takes the same waiting key; that
-invoice's worker runs the note step once it is sent (round 8):
+invoice's worker runs the note step once it is sent (round 8). Since #4381
+(`INV-PAY-144`) a late charge for a booking change on an invoiced booking is
+recorded by the keep's split instead, decided under the approval task's row
+and then the change's anchor:
 
 ```text
 close (no receipt in Xero) -> KEPT_LATE_CAPTURE_INVOICE PENDING, no note
+close (no receipt in Xero; a change capture on an invoiced booking, #4381) ->
+  an invoice bills the change -> ADDITIONAL_CAPTURE_RECEIPT PENDING, no note;
+    its worker runs the note step once the payment is linked
+  nothing bills it -> KEPT_LATE_CAPTURE_INVOICE PENDING, less what another
+    writer records; where another records or holds all of it -> waiting key,
+    nothing queued, and no note follows (the sweep's: until #4380)
+  the change's own unsent invoice names it -> KEPT_LATE_CAPTURE_INVOICE
+    PENDING for the gross capture, as before
+  no change readable -> nothing, plan `none`; the repair tool names it
 receipt worker: invoice + Stripe payment sent
   -> transaction 1 under the approval task's row: receipt link written
   -> transaction 2 under the same row: bank-transfer REFUND_CREDIT_NOTE
@@ -5682,7 +5694,8 @@ note step fails -> receipt row FAILED with its link standing; its retry finds
   the invoice and payment linked and runs only the note step
 receipt FAILED unsent -> no note; the repair tool's
   PAID_ANOTHER_WAY_LATE_CAPTURE_WITHOUT_XERO_RECEIPT retries (or queues) it,
-  and the note follows
+  and the note follows (#4381: a change capture's receipt never queued is its
+  KEPT_LATE_CAPTURE_NOT_RECORDED_IN_XERO, applied by the close's split again)
 receipt FAILED after it may have reached Xero (payment linked, or the invoice
   call attempted) -> left FAILED for an officer, who checks Xero, then retries,
   or marks it resolved and records the refund by hand if it is there;

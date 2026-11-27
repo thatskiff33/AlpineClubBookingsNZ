@@ -528,8 +528,8 @@ export interface BookingClassificationContext {
   >;
   /**
    * #4324: of those, the kept CHANGE captures on a cancelled booking whose
-   * primary invoice exists, by intent (`loadKeptChangeCaptureEvidence`).
-   * Absent, none to check.
+   * primary invoice exists, by intent (`loadKeptChangeCaptureEvidence`);
+   * #4381: and those whose refund was closed paid another way. Absent, none.
    */
   keptChangeCaptures?: Map<string, KeptChangeCaptureRepairEvidence>;
   /**

@@ -1009,8 +1009,10 @@ describe("#4324: a kept change capture on an invoiced booking", () => {
       mocks.operationFindFirst.mockResolvedValue({ id: "op_receipt_existing" });
       mocks.operationFindMany.mockResolvedValueOnce([]).mockResolvedValueOnce([{ status: "CANCELLED", requestPayload: {} }]);
       await expect(plan()).resolves.toEqual({ kind: "receipt-queued", queueOperationId: "op_receipt_existing" });
+      // #4381: the newest live row, read by the close's split too.
       expect(mocks.operationFindFirst).toHaveBeenCalledWith(expect.objectContaining({
         where: { correlationKey: "receipt-key:pi_late", status: { not: "CANCELLED" } },
+        orderBy: { createdAt: "desc" },
       }));
       expect(mocks.enqueueXeroKeptLateCaptureInvoiceOperation).not.toHaveBeenCalled();
     });

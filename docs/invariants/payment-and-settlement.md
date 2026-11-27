@@ -1953,9 +1953,9 @@ and **`INV-PAY-147`** (slice evidence).
   receipt is owed (`lateCaptureReceiptOwed`: kept, or closed paid another
   way), else closes its row; an approval withdraws an undecided receipt. A
   paid-another-way close takes this split (#4381, `INV-PAY-122`).
-- **Repair.** `KEPT_LATE_CAPTURE_NOT_RECORDED_IN_XERO`, dry run listing the
-  cents `--apply` records, then recorded automatically; without the primary
-  invoice's id, "cannot tell yet".
+- **Repair.** `KEPT_LATE_CAPTURE_NOT_RECORDED_IN_XERO`, for a keep or a close:
+  the dry run lists the cents `--apply` records automatically; without the
+  primary invoice's id, "cannot tell yet".
 - Pinned by `xero-kept-late-capture-ledger.test.ts` (e3, e4),
   `late-capture-kept-xero.test.ts`, `additional-capture-xero-receipt.test.ts`,
   `card-refund-paid-another-way-xero.test.ts`,

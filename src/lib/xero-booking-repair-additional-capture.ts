@@ -449,7 +449,7 @@ const PRIMARY_INVOICE_ID_NOT_SYNCED_SUMMARY =
 
 /** #4381: a finding's words for a capture whose approved refund was closed paid another way, rather than kept. */
 const closeWords = (summary: string) => summary.replace("a treasurer kept", "whose approved refund was paid another way")
-  .replace("A treasurer kept a late card payment", "A treasurer paid back, another way, a late card payment").replace("the kept card payment", "the card payment whose refund was paid another way").replace("The keep's own", "The close's own");
+  .replace("A treasurer kept a late card payment", "A treasurer paid back, another way, a late card payment").replace(/\b(the|a) kept card payment/, "$1 card payment whose refund was paid another way").replace("The keep's own", "The close's own");
 
 const KEPT_REFUSED_SUMMARY =
   "A late card payment a treasurer kept on this cancelled booking could not be recorded against the Xero invoice that bills it. Its Xero operation says why; record it by hand in Xero and mark the operation resolved, or fix the cause and retry it.";

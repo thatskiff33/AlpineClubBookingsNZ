@@ -616,12 +616,13 @@ export async function queueMissingPaidAnotherWayReceipt(
   input: { manualRefundTaskId: string; paymentIntentId: string; clubZone: ClubTimeZone },
 ): Promise<PaidAnotherWayXeroQueued> {
   await lockKeptLateCaptureTask(tx, input.manualRefundTaskId);
-  await lockKeptCaptureAnchor(tx, input, { additionalOnly: true });
   const task = await tx.manualRefundTask.findUnique({
     where: { id: input.manualRefundTaskId },
     select: { id: true, status: true, createdAt: true, bookingId: true, lateCaptureApprovalIntentId: true },
   });
+  // Before the anchor, as the keep's decision reads it: a keep holds the anchor ahead of its claim on this row.
   if (!task || task.status !== "COMPLETED" || task.lateCaptureApprovalIntentId !== input.paymentIntentId) return "nothing";
+  await lockKeptCaptureAnchor(tx, input, { additionalOnly: true });
   if (!(await lateCaptureReceiptOwed(tx, input.paymentIntentId))) return "nothing";
   if ((await readPaidAnotherWayLateCaptureXeroReceipt(input.paymentIntentId, tx)).kind !== "none") return "nothing";
   const plan = await lateCaptureReceiptPlan(tx, task, input.paymentIntentId, { lockAnchor: true });

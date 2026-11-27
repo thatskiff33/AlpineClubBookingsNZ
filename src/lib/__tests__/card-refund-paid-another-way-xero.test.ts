@@ -26,6 +26,7 @@ const mocks = vi.hoisted(() => ({
   enqueueKeptInvoice: vi.fn<(...args: unknown[]) => Promise<unknown>>(async () => ({ queueOperationId: "kept-1", message: "queued" })),
   returnToPending: vi.fn<(...args: unknown[]) => Promise<unknown>>(async () => ({ outcome: "pending", requestWritten: false })),
   receiptOwed: vi.fn<(...args: unknown[]) => Promise<boolean>>(async () => true),
+  lockAnchor: vi.fn<(...args: unknown[]) => Promise<boolean>>(async () => true),
 }));
 
 vi.mock("server-only", () => ({}));
@@ -56,7 +57,7 @@ vi.mock("@/lib/additional-capture-receipt-enqueue", () => ({
   enqueueAdditionalCaptureReceiptOperation: (...args: unknown[]) => mocks.enqueueCaptureReceipt(...args),
 }));
 vi.mock("@/lib/kept-late-capture-change-receipt", () => ({
-  lockKeptCaptureAnchor: async () => true,
+  lockKeptCaptureAnchor: (...args: unknown[]) => mocks.lockAnchor(...args),
   lateCaptureReceiptOwed: (...args: unknown[]) => mocks.receiptOwed(...args),
 }));
 vi.mock("@/lib/xero-outbox-pending-request", () => ({
@@ -455,6 +456,18 @@ describe("#4381: a late change capture's close is split as the keep splits it (I
       mocks.receipt.mockResolvedValueOnce({ kind: "recorded", invoiceId: null, recordedCents: 8_000 });
       expect(await repair()).toBe("nothing");
       expect(mocks.enqueueCaptureReceipt).not.toHaveBeenCalled();
+    });
+
+    it("MUTATION a task no longer COMPLETED queues nothing and never takes the anchor a keep holds ahead of its claim", async () => {
+      for (const status of ["OPEN", "DISMISSED"]) {
+        db.manualRefundTask.findUnique.mockResolvedValueOnce({ ...TASK, status, lateCaptureApprovalIntentId: "pi_late" });
+        expect(await repair()).toBe("nothing");
+      }
+      expect(mocks.lockAnchor).not.toHaveBeenCalled();
+      expect(mocks.receiptOwed).not.toHaveBeenCalled();
+      // Still COMPLETED: the anchor is taken, after the task row.
+      expect(await repair()).toBe("receipt-then-refund-note");
+      expect(mocks.lockAnchor).toHaveBeenCalledWith(lateDb, expect.objectContaining({ manualRefundTaskId: "approval-1" }), { additionalOnly: true });
     });
   });
 });

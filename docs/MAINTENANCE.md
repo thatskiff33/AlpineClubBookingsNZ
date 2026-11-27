@@ -1847,7 +1847,27 @@ missing supplementary invoice is still reported.
 A late capture the treasurer **approved** refunding, whose card refund Stripe
 gave up on and which was then closed as **Paid another way** before Xero had
 its receipt, owes that receipt too, and the close's bank-transfer note waits
-for it (#3372, `INV-PAY-122`). When the receipt row failed before reaching
+for it (#3372, `INV-PAY-122`). Since #4381 (`INV-PAY-144`), where that payment
+was for a **booking change** on a booking whose Xero invoice exists and no
+receipt was queued, the tool lists it as `KEPT_LATE_CAPTURE_NOT_RECORDED_IN_XERO`
+instead, worded for a refund paid another way, with the `recordedBy` and
+amounts described above. Its `--apply` runs the close's own decision again under
+the approval task's row and the change's lock: a payment on the invoice that
+bills the change, or a kept-payment invoice for the part no other Xero document
+records, and the bank-transfer note follows it. A payment no booking change can
+be read from is reported `manual_review`, as for a kept payment: the close
+queued nothing for it, so record the payment and its bank refund by hand. One
+whose booking lacks its synced invoice id is reported "cannot tell yet", as
+above. Only a change whose own unsent invoice names the payment still gets the
+kept-payment invoice for the whole payment, under the finding below. Where
+another Xero document already records the whole payment (the credit-release
+sweep's share or hold, the booking's invoice when it was linked, or another
+invoice covering the change), the tool raises nothing and the app queues no
+bank-transfer note for the close, although the close's dialog said one would
+follow: record that refund note by hand in Xero (for the sweep, until #4380
+lands). A close made before #4381 that already raised a kept-payment invoice
+beside the invoice billing the change is not found by the tool; correct it in
+Xero by hand. When the receipt row failed before reaching
 Xero, or none was queued, `PAID_ANOTHER_WAY_LATE_CAPTURE_WITHOUT_XERO_RECEIPT`
 retries or queues it. Both are safe to auto-apply: the worker and the enqueue
 re-read the task and the close under the task's row lock before anything is

@@ -18,11 +18,7 @@ import type {
   MutableFinding,
 } from "./xero-booking-repair-types";
 import { addAction, addFinding, buildRetryAction } from "./xero-booking-repair-findings";
-import {
-  addKeptChangeCaptureFinding,
-  keptChangeCaptureQueuesKeptInvoice,
-  type KeptChangeCaptureRepairEvidence,
-} from "./xero-booking-repair-additional-capture";
+import { addKeptChangeCaptureFinding, type KeptChangeCaptureRepairEvidence } from "./xero-booking-repair-additional-capture";
 
 type LateCaptureTask = BookingClassificationContext["lateCaptureTasks"] extends Map<string, infer Task> ? Task : never;
 
@@ -135,6 +131,34 @@ export function addPaidAnotherWayReceiptFinding({
     addRecordByHandFinding(findings, close, details);
     return false;
   }
+  // #4381 (`INV-PAY-144`): the kept change capture's finding, in the close's
+  // words; where it queues, its apply runs the close's own split under its locks.
+  const addChangeCaptureFinding = (capture: NonNullable<typeof changeCapture>): true => {
+    addKeptChangeCaptureFinding({
+      findings,
+      actionMap,
+      booking,
+      payment: capture.payment,
+      transaction,
+      kept: { taskId: lateTask.taskId, paidAnotherWay: true },
+      found: capture.found,
+    });
+    return true;
+  };
+  const receiptRowLive =
+    changeCapture?.found !== undefined &&
+    (changeCapture.found.receiptLinked || changeCapture.found.receiptOperations.some((operation) => operation.status !== "CANCELLED"));
+  // #4381 (owner Q1 on #4324): a close that planned no Xero record because no
+  // change can be read from its capture stored `none`, so nothing waits and
+  // nothing below reaches it. An officer records it by hand: named here.
+  if (
+    close.xeroRefundNote === "none" &&
+    changeCapture?.found?.route === "change-unknown" &&
+    close.receiptState?.receipt.kind === "none" &&
+    !keptLateCaptureInvoiceAsked(lateTask.operations)
+  ) {
+    return addChangeCaptureFinding(changeCapture);
+  }
   if (close.xeroRefundNote !== "after-receipt") return false;
   const receiptCents = decideLateCapture({
     taskStatus: "COMPLETED",
@@ -199,32 +223,15 @@ export function addPaidAnotherWayReceiptFinding({
   if (state.receipt.kind === "recorded") return true;
 
   if (!failed && keptLateCaptureInvoiceAsked(lateTask.operations)) return false;
-  // #4381 (owner, 25 Oct 2026 on #4324; `INV-PAY-144`): a change capture on an
-  // invoiced booking with no kept-capture invoice asked for is split as the
-  // close's plan splits it. Its own receipt (live, or the route) and a change
-  // no evidence names are the kept change capture's finding, worded for the
-  // close; the kept-capture invoice records only what other writers do not.
-  let keptInvoiceCents = receiptCents;
-  if (!failed && changeCapture) {
-    const { found } = changeCapture;
-    const receiptRowLive = found && (found.receiptLinked || found.receiptOperations.some((operation) => operation.status !== "CANCELLED"));
-    if (!found || receiptRowLive || found.route === "receipt" || found.route === "change-unknown") {
-      addKeptChangeCaptureFinding({
-        findings,
-        actionMap,
-        booking,
-        payment: changeCapture.payment,
-        transaction,
-        kept: { taskId: lateTask.taskId, paidAnotherWay: true },
-        found,
-      });
-      return true;
-    }
-    if (found.route === "kept-invoice") {
-      // Recorded in full elsewhere, or held by the credit-release sweep: nothing to queue, and the note waits.
-      if (!keptChangeCaptureQueuesKeptInvoice(found, transaction)) return true;
-      keptInvoiceCents = receiptCents - found.alreadyRecordedCents;
-    }
+  // #4381 (owner, 25 Oct 2026 on #4324; `INV-PAY-144`, `INV-SSOT`): a change
+  // capture on an invoiced booking with no kept-capture invoice asked for is
+  // the kept change capture's finding. Its `--apply` decides the document
+  // again under the task row and the anchor (`queueMissingPaidAnotherWayReceipt`),
+  // so this pass never sizes or routes it from its own snapshot. Only a change
+  // whose own invoice names the capture and was never sent (`change-invoice`)
+  // keeps the kept-capture invoice below, for the gross capture, as before.
+  if (!failed && changeCapture && (receiptRowLive || changeCapture.found?.route !== "change-invoice")) {
+    return addChangeCaptureFinding(changeCapture);
   }
   // Round 8 (money review): a FAILED receipt row that may have reached Xero -
   // its Stripe payment linked, or `createInvoices` attempted - is never retried
@@ -250,7 +257,7 @@ export function addPaidAnotherWayReceiptFinding({
           manualRefundTaskId: lateTask.taskId,
           bookingId: booking.id,
           paymentIntentId: transaction.stripePaymentIntentId,
-          capturedCents: keptInvoiceCents,
+          capturedCents: receiptCents,
           capturedAt: close.raisedAt.toISOString(),
         },
       });
