@@ -5,6 +5,12 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { FocusedActionError } from "@/components/focused-action-error";
+import {
+  saveErrorMessage,
+  saveRefusalFromResponse,
+} from "@/hooks/use-section-edit-state";
+
+const REFUSED_FALLBACK = "The adult could not be named. Reload this request and try again.";
 
 /** Name one accepted adult at a time, preserving the accepted quote and hold. */
 export function ResolvePendingSchoolAdults({
@@ -51,8 +57,7 @@ export function ResolvePendingSchoolAdults({
           teachers: [{ firstName: firstName.trim(), lastName: lastName.trim(), email: email.trim() || null }],
         }),
       });
-      const result = await response.json();
-      if (!response.ok) throw new Error(result?.error || "The adult could not be named. Reload this request and try again.");
+      if (!response.ok) throw await saveRefusalFromResponse(response, REFUSED_FALLBACK);
       saved = true;
       clearDraft();
       await onResolved();
@@ -60,7 +65,7 @@ export function ResolvePendingSchoolAdults({
       if (saved) setRefreshNeeded(true);
       setError(saved
         ? "The name was saved, but this page could not refresh. Reload it before naming anyone else."
-        : cause instanceof Error ? cause.message : "The adult could not be named.");
+        : saveErrorMessage(cause, "The adult could not be named."));
       setAttentionKey((key) => key + 1);
     } finally {
       setSaving(false);
