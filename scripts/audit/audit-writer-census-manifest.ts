@@ -1731,7 +1731,7 @@ export const AUDIT_WRITER_WRAPPERS: Readonly<
 };
 
 /**
- * The eight `admin` writers #2730 held for the owner, settled by the owner on
+ * The eight `admin` writers #2730 held for the owner. Owner decision,
  * 20 Nov 2026 (#5265): ALL EIGHT STAY `admin`. Six record a member being
  * deleted or archived, two record family-link suggestions being hidden or
  * reset. Every member-visible destination would publish rows to a member: the
