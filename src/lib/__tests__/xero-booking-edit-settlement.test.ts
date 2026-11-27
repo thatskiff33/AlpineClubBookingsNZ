@@ -500,9 +500,11 @@ describe("queueXeroBookingEditSettlement (side effects)", () => {
       primaryInvoiceBillsIncrease: true,
     });
     expect(decision.financialAction).toMatchObject({ type: "primary-invoice", allocateAppliedCredit: true });
+    // Unemailed: Xero's email would go out before the allocation, showing the
+    // whole worth as due; the booking-changed email is the only ask.
     expect(mocks.enqueueXeroBookingInvoiceOperation).toHaveBeenCalledWith("booking_ib", {
       createdByMemberId: "admin_1",
-      invoiceEmailDelivery: null,
+      invoiceEmailDelivery: "ASKED_BY_EDIT",
     });
     expect(mocks.enqueueXeroAppliedCreditAllocationOperation).toHaveBeenCalledWith("booking_ib", { createdByMemberId: "admin_1" });
     expect(mocks.enqueueXeroBookingInvoiceOperation.mock.invocationCallOrder[0]).toBeLessThan(
@@ -511,7 +513,23 @@ describe("queueXeroBookingEditSettlement (side effects)", () => {
     expect(mocks.enqueueXeroSupplementaryInvoiceOperation).not.toHaveBeenCalled();
   });
 
-  it("#5288: F20's $0 auto-pay raises the primary invoice without an allocation", async () => {
+  it("MUTATION #5288: queues no allocation when the invoice enqueue is refused - it would retry \"no Xero invoice yet\" until it failed", async () => {
+    // A create an officer resolved by hand in Xero (#3635), a link saved since
+    // the edit committed, an external settlement: the enqueue returns no operation.
+    mocks.enqueueXeroBookingInvoiceOperation.mockResolvedValue({ queueOperationId: null });
+    await queueXeroBookingEditSettlement({
+      bookingId: "booking_ib",
+      bookingModificationId: "mod_ib",
+      hasIssuedXeroInvoice: false,
+      priceDiffCents: 0,
+      changeFeeCents: 5000,
+      primaryInvoiceBillsIncrease: true,
+    });
+    expect(mocks.enqueueXeroBookingInvoiceOperation).toHaveBeenCalledTimes(1);
+    expect(mocks.enqueueXeroAppliedCreditAllocationOperation).not.toHaveBeenCalled();
+  });
+
+  it("#5288: F20's $0 auto-pay raises the primary invoice without an allocation, and leaves its email to the ordinary rules", async () => {
     await queueXeroBookingEditSettlement({
       bookingId: "booking_zero",
       bookingModificationId: "mod_zero",
@@ -520,6 +538,7 @@ describe("queueXeroBookingEditSettlement (side effects)", () => {
       createPrimaryInvoiceWhenMissing: true,
     });
     expect(mocks.enqueueXeroBookingInvoiceOperation).toHaveBeenCalledTimes(1);
+    expect(mocks.enqueueXeroBookingInvoiceOperation).toHaveBeenCalledWith("booking_zero", expect.objectContaining({ invoiceEmailDelivery: null }));
     expect(mocks.enqueueXeroAppliedCreditAllocationOperation).not.toHaveBeenCalled();
   });
 

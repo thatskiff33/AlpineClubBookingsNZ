@@ -2,7 +2,7 @@ import type { PaymentSource } from "@prisma/client";
 
 import { isAdditionalAskRetiredBookingStatus } from "@/lib/additional-payment-chase";
 import { paidByOrganiserInternetBanking } from "@/lib/group-organiser-paid";
-import { CARD_PAYMENT_SOURCE, INTERNET_BANKING_PAYMENT_SOURCE } from "@/lib/payment-source";
+import { CARD_PAYMENT_SOURCE } from "@/lib/payment-source";
 
 /**
  * The `Payment.status` values that mean MONEY WAS TAKEN — captured, and possibly
@@ -161,20 +161,9 @@ export function hasCapturedPayment(
   return true;
 }
 
-/**
- * A settled booking on a settled payment of one source: the shape both increase
- * questions below share, written once (`INV-SSOT`). The STATUS half of
- * `hasCapturedPayment` only; `canAskCardForIncrease` says why.
- */
-function isSettledOnPaymentSource(
-  booking: { status: string; payment: { status: string; source: PaymentSource } | null | undefined },
-  source: PaymentSource,
-): boolean {
-  return (
-    isSettledBookingStatus(booking.status) &&
-    isCapturedPaymentStatus(booking.payment?.status ?? "") &&
-    booking.payment?.source === source
-  );
+/** A settled booking on a settled payment of one `source`: what both increase questions share (`INV-SSOT`, #5288). */
+export function isSettledOnPaymentSource(booking: Parameters<typeof canAskCardForIncrease>[0], source: PaymentSource): boolean {
+  return isSettledBookingStatus(booking.status) && isCapturedPaymentStatus(booking.payment?.status ?? "") && booking.payment?.source === source;
 }
 
 /**
@@ -213,21 +202,6 @@ export function canAskCardForIncrease(booking: {
   payment: { status: string; source: PaymentSource } | null | undefined;
 }): boolean {
   return isSettledOnPaymentSource(booking, CARD_PAYMENT_SOURCE);
-}
-
-/**
- * #5288 (`INV-PAY-163`): the Internet Banking counterpart of
- * `canAskCardForIncrease` - a settled booking on a settled Internet Banking
- * payment, which has no card to ask. Whether Xero bills its increase is
- * `xeroBilledIncrease`'s question (`primary-invoice-bills-increase.ts`), which
- * adds what this one cannot see: recorded bank cash, an invoice link, a
- * settlement made outside the app.
- */
-export function isSettledOnInternetBanking(booking: {
-  status: string;
-  payment: { status: string; source: PaymentSource } | null | undefined;
-}): boolean {
-  return isSettledOnPaymentSource(booking, INTERNET_BANKING_PAYMENT_SOURCE);
 }
 
 /**

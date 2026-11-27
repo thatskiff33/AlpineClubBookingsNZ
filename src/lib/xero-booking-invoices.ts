@@ -43,7 +43,7 @@ import {
 } from "@/lib/xero-invoice-email";
 import {
   readXeroInvoiceEmailInstruction,
-  xeroInvoiceEmailIsWithheldAtCreation,
+  xeroInvoiceEmailIsAskedByEdit, xeroInvoiceEmailIsWithheldAtCreation,
 } from "@/lib/xero-invoice-email-instruction";
 import {
   getAccountMapping,
@@ -868,8 +868,8 @@ export async function createXeroInvoiceForBooking(
       it from Xero yourself", because the switch may be on.
     */
     let invoiceEmailFailureCause: XeroInvoiceEmailFailureCause | null = null;
-    const shouldEmailInvoice =
-      booking.payment.source === PaymentSource.INTERNET_BANKING;
+    const shouldEmailInvoice = // #5288: not where the edit that raised it asked the member, net of credit, itself
+      booking.payment.source === PaymentSource.INTERNET_BANKING && !xeroInvoiceEmailIsAskedByEdit(queuedInvoiceEmailInstruction);
 
     // #2258 (owner decision D10): the per-booking "No emails" switch withholds
     // EVERYTHING for the booking, including the invoice email XERO sends on our

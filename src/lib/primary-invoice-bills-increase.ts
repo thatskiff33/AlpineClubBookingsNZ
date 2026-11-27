@@ -5,9 +5,10 @@ import {
   bookingAmountOwedCents,
   feeOwedAfterEditCents,
   hasCapturedPayment,
-  isSettledOnInternetBanking,
+  isSettledOnPaymentSource,
 } from "@/lib/booking-payment-state";
 import { paidByOrganiserInternetBanking } from "@/lib/group-organiser-paid";
+import { INTERNET_BANKING_PAYMENT_SOURCE } from "@/lib/payment-source";
 import { unallocatedAppliedCents } from "@/lib/xero-applied-credit-ledger-state";
 
 type IncreaseBooking = {
@@ -61,7 +62,7 @@ function mayBillIncreaseOnNewPrimaryInvoice(booking: IncreaseBooking, edit: Incr
     !edit.hasSucceededPayment &&
     !edit.hasIssuedXeroInvoice &&
     !paidByOrganiserInternetBanking(booking) &&
-    isSettledOnInternetBanking(booking) &&
+    isSettledOnPaymentSource(booking, INTERNET_BANKING_PAYMENT_SOURCE) &&
     !hasCapturedPayment(booking.payment) &&
     !booking.payment?.xeroInvoiceId &&
     !bookingHasExternalSettlement(booking)
