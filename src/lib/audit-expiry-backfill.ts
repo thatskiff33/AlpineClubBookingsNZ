@@ -29,6 +29,7 @@
 // the selector, and the nightly retention job writes other columns.
 import { randomUUID } from "node:crypto";
 import { Prisma, type PrismaClient } from "@prisma/client";
+import { z } from "zod";
 
 import {
   classifyAuditRetention,
@@ -39,6 +40,7 @@ import {
 import { isAuditCategory } from "@/lib/audit-categories";
 import type { AuditRetentionClass } from "@/lib/audit-retention-classes";
 import { getAuditLogRetentionCutoffs } from "@/lib/audit-retention";
+import { decodeRawRows } from "@/lib/raw-sql-rows";
 
 export const AUDIT_EXPIRY_BACKFILL_ACTION = "AUDIT_EXPIRY_BACKFILLED";
 export const AUDIT_EXPIRY_BACKFILL_SOURCE = "#5265";
@@ -176,10 +178,6 @@ function writerRetentionClass(row: Pick<CandidateRow, "action" | "category" | "s
     category: isAuditCategory(row.category) ? row.category : null,
     severity: AUDIT_SEVERITIES.find((severity) => severity === row.severity) ?? null,
   });
-}
-
-function isoDate(date: Date): string {
-  return date.toISOString().slice(0, 10);
 }
 
 /** Every candidate, oldest first, a page at a time. */
@@ -329,10 +327,13 @@ export function buildAuditExpiryBackfillApplyCommand(params: {
   return parts.join(" ");
 }
 
+const EXPIRES_AT_UPDATE_GRANT_ROW = z.object({ allowed: z.boolean() });
+
 async function assertCanUpdateExpiresAt(db: AuditExpiryBackfillDb): Promise<void> {
-  const rows = await db.$queryRaw<{ allowed: boolean }[]>(Prisma.sql`
+  const returned = await db.$queryRaw(Prisma.sql`
     SELECT has_column_privilege(current_user, '"AuditLog"', 'expiresAt', 'UPDATE') AS allowed
   `);
+  const rows = decodeRawRows(returned, EXPIRES_AT_UPDATE_GRANT_ROW, "audit expiresAt update grant");
   if (rows[0]?.allowed !== true) {
     throw new AuditExpiryBackfillRefusal(
       'This database connection may not UPDATE "AuditLog"."expiresAt". Under the ' +
@@ -488,9 +489,9 @@ export function formatAuditExpiryBackfillReport(report: AuditExpiryBackfillRepor
       .join(", ");
     lines.push(
       `- ${kind.action} | ${kind.category ?? "(none)"} | ${kind.severity ?? "(none)"}: ${kind.count} ` +
-        `recorded ${isoDate(new Date(kind.firstRecordedAt))} to ${isoDate(new Date(kind.lastRecordedAt))} ` +
-        `(${years}); new expiry ${isoDate(new Date(kind.earliestNewExpiresAt))} to ` +
-        `${isoDate(new Date(kind.latestNewExpiresAt))}; already past: ${kind.alreadyExpired}; ` +
+        `recorded ${kind.firstRecordedAt} to ${kind.lastRecordedAt} (by UTC year: ${years}); ` +
+        `new expiry ${kind.earliestNewExpiresAt} to ${kind.latestNewExpiresAt}; ` +
+        `already past: ${kind.alreadyExpired}; ` +
         `new entries today: ${kind.writerRetentionClass}, ${kind.writerRetentionPeriod}`,
     );
   }
