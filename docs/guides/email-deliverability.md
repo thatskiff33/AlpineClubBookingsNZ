@@ -37,7 +37,8 @@ archiving a failure — are **support**-area edit actions; a view-only support r
 2. Read the four sections top to bottom:
    - **Email Deliverability** — active recipient **suppressions** (addresses the
      provider bounced or that complained). Clear a suppression once the address
-     is known good.
+     is known good. See [Blocked addresses](#blocked-addresses-bounces-and-complaints)
+     for what a block covers.
    - **Token Email Recovery** — tokenised emails (sign-in / pay links) that
      failed and were scanned for reissue; reissue the ones a member still needs.
    - **Exhausted Email Failures** — sends that need operator attention. Most used
@@ -54,6 +55,30 @@ archiving a failure — are **support**-area edit actions; a view-only support r
      lookback window because no recipient received them at send time. A later
      retry may since have delivered one; the row records the send, not the
      outcome.
+
+### Blocked addresses: bounces and complaints
+
+A suppression blocks **this site's own emails** to the address: every send and
+every retry checks it first and is refused. Invoices emailed by Xero are not
+covered by the block (owner decision D7): Xero sends them from its own servers
+and the block is not consulted. A block is added at once for a complaint or a
+permanent bounce, and from the second temporary bounce (a full mailbox, say).
+
+- **A bounce** marks that one email as bounced in the email log; the address's
+  other emails keep their status.
+- **A complaint**, usually the recipient marking an email as spam, marks no
+  email: the email arrived, so it keeps showing as sent. Officers who receive
+  **Reported issues** alerts (owner decision D4) get one **Admin Email
+  Complaint** alert per complaint report (owner decision D6), with the address,
+  the complaint's type, the members whose record uses the address, which email
+  it was about if the app can tell, and a link back here.
+- **A "not spam" report**, the recipient moving a club email out of their spam
+  folder, changes nothing: no block, no alert (owner decision D5).
+
+To lift a block, choose **Clear** on its row under **Active suppressions**, once
+the member asks to receive email again or the address is fixed. Clearing needs
+Support & System edit. Exhausted failures to that address then offer their usual
+action again.
 
 ### Deal with an exhausted email failure
 
@@ -77,7 +102,12 @@ What you can do next depends on whether the system kept a copy of the message:
    **Try again** is not offered. Follow the link and send a fresh copy, as in
    [Send a fresh copy of a booking email](#send-a-fresh-copy-of-a-booking-email);
    the failure archives itself once the copy has gone.
-3. **The row says it can't be resent from here.** The message held a sign-in
+3. **The row says the address is blocked.** Nothing can be sent to it while
+   its suppression stands, so **Try again** and the other resends are not
+   offered. If the member asks to receive email again, clear the suppression
+   (see [Blocked addresses](#blocked-addresses-bounces-and-complaints)); the row
+   then offers its usual action. Otherwise choose **Archive**.
+4. **The row says it can't be resent from here.** The message held a sign-in
    link, a door code or a payment link, so no copy was kept, or its copy was
    cleared when it was retired. A booking email saved before the club's
    per-booking **No emails** switch existed is treated the same way: it records
@@ -159,6 +189,8 @@ This is a monitoring page — it has no configuration. The figures it shows:
 | Symptom | Likely cause | Fix |
 | --- | --- | --- |
 | A member never got any email | Their address is suppressed after a bounce/complaint | Confirm the address, then clear the suppression here |
+| A member who marked an email as spam still got an invoice | Invoices are emailed by Xero, which the block does not cover (owner decision D7) | Nothing to fix in the app; contact the member if needed |
+| An exhausted failure says the address is blocked | The recipient bounced or complained | Clear the suppression if they want email again; otherwise archive the failure |
 | A nomination, account-setup or membership-cancellation email never arrived | The tokenised email failed | Reissue it from **Token Email Recovery** |
 | A booking confirmation, pre-arrival reminder or guest payment link failed and was not retried | It carries a door code or payment link, so no copy is kept to retry | Follow **Send a fresh copy from the booking** and send a fresh copy; the failure archives itself once the copy has gone. If the booking has been deleted there is no link: contact the member directly, then archive the failure |
 | An email failed after a provider outage and the row has **Try again** | The retry job used all its attempts during the outage | Once the provider is working, choose **Try again**; the next retry run sends it |

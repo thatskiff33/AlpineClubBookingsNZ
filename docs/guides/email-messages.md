@@ -489,32 +489,47 @@ you want both reworded; editing only one leaves the other on its built-in text.
 > email history could show emails that arrived as bounced. A temporary bounce
 > (a full mailbox, say) follows the same rule as a permanent one. A complaint,
 > usually the recipient marking an email as spam, now marks no email at all:
-> the email arrived, so it keeps showing as sent.
+> the email arrived, so it keeps showing as sent. A "not spam" report, the
+> recipient moving a club email out of their spam folder, changes nothing: the
+> address is not blocked and no alert is sent (owner decision D5).
 >
 > The address is blocked from further emails exactly as before: at once for a
-> complaint or a permanent bounce, from the second temporary bounce. Once it
-> is blocked, nothing waiting to be sent or retried goes to it. After a first
-> temporary bounce, an email to the address that failed and is waiting for a
-> retry is now retried, where before it was marked bounced and dropped.
+> complaint or a permanent bounce, from the second temporary bounce. The block
+> covers this site's own emails; invoices emailed by Xero are not covered by it
+> (owner decision D7). Once it is blocked, nothing of the site's own waiting to
+> be sent or retried goes to it. After a first temporary bounce, an email to the
+> address that failed and is waiting for a retry is now retried, where before it
+> was marked bounced and dropped.
 >
 > What an officer can notice:
 >
 > - A new alert, **Admin Email Complaint** (`admin-email-complaint`), sent once
->   per complaint. It gives the address, the members whose record uses it (or
->   says no member record does), which email the complaint was about and when
->   it was sent (or says the app could not tell), and that the address is now
->   blocked. It links to **Email Deliverability**, where the block is listed and
->   can be lifted. It goes to officers who receive **Reported issues** alerts
->   (Support & System edit, which lifting a block needs), and its wording is
->   editable like the others.
+>   per complaint report (owner decision D6). It gives the address, the
+>   complaint's type in plain words, the members whose record uses the address
+>   (five by name and a count of the rest, or that no member record does),
+>   which email the complaint was about and when it was sent (or that the app
+>   could not tell), and that the address is now blocked for the site's own
+>   emails, invoices emailed by Xero excepted. It links to **Email
+>   Deliverability**, where the block is listed and can be lifted. It goes to
+>   officers who receive **Reported issues** alerts (owner decision D4: Support
+>   & System edit, which lifting a block needs), and its wording is editable
+>   like the others. If it cannot be sent at once, it is kept and tried again
+>   every 15 minutes, for up to 7 days, until an officer has it; it is not sent
+>   at all when the template is muted, nobody receives Reported issues alerts,
+>   or the block has been lifted by then.
 > - A member who received their waitlist offer email still counts as told if
 >   they mark it as spam, or if another email to them later bounces or draws a
->   complaint: they are sent **Waitlist Offer Expired** if the offer lapses, and
->   no **Waitlist email not sent** alert is raised for it. An offer email that
->   bounced counts as not told, as before.
+>   complaint, so no **Waitlist email not sent** alert is raised for it. If the
+>   offer lapses, the **Waitlist Offer Expired** email is attempted, but when
+>   the member marked an email as spam their address is blocked, so it is
+>   refused and does not reach them; the complaint alert is how officers hear.
+>   An offer email that bounced counts as not told, as before, when the app can
+>   match the bounce to it (see Limits).
+> - An exhausted email failure to a blocked address no longer offers **Try
+>   again** on Email Deliverability; it says the address is blocked instead.
 >
 > To tell which email a report is about, the app now keeps the id the mail
-> service gave each email when it accepted it. Only Amazon SES is recognised
+> service gave each email when it accepted it. Only AWS SES is recognised
 > (`USE_AWS_SES=true`).
 >
 > Limits. An email sent before this version, or while a server still running
@@ -522,11 +537,12 @@ you want both reworded; editing only one leaves the other on its built-in text.
 > id: a report about it marks it only when SES includes the original email
 > headers, an optional setting
 > ([`CONFIGURATION.md`](../../CONFIGURATION.md#ses-bounce-and-complaint-feedback)).
-> Without it, the address is still blocked but no email is marked. The same
-> holds for email sent through an SMTP relay. Emails already marked bounced
-> before this version stay marked. During the switch, a server still running
-> the version before it marks every email to the address on a bounce or a
-> complaint, as before, and sends no complaint alert.
+> Without it, the address is still blocked but no email is marked, so a
+> bounced offer email of that age counts as told. The same holds for email
+> sent through an SMTP relay. Emails already marked bounced before this version
+> stay marked. During the switch, a server still running the version before it
+> marks every email to the address on a bounce or a complaint (a "not spam"
+> report included), as before, and sends no complaint alert.
 
 > **Upgrade note (#5433, card-payment confirmations).** A member's **Booking
 > Confirmed** email after paying by card is no longer lost if the payment is

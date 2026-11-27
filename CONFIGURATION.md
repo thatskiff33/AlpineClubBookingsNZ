@@ -2807,10 +2807,13 @@ retries for roughly 50 minutes. See
 ### SES Bounce and Complaint Feedback
 
 A bounce marks as bounced only the email it is about, and a complaint marks
-none and alerts officers once (#5469); either way the address is suppressed,
-so nothing more is sent to it. The app finds the email by the id SES gave it,
-which SES returns when it accepts the message (`250 Ok <id>`) and the app stores
-for each email it sends with `USE_AWS_SES=true`. No setting is needed for that.
+none and alerts officers once per report (#5469). The address is blocked from
+this site's own emails at once for a complaint or a permanent bounce, and from
+the second temporary bounce; invoices emailed by Xero are not covered by the
+block (owner decision D7). A "not spam" report changes nothing (owner decision
+D5). The app finds the email by the id SES gave it, which SES returns when it
+accepts the message (`250 Ok <id>`) and the app stores for each email it sends
+with `USE_AWS_SES=true`. No setting is needed for that.
 
 Optional, for emails sent before this version (and any sent while the previous
 version was still running during the upgrade): turn on **include original email
@@ -2818,12 +2821,13 @@ headers** for the sending identity's bounce and complaint notifications in SES
 (the `SetIdentityHeadersInNotificationsEnabled` setting). Those emails stored no
 SES id, so the app can find them only by the Message-ID header it sent, which
 SES reports only among the original headers. Without it, a report about such an
-email still suppresses the address but marks no email.
+email still blocks the address as above but marks no email.
 
 An SMTP relay (`USE_SMTP_RELAY=true`) is not a recognised mail service, even one
 that forwards to SES, so its emails store no id; and the app reads bounce and
-complaint reports only from SES's SNS notifications. Supporting another
-service is an adapter for its reports and an entry for its reply format
+complaint reports only from SES's SNS notifications (`notificationType`), not
+from SES event publishing. Supporting another service is an adapter for its
+reports and an entry for its reply format
 ([Email Retry Lifecycle](docs/STATE_MACHINES.md#email-retry-lifecycle),
 `INV-INT-043`). See
 [Amazon SES SMTP issues](https://docs.aws.amazon.com/ses/latest/dg/troubleshoot-smtp.html)

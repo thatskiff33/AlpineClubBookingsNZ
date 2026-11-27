@@ -28,10 +28,9 @@ const MAX_MEMBER_NAMES = 5;
 
 /**
  * THE ONE PLACE THE ALERT'S ONCE-ONLY KEY IS MADE: one alert per complaint
- * report, keyed on the address's suppression row (never the address itself,
- * which must not sit in `AlertCooldown`) and the service's id for the report.
- * One alert per blocked address instead is this line without the report part
- * (owner question, #5469 round 3 item 4).
+ * report (owner decision D6, 28 Nov 2026), keyed on the address's suppression
+ * row (never the address itself, which must not sit in `AlertCooldown`) and
+ * the service's id for the report.
  */
 function emailComplaintAlertKey(suppressionId: string, event: DeliveryFeedbackEvent): string {
   return `email-complaint:${suppressionId}:${event.reportId ?? event.providerMessageId ?? "no-report-id"}`;

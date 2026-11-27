@@ -75,8 +75,9 @@ the member's own preferences instead, according to its category (#4987,
 | **Club newsletter** — optional news | **Club newsletters**, off unless turned on | Does not receive it |
 
 Email suppression (bounces and complaints) applies to both. A complaint also
-sends officers the **Admin Email Complaint** alert, once per complaint; like
-any admin alert, it can be muted here (#5469).
+sends officers the **Admin Email Complaint** alert, once per complaint report
+(owner decision D6), on the Reported issues preference (D4); like any admin
+alert, it can be muted here, and then none is sent (#5469).
 
 ## Troubleshooting
 

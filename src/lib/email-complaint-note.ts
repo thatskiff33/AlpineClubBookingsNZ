@@ -10,10 +10,11 @@ import type { ComplaintType } from "@/lib/email/delivery-feedback";
 
 /**
  * "This site's own emails": invoices that Xero emails at the app's request do
- * not consult the block (`docs/guides/email-deliverability.md` says so).
+ * not consult the block, and stay that way (owner decision D7, 28 Nov 2026), so
+ * the alert names them as the exception.
  */
 export const EMAIL_COMPLAINT_BLOCK_NOTE =
-  "The address is now blocked, so this site sends it none of its own emails until the block is lifted. You can see the block, and lift it if they ask to receive email again, on the Email Deliverability page.";
+  "The address is now blocked, so this site sends it none of its own emails until the block is lifted. Invoices emailed by Xero are not covered by the block. You can see the block, and lift it if they ask to receive email again, on the Email Deliverability page.";
 
 /** A complaint's type in plain words. */
 const COMPLAINT_TYPE_LABEL: Readonly<Record<ComplaintType, string>> = {
