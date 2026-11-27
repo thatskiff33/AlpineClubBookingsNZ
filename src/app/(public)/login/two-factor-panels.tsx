@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState, type FormEvent } from "react";
+import Link from "next/link";
 import { startAuthentication } from "@simplewebauthn/browser";
 import { Copy, Fingerprint, KeyRound, Loader2, Mail, ShieldCheck } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -238,6 +239,17 @@ export function TwoFactorEnrollPanel({
               />
             )}
           </OptionCardGroup>
+          {appOnly ? (
+            // An officer can satisfy the rule with a passkey instead, which is
+            // added from the profile security card (#4620 lock-out walk).
+            <p className="text-sm text-muted-foreground">
+              No authenticator app?{" "}
+              <Link href="/profile" className="underline underline-offset-4">
+                Add a passkey from your profile
+              </Link>{" "}
+              instead.
+            </p>
+          ) : null}
 
           {method === "TOTP" ? (
             <div className="space-y-4">

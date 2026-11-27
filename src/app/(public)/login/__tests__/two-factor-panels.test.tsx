@@ -249,6 +249,24 @@ describe("method choice is announced, not only shaded (#4952)", () => {
     await screen.findByText(setup.secret);
   });
 
+  // #4620 lock-out walk: an officer without an app can still satisfy the rule
+  // with a passkey, so the app-only panel points to where one is added.
+  it("points an app-only officer to the profile to add a passkey instead", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => response(setup)));
+    const { unmount } = render(<TwoFactorEnrollPanel callbackUrl={deepLink} appOnly />);
+    expect(
+      screen.getByRole("link", { name: "Add a passkey from your profile" }),
+    ).toHaveAttribute("href", "/profile");
+    await screen.findByText(setup.secret);
+    unmount();
+
+    render(<TwoFactorEnrollPanel callbackUrl={deepLink} />);
+    expect(
+      screen.queryByRole("link", { name: "Add a passkey from your profile" }),
+    ).toBeNull();
+    await screen.findByText(setup.secret);
+  });
+
   it("names the sign-in group and moves pressed to Recovery", () => {
     render(<TwoFactorVerifyPanel callbackUrl={deepLink} enrolledMethod="EMAIL" hasPasskey />);
     const group = screen.getByRole("group", { name: "Verification method" });
