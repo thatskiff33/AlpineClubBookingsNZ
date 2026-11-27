@@ -207,6 +207,7 @@ import {
 import { adminGroupJoinerStartedStayTemplate } from "@/lib/email-templates/admin-group-joiner-started-stay";
 import { adminWaitlistNoticeUnsentTemplate } from "@/lib/email-templates/admin-waitlist-notice-unsent";
 import { adminBookingConfirmationUnsentTemplate } from "@/lib/email-templates/admin-booking-confirmation-unsent";
+import { adminBookingNoticeUnsentTemplate } from "@/lib/email-templates/admin-booking-notice-unsent";
 import {
   groupJoinCancelledTemplate,
   groupJoinPaySelfTemplate,
@@ -1158,6 +1159,14 @@ const GENERATED_CASES: EmailRenderCase[] = [
     adminGroupJoinerStartedStayTemplate({ organiserName: "organiserName-1", organiserBookingId: "organiserBookingId-2", organiserBookingUrl: "https://example.test/bookings/organiserBookingId-2", checkIn: new Date("2026-03-04T00:00:00.000Z"), joiners: [{ name: "name-3 <b>", bookingUrl: "https://example.test/bookings/bookingId-4" }, { name: "name-5", bookingUrl: "https://example.test/bookings/bookingId-6" }] }) },
   { id: "adminBookingConfirmationUnsentTemplate:minimal", fn: "adminBookingConfirmationUnsentTemplate", render: () =>
     adminBookingConfirmationUnsentTemplate({ memberName: "memberName-1 <b>", bookingId: "bookingId-2", bookingUrl: "https://example.test/bookings/bookingId-2", checkIn: new Date("2026-03-04T00:00:00.000Z"), checkOut: new Date("2026-03-05T00:00:00.000Z") }) },
+  { id: "adminBookingNoticeUnsentTemplate:request-hold-cancelled", fn: "adminBookingNoticeUnsentTemplate", render: () =>
+    adminBookingNoticeUnsentTemplate({ notice: "request-hold-cancelled", memberName: "memberName-1 <b>", bookingId: "bookingId-2", bookingUrl: "https://example.test/bookings/bookingId-2", checkIn: new Date("2026-03-04T00:00:00.000Z"), checkOut: new Date("2026-03-05T00:00:00.000Z") }) },
+  { id: "adminBookingNoticeUnsentTemplate:split-guest-cancelled", fn: "adminBookingNoticeUnsentTemplate", render: () =>
+    adminBookingNoticeUnsentTemplate({ notice: "split-guest-cancelled", memberName: "memberName-1 <b>", bookingId: "bookingId-2", bookingUrl: "https://example.test/bookings/bookingId-2", checkIn: new Date("2026-03-04T00:00:00.000Z"), checkOut: new Date("2026-03-05T00:00:00.000Z") }) },
+  { id: "adminBookingNoticeUnsentTemplate:split-guest-payment-link", fn: "adminBookingNoticeUnsentTemplate", render: () =>
+    adminBookingNoticeUnsentTemplate({ notice: "split-guest-payment-link", memberName: "memberName-1 <b>", bookingId: "bookingId-2", bookingUrl: "https://example.test/bookings/bookingId-2", checkIn: new Date("2026-03-04T00:00:00.000Z"), checkOut: new Date("2026-03-05T00:00:00.000Z") }) },
+  { id: "adminBookingNoticeUnsentTemplate:saved-card-unusable", fn: "adminBookingNoticeUnsentTemplate", render: () =>
+    adminBookingNoticeUnsentTemplate({ notice: "saved-card-unusable", memberName: "memberName-1 <b>", bookingId: "bookingId-2", bookingUrl: "https://example.test/bookings/bookingId-2", checkIn: new Date("2026-03-04T00:00:00.000Z"), checkOut: new Date("2026-03-05T00:00:00.000Z") }) },
   { id: "adminWaitlistNoticeUnsentTemplate:offer", fn: "adminWaitlistNoticeUnsentTemplate", render: () =>
     adminWaitlistNoticeUnsentTemplate({ notice: "offer", memberName: "memberName-1 <b>", bookingId: "bookingId-2", bookingUrl: "https://example.test/bookings/bookingId-2", checkIn: new Date("2026-03-04T00:00:00.000Z"), checkOut: new Date("2026-03-05T00:00:00.000Z") }) },
   { id: "adminWaitlistNoticeUnsentTemplate:offer-expired", fn: "adminWaitlistNoticeUnsentTemplate", render: () =>

@@ -171,6 +171,7 @@ import { createPaymentIntentForPaymentLink } from "@/lib/payment-link-intent";
 import {
   issueSplitGuestPaymentLink,
   mintSplitGuestPaymentLinkIfAbsent,
+  prepareSplitGuestPaymentLinkReissue,
 } from "@/lib/payment-link-split-guest";
 import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 import { BOOKING_ALREADY_PAID_CODE, SWITCHED_TO_INTERNET_BANKING_BODY } from "@/lib/payment-recovery-contract";
@@ -2548,6 +2549,93 @@ describe("issueSplitGuestPaymentLink (#1967)", () => {
         where: expect.objectContaining({ id: "pl-fresh" }),
       })
     );
+  });
+  // #5433 PR 4, round 2, item 4: the owed link's recovery passes `recordOwed`,
+  // which runs inside the re-issue's own transaction. The double stages the
+  // transaction's writes and applies them only when the callback resolves, as
+  // PostgreSQL commits or rolls back.
+  describe("prepareSplitGuestPaymentLinkReissue with recordOwed (#5433)", () => {
+    function stagingTransaction() {
+      const committed: string[] = [];
+      const order: string[] = [];
+      mockedTransaction.mockImplementation(async (arg: unknown) => {
+        const staged: string[] = [];
+        const tx = {
+          booking: { findUnique: mockedBookingFindUnique },
+          paymentLink: {
+            findFirst: mockedPaymentLinkFindFirst,
+            create: vi.fn(async () => {
+              staged.push("mint");
+              order.push("mint");
+              return { id: "pl-new" };
+            }),
+            updateMany: vi.fn(async () => {
+              staged.push("revoke");
+              order.push("revoke");
+              return { count: 1 };
+            }),
+          },
+          owedNotice: { createMany: vi.fn(async () => (staged.push("marker"), order.push("marker"), { count: 1 })) },
+        };
+        const value = await (arg as (t: typeof tx) => Promise<unknown>)(tx);
+        committed.push(...staged);
+        return value;
+      });
+      return { committed, order };
+    }
+
+    it("runs recordOwed as the transaction's last write, after the revoke and the mint, and hands back what it recorded", async () => {
+      const { committed, order } = stagingTransaction();
+      mockedBookingFindUnique.mockResolvedValueOnce(splitChild() as never).mockResolvedValueOnce({ status: BookingStatus.PENDING } as never);
+      mockedPaymentLinkFindFirst.mockResolvedValue(null);
+      const recordOwed = vi.fn(async (tx: { owedNotice: { createMany: () => Promise<unknown> } }, minted: { paymentLinkId: string }) => {
+        await tx.owedNotice.createMany();
+        return `marker-for-${minted.paymentLinkId}`;
+      });
+
+      const prepared = await prepareSplitGuestPaymentLinkReissue("child-1", recordOwed as never);
+
+      expect(prepared).toMatchObject({ kind: "minted", minted: { paymentLinkId: "pl-new" }, owed: "marker-for-pl-new" });
+      expect(order).toEqual(["revoke", "mint", "marker"]);
+      expect(committed).toEqual(["revoke", "mint", "marker"]);
+      expect(sendSplitGuestPaymentLinkEmail).not.toHaveBeenCalled();
+    });
+
+    it("rolls back the revoke and the mint when the marker insert fails", async () => {
+      const { committed } = stagingTransaction();
+      mockedBookingFindUnique.mockResolvedValueOnce(splitChild() as never).mockResolvedValueOnce({ status: BookingStatus.PENDING } as never);
+      mockedPaymentLinkFindFirst.mockResolvedValue(null);
+      const recordOwed = vi.fn(async () => {
+        throw new Error("OwedNotice insert failed");
+      });
+
+      await expect(prepareSplitGuestPaymentLinkReissue("child-1", recordOwed)).rejects.toThrow("OwedNotice insert failed");
+
+      expect(committed).toEqual([]);
+    });
+
+    it.each([
+      ["just_sent", () => {
+        mockedBookingFindUnique.mockResolvedValueOnce(splitChild() as never).mockResolvedValueOnce({ status: BookingStatus.PENDING } as never);
+        mockedPaymentLinkFindFirst.mockResolvedValue({ id: "pl-active", createdAt: new Date() } as never);
+      }],
+      ["not_payable", () => {
+        mockedBookingFindUnique.mockResolvedValueOnce(splitChild() as never).mockResolvedValueOnce({ status: BookingStatus.CANCELLED } as never);
+      }],
+      ["withheld", () => {
+        mockedBookingFindUnique.mockResolvedValueOnce(splitChild({ noEmails: true }) as never);
+      }],
+    ])("never calls recordOwed when the re-issue answers %s", async (kind, arrange) => {
+      const { committed } = stagingTransaction();
+      arrange();
+      const recordOwed = vi.fn();
+
+      const prepared = await prepareSplitGuestPaymentLinkReissue("child-1", recordOwed);
+
+      expect(prepared).toEqual({ kind });
+      expect(recordOwed).not.toHaveBeenCalled();
+      expect(committed).toEqual([]);
+    });
   });
 });
 
