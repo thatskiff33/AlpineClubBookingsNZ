@@ -234,6 +234,17 @@ describe("#5241 Xero credit deduction correction", () => {
     expect(fake.snapshot().invoices).toHaveLength(0);
   });
 
+  it("refuses a note whose lines share an account but name different tax types", async () => {
+    proxyApi("getCreditNote", (original) => async (...args: never[]) => {
+      const response = await original(...args);
+      const lines = (response.body.creditNotes![0] as CreditNote).lineItems!;
+      lines.push({ ...lines[0]!, taxType: "TAX005" });
+      return response;
+    });
+    await expect(correctXeroCreditNote(correction(1000))).rejects.toThrow("NOTE_MIXED_LINES");
+    expect(fake.snapshot().invoices).toHaveLength(0);
+  });
+
   it("cancellation stops at a live correction invoice, and no longer once it is voided in Xero", async () => {
     const invoiceId = await adoptable();
     const failure = await assertXeroCreditNoteCorrectionUntouched(correction(1000)).catch((error: Error) => error);

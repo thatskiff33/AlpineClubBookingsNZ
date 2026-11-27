@@ -1,11 +1,11 @@
 /** Xero-only correction of existing credit; shared with Ledger M5 (#4517, #5241). */
-import { CreditNote, Invoice, LineAmountTypes, type XeroClient } from "xero-node";
+import { CreditNote, Invoice, type XeroClient } from "xero-node";
 import { exactProviderAmountToCents } from "@/lib/money-provider-amount";
 import { callXeroApi, getAuthenticatedXeroClient } from "@/lib/xero-api-client";
 import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
 import { xeroDocumentDateForClubToday } from "@/lib/xero-provider-dates";
 import { buildXeroIdempotencyKey } from "@/lib/xero-sync";
-import { xeroOffsettingLineAmountTypes } from "@/lib/xero-tax-rendering";
+import { xeroLineTax, xeroNamedLineTaxType, xeroOffsettingRendering } from "@/lib/xero-tax-rendering";
 
 type Session = { xero: XeroClient; tenantId: string };
 export interface XeroCreditNoteCorrectionInput {
@@ -112,12 +112,9 @@ export async function correctXeroCreditNote(input: XeroCreditNoteCorrectionInput
 
   const lines = note.lineItems ?? [];
   const first = lines[0];
-  // An untaxed note's lines name no tax type or "NONE" (`xeroDocumentCarriesTax`); its correction names none.
-  const lineAmountTypes = xeroOffsettingLineAmountTypes(note);
-  const taxOf = (line: { taxType?: string }) => (line.taxType && line.taxType !== "NONE" ? line.taxType : undefined);
-  const taxType = first && taxOf(first);
-  if (!first?.accountCode || !taxType && lineAmountTypes !== LineAmountTypes.NoTax ||
-    lines.some(line => line.accountCode !== first.accountCode || taxOf(line) !== taxType)) {
+  // The note's own tax, from the one renderer (INV-CONFIG-007): null when its lines mix tax types or a taxed note names none.
+  const rendering = xeroOffsettingRendering(note);
+  if (!first?.accountCode || !rendering || lines.some(line => line.accountCode !== first.accountCode)) {
     throw new XeroCreditNoteCorrectionRefusal("NOTE_MIXED_LINES", "the credit note has mixed or missing account codes or tax rates; cancel this correction and ask the treasurer to check the note.");
   }
   const candidates = await findInvoices(session, input.reference);
@@ -137,15 +134,15 @@ export async function correctXeroCreditNote(input: XeroCreditNoteCorrectionInput
       date: documentDate,
       dueDate: documentDate,
       currencyCode: note.currencyCode,
-      lineAmountTypes,
-      lineItems: [{ description: input.reference, quantity: 1, unitAmount: input.cents / 100, accountCode: first.accountCode, ...(taxType ? { taxType } : {}) }],
+      lineAmountTypes: rendering.lineAmountTypes,
+      lineItems: [{ description: input.reference, quantity: 1, unitAmount: input.cents / 100, accountCode: first.accountCode, ...xeroLineTax(rendering) }],
     }] }, undefined, undefined, key("invoice")), meter("createInvoices", "INVOICE"));
     invoice = response.body.invoices?.[0];
   }
   if (!invoice?.invoiceID || invoice.reference !== input.reference || invoice.type !== Invoice.TypeEnum.ACCREC ||
     invoice.contact?.contactID !== note.contact!.contactID || exactProviderAmountToCents(invoice.total) !== input.cents ||
     invoice.currencyCode !== note.currencyCode || !invoice.lineItems?.length ||
-    invoice.lineItems.some(line => line.accountCode !== first.accountCode || taxOf(line) !== taxType) ||
+    invoice.lineItems.some(line => line.accountCode !== first.accountCode || xeroNamedLineTaxType(line) !== rendering.taxType) ||
     invoice.status !== Invoice.StatusEnum.AUTHORISED && invoice.status !== Invoice.StatusEnum.PAID) {
     throw new XeroCreditNoteCorrectionRefusal("CORRECTION_INVOICE_CHANGED", "the invoice with this reference does not match the correction; check Xero before retrying.");
   }

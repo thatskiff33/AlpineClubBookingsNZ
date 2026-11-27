@@ -108,15 +108,32 @@ export function xeroDocumentCarriesTax(
 }
 
 /**
- * The line-amount basis of a document that offsets an existing one (#5241): a
- * credit-deduction correction invoice bills the cents taken back off a credit
- * note. An untaxed note's correction is untaxed; any other note's is
- * `Inclusive`, so the gross the invoice bills equals the cents taken back
- * whatever basis the note itself was raised under. Its lines keep the note's
- * own tax type, which the caller copies from the note.
+ * The tax type a line of an existing Xero document names, or none: a line that
+ * names no tax type and one that names "NONE" are both untaxed, as
+ * `xeroDocumentCarriesTax` reads them.
  */
-export function xeroOffsettingLineAmountTypes(
-  document: { lineAmountTypes?: LineAmountTypes | string | null },
-): LineAmountTypes {
-  return document.lineAmountTypes === LineAmountTypes.NoTax ? LineAmountTypes.NoTax : LineAmountTypes.Inclusive;
+export function xeroNamedLineTaxType(line: { taxType?: string | null }): string | undefined {
+  return line.taxType && line.taxType !== "NONE" ? line.taxType : undefined;
+}
+
+/**
+ * How a document that offsets an existing one is rendered (#5241): a
+ * credit-deduction correction invoice bills the cents taken back off a credit
+ * note, under the note's own tax and not the club's treatment today. An untaxed
+ * note's correction is untaxed and names no tax type; any other note's is
+ * `Inclusive` under the one tax type its lines name, so the gross the invoice
+ * bills equals the cents taken back whatever basis the note was raised under.
+ *
+ * Null when the document cannot be offset under one rendering: its lines name
+ * different tax types, or it is taxed and its lines name none. The caller
+ * refuses then, before any provider write.
+ */
+export function xeroOffsettingRendering(
+  document: { lineAmountTypes?: LineAmountTypes | string | null; lineItems?: ReadonlyArray<{ taxType?: string | null }> | null },
+): XeroTaxRendering | null {
+  const lines = document.lineItems ?? [];
+  const untaxed = document.lineAmountTypes === LineAmountTypes.NoTax;
+  const taxType = lines[0] && xeroNamedLineTaxType(lines[0]);
+  if (lines.some((line) => xeroNamedLineTaxType(line) !== taxType) || !taxType && !untaxed) return null;
+  return { lineAmountTypes: untaxed ? LineAmountTypes.NoTax : LineAmountTypes.Inclusive, ...(taxType ? { taxType } : {}) };
 }
