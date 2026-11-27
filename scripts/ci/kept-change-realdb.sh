@@ -38,6 +38,8 @@ files=(
   src/lib/__tests__/booking-ledger-group-settlement.realdb.test.ts
   # #5255: the once-ever alert sweep's give-back against the alert's email row.
   src/lib/__tests__/admin-alert-once-sweep.realdb.test.ts
+  # #5391: two account mapping saves, and a save beside the import's key holder.
+  src/lib/__tests__/xero-account-mapping-save-race.realdb.test.ts
 )
 # An explicit report plus the existing validator rejects green describe.skip.
 pnpm exec vitest run --maxWorkers=1 --reporter=json --outputFile="$race_dir/report.json" "${files[@]}"

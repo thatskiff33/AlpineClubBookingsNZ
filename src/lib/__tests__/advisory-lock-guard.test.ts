@@ -1172,6 +1172,9 @@ const SCOPED_ADVISORY_LOCK_INVENTORY: Record<string, number> = {
   // first, before any row, and hold no other advisory key
   // (docs/CONCURRENCY_AND_LOCKING.md, the calendar-series row).
   "src/lib/calendar-service.ts": 1,
+  // Still ONE: the Xero account mapping save (#5391) calls
+  // `acquireConfigImportLock`, first and alone in its transaction, and adds no
+  // raw lock site (docs/CONCURRENCY_AND_LOCKING.md, the account mapping save).
   "src/lib/config-transfer-lock.ts": 1,
   // TWO: the blocking `acquireLodgeCapacityLock`, and `tryAcquireLodgeCapacityLock`
   // (#4876). The try form is the same per-lodge key and never waits. Member merge

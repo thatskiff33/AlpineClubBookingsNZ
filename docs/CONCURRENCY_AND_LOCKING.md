@@ -73,7 +73,8 @@ alone. Config-transfer import's order is in
 [minimum-stay](#composition-minimum-stay-policy-set-2363),
 [roster dates](#composition-roster-date-writers-2586),
 [lodge admission](#composition-lodge-admission-deactivation-and-hut-leader-assignments-2701)
-and [the club-theme writer](#bunk-pairing-room-row-and-the-club-theme-logo-writer-2322);
+[the club-theme writer](#bunk-pairing-room-row-and-the-club-theme-logo-writer-2322)
+and [the Xero account mapping save](#the-xero-account-mapping-save-takes-the-config-import-key-5391);
 member partner link's in
 [merge's key order](#merges-key-order-policy-set-lodges-lifecycle-partner-links);
 the legacy `hashtext(<memberId>)` contact-link key's in
@@ -943,7 +944,7 @@ are the literal `1`.
 | **Membership application** | `hashtext(<application key>)` | `membershipApplicationLockKey` (`nomination.ts`) | — | State transitions of one membership application. |
 | **Membership applicant** | `hashtext(<applicant-email key>)` | `membershipApplicationApplicantLockKey` (`nomination.ts`) | — | Per-email applicant dedup at submit time. |
 | **Roster-date writers** | `hashtext("roster:<date>")` | `lockRosterDate(tx, date)` / sorted `lockRosterDates(tx, dates)` (`roster-lock.ts`) | date | Serialises whole-roster save/regenerate/confirm/auto-suggest, kiosk confirm and complete/uncomplete, and booking/guest cleanup that can remove suggested rows for the same lodge night. |
-| **Config-transfer import** | `hashtext("config-transfer-import")` | `acquireConfigImportLock(tx)` (`config-transfer-lock.ts`) | — | Single-flights configuration-bundle apply and excludes lodge identity mutations while an import resolves bundle slugs to immutable lodge ids. A lodge update/deactivation then takes its immutable target-lodge capacity key before re-reading the lodge and active-lodge/dependency predicates. |
+| **Config-transfer import** | `hashtext("config-transfer-import")` | `acquireConfigImportLock(tx)` (`config-transfer-lock.ts`) | — | Single-flights configuration-bundle apply and excludes lodge identity mutations while an import resolves bundle slugs to immutable lodge ids. A lodge update/deactivation then takes its immutable target-lodge capacity key before re-reading the lodge and active-lodge/dependency predicates. The Xero account mapping save (`saveXeroAccountMappings`, #5391) takes it alone, so its Opening Credits shared-account check and its writes cannot interleave with another save or with an import's Xero category: [the account mapping save](#the-xero-account-mapping-save-takes-the-config-import-key-5391). |
 | **Minimum-stay policy set** | `hashtext("minimum-stay-policy-set")` | `lockMinimumStayPolicySet(tx)` (`minimum-stay-policy-set.ts`) plus the migration's `MinimumStayPolicy_lock_set` statement trigger | policy config | Serialises every live CRUD and config-transfer replacement across the small club/lodge policy set. The database trigger puts draining old-colour DML behind the exact same key before any tuple lock. |
 | **Adult-member hosting policy set** | `hashtext("adult-member-hosting-policy-set")` | `lockAdultMemberHostingPolicySet(tx)` / `tryLockAdultMemberHostingPolicySet(tx)` (`adult-member-hosting-policy-set.ts`) plus the migration's `AdultMemberHostingPolicy_lock_set` statement trigger | policy config | Serialises the admin write route and the config-transfer replacement over the one club row plus one row per lodge (#2364), fences the drain's policy read before incident reconciliation, and excludes member merge while policy reconciliation enumerates bookings and inserts queue rows. Unlike its minimum-stay sibling the trigger is NOT a blue/green drain boundary — the table did not exist before its own migration, so no old colour writes it — it is there so advisory-before-tuple order holds for every writer, operator psql included. Policy writers and merge take the blocking form. The drain takes the fail-fast form, releases a contended exact queue claim without consuming an attempt, and otherwise composes policy-set → sorted member-lifecycle → sorted `Member FOR KEY SHARE` rows → coverage-owner. |
 | **Membership subscription billing** | `hashtext("membership-subscription-billing:<seasonYear>")`, minted once in `lockSubscriptionBillingSeason` (`subscription-billing-season-lock.ts`) | `confirmSubscriptionBillingPreview`, `reconcileSubscriptionBillingExceptions` (`membership-subscription-billing.ts`); `clearStaleNotRequiredRows` (`member-subscription-defaults.ts`, #5190), called by the membership-lockout-settings `PUT` and after a config import commits | — | Annual/approval charge snapshot creation for one membership year; the #2148 refresh-reconciliation holds the same key so exception auto-resolution serialises with confirm and never resolves rows a concurrent confirm is regenerating. The #5190 liability clear-up holds it too, as a single-lock holder: the settings `PUT` takes it first, then upserts the club's liability rule, then flips the season's untouched `NOT_REQUIRED` rows whose member now owes, all in one transaction, so a confirm (which reads the rule inside the key) sees the rule and the rows from before the save or after it, never half of each. The config import runs the clear-up in its own transaction after the import commits, so the config-transfer lock and this key never nest. The clear-up takes the liability-rule key (next row) exclusive after this key; the settings `PUT` takes no rule key of its own, so it reaches the rule key only inside the clear-up, after its upsert; nothing takes this key after the rule key. The seasonal-assignment reconcile does NOT take this key (#5190 review): its callers hold `lock(1)`, lodge and member keys, and waiting here would stall every global-cohort writer behind a running confirm. `subscription-liability-opt-in.realdb.test.ts` proves both orders of confirm against the settings save and that the clear-up moves only untouched rows, on real PostgreSQL. The clear-up's write is one status-guarded `updateMany` (no invoice, no manual mark, no active coverage claim — so a `NO_INVOICE` fee's claim is never cleared), and a second run matches nothing. The #2161 operator family-marker writers (MARK/UNMARK on the subscription-billing route) deliberately take **no** advisory lock: they only insert/release a `FamilyGroupSeasonInvoiceMarker` row (single-active enforced by a partial unique index, so a concurrent double-mark is a benign no-op), and confirm re-derives suppression from the live marker rows under this same lock inside its transaction, so a mark landing mid-confirm either is seen by the in-tx re-preview or shifts the confirmation token — never a torn snapshot. The #4098 close-as-already-paid writer (`closeAlreadyPaidSubscriptionCharge`, `membership-subscription-charge-close.ts`) also takes **no** advisory lock, like the #2147 void release it mirrors: in one transaction it claims the charge with a status-guarded `updateMany` (`CONFLICT` + `SUBSCRIPTION_ALREADY_PAID` + no invoice), then re-checks PAID in the `WHERE` of the subscription write that bumps `voidGeneration` (a short count rolls back), then releases the coverage claims. It refuses while an invoice operation for the charge is queued or running, which covers an old pod's worker during a rollout. It does not rely on that refusal against a new worker: every charge-status write in the invoice pipeline (`liveChargeWhere` in `subscription-charge-already-paid.ts`, shared by the enqueue, the worker and the outbox failure handler) matches only live charges, so a worker whose Xero call was in flight when the close landed loses its `INVOICE_CREATED` write, links and emails nothing, and leaves `STRAY_INVOICE_AFTER_CLOSE` on the closed charge naming the invoice to void, written in the same transaction as the lost claim (only when that attempt raised or adopted the invoice; a voided charge or a resumed invoice just finishes as skipped). A concurrent close loses the claim and reads the charge closed; a manual reversal committing first rolls it back; the members are PAID, so a concurrent confirm never bills them either way. A later re-bill of a closed or voided family (#4110) runs inside confirm under this season key, and the family/type/season partial unique index (live charges only) still refuses a second LIVE family charge if two confirms ever raced past it. |
@@ -9537,6 +9538,58 @@ operator's copy of that is
   generic is an unchecked cast and a column that does not exist arrives
   `undefined`, not as an error. If a statement genuinely cannot be a model read,
   validate its rows with `decodeRawRows` (`src/lib/raw-sql-rows.ts`).
+
+## The Xero account mapping save takes the config-import key (#5391)
+
+Opening Credits never shares its Xero account with another mapped role (#4988).
+That rule is a check over every `XeroAccountMapping` row followed by writes to
+some of them, and no unique index can carry it: the conflict is between two
+different keys' effective codes, one of which may be an unset key's default. Two
+writers create and change these rows: the Account Mapping screen's save
+(`saveXeroAccountMappings`, `src/lib/xero-account-mapping-save.ts`, behind
+`PUT /api/admin/xero/account-mappings`) and the configuration import's Xero
+category. Before #5391 the save checked and wrote with no transaction, so two
+saves at once, or a save beside an import, could each pass on the rows they read
+and both land.
+
+The save now runs its writes in one transaction that first takes
+`acquireConfigImportLock(tx)`, re-reads every row through that transaction, and
+writes only if the rows still pass:
+
+- **Tier (`INV-LOCK-001`).** The narrow config-import key, not `lock(1)`: the
+  save reads and writes no booking, capacity or money row, and its only
+  counterparts are another save and the import, which already holds this key
+  from before its in-lock re-plan (which runs the same shared-account rule on
+  rows read through its own transaction) to its commit.
+- **Order (`INV-LOCK-002`).** The save takes this key first and takes no other
+  advisory key, so it adds no edge to the import's order (config-import, then
+  policy-set, lodge and fee-schedule keys). It holds the key for one read and a
+  few upserts, with no provider call inside.
+- **Registration (`INV-LOCK-003`).** The save calls the helper, so the key is
+  still minted at one raw site (`config-transfer-lock.ts`, unchanged in
+  `SCOPED_ADVISORY_LOCK_INVENTORY`). The route's own test pins the order of the
+  lock, the re-read and the writes.
+- **What runs outside the lock (`INV-LOCK-004`).** The account-class check reads
+  the cached chart of accounts through the module client, and the Exempt
+  prerequisite may ask Xero for its tax rates, so both run before the
+  transaction opens. Which codes a save sets or changes decides both, so inside
+  the lock the save also compares the stored code of every key it writes with
+  what the first read saw, and refuses with a 409 the officer can retry if one
+  moved. A refused save writes nothing.
+
+The save opens its transaction with Prisma's default budget. A save that waits
+longer than that behind a long import fails without writing, as the lodge create
+and rename routes that share this key do.
+
+`xero-account-mapping-save-race.realdb.test.ts` proves on real PostgreSQL that of
+two queued saves that would share an account between them exactly one is
+written, and that a save waiting behind a holder of the key is refused on the
+rows that holder committed. Counterparts reconciled: #4988 and #5150 (the
+shared-account rule and its import findings), #5248 (the import's category
+keys, taken after this one), #5190 (the post-import clear-up, which runs after
+the import's transaction and never nests this key) and #5400 (the route's body
+parsing). No open pull request in the pre-edit public GitHub query touched the
+save, the config-import key or the import's Xero category.
 
 ## Xero inbound cycle run claim (#4432)
 
