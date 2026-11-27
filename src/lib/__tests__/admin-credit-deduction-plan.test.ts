@@ -3,7 +3,7 @@ import { planAdminCreditDeduction, type DeductionLot } from "@/lib/admin-credit-
 
 const lot = (overrides: Partial<DeductionLot> = {}): DeductionLot => ({
   memberCreditId: "lot-a", xeroCreditNoteId: "note-a", remainingCents: 1000,
-  totalCents: 1000, hasSlices: false, writtenDownCents: 0, ...overrides,
+  totalCents: 1000, hasSlices: false, writtenDownCents: 0, sharesNote: false, ...overrides,
 });
 
 describe("admin credit deduction plan", () => {
@@ -27,6 +27,16 @@ describe("admin credit deduction plan", () => {
   it("uses an invoice after an earlier write-down", () => {
     expect(planAdminCreditDeduction(600, 600, 0, [lot({ remainingCents: 600, writtenDownCents: 400 })]).lines[0]?.mode)
       .toBe("INVOICE");
+  });
+  it("plans one line for a note that funds two lots, so one reference and one set of keys cover it", () => {
+    const shared = [lot({ sharesNote: true }), lot({ memberCreditId: "lot-b", sharesNote: true })];
+    expect(planAdminCreditDeduction(1400, 2000, 0, shared).lines)
+      .toEqual([{ memberCreditId: "lot-a", xeroCreditNoteId: "note-a", amountCents: 1400, mode: "INVOICE" }]);
+    expect(planAdminCreditDeduction(2000, 2000, 0, shared).lines)
+      .toEqual([{ memberCreditId: "lot-a", xeroCreditNoteId: "note-a", amountCents: 2000, mode: "INVOICE" }]);
+  });
+  it("never voids a note another lot shares, even when this lot is taken whole", () => {
+    expect(planAdminCreditDeduction(1000, 1000, 0, [lot({ sharesNote: true })]).lines[0]?.mode).toBe("INVOICE");
   });
   it("keeps loader order between noted lots", () => {
     expect(planAdminCreditDeduction(1200, 2000, 0, [lot(), lot({ memberCreditId: "lot-b", xeroCreditNoteId: "note-b" })]).lines)

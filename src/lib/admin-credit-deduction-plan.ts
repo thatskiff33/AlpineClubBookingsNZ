@@ -8,9 +8,13 @@ export interface DeductionLot {
   totalCents: number;
   hasSlices: boolean;
   writtenDownCents: number;
+  /** Another positive credit row is funded by the same Xero note, free or not. */
+  sharesNote: boolean;
 }
 
+/** One per Xero note: its reference and idempotency keys name the request and the note alone. */
 export interface DeductionLine {
+  /** The first lot the line draws on. */
   memberCreditId: string;
   xeroCreditNoteId: string;
   amountCents: number;
@@ -41,13 +45,21 @@ export function planAdminCreditDeduction(
   for (const lot of lots) {
     const amountCents = Math.min(remaining, lot.remainingCents);
     if (amountCents <= 0) continue;
+    remaining -= amountCents;
+    const sameNote = lines.find((line) => line.xeroCreditNoteId === lot.xeroCreditNoteId);
+    if (sameNote) {
+      sameNote.amountCents += amountCents;
+      sameNote.mode = "INVOICE";
+      continue;
+    }
+    // Voiding takes the whole note, so only a lot that is the whole note may plan it.
+    const wholeNote = !lot.sharesNote && !lot.hasSlices && lot.writtenDownCents === 0 && amountCents === lot.totalCents;
     lines.push({
       memberCreditId: lot.memberCreditId,
       xeroCreditNoteId: lot.xeroCreditNoteId,
       amountCents,
-      mode: !lot.hasSlices && lot.writtenDownCents === 0 && amountCents === lot.totalCents ? "VOID" : "INVOICE",
+      mode: wholeNote ? "VOID" : "INVOICE",
     });
-    remaining -= amountCents;
   }
   if (remaining > 0) {
     throw new MemberCreditValidationError("This deduction would take credit backed by a Xero overpayment or prepayment. Correct that cash credit through its own Xero workflow.");

@@ -5,6 +5,7 @@ import { buildAdminCreditDeductionPayload } from "@/lib/admin-credit-deduction-p
 import { planAdminCreditDeduction, type DeductionLot } from "@/lib/admin-credit-deduction-plan";
 import { MemberCreditValidationError } from "@/lib/policies/member-credit";
 import { loadFreeCreditLots } from "@/lib/xero-applied-credit-lots";
+import { fundingLotWhere } from "@/lib/xero-applied-credit-slice-lookup";
 import { buildXeroIdempotencyKey, startXeroSyncOperation } from "@/lib/xero-sync";
 import { createAuditLog } from "@/lib/audit";
 import type { ClubFormat } from "@/lib/club-format";
@@ -45,11 +46,13 @@ export async function reserveNotedCreditDeduction(
     });
     if (queued) throw new MemberCreditValidationError("This credit's Xero note is still being raised; approve once its Xero note is raised.");
   }
-  const [balance, cash, sources, slices] = await Promise.all([
+  const noteIds = [...new Set(free.flatMap((lot) => lot.xeroCreditNoteId ?? []))];
+  const [balance, cash, sources, slices, funded] = await Promise.all([
     tx.memberCredit.aggregate({ where: { memberId: request.memberId }, _sum: { amountCents: true } }),
     tx.memberCredit.aggregate({ where: { memberId: request.memberId, xeroCashCreditId: { not: null } }, _sum: { amountCents: true } }),
     tx.memberCredit.findMany({ where: { id: { in: free.map((lot) => lot.memberCreditId) } }, select: { id: true, amountCents: true } }),
     tx.memberCreditNoteAllocation.findMany({ where: { memberCreditId: { in: free.map((lot) => lot.memberCreditId) } }, select: { memberCreditId: true } }),
+    tx.memberCredit.findMany({ where: fundingLotWhere({ in: noteIds }), select: { xeroCreditNoteId: true } }),
   ]);
   const lots: DeductionLot[] = free.flatMap((lot) => {
     if (!lot.xeroCreditNoteId) return [];
@@ -62,6 +65,7 @@ export async function reserveNotedCreditDeduction(
       totalCents: source.amountCents,
       hasSlices: slices.some((slice) => slice.memberCreditId === lot.memberCreditId),
       writtenDownCents: loaded?.writtenDownByNote.get(lot.xeroCreditNoteId) ?? 0,
+      sharesNote: funded.filter((row) => row.xeroCreditNoteId === lot.xeroCreditNoteId).length > 1,
     }];
   });
   const plan = planAdminCreditDeduction(-request.amountCents, balance._sum.amountCents ?? 0, Math.max(0, cash._sum.amountCents ?? 0), lots);

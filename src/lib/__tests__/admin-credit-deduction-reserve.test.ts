@@ -68,6 +68,26 @@ describe("reserveNotedCreditDeduction", () => {
     expect(queue).toHaveBeenCalledOnce();
     expect(queue).toHaveBeenCalledWith(expect.objectContaining({ idempotencyKey: "admin-credit-deduction:request:credit-note-correction:600:v1" }));
   });
+  it("reserves one line and one row for a note that funds two lots", async () => {
+    const state = store([credit("lot-a", 400, { xeroCreditNoteId: "note" }), credit("lot-b", 400, { xeroCreditNoteId: "note" })]);
+    await reserveNotedCreditDeduction(state.db, request);
+    expect(state.lines).toHaveLength(1);
+    expect(state.lines[0]).toMatchObject({ sourceMemberCreditId: "lot-a", xeroCreditNoteId: "note", amountCents: 600, mode: "INVOICE" });
+    expect(state.credits.filter((row) => row.amountCents < 0)).toMatchObject([{ amountCents: -600, xeroCreditNoteId: "note" }]);
+  });
+  it("corrects by invoice, never by void, when the note also funds a lot that is already spent", async () => {
+    const state = store(
+      [credit("lot-a", 600, { xeroCreditNoteId: "note" }), credit("lot-b", 400, { xeroCreditNoteId: "note" }), credit("booking", -400)],
+      [{ id: "slice", amountCents: 400, memberCreditId: "lot-b" }],
+    );
+    await reserveNotedCreditDeduction(state.db, request);
+    expect(state.lines).toMatchObject([{ sourceMemberCreditId: "lot-a", amountCents: 600, mode: "INVOICE" }]);
+  });
+  it("still voids a whole note that funds this one lot", async () => {
+    const state = store([credit("lot", 600, { xeroCreditNoteId: "note" })]);
+    await reserveNotedCreditDeduction(state.db, request);
+    expect(state.lines).toMatchObject([{ amountCents: 600, mode: "VOID" }]);
+  });
   it("permits repeated partial deductions without reusing the unique reservation row", async () => {
     const state = store([credit("lot", 1000, { xeroCreditNoteId: "note" })]);
     await reserveNotedCreditDeduction(state.db, { ...request, amountCents: -400 });
