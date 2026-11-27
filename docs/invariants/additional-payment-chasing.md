@@ -662,7 +662,7 @@ a missing note hide from the missing-note detector.
 Internet Banking payments (#4162): Xero is followed both ways, never below
 their own transaction detail plus the corrections their links count, capped
 at the stored total (#5289). Below, it keeps the floor, logs and alerts (not
-while its refund note's create can still run; a failed one alerts itself); only the nightly follow-up moves the
+while its note's create can run); only the nightly follow-up moves the
 detail, line and total together (`INV-ADDPAY-042`).
 
 - **A refund request's paid-back cash is not Xero's to drop** (#4215,
