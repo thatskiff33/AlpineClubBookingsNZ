@@ -78,7 +78,7 @@ import {
   hasLateCaptureApprovalTask,
   keptCaptureAnchorId,
   keptReceiptStillKeptElseClosed,
-  lateCaptureStillKept,
+  lateCaptureReceiptOwed,
 } from "@/lib/kept-late-capture-change-receipt";
 import { amountDueOn, ownPaymentPending, type InvoiceRead } from "@/lib/additional-capture-receipt-invoice-read";
 import { completeRecordedReceipt, findReceiptLegPayment, sendAdditionalCaptureReceiptLegs, type OtherRecorder } from "@/lib/additional-capture-receipt-send";
@@ -557,7 +557,7 @@ export async function recordAdditionalCaptureReceipt(
     const stored = await prisma.$transaction(async (tx) => {
       const changeId = captureChangeId(transaction);
       await lockSupplementaryInvoiceAnchor(tx, keptCaptureAnchorId(transaction, bookingId));
-      if (cancelled && !(await lateCaptureStillKept(tx, paymentIntentId))) {
+      if (cancelled && !(await lateCaptureReceiptOwed(tx, paymentIntentId))) {
         await closeKeptReceiptNotKept(tx, params.syncOperation, {});
         return "not-kept" as const;
       }

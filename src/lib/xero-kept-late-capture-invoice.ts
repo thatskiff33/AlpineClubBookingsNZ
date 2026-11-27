@@ -74,7 +74,6 @@ import { resolveXeroTaxRendering } from "@/lib/xero-tax-anchors";
 import { createXeroPaymentForInvoice } from "@/lib/xero-invoice-payments";
 import { recordCaptureReceiptManifest } from "@/lib/member-money/doors";
 import type { ClubTimeZone } from "@/lib/club-time";
-import { findLateCaptureRefundPaidAnotherWay } from "@/lib/late-capture-paid-another-way";
 import {
   KEPT_INVOICE_CREATE,
   findLiveKeptReceiptRow,
@@ -91,7 +90,7 @@ import {
   XERO_OUTBOX_SUPPLEMENTARY_INVOICE_TYPE,
   readQueuedOutboxPayload,
 } from "@/lib/xero-operation-outbox-payload";
-import { lockKeptCaptureAnchor, withdrawUndecidedKeptCaptureReceipt } from "@/lib/kept-late-capture-change-receipt";
+import { lateCaptureReceiptOwed, lockKeptCaptureAnchor, withdrawUndecidedKeptCaptureReceipt } from "@/lib/kept-late-capture-change-receipt";
 import type { XeroOperationClaim } from "@/lib/xero-operation-outcome-guard";
 import { returnOutboxRowToPending, UNCLAIMED } from "@/lib/xero-outbox-pending-request";
 
@@ -180,17 +179,10 @@ export async function enqueueXeroKeptLateCaptureInvoiceOperation(params: {
     return { queueOperationId: null, message: "Nothing was captured, so no Xero invoice is needed." };
   }
   await lockKeptLateCaptureTask(db, params.manualRefundTaskId);
-  const task = await db.manualRefundTask.findUnique({
-    where: { id: params.manualRefundTaskId },
-    select: { status: true },
-  });
   // Kept, or (#3924 round 6) approved and its card refund closed as paid
-  // another way: either way the charge is still in the Stripe account.
-  const receiptOwed =
-    task?.status === "DISMISSED" ||
-    (task?.status === "COMPLETED" &&
-      (await findLateCaptureRefundPaidAnotherWay(params.paymentIntentId, db)) !== null);
-  if (!receiptOwed) {
+  // another way: either way the charge is still in the Stripe account (#4381:
+  // the one spelling, `lateCaptureReceiptOwed`).
+  if (!(await lateCaptureReceiptOwed(db, params.paymentIntentId))) {
     return {
       queueOperationId: null,
       message: "The payment is no longer kept, so no Xero invoice was queued.",
@@ -484,9 +476,8 @@ export async function createXeroKeptLateCaptureInvoice(
         bookingStatus: "CANCELLED",
         superseded: false,
         capture,
-        refundClosedPaidAnotherWay:
-          task?.status === "COMPLETED" &&
-          (await findLateCaptureRefundPaidAnotherWay(paymentIntentId, tx)) !== null,
+        // #4381: for a COMPLETED task, the one spelling of "its refund was closed paid another way".
+        refundClosedPaidAnotherWay: await lateCaptureReceiptOwed(tx, paymentIntentId),
       });
       if (decision.recordCents > 0) return null;
       const reason = `The kept payment's task is ${task?.status ?? "missing"}, not kept, so no Xero invoice was raised.`;
