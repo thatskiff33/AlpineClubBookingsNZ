@@ -13,10 +13,10 @@ reason: approval hands a deduction to the reservation under the ledger lock it
   the outbox for deductions too.
 
 file: src/app/(admin)/admin/membership/members/[id]/page.tsx
-lines: 1365
+lines: 1367
 reason: passes the reserved corrections and the cancel handler from the
   credits hook to the credit card, as it passes the card's other props.
 
 function: src/app/(admin)/admin/membership/members/[id]/page.tsx#MemberDetailPage
-lines: 1254
+lines: 1255
 reason: the same three props and their destructuring from the credits hook.
