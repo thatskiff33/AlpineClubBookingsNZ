@@ -298,8 +298,8 @@ export async function getCachedChartOfAccounts(): Promise<XeroAdminCacheRecord<X
  * the CALLER's client: for a reader that may be inside a transaction. The
  * configuration import plans a second time inside its apply (`INV-LOCK-004`),
  * where `getCachedChartOfAccounts` would read through the module client on
- * another connection. Every refresh stores the chart as it fills the
- * per-process copy, so the two readers answer alike. Null when Xero is not
+ * another connection. Mapping writers use the persisted chart because the
+ * per-process copy can differ between servers. Null when Xero is not
  * connected, nothing is stored, or the stored chart has expired. A failed read
  * is thrown, not swallowed: inside a transaction it has already ended it.
  */

@@ -66,7 +66,7 @@ vi.mock("@/lib/session-guards", async () => ({
   requireActiveSessionUser: async () => null,
 }));
 vi.mock("@/lib/audit", () => ({ logAudit: h.logAudit }));
-vi.mock("@/lib/xero-admin-cache", () => ({ getCachedChartOfAccounts: h.chart }));
+vi.mock("@/lib/xero-admin-cache", () => ({ readStoredChartOfAccounts: h.chart }));
 vi.mock("@/lib/xero-tax-anchors", () => import("@/lib/__tests__/support/xero-tax-anchors-baseline"));
 vi.mock("@/lib/club-time-zone-runtime", () => ({ readClubTimeZoneOutsideRequest: async () => "Pacific/Auckland" }));
 vi.mock("@/lib/club-tax-settings", async (importOriginal) => ({
@@ -98,11 +98,7 @@ const CHART = [
 ];
 
 function cacheChart(accounts: typeof CHART | null) {
-  h.chart.mockResolvedValue(
-    accounts === null
-      ? null
-      : { values: accounts, metadata: { source: "database", lastRefreshedAt: "", expiresAt: "" } },
-  );
+  h.chart.mockResolvedValue(accounts);
 }
 
 function store(codes: Record<string, string | null>) {

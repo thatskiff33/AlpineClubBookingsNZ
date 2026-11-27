@@ -23,13 +23,13 @@ type MappingCodeRow = { key: string; code: string | null };
  * row, and a club with an older out-of-class code must still be able to change
  * its other mappings. The setup check reports such a code instead.
  *
- * `readChart` is asked only when there is a code to judge. A chart it cannot
- * supply (none cached, or expired) judges nothing.
+ * Read the connected organisation's persisted chart only when there is a code
+ * to judge. Both writers use that snapshot, never a process-local copy.
  */
 export async function changedCodeClassViolations(
+  db: Parameters<typeof readStoredChartOfAccounts>[0],
   stored: Iterable<MappingCodeRow>,
   after: Iterable<readonly [key: string, code: string | null | undefined]>,
-  readChart: () => Promise<Parameters<typeof mappingCodeClassViolation>[2]>,
 ): Promise<string[]> {
   const storedCode = new Map([...stored].map((row) => [row.key, normalizeMappingCode(row.code)]));
   const changed = [...after].filter(([key, code]) => {
@@ -37,7 +37,7 @@ export async function changedCodeClassViolations(
     return next !== null && next !== (storedCode.get(key) ?? null);
   });
   if (changed.length === 0) return [];
-  const chart = await readChart();
+  const chart = await readStoredChartOfAccounts(db);
   return changed.flatMap(([key, code]) =>
     isAccountMappingKey(key) ? (mappingCodeClassViolation(key, code, chart) ?? []) : [],
   );
@@ -59,7 +59,7 @@ export async function accountMappingImportFindings(
   after: ReadonlyMap<string, string | null>,
 ): Promise<{ errors: string[]; warnings: string[] }> {
   const stored = [...storedRows];
-  const errors = await changedCodeClassViolations(stored, after, () => readStoredChartOfAccounts(db));
+  const errors = await changedCodeClassViolations(db, stored, after);
   const openingCredits = await openingCreditsImportFindings(db, stored, after);
   if (openingCredits.error) errors.push(openingCredits.error);
   return { errors, warnings: openingCredits.warning ? [openingCredits.warning] : [] };

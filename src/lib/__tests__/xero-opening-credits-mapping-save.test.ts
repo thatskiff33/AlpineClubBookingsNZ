@@ -34,6 +34,7 @@ const h = vi.hoisted(() => {
     },
   );
   const prisma = {
+    xeroAdminCache: { findUnique: vi.fn(async () => null) },
     xeroAccountMapping: { findMany: vi.fn(async () => state.rows.map((row) => ({ ...row }))), upsert },
     xeroTaxCategoryMapping: { findMany: vi.fn(async () => state.taxCategoryRows) },
     // The save writes in one transaction under the config-import key (#5391).

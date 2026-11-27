@@ -2,7 +2,6 @@ import { acquireConfigImportLock } from "@/lib/config-transfer-lock";
 import { prisma } from "@/lib/prisma";
 import { normalizeMappingCode } from "@/lib/xero-account-mapping-keys";
 import { changedCodeClassViolations } from "@/lib/xero-account-mapping-write-checks";
-import { getCachedChartOfAccounts } from "@/lib/xero-admin-cache";
 import {
   openingCreditsMappingSaveRefusal,
   openingCreditsSharedAccountSaveProblem,
@@ -84,9 +83,9 @@ export async function saveXeroAccountMappings(
 
   // Only the codes this save sets or changes are judged (`changedCodeClassViolations`).
   const wrongKind = await changedCodeClassViolations(
+    prisma,
     stored,
     Object.entries(updates).map(([key, value]) => [key, value?.code] as const),
-    async () => (await getCachedChartOfAccounts())?.values,
   );
   if (wrongKind.length > 0) return { ok: false, status: 400, error: `${wrongKind.join(" ")} ${NOTHING_SAVED}` };
 
