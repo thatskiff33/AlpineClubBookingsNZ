@@ -58,10 +58,8 @@ vi.mock("@/lib/club-format-server", () => ({ clubFormatValues: vi.fn(async () =>
 vi.mock("@/lib/club-time-zone-runtime", () => ({
   readClubTimeZoneOutsideRequest: vi.fn(async () => "Pacific/Auckland"),
 }));
-vi.mock("@/lib/member-credit", () => ({
-  lockMemberCreditLedger: mocks.lockMemberCreditLedger,
-  postAgeUpCreditLot: mocks.postAgeUpCreditLot,
-}));
+vi.mock("@/lib/member-credit", () => ({ lockMemberCreditLedger: mocks.lockMemberCreditLedger }));
+vi.mock("@/lib/member-credit-age-up", () => ({ postAgeUpCreditLot: mocks.postAgeUpCreditLot }));
 vi.mock("@/lib/xero-api-client", () => ({
   callXeroApi: vi.fn(async (call: () => Promise<unknown>) => call()),
   getAuthenticatedXeroClient: mocks.getAuthenticatedXeroClient,

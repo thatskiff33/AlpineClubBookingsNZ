@@ -31,7 +31,8 @@ import { AGE_UP_ADJUSTMENT_LOCAL_MODEL, buildAgeUpCreditPayload } from "@/lib/ag
 import { clubFormatValues } from "@/lib/club-format-server";
 import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
 import logger from "@/lib/logger";
-import { lockMemberCreditLedger, postAgeUpCreditLot } from "@/lib/member-credit";
+import { lockMemberCreditLedger } from "@/lib/member-credit";
+import { postAgeUpCreditLot } from "@/lib/member-credit-age-up";
 import { providerAmountToCents } from "@/lib/money-provider-amount";
 import { prisma } from "@/lib/prisma";
 import { ageUpCreditIdempotencyKey } from "@/lib/subscription-age-up-billing";

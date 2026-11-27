@@ -16,7 +16,7 @@ vi.mock("@/lib/xero-sync", () => ({
   startXeroSyncOperation: mocks.startOperation,
 }));
 
-import { postAgeUpCreditLot } from "@/lib/member-credit";
+import { postAgeUpCreditLot } from "@/lib/member-credit-age-up";
 import { MemberCreditValidationError } from "@/lib/policies/member-credit";
 import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
