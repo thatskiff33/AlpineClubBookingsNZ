@@ -16,6 +16,7 @@ import {
   getStuckStateAffectedCount,
   resetStuckStateAffectedCountCache,
 } from "@/lib/stuck-state-affected-count";
+import type { BookingMoneyCensusSummary } from "@/lib/booking-money-census-summary";
 import { STUCK_STATE_DETAIL_ROW_CAP } from "@/lib/stuck-state-payment-signals";
 import { adminAnchorHref, adminHref } from "@/lib/admin-hubs";
 
@@ -201,6 +202,12 @@ function buildDeps(overrides?: Partial<StuckStateDashboardDependencies>) {
     listExhaustedCashSettlementAlerts: vi.fn().mockResolvedValue([]),
     listDeadCardRefundOperationIds: vi.fn().mockResolvedValue(new Set()),
     loadDetailFormat: vi.fn().mockResolvedValue(detailFormat),
+    // #4910: the nightly booking money check and the two credit faults; quiet by default.
+    readLatestBookingMoneyCensusRun: vi.fn().mockResolvedValue({ problem: null, checkedAt: null, summary: null }),
+    listNegativeCreditBalances: vi.fn().mockResolvedValue([]),
+    findOrphanedAppliedCredits: vi.fn().mockResolvedValue({ findings: [] }),
+    listMoneyCheckBookings: vi.fn().mockResolvedValue([]),
+    listMoneyCheckMembers: vi.fn().mockResolvedValue([]),
   };
 
   return {
@@ -1397,5 +1404,204 @@ describe("named rows behind the stuck-state signals (#4959)", () => {
     expect(item).toMatchObject({ count: 4, href: adminAnchorHref("stuck-states", "booking-unnamed-placeholder-guests") });
     expect(item?.details).toBeUndefined();
     expect(deps.listBookingsWithUnnamedPlaceholderGuests).not.toHaveBeenCalled();
+  });
+});
+
+describe("getStuckStateDashboard money check items (#4910)", () => {
+  const NOW = new Date("2026-07-01T00:00:00.000Z");
+  const CHECKED_AT = new Date("2026-06-30T17:30:04.000Z");
+
+  /** What a nightly run stored: two drift classes, one known class, and a price check with one reason. */
+  const censusSummary: BookingMoneyCensusSummary = {
+    verdict: "GATE_CLOSED",
+    bookingsChecked: 40,
+    findings: 5,
+    drift: 3,
+    unacknowledgedClassInstances: 2,
+    classes: [
+      { class: "disagreement:CAPTURED", group: "disagreement", count: 2, bookingIds: ["booking-a", "booking-b"] },
+      { class: "coverage:NO_LINES", group: "coverage", count: 1, bookingIds: ["booking-c"] },
+      { class: "class:LEGACY_SHAPE", group: "class", count: 2, bookingIds: ["booking-d", "booking-gone"] },
+    ],
+    reconciliation: { totalBookings: 40, reconciled: 37, unreconciled: 3, byReason: { NO_SURVIVING_STRANDS: 3 } },
+    alert: { newFindings: 0, sent: false, failed: false },
+  };
+
+  function named(id: string) {
+    return { id, member: { firstName: "Aroha", lastName: "Ngata" }, organisation: null };
+  }
+
+  function moneyDeps(overrides?: Partial<StuckStateDashboardDependencies>) {
+    const deps = buildDeps({
+      readLatestBookingMoneyCensusRun: vi.fn().mockResolvedValue({ problem: null, checkedAt: CHECKED_AT, summary: censusSummary }),
+      listMoneyCheckBookings: vi.fn(async (ids: readonly string[]) => ids.filter((id) => id !== "booking-gone").map(named)),
+      listMoneyCheckMembers: vi.fn(async (ids: readonly string[]) => ids.map((id) => ({ id, firstName: "Mere", lastName: "Parata" }))),
+      ...overrides,
+    });
+    vi.mocked(deps.db.paymentRecoveryOperation.count).mockResolvedValue(0);
+    return deps;
+  }
+
+  const item = (dashboard: Awaited<ReturnType<typeof getStuckStateDashboard>>, id: string) =>
+    dashboard.items.find((candidate) => candidate.id === id);
+
+  it("shows drift from the latest run as a critical Finance item with its classes, bookings and command", async () => {
+    const dashboard = await getStuckStateDashboard({ deps: moneyDeps(), now: NOW, viewerCanViewMembership: true });
+
+    const drift = item(dashboard, "payment-booking-money-census-drift");
+    expect(drift).toMatchObject({
+      domain: "payment",
+      title: "Booking money records disagree",
+      severity: "critical",
+      owner: "Finance",
+      count: 3,
+    });
+    expect(drift?.summary).toContain("CAPTURED disagreement (2), NO_LINES coverage gap (1)");
+    expect(drift?.summary).toContain("2026-06-30");
+    expect(drift?.summary).toContain("pnpm run booking-ledger:census");
+    // The price check names no booking, so it is a sentence on this item, once.
+    expect(drift?.summary).toContain("3 of 40 bookings");
+    expect(drift?.details).toEqual([
+      { id: "disagreement:CAPTURED:booking-a", title: expect.stringMatching(/ - Aroha Ngata$/), summary: "CAPTURED disagreement.", href: "/bookings/booking-a" },
+      { id: "disagreement:CAPTURED:booking-b", title: expect.stringMatching(/ - Aroha Ngata$/), summary: "CAPTURED disagreement.", href: "/bookings/booking-b" },
+      { id: "coverage:NO_LINES:booking-c", title: expect.stringMatching(/ - Aroha Ngata$/), summary: "NO_LINES coverage gap.", href: "/bookings/booking-c" },
+    ]);
+  });
+
+  it("shows known classes as the census's unacknowledged count, as information and not as an emergency", async () => {
+    const dashboard = await getStuckStateDashboard({ deps: moneyDeps(), now: NOW, viewerCanViewMembership: true });
+
+    const known = item(dashboard, "payment-booking-money-census-known");
+    expect(known).toMatchObject({ severity: "info", owner: "Finance", count: 2 });
+    expect(known?.summary).toContain("LEGACY_SHAPE (2)");
+    expect(known?.summary).not.toContain("3 of 40 bookings");
+    // A booking no longer on file keeps its row, by reference alone.
+    expect(known?.details?.map((detail) => detail.href)).toEqual(["/bookings/booking-d", "/bookings/booking-gone"]);
+    expect(known?.details?.[1].title).not.toContain(" - ");
+    expect(dashboard.totals.critical).toBe(3);
+    expect(dashboard.totals.info).toBe(2);
+  });
+
+  it("keeps counts and classes but reads no name without membership:view (#2823)", async () => {
+    const deps = moneyDeps({
+      listNegativeCreditBalances: vi.fn().mockResolvedValue([{ memberId: "member-1", balanceCents: -500 }]),
+      findOrphanedAppliedCredits: vi.fn().mockResolvedValue({ findings: [{ bookingId: "booking-o", appliedCreditCents: 4_000 }] }),
+    });
+    const dashboard = await getStuckStateDashboard({ deps, now: NOW, viewerCanViewFinance: true });
+
+    for (const id of [
+      "payment-booking-money-census-drift",
+      "payment-booking-money-census-known",
+      "payment-negative-credit-balances",
+      "payment-orphaned-applied-credit",
+    ]) {
+      expect(item(dashboard, id)?.count).toBeGreaterThan(0);
+      expect(item(dashboard, id)?.details).toBeUndefined();
+    }
+    expect(item(dashboard, "payment-booking-money-census-drift")?.summary).toContain("CAPTURED disagreement (2)");
+    expect(deps.listMoneyCheckBookings).not.toHaveBeenCalled();
+    expect(deps.listMoneyCheckMembers).not.toHaveBeenCalled();
+    expect(JSON.stringify(dashboard)).not.toMatch(/Aroha|Mere/);
+  });
+
+  it("says the check did not run when its latest run failed or went stale, beside its last good findings", async () => {
+    const deps = moneyDeps({
+      readLatestBookingMoneyCensusRun: vi.fn().mockResolvedValue({
+        problem: "Latest run failed: census read failed",
+        checkedAt: CHECKED_AT,
+        summary: censusSummary,
+      }),
+    });
+    const dashboard = await getStuckStateDashboard({ deps, now: NOW });
+
+    const notRun = item(dashboard, "payment-booking-money-census-not-run");
+    expect(notRun).toMatchObject({
+      domain: "payment",
+      title: "Money check did not run",
+      severity: "warning",
+      count: 1,
+      href: adminHref("background-jobs"),
+    });
+    expect(notRun?.summary).toContain("Latest run failed: census read failed");
+    expect(notRun?.summary).toContain("last good run on 2026-06-30");
+    expect(deps.readLatestBookingMoneyCensusRun).toHaveBeenCalledWith(NOW);
+    // The last good run's findings stay on the page.
+    expect(item(dashboard, "payment-booking-money-census-drift")?.count).toBe(3);
+  });
+
+  it("says so when the check has a problem and no good run to report from", async () => {
+    const deps = moneyDeps({
+      readLatestBookingMoneyCensusRun: vi.fn().mockResolvedValue({ problem: "Latest run failed.", checkedAt: null, summary: null }),
+    });
+    const dashboard = await getStuckStateDashboard({ deps, now: NOW });
+
+    expect(item(dashboard, "payment-booking-money-census-not-run")?.summary).toContain("no good run to report from");
+    expect(item(dashboard, "payment-booking-money-census-drift")).toBeUndefined();
+  });
+
+  it("shows nothing for a clean run of a consistent database", async () => {
+    const clean: BookingMoneyCensusSummary = {
+      ...censusSummary,
+      verdict: "GATE_OPEN",
+      findings: 0,
+      drift: 0,
+      unacknowledgedClassInstances: 0,
+      classes: [],
+      reconciliation: { totalBookings: 40, reconciled: 40, unreconciled: 0, byReason: {} },
+    };
+    const deps = moneyDeps({
+      readLatestBookingMoneyCensusRun: vi.fn().mockResolvedValue({ problem: null, checkedAt: CHECKED_AT, summary: clean }),
+    });
+    const dashboard = await getStuckStateDashboard({ deps, now: NOW, viewerCanViewMembership: true, viewerCanViewFinance: true });
+
+    expect(dashboard.items).toEqual([]);
+    expect(dashboard.totals.affectedCount).toBe(0);
+    // Nothing to print, so no name is looked up.
+    expect(deps.listMoneyCheckBookings).not.toHaveBeenCalled();
+    expect(deps.listMoneyCheckMembers).not.toHaveBeenCalled();
+  });
+
+  it("lists members with negative credit, with the amount only for a finance viewer", async () => {
+    const balances = [
+      { memberId: "member-1", balanceCents: -2_500 },
+      { memberId: "member-2", balanceCents: -100 },
+    ];
+    const deps = () => moneyDeps({ listNegativeCreditBalances: vi.fn().mockResolvedValue(balances) });
+
+    const finance = await getStuckStateDashboard({ deps: deps(), now: NOW, viewerCanViewMembership: true, viewerCanViewFinance: true });
+    const financeItem = item(finance, "payment-negative-credit-balances");
+    expect(financeItem).toMatchObject({ domain: "payment", title: "Members with negative credit", severity: "critical", owner: "Finance", count: 2 });
+    expect(financeItem?.details).toEqual([
+      { id: "member-1", title: "Mere Parata", summary: "Credit balance $-25.00.", href: adminHref("member-detail", { id: "member-1" }) },
+      { id: "member-2", title: "Mere Parata", summary: "Credit balance $-1.00.", href: adminHref("member-detail", { id: "member-2" }) },
+    ]);
+
+    const membershipOnly = await getStuckStateDashboard({ deps: deps(), now: NOW, viewerCanViewMembership: true });
+    expect(item(membershipOnly, "payment-negative-credit-balances")?.details?.map((detail) => detail.summary)).toEqual([
+      "Credit balance is below zero.",
+      "Credit balance is below zero.",
+    ]);
+  });
+
+  it("lists cancelled bookings still holding applied credit and names the command that returns it", async () => {
+    const deps = moneyDeps({
+      findOrphanedAppliedCredits: vi.fn().mockResolvedValue({
+        findings: [{ bookingId: "booking-o", appliedCreditCents: 4_000 }],
+      }),
+    });
+    const dashboard = await getStuckStateDashboard({ deps, now: NOW, viewerCanViewMembership: true, viewerCanViewFinance: true });
+
+    const orphaned = item(dashboard, "payment-orphaned-applied-credit");
+    expect(orphaned).toMatchObject({
+      domain: "payment",
+      title: "Cancelled bookings still holding credit",
+      severity: "critical",
+      owner: "Finance",
+      count: 1,
+    });
+    expect(orphaned?.summary).toContain("pnpm run payments:backfill-orphaned-credits");
+    expect(orphaned?.details).toEqual([
+      { id: "booking-o", title: expect.stringMatching(/ - Aroha Ngata$/), summary: "$40.00 of applied credit not returned.", href: "/bookings/booking-o" },
+    ]);
   });
 });

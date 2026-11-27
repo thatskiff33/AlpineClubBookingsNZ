@@ -270,6 +270,9 @@ describe("#4910 runBookingMoneyCensus: the nightly booking money check", () => {
     const summary = await runBookingMoneyCensus(deps);
 
     expect(summary).toMatchObject({ findings: 4, drift: 3, alert: { newFindings: 0, sent: false, failed: true } });
+    // The warning is what admin cron health reads to show the run as not healthy.
+    expect(summary.warning).toContain("could not be sent");
+    expect(parseBookingMoneyCensusSummary(JSON.parse(JSON.stringify(summary)))).toEqual(summary);
     expect(deps.sendOnceEver).not.toHaveBeenCalled();
     expect(mocks.reportCronError).toHaveBeenCalledTimes(1);
   });

@@ -1185,6 +1185,13 @@ const STUCK_STATE_ROW_ANCHORS = [
   "payment-group-settlement-stale",
   "booking-unnamed-placeholder-guests",
 ];
+/** The money check rows (#4910), whose ids `stuck-state-money-signals.ts` writes out. */
+const STUCK_STATE_MONEY_ROW_ANCHORS = [
+  "payment-booking-money-census-drift",
+  "payment-booking-money-census-known",
+  "payment-negative-credit-balances",
+  "payment-orphaned-applied-credit",
+];
 
 describe("tabs and anchors", () => {
   it("links a tab, the default one without a query, and a section", () => {
@@ -1223,7 +1230,7 @@ describe("tabs and anchors", () => {
       ["membership-cancellations", ["requests", "settings"], []],
       ["family-groups", ["groups", "suggestions"], []],
       ["health", [], ["integration-readiness"]],
-      ["stuck-states", [], ["bank-refund-voids", ...STUCK_STATE_ROW_ANCHORS]],
+      ["stuck-states", [], ["bank-refund-voids", ...STUCK_STATE_ROW_ANCHORS, ...STUCK_STATE_MONEY_ROW_ANCHORS]],
     ]);
   });
 
@@ -1323,8 +1330,9 @@ describe("tabs and anchors", () => {
    * its element the id through the registry-typed constant pinned below.
    *
    * #4959: each Stuck States signal's table row is the item's own element. The
-   * page renders `<TableRow id={item.id}`, and the dashboard module writes each
-   * signal's id out as a literal, so the anchor is the id the card links to.
+   * page renders `<TableRow id={item.id}`, and the dashboard module (or, for the
+   * money check rows of #4910, its money signals module) writes each signal's id
+   * out as a literal, so the anchor is the id the card links to.
    */
   const COMPONENT_ANCHORS: Record<
     string,
@@ -1339,6 +1347,12 @@ describe("tabs and anchors", () => {
       STUCK_STATE_ROW_ANCHORS.map((anchor) => [
         anchor,
         { renders: "<TableRow id={item.id}", file: "src/lib/stuck-state-dashboard.ts", id: `id: "${anchor}"` },
+      ]),
+    ),
+    ...Object.fromEntries(
+      STUCK_STATE_MONEY_ROW_ANCHORS.map((anchor) => [
+        anchor,
+        { renders: "<TableRow id={item.id}", file: "src/lib/stuck-state-money-signals.ts", id: `id: "${anchor}"` },
       ]),
     ),
   };
@@ -1366,7 +1380,11 @@ describe("tabs and anchors", () => {
     // The panel writes `id={BANK_REFUND_VOIDS_ANCHOR}`; its stuck-state row links
     // with adminAnchorHref. One spelling, typed against the registry.
     expect(BANK_REFUND_VOIDS_ANCHOR).toBe("bank-refund-voids");
-    expect(getAdminPage("stuck-states").anchors).toEqual([BANK_REFUND_VOIDS_ANCHOR, ...STUCK_STATE_ROW_ANCHORS]);
+    expect(getAdminPage("stuck-states").anchors).toEqual([
+      BANK_REFUND_VOIDS_ANCHOR,
+      ...STUCK_STATE_ROW_ANCHORS,
+      ...STUCK_STATE_MONEY_ROW_ANCHORS,
+    ]);
     expect(adminAnchorHref("stuck-states", BANK_REFUND_VOIDS_ANCHOR)).toBe(
       "/admin/stuck-states#bank-refund-voids",
     );
@@ -2241,6 +2259,7 @@ describe("the registry is inert", () => {
     "src/lib/email-templates/admin-ops.ts":
       "C5: the digest's finance links use adminHref; C10: and its Bookings links",
     "src/lib/email-templates/admin-xero-reports.ts": "C5: the report buttons use adminHref",
+    "src/lib/email/admin-alerts-booking-money-census.ts": "#4910: the Stuck States review link is adminHref",
     "src/lib/email/admin-alerts-finance.ts": "C5: payment review links use adminHref",
     "src/lib/email/admin-alerts-internet-banking-started-stay.ts":
       "C5: the payments review link is adminHref",
@@ -2253,6 +2272,8 @@ describe("the registry is inert", () => {
       "C5, C7: stuck-state links use adminHref; C7: the voided bank refund notes row is adminAnchorHref; " +
       "C9: the unreachable-members rows use adminHref; " +
       "C10: the Bookings, Waitlist, Bed Allocation and Booking Requests links",
+    "src/lib/stuck-state-money-signals.ts":
+      "#4910: the money check rows are adminAnchorHref, and their Background Jobs and member links adminHref",
     "src/lib/xero-record-activity.ts":
       "C5: the payments back link is adminLink; C9: the member back links and C10: the Bookings links are adminHref; " +
       "#4968: the cancellations back link reads the registry label",

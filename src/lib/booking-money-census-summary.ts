@@ -39,6 +39,10 @@ export const BOOKING_MONEY_RECONCILIATION_CENSUS_COMMAND = "pnpm run booking-mon
 /** The most booking ids a summary, an alert or a dashboard item names for one class. */
 export const BOOKING_MONEY_CENSUS_IDS_PER_CLASS = 20;
 
+/** What a run that could not send its alert says on Background Jobs. */
+const BOOKING_MONEY_CENSUS_ALERT_FAILED_WARNING =
+  "The alert for new findings could not be sent; the next run tries again. The findings are on the Stuck States page.";
+
 const FINDING_GROUPS = ["disagreement", "coverage", "integrity", "class"] as const;
 export type BookingMoneyCensusFindingGroup = (typeof FINDING_GROUPS)[number];
 
@@ -124,6 +128,8 @@ const summarySchema = z.object({
   }),
   /** What the run did about findings it had not alerted before; `failed` when the alert step threw. */
   alert: z.object({ newFindings: z.number().int().nonnegative(), sent: z.boolean(), failed: z.boolean() }),
+  /** Set when the alert step failed: admin cron health shows a run carrying one as a warning (#3663). */
+  warning: z.string().min(1).optional(),
 });
 export type BookingMoneyCensusSummary = z.infer<typeof summarySchema>;
 export type BookingMoneyCensusClassSummary = z.infer<typeof classSummarySchema>;
@@ -173,6 +179,7 @@ export function summarizeBookingMoneyCensus(input: {
       ),
     },
     alert,
+    ...(alert.failed ? { warning: BOOKING_MONEY_CENSUS_ALERT_FAILED_WARNING } : {}),
   };
 }
 

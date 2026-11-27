@@ -59,6 +59,7 @@ import {
 } from "@/lib/stuck-state-payment-signals";
 
 import { adminHref, adminAnchorHref } from "@/lib/admin-hubs";
+import { defaultStuckStateMoneyDependencies, getMoneyCheckItems, type StuckStateMoneyDependencies } from "@/lib/stuck-state-money-signals";
 import { describeContactGroupMismatchStuckState } from "@/lib/xero-contact-group-mismatch-summary";
 const BED_ALLOCATION_LOOKAHEAD_DAYS = 7;
 
@@ -131,7 +132,7 @@ type WaitlistOfferBooking = Parameters<
   waitlistOfferExpiresAt: Date | null;
 };
 
-export interface StuckStateDashboardDependencies {
+export interface StuckStateDashboardDependencies extends StuckStateMoneyDependencies {
   db: StuckStateDashboardDb;
   loadEffectiveModuleFlags: typeof loadEffectiveModuleFlags;
   getXeroAdminHealthSnapshot: typeof getXeroAdminHealthSnapshot;
@@ -197,6 +198,7 @@ const SEVERITY_ORDER: Record<StuckStateSeverity, number> = {
 };
 
 const defaultDependencies: StuckStateDashboardDependencies = {
+  ...defaultStuckStateMoneyDependencies,
   db: prisma as unknown as StuckStateDashboardDb,
   loadEffectiveModuleFlags,
   getXeroAdminHealthSnapshot,
@@ -873,6 +875,9 @@ export async function getStuckStateDashboard(input?: {
   ]);
 
   buildPaymentItems(items, paymentSignals.counts, paymentSignals.details);
+  // #4910 (`INV-PAY-163`): the nightly booking money check and the two credit faults.
+  const moneyCheckViewer = { membership: viewerCanViewMembership, finance: input?.viewerCanViewFinance ?? false };
+  for (const item of await getMoneyCheckItems(deps, now, moneyCheckViewer)) addItem(items, { ...item, domain: "payment" });
   const [exhaustedSettlementAlerts, exhaustedSettlementAlertRows] = await Promise.all([
     deps.countExhaustedCashSettlementAlerts(),
     viewerCanViewPaymentRows
