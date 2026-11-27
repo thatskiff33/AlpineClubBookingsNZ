@@ -37,12 +37,15 @@ import { getXeroTokenReadability } from "@/lib/xero-token-store";
 import { getStripeSetupState } from "@/lib/stripe-config";
 import {
   ACCOUNT_MAPPING_FALLBACK_KEYS,
+  ACCOUNT_MAPPING_KEYS,
   ACCOUNT_MAPPING_KEYS_ASKING_WHILE_UNSET,
   describeMappingOwnWhileUnset,
   isCodeExplicitlyConfigured,
+  mappingCodeClassViolation,
   MAPPING_LABELS,
   type AccountMappingKey,
 } from "@/lib/xero-account-mapping-keys";
+import { getCachedChartOfAccounts } from "@/lib/xero-admin-cache";
 
 /**
  * The mapping keys that are asking to be decided while they are unset
@@ -143,7 +146,8 @@ export async function getSetupDatabaseSnapshot(): Promise<SetupDatabaseSnapshot>
     membershipCancellationSettings,
     operationalXeroConnection,
     xeroAccountMappingCount,
-    xeroFallbackMappingRows,
+    xeroMappingRows,
+    xeroChartOfAccounts,
     xeroHutFeeItemMappingCount,
     xeroEntranceFeeMappingCount,
     clubIdentity,
@@ -186,11 +190,15 @@ export async function getSetupDatabaseSnapshot(): Promise<SetupDatabaseSnapshot>
     // ANY row with a code — so an upgrading club reads "configured" on the very
     // day a new key ships. Read the rows, not a count, so the step can name the
     // key. Codes are compared after normalisation, because blank is not a
-    // choice.
+    // choice. Every registered key is read, not only the asking ones: the
+    // stored codes are also checked against the chart of accounts (#5235).
     prisma.xeroAccountMapping.findMany({
-      where: { key: { in: [...ACCOUNT_MAPPING_KEYS_ASKING] } },
+      where: { key: { in: [...ACCOUNT_MAPPING_KEYS] } },
       select: { key: true, code: true },
     }),
+    // #5235: the connected organisation's chart as last cached, never a call to
+    // Xero. Null (not connected, nothing cached, expired) judges nothing.
+    getCachedChartOfAccounts(),
     prisma.xeroItemCodeMapping.count({
       where: {
         category: "HUT_FEE",
@@ -569,18 +577,28 @@ export async function getSetupDatabaseSnapshot(): Promise<SetupDatabaseSnapshot>
     xeroUnsetFallbackMappingLabels: ACCOUNT_MAPPING_KEYS_WITH_FALLBACK.filter(
       (key) =>
         !isCodeExplicitlyConfigured(
-          xeroFallbackMappingRows.find((row) => row.key === key) ?? null,
+          xeroMappingRows.find((row) => row.key === key) ?? null,
         ),
     ).map((key) => MAPPING_LABELS[key] ?? key),
     xeroUnsetMappingConsequences: ACCOUNT_MAPPING_KEYS_ASKING.flatMap((key) => {
       const own = describeMappingOwnWhileUnset(key);
       if (own === null) return [];
       return isCodeExplicitlyConfigured(
-        xeroFallbackMappingRows.find((row) => row.key === key) ?? null,
+        xeroMappingRows.find((row) => row.key === key) ?? null,
       )
         ? []
         : [`${MAPPING_LABELS[key] ?? key}: ${own}`];
     }),
+    // The same question the save and the import ask of a new code
+    // (`mappingCodeClassViolation`), asked of the codes already stored.
+    xeroMappingAccountKindProblems: ACCOUNT_MAPPING_KEYS.flatMap(
+      (key) =>
+        mappingCodeClassViolation(
+          key,
+          xeroMappingRows.find((row) => row.key === key)?.code,
+          xeroChartOfAccounts?.values,
+        ) ?? [],
+    ),
     xeroHutFeeItemMappingCount,
     xeroEntranceFeeMappingCount,
     membershipTypeRateGaps,

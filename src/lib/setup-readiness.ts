@@ -149,6 +149,16 @@ export interface SetupDatabaseSnapshot {
    * labels above, in the same order.
    */
   xeroUnsetMappingConsequences?: string[];
+  /**
+   * #5235: one sentence per stored account code that the cached chart of
+   * accounts shows is the wrong kind of account for its mapping. The save and
+   * the configuration import refuse such a code when it is set or changed
+   * (`mappingCodeClassViolation`, the source of each sentence); this reports
+   * one stored before that check, written while no chart was cached, or whose
+   * account changed in Xero since. Entries keep posting to it until an officer
+   * chooses another account.
+   */
+  xeroMappingAccountKindProblems?: string[];
   xeroHutFeeItemMappingCount: number;
   xeroEntranceFeeMappingCount: number;
   // Per-membership-type rate gaps (#1930, E4): "TypeName — SeasonName" entries
@@ -2069,11 +2079,11 @@ function buildXeroMappingCheck(
     (sentence) => sentence.split(": ")[0] ?? sentence,
   );
   const unsetMappings = [...unsetFallbackMappings, ...unsetConsequenceLabels];
-  const complete =
-    accountMappings > 0 &&
-    hutFeeMappings > 0 &&
-    entranceFeeMappings > 0 &&
-    unsetMappings.length === 0;
+  // A stored code the chart shows is the wrong kind of account (#5235). It is
+  // reported ahead of an undecided mapping: entries are posting to it now.
+  const accountKindProblems = db?.xeroMappingAccountKindProblems ?? [];
+  const mapped = accountMappings > 0 && hutFeeMappings > 0 && entranceFeeMappings > 0;
+  const complete = mapped && unsetMappings.length === 0 && accountKindProblems.length === 0;
 
   return applyProgress(
     {
@@ -2085,16 +2095,16 @@ function buildXeroMappingCheck(
       required: false,
       message: complete
         ? "Xero account and item mappings are configured."
-        : unsetMappings.length > 0 &&
-            accountMappings > 0 &&
-            hutFeeMappings > 0 &&
-            entranceFeeMappings > 0
-          ? unsetConsequenceLabels.length === 0
-            ? `Choose an account for ${unsetMappings.join(" and ")} — until you do, those entries keep posting where they did before.`
-            : `Choose an account for ${unsetMappings.join(" and ")} — the details say what happens until you do.`
-          : "Map Xero accounts and item codes before using live Xero sync.",
+        : !mapped
+          ? "Map Xero accounts and item codes before using live Xero sync."
+          : accountKindProblems.length > 0
+            ? "At least one account mapping uses the wrong kind of Xero account, and entries keep posting to it until you choose another. The details name each one."
+            : unsetConsequenceLabels.length === 0
+              ? `Choose an account for ${unsetMappings.join(" and ")} — until you do, those entries keep posting where they did before.`
+              : `Choose an account for ${unsetMappings.join(" and ")} — the details say what happens until you do.`,
       details: [
         `Account mappings: ${accountMappings}`,
+        ...accountKindProblems.map((sentence) => `Wrong kind of account: ${sentence}`),
         ...(unsetFallbackMappings.length > 0
           ? [`Not chosen yet, using a fallback: ${unsetFallbackMappings.join(", ")}`]
           : []),
