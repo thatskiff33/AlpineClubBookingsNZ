@@ -2,7 +2,7 @@
  * The mid-stay edit audit's report and command-line flags (#5242). The rules
  * and their limits live in `mid-stay-edit-history-audit.ts`; this module only
  * presents a result. `--summary` is the one part safe for the public issue: the
- * list carries booking and member ids.
+ * list carries booking ids.
  */
 import type { ClubFormat } from "@/lib/club-format";
 import { parseInstant } from "@/lib/club-time";
@@ -69,7 +69,7 @@ function describeShapeTotal(total: MidStayEditShapeTotal, format: ClubFormat): s
 
 /**
  * The report. `summaryOnly` prints the header and counts alone - the only part
- * safe to post on the public issue; the list carries booking and member ids.
+ * safe to post on the public issue; the list carries booking ids.
  */
 export function formatMidStayEditAuditReport(
   result: MidStayEditAuditResult,
@@ -99,6 +99,10 @@ export function formatMidStayEditAuditReport(
     ...summary.shapes.map((total) => describeShapeTotal(total, format)),
     "Certain: the history shows the error and its amount. Possible: a person checks; \"up to\" is a limit, not a finding;",
     "an officer re-price's \"net change\" bounds nothing, since nights may have moved both ways.",
+    "Every mid-stay give-back is listed under #2744: its nights were valued at the season rates of the day, with each",
+    "guest's membership type and subscription standing (unpaid-subscription pricing) read afresh, not at the price paid.",
+    "\"credit given\" is what that edit took off the price. It does not bound a short credit: where the nights were",
+    "valued below what was paid, the member is short by an amount the history does not hold.",
   ];
   if (options.summaryOnly) return lines.join("\n");
 
@@ -106,14 +110,14 @@ export function formatMidStayEditAuditReport(
   if (listed.length > 0) {
     lines.push(
       "",
-      "## Listed edits - booking and member ids: keep this off the public repository and issue",
-      "  booking | member | modification | edited on | shape | certainty | at stake | reason",
+      "## Listed edits - booking ids: keep this off the public repository and issue",
+      "  booking | modification | edited on | shape | certainty | amount | reason",
     );
     for (const edit of listed) {
       for (const finding of edit.findings) {
         const meta = MID_STAY_EDIT_SHAPES[finding.shape];
         lines.push(
-          `  ${edit.bookingId} | ${edit.memberId ?? "(organisation-owned)"} | ${edit.modificationId} | ${edit.editedOn ?? "unknown"} | ${finding.shape} | ${meta.certainty} | ${describeAmount(finding, format)} | ${finding.reason}`,
+          `  ${edit.bookingId} | ${edit.modificationId} | ${edit.editedOn ?? "unknown"} | ${finding.shape} | ${meta.certainty} | ${describeAmount(finding, format)} | ${finding.reason}`,
         );
       }
     }

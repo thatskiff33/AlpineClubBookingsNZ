@@ -3208,7 +3208,8 @@ Before PRs #2757 and #2758 (merged 10 Aug 2026; first released in v0.14.0) an
 edit to a booking whose stay had started could price wrongly in two ways:
 a guest whose nights had ended was put back on the booking and billed again
 (#2743), and nights the edit gave back were credited at the rates of the day,
-not the rate the member paid (#2744). Both are fixed going forward and old
+with each guest's membership type and subscription standing read afresh, not
+at the rate the member paid (#2744). Both are fixed going forward and old
 bookings were left as they were (`INV-MOD-025`).
 `scripts/audit-mid-stay-edit-history.ts` lists the old edits that may carry
 either error, with the amount at stake. It is READ-ONLY and repairs nothing: it
@@ -3219,11 +3220,14 @@ Running it on production is an owner step. Agents run it against a local or
 test database only and never connect to production.
 
 ```bash
-pnpm run --silent bookings:audit-mid-stay-edits > mid-stay-edit-audit.txt
+pnpm run --silent bookings:audit-mid-stay-edits > ~/mid-stay-edit-audit.txt
 pnpm run --silent bookings:audit-mid-stay-edits --summary
-pnpm run --silent bookings:audit-mid-stay-edits --json > mid-stay-edit-audit.json
+pnpm run --silent bookings:audit-mid-stay-edits --json > ~/mid-stay-edit-audit.json
 pnpm run --silent bookings:audit-mid-stay-edits --before 2026-08-11T00:00:00+12:00
 ```
+
+The full list and the JSON carry booking ids, so they go to the home directory,
+never into this checkout.
 
 **Why it cannot be exact.** Before the fixes each edit kept one record: the
 stay's dates and price before and after, and the names of guests removed and
@@ -3231,9 +3235,26 @@ added. There is no per-guest before and after, and every guest's nights were
 rewritten. So a price rise with nothing bought, or an edit that only added
 guests, can be judged; an extension, an edit that both bought and gave back
 nights, or a booking edited again later can only be bounded. #2743 re-billed an
-ended guest on any edit, a shortening included, so a give-back on a party of
-two or more is listed with its amount unknown: the re-bill would hide inside
-the credit and nothing records whether a guest had left. An officer's date
+ended guest on any edit, a shortening included, so every give-back that did not
+raise the price is listed with its amount unknown: the re-bill would hide inside
+the credit and nothing records whether a guest had left. A one-guest booking is
+no exception, because a guest's dates need only sit inside the booking's.
+
+**Every give-back is a possible #2744 case.** The old pricing valued the nights
+given back at the season rates of the day, and read each guest's membership
+type and subscription standing afresh (a member whose subscription is unpaid is
+priced as a non-member). The record holds neither the price paid for those
+nights nor that standing. So every edit after check-in that gave nights back is
+listed, whether or not anything looks wrong. Example: a member books while
+their subscription is unpaid, at the non-member rate, pays it, then shortens the
+stay; the nights come back at the member rate and nothing on the booking shows
+it. Where the audit can see a cause, the reason names it: season rates changed
+after booking (a season deleted since counts), the booking carried a discount
+or promo, or a guest or night price is below zero. The figure on these lines is
+the "credit given": what the edit took off the price. It limits an over-credit
+and does not limit a short credit. Example: 4 nights paid at $50, the rate later
+cut to $20, 2 nights given back; the credit given was $40, the right credit
+$100, and the $60 the member is short is not in the record. An officer's date
 override that re-priced the stay ("recalculate") worked outside the mid-stay
 rules: a date change put every guest on the full new dates, one whose nights
 had ended included, and nights with no stored price took the rates of the day.
@@ -3246,10 +3267,7 @@ so one saved after check-in could bill an ended guest again; a later one
 changed no price and reads as clear. Shift-mode overrides moved no money, a
 paid booking's spelling fix (#1386) has never re-priced, a guest-to-member link
 was refused beside any other change, and the separate add-guest and
-remove-guest actions refused a stay under way, so none of them is examined. For
-#2744 a season deleted since booking counts as a rate change; the audit cannot
-see a guest whose member or age category changed between booking and edit while
-the rates stayed the same.
+remove-guest actions refused a stay under way, so none of them is examined.
 
 **Reading the header.** It prints the merge times of #2757 and #2758, when the
 marker migration (`20260810020000_backfill_bed_allocation_audit_category`, the
@@ -3262,23 +3280,27 @@ later release, or the migration ran apart from the deploy - re-run with
 the marker the audit stops and asks for `--before`, rather than guess; the
 marker is therefore not on the never-squash list.
 
-**Reading the list.** One line per edit and shape: booking id, the booking's
-member id, the modification id, the club date of the edit, the shape, its
-certainty, the amount at stake and one sentence of reason.
+**Reading the list.** One line per edit and shape: booking id, the
+modification id, the club date of the edit, the shape, its certainty, the
+amount and the reason. It carries no member id; the booking leads to the member.
 
 - `certain`: the record shows the error and its amount - the price rose though
   the edit bought nothing, or rose by more than the guests it added cost. Where
   that edit also gave nights back, the amount is a floor and the reason says so.
 - `possible`: a person checks the booking. "up to" is a limit, not a finding of
-  that much; "amount unknown" means an over-charge may hide inside a net credit.
+  that much; "amount unknown" means an over-charge may hide inside a net credit;
+  "credit given" is what a give-back took off the price, and does not limit how
+  far short that credit may be.
 - `officer-recalculated`: an officer override re-priced the stay; its "net
   change" is not a limit, and it has its own line in the summary.
 - `unreadable`: the edit's record could not be read; it is listed, never
   dropped.
 
-The list holds booking and member ids: keep the file off the public repository
-and issue, and delete it once the decision is recorded. Post only the
-`--summary` output on #5242. All zeros closes #5242; otherwise file a follow-up
+The list holds booking ids: keep the file off the public repository and issue,
+and delete it once the decision is recorded. Post only the `--summary` output
+on #5242. Every give-back after check-in is listed, so a zero on the #2744 line
+means no such edit was made before the cut-off, not that some were checked and
+passed. All zeros closes #5242; otherwise file a follow-up
 decision issue with the counts and the money from the summary. Nothing is
 adjusted without that decision.
 

@@ -8,7 +8,8 @@
  * - #2743: a guest whose nights had already ended was put back on the booking
  *   by the edit and billed for the booking's remaining nights.
  * - #2744: nights the edit gave back were credited at TODAY's season rate,
- *   not the rate the member paid.
+ *   with each guest's membership type and subscription standing (lockout
+ *   pricing) read afresh, not at the rate the member paid.
  *
  * Both are fixed going forward and old bookings were left as they were. This
  * LISTS the old edits that may carry either error, so the owner can decide
@@ -21,13 +22,18 @@
  * after, and every guest's night rows were rewritten. So a price rise with
  * nothing bought, or an add-only edit, can be judged; an extension, a mixed
  * edit or a booking edited again later can only be bounded ("possible, up
- * to"); and a give-back on a party of two or more may hide a re-billed guest
- * inside its credit, an amount nothing records. An officer's date override
- * (`pricingMode: "recalculate"`, through the batch service or the date-change
- * service) re-priced the stay outside the mid-stay rules: a date change put
- * every guest on the full new dates (#1093), one whose nights had ended
- * included, and nights with no stored price took the rates of the day (#1036
- * kept the rest). So every one made mid-stay is listed for a person.
+ * to"); and a give-back may hide a re-billed guest inside its credit, an amount
+ * nothing records. Nor does the history hold the price paid for the nights given
+ * back or each guest's standing when they were bought, so EVERY give-back is
+ * listed as a possible #2744 case: the season, discount and negative-price
+ * signs only tag its reason, and a member who booked at the non-member rate
+ * while their subscription was unpaid, paid it, then shortened leaves no sign
+ * at all. An officer's date override (`pricingMode: "recalculate"`, through the
+ * batch service or the date-change service) re-priced the stay outside the
+ * mid-stay rules: a date change put every guest on the full new dates (#1093),
+ * one whose nights had ended included, and nights with no stored price took the
+ * rates of the day (#1036 kept the rest). So every one made mid-stay is listed
+ * for a person.
  *
  * A name edit (`GUEST_UPDATE`) is examined too: until #1099 (4 Jul 2026) it ran
  * the same pricing, so one saved mid-stay could re-bill an ended guest; since
@@ -50,7 +56,8 @@
  * (`INV-OPS-001`) plus the one shared migration-history read, in ONE read-only
  * snapshot (`withReadOnlySnapshot`). It reads the stored snapshots, which hold
  * guest names, but takes only dates, amounts and counts out of them; what it
- * returns and prints is ids and amounts, never a name or email.
+ * returns and prints is booking and modification ids and amounts, never a
+ * member id, name or email.
  */
 import type { Prisma } from "@prisma/client";
 import { z } from "zod";
@@ -63,7 +70,6 @@ import {
   compareCalendarDates,
   parseCalendarDate,
 } from "@/lib/club-time";
-import { bookingOwner } from "@/lib/booking-owner";
 import { readMigrationFinishedAt } from "@/lib/migration-finished-at";
 import { prisma } from "@/lib/prisma";
 import { withReadOnlySnapshot } from "@/lib/read-only-snapshot";
@@ -97,16 +103,17 @@ export type MidStayEditShape =
 
 /**
  * Each shape's fixed reading. `amount`: what its figure is - the error itself,
- * an upper limit ("up to", not a finding of that much), or an officer
- * re-price's net change, which bounds nothing because nights may have moved
- * both ways. `null` issue: not attributable to either fix alone.
+ * an upper limit ("up to", not a finding of that much), an officer re-price's
+ * net change, which bounds nothing because nights may have moved both ways, or
+ * the credit a give-back actually gave, which bounds an over-credit but not a
+ * short one. `null` issue: not attributable to either fix alone.
  */
 export const MID_STAY_EDIT_SHAPES: Record<
   MidStayEditShape,
   {
     issue: "#2743" | "#2744" | null;
     certainty: "certain" | "possible" | "unreadable";
-    amount: "exact" | "up to" | "net change";
+    amount: "exact" | "up to" | "net change" | "credit given";
     label: string;
   }
 > = {
@@ -149,8 +156,8 @@ export const MID_STAY_EDIT_SHAPES: Record<
   "give-back-repriced": {
     issue: "#2744",
     certainty: "possible",
-    amount: "up to",
-    label: "Nights given back where today's rate may differ from the rate paid",
+    amount: "credit given",
+    label: "Nights given back, valued at the day's rates and standing, not the price paid",
   },
   unreadable: {
     issue: null,
@@ -175,7 +182,6 @@ const PREVIOUS_SNAPSHOT = SNAPSHOT_DATES.extend({
   totalPriceCents: z.number().int(),
   discountCents: z.number().int().nullish(),
   promoAdjustmentCents: z.number().int().nullish(),
-  guestCount: z.number().int().nullish(),
   removedGuests: NAMES.nullish(),
 });
 const NEW_SNAPSHOT = SNAPSHOT_DATES.extend({
@@ -193,8 +199,6 @@ export interface MidStayEditFacts {
     totalPriceCents: number;
     discountCents: number;
     promoAdjustmentCents: number;
-    /** Guests before the edit; `null` when the row did not store it. */
-    guestCount: number | null;
     removedGuestCount: number;
   };
   next: {
@@ -279,9 +283,10 @@ export function classifyMidStayEdit(facts: MidStayEditFacts): MidStayEditFinding
 
   // #2743 re-admitted a guest whose stay had ended on ANY edit, a shortening
   // included, and the edit rewrote every guest's nights, so nothing left says
-  // whether one had. With one guest none can have ended while the stay runs.
-  const anotherGuestMayHaveEnded = previous.guestCount === null || previous.guestCount >= 2;
-  if (gaveBack && d <= 0 && (facts.earlierMidStayRemoval || anotherGuestMayHaveEnded)) {
+  // whether one had. A one-guest booking is no exception: a guest's range need
+  // only sit inside the booking's dates, and a removal before check-in that left
+  // one partial-stay guest is not in the rows examined here.
+  if (gaveBack && d <= 0) {
     findings.push({
       shape: "give-back-may-hide-rebill",
       atStakeCents: null,
@@ -291,16 +296,25 @@ export function classifyMidStayEdit(facts: MidStayEditFacts): MidStayEditFinding
     });
   }
 
-  const repricedBecause = [
-    facts.ratesChangedSinceBooking ? "season rates changed after booking" : null,
-    previous.discountCents !== 0 || previous.promoAdjustmentCents !== 0 ? "the booking carried a discount or promo" : null,
-    facts.negativePriceOnBooking ? "a guest or night price is below zero" : null,
-  ].filter((part): part is string => part !== null);
-  if (gaveBack && repricedBecause.length > 0) {
+  // #2744 valued the nights given back at the season rates of the day, with
+  // every guest's membership type and subscription standing read afresh. The
+  // history holds neither the price paid nor that standing, so EVERY give-back
+  // is listed; what the audit can see only tags the reason.
+  if (gaveBack) {
+    const signs = [
+      facts.ratesChangedSinceBooking ? "season rates changed after booking" : null,
+      previous.discountCents !== 0 || previous.promoAdjustmentCents !== 0 ? "the booking carried a discount or promo" : null,
+      facts.negativePriceOnBooking ? "a guest or night price is below zero" : null,
+    ].filter((part): part is string => part !== null);
     findings.push({
       shape: "give-back-repriced",
+      // The credit actually given, net of anything the edit bought: not a limit on a short credit.
       atStakeCents: d < 0 ? -d : null,
-      reason: `Nights given back were valued at the rates of the day and ${repricedBecause.join(", and ")}.`,
+      reason: `Nights given back were valued at the season rates of the day and each guest's membership type and subscription standing at the edit, not at the price paid. ${
+        signs.length > 0
+          ? `Signs on this booking: ${signs.join("; ")}.`
+          : "No sign on this booking, but a membership-type change or a subscription paid since booking leaves none."
+      } Compare the credit with what was paid for those nights.`,
     });
   }
   return findings;
@@ -318,8 +332,6 @@ export interface ExaminedMidStayEdit {
   modificationId: string;
   modificationType: string;
   bookingId: string;
-  /** The booking's member: the person a remedy would reach; `null` on an organisation's booking. Never a name. */
-  memberId: string | null;
   createdAt: Date;
   /** The edit's club calendar day; `null` when unreadable. */
   editedOn: CalendarDate | null;
@@ -444,13 +456,13 @@ async function auditInSnapshot(
   }
 
   const bookingIds = [...new Set(candidates.map((candidate) => candidate.row.bookingId))];
-  const bookings = new Map<string, { memberId: string | null; lodgeId: string; createdAt: Date }>();
+  const bookings = new Map<string, { lodgeId: string; createdAt: Date }>();
   const guestsByBooking = new Map<string, { createdAt: Date; priceCents: number; minNightPriceCents: number | null }[]>();
   const lastEditByBooking = new Map<string, Date>();
   for (const ids of chunks(bookingIds)) {
     for (const booking of await db.booking.findMany({
       where: { id: { in: ids } },
-      select: { id: true, memberId: true, lodgeId: true, createdAt: true },
+      select: { id: true, lodgeId: true, createdAt: true },
     })) {
       bookings.set(booking.id, booking);
     }
@@ -512,7 +524,6 @@ async function auditInSnapshot(
       modificationId: row.id,
       modificationType: row.modificationType,
       bookingId: row.bookingId,
-      memberId: booking ? bookingOwner(booking).memberId : null,
       createdAt: row.createdAt,
     };
     if (!parsed.readable || !booking) {
@@ -555,7 +566,6 @@ async function auditInSnapshot(
         totalPriceCents: parsed.previous.totalPriceCents,
         discountCents: parsed.previous.discountCents ?? 0,
         promoAdjustmentCents: parsed.previous.promoAdjustmentCents ?? 0,
-        guestCount: parsed.previous.guestCount ?? null,
         removedGuestCount,
       },
       next: {

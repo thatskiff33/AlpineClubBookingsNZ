@@ -69,7 +69,7 @@ type Guest = { bookingId: string; createdAt: Date; priceCents: number; nights: {
 function fakeDb(fixture: {
   modifications: Mod[];
   guests?: Guest[];
-  bookings?: { id: string; memberId: string | null; lodgeId: string; createdAt: Date }[];
+  bookings?: { id: string; lodgeId: string; createdAt: Date }[];
   seasons?: { lodgeId: string; startDate: Date; endDate: Date; updatedAt: Date; membershipTypeRates: { updatedAt: Date }[] }[];
   history?: boolean;
   markerFinishedAt?: Date | null;
@@ -108,7 +108,7 @@ function fakeDb(fixture: {
     },
     booking: {
       findMany: vi.fn(async () =>
-        fixture.bookings ?? bookingIds.map((id) => ({ id, memberId: `member-of-${id}`, lodgeId: "lodge_a", createdAt: BOOKED_AT })),
+        fixture.bookings ?? bookingIds.map((id) => ({ id, lodgeId: "lodge_a", createdAt: BOOKED_AT })),
       ),
     },
     bookingGuest: { findMany: vi.fn(async () => fixture.guests ?? []) },
@@ -145,6 +145,12 @@ function findingsById(result: MidStayEditAuditResult) {
   );
 }
 
+/** What every mid-stay give-back that lowered the price reads as: both shapes, the credit given on the second. */
+const giveBack = (creditGivenCents: number) => [
+  { shape: "give-back-may-hide-rebill", atStakeCents: null },
+  { shape: "give-back-repriced", atStakeCents: creditGivenCents },
+];
+
 function shapeFixture() {
   const guest = (bookingId: string, createdAt: Date, priceCents: number): Guest => ({
     bookingId,
@@ -172,17 +178,22 @@ function shapeFixture() {
         previous: { guestCount: 1, discountCents: 2000 },
         next: { checkOut: "2026-07-13", totalPriceCents: 45000 },
       }),
+      // Booked while the subscription was unpaid, so 5 nights at the $100 non-member rate. The member
+      // paid it, then gave 2 nights back, which the old pricing valued at the $60 member rate: $120
+      // credited where $200 was paid. One guest, rates untouched, no discount: no sign at all.
+      mod("give_back_lockout_paid", "b_lockout_paid", { previous: { guestCount: 1 }, next: { checkOut: "2026-07-13", totalPriceCents: 38000 } }),
       mod("officer_shortened", "b_officer", {
         next: { checkOut: "2026-07-13", totalPriceCents: 38000, adminOverride: true, pricingMode: "recalculate" },
       }),
       mod("officer_unchanged_total", "b_officer_zero", { type: "DATE_CHANGE", next: { checkOut: "2026-07-16", pricingMode: "recalculate" } }),
       mod("unreadable", "b_unreadable", { previous: { totalPriceCents: "lots" } }),
+      // No readable dates, so nothing places these against a stay: listed all the same.
+      mod("undated", "b_undated", { createdAt: at("2026-03-01T00:00:00Z"), previous: { checkIn: null } }),
+      mod("misdated", "b_misdated", { createdAt: at("2026-03-02T00:00:00Z"), previous: { checkOut: "next Tuesday" } }),
       // Until #1099 a name edit ran the same pricing, so one could re-bill an ended guest.
       mod("name_edit_rebilled", "b_name_edit", { type: "GUEST_UPDATE", next: { totalPriceCents: 60000 } }),
       // Clear, or not examined at all.
       mod("add_exact", "b_add_exact", { next: { totalPriceCents: 65000, addedGuests: [NAME] } }),
-      // One guest: none can have ended while the stay runs, and the rates are untouched.
-      mod("give_back_clean", "b_clean", { previous: { guestCount: 1 }, next: { checkOut: "2026-07-13", totalPriceCents: 30000 } }),
       mod("before_check_in", "b_early", { createdAt: at("2026-07-05T00:00:00Z"), next: { totalPriceCents: 60000 } }),
       mod("after_cut_off", "b_late", {
         createdAt: at("2026-08-12T00:00:00Z"),
@@ -205,10 +216,10 @@ function shapeFixture() {
       guest("b_add_exact", MID_STAY, 15000),
     ],
     bookings: [
-      ...["b_rebilled", "b_add_excess", "b_extension", "b_add_later", "b_removal", "b_party", "b_discount", "b_officer", "b_officer_zero", "b_unreadable", "b_name_edit", "b_add_exact", "b_clean", "b_early", "b_late", "b_officer_early", "b_shift2"].map(
-        (id) => ({ id, memberId: `member-of-${id}`, lodgeId: "lodge_a", createdAt: BOOKED_AT }),
+      ...["b_rebilled", "b_add_excess", "b_extension", "b_add_later", "b_removal", "b_party", "b_discount", "b_officer", "b_officer_zero", "b_unreadable", "b_undated", "b_misdated", "b_name_edit", "b_add_exact", "b_lockout_paid", "b_early", "b_late", "b_officer_early", "b_shift2"].map(
+        (id) => ({ id, lodgeId: "lodge_a", createdAt: BOOKED_AT }),
       ),
-      { id: "b_rate_change", memberId: "member-of-b_rate_change", lodgeId: "lodge_b", createdAt: BOOKED_AT },
+      { id: "b_rate_change", lodgeId: "lodge_b", createdAt: BOOKED_AT },
     ],
     seasons: [
       { lodgeId: "lodge_a", startDate: at("2026-06-01"), endDate: at("2026-10-31"), updatedAt: at("2026-05-01T00:00:00Z"), membershipTypeRates: [] },
@@ -235,30 +246,85 @@ describe("auditMidStayEditHistory (#5242) - which edits, and how each reads", ()
       add_excess: [{ shape: "added-guests-excess", atStakeCents: 5000 }],
       extension: [{ shape: "extended-or-mixed", atStakeCents: 30000 }],
       add_edited_later: [{ shape: "added-guests-unmatched", atStakeCents: 20000 }],
-      removal: [{ shape: "give-back-may-hide-rebill", atStakeCents: null }],
-      give_back_after_removal: [{ shape: "give-back-may-hide-rebill", atStakeCents: null }],
-      give_back_party: [{ shape: "give-back-may-hide-rebill", atStakeCents: null }],
-      give_back_rate_change: [{ shape: "give-back-repriced", atStakeCents: 8000 }],
-      give_back_discount: [{ shape: "give-back-repriced", atStakeCents: 5000 }],
+      // Every give-back reads both ways: a re-bill may hide in it (#2743), and its
+      // nights were valued at the day's rates and standing (#2744).
+      removal: giveBack(10000),
+      give_back_after_removal: giveBack(5000),
+      give_back_party: giveBack(20000),
+      give_back_rate_change: giveBack(8000),
+      give_back_discount: giveBack(5000),
+      give_back_lockout_paid: giveBack(12000),
       officer_shortened: [{ shape: "officer-recalculated", atStakeCents: 12000 }],
       officer_unchanged_total: [{ shape: "officer-recalculated", atStakeCents: 0 }],
       unreadable: [{ shape: "unreadable", atStakeCents: null }],
+      undated: [{ shape: "unreadable", atStakeCents: null }],
+      misdated: [{ shape: "unreadable", atStakeCents: null }],
       name_edit_rebilled: [{ shape: "rebilled-nothing-bought", atStakeCents: 10000 }],
       add_exact: [],
-      give_back_clean: [],
       // A name edit since #1099 echoes the stored price: examined, and clear.
       later_name_fix: [],
     });
     expect(result.midStayAfterCutOff).toBe(1);
   });
 
-  it("carries the booking's member and the edit's club day on each examined edit", async () => {
+  it("carries the booking, the edit's club day and its price change on each examined edit, and no member id", async () => {
     const result = await run(shapeFixture());
-    expect(result.examined.find((edit) => edit.modificationId === "rebilled")).toMatchObject({
+    expect(result.examined.find((edit) => edit.modificationId === "rebilled")).toEqual({
+      modificationId: "rebilled",
+      modificationType: "BATCH_MODIFY",
       bookingId: "b_rebilled",
-      memberId: "member-of-b_rebilled",
+      createdAt: MID_STAY,
       editedOn: "2026-07-12",
       priceChangeCents: 10000,
+      findings: [expect.objectContaining({ shape: "rebilled-nothing-bought" })],
+    });
+  });
+
+  it("lists a row whose dates cannot be read, wherever its edit fell: listed, never dropped", async () => {
+    const result = await run(shapeFixture());
+    for (const id of ["undated", "misdated"]) {
+      expect(result.examined.find((edit) => edit.modificationId === id)).toMatchObject({
+        priceChangeCents: null,
+        findings: [{ shape: "unreadable", atStakeCents: null, reason: expect.stringMatching(/cannot be read/) }],
+      });
+    }
+  });
+
+  it("lists a give-back with no sign on it: booked at the non-member rate with the subscription unpaid, paid, then shortened (#2744)", async () => {
+    const result = await run(shapeFixture());
+    const finding = result.examined
+      .find((edit) => edit.modificationId === "give_back_lockout_paid")
+      ?.findings.find((entry) => entry.shape === "give-back-repriced");
+    // $120 is the credit given; the $80 the member is short is not in the history.
+    expect(finding?.atStakeCents).toBe(12000);
+    expect(finding?.reason).toMatch(/membership type and subscription standing at the edit/);
+    expect(finding?.reason).toMatch(/No sign on this booking/);
+  });
+
+  it("tags a give-back's reason with each sign the audit can see", async () => {
+    const result = await run(shapeFixture());
+    const reason = (id: string) =>
+      result.examined.find((edit) => edit.modificationId === id)?.findings.find((entry) => entry.shape === "give-back-repriced")?.reason;
+    expect(reason("give_back_rate_change")).toMatch(/Signs on this booking: season rates changed after booking\./);
+    expect(reason("give_back_discount")).toMatch(/Signs on this booking: the booking carried a discount or promo\./);
+  });
+
+  it("lists a one-guest give-back as a possible hidden re-bill too: a sole guest's range may end before the booking's", async () => {
+    const db = fakeDb({
+      modifications: [mod("sole_guest", "b1", { previous: { guestCount: 1 }, next: { checkOut: "2026-07-14", totalPriceCents: 45000 } })],
+    });
+    expect(findingsById(await run(db))).toEqual({ sole_guest: giveBack(5000) });
+  });
+
+  it("lists a give-back that raised the price with the credit unknown, beside the rise", async () => {
+    const db = fakeDb({
+      modifications: [mod("rise_with_removal", "b1", { previous: { removedGuests: [NAME] }, next: { totalPriceCents: 52000 } })],
+    });
+    expect(findingsById(await run(db))).toEqual({
+      rise_with_removal: [
+        { shape: "rebilled-nothing-bought", atStakeCents: 2000 },
+        { shape: "give-back-repriced", atStakeCents: null },
+      ],
     });
   });
 
@@ -272,20 +338,24 @@ describe("auditMidStayEditHistory (#5242) - which edits, and how each reads", ()
     });
   });
 
-  it("reads a negative guest or night price on the booking as a #2744 sign", async () => {
+  it("tags a negative guest or night price on the booking as a #2744 sign", async () => {
     const db = fakeDb({
       modifications: [mod("give_back", "b1", { previous: { guestCount: 1 }, next: { checkOut: "2026-07-13", totalPriceCents: 45000 } })],
       guests: [{ bookingId: "b1", createdAt: BOOKED_AT, priceCents: 20000, nights: [{ priceCents: -500 }, { priceCents: null }] }],
     });
-    expect(findingsById(await run(db))).toEqual({ give_back: [{ shape: "give-back-repriced", atStakeCents: 5000 }] });
+    const result = await run(db);
+    expect(findingsById(result)).toEqual({ give_back: giveBack(5000) });
+    expect(result.examined[0]?.findings[1]?.reason).toMatch(/Signs on this booking: a guest or night price is below zero\./);
   });
 
-  it("reads a stay no season covers any more as a rate change: a deleted season leaves no row", async () => {
+  it("tags a stay no season covers any more as a rate change: a deleted season leaves no row", async () => {
     const db = fakeDb({
       modifications: [mod("give_back", "b1", { previous: { guestCount: 1 }, next: { checkOut: "2026-07-13", totalPriceCents: 45000 } })],
       seasons: [],
     });
-    expect(findingsById(await run(db))).toEqual({ give_back: [{ shape: "give-back-repriced", atStakeCents: 5000 }] });
+    const result = await run(db);
+    expect(findingsById(result)).toEqual({ give_back: giveBack(5000) });
+    expect(result.examined[0]?.findings[1]?.reason).toMatch(/Signs on this booking: season rates changed after booking\./);
   });
 
   it("says a rise is a floor when the edit that bought nothing also gave nights back", async () => {
@@ -389,17 +459,41 @@ describe("formatMidStayEditAuditReport", () => {
 
   it("--summary counts each shape, the officer shape on its own line, and lists no ids", async () => {
     const report = formatMidStayEditAuditReport(await run(shapeFixture()), CLUB_FORMAT_TEST, { summaryOnly: true });
-    expect(report).toContain("16 mid-stay edit(s) before the cut-off examined: 13 listed, 3 clear.");
+    expect(report).toContain("18 mid-stay edit(s) before the cut-off examined: 16 listed, 2 clear.");
     expect(report).toMatch(/Officer override re-priced the stay \(possible\): 2, net change \$120\.00/);
     expect(report).toMatch(/Price rose though the edit bought nothing \(#2743, certain\): 2, \$200\.00/);
-    expect(report).toMatch(/Nights given back; an ended guest's re-bill may hide in the credit \(#2743, possible\): 3, 3 amount unknown/);
-    expect(report).toMatch(/History unreadable - a person checks: 1/);
-    expect(report).not.toMatch(/b_rebilled|member-of-|Listed edits/);
+    expect(report).toMatch(/Nights given back; an ended guest's re-bill may hide in the credit \(#2743, possible\): 6, 6 amount unknown/);
+    expect(report).toMatch(/not the price paid \(#2744, possible\): 6, credit given \$600\.00/);
+    expect(report).toMatch(/History unreadable - a person checks: 3/);
+    expect(report).not.toMatch(/b_rebilled|Listed edits/);
+  });
+
+  it("says in the summary why every give-back is listed, and that the credit given does not bound a short credit", async () => {
+    // 4 nights paid at $50, the season rate later cut to $20, then 2 nights given back: $40
+    // credited where $100 was paid. The $40 is all the history holds; the $60 short is not in it.
+    const db = fakeDb({
+      modifications: [
+        mod("rate_cut", "b1", {
+          checkIn: "2026-07-10",
+          checkOut: "2026-07-14",
+          previous: { guestCount: 1, totalPriceCents: 20000 },
+          next: { checkOut: "2026-07-12", totalPriceCents: 16000 },
+        }),
+      ],
+    });
+    const result = await run(db);
+    const summary = formatMidStayEditAuditReport(result, CLUB_FORMAT_TEST, { summaryOnly: true });
+    expect(summary).toMatch(/\(#2744, possible\): 1, credit given \$40\.00/);
+    expect(summary).not.toMatch(/up to \$40\.00/);
+    expect(summary).toMatch(/membership type and subscription standing/);
+    expect(summary).toMatch(/"credit given" is what that edit took off the price\. It does not bound a short credit/);
+    expect(formatMidStayEditAuditReport(result, CLUB_FORMAT_TEST)).toContain("| give-back-repriced | possible | credit given $40.00 |");
   });
 
   it("the full report lists each finding by id, with an officer recalculation at $0.00 included", async () => {
     const report = formatMidStayEditAuditReport(await run(shapeFixture()), CLUB_FORMAT_TEST);
-    expect(report).toContain("b_add_excess | member-of-b_add_excess | add_excess | 2026-07-12 | added-guests-excess | certain | $50.00 |");
+    expect(report).toContain("  b_add_excess | add_excess | 2026-07-12 | added-guests-excess | certain | $50.00 |");
+    expect(report).toContain("  b_undated | undated | unknown | unreadable | unreadable | amount unknown |");
     expect(report).toContain("| officer_unchanged_total | 2026-07-12 | officer-recalculated | possible | net change $0.00 |");
     expect(report).toContain("| give_back_after_removal | 2026-07-13 | give-back-may-hide-rebill | possible | amount unknown |");
     expect(report).not.toContain("| add_exact |");

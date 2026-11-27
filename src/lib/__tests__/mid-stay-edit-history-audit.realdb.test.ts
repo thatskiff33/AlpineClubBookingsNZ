@@ -57,7 +57,8 @@ const BOOKINGS: Record<string, string> = {
   added: "steady",
   officer: "steady",
   unreadable: "steady",
-  clean: "steady",
+  undated: "steady",
+  lockout_paid: "steady",
   name_edit: "steady",
   typo_fix: "steady",
   repriced: "repriced",
@@ -131,8 +132,12 @@ const BOOKINGS: Record<string, string> = {
           next: { checkOut: "2026-07-13", totalPriceCents: 38000, pricingMode: "recalculate", capacityOverridden: false },
         }),
         oldWriterRow("unreadable", { previous: { totalPriceCents: null } }),
+        // No dates to place it against the stay: listed, never dropped.
+        oldWriterRow("undated", { previous: { checkIn: null } }),
         oldWriterRow("repriced", { next: { checkOut: "2026-07-13", totalPriceCents: 42000 } }),
-        oldWriterRow("clean", { next: { checkOut: "2026-07-13", totalPriceCents: 30000 } }),
+        // Booked at the $100 non-member rate with the subscription unpaid, paid, then 2 nights given
+        // back at the $60 member rate: steady rates, no discount, nothing for the audit to see.
+        oldWriterRow("lockout_paid", { next: { checkOut: "2026-07-13", totalPriceCents: 38000 } }),
         // A name edit made before #1099 still ran the pricing; a paid booking's spelling fix never did.
         oldWriterRow("name_edit", { type: "GUEST_UPDATE", next: { totalPriceCents: 60000 } }),
         oldWriterRow("typo_fix", { type: "GUEST_TYPO_FIX", next: { totalPriceCents: 60000 } }),
@@ -170,11 +175,15 @@ const BOOKINGS: Record<string, string> = {
       added: [["added-guests-excess", 5000]],
       officer: [["officer-recalculated", 12000]],
       unreadable: [["unreadable", null]],
-      repriced: [["give-back-repriced", 8000]],
-      clean: [],
+      undated: [["unreadable", null]],
+      // Every give-back reads both ways; the second figure is the credit given.
+      repriced: [["give-back-may-hide-rebill", null], ["give-back-repriced", 8000]],
+      lockout_paid: [["give-back-may-hide-rebill", null], ["give-back-repriced", 12000]],
       name_edit: [["rebilled-nothing-bought", 10000]],
     });
-    expect(ours.every((edit) => edit.memberId === PREFIX + "member" && edit.editedOn === "2026-07-12")).toBe(true);
+    expect(ours.every((edit) => edit.editedOn === (edit.bookingId === PREFIX + "undated" ? null : "2026-07-12"))).toBe(true);
+    // Booking and modification ids only: no member id, no name.
+    expect(JSON.stringify(ours)).not.toContain(PREFIX + "member");
     expect(JSON.stringify(ours)).not.toContain(NAME.firstName);
   });
 

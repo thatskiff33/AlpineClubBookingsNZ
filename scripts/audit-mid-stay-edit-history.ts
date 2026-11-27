@@ -2,7 +2,8 @@
  * Read-only audit of booking edits made after check-in, before this install
  * took the #2743 and #2744 fixes (#5242, `INV-MOD-025`). It lists each edit
  * that may have billed a guest again for nights after their stay ended, or
- * credited nights back at the rates of the day, with what may be at stake.
+ * credited nights back at the rates and membership standing of the day, with
+ * what may be at stake.
  *
  * REPORT ONLY - this script never writes, never repairs and never calls a live
  * provider. It has no `--apply`. The decision goes to the owner on #5242 with
@@ -13,7 +14,7 @@
  * Running it on production is an owner step. Agents use a local or test
  * database only.
  *
- *   pnpm run --silent bookings:audit-mid-stay-edits > mid-stay-edit-audit.txt
+ *   pnpm run --silent bookings:audit-mid-stay-edits > ~/mid-stay-edit-audit.txt
  *   pnpm run --silent bookings:audit-mid-stay-edits --summary
  */
 import "dotenv/config";
@@ -30,13 +31,13 @@ import { readClubTimeZoneOutsideRequest } from "../src/lib/club-time-zone-runtim
 
 function printUsage() {
   console.log(`Usage:
-  pnpm run --silent bookings:audit-mid-stay-edits                  # full report, with booking and member ids
+  pnpm run --silent bookings:audit-mid-stay-edits                  # full report, with booking ids
   pnpm run --silent bookings:audit-mid-stay-edits --summary        # header and counts only: safe to post on #5242
   pnpm run --silent bookings:audit-mid-stay-edits --json           # report plus every examined edit as JSON
 
 This audit is read-only. It never writes and never calls Xero/Stripe/SES.
-It writes no file: redirect its output to keep one, and keep that file off the
-public repository and issue. Do not run it while a migration runs: it reads in
+It writes no file: redirect its output to keep one, to a path outside this
+checkout (such as ~/), and keep that file off the public repository and issue. Do not run it while a migration runs: it reads in
 one snapshot held for up to 120 seconds.
 
 Options:
