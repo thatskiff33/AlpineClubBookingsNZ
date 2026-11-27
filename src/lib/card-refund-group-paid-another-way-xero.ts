@@ -47,7 +47,7 @@ export type GroupCardRefundCloseOperation = {
   allocationPlan: Prisma.JsonValue;
 };
 
-export interface GroupCardRefundBankRecordInput {
+interface GroupCardRefundBankRecordInput {
   operation: GroupCardRefundCloseOperation;
   /** The joiner's booking and payment the bank money went back for. */
   bookingId: string;
