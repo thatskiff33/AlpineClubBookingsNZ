@@ -16,12 +16,15 @@ const mocks = vi.hoisted(() => ({
   mappings: vi.fn(),
 }));
 const openingCreditsRow = vi.hoisted(() => vi.fn());
+// #5235: the chart of accounts as the Xero screens last cached it, or null.
+const cachedChart = vi.hoisted(() => vi.fn());
 const accountMappingRows = vi.hoisted(() => vi.fn());
 // #4988: the health check asks whether the Opening Credits account is mapped,
 // and reads every stored account mapping to see whether another shares its account.
 vi.mock("@/lib/prisma", () => ({
   prisma: { xeroAccountMapping: { findUnique: openingCreditsRow, findMany: accountMappingRows } },
 }));
+vi.mock("@/lib/xero-admin-cache", () => ({ getCachedChartOfAccounts: cachedChart }));
 vi.mock("@/lib/xero-tax-anchors", () => import("./support/xero-tax-anchors-baseline"));
 vi.mock("@/lib/club-time-zone-runtime", () => ({ readClubTimeZoneOutsideRequest: async () => "Pacific/Auckland" }));
 vi.mock("@/lib/club-tax-settings", async (importOriginal) => ({
@@ -99,6 +102,8 @@ describe("readXeroTaxHealth", () => {
     openingCreditsRow.mockResolvedValue(null);
     accountMappingRows.mockReset();
     accountMappingRows.mockResolvedValue([]);
+    cachedChart.mockReset();
+    cachedChart.mockResolvedValue(null);
   });
 
   it("is clean when Xero agrees with the period in force today", async () => {
@@ -305,6 +310,75 @@ describe("readXeroTaxHealth", () => {
       mocks.mappings.mockResolvedValue({ tenantId: null, rows: [] });
       expect((await readXeroTaxHealth()).problems).toEqual([]);
       expect(accountMappingRows).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("Hut Fee Refunds mapped to an expense account the code in force cannot sit on (#5235)", () => {
+    const REFUND_ACCOUNT_PROBLEM =
+      "Hut Fee Refunds is mapped to an expense account, and Xero's tax rate OUTPUT2 (15% GST on Income) cannot be used on expenses, so Xero would reject refund credit notes. Map Hut Fee Refunds to a revenue account, or ask your accountant which account and tax rate refunds should use.";
+    const CHART = [
+      { code: "200", name: "Hut Fees", type: "REVENUE", class: "REVENUE" },
+      { code: "429", name: "General Expenses", type: "OVERHEADS", class: "EXPENSE" },
+    ];
+    /** The stored Hut Fee Refunds row; every other key is unset. */
+    const storeRefundMapping = (row: { code: string | null; itemCode?: string | null } | null) =>
+      openingCreditsRow.mockImplementation(async ({ where }: { where: { key: string } }) =>
+        where.key === "hutFeeRefunds" && row ? { itemCode: null, ...row } : null,
+      );
+
+    beforeEach(() => {
+      cachedChart.mockResolvedValue({ values: CHART });
+      storeRefundMapping({ code: "429" });
+    });
+
+    it("MUTATION: is a health problem for a registered club whose code cannot be used on expenses", async () => {
+      expect((await readXeroTaxHealth()).problems).toEqual([REFUND_ACCOUNT_PROBLEM]);
+    });
+
+    it("is clean when Xero lets the code in force sit on an expense account", async () => {
+      mocks.rates.mockResolvedValue([rate({ expenses: true })]);
+      await expect(readXeroTaxHealth()).resolves.toEqual({ checked: true, problems: [] });
+    });
+
+    it("is clean on a revenue account, and on the default while no code is stored", async () => {
+      storeRefundMapping({ code: "200" });
+      await expect(readXeroTaxHealth()).resolves.toEqual({ checked: true, problems: [] });
+      storeRefundMapping(null);
+      await expect(readXeroTaxHealth()).resolves.toEqual({ checked: true, problems: [] });
+    });
+
+    it("has nothing to check for a club that is not registered, and reads neither the mapping nor the chart", async () => {
+      mocks.schedule.mockResolvedValue([unregistered]);
+      mocks.organisation.mockResolvedValue({ paysTax: false });
+      await expect(readXeroTaxHealth()).resolves.toEqual({ checked: true, problems: [] });
+      expect(openingCreditsRow).not.toHaveBeenCalledWith(expect.objectContaining({ where: { key: "hutFeeRefunds" } }));
+      expect(cachedChart).not.toHaveBeenCalled();
+    });
+
+    it("says nothing about what it cannot place: no cached chart, a code the chart does not list, or unread rates", async () => {
+      cachedChart.mockResolvedValue(null);
+      expect((await readXeroTaxHealth()).problems).toEqual([]);
+      cachedChart.mockResolvedValue({ values: CHART });
+      storeRefundMapping({ code: "777" });
+      expect((await readXeroTaxHealth()).problems).toEqual([]);
+      storeRefundMapping({ code: "429" });
+      mocks.rates.mockResolvedValue(null);
+      expect((await readXeroTaxHealth()).problems).toEqual([]);
+    });
+
+    it("judges the account the refund line names: none when a Xero item supplies it", async () => {
+      // An organisation whose account 200, the default, is an expense account.
+      cachedChart.mockResolvedValue({ values: [{ code: "200", name: "Refunds", type: "EXPENSE", class: "EXPENSE" }] });
+      storeRefundMapping(null);
+      expect((await readXeroTaxHealth()).problems).toEqual([REFUND_ACCOUNT_PROBLEM]);
+      // With an item code and no chosen account, the line carries no account code: Xero takes it from the item.
+      storeRefundMapping({ code: null, itemCode: "REFUND-ITEM" });
+      expect((await readXeroTaxHealth()).problems).toEqual([]);
+    });
+
+    it("leaves a code Xero no longer has to the code's own problem", async () => {
+      mocks.rates.mockResolvedValue([rate({ taxType: "OTHER" })]);
+      expect((await readXeroTaxHealth()).problems).toEqual([expect.stringMatching(/no tax rate with the code OUTPUT2/)]);
     });
   });
 

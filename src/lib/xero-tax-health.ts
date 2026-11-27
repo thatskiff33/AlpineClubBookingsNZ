@@ -1,7 +1,12 @@
-import { clubTaxPeriodOn, loadClubTaxSchedule } from "@/lib/club-tax-settings";
+import { clubTaxPeriodOn, loadClubTaxSchedule, type ClubTaxPeriod } from "@/lib/club-tax-settings";
 import { clubToday } from "@/lib/club-time";
 import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
 import { prisma } from "@/lib/prisma";
+import { normalizeXeroAccountClass } from "@/lib/xero-account-class";
+import { MAPPING_LABELS, normalizeMappingCode } from "@/lib/xero-account-mapping-keys";
+import { getCachedChartOfAccounts } from "@/lib/xero-admin-cache";
+import { applyHutFeeLineCodes } from "@/lib/xero-hut-fee-line-codes";
+import { getResolvedAccountMapping } from "@/lib/xero-mappings";
 import {
   openingCreditsExemptHealthProblem,
   openingCreditsSharedAccountHealthProblem,
@@ -30,8 +35,12 @@ import { countOpenXeroTaxOverrideMismatches, xeroTaxOverridePauseProblem } from 
  *   spent opening credits are waiting or will wait, and a card booking's
  *   invoice operation fails;
  * - the Opening Credits account is stored on the Xero account another mapping
- *   uses (#4988), which the mapping screen and the config import refuse but two
- *   writes at once can still leave (#5391).
+ *   uses (#4988), which the mapping screen and the config import refuse, each
+ *   under the key the other holds (#5391), but a row written before that, or
+ *   straight to the database, can still carry;
+ * - Hut Fee Refunds is mapped to an expense account and Xero says the code in
+ *   force cannot be used on expenses (#5235), so Xero would reject refund
+ *   credit notes.
  *
  * And one the app found itself (#5208): Xero changed the GST sent on an invoice,
  * so the journal's GST overrides are paused until finance resumes them.
@@ -73,9 +82,52 @@ export async function readXeroTaxHealth(): Promise<XeroTaxHealth> {
   if (openingCredits) problems.push(openingCredits);
   const sharedAccount = await openingCreditsSharedAccountHealthProblem(mappings);
   if (sharedAccount) problems.push(sharedAccount);
+  const refundAccount = await hutFeeRefundsExpenseAccountProblem(period, rates);
+  if (refundAccount) problems.push(refundAccount);
   const pause = xeroTaxOverridePauseProblem(pausedInvoices);
   if (pause) problems.push(pause);
   return { checked: rates !== null || paysTax !== null, problems };
+}
+
+/**
+ * HUT FEE REFUNDS ON AN EXPENSE ACCOUNT (#5235). A club may map Hut Fee Refunds
+ * to an expense account, and a refund credit note line carries the club's own
+ * sales tax code whichever kind of account it names (`xeroLineTax`). Xero says
+ * per rate which kinds of account it may sit on, and rejects a document that
+ * pairs a rate with an account outside them. The problem is reported when all
+ * three hold: a registered period is in force, the account the refund line
+ * names (`applyHutFeeLineCodes`) is an expense account in the cached chart, and
+ * Xero says the period's rate cannot be used on expenses.
+ *
+ * Null whenever one of them cannot be established: no cached chart, a code the
+ * chart does not list, or a line that takes its account from a Xero item. A
+ * code Xero no longer has is `xeroTaxCodeProblem`'s to report. Nothing is read
+ * for a club that is not registered, or while Xero's rates could not be read.
+ */
+async function hutFeeRefundsExpenseAccountProblem(
+  period: Pick<ClubTaxPeriod, "gstRegistered" | "xeroTaxType">,
+  rates: readonly XeroTaxRateOption[] | null,
+): Promise<string | null> {
+  if (!period.gstRegistered || rates === null) return null;
+  const rate = rates.find((candidate) => candidate.taxType === period.xeroTaxType);
+  if (!rate || rate.expenses) return null;
+  const [mapping, chart] = await Promise.all([
+    getResolvedAccountMapping("hutFeeRefunds"),
+    getCachedChartOfAccounts(),
+  ]);
+  const lineAccount = normalizeMappingCode(
+    applyHutFeeLineCodes(
+      {},
+      {
+        itemCode: mapping.itemCode,
+        accountCode: mapping.code ?? "200",
+        accountCodeExplicitlyConfigured: mapping.codeExplicitlyConfigured,
+      },
+    ).accountCode,
+  );
+  const account = chart?.values.find((row) => normalizeMappingCode(row.code) === lineAccount);
+  if (!lineAccount || !account || normalizeXeroAccountClass(account.class) !== "EXPENSE") return null;
+  return `${MAPPING_LABELS.hutFeeRefunds} is mapped to an expense account, and Xero's tax rate ${rate.taxType} (${rate.name}) cannot be used on expenses, so Xero would reject refund credit notes. Map ${MAPPING_LABELS.hutFeeRefunds} to a revenue account, or ask your accountant which account and tax rate refunds should use.`;
 }
 
 /** A mapped category Xero can no longer carry. A tenant mismatch needs no Xero read; a rate problem does. */
