@@ -169,7 +169,7 @@ async function expectNothingWritten(bookingId: string) {
     expect(payment.settledByTransactionId).toBe(deposit!.id);
 
     // The one predicate every "Paid" surface will ask reads it as part paid.
-    const { bookingPartPaid } = await import("@/lib/additional-payment-chase");
+    const { bookingPartPaid } = await import("@/lib/deposit-balance");
     expect(bookingPartPaid({ bookingStatus: "PAID", payment })).toEqual({ owingCents: WORTH - DEPOSIT, dueOn: DUE_ON });
 
     // The mirror the settle wrote is the one the rebuild derives from the rows.
@@ -260,7 +260,7 @@ async function expectNothingWritten(bookingId: string) {
     const id = await unpaidBooking();
     const { cancelBooking } = await import("@/lib/booking-cancel");
     const [settled, cancelled] = await Promise.allSettled([settle(id), cancelBooking(id, names.officerId, "ADMIN", "127.0.0.1", CLUB_FORMAT_TEST)]);
-    const { bookingPartPaid } = await import("@/lib/additional-payment-chase");
+    const { bookingPartPaid } = await import("@/lib/deposit-balance");
     const status = (await prisma.booking.findUniqueOrThrow({ where: { id }, select: { status: true } })).status;
     const payment = await paymentOf(id);
     expect(cancelled.status).toBe("fulfilled");
@@ -296,7 +296,7 @@ async function expectNothingWritten(bookingId: string) {
     const { cancelBooking } = await import("@/lib/booking-cancel");
     expect((await cancelBooking(id, names.officerId, "ADMIN", "127.0.0.1", CLUB_FORMAT_TEST)).status).toBe(200);
     const payment = (await paymentOf(id))!;
-    const { bookingPartPaid } = await import("@/lib/additional-payment-chase");
+    const { bookingPartPaid } = await import("@/lib/deposit-balance");
     expect(bookingPartPaid({ bookingStatus: "CANCELLED", payment })).toBeNull();
     expect(await bedsHeldBy(id)).toEqual([0, 0]);
     // Refunded from the money held (`INV-ADDPAY-015`): half the deposit, by hand, never the unpaid balance.

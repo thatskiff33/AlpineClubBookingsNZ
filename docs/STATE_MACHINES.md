@@ -2551,6 +2551,34 @@ inbound fence records its conflict the same way, under the
 
 `INV-ADDPAY-045`, `INV-ADDPAY-046`, `INV-ADDPAY-048`, `INV-ADDPAY-050`, `INV-ADDPAY-051`, `INV-ADDPAY-052`.
 
+### Deposit settle and balance request lifecycle (#5008)
+
+A sibling of the manual mark-paid above, through the same settlement body and
+under the same locks. Nothing calls it yet (#5008 child A): #5005's import is its
+first caller, and no balance is written until the release that chases one is
+fully deployed.
+
+```text
+settleBookingByDeposit (officer's deposit < amount owing; due date from club today to check-in)
+  Booking: PAYMENT_PENDING / CONFIRMED / PENDING / DRAFT -> PAID (beds held, as a manual settle)
+  Payment: -> SUCCEEDED, INTERNET_BANKING, amountCents = deposit, provenance columns written;
+           additionalAmountCents = balance, additionalPaymentStatus PENDING, no intent pointer
+  PaymentTransaction PRIMARY: INTERNET_BANKING, reason "deposit_settle", -> SUCCEEDED
+           (the settling row; CASH_RECORDED line, R08 receipt applied to the R01 charge)
+  PaymentTransaction ADDITIONAL: INTERNET_BANKING, no intent, reason "deposit_balance",
+           balanceDueOn = the due date, PENDING (the balance request; posts nothing, R25)
+  AuditLog: "booking-payment.deposit.settle"
+  refused, nothing written: deposit <= 0 or >= the amount owing; due date in the past or
+           after check-in; worth moved; a request already open; any manual-settle refusal
+balance request (cause "balance"; an edit folded into it reads "mixed")
+  -> never chased by the edit or credit-release chase, never re-sent by the officer's button
+  -> part paid while owed (bookingPartPaid); not owed once the booking is cancelled
+Record manual payment's reversal: refused while a balance request exists
+```
+
+Paying the balance (card or officer), its reminders and overdue list, and how a
+cancel or edit treats it are #5008 children B and C. `INV-ADDPAY-053`, `INV-PAY-047`.
+
 ### Stripe dispute record (#4911)
 
 One `StripeDispute` row per Stripe dispute (chargeback), kept by the four

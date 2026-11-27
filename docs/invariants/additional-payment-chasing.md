@@ -38,6 +38,9 @@ admin surface showed one. These rules now hold:
   amount-only test would show cancelled bookings as owing and would email their
   members a payment demand. It takes the status as a required argument so a
   caller cannot forget it.
+- **A deposit's balance is one such request** [INV-ADDPAY-053]: its cause is
+  `balance`, and `bookingPartPaid` (`src/lib/deposit-balance.ts`), built on this
+  test, is what says a booking is part paid.
 
 ### INV-ADDPAY-023
 
@@ -109,6 +112,8 @@ admin surface showed one. These rules now hold:
   moment `checkOut <= today` - a finished stay belongs to the queue above [INV-LOCKOUT-043].
   The one exception is a request for credit used elsewhere in the club's
   accounts, which has its own repeating chase [INV-ADDPAY-048].
+  A deposit's balance is never chased by this chase or re-sent from the
+  officer's button: only on the dates its due date sets [INV-ADDPAY-053].
 
 ### INV-ADDPAY-025
 
@@ -1774,3 +1779,32 @@ _Legacy: settles tasks raised before #4317._
   `Payment` row lock**, beside the sizing fence: a change in between throws and
   the row retries; a lost claim supersedes and moves nothing. No new lock or
   advisory key. Home: `credit-release-merge.ts`, `credit-release-ask.ts`.
+
+### INV-ADDPAY-053
+
+- **A booking may be settled by a deposit that is less than its worth** (#5008,
+  owner decisions of 11 Nov 2026). The rest is one request with cause
+  `balance` and a due date. It holds its beds, is chased on dates set by the due
+  date, can be paid once by card or recorded once by an officer, is retired by
+  cancellation, and is never shown as fully paid while it is owing.
+- **Stored where the cause already lives.** The request is an `ADDITIONAL`
+  `PaymentTransaction` with reason `deposit_balance`, no instrument, and its
+  due date in `balanceDueOn`, a club calendar date from today to check-in
+  (`INV-DATE-010`, `INV-DATE-019`). No booking status, enum value or `Payment`
+  column is added.
+- **Settled through the one settlement body.** `settleBookingByDeposit`
+  is a sibling of Record manual payment: the same locks, refusals, capacity
+  check and PAID claim. The deposit is the officer's
+  cash receipt (R08); the request posts nothing (R25). Received plus credit plus
+  the balance equals the worth [INV-PAY-047]. It refuses a deposit of nothing or
+  of all that is owing, a due date in the past or after check-in, a moved worth,
+  and a booking with a request already open. Record manual payment's reversal
+  refuses a deposit-settled booking.
+- **Part paid is derived, never stored**: `bookingPartPaid`
+  (`src/lib/deposit-balance.ts`) says what is owing and by when. Rows of more than
+  one cause in one request read `mixed` and keep the balance's due date.
+- **Chased only by its own schedule**: 14 and 3 days before the due date and
+  the day after it (`balanceReminderSchedule`). The edit and credit-release
+  chase, and the officer's re-send, select no request that carries a balance.
+- **Nothing writes one until the release that chases it is fully deployed**:
+  an older release would word it as an edit. Until then no caller exists.

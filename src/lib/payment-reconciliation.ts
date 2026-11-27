@@ -6,6 +6,7 @@ import { settleHostingCoverageAfterCommit } from "@/lib/adult-member-hosting-cov
 import { enqueueOwnHostingCoverageReevaluation } from "@/lib/adult-member-hosting-review";
 import { reconcileHostingReviewForSystemCancellation } from "@/lib/adult-member-hosting-system-cancellation";
 import { prisma } from "@/lib/prisma";
+import { DEPOSIT_BALANCE_REQUEST_WHERE, DEPOSIT_SETTLE_REVERSAL_REFUSAL } from "@/lib/deposit-balance";
 import {
   BookingEventType,
   BookingStatus,
@@ -68,8 +69,6 @@ import { getDefaultLodgeId } from "@/lib/lodges";
 import {
   bookingAmountOwedCents,
   bookingWorthCents,
-  DEPOSIT_BALANCE_REQUEST_WHERE,
-  DEPOSIT_SETTLE_REVERSAL_REFUSAL,
   isManualSettleFromPaymentStatus,
   MANUAL_CAPTURED_PAYMENT_REFUSAL,
   MANUAL_SETTLE_FROM_PAYMENT_STATUS_LIST,
@@ -441,20 +440,7 @@ async function prepareManualSettlement(
   // #5008 (`INV-ADDPAY-053`): the deposit is what was received and the rest is
   // the balance, the not-covered arithmetic below with the balance as the
   // uncollected term: deposit + credit + balance = worth (`INV-PAY-047`).
-  if (settlement.kind === "deposit") {
-    const split = await prepareDepositSplit(tx, booking, settlement, { payment, effectiveAmountCents });
-    return {
-      amountOwingCents: effectiveAmountCents,
-      settlementAmountCents: split.depositCents,
-      creditAppliedCents,
-      paymentId: payment?.id ?? null,
-      outstandingAdditionalCents: 0,
-      additionalSettlementCents: 0,
-      uncollectedAdditionalCents: split.balanceCents,
-      previousAdditionalPaymentStatus: payment?.additionalPaymentStatus ?? null,
-      additionalPaymentIntentId: null,
-    };
-  }
+  if (settlement.kind === "deposit") return prepareDepositSplit(tx, booking, settlement, { payment, effectiveAmountCents, creditAppliedCents });
 
   // #2397 — the outstanding upward-modification delta, and the admin's answer
   // about it.
@@ -2491,10 +2477,8 @@ export async function reverseManualBookingPayment({
         409
       );
     }
-
-    if ((await tx.paymentTransaction.count({ where: { paymentId: payment.id, ...DEPOSIT_BALANCE_REQUEST_WHERE } })) > 0) {
-      throw new ManualBookingPaymentError(DEPOSIT_SETTLE_REVERSAL_REFUSAL, 409);
-    }
+    // #5008: a deposit settle is never reversed here; its balance request would outlive it.
+    if ((await tx.paymentTransaction.count({ where: { paymentId: payment.id, ...DEPOSIT_BALANCE_REQUEST_WHERE } })) > 0) throw new ManualBookingPaymentError(DEPOSIT_SETTLE_REVERSAL_REFUSAL, 409);
 
     // Guard 2 again, for anything acquired SINCE the settle.
     await assertNoXeroInvoiceEvidence(tx, payment);

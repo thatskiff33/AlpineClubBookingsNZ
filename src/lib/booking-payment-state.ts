@@ -1,7 +1,6 @@
 import type { PaymentSource } from "@prisma/client";
 
 import { isAdditionalAskRetiredBookingStatus } from "@/lib/additional-payment-chase";
-import { DEPOSIT_BALANCE_ASK_REASON } from "@/lib/credit-release-ask-keys";
 import { paidByOrganiserInternetBanking } from "@/lib/group-organiser-paid";
 
 /**
@@ -71,16 +70,6 @@ const MANUAL_SETTLE_FROM_PAYMENT_STATUSES = new Set<string>(
  */
 export const MANUAL_CAPTURED_PAYMENT_REFUSAL =
   "This booking's payment has already taken money — it cannot also be recorded as a cash settlement. Check the payment (and any refund owing) before recording anything.";
-
-/**
- * #5008 (`INV-ADDPAY-053`): a booking settled by a deposit is not reversed by Record
- * manual payment's reversal, which would put the booking back to unpaid while its
- * balance request stood. The server's refusal and the admin page's share this
- * sentence and the row filter that finds the balance (any status, never withdrawn).
- */
-export const DEPOSIT_SETTLE_REVERSAL_REFUSAL =
-  "This booking was settled by a deposit with a balance requested, so the payment cannot be reversed here.";
-export const DEPOSIT_BALANCE_REQUEST_WHERE = { kind: "ADDITIONAL", reason: DEPOSIT_BALANCE_ASK_REASON, withdrawnAt: null } as const;
 
 /** Whether a manual cash / off-Xero settlement may settle from this status. */
 export function isManualSettleFromPaymentStatus(status: string): boolean {

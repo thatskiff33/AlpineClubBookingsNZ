@@ -40,9 +40,10 @@ export async function prepareDepositSplit(
   owed: {
     payment: { id: string; additionalAmountCents: number; additionalPaymentStatus: string | null } | null;
     effectiveAmountCents: number;
+    creditAppliedCents: number;
   },
 ) {
-  const { payment, effectiveAmountCents } = owed;
+  const { payment, effectiveAmountCents, creditAppliedCents } = owed;
   // One request per booking: a balance is raised only on a booking with no request open, so it
   // never folds into, or is folded into, an extra by this door (an edit merges into it later).
   const openRows = payment === null ? 0 : await tx.paymentTransaction.count({
@@ -75,7 +76,18 @@ export async function prepareDepositSplit(
     throw new ManualBookingPaymentError("The balance's due date is after check-in. Choose a date on or before check-in.", 409);
   }
 
-  return { depositCents, balanceCents: effectiveAmountCents - depositCents };
+  // The manual settle's prepared shape, on its "not covered" answer: the balance is the uncollected term.
+  return {
+    amountOwingCents: effectiveAmountCents,
+    settlementAmountCents: depositCents,
+    creditAppliedCents,
+    paymentId: payment?.id ?? null,
+    outstandingAdditionalCents: 0,
+    additionalSettlementCents: 0,
+    uncollectedAdditionalCents: effectiveAmountCents - depositCents,
+    previousAdditionalPaymentStatus: payment?.additionalPaymentStatus ?? null,
+    additionalPaymentIntentId: null,
+  };
 }
 
 /**

@@ -784,6 +784,7 @@ Prefix `INV-ADDPAY`.
 | `INV-ADDPAY-050` | Earlier credit releases are asked for in audited, switchable batches |
 | `INV-ADDPAY-051` | An unchaseable released-credit request fails closed to the officers |
 | `INV-ADDPAY-052` | A release on an unpaid edit request merges into one request |
+| `INV-ADDPAY-053` | A booking settled by a deposit owes one dated balance request |
 
 ## Analytics And Privacy
 

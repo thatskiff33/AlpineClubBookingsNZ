@@ -109,7 +109,8 @@ the legacy `hashtext(<memberId>)` contact-link key's in
 [refund failed later (#4104)](#a-card-refund-that-failed-later-the-payment-row-lock-no-advisory-key-4104) ·
 [primary invoice link (#3980)](#an-edit-against-the-primary-invoices-link-the-payment-row-lock-no-advisory-key-3980) ·
 [combined group invoice manifest (#4525)](#the-combined-group-invoices-export-manifest-no-lock-the-unique-keys-4525) ·
-[a Stripe dispute's record (#4911)](#a-stripe-disputes-record-4911).
+[a Stripe dispute's record (#4911)](#a-stripe-disputes-record-4911) ·
+[a deposit settle and its balance request (#5008)](#a-deposit-settle-and-its-balance-request-the-manual-settles-tiers-no-new-key-5008).
 
 **Xero refund-note links.**
 [Stripe repair (#2901)](#stripe-refund-note-link-repair-deliberately-lock-free-2901) ·
@@ -6315,6 +6316,23 @@ The stale-hold cron independently refuses any request with an accepted quote
 pointer (#3415). Acceptance retains its `AWAITING_REVIEW` hold for officer
 approval or decline; generic cancellation refuses an `ACCEPTED` linked request
 under the global lock. Officer decline claims `DECLINED` before releasing it.
+
+#### A deposit settle and its balance request: the manual settle's tiers, no new key (#5008)
+
+`settleBookingByDeposit` (`INV-ADDPAY-053`) enters the same settlement body as
+the manual mark-paid, with the same composition: `lock(1)` →
+`acquireLodgeCapacityLock` → the booking row (#4840) → `lockMemberCreditLedger`
+→ the Payment row. Every refusal reads the post-lock snapshot; the fenced
+`payment.updateMany` also re-asserts that no extra is owing, so a request raised
+between the read and the write is a 409. The balance request is created after
+that fenced write, under the Payment row lock the settle holds, beside the
+deposit's cash row, so no request writer can interleave a second one. The
+booking's PAID claim is the same status-guarded `updateMany`: of two deposit
+settles one commits and the other is refused. Against a cancel, a cancel first
+leaves the settle refused; a settle first is either refused by the cancel's own
+drift check or cancelled after it, refunding only from the deposit. Its `lock(1)` is the body's
+registered site (`settleBookingPaymentInTransaction#1`); no advisory key or lock
+site is added. Proved on PostgreSQL in `deposit-settle.realdb.test.ts`.
 
 ### Writer doing both → `lock(1)` first, then per-lodge
 

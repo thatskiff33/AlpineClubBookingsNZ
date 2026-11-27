@@ -154,11 +154,7 @@ export async function resendAdditionalPaymentEmail(params: {
   // #5008 (`INV-ADDPAY-053`): this email words every request as an extra, so a deposit balance
   // is never re-sent from here; its own reminders come with #5008 child C.
   if (chainIncludesBalance(payment.transactions)) {
-    return {
-      ok: false,
-      status: 409,
-      error: "This booking's balance after a deposit is not sent from here, so nothing was sent.",
-    };
+    return { ok: false, status: 409, error: "This booking's balance after a deposit is not sent from here, so nothing was sent." };
   }
 
   let silenced: boolean;

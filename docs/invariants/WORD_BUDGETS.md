@@ -103,7 +103,7 @@ while exceptions are proposed on their deciding issues (#2576, #3040, #3039,
 | `INV-OPS-013` | 1354 |
 | `INV-CONFIG-004` | 1304 |
 | `INV-OPS-012` | 1200 |
-| `INV-PAY-047` | 1164 |
+| `INV-PAY-047` | 1155 |
 | `INV-MOD-055` | 1002 |
 | `INV-ADDPAY-036` | 1137 |
 | `INV-SSOT-003` | 1094 |

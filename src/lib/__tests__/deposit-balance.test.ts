@@ -4,7 +4,7 @@
  */
 import { describe, expect, it } from "vitest";
 
-import { balanceReminderSchedule, bookingPartPaid, type PartPaidAskRow } from "@/lib/additional-payment-chase";
+import { balanceReminderSchedule, bookingPartPaid, type PartPaidAskRow } from "@/lib/deposit-balance";
 import { requireCalendarDate } from "@/lib/club-time";
 import { CREDIT_RELEASE_ASK_REASON, DEPOSIT_BALANCE_ASK_REASON } from "@/lib/credit-release-ask-keys";
 

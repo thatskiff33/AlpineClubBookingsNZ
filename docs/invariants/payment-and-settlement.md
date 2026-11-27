@@ -306,7 +306,8 @@ the rule: it names sibling IDs so a change to one prompts checking the others.
   `amountCents + creditAppliedCents = finalPriceCents` is only the special case
   where nothing is left owing. What holds in every case is
   `amountCents + creditAppliedCents + (uncollected addition) = finalPriceCents`:
-  every cent of the price is collected, paid with credit, or still owed.
+  every cent of the price is collected, paid with credit, or still owed
+  (a deposit's balance is still owed [INV-ADDPAY-053]).
   This is NOT enforced by a runtime assertion inside the settle, and cannot be:
   the settled figure is *defined* as `finalPriceCents - credit - uncollected`,
   so any in-transaction check reduces to `finalPrice === finalPrice`. What
@@ -343,9 +344,8 @@ the rule: it names sibling IDs so a change to one prompts checking the others.
   - **An ask is sized so the mirror still holds after it.** Minting a replacement
     ADDITIONAL PaymentIntent RETIRES every other outstanding ask on the payment
     (`queueSupersededAdditionalIntentCancellationRows`), so an ask sized on one
-    edit's own delta deletes the unpaid balance of the ask it replaces. Two
-    consecutive +$70 edits on a $130 paid booking asked $70 and lost $70,
-    permanently and silently. The ask is therefore the edit's own net PLUS the unpaid balance of the ask it
+    edit's own delta deletes the unpaid balance of the ask it replaces (#3340).
+    The ask is therefore the edit's own net PLUS the unpaid balance of the ask it
     supersedes, which is `sizeAdditionalAsk` in
     `src/lib/additional-payment-ask.ts` — the one home for all of this
     arithmetic, and the module the census guard and the operator SQL are both
