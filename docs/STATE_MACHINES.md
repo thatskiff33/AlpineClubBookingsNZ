@@ -3511,8 +3511,8 @@ that has just moved on (the "No emails" switch is set without lock(1) too, so
 the restart's read of it can be stale by a moment; the only effect is an
 extended window for an email then withheld). A lapsed offer counts as never
 told when its offer email's row is not told, whatever else remains (a
-`FAILED` row at that moment, or a bounce or complaint reported for that email
-after `SENT`), or, with
+`FAILED` row at that moment, or a bounce reported for that email after
+`SENT`), or, with
 no row, when its notice still stands or passed its cut-off unsent; an offer
 made before #5433, which wrote neither, counts as told. Such a lapse sends no
 "offer expired" email; the revert, the re-offer pass and its rotation are
@@ -3558,17 +3558,19 @@ once more. The sent stamp is written twice before giving up; **stated limit:**
 if both writes fail, a later attempt takes the claim over and the officers may
 get the alert twice.
 
-Since #5469 the mail provider's feedback handler (`email/ses-feedback.ts`)
-marks `BOUNCED` only the email a bounce or complaint names, so a member whose
-offer email was delivered still reads as told when the address later draws a
-complaint or a temporary bounce on another email. The limits of that rule are
-in [Email Retry Lifecycle](#email-retry-lifecycle): an offer email marked by
-the old rule, before #5469 or by the previous release during the switchover,
-still reads as never told; and where the feedback names no email this
-release can find, a bounced offer email keeps reading as told. One more
-stated limit: an "offer expired" email that cannot be delivered settles with
-no officers' alert: nothing is at stake, as the member is simply back on the
-waitlist.
+Since #5469 a bounce marks `BOUNCED` only the email it names and a complaint
+marks none (`INV-INT-043`). So a bounced offer email reads as never told (the
+lapse alert as above); an offer email the member marked as spam reads as
+told, and officers get the complaint alert instead; and a member whose offer
+email was delivered still reads as told when the address later draws a bounce
+or complaint on another email. The limits are in
+[Email Retry Lifecycle](#email-retry-lifecycle): an offer email marked by the
+old rule, before #5469 or by the previous release during the switchover,
+still reads as never told; and a bounced offer email that the report cannot
+be matched to (no stored id and no original headers) keeps reading as told.
+One more stated limit: an "offer expired" email that cannot be delivered
+settles with no officers' alert: nothing is at stake, as the member is simply
+back on the waitlist.
 The member's booking page shows the live offer and its deadline whether or
 not the email went.
 
@@ -4396,37 +4398,46 @@ cron's next failure) does not count. Pinned by
 A copy that has explicitly declared a capture mailbox transmits into it normally
 and its rows are ordinary `SENT`.
 
-Bounce and complaint feedback from SES (#5469, owner decision 27 Nov 2026,
-`email/ses-feedback.ts`) moves to `BOUNCED` only the `QUEUED`, `SENT` or
-`FAILED` row whose `messageId` the notification names, and records the
-address's suppression exactly as before. A temporary bounce and a complaint
-follow the same rule as a hard bounce. Every other row to the address keeps its
-status, so a delivered email still reads as delivered. Nothing more is sent to
-a suppressed address because the email core and the retry cron check the
-suppression record before every send and write the refused send's row
-`BOUNCED`, its body dropped; no other row's status needs rewriting to stop
-it. A complaint or a hard bounce suppresses at once; a
-temporary bounce from the second on, so after the first a pending `FAILED` row
-to that address is still retried. A repeat of the same notification matches
-no row (the named one is already `BOUNCED`) and is not counted again toward
-suppression (`INV-INT-039`).
+Bounce and complaint reports (#5469, owner decisions 27 Nov 2026,
+`INV-INT-043`). Each mail service's report becomes one neutral event
+(`email/delivery-feedback.ts`; SES's adapter is `email/ses-feedback.ts`), and
+one rule acts on it. It records the address's suppression exactly as before:
+a complaint or a permanent bounce suppresses at once, a temporary bounce from
+the second on. A bounce, permanent or temporary, moves to `BOUNCED` only the
+`QUEUED`, `SENT` or `FAILED` row the report names. A complaint moves no row:
+the email arrived, so it keeps saying `SENT`, and officers get one
+`admin-email-complaint` alert per complaint instead, sent after the
+suppression is written. Every other row to the address keeps its status.
+Nothing more is sent to a suppressed address because the email core and the
+retry cron check the suppression record before every send and write the
+refused send's row `BOUNCED`, its body dropped; no other row needs
+rewriting to stop it. So after a first temporary bounce a pending `FAILED`
+row to that address is still retried. A repeat of the same report matches no
+row (the named one is already `BOUNCED`), is not counted again toward
+suppression, and finds the alert's claim kept (`INV-INT-039`).
 
-The row stores the Message-ID header the mail library generated for a
-successful send; `QUEUED` and `FAILED` rows, and sends in development mode,
-store none. SES replaces that header on the way out and names the message by
-its own id, so the stored value appears in a notification only when the
-identity's notifications include the original headers (`CONFIGURATION.md`,
-"SES bounce and complaint feedback"). **Stated limits:** without those headers,
-or for a row with no stored id, no row is marked: the address is still
-suppressed, but an email that did bounce keeps reading as `SENT`. Rows marked
-`BOUNCED` by the old rule, which marked every row to the address, stay as
-they were (no data rewrite), so an email delivered before #5469 can still
-read as bounced. During a blue-green switchover the previous release, still
-handling some notifications, marks every row to the address as before.
+Which row a report names: the one whose `providerMessageId` matches the id
+the service gave the message. Both send paths store that id from the
+server's reply to a successful send (`email/provider-message-id.ts`, one entry
+per recognised service; only SES, recognised from `USE_AWS_SES`, whose reply is
+`250 Ok <id>`). A row with no stored id is matched instead by its `messageId`,
+the Message-ID header the mail library generated, which SES replaces on the
+way out and reports only among the original headers, sent only when the
+identity is set to include them (`CONFIGURATION.md`, "SES Bounce and
+Complaint Feedback"). **Stated limits:** a row with no stored id (sent before
+#5469, by the previous release, through an SMTP relay or other server the app
+does not recognise, or in development mode) is matched only through those
+headers; without them no row is marked, the address is still suppressed, and
+an email that did bounce keeps reading as `SENT`. Rows marked `BOUNCED` by
+the old rule, which marked every row to the address, stay as they were (no
+data rewrite). During a blue-green switchover the previous release, still
+handling some reports, neither stores nor reads the id and marks every row
+to the address, complaints included.
 
 ```text
 email queued -> send attempted -> sent
-sent -> bounce or complaint naming this message -> bounced; address suppression recorded
+sent -> bounce naming this message -> bounced; address suppression recorded
+sent -> complaint naming this message -> stays sent; address suppressed; officers alerted once
 confirmed copy -> environment-safety suppression (terminal, no provider contacted)
 unconfirmed role or capture-in-production -> retryable failure carrying a block reason
 send failure -> retryable failed -> suppression + booking authority rechecked

@@ -2806,17 +2806,29 @@ retries for roughly 50 minutes. See
 
 ### SES Bounce and Complaint Feedback
 
-A bounce or complaint marks as bounced only the email it is about (#5469);
-the address is suppressed either way, so nothing more is sent to it. The app
-finds that email by the Message-ID header it sent, which SES replaces with its
-own on the way out and reports back only among the original headers. So turn
-on **include original email headers** for the sending identity's bounce and
-complaint notifications in SES (the `SetIdentityHeadersInNotificationsEnabled`
-setting). Without it the address is still suppressed, but no email is marked:
-an email that did bounce keeps showing as sent, and a waitlist offer email
-that bounced counts as told. See
-[Amazon SNS notification contents for Amazon SES](https://docs.aws.amazon.com/ses/latest/dg/notification-contents.html)
-and [Email Retry Lifecycle](docs/STATE_MACHINES.md#email-retry-lifecycle).
+A bounce marks as bounced only the email it is about, and a complaint marks
+none and alerts officers once (#5469); either way the address is suppressed,
+so nothing more is sent to it. The app finds the email by the id SES gave it,
+which SES returns when it accepts the message (`250 Ok <id>`) and the app stores
+for each email it sends with `USE_AWS_SES=true`. No setting is needed for that.
+
+Optional, for emails sent before this version (and any sent while the previous
+version was still running during the upgrade): turn on **include original email
+headers** for the sending identity's bounce and complaint notifications in SES
+(the `SetIdentityHeadersInNotificationsEnabled` setting). Those emails stored no
+SES id, so the app can find them only by the Message-ID header it sent, which
+SES reports only among the original headers. Without it, a report about such an
+email still suppresses the address but marks no email.
+
+An SMTP relay (`USE_SMTP_RELAY=true`) is not a recognised mail service, even one
+that forwards to SES, so its emails store no id; and the app reads bounce and
+complaint reports only from SES's SNS notifications. Supporting another
+service is an adapter for its reports and an entry for its reply format
+([Email Retry Lifecycle](docs/STATE_MACHINES.md#email-retry-lifecycle),
+`INV-INT-043`). See
+[Amazon SES SMTP issues](https://docs.aws.amazon.com/ses/latest/dg/troubleshoot-smtp.html)
+(the reply format) and
+[Amazon SNS notification contents for Amazon SES](https://docs.aws.amazon.com/ses/latest/dg/notification-contents.html).
 
 ## Address Autocomplete
 

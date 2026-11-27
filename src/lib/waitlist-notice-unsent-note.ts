@@ -9,11 +9,11 @@
  * Which waitlist email did not reach the member: the offer, the offer-expired
  * notice, or (owner decision D5, 24 Nov 2026) an offer that lapsed with its
  * email not known to have reached them. Each note must be true in every case
- * it is sent for (round 3, item 3). Since #5469 a bounce or complaint marks
- * only the email it names, so "bounced" here is about this email, not an
- * earlier or later one to the same address. Stated limit: a row the old rule
- * (or the previous release, during a switchover) marked for feedback about
- * another email still reads as bounced.
+ * it is sent for (round 3, item 3). Since #5469 a bounce marks only the email
+ * it names, and a complaint marks none, so "bounced" here is about this
+ * email, not an earlier or later one to the same address. Stated limit: a row
+ * the old rule (or the previous release, during a switchover) marked for a
+ * report about another email, or for a complaint, still reads as bounced.
  */
 export type WaitlistNoticeUnsent = "offer" | "offer-expired" | "offer-lapsed-untold";
 

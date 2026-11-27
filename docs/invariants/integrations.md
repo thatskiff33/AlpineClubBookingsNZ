@@ -777,8 +777,8 @@ as a duplicate and never applied twice by racing takeovers.
   over through the same guard; losing it answers 409. A fresh one is refused.
 - **The operation row** the dead attempt left is recovered by `INV-INT-038`.
 - **Replays are harmless.** Handlers are idempotent; the same SES feedback
-  (message id and event type) is not counted twice toward suppression, and
-  marks `BOUNCED` only the email named (#5469).
+  (message id and event type) is not counted twice toward suppression; what
+  a report changes is `INV-INT-043`.
 - **A poison event stops being retaken.** After three dead attempts (the
   `INV-INT-038` row's `attemptCount`), the worker leaves the event PROCESSING
   and logs an error each run; only Replay retries it.
@@ -789,8 +789,7 @@ as a duplicate and never applied twice by racing takeovers.
   operation threshold must not exceed the lease.
 
 Pinned by `ses-sns-webhook.test.ts`, `stripe-webhook-events.test.ts`,
-`xero-inbound-stale-event-takeover.test.ts`, `email-suppression-replay.test.ts`,
-`ses-feedback-named-message.test.ts`
+`xero-inbound-stale-event-takeover.test.ts`, `email-suppression-replay.test.ts`
 and, against real PostgreSQL, `xero-inbound-stale-event-takeover.realdb.test.ts`.
 
 ## Stored outbox payloads (#3971)
@@ -1012,3 +1011,42 @@ Pinned by `admin-alert-once-lost-cases.test.ts`, `admin-alert-once.test.ts`,
 `admin-alert-once-census.test.ts`, `alert-cooldown.test.ts`,
 `attempt-log-once-ever-claim.test.ts` and, against real PostgreSQL,
 `admin-alert-once-sweep.realdb.test.ts`.
+
+## Bounce and complaint reports (#5469)
+
+### INV-INT-043
+
+A bounce or complaint report changes only what it names: the address's
+suppression and, for a bounce, the one email it is about (owner decisions,
+27 Nov 2026).
+
+- **One event, one rule.** Each mail service's adapter turns its report into
+  a `DeliveryFeedbackEvent`; `applyDeliveryFeedback`
+  (`email/delivery-feedback.ts`) alone acts on it; SES's is
+  `email/ses-feedback.ts`. Another service adds an adapter, a route and an
+  entry in `email/provider-message-id.ts`.
+- **The id is stored at send.** Both send paths write
+  `EmailLog.providerMessageId` from the server's reply, for a recognised
+  service only (SES, from `USE_AWS_SES`); any other server stores none.
+- **Which email.** The stored id first; for a row with none, the Message-ID
+  header the report carries. Never the address.
+- **A bounce**, permanent or temporary, marks that row `BOUNCED`; every other
+  row keeps its status. **A complaint** marks nothing and sends officers
+  `admin-email-complaint` once per report (`sendAdminAlertOnceEver`, keyed on
+  the report), after the suppression is written and only while it is active.
+  A send that reached nobody and left nothing to replay throws, so the
+  service delivers the report again.
+- **Suppression is unchanged** and is what stops pending sends: the email
+  core and the retry job check it before every send.
+- **Replays are harmless.** The named row is already `BOUNCED`, the
+  suppression is not counted twice, and the alert claim is kept.
+- **No new lock:** one status-guarded update (`INV-LOCK-001`).
+- **Limits.** A row sent before #5469, by the previous release, or through an
+  unrecognised server has no stored id, so it is found only through the
+  original headers, which SES sends only when configured. During a
+  switchover the previous release marks every row to the address. Rows the
+  old rule marked stay marked.
+
+Pinned by `ses-feedback-named-message.test.ts`,
+`ses-feedback-adapter.test.ts`, `provider-message-id.test.ts`,
+`cron-email-retry.test.ts` and `phase6a-notifications.test.ts`.

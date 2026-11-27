@@ -2094,6 +2094,12 @@ The source of truth is `prisma/schema.prisma`. Key domains are:
   connection rather than a separate finance token store.
 - Cron run records, email logs, webhook logs, processed webhook events, and
   backup/audit-retention support records.
+- Each email log row (`EmailLog`) keeps two ids for a sent message: `messageId`,
+  the Message-ID header the mail library generated, and, since #5469,
+  `providerMessageId`, the id the mail server gave it, read from the server's
+  reply by `src/lib/email/provider-message-id.ts` (null for a server the app
+  does not recognise, and for rows sent before #5469). Bounce and complaint
+  reports find their email by it (`INV-INT-043`).
 - Owed notices (`OwedNotice`, #5433): a notice a committed change still owes,
   written in the change's own transaction by a deterministic id and cleared
   once sent; the confirm-pending and email retry jobs sweep what the first
@@ -3583,7 +3589,14 @@ on Addy availability.
 ### Email
 
 AWS SES SMTP sends transactional email. SES SNS feedback is ingested for bounce
-and complaint suppression. Email templates should avoid embedding secrets and
+and complaint suppression: the SES adapter (`email/ses-feedback.ts`) turns a
+notification into one service-neutral `DeliveryFeedbackEvent`, and one rule
+(`email/delivery-feedback.ts`) suppresses the address, marks a bounced email,
+and alerts officers of a complaint (`INV-INT-043`). To add another mail
+service: an entry in `email/provider-message-id.ts` saying how its reply to a
+send names the message, and, for its bounce and complaint reports, an adapter
+that builds the event and a route that receives them; the rule does not
+change. Email templates should avoid embedding secrets and
 should use effective recipient logic for dependents where required. Editable
 templates and admin/system delivery policies are registered in the email
 message registry and surfaced in Admin Setup and Admin Notifications.

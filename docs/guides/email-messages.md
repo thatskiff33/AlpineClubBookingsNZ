@@ -467,7 +467,7 @@ you want both reworded; editing only one leaves the other on its built-in text.
 > moment. So contact them directly, or retract the offer. And a **Waitlist
 > Offer Expired** email that cannot be delivered raises no alert: the member
 > is simply back on the waitlist. What a bounce or complaint marks changed
-> again in #5469 (the next upgrade note).
+> in #5469 (the next upgrade note).
 >
 > During the switch to this version, a server still running the version
 > before it that expires an offer this version made and never sent sends the
@@ -483,30 +483,50 @@ you want both reworded; editing only one leaves the other on its built-in text.
 > "not sent" alert; and if such an offer lapses, the member is sent **Waitlist
 > Offer Expired** as before.
 
-> **Upgrade note (#5469, bounces and complaints).** When the mail provider
-> reports a bounce or a complaint, only the email it is about is now marked
-> bounced. Before, every earlier email to that address was marked bounced too,
-> so a member's email history could show emails that arrived as bounced. A
-> temporary bounce (a full mailbox, say) and a complaint follow the same rule.
+> **Upgrade note (#5469, bounces and complaints).** When the mail service
+> reports that an email bounced, only that email is now marked bounced. Before,
+> every earlier email to the address was marked bounced too, so a member's
+> email history could show emails that arrived as bounced. A temporary bounce
+> (a full mailbox, say) follows the same rule as a permanent one. A complaint,
+> usually the recipient marking an email as spam, now marks no email at all:
+> the email arrived, so it keeps showing as sent.
+>
 > The address is blocked from further emails exactly as before: at once for a
 > complaint or a permanent bounce, from the second temporary bounce. Once it
 > is blocked, nothing waiting to be sent or retried goes to it. After a first
 > temporary bounce, an email to the address that failed and is waiting for a
 > retry is now retried, where before it was marked bounced and dropped.
 >
-> What an officer can notice: a member who received their waitlist offer
-> email still counts as told if another email to them later bounces or draws
-> a complaint, so they are sent **Waitlist Offer Expired** if the offer lapses
-> and no **Waitlist email not sent** alert is raised for it.
+> What an officer can notice:
 >
-> Limits. The provider's report names the email only when the setting in
-> [`CONFIGURATION.md`](../../CONFIGURATION.md#ses-bounce-and-complaint-feedback)
-> is on. Without it no email is marked: the address is still blocked, but an
-> email that did bounce keeps showing as sent, and an offer email that bounced
-> counts as told. Emails already marked bounced before this version stay
-> marked, so older history can still show a delivered email as bounced.
-> During the switch to this version, a server still running the version
-> before it marks every email to the address, as before.
+> - A new alert, **Admin Email Complaint** (`admin-email-complaint`), sent once
+>   per complaint. It gives the address, the members whose record uses it (or
+>   says no member record does), which email the complaint was about and when
+>   it was sent (or says the app could not tell), and that the address is now
+>   blocked. It links to **Email Deliverability**, where the block is listed and
+>   can be lifted. It goes to officers who receive **Reported issues** alerts
+>   (Support & System edit, which lifting a block needs), and its wording is
+>   editable like the others.
+> - A member who received their waitlist offer email still counts as told if
+>   they mark it as spam, or if another email to them later bounces or draws a
+>   complaint: they are sent **Waitlist Offer Expired** if the offer lapses, and
+>   no **Waitlist email not sent** alert is raised for it. An offer email that
+>   bounced counts as not told, as before.
+>
+> To tell which email a report is about, the app now keeps the id the mail
+> service gave each email when it accepted it. Only Amazon SES is recognised
+> (`USE_AWS_SES=true`).
+>
+> Limits. An email sent before this version, or while a server still running
+> the version before it was handling mail during the switch, has no stored
+> id: a report about it marks it only when SES includes the original email
+> headers, an optional setting
+> ([`CONFIGURATION.md`](../../CONFIGURATION.md#ses-bounce-and-complaint-feedback)).
+> Without it, the address is still blocked but no email is marked. The same
+> holds for email sent through an SMTP relay. Emails already marked bounced
+> before this version stay marked. During the switch, a server still running
+> the version before it marks every email to the address on a bounce or a
+> complaint, as before, and sends no complaint alert.
 
 > **Upgrade note (#5433, card-payment confirmations).** A member's **Booking
 > Confirmed** email after paying by card is no longer lost if the payment is

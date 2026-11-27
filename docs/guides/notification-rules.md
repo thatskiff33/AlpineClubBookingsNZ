@@ -74,7 +74,9 @@ the member's own preferences instead, according to its category (#4987,
 | **Club notice** — club business | **Club notices**, on unless turned off | Receives it |
 | **Club newsletter** — optional news | **Club newsletters**, off unless turned on | Does not receive it |
 
-Email suppression (bounces and complaints) applies to both.
+Email suppression (bounces and complaints) applies to both. A complaint also
+sends officers the **Admin Email Complaint** alert, once per complaint; like
+any admin alert, it can be muted here (#5469).
 
 ## Troubleshooting
 
