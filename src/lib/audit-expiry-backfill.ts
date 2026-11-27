@@ -501,7 +501,7 @@ export function formatAuditExpiryBackfillReport(report: AuditExpiryBackfillRepor
       `${report.incidentPreserved.heldByTenYearFloor} past seven years are still kept by the ten-year floor).`,
   );
   lines.push(
-    `Entries with a retention class but no expiry (deliberate keep-for-ever, never changed here): ` +
+    `Entries with a retention class but no expiry (kept for ever, never changed here): ` +
       `${report.keptForeverWithClass}`,
   );
 

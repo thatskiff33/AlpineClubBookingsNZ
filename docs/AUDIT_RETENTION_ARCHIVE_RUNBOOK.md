@@ -143,7 +143,7 @@ If the club wants any of those rows kept, hold the deploy and raise it on the is
 
 **Which connection.** On a single-role install, `DATABASE_URL` as usual. Under the [least-privilege roles](../DEPLOYMENT.md#least-privilege-database-roles) neither the application role (`INSERT` and `SELECT` only) nor the audit-retention role (`UPDATE` of `ipAddress` and `userAgent` only) may change `expiresAt`, so name the operator connection (`POSTGRES_USER`); apply checks the grant before it writes and refuses with that advice.
 
-**What the next prune deletes.** Every entry it reported as deletable, for good: `critical` and unclassified entries are never archived, so no copy is kept anywhere but backups. Afterwards the census reports 0.
+**What the next prune deletes.** Every entry it reported as deletable, for good: `critical` and unclassified entries are never archived, so no copy is kept anywhere but backups. The count is taken at the moment you run it; the nightly job runs at 03:30 club time, so an entry that passes seven years in between is deleted too, as it would have been that night under the decision anyway. Take a backup just before apply: it is the only way back. Do not run apply around 03:30 club time, when the nightly job updates and deletes the same rows. Apply never updates more entries than `--confirm-total`; any that appear meanwhile wait for a fresh dry run. Afterwards the census reports 0.
 
 ## Archive Database Env Vars
 

@@ -458,9 +458,10 @@ This census replaces the read-only retention query in
 **How to check it worked.** The census reports 0, and the activity log has one
 `AUDIT_EXPIRY_BACKFILLED` entry, under Admin, per batch.
 
-**Rollback.** The apply writes only `expiresAt`, and each batch's entry names
-the run, so an expiry can be cleared by hand before the clean-up reaches it. A
-record the clean-up has deleted is gone; only a backup brings it back.
+**Rollback.** Take a backup just before the apply; it is the only way back. The
+batch entries record counts and date ranges, not which rows changed, so the
+expiries cannot be picked out and cleared by hand, and a record the clean-up
+has deleted is gone.
 
 ## v0.13.2 → v0.14.0
 
