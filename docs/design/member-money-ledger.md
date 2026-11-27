@@ -807,7 +807,15 @@ loses. A booking-anchored clearing note has no edit behind it and records
 nothing. The role's coverage is a group of its own: an invoice's cover of an
 event's slice and a note's cover of another event's never meet, and summing
 coverage across roles against the component's live gross is still the later
-step named above.
+step named above. Two limits stand, both shared with the supplementary
+invoice. The sender has no replay, so a manifest that failed to write stays
+unwritten until the same operation runs again. And the manifest is planned from
+the lines this attempt built: when Xero answers a repeated key with the note it
+already holds, the total is the same (the key carries the cents) but the frozen
+line codes and hash are this attempt's, not held to the lines Xero returned as
+the primary invoice's are (`confirmBilledPrimaryInvoice`). The shared match also
+refuses a reversed share closure for both documents, which the reader already
+drops (`readReviewClosure`).
 
 The booking-invoice family's round trip runs on the provider fakes
 (`xero-booking-invoice-manifest-round-trip.realdb.test.ts`): the primary
@@ -818,8 +826,8 @@ manifest must cover exactly the lines Xero holds, its stay lines by
 `BOOKING_REVENUE` slices and its fee line by `FEE_REVENUE`. A repeat send moves
 no manifest, and a second note on the same slice is an `ALREADY_COVERED` row
 with no second cover. The read-back and the check live in one helper
-(`src/test/providers/manifest-round-trip.ts`) the refund-note and failed-later
-reversal round trips reuse.
+(`src/test/providers/manifest-round-trip.ts`), written for the refund-note
+(#5278) and failed-later reversal (#5287) round trips to reuse.
 
 | Rendered object | Ledger slice and coverage rule |
 | --- | --- |

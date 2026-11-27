@@ -1,10 +1,9 @@
 import type { LineItem } from "xero-node";
 import type { MemberMoneyExportConflictReason } from "@prisma/client";
-import { invoiceLineItemsTotalCents } from "../../xero-modification-line-items";
 import type { XeroTaxRendering } from "../../xero-tax-rendering";
-import { componentKey, liveComponentGross } from "./components";
-import { frozenLineCodes, primaryInvoicePayloadHash, splitStayAndFeeCents } from "./primary-invoice-plan";
-import { matchStaySlices, type SliceEvent, type SupplementaryInvoiceCoverage } from "./supplementary-invoice-plan";
+import { liveComponentGross, movedComponents } from "./components";
+import { splitStayAndFeeCents } from "./primary-invoice-plan";
+import { matchStaySlices, sliceDocumentRendering, type SliceDocumentPlan, type SliceEvent } from "./supplementary-invoice-plan";
 
 /**
  * AN EDIT'S CREDIT NOTE, PLANNED FROM THE JOURNAL (#4525, Ledger M13;
@@ -60,47 +59,22 @@ export interface ModificationCreditNotePlanInput {
   shareEvents?: ReadonlyArray<SliceEvent | null | "AMBIGUOUS">;
 }
 
-interface ModificationCreditNoteRendering {
-  legacyKey: string;
-  payloadHash: string;
-  frozenMapping: Record<string, unknown>;
-  lineTotalCents: number;
-}
-
-export type ModificationCreditNotePlan =
-  | (ModificationCreditNoteRendering & { outcome: "COVERED"; coverage: SupplementaryInvoiceCoverage[] })
-  | (ModificationCreditNoteRendering & { outcome: "CONFLICT"; reason: MemberMoneyExportConflictReason; problem: string });
+/** The note's plan, in the one shape every slice document's takes (`sliceDocumentRendering`). */
+export type ModificationCreditNotePlan = SliceDocumentPlan;
 
 /** Plan the edit's credit note the sender sent: its coverage or its conflict. */
 export function planModificationCreditNote(input: ModificationCreditNotePlanInput): ModificationCreditNotePlan {
   const { bookingId, anchor, lines, sliceEvent } = input;
   const { stayCents, feeCents } = splitStayAndFeeCents(lines);
-  const lineTotalCents = invoiceLineItemsTotalCents(lines);
-  const rendering = (coverage: SupplementaryInvoiceCoverage[]): ModificationCreditNoteRendering => ({
-    legacyKey: input.legacyKey,
-    payloadHash: primaryInvoicePayloadHash(lines),
-    frozenMapping: {
-      source: "BUILT",
-      anchor,
-      priceLines: input.priceLines ?? null,
-      lineCodes: frozenLineCodes(lines),
-      // #4632: the treatment the note was sent with, from the booking's tax anchor.
-      taxType: input.taxRendering.taxType ?? null,
-      lineAmountTypes: input.taxRendering.lineAmountTypes,
-      componentTaxCodes: coverage.map(({ account, chargeIdentity, sliceKey, taxCode }) =>
-        ({ account, chargeIdentity, sliceKey: sliceKey ?? null, taxCode })),
-    },
-    lineTotalCents,
-  });
   const conflict = (reason: MemberMoneyExportConflictReason, problem: string): ModificationCreditNotePlan =>
-    ({ outcome: "CONFLICT", reason, problem, ...rendering([]) });
+    ({ outcome: "CONFLICT", reason, problem, ...sliceDocumentRendering(input, []) });
 
   if (anchor.kind === "OTHER_SCOPE") {
     return conflict("COMPONENT_UNUSABLE", `a ${anchor.scope} note returns no stay slice of the journal`);
   }
   // The fee line, or a fee the event moved, nets a fee against the reduction: no slice is returned whole.
   const eventMovesFee = typeof sliceEvent === "object" && sliceEvent !== null &&
-    [...liveComponentGross(sliceEvent.legs)].some(([key, cents]) => cents !== 0 && key.startsWith(componentKey("FEE_REVENUE", "")));
+    movedComponents(liveComponentGross(sliceEvent.legs), "FEE_REVENUE").length > 0;
   if (feeCents !== 0 || eventMovesFee) return conflict("REDUCTION_NETTED", "the note nets a change fee against the reduction it returns");
 
   const matched = matchStaySlices({
@@ -112,8 +86,9 @@ export function planModificationCreditNote(input: ModificationCreditNotePlanInpu
   });
   if (matched.outcome === "CONFLICT") return conflict(matched.reason, matched.problem);
   const { coverage } = matched;
-  if (coverage.length === 0 || coverage.reduce((sum, c) => sum + c.coveredCents, 0) !== lineTotalCents) {
+  const rendering = sliceDocumentRendering(input, coverage);
+  if (coverage.length === 0 || coverage.reduce((sum, c) => sum + c.coveredCents, 0) !== rendering.lineTotalCents) {
     return conflict("STAY_CENTS", "the lines' total is not what the slices carry");
   }
-  return { outcome: "COVERED", coverage, ...rendering(coverage) };
+  return { outcome: "COVERED", coverage, ...rendering };
 }

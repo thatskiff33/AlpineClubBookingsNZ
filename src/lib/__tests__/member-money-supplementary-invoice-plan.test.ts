@@ -231,6 +231,8 @@ describe("planSupplementaryBookingInvoice (ALP-436)", () => {
     it.each([
       ["a share with no closure", [null]],
       ["a share whose task closed twice", ["AMBIGUOUS" as const]],
+      // ALP-753: the lines still add up to both closures, so only the reversal refuses it.
+      ["a share whose closure the journal reversed", [{ ...closure(CLOSE_A, leg("BOOKING_REVENUE", STAY, 1500)), reversed: true }, closure(CLOSE_B, leg("BOOKING_REVENUE", STAY, 500))]],
       ["a closure moving another booking's revenue", [closure(CLOSE_A, leg("BOOKING_REVENUE", STAY, 2000), leg("BOOKING_REVENUE", "booking:other:charge", 100))]],
     ])("refuses %s as COMPONENT_UNUSABLE", (_label, shareEvents) => {
       expect(planSupplementaryBookingInvoice(withShares({ shareEvents }))).toMatchObject({ outcome: "CONFLICT", reason: "COMPONENT_UNUSABLE" });

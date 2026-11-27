@@ -14,7 +14,7 @@ import { providerAmountToCents } from "@/lib/money-provider-amount";
  *
  * Document-generic on purpose: a booking invoice, an edit's credit note, a
  * refund note, its payment and a failed-later reversal all read back as lines
- * and a total, so the sibling round trips (#5278, #5287) reuse this as it is.
+ * and a total, so the sibling round trips (#5278, #5287) can reuse this as it is.
  * The line total is worked out here, quantity times unit amount per line as
  * the transport totals it, never with the app's own totalling helper, so the
  * sender and this proof cannot agree by construction.
