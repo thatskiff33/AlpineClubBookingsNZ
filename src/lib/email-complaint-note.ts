@@ -23,11 +23,12 @@ const COMPLAINT_TYPE_LABEL: Readonly<Record<ComplaintType, string>> = {
   virus: "Reported as carrying a virus",
   "auth-failure": "Reported as failing email authentication checks",
   other: "Another kind of complaint",
-  unknown: "Not given by the mail service",
+  "not-given": "Not given by the mail service",
+  unrecognised: "A type the app does not recognise",
 };
 
 export function emailComplaintTypeLabel(type: string): string {
-  return COMPLAINT_TYPE_LABEL[type as ComplaintType] ?? COMPLAINT_TYPE_LABEL.unknown;
+  return COMPLAINT_TYPE_LABEL[type as ComplaintType] ?? COMPLAINT_TYPE_LABEL.unrecognised;
 }
 
 /** The members whose record uses the address, the rest counted, or a plain "none". */

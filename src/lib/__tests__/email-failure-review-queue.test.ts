@@ -80,16 +80,22 @@ Object.assign(mockPrisma, {
       args.where.id.in.filter((id) => store.bookingIds.has(id)).map((id) => ({ id })),
     ),
   },
-  // #5469: the suppression list's active, normalised addresses.
+  // #5469: the suppression list's rows, filtered by the query's own where
+  // (address, suppressedAt not null, clearedAt null).
   emailSuppression: {
-    findMany: vi.fn(async (args: { where: { email: { in: string[] } } }) =>
-      args.where.email.in.filter((email) => blockedAddresses.has(email)).map((email) => ({ email })),
+    findMany: vi.fn(async (args: { where: Record<string, unknown> }) =>
+      suppressionRows.filter((row) => matchesWhere(row, args.where)).map((row) => ({ email: row.email })),
     ),
   },
 });
 
-/** Addresses on the suppression list, active, as it stores them (lower case). */
-const blockedAddresses = new Set<string>();
+/** Suppression rows as the list stores them (lower case), a lifted one with `clearedAt` set. */
+const suppressionRows: Array<{ email: string; suppressedAt: Date | null; clearedAt: Date | null }> = [];
+const blockedAddresses = {
+  add: (email: string, clearedAt: Date | null = null) =>
+    suppressionRows.push({ email, suppressedAt: new Date("2026-05-01T00:00:00.000Z"), clearedAt }),
+  clear: () => suppressionRows.splice(0),
+};
 
 vi.mock("@/lib/prisma", () => ({ prisma: mockPrisma }));
 vi.mock("@/lib/audit", () => ({ createAuditLog: vi.fn() }));
@@ -293,6 +299,9 @@ describe("getExhaustedEmailFailureReviewQueue (#4963)", () => {
     );
     blockedAddresses.add("blocked.one@example.com");
     blockedAddresses.add("blocked-two@example.com");
+    // A block an officer has lifted no longer counts.
+    store.emails.push(exhausted("lifted", 30, { to: "lifted@example.com", templateName: "member-welcome" }));
+    blockedAddresses.add("lifted@example.com", new Date("2026-05-02T00:00:00.000Z"));
 
     const queue = await getExhaustedEmailFailureReviewQueue();
 
@@ -300,6 +309,7 @@ describe("getExhaustedEmailFailureReviewQueue (#4963)", () => {
       "blocked-retry": "address_blocked",
       "blocked-token": "address_blocked",
       open: "retry",
+      lifted: "retry",
     });
   });
 

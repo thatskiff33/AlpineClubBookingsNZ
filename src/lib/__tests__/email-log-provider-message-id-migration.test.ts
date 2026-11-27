@@ -26,8 +26,8 @@ function sqlStatements(migration: string): string[] {
 }
 
 describe("the EmailLog.providerMessageId migrations (#5469)", () => {
-  it("MUTATION: the column's file adds one nullable column and nothing else", () => {
-    expect(sqlStatements(COLUMN)).toEqual(['ALTER TABLE "EmailLog" ADD COLUMN "providerMessageId" TEXT']);
+  it("MUTATION: the column's file adds one nullable column and nothing else, and keeps one added out of band", () => {
+    expect(sqlStatements(COLUMN)).toEqual(['ALTER TABLE "EmailLog" ADD COLUMN IF NOT EXISTS "providerMessageId" TEXT']);
   });
 
   it("MUTATION: the index is its own file, and keeps an index an operator built beforehand", () => {
@@ -58,7 +58,8 @@ describe("the EmailLog.providerMessageId migrations (#5469)", () => {
       .split("\n")
       .find((line) => line.startsWith(`${INDEX}\t`));
     expect(row).toMatch(/bounds only the wait to acquire the lock, not the build/);
-    expect(row).toMatch(/CREATE INDEX CONCURRENTLY IF NOT EXISTS/);
+    expect(row).toMatch(/ADD COLUMN IF NOT EXISTS "providerMessageId" TEXT; and then CREATE INDEX CONCURRENTLY IF NOT EXISTS/);
+    expect(row).toMatch(/Nothing checks automatically that a pre-built index is valid/);
   });
 
   it("each is the only migration with its timestamp prefix, and the index sorts after the column", () => {

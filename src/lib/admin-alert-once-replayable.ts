@@ -22,36 +22,78 @@ import logger from "@/lib/logger";
  * - The claim is kept: the owed row is settled. Otherwise it stays for the sweep.
  *
  * Re-sending never doubles an alert: the sweep sends only through the same
- * claim, and only while no claim holds it. Never throws; returns whether the
- * claim was kept.
+ * claim, and only while no claim holds it. Returns whether the claim was kept.
+ * Never throws, unless the caller passes `throwIfUnstored` (#5469): a caller
+ * whose own trigger is redelivered (a provider webhook) then gets a throw when
+ * the alert could not be stored and its claim was not kept, so the trigger
+ * comes back rather than the alert being lost. On such a redelivery a claim
+ * deferred for the day by the unstored attempt has its owed row stored now.
  */
 export async function sendReplayableAdminAlertOnceEver({
   key,
   label,
   context,
+  throwIfUnstored = false,
   ...send
 }: {
   key: string;
   label: string;
   context: Record<string, unknown>;
+  throwIfUnstored?: boolean;
 } & ReplayableAlertSend): Promise<boolean> {
   const { alert } = send;
   const now = new Date();
+  const stored: StoredReplayableAlert = { label, alert };
+  const store = () => markAlertOwed({ key: onceEverOwedKey(key), due: "after-retry", retryAfterMs: 0, replayAlert: stored, now });
   try {
     const state = await readOnceEverClaimState(key, now);
-    if (state === "kept" || state === "deferred") return false;
+    if (state === "kept") return false;
+    if (state === "deferred") {
+      // Stored by the call that deferred; or, for a caller that throws when it
+      // cannot store, stored now (a duplicate key is ignored).
+      if (throwIfUnstored) {
+        await store().catch((err) => {
+          logger.error({ ...context, err }, `Failed to store the ${label} for the sweep`);
+          throw new ReplayableAlertNotStoredError(label);
+        });
+      }
+      return false;
+    }
   } catch (err) {
+    if (err instanceof ReplayableAlertNotStoredError) throw err;
     // The claim below reads the same row and says what it can.
     logger.error({ ...context, err }, `Failed to read the ${label} claim before sending it`);
   }
-  const stored: StoredReplayableAlert = { label, alert };
+  let unstored = false;
   try {
-    await markAlertOwed({ key: onceEverOwedKey(key), due: "after-retry", retryAfterMs: 0, replayAlert: stored, now });
+    await store();
   } catch (err) {
+    unstored = true;
     logger.error({ ...context, err }, `Failed to store the ${label} for the sweep; sending it once without a retry`);
   }
-  return sendStoredAlertOnceEver({ key, context, label, send });
+  const kept = await sendStoredAlertOnceEver({ key, context, label, send });
+  if (!kept && unstored && throwIfUnstored) throw new ReplayableAlertNotStoredError(label);
+  return kept;
 }
+
+/** #5469: the alert was neither stored for the sweep nor kept; the caller's trigger must come again. */
+export class ReplayableAlertNotStoredError extends Error {
+  constructor(label: string) {
+    super(`The ${label} could not be stored for the sweep and was not sent; its trigger must be delivered again`);
+    this.name = "ReplayableAlertNotStoredError";
+  }
+}
+
+/**
+ * #5469: what a replayable sender returns when what its alert reported no
+ * longer holds (a complaint alert whose block was lifted before it went). The
+ * alert is withdrawn for good: its claim is kept and its owed row settled, so
+ * it is never sent later, even if the same condition returns.
+ */
+export const ALERT_WITHDRAWN = "withdrawn" as const;
+
+/** The result a withdrawn alert hands the claim rule, so the claim is kept (as `UNMUTEABLE_ALERT_SENT` does). */
+const WITHDRAWN_CLAIM_KEPT: AdminAlertSendResult = { deliveryAllowed: true, recipients: 1, sent: 1, queuedForRetry: 0, notDelivered: 0 };
 
 /**
  * What a raised-once caller sends: one of the two admin alerts these callers
@@ -137,8 +179,20 @@ export async function sendStoredAlertOnceEver({
   label: string;
   send: ReplayableAlertSend;
 }): Promise<boolean> {
-  const kept = await sendAdminAlertOnceEver({ key, label, context, send: () => sendReplayableAlert(send) });
+  let withdrawn = false;
+  const kept = await sendAdminAlertOnceEver({
+    key,
+    label,
+    context,
+    send: async () => {
+      const result = await sendReplayableAlert(send);
+      if (result !== ALERT_WITHDRAWN) return result;
+      withdrawn = true;
+      return WITHDRAWN_CLAIM_KEPT;
+    },
+  });
   if (!kept) return false;
+  if (withdrawn) logger.info(context, `The ${label} was withdrawn: what it reported no longer holds, so nothing was sent and it is closed`);
   try {
     await settleOwedAlert({ key: onceEverOwedKey(key) });
   } catch (err) {
@@ -148,7 +202,7 @@ export async function sendStoredAlertOnceEver({
 }
 
 /** Loaded on use: the payment ledger reaches some callers, and these senders reach back to it. */
-async function sendReplayableAlert(send: ReplayableAlertSend): Promise<AdminAlertSendResult> {
+async function sendReplayableAlert(send: ReplayableAlertSend): Promise<AdminAlertSendResult | typeof ALERT_WITHDRAWN> {
   if (send.alert.kind === "email-complaint") {
     const { sendAdminEmailComplaintAlert } = await import("@/lib/email/admin-alerts-email-complaint");
     return sendAdminEmailComplaintAlert(send.alert);

@@ -1,4 +1,4 @@
-import { sendReplayableAdminAlertOnceEver, type EmailComplaintReplayAlert } from "@/lib/admin-alert-once-replayable";
+import { ALERT_WITHDRAWN, sendReplayableAdminAlertOnceEver, type EmailComplaintReplayAlert } from "@/lib/admin-alert-once-replayable";
 import { adminHref } from "@/lib/admin-hubs";
 import { getAppBaseUrl } from "@/lib/app-url";
 import {
@@ -16,7 +16,7 @@ import { shouldSendAdminSystemEmail } from "@/lib/notification-delivery-policies
 import { prisma } from "@/lib/prisma";
 import { getAdminAlertEmails, sendToAdmins } from "./admin-alerts-shared";
 import type { AdminAlertRecipientsResult } from "./admin-alert-send-result";
-import type { DeliveryFeedbackEvent } from "./delivery-feedback";
+import type { ComplaintFeedbackEvent } from "./delivery-feedback";
 
 const EMAIL_COMPLAINT_TEMPLATE_NAME = "admin-email-complaint";
 
@@ -32,7 +32,7 @@ const MAX_MEMBER_NAMES = 5;
  * row (never the address itself, which must not sit in `AlertCooldown`) and
  * the service's id for the report.
  */
-function emailComplaintAlertKey(suppressionId: string, event: DeliveryFeedbackEvent): string {
+function emailComplaintAlertKey(suppressionId: string, event: ComplaintFeedbackEvent): string {
   return `email-complaint:${suppressionId}:${event.reportId ?? event.providerMessageId ?? "no-report-id"}`;
 }
 
@@ -47,14 +47,16 @@ function emailComplaintAlertKey(suppressionId: string, event: DeliveryFeedbackEv
  * which stores it first and lets the payments cron's sweep re-send it until an
  * officer has it (`INV-INT-042`), so a send that fails, reaches nobody for a
  * passing reason, or whose claim cannot be given back is not lost; a
- * redelivered report finds the claim kept and sends nothing. Never throws.
+ * redelivered report finds the claim kept and sends nothing. Throws only when
+ * the alert could not even be stored and was not kept (`throwIfUnstored`), so
+ * the webhook answers with an error and SNS delivers the report again.
  */
 export async function alertOfficersOfComplaint({
   event,
   suppressionId,
   complainedEmailLogId,
 }: {
-  event: DeliveryFeedbackEvent;
+  event: ComplaintFeedbackEvent;
   suppressionId: string;
   complainedEmailLogId: string | null;
 }): Promise<void> {
@@ -73,24 +75,15 @@ export async function alertOfficersOfComplaint({
     key: emailComplaintAlertKey(suppressionId, event),
     label: "email complaint alert",
     context,
+    throwIfUnstored: true,
     alert: {
       kind: "email-complaint",
       suppressionId,
-      complaintType: event.complaintType ?? "unknown",
+      complaintType: event.complaintType,
       complainedEmailLogId,
     },
   });
 }
-
-/** What a send to nobody reports: kept for the sweep, as a passing reason. */
-const NOT_SENT: AdminAlertRecipientsResult = {
-  deliveryAllowed: true,
-  recipients: 0,
-  sent: 0,
-  queuedForRetry: 0,
-  notDelivered: 0,
-  failedBeforeLogged: 0,
-};
 
 async function memberNamesForAddress(recipient: string): Promise<string> {
   const where = { email: { equals: recipient, mode: "insensitive" as const } };
@@ -112,15 +105,19 @@ async function memberNamesForAddress(recipient: string): Promise<string> {
 /**
  * Build and send the alert from its stored ids, on the first attempt and on
  * every re-send by the sweep. The address is read from the suppression row
- * now; if the block has been lifted meanwhile, every sentence about it would
- * be false, so nothing is sent (and the sweep stops trying after 7 days).
+ * now. If the block has been lifted meanwhile, every sentence about it would
+ * be false, so the alert is withdrawn for good (`ALERT_WITHDRAWN`): a later
+ * block of the same address clears the lift on the same row, and must not
+ * bring this stale alert back; its own report raises its own alert.
  */
-export async function sendAdminEmailComplaintAlert(alert: EmailComplaintReplayAlert): Promise<AdminAlertRecipientsResult> {
+export async function sendAdminEmailComplaintAlert(
+  alert: EmailComplaintReplayAlert,
+): Promise<AdminAlertRecipientsResult | typeof ALERT_WITHDRAWN> {
   const suppression = await prisma.emailSuppression.findUnique({
     where: { id: alert.suppressionId },
     select: { email: true, suppressedAt: true, clearedAt: true },
   });
-  if (!suppression?.suppressedAt || suppression.clearedAt) return NOT_SENT;
+  if (!suppression?.suppressedAt || suppression.clearedAt) return ALERT_WITHDRAWN;
 
   const complainedEmail = alert.complainedEmailLogId
     ? await prisma.emailLog.findUnique({

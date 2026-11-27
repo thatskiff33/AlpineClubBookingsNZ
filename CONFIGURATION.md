@@ -2807,7 +2807,7 @@ retries for roughly 50 minutes. See
 ### SES Bounce and Complaint Feedback
 
 A bounce marks as bounced only the email it is about, and a complaint marks
-none and alerts officers once per report (#5469). The address is blocked from
+none and alerts officers once per report for each address it names (#5469). The address is blocked from
 this site's own emails at once for a complaint or a permanent bounce, and from
 the second temporary bounce; invoices emailed by Xero are not covered by the
 block (owner decision D7). A "not spam" report changes nothing (owner decision

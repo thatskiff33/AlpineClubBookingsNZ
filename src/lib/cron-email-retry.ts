@@ -113,6 +113,8 @@ export async function retryFailedEmails(): Promise<{
   retried: number;
   succeeded: number;
   failed: number;
+  /** #5469: rows left for the next run because their suppression could not be read. */
+  skipped: number;
 }> {
   /*
     Environment-safety boundary (#3035, ENV-SAFETY 2; epic #2986). INV-CONFIG-004.
@@ -152,7 +154,7 @@ export async function retryFailedEmails(): Promise<{
       { job: "retryFailedEmails" },
       "Skipped the email retry run: this installation is not the club's live site, so no message was replayed and no provider was contacted. Every failed row is left untouched",
     );
-    return { retried: 0, succeeded: 0, failed: 0 };
+    return { retried: 0, succeeded: 0, failed: 0, skipped: 0 };
   }
   if (delivery.kind !== "allow") {
     /*
@@ -226,6 +228,7 @@ export async function retryFailedEmails(): Promise<{
   let retried = 0;
   let succeeded = 0;
   let failed = 0;
+  let skipped = 0;
 
   for (const emailLog of failedEmails) {
     /*
@@ -263,16 +266,13 @@ export async function retryFailedEmails(): Promise<{
     // re-theming a replay would change what the member is shown relative to
     // what the club approved at send time.
     let retryHtml = emailLog.bookingRetryHtmlBody ?? emailLog.htmlBody!;
-    // F26 (#1885): a FAILED row can predate the suppression of its recipient,
-    // so re-check here; an active one marks the row BOUNCED with the core's
-    // reason string and drops the retained body. #5469: a read that fails
-    // skips the row, unclaimed, for the next run, since no bounce rewrites the
-    // address's pending rows any more (the core still proceeds on a failed read).
+    // F26 (#1885): re-check suppression, which can postdate the row; #5469: a
+    // failed read skips the row, unclaimed and counted, for the next run.
     const activeSuppression = await getActiveEmailSuppression(emailLog.to).catch((err: unknown): typeof SUPPRESSION_UNREADABLE => {
       logger.error({ err, emailLogId: emailLog.id }, "Failed to check email suppression state before retry; left for the next run");
       return SUPPRESSION_UNREADABLE;
     });
-    if (activeSuppression === SUPPRESSION_UNREADABLE) continue;
+    if (activeSuppression === SUPPRESSION_UNREADABLE) { skipped++; continue; }
 
     if (activeSuppression) {
       await prisma.emailLog
@@ -676,5 +676,5 @@ export async function retryFailedEmails(): Promise<{
     succeeded++;
   }
 
-  return { retried, succeeded, failed };
+  return { retried, succeeded, failed, skipped };
 }

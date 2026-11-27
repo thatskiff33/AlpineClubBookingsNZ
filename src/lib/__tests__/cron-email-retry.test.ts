@@ -188,7 +188,7 @@ describe("retryFailedEmails (issue #820)", () => {
 
     const result = await retryFailedEmails();
 
-    expect(result).toEqual({ retried: 1, succeeded: 1, failed: 0 });
+    expect(result).toEqual({ retried: 1, succeeded: 1, failed: 0, skipped: 0 });
     // The row is claimed atomically (FAILED -> QUEUED, attempts incremented)
     // before the send so a concurrent/interrupted run cannot double-send (F33).
     expect(mocks.updateMany).toHaveBeenCalledWith({
@@ -265,7 +265,7 @@ describe("retryFailedEmails (issue #820)", () => {
     expect(mocks.sendMail).not.toHaveBeenCalled();
     expect(mocks.updateMany).not.toHaveBeenCalled();
     expect(mocks.update).not.toHaveBeenCalled();
-    expect(result).toEqual({ retried: 0, succeeded: 0, failed: 0 });
+    expect(result).toEqual({ retried: 0, succeeded: 0, failed: 0, skipped: 1 });
   });
 
   it("keeps a still-retryable email FAILED and does not alert admins yet", async () => {
@@ -274,7 +274,7 @@ describe("retryFailedEmails (issue #820)", () => {
 
     const result = await retryFailedEmails();
 
-    expect(result).toEqual({ retried: 1, succeeded: 0, failed: 1 });
+    expect(result).toEqual({ retried: 1, succeeded: 0, failed: 1, skipped: 0 });
     // attempts incremented, status restored to FAILED for the next run
     // (the pre-send claim moved it to QUEUED).
     const updateArg = mocks.update.mock.calls[0][0];
@@ -315,7 +315,7 @@ describe("retryFailedEmails (issue #820)", () => {
         deliveryBlockReason: null,
       },
     });
-    expect(result).toEqual({ retried: 0, succeeded: 0, failed: 0 });
+    expect(result).toEqual({ retried: 0, succeeded: 0, failed: 0, skipped: 0 });
   });
 
   it("does not send when the pre-send claim is lost (row already claimed/sent) (F33, #1885)", async () => {
@@ -326,7 +326,7 @@ describe("retryFailedEmails (issue #820)", () => {
 
     expect(mocks.sendMail).not.toHaveBeenCalled();
     expect(mocks.update).not.toHaveBeenCalled();
-    expect(result).toEqual({ retried: 0, succeeded: 0, failed: 0 });
+    expect(result).toEqual({ retried: 0, succeeded: 0, failed: 0, skipped: 0 });
   });
 
   it("never restores FAILED when the post-send SENT write fails, so an interrupted retry cannot re-send (F33, #1885)", async () => {
@@ -343,7 +343,7 @@ describe("retryFailedEmails (issue #820)", () => {
     for (const call of mocks.update.mock.calls) {
       expect(call[0].data.status).not.toBe("FAILED");
     }
-    expect(result).toEqual({ retried: 1, succeeded: 1, failed: 0 });
+    expect(result).toEqual({ retried: 1, succeeded: 1, failed: 0, skipped: 0 });
   });
 
   it("alerts admins when an email exhausts its retries", async () => {
@@ -353,7 +353,7 @@ describe("retryFailedEmails (issue #820)", () => {
 
     const result = await retryFailedEmails();
 
-    expect(result).toEqual({ retried: 1, succeeded: 0, failed: 1 });
+    expect(result).toEqual({ retried: 1, succeeded: 0, failed: 1, skipped: 0 });
     expect(mocks.sendEmail).toHaveBeenCalledWith(
       expect.objectContaining({
         to: "admin@example.test",
@@ -450,7 +450,7 @@ describe('retryFailedEmails and the per-booking "No emails" switch (#2258)', () 
     expect(mocks.sendMail).not.toHaveBeenCalled();
     // Not claimed, so it is not counted as a retry attempt.
     expect(mocks.updateMany).not.toHaveBeenCalled();
-    expect(result).toEqual({ retried: 0, succeeded: 0, failed: 0 });
+    expect(result).toEqual({ retried: 0, succeeded: 0, failed: 0, skipped: 0 });
     expect(mocks.update).toHaveBeenCalledWith({
       where: { id: "email_1" },
       data: expect.objectContaining({
@@ -469,7 +469,7 @@ describe('retryFailedEmails and the per-booking "No emails" switch (#2258)', () 
     expect(mocks.sendMail).not.toHaveBeenCalled();
     expect(mocks.update).not.toHaveBeenCalled();
     expect(mocks.updateMany).not.toHaveBeenCalled();
-    expect(result).toEqual({ retried: 0, succeeded: 0, failed: 0 });
+    expect(result).toEqual({ retried: 0, succeeded: 0, failed: 0, skipped: 0 });
   });
 
   it("replays normally when the booking's switch is off", async () => {
@@ -502,7 +502,7 @@ describe('retryFailedEmails and the per-booking "No emails" switch (#2258)', () 
 
     const result = await retryFailedEmails();
 
-    expect(result).toEqual({ retried: 1, succeeded: 1, failed: 0 });
+    expect(result).toEqual({ retried: 1, succeeded: 1, failed: 0, skipped: 0 });
     expect(mocks.sendMail).toHaveBeenCalledTimes(1);
     const retry = mocks.sendMail.mock.calls[0][0];
     expect(retry.html).toContain("Operational update");
@@ -537,7 +537,7 @@ describe('retryFailedEmails and the per-booking "No emails" switch (#2258)', () 
 
     const result = await retryFailedEmails();
 
-    expect(result).toEqual({ retried: 1, succeeded: 1, failed: 0 });
+    expect(result).toEqual({ retried: 1, succeeded: 1, failed: 0, skipped: 0 });
     expect(mocks.sendMail).toHaveBeenCalledTimes(1);
     expect(mocks.sendMail.mock.calls[0][0].html).toContain("Club-authored body");
     expect(mocks.sendMail.mock.calls[0][0].html).not.toContain(
@@ -560,7 +560,7 @@ describe('retryFailedEmails and the per-booking "No emails" switch (#2258)', () 
 
     const result = await retryFailedEmails();
 
-    expect(result).toEqual({ retried: 1, succeeded: 1, failed: 0 });
+    expect(result).toEqual({ retried: 1, succeeded: 1, failed: 0, skipped: 0 });
     expect(mocks.sendMail.mock.calls[0][0].to).toBe(
       "old-mailbox@example.test",
     );
@@ -583,7 +583,7 @@ describe('retryFailedEmails and the per-booking "No emails" switch (#2258)', () 
 
     const result = await retryFailedEmails();
 
-    expect(result).toEqual({ retried: 1, succeeded: 1, failed: 0 });
+    expect(result).toEqual({ retried: 1, succeeded: 1, failed: 0, skipped: 0 });
     expect(mocks.sendMail.mock.calls[0][0].html).toContain(quarantinedHtml);
     expect(mocks.sendMail.mock.calls[0][0].html).toContain(
       "/bookings/bk_1",
@@ -611,7 +611,7 @@ describe('retryFailedEmails and the per-booking "No emails" switch (#2258)', () 
 
     const result = await retryFailedEmails();
 
-    expect(result).toEqual({ retried: 1, succeeded: 1, failed: 0 });
+    expect(result).toEqual({ retried: 1, succeeded: 1, failed: 0, skipped: 0 });
     expect(mocks.sendMail.mock.calls[0][0].html).toBe(storedOverride);
     expect(mocks.updateMany.mock.calls[0][0].data).not.toHaveProperty(
       "htmlBody",
@@ -631,7 +631,7 @@ describe('retryFailedEmails and the per-booking "No emails" switch (#2258)', () 
 
     const result = await retryFailedEmails();
 
-    expect(result).toEqual({ retried: 1, succeeded: 1, failed: 0 });
+    expect(result).toEqual({ retried: 1, succeeded: 1, failed: 0, skipped: 0 });
     expect(mocks.sendMail.mock.calls[0][0].html).toBe(bearerHtml);
   });
 
@@ -646,7 +646,7 @@ describe('retryFailedEmails and the per-booking "No emails" switch (#2258)', () 
 
     const result = await retryFailedEmails();
 
-    expect(result).toEqual({ retried: 0, succeeded: 0, failed: 0 });
+    expect(result).toEqual({ retried: 0, succeeded: 0, failed: 0, skipped: 0 });
     expect(mocks.sendMail).not.toHaveBeenCalled();
     expect(mocks.updateMany).toHaveBeenCalledWith({
       where: expect.objectContaining({ id: "email_1", status: "FAILED" }),
@@ -669,7 +669,7 @@ describe('retryFailedEmails and the per-booking "No emails" switch (#2258)', () 
 
     const result = await retryFailedEmails();
 
-    expect(result).toEqual({ retried: 0, succeeded: 0, failed: 0 });
+    expect(result).toEqual({ retried: 0, succeeded: 0, failed: 0, skipped: 0 });
     expect(mocks.sendMail).not.toHaveBeenCalled();
     expect(mocks.updateMany).toHaveBeenCalledWith({
       where: expect.objectContaining({ id: "email_1", status: "FAILED" }),
@@ -692,7 +692,7 @@ describe('retryFailedEmails and the per-booking "No emails" switch (#2258)', () 
 
     const result = await retryFailedEmails();
 
-    expect(result).toEqual({ retried: 0, succeeded: 0, failed: 0 });
+    expect(result).toEqual({ retried: 0, succeeded: 0, failed: 0, skipped: 0 });
     expect(mocks.sendMail).not.toHaveBeenCalled();
     expect(mocks.updateMany).toHaveBeenCalledWith({
       where: {
@@ -720,7 +720,7 @@ describe('retryFailedEmails and the per-booking "No emails" switch (#2258)', () 
     expect(mocks.sendMail).not.toHaveBeenCalled();
     // Not claimed, so not counted as a retry attempt...
     expect(mocks.updateMany).not.toHaveBeenCalled();
-    expect(result).toEqual({ retried: 0, succeeded: 0, failed: 0 });
+    expect(result).toEqual({ retried: 0, succeeded: 0, failed: 0, skipped: 0 });
     // ...but RETIRED, not left as found: attempts goes to the max so the row
     // leaves this cron's selection window and enters the >=3 operator review
     // queue, with an errorMessage saying what to do about it.
@@ -834,6 +834,7 @@ describe("retryFailedEmails and the environment-safety boundary (#3035)", () => 
       retried: 0,
       succeeded: 0,
       failed: 0,
+      skipped: 0,
     });
     expect(mocks.findMany).not.toHaveBeenCalled();
     expect(mocks.update).not.toHaveBeenCalled();
@@ -880,6 +881,7 @@ describe("retryFailedEmails and the environment-safety boundary (#3035)", () => 
       retried: 1,
       succeeded: 1,
       failed: 0,
+      skipped: 0,
     });
     expect(mocks.sendMail).toHaveBeenCalledTimes(1);
   });

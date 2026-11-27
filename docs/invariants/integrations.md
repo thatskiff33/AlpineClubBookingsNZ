@@ -1025,26 +1025,26 @@ suppression and, for a bounce, the one email it is about (owner decisions,
   (`email/delivery-feedback.ts`) alone acts on it; SES's is
   `email/ses-feedback.ts`. Another service adds an adapter, a route and an
   entry in `email/provider-message-id.ts`.
-- **The id is stored at send** in `EmailLog.providerMessageId`, by both send
-  paths, for a recognised service only (SES, from `USE_AWS_SES`), and only in
-  its documented shape.
-- **Which email.** The stored id first; for a row with none, the Message-ID
-  header the report carries. Never the address.
-- **A bounce** marks that row `BOUNCED`; every other row keeps its status.
-  **A complaint** marks nothing; officers get `admin-email-complaint` once
-  per report (D6), while the block is active, through
-  `sendReplayableAdminAlertOnceEver` keyed on the suppression row and the
-  report, never the address. Only a muted template or an empty audience
-  sends nothing. **A "not spam" report** changes nothing (D5).
-- **Suppression is unchanged**, decided by the event's kind, and is what
-  stops pending sends: the email core and the retry job check it first.
-- **Replays are harmless.** The row is already `BOUNCED`, the suppression is
-  not counted twice, and the alert claim is kept.
+- **The id is stored at send** in `EmailLog.providerMessageId` by both send
+  paths, for SES only (`USE_AWS_SES`), in its documented shape.
+- **Which email.** The stored id; failing that, the Message-ID header the
+  report carries, warning when that row's stored id differs. Never the
+  address.
+- **A bounce** marks that row `BOUNCED`. **A complaint** marks nothing;
+  officers get `admin-email-complaint` once per report for each address it
+  names (D6), while blocked, through `sendReplayableAdminAlertOnceEver`
+  keyed on suppression row and report, never the address. Unstored and
+  unsent, it throws so the report is redelivered. **"Not spam"** changes
+  nothing (D5).
+- **Suppression is unchanged**, decided by the event's kind, and stops
+  pending sends: the email core and the retry job check it first.
+- **Replays are harmless:** the row is already `BOUNCED`, the suppression
+  is not counted twice, and the alert claim is kept.
 - **No new lock:** one status-guarded update (`INV-LOCK-001`).
-- **Limits.** A row with no stored id (sent before #5469, by the previous
-  release, or through an unrecognised server) is found only through the
-  original headers. During a switchover the previous release marks every
-  row to the address. Rows the old rule marked stay marked.
+- **Limits.** Rows with no stored id match only by header. The previous
+  release marks every row during a switchover. Old marks stay. No alert
+  for a muted template, an empty audience or a block lifted first; a crash
+  before the store, after the redeliveries end, loses it.
 
 Pinned by `ses-feedback-named-message.test.ts`,
 `ses-feedback-adapter.test.ts`, `provider-message-id.test.ts`,

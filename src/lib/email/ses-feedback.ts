@@ -1,9 +1,6 @@
-import {
-  applyDeliveryFeedback,
-  type ComplaintType,
-  type DeliveryFeedbackEvent,
-  type DeliveryFeedbackKind,
-} from "./delivery-feedback";
+import { applyDeliveryFeedback, type ComplaintType, type DeliveryFeedbackEvent } from "./delivery-feedback";
+
+type DeliveryFeedbackKind = DeliveryFeedbackEvent["kind"];
 
 /**
  * #5469: THE SES ADAPTER. Turns an SES bounce or complaint notification, as
@@ -78,7 +75,7 @@ function getSesFeedbackRecipients(
 }
 
 /** SES's `Permanent` is a permanent bounce; `Transient`, `Undetermined` or none is a temporary one, as the suppression rule has always read them. */
-function sesBounceKind(bounceType: string | undefined): DeliveryFeedbackKind {
+function sesBounceKind(bounceType: string | undefined): "permanent-bounce" | "temporary-bounce" {
   return bounceType?.toLowerCase() === "permanent" ? "permanent-bounce" : "temporary-bounce";
 }
 
@@ -87,9 +84,9 @@ function sesBounceKind(bounceType: string | undefined): DeliveryFeedbackKind {
  * notification contents for Amazon SES", complaint types, after the IANA MARF
  * register): `abuse`, `auth-failure`, `fraud`, `not-spam`, `other`,
  * `virus`. `not-spam` ("the entity providing the report does not consider the
- * message to be spam") is its own kind (owner decision D5); a type that is
- * missing or not in that list is a complaint of unknown type, so it blocks and
- * alerts like any other.
+ * message to be spam") is its own kind (owner decision D5). A complaint with
+ * no type is `not-given`, and one with a type not in that list is
+ * `unrecognised`; both block and alert like any other.
  */
 const SES_COMPLAINT_TYPES: Readonly<Record<string, ComplaintType>> = {
   abuse: "abuse",
@@ -99,10 +96,13 @@ const SES_COMPLAINT_TYPES: Readonly<Record<string, ComplaintType>> = {
   virus: "virus",
 };
 
-function sesComplaintKind(feedbackType: string | undefined): { kind: DeliveryFeedbackKind; complaintType: ComplaintType | null } {
+function sesComplaintKind(
+  feedbackType: string | undefined,
+): { kind: "not-spam-report" } | { kind: "complaint"; complaintType: ComplaintType } {
   const type = feedbackType?.trim().toLowerCase() ?? "";
-  if (type === "not-spam") return { kind: "not-spam-report", complaintType: null };
-  return { kind: "complaint", complaintType: SES_COMPLAINT_TYPES[type] ?? "unknown" };
+  if (type === "not-spam") return { kind: "not-spam-report" };
+  if (!type) return { kind: "complaint", complaintType: "not-given" };
+  return { kind: "complaint", complaintType: SES_COMPLAINT_TYPES[type] ?? "unrecognised" };
 }
 
 /** The Message-ID headers the app sent, from whichever original-header field SES included. */
@@ -128,7 +128,7 @@ export function sesNotificationToDeliveryFeedback(payload: unknown): DeliveryFee
   const complaint = notificationType === "complaint";
   const classified = complaint
     ? sesComplaintKind(notification.complaint?.complaintFeedbackType)
-    : { kind: sesBounceKind(notification.bounce?.bounceType), complaintType: null };
+    : { kind: sesBounceKind(notification.bounce?.bounceType) };
   return {
     service: "aws-ses",
     ...classified,

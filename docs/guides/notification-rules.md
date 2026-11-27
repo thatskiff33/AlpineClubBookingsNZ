@@ -76,7 +76,7 @@ the member's own preferences instead, according to its category (#4987,
 
 Email suppression (bounces and complaints) applies to both. A complaint also
 sends officers the **Admin Email Complaint** alert, once per complaint report
-(owner decision D6), on the Reported issues preference (D4); like any admin
+for each address it names (owner decision D6), on the Reported issues preference (D4); like any admin
 alert, it can be muted here, and then none is sent (#5469).
 
 ## Troubleshooting

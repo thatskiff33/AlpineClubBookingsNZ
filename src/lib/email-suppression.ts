@@ -10,19 +10,20 @@ type EmailSuppressionReason = "BOUNCE" | "COMPLAINT";
  */
 export type EmailFeedbackSuppressionEvent = {
   email: string;
-  reason: EmailSuppressionReason;
-  eventType: "bounce" | "complaint";
-  /**
-   * A permanent bounce, which suppresses at once like a complaint. Decided by
-   * the report's kind, once; the provider's labels below are for display only.
-   */
-  permanentBounce?: boolean;
   /** The id the mail service gave the message (stored in `lastSesMessageId`). */
   providerMessageId?: string | null;
+  /** The provider's labels, for display only. */
   bounceType?: string | null;
   bounceSubType?: string | null;
   complaintFeedbackType?: string | null;
-};
+} & (
+  | { reason: "COMPLAINT"; eventType: "complaint" }
+  /**
+   * A bounce says whether it is permanent, which suppresses at once like a
+   * complaint: decided by the report's kind, once, never by a label.
+   */
+  | { reason: "BOUNCE"; eventType: "bounce"; permanentBounce: boolean }
+);
 
 const TRANSIENT_BOUNCE_SUPPRESSION_THRESHOLD = 2;
 

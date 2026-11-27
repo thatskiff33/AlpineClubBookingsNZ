@@ -200,7 +200,7 @@ describe("the retry job asks a template's still-wanted check before it claims (#
     const result = await retryFailedEmails();
 
     expect(mocks.sendMail).not.toHaveBeenCalled();
-    expect(result).toEqual({ retried: 0, succeeded: 0, failed: 0 });
+    expect(result).toEqual({ retried: 0, succeeded: 0, failed: 0, skipped: 0 });
     expect(mocks.updateMany).toHaveBeenCalledTimes(1);
     expect(mocks.updateMany).toHaveBeenCalledWith({
       where: { id: OFFER_ROW_ID, status: "FAILED", attempts: 1, htmlBody: null, bookingRetryHtmlBody: "<p>the offer</p>" },
@@ -215,7 +215,7 @@ describe("the retry job asks a template's still-wanted check before it claims (#
 
     const result = await retryFailedEmails();
 
-    expect(result).toEqual({ retried: 1, succeeded: 1, failed: 0 });
+    expect(result).toEqual({ retried: 1, succeeded: 1, failed: 0, skipped: 0 });
     expect(mocks.sendMail).toHaveBeenCalledTimes(1);
   });
 
@@ -246,7 +246,7 @@ describe("the retry job asks a template's still-wanted check before it claims (#
 
     const result = await retryFailedEmails();
 
-    expect(result).toEqual({ retried: 1, succeeded: 1, failed: 0 });
+    expect(result).toEqual({ retried: 1, succeeded: 1, failed: 0, skipped: 0 });
     expect(mocks.sendMail).toHaveBeenCalledTimes(1);
   });
 

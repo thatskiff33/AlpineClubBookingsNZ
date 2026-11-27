@@ -85,7 +85,7 @@ offered to them at all:
 | Member requests | Membership | A member submits a family-group / linking request |
 | Booking change requests | Bookings | A member requests a change to a locked booking, or asks for a booking-policy exception |
 | Refund requests | Finance | A member submits a refund appeal |
-| Reported issues | Support & System | A logged-in user reports a site issue. Also the **Admin Email Complaint** alert: a recipient complained about a club email (usually by marking it as spam) and their address is now blocked; once per complaint report, with a link to Email Deliverability, where the block can be lifted (#5469, owner decisions D4 and D6). A "not spam" report sends none (D5) |
+| Reported issues | Support & System | A logged-in user reports a site issue. Also the **Admin Email Complaint** alert: a recipient complained about a club email (usually by marking it as spam) and their address is now blocked; once per complaint report for each address it names, with a link to Email Deliverability, where the block can be lifted (#5469, owner decisions D4 and D6). A "not spam" report sends none (D5) |
 | Public booking requests | Bookings | A non-member submits a public booking request |
 | Booking review required | Bookings | A booking needs admin review before confirmation. Also the **Booking confirmation not sent** alert: a paid booking's confirmation email could not be sent in time or did not reach the owner; once per paid booking (#5433) |
 | Member delete requests | Membership | A hard-delete of a member is requested (two-admin rule) |

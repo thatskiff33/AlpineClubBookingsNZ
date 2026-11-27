@@ -11,4 +11,6 @@
 -- and rewrites no heap. Every existing row reads NULL, which is right: nothing
 -- before this release stored the id. The previous release's Prisma client
 -- names its columns explicitly, so it neither reads nor writes this one.
-ALTER TABLE "EmailLog" ADD COLUMN "providerMessageId" TEXT;
+-- IF NOT EXISTS so an operator who added the column and built its index out
+-- of band before the deploy (the index migration's ledger row) is not failed.
+ALTER TABLE "EmailLog" ADD COLUMN IF NOT EXISTS "providerMessageId" TEXT;

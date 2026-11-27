@@ -472,13 +472,11 @@ describe("N-10: EmailLog tracking", () => {
     // #5469: only the email the notification names, by the id SES gave it,
     // never every row to the address (`ses-feedback-named-message.test.ts`
     // pins the rule, complaints included).
-    expect(mockPrisma.emailLog.updateMany).toHaveBeenCalledWith({
-      where: {
-        providerMessageId: "ses-message-1",
-        status: { in: ["QUEUED", "SENT", "FAILED"] },
-      },
-      data: expect.objectContaining({ status: "BOUNCED" }),
-    });
+    expect(mockPrisma.emailLog.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { providerMessageId: "ses-message-1" } }),
+    );
+    // No row stores that id here, so nothing is marked.
+    expect(mockPrisma.emailLog.updateMany).not.toHaveBeenCalled();
     expect(mockPrisma.emailSuppression.create).toHaveBeenCalledWith({
       data: expect.objectContaining({
         email: "member@example.com",

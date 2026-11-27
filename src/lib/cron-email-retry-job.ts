@@ -45,7 +45,12 @@ function withSweepRecord(err: unknown, owedNotices: SweepRecord): unknown {
 export async function runEmailRetryJob() {
   const owedNotices = await sweepOwedNotices();
   try {
-    return { ...(await retryFailedEmails()), owedNotices };
+    const replay = await retryFailedEmails();
+    if (replay.skipped > 0) {
+      // #5469: a suppression read that keeps failing must not look like an idle run.
+      logger.warn({ job: JOB, skipped: replay.skipped }, "The email retry left rows for the next run: their recipient's suppression could not be read");
+    }
+    return { ...replay, owedNotices };
   } catch (err) {
     throw withSweepRecord(err, owedNotices);
   }

@@ -20,8 +20,10 @@ vi.mock("@/lib/payment-recovery-alert", () => ({
 vi.mock("@/lib/club-format-server", () => ({ clubFormatValues: senders.format }));
 
 import {
+  ALERT_WITHDRAWN,
   onceEverOwedKey,
   parseStoredReplayableAlert,
+  ReplayableAlertNotStoredError,
   sendReplayableAdminAlertOnceEver,
   type ReplayableAdminAlert,
 } from "@/lib/admin-alert-once-replayable";
@@ -158,5 +160,80 @@ describe("the stored email complaint alert (#5469)", () => {
 
     expect(senders.complaint).toHaveBeenCalledTimes(2);
     expect(senders.complaint).toHaveBeenLastCalledWith(COMPLAINT);
+  });
+});
+
+describe("a caller whose trigger is redelivered: throwIfUnstored (#5469)", () => {
+  const COMPLAINT: ReplayableAdminAlert = { kind: "email-complaint", suppressionId: "sup-9", complaintType: "abuse", complainedEmailLogId: null };
+  const KEY9 = "email-complaint:sup-9:fb-9";
+  const raiseComplaint = (throwIfUnstored = true) =>
+    sendReplayableAdminAlertOnceEver({ key: KEY9, label: "email complaint alert", context: {}, alert: COMPLAINT, throwIfUnstored });
+  const storeFails = () =>
+    db.fake.intercept("create", async () => {
+      throw new Error("connection lost");
+    });
+
+  it("MUTATION: throws when the alert could not be stored and its send failed, leaving nothing behind", async () => {
+    storeFails();
+    senders.complaint.mockRejectedValueOnce(new Error("transport down"));
+
+    await expect(raiseComplaint()).rejects.toBeInstanceOf(ReplayableAlertNotStoredError);
+    expect(db.fake.rows.has(onceEverOwedKey(KEY9))).toBe(false);
+  });
+
+  it("MUTATION: throws when unstored and nobody received it, and the redelivery stores it for the sweep", async () => {
+    storeFails();
+    senders.complaint.mockResolvedValueOnce({ ...UNMUTEABLE_ALERT_SENT, recipients: 0, sent: 0 });
+
+    await expect(raiseComplaint()).rejects.toBeInstanceOf(ReplayableAlertNotStoredError);
+    await expect(raiseComplaint(), "the redelivery, the claim deferred").resolves.toBe(false);
+    expect(db.fake.rows.has(onceEverOwedKey(KEY9))).toBe(true);
+    expect(senders.complaint).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not throw when unstored but the alert went out", async () => {
+    storeFails();
+    senders.complaint.mockResolvedValueOnce(UNMUTEABLE_ALERT_SENT);
+
+    await expect(raiseComplaint()).resolves.toBe(true);
+  });
+
+  it("MUTATION: every other caller keeps the old default: logged, never thrown", async () => {
+    storeFails();
+    senders.complaint.mockRejectedValueOnce(new Error("transport down"));
+
+    await expect(raiseComplaint(false)).resolves.toBe(false);
+  });
+});
+
+describe("a withdrawn alert (#5469)", () => {
+  const COMPLAINT: ReplayableAdminAlert = { kind: "email-complaint", suppressionId: "sup-8", complaintType: "abuse", complainedEmailLogId: null };
+  const KEY8 = "email-complaint:sup-8:fb-8";
+  const raiseComplaint = () => sendReplayableAdminAlertOnceEver({ key: KEY8, label: "email complaint alert", context: {}, alert: COMPLAINT });
+
+  it("MUTATION: is closed for good: the claim kept, the stored copy settled, logged at info, never sent", async () => {
+    senders.complaint.mockResolvedValueOnce(ALERT_WITHDRAWN);
+
+    await expect(raiseComplaint()).resolves.toBe(true);
+    expect(db.fake.rows.has(onceEverOwedKey(KEY8))).toBe(false);
+    expect(db.fake.rows.has(KEY8), "the claim is kept").toBe(true);
+    expect(logger.info).toHaveBeenCalledWith(expect.anything(), expect.stringContaining("was withdrawn"));
+    expect(logger.error).not.toHaveBeenCalled();
+
+    await sweepOnceEverAlerts(new Date(Date.now() + 2 * 86_400_000));
+    await expect(raiseComplaint(), "a redelivery").resolves.toBe(false);
+    expect(senders.complaint).toHaveBeenCalledTimes(1);
+  });
+
+  it("MUTATION: one withdrawn on the sweep's re-send is settled there, with no error", async () => {
+    senders.complaint.mockRejectedValueOnce(new Error("transport down")).mockResolvedValueOnce(ALERT_WITHDRAWN);
+
+    await raiseComplaint();
+    await sweepOnceEverAlerts(new Date(Date.now() + 60_000));
+    await sweepOnceEverAlerts(new Date(Date.now() + 8 * 86_400_000));
+
+    expect(senders.complaint).toHaveBeenCalledTimes(2);
+    expect(db.fake.rows.has(onceEverOwedKey(KEY8))).toBe(false);
+    expect(logger.error).not.toHaveBeenCalledWith(expect.anything(), expect.stringContaining("Gave up"));
   });
 });

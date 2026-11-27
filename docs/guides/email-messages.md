@@ -504,7 +504,8 @@ you want both reworded; editing only one leaves the other on its built-in text.
 > What an officer can notice:
 >
 > - A new alert, **Admin Email Complaint** (`admin-email-complaint`), sent once
->   per complaint report (owner decision D6). It gives the address, the
+>   per complaint report for each address it names (owner decision D6). It
+>   gives the address, the
 >   complaint's type in plain words, the members whose record uses the address
 >   (five by name and a count of the rest, or that no member record does),
 >   which email the complaint was about and when it was sent (or that the app
@@ -514,9 +515,10 @@ you want both reworded; editing only one leaves the other on its built-in text.
 >   officers who receive **Reported issues** alerts (owner decision D4: Support
 >   & System edit, which lifting a block needs), and its wording is editable
 >   like the others. If it cannot be sent at once, it is kept and tried again
->   every 15 minutes, for up to 7 days, until an officer has it; it is not sent
->   at all when the template is muted, nobody receives Reported issues alerts,
->   or the block has been lifted by then.
+>   until an officer has it, for up to 7 days: every 15 minutes after a send
+>   that failed, and a day later when nobody could receive it. It is not sent
+>   at all when the template is muted or nobody receives Reported issues
+>   alerts, and it is dropped for good if the block is lifted before it goes.
 > - A member who received their waitlist offer email still counts as told if
 >   they mark it as spam, or if another email to them later bounces or draws a
 >   complaint, so no **Waitlist email not sent** alert is raised for it. If the

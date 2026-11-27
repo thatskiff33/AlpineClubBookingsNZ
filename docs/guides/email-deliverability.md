@@ -59,7 +59,9 @@ archiving a failure — are **support**-area edit actions; a view-only support r
 ### Blocked addresses: bounces and complaints
 
 A suppression blocks **this site's own emails** to the address: every send and
-every retry checks it first and is refused. Invoices emailed by Xero are not
+every retry checks it first and is refused. One limit: if the block cannot be
+read at that moment (the database does not answer), a new send goes ahead,
+while a retry is left for the next run. Invoices emailed by Xero are not
 covered by the block (owner decision D7): Xero sends them from its own servers
 and the block is not consulted. A block is added at once for a complaint or a
 permanent bounce, and from the second temporary bounce (a full mailbox, say).
@@ -69,7 +71,8 @@ permanent bounce, and from the second temporary bounce (a full mailbox, say).
 - **A complaint**, usually the recipient marking an email as spam, marks no
   email: the email arrived, so it keeps showing as sent. Officers who receive
   **Reported issues** alerts (owner decision D4) get one **Admin Email
-  Complaint** alert per complaint report (owner decision D6), with the address,
+  Complaint** alert per complaint report for each address it names (owner
+  decision D6), with the address,
   the complaint's type, the members whose record uses the address, which email
   it was about if the app can tell, and a link back here.
 - **A "not spam" report**, the recipient moving a club email out of their spam
@@ -77,8 +80,9 @@ permanent bounce, and from the second temporary bounce (a full mailbox, say).
 
 To lift a block, choose **Clear** on its row under **Active suppressions**, once
 the member asks to receive email again or the address is fixed. Clearing needs
-Support & System edit. Exhausted failures to that address then offer their usual
-action again.
+Support & System edit. Exhausted failures to that address then show whatever
+can still be done for them, which for some (an email about a booking since
+deleted, say) is nothing but **Archive**.
 
 ### Deal with an exhausted email failure
 
@@ -106,7 +110,8 @@ What you can do next depends on whether the system kept a copy of the message:
    its suppression stands, so **Try again** and the other resends are not
    offered. If the member asks to receive email again, clear the suppression
    (see [Blocked addresses](#blocked-addresses-bounces-and-complaints)); the row
-   then offers its usual action. Otherwise choose **Archive**.
+   then shows whatever can still be done for it, which may be nothing but
+   **Archive**. Otherwise choose **Archive**.
 4. **The row says it can't be resent from here.** The message held a sign-in
    link, a door code or a payment link, so no copy was kept, or its copy was
    cleared when it was retired. A booking email saved before the club's

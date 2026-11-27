@@ -21,7 +21,7 @@ export const EMAIL_COMPLAINT_ALERT_TRIGGER: Partial<
     triggerSummary:
       "The mail service reported a complaint from a recipient about an email the club sent, usually the recipient marking it as spam, and the address is now blocked (#5469, owner decisions D3 and D5)",
     frequency:
-      "Once per complaint report, guarded by a cross-instance claim, and not at all when the template is muted or nobody receives Reported issues alerts. The alert is stored first, and the payments cron's sweep re-sends it until an admin has it or a copy is queued for the email retry cron, for up to 7 days; it is not sent if the block has been lifted by then. A 'not spam' report sends nothing",
+      "Once per complaint report for each address it names, guarded by a cross-instance claim, and not at all when the template is muted or nobody receives Reported issues alerts. The alert is stored first, and the payments cron's sweep re-sends it until an admin has it or a copy is queued for the email retry cron, for up to 7 days (every 15 minutes after a failed send, a day later when nobody could receive it); a block lifted before it goes withdraws it for good. A 'not spam' report sends nothing",
   },
 };
 

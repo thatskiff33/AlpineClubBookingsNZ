@@ -29,6 +29,7 @@ const transientBounce: EmailFeedbackSuppressionEvent = {
   email: "Member@Example.com",
   reason: "BOUNCE",
   eventType: "bounce",
+  permanentBounce: false,
   providerMessageId: "ses-message-1",
   bounceType: "Transient",
   bounceSubType: "MailboxFull",

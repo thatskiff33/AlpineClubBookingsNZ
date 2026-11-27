@@ -32,7 +32,6 @@ describe("the SES adapter's neutral event (#5469)", () => {
     expect(sesNotificationToDeliveryFeedback(bounce("Permanent"))).toEqual({
       service: "aws-ses",
       kind: "permanent-bounce",
-      complaintType: null,
       recipients: ["Member@Example.test"],
       providerMessageId: "0100018c-ses-assigned-000000",
       sentMessageIds: [" <sent-1@club.example.test>", "<sent-1@club.example.test>"],
@@ -77,7 +76,13 @@ describe("the SES adapter's neutral event (#5469)", () => {
         mail: { messageId: "0100-c-000000" },
         complaint: { complaintFeedbackType: "Not-Spam", complainedRecipients: [{ emailAddress: "member@example.test" }] },
       }),
-    ).toMatchObject({ kind: "not-spam-report", complaintType: null });
+    ).toEqual(expect.objectContaining({ kind: "not-spam-report" }));
+    expect(
+      sesNotificationToDeliveryFeedback({
+        notificationType: "Complaint",
+        complaint: { complaintFeedbackType: "not-spam", complainedRecipients: [{ emailAddress: "member@example.test" }] },
+      }),
+    ).not.toHaveProperty("complaintType");
   });
 
   it.each([
@@ -85,8 +90,9 @@ describe("the SES adapter's neutral event (#5469)", () => {
     ["virus", "virus"],
     ["auth-failure", "auth-failure"],
     ["other", "other"],
-    ["something-new", "unknown"],
-    [undefined, "unknown"],
+    ["something-new", "unrecognised"],
+    [undefined, "not-given"],
+    ["  ", "not-given"],
   ])("MUTATION: a complaint of type %s is a complaint of type %s", (feedbackType, complaintType) => {
     expect(
       sesNotificationToDeliveryFeedback({

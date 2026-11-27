@@ -58,6 +58,8 @@ const store = vi.hoisted(() => ({
   members: [] as Array<{ email: string; firstName: string; lastName: string }>,
   claims: new Map<string, "kept" | "deferred">(),
   owed: new Map<string, OwedAlert>(),
+  /** The owed row cannot be written (the database is down for that write). */
+  storeFails: false,
 }));
 
 function matches(row: Record<string, unknown>, where: Record<string, unknown>) {
@@ -86,12 +88,21 @@ const mocks = vi.hoisted(() => ({
 vi.mock("@/lib/prisma", () => ({
   prisma: { emailLog: mocks.emailLog, emailSuppression: mocks.emailSuppression, member: mocks.member },
 }));
-vi.mock("@/lib/logger", () => ({
-  default: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
-}));
+const logger = vi.hoisted(() => ({ info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() }));
+vi.mock("@/lib/logger", () => ({ default: logger }));
 vi.mock("@/lib/admin-alert-once-replayable", () => ({
-  sendReplayableAdminAlertOnceEver: async ({ key, alert }: { key: string; alert: OwedAlert }) => {
-    if (store.claims.has(key)) return false;
+  ALERT_WITHDRAWN: "withdrawn",
+  sendReplayableAdminAlertOnceEver: async ({ key, alert, throwIfUnstored }: { key: string; alert: OwedAlert; throwIfUnstored?: boolean }) => {
+    if (store.claims.get(key) === "kept") return false;
+    if (store.claims.get(key) === "deferred") {
+      if (throwIfUnstored && !store.storeFails) store.owed.set(key, alert);
+      return false;
+    }
+    if (store.storeFails) {
+      const kept = await attempt(key, alert);
+      if (!kept && throwIfUnstored) throw new Error("not stored and not sent");
+      return kept;
+    }
     store.owed.set(key, alert);
     return sendOwed(key);
   },
@@ -116,21 +127,26 @@ import { sendAdminEmailComplaintAlert } from "@/lib/email/admin-alerts-email-com
 import { getActiveEmailSuppression } from "@/lib/email-suppression";
 import { isToldKeyedEmailState, keyedEmailRowState } from "@/lib/email/keyed-email-state";
 
-/** One attempt at an owed alert, under its claim, as the replayable helper and the sweep make it. */
-async function sendOwed(key: string): Promise<boolean> {
-  const alert = store.owed.get(key)!;
+/** One attempt at an alert under its claim: kept when sent or withdrawn, deferred when nobody got it, given back when it threw. */
+async function attempt(key: string, alert: OwedAlert): Promise<boolean> {
   try {
     const result = await sendAdminEmailComplaintAlert(alert);
-    if (result.sent + result.queuedForRetry > 0) {
+    if (result === "withdrawn" || result.sent + result.queuedForRetry > 0) {
       store.claims.set(key, "kept");
-      store.owed.delete(key);
       return true;
     }
     store.claims.set(key, "deferred");
     return false;
   } catch {
-    return false; // claim given back; the owed alert stays for the sweep
+    return false;
   }
+}
+
+/** One attempt at an owed alert, as the replayable helper and the sweep make it; settled once kept. */
+async function sendOwed(key: string): Promise<boolean> {
+  const kept = await attempt(key, store.owed.get(key)!);
+  if (kept) store.owed.delete(key);
+  return kept;
 }
 
 /** The payments cron's sweep: re-send each owed alert no claim holds. */
@@ -226,6 +242,7 @@ beforeEach(() => {
   store.members = [{ email: "Member@Example.test", firstName: "Sam", lastName: "Member" }];
   store.claims = new Map();
   store.owed = new Map();
+  store.storeFails = false;
   mocks.sendToAdmins.mockResolvedValue(DELIVERED);
   mocks.getAdminAlertEmails.mockResolvedValue(["officer@club.example.test"]);
   mocks.shouldSendAdminSystemEmail.mockResolvedValue({ send: true, mode: "always" });
@@ -288,10 +305,27 @@ describe("a bounce marks only the email it names (#5469)", () => {
     expect(statuses()).toEqual({ ...UNCHANGED, legacy: EmailLogStatus.BOUNCED });
   });
 
-  it("MUTATION: a row with a stored id is found by that id, not by its header", async () => {
+  it("MUTATION: when no row has the report's id, the header finds the row whatever id it stored, with a warning", async () => {
     await ingestSesSnsEmailFeedback(hardBounce(mail("0100-eeee-000000", "<named-1@club.example.test>")));
 
-    expect(statuses()).toEqual(UNCHANGED);
+    expect(statuses()).toEqual({ ...UNCHANGED, named: EmailLogStatus.BOUNCED });
+    expect(logger.warn).toHaveBeenCalledWith(
+      expect.objectContaining({ emailLogId: "named", reportedId: "0100-eeee-000000", storedId: "0100-aaa1-000000" }),
+      expect.stringContaining("stored server id differs"),
+    );
+  });
+
+  it("MUTATION: the stored id wins over the header when both match rows", async () => {
+    await ingestSesSnsEmailFeedback(hardBounce(mail("0100-aaa1-000000", "<legacy-1@club.example.test>")));
+
+    expect(statuses()).toEqual({ ...UNCHANGED, named: EmailLogStatus.BOUNCED });
+    expect(logger.warn).not.toHaveBeenCalledWith(expect.anything(), expect.stringContaining("stored server id differs"));
+  });
+
+  it("a header match on a row with no stored id raises no warning", async () => {
+    await ingestSesSnsEmailFeedback(hardBounce(mail("0100-dddd-000000", "<legacy-1@club.example.test>")));
+
+    expect(logger.warn).not.toHaveBeenCalledWith(expect.anything(), expect.stringContaining("stored server id differs"));
   });
 
   it("MUTATION: the header fallback reads the common headers, with or without angle brackets", async () => {
@@ -439,7 +473,7 @@ describe("a complaint marks nothing and alerts officers once per report (#5469, 
     ["virus", "Reported as carrying a virus"],
     ["auth-failure", "Reported as failing email authentication checks"],
     ["other", "Another kind of complaint"],
-    ["something-new", "Not given by the mail service"],
+    ["something-new", "A type the app does not recognise"],
     [null, "Not given by the mail service"],
   ])("MUTATION: a complaint of type %s blocks and alerts, with its type in plain words", async (type, label) => {
     await ingestSesSnsEmailFeedback(complaint(mail("0100-aaa1-000000"), { type }));
@@ -494,7 +528,7 @@ describe("a complaint marks nothing and alerts officers once per report (#5469, 
     expect(mocks.sendToAdmins).not.toHaveBeenCalled();
   });
 
-  it("MUTATION: a stored alert is not sent once the block has been lifted", async () => {
+  it("MUTATION: a stored alert whose block was lifted is withdrawn for good, not sent", async () => {
     mocks.sendToAdmins.mockRejectedValueOnce(new Error("mail transport down"));
     await ingestSesSnsEmailFeedback(complaint(mail("0100-aaa1-000000")));
     store.suppressions[0]!.clearedAt = new Date("2026-07-01T00:00:00.000Z");
@@ -502,6 +536,38 @@ describe("a complaint marks nothing and alerts officers once per report (#5469, 
     await sweep();
 
     expect(mocks.sendToAdmins).toHaveBeenCalledTimes(1); // the failed first attempt only
+    expect(store.owed.size).toBe(0);
+    expect(store.claims.get("email-complaint:sup-1:fb-complaint-1")).toBe("kept");
+  });
+
+  it("MUTATION: a lift and then a re-block within seven days sends the new report's alert, never the stale one", async () => {
+    mocks.sendToAdmins.mockRejectedValueOnce(new Error("mail transport down"));
+    await ingestSesSnsEmailFeedback(complaint(mail("0100-aaa1-000000"), { feedbackId: "fb-complaint-1" }));
+    store.suppressions[0]!.clearedAt = new Date("2026-07-01T00:00:00.000Z");
+    await sweep();
+
+    await ingestSesSnsEmailFeedback(complaint(mail("0100-bbb2-000000"), { feedbackId: "fb-complaint-2" }));
+    await sweep();
+
+    expect(store.suppressions[0]).toMatchObject({ clearedAt: null, suppressedAt: expect.any(Date) });
+    expect(mocks.sendToAdmins).toHaveBeenCalledTimes(2);
+    expect(alertData(1).emailNote).toBe(`Waitlist Offer, sent at ${SENT_AT.toISOString()}`);
+    expect(store.claims.get("email-complaint:sup-1:fb-complaint-1")).toBe("kept");
+  });
+
+  it("MUTATION: an alert neither stored nor sent fails the webhook, and the redelivery sends it once", async () => {
+    store.storeFails = true;
+    mocks.sendToAdmins.mockRejectedValueOnce(new Error("mail transport down"));
+    const notification = complaint(mail("0100-aaa1-000000"));
+
+    await expect(ingestSesSnsEmailFeedback(notification)).rejects.toThrow(/not stored and not sent/);
+    await expect(getActiveEmailSuppression(MEMBER)).resolves.toMatchObject({ reason: "COMPLAINT" });
+
+    store.storeFails = false;
+    await ingestSesSnsEmailFeedback(notification);
+    await ingestSesSnsEmailFeedback(notification);
+
+    expect(mocks.sendToAdmins).toHaveBeenCalledTimes(2);
   });
 
   it("two complaint reports are two alerts (D6)", async () => {

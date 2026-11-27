@@ -22,33 +22,28 @@ import { MAIL_SERVICE_LABEL, type MailService } from "./provider-message-id";
  *   the email core and the retry job check before every send, not by any row's
  *   status.
  * - A bounce marks `BOUNCED` only the email the report names (owner decision,
- *   option A, 27 Nov 2026): the row whose stored server id matches, or, for a
- *   row with no stored id, the one whose Message-ID header the report carries.
- *   Every other row to the address keeps its status. A report that names no
- *   email we can find marks nothing.
+ *   option A, 27 Nov 2026): the row whose stored server id matches, or else
+ *   the one whose Message-ID header the report carries. Every other row to the
+ *   address keeps its status. A report that names no email we can find marks
+ *   nothing.
  * - A complaint marks nothing (owner decision D3, 27 Nov 2026): the email
- *   arrived, so its row keeps saying sent. Officers are told once instead
- *   (`alertOfficersOfComplaint`).
+ *   arrived, so its row keeps saying sent. Officers are told once per report,
+ *   for each address it names, instead (`alertOfficersOfComplaint`, D4, D6).
  * - A "not spam" report (owner decision D5, 28 Nov 2026), the recipient
  *   moving a club email out of their spam folder, changes nothing: no block,
  *   no mark, no alert.
  */
 
 /**
- * What a report says happened. A service's "undetermined" bounce is a
- * temporary one, as the suppression rule has always read it; a complaint whose
- * type is unknown or missing is a complaint.
+ * A complaint's type in the app's own words, mapped from the service's by its
+ * adapter: `not-given` when the report carries none, `unrecognised` when it
+ * carries one the app does not know.
  */
-export type DeliveryFeedbackKind = "permanent-bounce" | "temporary-bounce" | "complaint" | "not-spam-report";
+export type ComplaintType = "abuse" | "fraud" | "virus" | "auth-failure" | "other" | "not-given" | "unrecognised";
 
-/** A complaint's type in the app's own words, mapped from the service's by its adapter. */
-export type ComplaintType = "abuse" | "fraud" | "virus" | "auth-failure" | "other" | "unknown";
-
-export type DeliveryFeedbackEvent = {
+/** What every report carries, whatever it says happened. */
+type DeliveryFeedbackReport = {
   service: MailService;
-  kind: DeliveryFeedbackKind;
-  /** For a complaint, its type; null otherwise. */
-  complaintType: ComplaintType | null;
   /** The addresses the report is about, as the service gave them. */
   recipients: string[];
   /** The id the service gave the message when it accepted it (`EmailLog.providerMessageId`). */
@@ -64,6 +59,20 @@ export type DeliveryFeedbackEvent = {
     complaintFeedbackType: string | null;
   };
 };
+
+/**
+ * What a report says happened, one shape per kind, so a complaint type on a
+ * bounce cannot be built. A service's "undetermined" bounce is a temporary
+ * one, as the suppression rule has always read it.
+ */
+export type DeliveryFeedbackEvent = DeliveryFeedbackReport &
+  (
+    | { kind: "permanent-bounce" | "temporary-bounce" }
+    | { kind: "complaint"; complaintType: ComplaintType }
+    | { kind: "not-spam-report" }
+  );
+
+export type ComplaintFeedbackEvent = Extract<DeliveryFeedbackEvent, { kind: "complaint" }>;
 
 /**
  * Statuses a bounce may move to `BOUNCED`. A row already `BOUNCED` is not
@@ -88,63 +97,72 @@ function headerIdCandidates(sentMessageIds: readonly string[]): string[] {
 }
 
 /**
- * THE ONE ANSWER TO "WHICH EMAIL IS THIS REPORT ABOUT", as `EmailLog` filters
- * tried in order: the stored server id, then (for a row that stored none: sent
- * before #5469, by the previous release, or through a server the app does not
- * recognise) the Message-ID header the app sent. The address never decides:
- * the ids name one message, and the contact form logs a label in place of the
- * address. Empty when the report names nothing usable.
+ * THE ONE ANSWER TO "WHICH EMAIL IS THIS REPORT ABOUT": the newest row whose
+ * stored server id matches; failing that, the newest whose Message-ID header
+ * the report carries (a Message-ID names one message), whatever id that row
+ * stored. A header match on a row whose stored id differs from the report's
+ * means the stored id is not the id the service reports by, so it is logged
+ * as a warning. The address never decides: the contact form logs a label in
+ * place of it. Null when the report names nothing we can find.
  */
-function emailLogFiltersNamedByReport(event: DeliveryFeedbackEvent) {
-  const filters: Array<{ providerMessageId: string } | { providerMessageId: null; messageId: { in: string[] } }> = [];
+async function findNamedEmailId(event: DeliveryFeedbackEvent): Promise<string | null> {
   const serverId = event.providerMessageId?.trim();
-  if (serverId) filters.push({ providerMessageId: serverId });
-  const headerIds = headerIdCandidates(event.sentMessageIds);
-  if (headerIds.length > 0) filters.push({ providerMessageId: null, messageId: { in: headerIds } });
-  return filters;
-}
-
-/** Mark the email a bounce names, by the first filter that finds it. */
-async function markBouncedEmail(event: DeliveryFeedbackEvent): Promise<number> {
-  for (const filter of emailLogFiltersNamedByReport(event)) {
-    const { count } = await prisma.emailLog.updateMany({
-      where: { ...filter, status: { in: [...BOUNCE_MARKABLE_STATUSES] } },
-      data: {
-        status: "BOUNCED",
-        errorMessage: `${event.kind === "permanent-bounce" ? "Permanent" : "Temporary"} bounce reported by ${MAIL_SERVICE_LABEL[event.service]}`,
-      },
+  if (serverId) {
+    const byStoredId = await prisma.emailLog.findFirst({
+      where: { providerMessageId: serverId },
+      select: { id: true },
+      orderBy: { createdAt: "desc" },
     });
-    if (count > 0) return count;
+    if (byStoredId) return byStoredId.id;
   }
-  return 0;
+  const headerIds = headerIdCandidates(event.sentMessageIds);
+  if (headerIds.length === 0) return null;
+  const byHeader = await prisma.emailLog.findFirst({
+    where: { messageId: { in: headerIds } },
+    select: { id: true, providerMessageId: true },
+    orderBy: { createdAt: "desc" },
+  });
+  if (byHeader && serverId && byHeader.providerMessageId) {
+    logger.warn(
+      { mailService: event.service, emailLogId: byHeader.id, reportedId: serverId, storedId: byHeader.providerMessageId },
+      "A delivery report's Message-ID matched an email whose stored server id differs from the report's; the stored id may not be the id the service reports by (#5469)",
+    );
+  }
+  return byHeader?.id ?? null;
 }
 
-/** The id of the email a complaint names, read and left as it is, or null. */
-async function findComplainedEmailId(event: DeliveryFeedbackEvent): Promise<string | null> {
-  for (const filter of emailLogFiltersNamedByReport(event)) {
-    const row = await prisma.emailLog.findFirst({ where: filter, select: { id: true }, orderBy: { createdAt: "desc" } });
-    if (row) return row.id;
-  }
-  return null;
+/** Mark the email a bounce names; 0 when it names none, or it is already marked. */
+async function markBouncedEmail(event: DeliveryFeedbackEvent & { kind: "permanent-bounce" | "temporary-bounce" }): Promise<number> {
+  const id = await findNamedEmailId(event);
+  if (!id) return 0;
+  const { count } = await prisma.emailLog.updateMany({
+    where: { id, status: { in: [...BOUNCE_MARKABLE_STATUSES] } },
+    data: {
+      status: "BOUNCED",
+      errorMessage: `${event.kind === "permanent-bounce" ? "Permanent" : "Temporary"} bounce reported by ${MAIL_SERVICE_LABEL[event.service]}`,
+    },
+  });
+  return count;
 }
 
 /**
  * The suppression writer's input. Whether it suppresses at once follows the
- * event's kind alone (`permanentBounce`); the service's labels ride along for
- * display.
+ * event's kind alone; the service's labels ride along for display.
  */
-function suppressionEvent(event: DeliveryFeedbackEvent, email: string): EmailFeedbackSuppressionEvent {
-  const complaint = event.kind === "complaint";
-  return {
+function suppressionEvent(
+  event: DeliveryFeedbackEvent & { kind: "permanent-bounce" | "temporary-bounce" | "complaint" },
+  email: string,
+): EmailFeedbackSuppressionEvent {
+  const labels = {
     email,
-    reason: complaint ? "COMPLAINT" : "BOUNCE",
-    eventType: complaint ? "complaint" : "bounce",
-    permanentBounce: event.kind === "permanent-bounce",
     providerMessageId: event.providerMessageId,
     bounceType: event.providerDetail.bounceType,
     bounceSubType: event.providerDetail.bounceSubType,
     complaintFeedbackType: event.providerDetail.complaintFeedbackType,
   };
+  return event.kind === "complaint"
+    ? { ...labels, reason: "COMPLAINT", eventType: "complaint" }
+    : { ...labels, reason: "BOUNCE", eventType: "bounce", permanentBounce: event.kind === "permanent-bounce" };
 }
 
 export async function applyDeliveryFeedback(event: DeliveryFeedbackEvent) {
@@ -168,10 +186,10 @@ export async function applyDeliveryFeedback(event: DeliveryFeedbackEvent) {
 
   // After the suppression is written, outside any transaction (there is none
   // here), and only while it is active, so the alert never says an address is
-  // blocked when it is not.
+  // blocked when it is not. One alert per report for each address it names.
   if (event.kind === "complaint") {
     const { alertOfficersOfComplaint } = await import("./admin-alerts-email-complaint");
-    const complainedEmailLogId = await findComplainedEmailId(event);
+    const complainedEmailLogId = await findNamedEmailId(event);
     for (const recipient of recipients) {
       const suppression = await getActiveEmailSuppression(recipient);
       if (!suppression) continue;

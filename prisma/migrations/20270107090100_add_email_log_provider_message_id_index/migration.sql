@@ -5,8 +5,9 @@
 -- previous migration) is released before the build starts. A plain CREATE
 -- INDEX takes a SHARE lock: email log reads carry on, inserts and updates
 -- wait for the build. CONCURRENTLY is not possible inside Prisma's
--- per-migration transaction; for a very large table, an operator can build
--- this same index CONCURRENTLY out of band first, and IF NOT EXISTS then
--- skips the build (the ledger row says how).
+-- per-migration transaction; for a very large table, an operator can add the
+-- column and build this same index CONCURRENTLY out of band before the
+-- deploy, and IF NOT EXISTS in both migrations then skips them (the ledger row
+-- says how). Nothing checks automatically that a pre-built index is valid.
 -- EmailLog is not on the deploy guard's hot-table list.
 CREATE INDEX IF NOT EXISTS "EmailLog_providerMessageId_idx" ON "EmailLog"("providerMessageId");
