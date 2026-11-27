@@ -501,4 +501,4 @@ export async function cleanHistories(prisma: PrismaClient, prefix: string): Prom
   await prisma.member.deleteMany({ where: { id: { in: [names.memberId, names.officerId] } } });
 }
 
-export { postedEdit as postHistoryEdit, createBooking as createHistoryBooking, settleByCard as settleHistoryByCard, parkStrand as parkHistoryStrand };
+export { postedEdit as postHistoryEdit, createBooking as createHistoryBooking, settleByCard as settleHistoryByCard, parkStrand as parkHistoryStrand, raiseReview as raiseHistoryReview };

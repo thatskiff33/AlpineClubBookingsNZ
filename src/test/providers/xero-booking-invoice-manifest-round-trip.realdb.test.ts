@@ -20,7 +20,6 @@
 import type { PrismaClient } from "@prisma/client";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import type { LineItem } from "xero-node";
-import type { CalendarDate } from "@/lib/club-time";
 import type { SuiteEnvironmentRoleDeclaration } from "@/lib/__tests__/helpers/environment-role";
 import { CLUB_FORMAT_TEST } from "@/lib/__tests__/support/club-format-fixture";
 import { memberMoneyTestContext } from "@/lib/__tests__/support/member-money-fixtures";
@@ -30,6 +29,7 @@ import {
   createHistoryBooking,
   historyNames,
   postHistoryEdit,
+  raiseHistoryReview,
   seedHistoryFixtures,
   settleHistoryByCard,
 } from "@/lib/__tests__/support/booking-ledger-history";
@@ -92,29 +92,9 @@ async function manifestState() {
 
 /** A review of `modificationId` settled by an officer as a charge of `SHARE`, re-pricing the first guest's first night: its task and its closure, as the review door posts them. */
 async function settleReviewShare(bookingId: string, modificationId: string): Promise<string> {
-  tick();
-  const { raiseEditFinancialReviewTask } = await import("@/lib/edit-financial-review");
+  // A legacy review, raised by the shared history helper: no production edit raises one since #4317 (INV-MOD-028).
+  const taskId = await raiseHistoryReview(prisma, names, bookingId, `${bookingId}-g1`, modificationId);
   const { postReviewClosureLedgerLines } = await import("@/lib/booking-ledger-modification-sync");
-  const { taskId } = await prisma.$transaction(async (tx) => {
-    await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
-    return raiseEditFinancialReviewTask({
-      occurrence: {
-        bookingId: bookingId,
-        bookingGuestId: `${bookingId}-g1`,
-        cause: "NO_STORED_NIGHT_PRICES",
-        surrenderedNightDates: [],
-        addedNightDates: ["2027-08-01" as CalendarDate],
-        storedEvidence: { guestTotalCents: null, nightPrices: [] },
-      },
-      guestMemberId: names.memberId,
-      bookingCheckIn: "2027-08-01" as CalendarDate,
-      bookingCheckOut: "2027-08-03" as CalendarDate,
-      bookingModificationId: modificationId,
-      paymentId: null,
-      guestsAddedByEdit: null,
-      store: tx,
-    });
-  });
   tick();
   await prisma.$transaction(async (tx) => {
     await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
