@@ -70,6 +70,12 @@ import {
   reportGroupTripDependentCeilingBound,
 } from "@/lib/adult-member-hosting-coverage-ceilings";
 import {
+  HOSTING_COVERAGE_MEMBER_FANOUT_LIMIT,
+  hostingCoverageMemberAttendanceWhere,
+  hostingCoverageMemberFanoutCeilingBinds,
+  invalidateMemberGroupTripCover,
+} from "@/lib/adult-member-hosting-member-fanout";
+import {
   GROUP_TRIP_IDENTITY_SELECT,
   groupTripCoverageDependentWhere,
   groupTripCoverageSourceWhere,
@@ -82,10 +88,7 @@ import type {
   AdultMemberHostingPolicyExceptionViolation,
   AdultMemberHostScope,
 } from "@/lib/booking-policy-exceptions";
-import {
-  ACTIVE_BOOKING_STATUSES,
-  isHostingCoverageSourceBookingStatus,
-} from "@/lib/booking-status";
+import { isHostingCoverageSourceBookingStatus } from "@/lib/booking-status";
 import {
   addDaysDateOnly,
   eachDateOnlyInRange,
@@ -2226,10 +2229,7 @@ export async function reconcileAdultMemberHostingReviewWithSiblings(
   let fanOut: {
     proof: HostingCoverageQueueParticipantProof;
     plannedSameOwner: CoverageOwnerFacts[];
-    verifiedGroupTrip: {
-      identity: GroupTripIdentity;
-      dependents: CoverageOwnerFacts[];
-    } | null;
+    verifiedGroupTrip: GroupTripDependentPlan | null;
   } | null = null;
   if (plannedBooking) {
     // #3039: plan the Group Trip dependents BEFORE the participant fence, because the
@@ -3319,31 +3319,44 @@ async function planGroupTripCoverageDependents(
   booking: GroupTripCoverageSourceFacts,
   resolved: ResolvedAdultMemberHostingPolicy,
   db: AdultMemberHostingReviewDb,
-): Promise<{
-  identity: GroupTripIdentity;
-  dependents: CoverageOwnerFacts[];
-} | null> {
+): Promise<GroupTripDependentPlan | null> {
   if (!resolved.hostScopes.sameGroupTrip) return null;
-  const identity =
-    groupTripIdentityOf(booking) ??
-    (await readInheritedSplitPairGroupTrip(db, booking));
+  const identity = await readGroupTripIdentity(db, booking);
   if (!identity) return null;
 
+  const rows = (await db.booking.findMany({
+    where: groupTripCoverageDependentWhere(booking, identity),
+    orderBy: [...COVERAGE_READ_ORDER],
+    take: GROUP_TRIP_COVERAGE_DEPENDENT_LIMIT,
+    select: COVERAGE_OWNER_FACTS_BASE_SELECT,
+  })) as CoverageOwnerRow[];
   // #3480: a trip sibling owned by an organisation holds no member-nights and
   // is not a participant, so it is not planned, not locked and not enqueued.
-  const dependents = coverageParticipantsOf(
-    (await db.booking.findMany({
-      where: groupTripCoverageDependentWhere(booking, identity),
-      orderBy: [...COVERAGE_READ_ORDER],
-      take: GROUP_TRIP_COVERAGE_DEPENDENT_LIMIT,
-      select: COVERAGE_OWNER_FACTS_BASE_SELECT,
-    })) as CoverageOwnerRow[],
-  );
   // NO CEILING REPORT HERE, deliberately: this read runs at least twice per fan-out
   // (the unlocked plan, then the under-lock re-verify) plus once more on the
   // post-commit drain-scope read, so reporting here produced two or three warnings
-  // for one truncation. `settleGroupTripDependentCoverage` reports it once, durably.
-  return { identity, dependents };
+  // for one truncation. `settleGroupTripDependentCoverage` reports it once, durably,
+  // from `readCount`: the rows READ, before the organisation-owned ones are dropped.
+  return { identity, dependents: coverageParticipantsOf(rows), readCount: rows.length, lodgeId: booking.lodgeId };
+}
+
+/** A Group Trip's dependents as planned or verified; `readCount` is the raw rows read. */
+type GroupTripDependentPlan = {
+  identity: GroupTripIdentity;
+  dependents: CoverageOwnerFacts[];
+  readCount: number;
+  lodgeId: string;
+};
+
+/**
+ * A booking's Group Trip as the fan-out resolves it: the canonical relations, then
+ * the split-pair carve-out (`INV-HOST-043`). Merge's cover invalidation uses it too.
+ */
+export async function readGroupTripIdentity(
+  db: Pick<AdultMemberHostingReadDb, "booking">,
+  booking: GroupTripCoverageSourceFacts,
+): Promise<GroupTripIdentity | null> {
+  return groupTripIdentityOf(booking) ?? (await readInheritedSplitPairGroupTrip(db, booking));
 }
 
 /**
@@ -3356,7 +3369,7 @@ async function planGroupTripCoverageDependents(
  * transaction never locked.
  */
 function groupTripDependentFingerprint(
-  plan: { identity: GroupTripIdentity; dependents: readonly CoverageOwnerFacts[] } | null,
+  plan: Pick<GroupTripDependentPlan, "identity" | "dependents"> | null,
 ): string {
   if (!plan) return "";
   return [
@@ -3416,9 +3429,9 @@ function coverageBookingSetFingerprint(
 async function lockAndVerifyGroupTripCoverageDependents(
   booking: GroupTripCoverageSourceFacts,
   resolved: ResolvedAdultMemberHostingPolicy,
-  planned: { identity: GroupTripIdentity; dependents: CoverageOwnerFacts[] } | null,
+  planned: GroupTripDependentPlan | null,
   db: AdultMemberHostingReviewDb,
-): Promise<{ identity: GroupTripIdentity; dependents: CoverageOwnerFacts[] } | null> {
+): Promise<GroupTripDependentPlan | null> {
   if (!planned) return null;
   // THE protocol, not a second copy of it: `acquireHostingCoverageGroupKey` tries
   // the key fail-fast and only then takes it blocking, and it is the one place in
@@ -3499,7 +3512,7 @@ async function lockAndVerifyGroupTripCoverageDependents(
  * did it.
  */
 async function settleGroupTripDependentCoverage(
-  verified: { identity: GroupTripIdentity; dependents: CoverageOwnerFacts[] } | null,
+  verified: GroupTripDependentPlan | null,
   actorMemberId: string | null,
   participantProof: HostingCoverageQueueParticipantProof,
   db: AdultMemberHostingReviewDb,
@@ -3514,16 +3527,14 @@ async function settleGroupTripDependentCoverage(
    */
   alreadyQueuedBookingIds?: ReadonlySet<string>,
 ): Promise<number> {
-  if (!verified || verified.dependents.length === 0) return 0;
+  if (!verified) return 0;
   // ONE durable record per trip per transaction when the bound binds. What a bound
   // ceiling costs here is a booking nobody re-evaluates, so it is written as an audit
   // row rather than left to a log line — see `reportGroupTripDependentCeilingBound`.
+  // The RAW count (#5239): a cap filled by organisation-owned rows still truncated.
   await reportGroupTripDependentCeilingBound(
-    {
-      groupBookingId: verified.identity.groupBookingId,
-      lodgeId: verified.dependents[0]?.lodgeId ?? "",
-    },
-    verified.dependents.length,
+    { groupBookingId: verified.identity.groupBookingId, lodgeId: verified.lodgeId },
+    verified.readCount,
     "group-trip-fanout",
     db,
   );
@@ -3776,10 +3787,7 @@ export async function enqueueOwnHostingCoverageReevaluation(
   // this is where they join the key discipline: the queue rows and the confirmation
   // commit together, and a concurrent removal of the cover cannot slip between them.
   // GROUP FIRST, then owner — the same order every other holder takes.
-  let verifiedGroupTrip: {
-    identity: GroupTripIdentity;
-    dependents: CoverageOwnerFacts[];
-  } | null = null;
+  let verifiedGroupTrip: GroupTripDependentPlan | null = null;
   try {
     verifiedGroupTrip = await lockAndVerifyGroupTripCoverageDependents(
       booking,
@@ -3830,17 +3838,8 @@ export async function enqueueOwnHostingCoverageReevaluation(
 }
 
 /**
- * A ceiling on the bookings ONE person's lifecycle change fans out to.
- *
- * Higher than the per-account ceilings because the set is a different shape — every
- * current-or-future booking this person ATTENDS, across lodges — and still small:
- * fifty live stays for one member is already far beyond a club member's real
- * footprint. Truncation is warned about for the same reason the dependent reads warn.
- */
-export const HOSTING_COVERAGE_MEMBER_FANOUT_LIMIT = 50;
-
-/**
- * The deterministic bounded candidate set shared by ordinary fan-out and merge.
+ * The deterministic bounded candidate set shared by ordinary fan-out and merge,
+ * with `ceilingBound` from the RAW rows read (`adult-member-hosting-member-fanout.ts`).
  *
  * `today` is the club's day as the UTC-midnight `@db.Date` encoding
  * (`INV-DATE-026`), resolved by the caller BEFORE it opened the transaction
@@ -3856,7 +3855,7 @@ export async function loadHostingCoverageMemberFanoutCandidates(
   memberId: string,
   db: AdultMemberHostingReviewDb,
   today: Date,
-): Promise<GroupTripCoverageSourceFacts[]> {
+): Promise<{ candidates: GroupTripCoverageSourceFacts[]; ceilingBound: boolean }> {
   // #3480: THE ONE REACHABLE DOOR FOR A SCHOOL BOOKING INTO THIS FAN-OUT. A club
   // member may be a guest on a school's organisation-owned booking (a teacher who
   // is also a member), and this read is by ATTENDANCE, so that booking is in the
@@ -3865,17 +3864,9 @@ export async function loadHostingCoverageMemberFanoutCandidates(
   // here rather than at each of the three callers (the standing fan-out, its
   // under-lock re-read, and merge's plan) so they cannot disagree about it. The
   // narrowing happens after `take`, so a school row can occupy one of the fifty
-  // slots; that is a slot, not a lost obligation, and the ceiling is already far
-  // above a member's real footprint.
-  return coverageParticipantsOf((await db.booking.findMany({
-    where: {
-      deletedAt: null,
-      status: { in: [...ACTIVE_BOOKING_STATUSES] },
-      // Current or future stays only — a checkout on or after today still has
-      // nights the rule can judge.
-      checkOut: { gte: today },
-      guests: { some: { memberId } },
-    },
+  // slots, which is why `ceilingBound` counts the rows read, not the candidates.
+  const rows = (await db.booking.findMany({
+    where: hostingCoverageMemberAttendanceWhere(memberId, today),
     orderBy: [{ checkIn: "asc" }, { id: "asc" }],
     take: HOSTING_COVERAGE_MEMBER_FANOUT_LIMIT,
     // THE GROUP TRIP IDENTITY RELATIONS ARE SELECTED HERE RATHER THAN RE-READ (#3039).
@@ -3886,7 +3877,11 @@ export async function loadHostingCoverageMemberFanoutCandidates(
     // (`INV-SSOT-001`). Merge's plan takes the same rows as `CoverageOwnerFacts` and
     // is unaffected — this type is a superset.
     select: GROUP_TRIP_COVERAGE_SOURCE_SELECT,
-  })) as GroupTripCoverageSourceRow[]);
+  })) as GroupTripCoverageSourceRow[];
+  return {
+    candidates: coverageParticipantsOf(rows),
+    ceilingBound: hostingCoverageMemberFanoutCeilingBinds(rows.length),
+  };
 }
 
 /**
@@ -3992,14 +3987,17 @@ export async function enqueueHostingCoverageReevaluationForMember(
   // retry a non-enforcing club can still see on a standing write is the price of
   // that fence, and it is a price this repository has decided to pay.
   await lockHostingCoverageMemberLifecycleTarget(db, memberId);
-  const plannedAttended = await loadHostingCoverageMemberFanoutCandidates(memberId, db, today);
-  if (plannedAttended.length === 0) return 0;
-  if (plannedAttended.length >= HOSTING_COVERAGE_MEMBER_FANOUT_LIMIT) {
-    logger.warn(
-      { memberId, limit: HOSTING_COVERAGE_MEMBER_FANOUT_LIMIT },
-      "Hosting coverage member fan-out hit its ceiling; a booking this member attends may not have been re-evaluated",
-    );
-  }
+  const plannedFanout = await loadHostingCoverageMemberFanoutCandidates(memberId, db, today);
+  const plannedAttended = plannedFanout.candidates;
+  // #5239: a bound ceiling leaves bookings past it un-re-checked, so every trip this
+  // person attends is invalidated, as the LAST write on every path that returns.
+  const settled = async (queued: number): Promise<number> => {
+    if (plannedFanout.ceilingBound) {
+      await invalidateMemberGroupTripCover(memberId, today, db, "member-standing-fanout");
+    }
+    return queued;
+  };
+  if (plannedAttended.length === 0 && !plannedFanout.ceilingBound) return 0;
 
   // One policy read per distinct lodge rather than per booking: the resolver is
   // already the hot path on every booking write and this can touch several stays.
@@ -4016,7 +4014,7 @@ export async function enqueueHostingCoverageReevaluationForMember(
   const plannedQueueOwners = plannedAttended
     .filter(enforcing)
     .map((booking) => bookingOwner(booking).memberId);
-  if (plannedQueueOwners.length === 0) return 0;
+  if (plannedQueueOwners.length === 0) return settled(0);
 
   const actorMemberId = context.actorMemberId ?? null;
   // #3039: A STANDING CHANGE OWES THE GROUP TRIP FAN-OUT TOO, and this seam is the
@@ -4049,7 +4047,7 @@ export async function enqueueHostingCoverageReevaluationForMember(
     {
       booking: GroupTripCoverageSourceFacts;
       resolved: ResolvedAdultMemberHostingPolicy;
-      plan: { identity: GroupTripIdentity; dependents: CoverageOwnerFacts[] };
+      plan: GroupTripDependentPlan;
     }
   >();
   for (const booking of plannedAttended) {
@@ -4087,7 +4085,7 @@ export async function enqueueHostingCoverageReevaluationForMember(
   // the one planned set; a changed owner or new booking outside it is a safe
   // retry, never a late participant acquisition.
   // The SAME club day as the planning pass above — see `today`'s docblock.
-  const attended = await loadHostingCoverageMemberFanoutCandidates(memberId, db, today);
+  const { candidates: attended } = await loadHostingCoverageMemberFanoutCandidates(memberId, db, today);
   // The SAME comparison the Group Trip fan-out uses — one definition, and the
   // order-sensitive one, because both reads apply the same `orderBy` so a changed
   // order is a changed world. This used to be a length check plus a `Map`-keyed
@@ -4113,10 +4111,7 @@ export async function enqueueHostingCoverageReevaluationForMember(
   // them, BEFORE any owner key. Sorted by `GroupBooking.id` above, and every
   // acquisition is tried fail-fast first, so a transaction holding one trip key
   // never waits for another.
-  const verifiedGroupTrips: Array<{
-    identity: GroupTripIdentity;
-    dependents: CoverageOwnerFacts[];
-  }> = [];
+  const verifiedGroupTrips: GroupTripDependentPlan[] = [];
   for (const entry of plannedGroupTrips) {
     const verified = await lockAndVerifyGroupTripCoverageDependents(
       entry.booking,
@@ -4178,7 +4173,7 @@ export async function enqueueHostingCoverageReevaluationForMember(
       ownItemBookingIds,
     );
   }
-  return queued;
+  return settled(queued);
 }
 
 /**

@@ -9,6 +9,7 @@ import {
   readInheritedSplitPairGroupTrips,
 } from "@/lib/adult-member-hosting-review";
 import {
+  policyShowsGroupTripCover,
   readStoredGroupTripCoverFreshness,
   storedHostingReviewDiffers,
   type GroupTripCoverFreshness,
@@ -20,7 +21,6 @@ import {
 } from "@/lib/kiosk-adult-cover";
 import {
   hostingModeIsActive,
-  hostingModeQueuesCoverageReevaluation,
   type ResolvedAdultMemberHostingPolicy,
 } from "@/lib/policies/adult-member-hosting";
 import {
@@ -433,7 +433,7 @@ async function readStalenessSignals(
  * `INV-HOST-045`).
  *
  * NOTHING IS READ unless the lodge queues from every seam that can change cover
- * (`hostingModeQueuesCoverageReevaluation`: `ENFORCED` only, so a review-only
+ * (`policyShowsGroupTripCover`: `ENFORCED` only, so a review-only
  * lodge keeps the warning) and still lets a sibling count; and only for cards
  * whose snapshot carries a freshness stamp. THEN THREE READS, each failing to
  * "unverifiable" rather than to the outer catch-all:
@@ -458,12 +458,7 @@ async function readKioskGroupTripCoverEvidence(
   identities: ReadonlyMap<string, GroupTripIdentity>,
 ): Promise<Map<string, GroupTripCoverFreshness>> {
   const verified = new Map<string, GroupTripCoverFreshness>();
-  if (
-    !hostingModeQueuesCoverageReevaluation(policy.mode) ||
-    !policy.hostScopes.sameGroupTrip
-  ) {
-    return verified;
-  }
+  if (!policyShowsGroupTripCover(policy)) return verified;
   const stamped = rows.flatMap((row) => {
     const identity = identities.get(row.id);
     return identity &&

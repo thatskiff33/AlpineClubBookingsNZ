@@ -10,6 +10,7 @@ import {
   coverageParticipantsOf,
   loadAdultMemberHostingPolicy,
   loadHostingCoverageMemberFanoutCandidates,
+  readGroupTripIdentity,
   sourceParticipant,
   type AdultMemberHostingReviewDb,
   type CoverageOwnerFacts,
@@ -24,9 +25,10 @@ import {
   type HostingCoverageQueueParticipantProof,
   type HostingCoverageSourceParticipant,
 } from "@/lib/adult-member-hosting-queue-participants";
+import { invalidateMemberGroupTripCover } from "@/lib/adult-member-hosting-member-fanout";
+import { policyShowsGroupTripCover } from "@/lib/adult-member-hosting-stored-review";
 import { bookingOwner } from "@/lib/booking-owner";
 import { eachDateOnlyInRange, formatDateOnly } from "@/lib/date-only";
-import { groupTripIdentityOf } from "@/lib/group-trip-identity";
 import {
   hostingModeQueuesCoverageReevaluation,
   type ResolvedAdultMemberHostingPolicy,
@@ -38,6 +40,11 @@ export type MemberMergeHostingCoveragePlan = Readonly<{
   coverageOwnerIds: readonly string[];
   /** Trips whose sibling cover the merge invalidates (#5239); see below. */
   invalidatedGroupTripIds: readonly string[];
+  /**
+   * Set when the master's attendance read filled its ceiling: the bookings past
+   * it were never read, so EVERY trip the master attends is invalidated instead.
+   */
+  everyAttendedTripOf: Readonly<{ memberId: string; today: Date }> | null;
 }>;
 
 /**
@@ -59,7 +66,7 @@ export async function buildMemberMergeHostingCoveragePlan(
   },
   db: AdultMemberHostingReviewDb,
 ): Promise<MemberMergeHostingCoveragePlan> {
-  const [attended, movedOwnerBookings] = await Promise.all([
+  const [attendedFanout, movedOwnerBookings] = await Promise.all([
     loadHostingCoverageMemberFanoutCandidates(params.masterId, db, params.today),
     params.capturedLoserOwnedBookingIds.length > 0
       ? (db.booking.findMany({
@@ -79,6 +86,7 @@ export async function buildMemberMergeHostingCoveragePlan(
         }) as Promise<CoverageOwnerRow[]>).then(coverageParticipantsOf)
       : Promise.resolve([]),
   ]);
+  const attended = attendedFanout.candidates;
   const candidatesById = new Map<string, CoverageOwnerFacts>();
   for (const booking of [...attended, ...movedOwnerBookings]) {
     candidatesById.set(booking.id, booking);
@@ -104,18 +112,16 @@ export async function buildMemberMergeHostingCoveragePlan(
   // qualification. Rather than let the kiosk show that sibling cover as current,
   // the merge moves the revision of every trip the person attends at a lodge
   // where sibling cover is shown, which leaves every snapshot in those trips
-  // unverified until it is next evaluated (`INV-HOST-045`).
-  const invalidatedGroupTripIds = [
-    ...new Set(
-      attended
-        .filter(
-          (booking) =>
-            queues(booking) &&
-            policyByLodge.get(booking.lodgeId)?.hostScopes.sameGroupTrip === true,
-        )
-        .flatMap((booking) => groupTripIdentityOf(booking)?.groupBookingId ?? []),
-    ),
-  ].sort();
+  // unverified until it is next evaluated (`INV-HOST-045`). Trip identity is the
+  // fan-out's own, split-pair carve-out included (`readGroupTripIdentity`).
+  const tripIds = new Set<string>();
+  for (const booking of attended) {
+    const policy = policyByLodge.get(booking.lodgeId);
+    if (!policy || !policyShowsGroupTripCover(policy)) continue;
+    const identity = await readGroupTripIdentity(db, booking);
+    if (identity) tripIds.add(identity.groupBookingId);
+  }
+  const invalidatedGroupTripIds = [...tripIds].sort();
   const items = included.map((booking) => ({
     memberId: bookingOwner(booking).memberId,
     lodgeId: booking.lodgeId,
@@ -150,6 +156,9 @@ export async function buildMemberMergeHostingCoveragePlan(
       )].sort(),
     ),
     invalidatedGroupTripIds: Object.freeze(invalidatedGroupTripIds),
+    everyAttendedTripOf: attendedFanout.ceilingBound
+      ? Object.freeze({ memberId: params.masterId, today: params.today })
+      : null,
   });
 }
 
@@ -165,7 +174,8 @@ export function memberMergeHostingCoveragePlanFingerprint(
       sourceBookingId: item.sourceBookingId ?? null,
     })),
   ) + JSON.stringify(plan.coverageOwnerIds) +
-    JSON.stringify(plan.invalidatedGroupTripIds);
+    JSON.stringify(plan.invalidatedGroupTripIds) +
+    JSON.stringify(plan.everyAttendedTripOf);
 }
 
 export async function enqueueMemberMergeHostingCoveragePlan(
@@ -178,11 +188,20 @@ export async function enqueueMemberMergeHostingCoveragePlan(
     assertHostingCoverageQueueParticipantsLocked(proof, item);
     if (await enqueueHostingCoverageReevaluation(item, proof, db)) queued += 1;
   }
-  // LAST, after every key and row the merge takes, so this bump adds no wait
-  // while it holds a trip row (`applyMoves` already holds organiser rows; see
-  // docs/CONCURRENCY_AND_LOCKING.md, the cover-invalidation revision, for how
-  // that wait is bounded). One statement, ids sorted.
-  if (plan.invalidatedGroupTripIds.length > 0) {
+  // AFTER every hosting key, `Member` row and queue row the merge takes, so this
+  // bump waits on nothing while it holds a trip row (only the loser's delete
+  // follows it; `applyMoves` already holds organiser rows; see
+  // docs/CONCURRENCY_AND_LOCKING.md, the cover-invalidation revision). One
+  // statement: a bound ceiling moves every trip the master attends, a superset
+  // of the listed ids; otherwise the listed ids, sorted.
+  if (plan.everyAttendedTripOf) {
+    await invalidateMemberGroupTripCover(
+      plan.everyAttendedTripOf.memberId,
+      plan.everyAttendedTripOf.today,
+      db,
+      "member-merge",
+    );
+  } else if (plan.invalidatedGroupTripIds.length > 0) {
     await db.groupBooking.updateMany({
       where: { id: { in: [...plan.invalidatedGroupTripIds] } },
       data: { coverageInvalidationRevision: { increment: 1 } },

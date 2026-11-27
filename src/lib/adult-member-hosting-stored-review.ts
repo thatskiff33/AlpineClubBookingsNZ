@@ -2,6 +2,10 @@ import type { PrismaClient } from "@prisma/client";
 
 import type { AdultMemberHostingPolicyExceptionViolation } from "@/lib/booking-policy-exceptions";
 import { stableStringify } from "@/lib/stable-digest";
+import {
+  hostingModeQueuesCoverageReevaluation,
+  type ResolvedAdultMemberHostingPolicy,
+} from "@/lib/policies/adult-member-hosting";
 
 /**
  * What `Booking.adultMemberHostingReview` holds, read back and written (#5239).
@@ -83,6 +87,18 @@ export function storedHostingReviewOf(
  */
 export function storedHostingReviewDiffers(current: unknown, next: unknown): boolean {
   return stableStringify(current) !== stableStringify(next);
+}
+
+/**
+ * Does this lodge's policy let the kiosk show cover resting on a Group Trip
+ * sibling (`INV-HOST-045`)? `ENFORCED`, so every seam that can change cover
+ * queues a re-check, and the `SAME_GROUP_TRIP` scope on. One answer for the kiosk
+ * and for the member merge, which invalidates exactly the trips it covers.
+ */
+export function policyShowsGroupTripCover(
+  policy: Pick<ResolvedAdultMemberHostingPolicy, "mode" | "hostScopes">,
+): boolean {
+  return hostingModeQueuesCoverageReevaluation(policy.mode) && policy.hostScopes.sameGroupTrip;
 }
 
 /**
