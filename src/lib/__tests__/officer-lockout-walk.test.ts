@@ -2,9 +2,19 @@
  * The combined lock-out walk (#4620 §4 item 4).
  *
  * A required officer in every factor state, with the club-wide `twoFactor`
- * module on and off, can always reach enrolment or verification, and is never
- * refused by both the password-change route and enrolment at once. The claims
- * are built with the release on, as they are once #4620 flips the switch.
+ * module on and off, can always reach enrolment or verification, and the
+ * officer gate never refuses a forced password change that enrolment is
+ * waiting on. The claims are built with the release on, as they are once
+ * officer sign-in is switched on.
+ *
+ * This walks the gate's decisions. The route guard, the enrol page and the
+ * signed-in layout each have their own case for the same officer:
+ * `session-guards.test.ts`, `two-factor-detour-landing.test.tsx` and
+ * `authenticated-layout-officer-gated-onboarding.test.tsx`.
+ *
+ * One state the gate cannot open: an officer with no password who is being
+ * forced to change it. The change route asks for the current password, so
+ * their way through is "Forgot password", which sets one and clears the flag.
  */
 
 import { describe, expect, it } from "vitest";
@@ -37,7 +47,9 @@ type FactorState = {
   factorsResetAt: Date | null;
 };
 
-// Every state starts its grace long ago, so an unsatisfied officer is past it.
+const IN_GRACE: FactorState = { name: "no factor, still inside grace", twoFactorEnabled: false, twoFactorMethod: null, hasPasskey: false, graceStartedAt: AN_HOUR_AGO, factorsResetAt: null };
+
+// Every other state starts its grace long ago, so an unsatisfied officer is past it.
 // An emailed-link, Google or recovery-code sign-in changes only the recent-proof
 // stamp, never these claims, so those states share the rows below. "No password
 // and no app" is the no-factor row: nothing in the gate reads a password.
@@ -48,6 +60,9 @@ const STATES: FactorState[] = [
   { name: "passkey only", twoFactorEnabled: false, twoFactorMethod: null, hasPasskey: true, graceStartedAt: LONG_AGO, factorsResetAt: null },
   { name: "just reset (in the app or by auth:reset-factors)", twoFactorEnabled: false, twoFactorMethod: null, hasPasskey: false, graceStartedAt: LONG_AGO, factorsResetAt: AN_HOUR_AGO },
   { name: "reset before grace ever started", twoFactorEnabled: false, twoFactorMethod: null, hasPasskey: false, graceStartedAt: null, factorsResetAt: AN_HOUR_AGO },
+  { name: "flag on with no method stored", twoFactorEnabled: true, twoFactorMethod: null, hasPasskey: false, graceStartedAt: LONG_AGO, factorsResetAt: null },
+  { name: "authenticator app switched off, method left behind", twoFactorEnabled: false, twoFactorMethod: "TOTP", hasPasskey: false, graceStartedAt: LONG_AGO, factorsResetAt: null },
+  IN_GRACE,
 ];
 
 const ENROLMENT_PATHS: Array<[string, string]> = [
@@ -82,13 +97,10 @@ function fullAdminSession(state: FactorState, module: { on: boolean; verified: b
     twoFactorEnabled: state.twoFactorEnabled,
     hasPasskey: state.hasPasskey,
   });
-  // Mirrors session-refresh: module off verifies at once; module on with
-  // nothing enrolled cannot have verified yet.
-  const twoFactorVerified = !module.on || (enrolled && module.verified);
   const sessionUser: TwoFactorSessionUser = {
     id: "officer-1",
     twoFactorRequired: module.on,
-    twoFactorVerified,
+    twoFactorVerified: module.verified,
     twoFactorEnrolled: enrolled,
     hasPasskey: state.hasPasskey,
     officerTwoFactorRequired: claims.officerTwoFactorRequired,
@@ -98,8 +110,13 @@ function fullAdminSession(state: FactorState, module: { on: boolean; verified: b
   return { claims, sessionUser };
 }
 
+// Both answers to "has this session passed the module challenge", module on
+// and off. That is more than sign-in can produce (nobody passes a challenge
+// with nothing enrolled), and deliberately so: the walk holds for every
+// session, without restating how the session refresh sets that claim.
 const PHASES = [
   { label: "module off", on: false, verified: true },
+  { label: "module off, session not marked verified", on: false, verified: false },
   { label: "module on, challenge still owed", on: true, verified: false },
   { label: "module on, challenge passed", on: true, verified: true },
 ];
@@ -215,6 +232,16 @@ describe("officer lock-out walk (#4620)", () => {
         now: NOW,
       }),
     ).toMatch(/^\/login\/enroll\?/);
+  });
+
+  it("lets an officer still inside grace through to the page they asked for", () => {
+    const { claims, sessionUser } = fullAdminSession(IN_GRACE, PHASES[0]);
+    expect(claims.officerTwoFactorRequired).toBe(true);
+    expect(claims.twoFactorSatisfiesOfficer).toBe(false);
+    expect(claims.officerTwoFactorGraceEndsAt).toBeGreaterThan(NOW.getTime());
+    expect(
+      factorGateRedirect({ sessionUser, pathname: "/admin", callbackPath: "/admin", now: NOW }),
+    ).toBeNull();
   });
 
   it("gates a past-grace officer with no factor (the walk is not vacuous)", () => {

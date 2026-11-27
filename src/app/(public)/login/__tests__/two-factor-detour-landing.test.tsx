@@ -360,4 +360,35 @@ describe("/login/enroll officer branch is app-only (#4618)", () => {
     const element = (await runEnroll()) as unknown as { props: { appOnly?: boolean } };
     expect(element.props.appOnly).toBeUndefined();
   });
+
+  // #4620 lock-out walk: the gate sends each of these officers here, so the
+  // page must offer the app rather than bounce them back to the gate.
+  it.each([
+    ["on emailed codes", { twoFactorEnrolled: true, twoFactorMethod: "EMAIL" }],
+    ["whose app was switched off", { twoFactorEnrolled: false, twoFactorMethod: "TOTP" }],
+    ["with the flag on and no method stored", { twoFactorEnrolled: true, twoFactorMethod: null }],
+  ])("renders the app-only panel for a required officer %s", async (_label, factor) => {
+    mockAuth.mockResolvedValue(
+      sessionUser({
+        twoFactorRequired: false,
+        officerTwoFactorRequired: true,
+        twoFactorSatisfiesOfficer: false,
+        ...factor,
+      }),
+    );
+    const element = (await runEnroll()) as unknown as { props: { appOnly?: boolean } };
+    expect(element.props.appOnly).toBe(true);
+  });
+
+  it("sends an officer who already has a qualifying factor on to their landing", async () => {
+    mockAuth.mockResolvedValue(
+      sessionUser({
+        twoFactorRequired: false,
+        officerTwoFactorRequired: true,
+        twoFactorSatisfiesOfficer: true,
+        twoFactorMethod: "TOTP",
+      }),
+    );
+    await expect(runEnroll()).rejects.toThrow("redirect:/dashboard");
+  });
 });

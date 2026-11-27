@@ -88,10 +88,26 @@ export function isOfficerEnrolmentPathAllowed(
 }
 
 /**
- * After the club-wide challenge is done (or when there is none): a required
- * officer who does not satisfy, and whose grace has ended, is blocked
- * everywhere except the enrolment allowlist. A null deadline is "not started"
- * and is not a lock-out.
+ * A required officer who does not satisfy and whose grace has ended (#4618).
+ * A null deadline is "not started" and is not a lock-out.
+ */
+export function isOfficerSessionGated(
+  sessionUser: TwoFactorSessionUser | null | undefined,
+  now: Date = new Date(),
+): boolean {
+  return officerClaimsAreGated(
+    {
+      officerTwoFactorRequired: sessionUser?.officerTwoFactorRequired === true,
+      twoFactorSatisfiesOfficer: sessionUser?.twoFactorSatisfiesOfficer === true,
+      officerTwoFactorGraceEndsAt: sessionUser?.officerTwoFactorGraceEndsAt ?? null,
+    },
+    now,
+  );
+}
+
+/**
+ * After the club-wide challenge is done (or when there is none): a gated
+ * officer is blocked everywhere except the enrolment allowlist.
  */
 export function isOfficerEnrolmentSessionBlocked(params: {
   sessionUser?: TwoFactorSessionUser | null;
@@ -99,20 +115,7 @@ export function isOfficerEnrolmentSessionBlocked(params: {
   method?: string | null;
   now?: Date;
 }): boolean {
-  const user = params.sessionUser;
-  const now = params.now ?? new Date();
-  if (
-    !officerClaimsAreGated(
-      {
-        officerTwoFactorRequired: user?.officerTwoFactorRequired === true,
-        twoFactorSatisfiesOfficer: user?.twoFactorSatisfiesOfficer === true,
-        officerTwoFactorGraceEndsAt: user?.officerTwoFactorGraceEndsAt ?? null,
-      },
-      now,
-    )
-  ) {
-    return false;
-  }
+  if (!isOfficerSessionGated(params.sessionUser, params.now)) return false;
   return !isOfficerEnrolmentPathAllowed(params.pathname, params.method);
 }
 

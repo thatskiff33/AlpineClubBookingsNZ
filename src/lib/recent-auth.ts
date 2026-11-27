@@ -89,10 +89,11 @@ export function passwordSignInOwesStrongerFactor(input: {
   twoFactorMethod?: string | null;
   hasPasskey?: boolean | null;
 }): boolean {
-  // The officer rule's own "does this factor count" check (INV-SSOT).
-  if (input.officerRequired) return satisfiesOfficerSecondFactor(input);
   const hasApp = input.twoFactorEnabled === true && input.twoFactorMethod !== "EMAIL";
-  return input.moduleRequired && hasApp;
+  if (input.moduleRequired && hasApp) return true;
+  // The officer rule's own "does this factor count" check (INV-SSOT). Being a
+  // required officer adds to what the module owes; it never takes away.
+  return input.officerRequired && satisfiesOfficerSecondFactor(input);
 }
 
 /**

@@ -210,7 +210,8 @@ export async function createPasskeyRegistrationOptions(input: {
     userID: new TextEncoder().encode(input.memberId),
     attestationType: "none",
     // Discoverable passkeys only (#4614 decision, 10 Nov 2026): a key that
-    // cannot store one fails the ceremony instead of saving an unusable row.
+    // cannot store one fails the ceremony instead of saving a passkey that
+    // could never sign in on its own.
     authenticatorSelection: {
       residentKey: "required",
       userVerification: "required",

@@ -130,6 +130,9 @@ export function ConfirmItsYouHost() {
   return <ConfirmItsYouDialog onDone={finish} />;
 }
 
+/** The message the fields point to with `aria-describedby`. */
+const REAUTH_ERROR_ID = "reauth-error";
+
 function ConfirmItsYouDialog({ onDone }: { onDone: (proved: boolean) => void }) {
   const [factors, setFactors] = useState<ReauthFactor[] | null>(null);
   const [passkeyOptions, setPasskeyOptions] = useState<unknown>(null);
@@ -234,7 +237,7 @@ function ConfirmItsYouDialog({ onDone }: { onDone: (proved: boolean) => void }) 
     if (factors) fieldRef.current?.focus();
   }, [factors]);
   const fieldErrorProps = error
-    ? { "aria-invalid": true, "aria-describedby": "reauth-error" }
+    ? { "aria-invalid": true, "aria-describedby": REAUTH_ERROR_ID }
     : {};
   const progress =
     factors === null
@@ -303,7 +306,7 @@ function ConfirmItsYouDialog({ onDone }: { onDone: (proved: boolean) => void }) 
             {progress}
           </p>
           <FocusedActionError
-            id="reauth-error"
+            id={REAUTH_ERROR_ID}
             error={error ?? ""}
             attentionKey={errorAttention}
           />

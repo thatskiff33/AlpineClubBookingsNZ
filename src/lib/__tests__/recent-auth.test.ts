@@ -109,5 +109,9 @@ describe("recent authentication window (#4616)", () => {
     const flagNoMethod = { twoFactorEnabled: true, twoFactorMethod: null, hasPasskey: false };
     expect(owes(flagNoMethod, false, true)).toBe(false);
     expect(owes(none, true, true)).toBe(false);
+    // Being a required officer never removes what the module owes: with the
+    // module on, that same flag is owed for an officer as for anyone else.
+    expect(owes(flagNoMethod, true, false)).toBe(true);
+    expect(owes(flagNoMethod, true, true)).toBe(true);
   });
 });

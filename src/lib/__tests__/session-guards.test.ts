@@ -98,6 +98,63 @@ describe("requireActiveSessionUser", () => {
       error: "Two-factor verification required",
     });
   });
+
+  // #4620: enrolment refuses until a forced password change is done, so the
+  // officer rule (#4618) must not refuse the change itself. It is the one
+  // thing that exemption opens.
+  describe("an officer past grace with no qualifying factor", () => {
+    const gatedOfficer = {
+      id: "member-1",
+      officerTwoFactorRequired: true,
+      twoFactorSatisfiesOfficer: false,
+      officerTwoFactorGraceEndsAt: Date.parse("2026-06-30T00:00:00.000Z"),
+    };
+
+    it("may change a forced password", async () => {
+      mockFindUnique.mockResolvedValue({ active: true, forcePasswordChange: true });
+
+      const response = await requireActiveSessionUser("member-1", {
+        allowForcePasswordChange: true,
+        sessionUser: gatedOfficer,
+      });
+
+      expect(response).toBeNull();
+    });
+
+    it("is refused on the password-change route when no change is being forced", async () => {
+      mockFindUnique.mockResolvedValue({ active: true, forcePasswordChange: false });
+
+      const response = await requireActiveSessionUser("member-1", {
+        allowForcePasswordChange: true,
+        sessionUser: gatedOfficer,
+      });
+
+      expect(response?.status).toBe(403);
+      await expect(response?.json()).resolves.toEqual({
+        error: "Two-factor verification required",
+      });
+    });
+
+    it("is refused on every other route", async () => {
+      mockFindUnique.mockResolvedValue({ active: true, forcePasswordChange: false });
+
+      const response = await requireActiveSessionUser("member-1", {
+        sessionUser: gatedOfficer,
+      });
+
+      expect(response?.status).toBe(403);
+    });
+
+    it("is let through once they have a qualifying factor", async () => {
+      mockFindUnique.mockResolvedValue({ active: true, forcePasswordChange: false });
+
+      const response = await requireActiveSessionUser("member-1", {
+        sessionUser: { ...gatedOfficer, twoFactorSatisfiesOfficer: true },
+      });
+
+      expect(response).toBeNull();
+    });
+  });
 });
 
 describe("requireAdmin", () => {

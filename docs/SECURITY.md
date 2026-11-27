@@ -679,8 +679,11 @@ report, the reset button and both routes are absent or answer 404.
 passkey stamps `twoFactorGraceStartedAt` once, with the database clock. Grace
 is a club setting, 0 to 60 days (14 by default), counted in club days. After
 it, the officer reaches only the enrolment pages, the profile security card
-and sign-out. A required officer cannot delete their last passkey; the check
-runs under their member row lock.
+and sign-out. An officer who is also being made to change their password can
+still do that, because enrolment waits for it; the signed-in pages hold back
+the "confirm your details" wizard until they have enrolled, because it would
+cover the passkey card and could not be saved. A required officer cannot
+delete their last passkey; the check runs under their member row lock.
 
 **Lost factor.** Another Full Admin opens the member and resets it after
 confirming it is them (step-up, `INV-AUTH-010`). They cannot reset
