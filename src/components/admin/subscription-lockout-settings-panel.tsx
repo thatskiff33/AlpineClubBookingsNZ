@@ -31,6 +31,7 @@ import {
   SubscriptionAccountSelect,
   type SubscriptionAccountOption,
 } from "@/components/admin/subscription-account-select";
+import { useYearEndRefresh } from "@/components/admin/use-year-end-refresh";
 
 const MONTH_NAMES = [
   "January",
@@ -155,6 +156,8 @@ export function SubscriptionLockoutSettingsPanel({
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [forbidden, setForbidden] = useState(false);
+  const { noteLoaded: noteYearEndLoaded, noteSaved: noteYearEndSaved } =
+    useYearEndRefresh();
 
   useEffect(() => {
     async function load() {
@@ -215,6 +218,7 @@ export function SubscriptionLockoutSettingsPanel({
         if (lockoutBody?.settings) {
           setSettings(lockoutBody.settings as LockoutSettings);
         }
+        noteYearEndLoaded(lockoutBody?.financialYear?.effectiveMonth);
         if (lockoutBody) {
           setFeeScheduleItemCodes(
             (lockoutBody.feeScheduleItemCodes as string[]) ?? [],
@@ -254,7 +258,7 @@ export function SubscriptionLockoutSettingsPanel({
       }
     }
     load();
-  }, [canMembership, canFinance, canBookings]);
+  }, [canMembership, canFinance, canBookings, noteYearEndLoaded]);
 
   function update(patch: Partial<LockoutSettings>) {
     setSettings((prev) => (prev ? { ...prev, ...patch } : prev));
@@ -292,6 +296,7 @@ export function SubscriptionLockoutSettingsPanel({
         if (lockoutBody.settings) {
           setSettings(lockoutBody.settings as LockoutSettings);
         }
+        noteYearEndSaved(lockoutBody.financialYear?.effectiveMonth);
         if (lockoutBody.feeScheduleItemCodes !== undefined) {
           setFeeScheduleItemCodes(
             (lockoutBody.feeScheduleItemCodes as string[]) ?? [],
