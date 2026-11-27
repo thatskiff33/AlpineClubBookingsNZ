@@ -55,7 +55,7 @@ const NIGHT_2 = new Date("2026-07-11T00:00:00.000Z");
 const CHECK_OUT = new Date("2026-07-12T00:00:00.000Z");
 // Nineteen days out, same length: the price is unchanged, so the fee alone is owed.
 const MOVED = { checkIn: "2026-07-20", checkOut: "2026-07-22" };
-// Two days later, still inside the 50% tier, so a move on from here is charged again.
+// Eleven days out: past the ten-day tier one test adds, so that a move here and a move on to MOVED each cross one.
 const NUDGED = { checkIn: "2026-07-12", checkOut: "2026-07-14" };
 // The seeded stay, and its first night alone.
 const SEEDED = { checkIn: "2026-07-10", checkOut: "2026-07-12" };
@@ -568,23 +568,34 @@ async function expectFeeAskedOnNewPrimaryInvoice(): Promise<void> {
   }, 60_000);
 
   it("MUTATION: an earlier fee nobody asked for is in the ask, because the new invoice bills it", async () => {
-    // The state an edit left before #5288: its fee recorded, no invoice, no ask.
-    await moveByDates(NUDGED);
-    await drainXeroWork();
-    await modifiedEmailHtml();
-    await prisma.xeroSyncOperation.deleteMany({ where: { localModel: "Payment", localId: PAYMENT_ID } });
-    await prisma.emailLog.deleteMany({ where: { bookingId: BOOKING_ID } });
-    expect((await censusVerdicts()).typed).toMatchObject({ residualCents: FEE_CENTS, verdict: "unasked" });
+    // A fee is charged only for a move into a more lenient tier, so two charged
+    // moves need a tier between them: 50% under ten days, 75% from ten, 100%
+    // from fourteen. Each move then costs a quarter of the price.
+    const stepFeeCents = PRICE_CENTS / 4;
+    const middleTier = { lodgeId: LODGE_ID, daysBeforeStay: 10 };
+    await prisma.cancellationPolicy.create({ data: { ...middleTier, refundPercentage: 75, creditRefundPercentage: 90 } });
+    try {
+      // The state an edit left before #5288: its fee recorded, no invoice, no ask.
+      await moveByDates(NUDGED);
+      await drainXeroWork();
+      await modifiedEmailHtml();
+      await prisma.xeroSyncOperation.deleteMany({ where: { localModel: "Payment", localId: PAYMENT_ID } });
+      await prisma.emailLog.deleteMany({ where: { bookingId: BOOKING_ID } });
+      expect((await censusVerdicts()).typed).toMatchObject({ residualCents: stepFeeCents, verdict: "unasked" });
 
-    await moveByDates();
+      await moveByDates();
 
-    // $100 of nights and two $50 fees on the invoice, $100 of credit against it.
-    expect((await buildPrimaryInvoiceAsTheCreateDoes()).lineTotalCents).toBe(PRICE_CENTS + 2 * FEE_CENTS);
-    expect(await expectEmailAsksInvoiceDue()).toBe(2 * FEE_CENTS);
-    expect(await primaryInvoiceOps()).toEqual([expect.objectContaining({ status: "PENDING", invoiceEmailDelivery: "ASKED_BY_EDIT" })]);
-    expect(await allocationOps()).toEqual([{ status: "PENDING" }]);
-    expect(await supplementaryInvoiceOps()).toEqual([]);
-    expect((await censusVerdicts()).typed).toMatchObject({ residualCents: 2 * FEE_CENTS, verdict: "billedInXero" });
+      // $100 of nights and two $25 fees on the invoice, $100 of credit against
+      // it: $50 is due, where this edit's own increase is $25.
+      expect((await buildPrimaryInvoiceAsTheCreateDoes()).lineTotalCents).toBe(PRICE_CENTS + 2 * stepFeeCents);
+      expect(await expectEmailAsksInvoiceDue()).toBe(2 * stepFeeCents);
+      expect(await primaryInvoiceOps()).toEqual([expect.objectContaining({ status: "PENDING", invoiceEmailDelivery: "ASKED_BY_EDIT" })]);
+      expect(await allocationOps()).toEqual([{ status: "PENDING" }]);
+      expect(await supplementaryInvoiceOps()).toEqual([]);
+      expect((await censusVerdicts()).typed).toMatchObject({ residualCents: 2 * stepFeeCents, verdict: "billedInXero" });
+    } finally {
+      await prisma.cancellationPolicy.deleteMany({ where: middleTier });
+    }
   }, 60_000);
 
   it("MUTATION: credit the club kept on an earlier reduction is not asked for again when the stay is put back", async () => {
