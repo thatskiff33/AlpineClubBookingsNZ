@@ -16,6 +16,14 @@ export const OWED_NOTICE_KINDS = [
   "waitlist-offer-expired",
   "waitlist-offer-lapsed-untold",
   "booking-confirmed",
+  // #5433 PR 4, the rest of the confirm-pending job.
+  "request-hold-cancelled-member",
+  "request-hold-cancelled-officers",
+  "split-guest-cancelled-member",
+  "split-guest-cancelled-officers",
+  "split-guest-payment-link",
+  "saved-card-unusable-member",
+  "saved-card-unusable-officers",
 ] as const;
 
 export type OwedNoticeKind = (typeof OWED_NOTICE_KINDS)[number];

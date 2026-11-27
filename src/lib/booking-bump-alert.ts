@@ -2,8 +2,9 @@ import { bookingBumpReason } from "@/lib/booking-bump-reason";
 import { BOOKING_OWNER_NAME_SELECT, bookingOwnerName } from "@/lib/booking-owner-name";
 import { formatBookingReference } from "@/lib/booking-reference";
 import { sendAdminBookingBumpedAlert } from "@/lib/email";
-import { adminAlertNeedsResend } from "@/lib/email/admin-alert-send-result";
 import logger from "@/lib/logger";
+import type { OwedNoticeOutcome } from "@/lib/owed-notice/deliver";
+import { owedOfficerAlertOutcome } from "@/lib/owed-notice/officer-alert";
 import { bookingListLodgeLabel, countActiveLodgesForBookingList } from "@/lib/lodges";
 import { prisma } from "@/lib/prisma";
 import type { Prisma } from "@prisma/client";
@@ -63,9 +64,9 @@ export async function alertOfficersOfBump(
   flagged: boolean,
   /** #5433: the job sending it, for the logs (the confirm-pending job, or the email retry job's sweep). */
   job: string,
-): Promise<"settled" | "unreached" | "threw"> {
-  try {
-    const result = await sendAdminBookingBumpedAlert({
+): Promise<OwedNoticeOutcome> {
+  return owedOfficerAlertOutcome("booking-bumped alert",{ bookingId: booking.id, job }, async () =>
+    sendAdminBookingBumpedAlert({
       bumpedMemberName: bookingOwnerName(booking),
       bookingReference: formatBookingReference(booking.id),
       lodgeName: await bumpedBookingLodgeName(booking.lodgeId),
@@ -73,15 +74,6 @@ export async function alertOfficersOfBump(
       checkOut: booking.checkOut,
       guestCount: booking.guests.length,
       reason: bookingBumpReason(flagged),
-    });
-    if (!adminAlertNeedsResend(result)) return "settled";
-    logger.warn(
-      { bookingId: booking.id, failedBeforeLogged: result.failedBeforeLogged, job },
-      "No officer received the booking-bumped alert and nothing will replay it; it stays owed for a day",
-    );
-    return "unreached";
-  } catch (err) {
-    logger.error({ err, bookingId: booking.id, job }, "Failed to send admin booking-bumped alert");
-    return "threw";
-  }
+    }),
+  );
 }
