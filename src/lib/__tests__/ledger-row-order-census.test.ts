@@ -208,8 +208,8 @@ const UNIQUE_EXPRESSION_READS: Record<string, string> = {
     "stripePaymentIntentId uses payment.additionalPaymentIntentId after the !additionalPaymentIntentId branch continues, excluding null (#4253).",
   "src/lib/booking-payment-cleanup.ts > failOutstandingAdditionalAskInClaim > additionalTransaction":
     "stripePaymentIntentId uses paymentIntentId after the !paymentIntentId branch returns, excluding null (#4316: moved from the cancel's claim).",
-  "src/lib/card-refund-paid-another-way-xero.ts > paidAnotherWayXeroRoute > capture":
-    "stripePaymentIntentId uses lateCaptureIntent after the lateCaptureIntent === null branch returns.",
+  "src/lib/card-refund-paid-another-way-xero.ts > lateCaptureReceiptPlan > capture":
+    "stripePaymentIntentId uses paymentIntentId, a string its callers pass only once the late capture's intent is known (#4381: moved from paidAnotherWayXeroRoute).",
   "src/lib/duplicate-capture-guard.ts > judgeCaptureOnPaidBooking > recordedSettler":
     "id uses input.recordedSettlerId inside its own truthiness ternary, so the read runs only on a non-null primary key (#4211).",
   "src/lib/late-capture-refund-credit-note.ts > creditBackLateCaptureRefunds > capture":

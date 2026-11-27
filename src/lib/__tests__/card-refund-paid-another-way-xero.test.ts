@@ -19,6 +19,13 @@ const mocks = vi.hoisted(() => ({
     queueOperationId: "rev-1",
     message: "Stripe reversal invoice queued for background processing.",
   })),
+  // #4381: the keep's reading, the receipt enqueue's gates and the enqueue itself.
+  readKeptCaptureRecord: vi.fn<(...args: unknown[]) => Promise<unknown>>(async () => ({ firstCut: "kept-invoice" })),
+  captureReceiptRefusal: vi.fn<(...args: unknown[]) => Promise<string | null>>(async () => null),
+  enqueueCaptureReceipt: vi.fn<(...args: unknown[]) => Promise<unknown>>(async () => ({ outcome: "queued", queueOperationId: "rcpt-1" })),
+  enqueueKeptInvoice: vi.fn<(...args: unknown[]) => Promise<unknown>>(async () => ({ queueOperationId: "kept-1", message: "queued" })),
+  returnToPending: vi.fn<(...args: unknown[]) => Promise<unknown>>(async () => ({ outcome: "pending", requestWritten: false })),
+  receiptOwed: vi.fn<(...args: unknown[]) => Promise<boolean>>(async () => true),
 }));
 
 vi.mock("server-only", () => ({}));
@@ -39,9 +46,22 @@ vi.mock("@/lib/late-capture-xero-receipt", () => ({
   readPaidAnotherWayLateCaptureXeroReceipt: (...args: unknown[]) => mocks.receipt(...args),
 }));
 vi.mock("@/lib/xero-kept-late-capture-invoice", () => ({
-  enqueueXeroKeptLateCaptureInvoiceOperation: vi.fn(),
+  enqueueXeroKeptLateCaptureInvoiceOperation: (...args: unknown[]) => mocks.enqueueKeptInvoice(...args),
   keptLateCaptureDocumentDate: () => "2026-06-19",
   lockKeptLateCaptureTask: vi.fn(),
+}));
+vi.mock("@/lib/late-capture-kept-xero", () => ({ readKeptCaptureRecord: (...args: unknown[]) => mocks.readKeptCaptureRecord(...args) }));
+vi.mock("@/lib/additional-capture-receipt-enqueue", () => ({
+  paidAnotherWayCaptureReceiptRefusal: (...args: unknown[]) => mocks.captureReceiptRefusal(...args),
+  enqueueAdditionalCaptureReceiptOperation: (...args: unknown[]) => mocks.enqueueCaptureReceipt(...args),
+}));
+vi.mock("@/lib/kept-late-capture-change-receipt", () => ({
+  lockKeptCaptureAnchor: async () => true,
+  lateCaptureReceiptOwed: (...args: unknown[]) => mocks.receiptOwed(...args),
+}));
+vi.mock("@/lib/xero-outbox-pending-request", () => ({
+  UNCLAIMED: { startedAt: null },
+  returnOutboxRowToPending: (...args: unknown[]) => mocks.returnToPending(...args),
 }));
 vi.mock("@/lib/kept-late-capture-receipt-rows", () => ({ keptReceiptHeldForOfficer: async () => false }));
 vi.mock("@/lib/xero-operation-outbox", () => ({ enqueueXeroRefundCreditNoteOperation: (...args: unknown[]) => mocks.enqueueNote(...args) }));
@@ -57,9 +77,11 @@ vi.mock("@/lib/xero-card-refund-reversal-outbox", async (importOriginal) => ({
 }));
 
 import {
+  PaidAnotherWayXeroChangedError,
   paidAnotherWayXeroPlan,
   paidAnotherWayCardNoteCoversCents,
   paidAnotherWayXeroPromise,
+  queueMissingPaidAnotherWayReceipt,
   queuePaidAnotherWayXero,
 } from "@/lib/card-refund-paid-another-way-xero";
 import { xeroQueuedMessage, xeroRefundNotePromise } from "@/components/admin/dead-card-refunds-xero-copy";
@@ -260,5 +282,179 @@ describe("a late capture's refund that failed later keeps INV-PAY-110's routing 
     expect(await plan({ ...failedLater, paymentIntentId: "pi_late" })).toEqual({ xeroRefundNote: "now", creditsInvoiceId: "inv-receipt" });
     expect(mocks.lateCaptureIntent).toHaveBeenCalledWith(expect.objectContaining({ idempotencyKey: "card_refund_failed_later_re_1", paymentIntentId: "pi_late" }), db);
     expect(mocks.receipt).toHaveBeenCalledWith("pi_late", db);
+  });
+});
+
+describe("#4381: a late change capture's close is split as the keep splits it (INV-PAY-144)", () => {
+  const TASK = { id: "approval-1", status: "COMPLETED", createdAt: new Date("2026-06-18T23:00:00.000Z"), bookingId: "b-1" };
+  const CAPTURE = { status: "SUCCEEDED", amountCents: 8_000, kind: "ADDITIONAL", paymentId: "p-1", bookingModificationId: "mod-1", reason: null };
+  const byEvidence = { firstCut: "by-change-evidence", anchorId: "mod-1", changeId: "mod-1", primaryInvoiceId: "inv-1" };
+  const routed = (route: string, elsewhere: number | "all" = 0) => ({ ...byEvidence, liveKeptInvoice: null, receiptRow: null, decided: { route, elsewhere } });
+  const approval = { idempotencyKey: "late_capture_approval_refund_recovery_pi_late", paymentIntentId: "pi_late", amountCents: 8_000 };
+  const lateDb = {
+    ...db,
+    paymentTransaction: { findFirst: vi.fn(async () => CAPTURE) },
+    xeroSyncOperation: { findUnique: vi.fn<(args: unknown) => Promise<unknown>>(async () => null) },
+  };
+  const closePlan = (lockApprovalTask = true) =>
+    paidAnotherWayXeroPlan(lateDb as never, approval as never, PAYMENT, { lockApprovalTask });
+  const closeQueue = (xeroPlan: Awaited<ReturnType<typeof closePlan>>) =>
+    queuePaidAnotherWayXero(lateDb as never, xeroPlan, { ...CLOSE, amountCents: 8_000 });
+  const receiptPlan = (capturedCents: number, document: "kept-invoice" | "capture-receipt") => ({
+    xeroRefundNote: "after-receipt",
+    receipt: { manualRefundTaskId: "approval-1", paymentIntentId: "pi_late", capturedCents, raisedAt: TASK.createdAt, document },
+  });
+
+  beforeEach(() => {
+    mocks.lateCaptureIntent.mockResolvedValue("pi_late");
+    mocks.receipt.mockResolvedValue({ kind: "none" });
+    db.manualRefundTask.findUnique.mockResolvedValue(TASK);
+    mocks.readKeptCaptureRecord.mockResolvedValue(routed("receipt"));
+    mocks.captureReceiptRefusal.mockResolvedValue(null);
+    mocks.enqueueCaptureReceipt.mockResolvedValue({ outcome: "queued", queueOperationId: "rcpt-1" });
+    mocks.enqueueKeptInvoice.mockResolvedValue({ queueOperationId: "kept-1", message: "queued" });
+    mocks.returnToPending.mockResolvedValue({ outcome: "pending", requestWritten: false });
+    mocks.receiptOwed.mockResolvedValue(true);
+  });
+
+  it("MUTATION: the primary invoice bills the change - the capture's own receipt is queued, never a kept-capture invoice", async () => {
+    const xeroPlan = await closePlan();
+    expect(xeroPlan).toEqual(receiptPlan(8_000, "capture-receipt"));
+    // The dialog's words are the receipt-then-note ones; the note follows the receipt.
+    expect(paidAnotherWayXeroPromise(xeroPlan)).toBe("after-receipt");
+    expect(await closeQueue(xeroPlan)).toBe("receipt-then-refund-note");
+    expect(mocks.enqueueCaptureReceipt).toHaveBeenCalledWith("pi_late", { store: lateDb, keptLateCapture: true, createdByMemberId: "m-1" });
+    expect(mocks.enqueueKeptInvoice).not.toHaveBeenCalled();
+    expect(mocks.enqueueNote).not.toHaveBeenCalled();
+  });
+
+  it("reads the keep's evidence under the anchor for the close, and without it for the dialog", async () => {
+    await closePlan(true);
+    expect(mocks.readKeptCaptureRecord).toHaveBeenLastCalledWith(lateDb, expect.objectContaining({ lockAnchor: true, manualRefundTaskId: "approval-1", bookingId: "b-1" }));
+    await closePlan(false);
+    expect(mocks.readKeptCaptureRecord).toHaveBeenLastCalledWith(lateDb, expect.objectContaining({ lockAnchor: false }));
+  });
+
+  it("receipt route recorded by another writer (the credit-release sweep holds it): nothing is queued and the note waits", async () => {
+    mocks.captureReceiptRefusal.mockResolvedValue("recorded-by-credit-release-sweep");
+    const xeroPlan = await closePlan();
+    expect(xeroPlan).toEqual({ xeroRefundNote: "after-receipt", receipt: null });
+    expect(paidAnotherWayXeroPromise(xeroPlan)).toBe("after-receipt-on-its-way");
+    expect(await closeQueue(xeroPlan)).toBe("refund-note-after-receipt");
+    expect(mocks.enqueueCaptureReceipt).not.toHaveBeenCalled();
+    expect(mocks.enqueueKeptInvoice).not.toHaveBeenCalled();
+  });
+
+  it("receipt route the enqueue refuses for any other reason (internet banking): nothing, and no note promised", async () => {
+    mocks.captureReceiptRefusal.mockResolvedValue("not-a-card-booking");
+    expect(await closePlan()).toEqual({ xeroRefundNote: "none" });
+  });
+
+  it("change-unknown: nothing is queued (the repair tool names it)", async () => {
+    mocks.readKeptCaptureRecord.mockResolvedValue(routed("change-unknown"));
+    expect(await closePlan()).toEqual({ xeroRefundNote: "none" });
+  });
+
+  it("kept-invoice route: the kept-capture invoice for the capture less what other writers record", async () => {
+    mocks.readKeptCaptureRecord.mockResolvedValue(routed("kept-invoice", 3_000));
+    const xeroPlan = await closePlan();
+    expect(xeroPlan).toEqual(receiptPlan(5_000, "kept-invoice"));
+    expect(await closeQueue(xeroPlan)).toBe("receipt-then-refund-note");
+    expect(mocks.enqueueKeptInvoice).toHaveBeenCalledWith(expect.objectContaining({ capturedCents: 5_000, requeueFailedUnsent: true }));
+    expect(mocks.enqueueCaptureReceipt).not.toHaveBeenCalled();
+  });
+
+  it.each([["all" as const], [8_000]])("kept-invoice route recorded in full elsewhere (%s): nothing to queue, the note waits", async (elsewhere) => {
+    mocks.readKeptCaptureRecord.mockResolvedValue(routed("kept-invoice", elsewhere));
+    expect(await closePlan()).toEqual({ xeroRefundNote: "after-receipt", receipt: null });
+  });
+
+  it("change-invoice route: the kept-capture invoice for the gross capture, as before #4381", async () => {
+    mocks.readKeptCaptureRecord.mockResolvedValue(routed("change-invoice"));
+    expect(await closePlan()).toEqual(receiptPlan(8_000, "kept-invoice"));
+  });
+
+  it("the booking's own payment, or a kept-capture invoice already asked for: that invoice, as before #4381", async () => {
+    mocks.readKeptCaptureRecord.mockResolvedValue({ firstCut: "kept-invoice" });
+    expect(await closePlan()).toEqual(receiptPlan(8_000, "kept-invoice"));
+    mocks.readKeptCaptureRecord.mockResolvedValue({ ...byEvidence, liveKeptInvoice: { id: "kept-0" }, receiptRow: null, decided: null });
+    expect(await closePlan()).toEqual(receiptPlan(8_000, "kept-invoice"));
+    expect(mocks.captureReceiptRefusal).not.toHaveBeenCalled();
+  });
+
+  it("the capture's own receipt row still undecided is its record; one that stood down for another writer is not re-queued", async () => {
+    const row = { id: "rcpt-0", status: "PENDING", manuallyResolvedAt: null, requestPayload: {} };
+    mocks.readKeptCaptureRecord.mockResolvedValue({ ...byEvidence, liveKeptInvoice: null, receiptRow: row, decided: null });
+    expect(await closePlan()).toEqual(receiptPlan(8_000, "capture-receipt"));
+    mocks.readKeptCaptureRecord.mockResolvedValue({ ...byEvidence, liveKeptInvoice: null, receiptRow: { ...row, status: "SUCCEEDED" }, decided: null });
+    expect(await closePlan()).toEqual({ xeroRefundNote: "none" });
+  });
+
+  describe("the queue's answer to a receipt row already there", () => {
+    const plan = receiptPlan(8_000, "capture-receipt") as Awaited<ReturnType<typeof closePlan>>;
+    const existing = (row: Record<string, unknown>) => {
+      mocks.enqueueCaptureReceipt.mockResolvedValue({ outcome: "already-queued", queueOperationId: "rcpt-0" });
+      lateDb.xeroSyncOperation.findUnique.mockResolvedValueOnce({ status: "FAILED", manuallyResolvedAt: null, requestPayload: {}, ...row });
+    };
+
+    it("MUTATION: an undecided FAILED row is put back to run, guarded on the FAILED row read", async () => {
+      existing({});
+      expect(await closeQueue(plan)).toBe("receipt-then-refund-note");
+      expect(mocks.returnToPending).toHaveBeenCalledWith(
+        expect.objectContaining({ operationId: "rcpt-0", where: { status: "FAILED", manuallyResolvedAt: null }, request: { keep: true } }),
+      );
+    });
+
+    it("a FAILED row that stored its decision may be in Xero: left for an officer, never run again", async () => {
+      existing({ requestPayload: { plan: { legs: [] } } });
+      expect(await closeQueue(plan)).toBe("receipt-held-for-officer");
+      expect(mocks.returnToPending).not.toHaveBeenCalled();
+    });
+
+    it("a requeue lost to the outbox's claim answers the claimed row; one lost to an officer's resolve is a 409", async () => {
+      existing({});
+      mocks.returnToPending.mockResolvedValueOnce({ outcome: "lost" });
+      lateDb.xeroSyncOperation.findUnique.mockResolvedValueOnce({ status: "RUNNING", manuallyResolvedAt: null });
+      expect(await closeQueue(plan)).toBe("receipt-then-refund-note");
+      existing({});
+      mocks.returnToPending.mockResolvedValueOnce({ outcome: "lost" });
+      lateDb.xeroSyncOperation.findUnique.mockResolvedValueOnce({ status: "FAILED", manuallyResolvedAt: new Date() });
+      await expect(closeQueue(plan)).rejects.toBeInstanceOf(PaidAnotherWayXeroChangedError);
+    });
+
+    it("a queued or running row is the record: nothing is written", async () => {
+      existing({ status: "PENDING" });
+      expect(await closeQueue(plan)).toBe("receipt-then-refund-note");
+      expect(mocks.returnToPending).not.toHaveBeenCalled();
+    });
+  });
+
+  it("MUTATION: a refusal the plan did not predict is a fault - the close throws and nothing commits", async () => {
+    mocks.enqueueCaptureReceipt.mockResolvedValue({ outcome: "not-eligible", reason: "capture-not-kept" });
+    await expect(closeQueue(receiptPlan(8_000, "capture-receipt") as never)).rejects.toThrow(/could not be queued \(capture-not-kept\)/);
+  });
+
+  describe("the repair tool's queue of a close's missing receipt (queueMissingPaidAnotherWayReceipt)", () => {
+    const repair = () =>
+      queueMissingPaidAnotherWayReceipt(lateDb as never, { manualRefundTaskId: "approval-1", paymentIntentId: "pi_late", clubZone: "Pacific/Auckland" as never });
+
+    beforeEach(() => {
+      db.manualRefundTask.findUnique.mockResolvedValue({ ...TASK, lateCaptureApprovalIntentId: "pi_late" });
+    });
+
+    it("runs the close's split again under its locks: the receipt where the primary invoice bills the change", async () => {
+      expect(await repair()).toBe("receipt-then-refund-note");
+      expect(mocks.readKeptCaptureRecord).toHaveBeenCalledWith(lateDb, expect.objectContaining({ lockAnchor: true }));
+      expect(mocks.enqueueCaptureReceipt).toHaveBeenCalledWith("pi_late", expect.objectContaining({ keptLateCapture: true, createdByMemberId: null }));
+      expect(mocks.enqueueKeptInvoice).not.toHaveBeenCalled();
+    });
+
+    it("queues nothing for a stale snapshot: no receipt owed any more, or Xero already records it", async () => {
+      mocks.receiptOwed.mockResolvedValueOnce(false);
+      expect(await repair()).toBe("nothing");
+      mocks.receipt.mockResolvedValueOnce({ kind: "recorded", invoiceId: null, recordedCents: 8_000 });
+      expect(await repair()).toBe("nothing");
+      expect(mocks.enqueueCaptureReceipt).not.toHaveBeenCalled();
+    });
   });
 });

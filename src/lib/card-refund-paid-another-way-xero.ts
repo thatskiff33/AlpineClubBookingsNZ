@@ -20,7 +20,7 @@ import {
   lockKeptLateCaptureTask,
 } from "@/lib/xero-kept-late-capture-invoice";
 import { keptReceiptHeldForOfficer } from "@/lib/kept-late-capture-receipt-rows";
-import { lockKeptCaptureAnchor } from "@/lib/kept-late-capture-change-receipt";
+import { lateCaptureReceiptOwed, lockKeptCaptureAnchor } from "@/lib/kept-late-capture-change-receipt";
 import { paidAnotherWayReceiptRetryInstruction } from "@/lib/paid-another-way-receipt-retry-wording";
 import { enqueueXeroRefundCreditNoteOperation } from "@/lib/xero-operation-outbox";
 import {
@@ -188,15 +188,20 @@ async function paidAnotherWayXeroRoute(
       payment.xeroInvoiceId !== null || (await findKeptLateCaptureInvoiceIdForPayment(payment.id, db)) !== null;
     return hasInvoice ? { xeroRefundNote: "now" } : { xeroRefundNote: "none" };
   }
-  const task = await db.manualRefundTask.findUnique({
-    where: { lateCaptureApprovalIntentId: lateCaptureIntent },
-    select: { id: true, status: true, createdAt: true, bookingId: true },
-  });
+  const readTask = () =>
+    db.manualRefundTask.findUnique({
+      where: { lateCaptureApprovalIntentId: lateCaptureIntent },
+      select: { id: true, status: true, createdAt: true, bookingId: true },
+    });
+  let task = await readTask();
   if (task && lockApprovalTask) {
     await lockKeptLateCaptureTask(db, task.id);
+    // #4381: read again under the row, so a keep or a reopen that committed
+    // while the close waited on it is the status the plan decides from.
+    task = await readTask();
     // #4324 review CONC-1: a change capture's plan is read under its change's
     // anchor, after the task row, and held to the queue below.
-    await lockKeptCaptureAnchor(db, { manualRefundTaskId: task.id, paymentIntentId: lateCaptureIntent }, { additionalOnly: true });
+    if (task) await lockKeptCaptureAnchor(db, { manualRefundTaskId: task.id, paymentIntentId: lateCaptureIntent }, { additionalOnly: true });
   }
   const receipt = await readPaidAnotherWayLateCaptureXeroReceipt(lateCaptureIntent, db);
   // Round 7 (money M5, `INV-PAY-122`): the note credits THIS receipt, named by
@@ -214,8 +219,24 @@ async function paidAnotherWayXeroRoute(
       : { xeroRefundNote: "after-receipt", receipt: null, receiptFailed: true };
   }
   if (receipt.kind === "resolved-by-hand" || !task) return { xeroRefundNote: "none" };
+  return lateCaptureReceiptPlan(db, task, lateCaptureIntent, { lockAnchor: lockApprovalTask });
+}
+
+/**
+ * The plan for a late capture Xero holds no receipt for yet: whether one is
+ * owed (`decideLateCapture`, the refund closed paid another way), and which
+ * document records it (`paidAnotherWayReceiptDocument`). Read by the close's
+ * plan, and (#4381) again by the repair tool's queue of a close's missing
+ * receipt (`queueMissingPaidAnotherWayReceipt`).
+ */
+async function lateCaptureReceiptPlan(
+  db: XeroPlanStore,
+  task: { id: string; status: "OPEN" | "COMPLETED" | "DISMISSED"; createdAt: Date; bookingId: string },
+  paymentIntentId: string,
+  { lockAnchor }: { lockAnchor: boolean },
+): Promise<PaidAnotherWayXeroPlan> {
   const capture = await db.paymentTransaction.findFirst({
-    where: { source: "STRIPE", stripePaymentIntentId: lateCaptureIntent },
+    where: { source: "STRIPE", stripePaymentIntentId: paymentIntentId },
     select: { status: true, amountCents: true, kind: true, paymentId: true, bookingModificationId: true, reason: true },
   });
   const { recordCents } = decideLateCapture({
@@ -226,20 +247,14 @@ async function paidAnotherWayXeroRoute(
     refundClosedPaidAnotherWay: true,
   });
   if (recordCents === 0 || !capture) return { xeroRefundNote: "none" };
-  const document = await paidAnotherWayReceiptDocument(db, {
-    task,
-    paymentIntentId: lateCaptureIntent,
-    capture,
-    recordCents,
-    lockAnchor: lockApprovalTask,
-  });
+  const document = await paidAnotherWayReceiptDocument(db, { task, paymentIntentId, capture, recordCents, lockAnchor });
   if (document.kind === "none") return { xeroRefundNote: "none" };
   if (document.kind === "recorded-elsewhere") return { xeroRefundNote: "after-receipt", receipt: null };
   return {
     xeroRefundNote: "after-receipt",
     receipt: {
       manualRefundTaskId: task.id,
-      paymentIntentId: lateCaptureIntent,
+      paymentIntentId,
       capturedCents: document.capturedCents,
       raisedAt: task.createdAt,
       document: document.kind,
@@ -531,19 +546,38 @@ export async function queuePaidAnotherWayXero(
     if (plan.receiptHeldForOfficer) return "receipt-held-for-officer";
     return plan.receiptFailed ? "refund-note-after-failed-receipt" : "refund-note-after-receipt";
   }
-  // #4324 (review C4, CONC-1): a change capture's kept-capture invoice is
-  // queued under its change's anchor, after the task row, as the keep queues
-  // it - so the supplementary enqueue's check for it (`anchorCaptureHasReceipt`)
-  // sees it. The plan took both already (`lockApprovalTask`); re-taking them is a no-op.
-  await lockKeptLateCaptureTask(tx, plan.receipt.manualRefundTaskId);
-  await lockKeptCaptureAnchor(tx, plan.receipt, { additionalOnly: true });
-  if (plan.receipt.document === "capture-receipt") return queuePaidAnotherWayCaptureReceipt(tx, plan.receipt, close);
+  return queueLateCaptureReceipt(tx, plan.receipt, close);
+}
+
+/** The late capture's receipt an `after-receipt` plan queues. */
+type PlannedLateCaptureReceipt = NonNullable<Extract<PaidAnotherWayXeroPlan, { xeroRefundNote: "after-receipt" }>["receipt"]>;
+
+/** What queuing a planned receipt needs of the close (or of the repair tool's run of it, with no officer). */
+type ReceiptQueueContext = { operationId: string; bookingId: string; actingMemberId: string | null; clubZone: ClubTimeZone };
+
+/**
+ * The planned receipt, by the document the plan chose: the capture's own
+ * receipt (#4381, {@link queuePaidAnotherWayCaptureReceipt}), or the
+ * kept-capture invoice.
+ */
+async function queueLateCaptureReceipt(
+  tx: Prisma.TransactionClient,
+  receipt: PlannedLateCaptureReceipt,
+  close: ReceiptQueueContext,
+): Promise<PaidAnotherWayXeroQueued> {
+  // #4324 (review C4, CONC-1): a change capture's record is queued under its
+  // change's anchor, after the task row, as the keep queues it - so the
+  // supplementary enqueue's check for it (`anchorCaptureHasReceipt`) sees it.
+  // The plan took both already (`lockApprovalTask`); re-taking them is a no-op.
+  await lockKeptLateCaptureTask(tx, receipt.manualRefundTaskId);
+  await lockKeptCaptureAnchor(tx, receipt, { additionalOnly: true });
+  if (receipt.document === "capture-receipt") return queuePaidAnotherWayCaptureReceipt(tx, receipt, close);
   const queued = await enqueueXeroKeptLateCaptureInvoiceOperation({
-    manualRefundTaskId: plan.receipt.manualRefundTaskId,
+    manualRefundTaskId: receipt.manualRefundTaskId,
     bookingId: close.bookingId,
-    paymentIntentId: plan.receipt.paymentIntentId,
-    capturedCents: plan.receipt.capturedCents,
-    capturedOn: keptLateCaptureDocumentDate(plan.receipt.raisedAt, close.clubZone),
+    paymentIntentId: receipt.paymentIntentId,
+    capturedCents: receipt.capturedCents,
+    capturedOn: keptLateCaptureDocumentDate(receipt.raisedAt, close.clubZone),
     createdByMemberId: close.actingMemberId,
     // Round 7 (money M2): a receipt row that failed before it reached Xero is
     // put back to run, never left FAILED as if it were live. Round 8: one that
@@ -561,6 +595,39 @@ export async function queuePaidAnotherWayXero(
   // Round 9: the id is the FAILED row left for an officer, not a queued one.
   if (queued.awaitingOfficerRetry) return "receipt-held-for-officer";
   return "receipt-then-refund-note";
+}
+
+/**
+ * #4381 (`INV-PAY-144`): THE REPAIR TOOL'S QUEUE OF A CLOSE'S MISSING RECEIPT
+ * - a late capture whose approved refund was closed as paid another way and
+ * which Xero holds no receipt for. The close's own decision, run again on the
+ * repair's transaction under the task row and the change's anchor: the task
+ * still owes the receipt (`lateCaptureReceiptOwed`), nothing in Xero records
+ * it yet, and the document is split as the close splits it
+ * (`lateCaptureReceiptPlan`), so a stale snapshot queues nothing twice and
+ * never the kept-capture invoice beside the invoice that bills the change.
+ */
+export async function queueMissingPaidAnotherWayReceipt(
+  tx: Prisma.TransactionClient,
+  input: { manualRefundTaskId: string; paymentIntentId: string; clubZone: ClubTimeZone },
+): Promise<PaidAnotherWayXeroQueued> {
+  await lockKeptLateCaptureTask(tx, input.manualRefundTaskId);
+  await lockKeptCaptureAnchor(tx, input, { additionalOnly: true });
+  const task = await tx.manualRefundTask.findUnique({
+    where: { id: input.manualRefundTaskId },
+    select: { id: true, status: true, createdAt: true, bookingId: true, lateCaptureApprovalIntentId: true },
+  });
+  if (!task || task.status !== "COMPLETED" || task.lateCaptureApprovalIntentId !== input.paymentIntentId) return "nothing";
+  if (!(await lateCaptureReceiptOwed(tx, input.paymentIntentId))) return "nothing";
+  if ((await readPaidAnotherWayLateCaptureXeroReceipt(input.paymentIntentId, tx)).kind !== "none") return "nothing";
+  const plan = await lateCaptureReceiptPlan(tx, task, input.paymentIntentId, { lockAnchor: true });
+  if (plan.xeroRefundNote !== "after-receipt" || plan.receipt === null) return "nothing";
+  return queueLateCaptureReceipt(tx, plan.receipt, {
+    operationId: `repair:${task.id}`,
+    bookingId: task.bookingId,
+    actingMemberId: null,
+    clubZone: input.clubZone,
+  });
 }
 
 /**
@@ -582,7 +649,7 @@ export async function queuePaidAnotherWayXero(
 async function queuePaidAnotherWayCaptureReceipt(
   tx: Prisma.TransactionClient,
   receipt: { paymentIntentId: string },
-  close: { operationId: string; actingMemberId: string },
+  close: ReceiptQueueContext,
 ): Promise<PaidAnotherWayXeroQueued> {
   const queued = await enqueueAdditionalCaptureReceiptOperation(receipt.paymentIntentId, {
     store: tx,

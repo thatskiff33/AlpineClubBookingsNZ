@@ -108,6 +108,8 @@ let gapCheck: typeof import("@/lib/xero-primary-invoice-fee-gap");
 let invoiceKey: typeof import("@/lib/xero-booking-invoice-key");
 let refundNote: typeof import("@/lib/late-capture-refund-credit-note");
 let door: typeof import("@/lib/manual-refund-task-resolution");
+let receiptVerdict: typeof import("@/lib/late-capture-xero-receipt");
+let eligibleCash: typeof import("@/lib/refund-note-eligible-cash");
 let CLUB_FORMAT_TEST: (typeof import("@/lib/__tests__/support/club-format-fixture"))["CLUB_FORMAT_TEST"];
 
 async function clean(): Promise<void> {
@@ -338,6 +340,8 @@ async function holdLock(lock: (tx: Prisma.TransactionClient) => Promise<unknown>
     invoiceKey = await import("@/lib/xero-booking-invoice-key");
     refundNote = await import("@/lib/late-capture-refund-credit-note");
     door = await import("@/lib/manual-refund-task-resolution");
+    receiptVerdict = await import("@/lib/late-capture-xero-receipt");
+    eligibleCash = await import("@/lib/refund-note-eligible-cash");
     ({ CLUB_FORMAT_TEST } = await import("@/lib/__tests__/support/club-format-fixture"));
     const [{ PrismaClient: SeparatePrismaClient }, { createPrismaPgAdapter }] = await Promise.all([
       import("@prisma/client"),
@@ -854,6 +858,275 @@ async function holdLock(lock: (tx: Prisma.TransactionClient) => Promise<unknown>
         where: { localModel: "ManualRefundTask", localId: TASK_ID, queueType: "KEPT_LATE_CAPTURE_INVOICE", status: { not: "CANCELLED" } },
       }),
     ).toBe(0);
+  });
+
+  /**
+   * #4381: the approved $80 refund of the late change capture, every Stripe
+   * retry given up (FAILED, no retry left) - the row a treasurer closes as
+   * paid another way.
+   */
+  async function seedDeadApprovalRefund(): Promise<void> {
+    await prisma.paymentRecoveryOperation.create({
+      data: {
+        id: REFUND_OPERATION_ID,
+        type: "REFUND_BOOKING_MODIFICATION",
+        status: "FAILED",
+        bookingId: BOOKING_ID,
+        paymentId: PAYMENT_ID,
+        paymentIntentId: CHANGE_INTENT,
+        amountCents: 8_000,
+        allocationPlan: [{ paymentTransactionId: CHANGE_TX_ID, amountCents: 8_000 }],
+        idempotencyKey: `late_capture_approval_refund_recovery_${CHANGE_INTENT}`,
+        attempts: 5,
+        nextRetryAt: null,
+      },
+    });
+  }
+
+  /** The treasurer's close of that refund for the whole $80, through the real door. */
+  const closePaidAnotherWay = () =>
+    paidAnotherWay.closeCardRefundPaidAnotherWay({
+      operationId: REFUND_OPERATION_ID,
+      amountCents: 8_000,
+      paidBack: "full",
+      expectedOwedCents: 8_000,
+      note: "Bank transfer, ref RACE-4381",
+      actingMemberId: OWNER_ID,
+    });
+
+  const liveKeptInvoices = () =>
+    prisma.xeroSyncOperation.count({
+      where: { localModel: "ManualRefundTask", localId: TASK_ID, queueType: "KEPT_LATE_CAPTURE_INVOICE", status: { not: "CANCELLED" } },
+    });
+
+  const refundNotes = () =>
+    prisma.xeroSyncOperation.findMany({
+      where: { localModel: "Payment", localId: PAYMENT_ID, queueType: "REFUND_CREDIT_NOTE", status: { not: "CANCELLED" } },
+      select: { requestPayload: true },
+    });
+
+  /** The outbox claims the receipt row and its worker runs, Xero showing `amountDue` dollars due on the primary invoice. */
+  async function runReceiptWorker(operationId: string, amountDue: number) {
+    const claimed = await claim.claimXeroSyncOperationToRunning(operationId, {
+      direction: "OUTBOUND",
+      entityType: "PAYMENT",
+      operationType: "CREATE",
+      localModel: { in: ["PaymentTransaction"] },
+    });
+    expect(claimed).toBeTruthy();
+    const paid: Array<{ amountCents?: number; invoiceId?: string }> = [];
+    await worker.recordAdditionalCaptureReceipt(
+      { syncOperation: claimed! },
+      {
+        getAuthenticatedXeroClient: async () =>
+          ({
+            tenantId: "tenant",
+            xero: {
+              accountingApi: {
+                getInvoice: async () => ({
+                  body: { invoices: [{ invoiceID: INVOICE_ID, status: "AUTHORISED", amountDue, payments: [] }] },
+                }),
+              },
+            },
+          }) as never,
+        callXeroApi: ((call: () => Promise<unknown>) => call()) as never,
+        createXeroPaymentForInvoice: async (input) => {
+          paid.push(input as { amountCents?: number; invoiceId?: string });
+          return "race-4381-xero-payment";
+        },
+        readStripeCaptureDocumentDate: async () => "2026-06-20",
+      },
+    );
+    return paid;
+  }
+
+  it("MUTATION #4381: a paid-another-way close of an $80 change the primary invoice bills records it once - its own receipt on that invoice, the bank note against it, no kept-capture invoice", { timeout: 30_000 }, async () => {
+    // The $80 edit was settled against the primary invoice, its card ask
+    // captured after the cancel, the treasurer approved refunding it, Stripe
+    // gave up, and the treasurer paid it back by bank.
+    await seed("COMPLETED");
+    await seedDeadApprovalRefund();
+
+    const closed = await closePaidAnotherWay();
+    expect(closed).toMatchObject({ xeroQueued: "receipt-then-refund-note" });
+    // INV-PAY-144: the capture's own receipt, never the kept-capture invoice beside the invoice that bills the change.
+    const [receipt, ...more] = (await receiptRows()).filter((row) => row.status !== "CANCELLED");
+    expect(more).toEqual([]);
+    expect(receipt).toMatchObject({ status: "PENDING" });
+    expect(await liveKeptInvoices()).toBe(0);
+    const [record] = await prisma.manualRefundTask.findMany({
+      where: { bookingId: BOOKING_ID, kind: "CANCELLED_BOOKING_HAND_BACK" },
+      select: { id: true, occurrenceKey: true },
+    });
+    expect(record?.occurrenceKey).toBe(`card-refund-paid-another-way:${REFUND_OPERATION_ID}:note-after-receipt`);
+    // The note waits for the receipt (owner, 8 Oct 2026: "Record receipt, then credit").
+    expect(await refundNotes()).toEqual([]);
+
+    // The worker reads "still owed its receipt" again under the anchor - the
+    // approved task with its close - and records the $80 on the primary invoice.
+    const paid = await runReceiptWorker(receipt!.id, 80);
+    expect(paid).toEqual([expect.objectContaining({ amountCents: 8_000 })]);
+    expect((await receiptRows()).find((row) => row.id === receipt!.id)).toMatchObject({ status: "SUCCEEDED" });
+    // The close's bank-transfer note, queued once the receipt is in Xero, credits the invoice that bills the change.
+    expect(await refundNotes()).toEqual([
+      {
+        requestPayload: expect.objectContaining({
+          refundAmountCents: 8_000,
+          refundMethod: "internet-banking",
+          paidAnotherWayTaskId: record!.id,
+          creditsInvoiceId: INVOICE_ID,
+        }),
+      },
+    ]);
+    expect(await liveKeptInvoices()).toBe(0);
+    // #5273: the receipt's worker records its capture-receipt manifest after the send - one, for its Xero payment
+    // (a CONFLICT here: this fixture posts no capture to the journal for it to cover).
+    const manifests = await prisma.memberMoneyExportManifest.findMany({
+      where: { bookingId: BOOKING_ID, documentRole: "CAPTURE_RECEIPT" },
+      select: { providerInvoiceId: true },
+    });
+    expect(manifests).toEqual([{ providerInvoiceId: "race-4381-xero-payment" }]);
+  });
+
+  it("#4381 (owner item 6): a receipt capped at the $50 the primary shows due records $50; the close's bank note is still what was paid back", { timeout: 30_000 }, async () => {
+    await seed("COMPLETED");
+    await seedDeadApprovalRefund();
+    await expect(closePaidAnotherWay()).resolves.toMatchObject({ xeroQueued: "receipt-then-refund-note" });
+    const [receipt] = await receiptRows();
+
+    const paid = await runReceiptWorker(receipt!.id, 50);
+    expect(paid).toEqual([expect.objectContaining({ amountCents: 5_000 })]);
+    // #4383 (INV-PAY-110): the receipt records $50 of the $80, the rest told to an officer.
+    await expect(receiptVerdict.readPaidAnotherWayLateCaptureXeroReceipt(CHANGE_INTENT)).resolves.toMatchObject({
+      kind: "recorded",
+      invoiceId: INVOICE_ID,
+      recordedCents: 5_000,
+    });
+    // INV-PAY-122: the close's note is sized by what the close paid back.
+    expect(await refundNotes()).toEqual([
+      { requestPayload: expect.objectContaining({ refundAmountCents: 8_000, creditsInvoiceId: INVOICE_ID }) },
+    ]);
+    // No card refund of the capture, so the refund-note cash leaves nothing out for it.
+    const payment = await prisma.payment.findUniqueOrThrow({ where: { id: PAYMENT_ID }, select: { id: true, bookingId: true, refundedAmountCents: true } });
+    await expect(eligibleCash.resolveRefundNoteEligibleCash(payment)).resolves.toMatchObject({ lateCaptureExcludedCents: 0 });
+    expect(await liveKeptInvoices()).toBe(0);
+  });
+
+  it("#4381: a close racing a keep of the same capture on the change's anchor - one receipt, which the later of the two finds", { timeout: 30_000 }, async () => {
+    // The approval was reopened, so the refund row is still dead while the task is OPEN again: the keep and the close each queue the receipt.
+    await seed("OPEN");
+    await seedDeadApprovalRefund();
+    const holder = await holdLock((tx) => supplementary.lockSupplementaryInvoiceAnchor(tx, MODIFICATION_ID));
+    let keepOutcome: PromiseSettledResult<Awaited<ReturnType<typeof dismiss>>> | undefined;
+    let closeOutcome: PromiseSettledResult<Awaited<ReturnType<typeof closePaidAnotherWay>>> | undefined;
+    try {
+      const keeping = dismiss().then(
+        (value) => ({ status: "fulfilled" as const, value }),
+        (reason: unknown) => ({ status: "rejected" as const, reason }),
+      );
+      expect(await untilQueuedBehind(holder.pid, 1)).toBe(1);
+      const closing = closePaidAnotherWay().then(
+        (value) => ({ status: "fulfilled" as const, value }),
+        (reason: unknown) => ({ status: "rejected" as const, reason }),
+      );
+      // The close waits on the task row the keep holds, the keep on the anchor.
+      expect(await untilWaiting(2)).toBe(2);
+      holder.release();
+      await holder.done;
+      [keepOutcome, closeOutcome] = await Promise.all([keeping, closing]);
+    } finally {
+      holder.release();
+      await holder.done.catch(() => undefined);
+    }
+    const live = (await receiptRows()).filter((row) => row.status !== "CANCELLED");
+    expect(live).toHaveLength(1);
+    expect(keepOutcome).toEqual({ status: "fulfilled", value: { kind: "receipt-queued", queueOperationId: live[0]!.id } });
+    expect(closeOutcome).toMatchObject({ status: "fulfilled", value: { xeroQueued: "receipt-then-refund-note" } });
+    expect(await liveKeptInvoices()).toBe(0);
+  });
+
+  it("#4381: a reopen queued behind a close on the task row - the close commits its receipt, and the worker then reads the reopened task under the anchor and stands down", { timeout: 30_000 }, async () => {
+    await seed("COMPLETED");
+    await seedDeadApprovalRefund();
+    const holder = await holdLock((tx) => supplementary.lockSupplementaryInvoiceAnchor(tx, MODIFICATION_ID));
+    let closeOutcome: PromiseSettledResult<Awaited<ReturnType<typeof closePaidAnotherWay>>> | undefined;
+    try {
+      const closing = closePaidAnotherWay().then(
+        (value) => ({ status: "fulfilled" as const, value }),
+        (reason: unknown) => ({ status: "rejected" as const, reason }),
+      );
+      expect(await untilQueuedBehind(holder.pid, 1)).toBe(1);
+      // The reopen's status-fenced claim writes the task row the close holds.
+      const reopening = prisma.manualRefundTask
+        .updateMany({ where: { id: TASK_ID, status: "COMPLETED" }, data: { status: "OPEN", completedAt: null } })
+        .then((result) => result);
+      expect(await untilWaiting(2)).toBe(2);
+      holder.release();
+      await holder.done;
+      [closeOutcome] = await Promise.all([closing, reopening]);
+    } finally {
+      holder.release();
+      await holder.done.catch(() => undefined);
+    }
+    expect(closeOutcome).toMatchObject({ status: "fulfilled", value: { xeroQueued: "receipt-then-refund-note" } });
+    const [receipt] = await receiptRows();
+    // Reopened, the capture owes no receipt: the worker closes its row unsent, and nothing records the capture twice.
+    const paid = await runReceiptWorker(receipt!.id, 80);
+    expect(paid).toEqual([]);
+    expect((await receiptRows())[0]).toMatchObject({ status: "CANCELLED" });
+    expect(await liveKeptInvoices()).toBe(0);
+  });
+
+  it("MUTATION #4381: the close puts an undecided FAILED receipt back to run only while it is still FAILED - a worker's claim landing first survives", { timeout: 30_000 }, async () => {
+    await seed("COMPLETED");
+    await seedDeadApprovalRefund();
+    const key = worker.additionalCaptureReceiptKey(CHANGE_INTENT);
+    const failed = await prisma.xeroSyncOperation.create({
+      data: {
+        direction: "OUTBOUND",
+        entityType: "PAYMENT",
+        operationType: "CREATE",
+        localModel: "PaymentTransaction",
+        localId: CHANGE_TX_ID,
+        queueType: "ADDITIONAL_CAPTURE_RECEIPT",
+        status: "FAILED",
+        idempotencyKey: key,
+        correlationKey: key,
+        lastErrorCode: "XERO_UNAVAILABLE",
+        requestPayload: {
+          queueType: "ADDITIONAL_CAPTURE_RECEIPT",
+          bookingId: BOOKING_ID,
+          paymentId: PAYMENT_ID,
+          paymentTransactionId: CHANGE_TX_ID,
+          paymentIntentId: CHANGE_INTENT,
+        },
+      },
+      select: { id: true },
+    });
+    // The outbox claims the row (uncommitted) while the close plans and queues.
+    const holder = await holdLock((tx) =>
+      tx.xeroSyncOperation.update({ where: { id: failed.id }, data: { status: "RUNNING", startedAt: new Date() } }),
+    );
+    let closeOutcome: PromiseSettledResult<Awaited<ReturnType<typeof closePaidAnotherWay>>> | undefined;
+    try {
+      const closing = closePaidAnotherWay().then(
+        (value) => ({ status: "fulfilled" as const, value }),
+        (reason: unknown) => ({ status: "rejected" as const, reason }),
+      );
+      // The close read the row FAILED, and its guarded requeue waits on the claim's row lock.
+      expect(await untilQueuedBehind(holder.pid, 1)).toBe(1);
+      holder.release();
+      await holder.done;
+      closeOutcome = await closing;
+    } finally {
+      holder.release();
+      await holder.done.catch(() => undefined);
+    }
+    expect(closeOutcome).toMatchObject({ status: "fulfilled", value: { xeroQueued: "receipt-then-refund-note" } });
+    // The claim stands: the requeue lost, so the running worker is never put back to PENDING under it.
+    expect(await prisma.xeroSyncOperation.findUnique({ where: { id: failed.id }, select: { status: true } })).toEqual({ status: "RUNNING" });
+    expect((await receiptRows()).filter((row) => row.status !== "CANCELLED")).toHaveLength(1);
+    expect(await liveKeptInvoices()).toBe(0);
   });
 
   it("#4382: a retired change invoice is re-queued in the keep's commit, and a rolled-back keep leaves it retired", async () => {
