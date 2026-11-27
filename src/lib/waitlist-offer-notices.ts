@@ -69,7 +69,6 @@ import { clubFormatValues } from "@/lib/club-format-server";
 import type { ClubTimeZone } from "@/lib/club-time";
 import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
 import { sendAdminWaitlistOfferAlert, sendWaitlistOfferEmail } from "@/lib/email";
-import { adminAlertNeedsResend } from "@/lib/email/admin-alert-send-result";
 import { sendAdminWaitlistNoticeUnsentAlert } from "@/lib/email/admin-alerts-waitlist-notice-unsent";
 import { emailReachability } from "@/lib/email-reachability";
 import { seasonYearOfStoredDate } from "@/lib/financial-year";
@@ -79,11 +78,13 @@ import type { SubscriptionLockoutMode } from "@/lib/membership-lockout-settings"
 import {
   deliverOwedNotice,
   OWED_OFFICER_ALERT_MAX_AGE_MS,
+  owedOfficerAlertSendBy,
   type OwedNoticeDeliverer,
   type OwedNoticeOutcome,
   type OwedNoticeRun,
 } from "@/lib/owed-notice/deliver";
 import type { OwedNoticeKind } from "@/lib/owed-notice/kinds";
+import { owedOfficerAlertOutcome } from "@/lib/owed-notice/officer-alert";
 import { alertOfficersOncePastCutoff, pastCutoffAlertKey } from "@/lib/owed-notice/past-cutoff-once";
 import { owedNoticeId, owedNoticeMarker, recordOwedNotices, type OwedNoticeMarker } from "@/lib/owed-notice/store";
 import { prisma } from "@/lib/prisma";
@@ -452,11 +453,18 @@ async function alertOfficersOfOffer(notice: WaitlistOfferNotice, marker: OwedNot
     logger.error({ key: marker.id, job }, "A waitlist offer's officer alert has no readable queue position; cleared without sending it");
     return "settled";
   }
+  const log = { bookingId: notice.bookingId, job };
+  let state: Awaited<ReturnType<typeof offerEmailStateOf>>;
   try {
-    const state = await offerEmailStateOf(marker);
+    state = await offerEmailStateOf(marker);
     if (state === "retrying") return "threw";
     if (state === "not-sent" && (await offerEmailStillOwed(marker))) return "threw";
-    const result = await sendAdminWaitlistOfferAlert({
+  } catch (err) {
+    logger.error({ err, ...log }, "Failed to send admin waitlist offer alert");
+    return "threw";
+  }
+  return owedOfficerAlertOutcome("waitlist offer alert", log, () =>
+    sendAdminWaitlistOfferAlert({
       memberName: notice.memberName,
       checkIn: notice.checkIn,
       checkOut: notice.checkOut,
@@ -464,17 +472,8 @@ async function alertOfficersOfOffer(notice: WaitlistOfferNotice, marker: OwedNot
       position,
       expiresAt: notice.expiresAt,
       offerEmail: isToldOfferEmailState(state) ? state : "not-delivered",
-    });
-    if (!adminAlertNeedsResend(result)) return "settled";
-    logger.warn(
-      { bookingId: notice.bookingId, failedBeforeLogged: result.failedBeforeLogged, job },
-      "No officer received the waitlist offer alert and nothing will replay it; it stays owed for a day",
-    );
-    return "unreached";
-  } catch (err) {
-    logger.error({ err, bookingId: notice.bookingId, job }, "Failed to send admin waitlist offer alert");
-    return "threw";
-  }
+    }),
+  );
 }
 
 /**
@@ -558,7 +557,7 @@ const OFFICERS: OwedNoticeDeliverer<WaitlistOfferNotice> = {
   audience: "officers",
   maxAgeMs: OWED_OFFICER_ALERT_MAX_AGE_MS,
   stillOwed: async (notice, marker) => offerMovedOn(notice, marker) ?? true,
-  sendBy: (_notice, marker) => new Date(marker.eventAt.getTime() + OWED_OFFICER_ALERT_MAX_AGE_MS),
+  sendBy: (_notice, marker) => owedOfficerAlertSendBy(marker),
   deliver: alertOfficersOfOffer,
 };
 

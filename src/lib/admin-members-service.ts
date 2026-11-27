@@ -23,6 +23,7 @@ import {
 } from "@/lib/club-time";
 import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
 import { clubSeasonYear } from "@/lib/financial-year";
+import { clubCurrentSeasonYear as resolveClubCurrentSeasonYear } from "@/lib/financial-year-server";
 import { UNASSIGNED_MEMBERSHIP_TYPE_VALUE } from "@/lib/membership-type-filter";
 import { subscriptionCategoryFilterWhere } from "@/lib/subscription-category-filter";
 import { serializeSubscriptionCategorySummary, subscriptionCategorySummarySelect } from "@/lib/subscription-categories";
@@ -1343,7 +1344,9 @@ export async function createAdminMember(
   // zone read from inside it would be an uncached query on the GLOBAL client while
   // the transaction holds a connection.
   const clubZoneForCreate = await readClubTimeZoneOutsideRequest();
-  const clubCurrentSeasonYear = clubSeasonYear(clubZoneForCreate);
+  // The club's resolved year-end, not the process cache (#5259); it may read
+  // Xero, which is one more reason this stays outside the transaction.
+  const clubCurrentSeasonYear = await resolveClubCurrentSeasonYear(clubZoneForCreate);
   const clubTodayForCreate = dateOnlyInstantOf(clubToday(clubZoneForCreate));
   const clubCurrentSeasonStart = getSeasonStartDate(clubCurrentSeasonYear);
   // Determine age tier from DOB if provided, otherwise use explicit value or default

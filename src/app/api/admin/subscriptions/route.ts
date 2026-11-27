@@ -4,7 +4,7 @@ import { requireAdmin } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma";
 import { clubToday } from "@/lib/club-time";
 import { clubTimeZone } from "@/lib/club-time/server";
-import { clubSeasonYear } from "@/lib/financial-year";
+import { clubCurrentSeasonYear } from "@/lib/financial-year-server";
 import logger from "@/lib/logger";
 import { getAgeTierSettings } from "@/lib/age-tier";
 import {
@@ -146,7 +146,7 @@ export async function GET(request: NextRequest) {
 
   const { status, ageTier, xeroContactGroup, sortBy, sortDir, page, pageSize } = parsed.data;
   const zone = await clubTimeZone();
-  const seasonYear = parsed.data.seasonYear ?? clubSeasonYear(zone);
+  const seasonYear = parsed.data.seasonYear ?? (await clubCurrentSeasonYear(zone));
 
   try {
     const [ageTierSettings, lockoutSettings] = await Promise.all([

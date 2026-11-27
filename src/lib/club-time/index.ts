@@ -81,6 +81,7 @@ export {
   CLUB_STAY_BOUNDARY_HOUR,
   endOfClubDayExclusive,
   endOfClubDayInclusive,
+  endOfStoredClubDay,
   instantForClubWallTime,
   noonOfClubDay,
   startOfClubDay,

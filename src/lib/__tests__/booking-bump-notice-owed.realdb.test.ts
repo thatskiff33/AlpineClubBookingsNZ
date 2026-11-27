@@ -35,6 +35,7 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { listingTogether } from "./support/owed-notice-listing-barrier";
+import type { OwedNoticeSource } from "@/lib/owed-notice/deliver";
 import { assertSafeRaceDbUrl } from "./support/race-db-url";
 import { resetStripeRaceHooks } from "./support/stripe-race-double";
 
@@ -121,6 +122,24 @@ let harnessRole: { restore: () => void } | undefined;
   "a bump's notices are owed until sent, and the member's email is recorded once - real PostgreSQL (#5407)",
   { timeout: 60_000 },
   () => {
+    /**
+     * The sweep, scoped to this suite (#5433 PR 4, round 2, item 5): its own two
+     * kinds, and only markers whose booking is one of its own. The real-database
+     * job runs every file in one process with no file-parallelism limit, so a
+     * default drain could claim another suite's markers, or run another kind's
+     * recovery on another suite's bookings.
+     */
+    function ownOnly(source: OwedNoticeSource): OwedNoticeSource {
+      return {
+        name: `${source.name} (this suite's)`,
+        listDue: async (deliverer, at) => (await source.listDue(deliverer, at)).filter((ref) => ref.marker?.subjectId.startsWith("b5407") === true),
+      };
+    }
+    function drainOwn(now: Date, options: { sources?: readonly OwedNoticeSource[] } = {}) {
+      const sources = options.sources ?? [owedNoticeTableSource, owed.legacyBumpMarkerSource];
+      return drainOwedNotices(now, { deliverers: owed.BUMP_NOTICE_DELIVERERS, sources: sources.map(ownOnly) });
+    }
+
     async function deleteCaseRows(ids: CaseIds) {
       await prisma.emailLog.deleteMany({
         where: { OR: [{ bookingId: ids.bookingId }, { to: ADMIN_EMAIL, subject: { contains: formatBookingReference(ids.bookingId) } }] },
@@ -268,16 +287,16 @@ let harnessRole: { restore: () => void } | undefined;
 
       // The next sweep sends the member's email; the officers' alert, which
       // reached nobody, is held a day.
-      await drainOwedNotices(new Date(bumpedAt.getTime() + WAIT_PAST));
+      await drainOwn(new Date(bumpedAt.getTime() + WAIT_PAST));
       const memberLogId = `email:booking-bumped:${owed.bumpNoticeIdempotencyKey(ids.bookingId, bumpedAt)}`;
       expect(await recorded(ids)).toEqual({ memberRows: [{ id: memberLogId }], officerRows: 0, markers: 1 });
 
       // A day later the sweep sends the officers' alert, once.
-      await drainOwedNotices(new Date(bumpedAt.getTime() + DAY + WAIT_PAST));
+      await drainOwn(new Date(bumpedAt.getTime() + DAY + WAIT_PAST));
       expect(await recorded(ids)).toEqual({ memberRows: [{ id: memberLogId }], officerRows: 1, markers: 0 });
 
       // A further sweep finds nothing owed.
-      await drainOwedNotices(new Date(bumpedAt.getTime() + 2 * DAY));
+      await drainOwn(new Date(bumpedAt.getTime() + 2 * DAY));
       expect(await recorded(ids)).toEqual({ memberRows: [{ id: memberLogId }], officerRows: 1, markers: 0 });
 
       // A member marker still standing after its send (a crash before the
@@ -287,7 +306,7 @@ let harnessRole: { restore: () => void } | undefined;
         data: { id: memberId, kind: "booking-bump-member", subjectId: ids.bookingId, eventAt: bumpedAt, variant: "b", stampedAt: bumpedAt },
       });
       const sendsBefore = vi.mocked(email.sendBookingBumpedEmail).mock.calls.length;
-      await drainOwedNotices(new Date(bumpedAt.getTime() + 3 * DAY));
+      await drainOwn(new Date(bumpedAt.getTime() + 3 * DAY));
       expect(vi.mocked(email.sendBookingBumpedEmail).mock.calls.length).toBe(sendsBefore + 1);
       expect(await recorded(ids)).toEqual({ memberRows: [{ id: memberLogId }], officerRows: 1, markers: 0 });
     });
@@ -312,7 +331,7 @@ let harnessRole: { restore: () => void } | undefined;
       const sweepAt = new Date(bumpedAt.getTime() + WAIT_PAST);
       // Each drain lists a kind's markers only once both have, so they truly overlap.
       const sources = [listingTogether(owedNoticeTableSource), owed.legacyBumpMarkerSource];
-      const results = await Promise.all([drainOwedNotices(sweepAt, { sources }), drainOwedNotices(sweepAt, { sources })]);
+      const results = await Promise.all([drainOwn(sweepAt, { sources }), drainOwn(sweepAt, { sources })]);
       // Both runs listed both of this case's markers: run one after the other,
       // the second would have found none of them.
       for (const result of results) expect(result.checked).toBeGreaterThanOrEqual(2);
@@ -344,7 +363,7 @@ let harnessRole: { restore: () => void } | undefined;
       });
       expect((await recorded(ids)).markers).toBe(2);
 
-      await drainOwedNotices(new Date(bumpedAt.getTime() + WAIT_PAST));
+      await drainOwn(new Date(bumpedAt.getTime() + WAIT_PAST));
 
       // Both markers were sent (each store's sweep found its own), with one event key.
       const memberSends = vi
@@ -372,7 +391,7 @@ let harnessRole: { restore: () => void } | undefined;
       const ids = CASES.marker;
       const bumpedAt = await bumpThenCancelledEvent(ids, SETTLEMENT_MARKER_EVENT_REASONS[0]!);
 
-      await drainOwedNotices(new Date(bumpedAt.getTime() + WAIT_PAST));
+      await drainOwn(new Date(bumpedAt.getTime() + WAIT_PAST));
 
       expect((await recorded(ids)).memberRows).toHaveLength(1);
       expect((await recorded(ids)).markers).toBe(0);
@@ -382,7 +401,7 @@ let harnessRole: { restore: () => void } | undefined;
       const ids = CASES.cancelled;
       const bumpedAt = await bumpThenCancelledEvent(ids, null);
 
-      await drainOwedNotices(new Date(bumpedAt.getTime() + WAIT_PAST));
+      await drainOwn(new Date(bumpedAt.getTime() + WAIT_PAST));
 
       expect(await recorded(ids)).toEqual({ memberRows: [], officerRows: 0, markers: 0 });
     });

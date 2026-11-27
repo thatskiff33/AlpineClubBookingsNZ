@@ -106,7 +106,7 @@ while exceptions are proposed on their deciding issues (#2576, #3040, #3039,
 | `INV-PAY-047` | 1164 |
 | `INV-MOD-055` | 1002 |
 | `INV-ADDPAY-036` | 1137 |
-| `INV-SSOT-003` | 1094 |
+| `INV-SSOT-003` | 1075 |
 | `INV-ADDPAY-038` | 1025 |
 | `INV-CONFIG-002` | 874 |
 | `INV-MONEY-003` | 867 |
