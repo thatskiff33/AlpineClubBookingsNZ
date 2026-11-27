@@ -297,6 +297,36 @@ one button that reaches Xero at all only asks it a question.
    invite emails; **Repair Canonical Links** and **Scan for Duplicates & Family
    Groups** clean up the link ledger.
 
+Each account mapping offers only the kind of Xero account it can use: a bank
+mapping lists bank accounts, an income mapping lists revenue accounts, and so
+on. **Hut Fee Refunds**, the account refund credit notes are coded to, takes
+either kind your club prefers (#5235), and its list is headed **Revenue
+accounts** and **Expense accounts**:
+
+- a **revenue** account shows refunds as a reduction of hut fee income. This is
+  the default (`200`), so a club that changes nothing sees no change;
+- an **expense** account shows refunds as their own cost line and leaves income
+  gross.
+
+Which is right is your treasurer's or accountant's call. Either way the credit
+note carries the same GST as the invoice it refunds. Xero decides which tax
+rates may be used on an expense account, so if your club is GST-registered and
+chooses an expense account, read the Xero health check afterwards: it warns
+when Xero says the club's tax rate cannot be used on expenses, because Xero
+would then reject refund credit notes. If it does, map **Hut Fee Refunds** back
+to a revenue account or ask your accountant which account and rate to use.
+
+**Save refuses the wrong kind of account.** When you set or change a mapping,
+the app checks the code against its copy of your chart of accounts and refuses,
+for example, an asset, liability or bank account on **Hut Fee Refunds**. The
+message names the mapping and nothing is saved. A code the copy does not list
+is accepted, as is any code while Xero is not connected; **Refresh Xero
+reference data** on the mappings card renews the copy. A code saved before
+this check existed is left alone when you save other mappings, and the setup
+checklist and the mapping row point it out. If two people change the same
+mapping at the same moment, the second is told the mappings changed and asked
+to reload.
+
 ### Subscribe to Xero webhooks, including credit notes
 
 This app does not register webhook events. In the Xero developer portal
@@ -412,12 +442,13 @@ never change; only how much of each price is GST does.
 The Xero health check warns if the tax code in force is missing or inactive in
 Xero, its rate differs, Xero's GST registration disagrees with the card, a
 mapped tax category's rate has gone, the **Opening Credits** account is
-mapped while a GST-registered club has no usable **Exempt** rate, or the
+mapped while a GST-registered club has no usable **Exempt** rate, the
 **Opening Credits** account is stored on the Xero account another mapping
-uses. The account mapping refuses to save that last one, so it appears only
-if two people saved mappings, or one saved while a configuration import ran,
-at the same moment; choose an account for **Opening Credits** that no other
-mapping uses. How
+uses, or **Hut Fee Refunds** is mapped to an expense account and Xero says the
+tax code in force cannot be used on expenses. The account mapping refuses to
+save a shared **Opening Credits** account, so that warning appears only for
+mappings stored before the refusal existed; choose an account for **Opening
+Credits** that no other mapping uses. How
 it works: [Tax treatment](../xero/ARCHITECTURE.md#tax-treatment).
 It checks only today's treatment. Bookings made under an earlier treatment
 still use that treatment's tax code on their later edits, credit notes and
