@@ -1,4 +1,4 @@
-import { ASK_CAUSE_ROWS, additionalAskCause } from "@/lib/additional-ask-cause";
+import { ASK_CAUSE_ROWS, additionalAskCause, chainIncludesBalance } from "@/lib/additional-ask-cause";
 import { resolveCreditReleaseReminderGate } from "@/lib/credit-release-reminder-gate";
 import { creditReleaseResendRefusal } from "@/lib/release-ask-officer-signal";
 import {
@@ -148,6 +148,16 @@ export async function resendAdditionalPaymentEmail(params: {
       ok: false,
       status: 409,
       error: "This booking has no outstanding additional payment.",
+    };
+  }
+
+  // #5008 (`INV-ADDPAY-053`): this email words every request as an extra, so a deposit balance
+  // is never re-sent from here; its own reminders come with #5008 child C.
+  if (chainIncludesBalance(payment.transactions)) {
+    return {
+      ok: false,
+      status: 409,
+      error: "This booking's balance after a deposit is not sent from here, so nothing was sent.",
     };
   }
 

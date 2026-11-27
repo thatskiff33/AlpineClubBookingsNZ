@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 
 import {
   additionalAskCause,
+  balanceRowsOfChain,
+  chainIncludesBalance,
   creditReleaseShareCents,
   isPureCreditReleaseChain,
   paymentRequestCauseSentence,
@@ -15,7 +17,7 @@ import {
   timelinePendingDetail,
   type AdditionalAskCause,
 } from "@/lib/additional-ask-cause";
-import { CREDIT_RELEASE_ASK_REASON } from "@/lib/credit-release-ask-keys";
+import { CREDIT_RELEASE_ASK_REASON, DEPOSIT_BALANCE_ASK_REASON } from "@/lib/credit-release-ask-keys";
 
 const release = (carriedAskCents = 0, withdrawnAt: Date | null = null) => ({
   reason: CREDIT_RELEASE_ASK_REASON,
@@ -184,5 +186,53 @@ describe("the payment-outcome and pay-form sentences", () => {
     expect(memberCardLeadParts("credit-release").lead).toMatch(/used elsewhere in the club's accounts/);
     expect(memberCardLeadParts("credit-release").trail).not.toMatch(/modification/);
     expect(memberCardLeadParts("mixed").lead).toMatch(/used elsewhere in the club's accounts/);
+  });
+});
+
+const balance = (carriedAskCents = 0, withdrawnAt: Date | null = null) => ({
+  reason: DEPOSIT_BALANCE_ASK_REASON,
+  carriedAskCents,
+  withdrawnAt,
+});
+
+describe("the deposit balance cause (#5008, INV-ADDPAY-053)", () => {
+  it("reads a lone balance row as a balance, never as a change the member made", () => {
+    expect(additionalAskCause([balance()])).toBe("balance");
+  });
+
+  it("reads an edit folded into an unpaid balance, either way round, as both", () => {
+    expect(additionalAskCause([edit(15_000), balance()])).toBe("mixed");
+    expect(additionalAskCause([balance(4_000), edit()])).toBe("mixed");
+  });
+
+  it("sees a balance only while it is part of the newest request", () => {
+    expect(chainIncludesBalance([balance()])).toBe(true);
+    expect(chainIncludesBalance([edit(15_000), balance()])).toBe(true);
+    // Not carried, or withdrawn by an officer: the newest request is just the edit.
+    expect(chainIncludesBalance([edit(0), balance()])).toBe(false);
+    expect(chainIncludesBalance([edit(15_000), balance(0, new Date("2026-07-01T00:00:00Z"))])).toBe(false);
+    expect(additionalAskCause([edit(15_000), balance(0, new Date("2026-07-01T00:00:00Z"))])).toBe("edit");
+    expect(balanceRowsOfChain([edit(15_000), balance()])).toEqual([balance()]);
+  });
+
+  it("is not a credit-release request, so no invoice-closing rule applies to it", () => {
+    expect(isPureCreditReleaseChain([balance()])).toBe(false);
+    expect(creditReleaseShareCents([{ ...balance(), amountCents: 15_000 }])).toBe(0);
+  });
+
+  it("words a balance as a deposit and its balance on every surface, never as a booking change", () => {
+    const lines = [
+      timelinePendingDetail("balance"),
+      timelinePaidDetail("balance"),
+      Object.values(officerPanelParts("balance")).join("$150.00"),
+      Object.values(memberCardFallbackParts("balance")).join("$150.00"),
+      Object.values(memberCardLeadParts("balance")).join("$150.00"),
+      preArrivalOutstandingNote("balance", "$150.00"),
+    ];
+    for (const line of lines) {
+      expect(line).toMatch(/deposit/);
+      expect(line).toMatch(/balance/);
+      expect(line).not.toMatch(/chang|modif/i);
+    }
   });
 });

@@ -52,7 +52,7 @@ vi.mock("@/lib/credit-release-bank-transfer", async (importOriginal) => ({
 }));
 
 import { resendAdditionalPaymentEmail } from "@/lib/additional-payment-resend-service";
-import { CREDIT_RELEASE_ASK_REASON } from "@/lib/credit-release-ask-keys";
+import { CREDIT_RELEASE_ASK_REASON, DEPOSIT_BALANCE_ASK_REASON } from "@/lib/credit-release-ask-keys";
 import { creditReleaseResendRefusal } from "@/lib/release-ask-officer-signal";
 import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
@@ -117,6 +117,15 @@ describe("resendAdditionalPaymentEmail", () => {
     });
     mockReadInvoiceBalance.mockResolvedValue({ invoiceId: "xero-inv-1", status: "AUTHORISED", amountDueCents: 21_000, invoiceNumber: "INV-0001" });
     mockLoadBankTransferOffer.mockResolvedValue(null);
+  });
+
+  it("never re-sends a deposit balance as an extra, claiming nothing (#5008, INV-ADDPAY-053)", async () => {
+    mockPrisma.booking.findUnique.mockResolvedValue(booking({
+      payment: { transactions: [{ createdAt: RAISED_AT, reason: DEPOSIT_BALANCE_ASK_REASON, carriedAskCents: 0, withdrawnAt: null, amountCents: 21_000 }] },
+    }));
+    expect(await resend()).toMatchObject({ ok: false, status: 409 });
+    expect(mockPrisma.payment.updateMany).not.toHaveBeenCalled();
+    expect(mockSendAdditionalPaymentReminderEmail).not.toHaveBeenCalled();
   });
 
   describe("a request for credit used elsewhere (#4253, INV-ADDPAY-051)", () => {

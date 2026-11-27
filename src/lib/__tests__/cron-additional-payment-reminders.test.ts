@@ -68,7 +68,7 @@ vi.mock("@/lib/credit-release-bank-transfer", async (importOriginal) => ({
 }));
 vi.mock("@/lib/release-ask-officer-signal", () => ({ signalCreditReleaseToOfficers: mockSignalOfficers }));
 
-import { CREDIT_RELEASE_ASK_REASON } from "@/lib/credit-release-ask-keys";
+import { CREDIT_RELEASE_ASK_REASON, DEPOSIT_BALANCE_ASK_REASON } from "@/lib/credit-release-ask-keys";
 import { XeroInvoiceNotFoundError } from "@/lib/xero-invoice-balance";
 import { sendAdditionalPaymentReminders } from "@/lib/cron-additional-payment-reminders";
 import {
@@ -468,6 +468,21 @@ describe("sendAdditionalPaymentReminders", () => {
       );
       expect(result.initialSentBookingIds).toEqual([]);
     });
+  });
+
+  it("never chases a deposit balance, alone or with an edit folded into it (#5008, INV-ADDPAY-053)", async () => {
+    const balance = { createdAt: EPISODE_STARTED_AT, reason: DEPOSIT_BALANCE_ASK_REASON, carriedAskCents: 0, withdrawnAt: null, amountCents: 21_000 };
+    const editOnBalance = { createdAt: new Date("2026-10-02T00:00:00.000Z"), reason: null, carriedAskCents: 21_000, withdrawnAt: null, amountCents: 25_000 };
+    mockPrisma.booking.findMany.mockResolvedValue([
+      booking({ id: "alone", payment: { transactions: [balance] } }),
+      booking({ id: "folded", payment: { transactions: [editOnBalance, balance] } }),
+    ]);
+
+    const result = await sendAdditionalPaymentReminders();
+
+    expect(result.skippedBookingIds).toEqual(["alone", "folded"]);
+    expect(mockSendAdditionalPaymentReminderEmail).not.toHaveBeenCalled();
+    expect(mockPrisma.payment.updateMany).not.toHaveBeenCalled();
   });
 
   it("still waits three days before the first email about an ordinary extra", async () => {

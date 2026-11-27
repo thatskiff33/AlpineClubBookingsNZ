@@ -10,7 +10,7 @@ import {
   resolveCreditReleaseChase,
   type AdditionalPaymentReminderKind,
 } from "@/lib/additional-payment-chase";
-import { ASK_CAUSE_ROWS, additionalAskCause } from "@/lib/additional-ask-cause";
+import { ASK_CAUSE_ROWS, additionalAskCause, chainIncludesBalance } from "@/lib/additional-ask-cause";
 import type { BankTransferOffer } from "@/lib/credit-release-bank-transfer";
 import { prepareCreditReleaseReminder } from "@/lib/credit-release-reminder-gate";
 import { canReceiveChaseEmail } from "@/lib/reminder-recipient-reachability";
@@ -504,6 +504,10 @@ function resolveChaseFor(params: {
 }): DueAdditionalPaymentReminder | null {
   const payment = params.booking.payment;
   if (!payment) return null;
+  // #5008 (`INV-ADDPAY-053`): a deposit balance is chased only on the dates its due date sets,
+  // never by this chase, whose wording says the member changed their booking. Until that chase
+  // exists (#5008 child C) nothing here selects one, alone or folded into a later request.
+  if (chainIncludesBalance(payment.transactions)) return null;
 
   const episodeStartedAt = additionalPaymentEpisodeStartedAt({
     paymentCreatedAt: payment.createdAt,

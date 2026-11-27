@@ -38,3 +38,11 @@ export function creditReleaseIdForAskRecoveryKey(idempotencyKey: string | null |
  * why it exists without guessing from the amount (`INV-ADDPAY-045`).
  */
 export const CREDIT_RELEASE_ASK_REASON = "credit_released_outside_app";
+
+/**
+ * #5008 (`INV-ADDPAY-053`): the `reason` on the request a deposit settle raises for the
+ * rest of the booking's worth, the cause `balance`. It lives beside the credit-release
+ * reason because both name a request's cause on the same `PaymentTransaction` rows, and
+ * `additional-ask-cause.ts` reads both from here.
+ */
+export const DEPOSIT_BALANCE_ASK_REASON = "deposit_balance";
