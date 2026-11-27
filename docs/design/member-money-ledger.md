@@ -786,6 +786,41 @@ reads 5,000 such VOIDs at most and warns on admin cron health when it stops
 at that cap or a release fails. The sweep is a lane decision under the owner's standing instruction of 25
 Nov 2026, the recommended option, for the owner to confirm.
 
+The edit credit note cohort (ALP-753, #5253) adds `MODIFICATION_CREDIT_NOTE`,
+and `createXeroCreditNoteForModification` still sends and allocates exactly as
+before. Once its row has completed, or gone PARTIAL (the note is in Xero
+either way), it calls `recordModificationCreditNoteManifest` with the lines it
+sent and its key (`creditNoteIdempotencyKey`). `planModificationCreditNote`
+mirrors the supplementary invoice through the same stay-slice match
+(`matchStaySlices`): the note returns a slice of the stay component, the
+negated movement of the edit's own `modification:` event, covered as positive
+cents and keyed by that event; a review task's note returns its task's one live
+closure; each settled review share the lines itemise is a slice of its own. A
+note that nets a change fee (a fee line, or a fee its event moved) is
+`REDUCTION_NETTED`; an increase, a share moving the other way, or lines that do
+not carry exactly the slices is `STAY_CENTS` or `REDUCTION_NETTED`; a missing,
+reversed or ambiguous event, and a give-back or billed-offset note (which
+returns applied credit or a billed offset, not a stay slice), are
+`COMPONENT_UNUSABLE`. A slice another note of the role still covers is
+`ALREADY_COVERED`, with no coverage, and the coverage key refuses a race that
+loses. A booking-anchored clearing note has no edit behind it and records
+nothing. The role's coverage is a group of its own: an invoice's cover of an
+event's slice and a note's cover of another event's never meet, and summing
+coverage across roles against the component's live gross is still the later
+step named above.
+
+The booking-invoice family's round trip runs on the provider fakes
+(`xero-booking-invoice-manifest-round-trip.realdb.test.ts`): the primary
+invoice, an edit's credit note and a supplementary invoice billing a change fee
+and a settled review share are sent through the app's own senders over
+`xeroTransport`, read back through the app's own client, and each recorded
+manifest must cover exactly the lines Xero holds, its stay lines by
+`BOOKING_REVENUE` slices and its fee line by `FEE_REVENUE`. A repeat send moves
+no manifest, and a second note on the same slice is an `ALREADY_COVERED` row
+with no second cover. The read-back and the check live in one helper
+(`src/test/providers/manifest-round-trip.ts`) the refund-note and failed-later
+reversal round trips reuse.
+
 | Rendered object | Ledger slice and coverage rule |
 | --- | --- |
 | Primary, supplementary or combined group invoice | Exact issued charge components, including fee coverage assigned once. Combined invoices consume child charge coverage; individual child invoices cannot consume it again. Pending bank-transfer obligations already have R01 postings. |
