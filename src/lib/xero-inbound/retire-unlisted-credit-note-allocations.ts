@@ -27,7 +27,7 @@ import { NOTE_ALLOCATION_ROLE, ROLELESS_ALLOCATION_ROLE } from "@/lib/xero-clear
 import {
   type XeroCreditNoteSnapshotSource,
   isIncludedRefundCreditNoteStatus,
-  judgeRefundNoteWrite,
+  readingIsCurrent,
   readRefundNoteSnapshotAt,
   REFUND_NOTE_SNAPSHOT_AT_KEY,
   xeroCreditNoteSnapshotMetadata,
@@ -59,7 +59,7 @@ export async function readStoredCreditNoteSnapshots(creditNoteId: string): Promi
 }
 
 function readingMayRetireAllocations(readingMetadata: unknown, storedSnapshots: readonly unknown[]): boolean {
-  return storedSnapshots.every((metadata) => judgeRefundNoteWrite(readingMetadata, metadata) === "apply");
+  return readingIsCurrent(readingMetadata, storedSnapshots);
 }
 
 function isLiveCreditNoteStatus(status: unknown): boolean {

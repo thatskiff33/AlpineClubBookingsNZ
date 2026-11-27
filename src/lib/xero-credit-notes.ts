@@ -17,7 +17,8 @@
 import { reviewTaskKeyParts } from "@/lib/xero-review-task-key";
 import { assertNoRefundCreditNoteInFlight, passUnrecordedRefundNoteFence } from "@/lib/xero-refund-note-in-flight";
 import { recordCreatedRefundNote, RefundNoteNotRecordedError } from "@/lib/xero-refund-note-record";
-import { mayRecordAsCanonicalRefundNote, readCanonicalRefundNoteField, refundNoteKeyAfterVoidParts, refundRequestOwnNotes, type RefundNoteKeyScope } from "@/lib/xero-refund-note-status";
+import { mayRecordAsCanonicalRefundNote, readCanonicalRefundNoteField, refundNoteKeyAfterVoidParts, refundRequestOwnNotes, type RefundNoteKeyScope, xeroCreditNoteSnapshotMetadata } from "@/lib/xero-refund-note-status";
+import { ACCOUNT_CREDIT_NOTE_ROLE, MODIFICATION_ACCOUNT_CREDIT_NOTE_ROLE } from "@/lib/xero-booking-credit-note-link-roles";
 import {
   XERO_OUTBOX_ACCOUNT_CREDIT_NOTE_TYPE,
   XERO_OUTBOX_MODIFICATION_ACCOUNT_CREDIT_NOTE_TYPE,
@@ -883,8 +884,8 @@ export async function createUnappliedXeroCreditNote(
   const linkLocalModel = bookingModificationId ? "BookingModification" : "Payment";
   const linkLocalId = bookingModificationId ?? paymentId;
   const linkRole = bookingModificationId
-    ? "MODIFICATION_ACCOUNT_CREDIT_NOTE"
-    : "ACCOUNT_CREDIT_NOTE";
+    ? MODIFICATION_ACCOUNT_CREDIT_NOTE_ROLE
+    : ACCOUNT_CREDIT_NOTE_ROLE;
   const reviewTaskId = bookingModificationId ? (options?.reviewTaskId ?? null) : null;
   const existingLink = reviewTaskId
     ? null
@@ -1158,6 +1159,10 @@ export async function createUnappliedXeroCreditNote(
           xeroObjectId: createdNote.creditNoteID,
           xeroObjectNumber: createdNote.creditNoteNumber ?? null,
           role: linkRole,
+          // #4347 (`INV-ADDPAY-041`): a payment's account-credit link records Xero's
+          // own answer with its UpdatedDateUTC, so the link funnel orders it
+          // against any inbound reading. A modification's note keeps its status-less link.
+          ...(linkRole === ACCOUNT_CREDIT_NOTE_ROLE ? { metadata: xeroCreditNoteSnapshotMetadata(createdNote), mergeMetadata: true } : {}),
         },
       ],
     });

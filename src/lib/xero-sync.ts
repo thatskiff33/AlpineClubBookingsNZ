@@ -6,7 +6,7 @@ import { asRecord, readString } from "./xero-json";
 import {
   canonicalRefundNoteFromField,
   isPerDeltaRefundNoteLink,
-  isRefundCreditNoteLinkCancelledInXero, isRefundNoteLinkOf, keepStoredRefundNoteVoid, REFUND_NOTE_LINK_ROLES,
+  isAccountCreditNoteLinkOf, isRefundCreditNoteLinkCancelledInXero, isRefundNoteLinkOf, keepStoredRefundNoteVoid, REFUND_NOTE_LINK_ROLES,
   perDeltaRefundNoteIds,
   neverCanonicalRefundNoteIds,
   readCanonicalRefundNoteField,
@@ -677,6 +677,10 @@ async function normalizePaymentRefundLinkWithClient(
   if (link.localModel !== "Payment") {
     return link;
   }
+
+  // #4347 (`INV-ADDPAY-041`): an account-credit note is judged by the same rule,
+  // locking only its own row. No pointer, no sibling, and no Payment row here.
+  if (isAccountCreditNoteLinkOf(link)) return keepStoredRefundNoteVoid(client, link);
 
   if (REFUND_NOTE_LINK_ROLES.some((role) => isRefundNoteLinkOf(link, role))) {
     // #4195, #4223: own row first. An explicit void already locked the Payment row (#4200).

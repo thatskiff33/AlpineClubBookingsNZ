@@ -15,7 +15,7 @@ import { type XeroAuditLocalLink } from "./types";
 import { repairAccountCreditAllocationBusinessState, repairRefundedPaymentBusinessState, resolveAccountCreditPaymentsFromMemberCredits, resolveAppliedCreditPaymentsFromLocalProvenance } from "./credit-note-repairs";
 import { resolveModificationRefundAmountsByPaymentId } from "./modification-note-refunds";
 import { accountCreditNoteHeld, accountCreditNoteRaisedFor, stampCancellationCreditXeroNote } from "@/lib/xero-account-credit-note-stamp";
-import { isIncludedRefundCreditNoteStatus, isRefundNoteLinkOf, mayRecordAsCanonicalRefundNote, withoutVoidedRefundNoteLinks, xeroCreditNoteSnapshotMetadata } from "@/lib/xero-refund-note-status";
+import { accountCreditNoteReadingIsCurrent, isIncludedRefundCreditNoteStatus, isRefundNoteLinkOf, mayRecordAsCanonicalRefundNote, withoutVoidedRefundNoteLinks, xeroCreditNoteSnapshotMetadata } from "@/lib/xero-refund-note-status";
 
 /** #4291: the audit source naming a recount reached only through a voided mirror. */
 const VOIDED_MIRROR_RECOUNT_AUDIT_SOURCE = "xero-inbound-credit-note-voided-mirror-recount";
@@ -156,6 +156,11 @@ export async function reconcileXeroCreditNote(creditNoteId: string) {
   for (const link of creditNoteLinks) {
     await upsertXeroObjectLink(withCreditNoteSpendEvidence(link, spendEvidence));
   }
+  // #4347: whether the note's account-credit rows, as the writes above left
+  // them, still take this reading. One they refused (a stored void, a newer
+  // snapshot) neither stamps a member's credit nor mirrors outside spend.
+  const readingMetadata = xeroCreditNoteSnapshotMetadata(creditNote);
+  const readingIsCurrentNow = () => accountCreditNoteReadingIsCurrent(creditNote.creditNoteID!, readingMetadata, prisma);
 
   const linkedRefundPaymentIds = creditNoteLinks
     .filter((link) => isRefundNoteLinkOf(link))
@@ -242,7 +247,7 @@ export async function reconcileXeroCreditNote(creditNoteId: string) {
   // credit that row named is stamped by id, else one equal credit, oldest
   // first; the first stamp ends the pass.
   const raisedFor =
-    creditNoteAmountCents !== null && accountCreditPayments.length > 0 && !(await accountCreditNoteHeld(creditNote.creditNoteID))
+    creditNoteAmountCents !== null && accountCreditPayments.length > 0 && (await readingIsCurrentNow()) && !(await accountCreditNoteHeld(creditNote.creditNoteID))
       ? await accountCreditNoteRaisedFor({ creditNoteId: creditNote.creditNoteID, paymentIds: accountCreditPayments.map((payment) => payment.id) })
       : null;
   if (raisedFor && creditNoteAmountCents !== null) {
@@ -358,7 +363,7 @@ export async function reconcileXeroCreditNote(creditNoteId: string) {
       isModificationNote,
       heldFloorAlerts: held.alerts,
       status: creditNote.status,
-      readingMetadata: xeroCreditNoteSnapshotMetadata(creditNote),
+      readingMetadata,
       priorSnapshots: priorCreditNoteSnapshots,
       listedInvoiceIds: new Set(allocationTargets.map((target) => target.invoiceId)),
     });
@@ -411,7 +416,8 @@ export async function reconcileXeroCreditNote(creditNoteId: string) {
     accountCreditPayments.length > 0 || appliedCreditPayments.length > 0
       ? await repairAccountCreditAllocationBusinessState(
           creditNote.creditNoteID,
-          allocationTargets
+          allocationTargets,
+          xeroCreditNoteSnapshotMetadata(creditNote), // #4347: refused when the account-credit row has moved past it
         )
       : {
           matchedPayments: 0,
@@ -507,7 +513,7 @@ export async function reconcileXeroCreditNote(creditNoteId: string) {
   let mirrorFailed = false;
   try {
     const mirrorEvidence = creditNoteMirrorEvidenceFrom(creditNote);
-    if (mirrorEvidence) await mirrorCreditNoteOutsideSpend(mirrorEvidence);
+    if (mirrorEvidence && (await readingIsCurrentNow())) await mirrorCreditNoteOutsideSpend(mirrorEvidence);
   } catch (err) {
     mirrorFailed = true;
     logger.error({ err, creditNoteId: creditNote.creditNoteID }, "Mirroring a credit note spent outside the app failed; the sweep will try again");
