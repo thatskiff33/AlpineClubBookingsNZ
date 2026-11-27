@@ -8,6 +8,7 @@
 import type { Prisma } from "@prisma/client";
 
 import type { OwedNoticeKind } from "@/lib/owed-notice/kinds";
+import logger from "@/lib/logger";
 import { claimByStamp, deferredStamp } from "@/lib/owed-notice/stamp";
 import { prisma } from "@/lib/prisma";
 
@@ -155,6 +156,28 @@ export async function recordOwedNotices(
     skipDuplicates: true,
   });
   return markers;
+}
+
+/**
+ * For a change that must never roll back for a marker's shape (a captured
+ * payment, a committed cancel, a cleared card): ask `owedNoticeInputProblem`
+ * of every input first, without writing. One that cannot be keyed is an error
+ * log (`message`, with `context` and the problem) and null, with nothing
+ * written, and the caller falls back to sending the way it did before #5433;
+ * otherwise the inputs are recorded and their markers returned. A database
+ * failure of the insert still rolls the transaction back, like any write in it.
+ */
+export async function recordOwedNoticesIfKeyable(
+  tx: Pick<Prisma.TransactionClient, "owedNotice">,
+  notices: readonly OwedNoticeInput[],
+  log: { message: string; context: Record<string, unknown> },
+): Promise<OwedNoticeMarker[] | null> {
+  const problem = notices.map(owedNoticeInputProblem).find((found) => found !== null);
+  if (problem) {
+    logger.error({ ...log.context, problem }, log.message);
+    return null;
+  }
+  return recordOwedNotices(tx, notices);
 }
 
 /**

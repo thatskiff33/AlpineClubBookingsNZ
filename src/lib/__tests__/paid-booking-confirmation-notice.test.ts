@@ -92,6 +92,7 @@ import { drainOwedNotices } from "@/lib/owed-notice/drain";
 import { owedNoticeTableSource } from "@/lib/owed-notice/deliver";
 import {
   deliverPaidBookingConfirmation,
+  sendUnrecordedPaidBookingConfirmation,
   PAID_CONFIRMATION_MAX_AGE_MS,
   PAID_CONFIRMATION_NOTICE_DELIVERERS,
   PAID_CONFIRMATION_SWEEP_AFTER_MS,
@@ -145,6 +146,25 @@ beforeEach(() => {
   core.sends = [];
   alerts.onceKeys = [];
   alerts.unsent.mockResolvedValue(SENT);
+});
+
+describe("a confirmation that could not be recorded as owed (#5433 PR 4, round 1, item 5)", () => {
+  it("is sent once, unkeyed, as before #5433, with no marker, no row read and no officers' alert", async () => {
+    core.booking = paidBooking();
+
+    await sendUnrecordedPaidBookingConfirmation(BOOKING_ID, CLUB_FORMAT_TEST, "test");
+
+    expect(core.sends).toEqual([undefined]);
+    expect(owed.store.rows.size).toBe(0);
+    expect(alerts.unsent).not.toHaveBeenCalled();
+  });
+
+  it("never throws when the send does", async () => {
+    core.booking = paidBooking();
+    core.next = "throw";
+
+    await expect(sendUnrecordedPaidBookingConfirmation(BOOKING_ID, CLUB_FORMAT_TEST, "test")).resolves.toBeUndefined();
+  });
 });
 
 describe("the marker the settle writes", () => {

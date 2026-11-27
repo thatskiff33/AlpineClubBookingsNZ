@@ -54,6 +54,7 @@ import logger from "@/lib/logger";
 import {
   deliverOwedNotice,
   OWED_OFFICER_ALERT_MAX_AGE_MS,
+  owedOfficerAlertSendBy,
   type OwedNoticeDeliverer,
   type OwedNoticeOutcome,
   type OwedNoticeRun,
@@ -235,7 +236,7 @@ const UNTOLD: OwedNoticeDeliverer<WaitlistOfferExpiredNotice> = {
   load: loadExpiredNotice,
   // Moot once the member is re-offered, confirmed or cancelled, or the stay has ended.
   stillOwed: expiredNoticeStillOwed,
-  sendBy: (_notice, marker) => new Date(marker.eventAt.getTime() + OWED_OFFICER_ALERT_MAX_AGE_MS),
+  sendBy: (_notice, marker) => owedOfficerAlertSendBy(marker),
   deliver: alertOfficersOfUntoldLapse,
 };
 

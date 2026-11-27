@@ -27,57 +27,30 @@
  * contradict the derivation it is labelling, so the single-year case is spelled
  * differently rather than papered over.
  *
- * ## THIS MOVES NO PIXEL ON ANY DEPLOYMENT TODAY, AND THAT IS NOT AN OVERSIGHT
+ * ## How the year-end reaches a screen (#5259)
  *
- * Be plain about it: a non-March club still sees `2026 - 2027 (Apr-Mar)` on that
- * screen, wrong on BOTH halves, exactly as before. What changed is true of the
- * code and not yet of the screen.
+ * The year-end month is resolved on the server - override, else Xero, else
+ * March - by `refreshFinancialYearConfig()`, which reads Prisma. `INV-OPS-013`
+ * keeps that off the client graph and prescribes the remedy: resolve on the
+ * server, pass the RESULT. So the admin layout awaits
+ * `clubFinancialYearEndMonth()` and hands the number to `ClubSeasonProvider`,
+ * exactly as the zone reaches `ClubTimeProvider`; a client screen calls
+ * `useClubSeason()`, and a server page calls {@link bindClubSeason} itself.
  *
- * The year-end month lives in `financial-year.ts`'s module cache, seeded by
- * `refreshFinancialYearConfig()`, whose only non-test caller reads Prisma and is
- * therefore server-side - so a `"use client"` page importing the rule reads
- * `DEFAULT_FINANCIAL_YEAR_END_MONTH`. `INV-OPS-013` is what keeps Prisma off the
- * client graph, but it is NOT the obstacle and reading it as one gets this
- * backwards: it PRESCRIBES the remedy, which is to do the work in a server
- * component or route and pass the RESULT to the client component.
+ * **The label and the season year move together, and must.** Before #5259 a
+ * `"use client"` screen read `financial-year.ts`'s process cache, which is never
+ * seeded in a browser, so both read March. Giving only the label the true
+ * year-end would have named `(Jul-Jun)` over a picker still selecting April-based
+ * season years - on 15 June 2026 a June club's current season is 2025, and the
+ * picker would have centred on 2026. {@link bindClubSeason} returns both from one
+ * year-end so they cannot disagree.
  *
- * **The reason the value is not plumbed in this change is that plumbing it to
- * the label ALONE would make the screen worse.** `subscriptions/page.tsx`
- * derives the season year it is selecting with `clubSeasonYear(clubTime.zone)`,
- * which reads the same unseeded cache. Give the label the true year-end and
- * leave that call alone and the picker names `(Jul-Jun)` while still selecting
- * April-based season years: on 15 June 2026 a June-year-end club's current
- * season is 2025, yet the picker would centre on 2026 and label it Jul-Jun. The
- * label and the value would disagree, which is worse than both being uniformly
- * stale. Deferring the two together is coherent; finishing half is not.
- *
- * What this buys is that **the RULE is shared**, so when the year-end does reach
- * the client - through `ClubTimeSettings` and the provider, as the zone already
- * does - the label follows it instead of quietly contradicting it.
- *
- * **Two of the three helpers below now REQUIRE the year-end** (#3133).
- * `seasonMonthsLabel` and `seasonYearsLabel` had a default that read the process
- * cache; every non-test caller already passed the value explicitly after #3136,
- * so deleting it cost nothing and an unstated year-end is now a compile error
- * rather than a silent March. `seasonSelectLabel` still carries the default, and
- * that is the deferral the section above describes rather than an inconsistency:
- * its thirteen callers are the display sites, ten of them in `"use client"`
- * files where no value is available to pass yet. `INV-SSOT-003` names
- * `getFinancialYearEndMonth` as a pending entry on the lint arm's resolver list
- * for exactly this reason, with the promotion condition published beside it.
- *
- * ## A stated limit: the SSR pass is reasoned, not measured
- *
- * A `"use client"` module is still server-rendered on the first request, in a
- * process where the cache genuinely IS seeded - so "byte-identical on the
- * client" needs the SSR pass to agree, or hydration would mismatch. The reading
- * is that Next compiles the react-server and SSR layers separately, giving two
- * module instances of `financial-year.ts` of which only the react-server one is
- * seeded, so the SSR pass renders the default too. **Nothing in this repository
- * documents or tests that property**, and nothing here asserts it. The optional
- * argument is what makes it permanently moot rather than merely likely: a
- * plumbed value is passed in, and a passed value cannot differ between two
- * module instances of a cache.
+ * **Every helper below REQUIRES the year-end.** `seasonMonthsLabel` and
+ * `seasonYearsLabel` lost their process-cache default in #3133;
+ * `seasonSelectLabel` lost its own in #5259, once every display site had a
+ * value to pass. An unstated year-end is a compile error rather than a silent
+ * March, which also makes the SSR pass moot: a value passed in cannot differ
+ * between the react-server and SSR module instances of a cache.
  *
  * ## The rest of the tree still writes this label by hand SEVEN times
  *
@@ -124,8 +97,8 @@
  * ## The real hazard was the DEFAULT, not the sharing
  *
  * Every helper below USED TO default `yearEndMonth` to
- * `getFinancialYearEndMonth()`, the `financial-year.ts` process cache; two of
- * the three no longer do (#3133, above). That default is right for a request
+ * `getFinancialYearEndMonth()`, the `financial-year.ts` process cache; none
+ * does now (#3133, #5259, above). That default is right for a request
  * path and WRONG for a background one: the cache is seeded only by
  * `refreshFinancialYearConfig()`, and no outbox path calls it. Adopting the
  * shared derivation at those four sites while taking the default would have
@@ -134,18 +107,19 @@
  *
  * So each of the four resolves the year-end and passes it explicitly, and
  * `buildComponentLineDescription` makes it a REQUIRED parameter - an unstated
- * year-end is a compile error rather than a silently wrong invoice line. **If
- * you are adopting these helpers on a cron, an outbox worker or any other path
- * that does not seed the cache, pass the year-end.** The default will not tell
- * you it guessed.
+ * year-end is a compile error rather than a silently wrong invoice line. On a
+ * cron, an outbox worker or any other path that does not seed the cache,
+ * resolve the year-end there rather than reading `getFinancialYearEndMonth()`.
  */
 import {
   calendarDateFromParts,
   formatClubShortMonth,
+  type ClubClock,
   type ClubDateFormat,
+  type ClubTimeZone,
 } from "@/lib/club-time";
 import {
-  getFinancialYearEndMonth,
+  clubSeasonYear,
   normalizeYearEndMonth,
   seasonStartMonthOf,
 } from "@/lib/financial-year";
@@ -208,7 +182,38 @@ export function seasonYearsLabel(
 export function seasonSelectLabel(
   seasonYear: number,
   format: ClubDateFormat,
-  yearEndMonth: number = getFinancialYearEndMonth(),
+  yearEndMonth: number,
 ): string {
   return `${seasonYearsLabel(seasonYear, yearEndMonth)} (${seasonMonthsLabel(yearEndMonth, format)})`;
+}
+
+/**
+ * The club's seasons with its year-end, zone and date format already supplied:
+ * the season year it is NOW and the name of any season, from ONE year-end.
+ */
+export interface BoundClubSeason {
+  readonly yearEndMonth: number;
+  /** The club's current season year, from the club's today in its own zone. */
+  currentSeasonYear(): number;
+  /** `"2026 - 2027 (Apr-Mar)"`, `"2025 - 2026 (Jul-Jun)"`, `"2026 (Jan-Dec)"`. */
+  selectLabel(seasonYear: number): string;
+}
+
+/**
+ * Bind a server-resolved year-end to the club's time. A client gets this from
+ * `useClubSeason()`; a server page passes `await clubFinancialYearEndMonth()`
+ * and `await clubTime()`. `clock` is for a caller that holds time still.
+ */
+export function bindClubSeason(
+  yearEndMonth: number,
+  clubTime: { readonly zone: ClubTimeZone; readonly format: ClubDateFormat },
+  clock?: ClubClock,
+): BoundClubSeason {
+  const month = normalizeYearEndMonth(yearEndMonth);
+  return {
+    yearEndMonth: month,
+    currentSeasonYear: () => clubSeasonYear(clubTime.zone, clock, month),
+    selectLabel: (seasonYear) =>
+      seasonSelectLabel(seasonYear, clubTime.format, month),
+  };
 }
