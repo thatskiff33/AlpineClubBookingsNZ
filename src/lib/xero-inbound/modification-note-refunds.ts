@@ -76,7 +76,9 @@ async function resolvePaymentIdsByInvoiceTargets(
 
     // #5289 C: a bank-transfer payment found by its link counts the note only on its one invoice
     // (`decisionInvoiceIdsOf`), as `decideLinkedRefundedTotalCents` counts its earlier notes, never
-    // on an older invoice it is still linked to. One found by its own invoice id already is.
+    // on an older invoice it is still linked to, and nowhere while it has no one invoice (two primary
+    // invoice links, say), since the decision would count nothing for it. One found by its own invoice
+    // id already is. A card payment found only by its link keeps the earlier rule: any linked invoice.
     const linkedPayments = linkedMatches.length === 0 ? [] : await prisma.payment.findMany({
       where: { id: { in: [...new Set(linkedMatches.map((link) => link.localId))] } },
       select: { id: true, source: true, xeroInvoiceId: true },
