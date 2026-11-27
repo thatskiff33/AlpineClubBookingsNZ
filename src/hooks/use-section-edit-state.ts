@@ -116,6 +116,19 @@ export async function saveRefusalFromResponse(
 }
 
 /**
+ * The sentence for an error a save threw: the shared
+ * {@link ADMIN_FORBIDDEN_SAVE_REASON} for a {@link ForbiddenSaveError}, a
+ * refusal's own sentence, otherwise `fallback`. The hook words a failed save
+ * with it, and so does a write made outside the hook (an action button, a
+ * one-off remove), so a refused write reads the same on every card (#5323).
+ */
+export function saveErrorMessage(err: unknown, fallback: string): string {
+  return err instanceof ForbiddenSaveError
+    ? ADMIN_FORBIDDEN_SAVE_REASON
+    : refusalMessageOr(err, fallback);
+}
+
+/**
  * A section with a `load` must word its failure; one without has none to word.
  */
 type LoadOptions<T> =
@@ -392,13 +405,9 @@ export function useSectionEditState<T extends object>(
       setSuccess(typeof message === "function" ? message(next) : message);
     } catch (saveError) {
       setSaveFailureKey((key) => key + 1);
-      if (saveError instanceof ForbiddenSaveError) {
-        setError(ADMIN_FORBIDDEN_SAVE_REASON);
-      } else {
-        setError(
-          refusalMessageOr(saveError, callbacks.current.saveErrorFallback),
-        );
-      }
+      setError(
+        saveErrorMessage(saveError, callbacks.current.saveErrorFallback),
+      );
     } finally {
       setSaving(false);
     }
