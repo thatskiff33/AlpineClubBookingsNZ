@@ -9,6 +9,7 @@ import {
   xeroCategoryLineTax,
   xeroDocumentCarriesTax,
   xeroLineTax,
+  xeroOffsettingLineAmountTypes,
   xeroTaxRenderingOf,
 } from "@/lib/xero-tax-rendering";
 
@@ -95,5 +96,17 @@ describe("xeroDocumentCarriesTax (#4632)", () => {
     expect(xeroDocumentCarriesTax(baseline, noTax)).toBe(false);
     expect(xeroDocumentCarriesTax({ lineAmountTypes: LineAmountTypes.Exclusive, lineItems: [{ taxType: "OUTPUT2" }] }, BASELINE_XERO_TAX_RENDERING)).toBe(false);
     expect(xeroDocumentCarriesTax({ lineAmountTypes: LineAmountTypes.NoTax, lineItems: [{ taxType: "OUTPUT2" }] }, noTax)).toBe(false);
+  });
+});
+
+describe("xeroOffsettingLineAmountTypes (#5241)", () => {
+  it("keeps an untaxed note's correction untaxed", () => {
+    expect(xeroOffsettingLineAmountTypes({ lineAmountTypes: LineAmountTypes.NoTax })).toBe(LineAmountTypes.NoTax);
+  });
+
+  it("bills any other note's correction tax-inclusive, so the gross equals the cents taken back", () => {
+    expect(xeroOffsettingLineAmountTypes({ lineAmountTypes: LineAmountTypes.Inclusive })).toBe(LineAmountTypes.Inclusive);
+    expect(xeroOffsettingLineAmountTypes({ lineAmountTypes: LineAmountTypes.Exclusive })).toBe(LineAmountTypes.Inclusive);
+    expect(xeroOffsettingLineAmountTypes({})).toBe(LineAmountTypes.Inclusive);
   });
 });

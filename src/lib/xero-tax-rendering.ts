@@ -106,3 +106,17 @@ export function xeroDocumentCarriesTax(
   return (document.lineItems ?? []).every((line) =>
     rendering.taxType === undefined ? !line.taxType || line.taxType === "NONE" : line.taxType === rendering.taxType);
 }
+
+/**
+ * The line-amount basis of a document that offsets an existing one (#5241): a
+ * credit-deduction correction invoice bills the cents taken back off a credit
+ * note. An untaxed note's correction is untaxed; any other note's is
+ * `Inclusive`, so the gross the invoice bills equals the cents taken back
+ * whatever basis the note itself was raised under. Its lines keep the note's
+ * own tax type, which the caller copies from the note.
+ */
+export function xeroOffsettingLineAmountTypes(
+  document: { lineAmountTypes?: LineAmountTypes | string | null },
+): LineAmountTypes {
+  return document.lineAmountTypes === LineAmountTypes.NoTax ? LineAmountTypes.NoTax : LineAmountTypes.Inclusive;
+}
