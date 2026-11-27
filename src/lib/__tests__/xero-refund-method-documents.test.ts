@@ -10,6 +10,8 @@
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { PaymentSource } from "@prisma/client";
+import { resolveXeroTaxRendering } from "@/lib/xero-tax-anchors";
+import { BASELINE_XERO_TAX_RENDERING } from "@/lib/xero-tax-rendering";
 
 const mocks = vi.hoisted(() => ({
   paymentFindUnique: vi.fn(),
@@ -1338,6 +1340,10 @@ describe("#5235: the refund line posts to the mapped Hut Fee Refunds account, re
     it.each(builders)("%s", async (_name, dollars, build) => {
       mocks.paymentFindUnique.mockResolvedValue(paymentRow(PaymentSource.STRIPE));
       mapHutFeeRefundsTo(code);
+      vi.mocked(resolveXeroTaxRendering).mockResolvedValueOnce({
+        ...BASELINE_XERO_TAX_RENDERING,
+        taxType: "CLUB_OUTPUT",
+      });
 
       await build();
 
@@ -1346,7 +1352,7 @@ describe("#5235: the refund line posts to the mapped Hut Fee Refunds account, re
       expect(note.lineItems).toHaveLength(1);
       expect(note.lineItems?.[0]).toMatchObject({
         accountCode: code,
-        taxType: "OUTPUT2",
+        taxType: "CLUB_OUTPUT",
         quantity: 1,
         unitAmount: dollars,
       });
