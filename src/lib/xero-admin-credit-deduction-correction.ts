@@ -10,13 +10,20 @@ import { clubFormatValues } from "@/lib/club-format-server";
 import { getXeroErrorStatusCode } from "@/lib/xero-error-shape";
 
 /**
- * Xero refused the write outright (a 4xx other than a timeout or rate limit), so
- * nothing landed: lift the "a write may have landed" fence, but only while no line
- * has completed. Cancel still reads Xero itself before restoring any cents.
+ * The fence says "a write may have landed without a reply". Lift it only when this
+ * run ended on a definite answer and no line has completed: Xero refused a request
+ * outright (a 4xx other than a timeout or rate limit), a call was refused before
+ * anything was sent (`preHttp`), or Xero's own state refused the correction before
+ * this run wrote anything. Otherwise a correction that can never finish could never
+ * be cancelled either. Cancel still reads Xero itself before restoring any cents,
+ * and refuses if this operation ran since it looked.
  */
-async function releaseFenceAfterRefusal(correctionId: string, error: unknown): Promise<void> {
+async function releaseFenceAfterRefusal(correctionId: string, error: unknown, wroteThisRun: boolean): Promise<void> {
   const status = getXeroErrorStatusCode(error);
-  if (status === undefined || status < 400 || status > 499 || status === 408 || status === 429) return;
+  const refusedByXero = status !== undefined && status >= 400 && status <= 499 && status !== 408 && status !== 429;
+  const neverSent = (error as { preHttp?: unknown } | null)?.preHttp === true;
+  const refusedOnRead = error instanceof Error && error.name === "XeroCreditNoteCorrectionRefusal" && !wroteThisRun;
+  if (!refusedByXero && !neverSent && !refusedOnRead) return;
   await prisma.adminCreditDeductionCorrection.updateMany({
     where: { id: correctionId, status: "RESERVED", providerMutationStartedAt: { not: null }, lines: { none: { completedAt: { not: null } } } },
     data: { providerMutationStartedAt: null },
@@ -30,6 +37,7 @@ export async function completeAdminCreditDeductionCorrection(input: {
 }): Promise<void> {
   const { syncOperation, payload } = input;
   let completed: Awaited<ReturnType<typeof completeXeroSyncOperation>> = null;
+  let wroteThisRun = false;
   try {
     const correction = await prisma.adminCreditDeductionCorrection.findUnique({
       where: { id: payload.correctionId }, include: { lines: true, request: true },
@@ -57,6 +65,7 @@ export async function completeAdminCreditDeductionCorrection(input: {
             });
             if (marked.count !== 1) throw new Error("Credit correction is no longer reserved");
           });
+          wroteThisRun = true;
         },
       });
       await prisma.$transaction(async (tx) => {
@@ -92,7 +101,7 @@ export async function completeAdminCreditDeductionCorrection(input: {
       return completeXeroSyncOperation(syncOperation, {}, { store: tx });
     });
   } catch (error) {
-    await releaseFenceAfterRefusal(payload.correctionId, error);
+    await releaseFenceAfterRefusal(payload.correctionId, error, wroteThisRun);
     await failXeroSyncOperation(syncOperation, error);
     throw error;
   }

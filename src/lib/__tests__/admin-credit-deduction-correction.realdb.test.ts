@@ -370,4 +370,88 @@ let harnessRole: SuiteEnvironmentRoleDeclaration | undefined;
     }
     expect(await freeOnNote(noteId)).toBe(xeroNote(noteId).remainingCreditCents);
   });
+
+  it("cancel restores nothing when a worker billed the correction and was refused while cancel was reading Xero; voiding that invoice in Xero then lets it cancel", async () => {
+    const { noteId } = await seedNotedGrant();
+    const approved = await approvedDeduction(3_000);
+    const reserved = await correctionOf(approved.request.id);
+    let interleaved = false;
+    const real = session.xero.accountingApi;
+    override.setXeroClientForTests({ tenantId: session.tenantId, xero: { accountingApi: new Proxy(real, {
+      get(target, name) {
+        const method = Reflect.get(target, name) as (...args: unknown[]) => Promise<unknown>;
+        // Xero refuses every allocation outright. Nothing lands, so the worker lifts its own fence.
+        if (name === "createCreditNoteAllocation") return async () => { throw Object.assign(new Error("Allocation refused"), { statusCode: 400 }); };
+        if (name !== "getInvoices" || interleaved) return method;
+        return async (...args: unknown[]) => {
+          interleaved = true;
+          // Cancel is shown a Xero with no correction invoice; a whole worker run then happens before it claims.
+          const seenByCancel = await method.apply(target, args);
+          await expect(runWorker(reserved.id)).rejects.toThrow();
+          return seenByCancel;
+        };
+      },
+    }) } as never });
+    const cancelIt = () => cancel.cancelAdminCreditDeductionCorrection({ memberId: MEMBER, correctionId: reserved.id, adminId: APPROVER });
+
+    await expect(cancelIt()).rejects.toThrow(/ran while it was being checked/);
+    expect(interleaved).toBe(true);
+    // The fence is down and the operation is claimable again: only the claim's memory of what it saw refused.
+    expect(await correctionOf(approved.request.id)).toMatchObject({ status: "RESERVED", providerMutationStartedAt: null });
+    expect(fake.snapshot().invoices).toHaveLength(1);
+    expect(await credit.getMemberCreditBalance(MEMBER)).toBe(7_000);
+
+    // The retry is refused again, so the correction can never finish while that invoice stands.
+    await expect(runWorker(reserved.id)).rejects.toThrow();
+    await expect(cancelIt()).rejects.toThrow(/void its correction invoice in Xero/);
+    expect(await credit.getMemberCreditBalance(MEMBER)).toBe(7_000);
+
+    fake.voidInvoice(fake.snapshot().invoices[0]!.invoiceID);
+    await cancelIt();
+    expect((await correctionOf(approved.request.id)).status).toBe("CANCELLED");
+    expect(await credit.getMemberCreditBalance(MEMBER)).toBe(10_000);
+    expect(await freeOnNote(noteId)).toBe(10_000);
+    expect(xeroNote(noteId).remainingCreditCents).toBe(10_000);
+  });
+
+  it("after a lost void reply cancel is refused by Xero's own state and the retry completes without a second write", async () => {
+    const { noteId } = await seedNotedGrant();
+    const approved = await approvedDeduction(10_000);
+    const reserved = await correctionOf(approved.request.id);
+    session.failAfterApply("updateCreditNote", { statusCode: 400, body: { Message: "reply lost" } });
+    await expect(runWorker(reserved.id)).rejects.toThrow();
+    expect(xeroNote(noteId).status).toBe("VOIDED");
+    await expect(cancel.cancelAdminCreditDeductionCorrection({ memberId: MEMBER, correctionId: reserved.id, adminId: APPROVER })).rejects.toThrow(/Retry it/);
+    expect(await credit.getMemberCreditBalance(MEMBER)).toBe(0);
+
+    await runWorker(reserved.id);
+    expect((await correctionOf(approved.request.id)).status).toBe("COMPLETED");
+    expect(await credit.getMemberCreditBalance(MEMBER)).toBe(0);
+    expect(fake.snapshot().invoices).toHaveLength(0);
+  });
+
+  it("a note that funds two lots is corrected by one invoice for the cents taken from both", async () => {
+    const { noteId, lotId } = await seedNotedGrant();
+    await db.memberCredit.update({ where: { id: lotId }, data: { amountCents: 6_000 } });
+    await db.memberCredit.create({ data: { memberId: MEMBER, amountCents: 4_000, type: "ADMIN_ADJUSTMENT", description: "Grant, second part", xeroCreditNoteId: noteId } });
+
+    const approved = await approvedDeduction(7_000);
+    const reserved = await correctionOf(approved.request.id);
+    expect(reserved.lines).toMatchObject([{ xeroCreditNoteId: noteId, amountCents: 7_000, mode: "INVOICE" }]);
+    await runWorker(reserved.id);
+    expect((await correctionOf(approved.request.id)).status).toBe("COMPLETED");
+    expect(fake.snapshot().allocations.filter((a) => a.creditNoteID === noteId)).toEqual([expect.objectContaining({ amountCents: 7_000 })]);
+    expect(xeroNote(noteId).remainingCreditCents).toBe(3_000);
+    expect(await freeOnNote(noteId)).toBe(3_000);
+    expect(await credit.getMemberCreditBalance(MEMBER)).toBe(3_000);
+
+    // Taking the rest is a second invoice under its own request, never a void of the shared note.
+    const rest = await approvedDeduction(3_000);
+    const restReserved = await correctionOf(rest.request.id);
+    expect(restReserved.lines).toMatchObject([{ amountCents: 3_000, mode: "INVOICE" }]);
+    await runWorker(restReserved.id);
+    expect(xeroNote(noteId).remainingCreditCents).toBe(0);
+    expect(await credit.getMemberCreditBalance(MEMBER)).toBe(0);
+    expect(fake.snapshot().invoices).toHaveLength(2);
+  });
 });

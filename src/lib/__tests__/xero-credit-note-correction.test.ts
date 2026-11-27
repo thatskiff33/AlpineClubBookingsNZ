@@ -192,4 +192,59 @@ describe("#5241 Xero credit deduction correction", () => {
     await expect(correctXeroCreditNote(correction(1000))).resolves.toMatchObject({ xeroAllocationId: expect.any(String) });
     expect(fake.snapshot().allocations).toHaveLength(1);
   });
+
+  it("keeps every idempotency key within Xero's 128 characters, and stable, for a large deduction", async () => {
+    // The outbox key of a $1,000.00 deduction: with the note's id and the step it used to run to 129.
+    const keyBase = `admin-credit-deduction:${"c".repeat(25)}:credit-note-correction:100000:v1:${"n".repeat(36)}`;
+    const keys: string[] = [];
+    const accountingApi = new Proxy(session.xero.accountingApi, { get(target, name) {
+      const member = Reflect.get(target, name);
+      if (name !== "createInvoices" && name !== "createCreditNoteAllocation") return member;
+      return (...args: unknown[]) => { keys.push(args[4] as string); return member.apply(target, args); };
+    } });
+    setXeroClientForTests({ tenantId: session.tenantId, xero: { accountingApi } as XeroClient });
+    await correctXeroCreditNote({ ...correction(10000), keyBase });
+    expect(keys).toHaveLength(2);
+    for (const key of keys) expect(key.length).toBeLessThanOrEqual(128);
+    expect(new Set(keys).size).toBe(2);
+    expect(fake.snapshot().allocations).toHaveLength(1);
+  });
+
+  it("corrects an untaxed note with an untaxed invoice that names no tax type", async () => {
+    const untaxed = await session.xero.accountingApi.createCreditNotes(session.tenantId, { creditNotes: [{
+      type: CreditNote.TypeEnum.ACCRECCREDIT, status: CreditNote.StatusEnum.AUTHORISED, contact: { contactID: contactId },
+      lineAmountTypes: LineAmountTypes.NoTax, lineItems: [{ description: "Original grant", quantity: 1, unitAmount: 50, accountCode: "400" }],
+    }] });
+    noteId = untaxed.body.creditNotes![0]!.creditNoteID!;
+    const result = await correctXeroCreditNote(correction(2000));
+    const invoice = (await session.xero.accountingApi.getInvoice(session.tenantId, result.xeroInvoiceId!)).body.invoices![0]!;
+    expect(invoice).toMatchObject({ lineAmountTypes: LineAmountTypes.NoTax, total: 20 });
+    expect(invoice.lineItems![0]!.accountCode).toBe("400");
+    expect(invoice.lineItems![0]!.taxType ?? "NONE").toBe("NONE");
+    await expect(correctXeroCreditNote(correction(2000))).resolves.toEqual(result); // the replay adopts it
+  });
+
+  it("refuses a taxed note whose line names no tax type", async () => {
+    proxyApi("getCreditNote", (original) => async (...args: never[]) => {
+      const response = await original(...args);
+      delete (response.body.creditNotes![0] as CreditNote).lineItems![0]!.taxType;
+      return response;
+    });
+    await expect(correctXeroCreditNote(correction(1000))).rejects.toThrow("NOTE_MIXED_LINES");
+    expect(fake.snapshot().invoices).toHaveLength(0);
+  });
+
+  it("cancellation stops at a live correction invoice, and no longer once it is voided in Xero", async () => {
+    const invoiceId = await adoptable();
+    const failure = await assertXeroCreditNoteCorrectionUntouched(correction(1000)).catch((error: Error) => error);
+    expect(failure).toMatchObject({ name: "XeroCreditNoteCorrectionRefusal", code: "CORRECTION_ALREADY_STARTED" });
+    fake.voidInvoice(invoiceId);
+    await expect(assertXeroCreditNoteCorrectionUntouched(correction(1000))).resolves.toBeUndefined();
+  });
+
+  it("cancellation of an invoice-mode line is not held by a note voided some other way", async () => {
+    fake.voidCreditNote(noteId);
+    await expect(assertXeroCreditNoteCorrectionUntouched(correction(1000, "INVOICE"))).resolves.toBeUndefined();
+    await expect(assertXeroCreditNoteCorrectionUntouched(correction(10000, "VOID"))).rejects.toThrow("CORRECTION_ALREADY_STARTED");
+  });
 });

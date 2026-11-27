@@ -1,9 +1,10 @@
 /** Xero-only correction of existing credit; shared with Ledger M5 (#4517, #5241). */
-import { CreditNote, Invoice, type XeroClient } from "xero-node";
+import { CreditNote, Invoice, LineAmountTypes, type XeroClient } from "xero-node";
 import { exactProviderAmountToCents } from "@/lib/money-provider-amount";
 import { callXeroApi, getAuthenticatedXeroClient } from "@/lib/xero-api-client";
 import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
 import { xeroDocumentDateForClubToday } from "@/lib/xero-provider-dates";
+import { buildXeroIdempotencyKey } from "@/lib/xero-sync";
 import { xeroOffsettingLineAmountTypes } from "@/lib/xero-tax-rendering";
 
 type Session = { xero: XeroClient; tenantId: string };
@@ -22,6 +23,22 @@ export interface XeroCreditNoteCorrectionResult {
   xeroAllocationId: string | null;
 }
 
+/**
+ * Xero's own state says this correction cannot go ahead as planned. Raised from what
+ * a read (or a create's own reply) showed, so the refusal itself sends nothing. The
+ * message leads with the code. Callers key on `name` and `code`, never `instanceof`,
+ * as the outbox does for its own refusals.
+ */
+export class XeroCreditNoteCorrectionRefusal extends Error {
+  constructor(
+    readonly code: "NOTE_CHANGED_IN_XERO" | "NOTE_MIXED_LINES" | "CORRECTION_INVOICE_CHANGED" | "CORRECTION_ALREADY_STARTED",
+    detail: string,
+  ) {
+    super(`${code}: ${detail}`);
+    this.name = "XeroCreditNoteCorrectionRefusal";
+  }
+}
+
 function meter(operation: string, resourceType: "CREDIT_NOTE" | "INVOICE" | "ALLOCATION") {
   return { operation, resourceType, workflow: "correctXeroCreditNote", context: operation } as const;
 }
@@ -30,7 +47,7 @@ async function readNote({ xero, tenantId }: Session, noteId: string): Promise<Cr
   const response = await callXeroApi(() => xero.accountingApi.getCreditNote(tenantId, noteId), meter("getCreditNote", "CREDIT_NOTE"));
   const [note, ...rest] = response.body.creditNotes ?? [];
   if (!note || rest.length || note.creditNoteID !== noteId || note.type !== CreditNote.TypeEnum.ACCRECCREDIT || !note.contact?.contactID) {
-    throw new Error("NOTE_CHANGED_IN_XERO: the original credit note cannot be verified. Retry after checking Xero.");
+    throw new XeroCreditNoteCorrectionRefusal("NOTE_CHANGED_IN_XERO", "the original credit note cannot be verified. Retry after checking Xero.");
   }
   return note;
 }
@@ -43,13 +60,22 @@ async function findInvoices({ xero, tenantId }: Session, reference: string): Pro
   return response.body.invoices ?? [];
 }
 
-/** Reads only. The caller must claim cancellation against a worker before restoring cents. */
-export async function assertXeroCreditNoteCorrectionUntouched(input: { noteId: string; reference: string }): Promise<void> {
+const NO_LONGER_AN_INVOICE: ReadonlySet<Invoice.StatusEnum | undefined> = new Set([Invoice.StatusEnum.VOIDED, Invoice.StatusEnum.DELETED]);
+
+/**
+ * Reads only. The caller must claim cancellation against a worker before restoring cents.
+ * A correction invoice someone voided or deleted in Xero bills nothing and holds no
+ * allocation, so it no longer counts. Only a VOID line can have voided the note itself;
+ * an INVOICE line never changes the note's status, so a note voided some other way does
+ * not hold that line's cancellation.
+ */
+export async function assertXeroCreditNoteCorrectionUntouched(input: { noteId: string; reference: string; mode: "VOID" | "INVOICE" }): Promise<void> {
   const session = await getAuthenticatedXeroClient();
   const note = await readNote(session, input.noteId);
-  const invoices = await findInvoices(session, input.reference);
-  if (note.status !== CreditNote.StatusEnum.AUTHORISED && note.status !== CreditNote.StatusEnum.PAID || invoices.length) {
-    throw new Error("CORRECTION_ALREADY_STARTED: Xero was changed; retry the correction instead of cancelling.");
+  const invoices = (await findInvoices(session, input.reference)).filter(invoice => !NO_LONGER_AN_INVOICE.has(invoice.status));
+  const noteVoided = note.status !== CreditNote.StatusEnum.AUTHORISED && note.status !== CreditNote.StatusEnum.PAID;
+  if (input.mode === "VOID" && noteVoided || invoices.length) {
+    throw new XeroCreditNoteCorrectionRefusal("CORRECTION_ALREADY_STARTED", "Xero already holds this correction.");
   }
 }
 
@@ -63,16 +89,18 @@ export async function correctXeroCreditNote(input: XeroCreditNoteCorrectionInput
   const session = await getAuthenticatedXeroClient();
   const { xero, tenantId } = session;
   const note = await readNote(session, input.noteId);
-  const key = (step: string) => `${input.keyBase}:${input.noteId}:${step}`;
-  // The club's calendar day (INV-DATE-019), read once: a retry under the same key sends the same date.
+  // Xero refuses a key over 128 characters; the builder hashes a long one down to 120.
+  const key = (step: string) => buildXeroIdempotencyKey(input.keyBase, input.noteId, step);
+  // The club's calendar day (INV-DATE-019), read once so the invoice and its allocation share it.
+  // A retry on a later day sends that day under the same key (`callXeroApi` records the assumption).
   const documentDate = xeroDocumentDateForClubToday(await readClubTimeZoneOutsideRequest());
   const total = exactProviderAmountToCents(note.total);
   const remaining = exactProviderAmountToCents(note.remainingCredit);
   if (input.mode === "VOID") {
-    if (total !== input.cents) throw new Error("NOTE_CHANGED_IN_XERO: the note total no longer matches the full deduction.");
+    if (total !== input.cents) throw new XeroCreditNoteCorrectionRefusal("NOTE_CHANGED_IN_XERO", "the note total no longer matches the full deduction.");
     if (note.status === CreditNote.StatusEnum.VOIDED) return { xeroInvoiceId: null, xeroAllocationId: null };
     if (note.status !== CreditNote.StatusEnum.AUTHORISED || remaining !== total || note.allocations?.some(a => !a.isDeleted) || note.payments?.length) {
-      throw new Error("NOTE_CHANGED_IN_XERO: the note is no longer wholly unused; cancel and request the deduction again.");
+      throw new XeroCreditNoteCorrectionRefusal("NOTE_CHANGED_IN_XERO", "the note is no longer wholly unused; cancel and request the deduction again.");
     }
     await input.beforeMutation?.();
     const response = await callXeroApi(() => xero.accountingApi.updateCreditNote(
@@ -84,15 +112,20 @@ export async function correctXeroCreditNote(input: XeroCreditNoteCorrectionInput
 
   const lines = note.lineItems ?? [];
   const first = lines[0];
-  if (!first?.accountCode || !first.taxType || lines.some(line => line.accountCode !== first.accountCode || line.taxType !== first.taxType)) {
-    throw new Error("NOTE_MIXED_LINES: the credit note has mixed or missing account codes or tax rates; cancel this correction and ask the treasurer to check the note.");
+  // An untaxed note's lines name no tax type or "NONE" (`xeroDocumentCarriesTax`); its correction names none.
+  const lineAmountTypes = xeroOffsettingLineAmountTypes(note);
+  const taxOf = (line: { taxType?: string }) => (line.taxType && line.taxType !== "NONE" ? line.taxType : undefined);
+  const taxType = first && taxOf(first);
+  if (!first?.accountCode || !taxType && lineAmountTypes !== LineAmountTypes.NoTax ||
+    lines.some(line => line.accountCode !== first.accountCode || taxOf(line) !== taxType)) {
+    throw new XeroCreditNoteCorrectionRefusal("NOTE_MIXED_LINES", "the credit note has mixed or missing account codes or tax rates; cancel this correction and ask the treasurer to check the note.");
   }
   const candidates = await findInvoices(session, input.reference);
-  if (candidates.length > 1) throw new Error("CORRECTION_INVOICE_CHANGED: several invoices use the correction reference.");
+  if (candidates.length > 1) throw new XeroCreditNoteCorrectionRefusal("CORRECTION_INVOICE_CHANGED", "several invoices use the correction reference.");
   let invoice: Invoice | undefined = candidates[0];
   if (!invoice) {
     if (note.status !== CreditNote.StatusEnum.AUTHORISED || remaining === null || remaining < input.cents) {
-      throw new Error("NOTE_CHANGED_IN_XERO: the credit note has insufficient free credit for this deduction.");
+      throw new XeroCreditNoteCorrectionRefusal("NOTE_CHANGED_IN_XERO", "the credit note has insufficient free credit for this deduction.");
     }
     await input.beforeMutation?.();
     const response = await callXeroApi(() => xero.accountingApi.createInvoices(tenantId, { invoices: [{
@@ -104,29 +137,29 @@ export async function correctXeroCreditNote(input: XeroCreditNoteCorrectionInput
       date: documentDate,
       dueDate: documentDate,
       currencyCode: note.currencyCode,
-      lineAmountTypes: xeroOffsettingLineAmountTypes(note),
-      lineItems: [{ description: input.reference, quantity: 1, unitAmount: input.cents / 100, accountCode: first.accountCode, taxType: first.taxType }],
+      lineAmountTypes,
+      lineItems: [{ description: input.reference, quantity: 1, unitAmount: input.cents / 100, accountCode: first.accountCode, ...(taxType ? { taxType } : {}) }],
     }] }, undefined, undefined, key("invoice")), meter("createInvoices", "INVOICE"));
     invoice = response.body.invoices?.[0];
   }
   if (!invoice?.invoiceID || invoice.reference !== input.reference || invoice.type !== Invoice.TypeEnum.ACCREC ||
     invoice.contact?.contactID !== note.contact!.contactID || exactProviderAmountToCents(invoice.total) !== input.cents ||
     invoice.currencyCode !== note.currencyCode || !invoice.lineItems?.length ||
-    invoice.lineItems.some(line => line.accountCode !== first.accountCode || line.taxType !== first.taxType) ||
+    invoice.lineItems.some(line => line.accountCode !== first.accountCode || taxOf(line) !== taxType) ||
     invoice.status !== Invoice.StatusEnum.AUTHORISED && invoice.status !== Invoice.StatusEnum.PAID) {
-    throw new Error("CORRECTION_INVOICE_CHANGED: the invoice with this reference does not match the correction; check Xero before retrying.");
+    throw new XeroCreditNoteCorrectionRefusal("CORRECTION_INVOICE_CHANGED", "the invoice with this reference does not match the correction; check Xero before retrying.");
   }
   const invoiceId = invoice.invoiceID;
   const allocated = (note.allocations ?? []).filter(a => !a.isDeleted && a.invoice?.invoiceID === invoiceId);
   if (allocated.length) {
     if (allocated.length !== 1 || exactProviderAmountToCents(allocated[0]!.amount) !== input.cents || !allocated[0]!.allocationID) {
-      throw new Error("CORRECTION_INVOICE_CHANGED: the correction allocation no longer matches the deduction.");
+      throw new XeroCreditNoteCorrectionRefusal("CORRECTION_INVOICE_CHANGED", "the correction allocation no longer matches the deduction.");
     }
     return { xeroInvoiceId: invoiceId, xeroAllocationId: allocated[0]!.allocationID! };
   }
   if (note.status !== CreditNote.StatusEnum.AUTHORISED || remaining === null || remaining < input.cents ||
     invoice.status !== Invoice.StatusEnum.AUTHORISED || exactProviderAmountToCents(invoice.amountDue) !== input.cents) {
-    throw new Error("NOTE_CHANGED_IN_XERO: the correction invoice or the credit note has already been used; check Xero and retry.");
+    throw new XeroCreditNoteCorrectionRefusal("NOTE_CHANGED_IN_XERO", "the correction invoice or the credit note has already been used; check Xero and retry.");
   }
   await input.beforeMutation?.();
   const response = await callXeroApi(() => xero.accountingApi.createCreditNoteAllocation(

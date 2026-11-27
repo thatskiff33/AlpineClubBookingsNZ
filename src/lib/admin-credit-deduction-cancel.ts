@@ -6,8 +6,14 @@ import { MemberCreditValidationError } from "@/lib/policies/member-credit";
 import { assertXeroCreditNoteCorrectionUntouched } from "@/lib/xero-credit-note-correction";
 import { adminCreditDeductionOperationWhere, adminCreditDeductionReference } from "@/lib/admin-credit-deduction-payload";
 import { createAuditLog } from "@/lib/audit";
+import logger from "@/lib/logger";
 
 const RETRY = "This correction may already have changed Xero. Retry it; its reserved credit cannot be restored.";
+const HELD_IN_XERO = "Xero already holds part of this correction, so its reserved credit cannot be restored. Retry it; if it cannot finish, void its correction invoice in Xero, then cancel.";
+const XERO_UNREADABLE = "Xero could not be checked just now, so nothing was changed. Try cancelling again shortly.";
+const RAN_MEANWHILE = "The Xero correction ran while it was being checked. Reload, then retry or cancel it.";
+const CANCELLABLE = ["PENDING", "FAILED"];
+
 /** A failed preflight can be cancelled; an ambiguous dispatched write can only be retried. */
 export async function cancelAdminCreditDeductionCorrection(input: {
   memberId: string; correctionId: string; adminId: string; ipAddress?: string;
@@ -18,23 +24,37 @@ export async function cancelAdminCreditDeductionCorrection(input: {
   if (!correction || correction.memberId !== input.memberId) throw new MemberCreditValidationError("Credit correction not found");
   if (correction.status !== "RESERVED") throw new MemberCreditValidationError("This credit correction has already ended");
   if (correction.providerMutationStartedAt) throw new MemberCreditValidationError(RETRY);
+  // Read before Xero is asked. A worker that runs during the reads below changes this row, and
+  // may by then have written to Xero and lifted its own fence, so the claim below demands the
+  // row exactly as it was seen here.
+  const seen = await prisma.xeroSyncOperation.findFirst({
+    where: adminCreditDeductionOperationWhere(correction.id), select: { id: true, status: true, startedAt: true, updatedAt: true },
+  });
+  if (!seen) throw new MemberCreditValidationError("Credit correction operation not found");
+  if (!CANCELLABLE.includes(seen.status)) throw new MemberCreditValidationError("The Xero correction is running; wait for it to finish, then retry");
   for (const line of correction.lines) {
     try {
-      await assertXeroCreditNoteCorrectionUntouched({ noteId: line.xeroCreditNoteId, reference: adminCreditDeductionReference(correction.requestId, line.xeroCreditNoteId) });
-    } catch {
-      throw new MemberCreditValidationError(RETRY);
+      await assertXeroCreditNoteCorrectionUntouched({
+        noteId: line.xeroCreditNoteId, mode: line.mode,
+        reference: adminCreditDeductionReference(correction.requestId, line.xeroCreditNoteId),
+      });
+    } catch (error) {
+      // Only Xero showing the correction's own work means "retry"; an outage must not send the
+      // officer to the one action that performs the write they are trying to stop.
+      const held = error instanceof Error && error.name === "XeroCreditNoteCorrectionRefusal" &&
+        (error as { code?: unknown }).code === "CORRECTION_ALREADY_STARTED";
+      if (!held) logger.warn({ err: error, correctionId: correction.id }, "Could not check Xero before cancelling a credit deduction correction");
+      throw new MemberCreditValidationError(held ? HELD_IN_XERO : XERO_UNREADABLE);
     }
   }
   await prisma.$transaction(async (tx) => {
     await lockMemberCreditLedger(input.memberId, tx);
-    const operation = await tx.xeroSyncOperation.findFirst({ where: adminCreditDeductionOperationWhere(correction.id) });
-    if (!operation) throw new MemberCreditValidationError("Credit correction operation not found");
     const claim = await tx.xeroSyncOperation.updateMany({
-      where: { id: operation.id, status: { in: ["PENDING", "FAILED"] } },
+      where: { id: seen.id, status: { in: CANCELLABLE }, startedAt: seen.startedAt, updatedAt: seen.updatedAt },
       data: { status: "CANCELLED", completedAt: new Date() },
     });
-    if (claim.count !== 1) throw new MemberCreditValidationError("The Xero correction is running; wait for it to finish, then retry");
-    // The one locked recheck: a worker that reached Xero during the read above set the fence.
+    if (claim.count !== 1) throw new MemberCreditValidationError(RAN_MEANWHILE);
+    // The locked recheck: a worker still holding its fence since the read above is refused here.
     const cancelled = await tx.adminCreditDeductionCorrection.updateMany({
       where: { id: correction.id, status: "RESERVED", providerMutationStartedAt: null },
       data: { status: "CANCELLED", cancelledById: input.adminId, cancelledAt: new Date() },
