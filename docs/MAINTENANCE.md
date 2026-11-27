@@ -3227,16 +3227,22 @@ pnpm run --silent bookings:audit-mid-stay-edits --before 2026-08-11T00:00:00+12:
 
 **Why it cannot be exact.** Before the fixes each edit kept one record: the
 stay's dates and price before and after, and the names of guests removed and
-added. There is no per-guest before and after. So an edit that only gave nights
-back, or only added guests, can be judged; an extension, an edit that both
-bought and gave back nights, or a booking edited again later can only be
-bounded. An officer's date override that re-priced the stay ("recalculate")
-re-priced every night at the rates of the day, so each one made after check-in
-is listed for a person to compare with the rates the member booked at, even at
-a $0.00 net change, because rates may have moved both ways. Shift-mode
-overrides moved no money and name or link corrections re-priced no nights, so
-neither is examined. #2744 cannot see a guest whose member or age category
-changed between booking and edit while the rates stayed the same.
+added. There is no per-guest before and after, and every guest's nights were
+rewritten. So a price rise with nothing bought, or an edit that only added
+guests, can be judged; an extension, an edit that both bought and gave back
+nights, or a booking edited again later can only be bounded. #2743 re-billed an
+ended guest on any edit, a shortening included, so a give-back on a party of
+two or more is listed with its amount unknown: the re-bill would hide inside
+the credit and nothing records whether a guest had left. An officer's date
+override that re-priced the stay ("recalculate") re-priced every night at the
+rates of the day, so each one made after check-in is listed for a person to
+compare with the rates the member booked at; its figure is the net change,
+which bounds nothing, since nights may have moved both ways, and a $0.00 net
+change is listed too. Shift-mode overrides moved no money, name corrections
+re-price nothing, and a guest-to-member link was refused beside any other
+change, so none of them is examined. For #2744 a season deleted since booking
+counts as a rate change; the audit cannot see a guest whose member or age
+category changed between booking and edit while the rates stayed the same.
 
 **Reading the header.** It prints the merge times of #2757 and #2758, when the
 marker migration (`20260810020000_backfill_bed_allocation_audit_category`, the
@@ -3257,8 +3263,8 @@ certainty, the amount at stake and one sentence of reason.
   the edit bought nothing, or rose by more than the guests it added cost.
 - `possible`: a person checks the booking. "up to" is a limit, not a finding of
   that much; "amount unknown" means an over-charge may hide inside a net credit.
-- `officer-recalculated`: an officer override re-priced the stay; it has its
-  own line in the summary.
+- `officer-recalculated`: an officer override re-priced the stay; its "net
+  change" is not a limit, and it has its own line in the summary.
 - `unreadable`: the edit's record could not be read; it is listed, never
   dropped.
 

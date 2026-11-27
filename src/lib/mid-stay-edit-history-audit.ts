@@ -18,14 +18,17 @@
  * mid-stay edit went through the batch edit service, which wrote ONE
  * `BookingModification` per edit: the booking's dates and price totals before
  * and after, and the NAMES of guests removed and added. No per-guest before and
- * after, and every guest's night rows were rewritten. So an edit that only
- * gave nights back, or only added guests, can be judged; an extension, a mixed
- * edit, or a booking edited again later can only be bounded ("possible, up
- * to"). An officer's date override (`pricingMode: "recalculate"`, through the
- * batch service or the date-change service) re-priced the whole stay at the
- * rates of the day, so every one made mid-stay is listed for a person.
- * Shift-mode overrides moved no money (`ADMIN_DATE_SHIFT`) and name or link
- * corrections did not re-price nights: neither is examined.
+ * after, and every guest's night rows were rewritten. So a price rise with
+ * nothing bought, or an add-only edit, can be judged; an extension, a mixed
+ * edit or a booking edited again later can only be bounded ("possible, up
+ * to"); and a give-back on a party of two or more may hide a re-billed guest
+ * inside its credit, an amount nothing records. An officer's date override
+ * (`pricingMode: "recalculate"`, through the batch service or the date-change
+ * service) re-priced the whole stay at the rates of the day, so every one made
+ * mid-stay is listed for a person. Shift-mode overrides moved no money
+ * (`ADMIN_DATE_SHIFT`), name corrections re-price nothing, and a guest-to-member
+ * link was refused beside any other change (it applies only to quote-priced
+ * whole-lodge bookings): none of them is examined.
  *
  * WHICH EDITS. Edits created before the cut-off - when this install took the
  * fixes - whose club calendar day falls within the stay before the edit,
@@ -36,8 +39,9 @@
  *
  * REPORT ONLY - IT NEVER WRITES AND NEVER REPAIRS. Typed SELECTs through Prisma
  * (`INV-OPS-001`) plus the one shared migration-history read, in ONE read-only
- * snapshot (`withReadOnlySnapshot`). It selects ids and amounts only, never a
- * guest's or member's name or email.
+ * snapshot (`withReadOnlySnapshot`). It reads the stored snapshots, which hold
+ * guest names, but takes only dates, amounts and counts out of them; what it
+ * returns and prints is ids and amounts, never a name or email.
  */
 import type { Prisma } from "@prisma/client";
 import { z } from "zod";
@@ -50,6 +54,7 @@ import {
   clubCalendarDateOf,
   compareCalendarDates,
   parseCalendarDate,
+  parseInstant,
 } from "@/lib/club-time";
 import { bookingOwner } from "@/lib/booking-owner";
 import { readMigrationFinishedAt } from "@/lib/migration-finished-at";
@@ -80,64 +85,71 @@ export type MidStayEditShape =
   | "added-guests-excess"
   | "added-guests-unmatched"
   | "extended-or-mixed"
-  | "give-back-after-removal"
+  | "give-back-may-hide-rebill"
   | "give-back-repriced"
   | "unreadable";
 
 /**
- * Each shape's fixed reading. `upTo`: the amount is an upper limit, not a
- * finding of that much. `null` issue: not attributable to either fix alone.
+ * Each shape's fixed reading. `amount`: what its figure is - the error itself,
+ * an upper limit ("up to", not a finding of that much), or an officer
+ * re-price's net change, which bounds nothing because nights may have moved
+ * both ways. `null` issue: not attributable to either fix alone.
  */
 export const MID_STAY_EDIT_SHAPES: Record<
   MidStayEditShape,
-  { issue: "#2743" | "#2744" | null; certainty: "certain" | "possible" | "unreadable"; upTo: boolean; label: string }
+  {
+    issue: "#2743" | "#2744" | null;
+    certainty: "certain" | "possible" | "unreadable";
+    amount: "exact" | "up to" | "net change";
+    label: string;
+  }
 > = {
   "officer-recalculated": {
     issue: null,
     certainty: "possible",
-    upTo: true,
+    amount: "net change",
     label: "Officer override re-priced the stay at the rates of the day",
   },
   "rebilled-nothing-bought": {
     issue: "#2743",
     certainty: "certain",
-    upTo: false,
+    amount: "exact",
     label: "Price rose though the edit bought nothing",
   },
   "added-guests-excess": {
     issue: "#2743",
     certainty: "certain",
-    upTo: false,
+    amount: "exact",
     label: "Guests added; charged more than the added guests' price",
   },
   "added-guests-unmatched": {
     issue: "#2743",
     certainty: "possible",
-    upTo: true,
+    amount: "up to",
     label: "Guests added; their price could not be matched",
   },
   "extended-or-mixed": {
     issue: "#2743",
     certainty: "possible",
-    upTo: true,
+    amount: "up to",
     label: "Stay extended, or nights both bought and given back",
   },
-  "give-back-after-removal": {
+  "give-back-may-hide-rebill": {
     issue: "#2743",
     certainty: "possible",
-    upTo: false,
-    label: "Nights given back after an earlier mid-stay removal",
+    amount: "exact",
+    label: "Nights given back; an ended guest's re-bill may hide in the credit",
   },
   "give-back-repriced": {
     issue: "#2744",
     certainty: "possible",
-    upTo: true,
+    amount: "up to",
     label: "Nights given back where today's rate may differ from the rate paid",
   },
   unreadable: {
     issue: null,
     certainty: "unreadable",
-    upTo: false,
+    amount: "exact",
     label: "History unreadable - a person checks",
   },
 };
@@ -157,6 +169,7 @@ const PREVIOUS_SNAPSHOT = SNAPSHOT_DATES.extend({
   totalPriceCents: z.number().int(),
   discountCents: z.number().int().nullish(),
   promoAdjustmentCents: z.number().int().nullish(),
+  guestCount: z.number().int().nullish(),
   removedGuests: NAMES.nullish(),
 });
 const NEW_SNAPSHOT = SNAPSHOT_DATES.extend({
@@ -174,6 +187,8 @@ export interface MidStayEditFacts {
     totalPriceCents: number;
     discountCents: number;
     promoAdjustmentCents: number;
+    /** Guests before the edit; `null` when the row did not store it. */
+    guestCount: number | null;
     removedGuestCount: number;
   };
   next: {
@@ -254,11 +269,17 @@ export function classifyMidStayEdit(facts: MidStayEditFacts): MidStayEditFinding
     });
   }
 
-  if (gaveBack && d <= 0 && facts.earlierMidStayRemoval) {
+  // #2743 re-admitted a guest whose stay had ended on ANY edit, a shortening
+  // included, and the edit rewrote every guest's nights, so nothing left says
+  // whether one had. With one guest none can have ended while the stay runs.
+  const anotherGuestMayHaveEnded = previous.guestCount === null || previous.guestCount >= 2;
+  if (gaveBack && d <= 0 && (facts.earlierMidStayRemoval || anotherGuestMayHaveEnded)) {
     findings.push({
-      shape: "give-back-after-removal",
+      shape: "give-back-may-hide-rebill",
       atStakeCents: null,
-      reason: "An earlier mid-stay edit removed a guest; this one may have billed them again inside its net credit.",
+      reason: facts.earlierMidStayRemoval
+        ? "An earlier mid-stay edit removed a guest; this one may have billed them again inside its net credit."
+        : "A guest whose stay had already ended would have been billed again inside this net credit; the history cannot say whether one had.",
     });
   }
 
@@ -457,18 +478,22 @@ async function auditInSnapshot(
       membershipTypeRates: { select: { updatedAt: true } },
     },
   });
-  const ratesChangedSince = (lodgeId: string, checkIn: CalendarDate, checkOut: CalendarDate, since: Date) =>
-    seasons.some((season) => {
-      if (season.lodgeId !== lodgeId) return false;
-      const start = calendarDateOfDateOnlyInstant(season.startDate);
-      const end = calendarDateOfDateOnlyInstant(season.endDate);
-      if (compareCalendarDates(start, checkOut) > 0 || compareCalendarDates(end, checkIn) < 0) return false;
-      // A row's last update hides any earlier one, so any change since booking counts.
-      return (
+  const ratesChangedSince = (lodgeId: string, checkIn: CalendarDate, checkOut: CalendarDate, since: Date) => {
+    const covering = seasons.filter(
+      (season) =>
+        season.lodgeId === lodgeId &&
+        compareCalendarDates(calendarDateOfDateOnlyInstant(season.startDate), checkOut) <= 0 &&
+        compareCalendarDates(calendarDateOfDateOnlyInstant(season.endDate), checkIn) >= 0,
+    );
+    // A deleted season leaves no row: none covering the stay counts as a change.
+    if (covering.length === 0) return true;
+    // A row's last update hides any earlier one, so any change since booking counts.
+    return covering.some(
+      (season) =>
         season.updatedAt.getTime() > since.getTime() ||
-        season.membershipTypeRates.some((rate) => rate.updatedAt.getTime() > since.getTime())
-      );
-    });
+        season.membershipTypeRates.some((rate) => rate.updatedAt.getTime() > since.getTime()),
+    );
+  };
 
   const examined: ExaminedMidStayEdit[] = [];
   // Candidates run oldest first, so this holds the bookings an EARLIER mid-stay edit removed a guest from.
@@ -522,6 +547,7 @@ async function auditInSnapshot(
         totalPriceCents: parsed.previous.totalPriceCents,
         discountCents: parsed.previous.discountCents ?? 0,
         promoAdjustmentCents: parsed.previous.promoAdjustmentCents ?? 0,
+        guestCount: parsed.previous.guestCount ?? null,
         removedGuestCount,
       },
       next: {
@@ -553,7 +579,7 @@ async function auditInSnapshot(
 export interface MidStayEditShapeTotal {
   shape: MidStayEditShape;
   count: number;
-  /** Known amounts summed; an "up to" shape's is its limit. */
+  /** Known amounts summed, read as the shape's `amount` says. */
   atStakeCents: number;
   /** Findings whose amount the history cannot give. */
   unknownAmountCount: number;
@@ -577,10 +603,14 @@ export function summariseMidStayEditAudit(result: MidStayEditAuditResult): {
   return { shapes, listedEdits, clearEdits: result.examined.length - listedEdits };
 }
 
+function amountWithKind(shape: MidStayEditShape, cents: number, format: ClubFormat): string {
+  const kind = MID_STAY_EDIT_SHAPES[shape].amount;
+  return `${kind === "exact" ? "" : `${kind} `}${formatCents(cents, format)}`;
+}
+
 function describeAmount(finding: MidStayEditFinding, format: ClubFormat): string {
   if (finding.atStakeCents === null) return "amount unknown";
-  const amount = formatCents(finding.atStakeCents, format);
-  return MID_STAY_EDIT_SHAPES[finding.shape].upTo ? `up to ${amount}` : amount;
+  return amountWithKind(finding.shape, finding.atStakeCents, format);
 }
 
 function describeShapeTotal(total: MidStayEditShapeTotal, format: ClubFormat): string {
@@ -589,7 +619,7 @@ function describeShapeTotal(total: MidStayEditShapeTotal, format: ClubFormat): s
   if (total.shape === "unreadable") return `  ${meta.label}: ${total.count}`;
   const parts = [`${total.count}`];
   if (total.unknownAmountCount < total.count || total.count === 0) {
-    parts.push(`${meta.upTo ? "up to " : ""}${formatCents(total.atStakeCents, format)}`);
+    parts.push(amountWithKind(total.shape, total.atStakeCents, format));
   }
   if (total.unknownAmountCount > 0) parts.push(`${total.unknownAmountCount} amount unknown`);
   return `  ${meta.label} (${tag}): ${parts.join(", ")}`;
@@ -625,7 +655,8 @@ export function formatMidStayEditAuditReport(
     "## Summary",
     `${result.examined.length} mid-stay edit(s) before the cut-off examined: ${summary.listedEdits} listed, ${summary.clearEdits} clear.`,
     ...summary.shapes.map((total) => describeShapeTotal(total, format)),
-    "Certain: the history shows the error and its amount. Possible: a person checks; \"up to\" is a limit, not a finding.",
+    "Certain: the history shows the error and its amount. Possible: a person checks; \"up to\" is a limit, not a finding;",
+    "an officer re-price's \"net change\" bounds nothing, since nights may have moved both ways.",
   ];
   if (options.summaryOnly) return lines.join("\n");
 
@@ -656,9 +687,6 @@ export interface MidStayEditAuditArgs {
   before?: Date;
 }
 
-/** An instant with its zone spelled out, so a cut-off never takes the host's local time. */
-const ISO_INSTANT = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d+)?)?(Z|[+-]\d{2}:\d{2})$/;
-
 /**
  * The CLI's flags. Anything else throws, `--apply` included: this audit has no
  * write path to switch on.
@@ -674,8 +702,10 @@ export function parseMidStayEditAuditArgs(argv: readonly string[]): MidStayEditA
     else if (arg === "--summary") args.summary = true;
     else if (arg === "--before" || arg.startsWith("--before=")) {
       const value = arg === "--before" ? argv[(i += 1)] : arg.slice("--before=".length);
-      const instant = value && ISO_INSTANT.test(value) ? new Date(value) : null;
-      if (!instant || Number.isNaN(instant.getTime())) {
+      // The kernel's parser: a zone is required, so a cut-off never takes the
+      // host's local time, and an impossible date is refused, never rolled.
+      const instant = value ? parseInstant(value) : null;
+      if (!instant) {
         throw new Error(`--before needs an ISO instant with its zone, such as 2026-08-11T00:00:00Z; got ${value ?? "nothing"}`);
       }
       args.before = instant;

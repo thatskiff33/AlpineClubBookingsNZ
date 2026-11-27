@@ -167,8 +167,12 @@ function shapeFixture() {
         previous: { totalPriceCents: 40000 },
         next: { checkOut: "2026-07-14", totalPriceCents: 35000 },
       }),
-      mod("give_back_rate_change", "b_rate_change", { next: { checkOut: "2026-07-13", totalPriceCents: 42000 } }),
-      mod("give_back_discount", "b_discount", { previous: { discountCents: 2000 }, next: { checkOut: "2026-07-13", totalPriceCents: 45000 } }),
+      mod("give_back_party", "b_party", { next: { checkOut: "2026-07-13", totalPriceCents: 30000 } }),
+      mod("give_back_rate_change", "b_rate_change", { previous: { guestCount: 1 }, next: { checkOut: "2026-07-13", totalPriceCents: 42000 } }),
+      mod("give_back_discount", "b_discount", {
+        previous: { guestCount: 1, discountCents: 2000 },
+        next: { checkOut: "2026-07-13", totalPriceCents: 45000 },
+      }),
       mod("officer_shortened", "b_officer", {
         next: { checkOut: "2026-07-13", totalPriceCents: 38000, adminOverride: true, pricingMode: "recalculate" },
       }),
@@ -176,7 +180,8 @@ function shapeFixture() {
       mod("unreadable", "b_unreadable", { previous: { totalPriceCents: "lots" } }),
       // Clear, or not examined at all.
       mod("add_exact", "b_add_exact", { next: { totalPriceCents: 65000, addedGuests: [NAME] } }),
-      mod("give_back_clean", "b_clean", { next: { checkOut: "2026-07-13", totalPriceCents: 30000 } }),
+      // One guest: none can have ended while the stay runs, and the rates are untouched.
+      mod("give_back_clean", "b_clean", { previous: { guestCount: 1 }, next: { checkOut: "2026-07-13", totalPriceCents: 30000 } }),
       mod("before_check_in", "b_early", { createdAt: at("2026-07-05T00:00:00Z"), next: { totalPriceCents: 60000 } }),
       mod("after_cut_off", "b_late", {
         createdAt: at("2026-08-12T00:00:00Z"),
@@ -199,7 +204,7 @@ function shapeFixture() {
       guest("b_add_exact", MID_STAY, 15000),
     ],
     bookings: [
-      ...["b_rebilled", "b_add_excess", "b_extension", "b_add_later", "b_removal", "b_discount", "b_officer", "b_officer_zero", "b_unreadable", "b_add_exact", "b_clean", "b_early", "b_late", "b_officer_early", "b_shift2"].map(
+      ...["b_rebilled", "b_add_excess", "b_extension", "b_add_later", "b_removal", "b_party", "b_discount", "b_officer", "b_officer_zero", "b_unreadable", "b_add_exact", "b_clean", "b_early", "b_late", "b_officer_early", "b_shift2"].map(
         (id) => ({ id, memberId: `member-of-${id}`, lodgeId: "lodge_a", createdAt: BOOKED_AT }),
       ),
       { id: "b_rate_change", memberId: "member-of-b_rate_change", lodgeId: "lodge_b", createdAt: BOOKED_AT },
@@ -229,8 +234,9 @@ describe("auditMidStayEditHistory (#5242) - which edits, and how each reads", ()
       add_excess: [{ shape: "added-guests-excess", atStakeCents: 5000 }],
       extension: [{ shape: "extended-or-mixed", atStakeCents: 30000 }],
       add_edited_later: [{ shape: "added-guests-unmatched", atStakeCents: 20000 }],
-      removal: [],
-      give_back_after_removal: [{ shape: "give-back-after-removal", atStakeCents: null }],
+      removal: [{ shape: "give-back-may-hide-rebill", atStakeCents: null }],
+      give_back_after_removal: [{ shape: "give-back-may-hide-rebill", atStakeCents: null }],
+      give_back_party: [{ shape: "give-back-may-hide-rebill", atStakeCents: null }],
       give_back_rate_change: [{ shape: "give-back-repriced", atStakeCents: 8000 }],
       give_back_discount: [{ shape: "give-back-repriced", atStakeCents: 5000 }],
       officer_shortened: [{ shape: "officer-recalculated", atStakeCents: 12000 }],
@@ -264,10 +270,25 @@ describe("auditMidStayEditHistory (#5242) - which edits, and how each reads", ()
 
   it("reads a negative guest or night price on the booking as a #2744 sign", async () => {
     const db = fakeDb({
-      modifications: [mod("give_back", "b1", { next: { checkOut: "2026-07-13", totalPriceCents: 45000 } })],
+      modifications: [mod("give_back", "b1", { previous: { guestCount: 1 }, next: { checkOut: "2026-07-13", totalPriceCents: 45000 } })],
       guests: [{ bookingId: "b1", createdAt: BOOKED_AT, priceCents: 20000, nights: [{ priceCents: -500 }, { priceCents: null }] }],
     });
     expect(findingsById(await run(db))).toEqual({ give_back: [{ shape: "give-back-repriced", atStakeCents: 5000 }] });
+  });
+
+  it("reads a stay no season covers any more as a rate change: a deleted season leaves no row", async () => {
+    const db = fakeDb({
+      modifications: [mod("give_back", "b1", { previous: { guestCount: 1 }, next: { checkOut: "2026-07-13", totalPriceCents: 45000 } })],
+      seasons: [],
+    });
+    expect(findingsById(await run(db))).toEqual({ give_back: [{ shape: "give-back-repriced", atStakeCents: 5000 }] });
+  });
+
+  it("names the earlier removal when it is why a give-back is listed", async () => {
+    const result = await run(shapeFixture());
+    const reason = (id: string) => result.examined.find((edit) => edit.modificationId === id)?.findings[0]?.reason;
+    expect(reason("give_back_after_removal")).toMatch(/earlier mid-stay edit removed a guest/);
+    expect(reason("give_back_party")).toMatch(/history cannot say whether one had/);
   });
 
   it("examines check-in day to check-out day by the club's calendar, not UTC", async () => {
@@ -350,10 +371,10 @@ describe("formatMidStayEditAuditReport", () => {
 
   it("--summary counts each shape, the officer shape on its own line, and lists no ids", async () => {
     const report = formatMidStayEditAuditReport(await run(shapeFixture()), CLUB_FORMAT_TEST, { summaryOnly: true });
-    expect(report).toContain("13 mid-stay edit(s) before the cut-off examined: 10 listed, 3 clear.");
-    expect(report).toMatch(/Officer override re-priced the stay at the rates of the day \(possible\): 2, up to \$120\.00/);
+    expect(report).toContain("14 mid-stay edit(s) before the cut-off examined: 12 listed, 2 clear.");
+    expect(report).toMatch(/Officer override re-priced the stay at the rates of the day \(possible\): 2, net change \$120\.00/);
     expect(report).toMatch(/Price rose though the edit bought nothing \(#2743, certain\): 1, \$100\.00/);
-    expect(report).toMatch(/Nights given back after an earlier mid-stay removal \(#2743, possible\): 1, 1 amount unknown/);
+    expect(report).toMatch(/Nights given back; an ended guest's re-bill may hide in the credit \(#2743, possible\): 3, 3 amount unknown/);
     expect(report).toMatch(/History unreadable - a person checks: 1/);
     expect(report).not.toMatch(/b_rebilled|member-of-|Listed edits/);
   });
@@ -361,8 +382,8 @@ describe("formatMidStayEditAuditReport", () => {
   it("the full report lists each finding by id, with an officer recalculation at $0.00 included", async () => {
     const report = formatMidStayEditAuditReport(await run(shapeFixture()), CLUB_FORMAT_TEST);
     expect(report).toContain("b_add_excess | member-of-b_add_excess | add_excess | 2026-07-12 | added-guests-excess | certain | $50.00 |");
-    expect(report).toContain("| officer_unchanged_total | 2026-07-12 | officer-recalculated | possible | up to $0.00 |");
-    expect(report).toContain("| give_back_after_removal | 2026-07-13 | give-back-after-removal | possible | amount unknown |");
+    expect(report).toContain("| officer_unchanged_total | 2026-07-12 | officer-recalculated | possible | net change $0.00 |");
+    expect(report).toContain("| give_back_after_removal | 2026-07-13 | give-back-may-hide-rebill | possible | amount unknown |");
     expect(report).not.toContain("| add_exact |");
   });
 
@@ -395,6 +416,8 @@ describe("parseMidStayEditAuditArgs", () => {
   it("refuses a --before with no zone, no value, or both --json and --summary", () => {
     expect(() => parseMidStayEditAuditArgs(["--before", "2026-08-11"])).toThrow(/ISO instant/);
     expect(() => parseMidStayEditAuditArgs(["--before", "2026-08-11T00:00:00"])).toThrow(/ISO instant/);
+    // JavaScript alone would roll this to 2 March and move the cut-off silently.
+    expect(() => parseMidStayEditAuditArgs(["--before", "2026-02-30T00:00:00Z"])).toThrow(/ISO instant/);
     expect(() => parseMidStayEditAuditArgs(["--before"])).toThrow(/got nothing/);
     expect(() => parseMidStayEditAuditArgs(["--json", "--summary"])).toThrow(/Choose one/);
   });
