@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi, type Mock } from "vitest";
 
 const mocks = vi.hoisted(() => ({ reportCronError: vi.fn() }));
 
@@ -53,25 +53,28 @@ function moneyTotals(unreconciled = 0): BookingMoneyReconciliationSummary {
   return { totalBookings: 7, byState: { RECONCILED: 7 - unreconciled, UNRECONCILED: unreconciled }, byReason };
 }
 
-function buildDeps(overrides: Partial<BookingMoneyCensusDependencies> = {}) {
-  const deps = {
+type MockedDependencies = {
+  [K in keyof BookingMoneyCensusDependencies]: Mock<BookingMoneyCensusDependencies[K]>;
+};
+
+function buildDeps(overrides: Partial<MockedDependencies> = {}): MockedDependencies {
+  return {
     readZone: vi.fn(async () => ZONE),
-    readJournalInactive: vi.fn(async () => null as string | null),
+    readJournalInactive: vi.fn(async () => null),
     censusLedger: vi.fn(async () => cleanReport()),
     censusMoney: vi.fn(async () => moneyTotals()),
     findHeldKeys: vi.fn(async () => new Set<string>()),
     readClaimState: vi.fn(async () => "none" as const),
     // Like the real helper: claims, runs the send, and keeps the claim when someone was sent it.
-    sendOnceEver: vi.fn(async ({ send }: { send: () => Promise<unknown> }) => {
+    sendOnceEver: vi.fn(async ({ send }) => {
       await send();
       return true;
     }),
     sendAlert: vi.fn(async () => DELIVERED),
     stampSent: vi.fn(async () => undefined),
-    now: () => NOW,
+    now: vi.fn(() => NOW),
     ...overrides,
-  } satisfies BookingMoneyCensusDependencies;
-  return deps;
+  };
 }
 
 const ALL_KEYS = [
