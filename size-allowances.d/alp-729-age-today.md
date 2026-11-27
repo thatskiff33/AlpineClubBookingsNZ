@@ -24,7 +24,7 @@ lines: 362
 reason: the club's today beside the season year, from the same zone read.
 
 file: src/lib/admin-members-service.ts
-lines: 1664
+lines: 1667
 reason: the club's today at the listing's pinned moment, for the filter and
   the per-row rule.
 
