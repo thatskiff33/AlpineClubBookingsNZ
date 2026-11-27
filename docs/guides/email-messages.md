@@ -571,7 +571,9 @@ you want both reworded; editing only one leaves the other on its built-in text.
 > charge of a saved card, an officer's confirmation of pending guests (which
 > still sends only when the officer asks), a bank transfer, and the recovery
 > of a card payment found already taken. A zero-balance confirmation follows
-> the same rules since the next note. During the
+> the same rules since the next note, and the charge of a saved card and the
+> recovery of a card payment found already taken since the card recovery doors
+> note below. During the
 > switch to this version a server still running the version before it sends
 > the confirmation as it always did, so an owner can be sent two: one by this
 > version after Stripe's notice, and one by the older server's scheduled job.
@@ -644,6 +646,31 @@ you want both reworded; editing only one leaves the other on its built-in text.
 > During the switch to this version, a server still running the version
 > before it sends these emails as it always did, with nothing kept for a
 > later run.
+
+> **Upgrade note (#5433, the card recovery doors).** Three ways a card payment
+> confirms a booking sent the member no **Booking Confirmed** email at all, and
+> now send it on the same rules as a card payment on the booking page (above):
+>
+> - a card payment the member made whose notice from Stripe did not reach the
+>   app, found when the member comes back to the pay step;
+> - the same for a payment made through the booking's payment link, found
+>   when the link is used again;
+> - an officer's charge of a saved card (the charge-saved-method route).
+>
+> Before, these sent nothing, and Stripe's notice arriving afterwards found the
+> booking already paid and sent nothing either, so the member was told only
+> when Stripe's notice happened to confirm the booking first. Now the member gets one confirmation, whichever of these or Stripe's notice
+> confirms the booking first. If the app is interrupted after the payment is
+> saved, a later run of the email retry job (every 30 minutes) sends it, until
+> the end of the check-in day or for seven days after the payment if that
+> comes first, and officers get **Booking confirmation not sent** when it could
+> not be sent in time, did not reach the owner, or the owner cannot be emailed
+> at all, as for every card payment (owner decisions, 23 and 25 Nov 2026). The
+> booking's Xero invoice is queued first, as before.
+>
+> An officer's confirmation of pending guests is unchanged: it still sends only
+> when the officer asks. During the switch to this version, a server still
+> running the version before it sends nothing for these three, as before.
 
 ## Settings reference
 

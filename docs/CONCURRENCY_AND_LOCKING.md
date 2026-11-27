@@ -6364,8 +6364,11 @@ table, until #5433's last pull request removes that source.
 
 The Stripe capture's settle records the member's paid confirmation the same way
 (#5433 PR 3, `recordPaidBookingConfirmationOwed`), when its caller asks
-(`owesPaidConfirmation`: the Stripe webhook, the confirm-payment route and the
-confirm-pending job's saved-card charge): one `OwedNotice` insert of one row on
+(`owesPaidConfirmation`: the Stripe webhook, the confirm-payment route, the
+confirm-pending job's saved-card charge, and since the card recovery doors the
+create-payment-intent and payment-link recoveries and the charge-saved-method
+route, each of which passes the flag to the same settle and changes nothing
+else inside it): one `OwedNotice` insert of one row on
 a primary key derived from the kind, the booking and the moment it was paid,
 written by `settleAndPostBookingReceipts` only when the settle body returns a
 fresh `paid` (its status-guarded PAID claim), and last in that transaction,
@@ -6380,7 +6383,9 @@ is an error log and the settle commits, so the marker can never roll back a
 captured payment for a reason of shape (a database failure of the insert still
 rolls the transaction back, like any write in it). Delivery after the commit and
 the sweep are the bump's, above, with the member's event key
-`<bookingId>:<paidAtMs>`.
+`<bookingId>:<paidAtMs>`; every card door reaches them through one sequence
+(`queueInvoiceAndDeliverPaidConfirmation`), which runs after the settle has
+returned and takes no lock or transaction of its own.
 
 The rest of `resolveHoldWindowUnderLock` records its notices the same way
 (#5433 PR 4), each as the last write of the branch that commits the change,

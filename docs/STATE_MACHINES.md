@@ -4559,20 +4559,27 @@ still pending when the offer ends is retired, not sent, unless the retry job
 had already claimed it (Waitlist Lifecycle).
 
 A card payment's confirmation (#5433 PR 3, owner decisions D1, D7 and D8) is
-the kind `booking-confirmed`. The three callers that send it (the Stripe
-webhook, the confirm-payment route and the confirm-pending job's saved-card
-charge) ask the settle to record it (`owesPaidConfirmation`);
+the kind `booking-confirmed`. Every card door that confirms a booking by itself
+asks the settle to record it (`owesPaidConfirmation`): the Stripe webhook, the
+confirm-payment route and the confirm-pending job's saved-card charge (PR 3),
+and the create-payment-intent and payment-link recoveries of a capture whose
+webhook was missed and the charge-saved-method route (the card recovery doors).
+Before that change those three sent no confirmation, and the webhook arriving
+after their settle found the booking already paid and sent none either.
 `settleAndPostBookingReceipts` writes the marker last in its transaction when
 the settle body returns a fresh `paid`, so a replayed settle that finds the
 booking already paid writes none. A booking id that cannot key a marker is an
-error log, never a throw: the payment settles and no confirmation is recorded.
-The other card doors (the charge-saved-method route, an officer's
-confirm-pending-guests, the create-payment-intent and payment-link recoveries)
-send no confirmation, or send one only on the officer's choice, and record none,
-as before. The caller queues the booking's Xero invoice first and then delivers
-the marker after its commit (the invoice queue is one outbox row, then an inline
-outbox kick when Xero is connected; no job re-queues a missed one, so it goes
-first). The wait is 30 minutes (a day after an officers' attempt that reached
+error log, never a throw: the payment settles and no confirmation is recorded,
+and the door sends it once, unkeyed, as before #5433. An officer's
+confirm-pending-guests sends one only on the officer's choice and records none,
+as before (#5470). After its commit each door runs the one sequence
+`queueInvoiceAndDeliverPaidConfirmation`: it queues the booking's Xero invoice
+first and then delivers the marker (the invoice queue is one outbox row, then
+an inline outbox kick when Xero is connected; no job re-queues a missed one, so
+it goes first). A door whose settle found the booking already paid, or a
+recovery that settled nothing because the payment was already recorded, sends
+nothing: the settle that marked the booking paid owns its confirmation. The
+wait is 30 minutes (a day after an officers' attempt that reached
 nobody), the event key `<bookingId>:<paidAtMs>`. The email is rendered from the
 booking as it stands then (`paid-booking-confirmation-email.ts`), stating any
 upward change since the payment that is not yet collected. It is cleared
