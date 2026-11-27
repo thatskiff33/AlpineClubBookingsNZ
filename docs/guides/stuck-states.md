@@ -73,8 +73,8 @@ refund out of the group organiser's card is on this list too: pay the
 organiser. A newer per-joiner refund offers **Try the card again**; the old
 whole-group refund does not. **Paid another way** on either records a refund
 Stripe already holds and pays nobody again, or records the bank payment and
-emails officers to credit the group's invoice in Xero by hand. Never a new
-dashboard refund. A charge-backed row offers:
+queues a Xero refund credit note, worded as a bank transfer, on each joiner's
+invoice. Never a new dashboard refund. A charge-backed row offers:
 
 - **Paid another way** - you paid the member back yourself, for example by
   bank transfer (below).
@@ -137,8 +137,8 @@ tool that Stripe refuses fails, and running the repair again asks Stripe
 afresh. An old group organiser's refund, and the refund of a stale group payment,
 are retried automatically and then listed below. The newer per-joiner refund
 can be tried on the organiser's card again; the old whole-group refund
-cannot, and is settled with **Paid another way**. A bank close credits the
-group's invoice in Xero by hand. Never a new dashboard refund.
+cannot, and is settled with **Paid another way**. A bank close queues each
+joiner's Xero refund credit note itself. Never a new dashboard refund.
 
 **A refund Stripe accepted and failed later** (#4104). Stripe can accept a card
 refund as pending and report it failed days later, for example when the card
