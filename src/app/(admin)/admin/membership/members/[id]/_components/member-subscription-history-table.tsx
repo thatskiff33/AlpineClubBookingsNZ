@@ -15,9 +15,9 @@ import {
   subscriptionStatusLabel,
 } from "@/lib/status-colors"
 import { useClubTime } from "@/components/club-time-provider"
+import { useClubSeason } from "@/components/club-season-provider"
 import { formatPayloadInstantDate } from "../../../../_lib/payload-instant"
 import { buildXeroInvoiceUrl } from "@/lib/xero-links"
-import { seasonSelectLabel } from "@/lib/season-label"
 import type { MemberDetail } from "../_types"
 
 export function MemberSubscriptionHistoryTable({
@@ -35,6 +35,8 @@ export function MemberSubscriptionHistoryTable({
   // `paidAt` is a real INSTANT — the moment the subscription was settled — read
   // in the club's persisted zone (`INV-CONFIG-002`), not the admin's browser.
   const clubTime = useClubTime()
+  // Season names follow the club's server-resolved year-end (#5259).
+  const season = useClubSeason()
   if (subscriptions.length === 0) {
     return <p className="text-sm text-muted-foreground">No subscription records</p>
   }
@@ -52,7 +54,7 @@ export function MemberSubscriptionHistoryTable({
         {subscriptions.map((sub) => (
           <TableRow key={sub.id}>
             <TableCell className="font-medium">
-              {seasonSelectLabel(sub.seasonYear, clubTime.format)}
+              {season.selectLabel(sub.seasonYear)}
             </TableCell>
             <TableCell>
               <Badge

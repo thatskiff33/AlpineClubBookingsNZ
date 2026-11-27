@@ -2,7 +2,7 @@
 
 import "@testing-library/jest-dom/vitest";
 import type { ComponentProps } from "react";
-import { act, cleanup, fireEvent, render, screen, waitFor } from "@/lib/__tests__/support/club-time-render";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@/lib/__tests__/support/club-season-render";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AdminPermissionMatrix } from "@/lib/admin-permissions";
 import {
