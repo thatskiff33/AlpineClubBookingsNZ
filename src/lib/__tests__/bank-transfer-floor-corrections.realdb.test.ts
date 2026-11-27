@@ -30,6 +30,7 @@
 import type { Invoice } from "xero-node";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { CLUB_FORMAT_TEST } from "@/lib/__tests__/support/club-format-fixture";
+import { XERO_SYNC_ERROR_ALERT_COOLDOWN_KEY } from "@/lib/xero-sync-error-alert-key";
 import { releaseBookingJournalForTeardown } from "./support/booking-financial-history-teardown";
 import { syncFakeXeroCreditNote } from "./support/fake-xero-credit-note-sync";
 import { assertSafeRaceDbUrl } from "./support/race-db-url";
@@ -62,6 +63,7 @@ let prisma: (typeof import("@/lib/prisma"))["prisma"];
       await releaseBookingJournalForTeardown(prisma, [BOOKING_ID]);
       await prisma.bookingLedgerLine.deleteMany({ where: { bookingId: BOOKING_ID } });
       await prisma.bookingEvent.deleteMany({ where: { bookingId: BOOKING_ID } });
+      await prisma.alertCooldown.deleteMany({ where: { key: XERO_SYNC_ERROR_ALERT_COOLDOWN_KEY } });
       await prisma.auditLog.deleteMany({ where: { OR: [{ entityId: { in: [BOOKING_ID, PAYMENT_ID] } }, { targetId: BOOKING_ID }, { metadata: { path: ["creditNoteId"], equals: NOTE_ID } }] } });
       await prisma.xeroObjectLink.deleteMany({ where: { OR: [{ localId: { in: [PAYMENT_ID, BOOKING_ID, MODIFICATION_ID] } }, { xeroObjectId: { in: [INVOICE_ID, NOTE_ID] } }] } });
       await prisma.xeroSyncOperation.deleteMany({ where: { localId: { in: [PAYMENT_ID, BOOKING_ID, MODIFICATION_ID] } } });
@@ -94,6 +96,11 @@ let prisma: (typeof import("@/lib/prisma"))["prisma"];
       vi.spyOn(alerts, "notifyXeroSyncError").mockImplementation((async (alert: { errorType: string; errorMessage: string }) => {
         if (alert.errorType === "refund-ledger-divergence") floorAlerts.push(alert.errorMessage);
       }) as never);
+      const email = await import("@/lib/email");
+      vi.spyOn(email, "sendAdminXeroSyncErrorAlert").mockImplementation(async (alert) => {
+        if (alert.errorType === "refund-ledger-divergence") floorAlerts.push(alert.errorMessage);
+        return { deliveryAllowed: true, recipients: 1, sent: 1, queuedForRetry: 0, notDelivered: 0, failedBeforeLogged: 0 };
+      });
     });
 
     afterAll(async () => {
@@ -272,6 +279,43 @@ let prisma: (typeof import("@/lib/prisma"))["prisma"];
       expect(floorAlerts).toHaveLength(1);
     });
 
+    it("MUTATION (D4 send): an alert that reached nobody, with no copy left for the email retry, stays owed until a later delivery sends it", async () => {
+      await keepHeldAtFloorThenStop();
+      const email = await import("@/lib/email");
+      vi.mocked(email.sendAdminXeroSyncErrorAlert).mockResolvedValueOnce({ deliveryAllowed: true, recipients: 1, sent: 0, queuedForRetry: 0, notDelivered: 1, failedBeforeLogged: 1 });
+      await settleKeptPlain();
+      expect((await floorMarkers())[0]!.snapshot).toMatchObject({ alertClaimedAt: null, alertSentAt: null });
+      await settleKeptPlain();
+      expect(floorAlerts).toHaveLength(1);
+      expect((await floorMarkers())[0]!.snapshot).toMatchObject({ alertSentAt: expect.any(String) });
+    });
+
+    it.each([
+      ["a copy is held for the email retry cron", { deliveryAllowed: true, recipients: 2, sent: 0, queuedForRetry: 1, notDelivered: 1, failedBeforeLogged: 1 }],
+      ["the club has switched the alert off", { deliveryAllowed: false, recipients: 0, sent: 0, queuedForRetry: 0, notDelivered: 0, failedBeforeLogged: 0 }],
+      ["no admin has opted in to it", { deliveryAllowed: true, recipients: 0, sent: 0, queuedForRetry: 0, notDelivered: 0, failedBeforeLogged: 0 }],
+      ["its only copy was withheld on purpose", { deliveryAllowed: true, recipients: 1, sent: 0, queuedForRetry: 0, notDelivered: 1, failedBeforeLogged: 0 }],
+    ])("when %s the marker is settled and no later delivery sends the alert again", async (_reason, result) => {
+      await keepHeldAtFloorThenStop();
+      const email = await import("@/lib/email");
+      vi.mocked(email.sendAdminXeroSyncErrorAlert).mockResolvedValueOnce(result);
+      await settleKeptPlain();
+      expect((await floorMarkers())[0]!.snapshot).toMatchObject({ alertSentAt: expect.any(String) });
+      await settleKeptPlain();
+      expect(email.sendAdminXeroSyncErrorAlert).toHaveBeenCalledTimes(1);
+    });
+
+    it("MUTATION (D4 send): the hour another Xero error alert already holds does not swallow the owed floor alert", async () => {
+      await keepHeldAtFloorThenStop();
+      // The real hourly sender: were the marker's alert sent through it, the held hour would send nothing.
+      const alerts = await import("@/lib/xero-error-alert");
+      vi.mocked(alerts.notifyXeroSyncError).mockRestore();
+      await prisma.alertCooldown.create({ data: { key: XERO_SYNC_ERROR_ALERT_COOLDOWN_KEY, lastAlertedAt: new Date() } });
+      await settleKeptPlain();
+      expect(floorAlerts).toHaveLength(1);
+      expect((await floorMarkers())[0]!.snapshot).toMatchObject({ alertSentAt: expect.any(String) });
+    });
+
     it("a marker claimed by a sender still within its window is left to that sender; a failed send gives the claim back for the next", async () => {
       await keepHeldAtFloorThenStop();
       const [marker] = await floorMarkers();
@@ -281,8 +325,8 @@ let prisma: (typeof import("@/lib/prisma"))["prisma"];
       expect(floorAlerts).toEqual([]);
 
       await prisma.bookingEvent.update({ where: { id: marker!.id }, data: { snapshot: { ...claimed, alertClaimedAt: null } } });
-      const alerts = await import("@/lib/xero-error-alert");
-      vi.mocked(alerts.notifyXeroSyncError).mockRejectedValueOnce(new Error("mail down"));
+      const email = await import("@/lib/email");
+      vi.mocked(email.sendAdminXeroSyncErrorAlert).mockRejectedValueOnce(new Error("mail down"));
       await settleKeptPlain();
       expect((await floorMarkers())[0]!.snapshot).toMatchObject({ alertClaimedAt: null, alertSentAt: null });
       await settleKeptPlain();

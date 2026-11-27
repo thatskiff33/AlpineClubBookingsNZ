@@ -141,9 +141,9 @@ export async function bankTransferFloorCents(
   };
 }
 
-/** The floor's alert (`BANK_TRANSFER_REFUND_SHORTFALL_ADVICE`), sent outside any transaction. */
-export async function sendBankTransferFloorAlert(alert: BankTransferFloorAlert, format: ClubFormat): Promise<void> {
-  await notifyXeroSyncError({
+/** The floor's alert as a Xero sync error alert carries it (`BANK_TRANSFER_REFUND_SHORTFALL_ADVICE`). */
+export function bankTransferFloorAlertOf(alert: BankTransferFloorAlert, format: ClubFormat) {
+  return {
     errorType: "refund-ledger-divergence",
     operation: `inbound-credit-note-repair:${alert.creditNoteId ?? `recount:${alert.paymentId}`}`,
     errorMessage: bankTransferRefundShortfallMessage({
@@ -153,5 +153,14 @@ export async function sendBankTransferFloorAlert(alert: BankTransferFloorAlert, 
       xeroTotal: formatCents(alert.xeroDerivedCents, format),
       recordedTotal: formatCents(alert.floorCents, format),
     }),
-  });
+  };
+}
+
+/**
+ * The floor's alert, sent outside any transaction, within the hour's one Xero
+ * error alert (`notifyXeroSyncError`). A kept settle's is recorded first and
+ * sent on its own claim instead (`sendOwedKeptFloorAlerts`).
+ */
+export async function sendBankTransferFloorAlert(alert: BankTransferFloorAlert, format: ClubFormat): Promise<void> {
+  await notifyXeroSyncError(bankTransferFloorAlertOf(alert, format));
 }

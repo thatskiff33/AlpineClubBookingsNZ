@@ -202,7 +202,7 @@ export interface IbKeptSettleFloorAlertEventSnapshot {
   floorCents: number;
   /** When a sender claimed the alert (ISO), or null; a claim older than the in-flight window is free again. */
   alertClaimedAt: string | null;
-  /** When the alert was sent (ISO), or null while it is owed. */
+  /** When the alert was sent, queued for the email retry cron, or found to go to nobody by the club's delivery rules (ISO); null while it is owed. */
   alertSentAt: string | null;
 }
 

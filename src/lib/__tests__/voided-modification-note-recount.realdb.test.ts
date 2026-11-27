@@ -191,6 +191,26 @@ let prisma: (typeof import("@/lib/prisma"))["prisma"];
       expect(await payment()).toEqual({ refundedAmountCents: 0, status: "SUCCEEDED" });
     });
 
+    it("a retirement committed just before the repair's insert wins the missing-row race", async () => {
+      const { applyActionsForPass } = await import("@/lib/xero-booking-repair-passes");
+      const { upsertXeroObjectLink } = await import("@/lib/xero-sync");
+      const key = { localModel: "BookingModification", localId: MODIFICATION_ID, xeroObjectType: "ALLOCATION", xeroObjectId: `${P}-racing-row`, role: "MODIFICATION_CREDIT_NOTE_ALLOCATION" };
+      const retired = { ...key, active: false, metadata: { amountCents: NOTE_CENTS, invoiceId: INVOICE_ID, creditNoteId: NOTE_ID } };
+      let intervened = false;
+      const store = prisma.$extends({ query: { xeroObjectLink: { async $allOperations({ operation, args, query }) {
+        if (!intervened && (operation === "upsert" || operation === "createMany")) {
+          intervened = true;
+          await prisma.xeroObjectLink.create({ data: retired });
+        }
+        return query(args);
+      } } } });
+      const action = { key: `${P}-race`, type: "SYNC_BOOKING_SCOPED_LINK", status: "planned", safeToAutoApply: true, payload: key };
+      await applyActionsForPass([{ bookingId: BOOKING_ID, actions: [action] } as never], { prisma: store, upsertXeroObjectLink } as never, false, {} as never);
+      expect(intervened).toBe(true);
+      expect(action.status).toBe("manual_review");
+      expect(await prisma.xeroObjectLink.findFirstOrThrow({ where: key })).toMatchObject(retired);
+    });
+
     // #5289 review: the booking repair tool sees only active links, so it reads the retired allocation as missing
     // and offers its backfill from the completed allocation operation. It takes no Payment row, so it never
     // switches the retired row (and the $100 its metadata counts) back on; a link that is truly missing it creates.

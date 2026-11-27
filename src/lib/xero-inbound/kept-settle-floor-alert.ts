@@ -15,10 +15,22 @@
  * `CASH_SETTLEMENT_ALERT_IN_FLIGHT_MS`), sends only on a won claim, and records
  * it sent. A lost claim sends nothing, so the settle's own send, a retried
  * delivery and the inbound cron (`retryCashSettlementAlerts`) never both send.
- * A failed send gives the claim back for the next sender. No lock is taken.
+ * No lock is taken.
+ *
+ * The marker is this alert's own claim, so it is sent straight through
+ * `sendAdminXeroSyncErrorAlert`, never through the hour's one Xero error alert
+ * (`notifyXeroSyncError`): an hour another error already holds would swallow
+ * it, and the marker would record sent an alert nobody was shown. It is
+ * recorded sent only on what the send reports: an admin has it, the email
+ * retry cron holds a copy, or the club's delivery rules send it to nobody (a
+ * final answer; the booking's staff timeline still shows the marker). A send
+ * that threw, or that reached nobody and left nothing to replay
+ * (`adminAlertNeedsResend`), gives the claim back for the next sender.
  */
 import { BookingEventType, Prisma } from "@prisma/client";
 import type { ClubFormat } from "@/lib/club-format";
+import { sendAdminXeroSyncErrorAlert } from "@/lib/email";
+import { adminAlertNeedsResend } from "@/lib/email/admin-alert-send-result";
 import logger from "@/lib/logger";
 import {
   asIbKeptSettleFloorAlertSnapshot,
@@ -27,7 +39,8 @@ import {
   type IbKeptSettleFloorAlertEventSnapshot,
 } from "@/lib/manual-settlement-reversal-event";
 import { prisma } from "@/lib/prisma";
-import { type BankTransferFloorAlert, sendBankTransferFloorAlert } from "./credit-note-bank-transfer-floor";
+import { redactSensitiveText } from "@/lib/redact-sensitive-json";
+import { type BankTransferFloorAlert, bankTransferFloorAlertOf } from "./credit-note-bank-transfer-floor";
 import { CASH_SETTLEMENT_ALERT_IN_FLIGHT_MS } from "./settle-from-cash-notice";
 
 /** In the settle's transaction: the marker for a keep held at the floor, its alert owed. */
@@ -81,8 +94,8 @@ function rewriteIfUnchanged(id: string, seen: IbKeptSettleFloorAlertEventSnapsho
  * Send every owed floor alert in `scope`: one payment's (after its settle
  * commits, a replay included), or every marker written before a time (the
  * inbound cron, leaving recent ones to their after-commit sender). Each is
- * claimed first and sent only on a won claim. Returns how many it sent. Never
- * throws for a failed send: it is logged and the claim given back.
+ * claimed first and sent only on a won claim. Returns how many it recorded
+ * sent. Never throws for a failed send: it is logged and the claim given back.
  */
 export async function sendOwedKeptFloorAlerts(
   scope: { paymentId: string } | { writtenBefore: Date },
@@ -108,7 +121,7 @@ export async function sendOwedKeptFloorAlerts(
     const claimed = { ...seen, alertClaimedAt: now.toISOString() };
     if ((await rewriteIfUnchanged(row.id, seen, claimed)).count !== 1) continue;
     try {
-      await sendBankTransferFloorAlert(
+      const alert = bankTransferFloorAlertOf(
         {
           paymentId: seen.paymentId,
           bookingId: row.bookingId,
@@ -119,6 +132,8 @@ export async function sendOwedKeptFloorAlerts(
         },
         format,
       );
+      const result = await sendAdminXeroSyncErrorAlert({ ...alert, errorMessage: redactSensitiveText(alert.errorMessage), timestamp: now });
+      if (adminAlertNeedsResend(result)) throw new Error("The floor alert reached no admin and no copy waits for the email retry cron");
     } catch (err) {
       logger.error({ err, markerId: row.id, paymentId: seen.paymentId }, "Failed to send a kept bank-transfer settle's floor alert; the next delivery or the inbound cron sends it (#5289)");
       await rewriteIfUnchanged(row.id, claimed, { ...claimed, alertClaimedAt: null }).catch(() => undefined);
