@@ -6,6 +6,10 @@ import {
   type AdminCronRun,
 } from "@/lib/admin-cron-health";
 import {
+  BOOKING_MONEY_CENSUS_CRON_SCHEDULE,
+  BOOKING_MONEY_CENSUS_JOB_NAME,
+} from "@/lib/booking-money-census-job";
+import {
   FINANCE_SYNC_CRON_JOB_NAME,
   FINANCE_SYNC_CRON_SCHEDULE,
 } from "@/lib/finance-sync-cron-config";
@@ -237,6 +241,26 @@ describe("admin cron health", () => {
       staleAfterMinutes: 2160,
     });
     expect(draftCleanup?.note).toBeUndefined();
+  });
+
+  it("tracks the nightly booking money check as a daily CronJobRun-backed job (#4910)", () => {
+    const definitions = getAdminCronJobDefinitions(CLUB_TIME_ZONE, {
+      CRON_ENABLED: "true",
+    } as unknown as NodeJS.ProcessEnv);
+    const moneyCheck = definitions.find(
+      (definition) => definition.jobName === BOOKING_MONEY_CENSUS_JOB_NAME
+    );
+
+    expect(moneyCheck).toMatchObject({
+      label: "Booking money check",
+      schedule: BOOKING_MONEY_CENSUS_CRON_SCHEDULE,
+      timezone: CLUB_TIME_ZONE,
+      expectedLocalTime: `05:30 daily in ${CLUB_TIME_ZONE}`,
+      staleAfterMinutes: 2160,
+      recordsRuns: true,
+      enabled: true,
+    });
+    expect(BOOKING_MONEY_CENSUS_CRON_SCHEDULE).toBe("30 5 * * *");
   });
 
   it("tracks general cron cycle jobs with matching freshness thresholds", () => {

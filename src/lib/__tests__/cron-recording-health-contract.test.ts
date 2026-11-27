@@ -25,6 +25,8 @@ function readInstrumentationRecordedJobNames(): string[] {
     "src/instrumentation.node.ts",
     "src/lib/general-cron-runner.ts",
     "src/lib/finance-sync-cron-config.ts",
+    // #4910: the nightly booking money check's name, recorded by instrumentation from this home.
+    "src/lib/booking-money-census-job.ts",
     // #4457: the retention jobs' recorded names, run from the data-pruning cron.
     "src/lib/privacy-retention-shared.ts",
   ].map((filePath) =>

@@ -33,6 +33,11 @@ export const ADMIN_SYSTEM_TEMPLATE_NAMES = new Set<EmailAuditTemplateName>([
   // sendToAdmins on the adminBookingReviewRequired preference; not
   // delivery-locked, because no money moved.
   "admin-booking-confirmation-unsent",
+  // #4910: the nightly booking money check found something it had not
+  // reported before. sendToAdmins on the adminPaymentFailure preference like
+  // its reconcile-by-hand siblings; not delivery-locked, because no money
+  // moved and the finding stays on the Stuck States page.
+  "admin-booking-money-census",
   // #3663: an expired internet banking hold left alone because the stay has
   // started. sendToAdmins on the adminPaymentFailure preference like its
   // reconcile-by-hand siblings; not delivery-locked, because no money moved.

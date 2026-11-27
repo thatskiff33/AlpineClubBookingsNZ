@@ -1,5 +1,9 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { APP_VERSION_ENV_VAR, getAppVersion } from "@/lib/app-version";
+import {
+  BOOKING_MONEY_CENSUS_CRON_SCHEDULE,
+  BOOKING_MONEY_CENSUS_JOB_NAME,
+} from "@/lib/booking-money-census-job";
 
 const scheduledCronJobs = vi.hoisted(
   (): Array<{
@@ -130,6 +134,9 @@ vi.mock("@/lib/late-capture-refund-hold", () => ({
 vi.mock("@/lib/duplicate-capture-kept-alert-drain", () => ({
   drainOwedNewCaptureAlerts: paymentsCycleTasks.drainOwedNewCaptureAlerts,
 }));
+// #4910: the nightly booking money check, doubled so the schedule test reads no database.
+const bookingMoneyCensus = vi.hoisted(() => ({ runBookingMoneyCensus: vi.fn() }));
+vi.mock("@/lib/cron-booking-money-census", () => bookingMoneyCensus);
 vi.mock("@/lib/xero-waiting-invoice-reaper", () => ({
   reapStaleWaitingPaymentXeroOutboxOperations:
     paymentsCycleTasks.reapStaleWaitingPaymentXeroOutboxOperations,
@@ -515,6 +522,42 @@ describe("OBS-03: cron job run recording", { timeout: 30_000 }, () => {
       expect.objectContaining({ jobName: "duplicate-capture-kept-alert", status: "SUCCESS" }),
       expect.objectContaining({ jobName: "combined-invoice-cover-release", status: "SUCCESS" }),
     ]);
+  });
+
+  it("runs the booking money check daily at 05:30 club time and records its summary, or its failure (#4910)", async () => {
+    await registerCronJobs();
+    const moneyCheck = scheduledCronJobs.find(
+      (job) => job.expression === BOOKING_MONEY_CENSUS_CRON_SCHEDULE
+    );
+    expect(BOOKING_MONEY_CENSUS_CRON_SCHEDULE).toBe("30 5 * * *");
+    expect(moneyCheck).toBeDefined();
+    const summary = { verdict: "GATE_OPEN", findings: 0 };
+    bookingMoneyCensus.runBookingMoneyCensus.mockResolvedValueOnce(summary);
+
+    await moneyCheck!.callback();
+
+    expect(bookingMoneyCensus.runBookingMoneyCensus).toHaveBeenCalledOnce();
+    expect(prisma.cronJobRun.create).toHaveBeenLastCalledWith({
+      data: expect.objectContaining({
+        jobName: BOOKING_MONEY_CENSUS_JOB_NAME,
+        status: "SUCCESS",
+        resultSummary: summary,
+      }),
+    });
+
+    bookingMoneyCensus.runBookingMoneyCensus.mockRejectedValueOnce(
+      new Error("census read failed")
+    );
+
+    await moneyCheck!.callback();
+
+    expect(prisma.cronJobRun.create).toHaveBeenLastCalledWith({
+      data: expect.objectContaining({
+        jobName: BOOKING_MONEY_CENSUS_JOB_NAME,
+        status: "FAILURE",
+        error: "census read failed",
+      }),
+    });
   });
 
   it("keeps and reports an expired draft that financial history names, deleting only the rest (#4514)", async () => {

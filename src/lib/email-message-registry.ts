@@ -1,7 +1,7 @@
 import { stripePaymentAlertSampleValue } from "@/lib/email-message-stripe-payment-samples";
 import { waitlistAlertSampleValue } from "@/lib/email-message-waitlist-samples";
 import { bookingChangeSampleValue } from "@/lib/email-message-booking-change-samples";
-import { OWED_NOTICE_ALERT_TRIGGERS } from "@/lib/email-message-owed-notice-triggers";
+import { SPLIT_TEMPLATE_TRIGGERS } from "@/lib/email-message-split-triggers";
 import {
   EMAIL_AUDIT_DEFAULTS,
   type EmailAuditTemplateName,
@@ -1141,7 +1141,7 @@ const TEMPLATE_TRIGGER_METADATA: Partial<
       "Organiser settled a joiner's spot as part of a combined group payment",
     frequency: "One email per joiner booking covered by the settled payment",
   },
-  ...OWED_NOTICE_ALERT_TRIGGERS,
+  ...SPLIT_TEMPLATE_TRIGGERS,
   "admin-group-joiner-started-stay": {
     triggerSummary:
       "A paid organiser-pays group had joiners its bill did not cover whose stay had started; they were switched to paying for themselves without an email, so the treasurer collects by hand (#3672)",

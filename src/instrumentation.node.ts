@@ -1636,6 +1636,44 @@ export async function register() {
 
     logger.info({ job: "credit-reconciliation" }, `Scheduled credit reconciliation (daily at 5:00 AM ${cronTimeZone()})`);
 
+    // Booking money check (#4910, INV-PAY-163): daily at 5:30 AM club time.
+    // Read-only: both censuses, a bounded summary, an alert for anything new.
+    const { BOOKING_MONEY_CENSUS_JOB_NAME, BOOKING_MONEY_CENSUS_CRON_SCHEDULE } = await import(
+      "./lib/booking-money-census-job"
+    );
+    let isBookingMoneyCensusRunning = false;
+    cron.default.schedule(BOOKING_MONEY_CENSUS_CRON_SCHEDULE, async () => {
+      if (isBookingMoneyCensusRunning) {
+        logger.info({ job: BOOKING_MONEY_CENSUS_JOB_NAME }, "Already running, skipping");
+        return;
+      }
+      isBookingMoneyCensusRunning = true;
+      const startedAt = new Date();
+      const checkInId = Sentry.captureCheckIn(
+        { monitorSlug: BOOKING_MONEY_CENSUS_JOB_NAME, status: "in_progress" },
+        sentryCronMonitorConfig(BOOKING_MONEY_CENSUS_CRON_SCHEDULE, { checkinMargin: 10, maxRuntime: 30 })
+      );
+      logger.info({ job: BOOKING_MONEY_CENSUS_JOB_NAME }, "Starting booking money check");
+      try {
+        const { runBookingMoneyCensus } = await import("./lib/cron-booking-money-census");
+        const result = await runBookingMoneyCensus();
+        logger.info(
+          { job: BOOKING_MONEY_CENSUS_JOB_NAME, verdict: result.verdict, findings: result.findings, alert: result.alert },
+          "Booking money check complete"
+        );
+        await recordCronRun(BOOKING_MONEY_CENSUS_JOB_NAME, startedAt, "SUCCESS", result);
+        Sentry.captureCheckIn({ checkInId, monitorSlug: BOOKING_MONEY_CENSUS_JOB_NAME, status: "ok" });
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        reportCronError({ tag: BOOKING_MONEY_CENSUS_JOB_NAME, err, message: "Error in booking money check" });
+        await recordCronRun(BOOKING_MONEY_CENSUS_JOB_NAME, startedAt, "FAILURE", undefined, message);
+        Sentry.captureCheckIn({ checkInId, monitorSlug: BOOKING_MONEY_CENSUS_JOB_NAME, status: "error" });
+      } finally {
+        isBookingMoneyCensusRunning = false;
+      }
+    }, { timezone: cronTimeZone() });
+    logger.info({ job: BOOKING_MONEY_CENSUS_JOB_NAME }, `Scheduled booking money check (daily at 5:30 AM ${cronTimeZone()})`);
+
     // Waitlist processor (every 30 minutes)
     cron.default.schedule("*/30 * * * *", async () => {
       if (isWaitlistCronRunning) {
