@@ -143,7 +143,10 @@ describe("subscription billing panel", () => {
     render(<SubscriptionBillingPanel seasonYear={2026} />);
     fireEvent.click(await screen.findByRole("button", { name: "Confirm and queue annual batch" }));
     expect(screen.getByText(/Credit.*Member Two/)).toBeTruthy();
-    expect(mocks.confirm).toHaveBeenCalledWith(expect.objectContaining({ title: expect.stringContaining("1 age-group adjustment") }));
+    expect(mocks.confirm).toHaveBeenCalledWith(expect.objectContaining({
+      title: expect.stringContaining("1 age-group adjustment"),
+      description: expect.stringMatching(/credit \$12\.34/i),
+    }));
   });
 
   beforeEach(() => {

@@ -323,9 +323,11 @@ export function SubscriptionBillingPanel({ seasonYear }: { seasonYear: number })
     const warningCount = data.preview.exceptions.filter((item) => isInvoicingPreviewWarning(item.code ?? "")).length;
     const withheldCount = data.preview.exceptions.length - warningCount;
     const decisionCount = data.preview.exceptions.filter((item) => isOfficerDecisionException(item.code ?? "")).length;
+    const invoiceCents = adjustments.reduce((total, item) => total + (item.kind === "TOP_UP" ? item.amountCents : 0), data.preview.totalCents);
+    const creditCents = adjustments.reduce((total, item) => total + (item.kind === "CREDIT" ? item.amountCents : 0), 0);
     const accepted = await confirm({
       title: `Create ${data.preview.entries.length} annual membership charge${data.preview.entries.length === 1 ? "" : "s"}${adjustments.length ? ` and ${adjustments.length} age-group adjustment${adjustments.length === 1 ? "" : "s"}` : ""}?`,
-      description: `${formatCents(data.preview.totalCents, format)} will be snapshotted. This creates durable Xero invoice work and cannot be undone by later fee or family changes. ${withheldCount} exception${withheldCount === 1 ? "" : "s"} will be recorded without invoicing${decisionCount > 0 ? `, ${decisionCount} of them needing your decision` : ""}.${warningCount > 0 ? ` ${warningCount} warning${warningCount === 1 ? "" : "s"} below: confirming invoices ${warningCount === 1 ? "that charge" : "those charges"}.` : ""}`,
+      description: `This batch will invoice ${formatCents(invoiceCents, format)}${creditCents ? ` and credit ${formatCents(creditCents, format)}` : ""}. Later fee or family changes cannot undo it. ${withheldCount} exception${withheldCount === 1 ? "" : "s"} will be recorded without invoicing${decisionCount > 0 ? `, ${decisionCount} of them needing your decision` : ""}.${warningCount > 0 ? ` ${warningCount} warning${warningCount === 1 ? "" : "s"} below: confirming invoices ${warningCount === 1 ? "that charge" : "those charges"}.` : ""}`,
       confirmLabel: "Confirm annual batch",
     });
     if (!accepted) return;
@@ -411,7 +413,7 @@ export function SubscriptionBillingPanel({ seasonYear }: { seasonYear: number })
             ) : null}
             <div className="grid gap-3 sm:grid-cols-5">
               <div><p className="text-xs text-muted-foreground">Charges</p><p className="text-xl font-semibold tabular-nums">{data.preview.entries.length}</p></div>
-              <div><p className="text-xs text-muted-foreground">Preview total</p><p className="text-xl font-semibold tabular-nums">{formatCents(data.preview.totalCents, format)}</p></div>
+              <div><p className="text-xs text-muted-foreground">Annual charges before adjustments</p><p className="text-xl font-semibold tabular-nums">{formatCents(data.preview.totalCents, format)}</p></div>
               <div><p className="text-xs text-muted-foreground">Open exceptions</p><p className="text-xl font-semibold tabular-nums">{visibleExceptions.length}</p></div>
               <div><p className="text-xs text-muted-foreground">Needs your decision</p><p className="text-xl font-semibold tabular-nums">{needsDecision.length}</p></div>
               <div><p className="text-xs text-muted-foreground">Due</p><p className="text-xl font-semibold tabular-nums">{data.preview.dueDays} days</p></div>
