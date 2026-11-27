@@ -9,6 +9,7 @@
   another booking in the trip is waiting to be checked again, at a lodge whose
   adult cover rule sends bookings to a Booking Officer rather than stopping
   them, after the Group Trip cover option has been switched off, for a very
-  large trip, and for a stay that is already over. Bookings last checked
+  large trip, in the trips of an adult booked on 50 or more upcoming stays
+  whose membership changes, and for a stay that is already over. Bookings last checked
   before this release keep saying *needs re-checking* until they are next
   checked. See [the lodge guide](../docs/guides/lodge.md#group-trips-on-the-day-list).

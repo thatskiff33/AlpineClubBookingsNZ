@@ -907,17 +907,16 @@ compliant indefinitely.
   amber. `EVALUATED` means at least one night, at least one uncovered.
 
   **Staleness signals, in this order:** (1) a queued
-  `HostingCoverageReevaluation` for the owner at this lodge, read first since it
-  invalidates an absent snapshot as much as a present one, night list not
-  intersected; (2) an open `HostingCoverageIncident` with NO snapshot (with one,
+  `HostingCoverageReevaluation` for the owner at this lodge, read first as it
+  invalidates an absent snapshot too, night list not intersected; (2) an open `HostingCoverageIncident` with NO snapshot (with one,
   the snapshot stands), never in any payload; (3) a readable snapshot with
   nothing uncovered; (4) an unverified covered night resting on
   `SAME_GROUP_TRIP`, making the whole snapshot `STALE`, never a night uncovered.
   Verified means: an `ENFORCED` lodge (`hostingModeQueuesCoverageReevaluation`),
   the scope on, a card `hostingPolicyReconciliationCandidateWhere` matches, below
   `GROUP_TRIP_COVERAGE_DEPENDENT_LIMIT`, and a `groupTripCoverFreshness` stamp
-  naming its trip's current `coverageInvalidationRevision` (truncated fan-outs
-  and member merges move it); a failed read is unverified. The policy revision is NOT a signal: a material change reaches
+  naming its trip's current `coverageInvalidationRevision` (truncated trip or
+  member fan-outs and merges move it); a failed read is unverified. The policy revision is NOT a signal: a material change reaches
   signal 1.
 
   **A partially readable snapshot is `UNREADABLE`**: no malformed night row is

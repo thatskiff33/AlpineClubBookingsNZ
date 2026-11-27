@@ -1981,15 +1981,28 @@ existing per-trip key, plus the merge's bump below:
 
 **A member merge moves the revision too.** Merge has no Group Trip fan-out, so
 `enqueueMemberMergeHostingCoveragePlan` increments the revision of every trip the
-merged person attends at a lodge that shows sibling cover, in one `updateMany` over
-sorted ids, as the LAST write after every key and row the merge takes. That bump is
-not under the trip key, and needs not be: it commits with the standing change, so an
-evaluation that read the old revision is left behind by it, and one that reads the
-new revision reads the merged standing too. Merges serialise on the hosting
-policy-set key, so two merges never update overlapping trip rows concurrently.
+merged person attends at a lodge that shows sibling cover (`policyShowsGroupTripCover`,
+trip identity by the fan-out's `readGroupTripIdentity`), in one `updateMany` over
+sorted ids, after every hosting key, `Member` row and queue row the merge takes. It
+is the merge's last hosting write, not its last statement: `member-merge.ts` deletes
+the loser after it, while holding the bumped trip rows. That bump is not under the
+trip key, and needs not be: it commits with the standing change, so an evaluation
+that read the old revision is left behind by it, and one that reads the new
+revision reads the merged standing too. Merges serialise on the hosting policy-set
+key, so two merges never update overlapping trip rows concurrently.
 
-**The row lock adds no wait-for cycle.** The trigger and the merge each take row
-locks on `GroupBooking` rows as their last lock. The other `GroupBooking` row
+**A bound member ceiling moves every trip the member attends.** The standing
+fan-out (`enqueueHostingCoverageReevaluationForMember`) and the merge plan read the
+person's current and future bookings capped at `HOSTING_COVERAGE_MEMBER_FANOUT_LIMIT`
+(50). When the raw read fills it, the bookings past it are never re-checked, so
+`invalidateMemberGroupTripCover` increments the revision of every trip the person
+attends (organiser, join, or the parent of a split child they attend) in ONE
+set-based `updateMany`, with no id list because those rows were never read. In the
+standing fan-out it is the last write on every path that returns; in the merge it
+replaces the id-list bump above, which it covers. Neither takes a new key.
+
+**Row-lock cycles end in a rollback, never a hang.** The trigger and both
+revision bumps take `GroupBooking` row locks as their last hosting lock. The other `GroupBooking` row
 writers — the join-status writer in `group-booking.ts`, the cancellation fence and
 `markGroupCancelled` in `group-cancel.ts` — update the row and then wait on nothing
 else before commit, so whoever holds a trip row is never waiting on a key the other
@@ -2001,7 +2014,13 @@ takes its `Member … FOR UPDATE` set. A truncating fan-out that holds one of th
 rows `FOR KEY SHARE` while its trigger waits for that trip row would close a cycle;
 the merge's bounded `Member` wait (#4855, `55P03` → its safe 409) or PostgreSQL's
 deadlock detector breaks it by rolling one whole transaction back, so the cost is
-a retry, never a hang or a half-written bump. A future `GroupBooking` writer that waits
+a retry, never a hang or a half-written bump. Two more cycles resolve the same way.
+The merge's loser delete runs while it holds the bumped trip rows, so a truncating
+fan-out whose trigger waits for one of them while holding a row that delete needs
+closes a merge/trigger cycle. And a set-based bump locks rows in scan order, not id
+order, so it can cross a fan-out's trigger (or another bump) that took a second trip
+row first. Both are broken by the deadlock detector (`40P01`) rolling one side back,
+bump and fan-out together; nothing half-written survives. A future `GroupBooking` writer that waits
 on a hosting key or a `Member` row while holding a trip row must reconcile this
 first.
 
