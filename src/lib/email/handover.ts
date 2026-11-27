@@ -125,10 +125,11 @@ export function senderEmailRow(id: string, options: { deferred: boolean }): Send
 
 /**
  * Hand copies whose hand-over was lost straight to the email retry job:
- * `FAILED` at their first attempt, body kept. For a caller-retried alert
- * (#4669) one recipient did receive: its owner sees "sent" and never sends it
- * again, and the sweep would release these copies to that owner, so nobody
- * would send them. Guarded on `NEVER_HANDED_OVER`: a copy the sweep reached
+ * `FAILED` at their first attempt, body kept. For an owner-retried alert
+ * (`isOwnerRetriedAlertTemplate`) one recipient did receive, or the retry job
+ * holds a copy of: its owner sees "sent" or queued and never sends it again,
+ * and the sweep would release these copies to that owner, so nobody would
+ * send them. Guarded on `NEVER_HANDED_OVER`: a copy the sweep reached
  * first, or whose claim did commit, is left to what settled it and logged as
  * a copy that recipient may never get. Never throws.
  */

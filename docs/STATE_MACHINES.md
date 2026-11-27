@@ -4420,7 +4420,8 @@ guarded on the row as read:
   takeover alerts, whose owner takes a held claim with no sent marker over):
   released to that owner, `FAILED`
   at attempts 1 with no body, and not sent by the retry job. When another
-  recipient did get that alert, its owner has stopped, so
+  recipient did get that alert, or the retry job holds another recipient's
+  copy, its owner has stopped, so
   `sendUnmuteableAdminAlert` or `sendAdminAlertTo` fails the lost copy with its body kept before it
   returns (`handLostHandoversToTheRetryJob`) and the retry job replays it;
 - `PENDING` at attempts 1, no body: `FAILED` at the ceiling, "never sent";

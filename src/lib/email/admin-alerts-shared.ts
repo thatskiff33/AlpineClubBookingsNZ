@@ -34,6 +34,7 @@ import {
   shouldPersistEmailHtml,
 } from "./internal";
 import {
+  adminAlertIsDeliveredOrQueued,
   type AdminAlertRecipientsResult,
   type UnmuteableAdminAlertOutcome,
 } from "./admin-alert-send-result";
@@ -299,15 +300,10 @@ export async function sendAdminAlertTo({
     );
   }
   const sent = outcomes.filter((outcome) => outcome.status === "sent").length;
-  // #5298: an owner-retried alert somebody received settles its owner, so a
-  // copy that lost its hand-over goes to the retry job now, as in `sendUnmuteableAdminAlert`.
-  if (ownerRetried && sent > 0) {
-    await handLostHandoversToTheRetryJob(outcomes.flatMap((outcome) => outcome.handoverLost ?? []), templateName);
-  }
   const queuedForRetry = outcomes.filter(
     (outcome) => outcome.status !== "sent" && outcome.queuedForRetry,
   ).length;
-  return {
+  const result: AdminAlertRecipientsResult = {
     deliveryAllowed: true,
     recipients: outcomes.length,
     sent,
@@ -315,6 +311,14 @@ export async function sendAdminAlertTo({
     notDelivered: outcomes.length - sent - queuedForRetry,
     failedBeforeLogged: outcomes.filter((outcome) => outcome.lostForWantOfARow).length,
   };
+  // #5298: an owner-retried alert somebody received, or the retry job holds a
+  // copy of, settles its owner (`adminAlertIsDeliveredOrQueued`, the rule its
+  // claim is kept on), so a copy that lost its hand-over goes to the retry job
+  // now, as in `sendUnmuteableAdminAlert`.
+  if (ownerRetried && adminAlertIsDeliveredOrQueued(result)) {
+    await handLostHandoversToTheRetryJob(outcomes.flatMap((outcome) => outcome.handoverLost ?? []), templateName);
+  }
+  return result;
 }
 
 /**
@@ -502,18 +506,19 @@ export async function sendUnmuteableAdminAlert({
   const ownerRetried = isOwnerRetriedAlertTemplate(templateName);
   const lostHandovers = outcomes.flatMap((outcome) => outcome.handoverLost ?? []);
   const sweepHoldsACopy = shouldPersistEmailHtml(templateName) && !ownerRetried && lostHandovers.length > 0;
-  // An owner-retried alert somebody did receive: its owner sees "sent" and
-  // sends nothing more, so a copy that lost its hand-over goes to the cron now
-  // (#4669's "the cron's to replay"), before the sweep can release it to an
-  // owner that is no longer retrying.
-  if (!nobodyReceivedIt && ownerRetried) {
-    await handLostHandoversToTheRetryJob(lostHandovers, templateName);
-  }
   // Before anything else can fail, and before the owner can retry.
   const release =
     nobodyReceivedIt && !sweepHoldsACopy && isCallerRetriedAlertTemplate(templateName)
       ? await releaseUnreceivedAlertCopies(attemptLogIds, templateName)
       : null;
+  // An owner-retried alert somebody did receive, or whose copies the cron
+  // holds: its owner sees "sent" or "queued-for-retry" and sends nothing more,
+  // so a copy that lost its hand-over goes to the cron now (#4669's "the
+  // cron's to replay"), before the sweep can release it to an owner that is no
+  // longer retrying.
+  if (ownerRetried && (!nobodyReceivedIt || release === "cron-holds-a-copy")) {
+    await handLostHandoversToTheRetryJob(lostHandovers, templateName);
+  }
 
   // Recipients refused for their once-ever claim are retried, not escalated (#5255).
   const escalatable = outcomes.filter((outcome) => !outcome.claimRefused);

@@ -18,6 +18,8 @@ const mocks = vi.hoisted(() => ({
   emailMessageSettingFindUnique: vi.fn(),
   logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
   handLostHandoversToTheRetryJob: vi.fn(),
+  // #4669's release transaction; unset, it resolves and the release answers "released".
+  transaction: vi.fn(),
 }));
 
 vi.mock("@/lib/prisma", () => ({
@@ -27,6 +29,7 @@ vi.mock("@/lib/prisma", () => ({
       findUnique: (...args: unknown[]) =>
         mocks.emailMessageSettingFindUnique(...args),
     },
+    $transaction: (...args: unknown[]) => mocks.transaction(...args),
   },
 }));
 vi.mock("@/lib/logger", () => ({ default: mocks.logger }));
@@ -401,6 +404,23 @@ describe("sendToAdmins reports each recipient's fate (#3672)", () => {
     expect(mocks.handLostHandoversToTheRetryJob).toHaveBeenCalledWith(["email-log-1"], "admin-superseded-payment-refund");
   });
 
+  // #5298 review: the owner also settles when nobody got the alert but the
+  // retry job holds a failed copy (`adminAlertIsDeliveredOrQueued`), so the
+  // lost copy goes to the retry job then too; the sweep would release it to an
+  // owner that has stopped, and that officer would never get it.
+  it("hands a takeover alert's lost hand-over to the retry job when another copy is queued for retry", async () => {
+    mocks.findMany.mockResolvedValue(treasurers.slice(0, 2));
+    mocks.sendEmail
+      .mockImplementationOnce(async ({ onAttemptLogged }: { onAttemptLogged?: (id: string) => void }) => {
+        onAttemptLogged?.("email-log-lost");
+        return { status: "handover_lost", emailLogId: "email-log-lost" };
+      })
+      .mockImplementationOnce(failsAfterItsRow);
+
+    await expect(send("admin-superseded-payment-refund")).resolves.toMatchObject({ sent: 0, queuedForRetry: 1, notDelivered: 1 });
+    expect(mocks.handLostHandoversToTheRetryJob).toHaveBeenCalledWith(["email-log-lost"], "admin-superseded-payment-refund");
+  });
+
   // #5407 review: a fault's copy whose row write failed has nothing to replay.
   it("does not count an environment fault's copy as queued when its row was never written", async () => {
     mocks.findMany.mockResolvedValue(treasurers.slice(0, 1));
@@ -752,6 +772,36 @@ describe("unmuteable admin alerts (#2761)", () => {
       .mockResolvedValue({ status: "handover_lost", emailLogId: "log-4" });
     await expect(send("admin-late-capture-auto-refund")).resolves.toBe("sent");
     expect(mocks.handLostHandoversToTheRetryJob).not.toHaveBeenCalled();
+  });
+
+  // #5298 review: nobody got it, but the cron had already claimed a sibling's
+  // copy, so the owner hears "queued-for-retry" and stops: the lost copy is the
+  // cron's as well, not the sweep's to release to that owner.
+  it("gives the retry job a caller-retried alert's lost hand-over when the cron already holds a sibling's copy", async () => {
+    mocks.findMany.mockResolvedValue([
+      enumRole("full.admin@club.test", "ADMIN"),
+      enumRole("treasurer@club.test", "FINANCE_ADMIN"),
+    ]);
+    mocks.sendEmail
+      .mockImplementationOnce(async ({ onAttemptLogged }: { onAttemptLogged?: (id: string) => void }) => {
+        onAttemptLogged?.("log-1");
+        throw new Error("SMTP down");
+      })
+      .mockResolvedValue({ status: "handover_lost", emailLogId: "log-2" });
+    // The release finds a row the cron claimed, and rolls back.
+    mocks.transaction.mockImplementationOnce(async (run: (tx: unknown) => Promise<void>) =>
+      run({ emailLog: { updateMany: async () => ({ count: 0 }), count: async () => 1 } }),
+    );
+
+    await expect(
+      sendUnmuteableAdminAlert({
+        subject: "Alert",
+        html: "<p>alert</p>",
+        templateName: "admin-unrecognised-stripe-payment",
+        requirement: { area: "finance", level: "edit" },
+      }),
+    ).resolves.toBe("queued-for-retry");
+    expect(mocks.handLostHandoversToTheRetryJob).toHaveBeenCalledWith(["log-2"], "admin-unrecognised-stripe-payment");
   });
 
   it("does not escalate when somebody was reached", async () => {

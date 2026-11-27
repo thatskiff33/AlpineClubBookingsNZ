@@ -2920,7 +2920,8 @@ mispricing a booking.
   `FAILED` at attempts 1 with no body, because its owner sends it again, and
   neither admin alert sender reports its lost hand-over as queued, so that
   owner does; when another
-  recipient received the alert the owner has stopped, so the sender fails the
+  recipient received the alert, or the retry job holds another recipient's
+  copy, the owner has stopped, so the sender fails the
   lost copy with its body kept, guarded like the claim, and the retry job
   replays it) and #4963's Try again (a `FAILED` row
   at the ceiling; the next retry claim writes `STARTED`). Proved on PostgreSQL
