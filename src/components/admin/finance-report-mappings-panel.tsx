@@ -32,7 +32,15 @@ import {
   ViewOnlyActionButton,
 } from "@/components/admin/view-only-action";
 import type { XeroAccount } from "@/lib/xero-admin-cache";
-import { apiErrorMessageFromBody } from "@/lib/api-error-message";
+import {
+  apiErrorMessageFromBody,
+  ApiRefusalError,
+  readApiObjectOrNull,
+  refusalMessageOr,
+} from "@/lib/api-error-message";
+
+const LOAD_FALLBACK = "Failed to load finance mappings";
+const ACCOUNTS_FALLBACK = "Failed to load Xero chart of accounts";
 
 type CategoryKind = "REVENUE" | "EXPENSE";
 
@@ -202,21 +210,15 @@ export function FinanceReportMappingsPanel() {
         setForbidden(true);
         return;
       }
-      const body = (await response.json()) as
-        | FinanceMappingsState
-        | { error?: string };
-      if (!response.ok || !("categories" in body)) {
-        throw new Error(
-          apiErrorMessageFromBody(body, "Failed to load finance mappings"),
-        );
+      // One guarded read decides both: an HTML error page or a body that is
+      // not the promised shape shows the route's sentence or the fallback.
+      const body = await readApiObjectOrNull(response);
+      if (!response.ok || !body || !("categories" in body)) {
+        throw new ApiRefusalError(apiErrorMessageFromBody(body, LOAD_FALLBACK));
       }
-      setState(toEditorState(body));
+      setState(toEditorState(body as FinanceMappingsState));
     } catch (loadError) {
-      setError(
-        loadError instanceof Error
-          ? loadError.message
-          : "Failed to load finance mappings",
-      );
+      setError(refusalMessageOr(loadError, LOAD_FALLBACK));
     } finally {
       setLoading(false);
     }
@@ -255,22 +257,14 @@ export function FinanceReportMappingsPanel() {
         );
         return;
       }
-      const body = (await response.json()) as
-        | { accounts?: XeroAccount[] }
-        | { error?: string };
-      if (!response.ok || !("accounts" in body) || !Array.isArray(body.accounts)) {
-        throw new Error(
-          apiErrorMessageFromBody(body, "Failed to load Xero chart of accounts"),
-        );
+      const body = await readApiObjectOrNull(response);
+      if (!response.ok || !Array.isArray(body?.accounts)) {
+        throw new ApiRefusalError(apiErrorMessageFromBody(body, ACCOUNTS_FALLBACK));
       }
-      setAccounts(body.accounts);
+      setAccounts(body.accounts as XeroAccount[]);
     } catch (accountsError) {
       setAccounts([]);
-      setCoaError(
-        accountsError instanceof Error
-          ? accountsError.message
-          : "Failed to load Xero chart of accounts",
-      );
+      setCoaError(refusalMessageOr(accountsError, ACCOUNTS_FALLBACK));
     }
   }
 
