@@ -7,7 +7,9 @@
  *
  * Pure: no client, no logger, no `server-only`.
  */
-import type { PaymentSource } from "@prisma/client";
+import type { XeroSyncOperation } from "@prisma/client";
+
+import { INTERNET_BANKING_PAYMENT_SOURCE } from "@/lib/booking-payment-state";
 
 /**
  * #5288: what the census reads to tell an Internet Banking residual billed in
@@ -38,10 +40,12 @@ export const BOOKING_XERO_BILLING_INVOICES = [
   { localModel: "BookingModification", role: "SUPPLEMENTARY_INVOICE" },
 ] as const;
 
-/** An invoice create in these states is still going out; a FAILED one is not evidence. */
-export const BOOKING_XERO_BILLING_QUEUED_STATUSES = ["PENDING", "RUNNING"] as const;
-
-const INTERNET_BANKING_SOURCE = "INTERNET_BANKING" satisfies PaymentSource;
+/**
+ * An invoice create in these states is still going out; a FAILED one is not
+ * evidence. Narrower than `XERO_ACTIVE_OPERATION_STATUSES` by `WAITING_PAYMENT`,
+ * which only a card capture releases and so never bills a bank transfer.
+ */
+export const BOOKING_XERO_BILLING_QUEUED_STATUSES = ["PENDING", "RUNNING"] as const satisfies readonly XeroSyncOperation["status"][];
 
 /** The SQL of one billing invoice's local id, over the census aliases `b` and `p`. */
 function billingInvoiceLocalIdSql(localModel: (typeof BOOKING_XERO_BILLING_INVOICES)[number]["localModel"], column: string): string {
@@ -87,12 +91,12 @@ export const BOOKING_XERO_BILLING_EVIDENCE: readonly {
 
 /** #5288: an Internet Banking payment with any {@link BOOKING_XERO_BILLING_EVIDENCE}. */
 export function bookingBilledInXero(facts: BookingXeroBillingFacts): boolean {
-  return facts.paymentSource === INTERNET_BANKING_SOURCE && BOOKING_XERO_BILLING_EVIDENCE.some((evidence) => evidence.ts(facts));
+  return facts.paymentSource === INTERNET_BANKING_PAYMENT_SOURCE && BOOKING_XERO_BILLING_EVIDENCE.some((evidence) => evidence.ts(facts));
 }
 
 /** The SQL twin of {@link bookingBilledInXero}, over `b` and `p`. */
 export function bookingBilledInXeroSql(): string {
-  return `(p."source" = '${INTERNET_BANKING_SOURCE}' AND (${BOOKING_XERO_BILLING_EVIDENCE.map((evidence) => evidence.sql).join(" OR ")}))`;
+  return `(p."source" = '${INTERNET_BANKING_PAYMENT_SOURCE}' AND (${BOOKING_XERO_BILLING_EVIDENCE.map((evidence) => evidence.sql).join(" OR ")}))`;
 }
 
 /**

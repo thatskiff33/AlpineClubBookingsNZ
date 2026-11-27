@@ -133,7 +133,8 @@ export interface ClassifyXeroBookingEditSettlementInput {
    * Internet Banking increase with no primary invoice linked is billed by
    * raising that invoice now - it bills the price plus every recorded fee -
    * with the applied credit allocated against it. Every door that settles
-   * through `applyPaymentAdjustments` passes it.
+   * through `applyPaymentAdjustments` passes it: dates, batch, guest removal,
+   * guest acceptance.
    */
   primaryInvoiceBillsIncrease?: boolean;
   requiresAdditionalStripePayment?: boolean;

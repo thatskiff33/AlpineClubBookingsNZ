@@ -6,7 +6,9 @@
   with the payment reference, as it already did once the invoice existed. The
   edit raises the booking's Xero invoice there and then: it bills the price and
   every change fee, with the account credit allocated against it, so the member
-  is billed the increase once. With Xero switched off the email still goes and
-  nothing is queued. The booking ledger census (`pnpm run
+  is billed the increase once. A guest removal that releases a promotion is
+  covered the same way. With Xero switched off the email still goes and nothing
+  is queued, and an edit that settles a booking at $0 no longer queues its Xero
+  invoice while Xero is off either. The booking ledger census (`pnpm run
   payments:audit-booking-ledger`) now lists money owed on a Xero invoice under
   its own heading instead of as money nobody is asking for.

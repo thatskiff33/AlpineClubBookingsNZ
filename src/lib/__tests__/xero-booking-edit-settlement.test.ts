@@ -523,6 +523,44 @@ describe("queueXeroBookingEditSettlement (side effects)", () => {
     expect(mocks.enqueueXeroAppliedCreditAllocationOperation).not.toHaveBeenCalled();
   });
 
+  it("#5288: a guest removal that raises an unlinked bank booking's price passes the flag, so its invoice is raised", async () => {
+    const { queueGuestRemovalXeroSettlement } = await import("@/lib/booking-guest-removal-xero");
+    await queueGuestRemovalXeroSettlement(
+      {
+        bookingId: "booking_removal",
+        bookingModificationId: "mod_removal",
+        hasIssuedXeroInvoice: false,
+        paymentStatus: "SUCCEEDED",
+        priceDiffCents: 2000,
+        xeroRefundAmountCents: 0,
+        settlementMethod: null,
+        hasSucceededPayment: false,
+        paymentId: "payment_removal",
+        refundHeldForDispute: false,
+        appliedCreditGivenBackCents: 0,
+        xeroAdditionalAmountCents: 2000,
+        zeroDollarAutoPaid: false,
+        primaryInvoiceBillsIncrease: true,
+        organiserChildRefund: null,
+      },
+      { createdByMemberId: "member_1", additionalPaymentIntentId: null },
+    );
+    expect(mocks.enqueueXeroBookingInvoiceOperation).toHaveBeenCalledWith("booking_removal", expect.anything());
+    expect(mocks.enqueueXeroAppliedCreditAllocationOperation).toHaveBeenCalledWith("booking_removal", { createdByMemberId: "member_1" });
+  });
+
+  it("#5288: with the Xero module off, F20's $0 invoice is not queued either", async () => {
+    xeroInvoicingEnabled.mockResolvedValue(false);
+    await queueXeroBookingEditSettlement({
+      bookingId: "booking_zero",
+      bookingModificationId: "mod_zero",
+      hasIssuedXeroInvoice: false,
+      priceDiffCents: -2000,
+      createPrimaryInvoiceWhenMissing: true,
+    });
+    expect(mocks.enqueueXeroBookingInvoiceOperation).not.toHaveBeenCalled();
+  });
+
   it("MUTATION #5288: queues no primary invoice or allocation while the Xero module is off", async () => {
     xeroInvoicingEnabled.mockResolvedValue(false);
     const decision = await queueXeroBookingEditSettlement({

@@ -1,10 +1,12 @@
 import type { PaymentSource } from "@prisma/client";
 
-import { isCapturedPaymentStatus, isSettledBookingStatus } from "@/lib/booking-payment-state";
+import { bookingHasExternalSettlement } from "@/lib/booking-external-settlement";
+import {
+  INTERNET_BANKING_PAYMENT_SOURCE,
+  isCapturedPaymentStatus,
+  isSettledBookingStatus,
+} from "@/lib/booking-payment-state";
 import { paidByOrganiserInternetBanking } from "@/lib/group-organiser-paid";
-
-/** The `Payment.source` whose increases Xero bills, checked by the compiler. */
-const INTERNET_BANKING_PAYMENT_SOURCE = "INTERNET_BANKING" satisfies PaymentSource;
 
 /**
  * #5288 (`INV-PAY-163`, owner decision 20 Nov 2026): is this edit's increase
@@ -15,9 +17,12 @@ const INTERNET_BANKING_PAYMENT_SOURCE = "INTERNET_BANKING" satisfies PaymentSour
  * for a supplementary one to sit beside, so the primary invoice, which bills
  * the price plus every recorded fee, carries the increase.
  *
- * Not a booking marked paid by hand: the invoice enqueue refuses it (#2262),
- * so the member would be told of an invoice that never comes. Not an
- * organiser's place: the organiser's combined invoice bills it (#4299).
+ * Not a booking settled outside the app (`bookingHasExternalSettlement`): the
+ * invoice enqueue refuses it (#2262), so the member would be told of an
+ * invoice that never comes. Not an organiser's place: the organiser's combined
+ * invoice bills it (#4299). One the enqueue refuses for a create an officer
+ * resolved by hand in Xero (#3635) is still asked; with no link or queued
+ * create, the census lists it as `unasked` for the treasurer.
  */
 function billsIncreaseOnNewPrimaryInvoice(
   booking: {
@@ -39,7 +44,7 @@ function billsIncreaseOnNewPrimaryInvoice(
     isCapturedPaymentStatus(booking.payment?.status ?? "") &&
     booking.payment?.source === INTERNET_BANKING_PAYMENT_SOURCE &&
     !booking.payment.xeroInvoiceId &&
-    !booking.payment.manuallyMarkedPaidAt
+    !bookingHasExternalSettlement(booking)
   );
 }
 

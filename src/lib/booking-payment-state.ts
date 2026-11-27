@@ -162,6 +162,7 @@ export function hasCapturedPayment(
 
 /** The `Payment.source` a card ask is minted against, checked by the compiler. */
 const CARD_PAYMENT_SOURCE = "STRIPE" satisfies PaymentSource;
+export const INTERNET_BANKING_PAYMENT_SOURCE = "INTERNET_BANKING" satisfies PaymentSource; // #5288: Xero bills its increases
 
 /**
  * #3502 (`INV-PAY-047`, `INV-MOD-018`): may an edit that RAISES this booking's

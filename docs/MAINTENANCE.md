@@ -2713,8 +2713,9 @@ finalPrice + changeFees - (captured - refunded) - credit - uncollected ask
   whose primary invoice is linked, whose primary or supplementary invoice link is
   active, or whose primary or supplementary invoice create is still queued or
   running. Listed apart, as "Billed on a Xero invoice; check Xero before
-  invoicing by hand". A FAILED create is not evidence: that row stays in the
-  first list.
+  invoicing by hand". A FAILED create alone is not evidence, but a linked
+  primary invoice is, so a later edit whose supplementary invoice failed is
+  listed here too: check that edit's invoice in Xero.
 - **Negative** — the club holds more than the price. Normal after a policy-tiered
   reduction (the retained slice is a charge, not a prepayment) or a reduction
   settled as account credit. Worth a glance, rarely worth an action.

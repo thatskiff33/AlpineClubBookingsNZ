@@ -4580,7 +4580,7 @@ and what the primary invoice bills), **`INV-PAY-136`** (the edit's claim),
 - **Who.** `billsIncreaseOnNewPrimaryInvoice`
   (`primary-invoice-bills-increase.ts`): an increase, no card ask, settled
   status, captured payment status, Internet Banking source, no invoice link,
-  not marked paid by hand, not an organiser's place. `applyPaymentAdjustments`
+  not settled outside the app, not an organiser's place. `applyPaymentAdjustments`
   returns it as `primaryInvoiceBillsIncrease`.
 - **The ask.** The "Booking Modified" email says "An additional Internet
   Banking payment of $X is required" with the payment reference, as a linked
@@ -4589,7 +4589,8 @@ and what the primary invoice bills), **`INV-PAY-136`** (the edit's claim),
   which bills the price plus every recorded fee, then the applied-credit
   allocation behind it. Never a supplementary invoice without a link. Both
   enqueues refuse a linked, queued or hand-resolved invoice. With the Xero
-  module off nothing is queued; the email still goes (`INV-INT-040`).
+  module off nothing is queued, F20's $0 invoice included; the email still
+  goes (`INV-INT-040`).
 - **Once.** The edit's claim on the unlinked row (`INV-PAY-136`) puts its fee
   on that invoice or, where its create read the booking first, on the one gap
   invoice the create raises.

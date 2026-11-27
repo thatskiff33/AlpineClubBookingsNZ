@@ -19,6 +19,7 @@ export type GuestRemovalXeroSettlement = Pick<
   | "appliedCreditGivenBackCents"
   | "xeroAdditionalAmountCents"
   | "zeroDollarAutoPaid"
+  | "primaryInvoiceBillsIncrease"
   | "organiserChildRefund"
 > & { bookingId: string };
 
@@ -37,6 +38,7 @@ export function guestRemovalXeroSettlement(result: RemoveBookingGuestResult): Gu
     appliedCreditGivenBackCents: result.appliedCreditGivenBackCents,
     xeroAdditionalAmountCents: result.xeroAdditionalAmountCents,
     zeroDollarAutoPaid: result.zeroDollarAutoPaid,
+    primaryInvoiceBillsIncrease: result.primaryInvoiceBillsIncrease,
     organiserChildRefund: result.organiserChildRefund,
   };
 }
@@ -90,5 +92,7 @@ export function queueGuestRemovalXeroSettlement(
     additionalPaymentIntentId,
     createPrimaryInvoiceWhenMissing:
       settlement.zeroDollarAutoPaid && !settlement.hasIssuedXeroInvoice,
+    // #5288: a removal that releases a promotion can raise an unlinked bank booking's price.
+    primaryInvoiceBillsIncrease: settlement.primaryInvoiceBillsIncrease,
   });
 }
