@@ -7,10 +7,11 @@
   unchanged (`200`), so a club that changes nothing sees no change.
 
   Refund credit notes carry the same GST whichever account you choose. Xero
-  decides which tax rates may be used on an expense account, so the Xero health
-  check now warns a GST-registered club when **Hut Fee Refunds** is on an
-  expense account and Xero says the club's tax rate cannot be used on
-  expenses, because Xero would reject those credit notes.
+  decides which tax rates may be used on an expense account, so the Xero check
+  on **System Health** now warns a GST-registered club when **Hut Fee
+  Refunds** is on an expense account and Xero says the club's tax rate cannot
+  be used on expenses, because Xero would reject those credit notes. Read it
+  after choosing an expense account.
 
   Saving a mapping now checks the kind of account, for every mapping: a code
   you set or change that your chart of accounts shows is the wrong kind, such

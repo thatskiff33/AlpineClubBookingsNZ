@@ -311,10 +311,11 @@ accounts** and **Expense accounts**:
 Which is right is your treasurer's or accountant's call. Either way the credit
 note carries the same GST as the invoice it refunds. Xero decides which tax
 rates may be used on an expense account, so if your club is GST-registered and
-chooses an expense account, read the Xero health check afterwards: it warns
-when Xero says the club's tax rate cannot be used on expenses, because Xero
-would then reject refund credit notes. If it does, map **Hut Fee Refunds** back
-to a revenue account or ask your accountant which account and rate to use.
+chooses an expense account, read the Xero check on
+[System Health](health.md) afterwards: it warns when Xero says the club's tax
+rate cannot be used on expenses, because Xero would then reject refund credit
+notes. If it does, map **Hut Fee Refunds** back to a revenue account or ask
+your accountant which account and rate to use.
 
 **Save refuses the wrong kind of account.** When you set or change a mapping,
 the app checks the code against its copy of your chart of accounts and refuses,
