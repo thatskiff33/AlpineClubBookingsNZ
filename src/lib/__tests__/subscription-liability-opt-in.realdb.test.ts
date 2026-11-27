@@ -132,10 +132,6 @@ let priorLockoutSettings: MembershipLockoutSettings | null = null;
     async function deleteFixtures() {
       const chargeIds = await ownedChargeIds();
       const ownedMember = { startsWith: PREFIX };
-      const creditLots = await prisma.memberCredit.findMany({ where: { memberId: ownedMember }, select: { id: true } });
-      await prisma.xeroSyncOperation.deleteMany({ where: { localModel: "MemberCredit", localId: { in: creditLots.map(({ id }) => id) } } });
-      await prisma.memberSubscriptionAgeUpAdjustment.deleteMany({ where: { memberId: ownedMember } });
-      await prisma.memberCredit.deleteMany({ where: { memberId: ownedMember } });
       await prisma.auditLog.deleteMany({
         where: { OR: [{ entityId: { in: chargeIds } }, { memberId: ownedMember }, { subjectMemberId: ownedMember }] },
       });
@@ -837,21 +833,6 @@ let priorLockoutSettings: MembershipLockoutSettings | null = null;
           }),
         ).toEqual({ status: "NOT_INVOICED" });
       });
-    });
-
-    it("rejects a duplicate birthday adjustment and two concurrent workers grant only one credit lot", async () => {
-      const { creditAgeUpAdjustmentToAccount } = await import("@/lib/subscription-age-up-credit");
-      const memberId = `${PREFIX}age-credit`;
-      await createMember(memberId, "ADULT");
-      const subscription = await prisma.memberSubscription.create({ data: { memberId, seasonYear: SEASON_YEAR } });
-      const data = { memberSubscriptionId: subscription.id, memberId, seasonYear: SEASON_YEAR, ageUpDate: DECISION_DATE,
-        kind: "CREDIT", fromAgeTier: "YOUTH", toAgeTier: "ADULT", coveredMonths: 9, fromAnnualCents: 1200,
-        toAnnualCents: 0, amountCents: 900, description: "Membership (9 months) · age group change credit" } as const;
-      const adjustment = await prisma.memberSubscriptionAgeUpAdjustment.create({ data });
-      await expect(prisma.memberSubscriptionAgeUpAdjustment.create({ data })).rejects.toMatchObject({ code: "P2002" });
-      const results = await Promise.all([creditAgeUpAdjustmentToAccount(adjustment.id), creditAgeUpAdjustmentToAccount(adjustment.id)]);
-      expect(results.filter(Boolean)).toHaveLength(1);
-      expect(await prisma.memberCredit.findMany({ where: { memberId }, select: { amountCents: true, type: true } })).toEqual([{ amountCents: 900, type: "ADMIN_ADJUSTMENT" }]);
     });
 
     describe("the SQL date-of-birth check agrees with the TS rule at every tier birthday", () => {

@@ -539,6 +539,13 @@ import "./membership-family-rebill.realdb.test";
 // tier birthday. Skipped unless RUN_CONCURRENCY_RACE_TESTS=1; it owns and cleans
 // its own `race-5190-` fixtures.
 import "./subscription-liability-opt-in.realdb.test";
+// #5190 PR 3 reuses it to prove one billing run under "Age today" raises a
+// part-season charge, a top-up and a credit once each, that a top-up holds its
+// member back only while issued and unpaid, that the sync never revives a voided
+// top-up, and that two credit workers on one adjustment grant one credit lot.
+// Skipped unless RUN_CONCURRENCY_RACE_TESTS=1; it owns and cleans its own
+// `race-5190pr3-` fixtures.
+import "./subscription-age-up.realdb.test";
 // #4131 reuses it to prove the booking's own payment captured after its booking
 // was cancelled is refunded from its own charge through the real webhook
 // processor: never a fee the cancel kept on another charge, and only what a part

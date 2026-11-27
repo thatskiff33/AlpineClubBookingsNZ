@@ -3431,6 +3431,24 @@ describe("subscription liability rule on billing (#5190)", () => {
       expect(built.ageUpAdjustments).toEqual([]);
     });
 
+    it("charges a fee part that is set not to prorate in full on a part-season charge", async () => {
+      mocks.effectiveFee.mockResolvedValue(fee({ id: "fee-youth", amountCents: 6_000, prorationRule: "NONE", components: [
+        comp({ label: "Base", amountCents: 4_800, sortOrder: 0, prorate: true }),
+        comp({ label: "Work party", amountCents: 1_200, sortOrder: 1, prorate: false }),
+      ] }));
+      mocks.members.findMany.mockResolvedValue([tom()]);
+
+      const built = await preview();
+
+      expect(built.entries[0]).toMatchObject({ prorationRule: "REMAINING_MONTHS_INCLUSIVE", coveredMonths: 10 });
+      // Base: 4800 x 10 / 12. Work party: all of it.
+      expect(built.entries[0].components).toEqual([
+        expect.objectContaining({ label: "Base", chargedAmountCents: 4_000, prorated: true }),
+        expect.objectContaining({ label: "Work party", chargedAmountCents: 1_200, prorated: false }),
+      ]);
+      expect(built.entries[0].chargedAmountCents).toBe(5_200);
+    });
+
     it("raises neither before the birthday", async () => {
       mocks.members.findMany.mockResolvedValue([ella(), tom()]);
 

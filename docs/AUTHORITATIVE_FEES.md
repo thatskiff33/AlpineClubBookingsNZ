@@ -245,11 +245,13 @@ confirm the preview. Newly approved members are the exception to the annual-batc
 trigger only: their configured charge is queued automatically after approval;
 incomplete setup records a visible exception without blocking membership.
 
-## Family billing mode
-
 With **Their age today**, the season charge uses the season-start tier. The
 annual batch prices a birthday change from the difference in annual fees for
-the remaining months (`INV-MONEY-051`, `INV-MONEY-052`, `INV-MONEY-053`).
+the remaining months (`INV-MONEY-051`, `INV-MONEY-052`, `INV-MONEY-053`). A
+part-season invoice for a newly liable member follows the fee's parts as any
+prorated charge does: a part set not to prorate is charged in full.
+
+## Family billing mode
 
 The club-level `familyBillingMode` on `MembershipSubscriptionBillingSettings`
 (edited from **Admin > Subscriptions**) decides whether family billing exists at
