@@ -29,3 +29,30 @@ lines: 455
 reason: the forced-edit check runs again inside the write transaction, so its
   current season (zone and year-end, which may read Xero) is resolved once
   before that transaction rather than inside it.
+
+file: src/app/api/admin/members/bulk-update/route.ts
+lines: 746
+reason: a bulk set-role judges age tiers in the season the club's resolved
+  year-end names (#5259 review), resolved once before the transaction.
+
+function: src/app/api/admin/members/bulk-update/route.ts#POST
+lines: 675
+reason: the same one resolution, beside the zone read it already makes.
+
+file: src/lib/admin-members-service.ts
+lines: 1665
+reason: creating a member seeds its subscription row in the season the club's
+  resolved year-end names (#5259 review), resolved before the transaction.
+
+function: src/lib/admin-members-service.ts#createAdminMember
+lines: 510
+reason: the same one resolution, beside the zone read it already makes.
+
+file: src/components/admin/subscription-lockout-settings-panel.tsx
+lines: 797
+reason: three calls into `useYearEndRefresh`, which redraws the admin layout
+  when a save moves the year-end; the logic itself lives in that hook.
+
+function: src/components/admin/subscription-lockout-settings-panel.tsx#SubscriptionLockoutSettingsPanel
+lines: 685
+reason: the same three calls.

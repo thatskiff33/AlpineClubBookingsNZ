@@ -1,8 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useRouter } from "next/navigation";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import {
@@ -28,6 +27,7 @@ import {
 } from "@/components/admin/view-only-action";
 import type { AdminPermissionMatrix } from "@/lib/admin-permissions";
 import { adminHref } from "@/lib/admin-hubs";
+import { useYearEndRefresh } from "@/components/admin/use-year-end-refresh";
 
 const MONTH_NAMES = [
   "January",
@@ -150,12 +150,8 @@ export function SubscriptionLockoutSettingsPanel({
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [forbidden, setForbidden] = useState(false);
-  const router = useRouter();
-  // The year-end month in effect when this page was drawn (#5259 review). The
-  // admin layout hands it to every season screen through `ClubSeasonProvider`,
-  // and Next keeps that layout across client navigation, so a save that moves
-  // it must re-render the layout or the season screens keep the old month.
-  const effectiveYearEndMonth = useRef<number | null>(null);
+  const { noteLoaded: noteYearEndLoaded, noteSaved: noteYearEndSaved } =
+    useYearEndRefresh();
 
   useEffect(() => {
     async function load() {
@@ -216,9 +212,7 @@ export function SubscriptionLockoutSettingsPanel({
         if (lockoutBody?.settings) {
           setSettings(lockoutBody.settings as LockoutSettings);
         }
-        if (typeof lockoutBody?.financialYear?.effectiveMonth === "number") {
-          effectiveYearEndMonth.current = lockoutBody.financialYear.effectiveMonth;
-        }
+        noteYearEndLoaded(lockoutBody?.financialYear?.effectiveMonth);
         if (lockoutBody) {
           setFeeScheduleItemCodes(
             (lockoutBody.feeScheduleItemCodes as string[]) ?? [],
@@ -258,7 +252,7 @@ export function SubscriptionLockoutSettingsPanel({
       }
     }
     load();
-  }, [canMembership, canFinance, canBookings]);
+  }, [canMembership, canFinance, canBookings, noteYearEndLoaded]);
 
   function update(patch: Partial<LockoutSettings>) {
     setSettings((prev) => (prev ? { ...prev, ...patch } : prev));
@@ -296,14 +290,7 @@ export function SubscriptionLockoutSettingsPanel({
         if (lockoutBody.settings) {
           setSettings(lockoutBody.settings as LockoutSettings);
         }
-        const savedYearEndMonth = lockoutBody.financialYear?.effectiveMonth;
-        if (
-          typeof savedYearEndMonth === "number" &&
-          savedYearEndMonth !== effectiveYearEndMonth.current
-        ) {
-          effectiveYearEndMonth.current = savedYearEndMonth;
-          router.refresh();
-        }
+        noteYearEndSaved(lockoutBody.financialYear?.effectiveMonth);
         if (lockoutBody.feeScheduleItemCodes !== undefined) {
           setFeeScheduleItemCodes(
             (lockoutBody.feeScheduleItemCodes as string[]) ?? [],
