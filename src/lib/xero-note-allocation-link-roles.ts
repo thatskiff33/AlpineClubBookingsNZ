@@ -29,5 +29,7 @@ export const CLEARING_ALLOCATION_LINK_WHERE = {
 
 /** The same rule for one link in hand, so a writer names exactly the links those readers count (#5289 B). */
 export function isClearingAllocationLinkRoleAndAnchor(link: { role: string; localModel: string }): boolean {
-  return link.role === NOTE_ALLOCATION_ROLE || (link.role === ROLELESS_ALLOCATION_ROLE && link.localModel !== "Payment");
+  return CLEARING_ALLOCATION_LINK_WHERE.OR.some(({ role, localModel }) =>
+    link.role === role && link.localModel !== localModel?.not,
+  );
 }
