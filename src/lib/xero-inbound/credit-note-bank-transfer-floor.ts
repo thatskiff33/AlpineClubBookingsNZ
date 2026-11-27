@@ -72,10 +72,12 @@ export type BankTransferFloorAlert = {
  * above the stored total. A correction moved no money, so it is never in the
  * detail; without it a $100 correction beside a $200 bank refund whose note is
  * still in the outbox (stored $300, detail $200, links $100) was floored at
- * $200, $100 too low. And while a refund note for the payment is still queued
- * to be created (`findBlockingRefundCreditNoteOperationId`), Xero is behind
- * by design: logged at info, no alert. If that note later fails for good, the
- * next writer raises the alert.
+ * $200, $100 too low. And while a refund note's create for the payment can
+ * still run (`findBlockingRefundCreditNoteOperationId`: queued, running, or
+ * failed but still replayable), Xero is behind by design: logged at info, no
+ * alert. A failed create raises the outbox's own failure alert; once it can
+ * no longer run (made non-replayable or resolved), the next writer raises
+ * this one.
  */
 export async function bankTransferFloorCents(
   store: Prisma.TransactionClient,
