@@ -6,6 +6,8 @@
  * Nothing here reads the database or the session, so the dialog can import it.
  */
 
+import { satisfiesOfficerSecondFactor } from "@/lib/second-factor-enrolment";
+
 export const RECENT_AUTH_WINDOW_MS = 5 * 60 * 1000;
 
 /** The refusal `requireRecentAuth` returns and the dialog recognises. */
@@ -87,8 +89,9 @@ export function passwordSignInOwesStrongerFactor(input: {
   twoFactorMethod?: string | null;
   hasPasskey?: boolean | null;
 }): boolean {
+  // The officer rule's own "does this factor count" check (INV-SSOT).
+  if (input.officerRequired) return satisfiesOfficerSecondFactor(input);
   const hasApp = input.twoFactorEnabled === true && input.twoFactorMethod !== "EMAIL";
-  if (input.officerRequired) return hasApp || input.hasPasskey === true;
   return input.moduleRequired && hasApp;
 }
 

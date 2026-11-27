@@ -104,6 +104,10 @@ describe("recent authentication window (#4616)", () => {
     expect(owes(app, false, false)).toBe(false);
     expect(owes(passkeyOnly, false, false)).toBe(false);
     expect(owes(emailOnly, true, true)).toBe(false);
+    // Owed exactly when the factor satisfies the officer rule: a flag left on
+    // with no method stored is not an app the officer gate accepts either.
+    const flagNoMethod = { twoFactorEnabled: true, twoFactorMethod: null, hasPasskey: false };
+    expect(owes(flagNoMethod, false, true)).toBe(false);
     expect(owes(none, true, true)).toBe(false);
   });
 });
