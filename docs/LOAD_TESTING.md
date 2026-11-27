@@ -389,7 +389,8 @@ single scenario by hand.
 
 Each VU logs in as its **own** volume-seeded member and repeats a booking cycle
 on a lodge and night chosen from its VU id: create a self-booking, extend it by
-one night, cancel it, and on the first iteration also hold a bed with a
+one night at the figures its `modify-quote` preview returned (a date change
+without them is refused, `INV-MOD-062`), cancel it, and on the first iteration also hold a bed with a
 child-only review request. Neighbouring VUs land on different lodges and
 nights, so writers queue on the global key and on more than one lodge key at
 once. Teardown reads every night the run could touch and `capacity_ceiling`

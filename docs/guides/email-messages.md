@@ -240,6 +240,36 @@ that blocks images shows the three service names instead — members never see
 the written-out addresses. Place the token on its own line inside your
 wording and Preview to see the row in place.
 
+When a booking whose confirmation offered those calendar links is later
+cancelled or bumped, the download link stops working, but an entry the member
+already saved stays in their calendar (#5249). So the **Booking Cancelled** and
+**Booking Update** (bumped) messages carry a calendar file that cancels the same
+entry, and **`{{calendarRemovalNote}}`** renders one sentence: "If you added
+this stay to your calendar, open the attached calendar file to remove it, and
+delete the entry yourself if it is still showing." The **Booking Modified**
+message carries **`{{calendarUpdateNote}}`** when the dates moved: "If you added
+this stay to your calendar, it still shows the old dates, so please update it."
+No file is attached to that one, because a calendar that ignores the entry's id
+would add a second entry beside the stale one.
+
+Both tokens are empty, and no file is attached, unless the member was sent the
+Booking Confirmed message and is still allowed the booking link it carried, so a
+school contact or a member who never had the calendar links sees nothing. If the
+file cannot be built the sentence drops its mention of an attachment, including
+when a failed email is retried. Retries adjust only this standard sentence;
+your surrounding wording is kept. The
+shipped default wording places each token on a line of its own. A club that
+saved its own wording for these messages keeps it unchanged: the file is still
+attached, but the sentence shows only after you add the token to your wording.
+
+**What the file can and cannot do.** Calendar apps differ in how they treat a
+cancellation for an entry that was added from a downloaded file: one may remove
+the entry, another may show a cancelled copy or ignore the file. Which app does
+what has not been tested yet, so do not promise members that opening the file
+removes the stay. An entry added through the Google Calendar or Outlook.com
+link has no connection to the file at all, so no file can remove it. That is
+why the sentence always ends with removing the entry by hand.
+
 A second, related pair works the other way round: **`{{rebookLabel}}` and
 `{{rebookPath}}`** in the **Booking Update** (bumped) message. That email goes to
 two very different people — a club member whose pending booking lost its beds,

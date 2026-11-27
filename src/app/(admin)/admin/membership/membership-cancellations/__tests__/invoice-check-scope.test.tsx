@@ -22,6 +22,7 @@ let membershipLevel: "view" | "edit" = "edit";
 
 // The page reads its tab from the URL since S1 (#4796); no tab is the queue.
 vi.mock("next/navigation", () => ({
+  usePathname: () => "/",
   useRouter: () => ({ replace: vi.fn(), push: vi.fn(), refresh: vi.fn() }),
   useSearchParams: () => new URLSearchParams(),
 }));

@@ -199,6 +199,11 @@ export default function BookingRequestsPage() {
     // Each tab's queue pages on its own (INV-OPS-020); a page from one tab
     // means nothing on another.
     setAdminListPageParam(params, 1);
+    // The policy exception queue's filters (#5247) are its own: a Cancelled or
+    // Approved chosen there must not open another tab on that filter.
+    if (activeTab === "exceptions") {
+      params.delete(BOOKING_REQUESTS_STATUS_PARAM);
+    }
 
     if (nextTab === "approvals") {
       params.delete("requestId");
@@ -211,7 +216,7 @@ export default function BookingRequestsPage() {
         params.delete(BOOKING_REQUESTS_STATUS_PARAM);
       }
     } else if (nextTab === "exceptions") {
-      // The exception queue keeps its own in-panel status filter and has no
+      // The exception queue's status filter is its own (#5247) and it has no
       // per-record deep link, so nothing from a sibling tab carries over.
       params.delete("bookingId");
       params.delete("requestId");

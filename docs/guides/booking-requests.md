@@ -57,8 +57,8 @@ previous and next arrows with page numbers when there is more. On **Approvals**,
 lists the oldest request first, so the one that has waited longest is at the top; decided and **All**
 filters list the newest first, and **All** on Approvals keeps every pending
 booking ahead of the decided ones. Changing the filter or tab, or pressing
-**Reset**, returns to page 1; the page stays in the address (except on
-**Policy Exceptions**, which keeps its filter and page on screen only); and if deciding the last request on a page
+**Reset**, returns to page 1; the filter and page stay in the address, so a
+reload or a shared link opens the same view; and if deciding the last request on a page
 empties it, the list steps back a page. A link that opens one booking or
 request — from an email, **Needs Attention** or the Bookings Review chip —
 shows that record pinned above the list, with a note, when it is not on the
@@ -622,7 +622,8 @@ being refused. Those asks land here.
 
 1. Open **Booking Requests → Policy Exceptions**. The tab shows a count of
    everything waiting. Filter by **Requested** (default), **Approved**,
-   **Rejected**, **Cancelled**, **Superseded**, or **All**.
+   **Rejected**, **Cancelled**, **Superseded**, **Expired** (the request was
+   holding beds and its hold ran out before anyone decided), or **All**.
 2. Each card tells you: who asked and **how long ago**, what they proposed
    (dates, how many guests, and for a change, what they want changed), which
    rules it breaks — named, with the policy and version that was reviewed —
@@ -733,7 +734,7 @@ therefore keeps its **All** context rather than disappearing from view.
 | --- | --- | --- |
 | Approvals | Pending (default), Approved, Rejected, All | Approve; Reject and cancel (Admin notes required to reject) |
 | Changes | Requested (default), Approved, Rejected, All | Acknowledge as approved (stay still running) or Approve and apply (stay finished, #3750), with **Promo code to apply** and, on a promo-only correction, the member email choice (#4533); Reject. Both need the member-facing explanation; optional internal note the member never sees; optional linked modification id (acknowledgement only) |
-| Policy Exceptions | Requested (default), Approved, Rejected, Cancelled, Superseded, All | Approve and apply (confirmation required; member-facing explanation required for an adult-member hosting override); Refuse (member-facing explanation required). Both actions also take an optional internal note the member never sees |
+| Policy Exceptions | Requested (default), Approved, Rejected, Cancelled, Superseded, Expired, All | Approve and apply (confirmation required; member-facing explanation required for an adult-member hosting override); Refuse (member-facing explanation required). Both actions also take an optional internal note the member never sees |
 | Public Requests | Queue (default), Awaiting verification, Verified, Priced, Quoted, Quote sent, Query, Modify, Accepted, Approved, Declined, Cancelled, Converted, All | Save quote; Send quote; Approve & send payment link / Approve & invoice school; Decline; Hold slots (school) |
 
 Notes and constraints:

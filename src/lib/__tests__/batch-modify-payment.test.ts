@@ -1,4 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+// #5238: these cases pin the save's own writes, driven through the route, not
+// the door's rule that a save carries its preview's figures (pinned by
+// `modify-quoted-figures.test.ts`), so their figure-less bodies still reach it.
+vi.mock("@/lib/edit-quoted-figures", async (importOriginal) => ({
+  ...((await importOriginal()) as typeof import("@/lib/edit-quoted-figures")),
+  requireEditQuotedFigures: () => {},
+}));
 
 // Fakes below model a correctly locked caller: the caller-held lock checks
 // (#4929) are proven against PostgreSQL in bed-allocation-lock-held.realdb.test.ts.

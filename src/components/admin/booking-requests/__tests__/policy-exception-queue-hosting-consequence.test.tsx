@@ -24,6 +24,12 @@ vi.mock("@/hooks/use-admin-area-edit-access", () => ({
 
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 
+vi.mock("next/navigation", () => ({
+  usePathname: () => "/",
+  useRouter: () => ({ replace: vi.fn(), push: vi.fn(), refresh: vi.fn() }),
+  useSearchParams: () => new URLSearchParams(),
+}));
+
 import { PolicyExceptionRequestsPanel } from "../policy-exception-requests-panel";
 
 const HOSTING_REF = {

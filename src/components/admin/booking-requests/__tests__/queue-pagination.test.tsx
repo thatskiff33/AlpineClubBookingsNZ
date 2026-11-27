@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import "@testing-library/jest-dom/vitest";
-import { fireEvent, render, screen, waitFor } from "@/lib/__tests__/support/club-time-render";
+import { cleanup, fireEvent, render, screen, waitFor } from "@/lib/__tests__/support/club-time-render";
 import type { ReactElement, ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -9,6 +9,8 @@ import { BookingApprovalsPanel } from "@/components/admin/booking-requests/booki
 import { BookingChangeRequestsPanel } from "@/components/admin/booking-requests/booking-change-requests-panel";
 import { PolicyExceptionRequestsPanel } from "@/components/admin/booking-requests/policy-exception-requests-panel";
 import { PublicBookingRequestsPanel } from "@/components/admin/booking-requests/public-booking-requests-panel";
+import { buildBookingRequestsHref } from "@/lib/admin-booking-requests-path";
+import { adminHref } from "@/lib/admin-hubs";
 import { PINNED_QUEUE_RECORD_NOTE } from "@/lib/admin-list-page";
 
 /**
@@ -17,10 +19,16 @@ import { PINNED_QUEUE_RECORD_NOTE } from "@/lib/admin-list-page";
  * record beyond page 1 still lands on that record.
  */
 
-const navigation = vi.hoisted(() => ({ search: "" }));
+// One router for every render, as Next's is: a fresh one each render would
+// re-run every effect that lists it.
+const navigation = vi.hoisted(() => {
+  const replace = vi.fn();
+  return { search: "", pathname: "/", replace, router: { replace, push: vi.fn(), refresh: vi.fn() } };
+});
 
 vi.mock("next/navigation", () => ({
-  useRouter: () => ({ replace: vi.fn(), push: vi.fn(), refresh: vi.fn() }),
+  usePathname: () => navigation.pathname,
+  useRouter: () => navigation.router,
   useSearchParams: () => new URLSearchParams(navigation.search),
 }));
 
@@ -205,6 +213,7 @@ function envelope(data: unknown[], page: number, total: number) {
 
 beforeEach(() => {
   navigation.search = "";
+  navigation.pathname = "/";
   vi.clearAllMocks();
 });
 
@@ -495,6 +504,87 @@ describe("PolicyExceptionRequestsPanel paging", () => {
     );
     expect(pageOf(fetches.reads(route).at(-1)!)).toBe("1");
   });
+
+  /** The address the panel last wrote, as its path and query. */
+  function writtenAddress() {
+    const href = navigation.replace.mock.calls.at(-1)?.[0] as string;
+    return new URL(href, "http://localhost");
+  }
+
+  it("#5247: the Expired filter reads expired requests and puts the filter in the address", async () => {
+    const fetches = installFetch({
+      [route]: (url) => envelope([exceptionItem()], Number(pageOf(url) ?? 1), 30),
+    });
+    render(<PolicyExceptionRequestsPanel />);
+    await screen.findByText("Showing 1–25 of 30");
+
+    fireEvent.click(screen.getByRole("button", { name: "Expired" }));
+    await waitFor(() =>
+      expect(fetches.reads(route).at(-1)!.searchParams.get("status")).toBe("EXPIRED"),
+    );
+    expect(pageOf(fetches.reads(route).at(-1)!)).toBe("1");
+    await waitFor(() => expect(writtenAddress().searchParams.get("status")).toBe("EXPIRED"));
+    const written = writtenAddress();
+    // The page's path from the reviewed path helper, not the admin-hubs registry,
+    // whose importers are a reviewed census (admin-hubs-registry.test.ts).
+    expect(written.pathname).toBe(new URL(buildBookingRequestsHref("exceptions"), "http://localhost").pathname);
+    expect(Object.fromEntries(written.searchParams)).toEqual({ tab: "exceptions", status: "EXPIRED" });
+  });
+
+  it("#5247: opens on the filter and page the address names", async () => {
+    navigation.search = "tab=exceptions&status=EXPIRED&page=2";
+    const fetches = installFetch({
+      [route]: (url) => envelope([exceptionItem()], Number(pageOf(url) ?? 1), 30),
+    });
+    render(<PolicyExceptionRequestsPanel />);
+
+    expect(await screen.findByText("Showing 26–30 of 30")).toBeInTheDocument();
+    const reads = fetches.reads(route);
+    expect(reads).toHaveLength(1);
+    expect(reads[0].searchParams.get("status")).toBe("EXPIRED");
+    expect(pageOf(reads[0])).toBe("2");
+    expect(screen.getByRole("button", { name: "Expired" })).toHaveClass("bg-primary");
+  });
+
+  it("#5247: the written address reopens the same filter and page after a reload", async () => {
+    const fetches = installFetch({
+      [route]: (url) => envelope([exceptionItem()], Number(pageOf(url) ?? 1), 30),
+    });
+    render(<PolicyExceptionRequestsPanel />);
+    await screen.findByText("Showing 1–25 of 30");
+    fireEvent.click(screen.getByRole("button", { name: "Expired" }));
+    await screen.findByText("Showing 1–25 of 30");
+    fireEvent.click(screen.getByRole("button", { name: "Next page" }));
+    expect(await screen.findByText("Showing 26–30 of 30")).toBeInTheDocument();
+    expect(fetches.reads(route).at(-1)!.searchParams.get("status")).toBe("EXPIRED");
+    await waitFor(() => expect(writtenAddress().searchParams.get("page")).toBe("2"));
+
+    // Reload: a fresh mount on exactly the address the panel wrote.
+    navigation.search = writtenAddress().search;
+    cleanup();
+    const reloaded = installFetch({
+      [route]: (url) => envelope([exceptionItem()], Number(pageOf(url) ?? 1), 30),
+    });
+    render(<PolicyExceptionRequestsPanel />);
+    expect(await screen.findByText("Showing 26–30 of 30")).toBeInTheDocument();
+    const first = reloaded.reads(route)[0];
+    expect(first.searchParams.get("status")).toBe("EXPIRED");
+    expect(pageOf(first)).toBe("2");
+  });
+
+  it("#5247: an unknown filter in the address opens Requested without an error", async () => {
+    navigation.search = "tab=exceptions&status=BOGUS";
+    const fetches = installFetch({
+      [route]: (url) => envelope([exceptionItem()], Number(pageOf(url) ?? 1), 3),
+    });
+    render(<PolicyExceptionRequestsPanel />);
+
+    expect(await screen.findByText("Showing 1–3 of 3")).toBeInTheDocument();
+    expect(fetches.reads(route)[0].searchParams.get("status")).toBe("REQUESTED");
+    expect(screen.getByRole("alert")).toBeEmptyDOMElement();
+    await waitFor(() => expect(writtenAddress().searchParams.has("status")).toBe(false));
+    expect(writtenAddress().searchParams.get("tab")).toBe("exceptions");
+  });
 });
 
 /**
@@ -539,5 +629,45 @@ describe("every booking queue keeps its pager mounted through a page change", ()
     expect(await screen.findByText("Showing 26–50 of 100")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Next page" })).toBe(next);
     expect(document.activeElement).toBe(next);
+  });
+});
+
+/**
+ * #5295: a replace to the address already shown is still a soft navigation,
+ * which drops the page's <title> until the server streams it back (#5155). Each
+ * panel opened at the address it would write replaces nothing; paging still
+ * writes the new address once.
+ */
+describe("every booking queue replaces the address only when it changes", () => {
+  const cases: Array<[string, string, () => ReactElement, unknown]> = [
+    ["booking approvals", "/api/admin/booking-reviews", () => <BookingApprovalsPanel />, booking],
+    ["change requests", "/api/admin/booking-change-requests", () => <BookingChangeRequestsPanel />, changeRequest()],
+    ["public requests", "/api/admin/booking-requests", () => <PublicBookingRequestsPanel />, publicRequest],
+    ["policy exceptions", "/api/admin/booking-exception-requests", () => <PolicyExceptionRequestsPanel />, exceptionItem()],
+  ];
+
+  it.each(cases)("%s: no replace when opened at its own address, one after paging", async (_name, route, panel, row) => {
+    installFetch({ [route]: (url) => envelope([row], Number(pageOf(url) ?? 1), 40) });
+
+    // The address the panel writes, learned from a render at another path.
+    const elsewhere = render(panel());
+    await waitFor(() => expect(navigation.replace).toHaveBeenCalled());
+    const own = new URL(navigation.replace.mock.calls.at(-1)![0] as string, "http://localhost");
+    expect(own.pathname).toBe(adminHref("booking-requests"));
+    elsewhere.unmount();
+    navigation.replace.mockClear();
+
+    navigation.pathname = own.pathname;
+    navigation.search = own.search.slice(1);
+    render(panel());
+    expect(await screen.findByText("Showing 1–25 of 40")).toBeInTheDocument();
+    expect(navigation.replace).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole("button", { name: "Next page" }));
+    expect(await screen.findByText("Showing 26–40 of 40")).toBeInTheDocument();
+    expect(navigation.replace).toHaveBeenCalledTimes(1);
+    const paged = new URL(navigation.replace.mock.calls[0][0] as string, "http://localhost");
+    expect(paged.pathname).toBe(own.pathname);
+    expect(paged.searchParams.get("page")).toBe("2");
   });
 });
