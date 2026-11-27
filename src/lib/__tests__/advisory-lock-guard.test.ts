@@ -802,7 +802,7 @@ const GLOBAL_LOCK_SITE_REGISTRY: readonly RegisteredGlobalLockSite[] = [
     site: "settleBookingPaymentInTransaction#1",
     tier: "GLOBAL",
     reason:
-      "#2262: the ONE settlement body, shared byte-for-byte by the Stripe capture and the admin's manual cash settlement. Without the global key the capture stopped excluding cancel, hold-release and settlement, and the PAID write could resurrect a just-cancelled booking.",
+      "#2262: the ONE settlement body, shared byte-for-byte by the Stripe capture and the admin's manual cash settlement (and, #5008, its deposit settle, which raises the balance request under the same keys). Without the global key the capture stopped excluding cancel, hold-release and settlement, and the PAID write could resurrect a just-cancelled booking.",
     invariant: "INV-LOCK-002",
   },
   {

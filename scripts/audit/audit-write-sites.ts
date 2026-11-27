@@ -426,6 +426,7 @@ export const AUDIT_WRITE_SITES: Readonly<Record<string, AuditWriteSiteLedgerEntr
   "src/lib/cron-quote-expiry-reminders.ts::releaseStaleModificationHolds#0": {"category":"booking","sink":"logAudit","action":"booking_request.quote_hold_released_stale_modification"},
   "src/lib/cron-quote-expiry-reminders.ts::sendQuoteExpiryReminders#0": {"category":"booking","sink":"logAudit","action":"booking_request.quote_reminder_sent"},
   "src/lib/custodian-assignment.ts::recordWholeLodgeHoldAmendment#0": {"category":"booking","sink":"createAuditLog","action":"booking.wholeLodgeHold.custodianAmended"},
+  "src/lib/deposit-settle.ts::recordDepositSettleAudit#0": {"category":"payment","sink":"createAuditLog","action":"booking-payment.deposit.settle"},
   "src/lib/diagnostics/tools/audit.ts::recordDiagnosticsToolAudit#0": {"category":"security","sink":"createStructuredAuditLog","action":"(dynamic) DIAGNOSTICS_TOOL_AUDIT_ACTION","reviewed":["2581-wrapper"]},
   "src/lib/edit-financial-review-carried-balance.ts::recordCarriedEditReviewChargeBalance#0": {"category":"payment","sink":"createAuditLog","action":"booking.editFinancialReview.chargeCarriedUnpaidBalance"},
   "src/lib/edit-financial-review-charge-request.ts::recordSecondEditReviewChargeInvoice#0": {"category":"payment","sink":"createAuditLog","action":"booking.editFinancialReview.chargeShareReinvoiced"},

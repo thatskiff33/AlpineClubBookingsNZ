@@ -27,9 +27,6 @@ import type { DepositSettlementSource } from "@/lib/payment-reconciliation-sourc
 /** The `reason` on the PRIMARY cash row a deposit settle records. */
 export const DEPOSIT_SETTLE_RECEIPT_REASON = "deposit_settle";
 
-/** The audit action of a deposit settle: what was received, what is owed, and by when. */
-export const DEPOSIT_SETTLE_AUDIT_ACTION = "booking-payment.deposit.settle";
-
 /**
  * The deposit's split of the amount owing, decided under the settlement body's locks
  * from its post-lock snapshot and BEFORE its first write. The figures and refusals
@@ -135,7 +132,7 @@ export async function recordDepositSettleAudit(
 ): Promise<void> {
   await createAuditLog(
     {
-      action: DEPOSIT_SETTLE_AUDIT_ACTION,
+      action: "booking-payment.deposit.settle",
       memberId: entry.actingAdminMemberId,
       actorMemberId: entry.actingAdminMemberId,
       subjectMemberId: entry.subjectMemberId,
