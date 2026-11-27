@@ -25,6 +25,7 @@ const REVIEWED: Record<string, string> = {
   "src/lib/credit-release-ask-close.ts|closeCreditReleaseAsksPaidInXero|updateMany|PaymentStatus.FAILED,computed|1": "W8: paid bank receipt hook; unpaid card row retired",
   "src/lib/credit-release-ask-close.ts|recordReleasePaidInXeroCash|recordInternetBankingPaymentTransaction|PaymentStatus.SUCCEEDED|1": "W8: paid bank receipt hook collecting only the row it wrote",
   "src/lib/credit-release-ask.ts|processCreditReleaseAskOperation|upsertPaymentIntentTransaction|PaymentStatus.PENDING|1": "unpaid/failed request bookkeeping only; cannot introduce captured cash",
+  "src/lib/deposit-settle.ts|raiseDepositBalanceRequest|create|PaymentStatus.PENDING|1": "#5008: a deposit's balance request (R25), PENDING with no instrument; cannot introduce captured cash",
   "src/lib/internet-banking-part-payment-at-cancel.ts|recordPartPaymentInClaim|recordInternetBankingPaymentTransaction|PaymentStatus.SUCCEEDED|1": "W7: recognised part receipt posted after legacy convergence",
   "src/lib/internet-banking-part-payment-at-cancel.ts|recordPartPaymentInClaim|update|PaymentStatus.SUCCEEDED|1": "W7: recognised part receipt posted after legacy convergence",
   "src/lib/organiser-extra-receipt.ts|receipt|create|\"SUCCEEDED\"|1": "organiser cash and shares belong to M6, not M4b",

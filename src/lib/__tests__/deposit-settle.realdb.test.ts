@@ -280,7 +280,7 @@ async function expectNothingWritten(bookingId: string) {
     if (cancelStatus === 200) {
       expect(status).toBe("CANCELLED");
       expect(bookingPartPaid({ bookingStatus: status, payment })).toBeNull();
-      handBackOwedCents = (await prisma.manualRefundTask.findFirstOrThrow({ where: { bookingId: id }, select: { amountCents: true } })).amountCents;
+      handBackOwedCents = (await prisma.manualRefundTask.findFirstOrThrow({ where: { bookingId: id }, select: { amountCents: true } })).amountCents ?? 0;
     } else {
       expect(cancelStatus).toBe(409);
       expect(status).toBe("PAID");
@@ -304,6 +304,6 @@ async function expectNothingWritten(bookingId: string) {
     expect(task).toEqual({ amountCents: DEPOSIT / 2, status: "OPEN" });
     await expectCensusClean(id);
     // Until the hand-back is paid, the receipt census shows that much over-collected, as for any cancelled manual payment.
-    await expectJournalClean(id, payment.id, task.amountCents);
+    await expectJournalClean(id, payment.id, DEPOSIT / 2);
   });
 });
