@@ -2140,7 +2140,7 @@ describe("advisory lock guard (#182 / H1 regression class)", { timeout: CENSUS_T
       "src/lib/xero-inbound/object-links.ts": "derives the inbound role; written only through writeCurrentCreditNoteAllocations",
       "src/lib/xero-payment-first-completion.ts": "reads a completion's links to take the Payment row first",
       "src/lib/xero-modification-credit-notes.ts": "writes through completeXeroSyncOperation's extraLinks",
-      "src/lib/xero-booking-repair-passes.ts": "the repair backfill: takes no Payment row, so it locks the link row and never switches a retired one back on; a bare new row counts nothing",
+      "src/lib/xero-booking-repair-passes.ts": "the repair backfill: takes no Payment row, so it reserves a missing link row, locks an existing one and never switches a retired one back on; a bare new row counts nothing",
       "src/lib/xero-operation-retry.ts": "names the role for a PARTIAL retry's allocation, completed through completeXeroSyncOperation",
     };
     const naming = sources

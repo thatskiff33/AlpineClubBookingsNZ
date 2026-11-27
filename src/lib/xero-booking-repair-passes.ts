@@ -132,17 +132,24 @@ async function applyLinkRepair(
     // links, so a retired row reads as missing). A missing row is created bare and counts nothing until
     // the note's sync writes it. The row lock holds a removal off until this commits.
     const retired = await deps.prisma.$transaction(async (tx) => {
-      await tx.$executeRaw`
-        SELECT 1 FROM "XeroObjectLink"
-        WHERE "localModel" = ${link.localModel} AND "localId" = ${link.localId}
-          AND "xeroObjectType" = ${link.xeroObjectType} AND "xeroObjectId" = ${link.xeroObjectId}
-          AND "role" = ${link.role}
-        FOR UPDATE`;
-      const row = await tx.xeroObjectLink.findUnique({
-        where: { localModel_localId_xeroObjectType_xeroObjectId_role: { localModel: link.localModel, localId: link.localId, xeroObjectType: link.xeroObjectType, xeroObjectId: link.xeroObjectId, role: link.role } },
-        select: { active: true },
-      });
-      if (row && !row.active) return true;
+      const key = { localModel: link.localModel, localId: link.localId, xeroObjectType: link.xeroObjectType, xeroObjectId: link.xeroObjectId, role: link.role };
+      // A missing row cannot be locked, so it is reserved first, as the inbound write reserves its own
+      // (`writeLockedAllocation`): a retirement committed while this waits is then a row to read, not
+      // one the upsert below would switch back on. The reservation rolls back with this transaction.
+      const reserved = await tx.xeroObjectLink.createMany({ data: [{ ...key, active: false }], skipDuplicates: true });
+      if (reserved.count === 0) {
+        await tx.$executeRaw`
+          SELECT 1 FROM "XeroObjectLink"
+          WHERE "localModel" = ${link.localModel} AND "localId" = ${link.localId}
+            AND "xeroObjectType" = ${link.xeroObjectType} AND "xeroObjectId" = ${link.xeroObjectId}
+            AND "role" = ${link.role}
+          FOR UPDATE`;
+        const row = await tx.xeroObjectLink.findUnique({
+          where: { localModel_localId_xeroObjectType_xeroObjectId_role: key },
+          select: { active: true },
+        });
+        if (row && !row.active) return true;
+      }
       await deps.upsertXeroObjectLink(link, { store: tx });
       return false;
     });
