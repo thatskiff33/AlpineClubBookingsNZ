@@ -51,6 +51,7 @@ import {
   compareCalendarDates,
   parseCalendarDate,
 } from "@/lib/club-time";
+import { bookingOwner } from "@/lib/booking-owner";
 import { readMigrationFinishedAt } from "@/lib/migration-finished-at";
 import { prisma } from "@/lib/prisma";
 import { withReadOnlySnapshot } from "@/lib/read-only-snapshot";
@@ -288,7 +289,7 @@ export interface ExaminedMidStayEdit {
   modificationId: string;
   modificationType: string;
   bookingId: string;
-  /** The booking's member: the person a remedy would reach. Never a name. */
+  /** The booking's member: the person a remedy would reach; `null` on an organisation's booking. Never a name. */
   memberId: string | null;
   createdAt: Date;
   /** The edit's club calendar day; `null` when unreadable. */
@@ -478,7 +479,7 @@ async function auditInSnapshot(
       modificationId: row.id,
       modificationType: row.modificationType,
       bookingId: row.bookingId,
-      memberId: booking?.memberId ?? null,
+      memberId: booking ? bookingOwner(booking).memberId : null,
       createdAt: row.createdAt,
     };
     if (!parsed.readable || !booking) {
@@ -639,7 +640,7 @@ export function formatMidStayEditAuditReport(
       for (const finding of edit.findings) {
         const meta = MID_STAY_EDIT_SHAPES[finding.shape];
         lines.push(
-          `  ${edit.bookingId} | ${edit.memberId ?? "(no member)"} | ${edit.modificationId} | ${edit.editedOn ?? "unknown"} | ${finding.shape} | ${meta.certainty} | ${describeAmount(finding, format)} | ${finding.reason}`,
+          `  ${edit.bookingId} | ${edit.memberId ?? "(organisation-owned)"} | ${edit.modificationId} | ${edit.editedOn ?? "unknown"} | ${finding.shape} | ${meta.certainty} | ${describeAmount(finding, format)} | ${finding.reason}`,
         );
       }
     }
