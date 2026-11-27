@@ -10,7 +10,9 @@
  *
  *   1. POST /api/bookings                      self-booking, one or two nights
  *      201 → PAYMENT_PENDING; 409 CAPACITY_EXCEEDED when the lodge is full
- *   2. PUT  /api/bookings/:id/modify-dates     one night longer (200, or 409)
+ *   2. POST /api/bookings/:id/modify-quote     preview one night longer, then
+ *      PUT  /api/bookings/:id/modify-dates     at the preview's figures
+ *      (200, or 409; a refusal over the figures counts as unexpected)
  *   3. POST /api/bookings/:id/cancel           credit refund (200)
  *   4. POST /api/bookings                      on the first iteration only, a
  *      child-only request that holds a bed in AWAITING_REVIEW (201, or the
@@ -184,6 +186,9 @@ function post(path, body) {
   });
 }
 
+/** A save refused over its figures (#5238): the harness sent the wrong ones. */
+const FIGURE_REFUSALS = ["EDIT_FIGURES_REQUIRED", "EDIT_PRICE_CHANGED"];
+
 function isCapacity409(res) {
   return res.status === 409 && bodyField(res, "code") === "CAPACITY_EXCEEDED";
 }
@@ -236,22 +241,38 @@ export default function mixedWrites(data) {
   if (bookingId) {
     sleep(cfg.thinkTime);
 
-    // 2. One night longer. A full next night is a normal 409.
-    const modifyRes = http.put(
-      cfg.baseUrl + "/api/bookings/" + bookingId + "/modify-dates",
-      JSON.stringify({ checkOut: addDaysIso(stay.checkOut, 1) }),
-      {
-        headers: jsonHeaders(IP),
-        tags: { flow: "mixed_writes" },
-        timeout: "60s",
-        responseCallback: WRITE_STATUSES,
-      }
-    );
-    if (modifyRes.status === 200) modified.add(1);
-    unexpected.add(!(modifyRes.status === 200 || modifyRes.status === 409));
+    // 2. One night longer, at the figures its preview showed: a date change
+    //    that sends none is refused (#5238, INV-MOD-062). A full next night is
+    //    a normal 409; a refusal about the figures themselves is not.
+    const newCheckOut = addDaysIso(stay.checkOut, 1);
+    const quoteRes = post("/api/bookings/" + bookingId + "/modify-quote", {
+      checkOut: newCheckOut,
+    });
+    const quotedFigures =
+      quoteRes.status === 200 ? bodyField(quoteRes, "quotedFigures") : undefined;
+    const modifyRes = quotedFigures
+      ? http.put(
+          cfg.baseUrl + "/api/bookings/" + bookingId + "/modify-dates",
+          JSON.stringify({ checkOut: newCheckOut, quotedFigures: quotedFigures }),
+          {
+            headers: jsonHeaders(IP),
+            tags: { flow: "mixed_writes" },
+            timeout: "60s",
+            responseCallback: WRITE_STATUSES,
+          }
+        )
+      : quoteRes;
+    const figuresRefused =
+      modifyRes.status === 409 &&
+      FIGURE_REFUSALS.indexOf(bodyField(modifyRes, "code")) !== -1;
+    const dateChangeClean =
+      (modifyRes.status === 200 && Boolean(quotedFigures)) ||
+      (modifyRes.status === 409 && !figuresRefused);
+    if (modifyRes.status === 200 && quotedFigures) modified.add(1);
+    unexpected.add(!dateChangeClean);
     check(modifyRes, {
-      "date change applied (200) or refused cleanly (409)": function (r) {
-        return r.status === 200 || r.status === 409;
+      "date change applied at its preview (200) or refused cleanly (409)": function () {
+        return dateChangeClean;
       },
     });
 

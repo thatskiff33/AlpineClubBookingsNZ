@@ -1,5 +1,3 @@
-import type { Role } from "@prisma/client";
-
 import {
   hostingCoverageActorOptions,
   inspectSameOwnerStrandingForOffer,
@@ -7,6 +5,13 @@ import {
 } from "@/lib/adult-member-hosting-review";
 import { bookingOwner } from "@/lib/booking-owner";
 import { settleHostingCoverageAfterCommit } from "@/lib/adult-member-hosting-coverage-drain";
+import { EditPriceChangedError } from "@/lib/edit-quoted-figures";
+import {
+  acceptedLinkedMoveFigures,
+  refuseWithFreshOffer,
+  requireLinkedMoveFigures,
+  type LinkedDateMoveArgs,
+} from "@/lib/booking-linked-date-move-request";
 import {
   SameOwnerCoverageLinkedMoveRequiredError,
   combineLinkedMoveQuote,
@@ -17,16 +22,12 @@ import {
   type LinkedMoveFeasibility,
   type LinkedMoveQuote,
 } from "@/lib/adult-member-hosting-linked-move";
-import {
-  strandedCoverageStateKey,
-  type HostingCoverageOverrideInput,
-} from "@/lib/adult-member-hosting-same-owner";
+import { strandedCoverageStateKey } from "@/lib/adult-member-hosting-same-owner";
 import {
   modifyBookingBatch,
   type BatchModificationPreTransaction,
   type BatchModificationResponse,
 } from "@/lib/booking-batch-modification-service";
-import type { BatchModifyInput } from "@/lib/booking-modify-validation";
 import {
   InsufficientCapacityError,
   OverCapacityConfirmationRequiredError,
@@ -38,7 +39,6 @@ import { GroupCancelInProgressError } from "@/lib/group-cancel-in-progress";
 import { acquireLodgeCapacityLock } from "@/lib/capacity";
 import { assertBookingEnvelopeInvariants } from "@/lib/booking-envelope-invariants";
 import { BookingModificationSettlementMethodRequiredError } from "@/lib/booking-modify-settlement-required";
-import type { CalendarDate } from "@/lib/club-time";
 import { formatDateOnly } from "@/lib/date-only";
 import {
   LINKED_MOVE_TRANSACTION_BUDGET,
@@ -53,7 +53,6 @@ import { prisma } from "@/lib/prisma";
 
 /** #3949: what `paidByOrganiser` reads of a booking. */
 const ORGANISER_PAID_SELECT = { organiserSettled: true, parentBookingId: true, payment: { select: { source: true } } } as const;
-import type { ClubFormat } from "@/lib/club-format";
 
 /**
  * THE LINKED MOVE: move a member's booking and the booking of theirs that was
@@ -144,20 +143,7 @@ import type { ClubFormat } from "@/lib/club-format";
  */
 
 
-export interface LinkedDateMoveArgs {
-  bookingId: string;
-  actor: { id: string; role: Role };
-  input: BatchModifyInput;
-  ipAddress: string;
-  todayAtClub: CalendarDate;
-  /**
-   * The club's format (#3565), resolved by the route before any transaction,
-   * like `todayAtClub`: both moves price inside one transaction, and the offer
-   * renders its figures into the refusal it throws.
-   */
-  format: ClubFormat;
-  hostingCoverageOverride?: HostingCoverageOverrideInput | null;
-}
+export type { LinkedDateMoveArgs };
 
 /**
  * Raised in `"quote"` mode purely to roll the probe transaction back.
@@ -260,7 +246,7 @@ async function runLinkedDateMove(
     const primary = await modifyBookingBatch({
       bookingId: args.bookingId,
       actor: args.actor,
-      input: { ...inputWithoutChoice, ...choiceFor(args.bookingId, memberChoice) },
+      input: { ...inputWithoutChoice, quotedFigures: acceptedLinkedMoveFigures(args, mode, args.bookingId), ...choiceFor(args.bookingId, memberChoice) },
       ipAddress: args.ipAddress,
       todayAtClub: args.todayAtClub,
       format: args.format,
@@ -312,6 +298,7 @@ async function runLinkedDateMove(
           bookingId: dependent.bookingId,
           actor: args.actor,
           input: {
+            quotedFigures: acceptedLinkedMoveFigures(args, mode, dependent.bookingId),
             checkIn: target.checkIn,
             checkOut: target.checkOut,
             // ONE settlement choice covers both bookings — the member is asked
@@ -545,6 +532,8 @@ async function runLinkedDateMove(
       throw new LinkedMoveProbeComplete(quote, keys);
     }
 
+    requireLinkedMoveFigures(args, [args.bookingId, ...linked.map((entry) => entry.stranded.bookingId)]); // #5238
+
     const deferred = [
       primary.deferredPostCommit,
       ...linked.map((entry) => entry.result?.deferredPostCommit),
@@ -623,6 +612,8 @@ export async function applyLinkedDateMove(
       preTransaction,
     );
   } catch (error) {
+    // #5238: a moved price on either booking refuses with the fresh offer.
+    if (error instanceof EditPriceChangedError) await refuseWithFreshOffer(error, () => offerLinkedDateMove(args));
     if (error instanceof LinkedMoveProbeComplete) {
       throw new SameOwnerCoverageLinkedMoveRequiredError(error.quote, {
         acceptStateKey: error.acceptStateKey,
