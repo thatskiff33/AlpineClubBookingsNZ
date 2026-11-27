@@ -157,6 +157,24 @@ describe("membership lockout settings route guards (#1940)", () => {
     expect(mocks.auditLogCreate).toHaveBeenCalled();
   });
 
+  it("answers a save with the year-end month now in effect (#5259)", async () => {
+    // The panel compares it with the month the page was drawn with, and
+    // refreshes the admin layout's season provider when the save moved it.
+    mocks.getFinancialYearResolution.mockResolvedValue({
+      overrideMonth: 6,
+      xeroMonth: null,
+      effectiveMonth: 6,
+    });
+    const response = await putLockoutSettings(
+      request({ financialYearEndMonthOverride: 6 }),
+    );
+
+    expect(response.status).toBe(200);
+    expect((await response.json()).financialYear).toEqual(
+      expect.objectContaining({ effectiveMonth: 6 }),
+    );
+  });
+
   // ---------------------------------------------------------------------------
   // #2543 — the three-way mode, now the only column (#2561 dropped the boolean).
   // ---------------------------------------------------------------------------

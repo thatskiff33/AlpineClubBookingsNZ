@@ -9,7 +9,7 @@ import {
   screen,
   waitFor,
   within,
-} from "@/lib/__tests__/support/club-time-render";
+} from "@/lib/__tests__/support/club-season-render";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { expectRecoveryAlertToHoldFocus } from "@/lib/__tests__/helpers/focus";
 // #1940: the page now reads the session permission matrix for view-only gating;
