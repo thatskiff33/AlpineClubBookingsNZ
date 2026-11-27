@@ -67,7 +67,7 @@ export const LODGE_OPS_HUB = defineHub({
       area: "lodge",
       admission: "rooms-beds-or",
       flags: ["bedAllocation"],
-      moved: false,
+      moved: true,
     },
     {
       id: "lodge-kiosk",
@@ -76,7 +76,7 @@ export const LODGE_OPS_HUB = defineHub({
       area: "lodge",
       flags: ["kiosk"],
       keywords: ["check-in", "kiosk", "arrivals"],
-      moved: false,
+      moved: true,
     },
     {
       id: "hut-leaders",
@@ -84,7 +84,7 @@ export const LODGE_OPS_HUB = defineHub({
       oldPath: "/admin/hut-leaders",
       area: "lodge",
       flags: ["hutLeaders"],
-      moved: false,
+      moved: true,
     },
     {
       id: "roster",
@@ -92,7 +92,7 @@ export const LODGE_OPS_HUB = defineHub({
       oldPath: "/admin/roster",
       area: "lodge",
       flags: ["chores"],
-      moved: false,
+      moved: true,
     },
     {
       id: "roster-print",
@@ -101,7 +101,7 @@ export const LODGE_OPS_HUB = defineHub({
       area: "lodge",
       flags: ["chores"],
       kind: "print",
-      moved: false,
+      moved: true,
     },
     {
       id: "chores",
@@ -110,7 +110,7 @@ export const LODGE_OPS_HUB = defineHub({
       oldPath: "/admin/chores",
       area: "lodge",
       flags: ["chores"],
-      moved: false,
+      moved: true,
     },
     {
       id: "work-parties",
@@ -118,14 +118,14 @@ export const LODGE_OPS_HUB = defineHub({
       oldPath: "/admin/work-parties",
       area: "lodge",
       flags: ["workParties"],
-      moved: false,
+      moved: true,
     },
     {
       id: "lodge-instructions",
       label: "Lodge Instructions",
       oldPath: "/admin/lodge-instructions",
       area: "lodge",
-      moved: false,
+      moved: true,
     },
     {
       id: "maintenance-reports",
@@ -134,7 +134,7 @@ export const LODGE_OPS_HUB = defineHub({
       area: "lodge",
       flags: ["maintenanceReports"],
       keywords: ["maintenance", "fault", "repair", "broken", "qr", "fix"],
-      moved: false,
+      moved: true,
     },
     {
       // Fork triyder/AlpineClubBookingsNZ#121: the Food Orders settings card (food officer email, label).
@@ -144,7 +144,7 @@ export const LODGE_OPS_HUB = defineHub({
       area: "lodge",
       flags: ["foodOrders"],
       keywords: ["food", "catering", "provisions", "order", "officer"],
-      moved: false,
+      moved: true,
     },
     {
       id: "display",
@@ -234,7 +234,7 @@ export const LODGE_OPS_HUB = defineHub({
       oldPath: "/admin/lockers",
       area: "membership",
       flags: ["lockers"],
-      moved: false,
+      moved: true,
     },
     {
       // Lodge-area for admin visibility; write access is widened to committee
@@ -246,7 +246,7 @@ export const LODGE_OPS_HUB = defineHub({
       area: "lodge",
       flags: ["eventsCalendar"],
       keywords: ["events", "meetings", "committee", "schedule"],
-      moved: false,
+      moved: true,
     },
   ],
 });
