@@ -1159,10 +1159,9 @@ export async function createUnappliedXeroCreditNote(
           xeroObjectId: createdNote.creditNoteID,
           xeroObjectNumber: createdNote.creditNoteNumber ?? null,
           role: linkRole,
-          // #4347 (`INV-ADDPAY-041`): a payment's account-credit link records Xero's
-          // own answer with its UpdatedDateUTC, so the link funnel orders it
-          // against any inbound reading. A modification's note keeps its status-less link.
-          ...(linkRole === ACCOUNT_CREDIT_NOTE_ROLE ? { metadata: xeroCreditNoteSnapshotMetadata(createdNote), mergeMetadata: true } : {}),
+          // #4347 (`INV-ADDPAY-041`): a payment's account-credit link records Xero's status and UpdatedDateUTC, not
+          // its amounts (those still arrive with the first inbound reading). A modification's note stays status-less.
+          ...(linkRole === ACCOUNT_CREDIT_NOTE_ROLE ? { metadata: xeroCreditNoteSnapshotMetadata({ status: createdNote.status, updatedDateUTC: createdNote.updatedDateUTC }), mergeMetadata: true } : {}),
         },
       ],
     });

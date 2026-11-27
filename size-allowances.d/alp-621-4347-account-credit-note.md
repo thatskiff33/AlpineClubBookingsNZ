@@ -28,12 +28,12 @@ reason: the gate must run inside the per-target transaction, after
   function is a refactor of its own, not part of this fix.
 
 file: src/lib/xero-credit-notes.ts
-lines: 1350
+lines: 1349
 reason: the outbound create's completion link records Xero's own answer with
   its UpdatedDateUTC, a field on the link literal already in this file.
 
 function: src/lib/xero-credit-notes.ts#createUnappliedXeroCreditNote
-lines: 319
+lines: 318
 reason: the same completion link literal, inside this function, which was
   already over its limit before this change.
 

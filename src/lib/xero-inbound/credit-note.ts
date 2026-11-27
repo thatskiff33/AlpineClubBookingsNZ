@@ -418,7 +418,7 @@ export async function reconcileXeroCreditNote(creditNoteId: string) {
       ? await repairAccountCreditAllocationBusinessState(
           creditNote.creditNoteID,
           allocationTargets,
-          xeroCreditNoteSnapshotMetadata(creditNote), // #4347: refused when the account-credit row has moved past it
+          readingMetadata, // #4347: refused when the account-credit row has moved past it
         )
       : {
           matchedPayments: 0,

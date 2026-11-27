@@ -1619,7 +1619,9 @@ landing after a void put the refund back. Now:
   voided account-credit link stays as active as it was before #4347;
 - every writer that records the note's Xero status stamps `providerUpdatedAt`:
   the inbound reconcile, and the outbound create (`createUnappliedXeroCreditNote`),
-  which records Xero's answer to its own create. The other writers record no
+  which records the status and `UpdatedDateUTC` Xero answered its create with,
+  but no amounts, so what the link counts still arrives with the first inbound
+  reading, as before. The other writers record no
   reading and keep the stored stamp: the #4712 link repair only turns `active`
   off, and the booking repair's link backfill and the outbox's "already linked"
   completion write no status. A modification's account-credit note keeps its
