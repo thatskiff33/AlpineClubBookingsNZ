@@ -201,6 +201,72 @@ describe("buildBookingIcs", () => {
   });
 });
 
+// #5249: the cancelled and bumped emails attach this file. A calendar app can
+// only apply it to the entry the member saved if it names the SAME event (UID)
+// at a LATER revision (SEQUENCE), so those are the two properties that matter.
+describe("buildBookingIcs, cancelled form (#5249)", () => {
+  const lineOf = (ics: string, prefix: string) =>
+    ics.split("\r\n").find((line) => line.startsWith(prefix));
+
+  it("cancels the same event the download served, as an all-day CANCEL with STATUS:CANCELLED", () => {
+    const ics = buildBookingIcs({
+      stay: STAY,
+      lodgeName: LODGE,
+      sequence: 1754006401,
+      generatedAt: new Date(),
+      cancelled: true,
+    });
+    expect(ics).toBe(
+      [
+        "BEGIN:VCALENDAR",
+        "VERSION:2.0",
+        "PRODID:-//AlpineClubBookingsNZ//Booking Calendar//EN",
+        "CALSCALE:GREGORIAN",
+        "METHOD:CANCEL",
+        "BEGIN:VEVENT",
+        "UID:booking-bkg_test123@bookings.example.org",
+        "SEQUENCE:1754006401",
+        "DTSTAMP:20260701T000000Z",
+        "DTSTART;VALUE=DATE:20260801",
+        "DTEND;VALUE=DATE:20260805",
+        "STATUS:CANCELLED",
+        "SUMMARY:Cancelled: Example Lodge stay",
+        "LOCATION:Example Lodge",
+        "DESCRIPTION:This lodge booking from 2026-08-01 was cancelled. Manage your ",
+        " bookings: https://bookings.example.org/bookings",
+        "END:VEVENT",
+        "END:VCALENDAR",
+        "",
+      ].join("\r\n"),
+    );
+    const published = buildBookingIcs({
+      stay: STAY,
+      lodgeName: LODGE,
+      sequence: 1754006400,
+      generatedAt: new Date(),
+    });
+    expect(lineOf(ics, "UID:")).toBe(lineOf(published, "UID:"));
+    expect(published).not.toContain("STATUS:CANCELLED");
+    expect(published).not.toContain("METHOD:CANCEL");
+  });
+
+  it("escapes and folds a long macron lodge name like the published form", () => {
+    const ics = buildBookingIcs({
+      stay: STAY,
+      lodgeName: "Whakapapa Kāinga; Māhau, Tūroa Pōkai Rāhui Wānaka Alpine Heritage Lodge",
+      sequence: 1,
+      generatedAt: new Date(),
+      cancelled: true,
+    });
+    for (const line of ics.split("\r\n")) {
+      expect(Buffer.byteLength(line, "utf8")).toBeLessThanOrEqual(75);
+    }
+    expect(ics.replaceAll("\r\n ", "")).toContain(
+      "SUMMARY:Cancelled: Whakapapa Kāinga\\; Māhau\\, Tūroa",
+    );
+  });
+});
+
 describe("web calendar URLs", () => {
   it("Google uses compact all-day dates with the exclusive end, and no extra params (they bloat the flat block's URL lines)", () => {
     const url = new URL(googleCalendarUrl({ stay: STAY, lodgeName: LODGE }));

@@ -2,7 +2,7 @@
 import { fetchWithRecentAuth } from "@/components/confirm-its-you";
 
 import Link from "next/link";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { adminHref } from "@/lib/admin-hubs";
@@ -18,6 +18,7 @@ import {
 } from "@/components/admin/view-only-action";
 import { ADMIN_VIEW_ONLY_ACTION_REASON } from "@/hooks/use-admin-area-edit-access";
 import { useActionAttention } from "@/hooks/use-scroll-to-feedback";
+import { useAdminListUrlSync } from "@/hooks/use-admin-list-url-sync";
 import { buildHrefWithReturnTo } from "@/lib/internal-return-path";
 import {
   readHostingCoverageOverridePrompt,
@@ -196,7 +197,6 @@ function statusBadgeClass(status: string) {
  * Requested. `currentPath` is that address, for Back links off a card.
  */
 function usePolicyExceptionQueueAddress(basePath: string) {
-  const router = useRouter();
   const searchParams = useSearchParams();
   const [filter, setFilter] = useState<ExceptionQueueStatusFilter>(() =>
     readPolicyExceptionQueueFilter(searchParams),
@@ -219,9 +219,8 @@ function usePolicyExceptionQueueAddress(basePath: string) {
     page: queuePage.page,
   });
 
-  useEffect(() => {
-    router.replace(currentPath, { scroll: false });
-  }, [currentPath, router]);
+  // Replaces only when the address shown differs (#5295, #5155).
+  useAdminListUrlSync(currentPath);
 
   return { filter, setFilter, queuePage, currentPath };
 }
