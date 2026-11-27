@@ -14,6 +14,18 @@ import {
   emailComplaintTypeLabel,
 } from "@/lib/email-complaint-note";
 
+/**
+ * The alert's default subject and body, spread into the audit defaults through
+ * `email-message-external-alerts.ts`; typed by its own literal key, never by
+ * `EmailAuditTemplateName`, which is derived from the map it joins.
+ */
+export const EMAIL_COMPLAINT_ALERT_DEFAULTS = {
+  "admin-email-complaint": {
+    "defaultSubject": "Complaint about a club email: {{recipientEmail}}",
+    "defaultBody": "Complaint About a Club Email\n\nThe mail service reported a complaint from {{recipientEmail}} about an email from the club. A complaint usually means the recipient marked the email as spam.\n\nAddress: {{recipientEmail}}\nComplaint type: {{complaintType}}\nMembers using this address: {{memberNames}}\nEmail: {{emailNote}}\n\n{{blockNote}}\n\nOpen Email Deliverability: {{deliverabilityUrl}}"
+  },
+} as const;
+
 export const EMAIL_COMPLAINT_ALERT_TRIGGER: Partial<
   Record<EmailAuditTemplateName, { triggerSummary: string; frequency: string }>
 > = {

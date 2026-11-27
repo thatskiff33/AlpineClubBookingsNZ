@@ -1,8 +1,6 @@
 import { stripePaymentAlertSampleValue } from "@/lib/email-message-stripe-payment-samples";
-import { owedNoticeAlertSampleValue } from "@/lib/email-message-owed-notice-samples";
 import { bookingChangeSampleValue } from "@/lib/email-message-booking-change-samples";
-import { OWED_NOTICE_ALERT_REQUIRED_TOKENS, OWED_NOTICE_ALERT_TRIGGERS } from "@/lib/email-message-owed-notice-triggers";
-import { EMAIL_COMPLAINT_ALERT_REQUIRED_TOKENS, EMAIL_COMPLAINT_ALERT_TOKENS, EMAIL_COMPLAINT_ALERT_TRIGGER, emailComplaintAlertSampleValue } from "@/lib/email-message-complaint-alert";
+import { EXTERNAL_ALERT_REQUIRED_TOKENS, EXTERNAL_ALERT_TOKENS, EXTERNAL_ALERT_TRIGGERS, externalAlertSampleValue } from "@/lib/email-message-external-alerts";
 import {
   EMAIL_AUDIT_DEFAULTS,
   type EmailAuditTemplateName,
@@ -451,8 +449,7 @@ const REQUIRED_TEMPLATE_TOKENS: Partial<Record<EmailAuditTemplateName, string[]>
   // #1992/#2007: memberName identifies the affected member and reviewUrl is the
   // admin action link (the payments board), mirroring the other admin alerts.
   "admin-duplicate-capture-refund": ["memberName", "reviewUrl"],
-  ...OWED_NOTICE_ALERT_REQUIRED_TOKENS,
-  ...EMAIL_COMPLAINT_ALERT_REQUIRED_TOKENS,
+  ...EXTERNAL_ALERT_REQUIRED_TOKENS,
   // #5433: {{offerNote}} says whether the offer email reached the member; an
   // override without it would tell officers nothing about that.
   "admin-waitlist-offer": ["offerNote"],
@@ -1139,8 +1136,7 @@ const TEMPLATE_TRIGGER_METADATA: Partial<
       "Organiser settled a joiner's spot as part of a combined group payment",
     frequency: "One email per joiner booking covered by the settled payment",
   },
-  ...OWED_NOTICE_ALERT_TRIGGERS,
-  ...EMAIL_COMPLAINT_ALERT_TRIGGER,
+  ...EXTERNAL_ALERT_TRIGGERS,
   "admin-group-joiner-started-stay": {
     triggerSummary:
       "A paid organiser-pays group had joiners its bill did not cover whose stay had started; they were switched to paying for themselves without an email, so the treasurer collects by hand (#3672)",
@@ -1468,7 +1464,7 @@ export function sampleValue(token: string): string {
   if (token === "holdKeptNote") {
     return internetBankingHoldKeptParagraph("part-paid");
   }
-  const alertNoteSample = owedNoticeAlertSampleValue(token) ?? emailComplaintAlertSampleValue(token);
+  const alertNoteSample = externalAlertSampleValue(token);
   if (alertNoteSample !== undefined) return alertNoteSample;
   // #4042: previewed as the cash arm, what the shipped default always said.
   if (token === "handBackNote") return manualRefundTaskAlertNote("cash-cancellation");
@@ -2052,7 +2048,7 @@ const APPROVED_EMAIL_TEMPLATE_TOKENS = [
   "noticeNote",
   "offerNote",
   "unsentNote",
-  ...EMAIL_COMPLAINT_ALERT_TOKENS,
+  ...EXTERNAL_ALERT_TOKENS,
   // #4042: which hand-back a manual refund task alert is about - its body
   // paragraphs, its subject/heading phrase, and whom the money goes back to.
   "handBackNote",

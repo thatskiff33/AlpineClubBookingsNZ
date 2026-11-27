@@ -1,12 +1,33 @@
 /**
  * The email registry's metadata for the officers' alerts raised when an owed
- * notice did not reach the member it was owed to (#5433): the tokens an edited
- * body must keep, and when each alert goes and how often, as the template
- * editor shows it. Moved out of `REQUIRED_TEMPLATE_TOKENS` and
+ * notice did not reach the member it was owed to (#5433): their default
+ * subject and body, the tokens an edited body must keep, and when each alert
+ * goes and how often, as the template editor shows it. Moved out of `REQUIRED_TEMPLATE_TOKENS` and
  * `TEMPLATE_TRIGGER_METADATA` in `email-message-registry.ts`, which is past its
  * size ceiling; those objects spread these in.
  */
+import { BOOKING_CONFIRMATION_UNSENT_NOTE } from "@/lib/booking-confirmation-unsent-note";
 import type { EmailAuditTemplateName } from "@/lib/email-message-audit-defaults";
+
+/**
+ * These alerts' default subject and body, spread into the audit defaults
+ * (`email-message-audit-defaults.ts`, past its size budget) through
+ * `email-message-external-alerts.ts`. Typed by their own literal keys, never by
+ * `EmailAuditTemplateName`, which is derived from the map they join.
+ */
+export const OWED_NOTICE_ALERT_DEFAULTS = {
+  // #5433: a waitlist email owed to a member passed its cut-off unsent.
+  "admin-waitlist-notice-unsent": {
+    "defaultSubject": "Waitlist email not sent: {{memberName}}",
+    "defaultBody": "Waitlist Email Not Sent\n\n{{noticeNote}}\n\nMember: {{memberName}}\nBooking: {{bookingReference}}\nCheck-in: {{checkIn}}\nCheck-out: {{checkOut}}\n\nOpen Booking: {{bookingUrl}}"
+  },
+  // #5433 (owner decision D1): a paid booking's confirmation did not reach its owner.
+  "admin-booking-confirmation-unsent": {
+    "defaultSubject": "Booking confirmation not sent: {{memberName}}",
+    "defaultBody": "Booking Confirmation Not Sent\n\n" + BOOKING_CONFIRMATION_UNSENT_NOTE + "\n\nOwner: {{memberName}}\nBooking: {{bookingReference}}\nCheck-in: {{checkIn}}\nCheck-out: {{checkOut}}\n\nOpen Booking: {{bookingUrl}}"
+  },
+  "admin-booking-notice-unsent": { "defaultSubject": "Booking email not sent: {{memberName}}", "defaultBody": "Booking Email Not Sent\n\n{{unsentNote}}\n\nOwner: {{memberName}}\nBooking: {{bookingReference}}\nCheck-in: {{checkIn}}\nCheck-out: {{checkOut}}\n\nOpen Booking: {{bookingUrl}}" }, // #5433 PR 4
+} as const;
 
 /**
  * The member and the booking link are what an officer acts on; a note token
