@@ -352,19 +352,21 @@ legitimately depend on being offered an out-of-service lodge.
   10 Aug 2026, #2717): an account filter, a fallback for while unset, a setup
   prompt saying so. Never a hard failure on upgrade, never a silent default.
 - **Filter on the account's CLASS, not its type** — Xero types four kinds of
-  account as expenses; class is the field meaning "an expense account".
+  account as expenses; class means "an expense account".
   `normalizeXeroAccountClass` is the ONE reading of it, shared with the finance
-  reports. A definition may narrow to types within its class.
-- **Structural: that a filter exists, and that the picker obeys it.**
-  `accountClass` is REQUIRED on every definition in
+  reports. A definition may narrow to types within a class or accept several
+  (`hutFeeRefunds`, #5235).
+- **Structural: a filter exists and the picker obeys it.**
+  `accepts` is REQUIRED on every definition in
   `src/lib/xero-account-mapping-keys.ts`, the one registry the picker, API
   allowlist, resolver and seed derive from; `accountsForMappingKey` is a
   picker's only filter.
-- **NOT structural: the stored code.** Judging it needs
-  the org's chart, so config transfer and the API are TRUSTED for the value.
-  `mappingWriteViolation` refuses only what the registry sees: unknown key,
-  account code on an item-only key, item code on a key reading none, blank code.
-  The setup screen flags a stored code outside the filter.
+- **A code set or changed is checked against the cached chart** (owner,
+  22 Nov 2026, #5235): the API and config transfer refuse one it places outside
+  `accepts` (`changedCodeClassViolations`), never one it cannot place; setup
+  reports a stored one. `mappingWriteViolation` refuses what the registry
+  sees: unknown key, account code on an item-only key, item code on a key
+  reading none, blank code.
 - **The fallback is ONE hop, and verbatim**: while unset,
   `getResolvedAccountMappingWithFallback` returns the fallback key's resolution
   unchanged, so an upgrading club posts where it did. A fallback key declares
@@ -372,7 +374,7 @@ legitimately depend on being offered an out-of-service lodge.
 - **"Configured" means the club CHOSE a code** — `isCodeExplicitlyConfigured`,
   asked of the code being shown, never a server flag that stales mid-edit.
 - **The prompt is in TWO places**, the mapping row and the `xero-mappings` setup
-  step: the mappings section is collapsed by default.
+  step: the mappings section starts collapsed.
 - **`goodwillWriteOffs` is the first instance**: whole EXPENSE class, falling
   back to `hutFeeRefunds`, reclassifying nothing. Only a noteless legacy
   `ADMIN_ADJUSTMENT` mint, or a Goodwill grant while unset, routes to it.
