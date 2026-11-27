@@ -160,7 +160,6 @@ describe("#5298: the takeover-retried alert templates match the takeover callers
   it("holds exactly the templates those callers send", () => {
     const sent = new Set<string>();
     for (const [file, senders] of Object.entries(TAKEOVER_SENDERS)) {
-      const source = readProductionSources().get(file)!;
       for (const sender of senders) {
         // Only its takeover caller calls it: any other caller would not send it
         // again, and the copy the sweep released to "its owner" would be lost.
