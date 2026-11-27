@@ -678,7 +678,7 @@ verified aggregate) and **`INV-MOD-058`** (an edit's stored lines).
 
 - **Until the reads move, every booking's ledger is proved against its money
   columns, and the cut-over waits on that proof** (#3583, design
-  `booking-ledger.md` §6, §7). `pnpm run booking-ledger:census` reads one
+  `booking-ledger.md` §6, §7). `pnpm run booking-ledger:census`, also nightly (`INV-PAY-163`), reads one
   `RepeatableRead`, `READ ONLY` snapshot, writes nothing, and checks seven
   identities per booking: `finalPriceCents` is Σ `GUEST_NIGHT`, `PROMOTION`
   and `GROUP_DISCOUNT` plus `adjusted(b)` less agreed give-backs, or, once
@@ -704,8 +704,7 @@ verified aggregate) and **`INV-MOD-058`** (an edit's stored lines).
   the gate until the owner's `--acknowledged` file, kept outside the
   repository, names its instance to the cent — `KNOWN_DEFECT_HISTORY` too —
   except `GROUP_SETTLEMENT_OFF_LEDGER` (#3583, while #3854's lines agree) and
-  `REFUND_APPEAL_PAID` (#4075), listed only. A moved figure is stale and still holds. `booking-ledger-projection-census.realdb.test.ts` proves it
-  on real-writer bookings.
+  `REFUND_APPEAL_PAID` (#4075), listed only. A moved figure is stale and still holds. `booking-ledger-projection-census.realdb.test.ts` proves it.
 
 ## INV-MONEY-006
 

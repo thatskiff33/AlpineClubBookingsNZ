@@ -318,8 +318,8 @@ the rule: it names sibling IDs so a change to one prompts checking the others.
   and (3) AFTER THE FACT — the booking-ledger census (`INV-MONEY-037`) checks
   every booking's `amountCents`, `creditAppliedCents` and uncollected
   addition against its ledger lines over committed data. **(3) is not a safety
-  net for this settle**: it is an operator-run command, not a scheduled job or
-  an alert.
+  net for this settle**: it runs nightly (`INV-PAY-163`), after the fact;
+  repair stays operator-run.
   Either answer is recorded on the mark-paid audit row BOTH ways — with the
   settled figure written, the amount owing, and what was deliberately left
   uncollected. A covered extra also writes
@@ -4561,3 +4561,39 @@ Xero note mints one when spent), **`INV-CONFIG-008`** (the Exempt line).
 - Proven by `opening-credit-csv.test.ts`, `opening-credit-batch.test.ts`,
   `opening-credit-routes.test.ts`, `goodwill-write-off-account.test.ts` and
   `opening-credit-batch.realdb.test.ts`.
+
+## INV-PAY-163
+
+**Related:** **`INV-MONEY-037`** (the booking-ledger census),
+**`INV-MONEY-031`** (the booking-money reconciliation census),
+**`INV-PAY-047`** point (3), **`INV-LOCK-001`** (no lock tier).
+
+- **The two booking money censuses run every night, read-only** (#4910). The
+  `booking-money-census` job (05:30 club time) calls
+  `censusBookingLedgerProjection` and `censusBookingMoneyReconciliation` as
+  they are: one census, one definition of every class. It reads the zone and
+  `journalInactive` outside the snapshots, takes no advisory lock, and repairs
+  nothing. It writes only its `CronJobRun` row (a bounded summary: verdict,
+  counts per class, up to 20 booking ids per class, the price check's
+  totals), once-ever claims in `AlertCooldown`, and the alert's email rows.
+- **Each finding alerts once.** A finding is a census class on a booking. The
+  first night it is seen, one admin email names it, never again. A night
+  with nothing new sends nothing; a failed send is retried the next night,
+  and the run carries a warning on Background Jobs.
+- **No acknowledgements on the server.** Every finding is reported. Drift
+  (disagreements, coverage gaps, integrity findings) is a critical Stuck
+  States item; known-class instances are an info item, as the census's
+  unacknowledged count, not an emergency.
+- **A check that stopped never reads as clean.** A failed or stale latest
+  run (the cron-health classifier's answer) shows "Money check did not run",
+  beside the last good run's findings.
+- **The credit faults are on Stuck States too.** Members with a negative
+  credit balance and cancelled bookings still holding applied credit each
+  have their own item, read as the credit reconciliation reads them; that
+  job still reports both to Sentry and heals nothing.
+- **Still operator-run:** the full report and the owner's `--acknowledged`
+  file (`pnpm run booking-ledger:census`), `--fail-on-gap`, and every repair.
+- Names need membership view (#2823); credit amounts, finance view too.
+- Proven by `cron-booking-money-census.test.ts`,
+  `stuck-state-money-signals.test.ts`, `stuck-state-dashboard.test.ts` and
+  `cron-booking-money-census.realdb.test.ts`.
