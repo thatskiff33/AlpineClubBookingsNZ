@@ -11,9 +11,9 @@
 // expiry. A row with a recognised class and no expiry is the deliberate
 // keep-for-ever escape hatch (`expiresAt: null` at the writer); one with an
 // unrecognised class and no expiry is #3940's. Neither is touched; each is
-// counted on its own line. Only `expiresAt` is written. `retentionClass` stays empty, so
-// the prune's unclassified branches delete the row at seven years, and an
-// incident-preserved row still waits for its ten-year floor.
+// counted on its own line. Only `expiresAt` is written. `retentionClass` stays
+// empty, so the prune's unclassified branches delete the row at seven years,
+// and an incident-preserved row still waits for its ten-year floor.
 //
 // THE EXPIRY is `getAuditRetentionExpiresAt("critical", createdAt)`, the
 // writer's own function, so there is one seven-year rule. Some kinds would be
