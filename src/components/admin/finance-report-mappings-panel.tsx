@@ -212,11 +212,14 @@ export function FinanceReportMappingsPanel() {
       }
       // One guarded read decides both: an HTML error page or a body that is
       // not the promised shape shows the route's sentence or the fallback.
-      const body = await readApiObjectOrNull(response);
+      const body = (await readApiObjectOrNull(response)) as
+        | FinanceMappingsState
+        | { error?: string }
+        | null;
       if (!response.ok || !body || !("categories" in body)) {
         throw new ApiRefusalError(apiErrorMessageFromBody(body, LOAD_FALLBACK));
       }
-      setState(toEditorState(body as FinanceMappingsState));
+      setState(toEditorState(body));
     } catch (loadError) {
       setError(refusalMessageOr(loadError, LOAD_FALLBACK));
     } finally {
