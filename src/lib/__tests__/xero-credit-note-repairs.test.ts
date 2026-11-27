@@ -1473,6 +1473,21 @@ describe("#4347: an account-credit note counts from the payment's own account-cr
     expect(refundedWrites()).toEqual([0]);
   });
 
+  it("MUTATION (dual role, review): an inactive but live account-credit row never cancels a live refund-note row", async () => {
+    rows = { account: () => [{ ...ACCOUNT_ROW("AUTHORISED", 100), active: false }], refund: () => [REFUND_ROW("AUTHORISED", 80)] };
+    lockedReads();
+    mocks.paymentFindMany.mockResolvedValue([payment({ ...BANK(), refundedAmountCents: 0, status: PaymentStatus.SUCCEEDED })]);
+    await repair();
+    expect(refundedWrites()).toEqual([8_000]);
+  });
+
+  it("an inactive account-credit row on its own counts nothing, as the payment's other links read it", async () => {
+    rows = { account: () => [{ ...ACCOUNT_ROW("AUTHORISED", 100), active: false }], refund: () => [] };
+    lockedReads();
+    await repair();
+    expect(refundedWrites()).toEqual([0]);
+  });
+
   it("a note the payment holds by both roles counts once, from the refund-note row, while both are live", async () => {
     rows = { account: () => [ACCOUNT_ROW("AUTHORISED", 100)], refund: () => [REFUND_ROW("AUTHORISED", 80)] };
     lockedReads();

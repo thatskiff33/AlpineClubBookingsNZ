@@ -118,4 +118,14 @@ describe("the inbound reconcile's credit stamp and outside-spend mirror act only
     expect(mocks.stamp).toHaveBeenCalledTimes(1);
     expect(mocks.mirror).toHaveBeenCalledTimes(1);
   });
+
+  it("MUTATION (review): the mirror is handed the same check to repeat under the member's credit lock", async () => {
+    storedAccountRow = { status: "AUTHORISED", total: 100, providerUpdatedAt: EARLY };
+    await reconcileXeroCreditNote(NOTE);
+    const { readingIsCurrent } = mocks.mirror.mock.calls[0]![1] as { readingIsCurrent: (tx: unknown) => Promise<boolean> };
+    // A void that committed after the outside check is seen on the mirror's own transaction.
+    const tx = { xeroObjectLink: { findMany: async () => [{ metadata: { status: "VOIDED", providerUpdatedAt: LATE } }] } };
+    expect(await readingIsCurrent(tx)).toBe(false);
+    expect(await readingIsCurrent({ xeroObjectLink: { findMany: async () => [{ metadata: storedAccountRow }] } })).toBe(true);
+  });
 });

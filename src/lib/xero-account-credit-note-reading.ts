@@ -4,7 +4,8 @@
 // `judgeRefundNoteWrite` stays the one order of two readings.
 import type { Prisma } from "@prisma/client";
 import { ACCOUNT_CREDIT_NOTE_ROLE } from "@/lib/xero-booking-credit-note-link-roles";
-import { judgeRefundNoteWrite, readRefundNoteRowsByPayment, REFUND_CREDIT_NOTE_LINK_WHERE } from "@/lib/xero-refund-note-status";
+import { isIncludedRefundCreditNoteStatus, judgeRefundNoteWrite, readRefundNoteRowsByPayment, REFUND_CREDIT_NOTE_LINK_WHERE } from "@/lib/xero-refund-note-status";
+import { asRecord } from "@/lib/xero-json";
 
 type LinkReader = Pick<Prisma.TransactionClient, "xeroObjectLink">;
 
@@ -32,6 +33,19 @@ export async function accountCreditNoteReadingIsCurrent(creditNoteId: string, re
 }
 
 export type CountedNoteRow = { active: boolean; metadata: unknown };
+
+/**
+ * #4288, #4347: whether a payment's rows for the note still count it, or null
+ * when it has none (the caller falls back to the reading). The first row - the
+ * refund-note row when there is one - must be active, and no row may record
+ * VOIDED/DELETED: an account-credit row beside a refund-note row vetoes only by
+ * its status, since its `active` is kept as stored (#4347), not a void.
+ */
+export function countedNoteRowsCount(rows: readonly CountedNoteRow[] | undefined): boolean | null {
+  const [first] = rows ?? [];
+  if (!first) return null;
+  return first.active && (rows ?? []).every((row) => isIncludedRefundCreditNoteStatus(asRecord(row.metadata)?.status));
+}
 
 /**
  * #4288, #4347: the rows through which each payment counts the note being

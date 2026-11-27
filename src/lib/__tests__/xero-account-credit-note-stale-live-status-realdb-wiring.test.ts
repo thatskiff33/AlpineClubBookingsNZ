@@ -28,7 +28,8 @@ describe("the stale live account-credit note proof stays wired into CI (#4347)",
     expect(suite).toContain("older AUTHORISED then void (lock-queued): the void's reconcile waits on the older write's row and wins");
     expect(suite).toContain("MUTATION (order): between two live readings the older one keeps the newer stored snapshot");
     expect(suite).toContain("a newer live reading after an older live one still applies");
-    expect(suite).toContain("card control: both orders keep the void on the link and leave the card ledger where it was");
+    expect(suite).toContain("card control: both orders keep the void on the link and never raise the card ledger from the voided note");
+    expect(suite).toContain("MUTATION (mirror, review): the outside-spend mirror re-checks the reading under the member's credit lock");
     expect(suite).toContain("MUTATION (allocation repair): an older reading's allocation posts nothing to the member's ledger after the void");
     expect(suite).toContain("lock order: the account-credit link write never waits on a held Payment row, and a Payment-first refund-note void completes beside it");
     expect(suite).toContain("pg_blocking_pids");

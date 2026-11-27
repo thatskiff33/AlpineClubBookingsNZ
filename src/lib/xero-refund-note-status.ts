@@ -112,6 +112,10 @@ export function isRefundNoteLinkOf(
   link: { localModel: string; xeroObjectType: string; role: string },
   role: (typeof REFUND_NOTE_LINK_ROLES)[number] = REFUND_CREDIT_NOTE_LINK_WHERE.role,
 ): boolean {
+  return isPaymentNoteLinkOf(link, role);
+}
+
+function isPaymentNoteLinkOf(link: { localModel: string; xeroObjectType: string; role: string }, role: JudgedNoteLinkRole): boolean {
   return link.localModel === REFUND_CREDIT_NOTE_LINK_WHERE.localModel && link.xeroObjectType === REFUND_CREDIT_NOTE_LINK_WHERE.xeroObjectType && link.role === role;
 }
 
@@ -122,7 +126,7 @@ export function isRefundNoteLinkOf(
  * a kept write leaves its `active` flag as the row holds it.
  */
 export function isAccountCreditNoteLinkOf(link: { localModel: string; xeroObjectType: string; role: string }): boolean {
-  return link.localModel === REFUND_CREDIT_NOTE_LINK_WHERE.localModel && link.xeroObjectType === REFUND_CREDIT_NOTE_LINK_WHERE.xeroObjectType && link.role === ACCOUNT_CREDIT_NOTE_ROLE;
+  return isPaymentNoteLinkOf(link, ACCOUNT_CREDIT_NOTE_ROLE);
 }
 
 /** #4347: the Payment note-link roles whose recorded snapshot is judged and read fresh: the refund-note roles and the account-credit role. */

@@ -39,7 +39,7 @@
  * KILL SWITCH: `creditNoteMirrorWritesDisabled`. While it is on the mirror computes
  * and logs what it would have done and writes nothing.
  */
-import { CreditType } from "@prisma/client";
+import { CreditType, type Prisma } from "@prisma/client";
 import { prisma } from "./prisma";
 import logger from "@/lib/logger";
 import { createAuditLog } from "./audit";
@@ -134,7 +134,8 @@ export type CreditNoteMirrorRefusal =
   | "lot-changed"
   | "nothing-to-do"
   | "none-free"
-  | "writes-disabled";
+  | "writes-disabled"
+  | "stale-reading";
 
 export type CreditNoteMirrorResult =
   | { acted: true; action: "written-down" | "restored"; cents: number; leftForAllocationCents: number }
@@ -143,6 +144,8 @@ export type CreditNoteMirrorResult =
 export interface CreditNoteMirrorDeps {
   now?: Date;
   db?: typeof prisma;
+  /** #4347: re-checked under the member's credit lock; false refuses the reading ("stale-reading"). */
+  readingIsCurrent?: (tx: Prisma.TransactionClient) => Promise<boolean>;
 }
 
 const KILL_SWITCH_KEY = { resourceType: CREDIT_NOTE_MIRROR_CURSOR_RESOURCE, scope: KILL_SWITCH_SCOPE } as const;
@@ -247,6 +250,7 @@ export async function mirrorCreditNoteOutsideSpend(
 
   const outcome = await db.$transaction(async (tx): Promise<CreditNoteMirrorResult> => {
     await lockMemberCreditLedger(memberId, tx);
+    if (deps.readingIsCurrent && !(await deps.readingIsCurrent(tx))) return { acted: false, reason: "stale-reading" };
 
     const funding = await findFundingLotsForNote(tx, memberId, creditNoteId);
     const [lot, ...extraLots] = funding;

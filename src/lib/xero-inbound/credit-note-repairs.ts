@@ -10,7 +10,7 @@ import logger from "@/lib/logger";
 import { type AccountCreditAllocationRepairResult, type AccountCreditAllocationTarget, type RefundedPaymentBusinessStateRepairResult } from "./types";
 import { getCreditNoteAmountCents, getJsonRecord, getRefundContributionCentsFromCreditNoteMetadata } from "./amounts";
 import { isIncludedRefundCreditNoteStatus } from "@/lib/xero-refund-note-status";
-import { accountCreditNoteReadingIsCurrent, type CountedNoteRow, readCountedNoteRows } from "@/lib/xero-account-credit-note-reading";
+import { accountCreditNoteReadingIsCurrent, type CountedNoteRow, countedNoteRowsCount, readCountedNoteRows } from "@/lib/xero-account-credit-note-reading";
 import { findActiveXeroObjectLinks } from "./object-links";
 import { notifyXeroSyncError } from "@/lib/xero-error-alert";
 import { sendBankTransferFloorAlert } from "./credit-note-bank-transfer-floor";
@@ -195,10 +195,10 @@ export async function repairRefundedPaymentBusinessState(input: {
   ]);
 
   // #4288, #4347: each payment's current note as its own refund-note and account-credit rows hold it NOW (read above, after
-  // the payment rows), never the reading or a remembered verdict: it counts only while EVERY such row is active and not
-  // VOIDED/DELETED, its amount from the first (the refund-note row); no row, the reading; no note being synced (#4095), nothing.
+  // the payment rows), never the reading or a remembered verdict (`countedNoteRowsCount`), its amount from the first row;
+  // no row, the reading; no note being synced (#4095), nothing.
   const includesCurrentCreditNoteContribution = (paymentId: string, rows = currentNoteRows.get(paymentId)) =>
-    input.creditNoteId !== null && (rows ? rows.every((row) => row.active && isIncludedRefundCreditNoteStatus(getJsonRecord(row.metadata)?.status)) : isIncludedRefundCreditNoteStatus(input.creditNote.status));
+    input.creditNoteId !== null && (countedNoteRowsCount(rows) ?? isIncludedRefundCreditNoteStatus(input.creditNote.status));
   const currentCreditNoteAmountCents = (paymentId: string, row = currentNoteRows.get(paymentId)?.[0]) =>
     !includesCurrentCreditNoteContribution(paymentId) ? null : row ? getRefundContributionCentsFromCreditNoteMetadata(row.metadata) : getCreditNoteAmountCents(input.creditNote);
   const currentDirectRefundPaymentId = directPaymentIds.length === 1 ? directPaymentIds[0] : null;

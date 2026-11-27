@@ -255,8 +255,16 @@ function reading(kind: Kind, status: string, updatedAt: string, allocations: Arr
     }
     /** The void kept: VOIDED at its own timestamp, `active` as stored (#4347 keeps it), nothing refunded. */
     const VOID_KEPT = { active: true, status: "VOIDED", providerUpdatedAt: LATE, refundedAmountCents: 0 };
-    /** The card control: the void is kept on the link, and the card ledger is never moved by Xero here. */
+    /** The card control: the void is kept on the link, and the card ledger is not raised from the voided note. */
     const CARD_VOID_KEPT = { ...VOID_KEPT, refundedAmountCents: 0 };
+    /**
+     * #4444: a card recount never rises above the refunds Stripe recorded. The
+     * control records $100 of them, so Stripe backs a raise to $100 and only
+     * the judged row can stop an older reading's raise.
+     */
+    async function stripeBacksCardRaise() {
+      await prisma.paymentRefund.create({ data: { paymentId: CARD, stripeRefundId: `re_${P}_backed`, amountCents: 10_000, currency: "nzd", status: "succeeded" } });
+    }
 
     it("void, then an older AUTHORISED reading: the void and the $0 refunded total stand (sequential)", async () => {
       await seed();
@@ -336,12 +344,14 @@ function reading(kind: Kind, status: string, updatedAt: string, allocations: Arr
       expect(await state("bank")).toEqual({ active: true, status: "PAID", providerUpdatedAt: LATE, refundedAmountCents: 10_000 });
     });
 
-    it("card control: both orders keep the void on the link and leave the card ledger where it was", async () => {
+    it("card control: both orders keep the void on the link and never raise the card ledger from the voided note", async () => {
       await seed();
+      await stripeBacksCardRaise();
       await reconcile("card", reading("card", "VOIDED", LATE));
       await reconcile("card", reading("card", "AUTHORISED", EARLY));
       expect(await state("card")).toEqual(CARD_VOID_KEPT);
       await seed();
+      await stripeBacksCardRaise();
       const held = await holdReading("card", "AUTHORISED", EARLY);
       const voiding = reconcile("card", reading("card", "VOIDED", LATE));
       void voiding.catch(() => undefined);
@@ -370,6 +380,24 @@ function reading(kind: Kind, status: string, updatedAt: string, allocations: Arr
       // Before #4347 the stale reading spent $100 of the voided note on the live booking.
       expect(await appliedCredit()).toEqual({ rows: [], creditAppliedCents: 0 });
       expect(await state("bank")).toEqual(VOID_KEPT);
+    });
+
+    it("MUTATION (mirror, review): the outside-spend mirror re-checks the reading under the member's credit lock", async () => {
+      await seed();
+      await reconcile("bank", reading("bank", "VOIDED", LATE));
+      const { creditNoteMirrorEvidenceFrom, mirrorCreditNoteOutsideSpend } = await import("@/lib/xero-credit-note-mirror");
+      const { accountCreditNoteReadingIsCurrent } = await import("@/lib/xero-account-credit-note-reading");
+      const { xeroCreditNoteSnapshotMetadata } = await import("@/lib/xero-refund-note-status");
+      // An older reading that passed the reconcile's own check before the void committed.
+      const older = reading("bank", "AUTHORISED", "2026-06-01T00:00:00.000Z");
+      const evidence = creditNoteMirrorEvidenceFrom(older as never);
+      expect(evidence).not.toBeNull();
+      const before = await prisma.memberCredit.findMany({ where: { memberId: MEMBER_ID }, select: { id: true, amountCents: true } });
+      const outcome = await mirrorCreditNoteOutsideSpend(evidence!, {
+        readingIsCurrent: (tx) => accountCreditNoteReadingIsCurrent(NOTE.bank, xeroCreditNoteSnapshotMetadata(older), tx),
+      });
+      expect(outcome).toEqual({ acted: false, reason: "stale-reading" });
+      expect(await prisma.memberCredit.findMany({ where: { memberId: MEMBER_ID }, select: { id: true, amountCents: true } })).toEqual(before);
     });
 
     it("a current reading's allocation is still posted to the member's ledger", async () => {
