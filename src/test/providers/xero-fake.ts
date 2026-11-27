@@ -60,7 +60,8 @@ export class XeroFake {
   }
 
   createInvoice(key: string, contactID: string, totalCents: number, reference?: string) {
-    return this.write(key, ["invoice", contactID, totalCents, reference], () => {
+    // The reference is not part of the replay identity: a replay returns the original document.
+    return this.write(key, ["invoice", contactID, totalCents], () => {
       this.get(this.contacts, contactID);
       if (!Number.isSafeInteger(totalCents) || totalCents < 0) throw new XeroValidationError("Invoice total must be non-negative integer cents");
       const invoice: Invoice = { invoiceID: `${this.idPrefix}invoice-${this.invoices.size + 1}`, contactID, totalCents, reference, status: totalCents === 0 ? "PAID" : "AUTHORISED" };
