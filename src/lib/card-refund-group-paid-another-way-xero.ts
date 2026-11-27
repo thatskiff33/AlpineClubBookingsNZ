@@ -6,6 +6,7 @@ import {
   paidAnotherWayXeroPlan,
   paidAnotherWayXeroPromise,
   queuePaidAnotherWayXero,
+  type PaidAnotherWayXeroPlan,
   type PaidAnotherWayXeroPromise,
   type PaidAnotherWayXeroQueued,
 } from "@/lib/card-refund-paid-another-way-xero";
@@ -47,45 +48,55 @@ export type GroupCardRefundCloseOperation = {
   allocationPlan: Prisma.JsonValue;
 };
 
-interface GroupCardRefundBankRecordInput {
-  operation: GroupCardRefundCloseOperation;
-  /** The joiner's booking and payment the bank money went back for. */
-  bookingId: string;
-  paymentId: string;
-  /** `row`: a per-joiner refund's one record. `joiner`: one of an old whole-group refund's, one per joiner. */
-  keyedBy: "row" | "joiner";
-  amountCents: number;
-  note: string;
-  reason: string;
-  actingMemberId: string;
-  clubZone: ClubTimeZone;
-  closedAt: Date;
+/** One joiner's Xero plan, read for its payment and its money (`planGroupCardRefundBankClose`). */
+type GroupCardRefundBankPlan = { operation: GroupCardRefundCloseOperation; paymentId: string; amountCents: number; plan: PaidAnotherWayXeroPlan };
+
+/**
+ * Plan one joiner's note: a per-joiner row for its own amount, a whole-group
+ * joiner for its share. A per-joiner close plans before the money moves, as
+ * the ordinary close does, so a reopened refund's card-note cover is read
+ * against the cash as it stood (`INV-PAY-151`); a whole-group row has none.
+ */
+export async function planGroupCardRefundBankClose(
+  tx: Prisma.TransactionClient,
+  operation: GroupCardRefundCloseOperation,
+  joiner: { paymentId: string; amountCents: number },
+): Promise<GroupCardRefundBankPlan> {
+  const payment = await tx.payment.findUnique({ where: { id: joiner.paymentId }, select: { id: true, xeroInvoiceId: true } });
+  if (!payment) throw new Error(`Group card refund close ${operation.id}: the joiner's payment ${joiner.paymentId} is gone`);
+  const plan = await paidAnotherWayXeroPlan(tx, { ...operation, amountCents: joiner.amountCents }, payment, { lockApprovalTask: true });
+  return { operation, paymentId: payment.id, amountCents: joiner.amountCents, plan };
 }
 
 /**
- * Write one joiner's COMPLETED close record and queue its Xero note, on the
- * close's transaction. The plan is read for this joiner's payment and this
- * joiner's money: a per-joiner row is its own amount, a whole-group joiner its
- * share of the plan.
+ * Write one joiner's COMPLETED close record, keyed as its plan says, and queue
+ * its Xero note, on the close's transaction.
  */
 export async function recordGroupCardRefundBankClose(
   tx: Prisma.TransactionClient,
-  input: GroupCardRefundBankRecordInput,
+  { operation, paymentId, amountCents, plan }: GroupCardRefundBankPlan,
+  input: {
+    /** The joiner's booking. `row`: a per-joiner refund's one record; `joiner`: one of an old whole-group refund's. */
+    bookingId: string;
+    keyedBy: "row" | "joiner";
+    note: string;
+    reason: string;
+    actingMemberId: string;
+    clubZone: ClubTimeZone;
+    closedAt: Date;
+  },
 ): Promise<{ recordId: string; xeroQueued: PaidAnotherWayXeroQueued }> {
-  const payment = await tx.payment.findUnique({ where: { id: input.paymentId }, select: { id: true, xeroInvoiceId: true } });
-  if (!payment) throw new Error(`Group card refund close ${input.operation.id}: the joiner's payment ${input.paymentId} is gone`);
-  const plan = await paidAnotherWayXeroPlan(tx, { ...input.operation, amountCents: input.amountCents }, payment, { lockApprovalTask: true });
   const record = await tx.manualRefundTask.create({
     data: {
       bookingId: input.bookingId,
-      paymentId: payment.id,
+      paymentId,
       kind: ManualRefundTaskKind.CANCELLED_BOOKING_HAND_BACK,
-      occurrenceKey: cardRefundPaidAnotherWayOccurrenceKey(input.operation.id, {
+      occurrenceKey: cardRefundPaidAnotherWayOccurrenceKey(operation.id, {
         xeroRefundNote: plan.xeroRefundNote,
         ...(input.keyedBy === "joiner" ? { childBookingId: input.bookingId } : {}),
       }),
-      amountCents: input.amountCents,
-      raisedAmountCents: input.amountCents,
+      amountCents,
+      raisedAmountCents: amountCents,
       status: "COMPLETED",
       completedAt: input.closedAt,
       completedByMemberId: input.actingMemberId,
@@ -95,11 +106,11 @@ export async function recordGroupCardRefundBankClose(
     select: { id: true },
   });
   const xeroQueued = await queuePaidAnotherWayXero(tx, plan, {
-    operationId: input.operation.id,
+    operationId: operation.id,
     bookingId: input.bookingId,
-    paymentId: payment.id,
+    paymentId,
     recordId: record.id,
-    amountCents: input.amountCents,
+    amountCents,
     actingMemberId: input.actingMemberId,
     clubZone: input.clubZone,
     closedAt: input.closedAt,

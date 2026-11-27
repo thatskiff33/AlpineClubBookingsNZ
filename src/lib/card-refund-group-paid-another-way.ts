@@ -15,6 +15,7 @@ import { bookingOwner } from "@/lib/booking-owner";
 import { formatBookingReference } from "@/lib/booking-reference";
 import {
   groupCardRefundXeroQueued,
+  planGroupCardRefundBankClose,
   recordGroupCardRefundBankClose,
   type GroupCardRefundCloseOperation,
   type GroupCardRefundXeroQueued,
@@ -438,6 +439,8 @@ async function closePerJoiner(tx: Prisma.TransactionClient, locked: Locked, clos
   if (input.amountCents <= 0) {
     throw new DeadCardRefundActionError("This refund is for nothing, so it cannot be recorded as a bank payment.", 409);
   }
+  // #5267: planned before the claim and the money, as the ordinary close plans.
+  const xeroPlan = await planGroupCardRefundBankClose(tx, closeOperation(locked, snap), { paymentId: payment.id, amountCents: input.amountCents });
   await claimSucceeded(tx, operation, PAID_ANOTHER_WAY_MARKER);
   try {
     await applyGroupSettlementMirrorRefund({
@@ -455,12 +458,9 @@ async function closePerJoiner(tx: Prisma.TransactionClient, locked: Locked, clos
     throw error;
   }
   // #5267: the record, keyed as its plan says, and the joiner's note on it.
-  const record = await recordGroupCardRefundBankClose(tx, {
-    operation: closeOperation(locked, snap),
+  const record = await recordGroupCardRefundBankClose(tx, xeroPlan, {
     bookingId: booking.id,
-    paymentId: payment.id,
     keyedBy: "row",
-    amountCents: input.amountCents,
     note,
     reason: `A refund to the group organiser on booking ${formatBookingReference(booking.id)} that Stripe gave up on was paid back by bank transfer (#4851).`,
     actingMemberId: input.actingMemberId,
@@ -567,12 +567,10 @@ async function closeLegacy(tx: Prisma.TransactionClient, locked: Locked, close: 
     // line above is the joiner's bank refund, so the record posts none.
     const records = [];
     for (const row of raised) {
-      const record = await recordGroupCardRefundBankClose(tx, {
-        operation: closeOperation(locked, snap),
+      const joiner = { paymentId: row.paymentId, amountCents: row.refundedCents };
+      const record = await recordGroupCardRefundBankClose(tx, await planGroupCardRefundBankClose(tx, closeOperation(locked, snap), joiner), {
         bookingId: row.child.id,
-        paymentId: row.paymentId,
         keyedBy: "joiner",
-        amountCents: row.refundedCents,
         note,
         reason: `A group organiser's old whole-group card refund that Stripe gave up on was paid back by bank transfer; this is booking ${formatBookingReference(row.child.id)}'s share (#4851).`,
         actingMemberId: input.actingMemberId,
