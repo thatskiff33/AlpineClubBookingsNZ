@@ -88,6 +88,11 @@ const READERS: Record<string, { reason: string; importOnly: boolean }> = {
     reason: "the face value of the subject's own obligations for their privacy access file (read-only)",
     importOnly: false,
   },
+  // #4525 (ALP-753): the round-trip proof's support reads a document's recorded manifest back beside what Xero holds.
+  "src/test/providers/manifest-round-trip.ts": {
+    reason: "test support: a document's export manifest and coverage, read back for the provider round trip (read-only)",
+    importOnly: false,
+  },
   // #5208: the GST safeguard compares the journal's planned line tax with Xero's reply.
   "src/lib/xero-tax-override-safeguard.ts": {
     reason: "the line tax overrides a primary invoice sent, compared with Xero's reply (a type import)",
@@ -139,6 +144,7 @@ const DOORS: Record<string, string> = {
   "src/lib/xero-booking-invoices.ts": "M13: the primary invoice's export manifest, after its link, and its Stripe payment's capture receipt",
   "src/lib/xero-supplementary-invoices.ts": "M13: the supplementary invoice's export manifest, after its operation completes, and its Stripe payment's capture receipt",
   "src/lib/xero-credit-notes.ts": "M13: a refund note's export manifest, after it is recorded",
+  "src/lib/xero-modification-credit-notes.ts": "M13: an edit credit note's export manifest, after its operation completes or goes PARTIAL",
   "src/lib/xero-refund-note-settlement.ts": "M13: a refund note payment's export manifest, after it is sent",
   // #4525 (M13): each capture sender's receipt manifest, after it stores a Xero payment id.
   "src/lib/additional-capture-receipt-send.ts": "M13: a change capture's receipt legs, each leg's capture receipt",
@@ -209,8 +215,8 @@ const BOUNDARY = "src/lib/member-money/";
 const WRITER = "src/lib/member-money/internal/store.ts";
 /** The command's entry points: nothing outside the boundary calls them; M3b's doors go through `./doors`. */
 const POSTING_COMMAND = /\b(postMemberMoneyEvent|reverseMemberMoneyJournal|writeMemberMoneyBatch)\b/;
-/** M3b's door entry points (#4627), M3c's pending charge (#4628), M4's hand-back and kept capture (#4516), and M13's invoice, refund-note, capture-receipt, failed-later reversal and combined group invoice manifests (#4525). */
-const DOOR_COMMAND = /\b(postBookingLedgerJournal|postMemberMergeTransfer|postPendingBookingJournal|postBookingReceipts|postRefundObligation|withdrawRefundObligation|reserveCardRefundSlice|postCardRefundCash|postPaidAnotherWayClose|reconcileMadeRefundReservations|releaseReservationByOperator|closeKeptCaptureReturn|postHandBackObligation|postHandBackPayment|postKeptCapture|reverseKeptCapture|planPrimaryInvoiceManifest|recordPrimaryInvoiceManifest|recordPrimaryInvoiceUpdateManifest|recordSupplementaryInvoiceManifest|recordRefundNoteManifest|recordRefundNotePaymentManifest|recordCaptureReceiptManifest|recordFailedLaterRefundReversalManifest|recordCombinedGroupInvoiceManifest|releaseCombinedGroupInvoiceManifest|sweepVoidedCombinedGroupInvoiceCover)\b/;
+/** M3b's door entry points (#4627), M3c's pending charge (#4628), M4's hand-back and kept capture (#4516), and M13's invoice, edit credit note, refund-note, capture-receipt, failed-later reversal and combined group invoice manifests (#4525). */
+const DOOR_COMMAND = /\b(postBookingLedgerJournal|postMemberMergeTransfer|postPendingBookingJournal|postBookingReceipts|postRefundObligation|withdrawRefundObligation|reserveCardRefundSlice|postCardRefundCash|postPaidAnotherWayClose|reconcileMadeRefundReservations|releaseReservationByOperator|closeKeptCaptureReturn|postHandBackObligation|postHandBackPayment|postKeptCapture|reverseKeptCapture|planPrimaryInvoiceManifest|recordPrimaryInvoiceManifest|recordPrimaryInvoiceUpdateManifest|recordSupplementaryInvoiceManifest|recordModificationCreditNoteManifest|recordRefundNoteManifest|recordRefundNotePaymentManifest|recordCaptureReceiptManifest|recordFailedLaterRefundReversalManifest|recordCombinedGroupInvoiceManifest|releaseCombinedGroupInvoiceManifest|sweepVoidedCombinedGroupInvoiceCover)\b/;
 const DELEGATE_WRITE = /\.memberMoney\w*\s*\.\s*(create|update|upsert|delete)/;
 /**
  * Every name that reaches a journal row through Prisma: each relation's
