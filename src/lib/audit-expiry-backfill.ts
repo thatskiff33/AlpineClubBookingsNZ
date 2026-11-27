@@ -22,9 +22,10 @@
 // The owner runs every mode. An agent never points this at a real database.
 // Census and dry run write nothing. Apply refuses unless the operator repeats
 // the live total and, when some rows would be deleted at the next nightly
-// prune, that count too. Each batch is one transaction of guarded
-// `updateMany`s plus one audit entry; a batch that updates nothing writes no
-// entry, so a second apply changes nothing. No advisory lock (INV-LOCK-001):
+// prune, that count too, and it updates no more rows than that total. Each
+// batch is one transaction of guarded `updateMany`s plus one audit entry; a
+// batch that updates nothing writes no entry, so a second apply changes
+// nothing. No advisory lock (INV-LOCK-001):
 // no booking, capacity or money writer is involved, every write is guarded on
 // the selector, and the nightly retention job writes other columns.
 import { randomUUID } from "node:crypto";
@@ -32,10 +33,10 @@ import { Prisma, type PrismaClient } from "@prisma/client";
 import { z } from "zod";
 
 import {
+  AUDIT_SEVERITIES,
   classifyAuditRetention,
   createAuditLog,
   getAuditRetentionExpiresAt,
-  type AuditSeverity,
 } from "@/lib/audit";
 import { isAuditCategory } from "@/lib/audit-categories";
 import type { AuditRetentionClass } from "@/lib/audit-retention-classes";
@@ -45,11 +46,15 @@ import { decodeRawRows } from "@/lib/raw-sql-rows";
 export const AUDIT_EXPIRY_BACKFILL_ACTION = "AUDIT_EXPIRY_BACKFILLED";
 export const AUDIT_EXPIRY_BACKFILL_SOURCE = "#5265";
 export const AUDIT_EXPIRY_BACKFILL_DEFAULT_BATCH_SIZE = 500;
-const AUDIT_SEVERITIES: readonly AuditSeverity[] = ["info", "important", "critical"];
-const MAX_BATCH_SIZE = 5_000;
-const SCAN_PAGE_SIZE = 5_000;
-// Per-row updates: 500 small statements need more than Prisma's 5-second default.
+// Per-row updates: 500 small statements need more than Prisma's 5-second
+// default, and the largest batch must still finish on a slow connection.
+const MAX_BATCH_SIZE = 1_000;
 const BATCH_TRANSACTION_OPTIONS = { maxWait: 10_000, timeout: 120_000 } as const;
+const SCAN_PAGE_SIZE = 5_000;
+// The batch entry lists its busiest kinds as an array, under the 50 items
+// `sanitizeAuditMetadata` keeps. An object keyed by action would lose the count
+// of any action whose name reads as a credential (`member.password.changed`).
+const MAX_AUDITED_ACTIONS = 40;
 
 /** The pre-v0.14.0 state: no class and no expiry. The only rows this module writes. */
 export const AUDIT_EXPIRY_BACKFILL_WHERE = {
@@ -379,6 +384,12 @@ async function applyBatch(params: {
     }
     if (updated === 0) return 0;
 
+    const listedActions = Object.entries(countsByAction)
+      .map(([action, count]) => ({ action, count }))
+      .sort((a, b) => b.count - a.count || a.action.localeCompare(b.action))
+      .slice(0, MAX_AUDITED_ACTIONS);
+    const rowsInListedActions = listedActions.reduce((sum, { count }) => sum + count, 0);
+
     await createAuditLog(
       {
         action: AUDIT_EXPIRY_BACKFILL_ACTION,
@@ -393,7 +404,8 @@ async function applyBatch(params: {
           runId,
           batchNumber,
           rowsUpdated: updated,
-          countsByAction,
+          countsByAction: listedActions,
+          rowsInUnlistedActions: updated - rowsInListedActions,
           createdFrom: createdFrom?.toISOString() ?? null,
           createdTo: createdTo?.toISOString() ?? null,
           alreadyExpired,
@@ -454,8 +466,16 @@ export async function runAuditExpiryBackfill(
   const runId = randomUUID();
   const batches: AuditExpiryBackfillBatch[] = [];
   let rowsUpdated = 0;
-  for (let batchNumber = 1; ; batchNumber += 1) {
-    const updated = await applyBatch({ db, now, runId, batchNumber, batchSize, actorMemberId: actor.id });
+  // Never more rows than the owner confirmed, whatever joins the selector meanwhile.
+  for (let batchNumber = 1; rowsUpdated < measured.total; batchNumber += 1) {
+    const updated = await applyBatch({
+      db,
+      now,
+      runId,
+      batchNumber,
+      batchSize: Math.min(batchSize, measured.total - rowsUpdated),
+      actorMemberId: actor.id,
+    });
     if (updated === 0) break;
     batches.push({ batchNumber, rowsUpdated: updated });
     rowsUpdated += updated;
@@ -464,13 +484,17 @@ export async function runAuditExpiryBackfill(
   return report;
 }
 
+function kindLabel(kind: AuditExpiryBackfillKind): string {
+  return `${kind.action} | ${kind.category ?? "(none)"} | ${kind.severity ?? "(none)"}`;
+}
+
 export function formatAuditExpiryBackfillReport(report: AuditExpiryBackfillReport): string {
   const lines: string[] = [];
   lines.push(`Older audit entries with no retention class and no expiry: ${report.total}`);
   lines.push(`Clock: ${report.now}. Each gets seven years from the day it was recorded (owner decision, #5265).`);
   lines.push(
-    `Already past seven years: ${report.alreadyExpired}. ` +
-      `The next nightly clean-up would delete ${report.deletableAtNextPrune} of them for good.`,
+    `Already past seven years at that clock: ${report.alreadyExpired}. The next nightly clean-up would ` +
+      `delete ${report.deletableAtNextPrune} of them for good, and any entry that passes seven years before it runs.`,
   );
   lines.push(
     `Incident-preserved among them: ${report.incidentPreserved.count} (included; ` +
@@ -488,7 +512,7 @@ export function formatAuditExpiryBackfillReport(report: AuditExpiryBackfillRepor
       .map(([year, count]) => `${year}: ${count}`)
       .join(", ");
     lines.push(
-      `- ${kind.action} | ${kind.category ?? "(none)"} | ${kind.severity ?? "(none)"}: ${kind.count} ` +
+      `- ${kindLabel(kind)}: ${kind.count} ` +
         `recorded ${kind.firstRecordedAt} to ${kind.lastRecordedAt} (by UTC year: ${years}); ` +
         `new expiry ${kind.earliestNewExpiresAt} to ${kind.latestNewExpiresAt}; ` +
         `already past: ${kind.alreadyExpired}; ` +
@@ -500,7 +524,7 @@ export function formatAuditExpiryBackfillReport(report: AuditExpiryBackfillRepor
   if (report.shorterClassKinds.length === 0) lines.push("- none");
   for (const kind of report.shorterClassKinds) {
     lines.push(
-      `- ${kind.action} | ${kind.category ?? "(none)"}: ${kind.count} older entries. New ones are ` +
+      `- ${kindLabel(kind)}: ${kind.count} older entries. New ones are ` +
         `${kind.writerRetentionClass} (${kind.writerRetentionPeriod}); as decided, these older ones still get seven years.`,
     );
   }

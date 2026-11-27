@@ -30,6 +30,7 @@ import {
   runAuditExpiryBackfill,
   type AuditExpiryBackfillMode,
 } from "../src/lib/audit-expiry-backfill";
+import { parseSafeDatabaseTarget } from "../src/lib/induction-baseline-cli";
 import { prisma } from "../src/lib/prisma";
 
 function printUsage() {
@@ -46,11 +47,12 @@ Options:
   --confirm-total <n>   The live total the dry run printed. Apply refuses any other number.
   --allow-delete <n>    Required when some entries are already past seven years: the number
                         the next nightly clean-up would delete. Apply refuses any other number.
-  --batch-size <n>      Entries per transaction (default 500).
+  --batch-size <n>      Entries per transaction (default 500, at most 1000).
   --json                Print the report as JSON after the text.
   --help, -h            Show this help.
 
-Name DATABASE_URL yourself. Apply needs the operator connection under split roles.
+Name DATABASE_URL yourself; every run first prints the database it reads, without
+the credentials. Apply needs the operator connection under split roles.
 `);
 }
 
@@ -116,9 +118,10 @@ function parseArgs(argv: string[]) {
 async function main() {
   // pnpm 11 passes the `--` in `pnpm run audit:expiry-backfill -- --apply` through.
   const args = parseArgs(process.argv.slice(2).filter((arg) => arg !== "--"));
-  if (!process.env.DATABASE_URL) {
-    throw new Error("DATABASE_URL is not set. Name the database this run should read.");
-  }
+  // `dotenv/config` may have supplied the URL from `.env`: say which database
+  // this is before anything is read. Host and name only, never the credentials.
+  const target = parseSafeDatabaseTarget(process.env.DATABASE_URL);
+  console.log(`Database: ${target.databaseName} on ${target.host}`);
   const report = await runAuditExpiryBackfill({
     mode: args.mode,
     db: prisma,

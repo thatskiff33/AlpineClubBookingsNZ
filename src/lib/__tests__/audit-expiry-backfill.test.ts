@@ -216,7 +216,11 @@ describe("runAuditExpiryBackfill (#5265)", () => {
         batchNumber: 1,
         rowsUpdated: 3,
         // Oldest first: both 2018 rows, then the leap-day row.
-        countsByAction: { FAMILY_GROUP_CREATED: 2, LODGE_CAPACITY_HOLD: 1 },
+        countsByAction: [
+          { action: "FAMILY_GROUP_CREATED", count: 2 },
+          { action: "LODGE_CAPACITY_HOLD", count: 1 },
+        ],
+        rowsInUnlistedActions: 0,
         createdFrom: OLD.toISOString(),
         createdTo: LEAP.toISOString(),
         alreadyExpired: 2,
@@ -270,6 +274,81 @@ describe("runAuditExpiryBackfill (#5265)", () => {
     await expect(run).rejects.toThrow(/operator connection/);
     expect(store.raw.auditLog.updateMany).not.toHaveBeenCalled();
     expect(store.raw.auditLog.create).not.toHaveBeenCalled();
+  });
+
+  it("keeps the count of a kind whose name reads as a credential in the batch entry", async () => {
+    // An object keyed by action would store this count as "[REDACTED]".
+    store = makeDb([
+      row({ id: "a", createdAt: RECENT, action: "member.password.changed", category: "security" }),
+      row({ id: "b", createdAt: RECENT, action: "member.password.changed", category: "security" }),
+    ]);
+
+    await runAuditExpiryBackfill({ mode: "apply", db: store.db, now: NOW, actorMemberId: "officer-1", confirmTotal: 2 });
+
+    expect(store.created[0]!.metadata).toMatchObject({
+      rowsUpdated: 2,
+      countsByAction: [{ action: "member.password.changed", count: 2 }],
+      rowsInUnlistedActions: 0,
+    });
+  });
+
+  it("counts every row once across scan pages, ties on the recorded instant included", async () => {
+    // One more than a scan page, all recorded at the same instant, so the
+    // second page starts on the id tie-break alone.
+    const tied = Array.from({ length: 5_001 }, (_, index) =>
+      row({ id: `tied-${String(index).padStart(5, "0")}`, createdAt: RECENT }),
+    );
+    store = makeDb(tied);
+
+    const report = await runAuditExpiryBackfill({ mode: "census", db: store.db, now: NOW });
+
+    expect(store.raw.auditLog.findMany).toHaveBeenCalledTimes(2);
+    expect(report.total).toBe(5_001);
+    expect(report.kinds).toEqual([expect.objectContaining({ count: 5_001 })]);
+  });
+
+  it("leaves a row that gained an expiry after it was read, and does not count it", async () => {
+    const elsewhere = new Date("2040-01-01T00:00:00.000Z");
+    const update = store.raw.auditLog.updateMany.getMockImplementation()!;
+    store.raw.auditLog.updateMany.mockImplementationOnce(async (args) => {
+      store.rows.find((r) => r.id === "old")!.expiresAt = elsewhere;
+      return update(args);
+    });
+
+    const report = await runAuditExpiryBackfill({
+      mode: "apply",
+      db: store.db,
+      now: NOW,
+      actorMemberId: "officer-1",
+      confirmTotal: 4,
+      allowDelete: 1,
+    });
+
+    expect(store.rows.find((r) => r.id === "old")!.expiresAt).toEqual(elsewhere);
+    expect(report.apply?.rowsUpdated).toBe(3);
+    expect(store.created[0]!.metadata).toMatchObject({ rowsUpdated: 3 });
+  });
+
+  it("updates no more rows than the confirmed total when another joins the selector mid-run", async () => {
+    const run = store.raw.$transaction.getMockImplementation()!;
+    store.raw.$transaction.mockImplementationOnce(async (fn) => {
+      store.rows.push(row({ id: "joined", createdAt: new Date("2010-01-01T00:00:00.000Z") }));
+      return run(fn);
+    });
+
+    const report = await runAuditExpiryBackfill({
+      mode: "apply",
+      db: store.db,
+      now: NOW,
+      batchSize: 3,
+      actorMemberId: "officer-1",
+      confirmTotal: 4,
+      allowDelete: 1,
+    });
+
+    expect(report.apply?.rowsUpdated).toBe(4);
+    // Five rows now match; one is left for a fresh dry run and apply.
+    expect(store.rows.filter((r) => r.retentionClass === null && r.expiresAt === null)).toHaveLength(1);
   });
 
   it("asks for no deletion count when nothing is past seven years", async () => {
