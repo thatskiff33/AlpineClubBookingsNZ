@@ -81,7 +81,12 @@ import { GET as listPolicies, PUT as putPolicy } from "@/app/api/admin/notificat
 import { PUT as putAlerts } from "@/app/api/admin/notifications/route";
 import { NextRequest } from "next/server";
 
-import { expectActionContract, officerMemberSession } from "@/lib/__tests__/helpers/mcp-action-contract";
+import {
+  buildActionRequest,
+  expectActionContract,
+  officerMemberSession,
+} from "@/lib/__tests__/helpers/mcp-action-contract";
+import { findMcpAction } from "@/lib/mcp/catalogue";
 import {
   BOOKING_MESSAGE_DEFINITIONS,
   BOOKING_MESSAGE_KEYS,
@@ -213,6 +218,19 @@ describe("booking message wording", () => {
     expect(h.prisma.auditLog.create).not.toHaveBeenCalled();
   });
 
+  it("refuses the bank details message through the dispatch path too", async () => {
+    const messageKey = "paymentRequest.bankTransfer.instructions";
+    const { request } = buildActionRequest(
+      findMcpAction("update_booking_message")!,
+      { messageKey, bodyText: "Pay into 12-3456-7890123-00." },
+      true,
+    );
+    const response = await putBookingMessage(request as never);
+    expect(response.status).toBe(403);
+    expect(await response.json()).toEqual({ error: BOOKING_PAYMENT_INSTRUCTIONS_WEBSITE_ONLY });
+    expect(h.prisma.bookingMessageOverride.upsert).not.toHaveBeenCalled();
+  });
+
   it("still lets the website change a payment-instruction message", async () => {
     const messageKey = "paymentRequest.bankTransfer.instructions";
     h.prisma.bookingMessageOverride.findUnique.mockResolvedValue(null);
@@ -293,6 +311,25 @@ describe("get_email_settings and update_email_settings", () => {
       expect(((await response.json()) as { error: string }).error).toMatch(/club website/);
     }
     expect(h.prisma.emailMessageSetting.upsert).not.toHaveBeenCalled();
+  });
+
+  it("drops an app's public address in the dispatch path, so the route never changes it", async () => {
+    // The action's flat input schema strips a key no part declares, and the split sends only
+    // declared keys: the save goes ahead without it (documented in docs/guides/mcp-server.md).
+    h.prisma.emailMessageSetting.findUnique.mockResolvedValue(null);
+    h.prisma.emailMessageSetting.upsert.mockResolvedValue({ id: "default", ...persisted });
+    h.loadPersistedSettings.mockResolvedValue(persisted);
+    h.loadSettingsForLodge.mockResolvedValue(inForce);
+    const { request } = buildActionRequest(
+      findMcpAction("update_email_settings")!,
+      { supportEmail: "support@example.test", publicUrl: "https://attacker.example" },
+      true,
+    );
+    expect(JSON.stringify(await request.clone().json())).not.toContain("attacker");
+    const response = await putEmailSettings(request as never);
+    expect(response.status).toBe(200);
+    const [[upsert]] = h.prisma.emailMessageSetting.upsert.mock.calls as [[{ update: Record<string, unknown> }]];
+    expect(upsert.update).not.toHaveProperty("publicUrl");
   });
 
   it("still lets the website set the public address, normalised", async () => {

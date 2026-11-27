@@ -20,6 +20,8 @@ import {
   EMAIL_TEMPLATE_KEY_SET,
 } from "@/lib/email-message-registry";
 import { emailTemplateCarriesAccessToken } from "@/lib/email-template-access-token";
+import { emailTemplateCarriesPaymentInstructions } from "@/lib/email-template-payment-instructions";
+import { EMAIL_TEMPLATE_PAYMENT_INSTRUCTIONS_WEBSITE_ONLY } from "@/lib/booking-message-definitions";
 import {
   EMPTYABLE_OVERRIDE_TOKENS,
   OPTIONAL_TEMPLATE_TOKENS,
@@ -535,6 +537,11 @@ export async function PUT(request: NextRequest) {
     return websiteOnlyForConnection(
       "This email carries a one-time sign-in, reset or invitation link, so its wording is changed on the club website.",
     );
+  }
+  // A template printing the club's bank-transfer instructions (`{{bankTransferNote}}`) could be
+  // saved without the token and with a fixed account instead, which is `club-setup`.
+  if (arrivesAsMcpConnection(request) && emailTemplateCarriesPaymentInstructions(parsed.data.templateName)) {
+    return websiteOnlyForConnection(EMAIL_TEMPLATE_PAYMENT_INSTRUCTIONS_WEBSITE_ONLY);
   }
 
   // Fork #38: a rich body is sanitised FIRST, then its derived text is what

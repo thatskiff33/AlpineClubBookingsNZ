@@ -6,10 +6,11 @@
  * its list answer is unchanged. Every handler runs twice (connection, then
  * browser), so the mocks answer both runs.
  *
- * The registry is cut to one template so a fixture can carry a saved override
- * for every template the route lists. The route still knows `password-reset`
- * (`ACCESS_TEMPLATE`), so a connection's change to a template that carries a
- * one-time sign-in link can be seen refused.
+ * The registry's list is cut to one template so a fixture can carry a saved
+ * override for every template the route lists. The route still knows every
+ * real template name, so a connection's change to a template that carries a
+ * one-time sign-in link (`ACCESS_TEMPLATE`) or prints the club's bank-transfer
+ * instructions can be seen refused.
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -27,7 +28,8 @@ vi.mock("@/lib/prisma", () => ({ prisma: h.prisma }));
 vi.mock("@/lib/email-message-registry", async (importOriginal) => {
   const actual = (await importOriginal()) as typeof import("@/lib/email-message-registry");
   const only = actual.EMAIL_TEMPLATE_DEFINITIONS.find((definition) => definition.key === "booking-confirmed")!;
-  return { ...actual, EMAIL_TEMPLATE_DEFINITIONS: [only], EMAIL_TEMPLATE_KEY_SET: new Set([only.key, "password-reset"]) };
+  // Every real key stays known, so the refusals below reach every template they cover.
+  return { ...actual, EMAIL_TEMPLATE_DEFINITIONS: [only] };
 });
 vi.mock("@/lib/email-message-renderer", async (importOriginal) => ({
   ...((await importOriginal()) as typeof import("@/lib/email-message-renderer")),
@@ -44,6 +46,17 @@ import {
 } from "@/lib/__tests__/helpers/mcp-action-contract";
 import { EMAIL_TEMPLATE_DEFINITIONS } from "@/lib/email-message-registry";
 import { emailTemplateCarriesAccessToken } from "@/lib/email-template-access-token";
+import {
+  emailTemplateCarriesPaymentInstructions,
+  PAYMENT_INSTRUCTION_EMAIL_TOKENS,
+} from "@/lib/email-template-payment-instructions";
+import {
+  BOOKING_MESSAGE_DEFINITION_BY_KEY,
+  EMAIL_TEMPLATE_PAYMENT_INSTRUCTIONS_WEBSITE_ONLY,
+} from "@/lib/booking-message-definitions";
+import { EMAIL_TOKENS_RENDERING_BOOKING_MESSAGES } from "@/lib/credit-release-bank-transfer";
+import { readdirSync, readFileSync, statSync } from "node:fs";
+import { join, relative } from "node:path";
 import { MCP_PRINCIPAL_HEADER } from "@/lib/mcp/principal";
 import { NextRequest } from "next/server";
 import { findMcpAction } from "@/lib/mcp/catalogue";
@@ -206,5 +219,93 @@ describe("emailTemplateCarriesAccessToken", () => {
     ).map((definition) => definition.key);
     expect(usesToken.length).toBeGreaterThan(0);
     expect(usesToken.filter((key) => !emailTemplateCarriesAccessToken(key))).toEqual([]);
+  });
+});
+
+/** The real registry, past this file's mock: what a census must cover. */
+async function realTemplateDefinitions() {
+  const actual = (await vi.importActual("@/lib/email-message-registry")) as typeof import("@/lib/email-message-registry");
+  return actual.EMAIL_TEMPLATE_DEFINITIONS;
+}
+
+describe("templates printing the club's bank-transfer instructions (ALP-724)", () => {
+  const PAYMENT_TEMPLATE = "credit-released-payment-request";
+
+  it("derives the tokens from the booking messages' own flag: {{bankTransferNote}} renders a flagged message", () => {
+    expect(EMAIL_TOKENS_RENDERING_BOOKING_MESSAGES.bankTransferNote).toBe("paymentRequest.bankTransfer.instructions");
+    expect(
+      BOOKING_MESSAGE_DEFINITION_BY_KEY.get("paymentRequest.bankTransfer.instructions")?.carriesPaymentInstructions,
+    ).toBe(true);
+    expect([...PAYMENT_INSTRUCTION_EMAIL_TOKENS]).toEqual(["bankTransferNote"]);
+    expect(emailTemplateCarriesPaymentInstructions(PAYMENT_TEMPLATE)).toBe(true);
+    expect(emailTemplateCarriesPaymentInstructions(TEMPLATE.key)).toBe(false);
+  });
+
+  it("refuses, through the dispatch path, a connection changing every template that allows such a token", async () => {
+    // Computed from the declaration and the flags, independently of the helper the route calls.
+    const flaggedTokens = Object.entries(EMAIL_TOKENS_RENDERING_BOOKING_MESSAGES)
+      .filter(([, messageKey]) => BOOKING_MESSAGE_DEFINITION_BY_KEY.get(messageKey)?.carriesPaymentInstructions)
+      .map(([token]) => token);
+    const covered = (await realTemplateDefinitions())
+      .filter((definition) => definition.allowedTokens.some((token) => flaggedTokens.includes(token)))
+      .map((definition) => definition.key);
+    expect(covered).toContain(PAYMENT_TEMPLATE);
+    for (const templateName of covered) {
+      // The lane's probe: the token dropped and a fixed account written in its place.
+      const { request } = buildActionRequest(
+        findMcpAction("update_email_template")!,
+        { templateName, bodyText: "Hi {{firstName}}, pay into 12-3456-7890123-00 today." },
+        true,
+      );
+      const response = await putTemplate(request as never);
+      expect(response.status, templateName).toBe(403);
+      expect(await response.json(), templateName).toEqual({ error: EMAIL_TEMPLATE_PAYMENT_INSTRUCTIONS_WEBSITE_ONLY });
+    }
+    expect(h.prisma.emailTemplateOverride.upsert).not.toHaveBeenCalled();
+    expect(h.prisma.auditLog.create).not.toHaveBeenCalled();
+  });
+
+  it("still lets a connection reset such a template to its default", async () => {
+    h.prisma.emailTemplateOverride.findUnique.mockResolvedValue({ ...OVERRIDE, templateName: PAYMENT_TEMPLATE });
+    h.prisma.emailTemplateOverride.deleteMany.mockResolvedValue({ count: 1 });
+    const { request } = buildActionRequest(findMcpAction("reset_email_template")!, { templateName: PAYMENT_TEMPLATE }, true);
+    const response = await resetTemplate(request as never);
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ reset: true });
+  });
+
+  it("still lets the website reach that template's save", async () => {
+    const request = new NextRequest(new URL("/api/admin/email-templates", "https://club.example.test"), {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ templateName: PAYMENT_TEMPLATE, subject: "Payment needed" }),
+    });
+    const response = await putTemplate(request as never);
+    expect(response.status).not.toBe(403);
+  });
+
+  it("finds every lib module that renders a booking message, so a new email token built from one is declared", () => {
+    // A module reading or rendering booking-message wording outside the booking-message modules
+    // could put it into an email token. Each such token must sit in
+    // EMAIL_TOKENS_RENDERING_BOOKING_MESSAGES, or the refusal above cannot see it.
+    const libRoot = join(process.cwd(), "src/lib");
+    const readers: string[] = [];
+    const walk = (dir: string) => {
+      for (const name of readdirSync(dir)) {
+        const path = join(dir, name);
+        if (statSync(path).isDirectory()) {
+          if (name !== "__tests__") walk(path);
+        } else if (/\.tsx?$/.test(name) && /\b(renderBookingMessageTemplate|loadPublicBookingMessages)\(/.test(readFileSync(path, "utf8"))) {
+          readers.push(relative(libRoot, path));
+        }
+      }
+    };
+    walk(libRoot);
+    expect(readers.sort()).toEqual([
+      "booking-message-definitions.ts",
+      "booking-message-settings.ts",
+      // Declares `bankTransferNote` in EMAIL_TOKENS_RENDERING_BOOKING_MESSAGES.
+      "credit-release-bank-transfer.ts",
+    ]);
   });
 });

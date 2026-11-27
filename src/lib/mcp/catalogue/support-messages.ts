@@ -151,7 +151,7 @@ export const SUPPORT_MESSAGE_MCP_ACTIONS: readonly McpAction[] = [
     id: "update_email_template",
     title: "Change an email template",
     summary:
-      "Officer: saves the club's subject and body for an email template (`templateName` from `list_email_templates`), which every later email of that kind uses. Send at least one of `subject`, `bodyText` or a formatted `bodyHtml`; null or empty returns that part to the default. Refused, listing the problems, if a token is unknown or a required one is missing. An email carrying a one-time sign-in, reset or invitation link (a required `token`) is changed on the club website only. Answers the saved change.",
+      "Officer: saves the club's subject and body for an email template (`templateName` from `list_email_templates`), which every later email of that kind uses. Send at least one of `subject`, `bodyText` or a formatted `bodyHtml`; null or empty returns that part to the default. Refused, listing the problems, if a token is unknown or a required one is missing. An email carrying a one-time sign-in, reset or invitation link (a required `token`), or printing the club's bank-transfer instructions (`bankTransferNote`), is changed on the club website only. Answers the saved change.",
     method: "PUT",
     path: "/api/admin/email-templates",
     body: emailTemplateUpdateSchema,

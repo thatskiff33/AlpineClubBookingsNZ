@@ -263,9 +263,19 @@ export const BOOKING_MESSAGE_DEFINITIONS: readonly BookingMessageDefinition[] = 
   },
 ] as const;
 
+/** Why an AI app may not change wording that `carriesPaymentInstructions` (ALP-724). */
+const PAYMENT_INSTRUCTIONS_REASON = "tells members where to pay by bank transfer";
+
 /** An AI app's refusal for a message that `carriesPaymentInstructions` (ALP-724). */
 export const BOOKING_PAYMENT_INSTRUCTIONS_WEBSITE_ONLY =
-  "This message tells members where to pay by bank transfer, so it is changed or reset on the club website.";
+  `This message ${PAYMENT_INSTRUCTIONS_REASON}, so it is changed or reset on the club website.`;
+
+/**
+ * An AI app's refusal for an email template that prints a payment-instruction message
+ * (`emailTemplateCarriesPaymentInstructions`). Its reset to the default stays open.
+ */
+export const EMAIL_TEMPLATE_PAYMENT_INSTRUCTIONS_WEBSITE_ONLY =
+  `This email ${PAYMENT_INSTRUCTIONS_REASON}, so its wording is changed on the club website.`;
 
 export const BOOKING_MESSAGE_DEFINITION_BY_KEY = new Map(
   BOOKING_MESSAGE_DEFINITIONS.map((definition) => [definition.key, definition]),

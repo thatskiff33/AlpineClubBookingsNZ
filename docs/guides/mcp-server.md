@@ -1086,11 +1086,15 @@ Bookings & Beds above.
   request, though the action itself is offered: the email settings' public
   address, which every email's links point to, sign-in and password-reset
   links among them; changing a template that carries a one-time `{{token}}`
-  link (from the registry's required tokens); changing or resetting the
-  booking messages that tell members where to pay by bank transfer
-  (`carriesPaymentInstructions` on the message); and switching session replay
-  (`sentryReplayEnabled`) in privacy retention, which must be sent back as
-  read.
+  link (from the registry's required tokens); changing an email template
+  that allows a token printing such a message (`{{bankTransferNote}}`,
+  declared in `EMAIL_TOKENS_RENDERING_BOOKING_MESSAGES`), though its reset to
+  the default stays open; changing or resetting the booking messages that
+  tell members where to pay by bank transfer (`carriesPaymentInstructions` on
+  the message); and switching session replay (`sentryReplayEnabled`) in
+  privacy retention, which must be sent back as read. An argument an action
+  does not declare, such as `publicUrl` on `update_email_settings`, is dropped
+  before the route runs, so the rest of the change is saved without it.
 - **What is never sent.** A problem report's screenshot, the query and
   fragment of the page address it came from (the path is sent), the reporter's
   browser details, a failed email's transport error unredacted, the lodge's door code (the email settings carry it for the

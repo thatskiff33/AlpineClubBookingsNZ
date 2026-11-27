@@ -1,5 +1,5 @@
 import { loadPublicBookingMessages, buildBookingMessageGlobalData } from "@/lib/booking-message-settings";
-import { renderBookingMessageTemplate } from "@/lib/booking-message-definitions";
+import { renderBookingMessageTemplate, type BookingMessageKey } from "@/lib/booking-message-definitions";
 import { escapeHtml } from "@/lib/email-templates/escape";
 
 /**
@@ -16,11 +16,25 @@ import { escapeHtml } from "@/lib/email-templates/escape";
  */
 export type BankTransferOffer = { instructions: string; reference: string };
 
+/** The booking message the club writes its bank account and reference instructions in. */
+const BANK_TRANSFER_INSTRUCTIONS_MESSAGE_KEY = "paymentRequest.bankTransfer.instructions" satisfies BookingMessageKey;
+
+/**
+ * Each email token whose value is rendered from a booking message, and that message (ALP-724).
+ * An email template allowing such a token prints that message's wording, so an AI app connection
+ * may not change a template whose token renders a message flagged `carriesPaymentInstructions`
+ * (`email-template-payment-instructions.ts`). A new email token built from a booking message is
+ * declared here; the census in `mcp-support-email-template-actions.test.ts` fails until it is.
+ */
+export const EMAIL_TOKENS_RENDERING_BOOKING_MESSAGES: Readonly<Record<string, BookingMessageKey>> = {
+  bankTransferNote: BANK_TRANSFER_INSTRUCTIONS_MESSAGE_KEY,
+};
+
 export async function loadBankTransferOffer(invoiceNumber: string | null | undefined): Promise<BankTransferOffer | null> {
   const reference = invoiceNumber?.trim();
   if (!reference) return null;
   const [bookingMessages, club] = await Promise.all([loadPublicBookingMessages(), buildBookingMessageGlobalData()]);
-  const body = renderBookingMessageTemplate(bookingMessages["paymentRequest.bankTransfer.instructions"] ?? "", {
+  const body = renderBookingMessageTemplate(bookingMessages[BANK_TRANSFER_INSTRUCTIONS_MESSAGE_KEY] ?? "", {
     ...club,
     paymentReference: reference,
     xeroInvoiceNumber: reference,
