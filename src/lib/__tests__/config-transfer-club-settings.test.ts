@@ -1059,7 +1059,8 @@ describe("membership-lockout useFeeScheduleItemCodes round-trips (#2178)", () =>
 
 // #5190 — the subscription-liability pair travels whole and chosen, or not at
 // all: a bundle can opt a target in, but its NOT_CHOSEN (or a half pair) never
-// overwrites a target's choice, and CURRENT_AGE is refused until it opens.
+// overwrites a target's choice. "Age today" (CURRENT_AGE) travels like any
+// other chosen source since part-season invoices shipped (#5190 PR 3).
 describe("membership-lockout subscription-liability pair (#5190)", () => {
   const lockoutBundle = (body: Record<string, unknown>) =>
     buildBundle({
@@ -1116,11 +1117,19 @@ describe("membership-lockout subscription-liability pair (#5190)", () => {
     expect(delegates.membershipLockoutSettings.upsert).not.toHaveBeenCalled();
   });
 
-  it("fails the dry-run on CURRENT_AGE, which needs part-season invoices", async () => {
+  it("opts a target in to CURRENT_AGE now that part-season invoices exist", async () => {
     const zip = lockoutBundle({ requiredTypeAgeRule: "ALWAYS_OWES", liabilityAgeSource: "CURRENT_AGE" });
     const plan = await buildImportPlan(stubDb({ membershipLockoutSettings: chosenTarget }), zip, { format: CLUB_FORMAT_TEST, mode: "merge" });
+    expect(plan.categories[0].errors).toEqual([]);
+    const item = plan.categories[0].items.find((i) => i.entity === "membership-lockout-settings");
+    expect(item?.changedFields).toEqual(["requiredTypeAgeRule", "liabilityAgeSource"]);
+  });
+
+  it("still fails the dry-run on a value that is no age source", async () => {
+    const zip = lockoutBundle({ requiredTypeAgeRule: "ALWAYS_OWES", liabilityAgeSource: "BIRTHDAY" });
+    const plan = await buildImportPlan(stubDb({ membershipLockoutSettings: chosenTarget }), zip, { format: CLUB_FORMAT_TEST, mode: "merge" });
     expect(plan.categories[0].errors).toEqual([
-      expect.stringContaining("liabilityAgeSource - CURRENT_AGE cannot be chosen yet"),
+      expect.stringContaining("is not a valid SubscriptionLiabilityAgeSource"),
     ]);
   });
 });

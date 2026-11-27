@@ -60,9 +60,8 @@ import {
 } from "@/lib/xero-mappings";
 import { createXeroCreditNoteForModification } from "@/lib/xero-modification-credit-notes";
 import { allocateAppliedCreditForBooking } from "@/lib/xero-applied-credit-allocation";
-import { scanSpacesAdminGrantNotesAwaitingRetry } from "@/lib/admin-grant-credit-note";
+import { isCreditLotOutboxPayload, runCreditLotOutboxOperation, scanSpacesCreditLotWaits } from "@/lib/xero-credit-lot-outbox";
 import { scanSpacesGroupInvoiceEmailsDeferred } from "@/lib/xero-group-settlement-invoice-outbox";
-import { createAdminGrantCreditNote } from "@/lib/xero-admin-grant-credit-note";
 import { unallocatedAppliedCreditCentsByBooking } from "@/lib/xero-applied-credit-ledger-state";
 import { deallocateExcessAppliedCreditForBooking } from "@/lib/xero-applied-credit-deallocation";
 import { outboxScanLeavesAwaitingOwnNote, OWN_NOTE_EXPECTED_KEY } from "@/lib/unpaid-ask-billed-offset-order";
@@ -81,7 +80,6 @@ import { recordAdditionalCaptureReceipt } from "@/lib/additional-capture-xero-re
 import { outboxScanSpacesWaitingReceipts } from "@/lib/additional-capture-receipt-gate";
 import { scanSpacesRefundNotesAwaitingResolve } from "@/lib/xero-refund-note-in-flight";
 import { scanSpacesTaxCategoriesAwaitingMapping, xeroOutboxWaitOf } from "@/lib/xero-tax-category-hold";
-import { XERO_OUTBOX_ADMIN_GRANT_CREDIT_NOTE_TYPE } from "@/lib/admin-grant-credit-note-payload";
 import { organisationContactDetailsOrganisationId, XERO_OUTBOX_ORGANISATION_CONTACT_DETAILS_TYPE } from "@/lib/organisation-contact-details-payload";
 import { syncOrganisationContactDetails } from "@/lib/organisation-xero-contact-details";
 import { isXeroConnected } from "@/lib/xero-token-store";
@@ -2174,7 +2172,7 @@ export async function processQueuedXeroOutboxOperations(options?: {
     where: {
       ...OUTBOX_PENDING_WHERE,
       // Rows waiting their turn are looked at only every few minutes, not on every kick (#3954, #3953, #4692 `INV-INT-035`); an owed group invoice email every minute (#4919); a line whose tax category is not mapped yet, every five (#4988).
-      AND: [outboxScanLeavesAwaitingOwnNote(new Date()), outboxScanSpacesWaitingReceipts(new Date()), scanSpacesRefundNotesAwaitingResolve(new Date()), scanSpacesAdminGrantNotesAwaitingRetry(new Date()), scanSpacesGroupInvoiceEmailsDeferred(new Date()), scanSpacesTaxCategoriesAwaitingMapping(new Date())],
+      AND: [outboxScanLeavesAwaitingOwnNote(new Date()), outboxScanSpacesWaitingReceipts(new Date()), scanSpacesRefundNotesAwaitingResolve(new Date()), scanSpacesCreditLotWaits(new Date()), scanSpacesGroupInvoiceEmailsDeferred(new Date()), scanSpacesTaxCategoriesAwaitingMapping(new Date())],
       // #5228: never a row whose request names no queue type - it is not sent
       // from a guess, and must not fill the batch ahead of the work behind it.
       NOT: NAMES_NO_QUEUE_TYPE,
@@ -2345,8 +2343,8 @@ export async function processQueuedXeroOutboxOperations(options?: {
           format,
           { createdByMemberId: queuedOperation.createdByMemberId ?? undefined, syncOperation: claimed, memberCreditId: payload.memberCreditId }
         );
-      } else if (payload?.queueType === XERO_OUTBOX_ADMIN_GRANT_CREDIT_NOTE_TYPE) {
-        await createAdminGrantCreditNote({ syncOperation: claimed, payload });
+      } else if (isCreditLotOutboxPayload(payload)) { // #4431 grant note, #5190 PR 3 age-up credit
+        await runCreditLotOutboxOperation(payload, claimed, queuedOperation.createdByMemberId);
       } else if (payload?.queueType === XERO_OUTBOX_ORGANISATION_CONTACT_DETAILS_TYPE && contactDetailsOrganisationId) { // #5245: read fresh at send time
         await syncOrganisationContactDetails({ organisationId: contactDetailsOrganisationId, syncOperation: claimed, createdByMemberId: queuedOperation.createdByMemberId ?? undefined });
       } else if (payload?.queueType === XERO_OUTBOX_MODIFICATION_ACCOUNT_CREDIT_NOTE_TYPE) {

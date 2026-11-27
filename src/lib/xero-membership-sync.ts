@@ -44,6 +44,7 @@ import {
 } from "@/lib/xero-provider-dates";
 import { loadMembershipLockoutSettings } from "@/lib/membership-lockout-settings";
 import { owesSubscriptionForAccess } from "@/lib/subscription-lockout-facts";
+import { syncAgeUpTopUpInvoices, withoutAgeUpTopUpInvoices } from "@/lib/subscription-age-up-sync";
 import { enqueueHostingCoverageReevaluationForMember } from "@/lib/adult-member-hosting-review";
 import { isHostingCoverageParticipantRetry } from "@/lib/adult-member-hosting-queue-participants";
 import { settleHostingCoverageAfterCommit } from "@/lib/adult-member-hosting-coverage-drain";
@@ -718,7 +719,8 @@ export async function checkMembershipStatus(
         (invoice) => invoice.invoiceID === immutableChargeInvoiceId
       );
     } else {
-      subscriptionInvoice = findSubscriptionInvoice(invoices, year, matchOptions);
+      // #5190 PR 3: an age-up top-up is never the member's season invoice.
+      subscriptionInvoice = findSubscriptionInvoice(await withoutAgeUpTopUpInvoices(invoices), year, matchOptions);
     }
 
     if (!subscriptionInvoice) {
@@ -1480,6 +1482,10 @@ export async function refreshAllMembershipStatuses(
         .filter((invoiceId): invoiceId is string => Boolean(invoiceId))
     )
   );
+  // #5190 PR 3: an age-up top-up is a coverage-less charge, so its invoice's
+  // status is mapped to its adjustment here (status-guarded, never revived).
+  const topUpToday = clubToday(await readClubTimeZoneOutsideRequest());
+  await syncAgeUpTopUpInvoices(changedInvoices, (invoice) => determineSubscriptionStatus(invoice, topUpToday).status);
   const changedChargeCoverage = changedInvoiceIds.length > 0
     ? await prisma.membershipSubscriptionChargeCoverage.findMany({
         where: {

@@ -714,7 +714,7 @@ export const SINGLETONS: SingletonSpec[] = [
       textFallbackEnabled: { required: true },
       useFeeScheduleItemCodes: { required: true },
       requiredTypeAgeRule: { required: true },
-      liabilityAgeSource: { required: true, validate: validateLiabilityAgeSource }, // no CURRENT_AGE yet
+      liabilityAgeSource: { required: true, validate: validateLiabilityAgeSource },
     },
     defaults: () => DEFAULT_MEMBERSHIP_LOCKOUT_SETTINGS,
     // BUNDLE-FORMAT compatibility, which outlives the column (#2543/#2561).

@@ -8,7 +8,7 @@ import { asRecord, readString } from "@/lib/xero-json";
 export const XERO_OUTBOX_AGE_UP_CREDIT_TYPE = "AGE_UP_CREDIT" as const;
 
 /** The row the credit's outbox operation is anchored on. */
-export const AGE_UP_ADJUSTMENT_LOCAL_MODEL = "MemberSubscriptionAgeUpAdjustment";
+export const AGE_UP_ADJUSTMENT_LOCAL_MODEL = "MemberSubscriptionAgeUpAdjustment" as const;
 
 export interface AgeUpCreditPayload {
   queueType: typeof XERO_OUTBOX_AGE_UP_CREDIT_TYPE;
@@ -25,4 +25,13 @@ export function readAgeUpCreditPayload(value: unknown): AgeUpCreditPayload | nul
   if (!payload || payload.queueType !== XERO_OUTBOX_AGE_UP_CREDIT_TYPE) return null;
   const adjustmentId = readString(payload.adjustmentId);
   return adjustmentId ? buildAgeUpCreditPayload(adjustmentId) : null;
+}
+
+/**
+ * A failed or partial age-up credit goes back to the outbox as queued, and the
+ * worker reads the adjustment fresh: a note already raised is found by its
+ * link and allocated, never raised again.
+ */
+export function ageUpCreditRetryLabel(op: { queueType?: string | null }): string | null {
+  return op.queueType === XERO_OUTBOX_AGE_UP_CREDIT_TYPE ? "age-group change credit" : null;
 }

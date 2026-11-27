@@ -8,7 +8,9 @@ import { asRecord, readNumber, readString } from "@/lib/xero-json";
 
 export const XERO_OUTBOX_ADMIN_GRANT_CREDIT_NOTE_TYPE = "ADMIN_GRANT_CREDIT_NOTE" as const;
 
-const MAPPING_KEYS = ["hutFeeRefunds", "goodwillWriteOffs"] as const;
+// `membershipCancellationCredit`: a mid-season age-up credit posted as a lot
+// (#5190 PR 3), on the account an age-up credit note would have used.
+const MAPPING_KEYS = ["hutFeeRefunds", "goodwillWriteOffs", "membershipCancellationCredit"] as const;
 
 export type AdminGrantNoteMappingKey = (typeof MAPPING_KEYS)[number];
 
@@ -39,7 +41,7 @@ export function buildAdminGrantCreditNotePayload(
   };
 }
 
-/** A positive integer amount, a credit id, and one of the two mapping keys. */
+/** A positive integer amount, a credit id, and one of the mapping keys. */
 export function readAdminGrantCreditNotePayload(value: unknown): AdminGrantCreditNotePayload | null {
   const payload = asRecord(value);
   if (!payload || payload.queueType !== XERO_OUTBOX_ADMIN_GRANT_CREDIT_NOTE_TYPE) return null;

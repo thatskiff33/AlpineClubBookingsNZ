@@ -80,11 +80,19 @@ export async function assertDeductionLeavesNotedCreditUntouched(
   }
 }
 
+/**
+ * Queue the Xero note for a positive credit lot: an approved grant names its
+ * account, and an age-up credit lot (#5190 PR 3) names its mapping directly.
+ */
 export async function enqueueAdminGrantCreditNote(
   tx: Prisma.TransactionClient,
-  credit: { id: string; amountCents: number; grantAccount: AdminCreditGrantAccount },
+  credit: { id: string; amountCents: number } & (
+    | { grantAccount: AdminCreditGrantAccount }
+    | { mappingKey: AdminGrantNoteMappingKey }
+  ),
 ): Promise<void> {
-  const mappingKey: AdminGrantNoteMappingKey = adminCreditGrantMappingKey(credit.grantAccount);
+  const mappingKey: AdminGrantNoteMappingKey =
+    "mappingKey" in credit ? credit.mappingKey : adminCreditGrantMappingKey(credit.grantAccount);
   const idempotencyKey = buildXeroIdempotencyKey(
     "member-credit",
     credit.id,

@@ -129,7 +129,6 @@ describe("GET /api/admin/membership-lockout-settings/liability-impact (#5190)", 
     ["no proposal", ""],
     ["half a proposal", "?requiredTypeAgeRule=ALWAYS_OWES"],
     ["not chosen", "?requiredTypeAgeRule=NOT_CHOSEN&liabilityAgeSource=NOT_CHOSEN"],
-    ["age today", "?requiredTypeAgeRule=ALWAYS_OWES&liabilityAgeSource=CURRENT_AGE"],
   ])("refuses %s", async (_label, query) => {
     const response = await get(query);
     expect(response.status).toBe(400);
@@ -169,12 +168,14 @@ describe("GET /api/admin/membership-lockout-settings/liability-impact (#5190)", 
     });
   });
 
-  it("previews a saveable rule for the club's current season", async () => {
-    const response = await get("?requiredTypeAgeRule=AGE_TIER_EXEMPTS&liabilityAgeSource=SEASON_END");
+  it.each(["SEASON_END", "CURRENT_AGE"] as const)("previews a saveable rule (%s) for the club's current season, on its today", async (source) => {
+    const response = await get(`?requiredTypeAgeRule=AGE_TIER_EXEMPTS&liabilityAgeSource=${source}`);
     expect(response.status).toBe(200);
     expect(mocks.buildImpact).toHaveBeenCalledWith(expect.anything(), {
       seasonYear: 2026,
-      proposed: { requiredTypeAgeRule: "AGE_TIER_EXEMPTS", liabilityAgeSource: "SEASON_END" },
+      proposed: { requiredTypeAgeRule: "AGE_TIER_EXEMPTS", liabilityAgeSource: source },
+      // The frozen test clock is 2026-07-01T00:00Z: noon on 1 July in Auckland.
+      today: "2026-07-01",
     });
   });
 });

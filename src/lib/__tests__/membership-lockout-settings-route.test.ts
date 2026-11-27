@@ -296,7 +296,6 @@ describe("membership lockout settings route: the subscription liability rule (#5
     ["only one answer", { requiredTypeAgeRule: "ALWAYS_OWES" }],
     ["the other answer alone", { liabilityAgeSource: "SEASON_END" }],
     ["half not chosen", { requiredTypeAgeRule: "ALWAYS_OWES", liabilityAgeSource: "NOT_CHOSEN" }],
-    ["age today, until part-season invoices ship", { requiredTypeAgeRule: "ALWAYS_OWES", liabilityAgeSource: "CURRENT_AGE" }],
   ])("refuses %s, writing nothing", async (_label, body) => {
     const response = await putLockoutSettings(request(body));
     expect(response.status).toBe(400);
