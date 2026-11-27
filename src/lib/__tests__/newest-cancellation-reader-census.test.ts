@@ -17,7 +17,7 @@ const CANCELLED = String.raw`type: (?:BookingEventType\.CANCELLED|"CANCELLED")`;
 /** `bookingEvent.findFirst({ where: { ..., type: CANCELLED, ... } ...` with a flat where-clause. */
 const NEWEST_BY_FIND_FIRST = new RegExp(String.raw`bookingEvent\.findFirst\(\{\s*where: \{[^{}]*${CANCELLED}[^{}]*\}`, "g");
 /** A booking's `events` relation narrowed to its cancellations and cut to one row. */
-const NEWEST_BY_RELATION = new RegExp(String.raw`events: \{\s*where: \{[^{}]*${CANCELLED}[^{}]*\},[^}]*take: 1`, "g");
+const NEWEST_BY_RELATION = new RegExp(String.raw`events: \{\s*where: \{[^{}]*${CANCELLED}[^{}]*\},\s*orderBy: [^\n]*\n\s*take: 1`, "g");
 
 function sourceFiles(dir: string): string[] {
   return readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
