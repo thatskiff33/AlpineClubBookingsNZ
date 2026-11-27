@@ -9,6 +9,7 @@ import { BookingApprovalsPanel } from "@/components/admin/booking-requests/booki
 import { BookingChangeRequestsPanel } from "@/components/admin/booking-requests/booking-change-requests-panel";
 import { PolicyExceptionRequestsPanel } from "@/components/admin/booking-requests/policy-exception-requests-panel";
 import { PublicBookingRequestsPanel } from "@/components/admin/booking-requests/public-booking-requests-panel";
+import { adminHref } from "@/lib/admin-hubs";
 import { PINNED_QUEUE_RECORD_NOTE } from "@/lib/admin-list-page";
 
 /**
@@ -17,10 +18,16 @@ import { PINNED_QUEUE_RECORD_NOTE } from "@/lib/admin-list-page";
  * record beyond page 1 still lands on that record.
  */
 
-const navigation = vi.hoisted(() => ({ search: "" }));
+// One router for every render, as Next's is: a fresh one each render would
+// re-run every effect that lists it.
+const navigation = vi.hoisted(() => {
+  const replace = vi.fn();
+  return { search: "", pathname: "/", replace, router: { replace, push: vi.fn(), refresh: vi.fn() } };
+});
 
 vi.mock("next/navigation", () => ({
-  useRouter: () => ({ replace: vi.fn(), push: vi.fn(), refresh: vi.fn() }),
+  usePathname: () => navigation.pathname,
+  useRouter: () => navigation.router,
   useSearchParams: () => new URLSearchParams(navigation.search),
 }));
 
@@ -205,6 +212,7 @@ function envelope(data: unknown[], page: number, total: number) {
 
 beforeEach(() => {
   navigation.search = "";
+  navigation.pathname = "/";
   vi.clearAllMocks();
 });
 
@@ -539,5 +547,44 @@ describe("every booking queue keeps its pager mounted through a page change", ()
     expect(await screen.findByText("Showing 26–50 of 100")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Next page" })).toBe(next);
     expect(document.activeElement).toBe(next);
+  });
+});
+
+/**
+ * #5295: a replace to the address already shown is still a soft navigation,
+ * which drops the page's <title> until the server streams it back (#5155). Each
+ * panel opened at the address it would write replaces nothing; paging still
+ * writes the new address once.
+ */
+describe("every booking queue replaces the address only when it changes", () => {
+  const cases: Array<[string, string, () => ReactElement, unknown]> = [
+    ["booking approvals", "/api/admin/booking-reviews", () => <BookingApprovalsPanel />, booking],
+    ["change requests", "/api/admin/booking-change-requests", () => <BookingChangeRequestsPanel />, changeRequest()],
+    ["public requests", "/api/admin/booking-requests", () => <PublicBookingRequestsPanel />, publicRequest],
+  ];
+
+  it.each(cases)("%s: no replace when opened at its own address, one after paging", async (_name, route, panel, row) => {
+    installFetch({ [route]: (url) => envelope([row], Number(pageOf(url) ?? 1), 40) });
+
+    // The address the panel writes, learned from a render at another path.
+    const elsewhere = render(panel());
+    await waitFor(() => expect(navigation.replace).toHaveBeenCalled());
+    const own = new URL(navigation.replace.mock.calls.at(-1)![0] as string, "http://localhost");
+    expect(own.pathname).toBe(adminHref("booking-requests"));
+    elsewhere.unmount();
+    navigation.replace.mockClear();
+
+    navigation.pathname = own.pathname;
+    navigation.search = own.search.slice(1);
+    render(panel());
+    expect(await screen.findByText("Showing 1–25 of 40")).toBeInTheDocument();
+    expect(navigation.replace).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole("button", { name: "Next page" }));
+    expect(await screen.findByText("Showing 26–40 of 40")).toBeInTheDocument();
+    expect(navigation.replace).toHaveBeenCalledTimes(1);
+    const paged = new URL(navigation.replace.mock.calls[0][0] as string, "http://localhost");
+    expect(paged.pathname).toBe(own.pathname);
+    expect(paged.searchParams.get("page")).toBe("2");
   });
 });

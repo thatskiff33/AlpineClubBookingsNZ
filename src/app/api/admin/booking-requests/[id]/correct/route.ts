@@ -17,7 +17,7 @@ import { schoolChildCountsSchema } from "@/lib/admin-bookings-schemas/requests";
 import { schoolTeacherSchema } from "@/lib/school-booking-request";
 import { requireAdmin } from "@/lib/session-guards";
 import { transactionContendedResponse } from "@/lib/transaction-contended-response";
-import { nameField } from "@/lib/zod-helpers";
+import { nameField, noCrlf } from "@/lib/zod-helpers";
 import { requireRecentAuth } from "@/lib/require-recent-auth";
 
 /**
@@ -32,8 +32,6 @@ import { requireRecentAuth } from "@/lib/require-recent-auth";
  * `/api/admin/booking-requests` is `{ area: "bookings", level: "edit" }`, the
  * same gate price, hold, approve and decline sit behind.
  */
-
-const noCrlf = (value: string) => !/[\r\n]/.test(value);
 
 const schoolRecordAcknowledgementSchema = z.object({
   outcome: z.enum(["existing", "new"]),

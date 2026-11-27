@@ -4,6 +4,7 @@ import "@testing-library/jest-dom/vitest";
 import { fireEvent, render, screen, waitFor, within } from "@/lib/__tests__/support/club-time-render";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ChangeEvent, ReactNode } from "react";
+import { adminTabHref } from "@/lib/admin-hubs";
 
 /**
  * #4960 / INV-OPS-020: the cancellation and archive queues are each capped at
@@ -11,10 +12,15 @@ import type { ChangeEvent, ReactNode } from "react";
  * keeps its page in the URL, and the cancellation filter restarts at page 1.
  */
 
-const navigation = vi.hoisted(() => ({ search: "", replace: vi.fn() }));
+// One router for every render, as Next's is (#5295).
+const navigation = vi.hoisted(() => {
+  const replace = vi.fn();
+  return { search: "", pathname: "/", replace, router: { replace, push: vi.fn(), refresh: vi.fn() } };
+});
 
 vi.mock("next/navigation", () => ({
-  useRouter: () => ({ replace: navigation.replace, push: vi.fn(), refresh: vi.fn() }),
+  usePathname: () => navigation.pathname,
+  useRouter: () => navigation.router,
   useSearchParams: () => new URLSearchParams(navigation.search),
 }));
 vi.mock("next-auth/react", () => ({
@@ -96,6 +102,7 @@ let archiveUrls: URL[];
 beforeEach(() => {
   vi.clearAllMocks();
   navigation.search = "";
+  navigation.pathname = "/";
   cancellationUrls = [];
   archiveUrls = [];
   vi.stubGlobal(
@@ -153,6 +160,30 @@ describe("membership cancellation queue paging (#4960)", () => {
         { scroll: false },
       ),
     );
+  });
+
+  // #5295: a replace to the address already shown is a soft navigation that
+  // drops the page's <title> until the server streams it back (#5155).
+  it.each([
+    ["no query", ""],
+    ["a filter and pages", "status=COMPLETED&page=3&archivePage=2"],
+  ])("replaces nothing when opened at its own address (%s), once after a filter change", async (_label, search) => {
+    navigation.pathname = adminTabHref("membership-cancellations", "requests");
+    navigation.search = search;
+    render(<MembershipCancellationsPage />);
+
+    await screen.findByText(/Showing \d+–\d+ of 60/);
+    await screen.findByText(/Showing \d+–\d+ of 30/);
+    expect(navigation.replace).not.toHaveBeenCalled();
+
+    fireEvent.change(screen.getByLabelText("Filter requests"), { target: { value: "ALL" } });
+    await waitFor(() => expect(cancellationUrls.at(-1)!.searchParams.get("status")).toBe("ALL"));
+    await screen.findByText("Showing 1–25 of 60");
+    expect(navigation.replace).toHaveBeenCalledTimes(1);
+    const written = new URL(navigation.replace.mock.calls[0][0] as string, "http://localhost");
+    expect(written.pathname).toBe(navigation.pathname);
+    expect(written.searchParams.get("status")).toBe("ALL");
+    expect(written.searchParams.has("page")).toBe(false);
   });
 
   it("opens on the filter and pages the URL names", async () => {

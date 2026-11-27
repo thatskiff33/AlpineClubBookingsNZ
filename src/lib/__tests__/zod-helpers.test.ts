@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
-import { nameField } from "@/lib/zod-helpers";
+import { nameField, noCrlf } from "@/lib/zod-helpers";
 
 describe("nameField", () => {
   const schema = z.object({ firstName: nameField(), lastName: nameField() });
@@ -47,5 +47,19 @@ describe("nameField", () => {
   it("collapses multiple consecutive CR/LFs into a single space", () => {
     const result = schema.parse({ firstName: "A\r\n\r\n\nB", lastName: "C" });
     expect(result.firstName).toBe("A B");
+  });
+});
+
+describe("noCrlf", () => {
+  it("rejects a bare CR or a bare LF, not only a CRLF pair", () => {
+    expect(noCrlf("a\rb")).toBe(false);
+    expect(noCrlf("a\nb")).toBe(false);
+    expect(noCrlf("a\r\nBcc: x@example.com")).toBe(false);
+  });
+
+  it("accepts single-line text, including tabs and empty strings", () => {
+    expect(noCrlf("021 555 0101")).toBe(true);
+    expect(noCrlf("a\tb")).toBe(true);
+    expect(noCrlf("")).toBe(true);
   });
 });

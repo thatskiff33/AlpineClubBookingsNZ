@@ -1681,7 +1681,8 @@ capacity or double-booking violation.
   promises a row the writer would refuse for a reason it could have seen.
 - **A Booking Ref imports once per lodge**, across every batch: checked under
   the lodge lock and backed by the partial unique index on IMPORTED rows.
-- Proven by `booking-import-plan.test.ts` and `booking-import.realdb.test.ts`.
+- Proven by `booking-import-plan.test.ts`, `booking-import-plan-decisions.test.ts`
+  and `booking-import.realdb.test.ts`.
 
 ### INV-CAP-041
 

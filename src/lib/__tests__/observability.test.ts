@@ -88,7 +88,7 @@ vi.mock("node-cron", () => ({
   },
 }));
 
-// #3663: the three tasks of the 15-minute payments cycle, doubled so the leader
+// #3663: the tasks of the 15-minute payments cycle, doubled so the leader
 // test below can prove the cron leader reaches every one of them through the
 // shared payments runner (which is NOT doubled).
 const paymentsCycleTasks = vi.hoisted(() => ({

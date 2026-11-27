@@ -41,6 +41,7 @@ const router = { replace, push, refresh: vi.fn() };
 vi.mock("next/navigation", async () => {
   const { useMemo, useSyncExternalStore } = await import("react");
   return {
+    usePathname: () => "/",
     useRouter: () => router,
     useSearchParams: () => {
       const query = useSyncExternalStore(nav.subscribe, () => nav.query);

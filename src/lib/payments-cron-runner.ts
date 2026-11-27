@@ -25,17 +25,12 @@ import { drainOwedNewCaptureAlerts } from "@/lib/duplicate-capture-kept-alert-dr
 import { sweepVoidedCombinedGroupInvoiceCover, type CombinedCoverSweepResult } from "@/lib/member-money/doors";
 import { sweepOnceEverAlerts, type OnceEverAlertSweepResult } from "@/lib/admin-alert-once-sweep";
 import { runRecordedCronTask } from "@/lib/cron-recorded-task";
+import {
+  PAYMENTS_CRON_JOB_NAMES,
+  type PaymentsCronJobName,
+  type PaymentsCronTask,
+} from "@/lib/payments-cron-jobs";
 import { reportCronError } from "@/lib/observability-bridge";
-
-export type PaymentsCronJobName =
-  | "once-ever-alert-sweep"
-  | "payment-recovery"
-  | "internet-banking-hold-release"
-  | "xero-waiting-invoice-reaper"
-  | "late-capture-held-alert"
-  | "credit-release-asks"
-  | "duplicate-capture-kept-alert"
-  | "combined-invoice-cover-release";
 
 /** A task's result, or `null` when that task failed (its FAILURE row says why). */
 export interface PaymentsCronCycleResult {
@@ -83,33 +78,33 @@ export class PaymentsCronCycleError extends Error {
   }
 }
 
-async function runRecordedTask<K extends keyof PaymentsCronCycleResult>(
+async function runRecordedTask<K extends PaymentsCronTask>(
   result: PaymentsCronCycleResult,
   failures: PaymentsCronFailure[],
   task: {
-    jobName: PaymentsCronJobName;
     resultKey: K;
     failureMessage: string;
     work: () => Promise<NonNullable<PaymentsCronCycleResult[K]>>;
     summaryFor?: (taskResult: NonNullable<PaymentsCronCycleResult[K]>) => unknown;
   }
 ): Promise<void> {
+  const jobName = PAYMENTS_CRON_JOB_NAMES[task.resultKey];
   const outcome = await runRecordedCronTask({
-    jobName: task.jobName,
+    jobName,
     work: task.work,
     summaryFor: task.summaryFor,
     onFailure: (error) =>
       reportCronError({
-        tag: task.jobName,
+        tag: jobName,
         err: error,
         message: task.failureMessage,
-        context: { job: task.jobName },
+        context: { job: jobName },
       }),
   });
   if (outcome.ok) {
     result[task.resultKey] = outcome.result;
   } else {
-    failures.push({ jobName: task.jobName, message: outcome.message });
+    failures.push({ jobName, message: outcome.message });
   }
 }
 
@@ -165,57 +160,49 @@ export async function runPaymentsCronCycle(): Promise<PaymentsCronCycleResult> {
     creditReleaseAsks: null,
     duplicateCaptureKeptAlert: null,
     combinedInvoiceCoverRelease: null,
-  };
+  } satisfies Record<PaymentsCronTask, null>;
   const failures: PaymentsCronFailure[] = [];
 
   // #5255: first, so a claim it gives back is sent by this cycle's own tasks.
   await runRecordedTask(result, failures, {
-    jobName: "once-ever-alert-sweep",
     resultKey: "onceEverAlertSweep",
     failureMessage: "Failed to sweep once-ever admin alerts",
     work: () => sweepOnceEverAlerts(),
     summaryFor: onceEverAlertSweepSummary,
   });
   await runRecordedTask(result, failures, {
-    jobName: "payment-recovery",
     resultKey: "recovery",
     failureMessage: "Error in payment recovery cron",
     // #3653: the cron's run also reads pending organiser child refunds back.
     work: () => processPaymentRecoveryOperations({ reconcilePendingChildRefunds: true }),
   });
   await runRecordedTask(result, failures, {
-    jobName: "internet-banking-hold-release",
     resultKey: "internetBankingHoldRelease",
     failureMessage: "Failed to release expired Internet Banking payment holds",
     work: () => releaseExpiredInternetBankingHolds(),
     summaryFor: holdReleaseSummary,
   });
   await runRecordedTask(result, failures, {
-    jobName: "xero-waiting-invoice-reaper",
     resultKey: "xeroOutboxReap",
     failureMessage: "Failed to reap stale WAITING_PAYMENT Xero outbox operations",
     work: () => reapStaleWaitingPaymentXeroOutboxOperations(),
   });
   await runRecordedTask(result, failures, {
-    jobName: "late-capture-held-alert",
     resultKey: "lateCaptureHeldAlert",
     failureMessage: "Failed to re-announce held late-capture payments",
     work: () => reannounceHeldLateCaptures(),
   });
   await runRecordedTask(result, failures, {
-    jobName: "credit-release-asks",
     resultKey: "creditReleaseAsks",
     failureMessage: "Failed to run the credit-release payment sweep",
     work: () => runCreditReleaseAskSweep(),
   });
   await runRecordedTask(result, failures, {
-    jobName: "duplicate-capture-kept-alert",
     resultKey: "duplicateCaptureKeptAlert",
     failureMessage: "Failed to deliver owed kept-capture alerts",
     work: () => drainOwedNewCaptureAlerts(),
   });
   await runRecordedTask(result, failures, {
-    jobName: "combined-invoice-cover-release",
     resultKey: "combinedInvoiceCoverRelease",
     failureMessage: "Failed to sweep the combined group invoices' cover on void invoices",
     work: () => sweepVoidedCombinedGroupInvoiceCover(),

@@ -1113,8 +1113,10 @@ reported `document-title` on the Members page in every attempt, although the
 fixture already waits up to 2 seconds for a title (`settleTitle`) before it
 scans. That is the observed symptom. The likely cause, inferred and not
 reproduced in a browser, is that the page replaced its URL with the URL it was
-already on at mount, and that soft navigation dropped the `<title>`. The page
-no longer makes that no-op replace.
+already on at mount, and that soft navigation dropped the `<title>`. No admin
+list makes that no-op replace any more: Members and the other lists that keep
+their filters in the address share `useAdminListUrlSync`, which replaces only
+when the address shown differs (#5295).
 
 Before a spec leaves a page, assert three things: the URL, the page's own
 content in place of the loading skeleton (no `[data-route-loading]` left, and a

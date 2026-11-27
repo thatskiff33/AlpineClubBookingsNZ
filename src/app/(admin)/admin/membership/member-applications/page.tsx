@@ -1,7 +1,8 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useSearchParams } from "next/navigation";
+import { useAdminListUrlSync } from "@/hooks/use-admin-list-url-sync";
 import { FocusedActionError } from "@/components/focused-action-error";
 import { useActionAttention } from "@/hooks/use-scroll-to-feedback";
 import { Button } from "@/components/ui/button";
@@ -174,7 +175,6 @@ export default function MemberApplicationsPage() {
   // Approve/decline/refresh/replace all write membership-area routes; a
   // view-only membership admin browses applications but cannot act (#1997).
   const canEditMembership = useAdminAreaEditAccess("membership");
-  const router = useRouter();
   const searchParams = useSearchParams();
   const [filter, setFilter] = useState(() =>
     filterFromStatusParam(searchParams.get("status")),
@@ -225,9 +225,7 @@ export default function MemberApplicationsPage() {
     ? `${MEMBER_APPLICATIONS_HREF}?${currentQuery}`
     : MEMBER_APPLICATIONS_HREF;
 
-  useEffect(() => {
-    router.replace(currentPath, { scroll: false });
-  }, [currentPath, router]);
+  useAdminListUrlSync(currentPath);
 
   async function loadApplications(nextFilter = filter) {
     // A slower read for a page or filter the officer has left must not replace
