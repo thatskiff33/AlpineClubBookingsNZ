@@ -9946,6 +9946,8 @@ enum MemberMoneyExportDocumentRole {
   CAPTURE_RECEIPT
   /// #4525 (ALP-437): the organiser's combined group-settlement invoice, covering each child's whole components.
   COMBINED_GROUP_INVOICE
+  /// #4525 (ALP-753): an edit's credit note, covering the stay slice its edit (or review closure) returned.
+  MODIFICATION_CREDIT_NOTE
 }
 
 enum MemberMoneyExportOutcome {
