@@ -1,7 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
+import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import {
@@ -149,6 +150,12 @@ export function SubscriptionLockoutSettingsPanel({
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [forbidden, setForbidden] = useState(false);
+  const router = useRouter();
+  // The year-end month in effect when this page was drawn (#5259 review). The
+  // admin layout hands it to every season screen through `ClubSeasonProvider`,
+  // and Next keeps that layout across client navigation, so a save that moves
+  // it must re-render the layout or the season screens keep the old month.
+  const effectiveYearEndMonth = useRef<number | null>(null);
 
   useEffect(() => {
     async function load() {
@@ -208,6 +215,9 @@ export function SubscriptionLockoutSettingsPanel({
         const lockoutBody = lockoutRes?.ok ? await lockoutRes.json() : null;
         if (lockoutBody?.settings) {
           setSettings(lockoutBody.settings as LockoutSettings);
+        }
+        if (typeof lockoutBody?.financialYear?.effectiveMonth === "number") {
+          effectiveYearEndMonth.current = lockoutBody.financialYear.effectiveMonth;
         }
         if (lockoutBody) {
           setFeeScheduleItemCodes(
@@ -285,6 +295,14 @@ export function SubscriptionLockoutSettingsPanel({
         }
         if (lockoutBody.settings) {
           setSettings(lockoutBody.settings as LockoutSettings);
+        }
+        const savedYearEndMonth = lockoutBody.financialYear?.effectiveMonth;
+        if (
+          typeof savedYearEndMonth === "number" &&
+          savedYearEndMonth !== effectiveYearEndMonth.current
+        ) {
+          effectiveYearEndMonth.current = savedYearEndMonth;
+          router.refresh();
         }
         if (lockoutBody.feeScheduleItemCodes !== undefined) {
           setFeeScheduleItemCodes(

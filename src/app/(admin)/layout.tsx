@@ -26,7 +26,7 @@ import { getDefaultLodgeCapacity } from "@/lib/lodge-capacity";
 import { clubFormatValues } from "@/lib/club-format-server";
 import { CardPaymentsRefusedBanner } from "@/components/admin/card-payments-refused-banner";
 import { ClubSeasonProvider } from "@/components/club-season-provider";
-import { clubFinancialYearEndMonth } from "@/lib/financial-year-server";
+import { clubFinancialYearEndMonthForLayout } from "@/lib/financial-year-server";
 
 export default async function AdminLayout({
   children,
@@ -68,7 +68,8 @@ export default async function AdminLayout({
     : null;
   const showOnboardingWizard = guard.showOnboardingWizard;
   // The year-end month reaches every admin season picker and label as data
-  // (#5259; INV-OPS-013): `club-season-provider.tsx` has the reasoning.
+  // (#5259; INV-OPS-013): `club-season-provider.tsx` has the reasoning. The
+  // wait is bounded so a slow Xero read cannot hold every admin page.
   const [
     effectiveModules,
     theme,
@@ -82,7 +83,7 @@ export default async function AdminLayout({
     getDefaultLodgeCapacity(),
     getCachedClubIdentity(),
     clubFormatValues(),
-    clubFinancialYearEndMonth(),
+    clubFinancialYearEndMonthForLayout(),
   ]);
   const liveClubIdentity = { ...clubIdentity, lodgeCapacity };
 

@@ -14,7 +14,7 @@ import { bindClubSeason, type BoundClubSeason } from "@/lib/season-label";
  * connected Xero organisation. A browser reads neither (`INV-OPS-013`), and
  * `financial-year.ts`'s process cache is never seeded in one, so a client
  * screen that asked it got March whatever the club had set. The admin layout
- * awaits `clubFinancialYearEndMonth()` and mounts this provider with the result.
+ * awaits `clubFinancialYearEndMonthForLayout()` (bounded) and mounts this provider with the result.
  *
  * ## Mounted by the admin layout only
  *

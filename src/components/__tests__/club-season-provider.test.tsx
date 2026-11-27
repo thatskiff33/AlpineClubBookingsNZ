@@ -27,11 +27,11 @@ const mocks = vi.hoisted(() => ({
   auth: vi.fn(),
   headers: vi.fn(),
   memberFindUnique: vi.fn(),
-  clubFinancialYearEndMonth: vi.fn(),
+  clubFinancialYearEndMonthForLayout: vi.fn(),
 }));
 
 vi.mock("@/lib/financial-year-server", () => ({
-  clubFinancialYearEndMonth: mocks.clubFinancialYearEndMonth,
+  clubFinancialYearEndMonthForLayout: mocks.clubFinancialYearEndMonthForLayout,
 }));
 
 // What follows is the admin layout's own dependencies, stubbed as
@@ -145,12 +145,12 @@ describe("the admin layout", () => {
 
   it("hands its pages the server-resolved year-end", async () => {
     // The frozen 1 July 2026 starts a June club's season 2026.
-    mocks.clubFinancialYearEndMonth.mockResolvedValue(6);
+    mocks.clubFinancialYearEndMonthForLayout.mockResolvedValue(6);
 
     render(await AdminLayout({ children: <CurrentSeason /> }));
 
     expect(screen.getByText("2026 - 2027 (Jul-Jun)")).toBeTruthy();
-    expect(mocks.clubFinancialYearEndMonth).toHaveBeenCalledTimes(1);
+    expect(mocks.clubFinancialYearEndMonthForLayout).toHaveBeenCalledTimes(1);
   });
 });
 

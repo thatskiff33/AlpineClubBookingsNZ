@@ -35,7 +35,7 @@ vi.mock("next/headers", () => ({
 // The admin layout resolves the club's year-end for its season screens
 // (#5259); the real resolver reads settings and Xero, which no case here is about.
 vi.mock("@/lib/financial-year-server", () => ({
-  clubFinancialYearEndMonth: async () => 3,
+  clubFinancialYearEndMonthForLayout: async () => 3,
 }));
 
 vi.mock("next/link", () => ({

@@ -20,8 +20,10 @@ import type { ClubClock, ClubTimeZone } from "@/lib/club-time";
 import {
   DEFAULT_FINANCIAL_YEAR_END_MONTH,
   clubSeasonYear,
+  getFinancialYearEndMonth,
   setFinancialYearEndMonth,
 } from "@/lib/financial-year";
+import logger from "@/lib/logger";
 import {
   loadMembershipLockoutSettings,
   MEMBERSHIP_LOCKOUT_SETTINGS_ID,
@@ -52,6 +54,58 @@ export async function refreshFinancialYearConfig(): Promise<number> {
  * reseeds the process cache, as every request-path resolution does.
  */
 export const clubFinancialYearEndMonth = cache(refreshFinancialYearConfig);
+
+/**
+ * How long the admin layout waits for the year-end before drawing with the
+ * last value this process resolved (#5259 review). A cold Xero year-end cache
+ * makes the resolution a live read, which can queue behind another process's
+ * token-refresh lease for minutes; every admin page would queue with it.
+ */
+export const LAYOUT_YEAR_END_WAIT_MS = 2_000;
+
+const TIMED_OUT = Symbol("year-end wait timed out");
+
+/**
+ * {@link clubFinancialYearEndMonth} for the ADMIN LAYOUT, bounded to `waitMs`.
+ *
+ * Past the bound, or on a rejection, it returns `getFinancialYearEndMonth()`:
+ * the last month any resolution in this process seeded (March before the first).
+ * The stored resolution adds nothing here: an override never reaches Xero, so it
+ * cannot be what is slow, and with none set a connected club's month is not
+ * stored. The resolution keeps running and reseeds the process cache when it
+ * lands, so the next page draws with it. Routes keep the unbounded read: they
+ * decide money, and must not decide it on a stale month.
+ */
+export async function clubFinancialYearEndMonthForLayout(
+  waitMs: number = LAYOUT_YEAR_END_WAIT_MS,
+): Promise<number> {
+  const live = clubFinancialYearEndMonth();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<typeof TIMED_OUT>((resolve) => {
+    timer = setTimeout(() => resolve(TIMED_OUT), waitMs);
+  });
+  try {
+    const month = await Promise.race([live, timeout]);
+    if (month !== TIMED_OUT) return month;
+    // Keep the abandoned read from surfacing as an unhandled rejection.
+    live.catch(() => undefined);
+    const fallback = getFinancialYearEndMonth();
+    logger.warn(
+      { waitMs, fallbackMonth: fallback },
+      "Financial year-end resolution exceeded the admin layout's wait; using this process's last resolved month",
+    );
+    return fallback;
+  } catch (err) {
+    const fallback = getFinancialYearEndMonth();
+    logger.warn(
+      { err, fallbackMonth: fallback },
+      "Financial year-end resolution failed for the admin layout; using this process's last resolved month",
+    );
+    return fallback;
+  } finally {
+    clearTimeout(timer);
+  }
+}
 
 /**
  * The club's current season year, from its zone AND its resolved year-end: the
