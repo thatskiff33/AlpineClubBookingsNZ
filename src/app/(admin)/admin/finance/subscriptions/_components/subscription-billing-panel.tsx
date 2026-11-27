@@ -1,6 +1,7 @@
 "use client";
 
 import type { FamilyBillingMode } from "@prisma/client";
+import type { SubscriptionBillingAgeUpAdjustment } from "@/lib/membership-subscription-billing-types";
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { AlertTriangle, CheckCircle2, MailWarning, ReceiptText, RefreshCw } from "lucide-react";
 import { Alert } from "@/components/ui/alert";
@@ -40,6 +41,7 @@ type BillingData = {
     dueDays: number;
     totalCents: number;
     confirmationToken: string;
+    ageUpAdjustments?: SubscriptionBillingAgeUpAdjustment[];
     entries: Array<{
       key: string;
       // Exactly one of these two is populated per entry — a category entry
@@ -179,6 +181,7 @@ export function SubscriptionBillingPanel({ seasonYear }: { seasonYear: number })
   const selectionRef = useRef({ seasonYear, decisionDate });
   const xeroInvoicingOff = data?.xeroInvoicing?.enabled === false;
   const awaitingXeroCount = data?.xeroInvoicing?.awaitingXeroCount ?? 0;
+  const adjustments = data?.preview.ageUpAdjustments ?? [];
   // #4986: with Xero off the missing account mapping is not why nothing can be
   // invoiced, and the screen that sets it is hidden; the notice says why instead.
   const visibleItems = data
@@ -321,7 +324,7 @@ export function SubscriptionBillingPanel({ seasonYear }: { seasonYear: number })
     const withheldCount = data.preview.exceptions.length - warningCount;
     const decisionCount = data.preview.exceptions.filter((item) => isOfficerDecisionException(item.code ?? "")).length;
     const accepted = await confirm({
-      title: `Create ${data.preview.entries.length} annual membership charge${data.preview.entries.length === 1 ? "" : "s"}?`,
+      title: `Create ${data.preview.entries.length} annual membership charge${data.preview.entries.length === 1 ? "" : "s"}${adjustments.length ? ` and ${adjustments.length} age-group adjustment${adjustments.length === 1 ? "" : "s"}` : ""}?`,
       description: `${formatCents(data.preview.totalCents, format)} will be snapshotted. This creates durable Xero invoice work and cannot be undone by later fee or family changes. ${withheldCount} exception${withheldCount === 1 ? "" : "s"} will be recorded without invoicing${decisionCount > 0 ? `, ${decisionCount} of them needing your decision` : ""}.${warningCount > 0 ? ` ${warningCount} warning${warningCount === 1 ? "" : "s"} below: confirming invoices ${warningCount === 1 ? "that charge" : "those charges"}.` : ""}`,
       confirmLabel: "Confirm annual batch",
     });
@@ -413,7 +416,7 @@ export function SubscriptionBillingPanel({ seasonYear }: { seasonYear: number })
               <div><p className="text-xs text-muted-foreground">Needs your decision</p><p className="text-xl font-semibold tabular-nums">{needsDecision.length}</p></div>
               <div><p className="text-xs text-muted-foreground">Due</p><p className="text-xl font-semibold tabular-nums">{data.preview.dueDays} days</p></div>
             </div>
-            {data.preview.entries.length > 0 ? (
+            {data.preview.entries.length > 0 || adjustments.length > 0 ? (
               <div className="space-y-2">
                 {data.preview.entries.map((entry) => (
                   <div key={entry.key} className="rounded-md border p-3 text-sm">
@@ -442,6 +445,14 @@ export function SubscriptionBillingPanel({ seasonYear }: { seasonYear: number })
                     ) : null}
                   </div>
                 ))}
+                {adjustments.length > 0 && <section aria-label="Age-group adjustments" className="space-y-2">
+                  <h3 className="font-medium">Age-group adjustments</h3>
+                  <p className="text-sm text-muted-foreground">These top-ups and credits are additional to the annual charge total.</p>
+                  {adjustments.map((item) => <div key={item.key} className="rounded-md border p-3 text-sm">
+                    <div className="flex flex-wrap justify-between gap-2"><span>{item.kind === "CREDIT" ? "Credit" : "Top-up"} · {item.memberName}</span><span>{formatCents(item.amountCents, format)}</span></div>
+                    <p className="text-muted-foreground">{item.description}</p>
+                  </div>)}
+                </section>}
                 <ViewOnlyActionButton canEdit={canEditFinance} describeReason={false} type="button" onClick={() => void confirmBatch()} disabled={working || xeroInvoicingOff}>Confirm and queue annual batch</ViewOnlyActionButton>
               </div>
             ) : <Alert variant="info">No new charges are available for this preview. Existing immutable coverage is not regenerated.</Alert>}

@@ -133,6 +133,19 @@ function successResponse(body = payload()) {
 }
 
 describe("subscription billing panel", () => {
+  it("can confirm a credit even when there are no annual invoices to create", async () => {
+    const body = payload({ decisionDate: CLUB_TODAY });
+    Object.assign(body.preview, { entries: [], totalCents: 0, ageUpAdjustments: [{
+      key: "credit-1", kind: "CREDIT", amountCents: 1234, memberName: "Member Two", description: "Full membership (6 months)",
+    }] });
+    mocks.canEdit.mockReturnValue(true);
+    vi.stubGlobal("fetch", vi.fn(() => successResponse(body)));
+    render(<SubscriptionBillingPanel seasonYear={2026} />);
+    fireEvent.click(await screen.findByRole("button", { name: "Confirm and queue annual batch" }));
+    expect(screen.getByText(/Credit.*Member Two/)).toBeTruthy();
+    expect(mocks.confirm).toHaveBeenCalledWith(expect.objectContaining({ title: expect.stringContaining("1 age-group adjustment") }));
+  });
+
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.confirm.mockResolvedValue(false);
