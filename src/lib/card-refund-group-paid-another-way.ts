@@ -2,7 +2,6 @@ import "server-only";
 
 import {
   BookingEventType,
-  ManualRefundTaskKind,
   PaymentRecoveryOperationStatus,
   PaymentStatus,
   type PaymentSource,
@@ -14,6 +13,12 @@ import { createAuditLog } from "@/lib/audit";
 import { recordBookingEvent } from "@/lib/booking-events";
 import { bookingOwner } from "@/lib/booking-owner";
 import { formatBookingReference } from "@/lib/booking-reference";
+import {
+  groupCardRefundXeroQueued,
+  recordGroupCardRefundBankClose,
+  type GroupCardRefundCloseOperation,
+  type GroupCardRefundXeroQueued,
+} from "@/lib/card-refund-group-paid-another-way-xero";
 import {
   GROUP_CARD_REFUND_LEGACY_OTHER_LIVE,
   GROUP_CARD_REFUND_LEGACY_PLAN_MISMATCH,
@@ -31,27 +36,25 @@ import {
 } from "@/lib/card-refund-dead-row";
 import { deadRowClaimWhere, lockDeadCardRefundRow, type DeadCardRefundRowRefusals } from "@/lib/card-refund-dead-row-lock";
 import { PAID_ANOTHER_WAY_MARKER, postPaidAnotherWayLine } from "@/lib/card-refund-paid-another-way";
+import { paidAnotherWayXeroAuditFollowUp, paidAnotherWayXeroQueuedARow } from "@/lib/card-refund-paid-another-way-xero";
 import type { PaidBackChoice } from "@/lib/card-refund-paid-back";
 import { getClubFormat } from "@/lib/club-format-settings";
 import type { ClubFormat } from "@/lib/club-format";
+import type { ClubTimeZone } from "@/lib/club-time";
+import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
 import {
   applyLegacyGroupChildRefundMirror,
   recordLegacyGroupChildRefundRecovered,
 } from "@/lib/group-cancel";
 import { groupCancelInProgress } from "@/lib/group-cancel-in-progress";
-import {
-  alertGroupMirrorRefundXeroByHand,
-  applyGroupSettlementMirrorRefund,
-  GROUP_CANCEL_IN_PROGRESS_MESSAGE,
-} from "@/lib/group-settlement-mirror-hand-back";
+import { applyGroupSettlementMirrorRefund, GROUP_CANCEL_IN_PROGRESS_MESSAGE } from "@/lib/group-settlement-mirror-hand-back";
 import {
   deserializeRefundPlan,
   LEGACY_GROUP_REFUND_PAID_BY_BANK_NOTE,
   legacyGroupSettlementRefundUnsentCents,
 } from "@/lib/group-settlement-refund-plan";
 import logger from "@/lib/logger";
-import { cardRefundPaidAnotherWayOccurrenceKey } from "@/lib/manual-refund-task-settlement-rules";
-import { MANUAL_REFUND_TASK_REASON_MAX, normaliseManualPaymentNote } from "@/lib/manual-subscription-payment";
+import { normaliseManualPaymentNote } from "@/lib/manual-subscription-payment";
 import { isRefusedRefundStatus } from "@/lib/payment-transaction-status";
 import { findCombinedCardSettlementForChild } from "@/lib/organiser-child-refund";
 import {
@@ -69,6 +72,7 @@ import {
 import { prisma } from "@/lib/prisma";
 import { listRefundsForPaymentIntent } from "@/lib/stripe";
 import { formatCents } from "@/lib/utils";
+import { kickQueuedXeroOutboxOperationsIfConnected } from "@/lib/xero-operation-outbox";
 
 /**
  * #4851 (owner decision, 10 Nov 2026): PAID ANOTHER WAY FOR A DEAD REFUND OUT OF
@@ -88,6 +92,12 @@ import { formatCents } from "@/lib/utils";
  * `applyLocalRefundAllocation`, and no new `PaymentRefund` on the bank path.
  * The same lock and claim as the charge-backed close (`lockDeadCardRefundRow`,
  * `accept: "either-group"`, `deadRowClaimWhere`).
+ *
+ * #5267 (owner decision, 20 Nov 2026): a bank close credits Xero itself. Each
+ * joiner's invoice gets the bank-transfer refund note an ordinary close raises,
+ * queued in this transaction and keyed on the joiner's record
+ * (`card-refund-group-paid-another-way-xero.ts`); officers are no longer
+ * emailed to credit the group's invoice by hand.
  *
  * STATED LIMIT: a refund Stripe creates after this read can still sit beside
  * the bank payment. These rows are not on the paid-back-twice list.
@@ -122,6 +132,8 @@ export interface GroupCardRefundPaidAnotherWayResult {
   amountCents: number;
   /** What the close did, so the dialog can say it. */
   outcome: "recorded-stripe" | "bank" | "mirrors" | "closed";
+  /** #5267: what a bank close queued in Xero; `nothing` for every other outcome. */
+  xeroQueued: GroupCardRefundXeroQueued;
 }
 
 /** The settlement fields the close pre-reads and re-reads under the lock: one select, so the two cannot drift. */
@@ -221,13 +233,14 @@ export async function closeGroupCardRefundPaidAnotherWay(
   const refunds = await readRefunds(preview.paymentIntentId);
   const snap: Snap = { paymentIntentId: preview.paymentIntentId, settlement, refunds };
   const format = await getClubFormat();
+  // `INV-LOCK-004`: the club's zone, for the Xero notes' date, is read before the transaction.
+  const clubZone = await readClubTimeZoneOutsideRequest();
 
   const result = await prisma.$transaction(async (tx) => {
     const locked = await lockDeadCardRefundRow(tx, input.operationId, REFUSALS, "either-group");
     if (locked.operation.paymentIntentId !== snap.paymentIntentId) throw new DeadCardRefundActionError(CHANGED, 409);
-    const body = childKey
-      ? await closePerJoiner(tx, locked, snap, input, note, format)
-      : await closeLegacy(tx, locked, snap, input, format);
+    const close: CloseContext = { snap, input, note, format, clubZone, closedAt: new Date() };
+    const body = childKey ? await closePerJoiner(tx, locked, close) : await closeLegacy(tx, locked, close);
     // Every outcome is the officer's close of the row, so every one is audited under `payment` with its note.
     await createAuditLog(
       {
@@ -241,7 +254,7 @@ export async function closeGroupCardRefundPaidAnotherWay(
         category: "payment",
         severity: "important",
         outcome: "success",
-        summary: closeSummary(childKey ? "organiser-child" : "legacy-group", body.outcome),
+        summary: closeSummary(childKey ? "organiser-child" : "legacy-group", body),
         details: note,
         metadata: {
           operationId: locked.operation.id,
@@ -251,6 +264,7 @@ export async function closeGroupCardRefundPaidAnotherWay(
           outcome: body.outcome,
           amountCents: body.amountCents,
           organiserCard: true,
+          xeroQueued: body.xeroQueued,
           ...body.auditMetadata,
         },
       },
@@ -265,8 +279,11 @@ export async function closeGroupCardRefundPaidAnotherWay(
   for (const follow of result.legacyFollowUps) {
     await recordLegacyGroupChildRefundRecovered(follow);
   }
-  for (const alert of result.alerts) {
-    await alertGroupMirrorRefundXeroByHand({ ...alert, format, paidBy: "card" });
+  if (result.xeroRowsQueued > 0) {
+    // The notes' rows committed with the close: only the kick is left.
+    await kickQueuedXeroOutboxOperationsIfConnected({ limit: result.xeroRowsQueued }).catch((error: unknown) =>
+      logger.error({ err: error, operationId: result.operationId }, "Failed to kick the Xero outbox after a group card refund's paid-another-way close"),
+    );
   }
   return {
     operationId: result.operationId,
@@ -274,6 +291,7 @@ export async function closeGroupCardRefundPaidAnotherWay(
     paymentId: result.paymentId,
     amountCents: result.amountCents,
     outcome: result.outcome,
+    xeroQueued: result.xeroQueued,
   };
 }
 
@@ -293,16 +311,31 @@ async function perJoinerSettlement(paymentId: string, bookingId: string): Promis
 
 type Locked = Awaited<ReturnType<typeof lockDeadCardRefundRow>>;
 
+/** #5267: what a bank close's audit summary says it queued in Xero. */
+function bankCloseXeroSentence(kind: "organiser-child" | "legacy-group", queued: GroupCardRefundXeroQueued): string {
+  const whose = kind === "organiser-child" ? "the joiner's invoice" : "each joiner's invoice";
+  if (queued === "refund-note") return `A Xero refund credit note worded as a bank transfer is queued on ${whose}.`;
+  if (queued === "some-refund-notes") {
+    return "A Xero refund credit note worded as a bank transfer is queued on the invoice of each joiner whose booking has one; the others have no Xero invoice to credit.";
+  }
+  return kind === "organiser-child"
+    ? "The joiner's booking has no Xero invoice to credit, so no Xero refund credit note was queued."
+    : "No joiner's booking has a Xero invoice to credit, so no Xero refund credit note was queued.";
+}
+
 /** The audit row's summary for each outcome of the close. */
-function closeSummary(kind: "organiser-child" | "legacy-group", outcome: GroupCardRefundPaidAnotherWayResult["outcome"]): string {
+function closeSummary(kind: "organiser-child" | "legacy-group", body: Pick<CloseBody, "outcome" | "xeroQueued">): string {
   const what = kind === "organiser-child"
     ? "Group organiser's card refund Stripe gave up on"
     : "Old whole-group card refund Stripe gave up on";
-  switch (outcome) {
+  switch (body.outcome) {
     case "recorded-stripe":
       return `${what} closed: Stripe already had the refund, so it was recorded and nobody was paid again.`;
     case "bank":
-      return `${what} closed as paid by bank transfer. Officers credit the group's invoice in Xero by hand.`;
+      // A reversal's words are the ordinary close's own (`INV-PAY-151`).
+      return body.xeroQueued === "stripe-reversal-and-bank-note"
+        ? `${what} closed as paid by bank transfer${paidAnotherWayXeroAuditFollowUp(body.xeroQueued)}`
+        : `${what} closed as paid by bank transfer. ${bankCloseXeroSentence(kind, body.xeroQueued)}`;
     case "mirrors":
       return `${what} closed: the group's payment was already refunded, so only the joiners' refund records were finished.`;
     case "closed":
@@ -318,20 +351,33 @@ interface CloseBody {
   outcome: GroupCardRefundPaidAnotherWayResult["outcome"];
   finish: Parameters<typeof finishRecordedOrganiserChildRefund>[0] | null;
   legacyFollowUps: Parameters<typeof recordLegacyGroupChildRefundRecovered>[0][];
-  /** One by-hand Xero alert each (`alertGroupMirrorRefundXeroByHand`); `reference` names the record to find. */
-  alerts: { bookingId: string; taskId: string; refundCents: number; reference?: string }[];
+  /** #5267: what the bank close queued in Xero, and how many outbox rows it can run now. */
+  xeroQueued: GroupCardRefundXeroQueued;
+  xeroRowsQueued: number;
   /** Extra fields for the close's one audit row. */
   auditMetadata: Record<string, unknown>;
 }
 
-async function closePerJoiner(
-  tx: Prisma.TransactionClient,
-  locked: Locked,
-  snap: Snap,
-  input: GroupCardRefundPaidAnotherWayInput,
-  note: string,
-  format: ClubFormat,
-): Promise<CloseBody> {
+/** Everything a close reads outside its transaction, and the instant it closes at. */
+interface CloseContext {
+  snap: Snap;
+  input: GroupCardRefundPaidAnotherWayInput;
+  note: string;
+  format: ClubFormat;
+  clubZone: ClubTimeZone;
+  closedAt: Date;
+}
+
+const NOTHING_QUEUED = { xeroQueued: "nothing", xeroRowsQueued: 0 } as const;
+
+/** The row as the Xero plan reads it, on the organiser's intent the close checked. */
+function closeOperation(locked: Locked, snap: Snap): GroupCardRefundCloseOperation {
+  const { id, idempotencyKey, amountCents, allocationPlan } = locked.operation;
+  return { id, idempotencyKey, amountCents, allocationPlan, paymentIntentId: snap.paymentIntentId };
+}
+
+async function closePerJoiner(tx: Prisma.TransactionClient, locked: Locked, close: CloseContext): Promise<CloseBody> {
+  const { snap, input, note, format } = close;
   const { operation, payment, booking } = locked;
   if (operation.amountCents !== input.expectedOwedCents) throw new DeadCardRefundActionError(CHANGED, 409);
   const child = await tx.booking.findUnique({
@@ -381,7 +427,7 @@ async function closePerJoiner(
         format,
       },
       legacyFollowUps: [],
-      alerts: [],
+      ...NOTHING_QUEUED,
       auditMetadata: { stripeRefundId: refund.id },
     };
   }
@@ -408,29 +454,23 @@ async function closePerJoiner(
     if (error instanceof ManualBookingPaymentError) throw new DeadCardRefundActionError(error.message, 409);
     throw error;
   }
-  const record = await tx.manualRefundTask.create({
-    data: {
-      bookingId: booking.id,
-      paymentId: payment.id,
-      kind: ManualRefundTaskKind.CANCELLED_BOOKING_HAND_BACK,
-      occurrenceKey: cardRefundPaidAnotherWayOccurrenceKey(operation.id, { xeroRefundNote: "none" }),
-      amountCents: input.amountCents,
-      raisedAmountCents: input.amountCents,
-      status: "COMPLETED",
-      completedAt: new Date(),
-      completedByMemberId: input.actingMemberId,
-      note,
-      reason: `A refund to the group organiser on booking ${formatBookingReference(booking.id)} that Stripe gave up on was paid back by bank transfer (#4851).`.slice(
-        0,
-        MANUAL_REFUND_TASK_REASON_MAX,
-      ),
-    },
-    select: { id: true },
+  // #5267: the record, keyed as its plan says, and the joiner's note on it.
+  const record = await recordGroupCardRefundBankClose(tx, {
+    operation: closeOperation(locked, snap),
+    bookingId: booking.id,
+    paymentId: payment.id,
+    keyedBy: "row",
+    amountCents: input.amountCents,
+    note,
+    reason: `A refund to the group organiser on booking ${formatBookingReference(booking.id)} that Stripe gave up on was paid back by bank transfer (#4851).`,
+    actingMemberId: input.actingMemberId,
+    clubZone: close.clubZone,
+    closedAt: close.closedAt,
   });
   await postPaidAnotherWayLine(tx, {
     bookingId: booking.id,
     lodgeId: child.lodgeId,
-    taskId: record.id,
+    taskId: record.recordId,
     amountCents: input.amountCents,
     officerMemberId: input.actingMemberId,
   });
@@ -454,18 +494,14 @@ async function closePerJoiner(
     outcome: "bank",
     finish: null,
     legacyFollowUps: [],
-    alerts: [{ bookingId: operation.bookingId, taskId: record.id, refundCents: input.amountCents }],
-    auditMetadata: { manualRefundTaskId: record.id },
+    xeroQueued: record.xeroQueued,
+    xeroRowsQueued: paidAnotherWayXeroQueuedARow(record.xeroQueued) ? 1 : 0,
+    auditMetadata: { manualRefundTaskId: record.recordId },
   };
 }
 
-async function closeLegacy(
-  tx: Prisma.TransactionClient,
-  locked: Locked,
-  snap: Snap,
-  input: GroupCardRefundPaidAnotherWayInput,
-  format: ClubFormat,
-): Promise<CloseBody> {
+async function closeLegacy(tx: Prisma.TransactionClient, locked: Locked, close: CloseContext): Promise<CloseBody> {
+  const { snap, input, note, format } = close;
   const { operation } = locked;
   const current = await tx.groupBookingSettlement.findUnique({
     where: { id: snap.settlement?.id ?? groupSettlementIdForRefundRecoveryKey(operation.idempotencyKey) },
@@ -484,7 +520,7 @@ async function closeLegacy(
     bookingId: operation.bookingId,
     paymentId: locked.payment.id,
     finish: null,
-    alerts: [] as CloseBody["alerts"],
+    ...NOTHING_QUEUED,
     auditMetadata: {},
   };
 
@@ -519,27 +555,40 @@ async function closeLegacy(
   if (current.status === PaymentStatus.SUCCEEDED) {
     await flipSettlement(tx, current, total);
     const raised = await mirrorChildren(tx, current, "bank");
-    // #4851 review: the bank paid the whole plan, and the by-hand Xero alerts
-    // are one per raised mirror. If a plan child was skipped or capped, the
-    // alerts would ask for less credit than the bank paid, so roll it all back.
+    // #4851 review, #5267: the bank paid the whole plan, and the Xero notes are
+    // one per raised mirror. If a plan child was skipped or capped, the notes
+    // would credit less than the bank paid, so roll it all back.
     if (raised.reduce((sum, row) => sum + row.refundedCents, 0) !== total) {
       throw new DeadCardRefundActionError(GROUP_CARD_REFUND_LEGACY_PLAN_MISMATCH, 409);
     }
     // The note is the plan's record that its refund lines are bank refunds (`legacyGroupRefundPaidByBank`).
     await claimSucceeded(tx, operation, LEGACY_GROUP_REFUND_PAID_BY_BANK_NOTE);
+    // #5267: each joiner's record and note, for its share. The plan's refund
+    // line above is the joiner's bank refund, so the record posts none.
+    const records = [];
+    for (const row of raised) {
+      const record = await recordGroupCardRefundBankClose(tx, {
+        operation: closeOperation(locked, snap),
+        bookingId: row.child.id,
+        paymentId: row.paymentId,
+        keyedBy: "joiner",
+        amountCents: row.refundedCents,
+        note,
+        reason: `A group organiser's old whole-group card refund that Stripe gave up on was paid back by bank transfer; this is booking ${formatBookingReference(row.child.id)}'s share (#4851).`,
+        actingMemberId: input.actingMemberId,
+        clubZone: close.clubZone,
+        closedAt: close.closedAt,
+      });
+      records.push({ bookingId: row.child.id, manualRefundTaskId: record.recordId, amountCents: row.refundedCents, xeroQueued: record.xeroQueued });
+    }
     return {
       ...base,
       amountCents: total,
       outcome: "bank",
-      auditMetadata: { raised: raised.map((row) => row.child.id) },
+      xeroQueued: groupCardRefundXeroQueued(records.map((record) => record.xeroQueued)),
+      xeroRowsQueued: records.filter((record) => paidAnotherWayXeroQueuedARow(record.xeroQueued)).length,
+      auditMetadata: { raised: raised.map((row) => row.child.id), records },
       legacyFollowUps: [],
-      // No refund task on this path: the officer finds the given-up refund row, not a task.
-      alerts: raised.map((row) => ({
-        bookingId: row.child.id,
-        taskId: operation.id,
-        refundCents: row.refundedCents,
-        reference: `old whole-group card refund ${operation.id}`,
-      })),
     };
   }
 

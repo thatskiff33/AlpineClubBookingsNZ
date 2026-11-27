@@ -1424,7 +1424,7 @@ describe("the list on the stuck-states page", () => {
         settleKind: "organiser-child",
         owedCents: 15_000,
         wholeAmountOnly: true,
-        xeroRefundNote: "none",
+        xeroRefundNote: "now", // #5267: the joiner's invoice is credited, as the close will,
         tryCardAgainRefusal: null,
       }),
     ]);

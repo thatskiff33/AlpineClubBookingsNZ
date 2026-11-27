@@ -193,7 +193,7 @@ function stripeRefund(input: { id: string; intent: string; amount: number; key?:
             amountCents: CHILD_CENTS,
             source: "STRIPE",
             status: "SUCCEEDED",
-            // #5267: a card-paid group has one Xero invoice per joiner (`settleGroupBooking`).
+            // #5267: a card-paid group has one Xero invoice per joiner (`settleConfirmedChildrenAndNotify`).
             ...(options.invoiced ? { xeroInvoiceId: `inv-${group.payments[index]!}` } : {}),
           },
         });
@@ -452,7 +452,7 @@ function stripeRefund(input: { id: string; intent: string; amount: number; key?:
       ]);
       // The bank cash is the close's own: the nightly self-heal asks no card note for it, queued or failed.
       expect(await nightlyCardAskCents(group.payments[0]!)).toBe(0);
-      await prisma.xeroSyncOperation.update({ where: { id: notes[0]!.id }, data: { status: "FAILED", errorMessage: "Xero is down" } });
+      await prisma.xeroSyncOperation.update({ where: { id: notes[0]!.id }, data: { status: "FAILED", lastErrorMessage: "Xero is down" } });
       expect(await nightlyCardAskCents(group.payments[0]!)).toBe(0);
       // A failed note is an officer's to retry, as its own row: the retry re-runs that row, never a second.
       const failed = await prisma.xeroSyncOperation.findUniqueOrThrow({ where: { id: notes[0]!.id } });

@@ -737,7 +737,7 @@ describe("one row, one winner", () => {
 
 describe("the list", () => {
   it("lists a per-joiner row and a legacy row, including one with nothing unsent", async () => {
-    const child = dead();
+    const child = { ...dead(), payment: paymentRow("pay-1") };
     const legacyOpen = dead({ id: "op-legacy", idempotencyKey: LEGACY_ROW, bookingId: "org-booking" });
     const legacyDone = dead({ id: "op-done", idempotencyKey: "group_settlement_refund_recovery_settle-done", bookingId: "org-booking" });
     state.operations = [child, legacyOpen, legacyDone];

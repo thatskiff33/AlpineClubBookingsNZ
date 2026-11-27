@@ -323,6 +323,16 @@ export type PaidAnotherWayXeroQueued =
   | "nothing";
 
 /**
+ * Round 10: whether the close queued a row the outbox can run now - its note,
+ * or the receipt its note follows - so the close kicks the outbox after its
+ * commit. A note waiting on another invoice, or on an officer, queued nothing
+ * to run. #5267: the group card refund close asks it too (`INV-SSOT`).
+ */
+export function paidAnotherWayXeroQueuedARow(queued: PaidAnotherWayXeroQueued): boolean {
+  return queued === "refund-note" || queued === "stripe-reversal-and-bank-note" || queued === "receipt-then-refund-note";
+}
+
+/**
  * #3924 round 9: what the close's audit summary adds when its receipt reaches
  * Xero only through an officer's retry, so the record says what is left to do.
  */
