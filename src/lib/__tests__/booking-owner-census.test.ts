@@ -988,6 +988,11 @@ const UNROOTED_ORGANISATION_SELECTIONS: readonly string[] = [
   // `Prisma.BookingGetPayload<{ include: typeof … }>`, so it is compile-checked
   // against Booking, which declares `organisation`.
   "src/lib/booking-modify-validation.ts::organisation: { select: { name: true, email: true } },#0",
+  // #5433 PR 4: the booking every member notice of the confirm-pending job
+  // reads after its commit, `OWED_BOOKING_NOTICE_SELECT`, built with
+  // `Prisma.validator<Prisma.BookingSelect>()`, so it is compile-checked against
+  // Booking, which declares `organisation`.
+  "src/lib/booking-notice-unsent-alert.ts::organisation: { select: { name: true, email: true } },#0",
   // #4042, #3949: the owner-name select, moved out of the organiser hand-back to
   // be shared with the joiner cancel's organiser name. Verified by hand: written
   // through `Prisma.validator<Prisma.BookingSelect>()` and spread into

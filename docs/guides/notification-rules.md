@@ -61,6 +61,12 @@ The **Your authenticator was reset** email (#4618) is account-security mail,
 like the password-reset and email-change notices. It goes to the member whose
 authenticator and passkeys were reset, and no booking flag withholds it.
 
+The three "not sent" alerts, **Booking confirmation not sent**, **Waitlist
+email not sent** and **Booking email not sent** (#5433), are ordinary admin
+templates here. Each tells officers that an email a member was owed did not
+reach them and will not be sent automatically. Set one to *Do not email* and
+that email is still dropped, but nobody is told.
+
 ### Bulk email categories
 
 Delivery rules govern automated emails. Bulk email that an admin sends —
