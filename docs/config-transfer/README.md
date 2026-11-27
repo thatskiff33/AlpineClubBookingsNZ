@@ -48,7 +48,8 @@ deeper reference for what each category contains and the import safety model.
   on **Hut Fee Refunds**, is an **error** that disables Apply. A code the chart
   does not list, or any code while no chart is stored (Xero not connected, or
   the stored copy expired), is not judged, and a code the import leaves as
-  stored is not either. The bundle format is unchanged: the rule lives in
+  stored is not either. Each account mapping key may appear only once in the
+  CSV; a duplicate blocks Apply. The bundle format is unchanged: the rule lives in
   code, not in the bundle.
 - **Validation blocks apply:** every row is strictly validated at plan time —
   malformed dates, unknown enum values, non-integer/negative money, and

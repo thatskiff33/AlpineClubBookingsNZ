@@ -191,6 +191,14 @@ describe("an imported account code is the kind of account its mapping accepts (#
     expect(await planErrors([account("hutFeeRefunds", "429")], target({}).db)).toEqual([]);
   });
 
+  it.each(["merge", "overwrite"] as const)("refuses repeated account mapping keys in %s mode", async (mode) => {
+    const stored = account("hutFeeRefunds", "200");
+    const bundle = [account("hutFeeRefunds", "429"), stored];
+    expect(await planErrors(bundle, target({ accounts: [stored] }).db, mode)).toContain(
+      'xero-config/account-mappings.csv row 3: duplicate mapping key "hutFeeRefunds"',
+    );
+  });
+
   it("still holds a one-class mapping to its class: an expense account is refused for Hut Fees Income", async () => {
     expect(await planErrors([account("hutFeesIncome", "429")], target({}).db)).toEqual([
       "xero-config/account-mappings.csv: Hut Fees Income needs a revenue account, and the code chosen for it is an expense account in the connected Xero organisation.",

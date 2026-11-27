@@ -655,11 +655,17 @@ async function planXeroConfig(ctx: PlanContext): Promise<CategoryPlanResult> {
   const batch = await loadXeroBatch(ctx.db);
   // #4988: every account code as it would read once this bundle is applied.
   const codesAfterImport = new Map([...batch.accounts.values()].map(({ key, code }) => [key, code]));
+  const seenKeys = new Set<string>();
 
   readCsvRows(ctx.files, ACCOUNT_FILE).forEach((raw, i) => {
     const v = new RowValidator(ACCOUNT_FILE, i, errors);
     const key = v.required("key", raw.key);
     if (!v.ok) return;
+    if (seenKeys.has(key)) {
+      errors.push(`${ACCOUNT_FILE} row ${i + 2}: duplicate mapping key "${key}"`);
+      return;
+    }
+    seenKeys.add(key);
     const current = batch.accounts.get(key) ?? null;
     fingerprintParts.push(
       `xero-account-mapping:${key}:${current ? hashRow([...ACCOUNT_FIELDS], current) : "absent"}`,
