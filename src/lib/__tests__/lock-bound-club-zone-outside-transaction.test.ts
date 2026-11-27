@@ -499,6 +499,10 @@ const PRODUCTION_SOURCES: ReadonlyMap<string, string> = new Map(
  */
 const TRANSACTION_OPENERS = [
   "$transaction(",
+  // #5433 PR 4: the split guest link's re-issue runs its caller's `recordOwed`
+  // in its lodge-lock transaction (the owed link's recovery records the new
+  // link's marker there).
+  "prepareSplitGuestPaymentLinkReissue(",
   "withOptionalTransaction(",
   "withBoundedReadOnlyTransaction(",
   "withStoreTransaction(",

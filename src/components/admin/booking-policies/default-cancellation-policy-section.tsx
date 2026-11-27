@@ -28,10 +28,13 @@ import {
   usePolicyScopeOptions,
 } from "./policy-scope-select"
 import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access"
-import { ForbiddenSaveError, useSectionEditState } from "@/hooks/use-section-edit-state"
-import { ApiRefusalError, apiRefusalFromResponse } from "@/lib/api-error-message"
 import {
-  ADMIN_FORBIDDEN_SAVE_REASON,
+  saveErrorMessage,
+  saveRefusalFromResponse,
+  useSectionEditState,
+} from "@/hooks/use-section-edit-state"
+import { ApiRefusalError } from "@/lib/api-error-message"
+import {
   AdminViewOnlySectionBanner,
   ViewOnlyActionButton,
 } from "@/components/admin/view-only-action"
@@ -258,10 +261,7 @@ export function DefaultCancellationPolicySection() {
               }),
         }),
       })
-      if (!res.ok) {
-        if (res.status === 403) throw new ForbiddenSaveError()
-        throw await apiRefusalFromResponse(res, SAVE_FALLBACK)
-      }
+      if (!res.ok) throw await saveRefusalFromResponse(res, SAVE_FALLBACK)
       // The PUT echoes the stored partition back, so re-seed from THAT — the
       // route sorts and normalises the rules it persists.
       return toDraft(await res.json(), lodgeId)
@@ -392,19 +392,12 @@ export function DefaultCancellationPolicySection() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ rules: [], lodgeId: scopeLodgeId }),
       })
-      if (!res.ok) {
-        if (res.status === 403) {
-          section.setError(ADMIN_FORBIDDEN_SAVE_REASON)
-          return
-        }
-        const data = await res.json()
-        throw new Error(data.error || SAVE_FALLBACK)
-      }
+      if (!res.ok) throw await saveRefusalFromResponse(res, SAVE_FALLBACK)
       setCreatingOverride(false)
       await reload()
       section.setSuccess("Override removed — this lodge uses the club-wide rules")
     } catch (err) {
-      section.setError(err instanceof Error ? err.message : "Unknown error")
+      section.setError(saveErrorMessage(err, SAVE_FALLBACK))
     } finally {
       setRemovingOverride(false)
     }

@@ -18,7 +18,11 @@ import {
 } from "@/lib/redact-sensitive-json";
 import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access";
 import {
-  ADMIN_FORBIDDEN_SAVE_REASON,
+  saveErrorMessage,
+  saveRefusalFromResponse,
+} from "@/hooks/use-section-edit-state";
+import { apiRefusalFromResponse, refusalMessageOr } from "@/lib/api-error-message";
+import {
   AdminViewOnlySectionBanner,
   ViewOnlyActionButton,
 } from "@/components/admin/view-only-action";
@@ -30,6 +34,10 @@ import type {
 } from "@/lib/xero-record-types";
 import { useClubTime } from "@/components/club-time-provider";
 import { XeroFailureExplanation } from "@/components/admin/xero-failure-explanation";
+
+const LOAD_FALLBACK = "Failed to load Xero activity"
+const RETRY_FALLBACK = "Failed to retry Xero operation"
+const REPLAY_FALLBACK = "Failed to replay Xero inbound event"
 
 interface XeroRecordActivityPanelProps {
   localModel: string
@@ -226,15 +234,13 @@ export function XeroRecordActivityPanel({
       const res = await fetch(
         `/api/admin/xero/records/${encodeURIComponent(localModel)}/${encodeURIComponent(localId)}`
       )
+      if (!res.ok) throw await apiRefusalFromResponse(res, LOAD_FALLBACK)
       const payload = await res.json()
-      if (!res.ok) {
-        throw new Error(payload.error || "Failed to load Xero activity")
-      }
 
       setData(payload.data ?? null)
       setError(null)
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to load Xero activity")
+      setError(refusalMessageOr(err, LOAD_FALLBACK))
     } finally {
       setLoading(false)
       setRefreshing(false)
@@ -260,18 +266,13 @@ export function XeroRecordActivityPanel({
       const res = await fetch(`/api/admin/xero/operations/${operationId}/retry`, {
         method: "POST",
       })
-      if (res.status === 403) {
-        throw new Error(ADMIN_FORBIDDEN_SAVE_REASON)
-      }
+      if (!res.ok) throw await saveRefusalFromResponse(res, RETRY_FALLBACK)
       const payload = await res.json()
-      if (!res.ok) {
-        throw new Error(payload.error || "Failed to retry Xero operation")
-      }
 
       setMessage(payload.message || "Xero operation queued for background retry.")
       await loadActivity(false)
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to retry Xero operation")
+      setError(saveErrorMessage(err, RETRY_FALLBACK))
     } finally {
       setRetryingOperationId(null)
     }
@@ -286,18 +287,13 @@ export function XeroRecordActivityPanel({
       const res = await fetch(`/api/admin/xero/inbound-events/${eventId}/replay`, {
         method: "POST",
       })
-      if (res.status === 403) {
-        throw new Error(ADMIN_FORBIDDEN_SAVE_REASON)
-      }
+      if (!res.ok) throw await saveRefusalFromResponse(res, REPLAY_FALLBACK)
       const payload = await res.json()
-      if (!res.ok) {
-        throw new Error(payload.error || "Failed to replay Xero inbound event")
-      }
 
       setMessage(payload.message || "Xero inbound event replayed.")
       await loadActivity(false)
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to replay Xero inbound event")
+      setError(saveErrorMessage(err, REPLAY_FALLBACK))
     } finally {
       setReplayingInboundEventId(null)
     }
