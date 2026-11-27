@@ -62,9 +62,9 @@ import { useAdminQueuePage } from "@/components/admin/use-admin-queue-page";
  *  - the last capacity conflict, when an approval has already been kept pending.
  */
 
+const LOAD_FALLBACK = "Failed to load exception requests";
 // Keyed by the shared filter list (#5247), so a filter the queue route accepts
 // cannot reach the toolbar without a label: a new one fails typecheck here.
-const LOAD_FALLBACK = "Failed to load exception requests";
 const STATUS_FILTER_LABELS: Record<ExceptionQueueStatusFilter, string> = {
   REQUESTED: "Requested",
   APPROVED: "Approved",
