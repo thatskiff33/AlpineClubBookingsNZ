@@ -16,6 +16,7 @@ import {
 } from "@/lib/__tests__/support/club-time-render";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { ADMIN_FORBIDDEN_SAVE_REASON } from "@/components/admin/view-only-action";
 import { AiSpendCurrencyCard } from "../ai-spend-currency-card";
 
 const mocks = vi.hoisted(() => ({ canEdit: true as boolean | undefined }));
@@ -181,6 +182,37 @@ describe("the staged edit", () => {
     fireEvent.click(screen.getByTestId("spend-currency-save"));
     expect((await screen.findByTestId("spend-currency-error")).textContent).toBe(
       "Refused by the server.",
+    );
+  });
+});
+
+describe("a refused save the proxy answered (#5323)", () => {
+  async function saveAgainst(refusal: Response) {
+    vi.stubGlobal("fetch", makeFetch(UNSET_AUD, () => refusal));
+    render(<AiSpendCurrencyCard />);
+    fireEvent.click(await screen.findByTestId("spend-currency-edit"));
+    fireEvent.change(screen.getByTestId("spend-currency-input"), {
+      target: { value: "0.5" },
+    });
+    fireEvent.click(screen.getByTestId("spend-currency-save"));
+    return (await screen.findByTestId("spend-currency-error")).textContent;
+  }
+
+  it("shows the shared forbidden reason for an HTML 403", async () => {
+    expect(await saveAgainst(new Response("<html>Forbidden</html>", { status: 403 }))).toBe(
+      ADMIN_FORBIDDEN_SAVE_REASON,
+    );
+  });
+
+  it("keeps a worded 403's own sentence", async () => {
+    expect(
+      await saveAgainst(Response.json({ error: "Two-factor verification required" }, { status: 403 })),
+    ).toBe("Two-factor verification required");
+  });
+
+  it("shows the card's fallback for an HTML 502", async () => {
+    expect(await saveAgainst(new Response("<html>Bad gateway</html>", { status: 502 }))).toBe(
+      "The rate could not be saved. Try again shortly.",
     );
   });
 });
