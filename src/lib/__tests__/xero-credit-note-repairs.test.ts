@@ -82,7 +82,7 @@ vi.mock("@/lib/xero-error-alert", () => ({
 const logger = vi.hoisted(() => ({ error: vi.fn(), warn: vi.fn(), info: vi.fn(), debug: vi.fn() }));
 vi.mock("@/lib/logger", () => ({ default: logger }));
 
-import { repairRefundedPaymentBusinessState } from "@/lib/xero-inbound/credit-note-repairs";
+import { repairAccountCreditAllocationBusinessState, repairRefundedPaymentBusinessState } from "@/lib/xero-inbound/credit-note-repairs";
 import { decideLinkedRefundedTotalCents } from "@/lib/xero-inbound/linked-refunded-total";
 import { prisma } from "@/lib/prisma";
 import { resolveModificationRefundAmountsByPaymentId } from "@/lib/xero-inbound/modification-note-refunds";
@@ -1279,11 +1279,11 @@ describe("#4288: the claim and the re-read of the note's own row, under the Paym
   /** The recount's reads: the note's own refund-note row live on the payment, no other link. */
   const linkReads = (where: { xeroObjectId?: string; role?: string }) =>
     where.xeroObjectId === "cn-current" && where.role === "REFUND_CREDIT_NOTE" ? [NOTE_ROW("AUTHORISED")] : [];
-  /** The transaction's client: the row re-read under the lock answers `rowNow`. */
+  /** The transaction's client: the refund-note row re-read under the lock answers `rowNow`; the payment has no account-credit row (#4347). */
   function lockedTx(rowNow: () => unknown[], findFirst: () => unknown = () => ({ id: "pay-1" })) {
     const tx = {
       $executeRaw: vi.fn(async () => 1),
-      xeroObjectLink: { findMany: vi.fn(async () => rowNow()) },
+      xeroObjectLink: { findMany: vi.fn(async ({ where }: { where: { role?: string } }) => (where.role === "ACCOUNT_CREDIT_NOTE" ? [] : rowNow())) },
       payment: { findFirst: vi.fn(async () => findFirst()), updateMany: mocks.paymentUpdateMany },
     };
     return tx;
@@ -1411,6 +1411,126 @@ describe("#4288: the claim and the re-read of the note's own row, under the Paym
 // Stripe failed later keeps its note in Xero, so a later note's recount took it
 // again. The worked example: $100 paid, an $80 refund noted then failed, a later
 // $30 refund noted (the note being synced). What went back is $30.
+describe("#4347: an account-credit note counts from the payment's own account-credit row as it stands now", () => {
+  type Row = { localId: string; xeroObjectId: string; active: boolean; metadata: Record<string, unknown> };
+  const ACCOUNT_ROW = (status: string, total = 100): Row => ({ localId: "pay-1", xeroObjectId: "cn-current", active: true, metadata: { status, total } });
+  const REFUND_ROW = (status: string, total = 100): Row => ({ ...ACCOUNT_ROW(status, total) });
+  /** The $200 bank transfer that kept $100 as account credit. */
+  const BANK = () => payment({ source: PaymentSource.INTERNET_BANKING, amountCents: 20_000, refundedAmountCents: 10_000, status: PaymentStatus.PARTIALLY_REFUNDED });
+  let rows: { account: () => Row[]; refund: () => Row[] };
+  const reads = ({ where }: { where: { role?: unknown; xeroObjectId?: string } }) =>
+    where.xeroObjectId !== "cn-current" ? [] : where.role === "ACCOUNT_CREDIT_NOTE" ? rows.account() : where.role === "REFUND_CREDIT_NOTE" ? rows.refund() : [];
+  /** `unlocked` answers the reads before the Payment lock; `locked`, the re-read under it (the same by default). */
+  function lockedReads(locked?: typeof rows) {
+    mocks.transaction.mockImplementation(async (callback: (tx: unknown) => Promise<unknown>) => {
+      if (mocks.transaction.mock.calls.length > 5) throw new Error("the recount retried without bound");
+      const underLock = locked ?? rows;
+      return callback({
+        $executeRaw: vi.fn(async () => 1),
+        xeroObjectLink: { findMany: vi.fn(async ({ where }: { where: { role?: unknown } }) => (where.role === "ACCOUNT_CREDIT_NOTE" ? underLock.account() : underLock.refund())) },
+        payment: { findFirst: vi.fn(async () => ({ id: "pay-1" })), updateMany: mocks.paymentUpdateMany },
+      });
+    });
+  }
+  /** An older AUTHORISED reading of the note, its total deliberately not the row's. */
+  const repair = () =>
+    repairRefundedPaymentBusinessState({
+      creditNoteId: "cn-current",
+      creditNote: { status: "AUTHORISED", total: 999, appliedAmount: null, remainingCredit: null } as never,
+      directPaymentIds: ["pay-1"],
+      modificationRefundAmountsByPaymentId: new Map(),
+    });
+  const refundedWrites = () => mocks.paymentUpdate.mock.calls.map(([call]) => (call as { data: { refundedAmountCents?: number } }).data.refundedAmountCents);
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.paymentUpdate.mockResolvedValue({});
+    mocks.notifyXeroSyncError.mockResolvedValue(undefined);
+    mocks.paymentFindMany.mockResolvedValue([BANK()]);
+    mocks.xeroObjectLinkFindMany.mockImplementation(async (args: { where: { role?: unknown; xeroObjectId?: string } }) => reads(args));
+    rows = { account: () => [ACCOUNT_ROW("AUTHORISED")], refund: () => [] };
+    lockedReads();
+  });
+
+  it("MUTATION (fresh row): an older AUTHORISED reading after the void counts nothing - the $100 is not put back", async () => {
+    rows = { account: () => [ACCOUNT_ROW("VOIDED")], refund: () => [] };
+    lockedReads();
+    await repair();
+    // Before #4347 the recount counted the reading (AUTHORISED, $999 clamped to $200).
+    expect(refundedWrites()).toEqual([0]);
+  });
+
+  it("a live account-credit row counts its own recorded amount, never the reading's", async () => {
+    mocks.paymentFindMany.mockResolvedValue([payment({ ...BANK(), refundedAmountCents: 0, status: PaymentStatus.SUCCEEDED })]);
+    await repair();
+    expect(refundedWrites()).toEqual([10_000]);
+  });
+
+  it("MUTATION (dual role): a note the payment holds by both roles counts nothing once either row is voided", async () => {
+    rows = { account: () => [ACCOUNT_ROW("VOIDED")], refund: () => [REFUND_ROW("AUTHORISED")] };
+    lockedReads();
+    await repair();
+    expect(refundedWrites()).toEqual([0]);
+  });
+
+  it("a note the payment holds by both roles counts once, from the refund-note row, while both are live", async () => {
+    rows = { account: () => [ACCOUNT_ROW("AUTHORISED", 100)], refund: () => [REFUND_ROW("AUTHORISED", 80)] };
+    lockedReads();
+    mocks.paymentFindMany.mockResolvedValue([payment({ ...BANK(), refundedAmountCents: 0, status: PaymentStatus.SUCCEEDED })]);
+    await repair();
+    expect(refundedWrites()).toEqual([8_000]);
+  });
+
+  it("MUTATION (locked re-read): an account-credit row voided after the unlocked read writes nothing on that pass", async () => {
+    mocks.paymentFindMany.mockResolvedValue([payment({ ...BANK(), refundedAmountCents: 0, status: PaymentStatus.SUCCEEDED })]);
+    lockedReads({ account: () => [ACCOUNT_ROW("VOIDED")], refund: () => [] });
+    // Every pass reads the row live unlocked and voided under the lock: retried once, then handed back (#4095).
+    await expect(repair()).resolves.toEqual({ matchedPayments: 1, updatedPayments: 0, unsettledPaymentIds: ["pay-1"] });
+    expect(mocks.paymentUpdateMany).not.toHaveBeenCalled();
+  });
+});
+
+describe("#4347: the account-credit allocation repair posts nothing from a reading the note's row refused", () => {
+  const tx = {
+    $executeRaw: vi.fn(async () => 1),
+    xeroObjectLink: { findMany: vi.fn() },
+    memberCredit: { findUnique: vi.fn(), findMany: vi.fn(), create: vi.fn(), update: vi.fn(), updateMany: vi.fn(), aggregate: vi.fn() },
+    payment: { findUnique: vi.fn(), update: vi.fn() },
+    // The deallocation fence, the first read past the gate.
+    xeroSyncOperation: { findFirst: vi.fn(async () => { throw new Error("passed the gate"); }), findMany: vi.fn(async () => { throw new Error("passed the gate"); }) },
+  };
+  const reading = (status: string, updatedAt: string) => ({ status, providerUpdatedAt: updatedAt });
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    // No historical allocation link and no invoice link: the invoice resolves to the member's live payment by its id.
+    mocks.xeroObjectLinkFindMany.mockResolvedValue([]);
+    mocks.paymentFindMany.mockResolvedValue([{ id: "pay-live", bookingId: "booking-live", creditAppliedCents: 0, booking: { memberId: "member-1" } }]);
+    mocks.transaction.mockImplementation(async (callback: (client: unknown) => Promise<unknown>) => callback(tx));
+  });
+
+  it.each([
+    ["a stored void", { status: "VOIDED", providerUpdatedAt: "2026-06-30T12:00:00.000Z" }],
+    ["a newer stored live snapshot", { status: "PAID", providerUpdatedAt: "2026-06-30T12:00:00.000Z" }],
+  ])("MUTATION: %s refuses an older AUTHORISED reading's allocation, after the member's credit lock", async (_label, stored) => {
+    tx.xeroObjectLink.findMany.mockResolvedValue([{ metadata: stored }]);
+    const result = await repairAccountCreditAllocationBusinessState("cn-current", [{ invoiceId: "inv-live", amountCents: 10_000 }], reading("AUTHORISED", "2026-06-30T11:00:00.000Z"));
+    expect(result).toMatchObject({ matchedPayments: 1, skippedAllocations: 1, createdAppliedCredits: 0, updatedAppliedCredits: 0 });
+    // The lock is taken first; the row is read under it; nothing on the member's ledger is read or written.
+    expect(tx.$executeRaw).toHaveBeenCalledTimes(1);
+    expect(tx.xeroObjectLink.findMany).toHaveBeenCalledWith(expect.objectContaining({ where: expect.objectContaining({ role: "ACCOUNT_CREDIT_NOTE", xeroObjectId: "cn-current" }) }));
+    expect(tx.memberCredit.findMany).not.toHaveBeenCalled();
+    expect(tx.memberCredit.create).not.toHaveBeenCalled();
+  });
+
+  it("a current reading passes the gate and goes on toward the member's ledger", async () => {
+    tx.xeroObjectLink.findMany.mockResolvedValue([{ metadata: { status: "AUTHORISED", providerUpdatedAt: "2026-06-30T11:00:00.000Z" } }]);
+    await expect(
+      repairAccountCreditAllocationBusinessState("cn-current", [{ invoiceId: "inv-live", amountCents: 10_000 }], reading("AUTHORISED", "2026-06-30T11:00:00.000Z")),
+    ).rejects.toThrow("passed the gate");
+  });
+});
+
 describe("#4370: a card refund Stripe failed later is taken off the recount once", () => {
   type Reversal = { cents: number; active: boolean; status?: string };
   const FAILED_REFUND = "re_failed";

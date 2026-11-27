@@ -6,9 +6,13 @@
  */
 import { describe, expect, it } from "vitest";
 import {
+  isAccountCreditNoteLinkOf,
   judgedRefundNoteReading,
   judgeRefundNoteWrite,
+  keepStoredRefundNoteVoid,
+  readingIsCurrent,
   readRefundNoteSnapshotAt,
+  REFUND_NOTE_LINK_ROLES,
   REFUND_NOTE_SNAPSHOT_AT_KEY,
   withoutVoidedRefundNoteLinks,
   xeroCreditNoteSnapshotMetadata,
@@ -131,5 +135,76 @@ describe("withoutVoidedRefundNoteLinks (#4288 review 4)", () => {
   it("a payment's void in one role never drops its link in the other", async () => {
     const db = store([row("pay_1", "REFUND_CREDIT_NOTE", "VOIDED"), row("pay_1", "REFUND_REQUEST_CREDIT_NOTE", "AUTHORISED")]);
     expect(await withoutVoidedRefundNoteLinks("cn_1", [link("pay_1", "REFUND_REQUEST_CREDIT_NOTE")], db)).toEqual([link("pay_1", "REFUND_REQUEST_CREDIT_NOTE")]);
+  });
+});
+
+/**
+ * #4347 (`INV-ADDPAY-041`): a payment's account-credit note link is judged by
+ * the same rule through `keepStoredRefundNoteVoid`, which locks its row and
+ * re-reads it, but a kept write leaves its `active` flag as the row holds it
+ * and it is never one of the refund-note roles.
+ */
+describe("keepStoredRefundNoteVoid for a payment's account-credit note (#4347)", () => {
+  /** One locked row, as the funnel reads it under its lock. */
+  const client = (stored: { metadata: unknown; active: boolean } | null) =>
+    ({
+      xeroObjectLink: { createMany: async () => ({ count: 0 }), findUnique: async () => stored },
+      $executeRaw: async () => 1,
+    }) as never;
+  const accountLink = (metadata?: unknown, active?: boolean) => ({
+    localModel: "Payment", localId: "pay_1", xeroObjectType: "CREDIT_NOTE", xeroObjectId: "cn_1", role: "ACCOUNT_CREDIT_NOTE",
+    ...(metadata !== undefined ? { metadata, mergeMetadata: true } : {}), ...(active !== undefined ? { active } : {}),
+  });
+
+  it("MUTATION (role): void, then an older live reading: the stored void, stamp and active flag are kept", async () => {
+    const kept = await keepStoredRefundNoteVoid(client({ metadata: at("VOIDED", LATE), active: true }), accountLink(at("AUTHORISED", EARLY)));
+    expect(kept).toMatchObject({ active: true, metadata: at("VOIDED", LATE), mergeMetadata: true });
+  });
+
+  it("an older live reading, then the void: the void applies as written", async () => {
+    const link = accountLink(at("VOIDED", LATE));
+    expect(await keepStoredRefundNoteVoid(client({ metadata: at("AUTHORISED", EARLY), active: true }), link)).toBe(link);
+  });
+
+  it("between two live readings the older keeps the newer stored snapshot; a newer one applies", async () => {
+    expect(await keepStoredRefundNoteVoid(client({ metadata: at("PAID", LATE), active: true }), accountLink(at("AUTHORISED", EARLY))))
+      .toMatchObject({ active: true, metadata: at("PAID", LATE) });
+    const newer = accountLink(at("PAID", LATE));
+    expect(await keepStoredRefundNoteVoid(client({ metadata: at("AUTHORISED", EARLY), active: true }), newer)).toBe(newer);
+  });
+
+  it("with no timestamps a stored void still wins over a live reading", async () => {
+    expect(await keepStoredRefundNoteVoid(client({ metadata: at("VOIDED"), active: true }), accountLink(at("AUTHORISED"))))
+      .toMatchObject({ active: true, metadata: at("VOIDED") });
+  });
+
+  it("a status-less write keeps the stored void's status and the row's active flag, inactive or not", async () => {
+    expect(await keepStoredRefundNoteVoid(client({ metadata: at("VOIDED", LATE), active: true }), accountLink(undefined, true)))
+      .toMatchObject({ active: true, metadata: { status: "VOIDED" }, mergeMetadata: true });
+    expect(await keepStoredRefundNoteVoid(client({ metadata: at("VOIDED", LATE), active: false }), accountLink(undefined, true)))
+      .toMatchObject({ active: false, metadata: { status: "VOIDED" } });
+  });
+
+  it("a refund note's kept void is still written inactive: only the account-credit role keeps its stored flag", async () => {
+    const refund = { ...accountLink(at("AUTHORISED", EARLY)), role: "REFUND_CREDIT_NOTE" };
+    expect(await keepStoredRefundNoteVoid(client({ metadata: at("VOIDED", LATE), active: true }), refund)).toMatchObject({ active: false });
+  });
+
+  it("is a predicate of its own, never one of the refund-note roles", () => {
+    const link = accountLink();
+    expect(isAccountCreditNoteLinkOf(link)).toBe(true);
+    expect((REFUND_NOTE_LINK_ROLES as readonly string[]).includes(link.role)).toBe(false);
+    expect(isAccountCreditNoteLinkOf({ ...link, localModel: "BookingModification" })).toBe(false);
+    expect(isAccountCreditNoteLinkOf({ ...link, role: "MODIFICATION_ACCOUNT_CREDIT_NOTE" })).toBe(false);
+  });
+});
+
+describe("readingIsCurrent (#4447, #4347)", () => {
+  it("is current only when every stored snapshot would apply it", () => {
+    expect(readingIsCurrent(at("AUTHORISED", LATE), [at("AUTHORISED", EARLY), { amountCents: 100 }])).toBe(true);
+    expect(readingIsCurrent(at("AUTHORISED", EARLY), [at("AUTHORISED", EARLY), at("VOIDED", LATE)])).toBe(false);
+    expect(readingIsCurrent(at("AUTHORISED", EARLY), [at("PAID", LATE)])).toBe(false);
+    expect(readingIsCurrent(at("VOIDED", EARLY), [at("PAID", LATE)])).toBe(true);
+    expect(readingIsCurrent(at("AUTHORISED", EARLY), [])).toBe(true);
   });
 });

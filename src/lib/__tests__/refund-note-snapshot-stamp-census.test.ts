@@ -11,11 +11,14 @@
  * source file and:
  *
  * - finds each object literal that names `xeroObjectType: "CREDIT_NOTE"`, a
- *   refund-note `role`, or spreads a link (`...link`), and has a `metadata`
- *   object literal. If that metadata names `status` itself it must be a
- *   declared exception below, with the reason it is not a Xero reading;
- * - enumerates every site whose metadata is, or spreads, the builder, so a
- *   writer that stops using it fails here by name;
+ *   refund-note or (#4347) account-credit `role`, or spreads a link
+ *   (`...link`), and has a `metadata` object literal. If that metadata names
+ *   `status` itself it must be a declared exception below, with the reason it
+ *   is not a Xero reading;
+ * - enumerates every site whose metadata is, or spreads, the builder - on a
+ *   link literal or (#4347) a fragment spread into one
+ *   (`...(cond ? { metadata: builder(...) } : {})`) - so a writer that stops
+ *   using it fails here by name;
  * - fails any other source file that spells the stamp's key itself.
  *
  * `pnpm run test:related` CANNOT SELECT THIS FILE: it has no import edge to the
@@ -25,8 +28,9 @@
  *
  * - Metadata passed by variable or parameter (`metadata: noteLinkMetadata`,
  *   `metadata: params.metadata`, shorthand `metadata`). None carries a status
- *   today: the outbound create's link is status-less, and an inbound status
- *   always comes through the builder at the literal.
+ *   today: the outbound refund-note create's link is status-less, and an
+ *   inbound or (#4347) outbound account-credit status always comes through
+ *   the builder at the literal.
  * - A link literal that names its type and role only through variables or
  *   parameters (`xeroObjectType: params.type`, `role: params.role`) and spreads
  *   nothing whose text names a link.
@@ -52,6 +56,8 @@ const STAMPED_WRITERS: Record<string, number> = {
   // The inbound reconcile: an existing link of any role, the pointer's note,
   // an account-credit payment, and a pointer named only after the first pass.
   "src/lib/xero-inbound/credit-note.ts": 4,
+  // #4347: the outbound account-credit note, stamped with Xero's answer to its create.
+  "src/lib/xero-credit-notes.ts": 1,
   // The Stripe status recorder (#2901).
   "src/lib/xero-refund-note-status-recorder.ts": 1,
   // The hand-made note answer (#4162), stamped with the reading it checked.
@@ -87,8 +93,8 @@ function isBuilderCall(node: ts.Expression): boolean {
   return ts.isCallExpression(node) && ts.isIdentifier(node.expression) && node.expression.text === BUILDER;
 }
 
-/** The refund-note roles a link literal can name, as a string or by the request role's constant. */
-const REFUND_NOTE_ROLES = new Set(["REFUND_CREDIT_NOTE", "REFUND_REQUEST_CREDIT_NOTE", "REFUND_REQUEST_CREDIT_NOTE_ROLE"]);
+/** The judged note roles a link literal can name, as a string or by its constant: the refund-note roles and (#4347) the account-credit role. */
+const REFUND_NOTE_ROLES = new Set(["REFUND_CREDIT_NOTE", "REFUND_REQUEST_CREDIT_NOTE", "REFUND_REQUEST_CREDIT_NOTE_ROLE", "ACCOUNT_CREDIT_NOTE", "ACCOUNT_CREDIT_NOTE_ROLE"]);
 
 /**
  * A literal that is, or may be, a credit-note link: it names
@@ -110,16 +116,19 @@ function scanCode(relative: string, code: string): Finding[] {
       const find = (name: string) => node.properties.find((property) => propertyName(property) === name);
       const type = find("xeroObjectType");
       const metadata = find("metadata");
-      if (isCreditNoteLinkLiteral(node, type, find("role")) && metadata && ts.isPropertyAssignment(metadata)) {
+      const isLink = isCreditNoteLinkLiteral(node, type, find("role"));
+      if (metadata && ts.isPropertyAssignment(metadata)) {
         const line = source.getLineAndCharacterOfPosition(node.getStart()).line + 1;
         const value = metadata.initializer;
+        // #4347: the builder counts wherever it is a literal's `metadata`, so a
+        // fragment spread conditionally into a link is enumerated too.
         if (isBuilderCall(value)) {
           findings.push({ file: relative, line, kind: "builder", text: BUILDER });
         } else if (ts.isObjectLiteralExpression(value)) {
           const spreadsBuilder = value.properties.some((property) => ts.isSpreadAssignment(property) && isBuilderCall(property.expression));
           const status = value.properties.find((property) => propertyName(property) === "status");
           if (spreadsBuilder) findings.push({ file: relative, line, kind: "builder", text: BUILDER });
-          if (status) {
+          if (status && isLink) {
             const text = ts.isPropertyAssignment(status) ? status.initializer.getText(source) : "status";
             findings.push({ file: relative, line, kind: "status", text });
           }
@@ -180,6 +189,8 @@ describe("every credit-note link that records a Xero status stamps its UpdatedDa
 
   it.each([
     ["a refund-note role and no type", 'upsertXeroObjectLink({ role: "REFUND_CREDIT_NOTE", metadata: { status: note.status } });'],
+    ["the account-credit role and no type (#4347)", 'upsertXeroObjectLink({ role: "ACCOUNT_CREDIT_NOTE", metadata: { status: note.status } });'],
+    ["the account-credit role's constant (#4347)", "upsertXeroObjectLink({ role: ACCOUNT_CREDIT_NOTE_ROLE, metadata: { status: note.status } });"],
     ["the request role's constant", "upsertXeroObjectLink({ role: REFUND_REQUEST_CREDIT_NOTE_ROLE, metadata: { status: note.status } });"],
     ["a spread link", "upsertXeroObjectLink({ ...link, metadata: { status: note.status } });"],
     ["a spread normalised link", "return { ...normalizedLink, active: false, metadata: { status: note.status } };"],
@@ -187,6 +198,15 @@ describe("every credit-note link that records a Xero status stamps its UpdatedDa
     expect(undeclaredStatuses(scanCode("src/lib/probe.ts", code))).toEqual([
       "src/lib/probe.ts:1 records status note.status without its UpdatedDateUTC - spread xeroCreditNoteSnapshotMetadata(...) instead",
     ]);
+  });
+
+  it("MUTATION (#4347): an account-credit writer that drops the builder from its conditional fragment is no longer counted", () => {
+    const writer = (fragment: string) => `extraLinks: [{ xeroObjectType: "CREDIT_NOTE", role: linkRole, ...(isAccount ? ${fragment} : {}) }]`;
+    expect(scanCode("src/lib/probe.ts", writer("{ metadata: xeroCreditNoteSnapshotMetadata(createdNote), mergeMetadata: true }"))).toEqual([
+      { file: "src/lib/probe.ts", line: 1, kind: "builder", text: BUILDER },
+    ]);
+    // Without the timestamp: no builder found, so STAMPED_WRITERS' count for the file fails by name.
+    expect(scanCode("src/lib/probe.ts", writer("{ metadata: { total: createdNote.total }, mergeMetadata: true }"))).toEqual([]);
   });
 
   it("an unrelated literal with a status in its metadata is not a link", () => {
