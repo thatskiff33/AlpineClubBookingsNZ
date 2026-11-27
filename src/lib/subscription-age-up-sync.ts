@@ -12,16 +12,17 @@
  * never revived and a repeat sweep writes nothing.
  */
 import { Invoice } from "xero-node";
-import type { SubscriptionStatus } from "@prisma/client";
+import type { CalendarDate } from "@/lib/club-time";
 import { prisma } from "@/lib/prisma";
+import { determineSubscriptionStatus } from "@/lib/xero-subscription-invoice-status";
 
 const LIVE_CHARGE_STATUSES = ["QUEUED", "PROCESSING", "INVOICE_CREATED", "EMAIL_FAILED", "EMAILED", "CONFLICT"] as const;
 
 /** Map each changed invoice that is a top-up's to the adjustment; returns how many moved. */
 export async function syncAgeUpTopUpInvoices(
   invoices: readonly Invoice[],
-  /** `determineSubscriptionStatus`, judged against the club's today. */
-  judge: (invoice: Invoice) => SubscriptionStatus,
+  /** The club's today: the day an unpaid invoice is judged overdue against. */
+  today: CalendarDate,
 ): Promise<number> {
   const byId = new Map(
     invoices.filter((invoice) => invoice.invoiceID).map((invoice) => [invoice.invoiceID!, invoice]),
@@ -52,7 +53,7 @@ export async function syncAgeUpTopUpInvoices(
       moved += voided;
       continue;
     }
-    const status = judge(invoice);
+    const { status } = determineSubscriptionStatus(invoice, today);
     if (status === topUp.xeroInvoiceStatus) continue;
     const updated = await prisma.memberSubscriptionAgeUpAdjustment.updateMany({
       where: { id: topUp.id, status: "PENDING", xeroInvoiceStatus: topUp.xeroInvoiceStatus },

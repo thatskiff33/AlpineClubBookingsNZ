@@ -20,9 +20,9 @@ import {
 } from "@/lib/xero-api-client";
 import {
   findSubscriptionInvoice,
-  determineSubscriptionStatus,
   shouldBackfillMembershipStatus,
 } from "@/lib/xero-membership-sync";
+import { determineSubscriptionStatus } from "@/lib/xero-subscription-invoice-status";
 import { buildInvoiceLineItems } from "@/lib/xero-booking-invoices";
 import { retryXeroWriteWithContactRepair } from "@/lib/xero-contacts";
 import { Invoice } from "xero-node"

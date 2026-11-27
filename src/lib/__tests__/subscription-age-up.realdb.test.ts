@@ -539,23 +539,23 @@ let ageTierSettings: Awaited<ReturnType<(typeof import("@/lib/age-tier"))["getAg
         data: { xeroInvoiceId: invoiceId, status: "EMAILED" },
       });
       const invoice = (status: Invoice.StatusEnum) => ({ invoiceID: invoiceId, status }) as Invoice;
-      const judge = (xero: Invoice) => (xero.status === Invoice.StatusEnum.PAID ? "PAID" as const : "UNPAID" as const);
+      const today = clubTime.calendarDateOfDateOnlyInstant(RUN_DATE);
 
       // A top-up's invoice is never taken for the member's season invoice.
       const seasonInvoice = { invoiceID: `${PREFIX}invoice-season` } as Invoice;
       expect(await ageUpSync.withoutAgeUpTopUpInvoices([seasonInvoice, invoice(Invoice.StatusEnum.AUTHORISED)])).toEqual([seasonInvoice]);
 
-      expect(await ageUpSync.syncAgeUpTopUpInvoices([invoice(Invoice.StatusEnum.AUTHORISED)], judge)).toBe(1);
+      expect(await ageUpSync.syncAgeUpTopUpInvoices([invoice(Invoice.StatusEnum.AUTHORISED)], today)).toBe(1);
       expect((await written(ELLA)).adjustments[0]).toMatchObject({ status: "PENDING", xeroInvoiceStatus: "UNPAID" });
       // The same sweep again writes nothing.
-      expect(await ageUpSync.syncAgeUpTopUpInvoices([invoice(Invoice.StatusEnum.AUTHORISED)], judge)).toBe(0);
+      expect(await ageUpSync.syncAgeUpTopUpInvoices([invoice(Invoice.StatusEnum.AUTHORISED)], today)).toBe(0);
 
-      expect(await ageUpSync.syncAgeUpTopUpInvoices([invoice(Invoice.StatusEnum.VOIDED)], judge)).toBe(1);
+      expect(await ageUpSync.syncAgeUpTopUpInvoices([invoice(Invoice.StatusEnum.VOIDED)], today)).toBe(1);
       const voided = await written(ELLA);
       expect(voided.adjustments[0]).toMatchObject({ status: "VOIDED" });
       expect(voided.charges.find((charge) => charge.id === topUpChargeId)).toMatchObject({ status: "VOIDED" });
       // A later "paid" for the voided invoice does not revive it.
-      expect(await ageUpSync.syncAgeUpTopUpInvoices([invoice(Invoice.StatusEnum.PAID)], judge)).toBe(0);
+      expect(await ageUpSync.syncAgeUpTopUpInvoices([invoice(Invoice.StatusEnum.PAID)], today)).toBe(0);
       expect((await written(ELLA)).adjustments[0]).toMatchObject({ status: "VOIDED", xeroInvoiceStatus: "UNPAID" });
 
       const before = await counts();

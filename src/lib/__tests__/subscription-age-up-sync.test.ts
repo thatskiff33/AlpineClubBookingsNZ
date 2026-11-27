@@ -54,14 +54,14 @@ const db = vi.hoisted(() => ({
 
 vi.mock("@/lib/prisma", () => ({ prisma: db }));
 
+import { requireCalendarDate } from "@/lib/club-time";
 import { syncAgeUpTopUpInvoices, withoutAgeUpTopUpInvoices } from "@/lib/subscription-age-up-sync";
 
 const invoice = (invoiceID: string, status: Invoice.StatusEnum = Invoice.StatusEnum.AUTHORISED) =>
   ({ invoiceID, status }) as Invoice;
 
-/** The sweep's judge, reduced to the invoice status these tests set. */
-const judge = (xero: Invoice): SubscriptionStatus =>
-  xero.status === Invoice.StatusEnum.PAID ? "PAID" : "UNPAID";
+/** The club's today the sweep judges an unpaid invoice's due day against. */
+const TODAY = requireCalendarDate("2026-07-01");
 
 const chargeOf = (adjustment: AdjustmentRow) => store.charges.find((charge) => charge.id === adjustment.chargeId);
 
@@ -95,10 +95,10 @@ describe("syncAgeUpTopUpInvoices (#5190 PR 3)", () => {
   it("marks a top-up paid when its invoice is paid, and writes nothing on a repeat sweep", async () => {
     const paid = [invoice("inv-1", Invoice.StatusEnum.PAID)];
 
-    expect(await syncAgeUpTopUpInvoices(paid, judge)).toBe(1);
+    expect(await syncAgeUpTopUpInvoices(paid, TODAY)).toBe(1);
     expect(store.adjustments[0]).toMatchObject({ status: "PENDING", xeroInvoiceStatus: "PAID" });
 
-    expect(await syncAgeUpTopUpInvoices(paid, judge)).toBe(0);
+    expect(await syncAgeUpTopUpInvoices(paid, TODAY)).toBe(0);
     expect(db.memberSubscriptionAgeUpAdjustment.updateMany).toHaveBeenCalledTimes(1);
   });
 
@@ -106,27 +106,37 @@ describe("syncAgeUpTopUpInvoices (#5190 PR 3)", () => {
     store.adjustments.push({ id: "top-up-2", kind: "TOP_UP", status: "PENDING", chargeId: "charge-2", xeroInvoiceStatus: "UNPAID" });
     store.charges.push({ id: "charge-2", status: "EMAILED", xeroInvoiceId: "inv-2" });
 
-    expect(await syncAgeUpTopUpInvoices([invoice("inv-2", Invoice.StatusEnum.PAID), invoice("inv-season")], judge)).toBe(1);
+    expect(await syncAgeUpTopUpInvoices([invoice("inv-2", Invoice.StatusEnum.PAID), invoice("inv-season")], TODAY)).toBe(1);
 
     expect(store.adjustments.map((row) => row.xeroInvoiceStatus)).toEqual(["UNPAID", "PAID"]);
   });
 
   it("makes no read when no changed invoice has an id", async () => {
-    expect(await syncAgeUpTopUpInvoices([{ status: Invoice.StatusEnum.PAID } as Invoice], judge)).toBe(0);
+    expect(await syncAgeUpTopUpInvoices([{ status: Invoice.StatusEnum.PAID } as Invoice], TODAY)).toBe(0);
     expect(db.memberSubscriptionAgeUpAdjustment.findMany).not.toHaveBeenCalled();
   });
 
   it.each([Invoice.StatusEnum.VOIDED, Invoice.StatusEnum.DELETED])(
     "voids the adjustment and its charge when the invoice is %s, once",
     async (status) => {
-      expect(await syncAgeUpTopUpInvoices([invoice("inv-1", status)], judge)).toBe(1);
+      expect(await syncAgeUpTopUpInvoices([invoice("inv-1", status)], TODAY)).toBe(1);
       expect(store.adjustments[0]).toMatchObject({ status: "VOIDED" });
       expect(store.charges[0]).toMatchObject({ status: "VOIDED" });
 
       // A voided top-up is no longer PENDING, so the next sweep does not read it.
-      expect(await syncAgeUpTopUpInvoices([invoice("inv-1", status)], judge)).toBe(0);
+      expect(await syncAgeUpTopUpInvoices([invoice("inv-1", status)], TODAY)).toBe(0);
     },
   );
+
+  it("turns an unpaid top-up overdue once the club's today is past its due day, not on it", async () => {
+    const due = (dueDate: string) => ({ ...invoice("inv-1"), dueDate }) as Invoice;
+
+    expect(await syncAgeUpTopUpInvoices([due("2026-07-01")], TODAY)).toBe(0);
+    expect(store.adjustments[0]).toMatchObject({ xeroInvoiceStatus: "UNPAID" });
+
+    expect(await syncAgeUpTopUpInvoices([due("2026-06-30")], TODAY)).toBe(1);
+    expect(store.adjustments[0]).toMatchObject({ status: "PENDING", xeroInvoiceStatus: "OVERDUE" });
+  });
 
   it("MUTATION (status guard): never revives a top-up another sweep voided after this one read it", async () => {
     // This sweep read the top-up as PENDING; before it writes, the row is VOIDED.
@@ -134,7 +144,7 @@ describe("syncAgeUpTopUpInvoices (#5190 PR 3)", () => {
     store.adjustments[0]!.status = "VOIDED";
     store.charges[0]!.status = "VOIDED";
 
-    expect(await syncAgeUpTopUpInvoices([invoice("inv-1", Invoice.StatusEnum.PAID)], judge)).toBe(0);
+    expect(await syncAgeUpTopUpInvoices([invoice("inv-1", Invoice.StatusEnum.PAID)], TODAY)).toBe(0);
 
     expect(store.adjustments[0]).toMatchObject({ status: "VOIDED", xeroInvoiceStatus: "UNPAID" });
   });
@@ -144,7 +154,7 @@ describe("syncAgeUpTopUpInvoices (#5190 PR 3)", () => {
     store.staleRead = [{ ...store.adjustments[0]! }];
     store.adjustments[0]!.status = "VOIDED";
 
-    expect(await syncAgeUpTopUpInvoices([invoice("inv-1", Invoice.StatusEnum.VOIDED)], judge)).toBe(0);
+    expect(await syncAgeUpTopUpInvoices([invoice("inv-1", Invoice.StatusEnum.VOIDED)], TODAY)).toBe(0);
 
     expect(db.membershipSubscriptionCharge.updateMany).not.toHaveBeenCalled();
     expect(store.charges[0]).toMatchObject({ status: "EMAILED" });
@@ -155,7 +165,8 @@ describe("syncAgeUpTopUpInvoices (#5190 PR 3)", () => {
     store.staleRead = [{ ...store.adjustments[0]! }];
     store.adjustments[0]!.xeroInvoiceStatus = "PAID";
 
-    expect(await syncAgeUpTopUpInvoices([invoice("inv-1")], () => "OVERDUE")).toBe(0);
+    const overdue = { ...invoice("inv-1"), dueDate: "2026-06-30" } as Invoice;
+    expect(await syncAgeUpTopUpInvoices([overdue], TODAY)).toBe(0);
 
     expect(store.adjustments[0]).toMatchObject({ xeroInvoiceStatus: "PAID" });
   });
