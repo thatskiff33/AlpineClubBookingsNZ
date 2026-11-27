@@ -56,12 +56,14 @@ import { readXeroTaxRates } from "@/lib/xero-tax-rates";
  * need, outside any transaction (`INV-LOCK-004`; the config import's plan is
  * the stated exception, on `openingCreditsImportFindings`). The sender's own
  * refusal (`XeroTaxCategoryUnavailableError`, held by the outbox) stays the
- * backstop for what a screen cannot stop: a rate edited in Xero, or a reconnect
- * to another organisation. Refusal 1 holds against two saves at once, and
- * against a save beside a configuration import: the save re-checks it under
- * the key the import holds (`saveXeroAccountMappings`, #5391). A shared account
- * stored before that, or written straight to the database, is still reported by
- * the health check (`openingCreditsSharedAccountHealthProblem`).
+ * backstop for what a screen cannot stop: a rate edited in Xero, a reconnect
+ * to another organisation, or a mapping save racing an Exempt clear (refusals 2
+ * and 3 are each read before their own write and share no lock). Refusal 1
+ * holds against two saves at once, and against a save beside a configuration
+ * import: the save re-checks it under the key the import holds
+ * (`saveXeroAccountMappings`, #5391). A shared account stored before that, or
+ * written straight to the database, is still reported by the health check
+ * (`openingCreditsSharedAccountHealthProblem`).
  */
 
 type MappingCodeRow = { key: string; code: string | null };
@@ -312,11 +314,11 @@ export async function exemptClearRefusalWhileOpeningCreditsMapped(): Promise<str
  * The Xero health check's line for a state no screen refusal rules out
  * (`readXeroTaxHealth`; #5375 item 3): a registration scheduled after Opening
  * Credits was mapped (allowed by the owner's decision above), a rate edited in
- * Xero, or a reconnect. Null, or the line: Opening Credits is mapped, a
- * registered period applies today or is scheduled, and Exempt has no usable
- * rate in the connected organisation. Judged by #5209's rule. Rates that could
- * not be read are "not checked", which the health check already says, so only
- * a known fault is reported.
+ * Xero, a reconnect, or a mapping save racing an Exempt clear. Null, or the
+ * line: Opening Credits is mapped, a registered period applies today or is
+ * scheduled, and Exempt has no usable rate in the connected organisation.
+ * Judged by #5209's rule. Rates that could not be read are "not checked", which
+ * the health check already says, so only a known fault is reported.
  */
 export async function openingCreditsExemptHealthProblem({
   schedule,
