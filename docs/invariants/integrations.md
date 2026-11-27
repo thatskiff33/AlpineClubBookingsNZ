@@ -1017,31 +1017,31 @@ Pinned by `admin-alert-once-lost-cases.test.ts`, `admin-alert-once.test.ts`,
 
 An email a crash left `QUEUED` is sent again exactly once if it provably
 never reached the mail server, and flagged to officers otherwise; it is never
-sent twice (#5298, plan approved 27 Nov 2026).
+sent twice (#5298).
 
 - **The mark.** `recordEmailAttempt` writes `handoverState` `PENDING`. The
-  sender calls the mail server only after `claimEmailHandover`, one
-  `updateMany` from `PENDING` (and `QUEUED`) to `STARTED`; lost or unwritable,
-  it sends nothing (`handover_lost`). The retry job's claim writes `STARTED`.
-  Null is the previous release's row.
+  sender sends only after its `claimEmailHandover` (`PENDING` to `STARTED`)
+  wins; lost or unwritable, it sends nothing (`handover_lost`). Every sender
+  write is guarded on the row still being its own (`senderEmailRow`), as is a
+  failed replay's. Retry claims write `STARTED`; null marks old rows.
 - **The sweep.** `sweepStrandedQueuedEmails`, first in each 30-minute retry
-  run, takes up to 50 rows `QUEUED` 30 minutes (`strandedQueuedAfterMs`) to
-  7 days, each written once, guarded on the row as read. `PENDING` at attempts 1 with a body goes back to
-  `FAILED` and is replayed that run with the usual checks; without one it goes
-  to the retry ceiling. Anything else goes to the ceiling as `UNCONFIRMED`.
-  Both ceiling outcomes alert officers.
-- **Why never twice.** The mail server takes no idempotency key and reports
-  only bounces and complaints, so a `STARTED` row's delivery cannot be
-  checked. Only a row no sender claimed is re-sent, and the sender's claim and
-  the sweep's write race on one row, so one wins. An `UNCONFIRMED` row is sent
-  again only by an officer's **Try again**, which warns of a duplicate.
+  run, settles up to 50 rows `QUEUED` past `strandedQueuedAfterMs()` and
+  under 7 days, each guarded as read. `PENDING` at attempts 1 with
+  a body is replayed that run or, when the batch is full, a later one; a
+  caller-retried alert is released to its owner; without a body it goes to
+  the retry ceiling. Anything else goes there as `UNCONFIRMED`. Both
+  ceiling outcomes alert officers.
+- **Why never twice.** SES takes no idempotency key and reports only bounces
+  and complaints. Only a row no sender claimed is re-sent, and
+  the claim and the sweep race on one row. An `UNCONFIRMED` row is sent again
+  only by an officer's **Try again**, which warns of a duplicate.
 - **Callers.** `isLeftForTheEmailRetryJob` counts `handover_lost` as owed to
   the retry job; an `UNCONFIRMED` keyed email reads as told.
-- **No new lock** (`INV-LOCK-001`, `INV-LOCK-002`); in the writer index
-  (`INV-LOCK-003`).
-- **Known limits:** a row stranded over 7 days is left alone; a database fault
-  at the claim delays the email up to an hour; previous-release rows are only
-  flagged.
+- **No new lock** (`INV-LOCK-001`); in the writer index (`INV-LOCK-003`).
+- **Known limits:** rows over 7 days are left alone; old rows are only
+  flagged; a database fault at the claim leaves a body-kept
+  email late by up to a run past the threshold, a bodyless one flagged
+  "never sent", and an ambiguous commit flagged `UNCONFIRMED`.
 
 Pinned by `handover.test.ts`, `durable-email-idempotency.test.ts`,
 `cron-email-retry.test.ts`, `email-failure-review-queue.test.ts`,

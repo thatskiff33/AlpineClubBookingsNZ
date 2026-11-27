@@ -4398,8 +4398,11 @@ A `QUEUED` row a crash strands is settled by the retry job (#5298,
 `INV-INT-043`). `EmailLog.handoverState` records how far the send got: the
 sender writes `PENDING` with the row, and moves it to `STARTED` with one guarded
 `updateMany` (id, `QUEUED`, `PENDING`) before it calls the mail server; a lost
-or failed claim sends nothing (`handover_lost`). The retry job's own claim also
-writes `STARTED`. Null means the previous release wrote the row. Before it
+or failed claim sends nothing (`handover_lost`). Each other write the sender
+makes to its row is guarded on the row still being its own (`PENDING` before
+the claim, the claim's `STARTED` after it), so a sender that stalls past the
+threshold cannot undo the sweep. The retry job's own claim also writes
+`STARTED`, and its FAILED write after a failed replay is guarded on that claim. Null means the previous release wrote the row. Before it
 selects, each run takes up to 50 rows `QUEUED` for more than 30 minutes (or
 `replayInFlightWindowMs()` if longer) and less than 7 days, each with a write
 guarded on the row as read:
@@ -4407,6 +4410,9 @@ guarded on the row as read:
 - `PENDING` at attempts 1, body kept: back to `FAILED`, attempts unchanged, and
   replayed with its usual checks by the same run, or a later one when 50 older
   failures fill that run's batch;
+- `PENDING` at attempts 1, an alert its owner sends again when nobody got it
+  (`isCallerRetriedAlertTemplate`, #4669): released to that owner, `FAILED`
+  at attempts 1 with no body, and not sent by the retry job;
 - `PENDING` at attempts 1, no body: `FAILED` at the ceiling, "never sent";
 - anything else (`STARTED`, null, or attempts above 1): `FAILED` at the
   ceiling and `UNCONFIRMED`, never sent again automatically. A keyed email's

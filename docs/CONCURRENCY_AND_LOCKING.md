@@ -2886,8 +2886,17 @@ mispricing a booking.
   `src/lib/cron-email-retry.ts` (`retryFailedEmails`, sweep first). The sender
   moves its own `EmailLog` row from `handoverState` `PENDING` to `STARTED` with
   one `updateMany` guarded on id, `QUEUED` and `PENDING`, and calls the mail
-  server only if it won. The sweep settles a row `QUEUED` for 30 minutes or more with
-  one `updateMany` guarded on the row exactly as read (status, hand-over state,
+  server only if it won. Every other write the sender makes to its row
+  (`senderEmailRow`: the booking gate, suppression, environment gate, dev-mode,
+  SENT and FAILED writes) is guarded the same way: on `QUEUED` and `PENDING`
+  before the claim, on `STARTED` at the claim's `lastAttemptAt` after it, so a
+  sender that stalls past the threshold cannot write over a row the sweep has
+  settled. A failed replay's FAILED write is guarded on the row as the retry
+  job claimed it, for the same reason. The sweep settles a row whose
+  `lastAttemptAt` is strictly older than `strandedQueuedAfterMs()`, the
+  greater of 30 minutes and `replayInFlightWindowMs()` (up to about 110
+  minutes with the largest transport timeouts), with one `updateMany` guarded
+  on the row exactly as read (status, hand-over state,
   attempts, `lastAttemptAt`, and for a re-send a body kept), always moving it
   off `QUEUED`. Both take the one row's lock; PostgreSQL re-checks the loser's
   guard against the committed row, so it matches nothing: a late sender sends
@@ -2901,9 +2910,13 @@ mispricing a booking.
   writes the same `PENDING` row in its confirm transaction, then the sender
   claims as above), #4669's `releaseUnreceivedAlertCopies` (touches only
   `FAILED` rows at attempts 1; a sweep re-send keeps attempts at 1 and leaves
-  the body, so its count is unchanged) and #4963's Try again (a `FAILED` row
+  the body, so its count is unchanged; a stranded caller-retried alert is never
+  re-sent by the sweep but released the same way, `FAILED` at attempts 1 with
+  no body, because its owner sends it again, and `sendUnmuteableAdminAlert`
+  reports its lost hand-over as undelivered so that owner does) and #4963's Try again (a `FAILED` row
   at the ceiling; the next retry claim writes `STARTED`). Proved on PostgreSQL
-  by `stranded-queued-email.realdb.test.ts` (each order, behind a held row).
+  by `stranded-queued-email.realdb.test.ts` (each order, behind a held row; a
+  stalled sender resuming through the real `sendEmail`; two racing sweeps).
 
 #### Member photo writer (epic #171)
 

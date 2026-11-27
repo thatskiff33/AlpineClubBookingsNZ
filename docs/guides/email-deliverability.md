@@ -90,9 +90,11 @@ What you can do next depends on whether the system kept a copy of the message:
 
 **An email the app stopped while sending.** The app records each email just
 before it hands it to the mail server. If the app stops between the two (a
-crash, deploy or restart), the retry job finds the email within about an hour.
-If it had not reached the mail server, the retry job sends it, and you see
-nothing. Otherwise the row lands here, and every officer gets an email about
+crash, deploy or restart), the retry job finds the email within about an hour
+with the default mail settings (longer if the mail server timeouts have been
+raised, up to about two and a half hours). If it had not reached the mail
+server, the retry job sends it, and you see nothing. A payment or Stripe alert
+that its own feature sends again is left to that feature instead. Otherwise the row lands here, and every officer gets an email about
 it:
 
 - **May already have been delivered** on the row means the app stopped while
@@ -101,8 +103,9 @@ it:
   choose **Try again**: the confirmation warns that they may receive it twice.
   If they have it, choose **Archive**.
 - A failure reason starting **Never sent** means it never reached the mail
-  server and no copy was kept. Send a fresh one from the booking or member,
-  then archive the row.
+  server and no copy was kept. Some features send their email again by
+  themselves, so check the recipient has not had a newer copy, then send a
+  fresh one from the booking or member if needed, and archive the row.
 
 Emails the app stopped on more than seven days ago are not looked at.
 
