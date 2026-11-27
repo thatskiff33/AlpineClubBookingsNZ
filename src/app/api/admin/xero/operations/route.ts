@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
 import type { Prisma } from "@prisma/client";
-import { z } from "zod";
 import { requireAdmin } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma";
 import { resolveFailedXeroOperationStates } from "@/lib/xero-admin-failures";
@@ -12,7 +11,6 @@ import { buildLocalAdminUrl } from "@/lib/xero-record-links";
 import { isStaleRunningXeroOperation } from "@/lib/xero-stale-operations";
 import { refundNoteResolveShape, resolveCreditNotePrompt } from "@/lib/xero-resolve-refund-note";
 import { findSupersededRefundNoteRowIds } from "@/lib/xero-operation-resolve-guards";
-import { adminListPageField } from "@/lib/admin-list-page";
 import {
   endOfClubDayInclusive,
   requireCalendarDate,
@@ -20,23 +18,10 @@ import {
   type ClubTimeZone,
 } from "@/lib/club-time";
 import { clubTimeZone } from "@/lib/club-time/server";
-import { dateOnlyStringSchema } from "@/lib/date-only-schema";
+import { xeroOperationsQuerySchema } from "@/lib/admin-xero-sync-schemas";
+import { XERO_OPERATIONS_CONNECTION_SHAPE } from "@/lib/connection-shapes/finance-xero-sync";
+import { connectionJson } from "@/lib/mcp-connection-request";
 
-const querySchema = z.object({
-  status: z.string().optional().default("all"),
-  entityType: z.string().optional().default("all"),
-  direction: z.string().optional().default("all"),
-  localModel: z.string().trim().optional().default("all"),
-  localId: z.string().trim().optional().default(""),
-  operationType: z.string().trim().optional().default("all"),
-  resourceId: z.string().trim().optional().default(""),
-  createdFrom: dateOnlyStringSchema.optional(),
-  createdTo: dateOnlyStringSchema.optional(),
-  failureState: z.enum(["all", "ACTIVE", "REPAIRED", "SUPERSEDED"]).optional().default("all"),
-  limit: z.coerce.number().int().min(1).max(100).optional().default(25),
-  page: adminListPageField,
-  pageSize: z.coerce.number().int().min(1).max(100).optional(),
-});
 
 /**
  * An admin filter's `YYYY-MM-DD` bound as the instants that bracket that CLUB
@@ -61,7 +46,7 @@ function endOfInputDate(date: string, zone: ClubTimeZone) {
 export async function GET(request: NextRequest) {
   const guard = await requireAdmin();
   if (!guard.ok) return guard.response;
-  const parsed = querySchema.safeParse({
+  const parsed = xeroOperationsQuerySchema.safeParse({
     status: request.nextUrl.searchParams.get("status") ?? undefined,
     entityType: request.nextUrl.searchParams.get("entityType") ?? undefined,
     direction: request.nextUrl.searchParams.get("direction") ?? undefined,
@@ -175,7 +160,7 @@ export async function GET(request: NextRequest) {
       operations.filter((operation) => refundNoteResolveShape(operation).kind === "asks-number"),
     );
 
-    return NextResponse.json({
+    return connectionJson(request, {
       data: operations.map((operation) => ({
         ...operation,
         ...getXeroOperationRetryMeta(operation),
@@ -205,7 +190,7 @@ export async function GET(request: NextRequest) {
       hiddenFailedCount,
       page,
       pageSize,
-    });
+    }, XERO_OPERATIONS_CONNECTION_SHAPE);
   } catch (err) {
     logger.error({ err }, "Failed to load Xero sync operations");
     return NextResponse.json(

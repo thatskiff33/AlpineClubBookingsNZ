@@ -2,10 +2,12 @@
 import { fetchWithRecentAuth } from "@/components/confirm-its-you";
 
 import { adminHref } from "@/lib/admin-hubs";
+import { apiRefusalFromResponse, refusalMessageOr } from "@/lib/api-error-message";
 
 import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useSearchParams } from "next/navigation";
+import { useAdminListUrlSync } from "@/hooks/use-admin-list-url-sync";
 import { DiagnosticsRecordButton } from "@/components/help-widget/diagnostics-record-button";
 import { Badge } from "@/components/ui/badge";
 import { toast } from "sonner";
@@ -37,6 +39,7 @@ import { notifyAdminQueueChanged } from "@/lib/admin-queue-events";
 
 type ReviewFilter = "PENDING" | "APPROVED" | "REJECTED" | "ALL";
 
+const LOAD_FALLBACK = "Failed to load booking reviews";
 const reviewFilters = new Set<ReviewFilter>(["PENDING", "APPROVED", "REJECTED", "ALL"]);
 
 function isReviewFilter(value: string | null): value is ReviewFilter {
@@ -128,7 +131,6 @@ export function BookingApprovalsPanel({
    * data through `ClubTimeProvider` and is never read from the viewer's clock.
    */
   const clubTime = useClubTime();
-  const router = useRouter();
   const searchParams = useSearchParams();
   const initialFilter = searchParams.get(BOOKING_REQUESTS_STATUS_PARAM);
   const focusedBookingId = searchParams.get("bookingId");
@@ -184,10 +186,8 @@ export function BookingApprovalsPanel({
     setError("");
     try {
       const response = await fetch(`/api/admin/booking-reviews?status=${filter}&page=${page}`);
+      if (!response.ok) throw await apiRefusalFromResponse(response, LOAD_FALLBACK);
       const data = await response.json();
-      if (!response.ok) {
-        throw new Error(data.error || "Failed to load booking reviews");
-      }
       const rows: BookingReviewData[] = Array.isArray(data?.data) ? data.data : [];
       const pinned = await fetchOffPageQueueRecord("/api/admin/booking-reviews", "bookingId", focusedBookingId, rows);
       if (!isCurrent()) return true; // a newer read owns the list
@@ -197,7 +197,7 @@ export function BookingApprovalsPanel({
       return true;
     } catch (err) {
       if (!isCurrent()) return true;
-      setError(err instanceof Error ? err.message : "Failed to load booking reviews");
+      setError(refusalMessageOr(err, LOAD_FALLBACK));
       return false;
     } finally {
       if (isCurrent()) setLoading(false);
@@ -210,9 +210,7 @@ export function BookingApprovalsPanel({
     fetchBookings();
   }, [fetchBookings]);
 
-  useEffect(() => {
-    router.replace(currentPath, { scroll: false });
-  }, [currentPath, router]);
+  useAdminListUrlSync(currentPath);
 
   function showActionError(message: string) {
     setError(message);

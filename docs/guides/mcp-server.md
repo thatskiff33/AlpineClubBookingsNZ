@@ -125,14 +125,16 @@ disconnect them under **Connections**. An app on the member's own computer
   the website; the app can be disconnected on the profile at any time.
 - **For an officer only**, a fourth: as a club officer, the app can also see
   the club records their admin role gives them, such as other members'
-  bookings and details and the club's booking settings; with **View and
-  change** it can change them too, and it is told to ask first (owner
-  decision,
+  bookings and details, the club's booking settings, and the public
+  website's pages and settings; with **View and change** it can change them
+  too, and it is told to ask first (owner decision,
   [#5305](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/5305#issuecomment-7093303964)).
   Approving this screen is what lets the connection run officer actions
   (below). The wording is general on purpose, so one approval covers every
   admin area the officer holds, including areas added later (owner decision,
   [#5305](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/5305#issuecomment-7131483847)).
+  The public website's pages and settings were named when the Content
+  actions arrived, under that same decision.
 
 The screen refuses, with a reason and nothing shared, when the app or its
 return address is not registered or not approved, when the account is a lodge
@@ -311,7 +313,7 @@ against them, whatever officer roles they hold.
 | `confirm_family_member_details` | Saves the name and date of birth of a family member without a login; their phone and addresses are copied from the member's own profile. Answers with name, age group and profile state | destructive | `PUT /api/members/family/[memberId]/details` |
 | `get_member_guest_options` | Whether members can be added as guests, and found by name or only by exact email | read | `GET /api/members/guest-candidates` |
 | `search_members_for_guest` | Members whose name starts with what was typed, at most ten: id, name and age group. Only while the club has name search on | read | `GET /api/members/guest-candidates/search` |
-| `find_member_by_email` | The member, or household, with exactly this email: id, name and age group | read (a `POST` that changes no member's data) | `POST /api/members/guest-candidates/resolve` |
+| `find_member_by_email` | The member, or household, with exactly this email: id, name and age group; a `POST` that changes no member's data | read | `POST /api/members/guest-candidates/resolve` |
 | `get_my_partner_link` | The member's partner, pending partner requests, one-step candidates and any unclaimed emailed invitation (its id and expiry, not the address) | read | `GET /api/members/partner-link` |
 | `request_partner_link` | Asks a partner with a login, by email or family member id, to confirm. A family member without a login is declared on the website, because that confirms the partnership at once | write | `POST /api/members/partner-link` |
 | `end_partner_link` | Withdraws a pending request, ends a confirmed partnership (the other person is told) or cancels an unclaimed invitation | destructive | `DELETE /api/members/partner-link` |
@@ -454,10 +456,11 @@ no action names a school record, and re-running failed Xero work is left to
 the Finance actions (ALP-721).
 
 Withdrawing an extra payment request sits under a booking's address but moves
-money (it cancels the card request and retires the amount owing), so it is
-left to the Finance actions (ALP-721), like marking a booking paid (owner
-decision,
-[#5305](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/5305#issuecomment-7093303964)).
+money (it cancels the card request and retires the amount owing). It and
+marking a booking paid, which cancels the member's open card checkouts, both
+reach Stripe, so they stay on the website (`moves-money`; owner decision,
+[#5305](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/5305#issuecomment-7131138226),
+item 1).
 
 #### Bookings
 
@@ -705,6 +708,127 @@ email changes; bulk emails; overriding an induction to complete without its
 sign-offs; and the member page's drawn family tree, whose links
 `get_member` already gives.
 
+### Finance officer actions (ALP-721)
+
+An officer who holds the **Finance** admin area can do through a connected
+app what they can do on the finance screens, except what needs a fresh
+sign-in (refunds, card-refund resolutions, disconnecting Xero and the rest of
+`STEP_UP_ROUTES`), marking a booking paid and withdrawing an extra payment
+request (both reach Stripe), marking a member's subscription paid by hand or
+reversing that (it emails the member a receipt and changes their booking
+prices; owner decision,
+[#5305](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/5305#issuecomment-7200981104)),
+all three `moves-money`, and the club's Finance setup (see
+[What stays on the website](#what-stays-on-the-website-and-why)). Card entry
+stays in the browser.
+
+How an officer action works:
+
+- **It is offered only to someone holding the area at the route's level, on
+  a connection the officer approved for officer actions** (`INV-MCP-009`,
+  `McpGrant.officerConsentAt`). The approval screen's line is the general
+  one ("the club records your admin role gives you"), which takes in Finance
+  records, so no separate Finance approval is asked for.
+  `mcpActionAdminRequirement` reads the requirement from the admin route map
+  (`getAdminRouteRequirement`), or, for the `/api/finance` workspace, from the
+  entry's `requires`, which the census holds to the guard the route calls; so
+  the sync status, a read the workspace guards at edit, is an edit action.
+  `find_actions`, `describe_action`, `run_action` and the tool list all ask it,
+  so a Finance viewer is shown the reads other than the sync status, and an
+  officer without the area,
+  or a member, is shown none and is told the action does not exist.
+- **It runs with the officer's real permissions.** The call reaches the
+  route through the front door, the route's own guard (`requireAdmin`, or the
+  finance workspace's) decides, and two-officer rules hold: a credit
+  adjustment a connection requests still needs a different officer to approve.
+- **Officers' connections are off by default.** **Officers may connect an AI
+  app** must be switched on first (`INV-MCP-002`).
+- Every amount an app sends or reads is integer cents. The payments list's
+  amount boxes take dollars as typed, so `list_payments` does not offer them.
+
+All of these are reached through `find_actions`. Kinds follow the owner's
+rule ([#5305](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/5305#issuecomment-7092977781),
+decision 2): a change that notifies anyone, or changes a member's payment,
+refund, credit, invoice, subscription or Xero record (the app's stored copy
+included), is `destructive`, so the app always confirms first and the call is
+logged as important. Only `run_finance_sync` and
+`backfill_finance_monthly_facts`, which rebuild club-wide report figures, are
+`write`.
+
+**Payments, credits, refunds, subscriptions and reports**
+
+| Action | What it does | Kind | Route |
+| --- | --- | --- | --- |
+| `list_payments` | One page of booking payments with the filtered totals | read | `GET /api/admin/payments` |
+| `list_credit_adjustment_requests` | Manual credit adjustments waiting for, or given, a second officer's decision | read | `GET /api/admin/credit-approvals` |
+| `get_member_credits` | One member's credit balance, ledger and pending requests | read | `GET /api/admin/members/[id]/credits` |
+| `request_credit_adjustment` | Asks for a manual credit change in cents; nothing changes until another officer approves, and the requester cannot withdraw it | destructive | `POST /api/admin/members/[id]/credits` |
+| `review_credit_adjustment` | Approves or rejects one; the requester cannot decide their own | destructive | `PATCH /api/admin/members/[id]/credits/[requestId]` |
+| `list_opening_credit_batches` | The opening-credit batches posted so far | read | `GET /api/admin/opening-credits` |
+| `generate_payment_invoice` | Raises the missing Xero invoice for a payment | destructive | `POST /api/admin/payments/[id]/generate-invoice` |
+| `answer_bank_refund_void` | Records what an officer did about a voided bank refund note | destructive | `POST /api/admin/payments/bank-refund-voids/[id]/answered` |
+| `list_manual_refund_tasks` | Money owed back by hand | read | `GET /api/admin/payments/manual-refund-tasks` |
+| `list_refund_requests` | Members' refund requests and their figures | read | `GET /api/admin/refund-requests` |
+| `get_finance_report` | The finance report for a date range | read | `GET /api/admin/reports` |
+| `list_subscriptions` | Members' subscriptions and their status | read | `GET /api/admin/subscriptions` |
+| `get_subscription_billing` | The season's billing preview, charges and exceptions, headed by a summary (invoice count and total, by category or type, exemptions and problems) the app shows the officer before confirming | read | `GET /api/admin/subscription-billing` |
+| `refresh_subscription_billing` | Refreshes the preview and clears exceptions it no longer finds | destructive | `POST /api/admin/subscription-billing` (`REFRESH_PREVIEW`) |
+| `confirm_subscription_billing_batch` | Raises the season's subscription invoices from a preview | destructive | same (`CONFIRM_ANNUAL_BATCH`) |
+| `retry_subscription_charge` | Queues a charge's invoice again, raising it if it never was | destructive | same (`RETRY_CHARGE`) |
+| `close_paid_subscription_charge` | Closes a charge whose subscriptions are already paid | destructive | same (`CLOSE_ALREADY_PAID`) |
+| `mark_family_invoiced`, `unmark_family_invoiced` | Sets or clears a family's already-invoiced mark | destructive | same (`MARK_FAMILY_INVOICED`, `UNMARK_FAMILY_INVOICED`) |
+| `get_finance_booking_metrics` | The finance workspace's booking figures | read | `GET /api/finance/bookings/metrics` |
+| `get_finance_sync_status` | The finance sync's latest run and failures (Finance edit) | read | `GET /api/finance/sync/status` |
+| `run_finance_sync` | Runs the finance sync now; a connection gets the outcome as JSON, the browser keeps its redirect | write | `POST /api/finance/sync/run` |
+| `backfill_finance_monthly_facts` | Rebuilds the monthly figures from a month | write | `POST /api/finance/sync/backfill-monthly-facts` |
+
+Changing the club's billing settings (`UPDATE_SETTINGS` on the same route) is
+not offered: it is club setup. A large club's preview can be longer than an
+answer may be, so the answer opens with `summary`, read from the same preview,
+and the action tells the app to show it to the officer before confirming and
+never to confirm on a preview it received only in part.
+
+**Xero sync**
+
+| Action | What it does | Kind | Route |
+| --- | --- | --- | --- |
+| `get_xero_connection_status` | Whether Xero is connected; `probe` runs the cached live check | read | `GET /api/admin/xero/status` |
+| `get_xero_sync_health` | The health counts on the Xero screens | read | `GET /api/admin/xero/health` |
+| `get_xero_api_usage` | Today's Xero API use against the budget | read | `GET /api/admin/xero/usage` |
+| `list_xero_operations` | The sync queue | read | `GET /api/admin/xero/operations` |
+| `retry_xero_operation`, `requeue_xero_operation` | Runs one operation again | destructive | `POST /api/admin/xero/operations/[id]/retry`, `…/requeue` |
+| `mark_xero_operation_failed` | Marks a stuck running operation failed | destructive | `POST /api/admin/xero/operations/[id]/mark-failed` |
+| `mark_xero_operation_non_replayable` | Marks an operation as never to be replayed | destructive | `POST /api/admin/xero/operations/[id]/mark-non-replayable` |
+| `resolve_xero_operation` | Records that an operation was put right in Xero by hand | destructive | `POST /api/admin/xero/operations/[id]/resolve` |
+| `reset_stale_running_xero_operations` | Resets every stuck running operation | destructive | `POST /api/admin/xero/operations/reset-stale-running` |
+| `retry_all_failed_xero_operations` | Queues every active failed operation again | destructive | `POST /api/admin/xero/operations/retry-all` |
+| `list_xero_inbound_events` | Events Xero sent the site | read | `GET /api/admin/xero/inbound-events` |
+| `replay_xero_inbound_event` | Processes one again | destructive | `POST /api/admin/xero/inbound-events/[id]/replay` |
+| `get_xero_record_activity` | One record's Xero operations, links and events | read | `GET /api/admin/xero/records/[localModel]/[localId]` |
+| `sync_member_from_xero`, `sync_booking_from_xero`, `sync_club_from_xero` | Reads one member, one booking or the whole club from Xero now | destructive | `POST /api/admin/xero/sync-now` (`scope` fixed) |
+| `sync_xero_contacts` | Matches Xero contacts to members | destructive | `POST /api/admin/xero/sync-contacts` |
+| `sync_xero_memberships` | Refreshes membership statuses from Xero | destructive | `POST /api/admin/xero/sync-memberships` |
+| `force_sync_member_xero_contact`, `force_refresh_member_xero_membership` | Forces one member's contact (creating one if Xero has none) or membership status | destructive | `POST /api/admin/xero/force-sync` (`syncType` fixed) |
+| `force_sync_booking_xero_invoice` | Forces a paid booking's invoice into Xero, even beside one made by hand | destructive | same |
+| `run_xero_link_maintenance` | The nightly link backfill and clean-up, now | destructive | `POST /api/admin/xero/link-maintenance` |
+| `list_xero_tax_override_mismatches`, `resume_xero_tax_overrides` | Invoices whose GST Xero changed, with each line's sent and kept GST in cents, and resuming the club's GST overrides once they are checked | read, destructive | `GET /api/admin/xero/tax-override-pause`, `POST …/clear` |
+
+**Xero contacts and invoices**
+
+| Action | What it does | Kind | Route |
+| --- | --- | --- | --- |
+| `search_xero_contacts` | Finds Xero contacts by name or email, without their email addresses | read | `GET /api/admin/xero/search-contacts` |
+| `link_member_to_xero_contact`, `unlink_member_from_xero_contact` | Links or unlinks a member and a contact | destructive | `POST /api/admin/members/[id]/xero-link`, `…/xero-unlink` |
+| `create_xero_contact_for_member` | Creates a member's contact in Xero | destructive | `POST /api/admin/members/[id]/xero-push` |
+| `list_xero_cash_credits`, `refresh_xero_cash_credits` | Open overpayments and prepayments, and re-reading them | read, destructive | `GET`, `POST /api/admin/xero/cash-credits` |
+| `list_xero_contact_group_mismatches`, `resync_xero_contact_group_mismatches` | Members whose contact groups disagree, and re-reading them | read, destructive | `GET`, `POST /api/admin/xero/contact-group-mismatches` |
+| `list_xero_contact_link_mismatches`, `resync_xero_contact_link_mismatches` | Linked contacts that no longer match their member, and re-reading them | read, destructive | `GET`, `POST /api/admin/xero/contact-link-mismatches` |
+| `list_xero_duplicate_contacts` | Contacts that share an email, by name and invoice count | read | `GET /api/admin/xero/duplicate-contacts` |
+| `list_erased_member_xero_contacts`, `check_erased_member_xero_contacts` | Erased members' contacts left in Xero, and checking them there | read, destructive | `GET`, `POST /api/admin/xero/erased-member-contacts` |
+| `list_members_missing_xero_contacts` | Members with no Xero contact, and what a run would do | read | `GET /api/admin/xero/missing-contacts` |
+| `create_missing_xero_contacts` | Creates or links the reviewed ones | destructive | `POST /api/admin/xero/missing-contacts` |
+| `list_bookings_missing_xero_invoices`, `queue_missing_xero_invoices` | Paid bookings with no Xero invoice, and queueing them | read, destructive | `GET`, `POST /api/admin/xero/missing-invoices` |
+
 ### Lodge Operations officer actions (ALP-722)
 
 An officer who holds the **Lodge Operations** admin area can do through an AI
@@ -831,6 +955,83 @@ kiosk account ask for fresh proof.
 | `set_maintenance_report_sign_active` | Pause or resume a lodge's QR report sign | destructive | edit | `PATCH /api/admin/maintenance-reports/tokens` |
 | `get_food_order_settings` | Read the food-order settings | read | view | `GET /api/admin/food-orders/settings` |
 
+### Content (officer, ALP-723)
+
+An officer who holds the **Content** admin area can do through a connected app
+what they can do on that area's screens (pages, footer, banners, club identity,
+public fee and policy sections, the privacy page's hosting details, site style,
+mountain conditions and public images), except upload a file. Each action runs
+on the area's own route with the officer's real permissions
+([`catalogue/content.ts`](../../src/lib/mcp/catalogue/content.ts)): a **view**
+grant reaches the reads, an **edit** grant the changes too. Anyone without the
+area, or on a connection not approved for officer actions, is never shown these
+actions: a call on an unapproved connection is refused before the route is
+reached, and the route itself refuses anyone without the area. All are reached through
+`find_actions` except `list_site_pages` and `list_site_banners`.
+
+HTML an app sends (a page's header and body, a footer section) goes through the
+same sanitiser as the website's editor (`sanitizePageContentHtml`) before it is
+saved; the app path adds no second one. The single-page and footer reads send
+the stored HTML, because their saves replace it whole; the page list leaves it
+out, so a long page is never cut off mid-list and saved back half-empty.
+
+| Action | What it does | Kind | Route |
+| --- | --- | --- | --- |
+| **Pages, footer and banners** | | | |
+| `list_site_pages` | Every public page with its address, menu title and whether it is published; not its HTML, which can outgrow an app's answer. Listed as its own tool | read | `GET /api/admin/page-content` |
+| `get_site_page` | One page whole, with its stored HTML | read | `GET /api/admin/page-content` |
+| `create_site_page` | Adds a page, published at once with an empty body | destructive | `POST /api/admin/page-content` |
+| `update_site_page` | Replaces every field of a page, live on the site; a system page keeps its slug and menu order | destructive | `PUT /api/admin/page-content` |
+| `set_site_page_published` | Shows or hides a page the club added | destructive | `PATCH /api/admin/page-content` |
+| `delete_site_page` | Deletes a page the club added; names the pages and footer sections that still link to it | destructive | `DELETE /api/admin/page-content` |
+| `list_footer_sections` | The footer columns with their stored HTML | read | `GET /api/admin/site-content` |
+| `update_footer_section` | Replaces one footer column's HTML | destructive | `PUT /api/admin/site-content` |
+| `list_site_banners` | Current, upcoming and past banners. Listed as its own tool | read | `GET /api/admin/site-banners` |
+| `create_site_banner` | Adds a banner across the top of every public page for its dates | destructive | `POST /api/admin/site-banners` |
+| `update_site_banner` | Changes a banner's message, priority, dates or whether it shows | destructive | `PATCH /api/admin/site-banners/[id]` |
+| `delete_site_banner` | Deletes a banner | destructive | `DELETE /api/admin/site-banners/[id]` |
+| **Site settings and style** | | | |
+| `get_club_identity` | The club's name, short name, hut leader label, Facebook address, and the invoice legal name and postal address | read | `GET /api/admin/club-identity` |
+| `update_club_identity` | Replaces those settings | destructive | `PUT /api/admin/club-identity` |
+| `get_contact_page_role` | Which committee role the Contact page lists, and the roles to choose from | read | `GET /api/admin/club-contact` |
+| `set_contact_page_role` | Chooses that role | destructive | `PUT /api/admin/club-contact` |
+| `get_public_content_settings` | Which fee and policy sections the public pages show, where Book Now goes, and how committee photos are shown | read | `GET /api/admin/public-content-settings` |
+| `update_public_content_settings` | Replaces those settings, except how committee photos are shown, which stays as stored | destructive | `PUT /api/admin/public-content-settings` |
+| `get_privacy_hosting_disclosure` | The hosting company and data location the privacy page names | read | `GET /api/admin/privacy-hosting` |
+| `update_privacy_hosting_disclosure` | Sets them | destructive | `PUT /api/admin/privacy-hosting` |
+| `get_site_style` | Brand colours, fonts, custom CSS, which logo is in use and contrast warnings; never the inline logo's bytes | read | `GET /api/admin/site-style` |
+| `update_site_style` | Replaces the colours, fonts and custom CSS, all of which must be sent. Never writes the logo or completes setup | destructive | `PUT /api/admin/site-style` |
+| `get_mountain_conditions_report` | The stored ski field report, its source and its refresh pause | read | `GET /api/admin/mountain-conditions` |
+| `refresh_mountain_conditions_report` | Fetches the report from its source now, replacing the stored one | destructive | `POST /api/admin/mountain-conditions` |
+| `replace_mountain_conditions_report` | Saves a report by hand, with its own section choices, and pauses auto refresh for 12 hours | destructive | `PUT /api/admin/mountain-conditions` |
+| `update_mountain_conditions_settings` | Which sections the widget shows, or the report's source and selectors | destructive | `PATCH /api/admin/mountain-conditions` |
+| **Public images** | | | |
+| `list_image_folders` | The Image Manager's photo folders | read | `GET /api/admin/image-manager/directories` |
+| `create_image_folder` | Adds an empty photo folder | write | `POST /api/admin/image-manager/directories` |
+| `rename_image_folder` | Renames a folder; a page gallery naming the old one shows nothing until edited | destructive | `PATCH /api/admin/image-manager/directories` |
+| `delete_image_folder` | Deletes a folder and everything in it | destructive | `DELETE /api/admin/image-manager/directories` |
+| `list_folder_photos` | The photos in one folder, with their public addresses | read | `GET /api/admin/image-manager/images` |
+| `delete_folder_photo` | Deletes one photo and its website-sized copies | destructive | `DELETE /api/admin/image-manager/images` |
+| `list_library_images` | The images uploaded for pages, a page at a time; never members' photos | read | `GET /api/admin/image-library` |
+| `delete_library_image` | Deletes a library image; names the pages that still show it | destructive | `DELETE /api/admin/image-library/[id]` |
+| `list_branding_images` | The branding images that ship with the site | read | `GET /api/admin/site-images` |
+
+Kinds follow the owner's rule (#5305): every Content change shows on the public
+website at once, replacing what another officer may have written, and is a
+club-wide configuration change (comment 7111359405), so it is `destructive`.
+Only adding an empty photo folder is a `write`: it shows nothing until a photo
+is uploaded into it on the website.
+
+What stays on the website in this area: uploading photos into a folder, an
+image into the page image library, and the site logo (each is a file from the
+officer's browser); finishing the site setup wizard; and choosing whether, and how, the
+public committee roster shows members' photos. Turning photos on publishes
+committee members' photos on public pages, which widens what others see of
+members (the spirit of the D-18 `privacy-posture` rule), so an officer makes
+that change on the website. The app's save leaves it as stored, and the route
+refuses the field from a connection (lane decision on PR #5487, owner to
+confirm).
+
 ## What stays on the website, and why
 
 Every route method that is not an action has a stated reason
@@ -838,7 +1039,10 @@ Every route method that is not an action has a stated reason
 reasons are permanent — those routes are never actions:
 
 - **Fresh proof** — anything on the fresh-proof list (`STEP_UP_ROUTES`), which
-  asks an officer to prove who they are again. Only the website can do that.
+  asks an officer to prove who they are again, and the few handlers that ask
+  for it themselves without being on that list (the opening-credit CSV
+  preview, confirm and reverse). Only the website can do that; the census
+  finds every handler that calls `requireRecentAuth`.
 - **Sign-in and connections** — signing in, and approving, listing or ending AI
   app connections, and the club's AI settings. A connection can never manage
   connections or widen what they may do.
@@ -891,6 +1095,16 @@ reasons are permanent — those routes are never actions:
   clear them unseen. So too pricing a food order or ticking its items
   received (a connection reads only its member's own food orders, ALP-796),
   and saving the food-order settings, whose officer address is never sent.
+- **Club setup** — the Finance area's setup: the bank account members pay
+  into, fees, tax settings, finance-report and Xero account, item-code and tax
+  mappings, Xero contact grouping rules, integration credentials, and
+  connecting Xero, Stripe, Google, MiroTalk, analytics and the Alpine Central
+  Server, including the one-off member import from Xero. A recorded exception
+  to the rule that an officer area's configuration is an action
+  ([#5305](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/5305#issuecomment-7131138226),
+  item 4).
+- **Service exports** — the old finance dashboard's bookings export, which
+  another system collects with its own shared key.
 
 Officer areas add their own permanent reasons:
 
@@ -908,8 +1122,8 @@ Officer areas add their own permanent reasons:
 - **Switched off** — a route that only answers that it is switched off.
 
 Every member route is an action or has one of these reasons. The remaining
-officer routes, outside Bookings & Beds, Membership and Lodge Operations, are
-**not yet**: each names the officer stage that will bring it in.
+officer routes, outside Bookings & Beds, Membership, Lodge Operations and
+Content, are **not yet**: each names the officer stage that will bring it in.
 
 ## Risks and limits
 
@@ -946,10 +1160,11 @@ actions, exactly as a member's does. `preview_cancel_booking` and
 officer's own (`INV-MCP-006`).
 
 It also reaches the officer actions for each admin area the officer holds,
-starting with Bookings & Beds (ALP-719), Membership (ALP-720) and Lodge
-Operations (ALP-722); the other areas follow. Whatever the officer asks about
-through those, such as another member's bookings, record, family links,
-applications, requests, inductions or committee roles, or the names on a chore
+starting with Bookings & Beds (ALP-719), Membership (ALP-720), Finance
+(ALP-721), Lodge Operations (ALP-722) and Content (ALP-723); the other areas
+follow. Whatever the officer asks about through those, such as another member's bookings, record,
+family links, applications, requests, inductions or committee roles, their
+payments, credit, subscriptions or Xero contacts, or the names on a chore
 roster or maintenance report, goes to that officer's AI provider (see
 [what each sends](#what-a-connection-sends-to-the-ai-provider)). The
 switch governs the connection, not the action list. That is why **Officers
@@ -1040,6 +1255,15 @@ after the list.
   club's warning and rejoining text. Also the requests the person raised or is
   part of: who asked and the reason they gave, and each participant's name,
   age group, status and when they confirmed or declined. No email addresses.
+- **Finance actions** (an officer holding Finance only): other members' names
+  and record ids with their payments, credit balances and ledgers, refund
+  requests, subscriptions, billing charges, and Xero sync state, as each
+  action names. Amounts are cents. Each shape leaves out email addresses,
+  Stripe ids, raw provider payloads and idempotency keys, and Xero internal
+  ids except a contact's id: Xero contact search and the link and push
+  answers carry it so the app can link a member to that contact. The
+  erased-member review carries no member or contact id. A refusal's text passes to the app
+  unchanged.
 - `get_age_groups`, `get_booking_messages`, `list_committee` and
   `get_skifield_report`: information the club already publishes. Each
   committee entry carries a name, a role and the free-text description the
@@ -1172,22 +1396,24 @@ provider already received. The club's register row is `ai-apps` in
   member (`applyMemberScopedRateLimit`, such as a message-board post, a food
   order or a maintenance report) counts against the member's own limit,
   shared with the website; its looser backstop counts per connection.
+- The Finance routes that call Xero live count per officer, shared with the
+  website, so an app cannot spend the club's Xero minute budget:
+  `search_xero_contacts` 30 searches a minute, and the `sync_*_from_xero`
+  actions 3 a minute between them. Past it the route answers 429.
 
 ## The roadmap
 
 Stage 1 (ALP-653) is the foundation. Stage 2 (ALP-718, then ALP-794,
 ALP-795, ALP-796 and ALP-797) decided every member route: the actions above,
 or a permanent reason. ALP-719 decided the Bookings & Beds officer routes,
-ALP-720 the Membership ones and ALP-722 the Lodge Operations ones the same
-way. The remaining routes are
-officer routes, grouped by admin area into follow-on tasks named in
+ALP-720 the Membership ones, ALP-721 the Finance ones, ALP-722 the Lodge
+Operations ones and ALP-723 the Content ones the same way. The remaining
+routes are officer routes, grouped by admin area into follow-on tasks named in
 `MCP_NOT_YET_TASKS` in
 [`exclusions.ts`](../../src/lib/mcp/exclusions.ts):
 
 | Task | Area |
 | --- | --- |
-| ALP-721 | Finance (officer, including `/api/finance`) |
-| ALP-723 | Content (officer) |
 | ALP-724 | Support and overview (officer) |
 
 After all six officer tasks ship, **ALP-727** reviews them together and makes the
@@ -1232,6 +1458,9 @@ route census reject any remaining `not-yet` exclusion.
    from records (a committee seat, a hut-leader assignment, a nomination)
    survives that: guard it with `arrivesAsMcpConnection` and add it to
    `mcp-record-derived-officer-reach.test.ts`.
+   Where a handler's guard demands more than the path's rule (its own
+   `requireAdmin` permission, or an `/api/finance` route's workspace guard),
+   the entry sets `requires` to it, and the census holds the two together.
 3. Test the contract with `expectActionContract` from
    `src/lib/__tests__/helpers/mcp-action-contract.ts`, signed in as
    `officerMemberSession()`: the connection's answer has exactly the

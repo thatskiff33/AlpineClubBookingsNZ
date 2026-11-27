@@ -240,6 +240,36 @@ that blocks images shows the three service names instead — members never see
 the written-out addresses. Place the token on its own line inside your
 wording and Preview to see the row in place.
 
+When a booking whose confirmation offered those calendar links is later
+cancelled or bumped, the download link stops working, but an entry the member
+already saved stays in their calendar (#5249). So the **Booking Cancelled** and
+**Booking Update** (bumped) messages carry a calendar file that cancels the same
+entry, and **`{{calendarRemovalNote}}`** renders one sentence: "If you added
+this stay to your calendar, open the attached calendar file to remove it, and
+delete the entry yourself if it is still showing." The **Booking Modified**
+message carries **`{{calendarUpdateNote}}`** when the dates moved: "If you added
+this stay to your calendar, it still shows the old dates, so please update it."
+No file is attached to that one, because a calendar that ignores the entry's id
+would add a second entry beside the stale one.
+
+Both tokens are empty, and no file is attached, unless the member was sent the
+Booking Confirmed message and is still allowed the booking link it carried, so a
+school contact or a member who never had the calendar links sees nothing. If the
+file cannot be built the sentence drops its mention of an attachment, including
+when a failed email is retried. Retries adjust only this standard sentence;
+your surrounding wording is kept. The
+shipped default wording places each token on a line of its own. A club that
+saved its own wording for these messages keeps it unchanged: the file is still
+attached, but the sentence shows only after you add the token to your wording.
+
+**What the file can and cannot do.** Calendar apps differ in how they treat a
+cancellation for an entry that was added from a downloaded file: one may remove
+the entry, another may show a cancelled copy or ignore the file. Which app does
+what has not been tested yet, so do not promise members that opening the file
+removes the stay. An entry added through the Google Calendar or Outlook.com
+link has no connection to the file at all, so no file can remove it. That is
+why the sentence always ends with removing the entry by hand.
+
 A second, related pair works the other way round: **`{{rebookLabel}}` and
 `{{rebookPath}}`** in the **Booking Update** (bumped) message. That email goes to
 two very different people — a club member whose pending booking lost its beds,
@@ -539,11 +569,81 @@ you want both reworded; editing only one leaves the other on its built-in text.
 >
 > Nothing changes for the other ways a booking is confirmed: an officer's
 > charge of a saved card, an officer's confirmation of pending guests (which
-> still sends only when the officer asks), a zero-balance confirmation, a bank
-> transfer, and the recovery of a card payment found already taken. During the
+> still sends only when the officer asks), a bank transfer, and the recovery
+> of a card payment found already taken. A zero-balance confirmation follows
+> the same rules since the next note. During the
 > switch to this version a server still running the version before it sends
 > the confirmation as it always did, so an owner can be sent two: one by this
 > version after Stripe's notice, and one by the older server's scheduled job.
+
+> **Upgrade note (#5433, the rest of the hold-deadline job).** The job that
+> acts on pending bookings when their hold runs out no longer loses an email
+> if the app is interrupted after the booking change is saved and before the
+> email goes. A later run of the email retry job (every 30 minutes) sends it
+> instead, so it can arrive late, usually within an hour, and the member is not
+> sent it twice. That covers:
+>
+> - the **Booking Confirmed** email for a booking confirmed with nothing to
+>   pay, now on the same rules as a card payment's (above), and built by the
+>   same email: a booking whose non-member guests are charged separately gets
+>   the paragraph about them, and an owner who cannot be emailed raises the
+>   **Booking confirmation not sent** alert;
+> - the requester's **Booking Request Payment Expired** email and the
+>   officers' **Admin Booking Request Hold Cancelled** notice, when an approved
+>   request booking is still unpaid at the end of its check-in day;
+> - the member's **Split Guest Portion Cancelled** email and the officers'
+>   **Admin Split Settlement Cancelled** notice, when a
+>   split booking's guest portion is still unpaid then;
+> - the **Split Guest Payment Link** email. If it was never sent, a later run
+>   replaces the link with a fresh one and sends that; each link is emailed at
+>   most once, and the fresh link is owed in its own right if that send is
+>   interrupted too. Fresh links are spaced out: the first after about half an
+>   hour, then 6 hours, 24 hours and every 48 hours after the one before, so a
+>   fault that keeps every send failing makes five fresh links (six in all),
+>   and the seven days below run from the first link. At the end the unsent
+>   link is cancelled before officers are alerted. A send that is refused
+>   rather than interrupted (a suppressed address, or a test environment's
+>   send gate) cancels its link with no alert, and the job's next two-day
+>   extension sends a new one, as before;
+> - the **Saved Card Charge Failed** email and the officers' **Admin Payment
+>   Failure** alert when a saved card is found unusable. That alert now says the
+>   owner is emailed separately rather than that they have been emailed, and a
+>   delayed copy says Stripe's own message was not kept.
+>
+> A late email is not sent once the booking has moved on: a cancellation
+> notice once the booking is no longer cancelled, a payment link once the
+> booking is no longer pending or the link was used or replaced, and a
+> request for a new card once a card has been saved or the booking is no
+> longer pending or awaiting its card (paid, cancelled or ended). A
+> cancellation notice is tried until the end of the check-out day, the others
+> until the end of the check-in day, and none for more than seven days (owner
+> decision, 27 Nov 2026), except while the email retry job is still retrying
+> a failed send, which it gives up within a few hours; past that, officers are
+> alerted once if the member was not told.
+>
+> What an officer can notice: a new alert, **Booking email not sent**
+> (`admin-booking-notice-unsent`). It is sent once per email when one of the
+> member emails above (other than the confirmation, which has its own alert)
+> could not be sent in time, or, for the cancellation notices and the request
+> for a new card, did not reach the owner: the send failed, the address
+> bounced or is on the suppression list, or the owner has no address that can
+> be emailed at all (owner decision, 27 Nov 2026). For the payment link it is
+> sent only when the link could not be emailed in time; a link email that
+> fails is replaced on a later run instead. Its note says which email it was,
+> so it reads on its own; it can arrive moments before the routine notice
+> about the same booking, because the member's email goes first. A
+> zero-balance confirmation follows the card payment's rule and raises
+> **Booking confirmation not sent** for an owner who cannot be emailed (owner
+> decision, 27 Nov 2026). It goes to officers
+> who receive **Booking review required** alerts, and its wording is
+> editable like the others. No alert is sent for an email the booking's
+> **No emails** switch held back. The reminders officers get while a request
+> booking or a guest portion stays unpaid are unchanged: the next one goes out
+> anyway.
+>
+> During the switch to this version, a server still running the version
+> before it sends these emails as it always did, with nothing kept for a
+> later run.
 
 ## Settings reference
 

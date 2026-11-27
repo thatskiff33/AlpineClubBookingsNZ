@@ -71,11 +71,25 @@ describe("PUT /api/bookings/[id]/modify quoted figures (#4924)", () => {
     expect(h.modifyBookingBatch.mock.calls[0]?.[0].input.quotedFigures).toEqual(previewed);
   });
 
-  it("saves without figures, as an older panel sends none", async () => {
+  it("refuses a save without figures, as an out-of-date page sends none (#5238)", async () => {
     const res = await PUT(req({ checkOut: "2026-08-03" }), { params });
 
-    expect(res.status).toBe(200);
-    expect(h.modifyBookingBatch.mock.calls[0]?.[0].input.quotedFigures).toBeUndefined();
+    expect(res.status).toBe(409);
+    await expect(res.json()).resolves.toEqual({
+      code: "EDIT_FIGURES_REQUIRED",
+      error: "This page is out of date. Reload it, check the price and save again.",
+    });
+    expect(h.modifyBookingBatch).not.toHaveBeenCalled();
+    expect(h.adminShiftBookingDates).not.toHaveBeenCalled();
+  });
+
+  it("refuses an admin date shift without figures too (#5238)", async () => {
+    h.authorizationRole.mockReturnValue("ADMIN");
+    const res = await PUT(req({ adminOverride: true, pricingMode: "shift", checkIn: "2026-09-12" }), { params });
+
+    expect(res.status).toBe(409);
+    await expect(res.json()).resolves.toMatchObject({ code: "EDIT_FIGURES_REQUIRED" });
+    expect(h.adminShiftBookingDates).not.toHaveBeenCalled();
   });
 
   it("answers a changed price with 409 EDIT_PRICE_CHANGED and the save's fresh figures", async () => {

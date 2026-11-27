@@ -3,6 +3,7 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 
 import { getAdminCronJobDefinitions } from "@/lib/admin-cron-health";
+import { PAYMENTS_CRON_JOB_NAMES } from "@/lib/payments-cron-jobs";
 import { XERO_CRON_JOB_NAMES } from "@/lib/xero-cron-jobs";
 
 // Issue #814 (high-risk invariant test gap #5):
@@ -23,8 +24,6 @@ function readInstrumentationRecordedJobNames(): string[] {
   const sources = [
     "src/instrumentation.node.ts",
     "src/lib/general-cron-runner.ts",
-    // #3663: the 15-minute payments cycle records its three tasks' job names.
-    "src/lib/payments-cron-runner.ts",
     "src/lib/finance-sync-cron-config.ts",
     // #4457: the retention jobs' recorded names, run from the data-pruning cron.
     "src/lib/privacy-retention-shared.ts",
@@ -32,8 +31,11 @@ function readInstrumentationRecordedJobNames(): string[] {
     fs.readFileSync(path.join(process.cwd(), filePath), "utf8")
   );
 
-  // The Xero cron runner records every task under its name from this map.
-  const names = new Set<string>(Object.values(XERO_CRON_JOB_NAMES));
+  // The Xero and payments cron runners record every task under its name from these maps.
+  const names = new Set<string>([
+    ...Object.values(XERO_CRON_JOB_NAMES),
+    ...Object.values(PAYMENTS_CRON_JOB_NAMES),
+  ]);
   const patterns = [
     /recordCronRun\(\s*"([a-z0-9-]+)"/g,
     /jobName:\s*"([a-z0-9-]+)"/g,

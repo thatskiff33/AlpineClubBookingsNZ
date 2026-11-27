@@ -22,10 +22,13 @@ import { ADMIN_WRITE_VISIBLE_POLL } from "./helpers/public-cache";
   is no longer read and its value is not imported), so the admin has to save one
   through Admin -> Integrations before anything can load at all.
 
-  A fake measurement id is used deliberately. The soft-navigation test serves a
-  fixed local gtag stub and fulfils collection requests: it tests the app's event
-  calls and kill switch without depending on Google's loader or sending hits.
-  Other tests still observe requests to Google with the fake id.
+  No test sends hits to Google, or reaches its hosts at all (#5296). Google
+  serves its real library even for the fake measurement id used here, so every
+  test serves a fixed local gtag stub instead and fulfils its collection
+  requests locally. A request that is fulfilled locally still starts, so the
+  recorder still sees it: what is asserted is WHETHER the page asks Google for
+  anything and WHAT it asks, never Google's answer. A fallback route catches
+  any Google request the stub does not serve, blocks it, and fails the test.
 */
 
 test.describe.configure({ mode: "serial" });
@@ -57,8 +60,8 @@ interface GoogleRequestLog {
 
 /**
  * The one rule for "this request is to a Google Analytics host". The recorder,
- * the settle counter and the local stub all use it, so nothing that is recorded
- * can reach the live network in a test that serves the stub.
+ * the settle counter, the local stub and its fallback guard all use it, so
+ * nothing that is recorded can reach the live network.
  */
 const isGoogleAnalyticsUrl = (url: string) =>
   GOOGLE_ANALYTICS_HOSTS.some((host) => url.includes(host));
@@ -102,6 +105,22 @@ function recordGoogleRequests(page: Page): GoogleRequestLog {
   return log;
 }
 
+/**
+ * Keep every Google Analytics request off the network (#5296): the local stub
+ * serves what it knows, and anything it passes on is blocked and returned, so
+ * the caller can fail the test on it. Routes run newest first, so the fallback
+ * is registered before the stub.
+ */
+async function serveGoogleLocally(page: Page): Promise<string[]> {
+  const unserved: string[] = [];
+  await page.route((url) => isGoogleAnalyticsUrl(url.href), async (route) => {
+    unserved.push(route.request().url());
+    await route.abort("blockedbyclient");
+  });
+  await stubGoogleTag(page);
+  return unserved;
+}
+
 /** A local tag: replay queued events and process later pushes, respecting opt-out. */
 async function stubGoogleTag(page: Page): Promise<void> {
   await page.route((url) => isGoogleAnalyticsUrl(url.href), async (route) => {
@@ -129,8 +148,10 @@ async function stubGoogleTag(page: Page): Promise<void> {
           pending.forEach(send);
         })();`,
       });
-    } else {
+    } else if (url.pathname === "/g/collect") {
       await route.fulfill({ status: 204 });
+    } else {
+      await route.fallback();
     }
   });
 }
@@ -240,7 +261,19 @@ test.afterAll(async () => {
 });
 
 test.describe("Google Analytics consent (anonymous visitor)", () => {
-  test.use({ storageState: { cookies: [], origins: [] } });
+  // A service worker's requests bypass `page.route`, so none may run here.
+  test.use({ storageState: { cookies: [], origins: [] }, serviceWorkers: "block" });
+
+  let unservedGoogleRequests: string[] = [];
+  test.beforeEach(async ({ page }) => {
+    unservedGoogleRequests = await serveGoogleLocally(page);
+  });
+  test.afterEach(() => {
+    expect(
+      unservedGoogleRequests,
+      "every Google request must be served by the local stub, never the network",
+    ).toEqual([]);
+  });
 
   test("the module alone loads nothing: the hard cutover leaves analytics off", async ({
     page,
@@ -276,7 +309,8 @@ test.describe("Google Analytics consent (anonymous visitor)", () => {
       bannerMessage: BANNER_MESSAGE,
     });
 
-    const googleRequests = recordGoogleRequests(page).urls;
+    const google = recordGoogleRequests(page);
+    const googleRequests = google.urls;
     await page.goto("/");
 
     // The banner shows the admin's own wording.
@@ -305,12 +339,10 @@ test.describe("Google Analytics consent (anonymous visitor)", () => {
     ).toBe(true);
 
     /*
-      A CONDITIONAL check on the URL sanitisation, and its limit is stated
-      rather than hidden. Google may serve its library for the fake id, and a
-      `collect` request may or may not follow the loader (CI run 44464520408:
-      loader 200, no hit), so this loop checks only the requests made by the
-      time it runs. Whether Google answers is not this spec's to control, and
-      the loop must not be mistaken for the proof.
+      The page view the app sends, through the local stub, carries the page
+      location with nothing but origin and path. The stub sends a hit for every
+      event, so this waits for it rather than checking whatever happened to
+      arrive.
 
       What proves the sanitisation is `analytics-route-policy.test.ts` (only
       origin + pathname is ever built, for an eligible route) and
@@ -319,6 +351,9 @@ test.describe("Google Analytics consent (anonymous visitor)", () => {
       collect request's `dl` fails the suite instead of going unnoticed.
     */
     const origin = new URL(page.url()).origin;
+    await expect
+      .poll(() => google.pageViews, { timeout: 15_000 })
+      .toContain(`${origin}/`);
     for (const url of googleRequests) {
       const pageLocation = new URL(url).searchParams.get("dl");
       if (!pageLocation) continue;
@@ -401,7 +436,6 @@ test.describe("Google Analytics consent (anonymous visitor)", () => {
       bannerMessage: BANNER_MESSAGE,
     });
 
-    await stubGoogleTag(page);
     const google = recordGoogleRequests(page);
     const googleRequests = google.urls;
     await page.goto("/");

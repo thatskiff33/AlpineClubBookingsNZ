@@ -36,9 +36,9 @@ vi.mock("@/lib/finance-sync-service", () => ({
 import {
   backfillFinanceMonthlyFacts,
   buildFinanceMonthlyFactBackfillDatasets,
-  DEFAULT_FINANCE_BACKFILL_MAX_CHUNKS,
   FINANCE_MONTHLY_FACT_BACKFILL_WORKFLOW,
 } from "@/lib/finance-monthly-fact-backfill";
+import { DEFAULT_FINANCE_BACKFILL_MAX_CHUNKS } from "@/lib/finance-backfill-request";
 import { shiftMonthKey } from "@/lib/finance-monthly-facts";
 import type { FinanceSyncDatasetContext } from "@/lib/finance-sync-service";
 

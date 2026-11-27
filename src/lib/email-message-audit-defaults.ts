@@ -48,7 +48,7 @@ const EMAIL_AUDIT_DEFAULTS_BASE = {
   },
   "booking-bumped": {
     "defaultSubject": "Booking Update - {{CLUB_LODGE_NAME}}",
-    "defaultBody": "Booking Update\n\nHi {{firstName}}, unfortunately your pending lodge booking has been bumped due to member demand.\n\nCheck-in: {{checkIn}}\nCheck-out: {{checkOut}}\nGuests: {{guestCount}}\n\nYour card has not been charged.\n\nAs a non-member booking, priority is given to club members when the lodge reaches capacity. You're welcome to rebook for different dates where availability exists.\n\n{{rebookLabel}}: {{BASE_URL}}{{rebookPath}}\n\nIf you have any questions, contact the club at {{SUPPORT_EMAIL}}.\n\nWe apologise for the inconvenience."
+    "defaultBody": "Booking Update\n\nHi {{firstName}}, unfortunately your pending lodge booking has been bumped due to member demand.\n\nCheck-in: {{checkIn}}\nCheck-out: {{checkOut}}\nGuests: {{guestCount}}\n\nYour card has not been charged.\n\n{{calendarRemovalNote}}\n\nAs a non-member booking, priority is given to club members when the lodge reaches capacity. You're welcome to rebook for different dates where availability exists.\n\n{{rebookLabel}}: {{BASE_URL}}{{rebookPath}}\n\nIf you have any questions, contact the club at {{SUPPORT_EMAIL}}.\n\nWe apologise for the inconvenience."
   },
   "booking-guests-cancelled": {
     "defaultSubject": "Booking Cancelled - {{CLUB_LODGE_NAME}}",
@@ -56,7 +56,7 @@ const EMAIL_AUDIT_DEFAULTS_BASE = {
   },
   "booking-cancelled": {
     "defaultSubject": "Booking Cancelled - {{CLUB_LODGE_NAME}}",
-    "defaultBody": "Booking Cancelled\n\nHi {{firstName}}, your lodge booking has been cancelled.\n\nCheck-in: {{checkIn}}\nCheck-out: {{checkOut}}\n\n{{refundMessage}}\n\n{{creditRestoredMessage}}\n\nYou can make a new booking at any time from your account.\n\nMake a New Booking: {{BASE_URL}}/book"
+    "defaultBody": "Booking Cancelled\n\nHi {{firstName}}, your lodge booking has been cancelled.\n\nCheck-in: {{checkIn}}\nCheck-out: {{checkOut}}\n\n{{refundMessage}}\n\n{{creditRestoredMessage}}\n\n{{calendarRemovalNote}}\n\nYou can make a new booking at any time from your account.\n\nMake a New Booking: {{BASE_URL}}/book"
   },
   "booking-policy-exception-approved": {
     "defaultSubject": "Your Request Was Approved - {{CLUB_LODGE_NAME}}",
@@ -64,7 +64,7 @@ const EMAIL_AUDIT_DEFAULTS_BASE = {
   },
   "booking-modified": {
     "defaultSubject": "Booking Modified - {{CLUB_LODGE_NAME}}",
-    "defaultBody": "Booking Modified\n\nHi {{firstName}}, your booking has been updated.\n\n{{modificationTypeLabel}}\n\n{{changeSummary}}\n{{paymentNote}}\n\nYou can view your updated booking details from your account.\n\nView Booking: {{BASE_URL}}/bookings"
+    "defaultBody": "Booking Modified\n\nHi {{firstName}}, your booking has been updated.\n\n{{modificationTypeLabel}}\n\n{{changeSummary}}\n{{paymentNote}}\n\n{{calendarUpdateNote}}\n\nYou can view your updated booking details from your account.\n\nView Booking: {{BASE_URL}}/bookings"
   },
   "checkin-reminder": {
     "defaultSubject": "Check-in Reminder - {{CLUB_LODGE_NAME}}",
@@ -132,6 +132,7 @@ const EMAIL_AUDIT_DEFAULTS_BASE = {
     "defaultSubject": "Booking confirmation not sent: {{memberName}}",
     "defaultBody": "Booking Confirmation Not Sent\n\n" + BOOKING_CONFIRMATION_UNSENT_NOTE + "\n\nOwner: {{memberName}}\nBooking: {{bookingReference}}\nCheck-in: {{checkIn}}\nCheck-out: {{checkOut}}\n\nOpen Booking: {{bookingUrl}}"
   },
+  "admin-booking-notice-unsent": { "defaultSubject": "Booking email not sent: {{memberName}}", "defaultBody": "Booking Email Not Sent\n\n{{unsentNote}}\n\nOwner: {{memberName}}\nBooking: {{bookingReference}}\nCheck-in: {{checkIn}}\nCheck-out: {{checkOut}}\n\nOpen Booking: {{bookingUrl}}" }, // #5433 PR 4
   "nomination-request": {
     "defaultSubject": "Nomination request for {{applicantName}} — {{CLUB_NAME}}",
     "defaultBody": "Membership Nomination Request\n\nHi {{nominatorName}},\n\n{{applicantName}} has listed you as one of their {{CLUB_NAME}} nominators.\n\nDependent family members included in this application: {{familyMemberCount}}\n\nPlease review the application and confirm whether you agree to nominate this person for membership.\n\nYou will need to sign in before you can confirm the nomination.\n\nReview Application: {{BASE_URL}}/nominations/{{token}}\n\nThis link expires on {{expiresAt}}."

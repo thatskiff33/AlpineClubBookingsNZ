@@ -9,6 +9,7 @@ import {
   organiserBilledSentence,
 } from "@/lib/booking-modified-email-copy";
 import { resolveBookingEmailLink } from "@/lib/booking-email-authority";
+import { resolveBookingCalendarRemoval, resolveCalendarUpdateNote } from "@/lib/booking-calendar-removal";
 import {
   type BookingCalendarLinks,
   bookingAddToCalendarBlock,
@@ -72,6 +73,7 @@ import { loadEmailMessageSettingsForLodge } from "@/lib/email-message-settings";
 import { loadEffectiveModuleFlags } from "@/lib/module-settings";
 import { sendEmail, type EmailSendOutcome } from "./core";
 import { BOOKING_CONFIRMED_TEMPLATE_NAME } from "./booking-confirmed-template";
+import { SAVED_CARD_CHARGE_FAILED_TEMPLATE, SPLIT_GUEST_PORTION_CANCELLED_TEMPLATE } from "./owed-notice-templates";
 import {
   bookingOwnerEmailContext,
   type BookingOwnerEmailSource,
@@ -780,6 +782,13 @@ export async function sendBookingBumpedEmail(
   recipientCanBookOnline: boolean,
 ): Promise<EmailSendOutcome> {
   const rebook = bookingBumpedRebookAction(recipientCanBookOnline);
+  // #5249: a member offered a calendar entry gets its cancellation and a note.
+  const calendar = await resolveBookingCalendarRemoval({
+    bookingId: bookingContext.bookingId,
+    recipientMemberId: bookingContext.recipientMemberId,
+    deliveryAddress: email,
+    templateName: "booking-bumped",
+  });
   return sendEmail({
     to: email,
     subject: `Booking Update - ${EMAIL_DEFAULT_LODGE_NAME}`,
@@ -795,6 +804,7 @@ export async function sendBookingBumpedEmail(
       checkOut,
       guestCount,
       recipientCanBookOnline,
+      calendar.note,
     )),
     bookingContext: bookingOwnerEmailContext(bookingContext.bookingId, bookingContext.recipientMemberId),
     templateName: "booking-bumped",
@@ -807,7 +817,9 @@ export async function sendBookingBumpedEmail(
       // the path so the club's own configured public URL still resolves it.
       rebookLabel: rebook.label,
       rebookPath: rebook.path,
+      calendarRemovalNote: calendar.note,
     },
+    attachments: calendar.attachments,
     lodgeId,
     idempotencyKey: bookingContext.idempotencyKey,
   });
@@ -861,6 +873,13 @@ export async function sendBookingCancelledEmail(
   // #4097: the parts of an own-card refund its card refund could not carry; the refund line names each.
   shortfall: { bankCents: number; checkCents: number } = { bankCents: 0, checkCents: 0 },
 ) {
+  // #5249: a member offered a calendar entry gets its cancellation and a note.
+  const calendar = await resolveBookingCalendarRemoval({
+    bookingId: bookingContext.bookingId,
+    recipientMemberId: bookingContext.recipientMemberId,
+    deliveryAddress: email,
+    templateName: "booking-cancelled",
+  });
   await sendEmail({
     to: email,
     subject: `Booking Cancelled - ${EMAIL_DEFAULT_LODGE_NAME}`,
@@ -875,6 +894,7 @@ export async function sendBookingCancelledEmail(
       creditRestoredBasis,
       refundSentenceCents,
       shortfall,
+      calendar.note,
     )),
     bookingContext: bookingOwnerEmailContext(bookingContext.bookingId, bookingContext.recipientMemberId),
     templateName: "booking-cancelled",
@@ -895,7 +915,9 @@ export async function sendBookingCancelledEmail(
         creditRestoredCents > 0
           ? `${formatMoneyCents(creditRestoredCents, format)}${creditRestoredSentenceTail(creditRestoredBasis)}`
           : "",
+      calendarRemovalNote: calendar.note,
     },
+    attachments: calendar.attachments,
     lodgeId,
   });
 }
@@ -926,6 +948,7 @@ export async function sendSplitGuestPortionCancelledEmail(params: {
   parentBookingReference?: string | null;
   // Booking's lodge (multi-lodge phase 8): see sendBookingConfirmedEmail.
   lodgeId?: string | null;
+  idempotencyKey?: string;
 }) {
   await sendEmail({
     to: params.email,
@@ -938,7 +961,7 @@ export async function sendSplitGuestPortionCancelledEmail(params: {
       parentBookingReference: params.parentBookingReference ?? null,
     })),
     bookingContext: bookingOwnerEmailContext(params.bookingId, params.recipientMemberId),
-    templateName: "split-guest-portion-cancelled",
+    templateName: SPLIT_GUEST_PORTION_CANCELLED_TEMPLATE,
     templateData: {
       firstName: params.firstName,
       checkIn: emailCalendarDay(params.checkIn),
@@ -958,6 +981,7 @@ export async function sendSplitGuestPortionCancelledEmail(params: {
       // false when the parent booking is not settled.
       ownBookingNote: splitGuestPortionOwnBookingLine(params.parentConfirmed),
     },
+    idempotencyKey: params.idempotencyKey,
     lodgeId: params.lodgeId,
   });
 }
@@ -1573,11 +1597,19 @@ export async function sendBookingModifiedEmail(params: {
   const giveBackNote = appliedCreditGiveBackNote(params.appliedCreditGivenBackCents, format);
   const askCancelledNote = unpaidAskCancelledNote(params.unpaidAskCancelled);
   const paymentNote = [reviewNote, settlementNote, giveBackNote, askCancelledNote].filter(Boolean).join(" ");
+  // #5249: moved dates leave a saved calendar entry stale; a sentence, no file.
+  const calendarNote = await resolveCalendarUpdateNote({
+    ...params,
+    deliveryAddress: params.email,
+    templateName: "booking-modified",
+  });
 
   await sendEmail({
     to: params.email,
     subject: `Booking Modified - ${EMAIL_DEFAULT_LODGE_NAME}`,
-    html: await renderEmailHtml(() => bookingModifiedTemplate(params, format)),
+    html: await renderEmailHtml(() =>
+      bookingModifiedTemplate({ ...params, calendarUpdateNote: calendarNote }, format),
+    ),
     bookingContext: bookingOwnerEmailContext(params.bookingId, params.recipientMemberId),
     templateName: "booking-modified",
     templateData: {
@@ -1608,6 +1640,7 @@ export async function sendBookingModifiedEmail(params: {
       paymentReference: params.paymentReference ?? "",
       xeroInvoiceNumber: params.xeroInvoiceNumber ?? "",
       paymentNote,
+      calendarUpdateNote: calendarNote,
     },
     lodgeId: params.lodgeId,
   });
@@ -1842,18 +1875,20 @@ export async function sendSavedCardChargeFailedEmail(params: {
   checkIn: Date;
   checkOut: Date;
   lodgeId?: string | null;
+  idempotencyKey?: string;
 }) {
   await sendEmail({
     to: params.email,
     subject: `Your Saved Card Needs Replacing - ${EMAIL_DEFAULT_LODGE_NAME}`,
     html: await renderEmailHtml(() => savedCardChargeFailedTemplate(params)),
     bookingContext: bookingOwnerEmailContext(params.bookingId, params.recipientMemberId),
-    templateName: "saved-card-charge-failed",
+    templateName: SAVED_CARD_CHARGE_FAILED_TEMPLATE,
     templateData: {
       firstName: params.firstName,
       checkIn: emailCalendarDay(params.checkIn),
       checkOut: emailCalendarDay(params.checkOut),
     },
     lodgeId: params.lodgeId,
+    idempotencyKey: params.idempotencyKey,
   });
 }

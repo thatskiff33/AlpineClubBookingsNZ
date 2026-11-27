@@ -8,12 +8,14 @@ import { formatCents } from "@/lib/utils";
 
 /**
  * #4924 (`INV-MOD-062`): the save's fresh figures from a 409
- * `EDIT_PRICE_CHANGED` body, or null when the body is any other refusal.
+ * `EDIT_PRICE_CHANGED` body, or null when the body is any other refusal. A
+ * refused linked-move acceptance (#5238) carries a fresh offer to answer
+ * instead, read by `readLinkedMoveRefusal`.
  */
 export function readEditPriceChangedFigures(data: unknown): EditQuotedFigures | null {
   if (!data || typeof data !== "object") return null;
-  const record = data as { code?: unknown; figures?: unknown };
-  if (record.code !== EDIT_PRICE_CHANGED_CODE) return null;
+  const record = data as { code?: unknown; figures?: unknown; linkedMove?: unknown };
+  if (record.code !== EDIT_PRICE_CHANGED_CODE || record.linkedMove !== undefined) return null;
   const figures = editQuotedFiguresSchema.safeParse(record.figures);
   return figures.success ? figures.data : null;
 }

@@ -23,6 +23,12 @@
  */
 
 import { formatCents } from "@/lib/utils";
+import {
+  EDIT_PRICE_CHANGED_CODE,
+  editQuotedFiguresSchema,
+  type EditQuotedFigures,
+  type LinkedQuotedFigures,
+} from "@/lib/edit-quoted-figures";
 import { EDIT_REFUND_ROUTES, editRefundDestinationPhrase, type EditRefundRoute } from "@/lib/edit-refund-route";
 import { HOSTING_COVERAGE_STATE_KEY_PATTERN } from "@/lib/hosting-coverage-override-client";
 import { isCalendarDate } from "@/lib/club-time";
@@ -38,6 +44,12 @@ import type { ClubFormat } from "@/lib/club-format";
  * shape are two things that can disagree about what the server sends.
  */
 export interface HostingCoverageLinkedMoveBooking {
+  /**
+   * #5238 (`INV-MOD-062`): this booking's figures as the offer priced them,
+   * echoed on `MOVE_BOTH` so its save refuses rather than settle another amount.
+   * Absent when the move is not available, or from a server older than #5238.
+   */
+  quotedFigures?: EditQuotedFigures;
   bookingId: string;
   /** The short handle the member sees, never the raw cuid alone. */
   reference: string;
@@ -66,6 +78,8 @@ export interface HostingCoverageLinkedMoveBooking {
 }
 
 export interface HostingCoverageLinkedMovePromptData {
+  /** #5238: the primary booking's figures as the offer priced them. */
+  quotedFigures?: EditQuotedFigures;
   message: string;
   /** The key `MOVE_BOTH` must return; bound to the moves AND the money. */
   acceptStateKey: string;
@@ -78,7 +92,7 @@ export interface HostingCoverageLinkedMovePromptData {
   linkedBookings: HostingCoverageLinkedMoveBooking[];
   combinedAmountDueCents: number;
   combinedRefundCents: number;
-  /** fork triyder/AlpineClubBookingsNZ#132: the freed applied credit inside `combinedRefundCents`, for the wording only. */
+  /** the 18 Nov 2026 money review on #5149: the freed applied credit inside `combinedRefundCents`, for the wording only. */
   combinedFreedCreditCents: number;
   combinedChangeFeeCents: number;
   combinedPolicyRetainedCents: number;
@@ -104,11 +118,11 @@ export interface HostingCoverageLinkedMovePromptData {
  */
 export interface LinkedMoveMoneyFacts {
   combinedAmountDueCents: number;
-  /** Every cent coming back to the member, freed applied credit included (`combineLinkedMoveQuote`, fork triyder/AlpineClubBookingsNZ#132). */
+  /** Every cent coming back to the member, freed applied credit included (`combineLinkedMoveQuote`, the 18 Nov 2026 money review on #5149). */
   combinedRefundCents: number;
   /**
    * The part of `combinedRefundCents` that is an unpaid booking's applied credit
-   * freed by a lower price (fork triyder/AlpineClubBookingsNZ#132). It always returns to account credit, so it is
+   * freed by a lower price (the 18 Nov 2026 money review on #5149). It always returns to account credit, so it is
    * never part of the card-or-credit choice; the sentences below say so. Copy only:
    * the one total the member consents to stays `combinedRefundCents`.
    */
@@ -245,7 +259,7 @@ export function formatLinkedMoveMoneySentence(
 ): string {
   const all = linkedMoveAllBookingsPhrase(facts.linkedCount);
   const parts: string[] = [];
-  // fork triyder/AlpineClubBookingsNZ#132: the settlement's share (`editMoneyBackCents`) is what the card-or-credit
+  // the 18 Nov 2026 money review on #5149: the settlement's share (`editMoneyBackCents`) is what the card-or-credit
   // choice covers; freed applied credit goes back to account credit regardless.
   const settlementShareCents = facts.combinedRefundCents - facts.combinedFreedCreditCents;
   const freed =
@@ -405,7 +419,10 @@ function readBooking(value: unknown): HostingCoverageLinkedMoveBooking | null {
   ) {
     return null;
   }
+  const figures = editQuotedFiguresSchema.optional().safeParse(row.quotedFigures);
+  if (!figures.success) return null;
   return {
+    ...(figures.data ? { quotedFigures: figures.data } : {}),
     bookingId: row.bookingId,
     reference: row.reference,
     lodgeName: row.lodgeName,
@@ -459,7 +476,11 @@ export function readHostingCoverageLinkedMovePrompt(
     linkedBookings.push(row);
   }
 
+  const primary = record.primary as { quotedFigures?: unknown } | undefined;
+  const figures = editQuotedFiguresSchema.optional().safeParse(primary?.quotedFigures);
+  if (!figures.success) return null;
   return {
+    ...(figures.data ? { quotedFigures: figures.data } : {}),
     message: record.error,
     acceptStateKey: record.acceptStateKey,
     declineStateKey: record.declineStateKey,
@@ -502,4 +523,61 @@ export function hostingCoverageLinkedMoveAnswer(
     return { choice, acknowledged: true, stateKey: prompt.acceptStateKey };
   }
   return { choice, acknowledged: true, stateKey: prompt.declineStateKey };
+}
+
+/**
+ * #5238 (`INV-MOD-062`): the figures a `MOVE_BOTH` acceptance sends back, the
+ * primary's and every other booking's exactly as the offer priced them. Null
+ * when the offer came from a server older than #5238 and carried none: the
+ * save then sends no linked figures and the server asks for a reload rather
+ * than settle a figure the panel cannot vouch for.
+ */
+function acceptedFigures(
+  prompt: HostingCoverageLinkedMovePromptData,
+): { quotedFigures: EditQuotedFigures; linkedQuotedFigures: LinkedQuotedFigures } | null {
+  const linkedQuotedFigures: LinkedQuotedFigures = [];
+  for (const row of prompt.linkedBookings) {
+    if (!row.quotedFigures) return null;
+    linkedQuotedFigures.push({ bookingId: row.bookingId, figures: row.quotedFigures });
+  }
+  if (!prompt.quotedFigures) return null;
+  return { quotedFigures: prompt.quotedFigures, linkedQuotedFigures };
+}
+
+/**
+ * What the retry adds to the save body for the arm the member chose: the answer
+ * (`hostingCoverageLinkedMoveAnswer`) and, on `MOVE_BOTH`, every booking's
+ * figures from the offer (#5238), which replace the primary's own preview
+ * figures because the offer is what the member accepted. Nothing when the arm
+ * has no answer to give.
+ */
+export function hostingCoverageLinkedMoveAnswerFields(
+  prompt: HostingCoverageLinkedMovePromptData,
+  choice: HostingCoverageLinkedMoveChoice,
+): Record<string, unknown> {
+  const answer = hostingCoverageLinkedMoveAnswer(prompt, choice);
+  if (!answer) return {};
+  return { hostingCoverageLinkedMove: answer, ...(choice === "MOVE_BOTH" ? acceptedFigures(prompt) : null) };
+}
+
+/**
+ * The linked-move offer a refused save carries, with what to tell the member:
+ * the first offer (#3232), or a fresh one after an acceptance refused because a
+ * booking's price moved (#5238, 409 `EDIT_PRICE_CHANGED` with `linkedMove`),
+ * when nothing was saved for either booking. Null for any other refusal.
+ */
+export function readLinkedMoveRefusal(
+  data: unknown,
+): { prompt: HostingCoverageLinkedMovePromptData; priceChanged: boolean; message: string } | null {
+  const record = data && typeof data === "object" ? (data as { code?: unknown; linkedMove?: unknown }) : null;
+  const priceChanged = record?.code === EDIT_PRICE_CHANGED_CODE;
+  const prompt = readHostingCoverageLinkedMovePrompt(priceChanged ? record?.linkedMove : data);
+  if (!prompt) return null;
+  return {
+    prompt,
+    priceChanged,
+    message: priceChanged
+      ? "The price of moving both bookings changed since you accepted it, so nothing was saved. Check the new figures and choose again."
+      : "Choose whether to move both bookings or only this one, then save again.",
+  };
 }

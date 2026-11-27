@@ -72,6 +72,11 @@ export function emptyWhakapapaSectionVisibility(): WhakapapaSectionVisibility {
   };
 }
 
+/** The widget's sections: the keys of `WhakapapaSectionVisibility`, from its one default. */
+export const WHAKAPAPA_SECTION_KEYS = Object.keys(
+  emptyWhakapapaSectionVisibility(),
+) as Array<keyof WhakapapaSectionVisibility>;
+
 export function coerceWhakapapaSectionVisibility(
   value: unknown,
 ): WhakapapaSectionVisibility {

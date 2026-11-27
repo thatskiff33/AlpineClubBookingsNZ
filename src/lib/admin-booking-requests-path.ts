@@ -17,6 +17,11 @@ import type { BookingRequestPendingCounts } from "@/lib/admin-booking-request-pe
  */
 import type { BookingRequestStatus } from "@prisma/client";
 import { adminHref } from "@/lib/admin-hubs";
+import {
+  DEFAULT_EXCEPTION_QUEUE_STATUS_FILTER,
+  EXCEPTION_QUEUE_STATUS_FILTERS,
+  type ExceptionQueueStatusFilter,
+} from "@/lib/booking-exception-request-shared";
 
 export const BOOKING_REQUESTS_TABS = [
   "approvals",
@@ -196,4 +201,20 @@ export function readPublicBookingRequestFilter(
 ): PublicBookingRequestFilter {
   const value = searchParams.get(BOOKING_REQUESTS_STATUS_PARAM);
   return isPublicBookingRequestFilter(value) ? value : DEFAULT_PUBLIC_BOOKING_REQUEST_FILTER;
+}
+
+function isPolicyExceptionQueueFilter(value: string | null): value is ExceptionQueueStatusFilter {
+  return value !== null && (EXCEPTION_QUEUE_STATUS_FILTERS as readonly string[]).includes(value);
+}
+
+/**
+ * The filter the policy-exceptions tab opens on for these query params
+ * (#5247). A missing or unknown value opens the waiting requests, never an
+ * error: a stale or hand-edited link still lands somewhere useful.
+ */
+export function readPolicyExceptionQueueFilter(
+  searchParams: Pick<URLSearchParams, "get">,
+): ExceptionQueueStatusFilter {
+  const value = searchParams.get(BOOKING_REQUESTS_STATUS_PARAM);
+  return isPolicyExceptionQueueFilter(value) ? value : DEFAULT_EXCEPTION_QUEUE_STATUS_FILTER;
 }

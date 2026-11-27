@@ -107,14 +107,18 @@ export async function workPartyActorIsOwnerOrFamily(
  * whose share the organiser paid is not: the group settlement records that
  * share on the joiner's payment (`amountCents`). A joiner worth $0 when the
  * group settled has nothing recorded there, and is caught like any booking
- * paid with nothing.
+ * paid with nothing. Owner decision, 20 Nov 2026 (#5338): a PAID booking with
+ * no payment row at all counts as no money taken, so Remove is refused there too.
  */
 export async function workPartyPaidWithNoMoneyTaken(
   db: Pick<Prisma.TransactionClient, "paymentTransaction">,
   booking: Pick<WorkPartyBooking, "status" | "payment">,
 ): Promise<boolean> {
   const payment = booking.payment;
-  if (booking.status !== BookingStatus.PAID || !payment) return false;
+  // No path writes a PAID booking without a payment row; old or hand-edited data
+  // could, and with no row there is no money recorded, so fail safe (#5338).
+  if (!payment) return booking.status === BookingStatus.PAID;
+  if (booking.status !== BookingStatus.PAID) return false;
   if (payment.amountCents > 0) return false;
   const taken = await db.paymentTransaction.count({
     where: { paymentId: payment.id, amountCents: { gt: 0 }, status: { in: [...CAPTURED_TRANSACTION_STATUS_LIST] } },

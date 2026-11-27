@@ -539,6 +539,32 @@ export function bookingBumpedRebookAction(
 }
 
 /**
+ * #5249: the sentence the cancelled and bumped emails carry for a member who was
+ * offered an add-to-calendar entry with their confirmation. A calendar file
+ * cannot reliably remove an entry a member saved (some apps ignore it, and an
+ * entry added through the Google Calendar or Outlook.com link is out of its
+ * reach), so the sentence always ends with removing it by hand. `attached` is
+ * false when the cancellation file could not be built, and then the sentence
+ * names no attachment. Fills `{{calendarRemovalNote}}` and the HTML templates'
+ * paragraph alike, so the two cannot drift.
+ */
+export function calendarRemovalNote(attached: boolean): string {
+  return attached
+    ? "If you added this stay to your calendar, open the attached calendar file to remove it, and delete the entry yourself if it is still showing."
+    : "If you added this stay to your calendar, please remove it.";
+}
+
+/**
+ * #5249: the sentence a date-changing booking-modified email carries for a
+ * member who was offered an add-to-calendar entry. No update file is attached:
+ * an app that ignores the event id would add a second entry beside the stale
+ * one. Fills `{{calendarUpdateNote}}` and the HTML template's paragraph alike.
+ */
+export function calendarUpdateNote(): string {
+  return "If you added this stay to your calendar, it still shows the old dates, so please update it.";
+}
+
+/**
  * #3792 — why a cancelled booking's applied account credit came back: tiered by
  * the cancellation policy (the member's own cancel), or in full (a cancel the
  * member did not choose: capacity, an expired internet banking hold). The

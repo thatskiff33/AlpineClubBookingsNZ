@@ -10,6 +10,10 @@
 import { z } from "zod";
 
 import { adminListPageQueryFields, adminQueueFocusIdField } from "@/lib/admin-list-page";
+import {
+  DEFAULT_EXCEPTION_QUEUE_STATUS_FILTER,
+  EXCEPTION_QUEUE_STATUS_FILTERS,
+} from "@/lib/booking-exception-request-shared";
 import { dateOnlyStringSchema } from "@/lib/date-only-schema";
 
 /** `GET /api/admin/booking-change-requests`: the locked-period change queue. */
@@ -25,29 +29,17 @@ export const adminBookingChangeRequestQueueQuerySchema = z.object({
 
 /**
  * `GET /api/admin/booking-exception-requests`: the unified policy-exception
- * queue. The values stay in step with `ExceptionQueueStatusFilter`, which the
- * queue reader takes; the route hands the parsed status straight to it, so the
- * compiler holds the two together.
+ * queue. The values are `EXCEPTION_QUEUE_STATUS_FILTERS`, the same list the
+ * queue reader's type and the officer screen's filter buttons come from
+ * (#5247), so the route can never reject a filter the screen offers.
  */
 export const adminBookingExceptionRequestQueueQuerySchema = z.object({
   status: z
-    .enum([
-      "REQUESTED",
-      "APPROVED",
-      "REJECTED",
-      "CANCELLED",
-      "SUPERSEDED",
-      // #2553: a request the hold reaper closed. Read-only filter value, kept in
-      // step with `ExceptionQueueStatusFilter` so the type and the route cannot
-      // disagree — the service advertising a value the route rejects is how an
-      // officer screen ends up 400ing on its own "Expired" tab.
-      "EXPIRED",
-      "ALL",
-    ])
+    .enum(EXCEPTION_QUEUE_STATUS_FILTERS)
     .optional()
-    .default("REQUESTED")
+    .default(DEFAULT_EXCEPTION_QUEUE_STATUS_FILTER)
     .describe(
-      "Which requests: `REQUESTED` (the default: waiting for a decision, oldest first), `APPROVED`, `REJECTED`, `CANCELLED`, `SUPERSEDED`, `EXPIRED` (the provisional hold ran out) or `ALL`.",
+      "Which requests: `REQUESTED` (the default: waiting for a decision, oldest first), `APPROVED`, `REJECTED`, `CANCELLED`, `SUPERSEDED`, `EXPIRED` (the provisional hold ran out) or `ALL`. Every filter but `REQUESTED` lists newest first.",
     ),
   ...adminListPageQueryFields,
 });

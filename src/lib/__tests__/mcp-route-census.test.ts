@@ -9,11 +9,11 @@ import {
   MCP_WEBSITE_ONLY_ACTIONS,
   mcpActionRouteFile,
 } from "@/lib/mcp/catalogue";
+import { CONTENT_MCP_ACTIONS } from "@/lib/mcp/catalogue/content";
 import { MEMBERSHIP_MCP_ACTIONS } from "@/lib/mcp/catalogue/membership";
 import {
   classifyMcpRoute,
   MCP_EXACT_EXCLUDED_ROUTES,
-  MCP_FINANCE_NOT_YET_ROUTES,
   MCP_NOT_YET_TASKS,
   MCP_PERMANENT_EXCLUSION_REASONS,
   mcpPermanentExclusion,
@@ -296,6 +296,27 @@ function officerReachOffMemberOnly(file: string, catalogued: ReadonlySet<string>
   return { decided, violations };
 }
 
+/** The exported handler of `method` in a route file, as source text, or null. */
+/** The finance workspace's API, which guards itself rather than through `requireAdmin`. */
+function underFinanceWorkspace(path: string): boolean {
+  return path === "/api/finance" || path.startsWith("/api/finance/");
+}
+
+function handlerSource(file: string, method: string): string | null {
+  const source = ts.createSourceFile(file, readFileSync(file, "utf8"), ts.ScriptTarget.Latest, true);
+  for (const statement of source.statements) {
+    if (ts.isFunctionDeclaration(statement) && hasExport(statement) && statement.name?.text === method) {
+      return statement.getText(source);
+    }
+    if (ts.isVariableStatement(statement) && hasExport(statement)) {
+      for (const declaration of statement.declarationList.declarations) {
+        if (ts.isIdentifier(declaration.name) && declaration.name.text === method) return declaration.getText(source);
+      }
+    }
+  }
+  return null;
+}
+
 function allRouteMethods(): Array<{ file: string; method: string }> {
   const files = new Set<string>();
   walkDir("src/app/api", files);
@@ -368,6 +389,35 @@ describe("AI app action census (ALP-653, INV-MCP-006)", { timeout: CENSUS_TIMEOU
     }
   });
 
+  it("leaves no route waiting on ALP-723, which decided the Content admin area", () => {
+    expect(Object.values(MCP_NOT_YET_TASKS)).not.toContain("ALP-723");
+    const content = routeMethods.filter(
+      (route) => getAdminRouteRequirement(adminRouteApiPath(route.file), route.method)?.area === "content",
+    );
+    expect(content.length).toBeGreaterThan(30);
+    const excluded: string[] = [];
+    for (const route of content) {
+      const result = classifyMcpRoute(route.file, route.method);
+      expect(result.kind, `${route.method} ${route.file}`).not.toBe("unclassified");
+      if (result.kind === "excluded") excluded.push(`${route.method} ${adminRouteApiPath(route.file)} ${result.reason}`);
+    }
+    // Only the file uploads stay on the website; nothing in the area needs a fresh proof.
+    expect(excluded.sort()).toEqual([
+      "POST /api/admin/image-library needs-browser",
+      "POST /api/admin/image-manager/upload needs-browser",
+      "POST /api/admin/site-style/logo needs-browser",
+    ]);
+    // The area is finished: a new content route has to be decided, not deferred.
+    expect(classifyMcpRoute("src/app/api/admin/site-banners/brand-new/route.ts", "GET")).toEqual({ kind: "unclassified" });
+  });
+
+  it("runs every Content action on a route the area gates", () => {
+    expect(CONTENT_MCP_ACTIONS.length).toBeGreaterThan(30);
+    for (const action of CONTENT_MCP_ACTIONS) {
+      expect(mcpActionAdminRequirement(action)?.area, action.id).toBe("content");
+    }
+  });
+
   it("brings every Bookings & Beds officer route in, or keeps it website-only for a stated reason", () => {
     const bookingsRoutes = routeMethods.filter(
       (route) => getAdminRouteRequirement(adminRouteApiPath(route.file), route.method)?.area === "bookings",
@@ -376,15 +426,8 @@ describe("AI app action census (ALP-653, INV-MCP-006)", { timeout: CENSUS_TIMEOU
     for (const route of bookingsRoutes) {
       const result = classifyMcpRoute(route.file, route.method);
       const key = stepUpRouteKey(route.file, route.method);
-      // Only the money routes the owner handed to the Finance lane wait on it
-      // (#5305 comment 7093303964, item 3).
-      if (MCP_FINANCE_NOT_YET_ROUTES.includes(`${route.method} ${adminRouteApiPath(route.file)}`)) {
-        expect(result, key).toEqual({ kind: "excluded", reason: "not-yet:ALP-721" });
-        continue;
-      }
       expect(result.kind === "action" || (result.kind === "excluded" && !result.reason.startsWith("not-yet:")), key).toBe(true);
     }
-    expect(MCP_FINANCE_NOT_YET_ROUTES).toEqual(["POST /api/admin/bookings/[id]/additional-payment/withdraw"]);
     // A new route in a decided area is not covered by a neighbour's decision.
     expect(classifyMcpRoute("src/app/api/admin/bookings/[id]/brand-new/route.ts", "POST")).toEqual({
       kind: "unclassified",
@@ -441,7 +484,10 @@ describe("AI app action census (ALP-653, INV-MCP-006)", { timeout: CENSUS_TIMEOU
     // through a shared guard wrapper, overrides the path's rule; the entry must
     // carry it as `requires`, and only then. The gate is read by the one
     // reader the admin authorization proof uses (`INV-SSOT-001`).
-    const mismatched = MCP_ACTIONS.filter((action) => mcpActionAdminRequirement(action) !== null).flatMap((action) => {
+    // The finance workspace's own guards are read by the test after this one.
+    const mismatched = MCP_ACTIONS.filter(
+      (action) => mcpActionAdminRequirement(action) !== null && !underFinanceWorkspace(action.path),
+    ).flatMap((action) => {
       const file = mcpActionRouteFile(action);
       if (!action.path.startsWith("/api/admin/")) {
         // Outside `/api/admin` only a pinned route may be an officer action.
@@ -469,6 +515,85 @@ describe("AI app action census (ALP-653, INV-MCP-006)", { timeout: CENSUS_TIMEOU
       MCP_ACTIONS.filter((action) => action.requires !== undefined).map((action) => `${action.method} ${action.path}`),
     );
     expect(Object.keys(OFFICER_ROUTES_OUTSIDE_ADMIN).filter((route) => !officerRoutes.has(route))).toEqual([]);
+  });
+
+  it("offers each finance workspace action at the level its own guard enforces", () => {
+    // `/api/finance` routes guard themselves rather than through `requireAdmin`,
+    // and the path's rule goes by method alone, so `requires` must name the
+    // level the handler's guard demands (ALP-721).
+    const workspace = MCP_ACTIONS.filter((action) => underFinanceWorkspace(action.path));
+    expect(workspace.length).toBeGreaterThan(0);
+    for (const action of workspace) {
+      const source = handlerSource(mcpActionRouteFile(action), action.method) ?? "";
+      const guard = action.requires?.level === "view" ? "requireFinanceViewerApiAccess(" : "requireFinanceManagerApiAccess(";
+      expect(action.requires?.area, action.id).toBe("finance");
+      expect(source.includes(guard), `${action.id} calls ${guard}`).toBe(true);
+    }
+  });
+
+  it("leaves no route waiting on ALP-721, which decided the Finance admin area", () => {
+    expect(Object.values(MCP_NOT_YET_TASKS)).not.toContain("ALP-721");
+    const finance = routeMethods.filter(
+      (route) => getAdminRouteRequirement(adminRouteApiPath(route.file), route.method)?.area === "finance",
+    );
+    expect(finance.length).toBeGreaterThan(60);
+    for (const route of finance) {
+      const result = classifyMcpRoute(route.file, route.method);
+      expect(result.kind, `${route.method} ${route.file}`).not.toBe("unclassified");
+      if (result.kind === "excluded") expect(result.reason, `${route.method} ${route.file}`).not.toMatch(/^not-yet:/);
+    }
+    // Finance is finished: a new finance route has to be decided, not deferred.
+    expect(classifyMcpRoute("src/app/api/admin/xero/brand-new/route.ts", "GET")).toEqual({ kind: "unclassified" });
+    expect(classifyMcpRoute("src/app/api/finance/brand-new/route.ts", "GET")).toEqual({ kind: "unclassified" });
+  });
+
+  it("keeps the Finance money and setup routes the owner kept website-only off the catalogue", () => {
+    // #5305 comment 7131138226: item 1, Stripe-touching money; item 4, setup.
+    // Comment 7200981104: a subscription marked paid by hand, as booking mark-paid.
+    const ownerDecided: Array<[string, string, string]> = [
+      ["src/app/api/admin/bookings/[id]/mark-paid/route.ts", "POST", "moves-money"],
+      ["src/app/api/admin/bookings/[id]/additional-payment/withdraw/route.ts", "POST", "moves-money"],
+      ["src/app/api/admin/subscriptions/[id]/manual-payment/route.ts", "POST", "moves-money"],
+      ["src/app/api/admin/internet-banking-settings/route.ts", "PUT", "club-setup"],
+      ["src/app/api/admin/fee-configuration/route.ts", "POST", "club-setup"],
+      ["src/app/api/admin/club-tax/route.ts", "PUT", "club-setup"],
+      ["src/app/api/admin/xero/account-mappings/route.ts", "PUT", "club-setup"],
+      ["src/app/api/admin/xero/item-code-mappings/route.ts", "PUT", "club-setup"],
+      ["src/app/api/admin/integrations/credentials/route.ts", "GET", "club-setup"],
+      ["src/app/api/admin/xero/connect/route.ts", "GET", "club-setup"],
+    ];
+    for (const [file, method, reason] of ownerDecided) {
+      expect(classifyMcpRoute(file, method), `${method} ${file}`).toEqual({ kind: "excluded", reason });
+    }
+  });
+
+  it("excludes every handler that asks for a fresh proof itself", () => {
+    // A connection never holds one (INV-MCP-005), so such a handler could only ever refuse it.
+    const asking = routeMethods.filter((route) => handlerSource(route.file, route.method)?.includes("requireRecentAuth("));
+    expect(asking.length).toBeGreaterThan(0);
+    for (const route of asking) {
+      expect(classifyMcpRoute(route.file, route.method), `${route.method} ${route.file}`).toEqual({
+        kind: "excluded",
+        reason: "fresh-proof",
+      });
+    }
+  });
+
+  it("gives the fresh-proof reason only to a route that still asks for one", () => {
+    // The reverse: a hand-listed handler that stops asking for a fresh proof
+    // must not stay excluded under a reason that is no longer true.
+    const stepUp = new Set(STEP_UP_ROUTES.map((route) => stepUpRouteKey(route.file, route.method)));
+    const freshProof = routeMethods.filter((route) => {
+      const result = classifyMcpRoute(route.file, route.method);
+      return result.kind === "excluded" && result.reason === "fresh-proof";
+    });
+    expect(freshProof.length).toBeGreaterThan(0);
+    for (const route of freshProof) {
+      const asks =
+        stepUp.has(stepUpRouteKey(route.file, route.method)) ||
+        Boolean(handlerSource(route.file, route.method)?.includes("requireRecentAuth("));
+      expect(asks, `${route.method} ${route.file}`).toBe(true);
+    }
   });
 
   it("points every catalogue entry at a route method that exists", () => {

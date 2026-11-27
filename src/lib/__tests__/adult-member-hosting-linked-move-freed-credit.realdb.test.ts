@@ -1,5 +1,5 @@
 /**
- * Real-PostgreSQL proof for fork triyder/AlpineClubBookingsNZ#132: the adult-member hosting linked-move
+ * Real-PostgreSQL proof for the 18 Nov 2026 money review on #5149: the adult-member hosting linked-move
  * offer's "comes back" figure counts the account credit a lower price frees on a
  * booking that is still pending, so the figure the member accepts equals the
  * change in their credit balance.
@@ -260,7 +260,7 @@ async function bookingRows() {
   });
 }
 
-(RUN ? describe : describe.skip)("the linked move counts freed account credit, on PostgreSQL (fork triyder/AlpineClubBookingsNZ#132)", () => {
+(RUN ? describe : describe.skip)("the linked move counts freed account credit, on PostgreSQL (the 18 Nov 2026 money review on #5149)", () => {
   beforeAll(async () => {
     assertSafeRaceDbUrl(RACE_DB_URL, "Linked move freed credit");
     process.env.DATABASE_URL = RACE_DB_URL;
@@ -375,8 +375,13 @@ async function bookingRows() {
     expect(await bookingRows()).toEqual(before);
     expect(await memberCredit.getMemberCreditBalance(OWNER_ID)).toBe(0);
 
+    // #5238: the acceptance echoes each booking's figures exactly as offered,
+    // and the real saves accept them, so the offer and the apply price alike.
+    const args = await moveArgs();
     await linkedMove.applyLinkedDateMove({
-      ...(await moveArgs()),
+      ...args,
+      input: { ...args.input, quotedFigures: shown.quote.primary.quotedFigures },
+      linkedQuotedFigures: shown.quote.linked.map((booking) => ({ bookingId: booking.bookingId, figures: booking.quotedFigures! })),
       linkedMove: { choice: "MOVE_BOTH", acknowledged: true, stateKey: shown.acceptStateKey },
     });
 

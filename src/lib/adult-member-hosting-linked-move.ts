@@ -7,6 +7,7 @@ import {
   type StrandedCoverageBooking,
 } from "@/lib/adult-member-hosting-same-owner";
 import { ApiError } from "@/lib/api-error";
+import type { EditQuotedFigures } from "@/lib/edit-quoted-figures";
 import { editTotalMoneyBackCents } from "@/lib/edit-money-back";
 import { editRefundRouteOf, type EditRefundRoute } from "@/lib/edit-refund-route";
 import { formatBookingReference } from "@/lib/booking-reference";
@@ -98,6 +99,7 @@ export type LinkedMoveBooking = HostingCoverageLinkedMoveBooking;
 
 /** The booking the member actually asked to move. */
 export interface LinkedMovePrimary {
+  quotedFigures: EditQuotedFigures;
   bookingId: string;
   reference: string;
   proposedCheckIn: string;
@@ -129,8 +131,8 @@ export interface LinkedMoveQuote {
   combinedChangeFeeCents: number;
   /** What the member pays now, across both bookings. */
   combinedAmountDueCents: number;
-  /** Every cent that comes back to the member, across both bookings, freed applied credit included (fork triyder/AlpineClubBookingsNZ#132). */
-  combinedRefundCents: number; combinedFreedCreditCents: number; // fork triyder/AlpineClubBookingsNZ#132: the freed applied credit inside it, for the wording only
+  /** Every cent that comes back to the member, across both bookings, freed applied credit included (the 18 Nov 2026 money review on #5149). */
+  combinedRefundCents: number; combinedFreedCreditCents: number; // the 18 Nov 2026 money review on #5149: the freed applied credit inside it, for the wording only
   /**
    * What the club's cancellation policy KEEPS of the reductions, across every
    * booking that moves — the difference between what a booking's price fell by and
@@ -382,6 +384,7 @@ export function formatLinkedMoveOfferMessage(quote: LinkedMoveQuote, format: Clu
  * that at the one call site.
  */
 export interface LinkedMoveSettledBooking {
+  quotedFigures: EditQuotedFigures;
   priceDiffCents: number;
   changeFeeCents: number;
   additionalAmountCents: number;
@@ -389,7 +392,7 @@ export interface LinkedMoveSettledBooking {
   accountCreditAmountCents: number;
   /** #3809: applied credit the reduction gave back - money coming back as well. */
   appliedCreditGivenBackCents: number;
-  refundedExcessCreditCents: number; // F20 (#1887): an UNPAID booking's applied credit the lower price freed (fork triyder/AlpineClubBookingsNZ#132)
+  refundedExcessCreditCents: number; // F20 (#1887): an UNPAID booking's applied credit the lower price freed (the 18 Nov 2026 money review on #5149)
   /** The WRITE's own answer, never inferred from the amounts — see `combineLinkedMoveQuote`. */
   requiresSettlementMethod: boolean;
   /** #5303 (`INV-PAY-160`): the settlement's own answer that a reduction's refund goes to the card. */
@@ -551,6 +554,7 @@ export function combineLinkedMoveQuote(input: {
 }): LinkedMoveQuote {
   const linked: LinkedMoveBooking[] = input.linked
     .map((entry) => ({
+      quotedFigures: entry.result?.quotedFigures,
       bookingId: entry.stranded.bookingId,
       reference: entry.stranded.reference,
       lodgeName: entry.stranded.lodgeName,
@@ -582,6 +586,7 @@ export function combineLinkedMoveQuote(input: {
 
   return {
     primary: {
+      quotedFigures: input.primary.quotedFigures,
       bookingId: input.primaryId,
       reference: formatBookingReference(input.primaryId),
       proposedCheckIn: input.primaryRange.checkIn,
@@ -595,8 +600,9 @@ export function combineLinkedMoveQuote(input: {
     combinedAmountDueCents: sum((r) => r.additionalAmountCents),
     // A reduction can come back as a card refund OR as account credit, and the
     // member chose once for both; credit given back (#3809) adds to either, and so
-    // does an unpaid booking's applied credit freed by the lower price (owner
-    // decision on fork triyder/AlpineClubBookingsNZ#132: one total, so it matches the balance change). The one
+    // does an unpaid booking's applied credit freed by the lower price (one total,
+    // so it matches the balance change: the maintainers' 18 Nov 2026 money review,
+    // https://github.com/thatskiff33/AlpineClubBookingsNZ/pull/5149#issuecomment-7065410540). The one
     // sum is `editTotalMoneyBackCents` (why it never double-counts is there).
     combinedRefundCents: sum(editTotalMoneyBackCents), combinedFreedCreditCents: sum((r) => r.refundedExcessCreditCents),
     combinedPolicyRetainedCents: sum((r) => r.policyRetainedAmountCents),

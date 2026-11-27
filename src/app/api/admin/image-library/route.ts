@@ -1,5 +1,4 @@
 import { NextRequest, NextResponse } from "next/server";
-import { z } from "zod";
 import { requireAdmin } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma";
 import { logAudit } from "@/lib/audit";
@@ -14,11 +13,9 @@ import {
   cleanImageForStorage,
 } from "@/lib/media-image";
 import { readCappedMultipartFormData } from "@/lib/capped-multipart";
-
-const listQuerySchema = z.object({
-  page: z.coerce.number().int().min(1).max(10_000).default(1),
-  pageSize: z.coerce.number().int().min(1).max(100).default(24),
-});
+import { imageLibraryListQuerySchema } from "@/lib/admin-content-api/images";
+import { connectionJson } from "@/lib/mcp-connection-request";
+import { IMAGE_LIBRARY_LIST_CONNECTION_SHAPE } from "@/lib/connection-shapes/content-images";
 
 const MEDIA_IMAGE_LIST_SELECT = {
   id: true,
@@ -56,7 +53,7 @@ export async function GET(request: NextRequest) {
   });
   if (!guard.ok) return guard.response;
 
-  const parsedQuery = listQuerySchema.safeParse({
+  const parsedQuery = imageLibraryListQuerySchema.safeParse({
     page: request.nextUrl.searchParams.get("page") ?? undefined,
     pageSize: request.nextUrl.searchParams.get("pageSize") ?? undefined,
   });
@@ -81,12 +78,16 @@ export async function GET(request: NextRequest) {
     prisma.mediaImage.count({ where: { kind: "CONTENT" } }),
   ]);
 
-  return NextResponse.json({
-    images: images.map(toMediaImageSummary),
-    total,
-    page,
-    pageSize,
-  });
+  return connectionJson(
+    request,
+    {
+      images: images.map(toMediaImageSummary),
+      total,
+      page,
+      pageSize,
+    },
+    IMAGE_LIBRARY_LIST_CONNECTION_SHAPE,
+  );
 }
 
 export async function POST(request: NextRequest) {

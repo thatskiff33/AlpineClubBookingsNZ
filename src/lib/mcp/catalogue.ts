@@ -95,6 +95,8 @@ import { BOOKINGS_BOOKING_MCP_ACTIONS } from "./catalogue/bookings-bookings";
 import { BOOKINGS_REQUEST_MCP_ACTIONS } from "./catalogue/bookings-requests";
 import { BOOKINGS_REVIEW_QUEUE_MCP_ACTIONS } from "./catalogue/bookings-review-queues";
 import { BOOKINGS_SETUP_MCP_ACTIONS } from "./catalogue/bookings-setup";
+import { CONTENT_MCP_ACTIONS } from "./catalogue/content";
+import { FINANCE_MCP_ACTIONS } from "./catalogue/finance";
 import { MEMBERSHIP_MCP_ACTIONS } from "./catalogue/membership";
 import { LODGE_MCP_ACTIONS } from "./catalogue/lodge";
 
@@ -655,8 +657,12 @@ export const MCP_ACTIONS: readonly McpAction[] = [
   // Membership (ALP-720), every route the `membership` area guards bar the
   // fresh-proof ones and those with a permanent reason.
   ...MEMBERSHIP_MCP_ACTIONS,
+  // Finance (ALP-721), in `catalogue/finance.ts`.
+  ...FINANCE_MCP_ACTIONS,
   // Lodge Operations (ALP-722), in `catalogue/lodge.ts`.
   ...LODGE_MCP_ACTIONS,
+  // Content (ALP-723), every route the `content` area guards bar file uploads.
+  ...CONTENT_MCP_ACTIONS,
 ];
 
 export const MCP_WEBSITE_ONLY_ACTIONS: readonly McpWebsiteOnlyAction[] = [

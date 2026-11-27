@@ -40,7 +40,7 @@ describe("public content settings route", () => {
   });
 
   it("serializes an existing Prisma row without leaking metadata", async () => {
-    const response = await GET();
+    const response = await GET(new Request("http://localhost/api/admin/public-content-settings"));
     expect(mocks.requireAdmin).toHaveBeenCalledWith({ permission: { area: "content", level: "view" } });
     expect(await response.json()).toEqual({ settings: {
       membershipTypes: true, entranceFees: false, hutFees: true,
@@ -56,7 +56,7 @@ describe("public content settings route", () => {
   // rather than a second hand-written copy.
   it("synthesises the shared shipped defaults when no row is saved", async () => {
     mocks.findUnique.mockResolvedValue(null);
-    const response = await GET();
+    const response = await GET(new Request("http://localhost/api/admin/public-content-settings"));
     const body = (await response.json()) as {
       settings: Record<string, unknown>;
     };
@@ -78,11 +78,11 @@ describe("public content settings route", () => {
   // the admin panel shows.
   it("returns a saved showBookNow choice unchanged in both directions", async () => {
     mocks.findUnique.mockResolvedValue({ ...existing, showBookNow: false });
-    const off = (await (await GET()).json()) as { settings: { showBookNow: boolean } };
+    const off = (await (await GET(new Request("http://localhost/api/admin/public-content-settings"))).json()) as { settings: { showBookNow: boolean } };
     expect(off.settings.showBookNow).toBe(false);
 
     mocks.findUnique.mockResolvedValue({ ...existing, showBookNow: true });
-    const on = (await (await GET()).json()) as { settings: { showBookNow: boolean } };
+    const on = (await (await GET(new Request("http://localhost/api/admin/public-content-settings"))).json()) as { settings: { showBookNow: boolean } };
     expect(on.settings.showBookNow).toBe(true);
   });
 
