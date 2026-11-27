@@ -614,8 +614,10 @@ adjustment) still takes its tax type from the club's treatment through
 carries the sales tax the original invoice line carried. Xero decides per tax
 rate which kinds of account the rate may sit on, and this cannot be tested
 without a live organisation, so `readXeroTaxHealth` warns when the refund
-account is an expense account in the cached chart and Xero says the tax code in
-force cannot be used on expenses: Xero would reject those credit notes.
+account is an expense account in the chart last stored and Xero says the tax
+code in force cannot be used on expenses: Xero would reject those credit notes.
+It reads that chart even after its hour is up, since one is stored only when an
+administrator opens a screen that lists accounts.
 `xero-refund-method-documents.test.ts` pins the line for both kinds of account.
 
 ### The journal's GST on each line (#5208)

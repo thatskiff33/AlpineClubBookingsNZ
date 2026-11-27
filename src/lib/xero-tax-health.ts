@@ -4,7 +4,7 @@ import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
 import { prisma } from "@/lib/prisma";
 import { normalizeXeroAccountClass } from "@/lib/xero-account-class";
 import { MAPPING_LABELS, normalizeMappingCode } from "@/lib/xero-account-mapping-keys";
-import { getCachedChartOfAccounts } from "@/lib/xero-admin-cache";
+import { readStoredChartOfAccounts } from "@/lib/xero-admin-cache";
 import { hutFeeRefundLineCodes } from "@/lib/xero-hut-fee-line-codes";
 import { getResolvedAccountMapping } from "@/lib/xero-mappings";
 import {
@@ -96,10 +96,12 @@ export async function readXeroTaxHealth(): Promise<XeroTaxHealth> {
  * per rate which kinds of account it may sit on, and rejects a document that
  * pairs a rate with an account outside them. The problem is reported when all
  * three hold: a registered period is in force, the account the refund line
- * names (`hutFeeRefundLineCodes`) is an expense account in the cached chart, and
- * Xero says the period's rate cannot be used on expenses.
+ * names (`hutFeeRefundLineCodes`) is an expense account in the chart last
+ * stored, and Xero says the period's rate cannot be used on expenses. The chart
+ * is read even after its hour is up, so the warning does not clear itself once
+ * nobody has opened an account screen for a while.
  *
- * Null whenever one of them cannot be established: no cached chart, a code the
+ * Null whenever one of them cannot be established: no stored chart, a code the
  * chart does not list, or a line that takes its account from a Xero item. A
  * code Xero no longer has is `xeroTaxCodeProblem`'s to report. Nothing is read
  * for a club that is not registered, or while Xero's rates could not be read.
@@ -113,10 +115,11 @@ async function hutFeeRefundsExpenseAccountProblem(
   if (!rate || rate.expenses) return null;
   const [mapping, chart] = await Promise.all([
     getResolvedAccountMapping("hutFeeRefunds"),
-    getCachedChartOfAccounts(),
+    // An unreadable chart is "cannot be established", as the cached read it replaced treated it.
+    readStoredChartOfAccounts(prisma, { evenIfExpired: true }).catch(() => null),
   ]);
   const lineAccount = normalizeMappingCode(hutFeeRefundLineCodes(mapping).accountCode);
-  const account = chart?.values.find((row) => normalizeMappingCode(row.code) === lineAccount);
+  const account = chart?.find((row) => normalizeMappingCode(row.code) === lineAccount);
   if (!lineAccount || !account || normalizeXeroAccountClass(account.class) !== "EXPENSE") return null;
   return `${MAPPING_LABELS.hutFeeRefunds} is mapped to an expense account, and Xero's tax rate ${rate.taxType} (${rate.name}) cannot be used on expenses, so Xero would reject refund credit notes. Map ${MAPPING_LABELS.hutFeeRefunds} to a revenue account, or ask your accountant which account and tax rate refunds should use.`;
 }

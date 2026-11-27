@@ -17,14 +17,14 @@ const mocks = vi.hoisted(() => ({
 }));
 const openingCreditsRow = vi.hoisted(() => vi.fn());
 // #5235: the chart of accounts as the Xero screens last cached it, or null.
-const cachedChart = vi.hoisted(() => vi.fn());
+const storedChart = vi.hoisted(() => vi.fn());
 const accountMappingRows = vi.hoisted(() => vi.fn());
 // #4988: the health check asks whether the Opening Credits account is mapped,
 // and reads every stored account mapping to see whether another shares its account.
 vi.mock("@/lib/prisma", () => ({
   prisma: { xeroAccountMapping: { findUnique: openingCreditsRow, findMany: accountMappingRows } },
 }));
-vi.mock("@/lib/xero-admin-cache", () => ({ getCachedChartOfAccounts: cachedChart }));
+vi.mock("@/lib/xero-admin-cache", () => ({ readStoredChartOfAccounts: storedChart }));
 vi.mock("@/lib/xero-tax-anchors", () => import("./support/xero-tax-anchors-baseline"));
 vi.mock("@/lib/club-time-zone-runtime", () => ({ readClubTimeZoneOutsideRequest: async () => "Pacific/Auckland" }));
 vi.mock("@/lib/club-tax-settings", async (importOriginal) => ({
@@ -102,8 +102,8 @@ describe("readXeroTaxHealth", () => {
     openingCreditsRow.mockResolvedValue(null);
     accountMappingRows.mockReset();
     accountMappingRows.mockResolvedValue([]);
-    cachedChart.mockReset();
-    cachedChart.mockResolvedValue(null);
+    storedChart.mockReset();
+    storedChart.mockResolvedValue(null);
   });
 
   it("is clean when Xero agrees with the period in force today", async () => {
@@ -327,12 +327,22 @@ describe("readXeroTaxHealth", () => {
       );
 
     beforeEach(() => {
-      cachedChart.mockResolvedValue({ values: CHART });
+      storedChart.mockResolvedValue(CHART);
       storeRefundMapping({ code: "429" });
     });
 
     it("MUTATION: is a health problem for a registered club whose code cannot be used on expenses", async () => {
       expect((await readXeroTaxHealth()).problems).toEqual([REFUND_ACCOUNT_PROBLEM]);
+    });
+
+    it("MUTATION: reads the last chart stored even after its hour is up, so the warning does not clear itself", async () => {
+      await readXeroTaxHealth();
+      expect(storedChart).toHaveBeenCalledWith(expect.anything(), { evenIfExpired: true });
+    });
+
+    it("says nothing when the stored chart cannot be read", async () => {
+      storedChart.mockRejectedValue(new Error("database unavailable"));
+      await expect(readXeroTaxHealth()).resolves.toEqual({ checked: true, problems: [] });
     });
 
     it("is clean when Xero lets the code in force sit on an expense account", async () => {
@@ -352,13 +362,13 @@ describe("readXeroTaxHealth", () => {
       mocks.organisation.mockResolvedValue({ paysTax: false });
       await expect(readXeroTaxHealth()).resolves.toEqual({ checked: true, problems: [] });
       expect(openingCreditsRow).not.toHaveBeenCalledWith(expect.objectContaining({ where: { key: "hutFeeRefunds" } }));
-      expect(cachedChart).not.toHaveBeenCalled();
+      expect(storedChart).not.toHaveBeenCalled();
     });
 
-    it("says nothing about what it cannot place: no cached chart, a code the chart does not list, or unread rates", async () => {
-      cachedChart.mockResolvedValue(null);
+    it("says nothing about what it cannot place: no stored chart, a code the chart does not list, or unread rates", async () => {
+      storedChart.mockResolvedValue(null);
       expect((await readXeroTaxHealth()).problems).toEqual([]);
-      cachedChart.mockResolvedValue({ values: CHART });
+      storedChart.mockResolvedValue(CHART);
       storeRefundMapping({ code: "777" });
       expect((await readXeroTaxHealth()).problems).toEqual([]);
       storeRefundMapping({ code: "429" });
@@ -368,7 +378,7 @@ describe("readXeroTaxHealth", () => {
 
     it("judges the account the refund line names: none when a Xero item supplies it", async () => {
       // An organisation whose account 200, the default, is an expense account.
-      cachedChart.mockResolvedValue({ values: [{ code: "200", name: "Refunds", type: "EXPENSE", class: "EXPENSE" }] });
+      storedChart.mockResolvedValue([{ code: "200", name: "Refunds", type: "EXPENSE", class: "EXPENSE" }]);
       storeRefundMapping(null);
       expect((await readXeroTaxHealth()).problems).toEqual([REFUND_ACCOUNT_PROBLEM]);
       // With an item code and no chosen account, the line carries no account code: Xero takes it from the item.

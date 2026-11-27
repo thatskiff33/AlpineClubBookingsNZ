@@ -302,9 +302,15 @@ export async function getCachedChartOfAccounts(): Promise<XeroAdminCacheRecord<X
  * per-process copy can differ between servers. Null when Xero is not
  * connected, nothing is stored, or the stored chart has expired. A failed read
  * is thrown, not swallowed: inside a transaction it has already ended it.
+ *
+ * `evenIfExpired` returns the last chart stored however old it is. It is for a
+ * reader that warns rather than refuses (`readXeroTaxHealth`): a chart is only
+ * stored when an administrator opens a screen that lists accounts, so a warning
+ * that needed a fresh one would clear itself an hour after anyone last looked.
  */
 export async function readStoredChartOfAccounts(
   db: Pick<Prisma.TransactionClient, "xeroAdminCache" | "xeroConnection">,
+  { evenIfExpired = false }: { evenIfExpired?: boolean } = {},
 ): Promise<XeroAccount[] | null> {
   const tenantId = (await readXeroConnection(db))?.tenantId ?? null;
   if (!tenantId) return null;
@@ -312,7 +318,8 @@ export async function readStoredChartOfAccounts(
     where: { cacheKey_tenantId: { cacheKey: CHART_OF_ACCOUNTS_CACHE_KEY, tenantId } },
     select: { payload: true, expiresAt: true },
   });
-  if (!record || record.expiresAt.getTime() <= Date.now()) return null;
+  if (!record) return null;
+  if (!evenIfExpired && record.expiresAt.getTime() <= Date.now()) return null;
   return isXeroAccountArray(record.payload) ? record.payload : null;
 }
 
