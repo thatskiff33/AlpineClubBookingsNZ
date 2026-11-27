@@ -8,8 +8,15 @@
   (Jul-Jun)", the season it is still in. This covers Subscriptions, Membership
   Types roll-forward, a member's seasonal membership card, summary strip and
   subscription history, the two bulk membership dialogs, the member profile
-  and the member data export. The routes behind them, and the member imports,
-  now default to that same season too.
+  and the member data export. The routes behind them, the member imports,
+  creating a member and changing members' roles in bulk now default to that
+  same season too.
+
+  Saving a new year-end on the Subscription lockout page, or disconnecting
+  Xero, now redraws the admin screens so they pick up the new month at once.
+  If Xero is slow to say which month the club's year ends in, admin pages no
+  longer wait for it: after two seconds they use the last month the server
+  knew, and catch up on the next page.
 
   Clubs whose year ends in March, which is every club running today, see the
   same seasons and names as before. One small difference: between January and

@@ -31,7 +31,7 @@ import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/session-guards";
 import { subscriptionBillingPreviewSummary } from "@/lib/subscription-billing-preview-summary";
 import { seasonYearOfStoredDate } from "@/lib/financial-year";
-import { clubFinancialYearEndMonth, refreshFinancialYearConfig } from "@/lib/financial-year-server";
+import { clubFinancialYearEndMonth } from "@/lib/financial-year-server";
 import { enqueueMembershipSubscriptionChargeOperation } from "@/lib/xero-subscription-invoices";
 import { assertSubscriptionInvoicingEnabled, isXeroInvoicingEnabled } from "@/lib/xero-invoicing-guard";
 import { XERO_SWITCHED_OFF_DURING_CONFIRM_MESSAGE, XeroInvoicingOffError } from "@/lib/xero-invoicing-off";
@@ -280,7 +280,7 @@ export async function POST(request: Request) {
       // Resolved out here, not inside the reconcile transaction: with no admin
       // override this reads the organisation's accounting year from Xero, and a
       // provider call under the season's advisory lock is forbidden (#3116).
-      const yearEndMonth = await refreshFinancialYearConfig();
+      const yearEndMonth = await clubFinancialYearEndMonth();
       const reconciled = await reconcileSubscriptionBillingExceptions({ seasonYear, decisionDate, yearEndMonth });
       if (reconciled.resolvedCount > 0) {
         await createAuditLog({

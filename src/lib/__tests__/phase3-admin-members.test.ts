@@ -29,7 +29,7 @@ vi.mock("@/lib/prisma", () => ({
       findMany: vi.fn(),
       aggregate: vi.fn(),
     },
-    bookingGuest: { count: vi.fn().mockResolvedValue(0) },
+    bookingGuest: { count: vi.fn().mockResolvedValue(0), findMany: vi.fn().mockResolvedValue([]) },
     payment: { count: vi.fn().mockResolvedValue(0) },
     paymentRefund: { count: vi.fn().mockResolvedValue(0) },
     paymentRecoveryOperation: { count: vi.fn().mockResolvedValue(0) },
@@ -2795,6 +2795,54 @@ describe("Phase 3: Admin Member Management", () => {
         action: "member.bulk-set-role",
         details: expect.stringContaining("USER, FINANCE_USER, FINANCE_ADMIN"),
       }));
+    });
+
+    it("judges a bulk tier change in the season the club's own year-end names (#5259)", async () => {
+      // An August year-end: on the frozen 1 July 2026 the club is still in the
+      // season that began September 2025, where a March club is in 2026.
+      vi.mocked(prisma.membershipLockoutSettings.findUnique).mockResolvedValueOnce({
+        financialYearEndMonthOverride: 8,
+      } as any);
+      mockedAuth.mockResolvedValue(adminSession);
+      vi.mocked(prisma.member.findMany).mockResolvedValue([
+        {
+          id: "m2",
+          firstName: "Bob",
+          lastName: "Smith",
+          email: "bob@test.com",
+          role: "USER",
+          financeAccessLevel: "NONE",
+          canLogin: true,
+          dateOfBirth: null,
+        },
+      ] as any);
+      vi.mocked(prisma.$transaction).mockImplementation(async (fn: any) =>
+        fn({
+          member: {
+            update: vi.fn().mockResolvedValue({}),
+            updateMany: vi.fn().mockResolvedValue({ count: 1 }),
+            findMany: vi.fn().mockResolvedValue([]),
+          },
+          memberAccessRole: {
+            createMany: vi.fn().mockResolvedValue({ count: 1 }),
+            deleteMany: vi.fn().mockResolvedValue({ count: 1 }),
+          },
+        }),
+      );
+
+      const req = new NextRequest("http://localhost/api/admin/members/bulk-update", {
+        method: "POST",
+        body: JSON.stringify({ ids: ["m2"], action: "set-role", accessRoles: ["ORG"] }),
+        headers: { "Content-Type": "application/json" },
+      });
+      const res = await bulkUpdate(req);
+
+      expect(res.status).toBe(200);
+      expect(prisma.seasonalMembershipAssignment.findUnique).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { memberId_seasonYear: { memberId: "m2", seasonYear: 2025 } },
+        }),
+      );
     });
 
     it("clears bulk access-role rows for non-login records", async () => {

@@ -17,7 +17,6 @@ const mocks = vi.hoisted(() => ({
   familyMarker: { findFirst: vi.fn(), create: vi.fn(), updateMany: vi.fn() },
   transaction: vi.fn(),
   clubTimeSettings: { findUnique: vi.fn() },
-  refreshFinancialYearConfig: vi.fn(),
   clubFinancialYearEndMonth: vi.fn(),
   closeAlreadyPaid: vi.fn(),
 }));
@@ -49,7 +48,6 @@ vi.mock("@/lib/membership-subscription-charge-close", async (importOriginal) => 
 // under the season's advisory lock (#3116). Mocked here because the real module
 // reaches Prisma and the provider, neither of which this route test stands up.
 vi.mock("@/lib/financial-year-server", () => ({
-  refreshFinancialYearConfig: mocks.refreshFinancialYearConfig,
   clubFinancialYearEndMonth: mocks.clubFinancialYearEndMonth,
 }));
 vi.mock("@/lib/prisma", () => ({
@@ -105,7 +103,6 @@ describe("admin subscription billing route", () => {
     mocks.buildPreview.mockResolvedValue(preview);
     mocks.confirmPreview.mockResolvedValue({ chargeIds: ["charge-1"], exceptionCount: 0 });
     mocks.reconcile.mockResolvedValue({ resolvedCount: 0 });
-    mocks.refreshFinancialYearConfig.mockResolvedValue(3);
     mocks.clubFinancialYearEndMonth.mockResolvedValue(3);
     mocks.enqueue.mockResolvedValue({ queueOperationId: "op-1", message: "queued" });
     mocks.charges.findMany.mockResolvedValue([]);
@@ -301,7 +298,7 @@ describe("admin subscription billing route", () => {
     // The year-end is resolved HERE and handed to reconcile, so the reconcile
     // transaction never resolves it under the season's advisory lock (#3116).
     expect(mocks.reconcile).toHaveBeenCalledWith({ seasonYear: 2026, decisionDate: expect.any(Date), yearEndMonth: 3 });
-    expect(mocks.refreshFinancialYearConfig).toHaveBeenCalled();
+    expect(mocks.clubFinancialYearEndMonth).toHaveBeenCalled();
     const body = await response.json();
     expect(body).toMatchObject({ success: true, reconciledCount: 3, preview, settings: { invoiceDueDays: 30 } });
     // Audits the reconciliation when it resolved rows.
