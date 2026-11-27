@@ -1419,6 +1419,7 @@ model MemberSubscriptionAgeUpAdjustment {
   chargeId             String?               @unique
   // CREDIT, lot route: the member credit lot it became.
   memberCreditId       String?               @unique
+  creditInvoiceId      String?
   // CREDIT, allocate route: the credit note allocated to the season invoice.
   xeroCreditNoteId     String?               @unique
   // TOP_UP: its invoice's status, from the membership sync. Null until issued.

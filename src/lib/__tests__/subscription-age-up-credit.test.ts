@@ -20,6 +20,7 @@ type Adjustment = {
   seasonYear: number;
   memberCreditId: string | null;
   xeroCreditNoteId: string | null;
+  creditInvoiceId: string | null;
 };
 type Charge = { xeroInvoiceId: string | null; status: string };
 
@@ -117,6 +118,7 @@ beforeEach(() => {
     seasonYear: 2026,
     memberCreditId: null,
     xeroCreditNoteId: null,
+    creditInvoiceId: null,
   };
   store.subscription = { status: "UNPAID", charge: { xeroInvoiceId: "inv-season", status: "EMAILED" } };
   store.existingNote = null;
@@ -168,6 +170,24 @@ beforeEach(() => {
 });
 
 describe("createAgeUpCredit: credit note on the season invoice (#5190 PR 3)", () => {
+  it("does not switch to a lot after Xero accepted a note but its link was not saved", async () => {
+    mocks.upsertXeroObjectLink.mockRejectedValueOnce(new Error("link write failed"));
+    await expect(run()).rejects.toThrow("link write failed");
+    seasonInvoiceOwes(0);
+    await run();
+    expect(mocks.postAgeUpCreditLot).not.toHaveBeenCalled();
+    expect(mocks.createCreditNotes.mock.calls.map(call => call[4])).toEqual([
+      ageUpCreditIdempotencyKey(ADJUSTMENT_ID), ageUpCreditIdempotencyKey(ADJUSTMENT_ID),
+    ]);
+  });
+
+  it("does not treat a missing Xero balance as a paid invoice", async () => {
+    mocks.getInvoice.mockResolvedValue({ body: { invoices: [{ invoiceID: "inv-season" }] } });
+    await expect(run()).rejects.toThrow(/balance/i);
+    expect(mocks.postAgeUpCreditLot).not.toHaveBeenCalled();
+    expect(mocks.createCreditNotes).not.toHaveBeenCalled();
+  });
+
   it("raises one note for the credit and allocates it while the invoice owes more than the credit", async () => {
     await run();
 
@@ -350,6 +370,7 @@ describe("createAgeUpCredit: credit on the member's account (#5190 PR 3)", () =>
 describe("creditAgeUpAdjustmentToAccount: the claim (#5190 PR 3)", () => {
   it.each([
     ["is no longer pending", { status: "CREDITED_ON_INVOICE" }],
+    ["has reserved the invoice route", { creditInvoiceId: "inv-season" }],
     ["was voided", { status: "VOIDED" }],
     ["already has a credit lot", { memberCreditId: "credit-lot-other" }],
     ["already has a credit note", { xeroCreditNoteId: "note-1" }],

@@ -106,7 +106,7 @@ export async function creditAgeUpAdjustmentToAccount(adjustmentId: string): Prom
   return prisma.$transaction(async (tx) => {
     await lockMemberCreditLedger(memberId, tx);
     const claimed = await tx.memberSubscriptionAgeUpAdjustment.updateMany({
-      where: { id: adjustmentId, kind: "CREDIT", status: "PENDING", memberCreditId: null, xeroCreditNoteId: null },
+      where: { id: adjustmentId, kind: "CREDIT", status: "PENDING", creditInvoiceId: null, memberCreditId: null, xeroCreditNoteId: null },
       data: { status: "CREDITED_TO_ACCOUNT" },
     });
     if (claimed.count === 0) return null;
@@ -138,6 +138,7 @@ export async function createAgeUpCredit(input: {
       kind: true,
       status: true,
       amountCents: true,
+      creditInvoiceId: true,
       description: true,
       seasonYear: true,
       memberSubscription: {
@@ -164,7 +165,9 @@ export async function createAgeUpCredit(input: {
     return;
   }
   const subscription = adjustment.memberSubscription;
-  const season = seasonInvoiceOf(subscription);
+  const season = adjustment.creditInvoiceId
+    ? { kind: "invoice" as const, invoiceId: adjustment.creditInvoiceId }
+    : seasonInvoiceOf(subscription);
   if (season.kind === "wait") {
     // Returned to PENDING by the outbox and looked at again later; nothing was sent.
     throw new XeroAppliedCreditOperationBusyError(
@@ -214,6 +217,7 @@ async function creditOnSeasonInvoice(input: {
     seasonYear: number;
     memberId: string;
     subscriptionId: string;
+    creditInvoiceId: string | null;
   };
   invoiceId: string;
   memberXeroContactId: string | null;
@@ -239,10 +243,18 @@ async function creditOnSeasonInvoice(input: {
   });
   const invoice = invoiceResponse.body.invoices?.[0];
   if (!invoice?.invoiceID) throw new Error(`Xero season invoice not found: ${invoiceId}`);
-  const amountDueCents = Math.max(0, providerAmountToCents(invoice.amountDue) ?? 0);
+  const amountDueCents = providerAmountToCents(invoice.amountDue);
+  if (amountDueCents === null) throw new Error(`Xero returned no valid balance for season invoice ${invoiceId}.`);
   // A note already raised for this adjustment is allocated whatever is owed
   // now: a second note, or a lot beside it, would credit twice.
-  if (!existingNote && amountDueCents < adjustment.amountCents) return false;
+  if (!adjustment.creditInvoiceId) {
+    if (!existingNote && amountDueCents < adjustment.amountCents) return false;
+    const reserved = await prisma.memberSubscriptionAgeUpAdjustment.updateMany({
+      where: { id: adjustment.id, kind: "CREDIT", status: "PENDING", creditInvoiceId: null, memberCreditId: null },
+      data: { creditInvoiceId: invoiceId },
+    });
+    if (reserved.count === 0) throw new Error("Another worker claimed this age-group credit; recheck its outcome.");
+  }
 
   const contactId = invoice.contact?.contactID ?? input.memberXeroContactId;
   if (!contactId) throw new Error(`No Xero contact for season invoice ${invoiceId}.`);

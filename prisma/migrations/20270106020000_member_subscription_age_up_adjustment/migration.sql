@@ -27,6 +27,7 @@ CREATE TABLE "MemberSubscriptionAgeUpAdjustment" (
     "description" TEXT NOT NULL,
     "chargeId" TEXT,
     "memberCreditId" TEXT,
+    "creditInvoiceId" TEXT,
     "xeroCreditNoteId" TEXT,
     "xeroInvoiceStatus" "SubscriptionStatus",
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -69,6 +70,6 @@ ALTER TABLE "MemberSubscriptionAgeUpAdjustment" ADD CONSTRAINT "MemberSubscripti
 -- A TOP_UP, and only a TOP_UP, names the charge that invoices it; only a CREDIT
 -- names a credit lot or a credit note.
 ALTER TABLE "MemberSubscriptionAgeUpAdjustment" ADD CONSTRAINT "MemberSubscriptionAgeUpAdjustment_kind_links" CHECK (
-  ("kind" = 'TOP_UP' AND "chargeId" IS NOT NULL AND "memberCreditId" IS NULL AND "xeroCreditNoteId" IS NULL)
-  OR ("kind" = 'CREDIT' AND "chargeId" IS NULL AND "xeroInvoiceStatus" IS NULL)
+  ("kind" = 'TOP_UP' AND "chargeId" IS NOT NULL AND "memberCreditId" IS NULL AND "xeroCreditNoteId" IS NULL AND "creditInvoiceId" IS NULL)
+  OR ("kind" = 'CREDIT' AND "chargeId" IS NULL AND "xeroInvoiceStatus" IS NULL AND ("memberCreditId" IS NULL OR "creditInvoiceId" IS NULL))
 );
