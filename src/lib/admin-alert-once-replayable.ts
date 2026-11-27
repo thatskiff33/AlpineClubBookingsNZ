@@ -89,7 +89,8 @@ type ReplayableAlertSend =
 
 /** A stored alert ready for the sweep to re-send, with the club's format read now for a payment alert. */
 export async function replayableAlertSend(alert: ReplayableAdminAlert): Promise<ReplayableAlertSend> {
-  if (alert.kind === "xero-sync-error" || alert.kind === "email-complaint") return { alert };
+  if (alert.kind === "xero-sync-error") return { alert };
+  if (alert.kind === "email-complaint") return { alert };
   const { clubFormatValues } = await import("@/lib/club-format-server");
   return { alert, format: await clubFormatValues() };
 }
