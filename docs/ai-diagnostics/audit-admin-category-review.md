@@ -17,6 +17,12 @@ came out of it is `INV-PRIV-012` — which is also where the fifteen lodge-gated
 sites and the `lockers` group (unresolved then, settled by #2777) are now
 recorded, instead of only in the open-question section at the foot of this page.
 
+**The eight still held are decided too: they stay (owner decision, 20 Nov 2026,
+#5265).** The six `member_lifecycle` delete and archive sites and the two
+family-suggestion sites keep `admin`; reopening any of them is a fresh owner
+decision. They are pinned per site in `HELD_ADMIN_CATEGORIES_5265`. See
+[Held for an owner decision](#held-for-an-owner-decision-9-sites-all-now-decided).
+
 **And the open question at the foot of this page is closed: they stay (#2765).**
 The test that decided it — *did this site split a subsystem*, not *does it name a
 lodge* — is `INV-PRIV-013`, and the fifteen are pinned per site in
@@ -403,7 +409,15 @@ is a genuine alternative — consent is the privacy domain (`INV-PRIV`) — but
 would publish a settings change on the acting administrator's activity page and
 narrow the operator gate at the same time. Kept, and flagged as re-decidable.
 
-## Held for an owner decision: 9 sites, of which 8 are still held
+## Held for an owner decision: 9 sites, all now decided
+
+**Decided 20 Nov 2026 (owner, #5265): all eight remaining sites stay `admin`.**
+That is now the rule, not a pending question: the six `member_lifecycle`
+delete and archive sites and the two family-suggestion sites keep `admin`, and
+reopening any of them is a fresh owner decision, not a sweep (`INV-PRIV-013`).
+`HELD_ADMIN_CATEGORIES_5265` (`scripts/audit/audit-writer-census-manifest.ts`)
+pins them per site, measured from the tree. The sections below keep the case
+each way, which is what the owner weighed. The ninth was settled by #2755.
 
 Two of #2730's own findings, plus one the sweep turned up, that this pass **did
 not** apply. Every destination is member-visible, so each move publishes rows on
@@ -439,7 +453,8 @@ so the same act answers to two gates depending on who started it, and
 side in two places. It is also retention-neutral. But it is a widening, and it
 wants the owner's explicit answer to a plain question: **should a member be able
 to see, on their own activity page, that their deletion was requested, who
-requested it, and the reason they gave?**
+requested it, and the reason they gave?** **Answered 20 Nov 2026 (owner, #5265): no.
+All six stay `admin`.**
 
 ### `FAMILY_SUGGESTION_HIDDEN` and `FAMILY_SUGGESTIONS_RESET` — 2 sites
 
@@ -450,7 +465,7 @@ both pass `memberId: guard.session.user.id`, which the member-timeline filter
 matches, so moving them to `family` publishes each row on the **acting
 officer's** own activity page. The names in the row travel in `metadata`, which
 the member projection withholds. It is the smallest widening on this page and
-still a widening.
+still a widening. **Decided 20 Nov 2026 (owner, #5265): both stay `admin`.**
 
 ### `admin.member.updated` / `.deactivated` / `.reactivated` — 1 site — RESOLVED in #2755
 

@@ -425,6 +425,43 @@ season, so a record for another season keeps its note.
 **Rollback.** Nothing to undo: the note is display only, and moving a member's
 membership type is an ordinary edit.
 
+### Give older activity records a seven-year expiry (#5265)
+
+**Who needs it.** Every club whose database is older than v0.14.0. Before that
+release, 82 kinds of activity record were written with no category, so they got
+no retention class and no expiry and are kept for ever. The owner decided on
+20 Nov 2026 (#5265) that they get the same seven years new records get, counted
+from the day each was recorded. **Nothing changes at deploy**: there is no
+migration, and the records keep their current retention until the owner runs
+the apply below.
+
+**What to do, once this release alone serves.** Read the counts first, because
+records already more than seven years old are deleted for good at the next
+nightly clean-up after the apply.
+
+```bash
+DATABASE_URL=<database> pnpm run audit:expiry-backfill              # census: counts by kind, writes nothing
+DATABASE_URL=<database> pnpm run audit:expiry-backfill -- --dry-run # the same, the batch plan and the apply command
+DATABASE_URL=<operator connection> pnpm run audit:expiry-backfill -- --apply \
+  --actor <your member id> --confirm-total <n> [--allow-delete <n>]
+```
+
+The census and dry run can be pointed at a copy or at the live database. Apply
+refuses unless `--confirm-total` is the live total and, when some records would
+be deleted, `--allow-delete` is that count. Under the
+[least-privilege roles](../DEPLOYMENT.md#least-privilege-database-roles) only the
+operator connection may change an expiry. The full steps:
+[`AUDIT_RETENTION_ARCHIVE_RUNBOOK.md`](AUDIT_RETENTION_ARCHIVE_RUNBOOK.md#older-entries-with-no-expiry-5265).
+This census replaces the read-only retention query in
+[the #2581 section](#one-off-categorisation-of-older-activity-entries-with-no-category-2581).
+
+**How to check it worked.** The census reports 0, and the activity log has one
+`AUDIT_EXPIRY_BACKFILLED` entry, under Admin, per batch.
+
+**Rollback.** The apply writes only `expiresAt`, and each batch's entry names
+the run, so an expiry can be cleared by hand before the clean-up reaches it. A
+record the clean-up has deleted is gone; only a backup brings it back.
+
 ## v0.13.2 → v0.14.0
 
 ### Upgrade checklist for this release
@@ -3095,6 +3132,8 @@ WHERE "category" IS NOT NULL
 GROUP BY 1;
 
 -- Retention on the entries the backfill categorised: what they were recorded with.
+-- Superseded by `pnpm run audit:expiry-backfill`'s census since #5265, which
+-- gives them seven years by owner decision; kept for a database not yet there.
 -- Expect every row to have neither a retention class nor an expiry (kept
 -- indefinitely); a non-zero "withClass" or "withExpiry" is worth reading, not alarming.
 SELECT count(*)                                              AS "backfilled",

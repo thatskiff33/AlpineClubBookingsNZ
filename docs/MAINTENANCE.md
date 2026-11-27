@@ -2179,6 +2179,27 @@ The before-values are on the booking's `PRICE_REBASE` history row and the audit
 entry, which is how a headline can be put back by hand. Do not roll production
 back below `5bab5c49`.
 
+### Give older activity records a seven-year expiry (#5265)
+
+`pnpm run audit:expiry-backfill` is the owner's one-off for activity records
+written before v0.14.0 with no retention class and no expiry, which are kept
+for ever. The owner decided on 20 Nov 2026 that they get seven years from the
+day each was recorded. It does nothing until it is run. Census (the default)
+and `--dry-run` write nothing; `--apply` writes only `expiresAt`, a batch at a
+time, with one `AUDIT_EXPIRY_BACKFILLED` entry per batch. A second apply
+changes nothing.
+
+```bash
+DATABASE_URL=<database> pnpm run audit:expiry-backfill
+DATABASE_URL=<database> pnpm run audit:expiry-backfill -- --dry-run
+DATABASE_URL=<operator connection> pnpm run audit:expiry-backfill -- --apply --actor <memberId> --confirm-total <n> [--allow-delete <n>]
+```
+
+Records already past seven years are deleted for good at the next nightly
+clean-up, which is why apply asks for that count. The steps, and what the
+report's sections mean:
+[`AUDIT_RETENTION_ARCHIVE_RUNBOOK.md`](AUDIT_RETENTION_ARCHIVE_RUNBOOK.md#older-entries-with-no-expiry-5265).
+
 ### Census the booking money verdicts, night-price provenance and edit reviews (#3278, #3531)
 
 `pnpm run booking-money:census` is a READ-ONLY, repeatable-read census. It

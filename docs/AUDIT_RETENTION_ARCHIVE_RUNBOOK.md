@@ -19,7 +19,7 @@ This runbook covers the production audit-log retention job and the optional arch
 - Archive rows older than 7 years are pruned from the archive database; an incident-preserved copy waits until it is 10 years old.
 - Unclassified rows (no `retentionClass`, from before every writer recorded a category) are pruned when their `expiresAt` passes unless their severity is `critical`, which keeps them for 7 years like the `critical` class. A row whose severity was **never set** counts as not critical and is pruned on its expiry (#3524); see "Unclassified rows with no severity" below.
 - A row whose `retentionClass` is not one of the four known classes counts as unclassified and follows the rule above. Such a row is never archived. See "Rows with an unrecognised retention class" below (#3940).
-- A row with no `expiresAt` at all is never pruned, whatever its class or severity. That is the deliberate keep-forever escape hatch, and #3524 did not change it.
+- A row with no `expiresAt` at all is never pruned, whatever its class or severity. For a row with a class, that is the deliberate keep-forever escape hatch, and #3524 did not change it. Rows with neither a class nor an expiry are the entries written before v0.14.0; by owner decision (20 Nov 2026, #5265) they get seven years from their `createdAt` once the owner runs the backfill in "Older entries with no expiry" below, and until then they are kept.
 
 ## Hard invariant: prune never outruns archival (#2506)
 
@@ -113,6 +113,38 @@ ROLLBACK;
 ```
 
 If the club wants any of those rows kept, hold the deploy and raise it on the issue. Do not edit audit rows by hand: the audit log is append-only evidence.
+
+## Older entries with no expiry (#5265)
+
+**The decision (owner, 20 Nov 2026, #5265).** Before v0.14.0, 82 kinds of entry were written with no category, so they got no `retentionClass` and no `expiresAt` and were kept for ever. #2581 gave them a category and deliberately no expiry. They now get the same seven years a new entry gets, counted from each entry's own `createdAt`, applied by the owner after reading the counts. Nothing happens at deploy and no agent runs it.
+
+`pnpm run audit:expiry-backfill` (`src/lib/audit-expiry-backfill.ts`) selects exactly the rows with `retentionClass IS NULL AND expiresAt IS NULL`. It writes only `expiresAt`, computed by the writer's own `getAuditRetentionExpiresAt("critical", createdAt)` (an entry recorded on 29 February expires on 1 March). `retentionClass` stays empty, so the prune's unclassified rules above delete the entry at exactly seven years, or, if it is incident-preserved, at ten.
+
+1. **Census** (the default; writes nothing). Run it and read it:
+
+   ```bash
+   DATABASE_URL=<database> pnpm run audit:expiry-backfill
+   ```
+
+   It reports the total, then for each kind (action, stored category and severity): how many, first and last recorded, how many per year, the range of new expiry dates, how many are already past seven years, and the retention class and period today's writer gives a new entry of that kind. Separately it reports:
+   - **Kinds a new entry of which would be kept for less than seven years today**, such as a `sensitive_access` view (two years). By the decision the older entries of those kinds still get seven years. That is reported, never written.
+   - **Incident-preserved entries**: included, and still kept until ten years old.
+   - **Entries with a retention class but no expiry**: the writer's deliberate keep-for-ever. Counted, never changed.
+   - **How many the next nightly clean-up would delete**: entries past seven years that the ten-year floor does not hold.
+2. **Dry run** (writes nothing). `-- --dry-run` adds the batch plan (500 per batch by default, oldest first) and prints the exact apply command for what it read.
+3. **Apply.** Run the printed command with your own member id:
+
+   ```bash
+   DATABASE_URL=<operator connection> pnpm run audit:expiry-backfill -- --apply \
+     --actor <memberId> --confirm-total <n> [--allow-delete <n>]
+   ```
+
+   The two numbers are the gate. `--confirm-total` must equal the live total and `--allow-delete` must equal the count the next clean-up would delete (leave it out when that is 0); any other number refuses and writes nothing. It also refuses an `--actor` that is not a member. Each batch is one transaction: each row's update is guarded on the selector, plus one `AUDIT_EXPIRY_BACKFILLED` entry under `admin` naming the run, batch, rows updated, counts by action, recorded range and how many were already past. A second apply finds nothing and writes nothing.
+
+**Which connection.** On a single-role install, `DATABASE_URL` as usual. Under the [least-privilege roles](../DEPLOYMENT.md#least-privilege-database-roles) neither the application role (`INSERT` and `SELECT` only) nor the audit-retention role (`UPDATE` of `ipAddress` and `userAgent` only) may change `expiresAt`, so name the operator connection (`POSTGRES_USER`); apply checks the grant before it writes and refuses with that advice.
+
+**What the next prune deletes.** Every entry it reported as deletable, for good: `critical` and unclassified entries are never archived, so no copy is kept anywhere but backups. Afterwards the census reports 0.
+
 
 ## Archive Database Env Vars
 
