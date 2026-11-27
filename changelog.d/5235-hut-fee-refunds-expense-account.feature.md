@@ -21,6 +21,6 @@
   other mappings; the setup checklist and the mapping row point it out instead.
 
   Saving the account mappings is now one step that either saves everything or
-  nothing (#5391). If someone else changes the same mapping while your save is
+  nothing (#5391). If someone else changes the same account code while your save is
   running, you are asked to reload and try again, and two saves at once can no
   longer leave **Opening Credits** sharing an account with another mapping.

@@ -322,11 +322,11 @@ the app checks the code against its copy of your chart of accounts and refuses,
 for example, an asset, liability or bank account on **Hut Fee Refunds**. The
 message names the mapping and nothing is saved. A code the copy does not list
 is accepted, as is any code while Xero is not connected; **Refresh Xero
-reference data** on the mappings card renews the copy. A code saved before
+reference data** on the mappings card renews the copy. If Xero has changed
+the class assigned to a code, refresh before retrying a refused save. A code saved before
 this check existed is left alone when you save other mappings, and the setup
-checklist and the mapping row point it out. If two people change the same
-mapping at the same moment, the second is told the mappings changed and asked
-to reload.
+checklist and the mapping row point it out. If another save changes an account
+code after yours starts checking it but before it writes, reload and try again.
 
 ### Subscribe to Xero webhooks, including credit notes
 

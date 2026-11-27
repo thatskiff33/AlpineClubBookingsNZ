@@ -61,15 +61,6 @@ const ITEM_FIELDS = [
   "itemCode", "amountCents",
 ] as const;
 
-/**
- * XeroItemCodeMapping.category is a plain string column. HUT_FEE and JOINING_FEE
- * are the current categories. ENTRANCE_FEE was the pre-#1931 name for
- * JOINING_FEE; the old-bundle import compat that normalised it — and the legacy
- * isMember HUT_FEE key — closed one release after the E13 contraction (#2131),
- * so such a bundle is now rejected with a clear error instead of being silently
- * upgraded. The deeper transfer of joining-fee SCHEDULE amounts is follow-up
- * #1941.
- */
 const ITEM_CATEGORIES = new Set(["HUT_FEE", "JOINING_FEE"]);
 /** Pre-#1931 category name; rejected on import now the compat window closed (#2131). */
 const LEGACY_ENTRANCE_FEE_CATEGORY = "ENTRANCE_FEE";
