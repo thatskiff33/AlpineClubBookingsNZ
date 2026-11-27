@@ -3353,4 +3353,153 @@ describe("subscription liability rule on billing (#5190)", () => {
     mocks.members.findMany.mockResolvedValue([typed("sam", "REQUIRED", "2019-06-01", "CHILD")]);
     await expect(preview()).rejects.toThrow("connection lost");
   });
+
+  // #5190 PR 3: the run under "Age today". The planner's own cases are in
+  // subscription-age-up-billing.test.ts; these pin how the preview uses it.
+  describe("\"Age today\": a mid-season age-up in the billing run (INV-MONEY-051..053)", () => {
+    // Youth costs 6000 a year and Adult 12000, neither prorated by its own rule.
+    const tieredFees = (adult: Record<string, unknown> = {}) =>
+      mocks.effectiveFee.mockImplementation(async ({ ageTier }: { ageTier: string | null }) =>
+        ageTier === "ADULT"
+          ? fee({ id: "fee-adult", amountCents: 12_000, prorationRule: "NONE", ...adult })
+          : fee({ id: "fee-youth", amountCents: 6_000, prorationRule: "NONE" }));
+    // Turns 18 on 15 Jun 2026: a Youth at season start, an Adult from that day.
+    const ella = () => typed("ella", "BASED_ON_AGE_TIER", "2008-06-15", "YOUTH");
+    // Turns 10 on 15 Jun 2026: an exempt Child at season start, a Youth from that day.
+    const tom = () => typed("tom", "BASED_ON_AGE_TIER", "2016-06-15", "CHILD");
+    const previewOn = (decisionDate: string, memberIds?: string[]) =>
+      buildSubscriptionBillingPreview({
+        seasonYear: 2026,
+        decisionDate: new Date(`${decisionDate}T00:00:00.000Z`),
+        ...(memberIds ? { memberIds } : {}),
+      });
+
+    beforeEach(() => {
+      chosen("AGE_TIER_EXEMPTS", "CURRENT_AGE");
+      tieredFees();
+    });
+
+    it("bills the season at the season-start tier and tops it up for the months at the new tier", async () => {
+      mocks.members.findMany.mockResolvedValue([ella()]);
+
+      const built = await preview();
+
+      expect(built.entries).toHaveLength(1);
+      expect(built.entries[0]).toMatchObject({
+        membershipAnnualFeeId: "fee-youth",
+        annualAmountCents: 6_000,
+        chargedAmountCents: 6_000,
+        decisionDate: "2026-07-13",
+      });
+      expect(built.ageUpAdjustments).toEqual([
+        expect.objectContaining({
+          key: "2026:age-up:ella:2026-06-15",
+          kind: "TOP_UP",
+          fromAgeTier: "YOUTH",
+          toAgeTier: "ADULT",
+          coveredMonths: 10,
+          // (12000 - 6000) x 10 / 12.
+          amountCents: 5_000,
+          xeroAccountCode: "203",
+          xeroItemCode: "SUB",
+        }),
+      ]);
+      // The season total is the season charges alone; a top-up is its own invoice.
+      expect(built.totalCents).toBe(6_000);
+      expect(built.exceptions).toEqual([]);
+    });
+
+    it("bills a member who aged into owing for the months left, from their birthday", async () => {
+      mocks.members.findMany.mockResolvedValue([tom()]);
+
+      const built = await preview();
+
+      expect(built.entries).toHaveLength(1);
+      expect(built.entries[0]).toMatchObject({
+        membershipAnnualFeeId: "fee-youth",
+        // The fee's own rule is NONE; a part-season charge is prorated regardless.
+        prorationRule: "REMAINING_MONTHS_INCLUSIVE",
+        coveredMonths: 10,
+        annualAmountCents: 6_000,
+        // 6000 x 10 / 12.
+        chargedAmountCents: 5_000,
+        // Decided on the birthday, not the run's day a month later.
+        decisionDate: "2026-06-15",
+      });
+      expect(built.exemptMemberIds).toEqual([]);
+      // The part-season charge settles the age-up: nothing more is raised.
+      expect(built.ageUpAdjustments).toEqual([]);
+    });
+
+    it("raises neither before the birthday", async () => {
+      mocks.members.findMany.mockResolvedValue([ella(), tom()]);
+
+      const built = await previewOn("2026-06-14");
+
+      expect(billedIds(built)).toEqual(["ella"]);
+      expect(built.entries[0]).toMatchObject({ membershipAnnualFeeId: "fee-youth" });
+      expect(built.exemptMemberIds).toEqual(["tom"]);
+      expect(built.ageUpAdjustments).toEqual([]);
+    });
+
+    it("raises neither from a run scoped to named members, such as a membership approval", async () => {
+      mocks.members.findMany.mockResolvedValue([ella(), tom()]);
+
+      const built = await previewOn("2026-07-13", ["ella", "tom"]);
+
+      // Each is judged and priced at their season-start tier.
+      expect(billedIds(built)).toEqual(["ella"]);
+      expect(built.entries[0]).toMatchObject({ membershipAnnualFeeId: "fee-youth", annualAmountCents: 6_000 });
+      expect(built.exemptMemberIds).toEqual(["tom"]);
+      expect(built.ageUpAdjustments).toEqual([]);
+    });
+
+    it("lists the adjustment as settle-in-Xero when the new tier's fee is billed to the family", async () => {
+      tieredFees({ billingBasis: "PER_FAMILY" });
+      mocks.members.findMany.mockResolvedValue([ella()]);
+
+      const built = await preview();
+
+      expect(billedIds(built)).toEqual(["ella"]);
+      expect(built.ageUpAdjustments).toEqual([]);
+      expect(built.exceptions).toEqual([
+        expect.objectContaining({
+          code: "AGE_UP_SETTLE_IN_XERO",
+          memberId: "ella",
+          seasonYear: 2026,
+          message: expect.stringMatching(/the Adult fee is not billed per member\. Settle the age-group change in Xero\.$/),
+        }),
+      ]);
+    });
+
+    it("binds the confirmation to the adjustments shown", async () => {
+      mocks.members.findMany.mockResolvedValue([ella()]);
+      const shown = await preview();
+
+      // The Adult fee moves between preview and confirm: the season charge,
+      // priced at Youth, is the same, but the top-up is not.
+      tieredFees({ amountCents: 12_600 });
+      mocks.members.findMany.mockResolvedValue([ella()]);
+      const repriced = await preview();
+
+      expect(repriced.entries).toEqual(shown.entries);
+      expect(repriced.ageUpAdjustments[0]).toMatchObject({ amountCents: 5_500 });
+      expect(repriced.confirmationToken).not.toBe(shown.confirmationToken);
+    });
+
+    it("leaves the confirmation token of a run with no age-ups as it was", async () => {
+      // Mia is 30 all season: the same entry, and so the same token, under
+      // "Age today" as under the season-start age.
+      const mia = () => typed("mia", "BASED_ON_AGE_TIER", "1996-06-01");
+      mocks.members.findMany.mockResolvedValue([mia()]);
+      const ageToday = await preview();
+
+      chosen("AGE_TIER_EXEMPTS", "SEASON_START");
+      mocks.members.findMany.mockResolvedValue([mia()]);
+      const seasonStart = await preview();
+
+      expect(ageToday.ageUpAdjustments).toEqual([]);
+      expect(ageToday.confirmationToken).toBe(seasonStart.confirmationToken);
+    });
+  });
 });
