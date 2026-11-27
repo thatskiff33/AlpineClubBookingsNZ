@@ -297,6 +297,7 @@ export async function getMoneyCheckItems(
                   ? `Credit balance ${format.cents(row.balanceCents)}.`
                   : "Credit balance is below zero.",
               href: adminHref("member-detail", { id: row.memberId }),
+              opens: "member" as const,
             };
           })
         : undefined,

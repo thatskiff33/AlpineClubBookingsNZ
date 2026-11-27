@@ -31,6 +31,8 @@ export interface StuckStateDetail {
   title: string;
   summary: string;
   href: string;
+  /** What `href` opens, so the link says so. A booking when absent. */
+  opens?: "member";
 }
 
 /** How a detail row prints money and an instant (#4959), in the club's format and zone. */

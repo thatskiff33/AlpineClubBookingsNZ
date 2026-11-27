@@ -1572,8 +1572,8 @@ describe("getStuckStateDashboard money check items (#4910)", () => {
     const financeItem = item(finance, "payment-negative-credit-balances");
     expect(financeItem).toMatchObject({ domain: "payment", title: "Members with negative credit", severity: "critical", owner: "Finance", count: 2 });
     expect(financeItem?.details).toEqual([
-      { id: "member-1", title: "Mere Parata", summary: "Credit balance $-25.00.", href: adminHref("member-detail", { id: "member-1" }) },
-      { id: "member-2", title: "Mere Parata", summary: "Credit balance $-1.00.", href: adminHref("member-detail", { id: "member-2" }) },
+      { id: "member-1", title: "Mere Parata", summary: "Credit balance $-25.00.", href: adminHref("member-detail", { id: "member-1" }), opens: "member" },
+      { id: "member-2", title: "Mere Parata", summary: "Credit balance $-1.00.", href: adminHref("member-detail", { id: "member-2" }), opens: "member" },
     ]);
 
     const membershipOnly = await getStuckStateDashboard({ deps: deps(), now: NOW, viewerCanViewMembership: true });

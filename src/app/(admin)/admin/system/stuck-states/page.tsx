@@ -158,7 +158,7 @@ function ItemRow({ item }: { item: StuckStateItem }) {
                   </div>
                 </div>
                 <Button asChild variant="ghost" size="sm">
-                  <Link href={detail.href}>Open booking</Link>
+                  <Link href={detail.href}>{detail.opens === "member" ? "Open member" : "Open booking"}</Link>
                 </Button>
               </li>
             ))}
