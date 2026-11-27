@@ -36,7 +36,7 @@ import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access"
 import { useActionAttention } from "@/hooks/use-scroll-to-feedback"
 import type { RosterDayStatus, RosterDayStatusResult } from "@/lib/roster-status"
 import { deriveSettledLodgeOptionScope } from "@/lib/lodge-option-scope"
-import { getAdminPage } from "@/lib/admin-hubs"
+import { adminHref, getAdminPage } from "@/lib/admin-hubs"
 
 // #2264: deliberately not one of the shared house shapes — the printed chore
 // roster heads the page with the full weekday and month, matching the
@@ -414,8 +414,6 @@ export default function RosterPage() {
   const stayingBookingIds = new Set((roster?.guests ?? []).map((guest) => guest.bookingId))
   const coveredBookingIds = new Set((roster?.assignments ?? []).map((assignment) => assignment.bookingId))
   const uncoveredCount = [...stayingBookingIds].filter((bookingId) => !coveredBookingIds.has(bookingId)).length
-  const selectedDatePathSegment = encodeURIComponent(selectedDate)
-
   return (
     <div>
       <div className="mb-6 flex items-center justify-between">
@@ -435,7 +433,7 @@ export default function RosterPage() {
               worse than not printing at all, because it leaves the building. */}
           {lodgeScopeReady ? (
             <Button asChild variant="outline">
-              <a href={`/admin/roster/${selectedDatePathSegment}/print?lodgeId=${encodeURIComponent(scopedLodgeId)}`} target="_blank" rel="noopener noreferrer">Print Roster</a>
+              <a href={`${adminHref("roster-print", { date: selectedDate })}?lodgeId=${encodeURIComponent(scopedLodgeId)}`} target="_blank" rel="noopener noreferrer">Print Roster</a>
             </Button>
           ) : null}
         </div>

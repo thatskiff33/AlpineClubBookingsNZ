@@ -114,7 +114,7 @@ vi.mock("@/lib/capacity", () => ({
 }));
 
 import MemberCalendarPage from "@/app/(authenticated)/calendar/page";
-import AdminCalendarPage from "@/app/(admin)/admin/calendar/page";
+import AdminCalendarPage from "@/app/(admin)/admin/lodge-ops/calendar/page";
 import DashboardPage from "@/app/(authenticated)/dashboard/page";
 import { loadSignedInMember } from "@/lib/signed-in-member";
 import { inRequestScope } from "@/lib/__tests__/helpers/request-cache-scope";

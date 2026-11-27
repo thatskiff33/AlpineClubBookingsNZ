@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react"
 import Link from "next/link"
+import { adminHref } from "@/lib/admin-hubs"
 import { useParams, useSearchParams } from "next/navigation"
 import { useClubIdentity } from "@/components/club-identity-provider"
 import { useClubFormat } from "@/components/club-format-provider"
@@ -124,8 +125,8 @@ export default function PrintRosterPage() {
           <Link
             href={
               lodgeId
-                ? `/admin/roster?lodgeId=${encodeURIComponent(lodgeId)}`
-                : "/admin/roster"
+                ? `${adminHref("roster")}?lodgeId=${encodeURIComponent(lodgeId)}`
+                : adminHref("roster")
             }
             className="font-medium text-foreground hover:underline"
           >

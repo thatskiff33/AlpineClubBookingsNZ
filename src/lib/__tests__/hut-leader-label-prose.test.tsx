@@ -43,7 +43,7 @@ vi.mock("@/components/admin/lodge-instructions-panel", () => ({
   LodgeInstructionsPanel: () => <div data-testid="lodge-instructions-panel" />,
 }));
 
-import LodgeInstructionsAdminPage from "@/app/(admin)/admin/lodge-instructions/page";
+import LodgeInstructionsAdminPage from "@/app/(admin)/admin/lodge-ops/lodge-instructions/page";
 import MemberLodgeInstructionsPage from "@/app/(authenticated)/lodge-instructions/page";
 import { LodgeCapacityCard } from "@/components/admin/lodge-capacity-card";
 

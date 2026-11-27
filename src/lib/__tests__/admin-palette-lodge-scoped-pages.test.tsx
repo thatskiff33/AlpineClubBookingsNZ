@@ -11,6 +11,9 @@
  * `LodgeSelect` settles a missing one on the club's first lodge (or its sole
  * lodge, ADR-002), then loads that lodge's records. Only the lodge list is
  * stubbed; the selector and the URL read are the shipped ones.
+ *
+ * C11 (#4808) moved Chores, Lockers and Rooms & Beds under `/admin/lodge-ops`,
+ * so each case runs with the hub switch off (the old URL) and on (the hub URL).
  */
 
 import "@testing-library/jest-dom/vitest";
@@ -20,7 +23,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { MODULE_KEYS } from "@/config/modules";
 import type { FeatureFlags } from "@/config/schema";
 import type { AdminPermissionMatrix } from "@/lib/admin-permissions";
-import { adminHref } from "@/lib/admin-hubs";
+import { adminHref, getAdminPage } from "@/lib/admin-hubs";
 import { requireCalendarDate } from "@/lib/club-time";
 
 type LodgeOptionState = {
@@ -32,6 +35,14 @@ type LodgeOptionState = {
 };
 
 let lodgeOptions: LodgeOptionState;
+
+const hubs = vi.hoisted(() => ({ live: false }));
+
+vi.mock("@/lib/admin-hubs/release", () => ({
+  get ADMIN_HUBS_LIVE() {
+    return hubs.live;
+  },
+}));
 
 vi.mock("@/components/lodge-select", async (importOriginal) => {
   const actual = (await importOriginal()) as typeof import("@/components/lodge-select");
@@ -56,8 +67,8 @@ vi.mock("@/components/confirm-dialog", () => ({
 }));
 
 import SeasonsPage from "@/app/(admin)/admin/rules/seasons/page";
-import ChoresPage from "@/app/(admin)/admin/chores/page";
-import LockersPage from "@/app/(admin)/admin/lockers/page";
+import ChoresPage from "@/app/(admin)/admin/lodge-ops/chores/page";
+import LockersPage from "@/app/(admin)/admin/lodge-ops/lockers/page";
 import { RoomsBedsManager } from "@/components/admin/rooms-beds-manager";
 import { getAdminFeatureSearchIndex } from "@/components/admin-sidebar";
 
@@ -158,9 +169,31 @@ afterEach(() => {
   vi.unstubAllGlobals();
   vi.clearAllMocks();
   window.history.replaceState({}, "", "/");
+  hubs.live = false;
+});
+
+/** Each page, with the switch off and on: the off link is the old URL, the on link the hub URL. */
+const PAGES_BY_SWITCH = PAGES.flatMap((page) =>
+  [false, true].map((live) => ({ ...page, live, label: live ? "hub URL" : "old URL" })),
+);
+
+describe("the bare link is the page's own address in each switch state (C11 #4808)", () => {
+  it.each(PAGES_BY_SWITCH)("$id at its $label", ({ id, live }) => {
+    hubs.live = live;
+    const page = getAdminPage(id);
+    expect(adminHref(id)).toBe(live ? page.hubPath : page.oldPath);
+  });
+
+  it("puts Chores, Lockers and Rooms & Beds under the Lodge hub", () => {
+    for (const id of ["chores", "lockers", "rooms-beds"] as const) {
+      expect(getAdminPage(id).hubPath).toBe(`/admin/lodge-ops/${id}`);
+      expect(getAdminPage(id).moved).toBe(true);
+    }
+  });
 });
 
 describe("the palette links each lodge-scoped page bare", () => {
+  // The palette's index is built once, at load, with the switch off.
   it.each(PAGES)("$id is offered at its adminHref, with no lodge in it", ({ id }) => {
     const href = adminHref(id);
     expect(href).not.toMatch(/[?#]/);
@@ -170,9 +203,10 @@ describe("the palette links each lodge-scoped page bare", () => {
 });
 
 describe("a lodge-scoped page opened from the palette settles its own lodge", () => {
-  it.each(PAGES)(
-    "$id loads the first lodge's records when two lodges exist",
-    async ({ id, render: renderPage, read, action }) => {
+  it.each(PAGES_BY_SWITCH)(
+    "$id loads the first lodge's records when two lodges exist, opened at its $label",
+    async ({ id, live, render: renderPage, read, action }) => {
+      hubs.live = live;
       lodgeOptions = { lodges: TWO_LODGES, loading: false, failed: false, forbidden: false, reload: vi.fn() };
       window.history.replaceState({}, "", adminHref(id));
       render(renderPage());
@@ -185,7 +219,8 @@ describe("a lodge-scoped page opened from the palette settles its own lodge", ()
     },
   );
 
-  it.each(PAGES)("$id loads the sole lodge's records in a one-lodge club", async ({ id, render: renderPage, read, action }) => {
+  it.each(PAGES_BY_SWITCH)("$id loads the sole lodge's records in a one-lodge club, opened at its $label", async ({ id, live, render: renderPage, read, action }) => {
+    hubs.live = live;
     lodgeOptions = {
       lodges: [{ id: "lodge-only", name: "The Lodge" }],
       loading: false,
@@ -202,7 +237,8 @@ describe("a lodge-scoped page opened from the palette settles its own lodge", ()
     expect(reads.every((url) => url.includes("lodgeId=lodge-only"))).toBe(true);
   });
 
-  it.each(PAGES)("$id still honours the lodge hub's ?lodgeId= link", async ({ id, render: renderPage, read }) => {
+  it.each(PAGES_BY_SWITCH)("$id still honours the lodge hub's ?lodgeId= link at its $label", async ({ id, live, render: renderPage, read }) => {
+    hubs.live = live;
     lodgeOptions = { lodges: TWO_LODGES, loading: false, failed: false, forbidden: false, reload: vi.fn() };
     window.history.replaceState({}, "", `${adminHref(id)}?lodgeId=lodge-2`);
     render(renderPage());

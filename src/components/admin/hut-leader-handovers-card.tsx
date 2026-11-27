@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { adminHref } from "@/lib/admin-hubs";
 import {
   formatClubDayMonth,
   requireCalendarDate,
@@ -30,7 +31,7 @@ export function HutLeaderHandoversCard({
 }) {
   if (handovers.length === 0) return null;
   return (
-    <Link href="/admin/hut-leaders">
+    <Link href={adminHref("hut-leaders")}>
       <Card className="hover:shadow-md transition-shadow cursor-pointer">
         <CardHeader className="pb-2">
           <CardTitle className="text-sm font-medium">Handovers this week</CardTitle>

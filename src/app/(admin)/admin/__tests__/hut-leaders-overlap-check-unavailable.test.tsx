@@ -71,7 +71,7 @@ function stubFetch(assignmentsRead: "ok" | "fails") {
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 
 async function reachConfirm() {
-  const HutLeadersPage = (await import("@/app/(admin)/admin/hut-leaders/page")).default;
+  const HutLeadersPage = (await import("@/app/(admin)/admin/lodge-ops/hut-leaders/page")).default;
   render(<HutLeadersPage />);
   await settleLodgeScopedPage("/api/admin/hut-leaders?lodgeId=");
   fireEvent.click(screen.getByRole("button", { name: /pick range/i }));

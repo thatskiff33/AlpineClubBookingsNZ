@@ -630,7 +630,7 @@ function listComponentFiles(path: string): string[] {
 //   as written.
 // - `lodge-select.tsx` — LOAD-BEARING for the same reason, though one step
 //   further out. `LodgeSelect` renders a `<Label>` (lodge-select.tsx:60) that no
-//   element rule hides, on admin pages including `admin/roster/page.tsx:484` —
+//   element rule hides, on admin pages including `admin/lodge-ops/roster/page.tsx` —
 //   inside the already-printable `admin/roster` tree. (Note `/admin/reports`
 //   imports only `useLodgeOptions` from this module (page.tsx:9), which renders
 //   no markup; the `LodgeSelect` component itself is not used there, and the
@@ -646,7 +646,7 @@ const PRINTABLE_SURFACE_ROOTS = [
   "src/app/(finance)",
   "src/components/finance",
   "src/app/(admin)/admin/finance/reports",
-  "src/app/(admin)/admin/roster",
+  "src/app/(admin)/admin/lodge-ops/roster",
   "src/app/(admin)/admin/membership/induction",
   "src/app/(authenticated)/lodge-instructions",
   "src/app/(website-dynamic)/hut-leader-instructions",

@@ -696,7 +696,7 @@ export default function LodgeSetupWizardPage() {
             {roomsSeeded && <p className="text-sm text-success-11">{roomsSeeded}</p>}
             <p className="text-sm text-muted-foreground">
               Need a mixed layout? Use the full editor:{" "}
-              <Link className="underline" href={configureHref("/admin/rooms-beds")}>
+              <Link className="underline" href={configureHref(adminHref("rooms-beds"))}>
                 rooms &amp; beds
               </Link>
               .
@@ -895,7 +895,7 @@ export default function LodgeSetupWizardPage() {
             {copySummary(choreCopy, "chore")}
             <p className="text-sm text-muted-foreground">
               Or manage the list on the{" "}
-              <Link className="underline" href={configureHref("/admin/chores")}>
+              <Link className="underline" href={configureHref(adminHref("chores"))}>
                 chores
               </Link>{" "}
               page.

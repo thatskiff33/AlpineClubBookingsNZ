@@ -21,7 +21,7 @@ vi.mock("@/hooks/use-xero-org-short-code", () => ({ useXeroOrgShortCode: () => (
 vi.mock("@/components/admin/manual-refund-task-queue", () => ({ ManualRefundTaskQueue: () => null }));
 vi.mock("@/app/(admin)/admin/finance/subscriptions/_components/subscription-billing-panel", () => ({ SubscriptionBillingPanel: () => null }));
 vi.mock("@/components/club-identity-provider", () => ({ useClubIdentity: () => ({ hutLeaderLabel: "Hut Leader" }) }));
-vi.mock("@/app/(admin)/admin/hut-leaders/_components/assignment-form", () => ({
+vi.mock("@/app/(admin)/admin/lodge-ops/hut-leaders/_components/assignment-form", () => ({
   // The real form's conflict preview reads the page's assignments, so stale
   // rows would warn about a clash with an assignment nobody can see.
   AssignmentForm: ({ onVisibleMonthChange, onPickNights, onSelectAnyMember, summary }: {
@@ -55,7 +55,7 @@ vi.mock("@/components/ui/select", async () => {
 
 import PaymentsPage from "@/app/(admin)/admin/finance/payments/page";
 import SubscriptionsPage from "@/app/(admin)/admin/finance/subscriptions/page";
-import HutLeadersPage from "@/app/(admin)/admin/hut-leaders/page";
+import HutLeadersPage from "@/app/(admin)/admin/lodge-ops/hut-leaders/page";
 import CommunicationsPage from "@/app/(admin)/admin/messages/communications/page";
 import { ADMIN_LOAD_FAILED_ERROR } from "@/lib/admin-query-error";
 

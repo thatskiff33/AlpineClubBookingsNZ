@@ -90,10 +90,10 @@ export default function LodgeConfigurationHubPage() {
   // Lodge capacity is lodge config; the write route enforces lodge:edit, so a
   // lodge:view admin sees this screen read-only (#1940).
   const canEdit = useAdminAreaEditAccess("lodge");
-  // The Lockers card links to /admin/lockers, which the route map gates on the
+  // The Lockers card links to Lockers, which the route map gates on the
   // membership area, not lodge (#4581): a lodge-only admin must not be offered a
   // link the layout would refuse, nor a summary fetch the API would 403.
-  const canOpenLockers = useCanOpenAdminPath("/admin/lockers") === true;
+  const canOpenLockers = useCanOpenAdminPath(adminHref("lockers")) === true;
   // #4643: the card follows the fee console (bookings OR finance); its count, the seasons API (bookings).
   const canOpenFees = useCanOpenAdminPath(adminHref("fees")) === true;
   const canReadSeasons = useCanOpenAdminPath(adminHref("seasons")) === true;
@@ -331,7 +331,7 @@ export default function LodgeConfigurationHubPage() {
       enabled: modules.bedAllocation !== false,
       title: "Rooms & Beds",
       icon: BedDouble,
-      href: `/admin/rooms-beds?lodgeId=${encodeURIComponent(lodgeId)}`,
+      href: `${adminHref("rooms-beds")}?lodgeId=${encodeURIComponent(lodgeId)}`,
       summary: rooms,
       emptyHint: "No rooms yet — capacity resolves to 0 until beds exist.",
       unit: "room",
@@ -341,7 +341,7 @@ export default function LodgeConfigurationHubPage() {
       enabled: modules.lockers !== false && canOpenLockers,
       title: "Lockers",
       icon: Lock,
-      href: `/admin/lockers?lodgeId=${encodeURIComponent(lodgeId)}`,
+      href: `${adminHref("lockers")}?lodgeId=${encodeURIComponent(lodgeId)}`,
       summary: lockers,
       emptyHint: "No lockers yet.",
       unit: "locker",
@@ -364,7 +364,7 @@ export default function LodgeConfigurationHubPage() {
       enabled: modules.chores !== false,
       title: "Chores",
       icon: ClipboardList,
-      href: `/admin/chores?lodgeId=${encodeURIComponent(lodgeId)}`,
+      href: `${adminHref("chores")}?lodgeId=${encodeURIComponent(lodgeId)}`,
       summary: chores,
       emptyHint: "No chore templates yet — rosters here will be empty.",
       unit: "chore template",

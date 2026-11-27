@@ -49,18 +49,13 @@ function allMoved(pages: readonly AdminHubPage[] = ADMIN_PAGES): AdminHubPage[] 
 const concrete = (registryPath: string) => registryPath.replace(/\[[^\]/]+\]/g, "x123");
 
 describe("activeAdminHref while the switch is off", () => {
-  it("PREMISE: the Website, Finance, Rules, Help & system, Messages & email, Bookings and Members hubs, Lobby Display and Lodges have moved, nothing else has, and the sidebar still links the old URLs", () => {
+  it("PREMISE: the Website, Finance, Rules, Help & system, Messages & email, Bookings, Members and Lodge hubs have moved, nothing else has, and the sidebar still links the old URLs", () => {
     const moved = ADMIN_PAGES.filter((page) => page.moved);
     expect(moved.length).toBeGreaterThan(0);
-    // Lodge is part-moved (C11 part 1 #4808): only Lobby Display and Lodges.
     expect(new Set(moved.map((page) => page.hub))).toEqual(
       new Set(["website", "finance", "rules", "system", "messages", "bookings", "members", "lodge-ops"]),
     );
-    expect(
-      moved
-        .filter((page) => page.hub === "lodge-ops")
-        .every((page) => /^\/admin\/(?:display|lodges)(?:\/|$)/.test(page.oldPath)),
-    ).toBe(true);
+    expect(ADMIN_PAGES.filter((page) => page.hub === "lodge-ops" && !page.moved)).toEqual([]);
     expect(SIDEBAR_HREFS).toContain("/admin/appearance");
     expect(SIDEBAR_HREFS).toContain("/admin/payments");
     expect(SIDEBAR_HREFS).toContain("/admin/fees");
@@ -74,6 +69,8 @@ describe("activeAdminHref while the switch is off", () => {
     expect(SIDEBAR_HREFS).toContain("/admin/waitlist");
     expect(SIDEBAR_HREFS).toContain("/admin/display");
     expect(SIDEBAR_HREFS).toContain("/admin/lodges");
+    expect(SIDEBAR_HREFS).toContain("/admin/hut-leaders");
+    expect(SIDEBAR_HREFS).toContain("/admin/lodge");
     expect(SIDEBAR_HREFS.length).toBeGreaterThan(40);
     expect(SIDEBAR_HREFS.some((href) => href.includes("?"))).toBe(true);
   });
@@ -151,6 +148,11 @@ describe("activeAdminHref over a moved registry", () => {
     expect(activeAdminHref("/admin/bookings", ["/admin/book"], moved)).toBe("");
     expect(activeAdminHref("/admin/booking-requests", ["/admin/book"], moved)).toBe("");
     expect(activeAdminHref("/admin/book", ["/admin/bookings"], moved)).toBe("");
+    // C11 (#4808): the kiosk is not Lodges or Lodge Instructions, at either path.
+    expect(activeAdminHref("/admin/lodge-ops", SIDEBAR_HREFS, moved)).toBe("");
+    expect(activeAdminHref("/admin/lodge-ops/lodges", ["/admin/lodge"], moved)).toBe("");
+    expect(activeAdminHref("/admin/lodge-ops/lodge-instructions", ["/admin/lodge"], moved)).toBe("");
+    expect(activeAdminHref("/admin/lodge-ops/lodge", ["/admin/lodges", "/admin/lodge-instructions"], moved)).toBe("");
   });
 
   it("reads only MOVED pages: an unmoved page's hub path is served by nothing", () => {

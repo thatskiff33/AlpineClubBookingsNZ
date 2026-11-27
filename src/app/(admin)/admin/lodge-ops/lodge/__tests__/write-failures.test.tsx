@@ -4,7 +4,7 @@ import "@testing-library/jest-dom/vitest";
 import { cleanup, fireEvent, render, screen, waitFor } from "@/lib/__tests__/support/club-time-render";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { htmlErrorPage, itShowsEveryRefusal } from "@/lib/__tests__/support/failed-write-cases";
-import AdminLodgePage from "@/app/(admin)/admin/lodge/page";
+import AdminLodgePage from "@/app/(admin)/admin/lodge-ops/lodge/page";
 
 /*
   The kiosk-account save and create check `res.ok` before parsing and read a

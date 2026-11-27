@@ -9,11 +9,11 @@ function source(path: string) {
 
 const migratedAdminChrome = [
   "src/app/(admin)/admin/rules/age-tier-settings/page.tsx",
-  "src/app/(admin)/admin/lockers/page.tsx",
+  "src/app/(admin)/admin/lodge-ops/lockers/page.tsx",
   "src/app/(admin)/admin/membership/committee/page.tsx",
-  "src/app/(admin)/admin/hut-leaders/page.tsx",
-  "src/app/(admin)/admin/hut-leaders/_components/assignment-form.tsx",
-  "src/app/(admin)/admin/work-parties/page.tsx",
+  "src/app/(admin)/admin/lodge-ops/hut-leaders/page.tsx",
+  "src/app/(admin)/admin/lodge-ops/hut-leaders/_components/assignment-form.tsx",
+  "src/app/(admin)/admin/lodge-ops/work-parties/page.tsx",
   "src/components/admin/family-groups/family-suggestions-panel.tsx",
   "src/app/(admin)/admin/system/stuck-states/page.tsx",
   "src/app/(admin)/admin/booking-desk/waitlist/page.tsx",
@@ -175,13 +175,13 @@ describe("#1819 final accessibility presentation contract", () => {
       "src/components/calendar/day-events-dialog.tsx",
       "src/components/calendar/month-calendar.tsx",
       "src/components/ui/dropdown-menu.tsx",
-      "src/app/(admin)/admin/chores/page.tsx",
+      "src/app/(admin)/admin/lodge-ops/chores/page.tsx",
       "src/app/(admin)/admin/membership/committee/page.tsx",
       "src/app/(admin)/admin/membership/members/[id]/_components/member-committee-assignments-card.tsx",
       "src/components/admin/booking-policies/minimum-night-stay-section.tsx",
       "src/components/admin/booking-policies/booking-periods-section.tsx",
       "src/app/(admin)/admin/membership/family-groups/page.tsx",
-      "src/app/(admin)/admin/hut-leaders/_components/assignment-form.tsx",
+      "src/app/(admin)/admin/lodge-ops/hut-leaders/_components/assignment-form.tsx",
     ];
     for (const file of files) {
       // Any class string on any element — a `className` literal, a template or a

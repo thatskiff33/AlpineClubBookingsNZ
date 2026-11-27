@@ -179,7 +179,7 @@ describe("hut leaders redesign — calendar-painted 3-step flow", () => {
         },
       ],
     });
-    const HutLeadersPage = (await import("@/app/(admin)/admin/hut-leaders/page")).default;
+    const HutLeadersPage = (await import("@/app/(admin)/admin/lodge-ops/hut-leaders/page")).default;
     render(<HutLeadersPage />);
 
     // Settle the page's lodge scope before touching the mocked calendar
@@ -204,7 +204,7 @@ describe("hut leaders redesign — calendar-painted 3-step flow", () => {
 
   it("assigns a member with NO booking via the Any member tab and posts the picked range", async () => {
     const fetchMock = stubFetch({ assignments: [] });
-    const HutLeadersPage = (await import("@/app/(admin)/admin/hut-leaders/page")).default;
+    const HutLeadersPage = (await import("@/app/(admin)/admin/lodge-ops/hut-leaders/page")).default;
     render(<HutLeadersPage />);
 
     // Settle before interacting — see the first case (#2944).
@@ -254,7 +254,7 @@ describe("hut leaders redesign — calendar-painted 3-step flow", () => {
       })),
       occupancyNights: [{ date: "2099-07-15", guestCount: 3 }],
     });
-    const HutLeadersPage = (await import("@/app/(admin)/admin/hut-leaders/page")).default;
+    const HutLeadersPage = (await import("@/app/(admin)/admin/lodge-ops/hut-leaders/page")).default;
     render(<HutLeadersPage />);
 
     // Navigate the calendar to July 2099.
@@ -309,7 +309,7 @@ describe("hut leaders redesign — calendar-painted 3-step flow", () => {
       },
       occupancyNights: [{ date: "2099-07-15", guestCount: 3 }],
     });
-    const HutLeadersPage = (await import("@/app/(admin)/admin/hut-leaders/page")).default;
+    const HutLeadersPage = (await import("@/app/(admin)/admin/lodge-ops/hut-leaders/page")).default;
     render(<HutLeadersPage />);
 
     fireEvent.click(await screen.findByRole("button", { name: /load july 2099/i }));
@@ -398,7 +398,7 @@ describe("hut leaders — Active/Past comes from the club's day (CT-4, #2870)", 
         },
       ],
     });
-    const HutLeadersPage = (await import("@/app/(admin)/admin/hut-leaders/page")).default;
+    const HutLeadersPage = (await import("@/app/(admin)/admin/lodge-ops/hut-leaders/page")).default;
     render(<HutLeadersPage />, {
       wrapper: ({ children }: { children: ReactNode }) => (
         <ClubTimeProvider zone={chosen.zone} locale={CLUB_FORMAT_TEST.locale}>{children}</ClubTimeProvider>

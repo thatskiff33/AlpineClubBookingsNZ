@@ -99,7 +99,7 @@ afterEach(() => {
 describe("occupancy calendar page integration", () => {
   it("syncs Hut Leader date inputs from the range calendar", async () => {
     stubFetch();
-    const HutLeadersPage = (await import("@/app/(admin)/admin/hut-leaders/page")).default;
+    const HutLeadersPage = (await import("@/app/(admin)/admin/lodge-ops/hut-leaders/page")).default;
 
     render(<HutLeadersPage />);
     // Settle BEFORE interacting, and note what this is and is not (#2944).
@@ -129,7 +129,7 @@ describe("occupancy calendar page integration", () => {
 
   it("syncs the Roster date input from the single-date calendar", async () => {
     stubFetch();
-    const RosterPage = (await import("@/app/(admin)/admin/roster/page")).default;
+    const RosterPage = (await import("@/app/(admin)/admin/lodge-ops/roster/page")).default;
 
     render(<RosterPage />);
     // Same settle-before-interact as the Hut Leader case above (#2944): this

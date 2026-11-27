@@ -1067,9 +1067,10 @@ describe("adminHref", () => {
   });
 
   it("links the hub path only when the switch is on AND the page has moved", () => {
-    // Chores has not moved, so the switch alone does not send it to its hub
-    // path. The member page has (C9), so it does once the switch is on.
-    const page = ADMIN_PAGES.find((candidate) => candidate.id === "chores")!;
+    // Modules (a Settings page) has not moved, so the switch alone does not
+    // send it to its hub path. The member page has (C9), so it does once the
+    // switch is on.
+    const page = ADMIN_PAGES.find((candidate) => candidate.id === "modules")!;
     const moved = { ...page, moved: true };
     expect(page.moved).toBe(false);
     expect(resolveAdminHref(page, true)).toBe(page.oldPath);
@@ -2096,7 +2097,8 @@ describe("the registry is inert", () => {
     "src/components/admin/booking-requests/__tests__/queue-pagination.test.tsx": "#5295: the registry Booking Requests path is the address each panel writes",
     "src/lib/__tests__/admin-member-applications-page.test.tsx": "#5295: the registry Member Applications path is the address the no-op replace test opens at",
     "src/lib/__tests__/admin-waitlist-refund-pages.test.tsx": "#5295: the registry Refund Requests path is the address the no-op replace test opens at",
-    "src/app/(admin)/admin/booking-desk/bed-allocation/page.tsx": "#4972: the empty-lodge alert links to Lodges",
+    "src/app/(admin)/admin/booking-desk/bed-allocation/page.tsx":
+      "#4972: the empty-lodge alert links to Lodges; C11 (#4808): and the Hut Leaders link is adminHref",
     "src/app/(admin)/admin/finance/xero/setup/xero-setup-wizard.tsx": "#4972: shares the step parameter and the webhooks and mapping step ids with the shortcuts",
     "src/lib/admin-permissions.ts":
       "C2: the route map's page half, the admission paths and the landing page are generated",
@@ -2122,6 +2124,7 @@ describe("the registry is inert", () => {
       "C8: the Messages & email links are adminLink; " +
       "C9: the Members links and badges are adminLink and adminHref; " +
       "C10: the Bookings links and the Booking Requests badge are adminLink and adminHref; " +
+      "C11 (#4808): the Lodge Operations links are adminLink; " +
       "C11 part 1 (#4808): the Lobby Display and Lodges links are adminLink",
     "src/lib/admin-work-queues.ts":
       "#4962: each officer work queue's link and label are adminLink and adminHref",
@@ -2218,7 +2221,8 @@ describe("the registry is inert", () => {
     "src/app/(admin)/admin/booking-desk/book/page.tsx": "C5: the Xero setup link is adminHref",
     "src/app/(admin)/admin/dashboard/page.tsx":
       "C5: the payments and refunds links, and the payments permission check, are adminHref; " +
-      "C6: the seasons and promo-code links; C10: the Bookings, Booking Requests and Bed Allocation links",
+      "C6: the seasons and promo-code links; C10: the Bookings, Booking Requests and Bed Allocation links; " +
+      "C11 (#4808): the Hut Leaders and Roster links and permission checks",
     "src/app/(admin)/admin/finance/internet-banking/page.tsx": "C5: its back link is adminLink",
     "src/app/(admin)/admin/finance/xero/_components/health-diagnostics-panel.tsx":
       "C5: the member-grouping link is adminHref",
@@ -2249,7 +2253,7 @@ describe("the registry is inert", () => {
       "C5: the member back-link label is the registry label of the Bookings or Finance page it returns to",
     "src/lib/audit-query.ts":
       "C5, C6: audit deep links use adminHref; C7: and the lifecycle audit link; C8: and the communications links; " +
-      "C9: and the member, family group, cancellation and deletion links",
+      "C9: and the member, family group, cancellation and deletion links; C11 (#4808): and the Chores, Hut Leaders and kiosk links",
     "src/lib/booking-provider-mismatches.ts":
       "C5: the settlement-queue link is adminHref; C10: the Waitlist link",
     "src/lib/diagnostics/page-context/__tests__/registry.test.ts":
@@ -2271,7 +2275,7 @@ describe("the registry is inert", () => {
     "src/lib/stuck-state-dashboard.ts":
       "C5, C7: stuck-state links use adminHref; C7: the voided bank refund notes row is adminAnchorHref; " +
       "C9: the unreachable-members rows use adminHref; " +
-      "C10: the Bookings, Waitlist, Bed Allocation and Booking Requests links",
+      "C10: the Bookings, Waitlist, Bed Allocation and Booking Requests links; C11 (#4808): the Hut Leaders link",
     "src/lib/xero-record-activity.ts":
       "C5: the payments back link is adminLink; C9: the member back links and C10: the Bookings links are adminHref; " +
       "#4968: the cancellations back link reads the registry label",
@@ -2284,7 +2288,7 @@ describe("the registry is inert", () => {
     "src/lib/contextual-help/questions-admin.ts":
       "C5: the Finance pages' question chips are keyed by each page's registry old path; C6: and Seasons'; " +
       "C7: and the Audit Log's; C8: and Communications'; C9: and the Members and Applications chips; " +
-      "C10: and the Bookings pages'",
+      "C10: and the Bookings pages'; C11 (#4808): and the Roster's",
     "src/app/(admin)/admin/finance/payments/page.tsx": "C5: its own address is adminHref",
     "src/app/(admin)/admin/finance/refund-requests/page.tsx": "C5: its own address is adminHref",
     "src/app/(admin)/admin/finance/subscriptions/page.tsx": "C5: its own address is adminHref",
@@ -2327,18 +2331,20 @@ describe("the registry is inert", () => {
       "C6: the fee console link is adminHref",
     "src/app/(admin)/admin/lodge-ops/lodges/[id]/page.tsx":
       "C6: the Seasons & Rates card's link, and the fees and seasons permission checks, are adminHref; " +
-      "C11 part 1 (#4808): its back links and the setup, display, roster and central lodge links are adminHref",
+      "C11 part 1 (#4808): its back links and the setup, display, roster and central lodge links are adminHref; " +
+      "C11 (#4808): the Rooms & Beds, Lockers and Chores cards and the Lockers permission check",
     "src/app/(admin)/admin/lodge-ops/lodges/[id]/setup/page.tsx":
-      "C6: the seasons link is adminHref; C11 part 1 (#4808): its back links and lodge links are adminHref",
+      "C6: the seasons link is adminHref; C11 part 1 (#4808): its back links and lodge links are adminHref; " +
+      "C11 (#4808): the Rooms & Beds and Chores links",
     "src/app/(admin)/admin/lodge-ops/lodges/_components/other-lodge-season-rates.tsx": "C6: the Fees link is adminHref",
     "src/app/(admin)/admin/membership/membership-types/page.tsx": "C6: the age tier settings link is adminHref",
-    "src/app/(admin)/admin/rooms-beds/page.tsx": "C6: its back link is adminLink",
+    "src/app/(admin)/admin/lodge-ops/rooms-beds/page.tsx": "C6: its back link is adminLink",
     "src/lib/contextual-help/admin/rates-and-policies.ts":
       "C6: the Rules pages' help is keyed by each page's registry old path",
     "src/lib/contextual-help/admin/setup-and-configuration.ts":
       "C6: the Bookings Setup help is keyed by its registry old path; " +
       "C8: and Notifications & Email's and Booking Messages'; " +
-      "C9: and the Members setup pages'",
+      "C9: and the Members setup pages'; C11 (#4808): and Rooms & Beds'",
     "src/app/(admin)/admin/system/audit-log/page.tsx": "C7: its own address is adminHref",
     "src/app/(admin)/admin/system/background-jobs/page.tsx": "C7: its back link is adminLink",
     "src/app/(admin)/admin/system/email-deliverability/page.tsx": "C7: its back link is adminLink",
@@ -2445,7 +2451,10 @@ describe("the registry is inert", () => {
     "src/app/(authenticated)/bookings/[id]/page.tsx":
       "C10: an officer's back link is the Bookings page at its adminHref",
     "src/components/admin-booking-calendar.tsx": "C10: its address is adminHref",
-    "src/components/admin/booking-bed-allocation-panel.tsx": "C10: the board link is adminHref",
+    "src/components/admin/booking-bed-allocation-panel.tsx":
+      "C10: the board link is adminHref; C11 (#4808): and the Hut Leaders link",
+    "src/components/admin/hut-leader-handovers-card.tsx": "C11 (#4808): the Hut Leaders link is adminHref",
+    "src/lib/maintenance-report-alert.ts": "C11 (#4808): the alert email's report link is Lodge Maintenance's adminHref",
     "src/components/admin/booking-filters.tsx": "C10: its address is adminHref",
     "src/components/admin/booking-requests/booking-change-requests-panel.tsx":
       "C10: its address and the approvals tab are adminHref; C9: the member link is adminHref",
@@ -2474,9 +2483,11 @@ describe("the registry is inert", () => {
     "src/app/(admin)/admin/setup/hub-cards.ts":
       "#4968: the setup cards, titled with registry labels and linked with adminHref; C9: the Membership & Members card is adminHref; #4972: the Xero Mappings card opens Xero Setup at its mapping step",
     "src/app/(admin)/admin/alpine-server/setup/page.tsx": "#4968: its heading is the registry label",
-    "src/app/(admin)/admin/chores/page.tsx": "#4968: its heading is the registry label",
+    "src/app/(admin)/admin/lodge-ops/chores/page.tsx": "#4968: its heading is the registry label",
     "src/app/(admin)/admin/config-transfer/page.tsx": "#4968: its heading is the registry label",
-    "src/app/(admin)/admin/roster/page.tsx": "#4968: its heading is the registry label",
+    "src/app/(admin)/admin/lodge-ops/roster/page.tsx":
+      "#4968: its heading is the registry label; C11 (#4808): the print link is adminHref",
+    "src/app/(admin)/admin/lodge-ops/roster/[date]/print/page.tsx": "C11 (#4808): its back link is adminHref",
     "src/app/(admin)/admin/rules/age-tier-settings/page.tsx": "#4968: its heading is the registry label",
     "src/app/(admin)/admin/system/backups/setup/page.tsx": "#4968: its heading is the registry label",
     "src/app/(admin)/admin/video-meetings/setup/page.tsx": "#4968: its heading is the registry label",
@@ -2537,7 +2548,7 @@ describe("the registry is inert", () => {
     "src/components/admin/lodge-capacity-settings-link.ts":
       "C11 part 1 (#4808): the capacity field link starts from the lodge page's adminHref",
     "src/lib/contextual-help/admin/lodge-operations.ts":
-      "C11 part 1 (#4808): the Lobby Display help is keyed by its registry old path",
+      "C11 (#4808): the Lodge pages' help is keyed by each page's registry old path",
     "src/lib/__tests__/admin-display-settings-redirect.test.ts":
       "C11 part 1 (#4808): pins the Display Settings stub's redirect to Display Devices' adminHref",
     "src/lib/csp.ts":

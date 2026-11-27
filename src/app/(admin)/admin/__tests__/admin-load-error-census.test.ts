@@ -35,7 +35,7 @@ const SITES: ReadonlyArray<{ file: string; guards: ReadonlyArray<{ gate: string;
     guards: [{ gate: "loadError ? (", empty: "No subscriptions found" }],
   },
   {
-    file: "src/app/(admin)/admin/hut-leaders/page.tsx",
+    file: "src/app/(admin)/admin/lodge-ops/hut-leaders/page.tsx",
     guards: [
       { gate: "assignmentsLoadError ? (", empty: "assignments yet." },
       // The amber card's absence means "every night is covered", so its

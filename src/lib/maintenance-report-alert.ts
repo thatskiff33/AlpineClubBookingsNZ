@@ -1,5 +1,6 @@
 import type { MaintenanceReportSource } from "@prisma/client";
 
+import { adminHref } from "@/lib/admin-hubs";
 import { getAppBaseUrl } from "@/lib/app-url";
 import { prisma } from "@/lib/prisma";
 
@@ -84,7 +85,7 @@ export async function resolveMaintenanceAlertPayload(
     // Built from our own origin and the report id only. A reporter cannot put a
     // link of their choosing in front of an officer, which is why the template
     // renders this with `sameOrigin: true`.
-    maintenanceReportUrl: `${baseUrl}/admin/maintenance-reports?report=${encodeURIComponent(
+    maintenanceReportUrl: `${baseUrl}${adminHref("maintenance-reports")}?report=${encodeURIComponent(
       input.reportId,
     )}`,
   };

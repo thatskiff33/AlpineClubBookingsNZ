@@ -337,7 +337,7 @@ export const adminSetupAndConfigurationHelpEntries: HelpEntry[] = [
     ),
   ),
   entry(
-    "/admin/rooms-beds",
+    getAdminPage("rooms-beds").oldPath,
     help(
       "Rooms & Beds",
       "Rooms & Beds configures lodge room and bed inventory used by capacity and bed allocation, plus that lodge's allocation preferences.",

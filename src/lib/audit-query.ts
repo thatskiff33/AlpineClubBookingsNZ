@@ -900,7 +900,7 @@ function actionFallbackDrilldownLink(
   if (normalized.includes("chore")) {
     return {
       label: "Open chores",
-      href: "/admin/chores",
+      href: adminHref("chores"),
       kind: "admin",
       primary: true,
     };
@@ -908,7 +908,7 @@ function actionFallbackDrilldownLink(
   if (normalized.includes("hut-leader")) {
     return {
       label: "Open hut leaders",
-      href: "/admin/hut-leaders",
+      href: adminHref("hut-leaders"),
       kind: "admin",
       primary: true,
     };
@@ -916,7 +916,7 @@ function actionFallbackDrilldownLink(
   if (normalized.includes("lodge")) {
     return {
       label: "Open lodge",
-      href: "/admin/lodge",
+      href: adminHref("lodge-kiosk"),
       kind: "admin",
       primary: true,
     };

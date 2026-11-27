@@ -43,7 +43,7 @@ vi.mock("@/components/lodge-select", async (importOriginal) => {
 // The contract under test is whether the page exposes its action surface at
 // all. A small form double makes that boundary observable without re-testing
 // the hut-leader form's own date/member workflow here.
-vi.mock("@/app/(admin)/admin/hut-leaders/_components/assignment-form", () => ({
+vi.mock("@/app/(admin)/admin/lodge-ops/hut-leaders/_components/assignment-form", () => ({
   AssignmentForm: () => <button>Confirm assignment</button>,
 }))
 
@@ -84,14 +84,14 @@ vi.mock("@/components/confirm-dialog", () => ({
 }))
 
 import SeasonsPage from "@/app/(admin)/admin/rules/seasons/page"
-import ChoresPage from "@/app/(admin)/admin/chores/page"
-import LockersPage from "@/app/(admin)/admin/lockers/page"
+import ChoresPage from "@/app/(admin)/admin/lodge-ops/chores/page"
+import LockersPage from "@/app/(admin)/admin/lodge-ops/lockers/page"
 import { HutFeesSection } from "@/app/(admin)/admin/rules/fees/_components/hut-fees-section"
-import RosterPage from "@/app/(admin)/admin/roster/page"
-import HutLeadersPage from "@/app/(admin)/admin/hut-leaders/page"
+import RosterPage from "@/app/(admin)/admin/lodge-ops/roster/page"
+import HutLeadersPage from "@/app/(admin)/admin/lodge-ops/hut-leaders/page"
 import { RoomsBedsManager } from "@/components/admin/rooms-beds-manager"
 import { LodgeCapacityCard } from "@/components/admin/lodge-capacity-card"
-import AdminWorkPartiesPage from "@/app/(admin)/admin/work-parties/page"
+import AdminWorkPartiesPage from "@/app/(admin)/admin/lodge-ops/work-parties/page"
 import { PromoCodesPageClient } from "@/app/(admin)/admin/rules/promo-codes/promo-codes-page-client"
 import { ClubIdentityProvider } from "@/components/club-identity-provider"
 import { clubIdentity } from "@/config/club-identity"

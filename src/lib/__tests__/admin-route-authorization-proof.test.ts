@@ -1241,18 +1241,16 @@ describe("#2984: finance-only standing grants Finance and nothing else", () => {
     // only home of the allocation preferences the Bed Allocation board sends an
     // officer to. A bookings grid that the map's `lodge` prefix would refuse is
     // exactly the officer who was standing on that board.
-    expect(allAdminPaths.has("/admin/rooms-beds")).toBe(true);
-    expect(
-      (await pageAdmits(viewGridFor("bookings"), "/admin/rooms-beds")).ok,
-    ).toBe(true);
-    expect(
-      (await pageAdmits(viewGridFor("lodge"), "/admin/rooms-beds")).ok,
-    ).toBe(true);
-    // It is an OR, not an opening: neither area means no page.
-    expect(
-      (await pageAdmits(viewGridFor("membership"), "/admin/rooms-beds")).ok,
-    ).toBe(false);
-    expect((await pageAdmits(FINANCE_ONLY, "/admin/rooms-beds")).ok).toBe(false);
+    // C11 (#4808): the file is at its hub path; the old URL is still served,
+    // and both answer alike.
+    expect(anchorRouteExists("/admin/rooms-beds")).toBe(true);
+    for (const pathname of ["/admin/rooms-beds", "/admin/lodge-ops/rooms-beds"]) {
+      expect((await pageAdmits(viewGridFor("bookings"), pathname)).ok, pathname).toBe(true);
+      expect((await pageAdmits(viewGridFor("lodge"), pathname)).ok, pathname).toBe(true);
+      // It is an OR, not an opening: neither area means no page.
+      expect((await pageAdmits(viewGridFor("membership"), pathname)).ok, pathname).toBe(false);
+      expect((await pageAdmits(FINANCE_ONLY, pathname)).ok, pathname).toBe(false);
+    }
   });
 });
 

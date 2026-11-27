@@ -41,7 +41,7 @@ vi.mock("@/components/confirm-dialog", () => ({
   useConfirm: () => ({ confirm: vi.fn(async () => false), confirmDialog: null }),
 }));
 
-import HutLeadersPage from "@/app/(admin)/admin/hut-leaders/page";
+import HutLeadersPage from "@/app/(admin)/admin/lodge-ops/hut-leaders/page";
 import { ClubIdentityProvider } from "@/components/club-identity-provider";
 import { clubIdentity } from "@/config/club-identity";
 

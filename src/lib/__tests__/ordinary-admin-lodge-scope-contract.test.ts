@@ -5,17 +5,17 @@ import { deriveSettledLodgeOptionScope } from "@/lib/lodge-option-scope"
 
 const LODGE_EDITORS = [
   "src/app/(admin)/admin/rules/seasons/page.tsx",
-  "src/app/(admin)/admin/chores/page.tsx",
-  "src/app/(admin)/admin/lockers/page.tsx",
+  "src/app/(admin)/admin/lodge-ops/chores/page.tsx",
+  "src/app/(admin)/admin/lodge-ops/lockers/page.tsx",
   "src/app/(admin)/admin/rules/fees/_components/hut-fees-section.tsx",
-  "src/app/(admin)/admin/roster/page.tsx",
-  "src/app/(admin)/admin/hut-leaders/page.tsx",
+  "src/app/(admin)/admin/lodge-ops/roster/page.tsx",
+  "src/app/(admin)/admin/lodge-ops/hut-leaders/page.tsx",
   "src/components/admin/rooms-beds-manager.tsx",
   "src/components/admin/lodge-capacity-card.tsx",
 ] as const
 
 const ALL_LODGES_EDITORS = [
-  "src/app/(admin)/admin/work-parties/page.tsx",
+  "src/app/(admin)/admin/lodge-ops/work-parties/page.tsx",
   "src/app/(admin)/admin/rules/promo-codes/promo-codes-page-client.tsx",
 ] as const
 

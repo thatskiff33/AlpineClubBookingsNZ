@@ -128,7 +128,7 @@ async function getStats(permissionMatrix: Promise<AdminPermissionMatrix>) {
     getHutLeaderDashboardCoverage({
       scope: { kind: "all" },
       today,
-      handovers: canViewAdminHrefWithMatrix(matrix, "/admin/hut-leaders")
+      handovers: canViewAdminHrefWithMatrix(matrix, adminHref("hut-leaders"))
         ? { from: today, to: dateOnlyInstantOf(addCalendarDays(todayKey, 6)) }
         : null,
     }),
@@ -347,11 +347,11 @@ export default async function AdminDashboardPage() {
   );
   const canViewHutLeaders = canViewAdminHrefWithMatrix(
     permissionMatrix,
-    "/admin/hut-leaders",
+    adminHref("hut-leaders"),
   );
   const canViewRoster = canViewAdminHrefWithMatrix(
     permissionMatrix,
-    "/admin/roster",
+    adminHref("roster"),
   );
   const canViewBedAllocation =
     stats.bedAllocationEnabled &&
@@ -434,7 +434,7 @@ export default async function AdminDashboardPage() {
           )}
 
           {canViewHutLeaders && (
-            <Link href="/admin/hut-leaders" className="group">
+            <Link href={adminHref("hut-leaders")} className="group">
               <Card className="h-full hover:shadow-md transition-shadow cursor-pointer">
                 <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
                   <CardTitle className="text-sm font-medium">
@@ -461,7 +461,7 @@ export default async function AdminDashboardPage() {
           )}
 
           {canViewRoster && (
-            <Link href="/admin/roster" className="group">
+            <Link href={adminHref("roster")} className="group">
               <Card className="h-full hover:shadow-md transition-shadow cursor-pointer">
                 <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
                   <CardTitle className="text-sm font-medium">
@@ -757,7 +757,7 @@ export default async function AdminDashboardPage() {
             </CardHeader>
             <CardContent>
               <Button asChild variant="outline" size="sm" className="w-full">
-                <Link href="/admin/roster">
+                <Link href={adminHref("roster")}>
                   View Roster
                   <ArrowRight className="ml-2 h-4 w-4" />
                 </Link>

@@ -69,7 +69,7 @@
       "count": 1
     }
   },
-  "src/app/(admin)/admin/chores/page.tsx": {
+  "src/app/(admin)/admin/lodge-ops/chores/page.tsx": {
     "design-system/no-native-confirm": {
       "count": 1
     },
@@ -183,7 +183,7 @@
       "count": 1
     }
   },
-  "src/app/(admin)/admin/hut-leaders/_components/custodian-bed-picker.tsx": {
+  "src/app/(admin)/admin/lodge-ops/hut-leaders/_components/custodian-bed-picker.tsx": {
     "design-system/no-raw-button": {
       "count": 1
     },
@@ -191,7 +191,7 @@
       "count": 1
     }
   },
-  "src/app/(admin)/admin/hut-leaders/page.tsx": {
+  "src/app/(admin)/admin/lodge-ops/hut-leaders/page.tsx": {
     "design-system/no-native-confirm": {
       "count": 2
     }
@@ -212,12 +212,12 @@
       "count": 1
     }
   },
-  "src/app/(admin)/admin/lockers/page.tsx": {
+  "src/app/(admin)/admin/lodge-ops/lockers/page.tsx": {
     "design-system/no-raw-button": {
       "count": 4
     }
   },
-  "src/app/(admin)/admin/lodge/page.tsx": {
+  "src/app/(admin)/admin/lodge-ops/lodge/page.tsx": {
     "design-system/no-raw-select": {
       "count": 2
     }
@@ -401,7 +401,7 @@
       "count": 2
     }
   },
-  "src/app/(admin)/admin/roster/[date]/print/page.tsx": {
+  "src/app/(admin)/admin/lodge-ops/roster/[date]/print/page.tsx": {
     "design-system/no-raw-button": {
       "count": 1
     },
@@ -409,7 +409,7 @@
       "count": 1
     }
   },
-  "src/app/(admin)/admin/roster/page.tsx": {
+  "src/app/(admin)/admin/lodge-ops/roster/page.tsx": {
     "design-system/no-native-confirm": {
       "count": 3
     },
@@ -440,7 +440,7 @@
       "count": 1
     }
   },
-  "src/app/(admin)/admin/work-parties/page.tsx": {
+  "src/app/(admin)/admin/lodge-ops/work-parties/page.tsx": {
     "design-system/no-native-confirm": {
       "count": 1
     },

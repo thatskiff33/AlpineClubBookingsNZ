@@ -856,7 +856,7 @@ describe("#25: Dashboard Hut Leader Warning", () => {
     expect(content).toContain("CLUB_HUT_LEADER_LABEL");
     expect(content).toContain("who counts"); // #3821: "Nights without a … who counts"
     // Should link to hut leaders page
-    expect(content).toContain("/admin/hut-leaders");
+    expect(content).toContain('adminHref("hut-leaders")');
     // Should show unassigned dates count
     expect(content).toContain("unassignedDatesWithBookings");
   });

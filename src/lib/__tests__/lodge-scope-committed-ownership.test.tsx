@@ -102,7 +102,7 @@ vi.mock("next/navigation", () => ({
   useSearchParams: () => new URLSearchParams(),
 }))
 
-import ChoresPage from "@/app/(admin)/admin/chores/page"
+import ChoresPage from "@/app/(admin)/admin/lodge-ops/chores/page"
 
 const CHORE = {
   id: "chore-1",
@@ -220,8 +220,8 @@ describe("lodge-scope ownership follows the committed scope (#2887)", () => {
  * render-body shape and go unnoticed.
  */
 const SCOPE_OWNERSHIP_REFS: ReadonlyArray<{ file: string; ref: string; scope: string }> = [
-  { file: "src/app/(admin)/admin/chores/page.tsx", ref: "activeScopeRef", scope: "scopedLodgeId" },
-  { file: "src/app/(admin)/admin/lockers/page.tsx", ref: "activeScopeRef", scope: "scopedLodgeId" },
+  { file: "src/app/(admin)/admin/lodge-ops/chores/page.tsx", ref: "activeScopeRef", scope: "scopedLodgeId" },
+  { file: "src/app/(admin)/admin/lodge-ops/lockers/page.tsx", ref: "activeScopeRef", scope: "scopedLodgeId" },
   { file: "src/app/(admin)/admin/rules/seasons/page.tsx", ref: "activeScopeRef", scope: "scopedLodgeId" },
   {
     file: "src/app/(admin)/admin/rules/fees/_components/hut-fees-section.tsx",

@@ -921,7 +921,7 @@ export function BookingBedAllocationPanel({
               held for a {hutLeaderLabel.toLowerCase()} with no booking, so no
               guest can be placed on them for those nights. Change the dates or
               the bed on the{" "}
-              <Link className="underline" href="/admin/hut-leaders">
+              <Link className="underline" href={adminHref("hut-leaders")}>
                 {hutLeaderLabel} Assignments
               </Link>{" "}
               page.
