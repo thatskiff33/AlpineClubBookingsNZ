@@ -1854,6 +1854,12 @@ const ROW_LOCK_SITE_INVENTORY: Record<string, number> = {
   // key; the refund and cancel doors only read the row. See
   // docs/CONCURRENCY_AND_LOCKING.md, "A Stripe dispute's record (#4911)".
   "src/lib/stripe-dispute.ts": 1,
+  // #5289 review: the booking repair tool's backfill of a note's own
+  // allocation link locks that link row alone and never switches a retired row
+  // back on; it takes no Payment row, before or after. See
+  // docs/CONCURRENCY_AND_LOCKING.md, "The app's own allocation of a note
+  // decides it too (#5289 B)".
+  "src/lib/xero-booking-repair-passes.ts": 1,
 };
 
 const CAPACITY_LOCK_MINT = "src/lib/lodge-capacity-lock.ts";
@@ -2128,12 +2134,13 @@ describe("advisory lock guard (#182 / H1 regression class)", { timeout: CENSUS_T
     const NOTE_ALLOCATION_ROLE_FILES: Record<string, string> = {
       "src/lib/xero-note-allocation-link-roles.ts": "defines the role",
       "src/lib/xero-clearing-allocations.ts": "re-exports it and reads the links (the clearing-note readers)",
-      "src/lib/xero-booking-repair-classify.ts": "reads the links to classify a booking; writes none",
+      "src/lib/xero-booking-repair-classify.ts": "reads the links to classify a booking; its backfill actions are written by xero-booking-repair-passes.ts",
       "src/lib/xero-inbound/linked-refunded-total.ts": "reads the links for the refunded-total decision",
       "src/lib/xero-inbound/bank-transfer-payment-of-invoice.ts": "reads a note's links for its removal (#5289 A)",
       "src/lib/xero-inbound/object-links.ts": "derives the inbound role; written only through writeCurrentCreditNoteAllocations",
       "src/lib/xero-payment-first-completion.ts": "reads a completion's links to take the Payment row first",
       "src/lib/xero-modification-credit-notes.ts": "writes through completeXeroSyncOperation's extraLinks",
+      "src/lib/xero-booking-repair-passes.ts": "the repair backfill: takes no Payment row, so it locks the link row and never switches a retired one back on; a bare new row counts nothing",
       "src/lib/xero-operation-retry.ts": "names the role for a PARTIAL retry's allocation, completed through completeXeroSyncOperation",
     };
     const naming = sources

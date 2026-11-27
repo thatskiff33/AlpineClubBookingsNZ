@@ -9103,7 +9103,12 @@ commit. Order (`INV-LOCK-002`): `Payment` rows, then the `XeroSyncOperation`
 row, then link rows; no writer takes an operation row and then a `Payment`
 row (the settle, the refund-note record and resolve take `Payment` first), so
 none is a cycle. `advisory-lock-guard.test.ts` keeps every writer of the role
-on one of these two paths.
+on one of these two paths, bar one: the booking repair tool's link backfill
+(`xero-booking-repair-passes.ts`) takes no `Payment` row, so it takes the link
+row alone (`FOR UPDATE`) and never switches a retired row back on (an
+operator's review instead); a missing row it creates bare, with no amounts, so
+it counts nothing until the note's sync writes it. A removal waits on that row
+lock; neither takes a `Payment` row after the link, so no cycle.
 
 Not serialised on the `Payment` row: the modification note's own status write
 (its `MODIFICATION_CREDIT_NOTE` link, a void included) goes through the link

@@ -10,6 +10,7 @@ import logger from "@/lib/logger";
 import { PartialRefundError } from "@/lib/payment-transactions";
 import { sliceAfterRecordedRefusals } from "@/lib/refused-card-refund-retry";
 import { buildXeroInvoiceUrl } from "@/lib/xero-links";
+import { NOTE_ALLOCATION_ROLE } from "@/lib/xero-note-allocation-link-roles";
 import { type SupplementaryInvoiceChargeKind } from "./xero-booking-repair-payments";
 import { releaseRepairedSupplementaryInvoiceIfAlreadyPaid } from "./xero-booking-repair-supplementary-release";
 import type { BookingXeroRepairAction, BookingXeroRepairBookingSummary, BookingXeroRepairPassReport, XeroBookingRepairActionStatus } from "./xero-booking-repair-types";
@@ -108,7 +109,7 @@ async function applyLinkRepair(
   action: BookingXeroRepairAction,
   deps: RepairDependencies
 ) {
-  await deps.upsertXeroObjectLink({
+  const link = {
     localModel: String(action.payload.localModel),
     localId: String(action.payload.localId),
     xeroObjectType: String(action.payload.xeroObjectType),
@@ -122,10 +123,37 @@ async function applyLinkRepair(
         ? action.payload.xeroObjectUrl
         : null,
     role: String(action.payload.role),
-  });
+  };
+
+  if (link.xeroObjectType === "ALLOCATION" && link.role === NOTE_ALLOCATION_ROLE) {
+    // #5289 (INV-LOCK-002): a note's own allocation link counts in a bank-transfer payment's refunded
+    // total by the amounts its row keeps, and its writers take that Payment row first. This one takes
+    // none, so it never switches back on a row a Xero reading retired (the classifier sees only active
+    // links, so a retired row reads as missing). A missing row is created bare and counts nothing until
+    // the note's sync writes it. The row lock holds a removal off until this commits.
+    const retired = await deps.prisma.$transaction(async (tx) => {
+      const [row] = await tx.$queryRaw<Array<{ active: boolean }>>`
+        SELECT "active" FROM "XeroObjectLink"
+        WHERE "localModel" = ${link.localModel} AND "localId" = ${link.localId}
+          AND "xeroObjectType" = ${link.xeroObjectType} AND "xeroObjectId" = ${link.xeroObjectId}
+          AND "role" = ${link.role}
+        FOR UPDATE`;
+      if (row && !row.active) return true;
+      await deps.upsertXeroObjectLink(link, { store: tx });
+      return false;
+    });
+    if (retired) {
+      // For an operator, not a state change: the next pass would offer the same backfill again.
+      action.status = "manual_review";
+      action.resultMessage = `Left the retired ${link.role} link for ${link.localModel} ${link.localId} off: a Xero reading removed that allocation.`;
+      return;
+    }
+  } else {
+    await deps.upsertXeroObjectLink(link);
+  }
 
   action.status = "applied";
-  action.resultMessage = `Backfilled ${String(action.payload.role)} link for ${String(action.payload.localModel)} ${String(action.payload.localId)}.`;
+  action.resultMessage = `Backfilled ${link.role} link for ${link.localModel} ${link.localId}.`;
 }
 
 function getPaymentIntentIdsFromActionPayload(action: BookingXeroRepairAction) {
