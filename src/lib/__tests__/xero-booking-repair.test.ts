@@ -6596,7 +6596,7 @@ describe("runBookingXeroRepair", () => {
             safeToAutoApply: true,
             details: expect.objectContaining({ manualRefundTaskId: "task_kept", capturedCents: 8000, recordedBy: "ADDITIONAL_CAPTURE_RECEIPT" }),
           });
-          expect(String((changeFinding(bookingReport) as unknown as { summary: string }).summary)).toMatch(/approved refund was paid another way/);
+          expect(String((changeFinding(bookingReport) as unknown as { summary: string }).summary)).toMatch(/^A treasurer paid back, another way, a late card payment/);
           expect(bookingReport.actions.find((a) => a.type === "QUEUE_KEPT_LATE_CAPTURE_RECORD")).toMatchObject({
             payload: { manualRefundTaskId: "task_kept", bookingId: "booking_1", paymentIntentId: "pi_kept", paidAnotherWayClose: true },
           });
@@ -6616,7 +6616,7 @@ describe("runBookingXeroRepair", () => {
           const { bookingReport } = await runChange(changeBooking({ bookingModificationId: null }), { closedPaidAnotherWay: true });
           expect(changeFinding(bookingReport)).toMatchObject({ severity: "manual_review", safeToAutoApply: false });
           expect(String((changeFinding(bookingReport) as unknown as { summary: string }).summary)).toMatch(
-            /whose approved refund was paid another way names no booking change/,
+            /^A late card payment whose approved refund was paid another way on this cancelled booking names no booking change/,
           );
           expect(bookingReport.actions.some((a) => a.type === "QUEUE_KEPT_LATE_CAPTURE_INVOICE" || a.type === "QUEUE_KEPT_LATE_CAPTURE_RECORD")).toBe(false);
         });

@@ -1,10 +1,14 @@
 import type { PaymentStatus } from "@prisma/client";
 
 import {
+  bookingHasPrimaryXeroInvoice,
   decideLateCapture,
   keptLateCaptureInvoiceAsked,
+  keptLateCaptureRecordRoute,
   keptReceiptMayHaveReachedXero,
 } from "@/lib/late-capture-kept-xero-rules";
+import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
+import type { RepairDependencies } from "./xero-booking-repair-deps";
 import { cardNoteMayBeInXeroSentence, cardRefundAboveRecordedSentence } from "@/lib/late-capture-card-note-wording";
 import type {
   BlockingOperationMatch,
@@ -21,6 +25,53 @@ import {
 } from "./xero-booking-repair-additional-capture";
 
 type LateCaptureTask = BookingClassificationContext["lateCaptureTasks"] extends Map<string, infer Task> ? Task : never;
+
+/**
+ * #4381 (`INV-PAY-144`): for a paid-another-way close of a change capture on
+ * an invoiced booking (`keptLateCaptureRecordRoute` answers
+ * `by-change-evidence`), its payment and the change's evidence, so the close's
+ * finding splits it as the keep does; undefined for any other capture.
+ */
+export function closedChangeCapture(
+  context: Pick<BookingClassificationContext, "keptChangeCaptures">,
+  payment: { id: string; source: string | null; xeroInvoiceId: string | null },
+  paymentLinks: Parameters<typeof bookingHasPrimaryXeroInvoice>[0]["paymentLinks"],
+  transaction: { kind: "PRIMARY" | "ADDITIONAL"; stripePaymentIntentId: string },
+) {
+  const route = keptLateCaptureRecordRoute({
+    captureKind: transaction.kind,
+    bookingHasPrimaryInvoice: bookingHasPrimaryXeroInvoice({ paymentXeroInvoiceId: payment.xeroInvoiceId, paymentLinks }),
+  });
+  if (route !== "by-change-evidence") return undefined;
+  return { payment, found: context.keptChangeCaptures?.get(transaction.stripePaymentIntentId) };
+}
+
+/**
+ * #4381: applies a `QUEUE_KEPT_LATE_CAPTURE_RECORD` raised for a close
+ * (`paidAnotherWayClose`): the close's own split, on a transaction of its own
+ * under the task row and the change's anchor (`queueMissingPaidAnotherWayReceipt`),
+ * so a stale snapshot records nothing twice.
+ */
+export async function applyPaidAnotherWayCloseReceiptAction(
+  action: BookingXeroRepairAction,
+  deps: Pick<RepairDependencies, "prisma" | "queueMissingPaidAnotherWayReceipt">,
+): Promise<void> {
+  const clubZone = await readClubTimeZoneOutsideRequest();
+  const queued = await deps.prisma.$transaction((tx) =>
+    deps.queueMissingPaidAnotherWayReceipt(tx, {
+      manualRefundTaskId: String(action.payload.manualRefundTaskId),
+      paymentIntentId: String(action.payload.paymentIntentId),
+      clubZone,
+    }),
+  );
+  const sent = queued === "receipt-then-refund-note";
+  action.status = sent ? "queued" : "skipped";
+  action.resultMessage = sent
+    ? "The card payment's Xero receipt is queued; the paid-another-way close's bank-transfer refund note follows it."
+    : queued === "receipt-held-for-officer"
+      ? "Nothing queued: the card payment's Xero receipt failed after it may have reached Xero. Check Xero, then retry it from the Xero operations list."
+      : "Nothing queued: the card payment no longer owes a receipt, Xero already records it, or no booking change can be read from it.";
+}
 
 /**
  * #3924 round 7 (money M2, `INV-PAY-122`; owner, 8 Oct 2026: "Record receipt,

@@ -18,6 +18,7 @@ import type { RepairDependencies } from "./xero-booking-repair-deps";
 import { describeRefusedRepairedLateCaptureRefund, describeRepairedLateCaptureRefund, madeRepairRefunds } from "@/lib/late-capture-repair-result-message";
 import { createCountMap } from "./xero-booking-repair-utils";
 import { applyAdditionalCaptureReceiptAction, applyKeptChangeCaptureRecordAction } from "./xero-booking-repair-additional-capture";
+import { applyPaidAnotherWayCloseReceiptAction } from "./xero-booking-repair-paid-another-way";
 import type { ClubFormat } from "@/lib/club-format";
 import { readModificationNoteWording } from "@/lib/xero-refund-method";
 import { applyHistoricalOrganiserInvoiceRepair } from "./xero-booking-repair-organiser-billing";
@@ -349,7 +350,10 @@ async function applyQueuedAction(
       return;
     }
     case "QUEUE_ADDITIONAL_CAPTURE_RECEIPT": return applyAdditionalCaptureReceiptAction(action, deps); // #3953
-    case "QUEUE_KEPT_LATE_CAPTURE_RECORD": return applyKeptChangeCaptureRecordAction(action, deps); // #4324
+    case "QUEUE_KEPT_LATE_CAPTURE_RECORD": // #4324; #4381: a close's, by the close's own split
+      return action.payload.paidAnotherWayClose === true
+        ? applyPaidAnotherWayCloseReceiptAction(action, deps)
+        : applyKeptChangeCaptureRecordAction(action, deps);
     case "QUEUE_PAID_ANOTHER_WAY_REFUND_NOTE": {
       // #3924 round 8: the one note step, under the approval task's row lock; it reads the receipt and the
       // close again there and queues at most once. #4516 round-3 review 2: only a note queued NOW is "queued".
