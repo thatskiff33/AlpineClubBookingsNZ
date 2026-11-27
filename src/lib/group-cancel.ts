@@ -911,8 +911,7 @@ export type GroupSettlementRefundReplayResult = {
  * One child's mirror of a frozen pre-#3653 plan, inside the caller's
  * transaction. The replay and the Stuck States bank close share this body.
  * `paidBackBy` says where the money went. Only `card` enqueues a card credit
- * note: the bank close raises each joiner's bank-transfer note on its own
- * record (#5267, `card-refund-group-paid-another-way-xero.ts`). A `bank` close
+ * note: a bank close's joiner notes are its records' (#5267). A `bank` close
  * posts the child's plan refund as the bank refund it was (`INV-PAY-153`).
  */
 export async function applyLegacyGroupChildRefundMirror(

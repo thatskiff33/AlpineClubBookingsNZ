@@ -11,10 +11,7 @@ import {
 } from "@/lib/card-refund-paid-another-way-xero";
 import type { ClubTimeZone } from "@/lib/club-time";
 import { deserializeRefundPlan } from "@/lib/group-settlement-refund-plan";
-import {
-  cardRefundPaidAnotherWayChildOccurrenceKey,
-  cardRefundPaidAnotherWayOccurrenceKey,
-} from "@/lib/manual-refund-task-settlement-rules";
+import { cardRefundPaidAnotherWayOccurrenceKey } from "@/lib/manual-refund-task-settlement-rules";
 import { MANUAL_REFUND_TASK_REASON_MAX } from "@/lib/manual-subscription-payment";
 
 /**
@@ -31,7 +28,7 @@ import { MANUAL_REFUND_TASK_REASON_MAX } from "@/lib/manual-subscription-payment
  *
  * - A per-joiner refund: one record, keyed on the row as any close is.
  * - A pre-#3653 whole-group refund: one record per joiner the plan raised,
- *   keyed on the row and the joiner (`cardRefundPaidAnotherWayChildOccurrenceKey`),
+ *   keyed on the row and the joiner (`childBookingId`),
  *   for that joiner's share - so the notes add up to the bank refund. The
  *   plan's refund line on the joiner is already its `BANK_REFUND`
  *   (`legacyGroupRefundPaidByBank`): the record posts no line of its own.
@@ -78,16 +75,15 @@ export async function recordGroupCardRefundBankClose(
   const payment = await tx.payment.findUnique({ where: { id: input.paymentId }, select: { id: true, xeroInvoiceId: true } });
   if (!payment) throw new Error(`Group card refund close ${input.operation.id}: the joiner's payment ${input.paymentId} is gone`);
   const plan = await paidAnotherWayXeroPlan(tx, { ...input.operation, amountCents: input.amountCents }, payment, { lockApprovalTask: true });
-  const key = { xeroRefundNote: plan.xeroRefundNote };
   const record = await tx.manualRefundTask.create({
     data: {
       bookingId: input.bookingId,
       paymentId: payment.id,
       kind: ManualRefundTaskKind.CANCELLED_BOOKING_HAND_BACK,
-      occurrenceKey:
-        input.keyedBy === "row"
-          ? cardRefundPaidAnotherWayOccurrenceKey(input.operation.id, key)
-          : cardRefundPaidAnotherWayChildOccurrenceKey(input.operation.id, input.bookingId, key),
+      occurrenceKey: cardRefundPaidAnotherWayOccurrenceKey(input.operation.id, {
+        xeroRefundNote: plan.xeroRefundNote,
+        ...(input.keyedBy === "joiner" ? { childBookingId: input.bookingId } : {}),
+      }),
       amountCents: input.amountCents,
       raisedAmountCents: input.amountCents,
       status: "COMPLETED",

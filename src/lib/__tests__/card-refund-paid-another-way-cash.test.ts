@@ -183,15 +183,15 @@ describe("#5267: an old whole-group card refund's per-joiner close records, as t
   }
 
   it("MUTATION: keyed `now` it is the close's own noted cash, which only its bank note answers - never a card note", async () => {
-    const { cardRefundPaidAnotherWayChildOccurrenceKey } = await import("@/lib/manual-refund-task-settlement-rules");
-    const store = joinerDb(cardRefundPaidAnotherWayChildOccurrenceKey("op-legacy", "joiner-a", { xeroRefundNote: "now" }));
+    const { cardRefundPaidAnotherWayOccurrenceKey } = await import("@/lib/manual-refund-task-settlement-rules");
+    const store = joinerDb(cardRefundPaidAnotherWayOccurrenceKey("op-legacy", { xeroRefundNote: "now", childBookingId: "joiner-a" }));
     await expect(readPaidAnotherWayCash(store, "payment-1")).resolves.toEqual({ notedCents: 3_000, unnotedCents: 0, awaitingReceiptCents: 0 });
     await expect(readPaidAnotherWayCloseShare(store, "payment-1", "joiner-record")).resolves.toMatchObject({ uncoveredCents: 3_000 });
   });
 
   it("CONTROL: a joiner with no invoice, keyed `none`, stays un-noted", async () => {
-    const { cardRefundPaidAnotherWayChildOccurrenceKey } = await import("@/lib/manual-refund-task-settlement-rules");
-    const store = joinerDb(cardRefundPaidAnotherWayChildOccurrenceKey("op-legacy", "joiner-a", { xeroRefundNote: "none" }));
+    const { cardRefundPaidAnotherWayOccurrenceKey } = await import("@/lib/manual-refund-task-settlement-rules");
+    const store = joinerDb(cardRefundPaidAnotherWayOccurrenceKey("op-legacy", { xeroRefundNote: "none", childBookingId: "joiner-a" }));
     await expect(readPaidAnotherWayCash(store, "payment-1")).resolves.toEqual({ notedCents: 0, unnotedCents: 3_000, awaitingReceiptCents: 0 });
   });
 });

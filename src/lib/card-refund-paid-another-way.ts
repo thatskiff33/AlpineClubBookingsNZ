@@ -136,8 +136,7 @@ import { LOCK1_HOLDER_TRANSACTION_BUDGET } from "@/lib/db-transaction";
  * - NOT HERE: an organiser child's refund (#3653) and a pre-#3653 whole-group
  *   refund. This close still refuses both (`lockDeadCardRefundRow`'s
  *   charge-backed accept). They settle through `closeGroupCardRefundPaidAnotherWay`,
- *   which does not book the organiser's money on the child's own charges, and
- *   (#5267) raises this same note on each joiner's invoice.
+ *   which does not book the organiser's money on the child's own charges.
  *
  * LOCKS (`INV-LOCK-001`; `lockDeadCardRefundRow`, shared with the other two
  * settlements of a dead row since #4368): the global key first - it moves a payment's refunded
@@ -313,13 +312,10 @@ export async function listDeadCardRefunds(): Promise<DeadCardRefundRow[]> {
       const { operation, owedCents, later } = entry;
       if (entry.kind !== "charge") {
         // #5267: the joiners' invoices are credited as the close will, from the same plan.
-        const xero = owedCents > 0 && operation.paymentIntentId
-          ? await groupCardRefundXeroPromise(
-              prisma,
-              entry.kind === "organiser-child"
-                ? { kind: entry.kind, operation: { ...operation, paymentIntentId: operation.paymentIntentId }, payment: operation.payment }
-                : { kind: entry.kind, operation: { ...operation, paymentIntentId: operation.paymentIntentId }, refundPlan: entry.refundPlan },
-            )
+        const planned = operation.paymentIntentId ? { ...operation, paymentIntentId: operation.paymentIntentId } : null;
+        const xero = owedCents > 0 && planned
+          ? await groupCardRefundXeroPromise(prisma, entry.kind === "organiser-child"
+            ? { kind: entry.kind, operation: planned, payment: operation.payment } : { kind: entry.kind, operation: planned, refundPlan: entry.refundPlan })
           : { xeroRefundNote: "none" as const, cardNoteCoversCents: 0 };
         return {
           operationId: operation.id,

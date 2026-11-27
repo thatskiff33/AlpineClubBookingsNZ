@@ -1585,14 +1585,13 @@ describe("#3924 round 4 (M2): the close's record is told apart by kind and key, 
 
   it("#5267: an old whole-group close writes one record per joiner, each its own key naming the one row it closed", async () => {
     const {
-      cardRefundPaidAnotherWayChildOccurrenceKey,
       cardRefundPaidAnotherWayOccurrenceKey,
       paidAnotherWayCloseXeroNote,
       paymentRecoveryOperationIdOfPaidAnotherWay,
     } = await import("@/lib/manual-refund-task-settlement-rules");
     const child = (bookingId: string, xeroRefundNote: "now" | "none") => ({
       kind: "CANCELLED_BOOKING_HAND_BACK",
-      occurrenceKey: cardRefundPaidAnotherWayChildOccurrenceKey("op-1", bookingId, { xeroRefundNote }),
+      occurrenceKey: cardRefundPaidAnotherWayOccurrenceKey("op-1", { xeroRefundNote, childBookingId: bookingId }),
     });
     const noted = child("child-a", "now");
     const unnoted = child("child-b", "none");

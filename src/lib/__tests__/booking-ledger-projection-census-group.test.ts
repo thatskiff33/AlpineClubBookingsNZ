@@ -19,7 +19,7 @@ import { organiserChildCommittedRefundFrom } from "@/lib/group-settlement-refund
 import { planGroupSettlementRefundLine, planGroupSettlementShareLines } from "@/lib/booking-ledger-group-settlement-posting";
 import { planCancellationChargeLines } from "@/lib/booking-ledger-cancellation-posting";
 import { refundKey } from "@/lib/booking-ledger-posting-keys";
-import { cardRefundPaidAnotherWayChildOccurrenceKey } from "@/lib/manual-refund-task-settlement-rules";
+import { cardRefundPaidAnotherWayOccurrenceKey } from "@/lib/manual-refund-task-settlement-rules";
 import { isPaymentRecoveryOperationInFlight } from "@/lib/payment-recovery-constants";
 import {
   buildOrganiserChildAppealRefundKey,
@@ -195,7 +195,7 @@ describe("the census on a group-settled child (#3854)", () => {
       settlementDirection: null,
       paymentId: paidByBank.payment!.id,
       lateCaptureApprovalIntentId: null,
-      occurrenceKey: cardRefundPaidAnotherWayChildOccurrenceKey("op-legacy", B, { xeroRefundNote: "now" }),
+      occurrenceKey: cardRefundPaidAnotherWayOccurrenceKey("op-legacy", { xeroRefundNote: "now", childBookingId: B }),
       reason: "A refund to the group organiser paid back by bank transfer (#4851).",
     };
     const subject = { ...paidByBank, tasks: [record] };
