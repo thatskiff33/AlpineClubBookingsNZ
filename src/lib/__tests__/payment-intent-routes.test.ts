@@ -117,10 +117,10 @@ vi.mock("@/lib/email", () => ({
 // #5433 PR 3: the route asks the settle for the confirmation's owed marker and
 // delivers it through the owed notice (proved in paid-booking-confirmation-notice.test.ts).
 const confirmation = vi.hoisted(() => ({
-  deliver: vi.fn(),
+  deliver: vi.fn(), sendUnrecorded: vi.fn(),
   marker: { id: "booking-confirmed:booking-1:1782864000000", kind: "booking-confirmed", subjectId: "booking-1", eventAt: new Date("2026-07-01T00:00:00.000Z"), variant: null, payload: null },
 }));
-vi.mock("@/lib/paid-booking-confirmation-notice", () => ({ deliverPaidBookingConfirmation: confirmation.deliver }));
+vi.mock("@/lib/paid-booking-confirmation-notice", () => ({ deliverPaidBookingConfirmation: confirmation.deliver, sendUnrecordedPaidBookingConfirmation: confirmation.sendUnrecorded }));
 
 vi.mock("@/lib/xero-booking-invoice-queue", () => ({
   queueXeroInvoiceForPaidBooking: mocks.queueXeroInvoiceForPaidBooking,
@@ -2073,8 +2073,20 @@ describe("confirm-payment route: booking confirmation email (issue #772)", () =>
     expect(mocks.markBookingPaymentSucceeded).toHaveBeenCalledWith(expect.objectContaining({ owesPaidConfirmation: true }));
     expect(confirmation.deliver).toHaveBeenCalledTimes(1);
     expect(confirmation.deliver).toHaveBeenCalledWith(confirmation.marker, CLUB_FORMAT_TEST, "confirm-payment");
+    expect(confirmation.sendUnrecorded).not.toHaveBeenCalled();
     // #5433 round 1: the invoice is queued first, so a stop during the delivery never leaves a paid booking with no queued invoice.
     expect(confirmation.deliver.mock.invocationCallOrder[0]).toBeGreaterThan(mocks.queueXeroInvoiceForPaidBooking.mock.invocationCallOrder[0]!);
+  });
+
+  it("#5433 PR 4, round 2: a fresh paid outcome whose marker could not be keyed sends the confirmation unkeyed, as before #5433", async () => {
+    setupConfirmPayment();
+    mocks.markBookingPaymentSucceeded.mockResolvedValue({ outcome: "paid", bookingId: "booking-1", bumpedBookingIds: [], paidConfirmation: null });
+
+    const res = await confirmPaymentRoute(makeRequest(), { params: Promise.resolve({ id: "booking-1" }) });
+
+    expect(res.status).toBe(200);
+    expect(confirmation.deliver).not.toHaveBeenCalled();
+    expect(confirmation.sendUnrecorded).toHaveBeenCalledWith("booking-1", CLUB_FORMAT_TEST, "confirm-payment");
   });
 
   it("does not send when the webhook already reconciled (already_paid)", async () => {

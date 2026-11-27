@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import "@testing-library/jest-dom/vitest";
-import { cleanup, fireEvent, render, screen, waitFor } from "@/lib/__tests__/support/club-time-render";
+import { cleanup, fireEvent, render, screen, waitFor } from "@/lib/__tests__/support/club-season-render";
 import type { ReactElement, ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { HelpWidgetProvider } from "@/components/help-widget/help-widget-context";

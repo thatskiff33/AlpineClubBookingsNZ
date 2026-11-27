@@ -33,6 +33,10 @@ export const ADMIN_SYSTEM_TEMPLATE_NAMES = new Set<EmailAuditTemplateName>([
   // sendToAdmins on the adminBookingReviewRequired preference; not
   // delivery-locked, because no money moved.
   "admin-booking-confirmation-unsent",
+  // #5433 PR 4: a member notice the confirm-pending job owed did not reach its
+  // owner. sendToAdmins on the adminBookingReviewRequired preference; not
+  // delivery-locked, because no money moved.
+  "admin-booking-notice-unsent",
   // #3663: an expired internet banking hold left alone because the stay has
   // started. sendToAdmins on the adminPaymentFailure preference like its
   // reconcile-by-hand siblings; not delivery-locked, because no money moved.

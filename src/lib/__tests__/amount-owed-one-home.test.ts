@@ -95,7 +95,9 @@ const ONE_READ_USERS = [
   "src/lib/payment-link-intent.ts",
   "src/app/api/payments/create-payment-intent/route.ts",
   // #4058: the emails that quote what is owed, read through the same helper.
-  "src/lib/cron-confirm-pending.ts",
+  // #5433: the hold-deadline job's split-guest link email is sent by the link's
+  // owed notice, for the first attempt and for a recovered one.
+  "src/lib/split-guest-payment-link-notice.ts",
   "src/lib/payment-link-reissue.ts",
   "src/lib/payment-link-split-guest.ts",
   // #4944: the member dashboard's Payment Owed card.
@@ -417,10 +419,10 @@ describe("the amount an unpaid booking owes has one home (#3750)", () => {
     // The five senders of a pay link.
     expect(callers.sort()).toEqual([
       "src/lib/booking-request.ts",
-      "src/lib/cron-confirm-pending.ts",
       "src/lib/group-booking.ts",
       "src/lib/payment-link-reissue.ts",
       "src/lib/payment-link-split-guest.ts",
+      "src/lib/split-guest-payment-link-notice.ts",
     ]);
     const offenders = callers.flatMap((file) => {
       const text = read(file);

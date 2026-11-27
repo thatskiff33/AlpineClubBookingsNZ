@@ -3,7 +3,7 @@ import {
   shouldDefaultPostalSameAsPhysical,
   type MemberAddressValues,
 } from "@/lib/member-address"
-import { seasonSelectLabel } from "@/lib/season-label"
+import type { BoundClubSeason } from "@/lib/season-label"
 import { formatCents } from "@/lib/utils"
 import type { ClubFormat } from "@/lib/club-format"
 import {
@@ -316,10 +316,9 @@ export function formatMemberMembershipPreview(input: {
   currentSeasonYear: number
   currentSeasonTypeName: string | null
   currentSeasonSubscriptionLabel: string | null
-}, format: ClubDateFormat) {
-  const season = seasonSelectLabel(input.currentSeasonYear, format)
+}, season: Pick<BoundClubSeason, "selectLabel">) {
   return [
-    `${season}: ${input.currentSeasonTypeName ?? "No seasonal type set"}`,
+    `${season.selectLabel(input.currentSeasonYear)}: ${input.currentSeasonTypeName ?? "No seasonal type set"}`,
     input.currentSeasonSubscriptionLabel,
   ]
     .filter(Boolean)

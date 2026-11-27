@@ -240,6 +240,11 @@ export async function deliverOwedNotice<S>(
  */
 export const OWED_OFFICER_ALERT_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 
+/** An officers' alert's cut-off, and every kind's that shares the seven days: that long after its event. */
+export function owedOfficerAlertSendBy(marker: Pick<OwedNoticeMarker, "eventAt">): Date {
+  return new Date(marker.eventAt.getTime() + OWED_OFFICER_ALERT_MAX_AGE_MS);
+}
+
 export type OwedNoticeSweepOutcome = "delivered" | "kept" | "cleared" | "expired" | "claim-lost";
 
 /** Past this many times its kind's maximum age a marker is cleared unread, whatever the kind (`maxAgeMs`). */
