@@ -1053,6 +1053,43 @@ describe("a membership standing change fans out to the trip (#3039, the third se
     expect(revisionBumps[0]?.queuedBefore).toBe(queued.length);
   });
 
+  /** #5239: earlier July stays on organisation-owned (school) bookings, which no member owns. */
+  function earlierSchoolStays(count: number): FakeBooking[] {
+    return earlierStays(count).map((row) => ({ ...row, memberId: null }));
+  }
+
+  it("counts the raw rows read, so school stays filling the member cap still invalidate (#5239)", async () => {
+    // The adult is a guest on 50 school bookings and on one member Group Trip booking.
+    // The capped read returns the 50 school rows; all are dropped as non-participants,
+    // so NO member candidate remains. The trip was never read, so the cap still binds:
+    // counting candidates instead of raw rows would leave the trip's stamp matching.
+    const { db, queued, revisionBumps } = makeStore([
+      ...earlierSchoolStays(HOSTING_COVERAGE_MEMBER_FANOUT_LIMIT),
+      ...tripRows(),
+    ]);
+    const recorded = await enqueueHostingCoverageReevaluationForMember("adult-source", db, TODAY);
+    expect(recorded).toBe(0);
+    expect(queued).toEqual([]);
+    expect(
+      revisionBumps,
+      "INV-HOST-045: the member ceiling is judged on the raw rows read, before organisation-owned " +
+        "rows are dropped, and the no-candidate exit still runs the bump",
+    ).toHaveLength(1);
+  });
+
+  it("invalidates when school stays and a member stay together fill the member cap (#5239)", async () => {
+    // 49 school rows plus one member stay fill the 50 slots; one candidate remains,
+    // and the trip booking past the cap is never read.
+    const memberStay = earlierStays(1).map((row) => ({ ...row, id: "earlier-member" }));
+    const { db, revisionBumps } = makeStore([
+      ...earlierSchoolStays(HOSTING_COVERAGE_MEMBER_FANOUT_LIMIT - 1),
+      ...memberStay,
+      ...tripRows(),
+    ]);
+    await enqueueHostingCoverageReevaluationForMember("adult-source", db, TODAY);
+    expect(revisionBumps).toHaveLength(1);
+  });
+
   it("moves no revision when the member read stays under its ceiling", async () => {
     const { db, revisionBumps } = makeStore([
       ...earlierStays(HOSTING_COVERAGE_MEMBER_FANOUT_LIMIT - 2),
