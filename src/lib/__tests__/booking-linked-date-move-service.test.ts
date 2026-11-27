@@ -51,12 +51,13 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { StrandedCoverageBooking } from "@/lib/adult-member-hosting-same-owner";
 import { stripComments } from "@/lib/__tests__/support/strip-comments";
+import { assertEditQuotedFigures, EditFiguresRequiredError, type EditQuotedFigures } from "@/lib/edit-quoted-figures";
 
 vi.mock("server-only", () => ({}));
 
 type BatchArgs = {
   bookingId: string;
-  input: { checkIn?: string; checkOut?: string; settlementMethod?: string };
+  input: { checkIn?: string; checkOut?: string; settlementMethod?: string; quotedFigures?: EditQuotedFigures };
   tx: unknown;
   hostingReconcile?: string;
   waiveChangeFee?: boolean;
@@ -245,6 +246,7 @@ function batchResult(
   const changeFeeCents = waiveChangeFee ? 0 : money.changeFeeCents;
   const waived = money.changeFeeCents - changeFeeCents;
   return {
+    quotedFigures: { newFinalPriceCents: 10000 + money.priceDiffCents, priceDiffCents: money.priceDiffCents, changeFeeCents, netChargeCents: money.priceDiffCents + changeFeeCents },
     booking: { id: bookingId, checkIn: range.checkIn, checkOut: range.checkOut },
     priceDiffCents: money.priceDiffCents,
     changeFeeCents,
@@ -293,11 +295,12 @@ function args(
   return {
     bookingId: PRIMARY,
     actor: { id: OWNER, role: "USER" as const },
-    input: { checkIn: "2026-08-20", checkOut: "2026-08-22" },
+    linkedQuotedFigures: [{ bookingId: DEPENDENT, figures: batchResult(DEPENDENT, DEPENDENT_MONEY, MOVED, false).quotedFigures }],
     ipAddress: "203.0.113.7",
     todayAtClub: "2026-07-01" as never,
     format: CLUB_FORMAT_TEST,
     ...overrides,
+    input: { checkIn: "2026-08-20", checkOut: "2026-08-22", quotedFigures: batchResult(PRIMARY, PRIMARY_MONEY, MOVED, false).quotedFigures, ...overrides.input },
   };
 }
 
@@ -465,6 +468,8 @@ async function acceptOffer(
   h.bookingDefaultsFindUnique.mockClear();
   return applyLinkedDateMove({
     ...args(),
+    input: { ...args().input, quotedFigures: offer.quote.primary.quotedFigures },
+    linkedQuotedFigures: offer.quote.linked.map(row => ({ bookingId: row.bookingId, figures: row.quotedFigures! })),
     linkedMove: {
       choice: "MOVE_BOTH",
       acknowledged: true,
@@ -1394,6 +1399,112 @@ describe("post-commit work is contained per booking (#3232)", () => {
     expect(message).toContain("post-commit follow-up work failed");
     expect(context.errs).toHaveLength(1);
     expect(context.bookingIds).toEqual([PRIMARY, DEPENDENT]);
+  });
+});
+
+/**
+ * #5238 (`INV-MOD-062`): accepting a linked move settles every booking at the
+ * figure the offer showed for it, or neither. The offer carries each booking's
+ * figures; the acceptance echoes them, and each booking's save compares its own.
+ * The double here runs the real comparison, so a moved price refuses exactly
+ * where `modifyBookingBatch` would.
+ */
+describe("accepted per-booking figures (#5238)", () => {
+  /** Accept `offer` echoing its own figures, unless `overrides` replace them. */
+  function acceptWithFigures(
+    offer: SameOwnerCoverageLinkedMoveRequiredError,
+    overrides: Partial<Parameters<typeof applyLinkedDateMove>[0]> = {},
+  ) {
+    return applyLinkedDateMove({
+      ...args(),
+      input: { ...args().input, quotedFigures: offer.quote.primary.quotedFigures },
+      linkedQuotedFigures: offer.quote.linked.map((row) => ({ bookingId: row.bookingId, figures: row.quotedFigures! })),
+      linkedMove: { choice: "MOVE_BOTH", acknowledged: true, stateKey: offer.acceptStateKey },
+      ...overrides,
+    });
+  }
+
+  /** Every later save compares its figures, and `changedId`'s total has moved by a cent. */
+  function priceMovesOn(changedId: string | null) {
+    const original = h.modifyBookingBatch.getMockImplementation()!;
+    h.modifyBookingBatch.mockImplementation(async (call: BatchArgs) => {
+      const result = await original(call);
+      if (call.bookingId === changedId) result.quotedFigures.newFinalPriceCents += 1;
+      assertEditQuotedFigures(call.input.quotedFigures, result.quotedFigures);
+      return result;
+    });
+  }
+
+  it("offers each booking's own figures, priced without any echoed figure", async () => {
+    const offer = await raiseOffer();
+
+    expect(offer.quote.primary.quotedFigures).toEqual(batchResult(PRIMARY, PRIMARY_MONEY, MOVED, false).quotedFigures);
+    expect(offer.quote.linked.map((row) => row.bookingId)).toEqual([DEPENDENT]);
+    expect(offer.quote.linked[0]?.quotedFigures).toBeDefined();
+    // The probe prices the move; it never compares against the member's preview.
+    for (const [call] of h.modifyBookingBatch.mock.calls as Array<[BatchArgs]>) {
+      expect(call.input.quotedFigures, call.bookingId).toBeUndefined();
+    }
+  });
+
+  it("hands each booking its own echoed figures and commits both when nothing moved", async () => {
+    const offer = await raiseOffer();
+    priceMovesOn(null);
+    h.events = [];
+    h.modifyBookingBatch.mockClear();
+
+    await acceptWithFigures(offer);
+
+    const byBooking = new Map((h.modifyBookingBatch.mock.calls as Array<[BatchArgs]>).map(([call]) => [call.bookingId, call.input.quotedFigures]));
+    expect(byBooking.get(PRIMARY)).toEqual(offer.quote.primary.quotedFigures);
+    expect(byBooking.get(DEPENDENT)).toEqual(offer.quote.linked[0]?.quotedFigures);
+    expect(h.events).toContain("tx:commit");
+  });
+
+  it.each([
+    ["the primary booking", PRIMARY],
+    ["the second booking", DEPENDENT],
+  ])("refuses a price that moved on %s, writes neither, and carries the fresh offer", async (_label, changedId) => {
+    const offer = await raiseOffer();
+    priceMovesOn(changedId);
+    h.events = [];
+
+    const thrown = await acceptWithFigures(offer).then(() => null, (error: unknown) => error);
+
+    expect(thrown).toMatchObject({ code: "EDIT_PRICE_CHANGED", linkedMove: { requiresLinkedMoveChoice: true } });
+    // The fresh offer is the one the member answers next: its figures are the moved ones.
+    const fresh = (thrown as { linkedMove: { primary: { quotedFigures: unknown }; linkedBookings: Array<{ quotedFigures: unknown }> } }).linkedMove;
+    const freshFigures = changedId === PRIMARY ? fresh.primary.quotedFigures : fresh.linkedBookings[0]?.quotedFigures;
+    const offered = changedId === PRIMARY ? offer.quote.primary.quotedFigures : offer.quote.linked[0]?.quotedFigures;
+    expect(freshFigures).not.toEqual(offered);
+    expect(h.events).toContain("tx:rollback");
+    expect(h.events).not.toContain("tx:commit");
+    expect(h.settleAfterCommit).not.toHaveBeenCalled();
+  });
+
+  it("refuses plainly, with no offer to answer, when the fresh offer would move no other booking", async () => {
+    const offer = await raiseOffer();
+    priceMovesOn(PRIMARY);
+    // By the re-pricing the other booking no longer relies on this one.
+    h.inspectStranding.mockResolvedValue([]);
+    h.events = [];
+
+    const thrown = await acceptWithFigures(offer).then(() => null, (error: unknown) => error);
+
+    expect(thrown).toMatchObject({ code: "EDIT_PRICE_CHANGED" });
+    expect((thrown as { linkedMove?: unknown }).linkedMove).toBeUndefined();
+    expect(h.events).not.toContain("tx:commit");
+    expect(h.settleAfterCommit).not.toHaveBeenCalled();
+  });
+
+  it("refuses an acceptance whose key matches but carries no figures for the second booking", async () => {
+    const offer = await raiseOffer();
+    h.events = [];
+
+    await expect(acceptWithFigures(offer, { linkedQuotedFigures: [] })).rejects.toBeInstanceOf(EditFiguresRequiredError);
+    expect(h.events).toContain("tx:rollback");
+    expect(h.events).not.toContain("tx:commit");
+    expect(h.settleAfterCommit).not.toHaveBeenCalled();
   });
 });
 

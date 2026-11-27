@@ -4,7 +4,8 @@ import { fetchWithRecentAuth } from "@/components/confirm-its-you";
 import { adminHref } from "@/lib/admin-hubs";
 import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useSearchParams } from "next/navigation";
+import { useAdminListUrlSync } from "@/hooks/use-admin-list-url-sync";
 import { Badge } from "@/components/ui/badge";
 import { toast } from "sonner";
 import { Button, type ButtonProps } from "@/components/ui/button";
@@ -119,7 +120,6 @@ export function BookingChangeRequestsPanel({
 }: BookingChangeRequestsPanelProps) {
   const format = useClubFormat();
   const formatDateTime = useInstantFormatter();
-  const router = useRouter();
   const searchParams = useSearchParams();
   const initialFilter = searchParams.get(BOOKING_REQUESTS_STATUS_PARAM);
   const requestId = searchParams.get("requestId");
@@ -165,9 +165,7 @@ export function BookingChangeRequestsPanel({
     basePath, searchParams.toString(), fixedSearchParams, filter, requestId, page,
   );
 
-  useEffect(() => {
-    router.replace(currentPath, { scroll: false });
-  }, [currentPath, router]);
+  useAdminListUrlSync(currentPath);
 
   const fetchRequests = useCallback(async () => {
     const isCurrent = beginLoad();

@@ -10,6 +10,7 @@ import { PublicBookingRequestsPanel } from "@/components/admin/booking-requests/
 // contact picker and club identity fetch or throw outside their providers.
 const replace = vi.fn();
 vi.mock("next/navigation", () => ({
+  usePathname: () => "/",
   useRouter: () => ({ replace, push: vi.fn() }),
   useSearchParams: () => ({ get: () => null }),
 }));

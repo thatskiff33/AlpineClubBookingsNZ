@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { withSaveFigures } from "@/lib/__tests__/support/edit-save-figures";
 import { NextRequest } from "next/server";
 
 // #2266: PUT /api/bookings/[id]/modify accepts `applyCreditCents` (the edit
@@ -73,7 +74,7 @@ import { PUT } from "@/app/api/bookings/[id]/modify/route";
 function req(body: unknown) {
   return new NextRequest("http://localhost/api/bookings/b1/modify", {
     method: "PUT",
-    body: JSON.stringify(body),
+    body: JSON.stringify(withSaveFigures(body)),
     headers: { "content-type": "application/json" },
   });
 }

@@ -179,8 +179,12 @@ async function modifyQuote(bookingId: string, body: unknown) {
   return api().post(`/api/bookings/${bookingId}/modify-quote`, { data: body });
 }
 
-async function modifyApply(bookingId: string, body: unknown) {
-  return api().put(`/api/bookings/${bookingId}/modify`, { data: body });
+/** #5238 (`INV-MOD-062`): a save carries its preview's figures, so preview first, as the panel does. */
+async function modifyApply(bookingId: string, body: Record<string, unknown>) {
+  const preview = await modifyQuote(bookingId, body);
+  expect(preview.ok(), `preview before saving (${preview.status()}): ${await preview.text()}`).toBeTruthy();
+  const { quotedFigures } = (await preview.json()) as { quotedFigures: unknown };
+  return api().put(`/api/bookings/${bookingId}/modify`, { data: { ...body, quotedFigures } });
 }
 
 async function allocate(bookingGuestId: string, bedId: string, stayDate: string) {

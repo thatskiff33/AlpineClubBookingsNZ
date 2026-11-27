@@ -10,6 +10,12 @@ import { assertEditQuotedFigures, EditPriceChangedError } from "@/lib/edit-quote
 const figures = { newFinalPriceCents: 10000, priceDiffCents: -12000, changeFeeCents: 0, netChargeCents: -12000 };
 
 describe("booking edit approval (#4924)", () => {
+  it("keeps each linked booking's accepted figures on the save request", () => {
+    const linkedQuotedFigures = [{ bookingId: "dependent", figures }];
+    const parsed = batchModifySchema.parse({ checkIn: "2026-08-01", quotedFigures: figures, linkedQuotedFigures });
+    expect(parsed).toMatchObject({ quotedFigures: figures, linkedQuotedFigures });
+  });
+
   it("derives every preview field without redefining it", () => {
     for (const key of Object.keys(modifyQuoteSchema.shape) as Array<keyof typeof modifyQuoteSchema.shape>) {
       expect(batchModifySchema.shape[key], key).toBe(modifyQuoteSchema.shape[key]);
