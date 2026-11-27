@@ -44,6 +44,9 @@ export async function prepareDepositSplit(
   },
 ) {
   const { payment, effectiveAmountCents, creditAppliedCents } = owed;
+  // Read before the owed test below, which narrows `payment` on its refusing branch.
+  const paymentId = payment?.id ?? null;
+  const previousAdditionalPaymentStatus = payment?.additionalPaymentStatus ?? null;
   // One request per booking: a balance is raised only on a booking with no request open, so it
   // never folds into, or is folded into, an extra by this door (an edit merges into it later).
   const openRows = payment === null ? 0 : await tx.paymentTransaction.count({
@@ -81,11 +84,11 @@ export async function prepareDepositSplit(
     amountOwingCents: effectiveAmountCents,
     settlementAmountCents: depositCents,
     creditAppliedCents,
-    paymentId: payment?.id ?? null,
+    paymentId,
     outstandingAdditionalCents: 0,
     additionalSettlementCents: 0,
     uncollectedAdditionalCents: effectiveAmountCents - depositCents,
-    previousAdditionalPaymentStatus: payment?.additionalPaymentStatus ?? null,
+    previousAdditionalPaymentStatus,
     additionalPaymentIntentId: null,
   };
 }
