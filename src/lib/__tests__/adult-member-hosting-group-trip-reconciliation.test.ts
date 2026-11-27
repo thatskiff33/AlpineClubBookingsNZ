@@ -75,6 +75,10 @@ import {
   reconcileAdultMemberHostingReview,
   reconcileAdultMemberHostingReviewWithSiblings,
 } from "@/lib/adult-member-hosting-review";
+import {
+  HOSTING_COVERAGE_MEMBER_FANOUT_LIMIT,
+  hostingCoverageMemberAttendanceWhere,
+} from "@/lib/adult-member-hosting-member-fanout";
 import { readStoredGroupTripCoverFreshness } from "@/lib/adult-member-hosting-stored-review";
 import { kioskPendingReevaluationWhere } from "@/lib/kiosk-group-trip";
 import { CENSUS_TIMEOUT_MS } from "@/test/census-timeout";
@@ -182,6 +186,8 @@ function makeStore(rows: FakeBooking[], options: StoreOptions = {}) {
   const audits: Array<Record<string, unknown>> = [];
   const bookingWheres: Array<Record<string, unknown>> = [];
   const revisionReadsAfterLock: boolean[] = [];
+  /** Each set-based revision bump, with how many queue rows preceded it (#5239). */
+  const revisionBumps: Array<{ where: unknown; queuedBefore: number }> = [];
   let dependentReads = 0;
 
   function recordLock(sql: string, values: unknown[], blocking: boolean) {
@@ -303,10 +309,14 @@ function makeStore(rows: FakeBooking[], options: StoreOptions = {}) {
           coverageInvalidationRevision: options.revisions?.[where.id] ?? 0,
         };
       }),
+      updateMany: vi.fn(async ({ where }: any) => {
+        revisionBumps.push({ where, queuedBefore: queued.length });
+        return { count: 1 };
+      }),
     },
   } as any;
 
-  return { db, locks, queued, bookingWheres, byId, audits, revisionReadsAfterLock };
+  return { db, locks, queued, bookingWheres, byId, audits, revisionReadsAfterLock, revisionBumps };
 }
 
 /**
@@ -803,6 +813,43 @@ describe("the Group Trip reconciliation fan-out (#3039, INV-HOST-046)", () => {
     expect(truncations[0]?.severity).toBe("important");
   });
 
+  it("counts the rows READ, so organisation-owned siblings filling the cap still record it (#5239)", async () => {
+    // Organisation-owned (school) bookings are dropped from the fan-out after the
+    // capped read. A cap they fill is still a truncation: a member's booking past
+    // it was never read.
+    const rows: FakeBooking[] = [
+      organiserOf(TRIP, {
+        guests: [
+          adultGuest("organiser-adult", ["2026-08-03", "2026-08-04"], "adult-source"),
+        ],
+      }),
+    ];
+    for (let index = 0; index < GROUP_TRIP_COVERAGE_DEPENDENT_LIMIT; index += 1) {
+      rows.push(
+        joinerOf(TRIP, `joiner-${String(index).padStart(3, "0")}`, {
+          ...(index % 2 === 0 ? { memberId: null } : {}),
+          guests: [guestRow(`kid-${index}`, ["2026-08-03", "2026-08-04"])],
+        }),
+      );
+    }
+    const { db, audits } = makeStore(rows);
+    await reconcileAdultMemberHostingReviewWithSiblings(
+      `organiser-${TRIP}`,
+      db,
+      OFFICER,
+    );
+    const truncations = audits.filter(
+      (row) => row.action === "booking.hostingCoverage.groupTripFanoutTruncated",
+    );
+    expect(
+      truncations,
+      "INV-HOST-046: the truncation report counts the raw rows the capped read returned",
+    ).toHaveLength(1);
+    expect((truncations[0]?.metadata as { returned?: number }).returned).toBe(
+      GROUP_TRIP_COVERAGE_DEPENDENT_LIMIT,
+    );
+  });
+
   it("writes no truncation record when the ceiling does not bind", async () => {
     const { db, audits } = makeStore(tripRows());
     await reconcileAdultMemberHostingReviewWithSiblings(
@@ -960,6 +1007,70 @@ describe("a membership standing change fans out to the trip (#3039, the third se
       "joiner-c",
       `organiser-${TRIP}`,
     ]);
+  });
+
+  /**
+   * #5239: earlier July stays this adult attends, each on its own account, so the
+   * trip's August booking sorts after them in the fan-out's `checkIn` order.
+   */
+  function earlierStays(count: number): FakeBooking[] {
+    return Array.from({ length: count }, (_, index) => {
+      const id = `earlier-${String(index).padStart(3, "0")}`;
+      return booking({
+        id,
+        memberId: `owner-${id}`,
+        checkIn: new Date("2026-07-10T00:00:00.000Z"),
+        checkOut: new Date("2026-07-12T00:00:00.000Z"),
+        guests: [adultGuest(`adult-on-${id}`, ["2026-07-10", "2026-07-11"], "adult-source")],
+      });
+    });
+  }
+
+  it("invalidates every trip the person attends when the member ceiling binds (#5239)", async () => {
+    // THE GAP: 50 earlier stays fill the ceiling, so the trip booking is never read,
+    // its joiners are never queued, and their snapshots would keep a matching stamp:
+    // the kiosk would show cover from an adult whose standing just changed.
+    const { db, queued, revisionBumps } = makeStore([
+      ...earlierStays(HOSTING_COVERAGE_MEMBER_FANOUT_LIMIT),
+      ...tripRows(),
+    ]);
+    await enqueueHostingCoverageReevaluationForMember("adult-source", db, TODAY);
+    expect(siblingSources(queued).filter((id) => id.startsWith("joiner-"))).toEqual([]);
+    expect(
+      revisionBumps,
+      "INV-HOST-045 (docs/invariants/adult-member-hosting.md): a bound member fan-out must move " +
+        "the revision of every trip the person attends, in one set-based update",
+    ).toHaveLength(1);
+    const attended = hostingCoverageMemberAttendanceWhere("adult-source", TODAY);
+    const attendedOrSplitParent = { OR: [attended, { linkedBookings: { some: attended } }] };
+    expect(revisionBumps[0]?.where).toEqual({
+      OR: [
+        { organiserBooking: { is: attendedOrSplitParent } },
+        { joins: { some: { booking: { is: attendedOrSplitParent } } } },
+      ],
+    });
+    // The LAST write: every queue row was written before it.
+    expect(revisionBumps[0]?.queuedBefore).toBe(queued.length);
+  });
+
+  it("moves no revision when the member read stays under its ceiling", async () => {
+    const { db, revisionBumps } = makeStore([
+      ...earlierStays(HOSTING_COVERAGE_MEMBER_FANOUT_LIMIT - 2),
+      ...tripRows(),
+    ]);
+    await enqueueHostingCoverageReevaluationForMember("adult-source", db, TODAY);
+    expect(revisionBumps).toEqual([]);
+  });
+
+  it("still invalidates when the ceiling binds at a lodge that queues nothing", async () => {
+    // The early return for "no enforcing lodge" is a path that returns too.
+    const { db, queued, revisionBumps } = makeStore(
+      [...earlierStays(HOSTING_COVERAGE_MEMBER_FANOUT_LIMIT), ...tripRows()],
+      { policies: [policyRow({ mode: "ADMIN_REVIEW_REQUIRED" })] },
+    );
+    await enqueueHostingCoverageReevaluationForMember("adult-source", db, TODAY);
+    expect(queued).toEqual([]);
+    expect(revisionBumps).toHaveLength(1);
   });
 });
 

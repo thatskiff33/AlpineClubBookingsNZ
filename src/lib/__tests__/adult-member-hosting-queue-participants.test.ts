@@ -10,6 +10,10 @@ import {
   enqueueMemberMergeHostingCoveragePlan,
   memberMergeHostingCoveragePlanFingerprint,
 } from "@/lib/adult-member-hosting-merge-coverage-plan";
+import {
+  HOSTING_COVERAGE_MEMBER_FANOUT_LIMIT,
+  hostingCoverageMemberAttendanceWhere,
+} from "@/lib/adult-member-hosting-member-fanout";
 
 import { stripComments } from "./support/strip-comments";
 
@@ -896,11 +900,17 @@ describe("a merge invalidates sibling cover in the trips the person attends (#52
     groupBookingAsOrganiser: null,
     groupBookingJoin: { groupBookingId: "trip-1" },
   };
-  function mergeDb(policy: Record<string, unknown>) {
+  function mergeDb(
+    policy: Record<string, unknown>,
+    attended: readonly Record<string, unknown>[] = [attendedInTrip],
+    splitParents: readonly Record<string, unknown>[] = [],
+  ) {
     return {
       booking: {
         findMany: vi.fn(({ where }: { where: Record<string, unknown> }) =>
-          Promise.resolve("guests" in where ? [attendedInTrip] : []),
+          Promise.resolve(
+            "guests" in where ? [...attended] : "OR" in where ? [...splitParents] : [],
+          ),
         ),
       },
       adultMemberHostingPolicy: {
@@ -957,6 +967,67 @@ describe("a merge invalidates sibling cover in the trips the person attends (#52
   ])("invalidates nothing where %s", async (_label, policy) => {
     const built = await plan(mergeDb(policy));
     expect(built.invalidatedGroupTripIds).toEqual([]);
+  });
+
+  it("resolves a split child's trip through its parent, as the fan-out does", async () => {
+    // The #738 half carrying the non-member guests holds neither trip relation;
+    // `readGroupTripIdentity` follows its same-owner parent (INV-HOST-043).
+    const splitChild = {
+      ...attendedInTrip,
+      id: "booking-split-child",
+      parentBookingId: "booking-parent",
+      groupBookingJoin: null,
+    };
+    const parent = {
+      id: "booking-parent",
+      groupBookingAsOrganiser: { id: "trip-2" },
+      groupBookingJoin: null,
+    };
+    const built = await plan(mergeDb({}, [splitChild], [parent]));
+    expect(
+      built.invalidatedGroupTripIds,
+      "INV-SSOT-001: the merge resolves trip identity with the fan-out's own reader",
+    ).toEqual(["trip-2"]);
+  });
+
+  it("moves every trip the master attends when the attendance read fills its ceiling", async () => {
+    // The bookings past the cap were never read, so no id list can name their
+    // trips: one set-based update reaches them (INV-HOST-045).
+    const attended = Array.from({ length: HOSTING_COVERAGE_MEMBER_FANOUT_LIMIT }, (_, index) => ({
+      ...attendedInTrip,
+      id: `booking-${String(index).padStart(3, "0")}`,
+    }));
+    const db = mergeDb({}, attended);
+    const built = await plan(db);
+    expect(built.everyAttendedTripOf).toEqual({
+      memberId: "master-1",
+      today: CLUB_TODAY_DATE_ONLY,
+    });
+    expect(memberMergeHostingCoveragePlanFingerprint(built)).not.toBe(
+      memberMergeHostingCoveragePlanFingerprint({ ...built, everyAttendedTripOf: null }),
+    );
+    await enqueueMemberMergeHostingCoveragePlan(
+      { ...built, items: [] },
+      {} as never,
+      db as never,
+    );
+    const attendance = hostingCoverageMemberAttendanceWhere("master-1", CLUB_TODAY_DATE_ONLY);
+    const attendedOrSplitParent = { OR: [attendance, { linkedBookings: { some: attendance } }] };
+    expect(db.groupBooking.updateMany).toHaveBeenCalledTimes(1);
+    expect(db.groupBooking.updateMany).toHaveBeenCalledWith({
+      where: {
+        OR: [
+          { organiserBooking: { is: attendedOrSplitParent } },
+          { joins: { some: { booking: { is: attendedOrSplitParent } } } },
+        ],
+      },
+      data: { coverageInvalidationRevision: { increment: 1 } },
+    });
+  });
+
+  it("sets no all-trips invalidation below the ceiling", async () => {
+    const built = await plan(mergeDb({}));
+    expect(built.everyAttendedTripOf).toBeNull();
   });
 });
 
