@@ -32,6 +32,7 @@ import {
 } from "../src/lib/audit-expiry-backfill";
 import { parseSafeDatabaseTarget } from "../src/lib/induction-baseline-cli";
 import { prisma } from "../src/lib/prisma";
+import { isMainModule } from "./lib/is-main-module.mjs";
 
 function printUsage() {
   console.log(`Usage:
@@ -61,7 +62,8 @@ function wholeNumber(flag: string, value: string | undefined): number {
   return Number(value);
 }
 
-function parseArgs(argv: string[]) {
+/** No flag is the census: the mode that writes nothing. */
+export function parseAuditExpiryBackfillArgs(argv: string[]) {
   const options: {
     mode: AuditExpiryBackfillMode;
     json: boolean;
@@ -117,7 +119,7 @@ function parseArgs(argv: string[]) {
 
 async function main() {
   // pnpm 11 passes the `--` in `pnpm run audit:expiry-backfill -- --apply` through.
-  const args = parseArgs(process.argv.slice(2).filter((arg) => arg !== "--"));
+  const args = parseAuditExpiryBackfillArgs(process.argv.slice(2).filter((arg) => arg !== "--"));
   // `dotenv/config` may have supplied the URL from `.env`: say which database
   // this is before anything is read. Host and name only, never the credentials.
   const target = parseSafeDatabaseTarget(process.env.DATABASE_URL);
@@ -140,11 +142,13 @@ async function main() {
   }
 }
 
-main()
-  .catch((error) => {
-    console.error(error instanceof Error ? error.message : "Unknown audit expiry backfill error");
-    process.exitCode = 1;
-  })
-  .finally(async () => {
-    await prisma.$disconnect().catch(() => {});
-  });
+if (isMainModule(import.meta.url)) {
+  main()
+    .catch((error) => {
+      console.error(error instanceof Error ? error.message : "Unknown audit expiry backfill error");
+      process.exitCode = 1;
+    })
+    .finally(async () => {
+      await prisma.$disconnect().catch(() => {});
+    });
+}

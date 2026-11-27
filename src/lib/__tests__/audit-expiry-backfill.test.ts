@@ -12,6 +12,8 @@ import { matchesWhere } from "@/lib/__tests__/support/prisma-where";
 vi.mock("@/lib/prisma", () => ({ prisma: {} }));
 
 import { getAuditRetentionExpiresAt } from "@/lib/audit";
+import { buildAuditLogPruneWhere } from "@/lib/audit-prune-predicate";
+import { getAuditLogRetentionCutoffs } from "@/lib/audit-retention";
 import {
   AUDIT_EXPIRY_BACKFILL_ACTION,
   AuditExpiryBackfillRefusal,
@@ -102,9 +104,19 @@ function fixture(): Row[] {
     row({ id: "preserved", createdAt: OLD, incidentPreserved: true, action: "LODGE_CAPACITY_HOLD" }),
     // Never selected: a class with no expiry is the writer's keep-for-ever.
     row({ id: "kept", createdAt: OLD, retentionClass: "critical" }),
+    // Never selected: a class outside the closed set (#3940), counted apart.
+    row({ id: "unknown-class", createdAt: OLD, retentionClass: "legacy_unknown" }),
     // Never selected: already has an expiry.
     row({ id: "has-expiry", createdAt: OLD, expiresAt: new Date("2030-01-01T00:00:00.000Z") }),
   ];
+}
+
+/** What the real prune's `where` would delete from the store at `now`. */
+function prunable(rows: Row[], now: Date): string[] {
+  const where = buildAuditLogPruneWhere({ now, ...getAuditLogRetentionCutoffs(now) });
+  // The batch entries the mock stores carry only what the writer set.
+  const columns = { archivedAt: null, incidentPreserved: false, severity: null };
+  return rows.filter((r) => matchesWhere({ ...columns, ...r }, where)).map((r) => r.id);
 }
 
 describe("runAuditExpiryBackfill (#5265)", () => {
@@ -118,7 +130,9 @@ describe("runAuditExpiryBackfill (#5265)", () => {
     const report = await runAuditExpiryBackfill({ mode: "census", db: store.db, now: NOW });
 
     expect(report.total).toBe(4);
+    // The deliberate keep-for-ever row and the unknown-class row are two numbers.
     expect(report.keptForeverWithClass).toBe(1);
+    expect(report.unknownClassWithoutExpiry).toBe(1);
     expect(report.kinds.map((kind) => kind.action).sort()).toEqual(
       ["FAMILY_GROUP_CREATED", "LODGE_CAPACITY_HOLD", "admin.member.view"].sort(),
     );
@@ -127,6 +141,71 @@ describe("runAuditExpiryBackfill (#5265)", () => {
     expect(report.alreadyExpired).toBe(2);
     expect(report.deletableAtNextPrune).toBe(1);
     expect(report.incidentPreserved).toEqual({ count: 1, heldByTenYearFloor: 1 });
+  });
+
+  it("reports rows with an expiry and no class: what apply leaves, and what an undo would clear", async () => {
+    const options = { db: store.db, now: NOW, actorMemberId: "officer-1", confirmTotal: 4, allowDelete: 1 };
+    // "has-expiry" is the one such row before apply. On a real database it is 0.
+    const before = await runAuditExpiryBackfill({ mode: "apply", ...options });
+    expect(before.expiryWithoutClass).toBe(1);
+
+    const after = await runAuditExpiryBackfill({ mode: "census", db: store.db, now: NOW });
+    expect(after.total).toBe(0);
+    expect(after.expiryWithoutClass).toBe(1 + before.apply!.rowsUpdated);
+    expect(after.keptForeverWithClass).toBe(1);
+    expect(after.unknownClassWithoutExpiry).toBe(1);
+    const text = formatAuditExpiryBackfillReport(after);
+    expect(text).toContain("Entries with an expiry and no retention class: 5.");
+    expect(text).toContain("unrecognised retention class and no expiry (#3940; never changed here): 1");
+  });
+
+  it("counts as deletable exactly what the prune's own rule deletes once applied", async () => {
+    const cutoffs = getAuditLogRetentionCutoffs(NOW);
+    const sevenYearsBack = new Date("2019-07-01T00:00:00.000Z"); // its expiry is NOW exactly
+    const justBefore = (instant: Date) => new Date(instant.getTime() - 1);
+    store = makeDb([
+      // Expiry exactly at the clock: not past, so not deleted. One millisecond older: deleted.
+      row({ id: "expiry-at-clock", createdAt: sevenYearsBack }),
+      row({ id: "expiry-just-past", createdAt: justBefore(sevenYearsBack) }),
+      // Preserved and recorded exactly at the ten-year cut-off: held. One millisecond older: deleted.
+      row({ id: "floor-at-cutoff", createdAt: cutoffs.incidentPreserved, incidentPreserved: true }),
+      row({ id: "floor-just-past", createdAt: justBefore(cutoffs.incidentPreserved), incidentPreserved: true }),
+      // Critical severity: the prune also wants it recorded before the seven-year cut-off.
+      row({ id: "critical-at-cutoff", createdAt: cutoffs.criticalMain, severity: "critical" }),
+      row({ id: "critical-just-past", createdAt: justBefore(cutoffs.criticalMain), severity: "critical" }),
+      row({ id: "recent", createdAt: RECENT }),
+    ]);
+
+    const census = await runAuditExpiryBackfill({ mode: "census", db: store.db, now: NOW });
+    expect(census.alreadyExpired).toBe(4);
+    expect(census.deletableAtNextPrune).toBe(3);
+    expect(census.incidentPreserved).toEqual({ count: 2, heldByTenYearFloor: 1 });
+
+    await runAuditExpiryBackfill({
+      mode: "apply",
+      db: store.db,
+      now: NOW,
+      actorMemberId: "officer-1",
+      confirmTotal: census.total,
+      allowDelete: census.deletableAtNextPrune,
+    });
+    expect(prunable(store.rows, NOW).sort()).toEqual(["critical-just-past", "expiry-just-past", "floor-just-past"]);
+  });
+
+  it("does not count a critical-severity row the prune keeps one more night on a 29 February clock", async () => {
+    // The writer's seven years rolls 29 Feb forward; the prune's cut-off clamps
+    // it back. The row's new expiry has passed, yet the prune still keeps it.
+    const now = new Date("2028-02-29T12:00:00.000Z");
+    store = makeDb([row({ id: "critical", createdAt: new Date("2021-02-28T18:00:00.000Z"), severity: "critical" })]);
+
+    const census = await runAuditExpiryBackfill({ mode: "census", db: store.db, now });
+    expect(census.alreadyExpired).toBe(1);
+    expect(census.deletableAtNextPrune).toBe(0);
+
+    // So apply asks for no deletion count, and the prune that night deletes nothing.
+    await runAuditExpiryBackfill({ mode: "apply", db: store.db, now, actorMemberId: "officer-1", confirmTotal: 1 });
+    expect(prunable(store.rows, now)).toEqual([]);
+    expect(prunable(store.rows, new Date("2028-03-01T12:00:00.000Z"))).toEqual(["critical"]);
   });
 
   it("gives each row the writer's own seven-year expiry from its recorded date, leap day included", async () => {

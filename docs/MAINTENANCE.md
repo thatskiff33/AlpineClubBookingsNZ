@@ -2196,8 +2196,9 @@ DATABASE_URL=<operator connection> pnpm run audit:expiry-backfill -- --apply --a
 ```
 
 Records already past seven years are deleted for good at the next nightly
-clean-up, which is why apply asks for that count. The steps, and what the
-report's sections mean:
+clean-up, which is why apply asks for that count. Until that clean-up runs an
+apply can be undone without restoring a backup. The steps, the undo, and what
+the report's sections mean:
 [`AUDIT_RETENTION_ARCHIVE_RUNBOOK.md`](AUDIT_RETENTION_ARCHIVE_RUNBOOK.md#older-entries-with-no-expiry-5265).
 
 ### Census the booking money verdicts, night-price provenance and edit reviews (#3278, #3531)

@@ -8,16 +8,25 @@
 // recorded, applied by the owner after reading the counts this module reports.
 //
 // THE SELECTOR is the pre-v0.14.0 state exactly: no retention class AND no
-// expiry. A row with a class and no expiry is the deliberate keep-for-ever
-// escape hatch (`expiresAt: null` at the writer) and is never touched; it is
-// only counted. Only `expiresAt` is written. `retentionClass` stays empty, so
-// the prune's unclassified branches delete the row at exactly seven years, and
-// an incident-preserved row still waits for its ten-year floor.
+// expiry. A row with a recognised class and no expiry is the deliberate
+// keep-for-ever escape hatch (`expiresAt: null` at the writer); one with an
+// unrecognised class and no expiry is #3940's. Neither is touched; each is
+// counted on its own line. Only `expiresAt` is written. `retentionClass` stays empty, so
+// the prune's unclassified branches delete the row at seven years, and an
+// incident-preserved row still waits for its ten-year floor.
 //
 // THE EXPIRY is `getAuditRetentionExpiresAt("critical", createdAt)`, the
 // writer's own function, so there is one seven-year rule. Some kinds would be
 // classed shorter today (a `sensitive_access` view, two years); by the
 // decision they still get seven years, and the report lists them on their own.
+//
+// WHAT THE NEXT PRUNE DELETES is asked of the prune's own rule,
+// `pruneDeletesUnclassifiedAuditLog`, never restated here (INV-SSOT-001): it is
+// the number `--allow-delete` must repeat.
+//
+// THE UNDO is the mirror shape, a row with an expiry and no class. No writer
+// produces one, so the census reports that count (0 before the first apply)
+// and the runbook's undo clears exactly it.
 //
 // The owner runs every mode. An agent never points this at a real database.
 // Census and dry run write nothing. Apply refuses unless the operator repeats
@@ -39,7 +48,8 @@ import {
   getAuditRetentionExpiresAt,
 } from "@/lib/audit";
 import { isAuditCategory } from "@/lib/audit-categories";
-import type { AuditRetentionClass } from "@/lib/audit-retention-classes";
+import { pruneDeletesUnclassifiedAuditLog } from "@/lib/audit-prune-predicate";
+import { AUDIT_RETENTION_CLASSES, type AuditRetentionClass } from "@/lib/audit-retention-classes";
 import { getAuditLogRetentionCutoffs } from "@/lib/audit-retention";
 import { decodeRawRows } from "@/lib/raw-sql-rows";
 
@@ -62,10 +72,32 @@ export const AUDIT_EXPIRY_BACKFILL_WHERE = {
   expiresAt: null,
 } satisfies Prisma.AuditLogWhereInput;
 
-/** A class but no expiry: the writer's deliberate keep-for-ever. Counted, never changed. */
+/** A recognised class but no expiry: the writer's deliberate keep-for-ever. Counted, never changed. */
 const KEPT_FOR_EVER_WHERE = {
-  retentionClass: { not: null },
+  retentionClass: { in: [...AUDIT_RETENTION_CLASSES] },
   expiresAt: null,
+} satisfies Prisma.AuditLogWhereInput;
+
+/**
+ * A class outside the closed set and no expiry (#3940). The prune reads such a
+ * class as none, but with no expiry it deletes nothing. Counted, never changed.
+ */
+const UNKNOWN_CLASS_NO_EXPIRY_WHERE = {
+  AND: [
+    { retentionClass: { not: null } },
+    { retentionClass: { notIn: [...AUDIT_RETENTION_CLASSES] } },
+  ],
+  expiresAt: null,
+} satisfies Prisma.AuditLogWhereInput;
+
+/**
+ * An expiry but no class: what an applied row looks like, and what no writer
+ * produces. 0 before the first apply, which is what makes the runbook's undo
+ * (clear the expiry of exactly these rows) exact.
+ */
+const EXPIRY_WITHOUT_CLASS_WHERE = {
+  retentionClass: null,
+  expiresAt: { not: null },
 } satisfies Prisma.AuditLogWhereInput;
 
 export type AuditExpiryBackfillMode = "census" | "dry-run" | "apply";
@@ -111,10 +143,16 @@ export interface AuditExpiryBackfillReport {
   total: number;
   /** New expiry already past, preserved rows included. */
   alreadyExpired: number;
-  /** What the next nightly prune would delete: past expiry and not held by the ten-year floor. */
+  /** What the next nightly prune would delete, by the prune's own rule. */
   deletableAtNextPrune: number;
+  /** `heldByTenYearFloor`: rows the prune would delete were they not preserved. */
   incidentPreserved: { count: number; heldByTenYearFloor: number };
+  /** A recognised class and no expiry: the writer's deliberate keep-for-ever. */
   keptForeverWithClass: number;
+  /** An unrecognised class and no expiry (#3940). */
+  unknownClassWithoutExpiry: number;
+  /** An expiry and no class: 0 before the first apply, then what an undo would clear. */
+  expiryWithoutClass: number;
   kinds: AuditExpiryBackfillKind[];
   /** Kinds whose writer class today is not `critical`: they still get seven years. */
   shorterClassKinds: AuditExpiryBackfillKind[];
@@ -227,7 +265,7 @@ interface KindAccumulator {
 }
 
 async function measure(db: AuditExpiryBackfillDb, now: Date) {
-  const preservedCutoff = getAuditLogRetentionCutoffs(now).incidentPreserved;
+  const clock = { now, ...getAuditLogRetentionCutoffs(now) };
   const kinds = new Map<string, KindAccumulator>();
   let total = 0;
   let alreadyExpired = 0;
@@ -237,12 +275,20 @@ async function measure(db: AuditExpiryBackfillDb, now: Date) {
 
   for await (const row of scanCandidates(db)) {
     total += 1;
-    const expired = auditBackfillExpiresAt(row.createdAt) < now;
-    const held = row.incidentPreserved && row.createdAt >= preservedCutoff;
+    const expiresAt = auditBackfillExpiresAt(row.createdAt);
+    const expired = expiresAt < now;
+    // The row as apply would leave it, put to the prune's own rule.
+    const applied = { ...row, expiresAt };
+    const deletable = pruneDeletesUnclassifiedAuditLog(applied, clock);
     if (expired) alreadyExpired += 1;
-    if (expired && !held) deletableAtNextPrune += 1;
-    if (row.incidentPreserved) preserved += 1;
-    if (expired && held) heldByTenYearFloor += 1;
+    if (deletable) deletableAtNextPrune += 1;
+    if (row.incidentPreserved) {
+      preserved += 1;
+      // Held by the floor: the same row, not preserved, would be deleted.
+      if (!deletable && pruneDeletesUnclassifiedAuditLog({ ...applied, incidentPreserved: false }, clock)) {
+        heldByTenYearFloor += 1;
+      }
+    }
 
     const key = JSON.stringify([row.action, row.category, row.severity]);
     let kind = kinds.get(key);
@@ -294,6 +340,8 @@ async function measure(db: AuditExpiryBackfillDb, now: Date) {
     );
 
   const keptForeverWithClass = await db.auditLog.count({ where: KEPT_FOR_EVER_WHERE });
+  const unknownClassWithoutExpiry = await db.auditLog.count({ where: UNKNOWN_CLASS_NO_EXPIRY_WHERE });
+  const expiryWithoutClass = await db.auditLog.count({ where: EXPIRY_WITHOUT_CLASS_WHERE });
 
   return {
     total,
@@ -301,6 +349,8 @@ async function measure(db: AuditExpiryBackfillDb, now: Date) {
     deletableAtNextPrune,
     incidentPreserved: { count: preserved, heldByTenYearFloor },
     keptForeverWithClass,
+    unknownClassWithoutExpiry,
+    expiryWithoutClass,
     kinds: kindLines,
     shorterClassKinds: kindLines.filter((kind) => kind.writerRetentionClass !== "critical"),
   };
@@ -501,8 +551,16 @@ export function formatAuditExpiryBackfillReport(report: AuditExpiryBackfillRepor
       `${report.incidentPreserved.heldByTenYearFloor} past seven years are still kept by the ten-year floor).`,
   );
   lines.push(
-    `Entries with a retention class but no expiry (kept for ever, never changed here): ` +
+    `Entries with a retention class and no expiry (kept for ever on purpose, never changed here): ` +
       `${report.keptForeverWithClass}`,
+  );
+  lines.push(
+    `Entries with an unrecognised retention class and no expiry (#3940; never changed here): ` +
+      `${report.unknownClassWithoutExpiry}`,
+  );
+  lines.push(
+    `Entries with an expiry and no retention class: ${report.expiryWithoutClass}. This is what an applied ` +
+      `entry looks like, so it should be 0 before the first apply; the runbook's undo clears exactly these.`,
   );
 
   lines.push("", "By kind (action | category | severity):");

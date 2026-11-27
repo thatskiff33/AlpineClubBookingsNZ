@@ -6,10 +6,12 @@ owner
 
 Once this release alone serves, run `pnpm run audit:expiry-backfill` (it only
 reads) and read the counts by kind, then `-- --dry-run`, which prints the exact
-apply command. Run that command, `--apply --actor <your member id>
+apply command. Note the line "Entries with an expiry and no retention class",
+which should read 0. Run that command, `--apply --actor <your member id>
 --confirm-total <n> [--allow-delete <n>]`, with `DATABASE_URL` naming the
 operator connection. Entries already past seven years are deleted for good at
-the next nightly clean-up, so read the counts first. The steps are in
+the next nightly clean-up, so read the counts first and take a backup. The
+steps, and how to undo an apply before that clean-up runs, are in
 `docs/AUDIT_RETENTION_ARCHIVE_RUNBOOK.md`, "Older entries with no expiry (#5265)".
 
 ## How to check it worked

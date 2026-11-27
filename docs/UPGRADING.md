@@ -458,10 +458,16 @@ This census replaces the read-only retention query in
 **How to check it worked.** The census reports 0, and the activity log has one
 `AUDIT_EXPIRY_BACKFILLED` entry, under Admin, per batch.
 
-**Rollback.** Take a backup just before the apply; it is the only way back. The
-batch entries record counts and date ranges, not which rows changed, so the
-expiries cannot be picked out and cleared by hand, and a record the clean-up
-has deleted is gone.
+**Rollback.** Before the next nightly clean-up (03:30 club time), the apply can
+be undone without a restore: the census reports "entries with an expiry and no
+retention class", which reads 0 before the first apply and afterwards counts
+exactly what the apply wrote, and the runbook's
+[undo](AUDIT_RETENTION_ARCHIVE_RUNBOOK.md#older-entries-with-no-expiry-5265)
+clears those expiries, refusing if the count is not the one you give it. Take a
+backup just before the apply all the same. It is the fallback: the only way to
+get back a record the clean-up has already deleted, and the only way back if
+that line did not read 0 beforehand. Restoring it also takes back every booking
+and payment made since.
 
 ## v0.13.2 → v0.14.0
 
