@@ -114,6 +114,13 @@ integration** module is off (see [Modules](modules.md)), the billing panel says
 
 ### Run the annual billing batch
 
+If the club chose **Their age today**, run the preview again after a birthday.
+A newly liable member gets a part-season invoice; a member moving between
+paying tiers gets a top-up or credit for the difference. The birthday month
+counts in full. Review the **Age-group adjustments** before confirming, even
+if there are no annual charges. For a shared invoice, follow the preview's
+instruction to settle the change in Xero rather than billing the family twice.
+
 1. In **Annual Membership Fee billing**, set the **Decision date** and click
    **Refresh preview**. Confirm the **Invoice due days** (default 30) and the
    **Family billing mode** if needed.

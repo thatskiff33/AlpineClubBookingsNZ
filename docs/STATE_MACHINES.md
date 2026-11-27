@@ -3122,6 +3122,12 @@ granular/flat mapping amount; a current schedule always wins.
 
 ## Membership Subscription Charge Lifecycle
 
+A birthday adjustment starts `PENDING`. A top-up follows its linked invoice's
+payment status, or becomes `VOIDED` if that invoice is voided or deleted. A
+credit becomes `CREDITED_ON_INVOICE` after allocation in Xero, or
+`CREDITED_TO_ACCOUNT` in the transaction that posts its member credit lot and
+queues the note. Neither outcome is eligible to grant another credit.
+
 ```text
 annual preview (read-only) -> explicit unchanged-token confirmation -> QUEUED
 new-member approval -> configured plan -> QUEUED

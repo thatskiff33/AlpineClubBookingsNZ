@@ -496,8 +496,8 @@ home for that explanation and is not repeated here.
   `MembershipLockoutSettings` holds two answers:
   `requiredTypeAgeRule` (does an exempt age tier exempt a member on a
   `REQUIRED` type: `ALWAYS_OWES` or `AGE_TIER_EXEMPTS`) and
-  `liabilityAgeSource` (which age decides the tier: `SEASON_START` or
-  `SEASON_END`; a member with no date of birth keeps their stored tier).
+  `liabilityAgeSource` (which age decides the tier: `SEASON_START`, `SEASON_END`
+  or `CURRENT_AGE`; a member with no date of birth keeps their stored tier).
   `resolveMemberSubscriptionLiability` in
   [`policies/subscription.ts`](../../src/lib/policies/subscription.ts) is the
   rule; only `liabilityRuleFor(side, settings)` picks a side.
@@ -513,9 +513,9 @@ home for that explanation and is not repeated here.
   owing shows `NOT_INVOICED` with a note (`hasNotRequiredRowBillingNote`).
 - **The pair is chosen whole, needs membership and finance edit (owner,
   23 Nov 2026), and never returns to `NOT_CHOSEN`.** The settings `PUT`
-  refuses a change without both, a half pair, a move back and `CURRENT_AGE`;
-  config import (full admin) ignores a half or `NOT_CHOSEN` pair and fails the
-  dry run on `CURRENT_AGE`. An omitted or unchanged pair is never written. A save or import
+  refuses a change without both, a half pair or a move back;
+  config import (full admin) ignores a half or `NOT_CHOSEN` pair.
+  An omitted or unchanged pair is never written. A save or import
   leaving the club chosen runs `clearStaleNotRequiredRows` (season, then
   rule key), resetting and auditing exactly the rows the `liability-impact`
   preview lists (`findStaleNotRequiredRows`); the screen saves only a previewed pair.

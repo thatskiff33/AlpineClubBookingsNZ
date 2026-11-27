@@ -247,6 +247,10 @@ incomplete setup records a visible exception without blocking membership.
 
 ## Family billing mode
 
+With **Their age today**, the season charge uses the season-start tier. The
+annual batch prices a birthday change from the difference in annual fees for
+the remaining months (`INV-MONEY-051`, `INV-MONEY-052`, `INV-MONEY-053`).
+
 The club-level `familyBillingMode` on `MembershipSubscriptionBillingSettings`
 (edited from **Admin > Subscriptions**) decides whether family billing exists at
 all, so it changes the operator and subscription rules above.

@@ -140,6 +140,9 @@ File: [`invariants/money.md`](invariants/money.md). Prefix `INV-MONEY`.
 | `INV-MONEY-048` | Card refund debts post at their doors; slices reserve before Stripe |
 | `INV-MONEY-049` | Bank and cash hand-backs post debt and payment; censuses check them |
 | `INV-MONEY-050` | Caps C1–C4 refuse by code; cash trims, reservations stop before Stripe |
+| `INV-MONEY-051` | A birthday that starts liability bills the remaining whole months |
+| `INV-MONEY-052` | A dearer age tier raises one top-up for the difference |
+| `INV-MONEY-053` | A cheaper age tier credits the invoice or the member, never both |
 
 ## Booking Dates And Capacity
 

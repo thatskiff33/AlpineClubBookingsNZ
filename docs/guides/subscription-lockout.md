@@ -313,7 +313,8 @@ Choosing, or changing, the rule needs both **Membership edit** and **Finance
 edit**, because it changes who is invoiced; an officer with Membership edit
 alone sees the rule but cannot change it, and can still change the other
 lockout settings. A chosen rule can be changed but not set back to *Not
-chosen*, and *age today* is not available yet. The same preview is available to
+chosen*. With **Their age today**, a birthday alone does not block booking. An
+issued, unpaid part-season invoice or top-up does; a credit never does. The same preview is available to
 scripts at
 `GET /api/admin/membership-lockout-settings/liability-impact?requiredTypeAgeRule=ALWAYS_OWES&liabilityAgeSource=SEASON_START`
 (membership view), and a configuration import (full admin only) can also set the
@@ -350,7 +351,7 @@ marked paid, never gets the note.
 | Item code matching | Membership | Single item code, or look-through to every fee-schedule item code | Single item code | Look-through resolves codes from [fee configuration](fees.md); overlap with other fee codes is warned |
 | Age-tier requirement | Bookings | Which age tiers must have a paid subscription | (read-only here) | Edit on [Age Groups](age-tier-settings.md) |
 | Required-type age rule | Membership and Finance (edit) | Whether an exempt age tier exempts a member on an always-required type | Not chosen | Chosen with the age source, after a preview of who it changes; cannot return to Not chosen (#5190) |
-| Liability age source | Membership and Finance (edit) | Which age decides a member's tier for liability | Not chosen | Season start or season end; age today not yet available (#5190) |
+| Liability age source | Membership and Finance (edit) | Which age decides a member's tier for liability | Not chosen | Season start, season end, or their age today; no date of birth uses the stored tier |
 
 ## Troubleshooting
 

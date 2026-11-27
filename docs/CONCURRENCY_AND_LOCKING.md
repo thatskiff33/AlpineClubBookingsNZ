@@ -30,6 +30,12 @@ whole. The rule is `INV-LOCK-001`..`INV-LOCK-003` in
 [`docs/invariants/operations.md`](invariants/operations.md); where this guide and
 an id disagree, the id wins.
 
+`creditAgeUpAdjustmentToAccount` takes only `lockMemberCreditLedger(memberId)`.
+After locking it claims a pending adjustment with `updateMany`; only the
+winner writes the credit lot and outbox row. It changes no booking or
+settlement money and calls no provider inside the transaction. Billing
+confirm still takes only the season key (`INV-LOCK-001`–`003`).
+
 **The two-tier protocol (#1881).**
 [Two tiers, and where the rule lives](#two-tiers-and-where-the-rule-lives) ·
 [Tier 1, per-lodge](#tier-1--per-lodge-capacity-claims) ·
