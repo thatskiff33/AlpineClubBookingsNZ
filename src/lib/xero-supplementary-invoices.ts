@@ -199,8 +199,8 @@ export async function createXeroSupplementaryInvoice(params: {
   const taxRendering = await resolveXeroTaxRendering({ kind: "booking", bookingId });
   // A negative price adjustment is a give-back, so it posts to the
   // hutFeeRefunds mapping like the standalone-reduction credit-note path
-  // (owner decision on #1356): clubs that prefer a single account map
-  // hutFeeRefunds to the same code as hutFeesIncome in the Xero mapping.
+  // (owner decision on #1356). Which account that is, is the club's choice:
+  // the hutFeesIncome account, another revenue account or an expense one (#5235).
   const refundMapping =
     priceDiffCents < 0 ? await getResolvedAccountMapping("hutFeeRefunds") : null;
 
