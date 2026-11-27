@@ -114,6 +114,7 @@ import { bookingOwner } from "@/lib/booking-owner";
 import { isPaidLikeBookingStatus } from "@/lib/booking-status";
 import { handsBackByHand } from "@/lib/manual-refund-hand-back-route";
 import { isCancelCardShortfallTask } from "@/lib/manual-refund-task-settlement-rules";
+import { NOT_A_SETTLEMENT_MARKER_WHERE } from "@/lib/manual-settlement-reversal-event";
 import { acquireLodgeCapacityLock } from "@/lib/lodge-capacity-lock";
 import { deriveBookingAppliedCreditCents, lockMemberCreditLedger } from "@/lib/member-credit";
 import { cancellationKeptCents } from "@/lib/cancellation-kept";
@@ -230,8 +231,9 @@ const BOOKING_SELECT = {
       payment: { select: { source: true } },
     },
   },
+  // #5289 review: the cancellation itself, never a settlement marker written after it.
   events: {
-    where: { type: "CANCELLED" },
+    where: { type: "CANCELLED", ...NOT_A_SETTLEMENT_MARKER_WHERE },
     orderBy: [{ occurredAt: "desc" }, { id: "desc" }],
     take: 1,
     select: { snapshot: true },

@@ -34,6 +34,7 @@ import { dispatchEditReviewAccountCreditXero } from "@/lib/edit-financial-review
 import { createBookingModificationCredit, giveBackAppliedCredit } from "@/lib/member-credit";
 import { cancellationCreditRestoreWhere } from "@/lib/member-credit-booking-rows";
 import { ManualBookingPaymentError } from "@/lib/manual-booking-payment-error";
+import { NOT_A_SETTLEMENT_MARKER_WHERE } from "@/lib/manual-settlement-reversal-event";
 
 /**
  * What the account-credit route moved: applied credit given back, and credit
@@ -489,8 +490,9 @@ async function frozenAppliedAtCancellationCents({
   restoredAt: Date;
   store: Prisma.TransactionClient;
 }): Promise<{ rowsCents: number; tieredCents: number; snapshot: Record<string, unknown> | null } | null> {
+  // #5289 review: the cancellation itself, never a settlement marker written after it.
   const cancelled = await store.bookingEvent.findFirst({
-    where: { bookingId, type: BookingEventType.CANCELLED },
+    where: { bookingId, type: BookingEventType.CANCELLED, ...NOT_A_SETTLEMENT_MARKER_WHERE },
     orderBy: { occurredAt: "desc" },
     select: { snapshot: true },
   });
