@@ -97,6 +97,11 @@ export const SENDS_THROUGH: Readonly<Record<string, { module: string; reason: st
     module: "src/lib/member-guest-consent-service.ts",
     reason: "sends the consent outcome email (notifyMemberGuestConsentOutcome) after the expiry or acceptance commits",
   },
+  queueInvoiceAndDeliverPaidConfirmation: {
+    module: "src/lib/paid-booking-confirmation-after-commit.ts",
+    reason:
+      "a card door's sequence after its settle commits (#5433): the owed confirmation goes through the owed notice, but a fresh PAID whose marker could not be keyed is sent unkeyed (sendUnrecordedPaidBookingConfirmation), so each call stays a listed site",
+  },
 };
 
 /** What an imported function does, read from its own module. */

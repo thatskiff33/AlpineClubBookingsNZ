@@ -31,7 +31,11 @@
  *   plan traced, the confirm-payment route among them (the plan's ST path from
  *   the browser, converted with the webhook in PR 3). A transaction-then-send
  *   elsewhere is not found; among what is left out is every route an officer
- *   starts by clicking a button.
+ *   starts by clicking a button. The three card doors converted outside the
+ *   scope (the create-payment-intent and payment-link recoveries and the
+ *   charge-saved-method route, #5433's card recovery doors) are pinned by the
+ *   per-door test below, not scanned: their other sends after a commit were
+ *   never traced by the plan, so the scope was not widened to them.
  * - A sender is found by NAME (`send`, `alert` or `notify` and a capital
  *   letter), as a unit of the same module that contains one, or as an imported
  *   helper `SENDS_THROUGH` names. Any other imported helper that sends under
@@ -94,6 +98,8 @@ const CARD_REFUND_ALERTS =
   "to trace under #5433: the officers' card refund alerts after the refund rows commit (failed-later card refunds, refund cap overflow; payment-transactions.ts).";
 const UNKEYED_CONFIRMATION =
   "#5433 PR 4 (rounds 1 and 2): a paid confirmation's fallback when its marker cannot be keyed (unreachable with today's ids). It is sent once, unkeyed, exactly as before #5433, so it is never worse than before; an owed one goes through deliverPaidBookingConfirmation.";
+const CARD_DOOR_CONFIRMATION =
+  "#5433 PR 3 and the card recovery doors: queueInvoiceAndDeliverPaidConfirmation, the card door's sequence after its settle commits. The owed confirmation goes through deliverPaidBookingConfirmation; only its fallback, a fresh PAID whose marker cannot be keyed (unreachable with today's ids, #5433 PR 4), is sent unkeyed as before #5433.";
 const STRIPE_SWITCH =
   "False positive: another `switch` case of the one event dispatch; the earlier case's commit never runs before this handler, which the census reads as its own unit.";
 
@@ -111,10 +117,15 @@ const POST_COMMIT_SEND_REASONS: Readonly<Record<string, Entry>> = {
     reason: `${RECURRING_REMINDER} (B3, B4)`,
   },
   "src/lib/cron-confirm-pending.ts#confirmPendingBookings#sendUnrecordedPaidBookingConfirmation": {
-    // The zero-balance confirmation and the saved-card charge's.
-    calls: 2,
+    // The zero-balance confirmation's (the saved-card charge's is the card door's sequence, below).
+    calls: 1,
     after: ["resolveHoldWindowUnderLock"],
     reason: UNKEYED_CONFIRMATION,
+  },
+  "src/lib/cron-confirm-pending.ts#confirmPendingBookings#queueInvoiceAndDeliverPaidConfirmation": {
+    calls: 1,
+    after: ["markBookingPaymentSucceeded"],
+    reason: CARD_DOOR_CONFIRMATION,
   },
   "src/lib/cron-confirm-pending.ts#confirmPendingBookings#sendAdminPaymentFailureAlert": {
     calls: 3,
@@ -123,10 +134,10 @@ const POST_COMMIT_SEND_REASONS: Readonly<Record<string, Entry>> = {
   },
 
   // stripe-webhook-service.ts
-  "src/lib/stripe-webhook-service.ts#handlePaymentIntentSucceeded#sendUnrecordedPaidBookingConfirmation": {
+  "src/lib/stripe-webhook-service.ts#handlePaymentIntentSucceeded#queueInvoiceAndDeliverPaidConfirmation": {
     calls: 1,
     after: ["markBookingPaymentSucceeded"],
-    reason: UNKEYED_CONFIRMATION,
+    reason: CARD_DOOR_CONFIRMATION,
   },
   "src/lib/stripe-webhook-service.ts#handlePaymentIntentSucceeded#alertPaymentAmountMismatch": {
     calls: 2,
@@ -352,10 +363,10 @@ const POST_COMMIT_SEND_REASONS: Readonly<Record<string, Entry>> = {
     after: [OWN_COMMIT],
     reason: MARK_PAID_ALERTS,
   },
-  "src/app/api/bookings/[id]/confirm-payment/route.ts#POST#sendUnrecordedPaidBookingConfirmation": {
+  "src/app/api/bookings/[id]/confirm-payment/route.ts#POST#queueInvoiceAndDeliverPaidConfirmation": {
     calls: 1,
     after: ["markBookingPaymentSucceeded"],
-    reason: UNKEYED_CONFIRMATION,
+    reason: CARD_DOOR_CONFIRMATION,
   },
   "src/app/api/bookings/[id]/confirm-payment/route.ts#POST#markBookingPaymentSucceeded": {
     calls: 1,
@@ -509,18 +520,24 @@ describe("#5433: every notice sent after a commit is owed, or has a recorded rea
     }
   });
 
-  // #5433 PR 3 (ST, CP-2): the converted card confirmation. A send put back after
-  // the settle is a site with no entry (the test above); this pins the other half:
-  // each of the three callers asks the settle for the marker and delivers it.
+  // #5433 PR 3 (ST, CP-2) and the card recovery doors: the converted card
+  // confirmation. A send put back after the settle is a site with no entry in the
+  // scoped files (the test above); this pins the other half for every card door,
+  // scoped or not: each asks the settle for the marker and hands the settle's
+  // result to the one after-commit sequence, once, after the settle.
   it.each([
     "src/lib/stripe-webhook-service.ts",
     "src/app/api/bookings/[id]/confirm-payment/route.ts",
     "src/lib/cron-confirm-pending.ts",
+    "src/app/api/payments/create-payment-intent/route.ts",
+    "src/lib/payment-link-intent.ts",
+    "src/app/api/payments/charge-saved-method/route.ts",
   ])("%s owes the paid confirmation in the settle and delivers it through its owed notice", (rel) => {
     const code = stripComments(readRepoFile(rel) ?? "");
-    expect(code).toContain("owesPaidConfirmation: true");
-    expect(code.indexOf("deliverPaidBookingConfirmation(reconciliation.paidConfirmation")).toBeGreaterThan(code.indexOf("markBookingPaymentSucceeded("));
-    expect(code).not.toMatch(/sendPaidBookingConfirm/);
+    expect(code.match(/owesPaidConfirmation: true/g)).toHaveLength(1);
+    expect(code.match(/queueInvoiceAndDeliverPaidConfirmation\(reconciliation,/g)).toHaveLength(1);
+    expect(code.indexOf("queueInvoiceAndDeliverPaidConfirmation(reconciliation,")).toBeGreaterThan(code.indexOf("markBookingPaymentSucceeded("));
+    expect(code).not.toMatch(/sendPaidBookingConfirm|deliverPaidBookingConfirmation\(reconciliation/);
   });
 
   // The mutation probes, kept: each edit the census must catch, applied to a copy.
