@@ -56,10 +56,12 @@ import { readXeroTaxRates } from "@/lib/xero-tax-rates";
  * need, outside any transaction (`INV-LOCK-004`; the config import's plan is
  * the stated exception, on `openingCreditsImportFindings`). The sender's own
  * refusal (`XeroTaxCategoryUnavailableError`, held by the outbox) stays the
- * backstop for what a screen cannot stop: a rate edited in Xero, a reconnect
- * to another organisation, or two saves racing. Two racing saves can also
- * leave refusal 1's shared account stored (the save is not atomic, #5391);
- * the health check reports that state (`openingCreditsSharedAccountHealthProblem`).
+ * backstop for what a screen cannot stop: a rate edited in Xero, or a reconnect
+ * to another organisation. Refusal 1 holds against two saves at once, and
+ * against a save beside a configuration import: the save re-checks it under
+ * the key the import holds (`saveXeroAccountMappings`, #5391). A shared account
+ * stored before that, or written straight to the database, is still reported by
+ * the health check (`openingCreditsSharedAccountHealthProblem`).
  */
 
 type MappingCodeRow = { key: string; code: string | null };
@@ -94,6 +96,18 @@ function openingCreditsSharedAccountRule(rows: readonly MappingCodeRow[]): strin
 function openingCreditsSharedAccountProblem(rows: readonly MappingCodeRow[]): string | null {
   const rule = openingCreditsSharedAccountRule(rows);
   return rule === null ? null : `${rule} No account mapping was saved.`;
+}
+
+/**
+ * The shared-account refusal over the rows as they are NOW plus this save: the
+ * pure half of `openingCreditsMappingSaveRefusal`, which the save runs again
+ * inside its transaction, on rows re-read under the lock (#5391).
+ */
+export function openingCreditsSharedAccountSaveProblem(
+  stored: readonly MappingCodeRow[],
+  updates: Readonly<Record<string, { code?: string | null } | undefined>>,
+): string | null {
+  return openingCreditsSharedAccountProblem(codesAfterSave(stored, updates));
 }
 
 /** The stored codes as they would read once `updates` is saved over them. */
@@ -173,7 +187,7 @@ export async function openingCreditsMappingSaveRefusal({
 
   if (!setsOrChangesOpeningCredits(stored, after)) return null;
   // Named, because the screen saves every mapping at once: the officer must be
-  // told which one was refused. The route refuses before its first write.
+  // told which one was refused. The save refuses before its first write.
   const { problem, ratesUnreadable } = await readExemptPrerequisiteProblem();
   if (problem === null) return null;
   return { message: `${OPENING_CREDITS_NEEDS_EXEMPT} ${problem} Nothing was saved.`, retryable: ratesUnreadable };
@@ -298,7 +312,7 @@ export async function exemptClearRefusalWhileOpeningCreditsMapped(): Promise<str
  * The Xero health check's line for a state no screen refusal rules out
  * (`readXeroTaxHealth`; #5375 item 3): a registration scheduled after Opening
  * Credits was mapped (allowed by the owner's decision above), a rate edited in
- * Xero, a reconnect, or two saves racing. Null, or the line: Opening Credits is mapped, a
+ * Xero, or a reconnect. Null, or the line: Opening Credits is mapped, a
  * registered period applies today or is scheduled, and Exempt has no usable
  * rate in the connected organisation. Judged by #5209's rule. Rates that could
  * not be read are "not checked", which the health check already says, so only
@@ -327,11 +341,10 @@ export async function openingCreditsExemptHealthProblem({
 /**
  * The Xero health check's line for a shared Opening Credits account that is
  * already stored (`readXeroTaxHealth`). The mapping screen and the config
- * import refuse to create it, but the screen's check and its writes are not
- * one transaction, so two saves at once, or a save beside an import, can each
- * pass and both land (#5391 makes the save atomic). Null, or the line: the
- * same rule over the stored rows (`openingCreditsSharedAccountRule`), ending
- * with what is true here. Nothing was refused; the mappings are saved.
+ * import refuse to create it, under one lock since #5391, so this reports rows
+ * stored before that or written another way. Null, or the line: the same rule
+ * over the stored rows (`openingCreditsSharedAccountRule`), ending with what is
+ * true here. Nothing was refused; the mappings are saved.
  *
  * Judged whether or not the club is GST-registered, as the refusal is (owner
  * decision, 21 Nov 2026). Like the health check's other mapping lines it says

@@ -26,6 +26,9 @@ vi.mock("@/lib/prisma", () => ({
       findUnique: vi.fn(),
       upsert: vi.fn(),
     },
+    // The mapping save writes inside one transaction, under an advisory key.
+    $transaction: vi.fn(),
+    $executeRaw: vi.fn(),
   },
 }));
 
@@ -77,6 +80,8 @@ const mockPrisma = prisma as unknown as {
     findUnique: ReturnType<typeof vi.fn>;
     upsert: ReturnType<typeof vi.fn>;
   };
+  $transaction: ReturnType<typeof vi.fn>;
+  $executeRaw: ReturnType<typeof vi.fn>;
 };
 
 const mockAuth = auth as ReturnType<typeof vi.fn>;
@@ -171,6 +176,9 @@ describe("PUT /api/admin/xero/account-mappings", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockAuth.mockResolvedValue(adminSession());
+    mockPrisma.$transaction.mockImplementation(
+      async (run: (tx: typeof mockPrisma) => Promise<unknown>) => run(mockPrisma),
+    );
     mockPrisma.xeroAccountMapping.upsert.mockResolvedValue({});
     mockPrisma.xeroAccountMapping.findMany.mockResolvedValue([
       { key: "hutFeesIncome", code: "201", itemCode: null },

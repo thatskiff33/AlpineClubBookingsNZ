@@ -298,14 +298,21 @@ describe("mappingCodeClassViolation: the class is checked on save (#5235, owner 
   ])("refuses %s on the refund mapping, naming the key and what it accepts", (code, kind) => {
     const violation = mappingCodeClassViolation("hutFeeRefunds", code, MIXED_CHART);
     expect(violation).toContain("Hut Fee Refunds needs a revenue or expense account");
-    expect(violation).toContain(code);
-    expect(violation).toContain(kind);
+    expect(violation).toContain(`is ${kind} in the connected Xero organisation`);
+  });
+
+  it("names the mapping and never the account code, which the screen could misread", () => {
+    // The mapping screen reads a bare "403" in a refusal as "not permitted".
+    const chart = [{ code: "403", name: "403 Clearing", type: "BANK", class: "ASSET" }];
+    const violation = mappingCodeClassViolation("hutFeeRefunds", "403", chart);
+    expect(violation).toContain("Hut Fee Refunds");
+    expect(violation).not.toMatch(/\d/);
   });
 
   it("names the type, not the class, when the class is accepted and the type is not", () => {
     // "needs a revenue account, and 260 is a revenue account" would be nonsense.
     expect(mappingCodeClassViolation("hutFeesIncome", "260", MIXED_CHART)).toBe(
-      "Hut Fees Income needs a revenue account, and 260 (Other Revenue) is an account of type OTHERINCOME in the connected Xero organisation.",
+      "Hut Fees Income needs a revenue account, and the code chosen for it is an account of type OTHERINCOME in the connected Xero organisation.",
     );
   });
 

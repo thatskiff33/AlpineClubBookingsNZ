@@ -33,15 +33,19 @@ const h = vi.hoisted(() => {
       return {};
     },
   );
+  const prisma = {
+    xeroAccountMapping: { findMany: vi.fn(async () => state.rows.map((row) => ({ ...row }))), upsert },
+    xeroTaxCategoryMapping: { findMany: vi.fn(async () => state.taxCategoryRows) },
+    // The save writes in one transaction under the config-import key (#5391).
+    $executeRaw: vi.fn(async () => 1),
+    $transaction: vi.fn(async (run: (tx: unknown) => Promise<unknown>): Promise<unknown> => run(prisma)),
+  };
   return {
     state,
     upsert,
     schedule: vi.fn(),
     readXeroTaxRates: vi.fn(),
-    prisma: {
-      xeroAccountMapping: { findMany: vi.fn(async () => state.rows.map((row) => ({ ...row }))), upsert },
-      xeroTaxCategoryMapping: { findMany: vi.fn(async () => state.taxCategoryRows) },
-    },
+    prisma,
   };
 });
 

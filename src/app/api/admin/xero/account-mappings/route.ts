@@ -11,7 +11,7 @@ import {
   normalizeMappingCode,
   type XeroMappingWritableKey,
 } from "@/lib/xero-account-mapping-keys";
-import { openingCreditsMappingSaveRefusal } from "@/lib/xero-opening-credits-exempt-guards";
+import { saveXeroAccountMappings } from "@/lib/xero-account-mapping-save";
 
 // The writable key set comes from the ONE registry (#2717): adding a mapping
 // key used to mean editing this allowlist, this zod schema, the admin picker's
@@ -127,32 +127,12 @@ export async function PUT(request: NextRequest) {
   const updates = parsed.data;
 
   try {
-    // #4988: Opening Credits never shares its account with another mapped role
-    // (owner decision, 21 Nov 2026), and a GST-registered club maps the Exempt
-    // tax category before it maps the account. Decided before any row is
-    // written, so a refused save changes nothing.
-    const refusal = await openingCreditsMappingSaveRefusal({
-      stored: await prisma.xeroAccountMapping.findMany({ select: { key: true, code: true } }),
-      updates,
-    });
-    // 503 only when Xero's tax rates could not be read, as the tax category route answers it.
-    if (refusal) return NextResponse.json({ error: refusal.message }, { status: refusal.retryable ? 503 : 409 });
-
-    type MappingValue = { code?: string | null; itemCode?: string | null };
-    const ops = (Object.entries(updates) as [XeroMappingWritableKey, MappingValue | undefined][])
-      .filter(([, val]) => val !== undefined)
-      .map(([key, val]) => {
-        const updateData: { code?: string | null; itemCode?: string | null } = {};
-        if (val!.code !== undefined) updateData.code = val!.code ?? null;
-        if (val!.itemCode !== undefined) updateData.itemCode = val!.itemCode ?? null;
-        return prisma.xeroAccountMapping.upsert({
-          where: { key },
-          update: updateData,
-          create: { key, code: updateData.code ?? null, itemCode: updateData.itemCode ?? null },
-        });
-      });
-
-    await Promise.all(ops);
+    // The checks and the writes are one decision (#5235, #5391): a code that is
+    // the wrong kind of account (400), or an Opening Credits rule (409; 503
+    // when Xero could not be asked), refuses the save before any row is
+    // written, under the key a configuration import also holds.
+    const saved = await saveXeroAccountMappings(updates);
+    if (!saved.ok) return NextResponse.json({ error: saved.error }, { status: saved.status });
 
     await logAudit({
       action: "xero_account_mappings_updated",
@@ -161,12 +141,8 @@ export async function PUT(request: NextRequest) {
       details: JSON.stringify(updates),
     });
 
-    // Return the full updated set
-    const all = await prisma.xeroAccountMapping.findMany({
-      select: { key: true, code: true, itemCode: true },
-    });
-
-    return NextResponse.json(serialiseMappings(all));
+    // The full updated set, as the save's own transaction read it back.
+    return NextResponse.json(serialiseMappings(saved.rows));
   } catch (error) {
     logger.error({ err: error }, "Failed to update account mappings");
     return NextResponse.json({ error: "Failed to update account mappings" }, { status: 500 });

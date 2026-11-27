@@ -448,14 +448,15 @@ export function withIndefiniteArticle(noun: string): string {
  * not connected, or nothing cached yet), a code the chart does not list, or a
  * row whose class the snapshot does not carry, there is nothing to judge and
  * the code is allowed, as it always was.
+ *
+ * The sentence names the mapping, never the account code: the mapping screen
+ * reads a bare "403" in a refusal as "not permitted", and an account can carry
+ * that code.
  */
 export function mappingCodeClassViolation(
   key: AccountMappingKey,
   code: string | null | undefined,
-  chart:
-    | readonly (FilterableAccount & { code: string; name?: string | null })[]
-    | null
-    | undefined,
+  chart: readonly (FilterableAccount & { code: string })[] | null | undefined,
 ): string | null {
   const wanted = normalizeMappingCode(code);
   if (wanted == null || chart == null) return null;
@@ -476,10 +477,9 @@ export function mappingCodeClassViolation(
     accountClass && !classIsAccepted
       ? `${withIndefiniteArticle(accountClass.toLowerCase())} account`
       : `an account of type ${account.type}`;
-  const named = account.name?.trim() ? `${wanted} (${account.name.trim()})` : wanted;
   return (
     `${MAPPING_LABELS[key]} needs ${withIndefiniteArticle(describeMappingAccountFilter(key))} account, ` +
-    `and ${named} is ${actual} in the connected Xero organisation.`
+    `and the code chosen for it is ${actual} in the connected Xero organisation.`
   );
 }
 
