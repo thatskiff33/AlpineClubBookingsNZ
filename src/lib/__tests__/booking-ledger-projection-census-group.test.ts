@@ -19,6 +19,7 @@ import { organiserChildCommittedRefundFrom } from "@/lib/group-settlement-refund
 import { planGroupSettlementRefundLine, planGroupSettlementShareLines } from "@/lib/booking-ledger-group-settlement-posting";
 import { planCancellationChargeLines } from "@/lib/booking-ledger-cancellation-posting";
 import { refundKey } from "@/lib/booking-ledger-posting-keys";
+import { cardRefundPaidAnotherWayChildOccurrenceKey } from "@/lib/manual-refund-task-settlement-rules";
 import { isPaymentRecoveryOperationInFlight } from "@/lib/payment-recovery-constants";
 import {
   buildOrganiserChildAppealRefundKey,
@@ -181,6 +182,31 @@ describe("the census on a group-settled child (#3854)", () => {
     const card = cancelledUnderPlan("STRIPE", { refundPosted: true });
     expect(integrity(card)).toEqual([]);
     expect(integrity({ ...card, groupSettlement: { ...card.groupSettlement!, refundPaidByBank: true } })).toContain("SOURCE_DRIFT");
+  });
+
+  it("#5267: the joiner's own close record beside that bank line is counted once, as the plan's refund - no hand-back, no drift", () => {
+    const paidByBank = cancelledUnderPlan("STRIPE", { refundPosted: true, refundPaidByBank: true });
+    const record = {
+      id: "close-record-1",
+      kind: "CANCELLED_BOOKING_HAND_BACK" as const,
+      status: "COMPLETED" as const,
+      amountCents: 2_250,
+      raisedAmountCents: 2_250,
+      settlementDirection: null,
+      paymentId: paidByBank.payment!.id,
+      lateCaptureApprovalIntentId: null,
+      occurrenceKey: cardRefundPaidAnotherWayChildOccurrenceKey("op-legacy", B, { xeroRefundNote: "now" }),
+      reason: "A refund to the group organiser paid back by bank transfer (#4851).",
+    };
+    const subject = { ...paidByBank, tasks: [record] };
+    expect(statuses(subject)).toMatchObject({ PRICE: "AGREE", CAPTURED: "AGREE", REFUNDED: "AGREE" });
+    expect(integrity(subject)).toEqual([]);
+    const refunded = evaluateBookingLedgerIdentities(subject).identities.find((result) => result.identity === "REFUNDED")!;
+    expect(JSON.stringify(refunded)).not.toContain("REFUND_MIRROR_HAND_BACK");
+    // Nor is the record a mirror write of its own: the plan's share still reads written, from the refunded total alone.
+    const handBacks = groupChildHandBacksFromRows(record.paymentId, [record]);
+    expect(handBacks).toEqual({ openEditRefundHandBackCents: 0, completedRefundRequestHandBackCents: 0, completedOtherMirrorWritesCents: 0 });
+    expect(mirrorPlanShareWritten(2_250, handBacks)).toBe(true);
   });
 
   it("a plan refund line that disagrees with the frozen plan is SOURCE_DRIFT", () => {

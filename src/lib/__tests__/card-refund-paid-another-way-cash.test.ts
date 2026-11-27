@@ -170,3 +170,28 @@ describe("the bank cash a card refund's bank records hold, per payment and kind 
     );
   });
 });
+
+describe("#5267: an old whole-group card refund's per-joiner close records, as the note pipeline reads their bank cash", () => {
+  function joinerDb(occurrenceKey: string) {
+    const row = { id: "joiner-record", kind: "CANCELLED_BOOKING_HAND_BACK", occurrenceKey, amountCents: 3_000, reviewContext: null };
+    return {
+      manualRefundTask: { findMany: vi.fn(async () => [row]), findFirst: vi.fn(async () => row) },
+      xeroSyncOperation: { count: vi.fn(async () => 0) },
+      xeroObjectLink: {},
+      paymentRecoveryOperation: {},
+    } as never;
+  }
+
+  it("MUTATION: keyed `now` it is the close's own noted cash, which only its bank note answers - never a card note", async () => {
+    const { cardRefundPaidAnotherWayChildOccurrenceKey } = await import("@/lib/manual-refund-task-settlement-rules");
+    const store = joinerDb(cardRefundPaidAnotherWayChildOccurrenceKey("op-legacy", "joiner-a", { xeroRefundNote: "now" }));
+    await expect(readPaidAnotherWayCash(store, "payment-1")).resolves.toEqual({ notedCents: 3_000, unnotedCents: 0, awaitingReceiptCents: 0 });
+    await expect(readPaidAnotherWayCloseShare(store, "payment-1", "joiner-record")).resolves.toMatchObject({ uncoveredCents: 3_000 });
+  });
+
+  it("CONTROL: a joiner with no invoice, keyed `none`, stays un-noted", async () => {
+    const { cardRefundPaidAnotherWayChildOccurrenceKey } = await import("@/lib/manual-refund-task-settlement-rules");
+    const store = joinerDb(cardRefundPaidAnotherWayChildOccurrenceKey("op-legacy", "joiner-a", { xeroRefundNote: "none" }));
+    await expect(readPaidAnotherWayCash(store, "payment-1")).resolves.toEqual({ notedCents: 0, unnotedCents: 3_000, awaitingReceiptCents: 0 });
+  });
+});

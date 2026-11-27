@@ -12,8 +12,11 @@
  *   recorded (its `PaymentRefund`, the mirror) and nobody is paid again: no
  *   refund is sent and no bank hand-back is written.
  * - PER-JOINER, BANK. With no such refund the whole amount is a bank payment:
- *   the child's mirror, a COMPLETED `:no-xero-note` hand-back and its
- *   `BANK_REFUND` line, no `PaymentRefund`; the combined settlement is untouched.
+ *   the child's mirror, a COMPLETED hand-back and its `BANK_REFUND` line, no
+ *   `PaymentRefund`; the combined settlement is untouched. #5267: the record
+ *   is keyed `now` and the joiner's invoice gets its bank-transfer refund note
+ *   in the same transaction, which the nightly card note never answers; a
+ *   joiner with no invoice in Xero gets `:no-xero-note` and no note.
  * - ONE ROW, ONE WINNER. A bank close and a re-arm of the same dead row, queued
  *   behind a held `lock(1)`: one commits, the other is refused and writes
  *   nothing.
@@ -22,7 +25,8 @@
  *   the key and records it without sending another.
  * - OLD WHOLE-GROUP. The plan's one unkeyed refund flips the settlement and
  *   raises every child's mirror; with no refund, the same flip and mirrors are
- *   recorded as a bank payment and officers are told to credit Xero by hand.
+ *   recorded as a bank payment, and (#5267) each joiner's share gets its own
+ *   record and bank-transfer refund note, the notes adding up to the plan.
  *
  * The group, its settlement and bookings are seeded rows, as the #4368 suite
  * seeds its payment. A per-joiner debt is written by the real reservation
@@ -73,6 +77,8 @@ let groupPosting: typeof import("@/lib/booking-ledger-group-settlement-posting")
 let ledgerWrite: typeof import("@/lib/booking-ledger-write");
 let censusStore: typeof import("@/lib/booking-ledger-projection-census-store");
 let census: typeof import("@/lib/booking-ledger-projection-census");
+let xeroHealth: typeof import("@/lib/xero-admin-health");
+let xeroRetry: typeof import("@/lib/xero-operation-retry");
 let legacyKey: (settlementId: string) => string;
 let CLUB_FORMAT_TEST: (typeof import("@/lib/__tests__/support/club-format-fixture"))["CLUB_FORMAT_TEST"];
 let realElapsedMs: (typeof import("@/lib/__tests__/helpers/clock"))["realElapsedMs"];
@@ -152,7 +158,10 @@ function stripeRefund(input: { id: string; intent: string; amount: number; key?:
     };
 
     /** The group, its combined card settlement, and two joiners the organiser paid for. */
-    async function createGroup(group: Group, options: { childStatus: "PAID" | "CANCELLED"; refundPlan?: Record<string, number> }) {
+    async function createGroup(
+      group: Group,
+      options: { childStatus: "PAID" | "CANCELLED"; refundPlan?: Record<string, number>; invoiced?: boolean },
+    ) {
       await prisma.booking.create({
         data: { ...bookingBase, id: group.organiser, status: "PAID", totalPriceCents: COMBINED_CENTS, finalPriceCents: COMBINED_CENTS },
       });
@@ -178,7 +187,15 @@ function stripeRefund(input: { id: string; intent: string; amount: number; key?:
           data: { ...bookingBase, id: childId, status: options.childStatus, parentBookingId: group.organiser, organiserSettled: true },
         });
         await prisma.payment.create({
-          data: { id: group.payments[index]!, bookingId: childId, amountCents: CHILD_CENTS, source: "STRIPE", status: "SUCCEEDED" },
+          data: {
+            id: group.payments[index]!,
+            bookingId: childId,
+            amountCents: CHILD_CENTS,
+            source: "STRIPE",
+            status: "SUCCEEDED",
+            // #5267: a card-paid group has one Xero invoice per joiner (`settleGroupBooking`).
+            ...(options.invoiced ? { xeroInvoiceId: `inv-${group.payments[index]!}` } : {}),
+          },
         });
       }
     }
@@ -244,8 +261,28 @@ function stripeRefund(input: { id: string; intent: string; amount: number; key?:
         select: { bookingId: true, kind: true, settlementMethod: true, unitCents: true },
       });
 
-    const childPayment = (group: Group, index = 0) => prisma.payment.findUniqueOrThrow({ where: { id: group.payments[index]! } });
+    const childPaymentById = (id: string) => prisma.payment.findUniqueOrThrow({ where: { id } });
+    const childPayment = (group: Group, index = 0) => childPaymentById(group.payments[index]!);
     const settlementNow = (group: Group) => prisma.groupBookingSettlement.findUniqueOrThrow({ where: { id: group.settlement } });
+    /** #5267: the refund-note creates queued on a joiner's payment. */
+    const noteRows = (paymentId: string) =>
+      prisma.xeroSyncOperation.findMany({
+        where: { localModel: "Payment", localId: paymentId, entityType: "CREDIT_NOTE", operationType: "CREATE" },
+        select: { id: true, status: true, idempotencyKey: true, requestPayload: true },
+      });
+    const payloadOf = (row: { requestPayload: unknown }) => row.requestPayload as Record<string, unknown>;
+
+    /**
+     * #5267: what the nightly self-heal would ask a CARD note for on a joiner's
+     * payment - the gap less the closes' own bank cash. Zero: only the close's
+     * bank note answers its money.
+     */
+    async function nightlyCardAskCents(paymentId: string) {
+      const payment = await childPaymentById(paymentId);
+      const gap = await xeroHealth.readRefundCreditNoteGap(payment);
+      return gap.uncoveredCents - gap.paidAnotherWayUncoveredCents;
+    }
+
     const closeAudits = (operationId: string) =>
       prisma.auditLog.findMany({ where: { entityId: operationId, action: "booking-payment.card-refund.paid-another-way" } });
 
@@ -309,6 +346,8 @@ function stripeRefund(input: { id: string; intent: string; amount: number; key?:
       ledgerWrite = await import("@/lib/booking-ledger-write");
       censusStore = await import("@/lib/booking-ledger-projection-census-store");
       census = await import("@/lib/booking-ledger-projection-census");
+      xeroHealth = await import("@/lib/xero-admin-health");
+      xeroRetry = await import("@/lib/xero-operation-retry");
       ({ buildGroupSettlementRefundRecoveryIdempotencyKey: legacyKey } = await import("@/lib/payment-recovery-keys"));
       ({ CLUB_FORMAT_TEST } = await import("@/lib/__tests__/support/club-format-fixture"));
       ({ realElapsedMs } = await import("@/lib/__tests__/helpers/clock"));
@@ -381,14 +420,14 @@ function stripeRefund(input: { id: string; intent: string; amount: number; key?:
       expect(await closeAudits(row.id)).toHaveLength(1);
     });
 
-    it("records a bank payment: the mirror, a no-Xero-note hand-back and its ledger line, no card refund", async () => {
+    it("records a bank payment: the mirror, the hand-back, its ledger line and the joiner's bank refund note, no card refund", async () => {
       const group = groupIds("bank");
-      await createGroup(group, { childStatus: "PAID" });
+      await createGroup(group, { childStatus: "PAID", invoiced: true });
       const row = await deadPerJoinerRow(group);
 
       const result = await groupClose.closeGroupCardRefundPaidAnotherWay(closeInput(row.id, REFUND_CENTS));
 
-      expect(result.outcome).toBe("bank");
+      expect(result).toMatchObject({ outcome: "bank", xeroQueued: "refund-note" });
       expect(sent).toEqual([]);
       const operation = await prisma.paymentRecoveryOperation.findUniqueOrThrow({ where: { id: row.id } });
       expect(operation).toMatchObject({ status: "SUCCEEDED", lastError: PAID_ANOTHER_WAY_MARKER });
@@ -396,15 +435,48 @@ function stripeRefund(input: { id: string; intent: string; amount: number; key?:
       expect(await prisma.paymentRefund.count({ where: { paymentId: group.payments[0]! } })).toBe(0);
       const tasks = await prisma.manualRefundTask.findMany({ where: { bookingId: group.children[0]! } });
       expect(tasks).toEqual([
-        expect.objectContaining({ status: "COMPLETED", amountCents: REFUND_CENTS, occurrenceKey: `card-refund-paid-another-way:${row.id}:no-xero-note` }),
+        expect.objectContaining({ status: "COMPLETED", amountCents: REFUND_CENTS, occurrenceKey: `card-refund-paid-another-way:${row.id}` }),
       ]);
       expect(
         await prisma.bookingLedgerLine.count({ where: { bookingId: group.children[0]!, kind: "BANK_REFUND", unitCents: REFUND_CENTS } }),
       ).toBe(1);
       expect((await settlementNow(group)).status).toBe("SUCCEEDED");
-      expect(alertSpy).toHaveBeenCalledTimes(1);
-      expect(alertSpy.mock.calls[0]![0]).toMatchObject({ bookingId: group.children[0]!, refundCents: REFUND_CENTS, paidBy: "card" });
-      expect(await closeAudits(row.id)).toHaveLength(1);
+      // #5267: the joiner's invoice is credited by the app, for exactly what the bank paid, keyed on the close's record.
+      const notes = await noteRows(group.payments[0]!);
+      expect(notes).toHaveLength(1);
+      expect(notes[0]).toMatchObject({ status: "PENDING" });
+      expect(payloadOf(notes[0]!)).toMatchObject({ refundAmountCents: REFUND_CENTS, refundMethod: "internet-banking", paidAnotherWayTaskId: tasks[0]!.id });
+      expect(alertSpy).not.toHaveBeenCalled();
+      expect(await closeAudits(row.id)).toEqual([
+        expect.objectContaining({ metadata: expect.objectContaining({ xeroQueued: "refund-note", manualRefundTaskId: tasks[0]!.id }) }),
+      ]);
+      // The bank cash is the close's own: the nightly self-heal asks no card note for it, queued or failed.
+      expect(await nightlyCardAskCents(group.payments[0]!)).toBe(0);
+      await prisma.xeroSyncOperation.update({ where: { id: notes[0]!.id }, data: { status: "FAILED", errorMessage: "Xero is down" } });
+      expect(await nightlyCardAskCents(group.payments[0]!)).toBe(0);
+      // A failed note is an officer's to retry, as its own row: the retry re-runs that row, never a second.
+      const failed = await prisma.xeroSyncOperation.findUniqueOrThrow({ where: { id: notes[0]!.id } });
+      expect(xeroRetry.getXeroOperationRetryMeta(failed)).toEqual({ supported: true, reason: null });
+      const { enqueueXeroRefundCreditNoteOperation } = await import("@/lib/xero-operation-outbox");
+      await prisma.xeroSyncOperation.update({ where: { id: notes[0]!.id }, data: { status: "PENDING" } });
+      const again = await enqueueXeroRefundCreditNoteOperation(group.payments[0]!, REFUND_CENTS, { paidAnotherWayTaskId: tasks[0]!.id, refundMethod: "internet-banking" });
+      expect(again.queueOperationId).toBe(notes[0]!.id);
+      expect(await noteRows(group.payments[0]!)).toHaveLength(1);
+    });
+
+    it("a joiner with no Xero invoice gets a no-note record and no email, as an ordinary close does", async () => {
+      const group = groupIds("bank-uninvoiced");
+      await createGroup(group, { childStatus: "PAID" });
+      const row = await deadPerJoinerRow(group);
+
+      const result = await groupClose.closeGroupCardRefundPaidAnotherWay(closeInput(row.id, REFUND_CENTS));
+
+      expect(result).toMatchObject({ outcome: "bank", xeroQueued: "nothing" });
+      expect(await prisma.manualRefundTask.findMany({ where: { bookingId: group.children[0]! }, select: { occurrenceKey: true } })).toEqual([
+        { occurrenceKey: `card-refund-paid-another-way:${row.id}:no-xero-note` },
+      ]);
+      expect(await noteRows(group.payments[0]!)).toEqual([]);
+      expect(alertSpy).not.toHaveBeenCalled();
     });
 
     it("one row, one winner: a bank close and a re-arm queued behind lock(1) - one commits, the other writes nothing", async () => {
@@ -504,17 +576,17 @@ function stripeRefund(input: { id: string; intent: string; amount: number; key?:
       expect(await closeAudits(row.id)).toHaveLength(1);
     });
 
-    it("with no such refund, the old whole-group close records the bank payment and tells officers to credit Xero by hand", async () => {
+    it("with no such refund, the old whole-group close records the bank payment and credits each joiner's invoice for its share", async () => {
       const group = groupIds("legacy-bank");
       const plan = Object.fromEntries(group.children.map((id, index) => [id, LEGACY_PLAN_CENTS[index]!]));
-      await createGroup(group, { childStatus: "CANCELLED", refundPlan: plan });
+      await createGroup(group, { childStatus: "CANCELLED", refundPlan: plan, invoiced: true });
       const total = LEGACY_PLAN_CENTS[0]! + LEGACY_PLAN_CENTS[1]!;
       const row = await deadLegacyRow(group, total);
       await postShares(group);
 
       const result = await groupClose.closeGroupCardRefundPaidAnotherWay(closeInput(row.id, total));
 
-      expect(result.outcome).toBe("bank");
+      expect(result).toMatchObject({ outcome: "bank", xeroQueued: "refund-note" });
       expect(sent).toEqual([]);
       expect((await settlementNow(group)).status).toBe("PARTIALLY_REFUNDED");
       expect((await childPayment(group, 0)).refundedAmountCents).toBe(LEGACY_PLAN_CENTS[0]);
@@ -529,19 +601,42 @@ function stripeRefund(input: { id: string; intent: string; amount: number; key?:
       expect(await planRefundLines(group)).toEqual(
         sorted.map(({ id, cents }) => ({ bookingId: id, kind: "BANK_REFUND", settlementMethod: "INTERNET_BANKING", unitCents: cents })),
       );
-      // The census reads the close's note from the row and takes those bank lines as the plan's own.
+      // #5267: one record per joiner, keyed on the row and the joiner, and one
+      // bank-transfer note on each joiner's invoice for its share. The notes
+      // add up to what the bank paid; no joiner gets a second ledger line.
+      let notedCents = 0;
+      for (const [index, childId] of group.children.entries()) {
+        const tasks = await prisma.manualRefundTask.findMany({ where: { bookingId: childId } });
+        expect(tasks).toEqual([
+          expect.objectContaining({
+            status: "COMPLETED",
+            paymentId: group.payments[index]!,
+            amountCents: LEGACY_PLAN_CENTS[index]!,
+            occurrenceKey: `card-refund-paid-another-way:${row.id}:child:${childId}`,
+          }),
+        ]);
+        const notes = await noteRows(group.payments[index]!);
+        expect(notes).toHaveLength(1);
+        expect(payloadOf(notes[0]!)).toMatchObject({ refundMethod: "internet-banking", paidAnotherWayTaskId: tasks[0]!.id });
+        notedCents += payloadOf(notes[0]!).refundAmountCents as number;
+        expect(await prisma.bookingLedgerLine.count({ where: { bookingId: childId, anchorKind: "REVIEW_TASK" } })).toBe(0);
+        expect(await nightlyCardAskCents(group.payments[index]!)).toBe(0);
+      }
+      expect(notedCents).toBe(total);
+      // The census reads the close's note from the row and takes those bank
+      // lines as the plan's own; the joiner's record adds no line to explain.
       for (const childId of group.children) {
         const censusRow = (await censusStore.readBookingLedgerCensusRow(prisma, childId))!;
         expect(censusRow.groupSettlement).toMatchObject({ id: group.settlement, refundPaidByBank: true });
-        const findings = census.evaluateBookingLedgerIdentities(censusRow).integrity;
-        expect(findings.filter((finding) => finding.kind === "SOURCE_DRIFT")).toEqual([]);
+        const identities = census.evaluateBookingLedgerIdentities(censusRow);
+        expect(identities.integrity.filter((finding) => finding.kind === "SOURCE_DRIFT")).toEqual([]);
       }
-      expect(alertSpy).toHaveBeenCalledTimes(2);
-      expect(alertSpy.mock.calls.map(([input]) => input.paidBy)).toEqual(["card", "card"]);
+      expect(alertSpy).not.toHaveBeenCalled();
       expect(await closeAudits(row.id)).toHaveLength(1);
       // A second close finds the row closed and writes nothing.
       await expect(groupClose.closeGroupCardRefundPaidAnotherWay(closeInput(row.id, total))).rejects.toMatchObject({ status: 409 });
       expect(await closeAudits(row.id)).toHaveLength(1);
+      expect(await prisma.manualRefundTask.count({ where: { bookingId: { in: group.children } } })).toBe(2);
     });
   },
 );

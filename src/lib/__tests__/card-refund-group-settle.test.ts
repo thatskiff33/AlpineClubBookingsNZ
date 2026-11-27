@@ -44,6 +44,10 @@ const state = vi.hoisted(() => ({
   paymentRefundCreates: 0,
   refundRecords: [] as { refund?: { id?: string } }[],
   missingBookings: [] as string[],
+  /** #5267: payments with no Xero invoice, whose close's plan is `none`. */
+  uninvoiced: [] as string[],
+  xeroPlans: [] as { operation: Record<string, unknown>; payment: { id: string } }[],
+  xeroQueues: [] as { plan: { xeroRefundNote: string }; close: Record<string, unknown> }[],
 }));
 
 function reset() {
@@ -71,6 +75,9 @@ function reset() {
   state.paymentRefundCreates = 0;
   state.refundRecords = [];
   state.missingBookings = [];
+  state.uninvoiced = [];
+  state.xeroPlans = [];
+  state.xeroQueues = [];
 }
 
 vi.mock("server-only", () => ({}));
@@ -122,6 +129,27 @@ vi.mock("@/lib/xero-operation-outbox", async (importOriginal) => {
     },
     kickQueuedXeroOutboxOperationsIfConnected: () => Promise.resolve(),
   };
+});
+
+// #5267: the ordinary close's Xero plan and queue, recorded - their own suites own what they read and write.
+vi.mock("@/lib/card-refund-paid-another-way-xero", async (importOriginal) => {
+  const actual = (await importOriginal()) as typeof import("@/lib/card-refund-paid-another-way-xero");
+  return {
+    ...actual,
+    paidAnotherWayXeroPlan: (_db: unknown, operation: Record<string, unknown>, payment: { id: string }) => {
+      state.xeroPlans.push({ operation, payment });
+      return Promise.resolve(state.uninvoiced.includes(payment.id) ? { xeroRefundNote: "none" } : { xeroRefundNote: "now" });
+    },
+    queuePaidAnotherWayXero: (_tx: unknown, plan: { xeroRefundNote: string }, close: Record<string, unknown>) => {
+      state.xeroQueues.push({ plan, close });
+      return Promise.resolve(plan.xeroRefundNote === "now" ? "refund-note" : "nothing");
+    },
+  };
+});
+
+vi.mock("@/lib/club-time-zone-runtime", async (importOriginal) => {
+  const actual = (await importOriginal()) as typeof import("@/lib/club-time-zone-runtime");
+  return { ...actual, readClubTimeZoneOutsideRequest: async () => "Pacific/Auckland" };
 });
 
 vi.mock("@/lib/booking-ledger-settlement-sync", async (importOriginal) => {
@@ -301,6 +329,10 @@ vi.mock("@/lib/prisma", () => {
         findMany: () => Promise.resolve(state.settlements),
       },
       bookingEvent: { create: recordEvent },
+      // #5267: an old whole-group row's joiners, whose invoices its Xero promise reads.
+      booking: {
+        findMany: () => Promise.resolve([{ id: "joiner-a", payment: { id: "pay-joiner-a", xeroInvoiceId: null } }]),
+      },
     },
   };
 });
@@ -449,17 +481,34 @@ describe("paid another way for a per-joiner refund", () => {
     expect(state.events.map((event) => event.type)).toEqual(["REFUNDED"]);
   });
 
-  it("a bank payment raises the mirror and the no-Xero hand-back, and writes no card refund", async () => {
+  it("a bank payment raises the mirror and the hand-back, queues the joiner's bank refund note, and writes no card refund", async () => {
     const result = await closeGroupCardRefundPaidAnotherWay(closeInput);
-    expect(result.outcome).toBe("bank");
+    expect(result).toMatchObject({ outcome: "bank", xeroQueued: "refund-note" });
     expect(state.processRefunds).toBe(0);
     expect(state.paymentRefundCreates).toBe(0);
     expect(state.enqueues).toHaveLength(0);
     expect(state.paymentUpdates[0]?.data?.refundedAmountCents).toBe(4_500);
-    expect(state.tasks[0]?.occurrenceKey).toBe("card-refund-paid-another-way:op-1:no-xero-note");
+    expect(state.tasks[0]?.occurrenceKey).toBe("card-refund-paid-another-way:op-1");
     expect(state.ledger.flat().some((row) => row.kind === "BANK_REFUND" && row.unitCents === 4_500)).toBe(true);
-    expect(state.alerts).toEqual([expect.objectContaining({ bookingId: "child-1", refundCents: 4_500, paidBy: "card" })]);
+    // #5267: planned on the joiner's own payment, queued once for the amount, keyed on the record; no email by hand.
+    expect(state.xeroPlans).toEqual([expect.objectContaining({ operation: expect.objectContaining({ id: "op-1", amountCents: 4_500 }), payment: expect.objectContaining({ id: "pay-1" }) })]);
+    expect(state.xeroQueues).toEqual([
+      expect.objectContaining({ close: expect.objectContaining({ paymentId: "pay-1", bookingId: "child-1", recordId: "task-1", amountCents: 4_500 }) }),
+    ]);
+    expect(state.alerts).toEqual([]);
     expect(state.claims[0]).toEqual(expect.objectContaining({ data: expect.objectContaining({ lastError: PAID_ANOTHER_WAY_MARKER }) }));
+    expect(state.audits.find((row) => row.action === "booking-payment.card-refund.paid-another-way")?.metadata).toMatchObject({
+      xeroQueued: "refund-note",
+      manualRefundTaskId: "task-1",
+    });
+  });
+
+  it("#5267: a joiner with no Xero invoice gets the no-note key, nothing queued and no email", async () => {
+    state.uninvoiced = ["pay-1"];
+    const result = await closeGroupCardRefundPaidAnotherWay(closeInput);
+    expect(result).toMatchObject({ outcome: "bank", xeroQueued: "nothing" });
+    expect(state.tasks[0]?.occurrenceKey).toBe("card-refund-paid-another-way:op-1:no-xero-note");
+    expect(state.alerts).toEqual([]);
   });
 
   it("an appeal writes no REFUNDED booking event", async () => {
@@ -525,15 +574,34 @@ describe("paid another way for an old whole-group refund", () => {
     expect(state.paymentRefundCreates).toBe(0);
   });
 
-  it("with no such refund, flips and mirrors, sends no card note, and alerts by hand", async () => {
+  it("with no such refund, flips and mirrors, sends no card note, and queues the joiner's bank refund note", async () => {
     const result = await closeGroupCardRefundPaidAnotherWay(closeInput);
-    expect(result.outcome).toBe("bank");
+    expect(result).toMatchObject({ outcome: "bank", xeroQueued: "refund-note" });
     expect(state.settlementUpdates).toHaveLength(1);
     expect(state.paymentUpdateMany).toHaveLength(1);
     expect(state.enqueues).toHaveLength(0);
-    expect(state.alerts).toEqual([expect.objectContaining({ bookingId: "joiner-a", refundCents: 4_500, paidBy: "card", reference: expect.stringContaining("old whole-group card refund") })]);
+    expect(state.alerts).toEqual([]);
+    // #5267: the joiner's own record, keyed on the row and the joiner, and its note.
+    expect(state.tasks).toEqual([
+      expect.objectContaining({ bookingId: "joiner-a", paymentId: "pay-joiner-a", amountCents: 4_500, occurrenceKey: "card-refund-paid-another-way:op-1:child:joiner-a" }),
+    ]);
+    expect(state.xeroQueues).toEqual([expect.objectContaining({ close: expect.objectContaining({ paymentId: "pay-joiner-a", bookingId: "joiner-a", amountCents: 4_500 }) })]);
+    // The plan's refund line is the joiner's bank refund: the record posts no second one.
+    expect(state.ledger.flat().filter((row) => row.kind === "BANK_REFUND")).toHaveLength(0);
     // #4851 review: the plan's own note, which the ledger census reads to expect bank refund lines.
     expect(state.claims[0]).toEqual(expect.objectContaining({ data: expect.objectContaining({ lastError: LEGACY_GROUP_REFUND_PAID_BY_BANK_NOTE }) }));
+  });
+
+  it("#5267: two joiners each get a note for their share, adding up to what the bank paid", async () => {
+    state.settlement = settlement({ refundPlan: { "joiner-a": 4_500, "joiner-b": 3_000 } });
+    const result = await closeGroupCardRefundPaidAnotherWay({ ...closeInput, amountCents: 7_500, expectedOwedCents: 7_500 });
+    expect(result).toMatchObject({ outcome: "bank", amountCents: 7_500, xeroQueued: "refund-note" });
+    expect(state.tasks.map((task) => task.occurrenceKey)).toEqual([
+      "card-refund-paid-another-way:op-1:child:joiner-a",
+      "card-refund-paid-another-way:op-1:child:joiner-b",
+    ]);
+    expect(state.xeroQueues.reduce((sum, queued) => sum + (queued.close.amountCents as number), 0)).toBe(7_500);
+    expect(state.alerts).toEqual([]);
   });
 
   it("#4851 review: refuses a bank close whose raised mirrors fall short of the plan, writing nothing", async () => {
@@ -545,6 +613,7 @@ describe("paid another way for an old whole-group refund", () => {
     ).rejects.toMatchObject({ status: 409, message: GROUP_CARD_REFUND_LEGACY_PLAN_MISMATCH });
     expect(state.claims).toHaveLength(0);
     expect(state.alerts).toHaveLength(0);
+    expect(state.xeroQueues).toHaveLength(0);
     expect(state.audits.filter((row) => row.action === "booking-payment.card-refund.paid-another-way")).toHaveLength(0);
   });
 
@@ -682,7 +751,8 @@ describe("the list", () => {
       settleKind: "organiser-child",
       owedCents: 4_500,
       wholeAmountOnly: true,
-      xeroRefundNote: "none",
+      // #5267: the joiner's invoice is credited, as the close will.
+      xeroRefundNote: "now",
       tryCardAgainRefusal: null,
       laterStripeRefunds: [],
       paidAnotherWayRefusal: null,
@@ -690,6 +760,7 @@ describe("the list", () => {
     expect(byId.get("op-legacy")).toMatchObject({
       settleKind: "legacy-group",
       owedCents: 4_500,
+      xeroRefundNote: "now",
       tryCardAgainRefusal: LEGACY_GROUP_CARD_REFUND_TRY_AGAIN_REFUSAL,
       paidAnotherWayRefusal: null,
     });

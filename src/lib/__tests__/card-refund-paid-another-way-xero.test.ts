@@ -254,6 +254,36 @@ describe("a failed-later row closed as paid another way (#4104, money 2; delta M
   });
 });
 
+describe("#5267: a joiner's refund out of the organiser's card, reopened after Stripe failed its recorded refund", () => {
+  // The executor recorded the refund and queued its card note on the joiner's
+  // invoice; Stripe failed it later, and the cron reopened the same row with
+  // the reopen's marker on its one slice (`organiserChildRefundAllocationPlan`).
+  const reopened = {
+    idempotencyKey: "organiser_child_refund_cancel_settle1_child-1",
+    paymentIntentId: "pi_org",
+    amountCents: 4_500,
+    allocationPlan: [{ paymentTransactionId: "organiser_child_refund_cancel_settle1_child-1", amountCents: 4_500, reopenedAfterRefundId: "re_failed" }],
+  };
+
+  it("MUTATION: the card note still in Xero answers it - a Stripe reversal and the bank note, never a second credit", async () => {
+    // The $45 card note stands; the cash behind it went with the failed refund.
+    mocks.coveredCents.mockResolvedValue(4_500);
+    mocks.eligibleCashCents.mockResolvedValue(0);
+    const xeroPlan = await plan(reopened);
+    expect(xeroPlan).toEqual({ xeroRefundNote: "now", cardNoteCoversCents: 4_500 });
+    expect(await queue(xeroPlan, 4_500)).toBe("stripe-reversal-and-bank-note");
+    expect(mocks.enqueueReversal).toHaveBeenCalledWith(expect.objectContaining({ amountCents: 4_500 }));
+    expect(noteCents()).toBe(4_500);
+  });
+
+  it("a joiner's refund never recorded (no reopen) is never read for a card note", async () => {
+    mocks.coveredCents.mockResolvedValue(4_500);
+    const fresh = { ...reopened, allocationPlan: [{ paymentTransactionId: reopened.idempotencyKey, amountCents: 4_500 }] };
+    expect(await plan(fresh)).toEqual({ xeroRefundNote: "now" });
+    expect(mocks.coveredCents).not.toHaveBeenCalled();
+  });
+});
+
 describe("a late capture's refund that failed later keeps INV-PAY-110's routing (#4104, money 3)", () => {
   it("MUTATION: its note credits the capture's own receipt, read off the row's intent", async () => {
     mocks.lateCaptureIntent.mockResolvedValue("pi_late");
