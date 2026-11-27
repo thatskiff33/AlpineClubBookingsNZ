@@ -72,6 +72,9 @@ import {
  *   records it as a payment on that invoice, capped at what Xero shows due;
  *   where nothing bills it, the kept-capture invoice; and where no change
  *   can be read, nothing.
+ *
+ * #4381: a paid-another-way close of the capture's approved refund splits it
+ * the same way, from the same reading ({@link readKeptCaptureRecord}).
  */
 
 /** What the post-commit half of a keep must do. */

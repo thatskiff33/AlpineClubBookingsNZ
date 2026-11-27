@@ -26,7 +26,9 @@
  * change the primary invoice bills, queued by the keep's one decision
  * (`queueKeptLateCaptureRecord`, `keptLateCapture`) on its own transaction,
  * which holds the approval task's row; under the anchor lock the task is read
- * again and must still be DISMISSED. Every other caller on a cancelled
+ * again and must still owe the receipt (`lateCaptureReceiptOwed`: DISMISSED,
+ * or #4381 approved with its card refund closed paid another way, whose close
+ * queues it the same way on its own transaction). Every other caller on a cancelled
  * booking - the release from a replayed webhook, say - finds the kept
  * capture's row (`already-queued`) or is refused, so the keep decides it once.
  */

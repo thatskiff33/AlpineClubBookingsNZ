@@ -138,7 +138,10 @@ export function paidAnotherWayXeroPromise(plan: PaidAnotherWayXeroPlan): PaidAno
  *   is queued `now`. Not in Xero at all: the charge is still in the Stripe
  *   account, so the close queues its receipt and the note follows it
  *   (`after-receipt`) - as long as the capture was taken and has its approval
- *   task (`decideLateCapture`). Recorded and resolved by hand in Xero: `none`,
+ *   task (`decideLateCapture`). #4381 (`INV-PAY-144`): which receipt is the
+ *   keep's split (`paidAnotherWayReceiptDocument`) - for a change capture on
+ *   an invoiced booking, the capture's own receipt on the invoice that bills
+ *   the change, never a kept-capture invoice beside it. Recorded and resolved by hand in Xero: `none`,
  *   the officer records its refunds by hand too (`INV-INT-025`). Never the
  *   booking's cleared pre-cancel invoice;
  * - any other: the payment's kept late-capture invoice, else its own invoice
@@ -470,8 +473,9 @@ export function paidAnotherWayCardNoteCoversCents(plan: PaidAnotherWayXeroPlan, 
  *   transaction also queues a Stripe reversal invoice for those cents
  *   (`INV-PAY-151`). Either enqueue refusing queues neither: the throw rolls
  *   the close back. A close with no cover queues only the bank note;
- * - `after-receipt` (round 6): the late charge's receipt, on its approval task;
- *   the receipt's worker queues the note once it is in Xero. The record is
+ * - `after-receipt` (round 6): the late charge's receipt, on its approval task
+ *   (#4381: the document the plan chose - the kept-capture invoice, or the
+ *   capture's own receipt); the receipt's worker queues the note once it is in Xero. The record is
  *   already in this transaction, so the enqueue reads the refund as closed. The
  *   plan and the enqueue ask the same facts under the same row lock, so a
  *   refusal is a fault and nothing commits. Round 8: with the receipt already

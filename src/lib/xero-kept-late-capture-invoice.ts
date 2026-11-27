@@ -37,7 +37,9 @@
  * 2026: "Record receipt, then credit"; `INV-PAY-122`). An APPROVED refund of
  * the capture that Stripe gave up on, closed as paid another way, leaves the
  * charge in the Stripe account: the close queues this same receipt, on the same
- * task, and its worker queues the close's bank-transfer refund note in the
+ * task (#4381: where the keep's split names it - a change capture whose
+ * invoice already bills the change gets its own receipt instead,
+ * `INV-PAY-144`), and its worker queues the close's bank-transfer refund note in the
  * transaction that records the receipt's link - so the note exists exactly
  * when the receipt does, and never runs before it.
  */

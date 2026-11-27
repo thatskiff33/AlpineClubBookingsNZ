@@ -1927,9 +1927,9 @@ and **`INV-PAY-147`** (slice evidence).
 - **A kept change capture on a cancelled, invoiced booking is recorded by the
   document the evidence names** (#4324, amending one `INV-PAY-110` case),
   so no income counts twice.
-- **One decision** (`keptChangeCaptureRoute`), taken once, by the keep or
-  repair tool, under the task row then the change's anchor, after
-  finding the capture's receipt or kept invoice:
+- **One decision** (`keptChangeCaptureRoute`, read by `readKeptCaptureRecord`),
+  under the task row then the change's anchor, after finding the capture's
+  receipt or kept invoice:
   - a change invoice naming the capture: the late-success release
     (`INV-PAY-104`); a `STALE_WAITING_PAYMENT` row re-queued in the keep,
     with its receipt if unpaid, or stamped captured if refused (officer
@@ -1949,15 +1949,16 @@ and **`INV-PAY-147`** (slice evidence).
   verdict counts it, so refunds get notes. No gap invoice on a cancelled
   booking, nor supplementary invoice for a change a kept-capture invoice
   bills; a gap invoice so refused raises the treasurer's UNDERBILLED task.
-- **Reopen.** Its worker re-reads the task under the anchor and, no longer
-  kept, closes its row; an approval takes the anchor
-  first and withdraws an undecided receipt. A paid-another-way close plans
-  under the task row then the anchor.
+- **Reopen and close.** The worker re-reads under the anchor whether the
+  receipt is owed (`lateCaptureReceiptOwed`: kept, or closed paid another
+  way), else closes its row; an approval withdraws an undecided receipt. A
+  paid-another-way close takes this split (#4381, `INV-PAY-122`).
 - **Repair.** `KEPT_LATE_CAPTURE_NOT_RECORDED_IN_XERO`, dry run listing the
   cents `--apply` records, then recorded automatically; without the primary
   invoice's id, "cannot tell yet".
 - Pinned by `xero-kept-late-capture-ledger.test.ts` (e3, e4),
   `late-capture-kept-xero.test.ts`, `additional-capture-xero-receipt.test.ts`,
+  `card-refund-paid-another-way-xero.test.ts`,
   `kept-change-capture-record.realdb.test.ts` and `xero-booking-repair.test.ts`.
 
 ## INV-PAY-031
@@ -2898,7 +2899,7 @@ _Legacy: settles tasks raised before #4317._
 - **"Paid another way" records the close as a completed hand-back and ends the
   refund** (#3372, owner 7 Oct 2026). `closeCardRefundPaidAnotherWay`
   (finance:edit) takes `lock(1)`, then the payment row, refuses (409) unless
-  the owed figure is what the treasurer saw, and claims a dead row to
+  the owed figure is the one shown, and claims a dead row to
   `SUCCEEDED`, status-guarded. It records the amount on unsent slices'
   charges (`applyLocalRefundAllocation`), writes a COMPLETED
   hand-back task under `card-refund-paid-another-way:<row>`, its `BANK_REFUND`
@@ -2913,7 +2914,7 @@ _Legacy: settles tasks raised before #4317._
     the task, sized by it less its notes, dated the close's day, where an
     invoice exists; else none (`:no-xero-note`). Covered: `INV-PAY-151`.
     A late capture's note names its receipt by invoice, never by intent.
-    None in Xero: queue it (`INV-PAY-110`), requeue a failed one that cannot have reached Xero, or
+    None in Xero: queue it as a keep would (`INV-PAY-144`), requeue a failed one never sent, or
     await one in flight; link then note once under the approval task's row,
     read first (`:note-after-receipt`). Cash evidence counts it once noted.
   - A superseded intent's row closes whole, only while its charge holds exactly
