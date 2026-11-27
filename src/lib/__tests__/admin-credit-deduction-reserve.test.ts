@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { CreditType, type Prisma } from "@prisma/client";
 import { matchesWhere } from "./support/prisma-where";
-import { reserveNotedCreditDeduction } from "@/lib/admin-credit-deduction-reserve";
+import { auditQueuedDeductionApproval, reserveNotedCreditDeduction } from "@/lib/admin-credit-deduction-reserve";
 
 const queue = vi.hoisted(() => vi.fn());
 vi.mock("@/lib/xero-sync", () => ({
@@ -9,6 +9,8 @@ vi.mock("@/lib/xero-sync", () => ({
   buildXeroIdempotencyKey: (...parts: unknown[]) => parts.join(":"),
 }));
 vi.mock("@/lib/prisma", () => ({ prisma: {} }));
+const audit = vi.hoisted(() => vi.fn());
+vi.mock("@/lib/audit", () => ({ createAuditLog: audit }));
 
 type Row = Record<string, unknown> & { id: string; amountCents: number };
 const request = { id: "request", memberId: "member", amountCents: -600, description: "Correct mistaken grant", requestedById: "requester", approvedById: "approver" };
@@ -99,5 +101,17 @@ describe("reserveNotedCreditDeduction", () => {
     const state = store([credit("cash", 1000, { xeroCashCreditId: "cash-document" })]);
     await expect(reserveNotedCreditDeduction(state.db, request)).rejects.toThrow(/overpayment|prepayment/);
     expect(state.credits).toHaveLength(1);
+  });
+});
+
+describe("auditQueuedDeductionApproval (#5241)", () => {
+  it("records the officers' approval in the caller's transaction with no member disclosure", async () => {
+    const tx = {} as Prisma.TransactionClient;
+    await auditQueuedDeductionApproval(tx, { request, adminId: "approver", creditId: "debit", amount: "$6.00", ipAddress: "127.0.0.1" });
+    expect(audit).toHaveBeenCalledWith(expect.objectContaining({
+      action: "member.credit.adjustment.approve", entityId: "request", memberId: "approver", targetId: "member", ipAddress: "127.0.0.1",
+      details: expect.stringContaining("Xero correction queued"),
+    }), tx);
+    expect(audit.mock.calls[0]![0]).not.toHaveProperty("memberDisclosure");
   });
 });

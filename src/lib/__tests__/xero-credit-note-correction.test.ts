@@ -141,4 +141,55 @@ describe("#5241 Xero credit deduction correction", () => {
     await expect(correctXeroCreditNote(correction(1000))).rejects.toThrow("CORRECTION_INVOICE_CHANGED");
     expect(fake.snapshot().allocations).toHaveLength(0);
   });
+
+  const proxyApi = (name: string, wrap: (original: (...args: never[]) => Promise<{ body: Record<string, unknown[] | undefined> }>) => unknown) => {
+    const original = (session.xero.accountingApi as unknown as Record<string, (...args: never[]) => Promise<{ body: Record<string, unknown[] | undefined> }>>)[name]!.bind(session.xero.accountingApi);
+    const accountingApi = new Proxy(session.xero.accountingApi, { get: (target, key) => key === name ? wrap(original) : Reflect.get(target, key) });
+    setXeroClientForTests({ tenantId: session.tenantId, xero: { accountingApi } as XeroClient });
+  };
+  const adoptable = () => session.xero.accountingApi.createInvoices(session.tenantId, { invoices: [{
+    type: Invoice.TypeEnum.ACCREC, status: Invoice.StatusEnum.AUTHORISED, contact: { contactID: contactId },
+    reference: correction(1000).reference, currencyCode: CurrencyCode.NZD, sentToContact: false,
+    lineAmountTypes: LineAmountTypes.Inclusive, lineItems: [line(10)],
+  }] }).then((response) => response.body.invoices![0]!.invoiceID!);
+
+  it("refuses a note it cannot verify as the member's sales credit note", async () => {
+    proxyApi("getCreditNote", (original) => async (...args: never[]) => {
+      const response = await original(...args);
+      (response.body.creditNotes![0] as CreditNote).type = CreditNote.TypeEnum.ACCPAYCREDIT;
+      return response;
+    });
+    await expect(correctXeroCreditNote(correction(1000))).rejects.toThrow("NOTE_CHANGED_IN_XERO: the original credit note cannot be verified");
+    expect(fake.snapshot().invoices).toHaveLength(0);
+  });
+
+  it("refuses to void a note whose total is not the whole deduction", async () => {
+    await expect(correctXeroCreditNote(correction(5000, "VOID"))).rejects.toThrow("NOTE_CHANGED_IN_XERO: the note total");
+    expect(fake.snapshot().creditNotes[0]!.status).toBe("AUTHORISED");
+  });
+
+  it("refuses an allocation of its invoice for another amount", async () => {
+    const invoiceId = await adoptable();
+    fake.allocate("short", noteId, invoiceId, 500);
+    await expect(correctXeroCreditNote(correction(1000))).rejects.toThrow("CORRECTION_INVOICE_CHANGED: the correction allocation");
+    expect(fake.snapshot().allocations).toHaveLength(1);
+  });
+
+  it("refuses to allocate once its invoice was part paid some other way", async () => {
+    const invoiceId = await adoptable();
+    fake.payInvoice("elsewhere", invoiceId, 400);
+    await expect(correctXeroCreditNote(correction(1000))).rejects.toThrow("NOTE_CHANGED_IN_XERO: the correction invoice or the credit note has already been used");
+    expect(fake.snapshot().allocations).toHaveLength(0);
+  });
+
+  it("fails, for a later read to settle, when Xero does not confirm the allocation", async () => {
+    proxyApi("createCreditNoteAllocation", (original) => async (...args: never[]) => {
+      const response = await original(...args);
+      return { ...response, body: { ...response.body, allocations: [] } };
+    });
+    await expect(correctXeroCreditNote(correction(1000))).rejects.toThrow("Xero did not confirm the correction allocation");
+    setXeroClientForTests(session);
+    await expect(correctXeroCreditNote(correction(1000))).resolves.toMatchObject({ xeroAllocationId: expect.any(String) });
+    expect(fake.snapshot().allocations).toHaveLength(1);
+  });
 });
