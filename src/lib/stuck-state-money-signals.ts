@@ -99,12 +99,13 @@ export function classifyBookingMoneyCensusRuns(
     (candidate) => candidate.jobName === BOOKING_MONEY_CENSUS_JOB_NAME,
   );
   if (!definition) throw new Error(`${BOOKING_MONEY_CENSUS_JOB_NAME} is not in the admin cron health list`);
-  const job = buildCronHealthReport({
+  const [job] = buildCronHealthReport({
     runs: [...runs],
     clubTimeZone,
     now,
     definitions: [{ ...definition, enabled: true, disabledReason: null }],
-  }).jobs[0];
+  }).jobs;
+  if (!job) throw new Error(`${BOOKING_MONEY_CENSUS_JOB_NAME} has no cron health verdict`);
 
   const lastGood = runs.filter((run) => run.status === "SUCCESS").sort((a, b) => runTime(b) - runTime(a))[0];
   const summary = lastGood ? parseBookingMoneyCensusSummary(lastGood.resultSummary) : null;

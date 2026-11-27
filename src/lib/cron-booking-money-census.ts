@@ -104,7 +104,7 @@ async function findingsNotAlertedBefore(
   for (let start = 0; start < keys.length; start += HELD_KEY_READ_SIZE) {
     for (const key of await deps.findHeldKeys(keys.slice(start, start + HELD_KEY_READ_SIZE), now)) held.add(key);
   }
-  return findings.filter((_, index) => !held.has(keys[index]));
+  return findings.filter((finding) => !held.has(bookingMoneyCensusAlertKey(finding)));
 }
 
 /**
