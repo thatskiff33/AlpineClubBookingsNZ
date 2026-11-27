@@ -20,10 +20,10 @@ import { providerAmountToCents } from "@/lib/money-provider-amount";
  * sender and this proof cannot agree by construction.
  */
 
-export type ReadBackDocumentKind = "INVOICE" | "CREDIT_NOTE";
+type ReadBackDocumentKind = "INVOICE" | "CREDIT_NOTE";
 
 /** A document as Xero holds it, read back through the app's client: its lines and Xero's own total. */
-export interface ReadBackDocument {
+interface ReadBackDocument {
   kind: ReadBackDocumentKind;
   id: string;
   lineItems: LineItem[];
@@ -65,7 +65,7 @@ const MANIFEST_SELECT = {
   },
 } satisfies Prisma.MemberMoneyExportManifestSelect;
 
-export type RecordedManifest = Awaited<ReturnType<typeof readManifests>>[number];
+type RecordedManifest = Awaited<ReturnType<typeof readManifests>>[number];
 
 /** Every manifest recorded under `role` for one provider object, oldest key first. */
 export async function readManifests(prisma: PrismaClient, role: MemberMoneyExportDocumentRole, providerId: string) {
@@ -84,7 +84,7 @@ export async function readManifest(prisma: PrismaClient, role: MemberMoneyExport
 }
 
 /** One group of a document's lines and the account whose cover must carry exactly their cents. */
-export interface CoverageLineGroup {
+interface CoverageLineGroup {
   account: MemberMoneyAccount;
   lines: (line: LineItem) => boolean;
 }

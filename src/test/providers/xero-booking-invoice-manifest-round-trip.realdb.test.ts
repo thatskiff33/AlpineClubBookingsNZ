@@ -229,15 +229,17 @@ async function settleReviewShare(bookingId: string, modificationId: string): Pro
 
   let supplementaryId: string;
   const REPRICE = `${CARD_ID}-reprice`;
+  const supplementaryRequest = {
+    bookingId: CARD_ID, priceDiffCents: REPRICED + SHARE, changeFeeCents: CHANGE_FEE,
+    bookingModificationId: REPRICE, recordPayment: false, format: CLUB_FORMAT_TEST,
+  };
 
   it("a supplementary invoice's manifest covers the edit's slice, the settled review share's slice and the change fee, exactly as Xero holds them", async () => {
     await postHistoryEdit(prisma, names, CARD_ID, REPRICE, { reprice: { guestId: `${CARD_ID}-g1`, stayDate: D2, priceCents: 5_000 + REPRICED }, changeFeeCents: CHANGE_FEE });
     const taskId = await settleReviewShare(CARD_ID, REPRICE);
     tick();
     const { createXeroSupplementaryInvoice } = await import("@/lib/xero-supplementary-invoices");
-    supplementaryId = (await createXeroSupplementaryInvoice({
-      bookingId: CARD_ID, priceDiffCents: REPRICED + SHARE, changeFeeCents: CHANGE_FEE, bookingModificationId: REPRICE, recordPayment: false, format: CLUB_FORMAT_TEST,
-    }))!;
+    supplementaryId = (await createXeroSupplementaryInvoice(supplementaryRequest))!;
     expect(supplementaryId, "the production push raised no supplementary invoice").toBeTruthy();
     const document = await readBackDocument("INVOICE", supplementaryId);
     expect(document.totalCents).toBe(REPRICED + SHARE + CHANGE_FEE);
@@ -263,6 +265,8 @@ async function settleReviewShare(bookingId: string, modificationId: string): Pro
     const { createXeroCreditNoteForModification } = await import("@/lib/xero-modification-credit-notes");
     expect(await createXeroInvoiceForBooking(BOOKING_ID)).toBe(invoiceId);
     expect(await createXeroInvoiceForBooking(CARD_ID)).toBe(cardInvoiceId);
+    const { createXeroSupplementaryInvoice } = await import("@/lib/xero-supplementary-invoices");
+    expect(await createXeroSupplementaryInvoice(supplementaryRequest)).toBe(supplementaryId);
     expect(await createXeroCreditNoteForModification({ bookingId: BOOKING_ID, refundAmountCents: REMOVED, bookingModificationId: REMOVAL, format: CLUB_FORMAT_TEST }))
       .toBe(noteId);
     expect(fake.snapshot().creditNotes).toHaveLength(1);
