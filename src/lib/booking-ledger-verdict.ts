@@ -7,7 +7,7 @@
  *
  * Pure: no client, no logger, no `server-only`.
  */
-import type { XeroSyncOperation } from "@prisma/client";
+import type { Prisma, XeroSyncOperation } from "@prisma/client";
 
 import { INTERNET_BANKING_PAYMENT_SOURCE } from "@/lib/payment-source";
 
@@ -45,7 +45,30 @@ export const BOOKING_XERO_BILLING_INVOICES = [
  * evidence. Narrower than `XERO_ACTIVE_OPERATION_STATUSES` by `WAITING_PAYMENT`,
  * which only a card capture releases and so never bills a bank transfer.
  */
-export const BOOKING_XERO_BILLING_QUEUED_STATUSES = ["PENDING", "RUNNING"] as const satisfies readonly XeroSyncOperation["status"][];
+const BOOKING_XERO_BILLING_QUEUED_STATUSES = ["PENDING", "RUNNING"] as const satisfies readonly XeroSyncOperation["status"][];
+
+/**
+ * What makes a link, and what makes an operation, an invoice's: the column
+ * filters the typed census spreads into its Prisma reads and the SQL twin folds
+ * with {@link sqlWhere}, so neither spells them a second time (`INV-SSOT-001`).
+ */
+export const BOOKING_XERO_BILLING_LINK_WHERE = { active: true, xeroObjectType: "INVOICE" } as const satisfies Prisma.XeroObjectLinkWhereInput;
+export const BOOKING_XERO_BILLING_CREATE_WHERE = {
+  direction: "OUTBOUND",
+  entityType: "INVOICE",
+  operationType: "CREATE",
+  status: { in: [...BOOKING_XERO_BILLING_QUEUED_STATUSES] },
+} satisfies Prisma.XeroSyncOperationWhereInput;
+
+/** A column filter as SQL over one table alias: equality, or `IN` for a `{ in }` list. */
+function sqlWhere(alias: string, where: Record<string, string | boolean | { in: readonly string[] }>): string {
+  return Object.entries(where)
+    .map(([column, value]) => {
+      if (typeof value === "boolean") return `${alias}."${column}" = ${value}`;
+      return typeof value === "string" ? `${alias}."${column}" = '${value}'` : `${alias}."${column}" IN (${sqlList(value.in)})`;
+    })
+    .join(" AND ");
+}
 
 /** The SQL of one billing invoice's local id, over the census aliases `b` and `p`. */
 function billingInvoiceLocalIdSql(localModel: (typeof BOOKING_XERO_BILLING_INVOICES)[number]["localModel"], column: string): string {
@@ -76,14 +99,14 @@ export const BOOKING_XERO_BILLING_EVIDENCE: readonly {
   {
     label: "an active primary or supplementary invoice link",
     ts: (facts) => facts.activeInvoiceLink,
-    sql: `EXISTS (SELECT 1 FROM "XeroObjectLink" l WHERE l."active" AND l."xeroObjectType" = 'INVOICE' AND (${BOOKING_XERO_BILLING_INVOICES.map(
+    sql: `EXISTS (SELECT 1 FROM "XeroObjectLink" l WHERE ${sqlWhere("l", BOOKING_XERO_BILLING_LINK_WHERE)} AND (${BOOKING_XERO_BILLING_INVOICES.map(
       (invoice) => `(l."localModel" = '${invoice.localModel}' AND l."role" = '${invoice.role}' AND ${billingInvoiceLocalIdSql(invoice.localModel, 'l."localId"')})`,
     ).join(" OR ")}))`,
   },
   {
     label: "a primary or supplementary invoice create queued or running",
     ts: (facts) => facts.queuedInvoiceCreate,
-    sql: `EXISTS (SELECT 1 FROM "XeroSyncOperation" o WHERE o."direction" = 'OUTBOUND' AND o."entityType" = 'INVOICE' AND o."operationType" = 'CREATE' AND o."status" IN (${sqlList(BOOKING_XERO_BILLING_QUEUED_STATUSES)}) AND (${BOOKING_XERO_BILLING_INVOICES.map(
+    sql: `EXISTS (SELECT 1 FROM "XeroSyncOperation" o WHERE ${sqlWhere("o", BOOKING_XERO_BILLING_CREATE_WHERE)} AND (${BOOKING_XERO_BILLING_INVOICES.map(
       (invoice) => `(o."localModel" = '${invoice.localModel}' AND ${billingInvoiceLocalIdSql(invoice.localModel, 'o."localId"')})`,
     ).join(" OR ")}))`,
   },

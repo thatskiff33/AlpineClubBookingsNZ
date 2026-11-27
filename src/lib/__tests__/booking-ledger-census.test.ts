@@ -949,8 +949,11 @@ describe("an Internet Banking residual with Xero billing evidence is billedInXer
     const sql = bookingBilledInXeroSql();
     expect(sql.startsWith(`(p."source" = 'INTERNET_BANKING' AND (`)).toBe(true);
     for (const evidence of BOOKING_XERO_BILLING_EVIDENCE) expect(sql).toContain(evidence.sql);
-    expect(BOOKING_XERO_BILLING_EVIDENCE.map((evidence) => evidence.sql).join(" OR ")).toContain(
-      `o."status" IN ('PENDING', 'RUNNING')`,
+    // The column filters are the typed census's own (`INV-SSOT-001`), spelt out
+    // here once so a change to either constant is a change someone read.
+    expect(sql).toContain(`FROM "XeroObjectLink" l WHERE l."active" = true AND l."xeroObjectType" = 'INVOICE' AND (`);
+    expect(sql).toContain(
+      `FROM "XeroSyncOperation" o WHERE o."direction" = 'OUTBOUND' AND o."entityType" = 'INVOICE' AND o."operationType" = 'CREATE' AND o."status" IN ('PENDING', 'RUNNING') AND (`,
     );
     // Each billing invoice is read where it is anchored, by its own role.
     for (const invoice of BOOKING_XERO_BILLING_INVOICES) {

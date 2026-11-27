@@ -18,8 +18,9 @@ import {
   type BookingLedgerIdentityRow,
 } from "@/lib/additional-payment-ask";
 import {
+  BOOKING_XERO_BILLING_CREATE_WHERE,
   BOOKING_XERO_BILLING_INVOICES,
-  BOOKING_XERO_BILLING_QUEUED_STATUSES,
+  BOOKING_XERO_BILLING_LINK_WHERE,
   bookingLedgerVerdict,
   type BookingLedgerVerdict,
   type BookingXeroBillingFacts,
@@ -91,18 +92,14 @@ export async function loadBookingLedgerCensus(db: CensusClient = prisma): Promis
   const [links, queued] = await Promise.all([
     db.xeroObjectLink.findMany({
       where: {
-        active: true,
-        xeroObjectType: "INVOICE",
+        ...BOOKING_XERO_BILLING_LINK_WHERE,
         OR: anchors.map(({ localModel, role, localIds }) => ({ localModel, role, localId: { in: localIds } })),
       },
       select: { localModel: true, localId: true },
     }),
     db.xeroSyncOperation.findMany({
       where: {
-        direction: "OUTBOUND",
-        entityType: "INVOICE",
-        operationType: "CREATE",
-        status: { in: [...BOOKING_XERO_BILLING_QUEUED_STATUSES] },
+        ...BOOKING_XERO_BILLING_CREATE_WHERE,
         OR: anchors.map(({ localModel, localIds }) => ({ localModel, localId: { in: localIds } })),
       },
       select: { localModel: true, localId: true },
