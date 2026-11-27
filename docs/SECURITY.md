@@ -648,8 +648,12 @@ free guessing oracle.
 
 **Stated limits.**
 
-- **No route asks yet.** The check and the dialog exist; #4619 decides where
-  they apply.
+- **The routes that ask are listed in `step-up-routes.ts` (#4619).** Until
+  #4620 turns the check on, none of them asks.
+- **Adding a factor does not yet ask for a fresh proof** (found in #4620's
+  composed review). An authenticator app's enrolment code starts the clock,
+  and a just-added passkey is offered by the dialog, so whoever holds an open
+  session could pass it. This is fixed before the switch goes on.
 - **A passkey confirms the same way it signs in (`INV-AUTH-009`).** The dialog
   offers it only for a passkey this member has saved. The public key is not
   in the session or the audit row.
@@ -693,7 +697,10 @@ Admin lost their factor runs, on the server,
 
 **Stated limits.** The report lists who is required and not yet enrolled; it
 is a Full Admin view only. An emailed code still signs a member in where the
-club-wide module allows it; it just does not meet this rule.
+club-wide module allows it; it just does not meet this rule. While the
+club-wide module is off, an enrolled officer's app or passkey is not yet asked
+for at sign-in, only at "Confirm it's you" (found in #4620's composed review,
+against `INV-AUTH-012`). This is fixed before the switch goes on.
 
 ## AI app connections (ALP-653)
 
