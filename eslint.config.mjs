@@ -1616,24 +1616,16 @@ const AMBIENT_AUTHORITY_RESOLVERS = {
     {
       name: "getFinancialYearEndMonth",
       /**
-       * Two live defaults remain, and the reason each is still here is a
+       * One live default remains, and the reason it is still here is a
        * measurement rather than reluctance. #3133 expected zero — #3116 was
        * deleting all four in flight — and #3136 merged having fixed the money
-       * paths WITHOUT deleting them.
+       * paths WITHOUT deleting them. #5259 deleted the second, on
+       * `season-label.ts`'s `seasonSelectLabel`, once the year-end reached the
+       * browser as data through `ClubSeasonProvider` and every display site had
+       * a value to pass.
        *
-       * `season-label.ts`'s `seasonSelectLabel` — thirteen non-test callers,
-       * TEN of them inside five `"use client"` files, and the value is not
-       * available in a browser at all: the cache is a module-level `let` whose
-       * only writer is `server-only`, so `getFinancialYearEndMonth()` in a
-       * client bundle returns the March default unconditionally. That module's
-       * own docblock reasons this out at length and concludes that plumbing the
-       * LABEL alone makes the screen WORSE, because `clubSeasonYear()` beside it
-       * reads the same unseeded cache and the picker would then name `(Jul-Jun)`
-       * while still selecting April-based season years. Deferring both together
-       * is coherent; finishing half is not.
-       *
-       * `financial-year.ts`'s `seasonYearOfCalendarDate` — worse, and not for
-       * its own sake. Two optional pass-throughs forward the parameter,
+       * `financial-year.ts`'s `seasonYearOfCalendarDate` — not for its own
+       * sake. Two optional pass-throughs forward the parameter,
        * `seasonYearOfStoredDate(value, yearEndMonth?)` and
        * `clubSeasonYear(zone, clock?, yearEndMonth?)`, and requiring it
        * cascades to roughly NINETY non-test call sites across booking,
@@ -1646,13 +1638,11 @@ const AMBIENT_AUTHORITY_RESOLVERS = {
        * makes for excluding `APP_STRIPE_CURRENCY`.
        *
        * Promote this name — move it to `banned` above and delete its pin in
-       * `ssot-authority-default-guard.test.ts` — when both defaults are gone.
-       * Neither is deleted by threading harder; each needs a decision the arm
-       * cannot make. The year-end has to reach the browser as data the way the
-       * zone already does, through `ClubTimeSettings` and the provider, and the
-       * cascade has to be taken as its own change.
+       * `ssot-authority-default-guard.test.ts` — when that default is gone. The
+       * cascade is its own change, resolving the year-end at each site rather
+       * than reading the cache there.
        */
-      liveDefaults: 2,
+      liveDefaults: 1,
     },
   ],
 };

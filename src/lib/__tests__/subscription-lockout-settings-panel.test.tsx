@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   emptyAdminPermissionMatrix,
   type AdminPermissionMatrix,
@@ -10,6 +10,9 @@ import {
 vi.mock("sonner", () => ({
   toast: { error: vi.fn(), success: vi.fn() },
 }));
+
+const router = vi.hoisted(() => ({ refresh: vi.fn() }));
+vi.mock("next/navigation", () => ({ useRouter: () => router }));
 
 import { SubscriptionLockoutSettingsPanel } from "@/components/admin/subscription-lockout-settings-panel";
 
@@ -306,5 +309,77 @@ describe("SubscriptionLockoutSettingsPanel — item-code matching mode (#2109)",
     const trigger = document.getElementById("item-code-mode");
     expect(trigger).toBeTruthy();
     expect(trigger).toHaveProperty("disabled", true);
+  });
+});
+
+// #5259 review: the admin layout hands every season screen the year-end through
+// `ClubSeasonProvider`, and Next keeps that layout across client navigation. A
+// save that moves the effective month must refresh the router, or the season
+// screens keep the old month while the routes resolve the new one.
+describe("SubscriptionLockoutSettingsPanel — year-end change refreshes the layout (#5259)", () => {
+  function stubYearEnd(loaded: number, saved: number) {
+    const fetchMock = vi.fn(async (input: unknown, init?: RequestInit) => {
+      const url = String(input);
+      let body: unknown = {};
+      if (url.includes("membership-lockout-settings")) {
+        const isSave = init?.method === "PUT";
+        body = {
+          settings: {
+            mode: "NO_BLOCK",
+            financialYearEndMonthOverride: isSave && saved !== 3 ? saved : null,
+            textFallbackEnabled: false,
+            useFeeScheduleItemCodes: false,
+          },
+          financialYear: {
+            overrideMonth: null,
+            xeroMonth: null,
+            effectiveMonth: isSave ? saved : loaded,
+          },
+          feeScheduleItemCodes: [],
+          overlappingCodes: [],
+        };
+      } else if (url.includes("xero/account-mappings")) {
+        body = { subscriptionIncome: { code: null, itemCode: null } };
+      } else if (url.includes("age-tier-settings")) {
+        body = { settings: [] };
+      }
+      return { ok: true, status: 200, json: async () => body };
+    }) as unknown as typeof fetch;
+    vi.stubGlobal("fetch", fetchMock);
+  }
+
+  async function saveOnce() {
+    render(
+      <SubscriptionLockoutSettingsPanel
+        permissionMatrix={matrix({
+          support: "view",
+          membership: "edit",
+          finance: "edit",
+          bookings: "edit",
+        })}
+      />,
+    );
+    const save = await screen.findByRole("button", { name: /Save settings/ });
+    fireEvent.click(save);
+    const { toast } = await import("sonner");
+    await waitFor(() => {
+      expect(toast.success).toHaveBeenCalled();
+    });
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("refreshes the router when the save moves the effective month", async () => {
+    stubYearEnd(3, 6);
+    await saveOnce();
+    expect(router.refresh).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not refresh when the effective month is unchanged", async () => {
+    stubYearEnd(6, 6);
+    await saveOnce();
+    expect(router.refresh).not.toHaveBeenCalled();
   });
 });

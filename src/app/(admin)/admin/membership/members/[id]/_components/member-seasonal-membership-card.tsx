@@ -23,9 +23,8 @@ import {
 import { Textarea } from "@/components/ui/textarea";
 import { ROLE_LABELS } from "@/lib/member-roles";
 import { formatCents } from "@/lib/utils";
-import { clubSeasonYear } from "@/lib/financial-year";
-import { seasonSelectLabel } from "@/lib/season-label";
 import { useClubTime } from "@/components/club-time-provider";
+import { useClubSeason } from "@/components/club-season-provider";
 import {
   parseInstant,
   type BoundClubTime,
@@ -203,6 +202,7 @@ export function MemberSeasonalMembershipCard({
   // (membership area); a view-only membership admin may still preview but
   // cannot commit the change (#1997).
   const clubTime = useClubTime();
+  const season = useClubSeason();
   const canEdit = useAdminAreaEditAccess("membership");
   const [membershipTypes, setMembershipTypes] = useState<
     MembershipTypeSummary[]
@@ -212,10 +212,10 @@ export function MemberSeasonalMembershipCard({
   // `Date`'s host-local components, so the fallback answered from whatever zone
   // the bundle was built with rather than the club's — and no better argument
   // could have fixed that, which is why the helper was replaced instead.
-  // Season NAMES come from `season-label.ts`, which also records why the
-  // year-end is unplumbed here and why that keeps name and value in step.
+  // The fallback and every season NAME follow the club's server-resolved
+  // year-end (#5259), from one binding, so name and value stay in step.
   const effectiveCurrentSeasonYear =
-    member.currentSeasonYear ?? clubSeasonYear(clubTime.zone);
+    member.currentSeasonYear ?? season.currentSeasonYear();
   const seasonalAssignments =
     member.seasonalMembershipAssignments ?? EMPTY_SEASONAL_ASSIGNMENTS;
   const [typesLoading, setTypesLoading] = useState(true);
@@ -526,11 +526,10 @@ export function MemberSeasonalMembershipCard({
             </div>
             <div className="mt-1 font-medium text-foreground">
               {currentAssignment
-                ? `${currentAssignment.membershipType.name} for ${seasonSelectLabel(
+                ? `${currentAssignment.membershipType.name} for ${season.selectLabel(
                     currentAssignment.seasonYear,
-                    clubTime.format,
                   )}`
-                : `No assignment for ${seasonSelectLabel(seasonYear, clubTime.format)}`}
+                : `No assignment for ${season.selectLabel(seasonYear)}`}
             </div>
             {currentAssignment?.applyFrom && (
               <div className="mt-1 text-xs text-muted-foreground">
@@ -617,9 +616,8 @@ export function MemberSeasonalMembershipCard({
                 </div>
               )}
               <div className="mt-1 text-muted-foreground">
-                {seasonSelectLabel(
+                {season.selectLabel(
                   preview.currentSeasonSubscription.seasonYear,
-                  clubTime.format,
                 )}
                 : {preview.currentSeasonSubscription.status}
                 {preview.currentSeasonSubscription.xeroInvoiceNumber
@@ -635,7 +633,7 @@ export function MemberSeasonalMembershipCard({
                   {preview.subscriptionHistory.recent
                     .map(
                       (record) =>
-                        `${seasonSelectLabel(record.seasonYear, clubTime.format)} ${record.status}`,
+                        `${season.selectLabel(record.seasonYear)} ${record.status}`,
                     )
                     .join(", ")}
                 </div>
