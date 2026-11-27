@@ -1731,6 +1731,31 @@ export const AUDIT_WRITER_WRAPPERS: Readonly<
 };
 
 /**
+ * The eight `admin` writers #2730 held for the owner, settled by the owner on
+ * 20 Nov 2026 (#5265): ALL EIGHT STAY `admin`. Six record a member being
+ * deleted or archived, two record family-link suggestions being hidden or
+ * reset. Every member-visible destination would publish rows to a member: the
+ * deleted or archived member (with the officer's free-text reason and, for an
+ * access-role officer, their name), or the acting officer's own timeline.
+ * Audit rows are append-only, so that is not quietly reversible.
+ *
+ * Reopening any of them is a fresh owner decision, not a sweep
+ * (`INV-PRIV-013`). Measured from the tree, so editing a writer fails the
+ * census test, not only editing this map. The reasoning per site:
+ * `docs/ai-diagnostics/audit-admin-category-review.md`.
+ */
+export const HELD_ADMIN_CATEGORIES_5265: Readonly<Record<string, string>> = {
+  "src/lib/member-lifecycle-actions.ts::createMemberArchiveRequest.request#0": "admin",
+  "src/lib/member-lifecycle-actions.ts::createMemberDeleteRequest.request#0": "admin",
+  "src/lib/member-lifecycle-actions.ts::reviewMemberArchiveRequest.approved#0": "admin",
+  "src/lib/member-lifecycle-actions.ts::reviewMemberArchiveRequest.rejected#0": "admin",
+  "src/lib/member-lifecycle-actions.ts::reviewMemberDeleteRequest.approved#0": "admin",
+  "src/lib/member-lifecycle-actions.ts::reviewMemberDeleteRequest.rejected#0": "admin",
+  "src/app/api/admin/family-suggestions/hide/route.ts::POST#0": "admin",
+  "src/app/api/admin/family-suggestions/reset/route.ts::POST#0": "admin",
+};
+
+/**
  * `auditLog` statements that do not produce a row, and are therefore approved
  * NOT to carry a category.
  *
@@ -1763,6 +1788,11 @@ export const APPROVED_NON_PRODUCING_AUDIT_DML: Readonly<Record<string, string>> 
       "be ten years past its `createdAt` (#3939).",
   "src/lib/audit-retention.ts::anonymizeExpiredAuditRequestData#0":
     "Retention anonymisation: clears `ipAddress`/`userAgent` on rows past the request-data window.",
+  "src/lib/audit-expiry-backfill.ts::applyBatch#0":
+    // #5265 (owner decision, 20 Nov 2026). Owner-run only, never at deploy.
+    "Expiry backfill: sets only `expiresAt`, to seven years from `createdAt`, on a row " +
+      "with no retention class and no expiry (guarded on both), so an older entry " +
+      "leaves at the prune's unclassified seven-year rule instead of never.",
 };
 
 /**
@@ -1985,4 +2015,5 @@ export const REVIEWED_SITE_RECORDS: readonly (readonly [
   ["2755-officer-visible", Object.keys(OFFICER_DRIVEN_MEMBER_VISIBLE_WRITERS_2755)],
   ["2765-lodge-keep", Object.keys(LODGE_GATED_ADMIN_CATEGORIES_2765)],
   ["2765-locker", MEMBERSHIP_GATED_LOCKER_SITES_2765],
+  ["5265-admin-keep", Object.keys(HELD_ADMIN_CATEGORIES_5265)],
 ];

@@ -64,6 +64,7 @@ import {
   APPROVED_NON_PRODUCING_AUDIT_DML,
   AUDIT_WRITER_WRAPPERS,
   AUDIT_WRITERS_WITHOUT_ENTITY_IDENTIFIER,
+  HELD_ADMIN_CATEGORIES_5265,
   LODGE_GATED_ADMIN_ACTIONS_2765,
   LODGE_GATED_ADMIN_CATEGORIES_2765,
   LODGE_GATED_ADMIN_SUBSYSTEM_PREFIXES_2765,
@@ -1085,6 +1086,34 @@ describe("audit writer census (#2581)", { timeout: AST_CENSUS_TIMEOUT_MS }, () =
         ).toBe("critical");
       }
     }
+  });
+
+  it("keeps the eight held member-lifecycle and family-suggestion sites at `admin`, as the owner decided (#5265)", () => {
+    // Owner decision, 20 Nov 2026 (#5265): all eight stay `admin`. Each
+    // member-visible destination publishes rows to a member — the deleted or
+    // archived member, or the acting officer — and audit rows are append-only.
+    // Measured from the tree, so editing a writer fails here.
+    const measured = Object.fromEntries(
+      census()
+        .sites.filter((site) => site.id in HELD_ADMIN_CATEGORIES_5265)
+        .map((site) => [site.id, describeCategory(site.category)]),
+    );
+
+    expect(
+      measured,
+      "A writer the owner decided stays `admin` (#5265, 20 Nov 2026) no longer " +
+        "records `admin`, or has moved and taken its identity with it. Moving one " +
+        "publishes its rows to a member; reopening it is a fresh owner decision " +
+        "(INV-PRIV-013), then this map updated.",
+    ).toEqual(HELD_ADMIN_CATEGORIES_5265);
+    expect(Object.keys(HELD_ADMIN_CATEGORIES_5265)).toHaveLength(8);
+
+    const memberVisible = new Set<string>(
+      MEMBER_AUDIT_TIMELINE_CATEGORY_OPTIONS.map((option) => option.value),
+    );
+    expect(
+      Object.values(HELD_ADMIN_CATEGORIES_5265).filter((category) => memberVisible.has(category)),
+    ).toEqual([]);
   });
 
   it("names the four locker sites as membership-gated, and no destination exists that does not widen", () => {
