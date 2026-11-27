@@ -145,12 +145,20 @@ const RAW_SQL_WRITERS: Readonly<Record<string, { writes: number; why: string }>>
 const PENDING_STATUS = /status:\s*"PENDING"/g;
 const WHERE_OR_DATA = /\b(where|data)\s*:/g;
 
-/** The `status: "PENDING"` that sit in a write's `data` (the nearest `where:`/`data:` before each is `data:`). */
+const ENQUEUE = /\bstartXeroSyncOperation\s*\(/g;
+
+/**
+ * The `status: "PENDING"` that sit in a write's `data` (the nearest `where:`/`data:` before each is `data:`). One
+ * inside an enqueue's own argument (a `startXeroSyncOperation(` after that `data:`) is the enqueue the header leaves
+ * out, not a write onto an existing row (#5241: the enqueue followed another model's `create({ data })`).
+ */
 function pendingWrites(text: string): number {
   let writes = 0;
   for (const status of text.matchAll(PENDING_STATUS)) {
-    const before = [...text.slice(0, status.index).matchAll(WHERE_OR_DATA)].at(-1);
-    if (before?.[1] === "data") writes += 1;
+    const preceding = text.slice(0, status.index);
+    const before = [...preceding.matchAll(WHERE_OR_DATA)].at(-1);
+    const enqueue = [...preceding.matchAll(ENQUEUE)].at(-1);
+    if (before?.[1] === "data" && !(enqueue && enqueue.index > before.index)) writes += 1;
   }
   return writes;
 }
@@ -312,6 +320,12 @@ describe("Xero operation PENDING writers (#5228)", { timeout: CENSUS_TIMEOUT_MS 
       }),
     );
     expect(writers).toEqual(Object.fromEntries(Object.entries(PENDING_WRITERS).map(([file, { writes }]) => [file, writes])));
+  });
+
+  it("counts a PENDING row write after another write's data, but not an enqueue there (#5241)", () => {
+    expect(pendingWrites(`tx.line.create({ data: { a: 1 } });\nawait startXeroSyncOperation({ status: "PENDING" });`)).toBe(0);
+    expect(pendingWrites(`await startXeroSyncOperation({ status: "PENDING" });\ntx.xeroSyncOperation.update({ where: { id }, data: { status: "PENDING" } });`)).toBe(1);
+    expect(pendingWrites(`tx.xeroSyncOperation.update({ where: { id }, data: { status: "PENDING" } });`)).toBe(1);
   });
 
   it("every row write that names PENDING in any form - a literal, a member such as XeroSyncStatus.PENDING, an arm of a conditional - is one of the named writers (#5368)", () => {

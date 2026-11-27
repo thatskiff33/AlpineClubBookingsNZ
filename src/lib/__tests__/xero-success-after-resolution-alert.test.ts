@@ -320,6 +320,8 @@ describe("#4374 census: a completion inside its caller's transaction delivers th
     // #5394: xero-contacts.ts left this list when its copy of the member
     // contact completer was deleted; it now calls the recovery module's one.
     expect([...new Set(storeSites.map((site) => site.file))].sort()).toEqual([
+      // #5241: the deduction correction completes under the member's credit-ledger lock with its completion audit.
+      "src/lib/xero-admin-credit-deduction-correction.ts",
       "src/lib/xero-contact-create-recovery.ts",
       "src/lib/xero-kept-late-capture-invoice.ts",
     ]);

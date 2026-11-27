@@ -29,6 +29,7 @@ export async function completeAdminCreditDeductionCorrection(input: {
   payload: AdminCreditDeductionPayload;
 }): Promise<void> {
   const { syncOperation, payload } = input;
+  let completed: Awaited<ReturnType<typeof completeXeroSyncOperation>> = null;
   try {
     const correction = await prisma.adminCreditDeductionCorrection.findUnique({
       where: { id: payload.correctionId }, include: { lines: true, request: true },
@@ -65,13 +66,13 @@ export async function completeAdminCreditDeductionCorrection(input: {
         await tx.adminCreditDeductionCorrectionLine.update({ where: { id: line.id }, data: { ...result, completedAt: new Date() } });
       });
     }
-    await prisma.$transaction(async (tx) => {
+    completed = await prisma.$transaction(async (tx) => {
       await lockMemberCreditLedger(correction.memberId, tx);
-      const completed = await tx.adminCreditDeductionCorrection.updateMany({
+      const claimed = await tx.adminCreditDeductionCorrection.updateMany({
         where: { id: correction.id, status: "RESERVED", lines: { every: { completedAt: { not: null } } } },
         data: { status: "COMPLETED", completedAt: new Date() },
       });
-      if (completed.count === 1) {
+      if (claimed.count === 1) {
         const lines = await tx.adminCreditDeductionCorrectionLine.findMany({ where: { correctionId: correction.id } });
         for (const line of lines) {
           if (line.xeroInvoiceId) await upsertXeroObjectLink({
@@ -88,11 +89,13 @@ export async function completeAdminCreditDeductionCorrection(input: {
           memberDisclosure: { visibility: "member-facing", text: `Credit of ${formatCents(Math.abs(correction.request.amountCents), format)} deducted from your account. Reason: ${correction.request.description}` },
         }, tx);
       }
-      await completeXeroSyncOperation(syncOperation, {}, { store: tx });
+      return completeXeroSyncOperation(syncOperation, {}, { store: tx });
     });
   } catch (error) {
     await releaseFenceAfterRefusal(payload.correctionId, error);
     await failXeroSyncOperation(syncOperation, error);
     throw error;
   }
+  // #4374 (INV-INT-029): a success on a row already resolved in Xero alerts after this commit, not inside it.
+  await completed?.deferredPostCommit?.();
 }
