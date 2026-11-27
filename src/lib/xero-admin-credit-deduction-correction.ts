@@ -30,6 +30,9 @@ async function releaseFenceAfterRefusal(correctionId: string, error: unknown, wr
   }).catch(() => undefined);
 }
 
+/** Thrown by the preflight's fence in place of a write: every check Xero's state allows has passed. */
+class PreflightPassed extends Error {}
+
 /** Provider work is outside transactions; each durable record uses the member's existing ledger key. */
 export async function completeAdminCreditDeductionCorrection(input: {
   syncOperation: XeroOperationClaim;
@@ -48,12 +51,24 @@ export async function completeAdminCreditDeductionCorrection(input: {
     if (!operation?.idempotencyKey) throw new Error("Credit correction has no durable idempotency key");
     if (operation.status !== "RUNNING" || operation.startedAt?.getTime() !== syncOperation.startedAt?.getTime()) return;
     const format = await clubFormatValues();
-    for (const line of correction.lines) {
-      if (line.completedAt) continue;
+    const keyBase = operation.idempotencyKey;
+    const pending = correction.lines.filter((line) => !line.completedAt);
+    const lineInput = (line: (typeof pending)[number]) => ({
+      noteId: line.xeroCreditNoteId, cents: line.amountCents, mode: line.mode,
+      reference: adminCreditDeductionReference(correction.requestId, line.xeroCreditNoteId), keyBase,
+    });
+    // Several notes: ask Xero about every one before the first write. A note that can never be
+    // corrected (mixed lines, voided, spent) then fails the correction while cancel can still
+    // restore all of it, not after an earlier note's write has made it uncancellable.
+    if (pending.length > 1 && pending.length === correction.lines.length && !correction.providerMutationStartedAt) {
+      for (const line of pending) {
+        await correctXeroCreditNote({ ...lineInput(line), beforeMutation: async () => { throw new PreflightPassed(); } })
+          .catch((error) => { if (!(error instanceof PreflightPassed)) throw error; });
+      }
+    }
+    for (const line of pending) {
       const result = await correctXeroCreditNote({
-        noteId: line.xeroCreditNoteId, cents: line.amountCents, mode: line.mode,
-        reference: adminCreditDeductionReference(correction.requestId, line.xeroCreditNoteId),
-        keyBase: operation.idempotencyKey,
+        ...lineInput(line),
         beforeMutation: async () => {
           await prisma.$transaction(async (tx) => {
             await lockMemberCreditLedger(correction.memberId, tx);

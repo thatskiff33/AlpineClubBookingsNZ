@@ -454,4 +454,34 @@ let harnessRole: SuiteEnvironmentRoleDeclaration | undefined;
     expect(await credit.getMemberCreditBalance(MEMBER)).toBe(0);
     expect(fake.snapshot().invoices).toHaveLength(2);
   });
+
+  it("a deduction across two notes writes nothing to Xero when one of them can no longer be corrected, and cancels whole", async () => {
+    const { noteId } = await seedNotedGrant();
+    const second = await session.xero.accountingApi.createCreditNotes(session.tenantId, { creditNotes: [{
+      type: CreditNote.TypeEnum.ACCRECCREDIT, status: CreditNote.StatusEnum.AUTHORISED,
+      contact: { contactID: contactId }, lineAmountTypes: LineAmountTypes.Inclusive,
+      lineItems: [{ description: "Second grant", quantity: 1, unitAmount: 50, accountCode: "400", taxType: "OUTPUT2" }],
+    }] });
+    const secondNoteId = second.body.creditNotes![0]!.creditNoteID!;
+    await db.memberCredit.create({ data: { memberId: MEMBER, amountCents: 5_000, type: "ADMIN_ADJUSTMENT", description: "Second grant", xeroCreditNoteId: secondNoteId } });
+
+    const approved = await approvedDeduction(12_000);
+    const reserved = await correctionOf(approved.request.id);
+    expect(reserved.lines.map((line) => line.mode).sort()).toEqual(["INVOICE", "VOID"]);
+    const voidLine = reserved.lines.find((line) => line.mode === "VOID")!;
+    const invoiceLine = reserved.lines.find((line) => line.mode === "INVOICE")!;
+    // Someone voids the part-taken note in Xero before the correction runs: its line can never complete.
+    fake.voidCreditNote(invoiceLine.xeroCreditNoteId);
+
+    await expect(runWorker(reserved.id)).rejects.toThrow(/NOTE_CHANGED_IN_XERO/);
+    expect(xeroNote(voidLine.xeroCreditNoteId).status).toBe("AUTHORISED");
+    expect(fake.snapshot().invoices).toHaveLength(0);
+    expect(await correctionOf(approved.request.id)).toMatchObject({ status: "RESERVED", providerMutationStartedAt: null });
+    expect((await correctionOf(approved.request.id)).lines.every((line) => line.completedAt === null)).toBe(true);
+
+    await cancel.cancelAdminCreditDeductionCorrection({ memberId: MEMBER, correctionId: reserved.id, adminId: APPROVER });
+    expect((await correctionOf(approved.request.id)).status).toBe("CANCELLED");
+    expect(await credit.getMemberCreditBalance(MEMBER)).toBe(15_000);
+    expect([noteId, secondNoteId]).toContain(voidLine.xeroCreditNoteId);
+  });
 });

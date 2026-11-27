@@ -163,6 +163,47 @@ describe("the deduction correction worker (#5241)", () => {
     expect(mocks.db.adminCreditDeductionCorrection.updateMany).toHaveBeenCalledWith(fenceLift);
   });
 
+  const twoNotes = (extra: Record<string, unknown> = {}) => ({ ...correction(), ...extra, lines: [correction().lines[0], { ...correction().lines[0], id: "line-2", memberCreditId: "debit-2", xeroCreditNoteId: "note-2" }] });
+  const fenceSet = expect.objectContaining({ data: { providerMutationStartedAt: expect.any(Date) } });
+
+  it("asks Xero about every note before the first write, so one that cannot be corrected leaves all of it cancellable", async () => {
+    mocks.db.adminCreditDeductionCorrection.findUnique.mockResolvedValue(twoNotes());
+    mocks.db.xeroSyncOperation.findFirst.mockResolvedValue({ id: "operation" });
+    mocks.correct.mockImplementation(async (input) => {
+      if (input.noteId === "note-2") throw refusal("NOTE_MIXED_LINES");
+      await input.beforeMutation();
+      return { xeroInvoiceId: "invoice", xeroAllocationId: "allocation" };
+    });
+    await expect(run()).rejects.toThrow("NOTE_MIXED_LINES");
+    expect(mocks.correct.mock.calls.map(([input]) => input.noteId)).toEqual(["note", "note-2"]);
+    expect(mocks.db.adminCreditDeductionCorrection.updateMany).not.toHaveBeenCalledWith(fenceSet);
+    expect(mocks.db.adminCreditDeductionCorrectionLine.update).not.toHaveBeenCalled();
+    expect(mocks.fail).toHaveBeenCalled();
+  });
+
+  it("writes each note once after every note passed the check", async () => {
+    mocks.db.adminCreditDeductionCorrection.findUnique.mockResolvedValue(twoNotes());
+    mocks.db.xeroSyncOperation.findFirst.mockResolvedValue({ id: "operation" });
+    mocks.db.adminCreditDeductionCorrectionLine.findMany.mockResolvedValue([]);
+    const written: string[] = [];
+    mocks.correct.mockImplementation(async (input) => {
+      await input.beforeMutation();
+      written.push(input.noteId);
+      return { xeroInvoiceId: "invoice", xeroAllocationId: "allocation" };
+    });
+    await run();
+    expect(written).toEqual(["note", "note-2"]);
+    expect(mocks.db.adminCreditDeductionCorrectionLine.update).toHaveBeenCalledTimes(2);
+    expect(mocks.complete).toHaveBeenCalled();
+  });
+
+  it("does not repeat the check on a retry whose earlier write may have landed", async () => {
+    mocks.db.adminCreditDeductionCorrection.findUnique.mockResolvedValue(twoNotes({ providerMutationStartedAt: claim.startedAt }));
+    mocks.db.adminCreditDeductionCorrectionLine.findMany.mockResolvedValue([]);
+    await run();
+    expect(mocks.correct).toHaveBeenCalledTimes(2);
+  });
+
   it("keeps the fence when Xero's state refuses after this run already wrote", async () => {
     mocks.db.xeroSyncOperation.findFirst.mockResolvedValue({ id: "operation" });
     mocks.correct.mockImplementation(async (input) => { await input.beforeMutation(); throw refusal("CORRECTION_INVOICE_CHANGED"); });
