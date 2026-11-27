@@ -1605,6 +1605,43 @@ as before #4288. No money reader uses a payment's `CREDIT_NOTE_ALLOCATION`
 links, and a `REFUND_PAYMENT` reader asks only whether one names the note. An
 older allocation link can therefore stay active beside a newer one.
 
+**Account-credit notes take the same rule (#4347, `INV-ADDPAY-041`).** A
+cancellation that keeps money as account credit raises an account-credit note,
+linked to the payment as `ACCOUNT_CREDIT_NOTE`. Its link was written unjudged,
+and the recount counted the reading itself, so an older AUTHORISED reading
+landing after a void put the refund back. Now:
+
+- every write of that link goes through `keepStoredRefundNoteVoid`
+  (`isAccountCreditNoteLinkOf`, a predicate of its own: the role is never in
+  `REFUND_NOTE_LINK_ROLES`). It locks only that row: no Payment row, no
+  sibling, no pointer. A kept write leaves `active` as the row holds it, because
+  the outbox's "already linked" check and the credit-lot code read that flag; a
+  voided account-credit link stays as active as it was before #4347;
+- every writer that records the note's Xero status stamps `providerUpdatedAt`:
+  the inbound reconcile, and the outbound create (`createUnappliedXeroCreditNote`),
+  which records Xero's answer to its own create. The other writers record no
+  reading and keep the stored stamp: the #4712 link repair only turns `active`
+  off, and the booking repair's link backfill and the outbox's "already linked"
+  completion write no status. A modification's account-credit note keeps its
+  status-less link (out of scope);
+- the recount counts the note being synced from each payment's own rows as they
+  stand now, its refund-note row and its account-credit row, and only while
+  every such row is active and live (the amount from the refund-note row first);
+  it decides under the Payment row lock as above;
+- a reading the note's account-credit row refuses (`readingIsCurrent`, the
+  #4447 test: any stored snapshot would keep itself over the reading) does not
+  stamp the member's cancellation credit, is not mirrored as outside spend
+  (#4270), and posts no allocation to the member's ledger: the allocation repair
+  re-checks it after taking the member's credit lock. A note with no
+  account-credit row keeps its behaviour from before #4347.
+
+Stated limits: a Xero reading with no `UpdatedDateUTC`, and a link written
+before the stamp existed, order only by "a stored void wins"; no timestamp is
+made up. During a blue/green deploy the old colour can still write the link
+unjudged until it drains. Account-credit notes an older reading already revived
+are not reported (#4336's report covers refund notes only). Lock order:
+[Refund-note link writes racing a void](../CONCURRENCY_AND_LOCKING.md#refund-note-link-writes-racing-a-void-4195-4223).
+
 A voided note is never re-adopted (owner decision). `findCanonicalPaymentRefundCreditNote`
 skips any note a link records VOIDED or DELETED, whether it arrives as the field,
 a refund payment's note, a succeeded create or an active link. The pointer gate

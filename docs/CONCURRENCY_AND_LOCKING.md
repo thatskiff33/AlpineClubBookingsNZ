@@ -119,6 +119,7 @@ the legacy `hashtext(<memberId>)` contact-link key's in
 [voided bank transfer (#4162)](#voided-bank-transfer-refund-note-follow-up-4162) ·
 [resolve by hand (#4421)](#resolve-by-hand-records-the-refund-note-lock1-then-the-payment-row-4421) ·
 [racing a void (#4195)](#refund-note-link-writes-racing-a-void-4195-4223) ·
+[account-credit notes (#4347)](#refund-note-link-writes-racing-a-void-4195-4223) ·
 [metadata merge (#4445)](#the-link-funnels-metadata-merge-one-statement-no-lock-4445).
 
 **Operations.**
@@ -9010,6 +9011,46 @@ after it: per-refund, pointer-named canonical and card (the void waits on
 A's Payment row before it takes the link). Each run asserts which statement is the waiter. A stale reading's
 allocations and refund payments are skipped only where the row, in either
 refund-note role, is VOIDED/DELETED when they are written.
+
+**A payment's account-credit note (#4347).** Its `ACCOUNT_CREDIT_NOTE` link
+write joins `keepStoredRefundNoteVoid` through its own branch in the link
+normaliser (`isAccountCreditNoteLinkOf`), which returns before any refund-note
+branch: it reserves and locks only that one link row, re-reads it and applies
+`judgeRefundNoteWrite`. It never reads or locks the Payment row, retires no
+sibling and moves no pointer; a kept write leaves `active` as the row holds it.
+No advisory key and no new statement (`INV-LOCK-001`, `INV-LOCK-003`: the row
+lock is already the guard's inventory entry for `xero-refund-note-status.ts`).
+
+Transaction boundaries, traced on `main` after #5231 and #5302 (#4279):
+
+- the inbound reconcile writes each link in its own `upsertXeroObjectLink`
+  transaction, which commits before the recount starts. The recount's locked
+  decision then takes the Payment row and plain-reads both roles' rows of the
+  note; the allocation repair, later, takes the member's credit key
+  (`lockMemberCreditLedger`) and plain-reads the note's account-credit rows. No
+  transaction holds the account-credit row while it waits on Payment or the
+  member key, so the order is link, commit, then Payment or member
+  (`INV-LOCK-002`);
+- an outbox completion writes the link after its operation row's guarded claim
+  (`completeWithClient`); the account-credit completion carries no
+  `canonicalRefundNote`, so it takes no Payment row;
+- the Payment-first writers - #4200's explicit void of a refund credit note and
+  #4279's adopting completion - lock the Payment row, then a
+  `REFUND_CREDIT_NOTE` row. Neither writes, reserves or locks an
+  `ACCOUNT_CREDIT_NOTE` row, including in `extraLinks` and a refused claim's
+  `recordLinks`, so their rows are disjoint from this one and there is no cycle;
+- the #4712 link repair turns `active` off with a guarded `updateMany` and no
+  other lock, then runs a recount with no note being synced, which reads no
+  current-note row.
+
+`xero-account-credit-note-stale-live-status.realdb.test.ts` proves the $200 /
+$100 Internet Banking example both ways round (void then older AUTHORISED, and
+the reverse), with the waiter on the held row asserted through
+`pg_blocking_pids`, plus a card control. A further case holds the Payment row
+in a Payment-first transaction: the older reconcile's account-credit link write
+commits without waiting, its recount is the statement queued on the Payment
+row, and the held transaction then writes an explicit refund-note void and
+commits beside it. `advisory-lock-guard.test.ts` pins the three orders.
 
 **An allocation Xero no longer lists (#4447).** After the credit-note link
 writes, and before the recount, a live reading records this note's allocation
