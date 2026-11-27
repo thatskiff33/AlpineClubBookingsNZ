@@ -302,6 +302,8 @@ describe("N-10: EmailLog tracking", () => {
       data: expect.objectContaining({
         status: "SENT",
         messageId: "msg-123",
+        // #5469: this reply names no SES id, so none is stored.
+        providerMessageId: null,
       }),
     });
     expect(mockTransporter.sendMail).toHaveBeenCalledWith(
@@ -311,6 +313,35 @@ describe("N-10: EmailLog tracking", () => {
     );
 
     (process.env as Record<string, string>).NODE_ENV =origEnv;
+  });
+
+  it("MUTATION: stores the id SES gave the message, read from its reply (#5469)", async () => {
+    const origEnv = process.env.NODE_ENV;
+    (process.env as Record<string, string>).NODE_ENV = "production";
+    mockTransporter.sendMail.mockResolvedValueOnce({
+      messageId: "<msg-123@example.test>",
+      response: "250 Ok 0100018c5f2a3b4c-1a2b-000000",
+    });
+
+    const { sendEmail } = await import("../email");
+    await sendEmail({
+      bookingContext: "none",
+      to: "test@example.com",
+      subject: "Test",
+      html: "<p>Test</p>",
+      templateName: "test-template",
+    });
+
+    expect(mockPrisma.emailLog.update).toHaveBeenCalledWith({
+      where: { id: "log-1" },
+      data: expect.objectContaining({
+        status: "SENT",
+        messageId: "<msg-123@example.test>",
+        providerMessageId: "0100018c5f2a3b4c-1a2b-000000",
+      }),
+    });
+
+    (process.env as Record<string, string>).NODE_ENV = origEnv;
   });
 
   it("does not fail delivery if EmailLog SENT update fails", async () => {
@@ -415,7 +446,7 @@ describe("N-10: EmailLog tracking", () => {
     (process.env as Record<string, string>).NODE_ENV = origEnv;
   });
 
-  it("records SES complaint feedback as durable recipient suppression", async () => {
+  it("records SES bounce feedback as durable recipient suppression", async () => {
     mockPrisma.emailSuppression.create.mockResolvedValue({
       id: "sup-1",
       email: "member@example.com",
@@ -423,25 +454,27 @@ describe("N-10: EmailLog tracking", () => {
 
     const { ingestSesSnsEmailFeedback } = await import("../email");
     const result = await ingestSesSnsEmailFeedback({
-      notificationType: "Complaint",
+      notificationType: "Bounce",
       mail: { messageId: "ses-message-1", destination: ["member@example.com"] },
-      complaint: {
-        complaintFeedbackType: "abuse",
-        complainedRecipients: [{ emailAddress: "Member@Example.com" }],
+      bounce: {
+        bounceType: "Permanent",
+        bounceSubType: "General",
+        bouncedRecipients: [{ emailAddress: "Member@Example.com" }],
       },
     });
 
     expect(result).toMatchObject({
       handled: true,
-      notificationType: "complaint",
+      notificationType: "bounce",
       recipients: ["member@example.com"],
       suppressionsProcessed: 1,
     });
-    // #5469: only the email the notification names, never every row to the
-    // address (`ses-feedback-named-message.test.ts` pins the rule itself).
+    // #5469: only the email the notification names, by the id SES gave it,
+    // never every row to the address (`ses-feedback-named-message.test.ts`
+    // pins the rule, complaints included).
     expect(mockPrisma.emailLog.updateMany).toHaveBeenCalledWith({
       where: {
-        messageId: { in: ["ses-message-1", "<ses-message-1>"] },
+        providerMessageId: "ses-message-1",
         status: { in: ["QUEUED", "SENT", "FAILED"] },
       },
       data: expect.objectContaining({ status: "BOUNCED" }),
@@ -449,9 +482,9 @@ describe("N-10: EmailLog tracking", () => {
     expect(mockPrisma.emailSuppression.create).toHaveBeenCalledWith({
       data: expect.objectContaining({
         email: "member@example.com",
-        reason: "COMPLAINT",
+        reason: "BOUNCE",
         suppressedAt: expect.any(Date),
-        lastComplaintFeedbackType: "abuse",
+        lastBounceType: "Permanent",
       }),
     });
   });

@@ -40,6 +40,7 @@ import {
   type DeliveryClearance,
   type DeliveryGrounds,
 } from "@/lib/environment-delivery-policy";
+import { mailServiceForDeliveryMode } from "./provider-message-id";
 
 /**
  * What a provider hands back once it has accepted a message.
@@ -108,7 +109,13 @@ export async function getEmailTransporter(clearance: DeliveryClearance) {
     cachedTransportSignature = signature;
   }
 
-  return { transporter: cachedTransporter, modeLabel: config.modeLabel };
+  // #5469: which recognised mail service carries the send, so the sender can
+  // read the id the server gives the message (`provider-message-id.ts`).
+  return {
+    transporter: cachedTransporter,
+    modeLabel: config.modeLabel,
+    mailService: mailServiceForDeliveryMode(config.mode),
+  };
 }
 
 /**

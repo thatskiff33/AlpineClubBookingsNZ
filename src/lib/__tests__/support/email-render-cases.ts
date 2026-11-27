@@ -206,6 +206,7 @@ import {
 } from "@/lib/email-templates/family-booking";
 import { adminGroupJoinerStartedStayTemplate } from "@/lib/email-templates/admin-group-joiner-started-stay";
 import { adminWaitlistNoticeUnsentTemplate } from "@/lib/email-templates/admin-waitlist-notice-unsent";
+import { adminEmailComplaintTemplate } from "@/lib/email-templates/admin-email-complaint";
 import { adminBookingConfirmationUnsentTemplate } from "@/lib/email-templates/admin-booking-confirmation-unsent";
 import {
   groupJoinCancelledTemplate,
@@ -1164,6 +1165,8 @@ const GENERATED_CASES: EmailRenderCase[] = [
     adminWaitlistNoticeUnsentTemplate({ notice: "offer-expired", memberName: "memberName-1", bookingId: "bookingId-2", bookingUrl: "https://example.test/bookings/bookingId-2", checkIn: new Date("2026-03-04T00:00:00.000Z"), checkOut: new Date("2026-03-05T00:00:00.000Z") }) },
   { id: "adminWaitlistNoticeUnsentTemplate:offer-lapsed-untold", fn: "adminWaitlistNoticeUnsentTemplate", render: () =>
     adminWaitlistNoticeUnsentTemplate({ notice: "offer-lapsed-untold", memberName: "memberName-1", bookingId: "bookingId-2", bookingUrl: "https://example.test/bookings/bookingId-2", checkIn: new Date("2026-03-04T00:00:00.000Z"), checkOut: new Date("2026-03-05T00:00:00.000Z") }) },
+  { id: "adminEmailComplaintTemplate:minimal", fn: "adminEmailComplaintTemplate", render: () =>
+    adminEmailComplaintTemplate({ recipientEmail: "recipientEmail-1 <b>", memberNames: "memberNames-2", emailNote: "emailNote-3", blockNote: "blockNote-4", deliverabilityUrl: "https://example.test/admin/system/email-deliverability" }) },
   { id: "groupJoinPaySelfTemplate:minimal", fn: "groupJoinPaySelfTemplate", render: () =>
     groupJoinPaySelfTemplate({ firstName: "firstName-1", organiserName: "organiserName-2", checkIn: new Date("2026-03-04T00:00:00.000Z"), checkOut: new Date("2026-03-05T00:00:00.000Z") }) },
   { id: "bookingRequestApprovedTemplate:minimal", fn: "bookingRequestApprovedTemplate", render: () =>

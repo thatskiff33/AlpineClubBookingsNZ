@@ -467,6 +467,12 @@ const EMAIL_AUDIT_DEFAULTS_BASE = {
     "defaultSubject": "Food order: {{lodgeName}}, needed by {{neededBy}}",
     "defaultBody": "Food Order Placed\n\nA food order has been placed for {{lodgeName}}. You are receiving it as the club's {{officerLabel}}.\n\nLodge: {{lodgeName}}\nNeeded by: {{neededBy}}\nOrdered by: {{orderedBy}}\n\n{{itemsText}}\n\n{{notes}}\n\nView Food Order: {{foodOrderUrl}}"
   },
+  // #5469 (owner decision D3): a recipient complained about a club email,
+  // usually by marking it as spam; the address is now blocked.
+  "admin-email-complaint": {
+    "defaultSubject": "Complaint about a club email: {{recipientEmail}}",
+    "defaultBody": "Complaint About a Club Email\n\nThe mail service reported a complaint from {{recipientEmail}} about an email from the club. A complaint usually means the recipient marked the email as spam.\n\nAddress: {{recipientEmail}}\nMembers using this address: {{memberNames}}\nEmail: {{emailNote}}\n\n{{blockNote}}\n\nOpen Email Deliverability: {{deliverabilityUrl}}"
+  },
   "admin-issue-report": {
     "defaultSubject": "Issue Report: {{memberName}}",
     "defaultBody": "Issue Report Submitted\n\n{{memberName}} has reported an issue from the bookings site.\n\nMember: {{memberName}}\nEmail: {{memberEmail}}\nPage: {{pageTitle}}\nScreenshot: Available in admin OR Not included\n\n{{description}}\n\nReview Issue Report: {{issueReportUrl}}\n\nOpen Reported Page: {{pageUrl}}"

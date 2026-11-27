@@ -109,6 +109,10 @@ export const ADMIN_SYSTEM_TEMPLATE_NAMES = new Set<EmailAuditTemplateName>([
   "admin-refund-request",
   "admin-booking-change-request",
   "admin-issue-report",
+  // #5469: a recipient complained about a club email and the address is now
+  // blocked. sendToAdmins on the adminIssueReport preference (Support & System
+  // edit, who can lift the block); not delivery-locked, as no money moved.
+  "admin-email-complaint",
   // #2780: a maintenance report was lodged. Ordinary admin alert plumbing -
   // sendToAdmins, gated by the adminMaintenanceReport preference (Lodge
   // Operations edit) and by the club-wide delivery rules. Deliberately NOT in

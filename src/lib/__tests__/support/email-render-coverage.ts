@@ -198,6 +198,7 @@ export const REGISTRY_KEY_RENDERERS: Record<string, string> = {
   // admin-alerts-ops
   "admin-daily-digest": "adminDailyDigestTemplate",
   "admin-issue-report": "adminIssueReportTemplate",
+  "admin-email-complaint": "adminEmailComplaintTemplate",
   "admin-maintenance-report": "adminMaintenanceReportTemplate",
   "food-order-placed": "foodOrderPlacedTemplate",
   "admin-server-version-paused": "adminServerVersionPausedTemplate",

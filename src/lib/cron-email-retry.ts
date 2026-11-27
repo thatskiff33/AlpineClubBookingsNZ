@@ -13,6 +13,7 @@ import {
   REPLAYABLE_FAILED_EMAIL_WHERE,
 } from "@/lib/email/retry-selection";
 import { retireReplayableEmailRow } from "@/lib/email/retire-replayable";
+import { providerMessageIdFromSendResult } from "@/lib/email/provider-message-id";
 import { replayStillWanted } from "@/lib/email/retry-still-wanted";
 import {
   describeDeliveryDecision,
@@ -249,7 +250,7 @@ export async function retryFailedEmails(): Promise<{
         `Email retry stopped part-way: ${describeDeliveryDecision(stillPermitted)}`,
       );
     }
-    const { transporter } = await getEmailTransporter(stillPermitted.clearance);
+    const { transporter, mailService } = await getEmailTransporter(stillPermitted.clearance);
 
     const usesBookingRetryBody = emailLog.bookingRetryHtmlBody != null;
     // Retained HTML, rendered by whichever process first attempted this
@@ -660,6 +661,8 @@ export async function retryFailedEmails(): Promise<{
           status: "SENT",
           sentAt: new Date(),
           messageId: result.messageId || null,
+          // #5469: the server's own id, which its bounce reports name.
+          providerMessageId: providerMessageIdFromSendResult(mailService, result),
           errorMessage: null,
           // #3035: the row is delivered, so nothing about it is being withheld.
           // Leaving a stale `deliveryBlockReason` here would keep a SENT message

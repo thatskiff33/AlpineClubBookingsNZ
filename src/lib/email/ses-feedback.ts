@@ -1,11 +1,19 @@
-import logger from "@/lib/logger";
-import { prisma } from "@/lib/prisma";
-import {
-  normalizeEmailAddress,
-  recordSesEmailFeedback,
-  type SesEmailFeedbackEvent,
-} from "@/lib/email-suppression";
+import { applyDeliveryFeedback, type DeliveryFeedbackEvent, type DeliveryFeedbackKind } from "./delivery-feedback";
 
+/**
+ * #5469: THE SES ADAPTER. Turns an SES bounce or complaint notification, as
+ * the SNS webhook delivers it, into the service-neutral `DeliveryFeedbackEvent`
+ * that `applyDeliveryFeedback` acts on. Nothing SES-specific reaches the rule.
+ *
+ * Which email a notification is about: `mail.messageId` is the id SES gave the
+ * message and returned in its reply to the send, which the app now stores
+ * (`provider-message-id.ts`). The Message-ID header the app sent is replaced by
+ * SES on the way out and appears only in `mail.headers` and
+ * `mail.commonHeaders`, which SES includes only when the identity's
+ * notifications are set to include the original headers; the rule uses them
+ * for rows that stored no id (AWS, "Amazon SNS notification contents for
+ * Amazon SES", mail object).
+ */
 type SesSnsNotification = {
   Type?: string;
   Message?: string;
@@ -14,16 +22,16 @@ type SesSnsNotification = {
     bounceType?: string;
     bounceSubType?: string;
     bouncedRecipients?: Array<{ emailAddress?: string }>;
+    feedbackId?: string;
   };
   complaint?: {
     complaintFeedbackType?: string;
     complainedRecipients?: Array<{ emailAddress?: string }>;
+    feedbackId?: string;
   };
   mail?: {
     destination?: string[];
     messageId?: string;
-    // Present only when the SES identity's notifications include the original
-    // headers. The Message-ID here is the one we sent, before SES replaced it.
     headers?: Array<{ name?: string; value?: string }>;
     commonHeaders?: { messageId?: string };
   };
@@ -64,125 +72,56 @@ function getSesFeedbackRecipients(
   );
 }
 
-/**
- * #5469: THE ONE ANSWER TO "WHICH EMAIL IS THIS FEEDBACK ABOUT", as the
- * `EmailLog.messageId` values that name it. A bounce or complaint marks only
- * that email and leaves the rest of the address's history as it was (owner
- * decision, option A, 27 Nov 2026).
- *
- * What the row stores is the Message-ID header the mail library generated
- * and returned on a successful send (`<random@sender-domain>`). SES replaces
- * that header on the way out and names the message in `mail.messageId` by an
- * id of its own, so the stored value is found only in the original headers
- * (`mail.headers`, `mail.commonHeaders`), which SES includes only when the
- * identity's notifications are set to include them (`CONFIGURATION.md`).
- * `mail.messageId` is offered too, so a row that ever stores SES's own id is
- * matched by the same rule.
- *
- * Each id is offered bare and in angle brackets, so the form a header or SES
- * uses does not decide the match. The id alone decides, not the address: it
- * names one message, and the contact form logs a label in place of the
- * address. An empty list means the feedback names no email we can find:
- * nothing is marked. Either way, further sends to the address are stopped by
- * its suppression record, not by any row's status: the email core and the
- * retry job check it before every send. A complaint or a permanent bounce
- * suppresses at once; a temporary bounce from the second one on
- * (`email-suppression.ts`).
- */
-function emailLogMessageIdsNamedByFeedback(
-  mail: SesSnsNotification["mail"],
-): string[] {
-  const raw = [
-    mail?.messageId,
+/** SES's `Permanent` is a permanent bounce; `Transient`, `Undetermined` or none is a temporary one, as the suppression rule has always read them. */
+function sesBounceKind(bounceType: string | undefined): DeliveryFeedbackKind {
+  return bounceType?.toLowerCase() === "permanent" ? "permanent-bounce" : "temporary-bounce";
+}
+
+/** The Message-ID headers the app sent, from whichever original-header field SES included. */
+function sesSentMessageIds(mail: SesSnsNotification["mail"]): string[] {
+  return [
     mail?.commonHeaders?.messageId,
     ...(mail?.headers ?? [])
       .filter((header) => header.name?.trim().toLowerCase() === "message-id")
       .map((header) => header.value),
-  ];
-  const ids = new Set<string>();
-  for (const value of raw) {
-    if (typeof value !== "string") continue;
-    const bare = value.trim().replace(/^<\s*/, "").replace(/\s*>$/, "").trim();
-    if (!bare) continue;
-    ids.add(bare);
-    ids.add(`<${bare}>`);
-  }
-  return Array.from(ids);
+  ].filter((value): value is string => typeof value === "string");
 }
 
-/**
- * Statuses a feedback notification may move to `BOUNCED`. A row already
- * `BOUNCED` is not matched, so a repeat of the same notification writes
- * nothing (`INV-INT-039`); a withheld row was never sent and keeps saying so.
- */
-const FEEDBACK_MARKABLE_STATUSES = ["QUEUED", "SENT", "FAILED"] as const;
-
-export async function ingestSesSnsEmailFeedback(payload: unknown) {
+/** The neutral event for an SES notification, or null for one this adapter does not handle. */
+export function sesNotificationToDeliveryFeedback(payload: unknown): DeliveryFeedbackEvent | null {
   const notification = parseSesSnsNotification(payload);
-  if (!notification) {
-    return { handled: false as const };
-  }
+  if (!notification) return null;
   const notificationType = notification.notificationType?.toLowerCase();
-  if (notificationType !== "bounce" && notificationType !== "complaint") {
-    return { handled: false as const };
-  }
+  if (notificationType !== "bounce" && notificationType !== "complaint") return null;
 
   const recipients = getSesFeedbackRecipients(notification, notificationType);
-  if (recipients.length === 0) {
+  if (recipients.length === 0) return null;
+
+  const complaint = notificationType === "complaint";
+  return {
+    service: "aws-ses",
+    kind: complaint ? "complaint" : sesBounceKind(notification.bounce?.bounceType),
+    recipients,
+    providerMessageId: notification.mail?.messageId?.trim() || null,
+    sentMessageIds: sesSentMessageIds(notification.mail),
+    reportId: (complaint ? notification.complaint?.feedbackId : notification.bounce?.feedbackId)?.trim() || null,
+    providerDetail: {
+      bounceType: notification.bounce?.bounceType ?? null,
+      bounceSubType: notification.bounce?.bounceSubType ?? null,
+      complaintFeedbackType: notification.complaint?.complaintFeedbackType ?? null,
+    },
+  };
+}
+
+export async function ingestSesSnsEmailFeedback(payload: unknown) {
+  const event = sesNotificationToDeliveryFeedback(payload);
+  if (!event) {
     return { handled: false as const };
   }
-  const normalizedRecipients = recipients.map(normalizeEmailAddress);
-
-  // Only the email this notification names, matched by its message id and
-  // nothing else: the address alone would rewrite every earlier email to it.
-  const namedMessageIds = emailLogMessageIdsNamedByFeedback(notification.mail);
-  const marked =
-    namedMessageIds.length === 0
-      ? { count: 0 }
-      : await prisma.emailLog.updateMany({
-          where: {
-            messageId: { in: namedMessageIds },
-            status: { in: [...FEEDBACK_MARKABLE_STATUSES] },
-          },
-          data: {
-            status: "BOUNCED",
-            errorMessage: `SES ${notificationType} received via SNS`,
-          },
-        });
-
-  const suppressionResult = await recordSesEmailFeedback(
-    normalizedRecipients.map(
-      (email): SesEmailFeedbackEvent => ({
-        email,
-        reason: notificationType === "complaint" ? "COMPLAINT" : "BOUNCE",
-        eventType: notificationType,
-        sesMessageId: notification.mail?.messageId ?? null,
-        bounceType: notification.bounce?.bounceType ?? null,
-        bounceSubType: notification.bounce?.bounceSubType ?? null,
-        complaintFeedbackType:
-          notification.complaint?.complaintFeedbackType ?? null,
-      }),
-    ),
-  );
-
-  logger.warn(
-    {
-      sesNotificationType: notificationType,
-      sesMessageId: notification.mail?.messageId ?? null,
-      recipients: normalizedRecipients,
-      emailLogsMarked: marked.count,
-      suppressionsProcessed: suppressionResult.processed,
-      suppressionsActive: suppressionResult.suppressed,
-    },
-    "Processed SES/SNS email delivery feedback",
-  );
-
+  const outcome = await applyDeliveryFeedback(event);
   return {
     handled: true as const,
-    notificationType,
-    recipients: normalizedRecipients,
-    emailLogsMarked: marked.count,
-    suppressionsProcessed: suppressionResult.processed,
-    suppressionsActive: suppressionResult.suppressed,
+    notificationType: event.kind === "complaint" ? ("complaint" as const) : ("bounce" as const),
+    ...outcome,
   };
 }

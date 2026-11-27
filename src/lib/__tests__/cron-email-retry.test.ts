@@ -211,6 +211,49 @@ describe("retryFailedEmails (issue #820)", () => {
     expect(mocks.sendEmail).not.toHaveBeenCalled();
   });
 
+  it("MUTATION: stores the id SES gave a re-sent email, read from its reply (#5469)", async () => {
+    mocks.resolveEmailDeliveryConfig.mockReturnValue({
+      ok: true,
+      mode: "aws-ses",
+      modeSource: "explicit-flag",
+      modeLabel: "AWS SES",
+      transportOptions: {
+        host: "email-smtp.ap-southeast-2.amazonaws.com",
+        port: 587,
+        secure: false,
+        auth: { user: "ses-user", pass: "ses-pass" },
+      },
+      issues: [],
+      warnings: [],
+    });
+    mocks.findMany.mockResolvedValue([failedEmail({ attempts: 1 })]);
+    mocks.sendMail.mockResolvedValue({ messageId: "<msg_1@example.test>", response: "250 Ok 0100018c-retry-000000" });
+
+    await retryFailedEmails();
+
+    expect(mocks.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: "email_1" },
+        data: expect.objectContaining({ status: "SENT", providerMessageId: "0100018c-retry-000000" }),
+      }),
+    );
+  });
+
+  it("MUTATION: stores no id when the server is not a recognised mail service (#5469)", async () => {
+    // The default here is an SMTP relay; its reply happens to look like SES's.
+    mocks.findMany.mockResolvedValue([failedEmail({ attempts: 1 })]);
+    mocks.sendMail.mockResolvedValue({ messageId: "msg_1", response: "250 Ok 0100018c-retry-000000" });
+
+    await retryFailedEmails();
+
+    expect(mocks.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: "email_1" },
+        data: expect.objectContaining({ status: "SENT", providerMessageId: null }),
+      }),
+    );
+  });
+
   it("keeps a still-retryable email FAILED and does not alert admins yet", async () => {
     mocks.findMany.mockResolvedValue([failedEmail({ attempts: 0 })]);
     mocks.sendMail.mockRejectedValue(new Error("smtp 421"));
