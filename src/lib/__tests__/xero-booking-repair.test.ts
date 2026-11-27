@@ -11839,12 +11839,12 @@ describe("#5220: the repair tool's run of the keep's decision on a retired chang
     status: "planned" as const,
     resultMessage: null as string | null,
   });
-  const run = async (plan: unknown) => {
+  const run = async (plan: unknown, alerted: string | null = "sent") => {
     const order: string[] = [];
     const deps = {
       prisma: { $transaction: async (fn: (tx: unknown) => unknown) => { const out = await fn({}); order.push("commit"); return out; } },
       planKeptLateCaptureXeroRecord: vi.fn().mockResolvedValue(plan),
-      alertKeptCaptureRefusal: vi.fn(async () => { order.push("alert"); }),
+      alertKeptCaptureRefusal: vi.fn(async () => { order.push("alert"); return alerted; }),
     };
     const planned = action();
     await applyKeptChangeCaptureRecordAction(planned as never, deps as never);
@@ -11863,7 +11863,29 @@ describe("#5220: the repair tool's run of the keep's decision on a retired chang
     expect(planned.status).toBe("skipped");
     // Not "a change invoice already answers": no invoice was issued, and the report says so.
     expect(planned.resultMessage).toContain("could not be re-issued");
+    expect(planned.resultMessage).toContain("an officer was emailed");
   });
+
+  // #5312: the report says an officer was emailed only when the email went out.
+  for (const [alerted, says] of [
+    ["undelivered", "the officer's email could not be sent"],
+    ["queued-for-retry", "the officer's email did not send and is queued to retry"],
+    ["no-recipients", "no officer was emailed"],
+    ["skipped-by-policy", "no officer was emailed"],
+  ] as const) {
+    it(`a refusal whose officer email was ${alerted} never reports one emailed`, async () => {
+      const plan = {
+        kind: "change-payment",
+        paymentIntentId: "pi_kept",
+        refusalAlert: { operationId: "op_retired", localModel: "BookingModification", localId: "mod_change", paymentIntentId: "pi_kept", reason: "short-of-ask", wasRetired: true },
+      };
+      const { planned } = await run(plan, alerted);
+      expect(planned.status).toBe("skipped");
+      expect(planned.resultMessage).toContain("marked captured");
+      expect(planned.resultMessage).toContain(says);
+      expect(planned.resultMessage).not.toContain("an officer was emailed");
+    });
+  }
 
   it("reports the receipt it queued beside a revived unpaid invoice", async () => {
     const { planned } = await run({ kind: "change-payment", paymentIntentId: "pi_kept", receiptQueueOperationId: "op_receipt" });

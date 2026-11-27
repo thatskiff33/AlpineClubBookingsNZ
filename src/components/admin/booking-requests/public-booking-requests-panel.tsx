@@ -2,10 +2,12 @@
 import { fetchWithRecentAuth } from "@/components/confirm-its-you";
 
 import { adminHref } from "@/lib/admin-hubs";
+import { apiRefusalFromResponse, refusalMessageOr } from "@/lib/api-error-message";
 import Link from "next/link";
 import { useClubFormat } from "@/components/club-format-provider";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useSearchParams } from "next/navigation";
+import { useAdminListUrlSync } from "@/hooks/use-admin-list-url-sync";
 import { Badge } from "@/components/ui/badge";
 import { toast } from "sonner";
 import { pluralHutLeaderLabel } from "@/config/hut-leader-label";
@@ -72,6 +74,7 @@ import {
 import { notifyAdminQueueChanged } from "@/lib/admin-queue-events";
 import { FILTER_LABELS } from "./public-booking-request-filters";
 
+const LOAD_FALLBACK = "Failed to load booking requests";
 const SCHOOL_CHILD_TIER_LABELS: Record<SchoolChildTier, string> = {
   INFANT: "Infants",
   CHILD: "Children",
@@ -394,7 +397,6 @@ export function PublicBookingRequestsPanel({
   const { currencyCode } = format;
   const formatDateTime = useInstantFormatter();
   const { hutLeaderLabel } = useClubIdentity();
-  const router = useRouter();
   const searchParams = useSearchParams();
   const requestId = searchParams.get("requestId");
   /*
@@ -530,9 +532,7 @@ export function PublicBookingRequestsPanel({
     page,
   );
 
-  useEffect(() => {
-    router.replace(currentPath, { scroll: false });
-  }, [currentPath, router]);
+  useAdminListUrlSync(currentPath);
 
   const fetchRequests = useCallback(async () => {
     const isCurrent = beginLoad();
@@ -540,10 +540,8 @@ export function PublicBookingRequestsPanel({
     setError("");
     try {
       const response = await fetch(`/api/admin/booking-requests?status=${filter}&page=${page}`);
+      if (!response.ok) throw await apiRefusalFromResponse(response, LOAD_FALLBACK);
       const data = await response.json();
-      if (!response.ok) {
-        throw new Error(data.error || "Failed to load booking requests");
-      }
       const rows: PublicBookingRequestData[] = Array.isArray(data?.data) ? data.data : [];
       const pinned = await fetchOffPageQueueRecord("/api/admin/booking-requests", "requestId", requestId, rows);
       if (!isCurrent()) return true; // a newer read owns the list
@@ -554,7 +552,7 @@ export function PublicBookingRequestsPanel({
       return true;
     } catch (err) {
       if (!isCurrent()) return true;
-      setError(err instanceof Error ? err.message : "Failed to load booking requests");
+      setError(refusalMessageOr(err, LOAD_FALLBACK));
       return false;
     } finally {
       if (isCurrent()) setLoading(false);

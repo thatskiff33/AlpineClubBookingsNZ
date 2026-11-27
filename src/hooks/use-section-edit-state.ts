@@ -3,6 +3,7 @@
 import {
   useCallback,
   useEffect,
+  useLayoutEffect,
   useRef,
   useState,
   type RefObject,
@@ -112,6 +113,19 @@ export async function saveRefusalFromResponse(
     return wordedForbiddenRefusal(body) ?? new ForbiddenSaveError();
   }
   return new ApiRefusalError(apiErrorMessageFromBody(body, fallback));
+}
+
+/**
+ * The sentence for an error a save threw: the shared
+ * {@link ADMIN_FORBIDDEN_SAVE_REASON} for a {@link ForbiddenSaveError}, a
+ * refusal's own sentence, otherwise `fallback`. The hook words a failed save
+ * with it, and so does a write made outside the hook (an action button, a
+ * one-off remove), so a refused write reads the same on every card (#5323).
+ */
+export function saveErrorMessage(err: unknown, fallback: string): string {
+  return err instanceof ForbiddenSaveError
+    ? ADMIN_FORBIDDEN_SAVE_REASON
+    : refusalMessageOr(err, fallback);
 }
 
 /**
@@ -290,10 +304,13 @@ export function useSectionEditState<T extends object>(
   // Callbacks are held in a latest-ref so a caller does not have to memoise
   // them: the mount-time load must run exactly once regardless of the identity
   // churn of an inline arrow function. The ref is seeded at first render and
-  // refreshed after every commit (this effect is declared before the load
-  // effect, so it has already run by the time the load fires).
+  // refreshed inside every commit, so it has run before the load effect and
+  // before any click on what that commit drew. It must stay a LAYOUT effect: a
+  // passive one runs in a later task, and a Save pressed in between ran the
+  // previous render's `save`, which read state from before the click's own
+  // render (ALP-808: the liability rule's "The preview listed 0").
   const callbacks = useRef(options);
-  useEffect(() => {
+  useLayoutEffect(() => {
     callbacks.current = options;
   });
 
@@ -388,13 +405,9 @@ export function useSectionEditState<T extends object>(
       setSuccess(typeof message === "function" ? message(next) : message);
     } catch (saveError) {
       setSaveFailureKey((key) => key + 1);
-      if (saveError instanceof ForbiddenSaveError) {
-        setError(ADMIN_FORBIDDEN_SAVE_REASON);
-      } else {
-        setError(
-          refusalMessageOr(saveError, callbacks.current.saveErrorFallback),
-        );
-      }
+      setError(
+        saveErrorMessage(saveError, callbacks.current.saveErrorFallback),
+      );
     } finally {
       setSaving(false);
     }

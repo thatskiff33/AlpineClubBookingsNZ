@@ -4,6 +4,7 @@ import type { AgeTier, SubscriptionStatus } from "@prisma/client";
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import type { ReactNode } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
+import { useAdminListUrlSync } from "@/hooks/use-admin-list-url-sync";
 import { useClubTime } from "@/components/club-time-provider";
 import { requireInstant } from "@/lib/club-time";
 import { clubSeasonYear } from "@/lib/financial-year";
@@ -429,10 +430,7 @@ export default function SubscriptionsPage() {
     ? `${SUBSCRIPTIONS_HREF}?${subscriptionsQuery}`
     : SUBSCRIPTIONS_HREF;
 
-  useEffect(() => {
-    const query = buildSubscriptionsSearchParams().toString();
-    router.replace(query ? `${SUBSCRIPTIONS_HREF}?${query}` : SUBSCRIPTIONS_HREF, { scroll: false });
-  }, [buildSubscriptionsSearchParams, router]);
+  useAdminListUrlSync(currentSubscriptionsPath);
 
   const fetchData = useCallback(async () => {
     // #4961: a failed read clears the previous query's rows and counts, so last

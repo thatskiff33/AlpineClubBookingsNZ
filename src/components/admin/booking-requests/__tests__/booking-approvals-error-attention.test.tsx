@@ -9,6 +9,7 @@ import { BookingApprovalsPanel } from "../booking-approvals-panel"
 import { expectRecoveryAlertToHoldFocus } from "@/lib/__tests__/helpers/focus"
 
 vi.mock("next/navigation", () => ({
+  usePathname: () => "/",
   useRouter: () => ({ replace: vi.fn(), push: vi.fn() }),
   useSearchParams: () => new URLSearchParams(),
 }))

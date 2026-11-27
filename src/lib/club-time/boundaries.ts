@@ -106,7 +106,7 @@
  */
 
 import { addCalendarDays } from "./calendar-date";
-import { clubWallTimeOf, clubZoneOffsetMs } from "./instant";
+import { calendarDateOfDateOnlyInstant, clubWallTimeOf, clubZoneOffsetMs } from "./instant";
 import {
   SkippedClubWallTimeError,
   type CalendarDate,
@@ -434,6 +434,16 @@ export function endOfClubDayInclusive(
   zone: ClubTimeZone,
 ): Instant {
   return new Date(endOfClubDayExclusive(date, zone).getTime() - 1);
+}
+
+/**
+ * The last instant, in club time, of a day stored as a date-only instant (a
+ * booking's `checkIn` or `checkOut`, read through `calendarDateOfDateOnlyInstant`).
+ * One definition for every "until the end of that day" rule: a payment link's
+ * expiry, and the cut-offs of the owed notices (#5433).
+ */
+export function endOfStoredClubDay(dateOnly: Instant, zone: ClubTimeZone): Instant {
+  return endOfClubDayInclusive(calendarDateOfDateOnlyInstant(dateOnly), zone);
 }
 
 /**

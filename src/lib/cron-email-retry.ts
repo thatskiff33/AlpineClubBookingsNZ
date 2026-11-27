@@ -26,6 +26,7 @@ import {
   resolveBookingEmailGate,
 } from "@/lib/booking-email-suppression";
 import { resolveBookingEmailLink } from "@/lib/booking-email-authority";
+import { calendarRemovalRetryHtml, retryCalendarRemovalAttachments } from "@/lib/booking-calendar-removal";
 import {
   finalizeBookingEmailHtml,
   hasBookingDetailHref,
@@ -553,12 +554,15 @@ export async function retryFailedEmails(): Promise<{
 
     let result: SentMessageInfo;
     try {
+      const attachments = await retryCalendarRemovalAttachments(emailLog);
+      const deliveryHtml = calendarRemovalRetryHtml(retryHtml, emailLog.templateName, attachments.length > 0);
       result = await transporter.sendMail({
         from: formatEmailFromAddress(EMAIL_FROM),
         to: emailLog.to,
         subject: emailLog.subject,
-        html: retryHtml,
-        text: htmlToPlainText(retryHtml),
+        html: deliveryHtml,
+        text: htmlToPlainText(deliveryHtml),
+        attachments,
       });
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : String(err);

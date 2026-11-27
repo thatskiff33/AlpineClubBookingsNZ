@@ -3,6 +3,7 @@ import logger from "@/lib/logger";
 import type { ClubTimeZone } from "@/lib/club-time";
 import { asRecord } from "@/lib/xero-json";
 import { kickQueuedXeroOutboxOperationsIfConnected } from "@/lib/xero-operation-outbox";
+import type { AdminAlertSendOutcome } from "@/lib/email/admin-alert-send-result";
 import { lockSupplementaryInvoiceAnchor } from "@/lib/xero-supplementary-invoice-enqueue";
 import { RETIRED_CODES_ANSWERING_CAPTURE } from "@/lib/xero-supplementary-invoice-capture-rules";
 import {
@@ -404,11 +405,14 @@ async function reviveKeptCaptureChangeInvoice(
     createdByMemberId: params.actingMemberId ?? null,
   });
   if (receipt.outcome === "not-eligible") {
-    // The revived invoice records the payment itself, or another document does: no receipt, and the keep stands.
-    logger.info(
-      { paymentIntentId: params.paymentIntentId, manualRefundTaskId: params.manualRefundTaskId, reason: receipt.reason },
-      "A kept late card payment's revived change invoice needs no receipt beside it",
-    );
+    // No receipt, and the keep stands. #5312: the message says only that; the reason says why. Where no other
+    // document records the payment, the revived invoice may go to Xero unpaid, so that is a warning.
+    const context = { paymentIntentId: params.paymentIntentId, manualRefundTaskId: params.manualRefundTaskId, reason: receipt.reason };
+    const message = "A kept late card payment's revived change invoice has no receipt queued beside it; the reason says why";
+    if (receipt.reason.startsWith("recorded-by-")) logger.info(context, message);
+    // No primary invoice id beside an active link is drift, as on the receipt route below.
+    else if (receipt.reason === "no-primary-invoice") logger.error(context, message);
+    else logger.warn(context, message);
     return plan;
   }
   return { ...plan, receiptQueueOperationId: receipt.queueOperationId };
@@ -515,12 +519,15 @@ export async function finishKeptLateCaptureXeroRecord(
  * and stamped `STALE_WAITING_PAYMENT_CAPTURED`. After the commit, by the keep
  * and by the repair tool's run of the same decision; never throws. A crash
  * before it leaves the stamp without the email (#4382's stated limit).
+ * Returns what the send did, `null` where the plan stamped nothing (#5312):
+ * the repair tool's report says whether an officer was emailed.
  */
-export async function alertKeptCaptureRefusal(plan: KeptLateCaptureXeroPlan): Promise<void> {
-  if (plan.kind !== "change-payment" || !plan.refusalAlert) return;
+export async function alertKeptCaptureRefusal(plan: KeptLateCaptureXeroPlan): Promise<AdminAlertSendOutcome | null> {
+  if (plan.kind !== "change-payment" || !plan.refusalAlert) return null;
   try {
-    await alertInvoiceNotIssuedOnCapture(plan.refusalAlert);
+    return await alertInvoiceNotIssuedOnCapture(plan.refusalAlert);
   } catch (err) {
     logger.error({ err, plan }, "Failed to alert an officer to a kept late card payment's retired change invoice");
+    return "undelivered";
   }
 }

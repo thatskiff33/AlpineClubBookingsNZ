@@ -41,8 +41,9 @@ import type { EditQuotedFigures } from "@/lib/edit-quoted-figures";
 export type BatchModifyInput = {
   /**
    * #4924 (`INV-MOD-062`): the preview's figures the member approved. Present,
-   * the save refuses `EditPriceChangedError` when its own differ; absent (an
-   * older client), it saves as before.
+   * the save refuses `EditPriceChangedError` when its own differ. Absent only
+   * for a caller with no preview (an officer's approval or change-request
+   * execution): the HTTP doors refuse a save without them (#5238).
    */
   quotedFigures?: EditQuotedFigures;
   checkIn?: string;

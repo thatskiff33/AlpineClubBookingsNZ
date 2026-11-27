@@ -532,8 +532,12 @@ describe("neither surface can drop a promo-code change silently again (#3179)", 
   it("the save carries the notice to every surface that owes the member an answer", () => {
     const source = executableSource(SAVE_SERVICE);
 
-    // The panel reads it off the response.
-    expect(source).toContain("promoChangeNotApplied: result.promoChangeNotApplied");
+    // The panel reads it off the response, whose result fields both of the
+    // save's returns spread from one place (#5238).
+    expect(source).toContain("...batchModificationResultFacts(result)");
+    expect(executableSource("src/lib/booking-batch-modification-transaction-result.ts")).toContain(
+      "promoChangeNotApplied: result.promoChangeNotApplied",
+    );
     // The booking's own history replays it.
     expect(source).toContain("promoChangeNotAppliedNote: promoChangeNotApplied.message");
     // The email is the durable copy for a member who closed the panel.

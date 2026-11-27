@@ -363,6 +363,7 @@ describe("admin lists share the page parser and range text (INV-OPS-020)", () =>
       "src/app/(admin)/admin/system/audit-log/page.tsx",
       "src/components/admin/booking-requests/booking-approvals-panel.tsx",
       "src/components/admin/booking-requests/booking-change-requests-panel.tsx",
+      "src/components/admin/booking-requests/policy-exception-requests-panel.tsx",
       "src/components/admin/booking-requests/public-booking-requests-panel.tsx",
     ]);
   });

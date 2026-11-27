@@ -3,7 +3,8 @@
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSession } from "next-auth/react";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useSearchParams } from "next/navigation";
+import { useAdminListUrlSync } from "@/hooks/use-admin-list-url-sync";
 import { Archive, CheckCircle2, RefreshCw, XCircle } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -366,7 +367,6 @@ function MembershipCancellationRequests() {
   // Participant/archive review writes membership-area routes; a view-only
   // membership admin browses the queues but cannot act (#1997).
   const canEditMembership = useAdminAreaEditAccess("membership");
-  const router = useRouter();
   const searchParams = useSearchParams();
   const initialStatus = searchParams.get("status");
   const [filter, setFilter] = useState<RequestFilter>(
@@ -446,9 +446,7 @@ function MembershipCancellationRequests() {
   const requestsHref = adminTabHref("membership-cancellations", "requests");
   const queueHref = queueQuery ? `${requestsHref}?${queueQuery}` : requestsHref;
 
-  useEffect(() => {
-    router.replace(queueHref, { scroll: false });
-  }, [queueHref, router]);
+  useAdminListUrlSync(queueHref);
 
   /**
    * Reload the cancellation queue. Returns the failure message when the reload
