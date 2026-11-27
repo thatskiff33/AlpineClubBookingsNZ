@@ -17,6 +17,7 @@ const mocks = vi.hoisted(() => ({
   // through the same `EmailMessageSetting` row every outbound email reads.
   emailMessageSettingFindUnique: vi.fn(),
   logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
+  handLostHandoversToTheRetryJob: vi.fn(),
 }));
 
 vi.mock("@/lib/prisma", () => ({
@@ -36,6 +37,7 @@ vi.mock("@/lib/email-admin-alert-escalation", () => ({
   recordAdminAlertDeliveryEscalation: mocks.recordEscalation,
 }));
 vi.mock("@/lib/email/core", () => ({ sendEmail: mocks.sendEmail }));
+vi.mock("@/lib/email/handover", () => ({ handLostHandoversToTheRetryJob: mocks.handLostHandoversToTheRetryJob }));
 
 import {
   getAdminEmails,
@@ -697,6 +699,39 @@ describe("unmuteable admin alerts (#2761)", () => {
 
     await expect(send("admin-late-capture-auto-refund")).resolves.toBe("queued-for-retry");
     await expect(send("admin-unrecognised-stripe-payment")).resolves.toBe("undelivered");
+    // Nobody got it, so the owner retries and the sweep releases the row to it.
+    expect(mocks.handLostHandoversToTheRetryJob).not.toHaveBeenCalled();
+  });
+
+  // #4669: the owner sees "sent" and never retries, so the copy one recipient
+  // lost is the cron's; the sweep would release it to an owner that has stopped.
+  it("gives the retry job a caller-retried alert's copy that lost its hand-over while another recipient got it", async () => {
+    mocks.findMany.mockResolvedValue([
+      enumRole("full.admin@club.test", "ADMIN"),
+      enumRole("treasurer@club.test", "FINANCE_ADMIN"),
+    ]);
+    mocks.sendEmail
+      .mockResolvedValueOnce({ status: "sent", emailLogId: "log-1", messageId: null })
+      .mockResolvedValue({ status: "handover_lost", emailLogId: "log-2" });
+    const send = (templateName: string) =>
+      sendUnmuteableAdminAlert({
+        subject: "Alert",
+        html: "<p>alert</p>",
+        templateName,
+        requirement: { area: "finance", level: "edit" },
+      });
+
+    await expect(send("admin-unrecognised-stripe-payment")).resolves.toBe("sent");
+    expect(mocks.handLostHandoversToTheRetryJob).toHaveBeenCalledWith(["log-2"], "admin-unrecognised-stripe-payment");
+
+    // Any other alert's lost copy is the sweep's to send again.
+    mocks.handLostHandoversToTheRetryJob.mockClear();
+    mocks.sendEmail
+      .mockReset()
+      .mockResolvedValueOnce({ status: "sent", emailLogId: "log-3", messageId: null })
+      .mockResolvedValue({ status: "handover_lost", emailLogId: "log-4" });
+    await expect(send("admin-late-capture-auto-refund")).resolves.toBe("sent");
+    expect(mocks.handLostHandoversToTheRetryJob).not.toHaveBeenCalled();
   });
 
   it("does not escalate when somebody was reached", async () => {

@@ -43,8 +43,17 @@ export const STRANDED_QUEUED_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 const STRANDED_QUEUED_BATCH = 50;
 
 /**
+ * A row recorded and never handed over: `PENDING`, and still at its first
+ * attempt. The attempts matter while the previous release is draining: its
+ * retry job claims a row the sweep handed back without moving it off
+ * `PENDING`, and raises attempts as it does, so neither a sender that stalled
+ * nor the sweep may take that row for one nobody has sent.
+ */
+const NEVER_HANDED_OVER = { status: "QUEUED", handoverState: "PENDING", attempts: FIRST_EMAIL_ATTEMPT } as const;
+
+/**
  * The sender's licence to hand this row to the mail server: moves it from
- * PENDING to STARTED, and answers the stamp it wrote only for the one caller
+ * PENDING (`NEVER_HANDED_OVER`) to STARTED, and answers the stamp it wrote only for the one caller
  * whose write landed (null when it lost). The stamp restarts the stranded
  * clock, so a send that was slow to get here is not swept while it is in
  * flight, and it identifies this claim to the writes that follow it. Throws on
@@ -53,7 +62,7 @@ const STRANDED_QUEUED_BATCH = 50;
 export async function claimEmailHandover(emailLogId: string): Promise<Date | null> {
   const claimedAt = new Date();
   const claim = await prisma.emailLog.updateMany({
-    where: { id: emailLogId, status: "QUEUED", handoverState: "PENDING" },
+    where: { id: emailLogId, ...NEVER_HANDED_OVER },
     data: { handoverState: "STARTED", lastAttemptAt: claimedAt },
   });
   return claim.count === 1 ? claimedAt : null;
@@ -62,7 +71,7 @@ export async function claimEmailHandover(emailLogId: string): Promise<Date | nul
 /**
  * The row one `sendEmail` call recorded, written to only while it is still
  * that sender's (#5298, `INV-INT-043`). Before the hand-over a write is guarded
- * on `QUEUED` and `PENDING`, after it on the claim (`STARTED` at the claim's
+ * on `NEVER_HANDED_OVER`, after it on the claim (`STARTED` at the claim's
  * stamp), so a sender that stalls past `strandedQueuedAfterMs()` cannot undo
  * the sweep: the row the sweep handed to the retry job, or flagged, is no
  * longer the sender's, and its late gate, failure or SENT write matches
@@ -85,9 +94,7 @@ export interface SenderEmailRow {
 }
 
 export function senderEmailRow(id: string, options: { deferred: boolean }): SenderEmailRow {
-  let guard: Prisma.EmailLogWhereInput = options.deferred
-    ? { id }
-    : { id, status: "QUEUED", handoverState: "PENDING" };
+  let guard: Prisma.EmailLogWhereInput = options.deferred ? { id } : { id, ...NEVER_HANDED_OVER };
   return {
     id,
     async write(data, what) {
@@ -114,6 +121,38 @@ export function senderEmailRow(id: string, options: { deferred: boolean }): Send
       return false;
     },
   };
+}
+
+/**
+ * Hand copies whose hand-over was lost straight to the email retry job:
+ * `FAILED` at their first attempt, body kept. For a caller-retried alert
+ * (#4669) one recipient did receive: its owner sees "sent" and never sends it
+ * again, and the sweep would release these copies to that owner, so nobody
+ * would send them. Guarded on `NEVER_HANDED_OVER`: a copy the sweep reached
+ * first, or whose claim did commit, is left to what settled it and logged as
+ * a copy that recipient may never get. Never throws.
+ */
+export async function handLostHandoversToTheRetryJob(emailLogIds: readonly string[], templateName: string): Promise<void> {
+  if (emailLogIds.length === 0) return;
+  const handedOver = await prisma.emailLog
+    .updateMany({
+      where: { id: { in: [...emailLogIds] }, ...NEVER_HANDED_OVER },
+      data: {
+        status: "FAILED",
+        errorMessage: "Its hand-over to the mail server could not be recorded, so the email retry job sends it (#5298).",
+      },
+    })
+    .then(({ count }) => count)
+    .catch((err: unknown) => {
+      logger.error({ err, emailLogIds, templateName }, "Could not give copies that lost their hand-over to the email retry job (#5298)");
+      return 0;
+    });
+  if (handedOver < emailLogIds.length) {
+    logger.error(
+      { emailLogIds, templateName, handedOver },
+      "A recipient's copy of an alert others received lost its hand-over and was not given to the email retry job; that recipient may not get it (#5298)",
+    );
+  }
 }
 
 /** What the sweep did with one stranded row. */
@@ -148,9 +187,7 @@ interface StrandedRow {
  * - anything else: `FAILED` at the ceiling and `UNCONFIRMED`, never sent again
  *   automatically, and officers are told it may already have arrived.
  *
- * "Never handed over" is PENDING at attempts 1: the previous release's retry
- * job can claim a new row without moving it off PENDING, and its claim raises
- * attempts. Each write is guarded on the row exactly as read, so it races the
+ * "Never handed over" is PENDING at attempts 1 (`NEVER_HANDED_OVER`). Each write is guarded on the row exactly as read, so it races the
  * sender's claim and another sweep, and only one wins. Never throws.
  */
 export async function sweepStrandedQueuedEmails(now: Date = new Date()): Promise<StrandedSweepResult> {
@@ -198,7 +235,8 @@ async function settleStrandedRow(row: StrandedRow, keepsBody: boolean, now: Date
     attempts: row.attempts,
     lastAttemptAt: row.lastAttemptAt,
   };
-  const neverHandedOver = row.handoverState === "PENDING" && row.attempts === FIRST_EMAIL_ATTEMPT;
+  const neverHandedOver =
+    row.handoverState === NEVER_HANDED_OVER.handoverState && row.attempts === NEVER_HANDED_OVER.attempts;
   const outcome: StrandedOutcome = !neverHandedOver
     ? "unconfirmed"
     : isCallerRetriedAlertTemplate(row.templateName)

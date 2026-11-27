@@ -19,6 +19,7 @@ vi.mock("@/lib/email/delivery-failed-alert", () => ({ alertOfficersOfUndelivered
 
 import {
   claimEmailHandover,
+  handLostHandoversToTheRetryJob,
   senderEmailRow,
   STRANDED_QUEUED_MAX_AGE_MS,
   strandedQueuedAfterMs,
@@ -70,10 +71,13 @@ beforeEach(() => {
 });
 
 describe("claimEmailHandover", () => {
-  it("moves only a QUEUED row still PENDING to STARTED, and restarts its stranded clock", async () => {
+  // Attempts 1 as well: the previous release's retry job claims a row the sweep
+  // handed back without moving it off PENDING, and a stalled sender must not
+  // then claim it too.
+  it("moves only a QUEUED row still PENDING at its first attempt to STARTED, and restarts its stranded clock", async () => {
     await expect(claimEmailHandover("log-1")).resolves.toEqual(NOW);
     expect(mocks.updateMany).toHaveBeenCalledWith({
-      where: { id: "log-1", status: "QUEUED", handoverState: "PENDING" },
+      where: { id: "log-1", status: "QUEUED", handoverState: "PENDING", attempts: 1 },
       data: { handoverState: "STARTED", lastAttemptAt: NOW },
     });
   });
@@ -86,13 +90,13 @@ describe("claimEmailHandover", () => {
 
 // #5298: a sender that stalls past the threshold must not undo the sweep.
 describe("senderEmailRow", () => {
-  it("writes before the hand-over only while the row is still QUEUED and PENDING", async () => {
+  it("writes before the hand-over only while the row is still QUEUED and PENDING at its first attempt", async () => {
     const row = senderEmailRow("log-1", { deferred: false });
     mocks.updateMany.mockResolvedValueOnce({ count: 0 });
 
     await expect(row.write({ status: "FAILED" }, "a failed send")).resolves.toBe(false);
     expect(mocks.updateMany).toHaveBeenCalledWith({
-      where: { id: "log-1", status: "QUEUED", handoverState: "PENDING" },
+      where: { id: "log-1", status: "QUEUED", handoverState: "PENDING", attempts: 1 },
       data: { status: "FAILED" },
     });
   });
@@ -119,6 +123,37 @@ describe("senderEmailRow", () => {
   it("writes a deferred row by id, as the retry job owns it and the sweep never touches it", async () => {
     await senderEmailRow("log-1", { deferred: true }).write({ status: "BOUNCED" }, "a suppressed email");
     expect(mocks.updateMany).toHaveBeenCalledWith({ where: { id: "log-1" }, data: { status: "BOUNCED" } });
+  });
+});
+
+// A caller-retried alert one recipient received: its owner sends nothing more,
+// so the copy that lost its hand-over must not wait for the sweep's release.
+describe("handLostHandoversToTheRetryJob", () => {
+  it("fails the copies with their bodies kept, only while nobody has handed them over", async () => {
+    mocks.updateMany.mockResolvedValueOnce({ count: 2 });
+    await handLostHandoversToTheRetryJob(["log-1", "log-2"], "admin-stripe-dispute");
+
+    const [{ where, data }] = mocks.updateMany.mock.calls[0]!;
+    expect(where).toEqual({ id: { in: ["log-1", "log-2"] }, status: "QUEUED", handoverState: "PENDING", attempts: 1 });
+    expect(data).toEqual({ status: "FAILED", errorMessage: expect.stringContaining("email retry job sends it") });
+    expect(mocks.logError).not.toHaveBeenCalled();
+  });
+
+  it("reports a copy something else settled first, or a failed write, and never throws", async () => {
+    mocks.updateMany.mockResolvedValueOnce({ count: 1 });
+    await handLostHandoversToTheRetryJob(["log-1", "log-2"], "admin-stripe-dispute");
+    expect(mocks.logError).toHaveBeenCalledWith(
+      expect.objectContaining({ handedOver: 1 }),
+      expect.stringContaining("that recipient may not get it"),
+    );
+
+    mocks.updateMany.mockRejectedValueOnce(new Error("database unavailable"));
+    await expect(handLostHandoversToTheRetryJob(["log-3"], "admin-stripe-dispute")).resolves.toBeUndefined();
+  });
+
+  it("writes nothing when no hand-over was lost", async () => {
+    await handLostHandoversToTheRetryJob([], "admin-stripe-dispute");
+    expect(mocks.updateMany).not.toHaveBeenCalled();
   });
 });
 

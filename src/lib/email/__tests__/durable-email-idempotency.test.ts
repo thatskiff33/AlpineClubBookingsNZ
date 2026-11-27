@@ -80,7 +80,7 @@ describe("durable email event identity", () => {
     }) });
     // #5298: the row is claimed for hand-over, and only then sent.
     expect(mocks.updateMany).toHaveBeenCalledWith({
-      where: { id: LOG_ID, status: "QUEUED", handoverState: "PENDING" },
+      where: { id: LOG_ID, status: "QUEUED", handoverState: "PENDING", attempts: 1 },
       data: { handoverState: "STARTED", lastAttemptAt: new Date() },
     });
     expect(mocks.updateMany.mock.invocationCallOrder[0]).toBeLessThan(mocks.sendMail.mock.invocationCallOrder[0]!);

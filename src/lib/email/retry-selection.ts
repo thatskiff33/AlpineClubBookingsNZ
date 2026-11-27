@@ -1,4 +1,4 @@
-import type { Prisma } from "@prisma/client";
+import type { EmailHandoverState, Prisma } from "@prisma/client";
 
 /**
  * The email retry ceiling: the cron replays a `FAILED` row only while
@@ -27,7 +27,7 @@ export const FIRST_EMAIL_ATTEMPT = 1;
  */
 export function isUnconfirmedDeliveryAwaitingOfficer(row: {
   attempts: number;
-  handoverState?: "PENDING" | "STARTED" | "UNCONFIRMED" | null;
+  handoverState?: EmailHandoverState | null;
 }): boolean {
   return row.handoverState === "UNCONFIRMED" && row.attempts >= EMAIL_RETRY_MAX_ATTEMPTS;
 }

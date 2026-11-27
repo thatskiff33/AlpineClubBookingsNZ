@@ -7260,17 +7260,6 @@ enum EmailLogStatus {
 }
 
 /**
- * Why a send failed closed because this installation's environment role could
- * not be confirmed (#3035, INV-CONFIG-004).
- *
- * Only ever set beside `EmailLogStatus.FAILED`, which is deliberate: an
- * unconfirmed role is a FAULT and the message stays retryable, so it goes out by
- * itself once an operator declares the role. The column is what makes that row
- * distinguishable from an ordinary transport failure by something sturdier than a
- * message string, and the three values are kept apart because the repair differs —
- * set the variable, fix the value you already set, or restore database access.
- */
-/**
  * #5298 (INV-INT-043): where a send stood relative to the mail server.
  *
  *   PENDING     recorded, not yet handed over. The sender and the stranded-row
@@ -7285,6 +7274,17 @@ enum EmailHandoverState {
   UNCONFIRMED
 }
 
+/**
+ * Why a send failed closed because this installation's environment role could
+ * not be confirmed (#3035, INV-CONFIG-004).
+ *
+ * Only ever set beside `EmailLogStatus.FAILED`, which is deliberate: an
+ * unconfirmed role is a FAULT and the message stays retryable, so it goes out by
+ * itself once an operator declares the role. The column is what makes that row
+ * distinguishable from an ordinary transport failure by something sturdier than a
+ * message string, and the three values are kept apart because the repair differs —
+ * set the variable, fix the value you already set, or restore database access.
+ */
 enum EmailDeliveryBlockReason {
   ENVIRONMENT_DECLARATION_MISSING
   ENVIRONMENT_DECLARATION_INVALID

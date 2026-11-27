@@ -18,7 +18,9 @@
  *    before its hand-over, while the sweep and the retry job send its email,
  *    writes nothing and sends nothing when it resumes (#5496 review). Two
  *    sweeps racing for one row settle it once, and a caller-retried alert is
- *    released to its owner, not re-sent.
+ *    released to its owner, not re-sent; a copy of one its sender handed to
+ *    the retry job is replayed once. A late sender cannot claim a row the
+ *    previous release's retry job claimed.
  *
  * Only the delivery policy and the mail transport are replaced (a harness is
  * never the club's live site, and no provider is contacted). Ordinary Vitest
@@ -300,6 +302,34 @@ let retryFailedEmails: (typeof import("@/lib/cron-email-retry"))["retryFailedEma
     expect(await read(owned.id)).toEqual(
       expect.objectContaining({ status: "FAILED", attempts: 1, htmlBody: null, bookingRetryHtmlBody: null }),
     );
+  });
+
+  // The owner of an alert one recipient received has stopped, so the sweep's
+  // release would lose the copy another recipient's lost hand-over left behind.
+  it("replays a caller-retried alert's lost copy once when its sender hands it to the retry job", async () => {
+    const lost = await recorded(`lost-copy@${P}.test`, { templateName: CALLER_RETRIED_TEMPLATE }, 0);
+    const claimed = await recorded(`claimed-copy@${P}.test`, { templateName: CALLER_RETRIED_TEMPLATE, handoverState: "STARTED" }, 0);
+
+    await handover.handLostHandoversToTheRetryJob([lost.id, claimed.id], CALLER_RETRIED_TEMPLATE);
+    expect(await read(lost.id)).toEqual(expect.objectContaining({ status: "FAILED", attempts: 1, htmlBody: lost.htmlBody }));
+    // A copy whose claim did commit is not the retry job's to send.
+    expect(await read(claimed.id)).toEqual(expect.objectContaining({ status: "QUEUED", handoverState: "STARTED" }));
+
+    moveClock(THIRTY_ONE_MINUTES);
+    await retryFailedEmails();
+    await retryFailedEmails();
+    expect(sendsTo(lost.to)).toBe(1);
+    expect(await read(lost.id)).toEqual(expect.objectContaining({ status: "SENT", attempts: 2 }));
+    expect(sendsTo(claimed.to)).toBe(0);
+  });
+
+  // While the previous release drains, its retry job claims a row the sweep
+  // handed back without moving it off PENDING; the stalled sender must lose.
+  it("refuses a late sender's claim on a row the previous release's retry job has claimed", async () => {
+    const row = await recorded(`old-claim@${P}.test`, { attempts: 2 }, 0);
+
+    await expect(handover.claimEmailHandover(row.id)).resolves.toBeNull();
+    expect(await read(row.id)).toEqual(expect.objectContaining({ status: "QUEUED", handoverState: "PENDING", attempts: 2 }));
   });
 
   it("flags a row that may have reached the mail server, sends it to nobody, and puts a bodiless one at the ceiling", async () => {

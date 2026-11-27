@@ -1020,9 +1020,9 @@ never reached the mail server, and flagged to officers otherwise; it is never
 sent twice (#5298).
 
 - **The mark.** `recordEmailAttempt` writes `handoverState` `PENDING`. The
-  sender sends only after its `claimEmailHandover` (`PENDING` to `STARTED`)
-  wins; lost or unwritable, it sends nothing (`handover_lost`). Every sender
-  write is guarded on the row still being its own (`senderEmailRow`), as is a
+  sender sends only after its `claimEmailHandover` (`PENDING` at attempts 1 to
+  `STARTED`) wins; lost or unwritable, it sends nothing (`handover_lost`).
+  Every sender write is guarded on the row still being its own (`senderEmailRow`), as is a
   failed replay's. Retry claims write `STARTED`; null marks old rows.
 - **The sweep.** `sweepStrandedQueuedEmails`, first in each 30-minute retry
   run, settles up to 50 rows `QUEUED` past `strandedQueuedAfterMs()` and
@@ -1032,8 +1032,8 @@ sent twice (#5298).
   the retry ceiling. Anything else goes there as `UNCONFIRMED`. Both
   ceiling outcomes alert officers.
 - **Why never twice.** SES takes no idempotency key and reports only bounces
-  and complaints. Only a row no sender claimed is re-sent, and
-  the claim and the sweep race on one row. An `UNCONFIRMED` row is sent again
+  and complaints. Only a row no sender claimed is re-sent; the claim and the
+  sweep race on one row. An `UNCONFIRMED` row is sent again
   only by an officer's **Try again**, which warns of a duplicate.
 - **Callers.** `isLeftForTheEmailRetryJob` counts `handover_lost` as owed to
   the retry job; an `UNCONFIRMED` keyed email reads as told.

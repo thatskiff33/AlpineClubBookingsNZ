@@ -2885,10 +2885,12 @@ mispricing a booking.
   called from `src/lib/email/core.ts` (`sendEmail`) and
   `src/lib/cron-email-retry.ts` (`retryFailedEmails`, sweep first). The sender
   moves its own `EmailLog` row from `handoverState` `PENDING` to `STARTED` with
-  one `updateMany` guarded on id, `QUEUED` and `PENDING`, and calls the mail
-  server only if it won. Every other write the sender makes to its row
+  one `updateMany` guarded on id, `QUEUED`, `PENDING` and attempts 1 (the
+  previous release's retry job claims a row the sweep handed back without
+  moving it off `PENDING`, and raises attempts), and calls the mail server only
+  if it won. Every other write the sender makes to its row
   (`senderEmailRow`: the booking gate, suppression, environment gate, dev-mode,
-  SENT and FAILED writes) is guarded the same way: on `QUEUED` and `PENDING`
+  SENT and FAILED writes) is guarded the same way: on the claim's own guard
   before the claim, on `STARTED` at the claim's `lastAttemptAt` after it, so a
   sender that stalls past the threshold cannot write over a row the sweep has
   settled. A failed replay's FAILED write is guarded on the row as the retry
@@ -2913,7 +2915,10 @@ mispricing a booking.
   the body, so its count is unchanged; a stranded caller-retried alert is never
   re-sent by the sweep but released the same way, `FAILED` at attempts 1 with
   no body, because its owner sends it again, and `sendUnmuteableAdminAlert`
-  reports its lost hand-over as undelivered so that owner does) and #4963's Try again (a `FAILED` row
+  reports its lost hand-over as undelivered so that owner does; when another
+  recipient received the alert the owner has stopped, so the sender fails the
+  lost copy with its body kept, guarded like the claim, and the retry job
+  replays it) and #4963's Try again (a `FAILED` row
   at the ceiling; the next retry claim writes `STARTED`). Proved on PostgreSQL
   by `stranded-queued-email.realdb.test.ts` (each order, behind a held row; a
   stalled sender resuming through the real `sendEmail`; two racing sweeps).

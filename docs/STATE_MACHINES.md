@@ -4397,7 +4397,7 @@ and its rows are ordinary `SENT`.
 A `QUEUED` row a crash strands is settled by the retry job (#5298,
 `INV-INT-043`). `EmailLog.handoverState` records how far the send got: the
 sender writes `PENDING` with the row, and moves it to `STARTED` with one guarded
-`updateMany` (id, `QUEUED`, `PENDING`) before it calls the mail server; a lost
+`updateMany` (id, `QUEUED`, `PENDING`, attempts 1) before it calls the mail server; a lost
 or failed claim sends nothing (`handover_lost`). Each other write the sender
 makes to its row is guarded on the row still being its own (`PENDING` before
 the claim, the claim's `STARTED` after it), so a sender that stalls past the
@@ -4412,7 +4412,10 @@ guarded on the row as read:
   failures fill that run's batch;
 - `PENDING` at attempts 1, an alert its owner sends again when nobody got it
   (`isCallerRetriedAlertTemplate`, #4669): released to that owner, `FAILED`
-  at attempts 1 with no body, and not sent by the retry job;
+  at attempts 1 with no body, and not sent by the retry job. When another
+  recipient did get that alert, its owner has stopped, so
+  `sendUnmuteableAdminAlert` fails the lost copy with its body kept before it
+  returns (`handLostHandoversToTheRetryJob`) and the retry job replays it;
 - `PENDING` at attempts 1, no body: `FAILED` at the ceiling, "never sent";
 - anything else (`STARTED`, null, or attempts above 1): `FAILED` at the
   ceiling and `UNCONFIRMED`, never sent again automatically. A keyed email's
@@ -4426,8 +4429,8 @@ review queue marks an `UNCONFIRMED` row "May already have been delivered"; its
 
 ```text
 email queued -> send attempted -> sent
-queued, never handed over, stranded 30 min -> failed (retried) or failed at the ceiling (no body)
-queued, hand-over started or unknown, stranded 30 min -> failed at the ceiling, unconfirmed (officer decides)
+queued, never handed over, stranded past the threshold -> failed (retried) or failed at the ceiling (no body)
+queued, hand-over started or unknown, stranded past the threshold -> failed at the ceiling, unconfirmed (officer decides)
 confirmed copy -> environment-safety suppression (terminal, no provider contacted)
 unconfirmed role or capture-in-production -> retryable failure carrying a block reason
 send failure -> retryable failed -> suppression + booking authority rechecked

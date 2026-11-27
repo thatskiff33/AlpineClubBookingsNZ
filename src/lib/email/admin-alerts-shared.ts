@@ -25,6 +25,7 @@ import {
   type AdminAlertRecipientDeliveryOutcome,
 } from "@/lib/email-admin-alert-escalation";
 import { sendEmail } from "./core";
+import { handLostHandoversToTheRetryJob } from "./handover";
 import { isLeftForTheEmailRetryJob } from "./send-outcome";
 import {
   type EmailAttachment,
@@ -445,7 +446,7 @@ export async function sendUnmuteableAdminAlert({
   // #5255: as `sendAdminAlertTo`, the once-ever claim goes to this alert's own rows only.
   const onceEverClaim = takeOnceEverClaim();
   const outcomes = await Promise.all(
-    emails.map(async (email): Promise<AdminAlertRecipientDeliveryOutcome & { claimRefused?: true; handoverLost?: true }> => {
+    emails.map(async (email): Promise<AdminAlertRecipientDeliveryOutcome & { claimRefused?: true; handoverLost?: string }> => {
       try {
         const outcome = await sendEmail({
           to: email,
@@ -464,7 +465,7 @@ export async function sendUnmuteableAdminAlert({
         const heldOnACopy =
           outcome.status === "withheld_for_environment" &&
           outcome.reason === "environment_non_production";
-        if (outcome.status === "handover_lost") return { status: "suppressed", handoverLost: true };
+        if (outcome.status === "handover_lost") return { status: "suppressed", handoverLost: outcome.emailLogId };
         return { status: outcome.status === "sent" || heldOnACopy ? "sent" : "suppressed" };
       } catch (err) {
         if (err instanceof OnceEverClaimRefusedError) {
@@ -486,10 +487,16 @@ export async function sendUnmuteableAdminAlert({
   // sweep, which re-sends it. Like a copy the cron holds, every copy is kept
   // and the owner does not send it again. Not a caller-retried alert: the sweep
   // releases that one to its owner, whose retry is then the only one.
+  const lostHandovers = outcomes.flatMap((outcome) => outcome.handoverLost ?? []);
   const sweepHoldsACopy =
-    shouldPersistEmailHtml(templateName) &&
-    !isCallerRetriedAlertTemplate(templateName) &&
-    outcomes.some((outcome) => outcome.handoverLost);
+    shouldPersistEmailHtml(templateName) && !isCallerRetriedAlertTemplate(templateName) && lostHandovers.length > 0;
+  // A caller-retried alert somebody did receive: its owner sees "sent" and
+  // sends nothing more, so a copy that lost its hand-over goes to the cron now
+  // (#4669's "the cron's to replay"), before the sweep can release it to an
+  // owner that is no longer retrying.
+  if (!nobodyReceivedIt && isCallerRetriedAlertTemplate(templateName)) {
+    await handLostHandoversToTheRetryJob(lostHandovers, templateName);
+  }
   // Before anything else can fail, and before the owner can retry.
   const release =
     nobodyReceivedIt && !sweepHoldsACopy && isCallerRetriedAlertTemplate(templateName)

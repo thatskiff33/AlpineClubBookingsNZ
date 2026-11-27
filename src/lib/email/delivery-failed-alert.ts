@@ -13,12 +13,9 @@ const DELIVERY_FAILED_ALERT_TEMPLATE = "admin-email-failure";
  * Never throws: it is called from a cron loop that must carry on. Skipped for
  * the alert's own template, so a failing alert cannot raise another.
  */
-export async function alertOfficersOfUndeliveredEmail(params: {
-  recipient: string;
-  templateName: string;
-  attemptCount: number;
-  stranded?: "unconfirmed" | "never_sent";
-}): Promise<void> {
+export async function alertOfficersOfUndeliveredEmail(
+  params: Parameters<typeof adminEmailDeliveryFailedTemplate>[0],
+): Promise<void> {
   if (params.templateName === DELIVERY_FAILED_ALERT_TEMPLATE) return;
   try {
     // Imported dynamically: the mailer's barrel reaches the retry cron's callers.
