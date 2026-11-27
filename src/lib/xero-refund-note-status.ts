@@ -356,28 +356,6 @@ export async function readRefundNoteRowsByPayment(
 }
 
 /**
- * #4288, #4347: the rows through which each payment counts this note in its
- * refunded total - its refund-note row, then its account-credit row - read NOW
- * on the caller's client, one after the other (a transaction client runs one
- * statement at a time). A payment with neither has no entry. The recount
- * counts the note only when EVERY row it has still counts it, so a void on
- * either role wins.
- */
-export async function readCountedNoteRowsByPayment(
-  creditNoteId: string,
-  paymentIds: readonly string[],
-  db: Pick<Prisma.TransactionClient, "xeroObjectLink">,
-): Promise<Map<string, { active: boolean; metadata: unknown }[]>> {
-  const byPayment = new Map<string, { active: boolean; metadata: unknown }[]>();
-  for (const role of [REFUND_CREDIT_NOTE_LINK_WHERE.role, ACCOUNT_CREDIT_NOTE_ROLE] as const) {
-    for (const [paymentId, row] of await readRefundNoteRowsByPayment(creditNoteId, paymentIds, db, role)) {
-      byPayment.set(paymentId, [...(byPayment.get(paymentId) ?? []), row]);
-    }
-  }
-  return byPayment;
-}
-
-/**
  * #4447, #4347: true when no stored snapshot of the note refuses this reading -
  * `judgeRefundNoteWrite` answers "apply" against every one. A reading a newer
  * stored snapshot or a stored void beat is not current, and nothing that

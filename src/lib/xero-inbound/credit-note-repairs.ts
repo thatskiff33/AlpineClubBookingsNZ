@@ -1,7 +1,7 @@
 import { APPLIED_CREDIT_ALLOCATION_ROLE } from "@/lib/xero-applied-credit-link-roles";
 import { storedShortBookingId } from "@/lib/booking-reference";
 import { type CreditNote as XeroCreditNote } from "xero-node";
-import { CreditType, PaymentSource, PaymentStatus } from "@prisma/client";
+import { CreditType, PaymentSource, PaymentStatus, type Prisma } from "@prisma/client";
 import { bookingOwner } from "@/lib/booking-owner";
 import { syncBookingLedgerCredits } from "@/lib/booking-ledger-credit-sync";
 import { prisma } from "@/lib/prisma";
@@ -9,7 +9,8 @@ import { lockPaymentForRefundedTotal, PAYMENT_ROW_WAIT_TRANSACTION_OPTIONS } fro
 import logger from "@/lib/logger";
 import { type AccountCreditAllocationRepairResult, type AccountCreditAllocationTarget, type RefundedPaymentBusinessStateRepairResult } from "./types";
 import { getCreditNoteAmountCents, getJsonRecord, getRefundContributionCentsFromCreditNoteMetadata } from "./amounts";
-import { accountCreditNoteReadingIsCurrent, isIncludedRefundCreditNoteStatus, readCountedNoteRowsByPayment } from "@/lib/xero-refund-note-status";
+import { accountCreditNoteReadingIsCurrent, isIncludedRefundCreditNoteStatus, readRefundNoteRowsByPayment, REFUND_CREDIT_NOTE_LINK_WHERE } from "@/lib/xero-refund-note-status";
+import { ACCOUNT_CREDIT_NOTE_ROLE } from "@/lib/xero-booking-credit-note-link-roles";
 import { findActiveXeroObjectLinks } from "./object-links";
 import { notifyXeroSyncError } from "@/lib/xero-error-alert";
 import { sendBankTransferFloorAlert } from "./credit-note-bank-transfer-floor";
@@ -123,6 +124,21 @@ async function includeDeletedAppliedCreditAllocationTargets(
   return [...targetsByInvoiceId.values()];
 }
 
+type CurrentNoteRow = { active: boolean; metadata: unknown };
+
+/**
+ * #4288, #4347: the rows through which each payment counts the note being
+ * synced - its refund-note row, then its account-credit row - read NOW on the
+ * caller's client, one statement at a time. A payment with neither has no entry.
+ */
+async function readCountedNoteRows(creditNoteId: string, paymentIds: readonly string[], db: Pick<Prisma.TransactionClient, "xeroObjectLink">) {
+  const byPayment = new Map<string, CurrentNoteRow[]>();
+  for (const role of [REFUND_CREDIT_NOTE_LINK_WHERE.role, ACCOUNT_CREDIT_NOTE_ROLE] as const) {
+    for (const [paymentId, row] of await readRefundNoteRowsByPayment(creditNoteId, paymentIds, db, role)) byPayment.set(paymentId, [...(byPayment.get(paymentId) ?? []), row]);
+  }
+  return byPayment;
+}
+
 /** #4288: named so this recount is not read as a transaction wrapper - it opens one, but this callback never runs in it. */
 type RecomputeModificationRefundAmounts = () => Promise<Map<string, number>>;
 
@@ -190,7 +206,7 @@ export async function repairRefundedPaymentBusinessState(input: {
   // #4347: and its account-credit row, the same way.
   const [linkedRefundedCentsByPaymentId, currentNoteRows] = await Promise.all([
     decideLinkedRefundedTotalCents(prisma, payments, { excludeCreditNoteId: input.creditNoteId }),
-    input.creditNoteId === null ? new Map<string, { active: boolean; metadata: unknown }[]>() : readCountedNoteRowsByPayment(input.creditNoteId, paymentIds, prisma),
+    input.creditNoteId === null ? new Map<string, CurrentNoteRow[]>() : readCountedNoteRows(input.creditNoteId, paymentIds, prisma),
   ]);
 
   // #4288, #4347: each payment's current note as its own refund-note and account-credit rows hold it NOW (read above, after
@@ -328,7 +344,7 @@ export async function repairRefundedPaymentBusinessState(input: {
     // the Payment row's (`PAYMENT_ROW_WAIT_TRANSACTION_OPTIONS`), not Prisma's 2s/5s: the nightly bank-void follow-up holds it for up to 30s.
     return prisma.$transaction(async (tx) => {
       await lockPaymentForRefundedTotal(tx, payment.id);
-      const now = input.creditNoteId === null ? undefined : (await readCountedNoteRowsByPayment(input.creditNoteId, [payment.id], tx)).get(payment.id);
+      const now = input.creditNoteId === null ? undefined : (await readCountedNoteRows(input.creditNoteId, [payment.id], tx)).get(payment.id);
       if (includesCurrentCreditNoteContribution(payment.id) && !(now && includesCurrentCreditNoteContribution(payment.id, now))) return "recount" as const;
       if (Object.keys(updates).length === 0) return (await tx.payment.findFirst({ where: asRead, select: { id: true } })) ? ("unchanged" as const) : ("lost" as const);
       return (await tx.payment.updateMany({ where: asRead, data: updates })).count === 1 ? ("updated" as const) : ("lost" as const);
