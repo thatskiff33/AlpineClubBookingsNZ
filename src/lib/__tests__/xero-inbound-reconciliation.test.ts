@@ -7660,6 +7660,8 @@ describe("processStoredXeroInboundEvents", () => {
         xeroObjectType: "CREDIT_NOTE",
         role: "ACCOUNT_CREDIT_NOTE",
       }])
+      // #4347: the stamp's check of the note's account-credit rows (none recorded: the reading is current).
+      .mockResolvedValueOnce([])
       .mockResolvedValueOnce([{
         localId: "pay_credit_source_1",
         xeroObjectId: "cn_credit_delete_alloc",
@@ -7667,6 +7669,8 @@ describe("processStoredXeroInboundEvents", () => {
       }])
       .mockResolvedValueOnce([])
       // #4288: the recount's own read of the note's refund-note rows (none: an account-credit note).
+      .mockResolvedValueOnce([])
+      // #4347: and of its account-credit rows (none here, so the reading counts).
       .mockResolvedValueOnce([])
       // Provider allocations are now empty, but this still-active completion
       // link proves the note previously targeted inv_booking_1.
