@@ -4047,9 +4047,8 @@ _Split from `INV-PAY-057` (#3220)._
   a part payment recognised at cancel included, is cash-sized. That receipt
   still includes the corrected amount, so the correction keeps counting and the
   net stays the cash. A recount finds any payment's modification notes by its
-  one invoice (#4444, #5289): a later note drops none, and a note counts once
-  per payment. A card payment's total never rises above Stripe's refunds
-  (owner, 23 Nov), so two notes for one refund cannot pass Stripe.
+  one invoice (#4444, #5289), each counted once per payment. A card payment's
+  total never rises above Stripe's refunds (owner, 23 Nov).
   A keep sets the whole refunded total its links record under the `Payment`
   row (`decideLinkedRefundedTotalCents`, floored), never an increment; every
   allocation writer (inbound, a voided note's removal, the app's own) locks
