@@ -10,7 +10,8 @@ vi.mock("@/lib/prisma", async () => {
 });
 const logger = vi.hoisted(() => ({ info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() }));
 vi.mock("@/lib/logger", () => ({ default: logger }));
-const senders = vi.hoisted(() => ({ xero: vi.fn(), payment: vi.fn(), format: vi.fn() }));
+const senders = vi.hoisted(() => ({ xero: vi.fn(), payment: vi.fn(), format: vi.fn(), complaint: vi.fn() }));
+vi.mock("@/lib/email/admin-alerts-email-complaint", () => ({ sendAdminEmailComplaintAlert: senders.complaint }));
 vi.mock("@/lib/email", () => ({ sendAdminXeroSyncErrorAlert: senders.xero }));
 vi.mock("@/lib/payment-recovery-alert", () => ({
   alertPaymentRecoveryOfficers: senders.payment,
@@ -127,5 +128,35 @@ describe("parseStoredReplayableAlert", () => {
     ]) {
       expect(parseStoredReplayableAlert(broken as never)).toBeNull();
     }
+  });
+});
+
+describe("the stored email complaint alert (#5469)", () => {
+  const COMPLAINT: ReplayableAdminAlert = { kind: "email-complaint", suppressionId: "sup-1", complaintType: "abuse", complainedEmailLogId: null };
+  const COMPLAINT_KEY = "email-complaint:sup-1:fb-1";
+
+  it("MUTATION: reads back with ids only, and refuses one without its suppression row", () => {
+    expect(parseStoredReplayableAlert({ label: "l", alert: COMPLAINT })).toEqual({ label: "l", alert: COMPLAINT });
+    expect(parseStoredReplayableAlert({ label: "l", alert: { ...COMPLAINT, complainedEmailLogId: "log-1" } })).not.toBeNull();
+    for (const broken of [
+      { ...COMPLAINT, suppressionId: undefined },
+      { ...COMPLAINT, complaintType: 3 },
+      { ...COMPLAINT, complainedEmailLogId: 7 },
+    ]) {
+      expect(parseStoredReplayableAlert({ label: "l", alert: broken } as never)).toBeNull();
+    }
+  });
+
+  it("MUTATION: a complaint alert whose send threw is re-sent by the sweep, once, through its own sender", async () => {
+    senders.complaint.mockRejectedValueOnce(new Error("transport down")).mockResolvedValue(UNMUTEABLE_ALERT_SENT);
+
+    await expect(
+      sendReplayableAdminAlertOnceEver({ key: COMPLAINT_KEY, label: "email complaint alert", context: {}, alert: COMPLAINT }),
+    ).resolves.toBe(false);
+    await sweepOnceEverAlerts(new Date(Date.now() + 60_000));
+    await sweepOnceEverAlerts(new Date(Date.now() + 120_000));
+
+    expect(senders.complaint).toHaveBeenCalledTimes(2);
+    expect(senders.complaint).toHaveBeenLastCalledWith(COMPLAINT);
   });
 });

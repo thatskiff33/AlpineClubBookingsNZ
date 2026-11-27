@@ -90,6 +90,9 @@ async function retireUnverifiableBookingEmail(params: {
   );
 }
 
+/** #5469: the retry job's suppression read failed; the row waits for the next run. */
+const SUPPRESSION_UNREADABLE = Symbol("suppression-unreadable");
+
 /**
  * N-11: Retry failed emails with backoff.
  * Queries EmailLog for FAILED records with attempts below
@@ -260,25 +263,16 @@ export async function retryFailedEmails(): Promise<{
     // re-theming a replay would change what the member is shown relative to
     // what the club approved at send time.
     let retryHtml = emailLog.bookingRetryHtmlBody ?? emailLog.htmlBody!;
-    // F26 (#1885): a FAILED row can be created before a bounce or complaint
-    // suppresses the recipient (the pre-send check in core.ts passed, then the
-    // SMTP send failed after the suppression landed). Re-check here so a
-    // suppressed recipient is not re-delivered: on an active suppression mark
-    // the row BOUNCED with the core's reason string and drop the retained body.
-    // #5469: a read that fails skips the row, unclaimed, for the next run,
-    // because a bounce no longer rewrites the address's pending rows, so this
-    // check is all that stops them. (The core's check for a new send still
-    // proceeds on a failed read, as before.)
-    let activeSuppression: Awaited<ReturnType<typeof getActiveEmailSuppression>>;
-    try {
-      activeSuppression = await getActiveEmailSuppression(emailLog.to);
-    } catch (err) {
-      logger.error(
-        { err, emailLogId: emailLog.id, templateName: emailLog.templateName },
-        "Failed to check email suppression state before retry; left for the next run",
-      );
-      continue;
-    }
+    // F26 (#1885): a FAILED row can predate the suppression of its recipient,
+    // so re-check here; an active one marks the row BOUNCED with the core's
+    // reason string and drops the retained body. #5469: a read that fails
+    // skips the row, unclaimed, for the next run, since no bounce rewrites the
+    // address's pending rows any more (the core still proceeds on a failed read).
+    const activeSuppression = await getActiveEmailSuppression(emailLog.to).catch((err: unknown) => {
+      logger.error({ err, emailLogId: emailLog.id }, "Failed to check email suppression state before retry; left for the next run");
+      return SUPPRESSION_UNREADABLE;
+    });
+    if (activeSuppression === SUPPRESSION_UNREADABLE) continue;
 
     if (activeSuppression) {
       await prisma.emailLog
