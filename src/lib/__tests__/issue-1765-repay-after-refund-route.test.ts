@@ -86,6 +86,8 @@ vi.mock("@/lib/payment-transactions", () => ({
 vi.mock("@/lib/xero-booking-invoice-queue", () => ({
   queueXeroInvoiceForPaidBooking: mocks.queueXeroInvoiceForPaidBooking,
 }));
+// #5433: the recovery delivers the confirmation it owes after the invoice (proved in payment-intent-routes.test.ts).
+vi.mock("@/lib/paid-booking-confirmation-notice", () => ({ deliverPaidBookingConfirmation: vi.fn(), sendUnrecordedPaidBookingConfirmation: vi.fn() }));
 
 vi.mock("@/lib/member-credit", () => ({
   deriveBookingAppliedCreditCents: mocks.deriveBookingAppliedCreditCents,
@@ -333,6 +335,7 @@ describe("#1765 repay-after-refund: create-payment-intent", () => {
       amountCents: REPRICED_FINAL,
       paymentMethodId: "pm_123",
       format: CLUB_FORMAT_TEST,
+      owesPaidConfirmation: true,
     });
     expect(mocks.queueXeroInvoiceForPaidBooking).toHaveBeenCalledWith({
       bookingId: "booking-1",
