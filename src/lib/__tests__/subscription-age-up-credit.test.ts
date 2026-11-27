@@ -237,6 +237,26 @@ describe("createAgeUpCredit: credit note on the season invoice (#5190 PR 3)", ()
     expect(mocks.postAgeUpCreditLot).not.toHaveBeenCalled();
   });
 
+  it("MUTATION (settle guard): leaves an adjustment that became a credit lot mid-flight as it is, and reports the operation partial", async () => {
+    // While the note is being allocated, the adjustment is settled as a lot.
+    mocks.createCreditNoteAllocation.mockImplementation(async () => {
+      Object.assign(store.adjustment!, { status: "CREDITED_TO_ACCOUNT", memberCreditId: "credit-lot-9" });
+      return { body: {} };
+    });
+
+    await run();
+
+    expect(store.adjustment).toMatchObject({
+      status: "CREDITED_TO_ACCOUNT",
+      memberCreditId: "credit-lot-9",
+      xeroCreditNoteId: null,
+    });
+    expect(mocks.completeXeroSyncOperation).toHaveBeenCalledWith(
+      syncOperation,
+      expect.objectContaining({ status: "PARTIAL", xeroObjectId: "note-1" }),
+    );
+  });
+
   it("records the failure and leaves the adjustment pending when Xero refuses the note", async () => {
     const refused = new Error("Xero is unavailable");
     mocks.createCreditNotes.mockRejectedValue(refused);
