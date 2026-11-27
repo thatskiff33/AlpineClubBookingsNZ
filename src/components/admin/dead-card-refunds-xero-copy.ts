@@ -1,3 +1,4 @@
+import type { GroupCardRefundXeroQueued } from "@/lib/card-refund-group-paid-another-way-xero";
 import type { PaidAnotherWayXeroPromise, PaidAnotherWayXeroQueued } from "@/lib/card-refund-paid-another-way-xero";
 import { paidAnotherWayReceiptRetryInstruction } from "@/lib/paid-another-way-receipt-retry-wording";
 
@@ -67,4 +68,16 @@ export function xeroQueuedMessage(xeroQueued: PaidAnotherWayXeroQueued | undefin
     return `An invoice recording the failed card refund's money back in the Stripe account, for the amount its card note covered, is queued, and a Xero refund credit note worded "${bankNoteWording}" is queued for the full amount paid back.`;
   }
   return "No Xero refund credit note was queued: check the refund is recorded in Xero.";
+}
+
+/**
+ * #5267: what the message after a group card refund's bank close says it
+ * queued in Xero - each joiner's own note, worded as any close's - and, for an
+ * old whole-group refund whose joiners are not all in Xero, which were not.
+ */
+export function groupXeroQueuedMessage(xeroQueued: GroupCardRefundXeroQueued | undefined, bankNoteWording: string): string {
+  if (xeroQueued === "some-refund-notes") {
+    return `A Xero refund credit note, worded "${bankNoteWording}", is queued on the invoice of each joiner whose booking has one. The others have no Xero invoice to credit: check Xero, and record their refunds there by hand if they need one.`;
+  }
+  return xeroQueuedMessage(xeroQueued, bankNoteWording);
 }

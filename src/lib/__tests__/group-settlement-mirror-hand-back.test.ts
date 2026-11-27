@@ -211,17 +211,6 @@ describe("review M1: the officers are told to credit the group's invoice by hand
   });
 });
 
-describe("#4851: a bank close of the organiser's card refund says the group paid by card", () => {
-  it("names the card and the record the officer can find", async () => {
-    mocks.bookingFindUnique.mockResolvedValueOnce({ parentBookingId: "org-b", member: { firstName: "Sam", lastName: "Joiner" } });
-    mocks.groupBookingFindUnique.mockResolvedValueOnce({ organiserMember: { firstName: "Olive", lastName: "Organiser" }, settlement: { xeroInvoiceNumber: "INV-0042" } });
-    await alertGroupMirrorRefundXeroByHand({ bookingId: "b1", taskId: "op-1", refundCents: 1_500, format: CLUB_FORMAT_TEST, paidBy: "card", reference: "old whole-group card refund op-1" });
-    const sent = mocks.sendAdminXeroSyncErrorAlert.mock.calls.at(-1)![0] as { errorMessage: string };
-    expect(sent.errorMessage).toContain("a group the organiser paid for by card (old whole-group card refund op-1)");
-    expect(sent.errorMessage).not.toContain("internet banking");
-  });
-});
-
 describe("the route reads as a bank transfer everywhere a hand-back does", () => {
   const route: GroupSettlementMirrorRoute = { kind: "group-settlement-mirror", paymentId: "pay-1", bookingModificationId: null, refundCents: 1_500, creditBackCents: 0 };
 

@@ -829,6 +829,32 @@ describe("#4851: a dead refund out of the group organiser's card", () => {
     expect(within(dialog).getByRole("radio", { name: "Paid back part of it" })).toBeDisabled();
   });
 
+  // #5267: the joiner's invoice is credited by the app; nobody is asked to do it by hand.
+  it("MUTATION: a per-joiner row promises the joiner's bank refund note, and the close says it is queued", async () => {
+    openDialog(row({ settleKind: "organiser-child", wholeAmountOnly: true, xeroRefundNote: "now" }));
+    const dialog = screen.getByRole("dialog");
+    expect(dialog).toHaveTextContent(`A Xero refund credit note for the amount, worded "${BANK_NOTE_WORDING}", is queued when you close it.`);
+    expect(dialog).not.toHaveTextContent(/by hand|emailed/);
+    fireEvent.click(fullChoice());
+    fireEvent.change(noteBox(), { target: { value: "Bank transfer to the organiser" } });
+    respond(200, { success: true, outcome: "bank", xeroQueued: "refund-note" });
+    fireEvent.click(closeButton());
+    await waitFor(() => expect(mocks.toastSuccess).toHaveBeenCalled());
+    expect(mocks.toastSuccess).toHaveBeenCalledWith(`The bank payment is recorded. Its Xero refund credit note, worded "${BANK_NOTE_WORDING}", is queued.`);
+  });
+
+  it("an old whole-group close whose joiners are not all in Xero says which were credited", async () => {
+    openDialog(row({ settleKind: "legacy-group", wholeAmountOnly: true, xeroRefundNote: "none", tryCardAgainRefusal: LEGACY_GROUP_CARD_REFUND_TRY_AGAIN_REFUSAL }));
+    fireEvent.click(fullChoice());
+    fireEvent.change(noteBox(), { target: { value: "Bank transfer to the organiser" } });
+    respond(200, { success: true, outcome: "bank", xeroQueued: "some-refund-notes" });
+    fireEvent.click(closeButton());
+    await waitFor(() => expect(mocks.toastSuccess).toHaveBeenCalled());
+    const said = String(mocks.toastSuccess.mock.calls[0]?.[0]);
+    expect(said).toContain(`A Xero refund credit note, worded "${BANK_NOTE_WORDING}", is queued on the invoice of each joiner whose booking has one.`);
+    expect(said).not.toMatch(/emailed/);
+  });
+
   it("Try the card again says the ask goes to the organiser's card, and a deferred retry says when", async () => {
     render(
       <DeadCardRefundsPanel

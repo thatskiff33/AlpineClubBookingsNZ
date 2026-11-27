@@ -33,7 +33,7 @@ import { PAID_BACK_REST_CHOICES, PAID_BACK_REST_LABELS, type PaidBackChoice, typ
 import { MANUAL_PAYMENT_NOTE_MAX } from "@/lib/manual-payment-note";
 import { parseDecimalDollarsToCents } from "@/lib/money-input";
 import { formatCents, formatCentsPlain } from "@/lib/utils";
-import { xeroQueuedMessage, xeroRefundNotePromise } from "@/components/admin/dead-card-refunds-xero-copy";
+import { groupXeroQueuedMessage, xeroQueuedMessage, xeroRefundNotePromise } from "@/components/admin/dead-card-refunds-xero-copy";
 import {
   NothingLeftOwedDialog,
   TryCardAgainDialog,
@@ -274,7 +274,7 @@ export function DeadCardRefundsPanel({
         const sentence = data.outcome === "recorded-stripe"
           ? "Stripe already had this refund. It is recorded, and nobody is paid again."
           : data.outcome === "bank"
-            ? "The bank payment is recorded. Officers are emailed to credit the group's invoice in Xero by hand."
+            ? `The bank payment is recorded. ${groupXeroQueuedMessage(data.xeroQueued, bankNoteWording)}`
             : "Closed. Nothing more is sent, and nobody is paid again.";
         toast.success(sentence);
       } else {
@@ -419,7 +419,7 @@ export function DeadCardRefundsPanel({
               <DialogTitle>Close this card refund as paid another way?</DialogTitle>
               <DialogDescription>
                 {target && isGroupCardRefund(target)
-                  ? "If Stripe already has the refund, this records it and pays nobody again. Otherwise the bank payment is recorded and officers are emailed to credit the group's invoice in Xero by hand."
+                  ? "If Stripe already has the refund, this records it and pays nobody again. Otherwise the bank payment is recorded, and Xero is told as below."
                   : "Stripe will not be asked again. The amount is recorded as refunded on the payment, and the refund leaves Refunds owed. Only do this once the member has the money."}
               </DialogDescription>
             </DialogHeader>
@@ -430,13 +430,12 @@ export function DeadCardRefundsPanel({
               <p className="text-muted-foreground">
                 Settle it here, not with a new refund in the Stripe dashboard.
               </p>
-              {target && isGroupCardRefund(target) ? null : (
-                <p className="text-muted-foreground">
-                  {target
-                    ? xeroRefundNotePromise(target.xeroRefundNote, bankNoteWording, formatCents(target.cardNoteCoversCents, format))
-                    : null}
-                </p>
-              )}
+              {/* #5267: a group row's joiners are credited in Xero as any close's member is. */}
+              <p className="text-muted-foreground">
+                {target
+                  ? xeroRefundNotePromise(target.xeroRefundNote, bankNoteWording, formatCents(target.cardNoteCoversCents, format))
+                  : null}
+              </p>
               <p className="font-medium text-foreground">
                 {target ? `${formatCents(target.owedCents, format)} is still owed.` : null}
               </p>
