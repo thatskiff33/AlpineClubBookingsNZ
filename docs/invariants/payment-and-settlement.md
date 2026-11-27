@@ -3396,12 +3396,13 @@ _Split from `INV-PAY-054` (#3268, epic #3270)._
   (`saved-card-charge-failed`, booking-scoped so the "No emails" switch applies)
   and one admin alert through the existing payment-failure template, its body
   saying in plain English that the card was found unusable, has been removed,
-  that the member has been asked to save a new one, and quoting Stripe. After
-  this run the pm is gone from every row, so the next run never reaches the
-  charge arm for it: a split child takes the #1967 payment-link path with its
-  capped cadence, a plain booking takes `missing_payment_method`, which only
-  logs. A rerun of the SAME run — a crash between the clear and the notices —
-  re-sends, the ordinary at-least-once shape every cron notice here accepts.
+  that the member is emailed separately to save a new one, and quoting Stripe.
+  After this run the pm is gone from every row, so the next run never reaches
+  the charge arm for it: a split child takes the #1967 payment-link path with
+  its capped cadence, a plain booking takes `missing_payment_method`, which only
+  logs. No later run of this branch re-sends them, so both are owed notices
+  (#5433 PR 4): recorded in the clears' own transaction, sent after its commit,
+  and swept by a later run if a stop came between.
   The soft-decline window is a pure function of time from the claim's own hold
   deadline (clamped to creation), which `releaseChargeClaim` writes back
   unchanged, so a rerun in the same window reaches the same answer
