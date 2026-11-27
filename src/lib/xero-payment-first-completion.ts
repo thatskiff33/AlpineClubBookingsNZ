@@ -26,6 +26,7 @@
  */
 import type { Prisma } from "@prisma/client";
 import logger from "@/lib/logger";
+import { asRecord, readString } from "@/lib/xero-json";
 import type { CanonicalRefundNoteAdoption } from "@/lib/xero-refund-note-adoption";
 import { NOTE_ALLOCATION_ROLE } from "@/lib/xero-note-allocation-link-roles";
 
@@ -35,11 +36,6 @@ export type NoteAllocationIntent = { creditNoteId: string | null; invoiceIds: st
 /** A completion's extra link, in the fields this reads. */
 type CompletionLink = { xeroObjectType: string; role: string; active?: boolean; metadata?: unknown };
 
-function readText(record: unknown, key: string): string | null {
-  const value = record && typeof record === "object" ? (record as Record<string, unknown>)[key] : undefined;
-  return typeof value === "string" && value.length > 0 ? value : null;
-}
-
 /**
  * #5289 B: the note allocations a completion writes on (its `extraLinks` with
  * the note's own allocation role, active), or null when it writes none.
@@ -48,9 +44,9 @@ export function noteAllocationIntentOf(extraLinks: readonly CompletionLink[] | u
   const allocations = (extraLinks ?? []).filter(
     (link) => link.xeroObjectType === "ALLOCATION" && link.role === NOTE_ALLOCATION_ROLE && link.active !== false,
   );
-  const invoiceIds = [...new Set(allocations.map((link) => readText(link.metadata, "invoiceId")).filter((id): id is string => id !== null))];
+  const invoiceIds = [...new Set(allocations.map((link) => readString(asRecord(link.metadata)?.invoiceId)).filter((id): id is string => id !== null))];
   if (invoiceIds.length === 0) return null;
-  return { creditNoteId: allocations.map((link) => readText(link.metadata, "creditNoteId")).find((id) => id !== null) ?? null, invoiceIds };
+  return { creditNoteId: allocations.map((link) => readString(asRecord(link.metadata)?.creditNoteId)).find((id) => id !== null) ?? null, invoiceIds };
 }
 
 type InteractiveTransactionRunner = {

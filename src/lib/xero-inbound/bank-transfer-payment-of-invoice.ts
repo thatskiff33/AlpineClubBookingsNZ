@@ -131,9 +131,6 @@ export async function decisionInvoiceIdsOf(
   return decided;
 }
 
-/** A note's allocation link as stored, and the payment its invoice names. */
-export type NoteAllocationOfPayment<L> = { link: L; invoiceId: string; paymentId: string | null };
-
 const NOTE_ALLOCATION_LINK_SELECT = {
   localModel: true,
   localId: true,
@@ -147,6 +144,9 @@ const NOTE_ALLOCATION_LINK_SELECT = {
 
 export type StoredNoteAllocationLink = Prisma.XeroObjectLinkGetPayload<{ select: typeof NOTE_ALLOCATION_LINK_SELECT }>;
 
+/** A note's allocation link as stored, and the payment its invoice names. */
+export type NoteAllocationOfPayment = { link: StoredNoteAllocationLink; invoiceId: string; paymentId: string | null };
+
 /**
  * #5289 A (owner decision D1): a credit note's still-active allocation links
  * (its own role and the role-less one), each with the invoice it records and
@@ -159,7 +159,7 @@ export type StoredNoteAllocationLink = Prisma.XeroObjectLinkGetPayload<{ select:
 export async function bankTransferPaymentsOfNoteAllocations(
   creditNoteId: string,
   db: Db = prisma,
-): Promise<Array<NoteAllocationOfPayment<StoredNoteAllocationLink>>> {
+): Promise<NoteAllocationOfPayment[]> {
   const links = await db.xeroObjectLink.findMany({
     where: {
       xeroObjectType: "ALLOCATION",
