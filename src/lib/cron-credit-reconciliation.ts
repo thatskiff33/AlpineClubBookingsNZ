@@ -21,13 +21,20 @@ import {
 } from "@/lib/xero-operation-outbox";
 
 /**
- * Daily reconciliation of account credit balances.
- * Compares local MemberCredit ledger totals against Xero unallocated credit notes.
- * Alerts admins if discrepancies are found.
+ * Daily check that the app's own account credit records are consistent.
  *
- * Note: Full Xero reconciliation requires querying credit notes per contact,
- * which is expensive. This simplified version just checks local consistency
- * and reports aggregate stats.
+ * LOCAL ONLY. It reads the `MemberCredit` ledger and the payment rows beside
+ * it; it does NOT compare any balance with Xero's unallocated credit notes.
+ * It reports, to the error log and Sentry:
+ * - members whose credit balance is negative;
+ * - cancelled bookings still holding applied credit (#1547), never healed here;
+ * - refunded card payments with no Xero refund credit note recorded locally,
+ *   and re-queues the note each one is missing.
+ * When Xero is connected it also logs how many credit rows carry a Xero credit
+ * note id, for a person to review. That count is not a comparison.
+ *
+ * The first two also appear on the Stuck States page
+ * (`stuck-state-money-signals.ts`, #4910, `INV-PAY-163`).
  */
 export async function reconcileCreditBalances(): Promise<{
   membersWithCredit: number;
