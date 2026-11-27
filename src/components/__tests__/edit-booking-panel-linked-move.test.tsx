@@ -731,4 +731,24 @@ describe("EditBookingPanel — accepting binds every booking's figures (#5238)",
     expect(await screen.findByText(/The price changed since you previewed it/)).toBeInTheDocument();
     await waitFor(() => expect(screen.queryByRole("radio", { name: /Move both bookings/ })).toBeNull());
   });
+
+  it("names no amounts when a refused acceptance's figures may be the other booking's", async () => {
+    // The member previewed a $10.00 charge on this booking; the refusal carries
+    // the dependent's fresh figures, which are not comparable with it.
+    quoteOverrides = { quotedFigures: PRIMARY_FIGURES };
+    modifyResponse = () => jsonResponse(offerWithFigures(), 409);
+    render(<EditBookingPanel booking={makeBooking()} onDone={vi.fn()} />);
+    const saveButton = await saveIntoTheOffer();
+
+    const freshDependent = { ...DEPENDENT_FIGURES, netChargeCents: -200 };
+    modifyResponse = () =>
+      jsonResponse({ code: "EDIT_PRICE_CHANGED", error: "The price changed since you previewed it. Review and save again.", figures: freshDependent }, 409);
+    fireEvent.click(screen.getByRole("radio", { name: /Move both bookings/ }));
+    fireEvent.click(saveButton);
+
+    expect(
+      await screen.findByText("The price changed since you previewed it. Review the new figures and save again."),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/is now/)).toBeNull();
+  });
 });
