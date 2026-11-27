@@ -1,7 +1,7 @@
 /**
  * `INV-INT-021` — the house rule for Xero account mapping keys (#2717).
  *
- * A new mapping key names the Xero account TYPE its picker may offer, says what
+ * A new mapping key names the Xero account classes it accepts, says what
  * it does while unset, and is surfaced in the Xero setup screen until a club
  * configures it. This file pins all three, plus the one-hop fallback resolution
  * both the runtime resolver and the setup screen share.
@@ -37,6 +37,8 @@ import {
   MAPPING_LABELS,
   describeMappingAccountFilter,
   describeMappingOwnWhileUnset,
+  mappingAccountClassFor,
+  mappingCodeClassViolation,
   MAPPING_ACCOUNT_FILTERS,
   XERO_ACCOUNT_MAPPING_DEFINITIONS,
   XERO_ITEM_ONLY_MAPPING_DEFINITIONS,
@@ -46,6 +48,7 @@ import {
   normalizeMappingCode,
   resolveAccountMappingSource,
   type AccountMappingKey,
+  type MappingAccountFilter,
 } from "@/lib/xero-account-mapping-keys";
 import {
   XERO_ACCOUNT_CLASSES,
@@ -69,15 +72,33 @@ const TYPES_BY_CLASS: Record<string, readonly string[]> = {
   ASSET: ["BANK", "CURRENT", "FIXED", "INVENTORY", "NONCURRENT", "PREPAYMENT"],
 };
 
+/** One row of every kind the save check has to tell apart. */
+const MIXED_CHART = [
+  { code: "200", name: "Hut Fees", type: "REVENUE", class: "REVENUE" },
+  { code: "260", name: "Other Revenue", type: "OTHERINCOME", class: "REVENUE" },
+  { code: "404", name: "Refunds Paid", type: "EXPENSE", class: "EXPENSE" },
+  { code: "429", name: "General Expenses", type: "OVERHEADS", class: "EXPENSE" },
+  { code: "606", name: "Business Bank Account", type: "BANK", class: "ASSET" },
+  { code: "620", name: "Prepayments", type: "PREPAYMENT", class: "ASSET" },
+  { code: "800", name: "Accounts Payable", type: "CURRLIAB", class: "LIABILITY" },
+  { code: "970", name: "Owner Funds", type: "EQUITY", class: "EQUITY" },
+];
+
 describe("INV-INT-021: every account mapping key carries an account filter", () => {
-  it("names exactly one Xero account CLASS per key, with no key left out", () => {
+  it("names at least one Xero account CLASS per key, each class once, with no key left out", () => {
     for (const definition of XERO_ACCOUNT_MAPPING_DEFINITIONS) {
-      expect(XERO_ACCOUNT_CLASSES).toContain(definition.accountClass);
+      const filters: readonly MappingAccountFilter[] = definition.accepts;
+      expect(filters.length, definition.key).toBeGreaterThan(0);
+      const classes = filters.map((filter) => filter.accountClass);
+      for (const accountClass of classes) {
+        expect(XERO_ACCOUNT_CLASSES).toContain(accountClass);
+      }
+      // Two entries for one class would make "which heading does this account
+      // sit under?" depend on entry order.
+      expect(new Set(classes).size, definition.key).toBe(classes.length);
       // The picker reads the derived record, so a key missing from it would
       // render an unfiltered account list — every Xero account, of every kind.
-      expect(MAPPING_ACCOUNT_FILTERS[definition.key].accountClass).toBe(
-        definition.accountClass,
-      );
+      expect(MAPPING_ACCOUNT_FILTERS[definition.key]).toEqual(filters);
     }
     expect(Object.keys(MAPPING_ACCOUNT_FILTERS).sort()).toEqual(
       [...ACCOUNT_MAPPING_KEYS].sort(),
@@ -88,10 +109,11 @@ describe("INV-INT-021: every account mapping key carries an account filter", () 
     // A narrowing that stepped outside its class would silently offer the wrong
     // kind of account while the registry still claimed the right class.
     for (const definition of XERO_ACCOUNT_MAPPING_DEFINITIONS) {
-      const narrowing: readonly string[] =
-        "accountTypes" in definition ? definition.accountTypes : [];
-      for (const type of narrowing) {
-        expect(TYPES_BY_CLASS[definition.accountClass] ?? []).toContain(type);
+      const filters: readonly MappingAccountFilter[] = definition.accepts;
+      for (const filter of filters) {
+        for (const type of filter.accountTypes ?? []) {
+          expect(TYPES_BY_CLASS[filter.accountClass] ?? []).toContain(type);
+        }
       }
     }
   });
@@ -99,7 +121,8 @@ describe("INV-INT-021: every account mapping key carries an account filter", () 
   it("describes each filter in a word the setup screen can put in a sentence", () => {
     expect(describeMappingAccountFilter("goodwillWriteOffs")).toBe("expense");
     expect(describeMappingAccountFilter("stripeBankAccount")).toBe("bank");
-    expect(describeMappingAccountFilter("hutFeeRefunds")).toBe("revenue");
+    expect(describeMappingAccountFilter("hutFeesIncome")).toBe("revenue");
+    expect(describeMappingAccountFilter("hutFeeRefunds")).toBe("revenue or expense");
   });
 
   it("gives every key a label and a description the setup screen can render", () => {
@@ -143,7 +166,7 @@ describe("goodwillWriteOffs — the owner's 10 Aug 2026 decision, pinned", () =>
   it("is filtered to EXPENSE accounts, because goodwill is a cost not a discount", () => {
     // Revenue stays at what was billed and goodwill shows as its own cost line.
     // A REVENUE filter here would put it back to contra-revenue silently.
-    expect(MAPPING_ACCOUNT_FILTERS.goodwillWriteOffs.accountClass).toBe("EXPENSE");
+    expect(MAPPING_ACCOUNT_FILTERS.goodwillWriteOffs).toEqual([{ accountClass: "EXPENSE" }]);
   });
 
   it("offers the WHOLE expense class, not just accounts typed EXPENSE", () => {
@@ -154,7 +177,7 @@ describe("goodwillWriteOffs — the owner's 10 Aug 2026 decision, pinned", () =>
     // override, and the club stays on the fallback for ever — which arrives at
     // "you may not configure this", the neighbour of the option the owner
     // explicitly rejected.
-    expect(MAPPING_ACCOUNT_FILTERS.goodwillWriteOffs.accountTypes).toBeUndefined();
+    expect(MAPPING_ACCOUNT_FILTERS.goodwillWriteOffs[0].accountTypes).toBeUndefined();
     const nzStandardChart = [
       { code: "200", name: "Sales", type: "REVENUE", class: "REVENUE" },
       { code: "404", name: "Bank Fees", type: "OVERHEADS", class: "EXPENSE" },
@@ -171,6 +194,10 @@ describe("goodwillWriteOffs — the owner's 10 Aug 2026 decision, pinned", () =>
     // A snapshot Xero returned without a Class must not empty a picker that has
     // worked since before #2717; the narrower type question still answers it.
     const noClass = [{ code: "200", name: "Hut Fees", type: "REVENUE", class: "" }];
+    expect(accountsForMappingKey("hutFeesIncome", noClass).map((a) => a.code)).toEqual([
+      "200",
+    ]);
+    // A two-class key answers it through the entry that declares its types.
     expect(accountsForMappingKey("hutFeeRefunds", noClass).map((a) => a.code)).toEqual([
       "200",
     ]);
@@ -193,9 +220,9 @@ describe("goodwillWriteOffs — the owner's 10 Aug 2026 decision, pinned", () =>
     expect(
       accountsForMappingKey("goodwillWriteOffs", chartOfAccounts).map((a) => a.code),
     ).toEqual(["404", "477"]);
-    // The refund mapping is unchanged and still offers revenue accounts.
+    // The income mapping still offers revenue accounts only.
     expect(
-      accountsForMappingKey("hutFeeRefunds", chartOfAccounts).map((a) => a.code),
+      accountsForMappingKey("hutFeesIncome", chartOfAccounts).map((a) => a.code),
     ).toEqual(["200"]);
   });
 
@@ -203,17 +230,123 @@ describe("goodwillWriteOffs — the owner's 10 Aug 2026 decision, pinned", () =>
     expect(ACCOUNT_MAPPING_KEYS).toContain("goodwillWriteOffs");
   });
 
-  it("leaves the ordinary refund mapping on REVENUE, untouched", () => {
-    expect(MAPPING_ACCOUNT_FILTERS.hutFeeRefunds.accountClass).toBe("REVENUE");
-    expect(MAPPING_ACCOUNT_FILTERS.hutFeeRefunds.accountTypes).toEqual(["REVENUE"]);
+  it("leaves the ordinary refund mapping with no fallback of its own", () => {
     expect(ACCOUNT_MAPPING_FALLBACK_KEYS.hutFeeRefunds).toBeUndefined();
+  });
+});
+
+describe("hutFeeRefunds: revenue or expense, the club's choice (#5235)", () => {
+  it("accepts revenue-type accounts and the whole expense class, and keeps its default", () => {
+    expect(MAPPING_ACCOUNT_FILTERS.hutFeeRefunds).toEqual([
+      { accountClass: "REVENUE", accountTypes: ["REVENUE"] },
+      { accountClass: "EXPENSE" },
+    ]);
+    // An existing club sees no change: the default is still the income account.
+    expect(ACCOUNT_MAPPING_DEFAULTS.hutFeeRefunds).toBe("200");
+    expect(ACCOUNT_MAPPING_DEFAULTS.hutFeeRefunds).toBe(ACCOUNT_MAPPING_DEFAULTS.hutFeesIncome);
+  });
+
+  it("offers revenue and expense accounts, and never a bank, asset, liability or equity one", () => {
+    expect(accountsForMappingKey("hutFeeRefunds", MIXED_CHART).map((a) => a.code)).toEqual([
+      "200",
+      "404",
+      "429",
+    ]);
+  });
+
+  it("says which class each offered account belongs to, for the picker's headings", () => {
+    const byCode = (code: string) => MIXED_CHART.find((account) => account.code === code)!;
+    expect(mappingAccountClassFor("hutFeeRefunds", byCode("200"))).toBe("REVENUE");
+    expect(mappingAccountClassFor("hutFeeRefunds", byCode("404"))).toBe("EXPENSE");
+    expect(mappingAccountClassFor("hutFeeRefunds", byCode("429"))).toBe("EXPENSE");
+    expect(mappingAccountClassFor("hutFeeRefunds", byCode("606"))).toBeNull();
+    // The revenue entry keeps its type narrowing: other income is not offered.
+    expect(mappingAccountClassFor("hutFeeRefunds", byCode("260"))).toBeNull();
+  });
+
+  it("matches on ANY accepted entry, not only the first", () => {
+    // Mutation probe (#5235): reading only `accepts[0]` leaves every
+    // single-class key green and silently drops the expense accounts here.
+    const expenseOnly = MIXED_CHART.filter((account) => account.class === "EXPENSE");
+    expect(accountsForMappingKey("hutFeeRefunds", expenseOnly)).toEqual(expenseOnly);
+    for (const account of expenseOnly) {
+      expect(mappingCodeClassViolation("hutFeeRefunds", account.code, MIXED_CHART)).toBeNull();
+    }
+  });
+
+  it("leaves the keys that fall back to it on their own single class", () => {
+    expect(accountsForMappingKey("goodwillWriteOffs", MIXED_CHART).map((a) => a.code)).toEqual([
+      "404",
+      "429",
+    ]);
+    expect(accountsForMappingKey("openingCredits", MIXED_CHART).map((a) => a.code)).toEqual(["800"]);
+  });
+});
+
+describe("mappingCodeClassViolation: the class is checked on save (#5235, owner decision 22 Nov 2026)", () => {
+  it("allows a revenue or an expense account on the refund mapping", () => {
+    expect(mappingCodeClassViolation("hutFeeRefunds", "200", MIXED_CHART)).toBeNull();
+    expect(mappingCodeClassViolation("hutFeeRefunds", "404", MIXED_CHART)).toBeNull();
+    expect(mappingCodeClassViolation("hutFeeRefunds", "429", MIXED_CHART)).toBeNull();
+  });
+
+  it.each([
+    ["606", "an asset account"],
+    ["620", "an asset account"],
+    ["800", "a liability account"],
+    ["970", "an equity account"],
+  ])("refuses %s on the refund mapping, naming the key and what it accepts", (code, kind) => {
+    const violation = mappingCodeClassViolation("hutFeeRefunds", code, MIXED_CHART);
+    expect(violation).toContain("Hut Fee Refunds needs a revenue or expense account");
+    expect(violation).toContain(code);
+    expect(violation).toContain(kind);
+  });
+
+  it("names the type, not the class, when the class is accepted and the type is not", () => {
+    // "needs a revenue account, and 260 is a revenue account" would be nonsense.
+    expect(mappingCodeClassViolation("hutFeesIncome", "260", MIXED_CHART)).toBe(
+      "Hut Fees Income needs a revenue account, and 260 (Other Revenue) is an account of type OTHERINCOME in the connected Xero organisation.",
+    );
+  });
+
+  it("judges every account key by its own entries, with nothing spelt out per key", () => {
+    for (const key of ACCOUNT_MAPPING_KEYS) {
+      const offered = new Set(accountsForMappingKey(key, MIXED_CHART).map((a) => a.code));
+      for (const account of MIXED_CHART) {
+        const violation = mappingCodeClassViolation(key, account.code, MIXED_CHART);
+        // The picker and the save agree on every row: offered means allowed.
+        expect(violation === null, `${key} ${account.code}`).toBe(offered.has(account.code));
+      }
+    }
+  });
+
+  it("has nothing to judge without a chart, a code, or a chart row for the code", () => {
+    expect(mappingCodeClassViolation("hutFeeRefunds", "606", null)).toBeNull();
+    expect(mappingCodeClassViolation("hutFeeRefunds", "606", undefined)).toBeNull();
+    expect(mappingCodeClassViolation("hutFeeRefunds", null, MIXED_CHART)).toBeNull();
+    expect(mappingCodeClassViolation("hutFeeRefunds", "  ", MIXED_CHART)).toBeNull();
+    // A code the cached chart does not list may be newer than the cache.
+    expect(mappingCodeClassViolation("hutFeeRefunds", "999", MIXED_CHART)).toBeNull();
+    expect(mappingCodeClassViolation("hutFeeRefunds", " 606 ", MIXED_CHART)).not.toBeNull();
+  });
+
+  it("does not refuse a row whose class the snapshot does not carry, unless a type entry settles it", () => {
+    const noClass = [
+      { code: "429", name: "General Expenses", type: "OVERHEADS", class: "" },
+      { code: "606", name: "Bank", type: "BANK", class: null },
+    ];
+    // The expense entry asks the class question and cannot tell: allowed.
+    expect(mappingCodeClassViolation("hutFeeRefunds", "429", noClass)).toBeNull();
+    expect(mappingCodeClassViolation("hutFeeRefunds", "606", noClass)).toBeNull();
+    // A key whose every entry names its types can still tell.
+    expect(mappingCodeClassViolation("hutFeesIncome", "606", noClass)).toContain("type BANK");
+    expect(mappingCodeClassViolation("stripeBankAccount", "606", noClass)).toBeNull();
   });
 });
 
 describe("openingCredits: the owner's 16 Nov 2026 decision on #4988, pinned", () => {
   it("offers the whole LIABILITY class, falls back to hutFeeRefunds and has no default", () => {
-    expect(MAPPING_ACCOUNT_FILTERS.openingCredits.accountClass).toBe("LIABILITY");
-    expect(MAPPING_ACCOUNT_FILTERS.openingCredits.accountTypes).toBeUndefined();
+    expect(MAPPING_ACCOUNT_FILTERS.openingCredits).toEqual([{ accountClass: "LIABILITY" }]);
     expect(ACCOUNT_MAPPING_FALLBACK_KEYS.openingCredits).toBe("hutFeeRefunds");
     expect(ACCOUNT_MAPPING_DEFAULTS.openingCredits).toBeNull();
   });
@@ -430,8 +563,8 @@ describe("INV-SSOT-001: one reading of a Xero account's class", () => {
  * The registry knows which keys hold an account code and which hold an item
  * code, so the mix-up is refused rather than stored as an edit that does
  * nothing. It does NOT know a club's chart of accounts, so it cannot say
- * whether a code names an expense account — the invariant states that limit
- * plainly rather than claiming a guarantee the mechanism does not hold.
+ * whether a code names an expense account: that is `mappingCodeClassViolation`'s
+ * question, asked with the chart in hand.
  */
 describe("mappingWriteViolation (#2717)", () => {
   it("refuses an account code on an item-only key", () => {
@@ -470,10 +603,12 @@ describe("mappingWriteViolation (#2717)", () => {
   });
 
   it("does NOT judge whether a code names the right kind of account", () => {
-    // Stated, not hidden: a revenue code on the goodwill key is accepted here,
-    // because answering needs the connected org's chart. INV-INT-021 says so,
-    // and the setup screen flags a stored code that is outside the filter.
+    // A revenue code on the goodwill key passes THIS check, because answering
+    // needs the connected org's chart. The check that has the chart refuses it.
     expect(mappingWriteViolation("goodwillWriteOffs", { code: "200" })).toBeNull();
+    expect(mappingCodeClassViolation("goodwillWriteOffs", "200", MIXED_CHART)).toContain(
+      "Goodwill & Write-Offs needs an expense account",
+    );
   });
 });
 

@@ -11,9 +11,9 @@
  * Every one of those consumers now derives from the definitions below.
  *
  * `INV-INT-021` is the house rule this file makes structural rather than
- * policed: a new account mapping key names the Xero account TYPE its picker may
- * offer (`accountType` is REQUIRED — a key with no filter cannot be written),
- * declares what it does while unset (`defaultCode`, or a `fallbackKey` naming
+ * policed: a new account mapping key names the Xero account classes it accepts
+ * (`accepts` is REQUIRED and never empty — a key with no filter cannot be
+ * written), declares what it does while unset (`defaultCode`, or a `fallbackKey` naming
  * the mapping that keeps working until a club configures this one), and is
  * surfaced in the Xero setup screen while it is unset. Never a hard failure on
  * upgrade, never a silent default.
@@ -27,6 +27,25 @@ import {
   type XeroAccountClass,
 } from "@/lib/xero-account-class";
 
+/** One kind of account a key accepts (`INV-INT-021`): a class, or types inside it. */
+export type MappingAccountFilter = {
+  /**
+   * The Xero account CLASS. Class, not type — type has four separate
+   * expense-class values and the single field meaning "this is an expense
+   * account" is the class. Goodwill is `EXPENSE` because goodwill is a cost the
+   * club chose to bear, not a reduction of what it billed (owner, 10 Aug 2026).
+   */
+  readonly accountClass: XeroAccountClass;
+  /**
+   * OPTIONAL narrowing WITHIN that class, for a key that wants less than the
+   * whole of it — `stripeBankAccount` wants a bank account, which is one type
+   * inside class `ASSET`. Every listed type must belong to the declared class;
+   * `xero-account-mapping-registry.test.ts` holds that. Omitted, the entry
+   * accepts the whole class, which is what a broad question like "an expense
+   * account" needs.
+   */
+  readonly accountTypes?: readonly string[];
+};
 
 export type XeroAccountMappingDefinition = {
   /** The `XeroAccountMapping.key` column value. Permanent: rows are keyed by it. */
@@ -36,22 +55,13 @@ export type XeroAccountMappingDefinition = {
   /** Admin picker help text. */
   readonly description: string;
   /**
-   * REQUIRED (`INV-INT-021`): the Xero account CLASS this key's picker offers.
-   * Class, not type — type has four separate expense-class values and the
-   * single field meaning "this is an expense account" is the class. Goodwill is
-   * `EXPENSE` because goodwill is a cost the club chose to bear, not a
-   * reduction of what it billed (owner, 10 Aug 2026).
+   * REQUIRED, never empty (`INV-INT-021`): the kinds of Xero account this key
+   * accepts. An account is accepted when ANY entry matches it. Most keys have
+   * one entry; a key a club may answer either way, such as `hutFeeRefunds`
+   * (#5235), lists one entry per class. The picker, the save, configuration
+   * import and the setup check all read this one list (`INV-SSOT`).
    */
-  readonly accountClass: XeroAccountClass;
-  /**
-   * OPTIONAL narrowing WITHIN that class, for a key that wants less than the
-   * whole of it — `stripeBankAccount` wants a bank account, which is one type
-   * inside class `ASSET`. Every listed type must belong to the declared class;
-   * `xero-account-mapping-registry.test.ts` holds that. Omitted, the key offers
-   * the whole class, which is what a broad question like "an expense account"
-   * needs.
-   */
-  readonly accountTypes?: readonly string[];
+  readonly accepts: readonly [MappingAccountFilter, ...MappingAccountFilter[]];
   /** Application default when no row exists or the row's code is null. */
   readonly defaultCode: string | null;
   /**
@@ -89,17 +99,23 @@ export const XERO_ACCOUNT_MAPPING_DEFINITIONS = [
     key: "hutFeesIncome",
     label: "Hut Fees Income",
     description: "Sales account for booking income line items",
-    accountClass: "REVENUE",
-    accountTypes: ["REVENUE"],
+    accepts: [{ accountClass: "REVENUE", accountTypes: ["REVENUE"] }],
     defaultCode: "200",
     carriesItemCode: true,
   },
   {
     key: "hutFeeRefunds",
     label: "Hut Fee Refunds",
-    description: "Account for refund credit notes",
-    accountClass: "REVENUE",
-    accountTypes: ["REVENUE"],
+    description:
+      "Account for refund credit notes. Choose a revenue account to show refunds as a reduction of hut fee income, or an expense account to show them as a cost.",
+    // #5235 (owner request, 18 Nov 2026): a club may record refunds against
+    // income or as a cost, so both classes are accepted (`INV-CONFIG-001`). The
+    // revenue entry keeps the type narrowing it always had; the expense entry
+    // is the whole class, for the reason given on `goodwillWriteOffs` below.
+    accepts: [
+      { accountClass: "REVENUE", accountTypes: ["REVENUE"] },
+      { accountClass: "EXPENSE" },
+    ],
     defaultCode: "200",
     carriesItemCode: true,
   },
@@ -112,7 +128,7 @@ export const XERO_ACCOUNT_MAPPING_DEFINITIONS = [
     // Zealand chart the range a treasurer puts write-offs in is typed
     // OVERHEADS, so narrowing to type EXPENSE would render an empty picker and
     // leave the club on the fallback for ever.
-    accountClass: "EXPENSE",
+    accepts: [{ accountClass: "EXPENSE" }],
     defaultCode: null,
     fallbackKey: "hutFeeRefunds",
     unsetEntriesLabel: "goodwill entries",
@@ -127,7 +143,7 @@ export const XERO_ACCOUNT_MAPPING_DEFINITIONS = [
       "Liability account for credit brought across from your old system with an opening-credit import, for example a member credits held account. When a member spends that credit on a booking, the Xero credit note line is coded here, so spending it reduces the balance your club already carries in Xero. Leave it unset if the old credit was never recorded in Xero: it then posts to the refund account. Once set, that line is sent with the tax rate mapped to the Exempt tax category, so a GST-registered club maps Exempt first, and the account must be one no other mapping uses. Check the choice with your treasurer or accountant.",
     // The whole liability class: charts name and type this account in more
     // than one way (current liability, or a plain liability).
-    accountClass: "LIABILITY",
+    accepts: [{ accountClass: "LIABILITY" }],
     defaultCode: null,
     fallbackKey: "hutFeeRefunds",
     unsetEntriesLabel: "spent opening credits",
@@ -138,8 +154,7 @@ export const XERO_ACCOUNT_MAPPING_DEFINITIONS = [
     description: "Bank account used to record Stripe payments",
     // A bank account is one type inside class ASSET; this key wants that type
     // and nothing else, so the narrowing is the whole filter here.
-    accountClass: "ASSET",
-    accountTypes: ["BANK"],
+    accepts: [{ accountClass: "ASSET", accountTypes: ["BANK"] }],
     defaultCode: "606",
   },
   {
@@ -147,8 +162,7 @@ export const XERO_ACCOUNT_MAPPING_DEFINITIONS = [
     label: "Bank Transfer Refunds Account",
     description:
       "Bank account a refund the club sends by internet banking is recorded against — the credit-note payment that shows the money leaving. Leave it unset and such a credit note is raised WITHOUT a settling payment, so it stays visibly outstanding in Xero for the treasurer to match to the bank line (#3529). A card refund never reads this: it is recorded against the Stripe bank account only when Stripe reports the refund.",
-    accountClass: "ASSET",
-    accountTypes: ["BANK"],
+    accepts: [{ accountClass: "ASSET", accountTypes: ["BANK"] }],
     // No default and NO fallback key, by owner decision (#3529, 20 Sep 2026):
     // Xero records a payment only where the money verifiably moved, and the
     // Stripe account is the one place a bank transfer never came from. The
@@ -163,16 +177,14 @@ export const XERO_ACCOUNT_MAPPING_DEFINITIONS = [
     key: "stripeFees",
     label: "Stripe Fees",
     description: "Expense account for Stripe transaction fees (optional)",
-    accountClass: "EXPENSE",
-    accountTypes: ["EXPENSE"],
+    accepts: [{ accountClass: "EXPENSE", accountTypes: ["EXPENSE"] }],
     defaultCode: null,
   },
   {
     key: "subscriptionIncome",
     label: "Subscription Income",
     description: "Account code used to detect Annual Membership Fee invoices",
-    accountClass: "REVENUE",
-    accountTypes: ["REVENUE"],
+    accepts: [{ accountClass: "REVENUE", accountTypes: ["REVENUE"] }],
     defaultCode: "203",
     carriesItemCode: true,
   },
@@ -181,8 +193,7 @@ export const XERO_ACCOUNT_MAPPING_DEFINITIONS = [
     label: "Membership Cancellation Credits",
     description:
       "Credit note account and item used to reverse unpaid Annual Membership Fee invoices when membership cancellation is approved",
-    accountClass: "REVENUE",
-    accountTypes: ["REVENUE"],
+    accepts: [{ accountClass: "REVENUE", accountTypes: ["REVENUE"] }],
     defaultCode: "203",
     carriesItemCode: true,
   },
@@ -282,27 +293,15 @@ export const MAPPING_DESCRIPTIONS: Record<string, string> = {
   ...byKey(XERO_ITEM_ONLY_MAPPING_DEFINITIONS, (d) => d.description),
 };
 
-/** The accounts one key's picker may offer (`INV-INT-021`). */
-export type MappingAccountFilter = {
-  readonly accountClass: XeroAccountClass;
-  readonly accountTypes?: readonly string[];
-};
-
-/** `INV-INT-021`: the account filter each key's picker applies. */
+/** `INV-INT-021`: the kinds of account each key accepts, any one of which matches. */
 export const MAPPING_ACCOUNT_FILTERS: Record<
   AccountMappingKey,
-  MappingAccountFilter
-> = byKey(XERO_ACCOUNT_MAPPING_DEFINITIONS, (d) => ({
-  accountClass: d.accountClass,
-  ...("accountTypes" in d ? { accountTypes: d.accountTypes } : {}),
-})) as Record<AccountMappingKey, MappingAccountFilter>;
+  readonly MappingAccountFilter[]
+> = byKey(
+  XERO_ACCOUNT_MAPPING_DEFINITIONS,
+  (d): readonly MappingAccountFilter[] => d.accepts,
+) as Record<AccountMappingKey, readonly MappingAccountFilter[]>;
 
-/**
- * The word the setup screen uses for the kind of account a key wants — "bank",
- * "revenue", "expense". A key narrowed to one type is named by that type,
- * because that is what an admin is being asked to pick; a key that offers a
- * whole class is named by the class.
- */
 /** What the setup screen calls this key's entries while its fallback is live. */
 export function describeMappingUnsetEntries(key: AccountMappingKey): string {
   return MAPPING_UNSET_ENTRY_LABELS[key] ?? "entries";
@@ -334,11 +333,20 @@ const MAPPING_WHILE_UNSET: Record<string, string | undefined> = byKey(
   (d) => ("whileUnset" in d ? d.whileUnset : undefined),
 );
 
+/**
+ * The word the setup screen uses for the kind of account a key wants — "bank",
+ * "revenue", "expense", or "revenue or expense" for a key that accepts two
+ * classes. An entry narrowed to one type is named by that type, because that
+ * is what an admin is being asked to pick; an entry that accepts a whole class
+ * is named by the class.
+ */
 export function describeMappingAccountFilter(key: AccountMappingKey): string {
-  const filter = MAPPING_ACCOUNT_FILTERS[key];
-  const narrowed =
-    filter.accountTypes?.length === 1 ? filter.accountTypes[0] : null;
-  return (narrowed ?? filter.accountClass).toLowerCase();
+  const nouns = MAPPING_ACCOUNT_FILTERS[key].map((filter) => {
+    const narrowed =
+      filter.accountTypes?.length === 1 ? filter.accountTypes[0] : null;
+    return (narrowed ?? filter.accountClass).toLowerCase();
+  });
+  return [...new Set(nouns)].join(" or ");
 }
 
 const MAPPING_UNSET_ENTRY_LABELS: Record<string, string | undefined> = byKey(
@@ -362,31 +370,117 @@ export const ACCOUNT_MAPPING_FALLBACK_KEYS: Readonly<
   ).map((definition) => [definition.key, definition.fallbackKey]),
 );
 
+/** What a chart row must carry for a key's filter to judge it. */
+type FilterableAccount = { type: string; class?: string | null };
+
 /**
- * The accounts a key's picker may offer (`INV-INT-021`).
- *
- * The filter lives here rather than inline in the picker so "goodwill offers
- * expense accounts only" is a fact one unit test can hold, and so a picker
- * cannot come to filter on anything other than the key's declared filter.
+ * How one accepted-account entry reads one chart row.
  *
  * It matches on the account's CLASS — the one field that means "this is an
  * expense account", and the same field the finance reports classify by (see
  * `xero-account-class.ts`). A chart row whose class the snapshot does not carry
- * still answers the narrower TYPE question, so a key that declares its types
- * keeps offering exactly the accounts it offered before #2717 even then; a key
- * that asks the broad class question drops such a row rather than guess.
+ * still answers the narrower TYPE question, so an entry that declares its types
+ * keeps matching exactly the accounts it matched before #2717 even then; an
+ * entry that asks the broad class question cannot tell, and says so rather than
+ * guess.
  */
-export function accountsForMappingKey<
-  Account extends { type: string; class?: string | null },
->(key: AccountMappingKey, accounts: readonly Account[]): Account[] {
-  const filter = MAPPING_ACCOUNT_FILTERS[key];
-  const typeMatches = (account: Account) =>
+function filterVerdict(
+  filter: MappingAccountFilter,
+  account: FilterableAccount,
+): "match" | "mismatch" | "unknown" {
+  const typeMatches =
     filter.accountTypes == null || filter.accountTypes.includes(account.type);
-  return accounts.filter((account) => {
-    const accountClass = normalizeXeroAccountClass(account.class);
-    if (accountClass) return accountClass === filter.accountClass && typeMatches(account);
-    return filter.accountTypes != null && typeMatches(account);
-  });
+  const accountClass = normalizeXeroAccountClass(account.class);
+  if (accountClass) {
+    return accountClass === filter.accountClass && typeMatches ? "match" : "mismatch";
+  }
+  if (filter.accountTypes == null) return "unknown";
+  return typeMatches ? "match" : "mismatch";
+}
+
+/**
+ * The class of the entry an account matched for `key`, or `null` when the key
+ * does not accept the account (`INV-INT-021`). The picker groups a two-class
+ * key's accounts under this, so the heading an account sits under and the rule
+ * that let it in cannot disagree.
+ */
+export function mappingAccountClassFor(
+  key: AccountMappingKey,
+  account: FilterableAccount,
+): XeroAccountClass | null {
+  const matched = MAPPING_ACCOUNT_FILTERS[key].find(
+    (filter) => filterVerdict(filter, account) === "match",
+  );
+  return matched?.accountClass ?? null;
+}
+
+/**
+ * The accounts a key's picker may offer (`INV-INT-021`): those ANY of its
+ * accepted entries matches.
+ *
+ * The filter lives here rather than inline in the picker so "goodwill offers
+ * expense accounts only" is a fact one unit test can hold, and so a picker
+ * cannot come to filter on anything other than the key's declared filter. A row
+ * no entry can judge (no class, and the entry asks the class question) is
+ * dropped rather than guessed at.
+ */
+export function accountsForMappingKey<Account extends FilterableAccount>(
+  key: AccountMappingKey,
+  accounts: readonly Account[],
+): Account[] {
+  return accounts.filter((account) => mappingAccountClassFor(key, account) != null);
+}
+
+/** "a revenue" / "an expense": the article the notices put before an account noun. */
+export function withIndefiniteArticle(noun: string): string {
+  return `${/^[aeiou]/i.test(noun) ? "an" : "a"} ${noun}`;
+}
+
+/**
+ * Why `code` may not be saved on `key`, or `null` when it may (#5235; owner
+ * decision of 22 Nov 2026: the class is checked on save, not only in the
+ * picker). The account-mappings API, configuration import and the setup check
+ * all ask this one question, of the same registry entries the picker filters
+ * by (`INV-INT-021`, `INV-SSOT`).
+ *
+ * It answers from the chart of accounts the caller already holds, and refuses
+ * only what that chart PROVES is the wrong kind of account. With no chart (Xero
+ * not connected, or nothing cached yet), a code the chart does not list, or a
+ * row whose class the snapshot does not carry, there is nothing to judge and
+ * the code is allowed, as it always was.
+ */
+export function mappingCodeClassViolation(
+  key: AccountMappingKey,
+  code: string | null | undefined,
+  chart:
+    | readonly (FilterableAccount & { code: string; name?: string | null })[]
+    | null
+    | undefined,
+): string | null {
+  const wanted = normalizeMappingCode(code);
+  if (wanted == null || chart == null) return null;
+  const account = chart.find((row) => normalizeMappingCode(row.code) === wanted);
+  if (!account) return null;
+  const verdicts = MAPPING_ACCOUNT_FILTERS[key].map((filter) =>
+    filterVerdict(filter, account),
+  );
+  if (verdicts.includes("match") || verdicts.includes("unknown")) return null;
+
+  const accountClass = normalizeXeroAccountClass(account.class);
+  // An account of an accepted class that still fails is the wrong TYPE inside
+  // it, so naming its class would read as a contradiction.
+  const classIsAccepted = MAPPING_ACCOUNT_FILTERS[key].some(
+    (filter) => filter.accountClass === accountClass,
+  );
+  const actual =
+    accountClass && !classIsAccepted
+      ? `${withIndefiniteArticle(accountClass.toLowerCase())} account`
+      : `an account of type ${account.type}`;
+  const named = account.name?.trim() ? `${wanted} (${account.name.trim()})` : wanted;
+  return (
+    `${MAPPING_LABELS[key]} needs ${withIndefiniteArticle(describeMappingAccountFilter(key))} account, ` +
+    `and ${named} is ${actual} in the connected Xero organisation.`
+  );
 }
 
 /**
@@ -445,9 +539,9 @@ const ITEM_ONLY_KEYS: ReadonlySet<string> = new Set<string>(
  * item code set there while its account code was unset was discarded whole,
  * because the resolver returns the FALLBACK key's resolution verbatim.
  *
- * It judges VALUES, never the account behind them: nothing here can say whether
- * a code names an expense account in the connected Xero organisation, because
- * that needs the chart. `INV-INT-021` states that limit plainly.
+ * It judges VALUES, never the account behind them. Whether a code names the
+ * right kind of account needs the chart of accounts, and is
+ * `mappingCodeClassViolation`'s question.
  */
 export function mappingWriteViolation(
   key: string,
