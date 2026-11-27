@@ -37,7 +37,7 @@ import {
   MAPPING_LABELS,
   describeMappingAccountFilter,
   describeMappingOwnWhileUnset,
-  mappingAccountClassFor,
+  groupAccountsForMappingKey,
   mappingCodeClassViolation,
   MAPPING_ACCOUNT_FILTERS,
   XERO_ACCOUNT_MAPPING_DEFINITIONS,
@@ -254,14 +254,35 @@ describe("hutFeeRefunds: revenue or expense, the club's choice (#5235)", () => {
     ]);
   });
 
-  it("says which class each offered account belongs to, for the picker's headings", () => {
-    const byCode = (code: string) => MIXED_CHART.find((account) => account.code === code)!;
-    expect(mappingAccountClassFor("hutFeeRefunds", byCode("200"))).toBe("REVENUE");
-    expect(mappingAccountClassFor("hutFeeRefunds", byCode("404"))).toBe("EXPENSE");
-    expect(mappingAccountClassFor("hutFeeRefunds", byCode("429"))).toBe("EXPENSE");
-    expect(mappingAccountClassFor("hutFeeRefunds", byCode("606"))).toBeNull();
-    // The revenue entry keeps its type narrowing: other income is not offered.
-    expect(mappingAccountClassFor("hutFeeRefunds", byCode("260"))).toBeNull();
+  it("groups the offered accounts under a heading per class, in the registry's order", () => {
+    const groups = groupAccountsForMappingKey("hutFeeRefunds", MIXED_CHART);
+    expect(groups.map((group) => [group.heading, group.accounts.map((a) => a.code)])).toEqual([
+      ["Revenue accounts", ["200"]],
+      // 606 (bank) and 260 (other income: the revenue entry keeps its type
+      // narrowing) sit under neither heading.
+      ["Expense accounts", ["404", "429"]],
+    ]);
+  });
+
+  it("leaves a class the chart has no account for without a heading", () => {
+    const revenueOnly = MIXED_CHART.filter((account) => account.class === "REVENUE");
+    expect(groupAccountsForMappingKey("hutFeeRefunds", revenueOnly).map((group) => group.heading)).toEqual([
+      "Revenue accounts",
+    ]);
+  });
+
+  it("gives a single-class key one block with no heading", () => {
+    expect(groupAccountsForMappingKey("goodwillWriteOffs", MIXED_CHART)).toEqual([
+      { accountClass: "EXPENSE", heading: null, accounts: accountsForMappingKey("goodwillWriteOffs", MIXED_CHART) },
+    ]);
+  });
+
+  it("groups exactly the accounts the key offers, for every key", () => {
+    for (const key of ACCOUNT_MAPPING_KEYS) {
+      const grouped = groupAccountsForMappingKey(key, MIXED_CHART).flatMap((group) => group.accounts);
+      expect(new Set(grouped), key).toEqual(new Set(accountsForMappingKey(key, MIXED_CHART)));
+      expect(grouped, key).toHaveLength(accountsForMappingKey(key, MIXED_CHART).length);
+    }
   });
 
   it("matches on ANY accepted entry, not only the first", () => {

@@ -404,7 +404,7 @@ function filterVerdict(
  * key's accounts under this, so the heading an account sits under and the rule
  * that let it in cannot disagree.
  */
-export function mappingAccountClassFor(
+function mappingAccountClassFor(
   key: AccountMappingKey,
   account: FilterableAccount,
 ): XeroAccountClass | null {
@@ -429,6 +429,40 @@ export function accountsForMappingKey<Account extends FilterableAccount>(
   accounts: readonly Account[],
 ): Account[] {
   return accounts.filter((account) => mappingAccountClassFor(key, account) != null);
+}
+
+/** One block of a key's picker: the accounts it offers that share a class. */
+export interface MappingAccountGroup<Account> {
+  accountClass: XeroAccountClass;
+  /**
+   * "Revenue accounts", "Expense accounts": the heading the block sits under,
+   * or `null` for a key that accepts one class, whose picker is one plain list.
+   */
+  heading: string | null;
+  accounts: Account[];
+}
+
+/**
+ * `accountsForMappingKey`, arranged for the picker (#5235): one block per class
+ * the key accepts, in the order the registry declares them, each account in the
+ * block of the entry that let it in. A class with no account in the chart has
+ * no block. The blocks together are exactly `accountsForMappingKey`.
+ */
+export function groupAccountsForMappingKey<Account extends FilterableAccount>(
+  key: AccountMappingKey,
+  accounts: readonly Account[],
+): MappingAccountGroup<Account>[] {
+  const classes = [...new Set(MAPPING_ACCOUNT_FILTERS[key].map((filter) => filter.accountClass))];
+  return classes
+    .map((accountClass) => ({
+      accountClass,
+      heading:
+        classes.length > 1
+          ? `${accountClass[0]}${accountClass.slice(1).toLowerCase()} accounts`
+          : null,
+      accounts: accounts.filter((account) => mappingAccountClassFor(key, account) === accountClass),
+    }))
+    .filter((group) => group.accounts.length > 0);
 }
 
 /** "a revenue" / "an expense": the article the notices put before an account noun. */
