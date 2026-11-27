@@ -19,7 +19,7 @@ export function PendingCreditCorrections({
 }: {
   corrections: PendingCreditDeductionCorrectionItem[]
   cancellingCorrectionId: string | null
-  canEdit: boolean
+  canEdit: boolean | undefined
   onCancel: (correctionId: string) => void
 }) {
   const format = useClubFormat()
