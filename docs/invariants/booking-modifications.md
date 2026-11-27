@@ -1296,16 +1296,14 @@ same way, or this heading changes. A booking with no stored night rows no
 longer parks: its nights are valued from the stay envelope and its stored total.
 One parked before #4317 prices the same way. `bookings:edit-review-cleanup`
 closes any still-OPEN review and re-bases a frozen headline once (#4343); until
-that run, `editedBookingTotalCents` carries the gap. The fence stays until the
-OPEN count is 0. No path raises or reopens a review.
+that run, `editedBookingTotalCents` carries the gap. No path raises or reopens
+a review.
 
-**Legacy: the fence stays until every review raised before #4317 is settled**
-(waves B and C). `assertNoPendingEditFinancialReview` sits ahead of every
-money-affecting edit and throws a 409 while any `EDIT_FINANCIAL_REVIEW` task on
-the booking is OPEN, because the edit would price against money the older one
-parked. Identity-only edits (`moneyAffecting: false`) pass straight through, and
-a consent-authority removal is exempt. The cleanup dismisses that still-open
-review once the guest is gone and moves no more money; an officer is warned.
+**The pending-review fence is retired** (#4344 wave C2). It refused a
+money-affecting edit while an `EDIT_FINANCIAL_REVIEW` task on the booking was
+OPEN; #4343's clean-up left none, so no edit is refused on that ground. A
+consent removal made while one was open already credited the guest, so the
+cleanup dismisses that review and moves no more money; an officer is warned.
 
 ## INV-MOD-042
 
@@ -1486,15 +1484,13 @@ removes any of them is a change to the rule above, not a tidy-up.
 
 - **Legacy (only a review raised before #4317 can be open): a member can still
   be asked for, and pay, the PRE-EDIT price while it is.** A parked shortening
-  left `Booking.finalPriceCents` at the figure it had before, and no payment path is fenced on an open review —
-  `bookingHasOpenFinancialReview` is read by the member's banner, the modified
-  email, the history builders and a diagnostic, and by nothing that takes money.
-  That is deliberate: the stored total IS the last figure a person stood behind,
+  left `Booking.finalPriceCents` at the figure it had before, and no payment path
+  is fenced on an open review. That is deliberate: the stored total IS the last figure a person stood behind,
   the review exists precisely to settle the difference afterwards through
   `chooseEditReviewSettlementRoute`, and fencing payment would strand a member
   on a `PAYMENT_PENDING` booking they cannot pay for, on a booking the club then
-  holds no money against. The member is told, by the banner and by the email,
-  that the adjustment is still being worked out.
+  holds no money against. Since #4344 wave C2 the member is no longer shown a
+  pending-review banner or email note; #4343's clean-up left no review open.
 
 ## INV-MOD-050
 

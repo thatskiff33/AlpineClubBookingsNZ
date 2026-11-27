@@ -2690,8 +2690,7 @@ DISMISSED -> OPEN   (#3498, owner decision D2: an officer with finance:edit puts
                      who dismissed the row, when, and what they said - the claim
                      clears all three off the row, so that entry is the only
                      place they survive. Everything the OPEN status governs
-                     re-arms with it: the pending-review fence, and the
-                     member-facing banner. See `INV-PAY-099`. Since #4343 an
+                     re-arms with it. See `INV-PAY-099`. Since #4343 an
                      `EDIT_FINANCIAL_REVIEW` is refused on this arm, before the
                      claim, and nothing is written: officer edit reviews are
                      retired. Remaining OPEN rows of that kind are settled or
@@ -3055,20 +3054,13 @@ There are FOUR creators, and only the first, second and fourth ever make an OPEN
   the state and #3032 the settlement and the fence; #3031, #3032 and #3166 added
   the raise callers, and #4317 removed every one of them.
 
-**#3032: while a review is OPEN, a MONEY-AFFECTING edit to that booking is
-refused** (legacy: only a review raised before #4317 can be OPEN).
-`assertNoPendingEditFinancialReview` (`src/lib/edit-financial-review.ts`)
-is called by the batch, date and guest-removal edit services, the guest-add route
-and the acceptance re-price under their locks, on
-the post-lock re-read and before any write, and answers `409` with the code
-`EDIT_FINANCIAL_REVIEW_PENDING`. It is deliberately narrow. An identity-only edit,
-a credit election and the price-preserving admin date shift are not fenced,
-because none of them reads the booking's stored money. Nor is a CONSENT-AUTHORITY
-removal (`CONSENT_DECLINE` / `CONSENT_EXPIRY`): owner decision D-14 says a member
-who never consented must always be able to come off a booking, so that removal
-proceeds rather than being held behind a pricing question nobody has answered.
-No removal parks its money since #4317, so the exemption's only effect is that
-the fence does not refuse it. The removal already credited the guest, so
+**An OPEN review no longer refuses an edit** (#4344 wave C2). #3032's
+pending-review fence refused a money-affecting edit while a review on the
+booking was OPEN, with a `409` coded `EDIT_FINANCIAL_REVIEW_PENDING`; a
+consent-authority removal (owner decision D-14) was exempt. #4343's clean-up
+left no OPEN review, and wave C2 removed the fence and its pending-review
+banner, list label, pay-link note and email note. A consent removal that came
+off while a review was open already credited the guest, so
 `bookings:edit-review-cleanup` dismisses the review that guest was on instead of
 settling it, and its own completion is refused under the same lock if a removal
 lands mid-run. An officer settling it by hand is warned, not refused (owner,

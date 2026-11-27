@@ -2226,8 +2226,8 @@ total at apply).
   `INV-PAY-067`; occurrence lifecycle `INV-PAY-060` and `INV-PAY-068`;
   settlement routing `INV-PAY-061` and `INV-PAY-069`; the charging direction
   `INV-PAY-062`, `INV-PAY-070`, `INV-PAY-063`, `INV-PAY-071`, `INV-PAY-064` and
-  `INV-PAY-072`; the refund legs and the anchor `INV-PAY-065`; the fence and
-  the constraints `INV-PAY-066`; reopening, `INV-PAY-099`.
+  `INV-PAY-072`; the refund legs and the anchor `INV-PAY-065`; the retired fence
+  and the constraints `INV-PAY-066`; reopening, `INV-PAY-099`.
 - **Late cash on a cancelled ORGANISATION-owned booking raises a hand-back task,
   never account credit** (#3369): an organisation has no ledger, so the money
   sits on the payments board and an admin is told.
@@ -2374,8 +2374,8 @@ _Legacy: settles tasks raised before #4317._
   reopening is an officer's own audited act and only from DISMISSED
   ([INV-PAY-099]). A
   replay cannot see a terminal row: the raise runs inside the caller's
-  transaction, and a new edit reaches the raise only after
-  `assertNoPendingEditFinancialReview` has confirmed nothing on the booking is
+  transaction, and a new edit reached the raise only after the pending-review
+  fence (retired by #4344 wave C2) had confirmed nothing on the booking was
   OPEN. Pinned by `edit-financial-review.test.ts` and
   `edit-financial-review-races.realdb.test.ts`.
 - **A stored night price is not proof of a sold price, which is why a human
@@ -2637,8 +2637,7 @@ _Legacy: settles tasks raised before #4317._
   `booking-payment.manual-refund-task.reopen` with a REQUIRED note, carrying who
   dismissed the row, when, and what they said — the claim clears all three from
   the row, so that entry is the only place they survive. Reopening re-arms
-  everything the OPEN status governs, including the pending-review fence
-  ([INV-PAY-066]) and the member-facing banner. An `EDIT_FINANCIAL_REVIEW` is
+  everything the OPEN status governs. An `EDIT_FINANCIAL_REVIEW` is
   the exception (#4343): refused before the claim, whether an officer or the
   machine dismissed it, and the finance queue does not offer it. Still-OPEN
   rows of that kind are closed by `bookings:edit-review-cleanup`. Home:
@@ -3100,13 +3099,10 @@ _Legacy: settles tasks raised before #4317._
 
 ## INV-PAY-066
 
-- **Live gating, for reviews raised before #4317 only.** **While a review is
-  OPEN, a money-affecting edit to that booking is refused** (#3032,
-  `assertNoPendingEditFinancialReview`), because pricing one
-  would mean starting from the amount under review. **All FOUR money-affecting
-  doors are fenced**: the batch edit, the date edit, the single-guest removal,
-  and `POST /api/bookings/[id]/guests`, which reprices inline in the route. Each is called inside the transaction, after the locks and the post-lock re-read, below authorisation and before any write, and each surfaces the 409 with its `code` above its handler's generic `ApiError` branch. Identity-only edits, credit elections, the price-preserving admin date
-  shift and consent-authority removals (owner decision D-14) are not fenced.
+- **No edit is gated on an open review** (#4344 wave C2). #3032's
+  pending-review fence refused a money-affecting edit while a review on the
+  booking was OPEN, at all four money-affecting doors. #4343's clean-up left no
+  OPEN review, and wave C2 removed the fence and its 409.
 - **Three database constraints, because prose is not enforcement** (migration
   `20260903010000`). An `EDIT_FINANCIAL_REVIEW` row must carry its
   `occurrenceKey` (`ManualRefundTask_edit_review_occurrence_key_present`) —

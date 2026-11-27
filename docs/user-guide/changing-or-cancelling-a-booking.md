@@ -120,7 +120,7 @@ choice — is not part of it and is named on the screen before you send it; make
 changes separately once the request is decided. Full detail in
 [Booking a stay](booking-a-stay.md#asking-to-be-let-past-a-booking-rule).
 
-### When the club has to check the amount
+### How a change is priced
 
 Every change is now priced when you save it, from what your booking was charged:
 nights you keep keep their price, nights you give back are credited at what they
@@ -129,51 +129,8 @@ night by night, so the credits always add up to what you were charged), and nigh
 you add are charged at today's prices. The quote you see before saving is exactly
 what saving does.
 
-A few changes made before that came in are still being checked by the club. For
-those, the club's records did not say clearly enough what those particular nights
-were sold for, so rather than guess at a number that was never actually charged,
-the club **saved the change and is working the amount out by hand**. If one of
-yours is among them, this is what you will see.
-
-You will see this on the booking page as **"Your booking change is saved"**. It
-tells you the change went through, shows your new dates, and says the club is
-checking what the change means for the amount. Nothing has been refunded or
-charged for it while that is happening.
-
-**There is nothing for you to do about that change.** Your stay is unaffected,
-your beds are held as normal, and somebody from the club will confirm the amount
-with you. You will not be shown a figure for it in the meantime — not even a
-zero — because until somebody has checked, there genuinely is not one, and a
-made-up number is worse than an honest wait. On **My Bookings** the booking's
-total is marked *"being checked"* for the same reason.
-
-**The total shown is the one from before your change.** While the club is
-working the amount out it deliberately leaves the booking's total exactly as it
-was — moving it would mean knowing by how much, which is the very thing being
-checked. Your new dates and your new guest list are saved and shown, so the
-total sits beside them looking settled when it is not yet. Every page that shows
-you that figure says so in as many words.
-
-**If the booking itself is still unpaid, you can still pay it, and you should.**
-A change can give back nights the club cannot price while adding nights that
-price normally, so the stay is going ahead and the amount on your payment page
-is still the club's ask — and if you are paying by an emailed link, it is the
-only way to pay at all. Pay it as usual rather than waiting: a payment link that
-expires can cost you the booking. If the amount turns out to have been more than
-you owed, the club puts that right when they finish the check, and money you
-paid by card goes back to that card. "Nothing to do" applies only to the amount
-being checked.
-
-The change-confirmation email says the same thing, and if the change also added
-something you owe for it says that too, with the amount, the invoice number and
-the payment reference. The two are separate and are shown separately.
-
 In the booking's **Transaction History** you will see the change listed with how
-much the booking's own total moved. That figure is real, but it is not a refund
-that has been paid — the row says so while the club is still working the
-adjustment out.
-
-If you would like to know where it is up to, just contact the club office.
+much the booking's own total moved.
 
 ### Resume and edit a draft
 
@@ -250,7 +207,7 @@ guide.
 | Change costs less on a booking your group organiser paid for by card | The difference goes back to the organiser's card, because they paid it; there is no account-credit choice |
 | Change costs more on a booking your group organiser paid for by card | The change cannot be paid online; contact the club |
 | Change costs more on a booking your group organiser paid for by internet banking | The extra, with any late-change fee, is invoiced to the organiser, not you; your email says so and there is nothing for you to pay |
-| The club's records do not say what each night was sold for | Your change is priced when you save it: your stay's stored total is shared across its nights, so what you are credited or charged always adds up to what you paid. A change made before this, still being checked, is worked out by a person and confirmed with you |
+| The club's records do not say what each night was sold for | Your change is priced when you save it: your stay's stored total is shared across its nights, so what you are credited or charged always adds up to what you paid. |
 | Nights are locked (near check-in) | The change may need club review before it applies |
 | Cancel a paid booking | Refund to card or account credit, per the cancellation schedule |
 | Cancel a booking your group organiser paid for by card | Any refund goes back to the organiser's card, per the cancellation schedule; there is no account-credit choice |
@@ -288,10 +245,6 @@ account-deletion rights in [Managing your account](your-account.md#privacy-and-d
 | You expected a card refund but got account credit (or vice versa) | The outcome depends on how the booking was paid and club settings | Check the **Account Credit** section on your profile; contact the office if it looks wrong |
 | Cancelling shows "no refund" | The booking was never paid | Nothing to refund — the booking is simply cancelled |
 | There is no Cancel button, and the page says the booking is with the club for review | A booking under review is withdrawn by the officer reviewing it, so that it also leaves their review queue | Contact the club office and ask them to withdraw it |
-| Your change saved but no refund or credit appeared, and the page says the club is checking | The change was made before every change was priced automatically, and the club's record of what those nights were sold for was not clear enough to work it out then | Nothing to do about that part — somebody at the club is working it out and will confirm it with you. Contact the office if you would like to know where it is up to |
-| The page says the club is checking an amount, but also asks you to pay | The change gave back nights that could not be priced and added nights that priced normally, so the stay is going ahead. The amount asked for is the booking's own total from **before** your change — the club leaves it alone while they work the adjustment out | Pay it as you normally would, rather than waiting: a payment link that expires can cost you the booking. The club settles the difference when they finish the check, and anything you overpaid by card goes back to that card |
-| **Transaction History** shows a minus figure for the change but nothing came back | That figure is how much the booking's total moved, not a refund that has been paid | Nothing to do — the row says while the adjustment is still being worked out; the refund or credit follows once the club confirms it |
-| **My Bookings** shows a total marked "being checked" | The same thing: it is the total from before your change, and the adjustment for the change is still being decided | Wait for the club to confirm the amount; the total will settle once they have |
 | Your membership-cancellation request is stuck | It is waiting on participant confirmations or admin review | Confirm your own inclusion; ask the club office if a link expired |
 
 ## Related links

@@ -630,9 +630,6 @@ sold price the records cannot tell us** tool on a booking's **Admin tools** card
   it has no buttons, and closing it is refused with a sentence saying the review
   was retired. Reload the page.
 
-A booking with a review waiting also shows a **Money waiting for review** warning
-on its own page, under **Admin tools**, with a link back to this page.
-
 **What an open review does and does not block.** A review raised against a
 captured payment blocks that payment's manual settlement from being reversed —
 the block is scoped to the payment the task names. A review with no payment

@@ -318,7 +318,7 @@ Prefix `INV-PAY`.
 | `INV-PAY-064` | Recovery replays close debt only when the ask exists; edit-time answer |
 | `INV-PAY-072` | Repair pass dates the primary invoice from operation history; unrequested shares traced |
 | `INV-PAY-065` | Card refunds cap before claiming, task-keyed; anchor is the original edit |
-| `INV-PAY-066` | Live fence on money doors for pre-#4317 reviews; three DB constraints |
+| `INV-PAY-066` | Edit fence for pre-#4317 reviews retired (#4344 C2); three DB constraints |
 | `INV-PAY-002` | Account credit is consumed only at `PAYMENT_PENDING`; a draft election spends nothing |
 | `INV-PAY-003` | The edit path writes an election only onto DRAFT, AWAITING_REVIEW and PAYMENT_PENDING |
 | `INV-PAY-004` | Members edit own drafts; draft edits move no money or capacity |

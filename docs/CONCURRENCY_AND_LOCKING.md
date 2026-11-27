@@ -5629,29 +5629,14 @@ have been visible already.
 #### Reopening a dismissed edit review takes lock(1) (#3498)
 
 **#3498 ADDS THE ONE TRANSITION ON THIS TABLE THAT DOES TAKE
-`pg_advisory_xact_lock(1)`, AND THE REASON IS THE DIRECTION IT MOVES THE FENCE.**
-An officer may put a DISMISSED money task back on the queue
-(`reopenManualRefundTask`, owner decision D2), except an `EDIT_FINANCIAL_REVIEW`:
-since #4343 that kind is refused before the claim, so a retired review cannot
-re-arm the fence. Every other kind still can. Every paragraph above argues that a
-closure needs no advisory key; the reopen is not its mirror image and inherits
-none of that argument.
-
-A closure moves `OPEN -> terminal`, which only RELAXES
-`assertNoPendingEditFinancialReview`: an edit that read the fence and proceeded
-was entitled to proceed. The reopen moves `DISMISSED -> OPEN`, which TIGHTENS the
-same fence **retroactively**, against money-affecting edits already in flight.
-Without a key that interleaves, and the interleaving pays a member twice:
-
-1. a member's date change takes `lock(1)`, reads the fence — the task is
-   `DISMISSED`, so it proceeds — and runs a long edit that issues account credit
-   against its own `BookingModification` M2;
-2. mid-window an officer reopens the task, holding nothing;
-3. both commit. The task is now `OPEN` on a booking whose edit has already
-   settled, its `reviewContext` still points at the earlier modification M1, and
-   the `MemberCredit.sourceBookingModificationId` anchor for M1 is free — so
-   completing it credits the member a second time, and the `@unique` anchor that
-   would have refused a replay never sees one.
+`pg_advisory_xact_lock(1)`.** An officer may put a DISMISSED money task back on
+the queue (`reopenManualRefundTask`, owner decision D2), except an
+`EDIT_FINANCIAL_REVIEW`, which #4343 refuses before the claim. Every paragraph
+above argues that a closure needs no advisory key; the reopen is not its mirror
+image. `DISMISSED -> OPEN` puts a settled money question back in the global
+cohort, so it serialises with cancel, capture and refund. Its first reason, that
+a reopened edit review re-armed the pending-review fence against edits in
+flight, went with the fence (#4344 wave C2).
 
 So the reopen takes `pg_advisory_xact_lock(1)` as its first statement, before it
 reads the row. **#5197:** the same core (`reopenInTransaction#1`) serves a late
@@ -6103,28 +6088,12 @@ and issue exactly one credit.
 
 #### One read inside the booking-edit lock envelope
 
-**And one new READ inside the booking-edit lock envelope.**
-`assertNoPendingEditFinancialReview` is called by `modifyBookingBatch`,
-`modifyBookingDates` and `removeBookingGuestInTransaction` after both locks and
-after the post-lock re-read, on the caller's `tx`. It takes no key of its own and
-adds no tier: it is a `findFirst` on the caller's transaction client, placed under
-the locks precisely so it cannot be answered by a task a concurrent completion
-was about to close. `adminShiftBookingDates` is the one edit path deliberately
-NOT fenced — it is price-preserving (`priceDiffCents: 0`, no refund, no credit),
-so it needs no money baseline. The predicate the three fenced services pass is
-each one's OWN repricing test, not a second expression beside it: the batch
-service passes `!pricePreservingModification`, the same value that chooses between
-the identity echo and the pricing engine twenty lines later. An earlier revision
-asked a similar-looking pair that differed by the other-lodge term, and a request
-carrying a name edit AND an other-lodge election — one the route's schema
-accepts — skipped the fence and then repriced.
-
-The preview takes the same fence, on the same predicate expressed in its own
-names (`src/app/api/bookings/[id]/modify-quote/route.ts`). It reads on the module
-client because a preview opens no transaction and writes nothing: a race with a
-completing review costs a stale quote, which the save then refuses under its
-locks. Without it the member would be shown a refund priced from a baseline the
-club has already said it cannot read, and the save would 409 on submit.
+**Retired by #4344 wave C2.** The pending-review fence (#3032) was a `findFirst`
+on the caller's `tx` inside the booking-edit lock envelope, taking no key of its
+own, in the batch, date, guest-removal and guest-add doors, the acceptance
+re-price and the `modify-quote` preview. Once #4343's clean-up left no OPEN
+`EDIT_FINANCIAL_REVIEW` task, wave C2 removed it. No edit door reads review tasks
+under its locks, and no lock, key or order changed with it.
 
 #### Booking soft-delete cancels its PaymentIntents after the commit, never under `lock(1)`
 
