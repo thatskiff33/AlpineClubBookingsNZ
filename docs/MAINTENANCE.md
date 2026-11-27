@@ -2059,8 +2059,9 @@ its own transaction under the member's credit-ledger advisory lock, re-checking
 the predicate under that lock so a re-run heals nothing. It makes ZERO
 Xero/Stripe/SES calls. The daily credit-reconciliation cron also alerts
 (alert-only, no auto-heal) under the tag
-`credit-reconciliation:orphaned-applied-credits`; a post-fix hit means a NEW
-regression — diagnose before running this script.
+`credit-reconciliation:orphaned-applied-credits`, and Stuck States lists each
+booking under **Cancelled bookings still holding credit** (#4910); a post-fix
+hit means a NEW regression — diagnose before running this script.
 
 Always start with a dry run (the default) against a non-production copy:
 
@@ -2491,6 +2492,24 @@ acknowledge each instance with its reference, and a figure that moves after
 sign-off goes stale and holds the gate again, so nothing stays "in flight"
 unseen. The census takes no lock, so run it off-peak against
 production; a whole history is read in one transaction, 500 bookings a page.
+
+### The nightly run of both censuses (#4910)
+
+The `booking-money-census` cron job runs this census and `booking-money:census`
+every night at 05:30 club time ([`INV-PAY-163`](invariants/payment-and-settlement.md#inv-pay-163)).
+It is the same code, read-only, with no acknowledgement file, so every finding
+is reported. It records a bounded summary on its `CronJobRun` row (verdict,
+counts per class, up to 20 booking ids per class, the reconciliation totals)
+and emails admins who receive payment failure alerts once per new finding (a
+census class on a booking); a night with nothing new sends nothing. Stuck States
+shows the latest good run: drift as **Booking money records disagree**, known
+classes as **Known booking money classes not acknowledged**, and **Money check
+did not run** when the latest run failed or is more than 36 hours old.
+
+What stays operator work: the full report, `--json`, `--fail-on-gap`, checking
+known classes against the owner's `--acknowledged` file, and every repair. Run
+the command above against a non-production copy, or production under a
+SELECT-only role, to see what a finding is.
 
 ### Back-post the booking ledger and open the cut-over gate (#3583)
 

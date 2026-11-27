@@ -505,6 +505,31 @@ To collect it by hand:
    the supplementary invoice the Xero repair tool raises unpaid for a change
    whose card request stopped, and record it as paid when the money arrives.
 
+### The nightly money check and credit faults
+
+Every night at 05:30 the app checks that each booking's payment records agree
+with its booking ledger, the record of every charge, payment and refund on it
+(#4910). The check only reads; it never changes or repairs anything. Four
+signals come from it, or from the daily credit check:
+
+- **Booking money records disagree** (Critical): the check found a booking
+  whose figures do not match, or could not be compared. The row names the
+  kind of mismatch and the booking. Admins who receive payment failure alerts
+  are emailed the first time each one is found, never again for the same one.
+  A person with server access runs `pnpm run booking-ledger:census` for the
+  full report; the app does not fix these itself.
+- **Known booking money classes not acknowledged** (Info): known history the
+  club's owner has not yet signed off. These are not new faults. The server
+  has no copy of the owner's sign-off file, so they stay listed.
+- **Money check did not run** (Warning): the latest nightly run failed, or
+  there has been no good run for more than 36 hours. Anything else the check
+  shows is from its last good run. Open [Background Jobs](background-jobs.md)
+  for the error.
+- **Members with negative credit** and **Cancelled bookings still holding
+  credit** (Critical): account credit that should not be possible. Open the
+  member's credit history, or the booking, to find the cause before anyone
+  runs the repair described in the maintenance guide.
+
 ## Settings reference
 
 The page has no settings. What it shows:
@@ -527,6 +552,7 @@ and **Bookings with unnamed guests** name each booking and its owner; and the
 payment signals (cancelled bookings with an unrecorded refund, the three
 recovery-operation signals, the two stale group settlements and undelivered
 bank transfer amount alerts) name each booking and its owner too (#4959).
+The money check signals name the bookings and members behind them (#4910).
 
 Each row is read with the same filter as the count, so the list and the count
 never disagree. At most 50 rows show; a longer list ends "and N more". Each
@@ -535,7 +561,8 @@ Jobs](background-jobs.md) for operations the app is still retrying.
 
 The named rows are membership-roll detail, so they appear **only if you also
 have Membership view access**. The payment rows also show amounts, so they need
-**Finance view as well**. An admin without them sees the same signal and the
+**Finance view as well**. The money check rows need only Membership view; a
+credit amount on them shows only with Finance view too. An admin without them sees the same signal and the
 same count — just not the names or links. This keeps the queue useful to
 support staff (they can see a problem exists and hand it on) without widening
 who can read the membership roll or the club's money.
@@ -550,6 +577,8 @@ who can read the membership roll or the club's money.
 | A payment/Xero signal is Critical | A settlement or sync didn't complete | Open it and reconcile; see [Payments](payments.md) / [Xero Sync](xero.md) |
 | An email signal shows exhausted failures | Delivery retries ran out | Investigate in [Email Deliverability](email-deliverability.md) |
 | Counts look stale | The dashboard is computed per visit | Reload the page to regenerate |
+| **Money check did not run** shows | The nightly booking money check failed, or has not completed for more than 36 hours | Open [Background Jobs](background-jobs.md) and read the **Booking money check** error. Its other signals still show the last good run |
+| **Booking money records disagree** shows after a repair | The check runs once a night | It clears after the next nightly run finds the booking in agreement |
 | **Paid another way** says the refund "is still being retried" | Stripe has retries left, so the refund is not stuck yet | Wait. It only appears in the list once its last retry has failed |
 | **Paid another way** says the payment "no longer holds that much to refund" | Another refund or credit on the same payment used the money since the page loaded | Reload the page and check the amount still owed |
 | **Paid another way** says the refund "changed while you were closing it", or that the amount is "more than this refund still owes" | A refund was recorded on the payment, or someone else closed it, since the page loaded. The list refreshes behind the dialog | Check the new amount still owed, and Stripe, before closing again |

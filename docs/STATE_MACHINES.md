@@ -696,8 +696,9 @@ refunds keep the applied rows) or settled without cash (the fully-credit-covered
 $0 SUCCEEDED payment, whose cancel takes the paid path and may tier the restore
 to 0). The daily credit-reconciliation cron alerts
 (alert-only, no auto-heal — a post-fix hit is a new regression) on any CANCELLED
-booking still holding orphaned applied credit, and
-`scripts/backfill-orphaned-applied-credits.ts` heals pre-fix orphans.
+booking still holding orphaned applied credit, Stuck States lists each one
+(`INV-PAY-163`), and `scripts/backfill-orphaned-applied-credits.ts` heals
+pre-fix orphans.
 
 ### BookingEvent Scope
 

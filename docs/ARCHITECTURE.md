@@ -1166,6 +1166,14 @@ passes `viewerCanViewFinance`. Each row set is read with the count's own
 `where` and capped at `STUCK_STATE_DETAIL_ROW_CAP`; the page says how many more
 there are (`INV-PAY-156`). The payment counts, their row reads and the shared
 row shape live in `src/lib/stuck-state-payment-signals.ts`.
+The nightly booking money check and the two credit faults (#4910,
+`INV-PAY-163`) live in `src/lib/stuck-state-money-signals.ts`: what the
+`booking-money-census` job's latest good `CronJobRun` summary found (drift
+critical, known classes info), a warning when that job failed or went stale
+(the cron-health classifier's answer, from its rows alone), members with a
+negative credit balance and cancelled bookings still holding applied credit.
+Their rows name bookings and members under `viewerCanViewMembership` alone;
+a credit amount also needs `viewerCanViewFinance`.
 The page also lists the card refunds Stripe gave up on (#3372), each with its
 "Paid another way" close: the list names bookings and money still owed, so the
 page loads it only for `{ area: "finance", level: "view" }`, and the close
@@ -3668,7 +3676,7 @@ flowchart TD
     Leader --> Q15["Every 15 min<br/>once-ever-alert-sweep, payment-recovery,<br/>internet-banking-hold-release, xero-waiting-invoice-reaper,<br/>late-capture-held-alert, credit-release-asks,<br/>duplicate-capture-kept-alert, combined-invoice-cover-release,<br/>xero-outbox, xero-operation-replay, xero-inbound-reconcile,<br/>xero-credit-note-outside-spend-mirror"]
     Leader --> Q30["Every 30 min<br/>waitlist-processor, email-retry"]
     Leader --> Q3h["Every 3 h<br/>additional-payment-reminders, confirm-pending,<br/>placeholder-guest-name-reminders, pre-arrival-reminders,<br/>purge-booking-requests, quote-expiry-reminders,<br/>school-attendee-confirmations, group-settlement-reaper,<br/>policy-exception-hold-reaper, hosting-coverage-reevaluation"]
-    Leader --> Daily["Daily<br/>complete-bookings, data-pruning, draft-cleanup,<br/>age-up, email-inheritance-reconcile,<br/>capacity-warnings, admin-digest,<br/>credit-reconciliation, hut-leader-auto-assign,<br/>checkin-reminders, pending-deadline-alerts,<br/>member-guest-consent-expiry,<br/>nomination-reminders, finance-daily-sync,<br/>xero-membership-refresh, xero-link-backfill,<br/>xero-link-cleanup, xero-bank-refund-void-follow-up,<br/>xero-reconciliation-report,<br/>xero-credit-sync-check, xero-cash-credit-refresh"]
+    Leader --> Daily["Daily<br/>complete-bookings, data-pruning, draft-cleanup,<br/>age-up, email-inheritance-reconcile,<br/>capacity-warnings, admin-digest,<br/>credit-reconciliation, booking-money-census,<br/>hut-leader-auto-assign,<br/>checkin-reminders, pending-deadline-alerts,<br/>member-guest-consent-expiry,<br/>nomination-reminders, finance-daily-sync,<br/>xero-membership-refresh, xero-link-backfill,<br/>xero-link-cleanup, xero-bank-refund-void-follow-up,<br/>xero-reconciliation-report,<br/>xero-credit-sync-check, xero-cash-credit-refresh"]
     Leader --> Cfg["Configurable<br/>backup"]
 ```
 
@@ -3711,7 +3719,8 @@ flowchart TD
 | `draft-cleanup` | Daily | Delete expired draft bookings; leave out and report any that financial history names (`INV-MONEY-043`) |
 | `member-guest-consent-expiry` | Daily at 04:30 NZT when the member-guests module is enabled | Expire lapsed member-guest consent requests, release the bed, and settle the reduction as account credit to the booking owner; rows the shared removal path refuses are counted separately for the admin exception list |
 | `pending-deadline-alerts` | Daily | Alert admins about pending bookings approaching deadline |
-| `credit-reconciliation` | Daily | Reconcile account-credit ledger state and alert on refunded Stripe payments missing Xero credit notes |
+| `credit-reconciliation` | Daily | Check the app's own account-credit records (no Xero comparison): report negative balances and cancelled bookings still holding applied credit to Sentry, and re-queue refunded card payments' missing Xero credit notes |
+| `booking-money-census` | Daily 05:30 club time | Run the booking-ledger and booking-money reconciliation censuses read-only, record a bounded summary for Stuck States, and email admins once per new finding (#4910, `INV-PAY-163`); takes no lock, repairs nothing |
 | `hut-leader-auto-assign` | Daily | Suggest hut leaders |
 | `age-up` | Daily | Process age-tier/member transitions |
 | `email-inheritance-reconcile` | Daily 06:45 NZT | Converge every family email-inheritance pointer onto the one-hop rule (#2716); runs just after `age-up` because ageing a member in or out of ADULT changes who may be a source |
