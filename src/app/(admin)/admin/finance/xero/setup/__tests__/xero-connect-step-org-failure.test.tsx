@@ -9,6 +9,12 @@ import type {
 } from "../use-xero-wizard-context";
 import type { WizardStepHelpers } from "@/components/admin/integration-wizard";
 
+// ConnectStep mounts `useXeroConnection`, which refreshes the router after a
+// disconnect, so the step needs a mounted app router.
+vi.mock("next/navigation", () => ({
+  useRouter: () => ({ refresh: vi.fn(), push: vi.fn(), replace: vi.fn() }),
+}));
+
 /*
   #2394 — the connect step must never sit on "Confirming the organisation
   name…" for ever.
