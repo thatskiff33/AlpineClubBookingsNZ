@@ -33,3 +33,11 @@ export function emailComplaintAlertSampleValue(token: string): string | undefine
   if (token === "deliverabilityUrl") return `https://bookings.example.org${adminHref("email-deliverability")}`;
   return undefined;
 }
+
+/** The tokens this alert adds to the registry's approved list. */
+export const EMAIL_COMPLAINT_ALERT_TOKENS = ["recipientEmail", "memberNames", "emailNote", "blockNote", "deliverabilityUrl"] as const;
+
+/** Whose address, that it is now blocked, and where to lift it: an override must keep these. */
+export const EMAIL_COMPLAINT_ALERT_REQUIRED_TOKENS: Partial<Record<EmailAuditTemplateName, string[]>> = {
+  "admin-email-complaint": ["recipientEmail", "blockNote", "deliverabilityUrl"],
+};

@@ -3,7 +3,7 @@ import { htmlToPlainText } from "../email-text";
 import logger from "@/lib/logger";
 import { prisma } from "@/lib/prisma";
 import { recordEmailAttempt } from "./attempt-log";
-import { providerMessageIdFromSendResult } from "./provider-message-id";
+import { sentEmailIdsFromResult } from "./provider-message-id";
 import {
   formatEmailFromAddressWithSettings,
 } from "@/lib/email-message-settings";
@@ -575,9 +575,7 @@ export async function sendEmail({
           data: {
             status: "SENT",
             sentAt: new Date(),
-            messageId: result.messageId || null,
-            // #5469: the server's own id, which its bounce reports name.
-            providerMessageId: providerMessageIdFromSendResult(mailService, result),
+            ...sentEmailIdsFromResult(mailService, result), // #5469
           },
         });
       } catch (err) {

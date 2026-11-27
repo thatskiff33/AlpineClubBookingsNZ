@@ -13,7 +13,7 @@ import {
   REPLAYABLE_FAILED_EMAIL_WHERE,
 } from "@/lib/email/retry-selection";
 import { retireReplayableEmailRow } from "@/lib/email/retire-replayable";
-import { providerMessageIdFromSendResult } from "@/lib/email/provider-message-id";
+import { sentEmailIdsFromResult } from "@/lib/email/provider-message-id";
 import { replayStillWanted } from "@/lib/email/retry-still-wanted";
 import {
   describeDeliveryDecision,
@@ -660,9 +660,7 @@ export async function retryFailedEmails(): Promise<{
         data: {
           status: "SENT",
           sentAt: new Date(),
-          messageId: result.messageId || null,
-          // #5469: the server's own id, which its bounce reports name.
-          providerMessageId: providerMessageIdFromSendResult(mailService, result),
+          ...sentEmailIdsFromResult(mailService, result), // #5469
           errorMessage: null,
           // #3035: the row is delivered, so nothing about it is being withheld.
           // Leaving a stale `deliveryBlockReason` here would keep a SENT message

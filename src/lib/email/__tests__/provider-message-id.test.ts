@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 
-import { mailServiceForDeliveryMode, providerMessageIdFromSendResult } from "@/lib/email/provider-message-id";
+import { mailServiceForDeliveryMode, sentEmailIdsFromResult, type MailService } from "@/lib/email/provider-message-id";
+
+const providerMessageIdFromSendResult = (service: MailService | null, result: { messageId?: unknown; response?: unknown }) =>
+  sentEmailIdsFromResult(service, result).providerMessageId;
 
 // #5469: which id the mail server gave an email, read from its reply to the
 // send. SES answers `250 Ok <MessageID>` (AWS, "Amazon SES SMTP issues").
@@ -32,9 +35,16 @@ describe("the mail server's id for a sent email (#5469)", () => {
     expect(providerMessageIdFromSendResult(null, { response: "250 Ok 0100-abc-000000" })).toBeNull();
   });
 
+  it("keeps the mail library's Message-ID beside the server's id", () => {
+    expect(sentEmailIdsFromResult("aws-ses", { messageId: "<m@club.example.test>", response: "250 Ok 0100-a-000000" })).toEqual({
+      messageId: "<m@club.example.test>",
+      providerMessageId: "0100-a-000000",
+    });
+    expect(sentEmailIdsFromResult(null, { messageId: "" })).toEqual({ messageId: null, providerMessageId: null });
+  });
+
   it("yields no id when the send result has no reply", () => {
     expect(providerMessageIdFromSendResult("aws-ses", {})).toBeNull();
     expect(providerMessageIdFromSendResult("aws-ses", { response: 250 })).toBeNull();
-    expect(providerMessageIdFromSendResult("aws-ses", null)).toBeNull();
   });
 });

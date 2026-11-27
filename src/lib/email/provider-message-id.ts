@@ -58,10 +58,25 @@ export function mailServiceForDeliveryMode(mode: string): MailService | null {
  * send result (`response` is the server's final reply), or null for a server
  * the app does not recognise or a reply that names no id. Never throws.
  */
-export function providerMessageIdFromSendResult(
+function providerMessageIdFromSendResult(
   mailService: MailService | null,
   result: { response?: unknown } | null | undefined,
 ): string | null {
   if (!mailService || typeof result?.response !== "string") return null;
   return READ_ID_FROM_REPLY[mailService](result.response.trim());
+}
+
+/**
+ * The two ids a `SENT` row stores for an accepted message, written by both
+ * send paths (`sendEmail` and the retry job) from one definition: the
+ * Message-ID header the mail library generated, and the mail server's own id.
+ */
+export function sentEmailIdsFromResult(
+  mailService: MailService | null,
+  result: { messageId?: unknown; response?: unknown },
+): { messageId: string | null; providerMessageId: string | null } {
+  return {
+    messageId: typeof result.messageId === "string" && result.messageId ? result.messageId : null,
+    providerMessageId: providerMessageIdFromSendResult(mailService, result),
+  };
 }
