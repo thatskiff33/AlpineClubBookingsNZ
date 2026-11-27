@@ -102,6 +102,49 @@ describe("confirm it's you dialog (#4616)", () => {
     ).toHaveLength(0);
   });
 
+  it("says it is loading, then focuses the field, and ties a refusal to it", async () => {
+    let releaseFactors: () => void = () => {};
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = typeof input === "string" ? input : input.toString();
+        if (url.includes("/api/auth/reauth") && init?.method !== "POST") {
+          await new Promise<void>((resolve) => {
+            releaseFactors = resolve;
+          });
+          return jsonResponse({ factors: ["TOTP"] });
+        }
+        if (url.includes("/api/auth/reauth")) {
+          return jsonResponse({ error: "That code didn't match." }, 400);
+        }
+        return jsonResponse(recentAuthRefusalBody(), 403);
+      }),
+    );
+    render(<Harness />);
+    fireEvent.click(screen.getByRole("button", { name: "Restore" }));
+
+    expect(await screen.findByRole("status")).toHaveTextContent(
+      "Checking how you can confirm",
+    );
+    // The alert region is mounted, empty, before any failure.
+    expect(screen.getByRole("alert")).toHaveTextContent("");
+    releaseFactors();
+
+    const code = await screen.findByLabelText("Authenticator code");
+    await waitFor(() => expect(code).toHaveFocus());
+    expect(code).not.toHaveAttribute("aria-invalid");
+
+    fireEvent.change(code, { target: { value: "000000" } });
+    fireEvent.click(screen.getByRole("button", { name: "Confirm" }));
+
+    await waitFor(() => {
+      expect(screen.getByRole("alert")).toHaveTextContent("That code didn't match.");
+    });
+    expect(code).toHaveAttribute("aria-invalid", "true");
+    expect(code).toHaveAttribute("aria-describedby", "reauth-error");
+    expect(screen.getByRole("alert")).toHaveAttribute("id", "reauth-error");
+  });
+
   it("sends a FormData body on the original attempt and the one replay", async () => {
     render(<ConfirmItsYouHost />);
     const body = new FormData();

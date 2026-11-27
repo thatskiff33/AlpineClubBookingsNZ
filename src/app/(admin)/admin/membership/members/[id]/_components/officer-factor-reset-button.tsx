@@ -4,6 +4,7 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 
 import { fetchWithRecentAuth } from "@/components/confirm-its-you";
+import { FocusedActionError } from "@/components/focused-action-error";
 import { Button } from "@/components/ui/button";
 import { isKioskSessionMember } from "@/lib/member-roles";
 import { OFFICER_SIGN_IN_ENFORCED } from "@/lib/officer-sign-in-switch";
@@ -37,10 +38,12 @@ export function OfficerFactorResetButton({ memberId }: { memberId: string }) {
   const router = useRouter();
   const [pending, setPending] = useState(false);
   const [message, setMessage] = useState("");
+  const [failure, setFailure] = useState("");
 
   async function reset() {
     setPending(true);
     setMessage("");
+    setFailure("");
     try {
       const response = await fetchWithRecentAuth(
         `/api/admin/security/two-factor-reset/${memberId}`,
@@ -51,7 +54,7 @@ export function OfficerFactorResetButton({ memberId }: { memberId: string }) {
         code?: string;
       } | null;
       if (!response.ok) {
-        setMessage(
+        setFailure(
           body?.code === REAUTH_REQUIRED_CODE
             ? "The reset needs you to confirm it's you first."
             : (body?.error ?? "The reset did not run."),
@@ -61,7 +64,7 @@ export function OfficerFactorResetButton({ memberId }: { memberId: string }) {
       setMessage("Their authenticator and passkeys were reset, and their sessions ended.");
       router.refresh();
     } catch {
-      setMessage("The reset did not run.");
+      setFailure("The reset did not run.");
     } finally {
       setPending(false);
     }
@@ -76,11 +79,11 @@ export function OfficerFactorResetButton({ memberId }: { memberId: string }) {
         Ends their sessions and emails them. Their next sign-in goes to set-up,
         with no new grace period.
       </p>
-      {message ? (
-        <p role="status" className="text-sm">
-          {message}
-        </p>
-      ) : null}
+      {/* Success is polite; a failure is an alert, styled as one (#4620). */}
+      <p role="status" className="text-sm">
+        {message}
+      </p>
+      <FocusedActionError id={`factor-reset-error-${memberId}`} error={failure} />
     </div>
   );
 }
