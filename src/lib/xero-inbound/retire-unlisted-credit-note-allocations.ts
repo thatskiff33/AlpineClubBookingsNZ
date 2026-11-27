@@ -62,10 +62,6 @@ function readingMayRetireAllocations(readingMetadata: unknown, storedSnapshots: 
   return storedSnapshots.every((metadata) => judgeRefundNoteWrite(readingMetadata, metadata) === "apply");
 }
 
-function isLiveCreditNoteStatus(status: unknown): boolean {
-  return typeof status === "string" && isIncludedRefundCreditNoteStatus(status);
-}
-
 /**
  * A missing stamp on either side is not newer. That is `judgeRefundNoteWrite`:
  * equal timestamps are the same snapshot, and a reading with no timestamp applies.
@@ -330,6 +326,8 @@ export type RetiredAllocations = { retired: number; decidedPaymentIds: string[] 
  * too. The links are read by `active: true`, so a pass that stopped after the
  * first of two finishes the second on the retry. A cancelled reading of any
  * other note turns nothing off: the recount already leaves a voided note out.
+ * Nor does a reading that carries no status: it says neither which invoices
+ * the note still credits nor that it was cancelled.
  */
 export async function retireUnlistedCreditNoteAllocations(input: {
   creditNoteId: string;
@@ -342,7 +340,8 @@ export async function retireUnlistedCreditNoteAllocations(input: {
   priorSnapshots: readonly unknown[];
   listedInvoiceIds: ReadonlySet<string>;
 }): Promise<RetiredAllocations> {
-  const cancelled = !isLiveCreditNoteStatus(input.status);
+  if (typeof input.status !== "string") return { retired: 0, decidedPaymentIds: [] };
+  const cancelled = !isIncludedRefundCreditNoteStatus(input.status);
   if (cancelled && !input.isModificationNote) return { retired: 0, decidedPaymentIds: [] };
   const currentSnapshots = await readStoredCreditNoteSnapshots(input.creditNoteId);
   if (!readingMayRetireAllocations(input.readingMetadata, [...input.priorSnapshots, ...currentSnapshots])) {

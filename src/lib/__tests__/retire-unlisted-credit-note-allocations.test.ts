@@ -461,7 +461,8 @@ describe("the allocation write decides its bank-transfer payment's refunded tota
 
   describe("retireUnlistedCreditNoteAllocations (#4449 item 4)", () => {
     const removedLink = allocation("inv-1", 10_000, NOTE_ALLOCATION_ROLE, "BookingModification");
-    function retireRemoved(isModificationNote: boolean, status = "AUTHORISED") {
+    /** `status: null` is a reading that carries none. */
+    function retireRemoved(isModificationNote: boolean, status: string | null = "AUTHORISED") {
       mocks.findMany.mockImplementation(async ({ where }: { where: { xeroObjectType?: string } }) =>
         where.xeroObjectType === "CREDIT_NOTE" ? [] : [removedLink],
       );
@@ -469,8 +470,8 @@ describe("the allocation write decides its bank-transfer payment's refunded tota
       return retireUnlistedCreditNoteAllocations({
         creditNoteId: NOTE,
         isModificationNote,
-        status,
-        readingMetadata: snapshot(status, LATE),
+        status: status ?? undefined,
+        readingMetadata: xeroCreditNoteSnapshotMetadata({ status: status ?? undefined, updatedDateUTC: new Date(LATE), total: 100 }),
         priorSnapshots: [],
         listedInvoiceIds: new Set(status === "AUTHORISED" ? [] : ["inv-1"]),
       });
@@ -510,6 +511,14 @@ describe("the allocation write decides its bank-transfer payment's refunded tota
         { store: expect.anything() },
       );
       expect(paymentUpdate).toHaveBeenCalledWith({ where: asRead, data: { refundedAmountCents: 0, status: "SUCCEEDED", updatedAt: expect.any(Date) } });
+    });
+
+    it("MUTATION (#5289 A): a reading with no status is not a cancelled one: it turns nothing off and decides no total", async () => {
+      await expect(retireRemoved(true, null)).resolves.toEqual({ retired: 0, decidedPaymentIds: [] });
+      expect(mocks.findMany).not.toHaveBeenCalled();
+      expect(steps).toEqual([]);
+      expect(mocks.upsert).not.toHaveBeenCalled();
+      expect(paymentUpdate).not.toHaveBeenCalled();
     });
   });
 });
