@@ -180,8 +180,15 @@ export const COMPLETED_CANCEL_CARD_SHORTFALL_TASK_WHERE = {
  *   the note once the receipt is in Xero (`INV-PAY-110`, `INV-PAY-122`);
  * - `none` (`:no-xero-note`): nothing to credit, and no receipt the app can
  *   record.
+ *
+ * #5267: a pre-#3653 whole-group card refund is ONE row for many joiners, each
+ * with its own invoice, so its bank close writes one record per joiner, keyed
+ * on the row and the joiner (`cardRefundPaidAnotherWayChildOccurrenceKey`,
+ * `:child:<bookingId>` before the suffix). Its operation id and note mode read
+ * off the key as any close's do; `closeKeysOf` names only a whole row's key.
  */
 export const CARD_REFUND_PAID_ANOTHER_WAY_KEY_PREFIX = "card-refund-paid-another-way:";
+const CARD_REFUND_PAID_ANOTHER_WAY_CHILD_SEGMENT = ":child:";
 const CARD_REFUND_PAID_ANOTHER_WAY_NO_NOTE_SUFFIX = ":no-xero-note";
 const CARD_REFUND_PAID_ANOTHER_WAY_NOTE_AFTER_RECEIPT_SUFFIX = ":note-after-receipt";
 
@@ -200,6 +207,15 @@ export function cardRefundPaidAnotherWayOccurrenceKey(
   { xeroRefundNote }: { xeroRefundNote: PaidAnotherWayXeroNote },
 ): string {
   return `${CARD_REFUND_PAID_ANOTHER_WAY_KEY_PREFIX}${paymentRecoveryOperationId}${PAID_ANOTHER_WAY_KEY_SUFFIX[xeroRefundNote]}`;
+}
+
+/** #5267: the key of one joiner's record of an old whole-group card refund's bank close; see the prefix's docblock. */
+export function cardRefundPaidAnotherWayChildOccurrenceKey(
+  paymentRecoveryOperationId: string,
+  childBookingId: string,
+  { xeroRefundNote }: { xeroRefundNote: PaidAnotherWayXeroNote },
+): string {
+  return `${CARD_REFUND_PAID_ANOTHER_WAY_KEY_PREFIX}${paymentRecoveryOperationId}${CARD_REFUND_PAID_ANOTHER_WAY_CHILD_SEGMENT}${childBookingId}${PAID_ANOTHER_WAY_KEY_SUFFIX[xeroRefundNote]}`;
 }
 
 /**
@@ -262,21 +278,27 @@ export function isCardRefundPaidAnotherWayTask(task: {
   );
 }
 
-/** A paid-another-way record's key, split into the operation it closed and how its note is raised. */
+/**
+ * A paid-another-way record's key, split into the operation it closed and how
+ * its note is raised. #5267: a whole-group close's joiner segment
+ * (`:child:<bookingId>`) is not part of the operation id.
+ */
 function readPaidAnotherWayKey(task: {
   kind: ManualRefundTaskKind | string | null;
   occurrenceKey: string | null;
 }): { operationId: string; xeroRefundNote: PaidAnotherWayXeroNote } | null {
   if (!isCardRefundPaidAnotherWayTask(task) || task.occurrenceKey === null) return null;
   const rest = task.occurrenceKey.slice(CARD_REFUND_PAID_ANOTHER_WAY_KEY_PREFIX.length);
+  const named = (body: string, xeroRefundNote: PaidAnotherWayXeroNote) => {
+    const child = body.indexOf(CARD_REFUND_PAID_ANOTHER_WAY_CHILD_SEGMENT);
+    const operationId = child < 0 ? body : body.slice(0, child);
+    return operationId.length > 0 ? { operationId, xeroRefundNote } : null;
+  };
   for (const xeroRefundNote of ["after-receipt", "none"] as const) {
     const suffix = PAID_ANOTHER_WAY_KEY_SUFFIX[xeroRefundNote];
-    if (rest.endsWith(suffix)) {
-      const operationId = rest.slice(0, -suffix.length);
-      return operationId.length > 0 ? { operationId, xeroRefundNote } : null;
-    }
+    if (rest.endsWith(suffix)) return named(rest.slice(0, -suffix.length), xeroRefundNote);
   }
-  return rest.length > 0 ? { operationId: rest, xeroRefundNote: "now" } : null;
+  return named(rest, "now");
 }
 
 /** The operation a paid-another-way record closed, read off its key; null for any other task. */
