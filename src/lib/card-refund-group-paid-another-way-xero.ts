@@ -133,11 +133,7 @@ export function groupCardRefundXeroQueued(answers: readonly PaidAnotherWayXeroQu
 /**
  * What the Stuck States dialog promises for a group row before its close, from
  * the same plan the close reads. A per-joiner row: its joiner's plan. An old
- * whole-group row: `now` when every joiner its plan refunds has an invoice to
- * credit, else `none`.
- *
- * STATED LIMIT: a whole-group row with some joiners invoiced and some not
- * reads `none` here; its close still notes the invoiced ones, and says so.
+ * whole-group row distinguishes all, some and no joiners with an invoice.
  */
 export async function groupCardRefundXeroPromise(
   db: Prisma.TransactionClient,
@@ -158,10 +154,13 @@ export async function groupCardRefundXeroPromise(
     where: { id: { in: shares.map(([bookingId]) => bookingId) } },
     select: { id: true, payment: { select: { id: true, xeroInvoiceId: true } } },
   });
-  for (const [bookingId, cents] of shares) {
-    const payment = joiners.find((joiner) => joiner.id === bookingId)?.payment;
-    const plan = payment ? await paidAnotherWayXeroPlan(db, { ...row.operation, amountCents: cents }, payment, { lockApprovalTask: false }) : null;
-    if (plan?.xeroRefundNote !== "now") return { xeroRefundNote: "none", cardNoteCoversCents: 0 };
+  const payments = new Map(joiners.map((joiner) => [joiner.id, joiner.payment]));
+  let credited = 0;
+  for (const [bookingId, amountCents] of shares) {
+    const payment = payments.get(bookingId);
+    if (!payment) continue;
+    const plan = await paidAnotherWayXeroPlan(db, { ...row.operation, amountCents }, payment, { lockApprovalTask: false });
+    if (plan.xeroRefundNote === "now") credited++;
   }
-  return { xeroRefundNote: "now", cardNoteCoversCents: 0 };
+  return { xeroRefundNote: credited === 0 ? "none" : credited === shares.length ? "all-joiners" : "some-joiners", cardNoteCoversCents: 0 };
 }

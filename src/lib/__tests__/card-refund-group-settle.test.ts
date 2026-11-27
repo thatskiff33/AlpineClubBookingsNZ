@@ -760,11 +760,13 @@ describe("the list", () => {
     expect(byId.get("op-legacy")).toMatchObject({
       settleKind: "legacy-group",
       owedCents: 4_500,
-      xeroRefundNote: "now",
+      xeroRefundNote: "all-joiners",
       tryCardAgainRefusal: LEGACY_GROUP_CARD_REFUND_TRY_AGAIN_REFUSAL,
       paidAnotherWayRefusal: null,
     });
     expect(byId.get("op-done")).toMatchObject({ settleKind: "legacy-group", owedCents: 0 });
+    state.settlements = [settlement({ refundPlan: { "joiner-a": 2_000, "joiner-b": 2_500 } })];
+    expect((await listDeadCardRefunds()).find((row) => row.operationId === "op-legacy")?.xeroRefundNote).toBe("some-joiners");
   });
 });
 

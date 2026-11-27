@@ -94,6 +94,8 @@ export type PaidAnotherWayXeroPlan =
  */
 export type PaidAnotherWayXeroPromise =
   | PaidAnotherWayXeroNote
+  | "all-joiners"
+  | "some-joiners"
   | "covered-by-card-note"
   | "after-receipt-on-its-way"
   | "after-receipt-failed"

@@ -20,6 +20,10 @@ export function xeroRefundNotePromise(
   /** #4369: what a card refund note still covers, formatted (`cardNoteCoversCents`). */
   cardNoteCovers = "",
 ): string {
+  if (xeroRefundNote === "all-joiners" || xeroRefundNote === "some-joiners") {
+    const share = `Each joiner with a Xero invoice gets a refund credit note for their share, worded "${bankNoteWording}".`;
+    return xeroRefundNote === "all-joiners" ? share : `${share} Some joiners have no Xero invoice; no note is queued for them.`;
+  }
   if (xeroRefundNote === "now") {
     return `A Xero refund credit note for the amount, worded "${bankNoteWording}", is queued when you close it.`;
   }

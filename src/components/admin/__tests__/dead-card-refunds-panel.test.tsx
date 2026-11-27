@@ -844,7 +844,8 @@ describe("#4851: a dead refund out of the group organiser's card", () => {
   });
 
   it("an old whole-group close whose joiners are not all in Xero says which were credited", async () => {
-    openDialog(row({ settleKind: "legacy-group", wholeAmountOnly: true, xeroRefundNote: "none", tryCardAgainRefusal: LEGACY_GROUP_CARD_REFUND_TRY_AGAIN_REFUSAL }));
+    openDialog(row({ settleKind: "legacy-group", wholeAmountOnly: true, xeroRefundNote: "some-joiners", tryCardAgainRefusal: LEGACY_GROUP_CARD_REFUND_TRY_AGAIN_REFUSAL }));
+    expect(screen.getByRole("dialog")).toHaveTextContent("Some joiners have no Xero invoice; no note is queued for them.");
     fireEvent.click(fullChoice());
     fireEvent.change(noteBox(), { target: { value: "Bank transfer to the organiser" } });
     respond(200, { success: true, outcome: "bank", xeroQueued: "some-refund-notes" });
