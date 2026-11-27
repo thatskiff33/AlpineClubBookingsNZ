@@ -1,7 +1,6 @@
 import { prisma } from "@/lib/prisma";
 import logger from "@/lib/logger";
 
-
 /**
  * One address's bounce or complaint, as the suppression writer takes it from
  * the feedback rule (`email/delivery-feedback.ts`, #5469), whichever mail
