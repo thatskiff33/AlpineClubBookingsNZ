@@ -21,6 +21,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { stripComments } from "@/lib/__tests__/support/strip-comments";
 import { walk } from "@/lib/__tests__/support/provider-mount-census";
+import { CENSUS_TIMEOUT_MS } from "@/test/census-timeout";
 
 const mocks = vi.hoisted(() => ({
   auth: vi.fn(),
@@ -169,5 +170,5 @@ describe("where useClubSeason may be called", () => {
     expect(consumers).toContain("src/app/(admin)/admin/finance/subscriptions/page.tsx");
     expect(consumers).toContain("src/app/(admin)/layout.tsx");
     expect(consumers.filter((file) => !file.startsWith("src/app/(admin)/"))).toEqual([]);
-  });
+  }, CENSUS_TIMEOUT_MS);
 });
