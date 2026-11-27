@@ -22,10 +22,8 @@ import type { BookingDetailViewer } from "./booking-detail-viewer";
 
 /**
  * WHAT HAS HAPPENED TO THIS BOOKING (#2958): the audit rows and lifecycle
- * events it reads, the open-financial-review flag (read ONCE here — #3033 — and
- * returned so the admin tools reuse it rather than query again), the
- * plain-language narrative shared with the public payment-link page, and the
- * transaction-history timeline. The admin-only rows are withheld at the data
+ * events it reads, the plain-language narrative shared with the public
+ * payment-link page, and the transaction-history timeline. The admin-only rows are withheld at the data
  * feed, on `canSeeAdminTools`, exactly as before; the builders this calls are
  * the canonical ones.
  *

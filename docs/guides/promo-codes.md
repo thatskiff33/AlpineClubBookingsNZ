@@ -253,8 +253,8 @@ nothing. The price stays as it was until the booking is next edited when:
 - the reduction cannot all go back the way it was paid (the cash still
   refundable and the credit applied do not add up to the price, for example
   after an earlier change kept part of a payment) — the codes then use nothing;
-- an edit is still under financial review, the booking is waiting for officer
-  review or on the waitlist, or the stay has started.
+- the booking is waiting for officer review or on the waitlist, or the stay has
+  started.
 
 #### How the booker chooses the codes: guest chips
 

@@ -108,8 +108,7 @@ import { primaryInvoiceSettlementHistory } from "@/lib/booking-primary-invoice-c
  * - a member could not edit it for a stay yet to start (`getBookingEditPolicy`
  *   in "future" mode: DRAFT, PENDING, PAYMENT_PENDING, CONFIRMED or PAID, check-in
  *   after today — so never AWAITING_REVIEW, `INV-MOD-013`, a waitlist status or
- *   a stay under way), it is quote-priced, or a financial review raised before
- *   #4317 is still open;
+ *   a stay under way), or it is quote-priced;
  * - the re-price would RAISE the price of a booking whose price is settled in
  *   any form — captured cash, paid with credit or at $0, or invoiced: collecting
  *   more needs an ask only the payer can answer, which an acceptance has no door
