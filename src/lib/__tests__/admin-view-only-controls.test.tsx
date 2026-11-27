@@ -2944,6 +2944,9 @@ describe("MemberCreditCard view-only gating (#1997, finance)", () => {
     creditLoading: false,
     creditError: "",
     pendingAdjustmentRequests: [],
+    pendingCorrections: [],
+    cancellingCorrectionId: null,
+    onCancelCorrection: vi.fn(),
     reviewingAdjustmentId: null,
     showAdjustmentForm: false,
     adjustmentError: "",
@@ -2973,6 +2976,26 @@ describe("MemberCreditCard view-only gating (#1997, finance)", () => {
     expect(
       screen.getByRole("button", { name: /Request Adjustment/i }),
     ).toBeEnabled();
+  });
+
+  // #5241: cancelling a queued Xero correction restores member credit, so it is finance:edit only.
+  const withCorrection = {
+    ...props,
+    pendingCorrections: [{ id: "corr-1", requestId: "req-1", amountCents: -2500, description: "Granted in error", createdAt: "2026-07-01T00:00:00.000Z" }],
+  } as ComponentProps<typeof MemberCreditCard>;
+
+  it("disables Cancel correction for a finance:view admin", () => {
+    sessionMatrix = matrix("view", { finance: "view" });
+    render(<MemberCreditCard {...withCorrection} />);
+
+    expect(screen.getByRole("button", { name: /Cancel correction/i })).toBeDisabled();
+  });
+
+  it("enables Cancel correction for a finance:edit admin", () => {
+    sessionMatrix = matrix("view", { finance: "edit" });
+    render(<MemberCreditCard {...withCorrection} />);
+
+    expect(screen.getByRole("button", { name: /Cancel correction/i })).toBeEnabled();
   });
 });
 
