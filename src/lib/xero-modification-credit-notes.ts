@@ -9,6 +9,7 @@
 
 import { CreditNote, type LineItem } from "xero-node";
 import { prisma } from "./prisma";
+import logger from "./logger";
 import { bookingOwner } from "@/lib/booking-owner";
 import { buildXeroInvoiceUrl } from "@/lib/xero-links";
 import {
@@ -69,6 +70,7 @@ import {
 } from "@/lib/xero-modification-note-refusal";
 import type { ClubFormat } from "@/lib/club-format";
 import type { XeroOperationClaim } from "@/lib/xero-operation-outcome-guard";
+import { recordModificationCreditNoteManifest } from "@/lib/member-money/doors";
 
 /**
  * `refundMethod` is how the reduction went back to the member (`INV-PAY-101`,
@@ -369,6 +371,7 @@ export async function createXeroCreditNoteForModification(params: {
     operationClaim = operation;
   }
 
+  let createdCreditNoteId: string;
   try {
     const response = await retryXeroWriteWithContactRepair({
       memberId: bookingOwner(booking).memberId,
@@ -413,7 +416,7 @@ export async function createXeroCreditNoteForModification(params: {
     if (!created?.creditNoteID) {
       throw new Error("Failed to create modification credit note");
     }
-    const createdCreditNoteId = created.creditNoteID;
+    createdCreditNoteId = created.creditNoteID;
 
     // One allocation call per target, each with its own Xero idempotency key.
     // A single target (every edit's note, and a clearing note with no
@@ -510,12 +513,31 @@ export async function createXeroCreditNoteForModification(params: {
       xeroObjectNumber: created.creditNoteNumber ?? null,
       extraLinks: [noteLink, ...allocationLinks],
     });
-
-    return createdCreditNoteId;
   } catch (error) {
     await failXeroSyncOperation(operationClaim!, error);
     throw error;
   }
+
+  // #4525 (ALP-753): what this note returns of the journal, recorded once the
+  // operation has completed, or ended PARTIAL (the note is in Xero either way).
+  // A booking-anchored clearing note has no edit behind it and records none.
+  // Never fails the note: nothing about the send changes.
+  if (bookingModificationId) {
+    await recordModificationCreditNoteManifest({
+      bookingId,
+      modificationId: bookingModificationId,
+      reviewTaskId,
+      legacyKey: creditNoteIdempotencyKey,
+      lines: itemised?.lineItems ?? [modRefundLineItem],
+      taxRendering,
+      priceLines: itemised?.record ?? null,
+      itemisedShareTaskIds: itemised?.itemisedShareTaskIds ?? [],
+      providerCreditNoteId: createdCreditNoteId,
+    }).catch((error: unknown) =>
+      logger.error({ err: error, bookingId, creditNoteId: createdCreditNoteId }, "Could not record the edit's credit note's export manifest; the note is unchanged"),
+    );
+  }
+  return createdCreditNoteId;
 }
 
 /**

@@ -42,7 +42,7 @@ async function readSliceEvent(db: Pick<Prisma.TransactionClient, "memberMoneyJou
 }
 
 /** A review task's one live closure: null when none stands, "AMBIGUOUS" when more than one does. */
-async function readReviewClosure(
+export async function readReviewClosure(
   db: Pick<Prisma.TransactionClient, "memberMoneyJournal">,
   bookingId: string,
   taskId: string,
