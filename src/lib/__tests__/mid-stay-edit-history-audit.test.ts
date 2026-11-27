@@ -7,11 +7,10 @@ import {
   auditMidStayEditHistory,
   FIX_2743_MERGED_AT,
   FIX_2744_MERGED_AT,
-  formatMidStayEditAuditReport,
   MidStayEditCutOffUnknownError,
-  parseMidStayEditAuditArgs,
   type MidStayEditAuditResult,
 } from "@/lib/mid-stay-edit-history-audit";
+import { formatMidStayEditAuditReport, parseMidStayEditAuditArgs } from "@/lib/mid-stay-edit-history-audit-report";
 import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
 const ZONE = requireClubTimeZone("Pacific/Auckland");

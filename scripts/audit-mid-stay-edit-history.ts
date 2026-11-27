@@ -19,11 +19,11 @@
 import "dotenv/config";
 import process from "node:process";
 
+import { auditMidStayEditHistory } from "../src/lib/mid-stay-edit-history-audit";
 import {
-  auditMidStayEditHistory,
   formatMidStayEditAuditReport,
   parseMidStayEditAuditArgs,
-} from "../src/lib/mid-stay-edit-history-audit";
+} from "../src/lib/mid-stay-edit-history-audit-report";
 import { prisma } from "../src/lib/prisma";
 import { getClubFormat } from "../src/lib/club-format-settings";
 import { readClubTimeZoneOutsideRequest } from "../src/lib/club-time-zone-runtime";
