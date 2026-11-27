@@ -72,6 +72,8 @@ const owedNoticeStore = createOwedNoticeStore();
 const mockTx = {
   alertCooldown: alertCooldownStore.delegate,
   owedNotice: owedNoticeStore.delegate,
+  // #5433 PR 4: a bump writes its BUMPED event inside its own transaction.
+  bookingEvent: { create: vi.fn().mockResolvedValue({ id: "evt_1" }) },
   $queryRaw: vi.fn().mockResolvedValue([{ held: true }]),
   $executeRaw: mockExecuteRaw,
   // #2364: the hosting review is reconciled inside the booking write, so
@@ -271,6 +273,17 @@ vi.mock("@/lib/payment-link", () => ({
 
 vi.mock("@/lib/logger", () => ({
   default: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+}));
+
+// #5433 PR 4 (CP-1): the $0 claim records the confirmation as owed and the job
+// delivers it through the paid confirmation's owed notice, whose rendering and
+// told rule are proved in paid-booking-confirmation-notice.test.ts and
+// paid-booking-confirmation-email.test.ts. Partly: the job's sweep reads the
+// real deliverer from the registry.
+const mockDeliverPaidBookingConfirmation = vi.hoisted(() => vi.fn());
+vi.mock("@/lib/paid-booking-confirmation-notice", async (importOriginal) => ({
+  ...((await importOriginal()) as typeof import("@/lib/paid-booking-confirmation-notice")),
+  deliverPaidBookingConfirmation: mockDeliverPaidBookingConfirmation,
 }));
 
 // ─── Imports (after vi.mock hoisting) ────────────────────────────────────────
@@ -771,24 +784,23 @@ describe("Cron Confirm Pending: zero-dollar handling", () => {
     });
   });
 
-  it("sends confirmation email with promo code for $0 PENDING booking", async () => {
+  it("#5433 PR 4 (CP-1): records the confirmation as owed in the $0 claim's transaction, then delivers it through the paid confirmation's owed notice", async () => {
     const booking = makeZeroDollarPendingBooking("b1");
     mockPendingBookings([booking]);
     mockCheckCapacity.mockResolvedValue({ available: true, minAvailable: 10, nightDetails: [] });
 
     await confirmPendingBookings();
 
-    expect(sendBookingConfirmedEmail).toHaveBeenCalledWith(
-      { bookingId: "b1", recipientMemberId: "member_b1" },
-      "b1@example.com",
-      "Test",
-      booking.checkIn,
-      booking.checkOut,
-      2,
-      0,
+    const [written] = owedNoticeStore.delegate.createMany.mock.calls.map(([args]) => args.data[0]!);
+    expect(written).toMatchObject({ kind: "booking-confirmed", subjectId: "b1" });
+    expect(mockDeliverPaidBookingConfirmation).toHaveBeenCalledTimes(1);
+    expect(mockDeliverPaidBookingConfirmation).toHaveBeenCalledWith(
+      expect.objectContaining({ id: written!.id, kind: "booking-confirmed", subjectId: "b1", eventAt: written!.eventAt }),
       CLUB_FORMAT_TEST,
-      { discountCents: 10000, promoAdjustmentCents: -10000, promoCode: "FREE100" }
+      "confirmPendingBookings",
     );
+    // The job's own renderer is gone (`INV-SSOT`): nothing is sent outside the owed notice.
+    expect(sendBookingConfirmedEmail).not.toHaveBeenCalled();
   });
 
   it("skips $0 booking already claimed by another process (updateMany returns 0)", async () => {
@@ -802,6 +814,9 @@ describe("Cron Confirm Pending: zero-dollar handling", () => {
     expect(result.confirmedBookingIds).toHaveLength(0);
     expect(mockPaymentCreate).not.toHaveBeenCalled();
     expect(sendBookingConfirmedEmail).not.toHaveBeenCalled();
+    // A lost claim writes no marker and delivers nothing.
+    expect(owedNoticeStore.delegate.createMany).not.toHaveBeenCalled();
+    expect(mockDeliverPaidBookingConfirmation).not.toHaveBeenCalled();
   });
 
   it("bumps a $0 PENDING booking when capacity is not available", async () => {
