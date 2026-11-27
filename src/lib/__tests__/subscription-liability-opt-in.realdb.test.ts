@@ -271,6 +271,7 @@ let priorLockoutSettings: MembershipLockoutSettings | null = null;
         data: { ...choice, updatedByMemberId: OFFICER_ID },
         liabilityAfterSave: choice,
         seasonYear: SEASON_YEAR,
+        today: clubTime.calendarDateOfDateOnlyInstant(DECISION_DATE),
       });
     }
 
@@ -468,6 +469,7 @@ let priorLockoutSettings: MembershipLockoutSettings | null = null;
       const { staleRecords } = await impact.buildSubscriptionLiabilityImpact(prisma, {
         seasonYear: SEASON_YEAR,
         proposed: CHOSEN_ALWAYS,
+        today: clubTime.calendarDateOfDateOnlyInstant(DECISION_DATE),
       });
       const { clearedStaleRows } = await optIn(CHOSEN_ALWAYS);
 
@@ -617,6 +619,7 @@ let priorLockoutSettings: MembershipLockoutSettings | null = null;
               memberId,
               seasonYear: SEASON_YEAR,
               subscriptionBehavior: "BASED_ON_AGE_TIER",
+              today: clubTime.calendarDateOfDateOnlyInstant(DECISION_DATE),
             }),
           ),
         ).resolves.toEqual({ reconciled: false });
@@ -692,6 +695,7 @@ let priorLockoutSettings: MembershipLockoutSettings | null = null;
             memberId,
             seasonYear: SEASON_YEAR,
             subscriptionBehavior: "BASED_ON_AGE_TIER",
+            today: clubTime.calendarDateOfDateOnlyInstant(DECISION_DATE),
           }),
         );
         // Released whatever happens, so a failure here cannot strand the
@@ -751,6 +755,7 @@ let priorLockoutSettings: MembershipLockoutSettings | null = null;
                 memberId,
                 seasonYear: SEASON_YEAR,
                 subscriptionBehavior: "BASED_ON_AGE_TIER",
+                today: clubTime.calendarDateOfDateOnlyInstant(DECISION_DATE),
               }),
             );
             await released;

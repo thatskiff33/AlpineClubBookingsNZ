@@ -13,6 +13,7 @@ vi.mock("@/lib/subscription-liability-impact", async (importOriginal) => ({
   buildSubscriptionLiabilityImpact: mocks.buildImpact,
 }));
 
+import { requireCalendarDate } from "@/lib/club-time";
 import { GET } from "@/app/api/admin/membership-lockout-settings/liability-impact/route";
 import {
   classifyLiabilityImpact,
@@ -55,6 +56,7 @@ function facts(
 function classify(proposed: { requiredTypeAgeRule: "ALWAYS_OWES" | "AGE_TIER_EXEMPTS"; liabilityAgeSource: "SEASON_START" | "SEASON_END" }, members: LiabilityImpactFacts[]) {
   return classifyLiabilityImpact({
     seasonYear: 2026,
+    today: requireCalendarDate("2026-07-01"),
     current: NOT_CHOSEN,
     proposed,
     ageTierSettings: AGE_TIER_SETTINGS,

@@ -67,6 +67,7 @@ const mocks = vi.hoisted(() => ({
   createXeroCardRefundReversalInvoice: vi.fn(),
   recordAdditionalCaptureReceipt: vi.fn(),
   createAdminGrantCreditNote: vi.fn(),
+  createAgeUpCredit: vi.fn(),
   syncOrganisationContactDetails: vi.fn(),
   enqueueAdditionalCaptureReceiptOperation: vi.fn(),
   anchorCaptureHasReceipt: vi.fn(),
@@ -303,6 +304,11 @@ vi.mock("@/lib/organisation-xero-contact-details", () => ({
 
 vi.mock("@/lib/xero-admin-grant-credit-note", () => ({
   createAdminGrantCreditNote: mocks.createAdminGrantCreditNote,
+}));
+// #5190 PR 3: the worker is mocked; its scan spacing is the real one.
+vi.mock("@/lib/subscription-age-up-credit", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/subscription-age-up-credit")>()),
+  createAgeUpCredit: mocks.createAgeUpCredit,
 }));
 vi.mock("@/lib/additional-capture-receipt-enqueue", () => ({
   enqueueAdditionalCaptureReceiptOperation: mocks.enqueueAdditionalCaptureReceiptOperation,
@@ -3970,6 +3976,17 @@ describe("processQueuedXeroOutboxOperations dispatch domain (#1272)", () => {
       },
       handler: mocks.createAdminGrantCreditNote,
     },
+    // #5190 PR 3: the adjustment is the anchor; the worker reads it fresh.
+    AGE_UP_CREDIT: {
+      op: {
+        id: "op_age_up_credit_1",
+        localId: "adjustment_1",
+        localModel: "MemberSubscriptionAgeUpAdjustment",
+        createdByMemberId: "admin_1",
+        requestPayload: { queueType: "AGE_UP_CREDIT", adjustmentId: "adjustment_1" },
+      },
+      handler: mocks.createAgeUpCredit,
+    },
     // #5245: the school is the row's anchor; the payload is its queue type alone.
     ORGANISATION_CONTACT_DETAILS: {
       op: {
@@ -4012,6 +4029,7 @@ describe("processQueuedXeroOutboxOperations dispatch domain (#1272)", () => {
     mocks.voidXeroInvoiceForCancelledGroupSettlement.mockResolvedValue(undefined);
     mocks.createXeroMembershipSubscriptionInvoice.mockResolvedValue("inv");
     mocks.createAdminGrantCreditNote.mockResolvedValue(undefined);
+    mocks.createAgeUpCredit.mockResolvedValue(undefined);
     mocks.syncOrganisationContactDetails.mockResolvedValue(undefined);
   });
 

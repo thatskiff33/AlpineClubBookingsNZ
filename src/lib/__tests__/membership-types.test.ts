@@ -1,6 +1,7 @@
 import { readFileSync } from "fs";
 import path from "path";
 import { beforeEach, describe, expect, expectTypeOf, it, vi } from "vitest";
+import { requireCalendarDate } from "@/lib/club-time";
 import {
   BUILT_IN_MEMBERSHIP_TYPES,
   DEFAULT_MEMBERSHIP_TYPE_AGE_TIERS,
@@ -253,6 +254,7 @@ describe("built-in membership type seed helpers", () => {
         member: { ageTier: input.ageTier, dateOfBirth: null },
         seasonRowStatus: input.seasonRowStatus ?? null,
         seasonYear: 2026,
+        today: requireCalendarDate("2026-07-01"),
         ageTierSettings: tiers(input.exemptTiers ?? []),
         liabilitySettings: input.liabilitySettings ?? {
           requiredTypeAgeRule: "NOT_CHOSEN",

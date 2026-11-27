@@ -23,8 +23,6 @@ const rule = liabilityRuleFor("billing", AGE_TODAY);
 
 /** A two-threshold ladder: CHILD 5-9 exempt, YOUTH 10-17 and ADULT 18+ owe. */
 const ladder = AGE_TIER_DEFAULTS;
-/** The same thresholds, but every tier owes (so a move is a price change only). */
-const allOwe: AgeTierSettingData[] = AGE_TIER_DEFAULTS.map((tier) => ({ ...tier, subscriptionRequiredForBooking: true }));
 
 const date = (value: string) => new Date(`${value}T00:00:00.000Z`);
 const day = (value: string) => value as CalendarDate;

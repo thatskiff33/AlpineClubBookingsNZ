@@ -2,6 +2,7 @@ import type { MembershipTypeSubscriptionBehavior } from "@prisma/client";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { matchesWhere } from "@/lib/__tests__/support/prisma-where";
+import { requireCalendarDate } from "@/lib/club-time";
 import {
   listSubscriptionStatus,
   NOT_REQUIRED_ROW_BILLING_NOTE,
@@ -32,6 +33,8 @@ import {
 } from "@/lib/member-subscription-defaults";
 
 const SEASON = 2026;
+// The club's today on the frozen test clock; only "Age today" reads it.
+const TODAY = requireCalendarDate("2026-07-01");
 const NOTHING_CLEARED = { clearedCount: 0, clearedMemberIds: [] };
 
 type Row = {
@@ -152,14 +155,14 @@ describe("clearStaleNotRequiredRows (#5190)", () => {
       members: [member("youth", "BASED_ON_AGE_TIER", "YOUTH")],
     });
 
-    await expect(clearStaleNotRequiredRows(tx as never, SEASON)).resolves.toEqual(NOTHING_CLEARED);
+    await expect(clearStaleNotRequiredRows(tx as never, SEASON, TODAY)).resolves.toEqual(NOTHING_CLEARED);
     expect(rows[0]!.status).toBe("NOT_REQUIRED");
     expect(tx.memberSubscription.updateManyAndReturn).not.toHaveBeenCalled();
   });
 
   it("takes the billing season key, then the liability-rule key exclusive, before it reads anything", async () => {
     const { tx, calls } = makeTx({ settings: CHOSEN, rows: [], members: [] });
-    await clearStaleNotRequiredRows(tx as never, SEASON);
+    await clearStaleNotRequiredRows(tx as never, SEASON, TODAY);
     // Season key first: the rule key is never held while waiting on a confirm.
     expect(calls[0]).toBe("lock:membership-subscription-billing:2026");
     expect(calls[1]).toBe("lock:membership-subscription-liability-rule");
@@ -192,7 +195,7 @@ describe("clearStaleNotRequiredRows (#5190)", () => {
     ];
     const { tx } = makeTx({ settings: CHOSEN, rows, members });
 
-    await expect(clearStaleNotRequiredRows(tx as never, SEASON)).resolves.toEqual({
+    await expect(clearStaleNotRequiredRows(tx as never, SEASON, TODAY)).resolves.toEqual({
       clearedCount: 2,
       clearedMemberIds: ["re-billable", "youth"],
     });
@@ -210,7 +213,7 @@ describe("clearStaleNotRequiredRows (#5190)", () => {
       "other-season": "NOT_REQUIRED",
     });
 
-    await expect(clearStaleNotRequiredRows(tx as never, SEASON)).resolves.toEqual(NOTHING_CLEARED);
+    await expect(clearStaleNotRequiredRows(tx as never, SEASON, TODAY)).resolves.toEqual(NOTHING_CLEARED);
   });
 
   it("re-asserts the guards at write time, so a claim landing after the read keeps the row", async () => {
@@ -226,7 +229,7 @@ describe("clearStaleNotRequiredRows (#5190)", () => {
       return [member("youth", "BASED_ON_AGE_TIER", "YOUTH")];
     });
 
-    await expect(clearStaleNotRequiredRows(tx as never, SEASON)).resolves.toEqual(NOTHING_CLEARED);
+    await expect(clearStaleNotRequiredRows(tx as never, SEASON, TODAY)).resolves.toEqual(NOTHING_CLEARED);
     expect(rows[0]!.status).toBe("NOT_REQUIRED");
   });
 
@@ -280,6 +283,7 @@ describe("findStaleNotRequiredRows: the one selection the preview lists and the 
         seasonYear: SEASON,
         settings: { requiredTypeAgeRule: "NOT_CHOSEN", liabilityAgeSource: "NOT_CHOSEN" },
         listSettings: NOT_CHOSEN,
+        today: TODAY,
       }),
     ).resolves.toEqual([]);
     expect(tx.memberSubscription.findMany).not.toHaveBeenCalled();
@@ -291,6 +295,7 @@ describe("findStaleNotRequiredRows: the one selection the preview lists and the 
       seasonYear: SEASON,
       settings: CHOSEN as never,
       listSettings: NOT_CHOSEN,
+      today: TODAY,
     });
     expect(
       stale.map(({ memberId, name, inBillingPopulation }) => ({ memberId, name, inBillingPopulation })),
@@ -309,6 +314,7 @@ describe("findStaleNotRequiredRows: the one selection the preview lists and the 
       seasonYear: SEASON,
       settings: CHOSEN as never,
       listSettings: NOT_CHOSEN,
+      today: TODAY,
     });
     const listed = Object.fromEntries(
       stale.map((row) => [row.memberId, { status: row.listStatus, note: row.listNote }]),
@@ -337,8 +343,9 @@ describe("findStaleNotRequiredRows: the one selection the preview lists and the 
       seasonYear: SEASON,
       settings: CHOSEN as never,
       listSettings: CHOSEN as never,
+      today: TODAY,
     });
-    const cleared = await clearStaleNotRequiredRows(tx as never, SEASON);
+    const cleared = await clearStaleNotRequiredRows(tx as never, SEASON, TODAY);
     expect(cleared.clearedMemberIds).toEqual(previewed.map((stale) => stale.memberId).sort());
     expect(cleared.clearedCount).toBe(previewed.length);
   });
