@@ -2,6 +2,7 @@
 import { fetchWithRecentAuth } from "@/components/confirm-its-you";
 
 import { adminHref } from "@/lib/admin-hubs";
+import { apiRefusalFromResponse, refusalMessageOr } from "@/lib/api-error-message";
 import Link from "next/link";
 import { useClubFormat } from "@/components/club-format-provider";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -73,6 +74,7 @@ import {
 import { notifyAdminQueueChanged } from "@/lib/admin-queue-events";
 import { FILTER_LABELS } from "./public-booking-request-filters";
 
+const LOAD_FALLBACK = "Failed to load booking requests";
 const SCHOOL_CHILD_TIER_LABELS: Record<SchoolChildTier, string> = {
   INFANT: "Infants",
   CHILD: "Children",
@@ -538,10 +540,8 @@ export function PublicBookingRequestsPanel({
     setError("");
     try {
       const response = await fetch(`/api/admin/booking-requests?status=${filter}&page=${page}`);
+      if (!response.ok) throw await apiRefusalFromResponse(response, LOAD_FALLBACK);
       const data = await response.json();
-      if (!response.ok) {
-        throw new Error(data.error || "Failed to load booking requests");
-      }
       const rows: PublicBookingRequestData[] = Array.isArray(data?.data) ? data.data : [];
       const pinned = await fetchOffPageQueueRecord("/api/admin/booking-requests", "requestId", requestId, rows);
       if (!isCurrent()) return true; // a newer read owns the list
@@ -552,7 +552,7 @@ export function PublicBookingRequestsPanel({
       return true;
     } catch (err) {
       if (!isCurrent()) return true;
-      setError(err instanceof Error ? err.message : "Failed to load booking requests");
+      setError(refusalMessageOr(err, LOAD_FALLBACK));
       return false;
     } finally {
       if (isCurrent()) setLoading(false);
