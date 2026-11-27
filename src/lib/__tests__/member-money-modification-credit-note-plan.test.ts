@@ -152,7 +152,7 @@ describe("planModificationCreditNote (ALP-753)", () => {
       .toMatchObject({ outcome: "CONFLICT", reason: "COMPONENT_UNUSABLE", problem: "the journal holds no event for what this note returns" });
     expect(planModificationCreditNote(input({ anchor: { kind: "REVIEW_SHARE", modificationId: MOD, taskId: "task-t" }, sliceEvent: "AMBIGUOUS" })))
       .toMatchObject({ outcome: "CONFLICT", reason: "COMPONENT_UNUSABLE" });
-    for (const share of [null, "AMBIGUOUS"] as const) {
+    for (const share of [null, "AMBIGUOUS", { ...reduction(CLOSE_T, 11000, 9500), reversed: true }] as const) {
       expect(planModificationCreditNote(input({ lines: [noteLine(3000), noteLine(1500)], sliceEvent: reduction(EVENT, 14000, 11000), shareEvents: [share] })))
         .toMatchObject({ outcome: "CONFLICT", reason: "COMPONENT_UNUSABLE" });
     }

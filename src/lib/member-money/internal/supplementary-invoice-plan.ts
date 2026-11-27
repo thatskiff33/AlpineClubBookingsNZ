@@ -108,14 +108,14 @@ export type SupplementaryInvoicePlan =
  * charged, a credit note RETURNS what they reduced (ALP-753). A slice is always
  * covered as positive cents; the direction says which sign of movement counts.
  */
-export type StaySliceDirection = "BILLS" | "RETURNS";
+type StaySliceDirection = "BILLS" | "RETURNS";
 
 const DIRECTION_WORDS: Record<StaySliceDirection, { sign: 1 | -1; document: string; verb: string; netted: string }> = {
   BILLS: { sign: 1, document: "invoice", verb: "bill", netted: "the invoice nets a settled review share's give-back against what the edit charges" },
   RETURNS: { sign: -1, document: "note", verb: "return", netted: "the note nets a settled review share's charge against what the edit returns" },
 };
 
-export type StaySliceMatch =
+type StaySliceMatch =
   | { outcome: "MATCHED"; event: SliceEvent; moved: Map<string, number>; coverage: SupplementaryInvoiceCoverage[] }
   | { outcome: "CONFLICT"; reason: MemberMoneyExportConflictReason; problem: string };
 
@@ -147,6 +147,7 @@ export function matchStaySlices(input: {
   for (const share of input.shareEvents) {
     if (share === "AMBIGUOUS") return conflict("COMPONENT_UNUSABLE", `a settled review share's task closed more than once; which closure this ${verb}s is unknown`);
     if (!share) return conflict("COMPONENT_UNUSABLE", `the journal holds no closure for a settled review share this ${document} ${verb}s`);
+    if (share.reversed) return conflict("COMPONENT_UNUSABLE", `the journal reversed ${share.eventKey}`);
     shareSlices.push(share);
   }
 
