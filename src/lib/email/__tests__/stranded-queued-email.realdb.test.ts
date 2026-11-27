@@ -14,6 +14,11 @@
  * 3. A row that may already have reached the mail server (STARTED, or written
  *    by the previous release) is flagged `UNCONFIRMED` at the retry ceiling and
  *    sent by nobody; a never-sent row that kept no body lands at the ceiling.
+ * 4. Through the real `sendEmail`: a sender that stalls past the threshold
+ *    before its hand-over, while the sweep and the retry job send its email,
+ *    writes nothing and sends nothing when it resumes (#5496 review). Two
+ *    sweeps racing for one row settle it once, and a caller-retried alert is
+ *    released to its owner, not re-sent.
  *
  * Only the delivery policy and the mail transport are replaced (a harness is
  * never the club's live site, and no provider is contacted). Ordinary Vitest
@@ -43,6 +48,9 @@ const transport = vi.hoisted(() => ({
   /** When set, the next `getEmailTransporter` never returns: the process "stops" there. */
   crashNext: false,
   crashed: false,
+  /** When set, the next `getEmailTransporter` waits until the test lets it go: a sender that stalls. */
+  stallNext: false,
+  resumeStalled: null as null | ((outcome: "throws" | "returns") => void),
 }));
 
 vi.mock("@/lib/environment-delivery-policy", async (importOriginal) => ({
@@ -57,13 +65,25 @@ vi.mock("@/lib/email/internal", async (importOriginal) => ({
       transport.crashed = true;
       return new Promise<never>(() => {});
     }
+    if (transport.stallNext) {
+      transport.stallNext = false;
+      return new Promise((resolve, reject) => {
+        transport.resumeStalled = (outcome) =>
+          outcome === "throws"
+            ? reject(new Error("race-5298 transport configuration failed"))
+            : resolve({ transporter: { sendMail: transport.sendMail }, modeLabel: "race-5298 fake transport" });
+      });
+    }
     return Promise.resolve({ transporter: { sendMail: transport.sendMail }, modeLabel: "race-5298 fake transport" });
   }),
 }));
 
 const P = "race-5298";
 const SUBJECT = `${P} notice`;
-const TEMPLATE = "admin-unrecognised-stripe-payment";
+// Keeps its body, and is not an alert its owner sends again (#4669): those are
+// released to their owner rather than re-sent, and have a case of their own.
+const TEMPLATE = "admin-payment-failure";
+const CALLER_RETRIED_TEMPLATE = "admin-bank-transfer-settlement-figure";
 const THIRTY_ONE_MINUTES = 31 * 60_000;
 const FIRST_CREATED = new Date(Date.UTC(2000, 0, 1));
 
@@ -144,6 +164,8 @@ let retryFailedEmails: (typeof import("@/lib/cron-email-retry"))["retryFailedEma
     transport.sendMail.mockResolvedValue({ messageId: `${P}-message` });
     transport.crashNext = false;
     transport.crashed = false;
+    transport.stallNext = false;
+    transport.resumeStalled = null;
   });
 
   afterAll(async () => {
@@ -192,7 +214,7 @@ let retryFailedEmails: (typeof import("@/lib/cron-email-retry"))["retryFailedEma
     const release = await holdRow(row.id);
 
     let sweep!: Promise<unknown>;
-    let claim!: Promise<boolean>;
+    let claim!: Promise<Date | null>;
     if (order === "sweep-first") {
       sweep = handover.sweepStrandedQueuedEmails();
       await waitForLockWaiters(1);
@@ -204,11 +226,12 @@ let retryFailedEmails: (typeof import("@/lib/cron-email-retry"))["retryFailedEma
     }
     await waitForLockWaiters(2);
     await release();
-    const [senderWon] = await Promise.all([claim, sweep]);
+    const [claimedAt] = await Promise.all([claim, sweep]);
+    const senderWon = claimedAt !== null;
 
     expect(senderWon).toBe(order === "sender-first");
     // A row is handed over once: no second claim wins it, whoever holds it.
-    await expect(handover.claimEmailHandover(row.id)).resolves.toBe(false);
+    await expect(handover.claimEmailHandover(row.id)).resolves.toBeNull();
     // The late sender sends only after winning; the retry job sends a row only
     // the sweep handed back.
     if (senderWon) await transport.sendMail({ to });
@@ -216,6 +239,66 @@ let retryFailedEmails: (typeof import("@/lib/cron-email-retry"))["retryFailedEma
     expect(sendsTo(to)).toBe(1);
     expect(await read(row.id)).toEqual(
       expect.objectContaining(senderWon ? { status: "QUEUED", handoverState: "STARTED" } : { status: "SENT", attempts: 2 }),
+    );
+  });
+
+  // #5496 review, item 1: a sender that stalls past the threshold before its
+  // hand-over must not undo the sweep's work when it resumes.
+  it.each([
+    ["its transport then fails", "throws"],
+    ["its transport then answers", "returns"],
+  ] as const)("sends once when a stalled sender resumes after the sweep and the retry job sent its email: %s", async (_label, outcome) => {
+    const to = `stalled-${outcome}@${P}.test`;
+    transport.stallNext = true;
+    const sender = sendEmail({ to, subject: SUBJECT, html: "<p>Your payment failed</p>", templateName: TEMPLATE, bookingContext: "none" });
+    await vi.waitFor(() => expect(transport.resumeStalled).not.toBeNull(), { timeout: 30_000 });
+    const [row] = await prisma.emailLog.findMany({ where: { subject: SUBJECT, to } });
+    await prisma.emailLog.update({ where: { id: row!.id }, data: { createdAt: FIRST_CREATED } });
+
+    moveClock(THIRTY_ONE_MINUTES);
+    await retryFailedEmails();
+    expect(sendsTo(to)).toBe(1);
+    const sent = await read(row!.id);
+    expect(sent).toEqual(expect.objectContaining({ status: "SENT", handoverState: "STARTED", attempts: 2 }));
+
+    transport.resumeStalled!(outcome);
+    if (outcome === "throws") await expect(sender).rejects.toThrow("race-5298 transport configuration failed");
+    else await expect(sender).resolves.toEqual({ status: "handover_lost", emailLogId: row!.id });
+    // Its late write matched nothing: the row is as the retry job left it.
+    expect(await read(row!.id)).toEqual(sent);
+
+    moveClock(THIRTY_ONE_MINUTES);
+    await retryFailedEmails();
+    expect(sendsTo(to)).toBe(1);
+  });
+
+  it("settles a row once when two sweeps race for it", async () => {
+    const to = `two-sweeps@${P}.test`;
+    const row = await recorded(to);
+    const release = await holdRow(row.id);
+
+    const sweeps = Promise.all([handover.sweepStrandedQueuedEmails(), handover.sweepStrandedQueuedEmails()]);
+    await waitForLockWaiters(2);
+    await release();
+    const results = await sweeps;
+
+    expect(results.reduce((sum, result) => sum + result.requeued, 0)).toBe(1);
+    await retryFailedEmails();
+    await retryFailedEmails();
+    expect(sendsTo(to)).toBe(1);
+  });
+
+  // #5496 review, item 2: the alert's owner sends it again when nobody got it.
+  it("releases a never-handed-over caller-retried alert to its owner and sends it to nobody", async () => {
+    const owned = await recorded(`owned@${P}.test`, { templateName: CALLER_RETRIED_TEMPLATE });
+
+    await retryFailedEmails();
+    moveClock(THIRTY_ONE_MINUTES);
+    await retryFailedEmails();
+
+    expect(sendsTo(owned.to)).toBe(0);
+    expect(await read(owned.id)).toEqual(
+      expect.objectContaining({ status: "FAILED", attempts: 1, htmlBody: null, bookingRetryHtmlBody: null }),
     );
   });
 
