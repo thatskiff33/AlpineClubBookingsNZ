@@ -2014,7 +2014,10 @@ takes its `Member … FOR UPDATE` set. A truncating fan-out that holds one of th
 rows `FOR KEY SHARE` while its trigger waits for that trip row would close a cycle;
 the merge's bounded `Member` wait (#4855, `55P03` → its safe 409) or PostgreSQL's
 deadlock detector breaks it by rolling one whole transaction back, so the cost is
-a retry, never a hang or a half-written bump. Two more cycles resolve the same way.
+a manual or next-run retry, never a hang or a half-written bump. Nothing retries
+in-process: the merge route maps only `MemberMergeError`, so a deadlocked merge
+shows a generic error with nothing saved and the admin runs it again. Two more
+cycles resolve the same way.
 The merge's loser delete runs while it holds the bumped trip rows, so a truncating
 fan-out whose trigger waits for one of them while holding a row that delete needs
 closes a merge/trigger cycle. And a set-based bump locks rows in scan order, not id

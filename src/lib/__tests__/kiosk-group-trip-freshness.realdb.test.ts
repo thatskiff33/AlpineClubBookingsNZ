@@ -19,7 +19,8 @@
  *     be OLDER than the facts the evaluation read, never newer;
  *  6. a member merge, which has no Group Trip fan-out, moves the revision of the
  *     trips the merged person attends, and so does the set-based bump a bound
- *     member fan-out ceiling makes.
+ *     member fan-out ceiling makes, by every route the person attends a trip
+ *     (organiser, join, and the split child of either), and by none other.
  *
  * Ordinary runs stay database-free: the suite runs only when
  * `RUN_CONCURRENCY_RACE_TESTS=1`, reads only the guarded race URL, and cleans its
@@ -47,8 +48,30 @@ const IDS = {
   group: "race-5239-group",
   joinRow: "race-5239-join",
 } as const;
-const MEMBER_IDS = [IDS.organiserMember, IDS.joinerMember, IDS.adultMember];
-const BOOKING_IDS = [IDS.organiserBooking, IDS.joinerBooking];
+/**
+ * One member attending trips by every route the set-based member bump names,
+ * plus stays it must not reach. Seeded only by the test that uses them.
+ */
+const WIDE = {
+  member: "race-5239-member-wide",
+  organiserTrip: "race-5239-wide-g-organiser",
+  joinTrip: "race-5239-wide-g-join",
+  organiserSplitTrip: "race-5239-wide-g-organiser-split",
+  joinSplitTrip: "race-5239-wide-g-join-split",
+  cancelledTrip: "race-5239-wide-g-cancelled",
+  finishedTrip: "race-5239-wide-g-finished",
+  unrelatedTrip: "race-5239-wide-g-unrelated",
+} as const;
+const WIDE_TRIP_IDS = Object.values(WIDE).filter((id) => id !== WIDE.member);
+const WIDE_BOOKING_IDS = [
+  ...WIDE_TRIP_IDS.map((trip) => `${trip}-organiser`),
+  `${WIDE.joinTrip}-joiner`,
+  `${WIDE.joinSplitTrip}-joiner`,
+  `${WIDE.organiserSplitTrip}-child`,
+  `${WIDE.joinSplitTrip}-child`,
+];
+const MEMBER_IDS = [IDS.organiserMember, IDS.joinerMember, IDS.adultMember, WIDE.member];
+const BOOKING_IDS = [IDS.organiserBooking, IDS.joinerBooking, ...WIDE_BOOKING_IDS];
 
 function deferred() {
   let resolve!: () => void;
@@ -112,7 +135,12 @@ describe("kiosk Group Trip freshness race DB safety guard (#5239)", () => {
         where: { sourceBookingId: { in: BOOKING_IDS } },
       });
       await primary.groupBookingJoin.deleteMany({ where: { id: IDS.joinRow } });
-      await primary.groupBooking.deleteMany({ where: { id: IDS.group } });
+      await primary.groupBookingJoin.deleteMany({
+        where: { groupBookingId: { in: WIDE_TRIP_IDS } },
+      });
+      await primary.groupBooking.deleteMany({
+        where: { id: { in: [IDS.group, ...WIDE_TRIP_IDS] } },
+      });
       await primary.bookingGuestNight.deleteMany({
         where: { bookingGuest: { bookingId: { in: BOOKING_IDS } } },
       });
@@ -458,6 +486,135 @@ describe("kiosk Group Trip freshness race DB safety guard (#5239)", () => {
       );
       expect(none).toBe(0);
       expect(await revision()).toBe(1);
+    });
+
+    /** A stay owned by the organiser member, with the wide member as a guest if `attends`. */
+    async function wideStay(
+      id: string,
+      options: {
+        attends: boolean;
+        ownerId?: string;
+        parentBookingId?: string;
+        status?: "PAID" | "CANCELLED";
+        checkIn?: Date;
+        checkOut?: Date;
+      },
+    ): Promise<void> {
+      const checkIn = options.checkIn ?? STAY.checkIn;
+      const checkOut = options.checkOut ?? STAY.checkOut;
+      await primary.booking.create({
+        data: {
+          ...STAY,
+          id,
+          memberId: options.ownerId ?? IDS.organiserMember,
+          status: options.status ?? "PAID",
+          checkIn,
+          checkOut,
+          parentBookingId: options.parentBookingId ?? null,
+          guests: options.attends
+            ? {
+                create: [
+                  {
+                    memberId: WIDE.member,
+                    firstName: "Wide",
+                    lastName: "Member",
+                    ageTier: "ADULT",
+                    isMember: true,
+                    stayStart: checkIn,
+                    stayEnd: checkOut,
+                    priceCents: 50,
+                    nights: { create: [{ stayDate: checkIn, priceCents: 50 }] },
+                  },
+                ],
+              }
+            : undefined,
+        },
+      });
+    }
+
+    /** A trip anchored on `<trip>-organiser`, optionally with `<trip>-joiner` joined. */
+    async function wideTrip(trip: string, withJoiner: boolean): Promise<void> {
+      await primary.groupBooking.create({
+        data: {
+          id: trip,
+          organiserBookingId: `${trip}-organiser`,
+          organiserMemberId: IDS.organiserMember,
+          joinCode: trip.toUpperCase(),
+          paymentMode: "EACH_PAYS_OWN",
+        },
+      });
+      if (withJoiner) {
+        await primary.groupBookingJoin.create({
+          data: {
+            groupBookingId: trip,
+            bookingId: `${trip}-joiner`,
+            joinerMemberId: IDS.joinerMember,
+            isMember: true,
+          },
+        });
+      }
+    }
+
+    it("reaches every route a member attends a trip by, and no stay it must not (#5239)", async () => {
+      const today = new Date("2026-07-01T00:00:00.000Z");
+      // 1. As a guest on the organiser's booking.
+      await wideStay(`${WIDE.organiserTrip}-organiser`, { attends: true });
+      await wideTrip(WIDE.organiserTrip, false);
+      // 2. As a guest on a booking joined to the trip.
+      await wideStay(`${WIDE.joinTrip}-organiser`, { attends: false });
+      await wideStay(`${WIDE.joinTrip}-joiner`, { attends: true, ownerId: IDS.joinerMember });
+      await wideTrip(WIDE.joinTrip, true);
+      // 3. On the split child of the organiser's booking (#738).
+      await wideStay(`${WIDE.organiserSplitTrip}-organiser`, { attends: false });
+      await wideStay(`${WIDE.organiserSplitTrip}-child`, {
+        attends: true,
+        parentBookingId: `${WIDE.organiserSplitTrip}-organiser`,
+      });
+      await wideTrip(WIDE.organiserSplitTrip, false);
+      // 4. On the split child of a joiner's booking.
+      await wideStay(`${WIDE.joinSplitTrip}-organiser`, { attends: false });
+      await wideStay(`${WIDE.joinSplitTrip}-joiner`, { attends: false, ownerId: IDS.joinerMember });
+      await wideStay(`${WIDE.joinSplitTrip}-child`, {
+        attends: true,
+        ownerId: IDS.joinerMember,
+        parentBookingId: `${WIDE.joinSplitTrip}-joiner`,
+      });
+      await wideTrip(WIDE.joinSplitTrip, true);
+      // Not reached: a cancelled stay, a stay that ended before today, and a trip
+      // the member has no booking in.
+      await wideStay(`${WIDE.cancelledTrip}-organiser`, { attends: true, status: "CANCELLED" });
+      await wideTrip(WIDE.cancelledTrip, false);
+      await wideStay(`${WIDE.finishedTrip}-organiser`, {
+        attends: true,
+        checkIn: new Date("2026-06-20"),
+        checkOut: new Date("2026-06-22"),
+      });
+      await wideTrip(WIDE.finishedTrip, false);
+      await wideStay(`${WIDE.unrelatedTrip}-organiser`, { attends: false });
+      await wideTrip(WIDE.unrelatedTrip, false);
+
+      const moved = await writerB.$transaction((tx) =>
+        memberFanout.invalidateMemberGroupTripCover(WIDE.member, today, tx, "member-standing-fanout"),
+      );
+      const revisions = Object.fromEntries(
+        (
+          await observer.groupBooking.findMany({
+            where: { id: { in: [IDS.group, ...WIDE_TRIP_IDS] } },
+            select: { id: true, coverageInvalidationRevision: true },
+          })
+        ).map((row) => [row.id, row.coverageInvalidationRevision]),
+      );
+      expect(moved).toBe(4);
+      expect(revisions).toEqual({
+        [IDS.group]: 0,
+        [WIDE.organiserTrip]: 1,
+        [WIDE.joinTrip]: 1,
+        [WIDE.organiserSplitTrip]: 1,
+        [WIDE.joinSplitTrip]: 1,
+        [WIDE.cancelledTrip]: 0,
+        [WIDE.finishedTrip]: 0,
+        [WIDE.unrelatedTrip]: 0,
+      });
     });
 
     it("leaves the stamp behind when a truncation waits for an evaluation holding the trip key", async () => {
