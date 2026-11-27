@@ -8,13 +8,17 @@ import type {
 import type { AdminAccessRequirement } from "@/lib/admin-permissions";
 import {
   addCalendarDays,
+  calendarDateOfDateOnlyInstant,
+  calendarDateParts,
+  compareCalendarDates,
+  countClubNights,
   dateOnlyInstantOf,
   type CalendarDate,
 } from "@/lib/club-time";
 import {
+  computeAgeOnCalendarDays,
   computeAgeTierWithSettings,
   getSeasonStartCalendarDate,
-  getSeasonStartDate,
   type AgeTierSettingData,
 } from "./age-tier";
 
@@ -70,15 +74,15 @@ export const SUBSCRIPTION_LIABILITY_AGE_SOURCES = [
 ] as const satisfies readonly SubscriptionLiabilityAgeSource[];
 
 /**
- * The age sources a club may choose today. `CURRENT_AGE` needs part-season
- * invoices for a member who ages up mid-season, which ship in #5190's third
- * pull request; until then every writer refuses it, and a stored value read
- * here counts as not chosen (the pre-#5190 rules — the direction that changes
- * nobody's bill or booking).
+ * The age sources a club may choose: every source but `NOT_CHOSEN`.
+ * `CURRENT_AGE` (#5190 PR 3, owner decisions 20 and 27 Nov 2026) reads the
+ * member's age today and settles a mid-season age-up with a part-season
+ * invoice, top-up or credit (`resolveAgeUpPart`, `INV-MONEY-051`).
  */
 export const CHOOSABLE_LIABILITY_AGE_SOURCES = [
   "SEASON_START",
   "SEASON_END",
+  "CURRENT_AGE",
 ] as const satisfies readonly SubscriptionLiabilityAgeSource[];
 
 type ChoosableLiabilityAgeSource =
@@ -134,13 +138,34 @@ export const LIABILITY_RULE_CHOICE_PERMISSIONS = [
   { area: "finance", level: "edit" },
 ] as const satisfies readonly AdminAccessRequirement[];
 
+/**
+ * The chosen age source, or null for `NOT_CHOSEN`. Exhaustive, so a new enum
+ * value is a compile error here rather than a silent cast (#5190 PR 3).
+ */
+function chosenAgeSource(
+  source: SubscriptionLiabilityAgeSource,
+): ChoosableLiabilityAgeSource | null {
+  switch (source) {
+    case "SEASON_START":
+    case "SEASON_END":
+    case "CURRENT_AGE":
+      return source;
+    case "NOT_CHOSEN":
+      return null;
+    default: {
+      const unreachable: never = source;
+      return unreachable;
+    }
+  }
+}
+
 /** The club has chosen its rule: both answers set, to values open for choice. */
 export function hasChosenLiabilityRule(
   settings: SubscriptionLiabilitySettings,
 ): boolean {
   return (
     settings.requiredTypeAgeRule !== "NOT_CHOSEN" &&
-    isChoosableLiabilityAgeSource(settings.liabilityAgeSource)
+    chosenAgeSource(settings.liabilityAgeSource) !== null
   );
 }
 
@@ -182,13 +207,11 @@ export function liabilityRuleFor(
   side: SubscriptionLiabilitySide,
   settings: SubscriptionLiabilitySettings,
 ): SubscriptionLiabilityRule {
-  if (hasChosenLiabilityRule(settings)) {
+  const ageSource = chosenAgeSource(settings.liabilityAgeSource);
+  if (settings.requiredTypeAgeRule !== "NOT_CHOSEN" && ageSource !== null) {
     return {
-      requiredTypeAgeRule:
-        settings.requiredTypeAgeRule === "AGE_TIER_EXEMPTS"
-          ? "AGE_TIER_EXEMPTS"
-          : "ALWAYS_OWES",
-      ageSource: settings.liabilityAgeSource as ChoosableLiabilityAgeSource,
+      requiredTypeAgeRule: settings.requiredTypeAgeRule,
+      ageSource,
       seasonRowExempts: false,
     };
   }
@@ -213,27 +236,50 @@ export function getSeasonEndDate(seasonYear: number): Date {
 }
 
 /**
+ * The day a DOB-derived source reads the age on: the season's first or last
+ * day, or `asOf` (the club's today) for `CURRENT_AGE`. The one definition the
+ * TS rule and the SQL filter (`subscription-liability-where.ts`) both read.
+ */
+export function liabilityReferenceDate(
+  source: ChoosableLiabilityAgeSource,
+  seasonYear: number,
+  asOf: CalendarDate,
+): CalendarDate {
+  switch (source) {
+    case "SEASON_START":
+      return getSeasonStartCalendarDate(seasonYear);
+    case "SEASON_END":
+      return getSeasonEndCalendarDate(seasonYear);
+    case "CURRENT_AGE":
+      return asOf;
+    default: {
+      const unreachable: never = source;
+      return unreachable;
+    }
+  }
+}
+
+/**
  * The age tier that decides liability for one member and season. A member with
- * no date of birth keeps their stored tier, whatever the source.
+ * no date of birth keeps their stored tier, whatever the source. `asOf` is the
+ * club's today: the day `CURRENT_AGE` reads the age on (owner decision, 20 Nov
+ * 2026); the season sources ignore it.
  */
 export function resolveLiabilityAgeTier(input: {
   source: LiabilityAgeTierSource;
   dateOfBirth: Date | null | undefined;
   storedAgeTier: AgeTier | null | undefined;
   seasonYear: number;
+  asOf: CalendarDate;
   ageTierSettings: AgeTierSettingData[];
 }): AgeTier | null {
   const storedAgeTier = input.storedAgeTier ?? null;
   if (input.source === "STORED_TIER" || !input.dateOfBirth) {
     return storedAgeTier;
   }
-  const referenceDate =
-    input.source === "SEASON_START"
-      ? getSeasonStartDate(input.seasonYear)
-      : getSeasonEndDate(input.seasonYear);
   return computeAgeTierWithSettings(
     input.dateOfBirth,
-    referenceDate,
+    dateOnlyInstantOf(liabilityReferenceDate(input.source, input.seasonYear, input.asOf)),
     input.ageTierSettings,
   );
 }
@@ -277,6 +323,8 @@ export function resolveMemberSubscriptionLiability(input: {
   member: { dateOfBirth: Date | null; ageTier: AgeTier } | null | undefined;
   seasonRowStatus: SubscriptionStatus | null | undefined;
   seasonYear: number;
+  /** The club's today; the day `CURRENT_AGE` reads the age on. */
+  asOf: CalendarDate;
   rule: SubscriptionLiabilityRule;
   ageTierSettings: AgeTierSettingData[];
 }): { owes: boolean; ageTier: AgeTier | null } {
@@ -286,6 +334,7 @@ export function resolveMemberSubscriptionLiability(input: {
         dateOfBirth: input.member.dateOfBirth,
         storedAgeTier: input.member.ageTier,
         seasonYear: input.seasonYear,
+        asOf: input.asOf,
         ageTierSettings: input.ageTierSettings,
       })
     : null;
@@ -298,5 +347,184 @@ export function resolveMemberSubscriptionLiability(input: {
       ageTierSettings: input.ageTierSettings,
     }),
     ageTier,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Part-season proration, shared by the season charge and the age-up parts
+// (#5190 PR 3, `INV-MONEY-051`). One definition, so a part-season invoice, a
+// top-up and a credit count months and round cents exactly as a mid-season
+// joiner's prorated charge does (`calculateMembershipCharge`).
+// ---------------------------------------------------------------------------
+
+/**
+ * Whole months from `from`'s month to the season's last month, both counted:
+ * a 15 January age-up in a 1 April to 31 March season covers January, February
+ * and March, 3 months (owner decision, 20 Nov 2026).
+ */
+export function remainingSeasonMonthsInclusive(seasonYear: number, from: CalendarDate): number {
+  const end = calendarDateParts(getSeasonEndCalendarDate(seasonYear));
+  const start = calendarDateParts(from);
+  return (end.year - start.year) * 12 + end.month - start.month + 1;
+}
+
+/**
+ * `annualCents` over `months` twelfths, rounded half-up to the cent with
+ * integer arithmetic. Fee schedules are Int32, so this stays far below the
+ * safe-integer ceiling.
+ */
+export function prorateAnnualCents(annualCents: number, months: number): number {
+  return Math.floor((annualCents * months + 6) / 12);
+}
+
+// ---------------------------------------------------------------------------
+// Age-up under "Age today" (#5190 PR 3; owner decisions 20 and 27 Nov 2026).
+//
+// The season charge is billed at the season-start tier. A member whose age
+// moves them to another tier during the season then settles the difference
+// for the whole months left, the birthday month included:
+//  - not owing -> owing: a part-season invoice at the new tier;
+//  - owing -> owing at a dearer tier: a part-season top-up for the difference;
+//  - owing -> owing at a cheaper tier, or -> not owing: a part-season credit.
+// An age rises by exactly one year inside a twelve-month season, so a member
+// has at most one age-up a season; a ladder with several thresholds still
+// moves them across only one of them.
+// ---------------------------------------------------------------------------
+
+/** One member's mid-season tier change, before it is priced. */
+export interface AgeUpEvent {
+  /** The first season day the new tier applies from. */
+  ageUpDate: CalendarDate;
+  fromTier: AgeTier;
+  toTier: AgeTier;
+  fromOwes: boolean;
+  toOwes: boolean;
+}
+
+/** {@link AgeUpEvent} priced: what is owed, or credited, for the months left. */
+export interface AgeUpPart extends AgeUpEvent {
+  coveredMonths: number;
+  /** The from tier's annual fee, 0 when that tier owes nothing. */
+  fromAnnualCents: number;
+  /** The to tier's annual fee, 0 when that tier owes nothing. */
+  toAnnualCents: number;
+  /** Positive: owed by the member. Negative: credited to them. Never 0. */
+  signedDifferenceCents: number;
+}
+
+export interface AgeUpInput {
+  dateOfBirth: Date | null | undefined;
+  /** `Member.joinedDate`: a member who joined after the birthday ages up on joining. */
+  joinedDate: Date | null | undefined;
+  seasonYear: number;
+  /** The club's today, or the billing run's decision date: an age-up after it has not happened yet. */
+  asOf: CalendarDate;
+  rule: SubscriptionLiabilityRule;
+  subscriptionBehavior: MembershipTypeSubscriptionBehavior | null | undefined;
+  ageTierSettings: AgeTierSettingData[];
+}
+
+/**
+ * The first day in `(start, end]` on which the member's age passes its
+ * season-start value, or null when it never does in this season. Binary search
+ * over `computeAgeOnCalendarDays`, which only ever rises, so a 29 February
+ * birthday lands on 1 March in a season with no 29 February (that function's
+ * own convention, `INV-DATE`).
+ */
+function birthdayCrossing(dateOfBirth: CalendarDate, seasonYear: number): CalendarDate | null {
+  const start = getSeasonStartCalendarDate(seasonYear);
+  const startAge = computeAgeOnCalendarDays(dateOfBirth, start);
+  const seasonDays = countClubNights(start, getSeasonEndCalendarDate(seasonYear));
+  if (computeAgeOnCalendarDays(dateOfBirth, addCalendarDays(start, seasonDays)) === startAge) {
+    return null;
+  }
+  // Invariant: the age at `low` is the season-start age; at `high` it is not.
+  let low = 0;
+  let high = seasonDays;
+  while (high - low > 1) {
+    const middle = Math.floor((low + high) / 2);
+    if (computeAgeOnCalendarDays(dateOfBirth, addCalendarDays(start, middle)) === startAge) {
+      low = middle;
+    } else {
+      high = middle;
+    }
+  }
+  return addCalendarDays(start, high);
+}
+
+/**
+ * The member's age-up this season, if the club reads "Age today", the member
+ * has a date of birth, their tier changes during the season and that day has
+ * come by `asOf`. Null otherwise, and when neither tier owes anything.
+ */
+export function resolveAgeUpEvent(input: AgeUpInput): AgeUpEvent | null {
+  if (input.rule.ageSource !== "CURRENT_AGE" || !input.dateOfBirth) return null;
+  const dateOfBirth = calendarDateOfDateOnlyInstant(input.dateOfBirth);
+  const crossing = birthdayCrossing(dateOfBirth, input.seasonYear);
+  if (!crossing) return null;
+  const tierOn = (day: CalendarDate) =>
+    computeAgeTierWithSettings(input.dateOfBirth!, dateOnlyInstantOf(day), input.ageTierSettings);
+  const fromTier = tierOn(getSeasonStartCalendarDate(input.seasonYear));
+  const toTier = tierOn(crossing);
+  if (fromTier === toTier) return null;
+  // A member who joined in the season after their birthday was never billed
+  // at the old tier for the months before they joined.
+  const joined = input.joinedDate ? calendarDateOfDateOnlyInstant(input.joinedDate) : null;
+  const ageUpDate =
+    joined &&
+    compareCalendarDates(joined, crossing) > 0 &&
+    compareCalendarDates(joined, getSeasonEndCalendarDate(input.seasonYear)) <= 0
+      ? joined
+      : crossing;
+  if (compareCalendarDates(ageUpDate, input.asOf) > 0) return null;
+  const owesAt = (ageTier: AgeTier) =>
+    resolveSubscriptionLiability({
+      subscriptionBehavior: input.subscriptionBehavior,
+      ageTier,
+      seasonRowStatus: null,
+      rule: input.rule,
+      ageTierSettings: input.ageTierSettings,
+    });
+  const fromOwes = owesAt(fromTier);
+  const toOwes = owesAt(toTier);
+  if (!fromOwes && !toOwes) return null;
+  return { ageUpDate, fromTier, toTier, fromOwes, toOwes };
+}
+
+/**
+ * {@link resolveAgeUpEvent} priced. The difference is the to tier's annual fee
+ * less the from tier's (0 for a tier that owes nothing), over the whole months
+ * from the age-up month to season end; half-up rounding is applied to its size
+ * and the sign put back, so a top-up and the mirror-image credit are the same
+ * number of cents. Null when there is no event or the difference is 0.
+ * `annualCentsFor` is only asked about a tier that owes.
+ */
+export function resolveAgeUpPart(
+  input: AgeUpInput & { annualCentsFor: (ageTier: AgeTier) => number },
+): AgeUpPart | null {
+  const event = resolveAgeUpEvent(input);
+  if (!event) return null;
+  return priceAgeUpEvent(event, input.seasonYear, input.annualCentsFor);
+}
+
+/** The pricing half of {@link resolveAgeUpPart}, for a caller holding the event. */
+export function priceAgeUpEvent(
+  event: AgeUpEvent,
+  seasonYear: number,
+  annualCentsFor: (ageTier: AgeTier) => number,
+): AgeUpPart | null {
+  const fromAnnualCents = event.fromOwes ? annualCentsFor(event.fromTier) : 0;
+  const toAnnualCents = event.toOwes ? annualCentsFor(event.toTier) : 0;
+  const coveredMonths = remainingSeasonMonthsInclusive(seasonYear, event.ageUpDate);
+  const annualDifference = toAnnualCents - fromAnnualCents;
+  if (annualDifference === 0) return null;
+  const size = prorateAnnualCents(Math.abs(annualDifference), coveredMonths);
+  if (size === 0) return null;
+  return {
+    ...event,
+    coveredMonths,
+    fromAnnualCents,
+    toAnnualCents,
+    signedDifferenceCents: annualDifference > 0 ? size : -size,
   };
 }

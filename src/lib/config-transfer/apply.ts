@@ -12,6 +12,7 @@ import { acquireLodgeCapacityLock } from "@/lib/lodge-capacity-lock";
 import { lockMinimumStayPolicySet } from "@/lib/minimum-stay-policy-set";
 import { lockAdultMemberHostingPolicySet } from "@/lib/adult-member-hosting-policy-set";
 import { settleHostingCoverageAfterCommit } from "@/lib/adult-member-hosting-coverage-drain";
+import { clubToday } from "@/lib/club-time";
 import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
 import { clubSeasonYear } from "@/lib/financial-year";
 import {
@@ -526,12 +527,14 @@ async function clearStaleRowsAfterImport(
     clearUp: Awaited<ReturnType<typeof clearStaleNotRequiredRows>>;
   };
   try {
-    const seasonYear = clubSeasonYear(await readClubTimeZoneOutsideRequest());
+    const zone = await readClubTimeZoneOutsideRequest();
+    const seasonYear = clubSeasonYear(zone);
     attemptedSeasonYear = seasonYear;
+    const today = clubToday(zone);
     // The clear-up waits on the billing season key, which a confirm may hold
     // for its whole budget.
     const clearUp = await prisma.$transaction(
-      (tx) => clearStaleNotRequiredRows(tx, seasonYear),
+      (tx) => clearStaleNotRequiredRows(tx, seasonYear, today),
       { timeout: SUBSCRIPTION_BILLING_SEASON_WAITER_TIMEOUT_MS },
     );
     ran = { seasonYear, clearUp };

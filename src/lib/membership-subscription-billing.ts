@@ -5,7 +5,6 @@ import type {
   AgeTier,
   MembershipBillingExceptionResolution,
   MembershipFeeBillingBasis,
-  MembershipFeeProrationRule,
   MembershipSubscriptionChargeSource,
   MembershipTypeSubscriptionBehavior,
   Prisma,
@@ -18,16 +17,14 @@ import {
 import { DEFAULT_MEMBERSHIP_SUBSCRIPTION_BILLING_SETTINGS } from "@/config/club-settings-defaults";
 import { createAuditLog } from "@/lib/audit";
 import { getEffectiveMembershipAnnualFee, getEffectiveSubscriptionCategoryFee, getFamilyBillingMode } from "@/lib/authoritative-fees";
-import { clubToday, dateOnlyInstantOf } from "@/lib/club-time";
+import { calendarDateOfDateOnlyInstant, clubToday, dateOnlyInstantOf } from "@/lib/club-time";
+import { confirmAgeUpAdjustments, createAgeUpPlanner } from "@/lib/subscription-age-up-billing";
 import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
 import { formatDateOnly, parseDateOnly } from "@/lib/date-only";
 import { seasonYearOfStoredDate } from "@/lib/financial-year";
 import { refreshFinancialYearConfig } from "@/lib/financial-year-server";
-import { seasonYearsLabel } from "@/lib/season-label";
 import { loadMembershipLockoutSettingsStrict } from "@/lib/membership-lockout-settings";
-import { getSeasonStartDate } from "@/lib/policies/age-tier";
 import {
-  getSeasonEndDate,
   liabilityRuleFor,
   resolveMemberSubscriptionLiability,
 } from "@/lib/policies/subscription";
@@ -47,6 +44,7 @@ import { subscriptionInvoiceOutboxRow } from "@/lib/xero-operation-outbox-payloa
 import { buildXeroIdempotencyKey, startXeroSyncOperation } from "@/lib/xero-sync";
 import { totalChargedCents } from "@/lib/subscription-billing-totals";
 import {
+  AGE_UP_SETTLE_IN_XERO_CODE,
   CLOSED_FAMILY_MEMBER_NEEDS_DECISION_CODE,
   CLOSED_FAMILY_PARTLY_REVERSED_CODE,
   CLOSED_FAMILY_REBILL_BESIDE_INVOICE_CODE,
@@ -62,6 +60,14 @@ import {
   WITHHELD_ON_APPROVAL_NOTE,
 } from "@/lib/subscription-charge-already-paid";
 
+import {
+  buildCategoryComponentLineDescription,
+  buildComponentLineDescription,
+  calculateMembershipCharge,
+  componentChargedCents,
+  seasonBounds,
+  SubscriptionBillingError,
+} from "@/lib/membership-charge-calculation";
 import type {
   SubscriptionBillingComponent,
   SubscriptionBillingExemptMember,
@@ -77,12 +83,6 @@ export type {
   SubscriptionBillingPreview,
 } from "@/lib/membership-subscription-billing-types";
 
-export class SubscriptionBillingError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = "SubscriptionBillingError";
-  }
-}
 
 export type SubscriptionBillingExceptionCode =
   | "MISSING_MEMBERSHIP_ASSIGNMENT"
@@ -121,7 +121,9 @@ export type SubscriptionBillingExceptionCode =
   | typeof CLOSED_FAMILY_PARTLY_REVERSED_CODE
   // #4110 review round 5: a warning too — the re-bill sits beside a member's
   // own live Xero invoice.
-  | typeof CLOSED_FAMILY_REBILL_BESIDE_INVOICE_CODE;
+  | typeof CLOSED_FAMILY_REBILL_BESIDE_INVOICE_CODE
+  // #5190 PR 3: a warning — an age-up this app cannot settle; settle it in Xero.
+  | typeof AGE_UP_SETTLE_IN_XERO_CODE;
 
 /**
  * Through the canonical `stableDigest` (`INV-SSOT-001`, #3250).
@@ -151,117 +153,7 @@ function digest(value: unknown) {
   return stableDigest(value);
 }
 
-/** The membership year's first and last days, as date-only instants. */
-function seasonBounds(seasonYear: number) {
-  return { start: getSeasonStartDate(seasonYear), end: getSeasonEndDate(seasonYear) };
-}
-
-export function calculateMembershipCharge(input: {
-  annualAmountCents: number;
-  prorationRule: MembershipFeeProrationRule;
-  seasonYear: number;
-  decisionDate: Date;
-}) {
-  if (!Number.isSafeInteger(input.annualAmountCents) || input.annualAmountCents < 0) {
-    throw new SubscriptionBillingError("Annual membership fee must be a non-negative integer number of cents.");
-  }
-  const { start, end } = seasonBounds(input.seasonYear);
-  const decision = new Date(Date.UTC(
-    input.decisionDate.getUTCFullYear(),
-    input.decisionDate.getUTCMonth(),
-    input.decisionDate.getUTCDate(),
-  ));
-  if (decision < start || decision > end) {
-    throw new SubscriptionBillingError(`Decision date must fall within membership year ${input.seasonYear}.`);
-  }
-  if (input.prorationRule === "NONE") {
-    return {
-      amountCents: input.annualAmountCents,
-      coveredMonths: 12,
-      coverageStart: start,
-      coverageEnd: end,
-    };
-  }
-  const coveredMonths =
-    (end.getUTCFullYear() - decision.getUTCFullYear()) * 12 +
-    end.getUTCMonth() - decision.getUTCMonth() + 1;
-  return {
-    // Integer arithmetic with half-up cent rounding. Values are far below the
-    // JS safe-integer ceiling because fee schedules are constrained to Int32.
-    amountCents: Math.floor((input.annualAmountCents * coveredMonths + 6) / 12),
-    coveredMonths,
-    coverageStart: new Date(Date.UTC(decision.getUTCFullYear(), decision.getUTCMonth(), 1)),
-    coverageEnd: end,
-  };
-}
-
-// The single-line invoice description. A single-component fee (every existing fee
-// post-backfill) reproduces this text — including the `(1 month)` vs `(N months)`
-// pluralization. Multi-component fees append the component label to distinguish
-// their lines.
-//
-// WHAT KEEPS AN EXISTING CHARGE'S LINE STABLE IS PERSISTENCE, NOT THIS LITERAL,
-// and the comment that stood here said otherwise (#3116). It claimed a frozen
-// string contract: a re-driven backfilled charge mints a byte-identical line
-// BECAUSE this text never changes. That is not the mechanism.
-// `MembershipSubscriptionChargeComponent.description` is a persisted column;
-// this function WRITES it at plan time and the mint READS THE STORED COLUMN BACK
-// (`xero-subscription-invoices.ts`, whose fallback branch is the one place that
-// re-derives at send time). So changing this derivation changes newly-planned
-// charges only.
-//
-// `yearEndMonth` IS REQUIRED and deliberately has no default, so an unstated
-// year-end is a compile error rather than a silently wrong invoice line - see
-// `season-label.ts` for why the default is wrong off a request path.
-export function buildComponentLineDescription(input: {
-  membershipTypeName: string;
-  seasonYear: number;
-  coveredMonths: number;
-  label: string;
-  isSoleComponent: boolean;
-  yearEndMonth: number;
-}) {
-  return componentLineDescription({ ...input, lead: input.membershipTypeName + " membership" });
-}
-
-// The category-axis sibling: "subscription" replaces "membership" because a
-// category charge is independent of any MembershipType. Both axes share one
-// formatter (`componentLineDescription`) so the season label, month count and
-// component suffix cannot drift between them (#4496 review, shared helpers).
-export function buildCategoryComponentLineDescription(input: {
-  subscriptionCategoryName: string;
-  seasonYear: number;
-  coveredMonths: number;
-  label: string;
-  isSoleComponent: boolean;
-  yearEndMonth: number;
-}) {
-  return componentLineDescription({ ...input, lead: input.subscriptionCategoryName + " subscription" });
-}
-
-function componentLineDescription(input: {
-  lead: string;
-  seasonYear: number;
-  coveredMonths: number;
-  label: string;
-  isSoleComponent: boolean;
-  yearEndMonth: number;
-}) {
-  const base = `${input.lead} `
-    + `${seasonYearsLabel(input.seasonYear, input.yearEndMonth)}`
-    + ` (${input.coveredMonths} month${input.coveredMonths === 1 ? "" : "s"})`;
-  return input.isSoleComponent ? base : `${base} — ${input.label}`;
-}
-
-// Per-component charged cents: same half-up cent rounding as the fee-level
-// calculation, applied per line. Σ of per-component floors can diverge from the
-// fee-level floor by up to (n−1) cents for a multi-component prorated fee — this
-// is intended: the charge total is authoritative as Σ components so the invoice
-// (one line per component) always foots to the charge amount (see
-// docs/AUTHORITATIVE_FEES.md). A single-component fee is byte-identical.
-function componentChargedCents(amountCents: number, prorate: boolean, coveredMonths: number) {
-  return prorate ? Math.floor((amountCents * coveredMonths + 6) / 12) : amountCents;
-}
+export { buildCategoryComponentLineDescription, buildComponentLineDescription, calculateMembershipCharge, SubscriptionBillingError };
 
 
 /** Newest charge first; the id breaks a createdAt tie, so the order is total. */
@@ -585,6 +477,7 @@ export async function buildSubscriptionBillingPreview(input: {
         // liability; ageTier is the fail-closed fallback when DOB is unknown.
         dateOfBirth: true,
         ageTier: true,
+        joinedDate: true, // #5190 PR 3: an in-season join after the birthday is the age-up day
         billingFamilyGroupId: true,
         seasonalMembershipAssignments: {
           where: { seasonYear: input.seasonYear },
@@ -958,6 +851,17 @@ export async function buildSubscriptionBillingPreview(input: {
     }
     return ageTierSettingsCache;
   };
+  // #5190 PR 3: under "Age today" the season charge is judged and priced at the
+  // season-start tier, and a mid-season age-up is settled by a part-season
+  // charge, top-up or credit (`subscription-age-up-billing.ts`, INV-MONEY-051).
+  const ageUp = createAgeUpPlanner({
+    db, seasonYear: input.seasonYear, decisionDate, yearEndMonth, rule: billingLiabilityRule,
+    scoped: Boolean(input.memberIds?.length), xeroInvoicingOff: Boolean(input.xeroInvoicingOff),
+    ageTierSettings: getAgeTierSettingsMemoized, feeFor: getMemoizedFee,
+    warn: (warning) => exceptions.push(exception({
+      ...warning, code: AGE_UP_SETTLE_IN_XERO_CODE, seasonYear: input.seasonYear, familyGroupId: null,
+    })),
+  });
 
   // #5190: whether a member owes a subscription for this season, on EITHER
   // billing axis, is the ONE liability rule booking access also reads
@@ -979,7 +883,8 @@ export async function buildSubscriptionBillingPreview(input: {
       member,
       seasonRowStatus: null,
       seasonYear: input.seasonYear,
-      rule: billingLiabilityRule,
+      asOf: calendarDateOfDateOnlyInstant(decisionDate),
+      rule: ageUp.seasonChargeRule,
       ageTierSettings: await getAgeTierSettingsMemoized(),
     });
 
@@ -1667,11 +1572,14 @@ export async function buildSubscriptionBillingPreview(input: {
     // NOT_APPLICABLE tier still short-circuits to the flat fee inside the
     // resolver.
     const liability = await resolveBillingLiability(member, membershipType.subscriptionBehavior);
+    // #5190 PR 3: exempt at season start but aged into owing by the decision
+    // date: a part-season charge at the new tier, decided on the age-up day.
+    const partSeason = liability.owes ? null : await ageUp.partSeasonCharge(member, membershipType);
     // The tier ACTUALLY used to resolve the fee — also what names a
     // MISSING_FEE_SCHEDULE exception and keys the memo cache: the liability
     // tier for a BASED_ON_AGE_TIER type, else the member's stored tier.
-    const feeTier =
-      membershipType.subscriptionBehavior === "BASED_ON_AGE_TIER"
+    const feeTier = partSeason ? partSeason.feeTier
+      : membershipType.subscriptionBehavior === "BASED_ON_AGE_TIER"
         ? liability.ageTier
         : member.ageTier;
     const fee = await getMemoizedFee(membershipType.id, feeTier);
@@ -1691,7 +1599,7 @@ export async function buildSubscriptionBillingPreview(input: {
     // a BASED_ON_AGE_TIER type can reach this exemption (the billing rule is
     // ALWAYS_OWES for a REQUIRED type); a club that chooses AGE_TIER_EXEMPTS
     // exempts a REQUIRED-type child here the same way (Edge 1).
-    if (!liability.owes && (!fee || fee.billingBasis === "PER_MEMBER")) {
+    if (!partSeason && !liability.owes && (!fee || fee.billingBasis === "PER_MEMBER")) {
       // Skip the charge; confirm upserts a NOT_REQUIRED season row (Q4). Join
       // exemptMemberIds (drives the confirm NOT_REQUIRED write — constraint 2),
       // and the display list for the collapsed "Exempt" section.
@@ -1711,11 +1619,12 @@ export async function buildSubscriptionBillingPreview(input: {
       }));
       continue;
     }
+    const prorationRule = partSeason ? "REMAINING_MONTHS_INCLUSIVE" : fee.prorationRule;
     const calculated = calculateMembershipCharge({
       annualAmountCents: fee.amountCents,
-      prorationRule: fee.prorationRule,
+      prorationRule,
       seasonYear: input.seasonYear,
-      decisionDate,
+      decisionDate: partSeason?.decisionDate ?? decisionDate,
     });
     let familyGroupId: string | null = null;
     let recipient = { id: member.id, name: memberName, email: member.email };
@@ -1925,11 +1834,11 @@ export async function buildSubscriptionBillingPreview(input: {
       membershipTypeKey: membershipType.key,
       membershipTypeName: membershipType.name,
       billingBasis: fee.billingBasis,
-      prorationRule: fee.prorationRule,
+      prorationRule,
       annualAmountCents: fee.amountCents,
       chargedAmountCents,
       coveredMonths: calculated.coveredMonths,
-      decisionDate: decisionDateOnly,
+      decisionDate: partSeason ? formatDateOnly(partSeason.decisionDate) : decisionDateOnly,
       coverageStart: formatDateOnly(calculated.coverageStart),
       coverageEnd: formatDateOnly(calculated.coverageEnd),
       familyGroupId,
@@ -2058,6 +1967,10 @@ export async function buildSubscriptionBillingPreview(input: {
       }
     }
   }
+  const ageUpAdjustments = await ageUp.planAdjustments({
+    members, entries, membershipTypeOf: (member) => member.seasonalMembershipAssignments[0]?.membershipType
+      ?? fallbackTypeByKey.get(defaultMembershipTypeKeyForRole(member.role)),
+  });
   exceptions.sort((left, right) => compareOrdinal(left.fingerprint, right.fingerprint));
   // Review finding: solo category entries (familyGroupId null) sharing the
   // SAME subscriptionCategoryId, grouped for the ungroupedCategoryMembers
@@ -2081,7 +1994,11 @@ export async function buildSubscriptionBillingPreview(input: {
     }))
     .sort((left, right) => compareOrdinal(left.subscriptionCategoryId, right.subscriptionCategoryId));
   const scopeMemberIds = input.memberIds?.length ? [...new Set(input.memberIds)].sort() : null;
-  const tokenPayload = { seasonYear: input.seasonYear, decisionDate: decisionDateOnly, dueDays, scopeMemberIds, entries, exceptions };
+  const tokenPayload = {
+    seasonYear: input.seasonYear, decisionDate: decisionDateOnly, dueDays, scopeMemberIds, entries, exceptions,
+    // #5190 PR 3: only when there are any, so every other club's token is unchanged.
+    ...(ageUpAdjustments.length > 0 ? { ageUpAdjustments } : {}),
+  };
   return {
     seasonYear: input.seasonYear,
     decisionDate: decisionDateOnly,
@@ -2101,6 +2018,7 @@ export async function buildSubscriptionBillingPreview(input: {
     alreadyInvoicedFamilies: alreadyInvoicedFamilies.sort((left, right) =>
       compareOrdinal(left.familyGroupId, right.familyGroupId)),
     totalCents: totalChargedCents(entries),
+    ageUpAdjustments,
     confirmationToken: digest(tokenPayload),
     ungroupedCategoryMembers,
   };
@@ -2421,6 +2339,10 @@ export async function confirmSubscriptionBillingPreview(input: {
         });
       }
     }
+    // #5190 PR 3: age-up top-ups and credits, from the same fresh preview.
+    chargeIds.push(...await confirmAgeUpAdjustments(tx, {
+      preview, source: input.source, confirmedByMemberId: input.confirmedByMemberId,
+    }));
     // #2041: give each BASED_ON_AGE_TIER tier-exempt member a NOT_REQUIRED
     // season row (decision Q4) so their booking status stays consistent with
     // billing even if the stored tier is promoted mid-season. Uses the fresh

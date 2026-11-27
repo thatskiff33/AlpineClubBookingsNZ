@@ -21,6 +21,7 @@ import {
 } from "@/lib/xero-mappings";
 import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/session-guards";
+import { clubToday } from "@/lib/club-time";
 import { clubTimeZone } from "@/lib/club-time/server";
 import { clubSeasonYear } from "@/lib/financial-year";
 import { membershipLockoutSettingsSchema } from "@/lib/admin-membership-api/config-settings";
@@ -163,11 +164,13 @@ export async function PUT(request: NextRequest) {
   };
   // #5190: a save that leaves the club on a chosen rule also runs the stale-row
   // clear-up, in the same transaction (`saveLockoutSettings`).
-  const seasonYear = clubSeasonYear(await clubTimeZone());
+  const zone = await clubTimeZone();
+  const seasonYear = clubSeasonYear(zone);
   const saved = await saveLockoutSettingsUnlessBusy(prisma, {
     data,
     liabilityAfterSave: liabilityChoice ?? stored,
     seasonYear,
+    today: clubToday(zone),
   });
   if (saved === null) {
     return NextResponse.json(

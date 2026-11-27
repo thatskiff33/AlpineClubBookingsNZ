@@ -183,6 +183,23 @@ enum MembershipSubscriptionChargeStatus {
   VOIDED
 }
 
+// #5190 PR 3: how a mid-season age-up is settled (MemberSubscriptionAgeUpAdjustment).
+enum AgeUpAdjustmentKind {
+  TOP_UP
+  CREDIT
+}
+
+// #5190 PR 3: PENDING until settled. A TOP_UP stays PENDING while its charge
+// lives and is VOIDED when its invoice is voided in Xero (never re-raised). A
+// CREDIT ends CREDITED_ON_INVOICE (a credit note allocated to the season
+// invoice) or CREDITED_TO_ACCOUNT (a member credit lot).
+enum AgeUpAdjustmentStatus {
+  PENDING
+  CREDITED_ON_INVOICE
+  CREDITED_TO_ACCOUNT
+  VOIDED
+}
+
 enum MembershipBillingExceptionStatus {
   OPEN
   RESOLVED
@@ -1186,6 +1203,8 @@ model MemberSubscription {
   // one ACTIVE — releasedAt IS NULL — at a time, enforced by the raw-SQL
   // partial unique index in prisma/partial-unique-indexes.tsv).
   chargeCoverage MembershipSubscriptionChargeCoverage[]
+  // #5190 PR 3: this season's mid-season age-up top-up or credit, if any.
+  ageUpAdjustments MemberSubscriptionAgeUpAdjustment[]
 
   @@unique([memberId, seasonYear])
   @@index([memberId])
@@ -1273,6 +1292,8 @@ model MembershipSubscriptionCharge {
   confirmedBy Member?  @relation("MembershipChargeConfirmer", fields: [confirmedByMemberId], references: [id], onDelete: SetNull)
   coverage    MembershipSubscriptionChargeCoverage[]
   components  MembershipSubscriptionChargeComponent[]
+  // #5190 PR 3: set on an age-up top-up's charge, which covers no subscription.
+  ageUpAdjustment MemberSubscriptionAgeUpAdjustment?
 
   @@index([seasonYear, status, createdAt])
   @@index([recipientMemberId, seasonYear])
@@ -1358,6 +1379,60 @@ model MembershipSubscriptionChargeCoverage {
   @@index([chargeId])
   @@index([subscriptionId])
   @@index([memberId, createdAt])
+}
+
+// #5190 PR 3 (INV-MONEY-051): one mid-season age-up's settlement under the
+// "Age today" liability rule — a part-season TOP_UP invoice for a move to a
+// dearer tier, or a part-season CREDIT for a move to a cheaper or free tier
+// (owner decision, 27 Nov 2026). A move from not owing to owing is NOT a row
+// here: it is an ordinary season charge with coverage, priced at the new tier.
+//
+// Immutable once written, like the charge: only `status`, `xeroInvoiceStatus`,
+// `memberCreditId` and `xeroCreditNoteId` change, each through a
+// status-guarded write. `@@unique([memberSubscriptionId, ageUpDate])` is the
+// one-per-member, season and age-up key, so a re-run of the billing run can
+// never raise a second one (a member ages up at most once in a season).
+// `memberId` is a bare snapshot of whom the row was raised for, as
+// `MembershipSubscriptionChargeCoverage.memberId` is; the subscription FK is
+// what follows a member merge. Raw-SQL CHECKs: `amountCents > 0`; a TOP_UP and
+// only a TOP_UP names its charge; only a CREDIT names a credit lot or note.
+model MemberSubscriptionAgeUpAdjustment {
+  id                   String                @id @default(cuid())
+  memberSubscriptionId String
+  memberId             String
+  seasonYear           Int
+  // The first season day the new tier applies from: the birthday, or a later
+  // in-season join date.
+  ageUpDate            DateTime              @db.Date
+  kind                 AgeUpAdjustmentKind
+  status               AgeUpAdjustmentStatus @default(PENDING)
+  fromAgeTier          AgeTier
+  toAgeTier            AgeTier
+  coveredMonths        Int
+  fromAnnualCents      Int
+  toAnnualCents        Int
+  // Always positive: what the TOP_UP invoices, or the CREDIT gives back.
+  amountCents          Int
+  // The Xero line text, frozen at confirm.
+  description          String
+  // TOP_UP: the charge that raises and emails its invoice (no coverage row).
+  chargeId             String?               @unique
+  // CREDIT, lot route: the member credit lot it became.
+  memberCreditId       String?               @unique
+  // CREDIT, allocate route: the credit note allocated to the season invoice.
+  xeroCreditNoteId     String?               @unique
+  // TOP_UP: its invoice's status, from the membership sync. Null until issued.
+  xeroInvoiceStatus    SubscriptionStatus?
+  createdAt            DateTime              @default(now())
+  updatedAt            DateTime              @updatedAt
+
+  memberSubscription MemberSubscription            @relation(fields: [memberSubscriptionId], references: [id], onDelete: Restrict)
+  charge             MembershipSubscriptionCharge? @relation(fields: [chargeId], references: [id], onDelete: Restrict)
+  memberCredit       MemberCredit?                 @relation(fields: [memberCreditId], references: [id], onDelete: Restrict)
+
+  @@unique([memberSubscriptionId, ageUpDate])
+  @@index([seasonYear, kind, status])
+  @@index([memberId])
 }
 
 // #2161 (D2): an explicit operator "already invoiced" marker for one family
@@ -8087,6 +8162,8 @@ model MemberCredit {
   cashAllocations           MemberCreditCashAllocation[]  @relation("CreditLotCashAllocations")
   cashReturns               MemberCreditCashReturn[]      @relation("CreditCashReturnRestoration")
   openingCreditBatch        OpeningCreditBatch?           @relation(fields: [openingCreditBatchId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  // #5190 PR 3: the age-up credit this lot was posted for, if any.
+  ageUpAdjustment           MemberSubscriptionAgeUpAdjustment?
 
   @@index([memberId])
   @@index([requestedById])

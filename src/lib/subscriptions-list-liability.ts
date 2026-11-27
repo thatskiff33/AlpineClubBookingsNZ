@@ -6,6 +6,7 @@ import type {
 } from "@prisma/client";
 
 import type { AgeTierSettingData } from "@/lib/age-tier";
+import type { CalendarDate } from "@/lib/club-time";
 import {
   effectiveSubscriptionBehavior,
   isSubscriptionNotRequiredForMembershipType,
@@ -34,6 +35,8 @@ export function isSubscriptionsListMemberNotRequired(
   },
   rule: {
     seasonYear: number;
+    /** The club's today: the day "Age today" reads the age on. */
+    today: CalendarDate;
     ageTierSettings: AgeTierSettingData[];
     liabilitySettings: SubscriptionLiabilitySettings;
   },

@@ -3,13 +3,10 @@ import type { Prisma } from "@prisma/client";
 import type { CalendarDate } from "@/lib/club-time";
 import { dateOfBirthPrefilterBoundForMinAge } from "@/lib/date-of-birth-prefilter";
 import { NON_MEMBER_ROLE_VALUES, OPERATIONAL_ROLE_VALUES } from "@/lib/member-roles";
-import {
-  getSeasonStartCalendarDate,
-  type AgeTierSettingData,
-} from "@/lib/policies/age-tier";
+import type { AgeTierSettingData } from "@/lib/policies/age-tier";
 import {
   ADMIN_LIST_LIABILITY_SIDE,
-  getSeasonEndCalendarDate,
+  liabilityReferenceDate,
   liabilityRuleFor,
   type LiabilityAgeTierSource,
   type SubscriptionLiabilitySettings,
@@ -35,6 +32,8 @@ import {
  */
 export function subscriptionNotRequiredMemberConditions(input: {
   seasonYear: number;
+  /** The club's today: the day "Age today" reads the age on (#5190 PR 3). */
+  today: CalendarDate;
   ageTierSettings: AgeTierSettingData[];
   liabilitySettings: SubscriptionLiabilitySettings;
   /**
@@ -56,6 +55,7 @@ export function subscriptionNotRequiredMemberConditions(input: {
   const exemptTier = exemptAgeTierWhere(
     rule.ageSource,
     seasonYear,
+    input.today,
     input.ageTierSettings,
   );
   return [
@@ -94,6 +94,7 @@ export function subscriptionNotRequiredMemberConditions(input: {
 function exemptAgeTierWhere(
   source: LiabilityAgeTierSource,
   seasonYear: number,
+  today: CalendarDate,
   ageTierSettings: AgeTierSettingData[],
 ): Prisma.MemberWhereInput {
   const exemptSettings = ageTierSettings.filter(
@@ -103,10 +104,7 @@ function exemptAgeTierWhere(
     ageTier: { in: [...exemptSettings.map((setting) => setting.tier), "NOT_APPLICABLE"] },
   };
   if (source === "STORED_TIER") return storedTierExempt;
-  const reference: CalendarDate =
-    source === "SEASON_START"
-      ? getSeasonStartCalendarDate(seasonYear)
-      : getSeasonEndCalendarDate(seasonYear);
+  const reference = liabilityReferenceDate(source, seasonYear, today);
   return {
     OR: [
       { AND: [{ dateOfBirth: null }, storedTierExempt] },

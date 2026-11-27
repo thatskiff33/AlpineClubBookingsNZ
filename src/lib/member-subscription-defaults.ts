@@ -4,6 +4,7 @@ import type {
   Role,
   SubscriptionStatus,
 } from "@prisma/client";
+import type { CalendarDate } from "@/lib/club-time";
 import { getAgeTierSettingsStrict } from "@/lib/age-tier";
 import { loadMembershipLockoutSettingsStrict } from "@/lib/membership-lockout-settings";
 import { resolveMembershipTypePoliciesForMembers } from "@/lib/membership-type-policy";
@@ -108,6 +109,8 @@ async function owesOnBillingSide(
     seasonYear: number;
     subscriptionBehavior: MembershipTypeSubscriptionBehavior;
     settings: Parameters<typeof liabilityRuleFor>[1];
+    /** The club's today, resolved before the transaction (`INV-LOCK-004`). */
+    today: CalendarDate;
   },
 ): Promise<boolean> {
   const [member, ageTierSettings] = await Promise.all([
@@ -124,6 +127,7 @@ async function owesOnBillingSide(
     // rule ignores it, chosen or not.
     seasonRowStatus: "NOT_REQUIRED",
     seasonYear: params.seasonYear,
+    asOf: params.today,
     rule: liabilityRuleFor("billing", params.settings),
     ageTierSettings,
   }).owes;
@@ -193,6 +197,11 @@ export async function reconcileSeasonSubscriptionForAssignment(
     memberId: string;
     seasonYear: number;
     subscriptionBehavior: MembershipTypeSubscriptionBehavior;
+    /**
+     * The club's today, resolved by the caller before its transaction
+     * (`INV-LOCK-004`): the day "Age today" reads the member's age on.
+     */
+    today: CalendarDate;
   }
 ): Promise<{ reconciled: boolean }> {
   if (params.subscriptionBehavior === "NOT_REQUIRED") {
@@ -324,9 +333,11 @@ export async function findStaleNotRequiredRows(
      * `settings` alone.
      */
     listSettings: SubscriptionLiabilitySettings;
+    /** The club's today, resolved before any transaction (`INV-LOCK-004`). */
+    today: CalendarDate;
   },
 ): Promise<StaleNotRequiredRow[]> {
-  const { seasonYear, settings, listSettings } = input;
+  const { seasonYear, settings, listSettings, today } = input;
   if (!hasChosenLiabilityRule(settings)) {
     return [];
   }
@@ -372,6 +383,7 @@ export async function findStaleNotRequiredRows(
         member,
         seasonRowStatus: "NOT_REQUIRED",
         seasonYear,
+        asOf: today,
         rule,
         ageTierSettings,
       }).owes
@@ -397,6 +409,7 @@ export async function findStaleNotRequiredRows(
         ),
         member,
         seasonYear,
+        today,
         ageTierSettings,
         liabilitySettings: listSettings,
       };
@@ -446,6 +459,8 @@ export async function findStaleNotRequiredRows(
 export async function clearStaleNotRequiredRows(
   tx: Prisma.TransactionClient,
   seasonYear: number,
+  /** The club's today, resolved before the transaction (`INV-LOCK-004`). */
+  today: CalendarDate,
 ): Promise<StaleNotRequiredClearUp> {
   const nothingCleared: StaleNotRequiredClearUp = { clearedCount: 0, clearedMemberIds: [] };
   await lockSubscriptionBillingSeason(tx, seasonYear);
@@ -454,7 +469,7 @@ export async function clearStaleNotRequiredRows(
   await lockSubscriptionLiabilityRuleExclusive(tx);
   const settings = await loadMembershipLockoutSettingsStrict(tx);
   const owingMemberIds = (
-    await findStaleNotRequiredRows(tx, { seasonYear, settings, listSettings: settings })
+    await findStaleNotRequiredRows(tx, { seasonYear, settings, listSettings: settings, today })
   ).map((row) => row.memberId);
   if (owingMemberIds.length === 0) {
     return nothingCleared;

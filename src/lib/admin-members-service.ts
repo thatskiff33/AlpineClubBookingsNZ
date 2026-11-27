@@ -286,10 +286,10 @@ export async function listAdminMembers(
   // The season the club is in AT `now`, from the club's PERSISTED zone rather
   // than the container's month (INV-CONFIG-002). `now` is pinned so the whole
   // listing is judged against one moment.
-  const currentSeasonYear = clubSeasonYear(
-    await readClubTimeZoneOutsideRequest(),
-    fixedClubClock(now),
-  );
+  const zone = await readClubTimeZoneOutsideRequest();
+  const currentSeasonYear = clubSeasonYear(zone, fixedClubClock(now));
+  // The club's today at the same moment: the day "Age today" reads ages on.
+  const today = clubToday(zone, fixedClubClock(now));
   const [ageTierSettings, lockoutSettings] = await Promise.all([
     getAgeTierSettings(),
     loadMembershipLockoutSettings(),
@@ -300,6 +300,7 @@ export async function listAdminMembers(
   // `subscriptionNotRequiredMemberConditions`.
   const notRequiredSubscriptionConditions = subscriptionNotRequiredMemberConditions({
     seasonYear: currentSeasonYear,
+    today,
     ageTierSettings,
     liabilitySettings: lockoutSettings,
   });
@@ -1065,6 +1066,7 @@ export async function listAdminMembers(
       ),
       member: m,
       seasonYear: currentSeasonYear,
+      today,
       ageTierSettings,
       liabilitySettings: lockoutSettings,
     };

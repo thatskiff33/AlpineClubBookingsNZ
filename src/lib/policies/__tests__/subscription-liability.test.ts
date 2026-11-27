@@ -5,6 +5,7 @@ import type {
 } from "@prisma/client";
 import { describe, expect, it } from "vitest";
 
+import type { CalendarDate } from "@/lib/club-time";
 import { AGE_TIER_DEFAULTS } from "@/lib/policies/age-tier";
 import {
   NOT_CHOSEN_LIABILITY_SETTINGS,
@@ -24,6 +25,8 @@ import {
 // 2027-03-31.
 const tiers = AGE_TIER_DEFAULTS;
 const SEASON = 2026;
+/** The club's today for "Age today": mid-season, after a January birthday. */
+const TODAY = "2027-02-01" as CalendarDate;
 
 /** Turns 10 (CHILD → YOUTH) on 15 Jan 2027: a child at season start, a youth at season end. */
 const agesUpMidSeason = { dateOfBirth: new Date("2017-01-15T00:00:00.000Z"), ageTier: "CHILD" as AgeTier };
@@ -51,6 +54,7 @@ function owes(input: {
     member: input.member,
     seasonRowStatus: input.row ?? null,
     seasonYear: SEASON,
+    asOf: TODAY,
     rule: liabilityRuleFor(input.side, input.settings),
     ageTierSettings: tiers,
   }).owes;
@@ -73,9 +77,8 @@ describe("liabilityRuleFor (#5190)", () => {
   it.each([
     settings("ALWAYS_OWES", "NOT_CHOSEN"),
     settings("NOT_CHOSEN", "SEASON_END"),
-    // Refused by every writer until part-season invoices ship (#5190 PR 3).
-    settings("AGE_TIER_EXEMPTS", "CURRENT_AGE"),
-  ])("treats a half-made or not-yet-open choice as not chosen: %o", (partial) => {
+    settings("NOT_CHOSEN", "CURRENT_AGE"),
+  ])("treats a half-made choice as not chosen: %o", (partial) => {
     expect(hasChosenLiabilityRule(partial)).toBe(false);
     expect(liabilityRuleFor("billing", partial)).toEqual(
       liabilityRuleFor("billing", NOT_CHOSEN_LIABILITY_SETTINGS),
@@ -90,6 +93,9 @@ describe("liabilityRuleFor (#5190)", () => {
     settings("ALWAYS_OWES", "SEASON_END"),
     settings("AGE_TIER_EXEMPTS", "SEASON_START"),
     settings("AGE_TIER_EXEMPTS", "SEASON_END"),
+    // #5190 PR 3: "Age today" is open for choice.
+    settings("ALWAYS_OWES", "CURRENT_AGE"),
+    settings("AGE_TIER_EXEMPTS", "CURRENT_AGE"),
   ])("gives both sides the identical rule once chosen, and the season row exempts nobody: %o", (chosen) => {
     const billing = liabilityRuleFor("billing", chosen);
     expect(liabilityRuleFor("access", chosen)).toEqual(billing);
@@ -109,20 +115,24 @@ describe("resolveLiabilityAgeTier (#5190)", () => {
   });
 
   it.each([
-    ["SEASON_START", "CHILD"],
-    ["SEASON_END", "YOUTH"],
-    ["STORED_TIER", "CHILD"],
-  ] as const)("reads %s as %s for a member who turns 10 mid-season", (source, expected) => {
+    ["SEASON_START", TODAY, "CHILD"],
+    ["SEASON_END", TODAY, "YOUTH"],
+    ["STORED_TIER", TODAY, "CHILD"],
+    // "Age today" reads the age on the club's today (owner decision, 20 Nov 2026).
+    ["CURRENT_AGE", "2027-01-14", "CHILD"],
+    ["CURRENT_AGE", "2027-01-15", "YOUTH"],
+  ] as const)("reads %s on %s as %s for a member who turns 10 mid-season", (source, asOf, expected) => {
     expect(resolveLiabilityAgeTier({
       source,
       dateOfBirth: agesUpMidSeason.dateOfBirth,
       storedAgeTier: agesUpMidSeason.ageTier,
       seasonYear: SEASON,
+      asOf: asOf as CalendarDate,
       ageTierSettings: tiers,
     })).toBe(expected);
   });
 
-  it.each(["SEASON_START", "SEASON_END"] as const)(
+  it.each(["SEASON_START", "SEASON_END", "CURRENT_AGE"] as const)(
     "falls back to the stored tier with no date of birth (%s)",
     (source) => {
       expect(resolveLiabilityAgeTier({
@@ -130,6 +140,7 @@ describe("resolveLiabilityAgeTier (#5190)", () => {
         dateOfBirth: null,
         storedAgeTier: "YOUTH",
         seasonYear: SEASON,
+        asOf: TODAY,
         ageTierSettings: tiers,
       })).toBe("YOUTH");
     },
@@ -176,6 +187,8 @@ describe("resolveSubscriptionLiability: the rule table (#5190)", () => {
     ["age source, not chosen", "BASED_ON_AGE_TIER", agesUpMidSeason, null, NOT_CHOSEN, false, false],
     ["age source, season start", "BASED_ON_AGE_TIER", agesUpMidSeason, null, exemptsStart, false, false],
     ["age source, season end", "BASED_ON_AGE_TIER", agesUpMidSeason, null, exemptsEnd, true, true],
+    // "Age today": the age on the club's today (TODAY is after the birthday).
+    ["age source, age today", "BASED_ON_AGE_TIER", agesUpMidSeason, null, settings("AGE_TIER_EXEMPTS", "CURRENT_AGE"), true, true],
     // A stale stored tier: billing reads the DOB at season start, access the stored tier, until chosen.
     ["stale stored tier, not chosen", "BASED_ON_AGE_TIER", adultStoredAsChild, null, NOT_CHOSEN, true, false],
     ["stale stored tier, chosen", "BASED_ON_AGE_TIER", adultStoredAsChild, null, exemptsStart, true, true],
@@ -196,7 +209,7 @@ describe("resolveSubscriptionLiability: the rule table (#5190)", () => {
     const members = [agesUpMidSeason, adultStoredAsChild, child, childNoDob, null];
     const behaviors: Array<MembershipTypeSubscriptionBehavior | null> = ["REQUIRED", "BASED_ON_AGE_TIER", "NOT_REQUIRED", null];
     const rows: Array<SubscriptionStatus | null> = [null, "NOT_REQUIRED", "NOT_INVOICED", "PAID"];
-    for (const chosen of [owesStart, owesEnd, exemptsStart, exemptsEnd]) {
+    for (const chosen of [owesStart, owesEnd, exemptsStart, exemptsEnd, settings("AGE_TIER_EXEMPTS", "CURRENT_AGE")]) {
       for (const behavior of behaviors) {
         for (const member of members) {
           for (const row of rows) {

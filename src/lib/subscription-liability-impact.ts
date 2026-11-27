@@ -1,6 +1,7 @@
 import type { AgeTier, Prisma, SubscriptionStatus } from "@prisma/client";
 
 import { getAgeTierSettingsStrict } from "@/lib/age-tier";
+import type { CalendarDate } from "@/lib/club-time";
 import { loadMembershipLockoutSettingsStrict } from "@/lib/membership-lockout-settings";
 import { resolveMembershipTypePoliciesForMembers } from "@/lib/membership-type-policy";
 import type { AgeTierSettingData } from "@/lib/policies/age-tier";
@@ -83,6 +84,8 @@ const UNPAID_INVOICE_STATUSES: ReadonlySet<SubscriptionStatus> = new Set(["UNPAI
  */
 export function classifyLiabilityImpact(input: {
   seasonYear: number;
+  /** The club's today: the day "Age today" reads the age on. */
+  today: CalendarDate;
   current: SubscriptionLiabilitySettings;
   proposed: SubscriptionLiabilitySettings;
   ageTierSettings: AgeTierSettingData[];
@@ -108,6 +111,7 @@ export function classifyLiabilityImpact(input: {
         member: facts.member,
         seasonRowStatus: facts.seasonRow?.status,
         seasonYear: input.seasonYear,
+        asOf: input.today,
         rule,
         ageTierSettings: input.ageTierSettings,
       }).owes;
@@ -153,9 +157,14 @@ type ImpactReadDb = Pick<
  */
 export async function buildSubscriptionLiabilityImpact(
   db: ImpactReadDb,
-  params: { seasonYear: number; proposed: SubscriptionLiabilitySettings },
+  params: {
+    seasonYear: number;
+    proposed: SubscriptionLiabilitySettings;
+    /** The club's today, resolved by the route (`INV-CONFIG-002`). */
+    today: CalendarDate;
+  },
 ): Promise<SubscriptionLiabilityImpact> {
-  const { seasonYear } = params;
+  const { seasonYear, today } = params;
   // Stored settings first: the stale list states each row's members-list
   // status under them, which is what the members list shows today.
   const lockoutSettings = await loadMembershipLockoutSettingsStrict(db);
@@ -187,6 +196,7 @@ export async function buildSubscriptionLiabilityImpact(
       seasonYear,
       settings: params.proposed,
       listSettings: current,
+      today,
     }),
   ]);
   const policies = await resolveMembershipTypePoliciesForMembers(db, {
@@ -195,6 +205,7 @@ export async function buildSubscriptionLiabilityImpact(
   });
   return classifyLiabilityImpact({
     seasonYear,
+    today,
     current,
     proposed: params.proposed,
     ageTierSettings,

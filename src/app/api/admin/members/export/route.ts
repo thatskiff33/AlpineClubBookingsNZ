@@ -26,7 +26,7 @@ import {
 } from "@/lib/membership-types";
 import { UNASSIGNED_MEMBERSHIP_TYPE_VALUE } from "@/lib/membership-type-filter";
 import { subscriptionCategoryFilterWhere } from "@/lib/subscription-category-filter";
-import { fixedClubClock } from "@/lib/club-time";
+import { clubToday, fixedClubClock } from "@/lib/club-time";
 import { clubTime } from "@/lib/club-time/server";
 import { clubDownloadFilename } from "@/lib/club-download-filename";
 import { getClubIdentity } from "@/lib/club-identity-settings";
@@ -82,8 +82,11 @@ export async function GET(req: NextRequest) {
   // #2149/#5190: mirror the members-list filter exactly — the shared liability
   // rule on the billing side until the club chooses (Q2), from the same settings
   // as the per-row column below.
+  // The club's today at the same pinned moment: "Age today" reads ages on it.
+  const today = clubToday(club.zone, fixedClubClock(now));
   const notRequiredSubscriptionConditions = subscriptionNotRequiredMemberConditions({
     seasonYear: currentSeasonYear,
+    today,
     ageTierSettings,
     liabilitySettings: lockoutSettings,
   });
@@ -316,6 +319,7 @@ export async function GET(req: NextRequest) {
       ),
       member: m,
       seasonYear: currentSeasonYear,
+      today,
       ageTierSettings,
       liabilitySettings: lockoutSettings,
     });

@@ -5,11 +5,18 @@ import type {
 } from "@prisma/client";
 
 import { getAgeTierSettings, type AgeTierSettingData } from "@/lib/age-tier";
+import { clubToday, type CalendarDate } from "@/lib/club-time";
+import {
+  readClubTimeZoneOutsideRequest,
+  readClubTimeZoneThrough,
+  type ClubTimeSettingsDelegate,
+} from "@/lib/club-time-zone-runtime";
 import {
   MEMBERSHIP_LOCKOUT_SETTINGS_ID,
   loadMembershipLockoutSettingsStrict,
   normalizeMembershipLockoutSettings,
 } from "@/lib/membership-lockout-settings";
+import { getSeasonStartCalendarDate } from "@/lib/policies/age-tier";
 import {
   NOT_CHOSEN_LIABILITY_SETTINGS,
   liabilityRuleFor,
@@ -53,6 +60,16 @@ import {
  * invoice, so its member could never reach PAID; the claim, not the row status
  * (which the Xero sync may rewrite), is what proves they are covered.
  *
+ * Under "Age today" (`CURRENT_AGE`, #5190 PR 3, owner decisions 20 and 27 Nov
+ * 2026) the age is read on the club's today, and a mid-season age-up has a
+ * grace (`INV-LOCKOUT-020`):
+ *  - a member who did not owe at season start but owes now is settled until
+ *    their part-season invoice is issued (their season row `UNPAID` or
+ *    `OVERDUE`); from then the normal pay-before-booking rule applies;
+ *  - an issued, unpaid age-up top-up (`MemberSubscriptionAgeUpAdjustment`)
+ *    makes a member unpaid until it is paid, whatever their season row says;
+ *  - an age-up credit never blocks anyone.
+ *
  * It deliberately does NOT consult the club's lockout mode. Whether the club
  * hard-blocks, reprices or ignores an unpaid member is the caller's decision;
  * this module only reports the fact. Keeping the fact and the policy apart is
@@ -69,12 +86,14 @@ export interface SubscriptionSettlementDb {
         memberId: true;
         status: true;
         chargeCoverage: typeof ACTIVE_NO_INVOICE_COVERAGE;
+        ageUpAdjustments: typeof ISSUED_UNPAID_AGE_UP_TOP_UP;
       };
     }): Promise<
       Array<{
         memberId: string;
         status: SubscriptionStatus;
         chargeCoverage: Array<{ id: string }>;
+        ageUpAdjustments: Array<{ id: string }>;
       }>
     >;
   };
@@ -96,6 +115,55 @@ export interface SubscriptionSettlementDb {
       select: { requiredTypeAgeRule: true; liabilityAgeSource: true };
     }): Promise<{ requiredTypeAgeRule: string; liabilityAgeSource: string } | null>;
   };
+  /**
+   * The club's timezone, read on the CALLER'S client when the club reads "Age
+   * today" and the caller did not pass `today` (`INV-LOCK-004`). Optional for
+   * the same reason as above.
+   */
+  clubTimeSettings?: ClubTimeSettingsDelegate;
+}
+
+/**
+ * An issued, unpaid age-up top-up (#5190 PR 3): `xeroInvoiceStatus` is set by
+ * the mint and the membership sync from the top-up's own Xero invoice, and
+ * stays null until it is issued. A voided top-up is `VOIDED` and never blocks.
+ */
+const ISSUED_UNPAID_STATUSES: SubscriptionStatus[] = ["UNPAID", "OVERDUE"];
+
+export const ISSUED_UNPAID_AGE_UP_TOP_UP = {
+  where: {
+    kind: "TOP_UP",
+    status: "PENDING",
+    xeroInvoiceStatus: { in: ISSUED_UNPAID_STATUSES },
+  },
+  take: 1,
+  select: { id: true },
+} as const;
+
+/** Whether a season row read with {@link ISSUED_UNPAID_AGE_UP_TOP_UP} has one. */
+export function hasIssuedUnpaidAgeUpTopUp(
+  row: { ageUpAdjustments?: ReadonlyArray<unknown> } | null | undefined,
+): boolean {
+  return (row?.ageUpAdjustments?.length ?? 0) > 0;
+}
+
+/**
+ * The day a settlement reads ages on (#5190 PR 3). The caller's `today` when it
+ * has one; otherwise, for a club on "Age today", the club's today through the
+ * caller's client. Any other source ignores the day, so the season's first day
+ * is passed and nothing is read.
+ */
+export async function resolveSettlementToday(
+  db: Pick<SubscriptionSettlementDb, "clubTimeSettings">,
+  liabilitySettings: SubscriptionLiabilitySettings,
+  seasonYear: number,
+  today?: CalendarDate,
+): Promise<CalendarDate> {
+  if (today) return today;
+  if (liabilityRuleFor("access", liabilitySettings).ageSource !== "CURRENT_AGE") {
+    return getSeasonStartCalendarDate(seasonYear);
+  }
+  return clubToday(await readClubTimeZoneThrough(db));
 }
 
 /**
@@ -151,15 +219,17 @@ export async function readSubscriptionLiabilitySettings(
 export async function owesSubscriptionForAccess(
   input: Omit<
     Parameters<typeof resolveMemberSubscriptionLiability>[0],
-    "rule" | "ageTierSettings"
+    "rule" | "ageTierSettings" | "asOf"
   >,
 ): Promise<boolean> {
-  const [lockoutSettings, ageTierSettings] = await Promise.all([
+  const [lockoutSettings, ageTierSettings, zone] = await Promise.all([
     loadMembershipLockoutSettingsStrict(),
     getAgeTierSettings(),
+    readClubTimeZoneOutsideRequest(),
   ]);
   return resolveMemberSubscriptionLiability({
     ...input,
+    asOf: clubToday(zone),
     rule: liabilityRuleFor("access", lockoutSettings),
     ageTierSettings,
   }).owes;
@@ -242,6 +312,8 @@ export function resolveMemberSubscriptionSettlement(input: {
   subscriptionStatus: SubscriptionStatus | null | undefined;
   /** An active coverage claim on a `NO_INVOICE` charge settles them (#5190). */
   coveredByNoInvoiceCharge: boolean;
+  /** An issued, unpaid age-up top-up makes them unpaid (#5190 PR 3). */
+  issuedUnpaidAgeUpTopUp: boolean;
   /**
    * The LIVE Member row's tier and date of birth, or `null` when no Member row
    * resolved. Null means "owes one": an id we cannot resolve must never
@@ -249,22 +321,37 @@ export function resolveMemberSubscriptionSettlement(input: {
    */
   member: { dateOfBirth: Date | null; ageTier: AgeTier } | null | undefined;
   seasonYear: number;
+  /** The club's today: the day "Age today" reads the age on. */
+  today: CalendarDate;
   ageTierSettings: AgeTierSettingData[];
   liabilitySettings: SubscriptionLiabilitySettings;
 }): MemberSubscriptionSettlement {
-  const { owes } = resolveMemberSubscriptionLiability({
+  const rule = liabilityRuleFor("access", input.liabilitySettings);
+  const facts = {
     subscriptionBehavior: input.subscriptionBehavior,
     member: input.member,
     seasonRowStatus: input.subscriptionStatus,
     seasonYear: input.seasonYear,
-    rule: liabilityRuleFor("access", input.liabilitySettings),
+    asOf: input.today,
     ageTierSettings: input.ageTierSettings,
-  });
+  };
+  const { owes } = resolveMemberSubscriptionLiability({ ...facts, rule });
+  // "Age today" grace (owner decision, 20 Nov 2026): a member who ages INTO
+  // owing mid-season owes nothing to book until their part-season invoice is
+  // issued, which leaves their season row UNPAID or OVERDUE.
+  const agedIntoOwing =
+    owes &&
+    rule.ageSource === "CURRENT_AGE" &&
+    !resolveMemberSubscriptionLiability({ ...facts, rule: { ...rule, ageSource: "SEASON_START" } }).owes;
+  const partSeasonIssued =
+    input.subscriptionStatus === "UNPAID" || input.subscriptionStatus === "OVERDUE";
   // A no-invoice fee settles the member without a payment: nothing is left for
   // them to pay, so no paid subscription is required of them (#5190).
   return {
-    subscriptionRequired: owes && !input.coveredByNoInvoiceCharge,
-    subscriptionPaid: input.subscriptionStatus === "PAID",
+    subscriptionRequired:
+      owes && !input.coveredByNoInvoiceCharge && (!agedIntoOwing || partSeasonIssued),
+    // An issued top-up is part of what they owe (owner decision, 27 Nov 2026).
+    subscriptionPaid: input.subscriptionStatus === "PAID" && !input.issuedUnpaidAgeUpTopUp,
   };
 }
 
@@ -304,6 +391,11 @@ export async function loadMemberSubscriptionSettlements(
      * otherwise read once through `db` (see `readSubscriptionLiabilitySettings`).
      */
     liabilitySettings?: SubscriptionLiabilitySettings;
+    /**
+     * The club's today when the caller already holds it; otherwise read through
+     * `db`, and only for a club on "Age today" (`resolveSettlementToday`).
+     */
+    today?: CalendarDate;
   },
 ): Promise<Map<string, MemberSubscriptionSettlement>> {
   const memberIds = [
@@ -328,6 +420,7 @@ export async function loadMemberSubscriptionSettlements(
         memberId: true,
         status: true,
         chargeCoverage: ACTIVE_NO_INVOICE_COVERAGE,
+        ageUpAdjustments: ISSUED_UNPAID_AGE_UP_TOP_UP,
       },
     }),
     db.member.findMany({
@@ -335,6 +428,7 @@ export async function loadMemberSubscriptionSettlements(
       select: { id: true, ageTier: true, dateOfBirth: true },
     }),
   ]);
+  const today = await resolveSettlementToday(db, liabilitySettings, params.seasonYear, params.today);
 
   const subscriptionByMember = new Map(
     subscriptions.map((subscription) => [subscription.memberId, subscription]),
@@ -351,8 +445,12 @@ export async function loadMemberSubscriptionSettlements(
         coveredByNoInvoiceCharge: hasActiveNoInvoiceCoverage(
           subscriptionByMember.get(memberId),
         ),
+        issuedUnpaidAgeUpTopUp: hasIssuedUnpaidAgeUpTopUp(
+          subscriptionByMember.get(memberId),
+        ),
         member: memberById.get(memberId) ?? null,
         seasonYear: params.seasonYear,
+        today,
         ageTierSettings,
         liabilitySettings,
       }),

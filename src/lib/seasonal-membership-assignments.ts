@@ -23,7 +23,7 @@ import { prisma } from "@/lib/prisma";
 import { getDisplayedWaitlistPositions } from "@/lib/waitlist-queue";
 import { getAuthSecret, requireAuthSecret } from "@/lib/runtime-config";
 import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
-import { clubToday, dateOnlyInstantOf } from "@/lib/club-time";
+import { calendarDateOfDateOnlyInstant, clubToday, dateOnlyInstantOf } from "@/lib/club-time";
 import { clubSeasonYear } from "@/lib/financial-year";
 import { computeAgeTier, getSeasonStartDate } from "@/lib/age-tier";
 import {
@@ -1144,6 +1144,7 @@ export async function saveSeasonalMembershipAssignment(params: {
       memberId: params.memberId,
       seasonYear: params.seasonYear,
       subscriptionBehavior: saved.membershipType.subscriptionBehavior,
+      today: calendarDateOfDateOnlyInstant(clubTodayDateOnly),
     });
 
     await tx.auditLog.create(
@@ -1764,6 +1765,7 @@ export async function rollForwardSeasonalMembershipAssignments(params: {
                 memberId,
                 seasonYear: params.toSeasonYear,
                 subscriptionBehavior,
+                today: calendarDateOfDateOnlyInstant(clubTodayDateOnly),
               });
             }
             return { chunkReconciled, chunkSwept };

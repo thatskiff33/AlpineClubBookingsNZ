@@ -3,10 +3,14 @@ import { getAgeTierSettings } from "@/lib/age-tier";
 import { memberGuestCrossFamilyRefusal } from "@/lib/booking-guests";
 import { resolveSubscriptionLockoutPolicy } from "@/lib/member-subscription-eligibility";
 import { resolveMembershipTypePoliciesForMembers } from "@/lib/membership-type-policy";
+import type { ClubTimeSettingsDelegate } from "@/lib/club-time-zone-runtime";
 import {
   ACTIVE_NO_INVOICE_COVERAGE,
+  ISSUED_UNPAID_AGE_UP_TOP_UP,
   hasActiveNoInvoiceCoverage,
+  hasIssuedUnpaidAgeUpTopUp,
   resolveMemberSubscriptionSettlement,
+  resolveSettlementToday,
   subscriptionIsUnpaid,
 } from "@/lib/subscription-lockout-facts";
 import { seasonYearOfStoredDate } from "@/lib/financial-year";
@@ -35,6 +39,7 @@ interface BookingMemberGuestSubscriptionDb {
         xeroOnlineInvoiceUrl: true;
         xeroInvoiceNumber: true;
         chargeCoverage: typeof ACTIVE_NO_INVOICE_COVERAGE;
+        ageUpAdjustments: typeof ISSUED_UNPAID_AGE_UP_TOP_UP;
       };
     }): Promise<
       Array<{
@@ -43,9 +48,12 @@ interface BookingMemberGuestSubscriptionDb {
         xeroOnlineInvoiceUrl: string | null;
         xeroInvoiceNumber: string | null;
         chargeCoverage?: Array<{ id: string }>;
+        ageUpAdjustments?: Array<{ id: string }>;
       }>
     >;
   };
+  /** "Age today" reads the club's today through this client (#5190 PR 3). */
+  clubTimeSettings?: ClubTimeSettingsDelegate;
   member: {
     findMany(args: {
       where: { id: { in: string[] } };
@@ -107,8 +115,10 @@ export async function findUnpaidMemberGuests(
       xeroOnlineInvoiceUrl: true,
       xeroInvoiceNumber: true,
       chargeCoverage: ACTIVE_NO_INVOICE_COVERAGE,
+      ageUpAdjustments: ISSUED_UNPAID_AGE_UP_TOP_UP,
     },
   });
+  const today = await resolveSettlementToday(db, lockout.liabilitySettings, seasonYear);
   const membershipTypePolicies = await resolveMembershipTypePoliciesForMembers(db, {
     memberIds: uniqueIds,
     seasonYear,
@@ -135,8 +145,10 @@ export async function findUnpaidMemberGuests(
         subscriptionBehavior: membershipTypePolicies.get(id)?.subscriptionBehavior,
         subscriptionStatus: subscriptionById.get(id)?.status,
         coveredByNoInvoiceCharge: hasActiveNoInvoiceCoverage(subscriptionById.get(id)),
+        issuedUnpaidAgeUpTopUp: hasIssuedUnpaidAgeUpTopUp(subscriptionById.get(id)),
         member: memberById.get(id) ?? null,
         seasonYear,
+        today,
         ageTierSettings,
         liabilitySettings: lockout.liabilitySettings,
       }),

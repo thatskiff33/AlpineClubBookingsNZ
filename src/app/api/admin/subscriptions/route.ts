@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { Prisma } from "@prisma/client";
 import { requireAdmin } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma";
+import { clubToday } from "@/lib/club-time";
 import { clubTimeZone } from "@/lib/club-time/server";
 import { clubSeasonYear } from "@/lib/financial-year";
 import logger from "@/lib/logger";
@@ -144,15 +145,15 @@ export async function GET(request: NextRequest) {
   }
 
   const { status, ageTier, xeroContactGroup, sortBy, sortDir, page, pageSize } = parsed.data;
-  const seasonYear =
-    parsed.data.seasonYear ?? clubSeasonYear(await clubTimeZone());
+  const zone = await clubTimeZone();
+  const seasonYear = parsed.data.seasonYear ?? clubSeasonYear(zone);
 
   try {
     const [ageTierSettings, lockoutSettings] = await Promise.all([
       getAgeTierSettings(),
       loadMembershipLockoutSettings(),
     ]);
-    const liabilityRule = { seasonYear, ageTierSettings, liabilitySettings: lockoutSettings };
+    const liabilityRule = { seasonYear, today: clubToday(zone), ageTierSettings, liabilitySettings: lockoutSettings };
     const memberWhere: Prisma.MemberWhereInput = { archivedAt: null };
 
     if (ageTier !== "all") {
