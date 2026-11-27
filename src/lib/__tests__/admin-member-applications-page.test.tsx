@@ -27,13 +27,19 @@ vi.mock("next-auth/react", () => ({
 }));
 
 // #4960: the page mirrors its filter and page into the URL.
-const navigation = vi.hoisted(() => ({ search: "", replace: vi.fn() }));
+// One router for every render, as Next's is (#5295).
+const navigation = vi.hoisted(() => {
+  const replace = vi.fn();
+  return { search: "", pathname: "/", replace, router: { replace, push: vi.fn() } };
+});
 vi.mock("next/navigation", () => ({
-  useRouter: () => ({ replace: navigation.replace, push: vi.fn() }),
+  usePathname: () => navigation.pathname,
+  useRouter: () => navigation.router,
   useSearchParams: () => new URLSearchParams(navigation.search),
 }));
 
 import MemberApplicationsPage from "@/app/(admin)/admin/membership/member-applications/page";
+import { adminHref } from "@/lib/admin-hubs";
 
 const fetchMock = vi.fn();
 
@@ -458,6 +464,7 @@ describe("MemberApplicationsPage paging (#4960)", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     navigation.search = "";
+    navigation.pathname = "/";
     listUrls = [];
     global.fetch = fetchMock as typeof fetch;
     fetchMock.mockImplementation((input: string) => {
@@ -523,6 +530,29 @@ describe("MemberApplicationsPage paging (#4960)", () => {
         "/admin/member-applications?status=ALL",
         { scroll: false },
       ),
+    );
+  });
+
+  // #5295: a replace to the address already shown is a soft navigation that
+  // drops the page's <title> until the server streams it back (#5155).
+  it.each([
+    ["no query", ""],
+    ["a filter and page", "status=APPROVED&page=2"],
+  ])("replaces nothing when opened at its own address (%s), once after a filter change", async (_label, search) => {
+    navigation.pathname = adminHref("member-applications");
+    navigation.search = search;
+    render(<MemberApplicationsPage />);
+
+    await screen.findByText(/Showing \d+–\d+ of 40/);
+    expect(navigation.replace).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole("button", { name: "All" }));
+    await waitFor(() => expect(listUrls.at(-1)!.searchParams.has("status")).toBe(false));
+    await screen.findByText("Showing 1–25 of 40");
+    expect(navigation.replace).toHaveBeenCalledTimes(1);
+    expect(navigation.replace).toHaveBeenCalledWith(
+      `${adminHref("member-applications")}?status=ALL`,
+      { scroll: false },
     );
   });
 

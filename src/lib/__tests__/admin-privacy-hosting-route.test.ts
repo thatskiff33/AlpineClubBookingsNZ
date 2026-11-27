@@ -23,7 +23,7 @@ beforeEach(() => {
   mocks.upsert.mockImplementation(async ({ create }: { create: { hostingProvider: string | null; dataLocation: string | null } }) => ({ hostingProvider: create.hostingProvider, dataLocation: create.dataLocation }));
 });
 it("reads an absent row as not set", async () => {
-  expect(await (await GET()).json()).toEqual({ settings: { hostingProvider: null, dataLocation: null } });
+  expect(await (await GET(new Request("http://localhost/api/admin/privacy-hosting"))).json()).toEqual({ settings: { hostingProvider: null, dataLocation: null } });
 });
 it.each(["view", "none"])("refuses writes by %s permission without effects", async level => {
   mocks.level = level;
@@ -31,8 +31,8 @@ it.each(["view", "none"])("refuses writes by %s permission without effects", asy
   expect(mocks.upsert).not.toHaveBeenCalled(); expect(mocks.audit).not.toHaveBeenCalled(); expect(mocks.revalidate).not.toHaveBeenCalled();
 });
 it("allows content view reads and forbids unrelated admins", async () => {
-  mocks.level = "view"; expect((await GET()).status).toBe(200);
-  mocks.level = "none"; expect((await GET()).status).toBe(403);
+  mocks.level = "view"; expect((await GET(new Request("http://localhost/api/admin/privacy-hosting"))).status).toBe(200);
+  mocks.level = "none"; expect((await GET(new Request("http://localhost/api/admin/privacy-hosting"))).status).toBe(403);
 });
 it("saves trimmed plain text, records before/after once and refreshes pages", async () => {
   const before = { hostingProvider: "Old", dataLocation: "Old place" };

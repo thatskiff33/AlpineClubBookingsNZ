@@ -2,7 +2,6 @@ import { parseJsonRequestBody } from "@/lib/api-json";
 import { exactContains } from "@/lib/prisma-exact-prefix";
 import { NextRequest, NextResponse } from "next/server";
 import { Prisma } from "@prisma/client";
-import { z } from "zod";
 import { requireAdmin } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma";
 import {
@@ -26,10 +25,24 @@ import {
 } from "@/lib/page-content";
 import logger from "@/lib/logger";
 import {
+  getEditablePageContent,
   listEditablePageContent,
   sanitizePageContentHtml,
 } from "@/lib/page-content-html";
 import { revalidatePublicPageContent } from "@/lib/public-content-revalidation";
+import {
+  pageContentCreateSchema,
+  pageContentDeleteSchema,
+  pageContentGetQuerySchema,
+  pageContentPublishSchema,
+  pageContentUpdateSchema,
+} from "@/lib/admin-content-api/pages";
+import { connectionJson } from "@/lib/mcp-connection-request";
+import {
+  PAGE_CONTENT_DELETED_CONNECTION_SHAPE,
+  PAGE_CONTENT_LIST_CONNECTION_SHAPE,
+  PAGE_CONTENT_PAGE_CONNECTION_SHAPE,
+} from "@/lib/connection-shapes/content-pages";
 
 // The one answer for a page that does not exist, including the loser of two
 // simultaneous deletes (#3852).
@@ -38,54 +51,6 @@ import { revalidatePublicPageContent } from "@/lib/public-content-revalidation";
 const PAGE_CONTENT_DELETED_ACTION = "PAGE_CONTENT_DELETED";
 
 const PAGE_NOT_FOUND = "Page not found";
-
-const createSchema = z
-  .object({
-    caption: z.string().trim().max(PAGE_CONTENT_LIMITS.captionMax),
-    menuTitle: z.string().trim().max(PAGE_CONTENT_LIMITS.menuTitleMax),
-    title: z.string().trim().min(1).max(PAGE_CONTENT_LIMITS.titleMax),
-    headerText: z.string().max(PAGE_CONTENT_LIMITS.headerTextMax),
-    slug: z.string().trim().min(1).max(PAGE_CONTENT_LIMITS.slugMax),
-    sortOrder: z
-      .number()
-      .int()
-      .min(PAGE_CONTENT_LIMITS.sortOrderMin)
-      .max(PAGE_CONTENT_LIMITS.sortOrderMax),
-  })
-  .strict();
-
-const updateSchema = z
-  .object({
-    id: z.string().trim().min(1),
-    caption: z.string().trim().max(PAGE_CONTENT_LIMITS.captionMax),
-    menuTitle: z.string().trim().max(PAGE_CONTENT_LIMITS.menuTitleMax),
-    title: z.string().trim().min(1).max(PAGE_CONTENT_LIMITS.titleMax),
-    headerText: z.string().max(PAGE_CONTENT_LIMITS.headerTextMax),
-    slug: z.string().trim().min(1).max(PAGE_CONTENT_LIMITS.slugMax),
-    sortOrder: z
-      .number()
-      .int()
-      .min(PAGE_CONTENT_LIMITS.sortOrderMin)
-      .max(PAGE_CONTENT_LIMITS.sortOrderMax),
-    contentHtml: z.string().max(PAGE_CONTENT_LIMITS.contentHtmlMax),
-  })
-  .strict();
-
-const patchSchema = z
-  .object({
-    id: z.string().trim().min(1),
-    published: z.boolean(),
-  })
-  .strict();
-
-// The id travels in the body, matching how PUT and PATCH already address a page
-// on this same collection route (#2352 D-B7(a)). See the DELETE handler's own
-// comment for why a `[id]/route.ts` was not chosen.
-const deleteSchema = z
-  .object({
-    id: z.string().trim().min(1),
-  })
-  .strict();
 
 function unauthorizedResponse() {
   return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -103,14 +68,25 @@ const editGuardOptions = {
   permission: { area: "content", level: "edit" },
 } as const;
 
-export async function GET() {
+export async function GET(request: NextRequest) {
   const guard = await requireAdmin(viewGuardOptions);
   if (!guard.ok) {
     return guard.response;
   }
 
+  // `?id=` reads one page with its HTML; the AI app's `get_site_page` (ALP-723).
+  if (request.nextUrl.searchParams.has("id")) {
+    const query = pageContentGetQuerySchema.safeParse(Object.fromEntries(request.nextUrl.searchParams));
+    if (!query.success) {
+      return NextResponse.json({ error: "Invalid input", details: query.error.flatten() }, { status: 400 });
+    }
+    const page = await getEditablePageContent(query.data.id);
+    if (!page) return NextResponse.json({ error: PAGE_NOT_FOUND }, { status: 404 });
+    return connectionJson(request, { page }, PAGE_CONTENT_PAGE_CONNECTION_SHAPE);
+  }
+
   const pages = await listEditablePageContent();
-  return NextResponse.json({ pages });
+  return connectionJson(request, { pages }, PAGE_CONTENT_LIST_CONNECTION_SHAPE);
 }
 
 export async function POST(request: NextRequest) {
@@ -125,7 +101,7 @@ export async function POST(request: NextRequest) {
   if (!jsonBody.ok) return jsonBody.response;
   const body = jsonBody.body;
 
-  const parsed = createSchema.safeParse(body);
+  const parsed = pageContentCreateSchema.safeParse(body);
   if (!parsed.success) {
     return NextResponse.json(
       { error: "Invalid input", details: parsed.error.flatten() },
@@ -212,7 +188,8 @@ export async function POST(request: NextRequest) {
   );
 
   revalidatePublicPageContent();
-  return NextResponse.json(
+  return connectionJson(
+    request,
     {
       page: {
         id: created.id,
@@ -229,6 +206,7 @@ export async function POST(request: NextRequest) {
         updatedByMemberId: created.updatedByMemberId,
       },
     },
+    PAGE_CONTENT_PAGE_CONNECTION_SHAPE,
     { status: 201 },
   );
 }
@@ -245,7 +223,7 @@ export async function PUT(request: NextRequest) {
   if (!bodyResult.ok) return bodyResult.response;
   const body = bodyResult.body;
 
-  const parsed = updateSchema.safeParse(body);
+  const parsed = pageContentUpdateSchema.safeParse(body);
   if (!parsed.success) {
     return NextResponse.json(
       { error: "Invalid input", details: parsed.error.flatten() },
@@ -383,7 +361,7 @@ export async function PUT(request: NextRequest) {
   );
 
   revalidatePublicPageContent();
-  return NextResponse.json({
+  return connectionJson(request, {
     page: {
       id: updated.id,
       slug: updated.slug,
@@ -398,7 +376,7 @@ export async function PUT(request: NextRequest) {
       updatedAt: updated.updatedAt.toISOString(),
       updatedByMemberId: updated.updatedByMemberId,
     },
-  });
+  }, PAGE_CONTENT_PAGE_CONNECTION_SHAPE);
 }
 
 // Toggles a page's public visibility (publish/unpublish). Only admin-created
@@ -415,7 +393,7 @@ export async function PATCH(request: NextRequest) {
   if (!parsedJson.ok) return parsedJson.response;
   const body = parsedJson.body;
 
-  const parsed = patchSchema.safeParse(body);
+  const parsed = pageContentPublishSchema.safeParse(body);
   if (!parsed.success) {
     return NextResponse.json(
       { error: "Invalid input", details: parsed.error.flatten() },
@@ -470,7 +448,7 @@ export async function PATCH(request: NextRequest) {
   );
 
   revalidatePublicPageContent();
-  return NextResponse.json({
+  return connectionJson(request, {
     page: {
       id: updated.id,
       slug: updated.slug,
@@ -485,7 +463,7 @@ export async function PATCH(request: NextRequest) {
       updatedAt: updated.updatedAt.toISOString(),
       updatedByMemberId: updated.updatedByMemberId,
     },
-  });
+  }, PAGE_CONTENT_PAGE_CONNECTION_SHAPE);
 }
 
 /**
@@ -607,7 +585,7 @@ export async function DELETE(request: NextRequest) {
   if (!jsonBody.ok) return jsonBody.response;
   const body = jsonBody.body;
 
-  const parsed = deleteSchema.safeParse(body);
+  const parsed = pageContentDeleteSchema.safeParse(body);
   if (!parsed.success) {
     return NextResponse.json(
       { error: "Invalid input", details: parsed.error.flatten() },
@@ -889,7 +867,7 @@ export async function DELETE(request: NextRequest) {
   // The reference lists come from the pre-transaction read, so a concurrent edit
   // can leave them one edit stale; they are a best-effort warning either way. The
   // page itself is described from the row the delete removed.
-  return NextResponse.json({
+  return connectionJson(request, {
     ok: true,
     page: {
       id: outcome.removed.id,
@@ -904,5 +882,5 @@ export async function DELETE(request: NextRequest) {
     bookNowPairRepaired: outcome.bookNowPairRepaired,
     snapshotComplete: outcome.snapshotComplete,
     publicCacheCleared,
-  });
+  }, PAGE_CONTENT_DELETED_CONNECTION_SHAPE);
 }

@@ -1,3 +1,4 @@
+import { PAYMENTS_CRON_SENTRY_MONITOR_SLUG } from "@/lib/payments-cron-jobs";
 import { XERO_CRON_JOB_NAMES } from "@/lib/xero-cron-jobs";
 
 /**
@@ -455,23 +456,20 @@ export async function register() {
       isPaymentsCronRunning = true;
 
       const checkInId = Sentry.captureCheckIn(
-        { monitorSlug: "payment-recovery", status: "in_progress" },
+        { monitorSlug: PAYMENTS_CRON_SENTRY_MONITOR_SLUG, status: "in_progress" },
         sentryCronMonitorConfig("*/15 * * * *", { checkinMargin: 5, maxRuntime: 10 })
       );
 
       try {
-        // #3663: the cycle `POST /api/cron/payments` runs (recovery, IB hold release,
-        // waiting-invoice reaper); the runner isolates and records each task.
-        const { runPaymentsCronCycle } = await import(
-          "./lib/payments-cron-runner"
-        );
+        // #3663: the cycle `POST /api/cron/payments` runs; the runner isolates and records each task.
+        const { runPaymentsCronCycle } = await import("./lib/payments-cron-runner");
         const result = await runPaymentsCronCycle();
         logger.info({ job: "payments-cron", ...result }, "Payments cron cycle complete");
-        Sentry.captureCheckIn({ checkInId, monitorSlug: "payment-recovery", status: "ok" });
+        Sentry.captureCheckIn({ checkInId, monitorSlug: PAYMENTS_CRON_SENTRY_MONITOR_SLUG, status: "ok" });
       } catch (err) {
         // Failed tasks already bridged to Sentry and recorded FAILURE in the runner.
         logger.error({ err, job: "payments-cron" }, "Error in payments cron cycle");
-        Sentry.captureCheckIn({ checkInId, monitorSlug: "payment-recovery", status: "error" });
+        Sentry.captureCheckIn({ checkInId, monitorSlug: PAYMENTS_CRON_SENTRY_MONITOR_SLUG, status: "error" });
       } finally {
         isPaymentsCronRunning = false;
       }

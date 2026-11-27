@@ -2,7 +2,8 @@
 
 import Link from "next/link";
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useSearchParams } from "next/navigation";
+import { useAdminListUrlSync } from "@/hooks/use-admin-list-url-sync";
 import {
   ChevronDown,
   ChevronLeft,
@@ -375,7 +376,6 @@ function MemberSearchFilter({
 export default function AuditLogPage() {
   const clubTime = useClubTime();
   const clubFormat = useClubFormat();
-  const router = useRouter();
   const searchParams = useSearchParams();
   const [eventType, setEventType] = useState(searchParams.get("eventType") || "all");
   const [category, setCategory] = useState(searchParams.get("category") || "all");
@@ -459,9 +459,7 @@ export default function AuditLogPage() {
   const auditQuery = buildAuditSearchParams().toString();
   const currentAuditPath = auditQuery ? `${adminHref("audit-log")}?${auditQuery}` : adminHref("audit-log");
 
-  useEffect(() => {
-    router.replace(currentAuditPath, { scroll: false });
-  }, [currentAuditPath, router]);
+  useAdminListUrlSync(currentAuditPath);
 
   // #2733: an id-only URL still has to render a readable chip, so the label is
   // resolved from `memberId` through the same authorized members search the

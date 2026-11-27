@@ -6,6 +6,7 @@ import { RefundsAndCreditsOwedList } from "@/components/admin/refunds-and-credit
 import { useState, useEffect, useCallback } from "react";
 import type { ReactNode } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
+import { useAdminListUrlSync } from "@/hooks/use-admin-list-url-sync";
 import { useClubTime } from "@/components/club-time-provider";
 import { bookingOwner } from "@/lib/booking-owner";
 import { formatPaidRefundedBreakdown, getPaymentNetOfRefundsCents } from "@/lib/booking-payment-state";
@@ -430,7 +431,7 @@ export default function PaymentsPage() {
   // first version of this comment claimed the activity window "is applied without
   // ever reaching the address bar" and that is FALSE (correctness review, 13 Aug
   // 2026): `buildPaymentsSearchParams` sets both bounds unconditionally and the
-  // sync effect below `router.replace`s them, so a bare `/admin/payments` rewrites
+  // address sync below (`useAdminListUrlSync`) replaces them in, so a bare `/admin/payments` rewrites
   // itself to `?lastUpdatedFrom=…&lastUpdatedTo=…` on mount. What is true is
   // narrower and still decisive:
   //   * the window is applied by REACT STATE, and the address only catches up
@@ -543,10 +544,7 @@ export default function PaymentsPage() {
   const paymentsQuery = buildPaymentsSearchParams().toString();
   const currentPaymentsPath = paymentsQuery ? `${PAYMENTS_HREF}?${paymentsQuery}` : PAYMENTS_HREF;
 
-  useEffect(() => {
-    const query = buildPaymentsSearchParams().toString();
-    router.replace(query ? `${PAYMENTS_HREF}?${query}` : PAYMENTS_HREF, { scroll: false });
-  }, [buildPaymentsSearchParams, router]);
+  useAdminListUrlSync(currentPaymentsPath);
 
   const fetchData = useCallback(async () => {
     setLoading(true);

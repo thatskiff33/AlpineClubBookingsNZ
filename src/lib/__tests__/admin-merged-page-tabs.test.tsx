@@ -28,6 +28,7 @@ vi.mock("next-auth/react", () => ({
 let searchParams = new URLSearchParams();
 const routerReplace = vi.fn();
 vi.mock("next/navigation", () => ({
+  usePathname: () => "/",
   useRouter: () => ({ replace: routerReplace, push: vi.fn(), refresh: vi.fn() }),
   useSearchParams: () => searchParams,
 }));

@@ -1,18 +1,18 @@
 import { revalidatePath } from "next/cache";
 import { NextResponse } from "next/server";
-import { z } from "zod";
 import { parseJsonRequestBody } from "@/lib/api-json";
 import {
   buildStructuredAuditLogCreateArgs,
   getAuditRequestContext,
 } from "@/lib/audit";
 import { primeClubIdentitySync } from "@/lib/club-identity-settings";
-import { clubLegalNameSchema, clubPostalAddressSchema } from "@/lib/club-invoice-supplier-fields";
 import { storedPostalAddress } from "@/lib/postal-address-lines";
-import { isHttpUrl } from "@/lib/http-url";
 import { prisma } from "@/lib/prisma";
 import { invalidatePublicClubIdentity } from "@/lib/public-layout-cache";
 import { requireAdmin } from "@/lib/session-guards";
+import { clubIdentitySchema, type ClubIdentityValues } from "@/lib/admin-content-api/settings";
+import { connectionJson } from "@/lib/mcp-connection-request";
+import { CLUB_IDENTITY_CONNECTION_SHAPE } from "@/lib/connection-shapes/content-settings";
 
 // DB-first club identity admin API (E3 #1929; facebookUrl added C5 #1984).
 // Cloned from the content-gated public-content-settings route: content:view to
@@ -29,34 +29,7 @@ import { requireAdmin } from "@/lib/session-guards";
 // them. Sent blank, either clears to the fallback (club name; no address).
 // The address is stored one trimmed line per line (`storedPostalAddress`).
 
-const settingsSchema = z
-  .object({
-    name: z.string().trim().max(200).nullable(),
-    shortName: z.string().trim().max(200).nullable(),
-    hutLeaderLabel: z.string().trim().max(200).nullable(),
-    facebookUrl: z
-      .string()
-      .trim()
-      .max(500)
-      // Blank clears (restores the fallback); a value must be a valid http(s) URL.
-      .refine((v) => v === "" || isHttpUrl(v), {
-        message: "facebookUrl must be a valid http(s) URL",
-      })
-      .nullable(),
-    // One line, and the lengths config transfer also enforces (`club-invoice-supplier-fields.ts`).
-    legalName: clubLegalNameSchema.nullable().optional(),
-    postalAddress: clubPostalAddressSchema.nullable().optional(),
-  })
-  .strict();
-
-type PersistedIdentity = {
-  name: string | null;
-  shortName: string | null;
-  hutLeaderLabel: string | null;
-  facebookUrl: string | null;
-  legalName: string | null;
-  postalAddress: string | null;
-};
+type PersistedIdentity = ClubIdentityValues;
 
 const defaults: PersistedIdentity = {
   name: null,
@@ -93,7 +66,7 @@ function emptyToNull(value: string | null): string | null {
   return trimmed ? trimmed : null;
 }
 
-export async function GET() {
+export async function GET(request: Request) {
   const guard = await requireAdmin({
     permission: { area: "content", level: "view" },
   });
@@ -102,9 +75,11 @@ export async function GET() {
     where: { id: "default" },
     select: settingsSelect,
   });
-  return NextResponse.json({
-    settings: settings ? serialize(settings) : defaults,
-  });
+  return connectionJson(
+    request,
+    { settings: settings ? serialize(settings) : defaults },
+    CLUB_IDENTITY_CONNECTION_SHAPE,
+  );
 }
 
 export async function PUT(request: Request) {
@@ -118,7 +93,7 @@ export async function PUT(request: Request) {
   });
   if (!jsonBody.ok) return jsonBody.response;
   const body = jsonBody.body;
-  const parsed = settingsSchema.safeParse(body);
+  const parsed = clubIdentitySchema.safeParse(body);
   if (!parsed.success) {
     return NextResponse.json({ error: "Invalid settings" }, { status: 400 });
   }
@@ -164,5 +139,5 @@ export async function PUT(request: Request) {
   invalidatePublicClubIdentity();
   await primeClubIdentitySync();
 
-  return NextResponse.json({ settings: serialize(settings) });
+  return connectionJson(request, { settings: serialize(settings) }, CLUB_IDENTITY_CONNECTION_SHAPE);
 }
