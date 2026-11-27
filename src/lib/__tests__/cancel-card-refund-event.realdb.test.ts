@@ -255,7 +255,7 @@ let CLUB_FORMAT_TEST: (typeof import("@/lib/__tests__/support/club-format-fixtur
     async function paymentLinkNarrative(): Promise<string> {
       const { token } = issueActionToken();
       await prisma.paymentLink.create({ data: { bookingId: BOOKING_ID, tokenHash: hashActionToken(token), expiresAt: new Date("2026-12-01T00:00:00.000Z") } });
-      return (await getPaymentLinkContext(token, { readOpenFinancialReview: async () => false })).narrative.message;
+      return (await getPaymentLinkContext(token)).narrative.message;
     }
     const refundedOn = (occurredAt: Date) => `$100.00 was refunded on ${club.instantDate(occurredAt)} and $100.00 was retained`;
     const ON_ITS_WAY = "$100.00 is on its way to your original payment method and $100.00 was retained";
