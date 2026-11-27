@@ -11,7 +11,7 @@ import type { ComponentProps } from "react";
 // The shared renderer, not Testing Library directly: this card reads the
 // club's zone from `useClubTime()`, which throws deliberately with no
 // provider mounted.
-import { fireEvent, render, screen, waitFor } from "@/lib/__tests__/support/club-time-render";
+import { fireEvent, render, screen, waitFor } from "@/lib/__tests__/support/club-season-render";
 
 vi.mock("next-auth/react", () => ({
   useSession: () => ({

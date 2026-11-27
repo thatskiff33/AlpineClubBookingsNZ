@@ -81,11 +81,10 @@ export const OWN_COMMIT = "(its own commit)";
  * module: it must send by this reader's rules, and its module must write.
  */
 export const COMMITS_THEN_SENDS: Readonly<Record<string, { module: string; reason: string }>> = {
-  retireAndEscalateUnusableSavedCard: {
-    module: "src/lib/saved-card-charge-failure.ts",
-    reason:
-      "commits the clear of an unusable saved card (two single-statement writes, no transaction), then emails the member and alerts officers (#3268)",
-  },
+  // Empty since #5433 PR 4: the one helper listed here, the saved-card
+  // escalation (`retireAndEscalateUnusableSavedCard`), now clears the card in a
+  // transaction that also records its two notices as owed, and delivers them
+  // through the owed-notice mechanism, so it is neither a sender nor a site.
 };
 
 /**
@@ -239,6 +238,8 @@ export function scanPostCommitSends(
   rel: string,
   code: string,
   imported: ReadonlyMap<string, ImportedRole> = new Map(),
+  /** The listed commit-then-send helpers; a test passes its own fixture list. */
+  commitsThenSends: Readonly<Record<string, unknown>> = COMMITS_THEN_SENDS,
 ): Map<string, PostCommitSite> {
   const all = units(parse(rel, code));
   const { committing, sending } = rolesOf(all, imported);
@@ -246,7 +247,7 @@ export function scanPostCommitSends(
   const sends = (name: string) => SENDER.test(name) || sending.has(name) || Object.hasOwn(SENDS_THROUGH, name);
   const commitsAndSendsItself = (name: string) => {
     const role = imported.get(name);
-    return Object.hasOwn(COMMITS_THEN_SENDS, name) || (role !== undefined && role.commits && role.sends && !role.inScope);
+    return Object.hasOwn(commitsThenSends, name) || (role !== undefined && role.commits && role.sends && !role.inScope);
   };
   const sites = new Map<string, PostCommitSite>();
   const count = (key: string, after: readonly string[]) => {

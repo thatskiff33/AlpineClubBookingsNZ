@@ -1,7 +1,7 @@
 import { stripePaymentAlertSampleValue } from "@/lib/email-message-stripe-payment-samples";
-import { waitlistAlertSampleValue } from "@/lib/email-message-waitlist-samples";
+import { owedNoticeAlertSampleValue } from "@/lib/email-message-owed-notice-samples";
 import { bookingChangeSampleValue } from "@/lib/email-message-booking-change-samples";
-import { OWED_NOTICE_ALERT_TRIGGERS } from "@/lib/email-message-owed-notice-triggers";
+import { OWED_NOTICE_ALERT_REQUIRED_TOKENS, OWED_NOTICE_ALERT_TRIGGERS } from "@/lib/email-message-owed-notice-triggers";
 import {
   EMAIL_AUDIT_DEFAULTS,
   type EmailAuditTemplateName,
@@ -450,11 +450,7 @@ const REQUIRED_TEMPLATE_TOKENS: Partial<Record<EmailAuditTemplateName, string[]>
   // #1992/#2007: memberName identifies the affected member and reviewUrl is the
   // admin action link (the payments board), mirroring the other admin alerts.
   "admin-duplicate-capture-refund": ["memberName", "reviewUrl"],
-  // #5433: {{noticeNote}} says which waitlist email went unsent and what to
-  // do; the member and the booking link are what an officer acts on.
-  "admin-waitlist-notice-unsent": ["noticeNote", "memberName", "bookingUrl"],
-  // #5433 (D1): the owner and the booking link are what an officer acts on.
-  "admin-booking-confirmation-unsent": ["memberName", "bookingUrl"],
+  ...OWED_NOTICE_ALERT_REQUIRED_TOKENS,
   // #5433: {{offerNote}} says whether the offer email reached the member; an
   // override without it would tell officers nothing about that.
   "admin-waitlist-offer": ["offerNote"],
@@ -1469,8 +1465,8 @@ export function sampleValue(token: string): string {
   if (token === "holdKeptNote") {
     return internetBankingHoldKeptParagraph("part-paid");
   }
-  const waitlistSample = waitlistAlertSampleValue(token);
-  if (waitlistSample !== undefined) return waitlistSample;
+  const owedNoticeSample = owedNoticeAlertSampleValue(token);
+  if (owedNoticeSample !== undefined) return owedNoticeSample;
   // #4042: previewed as the cash arm, what the shipped default always said.
   if (token === "handBackNote") return manualRefundTaskAlertNote("cash-cancellation");
   if (token === "handBackLabel") return manualRefundTaskAlertLabel("cash-cancellation");
@@ -2049,9 +2045,10 @@ const APPROVED_EMAIL_TEMPLATE_TOKENS = [
   "handBackConflictNote",
   // #3643: why an expired internet banking hold was kept, not released.
   "holdKeptNote",
-  // #5433: the waitlist alerts' notes: which email went unsent, and the offer's.
+  // #5433: the owed-notice alerts' notes: which email went unsent, and the offer's.
   "noticeNote",
   "offerNote",
+  "unsentNote",
   // #4042: which hand-back a manual refund task alert is about - its body
   // paragraphs, its subject/heading phrase, and whom the money goes back to.
   "handBackNote",

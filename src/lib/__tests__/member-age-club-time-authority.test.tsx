@@ -78,6 +78,7 @@ vi.mock("next/link", () => ({
 import { cleanup, render, screen } from "@testing-library/react";
 
 import { ClubTimeProvider } from "@/components/club-time-provider";
+import { ClubSeasonProvider } from "@/components/club-season-provider";
 import { ClubFormatTestProvider } from "@/lib/__tests__/support/club-time-render";
 import { MemberSummaryStrip } from "@/app/(admin)/admin/membership/members/[id]/_components/member-summary-strip";
 import { searchFamilyGroupCandidateMembers } from "@/lib/admin-family-group-member-search";
@@ -120,12 +121,14 @@ function renderStripUnderClubZone(zone: string) {
   return render(
     <ClubFormatTestProvider>
       <ClubTimeProvider zone={zone} locale={CLUB_FORMAT_TEST.locale}>
-        <MemberSummaryStrip
-          member={memberFixture()}
-          membershipLabel="Full"
-          creditBalance={0}
-          creditLoading={false}
-        />
+        <ClubSeasonProvider yearEndMonth={3}>
+          <MemberSummaryStrip
+            member={memberFixture()}
+            membershipLabel="Full"
+            creditBalance={0}
+            creditLoading={false}
+          />
+        </ClubSeasonProvider>
       </ClubTimeProvider>
     </ClubFormatTestProvider>,
   );

@@ -6,9 +6,10 @@
  * ## Why this needs its own file, and its own instant
  *
  * `MemberBulkMembershipDialog` seeds the season selector from
- * `calendarDateParts(clubTime.today()).year` and keeps that value whenever the
- * membership-types response omits `currentSeasonYear` — which the loader
- * explicitly tolerates. A season a year out here is applied to up to a hundred
+ * `useClubSeason().currentSeasonYear()` — the club's today in its persisted zone,
+ * under its server-resolved year-end (#5259; it was the bare calendar year
+ * before) — and keeps that value whenever the membership-types response omits
+ * `currentSeasonYear`, which the loader explicitly tolerates. A season a year out here is applied to up to a hundred
  * members in one click, so it is the most consequential "the club's day, not the
  * viewer's" read in the members tree.
  *
@@ -24,6 +25,11 @@
  * never handed back, so the root re-freeze cannot restore the default underneath
  * a later test in this file.
  *
+ * The zone case runs under a DECEMBER year-end, where the season year IS the
+ * calendar year, so it isolates the zone. The March case then shows the year-end
+ * is honoured: on the same instant a March club is in season 2026 in every zone,
+ * though Kiritimati's calendar has already reached 2027.
+ *
  * The other bulk-dialog behaviours stay in `member-bulk-membership-dialog.test.tsx`
  * at the default instant; splitting is the house answer to a file that would
  * otherwise mix two clocks.
@@ -36,10 +42,11 @@ import {
   render,
   screen,
   waitFor,
-} from "@/lib/__tests__/support/club-time-render"
+} from "@/lib/__tests__/support/club-season-render"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 
 import { ClubTimeProvider } from "@/components/club-time-provider"
+import { ClubSeasonProvider } from "@/components/club-season-provider"
 import { ENVIRONMENT_CLUB_ZONE } from "@/lib/__tests__/helpers/environment-club-zone"
 import { chooseDivergentClubZone } from "@/lib/__tests__/helpers/club-time-zone"
 import { MemberBulkMembershipDialog } from "../member-bulk-membership-dialog"
@@ -92,6 +99,26 @@ const TYPES_WITHOUT_SEASON = {
   membershipTypes: [{ id: "type-a", name: "Full", isActive: true }],
 }
 
+function renderDialogIn(zone: string, yearEndMonth: number) {
+  return render(
+    <MemberBulkMembershipDialog
+      open
+      selectedIds={new Set(["m1", "m2"])}
+      memberNames={new Map([["m1", "Alice"], ["m2", "Bob"]])}
+      onOpenChange={vi.fn()}
+      onComplete={vi.fn()}
+      onError={vi.fn()}
+    />,
+    {
+      wrapper: ({ children }: { children: ReactNode }) => (
+        <ClubTimeProvider zone={zone} locale={CLUB_FORMAT_TEST.locale}>
+          <ClubSeasonProvider yearEndMonth={yearEndMonth}>{children}</ClubSeasonProvider>
+        </ClubTimeProvider>
+      ),
+    },
+  )
+}
+
 afterEach(() => {
   cleanup()
   vi.unstubAllGlobals()
@@ -128,21 +155,8 @@ describe("MemberBulkMembershipDialog seeds the season from the CLUB's year (CT-4
       vi.fn(async () => ({ ok: true, json: async () => TYPES_WITHOUT_SEASON }) as Response),
     )
 
-    render(
-      <MemberBulkMembershipDialog
-        open
-        selectedIds={new Set(["m1", "m2"])}
-        memberNames={new Map([["m1", "Alice"], ["m2", "Bob"]])}
-        onOpenChange={vi.fn()}
-        onComplete={vi.fn()}
-        onError={vi.fn()}
-      />,
-      {
-        wrapper: ({ children }: { children: ReactNode }) => (
-          <ClubTimeProvider zone={chosen.zone} locale={CLUB_FORMAT_TEST.locale}>{children}</ClubTimeProvider>
-        ),
-      },
-    )
+    // December: the season year is the calendar year, so only the zone moves it.
+    renderDialogIn(chosen.zone, 12)
 
     // The selector marks the seeded year as the current season, and it is the
     // value the bulk POST would carry for every selected member.
@@ -154,5 +168,20 @@ describe("MemberBulkMembershipDialog seeds the season from the CLUB's year (CT-4
     expect(
       screen.queryByRole("option", { name: `${environmentYear} (current season)` }),
     ).toBeNull()
+  })
+
+  it("seeds the club's SEASON year, not its calendar year, under a March year-end", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => ({ ok: true, json: async () => TYPES_WITHOUT_SEASON }) as Response),
+    )
+
+    // 1 January 2027 in Kiritimati is still inside the March club's season 2026.
+    renderDialogIn("Pacific/Kiritimati", 3)
+
+    await waitFor(() =>
+      expect(screen.getByRole("option", { name: "2026 (current season)" })).toBeTruthy(),
+    )
+    expect(screen.queryByRole("option", { name: "2027 (current season)" })).toBeNull()
   })
 })

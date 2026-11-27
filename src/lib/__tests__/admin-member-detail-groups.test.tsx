@@ -2,7 +2,7 @@
 
 import "@testing-library/jest-dom/vitest";
 
-import { act, fireEvent, render, screen, waitFor } from "@/lib/__tests__/support/club-time-render";
+import { act, fireEvent, render, screen, waitFor } from "@/lib/__tests__/support/club-season-render";
 // NOT bare `@testing-library/react`: since CT-4 (#2870) this tree reads the
 // club's zone from `ClubTimeProvider`, and `useClubTime()` throws without one —
 // deliberately, so a tree that forgot to mount it fails loudly instead of

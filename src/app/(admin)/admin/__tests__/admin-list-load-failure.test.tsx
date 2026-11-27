@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
 import type { ReactNode } from "react";
-import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@/lib/__tests__/support/club-time-render";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@/lib/__tests__/support/club-season-render";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 // One URLSearchParams per test file, as Next keeps it stable between renders.

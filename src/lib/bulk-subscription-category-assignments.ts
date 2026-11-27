@@ -4,7 +4,7 @@ import {
   type StructuredAuditEvent,
 } from "@/lib/audit";
 import { calendarDateOfDateOnlyInstant } from "@/lib/club-time";
-import { clubSeasonYear } from "@/lib/financial-year";
+import { clubCurrentSeasonYear } from "@/lib/financial-year-server";
 import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
 import {
   BULK_LINKED_GUEST_LABEL_LIMIT,
@@ -467,8 +467,8 @@ export async function bulkSaveSubscriptionCategory(params: {
 
   let xeroReconcile: BulkSeasonalMembershipXeroReconcile | null = null;
   if (ageTierRepairedMemberIds.length > 0) {
-    const clubCurrentSeasonYear = clubSeasonYear(await readClubTimeZoneOutsideRequest());
-    if (params.seasonYear === clubCurrentSeasonYear) {
+    const currentSeasonYear = await clubCurrentSeasonYear(await readClubTimeZoneOutsideRequest());
+    if (params.seasonYear === currentSeasonYear) {
       const reconcileResult = await reconcileMembersXeroContactGroups(
         ageTierRepairedMemberIds,
         {

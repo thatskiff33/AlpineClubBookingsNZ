@@ -50,8 +50,11 @@
  *
  * #3133 then deleted the default itself, on `seasonYearsLabel` and
  * `seasonMonthsLabel` both, so the shape that produced this whole issue can no
- * longer be written at either. `seasonSelectLabel` keeps its default for the
- * display sites, and `INV-SSOT-003` carries why.
+ * longer be written at either. #5259 deleted `seasonSelectLabel`'s too, once the
+ * year-end reached the browser: a `"use client"` screen now names its seasons
+ * through `useClubSeason()` from `@/components/club-season-provider`, which binds
+ * the same derivation to the server-resolved year-end, so either import counts as
+ * adoption below.
  *
  * ## The regex is self-checked, because a source scan that matches nothing is
  * indistinguishable from a source scan that passes
@@ -181,7 +184,9 @@ describe("the surfaces that adopted the shared derivation (#3103)", () => {
   it.each(ADOPTED)("%s names a season by the club's year-end", (relative) => {
     const source = read(relative);
     expect(source).not.toMatch(TWO_CALENDAR_YEAR_NAME);
-    expect(source).toContain('from "@/lib/season-label"');
+    expect(source).toMatch(
+      /from "@\/lib\/season-label"|from "@\/components\/club-season-provider"/,
+    );
   });
 
   it("keeps the roll-forward picker's next-season arithmetic", () => {
