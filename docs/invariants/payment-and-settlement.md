@@ -4572,31 +4572,33 @@ and what the primary invoice bills), **`INV-PAY-136`** (the edit's claim),
 **`INV-MOD-042`** (the fee).
 
 - **An unlinked Internet Banking increase is asked for and billed on the
-  primary invoice** (#5288; owner, 20 Nov 2026). The shape: a paid booking on
-  a settled Internet Banking payment, typically one account credit paid in
-  full, whose primary Xero invoice is not linked. It has no card to ask and no
-  invoice for a supplementary one to sit beside, so an edit raising its worth
-  (a price increase or the late-notice fee) used to ask nobody.
-- **Who.** `billsIncreaseOnNewPrimaryInvoice`
+  primary invoice** (#5288; owner, 20 and 28 Nov 2026). The shape: a paid
+  Internet Banking booking that account credit paid in full, with no primary
+  Xero invoice linked: no card to ask, no invoice for a supplementary one.
+- **Who.** `mayBillIncreaseOnNewPrimaryInvoice`
   (`primary-invoice-bills-increase.ts`): an increase, no card ask, settled
   status, captured payment status, Internet Banking source, no invoice link,
-  not settled outside the app, not an organiser's place. `applyPaymentAdjustments`
-  returns it as `primaryInvoiceBillsIncrease`.
-- **The ask.** The "Booking Modified" email says "An additional Internet
-  Banking payment of $X is required" with the payment reference, as a linked
-  booking's edit does. Nothing is minted.
-- **The bill.** After commit, the edit's Xero leg queues the primary invoice,
-  which bills the price plus every recorded fee, then the applied-credit
-  allocation behind it. Never a supplementary invoice without a link. Both
-  enqueues refuse a linked, queued or hand-resolved invoice. With the Xero
-  module off nothing is queued, F20's $0 invoice included; the email still
-  goes (`INV-INT-040`).
+  no bank cash recorded, not settled outside the app, not an organiser's
+  place. Bank cash stays `unasked` in the census, for the treasurer: the
+  invoice would bill that transfer again.
+- **The ask.** `primaryInvoiceDueCents`: what that invoice will show as due,
+  price plus every recorded fee less the applied credit the allocation engine
+  allocates (`unallocatedAppliedCents`), never one edit's increase. Nothing
+  due: no ask, no invoice. The "Booking Modified" email says "An additional
+  Internet Banking payment of $X is required" with the payment reference.
+  Nothing is minted.
+- **The bill.** After commit, the edit queues the primary invoice, unemailed
+  (`XERO_INVOICE_EMAIL_ASKED_BY_EDIT`: Xero's email precedes the allocation
+  and would show the gross), then the applied-credit allocation, only behind
+  an invoice operation. Never a supplementary invoice without a link. With
+  Xero off nothing is queued, F20's $0 invoice included; the email still goes
+  (`INV-INT-040`).
 - **Once.** The edit's claim on the unlinked row (`INV-PAY-136`) puts its fee
   on that invoice or, where its create read the booking first, on the one gap
-  invoice the create raises.
-  A later edit, once linked, is billed on its own supplementary invoice.
-- **Locks.** None new: the edit's `lock(1)`, lodge key and Payment-row claim
-  are unchanged; the enqueues run after commit.
+  invoice the create raises. A later, linked edit gets its own supplementary
+  invoice.
+- **Locks.** None new: the credit read runs after the edit's locks, the
+  enqueues after commit.
 - Pinned by `ib-unlinked-fee-ask.realdb.test.ts`,
   `booking-primary-invoice-claim.test.ts`,
   `xero-booking-edit-settlement.test.ts` and `booking-ledger-census.test.ts`.

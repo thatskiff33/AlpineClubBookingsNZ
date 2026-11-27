@@ -2732,6 +2732,10 @@ evidence and lists such a row as billed on a Xero invoice rather than as
 nobody's. **Before acting on a row in either positive list, check the booking's
 payment source and its Xero invoices.** A card booking's positive residual is
 the real thing; an IB one is real only when Xero holds no invoice for it.
+One IB shape is left there on purpose (#5288): a booking with a bank transfer
+recorded and no primary invoice linked. An edit raising its worth asks nobody,
+because a new primary invoice would bill the transfer again, so it stays under
+"Money nobody is asking for" for the treasurer to invoice.
 
 **A CREDIT-PAID ($0) BOOKING THAT GREW BEFORE #3502 IS USUALLY A REAL POSITIVE.**
 A booking paid wholly with account credit has a $0 captured payment and no card
