@@ -25,6 +25,7 @@ import { releaseBookingJournalForTeardown } from "./support/booking-financial-hi
 
 import { CLUB_FORMAT_TEST } from "@/lib/__tests__/support/club-format-fixture";
 import { assertSafeRaceDbUrl } from "@/lib/__tests__/support/race-db-url";
+import { realElapsedMs } from "@/lib/__tests__/helpers/clock";
 import { memberMoneyTestContext } from "@/lib/__tests__/support/member-money-fixtures";
 
 const RUN = process.env.RUN_CONCURRENCY_RACE_TESTS === "1";
@@ -244,21 +245,24 @@ async function supplementaryInvoiceOps() {
   });
 }
 
-/** The member's "Booking Modified" email, once the door's unawaited send has written it. */
+/**
+ * The member's "Booking Modified" email, once the door's unawaited send has
+ * written it. Polled by hand, not with `vi.waitFor`: under the faked `Date` that
+ * advances the frozen clock by each interval, and the harness runs later suites
+ * in this same process on that clock (INV-INT-038's replay asserts `startedAt`).
+ */
 async function modifiedEmailHtml(): Promise<string> {
-  const row = await vi.waitFor(
-    async () => {
-      const found = await prisma.emailLog.findFirst({
-        where: { bookingId: BOOKING_ID, templateName: "booking-modified" },
-        orderBy: { createdAt: "desc" },
-        select: { htmlBody: true, bookingRetryHtmlBody: true },
-      });
-      if (!found) throw new Error("no booking-modified email yet");
-      return found;
-    },
-    { timeout: 10_000, interval: 50 },
-  );
-  return row.bookingRetryHtmlBody ?? row.htmlBody ?? "";
+  const started = process.hrtime.bigint();
+  for (;;) {
+    const row = await prisma.emailLog.findFirst({
+      where: { bookingId: BOOKING_ID, templateName: "booking-modified" },
+      orderBy: { createdAt: "desc" },
+      select: { htmlBody: true, bookingRetryHtmlBody: true },
+    });
+    if (row) return row.bookingRetryHtmlBody ?? row.htmlBody ?? "";
+    if (realElapsedMs(started) > 10_000) throw new Error("no booking-modified email yet");
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
 }
 
 /** `INV-PAY-047`'s typed census and its SQL twin, for this booking. */

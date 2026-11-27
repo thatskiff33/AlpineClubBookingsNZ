@@ -2794,10 +2794,10 @@ describe("PUT /api/bookings/[id]/modify", () => {
     );
     expect(mockCreatePaymentIntent).not.toHaveBeenCalled();
 
-    // The after-commit enqueue awaits the Xero module check first (#5288).
-    await vi.waitFor(() =>
-      expect(mockKickQueuedXeroOutboxOperationsIfConnected).toHaveBeenCalledWith({ limit: 1 }),
-    );
+    // The after-commit enqueue awaits the Xero module check first (#5288). Flushed
+    // by hand: `vi.waitFor` would advance the frozen clock under the faked Date.
+    for (let tick = 0; tick < 10; tick += 1) await Promise.resolve();
+    expect(mockKickQueuedXeroOutboxOperationsIfConnected).toHaveBeenCalledWith({ limit: 1 });
     expect(mockEnqueueXeroBookingInvoiceOperation).toHaveBeenCalledWith("bk1", {
       createdByMemberId: "m1",
       // #2929: an edit settlement has no creation-time email choice.
