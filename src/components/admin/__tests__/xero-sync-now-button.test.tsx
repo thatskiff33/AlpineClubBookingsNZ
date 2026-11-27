@@ -10,6 +10,7 @@ vi.mock("@/components/admin/admin-booking-tools-card", () => ({ AdminBookingTool
 vi.mock("@/components/admin/booking-withheld-emails-banner", () => ({ BookingWithheldEmailsBanner: () => null }));
 vi.mock("@/lib/booking-payment-state", () => ({ savedCardChargeCents: () => 0 }));
 import { XeroSyncNowButton } from "@/components/admin/xero-sync-now-button";
+import { ADMIN_FORBIDDEN_SAVE_REASON } from "@/components/admin/view-only-action";
 import { BookingAdminToolsSection } from "@/app/(authenticated)/bookings/[id]/_components/booking-admin-tools-section";
 
 describe("Xero sync-now controls", () => {
@@ -38,6 +39,17 @@ describe("Xero sync-now controls", () => {
     render(<XeroSyncNowButton target={{ scope: "club" }} />);
     fireEvent.click(screen.getByRole("button", { name: "Sync everything from Xero now" }));
     expect(await screen.findByText("Try again shortly.")).toBeVisible();
+    expect(h.refresh).not.toHaveBeenCalled();
+  });
+  // #5323: a proxy's HTML page is never read as the refusal.
+  it.each([
+    [403, "<html>Forbidden</html>", ADMIN_FORBIDDEN_SAVE_REASON],
+    [502, "<html>Bad gateway</html>", "Sync could not finish. It is safe to retry."],
+  ])("words an HTML %i as the shared reason or the button's fallback", async (status, body, shown) => {
+    h.fetch.mockResolvedValue(new Response(body, { status }));
+    render(<XeroSyncNowButton target={{ scope: "club" }} />);
+    fireEvent.click(screen.getByRole("button", { name: "Sync everything from Xero now" }));
+    expect(await screen.findByText(shown)).toBeVisible();
     expect(h.refresh).not.toHaveBeenCalled();
   });
   it.each([false, true])("shows booking sync with finance edit=%s and no booking edit tools", (edit) => {
