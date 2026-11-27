@@ -2393,6 +2393,8 @@ describe("the registry is inert", () => {
       "C9: the parent link is adminHref",
     "src/app/(admin)/admin/membership/members/[id]/_components/member-partner-link-card.tsx":
       "C9: the partner link is adminHref",
+    "src/app/(admin)/admin/membership/members/[id]/_components/pending-credit-corrections.tsx":
+      "C9 (#5241): the Xero operations link is adminHref",
     "src/app/(admin)/admin/membership/members/[id]/merge/page.tsx": "C9: its links are adminHref and adminLink",
     "src/app/(admin)/admin/membership/members/[id]/page.tsx": "C9: its links are adminHref",
     "src/app/(admin)/admin/membership/members/_components/member-table.tsx": "C9: the member links are adminHref",
