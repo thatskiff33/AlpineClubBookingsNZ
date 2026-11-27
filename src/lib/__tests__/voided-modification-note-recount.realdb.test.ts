@@ -158,6 +158,17 @@ let prisma: (typeof import("@/lib/prisma"))["prisma"];
     const activeAllocations = async () =>
       (await prisma.xeroObjectLink.findMany({ where: { xeroObjectType: "ALLOCATION", localId: MODIFICATION_ID, active: true }, select: { xeroObjectId: true } })).map((link) => link.xeroObjectId);
 
+    it("does not count the current correction for an unstamped bank transfer with two primary invoices", async () => {
+      await seed();
+      await prisma.payment.update({ where: { id: PAYMENT_ID }, data: { xeroInvoiceId: null } });
+      await prisma.xeroObjectLink.create({ data: { localModel: "Payment", localId: PAYMENT_ID, xeroObjectType: "INVOICE", xeroObjectId: OTHER_INVOICE_ID, role: "PRIMARY_INVOICE" } });
+      await syncFakeXeroCreditNote({
+        creditNoteID: NOTE_ID, creditNoteNumber: "CN-5289A", status: "AUTHORISED", total: 100, appliedAmount: 100, remainingCredit: 0,
+        updatedDateUTC: new Date("2026-06-30T12:00:00.000Z"), allocations: [{ invoice: { invoiceID: INVOICE_ID }, amount: 100 }], payments: [],
+      });
+      expect(await payment()).toEqual({ refundedAmountCents: 0, status: "SUCCEEDED" });
+    });
+
     it.each(["VOIDED", "DELETED"] as const)("MUTATION (D1): a %s reading with no allocations takes the 100-dollar correction back off: nothing refunded, the status refundedTotalStatus gives, and the allocation turned off", async (status) => {
       await seed();
       expect(await payment()).toEqual({ refundedAmountCents: NOTE_CENTS, status: "PARTIALLY_REFUNDED" });

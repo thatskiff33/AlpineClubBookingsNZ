@@ -5,7 +5,7 @@
  * module's `repairRefundedPaymentBusinessState` is the one consumer of the
  * payment-side helpers here, and `credit-note.ts` calls the note-side one.
  */
-import { PaymentStatus, PaymentTransactionKind, type Prisma } from "@prisma/client";
+import { PaymentSource, PaymentStatus, PaymentTransactionKind, type Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import logger from "@/lib/logger";
 import { isCapturedTransactionStatus, latestTransactionOfKind } from "@/lib/payment-transaction-status";
@@ -82,9 +82,11 @@ async function resolvePaymentIdsByInvoiceTargets(
       select: { id: true, source: true, xeroInvoiceId: true },
     });
     const decisionInvoiceIds = await decisionInvoiceIdsOf(linkedPayments);
+    const linkOnlyNonBankPayments = new Set(linkedPayments
+      .filter((payment) => payment.source !== PaymentSource.INTERNET_BANKING && !payment.xeroInvoiceId)
+      .map((payment) => payment.id));
     for (const link of linkedMatches) {
-      const decisionInvoiceId = decisionInvoiceIds.get(link.localId);
-      if (decisionInvoiceId !== undefined && decisionInvoiceId !== link.xeroObjectId) continue;
+      if (decisionInvoiceIds.get(link.localId) !== link.xeroObjectId && !linkOnlyNonBankPayments.has(link.localId)) continue;
       const ids = paymentIdsByInvoiceId.get(link.xeroObjectId) ?? new Set<string>();
       ids.add(link.localId);
       paymentIdsByInvoiceId.set(link.xeroObjectId, ids);
