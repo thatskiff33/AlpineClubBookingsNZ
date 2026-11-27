@@ -156,6 +156,7 @@ export const REGISTRY_KEY_RENDERERS: Record<string, string> = {
   "admin-waitlist-notice-unsent": "adminWaitlistNoticeUnsentTemplate",
   "admin-booking-confirmation-unsent": "adminBookingConfirmationUnsentTemplate",
   "admin-booking-money-census": "adminBookingMoneyCensusTemplate",
+  "admin-booking-notice-unsent": "adminBookingNoticeUnsentTemplate",
   "admin-whole-lodge-manual-invoice": "adminWholeLodgeManualInvoiceTemplate",
   // admin-alerts-finance
   "admin-credit-sync-drift": "adminCreditSyncDriftTemplate",

@@ -128,11 +128,9 @@ const EMAIL_AUDIT_DEFAULTS_BASE = {
     "defaultBody": "Waitlist Email Not Sent\n\n{{noticeNote}}\n\nMember: {{memberName}}\nBooking: {{bookingReference}}\nCheck-in: {{checkIn}}\nCheck-out: {{checkOut}}\n\nOpen Booking: {{bookingUrl}}"
   },
   // #5433 (owner decision D1): a paid booking's confirmation did not reach its owner.
-  "admin-booking-confirmation-unsent": {
-    "defaultSubject": "Booking confirmation not sent: {{memberName}}",
-    "defaultBody": "Booking Confirmation Not Sent\n\n" + BOOKING_CONFIRMATION_UNSENT_NOTE + "\n\nOwner: {{memberName}}\nBooking: {{bookingReference}}\nCheck-in: {{checkIn}}\nCheck-out: {{checkOut}}\n\nOpen Booking: {{bookingUrl}}"
-  },
+  "admin-booking-confirmation-unsent": { "defaultSubject": "Booking confirmation not sent: {{memberName}}", "defaultBody": "Booking Confirmation Not Sent\n\n" + BOOKING_CONFIRMATION_UNSENT_NOTE + "\n\nOwner: {{memberName}}\nBooking: {{bookingReference}}\nCheck-in: {{checkIn}}\nCheck-out: {{checkOut}}\n\nOpen Booking: {{bookingUrl}}" },
   "admin-booking-money-census": { "defaultSubject": "Booking money check: {{count}} new", "defaultBody": "Booking Money Check\n\n" + BOOKING_MONEY_CENSUS_ALERT_NOTE + "\n\nNew findings: {{count}}\n{{details}}\n\nFor the full report, run " + BOOKING_LEDGER_CENSUS_COMMAND + " on the server.\n\nOpen Stuck States: {{reviewUrl}}" }, // #4910: the nightly booking money check found something new.
+  "admin-booking-notice-unsent": { "defaultSubject": "Booking email not sent: {{memberName}}", "defaultBody": "Booking Email Not Sent\n\n{{unsentNote}}\n\nOwner: {{memberName}}\nBooking: {{bookingReference}}\nCheck-in: {{checkIn}}\nCheck-out: {{checkOut}}\n\nOpen Booking: {{bookingUrl}}" }, // #5433 PR 4
   "nomination-request": {
     "defaultSubject": "Nomination request for {{applicantName}} — {{CLUB_NAME}}",
     "defaultBody": "Membership Nomination Request\n\nHi {{nominatorName}},\n\n{{applicantName}} has listed you as one of their {{CLUB_NAME}} nominators.\n\nDependent family members included in this application: {{familyMemberCount}}\n\nPlease review the application and confirm whether you agree to nominate this person for membership.\n\nYou will need to sign in before you can confirm the nomination.\n\nReview Application: {{BASE_URL}}/nominations/{{token}}\n\nThis link expires on {{expiresAt}}."
