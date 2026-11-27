@@ -97,8 +97,7 @@ import { setTransactionLockTimeout } from "@/lib/member-merge-booking-lock";
  * the bounded-exception rule in `docs/CONCURRENCY_AND_LOCKING.md` forbids (since
  * #3582 an edit review's closure takes `lock(1)` inside its transaction only,
  * released before the call; legacy kinds take none). Reopening makes NO PROVIDER
- * CALL at all, so that exception has nothing to apply to - and the two
- * transitions are not mirror images in the way that phrasing suggests.
+ * CALL at all, so that exception has nothing to apply to.
  *
  * The global key is still taken first. A reopen puts a settled money question
  * back on the queue (and, for a dispute-loss hand-back, restores its debt), so
