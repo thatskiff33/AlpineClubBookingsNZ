@@ -122,6 +122,10 @@ describe("xeroOffsettingRendering (#5241)", () => {
     expect(xeroOffsettingRendering({ lineAmountTypes: LineAmountTypes.NoTax, lineItems: [{}, { taxType: "OUTPUT2" }] })).toBeNull();
   });
 
+  it("refuses an untaxed note even when all lines name the same tax code", () => {
+    expect(xeroOffsettingRendering({ lineAmountTypes: LineAmountTypes.NoTax, lineItems: [{ taxType: "TAX005" }, { taxType: "TAX005" }] })).toBeNull();
+  });
+
   it("gives no rendering when a taxed note's lines name no tax type", () => {
     expect(xeroOffsettingRendering({ lineAmountTypes: LineAmountTypes.Inclusive, lineItems: [{}] })).toBeNull();
     expect(xeroOffsettingRendering({ lineAmountTypes: LineAmountTypes.Inclusive, lineItems: [{ taxType: "NONE" }] })).toBeNull();

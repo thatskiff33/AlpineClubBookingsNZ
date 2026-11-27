@@ -125,7 +125,7 @@ export function xeroNamedLineTaxType(line: { taxType?: string | null }): string 
  * bills equals the cents taken back whatever basis the note was raised under.
  *
  * Null when the document cannot be offset under one rendering: its lines name
- * different tax types, or it is taxed and its lines name none. The caller
+ * different tax types, or their tax type contradicts the document basis. The caller
  * refuses then, before any provider write.
  */
 export function xeroOffsettingRendering(
@@ -134,6 +134,7 @@ export function xeroOffsettingRendering(
   const lines = document.lineItems ?? [];
   const untaxed = document.lineAmountTypes === LineAmountTypes.NoTax;
   const taxType = lines[0] && xeroNamedLineTaxType(lines[0]);
-  if (lines.some((line) => xeroNamedLineTaxType(line) !== taxType) || !taxType && !untaxed) return null;
-  return { lineAmountTypes: untaxed ? LineAmountTypes.NoTax : LineAmountTypes.Inclusive, ...(taxType ? { taxType } : {}) };
+  if (lines.some((line) => xeroNamedLineTaxType(line) !== taxType)) return null;
+  if (untaxed) return taxType ? null : { lineAmountTypes: LineAmountTypes.NoTax };
+  return taxType ? { lineAmountTypes: LineAmountTypes.Inclusive, taxType } : null;
 }
