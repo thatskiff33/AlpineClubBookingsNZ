@@ -9,4 +9,4 @@
  * policy's database default is already on, so flipping this is the only edit
  * #4620 makes for #4618; do not also change that column default.
  */
-export const OFFICER_SIGN_IN_ENFORCED = false;
+export const OFFICER_SIGN_IN_ENFORCED = true;
