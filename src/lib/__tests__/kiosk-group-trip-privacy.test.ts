@@ -1612,7 +1612,7 @@ describe("#5239 sibling cover is shown only when it can be verified (INV-HOST-04
     ["a trip that shrank after a truncation", siblingReview({ ...STAMP, revision: 3 }), { revisions: { [TRIP]: 4 }, dependentPopulation: 1 }],
     ["a trip row that has gone", siblingReview(), { revisions: {} }],
     ["a card no policy change would re-queue (a completed stay)", siblingReview(), { outsidePolicyCohort: ["b-dependent"] }],
-  ] as const) {
+  ] satisfies Array<[string, unknown, Parameters<typeof fakeStore>[0]]>) {
     it(`withholds it under ${label}, with no rows or scopes in the payload`, async () => {
       const { source, attached } = await cover(review, options);
       expect(source, `INV-HOST-045: ${label}`).toEqual(STALE);
