@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import "@testing-library/jest-dom/vitest";
-import { fireEvent, render, screen, waitFor } from "@/lib/__tests__/support/club-time-render";
+import { cleanup, fireEvent, render, screen, waitFor } from "@/lib/__tests__/support/club-time-render";
 import type { ReactElement, ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -9,6 +9,7 @@ import { BookingApprovalsPanel } from "@/components/admin/booking-requests/booki
 import { BookingChangeRequestsPanel } from "@/components/admin/booking-requests/booking-change-requests-panel";
 import { PolicyExceptionRequestsPanel } from "@/components/admin/booking-requests/policy-exception-requests-panel";
 import { PublicBookingRequestsPanel } from "@/components/admin/booking-requests/public-booking-requests-panel";
+import { buildBookingRequestsHref } from "@/lib/admin-booking-requests-path";
 import { adminHref } from "@/lib/admin-hubs";
 import { PINNED_QUEUE_RECORD_NOTE } from "@/lib/admin-list-page";
 
@@ -503,6 +504,87 @@ describe("PolicyExceptionRequestsPanel paging", () => {
     );
     expect(pageOf(fetches.reads(route).at(-1)!)).toBe("1");
   });
+
+  /** The address the panel last wrote, as its path and query. */
+  function writtenAddress() {
+    const href = navigation.replace.mock.calls.at(-1)?.[0] as string;
+    return new URL(href, "http://localhost");
+  }
+
+  it("#5247: the Expired filter reads expired requests and puts the filter in the address", async () => {
+    const fetches = installFetch({
+      [route]: (url) => envelope([exceptionItem()], Number(pageOf(url) ?? 1), 30),
+    });
+    render(<PolicyExceptionRequestsPanel />);
+    await screen.findByText("Showing 1–25 of 30");
+
+    fireEvent.click(screen.getByRole("button", { name: "Expired" }));
+    await waitFor(() =>
+      expect(fetches.reads(route).at(-1)!.searchParams.get("status")).toBe("EXPIRED"),
+    );
+    expect(pageOf(fetches.reads(route).at(-1)!)).toBe("1");
+    await waitFor(() => expect(writtenAddress().searchParams.get("status")).toBe("EXPIRED"));
+    const written = writtenAddress();
+    // The page's path from the reviewed path helper, not the admin-hubs registry,
+    // whose importers are a reviewed census (admin-hubs-registry.test.ts).
+    expect(written.pathname).toBe(new URL(buildBookingRequestsHref("exceptions"), "http://localhost").pathname);
+    expect(Object.fromEntries(written.searchParams)).toEqual({ tab: "exceptions", status: "EXPIRED" });
+  });
+
+  it("#5247: opens on the filter and page the address names", async () => {
+    navigation.search = "tab=exceptions&status=EXPIRED&page=2";
+    const fetches = installFetch({
+      [route]: (url) => envelope([exceptionItem()], Number(pageOf(url) ?? 1), 30),
+    });
+    render(<PolicyExceptionRequestsPanel />);
+
+    expect(await screen.findByText("Showing 26–30 of 30")).toBeInTheDocument();
+    const reads = fetches.reads(route);
+    expect(reads).toHaveLength(1);
+    expect(reads[0].searchParams.get("status")).toBe("EXPIRED");
+    expect(pageOf(reads[0])).toBe("2");
+    expect(screen.getByRole("button", { name: "Expired" })).toHaveClass("bg-primary");
+  });
+
+  it("#5247: the written address reopens the same filter and page after a reload", async () => {
+    const fetches = installFetch({
+      [route]: (url) => envelope([exceptionItem()], Number(pageOf(url) ?? 1), 30),
+    });
+    render(<PolicyExceptionRequestsPanel />);
+    await screen.findByText("Showing 1–25 of 30");
+    fireEvent.click(screen.getByRole("button", { name: "Expired" }));
+    await screen.findByText("Showing 1–25 of 30");
+    fireEvent.click(screen.getByRole("button", { name: "Next page" }));
+    expect(await screen.findByText("Showing 26–30 of 30")).toBeInTheDocument();
+    expect(fetches.reads(route).at(-1)!.searchParams.get("status")).toBe("EXPIRED");
+    await waitFor(() => expect(writtenAddress().searchParams.get("page")).toBe("2"));
+
+    // Reload: a fresh mount on exactly the address the panel wrote.
+    navigation.search = writtenAddress().search;
+    cleanup();
+    const reloaded = installFetch({
+      [route]: (url) => envelope([exceptionItem()], Number(pageOf(url) ?? 1), 30),
+    });
+    render(<PolicyExceptionRequestsPanel />);
+    expect(await screen.findByText("Showing 26–30 of 30")).toBeInTheDocument();
+    const first = reloaded.reads(route)[0];
+    expect(first.searchParams.get("status")).toBe("EXPIRED");
+    expect(pageOf(first)).toBe("2");
+  });
+
+  it("#5247: an unknown filter in the address opens Requested without an error", async () => {
+    navigation.search = "tab=exceptions&status=BOGUS";
+    const fetches = installFetch({
+      [route]: (url) => envelope([exceptionItem()], Number(pageOf(url) ?? 1), 3),
+    });
+    render(<PolicyExceptionRequestsPanel />);
+
+    expect(await screen.findByText("Showing 1–3 of 3")).toBeInTheDocument();
+    expect(fetches.reads(route)[0].searchParams.get("status")).toBe("REQUESTED");
+    expect(screen.getByRole("alert")).toBeEmptyDOMElement();
+    await waitFor(() => expect(writtenAddress().searchParams.has("status")).toBe(false));
+    expect(writtenAddress().searchParams.get("tab")).toBe("exceptions");
+  });
 });
 
 /**
@@ -561,6 +643,7 @@ describe("every booking queue replaces the address only when it changes", () => 
     ["booking approvals", "/api/admin/booking-reviews", () => <BookingApprovalsPanel />, booking],
     ["change requests", "/api/admin/booking-change-requests", () => <BookingChangeRequestsPanel />, changeRequest()],
     ["public requests", "/api/admin/booking-requests", () => <PublicBookingRequestsPanel />, publicRequest],
+    ["policy exceptions", "/api/admin/booking-exception-requests", () => <PolicyExceptionRequestsPanel />, exceptionItem()],
   ];
 
   it.each(cases)("%s: no replace when opened at its own address, one after paging", async (_name, route, panel, row) => {

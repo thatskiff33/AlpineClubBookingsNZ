@@ -1789,6 +1789,51 @@ describe("readUnifiedExceptionQueue (merges both sources)", () => {
     expect(mocks.nbFindMany.mock.calls[1][0].orderBy).toEqual([{ createdAt: "desc" }, { id: "desc" }]);
   });
 
+  // #5247: the officer screen's Expired filter. Both sources are narrowed to
+  // EXPIRED, and like every closed filter it reads newest first.
+  it("EXPIRED reads expired requests from both sources, newest first", async () => {
+    const expiredRow = (id: string, createdAt: string) => ({
+      id,
+      status: "EXPIRED",
+      createdAt: new Date(createdAt),
+      updatedAt: new Date(createdAt),
+      lodgeId: "lodge_1",
+      bookingId: "booking-1",
+      requestedBy: { id: "m1", firstName: "Ada", lastName: "Lovelace", email: "a@x.nz" },
+      reviewedBy: null,
+      reviewedAt: null,
+      memberMessage: null,
+      proposalHash: "a".repeat(64),
+      aggregateCapacityMode: "HOLD",
+      frozenEvidence: { reasonCodes: [], affectedNights: [] },
+      attemptCount: 1,
+      conflictCount: 0,
+      lastConflictAt: null,
+      lastConflictReason: null,
+      supersededByRequestId: null,
+      requestedChanges: null,
+    });
+    mocks.nbCount.mockResolvedValue(1);
+    mocks.bcrCount.mockResolvedValue(1);
+    mocks.nbFindMany.mockResolvedValue([expiredRow("nb-old", "2026-06-01T00:00:00Z")]);
+    mocks.bcrFindMany.mockResolvedValue([expiredRow("bcr-new", "2026-06-20T00:00:00Z")]);
+
+    const result = await readUnifiedExceptionQueue({ status: "EXPIRED", page: 1, pageSize: 25 });
+
+    expect(result.data.map((item) => [item.id, item.status])).toEqual([
+      ["bcr-new", "EXPIRED"],
+      ["nb-old", "EXPIRED"],
+    ]);
+    expect(result.total).toBe(2);
+    const nbQuery = mocks.nbFindMany.mock.calls.at(-1)![0];
+    const bcrQuery = mocks.bcrFindMany.mock.calls.at(-1)![0];
+    expect(nbQuery.where).toEqual({ status: "EXPIRED" });
+    expect(bcrQuery.where).toEqual({ kind: "POLICY_EXCEPTION", status: "EXPIRED" });
+    expect(mocks.nbCount.mock.calls.at(-1)![0].where).toEqual({ status: "EXPIRED" });
+    expect(nbQuery.orderBy).toEqual([{ createdAt: "desc" }, { id: "desc" }]);
+    expect(bcrQuery.orderBy).toEqual([{ createdAt: "desc" }, { id: "desc" }]);
+  });
+
   // INV-OPS-020 (#4960): the total is each source's own row count and every row
   // is reachable. The read used to stop at 500 rows a source, so a club with more
   // decided requests than that saw a total capped at 1000 and could not reach the
