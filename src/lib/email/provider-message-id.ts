@@ -71,7 +71,6 @@ function providerMessageIdFromSendResult(
 ): string | null {
   if (!mailService || typeof result?.response !== "string") return null;
   const reply = result.response.trim();
-  if (reply.length > MAX_PROVIDER_MESSAGE_ID_LENGTH + 16) return null;
   const id = READ_ID_FROM_REPLY[mailService](reply);
   return id && id.length <= MAX_PROVIDER_MESSAGE_ID_LENGTH ? id : null;
 }
