@@ -11,6 +11,7 @@ import {
   EMAIL_COMPLAINT_BLOCK_NOTE,
   emailComplaintEmailNote,
   emailComplaintMemberNames,
+  emailComplaintTypeLabel,
 } from "@/lib/email-complaint-note";
 
 export const EMAIL_COMPLAINT_ALERT_TRIGGER: Partial<
@@ -18,15 +19,16 @@ export const EMAIL_COMPLAINT_ALERT_TRIGGER: Partial<
 > = {
   "admin-email-complaint": {
     triggerSummary:
-      "The mail service reported a complaint from a recipient about an email the club sent, usually the recipient marking it as spam, and the address is now blocked (#5469, owner decision D3)",
+      "The mail service reported a complaint from a recipient about an email the club sent, usually the recipient marking it as spam, and the address is now blocked (#5469, owner decisions D3 and D5)",
     frequency:
-      "Once per complaint, guarded by a cross-instance claim. The claim is kept once any admin is sent it or has a copy queued for the email retry cron, held for a day when no admin can receive it, and given back when the send throws, so the mail service's next delivery of the report sends it",
+      "Once per complaint report, guarded by a cross-instance claim, and not at all when the template is muted or nobody receives Reported issues alerts. The alert is stored first, and the payments cron's sweep re-sends it until an admin has it or a copy is queued for the email retry cron, for up to 7 days; it is not sent if the block has been lifted by then. A 'not spam' report sends nothing",
   },
 };
 
 /** The sample for one of this alert's tokens, or undefined for any other token. */
 export function emailComplaintAlertSampleValue(token: string): string | undefined {
   if (token === "recipientEmail") return "sam.member@example.org";
+  if (token === "complaintType") return emailComplaintTypeLabel("abuse");
   if (token === "memberNames") return emailComplaintMemberNames(["Sam Member"]);
   if (token === "emailNote") return emailComplaintEmailNote({ label: "Booking Confirmed", sentAt: "16 Apr 2026, 2:30 pm" });
   if (token === "blockNote") return EMAIL_COMPLAINT_BLOCK_NOTE;
@@ -35,7 +37,7 @@ export function emailComplaintAlertSampleValue(token: string): string | undefine
 }
 
 /** The tokens this alert adds to the registry's approved list. */
-export const EMAIL_COMPLAINT_ALERT_TOKENS = ["recipientEmail", "memberNames", "emailNote", "blockNote", "deliverabilityUrl"] as const;
+export const EMAIL_COMPLAINT_ALERT_TOKENS = ["recipientEmail", "complaintType", "memberNames", "emailNote", "blockNote", "deliverabilityUrl"] as const;
 
 /** Whose address, that it is now blocked, and where to lift it: an override must keep these. */
 export const EMAIL_COMPLAINT_ALERT_REQUIRED_TOKENS: Partial<Record<EmailAuditTemplateName, string[]>> = {

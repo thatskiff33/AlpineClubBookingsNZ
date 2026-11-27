@@ -80,7 +80,16 @@ Object.assign(mockPrisma, {
       args.where.id.in.filter((id) => store.bookingIds.has(id)).map((id) => ({ id })),
     ),
   },
+  // #5469: the suppression list's active, normalised addresses.
+  emailSuppression: {
+    findMany: vi.fn(async (args: { where: { email: { in: string[] } } }) =>
+      args.where.email.in.filter((email) => blockedAddresses.has(email)).map((email) => ({ email })),
+    ),
+  },
 });
+
+/** Addresses on the suppression list, active, as it stores them (lower case). */
+const blockedAddresses = new Set<string>();
 
 vi.mock("@/lib/prisma", () => ({ prisma: mockPrisma }));
 vi.mock("@/lib/audit", () => ({ createAuditLog: vi.fn() }));
@@ -126,6 +135,7 @@ describe("getExhaustedEmailFailureReviewQueue (#4963)", () => {
     store.emails = [];
     store.audits = [];
     store.bookingIds = new Set();
+    blockedAddresses.clear();
   });
 
   it("reports the true total when archived rows fill the scan window, and says the window is capped", async () => {
@@ -272,6 +282,24 @@ describe("getExhaustedEmailFailureReviewQueue (#4963)", () => {
       retired: "retired",
       "no-booking": "retired",
       "booking-deleted": "retired",
+    });
+  });
+
+  it("MUTATION: offers no resend for a row whose address is blocked, whatever it would otherwise offer (#5469)", async () => {
+    store.emails.push(
+      exhausted("blocked-retry", 60, { to: "Blocked.One@Example.com" }),
+      exhausted("blocked-token", 50, { to: "blocked-two@example.com", templateName: "member-setup-invite", htmlBody: null }),
+      exhausted("open", 40, { templateName: "member-welcome" }),
+    );
+    blockedAddresses.add("blocked.one@example.com");
+    blockedAddresses.add("blocked-two@example.com");
+
+    const queue = await getExhaustedEmailFailureReviewQueue();
+
+    expect(Object.fromEntries(queue.failures.map((failure) => [failure.id, failure.recovery]))).toEqual({
+      "blocked-retry": "address_blocked",
+      "blocked-token": "address_blocked",
+      open: "retry",
     });
   });
 

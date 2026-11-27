@@ -27,6 +27,8 @@ const NO_RESEND_GUIDANCE: Record<
   Exclude<ExhaustedEmailFailure["recovery"], "retry" | "fresh_copy">,
   string
 > = {
+  address_blocked:
+    "This address is blocked after a bounce or complaint, so nothing can be sent to it from here. If the member asks to receive email again, clear its suppression under Active suppressions above; this row then offers its usual action again.",
   token_reissue:
     "No copy of this message was kept because it held a single-use link, so it can't be resent from here. Reissue it from Token Email Recovery above.",
   sensitive:

@@ -3,11 +3,22 @@ import logger from "@/lib/logger";
 
 type EmailSuppressionReason = "BOUNCE" | "COMPLAINT";
 
-export type SesEmailFeedbackEvent = {
+/**
+ * One address's bounce or complaint, as the suppression writer takes it from
+ * the feedback rule (`email/delivery-feedback.ts`, #5469), whichever mail
+ * service reported it.
+ */
+export type EmailFeedbackSuppressionEvent = {
   email: string;
   reason: EmailSuppressionReason;
   eventType: "bounce" | "complaint";
-  sesMessageId?: string | null;
+  /**
+   * A permanent bounce, which suppresses at once like a complaint. Decided by
+   * the report's kind, once; the provider's labels below are for display only.
+   */
+  permanentBounce?: boolean;
+  /** The id the mail service gave the message (stored in `lastSesMessageId`). */
+  providerMessageId?: string | null;
   bounceType?: string | null;
   bounceSubType?: string | null;
   complaintFeedbackType?: string | null;
@@ -20,14 +31,14 @@ export function normalizeEmailAddress(email: string) {
 }
 
 function shouldSuppressFeedbackEvent(
-  event: SesEmailFeedbackEvent,
+  event: EmailFeedbackSuppressionEvent,
   nextEventCount: number
 ) {
   if (event.reason === "COMPLAINT") {
     return true;
   }
 
-  if (event.bounceType?.toLowerCase() === "permanent") {
+  if (event.permanentBounce) {
     return true;
   }
 
@@ -35,18 +46,18 @@ function shouldSuppressFeedbackEvent(
 }
 
 /**
- * True when the address's last recorded event is this same SES feedback: one
- * SES message's bounce (or complaint) for one recipient is one event, however
- * often SNS delivers it. Without an SES message id the event cannot be told
- * apart from a new one, so it is counted.
+ * True when the address's last recorded event is this same report: one
+ * message's bounce (or complaint) for one recipient is one event, however
+ * often the service delivers it. Without the service's message id the event
+ * cannot be told apart from a new one, so it is counted.
  */
 function isSameFeedbackEvent(
   existing: { lastSesMessageId: string | null; lastEventType: string | null },
-  event: SesEmailFeedbackEvent
+  event: EmailFeedbackSuppressionEvent
 ) {
   return (
-    Boolean(event.sesMessageId) &&
-    existing.lastSesMessageId === event.sesMessageId &&
+    Boolean(event.providerMessageId) &&
+    existing.lastSesMessageId === event.providerMessageId &&
     existing.lastEventType === event.eventType
   );
 }
@@ -66,9 +77,9 @@ export async function getActiveEmailSuppression(email: string) {
   });
 }
 
-export async function recordSesEmailFeedback(events: SesEmailFeedbackEvent[]) {
+export async function recordEmailFeedbackSuppression(events: EmailFeedbackSuppressionEvent[]) {
   const now = new Date();
-  const uniqueEvents = new Map<string, SesEmailFeedbackEvent>();
+  const uniqueEvents = new Map<string, EmailFeedbackSuppressionEvent>();
 
   for (const event of events) {
     const email = normalizeEmailAddress(event.email);
@@ -113,7 +124,7 @@ export async function recordSesEmailFeedback(events: SesEmailFeedbackEvent[]) {
       lastBounceType: event.bounceType ?? null,
       lastBounceSubType: event.bounceSubType ?? null,
       lastComplaintFeedbackType: event.complaintFeedbackType ?? null,
-      lastSesMessageId: event.sesMessageId ?? null,
+      lastSesMessageId: event.providerMessageId ?? null,
       clearedAt: suppressNow ? null : existing?.clearedAt ?? null,
       clearedById: suppressNow ? null : existing?.clearedById ?? null,
       clearReason: suppressNow ? null : existing?.clearReason ?? null,

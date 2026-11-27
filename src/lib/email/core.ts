@@ -15,6 +15,7 @@ import {
   getActiveEmailSuppression,
   normalizeEmailAddress,
 } from "@/lib/email-suppression";
+import { suppressedEmailErrorMessage } from "./suppressed-email-message";
 import {
   resolveBookingEmailGate,
   type EmailBookingContext,
@@ -457,7 +458,7 @@ export async function sendEmail({
             status: "BOUNCED",
             htmlBody: null,
             bookingRetryHtmlBody: null,
-            errorMessage: `Email suppressed after SES ${activeSuppression.reason.toLowerCase()} feedback`,
+            errorMessage: suppressedEmailErrorMessage(activeSuppression.reason),
           },
         });
       } catch (err) {

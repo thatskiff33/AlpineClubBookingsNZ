@@ -12,6 +12,7 @@ import {
   EMAIL_RETRY_MAX_ATTEMPTS,
   RETAINS_REPLAYABLE_EMAIL_BODY,
 } from "@/lib/email/retry-selection";
+import { normalizeEmailAddress } from "@/lib/email-suppression";
 import { prisma } from "@/lib/prisma";
 import { isTokenRecoveryTemplate } from "@/lib/token-email-recovery";
 
@@ -55,8 +56,12 @@ const REQUEUEABLE_EMAIL_FAILURE_WHERE = {
  *   email with no booking, which the cron retires (body kept) because it cannot
  *   check it against the booking's "No emails" switch, or an email about a
  *   booking that has since been deleted.
+ * - `address_blocked` (#5469): the recipient's address is suppressed after a
+ *   bounce or complaint, so every resend would be refused; it takes the place
+ *   of the row's other action until an officer lifts the block.
  */
 export type ExhaustedEmailFailureRecovery =
+  | "address_blocked"
   | "retry"
   | "token_reissue"
   | "fresh_copy"
@@ -67,7 +72,9 @@ function recoveryFor(
   templateName: string,
   canRequeue: boolean,
   freshCopyHref: string | null,
+  addressBlocked: boolean,
 ): ExhaustedEmailFailureRecovery {
+  if (addressBlocked) return "address_blocked";
   if (canRequeue) return "retry";
   if (isTokenRecoveryTemplate(templateName)) return "token_reissue";
   if (freshCopyHref) return "fresh_copy";
@@ -161,7 +168,10 @@ export async function getExhaustedEmailFailureReviewQueue(limit = 25) {
       failures.flatMap((failure) => (failure.bookingId ? [failure.bookingId] : [])),
     ),
   ];
-  const [reviews, replayable, existingBookings] =
+  // #5469: which recipients are blocked now, one batched read on the
+  // suppression list's own normalised addresses.
+  const recipientAddresses = [...new Set(failures.map((failure) => normalizeEmailAddress(failure.to)))];
+  const [reviews, replayable, existingBookings, blockedAddresses] =
     failureIds.length > 0
       ? await Promise.all([
           prisma.auditLog.findMany({
@@ -199,8 +209,13 @@ export async function getExhaustedEmailFailureReviewQueue(limit = 25) {
                 select: { id: true, deletedAt: true },
               })
             : Promise.resolve([]),
+          prisma.emailSuppression.findMany({
+            where: { email: { in: recipientAddresses }, suppressedAt: { not: null }, clearedAt: null },
+            select: { email: true },
+          }),
         ])
-      : [[], [], []];
+      : [[], [], [], []];
+  const blockedAddressSet = new Set(blockedAddresses.map((row) => row.email));
   const replayableIds = new Set(replayable.map((row) => row.id));
   const existingBookingIds = new Set(existingBookings.map((booking) => booking.id));
   // A soft-deleted booking still has a row, but its page refuses every fresh
@@ -253,7 +268,12 @@ export async function getExhaustedEmailFailureReviewQueue(limit = 25) {
       bookingId: failure.bookingId,
       bookingExists,
       bookingRecipientMemberId: failure.bookingRecipientMemberId,
-      recovery: recoveryFor(failure.templateName, canRequeue, freshCopyHref),
+      recovery: recoveryFor(
+        failure.templateName,
+        canRequeue,
+        freshCopyHref,
+        blockedAddressSet.has(normalizeEmailAddress(failure.to)),
+      ),
       freshCopyHref,
       reviewedAt: review?.createdAt.toISOString() ?? null,
       reviewedById: review?.actorMemberId ?? review?.memberId ?? null,

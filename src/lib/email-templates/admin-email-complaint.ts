@@ -12,6 +12,7 @@ import { alertBox, button, heading, infoTable, layout, paragraph } from "./layou
 
 export function adminEmailComplaintTemplate(data: {
   recipientEmail: string;
+  complaintType: string;
   memberNames: string;
   emailNote: string;
   blockNote: string;
@@ -22,6 +23,7 @@ export function adminEmailComplaintTemplate(data: {
     ${paragraph(`The mail service reported a complaint from ${escapeHtml(data.recipientEmail)} about an email from the club. A complaint usually means the recipient marked the email as spam.`)}
     ${infoTable([
       { label: "Address", value: escapeHtml(data.recipientEmail) },
+      { label: "Complaint type", value: escapeHtml(data.complaintType) },
       { label: "Members using this address", value: escapeHtml(data.memberNames) },
       { label: "Email", value: escapeHtml(data.emailNote) },
     ])}

@@ -227,14 +227,14 @@ describe("retryFailedEmails (issue #820)", () => {
       warnings: [],
     });
     mocks.findMany.mockResolvedValue([failedEmail({ attempts: 1 })]);
-    mocks.sendMail.mockResolvedValue({ messageId: "<msg_1@example.test>", response: "250 Ok 0100018c-retry-000000" });
+    mocks.sendMail.mockResolvedValue({ messageId: "<msg_1@example.test>", response: "250 Ok 0100018c-ee77-000000" });
 
     await retryFailedEmails();
 
     expect(mocks.update).toHaveBeenCalledWith(
       expect.objectContaining({
         where: { id: "email_1" },
-        data: expect.objectContaining({ status: "SENT", providerMessageId: "0100018c-retry-000000" }),
+        data: expect.objectContaining({ status: "SENT", providerMessageId: "0100018c-ee77-000000" }),
       }),
     );
   });
@@ -242,7 +242,7 @@ describe("retryFailedEmails (issue #820)", () => {
   it("MUTATION: stores no id when the server is not a recognised mail service (#5469)", async () => {
     // The default here is an SMTP relay; its reply happens to look like SES's.
     mocks.findMany.mockResolvedValue([failedEmail({ attempts: 1 })]);
-    mocks.sendMail.mockResolvedValue({ messageId: "msg_1", response: "250 Ok 0100018c-retry-000000" });
+    mocks.sendMail.mockResolvedValue({ messageId: "msg_1", response: "250 Ok 0100018c-ee77-000000" });
 
     await retryFailedEmails();
 
@@ -252,6 +252,20 @@ describe("retryFailedEmails (issue #820)", () => {
         data: expect.objectContaining({ status: "SENT", providerMessageId: null }),
       }),
     );
+  });
+
+  it("MUTATION: skips a row, unclaimed and unsent, when the suppression read fails (#5469)", async () => {
+    // A bounce no longer rewrites the address's pending rows, so this check is
+    // all that stops them: a failed read leaves the row for the next run.
+    mocks.findMany.mockResolvedValue([failedEmail({ attempts: 1 })]);
+    mocks.getActiveEmailSuppression.mockRejectedValue(new Error("database unreachable"));
+
+    const result = await retryFailedEmails();
+
+    expect(mocks.sendMail).not.toHaveBeenCalled();
+    expect(mocks.updateMany).not.toHaveBeenCalled();
+    expect(mocks.update).not.toHaveBeenCalled();
+    expect(result).toEqual({ retried: 0, succeeded: 0, failed: 0 });
   });
 
   it("keeps a still-retryable email FAILED and does not alert admins yet", async () => {
@@ -297,7 +311,7 @@ describe("retryFailedEmails (issue #820)", () => {
         status: "BOUNCED",
         htmlBody: null,
         bookingRetryHtmlBody: null,
-        errorMessage: "Email suppressed after SES bounce feedback",
+        errorMessage: "Email suppressed after a bounce report",
         deliveryBlockReason: null,
       },
     });

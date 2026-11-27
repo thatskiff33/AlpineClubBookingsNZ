@@ -87,13 +87,13 @@ export async function sendAdminAlertOnceEver(args: OnceEverAlertArgs): Promise<b
  * - late-capture-refund-hold.ts
  * - late-capture-unrecorded-refunds.ts
  * - cancelled-booking-late-capture.ts
- * - email/admin-alerts-email-complaint.ts
  * Raised once; the sweep re-sends its stored alert:
  * - capacity-race-refund-shortfall.ts
  * - pre-persisted-refund-close.ts
  * - card-refund-cap-overflow.ts
  * - superseded-ask-invoice-return.ts
  * - xero-success-after-resolution-alert.ts
+ * - email/admin-alerts-email-complaint.ts
  */
 
 type OnceEverAlertArgs = {

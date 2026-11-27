@@ -23,13 +23,13 @@ vi.mock("@/lib/logger", () => ({
   default: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
 }));
 
-import { recordSesEmailFeedback, type SesEmailFeedbackEvent } from "@/lib/email-suppression";
+import { recordEmailFeedbackSuppression, type EmailFeedbackSuppressionEvent } from "@/lib/email-suppression";
 
-const transientBounce: SesEmailFeedbackEvent = {
+const transientBounce: EmailFeedbackSuppressionEvent = {
   email: "Member@Example.com",
   reason: "BOUNCE",
   eventType: "bounce",
-  sesMessageId: "ses-message-1",
+  providerMessageId: "ses-message-1",
   bounceType: "Transient",
   bounceSubType: "MailboxFull",
 };
@@ -50,7 +50,28 @@ function existingRow(overrides: Record<string, unknown> = {}) {
   };
 }
 
-describe("recordSesEmailFeedback replay safety", () => {
+describe("recordEmailFeedbackSuppression decides permanence from the report's kind (#5469)", () => {
+  beforeEach(() => {
+    vi.resetAllMocks();
+  });
+
+  it("MUTATION: a permanent bounce suppresses at once, whatever the provider's label says", async () => {
+    mocks.findUnique.mockResolvedValue(null);
+    await expect(
+      recordEmailFeedbackSuppression([{ ...transientBounce, permanentBounce: true, bounceType: "Transient" }]),
+    ).resolves.toEqual({ processed: 1, suppressed: 1 });
+  });
+
+  it("MUTATION: a provider label of Permanent alone does not suppress at once", async () => {
+    mocks.findUnique.mockResolvedValue(null);
+    await expect(
+      recordEmailFeedbackSuppression([{ ...transientBounce, permanentBounce: false, bounceType: "Permanent" }]),
+    ).resolves.toEqual({ processed: 1, suppressed: 0 });
+    expect(mocks.create).toHaveBeenCalledWith({ data: expect.objectContaining({ lastBounceType: "Permanent", suppressedAt: null }) });
+  });
+});
+
+describe("recordEmailFeedbackSuppression replay safety", () => {
   beforeEach(() => {
     vi.resetAllMocks();
   });
@@ -58,7 +79,7 @@ describe("recordSesEmailFeedback replay safety", () => {
   it("MUTATION: a replay of the transient bounce already recorded neither counts nor suppresses", async () => {
     mocks.findUnique.mockResolvedValue(existingRow());
 
-    await expect(recordSesEmailFeedback([transientBounce])).resolves.toEqual({
+    await expect(recordEmailFeedbackSuppression([transientBounce])).resolves.toEqual({
       processed: 1,
       suppressed: 0,
     });
@@ -70,7 +91,7 @@ describe("recordSesEmailFeedback replay safety", () => {
   it("a second transient bounce from a different SES message still suppresses at the threshold", async () => {
     mocks.findUnique.mockResolvedValue(existingRow({ lastSesMessageId: "ses-message-0" }));
 
-    await expect(recordSesEmailFeedback([transientBounce])).resolves.toEqual({
+    await expect(recordEmailFeedbackSuppression([transientBounce])).resolves.toEqual({
       processed: 1,
       suppressed: 1,
     });
@@ -88,7 +109,7 @@ describe("recordSesEmailFeedback replay safety", () => {
   it("feedback without an SES message id cannot be told apart, so it is counted", async () => {
     mocks.findUnique.mockResolvedValue(existingRow({ lastSesMessageId: null }));
 
-    await recordSesEmailFeedback([{ ...transientBounce, sesMessageId: null }]);
+    await recordEmailFeedbackSuppression([{ ...transientBounce, providerMessageId: null }]);
 
     expect(mocks.update).toHaveBeenCalledWith(
       expect.objectContaining({ data: expect.objectContaining({ eventCount: 2 }) }),
@@ -98,8 +119,8 @@ describe("recordSesEmailFeedback replay safety", () => {
   it("a complaint on the message that already bounced is a new event", async () => {
     mocks.findUnique.mockResolvedValue(existingRow());
 
-    await recordSesEmailFeedback([
-      { email: "member@example.com", reason: "COMPLAINT", eventType: "complaint", sesMessageId: "ses-message-1" },
+    await recordEmailFeedbackSuppression([
+      { email: "member@example.com", reason: "COMPLAINT", eventType: "complaint", providerMessageId: "ses-message-1" },
     ]);
 
     expect(mocks.update).toHaveBeenCalledWith(
@@ -114,7 +135,7 @@ describe("recordSesEmailFeedback replay safety", () => {
       existingRow({ eventCount: 2, suppressedAt: new Date("2026-06-30T00:00:00.000Z") }),
     );
 
-    await expect(recordSesEmailFeedback([transientBounce])).resolves.toEqual({
+    await expect(recordEmailFeedbackSuppression([transientBounce])).resolves.toEqual({
       processed: 1,
       suppressed: 1,
     });

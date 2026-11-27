@@ -3,21 +3,21 @@ import { prisma } from "@/lib/prisma";
 import {
   getActiveEmailSuppression,
   normalizeEmailAddress,
-  recordSesEmailFeedback,
-  type SesEmailFeedbackEvent,
+  recordEmailFeedbackSuppression,
+  type EmailFeedbackSuppressionEvent,
 } from "@/lib/email-suppression";
 import { MAIL_SERVICE_LABEL, type MailService } from "./provider-message-id";
 
 /**
  * #5469: THE ONE RULE FOR A BOUNCE OR COMPLAINT REPORT, whichever mail service
- * sent it. Each service has an adapter that turns its own report into a
- * `DeliveryFeedbackEvent` (SES: `ses-feedback.ts`, reached from the SNS
- * webhook); this module is the only place the event is acted on. Adding a
- * service is an adapter, a route and a `provider-message-id.ts` entry; nothing
- * here changes.
+ * sent it (`INV-INT-043`). Each service has an adapter that turns its own
+ * report into a `DeliveryFeedbackEvent` (SES: `ses-feedback.ts`, reached from
+ * the SNS webhook); this module is the only place the event is acted on.
+ * Adding a service is an adapter, a route and a `provider-message-id.ts`
+ * entry; nothing here changes.
  *
- * - Suppression, exactly as before: a complaint or a permanent bounce
- *   suppresses the address at once, a temporary bounce from the second one
+ * - Suppression, as before: a complaint or a permanent bounce suppresses the
+ *   address at once, a temporary bounce from the second one
  *   (`email-suppression.ts`). Further sends are stopped by that record, which
  *   the email core and the retry job check before every send, not by any row's
  *   status.
@@ -29,14 +29,26 @@ import { MAIL_SERVICE_LABEL, type MailService } from "./provider-message-id";
  * - A complaint marks nothing (owner decision D3, 27 Nov 2026): the email
  *   arrived, so its row keeps saying sent. Officers are told once instead
  *   (`alertOfficersOfComplaint`).
+ * - A "not spam" report (owner decision D5, 28 Nov 2026), the recipient
+ *   moving a club email out of their spam folder, changes nothing: no block,
+ *   no mark, no alert.
  */
 
-/** What a report says happened. A service's "undetermined" bounce is a temporary one, as before. */
-export type DeliveryFeedbackKind = "permanent-bounce" | "temporary-bounce" | "complaint";
+/**
+ * What a report says happened. A service's "undetermined" bounce is a
+ * temporary one, as the suppression rule has always read it; a complaint whose
+ * type is unknown or missing is a complaint.
+ */
+export type DeliveryFeedbackKind = "permanent-bounce" | "temporary-bounce" | "complaint" | "not-spam-report";
+
+/** A complaint's type in the app's own words, mapped from the service's by its adapter. */
+export type ComplaintType = "abuse" | "fraud" | "virus" | "auth-failure" | "other" | "unknown";
 
 export type DeliveryFeedbackEvent = {
   service: MailService;
   kind: DeliveryFeedbackKind;
+  /** For a complaint, its type; null otherwise. */
+  complaintType: ComplaintType | null;
   /** The addresses the report is about, as the service gave them. */
   recipients: string[];
   /** The id the service gave the message when it accepted it (`EmailLog.providerMessageId`). */
@@ -45,7 +57,7 @@ export type DeliveryFeedbackEvent = {
   sentMessageIds: string[];
   /** The service's own id for this report, which makes one complaint one alert. */
   reportId: string | null;
-  /** The service's own labels, recorded on the suppression for operators. */
+  /** The service's own labels, recorded on the suppression for operators to read; never decides anything. */
   providerDetail: {
     bounceType: string | null;
     bounceSubType: string | null;
@@ -107,32 +119,29 @@ async function markBouncedEmail(event: DeliveryFeedbackEvent): Promise<number> {
   return 0;
 }
 
-/** The email a complaint names, read and left as it is, or null. */
-async function findComplainedEmail(event: DeliveryFeedbackEvent) {
+/** The id of the email a complaint names, read and left as it is, or null. */
+async function findComplainedEmailId(event: DeliveryFeedbackEvent): Promise<string | null> {
   for (const filter of emailLogFiltersNamedByReport(event)) {
-    const row = await prisma.emailLog.findFirst({
-      where: filter,
-      select: { templateName: true, sentAt: true },
-      orderBy: { createdAt: "desc" },
-    });
-    if (row) return row;
+    const row = await prisma.emailLog.findFirst({ where: filter, select: { id: true }, orderBy: { createdAt: "desc" } });
+    if (row) return row.id;
   }
   return null;
 }
 
 /**
- * The suppression writer's input. Permanence follows the event's kind, so an
- * adapter decides it once; the service's own label is kept where it has one.
+ * The suppression writer's input. Whether it suppresses at once follows the
+ * event's kind alone (`permanentBounce`); the service's labels ride along for
+ * display.
  */
-function suppressionEvent(event: DeliveryFeedbackEvent, email: string): SesEmailFeedbackEvent {
+function suppressionEvent(event: DeliveryFeedbackEvent, email: string): EmailFeedbackSuppressionEvent {
   const complaint = event.kind === "complaint";
   return {
     email,
     reason: complaint ? "COMPLAINT" : "BOUNCE",
     eventType: complaint ? "complaint" : "bounce",
-    sesMessageId: event.providerMessageId,
-    bounceType:
-      event.kind === "permanent-bounce" ? "Permanent" : complaint ? null : event.providerDetail.bounceType,
+    permanentBounce: event.kind === "permanent-bounce",
+    providerMessageId: event.providerMessageId,
+    bounceType: event.providerDetail.bounceType,
     bounceSubType: event.providerDetail.bounceSubType,
     complaintFeedbackType: event.providerDetail.complaintFeedbackType,
   };
@@ -143,20 +152,30 @@ export async function applyDeliveryFeedback(event: DeliveryFeedbackEvent) {
     new Set(event.recipients.map(normalizeEmailAddress).filter(Boolean)),
   );
 
+  if (event.kind === "not-spam-report") {
+    logger.info(
+      { mailService: event.service, providerMessageId: event.providerMessageId, reportId: event.reportId },
+      "A recipient marked a club email as not spam; nothing changed (#5469 D5)",
+    );
+    return { recipients, emailLogsMarked: 0, suppressionsProcessed: 0, suppressionsActive: 0 };
+  }
+
   const emailLogsMarked = event.kind === "complaint" ? 0 : await markBouncedEmail(event);
 
-  const suppressionResult = await recordSesEmailFeedback(
+  const suppressionResult = await recordEmailFeedbackSuppression(
     recipients.map((email) => suppressionEvent(event, email)),
   );
 
   // After the suppression is written, outside any transaction (there is none
-  // here), so the alert never says the address is blocked before it is.
+  // here), and only while it is active, so the alert never says an address is
+  // blocked when it is not.
   if (event.kind === "complaint") {
     const { alertOfficersOfComplaint } = await import("./admin-alerts-email-complaint");
-    const complainedEmail = await findComplainedEmail(event);
+    const complainedEmailLogId = await findComplainedEmailId(event);
     for (const recipient of recipients) {
-      if (!(await getActiveEmailSuppression(recipient))) continue;
-      await alertOfficersOfComplaint({ event, recipient, complainedEmail });
+      const suppression = await getActiveEmailSuppression(recipient);
+      if (!suppression) continue;
+      await alertOfficersOfComplaint({ event, suppressionId: suppression.id, complainedEmailLogId });
     }
   }
 

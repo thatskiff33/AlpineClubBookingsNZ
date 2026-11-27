@@ -3,16 +3,37 @@
  * (`email-templates/admin-email-complaint.ts`), one home for the sender and the
  * email registry's preview. A leaf module, so the registry can preview the
  * tokens without loading the sender. Each must be true whenever the alert goes:
- * it is sent only once the address's block is in place, to officers who hold
+ * it is sent only while the address's block is in place, to officers who hold
  * Support & System edit, which is what lifting a block needs.
  */
+import type { ComplaintType } from "@/lib/email/delivery-feedback";
 
+/**
+ * "This site's own emails": invoices that Xero emails at the app's request do
+ * not consult the block (`docs/guides/email-deliverability.md` says so).
+ */
 export const EMAIL_COMPLAINT_BLOCK_NOTE =
-  "The address is now blocked, so this site sends it no further email until the block is lifted. You can see the block, and lift it if they ask to receive email again, on the Email Deliverability page.";
+  "The address is now blocked, so this site sends it none of its own emails until the block is lifted. You can see the block, and lift it if they ask to receive email again, on the Email Deliverability page.";
 
-/** The members whose record uses the address, or a plain "none". */
-export function emailComplaintMemberNames(names: readonly string[]): string {
-  return names.length > 0 ? names.join(", ") : "None: no member record uses this address";
+/** A complaint's type in plain words. */
+const COMPLAINT_TYPE_LABEL: Readonly<Record<ComplaintType, string>> = {
+  abuse: "Marked as spam or abuse",
+  fraud: "Reported as fraud or phishing",
+  virus: "Reported as carrying a virus",
+  "auth-failure": "Reported as failing email authentication checks",
+  other: "Another kind of complaint",
+  unknown: "Not given by the mail service",
+};
+
+export function emailComplaintTypeLabel(type: string): string {
+  return COMPLAINT_TYPE_LABEL[type as ComplaintType] ?? COMPLAINT_TYPE_LABEL.unknown;
+}
+
+/** The members whose record uses the address, the rest counted, or a plain "none". */
+export function emailComplaintMemberNames(names: readonly string[], total: number = names.length): string {
+  if (names.length === 0) return "None: no member record uses this address";
+  const more = total - names.length;
+  return more > 0 ? `${names.join(", ")} and ${more} more` : names.join(", ");
 }
 
 /** Which email the complaint was about, when the report could be matched to one. */

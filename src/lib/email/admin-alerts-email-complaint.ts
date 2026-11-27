@@ -1,117 +1,153 @@
-import { readOnceEverClaimState, sendAdminAlertOnceEver } from "@/lib/admin-alert-once";
+import { sendReplayableAdminAlertOnceEver, type EmailComplaintReplayAlert } from "@/lib/admin-alert-once-replayable";
 import { adminHref } from "@/lib/admin-hubs";
 import { getAppBaseUrl } from "@/lib/app-url";
 import {
   EMAIL_COMPLAINT_BLOCK_NOTE,
   emailComplaintEmailNote,
   emailComplaintMemberNames,
+  emailComplaintTypeLabel,
 } from "@/lib/email-complaint-note";
 import { getEmailTemplateDefinition } from "@/lib/email-message-registry";
 import { adminEmailComplaintTemplate } from "@/lib/email-templates/admin-email-complaint";
 import { emailClubDateTime } from "@/lib/email-templates-club-time";
 import { renderEmailHtml } from "@/lib/email-theme";
+import logger from "@/lib/logger";
+import { shouldSendAdminSystemEmail } from "@/lib/notification-delivery-policies";
 import { prisma } from "@/lib/prisma";
-import { sendToAdmins } from "./admin-alerts-shared";
+import { getAdminAlertEmails, sendToAdmins } from "./admin-alerts-shared";
 import type { AdminAlertRecipientsResult } from "./admin-alert-send-result";
 import type { DeliveryFeedbackEvent } from "./delivery-feedback";
 
 const EMAIL_COMPLAINT_TEMPLATE_NAME = "admin-email-complaint";
 
-/** At most this many member names are listed for one address. */
+/** The officers who receive it: "Reported issues", Support & System edit (owner decision D4). */
+const EMAIL_COMPLAINT_PREFERENCE = "adminIssueReport" as const;
+
+/** At most this many member names are listed; the rest are counted. */
 const MAX_MEMBER_NAMES = 5;
 
-/** Thrown so the webhook answers with an error and the mail service delivers the report again. */
-class EmailComplaintAlertNotSentError extends Error {
-  constructor(key: string) {
-    super(`The officers' alert for email complaint ${key} was not sent; the report will be delivered again`);
-    this.name = "EmailComplaintAlertNotSentError";
-  }
-}
-
-/** One complaint, one alert: the service, its id for the report (or the message), and the address. */
-function emailComplaintAlertKey(event: DeliveryFeedbackEvent, recipient: string): string {
-  const reportKey = event.reportId ?? event.providerMessageId ?? "no-report-id";
-  return `email-complaint:${event.service}:${reportKey}:${recipient}`;
-}
-
-async function memberNamesForAddress(recipient: string): Promise<string[]> {
-  const members = await prisma.member.findMany({
-    where: { email: { equals: recipient, mode: "insensitive" } },
-    select: { firstName: true, lastName: true },
-    orderBy: [{ lastName: "asc" }, { firstName: "asc" }],
-    take: MAX_MEMBER_NAMES,
-  });
-  return members.map((member) => `${member.firstName} ${member.lastName}`.trim());
+/**
+ * THE ONE PLACE THE ALERT'S ONCE-ONLY KEY IS MADE: one alert per complaint
+ * report, keyed on the address's suppression row (never the address itself,
+ * which must not sit in `AlertCooldown`) and the service's id for the report.
+ * One alert per blocked address instead is this line without the report part
+ * (owner question, #5469 round 3 item 4).
+ */
+function emailComplaintAlertKey(suppressionId: string, event: DeliveryFeedbackEvent): string {
+  return `email-complaint:${suppressionId}:${event.reportId ?? event.providerMessageId ?? "no-report-id"}`;
 }
 
 /**
  * #5469 (owner decision D3, 27 Nov 2026): tell officers once that a recipient
  * complained about a club email (usually by marking it as spam), now that the
- * address is blocked. The caller has written the suppression and checked it is
+ * address is blocked. The caller has written the suppression and read it
  * active, outside any transaction.
  *
- * Audience: the `adminIssueReport` preference ("Reported issues", Support &
- * System edit), because that area owns the Email Deliverability page where a
- * block is seen and lifted, so everyone the alert reaches can act on it.
- *
- * Once per complaint through `sendAdminAlertOnceEver`, keyed on the report.
- * A redelivered report finds the claim kept and sends nothing. When the claim
- * was not kept and nothing holds it (the send threw, or reached nobody and
- * wrote no row the retry job could replay), this throws, so the webhook answers
- * with an error, releases its lease, and the mail service delivers the report
- * again; the suppression and the marking are idempotent, so only the alert is
- * retried. A claim deferred for a day because nobody can receive the alert is
- * left as it is.
+ * A muted template or an audience nobody is in is final: nothing is stored or
+ * sent. Otherwise the alert goes through `sendReplayableAdminAlertOnceEver`,
+ * which stores it first and lets the payments cron's sweep re-send it until an
+ * officer has it (`INV-INT-042`), so a send that fails, reaches nobody for a
+ * passing reason, or whose claim cannot be given back is not lost; a
+ * redelivered report finds the claim kept and sends nothing. Never throws.
  */
 export async function alertOfficersOfComplaint({
   event,
-  recipient,
-  complainedEmail,
+  suppressionId,
+  complainedEmailLogId,
 }: {
   event: DeliveryFeedbackEvent;
-  recipient: string;
-  complainedEmail: { templateName: string; sentAt: Date | null } | null;
+  suppressionId: string;
+  complainedEmailLogId: string | null;
 }): Promise<void> {
-  const key = emailComplaintAlertKey(event, recipient);
-  const context = { mailService: event.service, reportId: event.reportId, providerMessageId: event.providerMessageId };
-  const kept = await sendAdminAlertOnceEver({
-    key,
+  const context = { mailService: event.service, reportId: event.reportId, suppressionId };
+  try {
+    const delivery = await shouldSendAdminSystemEmail({ templateName: EMAIL_COMPLAINT_TEMPLATE_NAME });
+    if (!delivery.send || (await getAdminAlertEmails(EMAIL_COMPLAINT_PREFERENCE)).length === 0) {
+      logger.info({ ...context, deliveryMode: delivery.mode }, "No officer receives email complaint alerts; none raised");
+      return;
+    }
+  } catch (err) {
+    // The replayable send below asks the same questions and keeps the alert for the sweep.
+    logger.error({ ...context, err }, "Failed to read who receives email complaint alerts");
+  }
+  await sendReplayableAdminAlertOnceEver({
+    key: emailComplaintAlertKey(suppressionId, event),
     label: "email complaint alert",
     context,
-    send: () => sendAdminEmailComplaintAlert({ recipient, complainedEmail }),
+    alert: {
+      kind: "email-complaint",
+      suppressionId,
+      complaintType: event.complaintType ?? "unknown",
+      complainedEmailLogId,
+    },
   });
-  if (kept) return;
-  const state = await readOnceEverClaimState(key, new Date());
-  if (state === "none" || state === "awaiting-send") throw new EmailComplaintAlertNotSentError(key);
 }
 
-async function sendAdminEmailComplaintAlert({
-  recipient,
-  complainedEmail,
-}: {
-  recipient: string;
-  complainedEmail: { templateName: string; sentAt: Date | null } | null;
-}): Promise<AdminAlertRecipientsResult> {
-  const memberNames = emailComplaintMemberNames(await memberNamesForAddress(recipient));
-  const emailNote = emailComplaintEmailNote(
-    complainedEmail && {
-      label: getEmailTemplateDefinition(complainedEmail.templateName)?.label ?? complainedEmail.templateName,
-      sentAt: complainedEmail.sentAt ? emailClubDateTime(complainedEmail.sentAt) : null,
-    },
+/** What a send to nobody reports: kept for the sweep, as a passing reason. */
+const NOT_SENT: AdminAlertRecipientsResult = {
+  deliveryAllowed: true,
+  recipients: 0,
+  sent: 0,
+  queuedForRetry: 0,
+  notDelivered: 0,
+  failedBeforeLogged: 0,
+};
+
+async function memberNamesForAddress(recipient: string): Promise<string> {
+  const where = { email: { equals: recipient, mode: "insensitive" as const } };
+  const [members, total] = await Promise.all([
+    prisma.member.findMany({
+      where,
+      select: { firstName: true, lastName: true },
+      orderBy: [{ lastName: "asc" }, { firstName: "asc" }],
+      take: MAX_MEMBER_NAMES,
+    }),
+    prisma.member.count({ where }),
+  ]);
+  return emailComplaintMemberNames(
+    members.map((member) => `${member.firstName} ${member.lastName}`.trim()),
+    total,
   );
-  const deliverabilityUrl = `${getAppBaseUrl()}${adminHref("email-deliverability")}`;
+}
+
+/**
+ * Build and send the alert from its stored ids, on the first attempt and on
+ * every re-send by the sweep. The address is read from the suppression row
+ * now; if the block has been lifted meanwhile, every sentence about it would
+ * be false, so nothing is sent (and the sweep stops trying after 7 days).
+ */
+export async function sendAdminEmailComplaintAlert(alert: EmailComplaintReplayAlert): Promise<AdminAlertRecipientsResult> {
+  const suppression = await prisma.emailSuppression.findUnique({
+    where: { id: alert.suppressionId },
+    select: { email: true, suppressedAt: true, clearedAt: true },
+  });
+  if (!suppression?.suppressedAt || suppression.clearedAt) return NOT_SENT;
+
+  const complainedEmail = alert.complainedEmailLogId
+    ? await prisma.emailLog.findUnique({
+        where: { id: alert.complainedEmailLogId },
+        select: { templateName: true, sentAt: true },
+      })
+    : null;
+  const recipient = suppression.email;
   const data = {
     recipientEmail: recipient,
-    memberNames,
-    emailNote,
+    complaintType: emailComplaintTypeLabel(alert.complaintType),
+    memberNames: await memberNamesForAddress(recipient),
+    emailNote: emailComplaintEmailNote(
+      complainedEmail && {
+        label: getEmailTemplateDefinition(complainedEmail.templateName)?.label ?? complainedEmail.templateName,
+        sentAt: complainedEmail.sentAt ? emailClubDateTime(complainedEmail.sentAt) : null,
+      },
+    ),
     blockNote: EMAIL_COMPLAINT_BLOCK_NOTE,
-    deliverabilityUrl,
+    deliverabilityUrl: `${getAppBaseUrl()}${adminHref("email-deliverability")}`,
   };
   return sendToAdmins({
     subject: `Complaint about a club email: ${recipient}`,
     html: await renderEmailHtml(() => adminEmailComplaintTemplate(data)),
     templateName: EMAIL_COMPLAINT_TEMPLATE_NAME,
     templateData: data,
-    preferenceKey: "adminIssueReport",
+    preferenceKey: EMAIL_COMPLAINT_PREFERENCE,
   });
 }

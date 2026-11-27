@@ -4,6 +4,7 @@ import { readOnceEverClaimState, sendAdminAlertOnceEver } from "@/lib/admin-aler
 import { markAlertOwed, settleOwedAlert } from "@/lib/alert-cooldown";
 import type { ClubFormat } from "@/lib/club-format";
 import type { AdminAlertSendResult } from "@/lib/email/admin-alert-send-result";
+import type { ComplaintType } from "@/lib/email/delivery-feedback";
 import logger from "@/lib/logger";
 
 /**
@@ -67,14 +68,28 @@ type PaymentRecoveryReplayAlert = {
   errorMessage: string;
 };
 type XeroSyncErrorReplayAlert = { kind: "xero-sync-error"; errorType: string; operation: string; errorMessage: string; timestamp: string };
-export type ReplayableAdminAlert = PaymentRecoveryReplayAlert | XeroSyncErrorReplayAlert;
+/**
+ * #5469: the officers' complaint alert, by ids only (the address and member
+ * names are read at send time, never stored here): the address's suppression
+ * row, the complaint's type, and the email it named, if any.
+ */
+export type EmailComplaintReplayAlert = {
+  kind: "email-complaint";
+  suppressionId: string;
+  complaintType: ComplaintType;
+  complainedEmailLogId: string | null;
+};
+export type ReplayableAdminAlert = PaymentRecoveryReplayAlert | XeroSyncErrorReplayAlert | EmailComplaintReplayAlert;
 
 /** An alert ready to send: a payment alert always with the club's format. */
-type ReplayableAlertSend = { alert: PaymentRecoveryReplayAlert; format: ClubFormat } | { alert: XeroSyncErrorReplayAlert };
+type ReplayableAlertSend =
+  | { alert: PaymentRecoveryReplayAlert; format: ClubFormat }
+  | { alert: XeroSyncErrorReplayAlert }
+  | { alert: EmailComplaintReplayAlert };
 
 /** A stored alert ready for the sweep to re-send, with the club's format read now for a payment alert. */
 export async function replayableAlertSend(alert: ReplayableAdminAlert): Promise<ReplayableAlertSend> {
-  if (alert.kind === "xero-sync-error") return { alert };
+  if (alert.kind === "xero-sync-error" || alert.kind === "email-complaint") return { alert };
   const { clubFormatValues } = await import("@/lib/club-format-server");
   return { alert, format: await clubFormatValues() };
 }
@@ -100,6 +115,9 @@ export function parseStoredReplayableAlert(value: Prisma.JsonValue | null): Stor
     if (fields.operationId !== undefined && typeof fields.operationId !== "string") return null;
   } else if (fields.kind === "xero-sync-error") {
     if (!strings("errorType", "operation", "errorMessage", "timestamp")) return null;
+  } else if (fields.kind === "email-complaint") {
+    if (!strings("suppressionId", "complaintType")) return null;
+    if (fields.complainedEmailLogId !== null && typeof fields.complainedEmailLogId !== "string") return null;
   } else {
     return null;
   }
@@ -130,6 +148,10 @@ export async function sendStoredAlertOnceEver({
 
 /** Loaded on use: the payment ledger reaches some callers, and these senders reach back to it. */
 async function sendReplayableAlert(send: ReplayableAlertSend): Promise<AdminAlertSendResult> {
+  if (send.alert.kind === "email-complaint") {
+    const { sendAdminEmailComplaintAlert } = await import("@/lib/email/admin-alerts-email-complaint");
+    return sendAdminEmailComplaintAlert(send.alert);
+  }
   if (!("format" in send)) {
     const { sendAdminXeroSyncErrorAlert } = await import("@/lib/email");
     const { errorType, operation, errorMessage, timestamp } = send.alert;

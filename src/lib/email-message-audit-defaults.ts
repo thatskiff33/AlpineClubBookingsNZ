@@ -469,7 +469,7 @@ const EMAIL_AUDIT_DEFAULTS_BASE = {
   },
   "admin-email-complaint": {
     "defaultSubject": "Complaint about a club email: {{recipientEmail}}",
-    "defaultBody": "Complaint About a Club Email\n\nThe mail service reported a complaint from {{recipientEmail}} about an email from the club. A complaint usually means the recipient marked the email as spam.\n\nAddress: {{recipientEmail}}\nMembers using this address: {{memberNames}}\nEmail: {{emailNote}}\n\n{{blockNote}}\n\nOpen Email Deliverability: {{deliverabilityUrl}}"
+    "defaultBody": "Complaint About a Club Email\n\nThe mail service reported a complaint from {{recipientEmail}} about an email from the club. A complaint usually means the recipient marked the email as spam.\n\nAddress: {{recipientEmail}}\nComplaint type: {{complaintType}}\nMembers using this address: {{memberNames}}\nEmail: {{emailNote}}\n\n{{blockNote}}\n\nOpen Email Deliverability: {{deliverabilityUrl}}"
   },
   "admin-issue-report": {
     "defaultSubject": "Issue Report: {{memberName}}",

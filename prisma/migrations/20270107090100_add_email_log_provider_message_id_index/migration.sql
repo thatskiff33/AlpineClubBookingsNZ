@@ -1,0 +1,12 @@
+-- #5469: the bounce and complaint handler's lookup by the stored server id.
+--
+-- Blue/green EXPAND migration (see docs/BLUE_GREEN_MIGRATION_SAFETY.tsv): one
+-- btree index, in its own file so the column's ACCESS EXCLUSIVE lock (the
+-- previous migration) is released before the build starts. A plain CREATE
+-- INDEX takes a SHARE lock: email log reads carry on, inserts and updates
+-- wait for the build. CONCURRENTLY is not possible inside Prisma's
+-- per-migration transaction; for a very large table, an operator can build
+-- this same index CONCURRENTLY out of band first, and IF NOT EXISTS then
+-- skips the build (the ledger row says how).
+-- EmailLog is not on the deploy guard's hot-table list.
+CREATE INDEX IF NOT EXISTS "EmailLog_providerMessageId_idx" ON "EmailLog"("providerMessageId");

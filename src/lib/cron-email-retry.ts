@@ -20,6 +20,7 @@ import {
   resolveDeliveryPolicy,
 } from "@/lib/environment-delivery-policy";
 import { getActiveEmailSuppression } from "@/lib/email-suppression";
+import { suppressedEmailErrorMessage } from "@/lib/email/suppressed-email-message";
 import {
   ALWAYS_BOOKING_SCOPED_TEMPLATE_NAMES,
   resolveBookingEmailGate,
@@ -259,22 +260,25 @@ export async function retryFailedEmails(): Promise<{
     // re-theming a replay would change what the member is shown relative to
     // what the club approved at send time.
     let retryHtml = emailLog.bookingRetryHtmlBody ?? emailLog.htmlBody!;
-    // F26 (#1885): a FAILED row can be created before an SNS bounce/complaint
+    // F26 (#1885): a FAILED row can be created before a bounce or complaint
     // suppresses the recipient (the pre-send check in core.ts passed, then the
     // SMTP send failed after the suppression landed). Re-check here so a
-    // suppressed recipient is never re-delivered. Mirrors core.ts: on check
-    // failure proceed (fail-open, same as the pre-send path); on an active
-    // suppression mark the row BOUNCED with the same reason string and drop
-    // the retained body.
-    const activeSuppression = await getActiveEmailSuppression(
-      emailLog.to,
-    ).catch((err) => {
+    // suppressed recipient is not re-delivered: on an active suppression mark
+    // the row BOUNCED with the core's reason string and drop the retained body.
+    // #5469: a read that fails skips the row, unclaimed, for the next run,
+    // because a bounce no longer rewrites the address's pending rows, so this
+    // check is all that stops them. (The core's check for a new send still
+    // proceeds on a failed read, as before.)
+    let activeSuppression: Awaited<ReturnType<typeof getActiveEmailSuppression>>;
+    try {
+      activeSuppression = await getActiveEmailSuppression(emailLog.to);
+    } catch (err) {
       logger.error(
-        { err, to: emailLog.to, templateName: emailLog.templateName },
-        "Failed to check email suppression state before retry",
+        { err, emailLogId: emailLog.id, templateName: emailLog.templateName },
+        "Failed to check email suppression state before retry; left for the next run",
       );
-      return null;
-    });
+      continue;
+    }
 
     if (activeSuppression) {
       await prisma.emailLog
@@ -284,7 +288,7 @@ export async function retryFailedEmails(): Promise<{
             status: "BOUNCED",
             htmlBody: null,
             bookingRetryHtmlBody: null,
-            errorMessage: `Email suppressed after SES ${activeSuppression.reason.toLowerCase()} feedback`,
+            errorMessage: suppressedEmailErrorMessage(activeSuppression.reason),
             // #3035: the recipient's address is the reason now, not the
             // environment. See the failure branch below on why the block reason
             // must not persist past the thing it described.

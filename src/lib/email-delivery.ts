@@ -1,3 +1,4 @@
+import { MAIL_SERVICE_LABEL } from "@/lib/email/provider-message-id";
 import {
   readEnv,
   readTransportTimeouts,
@@ -41,7 +42,7 @@ import {
  * the exact defect class this epic exists to remove. See
  * {@link classifyCaptureHost}.
  */
-type EmailDeliveryMode = "aws-ses" | "smtp-relay" | "local-capture";
+export type EmailDeliveryMode = "aws-ses" | "smtp-relay" | "local-capture";
 
 /**
  * What a transport can DO, which is the only thing the delivery policy needs.
@@ -385,7 +386,7 @@ export function resolveEmailDeliveryConfigFromEnv(
       ok: issues.length === 0,
       mode,
       modeSource,
-      modeLabel: "AWS SES",
+      modeLabel: MAIL_SERVICE_LABEL["aws-ses"],
       captureHost: "not-applicable",
       issues,
       warnings,

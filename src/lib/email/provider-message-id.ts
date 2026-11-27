@@ -17,18 +17,18 @@
  * SES's is not stored as an id. An SMTP relay (`USE_SMTP_RELAY`) and a capture
  * mailbox are not recognised services, even when the relay forwards to SES.
  */
+import type { EmailDeliveryMode } from "@/lib/email-delivery";
 
 /** A mail service whose reply to a send names the message. Today only SES. */
 export type MailService = "aws-ses";
 
-/** How officers see each service named, for example in an email's error note. */
+/** How each service is named wherever officers or operators read it, the delivery mode's label included (#5469: one label). */
 export const MAIL_SERVICE_LABEL: Readonly<Record<MailService, string>> = {
-  "aws-ses": "Amazon SES",
+  "aws-ses": "AWS SES",
 };
 
-type DeliveryModeName = "aws-ses" | "smtp-relay" | "local-capture" | "invalid";
-
-const MAIL_SERVICE_FOR_DELIVERY_MODE: Readonly<Record<DeliveryModeName, MailService | null>> = {
+/** Every delivery mode, so a new one fails to compile here until it is classified. */
+const MAIL_SERVICE_FOR_DELIVERY_MODE: Readonly<Record<EmailDeliveryMode | "invalid", MailService | null>> = {
   "aws-ses": "aws-ses",
   "smtp-relay": null,
   "local-capture": null,
@@ -36,34 +36,44 @@ const MAIL_SERVICE_FOR_DELIVERY_MODE: Readonly<Record<DeliveryModeName, MailServ
 };
 
 /**
- * Amazon SES over SMTP answers an accepted message with `250 Ok <MessageID>`,
- * where the MessageID is the id SES uses for it and later sends as
- * `mail.messageId` in its bounce and complaint notifications (AWS, "Amazon SES
- * SMTP issues", SMTP response codes; "Amazon SNS notification contents for
- * Amazon SES", mail object).
+ * Amazon SES over SMTP answers an accepted message with `250 Ok <MessageID>`
+ * (AWS, "Amazon SES SMTP issues", SMTP response codes); its notifications name
+ * the message in `mail.messageId` (AWS, "Amazon SNS notification contents for
+ * Amazon SES", whose example is `000001378603177f-7a5433e7-8edb-42ae-af10-f0181f34d6ee-000000`).
+ * Only that shape is stored: hex groups joined by hyphens, at most
+ * `MAX_PROVIDER_MESSAGE_ID_LENGTH` characters, lower-cased as the
+ * notifications write it. Anything else, from a broken or hostile endpoint,
+ * stores nothing, so a reply can never make the row's write fail.
  */
-const SES_ACCEPTED_REPLY = /^250 Ok ([^\s<>]+)$/;
+const SES_ACCEPTED_REPLY = /^250 Ok ([0-9a-f]+(?:-[0-9a-f]+)+)$/i;
+
+/** Longest id stored; SES's are about 60 characters. */
+export const MAX_PROVIDER_MESSAGE_ID_LENGTH = 128;
 
 const READ_ID_FROM_REPLY: Readonly<Record<MailService, (reply: string) => string | null>> = {
-  "aws-ses": (reply) => SES_ACCEPTED_REPLY.exec(reply)?.[1] ?? null,
+  "aws-ses": (reply) => SES_ACCEPTED_REPLY.exec(reply)?.[1]?.toLowerCase() ?? null,
 };
 
 /** The recognised mail service behind a delivery mode, or null. */
-export function mailServiceForDeliveryMode(mode: string): MailService | null {
-  return MAIL_SERVICE_FOR_DELIVERY_MODE[mode as DeliveryModeName] ?? null;
+export function mailServiceForDeliveryMode(mode: EmailDeliveryMode | "invalid"): MailService | null {
+  return MAIL_SERVICE_FOR_DELIVERY_MODE[mode];
 }
 
 /**
  * The id the mail server gave an accepted message, from the mail library's
  * send result (`response` is the server's final reply), or null for a server
- * the app does not recognise or a reply that names no id. Never throws.
+ * the app does not recognise, a reply that names no id, or one too long to be
+ * an id. Never throws.
  */
 function providerMessageIdFromSendResult(
   mailService: MailService | null,
   result: { response?: unknown } | null | undefined,
 ): string | null {
   if (!mailService || typeof result?.response !== "string") return null;
-  return READ_ID_FROM_REPLY[mailService](result.response.trim());
+  const reply = result.response.trim();
+  if (reply.length > MAX_PROVIDER_MESSAGE_ID_LENGTH + 16) return null;
+  const id = READ_ID_FROM_REPLY[mailService](reply);
+  return id && id.length <= MAX_PROVIDER_MESSAGE_ID_LENGTH ? id : null;
 }
 
 /**

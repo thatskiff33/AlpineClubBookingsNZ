@@ -7,7 +7,7 @@ vi.mock("@/lib/prisma", () => ({ prisma: {} }));
 import { sesNotificationToDeliveryFeedback } from "@/lib/email/ses-feedback";
 
 const MAIL = {
-  messageId: " 0100018c-ses-assigned-000000 ",
+  messageId: " 0100018C-SES-ASSIGNED-000000 ",
   destination: ["fallback@example.test"],
   headers: [
     { name: "From", value: "Club <club@example.test>" },
@@ -32,6 +32,7 @@ describe("the SES adapter's neutral event (#5469)", () => {
     expect(sesNotificationToDeliveryFeedback(bounce("Permanent"))).toEqual({
       service: "aws-ses",
       kind: "permanent-bounce",
+      complaintType: null,
       recipients: ["Member@Example.test"],
       providerMessageId: "0100018c-ses-assigned-000000",
       sentMessageIds: [" <sent-1@club.example.test>", "<sent-1@club.example.test>"],
@@ -60,12 +61,40 @@ describe("the SES adapter's neutral event (#5469)", () => {
     ).toEqual({
       service: "aws-ses",
       kind: "complaint",
+      complaintType: "abuse",
       recipients: ["member@example.test"],
       providerMessageId: "0100-c-000000",
       sentMessageIds: [],
       reportId: "fb-c",
       providerDetail: { bounceType: null, bounceSubType: null, complaintFeedbackType: "abuse" },
     });
+  });
+
+  it("MUTATION: a 'not spam' report is its own kind, not a complaint (D5)", () => {
+    expect(
+      sesNotificationToDeliveryFeedback({
+        notificationType: "Complaint",
+        mail: { messageId: "0100-c-000000" },
+        complaint: { complaintFeedbackType: "Not-Spam", complainedRecipients: [{ emailAddress: "member@example.test" }] },
+      }),
+    ).toMatchObject({ kind: "not-spam-report", complaintType: null });
+  });
+
+  it.each([
+    ["fraud", "fraud"],
+    ["virus", "virus"],
+    ["auth-failure", "auth-failure"],
+    ["other", "other"],
+    ["something-new", "unknown"],
+    [undefined, "unknown"],
+  ])("MUTATION: a complaint of type %s is a complaint of type %s", (feedbackType, complaintType) => {
+    expect(
+      sesNotificationToDeliveryFeedback({
+        notificationType: "Complaint",
+        mail: { messageId: "0100-c-000000" },
+        complaint: { ...(feedbackType ? { complaintFeedbackType: feedbackType } : {}), complainedRecipients: [{ emailAddress: "m@example.test" }] },
+      }),
+    ).toMatchObject({ kind: "complaint", complaintType });
   });
 
   it("reads a notification wrapped in an SNS envelope, and falls back to the destination for recipients", () => {
