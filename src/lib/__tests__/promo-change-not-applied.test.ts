@@ -400,7 +400,6 @@ function emailParams(overrides: Record<string, unknown> = {}) {
     addedGuests: [],
     refundAmountCents: 0,
     additionalAmountCents: 0,
-    financialReviewPending: true,
     refundByBankTransfer: null,
     appliedCreditGivenBackCents: 0,
     unpaidAskCancelled: false,

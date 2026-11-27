@@ -754,8 +754,7 @@ describe("booking-modified default body (#2267)", () => {
       additionalAmountCents: 0,
       // #3032: required. This helper is about promo coverage, so the control
       // value keeps the review note out of every assertion here.
-      financialReviewPending: false,
-      refundByBankTransfer: null,
+        refundByBankTransfer: null,
       appliedCreditGivenBackCents: 0,
       unpaidAskCancelled: false,
       refundDestination: "own",

@@ -48,7 +48,6 @@ function params(addedGuests: ReadonlyArray<typeof ARI & { consentStatus?: string
     addedGuests,
     appliedCreditGivenBackCents: 0,
     unpaidAskCancelled: false,
-    financialReviewPending: false,
     refundByBankTransfer: null,
     refundDestination: "own" as const,
   };

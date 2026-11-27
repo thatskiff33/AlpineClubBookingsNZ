@@ -84,10 +84,6 @@ vi.mock("@/lib/cancellation", async (importOriginal) => ({
   ...((await importOriginal()) as typeof import("@/lib/cancellation")),
   loadCancellationPolicy: h.loadCancellationPolicy,
 }));
-vi.mock("@/lib/edit-financial-review", async (importOriginal) => ({
-  ...((await importOriginal()) as typeof import("@/lib/edit-financial-review")),
-  assertNoPendingEditFinancialReview: vi.fn(async () => undefined),
-}));
 vi.mock("@/lib/night-adjustment-write", () => ({ recordBookingNightAdjustments: vi.fn() }));
 vi.mock("@/lib/booking-ledger-modification-sync", () => ({ postModificationLedgerLines: vi.fn() }));
 vi.mock("@/lib/booking-modification-pricing", () => ({
