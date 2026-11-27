@@ -30,6 +30,7 @@ import { isLeftForTheEmailRetryJob } from "./send-outcome";
 import {
   type EmailAttachment,
   isCallerRetriedAlertTemplate,
+  isOwnerRetriedAlertTemplate,
   shouldPersistEmailHtml,
 } from "./internal";
 import {
@@ -203,6 +204,8 @@ export async function sendAdminAlertTo({
   // A FAILED row is replayed only when it kept its body (`core.ts`); a
   // sensitive template's does not, and goes to the review queue instead.
   const failedRowIsReplayed = shouldPersistEmailHtml(templateName);
+  // #5298: an owner-retried alert's lost hand-over is released to its owner, not queued.
+  const ownerRetried = isOwnerRetriedAlertTemplate(templateName);
   // #5255: the once-ever claim this alert is sent under, if any; every
   // recipient's row confirms it, and a later alert in the same send gets none.
   const onceEverClaim = takeOnceEverClaim();
@@ -213,6 +216,7 @@ export async function sendAdminAlertTo({
         logged: boolean;
         lostForWantOfARow: boolean;
         claimRefused?: true;
+        handoverLost?: string;
       }
     > => {
       // Whether this copy's EmailLog row was written (`onAttemptLogged`, as
@@ -244,12 +248,15 @@ export async function sendAdminAlertTo({
         // FAILED row the retry cron sends once the installation is corrected,
         // and a lost hand-over (#5298) a row the stranded-email sweep hands it,
         // but only if the row was written (#5407): without one it is lost.
-        const replayableFault = isLeftForTheEmailRetryJob(outcome) && failedRowIsReplayed;
+        const handoverLost = outcome.status === "handover_lost";
+        const replayableFault =
+          isLeftForTheEmailRetryJob(outcome) && failedRowIsReplayed && !(handoverLost && ownerRetried);
         return {
           status: outcome.status === "sent" ? "sent" : "suppressed",
           queuedForRetry: replayableFault && logged,
           logged,
           lostForWantOfARow: replayableFault && !logged,
+          ...(handoverLost ? { handoverLost: outcome.emailLogId } : {}),
         };
       } catch (err) {
         if (err instanceof OnceEverClaimRefusedError) {
@@ -292,6 +299,11 @@ export async function sendAdminAlertTo({
     );
   }
   const sent = outcomes.filter((outcome) => outcome.status === "sent").length;
+  // #5298: an owner-retried alert somebody received settles its owner, so a
+  // copy that lost its hand-over goes to the retry job now, as in `sendUnmuteableAdminAlert`.
+  if (ownerRetried && sent > 0) {
+    await handLostHandoversToTheRetryJob(outcomes.flatMap((outcome) => outcome.handoverLost ?? []), templateName);
+  }
   const queuedForRetry = outcomes.filter(
     (outcome) => outcome.status !== "sent" && outcome.queuedForRetry,
   ).length;
@@ -485,16 +497,16 @@ export async function sendUnmuteableAdminAlert({
   const nobodyReceivedIt = outcomes.every((outcome) => outcome.status !== "sent");
   // #5298: a lost hand-over left its row, body and all, to the stranded-email
   // sweep, which re-sends it. Like a copy the cron holds, every copy is kept
-  // and the owner does not send it again. Not a caller-retried alert: the sweep
+  // and the owner does not send it again. Not an owner-retried alert: the sweep
   // releases that one to its owner, whose retry is then the only one.
+  const ownerRetried = isOwnerRetriedAlertTemplate(templateName);
   const lostHandovers = outcomes.flatMap((outcome) => outcome.handoverLost ?? []);
-  const sweepHoldsACopy =
-    shouldPersistEmailHtml(templateName) && !isCallerRetriedAlertTemplate(templateName) && lostHandovers.length > 0;
-  // A caller-retried alert somebody did receive: its owner sees "sent" and
+  const sweepHoldsACopy = shouldPersistEmailHtml(templateName) && !ownerRetried && lostHandovers.length > 0;
+  // An owner-retried alert somebody did receive: its owner sees "sent" and
   // sends nothing more, so a copy that lost its hand-over goes to the cron now
   // (#4669's "the cron's to replay"), before the sweep can release it to an
   // owner that is no longer retrying.
-  if (!nobodyReceivedIt && isCallerRetriedAlertTemplate(templateName)) {
+  if (!nobodyReceivedIt && ownerRetried) {
     await handLostHandoversToTheRetryJob(lostHandovers, templateName);
   }
   // Before anything else can fail, and before the owner can retry.

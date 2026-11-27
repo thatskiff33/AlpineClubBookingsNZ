@@ -240,6 +240,16 @@ describe("sweepStrandedQueuedEmails", () => {
     expect(mocks.alert).not.toHaveBeenCalled();
   });
 
+  // #5298 review: a takeover alert's owner takes its held claim over and sends
+  // again after a crash, so its stranded copy is released too.
+  it("releases a never-sent takeover alert to its owner as well", async () => {
+    given([stranded("taken", { templateName: "admin-superseded-payment-refund" })], ["taken"]);
+
+    await expect(sweepStrandedQueuedEmails(NOW)).resolves.toEqual({ requeued: 0, released_to_owner: 1, never_sent: 0, unconfirmed: 0 });
+    expect(writeFor("taken")!.data).toMatchObject({ status: "FAILED", htmlBody: null });
+    expect(mocks.alert).not.toHaveBeenCalled();
+  });
+
   it.each<[string, Pick<Row, "handoverState" | "attempts">]>([
     ["a sender that started its hand-over", { handoverState: "STARTED", attempts: 1 }],
     ["the previous release, which records nothing", { handoverState: null, attempts: 1 }],

@@ -381,6 +381,26 @@ describe("sendToAdmins reports each recipient's fate (#3672)", () => {
     });
   });
 
+  // #5298 review: a takeover alert's owner sends it again after a crash, and the
+  // sweep releases its stranded copy to that owner; so a lost hand-over is not
+  // "queued" (the owner retries), and when another recipient got it, the lost
+  // copy goes to the retry job now, as the owner has settled.
+  it("does not count a takeover alert's lost hand-over as queued, and hands it to the retry job once someone got it", async () => {
+    const lost = async ({ onAttemptLogged }: { onAttemptLogged?: (id: string) => void }) => {
+      onAttemptLogged?.("email-log-1");
+      return { status: "handover_lost", emailLogId: "email-log-1" };
+    };
+    mocks.findMany.mockResolvedValue(treasurers.slice(0, 1));
+    mocks.sendEmail.mockImplementationOnce(lost);
+    await expect(send("admin-superseded-payment-refund")).resolves.toMatchObject({ sent: 0, queuedForRetry: 0 });
+    expect(mocks.handLostHandoversToTheRetryJob).not.toHaveBeenCalled();
+
+    mocks.findMany.mockResolvedValue(treasurers.slice(0, 2));
+    mocks.sendEmail.mockImplementationOnce(lost).mockResolvedValueOnce({ status: "sent" });
+    await expect(send("admin-superseded-payment-refund")).resolves.toMatchObject({ sent: 1, queuedForRetry: 0 });
+    expect(mocks.handLostHandoversToTheRetryJob).toHaveBeenCalledWith(["email-log-1"], "admin-superseded-payment-refund");
+  });
+
   // #5407 review: a fault's copy whose row write failed has nothing to replay.
   it("does not count an environment fault's copy as queued when its row was never written", async () => {
     mocks.findMany.mockResolvedValue(treasurers.slice(0, 1));

@@ -2,7 +2,7 @@ import type { EmailHandoverState, Prisma } from "@prisma/client";
 import logger from "@/lib/logger";
 import { prisma } from "@/lib/prisma";
 import { alertOfficersOfUndeliveredEmail } from "./delivery-failed-alert";
-import { isCallerRetriedAlertTemplate } from "./internal";
+import { isOwnerRetriedAlertTemplate } from "./internal";
 import { replayInFlightWindowMs } from "./replay-in-flight";
 import { EMAIL_RETRY_MAX_ATTEMPTS, FIRST_EMAIL_ATTEMPT, RETAINS_REPLAYABLE_EMAIL_BODY } from "./retry-selection";
 
@@ -175,7 +175,8 @@ interface StrandedRow {
  * (and younger than `STRANDED_QUEUED_MAX_AGE_MS`), up to 50 a run:
  *
  * - never handed over, an alert its owner sends again when nobody received it
- *   (`isCallerRetriedAlertTemplate`, #4669): released to that owner the way
+ *   (`isOwnerRetriedAlertTemplate`: #4669's and the takeover alerts'):
+ *   released to that owner the way
  *   `releaseUnreceivedAlertCopies` releases one, `FAILED` at its first attempt
  *   with no body, so the owner's retry is the only one; officers are not told;
  * - never handed over, body kept: back to `FAILED` with its attempts unchanged,
@@ -239,7 +240,7 @@ async function settleStrandedRow(row: StrandedRow, keepsBody: boolean, now: Date
     row.handoverState === NEVER_HANDED_OVER.handoverState && row.attempts === NEVER_HANDED_OVER.attempts;
   const outcome: StrandedOutcome = !neverHandedOver
     ? "unconfirmed"
-    : isCallerRetriedAlertTemplate(row.templateName)
+    : isOwnerRetriedAlertTemplate(row.templateName)
       ? "released_to_owner"
       : keepsBody
         ? "requeued"

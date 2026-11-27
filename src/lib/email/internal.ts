@@ -282,6 +282,35 @@ export function isCallerRetriedAlertTemplate(templateName: string): boolean {
 }
 
 /**
+ * #5298 review: the admin alerts sent through the once-ever takeover sequence
+ * (`sendAdminAlertOnceEverWithTakeover`, directly or through
+ * `alertOfficersOncePastCutoff`). Such a caller settles only on its own sent
+ * marker, which a crashed sender never wrote, so its next run takes the held
+ * claim over and sends a fresh alert. `admin-alert-once-census.test.ts` holds
+ * this set to every takeover caller, so a new one cannot be missed.
+ */
+export const TAKEOVER_RETRIED_ALERT_TEMPLATES: ReadonlySet<string> = new Set([
+  "admin-unrecognised-stripe-payment",
+  "admin-unmatched-app-stripe-payment",
+  "admin-stripe-dispute",
+  "admin-superseded-payment-refund",
+  "admin-booking-confirmation-unsent",
+  "admin-waitlist-notice-unsent",
+]);
+
+/**
+ * #5298 (`INV-INT-043`): an admin alert whose OWNER sends it again when no
+ * recipient received it - a caller-retried alert (#4669) or a takeover alert
+ * (above). A copy of one that never reached the mail server is released to
+ * that owner by the stranded-email sweep, never re-sent by the retry job, and
+ * a lost hand-over is not reported to the owner as queued, so the owner's
+ * retry is the only one.
+ */
+export function isOwnerRetriedAlertTemplate(templateName: string): boolean {
+  return isCallerRetriedAlertTemplate(templateName) || TAKEOVER_RETRIED_ALERT_TEMPLATES.has(templateName);
+}
+
+/**
  * Whether `sendEmail` keeps this template's rendered body for the email retry
  * cron. A caller-retried alert always does: without one, a copy one recipient
  * lost could never be replayed, and an environment fault would write its row

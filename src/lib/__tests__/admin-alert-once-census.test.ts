@@ -2,6 +2,7 @@ import { readdirSync, readFileSync, statSync } from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 
+import { TAKEOVER_RETRIED_ALERT_TEMPLATES } from "@/lib/email/internal";
 import { stripComments } from "./support/strip-comments";
 import { CENSUS_TIMEOUT_MS } from "@/test/census-timeout";
 
@@ -112,5 +113,60 @@ describe("#4696, #5255: the once-ever helpers' caller census matches the code", 
     const replayed = new Set(callersNaming(NAMES[REPLAYED]));
     const both = callersNaming(NAMES[RETRIED]).filter((file) => replayed.has(file));
     expect(both).toEqual([]);
+  }, CENSUS_TIMEOUT_MS);
+});
+
+/*
+ * #5298 review (`INV-INT-043`): an alert sent through the takeover sequence is
+ * sent again by its owner after a crash (a held claim with no sent marker is
+ * taken over), so the stranded-email sweep must release its stranded copy, not
+ * re-send it. The sweep reads `TAKEOVER_RETRIED_ALERT_TEMPLATES`; this pins that
+ * set to the takeover callers and the senders each one calls, so a new caller
+ * or a renamed template fails here until the set says so.
+ */
+const TAKEOVER_WRAPPER = "src/lib/owed-notice/past-cutoff-once.ts";
+const TAKEOVER_CALL = /\b(?:sendAdminAlertOnceEverWithTakeover|alertOfficersOncePastCutoff)\s*\(/;
+/** Each takeover caller, and the alert sender(s) its takeover sends through. */
+const TAKEOVER_SENDERS: Record<string, string[]> = {
+  "src/lib/unrecognised-stripe-payment.ts": ["sendAdminUnrecognisedStripePaymentAlert", "sendAdminUnmatchedAppStripePaymentAlert"],
+  "src/lib/stripe-dispute.ts": ["sendAdminStripeDisputeAlert"],
+  "src/lib/superseded-additional-refund.ts": ["sendAdminSupersededPaymentRefundAlert"],
+  "src/lib/paid-booking-confirmation-notice.ts": ["sendAdminBookingConfirmationUnsentAlert"],
+  "src/lib/waitlist-offer-notices.ts": ["sendAdminWaitlistNoticeUnsentAlert"],
+};
+
+/** The template a sender function sends, read from its definition under `src/lib/email/`. */
+function templatesSentBy(sender: string): string[] {
+  for (const [file, source] of readProductionSources()) {
+    if (!file.startsWith("src/lib/email/")) continue;
+    const start = source.search(new RegExp(`export async function ${sender}\\b`));
+    if (start < 0) continue;
+    const next = source.indexOf("\nexport ", start + 1);
+    const body = source.slice(start, next < 0 ? undefined : next);
+    return [...body.matchAll(/templateName: "([^"]+)"/g)].map((match) => match[1]!);
+  }
+  throw new Error(`no definition of ${sender} under src/lib/email/`);
+}
+
+describe("#5298: the takeover-retried alert templates match the takeover callers", () => {
+  it("lists every takeover caller", () => {
+    expect(
+      callersNaming(TAKEOVER_CALL).filter((file) => file !== TAKEOVER_WRAPPER),
+      "add the new takeover caller and its sender to TAKEOVER_SENDERS, and its template to TAKEOVER_RETRIED_ALERT_TEMPLATES",
+    ).toEqual(Object.keys(TAKEOVER_SENDERS).sort());
+  }, CENSUS_TIMEOUT_MS);
+
+  it("holds exactly the templates those callers send", () => {
+    const sent = new Set<string>();
+    for (const [file, senders] of Object.entries(TAKEOVER_SENDERS)) {
+      const source = readProductionSources().get(file)!;
+      for (const sender of senders) {
+        expect(source, `${file} calls ${sender}`).toMatch(new RegExp(`\\b${sender}\\s*\\(`));
+        const templates = templatesSentBy(sender);
+        expect(templates.length, `${sender} names its template`).toBeGreaterThan(0);
+        for (const template of templates) sent.add(template);
+      }
+    }
+    expect([...TAKEOVER_RETRIED_ALERT_TEMPLATES].sort()).toEqual([...sent].sort());
   }, CENSUS_TIMEOUT_MS);
 });
