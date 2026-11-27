@@ -145,7 +145,6 @@ If the club wants any of those rows kept, hold the deploy and raise it on the is
 
 **What the next prune deletes.** Every entry it reported as deletable, for good: `critical` and unclassified entries are never archived, so no copy is kept anywhere but backups. Afterwards the census reports 0.
 
-
 ## Archive Database Env Vars
 
 Set one of these on the cron-enabled production app instance:
