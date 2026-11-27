@@ -147,20 +147,33 @@ payment not yet made (being retried, or stopped and listed on [Stuck States](stu
 Approving the deduction takes the money off the member's balance at once, so
 it cannot be spent, and queues one Xero correction:
 
-- If the whole of an unused note is taken back, the note is **voided** in Xero.
+- If the whole of an unused note is taken back, and the note backs no other
+  credit in the app, the note is **voided** in Xero.
 - Otherwise the app raises an invoice in Xero for **only the amount taken back**,
-  on the member's contact with the note's account and tax rate, and allocates it
-  against the note. Xero does not email it. The note's remaining credit then
-  matches the member's credit in the app to the cent. Earlier uses of the note
-  are kept.
+  on the member's contact with the note's account and tax rate (none on an
+  untaxed note), and allocates it against the note. Xero does not email it. The
+  note's remaining credit then matches the member's credit in the app to the
+  cent. Earlier uses of the note are kept.
+- A deduction that reaches into several notes makes one such change per note.
+  The app checks every one of those notes in Xero before it changes the first.
 
 While the correction runs, the member's credit card shows **Waiting for Xero
 correction**. The member sees the deduction and its reason once Xero is
 corrected. If the correction fails it stays on the
 [Xero operations list](xero.md) and the credit stays held: **Retry** it once the
 cause is fixed in Xero. **Cancel** on the member's credit card gives the credit
-back, but only while Xero shows nothing changed; once a void or invoice may
-have reached Xero, retry instead. A correction cannot be marked resolved.
+back, but only while Xero holds nothing of the correction: no voided note and
+no correction invoice. Cancel checks Xero itself each time. If Xero holds part
+of it, retry: the retry finds what reached Xero and finishes it once. If the
+retry can never finish, void the correction invoice in Xero (its reference
+starts "Credit deduction"), then cancel. A correction cannot be marked
+resolved.
+
+One case has no way out in the app. If a deduction across several notes has
+corrected one note and a later note can then never be corrected (it was voided
+or spent in Xero in the moments between the app's check and its change), the
+correction can be neither finished nor cancelled. The credit stays held. Ask
+your administrator; it needs fixing by hand.
 
 ### Post or reverse opening credits
 
@@ -225,7 +238,7 @@ This is a review queue — its per-review inputs:
 | Admin Notes | Note visible to the member | Optional |
 | Notify choice (approve/reject) | Whether the member is emailed | Recorded in the audit log either way |
 | Approve / Reject (credit) | Action a manual credit adjustment | Two-person rule: the requester cannot approve |
-| Cancel (Waiting for Xero correction) | Stop a deduction's Xero correction and give the credit back | Finance edit; only while Xero shows no change |
+| Cancel (Waiting for Xero correction) | Stop a deduction's Xero correction and give the credit back | Finance edit; only while Xero holds nothing of the correction |
 | Import opening credits | Preview and post a moving-in club's opening credit | Finance edit; one approval; up to 500 rows; a file posts once |
 | Reverse batch | Remove a whole opening-credit batch | Finance edit; a reason is required; refused once any of it is spent |
 
@@ -249,7 +262,9 @@ governed by the [cancellation policy](../CANCELLATIONS.md#refund-policy).
 | A deduction says the credit's Xero note is still being raised | The grant's own credit note is queued for Xero | Approve once the note exists (the Xero operations list shows it) |
 | A credit correction failed with "NOTE_CHANGED_IN_XERO" | The note was used, changed or voided in Xero after the deduction was approved | **Cancel** it if offered, then request the deduction again against what is left |
 | A credit correction failed with "NOTE_MIXED_LINES" | The note has lines with different accounts or tax rates, so the app cannot bill it back | **Cancel** it and correct the note in Xero by hand |
-| **Cancel** on a correction says to retry | Xero may already hold the void or the invoice | **Retry** the correction; it finds what reached Xero and finishes it once |
+| **Cancel** says the correction may already have changed Xero, or that Xero already holds part of it | Xero holds, or may hold, the void or the correction invoice | **Retry** the correction; it finds what reached Xero and finishes it once. If the retry keeps failing, void the correction invoice in Xero, then **Cancel** |
+| **Cancel** says Xero could not be checked just now | Xero was unreachable, busy or disconnected | Nothing was changed. Cancel again shortly |
+| **Cancel** says the correction is running, or ran while it was being checked | The queue picked the correction up at the same moment | Reload the member, then **Retry** or **Cancel** |
 | **Reverse batch** is refused | A member has spent part of their opening credit, or had credit deducted since it posted | Correct that member with a credit adjustment instead |
 
 ## Related links

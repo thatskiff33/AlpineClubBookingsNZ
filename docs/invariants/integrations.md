@@ -653,26 +653,29 @@ Pinned by `xero-admin-grant-credit-note.test.ts`, `member-credit.test.ts`,
 ### INV-INT-043
 
 An approved deduction of credit with a Xero credit note corrects that note in
-Xero, and the member's free credit on the note then equals Xero's remaining
-credit to the cent. The correction never raises a second credit note.
+Xero; the member's free credit on the note then equals Xero's remaining credit
+to the cent. It never raises a second credit note.
 
 - **Reserved, then corrected.** Approval writes the deduction under the member's
   credit-ledger lock as write-down rows stamped with the note
-  (`reserveNotedCreditDeduction`), so the cents cannot be spent, and queues one
+  (`reserveNotedCreditDeduction`) and queues one
   `ADMIN_CREDIT_DEDUCTION_CORRECTION`. Noteless credit is taken first. A grant
   note still queued refuses the deduction.
-- **Void or bill back.** A wholly unused note taken whole is voided. Otherwise
-  the app raises an unemailed invoice for only the cents taken back, with the
-  note's contact, account and tax rate, and allocates it to the note.
-  `correctXeroCreditNote` (`xero-credit-note-correction.ts`) is the one helper;
-  Ledger M5 (#4517) and #5204 reuse it.
-- **Applied once.** Each write has its own key. A retry reads the note and finds
-  the invoice by its reference before writing. A note that changed in Xero, or
-  has mixed lines, fails without a write.
-- **Cancel only when untouched.** Cancel reads Xero first and needs no invoice
-  with the reference and the note not voided. Under the lock it then claims the
-  operation and the correction with status-guarded updates, and writes restore
-  rows. Otherwise the officer retries. Never marked resolved.
+- **Void or bill back, one line per note.** A note is voided only when it funds
+  one lot, wholly unused and taken whole. Otherwise the app raises an unemailed
+  invoice for only the cents taken back, with the note's contact, account and
+  tax basis, and allocates it to the note. `correctXeroCreditNote`
+  (`xero-credit-note-correction.ts`) is the one helper, for #4517 and #5204 to
+  reuse.
+- **Applied once.** Each write has its own `buildXeroIdempotencyKey` key. A
+  retry reads the note and finds the invoice by reference before writing. A
+  note changed in Xero, or with mixed lines, fails without a write; several
+  notes are all read before the first write.
+- **Cancel only when untouched.** Cancel reads the operation, then Xero: no live
+  invoice with the reference, and a void line's note not voided. Under the lock
+  it claims the operation exactly as read, then the correction, and writes
+  restore rows. The fence (`providerMutationStartedAt`) refuses cancel; it lifts
+  only with no line completed and a definite refusal. Never marked resolved.
 - **Readers wait.** The outside-spend mirror, the converge and the flag skip a
   note while its correction is RESERVED (`admin-credit-deduction-note-guard.ts`).
   A note voided by a completed correction raises no alert.

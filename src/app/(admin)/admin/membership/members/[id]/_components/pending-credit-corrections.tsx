@@ -9,7 +9,7 @@ import type { PendingCreditDeductionCorrectionItem } from "../_types"
 
 /**
  * #5241: approved deductions whose Xero correction is still running. The cents are
- * held off the balance; Cancel restores them only while Xero shows no change.
+ * held off the balance; Cancel restores them only while Xero holds nothing of the correction.
  */
 export function PendingCreditCorrections({
   corrections,

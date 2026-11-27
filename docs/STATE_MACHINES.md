@@ -3367,14 +3367,19 @@ with a Xero credit note; deductions of noteless credit alone have none.
 deduction approved -> RESERVED (write-down rows hold the cents; one ADMIN_CREDIT_DEDUCTION_CORRECTION queued)
 RESERVED -> COMPLETED   every line voided or billed back in Xero; member-facing notice written
 RESERVED -> RESERVED    a Xero failure; the operation is FAILED and only Retry or Cancel moves it
-RESERVED -> CANCELLED   officer cancel, only while Xero shows no change; restore rows give the cents back
+RESERVED -> CANCELLED   officer cancel, only while Xero holds nothing of the correction; restore rows give the cents back
 ```
 
 Every transition is a status-guarded `updateMany` under the member's
 credit-ledger lock. `providerMutationStartedAt` records that a Xero write may
-have landed; while set, cancel is refused, unless Xero refused the write
-outright and no line completed. The operation can be retried or cancelled,
-never marked resolved.
+have landed; while set, cancel is refused. A failed run clears it only when no
+line has completed and the run ended on a definite answer: Xero refused a
+request outright, a call was refused before anything was sent, or Xero's own
+state refused the correction before that run wrote. Cancel claims the
+operation's row exactly as it read it before asking Xero (status, `startedAt`
+and `updatedAt`), so a run in between refuses the cancel. The operation can be
+retried or cancelled, never marked resolved. Once one line of several has
+completed, the correction can only be retried.
 
 ## Waitlist Lifecycle
 
