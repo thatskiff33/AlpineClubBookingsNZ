@@ -22,6 +22,7 @@
  * `adult-member-hosting-linked-move.test.ts`. This file is about the seam.
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { SAVE_FIGURES, withSaveFigures } from "@/lib/__tests__/support/edit-save-figures";
 import { NextRequest } from "next/server";
 
 const h = vi.hoisted(() => ({
@@ -85,11 +86,15 @@ const DEPENDENT = "bk-dependent-01";
 const ACCEPT_KEY = `v1:${"a".repeat(64)}`;
 const DECLINE_KEY = `v1:${"b".repeat(64)}`;
 
+const PRIMARY_FIGURES = { newFinalPriceCents: 12_500, priceDiffCents: 2_500, changeFeeCents: 1_000, netChargeCents: 3_500 };
+const DEPENDENT_FIGURES = { newFinalPriceCents: 8_800, priceDiffCents: -1_200, changeFeeCents: 1_000, netChargeCents: -200 };
+
 function quote(
   overrides: Partial<LinkedMoveQuote> = {},
 ): LinkedMoveQuote {
   return {
     primary: {
+      quotedFigures: PRIMARY_FIGURES,
       bookingId: PRIMARY,
       reference: "BK-PRIMA",
       proposedCheckIn: "2026-08-20",
@@ -109,6 +114,7 @@ function quote(
         proposedCheckOut: "2026-08-22",
         priceDiffCents: -1_200,
         changeFeeCents: 1_000,
+        quotedFigures: DEPENDENT_FIGURES,
       },
     ],
     combinedPriceDiffCents: 1_300,
@@ -150,12 +156,15 @@ const params = Promise.resolve({ id: PRIMARY });
 function req(path: "modify" | "modify-dates", body: unknown) {
   return new NextRequest(`http://localhost/api/bookings/${PRIMARY}/${path}`, {
     method: "PUT",
-    body: JSON.stringify(body),
+    body: JSON.stringify(withSaveFigures(body)),
     headers: { "content-type": "application/json" },
   });
 }
 
 const DATE_MOVE = { checkIn: "2026-08-20", checkOut: "2026-08-22" };
+// #5238: an acceptance echoes the figures the offer showed for each other booking.
+const LINKED_FIGURES = [{ bookingId: "dependent-booking", figures: SAVE_FIGURES }];
+const ACCEPTANCE = { ...DATE_MOVE, hostingCoverageLinkedMove: ANSWER, linkedQuotedFigures: LINKED_FIGURES };
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -215,6 +224,9 @@ for (const door of DOORS) {
       expect(body.combinedChangeFeeCents).toBe(2_000);
       expect(body.settlementMethodRequired).toBe(true);
       expect(body.bothChangeFeesCharged).toBe(true);
+      // #5238: each booking's figures, which an acceptance echoes back.
+      expect(body.primary.quotedFigures).toEqual(PRIMARY_FIGURES);
+      expect(body.linkedBookings[0].quotedFigures).toEqual(DEPENDENT_FIGURES);
       // And it is the OFFER, not a flattened refusal: the generic ApiError branch
       // would have answered `{ error }` alone.
       expect(Object.keys(body)).toContain("primary");
@@ -241,18 +253,31 @@ for (const door of DOORS) {
     });
 
     it("dispatches a MOVE_BOTH answer to the shared arms", async () => {
+      const res = await door.handler(req(door.path, ACCEPTANCE), { params });
+
+      expect(res.status).toBe(200);
+      const call = door.service().mock.calls[0]?.[0] as {
+        linkedMove?: typeof ANSWER;
+        linkedQuotedFigures?: unknown;
+        bookingId: string;
+      };
+      expect(call.bookingId).toBe(PRIMARY);
+      expect(call.linkedMove).toEqual(ANSWER);
+      expect(call.linkedQuotedFigures).toEqual(LINKED_FIGURES);
+    });
+
+    it("refuses a MOVE_BOTH answer without the other bookings' figures, before any save (#5238)", async () => {
       const res = await door.handler(
         req(door.path, { ...DATE_MOVE, hostingCoverageLinkedMove: ANSWER }),
         { params },
       );
 
-      expect(res.status).toBe(200);
-      const call = door.service().mock.calls[0]?.[0] as {
-        linkedMove?: typeof ANSWER;
-        bookingId: string;
-      };
-      expect(call.bookingId).toBe(PRIMARY);
-      expect(call.linkedMove).toEqual(ANSWER);
+      expect(res.status).toBe(409);
+      await expect(res.json()).resolves.toEqual({
+        code: "EDIT_FIGURES_REQUIRED",
+        error: "This page is out of date. Reload it, check the price and save again.",
+      });
+      expect(door.service()).not.toHaveBeenCalled();
     });
 
     it("dispatches a LEAVE_UNCOVERED answer with the DECLINE key it belongs to", async () => {
@@ -289,10 +314,7 @@ for (const door of DOORS) {
       h.managementRole.mockReturnValue("USER");
       h.legacyRole.mockReturnValue("USER");
 
-      const res = await door.handler(
-        req(door.path, { ...DATE_MOVE, hostingCoverageLinkedMove: ANSWER }),
-        { params },
-      );
+      const res = await door.handler(req(door.path, ACCEPTANCE), { params });
 
       expect(res.status).toBe(200);
       expect(door.service()).toHaveBeenCalledTimes(1);
