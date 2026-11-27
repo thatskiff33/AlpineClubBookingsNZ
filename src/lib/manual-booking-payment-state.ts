@@ -5,6 +5,8 @@ import "server-only";
 import { BookingStatus, PaymentSource } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import {
+  DEPOSIT_BALANCE_REQUEST_WHERE,
+  DEPOSIT_SETTLE_REVERSAL_REFUSAL,
   isManualSettleFromPaymentStatus,
   MANUAL_CAPTURED_PAYMENT_REFUSAL, bookingAmountOwedCents } from "@/lib/booking-payment-state";
 import { CAPTURED_NOT_FULLY_REFUNDED_TRANSACTION_STATUS_LIST } from "@/lib/payment-transaction-status";
@@ -202,6 +204,8 @@ export async function getBookingManualPaymentState(
       } else if (settledStripe) {
         reverseBlockedReason =
           "A card payment has since settled this booking — reversing the manual record would misstate the ledger.";
+      } else if ((await prisma.paymentTransaction.count({ where: { paymentId: payment.id, ...DEPOSIT_BALANCE_REQUEST_WHERE } })) > 0) {
+        reverseBlockedReason = DEPOSIT_SETTLE_REVERSAL_REFUSAL;
       }
     }
   }

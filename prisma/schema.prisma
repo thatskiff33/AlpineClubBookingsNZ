@@ -3607,6 +3607,11 @@ model PaymentTransaction {
   /// key: a provenance stamp, read only beside the booking's own edits. NULL means
   /// not recorded (older rows, review charges, and every other kind of row).
   bookingModificationId String?
+  /// #5008 (INV-ADDPAY-053): the due date of a deposit balance, a club calendar
+  /// date on or before check-in. Set only on the ADDITIONAL request a deposit
+  /// settle raises (reason `deposit_balance`); NULL on every other row. The
+  /// balance's amount is the row's own `amountCents`, never a second copy.
+  balanceDueOn          DateTime?              @db.Date
   createdAt             DateTime               @default(now())
   /// #4132 (INV-PAY-133): the order rows were inserted in, from an owned
   /// INTEGER sequence. Rows written in one transaction share a `createdAt`, so

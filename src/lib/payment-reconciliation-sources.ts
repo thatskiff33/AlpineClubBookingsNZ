@@ -6,6 +6,7 @@
  */
 import type { CapacityCancellationRefund } from "@/lib/booking-card-refund-copy";
 import type { ClubFormat } from "@/lib/club-format";
+import type { CalendarDate } from "@/lib/club-time";
 import type { OwedNoticeMarker } from "@/lib/owed-notice/store";
 
 export type MarkBookingPaymentSucceededResult = {
@@ -122,4 +123,35 @@ export type ManualSettlementSource = {
   additionalCoverage: ManualAdditionalCoverage | null;
 };
 
-export type BookingSettlementSource = StripeSettlementSource | ManualSettlementSource;
+/**
+ * #5008 (`INV-ADDPAY-053`): an officer settles a booking by a DEPOSIT less than its
+ * worth. The deposit is recorded as the settling cash payment, exactly as a manual
+ * settle records its cash, and the rest is raised as one request with cause
+ * `balance` and a due date, in the same transaction. The deposit is the officer's
+ * figure (what was actually received); everything else is recomputed under the locks.
+ */
+export type DepositSettlementSource = {
+  kind: "deposit";
+  actingAdminMemberId: string;
+  note: string | null;
+  /** What the club received, in integer cents: more than 0, less than the amount owing. */
+  depositCents: number;
+  /** The balance's due date, a club calendar date from today to check-in. */
+  balanceDueOn: CalendarDate;
+  /** The club's today, read before the transaction (no settings read under the locks). */
+  today: CalendarDate;
+  /**
+   * The booking's worth (price plus any change fee) the officer was shown. A
+   * mismatch under the locks is a 409, as a moved figure is on the manual settle.
+   */
+  expectedWorthCents: number;
+};
+
+/** The two settlements an officer records, which share the manual arm of the settlement body. */
+export type OfficerSettlementSource = ManualSettlementSource | DepositSettlementSource;
+
+export type BookingSettlementSource = StripeSettlementSource | OfficerSettlementSource;
+
+export function isOfficerSettlement(settlement: BookingSettlementSource): settlement is OfficerSettlementSource {
+  return settlement.kind === "manual" || settlement.kind === "deposit";
+}

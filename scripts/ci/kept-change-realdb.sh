@@ -38,6 +38,8 @@ files=(
   src/lib/__tests__/booking-ledger-group-settlement.realdb.test.ts
   # #5255: the once-ever alert sweep's give-back against the alert's email row.
   src/lib/__tests__/admin-alert-once-sweep.realdb.test.ts
+  # #5008: the deposit settle through the manual arm of the settlement body.
+  src/lib/__tests__/deposit-settle.realdb.test.ts
 )
 # An explicit report plus the existing validator rejects green describe.skip.
 pnpm exec vitest run --maxWorkers=1 --reporter=json --outputFile="$race_dir/report.json" "${files[@]}"

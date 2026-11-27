@@ -68,6 +68,8 @@ import { getDefaultLodgeId } from "@/lib/lodges";
 import {
   bookingAmountOwedCents,
   bookingWorthCents,
+  DEPOSIT_BALANCE_REQUEST_WHERE,
+  DEPOSIT_SETTLE_REVERSAL_REFUSAL,
   isManualSettleFromPaymentStatus,
   MANUAL_CAPTURED_PAYMENT_REFUSAL,
   MANUAL_SETTLE_FROM_PAYMENT_STATUS_LIST,
@@ -103,15 +105,19 @@ type ReconciliationBooking = Prisma.BookingGetPayload<{
   };
 }>;
 
-import type {
-  BookingSettlementSource,
-  ManualAdditionalCoverage,
-  ManualSettlementSource,
-  MarkBookingPaymentSucceededInput,
-  MarkBookingPaymentSucceededResult,
-  StripeSettlementSource,
+import {
+  isOfficerSettlement,
+  type BookingSettlementSource,
+  type ManualAdditionalCoverage,
+  type MarkBookingPaymentSucceededInput,
+  type MarkBookingPaymentSucceededResult,
+  type OfficerSettlementSource,
+  type StripeSettlementSource,
 } from "@/lib/payment-reconciliation-sources";
+import { DEPOSIT_SETTLE_RECEIPT_REASON, prepareDepositSplit, raiseDepositBalanceRequest, recordDepositSettleAudit } from "@/lib/deposit-settle";
 import { LOCK1_HOLDER_TRANSACTION_BUDGET } from "@/lib/db-transaction";
+import { clubToday, parseCalendarDate } from "@/lib/club-time";
+import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
 import { readClearedCreditElectionCents, readSettledAdditionalPayment } from "@/lib/manual-mark-paid-metadata";
 import { owePaidConfirmationAfterFreshClaim } from "@/lib/paid-booking-confirmation-owed";
 import { consumeCaptureAwaitingSettle } from "@/lib/unsettled-capture-marker";
@@ -280,7 +286,7 @@ async function assertNoXeroInvoiceEvidence(
 async function prepareManualSettlement(
   tx: Prisma.TransactionClient,
   booking: ReconciliationBooking,
-  settlement: ManualSettlementSource
+  settlement: OfficerSettlementSource
 ) {
   // Third lock tier. Credit writers serialise on a per-member key, not lock(1),
   // so the switch-to-internet-banking precedent deliberately refuses to rely on
@@ -413,7 +419,9 @@ async function prepareManualSettlement(
       409
     );
   }
-  if (effectiveAmountCents !== settlement.expectedAmountCents) {
+  const worthCents = bookingWorthCents({ finalPriceCents: booking.finalPriceCents, changeFeeCents: recordedChangeFeeCents });
+  // #5008: a deposit settle names the worth the officer was shown; it splits what is owing.
+  if (settlement.kind === "manual" ? effectiveAmountCents !== settlement.expectedAmountCents : worthCents !== settlement.expectedWorthCents) {
     throw new ManualBookingPaymentError(
       "The amount owing changed while you were recording this payment — refresh and check the figure before recording it.",
       409
@@ -423,14 +431,29 @@ async function prepareManualSettlement(
   // The ledger mirror holds by construction (effective = final - credit), but
   // assert it explicitly so a future change to either derivation is caught here
   // rather than in the ledger.
-  if (
-    effectiveAmountCents + creditAppliedCents !==
-    bookingWorthCents({ finalPriceCents: booking.finalPriceCents, changeFeeCents: recordedChangeFeeCents })
-  ) {
+  if (effectiveAmountCents + creditAppliedCents !== worthCents) {
     throw new ManualBookingPaymentError(
       "This booking's payment ledger does not reconcile — refresh and try again.",
       409
     );
+  }
+
+  // #5008 (`INV-ADDPAY-053`): the deposit is what was received and the rest is
+  // the balance, the not-covered arithmetic below with the balance as the
+  // uncollected term: deposit + credit + balance = worth (`INV-PAY-047`).
+  if (settlement.kind === "deposit") {
+    const split = await prepareDepositSplit(tx, booking, settlement, { payment, effectiveAmountCents });
+    return {
+      amountOwingCents: effectiveAmountCents,
+      settlementAmountCents: split.depositCents,
+      creditAppliedCents,
+      paymentId: payment?.id ?? null,
+      outstandingAdditionalCents: 0,
+      additionalSettlementCents: 0,
+      uncollectedAdditionalCents: split.balanceCents,
+      previousAdditionalPaymentStatus: payment?.additionalPaymentStatus ?? null,
+      additionalPaymentIntentId: null,
+    };
   }
 
   // #2397 — the outstanding upward-modification delta, and the admin's answer
@@ -640,7 +663,7 @@ async function settleBookingPaymentInTransaction(
     // #4840: a manual settle names its officer on the Payment row below (the FK takes KEY SHARE on that Member row)
     // before its PAID claim, so it takes the booking row first: booking row, then Member, the order member merge and
     // every booking writer share. Taken after, it deadlocks a merge of that officer holding this row outside its prefix.
-    if (settlement.kind === "manual") await lockBookingRowForOwnerRead(tx, bookingId);
+    if (isOfficerSettlement(settlement)) await lockBookingRowForOwnerRead(tx, bookingId);
 
     // Re-read the full booking under the lock; the status/amount checks, the
     // capacity check and the PAID/CANCELLED claim below consume ONLY this
@@ -673,10 +696,9 @@ async function settleBookingPaymentInTransaction(
     // B5 (#2262): the manual path's third lock tier, every guard-2 refusal and
     // the amount law, all decided from this same post-lock snapshot and all
     // BEFORE the first write below.
-    const manual =
-      settlement.kind === "manual"
-        ? await prepareManualSettlement(tx, booking, settlement)
-        : null;
+    const manual = isOfficerSettlement(settlement)
+      ? await prepareManualSettlement(tx, booking, settlement)
+      : null;
 
     // The amount this settlement moves. The Stripe path takes the captured
     // amount as given (and validates it against the booking below); the manual
@@ -820,7 +842,7 @@ async function settleBookingPaymentInTransaction(
         data: {
           status: PaymentStatus.SUCCEEDED,
           amountCents: manualPrimaryTransactionAmountCents,
-          reason: "manual_mark_paid",
+          reason: settlement.kind === "deposit" ? DEPOSIT_SETTLE_RECEIPT_REASON : "manual_mark_paid",
         },
       });
 
@@ -833,7 +855,7 @@ async function settleBookingPaymentInTransaction(
             stripePaymentIntentId: null,
             amountCents: manualPrimaryTransactionAmountCents,
             status: PaymentStatus.SUCCEEDED,
-            reason: "manual_mark_paid",
+            reason: settlement.kind === "deposit" ? DEPOSIT_SETTLE_RECEIPT_REASON : "manual_mark_paid",
           },
         });
         manualReceiptRowIds.push(minted.id);
@@ -1039,7 +1061,7 @@ async function settleBookingPaymentInTransaction(
     if (
       !capacity.available &&
       !bookingHasCapacityOverride(booking) &&
-      settlement.kind === "manual"
+      isOfficerSettlement(settlement)
     ) {
       // B5 (#2262), owner-decided 28 Jul: REFUSE, do not mirror the Stripe
       // path's cancel-and-refund. No in-system money fact exists yet — the
@@ -1170,7 +1192,7 @@ async function settleBookingPaymentInTransaction(
     // -> 409 rather than a double-apply. One clock read is shared by the
     // provenance columns, the audit row and the member's receipt.
     const manualSettledAt = new Date();
-    if (settlement.kind === "manual") {
+    if (isOfficerSettlement(settlement)) {
       const fenced = await tx.payment.updateMany({
         where: {
           id: payment.id,
@@ -1211,6 +1233,10 @@ async function settleBookingPaymentInTransaction(
                 ],
               }
             : {}),
+          // #5008: a deposit settle found no extra owing; one recorded since is a 409.
+          ...(settlement.kind === "deposit"
+            ? { AND: [{ OR: [{ additionalAmountCents: { lte: 0 } }, { additionalPaymentStatus: "SUCCEEDED" }] }] }
+            : {}),
         },
         data: {
           status: PaymentStatus.SUCCEEDED,
@@ -1232,6 +1258,11 @@ async function settleBookingPaymentInTransaction(
           ...(manualAdditionalSettlementCents > 0
             ? { additionalPaymentStatus: "SUCCEEDED" }
             : {}),
+          // #5008: the balance request's mirror, exactly what `reconcilePaymentAggregates`
+          // derives from the request row raised below (the newest ADDITIONAL row, no card).
+          ...(settlement.kind === "deposit"
+            ? { additionalAmountCents: manualUncollectedAdditionalCents, additionalPaymentStatus: "PENDING", additionalPaymentIntentId: null }
+            : {}),
         },
       });
       if (fenced.count === 0) {
@@ -1239,6 +1270,11 @@ async function settleBookingPaymentInTransaction(
           "This booking's payment changed while you were recording it — refresh and try again.",
           409
         );
+      }
+      // #5008 (`INV-ADDPAY-053`): the rest of the amount owing, as one request with cause
+      // `balance` and its due date, in the deposit's own transaction. It posts no money (R25).
+      if (settlement.kind === "deposit") {
+        await raiseDepositBalanceRequest(tx, { paymentId: payment.id, balanceCents: manualUncollectedAdditionalCents, balanceDueOn: settlement.balanceDueOn });
       }
     }
 
@@ -1275,7 +1311,7 @@ async function settleBookingPaymentInTransaction(
     // where every other settlement's ledger lines converge. It runs the same
     // sync here, after the provenance columns above are written — so its rows
     // read as cash recorded by an officer (`INV-PAY-001`), not a bank receipt.
-    if (settlement.kind === "manual") {
+    if (isOfficerSettlement(settlement)) {
       await syncBookingLedgerSettlements({ paymentId: payment.id, store: tx });
     }
 
@@ -1301,7 +1337,7 @@ async function settleBookingPaymentInTransaction(
     await enqueueOwnHostingCoverageReevaluation(booking.id, tx, {
       cause: "SYSTEM_CHANGE",
       actorMemberId:
-        settlement.kind === "manual" ? settlement.actingAdminMemberId : null,
+        isOfficerSettlement(settlement) ? settlement.actingAdminMemberId : null,
     });
 
     // #2265 (#2319; #2262 door 3). This is the single settle door every card
@@ -1376,7 +1412,7 @@ async function settleBookingPaymentInTransaction(
       },
     });
 
-    if (settlement.kind === "manual") {
+    if (isOfficerSettlement(settlement)) {
       // Stripe-intent hygiene, belt-and-braces under guard 3. The member may
       // still hold a live /pay client secret for this booking; once the club
       // has the cash, that intent must not capture. Durable CANCEL_PAYMENT_INTENT
@@ -1400,7 +1436,15 @@ async function settleBookingPaymentInTransaction(
               : null,
         });
 
-      await createAuditLog(
+      // #5008: a deposit settle has its own audit row; the reversal reads only the manual one.
+      if (settlement.kind === "deposit") {
+        await recordDepositSettleAudit(tx, {
+          bookingId: booking.id, subjectMemberId: bookingOwner(booking).memberId, previousStatus: booking.status,
+          paymentId: payment.id, actingAdminMemberId: settlement.actingAdminMemberId, note: settlement.note,
+          depositCents: settlementAmountCents, creditAppliedCents: mirrorCreditAppliedCents, balanceCents: manualUncollectedAdditionalCents,
+          balanceDueOn: settlement.balanceDueOn, cancelledIntentIds: outstandingIntentIds, adoptedIntentIds, clearedCreditElectionCents: staleCreditElectionCents,
+        });
+      } else await createAuditLog(
         {
           action: MANUAL_MARK_PAID_AUDIT_ACTION,
           memberId: settlement.actingAdminMemberId,
@@ -2086,6 +2130,70 @@ export async function settleImportedBookingInTransaction(
 }
 
 /**
+ * #5008 child A (`INV-ADDPAY-053`) — settle a booking by a DEPOSIT less than what it
+ * owes: a SIBLING ENTRY POINT into the manual arm of the one settlement body, so the
+ * locks (lock(1) -> lodge -> booking row -> member credit -> Payment row), the
+ * refusals, the capacity check, the fenced PAID claim, the CASH_RECORDED line and its
+ * R08 receipt, and the bed reconciliation are the manual settle's own lines. In the
+ * same transaction it raises the rest as one request with cause `balance` and its
+ * due date (`deposit-settle.ts`). The booking ends PAID and holds its beds; "part
+ * paid" is `bookingPartPaid`'s to say. It sends the member nothing and calls no
+ * provider inside the transaction; intents it queued for cancellation are cancelled
+ * after the commit, best-effort, as the manual settle does.
+ *
+ * Inert in this release: no route, screen or job calls it. #5005's import is the
+ * first caller, and no balance is written until the release that chases one
+ * (#5008 child C) is fully deployed.
+ */
+export async function settleBookingByDeposit({
+  bookingId,
+  depositCents,
+  balanceDueOn,
+  expectedWorthCents,
+  actingAdminMemberId,
+  note,
+}: {
+  bookingId: string;
+  depositCents: number;
+  /** A club calendar date, `YYYY-MM-DD`, from today to check-in. */
+  balanceDueOn: string;
+  expectedWorthCents: number;
+  actingAdminMemberId: string;
+  note: string | null;
+}) {
+  const dueOn = parseCalendarDate(balanceDueOn);
+  if (!dueOn) throw new ManualBookingPaymentError("The balance's due date is not a calendar date.", 400);
+  // Read before the transaction: no settings read under the locks (`INV-LOCK-004`).
+  const journal = await resolveBookingMoneyPostingContext();
+  const today = clubToday(await readClubTimeZoneOutsideRequest());
+  const result = await prisma.$transaction((tx) =>
+    settleAndPostBookingReceipts(tx, bookingId, {
+      kind: "deposit", actingAdminMemberId, note, depositCents, balanceDueOn: dueOn, today, expectedWorthCents,
+    }, journal), LOCK1_HOLDER_TRANSACTION_BUDGET
+  );
+  if (result.outcome !== "manual_paid") {
+    // Unreachable: the deposit source pays or throws, as the manual one does.
+    throw new Error(`Unexpected settlement outcome on the deposit path: ${result.outcome}`);
+  }
+  await settleHostingCoverageAfterCommit({ bookingId });
+  for (const paymentIntentId of result.outstandingIntentIds) {
+    await cancelPaymentIntentIfCancellable(paymentIntentId).catch((err) =>
+      logger.warn({ err, bookingId, paymentIntentId }, "Deposit settle: best-effort Stripe intent cancel failed; the recovery cron will retry")
+    );
+  }
+  return {
+    bookingId,
+    paymentId: result.paymentId,
+    depositCents: result.effectiveAmountCents,
+    creditAppliedCents: result.creditAppliedCents,
+    balanceCents: result.uncollectedAdditionalCents,
+    balanceDueOn: dueOn,
+    settledAt: result.settledAt,
+    staleCreditElectionCents: result.staleCreditElectionCents,
+  };
+}
+
+/**
  * B5 (#2262) — record a cash / off-Xero bank-transfer settlement for a booking.
  *
  * A SIBLING ENTRY POINT into the settlement core above, not a second settlement
@@ -2382,6 +2490,10 @@ export async function reverseManualBookingPayment({
         "There is an open manual refund task for this payment — resolve it before reversing the settlement.",
         409
       );
+    }
+
+    if ((await tx.paymentTransaction.count({ where: { paymentId: payment.id, ...DEPOSIT_BALANCE_REQUEST_WHERE } })) > 0) {
+      throw new ManualBookingPaymentError(DEPOSIT_SETTLE_REVERSAL_REFUSAL, 409);
     }
 
     // Guard 2 again, for anything acquired SINCE the settle.

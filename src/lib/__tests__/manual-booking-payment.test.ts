@@ -41,6 +41,7 @@ const mocks = vi.hoisted(() => ({
   paymentTransactionFindMany: vi.fn(),
   paymentTransactionUpdateMany: vi.fn(),
   paymentTransactionCreate: vi.fn(),
+  paymentTransactionCount: vi.fn(),
   paymentRecoveryOperationFindMany: vi.fn(),
   paymentRecoveryOperationFindFirst: vi.fn(),
   paymentRecoveryOperationUpdateMany: vi.fn(),
@@ -217,6 +218,7 @@ const tx = {
     updateMany: (...args: unknown[]) =>
       mocks.paymentTransactionUpdateMany(...args),
     create: (...args: unknown[]) => mocks.paymentTransactionCreate(...args),
+    count: (...args: unknown[]) => mocks.paymentTransactionCount(...args),
   },
   paymentRecoveryOperation: {
     findMany: (...args: unknown[]) =>
@@ -316,6 +318,8 @@ beforeEach(() => {
   mocks.bookingUpdateMany.mockResolvedValue({ count: 1 });
   mocks.paymentTransactionUpdateMany.mockResolvedValue({ count: 0 });
   mocks.paymentTransactionCreate.mockResolvedValue({ id: "txn-manual" });
+  // #5008: no deposit balance request unless a test says otherwise.
+  mocks.paymentTransactionCount.mockResolvedValue(0);
   mocks.paymentTransactionFindMany.mockResolvedValue([]);
   mocks.paymentRecoveryOperationFindMany.mockResolvedValue([]);
   mocks.paymentRecoveryOperationUpdateMany.mockResolvedValue({ count: 0 });
