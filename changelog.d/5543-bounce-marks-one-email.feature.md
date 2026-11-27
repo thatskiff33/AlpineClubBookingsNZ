@@ -4,11 +4,12 @@
   marked bounced, so a member's history could show delivered emails as bounced
   and officers could not tell which one had failed. Now only the email the
   report is about is marked. The address is still blocked from further emails
-  exactly as before. A member who received their waitlist offer still counts as
-  told when a different email to them later bounces.
+  as before, except after a "not spam" report (below). A member who received
+  their waitlist offer still counts as told when a different email to them
+  later bounces.
 
   To match a report to its email, the app now stores the id the mail server
-  gives each email when it is sent. This works for Amazon SES without any
+  gives each email when it is sent. This works for AWS SES without any
   setup. Emails sent before this upgrade are matched only if your SES
   notifications include the original email headers, which is optional; without
   it an older email that bounces keeps reading as sent, while the address is
@@ -16,7 +17,8 @@
 
   What officers notice, by owner decision: a new alert, "Complaint About a Club
   Email", sent to officers with the "Reported issues" preference when a member
-  marks a club email as spam, once for each report. It names the address, the
+  marks a club email as spam, once for each report and address it names. It
+  names the address, the
   members who use it, the email where the app can tell, and says the address is
   now blocked, with a link to the Email Deliverability page where the block can
   be lifted. The email itself stays recorded as sent, because it did arrive. A
@@ -29,6 +31,7 @@
   Emails the old rule already marked bounced stay marked. During the upgrade, a
   server still running the previous version marks every email to an address as
   before and sends no complaint alert. The upgrade adds a column and an index
-  to the email log; building the index makes email sending wait briefly, longer
-  on a very large email log (see the upgrade notes if email-log pruning is off
-  and your log is large).
+  to the email log; while the index builds, the app's email sends wait, for
+  about one pass over the email log. If email-log pruning is off and your log
+  is large, see "A bounce marks one email" in `docs/UPGRADING.md` for checking
+  its size and building the index beforehand.

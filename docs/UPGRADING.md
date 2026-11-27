@@ -425,6 +425,61 @@ season, so a record for another season keeps its note.
 **Rollback.** Nothing to undo: the note is display only, and moving a member's
 membership type is an ordinary edit.
 
+### A bounce marks one email; the email log gets a column and an index (#5469)
+
+**What changes.** Two migrations run. The first adds the nullable column
+`EmailLog.providerMessageId`, with no backfill; the second builds its index,
+`EmailLog_providerMessageId_idx`. From this release the app stores, for each
+email it sends with `USE_AWS_SES=true`, the id AWS SES gives it, and a bounce
+report marks as bounced only the email it names. A complaint marks no email
+and sends officers the new **Admin Email Complaint** alert. Emails the
+previous rule already marked bounced stay as they are: nothing is rewritten.
+
+**Who needs to act.** A club with a large email log. The index build takes a
+lock that lets the email log be read but makes every write wait, so the app's
+email sends wait until the build ends: about one pass over the table. The log
+grows without limit unless Privacy retention's log pruning is turned on, and
+it is off by default. Count the rows first, on the live environment's database:
+
+```sql
+SELECT count(*) FROM "EmailLog";
+```
+
+If sends cannot wait that long, deploy in a quiet moment, or build the index
+before the deploy without blocking writes, as the safety ledger rows for
+`20270107090000_add_email_log_provider_message_id` and
+`20270107090100_add_email_log_provider_message_id_index` describe:
+
+```sql
+ALTER TABLE "EmailLog" ADD COLUMN IF NOT EXISTS "providerMessageId" TEXT;
+CREATE INDEX CONCURRENTLY IF NOT EXISTS "EmailLog_providerMessageId_idx" ON "EmailLog"("providerMessageId");
+```
+
+Nothing checks automatically that a pre-built index is valid. Check it before
+the deploy:
+
+```sql
+SELECT indisvalid FROM pg_index WHERE indexrelid = '"EmailLog_providerMessageId_idx"'::regclass;
+```
+
+If it says `false`, run `DROP INDEX CONCURRENTLY "EmailLog_providerMessageId_idx";`
+and build it again. Both migrations then find what they would create and do
+nothing.
+
+**Optional: include the original headers in SES notifications.** Emails sent
+before this release stored no SES id, so a bounce report about one can mark it
+only if the sending identity's bounce and complaint notifications include the
+original email headers (`SetIdentityHeadersInNotificationsEnabled`; see
+[`CONFIGURATION.md`](../CONFIGURATION.md#ses-bounce-and-complaint-feedback)).
+Without it, the address is still blocked and the email keeps showing as sent.
+
+**During the switch.** A server still running the previous release, handling
+some reports, marks every email to the address as before and sends no
+complaint alert.
+
+**Rollback.** Nothing to undo: the previous release never reads the column or
+the index, so leave both in place.
+
 ## v0.13.2 → v0.14.0
 
 ### Upgrade checklist for this release
