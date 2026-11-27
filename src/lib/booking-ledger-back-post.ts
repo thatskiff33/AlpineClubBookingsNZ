@@ -231,9 +231,8 @@ const BOOKING_SELECT = {
       payment: { select: { source: true } },
     },
   },
-  // #5289 review: the cancellation itself, never a settlement marker written after it.
   events: {
-    where: { type: "CANCELLED", ...NOT_A_SETTLEMENT_MARKER_WHERE },
+    where: { type: "CANCELLED", ...NOT_A_SETTLEMENT_MARKER_WHERE }, // #5289 review: the cancellation, never a settlement marker
     orderBy: [{ occurredAt: "desc" }, { id: "desc" }],
     take: 1,
     select: { snapshot: true },
