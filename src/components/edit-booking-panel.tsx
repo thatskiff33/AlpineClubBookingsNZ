@@ -1342,9 +1342,6 @@ export function EditBookingPanel({
       // are not beds for both), and the save then carries no answer at all so the
       // server re-prompts rather than acting on half of one. Accepting also binds
       // every booking to the figure the offer showed for it (#5238).
-      // An accepted move binds several bookings' figures; a plain refusal's
-      // figures can be the other booking's, so its message names no amounts.
-      const acceptedLinkedMove = Boolean(linkedMoveState && linkedMoveChoice === "MOVE_BOTH");
       if (linkedMoveState && linkedMoveChoice) {
         Object.assign(body, hostingCoverageLinkedMoveAnswerFields(linkedMoveState.prompt, linkedMoveChoice));
         // #3232: and the return method for the other booking's refund, added HERE
@@ -1371,14 +1368,14 @@ export function EditBookingPanel({
 
       const data = await res.json();
       if (!res.ok) {
-        // #4924: the price moved since the preview, so nothing was saved. Say
-        // what changed, keep the edit open and price it again. An open linked-move
-        // answer was for the old price, so it goes too (#5238).
+        // #4924: the price moved since the preview, so nothing was saved. Say what
+        // changed (no amounts after an accepted move: the figures may be the other
+        // booking's), keep the edit open and price it again; the answer goes (#5238).
         const freshFigures = readEditPriceChangedFigures(data);
         if (freshFigures) {
           setLinkedMoveState(null);
           setLinkedMoveChoice(null);
-          setSaveError(editPriceChangedMessage(acceptedLinkedMove ? null : previewedFigures, freshFigures, format));
+          setSaveError(editPriceChangedMessage(linkedMoveState && linkedMoveChoice === "MOVE_BOTH" ? null : previewedFigures, freshFigures, format));
           requote();
           return;
         }
