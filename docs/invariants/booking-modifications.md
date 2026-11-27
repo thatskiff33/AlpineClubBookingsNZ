@@ -1015,10 +1015,9 @@ arithmetic, a today's-rate refund, averaged per-night rows or without the
 edit-time discount keeps its rows and price, and a guest already below zero is
 left as found, neither driven deeper nor repaired. These rules bind edits from
 here on; any correction is an owner decision and a separate, audited adjustment
-(#2745, #2756).
+(#2745, #2756; read-only audit `bookings:audit-mid-stay-edits`, #5242).
 
-History, measurements and rejected alternatives: #2736, #2743, #2744 and #2756
-(and #2770, #4317).
+History: #2736, #2743, #2744, #2756, #2770, #4317.
 
 ## INV-MOD-020
 

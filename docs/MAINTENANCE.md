@@ -3202,6 +3202,75 @@ DATABASE_URL=<non-prod copy> pnpm run payments:audit-organiser-child-refunds
 DATABASE_URL=<non-prod copy> pnpm run payments:audit-organiser-child-refunds --json
 ```
 
+### Audit mid-stay edits made before the #2743 and #2744 fixes (#5242)
+
+Before PRs #2757 and #2758 (merged 10 Aug 2026; first released in v0.14.0) an
+edit to a booking whose stay had started could price wrongly in two ways:
+a guest whose nights had ended was put back on the booking and billed again
+(#2743), and nights the edit gave back were credited at the rates of the day,
+not the rate the member paid (#2744). Both are fixed going forward and old
+bookings were left as they were (`INV-MOD-025`).
+`scripts/audit-mid-stay-edit-history.ts` lists the old edits that may carry
+either error, with the amount at stake. It is READ-ONLY and repairs nothing: it
+has no write path and no `--apply`. Whether to credit or refund anyone is the
+owner's decision on #5242.
+
+Running it on production is an owner step. Agents run it against a local or
+test database only and never connect to production.
+
+```bash
+pnpm run --silent bookings:audit-mid-stay-edits > mid-stay-edit-audit.txt
+pnpm run --silent bookings:audit-mid-stay-edits --summary
+pnpm run --silent bookings:audit-mid-stay-edits --json > mid-stay-edit-audit.json
+pnpm run --silent bookings:audit-mid-stay-edits --before 2026-08-11T00:00:00+12:00
+```
+
+**Why it cannot be exact.** Before the fixes each edit kept one record: the
+stay's dates and price before and after, and the names of guests removed and
+added. There is no per-guest before and after. So an edit that only gave nights
+back, or only added guests, can be judged; an extension, an edit that both
+bought and gave back nights, or a booking edited again later can only be
+bounded. An officer's date override that re-priced the stay ("recalculate")
+re-priced every night at the rates of the day, so each one made after check-in
+is listed for a person to compare with the rates the member booked at, even at
+a $0.00 net change, because rates may have moved both ways. Shift-mode
+overrides moved no money and name or link corrections re-priced no nights, so
+neither is examined. #2744 cannot see a guest whose member or age category
+changed between booking and edit while the rates stayed the same.
+
+**Reading the header.** It prints the merge times of #2757 and #2758, when the
+marker migration (`20260810020000_backfill_bed_allocation_audit_category`, the
+first merged after both fixes) finished on this database, the cut-off used, and
+how many edits after check-in came after the cut-off (made under the fixes, not
+examined). By default the cut-off is the marker's finish plus 24 hours. If this
+install began running the fixes at a different time - it upgraded straight to a
+later release, or the migration ran apart from the deploy - re-run with
+`--before` set to that moment, with its zone. On a database with no record of
+the marker the audit stops and asks for `--before`, rather than guess; the
+marker is therefore not on the never-squash list.
+
+**Reading the list.** One line per edit and shape: booking id, the booking's
+member id, the modification id, the club date of the edit, the shape, its
+certainty, the amount at stake and one sentence of reason.
+
+- `certain`: the record shows the error and its amount - the price rose though
+  the edit bought nothing, or rose by more than the guests it added cost.
+- `possible`: a person checks the booking. "up to" is a limit, not a finding of
+  that much; "amount unknown" means an over-charge may hide inside a net credit.
+- `officer-recalculated`: an officer override re-priced the stay; it has its
+  own line in the summary.
+- `unreadable`: the edit's record could not be read; it is listed, never
+  dropped.
+
+The list holds booking and member ids: keep the file off the public repository
+and issue, and delete it once the decision is recorded. Post only the
+`--summary` output on #5242. All zeros closes #5242; otherwise file a follow-up
+decision issue with the counts and the money from the summary. Nothing is
+adjusted without that decision.
+
+Do not run it while a migration runs: it reads in ONE read-only
+`RepeatableRead` snapshot held for up to 120 seconds.
+
 ### Audit IB hold-expiry invoice under-clears (#1597)
 
 `scripts/audit-ib-hold-clearing.ts` is a READ-ONLY audit — it never writes and
