@@ -2575,15 +2575,17 @@ describe("processQueuedXeroOutboxOperations", () => {
         expect.objectContaining({ OR: expect.any(Array) }),
         expect.objectContaining({ OR: expect.any(Array) }),
         expect.objectContaining({ OR: expect.any(Array) }),
-        expect.objectContaining({ OR: expect.any(Array) }),
+        // #4431 and #5190 PR 3: the two credit-lot waits share one arm.
+        { AND: [expect.objectContaining({ OR: expect.any(Array) }), expect.objectContaining({ OR: expect.any(Array) })] },
         expect.objectContaining({ OR: expect.any(Array) }),
         expect.objectContaining({ OR: expect.any(Array) }),
       ],
       // #5228: never a row whose request names no queue type.
       NOT: NAMES_NO_QUEUE_TYPE,
     });
-    // #4299, #4369, #4431 and #5245: the pinned types, the organiser extra, the reversal, the admin grant note, and a school's contact details.
-    expect(args.where.queueType.in).toHaveLength(22);
+    // #4299, #4369, #4431, #5245 and #5190: the pinned types, the organiser extra, the reversal, the admin grant note, a school's contact details, and an age-up credit.
+    expect(args.where.queueType.in).toHaveLength(23);
+    expect(args.where.queueType.in).toContain("AGE_UP_CREDIT");
     expect(args.where.queueType.in).toContain("ORGANISER_EXTRA_ADJUSTMENT");
     expect(args.where.queueType.in).toContain("CARD_REFUND_REVERSAL_INVOICE");
     expect(args.where.queueType.in).toContain("ADMIN_GRANT_CREDIT_NOTE");
@@ -2698,7 +2700,8 @@ describe("processQueuedXeroOutboxOperations", () => {
     const { BILLED_OFFSET_AWAITING_OWN_NOTE_CODE, BILLED_OFFSET_OWN_NOTE_RECHECK_MS } = await import("@/lib/unpaid-ask-billed-offset-order");
     const { ADDITIONAL_CAPTURE_RECEIPT_RECHECK_MS, ADDITIONAL_CAPTURE_RECEIPT_WAITING_CODE } = await import("@/lib/additional-capture-receipt-gate");
     const { ADMIN_GRANT_NOTE_AWAITING_RETRY_RECHECK_MS } = await import("@/lib/admin-grant-credit-note");
-    const { ADMIN_GRANT_NOTE_AWAITING_RETRY_CODE, GROUP_SETTLEMENT_INVOICE_EMAIL_DEFERRED_CODE } = await import("@/lib/xero-operation-error-codes");
+    const { ADMIN_GRANT_NOTE_AWAITING_RETRY_CODE, AGE_UP_CREDIT_AWAITING_SEASON_INVOICE_CODE, GROUP_SETTLEMENT_INVOICE_EMAIL_DEFERRED_CODE } = await import("@/lib/xero-operation-error-codes");
+    const { AGE_UP_CREDIT_SEASON_INVOICE_RECHECK_MS } = await import("@/lib/subscription-age-up-credit");
     const { GROUP_SETTLEMENT_INVOICE_EMAIL_DEFERRED_RECHECK_MS } = await import("@/lib/xero-group-settlement-invoice-outbox");
     const { XERO_TAX_CATEGORY_AWAITING_MAPPING_CODE } = await import("@/lib/xero-operation-error-codes");
     const { XERO_TAX_CATEGORY_AWAITING_MAPPING_RECHECK_MS } = await import("@/lib/xero-tax-category-hold");
@@ -2749,11 +2752,23 @@ describe("processQueuedXeroOutboxOperations", () => {
         ],
       },
       // #4431: a failed admin grant note is spaced until its retry is due.
+      // #5190 PR 3: an age-up credit waiting for its season invoice, the same way.
       {
-        OR: [
-          { lastErrorCode: null },
-          { lastErrorCode: { not: ADMIN_GRANT_NOTE_AWAITING_RETRY_CODE } },
-          { updatedAt: { lte: new Date(Date.now() - ADMIN_GRANT_NOTE_AWAITING_RETRY_RECHECK_MS) } },
+        AND: [
+          {
+            OR: [
+              { lastErrorCode: null },
+              { lastErrorCode: { not: ADMIN_GRANT_NOTE_AWAITING_RETRY_CODE } },
+              { updatedAt: { lte: new Date(Date.now() - ADMIN_GRANT_NOTE_AWAITING_RETRY_RECHECK_MS) } },
+            ],
+          },
+          {
+            OR: [
+              { lastErrorCode: null },
+              { lastErrorCode: { not: AGE_UP_CREDIT_AWAITING_SEASON_INVOICE_CODE } },
+              { updatedAt: { lte: new Date(Date.now() - AGE_UP_CREDIT_SEASON_INVOICE_RECHECK_MS) } },
+            ],
+          },
         ],
       },
       // #4919: a group invoice whose email is owed is asked for again a minute on.

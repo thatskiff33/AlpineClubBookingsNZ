@@ -126,8 +126,9 @@ describe("config-transfer import of the subscription-liability rule (#5190)", ()
 
     expect(db.$transaction).toHaveBeenCalledTimes(2);
     expect(clearUp.clearStaleNotRequiredRows).toHaveBeenCalledTimes(1);
-    // The frozen test clock is 1 July 2026: season 2026.
-    expect(clearUp.clearStaleNotRequiredRows).toHaveBeenCalledWith(db.tx, 2026);
+    // The frozen test clock is 1 July 2026: season 2026, and the club's today
+    // that "Age today" reads ages on (#5190 PR 3).
+    expect(clearUp.clearStaleNotRequiredRows).toHaveBeenCalledWith(db.tx, 2026, "2026-07-01");
     // The clear-up waits on the billing season key, which a confirm may hold
     // for its whole budget, so its transaction outlasts confirm's.
     expect(db.$transaction.mock.calls[1]![1]).toEqual({

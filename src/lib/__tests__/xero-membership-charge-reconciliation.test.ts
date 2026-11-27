@@ -46,7 +46,9 @@ vi.mock("@/lib/prisma", () => ({
       findFirst: mocks.coverageFindFirst,
       updateMany: mocks.coverageUpdateMany,
     },
-    membershipSubscriptionCharge: { updateMany: mocks.chargeUpdateMany },
+    membershipSubscriptionCharge: { updateMany: mocks.chargeUpdateMany, findMany: vi.fn(async () => []) },
+    // #5190 PR 3: the sweep maps top-up invoices to their adjustments; none here.
+    memberSubscriptionAgeUpAdjustment: { findMany: vi.fn(async () => []) },
     // #5190: the sync reads the liability rule strictly; no row is NOT_CHOSEN.
     membershipLockoutSettings: { findUnique: vi.fn(async () => null) },
     $transaction: mocks.transaction,
@@ -135,7 +137,9 @@ describe("membership charge reconciliation", () => {
     // pass a tx client exposing the delegates it writes.
     mocks.transaction.mockImplementation(async (callback: (tx: unknown) => unknown) => callback({
       membershipSubscriptionChargeCoverage: { findFirst: mocks.coverageFindFirst, updateMany: mocks.coverageUpdateMany },
-      membershipSubscriptionCharge: { updateMany: mocks.chargeUpdateMany },
+      membershipSubscriptionCharge: { updateMany: mocks.chargeUpdateMany, findMany: vi.fn(async () => []) },
+    // #5190 PR 3: the sweep maps top-up invoices to their adjustments; none here.
+    memberSubscriptionAgeUpAdjustment: { findMany: vi.fn(async () => []) },
       memberSubscription: {
         findUnique: mocks.subscriptionFindUnique,
         upsert: mocks.subscriptionUpsert,

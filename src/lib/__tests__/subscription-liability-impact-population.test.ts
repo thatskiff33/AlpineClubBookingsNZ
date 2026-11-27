@@ -73,6 +73,7 @@ describe("buildSubscriptionLiabilityImpact reads the billing population (#5190)"
       seasonYear: 2026,
       settings: { requiredTypeAgeRule: "ALWAYS_OWES", liabilityAgeSource: "SEASON_START" },
       listSettings: { requiredTypeAgeRule: "NOT_CHOSEN", liabilityAgeSource: "NOT_CHOSEN" },
+      today: "2026-07-01",
     });
     expect(impact.staleRecords).toEqual([
       { memberId: "gone", name: "Archived Member", inBillingPopulation: false },

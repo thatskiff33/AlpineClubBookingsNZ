@@ -82,7 +82,8 @@ export async function GET(req: NextRequest) {
   // #2149/#5190: mirror the members-list filter exactly — the shared liability
   // rule on the billing side until the club chooses (Q2), from the same settings
   // as the per-row column below.
-  // The club's today at the same pinned moment: "Age today" reads ages on it.
+  // The club's today at the same pinned moment: "Age today" reads ages on it,
+  // and the download's filename carries it.
   const today = clubToday(club.zone, fixedClubClock(now));
   const notRequiredSubscriptionConditions = subscriptionNotRequiredMemberConditions({
     seasonYear: currentSeasonYear,
@@ -475,7 +476,6 @@ export async function GET(req: NextRequest) {
     const csv = [headers.join(","), ...rows.map((r) => r.join(","))].join(
       "\r\n",
     );
-    const today = club.today();
 
     // Privacy audit: record that a members CSV was exported. Only the applied
     // filters and the row count are stored — never member row contents.

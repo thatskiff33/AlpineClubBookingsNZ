@@ -7,6 +7,7 @@ const mocks = vi.hoisted(() => ({
   txChargeUpdateMany: vi.fn(),
   txChargeFindUnique: vi.fn(),
   memberSubscriptionUpdateMany: vi.fn(),
+  ageUpAdjustmentUpdateMany: vi.fn(),
   linkUpsert: vi.fn(),
   transaction: vi.fn(),
   getInvoices: vi.fn(),
@@ -111,6 +112,7 @@ describe("subscription invoice delivery behavior", () => {
     mocks.findContact.mockResolvedValue("contact-1");
     mocks.memberSubscriptionUpdateMany.mockResolvedValue({ count: 1 });
     mocks.txChargeUpdateMany.mockResolvedValue({ count: 1 });
+    mocks.ageUpAdjustmentUpdateMany.mockResolvedValue({ count: 0 });
     mocks.chargeUpdate.mockResolvedValue({ count: 1 });
     mocks.getInvoices.mockResolvedValue({ body: { invoices: [] } });
     mocks.createInvoices.mockImplementation(async () => {
@@ -126,9 +128,30 @@ describe("subscription invoice delivery behavior", () => {
       return callback({
         membershipSubscriptionCharge: { updateMany: mocks.txChargeUpdateMany, findUnique: mocks.txChargeFindUnique },
         memberSubscription: { updateMany: mocks.memberSubscriptionUpdateMany },
+        memberSubscriptionAgeUpAdjustment: { updateMany: mocks.ageUpAdjustmentUpdateMany },
         xeroObjectLink: { upsert: mocks.linkUpsert },
       });
     });
+  });
+
+  // #5190 PR 3 (`INV-LOCKOUT-020`): a top-up counts against a member's booking
+  // from the moment its invoice is issued, so the write that records the
+  // invoice marks the adjustment issued, in the same transaction.
+  it("marks an age-up top-up issued when its invoice is recorded, and only one not yet issued", async () => {
+    mocks.chargeFind.mockResolvedValue(charge());
+
+    await createXeroMembershipSubscriptionInvoice({ chargeId: "charge-1", syncOperation: xeroClaim("op-1") });
+
+    expect(mocks.ageUpAdjustmentUpdateMany).toHaveBeenCalledTimes(1);
+    // PENDING and never issued: a voided top-up, or one the sync already
+    // judged paid, is not put back to UNPAID by a resumed delivery.
+    expect(mocks.ageUpAdjustmentUpdateMany).toHaveBeenCalledWith({
+      where: { chargeId: "charge-1", status: "PENDING", xeroInvoiceStatus: null },
+      data: { xeroInvoiceStatus: "UNPAID" },
+    });
+    expect(mocks.txChargeUpdateMany.mock.invocationCallOrder[0]).toBeLessThan(
+      mocks.ageUpAdjustmentUpdateMany.mock.invocationCallOrder[0]!,
+    );
   });
 
   it("persists a created invoice before email and retries only email after partial failure", async () => {
