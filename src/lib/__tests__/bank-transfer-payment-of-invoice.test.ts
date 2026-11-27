@@ -32,11 +32,14 @@ function store(payments: Payment[], links: Link[]) {
     const creditNoteId = (where.metadata as { equals: string }).equals;
     return links.filter((link) => link.xeroObjectType === "ALLOCATION" && link.active && (link.metadata as { creditNoteId?: string })?.creditNoteId === creditNoteId);
   });
-  const paymentFindMany = vi.fn(async ({ where }: { where: { source: string; OR: Array<{ xeroInvoiceId?: { in: string[] }; id?: { in: string[] } }> } }) =>
-    payments.filter(
-      (payment) =>
-        payment.source === where.source &&
-        where.OR.some((clause) => clause.xeroInvoiceId?.in.includes(payment.xeroInvoiceId ?? "") || clause.id?.in.includes(payment.id)),
+  type PaymentWhere = { source?: string; OR?: Array<{ xeroInvoiceId?: { in: string[] }; id?: { in: string[] } }>; xeroInvoiceId?: { in: string[] } };
+  const paymentFindMany = vi.fn(async ({ where }: { where: PaymentWhere }) =>
+    // Two shapes: the settle's filter (a source and an OR), or any payment stamped with one of these invoices.
+    payments.filter((payment) =>
+      where.OR
+        ? payment.source === where.source &&
+          where.OR.some((clause) => clause.xeroInvoiceId?.in.includes(payment.xeroInvoiceId ?? "") || clause.id?.in.includes(payment.id))
+        : where.xeroInvoiceId!.in.includes(payment.xeroInvoiceId ?? ""),
     ),
   );
   return { db: { xeroObjectLink: { findMany: linkFindMany }, payment: { findMany: paymentFindMany } } as never, linkFindMany };
@@ -100,13 +103,38 @@ describe("decisionInvoiceIdsOf (#5289 C)", () => {
   });
 
   it("MUTATION (link-only): with none stamped, the invoice its only active link names; none when two do", async () => {
-    const { db } = store([], [invoiceLink("pay-1", "inv-1"), invoiceLink("pay-2", "inv-2"), invoiceLink("pay-2", "inv-3")]);
+    const { db } = store(
+      [{ id: "pay-1", source: "INTERNET_BANKING", xeroInvoiceId: null }, { id: "pay-2", source: "INTERNET_BANKING", xeroInvoiceId: null }],
+      [invoiceLink("pay-1", "inv-1"), invoiceLink("pay-2", "inv-2"), invoiceLink("pay-2", "inv-3")],
+    );
     await expect(
       decisionInvoiceIdsOf(
         [
           { id: "pay-1", source: "INTERNET_BANKING" as never, xeroInvoiceId: null },
           { id: "pay-2", source: "INTERNET_BANKING" as never, xeroInvoiceId: null },
         ],
+        db,
+      ),
+    ).resolves.toEqual(new Map([["pay-1", "inv-1"]]));
+  });
+
+  it("MUTATION (the invoice's one payment): an unstamped payment linked to an invoice another payment owns, or shares, takes no invoice", async () => {
+    // pay-1 owns inv-1 by its own id and pay-2 is linked to it; pay-4 and pay-5 are both linked to inv-2;
+    // card payment card-1 is stamped with inv-3, which pay-6 is linked to.
+    const { db } = store(
+      [
+        { id: "pay-1", source: "INTERNET_BANKING", xeroInvoiceId: "inv-1" },
+        { id: "pay-2", source: "INTERNET_BANKING", xeroInvoiceId: null },
+        { id: "pay-4", source: "INTERNET_BANKING", xeroInvoiceId: null },
+        { id: "pay-5", source: "INTERNET_BANKING", xeroInvoiceId: null },
+        { id: "pay-6", source: "INTERNET_BANKING", xeroInvoiceId: null },
+        { id: "card-1", source: "STRIPE", xeroInvoiceId: "inv-3" },
+      ],
+      [invoiceLink("pay-2", "inv-1"), invoiceLink("pay-4", "inv-2"), invoiceLink("pay-5", "inv-2"), invoiceLink("pay-6", "inv-3")],
+    );
+    await expect(
+      decisionInvoiceIdsOf(
+        (["pay-1", "pay-2", "pay-4", "pay-5", "pay-6"] as const).map((id) => ({ id, source: "INTERNET_BANKING" as never, xeroInvoiceId: id === "pay-1" ? "inv-1" : null })),
         db,
       ),
     ).resolves.toEqual(new Map([["pay-1", "inv-1"]]));

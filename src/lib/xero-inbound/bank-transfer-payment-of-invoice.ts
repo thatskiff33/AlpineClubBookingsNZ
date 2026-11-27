@@ -90,7 +90,9 @@ export async function bankTransferPaymentIdsOfInvoices(invoiceIds: readonly stri
  * The invoice whose allocations a payment's refunded total counts
  * (`decideLinkedRefundedTotalCents`): its own invoice id, whatever its source
  * (#4444), or, for a bank transfer while none is stamped, the invoice its only
- * active primary-invoice link names (the settle's rule). One invoice per
+ * active primary-invoice link names, when that invoice names this payment
+ * alone (`bankTransferPaymentIdsOfInvoices`, the settle's rule) and no payment
+ * is stamped with it. One invoice per
  * payment, so an older invoice it was once linked to is never added. Absent
  * when no single invoice names it.
  */
@@ -109,9 +111,22 @@ export async function decisionInvoiceIdsOf(
     where: { ...PRIMARY_INVOICE_LINK_WHERE, localId: { in: unstamped } },
     select: { localId: true, xeroObjectId: true },
   });
+  const candidates = new Map<string, string>();
   for (const paymentId of unstamped) {
     const [only, ...more] = new Set(links.filter((link) => link.localId === paymentId).map((link) => link.xeroObjectId));
-    if (only && more.length === 0) decided.set(paymentId, only);
+    if (only && more.length === 0) candidates.set(paymentId, only);
+  }
+  // The invoice must name this payment alone: by the settle's rule, and stamped on no other payment of any source,
+  // so an invoice is never two payments' (`Payment.xeroInvoiceId` is unique for the stamped ones).
+  const [owners, stamped] = await Promise.all([
+    bankTransferPaymentIdsOfInvoices([...candidates.values()], db),
+    candidates.size === 0
+      ? []
+      : db.payment.findMany({ where: { xeroInvoiceId: { in: [...new Set(candidates.values())] } }, select: { xeroInvoiceId: true } }),
+  ]);
+  const stampedInvoiceIds = new Set(stamped.map((payment) => payment.xeroInvoiceId));
+  for (const [paymentId, invoiceId] of candidates) {
+    if (owners.get(invoiceId) === paymentId && !stampedInvoiceIds.has(invoiceId)) decided.set(paymentId, invoiceId);
   }
   return decided;
 }
