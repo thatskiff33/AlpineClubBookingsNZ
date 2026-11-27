@@ -431,6 +431,7 @@ describe("booking override delivery-copy URL sanitation", () => {
         retried: 1,
         succeeded: 1,
         failed: 0,
+        skipped: 0,
       });
 
       const retryDelivery = mocks.sendMail.mock.calls[1][0];
