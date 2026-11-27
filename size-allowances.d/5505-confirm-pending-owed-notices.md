@@ -1,7 +1,7 @@
 # Size allowances for #5505 (#5433, the rest of the hold-deadline job)
 
 file: src/lib/email/booking.ts
-lines: 1864
+lines: 1894
 reason: two senders (the split-guest cancellation and the saved-card failure
   email) carry their owed notice's event key through to sendEmail, and both
   take their template name from the one module the reader also uses. The key
