@@ -1,10 +1,7 @@
 import { acquireConfigImportLock } from "@/lib/config-transfer-lock";
 import { prisma } from "@/lib/prisma";
-import {
-  isAccountMappingKey,
-  mappingCodeClassViolation,
-  normalizeMappingCode,
-} from "@/lib/xero-account-mapping-keys";
+import { normalizeMappingCode } from "@/lib/xero-account-mapping-keys";
+import { changedCodeClassViolations } from "@/lib/xero-account-mapping-write-checks";
 import { getCachedChartOfAccounts } from "@/lib/xero-admin-cache";
 import {
   openingCreditsMappingSaveRefusal,
@@ -18,7 +15,7 @@ import {
  * Two things are refused before anything is written:
  *
  * - a code the cached chart of accounts shows is the wrong kind of account for
- *   its key (`mappingCodeClassViolation`; owner decision of 22 Nov 2026 on
+ *   its key (`changedCodeClassViolations`; owner decision of 22 Nov 2026 on
  *   #5235: the class is checked on save, not only in the picker);
  * - Opening Credits sharing its account with another mapped role, or being
  *   mapped without the Exempt tax category (`openingCreditsMappingSaveRefusal`).
@@ -67,30 +64,6 @@ export const MAPPINGS_CHANGED_WHILE_SAVING =
 
 const NOTHING_SAVED = "No account mapping was saved.";
 
-/**
- * Why the codes this save SETS OR CHANGES may not be stored, or null. A code
- * the save leaves as it is stored is not judged: the screen sends every key on
- * every save, and a club with an older out-of-class code must still be able to
- * save its other mappings. The setup check reports such a code instead.
- */
-async function changedCodeClassProblem(
-  stored: readonly { key: string; code: string | null }[],
-  updates: XeroAccountMappingUpdates,
-): Promise<string | null> {
-  const storedCode = new Map(stored.map((row) => [row.key, normalizeMappingCode(row.code)]));
-  const changed = Object.entries(updates).filter(([key, value]) => {
-    const next = normalizeMappingCode(value?.code);
-    return next !== null && next !== (storedCode.get(key) ?? null);
-  });
-  if (changed.length === 0) return null;
-  const chart = await getCachedChartOfAccounts();
-  const violations = changed.flatMap(([key, value]) => {
-    if (!isAccountMappingKey(key)) return [];
-    return mappingCodeClassViolation(key, value?.code, chart?.values) ?? [];
-  });
-  return violations.length === 0 ? null : `${violations.join(" ")} ${NOTHING_SAVED}`;
-}
-
 /** Whether a key this save writes a code for holds a different stored code now than the first pass read. */
 function writtenCodesDrifted(
   before: readonly { key: string; code: string | null }[],
@@ -109,8 +82,13 @@ export async function saveXeroAccountMappings(
 ): Promise<XeroAccountMappingSaveResult> {
   const stored = await prisma.xeroAccountMapping.findMany({ select: { key: true, code: true } });
 
-  const classProblem = await changedCodeClassProblem(stored, updates);
-  if (classProblem) return { ok: false, status: 400, error: classProblem };
+  // Only the codes this save sets or changes are judged (`changedCodeClassViolations`).
+  const wrongKind = await changedCodeClassViolations(
+    stored,
+    Object.entries(updates).map(([key, value]) => [key, value?.code] as const),
+    async () => (await getCachedChartOfAccounts())?.values,
+  );
+  if (wrongKind.length > 0) return { ok: false, status: 400, error: `${wrongKind.join(" ")} ${NOTHING_SAVED}` };
 
   // #4988: Opening Credits never shares its account with another mapped role
   // (owner decision, 21 Nov 2026), and a GST-registered club maps the Exempt

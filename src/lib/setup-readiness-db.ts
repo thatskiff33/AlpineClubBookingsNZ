@@ -35,32 +35,9 @@ import { codeHashKeyId, twoFactorSecretKeyId } from "@/lib/two-factor-key-format
 import { collapseHutFeeColumns } from "@/lib/public-hut-fee-columns";
 import { getXeroTokenReadability } from "@/lib/xero-token-store";
 import { getStripeSetupState } from "@/lib/stripe-config";
-import {
-  ACCOUNT_MAPPING_FALLBACK_KEYS,
-  ACCOUNT_MAPPING_KEYS,
-  ACCOUNT_MAPPING_KEYS_ASKING_WHILE_UNSET,
-  describeMappingOwnWhileUnset,
-  isCodeExplicitlyConfigured,
-  mappingCodeClassViolation,
-  MAPPING_LABELS,
-  type AccountMappingKey,
-} from "@/lib/xero-account-mapping-keys";
+import { describeStoredXeroMappings } from "@/lib/setup-readiness-xero-mapping";
+import { ACCOUNT_MAPPING_KEYS } from "@/lib/xero-account-mapping-keys";
 import { getCachedChartOfAccounts } from "@/lib/xero-admin-cache";
-
-/**
- * The mapping keys that are asking to be decided while they are unset
- * (`INV-INT-021`), in two kinds the checklist must NOT conflate: one working
- * off another key's mapping (`ACCOUNT_MAPPING_FALLBACK_KEYS`, "using a
- * fallback"), and one that declares what the system does without it and has
- * no fallback (#3529: its own `whileUnset` sentence). Both straight off the
- * registry, so a new key of either kind is surfaced without anybody
- * remembering to add it — and a key of the second kind is never described as
- * falling back, which its registry entry says it does not.
- */
-const ACCOUNT_MAPPING_KEYS_ASKING = ACCOUNT_MAPPING_KEYS_ASKING_WHILE_UNSET;
-const ACCOUNT_MAPPING_KEYS_WITH_FALLBACK = Object.keys(
-  ACCOUNT_MAPPING_FALLBACK_KEYS,
-) as AccountMappingKey[];
 
 /**
  * The sentinel a failed `ClubTimeSettings` read resolves to, so "the read did
@@ -574,31 +551,7 @@ export async function getSetupDatabaseSnapshot(): Promise<SetupDatabaseSnapshot>
     stripeWebhookSecretSet,
     stripeNeedsReentry,
     xeroAccountMappingCount,
-    xeroUnsetFallbackMappingLabels: ACCOUNT_MAPPING_KEYS_WITH_FALLBACK.filter(
-      (key) =>
-        !isCodeExplicitlyConfigured(
-          xeroMappingRows.find((row) => row.key === key) ?? null,
-        ),
-    ).map((key) => MAPPING_LABELS[key] ?? key),
-    xeroUnsetMappingConsequences: ACCOUNT_MAPPING_KEYS_ASKING.flatMap((key) => {
-      const own = describeMappingOwnWhileUnset(key);
-      if (own === null) return [];
-      return isCodeExplicitlyConfigured(
-        xeroMappingRows.find((row) => row.key === key) ?? null,
-      )
-        ? []
-        : [`${MAPPING_LABELS[key] ?? key}: ${own}`];
-    }),
-    // The same question the save and the import ask of a new code
-    // (`mappingCodeClassViolation`), asked of the codes already stored.
-    xeroMappingAccountKindProblems: ACCOUNT_MAPPING_KEYS.flatMap(
-      (key) =>
-        mappingCodeClassViolation(
-          key,
-          xeroMappingRows.find((row) => row.key === key)?.code,
-          xeroChartOfAccounts?.values,
-        ) ?? [],
-    ),
+    ...describeStoredXeroMappings(xeroMappingRows, xeroChartOfAccounts?.values),
     xeroHutFeeItemMappingCount,
     xeroEntranceFeeMappingCount,
     membershipTypeRateGaps,

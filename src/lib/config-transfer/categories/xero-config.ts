@@ -28,14 +28,7 @@ import { bundleCarriesJoiningFeeSchedule } from "./membership-fees";
 import { addDaysDateOnly } from "@/lib/date-only";
 import { clubToday, dateOnlyInstantOf } from "@/lib/club-time";
 import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
-import { openingCreditsImportFindings } from "@/lib/xero-opening-credits-exempt-guards";
-import {
-  isAccountMappingKey,
-  mappingCodeClassViolation,
-  normalizeMappingCode,
-  type AccountMappingKey,
-} from "@/lib/xero-account-mapping-keys";
-import { readStoredChartOfAccounts } from "@/lib/xero-admin-cache";
+import { accountMappingImportFindings } from "@/lib/xero-account-mapping-write-checks";
 
 // xero-config category: the accounting mappings — GL account/item-code mappings
 // and per-category item codes. Contact-group rules/accepted-groups are excluded
@@ -662,8 +655,6 @@ async function planXeroConfig(ctx: PlanContext): Promise<CategoryPlanResult> {
   const batch = await loadXeroBatch(ctx.db);
   // #4988: every account code as it would read once this bundle is applied.
   const codesAfterImport = new Map([...batch.accounts.values()].map(({ key, code }) => [key, code]));
-  // #5235: the rows whose code this bundle sets or changes, for the class check below.
-  const codesSetOrChanged: { rowIndex: number; key: AccountMappingKey; code: string }[] = [];
 
   readCsvRows(ctx.files, ACCOUNT_FILE).forEach((raw, i) => {
     const v = new RowValidator(ACCOUNT_FILE, i, errors);
@@ -679,31 +670,13 @@ async function planXeroConfig(ctx: PlanContext): Promise<CategoryPlanResult> {
     // As `applyRow` writes it: a new row takes the bundle's code, an existing one only if this mode writes the field.
     if (!current) codesAfterImport.set(key, nz(raw.code));
     else if ("code" in write) codesAfterImport.set(key, write.code ?? null);
-    const next = normalizeMappingCode(codesAfterImport.get(key));
-    if (isAccountMappingKey(key) && next !== null && next !== normalizeMappingCode(current?.code)) {
-      codesSetOrChanged.push({ rowIndex: i, key, code: next });
-    }
   });
 
-  // #5235 (owner decision, 22 Nov 2026): the account mapping screen's check on
-  // the kind of account, applied to the import, which writes the same rows. As
-  // on that screen, only a code the bundle sets or changes is judged, against
-  // the stored chart of the organisation connected HERE, and a code that chart
-  // cannot place is allowed. Read through the plan's own client, so the in-lock
-  // re-plan stays on its transaction, and only when there is a code to judge.
-  if (codesSetOrChanged.length > 0) {
-    const chart = await readStoredChartOfAccounts(ctx.db);
-    for (const { rowIndex, key, code } of codesSetOrChanged) {
-      const violation = mappingCodeClassViolation(key, code, chart);
-      if (violation) errors.push(`${ACCOUNT_FILE} row ${rowIndex + 2}: code — ${violation}`);
-    }
-  }
-
-  // #4988: the account mapping screen's rules for Opening Credits, applied to
-  // the import, which writes the same rows. The error blocks the apply.
-  const openingCredits = await openingCreditsImportFindings(ctx.db, batch.accounts.values(), codesAfterImport);
-  if (openingCredits.error) errors.push(`${ACCOUNT_FILE}: ${openingCredits.error}`);
-  if (openingCredits.warning) warnings.push(openingCredits.warning);
+  // #4988, #5235: the account mapping screen's rules for the kind of account and for
+  // Opening Credits, applied to the import, which writes the same rows. An error blocks the apply.
+  const accountFindings = await accountMappingImportFindings(ctx.db, batch.accounts.values(), codesAfterImport);
+  errors.push(...accountFindings.errors.map((error) => `${ACCOUNT_FILE}: ${error}`));
+  warnings.push(...accountFindings.warnings);
 
   const parsedItemRows: ParsedItemRow[] = [];
   readCsvRows(ctx.files, ITEM_FILE).forEach((raw, i) => {

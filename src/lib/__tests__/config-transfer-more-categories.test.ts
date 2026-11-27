@@ -138,7 +138,7 @@ describe("an imported account code is the kind of account its mapping accepts (#
   ];
   const NOT_EXPIRED = new Date("2026-07-01T00:30:00.000Z");
   const REFUSED =
-    "xero-config/account-mappings.csv row 2: code — Hut Fee Refunds needs a revenue or expense account, and the code chosen for it is an asset account in the connected Xero organisation.";
+    "xero-config/account-mappings.csv: Hut Fee Refunds needs a revenue or expense account, and the code chosen for it is an asset account in the connected Xero organisation.";
 
   function target(options: {
     accounts?: AccountRow[];
@@ -193,7 +193,7 @@ describe("an imported account code is the kind of account its mapping accepts (#
 
   it("still holds a one-class mapping to its class: an expense account is refused for Hut Fees Income", async () => {
     expect(await planErrors([account("hutFeesIncome", "429")], target({}).db)).toEqual([
-      "xero-config/account-mappings.csv row 2: code — Hut Fees Income needs a revenue account, and the code chosen for it is an expense account in the connected Xero organisation.",
+      "xero-config/account-mappings.csv: Hut Fees Income needs a revenue account, and the code chosen for it is an expense account in the connected Xero organisation.",
     ]);
   });
 
