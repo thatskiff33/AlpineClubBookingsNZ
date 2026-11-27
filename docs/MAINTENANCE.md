@@ -1474,6 +1474,12 @@ check it against what you typed before reading the findings. Both dates must be
 real calendar days: `--to 2026-04-31` is refused rather than quietly read as
 1 May, which is what it used to do.
 
+An applied link backfill can come back as `manual_review` for a credit note's
+allocation link that is off: a Xero reading removed that allocation, so the
+tool leaves it off (#5289). Check the note in Xero; the backfill is offered
+again on every run until the allocation is back in Xero or the finding is
+resolved by hand.
+
 **Reading an archived report from before #2868.** Only the CHECK-IN half of the
 window was wrong, and this matters because the error does not go the way the
 header suggests. The window was built as midnight in the server's own time zone
@@ -2947,8 +2953,9 @@ pnpm run xero:applied-credit-account-note-link-repair --apply --payment <payment
   settle: a failed recount, or a link an inbound sync running at the same time
   made active again (run the repair again for that one). The recount never
   lowers a Stripe payment's recorded refund, nor a bank-transfer payment's
-  below its own refund detail: it raises an admin alert instead, so settle
-  that one by hand. Keep the dry-run output with the change record.
+  below its own refund detail plus the corrections its links count (capped at
+  the stored total): it raises an admin alert instead, so settle that one by
+  hand. Keep the dry-run output with the change record.
 - **Then raise the missing cancellation notes.** Retiring a link raises
   nothing by itself. For each booking `--apply` names, run
   `pnpm run xero:booking-repair --booking <bookingId> --dry-run`, review its

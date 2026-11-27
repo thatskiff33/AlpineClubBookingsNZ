@@ -28,7 +28,8 @@ const XERO_SYNC_ERROR_ALERT_WINDOW_MS = 60 * 60 * 1000;
  * payment, a group settlement hand-back, a membership cancellation that
  * refunded nothing or stranded an invoice, a change paid twice, a capture the
  * waiting-invoice reaper found unrecorded, a Xero success after a resolved
- * failure); most are limited by a claim of their own, once ever or per key.
+ * failure, a kept bank-transfer settle held at its floor); most are limited by
+ * a claim of their own, once ever or per key.
  *
  * Never throws: every failure is logged.
  */
