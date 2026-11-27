@@ -2,6 +2,7 @@
 import { fetchWithRecentAuth } from "@/components/confirm-its-you";
 
 import { adminHref } from "@/lib/admin-hubs";
+import { apiRefusalFromResponse, refusalMessageOr } from "@/lib/api-error-message";
 import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
@@ -58,6 +59,9 @@ import { useBookingChangeRequestDecisionDrafts } from "@/components/admin/bookin
 import { notifyAdminQueueChanged } from "@/lib/admin-queue-events";
 
 type RequestFilter = "REQUESTED" | "APPROVED" | "REJECTED" | "ALL";
+
+/** Shown for a failed queue load the route did not word (#5323). */
+const LOAD_FALLBACK = "Failed to load booking change requests";
 
 const requestFilters = new Set<RequestFilter>([
   "REQUESTED",
@@ -173,10 +177,8 @@ export function BookingChangeRequestsPanel({
     setError("");
     try {
       const response = await fetch(`/api/admin/booking-change-requests?status=${filter}&page=${page}`);
+      if (!response.ok) throw await apiRefusalFromResponse(response, LOAD_FALLBACK);
       const data = await response.json();
-      if (!response.ok) {
-        throw new Error(data.error || "Failed to load booking change requests");
-      }
       const rows: BookingChangeRequestData[] = Array.isArray(data?.data) ? data.data : [];
       const pinned = await fetchOffPageQueueRecord("/api/admin/booking-change-requests", "requestId", requestId, rows);
       if (!isCurrent()) return;
@@ -186,7 +188,7 @@ export function BookingChangeRequestsPanel({
       setMemberGuestFind(data?.memberGuestFind ?? null);
     } catch (err) {
       if (!isCurrent()) return;
-      setError(err instanceof Error ? err.message : "Failed to load booking change requests");
+      setError(refusalMessageOr(err, LOAD_FALLBACK));
     } finally {
       if (isCurrent()) setLoading(false);
     }
