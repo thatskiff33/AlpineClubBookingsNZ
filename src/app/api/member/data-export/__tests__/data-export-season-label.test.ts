@@ -28,7 +28,7 @@
  * field a consumer would actually parse has to be pinned as unchanged in the
  * same test that changes the label.
  */
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   auth: vi.fn(),
@@ -39,6 +39,13 @@ const mocks = vi.hoisted(() => ({
   choreFindMany: vi.fn(),
   subscriptionFindMany: vi.fn(),
   auditFindMany: vi.fn(),
+  clubFinancialYearEndMonth: vi.fn(),
+}));
+
+// The export resolves the club's year-end on the server (#5259); each case
+// chooses it here, where the real resolver would read the override or Xero.
+vi.mock("@/lib/financial-year-server", () => ({
+  clubFinancialYearEndMonth: mocks.clubFinancialYearEndMonth,
 }));
 
 vi.mock("@/lib/auth", () => ({ auth: mocks.auth }));
@@ -75,10 +82,7 @@ vi.mock("@/lib/prisma", () => ({
   },
 }));
 
-import {
-  DEFAULT_FINANCIAL_YEAR_END_MONTH,
-  __setFinancialYearEndMonthForTesting,
-} from "@/lib/financial-year";
+import { DEFAULT_FINANCIAL_YEAR_END_MONTH } from "@/lib/financial-year";
 import { GET as dataExportGet } from "@/app/api/member/data-export/route";
 
 interface ExportedSubscription {
@@ -96,7 +100,9 @@ async function exportedSubscriptions(): Promise<ExportedSubscription[]> {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  __setFinancialYearEndMonthForTesting(DEFAULT_FINANCIAL_YEAR_END_MONTH);
+  mocks.clubFinancialYearEndMonth.mockResolvedValue(
+    DEFAULT_FINANCIAL_YEAR_END_MONTH,
+  );
   mocks.auth.mockResolvedValue({ user: { id: "m1" } });
   mocks.requireActiveSessionUser.mockResolvedValue(null);
   mocks.checkRateLimit.mockResolvedValue({
@@ -135,10 +141,6 @@ beforeEach(() => {
   ]);
 });
 
-afterEach(() => {
-  __setFinancialYearEndMonthForTesting(DEFAULT_FINANCIAL_YEAR_END_MONTH);
-});
-
 describe("the member data export names a season the way the screen does", () => {
   it("names both calendar years when the season spans two (March year-end)", async () => {
     const subscriptions = await exportedSubscriptions();
@@ -156,7 +158,7 @@ describe("the member data export names a season the way the screen does", () => 
     // The discriminator. A December year-end starts the season in January, so
     // the season and the calendar year are the same year and "2026 - 2027"
     // would contradict the `seasonYear` printed beside it.
-    __setFinancialYearEndMonthForTesting(12);
+    mocks.clubFinancialYearEndMonth.mockResolvedValue(12);
 
     const subscriptions = await exportedSubscriptions();
 

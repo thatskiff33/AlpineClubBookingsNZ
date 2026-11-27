@@ -11,7 +11,7 @@ import {
 import { computeAgeTier, getSeasonStartDate } from "@/lib/age-tier";
 import { clubToday, dateOnlyInstantOf, parseCalendarDate, } from "@/lib/club-time";
 import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
-import { clubSeasonYear } from "@/lib/financial-year";
+import { clubCurrentSeasonYear } from "@/lib/financial-year-server";
 import {
   getXeroContactGroupMemberships,
   syncManagedXeroContactGroupForMember,
@@ -681,7 +681,7 @@ export async function getAdminMemberDetail(params: {
   // INV-CONFIG-002). Two separate reads could straddle midnight in the club's
   // zone and describe two different seasons three lines apart on one screen,
   // which is the shape group D found on the admin dashboard.
-  const currentSeasonYear = clubSeasonYear(
+  const currentSeasonYear = await clubCurrentSeasonYear(
     await readClubTimeZoneOutsideRequest(),
   );
 
@@ -804,7 +804,7 @@ export async function updateAdminMember(params: {
   // uses it, and two readers in one function would be worse than one extra
   // settings query.
   const clubZone = await readClubTimeZoneOutsideRequest();
-  const clubCurrentSeasonYear = clubSeasonYear(clubZone);
+  const currentSeasonYear = await clubCurrentSeasonYear(clubZone);
   // The club's today, derived from that one zone and computed ONCE, as the
   // UTC-midnight `@db.Date` encoding (`INV-DATE-026`). Every consumer below
   // takes this value: the linked-guest bound, the partner-share lock prefix,
@@ -823,7 +823,7 @@ export async function updateAdminMember(params: {
       loadAccessRoleDefinitions(prisma),
       // #2106: the member's current-season membership type decides whether N/A
       // is forced (FORCED), hand-pickable (ALLOWED) or rejected (DISALLOWED).
-      loadMemberCurrentSeasonTypeExemption(prisma, id, clubCurrentSeasonYear),
+      loadMemberCurrentSeasonTypeExemption(prisma, id, currentSeasonYear),
     ]);
   if (!existing) {
     return jsonResult({ error: "Member not found" }, { status: 404 });
@@ -1272,7 +1272,7 @@ export async function updateAdminMember(params: {
     // One reference point for both branches, from the CLUB's current season
     // (CT-4, #2870): an age tier decides a price band, so the two branches must
     // never be able to judge the same member against two different seasons.
-    const restoreSeasonStart = getSeasonStartDate(clubSeasonYear(clubZone));
+    const restoreSeasonStart = getSeasonStartDate(currentSeasonYear);
     let restorePersonTier: AgeTier;
     if (dobProvided) {
       restorePersonTier = await computeAgeTier(

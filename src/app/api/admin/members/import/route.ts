@@ -7,7 +7,7 @@ import { requireAdmin } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma";
 import { computeAgeTier, getSeasonStartDate } from "@/lib/age-tier";
 import { clubTimeZone } from "@/lib/club-time/server";
-import { clubSeasonYear } from "@/lib/financial-year";
+import { clubCurrentSeasonYear } from "@/lib/financial-year-server";
 import { sendMemberSetupInviteEmail } from "@/lib/email";
 import { applyRateLimit } from "@/lib/rate-limit";
 import { createAuditLog } from "@/lib/audit";
@@ -307,7 +307,7 @@ export async function POST(req: NextRequest) {
   // review). It was derived inside the per-row loop below, and an import that
   // straddles club midnight on a season boundary would then classify its early
   // and late rows against different seasons — an age tier decides a price band.
-  const clubSeason = clubSeasonYear(await clubTimeZone());
+  const clubSeason = await clubCurrentSeasonYear(await clubTimeZone());
   const clubCurrentSeasonStart = getSeasonStartDate(clubSeason);
 
   // `rows.entries()` rather than a counting loop: the index is only ever used

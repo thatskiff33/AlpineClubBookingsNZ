@@ -24,6 +24,13 @@ import {
   shouldDefaultLinkSideEffects,
 } from "@/lib/admin-member-detail-helpers"
 import { CLUB_FORMAT_TEST } from "./support/club-format-fixture"
+import { requireClubTimeZone } from "@/lib/club-time"
+import { bindClubSeason } from "@/lib/season-label"
+
+const CLUB = {
+  zone: requireClubTimeZone("Pacific/Auckland"),
+  format: CLUB_FORMAT_TEST,
+}
 import { getAdminPage } from "@/lib/admin-hubs"
 
 describe("admin-member-detail-helpers", () => {
@@ -380,21 +387,30 @@ describe("admin-member-detail-helpers", () => {
       ).toBe("None")
     })
 
-    it("summarises the current-season membership", () => {
+    it("summarises the current-season membership with the club's season name", () => {
+      const march = bindClubSeason(3, CLUB)
       expect(
         formatMemberMembershipPreview({
           currentSeasonYear: 2026,
           currentSeasonTypeName: "Full Member",
           currentSeasonSubscriptionLabel: "Paid",
-        }, CLUB_FORMAT_TEST)
+        }, march)
       ).toBe("2026 - 2027 (Apr-Mar): Full Member · Paid")
       expect(
         formatMemberMembershipPreview({
           currentSeasonYear: 2026,
           currentSeasonTypeName: null,
           currentSeasonSubscriptionLabel: null,
-        }, CLUB_FORMAT_TEST)
+        }, march)
       ).toBe("2026 - 2027 (Apr-Mar): No seasonal type set")
+      // The bound year-end names the season, not a March default (#5259).
+      expect(
+        formatMemberMembershipPreview({
+          currentSeasonYear: 2025,
+          currentSeasonTypeName: "Full Member",
+          currentSeasonSubscriptionLabel: null,
+        }, bindClubSeason(6, CLUB))
+      ).toBe("2025 - 2026 (Jul-Jun): Full Member")
     })
 
     it("summarises finance state with a loading placeholder", () => {

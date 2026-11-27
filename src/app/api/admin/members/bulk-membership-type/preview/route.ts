@@ -8,7 +8,7 @@ import { BULK_LINKED_GUEST_LABEL_LIMIT } from "@/lib/bulk-seasonal-save";
 import { requireAdmin } from "@/lib/session-guards";
 import { clubTimeZone } from "@/lib/club-time/server";
 import { clubToday, dateOnlyInstantOf } from "@/lib/club-time";
-import { clubSeasonYear } from "@/lib/financial-year";
+import { clubCurrentSeasonYear } from "@/lib/financial-year-server";
 import { dateOnlyStringSchema } from "@/lib/date-only-schema";
 
 // Preview divergence from the single-member flow (#2107, documented): archived
@@ -135,7 +135,7 @@ export async function POST(request: NextRequest) {
   // preview reports. Both answers now come from one `clubTimeZone()`, which is
   // React-cached for this request in any case.
   const clubZone = await clubTimeZone();
-  const clubCurrentSeasonYear = clubSeasonYear(clubZone);
+  const currentSeasonYear = await clubCurrentSeasonYear(clubZone);
   const clubTodayDateOnly = dateOnlyInstantOf(clubToday(clubZone));
 
   for (const id of previewableIds) {
@@ -145,7 +145,7 @@ export async function POST(request: NextRequest) {
       membershipTypeId,
       applyFrom: applyFrom ?? null,
       now: clubTodayDateOnly,
-      clubCurrentSeasonYear,
+      clubCurrentSeasonYear: currentSeasonYear,
     });
 
     const status = result.init?.status;

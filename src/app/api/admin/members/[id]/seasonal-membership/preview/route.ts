@@ -4,7 +4,7 @@ import { parseJsonRequestBody } from "@/lib/api-json";
 import { getSeasonalMembershipChangePreview } from "@/lib/seasonal-membership-assignments";
 import { clubTimeZone } from "@/lib/club-time/server";
 import { clubToday, dateOnlyInstantOf } from "@/lib/club-time";
-import { clubSeasonYear } from "@/lib/financial-year";
+import { clubCurrentSeasonYear } from "@/lib/financial-year-server";
 import { requireAdmin } from "@/lib/session-guards";
 import { dateOnlyStringSchema } from "@/lib/date-only-schema";
 
@@ -75,7 +75,8 @@ export async function POST(
     subscriptionCategoryId: parsedBody.data.subscriptionCategoryId,
     applyFrom: parsedBody.data.applyFrom ?? null,
     now: dateOnlyInstantOf(clubToday(clubZone)),
-    clubCurrentSeasonYear: clubSeasonYear(clubZone),
+    // Under the resolved year-end (#5259), as the save re-derives it.
+    clubCurrentSeasonYear: await clubCurrentSeasonYear(clubZone),
   });
 
   return NextResponse.json(result.body, result.init);

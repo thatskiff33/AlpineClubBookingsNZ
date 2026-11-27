@@ -161,11 +161,10 @@ History, measurements and rejected alternatives: #3126 (and #3123, #3131,
     in that suite — so the deferral cannot grow, and the moment the last default
     goes the pin fails and hands the reader the promotion step. That is a ratchet
     with a mechanical trigger rather than a list that rots.
-  - Its remaining defaults are held by **cost, not doubt**, and each needs a
-    decision rather than more threading. `seasonSelectLabel`'s callers are
-    display sites, most of them in browser bundles that the `server-only` seeder
-    can never reach, so the year-end has to arrive as data the way the club's
-    zone already does. `seasonYearOfCalendarDate` cascades through two optional
+  - Its one remaining default is held by **cost, not doubt**, and needs a
+    decision rather than more threading. `seasonSelectLabel`'s went in #5259,
+    once the year-end reached the browser as data through `ClubSeasonProvider`.
+    `seasonYearOfCalendarDate` cascades through two optional
     pass-throughs into most of the booking, waitlist, membership and Xero tree,
     where the change actually written at each site would be
     `getFinancialYearEndMonth()` **at** the call site — compliant with this

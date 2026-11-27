@@ -16,7 +16,7 @@ import {
   render,
   screen,
   within,
-} from "@/lib/__tests__/support/club-time-render";
+} from "@/lib/__tests__/support/club-season-render";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ReactNode } from "react";
 import { itShowsEveryRefusal } from "@/lib/__tests__/support/failed-write-cases";

@@ -4,8 +4,8 @@ import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { clubFormat, clubFormatValues } from "@/lib/club-format-server";
 import type { BoundClubFormat } from "@/lib/club-format-bound";
-import { clubSeasonYear } from "@/lib/financial-year";
-import { seasonSelectLabel } from "@/lib/season-label";
+import { clubFinancialYearEndMonth } from "@/lib/financial-year-server";
+import { bindClubSeason } from "@/lib/season-label";
 import {
   ProfileDetailsCard,
   ProfileDetailsPageActions,
@@ -151,8 +151,9 @@ export default async function ProfilePage({
   // carry a comment saying it deliberately stayed on the host's clock because no
   // call site could fix itself — which was true of the helper it called, and is
   // the reason the fix had to be a new zone-aware function rather than a better
-  // argument (CT-4 group F1, #2870).
-  const currentSeasonYear = clubSeasonYear(club.zone);
+  // argument (CT-4 group F1, #2870). The year-end is the club's resolved one (#5259).
+  const season = bindClubSeason(await clubFinancialYearEndMonth(), club);
+  const currentSeasonYear = season.currentSeasonYear();
 
   const member = await prisma.member.findUnique({
     where: { id: session.user.id },
@@ -405,7 +406,7 @@ export default async function ProfilePage({
             <Separator />
             <div className="flex justify-between items-center">
               <span className="text-muted-foreground">
-                Subscription {seasonSelectLabel(currentSeasonYear, club.format)}
+                Subscription {season.selectLabel(currentSeasonYear)}
               </span>
               <Badge
                 className={subscriptionStatusClass(
@@ -506,7 +507,7 @@ export default async function ProfilePage({
           ) : (
             <div className="divide-y">
               {subscriptionHistory.map((sub) => {
-                const label = seasonSelectLabel(sub.seasonYear, club.format);
+                const label = season.selectLabel(sub.seasonYear);
                 const isCurrent = sub.seasonYear === currentSeasonYear;
                 return (
                   <div

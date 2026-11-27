@@ -72,7 +72,7 @@ import logger from "@/lib/logger";
 import { sendPasswordResetEmail } from "./email";
 import { issueActionToken } from "./action-tokens";
 import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
-import { clubSeasonYear } from "@/lib/financial-year";
+import { clubCurrentSeasonYear } from "@/lib/financial-year-server";
 import { clubToday, dateOnlyInstantOf } from "@/lib/club-time";
 import { computeAgeTier } from "@/lib/age-tier";
 // From the module that DECLARES it rather than the `age-tier.ts` re-export: it is
@@ -327,7 +327,7 @@ export async function importMembersFromXeroGroups(
   // member, and a long import straddling club midnight judging its first and
   // last members against different days.
   const clubZone = await readClubTimeZoneOutsideRequest();
-  const seasonYear = clubSeasonYear(clubZone);
+  const seasonYear = await clubCurrentSeasonYear(clubZone);
   const clubTodayDateOnly = dateOnlyInstantOf(clubToday(clubZone));
   // Derived from the SAME pinned season as every seasonal assignment below, so one
   // import cannot judge an age tier in one season and assign a membership in

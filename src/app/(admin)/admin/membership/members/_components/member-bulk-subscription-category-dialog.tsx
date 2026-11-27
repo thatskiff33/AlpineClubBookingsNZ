@@ -21,9 +21,8 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import { Textarea } from "@/components/ui/textarea"
-import { useClubTime } from "@/components/club-time-provider"
+import { useClubSeason } from "@/components/club-season-provider"
 import type { SubscriptionCategoryOption } from "@/hooks/use-subscription-category-options"
-import { calendarDateParts } from "@/lib/club-time"
 import {
   LinkedGuestBookingList,
   type LinkedGuestBookings,
@@ -329,10 +328,9 @@ export function MemberBulkSubscriptionCategoryDialog({
   onComplete,
   onError,
 }: MemberBulkSubscriptionCategoryDialogProps) {
-  // The club's calendar year until the server's season year arrives
-  // (INV-CONFIG-002), as in the bulk membership-type dialog.
-  const clubTime = useClubTime()
-  const currentYear = calendarDateParts(clubTime.today()).year
+  // The club's current season until the server's season year arrives
+  // (INV-CONFIG-002, #5259), as in the bulk membership-type dialog.
+  const currentYear = useClubSeason().currentSeasonYear()
   const [categoryValue, setCategoryValue] = useState<string>("")
   const [currentSeasonYear, setCurrentSeasonYear] = useState<number>(currentYear)
   const [seasonYear, setSeasonYear] = useState<number>(currentYear)
