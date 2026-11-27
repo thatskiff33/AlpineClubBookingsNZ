@@ -124,14 +124,6 @@ vi.mock("@/lib/booking-ledger-credit-sync", () => ({
 
 vi.mock("@/lib/prisma", () => ({
   prisma: {
-    /*
-      #3032: the modified email asks whether the club is still working out an
-      amount on this booking, through `bookingHasOpenFinancialReview`. That
-      reads the GLOBAL client after the transaction commits, which is a
-      different read from the fence's in-transaction `findFirst`. Empty by
-      default - no review is open - so every pre-#3032 assertion in this file
-      means exactly what it meant before.
-    */
     manualRefundTask: { aggregate: vi.fn(async () => ({ _sum: { amountCents: null } })), findMany: vi.fn().mockResolvedValue([]) },
     paymentRecoveryOperation: {
       findUnique: (...args: unknown[]) => mockRecoveryOperationFindUnique(...args),
@@ -584,9 +576,6 @@ function makeTx(booking: ReturnType<typeof makeBooking>) {
     groupDiscountSetting: {
       findUnique: vi.fn().mockResolvedValue(null),
     },
-    // #3032: the pending-review fence reads this under the booking-edit locks.
-    // Empty by default - no financial review is open - so every pre-#3032 test
-    // asserts exactly what it asserted before.
     // #3954: no increase is waiting on its mint's recovery for a reduction to net off.
     paymentRecoveryOperation: { findMany: vi.fn(async () => []) },
     manualRefundTask: {
@@ -601,10 +590,6 @@ function makeTx(booking: ReturnType<typeof makeBooking>) {
       create: vi.fn().mockResolvedValue({ id: "task_1" }),
       // #3827 (D-3813-6): an internet-banking reduction's officer refund task.
       createMany: vi.fn().mockResolvedValue({ count: 1 }),
-      // #3032: the modified email asks whether the club is still working
-      // out an amount on this booking (`bookingHasOpenFinancialReview`).
-      // Empty by default - no review is open - so every pre-#3032
-      // assertion in this file means exactly what it meant before.
       findMany: vi.fn().mockResolvedValue([]),
     },
     bookingModification: {
@@ -3335,9 +3320,9 @@ describe("PUT /api/bookings/[id]/modify", () => {
     // THE IDENTITY ECHO copies a booking's rows straight back on an edit that
     // changes only a name, and it used to refuse anything that was not a number.
     // A parked booking's rows now carry NULLs, and that edit is not
-    // money-affecting, so it passes the pending-review fence and reaches the
-    // echo — which means refusing here would refuse a member a typo correction
-    // on a booking whose amount an officer has yet to confirm.
+    // money-affecting, so it reaches the echo — which means refusing here would
+    // refuse a member a typo correction on a booking whose amount an officer
+    // has yet to confirm.
     //
     // Byte-for-byte preservation is the echo's whole promise, so a row that says
     // "not known" is preserved as that. Writing a number instead would invent the
@@ -4575,60 +4560,6 @@ describe("PUT /api/bookings/[id]/modify", () => {
     expect(vi.mocked(sendBookingModifiedEmail)).toHaveBeenCalledTimes(1);
   });
 
-  it("tells the member their money is still being worked out (#3032)", async () => {
-    /*
-      THE WIRE #3033 LEFT DEAD. `financialReviewPending` was optional and
-      defaulted to false, and no production caller set it - so the sentence
-      #3033 added to the email could not reach a member from this path at all.
-
-      This path raises no review of its own (no edit does since #4317), so the
-      honest question is not "did this edit park money" but "is the club still
-      working out an amount on this booking" — a review raised before #4317. The
-      value therefore comes from the real `bookingHasOpenFinancialReview` read,
-      and this test drives it by putting an OPEN review row in front of that
-      read rather than by handing the route a literal.
-
-      Note the fence's own `findFirst` stays empty, so the edit proceeds. That
-      is not a contrived pairing: the fence reads inside the transaction and
-      this reads after it commits, so a review opened by another lane in between
-      produces exactly this state.
-    */
-    const { prisma } = await import("@/lib/prisma");
-    vi.mocked(prisma.manualRefundTask.findMany).mockResolvedValue([
-      { bookingId: "bk1" },
-    ] as never);
-
-    const response = await runZeroNetDateChange({});
-    expect(response.status).toBe(200);
-
-    const { sendBookingModifiedEmail } = await import("@/lib/email");
-    expect(vi.mocked(sendBookingModifiedEmail)).toHaveBeenCalledWith(
-      expect.objectContaining({ financialReviewPending: true }),
-      CLUB_FORMAT_TEST,
-    );
-  });
-
-  it("says nothing about a review when the booking has none (#3032)", async () => {
-    // The CONTROL. Hard-code `true` at the call site and this fails; hard-code
-    // `false` and the case above fails. Only a real read passes both.
-    //
-    // The empty result is set EXPLICITLY rather than relied on from the mock's
-    // declaration: `vi.clearAllMocks()` clears recorded calls but keeps
-    // implementations, so the row the case above installed survives into this
-    // test and this control silently inverted until it was stated here.
-    const { prisma } = await import("@/lib/prisma");
-    vi.mocked(prisma.manualRefundTask.findMany).mockResolvedValue([] as never);
-
-    const response = await runZeroNetDateChange({});
-    expect(response.status).toBe(200);
-
-    const { sendBookingModifiedEmail } = await import("@/lib/email");
-    expect(vi.mocked(sendBookingModifiedEmail)).toHaveBeenCalledWith(
-      expect.objectContaining({ financialReviewPending: false }),
-      CLUB_FORMAT_TEST,
-    );
-  });
-
   it("always emails a member self-edit by default (#1696)", async () => {
     // Default session (a plain member owner) resolves to the USER actor, whose
     // edits always notify.
@@ -4651,15 +4582,12 @@ describe("PUT /api/bookings/[id]/modify", () => {
   });
 
   /**
-   * #3032 (epic #2797): the pending-review fence on the BATCH edit path.
-   *
-   * The rule is "a second money-affecting edit is fenced when it would need
-   * unresolved money as its baseline; identity-only changes stay independent where
-   * safe". The service's own name for that split is `pricePreservingModification`,
-   * and the fence asks it rather than re-deriving it — an earlier revision asked a
-   * second expression that differed by one term, which is the case pinned below.
+   * #4344 wave C2: an edit review raised before #4317 that is still OPEN no
+   * longer holds a batch edit up. The retired pending-review fence refused every
+   * money-affecting edit while one was open; each case arranges an OPEN row where
+   * it read, so putting it back would turn these into refusals.
    */
-  describe("#3032 pending financial review fences a batch edit", () => {
+  describe("an old open edit review does not hold a batch edit up (#4344 wave C2)", () => {
     const openReview = {
       id: "task-open",
       occurrenceKey: "edit-financial-review:v1:abc",
@@ -4668,9 +4596,7 @@ describe("PUT /api/bookings/[id]/modify", () => {
       reviewContext: null,
     };
 
-    function twoGuestBooking({
-      memberGuest = true,
-    }: { memberGuest?: boolean } = {}) {
+    function twoGuestBooking() {
       return makeBooking({
         status: "PAYMENT_PENDING",
         payment: {
@@ -4689,10 +4615,10 @@ describe("PUT /api/bookings/[id]/modify", () => {
             id: "g1",
             bookingId: "bk1",
             firstName: "Alice",
-            lastName: memberGuest ? "Member" : "Visitor",
+            lastName: "Member",
             ageTier: "ADULT",
-            isMember: memberGuest,
-            memberId: memberGuest ? "m1" : null,
+            isMember: true,
+            memberId: "m1",
             priceCents: 2500,
           },
           {
@@ -4720,9 +4646,6 @@ describe("PUT /api/bookings/[id]/modify", () => {
         format: CLUB_FORMAT_TEST,
         todayAtClub: FIXTURE_CLUB_DAY,
         bookingId: "bk1",
-        // ADMIN, because the other-lodge election below is officer-only. The fence
-        // is about the booking's money, not about who is asking, so using one
-        // actor throughout keeps the cases comparable.
         actor: { id: "officer-1", role: "ADMIN" },
         input: input as never,
         ipAddress: "127.0.0.1",
@@ -4731,28 +4654,7 @@ describe("PUT /api/bookings/[id]/modify", () => {
       });
     }
 
-    it("refuses a structural edit while the booking's money is under review", async () => {
-      const tx = makeTx(twoGuestBooking());
-      tx.manualRefundTask.findFirst.mockResolvedValue(openReview);
-
-      await expect(
-        runBatch(tx, {
-          addGuests: [
-            { firstName: "New", lastName: "Guest", ageTier: "ADULT", isMember: false },
-          ],
-        }),
-      ).rejects.toMatchObject({
-        status: 409,
-        code: "EDIT_FINANCIAL_REVIEW_PENDING",
-      });
-
-      // Refused BEFORE anything is priced or written, so the booking is untouched.
-      expect(mockCalculateBookingPrice).not.toHaveBeenCalled();
-      expect(tx.booking.update).not.toHaveBeenCalled();
-      expect(tx.bookingModification.create).not.toHaveBeenCalled();
-    });
-
-    it("lets a name correction through — it reads no stored money, so it compounds nothing", async () => {
+    it("lets a name correction through, unpriced", async () => {
       const tx = makeTx(twoGuestBooking());
       tx.manualRefundTask.findFirst.mockResolvedValue(openReview);
 
@@ -4762,50 +4664,11 @@ describe("PUT /api/bookings/[id]/modify", () => {
 
       expect(result.priceDiffCents).toBe(0);
       expect(mockCalculateBookingPrice).not.toHaveBeenCalled();
-      // The fence never even queried: `moneyAffecting` is false, so it returns
-      // without a read.
-      expect(tx.manualRefundTask.findFirst).not.toHaveBeenCalled();
     });
 
-    it("REGRESSION: a name correction carrying an other-lodge election IS fenced", async () => {
-      // The shape that slipped through. `requestedStructuralChange` deliberately
-      // excludes the other-lodge fields (#2978 kept them out so the quote-priced
-      // exemptions keep the meaning `modify-quote` gives them), so this request is
-      // "identity-only" by that test — and then reprices anyway, because an
-      // other-lodge election re-rates guests. A fence asking anything other than
-      // `pricePreservingModification` lets it past and re-rates the party off
-      // stored money that is under review. The route's own schema accepts both
-      // fields on one PUT, so this is a reachable request, not a contrived one.
-      // No member-flagged guest, so the eligibility resolver short-circuits with
-      // no query and the election reaches the fence on this harness.
-      const tx = Object.assign(makeTx(twoGuestBooking({ memberGuest: false })), {
-        otherLodge: {
-          // `findFirst` (triyder/AlpineClubBookingsNZ#58): a newly chosen lodge must also be visible.
-          findFirst: vi.fn().mockResolvedValue({ id: "lodge-other" }),
-        },
-      });
-      tx.manualRefundTask.findFirst.mockResolvedValue(openReview);
-
-      await expect(
-        runBatch(tx, {
-          guestUpdates: [{ guestId: "g2", firstName: "Robert", lastName: "Smith" }],
-          otherLodgeId: "lodge-other",
-          otherLodgeMemberGuestIds: ["g2"],
-        }),
-      ).rejects.toMatchObject({
-        status: 409,
-        code: "EDIT_FINANCIAL_REVIEW_PENDING",
-      });
-
-      expect(mockCalculateBookingPrice).not.toHaveBeenCalled();
-      expect(tx.booking.update).not.toHaveBeenCalled();
-    });
-
-    it("CONTROL: the same structural edit succeeds when no review is open", async () => {
-      // Without this the three cases above would still pass against a fence that
-      // refused every edit.
+    it("prices and saves a structural edit while the review is open", async () => {
       const tx = makeTx(twoGuestBooking());
-      tx.manualRefundTask.findFirst.mockResolvedValue(null);
+      tx.manualRefundTask.findFirst.mockResolvedValue(openReview);
       mockCalculateBookingPrice.mockReturnValue({
         totalPriceCents: 7500,
         guests: [
@@ -4827,8 +4690,7 @@ describe("PUT /api/bookings/[id]/modify", () => {
           data: expect.objectContaining({ finalPriceCents: 7500 }),
         }),
       );
-      // The fence DID run and passed — it is not silently absent on this path.
-      expect(tx.manualRefundTask.findFirst).toHaveBeenCalledTimes(1);
+      expect(tx.bookingModification.create).toHaveBeenCalled();
     });
   });
 
