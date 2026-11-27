@@ -249,6 +249,8 @@ interface FakeStore {
     dependentCountWheres: unknown[];
     cohortWheres: unknown[];
     cardMembershipWheres: unknown[];
+    /** Start and end of the queue read and the snapshot re-read, in order (#5239). */
+    readSequence: string[];
   };
 }
 
@@ -284,6 +286,7 @@ function fakeStore(options: {
     dependentCountWheres: [] as unknown[],
     cohortWheres: [] as unknown[],
     cardMembershipWheres: [] as unknown[],
+    readSequence: [] as string[],
   };
   const db = {
     adultMemberHostingPolicy: {
@@ -311,6 +314,7 @@ function fakeStore(options: {
             unknown,
           ];
           calls.cohortWheres.push(cohort);
+          calls.readSequence.push("snapshot-reread:start");
           calls.cardMembershipWheres.push(...cards.OR.map((card) => card.AND));
           return cards.OR.map((card) => card.AND[0].id)
             .filter((id) => !(options.outsidePolicyCohort ?? []).includes(id))
@@ -373,6 +377,11 @@ function fakeStore(options: {
     hostingCoverageReevaluation: {
       findMany: async (args: { where: { memberId: { in: string[] } } }) => {
         calls.reevaluationFindMany += 1;
+        calls.readSequence.push("queue-read:start");
+        // Resolve on a LATER macrotask, so a snapshot re-read started alongside
+        // this one (rather than after it) is recorded before it ends.
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        calls.readSequence.push("queue-read:end");
         return (options.queuedOwnerIds ?? [])
           .filter((id) => args.where.memberId.in.includes(id))
           .map((memberId) => ({ memberId }));
@@ -1587,6 +1596,18 @@ describe("#5239 sibling cover is shown only when it can be verified (INV-HOST-04
       rereadReview: { "b-dependent": siblingReview({ ...STAMP, revision: 5 }) },
     });
     expect(source).toEqual(STALE);
+  });
+
+  it("awaits the queue read before it re-reads the snapshot", async () => {
+    // The re-read only catches a re-check that finished after the day list's
+    // read if it runs AFTER the queue read: run together, or swapped, a re-check
+    // landing between them leaves neither a pending row nor a changed column.
+    const { calls } = await cover(siblingReview());
+    expect(
+      calls.readSequence,
+      "INV-HOST-045 (docs/invariants/adult-member-hosting.md): the snapshot re-read must start " +
+        "only after the queue read has returned",
+    ).toEqual(["queue-read:start", "queue-read:end", "snapshot-reread:start"]);
   });
 
   it("counts the card's dependent population with the fan-out's own predicate", async () => {
