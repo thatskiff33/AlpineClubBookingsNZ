@@ -218,7 +218,9 @@ describe("SubscriptionLockoutSettingsPanel — item-code matching mode (#2109)",
       } else if (url.includes("xero/account-mappings")) {
         body = { subscriptionIncome: { code: "203", itemCode: "SUBS" } };
       } else if (url.includes("xero/chart-of-accounts")) {
-        body = { accounts: [{ code: "203", name: "Annual Subs" }] };
+        body = {
+          accounts: [{ code: "203", name: "Annual Subs", type: "REVENUE", class: "REVENUE" }],
+        };
       } else if (url.includes("xero/items")) {
         body = { items: [{ code: "SUBS", name: "Subscription" }] };
       } else if (url.includes("xero/organisation")) {

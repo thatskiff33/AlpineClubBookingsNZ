@@ -153,7 +153,9 @@ later edit re-prices the rest of the stay.
 
 1. In **Paid-subscription detection**, pick the **Subscription account code**
    (an invoice line posted to it counts as a subscription; defaults to 203 Annual
-   Subs when unset) and optionally a **Subscription item code**.
+   Subs when unset) and optionally a **Subscription item code**. The list offers
+   the organisation's revenue accounts, the kind the Subscription Income mapping
+   accepts.
 2. Choose an **Item code matching** mode:
    - **Single item code** (default): only the one subscription item code above
      is matched — today's behaviour, unchanged.
