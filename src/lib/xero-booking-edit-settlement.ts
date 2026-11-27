@@ -129,7 +129,7 @@ export interface ClassifyXeroBookingEditSettlementInput {
   guestIdentityChanged?: boolean;
   createPrimaryInvoiceWhenMissing?: boolean;
   /**
-   * #5288 (`INV-PAY-047`): the settlement's `primaryInvoiceBillsIncrease`. An
+   * #5288 (`INV-PAY-163`): the settlement's `primaryInvoiceBillsIncrease`. An
    * Internet Banking increase with no primary invoice linked is billed by
    * raising that invoice now - it bills the price plus every recorded fee -
    * with the applied credit allocated against it. Every door that settles
