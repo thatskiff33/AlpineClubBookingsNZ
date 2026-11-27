@@ -90,6 +90,7 @@ vi.mock("@/lib/logger", () => ({
 }));
 
 import {
+  alertKeptCaptureRefusal,
   finishKeptLateCaptureXeroRecord,
   planKeptLateCaptureXeroRecord,
   readKeptChangeCaptureEvidence,
@@ -796,6 +797,27 @@ describe("#4324: a kept change capture on an invoiced booking", () => {
       expect(mocks.enqueueXeroKeptLateCaptureInvoiceOperation).not.toHaveBeenCalled();
     });
 
+    // #5312: the log's message never names a reason its `reason` field contradicts, and a reason that can leave
+    // the revived invoice unpaid in Xero is a warning (no primary invoice id is drift, so an error).
+    for (const [reason, level] of [
+      ["recorded-by-supplementary-invoice", "info"],
+      ["not-a-card-booking", "warn"],
+      ["capture-not-kept", "warn"],
+      ["no-primary-invoice", "error"],
+    ] as const) {
+      it(`#5312: a revived invoice with no receipt queued (${reason}) logs at ${level}, in words that fit the reason`, async () => {
+        answerWith(changeInvoice("CANCELLED", "STALE_WAITING_PAYMENT"));
+        mocks.enqueueAdditionalCaptureReceiptOperation.mockResolvedValue({ outcome: "not-eligible", reason });
+        await expect(plan()).resolves.toEqual({ kind: "change-payment", paymentIntentId: "pi_late" });
+        const calls = (["info", "warn", "error"] as const).flatMap((at) =>
+          vi.mocked(logger[at]).mock.calls.map(([context, message]) => ({ at, context, message })),
+        );
+        const logged = calls.filter(({ context }) => (context as { reason?: string }).reason === reason);
+        expect(logged).toEqual([{ at: level, context: expect.objectContaining({ paymentIntentId: "pi_late", reason }), message: expect.any(String) }]);
+        expect(logged[0]!.message).toMatchInlineSnapshot(`"A kept late card payment's revived change invoice has no receipt queued beside it; the reason says why"`);
+      });
+    }
+
     it("#5220: a database failure queueing the receipt rolls the keep back, never swallowed", async () => {
       answerWith(changeInvoice("CANCELLED", "STALE_WAITING_PAYMENT"));
       mocks.enqueueAdditionalCaptureReceiptOperation.mockRejectedValue(new Error("connection lost"));
@@ -1186,6 +1208,14 @@ describe("finishKeptLateCaptureXeroRecord", () => {
     ).resolves.toBeUndefined();
     expect(mocks.alertInvoiceNotIssuedOnCapture).toHaveBeenCalledTimes(1);
     expect(mocks.alertInvoiceNotIssuedOnCapture).toHaveBeenCalledWith(refusalAlert);
+  });
+
+  it("#5312: reports what the officer's email did, and null for a plan that stamped nothing", async () => {
+    mocks.alertInvoiceNotIssuedOnCapture.mockResolvedValue("undelivered");
+    await expect(alertKeptCaptureRefusal({ kind: "change-payment", paymentIntentId: "pi_late", refusalAlert })).resolves.toBe("undelivered");
+    mocks.alertInvoiceNotIssuedOnCapture.mockRejectedValue(new Error("smtp down"));
+    await expect(alertKeptCaptureRefusal({ kind: "change-payment", paymentIntentId: "pi_late", refusalAlert })).resolves.toBe("undelivered");
+    await expect(alertKeptCaptureRefusal({ kind: "change-payment", paymentIntentId: "pi_late" })).resolves.toBeNull();
   });
 
   it("#5220: a failing alert does not stop the release", async () => {
