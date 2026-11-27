@@ -129,6 +129,7 @@ function stripeRefund(input: { id: string; intent: string; amount: number; key?:
       const bookingIds = bookings.map((row) => row.id);
       const payments = await prisma.payment.findMany({ where: { id: { startsWith: P } }, select: { id: true } });
       const paymentIds = payments.map((row) => row.id);
+      await prisma.xeroObjectLink.deleteMany({ where: { localModel: "Payment", localId: { in: paymentIds } } });
       await prisma.xeroSyncOperation.deleteMany({ where: { localId: { in: [...paymentIds, ...bookingIds] } } });
       await prisma.bookingEvent.deleteMany({ where: { bookingId: { in: bookingIds } } });
       // #4627: the doors post journal batches bridged to these lines; release them first.
@@ -277,10 +278,10 @@ function stripeRefund(input: { id: string; intent: string; amount: number; key?:
      * payment - the gap less the closes' own bank cash. Zero: only the close's
      * bank note answers its money.
      */
-    async function nightlyCardAskCents(paymentId: string) {
+    async function expectBankOnlyGap(paymentId: string, cents: number) {
       const payment = await childPaymentById(paymentId);
       const gap = await xeroHealth.readRefundCreditNoteGap(payment);
-      return gap.uncoveredCents - gap.paidAnotherWayUncoveredCents;
+      expect(gap).toMatchObject({ uncoveredCents: cents, paidAnotherWayUncoveredCents: cents });
     }
 
     const closeAudits = (operationId: string) =>
@@ -451,17 +452,41 @@ function stripeRefund(input: { id: string; intent: string; amount: number; key?:
         expect.objectContaining({ metadata: expect.objectContaining({ xeroQueued: "refund-note", manualRefundTaskId: tasks[0]!.id }) }),
       ]);
       // The bank cash is the close's own: the nightly self-heal asks no card note for it, queued or failed.
-      expect(await nightlyCardAskCents(group.payments[0]!)).toBe(0);
+      await expectBankOnlyGap(group.payments[0]!, REFUND_CENTS);
       await prisma.xeroSyncOperation.update({ where: { id: notes[0]!.id }, data: { status: "FAILED", lastErrorMessage: "Xero is down" } });
-      expect(await nightlyCardAskCents(group.payments[0]!)).toBe(0);
+      await expectBankOnlyGap(group.payments[0]!, REFUND_CENTS);
       // A failed note is an officer's to retry, as its own row: the retry re-runs that row, never a second.
       const failed = await prisma.xeroSyncOperation.findUniqueOrThrow({ where: { id: notes[0]!.id } });
       expect(xeroRetry.getXeroOperationRetryMeta(failed)).toEqual({ supported: true, reason: null });
-      const { enqueueXeroRefundCreditNoteOperation } = await import("@/lib/xero-operation-outbox");
-      await prisma.xeroSyncOperation.update({ where: { id: notes[0]!.id }, data: { status: "PENDING" } });
-      const again = await enqueueXeroRefundCreditNoteOperation(group.payments[0]!, REFUND_CENTS, { paidAnotherWayTaskId: tasks[0]!.id, refundMethod: "internet-banking" });
-      expect(again.queueOperationId).toBe(notes[0]!.id);
-      expect(await noteRows(group.payments[0]!)).toHaveLength(1);
+      const { enqueueXeroSyncOperationRetry } = await import("@/lib/xero-operation-queue");
+      const retry = await enqueueXeroSyncOperationRetry(failed.id);
+      expect(await prisma.xeroSyncOperation.findUniqueOrThrow({ where: { id: retry.queueOperationId } })).toMatchObject({
+        requestPayload: { originalOperationId: failed.id },
+      });
+      await expect(enqueueXeroSyncOperationRetry(failed.id)).rejects.toMatchObject({ status: 409 });
+      expect(await noteRows(group.payments[0]!)).toEqual([expect.objectContaining({ id: failed.id, idempotencyKey: notes[0]!.idempotencyKey })]);
+    });
+
+    it("reverses a reopened joiner's existing card credit before crediting the bank refund", async () => {
+      const group = groupIds("reopened");
+      await createGroup(group, { childStatus: "PAID", invoiced: true });
+      const row = await deadPerJoinerRow(group);
+      await prisma.paymentRecoveryOperation.update({ where: { id: row.id }, data: {
+        allocationPlan: core.organiserChildRefundAllocationPlan(row.idempotencyKey, REFUND_CENTS, "re_failed"),
+      } });
+      const paymentId = group.payments[0]!;
+      await prisma.xeroObjectLink.create({ data: {
+        localModel: "Payment", localId: paymentId, xeroObjectType: "CREDIT_NOTE", xeroObjectId: "cn_race_5267_card",
+        role: "REFUND_CREDIT_NOTE", active: true, metadata: { amountCents: REFUND_CENTS },
+      } });
+      const result = await groupClose.closeGroupCardRefundPaidAnotherWay(closeInput(row.id, REFUND_CENTS));
+      expect(result.xeroQueued).toBe("stripe-reversal-and-bank-note");
+      const operations = await prisma.xeroSyncOperation.findMany({ where: { localModel: "Payment", localId: paymentId } });
+      expect(operations).toHaveLength(2);
+      expect(operations).toEqual(expect.arrayContaining([
+        expect.objectContaining({ queueType: "CARD_REFUND_REVERSAL_INVOICE", requestPayload: expect.objectContaining({ amountCents: REFUND_CENTS }) }),
+        expect.objectContaining({ queueType: "REFUND_CREDIT_NOTE", requestPayload: expect.objectContaining({ refundAmountCents: REFUND_CENTS, refundMethod: "internet-banking" }) }),
+      ]));
     });
 
     it("a joiner with no Xero invoice gets a no-note record and no email, as an ordinary close does", async () => {
@@ -620,7 +645,7 @@ function stripeRefund(input: { id: string; intent: string; amount: number; key?:
         expect(payloadOf(notes[0]!)).toMatchObject({ refundMethod: "internet-banking", paidAnotherWayTaskId: tasks[0]!.id });
         notedCents += payloadOf(notes[0]!).refundAmountCents as number;
         expect(await prisma.bookingLedgerLine.count({ where: { bookingId: childId, anchorKind: "REVIEW_TASK" } })).toBe(0);
-        expect(await nightlyCardAskCents(group.payments[index]!)).toBe(0);
+        await expectBankOnlyGap(group.payments[index]!, LEGACY_PLAN_CENTS[index]!);
       }
       expect(notedCents).toBe(total);
       // The census reads the close's note from the row and takes those bank
