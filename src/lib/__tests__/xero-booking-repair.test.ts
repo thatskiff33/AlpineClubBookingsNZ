@@ -825,6 +825,8 @@ function createDependencies(state: {
     // #4324: the keep's own decision, for a kept change capture.
     planKeptLateCaptureXeroRecord: vi.fn().mockResolvedValue({ kind: "receipt-queued", queueOperationId: "op_receipt" }),
     alertKeptCaptureRefusal: vi.fn().mockResolvedValue(undefined),
+    // #4381: a paid-another-way close's missing receipt, by the close's own split.
+    queueMissingPaidAnotherWayReceipt: vi.fn().mockResolvedValue("receipt-then-refund-note"),
     // #3548: the repair's settle of an operator-applied refund note. Tests that
     // do not apply that action never call it.
     finishRefundCreditNoteSettlement: vi.fn().mockResolvedValue({
@@ -6317,6 +6319,8 @@ describe("runBookingXeroRepair", () => {
           apply?: boolean;
           /** The #4253 sweep's $30 credit-release ask before the capture: carried into it (its share), or not (held). */
           sweep?: "share" | "held";
+          /** #4381: the approval was COMPLETED and its card refund closed paid another way, the note waiting for the receipt. */
+          closedPaidAnotherWay?: true;
         } = {},
       ) => {
         const deps = createDependencies({
@@ -6327,8 +6331,25 @@ describe("runBookingXeroRepair", () => {
             mod_change: { newData: options.marked === false ? {} : { primaryInvoiceSettlement: { settledAgainstPrimaryInvoice: true } } },
           },
           lateCaptureApprovalTasks: [
-            { id: "task_kept", bookingId: booking.id, lateCaptureApprovalIntentId: "pi_kept", status: "DISMISSED", createdAt: RAISED_AT },
+            {
+              id: "task_kept",
+              bookingId: booking.id,
+              lateCaptureApprovalIntentId: "pi_kept",
+              status: options.closedPaidAnotherWay ? "COMPLETED" : "DISMISSED",
+              createdAt: RAISED_AT,
+            },
           ],
+          ...(options.closedPaidAnotherWay
+            ? {
+                lateCaptureApprovalRefunds: [{ id: "op_dead", idempotencyKey: buildLateCaptureApprovalRefundRecoveryIdempotencyKey("pi_kept") }],
+                paidAnotherWayCloses: [
+                  {
+                    kind: "CANCELLED_BOOKING_HAND_BACK",
+                    occurrenceKey: cardRefundPaidAnotherWayOccurrenceKey("op_dead", { xeroRefundNote: "after-receipt" }),
+                  },
+                ],
+              }
+            : {}),
         });
         // Exercise the loader's separate invoice and receipt reads against one store.
         const operations = options.operations ?? [];
@@ -6556,6 +6577,63 @@ describe("runBookingXeroRepair", () => {
         const receiptLink = { ...primaryInvoiceLink, id: "link_receipt", localModel: "PaymentTransaction", localId: "txn_primary", xeroObjectType: "PAYMENT", role: "ADDITIONAL_CAPTURE_PAYMENT" };
         const receipted = await runChange(unsynced, { links: [primaryInvoiceLink, receiptLink] });
         expect(changeFinding(receipted.bookingReport)).toBeUndefined();
+      });
+
+      /**
+       * #4381 (owner, 25 Oct 2026 on #4324; `INV-PAY-144`): the same capture,
+       * its approved refund closed as paid another way, the close's note waiting
+       * for the receipt. The tool splits it as the close does - never a
+       * kept-capture invoice beside the invoice that bills the change.
+       */
+      describe("#4381: the same capture, its approved refund closed paid another way", () => {
+        const closeFinding = (bookingReport: { findings: { code: string }[] }) =>
+          bookingReport.findings.find((finding) => finding.code === "PAID_ANOTHER_WAY_LATE_CAPTURE_WITHOUT_XERO_RECEIPT");
+
+        it("MUTATION: the primary invoice bills the change - its receipt, by the close's own split on --apply, and no kept-capture invoice", async () => {
+          const { bookingReport } = await runChange(changeBooking(), { closedPaidAnotherWay: true });
+          expect(changeFinding(bookingReport)).toMatchObject({
+            severity: "critical",
+            safeToAutoApply: true,
+            details: expect.objectContaining({ manualRefundTaskId: "task_kept", capturedCents: 8000, recordedBy: "ADDITIONAL_CAPTURE_RECEIPT" }),
+          });
+          expect(String((changeFinding(bookingReport) as unknown as { summary: string }).summary)).toMatch(/approved refund was paid another way/);
+          expect(bookingReport.actions.find((a) => a.type === "QUEUE_KEPT_LATE_CAPTURE_RECORD")).toMatchObject({
+            payload: { manualRefundTaskId: "task_kept", bookingId: "booking_1", paymentIntentId: "pi_kept", paidAnotherWayClose: true },
+          });
+          expect(bookingReport.actions.find((a) => a.type === "QUEUE_KEPT_LATE_CAPTURE_INVOICE")).toBeUndefined();
+          expect(closeFinding(bookingReport)).toBeUndefined();
+
+          const applied = await runChange(changeBooking(), { closedPaidAnotherWay: true, apply: true });
+          expect(applied.deps.queueMissingPaidAnotherWayReceipt).toHaveBeenCalledWith(
+            expect.anything(),
+            expect.objectContaining({ manualRefundTaskId: "task_kept", paymentIntentId: "pi_kept" }),
+          );
+          expect(applied.deps.planKeptLateCaptureXeroRecord).not.toHaveBeenCalled();
+          expect(applied.bookingReport.actions.find((a) => a.type === "QUEUE_KEPT_LATE_CAPTURE_RECORD")).toMatchObject({ status: "queued" });
+        });
+
+        it("no change can be read from it: named for an officer in the close's words, nothing queued", async () => {
+          const { bookingReport } = await runChange(changeBooking({ bookingModificationId: null }), { closedPaidAnotherWay: true });
+          expect(changeFinding(bookingReport)).toMatchObject({ severity: "manual_review", safeToAutoApply: false });
+          expect(String((changeFinding(bookingReport) as unknown as { summary: string }).summary)).toMatch(
+            /whose approved refund was paid another way names no booking change/,
+          );
+          expect(bookingReport.actions.some((a) => a.type === "QUEUE_KEPT_LATE_CAPTURE_INVOICE" || a.type === "QUEUE_KEPT_LATE_CAPTURE_RECORD")).toBe(false);
+        });
+
+        it("MUTATION nothing bills the change: the kept-capture invoice, sized net of what the sweep records", async () => {
+          const { bookingReport } = await runChange(changeBooking(), {
+            closedPaidAnotherWay: true,
+            marked: false,
+            operations: [changeOperation("CANCELLED", "WITHDRAWN_BY_OFFICER", "pi_superseded")],
+            sweep: "share",
+          });
+          expect(closeFinding(bookingReport)).toMatchObject({ severity: "critical", safeToAutoApply: true });
+          expect(bookingReport.actions.find((a) => a.type === "QUEUE_KEPT_LATE_CAPTURE_INVOICE")).toMatchObject({
+            payload: expect.objectContaining({ manualRefundTaskId: "task_kept", capturedCents: 5000 }),
+          });
+          expect(changeFinding(bookingReport)).toBeUndefined();
+        });
       });
 
       describe("review MF2 (round 3): the dry run lists the figure --apply records", () => {
