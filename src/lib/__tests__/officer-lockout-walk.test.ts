@@ -203,6 +203,20 @@ describe("officer lock-out walk (#4620)", () => {
     ).toMatch(/^\/login\/enroll\?/);
   });
 
+  it("does not exempt the password-change route when no change is pending", () => {
+    const { sessionUser } = fullAdminSession(STATES[0], PHASES[0]);
+    expect(
+      factorGateRedirect({
+        sessionUser,
+        member: { twoFactorEnabled: false, forcePasswordChange: false },
+        allowForcePasswordChange: true,
+        pathname: null,
+        callbackPath: null,
+        now: NOW,
+      }),
+    ).toMatch(/^\/login\/enroll\?/);
+  });
+
   it("gates a past-grace officer with no factor (the walk is not vacuous)", () => {
     const { claims, sessionUser } = fullAdminSession(STATES[0], PHASES[0]);
     expect(claims.officerTwoFactorRequired).toBe(true);

@@ -228,26 +228,30 @@ describe("passkey ceremonies (#4617)", () => {
       clientExtensionResults,
     });
 
-    const refused = await verifyPasskeyRegistration({
-      memberId: MEMBER,
-      response: registration({ credProps: { rk: false } }),
-      name: "",
-      actor: ACTOR,
-    });
-    expect(refused).toMatchObject({ ok: false, status: 400 });
-    expect(mockPrisma.webAuthnCredential.create).not.toHaveBeenCalled();
-
-    for (const reported of [{}, { credProps: {} }, { credProps: { rk: true } }]) {
-      const accepted = await verifyPasskeyRegistration({
+    try {
+      const refused = await verifyPasskeyRegistration({
         memberId: MEMBER,
-        response: registration(reported),
+        response: registration({ credProps: { rk: false } }),
         name: "",
         actor: ACTOR,
       });
-      expect(accepted).toEqual({ ok: true });
+      expect(refused).toMatchObject({ ok: false, status: 400 });
+      expect(mockPrisma.webAuthnCredential.create).not.toHaveBeenCalled();
+
+      for (const reported of [{}, { credProps: {} }, { credProps: { rk: true } }]) {
+        const accepted = await verifyPasskeyRegistration({
+          memberId: MEMBER,
+          response: registration(reported),
+          name: "",
+          actor: ACTOR,
+        });
+        expect(accepted).toEqual({ ok: true });
+      }
+      expect(mockPrisma.webAuthnCredential.create).toHaveBeenCalledTimes(3);
+    } finally {
+      // Restore the real verifier so a failure here cannot pass later tests.
+      vi.mocked(webauthnServer.verifyRegistrationResponse).mockReset();
     }
-    expect(mockPrisma.webAuthnCredential.create).toHaveBeenCalledTimes(3);
-    vi.mocked(webauthnServer.verifyRegistrationResponse).mockReset();
   });
 
   it("refuses an expired challenge and a replay", async () => {
