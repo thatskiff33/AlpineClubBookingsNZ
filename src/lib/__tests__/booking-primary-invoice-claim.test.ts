@@ -35,8 +35,13 @@ const payment = {
   updateMany: vi.fn(async () => ({ count: 1 })),
 };
 const groupBookingFindUnique = vi.fn();
+/** The applied-credit rows no Xero note carries yet (`unallocatedAppliedCents`), as the ledger sums them. */
+const memberCreditGroupBy = vi.fn();
+const unallocatedAppliedCredit = (cents: number) =>
+  memberCreditGroupBy.mockResolvedValue([{ appliedToBookingId: "booking_1", _sum: { amountCents: -cents } }]);
 const tx = {
   groupBooking: { findUnique: groupBookingFindUnique },
+  memberCredit: { groupBy: memberCreditGroupBy },
   payment,
   manualRefundTask: { aggregate: vi.fn(async () => ({ _sum: { amountCents: null } })) },
   paymentRecoveryOperation: { findMany: vi.fn(async () => []) },
@@ -87,6 +92,7 @@ const adjust = (
 beforeEach(() => {
   vi.clearAllMocks();
   payment.updateMany.mockResolvedValue({ count: 1 });
+  memberCreditGroupBy.mockResolvedValue([]);
 });
 
 describe("the edit's claim on the unlinked primary invoice (#3980)", () => {
@@ -261,17 +267,22 @@ it("does not report a missing payment when there is no fee to record", async () 
 });
 
 /**
- * #5288 (`INV-PAY-047`, owner decision 20 Nov 2026): a PAID Internet Banking
- * booking with no primary invoice linked - here one account credit paid in
+ * #5288 (`INV-PAY-163`, owner decisions 20 and 28 Nov 2026): a PAID Internet
+ * Banking booking with no primary invoice linked - one account credit paid in
  * full - has no card to ask and no invoice for a supplementary one to sit
- * beside. Its increase is named to the member and billed on the primary
- * invoice the door now raises; nothing is minted.
+ * beside. Its increase is billed on the primary invoice the door now raises,
+ * and the member is asked for what that invoice will show as due: its worth
+ * less the applied credit allocated to it. Nothing is minted.
  */
 describe("an unlinked Internet Banking increase is billed on the primary invoice (#5288)", () => {
-  function creditPaidBankBooking(payment: Partial<NonNullable<LoadedBookingForModify["payment"]>> = {}): LoadedBookingForModify {
+  function creditPaidBankBooking(
+    payment: Partial<NonNullable<LoadedBookingForModify["payment"]>> = {},
+    finalPriceCents = 20_000,
+  ): LoadedBookingForModify {
     const booking = paidBooking(null);
     return {
       ...booking,
+      finalPriceCents,
       payment: {
         ...booking.payment!,
         source: PaymentSource.INTERNET_BANKING,
@@ -284,13 +295,21 @@ describe("an unlinked Internet Banking increase is billed on the primary invoice
     };
   }
 
-  it("MUTATION: names the whole increase and asks Xero, not the card, for it", async () => {
+  beforeEach(() => unallocatedAppliedCredit(20_000));
+
+  it("MUTATION: asks Xero, not the card, for what the new invoice shows as due", async () => {
     const result = await adjust(creditPaidBankBooking(), 0, 5_000);
     expect(result.primaryInvoiceBillsIncrease).toBe(true);
+    // $200 price + $50 fee, less $200 of credit.
     expect(result.additionalAmountCents).toBe(5_000);
     expect(result.additionalAsk.amountCents).toBe(0);
-    // Xero's share of it: the primary invoice the door raises bills it.
     expect(result.xeroAdditionalAmountCents).toBe(5_000);
+    // The credit read is the allocation engine's own: this booking's rows no Xero note carries.
+    expect(memberCreditGroupBy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { appliedToBookingId: { in: ["booking_1"] }, type: "BOOKING_APPLIED", xeroCreditNoteId: null },
+      }),
+    );
     // The claim and its fee write stand, so the invoice the door raises bills the fee.
     expect(result.settledAgainstPrimaryInvoice).toBe(true);
     expect(payment.updateMany).toHaveBeenCalledWith({
@@ -299,10 +318,41 @@ describe("an unlinked Internet Banking increase is billed on the primary invoice
     });
   });
 
-  it("also covers a bank-paid booking's increase while no invoice is linked", async () => {
-    const result = await adjust(creditPaidBankBooking({ amountCents: 20_000, creditAppliedCents: 0 }), 3_000);
+  it("MUTATION: an earlier fee nobody was asked for is asked with this one - the invoice bills both", async () => {
+    // $200 price + $50 recorded + $50 now = $300 invoice, less $200 of credit.
+    const result = await adjust(creditPaidBankBooking({ changeFeeCents: 5_000 }), 0, 5_000);
     expect(result.primaryInvoiceBillsIncrease).toBe(true);
-    expect(result.additionalAmountCents).toBe(3_000);
+    expect(result.additionalAmountCents).toBe(10_000);
+    expect(result.xeroAdditionalAmountCents).toBe(10_000);
+  });
+
+  it("MUTATION: credit the club kept from an earlier reduction is not asked for twice", async () => {
+    // Cut to $150 with $25 of the credit kept ($175 still applied), now back
+    // to $200: the invoice is $200 and $175 is allocated, so $25 is due, not $50.
+    unallocatedAppliedCredit(17_500);
+    const result = await adjust(creditPaidBankBooking({ creditAppliedCents: 17_500 }, 15_000), 5_000);
+    expect(result.primaryInvoiceBillsIncrease).toBe(true);
+    expect(result.additionalAmountCents).toBe(2_500);
+  });
+
+  it("asks nothing and raises no invoice when the kept credit still covers the booking", async () => {
+    unallocatedAppliedCredit(17_500);
+    const result = await adjust(creditPaidBankBooking({ creditAppliedCents: 17_500 }, 15_000), 2_000);
+    expect(result.primaryInvoiceBillsIncrease).toBe(false);
+    expect(result.additionalAmountCents).toBe(0);
+    expect(result.xeroAdditionalAmountCents).toBe(0);
+  });
+
+  it("MUTATION: not a booking with bank cash recorded - the invoice would bill that transfer again", async () => {
+    // $100 of credit and $100 by bank transfer: a new primary invoice bills the
+    // whole $230 and a create records only card cash, so $130 would show as due
+    // where $30 is owed. It stays `unasked` in the census, for the treasurer.
+    unallocatedAppliedCredit(10_000);
+    const result = await adjust(creditPaidBankBooking({ amountCents: 10_000, creditAppliedCents: 10_000 }), 3_000);
+    expect(result.primaryInvoiceBillsIncrease).toBe(false);
+    expect(result.additionalAmountCents).toBe(0);
+    expect(result.xeroAdditionalAmountCents).toBe(0);
+    expect(memberCreditGroupBy).not.toHaveBeenCalled();
   });
 
   it.each([

@@ -119,6 +119,11 @@ const KNOWN_COMPOSERS = [
 // the composers `booking-amount-owed.ts` still has to absorb.
 const CASH_COVER_HOME = "src/lib/booking-cash-evidence.ts";
 const CASH_COVER_EMAIL = "src/lib/booking-exception-approval.ts";
+// #5288 (`INV-PAY-163`): what a new primary invoice shows as due. It composes
+// `bookingAmountOwedCents` with the credit the allocation engine allocates
+// (`unallocatedAppliedCents`), by design, so the ask and the invoice cannot
+// part; the one read's whole-ledger credit would be a different figure.
+const PRIMARY_INVOICE_DUE_HOME = "src/lib/primary-invoice-bills-increase.ts";
 // Reading the one home: the two helpers, the one read built on them (#3991),
 // or the saved-card figure built on worth (#4357).
 const READS_ONE_HOME = /\b(?:booking(?:AmountOwed|Worth)Cents|readBookingAmountOwed|savedCardChargeCents)\(/;
@@ -254,8 +259,14 @@ describe("the amount an unpaid booking owes has one home (#3750)", () => {
     const composers = sourceFiles(path.join(REPO, "src"))
       .filter((file) => /\bbookingAmountOwedCents\(/.test(read(file)))
       .filter(
-        (file) => file !== ONE_HOME_READ && file !== "src/lib/booking-payment-state.ts" && file !== CASH_COVER_HOME,
+        (file) =>
+          file !== ONE_HOME_READ &&
+          file !== "src/lib/booking-payment-state.ts" &&
+          file !== CASH_COVER_HOME &&
+          file !== PRIMARY_INVOICE_DUE_HOME,
       );
+    expect(read(PRIMARY_INVOICE_DUE_HOME)).toMatch(/\bunallocatedAppliedCents\(/);
+    expect(read(PRIMARY_INVOICE_DUE_HOME)).not.toMatch(/\bderiveBookingAppliedCreditCents\(/);
     expect(composers.sort(), "INV-PAY-119: read it through readBookingAmountOwed, or list it in booking-amount-owed.ts").toEqual(
       [...KNOWN_COMPOSERS].sort(),
     );

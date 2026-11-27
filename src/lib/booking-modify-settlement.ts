@@ -72,7 +72,7 @@ export type PaymentAdjustmentResult = {
   /**
    * The plain figure the EMAILS, the response bodies and the Xero leg read. On
    * the card arm it equals `additionalAsk.amountCents`; where there is no card
-   * it is the Xero invoice's own delta (`xeroBilledIncrease`), superseding nothing.
+   * it is what Xero bills (`xeroBilledIncrease`), superseding nothing.
    */
   additionalAmountCents: number;
   /**
@@ -292,7 +292,7 @@ export async function applyPaymentAdjustments(
           ? 0
           : Math.abs(netAmountCents)
       : 0;
-  const { xeroAdditionalAmountCents, primaryInvoiceBillsIncrease } = xeroBilledIncrease(booking, { netAmountCents, hasSucceededPayment, hasIssuedXeroInvoice });
+  const { xeroAdditionalAmountCents, primaryInvoiceBillsIncrease } = await xeroBilledIncrease(tx, booking, { netAmountCents, priceDiffCents, changeFeeCents, hasSucceededPayment, hasIssuedXeroInvoice });
   // #4299 (`INV-PAY-148`): the organiser is invoiced for the increase, so the
   // joiner is asked for nothing; the emails and responses say who was billed.
   const billedToOrganiserCents = organiserBilling ? xeroAdditionalAmountCents : 0;
@@ -364,8 +364,8 @@ export async function applyPaymentAdjustments(
       // resulting shortfall visible instead of silent.
       //
       // The Xero arm below is deliberately untouched: `xeroAdditionalAmountCents`
-      // sizes THIS edit's share of a Xero invoice (#5288), which supersedes nothing
-      // and is collected alongside whatever came before it.
+      // sizes THIS edit's supplementary invoice, or (#5288) what the new primary
+      // invoice shows as due; neither supersedes an ask (`xeroBilledIncrease`).
       const organiserChargeRefusal = organiserChildChargeRefusal({ booking, netChargeCents: netAmountCents });
       if (organiserChargeRefusal) {
         // #3653: the organiser paid for this booking out of ONE combined card

@@ -9,7 +9,7 @@
  */
 import type { XeroSyncOperation } from "@prisma/client";
 
-import { INTERNET_BANKING_PAYMENT_SOURCE } from "@/lib/booking-payment-state";
+import { INTERNET_BANKING_PAYMENT_SOURCE } from "@/lib/payment-source";
 
 /**
  * #5288: what the census reads to tell an Internet Banking residual billed in
