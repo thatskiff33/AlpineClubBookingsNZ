@@ -170,16 +170,54 @@ beforeEach(() => {
 });
 
 describe("createAgeUpCredit: credit note on the season invoice (#5190 PR 3)", () => {
-  it("does not switch to a lot after Xero accepted a note but its link was not saved", async () => {
-    mocks.upsertXeroObjectLink.mockRejectedValueOnce(new Error("link write failed"));
-    await expect(run()).rejects.toThrow("link write failed");
-    seasonInvoiceOwes(0);
+  it("reserves the season invoice on the adjustment before the note is sent", async () => {
+    let reservedWhenSent: string | null = null;
+    mocks.createCreditNotes.mockImplementation(async () => {
+      reservedWhenSent = store.adjustment!.creditInvoiceId;
+      return { body: { creditNotes: [{ creditNoteID: "note-1", creditNoteNumber: "CN-0042" }] } };
+    });
+
     await run();
-    expect(mocks.postAgeUpCreditLot).not.toHaveBeenCalled();
-    expect(mocks.createCreditNotes.mock.calls.map(call => call[4])).toEqual([
-      ageUpCreditIdempotencyKey(ADJUSTMENT_ID), ageUpCreditIdempotencyKey(ADJUSTMENT_ID),
-    ]);
+
+    // Reserved after the send, a lost reply would leave the lot route open
+    // beside a note Xero already holds.
+    expect(reservedWhenSent).toBe("inv-season");
   });
+
+  it.each([
+    ["Xero's reply to the note was lost", () => mocks.createCreditNotes.mockRejectedValueOnce(new Error("socket hang up"))],
+    ["Xero accepted the note but its link was not saved", () => mocks.upsertXeroObjectLink.mockRejectedValueOnce(new Error("link write failed"))],
+  ] as const)(
+    "MUTATION (reservation): after %s, the retry stays on the reserved invoice with the same key and never becomes a lot",
+    async (_what, breakFirstAttempt) => {
+      breakFirstAttempt();
+      await expect(run()).rejects.toThrow();
+      expect(store.adjustment).toMatchObject({ status: "PENDING", creditInvoiceId: "inv-season", memberCreditId: null });
+
+      // Before the retry the member pays the invoice, and the season is
+      // re-invoiced: neither moves a reserved credit.
+      seasonInvoiceOwes(0);
+      store.subscription = { status: "PAID", charge: { xeroInvoiceId: "inv-reraised", status: "EMAILED" } };
+      await run();
+
+      expect(mocks.postAgeUpCreditLot).not.toHaveBeenCalled();
+      expect(mocks.getInvoice.mock.calls.map((call) => call[1])).toEqual(["inv-season", "inv-season"]);
+      expect(mocks.createCreditNotes.mock.calls.map((call) => call[4])).toEqual([
+        ageUpCreditIdempotencyKey(ADJUSTMENT_ID),
+        ageUpCreditIdempotencyKey(ADJUSTMENT_ID),
+      ]);
+      expect(mocks.createCreditNoteAllocation).toHaveBeenCalledTimes(1);
+      expect(mocks.createCreditNoteAllocation.mock.calls[0]![2]).toEqual({
+        allocations: [{ invoice: { invoiceID: "inv-season" }, amount: 45, date: "2026-07-01" }],
+      });
+      expect(store.adjustment).toMatchObject({
+        status: "CREDITED_ON_INVOICE",
+        xeroCreditNoteId: "note-1",
+        creditInvoiceId: "inv-season",
+        memberCreditId: null,
+      });
+    },
+  );
 
   it("does not treat a missing Xero balance as a paid invoice", async () => {
     mocks.getInvoice.mockResolvedValue({ body: { invoices: [{ invoiceID: "inv-season" }] } });
@@ -305,6 +343,7 @@ describe("createAgeUpCredit: credit on the member's account (#5190 PR 3)", () =>
       status: "CREDITED_TO_ACCOUNT",
       memberCreditId: "credit-lot-1",
       xeroCreditNoteId: null,
+      creditInvoiceId: null,
     });
     expect(mocks.createCreditNotes).not.toHaveBeenCalled();
     expect(mocks.createCreditNoteAllocation).not.toHaveBeenCalled();

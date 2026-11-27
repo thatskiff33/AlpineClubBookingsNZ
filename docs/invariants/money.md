@@ -1271,6 +1271,8 @@ one adjustment; neither a rerun nor voiding a top-up raises another.
 ## INV-MONEY-053
 
 A negative difference is one positive credit, rounded on its magnitude. If
-the season invoice still owes at least that much, allocate a Xero credit note
-to it. Otherwise grant the full amount as one member credit lot and queue its
-credit note. Never use both routes or refund through Stripe.
+the season invoice still owes at least that much, reserve that invoice on the
+adjustment, then allocate a Xero credit note to it; a retry keeps to the
+reserved invoice whatever it owes by then. Otherwise grant the full amount as
+one member credit lot and queue its credit note. A balance Xero does not
+report is not zero. Never use both routes or refund through Stripe.

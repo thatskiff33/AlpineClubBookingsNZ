@@ -1419,6 +1419,9 @@ model MemberSubscriptionAgeUpAdjustment {
   chargeId             String?               @unique
   // CREDIT, lot route: the member credit lot it became.
   memberCreditId       String?               @unique
+  // CREDIT, allocate route: the Xero season invoice reserved for the credit
+  // note BEFORE the note is sent. Every retry credits this invoice, and a
+  // reserved credit never becomes a lot.
   creditInvoiceId      String?
   // CREDIT, allocate route: the credit note allocated to the season invoice.
   xeroCreditNoteId     String?               @unique

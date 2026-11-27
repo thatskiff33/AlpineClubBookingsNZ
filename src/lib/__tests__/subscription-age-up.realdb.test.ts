@@ -18,6 +18,9 @@
  *    run names it instead of raising it again.
  * 5. TWO CREDIT WORKERS on one adjustment grant one credit lot, with one Xero
  *    note queued.
+ * 6. A CREDIT'S TWO ROUTES exclude each other: racing the invoice reservation
+ *    against the lot claim, exactly one wins, and the table's check refuses a
+ *    credit that carries both.
  *
  * Ordinary Vitest runs skip the whole file. It reuses the guarded, disposable
  * loopback PostgreSQL `concurrency-lock-races.realdb.test.ts` provisions
@@ -633,6 +636,57 @@ let ageTierSettings: Awaited<ReturnType<(typeof import("@/lib/age-tier"))["getAg
       // A later retry of the same operation finds it settled.
       expect(await ageUpCredit.creditAgeUpAdjustmentToAccount(adjustment.id)).toBeNull();
       expect(await prisma.memberCredit.count({ where: { memberId } })).toBe(1);
+    });
+
+    it("racing the invoice reservation against the lot claim, one route wins and the other writes nothing", async () => {
+      // Repeated, because either statement may reach the row first.
+      for (let round = 0; round < 6; round++) {
+        const memberId = `${PREFIX}routes-${round}`;
+        const { adjustment } = await seedCreditAdjustment(memberId);
+
+        const [reserved, lot] = await Promise.all([
+          ageUpCredit.reserveAgeUpCreditInvoice(adjustment.id, "xero-invoice-season"),
+          ageUpCredit.creditAgeUpAdjustmentToAccount(adjustment.id),
+        ]);
+
+        expect(reserved, "exactly one route claims the adjustment").toBe(lot === null);
+        const row = await prisma.memberSubscriptionAgeUpAdjustment.findUniqueOrThrow({
+          where: { id: adjustment.id },
+          select: { status: true, creditInvoiceId: true, memberCreditId: true },
+        });
+        const lots = await prisma.memberCredit.count({ where: { memberId } });
+        if (reserved) {
+          expect(row).toEqual({ status: "PENDING", creditInvoiceId: "xero-invoice-season", memberCreditId: null });
+          expect(lots).toBe(0);
+          // Reserved for good: a later lot claim, and a second reservation, both lose.
+          expect(await ageUpCredit.creditAgeUpAdjustmentToAccount(adjustment.id)).toBeNull();
+          expect(await ageUpCredit.reserveAgeUpCreditInvoice(adjustment.id, "xero-invoice-other")).toBe(false);
+          expect(await prisma.memberCredit.count({ where: { memberId } })).toBe(0);
+        } else {
+          expect(row).toEqual({ status: "CREDITED_TO_ACCOUNT", creditInvoiceId: null, memberCreditId: lot!.memberCreditId });
+          expect(lots).toBe(1);
+          // Settled as a lot: no invoice can be reserved for a note any more.
+          expect(await ageUpCredit.reserveAgeUpCreditInvoice(adjustment.id, "xero-invoice-season")).toBe(false);
+        }
+      }
+    });
+
+    it("the database refuses a credit that is both a lot and reserved for an invoice", async () => {
+      const memberId = `${PREFIX}both`;
+      const { adjustment } = await seedCreditAdjustment(memberId);
+      const lot = await ageUpCredit.creditAgeUpAdjustmentToAccount(adjustment.id);
+      expect(lot).not.toBeNull();
+
+      await expect(
+        prisma.memberSubscriptionAgeUpAdjustment.update({ where: { id: adjustment.id }, data: { creditInvoiceId: "xero-invoice-season" } }),
+      ).rejects.toThrow("MemberSubscriptionAgeUpAdjustment_kind_links");
+
+      expect(
+        await prisma.memberSubscriptionAgeUpAdjustment.findUniqueOrThrow({
+          where: { id: adjustment.id },
+          select: { creditInvoiceId: true, memberCreditId: true },
+        }),
+      ).toEqual({ creditInvoiceId: null, memberCreditId: lot!.memberCreditId });
     });
   },
 );

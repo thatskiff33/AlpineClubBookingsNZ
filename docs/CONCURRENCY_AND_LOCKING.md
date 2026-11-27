@@ -33,8 +33,11 @@ an id disagree, the id wins.
 `creditAgeUpAdjustmentToAccount` takes only `lockMemberCreditLedger(memberId)`.
 After locking it claims a pending adjustment with `updateMany`; only the
 winner writes the credit lot and outbox row. It changes no booking or
-settlement money and calls no provider inside the transaction. Billing
-confirm still takes only the season key (`INV-LOCK-001`–`003`).
+settlement money and calls no provider inside the transaction. Its other
+route, `reserveAgeUpCreditInvoice`, is one guarded `updateMany` with no lock,
+run before the note is sent to Xero; each claim requires that the other has
+not happened, so one adjustment takes one route. Billing confirm still takes
+only the season key (`INV-LOCK-001`–`003`).
 
 **The two-tier protocol (#1881).**
 [Two tiers, and where the rule lives](#two-tiers-and-where-the-rule-lives) ·

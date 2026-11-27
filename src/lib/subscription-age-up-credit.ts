@@ -9,9 +9,14 @@
  *     with no invoice of this app's (closed as already paid, or marked paid by
  *     hand) has none to wait for, and goes straight to the lot.
  *  2. It reads that invoice's `amountDue` from Xero. When it is at least the
- *     credit, ONE credit note on the `membershipCancellationCredit` mapping is
- *     raised and allocated to it (`subscription-credit-note.ts`, the helper the
- *     cancellation credit shares), and the adjustment ends CREDITED_ON_INVOICE.
+ *     credit, the invoice is RESERVED on the adjustment (`creditInvoiceId`)
+ *     before anything is sent. Then ONE credit note on the
+ *     `membershipCancellationCredit` mapping is raised and allocated to it
+ *     (`subscription-credit-note.ts`, the helper the cancellation credit
+ *     shares), and the adjustment ends CREDITED_ON_INVOICE. A retry of a
+ *     reserved credit stays on that invoice, whatever it owes by then: Xero
+ *     may hold a note this app never recorded, so the lot route is closed. A
+ *     balance Xero did not send is an error, never read as nothing owed.
  *  3. Otherwise (the invoice is paid, or owes less) the credit becomes a
  *     positive member credit lot with its own Xero note queued
  *     (`postAgeUpCreditLot`), spent later through `applyCreditToBooking`, which
@@ -20,8 +25,9 @@
  *
  * Never twice. The operation's correlation key is the adjustment's own
  * (`ageUpCreditIdempotencyKey`), so one is active at a time; the note's Xero
- * idempotency key is the same key; the lot is written only after a
- * status-guarded claim of the PENDING adjustment, under
+ * idempotency key is the same key; the two routes claim the PENDING adjustment
+ * with guarded writes that exclude each other (`reserveAgeUpCreditInvoice`,
+ * `creditAgeUpAdjustmentToAccount`); the lot is written only after its claim, under
  * `lockMemberCreditLedger(memberId)` alone (`INV-LOCK-003` site; it moves no
  * booking or settlement money, so no global or season key, `INV-LOCK-001`).
  * The provider call is never inside that transaction.
@@ -85,6 +91,22 @@ function seasonInvoiceOf(subscription: {
   }
   if (!charge && subscription.status === "PAID") return { kind: "paid-without-invoice" };
   return { kind: "wait" };
+}
+
+/**
+ * The allocate route's claim: name the season invoice on the PENDING adjustment
+ * before a note is sent to Xero. The lot route's claim requires no reserved
+ * invoice, so once this wins a note Xero accepted without this app recording it
+ * can never be joined by a lot. False when the adjustment is no longer free to
+ * reserve. One guarded statement, no lock (`INV-LOCK-001`: it moves no money).
+ * Exported for the realdb race.
+ */
+export async function reserveAgeUpCreditInvoice(adjustmentId: string, invoiceId: string): Promise<boolean> {
+  const reserved = await prisma.memberSubscriptionAgeUpAdjustment.updateMany({
+    where: { id: adjustmentId, kind: "CREDIT", status: "PENDING", creditInvoiceId: null, memberCreditId: null, xeroCreditNoteId: null },
+    data: { creditInvoiceId: invoiceId },
+  });
+  return reserved.count === 1;
 }
 
 /**
@@ -245,15 +267,13 @@ async function creditOnSeasonInvoice(input: {
   if (!invoice?.invoiceID) throw new Error(`Xero season invoice not found: ${invoiceId}`);
   const amountDueCents = providerAmountToCents(invoice.amountDue);
   if (amountDueCents === null) throw new Error(`Xero returned no valid balance for season invoice ${invoiceId}.`);
-  // A note already raised for this adjustment is allocated whatever is owed
-  // now: a second note, or a lot beside it, would credit twice.
+  // A reserved credit, or one whose note is already recorded, is allocated
+  // whatever is owed now: a second note, or a lot beside it, would credit twice.
   if (!adjustment.creditInvoiceId) {
     if (!existingNote && amountDueCents < adjustment.amountCents) return false;
-    const reserved = await prisma.memberSubscriptionAgeUpAdjustment.updateMany({
-      where: { id: adjustment.id, kind: "CREDIT", status: "PENDING", creditInvoiceId: null, memberCreditId: null },
-      data: { creditInvoiceId: invoiceId },
-    });
-    if (reserved.count === 0) throw new Error("Another worker claimed this age-group credit; recheck its outcome.");
+    if (!(await reserveAgeUpCreditInvoice(adjustment.id, invoiceId))) {
+      throw new Error("Another worker claimed this age-group credit; recheck its outcome.");
+    }
   }
 
   const contactId = invoice.contact?.contactID ?? input.memberXeroContactId;

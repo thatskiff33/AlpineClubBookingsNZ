@@ -121,6 +121,14 @@ counts in full. Review the **Age-group adjustments** before confirming, even
 if there are no annual charges. For a shared invoice, follow the preview's
 instruction to settle the change in Xero rather than billing the family twice.
 
+A credit comes off the member's season invoice in Xero, once that invoice is
+raised and while it still owes at least the credit; otherwise it becomes credit
+on the member's account. Once the app has chosen the invoice it keeps to it, so
+a member is never credited twice. If that invoice is paid or voided before the
+credit note is applied, the credit shows as failed under **Xero Operations**
+(see [Xero](xero.md)). Find its credit note in Xero by the reference starting
+`MEMSUB-AGEUP-` and settle the credit there.
+
 1. In **Annual Membership Fee billing**, set the **Decision date** and click
    **Refresh preview**. Confirm the **Invoice due days** (default 30) and the
    **Family billing mode** if needed.
