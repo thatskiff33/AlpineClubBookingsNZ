@@ -7,6 +7,7 @@ import {
   type IssueReportDetailAnswer,
 } from "@/lib/connection-shapes/support-records";
 import { connectionJson } from "@/lib/mcp-connection-request";
+import { issueReportPageAddressFor } from "@/lib/issue-report-page-address";
 import { logAudit } from "@/lib/audit";
 import { getClientIp } from "@/lib/rate-limit-http";
 import logger from "@/lib/logger";
@@ -81,7 +82,8 @@ function screenshotAccessFor(
   });
 }
 
-function mapReport(report: LoadedReport, access: IssueReportScreenshotAccess): IssueReportDetailAnswer {
+/** An AI app connection reads the page address as its path only (ALP-724). */
+function mapReport(report: LoadedReport, access: IssueReportScreenshotAccess, request: Request): IssueReportDetailAnswer {
   const now = new Date();
   const browserInfoRetained = Boolean(
     report.browserInfo &&
@@ -91,7 +93,7 @@ function mapReport(report: LoadedReport, access: IssueReportScreenshotAccess): I
 
   return {
     id: report.id,
-    pageUrl: report.pageUrl,
+    pageUrl: issueReportPageAddressFor(request, report.pageUrl),
     pageTitle: report.pageTitle,
     description: report.description,
     screenshot: {
@@ -166,9 +168,7 @@ export async function GET(
   const admin = await requireAdmin({
     permission: { area: "support", level: "view" },
   });
-  if (!admin.ok) {
-    return admin.response;
-  }
+  if (!admin.ok) return admin.response;
 
   const { id } = await params;
   const report = await loadReport(id);
@@ -230,7 +230,7 @@ export async function GET(
     });
   }
 
-  return connectionJson(request, { report: mapReport(report, access) }, ISSUE_REPORT_CONNECTION_SHAPE);
+  return connectionJson(request, { report: mapReport(report, access, request) }, ISSUE_REPORT_CONNECTION_SHAPE);
 }
 
 export async function PATCH(
@@ -336,7 +336,7 @@ export async function PATCH(
     }
     return connectionJson(
       request,
-      { report: mapReport(report, screenshotAccessFor(report, admin.session.user)) },
+      { report: mapReport(report, screenshotAccessFor(report, admin.session.user), request) },
       ISSUE_REPORT_CONNECTION_SHAPE,
     );
   } catch (err) {

@@ -12,13 +12,18 @@
  * dismissing one cannot be undone from the app (#5305 comment 7092977781).
  * The two previews render with sample data and save nothing, so they run as
  * reads. Reissuing a failed email's link is website-only (`sign-in-access`).
+ *
+ * Website-only parts, refused by the route on an AI app request: the email
+ * settings' `publicUrl` and the templates that carry a one-time `{{token}}`
+ * link (`sign-in-access`), and the booking messages that
+ * `carriesPaymentInstructions` (`club-setup`).
  */
 import {
   adminNotificationPreferencesUpdateSchema,
   bookingMessageResetSchema,
   bookingMessageWordingSchema,
   emailFailureReviewSchema,
-  emailMessageSettingsUpdateSchema,
+  emailMessageSettingsConnectionUpdateSchema,
   emailSuppressionClearSchema,
   emailTemplatePreviewSchema,
   emailTemplateQuerySchema,
@@ -83,7 +88,7 @@ export const SUPPORT_MESSAGE_MCP_ACTIONS: readonly McpAction[] = [
     id: "update_booking_message",
     title: "Change a booking message's wording",
     summary:
-      "Officer: saves new wording for a booking message (`messageKey` from `list_booking_message_wording`), which members then see on the booking screens. Unknown tokens are refused. Answers the saved wording.",
+      "Officer: saves new wording for a booking message (`messageKey` from `list_booking_message_wording`), which members then see on the booking screens. Unknown tokens are refused. The messages that tell members where to pay by bank transfer (Internet Banking pending, the payment link and payment request bank details) are changed on the club website only. Answers the saved wording.",
     method: "PUT",
     path: "/api/admin/booking-messages",
     body: bookingMessageWordingSchema,
@@ -95,7 +100,7 @@ export const SUPPORT_MESSAGE_MCP_ACTIONS: readonly McpAction[] = [
     id: "reset_booking_message",
     title: "Reset a booking message to its default",
     summary:
-      "Officer: deletes the club's wording for a booking message (`messageKey`), so members see the default again. `reset` is false when there was nothing to reset.",
+      "Officer: deletes the club's wording for a booking message (`messageKey`), so members see the default again. `reset` is false when there was nothing to reset. The bank-transfer payment messages are reset on the club website only.",
     method: "POST",
     path: "/api/admin/booking-messages/reset",
     body: bookingMessageResetSchema,
@@ -146,7 +151,7 @@ export const SUPPORT_MESSAGE_MCP_ACTIONS: readonly McpAction[] = [
     id: "update_email_template",
     title: "Change an email template",
     summary:
-      "Officer: saves the club's subject and body for an email template (`templateName` from `list_email_templates`), which every later email of that kind uses. Send at least one of `subject`, `bodyText` or a formatted `bodyHtml`; null or empty returns that part to the default. Refused, listing the problems, if a token is unknown or a required one is missing. Answers the saved change.",
+      "Officer: saves the club's subject and body for an email template (`templateName` from `list_email_templates`), which every later email of that kind uses. Send at least one of `subject`, `bodyText` or a formatted `bodyHtml`; null or empty returns that part to the default. Refused, listing the problems, if a token is unknown or a required one is missing. An email carrying a one-time sign-in, reset or invitation link (a required `token`) is changed on the club website only. Answers the saved change.",
     method: "PUT",
     path: "/api/admin/email-templates",
     body: emailTemplateUpdateSchema,
@@ -183,10 +188,10 @@ export const SUPPORT_MESSAGE_MCP_ACTIONS: readonly McpAction[] = [
     id: "update_email_settings",
     title: "Change the club's email settings",
     summary:
-      "Officer: changes the names and addresses every email is sent with: club name, bookings name, sender name, support and contact email, and the public address links point to (http or https). Fields left out are unchanged; null returns one to the default. Answers the settings as `get_email_settings` does.",
+      "Officer: changes the names and addresses every email is sent with: club name, bookings name, sender name, and support and contact email. Fields left out are unchanged; null returns one to the default. The public address the links point to, sign-in links among them, is changed on the club website. Answers the settings as `get_email_settings` does.",
     method: "PUT",
     path: "/api/admin/email-settings",
-    body: emailMessageSettingsUpdateSchema,
+    body: emailMessageSettingsConnectionUpdateSchema,
     kind: "destructive",
     returns: EMAIL_SETTINGS_CONNECTION_SHAPE,
     core: false,

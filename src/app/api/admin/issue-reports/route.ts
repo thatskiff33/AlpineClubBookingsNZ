@@ -12,6 +12,7 @@ import logger from "@/lib/logger";
 import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/session-guards";
 import { isFullAdmin } from "@/lib/access-roles";
+import { issueReportPageAddressFor } from "@/lib/issue-report-page-address";
 import { classifyIssueReportScreenshot } from "@/lib/issue-report-screenshot-access";
 
 // The query schema lives in admin-support-api/system.ts, which the AI app
@@ -168,7 +169,9 @@ export async function GET(request: NextRequest) {
     return connectionJson(
       request,
       {
-        reports: reports.map((report) => summarizeReport(report, viewerFullAdmin)),
+        reports: reports.map((report) =>
+          summarizeReport({ ...report, pageUrl: issueReportPageAddressFor(request, report.pageUrl) }, viewerFullAdmin),
+        ),
         total,
         page,
         pageSize,

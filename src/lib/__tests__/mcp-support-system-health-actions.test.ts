@@ -272,6 +272,18 @@ describe("get_system_health", () => {
     expect(JSON.stringify(connection)).toContain("Rejected: Bearer");
     expect(JSON.stringify(browser)).toContain("abc123SecretToken");
   });
+
+  it("redacts a failed email's transport error for a connection only", async () => {
+    const queue = await h.failures();
+    h.failures.mockResolvedValue({
+      ...queue,
+      failures: [{ ...queue.failures[0], errorMessage: "535 Auth failed: Bearer smtpSecret987Token" }],
+    });
+    const { connection, browser } = await expectActionContract({ actionId: "get_system_health", handler: getHealth });
+    expect(JSON.stringify(connection)).not.toContain("smtpSecret987Token");
+    expect(JSON.stringify(connection)).toContain("535 Auth failed");
+    expect(JSON.stringify(browser)).toContain("smtpSecret987Token");
+  });
 });
 
 describe("get_runtime_status", () => {

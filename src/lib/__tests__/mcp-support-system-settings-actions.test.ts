@@ -71,7 +71,12 @@ import { GET as getOfficerTwoFactor } from "@/app/api/admin/security/officer-two
 import { GET as getPasswordPolicy } from "@/app/api/admin/security/password-policy/route";
 import { adminSession } from "@/lib/__tests__/helpers/sessions";
 import { emptyAdminPermissionMatrix } from "@/lib/admin-permissions";
-import { expectActionContract, officerMemberSession } from "@/lib/__tests__/helpers/mcp-action-contract";
+import {
+  buildActionRequest,
+  expectActionContract,
+  officerMemberSession,
+} from "@/lib/__tests__/helpers/mcp-action-contract";
+import { findMcpAction } from "@/lib/mcp/catalogue";
 import { DEFAULT_PRIVACY_RETENTION_SETTINGS } from "@/lib/privacy-retention-shared";
 
 const STAMP = new Date("2026-06-30T00:00:00.000Z");
@@ -242,6 +247,7 @@ describe("privacy retention", () => {
 
   it("update_privacy_retention saves every setting", async () => {
     const settings = { ...DEFAULT_PRIVACY_RETENTION_SETTINGS, emailLogRetentionYears: 3 };
+    h.retentionSettings.mockResolvedValue(DEFAULT_PRIVACY_RETENTION_SETTINGS);
     h.saveRetention.mockResolvedValue(settings);
     const { connection } = await expectActionContract({
       actionId: "update_privacy_retention",
@@ -249,6 +255,31 @@ describe("privacy retention", () => {
       args: settings,
     });
     expect(connection).toEqual({ settings });
+    expect(h.saveRetention).toHaveBeenCalledWith(settings, "officer-1");
+  });
+
+  it("refuses a connection switching session replay, either way, and saves nothing", async () => {
+    for (const saved of [false, true]) {
+      h.retentionSettings.mockResolvedValue({ ...DEFAULT_PRIVACY_RETENTION_SETTINGS, sentryReplayEnabled: saved });
+      const { request } = buildActionRequest(
+        findMcpAction("update_privacy_retention")!,
+        { ...DEFAULT_PRIVACY_RETENTION_SETTINGS, sentryReplayEnabled: !saved },
+        true,
+      );
+      const response = await putRetention(request);
+      expect(response.status).toBe(403);
+      expect(((await response.json()) as { error: string }).error).toMatch(/Session replay/);
+    }
+    expect(h.saveRetention).not.toHaveBeenCalled();
+  });
+
+  it("still lets the website switch session replay", async () => {
+    const settings = { ...DEFAULT_PRIVACY_RETENTION_SETTINGS, sentryReplayEnabled: true };
+    h.retentionSettings.mockResolvedValue(DEFAULT_PRIVACY_RETENTION_SETTINGS);
+    h.saveRetention.mockResolvedValue(settings);
+    const { request } = buildActionRequest(findMcpAction("update_privacy_retention")!, settings, false);
+    const response = await putRetention(request);
+    expect(response.status).toBe(200);
     expect(h.saveRetention).toHaveBeenCalledWith(settings, "officer-1");
   });
 });

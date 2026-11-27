@@ -6,7 +6,11 @@ import {
   type EmailTemplateStaleContent,
 } from "@/lib/connection-shapes/support-messages";
 import { readTemplateQuery, templatesAnswer } from "@/lib/email-templates-route-answer";
-import { connectionJson } from "@/lib/mcp-connection-request";
+import {
+  arrivesAsMcpConnection,
+  connectionJson,
+  websiteOnlyForConnection,
+} from "@/lib/mcp-connection-request";
 import {
   buildStructuredAuditLogCreateArgs,
   getAuditRequestContext,
@@ -15,6 +19,7 @@ import {
   EMAIL_TEMPLATE_DEFINITIONS,
   EMAIL_TEMPLATE_KEY_SET,
 } from "@/lib/email-message-registry";
+import { emailTemplateCarriesAccessToken } from "@/lib/email-template-access-token";
 import {
   EMPTYABLE_OVERRIDE_TOKENS,
   OPTIONAL_TEMPLATE_TOKENS,
@@ -522,6 +527,14 @@ export async function PUT(request: NextRequest) {
 
   if (!EMAIL_TEMPLATE_KEY_SET.has(parsed.data.templateName)) {
     return NextResponse.json({ error: "Unknown email template" }, { status: 400 });
+  }
+  // ALP-724: a template carrying a one-time sign-in, reset or invitation link
+  // decides where that link points (`sign-in-access`), so an AI app connection
+  // may not change it; the reset to the default stays open.
+  if (arrivesAsMcpConnection(request) && emailTemplateCarriesAccessToken(parsed.data.templateName)) {
+    return websiteOnlyForConnection(
+      "This email carries a one-time sign-in, reset or invitation link, so its wording is changed on the club website.",
+    );
   }
 
   // Fork #38: a rich body is sanitised FIRST, then its derived text is what

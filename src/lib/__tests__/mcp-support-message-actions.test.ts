@@ -79,13 +79,31 @@ import { POST as clearSuppression } from "@/app/api/admin/email-suppressions/[id
 import { GET as listSuppressions } from "@/app/api/admin/email-suppressions/route";
 import { GET as listPolicies, PUT as putPolicy } from "@/app/api/admin/notification-delivery-policies/route";
 import { PUT as putAlerts } from "@/app/api/admin/notifications/route";
+import { NextRequest } from "next/server";
+
 import { expectActionContract, officerMemberSession } from "@/lib/__tests__/helpers/mcp-action-contract";
-import { BOOKING_MESSAGE_KEYS } from "@/lib/booking-message-definitions";
+import {
+  BOOKING_MESSAGE_DEFINITIONS,
+  BOOKING_MESSAGE_KEYS,
+  BOOKING_PAYMENT_INSTRUCTIONS_WEBSITE_ONLY,
+} from "@/lib/booking-message-definitions";
+import { MCP_PRINCIPAL_HEADER } from "@/lib/mcp/principal";
 import { EMAIL_TEMPLATE_DEFINITIONS, isAdminSystemTemplate } from "@/lib/email-message-registry";
 import { SUPPORT_MESSAGE_MCP_ACTIONS } from "@/lib/mcp/catalogue/support-messages";
 
 const STAMP = new Date("2026-06-30T00:00:00.000Z");
 const MESSAGE_KEY = BOOKING_MESSAGE_KEYS[0];
+const PAYMENT_INSTRUCTION_KEYS = BOOKING_MESSAGE_DEFINITIONS.filter((d) => d.carriesPaymentInstructions).map((d) => d.key);
+
+/**
+ * A request the catalogue's own schema would not let the app build (a field
+ * or key it refuses), sent to the route straight, as a connection or a browser.
+ */
+function rawRequest(method: string, path: string, body: unknown, viaConnection: boolean): NextRequest {
+  const headers: Record<string, string> = { accept: "application/json", "content-type": "application/json" };
+  if (viaConnection) headers[MCP_PRINCIPAL_HEADER] = "contract-test-principal";
+  return new NextRequest(new URL(path, "https://club.example.test"), { method, headers, body: JSON.stringify(body) });
+}
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -174,6 +192,37 @@ describe("booking message wording", () => {
     expect(connection).toEqual({ reset: true });
     expect(h.prisma.bookingMessageOverride.deleteMany).toHaveBeenCalledWith({ where: { messageKey: MESSAGE_KEY } });
   });
+
+  it("flags the bank-transfer payment instructions, and not the card wording", () => {
+    expect(PAYMENT_INSTRUCTION_KEYS).toContain("paymentRequest.bankTransfer.instructions");
+    expect(PAYMENT_INSTRUCTION_KEYS).not.toContain(MESSAGE_KEY);
+  });
+
+  it("refuses a connection changing or resetting a payment-instruction message, and saves nothing", async () => {
+    for (const messageKey of PAYMENT_INSTRUCTION_KEYS) {
+      const put = await putBookingMessage(
+        rawRequest("PUT", "/api/admin/booking-messages", { messageKey, bodyText: "Pay into 12-3456-7890123-00." }, true),
+      );
+      expect(put.status, messageKey).toBe(403);
+      expect(await put.json()).toEqual({ error: BOOKING_PAYMENT_INSTRUCTIONS_WEBSITE_ONLY });
+      const reset = await resetBookingMessage(rawRequest("POST", "/api/admin/booking-messages/reset", { messageKey }, true));
+      expect(reset.status, messageKey).toBe(403);
+    }
+    expect(h.prisma.bookingMessageOverride.upsert).not.toHaveBeenCalled();
+    expect(h.prisma.bookingMessageOverride.deleteMany).not.toHaveBeenCalled();
+    expect(h.prisma.auditLog.create).not.toHaveBeenCalled();
+  });
+
+  it("still lets the website change a payment-instruction message", async () => {
+    const messageKey = "paymentRequest.bankTransfer.instructions";
+    h.prisma.bookingMessageOverride.findUnique.mockResolvedValue(null);
+    h.prisma.bookingMessageOverride.upsert.mockResolvedValue({ ...override, messageKey });
+    const response = await putBookingMessage(
+      rawRequest("PUT", "/api/admin/booking-messages", { messageKey, bodyText: "Pay into 12-3456-7890123-00." }, false),
+    );
+    expect(response.status).toBe(200);
+    expect(h.prisma.bookingMessageOverride.upsert).toHaveBeenCalled();
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -214,20 +263,48 @@ describe("get_email_settings and update_email_settings", () => {
     expect(JSON.stringify(browser)).toContain("4321");
   });
 
-  it("saves the fields the app sends, normalising the public address", async () => {
+  it("saves the fields the app sends", async () => {
     h.prisma.emailMessageSetting.findUnique.mockResolvedValue(null);
     h.prisma.emailMessageSetting.upsert.mockResolvedValue({ id: "default", ...persisted });
     h.loadSettingsForLodge.mockResolvedValue(inForce);
     const { connection } = await expectActionContract({
       actionId: "update_email_settings",
       handler: putEmailSettings,
-      args: { supportEmail: "support@example.test", publicUrl: "https://club.example.test/" },
+      args: { supportEmail: "support@example.test" },
     });
     expect(JSON.stringify(connection)).not.toContain("4321");
     expect(h.prisma.emailMessageSetting.upsert).toHaveBeenCalledWith(
-      expect.objectContaining({
-        update: expect.objectContaining({ supportEmail: "support@example.test", publicUrl: "https://club.example.test" }),
-      }),
+      expect.objectContaining({ update: expect.objectContaining({ supportEmail: "support@example.test" }) }),
+    );
+  });
+
+  it("offers the app no public address: the action's body is the route's schema without it", () => {
+    const action = SUPPORT_MESSAGE_MCP_ACTIONS.find((entry) => entry.id === "update_email_settings")!;
+    expect(action.body?.safeParse({ publicUrl: "https://attacker.example" }).success).toBe(false);
+    expect(action.body?.safeParse({ clubName: "Example Club" }).success).toBe(true);
+  });
+
+  it("refuses a connection setting the public address, even to the default, and saves nothing", async () => {
+    for (const publicUrl of ["https://attacker.example", null]) {
+      const response = await putEmailSettings(
+        rawRequest("PUT", "/api/admin/email-settings", { supportEmail: "support@example.test", publicUrl }, true),
+      );
+      expect(response.status).toBe(403);
+      expect(((await response.json()) as { error: string }).error).toMatch(/club website/);
+    }
+    expect(h.prisma.emailMessageSetting.upsert).not.toHaveBeenCalled();
+  });
+
+  it("still lets the website set the public address, normalised", async () => {
+    h.prisma.emailMessageSetting.findUnique.mockResolvedValue(null);
+    h.prisma.emailMessageSetting.upsert.mockResolvedValue({ id: "default", ...persisted });
+    h.loadSettingsForLodge.mockResolvedValue(inForce);
+    const response = await putEmailSettings(
+      rawRequest("PUT", "/api/admin/email-settings", { publicUrl: "https://club.example.test/" }, false),
+    );
+    expect(response.status).toBe(200);
+    expect(h.prisma.emailMessageSetting.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({ update: expect.objectContaining({ publicUrl: "https://club.example.test" }) }),
     );
   });
 });

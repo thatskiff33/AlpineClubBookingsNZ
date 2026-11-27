@@ -9,7 +9,11 @@ import {
   PRIVACY_RETENTION_SAVED_CONNECTION_SHAPE,
   type PrivacyRetentionAnswer,
 } from "@/lib/connection-shapes/support-system";
-import { connectionJson } from "@/lib/mcp-connection-request";
+import {
+  arrivesAsMcpConnection,
+  connectionJson,
+  websiteOnlyForConnection,
+} from "@/lib/mcp-connection-request";
 import { parseJsonRequestBody } from "@/lib/api-json";
 import { getPrivacyRetentionPreview } from "@/lib/privacy-retention";
 import {
@@ -95,6 +99,17 @@ export async function PUT(request: Request) {
     const saved = current ??= await getPrivacyRetentionSettings();
     if ([...fields].some(field => parsed.data[field] !== saved[field])) {
       return NextResponse.json({ error }, { status: 403 });
+    }
+  }
+  // ALP-724: session replay records members' sessions to a third party. That
+  // is privacy posture, website-only, so an AI app connection must send the
+  // saved value back unchanged.
+  if (arrivesAsMcpConnection(request)) {
+    const saved = current ??= await getPrivacyRetentionSettings();
+    if (parsed.data.sentryReplayEnabled !== saved.sentryReplayEnabled) {
+      return websiteOnlyForConnection(
+        "Session replay records members' sessions to an outside service, so it is switched on or off on the club website.",
+      );
     }
   }
   const settings = await savePrivacyRetentionSettings(parsed.data, guard.session.user.id);

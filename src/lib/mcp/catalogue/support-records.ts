@@ -48,7 +48,7 @@ export const SUPPORT_RECORD_MCP_ACTIONS: readonly McpAction[] = [
     id: "list_issue_reports",
     title: "List problem reports",
     summary:
-      "Officer: problem reports members sent from the website, newest first: `OPEN` by default, or `RESOLVED` or `ALL`. Each has the page it came from, what the member wrote, who sent it, whether a screenshot is still kept, and how it was resolved. Every read is recorded in the audit log.",
+      "Officer: problem reports members sent from the website, newest first: `OPEN` by default, or `RESOLVED` or `ALL`. Each has the path of the page it came from (no query), what the member wrote, who sent it, whether a screenshot is still kept, and how it was resolved. Every read is recorded in the audit log.",
     method: "GET",
     path: "/api/admin/issue-reports",
     query: issueReportListQuerySchema,

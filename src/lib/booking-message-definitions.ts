@@ -71,6 +71,14 @@ export interface BookingMessageDefinition {
   description: string;
   defaultBody: string;
   tokens: readonly BookingMessageToken[];
+  /**
+   * Whether a member reads this message at the point of paying by bank
+   * transfer, where the club writes the account or reference to pay into.
+   * Changing it is `club-setup`, like the Internet Banking settings, so an AI
+   * app connection may not change or reset it (ALP-724). Required, so every
+   * new message decides.
+   */
+  carriesPaymentInstructions: boolean;
 }
 
 const ALL_TOKENS = BOOKING_MESSAGE_TOKENS;
@@ -83,6 +91,7 @@ export const BOOKING_MESSAGE_DEFINITIONS: readonly BookingMessageDefinition[] = 
     description: "Shown next to the card payment option during member booking.",
     defaultBody: "Pay now and secure the booking immediately.",
     tokens: ALL_TOKENS,
+    carriesPaymentInstructions: false,
   },
   {
     key: "booking.payment.internetBanking.description",
@@ -92,6 +101,7 @@ export const BOOKING_MESSAGE_DEFINITIONS: readonly BookingMessageDefinition[] = 
     defaultBody:
       "Receive a Xero invoice by email and make payment via internet banking. Once the payment is reconciled and sync'd back to the booking system, your booking will be confirmed. Until then your booking is not held and someone else could take your space by booking and paying with Card.",
     tokens: ALL_TOKENS,
+    carriesPaymentInstructions: false,
   },
   {
     key: "booking.payment.internetBanking.unavailable",
@@ -101,6 +111,7 @@ export const BOOKING_MESSAGE_DEFINITIONS: readonly BookingMessageDefinition[] = 
     defaultBody:
       "Internet Banking is not available for this check-in date. Please pay by card to secure the booking immediately.",
     tokens: ALL_TOKENS,
+    carriesPaymentInstructions: false,
   },
   {
     key: "booking.detail.paymentRequired.description",
@@ -110,6 +121,7 @@ export const BOOKING_MESSAGE_DEFINITIONS: readonly BookingMessageDefinition[] = 
     defaultBody:
       "Payment is required to secure this booking. Availability may change until payment succeeds.",
     tokens: ALL_TOKENS,
+    carriesPaymentInstructions: false,
   },
   {
     key: "booking.detail.internetBanking.pending",
@@ -119,6 +131,7 @@ export const BOOKING_MESSAGE_DEFINITIONS: readonly BookingMessageDefinition[] = 
     defaultBody:
       "Your Xero invoice has been emailed. Use reference {{paymentReference}} when paying by internet banking. Your booking will be confirmed once the payment is reconciled.",
     tokens: ALL_TOKENS,
+    carriesPaymentInstructions: true,
   },
   {
     // #2263: the same card, for a club running WITHOUT the Xero module. The
@@ -134,6 +147,7 @@ export const BOOKING_MESSAGE_DEFINITIONS: readonly BookingMessageDefinition[] = 
     defaultBody:
       "Use reference {{paymentReference}} when paying by internet banking. The club will send you an invoice and will record the payment once it arrives.",
     tokens: ALL_TOKENS,
+    carriesPaymentInstructions: true,
   },
   {
     key: "booking.detail.switchToInternetBanking",
@@ -143,6 +157,7 @@ export const BOOKING_MESSAGE_DEFINITIONS: readonly BookingMessageDefinition[] = 
     defaultBody:
       "Prefer to pay by internet banking? We will email a Xero invoice and confirm the booking after the payment is reconciled.",
     tokens: ALL_TOKENS,
+    carriesPaymentInstructions: false,
   },
   {
     key: "booking.detail.switchToInternetBankingWholeLodge",
@@ -153,6 +168,7 @@ export const BOOKING_MESSAGE_DEFINITIONS: readonly BookingMessageDefinition[] = 
     defaultBody:
       "Prefer to pay by internet banking? We will email a Xero invoice. Your whole-lodge booking stays confirmed while the payment is outstanding.",
     tokens: ALL_TOKENS,
+    carriesPaymentInstructions: false,
   },
   {
     key: "booking.detail.switchToInternetBankingConfirm",
@@ -162,6 +178,7 @@ export const BOOKING_MESSAGE_DEFINITIONS: readonly BookingMessageDefinition[] = 
     defaultBody:
       "We'll email you a Xero invoice to pay by bank transfer, and confirm your booking once the payment is reconciled. You can't switch back to paying by card from this page.",
     tokens: ALL_TOKENS,
+    carriesPaymentInstructions: false,
   },
   {
     key: "booking.detail.switchToInternetBankingConfirmWholeLodge",
@@ -171,6 +188,7 @@ export const BOOKING_MESSAGE_DEFINITIONS: readonly BookingMessageDefinition[] = 
     defaultBody:
       "We'll email you a Xero invoice to pay by bank transfer. Your whole-lodge booking stays confirmed while the payment is outstanding. You can't switch back to paying by card from this page.",
     tokens: ALL_TOKENS,
+    carriesPaymentInstructions: false,
   },
   {
     key: "booking.detail.financialReviewPending",
@@ -181,6 +199,7 @@ export const BOOKING_MESSAGE_DEFINITIONS: readonly BookingMessageDefinition[] = 
     defaultBody:
       "We keep a record of what every stay was sold for, and for this booking that record is not clear enough to work the amount out from. Rather than put a figure on it that was never actually charged, somebody here goes through it by hand.",
     tokens: ALL_TOKENS,
+    carriesPaymentInstructions: false,
   },
   {
     key: "paymentLink.internetBanking.description",
@@ -190,6 +209,7 @@ export const BOOKING_MESSAGE_DEFINITIONS: readonly BookingMessageDefinition[] = 
     defaultBody:
       "Use reference {{paymentReference}} when making a direct transfer. The booking will be confirmed after the Xero invoice payment is reconciled.",
     tokens: ALL_TOKENS,
+    carriesPaymentInstructions: true,
   },
   {
     key: "paymentRequest.bankTransfer.instructions",
@@ -199,6 +219,7 @@ export const BOOKING_MESSAGE_DEFINITIONS: readonly BookingMessageDefinition[] = 
       "Added to the email that asks a member to pay for account credit that was used elsewhere in the club's accounts, so they can pay by bank transfer as well as by card. Write the account name and number here; the email already quotes the Xero invoice number as the payment reference. While this is empty the email offers card payment only, so fill it in before payment requests are switched on.",
     defaultBody: "",
     tokens: ALL_TOKENS,
+    carriesPaymentInstructions: true,
   },
   {
     key: "cancellation.refundAppeal.description",
@@ -208,6 +229,7 @@ export const BOOKING_MESSAGE_DEFINITIONS: readonly BookingMessageDefinition[] = 
     defaultBody:
       "If your cancellation is outside the automatic refund window, you can ask the committee to review the refund outcome.",
     tokens: ALL_TOKENS,
+    carriesPaymentInstructions: false,
   },
   {
     key: "groupBooking.settle.description",
@@ -217,6 +239,7 @@ export const BOOKING_MESSAGE_DEFINITIONS: readonly BookingMessageDefinition[] = 
     defaultBody:
       "Pay for every joiner's beds in one settlement. Card payment confirms the group immediately; Internet Banking sends one Xero invoice for the organiser to pay.",
     tokens: ALL_TOKENS,
+    carriesPaymentInstructions: false,
   },
   {
     key: "groupBooking.internetBanking.description",
@@ -226,6 +249,7 @@ export const BOOKING_MESSAGE_DEFINITIONS: readonly BookingMessageDefinition[] = 
     defaultBody:
       "Receive one Xero invoice by email for the organiser-settled group bookings.",
     tokens: ALL_TOKENS,
+    carriesPaymentInstructions: false,
   },
   {
     key: "groupBooking.invoiceSent.description",
@@ -235,8 +259,13 @@ export const BOOKING_MESSAGE_DEFINITIONS: readonly BookingMessageDefinition[] = 
     defaultBody:
       "The organiser invoice has been emailed. The group booking stays confirmed while Xero reconciles the payment.",
     tokens: ALL_TOKENS,
+    carriesPaymentInstructions: false,
   },
 ] as const;
+
+/** An AI app's refusal for a message that `carriesPaymentInstructions` (ALP-724). */
+export const BOOKING_PAYMENT_INSTRUCTIONS_WEBSITE_ONLY =
+  "This message tells members where to pay by bank transfer, so it is changed or reset on the club website.";
 
 export const BOOKING_MESSAGE_DEFINITION_BY_KEY = new Map(
   BOOKING_MESSAGE_DEFINITIONS.map((definition) => [definition.key, definition]),

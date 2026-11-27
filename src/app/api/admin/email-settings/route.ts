@@ -1,8 +1,15 @@
 import { NextRequest, NextResponse } from "next/server";
 import { parseJsonRequestBody } from "@/lib/api-json";
-import { emailMessageSettingsUpdateSchema } from "@/lib/admin-support-api/messages";
+import {
+  emailMessageSettingsConnectionUpdateSchema,
+  emailMessageSettingsUpdateSchema,
+} from "@/lib/admin-support-api/messages";
 import { EMAIL_SETTINGS_CONNECTION_SHAPE } from "@/lib/connection-shapes/support-messages";
-import { connectionJson } from "@/lib/mcp-connection-request";
+import {
+  arrivesAsMcpConnection,
+  connectionJson,
+  websiteOnlyForConnection,
+} from "@/lib/mcp-connection-request";
 import {
   buildStructuredAuditLogCreateArgs,
   getAuditRequestContext,
@@ -50,7 +57,18 @@ export async function PUT(request: NextRequest) {
   if (!jsonBody.ok) return jsonBody.response;
   const body = jsonBody.body;
 
-  const parsed = emailMessageSettingsUpdateSchema.safeParse(body);
+  // ALP-724: every email's links, sign-in and password-reset links among them,
+  // point at `publicUrl` (`applyEmailMessageSettingsToHtml`). That is
+  // `sign-in-access`, so an AI app connection may not set it, even to null.
+  const viaConnection = arrivesAsMcpConnection(request);
+  if (viaConnection && typeof body === "object" && body !== null && "publicUrl" in body) {
+    return websiteOnlyForConnection(
+      "The public address that every email's links, sign-in and password-reset links among them, point to is changed on the club website.",
+    );
+  }
+  const parsed = viaConnection
+    ? emailMessageSettingsConnectionUpdateSchema.safeParse(body)
+    : emailMessageSettingsUpdateSchema.safeParse(body);
   if (!parsed.success) {
     return NextResponse.json(
       { error: "Invalid input", details: parsed.error.flatten() },

@@ -1082,8 +1082,18 @@ Bookings & Beds above.
   `account`, `family`, `communication` and `privacy` Membership. An entry with
   no category is never sent. The route decides this, whatever the app filters
   on. The filter lists the screen draws from every entry are not sent either.
-- **What is never sent.** A problem report's screenshot and the reporter's
-  browser details, the lodge's door code (the email settings carry it for the
+- **Parts that stay on the website.** The route refuses these on an AI app
+  request, though the action itself is offered: the email settings' public
+  address, which every email's links point to, sign-in and password-reset
+  links among them; changing a template that carries a one-time `{{token}}`
+  link (from the registry's required tokens); changing or resetting the
+  booking messages that tell members where to pay by bank transfer
+  (`carriesPaymentInstructions` on the message); and switching session replay
+  (`sentryReplayEnabled`) in privacy retention, which must be sent back as
+  read.
+- **What is never sent.** A problem report's screenshot, the query and
+  fragment of the page address it came from (the path is sent), the reporter's
+  browser details, a failed email's transport error unredacted, the lodge's door code (the email settings carry it for the
   emails that print it), a backup's credentials, directory and file names,
   the audit log's IP addresses, browser details and structured metadata, and
   the email addresses on the people an audit entry or problem report names.

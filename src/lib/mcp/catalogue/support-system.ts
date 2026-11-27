@@ -261,7 +261,7 @@ export const SUPPORT_SYSTEM_MCP_ACTIONS: readonly McpAction[] = [
     id: "update_privacy_retention",
     title: "Change the privacy retention settings",
     summary:
-      "Officer: saves every retention setting at once (read them first with `get_privacy_retention`): years to keep email logs, rejected applications and former members, days to keep a stay's dietary needs, and which removal jobs run. Member and application settings need Membership edit, dietary ones Bookings edit. Switched-on jobs delete data for good. Answers the saved settings.",
+      "Officer: saves every retention setting at once (read them first with `get_privacy_retention`): years to keep email logs, rejected applications and former members, days to keep a stay's dietary needs, and which removal jobs run. Member and application settings need Membership edit, dietary ones Bookings edit. `sentryReplayEnabled` (session replay, recording members' sessions to an outside service) must be sent back as read: it is switched on the club website only. Switched-on jobs delete data for good. Answers the saved settings.",
     method: "PUT",
     path: "/api/admin/privacy-retention",
     body: privacyRetentionSettingsSchema,

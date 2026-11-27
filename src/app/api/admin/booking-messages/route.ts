@@ -4,13 +4,18 @@ import {
   BOOKING_MESSAGE_SAVED_CONNECTION_SHAPE,
   BOOKING_MESSAGE_WORDING_LIST_CONNECTION_SHAPE,
 } from "@/lib/connection-shapes/support-messages";
-import { connectionJson } from "@/lib/mcp-connection-request";
+import {
+  arrivesAsMcpConnection,
+  connectionJson,
+  websiteOnlyForConnection,
+} from "@/lib/mcp-connection-request";
 import {
   buildStructuredAuditLogCreateArgs,
   getAuditRequestContext,
 } from "@/lib/audit";
 import {
   BOOKING_MESSAGE_DEFINITION_BY_KEY,
+  BOOKING_PAYMENT_INSTRUCTIONS_WEBSITE_ONLY,
   BOOKING_MESSAGE_KEYS,
   validateBookingMessageContent,
   type BookingMessageKey,
@@ -61,6 +66,15 @@ export async function PUT(request: NextRequest) {
 
   if (!bookingMessageKeySet.has(parsed.data.messageKey)) {
     return NextResponse.json({ error: "Unknown booking message" }, { status: 400 });
+  }
+
+  // ALP-724: payment instructions carry the account members pay into
+  // (`club-setup`), so an AI app connection may not change or reset them.
+  if (
+    arrivesAsMcpConnection(request) &&
+    BOOKING_MESSAGE_DEFINITION_BY_KEY.get(parsed.data.messageKey as BookingMessageKey)?.carriesPaymentInstructions
+  ) {
+    return websiteOnlyForConnection(BOOKING_PAYMENT_INSTRUCTIONS_WEBSITE_ONLY);
   }
 
   const validation = validateBookingMessageContent(parsed.data.bodyText);

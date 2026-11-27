@@ -122,6 +122,13 @@ export const emailMessageSettingsUpdateSchema = z
   })
   .strict();
 
+/**
+ * `PUT /api/admin/email-settings` from an AI app connection: every field but
+ * `publicUrl`, which the sign-in and password-reset links point to and so
+ * stays on the website (`sign-in-access`, ALP-724). The route refuses it.
+ */
+export const emailMessageSettingsConnectionUpdateSchema = emailMessageSettingsUpdateSchema.omit({ publicUrl: true });
+
 // ---------------------------------------------------------------------------
 // Delivery policies and officers' alerts
 // ---------------------------------------------------------------------------

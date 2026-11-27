@@ -223,6 +223,19 @@ describe("list_issue_reports and get_issue_report", () => {
     expect(h.prisma.issueReport.findMany).toHaveBeenCalledWith(expect.objectContaining({ where: {} }));
   });
 
+  it("sends a connection the page's path only, the browser the address whole", async () => {
+    const pageUrl = "https://club.example.test/login/magic?token=one-time-abc#top";
+    h.prisma.issueReport.findMany.mockResolvedValue([{ ...REPORT, pageUrl }]);
+    h.prisma.issueReport.count.mockResolvedValue(1);
+    h.prisma.issueReport.findUnique.mockResolvedValue({ ...REPORT, pageUrl });
+    const list = await expectActionContract({ actionId: "list_issue_reports", handler: listIssueReports, args: { status: "ALL" } });
+    const one = await expectActionContract({ actionId: "get_issue_report", handler: getIssueReport, args: { id: "report-1" } });
+    expect((list.connection as { reports: Array<{ pageUrl: string }> }).reports[0]!.pageUrl).toBe("/login/magic");
+    expect((one.connection as { report: { pageUrl: string } }).report.pageUrl).toBe("/login/magic");
+    expect((list.browser as { reports: Array<{ pageUrl: string }> }).reports[0]!.pageUrl).toBe(pageUrl);
+    expect((one.browser as { report: { pageUrl: string } }).report.pageUrl).toBe(pageUrl);
+  });
+
   it("reads one report without its screenshot or browser details, which the browser still gets", async () => {
     h.prisma.issueReport.findUnique.mockResolvedValue(REPORT);
     const { connection, browser } = await expectActionContract({

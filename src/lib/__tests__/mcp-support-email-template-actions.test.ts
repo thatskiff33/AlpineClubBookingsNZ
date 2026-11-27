@@ -7,7 +7,9 @@
  * browser), so the mocks answer both runs.
  *
  * The registry is cut to one template so a fixture can carry a saved override
- * for every template the route lists.
+ * for every template the route lists. The route still knows `password-reset`
+ * (`ACCESS_TEMPLATE`), so a connection's change to a template that carries a
+ * one-time sign-in link can be seen refused.
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -25,7 +27,7 @@ vi.mock("@/lib/prisma", () => ({ prisma: h.prisma }));
 vi.mock("@/lib/email-message-registry", async (importOriginal) => {
   const actual = (await importOriginal()) as typeof import("@/lib/email-message-registry");
   const only = actual.EMAIL_TEMPLATE_DEFINITIONS.find((definition) => definition.key === "booking-confirmed")!;
-  return { ...actual, EMAIL_TEMPLATE_DEFINITIONS: [only], EMAIL_TEMPLATE_KEY_SET: new Set([only.key]) };
+  return { ...actual, EMAIL_TEMPLATE_DEFINITIONS: [only], EMAIL_TEMPLATE_KEY_SET: new Set([only.key, "password-reset"]) };
 });
 vi.mock("@/lib/email-message-renderer", async (importOriginal) => ({
   ...((await importOriginal()) as typeof import("@/lib/email-message-renderer")),
@@ -41,11 +43,15 @@ import {
   officerMemberSession,
 } from "@/lib/__tests__/helpers/mcp-action-contract";
 import { EMAIL_TEMPLATE_DEFINITIONS } from "@/lib/email-message-registry";
+import { emailTemplateCarriesAccessToken } from "@/lib/email-template-access-token";
+import { MCP_PRINCIPAL_HEADER } from "@/lib/mcp/principal";
+import { NextRequest } from "next/server";
 import { findMcpAction } from "@/lib/mcp/catalogue";
 import { EMAIL_TEMPLATE_LIST_CONNECTION_SHAPE } from "@/lib/connection-shapes/support-messages";
 
 const STAMP = new Date("2026-06-30T00:00:00.000Z");
 const TEMPLATE = EMAIL_TEMPLATE_DEFINITIONS[0]!;
+const ACCESS_TEMPLATE = "password-reset";
 
 const OVERRIDE = {
   templateName: TEMPLATE.key,
@@ -162,5 +168,43 @@ describe("update_email_template and reset_email_template", () => {
       args: { templateName: TEMPLATE.key },
     });
     expect(connection).toEqual({ reset: true });
+  });
+
+  it("refuses a connection changing a template that carries a one-time link, and saves nothing", async () => {
+    expect(emailTemplateCarriesAccessToken(ACCESS_TEMPLATE)).toBe(true);
+    expect(emailTemplateCarriesAccessToken(TEMPLATE.key)).toBe(false);
+    // The catalogue's schema accepts it: the refusal is the route's.
+    const { request } = buildActionRequest(
+      findMcpAction("update_email_template")!,
+      { templateName: ACCESS_TEMPLATE, bodyText: "Reset here: https://attacker.example/reset?token={{token}}" },
+      true,
+    );
+    const response = await putTemplate(request as never);
+    expect(response.status).toBe(403);
+    expect(((await response.json()) as { error: string }).error).toMatch(/club website/);
+    expect(h.prisma.emailTemplateOverride.upsert).not.toHaveBeenCalled();
+  });
+
+  it("still lets the website reach that template's save", async () => {
+    // Past the connection refusal, the route's own content rules apply.
+    const request = new NextRequest(new URL("/api/admin/email-templates", "https://club.example.test"), {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ templateName: ACCESS_TEMPLATE, subject: "Reset your password" }),
+    });
+    const response = await putTemplate(request as never);
+    expect(response.status).not.toBe(403);
+    expect(request.headers.has(MCP_PRINCIPAL_HEADER)).toBe(false);
+  });
+});
+
+describe("emailTemplateCarriesAccessToken", () => {
+  it("covers every template that may use a one-time {{token}} link, from the required-token table", async () => {
+    const actual = (await vi.importActual("@/lib/email-message-registry")) as typeof import("@/lib/email-message-registry");
+    const usesToken = actual.EMAIL_TEMPLATE_DEFINITIONS.filter((definition) =>
+      definition.allowedTokens.includes("token"),
+    ).map((definition) => definition.key);
+    expect(usesToken.length).toBeGreaterThan(0);
+    expect(usesToken.filter((key) => !emailTemplateCarriesAccessToken(key))).toEqual([]);
   });
 });
