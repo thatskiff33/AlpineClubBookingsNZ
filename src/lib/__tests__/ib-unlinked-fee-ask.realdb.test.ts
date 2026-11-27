@@ -1,12 +1,20 @@
 /**
  * Real-PostgreSQL proof for #5288 (owner decision, 20 Nov 2026): an edit that
  * raises what a PAID Internet Banking booking is worth, before its primary Xero
- * invoice is linked, asks for the increase as a linked booking's edit does - the
+ * invoice is linked, asks for it as a linked booking's edit does - the
  * "additional Internet Banking payment" email with the payment reference - and
  * bills it by raising the primary invoice now. That invoice bills the price plus
  * every recorded fee (`buildPrimaryInvoiceLines`), with the applied credit
  * allocated against it, so the increase is on one Xero document by
  * construction and no supplementary invoice is raised beside it.
+ *
+ * THE AMOUNT ASKED IS WHAT THAT INVOICE SHOWS AS DUE (owner decision, 28 Nov
+ * 2026), not this edit's increase: its lines' total less the applied credit the
+ * allocation will put against it. The two differ when an earlier fee was never
+ * asked for and when an earlier reduction left credit with the club; both are
+ * proved below against the create's own line builder and the allocation
+ * engine's own credit read. Xero is not asked to email the invoice: the
+ * booking-changed email is the ask.
  *
  * THE EDIT IS THE REAL DOOR: `modifyBookingDates` and `modifyBookingBatch`,
  * under their real locks and post-lock re-read. The invoice's provider leg is
@@ -47,6 +55,11 @@ const NIGHT_2 = new Date("2026-07-11T00:00:00.000Z");
 const CHECK_OUT = new Date("2026-07-12T00:00:00.000Z");
 // Nineteen days out, same length: the price is unchanged, so the fee alone is owed.
 const MOVED = { checkIn: "2026-07-20", checkOut: "2026-07-22" };
+// Two days later, still inside the 50% tier, so a move on from here is charged again.
+const NUDGED = { checkIn: "2026-07-12", checkOut: "2026-07-14" };
+// The seeded stay, and its first night alone.
+const SEEDED = { checkIn: "2026-07-10", checkOut: "2026-07-12" };
+const SHORTENED = { checkIn: "2026-07-10", checkOut: "2026-07-11" };
 // One night longer than MOVED, for a later edit of the moved stay.
 const MOVED_LONGER = { checkIn: "2026-07-20", checkOut: "2026-07-23" };
 const NIGHT_CENTS = 5_000;
@@ -54,6 +67,7 @@ const PRICE_CENTS = 2 * NIGHT_CENTS;
 /** (100% - 50%) of the original price: the fee the policy sets for the move. */
 const FEE_CENTS = PRICE_CENTS / 2;
 const IB_ASK = /An additional Internet Banking payment of \$50\.00 is required\./;
+const ANY_IB_ASK = /An additional Internet Banking payment of \$(\d+)\.(\d\d) is required\./;
 
 let prisma: PrismaClient;
 let batchService: typeof import("@/lib/booking-batch-modification-service");
@@ -71,6 +85,7 @@ let paymentState: typeof import("@/lib/booking-payment-state");
 let lineItems: typeof import("@/lib/xero-modification-line-items");
 let mappings: typeof import("@/lib/xero-mappings");
 let taxRendering: typeof import("@/lib/xero-tax-rendering");
+let appliedCreditState: typeof import("@/lib/xero-applied-credit-ledger-state");
 const pendingXeroWork: Promise<unknown>[] = [];
 let restoreXeroQueue: (() => void) | undefined;
 let priorModules: { xeroIntegration: boolean } | null | undefined;
@@ -132,7 +147,8 @@ async function setXeroModule(on: boolean): Promise<void> {
  * credit settled, nothing captured, no primary invoice linked yet - one guest,
  * two nights, the credit on the ledger as the settle posted it.
  */
-async function seed(): Promise<void> {
+async function seed(bankCashCents = 0): Promise<void> {
+  const creditCents = PRICE_CENTS - bankCashCents;
   await prisma.booking.create({
     data: {
       id: BOOKING_ID,
@@ -168,8 +184,8 @@ async function seed(): Promise<void> {
     data: {
       id: PAYMENT_ID,
       bookingId: BOOKING_ID,
-      amountCents: 0,
-      creditAppliedCents: PRICE_CENTS,
+      amountCents: bankCashCents,
+      creditAppliedCents: creditCents,
       source: "INTERNET_BANKING",
       status: "SUCCEEDED",
       reference: REFERENCE,
@@ -179,7 +195,7 @@ async function seed(): Promise<void> {
           id: PRIMARY_ID,
           kind: "PRIMARY",
           source: "INTERNET_BANKING",
-          amountCents: 0,
+          amountCents: bankCashCents,
           status: "SUCCEEDED",
           reference: REFERENCE,
           reason: "internet_banking_booking_payment",
@@ -188,7 +204,7 @@ async function seed(): Promise<void> {
     },
   });
   await prisma.memberCredit.create({
-    data: { memberId: OWNER_ID, amountCents: -PRICE_CENTS, type: "BOOKING_APPLIED", appliedToBookingId: BOOKING_ID, description: "Applied at booking" },
+    data: { memberId: OWNER_ID, amountCents: -creditCents, type: "BOOKING_APPLIED", appliedToBookingId: BOOKING_ID, description: "Applied at booking" },
   });
   await prisma.$transaction((tx) =>
     confirmationSync.postStoredBookingConfirmationLedgerLines(tx, BOOKING_ID, memberMoneyTestContext()),
@@ -227,7 +243,7 @@ async function moveByBatch(input: { checkIn: string; checkOut: string } = MOVED)
 async function primaryInvoiceOps() {
   return prisma.xeroSyncOperation.findMany({
     where: { localModel: "Payment", localId: PAYMENT_ID, entityType: "INVOICE", operationType: "CREATE" },
-    select: { id: true, status: true },
+    select: { id: true, status: true, invoiceEmailDelivery: true },
   });
 }
 
@@ -275,14 +291,61 @@ async function censusVerdicts() {
   return { typed, raw };
 }
 
+/** The primary invoice as the create builds it now: its own snapshot read and line builder. */
+async function buildPrimaryInvoiceAsTheCreateDoes() {
+  const { booking: read, markedModificationIdsAtBuild } = await snapshot.readBookingForPrimaryInvoice(BOOKING_ID);
+  const booking = read!;
+  const built = primaryLines.buildPrimaryInvoiceLines({
+    guests: booking.guests.map((guest) => ({
+      firstName: guest.firstName,
+      lastName: guest.lastName,
+      ageTier: guest.ageTier,
+      isMember: guest.isMember,
+      priceCents: guest.priceCents,
+      nights: guest.nights.map((night) => ({ stayDate: night.stayDate, priceCents: night.priceCents })),
+    })),
+    checkIn: booking.checkIn,
+    checkOut: booking.checkOut,
+    nights: Math.round((booking.checkOut.getTime() - booking.checkIn.getTime()) / 86_400_000),
+    hutFeeMapping: { code: "200", itemCode: null, codeExplicitlyConfigured: false },
+    hutFeeItemCodeMap: await mappings.getHutFeeItemCodeMap(),
+    seasonType: "WINTER",
+    promo: { aggregateCents: 0, redemptions: [], adjustmentRows: [], firstGuest: null },
+    changeFeeCents: paymentState.recordedChangeFeeCents(booking.payment),
+    taxRendering: taxRendering.BASELINE_XERO_TAX_RENDERING,
+  });
+  return { booking, built, markedModificationIdsAtBuild, lineTotalCents: lineItems.invoiceLineItemsTotalCents(built.lines) };
+}
+
+/** What the latest booking-changed email asks the member to pay by bank transfer, in cents; null when it asks nothing. */
+async function emailAskedCents(): Promise<number | null> {
+  const asked = ANY_IB_ASK.exec(await modifiedEmailHtml());
+  return asked ? Number(asked[1]) * 100 + Number(asked[2]) : null;
+}
+
+/**
+ * THE OWNER'S RULE (28 Nov 2026): the email asks for what the new primary
+ * invoice shows as due - its lines as the create builds them, less the applied
+ * credit the allocation engine will put against it. Returns that amount.
+ */
+async function expectEmailAsksInvoiceDue(): Promise<number> {
+  await drainXeroWork();
+  const { lineTotalCents } = await buildPrimaryInvoiceAsTheCreateDoes();
+  const dueCents = lineTotalCents - (await appliedCreditState.unallocatedAppliedCents(BOOKING_ID));
+  expect(await emailAskedCents()).toBe(dueCents);
+  return dueCents;
+}
+
 /** The fee-only move's asks: the email, one primary invoice and its credit allocation, and the census. */
 async function expectFeeAskedOnNewPrimaryInvoice(): Promise<void> {
   await drainXeroWork();
   const html = await modifiedEmailHtml();
   expect(html).toMatch(IB_ASK);
   expect(html).toContain(`Payment reference: ${REFERENCE}.`);
+  expect(await expectEmailAsksInvoiceDue()).toBe(FEE_CENTS);
 
-  expect(await primaryInvoiceOps()).toEqual([expect.objectContaining({ status: "PENDING" })]);
+  // Raised unemailed: Xero's email would go out before the credit is allocated.
+  expect(await primaryInvoiceOps()).toEqual([expect.objectContaining({ status: "PENDING", invoiceEmailDelivery: "ASKED_BY_EDIT" })]);
   expect(await allocationOps()).toEqual([{ status: "PENDING" }]);
   expect(await supplementaryInvoiceOps()).toEqual([]);
 
@@ -311,6 +374,7 @@ async function expectFeeAskedOnNewPrimaryInvoice(): Promise<void> {
     lineItems = await import("@/lib/xero-modification-line-items");
     mappings = await import("@/lib/xero-mappings");
     taxRendering = await import("@/lib/xero-tax-rendering");
+    appliedCreditState = await import("@/lib/xero-applied-credit-ledger-state");
     const queue = editSettlement.queueXeroBookingEditSettlement;
     // Pass-through: the harness imports every suite into one process.
     const spy = vi.spyOn(editSettlement, "queueXeroBookingEditSettlement").mockImplementation((input) => {
@@ -419,7 +483,9 @@ async function expectFeeAskedOnNewPrimaryInvoice(): Promise<void> {
     await moveByDates();
     await drainXeroWork();
 
-    expect(await primaryInvoiceOps()).toEqual([{ id: before.queueOperationId, status: "PENDING" }]);
+    // The queued create keeps the instruction it was enqueued with: the column
+    // is written once (#2929), so this one is emailed by the ordinary rules.
+    expect(await primaryInvoiceOps()).toEqual([{ id: before.queueOperationId, status: "PENDING", invoiceEmailDelivery: null }]);
     expect(await supplementaryInvoiceOps()).toEqual([]);
   }, 60_000);
 
@@ -429,27 +495,7 @@ async function expectFeeAskedOnNewPrimaryInvoice(): Promise<void> {
     const [operation] = await primaryInvoiceOps();
 
     // The create, up to Xero and back: its own read and line builder.
-    const { booking: read, markedModificationIdsAtBuild } = await snapshot.readBookingForPrimaryInvoice(BOOKING_ID);
-    const booking = read!;
-    const built = primaryLines.buildPrimaryInvoiceLines({
-      guests: booking.guests.map((guest) => ({
-        firstName: guest.firstName,
-        lastName: guest.lastName,
-        ageTier: guest.ageTier,
-        isMember: guest.isMember,
-        priceCents: guest.priceCents,
-        nights: guest.nights.map((night) => ({ stayDate: night.stayDate, priceCents: night.priceCents })),
-      })),
-      checkIn: booking.checkIn,
-      checkOut: booking.checkOut,
-      nights: 2,
-      hutFeeMapping: { code: "200", itemCode: null, codeExplicitlyConfigured: false },
-      hutFeeItemCodeMap: await mappings.getHutFeeItemCodeMap(),
-      seasonType: "WINTER",
-      promo: { aggregateCents: 0, redemptions: [], adjustmentRows: [], firstGuest: null },
-      changeFeeCents: paymentState.recordedChangeFeeCents(booking.payment),
-      taxRendering: taxRendering.BASELINE_XERO_TAX_RENDERING,
-    });
+    const { booking, built, markedModificationIdsAtBuild } = await buildPrimaryInvoiceAsTheCreateDoes();
     expect(built.feeLines).toHaveLength(1);
     expect(lineItems.invoiceLineItemsTotalCents(built.feeLines)).toBe(FEE_CENTS);
     expect(lineItems.invoiceLineItemsTotalCents(built.lines)).toBe(PRICE_CENTS + FEE_CENTS);
@@ -519,6 +565,68 @@ async function expectFeeAskedOnNewPrimaryInvoice(): Promise<void> {
     const supplementary = await supplementaryInvoiceOps();
     expect(supplementary).toHaveLength(1);
     expect(supplementary[0].requestPayload).toMatchObject({ priceDiffCents: 0, changeFeeCents: FEE_CENTS });
+  }, 60_000);
+
+  it("MUTATION: an earlier fee nobody asked for is in the ask, because the new invoice bills it", async () => {
+    // The state an edit left before #5288: its fee recorded, no invoice, no ask.
+    await moveByDates(NUDGED);
+    await drainXeroWork();
+    await modifiedEmailHtml();
+    await prisma.xeroSyncOperation.deleteMany({ where: { localModel: "Payment", localId: PAYMENT_ID } });
+    await prisma.emailLog.deleteMany({ where: { bookingId: BOOKING_ID } });
+    expect((await censusVerdicts()).typed).toMatchObject({ residualCents: FEE_CENTS, verdict: "unasked" });
+
+    await moveByDates();
+
+    // $100 of nights and two $50 fees on the invoice, $100 of credit against it.
+    expect((await buildPrimaryInvoiceAsTheCreateDoes()).lineTotalCents).toBe(PRICE_CENTS + 2 * FEE_CENTS);
+    expect(await expectEmailAsksInvoiceDue()).toBe(2 * FEE_CENTS);
+    expect(await primaryInvoiceOps()).toEqual([expect.objectContaining({ status: "PENDING", invoiceEmailDelivery: "ASKED_BY_EDIT" })]);
+    expect(await allocationOps()).toEqual([{ status: "PENDING" }]);
+    expect(await supplementaryInvoiceOps()).toEqual([]);
+    expect((await censusVerdicts()).typed).toMatchObject({ residualCents: 2 * FEE_CENTS, verdict: "billedInXero" });
+  }, 60_000);
+
+  it("MUTATION: credit the club kept on an earlier reduction is not asked for again when the stay is put back", async () => {
+    await moveByDates(SHORTENED);
+    await drainXeroWork();
+    await modifiedEmailHtml();
+    // The reduction asked for nothing and raised nothing.
+    expect(await emailAskedCents()).toBeNull();
+    expect(await primaryInvoiceOps()).toEqual([]);
+    const keptCents = (await appliedCreditState.unallocatedAppliedCents(BOOKING_ID)) - NIGHT_CENTS;
+    expect(keptCents).toBeGreaterThan(0);
+    await prisma.emailLog.deleteMany({ where: { bookingId: BOOKING_ID } });
+
+    await moveByDates(SEEDED);
+
+    // Back at $100, with the kept credit still applied: only the rest is due.
+    const { booking, lineTotalCents } = await buildPrimaryInvoiceAsTheCreateDoes();
+    expect(booking.finalPriceCents).toBe(PRICE_CENTS);
+    const dueCents = await expectEmailAsksInvoiceDue();
+    expect(dueCents).toBe(lineTotalCents - NIGHT_CENTS - keptCents);
+    expect(dueCents).toBeLessThan(NIGHT_CENTS);
+    expect(await primaryInvoiceOps()).toEqual([expect.objectContaining({ status: "PENDING", invoiceEmailDelivery: "ASKED_BY_EDIT" })]);
+    expect(await allocationOps()).toEqual([{ status: "PENDING" }]);
+    expect(await supplementaryInvoiceOps()).toEqual([]);
+  }, 60_000);
+
+  it("MUTATION: a booking with bank cash recorded is left to the treasurer: no ask, no invoice, and the census still says unasked", async () => {
+    // $60 of credit and $40 by bank transfer: a new primary invoice would bill
+    // the whole $150 against $60 of credit, $90 where $50 is owed.
+    await clean();
+    await seed(4_000);
+
+    await moveByDates();
+    await drainXeroWork();
+
+    expect(await emailAskedCents()).toBeNull();
+    expect(await primaryInvoiceOps()).toEqual([]);
+    expect(await allocationOps()).toEqual([]);
+    expect(await supplementaryInvoiceOps()).toEqual([]);
+    const { typed, raw } = await censusVerdicts();
+    expect(typed).toMatchObject({ residualCents: FEE_CENTS, verdict: "unasked" });
+    expect(raw).toMatchObject({ residualCents: FEE_CENTS, billedInXero: false });
   }, 60_000);
 
   it("with the Xero module off the member is still asked, and nothing is queued for Xero", async () => {
