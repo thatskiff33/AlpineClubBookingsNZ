@@ -439,7 +439,7 @@ async function readStalenessSignals(
  * "unverifiable" rather than to the outer catch-all:
  *
  *  - the trips' current `coverageInvalidationRevision`. It moves on every
- *    truncated fan-out and member merge and never goes back, so a card the
+ *    truncated trip or member fan-out and member merge and never goes back, so a card the
  *    fan-out missed stays behind until re-evaluated, however small the trip is;
  *  - which cards a sibling's fan-out reaches (`groupTripCoverageDependentWhere`)
  *    AND a policy change would re-queue

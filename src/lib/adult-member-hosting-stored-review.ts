@@ -47,8 +47,10 @@ export function parseStoredHostingReview(
  *
  * `GroupBooking.coverageInvalidationRevision` moves on, by database trigger,
  * every time a trip's re-evaluation fan-out is truncated at
- * `GROUP_TRIP_COVERAGE_DEPENDENT_LIMIT` — the one way a dependent booking can be
- * left without the queued re-check it was owed. A snapshot is written with the
+ * `GROUP_TRIP_COVERAGE_DEPENDENT_LIMIT` — one way a dependent booking can be
+ * left without the queued re-check it was owed — and, as application code, by a
+ * member merge and by a member fan-out that fills its own ceiling
+ * (`invalidateMemberGroupTripCover`). A snapshot is written with the
  * revision it was evaluated under, so a matching revision says no truncated
  * fan-out has happened since, and the absence of a queued row then says
  * nothing else changed either. The kiosk compares the two before it shows cover
