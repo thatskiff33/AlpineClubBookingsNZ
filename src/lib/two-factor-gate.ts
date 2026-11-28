@@ -114,8 +114,8 @@ export function isOfficerSessionGated(
 
 /**
  * A required officer who does not satisfy yet and still has grace left: the
- * one who is reminded rather than stopped. The opposite answer to
- * `isOfficerSessionGated` for the same officer.
+ * one who is reminded rather than stopped. Never true together with
+ * `isOfficerSessionGated`.
  */
 export function isOfficerInGrace(
   sessionUser: TwoFactorSessionUser | null | undefined,
