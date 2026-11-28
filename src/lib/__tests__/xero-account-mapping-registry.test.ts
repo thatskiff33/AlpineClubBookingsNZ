@@ -238,7 +238,7 @@ describe("goodwillWriteOffs — the owner's 10 Aug 2026 decision, pinned", () =>
 describe("hutFeeRefunds: revenue or expense, the club's choice (#5235)", () => {
   it("accepts revenue-type accounts and the whole expense class, and keeps its default", () => {
     expect(MAPPING_ACCOUNT_FILTERS.hutFeeRefunds).toEqual([
-      { accountClass: "REVENUE", accountTypes: ["REVENUE"] },
+      { accountClass: "REVENUE", accountTypes: ["REVENUE", "SALES", "OTHERINCOME"] },
       { accountClass: "EXPENSE" },
     ]);
     // An existing club sees no change: the default is still the income account.
@@ -249,6 +249,7 @@ describe("hutFeeRefunds: revenue or expense, the club's choice (#5235)", () => {
   it("offers revenue and expense accounts, and never a bank, asset, liability or equity one", () => {
     expect(accountsForMappingKey("hutFeeRefunds", MIXED_CHART).map((a) => a.code)).toEqual([
       "200",
+      "260",
       "404",
       "429",
     ]);
@@ -257,9 +258,8 @@ describe("hutFeeRefunds: revenue or expense, the club's choice (#5235)", () => {
   it("groups the offered accounts under a heading per class, in the registry's order", () => {
     const groups = groupAccountsForMappingKey("hutFeeRefunds", MIXED_CHART);
     expect(groups.map((group) => [group.heading, group.accounts.map((a) => a.code)])).toEqual([
-      ["Revenue accounts", ["200"]],
-      // 606 (bank) and 260 (other income: the revenue entry keeps its type
-      // narrowing) sit under neither heading.
+      // Other income is income (owner decision, 28 Nov 2026); 606 (bank) sits under neither heading.
+      ["Revenue accounts", ["200", "260"]],
       ["Expense accounts", ["404", "429"]],
     ]);
   });
@@ -331,11 +331,25 @@ describe("mappingCodeClassViolation: the class is checked on save (#5235, owner 
   });
 
   it("names the type, not the class, when the class is accepted and the type is not", () => {
-    // "needs a revenue account, and 260 is a revenue account" would be nonsense.
-    expect(mappingCodeClassViolation("hutFeesIncome", "260", MIXED_CHART)).toBe(
-      "Hut Fees Income needs a revenue account, and the code chosen for it is an account of type OTHERINCOME in the connected Xero organisation.",
+    // "needs a bank account, and 620 is an asset account" would read as a contradiction.
+    expect(mappingCodeClassViolation("stripeBankAccount", "620", MIXED_CHART)).toBe(
+      "Stripe Bank Account needs a bank account, and the code chosen for it is an account of type PREPAYMENT in the connected Xero organisation.",
     );
   });
+
+  // Owner decision, 28 Nov 2026 (#5235 review): a revenue mapping takes every income type.
+  it.each(["hutFeesIncome", "hutFeeRefunds", "subscriptionIncome", "membershipCancellationCredit"] as const)(
+    "%s accepts a SALES and an OTHERINCOME account, offered and saved alike",
+    (key) => {
+      const chart = [
+        { code: "201", name: "Sales", type: "SALES", class: "REVENUE" },
+        { code: "260", name: "Other Revenue", type: "OTHERINCOME", class: "REVENUE" },
+        { code: "270", name: "Interest Income", type: "OTHERINCOME", class: "" },
+      ];
+      expect(accountsForMappingKey(key, chart).map((a) => a.code)).toEqual(["201", "260", "270"]);
+      for (const account of chart) expect(mappingCodeClassViolation(key, account.code, chart)).toBeNull();
+    },
+  );
 
   it("judges every account key by its own entries, with nothing spelt out per key", () => {
     for (const key of ACCOUNT_MAPPING_KEYS) {

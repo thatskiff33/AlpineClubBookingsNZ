@@ -96,12 +96,20 @@ export type XeroAccountMappingDefinition = {
 
 export const DEFAULT_HUT_FEE_ACCOUNT_CODE = "200";
 
+/**
+ * Every Xero account type in class REVENUE (owner decision, 28 Nov 2026, on
+ * #5235: a revenue mapping accepts sales and other-income accounts as well as
+ * plain revenue ones). Listed rather than left as the bare class so that a
+ * chart row whose class the snapshot does not carry is still judged by type.
+ */
+const INCOME_ACCOUNT_TYPES = ["REVENUE", "SALES", "OTHERINCOME"] as const;
+
 export const XERO_ACCOUNT_MAPPING_DEFINITIONS = [
   {
     key: "hutFeesIncome",
     label: "Hut Fees Income",
     description: "Sales account for booking income line items",
-    accepts: [{ accountClass: "REVENUE", accountTypes: ["REVENUE"] }],
+    accepts: [{ accountClass: "REVENUE", accountTypes: INCOME_ACCOUNT_TYPES }],
     defaultCode: DEFAULT_HUT_FEE_ACCOUNT_CODE,
     carriesItemCode: true,
   },
@@ -114,8 +122,10 @@ export const XERO_ACCOUNT_MAPPING_DEFINITIONS = [
     // income or as a cost, so both classes are accepted (`INV-CONFIG-001`). The
     // revenue entry keeps the type narrowing it always had; the expense entry
     // is the whole class, for the reason given on `goodwillWriteOffs` below.
+    // Its revenue entry takes every income type, as the other revenue
+    // mappings do (owner decision, 28 Nov 2026).
     accepts: [
-      { accountClass: "REVENUE", accountTypes: ["REVENUE"] },
+      { accountClass: "REVENUE", accountTypes: INCOME_ACCOUNT_TYPES },
       { accountClass: "EXPENSE" },
     ],
     defaultCode: DEFAULT_HUT_FEE_ACCOUNT_CODE,
@@ -186,7 +196,7 @@ export const XERO_ACCOUNT_MAPPING_DEFINITIONS = [
     key: "subscriptionIncome",
     label: "Subscription Income",
     description: "Account code used to detect Annual Membership Fee invoices",
-    accepts: [{ accountClass: "REVENUE", accountTypes: ["REVENUE"] }],
+    accepts: [{ accountClass: "REVENUE", accountTypes: INCOME_ACCOUNT_TYPES }],
     defaultCode: "203",
     carriesItemCode: true,
   },
@@ -195,7 +205,7 @@ export const XERO_ACCOUNT_MAPPING_DEFINITIONS = [
     label: "Membership Cancellation Credits",
     description:
       "Credit note account and item used to reverse unpaid Annual Membership Fee invoices when membership cancellation is approved",
-    accepts: [{ accountClass: "REVENUE", accountTypes: ["REVENUE"] }],
+    accepts: [{ accountClass: "REVENUE", accountTypes: INCOME_ACCOUNT_TYPES }],
     defaultCode: "203",
     carriesItemCode: true,
   },
