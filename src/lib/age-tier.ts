@@ -12,9 +12,9 @@ export {
   // test seam
   computeAge,
   computeAgeTierWithSettings,
-  getSeasonStartCalendarDate,
   getSeasonStartDate,
   normalizeAgeTierSettings,
+  seasonStartCalendarDateUnder,
   validateAgeTierPartition,
 } from "./policies/age-tier";
 export type { AgeTierSettingData } from "./policies/age-tier";

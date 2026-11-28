@@ -3,8 +3,8 @@ import { prisma } from "./prisma";
 import {
   computeAgeTierWithSettings,
   getAgeTierSettings,
+  seasonStartCalendarDateUnder,
 } from "./age-tier";
-import { seasonStartCalendarDateUnder } from "./policies/age-tier";
 import { dateOnlyInstantOf } from "@/lib/club-time";
 import { readClubTimeZoneOutsideRequest } from "./club-time-zone-runtime";
 import { clubSeasonYear } from "./financial-year";
