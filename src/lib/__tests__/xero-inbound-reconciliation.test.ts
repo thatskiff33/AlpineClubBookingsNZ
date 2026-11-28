@@ -438,9 +438,12 @@ vi.mock("@/lib/xero-api-client", async (importOriginal) => {
   };
 });
 
-vi.mock("@/lib/financial-year-server", () => ({
-  refreshFinancialYearConfig: vi.fn().mockResolvedValue(3),
+// The club's year-end, resolved once per reconcile (#5259). March by default;
+// `vi.fn(impl)` keeps that default through `vi.resetAllMocks()`.
+const financialYear = vi.hoisted(() => ({
+  refreshFinancialYearConfig: vi.fn(async () => 3),
 }));
+vi.mock("@/lib/financial-year-server", () => financialYear);
 
 vi.mock("@/lib/xero-membership-sync", async (importOriginal) => {
   const actual = (await importOriginal()) as typeof import("@/lib/xero-membership-sync");
@@ -988,6 +991,64 @@ describe("processStoredXeroInboundEvents", () => {
           ]),
         }),
       }),
+    });
+  });
+
+  // #5259: the season an inbound invoice refreshes is placed with the club's
+  // RESOLVED year-end, not a process cache that answers March until seeded.
+  // 15 June 2026 is the 2026 season for a March or December year-end and the
+  // 2025 season for a June one.
+  it.each([
+    [3, 2026],
+    [6, 2025],
+    [12, 2026],
+  ])("refreshes the invoice's season under a year-end of month %i (season %i)", async (yearEndMonth, seasonYear) => {
+    financialYear.refreshFinancialYearConfig.mockResolvedValue(yearEndMonth);
+    mocks.inboundFindMany.mockResolvedValue([
+      {
+        id: "evt_2",
+        source: "webhook",
+        eventCategory: "INVOICE",
+        eventType: "UPDATE",
+        resourceId: "inv_1",
+        correlationKey: "corr_2",
+        payload: { resourceId: "inv_1" },
+      },
+    ]);
+    mocks.processedCreate.mockResolvedValue({ id: "processed_2" });
+    mocks.linkFindMany.mockResolvedValue([]);
+    mocks.paymentFindMany.mockResolvedValue([]);
+    mocks.subscriptionFindMany.mockResolvedValue([]);
+    mocks.memberFindMany.mockResolvedValue([{ id: "mem_1" }]);
+    mocks.checkMembershipStatus.mockResolvedValue({
+      status: "PAID",
+      xeroInvoiceId: "inv_1",
+    });
+    mocks.getAuthenticatedXeroClient.mockResolvedValue({
+      xero: {
+        accountingApi: {
+          getInvoice: vi.fn().mockResolvedValue({
+            body: {
+              invoices: [
+                {
+                  invoiceID: "inv_1",
+                  invoiceNumber: "INV-001",
+                  date: "2026-06-15",
+                  contact: { contactID: "contact_1" },
+                  lineItems: [{ accountCode: "203" }],
+                },
+              ],
+            },
+          }),
+        },
+      },
+      tenantId: "tenant_1",
+    });
+
+    await processStoredXeroInboundEvents();
+
+    expect(mocks.checkMembershipStatus).toHaveBeenCalledWith("mem_1", seasonYear, {
+      yearEndMonth,
     });
   });
 
