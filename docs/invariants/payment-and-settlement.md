@@ -4572,21 +4572,21 @@ and what the primary invoice bills), **`INV-PAY-136`** (the edit's claim),
 **`INV-MOD-042`** (the fee).
 
 - **An unlinked Internet Banking increase is asked for and billed on the
-  primary invoice** (#5288; owner, 20 and 28 Nov 2026). The shape: a paid
-  Internet Banking booking that account credit paid in full, with no primary
-  Xero invoice linked: no card to ask, no invoice for a supplementary one.
+  primary invoice** (#5288; owner, 20 and 28 Nov 2026): a paid Internet
+  Banking booking that credit paid in full, no primary invoice linked.
 - **Who.** `mayBillIncreaseOnNewPrimaryInvoice`
   (`primary-invoice-bills-increase.ts`): an increase, no card ask, settled
   status, captured payment status, Internet Banking source, no invoice link,
   no bank cash recorded, not settled outside the app, not an organiser's
-  place. Bank cash stays `unasked` in the census, for the treasurer: the
-  invoice would bill that transfer again.
+  place. Bank cash stays `unasked`, for the treasurer: the invoice would bill
+  that transfer again.
 - **The ask.** `primaryInvoiceDueCents`: what that invoice will show as due,
   price plus every recorded fee less the applied credit the allocation engine
   allocates (`unallocatedAppliedCents`), never one edit's increase. Nothing
-  due: no ask, no invoice. The "Booking Modified" email says "An additional
-  Internet Banking payment of $X is required" with the payment reference.
-  Nothing is minted.
+  due: no ask, no invoice. The "Booking Modified" email says "The amount now
+  due on this booking is $X by Internet Banking. This replaces any earlier
+  amount we asked for." (`internetBankingAskSentence`), with the payment
+  reference; a linked booking's edit keeps "additional". Nothing is minted.
 - **The bill.** After commit, the edit queues the primary invoice, unemailed
   (`XERO_INVOICE_EMAIL_ASKED_BY_EDIT`: Xero's email precedes the allocation
   and would show the gross), then the applied-credit allocation, only behind

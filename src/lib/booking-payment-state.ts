@@ -443,7 +443,7 @@ export function stripeRefundMirrorShowsCapture(payment: {
   refundedAmountCents: number;
 }): boolean {
   return (
-    payment.source === "STRIPE" &&
+    payment.source === CARD_PAYMENT_SOURCE &&
     (payment.status === "REFUNDED" ||
       payment.status === "PARTIALLY_REFUNDED" ||
       payment.refundedAmountCents > 0)
@@ -583,7 +583,7 @@ export function editReviewRefundSettlementPayment(task: {
 export function editReviewRefundGoesBackOnCard(payment: {
   source: string | null;
 }): boolean {
-  return payment.source === "STRIPE";
+  return payment.source === CARD_PAYMENT_SOURCE;
 }
 
 /**
