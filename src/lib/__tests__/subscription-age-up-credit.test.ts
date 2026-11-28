@@ -98,10 +98,13 @@ function matches(row: Record<string, unknown>, where: Record<string, unknown>): 
   return Object.entries(where).every(([column, wanted]) => row[column] === wanted);
 }
 
-/** What Xero says the season invoice still owes, in dollars as Xero sends it. */
-function seasonInvoiceOwes(amountDue: number) {
+/**
+ * What Xero says the season invoice still owes, in dollars as Xero sends it,
+ * and the status it holds the invoice in: issued unless a test says otherwise.
+ */
+function seasonInvoiceOwes(amountDue: number, status: string = amountDue === 0 ? "PAID" : "AUTHORISED") {
   mocks.getInvoice.mockResolvedValue({
-    body: { invoices: [{ invoiceID: "inv-season", amountDue, contact: { contactID: "contact-1" } }] },
+    body: { invoices: [{ invoiceID: "inv-season", amountDue, status, contact: { contactID: "contact-1" } }] },
   });
 }
 
@@ -220,10 +223,21 @@ describe("createAgeUpCredit: credit note on the season invoice (#5190 PR 3)", ()
   );
 
   it("does not treat a missing Xero balance as a paid invoice", async () => {
-    mocks.getInvoice.mockResolvedValue({ body: { invoices: [{ invoiceID: "inv-season" }] } });
+    mocks.getInvoice.mockResolvedValue({ body: { invoices: [{ invoiceID: "inv-season", status: "AUTHORISED" }] } });
     await expect(run()).rejects.toThrow(/balance/i);
     expect(mocks.postAgeUpCreditLot).not.toHaveBeenCalled();
     expect(mocks.createCreditNotes).not.toHaveBeenCalled();
+  });
+
+  it("does not judge an invoice whose status Xero did not send", async () => {
+    mocks.getInvoice.mockResolvedValue({ body: { invoices: [{ invoiceID: "inv-season", amountDue: 0 }] } });
+
+    await expect(run()).rejects.toThrow(/status/i);
+
+    expect(mocks.failXeroSyncOperation).toHaveBeenCalledTimes(1);
+    expect(mocks.postAgeUpCreditLot).not.toHaveBeenCalled();
+    expect(mocks.createCreditNotes).not.toHaveBeenCalled();
+    expect(store.adjustment).toMatchObject({ status: "PENDING", creditInvoiceId: null });
   });
 
   it("raises one note for the credit and allocates it while the invoice owes more than the credit", async () => {
@@ -456,6 +470,31 @@ describe("createAgeUpCredit: when it does nothing yet, or at all (#5190 PR 3)", 
     expect(mocks.failXeroSyncOperation).not.toHaveBeenCalled();
     expect(store.adjustment!.status).toBe("PENDING");
   });
+
+  it.each([
+    // Owes nothing, and nothing was paid: read as a paid invoice, each of
+    // these would hand the member a credit lot for a season they never paid.
+    ["voided", 0],
+    ["deleted", 0],
+    // Owes everything, but is not yet an invoice a note can be allocated to.
+    ["draft", 120],
+    ["submitted", 120],
+  ] as const)(
+    "MUTATION (issued invoice): waits, crediting nothing, while Xero holds the season invoice %s",
+    async (held, amountDue) => {
+      seasonInvoiceOwes(amountDue, held.toUpperCase());
+
+      const waiting = await run().catch((error: unknown) => error);
+
+      expect(waiting).toBeInstanceOf(XeroAppliedCreditOperationBusyError);
+      expect((waiting as XeroAppliedCreditOperationBusyError).waitCode).toBe(AGE_UP_CREDIT_AWAITING_SEASON_INVOICE_CODE);
+      expect(mocks.postAgeUpCreditLot).not.toHaveBeenCalled();
+      expect(mocks.createCreditNotes).not.toHaveBeenCalled();
+      expect(mocks.failXeroSyncOperation).not.toHaveBeenCalled();
+      // Nothing reserved either: the season's next invoice is free to take the credit.
+      expect(store.adjustment).toMatchObject({ status: "PENDING", creditInvoiceId: null, memberCreditId: null });
+    },
+  );
 
   it.each(["CREDITED_ON_INVOICE", "CREDITED_TO_ACCOUNT", "VOIDED"] as const)(
     "completes as skipped for an adjustment already %s",

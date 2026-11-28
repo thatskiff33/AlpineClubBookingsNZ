@@ -123,7 +123,9 @@ instruction to settle the change in Xero rather than billing the family twice.
 
 A credit comes off the member's season invoice in Xero, once that invoice is
 raised and while it still owes at least the credit; otherwise it becomes credit
-on the member's account. Once the app has chosen the invoice it keeps to it, so
+on the member's account. While the season invoice is voided, deleted or still a
+draft in Xero the credit waits for it to be raised again, since nothing was
+paid. Once the app has chosen the invoice it keeps to it, so
 a member is never credited twice. If that invoice is paid or voided before the
 credit note is applied, the credit shows as failed under **Xero Operations**
 (see [Xero](xero.md)). Find its credit note in Xero by the reference starting

@@ -1275,4 +1275,6 @@ the season invoice still owes at least that much, reserve that invoice on the
 adjustment, then allocate a Xero credit note to it; a retry keeps to the
 reserved invoice whatever it owes by then. Otherwise grant the full amount as
 one member credit lot and queue its credit note. A balance Xero does not
-report is not zero. Never use both routes or refund through Stripe.
+report is not zero, and an invoice Xero holds voided, deleted or not yet
+approved is not a paid one: the credit waits for the season to be invoiced.
+Never use both routes or refund through Stripe.
