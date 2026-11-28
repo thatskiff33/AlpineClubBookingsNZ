@@ -260,6 +260,15 @@ export function liabilityReferenceDate(
 }
 
 /**
+ * The rule the SEASON charge is judged and priced by. Under "Age today" that is
+ * the season-start tier; the age-up parts settle the rest. Every other rule is
+ * returned as it is.
+ */
+export function seasonChargeLiabilityRule(rule: SubscriptionLiabilityRule): SubscriptionLiabilityRule {
+  return rule.ageSource === "CURRENT_AGE" ? { ...rule, ageSource: "SEASON_START" } : rule;
+}
+
+/**
  * The age tier that decides liability for one member and season. A member with
  * no date of birth keeps their stored tier, whatever the source. `asOf` is the
  * club's today: the day `CURRENT_AGE` reads the age on (owner decision, 20 Nov

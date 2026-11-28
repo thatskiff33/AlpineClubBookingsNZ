@@ -21,6 +21,7 @@ import {
   NOT_CHOSEN_LIABILITY_SETTINGS,
   liabilityRuleFor,
   resolveMemberSubscriptionLiability,
+  seasonChargeLiabilityRule,
   type SubscriptionLiabilitySettings,
 } from "@/lib/policies/subscription";
 
@@ -342,9 +343,9 @@ export function resolveMemberSubscriptionSettlement(input: {
   const agedIntoOwing =
     owes &&
     rule.ageSource === "CURRENT_AGE" &&
-    !resolveMemberSubscriptionLiability({ ...facts, rule: { ...rule, ageSource: "SEASON_START" } }).owes;
+    !resolveMemberSubscriptionLiability({ ...facts, rule: seasonChargeLiabilityRule(rule) }).owes;
   const partSeasonIssued =
-    input.subscriptionStatus === "UNPAID" || input.subscriptionStatus === "OVERDUE";
+    input.subscriptionStatus != null && ISSUED_UNPAID_STATUSES.includes(input.subscriptionStatus);
   // A no-invoice fee settles the member without a payment: nothing is left for
   // them to pay, so no paid subscription is required of them (#5190).
   return {

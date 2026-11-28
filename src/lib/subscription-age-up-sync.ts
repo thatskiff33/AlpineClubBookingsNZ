@@ -14,9 +14,8 @@
 import { Invoice } from "xero-node";
 import type { CalendarDate } from "@/lib/club-time";
 import { prisma } from "@/lib/prisma";
+import { liveChargeWhere } from "@/lib/subscription-charge-already-paid";
 import { determineSubscriptionStatus } from "@/lib/xero-subscription-invoice-status";
-
-const LIVE_CHARGE_STATUSES = ["QUEUED", "PROCESSING", "INVOICE_CREATED", "EMAIL_FAILED", "EMAILED", "CONFLICT"] as const;
 
 /** Map each changed invoice that is a top-up's to the adjustment; returns how many moved. */
 export async function syncAgeUpTopUpInvoices(
@@ -45,7 +44,7 @@ export async function syncAgeUpTopUpInvoices(
         });
         if (adjustment.count === 0) return 0;
         await tx.membershipSubscriptionCharge.updateMany({
-          where: { id: chargeId, status: { in: [...LIVE_CHARGE_STATUSES] } },
+          where: liveChargeWhere(chargeId),
           data: { status: "VOIDED" },
         });
         return 1;

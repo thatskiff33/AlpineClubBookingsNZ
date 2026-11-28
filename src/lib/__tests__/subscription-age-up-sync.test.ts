@@ -28,11 +28,14 @@ const store = vi.hoisted(() => ({
   staleRead: null as AdjustmentRow[] | null,
 }));
 
-/** A flat `where`: a plain value must equal the column; `{ in: [...] }` must contain it. */
+/** A flat `where`: a plain value must equal the column; `{ in: [...] }` must contain it, `{ notIn: [...] }` must not. */
 function matches(row: Record<string, unknown>, where: Record<string, unknown>): boolean {
   return Object.entries(where).every(([column, wanted]) => {
     if (wanted && typeof wanted === "object" && "in" in wanted) {
       return (wanted as { in: unknown[] }).in.includes(row[column]);
+    }
+    if (wanted && typeof wanted === "object" && "notIn" in wanted) {
+      return !(wanted as { notIn: unknown[] }).notIn.includes(row[column]);
     }
     return row[column] === wanted;
   });

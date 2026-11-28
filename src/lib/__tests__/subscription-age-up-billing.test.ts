@@ -27,7 +27,7 @@ vi.mock("@/lib/xero-sync", () => ({
 }));
 
 import { AGE_TIER_DEFAULTS, type AgeTierSettingData } from "@/lib/policies/age-tier";
-import { liabilityRuleFor, type SubscriptionLiabilitySettings } from "@/lib/policies/subscription";
+import { liabilityRuleFor, seasonChargeLiabilityRule, type SubscriptionLiabilitySettings } from "@/lib/policies/subscription";
 import type {
   SubscriptionBillingAgeUpAdjustment,
   SubscriptionBillingPlanEntry,
@@ -37,7 +37,6 @@ import {
   ageUpTopUpChargeKey,
   confirmAgeUpAdjustments,
   createAgeUpPlanner,
-  seasonChargeLiabilityRule,
   type AgeUpPlanMember,
   type AgeUpWarning,
 } from "@/lib/subscription-age-up-billing";

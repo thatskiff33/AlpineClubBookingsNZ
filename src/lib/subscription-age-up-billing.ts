@@ -63,6 +63,7 @@ import {
   getSeasonEndDate,
   priceAgeUpEvent,
   resolveAgeUpEvent,
+  seasonChargeLiabilityRule,
   type AgeUpEvent,
   type SubscriptionLiabilityRule,
 } from "@/lib/policies/subscription";
@@ -84,15 +85,6 @@ export function ageUpCreditIdempotencyKey(adjustmentId: string): string {
  */
 export function ageUpTopUpChargeKey(subscriptionId: string, ageUpDate: string): string {
   return stableDigest(["age-up", subscriptionId, ageUpDate]);
-}
-
-/**
- * The rule the SEASON charge is judged and priced by. Under "Age today" that is
- * the season-start tier; the age-up parts settle the rest. Every other rule is
- * returned as it is.
- */
-export function seasonChargeLiabilityRule(rule: SubscriptionLiabilityRule): SubscriptionLiabilityRule {
-  return rule.ageSource === "CURRENT_AGE" ? { ...rule, ageSource: "SEASON_START" } : rule;
 }
 
 type Db = Prisma.TransactionClient | typeof prisma;
