@@ -53,6 +53,7 @@ import { calendarDateFromParts } from "@/lib/club-time";
 import {
   seasonMonthsLabel,
   seasonSelectLabel,
+  seasonSlashLabel,
   seasonYearsLabel,
 } from "@/lib/season-label";
 import { withTimeZone } from "@/lib/__tests__/helpers/timezone";
@@ -110,6 +111,10 @@ describe("seasonSelectLabel", () => {
         .toBe(2026);
       expect(seasonYearsLabel(2026, yearEndMonth), `year-end ${yearEndMonth}`).toBe(
         lastMonthYear === 2026 ? "2026" : "2026 - 2027",
+      );
+      // The slash spelling the booking refusals use answers the same question.
+      expect(seasonSlashLabel(2026, yearEndMonth), `year-end ${yearEndMonth}`).toBe(
+        lastMonthYear === 2026 ? "2026" : "2026/2027",
       );
     }
   });

@@ -151,9 +151,14 @@ History, measurements and rejected alternatives: #3126 (and #3123, #3131,
   - A resolver returning the **club's own** answer on every call
     (`await clubTimeZone()`, `await readClubTimeZoneOutsideRequest()`) is not
     this defect and is not on the list.
-  - Season labels and season years require the resolved year-end month. Requests
-    pass the server-resolved setting; workers resolve it once per run. The lint
-    rule bans using the process cache as a parameter default (#5259).
+  - **`getFinancialYearEndMonth` is banned, no longer pending** (#5259). Its
+    last default, on `seasonYearOfCalendarDate`, went once every caller passed
+    the club's resolved year-end: `clubFinancialYearEndMonth()` inside a
+    request, `refreshFinancialYearConfig()` once per run outside one. The pending
+    list and its pinned count went with it. The cache is still read **by name**
+    where the month cannot be resolved in place — the age-tier season start, the
+    hosting reconciler inside its writers' transactions, the admin layout's
+    bounded wait — which an arm scoped to defaults does not reach.
 - **What no syntactic arm here reaches**, stated plainly rather than left as a
   discovered gap: a default that calls a **club-time** resolver
   (`= await clubTimeZone()`), which returns the club's own answer and is not

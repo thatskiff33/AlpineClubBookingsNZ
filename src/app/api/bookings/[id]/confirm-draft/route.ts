@@ -13,6 +13,7 @@ import {
 } from "@/lib/capacity";
 import { seasonYearOfStoredDate } from "@/lib/financial-year";
 import { clubFinancialYearEndMonth } from "@/lib/financial-year-server";
+import { seasonSlashLabel } from "@/lib/season-label";
 import {
   enqueueXeroBookingInvoiceOperation,
   kickQueuedXeroOutboxOperationsIfConnected,
@@ -196,7 +197,7 @@ export async function POST(
       },
     });
     if (!paidSub) {
-      const seasonDisplay = `${seasonYear}/${seasonYear + 1}`;
+      const seasonDisplay = seasonSlashLabel(seasonYear, yearEndMonth);
       return NextResponse.json(
         {
           error: `Your membership subscription for the ${seasonDisplay} season is not paid. Please contact the club to arrange payment before booking.`,

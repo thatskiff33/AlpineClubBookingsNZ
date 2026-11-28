@@ -1586,6 +1586,11 @@ const AMBIENT_AUTHORITY_RESOLVERS = {
     // own name and branding, with a persisted row competing with a shipped
     // default — the same two-sources-and-a-guess as the year-end.
     "getClubIdentitySync",
+    // `financial-year.ts`. Module cache seeded by `refreshFinancialYearConfig()`,
+    // falls back to March. Pending, with its live defaults pinned, until #5259
+    // deleted the last one (`seasonYearOfCalendarDate`'s): every caller now
+    // passes the club's resolved year-end, so the name moved here as the pin
+    // said it would at zero.
     "getFinancialYearEndMonth",
     // `email-theme.ts`. Module cache seeded by `primeEmailPalette()`, falls back
     // to `DEFAULT_EMAIL_PALETTE`. An unseeded worker renders a club's email in

@@ -22,6 +22,7 @@ import { findUnpaidMemberGuests } from "@/lib/booking-member-guest-subscriptions
 import logger from "@/lib/logger";
 import { seasonYearOfStoredDate } from "@/lib/financial-year";
 import { clubFinancialYearEndMonth } from "@/lib/financial-year-server";
+import { seasonSlashLabel } from "@/lib/season-label";
 import {
   assertMembershipTypeBookingAllowed,
   getMembershipTypeBookingPolicyErrorBody,
@@ -710,7 +711,7 @@ export async function POST(request: NextRequest) {
         where: { memberId: effectiveMemberId, seasonYear },
         orderBy: { updatedAt: "desc" },
       });
-      const seasonDisplay = `${seasonYear}/${seasonYear + 1}`;
+      const seasonDisplay = seasonSlashLabel(seasonYear, yearEndMonth);
       return NextResponse.json(
         {
           error: `Your membership subscription for the ${seasonDisplay} season is not paid. Please contact the club to arrange payment before booking.`,

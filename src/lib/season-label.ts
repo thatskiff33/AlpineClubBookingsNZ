@@ -48,9 +48,25 @@
  * **Every helper below REQUIRES the year-end.** `seasonMonthsLabel` and
  * `seasonYearsLabel` lost their process-cache default in #3133;
  * `seasonSelectLabel` lost its own in #5259, once every display site had a
- * value to pass. The season-year derivations also require it. An unstated year-end is a compile error rather than a silent
+ * value to pass. An unstated year-end is a compile error rather than a silent
  * March, which also makes the SSR pass moot: a value passed in cannot differ
  * between the react-server and SSR module instances of a cache.
+ *
+ * **NO SEASON DERIVATION DEFAULTS ITS YEAR-END EITHER (#5259).**
+ * `seasonYearOfCalendarDate` and its two pass-throughs in `financial-year.ts`
+ * lost the last process-cache default, so the season YEAR a name is built from
+ * is derived from the same caller-supplied month as the name. `INV-SSOT-003`
+ * now bans `getFinancialYearEndMonth` as a parameter default outright.
+ *
+ * ## One call site still writes the slash name by hand
+ *
+ * `subscription-lockout-enforcement.ts` builds the unpaid-subscription rate
+ * notice from `${seasonYear}/${seasonYear + 1}`: it has no year-end in scope,
+ * and threading one in reaches every booking pricing path. The booking,
+ * confirm-draft and group-trip refusals, the reports heading, the member
+ * subscription status and the membership-type refusal name theirs through
+ * {@link seasonSlashLabel} (#5259). `__tests__/season-label-adoption-contract.test.ts`
+ * tells a NAME from ARITHMETIC over comment-stripped source.
  *
  * **THE FOUR MONEY AND PROVIDER SITES ADOPTED THIS IN #3116, AND THE EXCLUSION
  * LIST IS NOW EMPTY.** They were `xero-subscription-invoices.ts` and
@@ -145,6 +161,10 @@ export function seasonYearsLabel(
   return seasonYearRangeLabel(seasonYear, yearEndMonth, " - ");
 }
 
+/**
+ * The same years with a slash - `"2026/2027"`, or `"2026"` for a December
+ * year-end - for the sentences that have always spelled a season that way.
+ */
 export function seasonSlashLabel(seasonYear: number, yearEndMonth: number): string {
   return seasonYearRangeLabel(seasonYear, yearEndMonth, "/");
 }

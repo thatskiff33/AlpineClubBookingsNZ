@@ -240,8 +240,7 @@ describe("the arm is mandatory everywhere, and nothing lifts it", () => {
   it("bans at least one ambient-state resolver, so the #3133 half is not vacuous", () => {
     // The #3133 arm is built from a NAMED list rather than a pattern, so an
     // empty list would leave six selectors that can never match while every
-    // structural assertion above still passed. The pending list is not a
-    // substitute: a pending name is one the arm deliberately does not fire on.
+    // structural assertion above still passed.
     expect(
       AMBIENT_AUTHORITY_RESOLVERS.banned.length,
       "The ambient-state resolver list is empty, so the three selector pairs " +
