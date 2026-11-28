@@ -43,7 +43,7 @@ describe("the repair tool never admits a reversal as the booking invoice (#5017)
 // Each reader and the number of exclusions it must carry. Removing one fails
 // here; adding a reader means adding its row.
 const READERS: Array<{ file: string; token: string; count: number }> = [
-  { file: "src/lib/payment-reconciliation.ts", token: "...NOT_CARD_REFUND_REVERSAL_INVOICE,", count: 2 },
+  { file: "src/lib/manual-settlement-xero-evidence.ts", token: "...NOT_CARD_REFUND_REVERSAL_INVOICE,", count: 2 },
   { file: "src/lib/manual-booking-payment-state.ts", token: "...NOT_CARD_REFUND_REVERSAL_INVOICE,", count: 1 },
   { file: "src/app/api/admin/bookings/search/route.ts", token: "...NOT_CARD_REFUND_REVERSAL_INVOICE,", count: 1 },
   { file: "src/lib/xero-resolved-in-xero-fences.ts", token: "...NOT_CARD_REFUND_REVERSAL_INVOICE,", count: 1 },

@@ -184,7 +184,7 @@ const EXISTENCE_READS: Record<string, string> = {
     "uses stampedTransaction only in Boolean(stampedTransaction || activeLink || mintOperation) for the Xero block.",
   "src/lib/manual-booking-payment-state.ts > getBookingManualPaymentState > [openTask, settledStripe]":
     "tests settledStripe in an else-if to set reverseBlockedReason; no row id is consumed.",
-  "src/lib/payment-reconciliation.ts > assertNoXeroInvoiceEvidence > stampedTransaction":
+  "src/lib/manual-settlement-xero-evidence.ts > assertNoXeroInvoiceEvidence > stampedTransaction":
     "tests stampedTransaction to throw the Xero invoice refusal; no row id is consumed.",
   "src/lib/payment-reconciliation.ts > reverseManualBookingPayment > settledStripeTransaction":
     "tests settledStripeTransaction to refuse reversing after a card capture; no row id is consumed.",

@@ -1,4 +1,4 @@
-import { CREDIT_RELEASE_ASK_REASON } from "@/lib/credit-release-ask-keys";
+import { CREDIT_RELEASE_ASK_REASON, DEPOSIT_BALANCE_ASK_REASON } from "@/lib/credit-release-ask-keys";
 
 /**
  * WHY AN UNPAID ADDITIONAL REQUEST EXISTS, and the member- and officer-facing words for it
@@ -10,11 +10,16 @@ import { CREDIT_RELEASE_ASK_REASON } from "@/lib/credit-release-ask-keys";
  * release request (the two are merged into one request for the member). The cause is read
  * from the ledger rows, never guessed from the amount, and every surface that words an
  * unpaid request takes its sentence from here so the sentences cannot drift apart.
+ *
+ * #5008 (`INV-ADDPAY-053`) adds a third cause, `balance`: the rest of a booking's worth after a
+ * deposit settled it, with a due date on its row. Rows of more than one cause in one request read
+ * `mixed`; a `mixed` request with a balance in it keeps the balance's due date and is never chased
+ * by the edit or credit-release chase (`chainIncludesBalance`).
  */
 /** How many of a payment's newest ADDITIONAL rows a surface loads to read the cause from. */
 export const ASK_CAUSE_ROWS = 6;
 
-export type AdditionalAskCause = "edit" | "credit-release" | "mixed";
+export type AdditionalAskCause = "edit" | "credit-release" | "balance" | "mixed";
 
 export type AdditionalAskCauseRow = {
   reason: string | null;
@@ -27,6 +32,18 @@ export function isCreditReleaseAskReason(reason: string | null | undefined): boo
   return reason === CREDIT_RELEASE_ASK_REASON;
 }
 
+/** The one place that says a ledger reason is a deposit balance's (`INV-ADDPAY-053`). */
+export function isDepositBalanceAskReason(reason: string | null | undefined): boolean {
+  return reason === DEPOSIT_BALANCE_ASK_REASON;
+}
+
+/** One row's own cause; any reason that is neither of the named ones is a change the member made. */
+function rowCause(reason: string | null): Exclude<AdditionalAskCause, "mixed"> {
+  if (isCreditReleaseAskReason(reason)) return "credit-release";
+  if (isDepositBalanceAskReason(reason)) return "balance";
+  return "edit";
+}
+
 /**
  * The cause of the request the NEWEST row is, given the payment's ADDITIONAL rows newest
  * first. The newest row's own cause counts; so does each older row a row carried
@@ -36,11 +53,28 @@ export function isCreditReleaseAskReason(reason: string | null | undefined): boo
  */
 export function additionalAskCause(rowsNewestFirst: readonly AdditionalAskCauseRow[]): AdditionalAskCause {
   const { rows } = askChain(rowsNewestFirst);
-  if (rows.length === 0) return "edit";
-  const release = rows.some((row) => isCreditReleaseAskReason(row.reason));
-  const edit = rows.some((row) => !isCreditReleaseAskReason(row.reason));
-  if (release && edit) return "mixed";
-  return release ? "credit-release" : "edit";
+  const causes = new Set(rows.map((row) => rowCause(row.reason)));
+  if (causes.size > 1) return "mixed";
+  const [only] = causes;
+  return only ?? "edit";
+}
+
+/**
+ * The balance rows of the newest request, newest first: empty when the request has no deposit
+ * balance in it. The one walk the part-paid predicate and the chase fence read, so a balance folded
+ * into a later request (`mixed`) is still seen, and one an officer withdrew is not.
+ */
+export function balanceRowsOfChain<T extends AdditionalAskCauseRow>(rowsNewestFirst: readonly T[]): T[] {
+  return askChain(rowsNewestFirst).rows.filter((row) => isDepositBalanceAskReason(row.reason));
+}
+
+/**
+ * Does the newest request carry a deposit balance? Such a request is chased only on the dates its due
+ * date sets (`INV-ADDPAY-053`), never by the edit or credit-release chase, whose wording would tell
+ * the member they changed their booking.
+ */
+export function chainIncludesBalance(rowsNewestFirst: readonly AdditionalAskCauseRow[]): boolean {
+  return balanceRowsOfChain(rowsNewestFirst).length > 0;
 }
 
 /** A ledger row with its amount, for the walks that need the money as well as the cause. */
@@ -98,6 +132,7 @@ const USED_ELSEWHERE = "account credit applied to this booking was used elsewher
 
 /** The sentence an unpaid-request line on the booking timeline uses (owner-approved cause phrase). */
 export function timelinePendingDetail(cause: AdditionalAskCause): string {
+  if (cause === "balance") return "A deposit was paid on this booking. The balance has not been paid yet.";
   if (cause === "credit-release") return "Account credit applied to this booking was used elsewhere in the club's accounts. This amount has not been paid yet.";
   if (cause === "mixed") return `A booking change increased the total, and ${USED_ELSEWHERE}. This amount has not been paid yet.`;
   return "A booking change increased the total. This extra amount has not been paid yet.";
@@ -105,6 +140,7 @@ export function timelinePendingDetail(cause: AdditionalAskCause): string {
 
 /** The timeline line for a request that was paid but whose own row is missing. */
 export function timelinePaidDetail(cause: AdditionalAskCause): string {
+  if (cause === "balance") return "A deposit was paid on this booking and the payment of the balance succeeded.";
   if (cause === "credit-release") return "Account credit applied to this booking was used elsewhere in the club's accounts and the payment requested for it succeeded.";
   if (cause === "mixed") return `A booking change increased the total, and ${USED_ELSEWHERE}. The payment requested for both succeeded.`;
   return "A booking change increased the total and the extra payment succeeded.";
@@ -137,6 +173,7 @@ export function timelineFailedDetail(cause: AdditionalAskCause, latest = false):
  * of the amount (the panel puts the figure between them in bold).
  */
 export function officerPanelParts(cause: AdditionalAskCause): { lead: string; trail: string } {
+  if (cause === "balance") return { lead: "A deposit was paid on this booking, so the balance of ", trail: " is owed and has not been collected." };
   if (cause === "credit-release") return { lead: "Account credit applied to this booking was used elsewhere in the club's accounts, so ", trail: " is owed and has not been collected." };
   if (cause === "mixed") return { lead: `A change to this booking increased the total, and ${USED_ELSEWHERE}; together `, trail: " is owed and has not been collected." };
   return { lead: "A change to this booking increased the total by ", trail: ", and that amount has not been collected." };
@@ -148,6 +185,7 @@ export function officerPanelParts(cause: AdditionalAskCause): { lead: string; tr
  */
 export function memberCardFallbackParts(cause: AdditionalAskCause): { lead: string; trail: string } {
   const trail = " is still owing on this booking according to our records.";
+  if (cause === "balance") return { lead: "You paid a deposit on this booking, so the balance of ", trail };
   if (cause === "credit-release") return { lead: "Account credit applied to your booking was used elsewhere in the club's accounts, so ", trail };
   if (cause === "mixed") return { lead: "A recent booking change, and account credit applied to your booking that was used elsewhere in the club's accounts, mean ", trail };
   return { lead: "A recent booking modification means ", trail };
@@ -157,6 +195,7 @@ export function memberCardFallbackParts(cause: AdditionalAskCause): { lead: stri
  * The paragraph above the member's payment form, in the two pieces either side of the amount.
  */
 export function memberCardLeadParts(cause: AdditionalAskCause): { lead: string; trail: string } {
+  if (cause === "balance") return { lead: "You paid a deposit on this booking, so the balance of ", trail: " is still owing. Please complete payment below." };
   if (cause === "credit-release") return { lead: "Account credit applied to your booking was used elsewhere in the club's accounts, so ", trail: " is still owing on this booking. Please complete payment below." };
   if (cause === "mixed") return { lead: "A recent booking change, and account credit applied to your booking that was used elsewhere in the club's accounts, mean ", trail: " is still owing on this booking. Please complete payment below." };
   return { lead: "A recent booking modification means ", trail: " is still owing on this booking. Please complete payment to finalise the modification." };
@@ -182,6 +221,7 @@ export function paymentRequestCauseSentence(cause: "credit-release" | "mixed", a
 
 /** The pre-arrival reminder's outstanding-amount note; `amount` is already formatted. */
 export function preArrivalOutstandingNote(cause: AdditionalAskCause, amount: string): string {
+  if (cause === "balance") return `You paid a deposit on this booking and the balance of ${amount} is still to pay. Please pay it from your booking page before you arrive.`;
   if (cause === "credit-release") return `There is still ${amount} to pay on this booking because account credit applied to it was used elsewhere in the club's accounts. Please pay it from your booking page before you arrive.`;
   if (cause === "mixed") return `There is still ${amount} to pay on this booking after a change to your stay and because account credit applied to it was used elsewhere in the club's accounts. Please pay it from your booking page before you arrive.`;
   return `There is still ${amount} to pay on this booking after a change to your stay. Please pay it from your booking page before you arrive.`;

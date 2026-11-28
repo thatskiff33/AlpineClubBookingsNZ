@@ -4,6 +4,8 @@ import "server-only";
 
 import { BookingStatus, PaymentSource } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
+import { DEPOSIT_SETTLE_REVERSAL_REFUSAL } from "@/lib/deposit-balance";
+import { isDepositSettledPayment } from "@/lib/deposit-settle";
 import {
   isManualSettleFromPaymentStatus,
   MANUAL_CAPTURED_PAYMENT_REFUSAL, bookingAmountOwedCents } from "@/lib/booking-payment-state";
@@ -202,6 +204,8 @@ export async function getBookingManualPaymentState(
       } else if (settledStripe) {
         reverseBlockedReason =
           "A card payment has since settled this booking — reversing the manual record would misstate the ledger.";
+      } else if (await isDepositSettledPayment(prisma, payment.id)) {
+        reverseBlockedReason = DEPOSIT_SETTLE_REVERSAL_REFUSAL;
       }
     }
   }

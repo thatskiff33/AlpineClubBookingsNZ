@@ -46,6 +46,8 @@ files=(
   src/lib/__tests__/email-failure-requeue.realdb.test.ts
   # #5239: the Group Trip cover-freshness trigger and its evaluation races.
   src/lib/__tests__/kiosk-group-trip-freshness.realdb.test.ts
+  # #5008: the deposit settle through the manual arm of the settlement body.
+  src/lib/__tests__/deposit-settle.realdb.test.ts
 )
 # An explicit report plus the existing validator rejects green describe.skip.
 pnpm exec vitest run --maxWorkers=1 --reporter=json --outputFile="$race_dir/report.json" "${files[@]}"

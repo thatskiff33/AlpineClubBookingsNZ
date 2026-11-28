@@ -306,7 +306,8 @@ the rule: it names sibling IDs so a change to one prompts checking the others.
   `amountCents + creditAppliedCents = finalPriceCents` is only the special case
   where nothing is left owing. What holds in every case is
   `amountCents + creditAppliedCents + (uncollected addition) = finalPriceCents`:
-  every cent of the price is collected, paid with credit, or still owed.
+  every cent of the price is collected, paid with credit, or still owed
+  (a deposit's balance is still owed [INV-ADDPAY-053]).
   This is NOT enforced by a runtime assertion inside the settle, and cannot be:
   the settled figure is *defined* as `finalPriceCents - credit - uncollected`,
   so any in-transaction check reduces to `finalPrice === finalPrice`. What
@@ -319,7 +320,7 @@ the rule: it names sibling IDs so a change to one prompts checking the others.
   every booking's `amountCents`, `creditAppliedCents` and uncollected
   addition against its ledger lines over committed data. **(3) is not a safety
   net for this settle**: it is an operator-run command, not a scheduled job or
-  an alert.
+  alert.
   Either answer is recorded on the mark-paid audit row BOTH ways — with the
   settled figure written, the amount owing, and what was deliberately left
   uncollected. A covered extra also writes
@@ -333,7 +334,7 @@ the rule: it names sibling IDs so a change to one prompts checking the others.
 
   - **Net, never gross.** `paidAmountCents = amountCents - refundedAmountCents`.
     The manual-settle path was made net-correct in July 2026; the edit path and
-    the payments board were not. `/admin/payments` rendered gross beside a
+    payments board were not. `/admin/payments` rendered gross beside a
     "Partially refunded" chip, so a $130 capture with $65 refunded read as "paid
     $130" and a booking officer sized the balance at `430 - 130 = 300` when the
     true figure was `430 - 65 = 365`.
@@ -345,11 +346,10 @@ the rule: it names sibling IDs so a change to one prompts checking the others.
     (`queueSupersededAdditionalIntentCancellationRows`), so an ask sized on one
     edit's own delta deletes the unpaid balance of the ask it replaces. Two
     consecutive +$70 edits on a $130 paid booking asked $70 and lost $70,
-    permanently and silently. The ask is therefore the edit's own net PLUS the unpaid balance of the ask it
-    supersedes, which is `sizeAdditionalAsk` in
-    `src/lib/additional-payment-ask.ts` — the one home for all of this
-    arithmetic, and the module the census guard and the operator SQL are both
-    folded from.
+    permanently and silently. The ask is therefore the edit's own net PLUS the
+    unpaid balance of the ask it supersedes, which is `sizeAdditionalAsk` in
+    `src/lib/additional-payment-ask.ts` — the one home for this arithmetic,
+    from which the census guard and operator SQL are folded.
   - **A booking paid wholly with credit is asked too (#3502).** Its
     `{ amountCents: 0, SUCCEEDED }` row fails `hasCapturedPayment`, so three
     edit doors sent its increase to a Xero supplementary invoice that, with Xero
