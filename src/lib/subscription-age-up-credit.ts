@@ -294,19 +294,17 @@ async function creditOnSeasonInvoice(input: {
   if (amountDueCents === null) throw new Error(`Xero returned no valid balance for season invoice ${invoiceId}.`);
   // A reserved credit, or one whose note is already recorded, is allocated
   // whatever is owed now: a second note, or a lot beside it, would credit twice.
-  if (!adjustment.creditInvoiceId) {
-    if (!existingNote) {
-      if (!invoice.status) throw new Error(`Xero returned no status for season invoice ${invoiceId}.`);
-      // The membership sync voids the charge of a voided invoice, and the
-      // credit then waits for the season to be invoiced again.
-      if (!isIssuedInvoiceStatus(invoice.status)) return "wait";
-      if (amountDueCents < adjustment.amountCents) return "lot";
-    }
-    if (!(await reserveAgeUpCreditInvoice(adjustment.id, invoiceId))) {
-      throw new Error("Another worker claimed this age-group credit; recheck its outcome.");
-    }
+  if (!adjustment.creditInvoiceId && !existingNote) {
+    if (!invoice.status) throw new Error(`Xero returned no status for season invoice ${invoiceId}.`);
+    // The membership sync voids the charge of a voided invoice, and the
+    // credit then waits for the season to be invoiced again.
+    if (!isIssuedInvoiceStatus(invoice.status)) return "wait";
+    if (amountDueCents < adjustment.amountCents) return "lot";
   }
 
+  // Every check that can refuse without writing to Xero runs BEFORE the
+  // reservation: a refusal here leaves the credit free to take either route on
+  // the retry, where a reserved one could only ever be allocated.
   const contactId = invoice.contact?.contactID ?? input.memberXeroContactId;
   if (!contactId) throw new Error(`No Xero contact for season invoice ${invoiceId}.`);
   // The note lands on the invoice's contact; prove that contact is contained
@@ -318,16 +316,22 @@ async function creditOnSeasonInvoice(input: {
     xero,
     tenantId,
   });
+  const taxRendering = existingNote
+    ? null
+    : await resolveXeroTaxRendering({
+        kind: "subscription-invoice",
+        invoiceId,
+        subscriptionId: adjustment.subscriptionId,
+      });
+  if (!adjustment.creditInvoiceId && !(await reserveAgeUpCreditInvoice(adjustment.id, invoiceId))) {
+    throw new Error("Another worker claimed this age-group credit; recheck its outcome.");
+  }
 
   const documentDate = xeroDocumentDateForClubToday(await readClubTimeZoneOutsideRequest());
   let creditNoteId = existingNote?.xeroObjectId ?? null;
   let creditNoteNumber = existingNote?.xeroObjectNumber ?? null;
-  if (!creditNoteId) {
-    const taxRendering = await resolveXeroTaxRendering({
-      kind: "subscription-invoice",
-      invoiceId,
-      subscriptionId: adjustment.subscriptionId,
-    });
+  // Resolved above exactly when no note is recorded yet.
+  if (taxRendering) {
     const creditNote = buildSubscriptionCreditNote({
       contactId,
       date: documentDate,
@@ -369,6 +373,7 @@ async function creditOnSeasonInvoice(input: {
     });
   }
 
+  if (!creditNoteId) throw new Error(`Age-group change credit ${adjustment.id} has no credit note to allocate.`);
   await allocateSubscriptionCreditNote({
     xero,
     tenantId,
