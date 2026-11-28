@@ -121,6 +121,13 @@ counts in full. Review the **Age-group adjustments** before confirming, even
 if there are no annual charges. For a shared invoice, follow the preview's
 instruction to settle the change in Xero rather than billing the family twice.
 
+A member gets one age-group adjustment a season, for no more months than their
+season invoice billed. If a date of birth or join date is corrected after an
+adjustment was raised, the preview names the earlier one and raises no second:
+settle the difference in Xero. A member approved after their birthday is
+billed from the birthday month unless their **Joined Date** is filled in:
+approval does not set it, so check it before running the preview.
+
 A credit comes off the member's season invoice in Xero, once that invoice is
 raised and while it still owes at least the credit; otherwise it becomes credit
 on the member's account. While the season invoice is voided, deleted or still a
