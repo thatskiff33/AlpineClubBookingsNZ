@@ -35,7 +35,6 @@ import {
   type AgeTierSettingsReader,
   type MemberSubscriptionSettlement,
 } from "@/lib/subscription-lockout-facts";
-import { seasonYearOfStoredDate } from "@/lib/financial-year";
 
 /**
  * The ONE place the five booking write paths ask "what does this club's
@@ -685,26 +684,18 @@ export async function evaluateProposedPaidUpAdultPresence(
      */
     bookingOwnerMemberId?: string | null;
     /**
-     * The membership season these nights fall in, when the caller has already
-     * resolved it AUTHORITATIVELY.
+     * The membership season these nights fall in, resolved AUTHORITATIVELY by
+     * the caller. REQUIRED (#5259): no season here rests on a default.
      *
-     * Omit it and the season comes from `seasonYearOfStoredDate`, whose year-end
-     * month defaults to the process-level cache in `financial-year.ts`. Every product
-     * caller of this function is a booking write behind a gated request that has
-     * seeded that cache, so omitting it is correct for them and this parameter
-     * changes nothing about their answer.
-     *
-     * A READ-ONLY EVIDENCE caller cannot rely on that. Nothing on a diagnostics
-     * path calls `refreshFinancialYearConfig`, so on a cold process the cache is
-     * still the March default and a club with any other year-end month would be
-     * judged in the WRONG SEASON — reporting a paid-up member as unfinancial
-     * (or the reverse) from a season row that is not theirs. Such a caller
-     * resolves the year-end month from stored state itself, refuses when it
-     * cannot, and passes the season here so the answer never depends on whatever
-     * happened to warm the cache. Same shape and same reason as
+     * A booking write derives it from the club's resolved year-end month
+     * before its transaction opens. A READ-ONLY EVIDENCE caller resolves the
+     * year-end month from stored state itself and refuses when it cannot, so
+     * a club with a non-March year-end is never judged in the wrong season: a
+     * paid-up member reported as unfinancial (or the reverse) from a season
+     * row that is not theirs. Same shape and same reason as
      * `resolveMembershipTypePolicy`'s own `seasonYear` input.
      */
-    seasonYear?: number;
+    seasonYear: number;
     /**
      * The club's lockout mode, when the caller has already read it.
      *
@@ -730,7 +721,7 @@ export async function evaluateProposedPaidUpAdultPresence(
       ? { readAgeTierSettings: input.readAgeTierSettings }
       : {}),
     lodgeId: input.lodgeId,
-    seasonYear: input.seasonYear ?? seasonYearOfStoredDate(input.checkIn),
+    seasonYear: input.seasonYear,
     checkIn: input.checkIn,
     checkOut: input.checkOut,
     bookingOwnerMemberId: input.bookingOwnerMemberId ?? null,

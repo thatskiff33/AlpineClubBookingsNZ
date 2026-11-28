@@ -23,6 +23,7 @@ import { getMemberCreditBalance } from "@/lib/member-credit";
 import { resolveSubscriptionLockoutMode } from "@/lib/member-subscription-eligibility";
 import { evaluateNonMemberPricingRequirements } from "@/lib/subscription-lockout-enforcement";
 import { seasonYearOfStoredDate } from "@/lib/financial-year";
+import { clubFinancialYearEndMonth } from "@/lib/financial-year-server";
 import { applyRateLimit, rateLimiters } from "@/lib/rate-limit";
 import { parseJsonRequestBody } from "@/lib/api-json";
 import {
@@ -314,6 +315,12 @@ export async function POST(request: NextRequest) {
   // saving the panel between the two calls makes the notice describe a regime the
   // number was not computed under.
   const subscriptionLockoutMode = await resolveSubscriptionLockoutMode();
+  // The stay's membership season, from the club's RESOLVED year-end (#5259),
+  // once: the price and the notice that explains it judge the same season.
+  const seasonYear = seasonYearOfStoredDate(
+    checkIn,
+    await clubFinancialYearEndMonth(),
+  );
 
   try {
     const price = await priceBookingGuestsWithMembershipTypePolicy(prisma, {
@@ -325,6 +332,7 @@ export async function POST(request: NextRequest) {
       guests,
       seasons: seasonData,
       groupDiscount,
+      seasonYear,
       subscriptionLockoutMode,
     });
     // Deferred non-member "guest portion" (#2003): when a split creates a
@@ -342,6 +350,7 @@ export async function POST(request: NextRequest) {
       guests,
       seasons: seasonData,
       groupDiscount,
+      seasonYear,
     });
     const deferredGuestPortionCents = deferredPortion?.totalPriceCents ?? null;
     const availableCreditCents = await getMemberCreditBalance(effectiveMemberId);
@@ -374,7 +383,7 @@ export async function POST(request: NextRequest) {
     const nonMemberPricing = await evaluateNonMemberPricingRequirements(prisma, {
       mode: subscriptionLockoutMode,
       lodgeId: quoteLodgeId,
-      seasonYear: seasonYearOfStoredDate(checkIn),
+      seasonYear,
       checkIn,
       checkOut,
       // Owner decision, 3 Aug 2026: an unfinancial member triggers the

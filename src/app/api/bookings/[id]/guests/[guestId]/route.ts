@@ -57,6 +57,7 @@ import { authorizationRoleFromAccessRoles } from "@/lib/access-roles";
 import { bookingManagementAuthorizationRole } from "@/lib/admin-permissions";
 import type { BookingModificationSettlementMethod } from "@/lib/booking-modify";
 import { clubFormatValues } from "@/lib/club-format-server";
+import { clubFinancialYearEndMonth } from "@/lib/financial-year-server";
 import { LOCK1_HOLDER_TRANSACTION_BUDGET } from "@/lib/db-transaction";
 import {
   TRANSACTION_CONTENDED_STATUS_CHECK_MESSAGE,
@@ -148,12 +149,16 @@ export async function DELETE(
   const format = await clubFormatValues();
   // #4627: the journal's posting context, likewise resolved before the transaction.
   const journal = await resolveBookingMoneyPostingContext();
+  // #5259: the club's resolved year-end, likewise; the removal's reprice places
+  // the booking in its membership season with it.
+  const yearEndMonth = await clubFinancialYearEndMonth();
 
   try {
     const result = await prisma.$transaction((tx) =>
       removeBookingGuestInTransaction({
         format,
         journal,
+        yearEndMonth,
         tx,
         bookingId,
         guestId,

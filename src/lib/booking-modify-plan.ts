@@ -732,6 +732,7 @@ export async function prepareGuestPlan(
     newCheckOut,
     memberGuestPolicy,
     subscriptionLockoutMode,
+    yearEndMonth,
     today,
     format,
     now = new Date(),
@@ -765,6 +766,13 @@ export async function prepareGuestPlan(
      * planner's own unit tests.
      */
     subscriptionLockoutMode?: SubscriptionLockoutMode;
+    /**
+     * The club's resolved financial year-end month (#5259), which places the
+     * stored and the proposed check-in in their membership seasons. REQUIRED,
+     * and resolved by the caller before it opened this transaction
+     * (`INV-LOCK-004`): resolving it can reach Xero.
+     */
+    yearEndMonth: number;
     /**
      * The CLUB's today, as the UTC-midnight `Date` a `@db.Date` round-trips
      * through, resolved by the caller BEFORE it opened this transaction
@@ -847,7 +855,7 @@ export async function prepareGuestPlan(
   // booking, and a cold cache, all at once.
   const otherLodgeEligibleGuestIds = requestCarriesOtherLodgeElection(input)
     ? await resolveOtherLodgeRateEligibleGuestIds(tx, {
-        seasonYear: seasonYearOfStoredDate(booking.checkIn),
+        seasonYear: seasonYearOfStoredDate(booking.checkIn, yearEndMonth),
         guests: booking.guests,
       })
     : new Set<string>();
@@ -1190,6 +1198,7 @@ export async function prepareGuestPlan(
     const unpaidMemberGuests = await findUnpaidMemberGuestNames(tx, {
       bookingMemberId: bookingOwner(booking).memberId,
       checkIn: isInProgressEdit && editableFrom ? editableFrom : newCheckIn,
+      yearEndMonth,
       guests: normalizedAddGuests ?? [],
     });
     // #2543: mode-gated like the five sibling refusal sites. The lookup above
@@ -1224,7 +1233,7 @@ export async function prepareGuestPlan(
     const nonMemberPricing = await evaluateNonMemberPricingRequirements(tx, {
       mode: subscriptionLockoutMode,
       lodgeId: bookingLodgeId,
-      seasonYear: seasonYearOfStoredDate(newCheckIn),
+      seasonYear: seasonYearOfStoredDate(newCheckIn, yearEndMonth),
       checkIn: newCheckIn,
       checkOut: newCheckOut,
       // Owner decision, 3 Aug 2026. On the apply path this also closes the
@@ -1589,6 +1598,7 @@ export async function calculateModifiedPricing(
     removeGuestIds,
     guestsForPricing,
     subscriptionLockoutMode,
+    yearEndMonth,
     skipBookingLifecycleRules,
     seasonRateData,
     adminOverride = false,
@@ -1649,9 +1659,11 @@ export async function calculateModifiedPricing(
      * settings from inside the transaction holding the capacity lock.
      */
     subscriptionLockoutMode?: SubscriptionLockoutMode;
+    /** The club's resolved year-end month; see `prepareGuestPlan` (#5259). */
+    yearEndMonth: number;
   },
 ): Promise<PricingResult> {
-  const seasonYear = seasonYearOfStoredDate(newCheckIn);
+  const seasonYear = seasonYearOfStoredDate(newCheckIn, yearEndMonth);
   await assertMembershipTypeBookingAllowed(tx, {
     ownerMemberId: bookingOwner(booking).memberId,
     guests: guestsForPricing,

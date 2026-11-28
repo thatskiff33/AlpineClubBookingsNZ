@@ -21,6 +21,7 @@ import { getMemberCreditBalance } from "@/lib/member-credit";
 import { findUnpaidMemberGuests } from "@/lib/booking-member-guest-subscriptions";
 import logger from "@/lib/logger";
 import { seasonYearOfStoredDate } from "@/lib/financial-year";
+import { clubFinancialYearEndMonth } from "@/lib/financial-year-server";
 import {
   assertMembershipTypeBookingAllowed,
   getMembershipTypeBookingPolicyErrorBody,
@@ -683,6 +684,11 @@ export async function POST(request: NextRequest) {
   // requirement below cannot branch on different answers if an admin saves the
   // setting mid-request.
   const subscriptionLockoutMode = await resolveSubscriptionLockoutMode();
+  // The booking's membership season, from the club's RESOLVED year-end (#5259),
+  // once: the owner gate, the membership-type policy and the paid-up-adult
+  // requirement below all judge the same season.
+  const yearEndMonth = await clubFinancialYearEndMonth();
+  const seasonYear = seasonYearOfStoredDate(checkIn, yearEndMonth);
 
   // Subscription gate for the booking owner. Bypassed when the Xero module
   // is effectively off, because subscriptions are invoiced through Xero, and
@@ -693,10 +699,9 @@ export async function POST(request: NextRequest) {
     !isAuthorizedOnBehalf &&
     await requiresPaidSubscriptionForMemberForBooking(prisma, {
       memberId: effectiveMemberId,
-      seasonYear: seasonYearOfStoredDate(checkIn),
+      seasonYear,
     })
   ) {
-    const seasonYear = seasonYearOfStoredDate(checkIn);
     const paidSub = await prisma.memberSubscription.findFirst({
       where: { memberId: effectiveMemberId, seasonYear, status: "PAID" },
     });
@@ -1086,7 +1091,7 @@ export async function POST(request: NextRequest) {
       await assertMembershipTypeBookingAllowed(prisma, {
         ownerMemberId: effectiveMemberId,
         guests: party,
-        seasonYear: seasonYearOfStoredDate(checkIn),
+        seasonYear,
         // Finding 2 (privacy re-review of MG3 #2308).
         skipAuthorization: isAuthorizedOnBehalf,
       });
@@ -1126,6 +1131,7 @@ export async function POST(request: NextRequest) {
         unpaidMemberGuests = await findUnpaidMemberGuests(prisma, {
           bookingMemberId: effectiveMemberId,
           checkIn,
+          yearEndMonth,
           guests: party,
         });
       } catch (error) {
@@ -1362,7 +1368,7 @@ export async function POST(request: NextRequest) {
     const nonMemberPricing = await evaluateNonMemberPricingRequirements(prisma, {
       mode: subscriptionLockoutMode,
       lodgeId: bookingLodgeId,
-      seasonYear: seasonYearOfStoredDate(checkIn),
+      seasonYear,
       checkIn,
       checkOut,
       // Owner decision, 3 Aug 2026: the requirement follows the unfinancial
@@ -1430,6 +1436,7 @@ export async function POST(request: NextRequest) {
       lodgeId: bookingLodgeId,
       checkIn,
       checkOut,
+      seasonYear,
       guests: guestInputs,
     });
     if (hostingViolation && isAuthorizedOnBehalf) {
@@ -1527,6 +1534,7 @@ export async function POST(request: NextRequest) {
         // #2543 — the mode resolved once above, handed to pricing so no path in
         // this request can price under a regime the gates did not branch on.
         subscriptionLockoutMode,
+        yearEndMonth,
         guestDietarySeeding,
         memberReviewJustification,
         adultMemberHostingReason,
@@ -1661,6 +1669,7 @@ export async function POST(request: NextRequest) {
       groupDiscount,
       // #2543 — see the draft branch above.
       subscriptionLockoutMode,
+      yearEndMonth,
       guestDietarySeeding,
       status,
       shouldBePending,
@@ -1705,6 +1714,7 @@ export async function POST(request: NextRequest) {
         groupDiscount,
         // #2543 — see the draft branch above.
         subscriptionLockoutMode,
+        yearEndMonth,
         guestDietarySeeding,
         memberReviewJustification,
         adultMemberHostingReason,

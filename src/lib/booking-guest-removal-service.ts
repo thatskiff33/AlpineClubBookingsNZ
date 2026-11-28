@@ -297,6 +297,7 @@ export async function removeBookingGuestInTransaction({
   settlementMethod,
   consentAuthority,
   subscriptionLockoutMode,
+  yearEndMonth,
   hostingCoverageOverride,
   today,
   format,
@@ -323,6 +324,13 @@ export async function removeBookingGuestInTransaction({
    * a peek; a consent-authority removal never reaches it at all.
    */
   subscriptionLockoutMode?: SubscriptionLockoutMode;
+  /**
+   * The club's resolved financial year-end month (#5259), which places the
+   * booking in its membership season for the reprice below. REQUIRED, and
+   * resolved by the caller BEFORE it opened this transaction for the reason
+   * `subscriptionLockoutMode` is: resolving it can reach Xero (`INV-LOCK-004`).
+   */
+  yearEndMonth: number;
   /**
    * The club's today (#3123), resolved by the caller BEFORE it opened this
    * transaction, exactly like `subscriptionLockoutMode` above and for the same
@@ -592,7 +600,7 @@ export async function removeBookingGuestInTransaction({
     // permitting.
     ...valuedNightLocksForGuest(guest, booking),
   }));
-  const seasonYear = seasonYearOfStoredDate(booking.checkIn);
+  const seasonYear = seasonYearOfStoredDate(booking.checkIn, yearEndMonth);
   await assertMembershipTypeBookingAllowed(tx, {
     ownerMemberId: bookingOwner(booking).memberId,
     guests: guestsForPricing,
@@ -632,7 +640,7 @@ export async function removeBookingGuestInTransaction({
     const nonMemberPricing = await evaluateNonMemberPricingRequirements(tx, {
       mode: subscriptionLockoutMode,
       lodgeId: bookingLodgeId,
-      seasonYear: seasonYearOfStoredDate(booking.checkIn),
+      seasonYear,
       checkIn: booking.checkIn,
       checkOut: booking.checkOut,
       // Owner decision, 3 Aug 2026. It matters most on this path: an unfinancial

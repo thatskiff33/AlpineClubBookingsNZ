@@ -70,6 +70,12 @@ export async function findUnpaidMemberGuests(
     /** The BOOKER, or null when the booking is owned by an Organisation (#3369). */
     bookingMemberId: string | null;
     checkIn: Date;
+    /**
+     * The club's resolved financial year-end month, which places `checkIn` in a
+     * membership season. Resolved by the caller, before any transaction `db`
+     * belongs to (#5259).
+     */
+    yearEndMonth: number;
     guests: BookingGuestLike[];
   }
 ): Promise<UnpaidMemberGuestInfo[]> {
@@ -94,7 +100,7 @@ export async function findUnpaidMemberGuests(
   }
 
   const uniqueIds = [...new Set(memberGuestIds)];
-  const seasonYear = seasonYearOfStoredDate(params.checkIn);
+  const seasonYear = seasonYearOfStoredDate(params.checkIn, params.yearEndMonth);
   const ageTierSettings = await getAgeTierSettings();
   const subscriptions = await db.memberSubscription.findMany({
     where: {
@@ -203,6 +209,12 @@ export async function findUnpaidMemberGuestNames(
     /** The BOOKER, or null when the booking is owned by an Organisation (#3369). */
     bookingMemberId: string | null;
     checkIn: Date;
+    /**
+     * The club's resolved financial year-end month, which places `checkIn` in a
+     * membership season. Resolved by the caller, before any transaction `db`
+     * belongs to (#5259).
+     */
+    yearEndMonth: number;
     guests: BookingGuestLike[];
   }
 ): Promise<string[]> {

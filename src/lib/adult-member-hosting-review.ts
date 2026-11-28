@@ -106,7 +106,10 @@ import {
   type SubscriptionLockoutDb,
 } from "@/lib/subscription-lockout-enforcement";
 import type { AgeTierSettingsReader } from "@/lib/subscription-lockout-facts";
-import { seasonYearOfStoredDate } from "@/lib/financial-year";
+import {
+  getFinancialYearEndMonth,
+  seasonYearOfStoredDate,
+} from "@/lib/financial-year";
 
 /**
  * Booking-side integration for the adult-member hosting policy (#2364).
@@ -989,9 +992,9 @@ async function evaluateLoadedBookingAdultMemberHosting(
   options: {
     /**
      * The season the subscription bridge judges settlement in, when the caller has
-     * already resolved it authoritatively. Omitted by every writer, which runs
-     * behind a gated request that has seeded the financial-year cache; supplied by
-     * read-only evidence callers, which cannot. See
+     * already resolved it authoritatively: supplied by read-only evidence callers.
+     * Omitted by every writer, whose season comes from the year-end this process
+     * last resolved; see the bridge call below, and
      * `evaluatePersistedBookingAdultMemberHostingReadOnly`.
      */
     seasonYear?: number;
@@ -1132,7 +1135,18 @@ async function evaluateLoadedBookingAdultMemberHosting(
         ...groupTrip.participants,
       ],
       db,
-      options.seasonYear ?? seasonYearOfStoredDate(booking.checkIn),
+      // THE WRITERS' SEASON IS THE ONE THIS PROCESS LAST RESOLVED, READ HERE BY
+      // NAME (#5259). Every other season derivation is handed the club's resolved
+      // year-end by its caller. This one cannot be yet: the reconcilers run inside
+      // the transactions of some thirty writers (payment settlement and the
+      // coverage drain among them), and resolving the year-end here would be a
+      // global-client read and possibly a Xero call under their locks
+      // (`INV-LOCK-004`). The season is read only under `NON_MEMBER_PRICING`,
+      // which needs the Xero module on, and every gated booking request then
+      // reseeds this cache before its transaction opens
+      // (`resolveSubscriptionLockoutPolicy`).
+      options.seasonYear ??
+        seasonYearOfStoredDate(booking.checkIn, getFinancialYearEndMonth()),
       options.subscriptionLockoutMode,
       options.readAgeTierSettings,
     );
@@ -1240,9 +1254,9 @@ function acquireHostingCoverageGroupKey(
  * but it must never join a writer lock cohort or mutate database state.
  *
  * `seasonYear` EXISTS BECAUSE THIS FORM HAS NO GATED REQUEST BEHIND IT. The
- * subscription bridge (#2543) judges settlement in a membership season, and the
- * season comes from `seasonYearOfStoredDate`, whose year-end month defaults to the
- * process-level financial-year cache in `financial-year.ts`. Writers reach this rule through routes that have
+ * subscription bridge (#2543) judges settlement in a membership season, and a
+ * writer's season comes from the year-end the process last resolved (the
+ * financial-year cache in `financial-year.ts`). Writers reach this rule through routes that have
  * already called `refreshFinancialYearConfig`; a read-only evidence caller has
  * not, so on a cold process the cache is still the March default and a club with
  * any other year-end month would have its hosts judged against a season row that
