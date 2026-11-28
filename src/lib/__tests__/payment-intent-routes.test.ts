@@ -1057,12 +1057,80 @@ describe("payment intent routes", () => {
       amountCents: 12500,
       paymentMethodId: "pm_123",
       format: CLUB_FORMAT_TEST,
+      owesPaidConfirmation: true,
     });
     expect(mocks.queueXeroInvoiceForPaidBooking).toHaveBeenCalledWith({
       bookingId: "booking-1",
       createdByMemberId: "member-1",
     });
     expect(mockStripeCreatePaymentIntent).not.toHaveBeenCalled();
+  });
+
+  // #5433 (the card recovery doors): the recovery of a capture whose webhook was
+  // missed owes the confirmation, as the webhook would have; the webhook arriving
+  // later reads already_paid and sends nothing (proved for the webhook in
+  // stripe-webhook-alerts.test.ts and with real PostgreSQL for the payment link).
+  describe("#5433: the create-payment-intent recovery owes the booking confirmation", () => {
+    function recover(paymentStatus = "PROCESSING") {
+      mockPrisma.booking.findUnique.mockResolvedValue({
+        id: "booking-1", memberId: "member-1", status: "CONFIRMED", finalPriceCents: 12500,
+        member: { id: "member-1", email: "member@example.com", firstName: "Test", lastName: "Member" },
+        payment: { stripePaymentIntentId: "pi_existing", status: paymentStatus },
+      });
+      mockGetPaymentIntent.mockResolvedValue({ id: "pi_existing", amount: 12500, payment_method: "pm_123", status: "succeeded" });
+      return createPaymentIntentRoute(new NextRequest("http://localhost/api/payments/create-payment-intent", {
+        method: "POST", body: JSON.stringify({ bookingId: "booking-1" }), headers: { "Content-Type": "application/json" },
+      }));
+    }
+
+    it("a fresh paid settle delivers its owed marker once, after the invoice is queued", async () => {
+      mocks.markBookingPaymentSucceeded.mockResolvedValue({ outcome: "paid", bookingId: "booking-1", bumpedBookingIds: [], paidConfirmation: confirmation.marker });
+
+      const res = await recover();
+
+      expect(res.status).toBe(200);
+      expect((await res.json()).alreadyPaid).toBe(true);
+      expect(confirmation.deliver).toHaveBeenCalledTimes(1);
+      expect(confirmation.deliver).toHaveBeenCalledWith(confirmation.marker, CLUB_FORMAT_TEST, "create-payment-intent");
+      expect(confirmation.sendUnrecorded).not.toHaveBeenCalled();
+      expect(confirmation.deliver.mock.invocationCallOrder[0]).toBeGreaterThan(mocks.queueXeroInvoiceForPaidBooking.mock.invocationCallOrder[0]!);
+    });
+
+    it("a fresh paid settle whose marker could not be keyed sends the confirmation unkeyed", async () => {
+      mocks.markBookingPaymentSucceeded.mockResolvedValue({ outcome: "paid", bookingId: "booking-1", bumpedBookingIds: [], paidConfirmation: null });
+
+      expect((await recover()).status).toBe(200);
+      expect(confirmation.deliver).not.toHaveBeenCalled();
+      expect(confirmation.sendUnrecorded).toHaveBeenCalledWith("booking-1", CLUB_FORMAT_TEST, "create-payment-intent");
+    });
+
+    it.each(["already_paid", "duplicate_capture_refunded", "duplicate_capture_kept"] as const)(
+      "a settle another payment already made (%s) sends nothing; the invoice queue is unchanged",
+      async (outcome) => {
+        mocks.markBookingPaymentSucceeded.mockResolvedValue({ outcome, bookingId: "booking-1", bumpedBookingIds: [] });
+
+        expect((await recover()).status).toBe(200);
+        expect(mocks.queueXeroInvoiceForPaidBooking).toHaveBeenCalledTimes(1);
+        expect(confirmation.deliver).not.toHaveBeenCalled();
+        expect(confirmation.sendUnrecorded).not.toHaveBeenCalled();
+      },
+    );
+
+    it("a payment already recorded as succeeded settles nothing here and sends nothing", async () => {
+      expect((await recover("SUCCEEDED")).status).toBe(200);
+      expect(mocks.markBookingPaymentSucceeded).not.toHaveBeenCalled();
+      expect(mocks.queueXeroInvoiceForPaidBooking).toHaveBeenCalledTimes(1);
+      expect(confirmation.deliver).not.toHaveBeenCalled();
+      expect(confirmation.sendUnrecorded).not.toHaveBeenCalled();
+    });
+
+    it("a capacity-race cancellation sends no confirmation", async () => {
+      mocks.markBookingPaymentSucceeded.mockResolvedValue({ outcome: "cancelled_refunded", bookingId: "booking-1", bumpedBookingIds: [], capacityRefund: { chargedAmountCents: 12500, plannedRefundCents: 12500 } });
+
+      expect((await recover()).status).toBe(409);
+      expect(confirmation.deliver).not.toHaveBeenCalled();
+      expect(confirmation.sendUnrecorded).not.toHaveBeenCalled();
+    });
   });
 
   it("reports captured-card recovery when a succeeded intent hits participant contention", async () => {

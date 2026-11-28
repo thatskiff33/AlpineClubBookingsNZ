@@ -240,7 +240,7 @@ export const ADMIN_HELP_QUESTIONS: Record<string, HelpQuestion[]> = {
       a: "Only the ones the club is ready to operate and support.",
     },
   ],
-  "/admin/roster": [
+  [getAdminPage("roster").oldPath]: [
     {
       q: "What is the roster for?",
       a: "Preparing lodge day rosters and printable operational lists.",

@@ -472,6 +472,37 @@ describe("after commit: the card refund, the Xero correction, the email and the 
     );
   });
 
+  /*
+    #5288 (`INV-PAY-163`): this door's Xero leg is told what the settlement
+    decided, as the date, batch and guest-removal doors' legs are. The result's
+    type makes the door carry the answer out of the transaction; only this test
+    makes it hand the answer on, because the Xero leg's parameter is optional.
+
+    THE MUTATION THAT FAILS IT: delete the `primaryInvoiceBillsIncrease` line
+    from the `queueXeroBookingEditSettlement` call in
+    `settleGuestAcceptanceRepriceAfterCommit`.
+  */
+  it.each([true, false])("MUTATION (#5288): passes the settlement's primary-invoice answer (%s) to the Xero leg", async (primaryInvoiceBillsIncrease) => {
+    const reprice = await accept(booking());
+    if (!reprice.repriced) throw new Error("expected a re-price");
+    // An acceptance's reduction never bills an increase, so the settlement answers no.
+    expect(reprice.primaryInvoiceBillsIncrease).toBe(false);
+    h.executeBookingModificationRefund.mockResolvedValue({ stripeRefundId: "re_1", refundDestination: "own" });
+    h.sendBookingModifiedEmail.mockResolvedValue(undefined);
+
+    await settleGuestAcceptanceRepriceAfterCommit({
+      bookingId: "booking-1",
+      actorMemberId: "cara",
+      reprice: { ...reprice, primaryInvoiceBillsIncrease },
+      format: CLUB_FORMAT_TEST,
+    });
+
+    expect(h.queueXeroBookingEditSettlement).toHaveBeenCalledTimes(1);
+    expect(h.queueXeroBookingEditSettlement).toHaveBeenCalledWith(
+      expect.objectContaining({ bookingId: "booking-1", bookingModificationId: "mod-1", primaryInvoiceBillsIncrease }),
+    );
+  });
+
   // #4070: the real refund helper; the email says the member's own-card refund
   // was made only when Stripe made it, and one it could not make stays owed on
   // the row the re-price wrote before it committed (#4992).

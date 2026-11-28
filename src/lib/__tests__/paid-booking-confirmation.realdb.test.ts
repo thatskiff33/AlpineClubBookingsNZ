@@ -6,7 +6,10 @@
  * attempt never did, exactly once; a booking cancelled in the meantime is not
  * sent; past the end of the check-in day the member is sent nothing and the
  * officers are alerted once; a send that does not reach the owner (a
- * suppressed address) alerts them too.
+ * suppressed address) alerts them too. The card recovery doors (#5433): the
+ * payment-link recovery of a capture whose webhook was missed owes the
+ * confirmation the same way, and the webhook arriving after it sends no second
+ * one.
  *
  * Each case runs the REAL settle, webhook processor, delivery and sweep against
  * the real `OwedNotice`, `Booking`, `Payment` and `EmailLog` tables and the
@@ -29,7 +32,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vites
 import { releaseBookingFinancialHistoryForTeardown } from "./support/booking-financial-history-teardown";
 import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 import { assertSafeRaceDbUrl } from "./support/race-db-url";
-import { resetStripeRaceHooks } from "./support/stripe-race-double";
+import { resetStripeRaceHooks, stripeRaceHooks } from "./support/stripe-race-double";
 
 /** The one shared double: the LAST file to register a factory wins, so every realdb file registers this same one. */
 vi.mock("@/lib/stripe", async (importOriginal) =>
@@ -106,6 +109,9 @@ const CASES = {
   rollback: caseIds("rbk", new Date("2034-03-17T00:00:00.000Z")),
   // Its check-in day (30 June, NZ) ended before the frozen today (1 July 2026, midday NZ).
   pastCutoff: caseIds("pco", new Date("2026-06-30T00:00:00.000Z")),
+  // #5433, the card recovery doors: the payment-link recovery of a capture whose webhook was missed.
+  linkDelivered: caseIds("lnk", new Date("2034-03-21T00:00:00.000Z")),
+  linkRecovered: caseIds("lnr", new Date("2034-03-25T00:00:00.000Z")),
 };
 
 let prisma: (typeof import("@/lib/prisma"))["prisma"];
@@ -114,6 +120,8 @@ let notice: typeof import("@/lib/paid-booking-confirmation-notice");
 let owedRecord: typeof import("@/lib/paid-booking-confirmation-owed");
 let drain: typeof import("@/lib/owed-notice/drain");
 let deliver: typeof import("@/lib/owed-notice/deliver");
+let linkIntent: typeof import("@/lib/payment-link-intent");
+let actionTokens: typeof import("@/lib/action-tokens");
 let harnessRole: { restore: () => void } | undefined;
 let webhookEventSequence = 0;
 
@@ -139,6 +147,7 @@ let webhookEventSequence = 0;
       await prisma.paymentRefund.deleteMany({ where: { paymentId: ids.paymentId } });
       await prisma.paymentTransaction.deleteMany({ where: { paymentId: ids.paymentId } });
       await prisma.payment.deleteMany({ where: { id: ids.paymentId } });
+      await prisma.paymentLink.deleteMany({ where: { bookingId: ids.bookingId } });
       await prisma.bookingGuestNight.deleteMany({ where: { bookingGuest: { bookingId: ids.bookingId } } });
       await prisma.bookingGuest.deleteMany({ where: { bookingId: ids.bookingId } });
       await prisma.booking.deleteMany({ where: { id: ids.bookingId } });
@@ -246,6 +255,31 @@ let webhookEventSequence = 0;
       });
     }
 
+    /** A live `/pay` link for the case's booking (its token; the link row is the fixture, no money). */
+    async function issueLink(ids: CaseIds): Promise<string> {
+      const { token, tokenHash } = actionTokens.issueActionToken();
+      await prisma.paymentLink.create({ data: { bookingId: ids.bookingId, tokenHash, expiresAt: ids.checkOut } });
+      return token;
+    }
+
+    /** Stripe holds the case's intent captured, and its webhook never reached the app: what a recovery door reads. */
+    function capturedWithoutWebhook(ids: CaseIds) {
+      stripeRaceHooks.get = async (id) => {
+        if (id !== ids.intentId) throw new Error(`fake Stripe: no such intent ${id}`);
+        return {
+          id: ids.intentId,
+          object: "payment_intent",
+          amount: PRICE_CENTS,
+          currency: "nzd",
+          status: "succeeded",
+          client_secret: `${ids.intentId}_secret`,
+          payment_method: "pm_race_5433c",
+          metadata: { bookingId: ids.bookingId },
+          latest_charge: null,
+        };
+      };
+    }
+
     /** A sweep of this kind, reading only this suite's markers. */
     function sweep(now: Date) {
       return drain.drainOwedNotices(now, {
@@ -292,6 +326,8 @@ let webhookEventSequence = 0;
       owedRecord = await import("@/lib/paid-booking-confirmation-owed");
       drain = await import("@/lib/owed-notice/drain");
       deliver = await import("@/lib/owed-notice/deliver");
+      linkIntent = await import("@/lib/payment-link-intent");
+      actionTokens = await import("@/lib/action-tokens");
 
       await deleteFixtures();
       await prisma.lodge.create({ data: { id: LODGE_ID, name: "Race 5433 confirmation lodge", slug: LODGE_ID, active: true } });
@@ -419,6 +455,60 @@ let webhookEventSequence = 0;
       expect(after.markers).toEqual([]);
       expect(after.confirmations.map((row) => row.status)).toEqual(["BOUNCED"]);
       expect(after.officerAlerts).toBe(1);
+    });
+
+    // #5433, the card recovery doors: before this change the payment-link recovery
+    // sent no confirmation, and the webhook arriving after it found the booking paid
+    // and sent none either.
+    it("the payment-link recovery of a capture whose webhook was missed owes the confirmation, sends it once and clears it; the webhook arriving afterwards sends no second one", async () => {
+      const ids = CASES.linkDelivered;
+      await seedBooking(ids);
+      const token = await issueLink(ids);
+      capturedWithoutWebhook(ids);
+
+      await expect(linkIntent.createPaymentIntentForPaymentLink(token)).resolves.toEqual({ type: "alreadyPaid" });
+
+      expect((await prisma.booking.findUniqueOrThrow({ where: { id: ids.bookingId } })).status).toBe("PAID");
+      const recovered = await rows(ids);
+      expect(recovered.markers).toEqual([]);
+      expect(recovered.confirmations).toHaveLength(1);
+      expect(recovered.confirmations[0]!.id).toMatch(new RegExp(`^email:booking-confirmed:${ids.bookingId}:\\d+$`));
+      expect(recovered.confirmations[0]!.status).toBe("SKIPPED_NON_PRODUCTION");
+
+      // Stripe's webhook for the same capture arrives late: its settle reads already_paid, writes no marker and sends nothing.
+      await deliverWebhook(ids);
+      expect(await rows(ids)).toEqual({ markers: [], confirmations: recovered.confirmations, officerAlerts: 0 });
+    });
+
+    it("a stop after the payment-link recovery's commit is recovered by the sweep exactly once; the late webhook's lost claim writes and sends nothing", async () => {
+      const ids = CASES.linkRecovered;
+      await seedBooking(ids);
+      const token = await issueLink(ids);
+      capturedWithoutWebhook(ids);
+
+      // The process stops between the recovery's settle commit and its send.
+      stop.on = true;
+      await expect(linkIntent.createPaymentIntentForPaymentLink(token)).resolves.toEqual({ type: "alreadyPaid" });
+      expect((await rows(ids)).markers).toHaveLength(1);
+      expect((await rows(ids)).confirmations).toEqual([]);
+      const paidAt = await paidAtOf(ids);
+
+      stop.on = false;
+      await deliverWebhook(ids);
+      expect((await rows(ids)).markers).toHaveLength(1);
+      expect((await rows(ids)).confirmations).toEqual([]);
+      const settled = await money(ids);
+
+      expect((await sweep(new Date(paidAt.getTime() + notice.PAID_CONFIRMATION_SWEEP_AFTER_MS - MINUTE))).checked).toBe(0);
+      expect(await sweep(new Date(paidAt.getTime() + notice.PAID_CONFIRMATION_SWEEP_AFTER_MS + MINUTE))).toMatchObject({ checked: 1, delivered: 1 });
+      expect(await rows(ids)).toEqual({
+        markers: [],
+        confirmations: [{ id: `email:booking-confirmed:${ids.bookingId}:${paidAt.getTime()}`, status: "SKIPPED_NON_PRODUCTION" }],
+        officerAlerts: 0,
+      });
+      expect((await sweep(new Date(paidAt.getTime() + DAY))).checked).toBe(0);
+      expect((await rows(ids)).confirmations).toHaveLength(1);
+      expect(await money(ids)).toEqual(settled);
     });
 
     it("leaves no marker when the transaction that records it rolls back", async () => {

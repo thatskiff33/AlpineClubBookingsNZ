@@ -414,6 +414,7 @@ const EXPECTED_ROUTE_AREAS: Record<string, AdminPermissionArea> = {
   "/api/admin/members/[id]/joining-fee/preview": "membership",
   "/api/admin/members/[id]/lifecycle/archive": "membership",
   "/api/admin/members/[id]/lifecycle/delete": "membership",
+  "/api/admin/members/[id]/lifecycle/unarchive": "membership",
   "/api/admin/members/[id]/lodge-access": "membership",
   "/api/admin/members/[id]/membership-cancellation": "membership",
   "/api/admin/members/[id]/merge": "membership",

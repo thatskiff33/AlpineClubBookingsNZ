@@ -139,7 +139,14 @@ export interface PaidAnotherWayCash {
 
 type CashStore = Pick<
   Prisma.TransactionClient,
-  "manualRefundTask" | "paymentRecoveryOperation" | "paymentTransaction" | "xeroObjectLink" | "xeroSyncOperation"
+  // #4381: the receipt gate reads which other document records a change capture.
+  | "bookingModification"
+  | "manualRefundTask"
+  | "payment"
+  | "paymentRecoveryOperation"
+  | "paymentTransaction"
+  | "xeroObjectLink"
+  | "xeroSyncOperation"
 >;
 
 /** One close on the payment, and how its bank cash counts (see the module comment). */

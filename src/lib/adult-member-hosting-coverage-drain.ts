@@ -680,12 +680,9 @@ async function notifyOwnerOfLostCoverage(
     lodgeId: delivery.lodgeId,
   });
   if (outcome.status === "sent") return "sent";
-  if (
-    outcome.status === "withheld_for_booking" &&
-    outcome.reason === "booking_flag_unreadable"
-  ) {
-    return "retry";
-  }
+  // #5298: a lost hand-over sent nothing, and this template keeps no copy for the sweep to re-send.
+  if (outcome.status === "handover_lost") return "retry";
+  if (outcome.status === "withheld_for_booking" && outcome.reason === "booking_flag_unreadable") return "retry";
   // #3035: an environment-safety CONFIGURATION fault is the same class of
   // transient fault as an unreadable switch — nothing is wrong with the recipient
   // and the answer changes as soon as somebody fixes the deployment. A CONFIRMED

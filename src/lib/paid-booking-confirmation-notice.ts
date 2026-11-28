@@ -59,10 +59,18 @@
  * own alert, to a different group; that one is not durable (round 2, F1), so
  * officers may get both, the trade-off the issue already accepts.
  *
- * Who owes it: only the three callers that send the confirmation ask the
- * settle to record it (`owesPaidConfirmation`): the Stripe webhook, the
- * confirm-payment route and the confirm-pending job's saved-card charge. The
- * other card doors send none, or only on an officer's choice, as before. The
+ * Who owes it: every card door that confirms a booking by itself asks the
+ * settle to record it (`owesPaidConfirmation`) and, after the commit, calls
+ * `queueInvoiceAndDeliverPaidConfirmation`
+ * (`paid-booking-confirmation-after-commit.ts`): the Stripe webhook, the
+ * confirm-payment route, the confirm-pending job's saved-card charge, and
+ * (#5433, the card recovery doors) the create-payment-intent and payment-link
+ * recoveries of a capture whose webhook was missed and the charge-saved-method
+ * route, an officer's or an authorised cron call (owner decision D12, 28 Nov
+ * 2026). Before that change those three sent none, and a webhook arriving after
+ * their settle found the booking already paid and sent none either. An
+ * officer's confirm-pending-guests sends only on the officer's choice and
+ * records none, as before (#5470). The
  * confirm-pending job's zero-balance confirmation records the same marker at
  * its own PAID claim (#5433 PR 4, CP-1) and is delivered here too, on the same
  * rules (owner decision D11: an owner who cannot be emailed at all raises the
@@ -274,10 +282,12 @@ export const PAID_CONFIRMATION_NOTICE_DELIVERERS: readonly OwedNoticeDeliverer<P
 
 /**
  * A confirmation that could not be recorded as owed (a booking id that cannot
- * key a marker; unreachable with today's ids): sent once as before #5433,
- * unkeyed, with nothing left for a later run and no officers' alert. Used by
- * the confirm-pending job's zero-balance claim (#5433 PR 4, round 1, item 5).
- * Never throws.
+ * key a marker; unreachable with today's ids): sent once, unkeyed, with nothing
+ * left for a later run and no officers' alert. Reached only through the shared
+ * after-commit sequence (`queueInvoiceAndDeliverPaidConfirmation`), by every
+ * door that owes the confirmation. For the webhook, the confirm-payment route
+ * and the confirm-pending job it is what those doors sent before #5433; for the
+ * three recovery doors, which sent nothing before, it is new. Never throws.
  */
 export async function sendUnrecordedPaidBookingConfirmation(bookingId: string, format: ClubFormat, job: string): Promise<void> {
   try {

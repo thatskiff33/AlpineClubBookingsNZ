@@ -49,6 +49,7 @@ function failure(
     bookingRecipientMemberId: null,
     recovery: "retired",
     freshCopyHref: null,
+    deliveryUnconfirmed: false,
     reviewedAt: null,
     reviewedById: null,
     reviewNote: null,
@@ -206,6 +207,31 @@ describe("EmailDeliverabilitySection exhausted failures", () => {
     expect(fetchMock).toHaveBeenCalledWith("/api/admin/email-failures/email-1/retry", {
       method: "POST",
     });
+  });
+
+  // #5298 (INV-INT-043): a send the app stopped part-way through.
+  it("marks a row that may already have been delivered, and warns of a duplicate before Try again", async () => {
+    dialog.confirm.mockResolvedValue(false);
+    vi.stubGlobal("fetch", vi.fn());
+    renderSection([
+      failure("unconfirmed", "maybe@example.com", null, { recovery: "retry", deliveryUnconfirmed: true }),
+      failure("plain", "plain@example.com", null, { recovery: "retry" }),
+    ]);
+
+    expect(within(rowFor("maybe@example.com")).getByText(/May already have been delivered/)).toBeVisible();
+    expect(within(rowFor("plain@example.com")).queryByText(/May already have been delivered/)).toBeNull();
+
+    fireEvent.click(within(rowFor("maybe@example.com")).getByRole("button", { name: "Try again" }));
+    await waitFor(() => expect(dialog.confirm).toHaveBeenCalledTimes(1));
+    expect(dialog.confirm).toHaveBeenLastCalledWith(
+      expect.objectContaining({ description: expect.stringContaining("maybe@example.com will receive it twice") }),
+    );
+
+    fireEvent.click(within(rowFor("plain@example.com")).getByRole("button", { name: "Try again" }));
+    await waitFor(() => expect(dialog.confirm).toHaveBeenCalledTimes(2));
+    expect(dialog.confirm).toHaveBeenLastCalledWith(
+      expect.objectContaining({ description: expect.not.stringContaining("twice") }),
+    );
   });
 
   it("sends nothing when the officer cancels, and reports a refusal from the route", async () => {

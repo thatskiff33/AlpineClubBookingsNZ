@@ -83,7 +83,7 @@ describe("the sidebar's active link over a moved hub", () => {
     stubPendingCounts();
   });
 
-  it("PREMISE: the Finance, Website, Rules, Help & system, Messages & email, Bookings and Members hubs and the Lodge hub's Lobby Display and Lodges pages have moved, and nothing else has", () => {
+  it("PREMISE: the Finance, Website, Rules, Help & system, Messages & email, Bookings, Members and Lodge hubs have moved, and nothing else has", () => {
     const moved = ADMIN_PAGES.filter((page) => page.moved);
     expect(moved.length).toBeGreaterThan(0);
     expect(new Set(moved.map((page) => page.hub))).toEqual(
@@ -134,14 +134,24 @@ describe("the sidebar's active link over a moved hub", () => {
     ["Bed Allocation's hub URL", "/admin/booking-desk/bed-allocation", ["Bed Allocation"]],
     ["the Waitlist's old URL", "/admin/waitlist", ["Waitlist"]],
     ["the Waitlist's hub URL", "/admin/booking-desk/waitlist", ["Waitlist"]],
+    // C11 (#4808): the Lodge pages. The kiosk's hub URL lights the kiosk alone,
+    // and the print sheet lights the roster above it.
+    ["Lodge Instructions' old URL", "/admin/lodge-instructions", ["Lodge Instructions"]],
+    ["Lodge Instructions' hub URL", "/admin/lodge-ops/lodge-instructions", ["Lodge Instructions"]],
+    ["the kiosk's old URL", "/admin/lodge", ["Lodge Kiosk"]],
+    ["the kiosk's hub URL", "/admin/lodge-ops/lodge", ["Lodge Kiosk"]],
+    ["Hut Leaders' hub URL", "/admin/lodge-ops/hut-leaders", ["Hut Leaders"]],
+    ["the roster print sheet's hub URL", "/admin/lodge-ops/roster/2026-07-01/print", ["Chore Roster"]],
+    ["Lodge Maintenance's hub URL", "/admin/lodge-ops/maintenance-reports", ["Lodge Maintenance"]],
   ])("highlights the same link at %s (%s)", async (_label, pathname, expected) => {
     await expect(activeLabels(pathname)).resolves.toEqual([...expected].sort());
   });
 
   it("leaves an unmoved page's highlight as it was", async () => {
-    await expect(activeLabels("/admin/lodge-instructions")).resolves.toEqual(["Lodge Instructions"]);
-    // Lodge Instructions has not moved, so its hub path is served by nothing and lights nothing.
-    await expect(activeLabels("/admin/lodge-ops/lodge-instructions")).resolves.toEqual([]);
+    await expect(activeLabels("/admin/security")).resolves.toEqual(["Login & Security"]);
+    // Login & Security (a Settings page) has not moved, so its hub path is
+    // served by nothing and lights nothing.
+    await expect(activeLabels("/admin/settings/security")).resolves.toEqual([]);
   });
 
   it("highlights nothing at the hub's own root, which is no page yet (C13)", async () => {
