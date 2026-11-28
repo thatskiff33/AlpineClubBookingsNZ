@@ -1,10 +1,14 @@
 import type { PaymentStatus } from "@prisma/client";
 
 import {
+  bookingHasPrimaryXeroInvoice,
   decideLateCapture,
   keptLateCaptureInvoiceAsked,
+  keptLateCaptureRecordRoute,
   keptReceiptMayHaveReachedXero,
 } from "@/lib/late-capture-kept-xero-rules";
+import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
+import type { RepairDependencies } from "./xero-booking-repair-deps";
 import { cardNoteMayBeInXeroSentence, cardRefundAboveRecordedSentence } from "@/lib/late-capture-card-note-wording";
 import type {
   BlockingOperationMatch,
@@ -14,8 +18,60 @@ import type {
   MutableFinding,
 } from "./xero-booking-repair-types";
 import { addAction, addFinding, buildRetryAction } from "./xero-booking-repair-findings";
+import { addKeptChangeCaptureFinding } from "./xero-booking-repair-additional-capture";
+import type { KeptChangeCaptureRepairEvidence } from "./xero-booking-repair-kept-change-evidence";
 
 type LateCaptureTask = BookingClassificationContext["lateCaptureTasks"] extends Map<string, infer Task> ? Task : never;
+
+/**
+ * #4381 (`INV-PAY-144`): for a paid-another-way close of a change capture on
+ * an invoiced booking (`keptLateCaptureRecordRoute` answers
+ * `by-change-evidence`), its payment and the keep's own reading of it
+ * (`loadKeptChangeCaptureEvidence`), so the close's finding splits it as the
+ * keep does. Undefined for any other capture, and where that reading found the
+ * task's live kept-capture invoice first: that invoice records it, as before.
+ */
+export function closedChangeCapture(
+  context: Pick<BookingClassificationContext, "keptChangeCaptures">,
+  payment: { id: string; source: string | null; xeroInvoiceId: string | null },
+  paymentLinks: Parameters<typeof bookingHasPrimaryXeroInvoice>[0]["paymentLinks"],
+  transaction: { kind: "PRIMARY" | "ADDITIONAL"; stripePaymentIntentId: string },
+) {
+  const route = keptLateCaptureRecordRoute({
+    captureKind: transaction.kind,
+    bookingHasPrimaryInvoice: bookingHasPrimaryXeroInvoice({ paymentXeroInvoiceId: payment.xeroInvoiceId, paymentLinks }),
+  });
+  if (route !== "by-change-evidence") return undefined;
+  const found = context.keptChangeCaptures?.get(transaction.stripePaymentIntentId);
+  return found?.liveKeptInvoice ? undefined : { payment, found };
+}
+
+/**
+ * #4381: applies a `QUEUE_KEPT_LATE_CAPTURE_RECORD` raised for a close
+ * (`paidAnotherWayClose`): the close's own split, on a transaction of its own
+ * under the task row and the change's anchor (`queueMissingPaidAnotherWayReceipt`),
+ * so a stale snapshot records nothing twice.
+ */
+export async function applyPaidAnotherWayCloseReceiptAction(
+  action: BookingXeroRepairAction,
+  deps: Pick<RepairDependencies, "prisma" | "queueMissingPaidAnotherWayReceipt">,
+): Promise<void> {
+  const clubZone = await readClubTimeZoneOutsideRequest();
+  const queued = await deps.prisma.$transaction((tx) =>
+    deps.queueMissingPaidAnotherWayReceipt(tx, {
+      manualRefundTaskId: String(action.payload.manualRefundTaskId),
+      paymentIntentId: String(action.payload.paymentIntentId),
+      clubZone,
+    }),
+  );
+  const sent = queued === "receipt-then-refund-note";
+  action.status = sent ? "queued" : "skipped";
+  action.resultMessage = sent
+    ? "The card payment's Xero receipt is queued; the paid-another-way close's bank-transfer refund note follows it."
+    : queued === "receipt-held-for-officer"
+      ? "Nothing queued: the card payment's Xero receipt failed after it may have reached Xero. Check Xero, then retry it from the Xero operations list."
+      : "Nothing queued: the card payment no longer owes a receipt, Xero already records it, or no booking change can be read from it.";
+}
 
 /**
  * #3924 round 7 (money M2, `INV-PAY-122`; owner, 8 Oct 2026: "Record receipt,
@@ -31,6 +87,7 @@ export function addPaidAnotherWayReceiptFinding({
   transaction,
   lateTask,
   keptInvoice,
+  changeCapture,
 }: {
   findings: MutableFinding[];
   actionMap: Map<string, BookingXeroRepairAction>;
@@ -39,6 +96,16 @@ export function addPaidAnotherWayReceiptFinding({
   transaction: { stripePaymentIntentId: string | null; status: PaymentStatus; amountCents: number };
   lateTask: LateCaptureTask;
   keptInvoice: BlockingOperationMatch | null;
+  /**
+   * #4381 (`INV-PAY-144`): for a change capture on an invoiced booking
+   * (`keptLateCaptureRecordRoute` answers `by-change-evidence`), its payment
+   * and the change's evidence, so the close is split as the keep is. Absent
+   * otherwise: the kept-capture invoice records it, as before.
+   */
+  changeCapture?: {
+    payment: { id: string; source: string | null; xeroInvoiceId: string | null };
+    found: KeptChangeCaptureRepairEvidence | undefined;
+  };
 }): boolean {
   // An APPROVED capture whose card refund was closed as paid another way, with
   // its note waiting for the receipt. The charge is still in the Stripe account
@@ -66,6 +133,45 @@ export function addPaidAnotherWayReceiptFinding({
   // for a close. Report-only, so the caller still looks at a PARTIAL row.
   if (close.receiptState?.receipt.kind === "resolved-by-hand") {
     addRecordByHandFinding(findings, close, details);
+    return false;
+  }
+  // #4381 (`INV-PAY-144`): the kept change capture's finding, in the close's
+  // words; where it queues, its apply runs the close's own split under its locks.
+  const addChangeCaptureFinding = (capture: NonNullable<typeof changeCapture>): true => {
+    addKeptChangeCaptureFinding({
+      findings,
+      actionMap,
+      booking,
+      payment: capture.payment,
+      transaction,
+      kept: { taskId: lateTask.taskId, paidAnotherWay: true },
+      found: capture.found,
+    });
+    return true;
+  };
+  // Lane review of #5534: a receipt row that stood down for another writer
+  // sent nothing, so it is neither live nor on its way (`receiptStoodDown`).
+  const receiptStoodDown = changeCapture?.found?.receiptStoodDown === true;
+  const receiptRowLive =
+    changeCapture?.found !== undefined &&
+    (changeCapture.found.receiptLinked ||
+      (!receiptStoodDown && changeCapture.found.receiptOperations.some((operation) => operation.status !== "CANCELLED")));
+  // #4381 (owner Q1 on #4324): a close that planned no Xero record because no
+  // change can be read from its capture stored `none`, so nothing waits and
+  // nothing below reaches it. An officer records it by hand: named here.
+  if (
+    close.xeroRefundNote === "none" &&
+    changeCapture?.found?.route === "change-unknown" &&
+    close.receiptState?.receipt.kind === "none" &&
+    !keptLateCaptureInvoiceAsked(lateTask.operations)
+  ) {
+    return addChangeCaptureFinding(changeCapture);
+  }
+  // #4381 (owner decision 28 Nov 2026): any other close that planned no note
+  // has none raised and none queued. Report-only; the caller still looks at a
+  // PARTIAL row.
+  if (close.xeroRefundNote === "none") {
+    addNoRefundNoteFinding(findings, close, details, "none");
     return false;
   }
   if (close.xeroRefundNote !== "after-receipt") return false;
@@ -132,6 +238,28 @@ export function addPaidAnotherWayReceiptFinding({
   if (state.receipt.kind === "recorded") return true;
 
   if (!failed && keptLateCaptureInvoiceAsked(lateTask.operations)) return false;
+  // #4381 (owner, 25 Oct 2026 on #4324; `INV-PAY-144`, `INV-SSOT`): a change
+  // capture on an invoiced booking with no kept-capture invoice asked for is
+  // the kept change capture's finding. Its `--apply` decides the document
+  // again under the task row and the anchor (`queueMissingPaidAnotherWayReceipt`),
+  // so this pass never sizes or routes it from its own snapshot. Only a change
+  // whose own invoice names the capture and was never sent (`change-invoice`)
+  // keeps the kept-capture invoice below, for the gross capture, as before.
+  if (!failed && changeCapture && (receiptRowLive || receiptStoodDown || changeCapture.found?.route !== "change-invoice")) {
+    // #4381 (owner decision 28 Nov 2026): another writer records the capture
+    // (or the capture's receipt stood down for one) and the verdict names no
+    // one invoice in Xero to credit. The credit-release sweep's hold (accepted
+    // until #4380) keeps the close's waiting key, so its note follows later:
+    // named as waiting, never to record by hand. Anything else - parts on two
+    // documents, or an invoice not yet in Xero - is named for an officer to
+    // record by hand. One the verdict does name was answered above.
+    if ((changeCapture.found?.recordedElsewhere || receiptStoodDown) && !receiptRowLive && state.receipt.kind === "none") {
+      if (changeCapture.found?.creditReleaseSweep) addCreditReleaseWaitFinding(findings, close, details);
+      else addNoRefundNoteFinding(findings, close, details, "recorded-elsewhere");
+      return true;
+    }
+    return addChangeCaptureFinding(changeCapture);
+  }
   // Round 8 (money review): a FAILED receipt row that may have reached Xero -
   // its Stripe payment linked, or `createInvoices` attempted - is never retried
   // automatically, or Xero could hold two receipts. An officer checks Xero first.
@@ -228,6 +356,75 @@ function addRecordByHandFinding(
       closeAmountCents: state.close.amountCents,
       recordByHandCents: state.recordByHandCents,
       ...mayBeInXeroDetail(state.cardNoteMayBeInXeroCents),
+    },
+    actionKeys: [],
+  });
+}
+
+/**
+ * #4381 (owner decision 28 Nov 2026 on #4381;
+ * `PAID_ANOTHER_WAY_REFUND_NOTE_AWAITS_CREDIT_RELEASE`): a close whose capture
+ * the credit-release sweep holds. It keeps its waiting key, so the nightly note
+ * step queues its note once an invoice in Xero names the capture (#4380). A
+ * refund recorded by hand meanwhile would be credited a second time, so this
+ * says not to. Report-only. Not once any note of the close was asked for.
+ */
+function addCreditReleaseWaitFinding(
+  findings: MutableFinding[],
+  close: NonNullable<LateCaptureTask["paidAnotherWayClose"]>,
+  details: { paymentId: string; manualRefundTaskId: string; paymentIntentId: string | null },
+): void {
+  const state = close.receiptState;
+  if (!state || state.noteAsked || !state.close || state.close.amountCents <= 0) return;
+  const amount = close.paidBackLabel ? `the ${close.paidBackLabel} paid back` : "what was paid back";
+  addFinding(findings, {
+    code: "PAID_ANOTHER_WAY_REFUND_NOTE_AWAITS_CREDIT_RELEASE",
+    severity: "info",
+    summary: `A late card payment whose refund was paid another way is held as released credit, so it has no Xero refund credit note yet. One for ${amount} is queued automatically once that credit is released (#4380). Do not record it by hand in Xero, or it would be credited twice.`,
+    safeToAutoApply: false,
+    details: {
+      ...details,
+      closeRecordId: state.close.id,
+      closeAmountCents: state.close.amountCents,
+      noRefundNote: "credit-release-sweep",
+    },
+    actionKeys: [],
+  });
+}
+
+/**
+ * #4381 (owner decision 28 Nov 2026 on #4381): a close with no bank-transfer
+ * note raised and none queued, for its own reason - it planned none (`none`;
+ * the dialog told the treasurer to record it by hand), or a writer other
+ * than the credit-release sweep records the capture and the app has no
+ * invoice in Xero it can credit (`recorded-elsewhere`). Report-only, under the record-by-hand code, sized
+ * by what every close of the capture paid back. Not once any note of the
+ * close was asked for.
+ */
+function addNoRefundNoteFinding(
+  findings: MutableFinding[],
+  close: NonNullable<LateCaptureTask["paidAnotherWayClose"]>,
+  details: { paymentId: string; manualRefundTaskId: string; paymentIntentId: string | null },
+  why: "none" | "recorded-elsewhere",
+): void {
+  const state = close.receiptState;
+  if (!state || state.noteAsked || !state.close || state.close.amountCents <= 0) return;
+  const amount = close.paidBackLabel ? `the ${close.paidBackLabel} paid back` : "what was paid back";
+  const reason =
+    why === "recorded-elsewhere"
+      ? "another Xero document records the late card payment, and the app has no invoice in Xero it can credit for certain"
+      : "when the refund was closed, the app had no Xero invoice it could credit for certain";
+  addFinding(findings, {
+    code: "PAID_ANOTHER_WAY_REFUND_NOTE_RECORD_BY_HAND",
+    severity: "warning",
+    summary: `A late card payment whose refund was paid another way has no Xero refund credit note, and none is queued: ${reason}. Record ${amount} as a refund by hand in Xero, against the invoice that records the payment. ${RECORD_BY_HAND_REMINDER}`,
+    safeToAutoApply: false,
+    details: {
+      ...details,
+      closeRecordId: state.close.id,
+      closeAmountCents: state.close.amountCents,
+      recordByHandCents: state.close.amountCents,
+      noRefundNote: why,
     },
     actionKeys: [],
   });

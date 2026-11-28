@@ -8,7 +8,8 @@ import type { PaidAnotherWayXeroNote } from "@/lib/manual-refund-task-settlement
 import type { PaidAnotherWayReceiptState } from "@/lib/paid-another-way-receipt-note";
 import type { PaidBackRefundRequest } from "@/lib/xero-inbound/refund-request-paid-back";
 import { LEDGER_ROWS_OLDEST_FIRST } from "@/lib/payment-ledger-order";
-import type { AdditionalCaptureReceiptEvidence, KeptChangeCaptureRepairEvidence } from "./xero-booking-repair-additional-capture";
+import type { AdditionalCaptureReceiptEvidence } from "./xero-booking-repair-additional-capture";
+import type { KeptChangeCaptureRepairEvidence } from "./xero-booking-repair-kept-change-evidence";
 import type { CreditNoteSpentOutsideApp } from "@/lib/xero-credit-note-spent-outside-flag";
 
 export const XERO_BOOKING_REPAIR_FINDING_CODES = [
@@ -47,6 +48,7 @@ export const XERO_BOOKING_REPAIR_FINDING_CODES = [
   // the close's bank-transfer refund its own notes do not cover. Report-only;
   // not raised once any note row of the close exists (round 10).
   "PAID_ANOTHER_WAY_REFUND_NOTE_RECORD_BY_HAND",
+  "PAID_ANOTHER_WAY_REFUND_NOTE_AWAITS_CREDIT_RELEASE", // #4381: the sweep holds it; its note follows (#4380), never by hand
   // #3924 round 12: a late capture's card refunds that no note will answer -
   // its receipt is the app's invoice in Xero, but its row was resolved by
   // hand, so every card-refund path reads it so - and that no record-by-hand
@@ -527,9 +529,8 @@ export interface BookingClassificationContext {
     { taskId: string; raisedAt: Date; operations: XeroOperationRecord[] }
   >;
   /**
-   * #4324: of those, the kept CHANGE captures on a cancelled booking whose
-   * primary invoice exists, by intent (`loadKeptChangeCaptureEvidence`).
-   * Absent, none to check.
+   * #4324, #4381: of those, the kept CHANGE captures (or closed paid another way) on a cancelled booking whose
+   * primary invoice exists, by intent (`loadKeptChangeCaptureEvidence`). Absent, none.
    */
   keptChangeCaptures?: Map<string, KeptChangeCaptureRepairEvidence>;
   /**
@@ -571,6 +572,8 @@ export interface BookingClassificationContext {
          * (`PaidAnotherWayReceiptState.cardNoteMayBeInXeroCents`).
          */
         cardNoteMayBeInXeroLabel?: string;
+        /** #4381: what every close of the capture paid back, formatted, for a close with no note raised or queued. */
+        paidBackLabel?: string;
       };
     }
   >;

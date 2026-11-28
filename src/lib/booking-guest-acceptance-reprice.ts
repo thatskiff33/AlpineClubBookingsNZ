@@ -170,6 +170,8 @@ export type GuestAcceptanceReprice =
       paymentStatus: string | null;
       paymentId: string | null;
       zeroDollarAutoPaid: boolean;
+      /** #5288: see `PaymentAdjustmentResult`; the Xero leg raises the primary invoice. */
+      primaryInvoiceBillsIncrease: boolean;
       /** Primary intents a zero-dollar auto-pay superseded, to cancel after commit. */
       supersededPrimaryPaymentIntentCount: number;
       /** #3954: the asks retired (cancelled after commit), cancelled outright, and the smaller one re-issued. */
@@ -335,6 +337,7 @@ export async function repriceBookingAfterGuestAcceptance(
       paymentStatus: booking.payment?.status ?? null,
       paymentId: booking.payment?.id ?? null,
       zeroDollarAutoPaid: false,
+      primaryInvoiceBillsIncrease: false,
       supersededPrimaryPaymentIntentCount: 0,
       retiredAdditionalAsks: [],
       unpaidAskCancelled: false,
@@ -536,6 +539,7 @@ export async function repriceBookingAfterGuestAcceptance(
     paymentStatus: booking.payment?.status ?? null,
     paymentId: booking.payment?.id ?? null,
     zeroDollarAutoPaid: lifecycle.zeroDollarAutoPaid,
+    primaryInvoiceBillsIncrease: adjusted.primaryInvoiceBillsIncrease,
     supersededPrimaryPaymentIntentCount: lifecycle.supersededPrimaryPaymentIntents.length,
     retiredAdditionalAsks: adjusted.retiredAdditionalAsks,
     unpaidAskCancelled: adjusted.unpaidAskCancelled,
@@ -612,6 +616,7 @@ export async function settleGuestAcceptanceRepriceAfterCommit(params: {
       requiresAdditionalStripePayment: false,
       additionalPaymentIntentId: additionalMint.additionalPaymentIntentId ?? null, // #3980 r2 F3: the ask it minted, as every minting door passes
       createPrimaryInvoiceWhenMissing: reprice.zeroDollarAutoPaid && !reprice.hasIssuedXeroInvoice,
+      primaryInvoiceBillsIncrease: reprice.primaryInvoiceBillsIncrease, // #5288
       // #3653: the organiser's refund raises its own note once Stripe has made it.
       organiserChildRefundOwnsCreditNote: reprice.organiserChildRefund !== null,
     });

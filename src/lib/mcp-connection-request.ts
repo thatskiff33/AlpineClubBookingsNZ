@@ -106,3 +106,12 @@ export function connectionListJson(
 ): NextResponse {
   return connectionJson(request, arrivesAsMcpConnection(request) ? { [key]: list } : list, shape);
 }
+
+/**
+ * The 403 for a part of an action that stays on the club website: the AI app
+ * may use the action, but not this field, template or message (ALP-724).
+ * Every such refusal answers through here, so they read and are coded alike.
+ */
+export function websiteOnlyForConnection(error: string): NextResponse {
+  return NextResponse.json({ error }, { status: 403 });
+}

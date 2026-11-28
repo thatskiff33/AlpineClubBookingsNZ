@@ -11,6 +11,7 @@ import {
   CASH_SETTLEMENT_ALERT_IN_FLIGHT_MS,
   raiseCashSettlementAlert,
 } from "./settle-from-cash-notice";
+import { sendOwedKeptFloorAlerts } from "./kept-settle-floor-alert";
 
 const pendingMarkerWhere = {
   type: BookingEventType.CANCELLED,
@@ -71,10 +72,14 @@ export async function listExhaustedCashSettlementAlerts(take: number): Promise<E
  * row fails the recorded cron run, leaving its durable marker for another run.
  */
 export async function retryCashSettlementAlerts(format: ClubFormat): Promise<number> {
+  const writtenBefore = new Date(new Date().getTime() - CASH_SETTLEMENT_ALERT_IN_FLIGHT_MS);
+  // #5289 F (D4): a kept settle's floor alert still owed, claimed before it is sent, so this run and a
+  // retried delivery never both send it. Its failures are logged by the sender and left for the next run.
+  const keptFloorAlertsSent = await sendOwedKeptFloorAlerts({ writtenBefore }, format);
   const rows = await prisma.bookingEvent.findMany({
     where: {
       ...pendingMarkerWhere,
-      createdAt: { lt: new Date(new Date().getTime() - CASH_SETTLEMENT_ALERT_IN_FLIGHT_MS) },
+      createdAt: { lt: writtenBefore },
     },
     select: {
       id: true,
@@ -102,5 +107,5 @@ export async function retryCashSettlementAlerts(format: ClubFormat): Promise<num
       format,
     });
   }
-  return candidates;
+  return candidates + keptFloorAlertsSent;
 }

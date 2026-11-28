@@ -219,3 +219,22 @@ export function unpaidPrimaryInvoiceGapPayload(
     ...(options.keepCoverage ? {} : primaryInvoiceGapPayload({ coveredCaptures: [] })),
   };
 }
+
+/** How every "another writer records this capture" reason starts: the enqueue's refusal and the worker's stand-down. */
+export const RECORDED_BY_ANOTHER_WRITER_PREFIX = "recorded-by-";
+
+/**
+ * #4381 (owner decision 28 Nov 2026 on #4381; `INV-PAY-144`, `INV-SSOT`): A
+ * RECEIPT ROW THAT STOOD DOWN FOR ANOTHER WRITER - the worker finished it
+ * SUCCEEDED with `skipped: "recorded-by-..."` and sent nothing, because the
+ * primary invoice, a supplementary invoice, a kept-capture invoice or the
+ * credit-release sweep already records the capture. Such a row is not the
+ * capture's record and no receipt is on its way: a paid-another-way close's
+ * plan, the document reading and the repair tool all read it here, never as a
+ * live receipt.
+ */
+export function additionalCaptureReceiptStoodDown(row: { status: string; responsePayload?: unknown }): boolean {
+  if (row.status !== "SUCCEEDED") return false;
+  const skipped = readString(asRecord(row.responsePayload)?.skipped);
+  return skipped !== null && skipped.startsWith(RECORDED_BY_ANOTHER_WRITER_PREFIX);
+}

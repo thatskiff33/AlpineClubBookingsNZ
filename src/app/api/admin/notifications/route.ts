@@ -1,6 +1,11 @@
 import { NextResponse } from "next/server";
-import { z } from "zod";
 import { parseJsonRequestBody } from "@/lib/api-json";
+import { adminNotificationPreferencesUpdateSchema } from "@/lib/admin-support-api/messages";
+import {
+  ADMIN_NOTIFICATION_PREFERENCES_CONNECTION_SHAPE,
+  type AdminNotificationPreferencesAnswer,
+} from "@/lib/connection-shapes/support-messages";
+import { connectionJson } from "@/lib/mcp-connection-request";
 import { requireAdmin } from "@/lib/session-guards";
 import {
   buildStructuredAuditLogCreateArgs,
@@ -18,35 +23,8 @@ import {
 } from "@/lib/admin-notification-preferences";
 import { MEMBER_ACCESS_ROLE_SELECT } from "@/lib/access-role-definitions";
 
-const preferenceUpdateSchema = z
-  .object({
-    adminNewBooking: z.boolean().optional(),
-    adminPaymentFailure: z.boolean().optional(),
-    adminPendingDeadline: z.boolean().optional(),
-    adminBookingBumped: z.boolean().optional(),
-    adminXeroSyncError: z.boolean().optional(),
-    adminCapacityWarning: z.boolean().optional(),
-    adminDailyDigest: z.boolean().optional(),
-    adminWaitlistOffer: z.boolean().optional(),
-    adminFamilyGroupRequest: z.boolean().optional(),
-    adminBookingChangeRequest: z.boolean().optional(),
-    adminRefundRequest: z.boolean().optional(),
-    adminIssueReport: z.boolean().optional(),
-    adminBookingRequest: z.boolean().optional(),
-    adminBookingReviewRequired: z.boolean().optional(),
-    adminMemberDeleteRequest: z.boolean().optional(),
-    adminMaintenanceReport: z.boolean().optional(),
-    adminServerVersion: z.boolean().optional(),
-  })
-  .refine(
-    (value) => Object.values(value).some((entry) => entry !== undefined),
-    "At least one preference update is required"
-  );
-
-const updateSchema = z.object({
-  memberId: z.string().min(1),
-  preferences: preferenceUpdateSchema,
-});
+// The body schema lives in admin-support-api/messages.ts, which the AI app
+// action `update_officer_alerts` offers too (ALP-724).
 
 export async function PUT(request: Request) {
   const guard = await requireAdmin({
@@ -60,7 +38,7 @@ export async function PUT(request: Request) {
   if (!jsonBody.ok) return jsonBody.response;
   const body = jsonBody.body;
 
-  const parsed = updateSchema.safeParse(body);
+  const parsed = adminNotificationPreferencesUpdateSchema.safeParse(body);
   if (!parsed.success) {
     return NextResponse.json(
       { error: "Invalid input", details: parsed.error.flatten() },
@@ -178,7 +156,7 @@ export async function PUT(request: Request) {
     ),
   ]);
 
-  return NextResponse.json({
+  const answer: AdminNotificationPreferencesAnswer = {
     memberId: targetMember.id,
     // Effective, area-masked values: what this admin will actually be sent,
     // which is what the grid re-renders from (#2548).
@@ -186,5 +164,6 @@ export async function PUT(request: Request) {
       targetMember,
       updated
     ),
-  });
+  };
+  return connectionJson(request, answer, ADMIN_NOTIFICATION_PREFERENCES_CONNECTION_SHAPE);
 }

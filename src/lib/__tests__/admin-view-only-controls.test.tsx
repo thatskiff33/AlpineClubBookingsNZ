@@ -124,19 +124,19 @@ import { PromoCodesPageClient } from "@/app/(admin)/admin/rules/promo-codes/prom
 // #1940 pass 3 delegated lanes (membership / lodge settings editors).
 import AdminMemberFieldsPage from "@/app/(admin)/admin/membership/member-fields/page";
 import AdminMembershipTypesPage from "@/app/(admin)/admin/membership/membership-types/page";
-import LockersPage from "@/app/(admin)/admin/lockers/page";
+import LockersPage from "@/app/(admin)/admin/lodge-ops/lockers/page";
 import CommitteePage from "@/app/(admin)/admin/membership/committee/page";
 import AdminDisplayDevicesPage from "@/app/(admin)/admin/lodge-ops/display/devices/page";
 import AdminDisplayLayoutsPage from "@/app/(admin)/admin/lodge-ops/display/layouts/page";
 import AdminDisplayTemplatesPage from "@/app/(admin)/admin/lodge-ops/display/templates/page";
 import { LodgeCapacityCard } from "@/components/admin/lodge-capacity-card";
 import { LodgeDisplaySettingsCard } from "@/app/(admin)/admin/lodge-ops/lodges/[id]/_components/lodge-display-settings-card";
-import ChoresPage from "@/app/(admin)/admin/chores/page";
-import AdminWorkPartiesPage from "@/app/(admin)/admin/work-parties/page";
+import ChoresPage from "@/app/(admin)/admin/lodge-ops/chores/page";
+import AdminWorkPartiesPage from "@/app/(admin)/admin/lodge-ops/work-parties/page";
 import AdminLodgesPage from "@/app/(admin)/admin/lodge-ops/lodges/page";
-import HutLeadersPage from "@/app/(admin)/admin/hut-leaders/page";
-import AdminLodgePage from "@/app/(admin)/admin/lodge/page";
-import RosterPage from "@/app/(admin)/admin/roster/page";
+import HutLeadersPage from "@/app/(admin)/admin/lodge-ops/hut-leaders/page";
+import AdminLodgePage from "@/app/(admin)/admin/lodge-ops/lodge/page";
+import RosterPage from "@/app/(admin)/admin/lodge-ops/roster/page";
 import LodgeConfigurationHubPage from "@/app/(admin)/admin/lodge-ops/lodges/[id]/page";
 import LodgeSetupWizardPage from "@/app/(admin)/admin/lodge-ops/lodges/[id]/setup/page";
 import { ClubIdentityProvider } from "@/components/club-identity-provider";

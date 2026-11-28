@@ -5,6 +5,10 @@
  * `/admin/lockers`. That page is a membership-area page (its API is
  * `requireAdmin({ area: "membership" })`), so a lodge-only admin saw a card the
  * layout then refused, and the hub fetched a summary the API would 403.
+ *
+ * C11 (#4808) moved Lockers, Rooms & Beds and Chores under `/admin/lodge-ops`:
+ * with the hub switch on, the cards link there, and the Lockers card is still
+ * offered only to an admin the layout admits at that path.
  */
 
 import "@testing-library/jest-dom/vitest";
@@ -21,6 +25,14 @@ import {
 } from "@/lib/admin-permissions";
 
 let permissionMatrix: AdminPermissionMatrix = emptyAdminPermissionMatrix();
+
+const hubs = vi.hoisted(() => ({ live: false }));
+
+vi.mock("@/lib/admin-hubs/release", () => ({
+  get ADMIN_HUBS_LIVE() {
+    return hubs.live;
+  },
+}));
 const fetchedUrls: string[] = [];
 
 vi.mock("next-auth/react", () => ({
@@ -81,6 +93,44 @@ beforeEach(() => {
 afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
+  hubs.live = false;
+});
+
+/** Every card's Configure link, as rendered. */
+function configureHrefs(): string[] {
+  return screen
+    .getAllByRole("link", { name: "Configure" })
+    .map((link) => link.getAttribute("href") ?? "");
+}
+
+describe("lodge hub cards at the hub paths (C11 #4808)", () => {
+  it.each([
+    [false, "/admin"],
+    [true, "/admin/lodge-ops"],
+  ] as const)("links Rooms & Beds, Lockers and Chores with the lodge (live=%s)", async (live, base) => {
+    hubs.live = live;
+    permissionMatrix = { ...emptyAdminPermissionMatrix(), lodge: "edit", membership: "view" };
+    render(<LodgeConfigurationHubPage />);
+    await waitFor(() => expect(screen.getByText("Lockers")).toBeInTheDocument());
+    expect(configureHrefs()).toEqual(
+      expect.arrayContaining([
+        `${base}/rooms-beds?lodgeId=lodge-1`,
+        `${base}/lockers?lodgeId=lodge-1`,
+        `${base}/chores?lodgeId=lodge-1`,
+      ]),
+    );
+  });
+
+  it("still hides the Lockers card from a lodge-only admin with the switch on", async () => {
+    hubs.live = true;
+    permissionMatrix = { ...emptyAdminPermissionMatrix(), lodge: "edit" };
+    render(<LodgeConfigurationHubPage />);
+    await screen.findByText("Chores");
+    expect(screen.queryByText("Lockers")).not.toBeInTheDocument();
+    expect(configureHrefs()).not.toContain("/admin/lodge-ops/lockers?lodgeId=lodge-1");
+    expect(configureHrefs()).toContain("/admin/lodge-ops/chores?lodgeId=lodge-1");
+    expect(fetchedUrls.some((u) => u.startsWith("/api/admin/lockers"))).toBe(false);
+  });
 });
 
 describe("lodge hub Lockers card (#4581)", () => {

@@ -22,6 +22,7 @@ import { readRefundRequestPaidBackCentsByPaymentId } from "./refund-request-paid
 import { readFailedCardRefundRecountCentsByPayment, readFailedCardRefundRecountCentsIn } from "./failed-card-refund-recount";
 import { receiptCountsInvoiceCorrections } from "./ib-receipt-reasons";
 import { CLEARING_ALLOCATION_LINK_WHERE, distinctClearingAllocations, NOTE_ALLOCATION_ROLE } from "@/lib/xero-clearing-allocations";
+import { decisionInvoiceIdsOf } from "./bank-transfer-payment-of-invoice";
 
 type Store = Prisma.TransactionClient;
 
@@ -55,6 +56,18 @@ export async function paymentsCountingInvoiceCorrections(
 }
 
 /**
+ * #5289 D: a payment's refunded total as its links record it (`cents`), and
+ * how much of it is invoice corrections (`correctionCents`): money no refund
+ * moved, so never in the payment's own refund detail, which the bank-transfer
+ * floor adds back (`bankTransferFloorCents`). Every other part is either in
+ * that detail already (a refund note's, an account-credit note's or a cash edit
+ * note's hand-back, a refund request paid back) or comes off it (a card refund
+ * Stripe failed later): `LINKED_TOTAL_PARTS` in
+ * `bank-transfer-floor-corrections.realdb.test.ts` lists them.
+ */
+export type LinkedRefundedTotal = { cents: number; correctionCents: number };
+
+/**
  * Each payment's refunded total as its links record it, before any clamp or
  * floor: its direct refund and account notes, each modification note applied
  * to it or (#3979, #4444) to its Xero invoice once (`distinctClearingAllocations`,
@@ -75,7 +88,7 @@ export async function decideLinkedRefundedTotalCents(
   store: Store,
   payments: ReadonlyArray<{ id: string; bookingId: string; refundedAmountCents: number; source: PaymentSource; xeroInvoiceId: string | null }>,
   options: { excludeCreditNoteId?: string | null; transactionRowsOverride?: ReadonlyMap<string, readonly ReceiptRow[]> } = {},
-): Promise<Map<string, number>> {
+): Promise<Map<string, LinkedRefundedTotal>> {
   const paymentIds = payments.map((payment) => payment.id);
   const excluded = options.excludeCreditNoteId ?? null;
   const readDirectRefundLinks = (db: Store) =>
@@ -109,10 +122,12 @@ export async function decideLinkedRefundedTotalCents(
   // is one rule; only the floors differ by source. The inbound sync links an
   // edit's note and its allocation to the edit, not the payment, so a recount
   // triggered by any later note used to drop every earlier modification note
-  // from a card payment's total. `Payment.xeroInvoiceId` is unique, so an
-  // invoice here is one payment's.
+  // from the total.
+  // #5289 C: one invoice per payment (`decisionInvoiceIdsOf`): its own, or the one its only
+  // link names while none is stamped; a caller deciding with the settle's invoice passes it as
+  // `xeroInvoiceId` (the keep). An older invoice it is still linked to is never added.
   const invoicePaymentIds = new Map(
-    payments.flatMap((payment) => (payment.xeroInvoiceId ? [[payment.xeroInvoiceId, payment.id] as const] : [])),
+    [...(await decisionInvoiceIdsOf(payments, store))].map(([paymentId, invoiceId]) => [invoiceId, paymentId] as const),
   );
   // #4786: by invoice, also a role-less link an older repair wrote on the note's anchor.
   const invoiceAllocationLinks =
@@ -235,8 +250,13 @@ export async function decideLinkedRefundedTotalCents(
       { creditNoteId, appliedCents: Math.round(amountCents) },
     ]);
   }
+  const correctionCents = new Map<string, number>();
   for (const [paymentId, allocations] of modificationAllocationsByPaymentId) {
-    for (const cents of sumAppliedCentsByCreditNote(allocations).values()) add(paymentId, cents);
+    for (const [creditNoteId, cents] of sumAppliedCentsByCreditNote(allocations)) {
+      add(paymentId, cents);
+      // Counted only as a correction (`validCorrectionNoteIds`), never as a note that moved cash.
+      if (!validModificationCreditNoteIds.has(creditNoteId)) correctionCents.set(paymentId, (correctionCents.get(paymentId) ?? 0) + cents);
+    }
   }
-  return linkedCents;
+  return new Map(paymentIds.map((paymentId) => [paymentId, { cents: linkedCents.get(paymentId) ?? 0, correctionCents: correctionCents.get(paymentId) ?? 0 }]));
 }

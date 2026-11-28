@@ -107,6 +107,7 @@ describe("#20: Lodge account seed and admin API", () => {
       "app",
       "(admin)",
       "admin",
+      "lodge-ops",
       "lodge",
       "page.tsx"
     );
@@ -123,8 +124,8 @@ describe("#20: Lodge account seed and admin API", () => {
       "admin-sidebar.tsx"
     );
     const content = fs.readFileSync(sidebarPath, "utf-8");
-    expect(content).toContain("/admin/lodge");
-    expect(content).toContain("Lodge Kiosk");
+    // C11 (#4808): the entry is the kiosk's registry link, labelled "Lodge Kiosk" there.
+    expect(content).toContain('adminLink("lodge-kiosk")');
   });
 
   it("admin lodge API validates input with Zod", async () => {

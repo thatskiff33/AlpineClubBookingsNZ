@@ -1,14 +1,13 @@
 import { parseDecimalDollarsToCents } from "@/lib/money-input";
 import { formatCents, formatCentsPlain } from "@/lib/utils";
 import type { ClubFormat } from "@/lib/club-format";
+import { AI_ASSISTANT_MAX_MONTHLY_BUDGET_CENTS } from "@/config/ai-spend";
 
 // Money helpers for the AI assistant monthly spend cap. All money is integer
 // cents of the club's configured currency (#3354); the editor shows a plain
-// two-decimal amount. Bounds mirror the settings route's zod contract
-// (0..100_000 cents = 0.00..1,000.00). Cap 0 disables all paid answers
+// two-decimal amount. The upper bound is the settings route's own
+// (`AI_ASSISTANT_MAX_MONTHLY_BUDGET_CENTS`). Cap 0 disables all paid answers
 // (hard-off).
-
-export const MAX_BUDGET_CENTS = 100_000;
 
 /**
  * Integer cents → a fixed 2dp dollars string for the editor input (e.g. 1000 →
@@ -55,10 +54,10 @@ export function parseDollarsToCents(input: string, format: ClubFormat): ParseBud
         "Enter an amount in dollars and cents, for example 10.00 — no currency symbol, thousands separator, or leading zero.",
     };
   }
-  if (cents > MAX_BUDGET_CENTS) {
+  if (cents > AI_ASSISTANT_MAX_MONTHLY_BUDGET_CENTS) {
     return {
       ok: false,
-      error: `The monthly cap cannot exceed ${formatCents(MAX_BUDGET_CENTS, format)}.`,
+      error: `The monthly cap cannot exceed ${formatCents(AI_ASSISTANT_MAX_MONTHLY_BUDGET_CENTS, format)}.`,
     };
   }
   return { ok: true, cents };

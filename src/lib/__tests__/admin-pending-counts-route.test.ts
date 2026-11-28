@@ -61,7 +61,7 @@ describe("GET /api/admin/pending-counts", () => {
   it("returns the other counts and names the one that threw", async () => {
     mocks.issueReportCount.mockRejectedValue(new Error("connection reset"));
 
-    const response = await GET();
+    const response = await GET(new Request("http://localhost/api/admin/pending-counts"));
     const body = await response.json();
 
     expect(response.status).toBe(200);
@@ -74,7 +74,7 @@ describe("GET /api/admin/pending-counts", () => {
   });
 
   it("is never cached, so a refetch after a decision sees the new number", async () => {
-    const response = await GET();
+    const response = await GET(new Request("http://localhost/api/admin/pending-counts"));
 
     expect(response.headers.get("Cache-Control")).toBe("no-store");
     expect((await response.json()).unavailable).toEqual([]);
@@ -86,7 +86,7 @@ describe("GET /api/admin/pending-counts", () => {
       response: NextResponse.json({ error: "Forbidden" }, { status: 403 }),
     });
 
-    const response = await GET();
+    const response = await GET(new Request("http://localhost/api/admin/pending-counts"));
 
     expect(response.status).toBe(403);
     expect(mocks.issueReportCount).not.toHaveBeenCalled();
