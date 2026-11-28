@@ -27,6 +27,8 @@ const h = vi.hoisted(() => ({
   loadModuleFlags: vi.fn(),
   isXeroConnected: vi.fn(),
   getXeroLockDates: vi.fn(),
+  reviewFindFirst: vi.fn(),
+  reviewFindMany: vi.fn(),
 }));
 
 vi.mock("@/lib/auth", () => ({ auth: h.auth }));
@@ -42,6 +44,7 @@ vi.mock("@/lib/prisma", () => ({
     season: { findMany: h.seasonFindMany },
     groupDiscountSetting: { findUnique: h.groupDiscountFindUnique },
     bookingRequest: { findFirst: h.bookingRequestFindFirst },
+    manualRefundTask: { findFirst: h.reviewFindFirst, findMany: h.reviewFindMany },
   },
 }));
 vi.mock("@/lib/capacity", async (importOriginal) => {
@@ -242,6 +245,8 @@ beforeEach(() => {
   h.seasonFindMany.mockResolvedValue([]);
   h.groupDiscountFindUnique.mockResolvedValue(null);
   h.bookingRequestFindFirst.mockResolvedValue(null);
+  h.reviewFindFirst.mockResolvedValue(null);
+  h.reviewFindMany.mockResolvedValue([]);
   h.getDefaultLodgeId.mockResolvedValue("lodge-1");
   h.getLodgeCapacity.mockResolvedValue(29);
   h.findConflicts.mockResolvedValue([]);
@@ -295,6 +300,36 @@ describe("POST /api/bookings/[id]/modify-quote recalc override (issue #1668)", (
     expect(body.priceDiffCents).toBe(10000);
     expect(body.newFinalPriceCents).toBe(40000);
     expect(body.capacityAvailable).toBe(true);
+  });
+
+  // #4344 wave C2: an old OPEN edit review no longer holds up the preview.
+  it("prices the move while an old edit review is still open on the booking", async () => {
+    const openReview = {
+      id: "task-open",
+      bookingId: "b1",
+      kind: "EDIT_FINANCIAL_REVIEW",
+      status: "OPEN",
+      occurrenceKey: "occ-1",
+      amountCents: null,
+      raisedAmountCents: null,
+      reviewContext: null,
+    };
+    h.reviewFindFirst.mockResolvedValue(openReview);
+    h.reviewFindMany.mockResolvedValue([openReview]);
+
+    const res = await POST(
+      req({
+        adminOverride: true,
+        pricingMode: "recalculate",
+        checkIn: "2026-08-12",
+      }),
+      { params },
+    );
+
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.priceDiffCents).toBe(10000);
+    expect(body.newFinalPriceCents).toBe(40000);
   });
 });
 
