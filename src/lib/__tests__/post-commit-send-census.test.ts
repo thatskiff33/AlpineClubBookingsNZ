@@ -96,10 +96,8 @@ const LATE_CAPTURE_HOLD =
   "to trace under #5433: the treasurer's held-late-capture alert after the hold's task commits (late-capture-refund-hold.ts). A still-open task re-announces on the next notice for the same capture (#3635), on no schedule.";
 const CARD_REFUND_ALERTS =
   "to trace under #5433: the officers' card refund alerts after the refund rows commit (failed-later card refunds, refund cap overflow; payment-transactions.ts).";
-const UNKEYED_CONFIRMATION =
-  "#5433 PR 4 (rounds 1 and 2): a paid confirmation's fallback when its marker cannot be keyed (unreachable with today's ids). It is sent once, unkeyed, exactly as before #5433, so it is never worse than before; an owed one goes through deliverPaidBookingConfirmation.";
 const CARD_DOOR_CONFIRMATION =
-  "#5433 PR 3 and the card recovery doors: queueInvoiceAndDeliverPaidConfirmation, the card door's sequence after its settle commits. The owed confirmation goes through deliverPaidBookingConfirmation; only its fallback, a fresh PAID whose marker cannot be keyed (unreachable with today's ids, #5433 PR 4), is sent unkeyed as before #5433.";
+  "#5433 PR 3, PR 4 and the card recovery doors: queueInvoiceAndDeliverPaidConfirmation, the one sequence after the commit that owes a paid confirmation (the card doors' settle, the zero-balance claim). The owed confirmation goes through deliverPaidBookingConfirmation; only its fallback, a fresh PAID that was owed a marker the booking could not key (unreachable with today's ids, #5433 PR 4), is sent unkeyed.";
 const STRIPE_SWITCH =
   "False positive: another `switch` case of the one event dispatch; the earlier case's commit never runs before this handler, which the census reads as its own unit.";
 
@@ -116,15 +114,10 @@ const POST_COMMIT_SEND_REASONS: Readonly<Record<string, Entry>> = {
     after: ["resolveHoldWindowUnderLock"],
     reason: `${RECURRING_REMINDER} (B3, B4)`,
   },
-  "src/lib/cron-confirm-pending.ts#confirmPendingBookings#sendUnrecordedPaidBookingConfirmation": {
-    // The zero-balance confirmation's (the saved-card charge's is the card door's sequence, below).
-    calls: 1,
-    after: ["resolveHoldWindowUnderLock"],
-    reason: UNKEYED_CONFIRMATION,
-  },
   "src/lib/cron-confirm-pending.ts#confirmPendingBookings#queueInvoiceAndDeliverPaidConfirmation": {
-    calls: 1,
-    after: ["markBookingPaymentSucceeded"],
+    // The zero-balance confirmation (after its claim), then the saved-card charge's (after its settle).
+    calls: 2,
+    after: ["resolveHoldWindowUnderLock", "markBookingPaymentSucceeded"],
     reason: CARD_DOOR_CONFIRMATION,
   },
   "src/lib/cron-confirm-pending.ts#confirmPendingBookings#sendAdminPaymentFailureAlert": {
@@ -523,21 +516,65 @@ describe("#5433: every notice sent after a commit is owed, or has a recorded rea
   // #5433 PR 3 (ST, CP-2) and the card recovery doors: the converted card
   // confirmation. A send put back after the settle is a site with no entry in the
   // scoped files (the test above); this pins the other half for every card door,
-  // scoped or not: each asks the settle for the marker and hands the settle's
-  // result to the one after-commit sequence, once, after the settle.
-  it.each([
+  // scoped or not: each asks the settle for the marker, hands THAT settle's result
+  // (the variable its one settle call assigns) to the one after-commit sequence,
+  // once, after the settle, and sends no confirmation of its own after the settle
+  // (fix round 1, item 2: a door outside the scan could otherwise add an unkeyed
+  // `sendBookingConfirmedEmail` and send the member two).
+  const CARD_DOORS = [
     "src/lib/stripe-webhook-service.ts",
     "src/app/api/bookings/[id]/confirm-payment/route.ts",
     "src/lib/cron-confirm-pending.ts",
     "src/app/api/payments/create-payment-intent/route.ts",
     "src/lib/payment-link-intent.ts",
     "src/app/api/payments/charge-saved-method/route.ts",
-  ])("%s owes the paid confirmation in the settle and delivers it through its owed notice", (rel) => {
-    const code = stripComments(readRepoFile(rel) ?? "");
-    expect(code.match(/owesPaidConfirmation: true/g)).toHaveLength(1);
-    expect(code.match(/queueInvoiceAndDeliverPaidConfirmation\(reconciliation,/g)).toHaveLength(1);
-    expect(code.indexOf("queueInvoiceAndDeliverPaidConfirmation(reconciliation,")).toBeGreaterThan(code.indexOf("markBookingPaymentSucceeded("));
-    expect(code).not.toMatch(/sendPaidBookingConfirm|deliverPaidBookingConfirmation\(reconciliation/);
+  ];
+  /** The zero-balance claim's hand-over: the marker it wrote, or null, for a fresh PAID it always owed. */
+  const ZERO_BALANCE_HAND_OVER = 'queueInvoiceAndDeliverPaidConfirmation({ outcome: "paid", paidConfirmation: resolution.paidConfirmation }';
+  /** The rule the per-door test applies, on a file's code with comments stripped: the reasons it breaks, or none. */
+  function cardDoorBreaks(code: string): string[] {
+    const breaks: string[] = [];
+    const settles = [...code.matchAll(/(?:const |let )?(\w+) = await markBookingPaymentSucceeded\(/g)];
+    if (settles.length !== 1) return [`expected one settle assigned to a variable, found ${settles.length}`];
+    if (code.match(/markBookingPaymentSucceeded\(/g)!.length !== 1) breaks.push("more than one settle call");
+    const settled = settles[0]![1]!;
+    const settleAt = settles[0]!.index!;
+    if (code.match(/owesPaidConfirmation: true/g)?.length !== 1) breaks.push("not exactly one owesPaidConfirmation: true");
+    const count = (needle: string) => code.split(needle).length - 1;
+    const handOver = `queueInvoiceAndDeliverPaidConfirmation(${settled},`;
+    if (count(handOver) !== 1) breaks.push(`not exactly one ${handOver}`);
+    if (code.indexOf(handOver) < settleAt) breaks.push("the sequence runs before the settle");
+    // Every other call of the sequence is the zero-balance claim's (the confirm-pending job only).
+    if (count("queueInvoiceAndDeliverPaidConfirmation(") !== count(handOver) + count(ZERO_BALANCE_HAND_OVER)) {
+      breaks.push("the sequence is handed something other than the settle's result");
+    }
+    const after = code.slice(settleAt);
+    for (const send of ["sendBookingConfirmedEmail(", "sendPaidBookingConfirm", "deliverPaidBookingConfirmation(", "sendUnrecordedPaidBookingConfirmation("]) {
+      if (after.includes(send)) breaks.push(`${send} after the settle`);
+    }
+    return breaks;
+  }
+
+  it.each(CARD_DOORS)("%s owes the paid confirmation in the settle and delivers it through its owed notice", (rel) => {
+    expect(cardDoorBreaks(stripComments(readRepoFile(rel) ?? ""))).toEqual([]);
+  });
+
+  // Fix round 1, item 1: the zero-balance confirmation goes through the same
+  // sequence with the marker its claim wrote, and the job has no copy of it.
+  it("the confirm-pending job's zero-balance confirmation goes through the same sequence", () => {
+    const code = stripComments(readRepoFile("src/lib/cron-confirm-pending.ts") ?? "");
+    expect(code.split(ZERO_BALANCE_HAND_OVER).length - 1).toBe(1);
+    expect(code).not.toMatch(/deliverPaidBookingConfirmation\(|sendUnrecordedPaidBookingConfirmation\(/);
+  });
+
+  it("the per-door rule catches a second confirmation after the settle, a different result handed over, and a missing flag", () => {
+    const door = `const reconciliation = await markBookingPaymentSucceeded({ owesPaidConfirmation: true });\nawait queueInvoiceAndDeliverPaidConfirmation(reconciliation, {});`;
+    expect(cardDoorBreaks(door)).toEqual([]);
+    expect(cardDoorBreaks(`${door}\nsendBookingConfirmedEmail(x);`)).toContain("sendBookingConfirmedEmail( after the settle");
+    expect(cardDoorBreaks(`sendBookingConfirmedEmail(x);\n${door}`)).toEqual([]);
+    expect(cardDoorBreaks(door.replace("(reconciliation,", "(other,"))).toContain("not exactly one queueInvoiceAndDeliverPaidConfirmation(reconciliation,");
+    expect(cardDoorBreaks(door.replace("owesPaidConfirmation: true", "x: 1"))).toContain("not exactly one owesPaidConfirmation: true");
+    expect(cardDoorBreaks(`${door}\nawait queueInvoiceAndDeliverPaidConfirmation({ outcome: "paid" }, {});`)).toContain("the sequence is handed something other than the settle's result");
   });
 
   // The mutation probes, kept: each edit the census must catch, applied to a copy.

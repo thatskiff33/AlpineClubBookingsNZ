@@ -37,10 +37,14 @@ export type MarkBookingPaymentSucceededResult = {
    * #5433 (owner decision D1): the paid confirmation's owed marker, which the
    * settle committed with a fresh "paid" when the caller asked for it
    * (`owesPaidConfirmation`). The caller hands it to
-   * `deliverPaidBookingConfirmation` after the commit; absent on every other
-   * outcome, and on "paid" for a caller that sends no confirmation.
+   * `deliverPaidBookingConfirmation` after the commit. Null when the caller
+   * asked and the settle marked the booking paid but the booking cannot key a
+   * marker (the caller then sends it once, unkeyed); absent on every other
+   * outcome, and on "paid" for a caller that did not ask, so the after-commit
+   * sequence never takes "not asked" for "cannot be keyed" (#5433, the card
+   * recovery doors, fix round 1).
    */
-  paidConfirmation?: OwedNoticeMarker;
+  paidConfirmation?: OwedNoticeMarker | null;
 };
 
 /** The card settle door's input (`markBookingPaymentSucceeded`), here with the other settlement types (#5005, #5433). */

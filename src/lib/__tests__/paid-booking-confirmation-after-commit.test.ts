@@ -19,6 +19,9 @@ vi.mock("@/lib/paid-booking-confirmation-notice", () => ({
   sendUnrecordedPaidBookingConfirmation: confirmation.sendUnrecorded,
 }));
 
+const log = vi.hoisted(() => ({ error: vi.fn() }));
+vi.mock("@/lib/logger", () => ({ default: { error: log.error, warn: vi.fn(), info: vi.fn(), debug: vi.fn() } }));
+
 import { queueInvoiceAndDeliverPaidConfirmation } from "@/lib/paid-booking-confirmation-after-commit";
 
 describe("queueInvoiceAndDeliverPaidConfirmation (#5433)", () => {
@@ -40,8 +43,8 @@ describe("queueInvoiceAndDeliverPaidConfirmation (#5433)", () => {
     expect(confirmation.sendUnrecorded).not.toHaveBeenCalled();
   });
 
-  it("sends a fresh PAID whose marker could not be keyed once, unkeyed, after the invoice", async () => {
-    await run({ outcome: "paid" });
+  it("sends a fresh PAID that was owed a marker the booking could not key (null) once, unkeyed, after the invoice", async () => {
+    await run({ outcome: "paid", paidConfirmation: null });
 
     expect(confirmation.deliver).not.toHaveBeenCalled();
     expect(confirmation.sendUnrecorded).toHaveBeenCalledWith("booking-1", CLUB_FORMAT_TEST, "door-x");
@@ -58,6 +61,17 @@ describe("queueInvoiceAndDeliverPaidConfirmation (#5433)", () => {
       expect(confirmation.sendUnrecorded).not.toHaveBeenCalled();
     },
   );
+
+  // Fix round 1, item 3: a door that forgot to ask the settle gets no marker and no null; sending unkeyed then
+  // would be a confirmation the sweep can never see, so it is an error log and nothing is sent.
+  it("sends nothing, and logs an error, for a fresh PAID whose settle was never asked to owe it (no paidConfirmation)", async () => {
+    await run({ outcome: "paid" });
+
+    expect(queueInvoice).toHaveBeenCalledTimes(1);
+    expect(confirmation.deliver).not.toHaveBeenCalled();
+    expect(confirmation.sendUnrecorded).not.toHaveBeenCalled();
+    expect(log.error).toHaveBeenCalledWith({ bookingId: "booking-1", job: "door-x" }, expect.stringContaining("without the settle being asked to owe it"));
+  });
 
   it("sends nothing when the door settled nothing (null), and still queues the invoice", async () => {
     await run(null);
