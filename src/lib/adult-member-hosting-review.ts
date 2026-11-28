@@ -2894,9 +2894,7 @@ async function settleSameOwnerDependentCoverage(
   // turn it into a live incident source, an officer override can leave it
   // confirmed but uncovered, and a later correction must close that incident.
   // Only the cross-booking fan-out needs the owner lock and dependent inspection.
-  // Every active mode, not only ENFORCED: at a review-only lodge the drain
-  // re-stamps the snapshot and opens nothing, and without the row the kiosk could
-  // not tell "nothing changed" from "nobody looked" (`INV-HOST-045`).
+  // Queued at every active mode: the kiosk reads no row as "nothing changed" (`INV-HOST-045`).
   if (!resolved.hostScopes.sameBookingOwner) {
     const context = options.coverageChange ?? { cause: "SYSTEM_CHANGE" as const };
     if (context.cause === "OFFICER_OVERRIDE" && !context.reason?.trim()) {
@@ -3631,13 +3629,9 @@ export async function loadGroupTripCoverageDependentBookingIds(
  * RESTORE cover as easily as remove it.
  *
  * Returns the queued item id, or null when nothing was queued: the rule is off at
- * this lodge or the booking has gone. `SAME_BOOKING` alone still queues this
- * booking; only the cross-booking owner lock depends on `SAME_BOOKING_OWNER`.
- *
- * QUEUES UNDER `ADMIN_REVIEW_REQUIRED` TOO. No incident opens there — the drain's
- * `reconcileSameOwnerCoverageIncident` only re-reconciles and re-stamps the review
- * snapshot — but that refresh is owed: the kiosk reads "no queued row" as "nothing
- * changed" at every active mode (`INV-HOST-045`).
+ * this lodge (review-only queues too, `INV-HOST-045`) or the booking has gone.
+ * `SAME_BOOKING` alone still queues this booking; only the cross-booking owner lock
+ * depends on `SAME_BOOKING_OWNER`.
  *
  * IT ALSO OWES THE GROUP TRIP FAN-OUT (#3039), and the group-settlement reaper is
  * the case that proves it rather than an argument by symmetry. Confirming ADDS
@@ -3921,13 +3915,11 @@ export async function loadHostingCoverageMemberFanoutCandidates(
  * a lapse cannot retroactively break a completed attendance record (§3).
  *
  * GATED ON AN ACTIVE MODE AND NOT ON THE SCOPE, deliberately. Incidents exist only
- * under `ENFORCED` — that rule is unchanged, and the drain opens none at a
- * review-only lodge — but a lapse removes cover under `SAME_BOOKING` just as surely
- * as under `SAME_BOOKING_OWNER`, and the drain reconciles each booking through the
- * shared evaluator, which honours whichever scopes the lodge actually has on. Gating
- * on the scope would have left a single-booking club with no lapse detection at
- * all, for no reason. Under `ADMIN_REVIEW_REQUIRED` the row refreshes the review
- * snapshot the officer and the kiosk read (`INV-HOST-045`).
+ * under `ENFORCED`; under review-only the row refreshes the review snapshot the
+ * kiosk reads (`INV-HOST-045`). A lapse removes cover under `SAME_BOOKING` just as
+ * surely as under `SAME_BOOKING_OWNER`, and the drain reconciles each booking through
+ * the shared evaluator, which honours whichever scopes the lodge has on. Gating on
+ * the scope would have left a single-booking club with no lapse detection at all.
  *
  * THE PARTICIPANT FENCE IS ALREADY MODE-GATED HERE and always was: the per-lodge
  * active-mode filter below returns 0 before any proof is acquired, so #2623 T5's
