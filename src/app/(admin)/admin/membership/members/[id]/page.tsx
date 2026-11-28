@@ -480,6 +480,7 @@ export default function MemberDetailPage({
     handleSubmitArchiveRequest,
     handleReviewArchiveRequest,
     handleSubmitCancellationRequest,
+    unarchive,
   } = useMemberLifecycleActions({ id, fetchMember, setLoading });
 
   // Xero link/push state
@@ -733,9 +734,6 @@ export default function MemberDetailPage({
   );
   const pendingArchiveRequest =
     archiveRequests.find((request) => request.status === "REQUESTED") ?? null;
-  const reviewedArchiveRequests = archiveRequests
-    .filter((request) => request.status !== "REQUESTED")
-    .slice(0, 3);
   const isArchiveRequester =
     pendingArchiveRequest?.requestedBy?.id === session?.user?.id;
   const canRequestArchive = Boolean(
@@ -1117,7 +1115,9 @@ export default function MemberDetailPage({
               canEdit={canEditMembership}
               member={member}
               pendingArchiveRequest={pendingArchiveRequest}
-              reviewedArchiveRequests={reviewedArchiveRequests}
+              lifecycleRequests={lifecycleRequests}
+              canUnarchive={actorIsFullAdmin && memberIsArchived}
+              unarchive={unarchive}
               isArchiveRequester={isArchiveRequester}
               canRequestArchive={canRequestArchive}
               canRequestCancellation={canRequestCancellation}

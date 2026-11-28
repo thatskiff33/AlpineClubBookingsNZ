@@ -75,7 +75,7 @@ const archiveTargetMemberSelect = {
   accessRoles: { select: MEMBER_ACCESS_ROLE_SELECT },
 } satisfies Prisma.MemberSelect;
 
-const lifecycleActionRequestInclude = {
+export const lifecycleActionRequestInclude = {
   requestedBy: { select: memberSummarySelect },
   reviewedBy: { select: memberSummarySelect },
 } satisfies Prisma.MemberLifecycleActionRequestInclude;
@@ -163,7 +163,7 @@ export class MemberLifecycleActionError extends Error {
   }
 }
 
-function requireCleanText(value: string | null | undefined, message: string) {
+export function requireCleanText(value: string | null | undefined, message: string) {
   const cleaned = cleanText(value);
   if (!cleaned) {
     throw new MemberLifecycleActionError(message, 422);
@@ -212,7 +212,7 @@ async function sendLifecycleEmailSafely(
   }
 }
 
-function serializeMemberLifecycleActionRequest(
+export function serializeMemberLifecycleActionRequest(
   request: LifecycleActionRequestRecord,
 ): SerializedMemberLifecycleActionRequest {
   return {
@@ -632,10 +632,10 @@ export async function getMemberDeleteEligibility({
   };
 }
 
-async function buildMemberSnapshot(
+export async function buildMemberSnapshot(
   memberId: string,
   db: LifecycleActionClient,
-  eligibility: MemberDeleteEligibility,
+  eligibility?: MemberDeleteEligibility,
 ) {
   const [member, xeroObjectLinks] = await Promise.all([
     db.member.findUnique({ where: { id: memberId } }),
@@ -675,11 +675,11 @@ export async function getMemberArchiveLifecycleRequests(memberId: string) {
   const requests = await prisma.memberLifecycleActionRequest.findMany({
     where: {
       memberId,
-      action: MemberLifecycleAction.ARCHIVE,
+      action: { in: [MemberLifecycleAction.ARCHIVE, MemberLifecycleAction.UNARCHIVE] },
     },
     include: lifecycleActionRequestInclude,
     orderBy: [{ requestedAt: "desc" }, { id: "desc" }],
-    take: 10,
+    take: 100, // #5540: the member page lists every archive and unarchive.
   });
 
   return requests.map(serializeMemberLifecycleActionRequest);
