@@ -4051,8 +4051,9 @@ _Split from `INV-PAY-057` (#3220)._
   total never rises above Stripe's refunds (owner, 23 Nov).
   A keep sets the whole refunded total its links record under the `Payment`
   row (`decideLinkedRefundedTotalCents`, floored), never an increment; every
-  allocation writer (inbound, a voided note's removal, the app's own) locks
-  the payment the settle's rule finds first and decides it too, so a writer
+  allocation writer (inbound, a voided note's removal, the app's own, a
+  note's status, #5251) locks the payment the settle's rule finds first and
+  decides it too, so a writer
   queued on `lock(1)` reads the net (#4449, #5289). The recount after a keep
   or replay is a backstop; failing, the event is retried (#4095).
 - **The refunded-total repair writes through a claim** on the row it read

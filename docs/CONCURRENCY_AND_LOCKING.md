@@ -9110,13 +9110,31 @@ operator's review instead); a missing row it creates bare, with no amounts, so
 it counts nothing until the note's sync writes it. A removal waits on that row
 lock; neither takes a `Payment` row after the link, so no cycle.
 
-Not serialised on the `Payment` row: the modification note's own status write
-(its `MODIFICATION_CREDIT_NOTE` link, a void included) goes through the link
-funnel with its link row only. A settle holding the row can still count a note
-voided while it runs; the cancel queued behind it then reads a net too low by
-that note (it under-refunds, never over-refunds), until the sync's removal
-(#5289 A: under the `Payment` row, for a cancelled reading too) and recount
-correct the total after its commit. Main counted live links the same way.
+**A note's own status is written under its `Payment` rows (#5251).** Owner
+decision, 28 Nov 2026. The inbound sync writes a modification note's own
+`MODIFICATION_CREDIT_NOTE` link (its status, a void included) through
+`writeCreditNoteLinks` (`modification-note-status-write.ts`). When the write
+changes whether the note counts (a cancelled reading, or a live one over a
+link that is missing, off or cancelled), it first takes the `Payment` row of
+every bank-transfer payment the note's active allocations name
+(`bankTransferPaymentsOfNoteAllocations`, the removal's read), ids sorted,
+then writes the note's link rows in one fixed order, then decides each total
+under the rows (`decideBankTransferRefundedTotal`, moving `updatedAt`), all in
+one transaction with `PAYMENT_ROW_WAIT_TRANSACTION_OPTIONS`. The payments are
+read again under the rows; an allocation committed in between that names a
+payment not held rolls the write back, and it runs again (three attempts,
+then the event is retried). A settle holding a row has either committed before
+the status changes, and its total is decided again here, or waits and reads
+the status this write left; the cancel queued on `lock(1)` reads that total.
+A live reading over a live link changes nothing a total reads and keeps the
+funnel's own write with no `Payment` row, so the sync's first wait on the row
+is still its allocation write or removal, and a newer reading's removal still
+decides straight after the settle it queued behind. The note's other links
+keep the funnel (a refund note's void takes its row there, #4200). Order
+(`INV-LOCK-002`): `Payment` rows, then link rows, as the allocation write; no
+new key, and `lockPaymentForRefundedTotal` is still the one statement.
+`kept-settle-queued-cancel.realdb.test.ts` drives a void before and during the
+settle (VOID cases); without the rows the queued reader sees the note counted.
 
 Inside the settle's or the write's own transaction (READ COMMITTED), #4370's
 failed-later card refund reads (`readFailedCardRefundRecountCentsIn`) are taken

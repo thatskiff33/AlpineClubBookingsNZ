@@ -1792,6 +1792,10 @@ const ROW_LOCK_SITE_INVENTORY: Record<string, number> = {
   // (`NOTE_ALLOCATION_ROLE`) on the invoice's one bank-transfer payment, in the
   // same transaction, both intents' Payment rows one sorted set, before the
   // claim; its total is decided after the links under the row. No new key.
+  // #5251: and by the inbound sync's write of a modification note's own status
+  // (`writeCreditNoteLinks`, no lock(1)), when the write changes whether the
+  // note counts: the payments its active allocations name, ids sorted, FIRST,
+  // then the note's link rows; each total decided under them. No new key.
   "src/lib/payment-transactions.ts": 1,
   // #4161 / #4192: the nightly link cleanup's refund-note heal takes two
   // lock-only statements: the one `XeroObjectLink` row it is about to re-write
