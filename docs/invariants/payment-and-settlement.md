@@ -208,6 +208,10 @@ the rule: it names sibling IDs so a change to one prompts checking the others.
   queue refuses to approve a manual-provenance payment. The policy math uses
   the bank-transfer/credit tier (owner decision, 28 Jul), so preview and
   execution agree.
+- One exception, for an imported booking only (#5005 child D, owner decision
+  O1, 11 Nov 2026): credit may be created only by an officer completing that
+  task as credit, in the transaction that completes it (`INV-PAY-165`). Every
+  other cash booking's task is paid back by hand, as before.
 
 ## INV-PAY-045
 
@@ -4529,8 +4533,8 @@ settlement body), **`INV-PAY-040`** (the manual capacity refusal),
   refund task of `INV-PAY-044`, and the invoice choke point refuses it on its
   manual provenance.
 - Limit: part-paid rows are refused ("part-paid bookings cannot be imported
-  yet") until #5008; the refund-as-credit choice is #5005 child D. Reversing a
-  batch is `INV-PAY-164`.
+  yet") until #5008. Reversing a batch is `INV-PAY-164`; giving a cancelled
+  imported booking's refund as account credit is `INV-PAY-165`.
 - Proven by `booking-import-parse.test.ts`, `booking-import-plan.test.ts`,
   `booking-import-plan-decisions.test.ts`, `booking-import-write.test.ts`,
   `zero-price-payment-call-sites.test.ts` and `booking-import.realdb.test.ts`.
@@ -4559,6 +4563,38 @@ settlement body), **`INV-PAY-040`** (the manual capacity refusal),
   confirmed again; a reversed row frees its Booking Ref.
 - **Both censuses stay clean**; nothing goes to Xero, Stripe or any inbox.
 - Proven by `booking-import.realdb.test.ts` and `booking-import-routes.test.ts`.
+
+## INV-PAY-165
+
+**Related: `INV-PAY-044`** (the by-hand task, amended here),
+**`INV-PAY-161`** (the import), **`INV-PAY-099`** (no reopen once completed),
+**`INV-LOCK-002`** (the order).
+
+- **A cancelled imported booking's refund may be given as account credit**
+  (#5005 child D, owner decision O1, 11 Nov 2026). Cancelling still raises the
+  by-hand task of `INV-PAY-044`; on Money to settle the officer then picks
+  "Mark paid back" or "Give as account credit", at the same amount.
+- **Only that task.** The cancellation's own hand-back, on the payment the
+  import recorded, of a member-owned booking whose import row is `IMPORTED`
+  (`importedRefundCreditRefusal`, the one rule the writer and the queue's
+  offer ask). Every other cash booking keeps `INV-PAY-044` unamended.
+- **One transaction, the completion's locks**: `lock(1)`, the booking row,
+  the member's credit ledger, the Payment row. The task is claimed `OPEN` ->
+  `COMPLETED` on its status and the amount shown, so it is settled one way
+  only; a lost claim writes nothing. Then the refund is allocated against the
+  payment, the credit written by `createCancellationCredit` (its ledger line and
+  `CREDITED` event), the task's `settledAsCreditId` set, and the journal's
+  refund debt withdrawn exactly: no bank refund is owed, and the credit waits
+  for ledger M5 as every cancelled bank-transfer booking's does.
+- **The Xero account-credit note** every account credit carries is queued in
+  the same transaction when the Xero module is on, and not otherwise. After
+  commit the member is emailed (`imported-refund-credited`).
+- **Both censuses stay clean.** The hand-back census reads a task with
+  `settledAsCreditId` as paid by credit, so it expects no bank payment (R14).
+- Proven by `booking-import.realdb.test.ts`,
+  `member-money-hand-back-census.test.ts`,
+  `admin-manual-refund-task-account-credit-route.test.ts` and
+  `manual-refund-task-queue-imported-credit.test.tsx`.
 
 ## INV-PAY-162
 

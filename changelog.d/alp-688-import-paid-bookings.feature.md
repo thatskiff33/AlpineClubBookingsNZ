@@ -15,7 +15,10 @@
   booking twice. A batch can be reversed: bookings nobody has touched since the
   import are cancelled with their recorded payment taken back and nobody
   emailed; touched bookings are kept and named. Importing and reversing need an
-  officer holding both finance edit and bookings edit. A cancelled imported
-  booking's refund is paid back by hand, as for any cash booking. Part-paid
-  bookings are refused for now. See
+  officer holding both finance edit and bookings edit. When an imported
+  booking is cancelled, its refund appears under **Money to settle** as for any
+  cash booking: pay it back by bank transfer and click **Mark paid back**, or
+  click **Give as account credit** to put the same amount on the member's
+  account instead. Credit emails the member and, with Xero on, raises the usual
+  account-credit note. Part-paid bookings are refused for now. See
   [Moving in, step 7](../docs/guides/moving-in.md#7-future-bookings-import-prepaid-stays).

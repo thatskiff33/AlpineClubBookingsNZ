@@ -2681,6 +2681,16 @@ OPEN -> COMPLETED   (#3032: and the confirmed amount now MOVES, down whichever o
                      holds one amount. `INV-PAY-100`.) A Xero modification
                      credit note for the same amount is queued on the same anchor
                      after the commit, through `queueXeroBookingEditSettlement`.)
+OPEN -> COMPLETED   (#5005 child D, `INV-PAY-165`: a cancelled imported
+                     booking's own hand-back only, "Give as account credit",
+                     finance:edit. Claimed on status OPEN and the amount shown,
+                     under lock(1), the booking row, the member's credit ledger
+                     and the Payment row; then the refund allocation, the
+                     CANCELLATION_REFUND credit and its CREDITED event, the
+                     task's `settledAsCreditId`, the journal debt withdrawn and,
+                     with Xero on, the account-credit note's outbox row, all in
+                     the claim's transaction. A task claimed either way cannot
+                     be claimed the other.)
 OPEN -> DISMISSED   (#3030: for an `EDIT_FINANCIAL_REVIEW` task this means
                      REVIEWED, AND THIS SYSTEM MOVED NO MONEY for that occurrence
                      - a real decision, which is why it is not the same thing as

@@ -416,6 +416,18 @@ stay claims its row under lock(1) then the lodge key at the registered site
 asked with `refuseRefund`: its paid-path claim throws, rolling back, before any
 write if the policy would give anything back. A lost row claim moves nothing.
 
+Giving a cancelled imported booking's refund as account credit (child D,
+`giveImportedRefundAsCredit`, `INV-PAY-165`) takes a hand-back completion's
+locks in its order: `lock(1)`, the booking row (`lockBookingRowForOwnerRead`),
+the owner's `lockMemberCreditLedger`, then the Payment row. Mark paid back
+(`resolveManualRefundTask`) takes `lock(1)` first for the same task, so the two
+buttons serialise and the second finds the task closed. The claim is an
+`updateMany` on status OPEN and the amount shown; the allocation, credit,
+journal withdrawal and the Xero note's outbox row follow it in the same
+transaction, on `LOCK1_HOLDER_TRANSACTION_BUDGET`. The registered site is
+`giveImportedRefundAsCredit#1`; it adds no key. The member email and the Xero
+worker's nudge run after commit.
+
 ### A writer that does BOTH takes BOTH — global first
 
 Many writers do both tiers at once: a Stripe capture claims capacity **and**

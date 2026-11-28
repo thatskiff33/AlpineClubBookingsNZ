@@ -271,9 +271,12 @@ Xero instead, against the payment the old system recorded.
 **Later.** An imported booking behaves like a booking paid in cash. Editing it
 works as usual. If it is cancelled, by the member or an officer, the club's
 cancellation policy applies to the imported amount and the refund appears
-under **Money to settle**; pay it back by bank transfer and click **Mark paid
-back** ([Pay back a refund for a cash booking](payments.md#pay-back-a-refund-for-a-cash-booking)).
-Nothing is asked of Stripe or Xero.
+under **Money to settle**. Settle it one of two ways, at the same amount
+([Pay back a refund for a cash booking](payments.md#pay-back-a-refund-for-a-cash-booking)):
+pay it back by bank transfer and click **Mark paid back**, or click **Give as
+account credit** to add it to the member's account for a later booking instead.
+Credit emails the member and, on a club with Xero, raises the credit note every
+account credit carries. Nothing is asked of Stripe.
 
 **Reverse a batch.** If a batch was wrong, open it and click **Reverse batch**.
 It first lists which bookings it will take back and which it keeps, and why.

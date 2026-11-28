@@ -213,6 +213,12 @@ wait rather than the moment the refund is made. The booking's **No emails** swit
 the admin alert beside it (**Superseded payment auto-refunded**) is not silenced
 by that switch.
 
+**Your Refund Is Now Account Credit** (`imported-refund-credited`, #5005) tells a
+member that an officer gave their cancelled imported booking's refund as account
+credit instead of a bank transfer, with `{{amount}}` the amount credited. It is
+sent once per refund task, straight after the officer confirms, and the
+booking's **No emails** switch withholds it.
+
 `{{amountDue}}` on the **Booking Request Approved** and **Split Guest Payment
 Link** messages is what the pay link asks the member to pay: the booking's price
 plus any change fee recorded on it, less account credit already applied - the

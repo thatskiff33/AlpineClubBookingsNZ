@@ -195,7 +195,14 @@ task, at the club's policy amount of what the member paid. It
 appears at the top of this page in the **Money to settle** card, and the
 member is told the club will arrange their refund.
 
-1. Pay the member back however the club normally does.
+1. Pay the member back however the club normally does. **For an imported
+   booking only** (one the [moving-in import](moving-in.md#7-future-bookings-import-prepaid-stays)
+   brought across), the task also offers **Give as account credit**: the same
+   amount goes on the member's account, to use on a later booking, instead of
+   to their bank. It confirms the amount and the member first, emails the
+   member, and on a club with Xero queues the account-credit note against their
+   contact. A task settled either way cannot be settled the other way, and it
+   cannot be undone. Every other cash booking's refund is paid back by hand.
 2. Click **Mark paid back** on the task. Only do this once the money has
    actually gone — that click is what records the refund in the payment ledger
    and on the booking's history.

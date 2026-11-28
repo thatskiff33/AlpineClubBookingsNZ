@@ -6,7 +6,8 @@ This engine carries over fully paid future stays at what the club actually
 received, without charging or notifying anybody. Child A of #5005 is the
 engine, child B its batch reversal, and child C the routes, the screen and the
 [moving-in guide's step](../guides/moving-in.md#7-future-bookings-import-prepaid-stays).
-Refund as account credit is child D; part-paid support is E, after #5008.
+Child D lets an officer give a cancelled imported booking's refund as account
+credit; part-paid support is E, after #5008.
 
 ## File and preview
 
@@ -72,8 +73,12 @@ are plain audit snapshots. The per-lodge live-reference partial index backs
 idempotency across batches. See the [batch lifecycle](../STATE_MACHINES.md#paid-booking-import-batch-lifecycle-5005-child-a).
 
 Cancellation and edits use existing cash-booking behavior: cancellation raises
-a manual refund task, and Mark paid back records its settlement. There is no
-refund-as-credit choice in this child. The ledger projection/journal census is
+a manual refund task, and Mark paid back records its settlement. Child D adds
+the second way to settle that task, as account credit
+(`booking-import/refund-credit.ts`, `INV-PAY-165`): one rule
+(`importedRefundCreditRefusal`) decides both the server's refusal and the
+queue's offer, the task records the credit it became (`settledAsCreditId`), and
+the journal's refund debt is withdrawn instead of paid. The ledger projection/journal census is
 exercised after import, free confirmation, cancellation, hand-back, edits and
 member merge by `booking-import.realdb.test.ts`.
 
