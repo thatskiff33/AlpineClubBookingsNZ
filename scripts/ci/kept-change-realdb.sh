@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Disposable, loopback-only PostgreSQL proof for #4324, #3403, #4930, #4069 and #5298 in Sekreton.
+# Disposable, loopback-only PostgreSQL proof for #4324, #3403, #4930, #4069, #5239 and #5298 in Sekreton.
 set -euo pipefail
 
 # The cluster start lives in one sourced helper (INV-SSOT); it sets pg_dir,
@@ -42,6 +42,8 @@ files=(
   # requeue proof that runs the same retry job.
   src/lib/email/__tests__/stranded-queued-email.realdb.test.ts
   src/lib/__tests__/email-failure-requeue.realdb.test.ts
+  # #5239: the Group Trip cover-freshness trigger and its evaluation races.
+  src/lib/__tests__/kiosk-group-trip-freshness.realdb.test.ts
 )
 # An explicit report plus the existing validator rejects green describe.skip.
 pnpm exec vitest run --maxWorkers=1 --reporter=json --outputFile="$race_dir/report.json" "${files[@]}"

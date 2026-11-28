@@ -1,3 +1,4 @@
+import { issueReportPageUrlToShow } from "@/lib/issue-report-page-url";
 import { NextRequest, NextResponse } from "next/server";
 import type { IssueReportOrigin } from "@prisma/client";
 import { z } from "zod";
@@ -62,7 +63,7 @@ function summarizeReport(report: {
 
   return {
     id: report.id,
-    pageUrl: report.pageUrl,
+    pageUrl: issueReportPageUrlToShow(report.pageUrl),
     pageTitle: report.pageTitle,
     description: report.description,
     screenshot: {
