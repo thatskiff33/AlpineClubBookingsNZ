@@ -126,6 +126,34 @@ address.
    **Approve Archive** or **Reject**. If *you* raised the archive request, you
    cannot review it — a different admin must (this is enforced on the server too).
 
+### Unarchive a member
+
+A Full Admin can undo an archive, for example one made by mistake. There is no
+second-admin review.
+
+1. Open **Admin → Members → the member → Lifecycle & Deletion**.
+2. In the **Archive** box, click **Unarchive Member**, give a reason, and
+   confirm.
+
+What it does and does not do:
+
+- It clears the archive only. The member goes back to **cancelled**: visible
+  and editable again, but still inactive and unable to sign in or book.
+- It does not reverse the cancellation. A member coming back to the club goes
+  through the club's rejoin process.
+- It does not restore the family links the archive removed. Re-link them by
+  hand if they are needed.
+- It makes no Xero change and sends no email. Archiving never touched Xero; any
+  contact change happened at cancellation.
+- The leaving date stays as it was.
+
+The **Archive history** list on the same card keeps every archive (who
+requested and approved it, when, the reason and any review note) and every
+unarchive (who, when and why), newest first. A member can be archived and
+unarchived more than once. Unarchive is refused for a deleted member, for one
+with an archive or delete request still waiting for review (decide that first),
+and for any admin who is not a Full Admin.
+
 ### Record a leaving date
 
 Deactivating or cancelling a member records their leaving day in club time.
@@ -181,6 +209,7 @@ The review queue itself has no persistent settings — only per-review inputs.
 | Admin note / Review note | Note sent to the member and the audit log | Up to 1000 characters |
 | Notify choice (approve/reject) | Whether the member is emailed | Processed either way; recorded in the audit log |
 | Approve Archive | Archives the member | Two-admin rule: the requester cannot approve |
+| Unarchive Member (member page) | Clears the archive; the member stays cancelled | Full Admin only, one step, reason required |
 
 Settings on the **Membership Cancellation** page: Cancellation warning (text),
 Rejoin process (text), Xero cancelled contact groups (Group ID + name rows;
@@ -208,6 +237,7 @@ approval (checkbox).
 | An admin cannot approve the cancellation they raised themselves | Cancellation approval always needs a different admin, including when an admin has raised it against their own membership | Ask another admin to review it |
 | **Approve** says the admin who raised the request is no longer on file | That admin's record has since been deleted, so the club can no longer show the approval was a second pair of eyes | Reject the request and raise a new one; it can then be approved normally |
 | Approve/Reject is disabled on an archive | You raised it — the two-admin rule needs a different reviewer | Ask another admin to review it |
+| A member's page shows no **Unarchive Member** action | You are not a Full Admin, or the member is not archived | Ask a Full Admin. A member who is cancelled but not archived needs nothing undone |
 | A refund didn't happen on cancellation | Paid subscriptions are not refunded; unpaid/overdue invoices are cleared with a credit note | This is by policy — see [`CANCELLATIONS.md`](../CANCELLATIONS.md#refund-policy) |
 | No credit note was raised, and the blue notice said a shared invoice was involved | The member's membership was billed on one invoice covering a whole family or billing group, and other members it covers are staying. Crediting it would wipe their share of the bill too, so nothing is credited automatically | Nothing is wrong: the invoice stands and the club is still owed it by the members who remain. If money genuinely is due back to the leaver, open the invoice from the link in that notice and raise the credit note in Xero yourself. See [shared family invoices](../CANCELLATIONS.md#shared-family-invoices) |
 | **Approve** is refused over the family's own subscription invoice | Approving would archive that member's Xero contact, and this cancellation will not credit that invoice because other members it covers are staying — so the balance is real and stays behind the archived contact | Read the blue notice beside the participant: it names the way out for this particular family, and there are three. Usually it is "approve the other family members first" — the last one approved credits the invoice in full and the refusal clears by itself. But where the whole family shares one Xero contact (children who inherit a parent's email address do), every one of them is refused over the same invoice and approving them in any order gets nowhere; and where the members holding it open were *deactivated* rather than cancelled, there is nothing to approve for them at all. In those two cases — and any time you would rather not wait — settle, credit or void the invoice in Xero, or switch **Archive Xero contacts after cancellation approval** off |
