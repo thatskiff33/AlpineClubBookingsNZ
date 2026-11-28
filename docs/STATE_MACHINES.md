@@ -3528,7 +3528,8 @@ that has just moved on (the "No emails" switch is set without lock(1) too, so
 the restart's read of it can be stale by a moment; the only effect is an
 extended window for an email then withheld). A lapsed offer counts as never
 told when its offer email's row is not told, whatever else remains (a
-`FAILED` row at that moment, or a bounce that arrived after `SENT`), or, with
+`FAILED` row at that moment, or a bounce reported for that email after
+`SENT`), or, with
 no row, when its notice still stands or passed its cut-off unsent; an offer
 made before #5433, which wrote neither, counts as told. Such a lapse sends no
 "offer expired" email; the revert, the re-offer pass and its rotation are
@@ -3574,14 +3575,21 @@ once more. The sent stamp is written twice before giving up; **stated limit:**
 if both writes fail, a later attempt takes the claim over and the officers may
 get the alert twice.
 
-Two more stated limits. (a) The mail provider's feedback handler
-(`email/ses-feedback.ts`) marks every earlier email to an address `BOUNCED`
-when any later one bounces or draws a complaint, a temporary bounce included,
-so a member who did receive the offer can read as never told at the lapse; the
-officers' "lapsed untold" wording says only that the email is not known to
-have reached them, which stays true. (b) An "offer expired" email that cannot
-be delivered settles with no officers' alert: nothing is at stake, as the
-member is simply back on the waitlist.
+Since #5469 a bounce marks `BOUNCED` only the email it names and a complaint
+marks none (`INV-INT-044`). So a bounced offer email reads as never told (the
+lapse alert as above); an offer email the member marked as spam reads as
+told, and officers get the complaint alert instead (at a lapse its "offer
+expired" email is attempted and refused, as the address is blocked); and a
+member whose offer
+email was delivered still reads as told when the address later draws a bounce
+or complaint on another email. The limits are in
+[Email Retry Lifecycle](#email-retry-lifecycle): an offer email marked by the
+old rule, before #5469 or by the previous release during the switchover,
+still reads as never told; and a bounced offer email that the report cannot
+be matched to (no stored id and no original headers) keeps reading as told.
+One more stated limit: an "offer expired" email that cannot be delivered
+settles with no officers' alert: nothing is at stake, as the member is simply
+back on the waitlist.
 The member's booking page shows the live offer and its deadline whether or
 not the email went.
 
@@ -4459,10 +4467,95 @@ review queue marks an `UNCONFIRMED` row "May already have been delivered"; its
 **Try again** warns that the member may receive it twice. Pinned by
 `handover.test.ts` and `stranded-queued-email.realdb.test.ts`.
 
+Bounce and complaint reports (#5469, owner decisions of 27 and 28 Nov 2026,
+`INV-INT-044`). Each mail service's report becomes one neutral event
+(`email/delivery-feedback.ts`; SES's adapter is `email/ses-feedback.ts`), and
+one rule acts on it. It records the address's suppression as before: a
+complaint or a permanent bounce suppresses at once, a temporary bounce from
+the second on, decided by the event's kind (the provider's labels are kept
+for display only). A bounce, permanent or temporary, moves to `BOUNCED` only
+the `QUEUED`, `SENT` or `FAILED` row the report names. A complaint moves no
+row: the email arrived, so it keeps saying `SENT`, and officers get one
+`admin-email-complaint` alert per complaint report, for each address it
+names, instead (D3, D6), on the
+"Reported issues" preference (D4), sent after the suppression is written and
+only while it is active. The alert is stored and re-sent by the once-ever
+sweep until an officer has it (`sendReplayableAdminAlertOnceEver`,
+`INV-INT-042`); only a muted template or nobody on that preference sends
+nothing at the start, and a block lifted before the alert goes withdraws it
+for good (its claim is kept, so a later block of the address does not bring
+it back). If the alert can neither be stored nor sent, the webhook answers
+with an error and SNS delivers the report again. A "not spam" report (SES's `not-spam` complaint type, the recipient
+moving a club email out of spam) changes nothing: no block, no mark, no alert
+(D5). A complaint whose type is missing or not recognised is a complaint,
+and the alert says which of the two. Every other
+row to the address keeps its status. Nothing more of this site's own email is
+sent to a suppressed address because the email core and the retry cron check
+the suppression record before every send and write the refused send's row
+`BOUNCED`, its body dropped; no other row needs rewriting to stop it.
+Invoices that Xero emails at the app's request do not consult the block (D7).
+If the retry cron cannot read the suppression record, it skips the row and
+leaves it for its next run, counted as `skipped` in the run's result and
+warned about; the email core, for a new send, still proceeds
+on a failed read (**stated limit**, as before #5469). A repeat of the same
+report matches no row (the named one is already `BOUNCED`), is not counted
+again toward suppression, and finds the alert's claim kept (`INV-INT-039`).
+
+Which row a report names: the one whose `providerMessageId` matches the id
+the service gave the message. Both send paths store that id from the
+server's reply to a successful send (`email/provider-message-id.ts`, one entry
+per recognised service; only SES, recognised from `USE_AWS_SES`, whose reply is
+`250 Ok <id>`), only in SES's documented shape (hex groups joined by hyphens,
+at most 128 characters, lower-cased); any other reply stores nothing. When no
+row has the report's id, the row whose `messageId` the report carries is
+matched instead, whatever id it stored (a Message-ID names one message): the
+Message-ID header the mail library generated, which SES replaces on the way out and
+reports only among the original headers, sent only when the identity is set
+to include them (`CONFIGURATION.md`, "SES Bounce and Complaint Feedback").
+The two provider facts this rests on are read from AWS's documentation, not
+tested against SES: that the SMTP reply's id is the `mail.messageId` a
+notification carries (were it not, no stored id would match and only the
+header fallback would find an email; a header match on a row whose stored
+id differs from the report's is logged as a warning, so that shows up), and that a notification's
+`commonHeaders.messageId` is the original header (`mail.headers`, also read,
+is documented to be).
+
+**Stated limits:**
+- A row with no stored id (sent before #5469, by the previous release,
+  through an SMTP relay or other server the app does not recognise, or in
+  development mode) is matched only through those headers; without them no
+  row is marked, the address is still suppressed, and an email that did bounce
+  keeps reading as `SENT`.
+- When the `SENT` write fails after the server accepted the email, or misses
+  because the stranded-email sweep settled the row first (#5298), neither id
+  is stored. The row stays `QUEUED` until that sweep flags it `UNCONFIRMED`
+  at the retry ceiling, a later bounce cannot match it, and the "was the
+  member told" rule reads it as sent.
+- A copy of the complaint alert that the retry job replays (after a failed
+  send, or a hand-over the stranded-email sweep gave back) goes out as it was
+  written. The check that withdraws the alert when the block has been lifted
+  runs when the alert is first sent and on each re-send by the alert sweep,
+  not on a replay, so an officer who lifts a block within that time can still
+  receive a copy saying the address is blocked (tracked in #5568).
+- After a single temporary bounce the address is not yet blocked, so its
+  pending `FAILED` rows are retried until a second temporary bounce blocks
+  it; each row gets at most one more accepted send before that.
+- Rows marked `BOUNCED` by the old rule, which marked every row to the
+  address, stay as they were (no data rewrite).
+- During a blue-green switchover the previous release, still handling some
+  reports, neither stores nor reads the id, marks every row to the address
+  (complaints and "not spam" reports included), and sends no complaint alert.
+- A crash between the suppression write and the alert's store, when SNS's
+  redeliveries end before the webhook's processing lease expires, loses the
+  alert; the block itself stands.
+
 ```text
 email queued -> send attempted -> sent
 queued, never handed over, stranded past the threshold -> failed (retried) or failed at the ceiling (no body)
 queued, hand-over started or unknown, stranded past the threshold -> failed at the ceiling, unconfirmed (officer decides)
+sent -> bounce naming this message -> bounced; address suppression recorded
+sent -> complaint naming this message -> stays sent; address suppressed; officers alerted once per report and address
+sent -> not-spam report -> nothing changes
 confirmed copy -> environment-safety suppression (terminal, no provider contacted)
 unconfirmed role or capture-in-production -> retryable failure carrying a block reason
 send failure -> retryable failed -> suppression + booking authority rechecked
