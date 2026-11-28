@@ -878,10 +878,10 @@ async function cleanupArchivedMemberLinks(
         email: departing.email,
       })
     : { retired: 0 };
-  // #2716: the CHOICE goes with the pointer here. Nothing in the product clears
-  // `archivedAt` — the archive state machine has no reverse edge — so a choice
-  // naming an archived member can never resolve again, and keeping it would
-  // report these dependants as waiting on an address that is never coming.
+  // #2716: the CHOICE goes with the pointer here. A Full Admin's unarchive
+  // (#5540) restores no family link and leaves the member cancelled, so a
+  // choice naming them could still never resolve; keeping it would report
+  // these dependants as waiting on an address that is never coming.
   const inheritance = await tx.member.updateMany({
     where: {
       OR: [

@@ -4140,6 +4140,7 @@ Known request statuses: `REQUESTED`, `APPROVED`, `REJECTED`, `WITHDRAWN`,
 Known participant statuses: `REQUESTED`, `PENDING_CONFIRMATION`, `DECLINED`,
 `APPROVED`, `REJECTED`, `CANCELLED`, `REJOINED`.
 Known lifecycle action statuses: `REQUESTED`, `APPROVED`, `REJECTED`.
+Known lifecycle actions: `ARCHIVE`, `DELETE`, `UNARCHIVE` (always `APPROVED`).
 
 A departure has an explicit calendar day (`Member.leavingDate`, #4457).
 Single and bulk deactivation, cancellation approval, archive approval and
@@ -4159,7 +4160,20 @@ admin approves -> local account/family changes -> Xero cancellation queued -> co
 admin rejects/withdraws -> request closed without lifecycle mutation
 archive/delete requested -> second-admin review -> approved/rejected
 delete approval -> eligibility re-check -> hard delete only when safe
+archived -> Full Admin unarchives (reason, one step) -> cancelled, not archived | 409 (deleted, not archived, pending archive or delete request) | 403 (not a Full Admin)
 ```
+
+Unarchive (#5540) is the archive's one reverse edge; cancellation has none.
+A Full Admin clears it from the member page's Lifecycle card
+(`POST /api/admin/members/[id]/lifecycle/unarchive`), under the member's
+`member-lifecycle:` key, with a guarded claim on `archivedAt`. Only the archive
+columns change: the member stays cancelled, inactive and login-off, keeps their
+leaving date, and gets back no family link. No email and no Xero call. It
+writes an `APPROVED` `UNARCHIVE` lifecycle row (the admin as requester and
+reviewer) and a `member_lifecycle.unarchived` audit row; the `ARCHIVE` row
+stays, so the page's Archive history shows every cycle. An `UNARCHIVE` row is
+never a request to review: the list API accepts only `ARCHIVE` and `DELETE`.
+See [`INV-LIFE-013`](invariants/membership-lifecycle.md#inv-life-013).
 
 Surfacing (#1938): ARCHIVE requests are reviewed on
 `/admin/membership-cancellations`; DELETE requests are reviewed in the

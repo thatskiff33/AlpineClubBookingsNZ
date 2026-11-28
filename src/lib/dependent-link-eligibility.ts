@@ -290,10 +290,10 @@ export function dependentParentEligibleWhere(): Prisma.MemberWhereInput[] {
  * endpoints with two contracts; a shared sentence would have to be vague about
  * which action was refused.
  *
- * ARCHIVED says what to do INSTEAD rather than "restore this member first":
- * nothing in the product clears `Member.archivedAt`. The only write is the
- * one-way stamp in `member-lifecycle-actions.ts`, and the archive state machine
- * has no reverse edge, so "restore" named a remedy that does not exist.
+ * ARCHIVED says what to do INSTEAD rather than "restore this member first".
+ * A Full Admin's unarchive (#5540) is the archive's one reverse edge, but it
+ * leaves the member cancelled and inactive, and a parent must be active, so
+ * unarchiving is still not a remedy here.
  */
 export const DEPENDENT_PARENT_LINK_ERRORS: Record<
   DependentParentStateReason,
@@ -302,7 +302,7 @@ export const DEPENDENT_PARENT_LINK_ERRORS: Record<
   ORGANISATION:
     "Dependents cannot be linked under an organisation or school account, because it is not a person.",
   ARCHIVED:
-    "Dependents cannot be linked under an archived member. Archiving is permanent, so link them under another member of the family instead.",
+    "Dependents cannot be linked under an archived member. Link them under another member of the family instead.",
   DELETED: "Dependents cannot be linked under a deleted member.",
   INACTIVE:
     "Dependents can only be linked under active members. Reactivate this member first.",
@@ -319,7 +319,7 @@ export const DEPENDENT_PARENT_CREATE_ERRORS: Record<
   ORGANISATION:
     "Dependents cannot be created under an organisation or school account, because it is not a person.",
   ARCHIVED:
-    "Dependents cannot be created under an archived member. Archiving is permanent, so add them under another member of the family instead.",
+    "Dependents cannot be created under an archived member. Add them under another member of the family instead.",
   DELETED: "Dependents cannot be created under a deleted member.",
   INACTIVE:
     "Dependents can only be created under active members. Reactivate this member first.",
@@ -337,7 +337,7 @@ export const DEPENDENT_PARENT_BLOCK_EXPLANATIONS: Record<
   ORGANISATION:
     "This is an organisation or school account rather than a person, so it cannot be recorded as anyone's parent.",
   ARCHIVED:
-    "This member is archived, and archiving cannot be undone — add the dependent under another member of the family instead.",
+    "This member is archived, and unarchiving leaves them cancelled — add the dependent under another member of the family instead.",
   DELETED: "This member is deleted and cannot have dependents added.",
   INACTIVE:
     "This member is inactive — reactivate them to add dependents.",
