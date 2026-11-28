@@ -228,6 +228,7 @@ function pricingArgs(
     skipBookingLifecycleRules: false,
     seasonRateData: SEASONS as never,
     partnerSharedGuests: [],
+    yearEndMonth: 3,
   };
 }
 
@@ -373,6 +374,7 @@ function preCheckInArgs(
     skipBookingLifecycleRules: false,
     seasonRateData: SEASONS as never,
     partnerSharedGuests: [],
+    yearEndMonth: 3,
   };
 }
 
@@ -484,6 +486,7 @@ describe("#4317 review H1: a frozen headline is carried, never settled by an edi
       skipBookingLifecycleRules: false,
       seasonRateData: SEASONS as never,
       partnerSharedGuests: [],
+      yearEndMonth: 3,
     });
 
     expect(save.priceBreakdown.guests.map((g) => g.priceCents)).toEqual([25_000, 25_000]);
@@ -519,6 +522,7 @@ describe("#4317 review H1: a frozen headline is carried, never settled by an edi
       skipBookingLifecycleRules: false,
       seasonRateData: SEASONS as never,
       partnerSharedGuests: [],
+      yearEndMonth: 3,
     });
 
     expect(quote.priceDiffCents).toBe(2 * RATE);
@@ -578,6 +582,7 @@ describe("#4317 review round 2: an edit that would carry a headline below zero i
         skipBookingLifecycleRules: false,
         seasonRateData: SEASONS as never,
         partnerSharedGuests: [],
+        yearEndMonth: 3,
       }),
     ).rejects.toBeInstanceOf(NegativeEditedHeadlineError);
   });
@@ -614,6 +619,7 @@ describe("#4317 review round 2: an edit that would carry a headline below zero i
         skipBookingLifecycleRules: false,
         seasonRateData: SEASONS as never,
         partnerSharedGuests: [],
+        yearEndMonth: 3,
       }),
     ).rejects.toBeInstanceOf(NegativeEditedHeadlineError);
   });
@@ -683,6 +689,7 @@ describe("#4317 review rounds 3 and 4: an in-progress plan carries its promotion
       skipBookingLifecycleRules: false,
       seasonRateData: SEASONS as never,
       partnerSharedGuests: [],
+      yearEndMonth: 3,
     });
     // The save prices the same plan and hands the promotion engine nothing: the
     // capped code is carried, never re-decided (round 4), so an expired code
@@ -793,6 +800,7 @@ describe("#4317 review M2: a negative stored guest total refuses the edit", () =
         skipBookingLifecycleRules: false,
         seasonRateData: SEASONS as never,
         partnerSharedGuests: [],
+        yearEndMonth: 3,
       }),
     ).rejects.toBeInstanceOf(NegativeStoredGuestTotalError);
   });

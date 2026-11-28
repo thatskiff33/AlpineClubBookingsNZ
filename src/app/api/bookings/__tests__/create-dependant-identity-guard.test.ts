@@ -1166,7 +1166,7 @@ describe("POST /api/bookings own-dependant identity guard (#2721)", () => {
       }, 409],
       ["a family membership-type block", () => {
         h.assertMembershipType.mockImplementation(async (_db: unknown, { guests }: { guests: Array<{ memberId?: string | null }> }) => {
-          if (hasFamily(guests)) throw new MembershipTypeBookingPolicyError([]);
+          if (hasFamily(guests)) throw new MembershipTypeBookingPolicyError([], 3);
         });
       }, 400],
       ["an unpaid family member", () => {

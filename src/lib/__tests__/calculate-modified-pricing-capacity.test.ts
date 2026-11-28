@@ -159,6 +159,7 @@ describe("calculateModifiedPricing capacity (issue #1668)", () => {
       calculateModifiedPricing(NO_DISCOUNT_TX, {
         ...baseArgs(),
         adminOverride: false,
+        yearEndMonth: 3,
       }),
     ).rejects.toMatchObject({
       // #3232: THE CLASS IS THE ASSERTION, not decoration on top of the message.
@@ -184,6 +185,7 @@ describe("calculateModifiedPricing capacity (issue #1668)", () => {
         ...baseArgs(),
         adminOverride: true,
         confirmOverCapacity: false,
+        yearEndMonth: 3,
       }),
     ).rejects.toBeInstanceOf(OverCapacityConfirmationRequiredError);
   });
@@ -195,6 +197,7 @@ describe("calculateModifiedPricing capacity (issue #1668)", () => {
       calculateModifiedPricing(NO_DISCOUNT_TX, {
         ...baseArgs(),
         adminOverride: false,
+        yearEndMonth: 3,
       }),
     ).rejects.toMatchObject({
       constructor: InsufficientCapacityError,
@@ -211,6 +214,7 @@ describe("calculateModifiedPricing capacity (issue #1668)", () => {
         ...baseArgs(),
         adminOverride: true,
         confirmOverCapacity: false,
+        yearEndMonth: 3,
       }),
     ).rejects.toBeInstanceOf(OverCapacityConfirmationRequiredError);
   });
@@ -224,6 +228,7 @@ describe("calculateModifiedPricing capacity (issue #1668)", () => {
         ...baseArgs(),
         adminOverride: true,
         confirmOverCapacity: true,
+        yearEndMonth: 3,
       });
     } catch (err) {
       thrown = err;
@@ -262,6 +267,7 @@ describe("calculateModifiedPricing capacity (issue #1668)", () => {
       ...baseArgs(),
       adminOverride: true,
       confirmOverCapacity: true,
+      yearEndMonth: 3,
     });
 
     expect(result.capacityOverridden).toBe(true);
@@ -384,6 +390,7 @@ describe("calculateModifiedPricing in-progress check-out-day capacity (#2029)", 
     await expect(
       calculateModifiedPricing(NO_DISCOUNT_TX, {
         ...inProgressArgs({ editableFrom: "2026-08-25", newCheckOut: "2026-08-25" }),
+        yearEndMonth: 3,
       }),
     ).rejects.toMatchObject({
       constructor: InsufficientCapacityError,
@@ -406,6 +413,7 @@ describe("calculateModifiedPricing in-progress check-out-day capacity (#2029)", 
 
     const result = await pricedPricing(NO_DISCOUNT_TX, {
       ...inProgressArgs({ editableFrom: "2026-08-25", newCheckOut: "2026-08-25" }),
+      yearEndMonth: 3,
     });
 
     // Charged exactly the one new night (ties to the pricing suite).
@@ -418,6 +426,7 @@ describe("calculateModifiedPricing in-progress check-out-day capacity (#2029)", 
 
     await pricedPricing(NO_DISCOUNT_TX, {
       ...inProgressArgs({ editableFrom: "2026-08-22", newCheckOut: "2026-08-26" }),
+      yearEndMonth: 3,
     });
 
     const call = h.checkCapacityForGuestRanges.mock.calls[0];
@@ -441,6 +450,7 @@ describe("calculateModifiedPricing in-progress check-out-day capacity (#2029)", 
           newCheckOut: "2026-08-25",
           partnerSharedGuests: [{ memberId: "m1", partnerMemberId: "m2" }],
         }),
+        yearEndMonth: 3,
       }),
     ).rejects.toMatchObject({
       constructor: ApiError,
@@ -465,6 +475,7 @@ describe("calculateModifiedPricing in-progress check-out-day capacity (#2029)", 
         guestStayEnd: "2026-08-24",
         guestPriceCents: 2 * RATE,
       }),
+      yearEndMonth: 3,
     });
 
     const ranges = h.checkCapacityForGuestRanges.mock.calls[0][3] as Array<{
@@ -531,6 +542,7 @@ describe("calculateModifiedPricing in-progress per-night breakdown (#2736)", () 
         guests: [guest],
       }),
       bookingId: "b1",
+      yearEndMonth: 3,
       isInProgressEdit: true,
       editableFrom: D("2026-08-21"),
       newCheckIn: D("2026-08-20"),
@@ -587,6 +599,7 @@ describe("calculateModifiedPricing in-progress per-night breakdown (#2736)", () 
         finalPriceCents: 1001,
         guests: [{ ...drifted.booking.guests[0], priceCents: 1001 }],
       }),
+      yearEndMonth: 3,
     });
 
     expect(result.priceBreakdown.guests[0].nightDates).toEqual([
@@ -613,6 +626,7 @@ describe("calculateModifiedPricing in-progress per-night breakdown (#2736)", () 
           ...drifted.booking,
           guests: [{ ...drifted.booking.guests[0], priceCents: 1001 }],
         }),
+        yearEndMonth: 3,
       }),
     ).rejects.toThrow(/Not enough beds available/);
 
@@ -722,6 +736,7 @@ describe("calculateModifiedPricing in-progress departed guest (#2743)", () => {
         guests: [gone, present],
       }),
       bookingId: "b1",
+      yearEndMonth: 3,
       isInProgressEdit: true,
       editableFrom: D("2026-08-22"),
       newCheckIn: D("2026-08-18"),
@@ -875,6 +890,7 @@ describe("calculateModifiedPricing in-progress per-night prices (#2744)", () => 
         guests,
       }),
       bookingId: "b1",
+      yearEndMonth: 3,
       isInProgressEdit: true,
       editableFrom: D("2026-08-21"),
       newCheckIn: D("2026-08-20"),
@@ -981,6 +997,7 @@ describe("calculateModifiedPricing in-progress per-night prices (#2744)", () => 
         guests: [guest, companion],
       }),
       bookingId: "b1",
+      yearEndMonth: 3,
       isInProgressEdit: true,
       // The 24th is the only night this edit can still touch; the 23rd is slept.
       editableFrom,

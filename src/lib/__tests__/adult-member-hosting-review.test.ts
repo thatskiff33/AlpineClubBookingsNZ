@@ -1034,6 +1034,8 @@ describe("pre-persist evaluation for the create path (#2364)", () => {
     lodgeId: "lodge-1",
     checkIn: new Date("2026-07-04T00:00:00.000Z"),
     checkOut: new Date("2026-07-06T00:00:00.000Z"),
+    // The stay's membership season, which the caller resolves (#5259).
+    seasonYear: 2026,
     guests: [{ firstName: "Non", lastName: "Member" }],
   };
 

@@ -542,6 +542,7 @@ async function runPlanner(
     // #2560: the mode the route resolves for this fixture (Xero module off).
     subscriptionLockoutMode: "NO_BLOCK",
     format: CLUB_FORMAT_TEST,
+    yearEndMonth: 3,
   });
   return {
     envelope: [

@@ -59,6 +59,7 @@ describe("manual PAID makes a member paid-up on the booking gate (#1944)", () =>
       bookingMemberId: "owner",
       checkIn: new Date("2026-07-15T00:00:00.000Z"),
       guests: [{ isMember: true, memberId: "g1" }],
+      yearEndMonth: 3,
     });
     expect(unpaid).toEqual([]);
   });
@@ -68,6 +69,7 @@ describe("manual PAID makes a member paid-up on the booking gate (#1944)", () =>
       bookingMemberId: "owner",
       checkIn: new Date("2026-07-15T00:00:00.000Z"),
       guests: [{ isMember: true, memberId: "g1" }],
+      yearEndMonth: 3,
     });
     expect(unpaid.map((row) => row.memberId)).toEqual(["g1"]);
   });

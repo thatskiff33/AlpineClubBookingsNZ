@@ -353,6 +353,7 @@ let webhookClient: PrismaClient;
         (tx) => removeBookingGuestInTransaction({
           tx, bookingId: BOOKING_ID, guestId: LEAVING_GUEST_ID, actorMemberId: MEMBER_ID, actorRole: "ADMIN", today: TODAY, format: CLUB_FORMAT_TEST, journal: JOURNAL,
           settlementMethod: "card",
+          yearEndMonth: 3,
         }),
         { maxWait: 10_000, timeout: 20_000 },
       );
@@ -1261,6 +1262,7 @@ let webhookClient: PrismaClient;
             const result = await removeBookingGuestInTransaction({
               tx, bookingId: BOOKING_ID, guestId: LEAVING_GUEST_ID, actorMemberId: MEMBER_ID, actorRole: "ADMIN", today: TODAY, format: CLUB_FORMAT_TEST, journal: JOURNAL,
               settlementMethod: "card",
+              yearEndMonth: 3,
             });
             reductionId = result.bookingModificationId!;
             // Queued inside the edit's transaction, visible to it before commit.

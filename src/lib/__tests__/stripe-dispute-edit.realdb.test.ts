@@ -248,6 +248,7 @@ let money: typeof import("@/lib/member-money");
             format: CLUB_FORMAT_TEST,
             journal: memberMoneyTestContext(),
             settlementMethod,
+            yearEndMonth: 3,
           }),
         { maxWait: 10_000, timeout: 20_000 },
       );

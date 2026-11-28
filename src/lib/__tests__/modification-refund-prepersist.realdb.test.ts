@@ -247,6 +247,7 @@ function remove(settlementMethod?: "card" | "credit", consentAuthority?: {
   return prisma.$transaction((tx) => removal.removeBookingGuestInTransaction({
     tx, bookingId: BOOKING, guestId: LEAVING, actorMemberId: OFFICER, actorRole: "ADMIN",
     today: TODAY, format: CLUB_FORMAT_TEST, journal: JOURNAL, settlementMethod, consentAuthority,
+    yearEndMonth: 3,
   }), { maxWait: 10_000, timeout: 20_000 });
 }
 

@@ -521,6 +521,7 @@ async function remove(
     actorRole: params.actorRole ?? "MEMBER",
     ...(params.settlementMethod ? { settlementMethod: params.settlementMethod } : {}),
     ...(params.consentAuthority ? { consentAuthority: params.consentAuthority } : {}),
+    yearEndMonth: 3,
   });
 }
 
@@ -1166,6 +1167,7 @@ describe("the self-removal window is judged on the day the caller supplies (#312
       guestId: TARGET_GUEST,
       actorMemberId: TARGET,
       actorRole: "MEMBER",
+      yearEndMonth: 3,
     });
   }
 

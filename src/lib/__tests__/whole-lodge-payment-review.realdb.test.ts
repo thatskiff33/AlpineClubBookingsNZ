@@ -312,6 +312,7 @@ async function readBooking() {
       await prisma.$transaction((tx) => removal.removeBookingGuestInTransaction({
         tx, bookingId: bookingId!, guestId: guest.id, actorMemberId: OFFICER, actorRole: "ADMIN",
         today: dateOnlyInstantOf(todayAtClub), format: CLUB_FORMAT_TEST, journal: memberMoneyTestContext(),
+        yearEndMonth: 3,
       }), { timeout: 30_000 });
     }
     const recovery = await import("@/lib/payment-recovery");

@@ -12,6 +12,7 @@ import {
   sumDeferredGuestPortionCents,
   type DeferredGuestPortionGuest,
 } from "@/lib/deferred-guest-portion";
+import { seasonYearOfStoredDate } from "@/lib/financial-year";
 
 // A minimal membership-type policy db (#1930/#2003): non-members resolve to the
 // built-in NON_MEMBER type, memberless members to FULL, and the group discount
@@ -190,6 +191,8 @@ describe("priceDeferredNonMemberPortion single-sources the deferred figure under
       guests: wholeParty,
       seasons,
       groupDiscount,
+      seasonYear: seasonYearOfStoredDate(checkIn, 3),
+      yearEndMonth: 3,
     });
     expect(deferred).not.toBeNull();
     expect(deferred!.totalPriceCents).toBe(SUBSET_CHARGE_CENTS);
@@ -203,6 +206,8 @@ describe("priceDeferredNonMemberPortion single-sources the deferred figure under
       guests: wholeParty,
       seasons,
       groupDiscount,
+      seasonYear: seasonYearOfStoredDate(checkIn, 3),
+      yearEndMonth: 3,
     });
     const naiveBannerSum = sumDeferredGuestPortionCents(wholePartyQuote.guests);
     expect(naiveBannerSum).toBe(DISCOUNTED_WHOLE_PARTY_NON_MEMBER_CENTS);
@@ -223,6 +228,8 @@ describe("priceDeferredNonMemberPortion single-sources the deferred figure under
       guests: wholeParty,
       seasons,
       groupDiscount,
+      seasonYear: seasonYearOfStoredDate(checkIn, 3),
+      yearEndMonth: 3,
     });
     const childStyle = await priceBookingGuestsWithMembershipTypePolicy(db, {
       checkIn,
@@ -233,6 +240,8 @@ describe("priceDeferredNonMemberPortion single-sources the deferred figure under
       ],
       seasons,
       groupDiscount,
+      seasonYear: seasonYearOfStoredDate(checkIn, 3),
+      yearEndMonth: 3,
     });
     expect(deferred!.totalPriceCents).toBe(childStyle.totalPriceCents);
     expect(deferred!.totalPriceCents).toBe(SUBSET_CHARGE_CENTS);
@@ -248,6 +257,8 @@ describe("priceDeferredNonMemberPortion single-sources the deferred figure under
       ],
       seasons,
       groupDiscount,
+      seasonYear: seasonYearOfStoredDate(checkIn, 3),
+      yearEndMonth: 3,
     });
     expect(deferred).toBeNull();
   });

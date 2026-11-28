@@ -285,6 +285,7 @@ describe("buildApprovalGuestCreates gives every guest a night set (#2739)", () =
       checkOut: CHECK_OUT,
       adminMemberId: "admin-1",
       heldBookingId: null,
+      yearEndMonth: 3,
     });
 
     expect(guestCreates.map((guest) => guest.nights.map((n) => n.priceCents))).toEqual([
@@ -304,6 +305,7 @@ describe("buildApprovalGuestCreates gives every guest a night set (#2739)", () =
       checkOut: CHECK_OUT,
       adminMemberId: "admin-1",
       heldBookingId: null,
+      yearEndMonth: 3,
     });
 
     const prismaData = toPipelineGuestCreateData(guestCreate, NO_DIETARY[0]);
@@ -387,6 +389,7 @@ describe("the guests now reach the Bed Allocation officer card (#2739)", () => {
       checkOut: CHECK_OUT,
       adminMemberId: "admin-1",
       heldBookingId: null,
+      yearEndMonth: 3,
     });
     return toPipelineGuestCreateData(guestCreate, NO_DIETARY[0]).nights.create;
   }

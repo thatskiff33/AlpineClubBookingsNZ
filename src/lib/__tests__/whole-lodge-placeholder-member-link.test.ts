@@ -154,6 +154,7 @@ describe("#2337: prepareGuestPlan threads a placeholder→member link into prici
         approvalRequired: true,
         pendingHoldExpiryDays: 0,
       },
+      yearEndMonth: 3,
     });
 
     expect(plan.guestMemberLinks).toEqual([
@@ -223,6 +224,7 @@ describe("#2337: prepareGuestPlan threads a placeholder→member link into prici
         approvalRequired: true,
         pendingHoldExpiryDays: 0,
       },
+      yearEndMonth: 3,
     });
 
     // The link's member id joined the SAME resolve as any added member guest.
@@ -257,6 +259,7 @@ describe("#2337: prepareGuestPlan threads a placeholder→member link into prici
         // required value, threaded on the policy the caller already resolved.
         timeZone: requireClubTimeZone("America/Denver"),
       },
+      yearEndMonth: 3,
     });
 
     const columns = plan.guestMemberLinkColumns.get("g1");

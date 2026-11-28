@@ -813,6 +813,7 @@ describe("guest removal prices remaining guests over their stored nights (#1093)
       actorMemberId: "m1",
       actorRole: "ADMIN",
       settlementMethod: "CREDIT" as any,
+      yearEndMonth: 3,
     });
 
     // Remaining gap-stay guest keeps exactly her two booked nights at their
