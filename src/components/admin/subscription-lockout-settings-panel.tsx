@@ -27,6 +27,10 @@ import {
 } from "@/components/admin/view-only-action";
 import type { AdminPermissionMatrix } from "@/lib/admin-permissions";
 import { adminHref } from "@/lib/admin-hubs";
+import {
+  SubscriptionAccountSelect,
+  type SubscriptionAccountOption,
+} from "@/components/admin/subscription-account-select";
 import { useYearEndRefresh } from "@/components/admin/use-year-end-refresh";
 
 const MONTH_NAMES = [
@@ -139,7 +143,9 @@ export function SubscriptionLockoutSettingsPanel({
   const [subscriptionItemCode, setSubscriptionItemCode] = useState<
     string | null
   >(null);
-  const [accounts, setAccounts] = useState<XeroCode[] | null>(null);
+  const [accounts, setAccounts] = useState<
+    SubscriptionAccountOption[] | null
+  >(null);
   const [items, setItems] = useState<XeroCode[] | null>(null);
   // #2109 fee-schedule look-through preview, computed server-side from the fee
   // schedule and the other fee configs.
@@ -231,7 +237,7 @@ export function SubscriptionLockoutSettingsPanel({
         // Xero reference data is only available when Xero is connected.
         if (accountsRes?.ok) {
           const body = await accountsRes.json();
-          setAccounts((body.accounts as XeroCode[]) ?? []);
+          setAccounts((body.accounts as SubscriptionAccountOption[]) ?? []);
         }
         if (itemsRes?.ok) {
           const body = await itemsRes.json();
@@ -567,27 +573,13 @@ export function SubscriptionLockoutSettingsPanel({
 
           <div className="space-y-1.5">
             <Label htmlFor="sub-account">Subscription account code</Label>
-            <Select
-              value={subscriptionCode ?? NONE}
-              onValueChange={(value) =>
-                setSubscriptionCode(value === NONE ? null : value)
-              }
+            <SubscriptionAccountSelect
+              id="sub-account"
+              value={subscriptionCode}
+              onChange={setSubscriptionCode}
+              accounts={accounts ?? []}
               disabled={!xeroConnected || !financeCanEdit}
-            >
-              <SelectTrigger id="sub-account" className="w-full sm:w-[360px]">
-                <SelectValue placeholder="Not set" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value={NONE}>
-                  <span className="text-muted-foreground">Not set</span>
-                </SelectItem>
-                {(accounts ?? []).map((a) => (
-                  <SelectItem key={a.code} value={a.code}>
-                    {a.code} - {a.name}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            />
             <p className="text-xs text-muted-foreground">
               An invoice line posted to this chart-of-account code counts as a
               subscription. Defaults to 203 (Annual Subs) when unset.

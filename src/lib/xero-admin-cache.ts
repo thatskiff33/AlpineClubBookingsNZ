@@ -293,6 +293,53 @@ export async function getCachedChartOfAccounts(): Promise<XeroAdminCacheRecord<X
   );
 }
 
+/**
+ * The connected organisation's chart of accounts as last stored, read through
+ * the CALLER's client: for a reader that may be inside a transaction. The
+ * configuration import plans a second time inside its apply (`INV-LOCK-004`),
+ * where `getCachedChartOfAccounts` would read through the module client on
+ * another connection. Mapping writers use the persisted chart because the
+ * per-process copy can differ between servers. Null when Xero is not
+ * connected, nothing is stored, or the stored chart has expired. A failed read
+ * is thrown, not swallowed: inside a transaction it has already ended it.
+ *
+ * `evenIfExpired` returns the last chart stored however old it is. It is for a
+ * reader that warns rather than refuses, which reaches it through
+ * `readLastStoredChartOfAccounts` below.
+ */
+export async function readStoredChartOfAccounts(
+  db: Pick<Prisma.TransactionClient, "xeroAdminCache" | "xeroConnection">,
+  { evenIfExpired = false }: { evenIfExpired?: boolean } = {},
+): Promise<XeroAccount[] | null> {
+  const tenantId = (await readXeroConnection(db))?.tenantId ?? null;
+  if (!tenantId) return null;
+  const record = await db.xeroAdminCache.findUnique({
+    where: { cacheKey_tenantId: { cacheKey: CHART_OF_ACCOUNTS_CACHE_KEY, tenantId } },
+    select: { payload: true, expiresAt: true },
+  });
+  if (!record) return null;
+  if (!evenIfExpired && record.expiresAt.getTime() <= Date.now()) return null;
+  return isXeroAccountArray(record.payload) ? record.payload : null;
+}
+
+/**
+ * The chart for a reader that WARNS about a stored account and refuses nothing:
+ * the Xero health check (`readXeroTaxHealth`) and the setup checklist
+ * (`getSetupDatabaseSnapshot`). It is the last chart stored however old, because
+ * a chart is only stored when an administrator opens a screen that lists
+ * accounts, so a warning that needed a fresh one would clear itself an hour
+ * after anyone last looked. A failed read is logged and reads as "no chart":
+ * the warning is one line of a larger report, which must still be given.
+ */
+export async function readLastStoredChartOfAccounts(): Promise<XeroAccount[] | null> {
+  try {
+    return await readStoredChartOfAccounts(prisma, { evenIfExpired: true });
+  } catch (error) {
+    logger.warn({ err: error }, "Failed to read the stored Xero chart of accounts");
+    return null;
+  }
+}
+
 export async function setCachedChartOfAccounts(
   tenantId: string,
   accounts: XeroAccount[]

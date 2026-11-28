@@ -2,8 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { bookableAgeTierEnum } from "@/lib/age-tier-schema";
 import { isHttpUrl } from "@/lib/http-url";
-import { adminHref, adminTabHref, getAdminPage } from "@/lib/admin-hubs";
-import { xeroMappingHref } from "@/lib/admin-hubs/xero-setup";
+import { adminHref, adminTabHref } from "@/lib/admin-hubs";
 import {
   CLUB_TIME_ZONE_FALLBACK,
   CLUB_TIME_ZONE_MAX_LENGTH,
@@ -48,6 +47,7 @@ import { DATA_ENCRYPTION_KEYS_ENV, DATA_ENCRYPTION_LEGACY_KEY_ENV } from "@/lib/
 import { buildDataEncryptionKeyCheck, type DataKeyRingSource, type DataKeyUsageSnapshot } from "@/lib/setup-readiness-data-keys";
 import { buildDatabaseRoleCheck, type DatabaseRoleSnapshot } from "@/lib/setup-readiness-database-role";
 import { describeEnvironmentRoleDeclaration, describeEnvironmentRoleOverride } from "@/lib/setup-readiness-environment-role";
+import { buildXeroMappingCheck, type XeroMappingSetupSnapshot } from "@/lib/setup-readiness-xero-mapping";
 
 export const SETUP_STEP_IDS = [
   "club-config",
@@ -95,7 +95,7 @@ interface SetupProgressInput {
   completedByMemberId?: string | null;
 }
 
-export interface SetupDatabaseSnapshot {
+export interface SetupDatabaseSnapshot extends XeroMappingSetupSnapshot {
   adminCount: number;
   adminModuleSettings?: AdminModuleSettingsSnapshot | null;
   ageTierSettingCount: number;
@@ -132,25 +132,6 @@ export interface SetupDatabaseSnapshot {
   stripePublishableKeySet?: boolean;
   stripeWebhookSecretSet?: boolean;
   stripeNeedsReentry?: boolean;
-  xeroAccountMappingCount: number;
-  /**
-   * Labels of the mapping keys that have a registered fallback and are still
-   * unset (#2717, `INV-INT-021`). The count above says nothing about them — it
-   * counts any row carrying a code, so an upgrading club reads "configured" on
-   * the very day a new key ships, which is the silence the owner rejected.
-   * Optional for callers that took no database snapshot.
-   */
-  xeroUnsetFallbackMappingLabels?: string[];
-  /**
-   * `INV-INT-021`, #3529: one sentence per unset asking key — "Label: what the
-   * system does without it" — so the checklist can say WHY a choice is waiting
-   * for a key that has no fallback (a bank-transfer refund note raised without
-   * a settling payment) as well as for one that does. Same population as the
-   * labels above, in the same order.
-   */
-  xeroUnsetMappingConsequences?: string[];
-  xeroHutFeeItemMappingCount: number;
-  xeroEntranceFeeMappingCount: number;
   // Per-membership-type rate gaps (#1930, E4): "TypeName — SeasonName" entries
   // for every MEMBER_RATE type × active/future season whose rate coverage is
   // incomplete (see computeMembershipTypeRateGaps). Any entry means a booking
@@ -2032,82 +2013,6 @@ function buildFinanceDashboardCheck(
   );
 }
 
-function buildXeroMappingCheck(
-  db: SetupDatabaseSnapshot | undefined,
-  progress: SetupProgressState,
-): SetupStepCheck {
-  if (!db) {
-    return applyProgress(
-      {
-        id: "xero-mappings",
-        title: "Xero Mappings",
-        description:
-          "Chart of accounts, hut fee item codes, and joining-fee categories.",
-        status: "warning",
-        required: false,
-        message: "Xero mapping database state was not checked.",
-        details: [`Review mappings in ${getAdminPage("xero-setup").label} after connecting Xero.`],
-        href: xeroMappingHref(),
-      },
-      progress,
-    );
-  }
-
-  const accountMappings = db?.xeroAccountMappingCount ?? 0;
-  const hutFeeMappings = db?.xeroHutFeeItemMappingCount ?? 0;
-  const entranceFeeMappings = db?.xeroEntranceFeeMappingCount ?? 0;
-  // A mapping that is falling back is a mapping nobody has decided (#2717,
-  // `INV-INT-021`). The owner's decision rejected silence, and the account
-  // count cannot see this: it counts rows with a code, so every upgrading club
-  // would read "configured" while a new key was quietly unset.
-  const unsetFallbackMappings = db?.xeroUnsetFallbackMappingLabels ?? [];
-  // A key with no fallback that says what happens without it (#3529) is the
-  // same undecided state, and is named separately so it is never called a
-  // fallback. The label is the text before the first ": ".
-  const unsetMappingConsequences = db?.xeroUnsetMappingConsequences ?? [];
-  const unsetConsequenceLabels = unsetMappingConsequences.map(
-    (sentence) => sentence.split(": ")[0] ?? sentence,
-  );
-  const unsetMappings = [...unsetFallbackMappings, ...unsetConsequenceLabels];
-  const complete =
-    accountMappings > 0 &&
-    hutFeeMappings > 0 &&
-    entranceFeeMappings > 0 &&
-    unsetMappings.length === 0;
-
-  return applyProgress(
-    {
-      id: "xero-mappings",
-      title: "Xero Mappings",
-      description:
-        "Chart of accounts, hut fee item codes, and joining-fee categories.",
-      status: complete ? "complete" : "warning",
-      required: false,
-      message: complete
-        ? "Xero account and item mappings are configured."
-        : unsetMappings.length > 0 &&
-            accountMappings > 0 &&
-            hutFeeMappings > 0 &&
-            entranceFeeMappings > 0
-          ? unsetConsequenceLabels.length === 0
-            ? `Choose an account for ${unsetMappings.join(" and ")} — until you do, those entries keep posting where they did before.`
-            : `Choose an account for ${unsetMappings.join(" and ")} — the details say what happens until you do.`
-          : "Map Xero accounts and item codes before using live Xero sync.",
-      details: [
-        `Account mappings: ${accountMappings}`,
-        ...(unsetFallbackMappings.length > 0
-          ? [`Not chosen yet, using a fallback: ${unsetFallbackMappings.join(", ")}`]
-          : []),
-        ...unsetMappingConsequences.map((sentence) => `Not chosen yet — ${sentence}`),
-        `Hut fee item mappings: ${hutFeeMappings}`,
-        `Joining fee mappings: ${entranceFeeMappings}`,
-      ],
-      href: xeroMappingHref(),
-    },
-    progress,
-  );
-}
-
 export function buildSetupReadiness(
   input: {
     env?: Env;
@@ -2166,7 +2071,7 @@ export function buildSetupReadiness(
     ],
     finance: [
       buildFinanceDashboardCheck(input.database, progress),
-      buildXeroMappingCheck(input.database, progress),
+      applyProgress(buildXeroMappingCheck(input.database), progress),
     ],
   };
 

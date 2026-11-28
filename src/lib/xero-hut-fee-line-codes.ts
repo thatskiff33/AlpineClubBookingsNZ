@@ -12,6 +12,7 @@
  * the caller (`getHutFeeItemCodeMap`, `getResolvedAccountMapping`).
  */
 import type { LineItem } from "xero-node";
+import { DEFAULT_HUT_FEE_ACCOUNT_CODE } from "@/lib/xero-account-mapping-keys";
 import {
   isHutFeeResolverConfigured,
   resolveHutFeeItemCode,
@@ -47,12 +48,16 @@ export function resolveHutFeeLineItemCode(
     : (context.itemCode ?? null);
 }
 
-/**
- * Stamp the codes onto a line. If an item code is set, Xero fills the account
- * from the Item's own configuration; the account code is sent as well when
- * there is no item code, when the account is not the "200" default, or when
- * the admin explicitly configured the account to override the Item's default.
- */
+type RefundLineMapping = { itemCode?: string | null; code?: string | null; codeExplicitlyConfigured: boolean };
+
+export function hutFeeRefundLineCodes(mapping: RefundLineMapping): Pick<LineItem, "itemCode" | "accountCode"> {
+  return applyHutFeeLineCodes({}, {
+    itemCode: mapping.itemCode,
+    accountCode: mapping.code ?? DEFAULT_HUT_FEE_ACCOUNT_CODE,
+    accountCodeExplicitlyConfigured: mapping.codeExplicitlyConfigured,
+  });
+}
+
 /**
  * One hut-fee refund line under the caller's tax rendering (#4632), with the
  * `hutFeeRefunds` item and account (`INV-PAY-151`). The refund credit note and the failed-card-refund reversal
@@ -61,24 +66,19 @@ export function resolveHutFeeLineItemCode(
 export function hutFeeRefundLine(
   description: string,
   amountCents: number,
-  mapping: { itemCode?: string | null; code?: string | null; codeExplicitlyConfigured: boolean },
+  mapping: RefundLineMapping,
   taxRendering: XeroTaxRendering,
 ): LineItem {
-  return applyHutFeeLineCodes(
-    {
-      description,
-      quantity: 1,
-      unitAmount: amountCents / 100,
-      ...xeroLineTax(taxRendering),
-    },
-    {
-      itemCode: mapping.itemCode,
-      accountCode: mapping.code ?? "200",
-      accountCodeExplicitlyConfigured: mapping.codeExplicitlyConfigured,
-    },
-  );
+  return {
+    description,
+    quantity: 1,
+    unitAmount: amountCents / 100,
+    ...xeroLineTax(taxRendering),
+    ...hutFeeRefundLineCodes(mapping),
+  };
 }
 
+/** Xero uses the item's account unless the line overrides it. */
 export function applyHutFeeLineCodes(
   lineItem: LineItem,
   codes: {
@@ -90,7 +90,7 @@ export function applyHutFeeLineCodes(
   if (codes.itemCode) {
     lineItem.itemCode = codes.itemCode;
   }
-  if (!codes.itemCode || codes.accountCode !== "200" || codes.accountCodeExplicitlyConfigured) {
+  if (!codes.itemCode || codes.accountCode !== DEFAULT_HUT_FEE_ACCOUNT_CODE || codes.accountCodeExplicitlyConfigured) {
     lineItem.accountCode = codes.accountCode;
   }
   return lineItem;
@@ -116,7 +116,7 @@ export function resolvePromoLineCodes(context: {
       : hutFeeMapping.itemCode;
   return {
     itemCode: promo?.xeroItemCode ?? fallbackItemCode ?? null,
-    accountCode: promo?.xeroAccountCode ?? hutFeeMapping.code ?? "200",
+    accountCode: promo?.xeroAccountCode ?? hutFeeMapping.code ?? DEFAULT_HUT_FEE_ACCOUNT_CODE,
     accountCodeExplicitlyConfigured:
       promo?.xeroAccountCode != null || hutFeeMapping.codeExplicitlyConfigured,
   };

@@ -35,29 +35,9 @@ import { codeHashKeyId, twoFactorSecretKeyId } from "@/lib/two-factor-key-format
 import { collapseHutFeeColumns } from "@/lib/public-hut-fee-columns";
 import { getXeroTokenReadability } from "@/lib/xero-token-store";
 import { getStripeSetupState } from "@/lib/stripe-config";
-import {
-  ACCOUNT_MAPPING_FALLBACK_KEYS,
-  ACCOUNT_MAPPING_KEYS_ASKING_WHILE_UNSET,
-  describeMappingOwnWhileUnset,
-  isCodeExplicitlyConfigured,
-  MAPPING_LABELS,
-  type AccountMappingKey,
-} from "@/lib/xero-account-mapping-keys";
-
-/**
- * The mapping keys that are asking to be decided while they are unset
- * (`INV-INT-021`), in two kinds the checklist must NOT conflate: one working
- * off another key's mapping (`ACCOUNT_MAPPING_FALLBACK_KEYS`, "using a
- * fallback"), and one that declares what the system does without it and has
- * no fallback (#3529: its own `whileUnset` sentence). Both straight off the
- * registry, so a new key of either kind is surfaced without anybody
- * remembering to add it — and a key of the second kind is never described as
- * falling back, which its registry entry says it does not.
- */
-const ACCOUNT_MAPPING_KEYS_ASKING = ACCOUNT_MAPPING_KEYS_ASKING_WHILE_UNSET;
-const ACCOUNT_MAPPING_KEYS_WITH_FALLBACK = Object.keys(
-  ACCOUNT_MAPPING_FALLBACK_KEYS,
-) as AccountMappingKey[];
+import { describeStoredXeroMappings } from "@/lib/setup-readiness-xero-mapping";
+import { ACCOUNT_MAPPING_KEYS } from "@/lib/xero-account-mapping-keys";
+import { readLastStoredChartOfAccounts } from "@/lib/xero-admin-cache";
 
 /**
  * The sentinel a failed `ClubTimeSettings` read resolves to, so "the read did
@@ -143,7 +123,8 @@ export async function getSetupDatabaseSnapshot(): Promise<SetupDatabaseSnapshot>
     membershipCancellationSettings,
     operationalXeroConnection,
     xeroAccountMappingCount,
-    xeroFallbackMappingRows,
+    xeroMappingRows,
+    xeroChartOfAccounts,
     xeroHutFeeItemMappingCount,
     xeroEntranceFeeMappingCount,
     clubIdentity,
@@ -186,11 +167,15 @@ export async function getSetupDatabaseSnapshot(): Promise<SetupDatabaseSnapshot>
     // ANY row with a code — so an upgrading club reads "configured" on the very
     // day a new key ships. Read the rows, not a count, so the step can name the
     // key. Codes are compared after normalisation, because blank is not a
-    // choice.
+    // choice. Every registered key is read, not only the asking ones: the
+    // stored codes are also checked against the chart of accounts (#5235).
     prisma.xeroAccountMapping.findMany({
-      where: { key: { in: [...ACCOUNT_MAPPING_KEYS_ASKING] } },
+      where: { key: { in: [...ACCOUNT_MAPPING_KEYS] } },
       select: { key: true, code: true },
     }),
+    // #5235: the connected organisation's chart as last cached, never a call to
+    // Xero. A known mismatch remains a warning until a newer chart replaces it.
+    readLastStoredChartOfAccounts(),
     prisma.xeroItemCodeMapping.count({
       where: {
         category: "HUT_FEE",
@@ -566,21 +551,7 @@ export async function getSetupDatabaseSnapshot(): Promise<SetupDatabaseSnapshot>
     stripeWebhookSecretSet,
     stripeNeedsReentry,
     xeroAccountMappingCount,
-    xeroUnsetFallbackMappingLabels: ACCOUNT_MAPPING_KEYS_WITH_FALLBACK.filter(
-      (key) =>
-        !isCodeExplicitlyConfigured(
-          xeroFallbackMappingRows.find((row) => row.key === key) ?? null,
-        ),
-    ).map((key) => MAPPING_LABELS[key] ?? key),
-    xeroUnsetMappingConsequences: ACCOUNT_MAPPING_KEYS_ASKING.flatMap((key) => {
-      const own = describeMappingOwnWhileUnset(key);
-      if (own === null) return [];
-      return isCodeExplicitlyConfigured(
-        xeroFallbackMappingRows.find((row) => row.key === key) ?? null,
-      )
-        ? []
-        : [`${MAPPING_LABELS[key] ?? key}: ${own}`];
-    }),
+    ...describeStoredXeroMappings(xeroMappingRows, xeroChartOfAccounts),
     xeroHutFeeItemMappingCount,
     xeroEntranceFeeMappingCount,
     membershipTypeRateGaps,

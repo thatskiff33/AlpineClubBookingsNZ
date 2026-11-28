@@ -370,6 +370,49 @@ describe("setup-readiness", () => {
     expect(step?.details?.join(" ")).not.toContain("using a fallback");
   });
 
+  it("warns when a stored account code is the wrong kind of account for its mapping (#5235)", () => {
+    // The save and the import refuse such a code when it is set or changed. One
+    // stored before that check, or while no chart was cached, is reported here.
+    const sentence =
+      "Hut Fee Refunds needs a revenue or expense account, and the code chosen for it is an asset account in the connected Xero organisation.";
+    const readiness = buildSetupReadiness({
+      env: baseEnv,
+      configDir: makeConfigDir(),
+      database: {
+        ...completeDatabase,
+        xeroUnsetFallbackMappingLabels: ["Goodwill & Write-Offs"],
+        xeroMappingAccountKindProblems: [sentence],
+      },
+      now: new Date("2026-05-18T00:00:00.000Z"),
+    });
+
+    const step = findStep(readiness, "xero-mappings");
+    expect(step?.status).toBe("warning");
+    // Ahead of the undecided mapping, which the details still list.
+    expect(step?.message).toBe(
+      "At least one account mapping uses the wrong kind of Xero account, and entries keep posting to it until you choose another. The details name each one.",
+    );
+    expect(step?.details).toContain(`Wrong kind of account: ${sentence}`);
+    expect(step?.details?.join(" ")).toContain("using a fallback: Goodwill & Write-Offs");
+    // Non-required: it informs, and blocks nobody's setup.
+    expect(step?.required).toBe(false);
+    expect(readiness.summary.blocked).toBe(0);
+  });
+
+  it("MUTATION: a wrong kind of account alone keeps the mappings step from reading complete (#5235)", () => {
+    const readiness = buildSetupReadiness({
+      env: baseEnv,
+      configDir: makeConfigDir(),
+      database: {
+        ...completeDatabase,
+        xeroUnsetFallbackMappingLabels: [],
+        xeroMappingAccountKindProblems: ["Hut Fees Income needs a revenue account."],
+      },
+      now: new Date("2026-05-18T00:00:00.000Z"),
+    });
+    expect(findStep(readiness, "xero-mappings")?.status).toBe("warning");
+  });
+
   it("reports the mappings step complete once every fallback key is chosen (#2717)", () => {
     const readiness = buildSetupReadiness({
       env: baseEnv,

@@ -65,6 +65,10 @@ vi.mock("@/components/ui/select", () => {
     SelectItem: ({ value, children }: { value: string; children?: React.ReactNode }) => (
       <option value={value}>{children}</option>
     ),
+    // A picker with class headings (#5235): the heading is the group's first,
+    // disabled option.
+    SelectGroup: ({ children }: { children?: React.ReactNode }) => <optgroup>{children}</optgroup>,
+    SelectLabel: ({ children }: { children?: React.ReactNode }) => <option disabled>{children}</option>,
   };
 });
 
@@ -180,14 +184,12 @@ describe("the goodwill fallback notice (#2717)", () => {
     await screen.findByText("Goodwill & Write-Offs");
     fireEvent.click(screen.getByRole("button", { name: /edit mappings/i }));
 
+    // By its current value: since #5235 the Hut Fee Refunds picker offers 429
+    // too, so "the picker that offers 429" no longer names one picker.
     const goodwillSelect = screen
       .getAllByRole("combobox")
-      .find((select) =>
-        Array.from((select as HTMLSelectElement).options).some(
-          (option) => option.value === "429",
-        ),
-      ) as HTMLSelectElement;
-    expect(goodwillSelect.value).toBe("429");
+      .find((select) => (select as HTMLSelectElement).value === "429") as HTMLSelectElement;
+    expect(goodwillSelect).toBeDefined();
     expect(screen.queryByText(/goodwill entries keep posting/i)).toBeNull();
 
     fireEvent.change(goodwillSelect, { target: { value: "__none__" } });
@@ -202,8 +204,34 @@ describe("the goodwill fallback notice (#2717)", () => {
     mountPanel(mappingRows({}));
     await screen.findByText("Goodwill & Write-Offs");
     fireEvent.click(screen.getByRole("button", { name: /edit mappings/i }));
+    // Twice: the goodwill picker, and Hut Fee Refunds, which accepts expense
+    // accounts too (#5235). Stripe Fees wants type EXPENSE, so not there.
     await waitFor(() => {
-      expect(screen.getAllByText("429 - General Expenses").length).toBeGreaterThan(0);
+      expect(screen.getAllByText("429 - General Expenses")).toHaveLength(2);
     });
+  });
+});
+
+describe("a refused save (#5235)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("shows the server's own sentence, so the officer reads which mapping was refused and why", async () => {
+    const refusal =
+      "Hut Fee Refunds needs a revenue or expense account, and the code chosen for it is an asset account in the connected Xero organisation. No account mapping was saved.";
+    mountPanel(mappingRows({}));
+    await screen.findByText("Goodwill & Write-Offs");
+    fireEvent.click(screen.getByRole("button", { name: /edit mappings/i }));
+    mockFetchJson.mockImplementation(async (url: string, init?: { method?: string }) => {
+      if (url === "/api/admin/xero/account-mappings" && init?.method === "PUT") throw new Error(refusal);
+      throw new Error(`unexpected fetch ${url}`);
+    });
+    fireEvent.click(screen.getByRole("button", { name: /^save/i }));
+
+    const alert = await screen.findByRole("alert");
+    expect(alert.textContent).toBe(refusal);
+    // Still editing: nothing was saved, and the staged choices are kept.
+    expect(screen.getAllByRole("combobox").length).toBeGreaterThan(0);
   });
 });

@@ -10,6 +10,8 @@
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { PaymentSource } from "@prisma/client";
+import { resolveXeroTaxRendering } from "@/lib/xero-tax-anchors";
+import { BASELINE_XERO_TAX_RENDERING } from "@/lib/xero-tax-rendering";
 
 const mocks = vi.hoisted(() => ({
   paymentFindUnique: vi.fn(),
@@ -1292,5 +1294,69 @@ describe("itemised modification notes (#3530)", () => {
     expect(mocks.bookingModificationFindUnique).not.toHaveBeenCalled();
     const enqueued = mocks.startXeroSyncOperation.mock.calls[0][0];
     expect(enqueued.requestPayload).not.toHaveProperty("priceLines");
+  });
+});
+
+/**
+ * #5235: Hut Fee Refunds may be mapped to a revenue account or an expense
+ * account. Each builder posts its refund line to the account the club mapped,
+ * whichever kind it is, under the booking's own tax treatment: the club's
+ * sales tax on income, tax-inclusive. No builder reads the account's class.
+ */
+describe("#5235: the refund line posts to the mapped Hut Fee Refunds account, revenue or expense", () => {
+  type TaxedCreditNote = CreditNoteShape & {
+    lineAmountTypes?: string;
+    lineItems?: Array<{ taxType?: string }>;
+  };
+
+  function mapHutFeeRefundsTo(code: string) {
+    mocks.getResolvedAccountMapping.mockImplementation(async (key: string) =>
+      key === "hutFeeRefunds"
+        ? { code, itemCode: null, codeExplicitlyConfigured: true }
+        : { code: "090", itemCode: null, codeExplicitlyConfigured: true },
+    );
+  }
+
+  const builders: Array<[string, number, () => Promise<unknown>]> = [
+    ["the cash refund note", 50, () => createXeroCreditNote(PAYMENT_ID, 5000, { refundMethod: "card" })],
+    ["the account-credit note", 50, () => createUnappliedXeroCreditNote(PAYMENT_ID, 5000, CLUB_FORMAT_TEST)],
+    [
+      "the modification credit note",
+      25,
+      () =>
+        createXeroCreditNoteForModification({
+          format: CLUB_FORMAT_TEST,
+          bookingId: BOOKING_ID,
+          refundAmountCents: 2500,
+          bookingModificationId: "cmmodification01",
+        }),
+    ],
+  ];
+
+  describe.each([
+    ["a revenue account", "200"],
+    ["an expense account", "429"],
+  ])("mapped to %s (%s)", (_kind, code) => {
+    it.each(builders)("%s", async (_name, dollars, build) => {
+      mocks.paymentFindUnique.mockResolvedValue(paymentRow(PaymentSource.STRIPE));
+      mapHutFeeRefundsTo(code);
+      vi.mocked(resolveXeroTaxRendering).mockResolvedValueOnce({
+        ...BASELINE_XERO_TAX_RENDERING,
+        taxType: "CLUB_OUTPUT",
+      });
+
+      await build();
+
+      const note = builtCreditNote() as TaxedCreditNote;
+      expect(note.lineAmountTypes).toBe("Inclusive");
+      expect(note.lineItems).toHaveLength(1);
+      expect(note.lineItems?.[0]).toMatchObject({
+        accountCode: code,
+        taxType: "CLUB_OUTPUT",
+        quantity: 1,
+        unitAmount: dollars,
+      });
+      expect(note.lineItems?.[0]).not.toHaveProperty("itemCode");
+    });
   });
 });

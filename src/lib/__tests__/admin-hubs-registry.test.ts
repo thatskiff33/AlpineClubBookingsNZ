@@ -2145,9 +2145,12 @@ describe("the registry is inert", () => {
     "src/components/admin/membership-cancellation-blocker-notice.tsx":
       "S1: the settings link is the queue's Settings tab",
     "src/lib/setup-readiness.ts":
-      "S1: the cancellation step links the Settings tab; C5: Xero setup and its label; #4972: the mappings step opens Xero Setup at its mapping step; " +
+      "S1: the cancellation step links the Settings tab; C5: Xero setup; " +
       "C6: the booking policies, age tier and seasons steps; C7: the System Health steps; " +
       "C9: the members step",
+    "src/lib/setup-readiness-xero-mapping.ts":
+      "#5235: the mappings step, moved out of setup-readiness.ts; C5: Xero Setup's label; " +
+      "#4972: the step opens Xero Setup at its mapping step",
     "src/lib/__tests__/admin-feature-search-index.test.ts":
       "S2: the palette census and its fail-closed property over every grid and seeded role",
     "src/lib/__tests__/contextual-help.test.ts":

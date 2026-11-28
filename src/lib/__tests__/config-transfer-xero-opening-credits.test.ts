@@ -46,6 +46,8 @@ function db(options: {
     xeroItemCodeMapping: { findMany: vi.fn().mockResolvedValue([]) },
     membershipType: { findMany: vi.fn().mockResolvedValue([]) },
     xeroConnection: { findUnique: vi.fn().mockResolvedValue({ tenantId: TENANT, expiresAt: new Date() }) },
+    // No stored chart of accounts, so the import has no kind of account to judge (#5235).
+    xeroAdminCache: { findUnique: vi.fn().mockResolvedValue(null) },
     // No stored baseline row: the club is registered since 2010 unless a later period says otherwise.
     clubTaxSettings: { findMany: vi.fn().mockResolvedValue(options.laterTaxPeriods ?? []) },
     xeroTaxCategoryMapping: {

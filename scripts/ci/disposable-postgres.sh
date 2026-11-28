@@ -5,7 +5,7 @@
 # `start_disposable_postgres <label>`. It is the one home of the cluster start
 # that `kept-change-realdb.sh` and `sekreton-migration-checks.sh` share
 # (INV-SSOT): finding the server tools, dropping root, a fresh directory, a free
-# high port, initdb, start, and the stop on exit.
+# high port, initdb, start with durability off, and the stop on exit.
 #
 # After it returns, the caller has:
 #   pg_dir     the cluster's scratch directory (data/, init.log, postgres.log)
@@ -63,5 +63,13 @@ for (let attempt = 0; attempt < 20; attempt++) {
 process.exit(1);
 ')
   "${pg_runner[@]}" initdb -D "$pg_dir/data" -U postgres --auth-local=trust --auth-host=trust > "$pg_dir/init.log"
-  "${pg_runner[@]}" pg_ctl -D "$pg_dir/data" -l "$pg_dir/postgres.log" -o "-h 127.0.0.1 -p $pg_port -k $pg_dir" -w start
+  # The cluster is thrown away on exit, so crash safety buys nothing and costs a
+  # disk flush per commit. Replaying every migration statement by statement is
+  # thousands of commits: with flushes on, a sandbox with slow fsync spent over
+  # two minutes on one replay and a suite's set-up hook timed out (#5235); with
+  # them off the same suite runs in ten seconds. These three settings change
+  # only what survives a crash, never what a query, lock or transaction sees.
+  local durability_off="-c fsync=off -c synchronous_commit=off -c full_page_writes=off"
+  "${pg_runner[@]}" pg_ctl -D "$pg_dir/data" -l "$pg_dir/postgres.log" \
+    -o "-h 127.0.0.1 -p $pg_port -k $pg_dir $durability_off" -w start
 }

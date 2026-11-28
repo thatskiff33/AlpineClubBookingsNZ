@@ -28,7 +28,7 @@ import { bundleCarriesJoiningFeeSchedule } from "./membership-fees";
 import { addDaysDateOnly } from "@/lib/date-only";
 import { clubToday, dateOnlyInstantOf } from "@/lib/club-time";
 import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
-import { openingCreditsImportFindings } from "@/lib/xero-opening-credits-exempt-guards";
+import { accountMappingImportFindings } from "@/lib/xero-account-mapping-write-checks";
 
 // xero-config category: the accounting mappings — GL account/item-code mappings
 // and per-category item codes. Contact-group rules/accepted-groups are excluded
@@ -61,15 +61,6 @@ const ITEM_FIELDS = [
   "itemCode", "amountCents",
 ] as const;
 
-/**
- * XeroItemCodeMapping.category is a plain string column. HUT_FEE and JOINING_FEE
- * are the current categories. ENTRANCE_FEE was the pre-#1931 name for
- * JOINING_FEE; the old-bundle import compat that normalised it — and the legacy
- * isMember HUT_FEE key — closed one release after the E13 contraction (#2131),
- * so such a bundle is now rejected with a clear error instead of being silently
- * upgraded. The deeper transfer of joining-fee SCHEDULE amounts is follow-up
- * #1941.
- */
 const ITEM_CATEGORIES = new Set(["HUT_FEE", "JOINING_FEE"]);
 /** Pre-#1931 category name; rejected on import now the compat window closed (#2131). */
 const LEGACY_ENTRANCE_FEE_CATEGORY = "ENTRANCE_FEE";
@@ -655,11 +646,17 @@ async function planXeroConfig(ctx: PlanContext): Promise<CategoryPlanResult> {
   const batch = await loadXeroBatch(ctx.db);
   // #4988: every account code as it would read once this bundle is applied.
   const codesAfterImport = new Map([...batch.accounts.values()].map(({ key, code }) => [key, code]));
+  const seenKeys = new Set<string>();
 
   readCsvRows(ctx.files, ACCOUNT_FILE).forEach((raw, i) => {
     const v = new RowValidator(ACCOUNT_FILE, i, errors);
     const key = v.required("key", raw.key);
     if (!v.ok) return;
+    if (seenKeys.has(key)) {
+      errors.push(`${ACCOUNT_FILE} row ${i + 2}: duplicate mapping key "${key}"`);
+      return;
+    }
+    seenKeys.add(key);
     const current = batch.accounts.get(key) ?? null;
     fingerprintParts.push(
       `xero-account-mapping:${key}:${current ? hashRow([...ACCOUNT_FIELDS], current) : "absent"}`,
@@ -672,11 +669,11 @@ async function planXeroConfig(ctx: PlanContext): Promise<CategoryPlanResult> {
     else if ("code" in write) codesAfterImport.set(key, write.code ?? null);
   });
 
-  // #4988: the account mapping screen's rules for Opening Credits, applied to
-  // the import, which writes the same rows. The error blocks the apply.
-  const openingCredits = await openingCreditsImportFindings(ctx.db, batch.accounts.values(), codesAfterImport);
-  if (openingCredits.error) errors.push(`${ACCOUNT_FILE}: ${openingCredits.error}`);
-  if (openingCredits.warning) warnings.push(openingCredits.warning);
+  // #4988, #5235: the account mapping screen's rules for the kind of account and for
+  // Opening Credits, applied to the import, which writes the same rows. An error blocks the apply.
+  const accountFindings = await accountMappingImportFindings(ctx.db, batch.accounts.values(), codesAfterImport);
+  errors.push(...accountFindings.errors.map((error) => `${ACCOUNT_FILE}: ${error}`));
+  warnings.push(...accountFindings.warnings);
 
   const parsedItemRows: ParsedItemRow[] = [];
   readCsvRows(ctx.files, ITEM_FILE).forEach((raw, i) => {
