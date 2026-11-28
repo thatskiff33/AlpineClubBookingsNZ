@@ -37,6 +37,7 @@ import {
   type BookingMoneyReconciliationView,
 } from "@/lib/booking-money-reconciliation-audience";
 import { useClubFormat } from "@/components/club-format-provider";
+import { useActionFocusReturn } from "@/hooks/use-scroll-to-feedback";
 import type { GroupSettlementInvoiceDisplay } from "@/lib/group-settlement-invoice-binding";
 import { organiserHasPaidSettlement } from "@/lib/group-organiser-paid";
 import {
@@ -165,6 +166,7 @@ export function OrganiserGroupBookingCard({
   // Settlement state.
   const [settleBusy, setSettleBusy] = useState(false);
   const [settleError, setSettleError] = useState("");
+  const focusReturn = useActionFocusReturn();
   const [settleClientSecret, setSettleClientSecret] = useState<string | null>(null);
   const [settleAmountCents, setSettleAmountCents] = useState<number | null>(null);
   const [settleMessage, setSettleMessage] = useState("");
@@ -184,11 +186,7 @@ export function OrganiserGroupBookingCard({
   useEffect(() => {
     fetch("/api/payments/options")
       .then((res) => (res.ok ? res.json() : null))
-      .then((data) =>
-        setInternetBankingEnabled(
-          Boolean(data?.methods?.internetBanking?.enabled)
-        )
-      )
+      .then((data) => setInternetBankingEnabled(Boolean(data?.methods?.internetBanking?.enabled)))
       .catch(() => setInternetBankingEnabled(false));
   }, []);
 
@@ -274,6 +272,7 @@ export function OrganiserGroupBookingCard({
     const usingInternetBanking = methodOverride
       ? methodOverride === "internet_banking"
       : internetBankingEnabled && settleMethod === "internet_banking";
+    focusReturn.capture();
     setSettleBusy(true);
     setSettleError("");
     setSettleMessage("");
@@ -323,6 +322,7 @@ export function OrganiserGroupBookingCard({
       setSettleError(err instanceof Error ? err.message : "Unable to start settlement right now.");
     } finally {
       setSettleBusy(false);
+      focusReturn.release();
     }
   }
 

@@ -9,6 +9,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
+import { useActionFocusReturn } from "@/hooks/use-scroll-to-feedback";
 import { Button } from "@/components/ui/button";
 import { unverifiedWriteMessage } from "@/lib/unverified-write-copy";
 
@@ -111,6 +112,7 @@ export function RequestedRoomEditor({
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const focusReturn = useActionFocusReturn();
   const statusId = useId();
 
   const hasChanged = selectionValue(room) !== selectionValue(savedRoom);
@@ -165,6 +167,7 @@ export function RequestedRoomEditor({
   }
 
   async function handleSave() {
+    focusReturn.capture();
     setSaving(true);
     setSaved(false);
     setError(null);
@@ -259,6 +262,7 @@ export function RequestedRoomEditor({
       );
     } finally {
       setSaving(false);
+      focusReturn.release();
     }
   }
 

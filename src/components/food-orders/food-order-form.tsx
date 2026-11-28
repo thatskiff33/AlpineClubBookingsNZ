@@ -4,6 +4,7 @@ import { useState } from "react";
 import { Loader2, Plus, X } from "lucide-react";
 
 import { Alert } from "@/components/ui/alert";
+import { useActionFocusReturn } from "@/hooks/use-scroll-to-feedback";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -74,6 +75,7 @@ export function FoodOrderForm({
   const [nextKey, setNextKey] = useState(1);
   const [error, setError] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  const focusReturn = useActionFocusReturn();
 
   function updateLine(key: number, patch: Partial<Line>) {
     setLines((current) =>
@@ -121,6 +123,7 @@ export function FoodOrderForm({
       ...line,
       quantity: parseFoodOrderQuantity(line.quantity) ?? line.quantity,
     }));
+    focusReturn.capture();
     setSubmitting(true);
     try {
       await onSubmit({ lodgeId, neededBy, notes: notes.trim(), items });
@@ -132,6 +135,7 @@ export function FoodOrderForm({
       );
     } finally {
       setSubmitting(false);
+      focusReturn.release();
     }
   }
 

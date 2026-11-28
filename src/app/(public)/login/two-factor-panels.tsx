@@ -4,6 +4,7 @@ import { useEffect, useState, type FormEvent } from "react";
 import { startAuthentication } from "@simplewebauthn/browser";
 import { Copy, Fingerprint, KeyRound, Loader2, Mail, ShieldCheck } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { useActionFocusReturn } from "@/hooks/use-scroll-to-feedback";
 import {
   Card,
   CardContent,
@@ -100,6 +101,7 @@ export function TwoFactorEnrollPanel({
   const [emailCode, setEmailCode] = useState("");
   const [emailSent, setEmailSent] = useState(false);
   const [loading, setLoading] = useState(false);
+  const focusReturn = useActionFocusReturn();
   const [error, setError] = useState("");
   const [recoveryCodes, setRecoveryCodes] = useState<string[] | null>(null);
   const setupQrDataUrl = useQrDataUrl(totpSetup?.otpauthUrl ?? null, 192);
@@ -131,6 +133,7 @@ export function TwoFactorEnrollPanel({
   }, [method, totpSetup]);
 
   async function sendEmailCode() {
+    focusReturn.capture();
     setLoading(true);
     setError("");
     try {
@@ -146,11 +149,13 @@ export function TwoFactorEnrollPanel({
       setError(err instanceof Error ? err.message : "Failed to send code");
     } finally {
       setLoading(false);
+      focusReturn.release();
     }
   }
 
   async function enrollTotp() {
     if (!totpSetup) return;
+    focusReturn.capture();
     setLoading(true);
     setError("");
     try {
@@ -169,10 +174,12 @@ export function TwoFactorEnrollPanel({
       setError(err instanceof Error ? err.message : "Enrollment failed");
     } finally {
       setLoading(false);
+      focusReturn.release();
     }
   }
 
   async function enrollEmail() {
+    focusReturn.capture();
     setLoading(true);
     setError("");
     try {
@@ -191,6 +198,7 @@ export function TwoFactorEnrollPanel({
       setError(err instanceof Error ? err.message : "Enrollment failed");
     } finally {
       setLoading(false);
+      focusReturn.release();
     }
   }
 
@@ -341,9 +349,11 @@ export function TwoFactorVerifyPanel({
   const [code, setCode] = useState("");
   const [emailSent, setEmailSent] = useState(false);
   const [loading, setLoading] = useState(false);
+  const focusReturn = useActionFocusReturn();
   const [error, setError] = useState("");
 
   async function sendEmailCode() {
+    focusReturn.capture();
     setLoading(true);
     setError("");
     try {
@@ -359,10 +369,12 @@ export function TwoFactorVerifyPanel({
       setError(err instanceof Error ? err.message : "Failed to send code");
     } finally {
       setLoading(false);
+      focusReturn.release();
     }
   }
 
   async function verify() {
+    focusReturn.capture();
     setLoading(true);
     setError("");
     try {
@@ -380,6 +392,7 @@ export function TwoFactorVerifyPanel({
       setError(err instanceof Error ? err.message : "Verification failed");
     } finally {
       setLoading(false);
+      focusReturn.release();
     }
   }
 
@@ -391,6 +404,7 @@ export function TwoFactorVerifyPanel({
   }
 
   async function signInWithPasskey() {
+    focusReturn.capture();
     setLoading(true);
     setError("");
     try {
@@ -423,6 +437,7 @@ export function TwoFactorVerifyPanel({
       setError(err instanceof Error ? err.message : "That passkey didn't work. Try again.");
     } finally {
       setLoading(false);
+      focusReturn.release();
     }
   }
 

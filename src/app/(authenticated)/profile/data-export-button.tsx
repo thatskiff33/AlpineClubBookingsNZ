@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
+import { useActionFocusReturn } from "@/hooks/use-scroll-to-feedback";
 import { FocusedActionError } from "@/components/focused-action-error";
 import { Download } from "lucide-react";
 import { saveResponseAsFile } from "@/lib/save-response-as-file";
@@ -13,8 +14,10 @@ import { saveResponseAsFile } from "@/lib/save-response-as-file";
 export function DataExportButton() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const focusReturn = useActionFocusReturn();
 
   async function handleExport() {
+    focusReturn.capture();
     setLoading(true);
     setError(null);
     try {
@@ -33,6 +36,7 @@ export function DataExportButton() {
       setError("Failed to download data. Please try again.");
     } finally {
       setLoading(false);
+      focusReturn.release();
     }
   }
 

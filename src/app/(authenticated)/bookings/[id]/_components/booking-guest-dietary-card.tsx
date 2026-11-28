@@ -4,6 +4,7 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
+import { useActionFocusReturn } from "@/hooks/use-scroll-to-feedback";
 import {
   Card,
   CardContent,
@@ -96,11 +97,13 @@ function GuestDietaryRow({
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(guest.dietaryRequirements ?? "");
   const [saving, setSaving] = useState(false);
+  const focusReturn = useActionFocusReturn();
   const name = `${guest.firstName} ${guest.lastName}`;
   const fieldId = `guest-dietary-${guest.id}`;
   const dirty = draft.trim() !== (guest.dietaryRequirements ?? "");
 
   async function save() {
+    focusReturn.capture();
     setSaving(true);
     try {
       const res = await fetch(`/api/admin/bookings/${bookingId}/guest-dietary`, {
@@ -128,6 +131,7 @@ function GuestDietaryRow({
       router.refresh();
     } finally {
       setSaving(false);
+      focusReturn.release();
     }
   }
 

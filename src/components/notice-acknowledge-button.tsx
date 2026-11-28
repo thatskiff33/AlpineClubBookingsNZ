@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
+import { useActionFocusReturn } from "@/hooks/use-scroll-to-feedback";
 import { Check } from "lucide-react";
 import { useClubTime } from "@/components/club-time-provider";
 
@@ -39,6 +40,7 @@ export function NoticeAcknowledgeButton({
   const [acknowledged, setAcknowledged] = useState(initialAcknowledged);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const focusReturn = useActionFocusReturn();
 
   if (acknowledged) {
     return (
@@ -53,6 +55,7 @@ export function NoticeAcknowledgeButton({
   }
 
   const acknowledge = async () => {
+    focusReturn.capture();
     setSubmitting(true);
     setError(null);
     try {
@@ -70,6 +73,7 @@ export function NoticeAcknowledgeButton({
       setError("Could not record your acknowledgement. Please try again.");
     } finally {
       setSubmitting(false);
+      focusReturn.release();
     }
   };
 

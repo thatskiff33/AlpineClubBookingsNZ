@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { ArrowDown, ArrowUp } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { useActionFocusReturn } from "@/hooks/use-scroll-to-feedback";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useClubFormat } from "@/components/club-format-provider";
@@ -74,6 +75,7 @@ export function PromoCodeList({
   const [code, setCode] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const focusReturn = useActionFocusReturn();
   const [announcement, setAnnouncement] = useState("");
   const [selection, setSelection] = useState<{
     code: string;
@@ -121,12 +123,14 @@ export function PromoCodeList({
   }
 
   async function run(entries: PromoCodeListEntry[], extra?: { code: string; appliesTo?: string }) {
+    focusReturn.capture();
     setBusy(true);
     setError("");
     try {
       return await validate(entries, appliesToMap(extra));
     } finally {
       setBusy(false);
+      focusReturn.release();
     }
   }
 

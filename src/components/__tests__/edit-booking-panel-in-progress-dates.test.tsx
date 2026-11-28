@@ -1,10 +1,11 @@
 // @vitest-environment jsdom
 
 import "@testing-library/jest-dom/vitest";
-import { fireEvent, render, screen, waitFor, within } from "@/lib/__tests__/support/club-time-render";
+import { act, fireEvent, render, screen, waitFor, within } from "@/lib/__tests__/support/club-time-render";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { EditBookingPanel } from "@/components/edit-booking-panel";
 import { CHANGE_REQUEST_DATES_OUTSIDE_NIGHTS_MESSAGE } from "@/lib/booking-change-request-guests";
+import { REPLY_SPEEDS, expectToHoldFocus, replyDelay } from "@/lib/__tests__/helpers/focus";
 
 // #2124: on an in-progress stay the change-dates UI must keep the original
 // (past) check-in fixed and let the member extend the check-out night by night
@@ -145,6 +146,58 @@ describe("EditBookingPanel — in-progress date extension (#2124)", () => {
     fireEvent.click(card.getByRole("button", { name: "Request Admin Review" }));
     await waitFor(() => expect(submitted).toBeDefined());
     expect(submitted).toMatchObject({ checkOut: "2026-08-19", addGuests: quoted!.addGuests });
+  });
+
+  // #5442: the request button is disabled while the request runs, which drops
+  // its focus to <body>; a refusal leaves it in place, so focus goes back.
+  it.each(REPLY_SPEEDS)("keeps focus on Request Admin Review when the request is refused ($speed reply)", async ({ delayMs }) => {
+    const baseFetch = global.fetch;
+    global.fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith("/modify-quote")) {
+        return jsonResponse({ error: "This booking is locked" }, 400);
+      }
+      if (url.endsWith("/change-requests")) {
+        await replyDelay(delayMs);
+        return jsonResponse({ error: "The club could not take that request." }, 400);
+      }
+      return baseFetch(input, init);
+    }) as typeof fetch;
+    render(<EditBookingPanel booking={inProgressBooking()} onDone={vi.fn()} />);
+
+    fireEvent.change(screen.getByLabelText("Check-out"), { target: { value: "2026-08-19" } });
+    await screen.findByText("This booking is locked");
+    const button = screen.getByRole("button", { name: "Request Admin Review" });
+    button.focus();
+    await act(async () => {
+      fireEvent.click(button);
+    });
+
+    await screen.findByText("The club could not take that request.");
+    await expectToHoldFocus(button, "Request Admin Review");
+  });
+
+  it.each(REPLY_SPEEDS)("keeps focus on Save changes when the save is refused ($speed reply)", async ({ delayMs }) => {
+    const baseFetch = global.fetch;
+    global.fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input).endsWith("/modify")) {
+        await replyDelay(delayMs);
+        return jsonResponse({ error: "The club could not save that change." }, 400);
+      }
+      return baseFetch(input, init);
+    }) as typeof fetch;
+    render(<EditBookingPanel booking={inProgressBooking()} onDone={vi.fn()} />);
+
+    fireEvent.change(screen.getByLabelText("Check-out"), { target: { value: "2026-08-19" } });
+    const button = screen.getByRole("button", { name: /save changes/i });
+    await waitFor(() => expect(button).toBeEnabled());
+    button.focus();
+    await act(async () => {
+      fireEvent.click(button);
+    });
+
+    await screen.findByText("The club could not save that change.");
+    await expectToHoldFocus(button, "Save changes");
   });
 
   it("renders the check-in fixed at the original past date", () => {
