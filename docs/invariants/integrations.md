@@ -1015,35 +1015,33 @@ Pinned by `admin-alert-once-lost-cases.test.ts`, `admin-alert-once.test.ts`,
 
 ### INV-INT-043
 
-An email a crash left `QUEUED` is sent again exactly once if it provably
-never reached the mail server, and flagged to officers otherwise; it is never
-sent twice (#5298).
+After a crash, only a `QUEUED` email provably never handed to the mail server can be
+resent automatically (#5298).
 
-- **The mark.** `recordEmailAttempt` writes `handoverState` `PENDING`. The
-  sender sends only after its `claimEmailHandover` (`PENDING` at attempts 1 to
-  `STARTED`) wins; lost or unwritable, it sends nothing (`handover_lost`).
-  Every sender write is guarded on the row still being its own (`senderEmailRow`), as is a
-  failed replay's. Retry claims write `STARTED`; null marks old rows.
-- **The sweep.** `sweepStrandedQueuedEmails`, first in each 30-minute retry
-  run, settles up to 50 rows `QUEUED` past `strandedQueuedAfterMs()` and
-  under 7 days, each guarded as read. `PENDING` at attempts 1 with
-  a body is replayed that run or, when the batch is full, a later one; an
-  owner-retried alert is released to its owner; without a body it goes to
-  the retry ceiling. Anything else goes there as `UNCONFIRMED`. Both
-  ceiling outcomes alert officers.
-- **Why never twice.** SES takes no idempotency key and reports only bounces
-  and complaints. Only a row no sender claimed is re-sent; the claim and the
-  sweep race on one row. An `UNCONFIRMED` row is sent again
-  only by an officer's **Try again**, which warns of a duplicate.
-- **Callers.** `isLeftForTheEmailRetryJob` counts `handover_lost` as owed to
-  the retry job; an `UNCONFIRMED` keyed email reads as told.
-- **No new lock** (`INV-LOCK-001`); in the writer index (`INV-LOCK-003`).
-- **Known limits:** rows over 7 days are left alone; old rows are only
-  flagged; a database fault at the claim leaves a body-kept
-  email late by up to a run past the threshold, a bodyless one flagged
-  "never sent", and an ambiguous commit flagged `UNCONFIRMED`.
+- **Claim.** The sender must win `PENDING` at attempt 1 → `STARTED` before sending;
+  `handover_lost` sends nothing. Sender and replay writes check row ownership. Retry
+  claims write `STARTED`. SES offers no idempotency key or delivery confirmation here.
+- **Sweep.** Each 30-minute retry run checks up to 50 rows past
+  `strandedQueuedAfterMs()`, ignoring rows older than seven days. Guarding each write
+  against the row as read, it releases unclaimed first attempts for owner-retried alerts
+  to their owner; otherwise it queues retained bodies for replay or flags “Never sent”
+  without one. All other cases, including legacy rows and ambiguous commits, are flagged
+  `UNCONFIRMED`. Both flags alert officers. Only an officer’s **Try again** resends
+  unconfirmed mail, with a duplicate warning. Unconfirmed keyed mail counts as told.
+- **Callers.** Normally `handover_lost` counts as owed to the retry job. For
+  owner-retried alerts it does not. If another recipient received the alert or the job
+  holds another copy, the sender hands lost copies to the job because the owner stops
+  retrying.
+- **Known limits.** Only a log line records a lost copy if that hand-off write fails or
+  the sweep wins first (sender stalled past threshold, another recipient received the
+  alert). Release depends on the owner retrying: a past-cutoff marker beyond its hard
+  ceiling clears unsent. `owedOfficerAlertOutcome` alerts (bump, waitlist, hold-ended
+  cancellation, saved-card-unusable) may arrive twice after a crash under their
+  at-least-once contract. Classifying them as owner-retried would lose alerts when every
+  hand-over fails without a crash.
 
 Pinned by `handover.test.ts`, `durable-email-idempotency.test.ts`,
-`cron-email-retry.test.ts`, `email-failure-review-queue.test.ts`,
-`email-deliverability-section.test.tsx` and, against real PostgreSQL,
-`stranded-queued-email.realdb.test.ts`.
+`cron-email-retry.test.ts`,
+`email-failure-review-queue.test.ts`, `email-deliverability-section.test.tsx`,
+`admin-alert-audience.test.ts`, `admin-alert-once-census.test.ts` and
+`stranded-queued-email.realdb.test.ts` (PostgreSQL).
