@@ -1388,10 +1388,11 @@ model MembershipSubscriptionChargeCoverage {
 // here: it is an ordinary season charge with coverage, priced at the new tier.
 //
 // Immutable once written, like the charge: only `status`, `xeroInvoiceStatus`,
-// `memberCreditId` and `xeroCreditNoteId` change, each through a
-// status-guarded write. `@@unique([memberSubscriptionId, ageUpDate])` is the
-// one-per-member, season and age-up key, so a re-run of the billing run can
-// never raise a second one (a member ages up at most once in a season).
+// `creditInvoiceId`, `memberCreditId` and `xeroCreditNoteId` change, each
+// through a status-guarded write. `@@unique([memberSubscriptionId])` is the
+// one-per-member-and-season key (a member ages up at most once in a season),
+// so neither a re-run of the billing run nor a corrected date of birth that
+// moves `ageUpDate` can ever raise a second one.
 // `memberId` is a bare snapshot of whom the row was raised for, as
 // `MembershipSubscriptionChargeCoverage.memberId` is; the subscription FK is
 // what follows a member merge. Raw-SQL CHECKs: `amountCents > 0`; a TOP_UP and
@@ -1434,7 +1435,7 @@ model MemberSubscriptionAgeUpAdjustment {
   charge             MembershipSubscriptionCharge? @relation(fields: [chargeId], references: [id], onDelete: Restrict)
   memberCredit       MemberCredit?                 @relation(fields: [memberCreditId], references: [id], onDelete: Restrict)
 
-  @@unique([memberSubscriptionId, ageUpDate])
+  @@unique([memberSubscriptionId])
   @@index([seasonYear, kind, status])
   @@index([memberId])
 }

@@ -1265,8 +1265,9 @@ No DOB means the stored tier and no birthday adjustment.
 ## INV-MONEY-052
 
 A move between paying tiers bills only a positive prorated difference. The
-top-up covers no additional member. One subscription and birthday identify
-one adjustment; neither a rerun nor voiding a top-up raises another.
+top-up covers no additional member, and no more months than the season charge
+billed. One member and season identify one adjustment; neither a rerun, a
+corrected date of birth, nor voiding a top-up raises another.
 
 ## INV-MONEY-053
 

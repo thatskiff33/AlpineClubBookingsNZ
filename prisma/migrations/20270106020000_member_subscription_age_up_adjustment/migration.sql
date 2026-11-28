@@ -52,7 +52,7 @@ CREATE INDEX "MemberSubscriptionAgeUpAdjustment_seasonYear_kind_status_idx" ON "
 CREATE INDEX "MemberSubscriptionAgeUpAdjustment_memberId_idx" ON "MemberSubscriptionAgeUpAdjustment"("memberId");
 
 -- CreateIndex
-CREATE UNIQUE INDEX "MemberSubscriptionAgeUpAdjustment_memberSubscriptionId_ageU_key" ON "MemberSubscriptionAgeUpAdjustment"("memberSubscriptionId", "ageUpDate");
+CREATE UNIQUE INDEX "MemberSubscriptionAgeUpAdjustment_memberSubscriptionId_key" ON "MemberSubscriptionAgeUpAdjustment"("memberSubscriptionId");
 
 -- AddForeignKey
 ALTER TABLE "MemberSubscriptionAgeUpAdjustment" ADD CONSTRAINT "MemberSubscriptionAgeUpAdjustment_memberSubscriptionId_fkey" FOREIGN KEY ("memberSubscriptionId") REFERENCES "MemberSubscription"("id") ON DELETE RESTRICT ON UPDATE CASCADE;

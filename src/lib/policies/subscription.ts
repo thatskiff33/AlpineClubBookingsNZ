@@ -516,15 +516,25 @@ export function resolveAgeUpPart(
   return priceAgeUpEvent(event, input.seasonYear, input.annualCentsFor);
 }
 
-/** The pricing half of {@link resolveAgeUpPart}, for a caller holding the event. */
+/**
+ * The pricing half of {@link resolveAgeUpPart}, for a caller holding the event.
+ * `billedMonths` is how many months the season charge being adjusted covered:
+ * the difference is never priced over more months than that, so a member whose
+ * season charge was itself part-season is not topped up or credited for months
+ * they were never billed.
+ */
 export function priceAgeUpEvent(
   event: AgeUpEvent,
   seasonYear: number,
   annualCentsFor: (ageTier: AgeTier) => number,
+  billedMonths?: number,
 ): AgeUpPart | null {
   const fromAnnualCents = event.fromOwes ? annualCentsFor(event.fromTier) : 0;
   const toAnnualCents = event.toOwes ? annualCentsFor(event.toTier) : 0;
-  const coveredMonths = remainingSeasonMonthsInclusive(seasonYear, event.ageUpDate);
+  const coveredMonths = Math.min(
+    remainingSeasonMonthsInclusive(seasonYear, event.ageUpDate),
+    billedMonths ?? Number.POSITIVE_INFINITY,
+  );
   const annualDifference = toAnnualCents - fromAnnualCents;
   if (annualDifference === 0) return null;
   const size = prorateAnnualCents(Math.abs(annualDifference), coveredMonths);

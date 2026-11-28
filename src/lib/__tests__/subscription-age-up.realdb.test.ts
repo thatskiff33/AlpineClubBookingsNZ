@@ -9,8 +9,8 @@
  *    The top-up is a charge with NO coverage claim, so the member's season row
  *    stays covered by their season charge alone. A second run, and a replay of
  *    the first confirmation, raise nothing.
- * 2. THE UNIQUE KEY (`memberSubscriptionId`, `ageUpDate`) refuses a second
- *    adjustment for one birthday, and the table's checks refuse a top-up with
+ * 2. THE UNIQUE KEY (`memberSubscriptionId`) refuses a second adjustment for
+ *    one member and season, whatever its day, and the table's checks refuse a top-up with
  *    no charge, a credit with an invoice status and an adjustment of nothing.
  * 3. BOOKING ACCESS reads the real rows: a top-up holds its member back only
  *    once its invoice is issued and unpaid, and a credit never does.
@@ -430,7 +430,7 @@ let ageTierSettings: Awaited<ReturnType<(typeof import("@/lib/age-tier"))["getAg
       expect(ella.adjustments).toHaveLength(1);
       const ellaAdjustment = ella.adjustments[0]!;
       expect(topUp).toMatchObject({
-        idempotencyKey: ageUpBilling.ageUpTopUpChargeKey(ellaAdjustment.memberSubscriptionId, BIRTHDAY),
+        idempotencyKey: ageUpBilling.ageUpTopUpChargeKey(ellaAdjustment.memberSubscriptionId),
         status: "QUEUED",
         prorationRule: "REMAINING_MONTHS_INCLUSIVE",
         annualAmountCents: 6_000,
@@ -575,14 +575,15 @@ let ageTierSettings: Awaited<ReturnType<(typeof import("@/lib/age-tier"))["getAg
       expect(await counts()).toEqual(before);
     });
 
-    it("the unique key refuses a second adjustment for one birthday, and allows another day's", async () => {
+    it("the unique key refuses a second adjustment for one member and season, on the same day or another", async () => {
       const { data } = await seedCreditAdjustment(`${PREFIX}unique`);
 
       await expect(prisma.memberSubscriptionAgeUpAdjustment.create({ data })).rejects.toMatchObject({ code: "P2002" });
 
+      // A corrected date of birth moves the day, and still raises no second one.
       const anotherDay = { ...data, ageUpDate: new Date("2026-09-03T00:00:00.000Z") };
-      await prisma.memberSubscriptionAgeUpAdjustment.create({ data: anotherDay });
-      expect(await prisma.memberSubscriptionAgeUpAdjustment.count({ where: { memberId: `${PREFIX}unique` } })).toBe(2);
+      await expect(prisma.memberSubscriptionAgeUpAdjustment.create({ data: anotherDay })).rejects.toMatchObject({ code: "P2002" });
+      expect(await prisma.memberSubscriptionAgeUpAdjustment.count({ where: { memberId: `${PREFIX}unique` } })).toBe(1);
     });
 
     it("the database refuses a top-up that names no charge, a credit that carries an invoice status, and an adjustment of nothing", async () => {

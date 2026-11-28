@@ -26,10 +26,15 @@
  * invoices through it, and no approval ever sees one.
  *
  * Never twice: the coverage partial index (part-season), the adjustment's
- * `@@unique([memberSubscriptionId, ageUpDate])`, the top-up charge's
- * `idempotencyKey` (built from the subscription and the age-up day, not the
- * amount) and the credit's Xero idempotency key. A voided top-up stays voided:
- * the preview names it and raises nothing.
+ * `@@unique([memberSubscriptionId])` (one per member and season, so a corrected
+ * date of birth or join date that moves the age-up day cannot raise a second),
+ * the top-up charge's `idempotencyKey` (built from the subscription alone,
+ * never the day or the amount) and the credit's Xero idempotency key. A voided
+ * top-up stays voided: the preview names it and raises nothing.
+ *
+ * Never for months the season charge did not bill: a member whose season charge
+ * was itself part-season (a mid-season approval) is topped up or credited for
+ * no more months than that charge covered.
  */
 import type {
   AgeTier,
@@ -80,11 +85,12 @@ export function ageUpCreditIdempotencyKey(adjustmentId: string): string {
 }
 
 /**
- * The top-up charge's idempotency key: the subscription and the age-up day,
- * never the amount, so a re-priced re-run cannot mint a second top-up.
+ * The top-up charge's idempotency key: the subscription alone, never the
+ * age-up day or the amount, so neither a re-priced re-run nor a corrected date
+ * of birth can mint a second top-up.
  */
-export function ageUpTopUpChargeKey(subscriptionId: string, ageUpDate: string): string {
-  return stableDigest(["age-up", subscriptionId, ageUpDate]);
+export function ageUpTopUpChargeKey(subscriptionId: string): string {
+  return stableDigest(["age-up", subscriptionId]);
 }
 
 type Db = Prisma.TransactionClient | typeof prisma;
@@ -278,6 +284,7 @@ export function createAgeUpPlanner(input: {
                   membershipTypeId: true,
                   membershipAnnualFeeId: true,
                   annualAmountCents: true,
+                  coveredMonths: true,
                   decisionDate: true,
                   _count: { select: { coverage: { where: { releasedAt: null } } } },
                 },
@@ -301,11 +308,16 @@ export function createAgeUpPlanner(input: {
       for (const { member, type, event } of candidates) {
         const row = rowByMember.get(member.id);
         const seasonCharge = row?.chargeCoverage[0]?.charge ?? null;
-        const ageUpDay = dateOnlyInstantOf(event.ageUpDate).getTime();
-        const raised = row?.ageUpAdjustments.find((adjustment) => adjustment.ageUpDate.getTime() === ageUpDay);
+        // One per member and season, whatever day it was raised for.
+        const raised = row?.ageUpAdjustments[0];
         if (raised) {
+          const raisedOn = calendarDateOfDateOnlyInstant(raised.ageUpDate);
           if (raised.status === "VOIDED") {
             warnShared(member, type, event, "its top-up invoice was voided in Xero, so it is not raised again");
+          } else if (compareCalendarDates(raisedOn, event.ageUpDate) !== 0) {
+            // Their date of birth or join date was corrected after it was raised.
+            warnShared(member, type, event,
+              `a ${raised.kind === "TOP_UP" ? "top-up" : "credit"} was already raised this season for an age-group change on ${raisedOn}, so a second is not raised`);
           }
           continue;
         }
@@ -328,7 +340,7 @@ export function createAgeUpPlanner(input: {
           candidate.membershipTypeId === type.id &&
           candidate.coveredMembers.length === 1 &&
           candidate.coveredMembers[0]?.id === member.id);
-        let season: { annualCents: number; pricedOn: Date } | null = null;
+        let season: { annualCents: number; coveredMonths: number; pricedOn: Date } | null = null;
         if (seasonCharge) {
           const feeTier = seasonCharge.membershipAnnualFeeId ? feeTierById.get(seasonCharge.membershipAnnualFeeId) : null;
           if (
@@ -343,9 +355,13 @@ export function createAgeUpPlanner(input: {
             warnShared(member, type, event, `their season subscription was priced for the ${formatAgeTierName(feeTier)} age group`);
             continue;
           }
-          season = { annualCents: seasonCharge.annualAmountCents, pricedOn: seasonCharge.decisionDate };
+          season = {
+            annualCents: seasonCharge.annualAmountCents,
+            coveredMonths: seasonCharge.coveredMonths,
+            pricedOn: seasonCharge.decisionDate,
+          };
         } else if (entry) {
-          season = { annualCents: entry.annualAmountCents, pricedOn: input.decisionDate };
+          season = { annualCents: entry.annualAmountCents, coveredMonths: entry.coveredMonths, pricedOn: input.decisionDate };
         } else {
           warnShared(member, type, event, "their season subscription was not billed by this app");
           continue;
@@ -364,8 +380,10 @@ export function createAgeUpPlanner(input: {
           }
           toAnnualCents = toFee.amountCents;
         }
+        // No more months than the season charge billed: a member approved
+        // part-way through the season paid the old tier only from then.
         const part = priceAgeUpEvent(event, input.seasonYear, (tier) =>
-          tier === event.fromTier ? season.annualCents : toAnnualCents);
+          tier === event.fromTier ? season.annualCents : toAnnualCents, season.coveredMonths);
         if (!part) continue;
         const kind = part.signedDifferenceCents > 0 ? "TOP_UP" : "CREDIT";
         planned.push({
@@ -426,7 +444,7 @@ export async function confirmAgeUpAdjustments(
     });
     const ageUpDate = parseDateOnly(item.ageUpDate);
     const existing = await tx.memberSubscriptionAgeUpAdjustment.findUnique({
-      where: { memberSubscriptionId_ageUpDate: { memberSubscriptionId: subscription.id, ageUpDate } },
+      where: { memberSubscriptionId: subscription.id },
       select: { id: true },
     });
     if (existing) continue;
@@ -466,7 +484,7 @@ export async function confirmAgeUpAdjustments(
     if (!item.xeroAccountCode) {
       throw new Error(`Age-up top-up ${item.key} has no resolved Xero account code; the preview should have withheld it.`);
     }
-    const idempotencyKey = ageUpTopUpChargeKey(subscription.id, item.ageUpDate);
+    const idempotencyKey = ageUpTopUpChargeKey(subscription.id);
     const annualDifferenceCents = item.toAnnualCents - item.fromAnnualCents;
     const charge = await tx.membershipSubscriptionCharge.upsert({
       where: { idempotencyKey },

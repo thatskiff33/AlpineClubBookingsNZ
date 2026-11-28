@@ -86,6 +86,7 @@ type StoredRow = {
       membershipTypeId: string | null;
       membershipAnnualFeeId: string | null;
       annualAmountCents: number;
+      coveredMonths: number;
       decisionDate: Date;
       _count: { coverage: number };
     };
@@ -104,6 +105,7 @@ function seasonRow(memberId: string, charge: Partial<StoredRow["chargeCoverage"]
         membershipTypeId: FULL.id,
         membershipAnnualFeeId: "fee-YOUTH",
         annualAmountCents: 6_000,
+        coveredMonths: 12,
         decisionDate: day("2026-04-10"),
         _count: { coverage: 1 },
         ...charge,
@@ -120,6 +122,7 @@ function entryFor(memberId: string, annualAmountCents: number, overrides: Record
     membershipTypeId: FULL.id,
     coveredMembers: [{ id: memberId }],
     annualAmountCents,
+    coveredMonths: 12,
     ...overrides,
   } as unknown as SubscriptionBillingPlanEntry;
 }
@@ -286,6 +289,25 @@ describe("a member who moves to a dearer tier: the top-up (INV-MONEY-052)", () =
     );
   });
 
+  it("covers no more months than the season charge billed, for a member approved after their birthday", async () => {
+    // Approved in September: the season charge billed Youth for seven months,
+    // so the difference is owed for those seven, not the ten since June.
+    stored = [seasonRow("ella", { coveredMonths: 7, decisionDate: day("2026-09-05") })];
+    const [stored7] = await planner({ decisionDate: "2026-10-01" }).plan([turnsEighteen()]);
+    expect(stored7).toMatchObject({
+      kind: "TOP_UP",
+      coveredMonths: 7,
+      amountCents: Math.round((expectedTopUp.toAnnualCents - expectedTopUp.fromAnnualCents) * 7 / 12),
+      description: expect.stringContaining("(7 months)"),
+    });
+
+    // The same when this run raises the part-season charge itself.
+    stored = [];
+    const [inRun] = await planner({ decisionDate: "2026-09-05" })
+      .plan([turnsEighteen()], [entryFor("ella", 6_000, { coveredMonths: 7 })]);
+    expect(inRun).toMatchObject({ coveredMonths: 7, amountCents: stored7!.amountCents });
+  });
+
   it("rounds half a cent up", async () => {
     // (12001 - 6000) x 10 / 12 = 5000.83.
     fees.ADULT = { id: "fee-ADULT", amountCents: 12_001, billingBasis: "PER_MEMBER" };
@@ -420,11 +442,19 @@ describe("an age-up is settled once (INV-MONEY-052)", () => {
     })]);
   });
 
-  it("is not blocked by an adjustment for a different day", async () => {
-    stored = [seasonRow("ella", {}, [{ ageUpDate: day("2026-05-01"), kind: "TOP_UP", status: "PENDING" }])];
+  it.each([
+    ["TOP_UP", "a top-up was already raised this season for an age-group change on 2026-05-01, so a second is not raised"],
+    ["CREDIT", "a credit was already raised this season for an age-group change on 2026-05-01, so a second is not raised"],
+  ] as const)(
+    "raises no second %s when a corrected date of birth moves the age-up day, and tells the officer why",
+    async (kind, why) => {
+      stored = [seasonRow("ella", {}, [{ ageUpDate: day("2026-05-01"), kind, status: "PENDING" }])];
+      const { plan, warnings } = planner();
 
-    expect(await planner().plan([turnsEighteen()])).toHaveLength(1);
-  });
+      expect(await plan([turnsEighteen()])).toEqual([]);
+      expect(warnings).toEqual([expect.objectContaining({ memberId: "ella", message: expect.stringContaining(why) })]);
+    },
+  );
 
   it("raises nothing more for a member this run bills a part-season charge", async () => {
     const { built, plan, warnings, db } = planner();
@@ -576,7 +606,7 @@ describe("confirmAgeUpAdjustments", () => {
 
     expect(await confirm(client, [item()])).toEqual(["charge-top-up"]);
 
-    const key = ageUpTopUpChargeKey("subscription-ella", "2026-06-15");
+    const key = ageUpTopUpChargeKey("subscription-ella");
     expect(tx.membershipSubscriptionCharge.upsert).toHaveBeenCalledTimes(1);
     const charge = tx.membershipSubscriptionCharge.upsert.mock.calls[0]![0 as never] as unknown as {
       where: unknown; update: unknown; create: Record<string, unknown>;
@@ -688,7 +718,7 @@ describe("confirmAgeUpAdjustments", () => {
       expect(await confirm(client, [item({ kind })])).toEqual([]);
 
       expect(tx.memberSubscriptionAgeUpAdjustment.findUnique).toHaveBeenCalledWith({
-        where: { memberSubscriptionId_ageUpDate: { memberSubscriptionId: "subscription-ella", ageUpDate: day("2026-06-15") } },
+        where: { memberSubscriptionId: "subscription-ella" },
         select: { id: true },
       });
       expect(tx.memberSubscriptionAgeUpAdjustment.create).not.toHaveBeenCalled();
@@ -706,9 +736,8 @@ describe("confirmAgeUpAdjustments", () => {
     expect(tx.memberSubscriptionAgeUpAdjustment.create).not.toHaveBeenCalled();
   });
 
-  it("keys the top-up charge on the subscription and the day, so a re-priced re-run finds the same charge", () => {
-    expect(ageUpTopUpChargeKey("subscription-ella", "2026-06-15")).toBe(ageUpTopUpChargeKey("subscription-ella", "2026-06-15"));
-    expect(ageUpTopUpChargeKey("subscription-ella", "2026-06-15")).not.toBe(ageUpTopUpChargeKey("subscription-ella", "2026-06-16"));
-    expect(ageUpTopUpChargeKey("subscription-ella", "2026-06-15")).not.toBe(ageUpTopUpChargeKey("subscription-other", "2026-06-15"));
+  it("keys the top-up charge on the subscription alone, so neither a re-priced re-run nor a moved age-up day mints a second", () => {
+    expect(ageUpTopUpChargeKey("subscription-ella")).toBe(ageUpTopUpChargeKey("subscription-ella"));
+    expect(ageUpTopUpChargeKey("subscription-ella")).not.toBe(ageUpTopUpChargeKey("subscription-other"));
   });
 });
