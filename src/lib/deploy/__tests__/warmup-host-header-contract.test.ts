@@ -16,8 +16,9 @@ import { describe, expect, it } from "vitest";
  * That is fine TODAY for one reason, and this file is that reason written as a test
  * rather than as a comment: nothing on a public render path reads a request host at
  * all. Absolute URLs and `metadataBase` come from `NEXTAUTH_URL`. The one place in the
- * tree that resolves a request host — the issue-report API — prefers the forwarded
- * value, so it would read the right answer anyway.
+ * tree that used to resolve a request host, the issue-report API, no longer reads one
+ * (GHSA-q9f4-243m-6f54); `src/lib/__tests__/request-origin-census.test.ts` holds the
+ * whole tree to that.
  *
  * If that changes, the warm-up would either store pages rendered for the loopback
  * authority or fail every route as an `unexpected-redirect`, and `fetch` cannot send a
@@ -76,13 +77,12 @@ describe("the warm-up gate's host assumption", () => {
     ).toEqual([]);
   });
 
-  it("keeps the tree's one host reader on the forwarded value first", () => {
+  it("finds no host reader left in the issue-report API, once the tree's only one", () => {
     const issueReports = readRepoFile("src/app/api/issue-reports/route.ts");
-    const forwarded = issueReports.indexOf('get("x-forwarded-host")');
-    const raw = issueReports.indexOf('get("host")');
 
-    expect(forwarded).toBeGreaterThan(-1);
-    expect(raw).toBeGreaterThan(forwarded);
+    expect(issueReports).not.toMatch(/x-forwarded-host/i);
+    expect(issueReports).not.toMatch(RAW_HOST_READ);
+    expect(issueReports).not.toMatch(/nextUrl\s*\??\.\s*origin/);
   });
 
   it("sends the forwarded host and proto, and never a client address", () => {
