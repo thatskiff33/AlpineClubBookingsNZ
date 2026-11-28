@@ -382,8 +382,7 @@ async function prepareBookingBatchModification(options: {
   const [memberGuestPolicy, subscriptionLockoutMode, yearEndMonth, xeroLockDates, guestDietarySeeding, journal] =
     await Promise.all([
       loadMemberGuestAddPolicy(),
-      resolveSubscriptionLockoutMode(),
-      clubFinancialYearEndMonth(),
+      resolveSubscriptionLockoutMode(), clubFinancialYearEndMonth(),
       resolveXeroLockDateFacts(options.candidateCheckIns, { audience: options.audience }),
       resolveBookingGuestDietarySeeding(),
       resolveBookingMoneyPostingContext(),
@@ -789,7 +788,8 @@ export async function modifyBookingBatch({
     // #1729's narrow guard, still before the transaction on this path.
     ordinaryGuard.decide(preparation.xeroLockDates);
   }
-  const { memberGuestPolicy, subscriptionLockoutMode, yearEndMonth } = preparation;
+  const memberGuestPolicy = preparation.memberGuestPolicy;
+  const subscriptionLockoutMode = preparation.subscriptionLockoutMode;
   // #3123 — the caller's club day, encoded at UTC midnight so it shares a frame
   // with the stored `@db.Date` columns the edit policy compares against
   // (`INV-DATE-026`). The day itself is a REQUIRED parameter; its docblock says
@@ -1066,7 +1066,7 @@ export async function modifyBookingBatch({
       // the planner's refusals and the paid-up-adult requirement branch on the
       // same mode `modify-quote` previewed, and no settings read happens under
       // the global + per-lodge locks this transaction holds.
-      subscriptionLockoutMode, yearEndMonth,
+      subscriptionLockoutMode, yearEndMonth: preparation.yearEndMonth,
     });
     const guestNameUpdates = resolveGuestNameUpdates({
       booking,
@@ -1170,7 +1170,7 @@ export async function modifyBookingBatch({
           removeGuestIds: input.removeGuestIds,
           guestsForPricing: guestPlan.guestsForPricing,
           // #2543 — see the `prepareGuestPlan` call above.
-          subscriptionLockoutMode, yearEndMonth,
+          subscriptionLockoutMode, yearEndMonth: preparation.yearEndMonth,
           // Finding 2 (privacy re-review of MG3 #2308). #2526: read the SAME
           // answer the guest plan used, so a policy-exception approval (which
           // borrows ADMIN only for the reviewed minimum-stay override) prices
