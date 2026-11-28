@@ -59,6 +59,7 @@ const h = vi.hoisted(() => {
     type: FakeType;
     subStatus?: string;
     noInvoiceCoverage?: boolean;
+    unpaidTopUp?: boolean;
   }> = [
     { id: "m1", ageTier: "ADULT", type: notRequiredType }, // exempt type
     { id: "m2", ageTier: "ADULT", type: requiredType, subStatus: "PAID" },
@@ -70,6 +71,8 @@ const h = vi.hoisted(() => {
     { id: "m8", ageTier: "ADULT", type: ageTierType }, // age requires, unpaid
     // #5190: a no-invoice fee's coverage settles them whatever the row says.
     { id: "m9", ageTier: "ADULT", type: requiredType, subStatus: "NOT_INVOICED", noInvoiceCoverage: true },
+    // #5190 PR 3: a paid season with an issued, unpaid age-up top-up still owes.
+    { id: "m10", ageTier: "ADULT", type: requiredType, subStatus: "PAID", unpaidTopUp: true },
   ];
 
   const members = spec.map((s) => ({
@@ -93,6 +96,7 @@ const h = vi.hoisted(() => {
       seasonYear: SEASON,
       status: s.subStatus!,
       chargeCoverage: s.noInvoiceCoverage ? [{ id: `cov-${s.id}` }] : [],
+      ageUpAdjustments: s.unpaidTopUp ? [{ id: `top-up-${s.id}` }] : [],
     }));
 
   const prismaMock = {
@@ -200,6 +204,8 @@ describe("resolveFinancialStatusForMembers parity with isMemberFinancial", () =>
     expect(batched.get("m3")).toBe(false);
     expect(batched.get("m4")).toBe(false);
     expect(batched.get("m8")).toBe(false);
+    // m10 paid season, but its age-up top-up is issued and unpaid.
+    expect(batched.get("m10")).toBe(false);
   });
 
   it("resolves an empty candidate set without querying", async () => {

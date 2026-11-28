@@ -100,6 +100,7 @@ import {
   priceBookingGuestsWithMembershipTypePolicy,
   requiresPaidSubscriptionForMemberForBooking,
 } from "@/lib/membership-type-policy";
+import { paidSeasonRowWhere } from "@/lib/subscription-lockout-facts";
 import {
   buildPaidUpAdultRefusalBody,
   evaluateNonMemberPricingRequirements,
@@ -882,7 +883,7 @@ export async function joinGroupBookingAsMember(
       }))
     ) {
       const paidSub = await prisma.memberSubscription.findFirst({
-        where: { memberId: sessionUserId, seasonYear, status: "PAID" },
+        where: paidSeasonRowWhere(sessionUserId, seasonYear),
         select: { id: true },
       });
       if (!paidSub) {

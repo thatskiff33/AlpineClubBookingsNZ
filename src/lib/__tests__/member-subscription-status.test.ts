@@ -161,6 +161,36 @@ describe("GET /api/member/subscription-status", () => {
     expect(body.memberRateNotice).toBeNull();
   });
 
+  // #5190 PR 3 (owner decision, 27 Nov 2026): an issued, unpaid age-up top-up
+  // holds a booking back, so a paid season row beside one is not reported paid.
+  it("tells a member with a paid season invoice and an issued, unpaid top-up that they still owe", async () => {
+    mockAuth.mockResolvedValue({ user: { id: "member-1" } });
+    mockFindUnique.mockResolvedValue({
+      role: "MEMBER",
+      ageTier: "ADULT",
+      subscriptions: [{
+        status: "PAID",
+        xeroInvoiceId: "inv-1",
+        xeroInvoiceNumber: "INV-0042",
+        xeroOnlineInvoiceUrl: "https://pay.xero.com/invoice/inv-1",
+        ageUpAdjustments: [{ id: "top-up-1" }],
+      }],
+    });
+
+    const body = await (await GET()).json();
+
+    expect(body).toEqual(expect.objectContaining({
+      status: "UNPAID",
+      rawStatus: "PAID",
+      subscriptionRequired: true,
+      // The paid season invoice is not offered as the one to pay.
+      invoiceUrl: null,
+      invoiceNumber: null,
+      rawInvoiceNumber: "INV-0042",
+    }));
+    expect(body.memberRateNotice).toMatch(/member rates aren't available/i);
+  });
+
   it("keeps member subscription reads local even when the invoice URL is missing", async () => {
     mockAuth.mockResolvedValue({ user: { id: "member-1" } });
     mockFindUnique.mockResolvedValue({

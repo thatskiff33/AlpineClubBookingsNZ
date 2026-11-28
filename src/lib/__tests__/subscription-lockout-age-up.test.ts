@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 
 /**
@@ -21,7 +23,9 @@ import type { SubscriptionLiabilitySettings } from "@/lib/policies/subscription"
 import {
   ISSUED_UNPAID_AGE_UP_TOP_UP,
   loadMemberSubscriptionSettlements,
+  paidSeasonRowWhere,
   resolveMemberSubscriptionSettlement,
+  seasonRowStatusOwed,
   subscriptionIsSettled,
   subscriptionIsUnpaid,
   type SubscriptionSettlementDb,
@@ -171,6 +175,42 @@ async function loaded(adjustments: Adjustment[], today: string | null = "2026-07
   });
   return settlements.get("member-1");
 }
+
+describe("the single-member gates read the same fact (owner decision, 27 Nov 2026)", () => {
+  it("the paid-row lookup refuses a PAID season row with an issued, unpaid top-up", () => {
+    expect(paidSeasonRowWhere("member-1", SEASON)).toEqual({
+      memberId: "member-1",
+      seasonYear: SEASON,
+      status: "PAID",
+      ageUpAdjustments: { none: ISSUED_UNPAID_AGE_UP_TOP_UP.where },
+    });
+  });
+
+  // Each HARD_BLOCK owner gate asks `requiresPaidSubscriptionForMemberForBooking`
+  // and then looks the paid row up itself. A bare `status: "PAID"` lookup there
+  // lets a member with an unpaid top-up book: the source is the only place that
+  // can be seen, because a mocked lookup answers whatever its `where` says.
+  it.each([
+    "src/app/api/bookings/route.ts",
+    "src/app/api/bookings/[id]/confirm-draft/route.ts",
+    "src/lib/group-booking.ts",
+  ])("%s looks the owner's paid row up through paidSeasonRowWhere", (file) => {
+    const source = readFileSync(path.resolve(process.cwd(), file), "utf8");
+    const gate = source.slice(source.indexOf("requiresPaidSubscriptionForMemberForBooking(prisma"));
+    const lookup = gate.slice(0, gate.indexOf("if (!paidSub)"));
+
+    expect(lookup).toContain("where: paidSeasonRowWhere(");
+    expect(lookup).not.toMatch(/status:\s*"PAID"/);
+  });
+
+  it("a member is told Unpaid, not Paid, while a top-up is issued and unpaid", () => {
+    expect(seasonRowStatusOwed({ status: "PAID", ageUpAdjustments: [{ id: "top-up-1" }] })).toBe("UNPAID");
+    expect(seasonRowStatusOwed({ status: "PAID", ageUpAdjustments: [] })).toBe("PAID");
+    expect(seasonRowStatusOwed({ status: "PAID" })).toBe("PAID");
+    // Never an upgrade: an overdue row stays overdue.
+    expect(seasonRowStatusOwed({ status: "OVERDUE", ageUpAdjustments: [{ id: "top-up-1" }] })).toBe("OVERDUE");
+  });
+});
 
 describe("which adjustments hold a paid member back, as the loader reads them", () => {
   const topUp = (overrides: Partial<Adjustment> = {}): Adjustment => ({

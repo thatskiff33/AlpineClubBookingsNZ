@@ -11,6 +11,8 @@ import {
 } from "@/lib/membership-type-policy";
 import { prisma } from "@/lib/prisma";
 import {
+  ISSUED_UNPAID_AGE_UP_TOP_UP,
+  hasIssuedUnpaidAgeUpTopUp,
   loadMemberSubscriptionSettlements,
   subscriptionIsSettled,
 } from "@/lib/subscription-lockout-facts";
@@ -71,9 +73,11 @@ export async function isMemberFinancial(
     where: {
       memberId_seasonYear: { memberId: params.memberId, seasonYear: params.seasonYear },
     },
-    select: { status: true },
+    select: { status: true, ageUpAdjustments: ISSUED_UNPAID_AGE_UP_TOP_UP },
   });
-  return sub?.status === "PAID";
+  // An issued, unpaid age-up top-up is part of what they owe (#5190 PR 3), as
+  // the batched sibling below reads it through `subscriptionPaid`.
+  return sub?.status === "PAID" && !hasIssuedUnpaidAgeUpTopUp(sub);
 }
 
 /**

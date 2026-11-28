@@ -141,11 +141,39 @@ export const ISSUED_UNPAID_AGE_UP_TOP_UP = {
   select: { id: true },
 } as const;
 
+/**
+ * The WHERE for "this member's season row is paid": PAID, with no issued,
+ * unpaid age-up top-up (owner decision, 27 Nov 2026). The single-member
+ * hard-block gates look their owner's row up with it, so they cannot disagree
+ * with `subscriptionPaid` in {@link resolveMemberSubscriptionSettlement}.
+ */
+export function paidSeasonRowWhere(memberId: string, seasonYear: number) {
+  return {
+    memberId,
+    seasonYear,
+    status: "PAID",
+    ageUpAdjustments: { none: ISSUED_UNPAID_AGE_UP_TOP_UP.where },
+  } as const;
+}
+
 /** Whether a season row read with {@link ISSUED_UNPAID_AGE_UP_TOP_UP} has one. */
 export function hasIssuedUnpaidAgeUpTopUp(
   row: { ageUpAdjustments?: ReadonlyArray<unknown> } | null | undefined,
 ): boolean {
   return (row?.ageUpAdjustments?.length ?? 0) > 0;
+}
+
+/**
+ * A season row's status as its member is told it. A PAID row with an issued,
+ * unpaid age-up top-up reads UNPAID: the top-up is part of what they owe and
+ * holds their booking back, so "Paid" beside a refused booking would be false.
+ * The row is read with {@link ISSUED_UNPAID_AGE_UP_TOP_UP}.
+ */
+export function seasonRowStatusOwed(row: {
+  status: SubscriptionStatus;
+  ageUpAdjustments?: ReadonlyArray<unknown>;
+}): SubscriptionStatus {
+  return row.status === "PAID" && hasIssuedUnpaidAgeUpTopUp(row) ? "UNPAID" : row.status;
 }
 
 /**
