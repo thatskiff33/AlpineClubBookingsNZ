@@ -15,6 +15,7 @@
  */
 import { NextRequest, NextResponse } from "next/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import type { ClubTimeZone } from "@/lib/club-time";
 
 const h = vi.hoisted(() => ({
   requireAdmin: vi.fn(),
@@ -137,7 +138,12 @@ vi.mock("@/lib/membership-subscription-charge-close", async (importOriginal) => 
   ...((await importOriginal()) as typeof import("@/lib/membership-subscription-charge-close")),
   closeAlreadyPaidSubscriptionCharge: h.closeAlreadyPaidSubscriptionCharge,
 }));
-vi.mock("@/lib/financial-year-server", () => ({ refreshFinancialYearConfig: async () => 3 }));
+vi.mock("@/lib/financial-year-server", () => ({
+  refreshFinancialYearConfig: async () => 3,
+  clubFinancialYearEndMonth: async () => 3,
+  clubCurrentSeasonYear: async (zone: ClubTimeZone) =>
+    (await import("@/lib/financial-year")).clubSeasonYear(zone, undefined, 3),
+}));
 vi.mock("@/lib/audit", async (importOriginal) => ({
   ...((await importOriginal()) as typeof import("@/lib/audit")),
   createAuditLog: h.createAuditLog,

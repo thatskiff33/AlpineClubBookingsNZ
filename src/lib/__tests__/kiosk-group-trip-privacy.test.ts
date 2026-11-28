@@ -29,6 +29,10 @@
 import { describe, expect, it, vi } from "vitest";
 
 vi.mock("server-only", () => ({}));
+// The club's today for the policy re-queue cohort (#5239): the frozen test day.
+vi.mock("@/lib/club-time/server", () => ({
+  clubTodayDateOnlyInstant: async () => new Date("2026-07-01T00:00:00.000Z"),
+}));
 
 import { readFileSync } from "node:fs";
 import path from "node:path";
@@ -36,6 +40,9 @@ import path from "node:path";
 import { AgeTier } from "@prisma/client";
 
 import { stripComments } from "@/lib/__tests__/support/strip-comments";
+import { GROUP_TRIP_COVERAGE_DEPENDENT_LIMIT } from "@/lib/adult-member-hosting-coverage-ceilings";
+import { hostingPolicyReconciliationCandidateWhere } from "@/lib/adult-member-hosting-policy-reconciliation";
+import { groupTripCoverageDependentWhere } from "@/lib/group-trip-identity";
 import { deriveKioskAdultCoverSource } from "@/lib/kiosk-adult-cover";
 import {
   attachKioskGroupTrip,
@@ -90,6 +97,9 @@ function bookingRow(overrides: Partial<StoreBooking> = {}): StoreBooking {
   return {
     id: "booking-1",
     memberId: "member-1",
+    lodgeId: LODGE,
+    checkIn: new Date("2026-08-01T00:00:00.000Z"),
+    checkOut: new Date("2026-08-03T00:00:00.000Z"),
     parentBookingId: null,
     adultMemberHostingReview: null,
     adultMemberHostingReviewStatus: null,
@@ -236,6 +246,11 @@ interface FakeStore {
     groupBookingFindMany: number;
     reevaluationFindMany: number;
     incidentFindMany: number;
+    dependentCountWheres: unknown[];
+    cohortWheres: unknown[];
+    cardMembershipWheres: unknown[];
+    /** Start and end of the queue read and the snapshot re-read, in order (#5239). */
+    readSequence: string[];
   };
 }
 
@@ -249,6 +264,17 @@ function fakeStore(options: {
    * unless a test says otherwise. Read ONLY by the cover-source tier.
    */
   policyRows?: Array<Record<string, unknown>>;
+  /** `GroupBooking.coverageInvalidationRevision` per trip (#5239). */
+  revisions?: Record<string, number>;
+  /** What the trip dependent count returns for every card (#5239). */
+  dependentPopulation?: number;
+  /** Stamped cards a policy change would NOT re-queue (#5239). */
+  outsidePolicyCohort?: string[];
+  /** The snapshot as re-read after the queue read, where it has moved. */
+  rereadReview?: Record<string, unknown>;
+  /** Make the revision read or the dependent count throw. */
+  failRevisionRead?: boolean;
+  failDependentCount?: boolean;
 } = {}): FakeStore {
   const bookings = options.bookings ?? [];
   const calls = {
@@ -257,6 +283,10 @@ function fakeStore(options: {
     groupBookingFindMany: 0,
     reevaluationFindMany: 0,
     incidentFindMany: 0,
+    dependentCountWheres: [] as unknown[],
+    cohortWheres: [] as unknown[],
+    cardMembershipWheres: [] as unknown[],
+    readSequence: [] as string[],
   };
   const db = {
     adultMemberHostingPolicy: {
@@ -275,6 +305,26 @@ function fakeStore(options: {
     booking: {
       findMany: async (args: { where: Record<string, unknown> }) => {
         calls.bookingFindMany += 1;
+        // #5239's policy re-queue cohort read: `id IN stamped AND <cohort>`.
+        // The cohort clause is the reconciliation's own builder, asserted by
+        // value below, so the fake answers it from the test's own list.
+        if ("AND" in args.where) {
+          const [cards, cohort] = args.where.AND as [
+            { OR: Array<{ AND: [{ id: string }, unknown] }> },
+            unknown,
+          ];
+          calls.cohortWheres.push(cohort);
+          calls.readSequence.push("snapshot-reread:start");
+          calls.cardMembershipWheres.push(...cards.OR.map((card) => card.AND));
+          return cards.OR.map((card) => card.AND[0].id)
+            .filter((id) => !(options.outsidePolicyCohort ?? []).includes(id))
+            .map((id) => ({
+              id,
+              adultMemberHostingReview:
+                options.rereadReview?.[id] ??
+                bookings.find((row) => row.id === id)?.adultMemberHostingReview,
+            }));
+        }
         return bookings
           .filter((row) => matchBookingWhere(row, args.where))
           .map((row) => ({
@@ -288,6 +338,11 @@ function fakeStore(options: {
             groupBookingJoin: row.groupBookingJoin,
           }));
       },
+      count: async (args: { where: unknown }) => {
+        calls.dependentCountWheres.push(args.where);
+        if (options.failDependentCount) throw new Error("count failed");
+        return options.dependentPopulation ?? 1;
+      },
     },
     groupBooking: {
       findMany: async (args: {
@@ -295,6 +350,12 @@ function fakeStore(options: {
         select: Record<string, unknown>;
       }) => {
         calls.groupBookingFindMany += 1;
+        if ("coverageInvalidationRevision" in args.select) {
+          if (options.failRevisionRead) throw new Error("revision read failed");
+          return Object.entries(options.revisions ?? {})
+            .filter(([id]) => args.where.id.in.includes(id))
+            .map(([id, revision]) => ({ id, coverageInvalidationRevision: revision }));
+        }
         // The join credential is in the store and is NEVER selected. A select
         // that started asking for it would hand this fake a value the leak
         // assertions below then find in the payload.
@@ -316,6 +377,11 @@ function fakeStore(options: {
     hostingCoverageReevaluation: {
       findMany: async (args: { where: { memberId: { in: string[] } } }) => {
         calls.reevaluationFindMany += 1;
+        calls.readSequence.push("queue-read:start");
+        // Resolve on a LATER macrotask, so a snapshot re-read started alongside
+        // this one (rather than after it) is recorded before it ends.
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        calls.readSequence.push("queue-read:end");
         return (options.queuedOwnerIds ?? [])
           .filter((id) => args.where.memberId.in.includes(id))
           .map((memberId) => ({ memberId }));
@@ -715,7 +781,11 @@ describe("#3040 the two privileged capabilities are independent", () => {
 // ---------------------------------------------------------------------------
 
 describe("#3040 adult-cover source is the canonical evaluation, honestly reported", () => {
-  const fresh = { queuedReevaluation: false, openIncident: false };
+  const fresh = {
+    queuedReevaluation: false,
+    openIncident: false,
+    currentGroupTripCover: null,
+  };
 
   it("the writer never persists an all-covered snapshot, which is what the STALE rule below rests on", () => {
     // A PREMISE GUARD, not a re-test of the evaluator. `deriveKioskAdultCoverSource`
@@ -964,17 +1034,12 @@ describe("#3040 adult-cover source is the canonical evaluation, honestly reporte
     expect(derived.scopes).toEqual(["SAME_BOOKING", "SAME_BOOKING_OWNER"]);
   });
 
-  it("WITHHOLDS a cover claim that rests on a Group Trip sibling, while #3039 is unbuilt", () => {
-    // The hole this closes, and it is the one this epic itself opens. The
-    // re-evaluation queue is keyed on the owner of the booking that CHANGED, so
-    // when a sibling in another account cancels, the queued row names THEIR
-    // owner — and `readStalenessSignals` reads this booking's own owner. Nothing
-    // marks the dependent stale, so a snapshot resting on that sibling would go
-    // on reporting positive cover indefinitely: the precise thing INV-HOST-045
-    // forbids. Until #3039's fan-out exists, such a claim is unverifiable and is
-    // withheld whole.
-    const derived = deriveKioskAdultCoverSource(
-      canonicalSnapshot([
+  it("shows sibling cover only when its stamp matches the trip's current revision", () => {
+    // #5239: #3039's fan-out queues a re-check under each dependent's own owner,
+    // so the remaining question is whether THIS snapshot was evaluated under the
+    // trip revision now in force — a truncated fan-out moves it on.
+    const sibling = (stamp: unknown) => ({
+      ...canonicalSnapshot([
         {
           night: "2026-08-01",
           memberIds: ["adult-1"],
@@ -982,18 +1047,42 @@ describe("#3040 adult-cover source is the canonical evaluation, honestly reporte
         },
         { night: "2026-08-02" },
       ]),
-      fresh,
-    );
-    expect(
-      derived,
-      "INV-HOST-045 (docs/invariants/adult-member-hosting.md): a night covered " +
-        "by an adult in a SIBLING Group Trip booking can be invalidated by a " +
-        "change on another account that nothing here can see until #3039 lands. " +
-        "An unverifiable claim is not shown as cover.",
-    ).toEqual({ status: "STALE", nights: [], scopes: [] });
+      ...(stamp === undefined ? {} : { groupTripCoverFreshness: stamp }),
+    });
+    const current = { groupBookingId: TRIP, revision: 2 };
+    const verified = { ...fresh, currentGroupTripCover: current };
 
-    // The mixed case too: one night resting on a sibling poisons the snapshot,
-    // because the display cannot show half of a per-night answer.
+    expect(
+      deriveKioskAdultCoverSource(sibling(current), verified),
+      "INV-HOST-045: verified sibling cover is shown as real per-night figures",
+    ).toEqual({
+      status: "EVALUATED",
+      nights: [
+        { night: "2026-08-01", covered: true, scopes: ["SAME_GROUP_TRIP"] },
+        { night: "2026-08-02", covered: false, scopes: [] },
+      ],
+      scopes: ["SAME_GROUP_TRIP"],
+      decision: null,
+    });
+
+    const STALE = { status: "STALE", nights: [], scopes: [] };
+    for (const [label, review, signals] of [
+      ["the card cannot be verified at all", sibling(current), fresh],
+      ["no stamp: written before #5239", sibling(undefined), verified],
+      ["an older revision: a fan-out was truncated since", sibling({ ...current, revision: 1 }), verified],
+      ["another trip's stamp", sibling({ ...current, groupBookingId: OTHER_TRIP }), verified],
+      ["a malformed stamp", sibling({ groupBookingId: TRIP, revision: "2" }), verified],
+      ["a negative revision", sibling({ groupBookingId: TRIP, revision: -1 }), verified],
+      ["a stamp that is not an object", sibling([TRIP, 2]), verified],
+    ] as const) {
+      expect(
+        deriveKioskAdultCoverSource(review, signals),
+        `INV-HOST-045: ${label} — an unverifiable sibling claim is withheld whole`,
+      ).toEqual(STALE);
+    }
+
+    // The mixed case: one night resting on an unverified sibling poisons the
+    // snapshot, because the display cannot show half of a per-night answer.
     expect(
       deriveKioskAdultCoverSource(
         canonicalSnapshot([
@@ -1012,6 +1101,14 @@ describe("#3040 adult-cover source is the canonical evaluation, honestly reporte
         fresh,
       ).status,
     ).toBe("STALE");
+
+    // And a queued re-check still wins over a matching stamp.
+    expect(
+      deriveKioskAdultCoverSource(sibling(current), {
+        ...verified,
+        queuedReevaluation: true,
+      }),
+    ).toEqual(STALE);
   });
 
   it("never carries a covering member's id", () => {
@@ -1073,6 +1170,7 @@ describe("#3040 adult-cover source is the canonical evaluation, honestly reporte
         deriveKioskAdultCoverSource(review, {
           queuedReevaluation: true,
           openIncident: false,
+          currentGroupTripCover: null,
         }),
         "INV-HOST-045: a booking with re-evaluation queued behind it is STALE, " +
           "and stale must never render as positive cover — nor as a reassuring " +
@@ -1093,6 +1191,7 @@ describe("#3040 adult-cover source is the canonical evaluation, honestly reporte
         deriveKioskAdultCoverSource(review, {
           queuedReevaluation: false,
           openIncident: true,
+          currentGroupTripCover: null,
         }),
         "INV-HOST-045: an open coverage incident says this booking IS carrying " +
           "uncovered nights; an empty column claiming none disagrees, and the " +
@@ -1111,7 +1210,7 @@ describe("#3040 adult-cover source is the canonical evaluation, honestly reporte
         },
         { night: "2026-08-02" },
       ]),
-      { queuedReevaluation: false, openIncident: true },
+      { queuedReevaluation: false, openIncident: true, currentGroupTripCover: null },
     );
     expect(derived.status).toBe("EVALUATED");
     expect(derived.nights.map((night) => night.covered)).toEqual([true, false]);
@@ -1409,6 +1508,151 @@ describe("#3040 the split-pair carve-out reaches the kiosk through its one canon
 // ---------------------------------------------------------------------------
 // Source-level fences
 // ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// #5239: Group Trip sibling cover, verified end to end through the attach seam
+// ---------------------------------------------------------------------------
+
+describe("#5239 sibling cover is shown only when it can be verified (INV-HOST-045)", () => {
+  const ENFORCED = { ...SCOPE_ON_POLICY, mode: "ENFORCED" };
+  const STAMP = { groupBookingId: TRIP, revision: 4 };
+  const siblingReview = (stamp: unknown = STAMP) => ({
+    ...canonicalSnapshot([
+      {
+        night: "2026-08-01",
+        memberIds: ["adult-secret"],
+        coveredByScopes: ["SAME_GROUP_TRIP"],
+      },
+      { night: "2026-08-02" },
+    ]),
+    ...(stamp === null ? {} : { groupTripCoverFreshness: stamp }),
+  });
+  const rows = (review: unknown = siblingReview()) => [
+    bookingRow({
+      id: "b-dependent",
+      memberId: "owner-dependent",
+      ...joinerOf(TRIP),
+      adultMemberHostingReview: review,
+    }),
+    bookingRow({ id: "b-organiser", memberId: "owner-organiser", ...organiserOf(TRIP) }),
+  ];
+  async function cover(
+    review: unknown,
+    options: Parameters<typeof fakeStore>[0] = {},
+  ) {
+    const bookings = rows(review);
+    const store = fakeStore({
+      bookings,
+      groups: [{ id: TRIP, organiser: "Olivia" }],
+      policyRows: [ENFORCED],
+      revisions: { [TRIP]: 4 },
+      ...options,
+    });
+    const { attached, calls } = await attach(bookings, PRIVILEGED, store);
+    return { source: attached[0].adultCoverSource, attached, calls };
+  }
+  const STALE = { status: "STALE", nights: [], scopes: [] };
+
+  it("shows verified sibling evidence as real figures", async () => {
+    const { source, attached } = await cover(siblingReview());
+    expect(source).toMatchObject({
+      status: "EVALUATED",
+      scopes: ["SAME_GROUP_TRIP"],
+    });
+    const payload = JSON.stringify(attached);
+    expect(payload, "INV-PRIV-016: no covering member id").not.toContain("adult-secret");
+    expect(payload, "INV-PRIV-016: the stamp's trip id never ships").not.toContain(TRIP);
+  });
+
+  it("asks which cards a policy change re-queues through the reconciliation's own predicate", async () => {
+    const { calls } = await cover(siblingReview());
+    expect(calls.cohortWheres).toEqual([
+      hostingPolicyReconciliationCandidateWhere(
+        new Date("2026-07-01T00:00:00.000Z"),
+      ),
+    ]);
+  });
+
+  it("asks whether a sibling's fan-out reaches each card through the fan-out's own predicate", async () => {
+    // A completed stay is outside the fan-out's dependent cohort, so no sibling
+    // change ever queues a re-check for it and its cover cannot be verified.
+    const { calls } = await cover(siblingReview());
+    const [dependent] = rows();
+    expect(calls.cardMembershipWheres).toEqual([
+      [
+        { id: "b-dependent" },
+        groupTripCoverageDependentWhere(
+          { ...dependent, id: null },
+          { groupBookingId: TRIP, role: "JOINER" },
+        ),
+      ],
+    ]);
+  });
+
+  it("withholds it when the snapshot moved between the day list's read and the queue read", async () => {
+    // The drain finished in between: no pending row is left, and the day list
+    // is showing the answer from before the re-check.
+    const { source } = await cover(siblingReview(), {
+      rereadReview: { "b-dependent": siblingReview({ ...STAMP, revision: 5 }) },
+    });
+    expect(source).toEqual(STALE);
+  });
+
+  it("awaits the queue read before it re-reads the snapshot", async () => {
+    // The re-read only catches a re-check that finished after the day list's
+    // read if it runs AFTER the queue read: run together, or swapped, a re-check
+    // landing between them leaves neither a pending row nor a changed column.
+    const { calls } = await cover(siblingReview());
+    expect(
+      calls.readSequence,
+      "INV-HOST-045 (docs/invariants/adult-member-hosting.md): the snapshot re-read must start " +
+        "only after the queue read has returned",
+    ).toEqual(["queue-read:start", "queue-read:end", "snapshot-reread:start"]);
+  });
+
+  it("counts the card's dependent population with the fan-out's own predicate", async () => {
+    const { calls } = await cover(siblingReview());
+    const [dependent] = rows();
+    expect(calls.dependentCountWheres).toEqual([
+      groupTripCoverageDependentWhere(dependent, {
+        groupBookingId: TRIP,
+        role: "JOINER",
+      }),
+    ]);
+  });
+
+  for (const [label, review, options] of [
+    ["a queued re-check for the card's owner", siblingReview(), { queuedOwnerIds: ["owner-dependent"] }],
+    ["review-only mode, whose confirming and membership seams queue nothing", siblingReview(), { policyRows: [SCOPE_ON_POLICY] }],
+    ["the Group Trip scope switched off", siblingReview(), { policyRows: [{ ...ENFORCED, hostScopeSameGroupTrip: false }] }],
+    ["a trip at the fan-out ceiling", siblingReview(), { dependentPopulation: GROUP_TRIP_COVERAGE_DEPENDENT_LIMIT }],
+    ["a failed revision read", siblingReview(), { failRevisionRead: true }],
+    ["a failed dependent count", siblingReview(), { failDependentCount: true }],
+    ["a missing stamp", siblingReview(null), {}],
+    ["a revision mismatch", siblingReview({ ...STAMP, revision: 3 }), {}],
+    ["a trip that shrank after a truncation", siblingReview({ ...STAMP, revision: 3 }), { revisions: { [TRIP]: 4 }, dependentPopulation: 1 }],
+    ["a trip row that has gone", siblingReview(), { revisions: {} }],
+    ["a card no policy change would re-queue (a completed stay)", siblingReview(), { outsidePolicyCohort: ["b-dependent"] }],
+  ] satisfies Array<[string, unknown, Parameters<typeof fakeStore>[0]]>) {
+    it(`withholds it under ${label}, with no rows or scopes in the payload`, async () => {
+      const { source, attached } = await cover(review, options);
+      expect(source, `INV-HOST-045: ${label}`).toEqual(STALE);
+      expect(JSON.stringify(attached)).not.toContain("SAME_GROUP_TRIP");
+    });
+  }
+
+  it("still shows the roster and the other card's line when a freshness read fails", async () => {
+    const { attached } = await cover(siblingReview(), { failRevisionRead: true });
+    expect(attached).toHaveLength(2);
+    expect(attached[1]).toHaveProperty("adultCoverSource");
+    expect(attached[0].groupTrip).toEqual({ label: 1 });
+  });
+
+  it("asks for no revision or count when no card's snapshot is stamped", async () => {
+    const { calls } = await cover(siblingReview(null));
+    expect(calls.dependentCountWheres).toEqual([]);
+  });
+});
 
 const KIOSK_SURFACES = [
   "src/lib/kiosk-group-trip.ts",

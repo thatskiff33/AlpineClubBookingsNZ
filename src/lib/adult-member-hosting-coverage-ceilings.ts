@@ -224,6 +224,15 @@ export const SAME_GROUP_TRIP_COVERAGE_SOURCE_LIMIT = 100;
 export const GROUP_TRIP_COVERAGE_DEPENDENT_LIMIT = 100;
 
 /**
+ * Does a Group Trip dependent population of this size fill the fan-out's
+ * ceiling? One spelling for the writer that records the truncation and the
+ * kiosk that refuses to vouch for a trip that large (#5239).
+ */
+export function groupTripDependentCeilingBinds(count: number): boolean {
+  return count >= GROUP_TRIP_COVERAGE_DEPENDENT_LIMIT;
+}
+
+/**
  * Say so DURABLY when the Group Trip dependent read filled its ceiling.
  *
  * A LOG LINE IS NOT ENOUGH HERE, and that is the difference from
@@ -261,7 +270,7 @@ export async function reportGroupTripDependentCeilingBound(
   read: string,
   db: AuditLogClient,
 ): Promise<void> {
-  if (returned < GROUP_TRIP_COVERAGE_DEPENDENT_LIMIT) return;
+  if (!groupTripDependentCeilingBinds(returned)) return;
   logger.warn(
     {
       groupBookingId: where.groupBookingId,

@@ -10,10 +10,11 @@ import {
   sanitizeAuditMetadata,
 } from "@/lib/audit";
 import { isAuditCategory } from "@/lib/audit-categories";
+import { buildAuditLogPruneWhere } from "@/lib/audit-prune-predicate";
 import {
+  ARCHIVABLE_RETENTION_CLASSES,
   AUDIT_ANONYMISED_REQUEST_COLUMNS,
   isAuditRetentionClass,
-  UNCLASSIFIED_RETENTION,
 } from "@/lib/audit-retention-classes";
 import logger from "@/lib/logger";
 import { prisma } from "@/lib/prisma";
@@ -29,10 +30,6 @@ const CRITICAL_MAIN_RETENTION_YEARS = 7;
 // `getAuditLogRetentionCutoffs(now).incidentPreserved`.
 const INCIDENT_PRESERVED_RETENTION_YEARS = 10;
 const DEFAULT_ARCHIVE_BATCH_SIZE = 500;
-const ARCHIVABLE_RETENTION_CLASSES: AuditRetentionClass[] = [
-  "sensitive_access",
-  "standard",
-];
 
 // ---------------------------------------------------------------------------
 // Audit archive column manifest (#2290)
@@ -681,55 +678,13 @@ export async function pruneExpiredAuditLogs(
   now = new Date(),
   options: { archiveActive?: boolean } = {}
 ): Promise<{ cutoff: Date; deleted: number }> {
-  const { criticalMain: cutoff, incidentPreserved: preservedCutoff } =
-    getAuditLogRetentionCutoffs(now);
-
-  // Archivable-class rows: gated on the archive marker only when an archive is
-  // active. `ARCHIVABLE_RETENTION_CLASSES` is the single source of which classes
-  // the archive is responsible for, shared with `archiveEligibleAuditLogs`.
-  const archivableExpiredClause: Prisma.AuditLogWhereInput = options.archiveActive
-    ? {
-        retentionClass: { in: ARCHIVABLE_RETENTION_CLASSES },
-        expiresAt: { lt: now },
-        archivedAt: { not: null },
-      }
-    : {
-        retentionClass: { in: ARCHIVABLE_RETENTION_CLASSES },
-        expiresAt: { lt: now },
-      };
-
+  const cutoffs = getAuditLogRetentionCutoffs(now);
+  // The rule itself, branch by branch, is `buildAuditLogPruneWhere`.
   const { count } = await db.auditLog.deleteMany({
-    where: {
-      // #3939: a preserved row also has to be ten years old, so it goes at the
-      // LATER of its normal rule and the cap. The column is NOT NULL DEFAULT
-      // false, so `incidentPreserved: false` has no NULL case.
-      AND: [
-        {
-          OR: [
-            { incidentPreserved: false },
-            { createdAt: { lt: preservedCutoff } },
-          ],
-        },
-      ],
-      OR: [
-        archivableExpiredClause,
-        {
-          // Never archived — pruned purely on its own 90-day expiry.
-          retentionClass: "diagnostic_high_volume",
-          expiresAt: { lt: now },
-        },
-        { AND: [UNCLASSIFIED_RETENTION, { expiresAt: { lt: now } }, { OR: [{ severity: null }, { severity: { not: "critical" } }] }] },
-        {
-          retentionClass: "critical",
-          createdAt: { lt: cutoff },
-          expiresAt: { lt: now },
-        },
-        { AND: [UNCLASSIFIED_RETENTION, { severity: "critical", createdAt: { lt: cutoff }, expiresAt: { lt: now } }] },
-      ],
-    },
+    where: buildAuditLogPruneWhere({ now, ...cutoffs }, options),
   });
 
-  return { cutoff, deleted: count };
+  return { cutoff: cutoffs.criticalMain, deleted: count };
 }
 
 // test seam
