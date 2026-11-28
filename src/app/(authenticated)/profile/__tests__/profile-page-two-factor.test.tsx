@@ -121,6 +121,7 @@ vi.mock("@/components/audit-timeline", () => ({
 }));
 
 import ProfilePage from "../page";
+import { PROFILE_SECURITY_HREF } from "@/lib/second-factor-enrolment";
 
 function moduleFlags(twoFactor: boolean) {
   return {
@@ -267,5 +268,11 @@ describe("ProfilePage two-factor card", () => {
 
     expect(html).toContain('id="account-credit"');
     expect(html).toContain('id="promo-codes"');
+  });
+
+  it("renders the Security anchor the factor set-up links point at (#4620)", async () => {
+    const html = await renderProfilePage();
+
+    expect(html).toContain(`id="${PROFILE_SECURITY_HREF.split("#")[1]}"`);
   });
 });

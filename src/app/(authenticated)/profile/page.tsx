@@ -55,7 +55,6 @@ import { MEMBER_ACCESS_ROLE_SELECT } from "@/lib/access-role-definitions";
 import { loadEffectiveModuleFlags } from "@/lib/module-settings";
 import { clubTime } from "@/lib/club-time/server";
 import { officerTwoFactorCardProps } from "@/lib/officer-two-factor-grace";
-import { PROFILE_SECURITY_SECTION_ID } from "@/lib/second-factor-enrolment";
 import { formatDateOnly } from "@/lib/date-only";
 import {
   grantSelfDietaryAccess,
@@ -112,7 +111,7 @@ function formatPromoBenefit(promo: {
 const PROFILE_SECTIONS: SectionNavItem[] = [
   { id: "profile-photo", label: "Profile Photo" },
   { id: "account-information", label: "Account Information" },
-  { id: PROFILE_SECURITY_SECTION_ID, label: "Security" },
+  { id: "security", label: "Security" },
   { id: "subscription-history", label: "Subscription History" },
   { id: "account-credit", label: "Account Credit" },
   { id: "promo-codes", label: "Promo Codes" },
@@ -422,7 +421,7 @@ export default async function ProfilePage({
         </Card>
 
         {/* Security */}
-        <Card id={PROFILE_SECURITY_SECTION_ID} className="scroll-mt-20">
+        <Card id="security" className="scroll-mt-20">
           <CardHeader>
             <CardTitle headingLevel={2}>Security</CardTitle>
             <CardDescription>

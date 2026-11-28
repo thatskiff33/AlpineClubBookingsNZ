@@ -10,8 +10,7 @@
  * Where a signed-in member adds or removes a sign-in factor: the Security
  * section of their profile. The path stays on the gated officer's allowlist.
  */
-export const PROFILE_SECURITY_SECTION_ID = "security";
-export const PROFILE_SECURITY_HREF = `/profile#${PROFILE_SECURITY_SECTION_ID}`;
+export const PROFILE_SECURITY_HREF = "/profile#security";
 
 /**
  * Said when a key cannot store a discoverable passkey (#4614), whether the
