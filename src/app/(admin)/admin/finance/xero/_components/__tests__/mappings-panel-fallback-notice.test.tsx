@@ -24,7 +24,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { expectRecoveryAlertToHoldFocus } from "@/lib/__tests__/helpers/focus";
 
 const mockFetchJson = vi.fn();
-vi.mock("../api", () => ({
+vi.mock("../api", async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
   fetchJson: (...a: unknown[]) => mockFetchJson(...a),
   postJson: vi.fn(),
 }));
@@ -73,6 +74,7 @@ vi.mock("@/components/ui/select", () => {
 });
 
 import { MappingsPanel } from "../mappings-panel";
+import { XeroRequestError } from "../api";
 
 /** The connected org's chart, as the chart-of-accounts route serialises it. */
 const CHART = [
@@ -233,5 +235,30 @@ describe("a refused save (#5235)", () => {
     expect(alert.textContent).toBe(refusal);
     // Still editing: nothing was saved, and the staged choices are kept.
     expect(screen.getAllByRole("combobox").length).toBeGreaterThan(0);
+  });
+
+  it("also shows a refusal about one mapping on that mapping's row, until its code is changed (#5235 review)", async () => {
+    const refusal =
+      "Hut Fee Refunds cannot use that expense account: Xero's tax rate OUTPUT2 (15% GST on Income), which refund credit notes carry, cannot be used on expenses, so Xero would reject them. Choose a revenue account, or ask your accountant which account and tax rate refunds should use. No account mapping was saved.";
+    mountPanel(mappingRows({ hutFeeRefunds: { code: "429" } }));
+    await screen.findByText("Goodwill & Write-Offs");
+    fireEvent.click(screen.getByRole("button", { name: /edit mappings/i }));
+    mockFetchJson.mockImplementation(async (url: string, init?: { method?: string }) => {
+      if (url === "/api/admin/xero/account-mappings" && init?.method === "PUT") {
+        throw new XeroRequestError(refusal, { error: refusal, key: "hutFeeRefunds" });
+      }
+      throw new Error(`unexpected fetch ${url}`);
+    });
+    fireEvent.click(screen.getByRole("button", { name: /^save/i }));
+
+    await waitFor(() => expect(screen.getAllByRole("alert")).toHaveLength(2));
+    for (const alert of screen.getAllByRole("alert")) expect(alert.textContent).toBe(refusal);
+
+    // Choosing another account takes the row's copy away; the top one stays until the next save.
+    const refundsPicker = screen
+      .getAllByRole("combobox")
+      .find((select) => (select as HTMLSelectElement).value === "429")!;
+    fireEvent.change(refundsPicker, { target: { value: "200" } });
+    expect(screen.getAllByRole("alert")).toHaveLength(1);
   });
 });

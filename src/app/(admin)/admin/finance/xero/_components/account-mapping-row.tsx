@@ -9,6 +9,7 @@ import {
   groupAccountsForMappingKey,
   isCodeExplicitlyConfigured,
   mappingCodeClassViolation,
+  mappingCodeMissingFromChart,
   MAPPING_DESCRIPTIONS,
   MAPPING_LABELS,
   resolveAccountMappingSource,
@@ -24,12 +25,15 @@ export function AccountMappingRow({
   setMappings,
   accounts,
   isEditingMappings,
+  refusal = null,
 }: {
   mappingKey: AccountMappingKey
   mappings: AccountMappings
   setMappings: (value: AccountMappings | null | ((prev: AccountMappings | null) => AccountMappings | null)) => void
   accounts: XeroAccount[]
   isEditingMappings: boolean
+  /** The last save's refusal when it was about this mapping (#5235 review): shown here as well as at the top. */
+  refusal?: string | null
 }) {
   const accountNoun = describeMappingAccountFilter(mappingKey)
   // INV-INT-021: the offered accounts come from the registry's filter, so this
@@ -45,6 +49,10 @@ export function AccountMappingRow({
   // a row goes unnoticed.
   const matchedAccount = accounts.find((account) => account.code === currentCode)
   const wrongKind = mappingCodeClassViolation(mappingKey, currentCode, accounts) !== null
+  // #5235 review: the chart lists active accounts only, so a code it does not
+  // list is archived, deleted, or newer than the chart. An empty chart (Xero
+  // not connected, or nothing read yet) says nothing.
+  const unlisted = accounts.length > 0 && mappingCodeMissingFromChart(currentCode, accounts)
   const currentIsOutsideFilter =
     currentCode != null &&
     currentCode !== "" &&
@@ -113,6 +121,18 @@ export function AccountMappingRow({
             organisation. Entries keep posting to it until you choose another account here, so
             choose {withIndefiniteArticle(accountNoun)} account, or refresh the chart of
             accounts if it is simply out of date.
+          </p>
+        ) : null}
+        {unlisted ? (
+          <p className="mt-1 text-xs text-warning-11">
+            This code is not an active account in the connected Xero organisation: it may have been
+            archived or deleted. Choose an active account here, or refresh the chart of accounts if
+            the account is new.
+          </p>
+        ) : null}
+        {refusal ? (
+          <p className="mt-1 text-xs text-danger" role="alert">
+            {refusal}
           </p>
         ) : null}
         {!usingFallback &&

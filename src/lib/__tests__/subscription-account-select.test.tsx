@@ -59,7 +59,7 @@ describe("the Subscription Income picker on the lockout screen (#5235)", () => {
       "__none__",
       ...accountsForMappingKey("subscriptionIncome", CHART).map((account) => account.code),
     ]);
-    expect(offered).toEqual(["__none__", "200", "203"]);
+    expect(offered).toEqual(["__none__", "200", "203", "260"]);
   });
 
   it("keeps a stored account of another kind listed, and says what it is not", () => {

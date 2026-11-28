@@ -13,7 +13,7 @@ import {
   AdminViewOnlySectionBanner,
   ViewOnlyActionButton,
 } from "@/components/admin/view-only-action"
-import { fetchJson } from "./api"
+import { fetchJson, XeroRequestError } from "./api"
 import { useAutoLoadOncePerOpening } from "./use-auto-load-once-per-opening"
 import {
   allHutFeeCellKeys,
@@ -104,6 +104,9 @@ export function MappingsPanel({
   const [refreshingReferenceData, setRefreshingReferenceData] = useState(false)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState("")
+  // #5235 review: a refused save about one mapping is shown on that row too.
+  // It stands while the row still holds the code that was refused.
+  const [rowRefusal, setRowRefusal] = useState<{ key: string; code: string | null; message: string } | null>(null)
   const [saved, setSaved] = useState(false)
   const [isEditingMappings, setEditing] = useState(false)
   const [hutFeeItemCodes, setHutFeeItemCodes] = useState<HutFeeMap>({})
@@ -194,6 +197,7 @@ export function MappingsPanel({
     if (!accountMappings) return
     setSaving(true)
     setError("")
+    setRowRefusal(null)
     setSaved(false)
     try {
       const savedAccounts = await fetchJson<AccountMappings>(
@@ -220,6 +224,11 @@ export function MappingsPanel({
         setError(ADMIN_FORBIDDEN_SAVE_REASON)
         return
       }
+      const refusedKey = err instanceof XeroRequestError ? (err.body as { key?: unknown } | null)?.key : undefined
+      if (typeof refusedKey === "string") {
+        const refusedCode = accountMappings[refusedKey as keyof AccountMappings]?.code ?? null
+        setRowRefusal({ key: refusedKey, code: refusedCode, message: err instanceof Error ? err.message : "" })
+      }
       setError(err instanceof Error ? err.message : "Failed to save mappings")
     } finally {
       setSaving(false)
@@ -231,6 +240,7 @@ export function MappingsPanel({
     setHutFeeItemCodes(savedHutFeeItemCodes)
     setEntranceFeeItemCodes(savedEntranceFeeItemCodes)
     setEditing(false)
+    setRowRefusal(null)
     // With nothing saved yet the only error on screen is the failed opening
     // load, and nothing re-asserts it now that the load no longer loops; keep
     // it shown until the admin retries (#5203).
@@ -298,6 +308,9 @@ export function MappingsPanel({
               setMappings={setAccountMappings}
               accounts={chartOfAccounts}
               isEditingMappings={isEditingMappings}
+              refusal={
+                rowRefusal?.key === key && (accountMappings[key]?.code ?? null) === rowRefusal.code ? rowRefusal.message : null
+              }
             />
           )) : null}
           <Separator />

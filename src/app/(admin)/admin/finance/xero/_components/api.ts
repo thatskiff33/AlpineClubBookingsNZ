@@ -28,10 +28,20 @@ async function readOptionalJson<T>(res: Response, fallback: T): Promise<T> {
 // only as the fallback the shared rule is handed: a blank or non-text `error`
 // then lands on `message`, and a blank or non-text `message` on the caller's
 // own sentence — never on an empty alert or "[object Object]" (#3445).
-async function readErrorMessage(res: Response, fallback: string): Promise<string> {
-  const data = await readOptionalJson<ErrorBody | null>(res, null)
+function errorMessageOf(data: ErrorBody | null, fallback: string): string {
   const message = typeof data?.message === "string" ? data.message.trim() : ""
   return apiErrorMessageFromBody(data, message === "" ? fallback : message)
+}
+
+/**
+ * A refused request, with the refusal's own body: a caller can read a field a
+ * route adds beside `error`, such as the account mapping save's `key` (#5235).
+ */
+export class XeroRequestError extends Error {
+  constructor(message: string, readonly body: unknown) {
+    super(message)
+    this.name = "XeroRequestError"
+  }
 }
 
 export async function fetchJson<T>(url: string, options?: RequestInit, fallbackMessage = "Request failed"): Promise<T> {
@@ -42,7 +52,8 @@ export async function fetchJson<T>(url: string, options?: RequestInit, fallbackM
     throw new Error(XERO_ACTION_NETWORK_ERROR)
   }
   if (!res.ok) {
-    throw new Error(await readErrorMessage(res, fallbackMessage))
+    const data = await readOptionalJson<ErrorBody | null>(res, null)
+    throw new XeroRequestError(errorMessageOf(data, fallbackMessage), data)
   }
   return readJson<T>(res)
 }
