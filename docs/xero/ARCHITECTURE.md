@@ -3309,6 +3309,18 @@ Stated limits:
   failed refund's note still stands: Xero credits that amount twice until an
   officer voids one (owner decision, 25 Oct 2026). #4361 plans the automated
   design for this family of cases, #4359 included.
+- **A dead refund out of a group organiser's card, closed as "Paid another
+  way", is noted on each joiner's invoice** (#5267, owner decision 20 Nov 2026;
+  `INV-PAY-153`). A group the organiser paid for by card has one invoice per
+  joiner, so each joiner's close record takes the same bank-transfer note,
+  planned and keyed as any close's: a per-joiner refund one record, an old
+  whole-group refund one per joiner (`:child:<booking>`), whose notes add up to
+  the bank refund. A joiner with no invoice in Xero gets none, as any close.
+  No officer is emailed. Closes made before this release were left to an
+  officer by hand, and no code revisits them. An old whole-group close from
+  then wrote no record, so the nightly check can read its bank money as card
+  cash and raise a card note beside the officer's: the release note asks
+  officers to check and void one.
 - **A re-send whose final attempt loses its answer after `charge.refunded`
   left it to that attempt is noted by nobody.** The webhook defers to a row
   still mid-attempt; when that attempt's answer is lost (a timeout, a crash the

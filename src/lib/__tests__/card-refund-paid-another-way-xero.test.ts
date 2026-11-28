@@ -91,6 +91,7 @@ import {
   queuePaidAnotherWayXero,
 } from "@/lib/card-refund-paid-another-way-xero";
 import { xeroQueuedMessage, xeroRefundNotePromise } from "@/components/admin/dead-card-refunds-xero-copy";
+import { buildOrganiserChildCancellationRefundKey } from "@/lib/payment-recovery-keys";
 
 const db = {
   payment: { findUnique: vi.fn(async () => ({ id: "p-1", bookingId: "b-1", refundedAmountCents: 0 })) },
@@ -279,6 +280,38 @@ describe("a failed-later row closed as paid another way (#4104, money 2; delta M
     const xeroPlan = await paidAnotherWayXeroPlan(db as never, failedLater as never, { id: "p-1", xeroInvoiceId: null }, { lockApprovalTask: false });
     expect(xeroPlan).toEqual({ xeroRefundNote: "none" });
     expect(await queue(xeroPlan, 4_000)).toBe("nothing");
+  });
+});
+
+describe("#5267: a joiner's refund out of the organiser's card, reopened after Stripe failed its recorded refund", () => {
+  // The executor recorded the refund and queued its card note on the joiner's
+  // invoice; Stripe failed it later, and the cron reopened the same row with
+  // the reopen's marker on its one slice (`organiserChildRefundAllocationPlan`).
+  // The row's key, minted by the writer's own builder (`INV-SSOT`) rather than written out.
+  const childRow = buildOrganiserChildCancellationRefundKey("settle1", "child-1");
+  const reopened = {
+    idempotencyKey: childRow,
+    paymentIntentId: "pi_org",
+    amountCents: 4_500,
+    allocationPlan: [{ paymentTransactionId: childRow, amountCents: 4_500, reopenedAfterRefundId: "re_failed" }],
+  };
+
+  it("MUTATION: the card note still in Xero answers it - a Stripe reversal and the bank note, never a second credit", async () => {
+    // The $45 card note stands; the cash behind it went with the failed refund.
+    mocks.coveredCents.mockResolvedValue(4_500);
+    mocks.eligibleCashCents.mockResolvedValue(0);
+    const xeroPlan = await plan(reopened);
+    expect(xeroPlan).toEqual({ xeroRefundNote: "now", cardNoteCoversCents: 4_500 });
+    expect(await queue(xeroPlan, 4_500)).toBe("stripe-reversal-and-bank-note");
+    expect(mocks.enqueueReversal).toHaveBeenCalledWith(expect.objectContaining({ amountCents: 4_500 }));
+    expect(noteCents()).toBe(4_500);
+  });
+
+  it("a joiner's refund never recorded (no reopen) is never read for a card note", async () => {
+    mocks.coveredCents.mockResolvedValue(4_500);
+    const fresh = { ...reopened, allocationPlan: [{ paymentTransactionId: reopened.idempotencyKey, amountCents: 4_500 }] };
+    expect(await plan(fresh)).toEqual({ xeroRefundNote: "now" });
+    expect(mocks.coveredCents).not.toHaveBeenCalled();
   });
 });
 

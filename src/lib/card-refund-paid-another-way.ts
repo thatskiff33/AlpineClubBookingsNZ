@@ -12,6 +12,7 @@ import {
   paidAnotherWayXeroAuditFollowUp,
   paidAnotherWayXeroPlan,
   paidAnotherWayXeroPromise,
+  paidAnotherWayXeroQueuedARow,
   queuePaidAnotherWayXero,
   type PaidAnotherWayXeroPlan,
   type PaidAnotherWayXeroPromise,
@@ -42,6 +43,7 @@ import {
   DEAD_CARD_REFUND_CLOSED,
 } from "@/lib/card-refund-dead-row";
 import { deadRowClaimWhere, lockDeadCardRefundRow } from "@/lib/card-refund-dead-row-lock";
+import { groupCardRefundXeroPromise } from "@/lib/card-refund-group-paid-another-way-xero";
 import { isOwedCardRefundOperation } from "@/lib/open-card-refund-owed";
 import { LEDGER_ROWS_OLDEST_FIRST } from "@/lib/payment-ledger-order";
 import { prisma } from "@/lib/prisma";
@@ -213,7 +215,8 @@ export interface DeadCardRefundRow {
    * #4851: whose card the row is. `charge` is today's charge-backed refund.
    * `organiser-child` is one joiner's refund out of the organiser's combined
    * card. `legacy-group` is the old whole-group refund. The two group kinds
-   * skip `deadCardRefundStillOwed` and `paidAnotherWayXeroPlan`.
+   * skip `deadCardRefundStillOwed`; their Xero promise is each joiner's
+   * (`groupCardRefundXeroPromise`, #5267).
    */
   settleKind: "charge" | "organiser-child" | "legacy-group";
   /**
@@ -228,7 +231,8 @@ export interface DeadCardRefundRow {
  * still owes. #4851: a per-joiner refund out of the organiser's card and a
  * pre-#3653 whole-group refund are on this list too. Their owed figure is the
  * row's own amount, or what the frozen plan has not sent; neither reads
- * `deadCardRefundStillOwed` or `paidAnotherWayXeroPlan`. A legacy row stays
+ * `deadCardRefundStillOwed`, and their Xero promise is their joiners' invoices'
+ * (`groupCardRefundXeroPromise`, #5267). A legacy row stays
  * when that figure is 0, so a mirror-only finish is reachable. #4368 (owner
  * decision, 25 Oct 2026; review C): a charge-backed row that owes nothing stays
  * while Stripe refunds the attribution gives it cover its own slices, naming
@@ -278,7 +282,8 @@ export async function listDeadCardRefunds(): Promise<DeadCardRefundRow[]> {
     later: ReturnType<typeof laterStripeRefundsCovering>;
   } & (
     | { kind: "charge"; owed: ReturnType<typeof deadCardRefundStillOwed> }
-    | { kind: "organiser-child" | "legacy-group"; owed: null }
+    | { kind: "organiser-child"; owed: null }
+    | { kind: "legacy-group"; owed: null; refundPlan: Prisma.JsonValue | null }
   );
   const listed = operations.flatMap((operation): ListedDeadCardRefund[] => {
     if (isOrganiserChildRefundKey(operation.idempotencyKey)) {
@@ -292,6 +297,7 @@ export async function listDeadCardRefunds(): Promise<DeadCardRefundRow[]> {
         owedCents: settlement ? legacyGroupSettlementRefundUnsentCents(settlement) : 0,
         later: [],
         owed: null,
+        refundPlan: settlement?.refundPlan ?? null,
       }];
     }
     if (!isOwedCardRefundOperation(operation)) return [];
@@ -305,6 +311,12 @@ export async function listDeadCardRefunds(): Promise<DeadCardRefundRow[]> {
     listed.map(async (entry) => {
       const { operation, owedCents, later } = entry;
       if (entry.kind !== "charge") {
+        // #5267: the joiners' invoices are credited as the close will, from the same plan.
+        const planned = operation.paymentIntentId ? { ...operation, paymentIntentId: operation.paymentIntentId } : null;
+        const xero = owedCents > 0 && planned
+          ? await groupCardRefundXeroPromise(prisma, entry.kind === "organiser-child"
+            ? { kind: entry.kind, operation: planned, payment: operation.payment } : { kind: entry.kind, operation: planned, refundPlan: entry.refundPlan })
+          : { xeroRefundNote: "none" as const, cardNoteCoversCents: 0 };
         return {
           operationId: operation.id,
           bookingId: operation.bookingId,
@@ -312,8 +324,7 @@ export async function listDeadCardRefunds(): Promise<DeadCardRefundRow[]> {
           raisedAt: operation.createdAt.toISOString(),
           owedCents,
           wholeAmountOnly: true,
-          xeroRefundNote: "none" as const,
-          cardNoteCoversCents: 0,
+          ...xero,
           stripeMayHaveRefunded: lastErrorSuggestsStripeMayHaveRefunded(operation.lastError),
           laterStripeRefunds: [],
           tryCardAgainRefusal: entry.kind === "legacy-group" ? LEGACY_GROUP_CARD_REFUND_TRY_AGAIN_REFUSAL : null,
@@ -676,14 +687,8 @@ export async function closeCardRefundPaidAnotherWay(
     };
   }, LOCK1_HOLDER_TRANSACTION_BUDGET);
 
-  // Round 10: only a close that queued a row - its note, or the receipt its
-  // note follows - kicks the outbox; a close whose note waits on another
-  // invoice, or on an officer, queued nothing to run.
-  if (
-    result.xeroQueued === "refund-note" ||
-    result.xeroQueued === "stripe-reversal-and-bank-note" ||
-    result.xeroQueued === "receipt-then-refund-note"
-  ) {
+  // Round 10: only a close that queued a row kicks the outbox.
+  if (paidAnotherWayXeroQueuedARow(result.xeroQueued)) {
     // The note's (or the receipt's) row committed with the close: only the kick is left.
     await kickQueuedXeroOutboxOperationsIfConnected({ limit: 1 }).catch((error: unknown) =>
       logger.error({ err: error, operationId: result.operationId }, "Failed to kick the Xero outbox after a paid-another-way close"),

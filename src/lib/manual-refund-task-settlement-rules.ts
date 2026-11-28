@@ -180,8 +180,11 @@ export const COMPLETED_CANCEL_CARD_SHORTFALL_TASK_WHERE = {
  *   the note once the receipt is in Xero (`INV-PAY-110`, `INV-PAY-122`);
  * - `none` (`:no-xero-note`): nothing to credit, and no receipt the app can
  *   record.
+ * #5267: an old whole-group row's close writes one record per joiner, keyed
+ * `<row>:child:<bookingId>` before the suffix (`childBookingId`).
  */
 export const CARD_REFUND_PAID_ANOTHER_WAY_KEY_PREFIX = "card-refund-paid-another-way:";
+const CARD_REFUND_PAID_ANOTHER_WAY_CHILD_SEGMENT = ":child:";
 const CARD_REFUND_PAID_ANOTHER_WAY_NO_NOTE_SUFFIX = ":no-xero-note";
 const CARD_REFUND_PAID_ANOTHER_WAY_NOTE_AFTER_RECEIPT_SUFFIX = ":note-after-receipt";
 
@@ -194,18 +197,19 @@ const PAID_ANOTHER_WAY_KEY_SUFFIX: Record<PaidAnotherWayXeroNote, string> = {
   none: CARD_REFUND_PAID_ANOTHER_WAY_NO_NOTE_SUFFIX,
 };
 
-/** The one occurrence key of one card refund operation's paid-another-way close. */
+/** The one occurrence key of one card refund operation's paid-another-way close (#5267: or of one joiner's record of it). */
 export function cardRefundPaidAnotherWayOccurrenceKey(
   paymentRecoveryOperationId: string,
-  { xeroRefundNote }: { xeroRefundNote: PaidAnotherWayXeroNote },
+  { xeroRefundNote, childBookingId }: { xeroRefundNote: PaidAnotherWayXeroNote; childBookingId?: string },
 ): string {
-  return `${CARD_REFUND_PAID_ANOTHER_WAY_KEY_PREFIX}${paymentRecoveryOperationId}${PAID_ANOTHER_WAY_KEY_SUFFIX[xeroRefundNote]}`;
+  const child = childBookingId === undefined ? "" : `${CARD_REFUND_PAID_ANOTHER_WAY_CHILD_SEGMENT}${childBookingId}`;
+  return `${CARD_REFUND_PAID_ANOTHER_WAY_KEY_PREFIX}${paymentRecoveryOperationId}${child}${PAID_ANOTHER_WAY_KEY_SUFFIX[xeroRefundNote]}`;
 }
 
 /**
  * Every key a close of this card refund operation can carry, one per way its
  * note is raised: the one way to find a close's record by the operation it
- * closed (#3924 round 8, `INV-SSOT`).
+ * closed (#3924 round 8, `INV-SSOT`); never #5267's per-joiner keys.
  */
 export function closeKeysOf(paymentRecoveryOperationId: string): string[] {
   return (Object.keys(PAID_ANOTHER_WAY_KEY_SUFFIX) as PaidAnotherWayXeroNote[]).map((xeroRefundNote) =>
@@ -269,14 +273,10 @@ function readPaidAnotherWayKey(task: {
 }): { operationId: string; xeroRefundNote: PaidAnotherWayXeroNote } | null {
   if (!isCardRefundPaidAnotherWayTask(task) || task.occurrenceKey === null) return null;
   const rest = task.occurrenceKey.slice(CARD_REFUND_PAID_ANOTHER_WAY_KEY_PREFIX.length);
-  for (const xeroRefundNote of ["after-receipt", "none"] as const) {
-    const suffix = PAID_ANOTHER_WAY_KEY_SUFFIX[xeroRefundNote];
-    if (rest.endsWith(suffix)) {
-      const operationId = rest.slice(0, -suffix.length);
-      return operationId.length > 0 ? { operationId, xeroRefundNote } : null;
-    }
-  }
-  return rest.length > 0 ? { operationId: rest, xeroRefundNote: "now" } : null;
+  // `now`'s suffix is empty, so it is tried last; a joiner's segment (#5267) is not the operation's id.
+  const xeroRefundNote = (["after-receipt", "none", "now"] as const).find((note) => rest.endsWith(PAID_ANOTHER_WAY_KEY_SUFFIX[note]))!;
+  const operationId = rest.slice(0, rest.length - PAID_ANOTHER_WAY_KEY_SUFFIX[xeroRefundNote].length).split(CARD_REFUND_PAID_ANOTHER_WAY_CHILD_SEGMENT)[0]!;
+  return operationId.length > 0 ? { operationId, xeroRefundNote } : null;
 }
 
 /** The operation a paid-another-way record closed, read off its key; null for any other task. */

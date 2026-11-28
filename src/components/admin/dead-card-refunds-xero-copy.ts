@@ -1,3 +1,4 @@
+import type { GroupCardRefundXeroQueued } from "@/lib/card-refund-group-paid-another-way-xero";
 import type { PaidAnotherWayXeroPromise, PaidAnotherWayXeroQueued } from "@/lib/card-refund-paid-another-way-xero";
 import { paidAnotherWayReceiptRetryInstruction } from "@/lib/paid-another-way-receipt-retry-wording";
 
@@ -19,6 +20,10 @@ export function xeroRefundNotePromise(
   /** #4369: what a card refund note still covers, formatted (`cardNoteCoversCents`). */
   cardNoteCovers = "",
 ): string {
+  if (xeroRefundNote === "all-joiners" || xeroRefundNote === "some-joiners") {
+    const share = `Each joiner with a Xero invoice gets a refund credit note for their share, worded "${bankNoteWording}".`;
+    return xeroRefundNote === "all-joiners" ? share : `${share} Some joiners have no Xero invoice; no note is queued for them.`;
+  }
   if (xeroRefundNote === "now") {
     return `Closing this queues a Xero refund credit note for the amount, worded "${bankNoteWording}". If an invoice already records the payment, the note credits that invoice.`;
   }
@@ -79,4 +84,17 @@ export function xeroQueuedMessage(xeroQueued: PaidAnotherWayXeroQueued | undefin
     return `An invoice recording the failed card refund's money back in the Stripe account, for the amount its card note covered, is queued, and a Xero refund credit note worded "${bankNoteWording}" is queued for the full amount paid back.`;
   }
   return "No Xero refund credit note was queued: check the refund is recorded in Xero.";
+}
+
+/**
+ * #5267: what the message after a group card refund's bank close says it
+ * queued in Xero - each joiner's own note, worded as any close's - and, for an
+ * old whole-group refund where only some joiners got a note, that the rest
+ * need checking in Xero.
+ */
+export function groupXeroQueuedMessage(xeroQueued: GroupCardRefundXeroQueued | undefined, bankNoteWording: string): string {
+  if (xeroQueued === "some-refund-notes") {
+    return `A Xero refund credit note, worded "${bankNoteWording}", is queued on some joiners' invoices. None was queued for the others, for example because their booking has no Xero invoice: check their refunds are recorded in Xero.`;
+  }
+  return xeroQueuedMessage(xeroQueued, bankNoteWording);
 }

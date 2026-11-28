@@ -911,7 +911,7 @@ export type GroupSettlementRefundReplayResult = {
  * One child's mirror of a frozen pre-#3653 plan, inside the caller's
  * transaction. The replay and the Stuck States bank close share this body.
  * `paidBackBy` says where the money went. Only `card` enqueues a card credit
- * note: the bank close credits the group's invoice by hand. A `bank` close
+ * note: a bank close's joiner notes are its records' (#5267). A `bank` close
  * posts the child's plan refund as the bank refund it was (`INV-PAY-153`).
  */
 export async function applyLegacyGroupChildRefundMirror(
@@ -953,7 +953,7 @@ export async function applyLegacyGroupChildRefundMirror(
     return { applied: false, raised: false, refundedCents: 0, queuedOperationId: null };
   }
   const refundedCents = nextRefunded - payment.refundedAmountCents;
-  // Only a card refund gets a card credit note; a bank close's invoice is credited by hand.
+  // Only a card refund gets a card credit note; a bank close's note is its record's (#5267).
   const queued = paidBackBy === "card" ? await enqueueXeroRefundCreditNoteOperation(paymentId, refundedCents, { store: tx }) : null;
   await postGroupSettlementRefundLedgerLine({
     store: tx,

@@ -27,6 +27,7 @@ import {
   STRIPE_MAY_HAVE_REFUNDED_WARNING,
   type DeadCardRefundPanelRow,
 } from "@/components/admin/dead-card-refunds-panel";
+import { xeroRefundNotePromise } from "@/components/admin/dead-card-refunds-xero-copy";
 import { expectRecoveryAlertToHoldFocus } from "@/lib/__tests__/helpers/focus";
 import { LEGACY_GROUP_CARD_REFUND_TRY_AGAIN_REFUSAL } from "@/lib/card-refund-group-copy";
 import { describeRefundMethod } from "@/lib/xero-refund-method";
@@ -854,6 +855,33 @@ describe("#4851: a dead refund out of the group organiser's card", () => {
     expect(within(dialog).getByRole("radio", { name: "Paid back part of it" })).toBeDisabled();
   });
 
+  // #5267: the joiner's invoice is credited by the app; nobody is asked to do it by hand.
+  it("MUTATION: a per-joiner row promises the joiner's bank refund note, and the close says it is queued", async () => {
+    openDialog(row({ settleKind: "organiser-child", wholeAmountOnly: true, xeroRefundNote: "now" }));
+    const dialog = screen.getByRole("dialog");
+    expect(dialog).toHaveTextContent(xeroRefundNotePromise("now", BANK_NOTE_WORDING));
+    expect(dialog).not.toHaveTextContent(/by hand|emailed/);
+    fireEvent.click(fullChoice());
+    fireEvent.change(noteBox(), { target: { value: "Bank transfer to the organiser" } });
+    respond(200, { success: true, outcome: "bank", xeroQueued: "refund-note" });
+    fireEvent.click(closeButton());
+    await waitFor(() => expect(mocks.toastSuccess).toHaveBeenCalled());
+    expect(mocks.toastSuccess).toHaveBeenCalledWith(`The bank payment is recorded. Its Xero refund credit note, worded "${BANK_NOTE_WORDING}", is queued.`);
+  });
+
+  it("an old whole-group close whose joiners are not all in Xero says the rest need checking", async () => {
+    openDialog(row({ settleKind: "legacy-group", wholeAmountOnly: true, xeroRefundNote: "some-joiners", tryCardAgainRefusal: LEGACY_GROUP_CARD_REFUND_TRY_AGAIN_REFUSAL }));
+    expect(screen.getByRole("dialog")).toHaveTextContent("Some joiners have no Xero invoice; no note is queued for them.");
+    fireEvent.click(fullChoice());
+    fireEvent.change(noteBox(), { target: { value: "Bank transfer to the organiser" } });
+    respond(200, { success: true, outcome: "bank", xeroQueued: "some-refund-notes" });
+    fireEvent.click(closeButton());
+    await waitFor(() => expect(mocks.toastSuccess).toHaveBeenCalled());
+    const said = String(mocks.toastSuccess.mock.calls[0]?.[0]);
+    expect(said).toContain(`A Xero refund credit note, worded "${BANK_NOTE_WORDING}", is queued on some joiners' invoices. None was queued for the others`);
+    expect(said).not.toMatch(/emailed/);
+  });
+
   it("Try the card again says the ask goes to the organiser's card, and a deferred retry says when", async () => {
     render(
       <DeadCardRefundsPanel
@@ -880,6 +908,13 @@ describe("#4851: a dead refund out of the group organiser's card", () => {
     expect(paidAnotherWay()).toBeEnabled();
     expect(screen.queryByRole("button", { name: /Try the card again/ })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /nothing left owed/i })).not.toBeInTheDocument();
+  });
+
+  // #5267 review: owing nothing, the close only finishes the joiners' card records, so no bank note is promised or refused.
+  it("MUTATION: the old whole-group row that owes nothing promises no Xero bank note and asks for nothing by hand", () => {
+    openDialog(row({ settleKind: "legacy-group", owedCents: 0, wholeAmountOnly: true, xeroRefundNote: "none", tryCardAgainRefusal: LEGACY_GROUP_CARD_REFUND_TRY_AGAIN_REFUSAL }));
+    const dialog = screen.getByRole("dialog");
+    expect(dialog).not.toHaveTextContent(/Xero refund credit note|by hand if it needs one/);
   });
 
   it("finance view-only leaves the organiser's buttons disabled", () => {

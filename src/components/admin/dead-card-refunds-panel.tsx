@@ -32,8 +32,9 @@ import type { PaidAnotherWayXeroPromise } from "@/lib/card-refund-paid-another-w
 import { PAID_BACK_REST_CHOICES, PAID_BACK_REST_LABELS, type PaidBackChoice, type PaidBackRestChoice } from "@/lib/card-refund-paid-back";
 import { MANUAL_PAYMENT_NOTE_MAX } from "@/lib/manual-payment-note";
 import { parseDecimalDollarsToCents } from "@/lib/money-input";
+import type { ClubFormat } from "@/lib/club-format";
 import { formatCents, formatCentsPlain } from "@/lib/utils";
-import { xeroQueuedMessage, xeroRefundNotePromise } from "@/components/admin/dead-card-refunds-xero-copy";
+import { groupXeroQueuedMessage, xeroQueuedMessage, xeroRefundNotePromise } from "@/components/admin/dead-card-refunds-xero-copy";
 import {
   NothingLeftOwedDialog,
   TryCardAgainDialog,
@@ -76,6 +77,20 @@ export interface DeadCardRefundPanelRow {
 
 function isGroupCardRefund(row: { settleKind?: string }): boolean {
   return row.settleKind === "organiser-child" || row.settleKind === "legacy-group";
+}
+
+/**
+ * #5267: the dialog's Xero line. A group row's joiners are credited in Xero as
+ * any close's member is; a group row that owes nothing pays nobody by bank, so
+ * it promises no bank note.
+ */
+function DialogXeroPromise({ row, bankNoteWording, format }: { row: DeadCardRefundPanelRow; bankNoteWording: string; format: ClubFormat }) {
+  if (isGroupCardRefund(row) && row.owedCents === 0) return null;
+  return (
+    <p className="text-muted-foreground">
+      {xeroRefundNotePromise(row.xeroRefundNote, bankNoteWording, formatCents(row.cardNoteCoversCents, format))}
+    </p>
+  );
 }
 
 /** The warning a refund whose last failure may have reached Stripe carries, on its row and in its dialog. */
@@ -274,7 +289,7 @@ export function DeadCardRefundsPanel({
         const sentence = data.outcome === "recorded-stripe"
           ? "Stripe already had this refund. It is recorded, and nobody is paid again."
           : data.outcome === "bank"
-            ? "The bank payment is recorded. Officers are emailed to credit the group's invoice in Xero by hand."
+            ? `The bank payment is recorded. ${groupXeroQueuedMessage(data.xeroQueued, bankNoteWording)}`
             : "Closed. Nothing more is sent, and nobody is paid again.";
         toast.success(sentence);
       } else {
@@ -419,7 +434,7 @@ export function DeadCardRefundsPanel({
               <DialogTitle>Close this card refund as paid another way?</DialogTitle>
               <DialogDescription>
                 {target && isGroupCardRefund(target)
-                  ? "If Stripe already has the refund, this records it and pays nobody again. Otherwise the bank payment is recorded and officers are emailed to credit the group's invoice in Xero by hand."
+                  ? "If Stripe already has the refund, this records it and pays nobody again. Otherwise the bank payment is recorded, and Xero is told as below."
                   : "Stripe will not be asked again. The amount is recorded as refunded on the payment, and the refund leaves Refunds owed. Only do this once the member has the money."}
               </DialogDescription>
             </DialogHeader>
@@ -430,13 +445,7 @@ export function DeadCardRefundsPanel({
               <p className="text-muted-foreground">
                 Settle it here, not with a new refund in the Stripe dashboard.
               </p>
-              {target && isGroupCardRefund(target) ? null : (
-                <p className="text-muted-foreground">
-                  {target
-                    ? xeroRefundNotePromise(target.xeroRefundNote, bankNoteWording, formatCents(target.cardNoteCoversCents, format))
-                    : null}
-                </p>
-              )}
+              {target ? <DialogXeroPromise row={target} bankNoteWording={bankNoteWording} format={format} /> : null}
               <p className="font-medium text-foreground">
                 {target ? `${formatCents(target.owedCents, format)} is still owed.` : null}
               </p>
