@@ -106,13 +106,13 @@ Pinned by `image-derivatives.test.ts`, `admin-image-manager-derivatives.test.ts`
   that a title exists, so a route with no `ROUTES` row can change its wording
   unnoticed. A new such route adds a row.
 - The screens a member reaches from an email link, and login, dashboard,
-  bookings, notices and `/join/apply`, have exactly one level-1 heading in
-  every render state.
+  bookings, notices and `/join/apply`, and the Finance screens, have exactly
+  one level-1 heading in every render state.
 - Every `CardTitle` declares a heading level or `"none"`; there is no default
   level (#2796 D1). `card-title-classification-census.test.ts` forbids
-  unclassified titles under the member-facing roots, the public website and
-  the member cards it lists, including the booking editor and edit-booking
-  panel (#5216), and ratchets the rest down (#4951).
+  unclassified titles under the member-facing roots, the public website, the
+  Finance area and the shared cards it lists, including the booking editor and
+  edit-booking panel (#5216), and ratchets the rest down (#4951).
 - An H1 an admin writes in a notice body or in the lodge instructions renders
   as an H2 wherever it is shown; the stored HTML and the editor keep the H1.
 - Limit: an H1 in the stored header or body HTML of `/join/apply` adds a second
@@ -123,4 +123,5 @@ Pinned by `image-derivatives.test.ts`, `admin-image-manager-derivatives.test.ts`
   `member-token-screen-headings.test.tsx`, `single-card-screen-headings.test.tsx`,
   `join-apply-state-headings.test.tsx`, `instruction-screen-headings.test.tsx`,
   `booking-detail-card-headings.test.tsx`,
-  `edit-booking/__tests__/heading-outline.test.tsx`.
+  `edit-booking/__tests__/heading-outline.test.tsx`, and the Finance screens'
+  `heading-outline.test.tsx` files.

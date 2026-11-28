@@ -71,22 +71,33 @@ export function SectionCard({
       className="mb-6 scroll-mt-24 focus:outline-none"
     >
       <CardHeader className="gap-4 md:flex-row md:items-start md:justify-between">
-        <button
-          type="button"
-          onClick={() => onToggle(!open)}
-          aria-expanded={open}
-          className="flex w-full items-start justify-between gap-3 rounded-md text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring md:flex-1"
-        >
-          <div className="space-y-1">
-            <CardTitle id={titleId}>{title}</CardTitle>
-            <CardDescription>{description}</CardDescription>
-          </div>
-          {open ? (
-            <ChevronDown aria-hidden className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
-          ) : (
-            <ChevronRight aria-hidden className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
-          )}
-        </button>
+        {/*
+          The section's level-2 heading, under the page's "Xero Sync" h1
+          (#5216). It wraps the toggle, as the ARIA disclosure pattern does,
+          because a heading role inside a button is dropped: a button's children
+          are presentational. A `<div>` with the role rather than an `<h2>` so
+          the theme's heading font does not restyle the title and description
+          (docs/ARCHITECTURE.md, "Card titles and heading semantics"), and named
+          by the title alone so the heading list does not read the description.
+        */}
+        <div role="heading" aria-level={2} aria-labelledby={titleId} className="w-full md:flex-1">
+          <button
+            type="button"
+            onClick={() => onToggle(!open)}
+            aria-expanded={open}
+            className="flex w-full items-start justify-between gap-3 rounded-md text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          >
+            <div className="space-y-1">
+              <CardTitle id={titleId} headingLevel="none">{title}</CardTitle>
+              <CardDescription>{description}</CardDescription>
+            </div>
+            {open ? (
+              <ChevronDown aria-hidden className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
+            ) : (
+              <ChevronRight aria-hidden className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
+            )}
+          </button>
+        </div>
         {actions ? (
           <div className="flex shrink-0 items-center gap-2" onClick={(event) => event.stopPropagation()}>
             {actions}

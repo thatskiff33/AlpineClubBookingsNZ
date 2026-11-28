@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { FINANCE_HUB } from "@/lib/admin-hubs/hubs/finance";
 import {
   CARD_TITLE_OPEN,
   headingClassification,
@@ -43,7 +44,30 @@ import {
  * the membership application form among them (#5372). Both are needed: the
  * pages root alone holds no card title.
  */
-const SWEPT_ROOTS = ["src/app/(website)/", "src/components/website/"];
+const SWEPT_ROOTS = [
+  "src/app/(website)/",
+  "src/components/website/",
+  // #5216 PR 2, the Finance area: the admin Finance hub's pages, the finance
+  // workspace (`/finance`) and the charts only it draws.
+  "src/app/(admin)/admin/finance/",
+  "src/app/(finance)/",
+  "src/components/finance/",
+];
+
+/**
+ * Where the Finance hub's pages lived before the admin hubs epic (#4468) moved
+ * them under `admin/finance/`. None holds a file today; they are forbidden too,
+ * so a branch cut before the move, or a move undone, cannot bring an
+ * unclassified Finance title back by path.
+ */
+const LEGACY_SWEPT_ROOTS = [
+  "src/app/(admin)/admin/payments/",
+  "src/app/(admin)/admin/internet-banking/",
+  "src/app/(admin)/admin/refund-requests/",
+  "src/app/(admin)/admin/subscriptions/",
+  "src/app/(admin)/admin/reports/",
+  "src/app/(admin)/admin/xero/",
+];
 
 /** Every root where an unclassified `CardTitle` is never allowed. */
 const FORBIDDEN_ROOTS = [...MEMBER_FACING_ROOTS, ...SWEPT_ROOTS];
@@ -90,15 +114,31 @@ const MEMBER_FACING_SHARED_FILES = [
 ];
 
 /**
+ * Shared components the Finance sweep (#5216 PR 2) classified that live outside
+ * its roots: the refund cards `/admin/finance/payments` draws, and the Xero
+ * activity panel of `/admin/finance/xero/records/…` (also a tab on the member
+ * page, where its compact title is not a heading).
+ */
+const FINANCE_SHARED_FILES = [
+  "src/components/admin/automatic-refund-notices-card.tsx",
+  "src/components/admin/manual-refund-task-queue.tsx",
+  "src/components/admin/manual-refund-task-reopen-card.tsx",
+  "src/components/admin/xero-record-activity-panel.tsx",
+];
+
+/** Every single file where an unclassified `CardTitle` is never allowed. */
+const FORBIDDEN_FILES = [...MEMBER_FACING_SHARED_FILES, ...FINANCE_SHARED_FILES];
+
+/**
  * The number of production `CardTitle`s that still omit `headingLevel`. Only
  * ever lower it: a sweep that classifies titles sets it to the new count.
  */
-const UNCLASSIFIED_BASELINE = 231;
+const UNCLASSIFIED_BASELINE = 198;
 
-function isMemberFacing(file: string) {
+function isForbidden(file: string) {
   return (
-    FORBIDDEN_ROOTS.some((root) => file.startsWith(root)) ||
-    MEMBER_FACING_SHARED_FILES.includes(file)
+    [...FORBIDDEN_ROOTS, ...LEGACY_SWEPT_ROOTS].some((root) => file.startsWith(root)) ||
+    FORBIDDEN_FILES.includes(file)
   );
 }
 
@@ -118,18 +158,18 @@ function unclassifiedCardTitles(): string[] {
 describe("every CardTitle declares a heading level or \"none\" (#4951)", () => {
   const unclassified = unclassifiedCardTitles();
 
-  it("no member-facing CardTitle omits headingLevel", () => {
-    const memberFacing = unclassified.filter((site) =>
-      isMemberFacing(site.slice(0, site.lastIndexOf(":")))
+  it("no member-facing or swept CardTitle omits headingLevel", () => {
+    const forbidden = unclassified.filter((site) =>
+      isForbidden(site.slice(0, site.lastIndexOf(":")))
     );
     expect(
-      memberFacing,
+      forbidden,
       "Give each of these CardTitles a headingLevel from its page's real " +
         "outline: 1 when the card is the page's whole content and nothing else " +
         "renders an h1 in that state, 2 under an existing h1, and \"none\" when " +
         "it is not a heading at all (INV-PUB-006; docs/ARCHITECTURE.md, \"Card " +
         "titles and heading semantics\"):\n" +
-        memberFacing.join("\n")
+        forbidden.join("\n")
     ).toEqual([]);
   });
 
@@ -150,8 +190,19 @@ describe("every CardTitle declares a heading level or \"none\" (#4951)", () => {
     for (const root of FORBIDDEN_ROOTS) {
       expect(SOURCE_FILES.some((file) => file.startsWith(root))).toBe(true);
     }
-    for (const file of MEMBER_FACING_SHARED_FILES) {
+    for (const file of FORBIDDEN_FILES) {
       expect(SOURCE_FILES).toContain(file);
+    }
+  });
+
+  it("forbids only legacy roots the Finance hub really moved", () => {
+    // A legacy root holds no file, so it cannot prove itself by matching one;
+    // it must instead be the old home of a page the hub registry says moved.
+    const movedFrom = FINANCE_HUB.pages
+      .filter((page) => page.moved)
+      .map((page) => `src/app/(admin)${page.oldPath}/`);
+    for (const root of LEGACY_SWEPT_ROOTS) {
+      expect(movedFrom.some((path) => path.startsWith(root)), root).toBe(true);
     }
   });
 });

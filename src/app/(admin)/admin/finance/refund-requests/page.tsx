@@ -561,7 +561,7 @@ export default function RefundRequestsPage() {
                   <Card key={req.id}>
                     <CardHeader>
                       <div className="flex items-center justify-between">
-                        <CardTitle className="text-lg">
+                        <CardTitle headingLevel={3} className="text-lg">
                           {req.member.firstName} {req.member.lastName}
                         </CardTitle>
                         <Badge
@@ -801,7 +801,7 @@ export default function RefundRequestsPage() {
                     <CardHeader>
                       <div className="flex items-center justify-between gap-3">
                         <div>
-                          <CardTitle className="text-lg">
+                          <CardTitle headingLevel={3} className="text-lg">
                             <Link
                               href={buildHrefWithReturnTo(`${adminHref("member-detail", { id: request.member.id })}`, currentRefundRequestsPath)}
                               className="hover:underline"

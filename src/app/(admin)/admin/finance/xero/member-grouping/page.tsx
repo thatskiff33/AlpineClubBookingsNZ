@@ -343,7 +343,7 @@ export default function XeroMemberGroupingPage() {
 
       <Card>
         <CardHeader>
-          <CardTitle>Grouping mode</CardTitle>
+          <CardTitle headingLevel={2}>Grouping mode</CardTitle>
         </CardHeader>
         <CardContent className="space-y-3">
           {(Object.keys(MODE_HELP) as GroupingMode[]).map((mode) => (
@@ -374,7 +374,7 @@ export default function XeroMemberGroupingPage() {
 
       <Card>
         <CardHeader>
-          <CardTitle>Grouping rules</CardTitle>
+          <CardTitle headingLevel={2}>Grouping rules</CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">
           <p className="text-xs text-muted-foreground">
@@ -543,7 +543,7 @@ export default function XeroMemberGroupingPage() {
 
       <Card>
         <CardHeader>
-          <CardTitle>Bulk re-sync (advanced)</CardTitle>
+          <CardTitle headingLevel={2}>Bulk re-sync (advanced)</CardTitle>
         </CardHeader>
         <CardContent className="space-y-3">
           <p className="text-sm text-muted-foreground">

@@ -7,6 +7,7 @@
 import { cleanup, render } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
 import {
+  applyTailwindHiddenRule,
   expectNoSkippedHeadingLevels,
   expectOneLevelOneHeading,
   expectSoundOutline,
@@ -67,5 +68,25 @@ describe("heading-outline helpers", () => {
       </>,
     );
     expect(() => expectNoSkippedHeadingLevels()).toThrow(/must start with a level-1 heading/);
+  });
+});
+
+describe("applyTailwindHiddenRule", () => {
+  it("takes a print-only heading out of the screen outline", () => {
+    const printOnly = (
+      <>
+        <h1>Page</h1>
+        <div className="hidden print:block">
+          <h1>Page, printed</h1>
+        </div>
+      </>
+    );
+    render(printOnly);
+    expect(() => expectOneLevelOneHeading("Page")).toThrow();
+    cleanup();
+
+    applyTailwindHiddenRule();
+    render(printOnly);
+    expect(() => expectSoundOutline("Page")).not.toThrow();
   });
 });

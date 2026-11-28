@@ -180,7 +180,7 @@ function StatCard({
   return (
     <Card className="reports-print-card print:border-slate-300 print:shadow-none">
       <CardHeader className="flex flex-row items-center justify-between pb-2">
-        <CardTitle className="text-sm font-medium text-muted-foreground">{title}</CardTitle>
+        <CardTitle headingLevel="none" className="text-sm font-medium text-muted-foreground">{title}</CardTitle>
         <Icon className="h-4 w-4 text-muted-foreground" />
       </CardHeader>
       <CardContent>
@@ -678,7 +678,7 @@ export default function ReportsPage() {
 
             <Card className="reports-print-card print:border-slate-300 print:shadow-none">
               <CardHeader>
-                <CardTitle className="flex items-center gap-2">
+                <CardTitle headingLevel={2} className="flex items-center gap-2">
                   <BarChart2 className="h-5 w-5" />
                   Occupancy Rate{occupancyScopeLabel ? ` · ${occupancyScopeLabel}` : ""}
                 </CardTitle>
@@ -698,7 +698,7 @@ export default function ReportsPage() {
           <section className="reports-print-section space-y-4">
             <Card className="reports-print-card print:border-slate-300 print:shadow-none">
               <CardHeader>
-                <CardTitle className="flex items-center gap-2">
+                <CardTitle headingLevel={2} className="flex items-center gap-2">
                   <DollarSign className="h-5 w-5" />
                   {`Booked Revenue by ${getRevenueGranularityLabel(data.revenueGranularity)}`}
                 </CardTitle>
@@ -722,7 +722,7 @@ export default function ReportsPage() {
 
             <Card className="reports-print-card print:border-slate-300 print:shadow-none">
               <CardHeader>
-                <CardTitle className="flex items-center gap-2">
+                <CardTitle headingLevel={2} className="flex items-center gap-2">
                   <TrendingUp className="h-5 w-5" />
                   Booking Trends (by week)
                 </CardTitle>
@@ -743,7 +743,7 @@ export default function ReportsPage() {
             <div className="grid grid-cols-1 gap-4 md:grid-cols-2 print:grid-cols-2 print:gap-3">
               <Card className="reports-print-card print:border-slate-300 print:shadow-none">
                 <CardHeader>
-                  <CardTitle>Member vs Non-Member Guests</CardTitle>
+                  <CardTitle headingLevel={2}>Member vs Non-Member Guests</CardTitle>
                 </CardHeader>
                 <CardContent>
                   {data.summary.memberGuests + data.summary.nonMemberGuests > 0 ? (
@@ -758,7 +758,7 @@ export default function ReportsPage() {
 
               <Card className="reports-print-card print:border-slate-300 print:shadow-none">
                 <CardHeader>
-                  <CardTitle>Booking Status Breakdown</CardTitle>
+                  <CardTitle headingLevel={2}>Booking Status Breakdown</CardTitle>
                 </CardHeader>
                 <CardContent>
                   {statusPieData.length > 0 ? (

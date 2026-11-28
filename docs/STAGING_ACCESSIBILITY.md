@@ -606,3 +606,56 @@ Stated limits:
   Otherwise only the baseline count holds it.
 - These are DOM-level checks of roles and levels. A real screen-reader
   walkthrough stays a human manual-QA task, as in the earlier sections.
+
+## #5216 Finance card titles as headings (2026-11-28)
+
+Static fix, the second of the seven card-title sweeps. Every card title on the
+Finance screens now says whether it is a heading, so the heading list a
+screen-reader user navigates by matches what the screen shows. Nothing looks
+different.
+
+- **Swept.** 33 card titles. On `/finance`, the view card, the trend, mix and
+  status cards and the ratio explorer's three cards are level 2 under the
+  workspace's h1; a KPI card's large figure is not a heading. On Payments,
+  Subscriptions and Reports, the summary figures' labels are not headings and
+  every other card is level 2; the refund queue's three cards on Payments are
+  level 2. On Refunds & Credits, each request card is level 3 inside its "Refund
+  Appeals" or "Manual Credit Approvals" section. On Xero Sync, Xero member
+  grouping and a Xero record's page, every card is level 2. The compact Xero
+  Activity tab on a member's page is not a heading: its tab already names it.
+- **Xero Sync's collapsible sections.** Each section's title sat inside its
+  toggle button, where a heading role is dropped. The level-2 heading now wraps
+  the button, as the ARIA disclosure pattern does, named by the title alone;
+  sub-headings such as "Targeted force sync" are level 3 inside their own
+  section. The account-mappings sub-headings move from h4 to h3, so they no
+  longer skip a level.
+- **The `/finance` error screen.** The workspace layout already shows the
+  screen's h1, so the error boundary's "Something went wrong" is now an h2
+  under it rather than a second h1. `ROUTE_GROUP_BOUNDARIES` records which
+  layout owns its h1 (`layoutOwnsH1`), and `route-group-boundaries.test.ts`
+  fails if that disagrees with the layout file.
+- **Census.** `UNCLASSIFIED_BASELINE` falls from 231 to 198. An unclassified
+  title is now refused under `src/app/(admin)/admin/finance/`,
+  `src/app/(finance)/`, `src/components/finance/`, the Finance pages' folders
+  from before the admin hubs move (each checked against the hub registry), and
+  in the four shared refund and Xero activity components.
+
+Pinned by a `heading-outline.test.tsx` beside each screen: `/finance`
+(loaded as viewer and manager, empty, no ratio data, loading, error), Payments,
+Refunds & Credits, Subscriptions and Xero Sync (each loading, loaded for an
+editor and for a view-only officer, empty or not connected, error), and a Xero
+record page; Reports and Xero member grouping in their existing page tests.
+
+Stated limits:
+
+- `/finance`'s workspace layout is an async server component, so its tests
+  render the real page and boundaries under the layout's h1 written out by
+  hand. `route-group-boundaries.test.ts` reads the layout file itself.
+- A print-only title (`hidden print:block`) is out of the screen outline because
+  it is `display: none` on screen; the tests supply that one Tailwind rule to
+  jsdom.
+- The Xero Setup wizard places its cards and sections at level 2 beside each
+  step's h2 rather than inside it, as its existing "Tax categories" card
+  already did. The outline is valid but flatter than the page's layout.
+- These are DOM-level checks of roles and levels. A real screen-reader
+  walkthrough stays a human manual-QA task.

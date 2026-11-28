@@ -179,7 +179,7 @@ export function FinanceDashboardClient({
                   {model.syncStatus.label}
                 </Badge>
               </div>
-              <CardTitle className="text-2xl text-card-foreground">
+              <CardTitle headingLevel={2} className="text-2xl text-card-foreground">
                 {model.selectionLabels.view}
               </CardTitle>
               <CardDescription className="max-w-3xl text-sm leading-6 text-muted-foreground">
@@ -480,7 +480,7 @@ export function FinanceDashboardClient({
           {model.trends.map((trend) => (
             <Card key={trend.title} className="reports-print-card">
               <CardHeader>
-                <CardTitle className="text-lg text-card-foreground">
+                <CardTitle headingLevel={2} className="text-lg text-card-foreground">
                   {trend.title}
                 </CardTitle>
                 <CardDescription>{trend.description}</CardDescription>
@@ -499,7 +499,7 @@ export function FinanceDashboardClient({
           {model.mix ? (
             <Card className="reports-print-card">
               <CardHeader>
-                <CardTitle className="text-lg text-card-foreground">
+                <CardTitle headingLevel={2} className="text-lg text-card-foreground">
                   {model.mix.title}
                 </CardTitle>
                 <CardDescription>{model.mix.description}</CardDescription>
@@ -521,7 +521,7 @@ export function FinanceDashboardClient({
                 <CardHeader>
                   <div className="flex items-start justify-between gap-3">
                     <div>
-                      <CardTitle className="text-lg text-card-foreground">
+                      <CardTitle headingLevel={2} className="text-lg text-card-foreground">
                         {panel.title}
                       </CardTitle>
                       <CardDescription>{panel.description}</CardDescription>

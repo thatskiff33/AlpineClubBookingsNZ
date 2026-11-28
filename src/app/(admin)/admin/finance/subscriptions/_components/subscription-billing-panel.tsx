@@ -354,7 +354,7 @@ export function SubscriptionBillingPanel({ seasonYear }: { seasonYear: number })
     <Card>
       {confirmDialog}
       <CardHeader>
-        <CardTitle className="flex items-center gap-2"><ReceiptText className="h-5 w-5" /> Annual Membership Fee billing</CardTitle>
+        <CardTitle headingLevel={2} className="flex items-center gap-2"><ReceiptText className="h-5 w-5" /> Annual Membership Fee billing</CardTitle>
       </CardHeader>
       <CardContent>
         {viewOnlyBanner}

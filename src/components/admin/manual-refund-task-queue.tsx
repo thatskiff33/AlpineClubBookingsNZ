@@ -654,7 +654,7 @@ export function ManualRefundTaskQueue() {
       {showQueue ? (
         <Card data-testid="manual-refund-task-queue">
           <CardHeader>
-            <CardTitle className="text-base">
+            <CardTitle headingLevel={2} className="text-base">
               Money to settle
               {tasks ? ` (${tasks.length})` : ""}
             </CardTitle>

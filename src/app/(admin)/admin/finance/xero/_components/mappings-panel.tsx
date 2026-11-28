@@ -296,7 +296,7 @@ export function MappingsPanel({
               {refreshingReferenceData ? "Refreshing..." : "Refresh Xero reference data"}
             </Button>
           </div>
-          <h4 className="text-sm font-semibold text-foreground">Account Code Mappings</h4>
+          <h3 className="text-sm font-semibold text-foreground">Account Code Mappings</h3>
           {accountMappings ? ACCOUNT_MAPPING_KEYS.map((key) => (
             <AccountMappingRow
               key={key}
@@ -308,7 +308,7 @@ export function MappingsPanel({
             />
           )) : null}
           <Separator />
-          <h4 className="text-sm font-semibold text-foreground">Credit Note Item Codes</h4>
+          <h3 className="text-sm font-semibold text-foreground">Credit Note Item Codes</h3>
           <p className="text-xs text-muted-foreground">Xero Items for credit note line items. When set, Xero can apply the item configuration while the mapped account remains available for reporting.</p>
           {accountMappings ? CREDIT_ITEM_MAPPING_KEYS.map((key) => (
             <CreditItemRow key={key} mappingKey={key} mappings={accountMappings} setMappings={setAccountMappings} items={xeroItems} isEditingMappings={isEditingMappings} />
@@ -520,7 +520,7 @@ function HutFeeTable({
   }
   return (
     <>
-      <h4 className="text-sm font-semibold text-foreground">Hut Fee Item Codes</h4>
+      <h3 className="text-sm font-semibold text-foreground">Hut Fee Item Codes</h3>
       <p className="text-xs text-muted-foreground">
         Map each membership type, season, and age group to a Xero Item. Types
         without age groups have a single flat (all ages) cell. Only rate-bearing
@@ -597,7 +597,7 @@ function HutFeeTable({
 function EntranceFeeTable({ isEditingMappings, items, codes, setCodes }: { isEditingMappings: boolean; items: XeroItem[]; codes: EntranceFeeMap; setCodes: (value: EntranceFeeMap | ((prev: EntranceFeeMap) => EntranceFeeMap)) => void }) {
   return (
     <>
-      <h4 className="text-sm font-semibold text-foreground">Joining Fee Categories</h4>
+      <h3 className="text-sm font-semibold text-foreground">Joining Fee Categories</h3>
       <p className="text-xs text-muted-foreground">
         Map each joining fee category to a Xero Item. Joining fee <strong>amounts</strong> are
         not configured here — they are managed per membership type on the{" "}
