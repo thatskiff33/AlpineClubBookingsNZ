@@ -2,7 +2,6 @@ import { exactContains } from "@/lib/prisma-exact-prefix";
 import { NextRequest, NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma";
-import { clubSeasonYear } from "@/lib/financial-year";
 import { AgeTier } from "@prisma/client";
 import logger from "@/lib/logger";
 import { getAgeTierSettings } from "@/lib/age-tier";
@@ -39,6 +38,7 @@ import {
   readMemberDietaryRequirementsByIds,
 } from "@/lib/member-dietary";
 import { requireRecentAuth } from "@/lib/require-recent-auth";
+import { clubCurrentSeasonYear } from "@/lib/financial-year-server";
 
 const AGE_TIER_VALUES = Object.values(AgeTier);
 const MEMBER_LIFECYCLE_STATUS_FILTERS = [
@@ -74,7 +74,7 @@ export async function GET(req: NextRequest) {
   // The season the CLUB is in at `now`, from its persisted zone rather than the
   // container's month (CT-4, #2870). `now` is pinned so the whole export is one
   // moment's answer.
-  const currentSeasonYear = clubSeasonYear(club.zone, fixedClubClock(now));
+  const currentSeasonYear = await clubCurrentSeasonYear(club.zone, fixedClubClock(now));
   const [ageTierSettings, lockoutSettings] = await Promise.all([
     getAgeTierSettings(),
     loadMembershipLockoutSettings(),

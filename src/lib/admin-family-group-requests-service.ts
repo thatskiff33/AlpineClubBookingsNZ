@@ -15,7 +15,6 @@ import {
   type AgeTierSettingData,
 } from "@/lib/age-tier";
 import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
-import { clubSeasonYear } from "@/lib/financial-year";
 import { clubToday, type CalendarDate } from "@/lib/club-time";
 import {
   buildParentLinks,
@@ -40,6 +39,7 @@ import {
 } from "@/lib/email";
 import { acquireMemberLifecycleLocks } from "@/lib/member-lifecycle-lock";
 import { acquireMemberPartnerLinkLocks } from "@/lib/member-partner-lock";
+import { clubCurrentSeasonYear } from "@/lib/financial-year-server";
 import {
   MEMBER_PARTNER_RELATIONSHIP_SELECT,
   MEMBER_PARENT_PARTNER_CONFLICT_MESSAGE,
@@ -361,7 +361,7 @@ export async function listAdminFamilyGroupRequests(): Promise<JsonRouteResult> {
   // looking at, so every row must be judged against the same season AND the
   // same day; two reads on one path can straddle club midnight and disagree.
   const clubZone = await readClubTimeZoneOutsideRequest();
-  const clubSeasonStart = getSeasonStartDate(clubSeasonYear(clubZone));
+  const clubSeasonStart = getSeasonStartDate(await clubCurrentSeasonYear(clubZone));
   const clubDay = clubToday(clubZone);
 
   const mapped = await Promise.all(
@@ -652,7 +652,7 @@ export async function reviewAdminFamilyGroupRequest(params: {
         const childRequestTier = getChildRequestTierMetadata(
           request,
           ageTierSettings,
-          getSeasonStartDate(clubSeasonYear(await readClubTimeZoneOutsideRequest())),
+          getSeasonStartDate(await clubCurrentSeasonYear(await readClubTimeZoneOutsideRequest())),
         );
         if (
           !childRequestTier.requestedAgeTier ||
@@ -787,7 +787,7 @@ export async function reviewAdminFamilyGroupRequest(params: {
 
         const ageTier = await computeAgeTier(
           request.requestedDateOfBirth,
-          getSeasonStartDate(clubSeasonYear(await readClubTimeZoneOutsideRequest()))
+          getSeasonStartDate(await clubCurrentSeasonYear(await readClubTimeZoneOutsideRequest()))
         );
         if (ageTier !== "ADULT") {
           return jsonResult(

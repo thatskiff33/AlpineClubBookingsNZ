@@ -8,7 +8,6 @@ import { parseDateOnly } from "@/lib/date-only";
 import { dateOnlyInstantOf } from "@/lib/club-time";
 import { clubTime } from "@/lib/club-time/server";
 import { clubTimeZone } from "@/lib/club-time/server";
-import { clubSeasonYear } from "@/lib/financial-year";
 import { logAudit } from "@/lib/audit";
 import logger from "@/lib/logger";
 import { sendChildRequestSubmittedEmail, sendAdminFamilyGroupRequestAlert } from "@/lib/email";
@@ -16,6 +15,7 @@ import { parseJsonRequestBody } from "@/lib/api-json";
 import { familyChildRequestSchema } from "@/lib/family-group-request-schemas";
 import { connectionJson } from "@/lib/mcp-connection-request";
 import { FAMILY_REQUEST_SUBMITTED_CONNECTION_SHAPE } from "@/lib/connection-shapes";
+import { clubCurrentSeasonYear } from "@/lib/financial-year-server";
 
 /**
  * POST /api/members/family/request-child
@@ -69,7 +69,7 @@ export async function POST(req: NextRequest) {
 
   const ageTier = await computeAgeTier(
     childDob,
-    getSeasonStartDate(clubSeasonYear(await clubTimeZone())),
+    getSeasonStartDate(await clubCurrentSeasonYear(await clubTimeZone())),
   );
   if (ageTier === "ADULT") {
     return NextResponse.json(

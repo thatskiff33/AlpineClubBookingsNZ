@@ -54,7 +54,6 @@ import {
 import { checkNominatorEligibility } from "@/lib/nominator-eligibility";
 import { prisma } from "@/lib/prisma";
 import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
-import { clubSeasonYear } from "@/lib/financial-year";
 import { queueApprovedMembershipSubscriptionCharges } from "@/lib/membership-subscription-billing";
 import { MEMBER_LEVEL_ROLE_VALUES } from "@/lib/member-roles";
 import { findOrCreateXeroContact } from "@/lib/xero-contacts";
@@ -109,6 +108,7 @@ import {
   type ApplicationFamilyMember,
 } from "@/lib/member-application-fields";
 import { pickMemberAddressValues, pickMemberPhoneValues } from "@/lib/member-address";
+import { clubCurrentSeasonYear } from "@/lib/financial-year-server";
 import {
   MEMBER_PARENT_PARTNER_CONFLICT_MESSAGE,
   acquireMemberParentPartnerPairLocks,
@@ -221,7 +221,7 @@ async function computeTier(
 }
 
 async function verifyNominator(email: string): Promise<VerifiedNominator> {
-  const seasonYear = clubSeasonYear(await readClubTimeZoneOutsideRequest());
+  const seasonYear = await clubCurrentSeasonYear(await readClubTimeZoneOutsideRequest());
   const normalizedEmail = cleanString(email).toLowerCase();
 
   const nominator = await prisma.member.findFirst({
@@ -1244,7 +1244,7 @@ export async function approveMemberApplication(
   // the same day, rather than two independent reads that an approval straddling
   // club midnight could answer differently.
   const clubZone = await readClubTimeZoneOutsideRequest();
-  const seasonYear = clubSeasonYear(clubZone);
+  const seasonYear = await clubCurrentSeasonYear(clubZone);
   const joiningFeeAsOf = dateOnlyInstantOf(clubToday(clubZone));
   const preFamilyMembers = parseApplicationFamilyMembers(application.familyMembers);
   const resolution = resolvePersonDecisions(preFamilyMembers.length, personDecisions);

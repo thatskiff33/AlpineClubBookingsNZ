@@ -527,7 +527,12 @@ async function clearStaleRowsAfterImport(
     clearUp: Awaited<ReturnType<typeof clearStaleNotRequiredRows>>;
   };
   try {
-    const seasonYear = clubSeasonYear(await readClubTimeZoneOutsideRequest(), undefined, await refreshFinancialYearConfig());
+    // The year-end as the import left it (#5259).
+    const seasonYear = clubSeasonYear(
+      await readClubTimeZoneOutsideRequest(),
+      undefined,
+      await refreshFinancialYearConfig(),
+    );
     attemptedSeasonYear = seasonYear;
     // The clear-up waits on the billing season key, which a confirm may hold
     // for its whole budget.

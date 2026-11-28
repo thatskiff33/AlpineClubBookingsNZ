@@ -151,7 +151,6 @@ export async function saveLockoutSettings(
     data: Omit<Prisma.MembershipLockoutSettingsUncheckedCreateInput, "id">;
     liabilityAfterSave: SubscriptionLiabilitySettings;
     seasonYear: number;
-    yearEndMonth: number;
   },
 ) {
   const upsert = {
@@ -175,7 +174,7 @@ export async function saveLockoutSettings(
     // reads the rule this upsert wrote.
     const record = await tx.membershipLockoutSettings.upsert(upsert);
     const clearedStaleRows: StaleNotRequiredClearUp | null =
-      await clearStaleNotRequiredRows(tx, seasonYear, input.yearEndMonth);
+      await clearStaleNotRequiredRows(tx, seasonYear);
     return { record, clearedStaleRows };
   }, {
     // The season key may be held by a billing confirm for its whole budget.

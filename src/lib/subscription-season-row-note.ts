@@ -114,7 +114,6 @@ export function hasNotRequiredRowBillingNote(input: {
   };
   seasonRow: SeasonRowState | null | undefined;
   seasonYear: number;
-  yearEndMonth: number;
   ageTierSettings: AgeTierSettingData[];
   liabilitySettings: SubscriptionLiabilitySettings;
 }): boolean {
@@ -125,7 +124,6 @@ export function hasNotRequiredRowBillingNote(input: {
     member: input.member,
     seasonRowStatus: input.seasonRow?.status,
     seasonYear: input.seasonYear,
-    yearEndMonth: input.yearEndMonth,
     rule: liabilityRuleFor(ADMIN_LIST_LIABILITY_SIDE, input.liabilitySettings),
     ageTierSettings: input.ageTierSettings,
   }).owes;

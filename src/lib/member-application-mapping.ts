@@ -393,7 +393,6 @@ export async function computeApprovalMappingOutcomes(params: {
   targetsById: Map<string, MappingTargetRecord>;
   loginHolderId: string | null;
   seasonYear: number;
-  yearEndMonth: number;
   // The acting admin (#1026 gate). Preview passes the requireAdmin session
   // actor; the approval transaction passes the PUT actor re-read in-tx. The
   // actor-dependent errors are part of the tokenized outcome, so a preview
@@ -413,7 +412,7 @@ export async function computeApprovalMappingOutcomes(params: {
     actor,
     ageTierSettings,
   } = params;
-  const seasonStart = getSeasonStartDate(seasonYear, params.yearEndMonth);
+  const seasonStart = getSeasonStartDate(seasonYear);
   const hasFamily = application.familyMembers.length > 0;
   const nominatorIds = new Set(
     [application.nominator1Id, application.nominator2Id].filter(
@@ -1067,7 +1066,6 @@ export async function buildApprovalMappingPreview(params: {
   applicationId: string;
   personDecisions?: PersonDecisions | null;
   seasonYear: number;
-  yearEndMonth: number;
   // The requireAdmin-verified acting admin (#1026 gate).
   actor: MappingActorContext;
   db?: MappingReadClient;
@@ -1132,7 +1130,6 @@ export async function buildApprovalMappingPreview(params: {
     targetsById,
     loginHolderId,
     seasonYear: params.seasonYear,
-    yearEndMonth: params.yearEndMonth,
     actor: params.actor,
     ageTierSettings,
   });

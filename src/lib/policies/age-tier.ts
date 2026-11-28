@@ -7,7 +7,7 @@ import {
   requireStoredCalendarDay,
   type CalendarDate,
 } from "@/lib/club-time";
-import { seasonStartMonthOf } from "@/lib/financial-year";
+import { getSeasonStartMonth } from "@/lib/financial-year";
 
 /**
  * THE AGE-TIER COMPARISON HAS TWO SIDES AND THEY SHARE ONE FRAME (#3082).
@@ -65,14 +65,14 @@ import { seasonStartMonthOf } from "@/lib/financial-year";
 /**
  * The club calendar day a season year starts on - the start of the membership
  * financial year. For the default 31 March year-end that is 1 April
- * (`getSeasonStartCalendarDate(2026, 3)` is `"2026-04-01"`).
+ * (`getSeasonStartCalendarDate(2026)` is `"2026-04-01"`).
  *
  * NO `Date`, so nothing here can be moved by a host zone. This is the canonical
  * form; {@link getSeasonStartDate} is the encoding of it that the existing call
  * sites take.
  */
-export function getSeasonStartCalendarDate(seasonYear: number, yearEndMonth: number): CalendarDate {
-  return calendarDateFromParts(seasonYear, seasonStartMonthOf(yearEndMonth), 1);
+export function getSeasonStartCalendarDate(seasonYear: number): CalendarDate {
+  return calendarDateFromParts(seasonYear, getSeasonStartMonth(), 1);
 }
 
 /**
@@ -84,8 +84,8 @@ export function getSeasonStartCalendarDate(seasonYear: number, yearEndMonth: num
  * which is a different instant in every zone. See the module doc above for why
  * that survived as long as it did and why it could not be corrected alone.
  */
-export function getSeasonStartDate(seasonYear: number, yearEndMonth: number): Date {
-  return dateOnlyInstantOf(getSeasonStartCalendarDate(seasonYear, yearEndMonth));
+export function getSeasonStartDate(seasonYear: number): Date {
+  return dateOnlyInstantOf(getSeasonStartCalendarDate(seasonYear));
 }
 
 /**
@@ -163,7 +163,7 @@ export function computeAge(dateOfBirth: Date, referenceDate: Date): number {
       requireStoredCalendarDay(referenceDate, {
         subject: "computeAge's referenceDate",
         instead:
-          "Pass getSeasonStartDate(seasonYear, yearEndMonth) - the season start at UTC midnight - from a " +
+          "Pass getSeasonStartDate(seasonYear) - the season start at UTC midnight - from a " +
           "season the caller resolved once.",
       }),
     ),

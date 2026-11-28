@@ -106,7 +106,6 @@ async function owesOnBillingSide(
   params: {
     memberId: string;
     seasonYear: number;
-    yearEndMonth: number;
     subscriptionBehavior: MembershipTypeSubscriptionBehavior;
     settings: Parameters<typeof liabilityRuleFor>[1];
   },
@@ -125,7 +124,6 @@ async function owesOnBillingSide(
     // rule ignores it, chosen or not.
     seasonRowStatus: "NOT_REQUIRED",
     seasonYear: params.seasonYear,
-    yearEndMonth: params.yearEndMonth,
     rule: liabilityRuleFor("billing", params.settings),
     ageTierSettings,
   }).owes;
@@ -194,7 +192,6 @@ export async function reconcileSeasonSubscriptionForAssignment(
   params: {
     memberId: string;
     seasonYear: number;
-    yearEndMonth: number;
     subscriptionBehavior: MembershipTypeSubscriptionBehavior;
   }
 ): Promise<{ reconciled: boolean }> {
@@ -320,7 +317,6 @@ export async function findStaleNotRequiredRows(
   >,
   input: {
     seasonYear: number;
-    yearEndMonth: number;
     settings: SubscriptionLiabilitySettings;
     /**
      * The club's stored settings, which the members list reads today; only
@@ -330,7 +326,7 @@ export async function findStaleNotRequiredRows(
     listSettings: SubscriptionLiabilitySettings;
   },
 ): Promise<StaleNotRequiredRow[]> {
-  const { seasonYear, yearEndMonth, settings, listSettings } = input;
+  const { seasonYear, settings, listSettings } = input;
   if (!hasChosenLiabilityRule(settings)) {
     return [];
   }
@@ -376,7 +372,6 @@ export async function findStaleNotRequiredRows(
         member,
         seasonRowStatus: "NOT_REQUIRED",
         seasonYear,
-        yearEndMonth,
         rule,
         ageTierSettings,
       }).owes
@@ -402,7 +397,6 @@ export async function findStaleNotRequiredRows(
         ),
         member,
         seasonYear,
-        yearEndMonth,
         ageTierSettings,
         liabilitySettings: listSettings,
       };
@@ -452,7 +446,6 @@ export async function findStaleNotRequiredRows(
 export async function clearStaleNotRequiredRows(
   tx: Prisma.TransactionClient,
   seasonYear: number,
-  yearEndMonth: number,
 ): Promise<StaleNotRequiredClearUp> {
   const nothingCleared: StaleNotRequiredClearUp = { clearedCount: 0, clearedMemberIds: [] };
   await lockSubscriptionBillingSeason(tx, seasonYear);
@@ -461,7 +454,7 @@ export async function clearStaleNotRequiredRows(
   await lockSubscriptionLiabilityRuleExclusive(tx);
   const settings = await loadMembershipLockoutSettingsStrict(tx);
   const owingMemberIds = (
-    await findStaleNotRequiredRows(tx, { seasonYear, yearEndMonth, settings, listSettings: settings })
+    await findStaleNotRequiredRows(tx, { seasonYear, settings, listSettings: settings })
   ).map((row) => row.memberId);
   if (owingMemberIds.length === 0) {
     return nothingCleared;

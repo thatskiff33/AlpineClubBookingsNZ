@@ -152,21 +152,20 @@ function digest(value: unknown) {
 }
 
 /** The membership year's first and last days, as date-only instants. */
-function seasonBounds(seasonYear: number, yearEndMonth: number) {
-  return { start: getSeasonStartDate(seasonYear, yearEndMonth), end: getSeasonEndDate(seasonYear, yearEndMonth) };
+function seasonBounds(seasonYear: number) {
+  return { start: getSeasonStartDate(seasonYear), end: getSeasonEndDate(seasonYear) };
 }
 
 export function calculateMembershipCharge(input: {
   annualAmountCents: number;
   prorationRule: MembershipFeeProrationRule;
   seasonYear: number;
-  yearEndMonth: number;
   decisionDate: Date;
 }) {
   if (!Number.isSafeInteger(input.annualAmountCents) || input.annualAmountCents < 0) {
     throw new SubscriptionBillingError("Annual membership fee must be a non-negative integer number of cents.");
   }
-  const { start, end } = seasonBounds(input.seasonYear, input.yearEndMonth);
+  const { start, end } = seasonBounds(input.seasonYear);
   const decision = new Date(Date.UTC(
     input.decisionDate.getUTCFullYear(),
     input.decisionDate.getUTCMonth(),
@@ -374,7 +373,7 @@ export async function buildSubscriptionBillingPreview(input: {
   const yearEndMonth = input.yearEndMonth ?? (await refreshFinancialYearConfig());
   // Validate the date against the selected membership year before querying,
   // including an otherwise-empty preview.
-  const bounds = seasonBounds(input.seasonYear, yearEndMonth);
+  const bounds = seasonBounds(input.seasonYear);
   if (decisionDate < bounds.start || decisionDate > bounds.end) {
     throw new SubscriptionBillingError(`Decision date must fall within membership year ${input.seasonYear}.`);
   }
@@ -980,7 +979,6 @@ export async function buildSubscriptionBillingPreview(input: {
       member,
       seasonRowStatus: null,
       seasonYear: input.seasonYear,
-      yearEndMonth,
       rule: billingLiabilityRule,
       ageTierSettings: await getAgeTierSettingsMemoized(),
     });

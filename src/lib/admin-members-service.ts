@@ -22,7 +22,6 @@ import {
   parseCalendarDate,
 } from "@/lib/club-time";
 import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
-import { clubSeasonYear } from "@/lib/financial-year";
 import { clubCurrentSeasonYear as resolveClubCurrentSeasonYear } from "@/lib/financial-year-server";
 import { UNASSIGNED_MEMBERSHIP_TYPE_VALUE } from "@/lib/membership-type-filter";
 import { subscriptionCategoryFilterWhere } from "@/lib/subscription-category-filter";
@@ -287,7 +286,7 @@ export async function listAdminMembers(
   // The season the club is in AT `now`, from the club's PERSISTED zone rather
   // than the container's month (INV-CONFIG-002). `now` is pinned so the whole
   // listing is judged against one moment.
-  const currentSeasonYear = clubSeasonYear(
+  const currentSeasonYear = await resolveClubCurrentSeasonYear(
     await readClubTimeZoneOutsideRequest(),
     fixedClubClock(now),
   );

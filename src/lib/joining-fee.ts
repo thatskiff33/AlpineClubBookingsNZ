@@ -28,7 +28,7 @@ import { resolveMembershipTypePolicyForMember } from "@/lib/membership-type-poli
 import { computeAgeTier } from "@/lib/age-tier";
 import { getSeasonStartDate } from "@/lib/policies/age-tier";
 import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
-import { clubSeasonYear } from "@/lib/financial-year";
+import { clubCurrentSeasonYear } from "@/lib/financial-year-server";
 
 type JoiningFeeStore = Prisma.TransactionClient | typeof prisma;
 
@@ -165,7 +165,7 @@ export async function resolveMemberJoiningFeeClassification(
   const policy = await resolveMembershipTypePolicyForMember(store, {
     memberId,
     seasonYear:
-      seasonYear ?? clubSeasonYear(await readClubTimeZoneOutsideRequest()),
+      seasonYear ?? await clubCurrentSeasonYear(await readClubTimeZoneOutsideRequest()),
   });
 
   if (!policy) {
@@ -322,7 +322,7 @@ export async function getJoiningFeePreviewForInputs(
           inputs.dateOfBirth,
           getSeasonStartDate(
             options.seasonYear
-              ?? clubSeasonYear(await readClubTimeZoneOutsideRequest()),
+              ?? await clubCurrentSeasonYear(await readClubTimeZoneOutsideRequest()),
           ),
         )
       : null);
