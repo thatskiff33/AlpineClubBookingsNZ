@@ -1,8 +1,7 @@
 /**
  * Real-PostgreSQL proof for #5288 (owner decision, 20 Nov 2026): an edit that
  * raises what a PAID Internet Banking booking is worth, before its primary Xero
- * invoice is linked, asks for it as a linked booking's edit does - the
- * "additional Internet Banking payment" email with the payment reference - and
+ * invoice is linked, emails the replacement balance and payment reference, and
  * bills it by raising the primary invoice now. That invoice bills the price plus
  * every recorded fee (`buildPrimaryInvoiceLines`), with the applied credit
  * allocated against it, so the increase is on one Xero document by
@@ -67,7 +66,7 @@ const PRICE_CENTS = 2 * NIGHT_CENTS;
 /** (100% - 50%) of the original price: the fee the policy sets for the move. */
 const FEE_CENTS = PRICE_CENTS / 2;
 const IB_ASK = /An additional Internet Banking payment of \$50\.00 is required\./;
-const ANY_IB_ASK = /An additional Internet Banking payment of \$(\d+)\.(\d\d) is required\./;
+const BALANCE_ASK = /The amount now due on this booking is \$(\d+)\.(\d\d) by Internet Banking\. This replaces any earlier amount we asked for\./;
 
 let prisma: PrismaClient;
 let batchService: typeof import("@/lib/booking-batch-modification-service");
@@ -319,7 +318,9 @@ async function buildPrimaryInvoiceAsTheCreateDoes() {
 
 /** What the latest booking-changed email asks the member to pay by bank transfer, in cents; null when it asks nothing. */
 async function emailAskedCents(): Promise<number | null> {
-  const asked = ANY_IB_ASK.exec(await modifiedEmailHtml());
+  const html = await modifiedEmailHtml();
+  expect(html).not.toContain("An additional Internet Banking payment");
+  const asked = BALANCE_ASK.exec(html);
   return asked ? Number(asked[1]) * 100 + Number(asked[2]) : null;
 }
 
@@ -340,7 +341,7 @@ async function expectEmailAsksInvoiceDue(): Promise<number> {
 async function expectFeeAskedOnNewPrimaryInvoice(): Promise<void> {
   await drainXeroWork();
   const html = await modifiedEmailHtml();
-  expect(html).toMatch(IB_ASK);
+  expect(html).toMatch(BALANCE_ASK);
   expect(html).toContain(`Payment reference: ${REFERENCE}.`);
   expect(await expectEmailAsksInvoiceDue()).toBe(FEE_CENTS);
 
@@ -560,11 +561,26 @@ async function expectFeeAskedOnNewPrimaryInvoice(): Promise<void> {
 
     const html = await modifiedEmailHtml();
     expect(html).toMatch(IB_ASK);
+    expect(html).not.toContain("This replaces any earlier amount");
     expect(html).toContain("Xero invoice INV-5288 will be used for payment.");
     expect(await primaryInvoiceOps()).toEqual([]);
     const supplementary = await supplementaryInvoiceOps();
     expect(supplementary).toHaveLength(1);
     expect(supplementary[0].requestPayload).toMatchObject({ priceDiffCents: 0, changeFeeCents: FEE_CENTS });
+  }, 60_000);
+
+  it("two edits before the primary link ask for $50, then a replacement balance of $100", async () => {
+    await moveByDates();
+    await drainXeroWork();
+    expect(await emailAskedCents()).toBe(5_000);
+    await prisma.emailLog.deleteMany({ where: { bookingId: BOOKING_ID } });
+
+    await moveByDates(MOVED_LONGER);
+    await drainXeroWork();
+    expect(await expectEmailAsksInvoiceDue()).toBe(10_000);
+    expect(await modifiedEmailHtml()).toContain(`Payment reference: ${REFERENCE}.`);
+    expect(await primaryInvoiceOps()).toHaveLength(1);
+    expect(await supplementaryInvoiceOps()).toEqual([]);
   }, 60_000);
 
   it("MUTATION: an earlier fee nobody asked for is in the ask, because the new invoice bills it", async () => {
@@ -647,7 +663,7 @@ async function expectFeeAskedOnNewPrimaryInvoice(): Promise<void> {
     await drainXeroWork();
 
     const html = await modifiedEmailHtml();
-    expect(html).toMatch(IB_ASK);
+    expect(html).toMatch(BALANCE_ASK);
     expect(html).toContain(`Payment reference: ${REFERENCE}.`);
     expect(await primaryInvoiceOps()).toEqual([]);
     expect(await allocationOps()).toEqual([]);
