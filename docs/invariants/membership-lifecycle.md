@@ -313,9 +313,16 @@ an existing member — bulk update (`action: "reactivate"`,
 `@default(true)`), i.e. a brand-new row that can resurrect nobody. Each of the
 two refuses **three** states, with a 409 naming which:
 
-- **Cancelled** (`cancelledAt` set) and **archived** (`archivedAt` set) — and
-  nothing in the application writes `cancelledAt: null` or `archivedAt: null`, so
-  those two states are terminal.
+- **Cancelled** (`cancelledAt` set) and **archived** (`archivedAt` set).
+  Nothing writes `cancelledAt: null`: cancellation is terminal, and coming back
+  is the club's rejoin process. The archive has one reverse edge (#5540): a Full
+  Admin's one-step unarchive with a required reason (`unarchiveMember`,
+  `src/lib/member-unarchive.ts`). It clears the three archive columns only, so
+  the member stays cancelled, inactive and login-off and both paths still
+  refuse them; it restores no family link and calls no provider. It refuses a
+  deleted member, one not archived, and one with a pending archive or delete
+  request. Every archive and unarchive stays on the record as a lifecycle
+  request row.
 - **Deleted** — a member an approved deletion request has anonymised (#2620).
   This state is NOT covered by the `cancelledAt`/`archivedAt` refusal and was
   wrongly documented here as if it were. Anonymisation

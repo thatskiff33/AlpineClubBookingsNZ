@@ -10,6 +10,7 @@ import logger from "@/lib/logger";
 import { PartialRefundError } from "@/lib/payment-transactions";
 import { sliceAfterRecordedRefusals } from "@/lib/refused-card-refund-retry";
 import { buildXeroInvoiceUrl } from "@/lib/xero-links";
+import { NOTE_ALLOCATION_ROLE } from "@/lib/xero-note-allocation-link-roles";
 import { type SupplementaryInvoiceChargeKind } from "./xero-booking-repair-payments";
 import { releaseRepairedSupplementaryInvoiceIfAlreadyPaid } from "./xero-booking-repair-supplementary-release";
 import type { BookingXeroRepairAction, BookingXeroRepairBookingSummary, BookingXeroRepairPassReport, XeroBookingRepairActionStatus } from "./xero-booking-repair-types";
@@ -18,6 +19,7 @@ import type { RepairDependencies } from "./xero-booking-repair-deps";
 import { describeRefusedRepairedLateCaptureRefund, describeRepairedLateCaptureRefund, madeRepairRefunds } from "@/lib/late-capture-repair-result-message";
 import { createCountMap } from "./xero-booking-repair-utils";
 import { applyAdditionalCaptureReceiptAction, applyKeptChangeCaptureRecordAction } from "./xero-booking-repair-additional-capture";
+import { applyPaidAnotherWayCloseReceiptAction } from "./xero-booking-repair-paid-another-way";
 import type { ClubFormat } from "@/lib/club-format";
 import { readModificationNoteWording } from "@/lib/xero-refund-method";
 import { applyHistoricalOrganiserInvoiceRepair } from "./xero-booking-repair-organiser-billing";
@@ -108,7 +110,7 @@ async function applyLinkRepair(
   action: BookingXeroRepairAction,
   deps: RepairDependencies
 ) {
-  await deps.upsertXeroObjectLink({
+  const link = {
     localModel: String(action.payload.localModel),
     localId: String(action.payload.localId),
     xeroObjectType: String(action.payload.xeroObjectType),
@@ -122,10 +124,48 @@ async function applyLinkRepair(
         ? action.payload.xeroObjectUrl
         : null,
     role: String(action.payload.role),
-  });
+  };
+
+  if (link.xeroObjectType === "ALLOCATION" && link.role === NOTE_ALLOCATION_ROLE) {
+    // #5289 (INV-LOCK-002): a note's own allocation link counts in a bank-transfer payment's refunded
+    // total by the amounts its row keeps, and its writers take that Payment row first. This one takes
+    // none, so it never switches back on a row a Xero reading retired (the classifier sees only active
+    // links, so a retired row reads as missing). A missing row is created bare and counts nothing until
+    // the note's sync writes it. The row lock holds a removal off until this commits.
+    const retired = await deps.prisma.$transaction(async (tx) => {
+      const key = { localModel: link.localModel, localId: link.localId, xeroObjectType: link.xeroObjectType, xeroObjectId: link.xeroObjectId, role: link.role };
+      // A missing row cannot be locked, so it is reserved first, as the inbound write reserves its own
+      // (`writeLockedAllocation`): a retirement committed while this waits is then a row to read, not
+      // one the upsert below would switch back on. The reservation rolls back with this transaction.
+      const reserved = await tx.xeroObjectLink.createMany({ data: [{ ...key, active: false }], skipDuplicates: true });
+      if (reserved.count === 0) {
+        await tx.$executeRaw`
+          SELECT 1 FROM "XeroObjectLink"
+          WHERE "localModel" = ${link.localModel} AND "localId" = ${link.localId}
+            AND "xeroObjectType" = ${link.xeroObjectType} AND "xeroObjectId" = ${link.xeroObjectId}
+            AND "role" = ${link.role}
+          FOR UPDATE`;
+        const row = await tx.xeroObjectLink.findUnique({
+          where: { localModel_localId_xeroObjectType_xeroObjectId_role: key },
+          select: { active: true },
+        });
+        if (row && !row.active) return true;
+      }
+      await deps.upsertXeroObjectLink(link, { store: tx });
+      return false;
+    });
+    if (retired) {
+      // For an operator, not a state change: the next pass would offer the same backfill again.
+      action.status = "manual_review";
+      action.resultMessage = `Left the retired ${link.role} link for ${link.localModel} ${link.localId} off: a Xero reading removed that allocation.`;
+      return;
+    }
+  } else {
+    await deps.upsertXeroObjectLink(link);
+  }
 
   action.status = "applied";
-  action.resultMessage = `Backfilled ${String(action.payload.role)} link for ${String(action.payload.localModel)} ${String(action.payload.localId)}.`;
+  action.resultMessage = `Backfilled ${link.role} link for ${link.localModel} ${link.localId}.`;
 }
 
 function getPaymentIntentIdsFromActionPayload(action: BookingXeroRepairAction) {
@@ -349,7 +389,10 @@ async function applyQueuedAction(
       return;
     }
     case "QUEUE_ADDITIONAL_CAPTURE_RECEIPT": return applyAdditionalCaptureReceiptAction(action, deps); // #3953
-    case "QUEUE_KEPT_LATE_CAPTURE_RECORD": return applyKeptChangeCaptureRecordAction(action, deps); // #4324
+    case "QUEUE_KEPT_LATE_CAPTURE_RECORD": // #4324; #4381: a close's, by the close's own split
+      return action.payload.paidAnotherWayClose === true
+        ? applyPaidAnotherWayCloseReceiptAction(action, deps)
+        : applyKeptChangeCaptureRecordAction(action, deps);
     case "QUEUE_PAID_ANOTHER_WAY_REFUND_NOTE": {
       // #3924 round 8: the one note step, under the approval task's row lock; it reads the receipt and the
       // close again there and queues at most once. #4516 round-3 review 2: only a note queued NOW is "queued".

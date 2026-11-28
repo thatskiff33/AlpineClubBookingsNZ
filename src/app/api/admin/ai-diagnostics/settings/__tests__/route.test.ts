@@ -31,7 +31,7 @@ vi.mock("@/lib/ai-diagnostics-usage", async (importActual) => {
 });
 
 import { GET, PUT } from "../route";
-import { DIAGNOSTICS_MAX_MONTHLY_BUDGET_CENTS } from "@/lib/ai-diagnostics-usage";
+import { AI_DIAGNOSTICS_MAX_MONTHLY_BUDGET_CENTS } from "@/config/ai-spend";
 
 function makeReq(body: unknown, raw?: string) {
   return new Request("https://club.example.com/api/admin/ai-diagnostics/settings", {
@@ -66,16 +66,16 @@ beforeEach(() => {
 describe("GET /api/admin/ai-diagnostics/settings", () => {
   it("rejects a non-admin via the guard", async () => {
     mocks.requireAdmin.mockResolvedValue({ ok: false, response: new Response(null, { status: 403 }) });
-    const res = await GET();
+    const res = await GET(new Request("http://localhost/api/admin/ai-diagnostics/settings"));
     expect(res.status).toBe(403);
   });
 
   it("returns the NZ$0 default budget when no row is stored", async () => {
     mocks.settingsFindUnique.mockResolvedValue(null);
-    const res = await GET();
+    const res = await GET(new Request("http://localhost/api/admin/ai-diagnostics/settings"));
     const json = await res.json();
     expect(json.monthlyBudgetCents).toBe(0);
-    expect(json.maxMonthlyBudgetCents).toBe(DIAGNOSTICS_MAX_MONTHLY_BUDGET_CENTS);
+    expect(json.maxMonthlyBudgetCents).toBe(AI_DIAGNOSTICS_MAX_MONTHLY_BUDGET_CENTS);
     expect(json.updatedAt).toBeNull();
   });
 });
@@ -96,9 +96,9 @@ describe("PUT /api/admin/ai-diagnostics/settings", () => {
   });
 
   it("accepts the max budget and rejects one cent over it (fat-finger guard)", async () => {
-    const ok = await PUT(makeReq({ monthlyBudgetCents: DIAGNOSTICS_MAX_MONTHLY_BUDGET_CENTS }));
+    const ok = await PUT(makeReq({ monthlyBudgetCents: AI_DIAGNOSTICS_MAX_MONTHLY_BUDGET_CENTS }));
     expect(ok.status).toBe(200);
-    const over = await PUT(makeReq({ monthlyBudgetCents: DIAGNOSTICS_MAX_MONTHLY_BUDGET_CENTS + 1 }));
+    const over = await PUT(makeReq({ monthlyBudgetCents: AI_DIAGNOSTICS_MAX_MONTHLY_BUDGET_CENTS + 1 }));
     expect(over.status).toBe(400);
   });
 

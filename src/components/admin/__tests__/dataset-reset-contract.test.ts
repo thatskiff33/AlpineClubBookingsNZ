@@ -26,7 +26,7 @@ const INCLUDED_DATASETS = [
   ["Public Booking Requests", "src/components/admin/booking-requests/public-booking-requests-panel.tsx"],
   ["Induction Register", "src/components/admin/induction-register-table.tsx"],
   ["Promo Redemptions", "src/app/(admin)/admin/rules/promo-codes/promo-redemptions-panel.tsx"],
-  ["Lockers", "src/app/(admin)/admin/lockers/page.tsx"],
+  ["Lockers", "src/app/(admin)/admin/lodge-ops/lockers/page.tsx"],
   ["Finance Dashboard", "src/app/(finance)/finance/_components/finance-dashboard-client.tsx"],
 ] as const
 

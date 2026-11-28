@@ -254,6 +254,8 @@ const tx = {
   // #3954 decision A: the parked invoices the retire cancels are read first,
   // for what they would have billed.
   xeroSyncOperation: { updateMany: xeroUpdateMany, findMany: vi.fn(async () => state.parkedInvoices) },
+  // #5288: an unlinked bank increase reads the credit its new invoice is allocated.
+  memberCredit: { groupBy: vi.fn(async () => []) },
 } as unknown as Parameters<typeof applyPaymentAdjustments>[0];
 
 function askRow(overrides: Partial<Row> = {}): Row {

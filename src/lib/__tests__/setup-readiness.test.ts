@@ -14,8 +14,8 @@ import { decideClubTimeZoneBackfill } from "@/lib/config-self-heal-steps";
 import { BROWSER_SENTRY_OFF_DETAIL } from "@/lib/observability/browser-sentry-config";
 import { decideEnvironmentRole } from "@/lib/environment-role";
 import type { EnvironmentRoleDeclaration } from "@/lib/environment-role-declaration";
+import { SETUP_STEP_IDS } from "@/lib/setup-step-ids";
 import {
-  SETUP_STEP_IDS,
   getSetupRequiredEnvNames,
   buildSetupReadiness,
   normalizeSetupProgress,

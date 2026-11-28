@@ -1308,7 +1308,7 @@ export async function modifyBookingDates({
       xeroAdditionalAmountCents,
       ownCardRefund,
       organiserChildRefund: payments.organiserChildRefund,
-      zeroDollarAutoPaid,
+      zeroDollarAutoPaid, primaryInvoiceBillsIncrease: payments.primaryInvoiceBillsIncrease, // #5288
       paymentId: booking.payment?.id ?? null,
       paymentCustomerId: booking.payment?.stripeCustomerId ?? null,
       memberEmail: bookingOwner(booking).member.email,
@@ -1497,8 +1497,8 @@ async function dispatchDatePostTransactionSideEffects({
     // F20 (#1887): a reprice that landed the booking fully credit-covered
     // auto-confirmed it at $0, so create the primary invoice if none was issued
     // (mirrors the batch modify path).
-    createPrimaryInvoiceWhenMissing:
-      result.zeroDollarAutoPaid && !result.hasIssuedXeroInvoice,
+    createPrimaryInvoiceWhenMissing: result.zeroDollarAutoPaid && !result.hasIssuedXeroInvoice,
+    primaryInvoiceBillsIncrease: result.primaryInvoiceBillsIncrease, // #5288: an unlinked bank increase
     requiresAdditionalStripePayment:
       result.xeroAdditionalAmountCents > 0 && result.hasSucceededPayment,
     additionalPaymentIntentId: additionalMint.additionalPaymentIntentId,

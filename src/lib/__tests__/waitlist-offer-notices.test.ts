@@ -313,7 +313,7 @@ describe("the sweep's offer email (owner decision D2; the told rule, review B)",
       await expect(sweep(MEMBER, handle)).resolves.toBe("delivered");
       expect(db.emailLogFindUnique).toHaveBeenCalledWith({
         where: { id: `email:waitlist-offer:booking1:${OFFERED_AT.getTime()}` },
-        select: { status: true, attempts: true, lastAttemptAt: true, htmlBody: true, bookingRetryHtmlBody: true },
+        select: { status: true, attempts: true, lastAttemptAt: true, handoverState: true, htmlBody: true, bookingRetryHtmlBody: true },
       });
       expect(send.restart).not.toHaveBeenCalled();
       expect(send.offer).not.toHaveBeenCalled();
