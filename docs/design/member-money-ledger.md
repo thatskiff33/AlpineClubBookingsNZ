@@ -802,8 +802,9 @@ not carry exactly the slices is `STAY_CENTS` or `REDUCTION_NETTED`; a missing,
 reversed or ambiguous event, and a give-back or billed-offset note (which
 returns applied credit or a billed offset, not a stay slice), are
 `COMPONENT_UNUSABLE`. A slice another note of the role still covers is
-`ALREADY_COVERED`, with no coverage, and the coverage key refuses a race that
-loses. A booking-anchored clearing note has no edit behind it and records
+`ALREADY_COVERED`, with no coverage. The coverage key refuses a race that
+loses; the losing note retries once, sees the winner and records
+`ALREADY_COVERED`, so it still has a manifest. A booking-anchored clearing note has no edit behind it and records
 nothing. The role's coverage is a group of its own: an invoice's cover of an
 event's slice and a note's cover of another event's never meet, and summing
 coverage across roles against the component's live gross is still the later

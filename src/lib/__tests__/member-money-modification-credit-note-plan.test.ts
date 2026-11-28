@@ -126,6 +126,13 @@ describe("planModificationCreditNote (ALP-753)", () => {
       sliceEvent: { ...reduction(EVENT, 14000, 7500), legs: [...reduction(EVENT, 14000, 7500).legs, leg("FEE_REVENUE", FEE, 2000)] },
     }));
     expect(single).toMatchObject({ outcome: "CONFLICT", reason: "REDUCTION_NETTED" });
+    // A fee line alone refuses the note, even when the event moved no fee: the stay line matches the event exactly.
+    const feeLineOnly = planModificationCreditNote(input({
+      lines: [noteLine(10000), { ...changeFeeLineItem(500, mapping, BASELINE), unitAmount: -5 }],
+      sliceEvent: reduction(EVENT, 14000, 4000),
+    }));
+    expect(feeLineOnly).toMatchObject({ outcome: "CONFLICT", reason: "REDUCTION_NETTED", lineTotalCents: 9500 });
+    expect(feeLineOnly).not.toHaveProperty("coverage");
   });
 
   it("refuses an edit that raised the price: a note returns no increase", () => {
@@ -200,6 +207,7 @@ describe("recordModificationCreditNoteManifest (ALP-753)", () => {
     ...overrides,
   });
   const written = () => mocks.writeExportManifest.mock.calls.at(-1)?.[1];
+  const p2002 = () => new Prisma.PrismaClientKnownRequestError("Unique constraint failed", { code: "P2002", clientVersion: "test" });
 
   beforeEach(() => {
     for (const mock of Object.values(mocks)) mock.mockReset();
@@ -236,11 +244,28 @@ describe("recordModificationCreditNoteManifest (ALP-753)", () => {
     mocks.coverageFindFirst.mockResolvedValue({ sliceKey: EVENT, manifest: { providerInvoiceId: "credit-1" } });
     await record({ legacyKey: `booking-mod:${MOD}:mod-credit-note:4500:v2`, providerCreditNoteId: "credit-2" });
     expect(written()).toMatchObject({ outcome: "CONFLICT", reason: "ALREADY_COVERED", coverage: [], providerInvoiceId: "credit-2" });
-    expect(mocks.logWarn).toHaveBeenCalledWith(expect.objectContaining({ reason: "ALREADY_COVERED" }), expect.any(String));
+    expect(mocks.logWarn).toHaveBeenCalledWith(expect.objectContaining({ reason: "ALREADY_COVERED" }), expect.stringContaining("Another edit credit note already returns this slice"));
+    expect(mocks.logWarn).not.toHaveBeenCalledWith(expect.anything(), expect.stringContaining("does not match the journal"));
   });
 
-  it("never throws: a lost unique-key race is noted, any other failure logged", async () => {
-    mocks.writeExportManifest.mockRejectedValueOnce(new Prisma.PrismaClientKnownRequestError("Unique constraint failed", { code: "P2002", clientVersion: "test" }));
+  it("retries a covered note that lost the race for its slice once, so it records ALREADY_COVERED against the winner", async () => {
+    mocks.writeExportManifest.mockRejectedValueOnce(p2002());
+    mocks.coverageFindFirst.mockResolvedValueOnce(null).mockResolvedValueOnce({ sliceKey: EVENT, manifest: { providerInvoiceId: "credit-1" } });
+    await expect(record({ providerCreditNoteId: "credit-2" })).resolves.toBeUndefined();
+    expect(mocks.writeExportManifest).toHaveBeenCalledTimes(2);
+    expect(written()).toMatchObject({ outcome: "CONFLICT", reason: "ALREADY_COVERED", coverage: [], providerInvoiceId: "credit-2" });
+  });
+
+  it("does not retry a unique-key failure on a note the planner already refused", async () => {
+    mocks.writeExportManifest.mockRejectedValueOnce(p2002());
+    // 99.99 returned against a 45.00 reduction: a CONFLICT before any precheck.
+    await expect(record({ lines: [noteLine(9999)] })).resolves.toBeUndefined();
+    expect(mocks.writeExportManifest).toHaveBeenCalledTimes(1);
+    expect(mocks.logInfo).toHaveBeenCalledWith(expect.objectContaining({ bookingId: BOOKING }), expect.stringContaining("first row stands"));
+  });
+
+  it("never throws: a unique-key race lost twice is noted, any other failure logged", async () => {
+    mocks.writeExportManifest.mockRejectedValueOnce(p2002()).mockRejectedValueOnce(p2002());
     await expect(record()).resolves.toBeUndefined();
     expect(mocks.logInfo).toHaveBeenCalledWith(expect.objectContaining({ bookingId: BOOKING }), expect.stringContaining("first row stands"));
     mocks.findMany.mockRejectedValueOnce(new Error("database gone"));

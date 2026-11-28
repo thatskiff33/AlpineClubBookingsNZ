@@ -22,8 +22,10 @@ import { writeExportManifest } from "./store";
  * slice another note of this role still covers (no release on its manifest) is
  * recorded as CONFLICT `ALREADY_COVERED`, with no coverage, as the refund note
  * does (`refund-note-manifest.ts`): a second note for the same reduction never
- * returns it twice. The unique coverage key is the last word; a race that
- * loses to it (P2002) is logged and swallowed.
+ * returns it twice. The unique coverage key is the last word: a COVERED
+ * note that loses a race to it (P2002) retries once in a fresh transaction, so
+ * its precheck sees the winner and it records `ALREADY_COVERED`; a second P2002
+ * is logged and swallowed.
  *
  * No advisory lock: the manifest changes no booking status, capacity or
  * settlement money, so it joins neither `pg_advisory_xact_lock(1)` nor the
@@ -98,7 +100,7 @@ export async function recordModificationCreditNoteManifest(input: {
         ? await readItemisedShareSliceEvents(prisma, bookingId, anchor, input.itemisedShareTaskIds)
         : [],
     });
-    const { plan, result } = await prisma.$transaction(async (tx) => {
+    const record = () => prisma.$transaction(async (tx) => {
       const settled = await refuseCoveredSlices(tx, built);
       const written = await writeExportManifest(tx, {
         documentRole: "MODIFICATION_CREDIT_NOTE",
@@ -114,8 +116,22 @@ export async function recordModificationCreditNoteManifest(input: {
       });
       return { plan: settled, result: written };
     });
+    let recorded: Awaited<ReturnType<typeof record>>;
+    try {
+      recorded = await record();
+    } catch (error) {
+      // A COVERED plan that lost the race for its slice rolled back whole. Once
+      // more, in a fresh transaction: the precheck now sees the winner and the
+      // note records ALREADY_COVERED, so it is never left with no manifest.
+      if (built.outcome !== "COVERED" || !isPrismaKnownUniqueConstraintError(error)) throw error;
+      recorded = await record();
+    }
+    const { plan, result } = recorded;
     if (plan.outcome === "CONFLICT" && result === "WRITTEN") {
-      logger.warn({ bookingId, providerCreditNoteId, reason: plan.reason, problem: plan.problem }, "The edit's credit note does not match the journal; its manifest records a conflict and the note still sent");
+      const message = plan.reason === "ALREADY_COVERED"
+        ? "Another edit credit note already returns this slice; this note's manifest records a conflict with no coverage and the note still sent"
+        : "The edit's credit note does not match the journal; its manifest records a conflict and the note still sent";
+      logger.warn({ bookingId, providerCreditNoteId, reason: plan.reason, problem: plan.problem }, message);
     }
     if (result === "KEPT_FIRST") {
       logger.info({ bookingId, providerCreditNoteId }, "The edit's credit note's manifest was already recorded differently; the first row stands");

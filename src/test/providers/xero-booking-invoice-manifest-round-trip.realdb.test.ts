@@ -12,7 +12,8 @@
  * review closure. Each document is then read back through the app's client,
  * and the manifest its sender recorded must cover exactly the lines Xero holds
  * (`manifest-round-trip.ts`). A repeat send moves no manifest, and a second
- * note on the same slice is recorded as a conflict with no second cover.
+ * note on the same slice is recorded as a conflict with no second cover, even
+ * when the two record at the same moment.
  *
  * Ordinary Vitest runs skip the whole file. It needs the guarded, disposable
  * loopback PostgreSQL the race harness uses, and owns its `race-5253-` rows.
@@ -265,6 +266,28 @@ async function settleReviewShare(bookingId: string, modificationId: string): Pro
     });
     expect(live).toEqual([{ manifest: { providerInvoiceId: noteId } }]);
     expect(await readManifests(prisma, "MODIFICATION_CREDIT_NOTE", noteId)).toHaveLength(1);
+  });
+
+  it("two notes recording the same fresh slice at once: one covers it, the loser retries and records ALREADY_COVERED, so neither is left without a manifest", async () => {
+    // A fresh reduction on the transfer booking: the remaining guest's first night re-priced down 20.00.
+    const CUT = `${BOOKING_ID}-cut`;
+    await postHistoryEdit(prisma, names, BOOKING_ID, CUT, { reprice: { guestId: `${BOOKING_ID}-g1`, stayDate: D1, priceCents: 5_000 - 2_000 }, changeFeeCents: 0 });
+    const [template] = (await readBackDocument("CREDIT_NOTE", noteId)).lineItems;
+    const lines: LineItem[] = [{ ...template, quantity: 1, unitAmount: 20, lineAmount: 20 }];
+    const record = (key: string) => doors.recordModificationCreditNoteManifest({
+      bookingId: BOOKING_ID, modificationId: CUT, legacyKey: `${CUT}:${key}`, lines,
+      taxRendering: BASELINE_XERO_TAX_RENDERING, priceLines: null, itemisedShareTaskIds: [], providerCreditNoteId: `${PREFIX}credit-${key}`,
+    });
+    await Promise.all([record("a"), record("b")]);
+    const manifests = await Promise.all(["a", "b"].map((key) => readManifest(prisma, "MODIFICATION_CREDIT_NOTE", `${PREFIX}credit-${key}`)));
+    expect(manifests.map((m) => m.outcome).sort()).toEqual(["CONFLICT", "COVERED"]);
+    const loser = manifests.find((m) => m.outcome === "CONFLICT")!;
+    expect(loser).toMatchObject({ reason: "ALREADY_COVERED", coverage: [] });
+    const winner = manifests.find((m) => m.outcome === "COVERED")!;
+    expect(winner.coverage).toEqual([
+      { account: "BOOKING_REVENUE", chargeIdentity: `booking:${BOOKING_ID}:charge`, sliceKey: `modification:${CUT}`, coveredCents: 2_000 },
+    ]);
+    expect(await prisma.memberMoneyExportCoverage.count({ where: { documentRole: "MODIFICATION_CREDIT_NOTE", sliceKey: `modification:${CUT}` } })).toBe(1);
   });
 });
 
