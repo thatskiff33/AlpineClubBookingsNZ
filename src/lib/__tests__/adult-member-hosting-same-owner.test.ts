@@ -1670,7 +1670,7 @@ describe("a change that would strand another booking (#2576 §6, §7, §14)", ()
     // is not ENFORCED — doubling a normal pending review into an urgent incident
     // would double the officer's queue for a state the club merely wants to see.
     const rows = strandingPair([REMAINING_MEMBER_CHILD]);
-    const { db, incidents } = makeStore(rows, {
+    const { db, incidents, updates } = makeStore(rows, {
       policies: [policyRow({ mode: "ADMIN_REVIEW_REQUIRED" })],
     });
     await expect(
@@ -1680,6 +1680,19 @@ describe("a change that would strand another booking (#2576 §6, §7, §14)", ()
       ),
     ).resolves.toEqual({ action: "none" });
     expect(incidents).toEqual([]);
+    // ...and the snapshot the row exists for IS written: the kiosk reads a
+    // drained row at a review-only lodge as "re-checked" (INV-HOST-045).
+    expect(updates).toEqual([
+      expect.objectContaining({
+        id: "b-main",
+        data: expect.objectContaining({
+          adultMemberHostingReview: expect.objectContaining({
+            reasonCode: "ADULT_MEMBER_HOSTING_REQUIRED",
+          }),
+          adultMemberHostingReviewStatus: "PENDING",
+        }),
+      }),
+    ]);
   });
 });
 
@@ -2186,21 +2199,35 @@ describe("a change to one PERSON's standing (#2576 §8, §17)", () => {
     }
   });
 
-  it("records nothing while the club is not enforcing", async () => {
+  it("queues at every active mode, and records nothing while the rule is off", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(TODAY);
     try {
-      // Incidents exist only under ENFORCED, and that rule is unchanged. Gated on the
-      // consequence and NOT on the scope, deliberately: a lapse removes cover under
-      // SAME_BOOKING just as surely, and the drain reconciles each booking through the
-      // shared evaluator, which honours whichever scopes the lodge actually has on.
+      // Incidents exist only under ENFORCED, and that rule is unchanged, but the
+      // review snapshot still has to be refreshed under ADMIN_REVIEW_REQUIRED: the
+      // kiosk reads "no queued row" as "nothing changed" at either active mode
+      // (INV-HOST-045). Gated on the consequence and NOT on the scope, deliberately:
+      // a lapse removes cover under SAME_BOOKING just as surely, and the drain
+      // reconciles each booking through the shared evaluator, which honours
+      // whichever scopes the lodge actually has on.
       const review = makeStore([attendedBooking("b-owner-1", "owner-1")], {
         policies: [policyRow({ mode: "ADMIN_REVIEW_REQUIRED" })],
       });
       expect(
         await enqueueHostingCoverageReevaluationForMember("lapsing-adult", review.db, CLUB_TODAY_DATE_ONLY),
+        "INV-HOST-045 (docs/invariants/adult-member-hosting.md): a standing change at a review-only lodge must queue its re-check",
+      ).toBe(1);
+      expect(review.queued).toEqual([
+        expect.objectContaining({ memberId: "owner-1", sourceBookingId: "b-owner-1" }),
+      ]);
+
+      const disabled = makeStore([attendedBooking("b-owner-1", "owner-1")], {
+        policies: [policyRow({ mode: "DISABLED" })],
+      });
+      expect(
+        await enqueueHostingCoverageReevaluationForMember("lapsing-adult", disabled.db, CLUB_TODAY_DATE_ONLY),
       ).toBe(0);
-      expect(review.queued).toEqual([]);
+      expect(disabled.queued).toEqual([]);
 
       const sameBookingOnly = makeStore([attendedBooking("b-owner-1", "owner-1")], {
         policies: [policyRow({ hostScopeSameBookingOwner: false })],
@@ -2222,7 +2249,7 @@ describe("a change to one PERSON's standing (#2576 §8, §17)", () => {
     vi.setSystemTime(TODAY);
     try {
       // #2623 T5 asked for this seam's fence to be gated on the policy. Its
-      // PARTICIPANT fence already is — the per-lodge `ENFORCED` filter returns 0
+      // PARTICIPANT fence already is — the per-lodge active-mode filter returns 0
       // before any proof is acquired. The subject barrier above it must NOT be:
       // it is the shared standing-subject fence every lifecycle writer reaches,
       // and account deletion relies on it to exclude a concurrent
@@ -3965,6 +3992,95 @@ describe("#3480: an organisation-owned booking is not a hosting-coverage partici
 
       await expect(
         enqueueOwnHostingCoverageReevaluation("b-school", db, { cause: "SYSTEM_CHANGE" }),
+      ).resolves.toBeNull();
+      expect(db.$executeRaw).not.toHaveBeenCalled();
+      expect(queued).toEqual([]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
+describe("the confirming and settle seams queue at every active mode (#5239 follow-up)", () => {
+  const TODAY = new Date("2026-07-01T00:00:00.000Z");
+
+  it.each(["ADMIN_REVIEW_REQUIRED", "ENFORCED"])(
+    "a confirming door at a %s lodge records the booking's own item",
+    async (mode) => {
+      vi.useFakeTimers();
+      vi.setSystemTime(TODAY);
+      try {
+        // The saved-card auto-charge, group settlement and the reaper's revert
+        // reach this seam. A review-only lodge opens no incident from the item,
+        // but the drain re-stamps the review snapshot, and without the row the
+        // kiosk would read "nothing changed" for a change nobody re-checked.
+        const { db, queued } = makeStore([booking({ id: "b-main", memberId: "owner-1" })], {
+          policies: [policyRow({ mode })],
+        });
+        await expect(
+          enqueueOwnHostingCoverageReevaluation("b-main", db, { cause: "SYSTEM_CHANGE" }),
+        ).resolves.not.toBeNull();
+        expect(
+          queued,
+          "INV-HOST-045 (docs/invariants/adult-member-hosting.md): every active mode queues from the confirming seam",
+        ).toEqual([
+          expect.objectContaining({
+            memberId: "owner-1",
+            lodgeId: LODGE,
+            sourceBookingId: "b-main",
+            cause: "SYSTEM_CHANGE",
+          }),
+        ]);
+      } finally {
+        vi.useRealTimers();
+      }
+    },
+  );
+
+  it("the settle step without SAME_BOOKING_OWNER records the booking's own item under review", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(TODAY);
+    try {
+      // The single-booking branch of `settleSameOwnerDependentCoverage` used to
+      // stop at ENFORCED, so a review-only lodge got no row for the change.
+      const { db, queued, incidents } = makeStore(
+        [
+          booking({
+            id: "b-main",
+            memberId: "owner-1",
+            guests: [guestRow("non-member-1", ["2026-07-03", "2026-07-04"])],
+          }),
+        ],
+        {
+          policies: [
+            policyRow({ mode: "ADMIN_REVIEW_REQUIRED", hostScopeSameBookingOwner: false }),
+          ],
+        },
+      );
+      await reconcileAdultMemberHostingReviewWithSiblings(
+        "b-main",
+        db,
+        hostingCoverageActorOptions({ vacatedRange: null, actorRole: "MEMBER", actorMemberId: "owner-1" }),
+      );
+      expect(
+        queued,
+        "INV-HOST-045 (docs/invariants/adult-member-hosting.md): the settle step queues at every active mode",
+      ).toEqual([expect.objectContaining({ memberId: "owner-1", sourceBookingId: "b-main" })]);
+      expect(incidents).toEqual([]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("a confirming door at a DISABLED lodge records nothing and takes no fence", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(TODAY);
+    try {
+      const { db, queued } = makeStore([booking({ id: "b-main", memberId: "owner-1" })], {
+        policies: [policyRow({ mode: "DISABLED" })],
+      });
+      await expect(
+        enqueueOwnHostingCoverageReevaluation("b-main", db, { cause: "SYSTEM_CHANGE" }),
       ).resolves.toBeNull();
       expect(db.$executeRaw).not.toHaveBeenCalled();
       expect(queued).toEqual([]);

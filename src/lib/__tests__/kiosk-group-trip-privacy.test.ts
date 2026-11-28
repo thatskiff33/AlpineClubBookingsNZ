@@ -42,6 +42,10 @@ import { AgeTier } from "@prisma/client";
 import { stripComments } from "@/lib/__tests__/support/strip-comments";
 import { GROUP_TRIP_COVERAGE_DEPENDENT_LIMIT } from "@/lib/adult-member-hosting-coverage-ceilings";
 import { hostingPolicyReconciliationCandidateWhere } from "@/lib/adult-member-hosting-policy-reconciliation";
+import {
+  storedHostingReviewOf,
+  type GroupTripCoverFreshness,
+} from "@/lib/adult-member-hosting-stored-review";
 import { groupTripCoverageDependentWhere } from "@/lib/group-trip-identity";
 import { deriveKioskAdultCoverSource } from "@/lib/kiosk-adult-cover";
 import {
@@ -1516,16 +1520,25 @@ describe("#3040 the split-pair carve-out reaches the kiosk through its one canon
 describe("#5239 sibling cover is shown only when it can be verified (INV-HOST-045)", () => {
   const ENFORCED = { ...SCOPE_ON_POLICY, mode: "ENFORCED" };
   const STAMP = { groupBookingId: TRIP, revision: 4 };
-  const siblingReview = (stamp: unknown = STAMP) => ({
-    ...canonicalSnapshot([
+  const siblingSnapshot = () =>
+    canonicalSnapshot([
       {
         night: "2026-08-01",
         memberIds: ["adult-secret"],
         coveredByScopes: ["SAME_GROUP_TRIP"],
       },
       { night: "2026-08-02" },
-    ]),
-    ...(stamp === null ? {} : { groupTripCoverFreshness: stamp }),
+    ]);
+  /** As the writer stamps it now (`storedHostingReviewOf`). */
+  const siblingReview = (stamp: GroupTripCoverFreshness | null = STAMP) =>
+    storedHostingReviewOf(siblingSnapshot() as never, stamp);
+  /**
+   * As a release stamped it while the confirming and membership seams queued
+   * nothing at a review-only lodge: well-formed, without the marker.
+   */
+  const stampedBeforeReviewQueued = () => ({
+    ...siblingSnapshot(),
+    groupTripCoverFreshness: STAMP,
   });
   const rows = (review: unknown = siblingReview()) => [
     bookingRow({
@@ -1562,6 +1575,20 @@ describe("#5239 sibling cover is shown only when it can be verified (INV-HOST-04
     const payload = JSON.stringify(attached);
     expect(payload, "INV-PRIV-016: no covering member id").not.toContain("adult-secret");
     expect(payload, "INV-PRIV-016: the stamp's trip id never ships").not.toContain(TRIP);
+  });
+
+  it("shows verified sibling evidence at a review-only lodge, where every seam queues too", async () => {
+    const { source } = await cover(siblingReview(), { policyRows: [SCOPE_ON_POLICY] });
+    expect(
+      source,
+      "INV-HOST-045 (docs/invariants/adult-member-hosting.md): review-only shows verified sibling cover",
+    ).toMatchObject({ status: "EVALUATED", scopes: ["SAME_GROUP_TRIP"] });
+  });
+
+  it("lets an ENFORCED lodge trust a stamp written before review-only lodges queued", async () => {
+    // Every seam always queued under ENFORCED, so the older stamp still vouches.
+    const { source } = await cover(stampedBeforeReviewQueued());
+    expect(source).toMatchObject({ status: "EVALUATED", scopes: ["SAME_GROUP_TRIP"] });
   });
 
   it("asks which cards a policy change re-queues through the reconciliation's own predicate", async () => {
@@ -1623,7 +1650,7 @@ describe("#5239 sibling cover is shown only when it can be verified (INV-HOST-04
 
   for (const [label, review, options] of [
     ["a queued re-check for the card's owner", siblingReview(), { queuedOwnerIds: ["owner-dependent"] }],
-    ["review-only mode, whose confirming and membership seams queue nothing", siblingReview(), { policyRows: [SCOPE_ON_POLICY] }],
+    ["review-only mode, with a stamp from before its seams queued", stampedBeforeReviewQueued(), { policyRows: [SCOPE_ON_POLICY] }],
     ["the Group Trip scope switched off", siblingReview(), { policyRows: [{ ...ENFORCED, hostScopeSameGroupTrip: false }] }],
     ["a trip at the fan-out ceiling", siblingReview(), { dependentPopulation: GROUP_TRIP_COVERAGE_DEPENDENT_LIMIT }],
     ["a failed revision read", siblingReview(), { failRevisionRead: true }],

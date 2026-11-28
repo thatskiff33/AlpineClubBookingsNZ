@@ -104,7 +104,6 @@ import {
   adultMemberHostingStateKey,
   evaluateAdultMemberHostingWithPolicy,
   hostingModeIsActive,
-  hostingModeQueuesCoverageReevaluation,
   resolveAdultMemberHostingPolicy,
   hostingModeCanRefuseStranding,
   type EffectiveAdultMemberHostingMode,
@@ -2073,15 +2072,15 @@ async function hasHostingSiblingAtActiveLodge(
  * clearing a snapshot left behind by a lodge that has since switched the rule off
  * is exactly its job.
  *
- * THE THRESHOLD IS NOT THE SIBLING'S, and the difference is deliberate rather than
- * drift (#2623 F5). That seam gates on `resolved.mode !== "ENFORCED"`, because all
- * it does is enqueue queue work that only an ENFORCED lodge can ever act on. This
- * one gates on `hostingModeIsActive` — ENFORCED *or* ADMIN_REVIEW_REQUIRED —
- * because under review-only the dependants still have to be re-read and a review
- * snapshot still has to be written, so the fence is genuinely owed. Narrowing this
- * to the sibling's test skips the fence at a review-only lodge that needs it, and
- * the `ADMIN_REVIEW_REQUIRED` case in `adult-member-hosting-same-owner.test.ts`
- * fails if you try it.
+ * THE THRESHOLD IS THE SIBLING'S: `hostingModeIsActive`, ENFORCED *or*
+ * ADMIN_REVIEW_REQUIRED, because under review-only the dependants still have to be
+ * re-read and a review snapshot still has to be written, so the fence is genuinely
+ * owed. The confirming seam used to stop at `ENFORCED` (#2623 F5) on the reasoning
+ * that only an enforcing lodge acts on queue work; the review snapshot and the
+ * kiosk's "no queued row means nothing changed" are that work at a review-only
+ * lodge (`INV-HOST-045`), so both now share the one test. Narrowing this skips the
+ * fence at a review-only lodge that needs it, and the `ADMIN_REVIEW_REQUIRED` case
+ * in `adult-member-hosting-same-owner.test.ts` fails if you try it.
  *
  * WHICH LODGE'S MODE (#3209). Clubs configure this rule PER LODGE, so "the lodge
  * of the booking that changed has it off" answers nothing about the lodges of the
@@ -2895,19 +2894,17 @@ async function settleSameOwnerDependentCoverage(
   // turn it into a live incident source, an officer override can leave it
   // confirmed but uncovered, and a later correction must close that incident.
   // Only the cross-booking fan-out needs the owner lock and dependent inspection.
+  // Queued at every active mode, as the kiosk reads no row as "nothing changed"
+  // (`INV-HOST-045`); incidents and overrides exist only under ENFORCED, and the
+  // drain resolves any stray one at review-only.
   if (!resolved.hostScopes.sameBookingOwner) {
-    if (!hostingModeQueuesCoverageReevaluation(resolved.mode)) return;
     const context = options.coverageChange ?? { cause: "SYSTEM_CHANGE" as const };
-    if (context.cause === "OFFICER_OVERRIDE" && !context.reason?.trim()) {
-      throw new Error(
-        "Overriding adult-member hosting coverage requires an explicit reason",
-      );
+    if (resolved.mode === "ENFORCED") {
+      if (context.cause === "OFFICER_OVERRIDE" && !context.reason?.trim()) {
+        throw new Error("Overriding adult-member hosting coverage requires an explicit reason");
+      }
+      await resolveOwnCoverageIncidentAfterChange(booking, db, context.actorMemberId ?? null);
     }
-    await resolveOwnCoverageIncidentAfterChange(
-      booking,
-      db,
-      context.actorMemberId ?? null,
-    );
     await enqueueHostingCoverageReevaluation(
       {
         memberId: bookingOwner(booking).memberId,
@@ -3629,9 +3626,10 @@ export async function loadGroupTripCoverageDependentBookingIds(
  * course, which is correct — a confirmation adds attendance, and attendance can
  * RESTORE cover as easily as remove it.
  *
- * Returns the queued item id, or null when nothing was queued: the club is not
- * enforcing or the booking has gone. `SAME_BOOKING` alone still queues this
- * booking; only the cross-booking owner lock depends on `SAME_BOOKING_OWNER`.
+ * Returns the queued item id, or null when nothing was queued: the rule is off at
+ * this lodge (review-only queues too, `INV-HOST-045`) or the booking has gone.
+ * `SAME_BOOKING` alone still queues this booking; only the cross-booking owner lock
+ * depends on `SAME_BOOKING_OWNER`.
  *
  * IT ALSO OWES THE GROUP TRIP FAN-OUT (#3039), and the group-settlement reaper is
  * the case that proves it rather than an argument by symmetry. Confirming ADDS
@@ -3719,7 +3717,7 @@ export async function enqueueOwnHostingCoverageReevaluation(
   if (!plannedBooking) return null;
 
   const resolved = await loadAdultMemberHostingPolicy(plannedBooking.lodgeId, db);
-  if (!hostingModeQueuesCoverageReevaluation(resolved.mode)) return null;
+  if (!hostingModeIsActive(resolved.mode)) return null;
 
   const actorMemberId = context.actorMemberId ?? null;
   // #3039: THIS SEAM OWES THE GROUP FAN-OUT TOO, and the reaper is the case that
@@ -3914,16 +3912,15 @@ export async function loadHostingCoverageMemberFanoutCandidates(
  * widen it into the lodge-wide sweep #2575 rejected. Past stays are excluded because
  * a lapse cannot retroactively break a completed attendance record (§3).
  *
- * GATED ON `ENFORCED` AND NOT ON THE SCOPE, deliberately, and this is the one place
- * the two gates differ. Incidents exist only under `ENFORCED` — that rule is
- * unchanged — but a lapse removes cover under `SAME_BOOKING` just as surely as under
- * `SAME_BOOKING_OWNER`, and the drain reconciles each booking through the shared
- * evaluator, which honours whichever scopes the lodge actually has on. Gating on the
- * scope would have left an enforcing single-booking club with no lapse detection at
- * all, for no reason.
+ * GATED ON AN ACTIVE MODE AND NOT ON THE SCOPE, deliberately. Incidents exist only
+ * under `ENFORCED`; under review-only the row refreshes the review snapshot the
+ * kiosk reads (`INV-HOST-045`). A lapse removes cover under `SAME_BOOKING` just as
+ * surely as under `SAME_BOOKING_OWNER`, and the drain reconciles each booking through
+ * the shared evaluator, which honours whichever scopes the lodge has on. Gating on
+ * the scope would have left a single-booking club with no lapse detection at all.
  *
  * THE PARTICIPANT FENCE IS ALREADY MODE-GATED HERE and always was: the per-lodge
- * `ENFORCED` filter below returns 0 before any proof is acquired, so #2623 T5's
+ * active-mode filter below returns 0 before any proof is acquired, so #2623 T5's
  * report that this seam takes the participant lock ungated does not hold against
  * this code. The subject barrier ABOVE it is ungated, and deliberately — see the
  * comment at that lock.
@@ -4009,10 +4006,10 @@ export async function enqueueHostingCoverageReevaluationForMember(
       await loadAdultMemberHostingPolicy(booking.lodgeId, db),
     );
   }
-  const enforcing = (booking: { lodgeId: string }): boolean =>
-    hostingModeQueuesCoverageReevaluation(resolvedByLodge.get(booking.lodgeId)?.mode ?? "DISABLED");
+  const active = (booking: { lodgeId: string }): boolean =>
+    hostingModeIsActive(resolvedByLodge.get(booking.lodgeId)?.mode ?? "DISABLED");
   const plannedQueueOwners = plannedAttended
-    .filter(enforcing)
+    .filter(active)
     .map((booking) => bookingOwner(booking).memberId);
   if (plannedQueueOwners.length === 0) return settled(0);
 
@@ -4051,7 +4048,7 @@ export async function enqueueHostingCoverageReevaluationForMember(
     }
   >();
   for (const booking of plannedAttended) {
-    if (!enforcing(booking)) continue;
+    if (!active(booking)) continue;
     const resolved = resolvedByLodge.get(booking.lodgeId);
     if (!resolved) continue;
     const plan = await planGroupTripCoverageDependents(booking, resolved, db);
@@ -4067,7 +4064,7 @@ export async function enqueueHostingCoverageReevaluationForMember(
     .sort(([left], [right]) => left.localeCompare(right))
     .map(([, entry]) => entry);
   const plannedSources = [
-    ...plannedAttended.filter(enforcing).map(sourceParticipant),
+    ...plannedAttended.filter(active).map(sourceParticipant),
     // The fence has to hold every owner the queue will name, and a trip dependent's
     // owner is somebody this person may not share a booking with at all.
     ...plannedGroupTrips.flatMap((entry) =>
@@ -4097,7 +4094,7 @@ export async function enqueueHostingCoverageReevaluationForMember(
     throw new HostingCoverageParticipantRetryError();
   }
   for (const booking of attended) {
-    if (enforcing(booking)) {
+    if (active(booking)) {
       assertHostingCoverageQueueParticipantsLocked(participantProof, {
         memberId: bookingOwner(booking).memberId,
         lodgeId: booking.lodgeId,
@@ -4125,7 +4122,7 @@ export async function enqueueHostingCoverageReevaluationForMember(
   const sameOwnerQueueOwners = attended
     .filter(
       (booking) =>
-        enforcing(booking) &&
+        active(booking) &&
         resolvedByLodge.get(booking.lodgeId)?.hostScopes.sameBookingOwner === true,
     )
     .map((booking) => bookingOwner(booking).memberId);
@@ -4139,7 +4136,7 @@ export async function enqueueHostingCoverageReevaluationForMember(
   let queued = 0;
   const ownItemBookingIds = new Set<string>();
   for (const booking of attended) {
-    if (!enforcing(booking)) continue;
+    if (!active(booking)) continue;
     ownItemBookingIds.add(booking.id);
 
     // The plural lock above already took §9's key for every applicable OWNER in
@@ -4566,9 +4563,9 @@ export async function reconcileSameOwnerCoverageIncident(
     enforcement: "REVIEW_ONLY",
   });
   if (outcome.mode !== "ENFORCED") {
-    // The club is no longer enforcing (or the booking moved out of scope), so an
-    // incident is no longer the right instrument. Resolve rather than leave a row
-    // an officer can do nothing useful with.
+    // Not enforcing: no incident. The reconcile above has re-stamped the review
+    // snapshot, all a review-only lodge's row is for (`INV-HOST-045`); resolve any
+    // stray incident rather than leave a row an officer can do nothing with.
     const closed = await resolveHostingCoverageIncidents(
       { bookingId: params.bookingId, resolution: "COVERAGE_RESTORED" },
       db,

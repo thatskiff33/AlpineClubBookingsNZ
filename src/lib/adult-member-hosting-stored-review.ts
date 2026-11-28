@@ -3,7 +3,8 @@ import type { PrismaClient } from "@prisma/client";
 import type { AdultMemberHostingPolicyExceptionViolation } from "@/lib/booking-policy-exceptions";
 import { stableStringify } from "@/lib/stable-digest";
 import {
-  hostingModeQueuesCoverageReevaluation,
+  hostingModeIsActive,
+  type EffectiveAdultMemberHostingMode,
   type ResolvedAdultMemberHostingPolicy,
 } from "@/lib/policies/adult-member-hosting";
 
@@ -69,9 +70,21 @@ export type GroupTripCoverFreshness = {
   revision: number;
 };
 
+/**
+ * The stamp as stored. `queuedAtEveryActiveMode` says the snapshot was written
+ * by a release in which every seam that can change cover queues a re-check under
+ * `ADMIN_REVIEW_REQUIRED` as well as `ENFORCED`. Before it, the confirming and
+ * membership-standing seams queued nothing at a review-only lodge, so a stamp
+ * written then can sit at the trip's current revision with no queued row while
+ * a sibling's cover has gone — see `groupTripCoverStampIsTrustedAt`.
+ */
+type StoredGroupTripCoverStamp = GroupTripCoverFreshness & {
+  queuedAtEveryActiveMode?: true;
+};
+
 /** The stored column's shape: the evaluator's snapshot plus its freshness stamp. */
 type StoredHostingReview = AdultMemberHostingPolicyExceptionViolation & {
-  groupTripCoverFreshness?: GroupTripCoverFreshness;
+  groupTripCoverFreshness?: StoredGroupTripCoverStamp;
 };
 
 /** The value the reconciler writes for a violation evaluated under `freshness`. */
@@ -79,7 +92,12 @@ export function storedHostingReviewOf(
   violation: AdultMemberHostingPolicyExceptionViolation,
   freshness: GroupTripCoverFreshness | null,
 ): StoredHostingReview {
-  return freshness ? { ...violation, groupTripCoverFreshness: freshness } : violation;
+  return freshness
+    ? {
+        ...violation,
+        groupTripCoverFreshness: { ...freshness, queuedAtEveryActiveMode: true },
+      }
+    : violation;
 }
 
 /**
@@ -93,14 +111,14 @@ export function storedHostingReviewDiffers(current: unknown, next: unknown): boo
 
 /**
  * Does this lodge's policy let the kiosk show cover resting on a Group Trip
- * sibling (`INV-HOST-045`)? `ENFORCED`, so every seam that can change cover
- * queues a re-check, and the `SAME_GROUP_TRIP` scope on. One answer for the kiosk
+ * sibling (`INV-HOST-045`)? An active mode, at which every seam that can change
+ * cover queues a re-check, and the `SAME_GROUP_TRIP` scope on. One answer for the kiosk
  * and for the member merge, which invalidates exactly the trips it covers.
  */
 export function policyShowsGroupTripCover(
   policy: Pick<ResolvedAdultMemberHostingPolicy, "mode" | "hostScopes">,
 ): boolean {
-  return hostingModeQueuesCoverageReevaluation(policy.mode) && policy.hostScopes.sameGroupTrip;
+  return hostingModeIsActive(policy.mode) && policy.hostScopes.sameGroupTrip;
 }
 
 /**
@@ -141,4 +159,24 @@ export function readStoredGroupTripCoverFreshness(
     return null;
   }
   return { groupBookingId, revision };
+}
+
+/**
+ * May a snapshot's stamp vouch for sibling cover at a lodge in `mode`?
+ *
+ * Under `ENFORCED` any well-formed stamp may: every seam has always queued
+ * there. Under `ADMIN_REVIEW_REQUIRED` only a stamp carrying
+ * `queuedAtEveryActiveMode` may, because one written before those seams queued
+ * there can predate a change nobody re-checked. Such a snapshot stays
+ * unverified until its booking is next evaluated, which rewrites the stamp.
+ */
+export function groupTripCoverStampIsTrustedAt(
+  review: unknown,
+  mode: EffectiveAdultMemberHostingMode,
+): boolean {
+  if (readStoredGroupTripCoverFreshness(review) === null) return false;
+  if (mode === "ENFORCED") return true;
+  const stamp = (review as { groupTripCoverFreshness: Record<string, unknown> })
+    .groupTripCoverFreshness;
+  return hostingModeIsActive(mode) && stamp.queuedAtEveryActiveMode === true;
 }

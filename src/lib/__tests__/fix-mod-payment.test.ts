@@ -360,6 +360,7 @@ import { calculateChangeFee } from "@/lib/change-fee";
 import { processRefund, createPaymentIntent, findOrCreateCustomer, getPaymentIntent, constructWebhookEvent } from "@/lib/stripe";
 import { calculateDualRefundAmounts } from "@/lib/cancellation";
 import {
+  fenceHostingCoverageQueue,
   fenceHostingPolicyFindMany,
   fenceMemberFindMany,
   hostingMemberRow,
@@ -597,6 +598,7 @@ function makeTx(booking: ReturnType<typeof makeBooking>) {
     adultMemberHostingPolicy: {
       findMany: fenceHostingPolicyFindMany({ mode: "ADMIN_REVIEW_REQUIRED" }),
     },
+    hostingCoverageReevaluation: fenceHostingCoverageQueue(),
     booking: {
       findUnique: fenceBooking.findUnique,
       findMany: fenceBooking.findMany,

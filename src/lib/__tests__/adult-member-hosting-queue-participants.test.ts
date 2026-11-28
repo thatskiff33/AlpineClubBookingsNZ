@@ -963,10 +963,21 @@ describe("a merge invalidates sibling cover in the trips the person attends (#52
 
   it.each([
     ["the scope is off", { hostScopeSameGroupTrip: false }],
-    ["the lodge does not show sibling cover (review-only)", { mode: "ADMIN_REVIEW_REQUIRED" }],
+    ["the rule is off at the lodge", { mode: "DISABLED" }],
   ])("invalidates nothing where %s", async (_label, policy) => {
     const built = await plan(mergeDb(policy));
     expect(built.invalidatedGroupTripIds).toEqual([]);
+  });
+
+  it("queues and invalidates at a review-only lodge, which shows sibling cover too", async () => {
+    // Every seam queues at every active mode, so the kiosk shows sibling cover
+    // under ADMIN_REVIEW_REQUIRED and the merge owes it the same re-check.
+    const built = await plan(mergeDb({ mode: "ADMIN_REVIEW_REQUIRED" }));
+    expect(
+      built.items.map((item) => item.sourceBookingId),
+      "INV-HOST-045 (docs/invariants/adult-member-hosting.md): the merge queues at every active mode",
+    ).toEqual(["booking-trip"]);
+    expect(built.invalidatedGroupTripIds).toEqual(["trip-1"]);
   });
 
   it("resolves a split child's trip through its parent, as the fan-out does", async () => {

@@ -9,6 +9,7 @@ import { describe, it, expect, vi, beforeEach, beforeAll } from "vitest";
 import { captureHostTimeZone } from "@/lib/__tests__/helpers/timezone";
 import {
   fenceBookingFindMany,
+  fenceHostingCoverageQueue,
   fenceHostingPolicyFindMany,
   fenceMemberFindMany,
   hostingMemberRow,
@@ -124,6 +125,7 @@ const mockTx = {
   adultMemberHostingPolicy: {
     findMany: fenceHostingPolicyFindMany({ mode: "ADMIN_REVIEW_REQUIRED" }),
   },
+  hostingCoverageReevaluation: fenceHostingCoverageQueue(),
   booking: {
     findMany: (args: unknown) => fenceTxBookingFindMany(args),
     findUnique: (args: unknown) => fenceBooking.findUnique(args),
@@ -178,6 +180,7 @@ vi.mock("@/lib/prisma", () => ({
     adultMemberHostingPolicy: {
       findMany: fenceHostingPolicyFindMany({ mode: "ADMIN_REVIEW_REQUIRED" }),
     },
+    hostingCoverageReevaluation: fenceHostingCoverageQueue(),
     // #2619: the participant fence can run on this client too, so it needs the
     // raw lock statement and the id-only member re-read. The booking reads
     // below are deliberately NOT wrapped in a recorder: the tests stub

@@ -9,8 +9,8 @@ import {
   readInheritedSplitPairGroupTrips,
 } from "@/lib/adult-member-hosting-review";
 import {
+  groupTripCoverStampIsTrustedAt,
   policyShowsGroupTripCover,
-  readStoredGroupTripCoverFreshness,
   storedHostingReviewDiffers,
   type GroupTripCoverFreshness,
 } from "@/lib/adult-member-hosting-stored-review";
@@ -433,9 +433,10 @@ async function readStalenessSignals(
  * `INV-HOST-045`).
  *
  * NOTHING IS READ unless the lodge queues from every seam that can change cover
- * (`policyShowsGroupTripCover`: `ENFORCED` only, so a review-only
- * lodge keeps the warning) and still lets a sibling count; and only for cards
- * whose snapshot carries a freshness stamp. THEN THREE READS, each failing to
+ * (`policyShowsGroupTripCover`: an active mode, `ENFORCED` or
+ * `ADMIN_REVIEW_REQUIRED`) and still lets a sibling count; and only for cards
+ * whose snapshot carries a stamp that may vouch at this mode
+ * (`groupTripCoverStampIsTrustedAt`). THEN THREE READS, each failing to
  * "unverifiable" rather than to the outer catch-all:
  *
  *  - the trips' current `coverageInvalidationRevision`. It moves on every
@@ -444,7 +445,7 @@ async function readStalenessSignals(
  *  - which cards a sibling's fan-out reaches (`groupTripCoverageDependentWhere`)
  *    AND a policy change would re-queue
  *    (`hostingPolicyReconciliationCandidateWhere`, as of the club's today):
- *    while the scope is off or the lodge is not `ENFORCED` nothing queues, and
+ *    while the scope is off or the rule is `DISABLED` nothing queues, and
  *    when that window ends only those bookings are re-checked. Each snapshot is
  *    re-read here, after the queue read, so a re-check that finished in between
  *    withholds rather than shows the day list's earlier answer;
@@ -462,7 +463,7 @@ async function readKioskGroupTripCoverEvidence(
   const stamped = rows.flatMap((row) => {
     const identity = identities.get(row.id);
     return identity &&
-      readStoredGroupTripCoverFreshness(row.adultMemberHostingReview) !== null
+      groupTripCoverStampIsTrustedAt(row.adultMemberHostingReview, policy.mode)
       ? [{ row, identity }]
       : [];
   });

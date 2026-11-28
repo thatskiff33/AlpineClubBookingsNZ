@@ -377,7 +377,16 @@ export function hostScopesAreSameBookingOnly(
   return enabled.length === 1 && enabled[0] === "SAME_BOOKING";
 }
 
-/** Whether a resolved consequence actually evaluates the rule. */
+/**
+ * Whether a resolved consequence actually evaluates the rule.
+ *
+ * ALSO THE QUEUEING ANSWER (#5239 follow-up, `INV-HOST-045`). Every seam that can
+ * change cover — the reconcile, confirming and membership-standing seams, the
+ * same-owner settle step and the member merge — queues a re-evaluation at every
+ * active mode, so at either consequence "no queued row" means "nothing changed",
+ * and the kiosk may show cover resting on another booking. There was a separate,
+ * `ENFORCED`-only predicate for that question; it is gone so the two cannot drift.
+ */
 export function hostingModeIsActive(
   mode: EffectiveAdultMemberHostingMode,
 ): mode is AdultMemberHostingConsequence {
@@ -405,19 +414,6 @@ export function hostingModeIsActive(
  * one predicate, extending the refusal moves every reader with it.
  */
 export function hostingModeCanRefuseStranding(
-  mode: EffectiveAdultMemberHostingMode,
-): boolean {
-  return mode === "ENFORCED";
-}
-
-/**
- * Does every seam that can change cover queue a re-evaluation at this mode?
- * Only `ENFORCED`: the confirming and membership-standing seams queue nothing
- * under `ADMIN_REVIEW_REQUIRED`, so only there does "no queued row" mean
- * "nothing changed", and only there may the kiosk show cover resting on
- * another booking (#5239, `INV-HOST-045`). Those seams and the kiosk share it.
- */
-export function hostingModeQueuesCoverageReevaluation(
   mode: EffectiveAdultMemberHostingMode,
 ): boolean {
   return mode === "ENFORCED";

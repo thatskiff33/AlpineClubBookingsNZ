@@ -310,6 +310,7 @@ import logger from "@/lib/logger";
  */
 const CLUB_TODAY_DATE_ONLY = new Date("2026-07-01T00:00:00.000Z");
 import {
+  fenceHostingCoverageQueue,
   fenceHostingPolicyFindMany,
   fenceMemberFindMany,
   hostingMemberRow,
@@ -515,6 +516,7 @@ function makeTx(
     adultMemberHostingPolicy: {
       findMany: fenceHostingPolicyFindMany({ mode: "ADMIN_REVIEW_REQUIRED" }),
     },
+    hostingCoverageReevaluation: fenceHostingCoverageQueue(),
     // #2619: the participant fence re-reads the locked Member rows and each
     // source booking's owner/lodge under the lock. An empty booking.findMany
     // made it report drift on data that never changed.
