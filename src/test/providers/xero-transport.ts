@@ -41,11 +41,14 @@ export const XERO_FAKE_TAX_RATES: Readonly<Record<string, number>> = { OUTPUT2: 
 /** A non-2xx reply; xero-node rejects with it serialised (`ApiError.generateError`). */
 export type XeroHttpFailure = { statusCode: number; headers?: Record<string, string>; body?: unknown };
 
+/** A connection lost with no HTTP reply at all (a reset or timeout): an Error with a socket code and no status. */
+export type XeroTransportFailure = { transportError: "ECONNRESET" | "ETIMEDOUT" };
+
 export function xeroTransport(fake: XeroFake) {
   let sequence = 0;
   const key = (value?: string) => value ?? `transport:${++sequence}`;
   const failures: XeroHttpFailure[] = [];
-  const afterApplyFailures = new Map<string, XeroHttpFailure>();
+  const afterApplyFailures = new Map<string, XeroHttpFailure | XeroTransportFailure>();
   const invoiceInputs = new Map<string, Record<string, unknown>>();
   const contactInputs = new Map<string, Record<string, unknown>>();
   const noteInputs = new Map<string, Record<string, unknown>>();
@@ -68,7 +71,11 @@ export function xeroTransport(fake: XeroFake) {
       } });
     }
     const lostReply = operation ? afterApplyFailures.get(operation) : undefined;
-    if (lostReply && operation) { afterApplyFailures.delete(operation); throw reject(lostReply); }
+    if (lostReply && operation) {
+      afterApplyFailures.delete(operation);
+      if ("transportError" in lostReply) throw Object.assign(new Error(`socket ${lostReply.transportError}`), { code: lostReply.transportError });
+      throw reject(lostReply);
+    }
     return { response: { statusCode: 200, headers: {} }, body: ObjectSerializer.deserialize(built, model) } as T;
   };
   const cents = (amount: unknown) => {
@@ -266,8 +273,8 @@ export function xeroTransport(fake: XeroFake) {
     xero: strictTestClient<XeroClient>("Xero", { accountingApi: strictTestClient<Api>("Xero", api) }),
     /** Queue an HTTP failure for the next call, e.g. a 429 with `x-rate-limit-problem: day`. */
     failNext(failure: XeroHttpFailure) { failures.push(failure); },
-    /** The write lands, then the caller loses the reply; a later read sees the write. */
-    failAfterApply(operation: "createInvoices" | "createCreditNoteAllocation" | "updateCreditNote", failure: XeroHttpFailure) { afterApplyFailures.set(operation, failure); },
+    /** The write lands, then the caller loses the reply (an HTTP status, or none at all); a later read sees the write. */
+    failAfterApply(operation: "createInvoices" | "createCreditNoteAllocation" | "updateCreditNote", failure: XeroHttpFailure | XeroTransportFailure) { afterApplyFailures.set(operation, failure); },
     /** Make the next invoice create or update work every line's tax out itself, ignoring any sent (#5208). */
     recalculateTaxNext() { recalculateTax = true; },
   };

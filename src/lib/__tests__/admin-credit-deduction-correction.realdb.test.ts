@@ -266,6 +266,51 @@ let harnessRole: SuiteEnvironmentRoleDeclaration | undefined;
     expect(await freeOnNote(noteId)).toBe(10_000 - 1_234);
   });
 
+  it("a retry under a different idempotency key still finds the invoice by reference, not by the fake's key replay", async () => {
+    const { noteId } = await seedNotedGrant();
+    const approved = await approvedDeduction(1_234);
+    const reserved = await correctionOf(approved.request.id);
+    session.failAfterApply("createInvoices", { statusCode: 400, body: { Message: "reply lost" } });
+    await expect(runWorker(reserved.id)).rejects.toThrow();
+    expect(fake.snapshot().invoices).toHaveLength(1);
+    // The fake replays a write sent under a key it has seen, so a same-key retry passes even if the
+    // reference lookup were broken. A fresh key leaves only the lookup to prevent a second invoice.
+    await db.xeroSyncOperation.updateMany({
+      where: { localModel: "AdminCreditDeductionCorrection", localId: reserved.id },
+      data: { idempotencyKey: `race-5241-rekeyed-${++sequence}` },
+    });
+
+    await runWorker(reserved.id);
+    expect((await correctionOf(approved.request.id)).status).toBe("COMPLETED");
+    expect(fake.snapshot().invoices).toHaveLength(1);
+    expect(fake.snapshot().allocations.filter((a) => a.creditNoteID === noteId)).toEqual([expect.objectContaining({ amountCents: 1_234 })]);
+    expect(xeroNote(noteId).remainingCreditCents).toBe(10_000 - 1_234);
+    expect(await freeOnNote(noteId)).toBe(10_000 - 1_234);
+  });
+
+  it("a lost reply with no status code keeps the fence up, refuses cancel, and the retry applies once", async () => {
+    const { noteId } = await seedNotedGrant();
+    const approved = await approvedDeduction(2_500);
+    const reserved = await correctionOf(approved.request.id);
+    // A connection reset after Xero applied the write: no HTTP status, so the app cannot know it was refused.
+    session.failAfterApply("createInvoices", { transportError: "ECONNRESET" });
+    await expect(runWorker(reserved.id)).rejects.toThrow(/ECONNRESET/);
+    expect((await correctionOf(approved.request.id)).providerMutationStartedAt).not.toBeNull();
+    expect(fake.snapshot().invoices).toHaveLength(1);
+    await expect(cancel.cancelAdminCreditDeductionCorrection({ memberId: MEMBER, correctionId: reserved.id, adminId: APPROVER }))
+      .rejects.toThrow(/may already have changed Xero/);
+    expect((await correctionOf(approved.request.id)).status).toBe("RESERVED");
+    expect(await credit.getMemberCreditBalance(MEMBER)).toBe(10_000 - 2_500);
+
+    await runWorker(reserved.id);
+    expect((await correctionOf(approved.request.id)).status).toBe("COMPLETED");
+    expect(fake.snapshot().invoices).toHaveLength(1);
+    expect(fake.snapshot().allocations.filter((a) => a.creditNoteID === noteId)).toEqual([expect.objectContaining({ amountCents: 2_500 })]);
+    expect(xeroNote(noteId).remainingCreditCents).toBe(10_000 - 2_500);
+    expect(await freeOnNote(noteId)).toBe(10_000 - 2_500);
+    expect(await credit.getMemberCreditBalance(MEMBER)).toBe(10_000 - 2_500);
+  });
+
   it("an untouched failed correction can be cancelled and its cents come back once", async () => {
     const { noteId } = await seedNotedGrant();
     const approved = await approvedDeduction(2_000);
