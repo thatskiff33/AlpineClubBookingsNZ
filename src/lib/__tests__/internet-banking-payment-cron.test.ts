@@ -1,3 +1,6 @@
+import { readdirSync, readFileSync, rmSync } from "node:fs";
+import path from "node:path";
+
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
@@ -1525,6 +1528,7 @@ describe("releaseExpiredInternetBankingHolds delta round (#3643 D4, D5, D9)", ()
       key: "internet-banking-hold-alert-owed:released-unreadable:pay_ib_1",
       due: "after-retry",
       retryAfterMs: 86_400_000,
+      now: expect.any(Date),
     });
     expect(mocks.createAuditLog).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -1545,7 +1549,27 @@ describe("releaseExpiredInternetBankingHolds delta round (#3643 D4, D5, D9)", ()
       key: "internet-banking-hold-alert-owed:released-unreadable:pay_ib_1",
       due: "next-run",
       retryAfterMs: 86_400_000,
+      now: expect.any(Date),
     });
+  });
+
+  // #5297 (`INV-INT-044`): the database refusing the marker leaves it on disk,
+  // for the once-ever alert sweep to write so the drain below finds it.
+  it("D4: an owed marker the database refuses is kept on disk with what the row would hold", async () => {
+    mocks.readHoldPaymentEvidence.mockResolvedValue(UNREADABLE);
+    mocks.sendAdminInternetBankingHoldKeptAlert.mockRejectedValue(new Error("database unreachable"));
+    mocks.markAlertOwed.mockRejectedValue(new Error("database unreachable"));
+    const spoolDir = process.env.ADMIN_ALERT_SPOOL_DIR!;
+    rmSync(spoolDir, { recursive: true, force: true });
+
+    const result = await releaseExpiredInternetBankingHolds(new Date("2026-07-12T08:00:00Z"));
+
+    expect(result.released).toBe(1);
+    const spooled = readdirSync(spoolDir).map((name) => JSON.parse(readFileSync(path.join(spoolDir, name), "utf8")));
+    expect(spooled).toEqual([
+      expect.objectContaining({ key: "internet-banking-hold-alert-owed:released-unreadable:pay_ib_1", due: "next-run", retryAfterMs: 86_400_000 }),
+    ]);
+    rmSync(spoolDir, { recursive: true, force: true });
   });
 
   it("D4: an owed alert whose drain send THREW is left due, not pushed a day out (#3635 N1)", async () => {
