@@ -316,7 +316,9 @@ edit**, because it changes who is invoiced; an officer with Membership edit
 alone sees the rule but cannot change it, and can still change the other
 lockout settings. A chosen rule can be changed but not set back to *Not
 chosen*. With **Their age today**, a birthday alone does not block booking. An
-issued, unpaid part-season invoice or top-up does; a credit never does. The same preview is available to
+issued, unpaid part-season invoice or top-up does; a credit never does. A season
+that has ended is read by the member's age on its last day, and one not yet
+begun by their age on its first. The same preview is available to
 scripts at
 `GET /api/admin/membership-lockout-settings/liability-impact?requiredTypeAgeRule=ALWAYS_OWES&liabilityAgeSource=SEASON_START`
 (membership view), and a configuration import (full admin only) can also set the

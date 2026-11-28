@@ -132,6 +132,22 @@ describe("resolveLiabilityAgeTier (#5190)", () => {
     })).toBe(expected);
   });
 
+  it.each([
+    // Turned 10 after last season ended: last season still reads them a child.
+    ["a season that has ended on its last day", SEASON - 1, "2027-01-15", "CHILD"],
+    // Still 9 today, but 10 when next season opens.
+    ["a season not yet begun on its first day", SEASON + 1, "2027-01-14", "YOUTH"],
+  ] as const)("reads CURRENT_AGE for %s", (_label, seasonYear, asOf, expected) => {
+    expect(resolveLiabilityAgeTier({
+      source: "CURRENT_AGE",
+      dateOfBirth: agesUpMidSeason.dateOfBirth,
+      storedAgeTier: agesUpMidSeason.ageTier,
+      seasonYear,
+      asOf: asOf as CalendarDate,
+      ageTierSettings: tiers,
+    })).toBe(expected);
+  });
+
   it.each(["SEASON_START", "SEASON_END", "CURRENT_AGE"] as const)(
     "falls back to the stored tier with no date of birth (%s)",
     (source) => {

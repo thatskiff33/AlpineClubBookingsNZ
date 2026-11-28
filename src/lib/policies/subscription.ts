@@ -237,8 +237,11 @@ export function getSeasonEndDate(seasonYear: number): Date {
 
 /**
  * The day a DOB-derived source reads the age on: the season's first or last
- * day, or `asOf` (the club's today) for `CURRENT_AGE`. The one definition the
- * TS rule and the SQL filter (`subscription-liability-where.ts`) both read.
+ * day, or `asOf` (the club's today) for `CURRENT_AGE`. "Age today" is read
+ * inside the season it is asked about: a season that has ended is judged on
+ * its last day and one not yet begun on its first, which are the tiers the
+ * season charge and its age-up parts bill. The one definition the TS rule and
+ * the SQL filter (`subscription-liability-where.ts`) both read.
  */
 export function liabilityReferenceDate(
   source: ChoosableLiabilityAgeSource,
@@ -250,8 +253,12 @@ export function liabilityReferenceDate(
       return getSeasonStartCalendarDate(seasonYear);
     case "SEASON_END":
       return getSeasonEndCalendarDate(seasonYear);
-    case "CURRENT_AGE":
-      return asOf;
+    case "CURRENT_AGE": {
+      const start = getSeasonStartCalendarDate(seasonYear);
+      const end = getSeasonEndCalendarDate(seasonYear);
+      if (compareCalendarDates(asOf, start) < 0) return start;
+      return compareCalendarDates(asOf, end) > 0 ? end : asOf;
+    }
     default: {
       const unreachable: never = source;
       return unreachable;
