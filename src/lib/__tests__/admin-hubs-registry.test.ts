@@ -2523,6 +2523,8 @@ describe("the registry is inert", () => {
       "C11 part 1 (#4808): pins the Display Settings stub's redirect to Display Devices' adminHref",
     "src/lib/csp.ts":
       "C11 part 1 (#4808): the preview and builder CSP allowlists hold each page's old path and hub path",
+    "src/components/ui/__tests__/card-title-classification-census.test.ts":
+      "#5216: each forbidden pre-move Finance folder is a moved Finance page's old path",
   };
   const SOURCE = /\.(?:ts|tsx|mts|cts|js|jsx|mjs|cjs)$/;
   const IMPORT = /(?:\bfrom\s*|\bimport\s*\(\s*|\brequire\s*\(\s*|^\s*import\s+)["'][^"']*admin-hubs(?:\/[^"']*)?["']/m;
