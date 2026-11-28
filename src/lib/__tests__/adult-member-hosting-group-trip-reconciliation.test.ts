@@ -72,8 +72,15 @@ import {
   GROUP_TRIP_COVERAGE_SOURCE_SELECT,
   enqueueHostingCoverageReevaluationForMember,
   loadGroupTripCoverageDependentBookingIds,
+  reconcileAdultMemberHostingReview,
   reconcileAdultMemberHostingReviewWithSiblings,
 } from "@/lib/adult-member-hosting-review";
+import {
+  HOSTING_COVERAGE_MEMBER_FANOUT_LIMIT,
+  hostingCoverageMemberAttendanceWhere,
+} from "@/lib/adult-member-hosting-member-fanout";
+import { readStoredGroupTripCoverFreshness } from "@/lib/adult-member-hosting-stored-review";
+import { kioskPendingReevaluationWhere } from "@/lib/kiosk-group-trip";
 import { CENSUS_TIMEOUT_MS } from "@/test/census-timeout";
 
 const LODGE = "lodge-a";
@@ -167,6 +174,8 @@ interface StoreOptions {
   onFirstDependentRead?: (rows: Map<string, FakeBooking>) => void;
   /** Fail the try-lock for this trip, as a conflicting transaction would. */
   contendedGroupKeys?: readonly string[];
+  /** `GroupBooking.coverageInvalidationRevision` per trip (#5239); 0 if absent. */
+  revisions?: Record<string, number>;
 }
 
 function makeStore(rows: FakeBooking[], options: StoreOptions = {}) {
@@ -176,6 +185,9 @@ function makeStore(rows: FakeBooking[], options: StoreOptions = {}) {
   const queued: Array<Record<string, unknown>> = [];
   const audits: Array<Record<string, unknown>> = [];
   const bookingWheres: Array<Record<string, unknown>> = [];
+  const revisionReadsAfterLock: boolean[] = [];
+  /** Each set-based revision bump, with how many queue rows preceded it (#5239). */
+  const revisionBumps: Array<{ where: unknown; queuedBefore: number }> = [];
   let dependentReads = 0;
 
   function recordLock(sql: string, values: unknown[], blocking: boolean) {
@@ -283,9 +295,28 @@ function makeStore(rows: FakeBooking[], options: StoreOptions = {}) {
         return {};
       }),
     },
+    groupBooking: {
+      findUnique: vi.fn(async ({ where }: any) => {
+        // Read under the trip key, so it must come after it (#5239).
+        revisionReadsAfterLock.push(
+          locks.some(
+            (lock) =>
+              lock.namespace === HOSTING_COVERAGE_GROUP_LOCK_NAMESPACE_FOR_TESTS &&
+              lock.key === where.id,
+          ),
+        );
+        return {
+          coverageInvalidationRevision: options.revisions?.[where.id] ?? 0,
+        };
+      }),
+      updateMany: vi.fn(async ({ where }: any) => {
+        revisionBumps.push({ where, queuedBefore: queued.length });
+        return { count: 1 };
+      }),
+    },
   } as any;
 
-  return { db, locks, queued, bookingWheres, byId, audits };
+  return { db, locks, queued, bookingWheres, byId, audits, revisionReadsAfterLock, revisionBumps };
 }
 
 /**
@@ -782,6 +813,43 @@ describe("the Group Trip reconciliation fan-out (#3039, INV-HOST-046)", () => {
     expect(truncations[0]?.severity).toBe("important");
   });
 
+  it("counts the rows READ, so organisation-owned siblings filling the cap still record it (#5239)", async () => {
+    // Organisation-owned (school) bookings are dropped from the fan-out after the
+    // capped read. A cap they fill is still a truncation: a member's booking past
+    // it was never read.
+    const rows: FakeBooking[] = [
+      organiserOf(TRIP, {
+        guests: [
+          adultGuest("organiser-adult", ["2026-08-03", "2026-08-04"], "adult-source"),
+        ],
+      }),
+    ];
+    for (let index = 0; index < GROUP_TRIP_COVERAGE_DEPENDENT_LIMIT; index += 1) {
+      rows.push(
+        joinerOf(TRIP, `joiner-${String(index).padStart(3, "0")}`, {
+          ...(index % 2 === 0 ? { memberId: null } : {}),
+          guests: [guestRow(`kid-${index}`, ["2026-08-03", "2026-08-04"])],
+        }),
+      );
+    }
+    const { db, audits } = makeStore(rows);
+    await reconcileAdultMemberHostingReviewWithSiblings(
+      `organiser-${TRIP}`,
+      db,
+      OFFICER,
+    );
+    const truncations = audits.filter(
+      (row) => row.action === "booking.hostingCoverage.groupTripFanoutTruncated",
+    );
+    expect(
+      truncations,
+      "INV-HOST-046: the truncation report counts the raw rows the capped read returned",
+    ).toHaveLength(1);
+    expect((truncations[0]?.metadata as { returned?: number }).returned).toBe(
+      GROUP_TRIP_COVERAGE_DEPENDENT_LIMIT,
+    );
+  });
+
   it("writes no truncation record when the ceiling does not bind", async () => {
     const { db, audits } = makeStore(tripRows());
     await reconcileAdultMemberHostingReviewWithSiblings(
@@ -939,6 +1007,107 @@ describe("a membership standing change fans out to the trip (#3039, the third se
       "joiner-c",
       `organiser-${TRIP}`,
     ]);
+  });
+
+  /**
+   * #5239: earlier July stays this adult attends, each on its own account, so the
+   * trip's August booking sorts after them in the fan-out's `checkIn` order.
+   */
+  function earlierStays(count: number): FakeBooking[] {
+    return Array.from({ length: count }, (_, index) => {
+      const id = `earlier-${String(index).padStart(3, "0")}`;
+      return booking({
+        id,
+        memberId: `owner-${id}`,
+        checkIn: new Date("2026-07-10T00:00:00.000Z"),
+        checkOut: new Date("2026-07-12T00:00:00.000Z"),
+        guests: [adultGuest(`adult-on-${id}`, ["2026-07-10", "2026-07-11"], "adult-source")],
+      });
+    });
+  }
+
+  it("invalidates every trip the person attends when the member ceiling binds (#5239)", async () => {
+    // THE GAP: 50 earlier stays fill the ceiling, so the trip booking is never read,
+    // its joiners are never queued, and their snapshots would keep a matching stamp:
+    // the kiosk would show cover from an adult whose standing just changed.
+    const { db, queued, revisionBumps } = makeStore([
+      ...earlierStays(HOSTING_COVERAGE_MEMBER_FANOUT_LIMIT),
+      ...tripRows(),
+    ]);
+    await enqueueHostingCoverageReevaluationForMember("adult-source", db, TODAY);
+    expect(siblingSources(queued).filter((id) => id.startsWith("joiner-"))).toEqual([]);
+    expect(
+      revisionBumps,
+      "INV-HOST-045 (docs/invariants/adult-member-hosting.md): a bound member fan-out must move " +
+        "the revision of every trip the person attends, in one set-based update",
+    ).toHaveLength(1);
+    const attended = hostingCoverageMemberAttendanceWhere("adult-source", TODAY);
+    const attendedOrSplitParent = { OR: [attended, { linkedBookings: { some: attended } }] };
+    expect(revisionBumps[0]?.where).toEqual({
+      OR: [
+        { organiserBooking: { is: attendedOrSplitParent } },
+        { joins: { some: { booking: { is: attendedOrSplitParent } } } },
+      ],
+    });
+    // The LAST write: every queue row was written before it.
+    expect(revisionBumps[0]?.queuedBefore).toBe(queued.length);
+  });
+
+  /** #5239: earlier July stays on organisation-owned (school) bookings, which no member owns. */
+  function earlierSchoolStays(count: number): FakeBooking[] {
+    return earlierStays(count).map((row) => ({ ...row, memberId: null }));
+  }
+
+  it("counts the raw rows read, so school stays filling the member cap still invalidate (#5239)", async () => {
+    // The adult is a guest on 50 school bookings and on one member Group Trip booking.
+    // The capped read returns the 50 school rows; all are dropped as non-participants,
+    // so NO member candidate remains. The trip was never read, so the cap still binds:
+    // counting candidates instead of raw rows would leave the trip's stamp matching.
+    const { db, queued, revisionBumps } = makeStore([
+      ...earlierSchoolStays(HOSTING_COVERAGE_MEMBER_FANOUT_LIMIT),
+      ...tripRows(),
+    ]);
+    const recorded = await enqueueHostingCoverageReevaluationForMember("adult-source", db, TODAY);
+    expect(recorded).toBe(0);
+    expect(queued).toEqual([]);
+    expect(
+      revisionBumps,
+      "INV-HOST-045: the member ceiling is judged on the raw rows read, before organisation-owned " +
+        "rows are dropped, and the no-candidate exit still runs the bump",
+    ).toHaveLength(1);
+  });
+
+  it("invalidates when school stays and a member stay together fill the member cap (#5239)", async () => {
+    // 49 school rows plus one member stay fill the 50 slots; one candidate remains,
+    // and the trip booking past the cap is never read.
+    const memberStay = earlierStays(1).map((row) => ({ ...row, id: "earlier-member" }));
+    const { db, revisionBumps } = makeStore([
+      ...earlierSchoolStays(HOSTING_COVERAGE_MEMBER_FANOUT_LIMIT - 1),
+      ...memberStay,
+      ...tripRows(),
+    ]);
+    await enqueueHostingCoverageReevaluationForMember("adult-source", db, TODAY);
+    expect(revisionBumps).toHaveLength(1);
+  });
+
+  it("moves no revision when the member read stays under its ceiling", async () => {
+    const { db, revisionBumps } = makeStore([
+      ...earlierStays(HOSTING_COVERAGE_MEMBER_FANOUT_LIMIT - 2),
+      ...tripRows(),
+    ]);
+    await enqueueHostingCoverageReevaluationForMember("adult-source", db, TODAY);
+    expect(revisionBumps).toEqual([]);
+  });
+
+  it("still invalidates when the ceiling binds at a lodge that queues nothing", async () => {
+    // The early return for "no enforcing lodge" is a path that returns too.
+    const { db, queued, revisionBumps } = makeStore(
+      [...earlierStays(HOSTING_COVERAGE_MEMBER_FANOUT_LIMIT), ...tripRows()],
+      { policies: [policyRow({ mode: "ADMIN_REVIEW_REQUIRED" })] },
+    );
+    await enqueueHostingCoverageReevaluationForMember("adult-source", db, TODAY);
+    expect(queued).toEqual([]);
+    expect(revisionBumps).toHaveLength(1);
   });
 });
 
@@ -1221,3 +1390,156 @@ describe("the inline drain reaches the siblings' items (#3039)", () => {
     ).toBeGreaterThan(-1);
   });
 });
+
+// #5239: the kiosk now shows cover that rests on a trip sibling, on two promises
+// from this side: every dependent's re-check is queued where the kiosk's own-owner
+// read finds it, and every fresh evaluation records the trip revision it ran under.
+describe("what the kiosk relies on from the fan-out and the evaluator (#5239, INV-HOST-045)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  /** Owner of each fixture booking, from the fixture's own rows. */
+  function ownerOf(rows: FakeBooking[], id: string): string {
+    const row = rows.find((candidate) => candidate.id === id);
+    return row?.memberId as string;
+  }
+
+  for (const [label, change] of [
+    ["an edit that removes the trip's adult", (rows: FakeBooking[]) => {
+      rows[0] = { ...rows[0], guests: [] };
+    }],
+    ["a cancellation of the covering booking", (rows: FakeBooking[]) => {
+      rows[0] = { ...rows[0], status: "CANCELLED" };
+    }],
+  ] as const) {
+    it(`queues ${label} for every dependent owner, where the kiosk's pending read finds it`, async () => {
+      const rows = tripRows();
+      change(rows);
+      const { db, queued } = makeStore(rows);
+      await reconcileAdultMemberHostingReviewWithSiblings(
+        `organiser-${TRIP}`,
+        db,
+        OFFICER,
+      );
+      for (const dependent of ["joiner-a", "joiner-b"]) {
+        const owner = ownerOf(rows, dependent);
+        const found = queued.filter((item) =>
+          // A freshly written row is unprocessed: the column defaults to NULL.
+          matchesWhere({ processedAt: null, ...item }, kioskPendingReevaluationWhere(LODGE, [owner])),
+        );
+        expect(
+          found.map((item) => item.sourceBookingId),
+          `INV-HOST-045 (docs/invariants/adult-member-hosting.md): ${dependent}'s ` +
+            "owner must hold a pending row the kiosk's own-owner read can see",
+        ).toEqual([dependent]);
+      }
+    });
+  }
+
+  /** A joiner whose kid is covered on the 3rd by the organiser's adult only. */
+  function partlyCoveredTrip(): FakeBooking[] {
+    const rows = tripRows({
+      organiser: {
+        guests: [adultGuest("organiser-adult", ["2026-08-03"], "adult-source")],
+      },
+    });
+    return rows;
+  }
+
+  it("stamps a fresh evaluation with the trip revision it read under the trip key", async () => {
+    const rows = partlyCoveredTrip();
+    const { db, byId, revisionReadsAfterLock } = makeStore(rows, {
+      revisions: { [TRIP]: 3 },
+    });
+    const outcome = await reconcileAdultMemberHostingReview("joiner-a", db, {
+      enforcement: "REVIEW_ONLY",
+    });
+    expect(outcome.action).toBe("opened");
+    const stored = byId.get("joiner-a")?.adultMemberHostingReview;
+    expect(
+      readStoredGroupTripCoverFreshness(stored),
+      "INV-HOST-045: the snapshot records the trip revision it was evaluated under",
+    ).toEqual({ groupBookingId: TRIP, revision: 3 });
+    expect(
+      (stored as { requirements: { qualifyingHostsByNight: unknown } })
+        .requirements.qualifyingHostsByNight,
+    ).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          night: "2026-08-03",
+          coveredByScopes: ["SAME_GROUP_TRIP"],
+        }),
+      ]),
+    );
+    expect(
+      revisionReadsAfterLock,
+      "INV-LOCK-002: the revision is read only once the trip key is held",
+    ).toEqual([true]);
+    // Never part of the hazard's identity, so never in a refusal or a notice.
+    expect(outcome.violation).not.toHaveProperty("groupTripCoverFreshness");
+  });
+
+  it("refreshes the stamp on an unchanged hazard without reopening the officer's decision", async () => {
+    const rows = partlyCoveredTrip();
+    const first = makeStore(rows, { revisions: { [TRIP]: 3 } });
+    await reconcileAdultMemberHostingReview("joiner-a", first.db, {
+      enforcement: "REVIEW_ONLY",
+    });
+    // An officer approved it; then a truncated fan-out moved the revision on.
+    const decided = {
+      ...first.byId.get("joiner-a"),
+      adultMemberHostingReviewStatus: "APPROVED",
+      adultMemberHostingReviewReason: "Hut leader confirmed",
+    };
+    const later = makeStore(
+      rows.map((row) => (row.id === "joiner-a" ? decided : row)),
+      { revisions: { [TRIP]: 4 } },
+    );
+    const outcome = await reconcileAdultMemberHostingReview("joiner-a", later.db, {
+      enforcement: "REVIEW_ONLY",
+    });
+    expect(outcome.action).toBe("unchanged");
+    const row = later.byId.get("joiner-a");
+    expect(readStoredGroupTripCoverFreshness(row?.adultMemberHostingReview)).toEqual({
+      groupBookingId: TRIP,
+      revision: 4,
+    });
+    expect(
+      row?.adultMemberHostingReviewStatus,
+      "the same hazard keeps its decision: a refreshed stamp is evidence, not a new hazard",
+    ).toBe("APPROVED");
+    const updates = later.db.booking.update.mock.calls.map(
+      ([args]: [{ data: Record<string, unknown> }]) => Object.keys(args.data),
+    );
+    expect(updates).toEqual([["adultMemberHostingReview"]]);
+
+    // Up to date now, so a second pass writes nothing at all — even though
+    // Postgres hands the column back with its keys re-ordered.
+    const settled = makeStore(
+      rows.map((candidate) =>
+        candidate.id === "joiner-a"
+          ? { ...row, adultMemberHostingReview: reorderKeys(row?.adultMemberHostingReview) }
+          : candidate,
+      ),
+      { revisions: { [TRIP]: 4 } },
+    );
+    await reconcileAdultMemberHostingReview("joiner-a", settled.db, {
+      enforcement: "REVIEW_ONLY",
+    });
+    expect(settled.db.booking.update).not.toHaveBeenCalled();
+  });
+});
+
+/** Reverse every object's key order, as a JSONB round trip may. */
+function reorderKeys(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(reorderKeys);
+  if (value && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value as Record<string, unknown>)
+        .reverse()
+        .map(([key, entry]) => [key, reorderKeys(entry)]),
+    );
+  }
+  return value;
+}

@@ -91,7 +91,7 @@ the legacy `hashtext(<memberId>)` contact-link key's in
 | Lock family | Read |
 | --- | --- |
 | Per-owner hosting coverage | [The key (#2576)](#same-owner-coverage-takes-a-per-owner-key-2576) · [drain and incidents](#same-owner-coverage-the-drain-and-incident-reconciliation) · [across accounts](#same-owner-coverage-across-accounts-the-participant-fence-3039) · [claims and lease](#same-owner-coverage-drain-claims-and-the-owner-notification-lease) |
-| Per-trip hosting coverage | [Group Trip (#3039)](#group-trip-coverage-takes-a-per-trip-key-above-the-owner-key-3039) |
+| Per-trip hosting coverage | [Group Trip (#3039)](#group-trip-coverage-takes-a-per-trip-key-above-the-owner-key-3039) · [cover-invalidation revision (#5239)](#the-trips-cover-invalidation-revision-rides-the-trip-key-5239) |
 | Per-member credit ledger | [Global, lodge, member credit (#2262)](#three-tier-composition-global--lodge--member-credit-2262) · [credit restoration (#1636)](#credit-restoration-exactly-once-is-now-structural-1636) |
 | Membership application and applicant | [Approval mapping (E10)](#composition-application-approval-mapping-e10-1936) |
 | Roster date | [Roster writers (#2586)](#composition-roster-date-writers-2586) |
@@ -1962,6 +1962,82 @@ beside it would be dead code no group read could exercise.
 locking rule, and are stated there: one bounded item per dependent booking naming
 that booking as its own source, cause `SYSTEM_CHANGE`, no refusal of any kind, and no
 sibling identity in the actor's answer.
+
+#### The trip's cover-invalidation revision rides the trip key (#5239)
+
+The kiosk shows cover resting on a Group Trip sibling only while the booking's
+hosting snapshot carries its trip's current `GroupBooking.coverageInvalidationRevision`
+(`INV-HOST-045`). **No advisory key is added, moved or re-ordered**
+(`INV-LOCK-001`..`INV-LOCK-003`); the protocol is two statements placed under the
+existing per-trip key, plus the merge's bump below:
+
+- **The increment is a database trigger, not application code.**
+  `AuditLog_bump_group_trip_coverage_invalidation` fires AFTER INSERT of a
+  `booking.hostingCoverage.groupTripFanoutTruncated` row on a `GroupBooking`, and
+  updates that trip's row in the inserting transaction. The only writer of that audit
+  row is `reportGroupTripDependentCeilingBound`, called by
+  `settleGroupTripDependentCoverage` after `lockAndVerifyGroupTripCoverageDependents`
+  took the trip key, so the bump is made under the key and rolls back with the
+  fan-out. A deployed old colour writes the same row the same way, so it bumps too.
+- **The read is inside the evaluator's trip-key callback.**
+  `evaluateBookingAdultMemberHosting` reads the revision immediately after
+  `acquireHostingCoverageGroupKey` and before any sibling is read as cover. The key
+  is fail-fast, so an evaluation never waits on, and never reads under, an
+  uncommitted bump: either the truncating fan-out committed first (the evaluation
+  reads its revision AND its booking changes), or it waits for the evaluation and
+  its bump leaves the stamp behind. The stamp can be older than the facts, never
+  newer. `kiosk-group-trip-freshness.realdb.test.ts` forces both orders.
+
+**A member merge moves the revision too.** Merge has no Group Trip fan-out, so
+`enqueueMemberMergeHostingCoveragePlan` increments the revision of every trip the
+merged person attends at a lodge that shows sibling cover (`policyShowsGroupTripCover`,
+trip identity by the fan-out's `readGroupTripIdentity`), in one `updateMany` over
+sorted ids, after every hosting key, `Member` row and queue row the merge takes. It
+is the merge's last hosting write, not its last statement: `member-merge.ts` deletes
+the loser after it, while holding the bumped trip rows. That bump is not under the
+trip key, and needs not be: it commits with the standing change, so an evaluation
+that read the old revision is left behind by it, and one that reads the new
+revision reads the merged standing too. Merges serialise on the hosting policy-set
+key, so two merges never update overlapping trip rows concurrently.
+
+**A bound member ceiling moves every trip the member attends.** The standing
+fan-out (`enqueueHostingCoverageReevaluationForMember`) and the merge plan read the
+person's current and future bookings capped at `HOSTING_COVERAGE_MEMBER_FANOUT_LIMIT`
+(50). When the raw read fills it, the bookings past it are never re-checked, so
+`invalidateMemberGroupTripCover` increments the revision of every trip the person
+attends (organiser, join, or the parent of a split child they attend) in ONE
+set-based `updateMany`, with no id list because those rows were never read. In the
+standing fan-out it is the last write on every path that returns; in the merge it
+replaces the id-list bump above, which it covers. Neither takes a new key.
+
+**Row-lock cycles end in a rollback, never a hang.** The trigger and both
+revision bumps take `GroupBooking` row locks as their last hosting lock. The other `GroupBooking` row
+writers — the join-status writer in `group-booking.ts`, the cancellation fence and
+`markGroupCancelled` in `group-cancel.ts` — update the row and then wait on nothing
+else before commit, so whoever holds a trip row is never waiting on a key the other
+side holds. (Not every writer that reaches a truncating fan-out holds `lock(1)` —
+the membership-standing seam's callers need not — so the argument rests on that
+ordering, not on `lock(1)`.) One writer does wait while holding a trip row: the
+merge's `applyMoves` re-points `GroupBooking.organiserMemberId` before the merge
+takes its `Member … FOR UPDATE` set. A truncating fan-out that holds one of those
+rows `FOR KEY SHARE` while its trigger waits for that trip row would close a cycle;
+the merge's bounded `Member` wait (#4855, `55P03` → its safe 409) or PostgreSQL's
+deadlock detector breaks it by rolling one whole transaction back, so the cost is
+a manual or next-run retry, never a hang or a half-written bump. Nothing retries
+in-process: the merge route maps only `MemberMergeError`, so a deadlocked merge
+shows a generic error with nothing saved and the admin runs it again. Two more
+cycles resolve the same way.
+The merge's loser delete runs while it holds the bumped trip rows, so a truncating
+fan-out whose trigger waits for one of them while holding a row that delete needs
+closes a merge/trigger cycle. And a set-based bump locks rows in scan order, not id
+order, so it can cross a fan-out's trigger (or another bump) that took a second trip
+row first. Both are broken by the deadlock detector (`40P01`) rolling one side back,
+bump and fan-out together; nothing half-written survives. A future `GroupBooking` writer that waits
+on a hosting key or a `Member` row while holding a trip row must reconcile this
+first.
+
+The kiosk's own reads (revision, the policy re-queue cohort and each card's
+dependent count) are plain reads with no lock: a wrong answer can only withhold.
 
 #### Which client reads the subscription-lockout mode (#2543)
 
