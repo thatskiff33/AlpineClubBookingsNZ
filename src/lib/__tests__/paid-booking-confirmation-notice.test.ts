@@ -222,7 +222,8 @@ describe("the settle's last write (owePaidConfirmationAfterFreshClaim)", () => {
   ])("writes nothing for %s", async (_label, settlement, outcome) => {
     const result = await owePaidConfirmationAfterFreshClaim(tx(), BOOKING_ID, settlement, { outcome });
 
-    expect(result.paidConfirmation).toBeNull();
+    // Absent, not null: "not owed" is told apart from "owed but cannot be keyed" (#5433 card recovery doors, fix round 1).
+    expect(result).not.toHaveProperty("paidConfirmation");
     expect(owed.store.delegate.createMany).not.toHaveBeenCalled();
   });
 });
