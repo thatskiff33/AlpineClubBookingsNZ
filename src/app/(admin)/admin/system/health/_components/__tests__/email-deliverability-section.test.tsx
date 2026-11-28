@@ -209,6 +209,19 @@ describe("EmailDeliverabilitySection exhausted failures", () => {
     });
   });
 
+  it("MUTATION: tells an officer to try again only on a row that offers Try again (#5469 review)", () => {
+    renderSection([
+      failure("unconfirmed", "maybe@example.com", null, { recovery: "retry", deliveryUnconfirmed: true }),
+      failure("blocked", "blocked@example.com", null, { recovery: "address_blocked", deliveryUnconfirmed: true }),
+    ]);
+
+    expect(within(rowFor("maybe@example.com")).getByText(/Check with them before you try again\./)).toBeVisible();
+    const blocked = within(rowFor("blocked@example.com"));
+    expect(blocked.getByText(/May already have been delivered.*Check with them before you send it another way\./)).toBeVisible();
+    expect(blocked.queryByText(/before you try again/)).toBeNull();
+    expect(blocked.queryByRole("button", { name: "Try again" })).toBeNull();
+  });
+
   // #5298 (INV-INT-043): a send the app stopped part-way through.
   it("marks a row that may already have been delivered, and warns of a duplicate before Try again", async () => {
     dialog.confirm.mockResolvedValue(false);

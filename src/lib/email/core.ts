@@ -4,6 +4,7 @@ import logger from "@/lib/logger";
 import { prisma } from "@/lib/prisma";
 import { recordEmailAttempt } from "./attempt-log";
 import { senderEmailRow } from "./handover";
+import { sentEmailIdsFromResult } from "./provider-message-id";
 import {
   formatEmailFromAddressWithSettings,
 } from "@/lib/email-message-settings";
@@ -15,6 +16,7 @@ import {
   getActiveEmailSuppression,
   normalizeEmailAddress,
 } from "@/lib/email-suppression";
+import { suppressedEmailErrorMessage } from "./suppressed-email-message";
 import {
   resolveBookingEmailGate,
   type EmailBookingContext,
@@ -449,7 +451,7 @@ export async function sendEmail({
         status: "BOUNCED",
         htmlBody: null,
         bookingRetryHtmlBody: null,
-        errorMessage: `Email suppressed after SES ${activeSuppression.reason.toLowerCase()} feedback`,
+        errorMessage: suppressedEmailErrorMessage(activeSuppression.reason),
       },
       "a suppressed email",
     );
@@ -521,7 +523,7 @@ export async function sendEmail({
   }
 
   try {
-    const { transporter, modeLabel } = await getEmailTransporter(
+    const { transporter, modeLabel, mailService } = await getEmailTransporter(
       environmentGate.clearance,
     );
     // #5298 (INV-INT-043): lost or unwritable, send nothing; the sweep owns it.
@@ -543,8 +545,8 @@ export async function sendEmail({
       modeLabel,
     });
 
-    // A write that misses is only logged: the email went out.
-    await row?.write({ status: "SENT", sentAt: new Date(), messageId: result.messageId || null }, "a sent email");
+    // A write that misses is only logged: the email went out. #5469: both ids.
+    await row?.write({ status: "SENT", sentAt: new Date(), ...sentEmailIdsFromResult(mailService, result) }, "a sent email");
     return {
       status: "sent",
       emailLogId,

@@ -531,7 +531,7 @@ describe("N-11: retryFailedEmails", () => {
     const { retryFailedEmails } = await import("../cron-email-retry");
     const result = await retryFailedEmails();
 
-    expect(result).toEqual({ retried: 1, succeeded: 0, failed: 1 });
+    expect(result).toEqual({ retried: 1, succeeded: 0, failed: 1, skipped: 0 });
     expect(mockPrisma.emailLog.updateMany).toHaveBeenCalledWith({
       // #5298: restored to FAILED only while the row is as this run claimed it.
       where: expect.objectContaining({ id: "log-fail-3", status: "QUEUED", handoverState: "STARTED" }),
@@ -575,7 +575,7 @@ describe("N-11: retryFailedEmails", () => {
     const { retryFailedEmails } = await import("../cron-email-retry");
     const result = await retryFailedEmails();
 
-    expect(result).toEqual({ retried: 0, succeeded: 0, failed: 0 });
+    expect(result).toEqual({ retried: 0, succeeded: 0, failed: 0, skipped: 0 });
   });
 });
 

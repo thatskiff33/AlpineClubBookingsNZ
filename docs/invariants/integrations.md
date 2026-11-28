@@ -650,7 +650,7 @@ Pinned by `xero-admin-grant-credit-note.test.ts`, `member-credit.test.ts`,
 
 ## Deducting credit that has a Xero note (#5241)
 
-### INV-INT-044
+### INV-INT-045
 
 An approved deduction of credit with a Xero credit note corrects that note in
 Xero; the member's free credit on the note then equals Xero's remaining credit
@@ -815,7 +815,8 @@ as a duplicate and never applied twice by racing takeovers.
   over through the same guard; losing it answers 409. A fresh one is refused.
 - **The operation row** the dead attempt left is recovered by `INV-INT-038`.
 - **Replays are harmless.** Handlers are idempotent; the same SES feedback
-  (message id and event type) is not counted twice toward suppression.
+  (message id and event type) is not counted twice toward suppression; what
+  a report changes is `INV-INT-044`.
 - **A poison event stops being retaken.** After three dead attempts (the
   `INV-INT-038` row's `attemptCount`), the worker leaves the event PROCESSING
   and logs an error each run; only Replay retries it.
@@ -1084,3 +1085,41 @@ Pinned by `handover.test.ts`, `durable-email-idempotency.test.ts`,
 `email-failure-review-queue.test.ts`, `email-deliverability-section.test.tsx`,
 `admin-alert-audience.test.ts`, `admin-alert-once-census.test.ts` and
 `stranded-queued-email.realdb.test.ts` (PostgreSQL).
+
+## Bounce and complaint reports (#5469)
+
+### INV-INT-044
+
+A bounce or complaint report changes only what it names: the address's
+suppression and, for a bounce, the one email it is about (owner decisions,
+27 and 28 Nov 2026).
+
+- **One event, one rule.** Each mail service's adapter turns its report into
+  a `DeliveryFeedbackEvent`; `applyDeliveryFeedback`
+  (`email/delivery-feedback.ts`) alone acts on it; SES's is
+  `email/ses-feedback.ts`. Another service adds an adapter, a route and an
+  entry in `email/provider-message-id.ts`.
+- **The id is stored at send** in `EmailLog.providerMessageId` by both send
+  paths, for SES only (`USE_AWS_SES`), in its documented shape.
+- **Which email.** The stored id; failing that, the Message-ID header the
+  report carries, warning when that row's stored id differs. Never the
+  address.
+- **A bounce** marks that row `BOUNCED`. **A complaint** marks nothing;
+  officers get `admin-email-complaint` once per report for each address it
+  names (D6), while blocked, through `sendReplayableAdminAlertOnceEver`
+  keyed on suppression row and report, never the address. Unstored and
+  unsent, it throws so the report is redelivered. **"Not spam"** changes
+  nothing (D5).
+- **Suppression is unchanged**, decided by the event's kind, and stops
+  pending sends: the email core and the retry job check it first.
+- **Replays are harmless:** the row is already `BOUNCED`, the suppression
+  is not counted twice, and the alert claim is kept.
+- **No new lock:** one status-guarded update (`INV-LOCK-001`).
+- **Limits.** Rows with no stored id match only by header. The previous
+  release marks every row during a switchover. Old marks stay. No alert
+  for a muted template, an empty audience or a block lifted first; a crash
+  before the store, after the redeliveries end, loses it.
+
+Pinned by `ses-feedback-named-message.test.ts`,
+`ses-feedback-adapter.test.ts`, `provider-message-id.test.ts`,
+`cron-email-retry.test.ts` and `phase6a-notifications.test.ts`.
