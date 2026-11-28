@@ -209,8 +209,7 @@ export function cardRefundPaidAnotherWayOccurrenceKey(
 /**
  * Every key a close of this card refund operation can carry, one per way its
  * note is raised: the one way to find a close's record by the operation it
- * closed (#3924 round 8, `INV-SSOT`). #5267: not an old whole-group row's
- * per-joiner records (`childBookingId`), which no caller of this asks for.
+ * closed (#3924 round 8, `INV-SSOT`); never #5267's per-joiner keys.
  */
 export function closeKeysOf(paymentRecoveryOperationId: string): string[] {
   return (Object.keys(PAID_ANOTHER_WAY_KEY_SUFFIX) as PaidAnotherWayXeroNote[]).map((xeroRefundNote) =>
