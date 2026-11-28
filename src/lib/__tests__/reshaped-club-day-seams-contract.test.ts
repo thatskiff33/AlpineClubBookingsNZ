@@ -257,7 +257,10 @@ describe("#3123 reshaped seams keep their required club day", { timeout: CENSUS_
     // resolves itself, with no transaction open. Fork triyder/AlpineClubBookingsNZ#119 added an eighth
     // `bookingStayHasStarted`: "Add to work party" refused a started stay;
     // fork triyder/AlpineClubBookingsNZ#127 allows one, so that call became an `isFinishedStay` on the
-    // same club's day, and the count is seven again.
+    // same club's day, and the count is seven again. #5005 (child B) made it
+    // eight: a paid-booking import's reversal keeps a booking whose stay has
+    // started (`booking-import/reverse.ts`), on the club's day the route
+    // resolves before any transaction opens.
     const sources = productionSources();
     let policyCalls = 0;
     let startedCalls = 0;
@@ -268,6 +271,6 @@ describe("#3123 reshaped seams keep their required club day", { timeout: CENSUS_
       startedCalls += callArguments(code, "bookingStayHasStarted").length;
     }
     expect(policyCalls).toBe(13);
-    expect(startedCalls).toBe(7);
+    expect(startedCalls).toBe(8);
   });
 });

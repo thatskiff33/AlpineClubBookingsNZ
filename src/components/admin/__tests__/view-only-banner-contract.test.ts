@@ -330,6 +330,8 @@ const KEEPS_OWN_REASON: Readonly<Record<string, number>> = {
   "components/admin/admin-exclusive-hold-controls.tsx": 2,
   "components/admin/admin-return-to-waitlist-controls.tsx": 1,
   "components/admin/bed-allocation-move-dialog.tsx": 1,
+  "components/admin/booking-import/booking-import-batch-detail.tsx": 1,
+  "components/admin/booking-import/booking-import-batches-card.tsx": 1,
   "components/admin/booking-manual-payment-controls.tsx": 2,
   "components/admin/booking-no-emails-controls.tsx": 1,
   "components/admin/booking-work-party-controls.tsx": 1,

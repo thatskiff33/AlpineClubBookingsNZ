@@ -679,6 +679,9 @@ const EXPECTED_PAGE_AREAS: Record<string, AdminPermissionArea> = {
   "/admin/book": "bookings",
   "/admin/booking-approvals": "bookings",
   "/admin/booking-change-requests": "bookings",
+  // #5005: opening the import page is a bookings read; its API also needs finance.
+  "/admin/booking-import": "bookings",
+  "/admin/booking-import/[id]": "bookings",
   "/admin/booking-messages": "support",
   "/admin/booking-policies": "bookings",
   "/admin/booking-policies/adult-member-hosting": "bookings",

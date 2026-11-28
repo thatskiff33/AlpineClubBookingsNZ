@@ -174,19 +174,12 @@ const SPECIAL_ROUTE_AREA_PATTERNS: Array<{
     area: "finance",
     pattern: /^\/api\/admin\/members\/[^/]+\/xero-(?:link|push|unlink)$/,
   },
-  // B5 (#2262): the path prefix says "bookings", but recording a booking's
-  // payment as cash / an off-Xero bank transfer (and reversing it) is a MONEY
-  // action, so it is gated finance:edit like its subscription sibling.
+  // B5 (#2262): the path says "bookings", but recording a booking's cash / off-Xero
+  // payment (or reversing it) is MONEY, gated finance:edit like its subscription
+  // sibling; so is importing paid bookings (#5005, which also checks bookings).
   {
     area: "finance",
-    pattern: /^\/api\/admin\/bookings\/[^/]+\/mark-paid$/,
-  },
-  // #5005 (child C): importing paid bookings records money the club already
-  // holds, so its routes are finance; each route also requires the same level
-  // of bookings access (O4, `requireBookingImportOfficer`).
-  {
-    area: "finance",
-    pattern: /^\/api\/admin\/bookings\/import(?:\/.*)?$/,
+    pattern: /^\/api\/admin\/bookings\/(?:[^/]+\/mark-paid|import(?:\/.*)?)$/,
   },
 ];
 
