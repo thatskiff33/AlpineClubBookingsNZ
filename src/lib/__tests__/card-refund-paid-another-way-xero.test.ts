@@ -63,6 +63,7 @@ import {
   queuePaidAnotherWayXero,
 } from "@/lib/card-refund-paid-another-way-xero";
 import { xeroQueuedMessage, xeroRefundNotePromise } from "@/components/admin/dead-card-refunds-xero-copy";
+import { buildOrganiserChildCancellationRefundKey } from "@/lib/payment-recovery-keys";
 
 const db = {
   payment: { findUnique: vi.fn(async () => ({ id: "p-1", bookingId: "b-1", refundedAmountCents: 0 })) },
@@ -258,11 +259,13 @@ describe("#5267: a joiner's refund out of the organiser's card, reopened after S
   // The executor recorded the refund and queued its card note on the joiner's
   // invoice; Stripe failed it later, and the cron reopened the same row with
   // the reopen's marker on its one slice (`organiserChildRefundAllocationPlan`).
+  // The row's key, minted by the writer's own builder (`INV-SSOT`) rather than written out.
+  const childRow = buildOrganiserChildCancellationRefundKey("settle1", "child-1");
   const reopened = {
-    idempotencyKey: "organiser_child_refund_cancel_settle1_child-1",
+    idempotencyKey: childRow,
     paymentIntentId: "pi_org",
     amountCents: 4_500,
-    allocationPlan: [{ paymentTransactionId: "organiser_child_refund_cancel_settle1_child-1", amountCents: 4_500, reopenedAfterRefundId: "re_failed" }],
+    allocationPlan: [{ paymentTransactionId: childRow, amountCents: 4_500, reopenedAfterRefundId: "re_failed" }],
   };
 
   it("MUTATION: the card note still in Xero answers it - a Stripe reversal and the bank note, never a second credit", async () => {

@@ -238,6 +238,10 @@ regexes = ['''^test-secret-for-alp-653-principal$''']
 description = "The readable outbox label `race-4324-other-ask` that commit 2437ce376 in PR #5301's history (#5220) wrote as the `correlationKey` and `idempotencyKey` of a fabricated second supplementary-invoice row in `kept-change-capture-record.realdb.test.ts`, the another-invoice-queued refusal case. A test's own label for a throwaway row in the disposable race database: it authorises nothing and names no credential. `generic-api-key` fired on the `...Key` identifiers, not the value. The test now names it through the `OTHER_ASK_LABEL` constant, so the tree no longer carries the flagged lines; the literal is forgiven only because history keeps it, and this file's header rules out fingerprints. Only this exact literal is forgiven."
 regexes = ['''^race-4324-other-ask$''']
 
+[[allowlists]]
+description = "The idempotency key of the fixture organiser-child `PaymentRecoveryOperation` in the #5267 reopened-refund unit test (`src/lib/__tests__/card-refund-paid-another-way-xero.test.ts`), commit d7b29522b5 in PR #5538's history. It is a readable label - the `organiser_child_refund_` prefix the writer mints with, then `cancel_settle1_child-1` - for a mocked row that never reaches a database, and it authorises nothing. `generic-api-key` fired on the `idempotencyKey` identifier, not the value. The test now mints the key with `buildOrganiserChildCancellationRefundKey` at run time, so the tree no longer carries it; the literal is forgiven only because history keeps it, and this file's header rules out fingerprints. The same class as `organiser_child_refund_cancel_settle_child-1` above. Only this exact literal is forgiven."
+regexes = ['''^organiser_child_refund_cancel_settle1_child-1$''']
+
 # ---------------------------------------------------------------------------
 # Repository-owned rules
 # ---------------------------------------------------------------------------
