@@ -13,10 +13,11 @@
  *
  * Nothing calls the settle yet; #5005's import is its first caller.
  */
-import { PaymentSource, PaymentStatus, PaymentTransactionKind, type Prisma } from "@prisma/client";
+import { BookingEventType, PaymentSource, PaymentStatus, PaymentTransactionKind, type Prisma } from "@prisma/client";
 
 import { isAdditionalAmountUncollected } from "@/lib/additional-payment-chase";
 import { createAuditLog } from "@/lib/audit";
+import { recordBookingEvent } from "@/lib/booking-events";
 import { calendarDateOfDateOnlyInstant, compareCalendarDates, dateOnlyInstantOf, type CalendarDate } from "@/lib/club-time";
 import { DEPOSIT_BALANCE_ASK_REASON } from "@/lib/credit-release-ask-keys";
 import { ManualBookingPaymentError } from "@/lib/manual-booking-payment-error";
@@ -26,6 +27,21 @@ import type { DepositSettlementSource } from "@/lib/payment-reconciliation-sourc
 
 /** The `reason` on the PRIMARY cash row a deposit settle records. */
 export const DEPOSIT_SETTLE_RECEIPT_REASON = "deposit_settle";
+
+/**
+ * WAS THIS PAYMENT SETTLED BY A DEPOSIT? Its cash row says so for good, whatever has since
+ * become of the balance request (paid, withdrawn, folded into an edit). The one reading the
+ * manual-payment reversal and its "can this be reversed" screen share.
+ */
+export async function isDepositSettledPayment(
+  db: Pick<Prisma.TransactionClient, "paymentTransaction">,
+  paymentId: string,
+): Promise<boolean> {
+  const receipts = await db.paymentTransaction.count({
+    where: { paymentId, kind: PaymentTransactionKind.PRIMARY, reason: DEPOSIT_SETTLE_RECEIPT_REASON },
+  });
+  return receipts > 0;
+}
 
 /**
  * The deposit's split of the amount owing, decided under the settlement body's locks
@@ -173,4 +189,29 @@ export async function recordDepositSettleAudit(
     },
     tx,
   );
+}
+
+/**
+ * The durable "paid" fact every settlement records (`MEMBER_PAID`, or
+ * `NON_MEMBER_CONFIRMED` for a guest's booking), here for the deposit received and by
+ * the officer who recorded it. After the commit, as the manual settle records its own.
+ */
+export async function recordDepositPaidEvent(entry: {
+  bookingId: string;
+  isGuestBooking: boolean;
+  actingAdminMemberId: string;
+  note: string | null;
+  depositCents: number;
+  balanceCents: number;
+  balanceDueOn: CalendarDate;
+}): Promise<void> {
+  const { bookingId, isGuestBooking, ...settled } = entry;
+  await recordBookingEvent({
+    bookingId,
+    type: isGuestBooking ? BookingEventType.NON_MEMBER_CONFIRMED : BookingEventType.MEMBER_PAID,
+    actorMemberId: entry.actingAdminMemberId,
+    amountCents: entry.depositCents,
+    reason: DEPOSIT_SETTLE_RECEIPT_REASON,
+    snapshot: { kind: DEPOSIT_SETTLE_RECEIPT_REASON, ...settled },
+  });
 }

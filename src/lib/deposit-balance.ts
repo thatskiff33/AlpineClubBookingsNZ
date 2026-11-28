@@ -10,7 +10,6 @@
 import { balanceRowsOfChain, type AdditionalAskCauseRow } from "@/lib/additional-ask-cause";
 import { isAdditionalPaymentOwed, type AdditionalPaymentChasePayment } from "@/lib/additional-payment-chase";
 import { addCalendarDays, calendarDateOfDateOnlyInstant, compareCalendarDates, type CalendarDate } from "@/lib/club-time";
-import { DEPOSIT_BALANCE_ASK_REASON } from "@/lib/credit-release-ask-keys";
 
 /** A request row as the part-paid predicate reads it: its cause, what it carried, and its due date. */
 export type PartPaidAskRow = AdditionalAskCauseRow & { balanceDueOn?: Date | null };
@@ -77,9 +76,7 @@ export function balanceReminderSchedule(dueOn: CalendarDate): {
 /**
  * A booking settled by a deposit is not reversed by Record manual payment's reversal, which would
  * put the booking back to unpaid while its balance request stood. The server's refusal and the
- * admin page share this sentence and the row filter that finds the balance (any status, never
- * withdrawn).
+ * admin page share this sentence; `isDepositSettledPayment` (`deposit-settle.ts`) is the test.
  */
 export const DEPOSIT_SETTLE_REVERSAL_REFUSAL =
   "This booking was settled by a deposit with a balance requested, so the payment cannot be reversed here.";
-export const DEPOSIT_BALANCE_REQUEST_WHERE = { kind: "ADDITIONAL", reason: DEPOSIT_BALANCE_ASK_REASON, withdrawnAt: null } as const;

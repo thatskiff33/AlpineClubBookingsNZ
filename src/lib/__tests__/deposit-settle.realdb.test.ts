@@ -12,8 +12,11 @@
  *     the request (R25). Both money records agree and the journal's batches verify.
  *  2. Each refusal writes nothing: a deposit of nothing, or of all that is owing; a
  *     due date in the past, after check-in, or not a date; a moved worth; a request
- *     already open; a booking already paid.
- *  3. Races: two deposit settles (one wins); a deposit settle against a cancel.
+ *     already open (on its rows, or on the summary columns alone); a booking already
+ *     paid. The manual-payment reversal and its screen refuse a deposit settle, and
+ *     still do once the balance request is withdrawn.
+ *  3. Races: two deposit settles (one wins); a deposit settle against a cancel; an
+ *     extra recorded while the settle waits for the Payment row (the fenced write).
  *
  * Ordinary Vitest runs skip the file; CI's real-PostgreSQL job runs it against the
  * guarded loopback race database. It cleans its own `race-5008-deposit-` rows.
@@ -69,6 +72,12 @@ async function paymentOf(bookingId: string) {
     where: { bookingId },
     include: { transactions: { orderBy: [{ createdAt: "desc" }, { insertionSeq: "desc" }] } },
   });
+}
+
+/** `bookingPartPaid` as a screen will ask it: the payment's summary columns and its ADDITIONAL rows, newest first. */
+async function partPaid(bookingStatus: string, payment: NonNullable<Awaited<ReturnType<typeof paymentOf>>>) {
+  const { bookingPartPaid } = await import("@/lib/deposit-balance");
+  return bookingPartPaid({ bookingStatus, payment: { ...payment, transactions: payment.transactions.filter((row) => row.kind === "ADDITIONAL") } });
 }
 
 /** Both money records against the booking's columns: nothing disagrees, lacks coverage or breaks integrity. */
@@ -169,8 +178,7 @@ async function expectNothingWritten(bookingId: string) {
     expect(payment.settledByTransactionId).toBe(deposit!.id);
 
     // The one predicate every "Paid" surface will ask reads it as part paid.
-    const { bookingPartPaid } = await import("@/lib/deposit-balance");
-    expect(bookingPartPaid({ bookingStatus: "PAID", payment })).toEqual({ owingCents: WORTH - DEPOSIT, dueOn: DUE_ON });
+    expect(await partPaid("PAID", payment)).toEqual({ owingCents: WORTH - DEPOSIT, dueOn: DUE_ON });
 
     // The mirror the settle wrote is the one the rebuild derives from the rows.
     const { reconcilePaymentAggregates } = await import("@/lib/payment-transactions");
@@ -192,15 +200,28 @@ async function expectNothingWritten(bookingId: string) {
 
     const audit = await prisma.auditLog.findFirstOrThrow({ where: { targetId: id, action: "booking-payment.deposit.settle" } });
     expect(audit.metadata).toMatchObject({ depositCents: DEPOSIT, balanceCents: WORTH - DEPOSIT, balanceDueOn: DUE_ON, creditAppliedCents: 0 });
+    // The durable "paid" fact, for the deposit received and by the officer who recorded it.
+    expect(await prisma.bookingEvent.findMany({ where: { bookingId: id, type: { in: ["MEMBER_PAID", "NON_MEMBER_CONFIRMED"] } }, select: { type: true, amountCents: true, actorMemberId: true, reason: true } }))
+      .toEqual([{ type: "MEMBER_PAID", amountCents: DEPOSIT, actorMemberId: names.officerId, reason: "deposit_settle" }]);
   });
 
   it("accepts a due date on the check-in day, and refuses to reverse a deposit as a manual payment", async () => {
     const id = await unpaidBooking();
     await settle(id, { balanceDueOn: CHECK_IN });
     expect((await paymentOf(id))!.transactions[0]!.balanceDueOn).toEqual(new Date(`${CHECK_IN}T00:00:00.000Z`));
-    await expect(reconciliation.reverseManualBookingPayment({ bookingId: id, actingAdminMemberId: names.officerId, note: null }))
-      .rejects.toMatchObject({ status: 409, message: expect.stringMatching(/deposit/) });
-    expect((await prisma.booking.findUniqueOrThrow({ where: { id }, select: { status: true } })).status).toBe("PAID");
+    const { getBookingManualPaymentState } = await import("@/lib/manual-booking-payment-state");
+    const { DEPOSIT_SETTLE_REVERSAL_REFUSAL } = await import("@/lib/deposit-balance");
+    const refusedBothWays = async () => {
+      await expect(reconciliation.reverseManualBookingPayment({ bookingId: id, actingAdminMemberId: names.officerId, note: null }))
+        .rejects.toMatchObject({ status: 409, message: DEPOSIT_SETTLE_REVERSAL_REFUSAL });
+      expect(await getBookingManualPaymentState(id)).toMatchObject({ canReverse: false, reverseBlockedReason: DEPOSIT_SETTLE_REVERSAL_REFUSAL });
+      expect((await prisma.booking.findUniqueOrThrow({ where: { id }, select: { status: true } })).status).toBe("PAID");
+    };
+    await refusedBothWays();
+    // Still a deposit settle once its balance request is withdrawn: the cash row is what says so.
+    await prisma.paymentTransaction.updateMany({ where: { payment: { bookingId: id }, kind: "ADDITIONAL" }, data: { withdrawnAt: new Date("2026-07-01T00:00:00.000Z") } });
+    await prisma.payment.update({ where: { bookingId: id }, data: { additionalAmountCents: 0, additionalPaymentStatus: null } });
+    await refusedBothWays();
   });
 
   it.each([
@@ -223,17 +244,42 @@ async function expectNothingWritten(bookingId: string) {
     await expectNothingWritten(id);
   });
 
-  it("refuses a booking that already has a request open", async () => {
+  it.each([
+    ["an open request row the summary columns do not show", { additionalAmountCents: 0, additionalPaymentStatus: null }, true],
+    ["an extra owing on the summary columns alone", { additionalAmountCents: 3_000, additionalPaymentStatus: "PENDING" }, false],
+  ])("refuses a booking that already has a request open: %s", async (_label, summary, withRow) => {
     const id = await unpaidBooking();
     const payment = await prisma.payment.create({
-      data: { bookingId: id, amountCents: WORTH, source: "INTERNET_BANKING", status: "PENDING", additionalAmountCents: 3_000, additionalPaymentStatus: "PENDING" },
+      data: { bookingId: id, amountCents: WORTH, source: "INTERNET_BANKING", status: "PENDING", ...summary },
     });
-    await prisma.paymentTransaction.create({
-      data: { paymentId: payment.id, kind: "ADDITIONAL", source: "STRIPE", stripePaymentIntentId: `pi_${PREFIX}open`, amountCents: 3_000, status: "PENDING", reason: "booking_modification" },
-    });
+    if (withRow) {
+      await prisma.paymentTransaction.create({
+        data: { paymentId: payment.id, kind: "ADDITIONAL", source: "STRIPE", stripePaymentIntentId: `pi_${PREFIX}open-${serial}`, amountCents: 3_000, status: "PENDING", reason: "booking_modification" },
+      });
+    }
     await expect(settle(id)).rejects.toMatchObject({ status: 409, message: expect.stringMatching(/request open/) });
     expect((await prisma.booking.findUniqueOrThrow({ where: { id }, select: { status: true } })).status).toBe("PAYMENT_PENDING");
-    expect(await prisma.paymentTransaction.count({ where: { paymentId: payment.id } })).toBe(1);
+    expect(await prisma.paymentTransaction.count({ where: { paymentId: payment.id } })).toBe(withRow ? 1 : 0);
+  });
+
+  it("RACE: an extra recorded while the settle waits for the Payment row is a 409, and nothing is settled", async () => {
+    const id = await unpaidBooking();
+    const payment = await prisma.payment.create({ data: { bookingId: id, amountCents: WORTH, source: "INTERNET_BANKING", status: "PENDING" } });
+    let settling: Promise<unknown> = Promise.resolve();
+    await prisma.$transaction(async (tx) => {
+      await tx.$queryRaw`SELECT id FROM "Payment" WHERE id = ${payment.id} FOR UPDATE`;
+      settling = settle(id).then(() => "settled", (error: unknown) => error);
+      // The settle has found no request open and now waits for this row's lock.
+      await expect.poll(
+        async () => Number((await prisma.$queryRaw<Array<{ waiting: bigint }>>`SELECT count(*) AS waiting FROM pg_locks WHERE NOT granted`)[0]!.waiting),
+        { timeout: 30_000 },
+      ).toBeGreaterThan(0);
+      await tx.payment.update({ where: { id: payment.id }, data: { additionalAmountCents: 3_000, additionalPaymentStatus: "PENDING" } });
+    }, { timeout: 60_000 });
+    expect(await settling).toMatchObject({ status: 409, message: expect.stringMatching(/changed while you were recording/) });
+    expect((await prisma.booking.findUniqueOrThrow({ where: { id }, select: { status: true } })).status).toBe("PAYMENT_PENDING");
+    expect(await prisma.payment.findUniqueOrThrow({ where: { id: payment.id } })).toMatchObject({ status: "PENDING", additionalAmountCents: 3_000, additionalPaymentStatus: "PENDING" });
+    expect(await prisma.paymentTransaction.count({ where: { paymentId: payment.id } })).toBe(0);
   });
 
   it("refuses a second deposit on a booking it already settled", async () => {
@@ -260,7 +306,6 @@ async function expectNothingWritten(bookingId: string) {
     const id = await unpaidBooking();
     const { cancelBooking } = await import("@/lib/booking-cancel");
     const [settled, cancelled] = await Promise.allSettled([settle(id), cancelBooking(id, names.officerId, "ADMIN", "127.0.0.1", CLUB_FORMAT_TEST)]);
-    const { bookingPartPaid } = await import("@/lib/deposit-balance");
     const status = (await prisma.booking.findUniqueOrThrow({ where: { id }, select: { status: true } })).status;
     const payment = await paymentOf(id);
     expect(cancelled.status).toBe("fulfilled");
@@ -279,12 +324,12 @@ async function expectNothingWritten(bookingId: string) {
     let handBackOwedCents = 0;
     if (cancelStatus === 200) {
       expect(status).toBe("CANCELLED");
-      expect(bookingPartPaid({ bookingStatus: status, payment })).toBeNull();
+      expect(await partPaid(status, payment!)).toBeNull();
       handBackOwedCents = (await prisma.manualRefundTask.findFirstOrThrow({ where: { bookingId: id }, select: { amountCents: true } })).amountCents ?? 0;
     } else {
       expect(cancelStatus).toBe(409);
       expect(status).toBe("PAID");
-      expect(bookingPartPaid({ bookingStatus: status, payment })).toEqual({ owingCents: WORTH - DEPOSIT, dueOn: DUE_ON });
+      expect(await partPaid(status, payment!)).toEqual({ owingCents: WORTH - DEPOSIT, dueOn: DUE_ON });
     }
     await expectCensusClean(id);
     await expectJournalClean(id, payment!.id, handBackOwedCents);
@@ -296,8 +341,7 @@ async function expectNothingWritten(bookingId: string) {
     const { cancelBooking } = await import("@/lib/booking-cancel");
     expect((await cancelBooking(id, names.officerId, "ADMIN", "127.0.0.1", CLUB_FORMAT_TEST)).status).toBe(200);
     const payment = (await paymentOf(id))!;
-    const { bookingPartPaid } = await import("@/lib/deposit-balance");
-    expect(bookingPartPaid({ bookingStatus: "CANCELLED", payment })).toBeNull();
+    expect(await partPaid("CANCELLED", payment)).toBeNull();
     expect(await bedsHeldBy(id)).toEqual([0, 0]);
     // Refunded from the money held (`INV-ADDPAY-015`): half the deposit, by hand, never the unpaid balance.
     const task = await prisma.manualRefundTask.findFirstOrThrow({ where: { bookingId: id }, select: { amountCents: true, status: true } });

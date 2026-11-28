@@ -9,7 +9,7 @@ manual settle's Xero-evidence refusal moved, unchanged, to
 `src/lib/manual-settlement-xero-evidence.ts`.
 
 function: src/lib/payment-reconciliation.ts#settleBookingPaymentInTransaction
-lines: 966
+lines: 967
 reason: the deposit's fence, its balance request and its audit row belong
   inside the fenced write and the officer block they extend, under the same
   locks; split out, they would run outside the claim they depend on.

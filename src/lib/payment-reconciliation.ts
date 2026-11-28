@@ -4,7 +4,7 @@ import { settleHostingCoverageAfterCommit } from "@/lib/adult-member-hosting-cov
 import { enqueueOwnHostingCoverageReevaluation } from "@/lib/adult-member-hosting-review";
 import { reconcileHostingReviewForSystemCancellation } from "@/lib/adult-member-hosting-system-cancellation";
 import { prisma } from "@/lib/prisma";
-import { DEPOSIT_BALANCE_REQUEST_WHERE, DEPOSIT_SETTLE_REVERSAL_REFUSAL } from "@/lib/deposit-balance";
+import { DEPOSIT_SETTLE_REVERSAL_REFUSAL } from "@/lib/deposit-balance";
 import {
   BookingEventType,
   BookingStatus,
@@ -112,7 +112,7 @@ import {
   type StripeSettlementSource,
 } from "@/lib/payment-reconciliation-sources";
 import { assertNoXeroInvoiceEvidence } from "@/lib/manual-settlement-xero-evidence";
-import { DEPOSIT_SETTLE_RECEIPT_REASON, prepareDepositSplit, raiseDepositBalanceRequest, recordDepositSettleAudit } from "@/lib/deposit-settle";
+import { DEPOSIT_SETTLE_RECEIPT_REASON, isDepositSettledPayment, prepareDepositSplit, raiseDepositBalanceRequest, recordDepositPaidEvent, recordDepositSettleAudit } from "@/lib/deposit-settle";
 import { LOCK1_HOLDER_TRANSACTION_BUDGET } from "@/lib/db-transaction";
 import { clubToday, parseCalendarDate } from "@/lib/club-time";
 import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
@@ -722,13 +722,14 @@ async function settleBookingPaymentInTransaction(
           ],
         },
       };
+      const receiptReason = settlement.kind === "deposit" ? DEPOSIT_SETTLE_RECEIPT_REASON : "manual_mark_paid";
       manualReceiptRowIds.push(...(await tx.paymentTransaction.findMany({ where: mintablePrimary, select: { id: true } })).map((row) => row.id));
       const mintedUpdate = await tx.paymentTransaction.updateMany({
         where: mintablePrimary,
         data: {
           status: PaymentStatus.SUCCEEDED,
           amountCents: manualPrimaryTransactionAmountCents,
-          reason: settlement.kind === "deposit" ? DEPOSIT_SETTLE_RECEIPT_REASON : "manual_mark_paid",
+          reason: receiptReason,
         },
       });
 
@@ -741,7 +742,7 @@ async function settleBookingPaymentInTransaction(
             stripePaymentIntentId: null,
             amountCents: manualPrimaryTransactionAmountCents,
             status: PaymentStatus.SUCCEEDED,
-            reason: settlement.kind === "deposit" ? DEPOSIT_SETTLE_RECEIPT_REASON : "manual_mark_paid",
+            reason: receiptReason,
           },
         });
         manualReceiptRowIds.push(minted.id);
@@ -1236,10 +1237,10 @@ async function settleBookingPaymentInTransaction(
     // the member's balance for cash already taken, which invents a charge
     // rather than honouring a choice. Cash collected outside the app means the
     // member's credit was NOT spent — so clear the election, and never leave a
-    // PAID booking advertising an election nothing will act on. Both callers
-    // report a non-null clear through reportUnappliedCreditElection after
-    // commit, so the member's booking history says "your credit is still
-    // available" and an operator can decide whether to refund the difference.
+    // PAID booking advertising an election nothing will act on. The capture and
+    // manual callers report a non-null clear (reportUnappliedCreditElection)
+    // after commit: "your credit is still available", and an operator decides
+    // on any refund. A deposit settle audits the clear and returns it (#5008).
     //
     // Nearly always a no-op, and that is the point. Every minter of a primary
     // intent either consumes the election first (the pay step, whose consumption
@@ -2029,7 +2030,9 @@ export async function settleImportedBookingInTransaction(
  *
  * Inert in this release: no route, screen or job calls it. #5005's import is the
  * first caller, and no balance is written until the release that chases one
- * (#5008 child C) is fully deployed.
+ * (#5008 child C) is fully deployed. That caller authorises the officer, trims
+ * the note, and reports a non-null `staleCreditElectionCents` to the member:
+ * `reportUnappliedCreditElection` says "fully settled", which a deposit is not.
  */
 export async function settleBookingByDeposit({
   bookingId,
@@ -2062,6 +2065,7 @@ export async function settleBookingByDeposit({
     throw new Error(`Unexpected settlement outcome on the deposit path: ${result.outcome}`);
   }
   await settleHostingCoverageAfterCommit({ bookingId });
+  await recordDepositPaidEvent({ bookingId, isGuestBooking: result.booking.parentBookingId !== null, actingAdminMemberId, note, depositCents: result.effectiveAmountCents, balanceCents: result.uncollectedAdditionalCents, balanceDueOn: dueOn });
   for (const paymentIntentId of result.outstandingIntentIds) {
     await cancelPaymentIntentIfCancellable(paymentIntentId).catch((err) =>
       logger.warn({ err, bookingId, paymentIntentId }, "Deposit settle: best-effort Stripe intent cancel failed; the recovery cron will retry")
@@ -2378,7 +2382,7 @@ export async function reverseManualBookingPayment({
       );
     }
     // #5008: a deposit settle is never reversed here; its balance request would outlive it.
-    if ((await tx.paymentTransaction.count({ where: { paymentId: payment.id, ...DEPOSIT_BALANCE_REQUEST_WHERE } })) > 0) throw new ManualBookingPaymentError(DEPOSIT_SETTLE_REVERSAL_REFUSAL, 409);
+    if (await isDepositSettledPayment(tx, payment.id)) throw new ManualBookingPaymentError(DEPOSIT_SETTLE_REVERSAL_REFUSAL, 409);
 
     // Guard 2 again, for anything acquired SINCE the settle.
     await assertNoXeroInvoiceEvidence(tx, payment);
