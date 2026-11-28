@@ -1341,7 +1341,7 @@ note.
    the claim wins (#4279): the completion takes the Payment row first, then
    the claim, re-checks under that row that the note is neither per-refund nor
    recorded VOIDED or DELETED, writes the pointer, then the links
-   (`completeAdoptingCanonicalRefundNote`, the create's record order). A repair
+   (`completeUnderPaymentRows`, the create's record order). A repair
    whose claim a stale reset took writes no pointer and no link, so a void that
    landed meanwhile is never undone by it; before #4279 its own earlier
    pointer write could leave the payment naming the voided note. A completion
@@ -2140,7 +2140,10 @@ the cap keeps them from reading as twice the money. The accepted cost: where
 Xero shows a refund before Stripe's sync records it, the total waits for that
 sync, which raises it itself. The cap raises no alert; the raise-only floor
 (`INV-ADDPAY-021`) still alerts on a Xero total below the ledger. The kept
-settle and the allocation write are bank-transfer only and take no cap.
+settle and the allocation write are bank-transfer only and take no cap. The
+cap sits in the one shared step (`decideXeroRefundedColumns`), after the
+raise-only floor, so a card ledger is neither lowered nor raised past Stripe
+(#5289 E).
 
 A card refund Stripe failed later (#4370) is left out of Stripe's figure, and
 cash paid back by bank for it is in the ledger, so the cap is what went back:
@@ -2163,7 +2166,11 @@ Pinned by `xero-credit-note-repairs.test.ts`,
 `xero-repair-known-modification-refund.test.ts`,
 `kept-settle-correction-recount.test.ts`,
 `retire-unlisted-credit-note-allocations.test.ts`,
-`ib-settle-from-cash.realdb.test.ts` and
+`ib-settle-from-cash.realdb.test.ts`,
+`voided-modification-note-recount.realdb.test.ts`,
+`card-refund-ledger-never-lowered.realdb.test.ts`,
+`bank-transfer-payment-of-invoice.test.ts`,
+`xero-refunded-columns.test.ts` and
 `kept-settle-queued-cancel.realdb.test.ts`.
 
 ## Flow 3 — Repair and hardening

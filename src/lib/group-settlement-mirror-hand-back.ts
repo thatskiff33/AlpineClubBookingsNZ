@@ -11,6 +11,7 @@ import { paidByOrganiserInternetBanking } from "@/lib/group-organiser-paid";
 import { mirrorPlanRefundedCents } from "@/lib/group-settlement-refund-plan";
 import { isGroupSettlementMirrorHandBackKind } from "@/lib/group-settlement-mirror-kinds";
 import { ManualBookingPaymentError } from "@/lib/manual-booking-payment-error";
+import { NOT_A_SETTLEMENT_MARKER_WHERE } from "@/lib/manual-settlement-reversal-event";
 import { lockPaymentForRefundedTotal } from "@/lib/payment-transactions";
 import { sendAdminXeroSyncErrorAlert } from "@/lib/email";
 import logger from "@/lib/logger";
@@ -265,8 +266,9 @@ export async function readGroupChildMirrorForPlanReplay(
     select: { kind: true, status: true, occurrenceKey: true, paymentId: true, amountCents: true, settlementDirection: true },
   });
   // Review round 3: a child its member cancelled themselves (a paid cancel's snapshot) was never the plan's to refund.
+  // #5289 review: the cancellation itself, never a settlement marker written after it.
   const cancelled = await tx.bookingEvent.findFirst({
-    where: { bookingId, type: "CANCELLED" },
+    where: { bookingId, type: "CANCELLED", ...NOT_A_SETTLEMENT_MARKER_WHERE },
     orderBy: [{ occurredAt: "desc" }, { id: "desc" }],
     select: { snapshot: true },
   });
