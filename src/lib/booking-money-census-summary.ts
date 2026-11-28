@@ -33,9 +33,6 @@ import {
   type BookingMoneyReconciliationSummary,
 } from "@/lib/booking-money-reconciliation";
 
-/** The command that prints the full booking-money reconciliation census. */
-export const BOOKING_MONEY_RECONCILIATION_CENSUS_COMMAND = "pnpm run booking-money:census";
-
 /** The most booking ids a summary, an alert or a dashboard item names for one class. */
 export const BOOKING_MONEY_CENSUS_IDS_PER_CLASS = 20;
 

@@ -18,6 +18,8 @@ export const BOOKING_MONEY_CENSUS_CRON_SCHEDULE = "30 5 * * *";
 
 /** The operator command that prints the full report a nightly summary is cut from. */
 export const BOOKING_LEDGER_CENSUS_COMMAND = "pnpm run booking-ledger:census";
+/** The operator command that prints the full booking-money reconciliation census. */
+export const BOOKING_MONEY_RECONCILIATION_CENSUS_COMMAND = "pnpm run booking-money:census";
 
 /** What the admin alert says about itself, in the email and in its editor default. */
 export const BOOKING_MONEY_CENSUS_ALERT_NOTE =
