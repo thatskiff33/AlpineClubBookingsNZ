@@ -530,6 +530,31 @@ export function mappingCodeClassViolation(
 }
 
 /**
+ * Whether `chart` is known and does not list `code` (#5235 review). The chart
+ * holds the connected organisation's ACTIVE accounts only, so an archived or
+ * deleted account is simply absent. Null code or no chart: false, there is
+ * nothing to say.
+ */
+export function mappingCodeMissingFromChart(
+  code: string | null | undefined,
+  chart: readonly { code: string }[] | null | undefined,
+): boolean {
+  const wanted = normalizeMappingCode(code);
+  if (wanted == null || chart == null) return false;
+  return !chart.some((row) => normalizeMappingCode(row.code) === wanted);
+}
+
+/**
+ * Why a code the save is asked to set may not be saved because the chart does
+ * not list it (owner decision, 28 Nov 2026: the save refuses an account it
+ * cannot place). Names the mapping, never the code, as
+ * `mappingCodeClassViolation` does.
+ */
+export function mappingCodeUnlistedRefusal(key: AccountMappingKey): string {
+  return `The code chosen for ${MAPPING_LABELS[key]} is not an active account in the connected Xero organisation; refresh the chart of accounts and choose again.`;
+}
+
+/**
  * A stored mapping code, or `null` when there is not one (#2717).
  *
  * BLANK IS NOT A CHOICE. A row whose code is an empty string used to read as

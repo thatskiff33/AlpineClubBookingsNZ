@@ -63,10 +63,18 @@ vi.mock("@/lib/club-tax-settings", async (importOriginal) => ({
   ...((await importOriginal()) as typeof import("@/lib/club-tax-settings")),
   loadClubTaxSchedule: h.schedule,
 }));
-vi.mock("@/lib/xero-connection", () => ({
+vi.mock("@/lib/xero-connection", async (importOriginal) => ({
+  ...((await importOriginal()) as typeof import("@/lib/xero-connection")),
   readXeroConnection: async () => ({ tenantId: "tenant-1", expiresAt: new Date() }),
 }));
 vi.mock("@/lib/xero-tax-rates", () => ({ readXeroTaxRates: h.readXeroTaxRates }));
+// This suite holds the Opening Credits rules; the chart check (#5235) has its own
+// route suite. Here Xero answers an empty chart and no code is refused against it.
+vi.mock("@/lib/xero-chart-of-accounts-fetch", () => ({ fetchChartOfAccountsFromXero: async () => ({ accounts: [], cache: null }) }));
+vi.mock("@/lib/xero-account-mapping-write-checks", async (importOriginal) => ({
+  ...((await importOriginal()) as typeof import("@/lib/xero-account-mapping-write-checks")),
+  changedCodeRefusals: () => [],
+}));
 
 import { auth } from "@/lib/auth";
 import { PUT } from "@/app/api/admin/xero/account-mappings/route";

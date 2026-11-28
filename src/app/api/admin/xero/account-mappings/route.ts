@@ -127,12 +127,16 @@ export async function PUT(request: NextRequest) {
   const updates = parsed.data;
 
   try {
-    // The checks and the writes are one decision (#5235, #5391): a code that is
-    // the wrong kind of account (400), or an Opening Credits rule (409; 503
-    // when Xero could not be asked), refuses the save before any row is
-    // written, under the key a configuration import also holds.
+    // The checks and the writes are one decision (#5235, #5391): a code the
+    // connected chart does not list or shows is the wrong kind of account
+    // (400), a refunds account Xero's tax code cannot sit on or an Opening
+    // Credits rule (409), or Xero that could not be asked (503) refuses the
+    // save before any row is written, under the key a configuration import
+    // also holds. `key` names the one mapping a refusal is about, for its row.
     const saved = await saveXeroAccountMappings(updates);
-    if (!saved.ok) return NextResponse.json({ error: saved.error }, { status: saved.status });
+    if (!saved.ok) {
+      return NextResponse.json({ error: saved.error, ...(saved.key ? { key: saved.key } : {}) }, { status: saved.status });
+    }
 
     await logAudit({
       action: "xero_account_mappings_updated",

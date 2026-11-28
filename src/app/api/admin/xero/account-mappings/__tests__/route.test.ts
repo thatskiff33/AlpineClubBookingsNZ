@@ -44,6 +44,8 @@ const h = vi.hoisted(() => {
   });
   const prisma = {
     xeroAccountMapping: { findMany, upsert },
+    // The earliest refundable booking (`readRefundableTaxTypes`): none, unless a case says otherwise.
+    booking: { findFirst: vi.fn(async () => null) },
     xeroTaxCategoryMapping: { findMany: vi.fn(async () => []) },
     $executeRaw: vi.fn(async (strings: TemplateStringsArray) => {
       state.calls.push(`lock:${strings.join("?")}`);
@@ -56,7 +58,17 @@ const h = vi.hoisted(() => {
       return run(prisma);
     }),
   };
-  return { state, upsert, prisma, chart: vi.fn(), schedule: vi.fn(), logAudit: vi.fn() };
+  return {
+    state,
+    upsert,
+    prisma,
+    chart: vi.fn(),
+    fetchChart: vi.fn(),
+    connection: vi.fn(),
+    rates: vi.fn(),
+    schedule: vi.fn(),
+    logAudit: vi.fn(),
+  };
 });
 
 vi.mock("@/lib/prisma", () => ({ prisma: h.prisma }));
@@ -67,19 +79,23 @@ vi.mock("@/lib/session-guards", async () => ({
 }));
 vi.mock("@/lib/audit", () => ({ logAudit: h.logAudit }));
 vi.mock("@/lib/xero-admin-cache", () => ({ readStoredChartOfAccounts: h.chart }));
+// #5235 review (owner decision, 28 Nov 2026): with no fresh stored chart the save asks Xero.
+vi.mock("@/lib/xero-chart-of-accounts-fetch", () => ({ fetchChartOfAccountsFromXero: h.fetchChart }));
 vi.mock("@/lib/xero-tax-anchors", () => import("@/lib/__tests__/support/xero-tax-anchors-baseline"));
 vi.mock("@/lib/club-time-zone-runtime", () => ({ readClubTimeZoneOutsideRequest: async () => "Pacific/Auckland" }));
 vi.mock("@/lib/club-tax-settings", async (importOriginal) => ({
   ...((await importOriginal()) as typeof import("@/lib/club-tax-settings")),
   loadClubTaxSchedule: h.schedule,
 }));
-vi.mock("@/lib/xero-connection", () => ({
-  readXeroConnection: async () => ({ tenantId: "tenant-1", expiresAt: new Date() }),
+vi.mock("@/lib/xero-connection", async (importOriginal) => ({
+  ...((await importOriginal()) as typeof import("@/lib/xero-connection")),
+  readXeroConnection: h.connection,
 }));
-vi.mock("@/lib/xero-tax-rates", () => ({ readXeroTaxRates: vi.fn(async () => []) }));
+vi.mock("@/lib/xero-tax-rates", () => ({ readXeroTaxRates: h.rates }));
 
 import { auth } from "@/lib/auth";
-import { MAPPINGS_CHANGED_WHILE_SAVING } from "@/lib/xero-account-mapping-save";
+import { MAPPINGS_CHANGED_WHILE_SAVING, MAPPINGS_SAVE_CONTENDED } from "@/lib/xero-account-mapping-save";
+import { XERO_CHART_UNAVAILABLE_FOR_SAVE } from "@/lib/xero-account-mapping-write-checks";
 import { PUT } from "@/app/api/admin/xero/account-mappings/route";
 
 // Not GST-registered, so mapping Opening Credits asks nothing of the Exempt category.
@@ -107,7 +123,7 @@ function store(codes: Record<string, string | null>) {
 
 const storedCode = (key: string) => h.state.rows.find((row) => row.key === key)?.code;
 
-async function save(body: unknown): Promise<{ status: number; error: string; payload: Record<string, { code: string | null }> }> {
+async function save(body: unknown): Promise<{ status: number; error: string; key?: string; payload: Record<string, { code: string | null }> }> {
   const response = await PUT(
     new NextRequest("http://localhost/api/admin/xero/account-mappings", {
       method: "PUT",
@@ -116,7 +132,7 @@ async function save(body: unknown): Promise<{ status: number; error: string; pay
     }),
   );
   const payload = await response.json();
-  return { status: response.status, error: payload.error ?? "", payload };
+  return { status: response.status, error: payload.error ?? "", key: payload.key, payload };
 }
 
 beforeEach(() => {
@@ -125,6 +141,9 @@ beforeEach(() => {
   h.state.calls = [];
   h.state.whileWaitingForLock = null;
   h.schedule.mockResolvedValue(NOT_REGISTERED);
+  h.connection.mockResolvedValue({ tenantId: "tenant-1", expiresAt: new Date() });
+  h.fetchChart.mockRejectedValue(new Error("no Xero in this suite unless a case asks"));
+  h.rates.mockResolvedValue([]);
   cacheChart(CHART);
   store({ hutFeesIncome: "200", hutFeeRefunds: "200" });
   vi.mocked(auth).mockResolvedValue({
@@ -170,14 +189,52 @@ describe("Hut Fee Refunds takes a revenue or an expense account (#5235)", () => 
     expect(error).toContain("Goodwill & Write-Offs needs an expense account");
   });
 
-  it("accepts any code while no chart of accounts is cached", async () => {
+  it("judges against the fresh stored chart without asking Xero", async () => {
+    expect((await save({ hutFeeRefunds: { code: "404" } })).status).toBe(200);
+    expect(h.fetchChart).not.toHaveBeenCalled();
+  });
+
+  it("MUTATION (owner decision, 28 Nov 2026): with no fresh stored chart, asks Xero first and judges by its answer", async () => {
+    cacheChart(null);
+    h.fetchChart.mockResolvedValue({ accounts: CHART, cache: null });
+    const { status, error, key } = await save({ hutFeeRefunds: { code: "606" } });
+    expect(status).toBe(400);
+    expect(error).toContain("Hut Fee Refunds needs a revenue or expense account");
+    expect(key).toBe("hutFeeRefunds");
+    expect(h.fetchChart).toHaveBeenCalledTimes(1);
+    expect(h.upsert).not.toHaveBeenCalled();
+    // The fetched chart is asked before the transaction opens, never inside it.
+    expect(h.prisma.$transaction).not.toHaveBeenCalled();
+    expect((await save({ hutFeeRefunds: { code: "404" } })).status).toBe(200);
+  });
+
+  it("MUTATION: refuses with a 503 when Xero is connected but cannot be asked, and writes nothing", async () => {
+    cacheChart(null);
+    const { status, error } = await save({ hutFeeRefunds: { code: "404" } });
+    expect(status).toBe(503);
+    expect(error).toBe(XERO_CHART_UNAVAILABLE_FOR_SAVE);
+    expect(error).not.toMatch(/\b403\b|forbidden/i);
+    expect(h.upsert).not.toHaveBeenCalled();
+    expect(storedCode("hutFeeRefunds")).toBe("200");
+  });
+
+  it("accepts any code unchecked only while Xero is not connected, and asks Xero nothing", async () => {
+    h.connection.mockResolvedValue(null);
     cacheChart(null);
     expect((await save({ hutFeeRefunds: { code: "606" } })).status).toBe(200);
     expect(storedCode("hutFeeRefunds")).toBe("606");
+    expect(h.fetchChart).not.toHaveBeenCalled();
+    expect(h.chart).not.toHaveBeenCalled();
   });
 
-  it("accepts a code the cached chart does not list, which may be newer than the cache", async () => {
-    expect((await save({ hutFeeRefunds: { code: "431" } })).status).toBe(200);
+  it("MUTATION: refuses a code the fresh chart does not list, such as an archived account, naming the mapping", async () => {
+    const { status, error, key } = await save({ hutFeeRefunds: { code: "431" } });
+    expect(status).toBe(400);
+    expect(error).toBe(
+      "The code chosen for Hut Fee Refunds is not an active account in the connected Xero organisation; refresh the chart of accounts and choose again. No account mapping was saved.",
+    );
+    expect(key).toBe("hutFeeRefunds");
+    expect(h.upsert).not.toHaveBeenCalled();
   });
 
   it("does not judge a code the save leaves as it is stored, so the other mappings can still be saved", async () => {
@@ -219,7 +276,8 @@ describe("the checks and the writes are one decision, under the config-import ke
   it("MUTATION: refuses a shared Opening Credits account that only exists once the lock is held", async () => {
     // Another save maps Opening Credits to 820 after this one's first read.
     h.state.whileWaitingForLock = () => h.state.rows.push({ key: "openingCredits", code: "820", itemCode: null });
-    cacheChart(null);
+    // Not connected, so the liability code is not judged by kind and the save reaches the lock.
+    h.connection.mockResolvedValue(null);
     const { status, error } = await save({ goodwillWriteOffs: { code: "820" } });
     expect(status).toBe(409);
     expect(error).toBe(
@@ -250,7 +308,63 @@ describe("the checks and the writes are one decision, under the config-import ke
     expect(storedCode("hutFeeRefunds")).toBe("404");
   });
 
-  it("keeps the retry message free of anything the screen reads as 'not permitted'", () => {
+  it("keeps the retry messages free of anything the screen reads as 'not permitted'", () => {
     expect(MAPPINGS_CHANGED_WHILE_SAVING).not.toMatch(/\b403\b|forbidden/i);
+    expect(MAPPINGS_SAVE_CONTENDED).not.toMatch(/\b403\b|forbidden/i);
+  });
+
+  it.each(["P2028", "P2034"])(
+    "answers a transaction that timed out behind an import's lock, or lost a conflict (%s), with a 409 to retry",
+    async (code) => {
+      h.prisma.$transaction.mockRejectedValueOnce(Object.assign(new Error("Transaction API error"), { code }));
+      const { status, error } = await save({ hutFeeRefunds: { code: "404" } });
+      expect(status).toBe(409);
+      expect(error).toBe(MAPPINGS_SAVE_CONTENDED);
+      expect(h.logAudit).not.toHaveBeenCalled();
+    },
+  );
+});
+
+describe("Hut Fee Refunds on an expense account Xero's tax code cannot sit on (#5235 review)", () => {
+  const OUTPUT2 = { taxType: "OUTPUT2", name: "15% GST on Income", rateBasisPoints: 1500, active: true, revenue: true, expenses: false };
+  const REGISTERED: ClubTaxSchedule = [CLUB_TAX_SETTINGS_DEFAULTS];
+
+  beforeEach(() => {
+    h.schedule.mockResolvedValue(REGISTERED);
+    h.rates.mockResolvedValue([OUTPUT2]);
+  });
+
+  it("MUTATION: refuses a registered club's expense refunds account with a 409 on that row, before any write", async () => {
+    const { status, error, key } = await save({ hutFeeRefunds: { code: "429" } });
+    expect(status).toBe(409);
+    expect(key).toBe("hutFeeRefunds");
+    expect(error).toBe(
+      "Hut Fee Refunds cannot use that expense account: Xero's tax rate OUTPUT2 (15% GST on Income), which refund credit notes carry, cannot be used on expenses, so Xero would reject them. Choose a revenue account, or ask your accountant which account and tax rate refunds should use. No account mapping was saved.",
+    );
+    expect(h.rates).toHaveBeenCalledWith({ fresh: true });
+    expect(h.upsert).not.toHaveBeenCalled();
+  });
+
+  it("accepts it when Xero lets the code sit on expenses", async () => {
+    h.rates.mockResolvedValue([{ ...OUTPUT2, expenses: true }]);
+    expect((await save({ hutFeeRefunds: { code: "429" } })).status).toBe(200);
+  });
+
+  it("answers 503 when Xero's rates cannot be read", async () => {
+    h.rates.mockRejectedValue(new Error("Xero down"));
+    const { status, error } = await save({ hutFeeRefunds: { code: "429" } });
+    expect(status).toBe(503);
+    expect(error).toBe(XERO_CHART_UNAVAILABLE_FOR_SAVE);
+    expect(h.upsert).not.toHaveBeenCalled();
+  });
+
+  it("asks nothing of the rates for a revenue account, an unchanged code, or a club never registered", async () => {
+    expect((await save({ hutFeeRefunds: { code: "200" } })).status).toBe(200);
+    store({ hutFeesIncome: "200", hutFeeRefunds: "429" });
+    expect((await save({ hutFeeRefunds: { code: "429" }, stripeFees: { code: "404" } })).status).toBe(200);
+    h.schedule.mockResolvedValue([{ gstRegistered: false, taxRateBasisPoints: 0, xeroTaxType: null, effectiveFrom: requireCalendarDate("2010-01-01") }]);
+    store({ hutFeesIncome: "200", hutFeeRefunds: "200" });
+    expect((await save({ hutFeeRefunds: { code: "429" } })).status).toBe(200);
+    expect(h.rates).not.toHaveBeenCalled();
   });
 });

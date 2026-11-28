@@ -9,6 +9,7 @@ import { readBundle } from "@/lib/config-transfer/bundle";
 import { parseCsv } from "@/lib/config-transfer/csv";
 import type { ReadDb } from "@/lib/config-transfer/import-types";
 import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
+import { XERO_CHART_UNAVAILABLE_FOR_IMPORT } from "@/lib/xero-account-mapping-write-checks";
 
 function sourceDb(): ReadDb {
   return {
@@ -215,15 +216,24 @@ describe("an imported account code is the kind of account its mapping accepts (#
     expect(await planErrors([account("hutFeeRefunds", null)], target({ accounts: stored }).db)).toEqual([]);
   });
 
-  it("allows what the chart cannot place: no connection, no stored chart, an expired one, or a code it does not list", async () => {
-    const bundle = [account("hutFeeRefunds", "090")];
+  it("writes a code unchecked only while Xero is not connected", async () => {
     const disconnected = target({ tenantId: null });
-    expect(await planErrors(bundle, disconnected.db)).toEqual([]);
+    expect(await planErrors([account("hutFeeRefunds", "090")], disconnected.db)).toEqual([]);
     expect(disconnected.chartRead).not.toHaveBeenCalled();
-    expect(await planErrors(bundle, target({ chart: null }).db)).toEqual([]);
+  });
+
+  it("MUTATION (owner decision, 28 Nov 2026): blocks a code it cannot check, connected with no fresh stored chart", async () => {
+    const bundle = [account("hutFeeRefunds", "429")];
+    const unavailable = `xero-config/account-mappings.csv: ${XERO_CHART_UNAVAILABLE_FOR_IMPORT}`;
+    expect(await planErrors(bundle, target({ chart: null }).db)).toEqual([unavailable]);
     // The frozen clock is 2026-07-01T00:00:00Z; this chart expired an hour before it.
     const expired = { payload: CHART, expiresAt: new Date("2026-06-30T23:00:00.000Z") };
-    expect(await planErrors(bundle, target({ chart: expired }).db)).toEqual([]);
-    expect(await planErrors([account("hutFeeRefunds", "777")], target({}).db)).toEqual([]);
+    expect(await planErrors(bundle, target({ chart: expired }).db)).toEqual([unavailable]);
+  });
+
+  it("MUTATION: blocks a code the fresh chart does not list, such as an archived account", async () => {
+    expect(await planErrors([account("hutFeeRefunds", "777")], target({}).db)).toEqual([
+      "xero-config/account-mappings.csv: The code chosen for Hut Fee Refunds is not an active account in the connected Xero organisation; refresh the chart of accounts and choose again.",
+    ]);
   });
 });

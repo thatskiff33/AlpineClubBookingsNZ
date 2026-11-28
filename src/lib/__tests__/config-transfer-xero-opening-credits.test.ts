@@ -33,6 +33,8 @@ const UNREGISTERED_PERIOD = {
   effectiveFrom: new Date("2026-01-01T00:00:00.000Z"),
 };
 
+const CHART_WITHOUT_CLASSES = ["201", "202", "2100"].map((code) => ({ code, name: `Account ${code}`, type: "REVENUE", class: "" }));
+
 /** A database double: the stored account mappings, the tax schedule's later rows and the Exempt mapping. */
 function db(options: {
   accounts: AccountRow[];
@@ -46,8 +48,9 @@ function db(options: {
     xeroItemCodeMapping: { findMany: vi.fn().mockResolvedValue([]) },
     membershipType: { findMany: vi.fn().mockResolvedValue([]) },
     xeroConnection: { findUnique: vi.fn().mockResolvedValue({ tenantId: TENANT, expiresAt: new Date() }) },
-    // No stored chart of accounts, so the import has no kind of account to judge (#5235).
-    xeroAdminCache: { findUnique: vi.fn().mockResolvedValue(null) },
+    // A fresh stored chart listing every code here without its class, so no code
+    // is refused by kind or as unlisted (#5235): those rules have their own suite.
+    xeroAdminCache: { findUnique: vi.fn().mockResolvedValue({ payload: CHART_WITHOUT_CLASSES, expiresAt: new Date("2026-07-01T00:30:00.000Z") }) },
     // No stored baseline row: the club is registered since 2010 unless a later period says otherwise.
     clubTaxSettings: { findMany: vi.fn().mockResolvedValue(options.laterTaxPeriods ?? []) },
     xeroTaxCategoryMapping: {
