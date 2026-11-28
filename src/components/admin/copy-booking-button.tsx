@@ -19,8 +19,13 @@ import {
   ADMIN_VIEW_ONLY_ACTION_REASON,
   useAdminAreaEditAccess,
 } from "@/hooks/use-admin-area-edit-access";
+import {
+  saveErrorMessage,
+  saveRefusalFromResponse,
+} from "@/hooks/use-section-edit-state";
 import { formatDateOnly } from "@/lib/date-only";
 
+const COPY_FALLBACK = "Failed to copy booking";
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
 
 function parseDateOnly(date: string) {
@@ -78,17 +83,14 @@ export function CopyBookingButton({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ checkIn }),
       });
+      if (!response.ok) throw await saveRefusalFromResponse(response, COPY_FALLBACK);
       const data = await response.json();
-      if (!response.ok) {
-        setError(data.error || "Failed to copy booking");
-        return;
-      }
 
       setOpen(false);
       router.push(`/bookings/${data.bookingId}`);
       router.refresh();
-    } catch {
-      setError("Failed to copy booking");
+    } catch (err) {
+      setError(saveErrorMessage(err, COPY_FALLBACK));
     } finally {
       setSubmitting(false);
     }

@@ -65,8 +65,9 @@ export async function sendAdminPaymentFailureAlert(data: {
   paymentIntentId: string;
 },
   format: ClubFormat,
-): Promise<AdminAlertSendResult> {
-  // Returned so a once-only caller can hold its claim on it (#3635 C5).
+): Promise<AdminAlertRecipientsResult> {
+  // Returned so a once-only caller can hold its claim on it (#3635 C5), and
+  // an owed alert can tell one nothing will replay (#5433 PR 4).
   return sendToAdmins({
     subject: `Payment Failed — ${CLUB_BOOKINGS_NAME}`,
     html: await renderEmailHtml(() => adminPaymentFailureTemplate(data, format)),

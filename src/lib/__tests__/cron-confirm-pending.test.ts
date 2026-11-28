@@ -82,12 +82,15 @@ vi.mock("../payment-reconciliation", () => ({
 // marker and delivers it through the owed notice (paid-booking-confirmation-notice.test.ts).
 const confirmation = vi.hoisted(() => ({
   deliver: vi.fn(),
+  // #5433 PR 4, round 1, item 5: a zero-balance confirmation that could not be keyed is sent as before.
+  sendUnrecorded: vi.fn(),
   marker: { id: "booking-confirmed:b1:1782864000000", kind: "booking-confirmed", subjectId: "b1", eventAt: new Date("2026-07-01T00:00:00.000Z"), variant: null, payload: null },
 }));
 // Partly: the job's own sweep reads the real deliverer from the registry.
 vi.mock("../paid-booking-confirmation-notice", async (importOriginal) => ({
   ...((await importOriginal()) as typeof import("../paid-booking-confirmation-notice")),
   deliverPaidBookingConfirmation: confirmation.deliver,
+  sendUnrecordedPaidBookingConfirmation: confirmation.sendUnrecorded,
 }));
 
 // #3267: the cron no longer records its charge through
@@ -143,7 +146,8 @@ const mockSendConfirmedEmail = vi.fn();
 const mockSendBumpedEmail = vi.fn();
 const mockSendGuestsRemovedEmail = vi.fn();
 const mockSendGuestsCancelledEmail = vi.fn();
-const mockSendAdminPaymentFailureAlert = vi.fn().mockResolvedValue(undefined);
+// #5433 PR 4: an owed alert for the #3268 escalation reads `sendToAdmins`' result (set to one officer reached below).
+const mockSendAdminPaymentFailureAlert = vi.fn();
 const mockSendAdminHoldExpiredAlert = vi.fn().mockResolvedValue(undefined);
 const mockSendSplitGuestPaymentLinkEmail = vi.fn().mockResolvedValue({
   status: "sent",
@@ -239,7 +243,7 @@ vi.mock("@/lib/payment-link", () => ({
   revokePaymentLinkById: (...args: unknown[]) =>
     mockRevokePaymentLinkById(...args),
 }));
-// Partial mock: the mint is stubbed, the real SPLIT_GUEST_PAYMENT_LINK_TEMPLATE
+// Partial mock: the mint is stubbed; the real SPLIT_GUEST_PAYMENT_LINK_TEMPLATE (`email/owed-notice-templates.ts`)
 // flows through so the withheld-row assertion below compares against the
 // production constant rather than a second literal (INV-SSOT-002).
 vi.mock("@/lib/payment-link-split-guest", async (importOriginal) => ({
@@ -320,6 +324,9 @@ const mockBookingEventCreate = vi.fn().mockResolvedValue({ id: "evt_1" });
 const mockBookingEventFindFirst = vi.fn().mockResolvedValue(null);
 const mockEmailLogFindFirst = vi.fn().mockResolvedValue(null);
 const mockEmailLogCreate = vi.fn().mockResolvedValue({ id: "emaillog_1" });
+// #5433 PR 4: the told rule's read of a keyed member email; SENT unless a case says otherwise.
+const SENT_EMAIL_ROW = { status: "SENT", attempts: 1, lastAttemptAt: new Date("2026-07-01T00:00:00.000Z"), htmlBody: null, bookingRetryHtmlBody: null, deliveryBlockReason: null };
+const mockEmailLogFindUnique = vi.fn().mockResolvedValue(SENT_EMAIL_ROW);
 const mockPrismaTransaction = vi.fn();
 const mockExecuteRaw = vi.fn();
 // #3268: retiring an unusable saved card clears it from every Payment row and
@@ -365,6 +372,8 @@ const mockLodgeCount = vi.fn().mockResolvedValue(2);
 const alertCooldownStore = createAlertCooldownStore();
 const owedNoticeStore = createOwedNoticeStore();
 const markerKeysWrittenInTransaction: string[] = [];
+/** #5433 PR 4: the booking event types written through the transaction client. */
+const eventTypesWrittenInTransaction: string[] = [];
 const transactionCommit = { failNext: false };
 
 vi.mock("../prisma", () => ({
@@ -403,6 +412,8 @@ vi.mock("../prisma", () => ({
     emailLog: {
       findFirst: (...args: unknown[]) => mockEmailLogFindFirst(...args),
       create: (...args: unknown[]) => mockEmailLogCreate(...args),
+      // #5433 PR 4: an owed member notice reads its own keyed row after the send.
+      findUnique: (...args: unknown[]) => mockEmailLogFindUnique(...args),
     },
     // #2576 §8: the post-cycle drain reads this on the base client. Empty, so the
     // sweep is one read that finds nothing.
@@ -732,9 +743,12 @@ describe("Cron: Confirm Pending Bookings", () => {
     mockRevokePaymentLinkById.mockResolvedValue(1);
     mockSendSplitGuestPaymentLinkEmail.mockResolvedValue({ status: "sent" });
     mockSendAdminSplitSettlementUnpaidAlert.mockResolvedValue(undefined);
-    mockSendAdminSplitSettlementCancelledAlert.mockResolvedValue(undefined);
+    // #5433 PR 4: the two one-off officers' notices are owed alerts and answer `sendToAdmins`' result.
+    mockSendAdminSplitSettlementCancelledAlert.mockResolvedValue(OFFICER_ALERT_SENT);
     mockSendSplitGuestPortionCancelledEmail.mockResolvedValue(undefined);
-    mockSendAdminBookingRequestHoldCancelledEmail.mockResolvedValue(undefined);
+    mockSendAdminBookingRequestHoldCancelledEmail.mockResolvedValue(OFFICER_ALERT_SENT);
+    mockEmailLogFindUnique.mockResolvedValue(SENT_EMAIL_ROW);
+    mockSendAdminPaymentFailureAlert.mockResolvedValue(OFFICER_ALERT_SENT);
     mockSendBookingRequestPaymentExpiredEmail.mockResolvedValue(undefined);
     mockProcessWaitlistForDates.mockResolvedValue(undefined);
     mockReconcileBedAllocationsForBooking.mockResolvedValue(undefined);
@@ -744,6 +758,7 @@ describe("Cron: Confirm Pending Bookings", () => {
     alertCooldownStore.rows.clear();
     owedNoticeStore.rows.clear();
     markerKeysWrittenInTransaction.length = 0;
+    eventTypesWrittenInTransaction.length = 0;
     transactionCommit.failNext = false;
     mockPrismaTransaction.mockImplementation(async (arg: unknown) => {
       if (typeof arg === "function") {
@@ -771,6 +786,8 @@ describe("Cron: Confirm Pending Bookings", () => {
           payment: {
             findUnique: vi.fn(async () => null), // Legacy fixtures outside the R01 population.
             upsert: (...args: unknown[]) => mockPaymentUpsert(...args),
+            // #5433 PR 4: the #3268 card clear runs in a transaction with its owed markers.
+            updateMany: (...args: unknown[]) => mockPaymentUpdateMany(...args),
           },
           // #3267: the claim mints the attempt row in-tx; the PROCESSING
           // release records Stripe's answer on it in-tx.
@@ -779,10 +796,13 @@ describe("Cron: Confirm Pending Bookings", () => {
             findMany: (...args: unknown[]) =>
               mockPromoRedemptionFindMany(...args),
           },
-          // #1993 Part A: the terminal branch records the CANCELLED event
-          // inside the lock transaction.
+          // #5433 PR 4: the bump writes its BUMPED event inside its own
+          // transaction; the types written here are listed apart.
           bookingEvent: {
-            create: (...args: unknown[]) => mockBookingEventCreate(...args),
+            create: (...args: unknown[]) => {
+              eventTypesWrittenInTransaction.push((args[0] as { data: { type: string } }).data.type);
+              return mockBookingEventCreate(...args);
+            },
           },
           // #2576 §9: the confirming claim records the bounded same-owner hosting
           // re-evaluation inside this transaction. No policy row, so the resolver
@@ -981,6 +1001,18 @@ describe("Cron: Confirm Pending Bookings", () => {
     );
   });
 
+  it("#5433 PR 4, round 2: a saved-card settle whose marker could not be keyed sends the confirmation unkeyed, as before #5433", async () => {
+    mockPendingBookings([makePendingBooking("b1")]);
+    mockCheckCapacityForGuestRanges.mockResolvedValue({ available: true, minAvailable: 10, nightDetails: [] });
+    mockChargePaymentMethod.mockResolvedValue({ id: "pi_auto_1", status: "succeeded", amount: 10000 });
+    mockMarkBookingPaymentSucceeded.mockResolvedValueOnce({ outcome: "paid", bookingId: "b1", bumpedBookingIds: [], paidConfirmation: null });
+
+    await confirmPendingBookings();
+
+    expect(confirmation.deliver).not.toHaveBeenCalled();
+    expect(confirmation.sendUnrecorded).toHaveBeenCalledWith("b1", CLUB_FORMAT_TEST, "confirmPendingBookings");
+  });
+
   it("confirms a booking when capacity is available and payment succeeds", async () => {
     const booking = makePendingBooking("b1");
     // #3267 (INV-PAY-055): the key is the attempt row's — booking id for the
@@ -1067,6 +1099,7 @@ describe("Cron: Confirm Pending Bookings", () => {
     expect(mockMarkBookingPaymentSucceeded).toHaveBeenCalledWith(expect.objectContaining({ bookingId: "b1", owesPaidConfirmation: true }));
     expect(confirmation.deliver).toHaveBeenCalledTimes(1);
     expect(confirmation.deliver).toHaveBeenCalledWith(confirmation.marker, CLUB_FORMAT_TEST, "confirmPendingBookings");
+    expect(confirmation.sendUnrecorded).not.toHaveBeenCalled();
     expect(confirmation.deliver.mock.invocationCallOrder[0]).toBeGreaterThan(mockEnqueueXeroBookingInvoiceOperation.mock.invocationCallOrder[0]!);
     expect(mockSendConfirmedEmail).not.toHaveBeenCalled();
   });
@@ -2855,7 +2888,7 @@ describe("Cron: Confirm Pending Bookings", () => {
     expect(mockSendSplitGuestPaymentLinkEmail).not.toHaveBeenCalled();
     expect(mockRevokePaymentLinkById).not.toHaveBeenCalled();
     const { SPLIT_GUEST_PAYMENT_LINK_TEMPLATE } = await import(
-      "@/lib/payment-link-split-guest"
+      "@/lib/email/owed-notice-templates"
     );
     expect(mockEmailLogCreate).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -4586,6 +4619,378 @@ describe("Cron: Confirm Pending Bookings", () => {
     });
   });
 
+  describe("#5433 PR 4: the rest of the job's notices are owed until sent", () => {
+    const RUN_AT = new Date("2026-07-09T00:00:00.000Z");
+    const MS = RUN_AT.getTime();
+    const LATER = new Date(MS + 3 * 60 * 60 * 1000);
+    const room = () => mockCheckCapacityForGuestRanges.mockResolvedValue({ available: true, minAvailable: 5, nightDetails: [] });
+    // A request booking whose check-in day has ended, with its check-out still to come.
+    const requestBooking = () =>
+      makePendingBooking("b1", { checkIn: "2026-07-08", checkOut: "2026-07-12", hasPaymentMethod: false, originBookingRequest: { id: "req_1" }, finalPriceCents: 14000, guestCount: 2 });
+    const splitChild = (parentBooking: NonNullable<Parameters<typeof makePendingBooking>[1]>["parentBooking"] = IB_SETTLED_PARENT) =>
+      makePendingBooking("child_1", { checkIn: "2026-07-08", checkOut: "2026-07-12", hasPaymentMethod: false, parentBookingId: "parent_1", parentBooking, finalPriceCents: 12000, guestCount: 2 });
+
+    describe("the BUMPED event", () => {
+      it("is written through the bump's transaction client at the bump's own time, and not again after the commit", async () => {
+        const bumping = { ...makePendingBooking("b1"), lodgeId: "lodge-1" };
+        mockPendingBookings([bumping]);
+        mockCheckCapacityForGuestRanges.mockResolvedValue({ available: false, minAvailable: 0, nightDetails: [] });
+
+        await confirmPendingBookings();
+
+        expect(eventTypesWrittenInTransaction).toEqual(["BUMPED"]);
+        const bumped = mockBookingEventCreate.mock.calls.filter(([call]) => call.data.type === "BUMPED");
+        expect(bumped).toHaveLength(1);
+        expect(bumped[0]![0].data).toMatchObject({ bookingId: "b1", occurredAt: RUN_AT, reason: bookingBumpReason(false), snapshot: { flagged: false } });
+        // The event's time is the markers' event time: one instant for both.
+        expect(markerKeysWrittenInTransaction[0]).toBe(`booking-bump-member:b1:${MS}:b`);
+      });
+
+      it("rolls back with the bump: no event, no marker, no notice", async () => {
+        const bumping = { ...makePendingBooking("b1"), lodgeId: "lodge-1" };
+        mockPendingBookings([bumping]);
+        mockCheckCapacityForGuestRanges.mockResolvedValue({ available: false, minAvailable: 0, nightDetails: [] });
+        transactionCommit.failNext = true;
+
+        const result = await confirmPendingBookings();
+
+        expect(result.bumpedBookingIds).toEqual([]);
+        // Written in the transaction that rolled back, and never after it.
+        expect(mockBookingEventCreate.mock.calls.filter(([call]) => call.data.type === "BUMPED")).toHaveLength(1);
+        expect(eventTypesWrittenInTransaction).toEqual(["BUMPED"]);
+        expect(owedNoticeStore.rows.size).toBe(0);
+        expect(mockSendBumpedEmail).not.toHaveBeenCalled();
+      });
+    });
+
+    describe("CP-1, the zero-balance confirmation", () => {
+      const KEY = `booking-confirmed:b1:${MS}`;
+
+      it("records the confirmation as owed through the claim's transaction client and delivers it from that marker after the Xero queue", async () => {
+        mockPendingBookings([makePendingBooking("b1", { finalPriceCents: 0 })]);
+        room();
+
+        const result = await confirmPendingBookings();
+
+        expect(result.confirmedBookingIds).toEqual(["b1"]);
+        expect(markerKeysWrittenInTransaction).toEqual([KEY]);
+        expect(confirmation.deliver).toHaveBeenCalledTimes(1);
+        expect(confirmation.deliver).toHaveBeenCalledWith(
+          expect.objectContaining({ id: KEY, kind: "booking-confirmed", subjectId: "b1", eventAt: RUN_AT }),
+          CLUB_FORMAT_TEST,
+          "confirmPendingBookings",
+        );
+        expect(confirmation.deliver.mock.invocationCallOrder[0]).toBeGreaterThan(mockEnqueueXeroBookingInvoiceOperation.mock.invocationCallOrder[0]!);
+        // The job's own renderer is gone; nothing else sends the confirmation.
+        expect(mockSendConfirmedEmail).not.toHaveBeenCalled();
+      });
+
+      it("writes no marker and delivers nothing when the claim's commit fails", async () => {
+        mockPendingBookings([makePendingBooking("b1", { finalPriceCents: 0 })]);
+        room();
+        transactionCommit.failNext = true;
+
+        const result = await confirmPendingBookings();
+
+        expect(result.confirmedBookingIds).toEqual([]);
+        expect(owedNoticeStore.rows.size).toBe(0);
+        expect(confirmation.deliver).not.toHaveBeenCalled();
+      });
+
+      it("sends a confirmation that cannot be keyed as before #5433, with no marker (round 1, item 5)", async () => {
+        mockPendingBookings([makePendingBooking("b 1", { finalPriceCents: 0 })]);
+        room();
+
+        await confirmPendingBookings();
+
+        expect(markerKeysWrittenInTransaction).toEqual([]);
+        expect(confirmation.deliver).not.toHaveBeenCalled();
+        expect(confirmation.sendUnrecorded).toHaveBeenCalledWith("b 1", CLUB_FORMAT_TEST, "confirmPendingBookings");
+      });
+
+      it("writes no marker when the PAID claim is lost", async () => {
+        mockPendingBookings([makePendingBooking("b1", { finalPriceCents: 0 })]);
+        room();
+        mockBookingUpdateMany.mockResolvedValue({ count: 0 });
+
+        await confirmPendingBookings();
+
+        expect(markerKeysWrittenInTransaction).toEqual([]);
+        expect(confirmation.deliver).not.toHaveBeenCalled();
+      });
+    });
+
+    describe("CP-4, a request hold ending in cancellation", () => {
+      const MEMBER = `request-hold-cancelled-member:b1:${MS}`;
+      const OFFICERS = `request-hold-cancelled-officers:b1:${MS}`;
+
+      it("records both notices through the cancel's transaction client, then sends the requester's (keyed by the cancel) before the officers' and clears both", async () => {
+        mockPendingBookings([requestBooking()]);
+        room();
+
+        const result = await confirmPendingBookings();
+
+        expect(result.cancelledBookingIds).toEqual(["b1"]);
+        expect(markerKeysWrittenInTransaction).toEqual([MEMBER, OFFICERS]);
+        expect(mockSendBookingRequestPaymentExpiredEmail).toHaveBeenCalledTimes(1);
+        expect(mockSendBookingRequestPaymentExpiredEmail.mock.calls[0]![0]).toEqual({
+          bookingContext: { bookingId: "b1", recipientMemberId: "member_b1" },
+          email: "b1@example.com",
+          firstName: "Test",
+          checkIn: new Date("2026-07-08"),
+          checkOut: new Date("2026-07-12"),
+          lodgeId: undefined,
+          idempotencyKey: `b1:${MS}`,
+        });
+        expect(mockSendAdminBookingRequestHoldCancelledEmail).toHaveBeenCalledWith(
+          { requesterName: "Test User", checkIn: new Date("2026-07-08"), checkOut: new Date("2026-07-12"), guestCount: 2, totalCents: 14000 },
+          CLUB_FORMAT_TEST,
+        );
+        expect(mockSendBookingRequestPaymentExpiredEmail.mock.invocationCallOrder[0]!).toBeLessThan(mockSendAdminBookingRequestHoldCancelledEmail.mock.invocationCallOrder[0]!);
+        // The waitlist wake still follows both, as before.
+        expect(mockProcessWaitlistForDates.mock.invocationCallOrder[0]!).toBeGreaterThan(mockSendAdminBookingRequestHoldCancelledEmail.mock.invocationCallOrder[0]!);
+        expect(owedNoticeStore.rows.size).toBe(0);
+      });
+
+      it("writes no marker and sends nothing when the cancel's commit fails", async () => {
+        mockPendingBookings([requestBooking()]);
+        room();
+        transactionCommit.failNext = true;
+
+        await confirmPendingBookings();
+
+        expect(owedNoticeStore.rows.size).toBe(0);
+        expect(mockSendBookingRequestPaymentExpiredEmail).not.toHaveBeenCalled();
+        expect(mockSendAdminBookingRequestHoldCancelledEmail).not.toHaveBeenCalled();
+      });
+
+      it("writes no marker when the cancel's claim is lost", async () => {
+        mockPendingBookings([requestBooking()]);
+        room();
+        mockBookingUpdateMany.mockResolvedValue({ count: 0 });
+
+        await confirmPendingBookings();
+
+        expect(markerKeysWrittenInTransaction).toEqual([]);
+        expect(mockSendBookingRequestPaymentExpiredEmail).not.toHaveBeenCalled();
+      });
+
+      it("keeps the requester's notice when its send throws, and a later run's sweep sends it once with the same key", async () => {
+        const booking = requestBooking();
+        mockPendingBookings([booking]);
+        room();
+        mockSendBookingRequestPaymentExpiredEmail.mockRejectedValueOnce(new Error("SMTP down"));
+        await confirmPendingBookings();
+        expect([...owedNoticeStore.rows.keys()]).toEqual([MEMBER]);
+
+        mockBookingFindMany.mockResolvedValue([]);
+        mockBookingFindUnique.mockResolvedValue({ ...booking, status: "CANCELLED", nonMemberHoldUntil: null, deletedAt: null });
+        vi.setSystemTime(LATER);
+        const later = await confirmPendingBookings();
+
+        expect(later.owedNotices).toEqual({ checked: 1, delivered: 1, cleared: 0, expired: 0 });
+        expect(mockSendBookingRequestPaymentExpiredEmail).toHaveBeenCalledTimes(2);
+        expect(mockSendBookingRequestPaymentExpiredEmail.mock.calls[1]![0]).toEqual(mockSendBookingRequestPaymentExpiredEmail.mock.calls[0]![0]);
+        expect(mockSendAdminBookingRequestHoldCancelledEmail).toHaveBeenCalledTimes(1);
+        expect(owedNoticeStore.rows.size).toBe(0);
+
+        const third = await confirmPendingBookings();
+        expect(third.owedNotices.checked).toBe(0);
+        expect(mockSendBookingRequestPaymentExpiredEmail).toHaveBeenCalledTimes(2);
+      });
+
+      it("keeps the officers' notice when nobody received it and nothing will replay it", async () => {
+        mockPendingBookings([requestBooking()]);
+        room();
+        mockSendAdminBookingRequestHoldCancelledEmail.mockResolvedValueOnce({ ...OFFICER_ALERT_SENT, sent: 0, notDelivered: 1, failedBeforeLogged: 1 });
+
+        await confirmPendingBookings();
+
+        expect([...owedNoticeStore.rows.keys()]).toEqual([OFFICERS]);
+      });
+
+      it("clears a notice whose booking is no longer cancelled, without sending it", async () => {
+        const booking = requestBooking();
+        mockPendingBookings([booking]);
+        room();
+        mockSendBookingRequestPaymentExpiredEmail.mockRejectedValueOnce(new Error("SMTP down"));
+        await confirmPendingBookings();
+
+        mockBookingFindMany.mockResolvedValue([]);
+        mockBookingFindUnique.mockResolvedValue({ ...booking, status: "CONFIRMED", nonMemberHoldUntil: null, deletedAt: null });
+        vi.setSystemTime(LATER);
+        const later = await confirmPendingBookings();
+
+        expect(later.owedNotices).toEqual({ checked: 1, delivered: 0, cleared: 1, expired: 0 });
+        expect(mockSendBookingRequestPaymentExpiredEmail).toHaveBeenCalledTimes(1);
+      });
+    });
+
+    describe("CP-5, a split guest portion cancelled at the end of the check-in day", () => {
+      const MEMBER = `split-guest-cancelled-member:child_1:${MS}`;
+      const OFFICERS = `split-guest-cancelled-officers:child_1:${MS}`;
+
+      it("records both notices with the parentUnpaid fact in their payload, and words both from it", async () => {
+        mockPendingBookings([splitChild({ status: "PAYMENT_PENDING", payment: { id: "pay_parent_1", source: "STRIPE", stripeCustomerId: null, stripePaymentMethodId: null } })]);
+        room();
+
+        await confirmPendingBookings();
+
+        expect(markerKeysWrittenInTransaction).toEqual([MEMBER, OFFICERS]);
+        const written = owedNoticeStore.delegate.createMany.mock.calls.flatMap(([call]) => call.data);
+        expect(written.map((row) => row.payload)).toEqual([{ parentUnpaid: 1 }, { parentUnpaid: 1 }]);
+        expect(mockSendSplitGuestPortionCancelledEmail.mock.calls[0]![0]).toEqual(
+          expect.objectContaining({ bookingId: "child_1", parentConfirmed: false, parentBookingReference: expect.any(String), idempotencyKey: `child_1:${MS}` }),
+        );
+        expect(mockSendAdminSplitSettlementCancelledAlert).toHaveBeenCalledWith(expect.objectContaining({ parentUnpaid: true, totalCents: 12000 }), CLUB_FORMAT_TEST);
+        expect(mockSendSplitGuestPortionCancelledEmail.mock.invocationCallOrder[0]!).toBeLessThan(mockSendAdminSplitSettlementCancelledAlert.mock.invocationCallOrder[0]!);
+        expect(owedNoticeStore.rows.size).toBe(0);
+      });
+
+      it("writes no marker and sends nothing when the cancel's commit fails", async () => {
+        mockPendingBookings([splitChild()]);
+        room();
+        transactionCommit.failNext = true;
+
+        await confirmPendingBookings();
+
+        expect(owedNoticeStore.rows.size).toBe(0);
+        expect(mockSendSplitGuestPortionCancelledEmail).not.toHaveBeenCalled();
+        expect(mockSendAdminSplitSettlementCancelledAlert).not.toHaveBeenCalled();
+      });
+
+      it("a later run's sweep sends the member's notice once, worded from the payload the cancel wrote", async () => {
+        const booking = splitChild();
+        mockPendingBookings([booking]);
+        room();
+        mockSendSplitGuestPortionCancelledEmail.mockRejectedValueOnce(new Error("SMTP down"));
+        await confirmPendingBookings();
+        expect([...owedNoticeStore.rows.keys()]).toEqual([MEMBER]);
+        expect(mockSendSplitGuestPortionCancelledEmail.mock.calls[0]![0]).toEqual(expect.objectContaining({ parentConfirmed: true }));
+
+        mockBookingFindMany.mockResolvedValue([]);
+        mockBookingFindUnique.mockResolvedValue({ ...booking, status: "CANCELLED", nonMemberHoldUntil: null, deletedAt: null });
+        vi.setSystemTime(LATER);
+        const later = await confirmPendingBookings();
+
+        expect(later.owedNotices.delivered).toBe(1);
+        expect(mockSendSplitGuestPortionCancelledEmail).toHaveBeenCalledTimes(2);
+        expect(mockSendSplitGuestPortionCancelledEmail.mock.calls[1]![0]).toEqual(mockSendSplitGuestPortionCancelledEmail.mock.calls[0]![0]);
+        expect(mockSendAdminSplitSettlementCancelledAlert).toHaveBeenCalledTimes(1);
+        expect(owedNoticeStore.rows.size).toBe(0);
+      });
+    });
+
+    describe("CP-6, a split guest portion's payment link", () => {
+      const LINK = "pl_split_1";
+      const KEY = `split-guest-payment-link:${LINK}:${MS}`;
+      const extendChild = () => {
+        mockPendingBookings([makePendingBooking("child_1", { hasPaymentMethod: false, parentBookingId: "parent_1", parentBooking: IB_SETTLED_PARENT, finalPriceCents: 12000, guestCount: 2 })]);
+        room();
+      };
+
+      it("records the link's email as owed through the minting transaction client, keyed by the link and holding no token, then sends it keyed by the link and clears it", async () => {
+        extendChild();
+
+        await confirmPendingBookings();
+
+        expect(markerKeysWrittenInTransaction).toEqual([KEY]);
+        const [written] = owedNoticeStore.delegate.createMany.mock.calls[0]![0].data;
+        expect(written).toMatchObject({ kind: "split-guest-payment-link", subjectId: LINK, payload: { bookingId: "child_1" } });
+        expect(JSON.stringify(written)).not.toContain("tok_split_1");
+        expect(mockSendSplitGuestPaymentLinkEmail).toHaveBeenCalledWith(
+          expect.objectContaining({ token: "tok_split_1", expiresAt: MINTED_LINK_EXPIRES_AT, idempotencyKey: LINK }),
+          CLUB_FORMAT_TEST,
+        );
+        expect(mockRevokePaymentLinkById).not.toHaveBeenCalled();
+        expect(owedNoticeStore.rows.size).toBe(0);
+      });
+
+      it("writes no marker and sends nothing when the extension's commit fails", async () => {
+        extendChild();
+        transactionCommit.failNext = true;
+
+        await confirmPendingBookings();
+
+        expect(owedNoticeStore.rows.size).toBe(0);
+        expect(mockSendSplitGuestPaymentLinkEmail).not.toHaveBeenCalled();
+      });
+
+      it("writes no marker when nothing was minted (an active link already stands)", async () => {
+        extendChild();
+        mockMintSplitGuestPaymentLinkIfAbsent.mockResolvedValue(null);
+
+        await confirmPendingBookings();
+
+        expect(markerKeysWrittenInTransaction).toEqual([]);
+      });
+
+      it("revokes a link whose email was not delivered, as before, and clears the marker: the next extension re-mints", async () => {
+        extendChild();
+        mockSendSplitGuestPaymentLinkEmail.mockResolvedValueOnce({ status: "suppressed" });
+
+        await confirmPendingBookings();
+
+        expect(mockRevokePaymentLinkById).toHaveBeenCalledWith(LINK);
+        expect(owedNoticeStore.rows.size).toBe(0);
+      });
+
+      it("keeps the marker and leaves the link live when the send throws before its keyed row was written: the sweep recovers it, and the next extension mints no other link (round 1, item 2; round 2, item 1)", async () => {
+        extendChild();
+        mockSendSplitGuestPaymentLinkEmail.mockRejectedValueOnce(new Error("EmailLog insert failed"));
+        mockEmailLogFindUnique.mockResolvedValue(null);
+
+        await confirmPendingBookings();
+
+        expect(mockRevokePaymentLinkById).not.toHaveBeenCalled();
+        expect([...owedNoticeStore.rows.keys()]).toEqual([KEY]);
+      });
+
+      it("treats a row that cannot be read after the send threw as 'do not know': the link stays live and owed, not revoked (round 3, item 3)", async () => {
+        extendChild();
+        mockSendSplitGuestPaymentLinkEmail.mockRejectedValueOnce(new Error("SMTP down"));
+        mockEmailLogFindUnique.mockRejectedValue(new Error("db down"));
+
+        await confirmPendingBookings();
+
+        expect(mockRevokePaymentLinkById).not.toHaveBeenCalled();
+        expect([...owedNoticeStore.rows.keys()]).toEqual([KEY]);
+      });
+
+      it("clears the marker when the send threw after its keyed row was written and the link was revoked: the next extension re-mints, as before", async () => {
+        extendChild();
+        mockSendSplitGuestPaymentLinkEmail.mockRejectedValueOnce(new Error("SMTP down"));
+        mockEmailLogFindUnique.mockResolvedValue({ ...SENT_EMAIL_ROW, status: "FAILED" });
+
+        await confirmPendingBookings();
+
+        expect(mockRevokePaymentLinkById).toHaveBeenCalledWith(LINK);
+        expect(owedNoticeStore.rows.size).toBe(0);
+      });
+
+      it("sends a link that cannot be keyed unkeyed, as before #5433, and does not revoke it once delivered (round 1, item 5)", async () => {
+        extendChild();
+        mockMintSplitGuestPaymentLinkIfAbsent.mockResolvedValue({ token: "tok_split_1", paymentLinkId: "pl bad", expiresAt: MINTED_LINK_EXPIRES_AT });
+
+        await confirmPendingBookings();
+
+        expect(markerKeysWrittenInTransaction).toEqual([]);
+        expect(mockSendSplitGuestPaymentLinkEmail).toHaveBeenCalledWith(expect.objectContaining({ token: "tok_split_1", idempotencyKey: undefined }), CLUB_FORMAT_TEST);
+        expect(mockRevokePaymentLinkById).not.toHaveBeenCalled();
+      });
+
+      it("keeps the marker for the sweep when the send throws and the revoke fails too: an active link nobody has", async () => {
+        extendChild();
+        mockSendSplitGuestPaymentLinkEmail.mockRejectedValueOnce(new Error("SMTP down"));
+        mockRevokePaymentLinkById.mockRejectedValueOnce(new Error("db down"));
+
+        await confirmPendingBookings();
+
+        expect([...owedNoticeStore.rows.keys()]).toEqual([KEY]);
+      });
+    });
+  });
+
   describe("#3268 an unusable saved card is terminal for the cron, never retried forever", () => {
     const INCIDENT_MESSAGE =
       "The provided PaymentMethod was previously used with a PaymentIntent without Customer attachment or was detached from a Customer. It may not be used again.";
@@ -5130,7 +5535,9 @@ describe("Cron: Confirm Pending Bookings", () => {
       const runTransaction = mockPrismaTransaction.getMockImplementation()!;
       let releaseTransactions = 0;
       mockPrismaTransaction.mockImplementation(async (arg: unknown, options?: unknown) => {
-        if (typeof arg === "function" && mockChargePaymentMethod.mock.calls.length > 0) {
+        // The release passes its budget; #3268's card clear (#5433 PR 4: a
+        // transaction with its owed markers) passes none and runs as usual.
+        if (typeof arg === "function" && mockChargePaymentMethod.mock.calls.length > 0 && options !== undefined) {
           releaseTransactions++;
           expect(options).toEqual({ maxWait: 5000, timeout: 10000 });
           throw Object.assign(new Error("Transaction API error: Unable to start a transaction in the given time."), { code: "P2028" });

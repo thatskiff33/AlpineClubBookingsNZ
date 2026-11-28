@@ -20,6 +20,10 @@ import {
   parseClubUnitsPerNzdToMicros,
 } from "@/lib/ai-spend-currency";
 import { requireInstant } from "@/lib/club-time";
+import {
+  saveErrorMessage,
+  saveRefusalFromResponse,
+} from "@/hooks/use-section-edit-state";
 
 /**
  * THE NZD -> CLUB-CURRENCY RATE FOR AI SPEND (#3354, owner decision 12 Sep 2026),
@@ -48,6 +52,7 @@ import { requireInstant } from "@/lib/club-time";
  */
 
 const RATE_URL = "/api/admin/ai-spend-currency";
+const SAVE_FALLBACK = "The rate could not be saved. Try again shortly.";
 
 type RateResponse = {
   clubCurrency: string;
@@ -191,28 +196,18 @@ export function AiSpendCurrencyCard() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ clubUnitsPerNzd: draft.trim() }),
       });
-      if (response.status === 401 || response.status === 403) {
+      if (response.status === 401) {
         setError(ADMIN_VIEW_ONLY_ACTION_REASON);
         return;
       }
-      if (!response.ok) {
-        let message = "The rate could not be saved. Try again shortly.";
-        try {
-          const body = (await response.json()) as { error?: string };
-          if (body.error) message = body.error;
-        } catch {
-          // keep the generic message
-        }
-        setError(message);
-        return;
-      }
+      if (!response.ok) throw await saveRefusalFromResponse(response, SAVE_FALLBACK);
       // Re-read rather than trust what was typed: the server is the source of
       // truth, and it is the server's "set at" instant that is shown.
       await load();
       setEditing(false);
       setSuccess("Rate saved.");
-    } catch {
-      setError("The rate could not be saved. Try again shortly.");
+    } catch (err) {
+      setError(saveErrorMessage(err, SAVE_FALLBACK));
     } finally {
       setSaving(false);
     }

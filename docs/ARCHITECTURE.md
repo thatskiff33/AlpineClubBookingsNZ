@@ -1254,10 +1254,13 @@ When one body decides between success and failure, parse it once with
 `readApiObjectOrEmpty` (or `readApiObjectOrNull` when a missing body must be
 told apart) and hand the result to `apiErrorMessageFromBody`; do not spell the
 "unreadable counts as empty" rule again.
+A refused write made outside the section-edit hook throws
+`saveRefusalFromResponse(res, fallback)` and shows
+`saveErrorMessage(err, fallback)`, so a bare or HTML 403 reads as the shared
+forbidden reason on every card, as it does inside the hook.
 `admin-failed-response-json-census.test.ts` fails on a new bare
-`await res.json()` read of a failed reply under `src/app/(admin)`, and in the
-admin components its own header names. That header, not this page, says how far
-into `src/components/admin` the census reaches. It does
+`await res.json()` read of a failed reply under `src/app/(admin)` or
+`src/components/admin`. It does
 not see a `.then((r) => r.json())` chain or an `err.message` shown from a catch,
 so review those by eye. It has no allowance list: an unguarded failure read
 anywhere it scans fails.

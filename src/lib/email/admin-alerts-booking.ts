@@ -449,11 +449,11 @@ export async function sendAdminBookingRequestHoldCancelledEmail(data: {
   totalCents: number;
 },
   format: ClubFormat,
-) {
+): Promise<AdminAlertRecipientsResult> {
   const baseUrl = process.env.NEXTAUTH_URL || "http://localhost:3000";
   const reviewUrl = `${baseUrl}${adminHref("bookings")}`;
 
-  await sendToAdmins({
+  return sendToAdmins({
     subject: `Request booking auto-cancelled — unpaid past check-in: ${data.requesterName}`,
     html: await renderEmailHtml(() => adminBookingRequestHoldCancelledTemplate({
       requesterName: data.requesterName,
@@ -551,11 +551,11 @@ export async function sendAdminSplitSettlementCancelledAlert(data: {
   parentUnpaid: boolean;
 },
   format: ClubFormat,
-) {
+): Promise<AdminAlertRecipientsResult> {
   const baseUrl = process.env.NEXTAUTH_URL || "http://localhost:3000";
   const reviewUrl = `${baseUrl}${adminHref("bookings")}`;
 
-  await sendToAdmins({
+  return sendToAdmins({
     subject: `Split booking guest portion auto-cancelled — unpaid past check-in: ${data.memberName}`,
     html: await renderEmailHtml(() => adminSplitSettlementCancelledTemplate({
       memberName: data.memberName,

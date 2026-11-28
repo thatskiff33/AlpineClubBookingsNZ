@@ -5,6 +5,9 @@ import { useRouter } from "next/navigation";
 import { useAdminAreaEditAccess, useAdminAreaViewAccess } from "@/hooks/use-admin-area-edit-access";
 import { AdminViewOnlySectionBanner, ViewOnlyActionButton } from "@/components/admin/view-only-action";
 import { PolicyFeedback } from "@/components/admin/booking-policies/policy-feedback";
+import { saveErrorMessage, saveRefusalFromResponse } from "@/hooks/use-section-edit-state";
+
+const SYNC_FALLBACK = "Sync could not finish. It is safe to retry.";
 
 type Scope = { scope: "member" | "booking"; id: string } | { scope: "club" };
 
@@ -22,13 +25,13 @@ export function XeroSyncNowButton({ target, onSynced, renderViewOnlyBanner = tru
       const response = await fetch("/api/admin/xero/sync-now", {
         method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(target),
       });
+      if (!response.ok) throw await saveRefusalFromResponse(response, SYNC_FALLBACK);
       const result = await response.json();
-      if (!response.ok) throw new Error(result.error ?? "Sync could not finish. It is safe to retry.");
       setSuccess(result.message);
       await onSynced?.();
       router.refresh();
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Sync could not finish. It is safe to retry.");
+      setError(saveErrorMessage(cause, SYNC_FALLBACK));
     } finally { setBusy(false); }
   }
   if (canView !== true) return null;

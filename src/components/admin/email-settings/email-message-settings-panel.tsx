@@ -30,7 +30,7 @@ import {
   AdminViewOnlySectionBanner,
   ViewOnlyActionButton,
 } from "@/components/admin/view-only-action";
-import { apiErrorMessageFromBody } from "@/lib/api-error-message";
+import { apiErrorMessageFromBody, apiRefusalFromResponse, refusalMessageOr, wordedForbiddenRefusal } from "@/lib/api-error-message";
 
 // Lodge identity (lodge name, travel note, door code) is no longer edited here;
 // it comes from each lodge's own settings (Admin → Lodges).
@@ -96,6 +96,8 @@ interface TemplateDefinition {
   // template has no saved override at all.
   staleContent?: TemplateStaleContent | null;
 }
+
+const LOAD_SETTINGS_FALLBACK = "Failed to load email settings";
 
 const settingFields: Array<{
   key: keyof EmailSettings;
@@ -375,14 +377,10 @@ export function EmailMessageSettingsPanel() {
         fetch("/api/admin/email-settings", { credentials: "same-origin" }),
         fetch("/api/admin/email-templates", { credentials: "same-origin" }),
       ]);
+      if (!settingsResponse.ok) throw await apiRefusalFromResponse(settingsResponse, LOAD_SETTINGS_FALLBACK);
+      if (!templatesResponse.ok) throw await apiRefusalFromResponse(templatesResponse, "Failed to load email templates");
       const settingsBody = await settingsResponse.json();
       const templatesBody = await templatesResponse.json();
-      if (!settingsResponse.ok) {
-        throw new Error(apiErrorMessageFromBody(settingsBody, "Failed to load email settings"));
-      }
-      if (!templatesResponse.ok) {
-        throw new Error(apiErrorMessageFromBody(templatesBody, "Failed to load email templates"));
-      }
       const nextTemplates = templatesBody.templates as TemplateDefinition[];
       setSettings(settingsBody.settings);
       setTemplates(nextTemplates);
@@ -447,7 +445,7 @@ export function EmailMessageSettingsPanel() {
         setBodyHtml(editorHtmlFor(selected));
       }
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Failed to load email settings");
+      toast.error(refusalMessageOr(error, LOAD_SETTINGS_FALLBACK));
     } finally {
       setLoading(false);
     }
@@ -486,7 +484,7 @@ export function EmailMessageSettingsPanel() {
       });
       const body = await response.json().catch(() => null);
       if (!response.ok) {
-        if (response.status === 403) setForbiddenSave(true);
+        if (response.status === 403 && !wordedForbiddenRefusal(body)) setForbiddenSave(true);
         throw new Error(apiErrorMessageFromBody(body, "Failed to save email settings"));
       }
       setSettings(body.settings);
@@ -518,7 +516,7 @@ export function EmailMessageSettingsPanel() {
       });
       const responseBody = await response.json().catch(() => null);
       if (!response.ok) {
-        if (response.status === 403) setForbiddenSave(true);
+        if (response.status === 403 && !wordedForbiddenRefusal(responseBody)) setForbiddenSave(true);
         throw new Error(
           templateErrorMessage(responseBody, "Failed to save email template"),
         );
@@ -560,7 +558,7 @@ export function EmailMessageSettingsPanel() {
       });
       const responseBody = await response.json().catch(() => null);
       if (!response.ok) {
-        if (response.status === 403) setForbiddenSave(true);
+        if (response.status === 403 && !wordedForbiddenRefusal(responseBody)) setForbiddenSave(true);
         throw new Error(apiErrorMessageFromBody(responseBody, "Failed to reset email template"));
       }
       setSubject(currentTemplate.defaultSubject);

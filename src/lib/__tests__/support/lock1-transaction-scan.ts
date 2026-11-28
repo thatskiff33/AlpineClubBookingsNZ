@@ -39,6 +39,10 @@ export const TRANSACTION_OPENERS: Readonly<Record<string, number | null>> = {
   // No options parameter: a lock(1) wait opened through it always runs on
   // Prisma's defaults, which the census reports like any other omission.
   withStoreTransaction: null,
+  // #5433 PR 4: the split guest link's re-issue runs its caller's `recordOwed`
+  // callback inside its own lodge-lock transaction (the owed link's recovery
+  // records the new link's marker there). Prisma's defaults, as before.
+  prepareSplitGuestPaymentLinkReissue: null,
 };
 
 export interface TransactionOpener {
