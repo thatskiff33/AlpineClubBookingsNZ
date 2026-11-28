@@ -32,7 +32,10 @@ import {
   assertLastFactorRemovable,
   LastOfficerFactorError,
 } from "@/lib/second-factor-requirement";
-import { satisfiesOfficerSecondFactor } from "@/lib/second-factor-enrolment";
+import {
+  NON_DISCOVERABLE_PASSKEY_ERROR,
+  satisfiesOfficerSecondFactor,
+} from "@/lib/second-factor-enrolment";
 import { TWO_FACTOR_SESSION_CHALLENGE_TTL_MS } from "@/lib/two-factor";
 import {
   recordTwoFactorMutation,
@@ -226,21 +229,14 @@ export async function createPasskeyRegistrationOptions(input: {
   return { ok: true as const, options };
 }
 
-const NON_DISCOVERABLE_PASSKEY_ERROR =
-  "That key can't save a passkey for signing in. Try a different device or key.";
-
 /**
  * The browser's `credProps` result says the credential is not discoverable.
  * Absent means unknown: not every browser reports it, so that is accepted.
+ * The report is the browser's own, unsigned: this spares a member a passkey
+ * that could not sign in, and is not a control.
  */
-function reportsNonDiscoverableCredential(response: unknown): boolean {
-  if (typeof response !== "object" || response === null) return false;
-  const extensions = (response as { clientExtensionResults?: unknown })
-    .clientExtensionResults;
-  if (typeof extensions !== "object" || extensions === null) return false;
-  const credProps = (extensions as { credProps?: unknown }).credProps;
-  if (typeof credProps !== "object" || credProps === null) return false;
-  return (credProps as { rk?: unknown }).rk === false;
+function reportsNonDiscoverableCredential(response: RegistrationResponseJSON): boolean {
+  return response.clientExtensionResults?.credProps?.rk === false;
 }
 
 export async function verifyPasskeyRegistration(input: {
@@ -285,7 +281,7 @@ export async function verifyPasskeyRegistration(input: {
   if (!verified.verified) {
     return { ok: false, status: 400, error: "That passkey didn't work. Try again." };
   }
-  if (reportsNonDiscoverableCredential(input.response)) {
+  if (reportsNonDiscoverableCredential(input.response as RegistrationResponseJSON)) {
     return { ok: false, status: 400, error: NON_DISCOVERABLE_PASSKEY_ERROR };
   }
 

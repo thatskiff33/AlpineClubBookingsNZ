@@ -222,7 +222,8 @@ This file holds only the rules.
   host is hardcoded (`INV-CONFIG-001`).
 - **Only a discoverable passkey can be added** (#4614). Registration asks for
   `residentKey: "required"`, and a browser reporting `credProps.rk` false is
-  refused. An unreported `rk` is accepted.
+  refused. An unreported `rk` is accepted: the report is the browser's own,
+  so this spares a member an unusable passkey and is not a control.
 - **A challenge is single-use and lasts two minutes,** the same duration as a
   two-factor session challenge. The plaintext is stored. The row is claimed
   with `deleteMany` before the signature is checked, and the claim succeeds

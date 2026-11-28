@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { startRegistration } from "@simplewebauthn/browser";
+import { startRegistration, WebAuthnError } from "@simplewebauthn/browser";
 import { Copy, Fingerprint, Loader2, ShieldCheck, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -11,7 +11,10 @@ import { Label } from "@/components/ui/label";
 import { FocusedActionError } from "@/components/focused-action-error";
 import { RetiredRecoveryCodesNotice } from "@/components/retired-recovery-codes-notice";
 import { apiErrorMessageFromResponse } from "@/lib/api-error-message";
-import { isSecondFactorEnrolled } from "@/lib/second-factor-enrolment";
+import {
+  isSecondFactorEnrolled,
+  NON_DISCOVERABLE_PASSKEY_ERROR,
+} from "@/lib/second-factor-enrolment";
 
 export type ProfilePasskey = {
   id: string;
@@ -123,7 +126,18 @@ export function TwoFactorSecurityCard({
       setPasskeyName("");
       router.refresh();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "That passkey didn't work. Try again.");
+      // A browser may refuse a key that cannot store a passkey before the
+      // server is asked; the library's wording for that is a developer's.
+      const cannotStorePasskey =
+        err instanceof WebAuthnError &&
+        err.code === "ERROR_AUTHENTICATOR_MISSING_DISCOVERABLE_CREDENTIAL_SUPPORT";
+      setError(
+        cannotStorePasskey
+          ? NON_DISCOVERABLE_PASSKEY_ERROR
+          : err instanceof Error
+            ? err.message
+            : "That passkey didn't work. Try again.",
+      );
     } finally {
       setLoading(false);
     }
