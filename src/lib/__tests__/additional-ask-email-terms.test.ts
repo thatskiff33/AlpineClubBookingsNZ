@@ -26,6 +26,7 @@ describe("additionalAskEmailTerms", () => {
     expect(additionalAskEmailTerms({ ...edit, additionalAmountCents: 2_000 }, LIVE)).toEqual({
       additionalAmountCents: 2_000,
       additionalPaymentMethod: "STRIPE",
+      asksAmountNowDue: false,
     });
   });
 
@@ -35,7 +36,24 @@ describe("additionalAskEmailTerms", () => {
         { additionalAsk: NO_ASK, hasSucceededPayment: false, paymentSource: PaymentSource.INTERNET_BANKING, additionalAmountCents: 2_000 },
         LIVE,
       ),
-    ).toEqual({ additionalAmountCents: 2_000, additionalPaymentMethod: "INTERNET_BANKING" });
+    ).toEqual({ additionalAmountCents: 2_000, additionalPaymentMethod: "INTERNET_BANKING", asksAmountNowDue: false });
+  });
+
+  it("MUTATION (#5288): names an increase the new primary invoice bills as the amount now due by Internet Banking", () => {
+    expect(
+      additionalAskEmailTerms(
+        { additionalAsk: NO_ASK, hasSucceededPayment: false, paymentSource: PaymentSource.INTERNET_BANKING, additionalAmountCents: 10_000, primaryInvoiceBillsIncrease: true },
+        LIVE,
+      ),
+    ).toEqual({ additionalAmountCents: 10_000, additionalPaymentMethod: "INTERNET_BANKING", asksAmountNowDue: true });
+  });
+
+  it.each([
+    ["a card ask", { additionalAsk: CARD_ASK, hasSucceededPayment: true, paymentSource: PaymentSource.STRIPE, additionalAmountCents: 2_000 }],
+    ["a figure with no method", { additionalAsk: NO_ASK, hasSucceededPayment: false, paymentSource: null, additionalAmountCents: 2_000 }],
+    ["nothing due", { additionalAsk: NO_ASK, hasSucceededPayment: false, paymentSource: PaymentSource.INTERNET_BANKING, additionalAmountCents: 0 }],
+  ])("never names %s as the amount now due, whatever the flag says", (_label, edit) => {
+    expect(additionalAskEmailTerms({ ...edit, primaryInvoiceBillsIncrease: true }, LIVE).asksAmountNowDue).toBe(false);
   });
 
   it("names a figure no card ask stands behind, on a booking not paid by Internet Banking, without a method", () => {
@@ -44,7 +62,7 @@ describe("additionalAskEmailTerms", () => {
         { additionalAsk: NO_ASK, hasSucceededPayment: false, paymentSource: PaymentSource.STRIPE, additionalAmountCents: 2_000 },
         LIVE,
       ),
-    ).toEqual({ additionalAmountCents: 2_000, additionalPaymentMethod: undefined });
+    ).toEqual({ additionalAmountCents: 2_000, additionalPaymentMethod: undefined, asksAmountNowDue: false });
   });
 
   it.each([
@@ -53,7 +71,7 @@ describe("additionalAskEmailTerms", () => {
     // #3954 round 9: a reduction retired it before it was offered.
     ["a retired card ask", { additionalAsk: CARD_ASK, hasSucceededPayment: true, paymentSource: PaymentSource.STRIPE, additionalAmountCents: 2_000 }, RETIRED],
   ])("names nothing, and no method, for %s", (_label, edit, mint) => {
-    expect(additionalAskEmailTerms(edit, mint)).toEqual({ additionalAmountCents: 0, additionalPaymentMethod: undefined });
+    expect(additionalAskEmailTerms(edit, mint)).toEqual({ additionalAmountCents: 0, additionalPaymentMethod: undefined, asksAmountNowDue: false });
   });
 });
 

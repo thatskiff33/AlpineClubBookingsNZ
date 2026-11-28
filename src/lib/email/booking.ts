@@ -5,7 +5,7 @@ import {
   bookingCancelledRefundSentence,
   type BookingCancelledRefundMethod,
   type BookingModifiedRefundDestination,
-  bookingModifiedRefundSentence,
+  bookingModifiedRefundSentence, internetBankingAskSentence,
   organiserBilledSentence,
 } from "@/lib/booking-modified-email-copy";
 import { resolveBookingEmailLink } from "@/lib/booking-email-authority";
@@ -1467,7 +1467,7 @@ export async function sendBookingModifiedEmail(params: {
    * `financialReviewPending` is: every sender answers it.
    */
   unpaidAskCancelled: boolean;
-  additionalPaymentMethod?: "STRIPE" | "INTERNET_BANKING";
+  additionalPaymentMethod?: "STRIPE" | "INTERNET_BANKING"; asksAmountNowDue?: boolean; // #5288: the amount now due, not an addition (`additionalAskEmailTerms`)
   paymentReference?: string | null;
   xeroInvoiceNumber?: string | null;
   // #2390: the plain-English sentence about who a capped promotion still covers
@@ -1584,7 +1584,7 @@ export async function sendBookingModifiedEmail(params: {
         ? `Account credit of ${formatMoneyCents(accountCreditAmountCents, format)} has been added for future bookings.`
         : params.additionalAmountCents > 0
           ? params.additionalPaymentMethod === "INTERNET_BANKING"
-            ? `An additional Internet Banking payment of ${formatMoneyCents(params.additionalAmountCents, format)} is required.${xeroInvoicePaymentContext}${paymentReferenceContext} Xero reconciliation confirms the payment before it is treated as paid.`
+            ? `${internetBankingAskSentence(formatMoneyCents(params.additionalAmountCents, format), params.asksAmountNowDue === true)}${xeroInvoicePaymentContext}${paymentReferenceContext} Xero reconciliation confirms the payment before it is treated as paid.`
             : `An additional payment of ${formatMoneyCents(params.additionalAmountCents, format)} is required.`
           : (params.billedToOrganiserCents ?? 0) > 0
             ? organiserBilledSentence(formatMoneyCents(params.billedToOrganiserCents!, format))

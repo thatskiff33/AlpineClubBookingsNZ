@@ -79,6 +79,21 @@ export function organiserBilledSentence(amount: string, when: "saved" | "quote" 
 }
 
 /**
+ * #5288 (`INV-PAY-163`, owner decision 28 Nov 2026): the Internet Banking ask
+ * of a "Booking Modified" email, ONE wording for the HTML email and its
+ * admin-editable body. An increase billed on the primary invoice the edit
+ * raises (`asksAmountNowDue`) asks for the whole amount now due, and says it
+ * replaces any earlier ask: two edits before that invoice links would
+ * otherwise ask $50, then $100, when $100 is due. Every other Internet Banking
+ * increase has its own supplementary invoice, so it is asked as an addition.
+ */
+export function internetBankingAskSentence(amount: string, asksAmountNowDue: boolean): string {
+  return asksAmountNowDue
+    ? `The amount now due on this booking is ${amount} by Internet Banking. This replaces any earlier amount we asked for.`
+    : `An additional Internet Banking payment of ${amount} is required.`;
+}
+
+/**
  * #3973: a refund on a joiner's booking that goes to the group ORGANISER, not
  * the joiner. Paid by card, to the organiser's card (#3653): made
  * (`organiser_card`), still on its way (`organiser_card_pending`), or carried by
