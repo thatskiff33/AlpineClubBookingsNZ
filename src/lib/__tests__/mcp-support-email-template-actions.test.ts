@@ -61,6 +61,7 @@ import { MCP_PRINCIPAL_HEADER } from "@/lib/mcp/principal";
 import { NextRequest } from "next/server";
 import { findMcpAction } from "@/lib/mcp/catalogue";
 import { EMAIL_TEMPLATE_LIST_CONNECTION_SHAPE } from "@/lib/connection-shapes/support-messages";
+import { CENSUS_TIMEOUT_MS } from "@/test/census-timeout";
 
 const STAMP = new Date("2026-06-30T00:00:00.000Z");
 const TEMPLATE = EMAIL_TEMPLATE_DEFINITIONS[0]!;
@@ -284,7 +285,8 @@ describe("templates printing the club's bank-transfer instructions (ALP-724)", (
     expect(response.status).not.toBe(403);
   });
 
-  it("finds every lib module that renders a booking message, so a new email token built from one is declared", () => {
+  // The one case here that reads every file under src/lib, so it carries the shared census budget.
+  it("finds every lib module that renders a booking message, so a new email token built from one is declared", { timeout: CENSUS_TIMEOUT_MS }, () => {
     // A module reading or rendering booking-message wording outside the booking-message modules
     // could put it into an email token. Each such token must sit in
     // EMAIL_TOKENS_RENDERING_BOOKING_MESSAGES, or the refusal above cannot see it.
