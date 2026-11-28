@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Disposable, loopback-only PostgreSQL proof for #4324, #3403, #4930, #4069, #5239 and #5298 in Sekreton.
+# Disposable, loopback-only PostgreSQL proof for #4324, #3403, #4930, #4069, #5239, #5298 and #5297 in Sekreton.
 set -euo pipefail
 
 # The cluster start lives in one sourced helper (INV-SSOT); it sets pg_dir,
@@ -40,6 +40,9 @@ files=(
   src/lib/__tests__/booking-ledger-group-settlement.realdb.test.ts
   # #5255: the once-ever alert sweep's give-back against the alert's email row.
   src/lib/__tests__/admin-alert-once-sweep.realdb.test.ts
+  # #5297: an alert raised while the database refuses every call, spooled to
+  # disk and sent once by the sweep when it answers.
+  src/lib/__tests__/admin-alert-db-outage.realdb.test.ts
   # #5298: an email a crash left QUEUED, recovered once or flagged, and the
   # requeue proof that runs the same retry job.
   src/lib/email/__tests__/stranded-queued-email.realdb.test.ts
