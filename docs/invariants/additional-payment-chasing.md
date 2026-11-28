@@ -1435,28 +1435,28 @@ _Legacy: settles tasks raised before #4317._
   and conflict check leave out a note a link records VOIDED or DELETED
   (`refundNoteIdSets`), so nothing writes one into
   `Payment.xeroRefundCreditNoteId`. The nightly cleanup heals a pre-#4091
-  active mirror (#4161). A later event for it still recounts the payment
-  (#4291).
+  active mirror (#4161); a later event still recounts the payment (#4291).
+- **Account-credit notes** too (#4347), `active` kept.
 - **A refund request's own note** (`INV-PAY-118`, #4195) too: its voided
   mirror goes inactive and never covers the request. Only an officer
   re-raises one (#4214), never a retry; the Xero key and any unqueued row
   name the voided notes. Its void moves no refunded
   total; the booking repair still counts the request.
 - **The reissue's key** (`refundNoteKeyAfterVoidParts`, row and Xero alike).
-  Once a note is voided it appends `after-void:<sorted ids>`: every
+  After a void it appends `after-void:<sorted ids>`: every
   refund note, live or voided, recorded at the key's watermark (v2) or amount
   (v1), or every note a "Paid another way" close's own rows raised once one is
   voided (v3). A figure the link lacks comes from its create row, or counts
   as matching. With no void the key is byte-identical. The create path
   refuses, recording nothing, a VOIDED/DELETED note or one another row raised.
-- **Bank transfers.** The inbound sync never undoes the refund
-  (`INV-ADDPAY-021`'s floor). One writer, the nightly follow-up
-  (`INV-ADDPAY-042`), moves the detail, `BANK_REFUND` line and total
-  together and raises the follow-up; nothing is re-raised automatically.
+- **Bank transfers.** Only the nightly follow-up (`INV-ADDPAY-042`) undoes
+  the refund, never the inbound sync (`INV-ADDPAY-021`'s floor): detail,
+  `BANK_REFUND` line and total together, raising the follow-up; nothing is
+  re-raised automatically.
   Pinned by `xero-refund-note-{void-pointer,crash-window,after-void-key}`,
   `xero-voided-note-recount`, `bank-refund-void-follow-up`,
   `xero-refund-request-note-void`, `xero-canonical-refund-note-void-race`,
-  `xero-refund-note-stale-live-status`, `xero-voided-request-note-retry-routes`,
+  `xero-{refund,account-credit}-note-stale-live-status`, `xero-voided-request-note-retry-routes`,
   `xero-sync`, `xero-booking-repair`, `xero-operation-retry`,
   `xero-operation-outbox` and `xero-hardening`.
 

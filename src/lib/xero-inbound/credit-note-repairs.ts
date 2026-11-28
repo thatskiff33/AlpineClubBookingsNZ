@@ -9,7 +9,8 @@ import { lockPaymentForRefundedTotal, PAYMENT_ROW_WAIT_TRANSACTION_OPTIONS } fro
 import logger from "@/lib/logger";
 import { type AccountCreditAllocationRepairResult, type AccountCreditAllocationTarget, type RefundedPaymentBusinessStateRepairResult } from "./types";
 import { getCreditNoteAmountCents, getJsonRecord, getRefundContributionCentsFromCreditNoteMetadata } from "./amounts";
-import { isIncludedRefundCreditNoteStatus, readRefundNoteRowsByPayment } from "@/lib/xero-refund-note-status";
+import { isIncludedRefundCreditNoteStatus } from "@/lib/xero-refund-note-status";
+import { accountCreditNoteReadingIsCurrent, type CountedNoteRow, countedNoteRowsCount, readCountedNoteRows } from "@/lib/xero-account-credit-note-reading";
 import { findActiveXeroObjectLinks } from "./object-links";
 import { notifyXeroSyncError } from "@/lib/xero-error-alert";
 import { sendBankTransferFloorAlert } from "./credit-note-bank-transfer-floor";
@@ -187,16 +188,18 @@ export async function repairRefundedPaymentBusinessState(input: {
   // #4449 (`INV-PAY-126`): what each payment's links record, less the note being synced (`decideLinkedRefundedTotalCents`),
   // read AFTER the payment rows, so a request paid back in between (#4215, `INV-PAY-118`) loses the claim below.
   // #4288: the note's own refund-note row too; its void may move no Payment column, so `repairOne` re-reads it locked.
+  // #4347: and its account-credit row, the same way.
   const [linkedRefundedCentsByPaymentId, currentNoteRows] = await Promise.all([
     decideLinkedRefundedTotalCents(prisma, payments, { excludeCreditNoteId: input.creditNoteId }),
-    input.creditNoteId === null ? new Map<string, { active: boolean; metadata: unknown }>() : readRefundNoteRowsByPayment(input.creditNoteId, paymentIds, prisma),
+    input.creditNoteId === null ? new Map<string, CountedNoteRow[]>() : readCountedNoteRows(input.creditNoteId, paymentIds, prisma),
   ]);
 
-  // #4288: each payment's current note as its own refund-note row holds it NOW (read above, after the payment rows),
-  // never the reading or a remembered verdict: an inactive or VOIDED/DELETED row counts nothing; no row, the reading; no note being synced (#4095), nothing.
-  const includesCurrentCreditNoteContribution = (paymentId: string, row = currentNoteRows.get(paymentId)) =>
-    input.creditNoteId !== null && (row ? row.active && isIncludedRefundCreditNoteStatus(getJsonRecord(row.metadata)?.status) : isIncludedRefundCreditNoteStatus(input.creditNote.status));
-  const currentCreditNoteAmountCents = (paymentId: string, row = currentNoteRows.get(paymentId)) =>
+  // #4288, #4347: each payment's current note as its own refund-note and account-credit rows hold it NOW (read above, after
+  // the payment rows), never the reading or a remembered verdict (`countedNoteRowsCount`), its amount from the first row;
+  // no row, the reading; no note being synced (#4095), nothing.
+  const includesCurrentCreditNoteContribution = (paymentId: string, rows = currentNoteRows.get(paymentId)) =>
+    input.creditNoteId !== null && (countedNoteRowsCount(rows) ?? isIncludedRefundCreditNoteStatus(input.creditNote.status));
+  const currentCreditNoteAmountCents = (paymentId: string, row = currentNoteRows.get(paymentId)?.[0]) =>
     !includesCurrentCreditNoteContribution(paymentId) ? null : row ? getRefundContributionCentsFromCreditNoteMetadata(row.metadata) : getCreditNoteAmountCents(input.creditNote);
   const currentDirectRefundPaymentId = directPaymentIds.length === 1 ? directPaymentIds[0] : null;
 
@@ -319,14 +322,14 @@ export async function repairRefundedPaymentBusinessState(input: {
       if (Object.keys(updates).length === 0) return "unchanged";
       return (await prisma.payment.updateMany({ where: asRead, data: updates })).count === 1 ? "updated" : "lost";
     }
-    // #4288: with the note's own refund-note row on this payment, decide under the Payment row lock - the claim alone cannot
+    // #4288, #4347: with the note's own refund-note or account-credit row on this payment, decide under the Payment row lock - the claim alone cannot
     // see a void's link write - re-reading that row there (a plain read; no provider call, no other lock). It no longer
     // counting writes nothing ("recount"); an unchanged verdict also checks the row as read, so a recount that waited on this
     // lock sees the write it waited for. Every outcome is then some serial order of the claim and the void. The budget is
     // the Payment row's (`PAYMENT_ROW_WAIT_TRANSACTION_OPTIONS`), not Prisma's 2s/5s: the nightly bank-void follow-up holds it for up to 30s.
     return prisma.$transaction(async (tx) => {
       await lockPaymentForRefundedTotal(tx, payment.id);
-      const now = input.creditNoteId === null ? undefined : (await readRefundNoteRowsByPayment(input.creditNoteId, [payment.id], tx)).get(payment.id);
+      const now = input.creditNoteId === null ? undefined : (await readCountedNoteRows(input.creditNoteId, [payment.id], tx)).get(payment.id);
       if (includesCurrentCreditNoteContribution(payment.id) && !(now && includesCurrentCreditNoteContribution(payment.id, now))) return "recount" as const;
       if (Object.keys(updates).length === 0) return (await tx.payment.findFirst({ where: asRead, select: { id: true } })) ? ("unchanged" as const) : ("lost" as const);
       return (await tx.payment.updateMany({ where: asRead, data: updates })).count === 1 ? ("updated" as const) : ("lost" as const);
@@ -597,7 +600,8 @@ export async function resolveAppliedCreditPaymentsFromLocalProvenance(
 
 export async function repairAccountCreditAllocationBusinessState(
   creditNoteId: string,
-  allocationTargets: AccountCreditAllocationTarget[]
+  allocationTargets: AccountCreditAllocationTarget[],
+  readingMetadata?: unknown, // #4347: the targets' reading; one the note's account-credit row refuses posts nothing
 ): Promise<AccountCreditAllocationRepairResult> {
   // Resolve once before the per-target transaction and credit-ledger lock.
   const format = await getClubFormat();
@@ -712,6 +716,11 @@ export async function repairAccountCreditAllocationBusinessState(
       // key, which is an `INV-LOCK` hazard visible only under concurrency.
       if (!creditLedgerMemberId) return;
       await lockMemberCreditLedger(creditLedgerMemberId, tx);
+      // #4347: judged on the account-credit row as stored under the lock (a plain read; no new lock).
+      if (readingMetadata !== undefined && !(await accountCreditNoteReadingIsCurrent(creditNoteId, readingMetadata, tx))) {
+        skippedAllocations += 1;
+        return logger.warn({ creditNoteId, invoiceId: target.invoiceId }, "Skipping account-credit allocation repair: the note's stored snapshot refuses this reading (#4347)");
+      }
       await assertNoAppliedCreditDeallocationFence(payment.id, tx);
       // #3792 (INV-PAY-019): a cancelled booking whose applied credit was
       // already given back has a restore row (`restoredFromBookingId`, written
