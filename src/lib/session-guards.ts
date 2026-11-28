@@ -182,7 +182,8 @@ function twoFactorRequiredResponse() {
  * The club-wide challenge and the officer enrolment gate, as one answer.
  * No path is passed: none of the allowlisted enrolment routes call these
  * guards, and the path header is caller-supplied on API routes the proxy does
- * not run on. A gated officer is therefore refused on every guarded API route.
+ * not run on. A gated officer is therefore refused on every guarded API
+ * route, except the password change a forced change is waiting on (#4620).
  */
 function factorGateResponse(params: {
   sessionUser?: TwoFactorSessionUser | null;

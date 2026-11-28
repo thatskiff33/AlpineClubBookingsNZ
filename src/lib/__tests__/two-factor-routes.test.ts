@@ -23,6 +23,8 @@ const mocks = vi.hoisted(() => ({
     issuer: "Test Club",
     label: "member@example.test",
   }),
+  createPasskeyRegistrationOptions: vi.fn(),
+  verifyPasskeyRegistration: vi.fn(),
 }));
 
 vi.mock("@/lib/two-factor-api", () => ({
@@ -80,12 +82,23 @@ vi.mock("@/lib/two-factor", () => ({
   generateTotpEnrollment: mocks.generateTotpEnrollment,
 }));
 
+vi.mock("@/lib/webauthn", () => ({
+  createPasskeyRegistrationOptions: mocks.createPasskeyRegistrationOptions,
+  verifyPasskeyRegistration: mocks.verifyPasskeyRegistration,
+}));
+
+vi.mock("@/lib/audit", () => ({
+  getAuditRequestContext: vi.fn(() => ({})),
+}));
+
 import { POST as sendEmailCode } from "@/app/api/auth/2fa/email/send/route";
 import { POST as enrollEmail } from "@/app/api/auth/2fa/enroll/email/route";
 import { POST as enrollTotp } from "@/app/api/auth/2fa/enroll/totp/route";
 import { POST as verifyCode } from "@/app/api/auth/2fa/verify/route";
 import { GET as setupTotp } from "@/app/api/auth/2fa/totp/setup/route";
 import { POST as regenerateRecoveryCodes } from "@/app/api/auth/2fa/recovery/regenerate/route";
+import { POST as passkeyRegisterOptions } from "@/app/api/auth/2fa/webauthn/register/options/route";
+import { POST as passkeyRegisterVerify } from "@/app/api/auth/2fa/webauthn/register/verify/route";
 
 function sessionGuard(overrides?: {
   required?: boolean;
@@ -247,6 +260,22 @@ describe("two-factor auth routes", () => {
     expect(mocks.markTwoFactorSessionVerified).toHaveBeenCalledWith("EMAIL");
   });
 
+  // The lock-out walk's second exception (#4620): the flag without a method
+  // has nothing to verify against, so the route refuses before any code is read.
+  it("refuses to verify for a member with the flag on and no method stored", async () => {
+    mocks.requireTwoFactorApiSession.mockResolvedValue(
+      sessionGuard({ enrolled: true, method: null }),
+    );
+
+    const response = await verifyCode(
+      request("/api/auth/2fa/verify", { method: "TOTP", code: "123456" }),
+    );
+
+    expect(response.status).toBe(409);
+    expect(mocks.verifyStoredTotpCode).not.toHaveBeenCalled();
+    expect(mocks.markTwoFactorSessionVerified).not.toHaveBeenCalled();
+  });
+
   it("rejects mismatched enrolled methods", async () => {
     mocks.requireTwoFactorApiSession.mockResolvedValue(
       sessionGuard({ enrolled: true, method: "EMAIL" }),
@@ -309,5 +338,54 @@ describe("two-factor auth routes", () => {
       issuer: "Test Club",
       label: "member@example.test",
     });
+  });
+});
+
+// The club-wide challenge refusal in `registrationAllowed`
+// (`src/app/api/auth/2fa/webauthn/guard.ts`) holds whatever the officer
+// sign-in switch says: a session still owing its sign-in challenge may not
+// add a passkey, so a stolen password alone cannot plant one (#4620).
+describe("passkey registration while the sign-in challenge is owed", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.applyRateLimit.mockReturnValue(null);
+    mocks.createPasskeyRegistrationOptions.mockResolvedValue({
+      ok: true,
+      options: { challenge: "challenge" },
+    });
+  });
+
+  it.each([
+    ["options", passkeyRegisterOptions, "/api/auth/2fa/webauthn/register/options"],
+    ["verify", passkeyRegisterVerify, "/api/auth/2fa/webauthn/register/verify"],
+  ] as const)("refuses %s before touching passkeys", async (_name, route, path) => {
+    mocks.requireTwoFactorApiSession.mockResolvedValue(
+      sessionGuard({ required: true, verified: false, enrolled: true, method: "TOTP" }),
+    );
+
+    const response = await route(request(path, { response: {} }));
+
+    expect(response.status).toBe(403);
+    await expect(response.json()).resolves.toEqual({
+      error: "Finish signing in before adding a passkey.",
+    });
+    expect(mocks.createPasskeyRegistrationOptions).not.toHaveBeenCalled();
+    expect(mocks.verifyPasskeyRegistration).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["the challenge is passed", { required: true, verified: true }],
+    ["no challenge is owed", { required: false, verified: false }],
+  ])("issues options once %s", async (_name, flags) => {
+    mocks.requireTwoFactorApiSession.mockResolvedValue(sessionGuard(flags));
+
+    const response = await passkeyRegisterOptions(
+      request("/api/auth/2fa/webauthn/register/options"),
+    );
+
+    expect(response.status).toBe(200);
+    expect(mocks.createPasskeyRegistrationOptions).toHaveBeenCalledWith(
+      expect.objectContaining({ memberId: "member-1" }),
+    );
   });
 });

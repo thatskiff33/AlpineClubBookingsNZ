@@ -32,7 +32,10 @@ import {
   assertLastFactorRemovable,
   LastOfficerFactorError,
 } from "@/lib/second-factor-requirement";
-import { satisfiesOfficerSecondFactor } from "@/lib/second-factor-enrolment";
+import {
+  NON_DISCOVERABLE_PASSKEY_ERROR,
+  satisfiesOfficerSecondFactor,
+} from "@/lib/second-factor-enrolment";
 import { TWO_FACTOR_SESSION_CHALLENGE_TTL_MS } from "@/lib/two-factor";
 import {
   recordTwoFactorMutation,
@@ -209,8 +212,11 @@ export async function createPasskeyRegistrationOptions(input: {
     userDisplayName: input.displayName,
     userID: new TextEncoder().encode(input.memberId),
     attestationType: "none",
+    // Discoverable passkeys only (#4614 decision, 10 Nov 2026): a key that
+    // cannot store one fails the ceremony instead of saving a passkey that
+    // could never sign in on its own.
     authenticatorSelection: {
-      residentKey: "preferred",
+      residentKey: "required",
       userVerification: "required",
     },
     timeout: TWO_FACTOR_SESSION_CHALLENGE_TTL_MS,
@@ -221,6 +227,16 @@ export async function createPasskeyRegistrationOptions(input: {
   });
   await storeChallenge(input.memberId, options.challenge, "registration");
   return { ok: true as const, options };
+}
+
+/**
+ * The browser's `credProps` result says the credential is not discoverable.
+ * Absent means unknown: not every browser reports it, so that is accepted.
+ * The report is the browser's own, unsigned: this spares a member a passkey
+ * that could not sign in, and is not a control.
+ */
+function reportsNonDiscoverableCredential(response: RegistrationResponseJSON): boolean {
+  return response.clientExtensionResults?.credProps?.rk === false;
 }
 
 export async function verifyPasskeyRegistration(input: {
@@ -264,6 +280,9 @@ export async function verifyPasskeyRegistration(input: {
   }
   if (!verified.verified) {
     return { ok: false, status: 400, error: "That passkey didn't work. Try again." };
+  }
+  if (reportsNonDiscoverableCredential(input.response as RegistrationResponseJSON)) {
+    return { ok: false, status: 400, error: NON_DISCOVERABLE_PASSKEY_ERROR };
   }
 
   const credential = verified.registrationInfo.credential;

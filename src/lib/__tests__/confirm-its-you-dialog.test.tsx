@@ -3,12 +3,13 @@
 import "@testing-library/jest-dom/vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { useState } from "react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   ConfirmItsYouHost,
   fetchWithRecentAuth,
 } from "@/components/confirm-its-you";
+import { expectRecoveryAlertToHoldFocus } from "@/lib/__tests__/helpers/focus";
 import { recentAuthRefusalBody } from "@/lib/recent-auth";
 
 const RESTORE_BODY = JSON.stringify({ filename: "nightly.sql", confirm: "RESTORE" });
@@ -67,6 +68,13 @@ describe("confirm it's you dialog (#4616)", () => {
     );
   });
 
+  // The open request is module state, so a dialog a test leaves open would
+  // greet the next test. Close it while its Cancel button is still mounted.
+  afterEach(() => {
+    const cancel = screen.queryByRole("button", { name: "Cancel" });
+    if (cancel) fireEvent.click(cancel);
+  });
+
   it("replays the original request once, with the same body", async () => {
     render(<Harness />);
     fireEvent.click(screen.getByRole("button", { name: "Restore" }));
@@ -100,6 +108,117 @@ describe("confirm it's you dialog (#4616)", () => {
     expect(
       calls.filter((call) => call.init?.method === "POST" && call.url.includes("/api/auth/reauth")),
     ).toHaveLength(0);
+  });
+
+  it("says it is loading, then focuses the field, and ties a refusal to it", async () => {
+    let releaseFactors: () => void = () => {};
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = typeof input === "string" ? input : input.toString();
+        if (url.includes("/api/auth/reauth") && init?.method !== "POST") {
+          await new Promise<void>((resolve) => {
+            releaseFactors = resolve;
+          });
+          return jsonResponse({ factors: ["TOTP"] });
+        }
+        if (url.includes("/api/auth/reauth")) {
+          return jsonResponse({ error: "That code didn't match." }, 400);
+        }
+        return jsonResponse(recentAuthRefusalBody(), 403);
+      }),
+    );
+    render(<Harness />);
+    fireEvent.click(screen.getByRole("button", { name: "Restore" }));
+
+    expect(await screen.findByRole("status")).toHaveTextContent(
+      "Checking how you can confirm",
+    );
+    // The alert region is mounted, empty, before any failure.
+    expect(screen.getByRole("alert")).toHaveTextContent("");
+    releaseFactors();
+
+    const code = await screen.findByLabelText("Authenticator code");
+    await waitFor(() => expect(code).toHaveFocus());
+    expect(code).not.toHaveAttribute("aria-invalid");
+
+    fireEvent.change(code, { target: { value: "000000" } });
+    fireEvent.click(screen.getByRole("button", { name: "Confirm" }));
+
+    await waitFor(() => {
+      expect(screen.getByRole("alert")).toHaveTextContent("That code didn't match.");
+    });
+    expect(code).toHaveAttribute("aria-invalid", "true");
+    expect(code).toHaveAttribute("aria-describedby", "reauth-error");
+    expect(screen.getByRole("alert")).toHaveAttribute("id", "reauth-error");
+  });
+
+  it("moves to the refusal each time, even when the same message comes back", async () => {
+    let releaseProof: () => void = () => {};
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = typeof input === "string" ? input : input.toString();
+        if (url.includes("/api/auth/reauth") && init?.method !== "POST") {
+          return jsonResponse({ factors: ["PASSWORD"] });
+        }
+        if (url.includes("/api/auth/reauth")) {
+          await new Promise<void>((resolve) => {
+            releaseProof = resolve;
+          });
+          return jsonResponse({ error: "That password didn't match." }, 400);
+        }
+        return jsonResponse(recentAuthRefusalBody(), 403);
+      }),
+    );
+    render(<Harness />);
+    fireEvent.click(screen.getByRole("button", { name: "Restore" }));
+    const password = await screen.findByLabelText("Password");
+    // Nothing to report yet: the progress line is mounted but out of the layout.
+    expect(screen.getByRole("status")).toHaveTextContent("");
+    expect(screen.getByRole("status")).toHaveClass("sr-only");
+
+    for (const attempt of ["first-guess", "second-guess"]) {
+      fireEvent.change(password, { target: { value: attempt } });
+      fireEvent.click(screen.getByRole("button", { name: "Confirm" }));
+      await waitFor(() => {
+        expect(screen.getByRole("status")).toHaveTextContent("Checking…");
+      });
+      expect(screen.getByRole("status")).not.toHaveClass("sr-only");
+      releaseProof();
+      await waitFor(() => {
+        expect(screen.getByRole("alert")).toHaveTextContent("That password didn't match.");
+      });
+      await expectRecoveryAlertToHoldFocus(screen.getByRole("alert"));
+      expect(screen.getByRole("status")).toHaveTextContent("");
+      password.focus();
+      expect(password).toHaveFocus();
+    }
+  });
+
+  it("leaves the code field unmarked when it is the passkey that failed", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = typeof input === "string" ? input : input.toString();
+        if (url.includes("/api/auth/reauth") && init?.method !== "POST") {
+          // No passkey options, so the passkey attempt fails before any request.
+          return jsonResponse({ factors: ["TOTP", "PASSKEY"] });
+        }
+        return jsonResponse(recentAuthRefusalBody(), 403);
+      }),
+    );
+    render(<Harness />);
+    fireEvent.click(screen.getByRole("button", { name: "Restore" }));
+    const code = await screen.findByLabelText("Authenticator code");
+
+    fireEvent.click(screen.getByRole("button", { name: "Use your passkey" }));
+
+    await waitFor(() => {
+      expect(screen.getByRole("alert")).toHaveTextContent("That didn't match. Try again.");
+    });
+    expect(code).not.toHaveAttribute("aria-invalid");
+    expect(code).not.toHaveAttribute("aria-describedby");
   });
 
   it("sends a FormData body on the original attempt and the one replay", async () => {

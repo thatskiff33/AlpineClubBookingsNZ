@@ -20,22 +20,29 @@ export type TwoFactorGateMember = {
   twoFactorEnabled?: boolean | null;
 };
 
+/**
+ * A forced password change comes first (#4620): enrolment refuses until it is
+ * done, so neither gate may refuse the route that makes the change.
+ */
+function isForcedPasswordChangeFirst(params: {
+  member?: TwoFactorGateMember | null;
+  allowForcePasswordChange?: boolean;
+}): boolean {
+  return params.allowForcePasswordChange === true && params.member?.forcePasswordChange === true;
+}
+
 export function isTwoFactorSessionBlocked(params: {
   sessionUser?: TwoFactorSessionUser | null;
   member?: TwoFactorGateMember | null;
   allowForcePasswordChange?: boolean;
 }) {
-  const { sessionUser, member, allowForcePasswordChange = false } = params;
+  const { sessionUser } = params;
 
   if (!sessionUser?.twoFactorRequired || sessionUser.twoFactorVerified) {
     return false;
   }
 
-  if (allowForcePasswordChange && member?.forcePasswordChange) {
-    return false;
-  }
-
-  return true;
+  return !isForcedPasswordChangeFirst(params);
 }
 
 export function buildTwoFactorGatePath(params: {
@@ -88,10 +95,43 @@ export function isOfficerEnrolmentPathAllowed(
 }
 
 /**
- * After the club-wide challenge is done (or when there is none): a required
- * officer who does not satisfy, and whose grace has ended, is blocked
- * everywhere except the enrolment allowlist. A null deadline is "not started"
- * and is not a lock-out.
+ * A required officer who does not satisfy and whose grace has ended (#4618).
+ * A null deadline is "not started" and is not a lock-out.
+ */
+export function isOfficerSessionGated(
+  sessionUser: TwoFactorSessionUser | null | undefined,
+  now: Date = new Date(),
+): boolean {
+  return officerClaimsAreGated(
+    {
+      officerTwoFactorRequired: sessionUser?.officerTwoFactorRequired === true,
+      twoFactorSatisfiesOfficer: sessionUser?.twoFactorSatisfiesOfficer === true,
+      officerTwoFactorGraceEndsAt: sessionUser?.officerTwoFactorGraceEndsAt ?? null,
+    },
+    now,
+  );
+}
+
+/**
+ * A required officer who does not satisfy yet and still has grace left: the
+ * one who is reminded rather than stopped. Never true together with
+ * `isOfficerSessionGated`.
+ */
+export function isOfficerInGrace(
+  sessionUser: TwoFactorSessionUser | null | undefined,
+  now: Date = new Date(),
+): boolean {
+  return (
+    sessionUser?.officerTwoFactorRequired === true &&
+    sessionUser.twoFactorSatisfiesOfficer !== true &&
+    sessionUser.officerTwoFactorGraceEndsAt != null &&
+    !isOfficerSessionGated(sessionUser, now)
+  );
+}
+
+/**
+ * After the club-wide challenge is done (or when there is none): a gated
+ * officer is blocked everywhere except the enrolment allowlist.
  */
 export function isOfficerEnrolmentSessionBlocked(params: {
   sessionUser?: TwoFactorSessionUser | null;
@@ -99,20 +139,7 @@ export function isOfficerEnrolmentSessionBlocked(params: {
   method?: string | null;
   now?: Date;
 }): boolean {
-  const user = params.sessionUser;
-  const now = params.now ?? new Date();
-  if (
-    !officerClaimsAreGated(
-      {
-        officerTwoFactorRequired: user?.officerTwoFactorRequired === true,
-        twoFactorSatisfiesOfficer: user?.twoFactorSatisfiesOfficer === true,
-        officerTwoFactorGraceEndsAt: user?.officerTwoFactorGraceEndsAt ?? null,
-      },
-      now,
-    )
-  ) {
-    return false;
-  }
+  if (!isOfficerSessionGated(params.sessionUser, params.now)) return false;
   return !isOfficerEnrolmentPathAllowed(params.pathname, params.method);
 }
 
@@ -135,6 +162,7 @@ export function factorGateRedirect(params: {
     return buildTwoFactorGatePath(params);
   }
   if (
+    !isForcedPasswordChangeFirst(params) &&
     isOfficerEnrolmentSessionBlocked({
       sessionUser: params.sessionUser,
       pathname: params.pathname ?? params.callbackPath ?? null,

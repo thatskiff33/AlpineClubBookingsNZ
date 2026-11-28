@@ -34,8 +34,11 @@ import {
 import { loadSignedInMember } from "@/lib/signed-in-member";
 import { getCurrentSiteBanners } from "@/lib/site-banners";
 import { getWebsiteThemeRenderState } from "@/lib/club-theme";
-import { officerClaimsAreGated } from "@/lib/officer-two-factor-claims";
-import { factorGateRedirect } from "@/lib/two-factor-gate";
+import {
+  factorGateRedirect,
+  isOfficerInGrace,
+  isOfficerSessionGated,
+} from "@/lib/two-factor-gate";
 import { OfficerGraceBanner } from "@/components/officer-grace-banner";
 
 export default async function AuthenticatedLayout({
@@ -76,27 +79,21 @@ export default async function AuthenticatedLayout({
   }
 
   const requestedPath = requestHeaders.get(REQUEST_PATH_HEADER);
+  // One instant for the gate, the reminder and the wizard hold-back, so they
+  // cannot disagree about whether grace has ended.
+  const now = new Date();
   const factorGate = factorGateRedirect({
     sessionUser: session.user,
     member,
     callbackPath: requestedPath,
     pathname: requestedPath,
+    now,
   });
   if (factorGate) {
     redirect(factorGate);
   }
-  const officerGraceReminder =
-    session.user.officerTwoFactorRequired === true &&
-    session.user.twoFactorSatisfiesOfficer !== true &&
-    session.user.officerTwoFactorGraceEndsAt != null &&
-    !officerClaimsAreGated(
-      {
-        officerTwoFactorRequired: true,
-        twoFactorSatisfiesOfficer: false,
-        officerTwoFactorGraceEndsAt: session.user.officerTwoFactorGraceEndsAt,
-      },
-      new Date(),
-    );
+  const officerGated = isOfficerSessionGated(session.user, now);
+  const officerGraceReminder = isOfficerInGrace(session.user, now);
 
   // Lodge-only accounts can only access /lodge/* routes. Combined access-role
   // accounts continue to their requested member or finance workspace.
@@ -182,10 +179,13 @@ export default async function AuthenticatedLayout({
   // Single-action token routes (e.g. `/nominations/<token>`) are exempt from the
   // mandatory onboarding gate so a member can complete that action without first
   // being forced to supply their own profile details. The gate is unchanged for
-  // every normal authenticated route.
+  // every normal authenticated route. A gated officer (#4620) reaches only
+  // their profile, to add a passkey: the wizard would cover that card and its
+  // saves are refused until they enrol, so it waits until they have.
   const showOnboardingWizard =
     shouldShowMemberOnboarding(member) &&
-    !isOnboardingGateExemptPath(requestedPath);
+    !isOnboardingGateExemptPath(requestedPath) &&
+    !officerGated;
   const [effectiveModules, lodgeCapacity, siteBanners, theme, clubIdentity] = await Promise.all([
     loadEffectiveModuleFlags(),
     // Default lodge: this layout's capacity feeds club identity copy

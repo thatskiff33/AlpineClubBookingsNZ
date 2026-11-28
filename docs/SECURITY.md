@@ -648,8 +648,12 @@ free guessing oracle.
 
 **Stated limits.**
 
-- **No route asks yet.** The check and the dialog exist; #4619 decides where
-  they apply.
+- **The routes that ask are listed in `step-up-routes.ts` (#4619).** Until
+  #4620 turns the check on, none of them asks.
+- **Adding a factor does not yet ask for a fresh proof (#4620).** An
+  authenticator app's enrolment code starts the clock, and a just-added
+  passkey is offered by the dialog, so whoever holds an open session could
+  pass it. The check stays off while this is open.
 - **A passkey confirms the same way it signs in (`INV-AUTH-009`).** The dialog
   offers it only for a passkey this member has saved. The public key is not
   in the session or the audit row.
@@ -675,8 +679,11 @@ report, the reset button and both routes are absent or answer 404.
 passkey stamps `twoFactorGraceStartedAt` once, with the database clock. Grace
 is a club setting, 0 to 60 days (14 by default), counted in club days. After
 it, the officer reaches only the enrolment pages, the profile security card
-and sign-out. A required officer cannot delete their last passkey; the check
-runs under their member row lock.
+and sign-out. An officer who is also being made to change their password can
+still do that, because enrolment waits for it; the signed-in pages hold back
+the "confirm your details" wizard until they have enrolled, because it would
+cover the passkey card and could not be saved. A required officer cannot
+delete their last passkey; the check runs under their member row lock.
 
 **Lost factor.** Another Full Admin opens the member and resets it after
 confirming it is them (step-up, `INV-AUTH-010`). They cannot reset
@@ -693,7 +700,10 @@ Admin lost their factor runs, on the server,
 
 **Stated limits.** The report lists who is required and not yet enrolled; it
 is a Full Admin view only. An emailed code still signs a member in where the
-club-wide module allows it; it just does not meet this rule.
+club-wide module allows it; it just does not meet this rule. While the
+club-wide module is off, an enrolled officer's app or passkey is not yet asked
+for at sign-in, only at "Confirm it's you", which falls short of
+`INV-AUTH-012`. The release constant stays off while this is open (#4620).
 
 ## AI app connections (ALP-653)
 

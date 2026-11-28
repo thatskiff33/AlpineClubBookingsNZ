@@ -189,8 +189,9 @@ This file holds only the rules.
 - **A password proof writes the stamp only when no authenticator factor is
   still owed.** An email factor does not count as owed, so that password step
   writes it and the later emailed code does not. An authenticator-app consume
-  writes it, including enrolment. An emailed link, Google, a recovery code,
-  and an emailed code do not, and none of them clears a stamp already there.
+  writes it, including enrolment, and so does a passkey sign-in. An emailed
+  link, Google, a recovery code, and an emailed code do not, and none of them
+  clears a stamp already there.
   The `jwt` callback in [`auth.ts`](../../src/lib/auth.ts) decides this from
   server-side facts: the credentials provider, the member row after reload,
   and the kind prefixed into the hashed two-factor challenge. A
@@ -219,6 +220,10 @@ This file holds only the rules.
 - **The relying party comes from `NEXTAUTH_URL`.** The id is its hostname and
   the expected origin is its origin. A missing or unparseable URL throws. No
   host is hardcoded (`INV-CONFIG-001`).
+- **Only a discoverable passkey can be added** (#4614). Registration asks for
+  `residentKey: "required"`, and a browser reporting `credProps.rk` false is
+  refused. An unreported `rk` is accepted: the report is the browser's own,
+  so this spares a member an unusable passkey and is not a control.
 - **A challenge is single-use and lasts two minutes,** the same duration as a
   two-factor session challenge. The plaintext is stored. The row is claimed
   with `deleteMany` before the signature is checked, and the claim succeeds
@@ -275,9 +280,10 @@ This file holds only the rules.
   Resetting a required officer closes their grace. A member reset before the
   rule reached them still gets their first grace period. The deadline is a
   club civil date (`INV-DATE`). After it, only the enrolment pages, the
-  profile security card, and sign-out stay open. While the release
-  constant is off, nobody is required and nothing is stamped. #4620 is the edit
-  that turns the constant on.
+  profile security card, and sign-out stay open, and a forced password
+  change, which enrolment waits for. While the release constant is off, nobody
+  is required and nothing is stamped. #4620 is the edit that turns the constant
+  on.
 - **A required officer's app or passkey is owed at a password sign-in.** That
   password does not write the recent-proof stamp (`INV-AUTH-008`).
 - **A required officer cannot remove their last satisfying factor.**

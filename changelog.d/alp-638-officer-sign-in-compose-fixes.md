@@ -1,0 +1,4 @@
+- **A passkey must be able to sign in on its own (#4620).**
+  A security key that cannot store a passkey is now refused when you try to add it, instead of being saved and then failing at sign-in. Passkeys already saved are not affected.
+- **Groundwork for officer sign-in, which stays switched off (#4620).**
+  Nothing here changes what officers see today. Once officer sign-in is switched on, an officer whose set-up period has ended and who must also change their password can change it first, instead of being refused by both screens. The "confirm your details" prompt waits until that officer has set up an authenticator app or a passkey, so it no longer covers the page where they do it. The set-up reminder and the set-up screen link straight to the Security section of the profile, where a passkey is added. The "Confirm it's you" prompt and the two-factor reset button now tell screen-reader users what is happening and what went wrong.

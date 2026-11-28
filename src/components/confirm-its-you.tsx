@@ -1,8 +1,9 @@
 "use client";
 
-import { useEffect, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import { startAuthentication } from "@simplewebauthn/browser";
 
+import { FocusedActionError } from "@/components/focused-action-error";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -14,6 +15,7 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { useActionFailure } from "@/hooks/use-action-failure";
 import {
   isReauthFactor,
   isReauthRequiredPayload,
@@ -129,12 +131,25 @@ export function ConfirmItsYouHost() {
   return <ConfirmItsYouDialog onDone={finish} />;
 }
 
+/** The message the fields point to with `aria-describedby`. */
+const REAUTH_ERROR_ID = "reauth-error";
+
 function ConfirmItsYouDialog({ onDone }: { onDone: (proved: boolean) => void }) {
   const [factors, setFactors] = useState<ReauthFactor[] | null>(null);
   const [passkeyOptions, setPasskeyOptions] = useState<unknown>(null);
   const [secret, setSecret] = useState("");
-  const [error, setError] = useState<string | null>(null);
-  const [pendingProof, setPendingProof] = useState(false);
+  const { error, attentionKey, fail, clear } = useActionFailure();
+  // Whose proof the message is about: a passkey that failed says nothing
+  // about what was typed in the field.
+  const [refusedFactor, setRefusedFactor] = useState<ReauthFactor | null>(null);
+  const [pendingProof, setPendingProof] = useState<ReauthFactor | null>(null);
+  const fieldRef = useRef<HTMLInputElement>(null);
+
+  function refuse(factor: ReauthFactor, message: string) {
+    fail(message);
+    setRefusedFactor(factor);
+    setPendingProof(null);
+  }
 
   useEffect(() => {
     let cancelled = false;
@@ -151,7 +166,7 @@ function ConfirmItsYouDialog({ onDone }: { onDone: (proved: boolean) => void }) 
             : [];
         if (!cancelled) {
           if (!response.ok || listed.length === 0) {
-            setError("Confirming isn't available right now.");
+            fail("Confirming isn't available right now.");
             setFactors([]);
           } else {
             setFactors(listed);
@@ -164,7 +179,7 @@ function ConfirmItsYouDialog({ onDone }: { onDone: (proved: boolean) => void }) 
         }
       } catch {
         if (!cancelled) {
-          setError("Confirming isn't available right now.");
+          fail("Confirming isn't available right now.");
           setFactors([]);
         }
       }
@@ -172,7 +187,7 @@ function ConfirmItsYouDialog({ onDone }: { onDone: (proved: boolean) => void }) 
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [fail]);
 
   const hasTotp = factors?.includes("TOTP") === true;
   const hasPasskey = factors?.includes("PASSKEY") === true;
@@ -187,8 +202,8 @@ function ConfirmItsYouDialog({ onDone }: { onDone: (proved: boolean) => void }) 
 
   async function prove(factor: ReauthFactor) {
     if (pendingProof) return;
-    setPendingProof(true);
-    setError(null);
+    setPendingProof(factor);
+    clear();
     try {
       const payload =
         factor === "PASSWORD"
@@ -213,13 +228,29 @@ function ConfirmItsYouDialog({ onDone }: { onDone: (proved: boolean) => void }) 
         typeof (body as { error?: unknown }).error === "string"
           ? (body as { error: string }).error
           : "That didn't match. Try again.";
-      setError(message);
-      setPendingProof(false);
+      refuse(factor, message);
     } catch {
-      setError("That didn't match. Try again.");
-      setPendingProof(false);
+      refuse(factor, "That didn't match. Try again.");
     }
   }
+
+  // The field takes focus once the factors load; Radix would otherwise leave
+  // it on Cancel. While its own refusal shows, the field is tied to it.
+  useEffect(() => {
+    if (factors) fieldRef.current?.focus();
+  }, [factors]);
+  const fieldErrorProps =
+    error && refusedFactor !== null && refusedFactor !== "PASSKEY"
+      ? { "aria-invalid": true, "aria-describedby": REAUTH_ERROR_ID }
+      : {};
+  const progress =
+    factors === null
+      ? "Checking how you can confirm…"
+      : pendingProof === "PASSKEY"
+        ? "Waiting for your passkey…"
+        : pendingProof
+          ? "Checking…"
+          : "";
 
   function onSubmit(event: FormEvent) {
     event.preventDefault();
@@ -249,6 +280,8 @@ function ConfirmItsYouDialog({ onDone }: { onDone: (proved: boolean) => void }) 
                 id="reauth-code"
                 inputMode="numeric"
                 autoComplete="one-time-code"
+                ref={fieldRef}
+                {...fieldErrorProps}
                 value={secret}
                 onChange={(event) => setSecret(event.target.value)}
               />
@@ -261,6 +294,8 @@ function ConfirmItsYouDialog({ onDone }: { onDone: (proved: boolean) => void }) 
                 id="reauth-password"
                 type="password"
                 autoComplete="current-password"
+                ref={fieldRef}
+                {...fieldErrorProps}
                 value={secret}
                 onChange={(event) => setSecret(event.target.value)}
               />
@@ -271,17 +306,16 @@ function ConfirmItsYouDialog({ onDone }: { onDone: (proved: boolean) => void }) 
               {"Use your passkey to confirm it's you."}
             </p>
           ) : null}
-          {error ? (
-            <p className="text-sm text-danger" role="alert">
-              {error}
-            </p>
-          ) : null}
+          <p className={progress ? "text-sm text-muted-foreground" : "sr-only"} role="status">
+            {progress}
+          </p>
+          <FocusedActionError id={REAUTH_ERROR_ID} error={error} attentionKey={attentionKey} />
           <DialogFooter>
             <Button
               type="button"
               variant="outline"
               onClick={() => onDone(false)}
-              disabled={pendingProof}
+              disabled={pendingProof !== null}
             >
               Cancel
             </Button>
@@ -289,13 +323,13 @@ function ConfirmItsYouDialog({ onDone }: { onDone: (proved: boolean) => void }) 
               <Button
                 type="button"
                 variant="outline"
-                disabled={pendingProof}
+                disabled={pendingProof !== null}
                 onClick={() => void prove("PASSKEY")}
               >
                 Use your passkey
               </Button>
             ) : null}
-            <Button type="submit" disabled={pendingProof || !primary}>
+            <Button type="submit" disabled={pendingProof !== null || !primary}>
               {primary === "PASSKEY" ? "Use your passkey" : "Confirm"}
             </Button>
           </DialogFooter>

@@ -6,6 +6,19 @@
  * alone now call this, so a passkey-only member is enrolled.
  */
 
+/**
+ * Where a signed-in member adds or removes a sign-in factor: the Security
+ * section of their profile. The path stays on the gated officer's allowlist.
+ */
+export const PROFILE_SECURITY_HREF = "/profile#security";
+
+/**
+ * Said when a key cannot store a discoverable passkey (#4614), whether the
+ * browser refuses it or the server does.
+ */
+export const NON_DISCOVERABLE_PASSKEY_ERROR =
+  "That key can't save a passkey for signing in. Try a different device or key.";
+
 export function isSecondFactorEnrolled(input: {
   twoFactorEnabled?: boolean | null;
   hasPasskey?: boolean | null;

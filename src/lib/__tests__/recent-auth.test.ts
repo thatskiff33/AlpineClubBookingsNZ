@@ -25,6 +25,17 @@ describe("recent authentication window (#4616)", () => {
     mockAuth.mockReset();
   });
 
+  it("is five minutes, pinned as a number rather than read back", () => {
+    expect(RECENT_AUTH_WINDOW_MS).toBe(300_000);
+  });
+
+  it("refuses a non-finite stamp, which would otherwise never expire", () => {
+    const now = frozenTestNow().getTime();
+    // now - Infinity is -Infinity, which is inside any window.
+    expect(isWithinRecentAuthWindow(Number.POSITIVE_INFINITY, now)).toBe(false);
+    expect(isWithinRecentAuthWindow(Number.NEGATIVE_INFINITY, now)).toBe(false);
+  });
+
   it("uses the frozen clock, and five minutes still passes", () => {
     const signedInAt = Date.now();
     expect(signedInAt).toBe(frozenTestNow().getTime());
@@ -104,6 +115,14 @@ describe("recent authentication window (#4616)", () => {
     expect(owes(app, false, false)).toBe(false);
     expect(owes(passkeyOnly, false, false)).toBe(false);
     expect(owes(emailOnly, true, true)).toBe(false);
+    // Owed exactly when the factor satisfies the officer rule: a flag left on
+    // with no method stored is not an app the officer gate accepts either.
+    const flagNoMethod = { twoFactorEnabled: true, twoFactorMethod: null, hasPasskey: false };
+    expect(owes(flagNoMethod, false, true)).toBe(false);
     expect(owes(none, true, true)).toBe(false);
+    // Being a required officer never removes what the module owes: with the
+    // module on, that same flag is owed for an officer as for anyone else.
+    expect(owes(flagNoMethod, true, false)).toBe(true);
+    expect(owes(flagNoMethod, true, true)).toBe(true);
   });
 });
