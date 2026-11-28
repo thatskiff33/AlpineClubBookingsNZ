@@ -47,6 +47,7 @@ vi.mock("@/lib/lodge-auth", () => ({
 }));
 
 import { GET } from "../route";
+import { storedHostingReviewOf } from "@/lib/adult-member-hosting-stored-review";
 
 const utc = (day: string) => new Date(`${day}T00:00:00.000Z`);
 const DAY = "2026-08-01";
@@ -117,18 +118,39 @@ const HOSTING_VIOLATION = {
   },
 };
 
-/** The same club, ENFORCED: the only mode whose re-check queue is verified. */
+/** The same club, ENFORCED. */
 const ENFORCED_POLICY = { ...SCOPE_ON_POLICY, mode: "ENFORCED" };
 
 /**
  * A snapshot whose covered night rests on a Group Trip sibling, as the writer
- * persists it: stamped with the trip and the trip's cover-invalidation revision
- * read under the trip key (`null` = a snapshot written before the stamp existed).
+ * persists it (`storedHostingReviewOf`): stamped with the trip and the trip's
+ * cover-invalidation revision read under the trip key (`null` = a snapshot
+ * written before the stamp existed).
  */
 function siblingCoveredReview(
   revision: number | null,
   nights: { first: "SAME_GROUP_TRIP" | null } = { first: "SAME_GROUP_TRIP" },
 ) {
+  const violation = siblingCoveredViolation(nights);
+  return storedHostingReviewOf(
+    violation as never,
+    revision === null ? null : { groupBookingId: TRIP, revision },
+  );
+}
+
+/**
+ * The same snapshot stamped by a release whose confirming and membership seams
+ * queued nothing at a review-only lodge: a well-formed stamp without
+ * `queuedAtEveryActiveMode`.
+ */
+function siblingCoveredReviewStampedBeforeReviewQueued(revision: number) {
+  return {
+    ...siblingCoveredViolation({ first: "SAME_GROUP_TRIP" }),
+    groupTripCoverFreshness: { groupBookingId: TRIP, revision },
+  };
+}
+
+function siblingCoveredViolation(nights: { first: "SAME_GROUP_TRIP" | null }) {
   const firstCovered = nights.first !== null;
   return {
     ...HOSTING_VIOLATION,
@@ -146,9 +168,6 @@ function siblingCoveredReview(
         { night: "2026-08-02", memberIds: [], coveredByScopes: [] },
       ],
     },
-    ...(revision === null
-      ? {}
-      : { groupTripCoverFreshness: { groupBookingId: TRIP, revision } }),
   };
 }
 
@@ -537,23 +556,45 @@ describe("#5239 Group Trip sibling cover on the kiosk (INV-HOST-045)", () => {
     });
   });
 
-  it("withholds under review-only mode, and shows again once ENFORCED is re-checked", async () => {
-    // Review-only lodges keep the warning: their confirming and membership
-    // seams queue nothing, so a matching stamp proves nothing there.
+  it("shows real figures under review-only mode too, once the sibling's change is re-checked", async () => {
+    // Every seam that can change cover queues at both active modes, so "no
+    // queued row" means "nothing changed" at a review-only lodge as well.
     day(siblingCoveredReview(3));
     mockPrisma.adultMemberHostingPolicy.findMany.mockResolvedValue([
       SCOPE_ON_POLICY,
-    ]);
-    expect((await callRoute()).bookings[0].adultCoverSource).toEqual(STALE);
-
-    // Back to ENFORCED: policy reconciliation queues every affected booking.
-    mockPrisma.adultMemberHostingPolicy.findMany.mockResolvedValue([
-      ENFORCED_POLICY,
     ]);
     queuedFor("owner-of-b-organiser");
     expect((await callRoute()).bookings[0].adultCoverSource).toEqual(STALE);
 
     drained();
+    expect(
+      (await callRoute()).bookings[0].adultCoverSource,
+      "INV-HOST-045: verified sibling cover is shown at a review-only lodge",
+    ).toEqual(SIBLING_FIGURES);
+  });
+
+  it("withholds a review-only snapshot stamped before review-only lodges queued, until re-evaluated", async () => {
+    // Written while the confirming and membership seams queued nothing there,
+    // so its matching revision cannot rule out a change nobody re-checked.
+    day(siblingCoveredReviewStampedBeforeReviewQueued(3));
+    mockPrisma.adultMemberHostingPolicy.findMany.mockResolvedValue([
+      SCOPE_ON_POLICY,
+    ]);
+    expect((await callRoute()).bookings[0].adultCoverSource).toEqual(STALE);
+
+    // ENFORCED lodges always queued from every seam, so the same stamp vouches.
+    mockPrisma.adultMemberHostingPolicy.findMany.mockResolvedValue([
+      ENFORCED_POLICY,
+    ]);
+    expect((await callRoute()).bookings[0].adultCoverSource).toEqual(
+      SIBLING_FIGURES,
+    );
+
+    // A canonical re-evaluation rewrites the stamp, and review-only shows it.
+    mockPrisma.adultMemberHostingPolicy.findMany.mockResolvedValue([
+      SCOPE_ON_POLICY,
+    ]);
+    day(siblingCoveredReview(3));
     expect((await callRoute()).bookings[0].adultCoverSource).toEqual(
       SIBLING_FIGURES,
     );

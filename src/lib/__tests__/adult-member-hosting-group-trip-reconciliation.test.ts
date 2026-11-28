@@ -79,7 +79,10 @@ import {
   HOSTING_COVERAGE_MEMBER_FANOUT_LIMIT,
   hostingCoverageMemberAttendanceWhere,
 } from "@/lib/adult-member-hosting-member-fanout";
-import { readStoredGroupTripCoverFreshness } from "@/lib/adult-member-hosting-stored-review";
+import {
+  groupTripCoverStampIsTrustedAt,
+  readStoredGroupTripCoverFreshness,
+} from "@/lib/adult-member-hosting-stored-review";
 import { kioskPendingReevaluationWhere } from "@/lib/kiosk-group-trip";
 import { CENSUS_TIMEOUT_MS } from "@/test/census-timeout";
 
@@ -1100,10 +1103,10 @@ describe("a membership standing change fans out to the trip (#3039, the third se
   });
 
   it("still invalidates when the ceiling binds at a lodge that queues nothing", async () => {
-    // The early return for "no enforcing lodge" is a path that returns too.
+    // The early return for "no active lodge" is a path that returns too.
     const { db, queued, revisionBumps } = makeStore(
       [...earlierStays(HOSTING_COVERAGE_MEMBER_FANOUT_LIMIT), ...tripRows()],
-      { policies: [policyRow({ mode: "ADMIN_REVIEW_REQUIRED" })] },
+      { policies: [policyRow({ mode: "DISABLED" })] },
     );
     await enqueueHostingCoverageReevaluationForMember("adult-source", db, TODAY);
     expect(queued).toEqual([]);
@@ -1461,6 +1464,10 @@ describe("what the kiosk relies on from the fan-out and the evaluator (#5239, IN
       readStoredGroupTripCoverFreshness(stored),
       "INV-HOST-045: the snapshot records the trip revision it was evaluated under",
     ).toEqual({ groupBookingId: TRIP, revision: 3 });
+    expect(
+      groupTripCoverStampIsTrustedAt(stored, "ADMIN_REVIEW_REQUIRED"),
+      "INV-HOST-045: a stamp written now vouches at a review-only lodge, whose seams queue too",
+    ).toBe(true);
     expect(
       (stored as { requirements: { qualifyingHostsByNight: unknown } })
         .requirements.qualifyingHostsByNight,
