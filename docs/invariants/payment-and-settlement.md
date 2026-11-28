@@ -397,14 +397,15 @@ the rule: it names sibling IDs so a change to one prompts checking the others.
   policy-retained or credit-settled reduction. Nothing repairs either
   automatically (owner, 8 Sep 2026).
 
-  **An Internet Banking price increase is an EXPECTED positive**, because it is
-  billed on a supplementary Xero invoice and raises no ADDITIONAL
-  `PaymentTransaction` for the ask term to see. Invoicing one by hand would bill
-  the member twice. A term reading the Xero outbox was considered and rejected:
-  it would make this identity depend on an external queue's state, where
-  "queued", "failed" and "sent" are three different answers to "is the club
-  asking for this?" that only a person can weigh. The operator guide
-  ([`MAINTENANCE.md`](../MAINTENANCE.md)) says so at the point of use.
+  **An Internet Banking increase is billed in Xero, not asked by a term**: its
+  invoice raises no ADDITIONAL `PaymentTransaction`, and invoicing it by hand
+  bills the member twice. The identity reads no outbox; the verdict does
+  (#5288). A positive residual on an Internet Banking payment whose primary
+  invoice is linked, whose primary or supplementary invoice link is active, or
+  whose such create is PENDING or RUNNING is `billedInXero`, listed apart
+  (`bookingBilledInXero`, one list, both forms). FAILED or
+  no evidence stays `unasked`; [INV-PAY-163] asks an unlinked one.
+  [`MAINTENANCE.md`](../MAINTENANCE.md) tells the operator.
 
   **WHAT THE CI HALF GUARDS, EXACTLY** (`src/lib/__tests__/booking-ledger-census.test.ts`).
   It is two guards, and conflating them overstates both. The ARITHMETIC guard
@@ -1728,6 +1729,8 @@ refunded total it corrects).
   just before them is unmeasured, and a create finding one's link hands any
   gap to the treasurer. The credit election changes no price. No payment row,
   no claim.
+- **An unlinked Internet Banking increase** has the door queue the primary
+  invoice after commit; the claim keeps its fee there once (`INV-PAY-163`).
 - Pinned by `primary-invoice-edit-race.realdb.test.ts`,
   `primary-invoice-claim-call-sites.test.ts`,
   `xero-primary-invoice-fee-gap.test.ts` and
@@ -4566,3 +4569,41 @@ Xero note mints one when spent), **`INV-CONFIG-008`** (the Exempt line).
 - Proven by `opening-credit-csv.test.ts`, `opening-credit-batch.test.ts`,
   `opening-credit-routes.test.ts`, `goodwill-write-off-account.test.ts` and
   `opening-credit-batch.realdb.test.ts`.
+
+## INV-PAY-163
+
+**Related:** **`INV-PAY-047`** (the census verdict), **`INV-PAY-119`** (worth,
+and what the primary invoice bills), **`INV-PAY-136`** (the edit's claim),
+**`INV-MOD-042`** (the fee).
+
+- **An unlinked Internet Banking increase is asked for and billed on the
+  primary invoice** (#5288; owner, 20 and 28 Nov 2026): a paid Internet
+  Banking booking that credit paid in full, no primary invoice linked.
+- **Who.** `mayBillIncreaseOnNewPrimaryInvoice`
+  (`primary-invoice-bills-increase.ts`): an increase, no card ask, settled
+  status, captured payment status, Internet Banking source, no invoice link,
+  no bank cash recorded, not settled outside the app, not an organiser's
+  place. Bank cash stays `unasked`, for the treasurer: the invoice would bill
+  that transfer again.
+- **The ask.** `primaryInvoiceDueCents`: what that invoice will show as due,
+  price plus every recorded fee less the applied credit the allocation engine
+  allocates (`unallocatedAppliedCents`), never one edit's increase. Nothing
+  due: no ask, no invoice. The "Booking Modified" email says "The amount now
+  due on this booking is $X by Internet Banking. This replaces any earlier
+  amount we asked for." (`internetBankingAskSentence`), with the payment
+  reference; a linked booking's edit keeps "additional". Nothing is minted.
+- **The bill.** After commit, the edit queues the primary invoice, unemailed
+  (`XERO_INVOICE_EMAIL_ASKED_BY_EDIT`: Xero's email precedes the allocation
+  and would show the gross), then the applied-credit allocation, only behind
+  an invoice operation. Never a supplementary invoice without a link. With
+  Xero off nothing is queued, F20's $0 invoice included; the email still goes
+  (`INV-INT-040`).
+- **Once.** The edit's claim on the unlinked row (`INV-PAY-136`) puts its fee
+  on that invoice or, where its create read the booking first, on the one gap
+  invoice the create raises. A later, linked edit gets its own supplementary
+  invoice.
+- **Locks.** None new: the credit read runs after the edit's locks, the
+  enqueues after commit.
+- Pinned by `ib-unlinked-fee-ask.realdb.test.ts`,
+  `booking-primary-invoice-claim.test.ts`,
+  `xero-booking-edit-settlement.test.ts` and `booking-ledger-census.test.ts`.

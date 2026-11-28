@@ -140,7 +140,12 @@ payment we asked for has been cancelled, so you no longer need to pay it."
 booking the club asks by card it reads "An additional payment of $X is
 required.", also while the card request waits to be retried; on a booking paid
 by internet banking it names an Internet Banking payment against the Xero
-invoice; any other amount still to pay is named without a method (#4052).
+invoice; any other amount still to pay is named without a method (#4052). On a
+booking paid with account credit whose Xero invoice is not linked yet, the
+change raises that invoice, and the sentence reads "The amount now due on this
+booking is $X by Internet Banking. This replaces any earlier amount we asked
+for.": $X is the whole amount the invoice will show as due, so a member edited
+twice is told one figure, not two to add up (#5288).
 
 `{{paymentNote}}` on the **Your Request Was Approved** message (an approved
 booking-rule exception that created a new booking) says what is left to pay, and

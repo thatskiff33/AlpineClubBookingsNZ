@@ -11,21 +11,39 @@
  */
 import { describe, expect, it } from "vitest";
 import {
+  XERO_INVOICE_EMAIL_ASKED_BY_EDIT,
   XERO_INVOICE_EMAIL_SEND,
   XERO_INVOICE_EMAIL_WITHHELD_AT_CREATION,
   readXeroInvoiceEmailInstruction,
   xeroInvoiceEmailInstructionForNotifyChoice,
+  xeroInvoiceEmailIsAskedByEdit,
   xeroInvoiceEmailIsWithheldAtCreation,
 } from "@/lib/xero-invoice-email-instruction";
 
 describe("readXeroInvoiceEmailInstruction", () => {
-  it("round-trips both values this application writes", () => {
+  it("round-trips every value this application writes", () => {
     expect(readXeroInvoiceEmailInstruction(XERO_INVOICE_EMAIL_SEND)).toBe(
       XERO_INVOICE_EMAIL_SEND,
     );
     expect(
       readXeroInvoiceEmailInstruction(XERO_INVOICE_EMAIL_WITHHELD_AT_CREATION),
     ).toBe(XERO_INVOICE_EMAIL_WITHHELD_AT_CREATION);
+    // #5288: the booking edit that raised the invoice asked the member itself.
+    expect(readXeroInvoiceEmailInstruction(XERO_INVOICE_EMAIL_ASKED_BY_EDIT)).toBe(
+      XERO_INVOICE_EMAIL_ASKED_BY_EDIT,
+    );
+  });
+
+  it("keeps the edit's own ask apart from the officer's withhold (#5288)", () => {
+    // Two reasons, two questions: only the officer's choice writes a withheld
+    // row, and only the edit's ask stops the email being considered at all.
+    expect(xeroInvoiceEmailIsAskedByEdit(XERO_INVOICE_EMAIL_ASKED_BY_EDIT)).toBe(true);
+    expect(xeroInvoiceEmailIsWithheldAtCreation(XERO_INVOICE_EMAIL_ASKED_BY_EDIT)).toBe(false);
+    for (const other of [XERO_INVOICE_EMAIL_SEND, XERO_INVOICE_EMAIL_WITHHELD_AT_CREATION, null] as const) {
+      expect(xeroInvoiceEmailIsAskedByEdit(other)).toBe(false);
+    }
+    // An unrecognised spelling cannot become one: it does not get past the parse.
+    expect(xeroInvoiceEmailIsAskedByEdit(readXeroInvoiceEmailInstruction("asked_by_edit"))).toBe(false);
   });
 
   it("reads NULL as no instruction — the honest state of every pre-#2929 row", () => {

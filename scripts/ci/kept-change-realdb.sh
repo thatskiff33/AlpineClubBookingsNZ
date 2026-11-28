@@ -29,6 +29,8 @@ files=(
   src/lib/__tests__/additional-capture-receipt-legs.realdb.test.ts
   src/lib/__tests__/primary-invoice-edit-race.realdb.test.ts
   src/lib/__tests__/unpaid-edit-change-fee-owed.realdb.test.ts
+  # #5288: an unlinked Internet Banking booking's edit increase is asked for.
+  src/lib/__tests__/ib-unlinked-fee-ask.realdb.test.ts
   src/lib/__tests__/price-preserving-edit-preview-save.realdb.test.ts
   src/lib/__tests__/edit-quoted-figures.realdb.test.ts
   # #4930: exercise reconciliation, cancellation and group settlement after

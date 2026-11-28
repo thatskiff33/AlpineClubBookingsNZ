@@ -42,8 +42,8 @@ export interface XeroSyncOperationInput {
   requestPayload?: unknown;
   /**
    * The creation-time Xero-invoice-email delivery instruction for this
-   * operation (#2929), or absent where the enqueuer has no such choice to
-   * express — which is every enqueuer but the on-behalf booking create.
+   * operation (#2929), or absent where the enqueuer has none to record: every
+   * one but the on-behalf booking create and #5288's edit (`ASKED_BY_EDIT`).
    *
    * Written once here and NEVER updated afterwards, for the same reason
    * `queueType` is: the handlers that rewrite `requestPayload` wholesale would

@@ -77,6 +77,7 @@ import {
   isAdditionalAmountUncollected,
 } from "@/lib/additional-payment-chase";
 import { CAPTURED_PAYMENT_STATUS_LIST } from "@/lib/booking-payment-state";
+import { bookingBilledInXeroSql } from "@/lib/booking-ledger-verdict";
 import { formatCents } from "@/lib/utils";
 import type { ClubFormat } from "@/lib/club-format";
 
@@ -588,26 +589,6 @@ export function bookingOutstandingCents(
 }
 
 /**
- * What a residual MEANS, named once so the guard, the operator census and the
- * docs cannot describe the same number three different ways.
- *
- * - `balanced` - the books add up.
- * - `unasked` - **the #3340 class**: money the price says is owed that nothing is
- *   asking for. A guard failure, always.
- * - `retained` - the club holds more than the price. Expected after a
- *   policy-tiered reduction (`INV-MOD-011` keeps a slice) or a reduction settled
- *   as account credit, so it is REPORTED to an operator and never failed.
- */
-export type BookingLedgerVerdict = "balanced" | "unasked" | "retained";
-
-export function bookingLedgerVerdict(
-  residualCents: number,
-): BookingLedgerVerdict {
-  if (residualCents === 0) return "balanced";
-  return residualCents > 0 ? "unasked" : "retained";
-}
-
-/**
  * The guard's failure message, built here so the invariant id travels with the
  * arithmetic rather than being retyped at each assertion (`AGENTS.md`, "Keeping
  * the table usable": a guard names the id it enforces).
@@ -664,7 +645,8 @@ export const BOOKING_LEDGER_CENSUS_CAPTURED_PAYMENT_STATUSES =
 
 /**
  * The whole operator-run census as a single read-only SELECT: every live booking
- * with a captured payment whose residual is not zero, with each term beside it.
+ * with a captured payment whose residual is not zero, with each term beside it
+ * and whether it is billed in Xero (`bookingBilledInXeroSql`, #5288).
  * REPORT ONLY - it never writes, and the owner's 8 Sep 2026 decision is that it
  * never repairs either. A human reads it and decides.
  */
@@ -686,7 +668,9 @@ export function bookingLedgerCensusSql(): string {
     '  p."creditAppliedCents",',
     '  p."additionalAmountCents",',
     '  p."additionalPaymentStatus",',
-    `  ${bookingLedgerResidualSql()} AS "residualCents"`,
+    '  p."source"                    AS "paymentSource",',
+    `  ${bookingLedgerResidualSql()} AS "residualCents",`,
+    `  ${bookingBilledInXeroSql()} AS "billedInXero"`,
     'FROM "Booking" b',
     'JOIN "Payment" p ON p."bookingId" = b."id"',
     'WHERE b."deletedAt" IS NULL',
