@@ -76,6 +76,7 @@ import { PartnerLinkSection } from "@/app/(authenticated)/profile/partner-link-s
 import { ProfileForm } from "@/components/profile/profile-form";
 import { TwoFactorVerifyPanel } from "@/app/(public)/login/two-factor-panels";
 import { OrganiserGroupBookingCard } from "@/components/group-booking/organiser-group-booking-card";
+import { FamilyGroupSection } from "@/components/profile/family-group-section";
 
 type Reply = { ok: boolean; body: unknown };
 
@@ -356,6 +357,22 @@ describe.each(REPLY_SPEEDS)("a control disabled while busy keeps focus ($speed r
     await press(button);
     await screen.findByText(REFUSAL);
     await expectToHoldFocus(button, "Settle group total");
+  });
+
+  it("family-group join request that is refused", async () => {
+    installFetch(
+      { ok: false, body: { error: REFUSAL } },
+      { delayMs, load: { invitations: [], familyMembers: [], pendingRequests: [] } },
+    );
+    render(<FamilyGroupSection familyGroups={[]} canManage />);
+    fireEvent.click(screen.getByRole("button", { name: /Request to Join a Family Group/ }));
+    fireEvent.change(screen.getByLabelText(/Member's email address/), {
+      target: { value: "member@example.org" },
+    });
+    const button = screen.getByRole("button", { name: "Send Request" });
+    await press(button);
+    await screen.findByText(REFUSAL);
+    await expectToHoldFocus(button, "Send Request");
   });
 
   it("profile save that is refused", async () => {
