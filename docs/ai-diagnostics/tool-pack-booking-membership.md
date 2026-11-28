@@ -1359,7 +1359,9 @@ for a stored `@db.Date` calendar day, which takes no timezone at all. Both go
 through one rule: a season starts on the first of the month **after** the club's
 financial year-end, which is April for the NZ 31-March convention and is
 club-configurable through `financialYearEndMonth`. So from 1 January until the
-season starts, the season year is the **previous** calendar year.
+season starts, the season year is the **previous** calendar year. Since #5259
+both take that year-end month as a required argument: the pack resolves it from
+stored state and refuses when it cannot, rather than reading a process cache.
 
 They replaced a single `getSeasonYear(date)` in `utils.ts` that read its argument's
 **host-local** month, so it answered from the container rather than the club — and

@@ -345,6 +345,10 @@ rather than reaching for a module kept alive for that purpose.
   column value, which takes NO zone and refuses a value carrying a UTC time of
   day. `getSeasonYear` was deleted rather than repaired, so the typechecker
   enumerated every call site instead of leaving the wrong ones silently green.
+  #5259 did the same to the year-end: both now REQUIRE the club's resolved
+  year-end month (`clubSeasonYear(zone, clock, yearEndMonth)`,
+  `seasonYearOfStoredDate(value, yearEndMonth)`) rather than defaulting to a
+  process cache that answers March until something seeds it.
 
   That second one is **now closed on both paths, and how it was reported is the
   part worth keeping.** The pricing engine decodes a stored calendar day in UTC
