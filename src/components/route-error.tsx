@@ -8,6 +8,7 @@ import { AlertTriangle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   ROUTE_GROUP_BOUNDARIES,
+  type RouteGroupBoundary,
   type RouteGroupKey,
 } from "@/lib/route-group-boundaries";
 
@@ -63,7 +64,10 @@ export function routeErrorDigest(error: unknown): string | undefined {
  * what happened rather than left on a control that no longer exists.
  */
 export function RouteError({ error, retry, area }: RouteErrorProps) {
-  const { homeHref, homeLabel } = ROUTE_GROUP_BOUNDARIES[area];
+  const boundary: RouteGroupBoundary = ROUTE_GROUP_BOUNDARIES[area];
+  const { homeHref, homeLabel } = boundary;
+  // Under a layout that owns the screen's h1, the failure is a section of it.
+  const Heading = boundary.layoutOwnsH1 ? "h2" : "h1";
   const digest = routeErrorDigest(error);
   const headingRef = useRef<HTMLHeadingElement>(null);
 
@@ -88,13 +92,13 @@ export function RouteError({ error, retry, area }: RouteErrorProps) {
       <span className="flex h-12 w-12 items-center justify-center rounded-full bg-muted text-muted-foreground">
         <AlertTriangle aria-hidden="true" className="h-6 w-6" />
       </span>
-      <h1
+      <Heading
         ref={headingRef}
         tabIndex={-1}
         className="mt-4 text-2xl font-semibold text-foreground focus:outline-none"
       >
         Something went wrong
-      </h1>
+      </Heading>
       <p className="mt-3 text-sm text-muted-foreground">
         This page could not be shown. Try again, or go back and carry on from
         there. If it keeps happening, let the club know

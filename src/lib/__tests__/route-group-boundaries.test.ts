@@ -25,6 +25,7 @@ import { CENSUS_TIMEOUT_MS } from "@/test/census-timeout";
  *     render with the group's chrome around it and catch all of its pages;
  *   - the `error.tsx` there is missing, is not the shared `RouteError`, names a
  *     different group, or wires Next's `reset` instead of `retry`;
+ *   - `layoutOwnsH1` disagrees with whether the layout renders an `<h1>`;
  *   - a group without a `loadingExemptReason` lacks its `loading.tsx`, a group
  *     WITH one has quietly gained one (anywhere in the group, unless the reason
  *     is marked root-only), or any `loading.tsx` anywhere skips the accessible
@@ -138,6 +139,16 @@ describe("route-group boundaries census (#4467)", () => {
       // `reset` re-renders the payload the client already holds; for a Server
       // Component error that is the same failure, so it must not be the wiring.
       expect(text).not.toMatch(/\breset\b/);
+    });
+
+    it("says whether its layout owns the h1 exactly when the layout renders one", () => {
+      // The error heading is an h2 under such a layout and the h1 otherwise
+      // (#5216), so a layout that gains or loses its h1 must change the table.
+      const layoutRendersH1 = /<h1\b/.test(code(`${boundaryDir}/layout.tsx`));
+      expect(
+        entry.layoutOwnsH1 === true,
+        `${boundaryDir}/layout.tsx ${layoutRendersH1 ? "renders" : "does not render"} an <h1>; set layoutOwnsH1 to match`,
+      ).toBe(layoutRendersH1);
     });
 
     it("has no second error.tsx above the boundary, outside the group's layout", () => {

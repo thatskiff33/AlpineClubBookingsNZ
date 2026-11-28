@@ -65,6 +65,12 @@ export type RouteGroupBoundary = {
    * keep theirs. Without it, no folder in the group may have one.
    */
   loadingExemptAtRootOnly?: true;
+  /**
+   * Set when the group's layout already renders the screen's one `<h1>` above
+   * the boundary, so the error heading must sit under it as an `<h2>` rather
+   * than add a second `<h1>` (`INV-PUB-006`, #5216).
+   */
+  layoutOwnsH1?: true;
 };
 
 export const ROUTE_GROUP_BOUNDARIES = {
@@ -91,6 +97,7 @@ export const ROUTE_GROUP_BOUNDARIES = {
     boundaryDir: "(finance)/finance",
     homeHref: "/finance",
     homeLabel: "Back to the finance dashboard",
+    layoutOwnsH1: true,
   },
   lodge: {
     group: "(lodge)",
