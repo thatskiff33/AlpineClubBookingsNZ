@@ -273,40 +273,20 @@ const buildAdminNavSections = (clubToday: CalendarDate): NavSection[] => [
   {
     label: "Lodge Operations",
     items: [
-      { href: "/admin/hut-leaders", label: "Hut Leaders", icon: UserCheck },
+      { ...adminLink("hut-leaders"), icon: UserCheck },
       { ...adminLink("roster"), icon: ClipboardList },
-      {
-        href: "/admin/lodge",
-        label: "Lodge Kiosk",
-        icon: Tablet,
-      },
-      {
-        href: "/admin/calendar",
-        label: "Calendar",
-        icon: CalendarDays,
-      },
-      { href: "/admin/work-parties", label: "Work Parties", icon: Hammer },
-      {
-        href: "/admin/lodge-instructions",
-        label: "Lodge Instructions",
-        icon: BookOpen,
-      },
-      {
-        // Maintenance reports (#2780). No explicit flag needed:
-        // `isFeatureHrefVisible` derives visibility from the href against
-        // FEATURE_ROUTE_RULES, and "/admin/maintenance-reports" is registered
-        // under the `maintenanceReports` rule — so with the module off this entry
-        // disappears from the sidebar, matching the 404 the route returns.
-        href: "/admin/maintenance-reports",
-        label: "Lodge Maintenance",
-        icon: Wrench,
-      },
-      {
-        // Food orders (fork triyder/AlpineClubBookingsNZ#121): hidden with the `foodOrders` module, like the entry above.
-        href: "/admin/food-orders",
-        label: "Food Orders",
-        icon: ShoppingBasket,
-      },
+      { ...adminLink("lodge-kiosk"), icon: Tablet },
+      { ...adminLink("calendar"), icon: CalendarDays },
+      { ...adminLink("work-parties"), icon: Hammer },
+      { ...adminLink("lodge-instructions"), icon: BookOpen },
+      // Maintenance reports (#2780). No explicit flag needed:
+      // `isFeatureHrefVisible` derives visibility from the href against
+      // FEATURE_ROUTE_RULES, and the page's paths are registered under the
+      // `maintenanceReports` rule — so with the module off this entry
+      // disappears from the sidebar, matching the 404 the route returns.
+      { ...adminLink("maintenance-reports"), icon: Wrench },
+      // Food orders (fork triyder/AlpineClubBookingsNZ#121): hidden with the `foodOrders` module, like the entry above.
+      { ...adminLink("food-orders"), icon: ShoppingBasket },
       // Lobby Display (fork issue hoppers99/AlpineClubBookingsNZ#109): one Lodge Operations entry opens the
       // hub landing page (/admin/display), which lays out cards for Devices,
       // Layouts, Templates, and Reference rather than scattering its leaves

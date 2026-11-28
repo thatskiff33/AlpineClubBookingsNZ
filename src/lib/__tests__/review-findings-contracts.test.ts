@@ -4077,7 +4077,7 @@ describe("review finding source/schema contracts", () => {
     // #2188 P2 DELETED that remap and migrated the door code (hut-leaders page)
     // onto `text-foreground` at source, which is legible in BOTH modes by
     // construction — the same guarantee, now correct-at-source, not by shim.
-    const hutLeaders = readRepoFile("src/app/(admin)/admin/hut-leaders/page.tsx");
+    const hutLeaders = readRepoFile("src/app/(admin)/admin/lodge-ops/hut-leaders/page.tsx");
     // The prominent mono door-code line renders on the semantic foreground token.
     expect(hutLeaders).toMatch(/font-mono[^"]*text-foreground/);
     // And it must NOT have reverted to a raw darkest-neutral tier.

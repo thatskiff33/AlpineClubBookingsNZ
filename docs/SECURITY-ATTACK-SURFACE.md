@@ -290,6 +290,14 @@ These family rules are enforced by automated tests (issue #1132):
   later) runs before the proxy and nothing is served at its URL. `admin-route-area-matrix.test.ts` keeps each one's former area and
   checks its destination admits on the same area, bar the one reviewed change
   (`/admin/setup/cancellation`, `support`, now a `membership` tab: narrower).
+  The Lodge hub (C11 #4808) sits under `/admin/lodge-ops`, not `/admin/lodge`:
+  of the admin pages, the `kiosk` module gate covers the kiosk alone, at
+  `/admin/lodge` and `/admin/lodge-ops/lodge`, and because every prefix matches
+  at a segment boundary, `/admin/lodge-ops` and its other pages never match
+  `/admin/lodge`. The gate's other prefixes (`/api/admin/lodge`, `/lodge`,
+  `/api/lodge`) did not move.
+  The census pins this, Lockers' `membership` admission and Rooms & Beds'
+  lodge-or-bookings admission at both paths.
 
 ### Public or Provider-Signed Exceptions
 

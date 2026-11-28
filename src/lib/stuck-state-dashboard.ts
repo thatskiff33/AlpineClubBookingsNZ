@@ -813,7 +813,7 @@ async function addLodgeItems(
     severity: "warning",
     owner: "Lodge",
     count: unassignedDates.length,
-    href: "/admin/hut-leaders",
+    href: adminHref("hut-leaders"),
     summary: `${unassignedDates.length} upcoming ${plural(
       unassignedDates.length,
       unassignedNoun,
