@@ -71,6 +71,7 @@ import { LoginForm } from "@/app/(public)/login/login-form";
 import { TwoFactorSecurityCard } from "@/app/(authenticated)/profile/two-factor-security-card";
 import { PartnerLinkSection } from "@/app/(authenticated)/profile/partner-link-section";
 import { ProfileForm } from "@/components/profile/profile-form";
+import { TwoFactorVerifyPanel } from "@/app/(public)/login/two-factor-panels";
 
 type Reply = { ok: boolean; body: unknown };
 
@@ -298,6 +299,15 @@ describe.each(REPLY_SPEEDS)("a control disabled while busy keeps focus ($speed r
     await press(button);
     await screen.findByText(REFUSAL);
     await expectToHoldFocus(button, "Send partner request");
+  });
+
+  it("sign-in email code that sends", async () => {
+    installFetch({ ok: true, body: {} }, { delayMs });
+    render(<TwoFactorVerifyPanel callbackUrl="/dashboard" enrolledMethod="EMAIL" />);
+    const button = screen.getByRole("button", { name: "Send email code" });
+    await press(button);
+    await waitFor(() => expect(button).toHaveTextContent("Send another code"));
+    await expectToHoldFocus(button, "Send another code");
   });
 
   it("profile save that is refused", async () => {
