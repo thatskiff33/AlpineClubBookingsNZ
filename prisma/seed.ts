@@ -12,6 +12,7 @@ import {
 import { CLUB_TIME_SETTINGS_ID } from "../src/lib/club-time-zone";
 import { requireClubTimeZone } from "../src/lib/club-time";
 import { clubSeasonYear } from "../src/lib/financial-year";
+import { refreshFinancialYearConfig } from "../src/lib/financial-year-server";
 import { decideClubTimeZoneBackfill } from "../src/lib/config-self-heal-steps";
 import { slugifyLodgeName } from "../src/lib/lodges";
 import { CLUB_CONFIG_LODGE_CAPACITY } from "../src/lib/lodge-capacity";
@@ -420,10 +421,13 @@ async function main() {
     where: { id: CLUB_TIME_SETTINGS_ID },
     select: { timeZone: true },
   });
+  const seedYearEndMonth = await refreshFinancialYearConfig();
   const seedClubSeasonYear = clubSeasonYear(
     requireClubTimeZone(
       seededClubTimeZone?.timeZone ?? clubTimeZoneBackfill.timeZone,
     ),
+    undefined,
+    seedYearEndMonth,
   );
 
   if (clubTimeZoneBackfill.kind === "defaulted") {

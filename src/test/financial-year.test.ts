@@ -52,23 +52,21 @@ describe("getSeasonStartMonth", () => {
 // The zone-aware half is `clubSeasonYear`, in `club-season-year.test.ts`.
 describe("seasonYearOfStoredDate with a configurable year-end", () => {
   it("matches the March default (April -> current year, March -> previous)", () => {
-    expect(seasonYearOfStoredDate(new Date("2026-04-01"))).toBe(2026);
-    expect(seasonYearOfStoredDate(new Date("2026-12-15"))).toBe(2026);
-    expect(seasonYearOfStoredDate(new Date("2026-03-31"))).toBe(2025);
+    expect(seasonYearOfStoredDate(new Date("2026-04-01"), 3)).toBe(2026);
+    expect(seasonYearOfStoredDate(new Date("2026-12-15"), 3)).toBe(2026);
+    expect(seasonYearOfStoredDate(new Date("2026-03-31"), 3)).toBe(2025);
   });
 
   it("handles a June year-end (season starts July)", () => {
-    __setFinancialYearEndMonthForTesting(6);
-    expect(seasonYearOfStoredDate(new Date("2026-07-01"))).toBe(2026); // start boundary
-    expect(seasonYearOfStoredDate(new Date("2026-12-31"))).toBe(2026);
-    expect(seasonYearOfStoredDate(new Date("2026-06-30"))).toBe(2025); // last day of season
+    expect(seasonYearOfStoredDate(new Date("2026-07-01"), 6)).toBe(2026); // start boundary
+    expect(seasonYearOfStoredDate(new Date("2026-12-31"), 6)).toBe(2026);
+    expect(seasonYearOfStoredDate(new Date("2026-06-30"), 6)).toBe(2025); // last day of season
   });
 
   it("handles a December year-end (calendar-year financial year)", () => {
-    __setFinancialYearEndMonthForTesting(12);
-    expect(seasonYearOfStoredDate(new Date("2026-01-01"))).toBe(2026);
-    expect(seasonYearOfStoredDate(new Date("2026-12-31"))).toBe(2026);
-    expect(seasonYearOfStoredDate(new Date("2027-01-01"))).toBe(2027);
+    expect(seasonYearOfStoredDate(new Date("2026-01-01"), 12)).toBe(2026);
+    expect(seasonYearOfStoredDate(new Date("2026-12-31"), 12)).toBe(2026);
+    expect(seasonYearOfStoredDate(new Date("2027-01-01"), 12)).toBe(2027);
   });
 });
 

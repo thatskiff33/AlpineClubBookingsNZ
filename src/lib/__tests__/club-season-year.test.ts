@@ -92,23 +92,21 @@ afterEach(() => {
 
 describe("seasonYearOfCalendarDate", () => {
   it("puts the season start month and everything after it in the current year", () => {
-    expect(seasonYearOfCalendarDate(requireCalendarDate("2026-04-01"))).toBe(2026);
-    expect(seasonYearOfCalendarDate(requireCalendarDate("2026-12-31"))).toBe(2026);
+    expect(seasonYearOfCalendarDate(requireCalendarDate("2026-04-01"), 3)).toBe(2026);
+    expect(seasonYearOfCalendarDate(requireCalendarDate("2026-12-31"), 3)).toBe(2026);
   });
 
   it("puts the months before the season start in the previous year", () => {
-    expect(seasonYearOfCalendarDate(requireCalendarDate("2026-03-31"))).toBe(2025);
-    expect(seasonYearOfCalendarDate(requireCalendarDate("2026-01-01"))).toBe(2025);
+    expect(seasonYearOfCalendarDate(requireCalendarDate("2026-03-31"), 3)).toBe(2025);
+    expect(seasonYearOfCalendarDate(requireCalendarDate("2026-01-01"), 3)).toBe(2025);
   });
 
-  it("follows the club's configured year-end month", () => {
-    __setFinancialYearEndMonthForTesting(6);
-    expect(seasonYearOfCalendarDate(requireCalendarDate("2026-07-01"))).toBe(2026);
-    expect(seasonYearOfCalendarDate(requireCalendarDate("2026-06-30"))).toBe(2025);
+  it("follows the explicitly supplied year-end month", () => {
+    expect(seasonYearOfCalendarDate(requireCalendarDate("2026-07-01"), 6)).toBe(2026);
+    expect(seasonYearOfCalendarDate(requireCalendarDate("2026-06-30"), 6)).toBe(2025);
 
-    __setFinancialYearEndMonthForTesting(12);
-    expect(seasonYearOfCalendarDate(requireCalendarDate("2026-01-01"))).toBe(2026);
-    expect(seasonYearOfCalendarDate(requireCalendarDate("2025-12-31"))).toBe(2025);
+    expect(seasonYearOfCalendarDate(requireCalendarDate("2026-01-01"), 12)).toBe(2026);
+    expect(seasonYearOfCalendarDate(requireCalendarDate("2025-12-31"), 12)).toBe(2025);
   });
 
   it("takes an explicit year-end month over the process cache", () => {
@@ -123,11 +121,11 @@ describe("seasonYearOfCalendarDate", () => {
     for (const host of HOSTS) {
       withTimeZone(host, () => {
         expect(
-          seasonYearOfCalendarDate(requireCalendarDate("2026-04-01")),
+          seasonYearOfCalendarDate(requireCalendarDate("2026-04-01"), 3),
           `season year of 2026-04-01 under host ${host}`,
         ).toBe(2026);
         expect(
-          seasonYearOfCalendarDate(requireCalendarDate("2026-03-31")),
+          seasonYearOfCalendarDate(requireCalendarDate("2026-03-31"), 3),
           `season year of 2026-03-31 under host ${host}`,
         ).toBe(2025);
       });
@@ -137,8 +135,8 @@ describe("seasonYearOfCalendarDate", () => {
 
 describe("seasonYearOfStoredDate", () => {
   it("reads a @db.Date encoding as the calendar day it names", () => {
-    expect(seasonYearOfStoredDate(new Date("2026-04-01T00:00:00.000Z"))).toBe(2026);
-    expect(seasonYearOfStoredDate(new Date("2026-03-31T00:00:00.000Z"))).toBe(2025);
+    expect(seasonYearOfStoredDate(new Date("2026-04-01T00:00:00.000Z"), 3)).toBe(2026);
+    expect(seasonYearOfStoredDate(new Date("2026-03-31T00:00:00.000Z"), 3)).toBe(2025);
   });
 
   it("answers the same on every host — the encoding is defined in UTC", () => {
@@ -148,7 +146,7 @@ describe("seasonYearOfStoredDate", () => {
     for (const host of HOSTS) {
       withTimeZone(host, () => {
         expect(
-          seasonYearOfStoredDate(new Date("2026-04-01T00:00:00.000Z")),
+          seasonYearOfStoredDate(new Date("2026-04-01T00:00:00.000Z"), 3),
           `stored 2026-04-01 under host ${host}`,
         ).toBe(2026);
       });
@@ -159,30 +157,29 @@ describe("seasonYearOfStoredDate", () => {
     // `calendarDateOfDateOnlyInstant` silently floors a real timestamp to its UTC
     // day (#3076), which for a club east of Greenwich is right for most of the day
     // and therefore the hardest kind of wrong to notice.
-    expect(() => seasonYearOfStoredDate(new Date("2026-04-01T06:00:00.000Z"))).toThrow(
+    expect(() => seasonYearOfStoredDate(new Date("2026-04-01T06:00:00.000Z"), 3)).toThrow(
       /stored calendar day, not a moment/,
     );
-    expect(() => seasonYearOfStoredDate(new Date("2026-04-01T00:00:00.001Z"))).toThrow(
+    expect(() => seasonYearOfStoredDate(new Date("2026-04-01T00:00:00.001Z"), 3)).toThrow(
       /stored calendar day, not a moment/,
     );
   });
 
   it("names clubSeasonYear in the refusal, because that is what the caller wanted", () => {
-    expect(() => seasonYearOfStoredDate(new Date("2026-04-01T06:00:00.000Z"))).toThrow(
-      /clubSeasonYear\(zone\)/,
+    expect(() => seasonYearOfStoredDate(new Date("2026-04-01T06:00:00.000Z"), 3)).toThrow(
+      /clubSeasonYear\(zone, clock, yearEndMonth\)/,
     );
   });
 
   it("refuses an invalid Date instead of answering NaN", () => {
-    expect(() => seasonYearOfStoredDate(new Date("not a date"))).toThrow(
+    expect(() => seasonYearOfStoredDate(new Date("not a date"), 3)).toThrow(
       /valid Date holding a @db.Date/,
     );
   });
 
-  it("follows the club's configured year-end month", () => {
-    __setFinancialYearEndMonthForTesting(12);
-    expect(seasonYearOfStoredDate(new Date("2026-01-01T00:00:00.000Z"))).toBe(2026);
-    expect(seasonYearOfStoredDate(new Date("2025-12-31T00:00:00.000Z"))).toBe(2025);
+  it("follows the explicitly supplied year-end month", () => {
+    expect(seasonYearOfStoredDate(new Date("2026-01-01T00:00:00.000Z"), 12)).toBe(2026);
+    expect(seasonYearOfStoredDate(new Date("2025-12-31T00:00:00.000Z"), 12)).toBe(2025);
   });
 });
 
@@ -192,8 +189,8 @@ describe("clubSeasonYear — zone authority", () => {
     // Denver is still on 31 March, so the season years are a year apart. Any
     // implementation that ignores its `zone` argument fails both halves at once.
     const clock = fixedClubClock(SEASON_BOUNDARY);
-    expect(clubSeasonYear(AUCKLAND, clock)).toBe(2026);
-    expect(clubSeasonYear(DENVER, clock)).toBe(2025);
+    expect(clubSeasonYear(AUCKLAND, clock, 3)).toBe(2026);
+    expect(clubSeasonYear(DENVER, clock, 3)).toBe(2025);
   });
 
   it("gives the same pair of answers on every host", () => {
@@ -201,10 +198,10 @@ describe("clubSeasonYear — zone authority", () => {
     for (const host of HOSTS) {
       withTimeZone(host, () => {
         expect(
-          clubSeasonYear(AUCKLAND, clock),
+          clubSeasonYear(AUCKLAND, clock, 3),
           `Auckland club on host ${host}`,
         ).toBe(2026);
-        expect(clubSeasonYear(DENVER, clock), `Denver club on host ${host}`).toBe(
+        expect(clubSeasonYear(DENVER, clock, 3), `Denver club on host ${host}`).toBe(
           2025,
         );
       });
@@ -221,21 +218,20 @@ describe("clubSeasonYear — zone authority", () => {
       withTimeZone(host, () => {
         for (const zone of [AUCKLAND, DENVER]) {
           expect(
-            seasonYearOfStoredDate(dateOnlyInstantOf(clubToday(zone, clock))),
+            seasonYearOfStoredDate(dateOnlyInstantOf(clubToday(zone, clock)), 3),
             `${zone} club, host ${host}`,
-          ).toBe(clubSeasonYear(zone, clock));
+          ).toBe(clubSeasonYear(zone, clock, 3));
         }
       });
     }
   });
 
-  it("follows the club's configured year-end month", () => {
+  it("follows the explicitly supplied year-end month", () => {
     const clock = fixedClubClock(new Date("2026-07-01T00:00:00.000Z"));
-    __setFinancialYearEndMonthForTesting(6);
     // Auckland is on 1 July (the June year-end's first day of season 2026);
     // Denver is still on 30 June, the LAST day of season 2025.
-    expect(clubSeasonYear(AUCKLAND, clock)).toBe(2026);
-    expect(clubSeasonYear(DENVER, clock)).toBe(2025);
+    expect(clubSeasonYear(AUCKLAND, clock, 6)).toBe(2026);
+    expect(clubSeasonYear(DENVER, clock, 6)).toBe(2025);
   });
 });
 
@@ -255,7 +251,7 @@ describe("clubSeasonYear — the default clock", () => {
   });
 
   it("reads the clock when none is passed", () => {
-    expect(clubSeasonYear(AUCKLAND)).toBe(2026);
-    expect(clubSeasonYear(DENVER)).toBe(2025);
+    expect(clubSeasonYear(AUCKLAND, undefined, 3)).toBe(2026);
+    expect(clubSeasonYear(DENVER, undefined, 3)).toBe(2025);
   });
 });

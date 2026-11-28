@@ -72,22 +72,22 @@ describe("formatCentsPlain", () => {
 
 describe("seasonYearOfStoredDate", () => {
   it("returns current year for April", () => {
-    expect(seasonYearOfStoredDate(new Date("2026-04-15"))).toBe(2026);
+    expect(seasonYearOfStoredDate(new Date("2026-04-15"), 3)).toBe(2026);
   });
 
   it("returns current year for December", () => {
-    expect(seasonYearOfStoredDate(new Date("2026-12-15"))).toBe(2026);
+    expect(seasonYearOfStoredDate(new Date("2026-12-15"), 3)).toBe(2026);
   });
 
   it("returns previous year for January", () => {
-    expect(seasonYearOfStoredDate(new Date("2026-01-15"))).toBe(2025);
+    expect(seasonYearOfStoredDate(new Date("2026-01-15"), 3)).toBe(2025);
   });
 
   it("returns previous year for March", () => {
-    expect(seasonYearOfStoredDate(new Date("2026-03-31"))).toBe(2025);
+    expect(seasonYearOfStoredDate(new Date("2026-03-31"), 3)).toBe(2025);
   });
 
   it("returns current year for April 1 (boundary)", () => {
-    expect(seasonYearOfStoredDate(new Date("2026-04-01"))).toBe(2026);
+    expect(seasonYearOfStoredDate(new Date("2026-04-01"), 3)).toBe(2026);
   });
 });

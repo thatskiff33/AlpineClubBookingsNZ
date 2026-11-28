@@ -54,7 +54,8 @@
  * year-end reached the browser: a `"use client"` screen now names its seasons
  * through `useClubSeason()` from `@/components/club-season-provider`, which binds
  * the same derivation to the server-resolved year-end, so either import counts as
- * adoption below.
+ * adoption below. The underlying season-year derivations also require an
+ * explicit year-end; neither the year nor its label defaults to a process cache.
  *
  * ## The regex is self-checked, because a source scan that matches nothing is
  * indistinguishable from a source scan that passes
