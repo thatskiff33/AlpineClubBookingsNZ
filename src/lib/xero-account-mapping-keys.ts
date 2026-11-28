@@ -94,13 +94,15 @@ export type XeroAccountMappingDefinition = {
   readonly carriesItemCode?: true;
 };
 
+export const DEFAULT_HUT_FEE_ACCOUNT_CODE = "200";
+
 export const XERO_ACCOUNT_MAPPING_DEFINITIONS = [
   {
     key: "hutFeesIncome",
     label: "Hut Fees Income",
     description: "Sales account for booking income line items",
     accepts: [{ accountClass: "REVENUE", accountTypes: ["REVENUE"] }],
-    defaultCode: "200",
+    defaultCode: DEFAULT_HUT_FEE_ACCOUNT_CODE,
     carriesItemCode: true,
   },
   {
@@ -116,7 +118,7 @@ export const XERO_ACCOUNT_MAPPING_DEFINITIONS = [
       { accountClass: "REVENUE", accountTypes: ["REVENUE"] },
       { accountClass: "EXPENSE" },
     ],
-    defaultCode: "200",
+    defaultCode: DEFAULT_HUT_FEE_ACCOUNT_CODE,
     carriesItemCode: true,
   },
   {

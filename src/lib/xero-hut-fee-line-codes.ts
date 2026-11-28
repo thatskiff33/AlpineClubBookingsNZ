@@ -12,6 +12,7 @@
  * the caller (`getHutFeeItemCodeMap`, `getResolvedAccountMapping`).
  */
 import type { LineItem } from "xero-node";
+import { DEFAULT_HUT_FEE_ACCOUNT_CODE } from "@/lib/xero-account-mapping-keys";
 import {
   isHutFeeResolverConfigured,
   resolveHutFeeItemCode,
@@ -52,7 +53,7 @@ type RefundLineMapping = { itemCode?: string | null; code?: string | null; codeE
 export function hutFeeRefundLineCodes(mapping: RefundLineMapping): Pick<LineItem, "itemCode" | "accountCode"> {
   return applyHutFeeLineCodes({}, {
     itemCode: mapping.itemCode,
-    accountCode: mapping.code ?? "200",
+    accountCode: mapping.code ?? DEFAULT_HUT_FEE_ACCOUNT_CODE,
     accountCodeExplicitlyConfigured: mapping.codeExplicitlyConfigured,
   });
 }
@@ -89,7 +90,7 @@ export function applyHutFeeLineCodes(
   if (codes.itemCode) {
     lineItem.itemCode = codes.itemCode;
   }
-  if (!codes.itemCode || codes.accountCode !== "200" || codes.accountCodeExplicitlyConfigured) {
+  if (!codes.itemCode || codes.accountCode !== DEFAULT_HUT_FEE_ACCOUNT_CODE || codes.accountCodeExplicitlyConfigured) {
     lineItem.accountCode = codes.accountCode;
   }
   return lineItem;
@@ -115,7 +116,7 @@ export function resolvePromoLineCodes(context: {
       : hutFeeMapping.itemCode;
   return {
     itemCode: promo?.xeroItemCode ?? fallbackItemCode ?? null,
-    accountCode: promo?.xeroAccountCode ?? hutFeeMapping.code ?? "200",
+    accountCode: promo?.xeroAccountCode ?? hutFeeMapping.code ?? DEFAULT_HUT_FEE_ACCOUNT_CODE,
     accountCodeExplicitlyConfigured:
       promo?.xeroAccountCode != null || hutFeeMapping.codeExplicitlyConfigured,
   };
