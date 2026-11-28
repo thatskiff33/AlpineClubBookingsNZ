@@ -81,13 +81,18 @@ export type BookingImportConfirmResult =
   | { outcome: "stale"; plan: BookingImportPlan }
   /** The batch was reversed (#5005 child B); its file cannot be confirmed again. */
   | { outcome: "reversed"; batchId: string }
-  | { outcome: "completed"; batchId: string; rows: BookingImportRowResult[] };
+  /**
+   * This call finished its share. `remaining` counts the bookings still
+   * pending when `maxBookings` stopped it; the batch is COMPLETED at zero.
+   */
+  | { outcome: "completed"; batchId: string; rows: BookingImportRowResult[]; remaining: number };
 
 /**
  * Confirm a planned import. `digest` is the digest of the preview the officer
  * saw. Safe to run again with the same file: the batch key finds the batch,
  * decided rows are skipped, and each row's claim makes a concurrent confirm
- * write each booking once.
+ * write each booking once. `maxBookings` bounds one call, so a route can
+ * repeat it in slices until `remaining` is zero.
  */
 export async function confirmBookingImport(input: {
   lodgeId: string;
@@ -96,6 +101,7 @@ export async function confirmBookingImport(input: {
   officerMemberId: string;
   today: Date;
   format: ClubDateFormat;
+  maxBookings?: number;
 }): Promise<BookingImportConfirmResult> {
   const { lodgeId, bookings, officerMemberId, today, format } = input;
 
@@ -144,6 +150,7 @@ export async function confirmBookingImport(input: {
     where: { batchId, status: BookingImportRowStatus.PENDING },
     orderBy: { firstLineNumber: "asc" },
     select: { id: true, bookingRef: true },
+    ...(input.maxBookings === undefined ? {} : { take: input.maxBookings }),
   });
   for (const row of pending) {
     const booking = byRef.get(row.bookingRef);
@@ -202,6 +209,7 @@ export async function confirmBookingImport(input: {
   return {
     outcome: "completed",
     batchId,
+    remaining,
     rows: rows.map((row): BookingImportRowResult =>
       row.status === BookingImportRowStatus.IMPORTED && row.bookingId
         ? { bookingRef: row.bookingRef, outcome: "IMPORTED", bookingId: row.bookingId }

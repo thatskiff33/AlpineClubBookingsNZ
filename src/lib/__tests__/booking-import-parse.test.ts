@@ -6,6 +6,7 @@ import {
   parseBookingImportCsv,
   type ParsedImportBooking,
 } from "@/lib/booking-import/parse";
+import { inferBookingImportColumnMapping } from "@/lib/booking-import/columns";
 import { memberImportIdentityKey } from "@/lib/member-import-identity";
 
 const HEADER =
@@ -237,5 +238,35 @@ describe("parseBookingImportCsv", () => {
     });
     const tooMany = [HEADER, ...Array.from({ length: 501 }, () => row())].join("\n");
     expect(parseBookingImportCsv(tooMany)).toMatchObject({ ok: false });
+  });
+});
+
+describe("the officer's column mapping (#5005 child C)", () => {
+  // The old system's own headers, in another order, with one extra column.
+  const OLD_HEADER =
+    "Ref,Paid,Leaving,Arriving,Age,Guest Last,Guest First,Guest Mail,Kind,Owner Last,Owner First,Owner Mail,Branch";
+  const OLD_ROW = "B1,100.00,2026-08-12,2026-08-10,,Owner,Ann,ann@example.test,Member,Owner,Ann,ann@example.test,North";
+  const MAPPING = {
+    bookingRef: 0, amountPaid: 1, checkOut: 2, checkIn: 3, ageGroup: 4, guestLastName: 5, guestFirstName: 6,
+    guestEmail: 7, guestType: 8, ownerLastName: 9, ownerFirstName: 10, ownerEmail: 11,
+  } as const;
+
+  it("reads a file whose headers the import does not know, through the mapping, as it reads the standard file", () => {
+    const mapped = parseBookingImportCsv([OLD_HEADER, OLD_ROW].join("\n"), { columnMapping: MAPPING });
+    if (!mapped.ok) throw new Error(mapped.error);
+    expect(mapped.bookings).toEqual(parseBookings([row()]));
+    // Without the mapping the same file is missing every required column.
+    expect(parseBookingImportCsv([OLD_HEADER, OLD_ROW].join("\n"))).toMatchObject({ ok: false, error: expect.stringMatching(/^Missing columns: Booking Ref, /) });
+  });
+
+  it("refuses a mapping to a column the file lacks, one column mapped twice, or a required column left out", () => {
+    const text = [OLD_HEADER, OLD_ROW].join("\n");
+    expect(parseBookingImportCsv(text, { columnMapping: { ...MAPPING, notes: 13 } })).toEqual({ ok: false, error: '"Notes" is mapped to a column the file does not have' });
+    expect(parseBookingImportCsv(text, { columnMapping: { ...MAPPING, notes: 0 } })).toEqual({ ok: false, error: 'One file column is mapped to both "Booking Ref" and "Notes"' });
+    expect(parseBookingImportCsv(text, { columnMapping: { ...MAPPING, amountPaid: null } })).toEqual({ ok: false, error: "Missing column: Amount Paid" });
+  });
+
+  it("proposes the mapping the headers name, first column first", () => {
+    expect(inferBookingImportColumnMapping(["booking ref", "Notes", "Check In", "notes"])).toEqual({ bookingRef: 0, notes: 1, checkIn: 2 });
   });
 });

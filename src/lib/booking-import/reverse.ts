@@ -33,6 +33,7 @@ import {
 import { logAudit } from "@/lib/audit";
 import { cancelBooking } from "@/lib/booking-cancel";
 import { bookingStayHasStarted } from "@/lib/booking-edit-policy";
+import { splitBookingImportRefusals } from "@/lib/booking-import/plan";
 import { acquireLodgeCapacityLock } from "@/lib/capacity";
 import type { ClubFormat } from "@/lib/club-format";
 import { LOCK1_HOLDER_TRANSACTION_BUDGET } from "@/lib/db-transaction";
@@ -126,7 +127,10 @@ export type BookingImportReversalRow = {
   firstLineNumber: number;
   bookingId: string | null;
   state: BookingImportReversalRowState;
+  /** Why a TOUCHED booking is kept. */
   reasons: string[];
+  /** Why a NOT_IMPORTED booking was refused at import. */
+  refusals: string[];
   amountCents: number;
   guestCount: number;
   guestNightCount: number;
@@ -170,6 +174,7 @@ export async function planBookingImportReversal(
       firstLineNumber: true,
       status: true,
       bookingId: true,
+      refusalReason: true,
       amountCents: true,
       guestCount: true,
       guestNightCount: true,
@@ -206,6 +211,7 @@ export async function planBookingImportReversal(
       bookingId: row.bookingId,
       state,
       reasons,
+      refusals: state === "NOT_IMPORTED" ? splitBookingImportRefusals(row.refusalReason, null).map((refusal) => refusal.message) : [],
       amountCents: row.amountCents,
       guestCount: row.guestCount,
       guestNightCount: row.guestNightCount,

@@ -425,6 +425,9 @@ const PERMANENT_ROUTES: ReadonlyArray<{
       "POST /api/admin/opening-credits/preview",
       "POST /api/admin/opening-credits/confirm",
       "POST /api/admin/opening-credits/[id]/reverse",
+      "POST /api/admin/bookings/import/preview",
+      "POST /api/admin/bookings/import/confirm",
+      "POST /api/admin/bookings/import/batches/[id]/reverse",
     ],
   },
   // The finance area also holds the club's setup screens: fees, tax, bank
@@ -484,6 +487,13 @@ const PERMANENT_ROUTES: ReadonlyArray<{
   },
   // Answers with a redirect into the old finance dashboard, not with data.
   { reason: "website-flow", routes: ["GET /api/finance/legacy-dashboard/auth"] },
+  // The paid-booking import screen's own reads (#5005): the batches and one
+  // batch's reversal preview, which only matter beside its confirm and
+  // reverse, both fresh-proof above.
+  {
+    reason: "website-flow",
+    routes: ["GET /api/admin/bookings/import/batches", "GET /api/admin/bookings/import/batches/[id]"],
+  },
   // Also needs the dashboard's shared bearer key, which no person holds.
   { reason: "service-export", routes: ["GET /api/finance/legacy-dashboard/bookings"] },
 ];

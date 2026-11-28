@@ -141,6 +141,8 @@ export const STEP_UP_ROUTES = [
   { method: "GET", file: "src/app/api/admin/members/export/route.ts" },
   { method: "GET", file: "src/app/api/admin/members/subject-access/route.ts" },
   { method: "POST", file: "src/app/api/admin/security/two-factor-reset/[memberId]/route.ts" },
+  // #5005: reversing a paid-booking import cancels bookings through cancelBooking.
+  { method: "POST", file: "src/app/api/admin/bookings/import/batches/[id]/reverse/route.ts" },
 ] as const satisfies readonly StepUpRoute[];
 
 export function stepUpRouteKey(file: string, method: string): string {

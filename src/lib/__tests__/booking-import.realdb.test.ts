@@ -761,6 +761,25 @@ async function existingBooking(ref: string, guests: Line[]) {
     await expectCensusClean(bookingId);
   }, 120_000);
 
+  it("confirms in bounded slices with one digest, the batch staying open until the last slice (#5005 child C)", async () => {
+    const { bookings, plan: preview } = await plan([
+      line({ ref: "S1", member: PEOPLE.owner, amount: "10" }),
+      line({ ref: "S2", owner: PEOPLE.friend, member: PEOPLE.friend, amount: "20" }),
+      line({ ref: "S3", owner: PEOPLE.other, member: PEOPLE.other, amount: "30" }),
+    ]);
+    const slice = (maxBookings: number) =>
+      writer.confirmBookingImport({ lodgeId: LODGE, bookings, digest: preview.digest, officerMemberId: OFFICER, today: TODAY, format: FORMAT, maxBookings });
+    const first = await slice(1);
+    expect(first).toMatchObject({ outcome: "completed", remaining: 2 });
+    if (first.outcome !== "completed") return;
+    expect(await prisma.bookingImportBatch.findUniqueOrThrow({ where: { id: first.batchId }, select: { status: true } })).toEqual({ status: "OPEN" });
+    expect(await reverser.reverseBookingImport({ batchId: first.batchId, officerMemberId: OFFICER, today: TODAY, format: CLUB_FORMAT_TEST, ipAddress: "127.0.0.1" })).toEqual({ outcome: "not_completed" });
+    expect(await slice(1)).toMatchObject({ outcome: "completed", remaining: 1 });
+    expect(await slice(5)).toMatchObject({ outcome: "completed", remaining: 0 });
+    expect(await prisma.bookingImportBatch.findUniqueOrThrow({ where: { id: first.batchId }, select: { status: true } })).toEqual({ status: "COMPLETED" });
+    expect(await prisma.booking.count({ where: { lodgeId: LODGE, status: "PAID" } })).toBe(3);
+  }, 120_000);
+
   describe("reversing a batch (#5005 child B)", () => {
     const reverse = (batchId: string, maxBookings?: number) =>
       reverser.reverseBookingImport({ batchId, officerMemberId: OFFICER, today: TODAY, format: CLUB_FORMAT_TEST, ipAddress: "127.0.0.1", ...(maxBookings ? { maxBookings } : {}) });

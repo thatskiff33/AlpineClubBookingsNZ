@@ -227,6 +227,14 @@ const EXPECTED_ROUTE_AREAS: Record<string, AdminPermissionArea> = {
   "/api/admin/bookings/[id]/work-party": "bookings",
   "/api/admin/bookings/[id]/review": "bookings",
   "/api/admin/bookings/eligible-family": "bookings",
+  // #5005 (child C): the paid-booking import records money the club already
+  // holds, so it is finance; each handler also requires the same level of
+  // bookings access (O4), so the area here is one of its two gates.
+  "/api/admin/bookings/import/batches": "finance",
+  "/api/admin/bookings/import/batches/[id]": "finance",
+  "/api/admin/bookings/import/batches/[id]/reverse": "finance",
+  "/api/admin/bookings/import/confirm": "finance",
+  "/api/admin/bookings/import/preview": "finance",
   "/api/admin/bookings/non-member-contact": "bookings",
   "/api/admin/bookings/search": "bookings",
   "/api/admin/chores": "lodge",

@@ -181,6 +181,13 @@ const SPECIAL_ROUTE_AREA_PATTERNS: Array<{
     area: "finance",
     pattern: /^\/api\/admin\/bookings\/[^/]+\/mark-paid$/,
   },
+  // #5005 (child C): importing paid bookings records money the club already
+  // holds, so its routes are finance; each route also requires the same level
+  // of bookings access (O4, `requireBookingImportOfficer`).
+  {
+    area: "finance",
+    pattern: /^\/api\/admin\/bookings\/import(?:\/.*)?$/,
+  },
 ];
 
 function cloneEmptyMatrix(): AdminPermissionMatrix {

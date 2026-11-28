@@ -23,6 +23,11 @@ import {
   type MemberImportDateFormat,
 } from "@/lib/member-csv-import";
 import { MAX_INTEGER_CENTS, parseDecimalDollarsToCents } from "@/lib/money-input";
+import {
+  readBookingImportColumns,
+  type BookingImportColumnKey,
+  type BookingImportColumnMapping,
+} from "@/lib/booking-import/columns";
 
 /** The longest Booking Ref the import stores; it is indexed, so it is bounded. */
 export const BOOKING_IMPORT_MAX_REF_LENGTH = 100;
@@ -33,29 +38,6 @@ export const BOOKING_IMPORT_MAX_NIGHTS = 366;
 /** The refusal every booking with a balance owing gets until #5008 ships. */
 export const BOOKING_IMPORT_PART_PAID_REFUSAL =
   "part-paid bookings cannot be imported yet";
-
-export const BOOKING_IMPORT_COLUMNS = [
-  { key: "bookingRef", label: "Booking Ref", required: true },
-  { key: "lodge", label: "Lodge", required: false },
-  { key: "ownerEmail", label: "Owner Email", required: true },
-  { key: "ownerFirstName", label: "Owner First Name", required: true },
-  { key: "ownerLastName", label: "Owner Last Name", required: true },
-  { key: "guestType", label: "Guest Type", required: true },
-  { key: "guestEmail", label: "Guest Email", required: true },
-  { key: "guestFirstName", label: "Guest First Name", required: true },
-  { key: "guestLastName", label: "Guest Last Name", required: true },
-  { key: "ageGroup", label: "Age Group", required: true },
-  { key: "checkIn", label: "Check In", required: true },
-  { key: "checkOut", label: "Check Out", required: true },
-  { key: "amountPaid", label: "Amount Paid", required: true },
-  { key: "nights", label: "Nights", required: false },
-  { key: "notes", label: "Notes", required: false },
-  { key: "balanceOwing", label: "Balance Owing", required: false },
-  { key: "balanceDueDate", label: "Balance Due Date", required: false },
-] as const;
-
-export type BookingImportColumnKey =
-  (typeof BOOKING_IMPORT_COLUMNS)[number]["key"];
 
 export type BookingImportPersonName = {
   email: string;
@@ -108,13 +90,6 @@ export type BookingImportParseResult =
   | { ok: true; bookings: ParsedImportBooking[]; rowCount: number }
   | { ok: false; error: string; lineNumber?: number };
 
-const COLUMN_KEY_BY_HEADER = new Map<string, BookingImportColumnKey>(
-  BOOKING_IMPORT_COLUMNS.map((column) => [
-    normalizeMemberImportHeader(column.label),
-    column.key,
-  ]),
-);
-
 const MEMBER_GUEST_TYPES = new Set(["member"]);
 const NON_MEMBER_GUEST_TYPES = new Set(["nonmember", "guest"]);
 
@@ -137,7 +112,7 @@ type RawRow = {
  */
 export function parseBookingImportCsv(
   text: string,
-  options: { dateFormat?: MemberImportDateFormat } = {},
+  options: { dateFormat?: MemberImportDateFormat; columnMapping?: BookingImportColumnMapping } = {},
 ): BookingImportParseResult {
   const parsed = parseMemberImportCsv(text);
   if (!parsed.ok) return parsed;
@@ -149,26 +124,9 @@ export function parseBookingImportCsv(
     };
   }
 
-  const columnIndex = new Map<BookingImportColumnKey, number>();
-  for (const [index, header] of headers.entries()) {
-    const key = COLUMN_KEY_BY_HEADER.get(normalizeMemberImportHeader(header));
-    if (!key) continue;
-    if (columnIndex.has(key)) {
-      return { ok: false, error: `The column "${header}" appears twice` };
-    }
-    columnIndex.set(key, index);
-  }
-  const missing = BOOKING_IMPORT_COLUMNS.filter(
-    (column) => column.required && !columnIndex.has(column.key),
-  );
-  if (missing.length > 0) {
-    return {
-      ok: false,
-      error: `Missing column${missing.length === 1 ? "" : "s"}: ${missing
-        .map((column) => column.label)
-        .join(", ")}`,
-    };
-  }
+  const mapped = readBookingImportColumns(headers, options.columnMapping);
+  if (!mapped.ok) return mapped;
+  const columnIndex = mapped.columnIndex;
 
   const groups = new Map<string, RawRow[]>();
   for (const record of rows) {

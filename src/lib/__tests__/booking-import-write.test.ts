@@ -247,6 +247,7 @@ describe("confirmBookingImport: before anything is written", () => {
     expect(result).toEqual({
       outcome: "completed",
       batchId: BATCH,
+      remaining: 0,
       rows: [{ bookingRef: "B1", outcome: "REFUSED", refusals: [{ code: "HOSTING", message: "first" }, { code: "HOSTING", message: "second" }] }],
     });
   });
@@ -314,7 +315,7 @@ describe("confirmBookingImport: one paid booking", () => {
       where: { id: BATCH, status: BookingImportBatchStatus.OPEN },
       data: { status: BookingImportBatchStatus.COMPLETED, completedAt: expect.any(Date) },
     });
-    expect(result).toEqual({ outcome: "completed", batchId: BATCH, rows: [{ bookingRef: "B1", outcome: "IMPORTED", bookingId: "booking-1" }] });
+    expect(result).toEqual({ outcome: "completed", batchId: BATCH, remaining: 0, rows: [{ bookingRef: "B1", outcome: "IMPORTED", bookingId: "booking-1" }] });
   });
 
   it("writes nothing when another confirm already claimed the row", async () => {
