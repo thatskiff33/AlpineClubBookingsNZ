@@ -10,6 +10,7 @@ import {
 } from "@/lib/additional-capture-receipt-payload";
 import logger from "@/lib/logger";
 import { automaticCancelledBookingRefundTaskReasons } from "@/lib/deleted-booking-modification-payment";
+import { readLateCaptureRecordedElsewhere, type RecordedElsewhereStore } from "@/lib/late-capture-recorded-elsewhere";
 import {
   XERO_OUTBOX_KEPT_LATE_CAPTURE_INVOICE_TYPE,
   XERO_OUTBOX_SUPPLEMENTARY_INVOICE_TYPE,
@@ -19,6 +20,9 @@ type ReceiptStore = Pick<
   Prisma.TransactionClient,
   "manualRefundTask" | "paymentTransaction" | "xeroObjectLink" | "xeroSyncOperation"
 >;
+
+/** #4381: the paid-another-way verdict also reads which other document records a change capture. */
+export type PaidAnotherWayReceiptStore = ReceiptStore & RecordedElsewhereStore;
 
 /**
  * WAS THIS LATE CAPTURE EVER RECORDED IN XERO, AND BY WHOM? (#3635 review F2,
@@ -74,6 +78,16 @@ type ReceiptStore = Pick<
  * that invoice is the app's own document in Xero. Both run `readReceipt`, so
  * they differ only where `widenToKnownInvoice` says.
  *
+ * #4381 (owner decision 28 Nov 2026 on #4381, `INV-PAY-144`): the
+ * paid-another-way verdict only, where nothing above answers - a change
+ * capture another writer records: `recorded` against the one invoice in Xero
+ * that records the whole capture (`readLateCaptureRecordedElsewhere`: the
+ * booking's primary invoice that recorded it when linked, or a supplementary
+ * invoice covering the change without naming the payment), for the gross
+ * capture, with `recordedElsewhere`. The close's note credits that invoice.
+ * The card verdict never reads it: the capture's card refunds keep their own
+ * path.
+ *
  * HOW MUCH IS RECORDED (#4383, `INV-PAY-110`). A `recorded` answer carries
  * `recordedCents`, the cents of the capture Xero holds. The capture's own
  * receipt is capped at its invoices' room (`INV-PAY-139`), so it can record
@@ -95,9 +109,11 @@ export type LateCaptureXeroReceipt =
       recordedCents: number | null;
       invoiceFailed?: true;
       invoiceMayBeInXero?: true;
+      /** #4381: another writer's invoice records the whole capture (paid-another-way verdict only). */
+      recordedElsewhere?: true;
     };
 
-type RecordedAt = Omit<Extract<LateCaptureXeroReceipt, { kind: "recorded" }>, "kind" | "recordedCents">;
+type RecordedAt = Omit<Extract<LateCaptureXeroReceipt, { kind: "recorded" }>, "kind" | "recordedCents" | "recordedElsewhere">;
 
 /**
  * #4383: of a capture's refunds, the cents a refund note may answer - what
@@ -115,22 +131,24 @@ export async function readLateCaptureXeroReceipt(
   paymentIntentId: string,
   store: ReceiptStore = prisma,
 ): Promise<LateCaptureXeroReceipt> {
-  return readReceipt(paymentIntentId, store, { widenToKnownInvoice: false });
+  return readReceipt(paymentIntentId, store, null);
 }
 
 /** The paid-another-way verdict: a resolved row's or a linked change's invoice is recorded (see above). */
 export async function readPaidAnotherWayLateCaptureXeroReceipt(
   paymentIntentId: string,
-  store: ReceiptStore = prisma,
+  store: PaidAnotherWayReceiptStore = prisma,
 ): Promise<LateCaptureXeroReceipt> {
-  return readReceipt(paymentIntentId, store, { widenToKnownInvoice: true });
+  return readReceipt(paymentIntentId, store, store);
 }
 
+/** `widened`: the paid-another-way verdict's store, or null for the card verdict. */
 async function readReceipt(
   paymentIntentId: string,
   store: ReceiptStore,
-  { widenToKnownInvoice }: { widenToKnownInvoice: boolean },
+  widened: PaidAnotherWayReceiptStore | null,
 ): Promise<LateCaptureXeroReceipt> {
+  const widenToKnownInvoice = widened !== null;
   let gross: Promise<number | null> | undefined;
   const grossCents = () => (gross ??= readGrossCaptureCents(paymentIntentId, store));
   const recorded = async (at: RecordedAt): Promise<LateCaptureXeroReceipt> => ({
@@ -210,6 +228,13 @@ async function readReceipt(
       : recorded({ invoiceId: null, invoiceFailed: true });
   }
   if (resolvedByHand || released.length > 0) return { kind: "resolved-by-hand" };
+  // #4381: paid another way only, and only for a capture with its approval task.
+  if (widened && task) {
+    const elsewhere = await readLateCaptureRecordedElsewhere(widened, paymentIntentId);
+    if (elsewhere.kind === "document") {
+      return { kind: "recorded", invoiceId: elsewhere.invoiceId, recordedCents: elsewhere.recordedCents, recordedElsewhere: true };
+    }
+  }
   return { kind: "none" };
 }
 

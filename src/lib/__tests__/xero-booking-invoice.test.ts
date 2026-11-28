@@ -2159,6 +2159,42 @@ describe("createXeroInvoiceForBooking", () => {
       });
     });
 
+    /*
+      #5288 (`INV-PAY-163`): the edit that raised this invoice asked the member
+      itself, for what is due after account credit. Xero's email goes out inside
+      the create, before the credit is allocated, and would show the whole worth.
+
+      THE MUTATION THAT FAILS IT: drop the `xeroInvoiceEmailIsAskedByEdit` term
+      from `shouldEmailInvoice` in xero-booking-invoices.ts.
+    */
+    it("MUTATION: does not ask Xero to email an invoice the booking edit asked for itself, and records no withhold (#5288)", async () => {
+      operationSays("ASKED_BY_EDIT");
+
+      await expect(
+        createXeroInvoiceForBooking("booking_1", { syncOperation: xeroClaim("op_1") }),
+      ).resolves.toBe("inv_1");
+
+      expect(mocks.xeroClientInstance.accountingApi.emailInvoice).not.toHaveBeenCalled();
+      // The invoice is raised and linked as ever.
+      const [, invoicePayload] = mocks.xeroClientInstance.accountingApi.createInvoices.mock.calls[0];
+      expect(invoicePayload.invoices[0].status).toBe("AUTHORISED");
+      expect(mocks.prisma.payment.updateMany).toHaveBeenCalled();
+      // Not a withhold: nothing the member is owed went unsent, so the booking's
+      // withheld list gains no row and no withhold key is set.
+      expect(mocks.prisma.emailLog.create).not.toHaveBeenCalled();
+      expect(mocks.completeXeroSyncOperation).toHaveBeenCalledWith(
+        expect.objectContaining({ id: "op_1" }),
+        expect.objectContaining({ status: "SUCCEEDED" }),
+      );
+      expect(completionPayload()).toMatchObject({
+        invoiceEmailError: null,
+        invoiceEmailSkipped: true,
+        invoiceEmailWithheldByCreationChoice: false,
+        invoiceEmailWithheldByNoEmails: false,
+        invoiceEmailWithheldForEnvironment: false,
+      });
+    });
+
     it("emails the invoice exactly as before when the officer chose to send", async () => {
       operationSays("SEND");
 

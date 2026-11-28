@@ -59,7 +59,7 @@ describe("admin security password-policy route (#2033)", () => {
   });
 
   it("GET is gated on support:view and returns the effective policy", async () => {
-    const res = await GET();
+    const res = await GET(new Request("http://localhost/api/admin/security/password-policy"));
     expect(mocks.requireAdmin).toHaveBeenCalledWith({
       permission: { area: "support", level: "view" },
     });
@@ -161,7 +161,7 @@ describe("admin security password-policy route (#2033)", () => {
   // #4610: the breached-password check switch (default on) is written here.
   describe("breachedPasswordCheck", () => {
     it("GET reports it on for an absent row", async () => {
-      const body = await (await GET()).json();
+      const body = await (await GET(new Request("http://localhost/api/admin/security/password-policy"))).json();
       expect(body.policy.breachedPasswordCheck).toBe(true);
     });
 
@@ -196,7 +196,7 @@ describe("admin security password-policy route (#2033)", () => {
   // refused outside 8..720 with no write, and optional for an older page.
   describe("sessionMaxAgeHours", () => {
     it("GET reports 168 hours (7 days) for an absent row", async () => {
-      const body = await (await GET()).json();
+      const body = await (await GET(new Request("http://localhost/api/admin/security/password-policy"))).json();
       expect(body.policy.sessionMaxAgeHours).toBe(168);
     });
 

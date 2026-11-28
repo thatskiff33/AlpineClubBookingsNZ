@@ -15,6 +15,7 @@
  * organisation accounts, and only then do the write gates run.
  */
 import { prisma } from "@/lib/prisma";
+import { adminHref } from "@/lib/admin-hubs";
 import { getAdminPermissionMatrix } from "@/lib/admin-permissions";
 import { MEMBER_ACCESS_ROLE_SELECT } from "@/lib/access-role-definitions";
 import {
@@ -106,7 +107,7 @@ async function main() {
   console.log(
     !moduleOn
       ? "\nReason: the Events calendar module is OFF for this club, so /calendar,\n" +
-        "/admin/calendar and the calendar API return Not Found for EVERYONE and\n" +
+        `${adminHref("calendar")} and the calendar API return Not Found for EVERYONE and\n` +
         "the dashboard Events card is hidden. Turn it on at Admin > Modules.\n" +
         "The per-member legs printed above are what would apply once it is back\n" +
         "on."

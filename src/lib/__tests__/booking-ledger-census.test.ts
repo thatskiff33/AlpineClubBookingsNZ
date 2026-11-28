@@ -2,6 +2,7 @@ import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { describe, expect, it } from "vitest";
+import { CARD_PAID_BILLING } from "./support/ledger-billing-facts";
 
 import { stripCommentsAndStrings } from "./support/strip-comments";
 
@@ -12,12 +13,18 @@ import {
   bookingLedgerCensusSql,
   bookingLedgerResidualCents,
   bookingLedgerResidualSql,
-  bookingLedgerVerdict,
   describeBookingLedgerResidual,
   sizeAdditionalAsk,
   sizeReviewChargeAsk,
   type BookingLedgerIdentityRow,
 } from "@/lib/additional-payment-ask";
+import {
+  BOOKING_XERO_BILLING_EVIDENCE,
+  BOOKING_XERO_BILLING_INVOICES,
+  bookingBilledInXeroSql,
+  bookingLedgerVerdict,
+  type BookingXeroBillingFacts,
+} from "@/lib/booking-ledger-verdict";
 import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 import { CENSUS_TIMEOUT_MS } from "@/test/census-timeout";
 
@@ -416,8 +423,8 @@ describe("INV-PAY-047: every live booking's money balances", () => {
 
       // The headline assertion: NOTHING built by the production sizing rule may
       // leave money the price says is owed that no ask is collecting.
-      expect(bookingLedgerVerdict(residual), message).not.toBe("unasked");
-      expect(bookingLedgerVerdict(residual), message).toBe(scenario.verdict);
+      expect(bookingLedgerVerdict(residual, CARD_PAID_BILLING), message).not.toBe("unasked");
+      expect(bookingLedgerVerdict(residual, CARD_PAID_BILLING), message).toBe(scenario.verdict);
       expect(residual, message).toBe(scenario.expectedResidualCents);
     });
   }
@@ -435,7 +442,7 @@ describe("INV-PAY-047: every live booking's money balances", () => {
     };
     const residual = bookingLedgerResidualCents(misSized);
     expect(residual).toBe(7000);
-    expect(bookingLedgerVerdict(residual)).toBe("unasked");
+    expect(bookingLedgerVerdict(residual, CARD_PAID_BILLING)).toBe("unasked");
 
     const message = describeBookingLedgerResidual({
       label: "a seeded mis-sized booking",
@@ -898,5 +905,61 @@ describe("the operator SQL is folded from the same terms (INV-PAY-047, INV-SSOT-
     // Report only: no write verb may ever appear in it.
     expect(sql).toMatch(/^SELECT\b/);
     expect(sql).not.toMatch(/\b(INSERT|UPDATE|DELETE|DROP|ALTER|TRUNCATE)\b/i);
+  });
+});
+
+/*
+  #5288 - AN INTERNET BANKING RESIDUAL BILLED IN XERO IS ASKED, NOT `unasked`.
+
+  An Internet Banking increase is never a card ask, so the identity's ask term
+  never holds it: the booking's primary invoice or an edit's supplementary
+  invoice asks for it, and Xero's reconciliation collects it. The verdict reads
+  that evidence; without any, the residual is still the #3340 class.
+*/
+describe("an Internet Banking residual with Xero billing evidence is billedInXero (INV-PAY-047, #5288)", () => {
+  const UNBILLED_BANK: BookingXeroBillingFacts = {
+    paymentSource: "INTERNET_BANKING",
+    xeroInvoiceId: null,
+    activeInvoiceLink: false,
+    queuedInvoiceCreate: false,
+  };
+
+  it.each([
+    ["the payment carries its primary invoice's id", { xeroInvoiceId: "inv-1" }],
+    ["an active primary or supplementary invoice link", { activeInvoiceLink: true }],
+    ["a primary or supplementary invoice create queued or running", { queuedInvoiceCreate: true }],
+  ] as const)("MUTATION: %s is enough", (_label, evidence) => {
+    expect(bookingLedgerVerdict(5_000, { ...UNBILLED_BANK, ...evidence })).toBe("billedInXero");
+  });
+
+  it("stays unasked with no evidence, or with evidence on a card payment", () => {
+    expect(bookingLedgerVerdict(5_000, UNBILLED_BANK)).toBe("unasked");
+    expect(
+      bookingLedgerVerdict(5_000, { ...CARD_PAID_BILLING, xeroInvoiceId: "inv-1", activeInvoiceLink: true, queuedInvoiceCreate: true }),
+    ).toBe("unasked");
+  });
+
+  it("leaves balanced and retained rows as they were", () => {
+    const billed = { ...UNBILLED_BANK, xeroInvoiceId: "inv-1" };
+    expect(bookingLedgerVerdict(0, billed)).toBe("balanced");
+    expect(bookingLedgerVerdict(-5_000, billed)).toBe("retained");
+  });
+
+  it("folds the SQL twin from the same evidence list, behind the Internet Banking source", () => {
+    const sql = bookingBilledInXeroSql();
+    expect(sql.startsWith(`(p."source" = 'INTERNET_BANKING' AND (`)).toBe(true);
+    for (const evidence of BOOKING_XERO_BILLING_EVIDENCE) expect(sql).toContain(evidence.sql);
+    // The column filters are the typed census's own (`INV-SSOT-001`), spelt out
+    // here once so a change to either constant is a change someone read.
+    expect(sql).toContain(`FROM "XeroObjectLink" l WHERE l."active" = true AND l."xeroObjectType" = 'INVOICE' AND (`);
+    expect(sql).toContain(
+      `FROM "XeroSyncOperation" o WHERE o."direction" = 'OUTBOUND' AND o."entityType" = 'INVOICE' AND o."operationType" = 'CREATE' AND o."status" IN ('PENDING', 'RUNNING') AND (`,
+    );
+    // Each billing invoice is read where it is anchored, by its own role.
+    for (const invoice of BOOKING_XERO_BILLING_INVOICES) {
+      expect(sql).toContain(`l."localModel" = '${invoice.localModel}' AND l."role" = '${invoice.role}'`);
+      expect(sql).toContain(`o."localModel" = '${invoice.localModel}'`);
+    }
+    expect(bookingLedgerCensusSql()).toContain(`${sql} AS "billedInXero"`);
   });
 });

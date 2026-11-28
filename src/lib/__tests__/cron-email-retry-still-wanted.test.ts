@@ -87,6 +87,10 @@ vi.mock("@/lib/email", () => ({
   getAdminEmails: mocks.getAdminEmails,
 }));
 
+// #5298: the stranded-QUEUED sweep runs first and has its own suites; stubbed so
+// its reads never consume this file's row fixtures.
+vi.mock("@/lib/email/handover", () => ({ sweepStrandedQueuedEmails: vi.fn() }));
+
 import { retryFailedEmails } from "@/lib/cron-email-retry";
 import { declareEnvironmentRole } from "@/lib/__tests__/helpers/environment-role";
 
@@ -200,7 +204,7 @@ describe("the retry job asks a template's still-wanted check before it claims (#
     const result = await retryFailedEmails();
 
     expect(mocks.sendMail).not.toHaveBeenCalled();
-    expect(result).toEqual({ retried: 0, succeeded: 0, failed: 0 });
+    expect(result).toEqual({ retried: 0, succeeded: 0, failed: 0, skipped: 0 });
     expect(mocks.updateMany).toHaveBeenCalledTimes(1);
     expect(mocks.updateMany).toHaveBeenCalledWith({
       where: { id: OFFER_ROW_ID, status: "FAILED", attempts: 1, htmlBody: null, bookingRetryHtmlBody: "<p>the offer</p>" },
@@ -215,7 +219,7 @@ describe("the retry job asks a template's still-wanted check before it claims (#
 
     const result = await retryFailedEmails();
 
-    expect(result).toEqual({ retried: 1, succeeded: 1, failed: 0 });
+    expect(result).toEqual({ retried: 1, succeeded: 1, failed: 0, skipped: 0 });
     expect(mocks.sendMail).toHaveBeenCalledTimes(1);
   });
 
@@ -246,7 +250,7 @@ describe("the retry job asks a template's still-wanted check before it claims (#
 
     const result = await retryFailedEmails();
 
-    expect(result).toEqual({ retried: 1, succeeded: 1, failed: 0 });
+    expect(result).toEqual({ retried: 1, succeeded: 1, failed: 0, skipped: 0 });
     expect(mocks.sendMail).toHaveBeenCalledTimes(1);
   });
 

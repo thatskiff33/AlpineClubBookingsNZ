@@ -34,7 +34,7 @@ import {
  * note id, for a person to review. That count is not a comparison.
  *
  * The first two also appear on the Stuck States page
- * (`stuck-state-money-signals.ts`, #4910, `INV-PAY-163`).
+ * (`stuck-state-money-signals.ts`, #4910, `INV-PAY-164`).
  */
 export async function reconcileCreditBalances(): Promise<{
   membersWithCredit: number;

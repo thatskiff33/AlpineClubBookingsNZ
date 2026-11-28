@@ -1,5 +1,5 @@
 /**
- * #4910 (`INV-PAY-163`): the admins' alert from the nightly booking money
+ * #4910 (`INV-PAY-164`): the admins' alert from the nightly booking money
  * check, sent when a run finds drift (records that disagree, or could not be
  * compared) it has not reported before. Known classes are never emailed (owner
  * decision, 28 Nov 2026). One email per run lists the new drift by census class, with booking ids only (no

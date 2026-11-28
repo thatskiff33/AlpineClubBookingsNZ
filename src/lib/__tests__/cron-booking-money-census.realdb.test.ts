@@ -1,6 +1,6 @@
 /**
  * Real-PostgreSQL proof of the nightly booking money check (#4910,
- * `INV-PAY-163`).
+ * `INV-PAY-164`).
  *
  * The unit suite proves the summary and the alert rules on injected census
  * reports. What it cannot show is the job reading a real database through the

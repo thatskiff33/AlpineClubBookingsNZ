@@ -941,7 +941,7 @@ Screen: `/admin/email-deliverability`.
 
 Shows: Email delivery results and eligible retry controls.
 
-Journey: Filter delivery outcomes and inspect a failure before retrying eligible mail. A failed booking confirmation, pre-arrival reminder or guest payment link links to its booking, where an officer sends a fresh copy.
+Journey: Filter outcomes and inspect failures before retrying mail. A failed booking confirmation, pre-arrival reminder or guest payment link links to its booking for a fresh copy. Try again warns of possible duplicates.
 
 [Guide](guides/email-deliverability.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
 

@@ -7271,6 +7271,21 @@ enum EmailLogStatus {
 }
 
 /**
+ * #5298 (INV-INT-043): where a send stood relative to the mail server.
+ *
+ *   PENDING     recorded, not yet handed over. The sender and the stranded-row
+ *               sweep race one guarded write out of it, so only one acts.
+ *   STARTED     a sender won that write and may have reached the mail server.
+ *   UNCONFIRMED the sweep found it QUEUED and STARTED (or unknown) long after the
+ *               send, so it may have been delivered; an officer decides.
+ */
+enum EmailHandoverState {
+  PENDING
+  STARTED
+  UNCONFIRMED
+}
+
+/**
  * Why a send failed closed because this installation's environment role could
  * not be confirmed (#3035, INV-CONFIG-004).
  *
@@ -7317,7 +7332,16 @@ model EmailLog {
   attempts      Int            @default(1)
   lastAttemptAt DateTime       @default(now())
   sentAt        DateTime?
+  // The Message-ID header the mail library generated for a successful send.
+  // A server may replace that header on the way out (SES does).
   messageId     String?
+  // #5469: the id the MAIL SERVER assigned to this message, read from its reply
+  // to a successful send (`email/provider-message-id.ts`), or null: not sent, a
+  // server the app does not recognise, or a row written before #5469 or by the
+  // previous release during a switchover. Bounce and complaint reports name
+  // the message by this id, so it is how a report finds its email. Nullable and
+  // additive: the previous release neither writes nor reads it.
+  providerMessageId String?
   // Booking this message belongs to (#2258), or null for account/security,
   // membership, family and admin mail that is not booking-scoped. Deliberately
   // a PLAIN indexed column with NO foreign key: EmailLog is a high-volume log
@@ -7344,6 +7368,10 @@ model EmailLog {
   // Prisma client selects explicit column lists, so it cannot see this column at
   // all and a blue/green drain is unaffected.
   deliveryBlockReason            EmailDeliveryBlockReason?
+  // #5298 (INV-INT-043): how far a QUEUED row got towards the mail server, so a
+  // row a crash left QUEUED is re-sent only when it provably never reached it.
+  // NULL is a row the previous release wrote, or any row before #5298.
+  handoverState                  EmailHandoverState?
   createdAt                      DateTime       @default(now())
   updatedAt                      DateTime       @updatedAt
 
@@ -7353,6 +7381,7 @@ model EmailLog {
   @@index([status, attempts])
   @@index([templateName, status, createdAt])
   @@index([bookingId, createdAt])
+  @@index([providerMessageId])
 }
 
 model EmailSuppression {

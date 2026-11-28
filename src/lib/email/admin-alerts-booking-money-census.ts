@@ -11,7 +11,7 @@ import {
 import { renderEmailHtml } from "@/lib/email-theme";
 
 /**
- * #4910 (`INV-PAY-163`): the nightly booking money check found something it
+ * #4910 (`INV-PAY-164`): the nightly booking money check found something it
  * has not reported before. Admin audience through `sendToAdmins` on the
  * `adminPaymentFailure` preference, like the other reconcile-by-hand finance
  * alerts. `classes` is already cut to the ids one class may name, so the email

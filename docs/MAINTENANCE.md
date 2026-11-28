@@ -1474,6 +1474,12 @@ check it against what you typed before reading the findings. Both dates must be
 real calendar days: `--to 2026-04-31` is refused rather than quietly read as
 1 May, which is what it used to do.
 
+An applied link backfill can come back as `manual_review` for a credit note's
+allocation link that is off: a Xero reading removed that allocation, so the
+tool leaves it off (#5289). Check the note in Xero; the backfill is offered
+again on every run until the allocation is back in Xero or the finding is
+resolved by hand.
+
 **Reading an archived report from before #2868.** Only the CHECK-IN half of the
 window was wrong, and this matters because the error does not go the way the
 header suggests. The window was built as midnight in the server's own time zone
@@ -1847,7 +1853,39 @@ missing supplementary invoice is still reported.
 A late capture the treasurer **approved** refunding, whose card refund Stripe
 gave up on and which was then closed as **Paid another way** before Xero had
 its receipt, owes that receipt too, and the close's bank-transfer note waits
-for it (#3372, `INV-PAY-122`). When the receipt row failed before reaching
+for it (#3372, `INV-PAY-122`). Since #4381 (`INV-PAY-144`), where that payment
+was for a **booking change** on a booking whose Xero invoice exists and no
+receipt was queued, the tool lists it as `KEPT_LATE_CAPTURE_NOT_RECORDED_IN_XERO`
+instead, worded for a refund paid another way, with the `recordedBy` and
+amounts described above. Its `--apply` runs the close's own decision again under
+the approval task's row and the change's lock: a payment on the invoice that
+bills the change, or a kept-payment invoice for the part no other Xero document
+records, and the bank-transfer note follows it. A payment no booking change can
+be read from is reported `manual_review`, as for a kept payment: the close
+queued nothing for it, so record the payment and its bank refund by hand. One
+whose booking lacks its synced invoice id is reported "cannot tell yet", as
+above. Only a change whose own unsent invoice names the payment still gets the
+kept-payment invoice for the whole payment, under the finding below. Where
+one invoice already in Xero records the whole payment (the booking's invoice,
+when the payment was part of what it recorded at its link, or another invoice
+covering the change without naming the payment), the close queues its
+bank-transfer note against that invoice straight away, and the tool queues
+one a close made before that change still waits for
+(`PAID_ANOTHER_WAY_REFUND_NOTE_NOT_QUEUED`). Where other documents record it
+but no one invoice in Xero can be named for certain, the close queues nothing
+and its dialog says to record the refund by hand. Wherever a close has no
+bank-transfer note raised and none queued - that case, or a close that
+planned none - the tool reports `PAID_ANOTHER_WAY_REFUND_NOTE_RECORD_BY_HAND`
+with what was paid back: record that refund by hand in Xero against the
+invoice that records the payment. It is report-only and keeps appearing after
+you do. Where the credit-release sweep holds the payment, the close keeps
+waiting for its note, which is queued once that credit is released (#4380):
+the tool reports `PAID_ANOTHER_WAY_REFUND_NOTE_AWAITS_CREDIT_RELEASE`, also
+report-only, and the dialog says the same. Do not record that refund by hand,
+or the note that follows credits it a second time. A close made
+before #4381 that already raised a kept-payment invoice
+beside the invoice billing the change is not found by the tool; correct it in
+Xero by hand. When the receipt row failed before reaching
 Xero, or none was queued, `PAID_ANOTHER_WAY_LATE_CAPTURE_WITHOUT_XERO_RECEIPT`
 retries or queues it. Both are safe to auto-apply: the worker and the enqueue
 re-read the task and the close under the task's row lock before anything is
@@ -2518,7 +2556,7 @@ production; a whole history is read in one transaction, 500 bookings a page.
 ### The nightly run of both censuses (#4910)
 
 The `booking-money-census` cron job runs this census and `booking-money:census`
-every night at 05:30 club time ([`INV-PAY-163`](invariants/payment-and-settlement.md#inv-pay-163)).
+every night at 05:30 club time ([`INV-PAY-164`](invariants/payment-and-settlement.md#inv-pay-164)).
 It is the same code, read-only, with no acknowledgement file, so every finding
 is reported. It records a bounded summary on its `CronJobRun` row (verdict,
 counts per class, up to 20 booking ids per class, the reconciliation totals)
@@ -2749,7 +2787,15 @@ finalPrice + changeFees - (captured - refunded) - credit - uncollected ask
   the #3340 class, and it is what a delta-sized ask produced when it superseded
   an unpaid one: minting the replacement retired the first extra, so its unpaid
   balance simply stopped being owed. Investigate each one and invoice by hand —
-  **but read the Internet Banking caveat below first.**
+  **but read the Internet Banking caveat below first.** The report lists these
+  as "Money nobody is asking for".
+- **Positive, billed on a Xero invoice** (#5288) — an Internet Banking booking
+  whose primary invoice is linked, whose primary or supplementary invoice link is
+  active, or whose primary or supplementary invoice create is still queued or
+  running. Listed apart, as "Billed on a Xero invoice; check Xero before
+  invoicing by hand". A FAILED create alone is not evidence, but a linked
+  primary invoice is, so a later edit whose supplementary invoice failed is
+  listed here too: check that edit's invoice in Xero.
 - **Negative** — the club holds more than the price. Normal after a policy-tiered
   reduction (the retained slice is a charge, not a prepayment) or a reduction
   settled as account credit. Worth a glance, rarely worth an action.
@@ -2757,13 +2803,19 @@ finalPrice + changeFees - (captured - refunded) - credit - uncollected ask
 **AN INTERNET BANKING BOOKING'S PRICE INCREASE IS AN EXPECTED POSITIVE, AND
 INVOICING IT BY HAND WOULD BILL THE MEMBER TWICE.** The identity's "uncollected
 ask" term reads the Stripe ask columns. An Internet Banking edit does not raise
-one: it bills through a SUPPLEMENTARY XERO INVOICE, which lives in the Xero
-outbox and leaves no ADDITIONAL `PaymentTransaction` behind. So an IB booking
-with a paid primary that takes a +$70 edit gains $70 of price, no captured cash
-and no ask — and the census reports +7000 as `unasked`, when the club is already
-asking for it on an invoice. **Before acting on any positive residual, check the
-booking's payment source and its Xero supplementary invoices.** A card booking's
-positive residual is the real thing; an IB one almost never is.
+one: it bills through a Xero invoice - a supplementary one once the primary is
+linked, or the primary itself, which the edit raises when none is linked yet
+(#5288, [`INV-PAY-163`](invariants/payment-and-settlement.md)) - and leaves no
+ADDITIONAL `PaymentTransaction` behind. So an IB booking that takes a +$70 edit
+gains $70 of price, no captured cash and no ask. The census now reads the Xero
+evidence and lists such a row as billed on a Xero invoice rather than as
+nobody's. **Before acting on a row in either positive list, check the booking's
+payment source and its Xero invoices.** A card booking's positive residual is
+the real thing; an IB one is real only when Xero holds no invoice for it.
+One IB shape is left there on purpose (#5288): a booking with a bank transfer
+recorded and no primary invoice linked. An edit raising its worth asks nobody,
+because a new primary invoice would bill the transfer again, so it stays under
+"Money nobody is asking for" for the treasurer to invoice.
 
 **A CREDIT-PAID ($0) BOOKING THAT GREW BEFORE #3502 IS USUALLY A REAL POSITIVE.**
 A booking paid wholly with account credit has a $0 captured payment and no card
@@ -2799,11 +2851,10 @@ retention, look at the booking's changes: an increase, then a reduction, with an
 ADDITIONAL card payment captured after the reduction. Report them to the owner;
 the census never repairs.
 
-That gap is not closed in the arithmetic on purpose. A term reading the Xero
-outbox would make the identity depend on an external system's queue state, and a
-queued-but-unsent invoice, a failed one and a sent one are three different
-answers to "is the club asking for this?" that only a person can weigh. The
-census is a report; this is one of the things the person reading it has to know.
+That gap is not closed in the arithmetic on purpose: the identity reads no Xero
+state. The verdict reads it instead, so the report sorts rows, but a queued
+invoice, a failed one and a sent one still need a person to weigh. The census is
+a report; this is one of the things the person reading it has to know.
 
 ```bash
 DATABASE_URL=<non-prod copy> pnpm run payments:audit-booking-ledger
@@ -2989,8 +3040,9 @@ pnpm run xero:applied-credit-account-note-link-repair --apply --payment <payment
   settle: a failed recount, or a link an inbound sync running at the same time
   made active again (run the repair again for that one). The recount never
   lowers a Stripe payment's recorded refund, nor a bank-transfer payment's
-  below its own refund detail: it raises an admin alert instead, so settle
-  that one by hand. Keep the dry-run output with the change record.
+  below its own refund detail plus the corrections its links count (capped at
+  the stored total): it raises an admin alert instead, so settle that one by
+  hand. Keep the dry-run output with the change record.
 - **Then raise the missing cancellation notes.** Retiring a link raises
   nothing by itself. For each booking `--apply` names, run
   `pnpm run xero:booking-repair --booking <bookingId> --dry-run`, review its
@@ -3243,6 +3295,114 @@ is READ-ONLY and repairs nothing: a cash mirror moves only on Stripe evidence.
 DATABASE_URL=<non-prod copy> pnpm run payments:audit-organiser-child-refunds
 DATABASE_URL=<non-prod copy> pnpm run payments:audit-organiser-child-refunds --json
 ```
+
+### Audit mid-stay edits made before the #2743 and #2744 fixes (#5242)
+
+Before PRs #2757 and #2758 (merged 10 Aug 2026; first released in v0.14.0) an
+edit to a booking whose stay had started could price wrongly in two ways:
+a guest whose nights had ended was put back on the booking and billed again
+(#2743), and nights the edit gave back were credited at the rates of the day,
+with each guest's membership type and subscription standing read afresh, not
+at the rate the member paid (#2744). Both are fixed going forward and old
+bookings were left as they were (`INV-MOD-025`).
+`scripts/audit-mid-stay-edit-history.ts` lists the old edits that may carry
+either error, with the amount at stake. It is READ-ONLY and repairs nothing: it
+has no write path and no `--apply`. Whether to credit or refund anyone is the
+owner's decision on #5242.
+
+Running it on production is an owner step. Agents run it against a local or
+test database only and never connect to production.
+
+```bash
+pnpm run --silent bookings:audit-mid-stay-edits > ~/mid-stay-edit-audit.txt
+pnpm run --silent bookings:audit-mid-stay-edits --summary
+pnpm run --silent bookings:audit-mid-stay-edits --json > ~/mid-stay-edit-audit.json
+pnpm run --silent bookings:audit-mid-stay-edits --before 2026-08-11T00:00:00+12:00
+```
+
+The full list and the JSON carry booking ids, so they go to the home directory,
+never into this checkout.
+
+**Why it cannot be exact.** Before the fixes each edit kept one record: the
+stay's dates and price before and after, and the names of guests removed and
+added. There is no per-guest before and after, and every guest's nights were
+rewritten. So a price rise with nothing bought, or an edit that only added
+guests, can be judged; an extension, an edit that both bought and gave back
+nights, or a booking edited again later can only be bounded. #2743 re-billed an
+ended guest on any edit, a shortening included, so every give-back that did not
+raise the price is listed with its amount unknown: the re-bill would hide inside
+the credit and nothing records whether a guest had left. A one-guest booking is
+no exception, because a guest's dates need only sit inside the booking's.
+
+**Every give-back is a possible #2744 case.** The old pricing valued the nights
+given back at the season rates of the day, and read each guest's membership
+type and subscription standing afresh (a member whose subscription is unpaid is
+priced as a non-member). The record holds neither the price paid for those
+nights nor that standing. So every edit after check-in that gave nights back is
+listed, whether or not anything looks wrong. Example: a member books while
+their subscription is unpaid, at the non-member rate, pays it, then shortens the
+stay; the nights come back at the member rate and nothing on the booking shows
+it. Where the audit can see a cause, the reason names it: season rates changed
+after booking (a season deleted since counts), the booking carried a discount
+or promo, or a guest or night price is below zero. The figure on these lines is
+the "credit given": what the edit took off the price, net of anything it
+bought. It limits an over-credit only when the edit bought nothing, and never
+limits a short credit. Example of the first: one night paid at $10 credited at
+$150 is a $140 over-credit, but with a $100 night bought in the same edit the
+credit given is only $50. Example: 4 nights paid at $50, the rate later
+cut to $20, 2 nights given back; the credit given was $40, the right credit
+$100, and the $60 the member is short is not in the record. An officer's date
+override that re-priced the stay ("recalculate") worked outside the mid-stay
+rules: a date change put every guest on the full new dates, one whose nights
+had ended included, and nights with no stored price took the rates of the day.
+So each one made after check-in is listed for a person to compare with what the
+member booked; its figure is the net change, which bounds nothing, since nights
+may have moved both ways, and a $0.00 net change is listed too.
+
+A name edit is examined too: until #1099 (4 Jul 2026) it ran the same pricing,
+so one saved after check-in could bill an ended guest again; a later one
+changed no price and reads as clear. Shift-mode overrides moved no money, a
+paid booking's spelling fix (#1386) has never re-priced, a guest-to-member link
+was refused beside any other change, and the separate add-guest and
+remove-guest actions refused a stay under way, so none of them is examined.
+
+**Reading the header.** It prints the merge times of #2757 and #2758, when the
+marker migration (`20260810020000_backfill_bed_allocation_audit_category`, the
+first merged after both fixes) finished on this database, the cut-off used, and
+how many edits after check-in came after the cut-off (made under the fixes, not
+examined). By default the cut-off is the marker's finish plus 24 hours. If this
+install began running the fixes at a different time - it upgraded straight to a
+later release, or the migration ran apart from the deploy - re-run with
+`--before` set to that moment, with its zone. On a database with no record of
+the marker the audit stops and asks for `--before`, rather than guess; the
+marker is therefore not on the never-squash list.
+
+**Reading the list.** One line per edit and shape: booking id, the
+modification id, the club date of the edit, the shape, its certainty, the
+amount and the reason. It carries no member id; the booking leads to the member.
+
+- `certain`: the record shows the error and its amount - the price rose though
+  the edit bought nothing, or rose by more than the guests it added cost. Where
+  that edit also gave nights back, the amount is a floor and the reason says so.
+- `possible`: a person checks the booking. "up to" is a limit, not a finding of
+  that much; "amount unknown" means an over-charge may hide inside a net credit;
+  "credit given" is what a give-back took off the price, and does not limit how
+  far short that credit may be.
+- `officer-recalculated`: an officer override re-priced the stay; its "net
+  change" is not a limit, and it has its own line in the summary.
+- `unreadable`: the edit's record could not be read; it is listed, never
+  dropped.
+
+The list holds booking ids: keep the file off the public repository and issue,
+and delete it once the decision is recorded. Post only the `--summary` output
+on #5242. Every give-back after check-in is listed, so a zero on the #2744 line
+means no such edit was made before the cut-off, not that some were checked and
+passed. All zeros closes #5242; otherwise file a follow-up
+decision issue with the counts and the money from the summary. Nothing is
+adjusted without that decision.
+
+Do not run it while a migration runs: it reads in ONE read-only
+`RepeatableRead` snapshot held for up to 120 seconds.
 
 ### Audit IB hold-expiry invoice under-clears (#1597)
 

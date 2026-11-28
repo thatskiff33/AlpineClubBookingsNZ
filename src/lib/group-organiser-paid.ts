@@ -19,6 +19,8 @@
  */
 import type { PaymentStatus } from "@prisma/client";
 
+import { CARD_PAYMENT_SOURCE, INTERNET_BANKING_PAYMENT_SOURCE } from "@/lib/payment-source";
+
 export const ORGANISER_PAID_SETTLEMENT_STATUSES = [
   "SUCCEEDED",
   "PARTIALLY_REFUNDED",
@@ -80,7 +82,7 @@ export function paidByOrganiserCard(booking: {
   return (
     booking.organiserSettled &&
     booking.parentBookingId != null &&
-    booking.payment?.source === "STRIPE"
+    booking.payment?.source === CARD_PAYMENT_SOURCE
   );
 }
 
@@ -105,7 +107,7 @@ export function paidByOrganiserInternetBanking(booking: {
   return (
     booking.organiserSettled &&
     booking.parentBookingId != null &&
-    booking.payment?.source === "INTERNET_BANKING"
+    booking.payment?.source === INTERNET_BANKING_PAYMENT_SOURCE
   );
 }
 

@@ -55,7 +55,8 @@ export const ADMIN_NOTIFICATION_PREFERENCE_META = {
   },
   adminIssueReport: {
     label: "Reported issues",
-    description: "Alerts when a logged-in user reports a site issue for admin follow-up.",
+    description:
+      "Alerts when a logged-in user reports a site issue for admin follow-up, and when a recipient complains about a club email (usually by marking it as spam) and their address is blocked.",
   },
   adminBookingRequest: {
     label: "Public booking requests",

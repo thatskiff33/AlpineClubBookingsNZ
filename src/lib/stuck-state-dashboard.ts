@@ -817,7 +817,7 @@ async function addLodgeItems(
     severity: "warning",
     owner: "Lodge",
     count: unassignedDates.length,
-    href: "/admin/hut-leaders",
+    href: adminHref("hut-leaders"),
     summary: `${unassignedDates.length} upcoming ${plural(
       unassignedDates.length,
       unassignedNoun,
@@ -877,7 +877,7 @@ export async function getStuckStateDashboard(input?: {
   ]);
 
   buildPaymentItems(items, paymentSignals.counts, paymentSignals.details);
-  // #4910 (`INV-PAY-163`): the nightly booking money check and the two credit faults.
+  // #4910 (`INV-PAY-164`): the nightly booking money check and the two credit faults.
   for (const item of await getMoneyCheckItems(deps, now, viewerCanViewPaymentRows)) addItem(items, { ...item, domain: "payment" });
   const [exhaustedSettlementAlerts, exhaustedSettlementAlertRows] = await Promise.all([
     deps.countExhaustedCashSettlementAlerts(),

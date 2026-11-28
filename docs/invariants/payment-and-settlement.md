@@ -318,7 +318,7 @@ the rule: it names sibling IDs so a change to one prompts checking the others.
   and (3) AFTER THE FACT — the booking-ledger census (`INV-MONEY-037`) checks
   every booking's `amountCents`, `creditAppliedCents` and uncollected
   addition against its ledger lines over committed data. **(3) is not a safety
-  net for this settle**: it runs nightly (`INV-PAY-163`), after the fact;
+  net for this settle**: it runs nightly (`INV-PAY-164`), after the fact;
   repair stays operator-run.
   Either answer is recorded on the mark-paid audit row BOTH ways — with the
   settled figure written, the amount owing, and what was deliberately left
@@ -397,14 +397,15 @@ the rule: it names sibling IDs so a change to one prompts checking the others.
   policy-retained or credit-settled reduction. Nothing repairs either
   automatically (owner, 8 Sep 2026).
 
-  **An Internet Banking price increase is an EXPECTED positive**, because it is
-  billed on a supplementary Xero invoice and raises no ADDITIONAL
-  `PaymentTransaction` for the ask term to see. Invoicing one by hand would bill
-  the member twice. A term reading the Xero outbox was considered and rejected:
-  it would make this identity depend on an external queue's state, where
-  "queued", "failed" and "sent" are three different answers to "is the club
-  asking for this?" that only a person can weigh. The operator guide
-  ([`MAINTENANCE.md`](../MAINTENANCE.md)) says so at the point of use.
+  **An Internet Banking increase is billed in Xero, not asked by a term**: its
+  invoice raises no ADDITIONAL `PaymentTransaction`, and invoicing it by hand
+  bills the member twice. The identity reads no outbox; the verdict does
+  (#5288). A positive residual on an Internet Banking payment whose primary
+  invoice is linked, whose primary or supplementary invoice link is active, or
+  whose such create is PENDING or RUNNING is `billedInXero`, listed apart
+  (`bookingBilledInXero`, one list, both forms). FAILED or
+  no evidence stays `unasked`; [INV-PAY-163] asks an unlinked one.
+  [`MAINTENANCE.md`](../MAINTENANCE.md) tells the operator.
 
   **WHAT THE CI HALF GUARDS, EXACTLY** (`src/lib/__tests__/booking-ledger-census.test.ts`).
   It is two guards, and conflating them overstates both. The ARITHMETIC guard
@@ -1728,6 +1729,8 @@ refunded total it corrects).
   just before them is unmeasured, and a create finding one's link hands any
   gap to the treasurer. The credit election changes no price. No payment row,
   no claim.
+- **An unlinked Internet Banking increase** has the door queue the primary
+  invoice after commit; the claim keeps its fee there once (`INV-PAY-163`).
 - Pinned by `primary-invoice-edit-race.realdb.test.ts`,
   `primary-invoice-claim-call-sites.test.ts`,
   `xero-primary-invoice-fee-gap.test.ts` and
@@ -1927,37 +1930,39 @@ and **`INV-PAY-147`** (slice evidence).
 - **A kept change capture on a cancelled, invoiced booking is recorded by the
   document the evidence names** (#4324, amending one `INV-PAY-110` case),
   so no income counts twice.
-- **One decision** (`keptChangeCaptureRoute`), taken once, by the keep or
-  repair tool, under the task row then the change's anchor, after
-  finding the capture's receipt or kept invoice:
+- **One decision** (`keptChangeCaptureRoute`, read by `readKeptCaptureRecord`),
+  under the task row then the change's anchor, after finding the capture's
+  receipt or kept invoice:
   - a change invoice naming the capture: the late-success release
     (`INV-PAY-104`); a `STALE_WAITING_PAYMENT` row re-queued in the keep,
-    with its receipt if unpaid, or stamped captured if refused (officer
-    emailed after commit, #5220); no repair finding;
-  - a #3980 gap invoice billing it (`primaryInvoiceGapBillsChange`), the
-    primary billing it (settled against it, or no supplementary invoice,
-    and not raced past it: `primaryInvoiceMissedChange`), or a live
-    supplementary invoice billing this capture: its receipt, capped at the
-    AmountDue;
-  - otherwise (withdrawn, recording another capture, or raced with no gap
-    billing it): the kept-capture invoice, less what another writer
-    records (`readCaptureRecorder`);
-  - no change readable: nothing, whatever names its intent; the repair tool
-    names it (owner, Q1).
+    with its receipt if unpaid, or stamped captured if refused (#5220);
+  - a #3980 gap invoice, the primary (settled against it, or no
+    supplementary invoice, and not raced: `primaryInvoiceMissedChange`), or
+    a live supplementary invoice billing this capture: its receipt, capped
+    at the AmountDue;
+  - otherwise: the kept-capture invoice, less what another writer records
+    (`readCaptureRecorder`);
+  - no change readable: nothing; the repair tool names it (owner, Q1).
 - **One recorder.** `readCaptureRecorder` and `anchorCaptureHasReceipt` count
-  a kept-capture invoice; a replayed release finds the receipt; the receipt
-  verdict counts it, so refunds get notes. No gap invoice on a cancelled
-  booking, nor supplementary invoice for a change a kept-capture invoice
-  bills; a gap invoice so refused raises the treasurer's UNDERBILLED task.
-- **Reopen.** Its worker re-reads the task under the anchor and, no longer
-  kept, closes its row; an approval takes the anchor
-  first and withdraws an undecided receipt. A paid-another-way close plans
-  under the task row then the anchor.
-- **Repair.** `KEPT_LATE_CAPTURE_NOT_RECORDED_IN_XERO`, dry run listing the
-  cents `--apply` records, then recorded automatically; without the primary
-  invoice's id, "cannot tell yet".
-- Pinned by `xero-kept-late-capture-ledger.test.ts` (e3, e4),
-  `late-capture-kept-xero.test.ts`, `additional-capture-xero-receipt.test.ts`,
+  a kept-capture invoice; a replayed release finds the receipt. No gap
+  invoice on a cancelled booking (a refused one raises UNDERBILLED), nor
+  supplementary invoice for a change a kept-capture invoice bills.
+- **Reopen and close.** The worker re-reads under the anchor whether the
+  receipt is owed (`lateCaptureReceiptOwed`), else closes its row; an
+  approval withdraws an undecided receipt. A
+  paid-another-way close takes this split (#4381, `INV-PAY-122`). Where
+  another writer records the whole capture, the close's note credits the one
+  invoice in Xero that does (`readLateCaptureRecordedElsewhere`), never
+  above it; the credit-release sweep stays `after-receipt` until #4380, never
+  to record by hand; otherwise `none` (owner, 28 Nov 2026).
+- **Repair.** `KEPT_LATE_CAPTURE_NOT_RECORDED_IN_XERO`: a dry run of the
+  cents `--apply` records; "cannot tell yet" without the primary's id. A
+  close with no note raised or queued:
+  `PAID_ANOTHER_WAY_REFUND_NOTE_RECORD_BY_HAND`; one the sweep holds:
+  `PAID_ANOTHER_WAY_REFUND_NOTE_AWAITS_CREDIT_RELEASE`.
+- Pinned by `late-capture-kept-xero.test.ts`,
+  `late-capture-recorded-elsewhere.test.ts`,
+  `card-refund-paid-another-way-xero.test.ts`,
   `kept-change-capture-record.realdb.test.ts` and `xero-booking-repair.test.ts`.
 
 ## INV-PAY-031
@@ -2898,7 +2903,7 @@ _Legacy: settles tasks raised before #4317._
 - **"Paid another way" records the close as a completed hand-back and ends the
   refund** (#3372, owner 7 Oct 2026). `closeCardRefundPaidAnotherWay`
   (finance:edit) takes `lock(1)`, then the payment row, refuses (409) unless
-  the owed figure is what the treasurer saw, and claims a dead row to
+  the owed figure is the one shown, and claims a dead row to
   `SUCCEEDED`, status-guarded. It records the amount on unsent slices'
   charges (`applyLocalRefundAllocation`), writes a COMPLETED
   hand-back task under `card-refund-paid-another-way:<row>`, its `BANK_REFUND`
@@ -2912,10 +2917,11 @@ _Legacy: settles tasks raised before #4317._
   - **Xero** (8 Oct): with no card-note cover, a bank-transfer note keyed on
     the task, sized by it less its notes, dated the close's day, where an
     invoice exists; else none (`:no-xero-note`). Covered: `INV-PAY-151`.
-    A late capture's note names its receipt by invoice, never by intent.
-    None in Xero: queue it (`INV-PAY-110`), requeue a failed one that cannot have reached Xero, or
-    await one in flight; link then note once under the approval task's row,
-    read first (`:note-after-receipt`). Cash evidence counts it once noted.
+    A late capture's note names its receipt by invoice, never intent;
+    an invoice recording it whole is one (`INV-PAY-144`).
+    None in Xero: queue it as a keep would, requeue one never sent, or await
+    one in flight; then note once under the approval row
+    (`:note-after-receipt`). Cash evidence counts it once noted.
   - A superseded intent's row closes whole, only while its charge holds exactly
     that. Group organiser rows are refused (`INV-PAY-153`).
   - **Refused** (#4492, `paidAnotherWayRefusal`, list and close; 409, no writes,
@@ -4048,14 +4054,15 @@ _Split from `INV-PAY-057` (#3220)._
   a part payment recognised at cancel included, is cash-sized. That receipt
   still includes the corrected amount, so the correction keeps counting and the
   net stays the cash. A recount finds any payment's modification notes by its
-  invoice (#4444): a later note drops none, and a note counts once per
-  payment. A card payment's total never rises above Stripe's refunds (owner,
-  23 Nov), so two notes for one refund cannot pass Stripe.
+  one invoice (#4444, #5289), each counted once per payment. A card payment's
+  total never rises above Stripe's refunds (owner, 23 Nov).
   A keep sets the whole refunded total its links record under the `Payment`
-  row (`decideLinkedRefundedTotalCents`, floored), never an increment; the
-  note's allocation write or removal locks that row first and decides it too,
-  so a writer queued on `lock(1)` reads the net (#4449). The recount after a
-  keep or replay is a backstop; failing, the event is retried (#4095).
+  row (`decideLinkedRefundedTotalCents`, floored), never an increment; every
+  allocation writer (inbound, a voided note's removal, the app's own, a
+  note's status, #5251) locks the payment the settle's rule finds first and
+  decides it too, so a writer
+  queued on `lock(1)` reads the net (#4449, #5289). The recount after a keep
+  or replay is a backstop; failing, the event is retried (#4095).
 - **The refunded-total repair writes through a claim** on the row it read
   (status, totals, `updatedAt`, which every settle transition touches),
   re-running once from scratch when lost, and never un-refunds a payment whose
@@ -4564,6 +4571,44 @@ Xero note mints one when spent), **`INV-CONFIG-008`** (the Exempt line).
   `opening-credit-batch.realdb.test.ts`.
 
 ## INV-PAY-163
+
+**Related:** **`INV-PAY-047`** (the census verdict), **`INV-PAY-119`** (worth,
+and what the primary invoice bills), **`INV-PAY-136`** (the edit's claim),
+**`INV-MOD-042`** (the fee).
+
+- **An unlinked Internet Banking increase is asked for and billed on the
+  primary invoice** (#5288; owner, 20 and 28 Nov 2026): a paid Internet
+  Banking booking that credit paid in full, no primary invoice linked.
+- **Who.** `mayBillIncreaseOnNewPrimaryInvoice`
+  (`primary-invoice-bills-increase.ts`): an increase, no card ask, settled
+  status, captured payment status, Internet Banking source, no invoice link,
+  no bank cash recorded, not settled outside the app, not an organiser's
+  place. Bank cash stays `unasked`, for the treasurer: the invoice would bill
+  that transfer again.
+- **The ask.** `primaryInvoiceDueCents`: what that invoice will show as due,
+  price plus every recorded fee less the applied credit the allocation engine
+  allocates (`unallocatedAppliedCents`), never one edit's increase. Nothing
+  due: no ask, no invoice. The "Booking Modified" email says "The amount now
+  due on this booking is $X by Internet Banking. This replaces any earlier
+  amount we asked for." (`internetBankingAskSentence`), with the payment
+  reference; a linked booking's edit keeps "additional". Nothing is minted.
+- **The bill.** After commit, the edit queues the primary invoice, unemailed
+  (`XERO_INVOICE_EMAIL_ASKED_BY_EDIT`: Xero's email precedes the allocation
+  and would show the gross), then the applied-credit allocation, only behind
+  an invoice operation. Never a supplementary invoice without a link. With
+  Xero off nothing is queued, F20's $0 invoice included; the email still goes
+  (`INV-INT-040`).
+- **Once.** The edit's claim on the unlinked row (`INV-PAY-136`) puts its fee
+  on that invoice or, where its create read the booking first, on the one gap
+  invoice the create raises. A later, linked edit gets its own supplementary
+  invoice.
+- **Locks.** None new: the credit read runs after the edit's locks, the
+  enqueues after commit.
+- Pinned by `ib-unlinked-fee-ask.realdb.test.ts`,
+  `booking-primary-invoice-claim.test.ts`,
+  `xero-booking-edit-settlement.test.ts` and `booking-ledger-census.test.ts`.
+
+## INV-PAY-164
 
 **Related:** **`INV-MONEY-037`** (the booking-ledger census),
 **`INV-MONEY-031`** (the booking-money reconciliation census),

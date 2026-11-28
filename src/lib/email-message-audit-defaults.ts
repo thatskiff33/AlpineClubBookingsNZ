@@ -1,9 +1,9 @@
 // Authoritative editor-safe defaults for the admin editor and server-side
 // render path. Keep template keys and wording aligned when the registry changes.
 import { BOOKING_URL_TEMPLATE_NAMES } from "@/lib/booking-email-template-contract";
-import { BOOKING_LEDGER_CENSUS_COMMAND, BOOKING_MONEY_CENSUS_ALERT_NOTE } from "@/lib/booking-money-census-job";
+
 import { adminHref } from "@/lib/admin-hubs";
-import { BOOKING_CONFIRMATION_UNSENT_NOTE } from "@/lib/booking-confirmation-unsent-note";
+import { EXTERNAL_ALERT_DEFAULTS } from "@/lib/email-message-external-alerts";
 
 const EMAIL_AUDIT_DEFAULTS_BASE = {
   "password-reset": {
@@ -122,15 +122,8 @@ const EMAIL_AUDIT_DEFAULTS_BASE = {
     "defaultSubject": "Waitlist Offer: {{memberName}}",
     "defaultBody": "Waitlist Offer Made\n\n{{offerNote}}\n\nMember: {{memberName}}\nCheck-in: {{checkIn}}\nCheck-out: {{checkOut}}\nGuests: {{guestCount}}\nQueue Position: #{{position}}\n\nThe member has until {{expiresAt}} to confirm their booking.\n\nView Waitlist: {{BASE_URL}}" + adminHref("waitlist")
   },
-  // #5433: a waitlist email owed to a member passed its cut-off unsent.
-  "admin-waitlist-notice-unsent": {
-    "defaultSubject": "Waitlist email not sent: {{memberName}}",
-    "defaultBody": "Waitlist Email Not Sent\n\n{{noticeNote}}\n\nMember: {{memberName}}\nBooking: {{bookingReference}}\nCheck-in: {{checkIn}}\nCheck-out: {{checkOut}}\n\nOpen Booking: {{bookingUrl}}"
-  },
-  // #5433 (owner decision D1): a paid booking's confirmation did not reach its owner.
-  "admin-booking-confirmation-unsent": { "defaultSubject": "Booking confirmation not sent: {{memberName}}", "defaultBody": "Booking Confirmation Not Sent\n\n" + BOOKING_CONFIRMATION_UNSENT_NOTE + "\n\nOwner: {{memberName}}\nBooking: {{bookingReference}}\nCheck-in: {{checkIn}}\nCheck-out: {{checkOut}}\n\nOpen Booking: {{bookingUrl}}" },
-  "admin-booking-money-census": { "defaultSubject": "Booking money check: {{count}} new", "defaultBody": "Booking Money Check\n\n" + BOOKING_MONEY_CENSUS_ALERT_NOTE + "\n\nNew findings: {{count}}\n{{details}}\n\nFor the full report, run " + BOOKING_LEDGER_CENSUS_COMMAND + " on the server.\n\nOpen Stuck States: {{reviewUrl}}" }, // #4910: the nightly booking money check found something new.
-  "admin-booking-notice-unsent": { "defaultSubject": "Booking email not sent: {{memberName}}", "defaultBody": "Booking Email Not Sent\n\n{{unsentNote}}\n\nOwner: {{memberName}}\nBooking: {{bookingReference}}\nCheck-in: {{checkIn}}\nCheck-out: {{checkOut}}\n\nOpen Booking: {{bookingUrl}}" }, // #5433 PR 4
+  // #5433 and #5469: alerts whose registry entries live in their own modules.
+  ...EXTERNAL_ALERT_DEFAULTS,
   "nomination-request": {
     "defaultSubject": "Nomination request for {{applicantName}} — {{CLUB_NAME}}",
     "defaultBody": "Membership Nomination Request\n\nHi {{nominatorName}},\n\n{{applicantName}} has listed you as one of their {{CLUB_NAME}} nominators.\n\nDependent family members included in this application: {{familyMemberCount}}\n\nPlease review the application and confirm whether you agree to nominate this person for membership.\n\nYou will need to sign in before you can confirm the nomination.\n\nReview Application: {{BASE_URL}}/nominations/{{token}}\n\nThis link expires on {{expiresAt}}."

@@ -1636,7 +1636,7 @@ export async function register() {
 
     logger.info({ job: "credit-reconciliation" }, `Scheduled credit reconciliation (daily at 5:00 AM ${cronTimeZone()})`);
 
-    // Booking money check (#4910, INV-PAY-163): daily at 5:30 AM club time.
+    // Booking money check (#4910, INV-PAY-164): daily at 5:30 AM club time.
     // Read-only: both censuses, a bounded summary, an alert for anything new.
     const { BOOKING_MONEY_CENSUS_JOB_NAME, BOOKING_MONEY_CENSUS_CRON_SCHEDULE } = await import(
       "./lib/booking-money-census-job"

@@ -1,6 +1,11 @@
 import { NextResponse } from "next/server";
-import { z } from "zod";
 import { parseJsonRequestBody } from "@/lib/api-json";
+import { helpAssistantBudgetUpdateSchema } from "@/lib/admin-support-api/ai-settings";
+import {
+  HELP_ASSISTANT_SETTINGS_CONNECTION_SHAPE,
+  type HelpAssistantSettingsAnswer,
+} from "@/lib/connection-shapes/support-ai";
+import { connectionJson } from "@/lib/mcp-connection-request";
 import { requireAdmin } from "@/lib/session-guards";
 import {
   buildStructuredAuditLogCreateArgs,
@@ -13,18 +18,14 @@ import { prisma } from "@/lib/prisma";
 // cap (#2211, C3). The cap is a deployment-specific operational control; it does
 // NOT travel in a config bundle (see config-transfer club-settings.ts).
 
+// The update schema (integer cents of the club's currency, #3354; 0 is
+// hard-off; capped so a fat-finger cannot uncap spend) lives in
+// admin-support-api/ai-settings.ts, which the AI app action
+// `update_help_assistant_budget` offers too (ALP-724).
+
 const AI_ASSISTANT_SETTINGS_ID = "default";
 
-const updateSchema = z
-  .object({
-    // Integer cents of the club's configured currency (#3354). 0 disables all
-    // paid answers (hard-off); 100000c = 1,000.00 upper guard so a fat-finger
-    // cannot uncap spend.
-    monthlyBudgetCents: z.number().int().min(0).max(100000),
-  })
-  .strict();
-
-export async function GET() {
+export async function GET(request: Request) {
   const guard = await requireAdmin({
     permission: { area: "support", level: "view" },
   });
@@ -34,11 +35,12 @@ export async function GET() {
     where: { id: AI_ASSISTANT_SETTINGS_ID },
   });
 
-  return NextResponse.json({
+  const answer: HelpAssistantSettingsAnswer = {
     monthlyBudgetCents: row?.monthlyBudgetCents ?? DEFAULT_MONTHLY_BUDGET_CENTS,
     updatedAt: row?.updatedAt?.toISOString() ?? null,
     updatedByMemberId: row?.updatedByMemberId ?? null,
-  });
+  };
+  return connectionJson(request, answer, HELP_ASSISTANT_SETTINGS_CONNECTION_SHAPE);
 }
 
 export async function PUT(request: Request) {
@@ -54,7 +56,7 @@ export async function PUT(request: Request) {
   if (!jsonBody.ok) return jsonBody.response;
   const body = jsonBody.body;
 
-  const parsed = updateSchema.safeParse(body);
+  const parsed = helpAssistantBudgetUpdateSchema.safeParse(body);
   if (!parsed.success) {
     return NextResponse.json(
       { error: "Invalid input", details: parsed.error.flatten() },
@@ -107,9 +109,10 @@ export async function PUT(request: Request) {
     return updated;
   });
 
-  return NextResponse.json({
+  const answer: HelpAssistantSettingsAnswer = {
     monthlyBudgetCents: row.monthlyBudgetCents,
     updatedAt: row.updatedAt.toISOString(),
     updatedByMemberId: row.updatedByMemberId,
-  });
+  };
+  return connectionJson(request, answer, HELP_ASSISTANT_SETTINGS_CONNECTION_SHAPE);
 }

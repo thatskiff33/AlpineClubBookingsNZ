@@ -12,6 +12,10 @@ const { mockPrisma } = vi.hoisted(() => ({
     auditLog: {
       findMany: vi.fn(),
     },
+    // #5469: which recipients are blocked; none here.
+    emailSuppression: {
+      findMany: vi.fn(async () => []),
+    },
   },
 }));
 

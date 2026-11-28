@@ -1,24 +1,17 @@
 import { NextRequest, NextResponse } from "next/server";
-import { z } from "zod";
+import { setupProgressSchema } from "@/lib/admin-support-api/system";
 import { logAudit } from "@/lib/audit";
+import { SETUP_PROGRESS_CONNECTION_SHAPE } from "@/lib/connection-shapes/support-system";
+import { connectionJson } from "@/lib/mcp-connection-request";
 import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/session-guards";
-import {
-  SETUP_STEP_IDS,
-  normalizeSetupProgress,
-  type SetupStepId,
-} from "@/lib/setup-readiness";
+import { normalizeSetupProgress } from "@/lib/setup-readiness";
+import type { SetupStepId } from "@/lib/setup-step-ids";
 import { parseJsonRequestBody } from "@/lib/api-json";
 
-const progressSchema = z.discriminatedUnion("action", [
-  z.object({
-    action: z.enum(["complete", "skip", "reopen"]),
-    stepId: z.enum(SETUP_STEP_IDS),
-  }),
-  z.object({
-    action: z.enum(["finish", "reset"]),
-  }),
-]);
+// The body schema lives in admin-support-api/system.ts, which the AI app
+// actions `update_setup_step`, `finish_setup` and `reset_setup_progress`
+// offer one branch each of (ALP-724).
 
 function withoutStep(ids: string[], stepId: SetupStepId) {
   return ids.filter((id) => id !== stepId);
@@ -34,7 +27,7 @@ export async function PATCH(request: NextRequest) {
   if (!jsonBody.ok) return jsonBody.response;
   const body = jsonBody.body;
 
-  const parsed = progressSchema.safeParse(body);
+  const parsed = setupProgressSchema.safeParse(body);
   if (!parsed.success) {
     return NextResponse.json(
       { error: "Invalid input", details: parsed.error.flatten() },
@@ -112,12 +105,16 @@ export async function PATCH(request: NextRequest) {
     metadata: parsed.data,
   });
 
-  return NextResponse.json({
-    progress: normalizeSetupProgress({
-      completedStepIds: record.completedStepIds,
-      skippedStepIds: record.skippedStepIds,
-      completedAt: record.completedAt?.toISOString() ?? null,
-      completedByMemberId: record.completedByMemberId,
-    }),
-  });
+  return connectionJson(
+    request,
+    {
+      progress: normalizeSetupProgress({
+        completedStepIds: record.completedStepIds,
+        skippedStepIds: record.skippedStepIds,
+        completedAt: record.completedAt?.toISOString() ?? null,
+        completedByMemberId: record.completedByMemberId,
+      }),
+    },
+    SETUP_PROGRESS_CONNECTION_SHAPE,
+  );
 }

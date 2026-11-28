@@ -389,7 +389,8 @@ Prefix `INV-PAY`.
 | `INV-PAY-160` | An edit refunds a card only where Stripe holds a record |
 | `INV-PAY-161` | An imported paid booking is settled manually in its creating transaction |
 | `INV-PAY-162` | An opening-credit file posts once, from one approval; reversal needs it unspent |
-| `INV-PAY-163` | The booking money censuses run nightly, read-only; each disagreement alerts once |
+| `INV-PAY-163` | An unlinked Internet Banking increase is asked, billed on the primary invoice |
+| `INV-PAY-164` | The booking money censuses run nightly, read-only; each disagreement alerts once |
 | `INV-PAY-031` | Organiser-pays settlement applies only if payment matches the settleable children |
 | `INV-PAY-032` | Group children confirmed before payment have a reaper releasing beds and notifying |
 | `INV-PAY-033` | Reverted group children end terminally: a second reap window cancels once |
@@ -984,6 +985,8 @@ File: [`invariants/integrations.md`](invariants/integrations.md). Prefix
 | `INV-INT-040` | No subscription or joining-fee invoice work while Xero is off |
 | `INV-INT-041` | A PENDING outbox row always holds a request the outbox can claim |
 | `INV-INT-042` | A once-ever alert claim with no email is given back |
+| `INV-INT-043` | A stranded QUEUED email is re-sent once or flagged, never twice |
+| `INV-INT-044` | A bounce or complaint changes only the email and address named |
 
 ## Operations
 

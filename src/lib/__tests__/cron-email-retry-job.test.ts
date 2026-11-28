@@ -38,12 +38,13 @@ beforeEach(() => {
   vi.clearAllMocks();
   mocks.order.length = 0;
   mocks.drain.mockResolvedValue(SWEPT);
-  mocks.retry.mockResolvedValue({ retried: 3, succeeded: 2, failed: 1 });
+  mocks.retry.mockResolvedValue({ retried: 3, succeeded: 2, failed: 1, skipped: 0 });
 });
 
 describe("runEmailRetryJob", () => {
   it("sweeps the owed notices under its cap and as this job, then replays the failed rows, and reports both", async () => {
-    await expect(runEmailRetryJob()).resolves.toEqual({ retried: 3, succeeded: 2, failed: 1, owedNotices: SWEPT });
+    await expect(runEmailRetryJob()).resolves.toEqual({ retried: 3, succeeded: 2, failed: 1, skipped: 0, owedNotices: SWEPT });
+    expect(mocks.logger.warn).not.toHaveBeenCalled();
     expect(mocks.order).toEqual(["drain", "retry"]);
     expect(mocks.drain).toHaveBeenCalledWith(expect.any(Date), { ...EMAIL_RETRY_OWED_NOTICE_CAP, job: "email-retry" });
   });
@@ -51,9 +52,19 @@ describe("runEmailRetryJob", () => {
   it("replays the failed rows even when the sweep throws, and records that it did", async () => {
     mocks.drain.mockRejectedValue(new Error("sweep broke"));
 
-    await expect(runEmailRetryJob()).resolves.toEqual({ retried: 3, succeeded: 2, failed: 1, owedNotices: { failed: "sweep broke" } });
+    await expect(runEmailRetryJob()).resolves.toEqual({ retried: 3, succeeded: 2, failed: 1, skipped: 0, owedNotices: { failed: "sweep broke" } });
     expect(mocks.retry).toHaveBeenCalledTimes(1);
     expect(mocks.logger.error).toHaveBeenCalledTimes(1);
+  });
+
+  it("MUTATION: reports rows the replay skipped, and warns, so a failing suppression read is not an idle run (#5469)", async () => {
+    mocks.retry.mockResolvedValue({ retried: 0, succeeded: 0, failed: 0, skipped: 2 });
+
+    await expect(runEmailRetryJob()).resolves.toMatchObject({ skipped: 2 });
+    expect(mocks.logger.warn).toHaveBeenCalledWith(
+      expect.objectContaining({ job: "email-retry", skipped: 2 }),
+      expect.stringContaining("suppression could not be read"),
+    );
   });
 
   it("keeps the sweep's counts on the replay's error, for the failed run's record", async () => {

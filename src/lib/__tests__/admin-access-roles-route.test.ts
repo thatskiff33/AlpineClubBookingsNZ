@@ -130,7 +130,7 @@ describe("GET /api/admin/access-roles", () => {
       },
     ]);
 
-    const response = await GET();
+    const response = await GET(new Request("http://localhost/api/admin/access-roles"));
     expect(response.status).toBe(200);
     const body = await response.json();
 

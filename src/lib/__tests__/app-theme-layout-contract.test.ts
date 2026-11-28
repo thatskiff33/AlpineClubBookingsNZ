@@ -767,7 +767,7 @@ describe("database theme app-shell contract", () => {
     const semanticTextFiles = [
       "src/app/(admin)/admin/rules/booking-policies/page.tsx",
       "src/app/(admin)/admin/messages/notifications/page.tsx",
-      "src/app/(admin)/admin/roster/[date]/print/page.tsx",
+      "src/app/(admin)/admin/lodge-ops/roster/[date]/print/page.tsx",
       "src/app/(admin)/admin/setup/finance/page.tsx",
       "src/app/(admin)/admin/setup/setup-page-client.tsx",
       "src/app/(admin)/admin/website/site-style/page.tsx",

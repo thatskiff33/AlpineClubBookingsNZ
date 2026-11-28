@@ -382,13 +382,13 @@ export async function enqueueXeroEntranceFeeInvoiceOperation(
  *
  * ## Why it cannot pick up a stranger's withhold
  *
- * Only the on-behalf booking create ever writes a non-null value, and it writes
- * one only where it enqueues: the Internet Banking create, and the zero-dollar
- * confirmed create. The card path enqueues no booking invoice at all, so it
- * leaves no row to inherit from; and `switch-to-internet-banking`, the one route
- * that could later raise a first invoice for a booking that had none, admits
- * only a `PAYMENT_PENDING` booking, which a zero-dollar create never leaves
- * behind (it is `CONFIRMED`). Rows written before #2929 are null and are skipped
+ * The on-behalf booking create writes a non-null value only where it enqueues:
+ * the Internet Banking create, and the zero-dollar confirmed create. The card
+ * path enqueues no booking invoice, so it leaves no row to inherit from; and
+ * `switch-to-internet-banking` admits only a `PAYMENT_PENDING` booking, which a
+ * zero-dollar create never leaves behind (it is `CONFIRMED`). The one other
+ * writer, a booking edit's ASKED_BY_EDIT (#5288), is inherited on purpose: its
+ * own email asked the member. Rows written before #2929 are null and skipped
  * by the `not: null` filter, so an older null can never mask a newer choice.
  *
  * Returns `null` when no previous operation expressed a choice, which is every
@@ -434,8 +434,8 @@ export async function enqueueXeroBookingInvoiceOperation(
      * `xero-operation-outbox` census that names every null-passing caller, so a
      * second count cannot drift out of step with it.)
      *
-     * `null` means "this caller has no creation-time choice to express" — which
-     * is every enqueuer but the on-behalf booking create. It is not the same as
+     * `null` means "this caller has no instruction to record" — every enqueuer
+     * but the on-behalf booking create and #5288's edit. It is not the same as
      * `SEND`: see {@link inheritedBookingInvoiceEmailInstruction}, which lets a
      * null-passing RE-MINT of the same invoice keep the instruction the original
      * enqueue recorded.

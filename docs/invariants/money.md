@@ -678,7 +678,7 @@ verified aggregate) and **`INV-MOD-058`** (an edit's stored lines).
 
 - **Until the reads move, every booking's ledger is proved against its money
   columns, and the cut-over waits on that proof** (#3583, design
-  `booking-ledger.md` §6, §7). `pnpm run booking-ledger:census`, also nightly (`INV-PAY-163`), reads one
+  `booking-ledger.md` §6, §7). `pnpm run booking-ledger:census`, also nightly (`INV-PAY-164`), reads one
   `RepeatableRead`, `READ ONLY` snapshot, writes nothing, and checks seven
   identities per booking: `finalPriceCents` is Σ `GUEST_NIGHT`, `PROMOTION`
   and `GROUP_DISCOUNT` plus `adjusted(b)` less agreed give-backs, or, once
