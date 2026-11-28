@@ -25,6 +25,17 @@ describe("recent authentication window (#4616)", () => {
     mockAuth.mockReset();
   });
 
+  it("is five minutes, pinned as a number rather than read back", () => {
+    expect(RECENT_AUTH_WINDOW_MS).toBe(300_000);
+  });
+
+  it("refuses a non-finite stamp, which would otherwise never expire", () => {
+    const now = frozenTestNow().getTime();
+    // now - Infinity is -Infinity, which is inside any window.
+    expect(isWithinRecentAuthWindow(Number.POSITIVE_INFINITY, now)).toBe(false);
+    expect(isWithinRecentAuthWindow(Number.NEGATIVE_INFINITY, now)).toBe(false);
+  });
+
   it("uses the frozen clock, and five minutes still passes", () => {
     const signedInAt = Date.now();
     expect(signedInAt).toBe(frozenTestNow().getTime());
