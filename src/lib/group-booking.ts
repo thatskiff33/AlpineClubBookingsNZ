@@ -883,8 +883,7 @@ export async function joinGroupBookingAsMember(
       }))
     ) {
       const paidSub = await prisma.memberSubscription.findFirst({
-        where: paidSeasonRowWhere(sessionUserId, seasonYear),
-        select: { id: true },
+        where: paidSeasonRowWhere(sessionUserId, seasonYear), select: { id: true },
       });
       if (!paidSub) {
         throw new GroupBookingError(

@@ -219,7 +219,6 @@ export default async function ProfilePage({
       },
       subscriptions: {
         orderBy: { seasonYear: "desc" },
-        // #5190 PR 3: an issued, unpaid age-up top-up is part of what they owe.
         select: { status: true, seasonYear: true, ageUpAdjustments: ISSUED_UNPAID_AGE_UP_TOP_UP },
       },
     },
@@ -238,9 +237,8 @@ export default async function ProfilePage({
   const { pendingDeletionRequest, pendingEmailChange } =
     await loadProfilePendingRequests({ memberId: member.id, isAdmin, club });
 
-  const currentSub = member.subscriptions.find(
-    (s) => s.seasonYear === currentSeasonYear,
-  );
+  // #5190 PR 3: an issued, unpaid age-up top-up is part of what they owe.
+  const currentSub = member.subscriptions.find((s) => s.seasonYear === currentSeasonYear);
   const subscriptionRequired =
     await requiresPaidSubscriptionForMemberForBooking(prisma, {
       memberId: member.id,

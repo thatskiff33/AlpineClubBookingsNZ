@@ -12,7 +12,7 @@ import {
 import { prisma } from "@/lib/prisma";
 import {
   ISSUED_UNPAID_AGE_UP_TOP_UP,
-  hasIssuedUnpaidAgeUpTopUp,
+  seasonRowStatusOwed,
   loadMemberSubscriptionSettlements,
   subscriptionIsSettled,
 } from "@/lib/subscription-lockout-facts";
@@ -55,7 +55,7 @@ type FinancialDb = Parameters<typeof requiresPaidSubscriptionForMemberForBooking
  * member-facing /api/member/subscription-status route reports:
  *   - not subscription-required (Life/honorary/operational type, age-tier
  *     exemption, or lockout disabled) => financial (in good standing), OR
- *   - current-season MemberSubscription.status === "PAID".
+ *   - current-season MemberSubscription is PAID, top-up included (#5190).
  * No parallel definition of "financial" is introduced.
  */
 export async function isMemberFinancial(
@@ -70,14 +70,10 @@ export async function isMemberFinancial(
     return true;
   }
   const sub = await prisma.memberSubscription.findUnique({
-    where: {
-      memberId_seasonYear: { memberId: params.memberId, seasonYear: params.seasonYear },
-    },
+    where: { memberId_seasonYear: { memberId: params.memberId, seasonYear: params.seasonYear } },
     select: { status: true, ageUpAdjustments: ISSUED_UNPAID_AGE_UP_TOP_UP },
   });
-  // An issued, unpaid age-up top-up is part of what they owe (#5190 PR 3), as
-  // the batched sibling below reads it through `subscriptionPaid`.
-  return sub?.status === "PAID" && !hasIssuedUnpaidAgeUpTopUp(sub);
+  return sub != null && seasonRowStatusOwed(sub) === "PAID";
 }
 
 /**
