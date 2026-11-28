@@ -21,7 +21,7 @@ import {
 } from "@/lib/payment-link-expiry";
 import { sendSplitGuestPaymentLinkEmail } from "@/lib/email";
 import { recordWithheldBookingEmail } from "@/lib/booking-email-suppression";
-import type { EmailAuditTemplateName } from "@/lib/email-message-audit-defaults";
+import { SPLIT_GUEST_PAYMENT_LINK_TEMPLATE } from "@/lib/email/owed-notice-templates";
 import logger from "@/lib/logger";
 import { readBookingAmountOwed } from "@/lib/booking-amount-owed";
 import { revokePaymentLinkById } from "@/lib/payment-link";
@@ -120,15 +120,6 @@ export async function mintSplitGuestPaymentLinkIfAbsent(
   return mintFreshSplitGuestPaymentLink(tx, booking.id, expiresAt, now);
 }
 
-/**
- * Registry template the split-guest pay-link email ships as (#1967): one
- * constant for the withhold record's template name across the split-guest mint
- * and the settlement cron (#2956). The slug itself is a registry key, defined
- * by the sender and the email registry; `satisfies` makes a rename there a
- * compile error here rather than a silent mismatch in the withheld list.
- */
-export const SPLIT_GUEST_PAYMENT_LINK_TEMPLATE =
-  "split-guest-payment-link" satisfies EmailAuditTemplateName;
 
 export type IssueSplitGuestPaymentLinkResult =
   | { outcome: "sent"; emailLogId: string | null; recipientMemberId: string | null; sentTo: string }
@@ -146,31 +137,18 @@ export type IssueSplitGuestPaymentLinkResult =
   | { outcome: "transient_failure" }
   | { outcome: "not_payable" };
 
-/**
- * On-demand sibling of the settlement-cron path (#1967): mint and email a
- * split non-member child's guest-portion payment link. Backs the
- * booking-detail affordance a member uses when paying their own place by
- * Internet Banking (no card on file for the later guest charge).
- *
- * This is a true send/RE-SEND: because a stored link's raw token is
- * unrecoverable, an existing active link is revoked and replaced with a fresh
- * one (revocation + mint atomically under the per-lodge advisory lock, so two
- * live tokens can never coexist). The only exception is an active link minted
- * within the last minute, which is treated as just-sent — that sentinel plus
- * the lock is the double-click guard. If the email is suppressed or the send
- * throws, the just-minted link is revoked again so no unreachable token stays
- * active. Refuses (`not_payable`) for anything that is not a genuine PENDING
- * split child (#738) — #796 group joiners are excluded by their join row — and
- * whenever a saved card exists on the child or its parent, because the
- * settlement cron will auto-charge that card and a parallel link would open a
- * second live settlement path.
- */
-export async function issueSplitGuestPaymentLink(
-  childBookingId: string,
-  /** The club's format (#3565), resolved once by the caller — never per child. */
-  format: ClubFormat
-): Promise<IssueSplitGuestPaymentLinkResult> {
-  const booking = await prisma.booking.findUnique({
+/** What the re-issue's checks and mint decided, before any email. */
+export type SplitGuestPaymentLinkReissue<Owed> =
+  | { kind: "not_payable" }
+  | { kind: "withheld" }
+  | { kind: "just_sent" }
+  | { kind: "minted"; booking: SplitGuestReissueBooking; minted: MintedSplitGuestPaymentLink; owed: Owed | null };
+
+/** The child booking as the re-issue reads it. */
+export type SplitGuestReissueBooking = NonNullable<Awaited<ReturnType<typeof loadSplitGuestReissueBooking>>>;
+
+function loadSplitGuestReissueBooking(childBookingId: string) {
+  return prisma.booking.findUnique({
     where: { id: childBookingId },
     include: {
       member: true,
@@ -182,6 +160,20 @@ export async function issueSplitGuestPaymentLink(
       groupBookingJoin: { select: { id: true } },
     },
   });
+}
+
+/**
+ * The re-issue's checks and its revoke-and-remint, without the email: the
+ * booking page's button (`issueSplitGuestPaymentLink`) sends right after, and
+ * the owed link's recovery (#5433 PR 4, `split-guest-payment-link-notice.ts`)
+ * passes `recordOwed` so the new link's email is owed in the very transaction
+ * that mints it, then delivers it as the job delivers its own.
+ */
+export async function prepareSplitGuestPaymentLinkReissue<Owed = null>(
+  childBookingId: string,
+  recordOwed?: (tx: Prisma.TransactionClient, minted: MintedSplitGuestPaymentLink) => Promise<Owed>,
+): Promise<SplitGuestPaymentLinkReissue<Owed>> {
+  const booking = await loadSplitGuestReissueBooking(childBookingId);
 
   if (
     !booking ||
@@ -196,7 +188,7 @@ export async function issueSplitGuestPaymentLink(
     // on a $0 child's payment is still owed, and the cron sends it this link.
     savedCardChargeCents(booking) <= 0
   ) {
-    return { outcome: "not_payable" };
+    return { kind: "not_payable" };
   }
 
   // #2258: check the "No emails" switch BEFORE minting. Minting first and
@@ -226,7 +218,7 @@ export async function issueSplitGuestPaymentLink(
       { bookingId: booking.id },
       'Did not mint a split guest payment link: the booking has "No emails" turned on',
     );
-    return { outcome: "withheld" };
+    return { kind: "withheld" };
   }
 
   // #1967 FIX-5: a saved card (its own, or inherited from the parent payment)
@@ -241,7 +233,7 @@ export async function issueSplitGuestPaymentLink(
       parentBooking: booking.parentBooking,
     })
   ) {
-    return { outcome: "not_payable" };
+    return { kind: "not_payable" };
   }
 
   // BEFORE the transaction, which holds the capacity lock, and ONCE, so the
@@ -256,7 +248,7 @@ export async function issueSplitGuestPaymentLink(
     ): Promise<
       | { kind: "not_payable" }
       | { kind: "just_sent" }
-      | ({ kind: "minted" } & MintedSplitGuestPaymentLink)
+      | { kind: "minted"; minted: MintedSplitGuestPaymentLink; owed: Owed | null }
     > => {
       const bookingLodgeId = booking.lodgeId ?? (await getDefaultLodgeId(tx));
       await acquireLodgeCapacityLock(tx, bookingLodgeId);
@@ -297,20 +289,42 @@ export async function issueSplitGuestPaymentLink(
 
       // Revoke-and-remint: the active link's raw token is unrecoverable at
       // rest, so re-sending means replacing it. Atomic under the lodge lock.
-      return {
-        kind: "minted",
-        ...(await mintFreshSplitGuestPaymentLink(
-          tx,
-          booking.id,
-          expiresAt,
-          now
-        )),
-      };
+      const fresh = await mintFreshSplitGuestPaymentLink(tx, booking.id, expiresAt, now);
+      // #5433 PR 4: the owed email's marker, when a caller records one: the
+      // transaction's last write, so the new link is never live unowed.
+      return { kind: "minted", minted: fresh, owed: recordOwed ? await recordOwed(tx, fresh) : null };
     }
   );
+  return minted.kind === "minted" ? { ...minted, booking } : minted;
+}
 
-  if (minted.kind === "not_payable") return { outcome: "not_payable" };
-  if (minted.kind === "just_sent") return { outcome: "just_sent" };
+/**
+ * On-demand sibling of the settlement-cron path (#1967): mint and email a
+ * split non-member child's guest-portion payment link. Backs the
+ * booking-detail affordance a member uses when paying their own place by
+ * Internet Banking (no card on file for the later guest charge).
+ *
+ * This is a true send/RE-SEND: because a stored link's raw token is
+ * unrecoverable, an existing active link is revoked and replaced with a fresh
+ * one (revocation + mint atomically under the per-lodge advisory lock, so two
+ * live tokens can never coexist). The only exception is an active link minted
+ * within the last minute, which is treated as just-sent — that sentinel plus
+ * the lock is the double-click guard. If the email is suppressed or the send
+ * throws, the just-minted link is revoked again so no unreachable token stays
+ * active. Refuses (`not_payable`) for anything that is not a genuine PENDING
+ * split child (#738) — #796 group joiners are excluded by their join row — and
+ * whenever a saved card exists on the child or its parent, because the
+ * settlement cron will auto-charge that card and a parallel link would open a
+ * second live settlement path.
+ */
+export async function issueSplitGuestPaymentLink(
+  childBookingId: string,
+  /** The club's format (#3565), resolved once by the caller — never per child. */
+  format: ClubFormat
+): Promise<IssueSplitGuestPaymentLinkResult> {
+  const prepared = await prepareSplitGuestPaymentLinkReissue(childBookingId);
+  if (prepared.kind !== "minted") return { outcome: prepared.kind };
+  const { booking, minted } = prepared;
 
   let emailOutcome;
   try {

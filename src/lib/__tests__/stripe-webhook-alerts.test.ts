@@ -405,10 +405,10 @@ vi.mock("@/lib/additional-capture-receipt-link", () => ({
 // #5433 PR 3: a fresh "paid" settle hands back the confirmation's owed marker, and the
 // webhook delivers it through the owed notice (proved in paid-booking-confirmation-notice.test.ts).
 const confirmation = vi.hoisted(() => ({
-  deliver: vi.fn(),
+  deliver: vi.fn(), sendUnrecorded: vi.fn(),
   marker: { id: "booking-confirmed:booking-1:1782864000000", kind: "booking-confirmed", subjectId: "booking-1", eventAt: new Date("2026-07-01T00:00:00.000Z"), variant: null, payload: null },
 }));
-vi.mock("@/lib/paid-booking-confirmation-notice", () => ({ deliverPaidBookingConfirmation: confirmation.deliver }));
+vi.mock("@/lib/paid-booking-confirmation-notice", () => ({ deliverPaidBookingConfirmation: confirmation.deliver, sendUnrecordedPaidBookingConfirmation: confirmation.sendUnrecorded }));
 
 vi.mock("@/lib/xero-error-alert", () => ({
   notifyXeroSyncError: (...args: unknown[]) => mockNotifyXeroSyncError(...args),
@@ -775,8 +775,59 @@ describe("Stripe webhook Xero alerting", () => {
     expect(mockMarkBookingPaymentSucceeded).toHaveBeenCalledWith(expect.objectContaining({ bookingId: "booking-1", owesPaidConfirmation: true }));
     expect(confirmation.deliver).toHaveBeenCalledTimes(1);
     expect(confirmation.deliver).toHaveBeenCalledWith(confirmation.marker, CLUB_FORMAT_TEST, "stripe-webhook");
+    expect(confirmation.sendUnrecorded).not.toHaveBeenCalled();
     // #5433 round 1: the invoice is queued first, so a stop during the delivery never leaves a paid booking with no queued invoice.
     expect(confirmation.deliver.mock.invocationCallOrder[0]).toBeGreaterThan(mockEnqueueXeroBookingInvoiceOperation.mock.invocationCallOrder[0]!);
+  });
+
+  it("#5433 PR 4, round 2: a fresh paid settle whose marker could not be keyed sends the confirmation unkeyed, as before #5433", async () => {
+    mockConstructWebhookEvent.mockReturnValue({
+      id: "evt_paid_confirmation",
+      type: "payment_intent.succeeded",
+      data: {
+        object: {
+          id: "pi_primary",
+          amount: 5000,
+          metadata: { bookingId: "booking-1" },
+          payment_method: "pm_123",
+        },
+      },
+    } as any);
+    mockFindPaymentTransactionByIntentId.mockResolvedValue({
+      id: "txn-1",
+      paymentId: "payment-1",
+      bookingId: "booking-1",
+      kind: "PRIMARY",
+      amountCents: 5000,
+      status: "PENDING",
+    });
+    const checkIn = new Date("2026-07-01");
+    const checkOut = new Date("2026-07-03");
+    mockBookingFindUnique.mockResolvedValue({
+      id: "booking-1",
+      memberId: "member-1",
+      lodgeId: "lodge-1",
+      status: "CONFIRMED",
+      checkIn,
+      checkOut,
+      finalPriceCents: 5000,
+      discountCents: 0,
+      guests: [{ id: "g1" }, { id: "g2" }],
+      member: { id: "member-1", firstName: "Alice", lastName: "Example", email: "alice@example.com" },
+      organisation: null,
+      promoRedemptions: [],
+      payment: { changeFeeCents: null },
+    });
+
+    mockMarkBookingPaymentSucceeded.mockResolvedValueOnce({ outcome: "paid", bookingId: "booking-1", bumpedBookingIds: [], paidConfirmation: null });
+
+    const response = await POST(makeRequest());
+
+    expect(response.status).toBe(200);
+    expect(mockMarkBookingPaymentSucceeded).toHaveBeenCalledWith(expect.objectContaining({ bookingId: "booking-1", owesPaidConfirmation: true }));
+    expect(confirmation.deliver).not.toHaveBeenCalled();
+    expect(confirmation.sendUnrecorded).toHaveBeenCalledTimes(1);
+    expect(confirmation.sendUnrecorded).toHaveBeenCalledWith("booking-1", CLUB_FORMAT_TEST, "stripe-webhook");
   });
 
   it("alerts and refuses a capture whose amount no longer matches the booking total (#1161)", async () => {

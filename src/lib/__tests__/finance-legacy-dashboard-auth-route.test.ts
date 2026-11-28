@@ -1,5 +1,4 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { NextRequest } from "next/server";
 
 const { mockAuth, mockFindUnique } = vi.hoisted(() => ({
   mockAuth: vi.fn(),
@@ -51,9 +50,7 @@ describe("finance legacy dashboard auth route", () => {
   });
 
   it("returns 204 for finance viewers with finance access role rows", async () => {
-    const response = await getFinanceLegacyDashboardAuthRoute(
-      new NextRequest("https://example.org/api/finance/legacy-dashboard/auth")
-    );
+    const response = await getFinanceLegacyDashboardAuthRoute();
 
     expect(response.status).toBe(204);
   });
@@ -61,9 +58,7 @@ describe("finance legacy dashboard auth route", () => {
   it("redirects unauthenticated requests to login with the legacy callback path", async () => {
     mockAuth.mockResolvedValue(null);
 
-    const response = await getFinanceLegacyDashboardAuthRoute(
-      new NextRequest("https://example.org/api/finance/legacy-dashboard/auth")
-    );
+    const response = await getFinanceLegacyDashboardAuthRoute();
 
     expect(response.status).toBe(307);
     expect(response.headers.get("location")).toBe(
@@ -78,9 +73,7 @@ describe("finance legacy dashboard auth route", () => {
       accessRoles: [],
     });
 
-    const response = await getFinanceLegacyDashboardAuthRoute(
-      new NextRequest("https://example.org/api/finance/legacy-dashboard/auth")
-    );
+    const response = await getFinanceLegacyDashboardAuthRoute();
 
     expect(response.status).toBe(307);
     expect(response.headers.get("location")).toBe(
@@ -94,9 +87,7 @@ describe("finance legacy dashboard auth route", () => {
       forcePasswordChange: true,
     });
 
-    const response = await getFinanceLegacyDashboardAuthRoute(
-      new NextRequest("https://example.org/api/finance/legacy-dashboard/auth")
-    );
+    const response = await getFinanceLegacyDashboardAuthRoute();
 
     expect(response.status).toBe(307);
     expect(response.headers.get("location")).toBe(

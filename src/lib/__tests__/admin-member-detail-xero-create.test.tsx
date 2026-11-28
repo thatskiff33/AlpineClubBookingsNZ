@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import "@testing-library/jest-dom/vitest";
-import { act, fireEvent, render, screen, waitFor } from "@/lib/__tests__/support/club-time-render";
+import { act, fireEvent, render, screen, waitFor } from "@/lib/__tests__/support/club-season-render";
 import type { ReactNode } from "react";
 import { Suspense } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";

@@ -8,6 +8,7 @@ import {
 } from "@prisma/client";
 import { BelowStripeMinimumError, UnsupportedChargeCurrencyError } from "@/lib/stripe-charge-currency";
 import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
+import { createOwedNoticeStore } from "./support/owed-notice-store";
 
 // #3268 — the saved-card charge-failure classifier and the retirement of a
 // card it calls terminal. The cron integration (release first, then retire,
@@ -16,6 +17,14 @@ import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
 const mockPaymentUpdateMany = vi.fn();
 const mockPaymentTransactionUpdateMany = vi.fn();
+// #5433 PR 4: the clear runs in one transaction with the two owed markers. The
+// double stages the transaction's `OwedNotice` writes and applies them only
+// when its callback resolves, so a rolled-back clear leaves no marker, as in
+// PostgreSQL. The markers are claimed and cleared on the base client.
+const owedNoticeStore = createOwedNoticeStore();
+const transactionCommit = { failNext: false };
+// What the told rule reads after the member's send: SENT unless a case says otherwise.
+const mockEmailLogFindUnique = vi.fn();
 vi.mock("../prisma", () => ({
   prisma: {
     payment: {
@@ -24,6 +33,25 @@ vi.mock("../prisma", () => ({
     paymentTransaction: {
       updateMany: (...args: unknown[]) =>
         mockPaymentTransactionUpdateMany(...args),
+    },
+    get owedNotice() {
+      return owedNoticeStore.delegate;
+    },
+    emailLog: { findUnique: (...args: unknown[]) => mockEmailLogFindUnique(...args) },
+    $transaction: async (callback: (tx: unknown) => Promise<unknown>) => {
+      const staged: Array<Parameters<typeof owedNoticeStore.delegate.createMany>[0]> = [];
+      const tx = {
+        payment: { updateMany: (...args: unknown[]) => mockPaymentUpdateMany(...args) },
+        paymentTransaction: { updateMany: (...args: unknown[]) => mockPaymentTransactionUpdateMany(...args) },
+        owedNotice: { createMany: async (args: Parameters<typeof owedNoticeStore.delegate.createMany>[0]) => { staged.push(args); return { count: args.data.length }; } },
+      };
+      const value = await callback(tx);
+      if (transactionCommit.failNext) {
+        transactionCommit.failNext = false;
+        throw new Error("commit failed");
+      }
+      for (const args of staged) await owedNoticeStore.delegate.createMany(args);
+      return value;
     },
   },
 }));
@@ -44,11 +72,11 @@ vi.mock("../email", () => ({
 
 const {
   classifySavedCardChargeFailure,
-  describeTerminalSavedCardChargeFailure,
   retireAndEscalateUnusableSavedCard,
   retireUnusableSavedCard,
   SOFT_DECLINE_TERMINAL_WINDOW,
 } = await import("../saved-card-charge-failure");
+const { describeTerminalSavedCardChargeFailure } = await import("../saved-card-unusable-notices");
 const { reconcilePaymentAggregates } = await import("../payment-transactions");
 
 const IN_WINDOW = { holdOverdueWindows: 1 };
@@ -304,12 +332,9 @@ describe("describeTerminalSavedCardChargeFailure (#3268)", () => {
   it("tells the admin what happened, what was done, what the member was asked, and what Stripe said", () => {
     const text = describeTerminalSavedCardChargeFailure(
       {
-        outcome: "terminal",
         reason: "payment_method_unusable",
-        stripeType: "invalid_request_error",
         stripeCode: "resource_missing",
         declineCode: null,
-        adviceCode: null,
         message: "No such PaymentMethod: 'pm_x'",
       },
       { claimReleased: true },
@@ -322,17 +347,28 @@ describe("describeTerminalSavedCardChargeFailure (#3268)", () => {
     expect(text).toContain("code resource_missing");
   });
 
+  it("#5433 PR 4: never says the owner has been emailed, which an owed notice cannot promise, and names the \"No emails\" switch and the follow-up alert", () => {
+    const text = describeTerminalSavedCardChargeFailure(
+      { reason: "payment_method_unusable", stripeCode: null, declineCode: null, message: "x" },
+      { claimReleased: true },
+    );
+    expect(text).not.toContain("has been emailed");
+    expect(text).toContain("unless this booking's emails are turned off");
+    expect(text).toContain("Booking email not sent");
+  });
+
+  it("#5433 PR 4: a recovered alert, with Stripe's free-text message not kept, says so and still names the codes", () => {
+    const text = describeTerminalSavedCardChargeFailure(
+      { reason: "card_permanently_declined", stripeCode: "card_declined", declineCode: "stolen_card", message: null },
+      { claimReleased: true },
+    );
+    expect(text).not.toContain("Stripe said");
+    expect(text).toContain("Stripe's own message was not kept for this delayed alert (code card_declined, decline stolen_card).");
+  });
+
   it("says the booking is stuck confirmed-unpaid when the claim release itself failed, never 'stays pending'", () => {
     const text = describeTerminalSavedCardChargeFailure(
-      {
-        outcome: "terminal",
-        reason: "payment_method_unusable",
-        stripeType: "invalid_request_error",
-        stripeCode: null,
-        declineCode: null,
-        adviceCode: null,
-        message: INCIDENT_MESSAGE,
-      },
+      { reason: "payment_method_unusable", stripeCode: null, declineCode: null, message: INCIDENT_MESSAGE },
       { claimReleased: false },
     );
     expect(text).not.toContain("stays pending");
@@ -343,15 +379,7 @@ describe("describeTerminalSavedCardChargeFailure (#3268)", () => {
 
   it("names the two-day rule for an exhausted soft decline", () => {
     const text = describeTerminalSavedCardChargeFailure(
-      {
-        outcome: "terminal",
-        reason: "soft_decline_exhausted",
-        stripeType: "card_error",
-        stripeCode: "card_declined",
-        declineCode: "insufficient_funds",
-        adviceCode: null,
-        message: "Your card has insufficient funds.",
-      },
+      { reason: "soft_decline_exhausted", stripeCode: "card_declined", declineCode: "insufficient_funds", message: "Your card has insufficient funds." },
       { claimReleased: true },
     );
     expect(text).toContain("two days");
@@ -379,7 +407,7 @@ describe("retireUnusableSavedCard (#3268)", () => {
       where: { paymentMethodId: "pm_dead" },
       data: { paymentMethodId: null },
     });
-    expect(result).toEqual({ clearedPaymentRows: 2, clearedLedgerRows: 1 });
+    expect(result).toEqual({ clearedPaymentRows: 2, clearedLedgerRows: 1, owed: null });
 
     // Provider call first, outside any transaction, then the local writes.
     const detachOrder = mockDetachPaymentMethod.mock.invocationCallOrder[0]!;
@@ -522,7 +550,7 @@ describe("retireUnusableSavedCard (#3268)", () => {
   });
 });
 
-describe("retireAndEscalateUnusableSavedCard (#3268)", () => {
+describe("retireAndEscalateUnusableSavedCard (#3268; owed notices since #5433 PR 4)", () => {
   const booking = {
     id: "b1",
     memberId: "member_b1",
@@ -542,27 +570,32 @@ describe("retireAndEscalateUnusableSavedCard (#3268)", () => {
     adviceCode: null,
     message: INCIDENT_MESSAGE,
   };
+  const OFFICER_ALERT_SENT = { deliveryAllowed: true, recipients: 1, sent: 1, queuedForRetry: 0, notDelivered: 0, failedBeforeLogged: 0 };
+  const run = (overrides: Partial<Parameters<typeof retireAndEscalateUnusableSavedCard>[0]> = {}) =>
+    retireAndEscalateUnusableSavedCard({ format: CLUB_FORMAT_TEST, booking, paymentMethodId: "pm_dead", paymentIntentId: "pi_dead", failure, claimReleased: true, ...overrides });
+  const kinds = () => [...owedNoticeStore.rows.values()].map((row) => row.kind).sort();
 
   beforeEach(() => {
     vi.clearAllMocks();
+    owedNoticeStore.rows.clear();
+    transactionCommit.failNext = false;
     mockDetachPaymentMethod.mockResolvedValue({ id: "pm_dead" });
     mockPaymentUpdateMany.mockResolvedValue({ count: 1 });
     mockPaymentTransactionUpdateMany.mockResolvedValue({ count: 0 });
     mockSendSavedCardChargeFailedEmail.mockResolvedValue(undefined);
-    mockSendAdminPaymentFailureAlert.mockResolvedValue(undefined);
+    mockSendAdminPaymentFailureAlert.mockResolvedValue(OFFICER_ALERT_SENT);
+    mockEmailLogFindUnique.mockResolvedValue({ status: "SENT", attempts: 1, lastAttemptAt: new Date(), htmlBody: null, bookingRetryHtmlBody: null, deliveryBlockReason: null });
   });
 
-  it("retires the card, then emails the member once and the admins once", async () => {
-    await retireAndEscalateUnusableSavedCard({
-      format: CLUB_FORMAT_TEST,
-      booking,
-      paymentMethodId: "pm_dead",
-      paymentIntentId: "N/A",
-      failure,
-      claimReleased: true,
-    });
+  it("retires the card, records both notices in the clear's transaction, then emails the member once and the admins once and clears both", async () => {
+    await run();
 
     expect(mockPaymentUpdateMany).toHaveBeenCalledTimes(1);
+    const [memberMarker] = owedNoticeStore.delegate.createMany.mock.calls[0]![0].data;
+    expect(owedNoticeStore.delegate.createMany.mock.calls[0]![0].data.map((row: { kind: string }) => row.kind)).toEqual([
+      "saved-card-unusable-member",
+      "saved-card-unusable-officers",
+    ]);
     expect(mockSendSavedCardChargeFailedEmail).toHaveBeenCalledTimes(1);
     expect(mockSendSavedCardChargeFailedEmail).toHaveBeenCalledWith({
       bookingId: "b1",
@@ -572,60 +605,74 @@ describe("retireAndEscalateUnusableSavedCard (#3268)", () => {
       checkIn: booking.checkIn,
       checkOut: booking.checkOut,
       lodgeId: "lodge_1",
+      idempotencyKey: `b1:${memberMarker.eventAt.getTime()}`,
     });
     expect(mockSendAdminPaymentFailureAlert).toHaveBeenCalledTimes(1);
-    const [alert] = mockSendAdminPaymentFailureAlert.mock.calls[0] as [{ errorMessage: string; memberName: string; amountCents: number }];
+    const [alert] = mockSendAdminPaymentFailureAlert.mock.calls[0] as [{ errorMessage: string; memberName: string; amountCents: number; paymentIntentId: string }];
     expect(alert.memberName).toBe("Test User");
     expect(alert.amountCents).toBe(10_000);
+    expect(alert.paymentIntentId).toBe("pi_dead");
     expect(alert.errorMessage).toContain("found unusable");
     expect(alert.errorMessage).toContain(INCIDENT_MESSAGE);
+    // The member first, as before #5433.
+    expect(mockSendSavedCardChargeFailedEmail.mock.invocationCallOrder[0]!).toBeLessThan(mockSendAdminPaymentFailureAlert.mock.invocationCallOrder[0]!);
+    expect(kinds()).toEqual([]);
   });
 
-  it("does not throw when the member email fails, and the clear is not undone", async () => {
+  it("does not throw when the member email fails, and the clear is not undone: the member's notice stays owed for the sweep", async () => {
     mockSendSavedCardChargeFailedEmail.mockRejectedValue(new Error("SES down"));
 
-    await expect(
-      retireAndEscalateUnusableSavedCard({ format: CLUB_FORMAT_TEST, booking, paymentMethodId: "pm_dead", paymentIntentId: "N/A", failure, claimReleased: true }),
-    ).resolves.toBeUndefined();
+    await expect(run()).resolves.toBeUndefined();
 
     expect(mockPaymentUpdateMany).toHaveBeenCalledTimes(1);
     expect(mockSendAdminPaymentFailureAlert).toHaveBeenCalledTimes(1);
+    expect(kinds()).toEqual(["saved-card-unusable-member"]);
   });
 
   it("threads a failed claim release into the admin alert's wording", async () => {
-    await retireAndEscalateUnusableSavedCard({
-      format: CLUB_FORMAT_TEST,
-      booking,
-      paymentMethodId: "pm_dead",
-      paymentIntentId: "N/A",
-      failure,
-      claimReleased: false,
-    });
+    await run({ claimReleased: false });
 
     const [alert] = mockSendAdminPaymentFailureAlert.mock.calls[0] as [{ errorMessage: string }];
     expect(alert.errorMessage).toContain("still marked confirmed but unpaid");
     expect(alert.errorMessage).not.toContain("stays pending");
   });
 
-  it("propagates a non-invalid_request detach failure: nothing cleared, nobody emailed — the caller falls back to the retry alert", async () => {
+  it("propagates a non-invalid_request detach failure: nothing cleared, nothing owed, nobody emailed — the caller falls back to the retry alert", async () => {
     const outage = stripeError({ type: "api_error", message: "Stripe is having a moment" });
     mockDetachPaymentMethod.mockRejectedValue(outage);
 
-    await expect(
-      retireAndEscalateUnusableSavedCard({ format: CLUB_FORMAT_TEST, booking, paymentMethodId: "pm_dead", paymentIntentId: "N/A", failure, claimReleased: true }),
-    ).rejects.toBe(outage);
+    await expect(run()).rejects.toBe(outage);
 
     expect(mockPaymentUpdateMany).not.toHaveBeenCalled();
+    expect(kinds()).toEqual([]);
     expect(mockSendSavedCardChargeFailedEmail).not.toHaveBeenCalled();
     expect(mockSendAdminPaymentFailureAlert).not.toHaveBeenCalled();
   });
 
-  it("does not throw when the admin alert fails", async () => {
+  it("writes no marker when the clear's transaction rolls back, and sends nothing", async () => {
+    transactionCommit.failNext = true;
+
+    await expect(run()).rejects.toThrow("commit failed");
+
+    expect(kinds()).toEqual([]);
+    expect(mockSendSavedCardChargeFailedEmail).not.toHaveBeenCalled();
+    expect(mockSendAdminPaymentFailureAlert).not.toHaveBeenCalled();
+  });
+
+  it("does not throw when the admin alert fails: the officers' notice stays owed for the sweep", async () => {
     mockSendAdminPaymentFailureAlert.mockRejectedValue(new Error("SES down"));
 
-    await expect(
-      retireAndEscalateUnusableSavedCard({ format: CLUB_FORMAT_TEST, booking, paymentMethodId: "pm_dead", paymentIntentId: "N/A", failure, claimReleased: true }),
-    ).resolves.toBeUndefined();
+    await expect(run()).resolves.toBeUndefined();
     expect(mockSendSavedCardChargeFailedEmail).toHaveBeenCalledTimes(1);
+    expect(kinds()).toEqual(["saved-card-unusable-officers"]);
+  });
+
+  it("keeps an id-shaped provider value in the officers' payload and leaves out one that is not (\"N/A\")", async () => {
+    await run({ paymentIntentId: "N/A", failure: { ...failure, stripeCode: "resource_missing" } });
+
+    const officers = owedNoticeStore.delegate.createMany.mock.calls[0]![0].data[1] as { payload: Record<string, unknown> };
+    expect(officers.payload).toEqual({ reason: "payment_method_unusable", claimReleased: 1, amountCents: 10_000, stripeCode: "resource_missing" });
+    const [alert] = mockSendAdminPaymentFailureAlert.mock.calls[0] as [{ paymentIntentId: string }];
+    expect(alert.paymentIntentId).toBe("N/A");
   });
 });

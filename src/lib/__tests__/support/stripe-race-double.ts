@@ -52,7 +52,9 @@ export const stripeRaceHooks: {
   checkoutSession: null | ((paymentIntentId: string) => Promise<unknown>);
   /** #4693: the runner's metadata stamp on the intent it minted. */
   stamp: null | ((paymentIntentId: string, metadata: Readonly<Record<string, string>>) => Promise<void>);
-} = { update: null, get: null, create: null, findByMetadata: null, list: null, cancel: null, refund: null, listRefunds: null, listChargeRefunds: null, customer: null, charge: null, checkoutSession: null, stamp: null };
+  /** #5433 PR 4: the detach of a saved card the confirm-pending job found unusable. */
+  detach: null | ((paymentMethodId: string) => Promise<unknown>);
+} = { update: null, get: null, create: null, findByMetadata: null, list: null, cancel: null, refund: null, listRefunds: null, listChargeRefunds: null, customer: null, charge: null, checkoutSession: null, stamp: null, detach: null };
 
 export function resetStripeRaceHooks(): void {
   stripeRaceHooks.update = null;
@@ -68,6 +70,7 @@ export function resetStripeRaceHooks(): void {
   stripeRaceHooks.charge = null;
   stripeRaceHooks.checkoutSession = null;
   stripeRaceHooks.stamp = null;
+  stripeRaceHooks.detach = null;
   refundsMadeByIntent.clear();
 }
 
@@ -120,6 +123,8 @@ export function stripeRaceDouble(actual: Stripe): Stripe {
       stripeRaceHooks.stamp
         ? stripeRaceHooks.stamp(args[0], args[1])
         : actual.stampPaymentIntentMetadata(...args)) as Stripe["stampPaymentIntentMetadata"],
+    detachPaymentMethod: ((paymentMethodId: string) =>
+      stripeRaceHooks.detach ? stripeRaceHooks.detach(paymentMethodId) : actual.detachPaymentMethod(paymentMethodId)) as Stripe["detachPaymentMethod"],
     findCheckoutSessionForPaymentIntent: ((paymentIntentId: string) =>
       stripeRaceHooks.checkoutSession
         ? stripeRaceHooks.checkoutSession(paymentIntentId)

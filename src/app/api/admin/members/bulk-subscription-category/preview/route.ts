@@ -4,7 +4,7 @@ import { previewBulkSubscriptionCategory } from "@/lib/bulk-subscription-categor
 import { requireAdmin } from "@/lib/session-guards";
 import { clubTimeZone } from "@/lib/club-time/server";
 import { clubToday, dateOnlyInstantOf } from "@/lib/club-time";
-import { clubSeasonYear } from "@/lib/financial-year";
+import { clubCurrentSeasonYear } from "@/lib/financial-year-server";
 import { bulkSubscriptionCategoryPreviewSchema } from "../schema";
 
 /** #5248: preview who a bulk subscription-category change moves. */
@@ -37,7 +37,7 @@ export async function POST(request: NextRequest) {
     seasonYear: parsed.data.seasonYear,
     subscriptionCategoryId: parsed.data.subscriptionCategoryId,
     now: dateOnlyInstantOf(clubToday(clubZone)),
-    clubCurrentSeasonYear: clubSeasonYear(clubZone),
+    clubCurrentSeasonYear: await clubCurrentSeasonYear(clubZone),
   });
 
   return NextResponse.json(result.body, result.init);

@@ -522,6 +522,7 @@ describe("processStoredXeroInboundEvents", () => {
       sent: 1,
       queuedForRetry: 0,
       notDelivered: 0,
+      failedBeforeLogged: 0,
     });
     mocks.checkCapacity.mockResolvedValue({ available: true });
     mocks.processWaitlist.mockResolvedValue(undefined);

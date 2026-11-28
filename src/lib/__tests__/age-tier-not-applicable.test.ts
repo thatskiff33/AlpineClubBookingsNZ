@@ -46,6 +46,9 @@ vi.mock("@/lib/prisma", () => ({
     },
     familyGroupMember: { deleteMany: vi.fn().mockResolvedValue({ count: 0 }) },
     memberFieldsSettings: { findUnique: vi.fn().mockResolvedValue(null) },
+    // #5259: the club's year-end override, read by the season resolver. None by
+    // default, so the club keeps the March default.
+    membershipLockoutSettings: { findUnique: vi.fn().mockResolvedValue(null) },
     passwordResetToken: { create: vi.fn() },
     xeroContactCache: { findUnique: vi.fn().mockResolvedValue(null) },
     $transaction: vi.fn(),
@@ -352,6 +355,36 @@ describe("#1440 — server-side NOT_APPLICABLE enforcement on member writes", ()
           data: expect.objectContaining({ ageTier: "NOT_APPLICABLE" }),
         }),
       );
+    });
+
+    it("seeds the NOT_REQUIRED row in the season the club's own year-end names (#5259)", async () => {
+      // An August year-end: on the frozen 1 July 2026 the club is still in the
+      // season that began September 2025, where a March club is in 2026.
+      vi.mocked(prisma.membershipLockoutSettings.findUnique).mockResolvedValueOnce({
+        financialYearEndMonthOverride: 8,
+      } as any);
+      vi.mocked(prisma.member.findFirst).mockResolvedValue(null);
+      const upsert = vi.fn().mockResolvedValue({});
+      vi.mocked(prisma.$transaction).mockImplementation(async (fn: any) =>
+        fn({
+          member: { create: vi.fn().mockResolvedValue({ ...orgMember, id: "org8" }) },
+          memberAccessRole: {
+            createMany: vi.fn().mockResolvedValue({ count: 1 }),
+          },
+          familyGroupMember: { createMany: vi.fn() },
+          memberSubscription: { upsert },
+        }),
+      );
+
+      const res = await createRequest({
+        firstName: "Springfield",
+        lastName: "School",
+        email: "office@school.test",
+        accessRoles: ["ORG"],
+      });
+
+      expect(res.status).toBe(201);
+      expect(JSON.stringify(upsert.mock.calls[0]?.[0])).toContain('"seasonYear":2025');
     });
 
     it("rejects NOT_APPLICABLE with 422 when creating a non-organisation member", async () => {

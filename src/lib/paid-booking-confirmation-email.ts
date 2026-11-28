@@ -39,13 +39,14 @@ export function loadPaidConfirmationBooking(bookingId: string): Promise<PaidConf
 }
 
 /**
- * Send the confirmation for `booking`, with the owed notice's event key. Throws
- * when the send does: its caller decides what a failure means for the notice.
+ * Send the confirmation for `booking`, with the owed notice's event key (none
+ * for a confirmation that could not be recorded as owed, sent as before
+ * #5433). Throws when the send does: its caller decides what a failure means.
  */
 export async function sendPaidBookingConfirmation(
   booking: PaidConfirmationBooking,
   format: ClubFormat,
-  idempotencyKey: string,
+  idempotencyKey: string | undefined,
 ) {
   const owner = bookingOwner(booking);
   // Split-booking parent (#738): describe the provisional non-member child so
