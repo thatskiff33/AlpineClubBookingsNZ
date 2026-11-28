@@ -251,7 +251,8 @@ describe("createAgeUpCredit: credit note on the season invoice (#5190 PR 3)", ()
       contact: { contactID: "contact-1" },
       // The frozen test clock is 1 July 2026 in the club's zone.
       date: "2026-07-01",
-      reference: "MEMSUB-AGEUP-adjustme",
+      // The id's last eight characters: a cuid's first eight are a timestamp.
+      reference: `MEMSUB-AGEUP-${ADJUSTMENT_ID.slice(-8)}`,
       lineItems: [{ description: DESCRIPTION, quantity: 1, unitAmount: 45, accountCode: "203" }],
     });
     // The note's Xero key is the adjustment's own, so a retry cannot raise a second.

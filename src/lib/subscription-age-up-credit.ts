@@ -341,7 +341,8 @@ async function creditOnSeasonInvoice(input: {
         amountCents: adjustment.amountCents,
         taxRendering,
       }),
-      reference: `MEMSUB-AGEUP-${adjustment.id.slice(0, 8)}`,
+      // The id's tail: its head is a timestamp, the same for one run's credits.
+      reference: `MEMSUB-AGEUP-${adjustment.id.slice(-8)}`,
     });
     await prisma.xeroSyncOperation.update({
       where: { id: input.syncOperation.id },
