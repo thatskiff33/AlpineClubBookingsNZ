@@ -168,6 +168,13 @@ export const MEMBER_CREDITS_CONNECTION_SHAPE = connectionShapeFor<{
     approvedBy: CreditPerson | null;
     approvalRequest: { createdAt: Date; reviewedAt: Date | null } | null;
   }>;
+  pendingCorrections: Array<{
+    id: string;
+    requestId: string;
+    amountCents: number;
+    description: string;
+    createdAt: Date;
+  }>;
   pendingRequests: Array<{
     id: string;
     amountCents: number;
@@ -192,6 +199,7 @@ export const MEMBER_CREDITS_CONNECTION_SHAPE = connectionShapeFor<{
     approvedBy: { id: true, firstName: true, lastName: true },
     approvalRequest: { createdAt: true, reviewedAt: true },
   },
+  pendingCorrections: { id: true, requestId: true, amountCents: true, description: true, createdAt: true },
   pendingRequests: {
     id: true,
     amountCents: true,

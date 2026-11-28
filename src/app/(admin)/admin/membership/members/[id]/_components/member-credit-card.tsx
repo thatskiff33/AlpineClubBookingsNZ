@@ -28,7 +28,9 @@ import { useClubFormat } from "@/components/club-format-provider"
 import type {
   CreditHistoryItem,
   PendingCreditAdjustmentItem,
+  PendingCreditDeductionCorrectionItem,
 } from "../_types"
+import { PendingCreditCorrections } from "./pending-credit-corrections"
 
 interface MemberCreditCardProps {
   creditBalance: number
@@ -36,6 +38,9 @@ interface MemberCreditCardProps {
   creditLoading: boolean
   creditError: string
   pendingAdjustmentRequests: PendingCreditAdjustmentItem[]
+  pendingCorrections: PendingCreditDeductionCorrectionItem[]
+  cancellingCorrectionId: string | null
+  onCancelCorrection: (correctionId: string) => void
   reviewingAdjustmentId: string | null
   showAdjustmentForm: boolean
   adjustmentError: string
@@ -56,6 +61,9 @@ export function MemberCreditCard({
   creditLoading,
   creditError,
   pendingAdjustmentRequests,
+  pendingCorrections,
+  cancellingCorrectionId,
+  onCancelCorrection,
   reviewingAdjustmentId,
   showAdjustmentForm,
   adjustmentError,
@@ -188,6 +196,7 @@ export function MemberCreditCard({
           <p className="text-sm text-danger-11">{creditError}</p>
         ) : (
           <>
+            <PendingCreditCorrections corrections={pendingCorrections} cancellingCorrectionId={cancellingCorrectionId} canEdit={canEditFinance} onCancel={onCancelCorrection} />
             {pendingAdjustmentRequests.length > 0 && (
               <div className="mb-4 rounded-md border border-warning-6 bg-warning-3 p-4">
                 <div className="mb-3">

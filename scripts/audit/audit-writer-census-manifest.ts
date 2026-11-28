@@ -1888,6 +1888,14 @@ export const MEMBER_FACING_AUDIT_WRITERS_2695: Readonly<
   // fixes #2695 originally sketched were refused: each would have removed it.
   "src/lib/member-credit.ts::reviewAdminAdjustmentRequest.result#1":
     "member.credit.adjustment.approve",
+  // #5241 (owner decision on #5241, 18 Nov 2026, plan approved with it): the
+  // SAME sentence for a deduction that corrects a Xero credit note, moved from
+  // approval to the correction's completion so the member is told once Xero
+  // agrees. PUBLISHES: the amount deducted, as money, and the officer's
+  // `description`. Not a new disclosure: approval of such a deduction declares
+  // none (`auditQueuedDeductionApproval`).
+  "src/lib/xero-admin-credit-deduction-correction.ts::completeAdminCreditDeductionCorrection#0":
+    "member.credit.deduction.xero_correction.complete",
 
   // ─── #2562's member-facing note, preserved rather than widened ──────────────
   // These five wrote an officer's `adminNotes` into `details` and the member

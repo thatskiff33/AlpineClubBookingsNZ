@@ -23,6 +23,7 @@ export async function readAdditionalSubjectRecords(memberId: string) {
     SchoolMemberClassification, MemberMoneyObligation, MemberInductionAssignedSigner, MemberInductionSignOff,
     McpGrant,
     FoodOrder, FoodOrderItem, XeroCashCredit,
+    AdminCreditDeductionCorrection, AdminCreditDeductionCorrectionLine,
   ] = await Promise.all([
     prisma.membershipSubscriptionChargeCoverage.findMany({ where: own, select: { chargeId: true, releasedAt: true, createdAt: true } }),
     prisma.membershipBillingException.findMany({ where: own, select: { seasonYear: true, code: true, firstSeenAt: true, resolvedAt: true } }),
@@ -108,6 +109,16 @@ export async function readAdditionalSubjectRecords(memberId: string) {
           select: { kind: true, currencyCode: true, documentDate: true, totalCents: true, remainingCents: true, syncedAt: true },
         })
         : []),
+    // #5241: the Xero corrections behind officer deductions of this member's
+    // credit. The officer who cancelled one and Xero's ids are left out.
+    prisma.adminCreditDeductionCorrection.findMany({
+      where: own,
+      select: { id: true, requestId: true, status: true, createdAt: true, completedAt: true, cancelledAt: true },
+    }),
+    prisma.adminCreditDeductionCorrectionLine.findMany({
+      where: { correction: own },
+      select: { correctionId: true, sourceMemberCreditId: true, amountCents: true, mode: true, completedAt: true },
+    }),
   ]);
   return {
     MembershipSubscriptionChargeCoverage, MembershipBillingException, SeasonalMembershipAssignment,
@@ -118,5 +129,6 @@ export async function readAdditionalSubjectRecords(memberId: string) {
     SchoolMemberClassification, MemberMoneyObligation, MemberInductionAssignedSigner, MemberInductionSignOff,
     McpGrant,
     FoodOrder, FoodOrderItem, XeroCashCredit,
+    AdminCreditDeductionCorrection, AdminCreditDeductionCorrectionLine,
   } satisfies Record<AdditionalRecordModel, unknown>;
 }

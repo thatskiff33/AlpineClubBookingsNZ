@@ -36,6 +36,7 @@
  * an owner who changed) writes nothing and says why; the caller keeps the
  * original failure.
  */
+import { noteHasOpenDeductionCorrection } from "@/lib/admin-credit-deduction-note-guard";
 import { BookingStatus, CreditType, type Prisma } from "@prisma/client";
 import { prisma } from "./prisma";
 import logger from "@/lib/logger";
@@ -74,7 +75,9 @@ export type ConvergeRefusal =
   | "slice-already-in-xero"
   | "shared-credit-note"
   | "unexplained-spend"
-  | "nothing-missing";
+  | "nothing-missing"
+  // #5241: an officer's deduction is changing this note in Xero right now.
+  | "deduction-correction-open";
 
 export type ConvergeResult =
   | { converged: true; writtenDownCents: number; closedOperations: number }
@@ -233,6 +236,7 @@ export async function convergeCreditNoteSpentOutsideApp(input: ConvergeInput): P
     if (!lot || otherLots.length > 0 || lot.id !== slice.memberCreditId) {
       return { converged: false, reason: "shared-credit-note" };
     }
+    if (await noteHasOpenDeductionCorrection(tx, creditNoteId)) return { converged: false, reason: "deduction-correction-open" };
 
     // What Xero shows spent on things the app has no record of, less what this
     // routine has already written down for the note. The slice bounds the rest.

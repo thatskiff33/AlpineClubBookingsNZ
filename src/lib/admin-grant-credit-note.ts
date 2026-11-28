@@ -1,7 +1,8 @@
 /**
  * A manual credit grant's Xero note, apart from the worker that creates it
- * (#4431). Approval enqueues here. A deduction and the spend allocator both
- * ask the same helper whether a free lot already has this operation.
+ * (#4431). Approval enqueues here. A deduction, an opening-credit reversal and
+ * the spend allocator all ask the same helper whether a free lot already has
+ * this operation.
  */
 import type { Prisma } from "@prisma/client";
 import {
@@ -54,10 +55,11 @@ export function adminGrantCreditNoteOperationWhere(creditIds: readonly string[])
 }
 
 /**
- * Refuse a deduction while any free lot already has a Xero note, or is waiting
- * for the note queued at approval. Legacy noteless credit has neither, so a
- * deduction of that balance still proceeds. Convergence write-downs are not
- * free lots (`loadFreeCreditLots` excludes them) and are not sent here.
+ * Refuse an opening-credit reversal while any free lot already has a Xero note,
+ * or is waiting for the note queued at approval. An officer's deduction no
+ * longer asks this: it corrects the note instead (#5241,
+ * `admin-credit-deduction-reserve.ts`). Convergence write-downs are not free
+ * lots (`loadFreeCreditLots` excludes them) and are not sent here.
  */
 export async function assertDeductionLeavesNotedCreditUntouched(
   memberId: string,

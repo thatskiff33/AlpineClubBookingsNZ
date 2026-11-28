@@ -2,6 +2,7 @@
 // route must check before its mark may stand. Kept out of the route so the
 // route stays a thin handler and the reads have one home.
 import { XERO_ACTIVE_OPERATION_STATUSES } from "./xero-active-operation-statuses";
+import { XERO_OUTBOX_ADMIN_CREDIT_DEDUCTION_CORRECTION_TYPE } from "@/lib/admin-credit-deduction-payload";
 import type { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { buildXeroOperationRequeueCorrelationKey } from "@/lib/xero-operation-queue";
@@ -246,6 +247,9 @@ export async function resolvePrecheckRefusal(operation: {
   manuallyResolvedAt: Date | null;
   xeroObjectId: string | null;
 }): Promise<string | null> {
+  if (operation.queueType === XERO_OUTBOX_ADMIN_CREDIT_DEDUCTION_CORRECTION_TYPE) {
+    return "A credit deduction correction cannot be marked resolved. Retry it, or cancel an untouched correction from the member’s credit history.";
+  }
   // #3635 decision 3: a retry that claimed the operation itself.
   if (operation.status === "RUNNING") return retryRunningRefusal(operation);
   if (operation.status !== "FAILED" && operation.status !== "PARTIAL") {

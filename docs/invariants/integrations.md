@@ -648,6 +648,44 @@ Pinned by `xero-admin-grant-credit-note.test.ts`, `member-credit.test.ts`,
 `xero-operation-outbox-payload.test.ts` and
 `xero-admin-grant-credit-note-contact-repair.realdb.test.ts`.
 
+## Deducting credit that has a Xero note (#5241)
+
+### INV-INT-045
+
+An approved deduction of credit with a Xero credit note corrects that note in
+Xero; the member's free credit on the note then equals Xero's remaining credit
+to the cent. It never raises a second credit note.
+
+- **Reserved, then corrected.** Approval writes the deduction under the member's
+  credit-ledger lock as write-down rows stamped with the note
+  (`reserveNotedCreditDeduction`) and queues one
+  `ADMIN_CREDIT_DEDUCTION_CORRECTION`. Noteless credit is taken first. A grant
+  note still queued refuses the deduction.
+- **Void or bill back, one line per note.** A note is voided only when it funds
+  one lot, wholly unused and taken whole. Otherwise the app raises an unemailed
+  invoice for only the cents taken back, with the note's contact, account and
+  tax basis, and allocates it to the note. `correctXeroCreditNote`
+  (`xero-credit-note-correction.ts`) is the one helper, for #4517 and #5204 to
+  reuse.
+- **Applied once.** Each write has its own `buildXeroIdempotencyKey` key. A
+  retry reads the note and finds the invoice by reference before writing. A
+  note changed in Xero, or with mixed lines, fails without a write; several
+  notes are all read before the first write.
+- **Cancel only when untouched.** Cancel reads the operation, then Xero: no live
+  invoice with the reference, and a void line's note not voided. Under the lock
+  it claims the operation exactly as read, then the correction, and writes
+  restore rows. The fence (`providerMutationStartedAt`) refuses cancel; it lifts
+  only with no line completed and a definite refusal. Never marked resolved.
+- **Readers wait.** The outside-spend mirror, the converge and the flag skip a
+  note while its correction is RESERVED (`admin-credit-deduction-note-guard.ts`).
+  A note voided by a completed correction raises no alert.
+- **Lock.** The member credit-ledger key only (`INV-LOCK-001`, `INV-LOCK-003`).
+
+Pinned by `admin-credit-deduction-plan.test.ts`,
+`admin-credit-deduction-reserve.test.ts`, `xero-credit-note-correction.test.ts`,
+`admin-credit-deduction-lifecycle.test.ts` and, against real PostgreSQL,
+`admin-credit-deduction-correction.realdb.test.ts`.
+
 ## One outcome per Xero operation row (#4356)
 
 ### INV-INT-029

@@ -340,6 +340,10 @@ count; reload once the update has finished.
 Each change has an audit entry (`xero.credit_note.outside_spend_mirrored` or
 `xero.credit_note.outside_spend_restored`). A note voided or deleted in Xero is never
 changed automatically; it is reported to the error log for an officer to look at.
+The exception is the app's own change: while an officer's deduction is correcting
+a note, the note is left alone and looked at again later, and a note voided by a
+completed deduction is not reported
+([deducting credit that has a Xero note](refund-requests.md#deducting-credit-that-has-a-xero-note)).
 Operators can switch the writes off with no deploy
 ([how](../xero/ARCHITECTURE.md#the-inbound-credit-note-mirror-4270)); while off, the log
 says what it would have done.

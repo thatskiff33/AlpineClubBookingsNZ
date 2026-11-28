@@ -306,6 +306,7 @@ describe("xero operation outbox payload parsing", () => {
       "ADDITIONAL_CAPTURE_RECEIPT",
       "ORGANISER_EXTRA_ADJUSTMENT",
       "ADMIN_GRANT_CREDIT_NOTE",
+      "ADMIN_CREDIT_DEDUCTION_CORRECTION",
       "ORGANISATION_CONTACT_DETAILS",
     ]);
     expect(new Set(XERO_OUTBOX_QUEUE_TYPES).size).toBe(
@@ -450,6 +451,7 @@ describe("xero operation outbox payload parsing", () => {
       ["CARD_REFUND_REVERSAL_INVOICE", "INVOICE"],
       ["ADDITIONAL_CAPTURE_RECEIPT", "PAYMENT"],
       ["ADMIN_GRANT_CREDIT_NOTE", "CREDIT_NOTE"],
+      ["ADMIN_CREDIT_DEDUCTION_CORRECTION", "CREDIT_NOTE"],
       ["ORGANISATION_CONTACT_DETAILS", "CONTACT"],
     ]);
     for (const queueType of XERO_OUTBOX_QUEUE_TYPES) {
@@ -479,6 +481,20 @@ describe("admin grant credit note payload (#4431)", () => {
       entityType: "CREDIT_NOTE",
       operationType: "CREATE",
       localModels: ["MemberCredit"],
+    });
+  });
+});
+
+describe("admin credit deduction correction payload (#5241)", () => {
+  it("parses the correction id and expects a credit-note update on the correction row", () => {
+    const queued = { queueType: "ADMIN_CREDIT_DEDUCTION_CORRECTION" as const, correctionId: "correction_1" };
+    expect(readQueuedOutboxPayload(queued)).toEqual(queued);
+    expect(readQueuedOutboxPayload({ ...queued, correctionId: "" })).toBeNull();
+    expect(readQueuedOutboxPayload({ queueType: "ADMIN_CREDIT_DEDUCTION_CORRECTION" })).toBeNull();
+    expect(getQueuedOutboxExpectedOperation("ADMIN_CREDIT_DEDUCTION_CORRECTION")).toEqual({
+      entityType: "CREDIT_NOTE",
+      operationType: "UPDATE",
+      localModels: ["AdminCreditDeductionCorrection"],
     });
   });
 });

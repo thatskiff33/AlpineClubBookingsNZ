@@ -63,6 +63,7 @@
  * spend shows when the note's next event is reconciled, and a reversal clears the
  * same way. The converge (#4219) and the mirror, not this flag, act on the ledger.
  */
+import { notesWithOpenDeductionCorrection } from "@/lib/admin-credit-deduction-note-guard";
 import { CreditType, type Prisma } from "@prisma/client";
 import { getMemberCreditBalance } from "@/lib/member-credit";
 import { bookingsAppliedCreditSettledByCancel, unallocatedAppliedCreditCentsByBooking } from "@/lib/xero-applied-credit-ledger-state";
@@ -233,7 +234,9 @@ export async function findCreditNotesSpentOutsideApp(
   const judgedNoteIds = [...new Set(judged.map((lot) => lot.xeroCreditNoteId!))];
   const fundingLots = await db.memberCredit.groupBy({ by: ["xeroCreditNoteId"], where: fundingLotWhere({ in: judgedNoteIds }), _count: { _all: true } });
   const shared = new Set(fundingLots.flatMap((row) => (row._count._all > 1 && row.xeroCreditNoteId ? [row.xeroCreditNoteId] : [])));
-  const candidates = judged.filter((lot) => !shared.has(lot.xeroCreditNoteId!));
+  // #5241: a note an officer's deduction is still correcting is looked at once it settles.
+  const correcting = await notesWithOpenDeductionCorrection(db, judgedNoteIds);
+  const candidates = judged.filter((lot) => !shared.has(lot.xeroCreditNoteId!) && !correcting.has(lot.xeroCreditNoteId!));
   if (candidates.length === 0) return [];
 
   // Only the candidates' slices: the mirror's sum, and the ones still to send.

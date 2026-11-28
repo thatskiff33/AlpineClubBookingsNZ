@@ -19,6 +19,7 @@ export const MCP_STATIC_SIBLING_SEGMENTS: ReadonlySet<string> = new Set([
   "bulk-update",
   "card-refunds",
   "cleanup",
+  "corrections",
   "create-group",
   "drafts",
   "eligible-family",

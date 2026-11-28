@@ -106,3 +106,35 @@ export function xeroDocumentCarriesTax(
   return (document.lineItems ?? []).every((line) =>
     rendering.taxType === undefined ? !line.taxType || line.taxType === "NONE" : line.taxType === rendering.taxType);
 }
+
+/**
+ * The tax type a line of an existing Xero document names, or none: a line that
+ * names no tax type and one that names "NONE" are both untaxed, as
+ * `xeroDocumentCarriesTax` reads them.
+ */
+export function xeroNamedLineTaxType(line: { taxType?: string | null }): string | undefined {
+  return line.taxType && line.taxType !== "NONE" ? line.taxType : undefined;
+}
+
+/**
+ * How a document that offsets an existing one is rendered (#5241): a
+ * credit-deduction correction invoice bills the cents taken back off a credit
+ * note, under the note's own tax and not the club's treatment today. An untaxed
+ * note's correction is untaxed and names no tax type; any other note's is
+ * `Inclusive` under the one tax type its lines name, so the gross the invoice
+ * bills equals the cents taken back whatever basis the note was raised under.
+ *
+ * Null when the document cannot be offset under one rendering: its lines name
+ * different tax types, or their tax type contradicts the document basis. The caller
+ * refuses then, before any provider write.
+ */
+export function xeroOffsettingRendering(
+  document: { lineAmountTypes?: LineAmountTypes | string | null; lineItems?: ReadonlyArray<{ taxType?: string | null }> | null },
+): XeroTaxRendering | null {
+  const lines = document.lineItems ?? [];
+  const untaxed = document.lineAmountTypes === LineAmountTypes.NoTax;
+  const taxType = lines[0] && xeroNamedLineTaxType(lines[0]);
+  if (lines.some((line) => xeroNamedLineTaxType(line) !== taxType)) return null;
+  if (untaxed) return taxType ? null : { lineAmountTypes: LineAmountTypes.NoTax };
+  return taxType ? { lineAmountTypes: LineAmountTypes.Inclusive, taxType } : null;
+}

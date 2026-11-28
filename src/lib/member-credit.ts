@@ -25,7 +25,7 @@ import {
   GRANT_ACCOUNT_MISSING_MESSAGE,
   type AdminCreditGrantAccount,
 } from "@/lib/admin-credit-grant-account";
-import { assertDeductionLeavesNotedCreditUntouched, enqueueAdminGrantCreditNote } from "@/lib/admin-grant-credit-note";
+import { enqueueAdminGrantCreditNote } from "@/lib/admin-grant-credit-note";
 import { buildXeroIdempotencyKey, startXeroSyncOperation } from "@/lib/xero-sync";
 import { XERO_OUTBOX_APPLIED_CREDIT_DEALLOCATION_TYPE } from "@/lib/xero-operation-outbox-payload";
 import { repairLegacyAppliedCreditNoteAllocationsForBooking } from "@/lib/xero-applied-credit-allocation-repair";
@@ -42,6 +42,7 @@ import {
   validateCreditApplicationAgainstBalance,
   validateNegativeAdjustmentAgainstBalance,
 } from "@/lib/policies/member-credit";
+import { auditQueuedDeductionApproval, creditDeductedDisclosureText, reserveNotedCreditDeduction } from "@/lib/admin-credit-deduction-reserve";
 import { cancellationCreditDescription } from "@/lib/cancellation-settled-money";
 
 const MEMBER_CREDIT_LOCK_NAMESPACE = "member-credit-ledger";
@@ -947,7 +948,6 @@ export async function createAdminAdjustmentRequest(
   try {
     const request = await prisma.$transaction(async (tx) => {
       await lockMemberCreditLedger(memberId, tx);
-      await assertDeductionLeavesNotedCreditUntouched(memberId, amountCents, tx);
 
       const createdRequest = await tx.adminCreditAdjustmentRequest.create({
         data: {
@@ -1066,7 +1066,6 @@ export async function reviewAdminAdjustmentRequest(
     }
 
     if (decision === "APPROVE") {
-      await assertDeductionLeavesNotedCreditUntouched(request.memberId, request.amountCents, tx);
       validateAdjustmentAmount(request.amountCents);
       await validateNegativeAdjustmentBalance(
         request.memberId,
@@ -1116,10 +1115,15 @@ export async function reviewAdminAdjustmentRequest(
         decision,
         request,
         credit: null,
+        correctionId: null,
       };
     }
 
-    const credit = await tx.memberCredit.create({
+    const reservation = request.amountCents < 0
+      ? await reserveNotedCreditDeduction(tx, { ...request, approvedById: adminId })
+      : null;
+    const correctionId = reservation?.correctionId ?? null;
+    const credit = reservation?.credit ?? await tx.memberCredit.create({
       data: {
         memberId: request.memberId,
         amountCents: request.amountCents,
@@ -1139,7 +1143,7 @@ export async function reviewAdminAdjustmentRequest(
       });
     }
 
-    await createAuditLog(
+    if (!correctionId) await createAuditLog(
       {
         action: "member.credit.adjustment.approve",
         category: "payment",
@@ -1170,17 +1174,20 @@ export async function reviewAdminAdjustmentRequest(
           text:
             request.amountCents >= 0
               ? `Credit of ${formatCents(request.amountCents, format)} added to your account. Reason: ${request.description}`
-              : `Credit of ${formatCents(Math.abs(request.amountCents), format)} deducted from your account. Reason: ${request.description}`,
+              : creditDeductedDisclosureText(request, format),
         },
         ipAddress,
       },
       tx
     );
+    // #5241: the member's timeline entry is written once Xero agrees, by the correction's completion.
+    else await auditQueuedDeductionApproval(tx, { request, adminId, creditId: credit.id, amount: formatAdjustmentAmount(request.amountCents, format), ipAddress });
 
     return {
       decision,
       request,
       credit,
+      correctionId,
     };
   });
 
@@ -1197,7 +1204,7 @@ export async function reviewAdminAdjustmentRequest(
       : "Admin credit adjustment rejected"
   );
 
-  if (result.decision === "APPROVE" && result.request.amountCents > 0 && result.credit) {
+  if (result.decision === "APPROVE" && result.credit) {
     void import("@/lib/xero-operation-outbox")
       .then(({ kickQueuedXeroOutboxOperationsIfConnected }) => kickQueuedXeroOutboxOperationsIfConnected())
       .catch((error: unknown) => {

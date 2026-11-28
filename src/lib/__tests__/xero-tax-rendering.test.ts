@@ -9,6 +9,8 @@ import {
   xeroCategoryLineTax,
   xeroDocumentCarriesTax,
   xeroLineTax,
+  xeroNamedLineTaxType,
+  xeroOffsettingRendering,
   xeroTaxRenderingOf,
 } from "@/lib/xero-tax-rendering";
 
@@ -95,5 +97,47 @@ describe("xeroDocumentCarriesTax (#4632)", () => {
     expect(xeroDocumentCarriesTax(baseline, noTax)).toBe(false);
     expect(xeroDocumentCarriesTax({ lineAmountTypes: LineAmountTypes.Exclusive, lineItems: [{ taxType: "OUTPUT2" }] }, BASELINE_XERO_TAX_RENDERING)).toBe(false);
     expect(xeroDocumentCarriesTax({ lineAmountTypes: LineAmountTypes.NoTax, lineItems: [{ taxType: "OUTPUT2" }] }, noTax)).toBe(false);
+  });
+});
+
+describe("xeroOffsettingRendering (#5241)", () => {
+  it("keeps an untaxed note's correction untaxed, with no tax type on its line", () => {
+    for (const lineItems of [[{}], [{ taxType: "NONE" }], [{ taxType: null }, { taxType: "NONE" }]]) {
+      const rendering = xeroOffsettingRendering({ lineAmountTypes: LineAmountTypes.NoTax, lineItems });
+      expect(rendering).toEqual({ lineAmountTypes: LineAmountTypes.NoTax });
+      expect(xeroLineTax(rendering!)).toEqual({});
+    }
+  });
+
+  it("bills any other note's correction tax-inclusive under the note's own tax type, so the gross equals the cents taken back", () => {
+    for (const lineAmountTypes of [LineAmountTypes.Inclusive, LineAmountTypes.Exclusive, undefined]) {
+      expect(xeroOffsettingRendering({ lineAmountTypes, lineItems: [{ taxType: "TAX005" }, { taxType: "TAX005" }] }))
+        .toEqual({ lineAmountTypes: LineAmountTypes.Inclusive, taxType: "TAX005" });
+    }
+  });
+
+  it("gives no rendering when the note's lines name different tax types", () => {
+    expect(xeroOffsettingRendering({ lineAmountTypes: LineAmountTypes.Inclusive, lineItems: [{ taxType: "OUTPUT2" }, { taxType: "TAX005" }] })).toBeNull();
+    expect(xeroOffsettingRendering({ lineAmountTypes: LineAmountTypes.Inclusive, lineItems: [{ taxType: "OUTPUT2" }, { taxType: "NONE" }] })).toBeNull();
+    expect(xeroOffsettingRendering({ lineAmountTypes: LineAmountTypes.NoTax, lineItems: [{}, { taxType: "OUTPUT2" }] })).toBeNull();
+  });
+
+  it("refuses an untaxed note even when all lines name the same tax code", () => {
+    expect(xeroOffsettingRendering({ lineAmountTypes: LineAmountTypes.NoTax, lineItems: [{ taxType: "TAX005" }, { taxType: "TAX005" }] })).toBeNull();
+  });
+
+  it("gives no rendering when a taxed note's lines name no tax type", () => {
+    expect(xeroOffsettingRendering({ lineAmountTypes: LineAmountTypes.Inclusive, lineItems: [{}] })).toBeNull();
+    expect(xeroOffsettingRendering({ lineAmountTypes: LineAmountTypes.Inclusive, lineItems: [{ taxType: "NONE" }] })).toBeNull();
+    expect(xeroOffsettingRendering({ lineItems: [] })).toBeNull();
+  });
+});
+
+describe("xeroNamedLineTaxType (#5241)", () => {
+  it("reads a line that names no tax type, or names NONE, as untaxed", () => {
+    expect(xeroNamedLineTaxType({})).toBeUndefined();
+    expect(xeroNamedLineTaxType({ taxType: null })).toBeUndefined();
+    expect(xeroNamedLineTaxType({ taxType: "NONE" })).toBeUndefined();
+    expect(xeroNamedLineTaxType({ taxType: "OUTPUT2" })).toBe("OUTPUT2");
   });
 });

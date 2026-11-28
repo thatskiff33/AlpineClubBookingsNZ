@@ -245,6 +245,11 @@ export const MEMBER_MERGE_RELATION_SPECS: readonly MemberMergeRelationSpec[] = [
   spec("AdminCreditAdjustmentRequest", "member", "memberId", "move"),
   spec("AdminCreditAdjustmentRequest", "requestedBy", "requestedById", "move"),
   spec("AdminCreditAdjustmentRequest", "reviewedBy", "reviewedById", "move"),
+  // #5241: a deduction's Xero correction follows its request and credit rows
+  // onto the surviving member; the worker and cancel read `memberId` from the
+  // row, so a RESERVED correction keeps working after the merge.
+  spec("AdminCreditDeductionCorrection", "member", "memberId", "move"),
+  spec("AdminCreditDeductionCorrection", "cancelledBy", "cancelledById", "move"),
   // #4988: who posted and who reversed an opening-credit batch. Nullable
   // SetNull actor back-refs with no Member unique, so `move` re-points the
   // history onto the surviving member.

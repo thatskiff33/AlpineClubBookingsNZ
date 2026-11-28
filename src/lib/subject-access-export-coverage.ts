@@ -206,6 +206,8 @@ export const SUBJECT_ACCESS_EXPORT_COVERAGE = {
   MemberCredit: "credits",
   MemberCreditNoteAllocation: "credits",
   AdminCreditAdjustmentRequest: "additionalRecords.AdminCreditAdjustmentRequest",
+  AdminCreditDeductionCorrection: "additionalRecords.AdminCreditDeductionCorrection",
+  AdminCreditDeductionCorrectionLine: "additionalRecords.AdminCreditDeductionCorrectionLine",
   // #4988: the subject posted or reversed an opening-credit batch. The credit
   // rows a batch gave the subject are already in `credits`.
   OpeningCreditBatch: "additionalRecords.OpeningCreditBatch",

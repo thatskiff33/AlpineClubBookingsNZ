@@ -3372,11 +3372,39 @@ Known refund request statuses: `PENDING`, `APPROVED`, `REJECTED`.
 refund requested -> approved/rejected -> Stripe refund or Xero credit/member credit
 approved, not by card -> OPEN officer refund task -> COMPLETED records the refund (#3827, D-3813-7)
 admin credit requested -> approved/rejected -> MemberCredit created/applied
+admin deduction of noted credit approved -> reserved -> Xero correction COMPLETED (or CANCELLED and restored)
 MemberCredit available -> applied to booking -> ledger remains linked
 ```
 
 To verify: all paths that update refunded totals and whether completed refund
 requests are represented by status, payment/refund rows, or both.
+
+### Credit deduction Xero correction (#5241)
+
+Known `AdminCreditDeductionCorrection` statuses: `RESERVED`, `COMPLETED`,
+`CANCELLED` (`INV-INT-045`). One row per approved deduction that takes credit
+with a Xero credit note; deductions of noteless credit alone have none.
+
+```text
+deduction approved -> RESERVED (write-down rows hold the cents; one ADMIN_CREDIT_DEDUCTION_CORRECTION queued)
+RESERVED -> COMPLETED   every line voided or billed back in Xero; member-facing notice written
+RESERVED -> RESERVED    a Xero failure; the operation is FAILED and only Retry or Cancel moves it
+RESERVED -> CANCELLED   officer cancel, only while Xero holds nothing of the correction; restore rows give the cents back
+```
+
+Every transition is a status-guarded `updateMany` under the member's
+credit-ledger lock. `providerMutationStartedAt` records that a Xero write may
+have landed; while set, cancel is refused. A failed run clears it only when no
+line has completed and the run ended on a definite answer: Xero refused a
+request outright, a call was refused before anything was sent, or Xero's own
+state refused the correction before that run wrote. Cancel claims the
+operation's row exactly as it read it before asking Xero (status, `startedAt`
+and `updatedAt`), so a run in between refuses the cancel. The operation can be
+retried or cancelled, never marked resolved. Once one line of several has
+completed, the correction can only be retried.
+Known limit (owner decision, 28 Nov 2026): if a later note is then changed in
+Xero so it can never be corrected, the correction stays `RESERVED` for good;
+the voided-note alert still fires. The officer guide has the manual steps.
 
 ## Waitlist Lifecycle
 
