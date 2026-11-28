@@ -36,9 +36,9 @@ import {
 /** The most booking ids a summary, an alert or a dashboard item names for one class. */
 export const BOOKING_MONEY_CENSUS_IDS_PER_CLASS = 20;
 
-/** What a run that could not send its alert says on Background Jobs. */
+/** What a run whose alert reached nobody says on Background Jobs. */
 const BOOKING_MONEY_CENSUS_ALERT_FAILED_WARNING =
-  "The alert for new findings could not be sent; the next run tries again. The findings are on the Stuck States page.";
+  "The alert for new findings could not be sent: the send failed, or no admin is set to receive it. A later run tries again. The findings are on the Stuck States page.";
 
 const FINDING_GROUPS = ["disagreement", "coverage", "integrity", "class"] as const;
 export type BookingMoneyCensusFindingGroup = (typeof FINDING_GROUPS)[number];

@@ -25,10 +25,14 @@
  * ONE EMAIL PER NIGHT. The new findings go out together under a digest key
  * made from their keys; each finding's own key is stamped only once that email
  * is kept (an admin was sent it, or a copy waits for the email retry cron).
- * If nobody can receive it, or the send fails, nothing is stamped and the next
- * night tries again. Limit: if the email is kept and a stamp then fails twice,
- * the next night either finds the same digest kept and stamps without sending,
- * or, when another finding arrived meanwhile, names the unstamped ones again.
+ * If nobody can receive it, or the send fails, nothing is stamped, the run's
+ * summary carries a warning (Background Jobs shows it) and a later night tries
+ * again. Limits: if the email is kept and a stamp then fails twice, the next
+ * night either finds the same digest kept and stamps without sending, or, when
+ * another finding arrived meanwhile, names the unstamped ones again. Two
+ * instances running the same night send one email when they find the same new
+ * findings (one digest key); if a finding lands between their reads, each sends
+ * its own and the findings both saw are named twice.
  */
 import { createHash } from "node:crypto";
 
@@ -109,16 +113,16 @@ async function findingsNotAlertedBefore(
 
 /**
  * Send one alert for the findings not alerted before, then stamp each so later
- * nights stay quiet. Returns what it did; throws only if the alert store
- * cannot be read.
+ * nights stay quiet. Returns what it did, `failed` when new findings reached
+ * nobody; throws only if the alert store cannot be read.
  */
 async function alertNewFindings(
   findings: readonly BookingMoneyCensusFinding[],
   deps: BookingMoneyCensusDependencies,
-): Promise<{ newFindings: number; sent: boolean }> {
+): Promise<BookingMoneyCensusSummary["alert"]> {
   const now = deps.now();
   const fresh = await findingsNotAlertedBefore(findings, deps, now);
-  if (fresh.length === 0) return { newFindings: 0, sent: false };
+  if (fresh.length === 0) return { newFindings: 0, sent: false, failed: false };
 
   const freshKeys = fresh.map(bookingMoneyCensusAlertKey).sort();
   const digest = createHash("sha256").update(freshKeys.join("\n")).digest("hex").slice(0, 32);
@@ -130,21 +134,25 @@ async function alertNewFindings(
     context,
     send: () => deps.sendAlert({ newFindings: fresh.length, classes: summarizeBookingMoneyCensusClasses(fresh) }),
   });
-  // Not kept by this run, yet kept already: an earlier night sent this very
-  // digest and its stamps failed. Stamp now; the email is not sent twice.
-  const settled = sent || (await deps.readClaimState(digestKey, now)) === "kept";
-  if (settled) {
+  // Not kept by this run, so ask where the digest's claim stands.
+  // - `kept`: an earlier night sent this very digest and its stamps failed.
+  //   Stamp now; the email is not sent twice.
+  // - `awaiting-send`: another instance is sending it now, and stamps it.
+  // - `none` or `deferred`: the send failed, or no admin can receive it. The
+  //   once-ever helper never throws, so this is the only place that can say so.
+  const claim = sent ? "kept" : await deps.readClaimState(digestKey, now);
+  if (claim === "kept") {
     for (const key of freshKeys) await deps.stampSent(key, ALERT_LABEL, { ...context, findingKey: key });
   }
-  return { newFindings: fresh.length, sent };
+  return { newFindings: fresh.length, sent, failed: claim === "none" || claim === "deferred" };
 }
 
 /**
  * One nightly run: both censuses, the bounded summary the scheduler records,
  * and an alert for anything new. A census that throws fails the run, so the
  * scheduler records FAILURE and the Stuck States page says the check did not
- * run. A failure in the alert step alone is reported and leaves the summary
- * standing: the findings are still on the page, and the next night alerts.
+ * run. A failure in the alert step alone leaves the summary standing, with a
+ * warning: the findings are still on the page, and a later night alerts.
  */
 export async function runBookingMoneyCensus(
   overrides: Partial<BookingMoneyCensusDependencies> = {},
@@ -158,7 +166,7 @@ export async function runBookingMoneyCensus(
 
   let alert: BookingMoneyCensusSummary["alert"];
   try {
-    alert = { ...(await alertNewFindings(findings, deps)), failed: false };
+    alert = await alertNewFindings(findings, deps);
   } catch (err) {
     reportCronError({
       tag: `${BOOKING_MONEY_CENSUS_JOB_NAME}-alert`,

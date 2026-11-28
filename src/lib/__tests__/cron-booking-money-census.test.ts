@@ -184,17 +184,38 @@ describe("#4910 runBookingMoneyCensus: the nightly booking money check", () => {
     expect(quiet).toMatchObject({ findings: 4, alert: { newFindings: 0, sent: false, failed: false } });
   });
 
-  it("stamps nothing when nobody could be sent the alert, so the next night tries again", async () => {
+  it.each([
+    ["the send failed and the claim was given back", "none"],
+    ["no admin can receive it and the claim is held for a day", "deferred"],
+  ] as const)("stamps nothing and warns on Background Jobs when %s", async (_case, claimState) => {
+    const deps = buildDeps({
+      censusLedger: vi.fn(async () => driftReport()),
+      // The real helper never throws: a send that reached nobody is only a false.
+      sendOnceEver: vi.fn(async () => false),
+      readClaimState: vi.fn(async () => claimState),
+    });
+
+    const summary = await runBookingMoneyCensus(deps);
+
+    // Nothing stamped, so a later night tries again.
+    expect(deps.stampSent).not.toHaveBeenCalled();
+    expect(summary.alert).toEqual({ newFindings: 4, sent: false, failed: true });
+    expect(summary.warning).toContain("could not be sent");
+    expect(summary).toMatchObject({ findings: 4, drift: 3 });
+  });
+
+  it("neither stamps nor warns while another instance is sending the same night's email", async () => {
     const deps = buildDeps({
       censusLedger: vi.fn(async () => driftReport()),
       sendOnceEver: vi.fn(async () => false),
-      readClaimState: vi.fn(async () => "deferred" as const),
+      readClaimState: vi.fn(async () => "awaiting-send" as const),
     });
 
     const summary = await runBookingMoneyCensus(deps);
 
     expect(deps.stampSent).not.toHaveBeenCalled();
     expect(summary.alert).toEqual({ newFindings: 4, sent: false, failed: false });
+    expect(summary.warning).toBeUndefined();
   });
 
   it("stamps without sending again when an earlier night's email for the same findings was kept", async () => {
@@ -210,6 +231,7 @@ describe("#4910 runBookingMoneyCensus: the nightly booking money check", () => {
     expect(deps.sendAlert).not.toHaveBeenCalled();
     expect(deps.stampSent.mock.calls.map(([key]) => key)).toEqual(ALL_KEYS);
     expect(summary.alert).toEqual({ newFindings: 4, sent: false, failed: false });
+    expect(summary.warning).toBeUndefined();
   });
 
   it("names at most twenty bookings per class in the summary and the alert, with the full count", async () => {
