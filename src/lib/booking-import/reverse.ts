@@ -34,7 +34,7 @@ import { logAudit } from "@/lib/audit";
 import { cancelBooking } from "@/lib/booking-cancel";
 import { bookingStayHasStarted } from "@/lib/booking-edit-policy";
 import { acquireLodgeCapacityLock } from "@/lib/capacity";
-import type { ClubFormat } from "@/lib/club-time";
+import type { ClubFormat } from "@/lib/club-format";
 import { LOCK1_HOLDER_TRANSACTION_BUDGET } from "@/lib/db-transaction";
 import { ManualBookingPaymentError } from "@/lib/manual-booking-payment-error";
 import { reverseManualBookingPayment } from "@/lib/payment-reconciliation";
