@@ -20,6 +20,7 @@ import { OptionCard, OptionCardGroup } from "@/components/ui/option-card";
 import { useQrDataUrl } from "@/hooks/use-qr-data-url";
 import { apiErrorMessageFromResponse } from "@/lib/api-error-message";
 import { RetiredRecoveryCodesNotice } from "@/components/retired-recovery-codes-notice";
+import { PROFILE_SECURITY_HREF } from "@/lib/second-factor-enrolment";
 
 type EnrollMethod = "TOTP" | "EMAIL";
 type VerifyMethod = "TOTP" | "EMAIL" | "RECOVERY";
@@ -244,7 +245,7 @@ export function TwoFactorEnrollPanel({
             // added from the profile security card (#4620 lock-out walk).
             <p className="text-sm text-muted-foreground">
               No authenticator app?{" "}
-              <Link href="/profile" className="underline underline-offset-4">
+              <Link href={PROFILE_SECURITY_HREF} className="underline underline-offset-4">
                 Add a passkey from your profile
               </Link>{" "}
               instead.

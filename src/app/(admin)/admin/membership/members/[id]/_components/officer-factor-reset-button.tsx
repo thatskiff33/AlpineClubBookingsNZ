@@ -79,8 +79,9 @@ export function OfficerFactorResetButton({ memberId }: { memberId: string }) {
         Ends their sessions and emails them. Their next sign-in goes to set-up,
         with no new grace period.
       </p>
-      {/* Success is polite; a failure is an alert, styled as one (#4620). */}
-      <p role="status" className="text-sm">
+      {/* Success is polite; a failure is an alert, styled as one (#4620).
+          Always mounted so it is announced; out of the layout while empty. */}
+      <p role="status" className={message ? "text-sm" : "sr-only"}>
         {message}
       </p>
       <FocusedActionError id={`factor-reset-error-${memberId}`} error={failure} />

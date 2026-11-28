@@ -28,7 +28,7 @@ describe("officer grace banner (#4618, #4620)", () => {
     const banner = screen.getByRole("status");
     expect(banner).toHaveTextContent(/Set up an authenticator app or a passkey by .+\./);
     expect(
-      screen.getByRole("link", { name: "Set it up from your profile" }),
-    ).toHaveAttribute("href", "/profile");
+      screen.getByRole("link", { name: "Open the Security section of your profile" }),
+    ).toHaveAttribute("href", "/profile#security");
   });
 });

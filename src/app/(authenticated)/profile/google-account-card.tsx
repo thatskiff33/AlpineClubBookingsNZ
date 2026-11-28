@@ -6,6 +6,7 @@ import { Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { FocusedActionError } from "@/components/focused-action-error";
+import { PROFILE_SECURITY_HREF } from "@/lib/second-factor-enrolment";
 
 /**
  * Profile "Connected accounts" control for Google sign-in (#2035). Rendered in
@@ -53,7 +54,7 @@ export function GoogleAccountCard({
       }
       // Full-page OAuth round-trip. The intent cookie is already set; on return
       // the signIn callback pins the sub and redirects to /profile.
-      await signIn("google", { callbackUrl: "/profile#security" });
+      await signIn("google", { callbackUrl: PROFILE_SECURITY_HREF });
     } catch {
       setError("Could not start Google linking. Please try again.");
       setLoading(false);
@@ -73,7 +74,7 @@ export function GoogleAccountCard({
         setLoading(false);
         return;
       }
-      window.location.assign("/profile#security");
+      window.location.assign(PROFILE_SECURITY_HREF);
     } catch {
       setError("Could not disconnect Google. Please try again.");
       setLoading(false);

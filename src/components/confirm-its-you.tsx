@@ -302,7 +302,7 @@ function ConfirmItsYouDialog({ onDone }: { onDone: (proved: boolean) => void }) 
               {"Use your passkey to confirm it's you."}
             </p>
           ) : null}
-          <p className="text-sm text-muted-foreground" role="status">
+          <p className={progress ? "text-sm text-muted-foreground" : "sr-only"} role="status">
             {progress}
           </p>
           <FocusedActionError

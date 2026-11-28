@@ -6,6 +6,12 @@
  * alone now call this, so a passkey-only member is enrolled.
  */
 
+/**
+ * Where a signed-in member adds or removes a sign-in factor: the Security
+ * section of their profile. The path stays on the gated officer's allowlist.
+ */
+export const PROFILE_SECURITY_HREF = "/profile#security";
+
 export function isSecondFactorEnrolled(input: {
   twoFactorEnabled?: boolean | null;
   hasPasskey?: boolean | null;

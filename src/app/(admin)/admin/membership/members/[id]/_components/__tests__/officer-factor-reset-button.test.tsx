@@ -29,6 +29,9 @@ describe("officer factor reset button (#4618, #4620)", () => {
   it("announces a refused reset as an alert, not as a status", async () => {
     stubReset(409, { error: "You cannot reset your own factors." });
     render(<OfficerFactorResetButton memberId="member-2" />);
+    // Both regions are mounted before anything happens, and take no room.
+    expect(screen.getByRole("status")).toHaveClass("sr-only");
+    expect(screen.getByRole("alert")).toHaveClass("sr-only");
     fireEvent.click(screen.getByRole("button", { name: "Reset two-factor" }));
 
     await waitFor(() => {
@@ -50,6 +53,7 @@ describe("officer factor reset button (#4618, #4620)", () => {
         "Their authenticator and passkeys were reset",
       );
     });
+    expect(screen.getByRole("status")).not.toHaveClass("sr-only");
     expect(screen.getByRole("alert")).toHaveTextContent("");
     expect(refresh).toHaveBeenCalledTimes(1);
   });

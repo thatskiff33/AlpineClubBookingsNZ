@@ -256,7 +256,7 @@ describe("method choice is announced, not only shaded (#4952)", () => {
     const { unmount } = render(<TwoFactorEnrollPanel callbackUrl={deepLink} appOnly />);
     expect(
       screen.getByRole("link", { name: "Add a passkey from your profile" }),
-    ).toHaveAttribute("href", "/profile");
+    ).toHaveAttribute("href", "/profile#security");
     await screen.findByText(setup.secret);
     unmount();
 
