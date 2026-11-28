@@ -3251,8 +3251,11 @@ stay; the nights come back at the member rate and nothing on the booking shows
 it. Where the audit can see a cause, the reason names it: season rates changed
 after booking (a season deleted since counts), the booking carried a discount
 or promo, or a guest or night price is below zero. The figure on these lines is
-the "credit given": what the edit took off the price. It limits an over-credit
-and does not limit a short credit. Example: 4 nights paid at $50, the rate later
+the "credit given": what the edit took off the price, net of anything it
+bought. It limits an over-credit only when the edit bought nothing, and never
+limits a short credit. Example of the first: one night paid at $10 credited at
+$150 is a $140 over-credit, but with a $100 night bought in the same edit the
+credit given is only $50. Example: 4 nights paid at $50, the rate later
 cut to $20, 2 nights given back; the credit given was $40, the right credit
 $100, and the $60 the member is short is not in the record. An officer's date
 override that re-priced the stay ("recalculate") worked outside the mid-stay

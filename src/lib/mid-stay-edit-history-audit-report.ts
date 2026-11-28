@@ -101,8 +101,9 @@ export function formatMidStayEditAuditReport(
     "an officer re-price's \"net change\" bounds nothing, since nights may have moved both ways.",
     "Every mid-stay give-back is listed under #2744: its nights were valued at the season rates of the day, with each",
     "guest's membership type and subscription standing (unpaid-subscription pricing) read afresh, not at the price paid.",
-    "\"credit given\" is what that edit took off the price. It does not bound a short credit: where the nights were",
-    "valued below what was paid, the member is short by an amount the history does not hold.",
+    "\"credit given\" is what that edit took off the price, net of anything it bought. It bounds an over-credit only",
+    "when the edit bought nothing. It does not bound a short credit: where the nights were valued below what was paid,",
+    "the member is short by an amount the history does not hold.",
   ];
   if (options.summaryOnly) return lines.join("\n");
 

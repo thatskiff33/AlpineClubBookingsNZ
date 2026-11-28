@@ -105,8 +105,10 @@ export type MidStayEditShape =
  * Each shape's fixed reading. `amount`: what its figure is - the error itself,
  * an upper limit ("up to", not a finding of that much), an officer re-price's
  * net change, which bounds nothing because nights may have moved both ways, or
- * the credit a give-back actually gave, which bounds an over-credit but not a
- * short one. `null` issue: not attributable to either fix alone.
+ * the credit a give-back actually gave (its net fall), which bounds an
+ * over-credit only when the edit bought nothing (a night bought in the same
+ * edit nets off a larger gross credit) and never bounds a short one. `null`
+ * issue: not attributable to either fix alone.
  */
 export const MID_STAY_EDIT_SHAPES: Record<
   MidStayEditShape,
@@ -308,8 +310,9 @@ export function classifyMidStayEdit(facts: MidStayEditFacts): MidStayEditFinding
     ].filter((part): part is string => part !== null);
     findings.push({
       shape: "give-back-repriced",
-      // The credit actually given, net of anything the edit bought: not a limit on a short credit.
-      atStakeCents: d < 0 ? -d : null,
+      // The credit actually given, net of anything the edit bought ($0.00 when the
+      // price did not move): a limit on an over-credit only when nothing was bought.
+      atStakeCents: d <= 0 ? Math.abs(d) : null,
       reason: `Nights given back were valued at the season rates of the day and each guest's membership type and subscription standing at the edit, not at the price paid. ${
         signs.length > 0
           ? `Signs on this booking: ${signs.join("; ")}.`

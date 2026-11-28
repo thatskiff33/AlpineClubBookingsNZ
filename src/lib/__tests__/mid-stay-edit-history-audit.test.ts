@@ -316,6 +316,18 @@ describe("auditMidStayEditHistory (#5242) - which edits, and how each reads", ()
     expect(findingsById(await run(db))).toEqual({ sole_guest: giveBack(5000) });
   });
 
+  it("lists a give-back with no net price change as a possible hidden re-bill, with $0.00 credit given, not unknown", async () => {
+    const db = fakeDb({
+      modifications: [mod("level_give_back", "b1", { next: { checkOut: "2026-07-14", totalPriceCents: 50000 } })],
+    });
+    const result = await run(db);
+    expect(findingsById(result)).toEqual({ level_give_back: giveBack(0) });
+    expect(formatMidStayEditAuditReport(result, CLUB_FORMAT_TEST)).toContain("| give-back-repriced | possible | credit given $0.00 |");
+    expect(formatMidStayEditAuditReport(result, CLUB_FORMAT_TEST, { summaryOnly: true })).toMatch(
+      /\(#2744, possible\): 1, credit given \$0\.00/,
+    );
+  });
+
   it("lists a give-back that raised the price with the credit unknown, beside the rise", async () => {
     const db = fakeDb({
       modifications: [mod("rise_with_removal", "b1", { previous: { removedGuests: [NAME] }, next: { totalPriceCents: 52000 } })],
@@ -486,7 +498,8 @@ describe("formatMidStayEditAuditReport", () => {
     expect(summary).toMatch(/\(#2744, possible\): 1, credit given \$40\.00/);
     expect(summary).not.toMatch(/up to \$40\.00/);
     expect(summary).toMatch(/membership type and subscription standing/);
-    expect(summary).toMatch(/"credit given" is what that edit took off the price\. It does not bound a short credit/);
+    expect(summary).toMatch(/"credit given" is what that edit took off the price, net of anything it bought\. It bounds an over-credit only/);
+    expect(summary).toMatch(/when the edit bought nothing\. It does not bound a short credit/);
     expect(formatMidStayEditAuditReport(result, CLUB_FORMAT_TEST)).toContain("| give-back-repriced | possible | credit given $40.00 |");
   });
 
