@@ -98,7 +98,7 @@ const LOADED: Partial<FinanceDashboardPageModel> = {
       ],
       financialYearEndMonth: 3,
       currentMonth: "2026-07",
-    } as NonNullable<FinanceDashboardPageModel["ratios"]>["matrix"],
+    },
     initialNumeratorId: null,
     initialDenominatorId: null,
     initialRangeKey: null,
@@ -135,7 +135,7 @@ describe("/finance heading outline (#5216)", () => {
     cleanup();
   });
 
-  it.each([
+  it.each<[string, Partial<FinanceDashboardPageModel>]>([
     ["loaded, viewer", { ...LOADED }],
     ["loaded, manager (the sync button shows)", { ...LOADED, isManager: true }],
     ["empty: nothing synced yet", {}],
@@ -148,7 +148,7 @@ describe("/finance heading outline (#5216)", () => {
         },
       },
     ],
-  ] as const)("%s", (_state, overrides) => {
+  ])("%s", (_state, overrides) => {
     render(
       <UnderWorkspaceLayout>
         <FinanceDashboardClient model={buildModel(overrides)} currentSearch="view=overview" />
