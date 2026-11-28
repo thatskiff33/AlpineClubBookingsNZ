@@ -13,6 +13,10 @@
 // is byte-for-byte identical to the unset behaviour and no test that asserts the
 // sender address changes. Set with ??= so any test that deliberately exercises a
 // different/!ok config by assigning or deleting these keeps control.
+import { randomUUID } from "node:crypto";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
 import { beforeEach, vi } from "vitest";
 import { SAFE_DEFAULT_CONFIG } from "@/config/club";
 
@@ -26,6 +30,13 @@ vi.mock("server-only", () => ({}));
 process.env.EMAIL_FROM ??= SAFE_DEFAULT_CONFIG.supportEmail;
 process.env.AWS_SES_ACCESS_KEY_ID ??= "test-ses-access-key-id";
 process.env.AWS_SES_SECRET_ACCESS_KEY ??= "test-ses-secret-access-key";
+
+// #5297: an owed admin alert the database refuses is kept on disk
+// (`src/lib/admin-alert-spool.ts`). Each test file gets its own directory
+// (created only if something is written), so no file reads another's spool
+// and none writes into the checkout. Assigned, not `??=`, so a developer's
+// own ADMIN_ALERT_SPOOL_DIR can never point a test run at a real spool.
+process.env.ADMIN_ALERT_SPOOL_DIR = join(tmpdir(), "vitest-admin-alert-spool", randomUUID());
 
 // Keep dotenv silent under Vitest. Scripts a suite imports (for example
 // `scripts/config-self-heal.ts`, via `import "dotenv/config"`) print dotenv's

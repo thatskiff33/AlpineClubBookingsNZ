@@ -145,7 +145,7 @@ function onceEverAlertSweepSummary(sweep: OnceEverAlertSweepResult) {
   return sweep.failed > 0
     ? {
         ...sweep,
-        warning: `${sweep.failed} once-ever alert claim(s) or owed alert(s) could not be swept and will be retried next run; see the application logs.`,
+        warning: `${sweep.failed} once-ever alert claim(s), owed alert(s) or spooled alert file(s) could not be swept and will be retried next run; see the application logs.`,
       }
     : sweep;
 }

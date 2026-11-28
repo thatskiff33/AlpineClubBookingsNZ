@@ -37,6 +37,9 @@
 
 # misc
 .DS_Store
+# Owed admin alerts kept on disk during a database outage when
+# ADMIN_ALERT_SPOOL_DIR is unset (#5297, src/lib/admin-alert-spool.ts).
+/.admin-alert-spool/
 *.pem
 # Claude Code local state is ignored at any depth; only the repository's
 # shared subagent roles (.claude/agents/ at the root) and its shared settings

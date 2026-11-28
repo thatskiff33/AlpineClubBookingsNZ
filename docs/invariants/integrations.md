@@ -1001,8 +1001,8 @@ decision, 18 Nov 2026).
   `INV-LOCK-002`); the `AlertCooldown` row lock serialises, registered in the
   writer index (`INV-LOCK-003`). The confirm holds no provider call.
 - **Known limits, not owner-accepted:** an alert raised while every database
-  write fails is only logged (#5297); an email row a crash leaves `QUEUED` is
-  settled by `INV-INT-043`; if one recipient's row write fails while another's
+  write fails is kept on disk by `INV-INT-045`; an email row a crash leaves
+  `QUEUED` is settled by `INV-INT-043`; if one recipient's row write fails while another's
   commits, the claim is kept and that recipient gets nothing, with no `FAILED`
   row to retry.
 
@@ -1085,3 +1085,41 @@ suppression and, for a bounce, the one email it is about (owner decisions,
 Pinned by `ses-feedback-named-message.test.ts`,
 `ses-feedback-adapter.test.ts`, `provider-message-id.test.ts`,
 `cron-email-retry.test.ts` and `phase6a-notifications.test.ts`.
+
+## Owed alerts kept on disk during a database outage (#5297)
+
+### INV-INT-045
+
+An owed admin alert the database refuses is kept on local disk and sent once
+the database answers, never twice (owner decision, 20 Nov 2026).
+
+- **Spool.** `markAlertOwedOrSpool` (`admin-alert-spool.ts`) writes the owed
+  row; if that throws, it writes the same fields to
+  `ADMIN_ALERT_SPOOL_DIR`, one file per key (`sha256` of it): a temporary
+  file, synced, renamed over. A repeat overwrites. Raised-once alerts
+  (`INV-INT-042`) and the Internet Banking hold's owed marker use it. Disk
+  refused too: logged only, as before; only then is it unstored for
+  `throwIfUnstored` (`INV-INT-044`).
+- **No second channel.** The spool never sends: a direct send would have no
+  claim or `EmailLog` row. The error log line (Sentry when configured) is the
+  signal as it fires.
+- **Ingest.** The once-ever alert sweep first moves each file into the
+  database through `markAlertOwed`, which only creates and ignores a duplicate,
+  stamped when spooled, then deletes the file. A crash between the two writes
+  nothing new. The sweep sends only through the alert's once-ever claim, so a
+  file for an alert sent meanwhile is settled unsent, a lost-reply claim is
+  given back after 15 minutes first, and an email row a crash left `QUEUED`
+  is `INV-INT-043`'s alone. The 7-day give-up runs from the spool time.
+- **Privacy.** A file holds exactly the owed row's fields: ids, cents and
+  error text. Mode 0600 in a 0700 directory, outside anything web-served, not
+  backed up, deleted once ingested, at most 500 files; an unreadable one is
+  logged and deleted.
+- **Storage.** The `admin_alert_spool` volume on every app container
+  outlives restarts and swaps.
+- **No lock.** Create-only rows; no advisory key (`INV-LOCK-001`), in the
+  writer index (`INV-LOCK-003`).
+- **Known limit:** a full disk then leaves the log as the only record.
+
+Pinned by `admin-alert-spool.test.ts`, `admin-alert-once-sweep.test.ts`,
+`admin-alert-once-replayable.test.ts`, `internet-banking-payment-cron.test.ts`
+and `admin-alert-db-outage.realdb.test.ts` (PostgreSQL).

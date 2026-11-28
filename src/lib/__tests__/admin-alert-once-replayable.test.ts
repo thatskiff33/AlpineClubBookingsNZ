@@ -1,4 +1,7 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { mkdirSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import path from "node:path";
+
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { AlertCooldownFake } from "./helpers/alert-cooldown-fake";
 
@@ -45,6 +48,8 @@ const raise = (format = CLUB_FORMAT_TEST) =>
 beforeEach(() => {
   vi.clearAllMocks();
   db.fake.reset();
+  // This file's own spool directory (`vitest.setup.ts`), emptied per test.
+  rmSync(process.env.ADMIN_ALERT_SPOOL_DIR!, { recursive: true, force: true });
   senders.payment.mockResolvedValue(UNMUTEABLE_ALERT_SENT);
   senders.format.mockResolvedValue(CLUB_FORMAT_TEST);
 });
@@ -103,6 +108,39 @@ describe("sendReplayableAdminAlertOnceEver", () => {
     await expect(raise()).resolves.toBe(true);
     expect(senders.payment).toHaveBeenCalledTimes(1);
     expect(logger.error).toHaveBeenCalledWith(expect.objectContaining({ bookingId: "b1" }), expect.stringContaining("Failed to store the shortfall alert"));
+  });
+
+  // #5297 (`INV-INT-045`): an alert raised while the database refuses every
+  // read and write is kept on disk, and sent once, by the sweep, when it answers.
+  it("keeps the alert on disk while every database call fails, and the sweep sends it once when the database answers", async () => {
+    const outage = (["create", "updateMany", "deleteMany", "findMany", "findUnique"] as const).map((op) =>
+      vi.spyOn(db.fake.delegate, op).mockRejectedValue(new Error("Can't reach database server")),
+    );
+    await expect(raise()).resolves.toBe(false);
+    expect(senders.payment, "no claim, so no send").not.toHaveBeenCalled();
+    expect(db.fake.rows.size).toBe(0);
+    expect(readdirSync(process.env.ADMIN_ALERT_SPOOL_DIR!)).toHaveLength(1);
+    await expect(sweepOnceEverAlerts(new Date(Date.now() + 60_000)), "still down").resolves.toMatchObject({ spooled: 0, resent: 0 });
+
+    for (const spy of outage) spy.mockRestore();
+    await expect(sweepOnceEverAlerts(new Date(Date.now() + 120_000))).resolves.toMatchObject({ spooled: 1, resent: 1, failed: 0 });
+    await sweepOnceEverAlerts(new Date(Date.now() + 180_000));
+    await expect(raise(), "the caller raising it again").resolves.toBe(false);
+    expect(senders.payment).toHaveBeenCalledTimes(1);
+    expect(readdirSync(process.env.ADMIN_ALERT_SPOOL_DIR!)).toEqual([]);
+    expect(db.fake.rows.has(OWED)).toBe(false);
+  });
+
+  it("sends once when only the stored copy's write failed, and the sweep settles the file it left without a second send", async () => {
+    db.fake.intercept("create", async () => {
+      throw new Error("connection lost");
+    });
+    await expect(raise()).resolves.toBe(true);
+    expect(readdirSync(process.env.ADMIN_ALERT_SPOOL_DIR!)).toHaveLength(1);
+
+    await expect(sweepOnceEverAlerts(new Date(Date.now() + 60_000))).resolves.toMatchObject({ spooled: 1, settled: 1, resent: 0 });
+    expect(senders.payment).toHaveBeenCalledTimes(1);
+    expect(db.fake.rows.has(OWED)).toBe(false);
   });
 
   it("still sends when the claim state cannot be read first", async () => {
@@ -168,10 +206,29 @@ describe("a caller whose trigger is redelivered: throwIfUnstored (#5469)", () =>
   const KEY9 = "email-complaint:sup-9:fb-9";
   const raiseComplaint = (throwIfUnstored = true) =>
     sendReplayableAdminAlertOnceEver({ key: KEY9, label: "email complaint alert", context: {}, alert: COMPLAINT, throwIfUnstored });
-  const storeFails = () =>
+  const dbStoreFails = () =>
     db.fake.intercept("create", async () => {
       throw new Error("connection lost");
     });
+  // Unstored means the disk refused it too (#5297): the spool directory sits under a file.
+  const storeFails = () => {
+    dbStoreFails();
+    const spool = process.env.ADMIN_ALERT_SPOOL_DIR!;
+    mkdirSync(spool, { recursive: true });
+    writeFileSync(path.join(spool, "a-file"), "");
+    vi.stubEnv("ADMIN_ALERT_SPOOL_DIR", path.join(spool, "a-file", "spool"));
+  };
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it("does not throw when the database refuses the alert but the disk keeps it (#5297)", async () => {
+    dbStoreFails();
+    senders.complaint.mockRejectedValueOnce(new Error("transport down"));
+
+    await expect(raiseComplaint()).resolves.toBe(false);
+    expect(readdirSync(process.env.ADMIN_ALERT_SPOOL_DIR!)).toHaveLength(1);
+  });
 
   it("MUTATION: throws when the alert could not be stored and its send failed, leaving nothing behind", async () => {
     storeFails();

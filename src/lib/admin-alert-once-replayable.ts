@@ -1,7 +1,8 @@
 import type { Prisma } from "@prisma/client";
 
 import { readOnceEverClaimState, sendAdminAlertOnceEver } from "@/lib/admin-alert-once";
-import { markAlertOwed, settleOwedAlert } from "@/lib/alert-cooldown";
+import { markAlertOwedOrSpool } from "@/lib/admin-alert-spool";
+import { settleOwedAlert } from "@/lib/alert-cooldown";
 import type { ClubFormat } from "@/lib/club-format";
 import type { AdminAlertSendResult } from "@/lib/email/admin-alert-send-result";
 import type { ComplaintType } from "@/lib/email/delivery-feedback";
@@ -17,8 +18,9 @@ import logger from "@/lib/logger";
  *
  * - The claim is already kept, or deferred for a day: nothing is written or
  *   sent (a deferred alert's owed row was stored by the call that deferred).
- * - The owed row cannot be stored: logged, and the alert is still sent once,
- *   exactly as before #5255.
+ * - The owed row cannot be stored: it is kept on local disk for the sweep to
+ *   store once the database answers (#5297, `admin-alert-spool.ts`). Only if
+ *   the disk refuses it too is it logged and sent once, as before #5255.
  * - The claim is kept: the owed row is settled. Otherwise it stays for the sweep.
  *
  * Re-sending never doubles an alert: the sweep sends only through the same
@@ -44,7 +46,11 @@ export async function sendReplayableAdminAlertOnceEver({
   const { alert } = send;
   const now = new Date();
   const stored: StoredReplayableAlert = { label, alert };
-  const store = () => markAlertOwed({ key: onceEverOwedKey(key), due: "after-retry", retryAfterMs: 0, replayAlert: stored, now });
+  const store = () =>
+    markAlertOwedOrSpool(
+      { key: onceEverOwedKey(key), due: "after-retry", retryAfterMs: 0, replayAlert: stored, now },
+      { label, context },
+    );
   try {
     const state = await readOnceEverClaimState(key, now);
     if (state === "kept") return false;
@@ -53,7 +59,7 @@ export async function sendReplayableAdminAlertOnceEver({
       // cannot store, stored now (a duplicate key is ignored).
       if (throwIfUnstored) {
         await store().catch((err) => {
-          logger.error({ ...context, err }, `Failed to store the ${label} for the sweep`);
+          logger.error({ ...context, err }, `Failed to store the ${label} for the sweep, in the database or on disk`);
           throw new ReplayableAlertNotStoredError(label);
         });
       }
@@ -69,7 +75,10 @@ export async function sendReplayableAdminAlertOnceEver({
     await store();
   } catch (err) {
     unstored = true;
-    logger.error({ ...context, err }, `Failed to store the ${label} for the sweep; sending it once without a retry`);
+    logger.error(
+      { ...context, err },
+      `Failed to store the ${label} for the sweep, in the database or on disk; sending it once without a retry`,
+    );
   }
   const kept = await sendStoredAlertOnceEver({ key, context, label, send });
   if (!kept && unstored && throwIfUnstored) throw new ReplayableAlertNotStoredError(label);

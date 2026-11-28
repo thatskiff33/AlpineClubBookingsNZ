@@ -2957,6 +2957,18 @@ mispricing a booking.
   match the same unsent claim, and only one deletes it. Proved on PostgreSQL by
   `admin-alert-once-sweep.realdb.test.ts` (each order, behind a held row).
 
+#### Owed admin alert spool (#5297)
+
+- **Owed-alert spool ingest** — `src/lib/admin-alert-spool.ts`
+  (`markAlertOwedOrSpool`, `ingestSpooledAlerts`, #5297, `INV-INT-045`),
+  called first by `sweepOnceEverAlerts`. A spooled owed row is written with
+  `markAlertOwed`'s plain `create`, a duplicate key ignored, and only then is
+  its file deleted; two sweeps or a re-read after a crash write one row. The
+  file itself is replaced by an atomic rename, one per key. Nothing here sends:
+  the send is the once-ever claim's, registered above. No transaction, no
+  advisory key, tier or order (INV-LOCK-001, INV-LOCK-002); this entry is the
+  site's registration (INV-LOCK-003).
+
 #### Stranded QUEUED email sweep against the sender's hand-over (#5298)
 
 - **Email hand-over claim** — `src/lib/email/handover.ts`

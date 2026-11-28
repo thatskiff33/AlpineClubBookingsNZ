@@ -1,3 +1,6 @@
+import { mkdirSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import path from "node:path";
+
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { AlertCooldownFake } from "./helpers/alert-cooldown-fake";
@@ -20,6 +23,7 @@ vi.mock("@/lib/club-format-server", async () => ({ clubFormatValues: async () =>
 
 import { readOnceEverClaimState } from "@/lib/admin-alert-once";
 import { onceEverOwedKey, type StoredReplayableAlert } from "@/lib/admin-alert-once-replayable";
+import { markAlertOwedOrSpool } from "@/lib/admin-alert-spool";
 import { ONCE_EVER_OWED_GIVE_UP_MS, ONCE_EVER_UNSENT_GRACE_MS, sweepOnceEverAlerts } from "@/lib/admin-alert-once-sweep";
 import {
   ALERT_NOBODY_ELIGIBLE_RETRY_MS,
@@ -195,6 +199,51 @@ describe("the sweep re-sends a raised-once alert's stored copy", () => {
     expect(db.fake.rows.size).toBe(0);
     expect(logger.error).toHaveBeenCalledWith(expect.objectContaining({ key: KEY }), expect.stringContaining("Gave up"));
     expect(logger.error).toHaveBeenCalledWith(expect.objectContaining({ key: "once:garbled" }), expect.stringContaining("cannot read"));
+  });
+});
+
+describe("the sweep moves spooled alerts into the database first (#5297)", () => {
+  const spool = async (key: string, raisedAt: Date) => {
+    const down = vi.spyOn(db.fake.delegate, "create").mockRejectedValueOnce(new Error("Can't reach database server"));
+    await markAlertOwedOrSpool(
+      { key: onceEverOwedKey(key), due: "after-retry", retryAfterMs: 0, replayAlert: STORED, now: raisedAt },
+      { label: STORED.label, context: {} },
+    );
+    down.mockRestore();
+  };
+
+  it("re-sends a spooled alert in the same run, and settles one whose claim was kept since without sending", async () => {
+    rmSync(process.env.ADMIN_ALERT_SPOOL_DIR!, { recursive: true, force: true });
+    await spool(KEY, T0);
+    await spool("xero-success-after-resolution:op-sent", T0);
+    await claim("xero-success-after-resolution:op-sent", T0);
+    await confirmAlertCooldownSend({ key: "xero-success-after-resolution:op-sent", claimedAt: T0 });
+
+    await expect(sweepOnceEverAlerts(at(MINUTE))).resolves.toMatchObject({ spooled: 2, resent: 1, settled: 1, failed: 0 });
+    await expect(sweepOnceEverAlerts(at(2 * MINUTE))).resolves.toMatchObject({ spooled: 0, resent: 0 });
+    expect(senders.xero).toHaveBeenCalledTimes(1);
+    expect(readdirSync(process.env.ADMIN_ALERT_SPOOL_DIR!)).toEqual([]);
+  });
+
+  it("drops a spooled alert raised more than 7 days ago with an error, as it drops an owed row", async () => {
+    rmSync(process.env.ADMIN_ALERT_SPOOL_DIR!, { recursive: true, force: true });
+    await spool(KEY, T0);
+
+    await expect(sweepOnceEverAlerts(at(ONCE_EVER_OWED_GIVE_UP_MS))).resolves.toMatchObject({ spooled: 1, dropped: 1, resent: 0 });
+    expect(senders.xero).not.toHaveBeenCalled();
+  });
+
+  it("counts a spool it cannot read as failed, and still sweeps the rest", async () => {
+    await owe(KEY);
+    const spoolPath = process.env.ADMIN_ALERT_SPOOL_DIR!;
+    rmSync(spoolPath, { recursive: true, force: true });
+    mkdirSync(path.dirname(spoolPath), { recursive: true });
+    writeFileSync(spoolPath, "not a directory");
+    try {
+      await expect(sweepOnceEverAlerts(at(MINUTE))).resolves.toMatchObject({ spooled: 0, resent: 1, failed: 1 });
+    } finally {
+      rmSync(spoolPath, { force: true });
+    }
   });
 });
 

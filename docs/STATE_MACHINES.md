@@ -5569,14 +5569,17 @@ awaiting send, 15 minutes on -> once-ever-alert-sweep gives it back -> no claim
 no claim -> the caller's next run claims and sends
 raised-once alert -> stored owed row -> sweep re-sends while no claim holds it
   -> settled once kept; dropped with an error after 7 days
+owed row refused by the database -> spool file (one per key) -> sweep writes
+  the owed row, deletes the file -> as a stored owed row above
 ```
 
 The give-back and the first email row race on the `AlertCooldown` row's lock:
 whichever commits first wins, and the loser changes nothing, so the sweep never
 makes a second send (`INV-INT-042`). A claim taken before #5255 has no mark and
-is never swept. Known limits, not owner-accepted: an alert raised while every
-database write fails (#5297). An email row a crash leaves `QUEUED` is settled
-by the stranded-email sweep (#5298, `INV-INT-043`).
+is never swept. An owed row raised while every database write fails is kept on
+disk and written by the sweep's first step, before it sends (#5297,
+`INV-INT-045`). An email row a crash leaves `QUEUED` is settled by the
+stranded-email sweep (#5298, `INV-INT-043`).
 
 ### Shared Xero inbound run authority (#4432)
 

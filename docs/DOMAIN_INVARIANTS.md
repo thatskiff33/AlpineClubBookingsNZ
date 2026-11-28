@@ -986,6 +986,7 @@ File: [`invariants/integrations.md`](invariants/integrations.md). Prefix
 | `INV-INT-042` | A once-ever alert claim with no email is given back |
 | `INV-INT-043` | A stranded QUEUED email is re-sent once or flagged, never twice |
 | `INV-INT-044` | A bounce or complaint changes only the email and address named |
+| `INV-INT-045` | An owed alert the database refuses is spooled, then sent once |
 
 ## Operations
 

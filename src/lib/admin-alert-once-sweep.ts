@@ -7,6 +7,7 @@ import {
   replayableAlertSend,
   sendStoredAlertOnceEver,
 } from "@/lib/admin-alert-once-replayable";
+import { ingestSpooledAlerts } from "@/lib/admin-alert-spool";
 import { listStaleUnsentAlertCooldowns, releaseUnsentAlertCooldown, settleOwedAlert } from "@/lib/alert-cooldown";
 import logger from "@/lib/logger";
 import { prisma } from "@/lib/prisma";
@@ -16,6 +17,9 @@ import { exactPrefix } from "@/lib/prisma-exact-prefix";
  * #5255 (`INV-INT-042`): THE ONCE-EVER ALERT SWEEP, the first task of the
  * 15-minute payments cron cycle (`once-ever-alert-sweep`).
  *
+ * 0. Owed rows an alert kept on disk while the database refused them
+ *    (#5297, `admin-alert-spool.ts`) are written to the database first, so
+ *    step 2 sends them in this run, through the same claim as any other.
  * 1. A once-ever claim still marked "no email yet" `ONCE_EVER_UNSENT_GRACE_MS`
  *    after it was taken has nothing sent or queued behind it - its claim
  *    write threw and its give-backs failed, or the write committed after the
@@ -34,13 +38,16 @@ import { exactPrefix } from "@/lib/prisma-exact-prefix";
  * read or written, for the run's warning.
  */
 export async function sweepOnceEverAlerts(now: Date = new Date()): Promise<OnceEverAlertSweepResult> {
-  const result: OnceEverAlertSweepResult = { released: 0, resent: 0, settled: 0, dropped: 0, failed: 0 };
+  const spool = await ingestSpooledAlerts(now);
+  const result: OnceEverAlertSweepResult = { spooled: spool.ingested, released: 0, resent: 0, settled: 0, dropped: 0, failed: spool.failed };
   await releaseStaleUnsentClaims(now, result);
   await drainOwedAlerts(now, result);
   return result;
 }
 
 export type OnceEverAlertSweepResult = {
+  /** Owed rows moved from the disk spool into the database (#5297). */
+  spooled: number;
   /** Claims given back because no email was recorded under them. */
   released: number;
   /** Raised-once alerts re-sent and kept. */
