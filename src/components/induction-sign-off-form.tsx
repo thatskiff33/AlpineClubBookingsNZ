@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
+import { useActionFocusReturn } from "@/hooks/use-scroll-to-feedback";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
@@ -24,6 +25,7 @@ export function InductionSignOffForm({
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const focusReturn = useActionFocusReturn();
 
   useEffect(() => {
     let cancelled = false;
@@ -60,6 +62,8 @@ export function InductionSignOffForm({
       toast.error("Please accept the declaration before signing off.");
       return;
     }
+    // A browser drops focus from a disabled control; hand it back when re-enabled (#5442).
+    focusReturn.capture();
     setSubmitting(true);
 
     try {
@@ -87,6 +91,7 @@ export function InductionSignOffForm({
       toast.error("Failed to record sign-off.");
     } finally {
       setSubmitting(false);
+      focusReturn.release();
     }
   }
 

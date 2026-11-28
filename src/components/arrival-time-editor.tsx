@@ -2,6 +2,7 @@
 
 import { useId, useState } from "react";
 import { Button } from "@/components/ui/button";
+import { useActionFocusReturn } from "@/hooks/use-scroll-to-feedback";
 import { TimePicker } from "./time-picker";
 import { formatArrivalTime, isValidArrivalTime } from "@/lib/arrival-time";
 
@@ -47,6 +48,7 @@ export function ArrivalTimeEditor({
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState("");
+  const focusReturn = useActionFocusReturn();
 
   const fieldId = useId();
   const hintId = `${fieldId}-hint`;
@@ -72,6 +74,8 @@ export function ArrivalTimeEditor({
       : null;
 
   async function handleSave() {
+    // A browser drops focus from a disabled control; hand it back when re-enabled (#5442).
+    focusReturn.capture();
     setSaving(true);
     setError("");
     setSaved(false);
@@ -102,6 +106,7 @@ export function ArrivalTimeEditor({
       setError(err instanceof Error ? err.message : "Failed to save arrival time");
     } finally {
       setSaving(false);
+      focusReturn.release();
     }
   }
 

@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { startRegistration } from "@simplewebauthn/browser";
 import { Copy, Fingerprint, Loader2, ShieldCheck, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { useActionFocusReturn } from "@/hooks/use-scroll-to-feedback";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -44,6 +45,7 @@ export function TwoFactorSecurityCard({
   const router = useRouter();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const focusReturn = useActionFocusReturn();
   const [codes, setCodes] = useState<string[] | null>(null);
   const [copied, setCopied] = useState(false);
   const [passkeyName, setPasskeyName] = useState("");
@@ -55,6 +57,8 @@ export function TwoFactorSecurityCard({
   });
 
   async function regenerate() {
+    // A browser drops focus from a disabled control; hand it back when re-enabled (#5442).
+    focusReturn.capture();
     setLoading(true);
     setError("");
     setCodes(null);
@@ -80,6 +84,7 @@ export function TwoFactorSecurityCard({
       );
     } finally {
       setLoading(false);
+      focusReturn.release();
     }
   }
 
@@ -90,6 +95,8 @@ export function TwoFactorSecurityCard({
   }
 
   async function addPasskey() {
+    // A browser drops focus from a disabled control; hand it back when re-enabled (#5442).
+    focusReturn.capture();
     setLoading(true);
     setError("");
     try {
@@ -126,6 +133,7 @@ export function TwoFactorSecurityCard({
       setError(err instanceof Error ? err.message : "That passkey didn't work. Try again.");
     } finally {
       setLoading(false);
+      focusReturn.release();
     }
   }
 

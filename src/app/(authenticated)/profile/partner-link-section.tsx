@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
+import { useActionFocusReturn } from "@/hooks/use-scroll-to-feedback";
 import { FieldHint, useFieldHint } from "@/components/ui/field-hint";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -42,6 +43,7 @@ export function PartnerLinkSection({ canManage = false }: PartnerLinkSectionProp
   const [showRemoveConfirm, setShowRemoveConfirm] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
+  const focusReturn = useActionFocusReturn();
   // #2264 — same treatment and same wording as the family-group email boxes:
   // the example moves under the field and folds into the note already there.
   const partnerEmailHint = useFieldHint();
@@ -66,6 +68,8 @@ export function PartnerLinkSection({ canManage = false }: PartnerLinkSectionProp
 
   async function callApi(input: RequestInfo, init: RequestInit) {
     setError("");
+    // A browser drops focus from a disabled control; hand it back when re-enabled (#5442).
+    focusReturn.capture();
     setSubmitting(true);
     try {
       const res = await fetch(input, init);
@@ -82,6 +86,7 @@ export function PartnerLinkSection({ canManage = false }: PartnerLinkSectionProp
       return false;
     } finally {
       setSubmitting(false);
+      focusReturn.release();
     }
   }
 

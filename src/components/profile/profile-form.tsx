@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { Loader2 } from "lucide-react";
 import { MemberAddressFields } from "@/components/member-address-fields";
+import { useActionFocusReturn } from "@/hooks/use-scroll-to-feedback";
 import { MemberDietaryRequirementsField } from "@/components/member-dietary-requirements-field";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -142,6 +143,7 @@ export function ProfileForm({
     }),
   );
   const [saving, setSaving] = useState(false);
+  const focusReturn = useActionFocusReturn();
   const readOnly = !editable;
   const readOnlyInputClassName = readOnly
     ? "bg-muted text-foreground shadow-none focus-visible:ring-0"
@@ -162,6 +164,8 @@ export function ProfileForm({
     e.preventDefault();
     if (readOnly) return;
 
+    // A browser drops focus from a disabled control; hand it back when re-enabled (#5442).
+    focusReturn.capture();
     setSavingState(true);
 
     try {
@@ -191,6 +195,7 @@ export function ProfileForm({
       toast.error("An unexpected error occurred");
     } finally {
       setSavingState(false);
+      focusReturn.release();
     }
   };
 

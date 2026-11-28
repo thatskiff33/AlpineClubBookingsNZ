@@ -4,6 +4,7 @@ import { useState } from "react";
 import { signIn } from "next-auth/react";
 import Link from "next/link";
 import { useClubIdentity } from "@/components/club-identity-provider";
+import { useActionFocusReturn } from "@/hooks/use-scroll-to-feedback";
 import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardFooter, CardHeader } from "@/components/ui/card";
@@ -83,6 +84,7 @@ export function LoginForm({
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+  const focusReturn = useActionFocusReturn();
   const [emailNotVerified, setEmailNotVerified] = useState(false);
   const [resendLoading, setResendLoading] = useState(false);
   const [resendSuccess, setResendSuccess] = useState(false);
@@ -171,6 +173,8 @@ export function LoginForm({
     setError("");
     setEmailNotVerified(false);
     setResendSuccess(false);
+    // A browser drops focus from a disabled control; hand it back when re-enabled (#5442).
+    focusReturn.capture();
     setLoading(true);
 
     try {
@@ -199,6 +203,7 @@ export function LoginForm({
           setError("Invalid email or password. Please try again.");
         }
         setLoading(false);
+        focusReturn.release();
       } else {
         // Full document navigation, never router.push: the client router's
         // cache can hold the logged-out RSC entry for the destination (the
@@ -223,6 +228,7 @@ export function LoginForm({
     } catch {
       setError("Something went wrong. Please try again.");
       setLoading(false);
+      focusReturn.release();
     }
   }
 

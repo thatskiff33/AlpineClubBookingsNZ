@@ -94,6 +94,27 @@ export async function expectToHoldFocus(
   }
 }
 
+// A reply slower than three of jsdom's 16 ms rendering ticks (#5442). jsdom runs
+// its focus fixup on that wall-clock tick, so a control disabled while busy
+// loses focus to <body> only when the reply outlasts one; an instant mock
+// usually beats it, and a loaded CI runner does not.
+export const SLOW_REPLY_MS = 50;
+
+/**
+ * Run an action case against an instant and a slow reply, so an outcome
+ * asserted before it can have arrived, or a control that drops focus while
+ * disabled, fails here rather than on a loaded runner.
+ */
+export const REPLY_SPEEDS = [
+  { speed: "instant", delayMs: 0 },
+  { speed: "slow", delayMs: SLOW_REPLY_MS },
+] as const;
+
+/** Wait `ms` of real time: the reply delay {@link REPLY_SPEEDS} names. */
+export async function replyDelay(ms: number): Promise<void> {
+  if (ms > 0) await new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 async function settlePendingReactWork(): Promise<void> {
   // `act` flushes React's own queue; the macrotask inside it is what lets a
   // Scheduler task or a `setTimeout(0)` that was already queued before this call

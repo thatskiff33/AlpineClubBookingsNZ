@@ -9,7 +9,12 @@ import { act, fireEvent, render, screen, waitFor } from "@/lib/__tests__/support
 import type { ReactElement } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { expectRecoveryAlertToHoldFocus, expectToHoldFocus } from "@/lib/__tests__/helpers/focus";
+import {
+  REPLY_SPEEDS,
+  replyDelay,
+  expectRecoveryAlertToHoldFocus,
+  expectToHoldFocus,
+} from "@/lib/__tests__/helpers/focus";
 
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ push: vi.fn(), refresh: vi.fn(), replace: vi.fn() }),
@@ -33,19 +38,6 @@ const FAILURE = "The club could not do that just now.";
 
 type Reply = { ok: boolean; status?: number; body: unknown };
 
-// A reply slower than three of jsdom's 16 ms rendering ticks (#5442). jsdom runs
-// its focus fixup on that wall-clock tick, so a control disabled while busy
-// loses focus to <body> only when the reply outlasts one; an instant mock
-// usually beats it, and a loaded CI runner does not.
-const SLOW_REPLY_MS = 50;
-
-// Every case runs against an instant and a slow reply, so an outcome asserted
-// before it can have arrived fails here rather than on a loaded runner.
-const REPLY_SPEEDS = [
-  { speed: "instant", delayMs: 0 },
-  { speed: "slow", delayMs: SLOW_REPLY_MS },
-];
-
 // With `load`, a GET only loads the surface's initial state and answers it at
 // once; every other request is the action under test and answers `action`
 // after `delayMs` of real time.
@@ -57,7 +49,7 @@ function installFetch(
     "fetch",
     vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
       const isLoad = load !== undefined && (!init?.method || init.method === "GET");
-      if (!isLoad && delayMs > 0) await new Promise((resolve) => setTimeout(resolve, delayMs));
+      if (!isLoad) await replyDelay(delayMs);
       const reply = isLoad ? { ok: true, body: load } : action;
       const { ok, status = ok ? 200 : 500, body } = reply;
       return { ok, status, json: async () => body } as Response;
