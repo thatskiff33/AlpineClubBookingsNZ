@@ -167,6 +167,9 @@ const PRE_MODULE_ROUTES_WITHOUT_WEBSITE_CALLER: Readonly<Record<string, string>>
     "the monthly finance facts backfill (Jul 2026), run by an operator or `pnpm run finance:backfill-monthly-facts`",
   "src/app/api/admin/xero/operations/[id]/requeue/route.ts":
     "requeuing a Xero operation (Apr 2026, the queued replay workflow); the operations panel's Retry superseded its button",
+  // Support & System (ALP-724): a route built long before the module.
+  "src/app/api/admin/ai-diagnostics/readiness/route.ts":
+    "AI Diagnostics' setup readiness (AID-2, #2371); the AI Diagnostics page reads the same readiness function on the server",
 };
 
 /**
