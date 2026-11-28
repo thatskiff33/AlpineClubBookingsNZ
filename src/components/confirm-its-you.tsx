@@ -15,6 +15,7 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { useActionFailure } from "@/hooks/use-action-failure";
 import {
   isReauthFactor,
   isReauthRequiredPayload,
@@ -137,14 +138,16 @@ function ConfirmItsYouDialog({ onDone }: { onDone: (proved: boolean) => void }) 
   const [factors, setFactors] = useState<ReauthFactor[] | null>(null);
   const [passkeyOptions, setPasskeyOptions] = useState<unknown>(null);
   const [secret, setSecret] = useState("");
-  const [error, setError] = useState<string | null>(null);
-  const [errorAttention, setErrorAttention] = useState(0);
+  const { error, attentionKey, fail, clear } = useActionFailure();
+  // Whose proof the message is about: a passkey that failed says nothing
+  // about what was typed in the field.
+  const [refusedFactor, setRefusedFactor] = useState<ReauthFactor | null>(null);
   const [pendingProof, setPendingProof] = useState<ReauthFactor | null>(null);
   const fieldRef = useRef<HTMLInputElement>(null);
 
-  function fail(message: string) {
-    setError(message);
-    setErrorAttention((value) => value + 1);
+  function refuse(factor: ReauthFactor, message: string) {
+    fail(message);
+    setRefusedFactor(factor);
     setPendingProof(null);
   }
 
@@ -163,7 +166,7 @@ function ConfirmItsYouDialog({ onDone }: { onDone: (proved: boolean) => void }) 
             : [];
         if (!cancelled) {
           if (!response.ok || listed.length === 0) {
-            setError("Confirming isn't available right now.");
+            fail("Confirming isn't available right now.");
             setFactors([]);
           } else {
             setFactors(listed);
@@ -176,7 +179,7 @@ function ConfirmItsYouDialog({ onDone }: { onDone: (proved: boolean) => void }) 
         }
       } catch {
         if (!cancelled) {
-          setError("Confirming isn't available right now.");
+          fail("Confirming isn't available right now.");
           setFactors([]);
         }
       }
@@ -184,7 +187,7 @@ function ConfirmItsYouDialog({ onDone }: { onDone: (proved: boolean) => void }) 
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [fail]);
 
   const hasTotp = factors?.includes("TOTP") === true;
   const hasPasskey = factors?.includes("PASSKEY") === true;
@@ -200,7 +203,7 @@ function ConfirmItsYouDialog({ onDone }: { onDone: (proved: boolean) => void }) 
   async function prove(factor: ReauthFactor) {
     if (pendingProof) return;
     setPendingProof(factor);
-    setError(null);
+    clear();
     try {
       const payload =
         factor === "PASSWORD"
@@ -225,20 +228,21 @@ function ConfirmItsYouDialog({ onDone }: { onDone: (proved: boolean) => void }) 
         typeof (body as { error?: unknown }).error === "string"
           ? (body as { error: string }).error
           : "That didn't match. Try again.";
-      fail(message);
+      refuse(factor, message);
     } catch {
-      fail("That didn't match. Try again.");
+      refuse(factor, "That didn't match. Try again.");
     }
   }
 
   // The field takes focus once the factors load; Radix would otherwise leave
-  // it on Cancel. While an error shows, the field is tied to it.
+  // it on Cancel. While its own refusal shows, the field is tied to it.
   useEffect(() => {
     if (factors) fieldRef.current?.focus();
   }, [factors]);
-  const fieldErrorProps = error
-    ? { "aria-invalid": true, "aria-describedby": REAUTH_ERROR_ID }
-    : {};
+  const fieldErrorProps =
+    error && refusedFactor !== null && refusedFactor !== "PASSKEY"
+      ? { "aria-invalid": true, "aria-describedby": REAUTH_ERROR_ID }
+      : {};
   const progress =
     factors === null
       ? "Checking how you can confirm…"
@@ -305,11 +309,7 @@ function ConfirmItsYouDialog({ onDone }: { onDone: (proved: boolean) => void }) 
           <p className={progress ? "text-sm text-muted-foreground" : "sr-only"} role="status">
             {progress}
           </p>
-          <FocusedActionError
-            id={REAUTH_ERROR_ID}
-            error={error ?? ""}
-            attentionKey={errorAttention}
-          />
+          <FocusedActionError id={REAUTH_ERROR_ID} error={error} attentionKey={attentionKey} />
           <DialogFooter>
             <Button
               type="button"

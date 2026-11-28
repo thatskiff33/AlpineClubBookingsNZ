@@ -196,6 +196,31 @@ describe("confirm it's you dialog (#4616)", () => {
     }
   });
 
+  it("leaves the code field unmarked when it is the passkey that failed", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = typeof input === "string" ? input : input.toString();
+        if (url.includes("/api/auth/reauth") && init?.method !== "POST") {
+          // No passkey options, so the passkey attempt fails before any request.
+          return jsonResponse({ factors: ["TOTP", "PASSKEY"] });
+        }
+        return jsonResponse(recentAuthRefusalBody(), 403);
+      }),
+    );
+    render(<Harness />);
+    fireEvent.click(screen.getByRole("button", { name: "Restore" }));
+    const code = await screen.findByLabelText("Authenticator code");
+
+    fireEvent.click(screen.getByRole("button", { name: "Use your passkey" }));
+
+    await waitFor(() => {
+      expect(screen.getByRole("alert")).toHaveTextContent("That didn't match. Try again.");
+    });
+    expect(code).not.toHaveAttribute("aria-invalid");
+    expect(code).not.toHaveAttribute("aria-describedby");
+  });
+
   it("sends a FormData body on the original attempt and the one replay", async () => {
     render(<ConfirmItsYouHost />);
     const body = new FormData();
