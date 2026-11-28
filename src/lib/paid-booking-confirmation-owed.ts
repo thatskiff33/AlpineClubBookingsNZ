@@ -53,16 +53,21 @@ export async function recordPaidBookingConfirmationOwed(
  * returned: record the confirmation as owed, paid now, when the body returned
  * "paid" (only its fresh PAID claim does) for a card settle whose caller asked
  * for it (`owesPaidConfirmation`); otherwise write nothing. The result goes back
- * with the marker, or null, for the caller's delivery after the commit.
+ * for the caller's delivery after the commit with `paidConfirmation`: the
+ * marker; null when it was owed but the booking cannot key one (so the caller
+ * sends it unkeyed); absent when none was owed, a caller that did not ask or an
+ * outcome that is not a fresh "paid" (#5433 card recovery doors, fix round 1,
+ * item 3: "not asked" and "cannot be keyed" are told apart, so a door that
+ * forgets the flag never sends an unkeyed confirmation the sweep cannot see).
  */
 export async function owePaidConfirmationAfterFreshClaim<R extends { outcome: string }>(
   tx: Pick<Prisma.TransactionClient, "owedNotice">,
   bookingId: string,
   settlement: BookingSettlementSource,
   result: R,
-): Promise<R & { paidConfirmation: OwedNoticeMarker | null }> {
+): Promise<R & { paidConfirmation?: OwedNoticeMarker | null }> {
   const owed = result.outcome === "paid" && settlement.kind === "stripe" && settlement.owesPaidConfirmation === true;
-  if (!owed) return { ...result, paidConfirmation: null };
+  if (!owed) return result;
   return { ...result, paidConfirmation: await recordPaidConfirmationOwedUnlessUnkeyable(tx, bookingId) };
 }
 

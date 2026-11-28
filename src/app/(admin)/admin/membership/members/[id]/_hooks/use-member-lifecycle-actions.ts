@@ -25,6 +25,42 @@ export function useMemberLifecycleActions({
   const [cancellationReason, setCancellationReason] = useState("");
   const [cancellationSubmitting, setCancellationSubmitting] = useState(false);
   const [cancellationError, setCancellationError] = useState("");
+  const [unarchiveSubmitting, setUnarchiveSubmitting] = useState(false);
+  const [unarchiveError, setUnarchiveError] = useState("");
+
+  // #5540: resolves true once the member is unarchived, so the dialog can close.
+  const handleUnarchiveMember = async (reason: string): Promise<boolean> => {
+    if (!reason) {
+      setUnarchiveError("Unarchive reason is required");
+      return false;
+    }
+
+    setUnarchiveSubmitting(true);
+    setUnarchiveError("");
+    try {
+      const res = await fetch(`/api/admin/members/${id}/lifecycle/unarchive`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ reason }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(data.error || "Failed to unarchive member");
+      }
+
+      toast.success("Member unarchived. They stay cancelled.");
+      setLoading(true);
+      await fetchMember();
+      return true;
+    } catch (err) {
+      setUnarchiveError(
+        err instanceof Error ? err.message : "Failed to unarchive member",
+      );
+      return false;
+    } finally {
+      setUnarchiveSubmitting(false);
+    }
+  };
 
   const handleSubmitArchiveRequest = async () => {
     const reason = archiveReason.trim();
@@ -160,5 +196,11 @@ export function useMemberLifecycleActions({
     handleSubmitArchiveRequest,
     handleReviewArchiveRequest,
     handleSubmitCancellationRequest,
+    unarchive: {
+      submitting: unarchiveSubmitting,
+      error: unarchiveError,
+      clearError: () => setUnarchiveError(""),
+      submit: handleUnarchiveMember,
+    },
   };
 }
