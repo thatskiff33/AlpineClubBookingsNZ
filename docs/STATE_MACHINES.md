@@ -4533,9 +4533,17 @@ is documented to be).
   development mode) is matched only through those headers; without them no
   row is marked, the address is still suppressed, and an email that did bounce
   keeps reading as `SENT`.
-- When the `SENT` write fails after the server accepted the email, the row
-  stays `QUEUED` with neither id, so a later bounce cannot match it and the
-  "was the member told" rule reads it as sent.
+- When the `SENT` write fails after the server accepted the email, or misses
+  because the stranded-email sweep settled the row first (#5298), neither id
+  is stored. The row stays `QUEUED` until that sweep flags it `UNCONFIRMED`
+  at the retry ceiling, a later bounce cannot match it, and the "was the
+  member told" rule reads it as sent.
+- A copy of the complaint alert that the retry job replays (after a failed
+  send, or a hand-over the stranded-email sweep gave back) goes out as it was
+  written. The check that withdraws the alert when the block has been lifted
+  runs when the alert is first sent and on each re-send by the alert sweep,
+  not on a replay, so an officer who lifts a block within that time can still
+  receive a copy saying the address is blocked (tracked in #5568).
 - After a single temporary bounce the address is not yet blocked, so its
   pending `FAILED` rows are retried until a second temporary bounce blocks
   it; each row gets at most one more accepted send before that.
