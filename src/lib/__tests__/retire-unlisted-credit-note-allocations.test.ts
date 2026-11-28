@@ -57,6 +57,7 @@ vi.mock("@/lib/xero-inbound/modification-note-refunds", () => ({ refundedTotalSt
 vi.mock("@/lib/club-format-settings", () => ({ getClubFormat: vi.fn(async () => ({ timeZone: "Pacific/Auckland" })) }));
 
 import {
+  directRecountPaymentIds,
   retireUnlistedCreditNoteAllocations,
   writeCurrentCreditNoteAllocation,
   writeCurrentCreditNoteAllocations,
@@ -380,6 +381,29 @@ describe("the allocation write decides its bank-transfer payment's refunded tota
         throw failure;
       }),
     ).rejects.toBe(failure);
+  });
+
+  it("MUTATION (#5251 one alert per payment): alerts held before the sync's writes join them, and a payment held twice is alerted once, with the last", async () => {
+    const early = { paymentId: "pay-1", bookingId: "booking-1", creditNoteId: NOTE, creditNoteNumber: null, xeroDerivedCents: 0, floorCents: 9_000 };
+    const other = { ...early, paymentId: "pay-2" };
+    const alert = { ...early, floorCents: 5_000 };
+    mocks.decideLinked.mockResolvedValue(new Map([["pay-1", { cents: 0, correctionCents: 0 }]]));
+    mocks.floor.mockResolvedValue({ cents: 5_000, alert });
+    // The note's status writes held `early` and `other` before the allocation writes ran.
+    await withHeldFloorAlerts(async (held) => {
+      await writeCurrentCreditNoteAllocations([link], { isModificationNote: true, heldFloorAlerts: held.alerts });
+    }, [early, other]);
+    expect(mocks.sendFloorAlert.mock.calls.map(([sent]) => sent)).toEqual([alert, other]);
+  });
+
+  it("MUTATION (removed payments recounted, #5289 A): a cancelled reading hands the recount the payments its removal decided; a live one does not", () => {
+    const input = { linkedPaymentIds: ["pay-linked"], voidedMirrorPaymentIds: ["pay-mirror", "pay-linked"], removedPaymentIds: ["pay-removed", "pay-mirror"] };
+    expect(directRecountPaymentIds({ ...input, status: "VOIDED" })).toEqual(["pay-linked", "pay-mirror", "pay-removed"]);
+    expect(directRecountPaymentIds({ ...input, status: "DELETED" })).toEqual(["pay-linked", "pay-mirror", "pay-removed"]);
+    // A live removal's payment is found by the note's own allocations (`resolveModificationRefundAmountsByPaymentId`).
+    expect(directRecountPaymentIds({ ...input, status: "AUTHORISED" })).toEqual(["pay-linked", "pay-mirror"]);
+    // The note links no payment: the removal's are the only ids the recount is given.
+    expect(directRecountPaymentIds({ linkedPaymentIds: [], voidedMirrorPaymentIds: [], removedPaymentIds: ["pay-removed"], status: "VOIDED" })).toEqual(["pay-removed"]);
   });
 
   it("with no holder, a write held at the floor sends its alert itself, once", async () => {

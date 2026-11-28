@@ -266,10 +266,12 @@ export type HeldFloorAlerts = { alerts: BankTransferFloorAlert[]; recountedPayme
  * a retry cannot see again because its link is off - and the recount's own
  * alerts come with the retry. A retried attempt alerts a listed write's
  * payment again, as the recount's own alerts on a retry do. The send never
- * masks `run`'s error.
+ * masks `run`'s error. #5251: `alreadyHeld` are the alerts the note's status
+ * writes returned before `run` (`writeCreditNoteLinks`); a payment several
+ * writes held is alerted once, with the last of them.
  */
-export async function withHeldFloorAlerts<T>(run: (held: HeldFloorAlerts) => Promise<T>): Promise<T> {
-  const held: HeldFloorAlerts = { alerts: [], recountedPaymentIds: new Set() };
+export async function withHeldFloorAlerts<T>(run: (held: HeldFloorAlerts) => Promise<T>, alreadyHeld: BankTransferFloorAlert[] = []): Promise<T> {
+  const held: HeldFloorAlerts = { alerts: alreadyHeld, recountedPaymentIds: new Set() };
   try {
     return await run(held);
   } finally {
@@ -280,7 +282,8 @@ export async function withHeldFloorAlerts<T>(run: (held: HeldFloorAlerts) => Pro
 /** The held alerts for payments the recount did not decide; a failure to send is logged, never thrown. */
 async function sendFloorAlertsNotRecounted(alerts: readonly BankTransferFloorAlert[], recountedPaymentIds: ReadonlySet<string>): Promise<void> {
   try {
-    await sendFloorAlerts(alerts.filter((alert) => !recountedPaymentIds.has(alert.paymentId)));
+    const lastByPaymentId = new Map(alerts.filter((alert) => !recountedPaymentIds.has(alert.paymentId)).map((alert) => [alert.paymentId, alert] as const));
+    await sendFloorAlerts([...lastByPaymentId.values()]);
   } catch (err) {
     logger.error({ err, paymentIds: alerts.map((alert) => alert.paymentId) }, "Failed to send held bank-transfer floor alerts (#4449)");
   }
@@ -313,6 +316,23 @@ export async function writeCurrentCreditNoteAllocations(
 
 /** What a removal pass did: the links it turned off, and (#5289 A) the payments whose totals it decided. */
 export type RetiredAllocations = { retired: number; decidedPaymentIds: string[] };
+
+/**
+ * The payments a note's sync hands its recount by id
+ * (`repairRefundedPaymentBusinessState`): those the note links, those whose
+ * mirror its void turned off (#4291), and, #5289 A, for a cancelled reading
+ * the payments its removal decided, which nothing else finds once their
+ * links are off. Each once.
+ */
+export function directRecountPaymentIds(input: {
+  linkedPaymentIds: readonly string[];
+  voidedMirrorPaymentIds: readonly string[];
+  status: unknown;
+  removedPaymentIds: readonly string[];
+}): string[] {
+  const removed = isIncludedRefundCreditNoteStatus(input.status) ? [] : input.removedPaymentIds;
+  return [...new Set([...input.linkedPaymentIds, ...input.voidedMirrorPaymentIds, ...removed])];
+}
 
 /**
  * Turn off this note's active allocation links whose invoice is not in

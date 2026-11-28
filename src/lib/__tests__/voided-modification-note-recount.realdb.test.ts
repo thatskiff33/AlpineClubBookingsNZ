@@ -172,7 +172,16 @@ let prisma: (typeof import("@/lib/prisma"))["prisma"];
     it.each(["VOIDED", "DELETED"] as const)("MUTATION (D1): a %s reading with no allocations takes the 100-dollar correction back off: nothing refunded, the status refundedTotalStatus gives, and the allocation turned off", async (status) => {
       await seed();
       expect(await payment()).toEqual({ refundedAmountCents: NOTE_CENTS, status: "PARTIALLY_REFUNDED" });
-      await syncCancelled(status);
+      const repairs = await import("@/lib/xero-inbound/credit-note-repairs");
+      const recount = vi.spyOn(repairs, "repairRefundedPaymentBusinessState");
+      try {
+        await syncCancelled(status);
+        // MUTATION (removed payments recounted): the note links no payment, so the removal's are the only ids the recount is given.
+        expect(recount).toHaveBeenCalledTimes(1);
+        expect(recount.mock.calls[0]![0].directPaymentIds).toEqual([PAYMENT_ID]);
+      } finally {
+        recount.mockRestore();
+      }
       // Captured, so nothing refunded returns it to SUCCEEDED (`refundedTotalStatus`), never to its uncaptured state.
       expect(await payment()).toEqual({ refundedAmountCents: 0, status: "SUCCEEDED" });
       expect(await activeAllocations()).toEqual([]);
@@ -192,11 +201,18 @@ let prisma: (typeof import("@/lib/prisma"))["prisma"];
       } finally {
         spy.mockRestore();
       }
-      // The first link went off; the payment's write rolled back with its decision.
+      // The first link went off; the second's write rolled back. #5251: the note's own status write had
+      // already taken the correction off the payment, under its Payment row, before the removal ran.
       expect(await activeAllocations()).toEqual([allocationLinkId(INVOICE_ID)]);
-      expect(await payment()).toEqual({ refundedAmountCents: NOTE_CENTS, status: "PARTIALLY_REFUNDED" });
+      expect(await payment()).toEqual({ refundedAmountCents: 0, status: "SUCCEEDED" });
 
-      // The retried event reads the same final note and finds only the link still active.
+      // The retried event reads the same final note and finds only the link still active: the pass that
+      // stopped left a known prefix off, and the removal's read (`active: true`) never hands it the first again.
+      const { bankTransferPaymentsOfNoteAllocations } = await import("@/lib/xero-inbound/bank-transfer-payment-of-invoice");
+      const remaining = await bankTransferPaymentsOfNoteAllocations(NOTE_ID);
+      expect(remaining.map((allocation) => [allocation.link.xeroObjectId, allocation.invoiceId, allocation.paymentId])).toEqual([
+        [allocationLinkId(INVOICE_ID), INVOICE_ID, PAYMENT_ID],
+      ]);
       await syncCancelled("VOIDED");
       expect(await activeAllocations()).toEqual([]);
       expect(await payment()).toEqual({ refundedAmountCents: 0, status: "SUCCEEDED" });
