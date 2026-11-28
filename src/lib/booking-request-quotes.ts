@@ -79,6 +79,7 @@ import {
   type SchoolChildCounts,
 } from "@/lib/admin-bookings-schemas/requests";
 import { seasonYearOfStoredDate } from "@/lib/financial-year";
+import { clubFinancialYearEndMonth } from "@/lib/financial-year-server";
 import { getCapacityFullNights } from "@/lib/capacity-full-nights";
 import { clubFormatValues } from "@/lib/club-format-server";
 import { isPendingSchoolAdultsWriteEnabled } from "@/lib/pending-school-adults-gate";
@@ -1654,6 +1655,7 @@ export async function holdBookingRequestSlots(input: {
     clubToday(await readClubTimeZoneOutsideRequest()),
   );
   const format = await clubFormatValues(); // the guard's refusal copy (#3566), before the locks
+  const yearEndMonth = await clubFinancialYearEndMonth(); // the rate snapshot's season (#5259)
 
   const request = await prisma.bookingRequest.findUnique({
     where: { id: input.requestId },
@@ -1815,7 +1817,7 @@ export async function holdBookingRequestSlots(input: {
   // annotation nothing would check that it supplies a night set at all.
   const guestCreates: HeldBookingGuestInput[] = (
     await resolveGuestRateMembershipTypes(prisma, {
-      seasonYear: seasonYearOfStoredDate(request.checkIn),
+      seasonYear: seasonYearOfStoredDate(request.checkIn, yearEndMonth),
       guests: guests.map((guest, index) => {
         const memberId = linkedMembers.get(index);
         return {

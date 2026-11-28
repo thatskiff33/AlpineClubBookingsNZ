@@ -143,6 +143,7 @@ import {
 } from "@/lib/xero-period-lock-guard";
 import { reconcileBedAllocationsForBookingWithLodgeLockHeld } from "@/lib/bed-allocation-lifecycle";
 import { seasonYearOfStoredDate } from "@/lib/financial-year";
+import { clubFinancialYearEndMonth } from "@/lib/financial-year-server";
 import { bookingFinalPriceCents } from "@/lib/booking-final-price";
 import { postModificationLedgerLines } from "@/lib/booking-ledger-modification-sync";
 import { computeModificationPricing } from "@/lib/booking-modification-pricing";
@@ -324,6 +325,9 @@ export async function modifyBookingDates({
   const format = await clubFormatValues();
   // #4627: the journal's posting context, before the transaction for the same reason.
   const journal = await resolveBookingMoneyPostingContext();
+  // #5259: the club's financial year-end, which places the new check-in in its
+  // membership season. Out here because resolving it can reach Xero.
+  const yearEndMonth = await clubFinancialYearEndMonth();
 
   const result = await prisma.$transaction(async (tx) => {
     // Two-tier lock protocol (#1881): a date change moves money (reduction
@@ -557,7 +561,7 @@ export async function modifyBookingDates({
       // the nights the new range adds price at current season rates.
       ...valuedNightLocksForGuest(g, booking),
     }));
-    const seasonYear = seasonYearOfStoredDate(newCheckIn);
+    const seasonYear = seasonYearOfStoredDate(newCheckIn, yearEndMonth);
     await assertMembershipTypeBookingAllowed(tx, {
       ownerMemberId: bookingOwner(booking).memberId,
       guests: guestsForPricing,

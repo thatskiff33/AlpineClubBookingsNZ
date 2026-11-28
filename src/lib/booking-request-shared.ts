@@ -287,6 +287,12 @@ export async function buildApprovalGuestCreates(
      * resolved by the caller before its transaction for the reason `today` is.
      */
     format: ClubDateFormat;
+    /**
+     * The club's year-end month, resolved by the caller before its transaction
+     * for the reason `today` is (#5259): the season the membership-type policy
+     * and the rate snapshot are read at is the season `checkIn` falls in.
+     */
+    yearEndMonth: number;
   }
 ): Promise<HeldBookingGuestInput[]> {
   const {
@@ -300,7 +306,9 @@ export async function buildApprovalGuestCreates(
     heldBookingId,
     today,
     format,
+    yearEndMonth,
   } = params;
+  const seasonYear = seasonYearOfStoredDate(checkIn, yearEndMonth);
 
   const unratedGuestCreates = guests.map((guest, index) => {
     const memberId = linkedMembers.get(index);
@@ -334,7 +342,7 @@ export async function buildApprovalGuestCreates(
   });
   await assertMembershipTypeBookingAllowed(tx, {
     guests: unratedGuestCreates,
-    seasonYear: seasonYearOfStoredDate(checkIn),
+    seasonYear,
     // Finding 2 (privacy re-review of MG3 #2308). Both approval pipelines are
     // admin-only — the converted booking has no member owner yet, which is also
     // why no family boundary could be computed here — so this keeps the detailed
@@ -350,7 +358,7 @@ export async function buildApprovalGuestCreates(
   // persisted on the guest row.
   const guestCreates: HeldBookingGuestInput[] = (
     await resolveGuestRateMembershipTypes(tx, {
-      seasonYear: seasonYearOfStoredDate(checkIn),
+      seasonYear,
       guests: unratedGuestCreates,
     })
   ).map((guest, index) => ({

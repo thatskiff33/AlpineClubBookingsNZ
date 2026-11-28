@@ -7,6 +7,7 @@ import { resolveModificationStayRanges, resolvedAddedGuestRange } from "@/lib/bo
 import { changeRequestProposalBatchInput } from "@/lib/booking-change-request-stored";
 import { mergeChangeRequestGuests, type ChangeRequestDelta } from "@/lib/booking-change-request-input";
 import { seasonYearOfStoredDate } from "@/lib/financial-year";
+import { clubFinancialYearEndMonth } from "@/lib/financial-year-server";
 import { calculateBookingPrice, getStayNights, type GuestInput } from "@/lib/pricing";
 import { loadActiveSeasonRates } from "@/lib/booking-modify-plan";
 import { toEditTimeGroupDiscountConfig } from "@/lib/policies/booking-route-decisions";
@@ -115,7 +116,10 @@ export async function estimateChangeRequestAddedGuests(
   const nonMembers = addGuests
     .map((guest, index) => ({ guest, index }))
     .filter(({ guest }) => !guest.isMember);
-  const seasonYear = seasonYearOfStoredDate(checkIn);
+  const seasonYear = seasonYearOfStoredDate(
+    checkIn,
+    await clubFinancialYearEndMonth(),
+  );
   const lodgeId = booking.lodgeId ?? (await getDefaultLodgeId(prisma));
   const [seasons, groupDiscountSetting, subscriptionLockoutMode] = await Promise.all([
     loadActiveSeasonRates(prisma, lodgeId),

@@ -124,6 +124,7 @@ import {
 import { recordBookingEvent } from "@/lib/booking-events";
 import { getLodgeCapacity } from "@/lib/lodge-capacity";
 import { seasonYearOfStoredDate } from "@/lib/financial-year";
+import { clubFinancialYearEndMonth } from "@/lib/financial-year-server";
 import { ACTIVE_BOOKING_STATUSES } from "@/lib/booking-status";
 import { describeUniqueConstraintTarget } from "@/lib/prisma-errors";
 import { getCapacityFullNights } from "@/lib/capacity-full-nights";
@@ -860,7 +861,10 @@ export async function joinGroupBookingAsMember(
     );
   }
 
-  const seasonYear = seasonYearOfStoredDate(checkIn);
+  // The club's year-end, resolved once for this join (#5259): the season the
+  // gates judge, and the value the create's transaction prices under.
+  const yearEndMonth = await clubFinancialYearEndMonth();
+  const seasonYear = seasonYearOfStoredDate(checkIn, yearEndMonth);
   await assertMembershipTypeBookingAllowed(prisma, {
     ownerMemberId: sessionUserId,
     guests,
