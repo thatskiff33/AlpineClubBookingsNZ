@@ -310,20 +310,26 @@ export async function getActiveXeroGroupingRules(): Promise<XeroGroupingRule[]> 
   }));
 }
 
-export interface XeroGroupingContext {
-  yearEndMonth: number;
-  mode: XeroMemberGroupingMode;
-  activeRules: XeroGroupingRule[];
-}
+/**
+ * NONE carries no year-end: it resolves no membership type, so no season, and
+ * its sync must stay a no-op that reads nothing from Xero (#1934, #5259).
+ */
+export type XeroGroupingContext = { activeRules: XeroGroupingRule[] } & (
+  | { mode: "NONE" }
+  | { mode: Exclude<XeroMemberGroupingMode, "NONE">; yearEndMonth: number }
+);
 
-/** Loads the mode + active rules together (one call for a bulk run). */
+/**
+ * Loads the mode + active rules together (one call for a bulk run), and under
+ * a grouping mode the club's year-end, which a cold cache reads from Xero.
+ */
 export async function loadXeroGroupingContext(): Promise<XeroGroupingContext> {
-  const [mode, activeRules, yearEndMonth] = await Promise.all([
+  const [mode, activeRules] = await Promise.all([
     getXeroGroupingMode(),
     getActiveXeroGroupingRules(),
-    refreshFinancialYearConfig(),
   ]);
-  return { mode, activeRules, yearEndMonth };
+  if (mode === "NONE") return { mode, activeRules };
+  return { mode, activeRules, yearEndMonth: await refreshFinancialYearConfig() };
 }
 
 /**
@@ -442,6 +448,11 @@ export async function resolveMemberGroupingsForMembers(params: {
  * age-tier columns.
  */
 export async function getManagedGroupUniverse(): Promise<string[]> {
-  const { mode, activeRules } = await loadXeroGroupingContext();
+  // Not `loadXeroGroupingContext`: the universe names no season, so it must
+  // not resolve the year-end.
+  const [mode, activeRules] = await Promise.all([
+    getXeroGroupingMode(),
+    getActiveXeroGroupingRules(),
+  ]);
   return computeManagedUniverse(mode, activeRules);
 }
