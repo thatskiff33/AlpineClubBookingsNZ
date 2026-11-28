@@ -98,6 +98,12 @@ describe("the Hut Fee Refunds picker (#5235)", () => {
     expect(screen.queryByText(/is not a revenue or expense account/)).toBeNull();
   });
 
+  it("keeps an unlisted stored code without claiming it is the wrong kind", () => {
+    mountRow("hutFeeRefunds", "777");
+    expect(screen.getByRole("option", { name: "777" })).toBeTruthy();
+    expect(screen.queryByText(/not a revenue or expense account/i)).toBeNull();
+  });
+
   it("says so when the stored code is neither, and keeps it selectable as what it is", () => {
     mountRow("hutFeeRefunds", "606");
     expect(

@@ -8,6 +8,7 @@ import {
   describeMappingUnsetEntries,
   groupAccountsForMappingKey,
   isCodeExplicitlyConfigured,
+  mappingCodeClassViolation,
   MAPPING_DESCRIPTIONS,
   MAPPING_LABELS,
   resolveAccountMappingSource,
@@ -43,6 +44,7 @@ export function AccountMappingRow({
   // name, in a picker whose current value is not among its options, is how such
   // a row goes unnoticed.
   const matchedAccount = accounts.find((account) => account.code === currentCode)
+  const wrongKind = mappingCodeClassViolation(mappingKey, currentCode, accounts) !== null
   const currentIsOutsideFilter =
     currentCode != null &&
     currentCode !== "" &&
@@ -96,7 +98,7 @@ export function AccountMappingRow({
               )}
               {currentIsOutsideFilter ? (
                 <SelectItem value={currentCode!}>
-                  {matchedAccount ? `${matchedAccount.code} - ${matchedAccount.name}` : currentCode} (not {withIndefiniteArticle(accountNoun)} account)
+                  {matchedAccount ? `${matchedAccount.code} - ${matchedAccount.name}` : currentCode}{wrongKind ? ` (not ${withIndefiniteArticle(accountNoun)} account)` : ""}
                 </SelectItem>
               ) : null}
               {offered.length === 0 ? <SelectItem value="__empty__" disabled>No {accountNoun} accounts found &mdash; check the chart of accounts is up to date</SelectItem> : null}
@@ -105,7 +107,7 @@ export function AccountMappingRow({
         ) : (
           <p className="rounded-md border border-border bg-muted px-3 py-2 text-sm">{matchedAccount ? `${matchedAccount.code} - ${matchedAccount.name}` : currentCode || <span className="text-muted-foreground">{ACCOUNT_MAPPING_DEFAULTS[mappingKey] ? "Not configured (using default)" : "Not configured"}</span>}</p>
         )}
-        {currentIsOutsideFilter ? (
+        {wrongKind ? (
           <p className="mt-1 text-xs text-warning-11">
             This code is not {withIndefiniteArticle(accountNoun)} account in the connected Xero
             organisation. Entries keep posting to it until you choose another account here, so
