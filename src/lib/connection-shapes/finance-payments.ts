@@ -297,6 +297,7 @@ export const MANUAL_REFUND_TASKS_CONNECTION_SHAPE = connectionShapeFor<{
     disputedHandBackLost: true,
     disputeReduction: { reducedByCents: true, stillOwedCents: true },
     markPaidRefusal: true,
+    importedRefundCredit: true,
     cardShortfallHandBack: true,
     cardShortfallCheck: true,
     bankRefundVoidFollowUp: { voidedCreditNoteNumber: true, voidedAt: true },

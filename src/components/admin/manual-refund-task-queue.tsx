@@ -27,6 +27,7 @@ import { formatStayDate } from "@/lib/club-time";
 import { unverifiedWriteMessage } from "@/lib/unverified-write-copy";
 import { DISPUTED_HAND_BACK_LOST_DISMISS_DESCRIPTION, RETIRED_EDIT_REVIEW_REFUSAL } from "@/lib/manual-refund-task-copy";
 import { ManualRefundTaskDisputeReduction } from "@/components/admin/manual-refund-task-dispute-reduction";
+import { ManualRefundTaskImportedCredit } from "@/components/admin/manual-refund-task-imported-credit";
 // #3213: whether a row may be closed as money that moved is decided ONCE, in a
 // client-safe home, and the completion door throws on the same answer
 // (`manual-refund-task-resolution.ts`, `INV-SSOT`). Deciding it again here is
@@ -92,6 +93,8 @@ interface ManualRefundTask {
   disputeReduction?: { reducedByCents: number; stillOwedCents: number } | null;
   /** #4516 (owner decision, 18 Nov 2026): set, the server refuses Mark paid (a lost dispute this refund takes), so none is offered. */
   markPaidRefusal?: string | null;
+  /** #5005 child D: a cancelled imported booking's refund, which may be given as account credit instead. Optional, as above. */
+  importedRefundCredit?: boolean;
   /** #4097: what a card cancellation's card refund could not carry - by bank transfer, or checked first. Optional, as above. */
   cardShortfallHandBack?: boolean;
   cardShortfallCheck?: boolean;
@@ -992,6 +995,8 @@ export function ManualRefundTaskQueue() {
                             : "Mark paid back"}
                       </ViewOnlyActionButton>
                       ) : null}
+                      {/* #5005 child D (owner decision O1): an imported booking's refund, the same amount as credit instead. */}
+                      <ManualRefundTaskImportedCredit task={task} canEdit={canEdit} onCredited={load} />
                       {/* #4042: a group organiser's hand-back is paid, never dismissed. #4516: nor, for now, a real bank or cash hand-back; its row says why. */}
                       {task.groupOrganiserHandBack === true ? null : task.journalHandBackDismissRefusal ? (
                         <><p className="text-xs text-muted-foreground" data-testid="manual-refund-task-dismiss-unavailable">

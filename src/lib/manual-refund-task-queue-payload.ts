@@ -11,6 +11,7 @@ import { journalHandBackDismissal, NO_HAND_BACK_DISPUTES, type HandBackDisputeCo
 import { paidByOrganiserInternetBanking } from "@/lib/group-organiser-paid";
 import { isGroupSettlementMirrorHandBackKind } from "@/lib/group-settlement-mirror-kinds";
 import { readBankRefundVoidFollowUpContext } from "@/lib/bank-refund-void-follow-up-copy";
+import { importedRefundCreditRefusal } from "@/lib/booking-import/refund-credit-rule";
 
 /**
  * What the finance settlement queue's loader sends to the browser, and the one
@@ -45,7 +46,9 @@ type QueueBookingSummary = {
 export const OPEN_TASK_BOOKING_PAYMENT_SELECT = {
   organiserSettled: true,
   parentBookingId: true,
-  payment: { select: { source: true } },
+  payment: { select: { id: true, source: true } },
+  // #5005 child D: whether the booking came from a paid-booking import, for the account-credit offer.
+  importRow: { select: { status: true } },
 } as const;
 
 /** An OPEN row the operator has to settle by hand. */
@@ -80,7 +83,9 @@ export type OpenManualRefundTaskRow = {
     /** #3949: `OPEN_TASK_BOOKING_PAYMENT_SELECT` - whether the group organiser paid for it. */
     organiserSettled: boolean;
     parentBookingId: string | null;
-    payment: { source: string } | null;
+    payment: { id: string; source: string } | null;
+    /** #5005 child D: the booking's paid-booking import row, if it came from one. */
+    importRow: { status: string } | null;
     /**
      * #3033: who owns the booking, for the ownership half of the link grant.
      * Null since #3369 when the owner is an `Organisation`, which never signs
@@ -184,6 +189,11 @@ export type OpenManualRefundTaskPayload = {
   /** #4516 (owner decision, 18 Nov 2026): the server's refusal of Mark paid (a lost dispute it may take), or null. Set, the row offers no Mark paid. */
   markPaidRefusal: string | null;
   /**
+   * #5005 child D (owner decision O1): a cancelled imported booking's refund, which the officer may give as account
+   * credit instead of paying it back by bank transfer. The server's own rule (`importedRefundCreditRefusal`).
+   */
+  importedRefundCredit: boolean;
+  /**
    * #4097 (`INV-PAY-129`): a card cancellation whose card refund carried less
    * than the refund due. `cardShortfallHandBack`: the part the payment's
    * non-card charges hold, refunded by bank transfer. `cardShortfallCheck`: the
@@ -273,6 +283,7 @@ export function toOpenManualRefundTaskPayload(
     // Waiting on an open dispute with a loss already taken: that sentence says both what to wait for and why not to pay.
     journalHandBackDismissRefusal: dismissal.refusal && dismissal.markPaidRefusal && dismissal.unappliedLostCents > 0 && !dismissal.reduction ? dismissal.markPaidRefusal : dismissal.refusal,
     markPaidRefusal: dismissal.markPaidRefusal,
+    importedRefundCredit: importedRefundCreditRefusal({ ...task, status: "OPEN" }) === null,
     disputedHandBackLost: dismissal.disputeLost,
     disputeReduction: dismissal.reduction && task.amountCents !== null
       ? { reducedByCents: dismissal.reduction.cents, stillOwedCents: task.amountCents - dismissal.reduction.cents } : null,

@@ -487,6 +487,7 @@ const EXPECTED_ROUTE_AREAS: Record<string, AdminPermissionArea> = {
   // lesser act than taking it.
   "/api/admin/payments/manual-refund-tasks/[id]/reopen": "finance",
   "/api/admin/payments/manual-refund-tasks/[id]/reduce-by-lost-dispute": "finance",
+  "/api/admin/payments/manual-refund-tasks/[id]/account-credit": "finance",
   "/api/admin/pending-counts": "overview",
   "/api/admin/privacy-hosting": "content",
   "/api/admin/privacy-retention": "support",

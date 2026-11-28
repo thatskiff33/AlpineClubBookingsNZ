@@ -558,6 +558,7 @@ describe("list_manual_refund_tasks", () => {
     disputedHandBackLost: false,
     disputeReduction: { reducedByCents: 3_000, stillOwedCents: 9_000 },
     markPaidRefusal: null,
+    importedRefundCredit: false,
     cardShortfallHandBack: false,
     cardShortfallCheck: false,
     bankRefundVoidFollowUp: { voidedCreditNoteNumber: "CN-0007", voidedAt: "2026-06-29T00:00:00.000Z" },

@@ -35,6 +35,7 @@ export const STEP_UP_OPERATIONS = [
   { file: "src/lib/manual-refund-task-resolution.ts", exportName: "resolveManualRefundTask" },
   { file: "src/lib/manual-refund-task-reopen.ts", exportName: "reopenManualRefundTask" },
   { file: "src/lib/manual-refund-task-dispute-reduction.ts", exportName: "reduceDisputedHandBack" },
+  { file: "src/lib/booking-import/refund-credit.ts", exportName: "giveImportedRefundAsCredit" },
   { file: "src/lib/bank-refund-void-follow-up.ts", exportName: "pickRefundForUnmatchedVoid" },
   { file: "src/lib/member-contact-erasure.ts", exportName: "MEMBER_CONTACT_ERASURE_PATCH" },
   // Not destructive, but a whole person's record in one file (#4915): an admin
@@ -127,6 +128,7 @@ export const STEP_UP_ROUTES = [
   { method: "POST", file: "src/app/api/admin/payments/manual-refund-tasks/[id]/route.ts" },
   { method: "POST", file: "src/app/api/admin/payments/manual-refund-tasks/[id]/reopen/route.ts" },
   { method: "POST", file: "src/app/api/admin/payments/manual-refund-tasks/[id]/reduce-by-lost-dispute/route.ts" },
+  { method: "POST", file: "src/app/api/admin/payments/manual-refund-tasks/[id]/account-credit/route.ts" },
   { method: "POST", file: "src/app/api/admin/payments/bank-refund-voids/[id]/pick/route.ts" },
   { method: "PATCH", file: "src/app/api/admin/booking-change-requests/[id]/route.ts" },
   { method: "PATCH", file: "src/app/api/admin/booking-exception-requests/[id]/route.ts" },
