@@ -17,6 +17,7 @@ import { BookingStatus, PrismaClient } from "@prisma/client";
 import { createPrismaPgAdapter } from "../../src/lib/prisma-adapter";
 import { getDefaultLodgeId } from "../../src/lib/lodges";
 import { quoteWaitlistEntryAtLodge } from "../../src/lib/waitlist-cross-lodge";
+import { refreshFinancialYearConfig } from "../../src/lib/financial-year-server";
 import {
   CAPACITY_ISOLATION_GUEST_COUNT,
   CAPACITY_ISOLATION_WINDOW,
@@ -307,6 +308,8 @@ async function main() {
   // it at lodge B with the SAME helper the confirm re-checks with
   // (quoteWaitlistEntryAtLodge), and stamp the offered lodge + price so the
   // accept never trips OFFER_PRICE_CHANGED. Shared by both seeded offers.
+  // The club's year-end, resolved once as the confirm path resolves it (#5259).
+  const yearEndMonth = await refreshFinancialYearConfig();
   async function stampCrossLodgeOffer(offerId: string): Promise<number> {
     const entry = await prisma.booking.findUniqueOrThrow({
       where: { id: offerId },
@@ -329,6 +332,7 @@ async function main() {
         hasPromoRedemption: false,
       },
       lodgeBId,
+      yearEndMonth,
     );
     if (!quote.offerable) {
       throw new Error(
