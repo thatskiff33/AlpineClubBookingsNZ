@@ -898,7 +898,7 @@ compliant indefinitely.
   **A snapshot records a violation and nothing else**: with nothing uncovered
   the evaluator returns `null` and the reconciler writes `Prisma.DbNull`, so
   "fully covered" is the ABSENCE of a snapshot and the display has no "all
-  covered" wording (pinned against the real evaluator).
+  covered" wording.
 
   **Four statuses; only `EVALUATED` carries night rows** (a discriminated
   union). `NOT_RECORDED`, no snapshot and no signal against it, is the ordinary
@@ -912,11 +912,11 @@ compliant indefinitely.
   the snapshot stands), never in any payload; (3) a readable snapshot with
   nothing uncovered; (4) an unverified covered night resting on
   `SAME_GROUP_TRIP`, making the whole snapshot `STALE`, never a night uncovered.
-  Verified means: an `ENFORCED` lodge (`hostingModeQueuesCoverageReevaluation`),
-  the scope on, a card `hostingPolicyReconciliationCandidateWhere` matches, below
+  Verified means: an active mode (`hostingModeIsActive`: every seam queues;
+  review-only needs a `queuedAtEveryActiveMode` stamp), the scope on, a card `hostingPolicyReconciliationCandidateWhere` matches, below
   `GROUP_TRIP_COVERAGE_DEPENDENT_LIMIT`, and a `groupTripCoverFreshness` stamp
-  naming its trip's current `coverageInvalidationRevision` (truncated trip or
-  member fan-outs and merges move it); a failed read is unverified. The policy revision is NOT a signal: a material change reaches
+  naming its trip's current `coverageInvalidationRevision` (truncated fan-outs
+  and merges move it); a failed read is unverified. The policy revision is NOT a signal: a material change reaches
   signal 1.
 
   **A partially readable snapshot is `UNREADABLE`**: no malformed night row is

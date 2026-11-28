@@ -1551,17 +1551,17 @@ held while the member tiers are acquired, so there is no queue → Member invers
 Ordinary producers close the new-row side of that handshake at each high-level
 enqueue seam (#2597). **Each seam reads the lodge's resolved hosting mode first and
 returns before acquiring anything when that mode gives it nothing to do** (#2623 T5).
-The two seams do not share one threshold, and the difference is deliberate rather
-than drift:
-
-| Seam | Returns early when | Why |
-| --- | --- | --- |
-| `enqueueOwnHostingCoverageReevaluation` | `mode !== "ENFORCED"` | It only enqueues queue work, and only an ENFORCED lodge can ever act on it. |
-| `reconcileAdultMemberHostingReviewWithSiblings` | mode is neither `ENFORCED` nor `ADMIN_REVIEW_REQUIRED` | Under review-only the dependants must still be re-read and a review snapshot written, so the fence is genuinely owed. |
-
-Widening the first to the second's test would take a lock for work that cannot
-exist; narrowing the second to the first's would skip the fence at a review-only
-lodge that needs it.
+Every seam shares one threshold, `hostingModeIsActive`: it returns early only when
+the mode is neither `ENFORCED` nor `ADMIN_REVIEW_REQUIRED`. That covers
+`reconcileAdultMemberHostingReviewWithSiblings`, `enqueueOwnHostingCoverageReevaluation`,
+the active-lodge filter in `enqueueHostingCoverageReevaluationForMember`, the
+single-booking branch of `settleSameOwnerDependentCoverage` and the member-merge
+plan. The confirming seam once stopped at `ENFORCED`, on the reasoning that only an
+enforcing lodge acts on queue work. A review-only lodge does too: the drain
+re-reconciles and re-stamps the review snapshot there, opening no incident, and the
+kiosk reads "no queued row" as "nothing changed" at either active mode
+(`INV-HOST-045`). Narrowing any seam back to `ENFORCED` would let a review-only
+kiosk show cover nobody re-checked.
 
 That gate is a correctness statement as well as a cost one: with the mode inactive
 the evaluator takes no coverage-owner advisory key and neither the sibling fan-out
@@ -1676,7 +1676,7 @@ remember it.
 
 **That subject barrier is deliberately NOT gated on the hosting mode, and it is the
 one exception to the paragraph above** (#2623 T5). The participant fence inside the
-same function already is gated — the per-lodge `ENFORCED` filter returns before any
+same function already is gated — the per-lodge active-mode filter returns before any
 proof is acquired — but the barrier sits above it and runs for every club, because
 it is the shared standing-subject fence rather than a hosting-coverage one: it is
 what makes a concurrent booking-request linked-member hold and a deactivation

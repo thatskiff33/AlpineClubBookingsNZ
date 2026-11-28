@@ -285,9 +285,10 @@ it is queued to be checked again, and until that check has run the card says
 the latest within a few hours. The kiosk also says *needs re-checking*, rather
 than showing cover it cannot stand behind, when:
 
-- the lodge's adult cover rule is set to **send to a Booking Officer** rather
-  than **stop the booking** — at that setting not every change queues a re-check,
-  so the kiosk cannot tell whether one is owed;
+- the lodge's adult cover rule is set to **send to a Booking Officer** and the
+  booking was last checked before that setting queued a re-check for every
+  change — once the booking is checked again, cover shows as at **stop the
+  booking**;
 - the Group Trip cover option has been switched off, or was switched off and
   back on and the re-check has not reached this booking yet;
 - the trip is very large (100 or more overlapping bookings at the lodge), or a
