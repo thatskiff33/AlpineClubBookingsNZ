@@ -57,6 +57,11 @@ export const memberArchiveRequestSchema = z.object({
   reason: officerRequestReason,
 });
 
+/** `POST /api/admin/members/[id]/lifecycle/unarchive` (#5540): one Full Admin, one step. */
+export const memberUnarchiveSchema = z.object({
+  reason: officerRequestReason,
+});
+
 /** `POST /api/admin/members/[id]/membership-cancellation`. */
 export const adminMembershipCancellationRequestSchema = z.object({
   reason: officerRequestReason,

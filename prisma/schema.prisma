@@ -332,6 +332,8 @@ enum MembershipCancellationParticipantStatus {
 enum MemberLifecycleAction {
   ARCHIVE
   DELETE
+  // #5540: written only as an APPROVED row, by a Full Admin's one-step unarchive.
+  UNARCHIVE
 }
 
 enum MemberLifecycleActionRequestStatus {

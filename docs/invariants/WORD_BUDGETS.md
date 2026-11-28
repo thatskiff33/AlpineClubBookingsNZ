@@ -121,7 +121,7 @@ while exceptions are proposed on their deciding issues (#2576, #3040, #3039,
 | `INV-MONEY-029` | 808 |
 | `INV-LIFE-062` | 639 |
 | `INV-ADDPAY-017` | 637 |
-| `INV-PRIV-013` | 625 |
+| `INV-PRIV-013` | 623 |
 | `INV-MOD-006` | 623 |
 | `INV-ADDPAY-023` | 584 |
 | `INV-LOCK-002` | 589 |

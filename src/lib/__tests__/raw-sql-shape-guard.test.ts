@@ -93,6 +93,11 @@ const RAW_READ_INVENTORY: Record<string, number> = {
   // Prisma model covers, whether this transaction holds the lodge key; its one
   // boolean is schema-decoded before a lock-held writer proceeds.
   "src/lib/lodge-capacity-lock.ts": 2,
+  // #5265: the owner-run audit expiry backfill's refusal to apply on a
+  // connection that may not change an expiry: one `has_column_privilege` call,
+  // a catalog function no Prisma model exposes. Its one boolean is
+  // schema-decoded through `decodeRawRows` before any row is written.
+  "src/lib/audit-expiry-backfill.ts": 1,
   // #4162: the voided bank-transfer refund note scan's candidate ids - a status
   // read the way the link reader reads it (trimmed, any case) joined to the
   // payment's source, which no Prisma JSON filter expresses. Its rows are

@@ -10,9 +10,11 @@ import {
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { NotifyChoiceDialog } from "@/components/admin/notify-choice-dialog"
 import { Label } from "@/components/ui/label"
-import { Archive } from "lucide-react"
+import { Archive, ArchiveRestore } from "lucide-react"
 import { useClubTime } from "@/components/club-time-provider"
 import { formatPayloadInstantDate } from "../../../../_lib/payload-instant"
+import { MemberLifecycleHistory } from "./member-lifecycle-history"
+import { MemberUnarchiveDialog } from "./member-unarchive-dialog"
 import type {
   MemberDetail,
   MemberLifecycleActionRequest,
@@ -23,7 +25,16 @@ import { adminHref } from "@/lib/admin-hubs";
 interface MemberLifecycleCardProps extends AncestorViewOnlyBannerProps {
   member: MemberDetail
   pendingArchiveRequest: MemberLifecycleActionRequest | null
-  reviewedArchiveRequests: MemberLifecycleActionRequest[]
+  /** Every lifecycle request on the member; the archive history picks its own (#5540). */
+  lifecycleRequests: MemberLifecycleActionRequest[]
+  /** A Full Admin looking at an archived member (#5540). The server enforces it too. */
+  canUnarchive: boolean
+  unarchive: {
+    submitting: boolean
+    error: string
+    clearError: () => void
+    submit: (reason: string) => Promise<boolean>
+  }
   isArchiveRequester: boolean
   canRequestArchive: boolean
   canRequestCancellation: boolean
@@ -54,7 +65,9 @@ interface MemberLifecycleCardProps extends AncestorViewOnlyBannerProps {
 export function MemberLifecycleCard({
   member,
   pendingArchiveRequest,
-  reviewedArchiveRequests,
+  lifecycleRequests,
+  canUnarchive,
+  unarchive,
   isArchiveRequester,
   canRequestArchive,
   canRequestCancellation,
@@ -92,6 +105,7 @@ export function MemberLifecycleCard({
     action: "approve" | "reject"
   } | null>(null)
   const [notifyDialogOpen, setNotifyDialogOpen] = useState(false)
+  const [unarchiveDialogOpen, setUnarchiveDialogOpen] = useState(false)
 
   function startReview(requestId: string, action: "approve" | "reject") {
     if (memberHasEmail) {
@@ -150,6 +164,22 @@ export function MemberLifecycleCard({
                   Archived {formatPayloadInstantDate(clubTime, member.archivedAt)}
                 </Badge>
                 {member.archivedReason && <p className="text-muted-foreground">{member.archivedReason}</p>}
+                {canUnarchive && (
+                  <ViewOnlyActionButton
+                    canEdit={canEdit}
+                    describeReason={!ancestorRendersViewOnlyBanner}
+                    variant="outline"
+                    size="sm"
+                    className="mt-2"
+                    onClick={() => {
+                      unarchive.clearError()
+                      setUnarchiveDialogOpen(true)
+                    }}
+                  >
+                    <ArchiveRestore className="h-4 w-4 mr-1" />
+                    Unarchive Member
+                  </ViewOnlyActionButton>
+                )}
               </div>
             ) : pendingArchiveRequest ? (
               <p className="mt-2 text-sm text-warning-11">Archive request pending review.</p>
@@ -287,35 +317,16 @@ export function MemberLifecycleCard({
           </div>
         )}
 
-        {reviewedArchiveRequests.length > 0 && (
-          <div className="space-y-2">
-            <p className="text-sm font-medium text-foreground">Recent archive decisions</p>
-            <div className="space-y-2">
-              {reviewedArchiveRequests.map((request) => (
-                <div key={request.id} className="rounded-md border border-border p-3 text-sm">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <Badge
-                      variant="secondary"
-                      className={
-                        request.status === "APPROVED"
-                          ? "bg-border text-foreground border-border"
-                          : "bg-danger-3 text-danger-11 border-danger-6"
-                      }
-                    >
-                      {request.status === "APPROVED" ? "Approved" : "Rejected"}
-                    </Badge>
-                    <span className="text-muted-foreground">
-                      {request.reviewedAt ? formatPayloadInstantDate(clubTime, request.reviewedAt) : "Not dated"} by{" "}
-                      {request.reviewedBy?.name ?? "Unknown admin"}
-                    </span>
-                  </div>
-                  {request.reviewNote && <p className="mt-1 text-muted-foreground">{request.reviewNote}</p>}
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
+        <MemberLifecycleHistory requests={lifecycleRequests} />
       </CardContent>
+
+      <MemberUnarchiveDialog
+        open={unarchiveDialogOpen}
+        onOpenChange={setUnarchiveDialogOpen}
+        error={unarchive.error}
+        submitting={unarchive.submitting}
+        onSubmit={unarchive.submit}
+      />
 
       {/* #1788: per-review member-email choice, mirroring the #1705/#1769a
           pattern. Shown only when the target member has an address on file;
