@@ -7,7 +7,7 @@ import {
   requireStoredCalendarDay,
   type CalendarDate,
 } from "@/lib/club-time";
-import { getSeasonStartMonth } from "@/lib/financial-year";
+import { getSeasonStartMonth, seasonStartMonthOf } from "@/lib/financial-year";
 
 /**
  * THE AGE-TIER COMPARISON HAS TWO SIDES AND THEY SHARE ONE FRAME (#3082).
@@ -73,6 +73,18 @@ import { getSeasonStartMonth } from "@/lib/financial-year";
  */
 export function getSeasonStartCalendarDate(seasonYear: number): CalendarDate {
   return calendarDateFromParts(seasonYear, getSeasonStartMonth(), 1);
+}
+
+/**
+ * The same day under a year-end the caller already resolved (#5259), for a run
+ * that derived its season year from that month and must date the season's
+ * start from it too, not from the process cache the form above reads.
+ */
+export function seasonStartCalendarDateUnder(
+  seasonYear: number,
+  yearEndMonth: number,
+): CalendarDate {
+  return calendarDateFromParts(seasonYear, seasonStartMonthOf(yearEndMonth), 1);
 }
 
 /**

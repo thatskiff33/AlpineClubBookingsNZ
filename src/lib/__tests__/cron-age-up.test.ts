@@ -33,6 +33,13 @@ vi.mock("../prisma", () => ({
   },
 }));
 
+// The club's year-end, resolved once per run (#5259). March unless a case
+// says otherwise; `vi.fn(impl)` keeps that default through `clearAllMocks()`.
+const financialYear = vi.hoisted(() => ({
+  refreshFinancialYearConfig: vi.fn(async () => 3),
+}));
+vi.mock("../financial-year-server", () => financialYear);
+
 vi.mock("../email", () => ({
   sendAgeUpInvitationEmail: vi.fn(),
   sendAgeUpParentEmailHandoffEmail: vi.fn(),
@@ -352,6 +359,43 @@ describe("checkAgeUpMembers", () => {
       await checkAgeUpMembers();
 
       expect(pointerWrites()).toEqual([]);
+    });
+  });
+
+  describe("judges the age in the season the club's resolved year-end puts today in (#5259)", () => {
+    // 15 June 2026 is in the 2026 season under a March year-end (from 1 April
+    // 2026) and a December one (from 1 January 2026), and in the 2025 season
+    // under a June one (from 1 July 2025). A member born 1 September 2007 is 18
+    // at the first two starts and 17 at the third.
+    beforeEach(() => {
+      vi.setSystemTime(new Date("2026-06-15T00:00:00.000Z"));
+    });
+
+    it.each([
+      [3, 1],
+      [6, 0],
+      [12, 1],
+    ])("year-end month %i upgrades %i member", async (yearEndMonth, upgraded) => {
+      financialYear.refreshFinancialYearConfig.mockResolvedValueOnce(yearEndMonth);
+      mockedFindMany.mockResolvedValue([
+        {
+          id: "m1",
+          email: "youth@example.com",
+          firstName: "Alice",
+          lastName: "Smith",
+          dateOfBirth: new Date("2007-09-01T00:00:00.000Z"),
+          inheritEmailFromId: null,
+          inheritEmailFrom: null,
+        },
+      ] as any);
+      mockedEmailLogFind.mockResolvedValue(null);
+      mockedUpdate.mockResolvedValue({} as any);
+      mockedCreateToken.mockResolvedValue({} as any);
+      mockedSendEmail.mockResolvedValue(EMAIL_SENT);
+
+      const result = await checkAgeUpMembers();
+
+      expect(result.upgraded).toBe(upgraded);
     });
   });
 
