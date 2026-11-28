@@ -10,7 +10,7 @@ import {
   ClubFormatTestProvider,
   CLUB_TIME_TEST_ZONE,
 } from "@/lib/__tests__/support/club-time-render";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("next/dynamic", () => ({
   default: () => () => null,
@@ -51,6 +51,7 @@ import { ENVIRONMENT_CLUB_ZONE } from "@/lib/__tests__/helpers/environment-club-
 import { getReportsDatasetDefaults } from "@/lib/admin-dataset-reset-state";
 import { chooseDivergentClubZone } from "@/lib/__tests__/helpers/club-time-zone";
 import { itShowsEveryRefusal } from "@/lib/__tests__/support/failed-write-cases";
+import { applyTailwindHiddenRule, expectSoundOutline } from "@/lib/__tests__/support/heading-outline";
 
 const EMPTY_REPORT = {
   summary: {
@@ -625,5 +626,72 @@ describe("reports default range comes from the club's zone (CT-4, #2870)", () =>
     expect(requested).toContain(`to=${chosen.to}`);
     const environmentDefaults = getReportsDatasetDefaults(environmentDay);
     expect(requested).not.toContain(`from=${environmentDefaults.from}`);
+  });
+});
+
+describe("heading outline (#5216)", () => {
+  // The report's print-only "Reports" title is an h1 that is display:none on
+  // screen.
+  beforeAll(applyTailwindHiddenRule);
+
+  function answerWith(response: () => Response | Promise<Response>) {
+    vi.stubGlobal("fetch", vi.fn(async () => response()));
+  }
+
+  it("loading: the page h1 alone", () => {
+    answerWith(() => new Promise<Response>(() => {}));
+    render(<ReportsPage />);
+    expectSoundOutline("Reports");
+  });
+
+  it("loaded with figures: every card a level 2 under the h1", async () => {
+    answerWith(() =>
+      Response.json({
+        ...EMPTY_REPORT,
+        summary: { ...EMPTY_REPORT.summary, totalBookings: 2, memberGuests: 1, nonMemberGuests: 1 },
+        statusBreakdown: { ...EMPTY_REPORT.statusBreakdown, confirmed: 2 },
+        occupancy: [{ date: "2026-07-01", occupiedBeds: 2, availableBeds: 8, occupancyRate: 20 }],
+        revenue: [
+          {
+            periodStart: "2026-07-01",
+            periodEnd: "2026-07-31",
+            label: "Jul",
+            tooltipLabel: "July 2026",
+            revenueCents: 10_000,
+            bookingCount: 2,
+          },
+        ],
+        trends: [
+          {
+            week: "2026-06-29",
+            total: 2,
+            pending: 0,
+            paymentPending: 0,
+            confirmed: 2,
+            paid: 0,
+            awaitingReview: 0,
+            completed: 0,
+          },
+        ],
+      }),
+    );
+    render(<ReportsPage />);
+    expect(await screen.findByText("Total Bookings")).toBeInTheDocument();
+    expectSoundOutline("Reports");
+    expect(screen.getByRole("heading", { level: 2, name: /Booking Status Breakdown/ })).toBeInTheDocument();
+  });
+
+  it("loaded but empty", async () => {
+    answerWith(() => Response.json(EMPTY_REPORT));
+    render(<ReportsPage />);
+    expect(await screen.findByText("Total Bookings")).toBeInTheDocument();
+    expectSoundOutline("Reports");
+  });
+
+  it("error", async () => {
+    answerWith(() => Response.json({ error: "Reports are unavailable." }, { status: 500 }));
+    render(<ReportsPage />);
+    expect(await screen.findByRole("alert")).toBeInTheDocument();
+    expectSoundOutline("Reports");
   });
 });

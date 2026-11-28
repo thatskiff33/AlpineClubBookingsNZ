@@ -10,7 +10,7 @@ import { parseDateOnly } from "@/lib/date-only";
 import { resolveFinanceDashboardSelection } from "@/lib/finance-dashboard-ranges";
 import type { FinanceDashboardPageModel } from "@/lib/finance-dashboard-page/model";
 import { CLUB_FORMAT_TEST } from "@/lib/__tests__/support/club-format-fixture";
-import { expectSoundOutline } from "@/lib/__tests__/support/heading-outline";
+import { applyTailwindHiddenRule, expectSoundOutline } from "@/lib/__tests__/support/heading-outline";
 
 /**
  * The /finance workspace's heading outline in every state it renders (#5216,
@@ -127,15 +127,9 @@ const LOADED: Partial<FinanceDashboardPageModel> = {
 };
 
 describe("/finance heading outline (#5216)", () => {
-  beforeAll(() => {
-    // The dashboard's print-only title ("Finance - <view>") is an h1 wrapped
-    // in Tailwind's `hidden print:block`: on screen it is display:none and out
-    // of the accessibility tree. jsdom loads no Tailwind, so give it the one
-    // screen rule that decides this.
-    const style = document.createElement("style");
-    style.textContent = ".hidden { display: none; }";
-    document.head.appendChild(style);
-  });
+  // The dashboard's print-only title ("Finance - <view>") is an h1 that is
+  // display:none on screen.
+  beforeAll(applyTailwindHiddenRule);
 
   afterEach(() => {
     cleanup();

@@ -56,3 +56,15 @@ export function expectSoundOutline(h1: string | RegExp) {
   expectOneLevelOneHeading(h1);
   expectNoSkippedHeadingLevels();
 }
+
+/**
+ * Tailwind's `hidden` utility, for jsdom, which loads no stylesheet. A screen's
+ * print-only title (`hidden print:block`) is display:none on screen and so out
+ * of the outline a screen reader announces; without this rule jsdom shows it
+ * and the screen appears to have a second h1. Call it once, in `beforeAll`.
+ */
+export function applyTailwindHiddenRule() {
+  const style = document.createElement("style");
+  style.textContent = ".hidden { display: none; }";
+  document.head.appendChild(style);
+}
