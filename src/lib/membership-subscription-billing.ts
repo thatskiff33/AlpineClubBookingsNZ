@@ -18,7 +18,7 @@ import { DEFAULT_MEMBERSHIP_SUBSCRIPTION_BILLING_SETTINGS } from "@/config/club-
 import { createAuditLog } from "@/lib/audit";
 import { getEffectiveMembershipAnnualFee, getEffectiveSubscriptionCategoryFee, getFamilyBillingMode } from "@/lib/authoritative-fees";
 import { calendarDateOfDateOnlyInstant, clubToday, dateOnlyInstantOf } from "@/lib/club-time";
-import { confirmAgeUpAdjustments, createAgeUpPlanner } from "@/lib/subscription-age-up-billing";
+import { ageUpAuditTotals, confirmAgeUpAdjustments, createAgeUpPlanner } from "@/lib/subscription-age-up-billing";
 import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
 import { formatDateOnly, parseDateOnly } from "@/lib/date-only";
 import { seasonYearOfStoredDate } from "@/lib/financial-year";
@@ -2384,6 +2384,7 @@ export async function confirmSubscriptionBillingPreview(input: {
             ? []
             : warnings.map((item) => ({ code: item.code, familyGroupId: item.familyGroupId, context: item.context })),
           totalCents: totalChargedCents(confirmedEntries),
+          ...ageUpAuditTotals(preview.ageUpAdjustments),
         }),
       }, tx);
     }

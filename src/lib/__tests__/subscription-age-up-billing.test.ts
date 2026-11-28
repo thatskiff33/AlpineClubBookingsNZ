@@ -35,6 +35,7 @@ import type {
 import {
   ageUpCreditIdempotencyKey,
   ageUpTopUpChargeKey,
+  ageUpAuditTotals,
   confirmAgeUpAdjustments,
   createAgeUpPlanner,
   type AgeUpPlanMember,
@@ -580,6 +581,15 @@ describe("confirmAgeUpAdjustments", () => {
     xeroAccountCode: "200",
     xeroItemCode: "SUB",
     ...overrides,
+  });
+
+  it("totals top-ups and credits apart for the confirm's audit row", () => {
+    expect(ageUpAuditTotals([
+      item(),
+      item({ amountCents: 250 }),
+      item({ kind: "CREDIT", amountCents: 4_000 }),
+    ])).toEqual({ ageUpTopUpCents: 5_250, ageUpCreditCents: 4_000 });
+    expect(ageUpAuditTotals([])).toEqual({ ageUpTopUpCents: 0, ageUpCreditCents: 0 });
   });
 
   function transaction(existingAdjustment: { id: string } | null = null) {

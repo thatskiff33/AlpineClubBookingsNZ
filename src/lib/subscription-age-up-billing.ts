@@ -421,6 +421,16 @@ export function createAgeUpPlanner(input: {
 }
 
 /**
+ * What a confirm's audit row says of its top-ups and credits. They sit outside
+ * the season total, as in the preview, and a credit moves money the other way.
+ */
+export function ageUpAuditTotals(adjustments: readonly Pick<SubscriptionBillingAgeUpAdjustment, "kind" | "amountCents">[]) {
+  const centsOf = (kind: SubscriptionBillingAgeUpAdjustment["kind"]) =>
+    adjustments.reduce((total, item) => (item.kind === kind ? total + item.amountCents : total), 0);
+  return { ageUpTopUpCents: centsOf("TOP_UP"), ageUpCreditCents: centsOf("CREDIT") };
+}
+
+/**
  * Write the preview's age-up top-ups and credits, inside the billing confirm's
  * season-locked transaction and from its fresh in-transaction preview. Returns
  * the top-up charge ids, which the caller queues as it queues season charges.
