@@ -181,6 +181,10 @@ function makeStore(rows: FakeBooking[], policies?: unknown[]) {
       updateMany: vi.fn(async () => ({ count: 0 })),
     },
     auditLog: { create: vi.fn(async () => ({})) },
+    // #5239: the trip's cover-invalidation revision, read under the trip key.
+    groupBooking: {
+      findUnique: vi.fn(async () => ({ coverageInvalidationRevision: 0 })),
+    },
   } as any;
 
   return { db, bookingWheres };
