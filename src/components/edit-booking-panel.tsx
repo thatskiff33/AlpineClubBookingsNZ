@@ -39,6 +39,7 @@ import {
 import { AccountCreditCard } from "@/components/edit-booking/account-credit-card";
 import { AdminOverrideCard } from "@/components/edit-booking/admin-override-card";
 import { ChangeRequestCard } from "@/components/edit-booking/change-request-card";
+import { useActionFocusReturn } from "@/hooks/use-scroll-to-feedback";
 import type { ChangeRequestAddGuest } from "@/lib/booking-change-request-guests";
 import { EditDatesCard } from "@/components/edit-booking/edit-dates-card";
 import { EditGuestsCard } from "@/components/edit-booking/edit-guests-card";
@@ -335,6 +336,7 @@ export function EditBookingPanel({
   // Save state
   const [saving, setSaving] = useState(false);
   const saveInFlightRef = useRef(false);
+  const focusReturn = useActionFocusReturn();
   const [saveError, setSaveError] = useState("");
   // #2390: the coverage the SAVE came back with, when it differs from what the
   // preview showed. The preview reads the promotion's counters unlocked and the
@@ -1313,6 +1315,8 @@ export function EditBookingPanel({
     }
     if (saveInFlightRef.current) return;
     saveInFlightRef.current = true;
+    // A browser drops focus from a disabled control; hand it back when re-enabled (#5442).
+    focusReturn.capture();
     setSaving(true);
     // A fresh save attempt retires the previous refusal's offer (#2562).
     setExceptionOfferState(null);
@@ -1531,12 +1535,15 @@ export function EditBookingPanel({
     } finally {
       saveInFlightRef.current = false;
       setSaving(false);
+      focusReturn.release();
     }
   }
 
   async function handleSubmitChangeRequest(cardAddGuests: ChangeRequestAddGuest[]) {
     setRequestError("");
     setRequestSuccess("");
+    // A browser drops focus from a disabled control; hand it back when re-enabled (#5442).
+    focusReturn.capture();
     setRequestSubmitting(true);
 
     try {
@@ -1564,6 +1571,7 @@ export function EditBookingPanel({
       return false;
     } finally {
       setRequestSubmitting(false);
+      focusReturn.release();
     }
   }
 
