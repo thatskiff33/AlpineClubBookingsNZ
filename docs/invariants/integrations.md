@@ -1098,8 +1098,8 @@ the database answers, never twice (owner decision, 20 Nov 2026).
   `ADMIN_ALERT_SPOOL_DIR`, one file per key (`sha256` of it): a temporary
   file, synced, renamed over. A repeat overwrites. Raised-once alerts
   (`INV-INT-042`) and the Internet Banking hold's owed marker use it. Disk
-  refused too: logged only, as before. A spooled alert counts as stored, so
-  `throwIfUnstored` (`INV-INT-044`) throws only when both refused.
+  refused too: logged only, as before; only then is it unstored for
+  `throwIfUnstored` (`INV-INT-044`).
 - **No second channel.** The spool never sends: a direct send would have no
   claim or `EmailLog` row. The error log line (Sentry when configured) is the
   signal as it fires.
@@ -1114,12 +1114,11 @@ the database answers, never twice (owner decision, 20 Nov 2026).
   error text. Mode 0600 in a 0700 directory, outside anything web-served, not
   backed up, deleted once ingested, at most 500 files; an unreadable one is
   logged and deleted.
-- **Storage.** The `admin_alert_spool` volume, on every app container,
-  outlives restarts and blue/green swaps.
+- **Storage.** The `admin_alert_spool` volume on every app container
+  outlives restarts and swaps.
 - **No lock.** Create-only rows; no advisory key (`INV-LOCK-001`), in the
   writer index (`INV-LOCK-003`).
-- **Known limit:** a full disk during the outage leaves the log as the only
-  record.
+- **Known limit:** a full disk then leaves the log as the only record.
 
 Pinned by `admin-alert-spool.test.ts`, `admin-alert-once-sweep.test.ts`,
 `admin-alert-once-replayable.test.ts`, `internet-banking-payment-cron.test.ts`
