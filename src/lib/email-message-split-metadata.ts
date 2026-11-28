@@ -22,8 +22,8 @@ export const SPLIT_TEMPLATE_TRIGGERS: Partial<
   ...OWED_NOTICE_ALERT_TRIGGERS,
   "admin-booking-money-census": {
     triggerSummary:
-      "The nightly booking money check (05:30, club time) found a booking whose money records disagree, or a known class of difference, that it has not reported before (#4910)",
+      "The nightly booking money check (05:30, club time) found a booking whose money records disagree, or could not be compared, that it has not reported before. Known classes of difference are never emailed; they are listed on the Stuck States page (#4910)",
     frequency:
-      "Once per finding (a census class on a booking), in one email per night that lists every new finding. Guarded by a cross-instance claim, which is kept once any admin is sent the email or has a copy queued for the email retry cron, held for a day when no admin can receive it, and given back when the send throws before reaching anyone. A night with nothing new sends nothing",
+      "Once per disagreement (a census class on a booking), in one email per night that lists every new disagreement. Guarded by a cross-instance claim, which is kept once any admin is sent the email or has a copy queued for the email retry cron, held for a day when no admin can receive it, and given back when the send throws before reaching anyone. A night with nothing new sends nothing",
   },
 };

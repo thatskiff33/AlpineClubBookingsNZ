@@ -113,18 +113,26 @@ async function settledCardBooking(id: string): Promise<void> {
   expect(settled.outcome).toBe("paid");
 }
 
-/** Rows in every table of the schema, by table. */
-async function rowCounts(): Promise<Record<string, number>> {
+/**
+ * A content hash of every table in the schema, by table: a count alone misses
+ * an update in place (a `payment.updateMany` keeps every count). Covers the
+ * money tables (Payment, BookingLedgerLine, MemberCredit, the journal) and the
+ * rest alike.
+ */
+async function tableHashes(): Promise<Record<string, string>> {
   const tables = await prisma.$queryRaw<Array<{ name: string }>>`
     SELECT table_name AS name FROM information_schema.tables
     WHERE table_schema = current_schema() AND table_type = 'BASE TABLE'
     ORDER BY table_name`;
-  const counts: Record<string, number> = {};
+  const hashes: Record<string, string> = {};
   for (const { name } of tables) {
-    const [row] = await prisma.$queryRawUnsafe<Array<{ n: bigint }>>(`SELECT count(*) AS n FROM "${name.replaceAll('"', '""')}"`);
-    counts[name] = Number(row.n);
+    const quoted = `"${name.replaceAll('"', '""')}"`;
+    const [row] = await prisma.$queryRawUnsafe<Array<{ h: string | null }>>(
+      `SELECT md5(coalesce(string_agg(t::text, E'\\n' ORDER BY t::text), '')) AS h FROM ${quoted} AS t`,
+    );
+    hashes[name] = row.h ?? "";
   }
-  return counts;
+  return hashes;
 }
 
 /** The census classes the summary names `bookingId` under. */
@@ -164,8 +172,8 @@ function classesNaming(summary: BookingMoneyCensusSummary, bookingId: string): s
     await cleanFixtures();
   });
 
-  it("names the disagreeing booking, not the consistent one, writes only its alert claims, and alerts once", async () => {
-    const before = await rowCounts();
+  it("names the disagreeing booking, not the consistent one, changes no row but its alert claims, and alerts once", async () => {
+    const before = await tableHashes();
     const sendAlert = vi.fn(async () => DELIVERED);
 
     const summary = await job.runBookingMoneyCensus({ sendAlert });
@@ -174,7 +182,7 @@ function classesNaming(summary: BookingMoneyCensusSummary, bookingId: string): s
     expect(classesNaming(summary, DRIFTED)).toContain("disagreement:CAPTURED");
     expect(classesNaming(summary, CONSISTENT)).toEqual([]);
 
-    const after = await rowCounts();
+    const after = await tableHashes();
     const changed = Object.keys({ ...before, ...after }).filter((table) => before[table] !== after[table]);
     expect(changed).toEqual(["AlertCooldown"]);
     await expect(

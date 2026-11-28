@@ -4573,18 +4573,18 @@ Xero note mints one when spent), **`INV-CONFIG-008`** (the Exempt line).
   `booking-money-census` job (05:30 club time) calls
   `censusBookingLedgerProjection` and `censusBookingMoneyReconciliation` as
   they are: one census, one definition of every class. It reads the zone and
-  `journalInactive` outside the snapshots, takes no advisory lock, and repairs
-  nothing. It writes only its `CronJobRun` row (a bounded summary: verdict,
-  counts per class, up to 20 booking ids per class, the price check's
-  totals), once-ever claims in `AlertCooldown`, and the alert's email rows.
-- **Each finding alerts once.** A finding is a census class on a booking. The
-  first night it is seen, one admin email names it, never again. A night
-  with nothing new sends nothing. A send that failed or reached nobody is
-  retried; its run warns on Background Jobs.
+  `journalInactive` outside the snapshots, takes no lock, repairs nothing.
+  It writes only its `CronJobRun` row (a bounded summary: verdict, counts
+  per class, up to 20 booking ids per class, the price check's totals),
+  once-ever claims in `AlertCooldown`, and the alert's email rows.
+- **Only drift is emailed, once** (owner decision, 28 Nov 2026). A finding
+  is a census class on a booking; one admin email names each new drift
+  finding, never again. Known classes are never emailed. A send that
+  reached nobody is retried; its run warns on Background Jobs.
 - **No acknowledgements on the server.** Every finding is reported. Drift
-  (disagreements, coverage gaps, integrity findings) is a critical Stuck
-  States item; known-class instances are an info item, as the census's
-  unacknowledged count, not an emergency, nor in the sidebar's count.
+  (disagreements, coverage gaps, integrity findings, any other closed-gate
+  reason) is a critical Stuck States item; known-class instances are an
+  info item, the census's unacknowledged count, outside the sidebar's count.
 - **A check that stopped never reads as clean.** A failed or stale latest
   run (the cron-health classifier's answer) shows "Money check did not run",
   beside the last good run's findings.

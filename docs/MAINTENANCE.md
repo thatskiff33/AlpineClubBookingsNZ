@@ -2522,8 +2522,9 @@ every night at 05:30 club time ([`INV-PAY-163`](invariants/payment-and-settlemen
 It is the same code, read-only, with no acknowledgement file, so every finding
 is reported. It records a bounded summary on its `CronJobRun` row (verdict,
 counts per class, up to 20 booking ids per class, the reconciliation totals)
-and emails admins who receive payment failure alerts once per new finding (a
-census class on a booking); a night with nothing new sends nothing. Stuck States
+and emails admins who receive payment failure alerts once per new drift finding
+(a census class on a booking whose records disagree); known classes are never
+emailed, and a night with no new drift sends nothing. Stuck States
 shows the latest good run: drift as **Booking money records disagree**, known
 classes as **Known booking money classes not acknowledged**, and **Money check
 did not run** when the latest run failed or is more than 36 hours old.

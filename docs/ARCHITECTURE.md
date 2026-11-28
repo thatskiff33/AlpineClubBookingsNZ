@@ -3720,7 +3720,7 @@ flowchart TD
 | `member-guest-consent-expiry` | Daily at 04:30 NZT when the member-guests module is enabled | Expire lapsed member-guest consent requests, release the bed, and settle the reduction as account credit to the booking owner; rows the shared removal path refuses are counted separately for the admin exception list |
 | `pending-deadline-alerts` | Daily | Alert admins about pending bookings approaching deadline |
 | `credit-reconciliation` | Daily | Check the app's own account-credit records (no Xero comparison): report negative balances and cancelled bookings still holding applied credit to Sentry, and re-queue refunded card payments' missing Xero credit notes |
-| `booking-money-census` | Daily 05:30 club time | Run the booking-ledger and booking-money reconciliation censuses read-only, record a bounded summary for Stuck States, and email admins once per new finding (#4910, `INV-PAY-163`); takes no lock, repairs nothing |
+| `booking-money-census` | Daily 05:30 club time | Run the booking-ledger and booking-money reconciliation censuses read-only, record a bounded summary for Stuck States, and email admins once per new disagreement, never for a known class (#4910, `INV-PAY-163`); takes no lock, repairs nothing |
 | `hut-leader-auto-assign` | Daily | Suggest hut leaders |
 | `age-up` | Daily | Process age-tier/member transitions |
 | `email-inheritance-reconcile` | Daily 06:45 NZT | Converge every family email-inheritance pointer onto the one-hop rule (#2716); runs just after `age-up` because ageing a member in or out of ADULT changes who may be a source |

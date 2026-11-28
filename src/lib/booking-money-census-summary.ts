@@ -17,8 +17,12 @@
  * acknowledgement file, so the census runs with none and reports everything:
  * - `disagreement`, `coverage`, `integrity`: the records disagree, or the
  *   census could not prove they agree. This is DRIFT.
+ * - `gate`: the census closed its gate for a reason none of the others names
+ *   (`gateClosedBecause`); one finding per reason, so a closed gate is never a
+ *   clean night. Also DRIFT.
  * - `class`: an instance of a known class the owner acknowledges booking by
- *   booking with the operator command. Known history, not a new emergency.
+ *   booking with the operator command. Known history, not a new emergency, and
+ *   never emailed (owner decision, 28 Nov 2026).
  * Classes the census only lists (`classGateRule` `OPEN`) are not findings.
  */
 import { z } from "zod";
@@ -40,7 +44,7 @@ export const BOOKING_MONEY_CENSUS_IDS_PER_CLASS = 20;
 const BOOKING_MONEY_CENSUS_ALERT_FAILED_WARNING =
   "The alert for new findings could not be sent: the send failed, or no admin is set to receive it. A later run tries again. The findings are on the Stuck States page.";
 
-const FINDING_GROUPS = ["disagreement", "coverage", "integrity", "class"] as const;
+const FINDING_GROUPS = ["disagreement", "coverage", "integrity", "gate", "class"] as const;
 export type BookingMoneyCensusFindingGroup = (typeof FINDING_GROUPS)[number];
 
 export type BookingMoneyCensusFinding = {
@@ -58,7 +62,9 @@ export function isBookingMoneyCensusDrift(finding: Pick<BookingMoneyCensusFindin
 
 /**
  * Every finding in a booking-ledger census report, one per class and booking,
- * in the report's own order. Reads the report; decides nothing.
+ * in the report's own order. Reads the report; decides nothing. A closed gate
+ * with no other finding becomes one `gate` finding per `gateClosedBecause`
+ * reason, so this list is empty exactly when the census's verdict is open.
  */
 export function listBookingMoneyCensusFindings(report: BookingLedgerCensusReport): BookingMoneyCensusFinding[] {
   const seen = new Set<string>();
@@ -81,6 +87,9 @@ export function listBookingMoneyCensusFindings(report: BookingLedgerCensusReport
     for (const instance of censusClass.instances) {
       if (!instance.acknowledged) add("class", name, instance.bookingId);
     }
+  }
+  if (report.verdict === "GATE_CLOSED" && findings.length === 0) {
+    for (const reason of report.gateClosedBecause) add("gate", reason, "");
   }
   return findings;
 }
@@ -123,7 +132,7 @@ const summarySchema = z.object({
     /** Only reasons with a booking. */
     byReason: z.record(z.string(), z.number().int().positive()),
   }),
-  /** What the run did about findings it had not alerted before; `failed` when the alert step threw. */
+  /** What the run did about drift findings it had not alerted before (known classes are never emailed); `failed` when the alert reached nobody or its step threw. */
   alert: z.object({ newFindings: z.number().int().nonnegative(), sent: z.boolean(), failed: z.boolean() }),
   /** Set when the alert step failed: admin cron health shows a run carrying one as a warning (#3663). */
   warning: z.string().min(1).optional(),
@@ -198,10 +207,11 @@ export function bookingMoneyCensusClassLine(entry: BookingMoneyCensusClassSummar
   return `${describeBookingMoneyCensusClass(entry)}: ${bookingMoneyCensusClassFindings(entry)}`;
 }
 
-/** `disagreement:CAPTURED` as an admin reads it: `CAPTURED disagreement`; a known class by its name alone. */
+/** `disagreement:CAPTURED` as an admin reads it: `CAPTURED disagreement`; a known class by its name alone; a gate reason after `census gate closed:`. */
 export function describeBookingMoneyCensusClass(entry: Pick<BookingMoneyCensusClassSummary, "class" | "group">): string {
   const name = entry.class.slice(entry.group.length + 1);
   if (entry.group === "class") return name;
+  if (entry.group === "gate") return `census gate closed: ${name}`;
   if (entry.group === "coverage") return `${name} coverage gap`;
   return `${name} ${entry.group}`;
 }

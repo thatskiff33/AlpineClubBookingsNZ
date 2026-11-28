@@ -522,9 +522,9 @@ signals come from it, or from the daily credit check:
   for the full report; the app does not fix these itself.
 - **Known booking money classes not acknowledged** (Info): known history the
   club's owner has not yet signed off. These are not new faults. The server
-  has no copy of the owner's sign-off file, so they stay listed. Nothing you
-  do in the app clears them, so they are left out of the Stuck States number
-  in the admin sidebar.
+  has no copy of the owner's sign-off file, so they stay listed. They are
+  never emailed. Nothing you do in the app clears them, so they are left out
+  of the Stuck States number in the admin sidebar.
 - **Money check did not run** (Warning): the latest nightly run failed, or
   there has been no good run for more than 36 hours. Anything else the check
   shows is from its last good run. Open [Background Jobs](background-jobs.md)

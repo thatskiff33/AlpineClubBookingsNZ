@@ -23,4 +23,4 @@ export const BOOKING_MONEY_RECONCILIATION_CENSUS_COMMAND = "pnpm run booking-mon
 
 /** What the admin alert says about itself, in the email and in its editor default. */
 export const BOOKING_MONEY_CENSUS_ALERT_NOTE =
-  "The nightly check of booking money records found something it has not reported before. Nothing was changed: the check only reads. Each finding is emailed once, and stays on the Stuck States page until it is put right.";
+  "The nightly check of booking money records found a booking whose records disagree that it has not reported before. Nothing was changed: the check only reads. Each disagreement is emailed once, and stays on the Stuck States page until it is put right. Known classes of difference are not emailed; they are listed on the Stuck States page.";

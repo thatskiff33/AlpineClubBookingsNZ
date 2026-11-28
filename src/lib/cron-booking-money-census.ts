@@ -14,15 +14,17 @@
  *
  * NO ACKNOWLEDGEMENTS. The operator command takes the owner's acknowledgement
  * file; the server has none, so every finding is reported, the known history
- * included. Two things keep that from becoming noise:
- * - each finding (a census class on a booking) is alerted ONCE, the first
- *   night it is seen, under a once-ever key. A night with nothing new sends
- *   nothing;
- * - the summary keeps known-class instances apart from drift
+ * included. Three things keep that from becoming noise:
+ * - ONLY DRIFT IS EMAILED (owner decision, 28 Nov 2026): a known class such as
+ *   `IN_FLIGHT_REFUND` follows most cancellations, so it is never emailed. The
+ *   summary keeps known-class instances apart from drift
  *   (`booking-money-census-summary.ts`), and the Stuck States page shows them
- *   as awaiting acknowledgement, not as an emergency.
+ *   as an info item awaiting acknowledgement, not as an emergency;
+ * - each drift finding (a census class on a booking) is alerted ONCE, the
+ *   first night it is seen, under a once-ever key;
+ * - a night with no new drift sends nothing.
  *
- * ONE EMAIL PER NIGHT. The new findings go out together under a digest key
+ * ONE EMAIL PER NIGHT. The new drift findings go out together under a digest key
  * made from their keys; each finding's own key is stamped only once that email
  * is kept (an admin was sent it, or a copy waits for the email retry cron).
  * If nobody can receive it, or the send fails, nothing is stamped, the run's
@@ -47,6 +49,7 @@ import { CENSUS_PAGE_SIZE, censusBookingLedgerProjection } from "@/lib/booking-l
 import { BOOKING_MONEY_CENSUS_JOB_NAME } from "@/lib/booking-money-census-job";
 import {
   bookingMoneyCensusAlertKey,
+  isBookingMoneyCensusDrift,
   listBookingMoneyCensusFindings,
   summarizeBookingMoneyCensus,
   summarizeBookingMoneyCensusClasses,
@@ -64,8 +67,8 @@ import { reportCronError } from "@/lib/observability-bridge";
 import { prisma } from "@/lib/prisma";
 
 const ALERT_LABEL = "booking money check alert";
-/** How many once-ever keys one held-key read asks for. */
-const HELD_KEY_READ_SIZE = 1000;
+/** How many once-ever keys one held-key read asks for; exported for the test that crosses a chunk edge. */
+export const HELD_KEY_READ_SIZE = 1000;
 
 /** Everything the run reaches, so a test runs it without a database. */
 export type BookingMoneyCensusDependencies = {
@@ -112,7 +115,7 @@ async function findingsNotAlertedBefore(
 }
 
 /**
- * Send one alert for the findings not alerted before, then stamp each so later
+ * Send one alert for the drift findings not alerted before, then stamp each so later
  * nights stay quiet. Returns what it did, `failed` when new findings reached
  * nobody; throws only if the alert store cannot be read.
  */
@@ -151,7 +154,7 @@ async function alertNewFindings(
  * One nightly run: both censuses, the bounded summary the scheduler records,
  * and an alert for anything new. A census that throws fails the run, so the
  * scheduler records FAILURE and the Stuck States page says the check did not
- * run. A failure in the alert step alone leaves the summary standing, with a
+ * run. Only drift is alerted; known classes stay on the page. A failure in the alert step alone leaves the summary standing, with a
  * warning: the findings are still on the page, and a later night alerts.
  */
 export async function runBookingMoneyCensus(
@@ -166,7 +169,8 @@ export async function runBookingMoneyCensus(
 
   let alert: BookingMoneyCensusSummary["alert"];
   try {
-    alert = await alertNewFindings(findings, deps);
+    // Known classes are left to the Stuck States info item: only drift is emailed.
+    alert = await alertNewFindings(findings.filter(isBookingMoneyCensusDrift), deps);
   } catch (err) {
     reportCronError({
       tag: `${BOOKING_MONEY_CENSUS_JOB_NAME}-alert`,
