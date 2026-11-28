@@ -6351,10 +6351,13 @@ or screen yet.
 | Row | PENDING | IMPORTED | Under global, lodge and member-night locks, repeat all checks; status-guarded claim; booking, cash settlement (or free confirmation), ledger, journal and events commit together. |
 | Row | PENDING | REFUSED | A failed under-lock check rolls back the booking; a PENDING-guarded write records the reason. |
 | Batch | OPEN | COMPLETED | No PENDING rows remain; guarded update records completion once. |
+| Batch | COMPLETED | REVERSED | Child B: the first reversal run claims it with a status-guarded update and records who and when. An OPEN batch cannot be reversed. |
+| Row | IMPORTED | REVERSED | Child B: only while untouched (`INV-PAY-163`). Claimed under the manual reversal's locks, in the transaction that takes the payment back (a free stay: under global and lodge locks). The booking is then cancelled with no email. |
 
-IMPORTED and REFUSED rows are terminal for this engine. Repeated confirms find
-the same batch and skip decided rows. A new file may retry a refused reference;
-the partial unique index excludes only IMPORTED rows. REVERSED values and actor
-columns reserve the schema for child B; no reversal transition is implemented
-here. Confirm refuses an already REVERSED batch. Children C, D and E add access,
-refund-as-credit and part-paid support respectively.
+IMPORTED rows stay IMPORTED when kept by a reversal; REFUSED and REVERSED rows
+are terminal. Repeated confirms find the same batch and skip decided rows. A
+new file may retry a refused or reversed reference; the partial unique index
+covers only IMPORTED rows. Confirm refuses a REVERSED batch. A REVERSED row
+whose booking is not yet cancelled is finished by the next reversal run.
+Children C, D and E add access, refund-as-credit and part-paid support
+respectively.

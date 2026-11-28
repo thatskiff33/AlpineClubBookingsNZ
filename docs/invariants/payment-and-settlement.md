@@ -4522,11 +4522,40 @@ settlement body), **`INV-PAY-040`** (the manual capacity refusal),
   refund task of `INV-PAY-044`, and the invoice choke point refuses it on its
   manual provenance.
 - Limit: part-paid rows are refused ("part-paid bookings cannot be imported
-  yet") until #5008; reversing a batch and the refund-as-credit choice are
-  #5005 children B and D.
+  yet") until #5008; the refund-as-credit choice is #5005 child D. Reversing a
+  batch is `INV-PAY-163`.
 - Proven by `booking-import-parse.test.ts`, `booking-import-plan.test.ts`,
   `booking-import-plan-decisions.test.ts`, `booking-import-write.test.ts`,
   `zero-price-payment-call-sites.test.ts` and `booking-import.realdb.test.ts`.
+
+## INV-PAY-163
+
+**Related: `INV-PAY-045`** (manual reversal), **`INV-PAY-161`** (the import).
+
+- **A batch reversal takes back only the imported bookings nobody has
+  touched** (#5005). Untouched means: still `PAID`, the stay not started
+  (`bookingStayHasStarted`), no `BookingModification` and the price as
+  imported, no refund, no refund task of any status, no card transaction or
+  intent, no Xero invoice or operation, and the payment as the import recorded
+  it. `importedBookingTouches` is the one reader; the preview
+  (`planBookingImportReversal`) and the writer both call it. A touched booking
+  is kept and named with plain reasons.
+- **Two existing writers, no copy.** A paid stay goes through
+  `reverseManualBookingPayment`, whose `beforeReverse` hook re-checks
+  "untouched" under its locks and claims the import row `REVERSED` with a
+  status-guarded update, so the row and the money move together. A free stay
+  claims its row under lock(1) and the lodge key. `cancelBooking` then cancels
+  the unpaid booking with no email (`notifyMember: false`), no refund and its
+  beds released, and only in the shape the first step left; a booking that
+  changed in between is reported, never cancelled into a refund.
+- **Resumable and safe twice.** The batch is claimed `REVERSED` once; a
+  `REVERSED` row whose booking is not cancelled is finished on the next run,
+  and a call may be bounded by `maxBookings`. A reversed batch's file cannot be
+  confirmed again, and a reversed row frees its Booking Ref.
+- **Both censuses stay clean**: the cash lines net to zero and the
+  cancellation posts the stay's reversal. Nothing goes to Xero, Stripe or any
+  inbox.
+- Proven by `booking-import.realdb.test.ts`.
 
 ## INV-PAY-162
 

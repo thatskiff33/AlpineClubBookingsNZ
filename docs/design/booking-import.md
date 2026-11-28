@@ -3,10 +3,11 @@
 Audience: Developer, Agent.
 
 This engine carries over fully paid future stays at what the club actually
-received, without charging or notifying anybody. It is child A of #5005;
-there is deliberately no route, screen or operator command yet. Reversal is
-child B; access, both officer permissions and the moving-in guide are child C;
-refund as account credit is D; part-paid support is E, after #5008.
+received, without charging or notifying anybody. Child A of #5005 is the
+engine and child B its batch reversal; there is deliberately no route, screen
+or operator command yet. Access, both officer permissions and the moving-in
+guide are child C; refund as account credit is D; part-paid support is E,
+after #5008.
 
 ## File and preview
 
@@ -77,10 +78,38 @@ refund-as-credit choice in this child. The ledger projection/journal census is
 exercised after import, free confirmation, cancellation, hand-back, edits and
 member merge by `booking-import.realdb.test.ts`.
 
+## Reversing a batch
+
+`reverseBookingImport` (`src/lib/booking-import/reverse.ts`, child B,
+`INV-PAY-163`) takes back the bookings of a completed batch that nobody has
+touched since the import; `planBookingImportReversal` shows the same answer
+first, read-only, with reasons for each kept booking and totals per state.
+Both read "untouched" through `importedBookingTouches`: still PAID, the stay
+not started, no edit and the imported price, no refund or refund task, no card
+transaction or intent, no Xero invoice or operation, and the payment as
+imported.
+
+Each booking takes two existing writers in turn. A paid stay goes through
+`reverseManualBookingPayment`; its `beforeReverse` hook re-checks "untouched"
+under the reversal's locks and claims the row REVERSED in the same
+transaction. A free stay claims its row under lock(1) and the lodge key. Then
+`cancelBooking` cancels the booking with no email and nothing to refund. A run
+that stops between the two steps leaves a REVERSED row on an unpaid booking
+holding no beds; the next run cancels it. If the booking changed in between (a
+card payment, say), the run reports it and cancels nothing. A call may be
+bounded with `maxBookings`; the route repeats it until nothing remains.
+
+The batch is claimed REVERSED by the first run and records who and when. Its
+file can no longer be confirmed, and a reversed row frees its Booking Ref for a
+corrected file. The cancel re-processes the waitlist for the freed nights, as
+every cancellation does. Both census identities stay clean after a reversal
+(`booking-import.realdb.test.ts`).
+
 ## Related contracts
 
 - [Architecture](../ARCHITECTURE.md#paid-booking-import-engine)
 - [Capacity](../CAPACITY_MODEL.md#imported-paid-future-bookings-5005)
 - [Payment invariant INV-PAY-161](../invariants/payment-and-settlement.md#inv-pay-161)
+- [Payment invariant INV-PAY-163](../invariants/payment-and-settlement.md#inv-pay-163)
 - [Capacity invariant INV-CAP-040](../invariants/booking-dates-and-capacity.md#inv-cap-040)
 - [Member-money journal](member-money-ledger.md)

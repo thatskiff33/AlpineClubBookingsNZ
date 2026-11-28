@@ -406,6 +406,14 @@ Journal tax context and dietary settings resolve before the transaction
 run after commit. See the [engine contract](design/booking-import.md) for the
 read-only preview, digest and resumable batch.
 
+Reversal (child B) also works one booking at a time. A paid stay's row is
+claimed inside `reverseManualBookingPayment`'s transaction (lock(1), the lodge
+key, then the Payment row) through its `beforeReverse` hook, which re-reads
+"untouched" under those locks; the batch adds no key of its own there. A free
+stay claims its row under lock(1) then the lodge key at the registered site
+`reverseOneRow#1`. The cancel that follows is `cancelBooking`'s own claim. A
+lost row claim moves nothing.
+
 ### A writer that does BOTH takes BOTH — global first
 
 Many writers do both tiers at once: a Stripe capture claims capacity **and**

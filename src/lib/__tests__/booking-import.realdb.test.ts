@@ -93,6 +93,7 @@ let prisma: PrismaClient;
 let parse: typeof import("@/lib/booking-import/parse");
 let planner: typeof import("@/lib/booking-import/plan");
 let writer: typeof import("@/lib/booking-import/write");
+let reverser: typeof import("@/lib/booking-import/reverse");
 let census: typeof import("@/lib/booking-ledger-projection-census-store");
 let editService: typeof import("@/lib/booking-batch-modification-service");
 const stripeCall = vi.fn(async () => { throw new Error("An import must never call Stripe"); });
@@ -213,6 +214,7 @@ async function existingBooking(ref: string, guests: Line[]) {
     parse = await import("@/lib/booking-import/parse");
     planner = await import("@/lib/booking-import/plan");
     writer = await import("@/lib/booking-import/write");
+    reverser = await import("@/lib/booking-import/reverse");
     census = await import("@/lib/booking-ledger-projection-census-store");
     editService = await import("@/lib/booking-batch-modification-service");
     const xeroQueue = await import("@/lib/xero-booking-edit-settlement");
@@ -758,4 +760,173 @@ async function existingBooking(ref: string, guests: Line[]) {
     expect(await prisma.bookingImportRow.findFirstOrThrow({ where: { lodgeId: LODGE, bookingRef: "M1" }, select: { status: true, bookingId: true } })).toEqual({ status: "IMPORTED", bookingId });
     await expectCensusClean(bookingId);
   }, 120_000);
+
+  describe("reversing a batch (#5005 child B)", () => {
+    const reverse = (batchId: string, maxBookings?: number) =>
+      reverser.reverseBookingImport({ batchId, officerMemberId: OFFICER, today: TODAY, format: CLUB_FORMAT_TEST, ipAddress: "127.0.0.1", ...(maxBookings ? { maxBookings } : {}) });
+    const batchOf = (result: Awaited<ReturnType<typeof importFile>>["result"]) => {
+      if (result.outcome !== "completed") throw new Error(`confirm was ${result.outcome}`);
+      return result.batchId;
+    };
+    const rowStatus = async (ref: string) =>
+      (await prisma.bookingImportRow.findFirstOrThrow({ where: { lodgeId: LODGE, bookingRef: ref }, orderBy: { createdAt: "asc" }, select: { status: true } })).status;
+
+    it("reverses the untouched bookings, keeps a touched one and names why, and both records still agree", async () => {
+      const { result } = await importFile([
+        line({ ref: "V1", member: PEOPLE.owner, amount: "120" }),
+        line({ ref: "V1", nonMember: { first: "Vic", age: "Adult" } }),
+        line({ ref: "V2", owner: PEOPLE.friend, member: PEOPLE.friend, amount: "0", checkIn: "2026-09-01", checkOut: "2026-09-02" }),
+        line({ ref: "V3", owner: PEOPLE.other, member: PEOPLE.other, amount: "80", checkIn: "2026-09-05", checkOut: "2026-09-06" }),
+      ]);
+      const batchId = batchOf(result);
+      const [paidId, freeId, touchedId] = ["V1", "V2", "V3"].map((ref) => importedId(result, ref));
+      // V3 is touched: cancelled by its member, which raises the by-hand refund task.
+      const { cancelBooking } = await import("@/lib/booking-cancel");
+      expect((await cancelBooking(touchedId!, OTHER, "USER", "127.0.0.1", CLUB_FORMAT_TEST)).status).toBe(200);
+
+      const preview = await reverser.planBookingImportReversal(prisma, { batchId, today: TODAY });
+      expect(preview!.rows.map((row) => [row.bookingRef, row.state])).toEqual([["V1", "UNTOUCHED"], ["V2", "UNTOUCHED"], ["V3", "TOUCHED"]]);
+      expect(preview!.rows[2]!.reasons).toEqual(["It has been cancelled", "It has a refund task"]);
+      expect(preview!.totals.UNTOUCHED).toEqual({ bookings: 2, guests: 3, guestNights: 5, amountCents: 12_000 });
+      expect(await prisma.booking.count({ where: { lodgeId: LODGE, status: "CANCELLED" } })).toBe(1);
+
+      const reversal = await reverse(batchId);
+      expect(reversal).toMatchObject({ outcome: "reversed", remaining: 0, rows: [
+        { bookingRef: "V1", outcome: "REVERSED" },
+        { bookingRef: "V2", outcome: "REVERSED" },
+        { bookingRef: "V3", outcome: "KEPT", reasons: ["It has been cancelled", "It has a refund task"] },
+      ] });
+      expect(await prisma.bookingImportBatch.findUniqueOrThrow({ where: { id: batchId }, select: { status: true, reversedByMemberId: true } })).toEqual({ status: "REVERSED", reversedByMemberId: OFFICER });
+      expect([await rowStatus("V1"), await rowStatus("V2"), await rowStatus("V3")]).toEqual(["REVERSED", "REVERSED", "IMPORTED"]);
+      for (const id of [paidId!, freeId!]) {
+        const booking = await prisma.booking.findUniqueOrThrow({ where: { id }, include: { payment: true } });
+        expect(booking.status).toBe("CANCELLED");
+        expect(await prisma.manualRefundTask.count({ where: { bookingId: id } })).toBe(0);
+        expect(await prisma.memberCredit.count({ where: { sourceBookingId: id } })).toBe(0);
+        await expectCensusClean(id);
+      }
+      // The paid booking's cash lines net to zero; its beds are released.
+      const cash = await prisma.bookingLedgerLine.findMany({ where: { bookingId: paidId!, side: "SETTLEMENT" }, select: { amountCents: true } });
+      expect(cash.reduce((sum, row) => sum + row.amountCents, 0)).toBe(0);
+      expect(await heldBeds("2026-08-10", "2026-08-12")).toEqual([0, 0]);
+      expect(await heldBeds("2026-09-01", "2026-09-02")).toEqual([0]);
+      // No email, no Xero operation, no Stripe call.
+      expect(await prisma.emailLog.findMany({ where: { OR: [{ bookingId: { in: [paidId!, freeId!] } }, { to: { in: [PEOPLE.owner.email, PEOPLE.friend.email] } }] }, select: { templateName: true } })).toEqual([]);
+      expect(await prisma.xeroSyncOperation.count({ where: { localId: { in: [paidId!, freeId!] } } })).toBe(0);
+      expect(stripeCall).not.toHaveBeenCalled();
+      // The touched booking is untouched by the reversal.
+      expect(await prisma.manualRefundTask.findFirstOrThrow({ where: { bookingId: touchedId! }, select: { status: true } })).toEqual({ status: "OPEN" });
+
+      // Twice is safe, and the file can no longer be confirmed.
+      expect(await reverse(batchId)).toMatchObject({ outcome: "reversed", rows: [{ bookingRef: "V3", outcome: "KEPT" }] });
+      const { bookings, plan: again } = await plan([
+        line({ ref: "V1", member: PEOPLE.owner, amount: "120" }),
+        line({ ref: "V1", nonMember: { first: "Vic", age: "Adult" } }),
+        line({ ref: "V2", owner: PEOPLE.friend, member: PEOPLE.friend, amount: "0", checkIn: "2026-09-01", checkOut: "2026-09-02" }),
+        line({ ref: "V3", owner: PEOPLE.other, member: PEOPLE.other, amount: "80", checkIn: "2026-09-05", checkOut: "2026-09-06" }),
+      ]);
+      expect(await writer.confirmBookingImport({ lodgeId: LODGE, bookings, digest: again.digest, officerMemberId: OFFICER, today: TODAY, format: FORMAT })).toEqual({ outcome: "reversed", batchId });
+
+      // A reversed Booking Ref is free again for a corrected file.
+      const corrected = await importFile([line({ ref: "V1", member: PEOPLE.owner, amount: "125" })]);
+      expect(corrected.preview.rows[0]).toMatchObject({ outcome: "IMPORT" });
+      importedId(corrected.result, "V1");
+    }, 240_000);
+
+    it("keeps an edited booking, and a booking whose stay has started", async () => {
+      const { result } = await importFile([
+        line({ ref: "W1", member: PEOPLE.owner, amount: "100" }),
+        line({ ref: "W2", owner: PEOPLE.friend, member: PEOPLE.friend, amount: "100", checkIn: "2026-07-01", checkOut: "2026-07-03" }),
+      ]);
+      const batchId = batchOf(result);
+      const editedId = importedId(result, "W1");
+      const { clubTime } = await import("@/lib/club-time/server");
+      await editService.modifyBookingBatch({
+        bookingId: editedId,
+        actor: { id: OFFICER, role: "ADMIN" },
+        input: { addGuests: [{ firstName: "Late", lastName: "Friend", ageTier: "ADULT", isMember: false }] } as never,
+        ipAddress: "127.0.0.1",
+        todayAtClub: (await clubTime()).today(),
+        format: CLUB_FORMAT_TEST,
+        waiveChangeFee: true,
+      });
+      while (pendingXeroWork.length > 0) await Promise.allSettled(pendingXeroWork.splice(0));
+      const reversal = await reverse(batchId);
+      expect(reversal).toMatchObject({ outcome: "reversed", rows: [
+        { bookingRef: "W1", outcome: "KEPT", reasons: ["It has been edited since the import"] },
+        { bookingRef: "W2", outcome: "KEPT", reasons: ["The stay has started"] },
+      ] });
+      expect(await prisma.booking.count({ where: { lodgeId: LODGE, status: "PAID" } })).toBe(2);
+      await expectCensusClean(editedId);
+    }, 120_000);
+
+    it("finishes a reversal that stopped between taking the payment back and the cancel", async () => {
+      const { result } = await importFile([
+        line({ ref: "R1", member: PEOPLE.owner, amount: "60" }),
+        line({ ref: "R2", owner: PEOPLE.friend, member: PEOPLE.friend, amount: "40", checkIn: "2026-09-01", checkOut: "2026-09-02" }),
+      ]);
+      const batchId = batchOf(result);
+      const firstId = importedId(result, "R1");
+      const cancel = await import("@/lib/booking-cancel");
+      const spy = vi.spyOn(cancel, "cancelBooking").mockRejectedValueOnce(new Error("the process stopped"));
+      try {
+        await expect(reverse(batchId)).rejects.toThrow("the process stopped");
+      } finally {
+        spy.mockRestore();
+      }
+      // Step 1 committed: the row is reversed and the booking unpaid, holding no beds.
+      expect(await rowStatus("R1")).toBe("REVERSED");
+      expect(await prisma.booking.findUniqueOrThrow({ where: { id: firstId }, select: { status: true } })).toEqual({ status: "PAYMENT_PENDING" });
+      expect(await heldBeds("2026-08-10", "2026-08-12")).toEqual([0, 0]);
+
+      // Bounded: one booking per call, then the rest.
+      expect(await reverse(batchId, 1)).toMatchObject({ rows: [{ bookingRef: "R1", outcome: "REVERSED" }], remaining: 1 });
+      expect(await reverse(batchId, 1)).toMatchObject({ rows: [{ bookingRef: "R2", outcome: "REVERSED" }], remaining: 0 });
+      expect(await prisma.booking.count({ where: { lodgeId: LODGE, status: { not: "CANCELLED" } } })).toBe(0);
+      for (const id of await lodgeBookingIds()) await expectCensusClean(id);
+    }, 120_000);
+
+    it("refuses a batch still being imported", async () => {
+      const { result } = await importFile([line({ ref: "O1", member: PEOPLE.owner, amount: "60" })]);
+      const batchId = batchOf(result);
+      await prisma.bookingImportBatch.update({ where: { id: batchId }, data: { status: "OPEN" } });
+      expect(await reverse(batchId)).toEqual({ outcome: "not_completed" });
+      expect(await reverse("no-such-batch")).toEqual({ outcome: "not_found" });
+      expect(await rowStatus("O1")).toBe("IMPORTED");
+    }, 120_000);
+
+    it.each([true, false])("races a member cancelling the same booking (reversal first: %s)", async (reversalFirst) => {
+      const { result } = await importFile([line({ ref: "Z1", member: PEOPLE.owner, amount: "200" })]);
+      const batchId = batchOf(result);
+      const bookingId = importedId(result, "Z1");
+      const { cancelBooking } = await import("@/lib/booking-cancel");
+      const memberCancel = () => cancelBooking(bookingId, OWNER, "USER", "127.0.0.1", CLUB_FORMAT_TEST);
+      const capacity = await import("@/lib/capacity");
+      const acquire = capacity.acquireLodgeCapacityLock;
+      const spy = vi.spyOn(capacity, "acquireLodgeCapacityLock").mockImplementation(async (tx, id) => {
+        await acquire(tx, id);
+        if (id === LODGE) await pauseIn("reverse-cancel-capacity", tx);
+      });
+      try {
+        const { held, arrived } = await arrivingWhilePaused(prisma, "reverse-cancel-capacity", reversalFirst ? () => reverse(batchId) : memberCancel, reversalFirst ? memberCancel : () => reverse(batchId));
+        expect(held.status, JSON.stringify(held)).toBe("fulfilled");
+        expect(arrived.status, JSON.stringify(arrived)).toBe("fulfilled");
+      } finally {
+        spy.mockRestore();
+      }
+      expect(await prisma.booking.findUniqueOrThrow({ where: { id: bookingId }, select: { status: true } })).toEqual({ status: "CANCELLED" });
+      const tasks = await prisma.manualRefundTask.count({ where: { bookingId } });
+      if (reversalFirst) {
+        // The payment was taken back first, so the member's cancel found nothing to refund.
+        expect(await rowStatus("Z1")).toBe("REVERSED");
+        expect(tasks).toBe(0);
+      } else {
+        // The member's cancel won: the refund task stands and the booking is kept.
+        expect(await rowStatus("Z1")).toBe("IMPORTED");
+        expect(tasks).toBe(1);
+      }
+      expect(await heldBeds("2026-08-10", "2026-08-12")).toEqual([0, 0]);
+      await expectCensusClean(bookingId);
+    }, 120_000);
+  });
 });

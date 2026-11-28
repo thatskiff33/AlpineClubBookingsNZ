@@ -115,6 +115,10 @@ const GLOBAL_LOCK_SITE_REGISTRY: readonly RegisteredGlobalLockSite[] = [
     invariant: "INV-LOCK-001",
   },
   {
+    site: "reverseOneRow#1", tier: "GLOBAL", invariant: "INV-LOCK-002",
+    reason: "#5005 child B: reversing an imported free stay claims its import row under the keys a manual-payment reversal takes (global, then the lodge capacity key), so a concurrent edit, cancel or second reversal of the booking is excluded while it re-checks \"untouched\". A paid stay reverses through reverseManualBookingPayment's own site; the cancel that follows is cancelBooking's.",
+  },
+  {
     site: "writeOneBooking#1", tier: "GLOBAL", invariant: "INV-LOCK-002",
     reason: "#5005: an imported booking is created PAID by the manual settlement body in one transaction, so it joins the settle/cancel cohort, then takes the lodge capacity key and the person-night keys and re-runs every import check under them. One booking per transaction; nothing leaves the app.",
   },
