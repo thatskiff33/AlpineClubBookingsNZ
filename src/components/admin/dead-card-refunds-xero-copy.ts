@@ -20,7 +20,7 @@ export function xeroRefundNotePromise(
   cardNoteCovers = "",
 ): string {
   if (xeroRefundNote === "now") {
-    return `A Xero refund credit note for the amount, worded "${bankNoteWording}", is queued when you close it.`;
+    return `Closing this queues a Xero refund credit note for the amount, worded "${bankNoteWording}". If an invoice already records the payment, the note credits that invoice.`;
   }
   // #4104: a refund Stripe failed later - its card note, raised while it counted, is in Xero.
   // Delta review (D4): said for a close of any amount, in full or in part.
@@ -42,10 +42,21 @@ export function xeroRefundNotePromise(
     );
     return `Closing this does not send the late card charge's Xero record. ${instruction}`;
   }
+  // #4381 (owner, 28 Nov 2026): the close keeps its waiting key, so a refund
+  // recorded by hand would be credited a second time when the note follows.
+  if (xeroRefundNote === "after-credit-release") return CREDIT_RELEASE_WAIT_WORDS;
   // Round 7 (UX): an invoice may still be on its way to Xero, so this never
   // says there is none.
   return "No Xero refund credit note is queued: the app has no Xero invoice it can credit for this money yet. Check Xero, and record the refund there by hand if it needs one.";
 }
+
+/**
+ * #4381: the credit-release sweep holds the late card charge. Its waiting note
+ * is queued once that held credit is released, so the treasurer must not
+ * record the refund by hand.
+ */
+const CREDIT_RELEASE_WAIT_WORDS =
+  "No Xero refund credit note yet: this late card charge is held as released credit. One is queued automatically once that credit is released. Do not record this refund by hand in Xero, or it would be credited twice.";
 
 /** What the message after the close says it queued in Xero (`CardRefundPaidAnotherWayResult.xeroQueued`). */
 export function xeroQueuedMessage(xeroQueued: PaidAnotherWayXeroQueued | undefined, bankNoteWording: string): string {
@@ -63,6 +74,7 @@ export function xeroQueuedMessage(xeroQueued: PaidAnotherWayXeroQueued | undefin
       `its refund credit note, worded "${bankNoteWording}", follows`,
     );
   }
+  if (xeroQueued === "refund-note-after-credit-release") return CREDIT_RELEASE_WAIT_WORDS;
   if (xeroQueued === "stripe-reversal-and-bank-note") {
     return `An invoice recording the failed card refund's money back in the Stripe account, for the amount its card note covered, is queued, and a Xero refund credit note worded "${bankNoteWording}" is queued for the full amount paid back.`;
   }

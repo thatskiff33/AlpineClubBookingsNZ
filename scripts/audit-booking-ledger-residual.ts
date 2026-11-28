@@ -8,7 +8,9 @@
  *
  * A residual of **zero** is the books balancing. A **positive** residual is the
  * #3340 class - money the price says is owed that nothing is asking for, which is
- * what a delta-sized ask produced when it superseded an unpaid one. A
+ * what a delta-sized ask produced when it superseded an unpaid one, unless it
+ * is on an Internet Banking booking whose Xero invoice is linked or still going
+ * out: that invoice asks for it, so it is listed apart (#5288). A
  * **negative** residual is the club holding more than the price, which is normal
  * after a policy-tiered reduction (`INV-MOD-011` keeps a slice) or a reduction
  * settled as account credit.
@@ -19,7 +21,8 @@
  * a person decides.
  *
  * IT READS TYPED, NOT RAW (`INV-OPS-001`, "lock raw, read typed"). The arithmetic
- * is `bookingLedgerResidualCents`, the same function the CI census guard calls, so
+ * is `bookingLedgerResidualCents`, the same function the CI census guard calls,
+ * read through `loadBookingLedgerCensus` (`src/lib/booking-ledger-census.ts`), so
  * the operator's answer and the guard's answer are one implementation rather than
  * two. `--sql` prints the EQUIVALENT statement for an operator who would rather
  * run it against a read-only replica; that statement is not written by hand
@@ -34,14 +37,8 @@
 import "dotenv/config";
 import process from "node:process";
 
-import {
-  BOOKING_LEDGER_CENSUS_CAPTURED_PAYMENT_STATUSES,
-  BOOKING_LEDGER_CENSUS_EXCLUDED_BOOKING_STATUSES,
-  bookingLedgerCensusSql,
-  bookingLedgerResidualCents,
-  bookingLedgerVerdict,
-  type BookingLedgerIdentityRow,
-} from "../src/lib/additional-payment-ask";
+import { bookingLedgerCensusSql } from "../src/lib/additional-payment-ask";
+import { loadBookingLedgerCensus } from "../src/lib/booking-ledger-census";
 import { prisma } from "../src/lib/prisma";
 import { getClubFormat } from "../src/lib/club-format-settings";
 import { formatCents } from "../src/lib/utils";
@@ -61,64 +58,6 @@ Options:
 `);
 }
 
-interface CensusRow extends BookingLedgerIdentityRow {
-  bookingId: string;
-  bookingStatus: string;
-  residualCents: number;
-}
-
-async function loadCensus(): Promise<CensusRow[]> {
-  const bookings = await prisma.booking.findMany({
-    where: {
-      deletedAt: null,
-      status: {
-        notIn: [...BOOKING_LEDGER_CENSUS_EXCLUDED_BOOKING_STATUSES],
-      },
-      payment: {
-        status: { in: [...BOOKING_LEDGER_CENSUS_CAPTURED_PAYMENT_STATUSES] },
-      },
-    },
-    select: {
-      id: true,
-      status: true,
-      finalPriceCents: true,
-      payment: {
-        select: {
-          changeFeeCents: true,
-          amountCents: true,
-          refundedAmountCents: true,
-          creditAppliedCents: true,
-          additionalAmountCents: true,
-          additionalPaymentStatus: true,
-        },
-      },
-    },
-  });
-
-  const rows: CensusRow[] = [];
-  for (const booking of bookings) {
-    if (!booking.payment) continue;
-    const row: CensusRow = {
-      bookingId: booking.id,
-      bookingStatus: booking.status,
-      finalPriceCents: booking.finalPriceCents,
-      changeFeeCents: booking.payment.changeFeeCents,
-      amountCents: booking.payment.amountCents,
-      refundedAmountCents: booking.payment.refundedAmountCents,
-      creditAppliedCents: booking.payment.creditAppliedCents,
-      additionalAmountCents: booking.payment.additionalAmountCents,
-      additionalPaymentStatus: booking.payment.additionalPaymentStatus,
-      residualCents: 0,
-    };
-    row.residualCents = bookingLedgerResidualCents(row);
-    if (row.residualCents !== 0) rows.push(row);
-  }
-  return rows.sort(
-    (a, b) =>
-      b.residualCents - a.residualCents || a.bookingId.localeCompare(b.bookingId),
-  );
-}
-
 async function main() {
   const argv = process.argv.slice(2);
   if (argv.includes("--help") || argv.includes("-h")) {
@@ -132,21 +71,20 @@ async function main() {
 
   // The club's format (#3565), read once before the census query.
   const format = await getClubFormat();
-  const rows = await loadCensus();
-  const unasked = rows.filter(
-    (row) => bookingLedgerVerdict(row.residualCents) === "unasked",
-  );
-  const retained = rows.filter(
-    (row) => bookingLedgerVerdict(row.residualCents) === "retained",
-  );
+  const rows = await loadBookingLedgerCensus();
+  const unasked = rows.filter((row) => row.verdict === "unasked");
+  // #5288: owed on an Internet Banking invoice that is linked or still going out.
+  const billedInXero = rows.filter((row) => row.verdict === "billedInXero");
+  const retained = rows.filter((row) => row.verdict === "retained");
 
   console.log("Booking ledger census (INV-PAY-047) - read only\n");
   console.log(
-    `${unasked.length} booking(s) are owed money nobody is asking for; ${retained.length} hold more than the price (normally a policy-retained or credit-settled reduction).\n`,
+    `${unasked.length} booking(s) are owed money nobody is asking for; ${billedInXero.length} are owed money billed on a Xero invoice; ${retained.length} hold more than the price (normally a policy-retained or credit-settled reduction).\n`,
   );
 
   for (const [title, group] of [
     ["Money nobody is asking for", unasked],
+    ["Billed on a Xero invoice; check Xero before invoicing by hand", billedInXero],
     ["Club holds more than the price", retained],
   ] as const) {
     if (group.length === 0) continue;
@@ -164,7 +102,7 @@ async function main() {
   }
 
   if (argv.includes("--json")) {
-    console.log(JSON.stringify({ unasked, retained }, null, 2));
+    console.log(JSON.stringify({ unasked, billedInXero, retained }, null, 2));
   }
 }
 

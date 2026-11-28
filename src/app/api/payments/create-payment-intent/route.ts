@@ -12,6 +12,7 @@ import { getDefaultLodgeId } from "@/lib/lodges";
 import { prisma } from "@/lib/prisma";
 import { createPaymentIntent, findOrCreateCustomer, getPaymentIntent } from "@/lib/stripe";
 import { markBookingPaymentSucceeded } from "@/lib/payment-reconciliation";
+import { queueInvoiceAndDeliverPaidConfirmation } from "@/lib/paid-booking-confirmation-after-commit";
 import { CreatePaymentIntentSchema } from "@/types/payments";
 import { auth } from "@/lib/auth";
 import { requireActiveSessionUser } from "@/lib/session-guards";
@@ -602,16 +603,17 @@ export async function POST(request: NextRequest) {
 
         if (!refundedHistory && !supersededCapture) {
           receivedPaymentIntentId = existingIntent.id;
+          let reconciliation: Awaited<ReturnType<typeof markBookingPaymentSucceeded>> | null = null; // #5433: null, nothing settled here
           if (booking.payment.status !== "SUCCEEDED") {
-            const reconciliation = await markBookingPaymentSucceeded({
+            reconciliation = await markBookingPaymentSucceeded({
       capturedAt: receiptCaptureTime(existingIntent),
               format,
               bookingId: booking.id,
               paymentIntentId: existingIntent.id,
               amountCents: existingIntent.amount,
               paymentMethodId: getStripePaymentMethodId(existingIntent),
+              owesPaidConfirmation: true, // #5433: the missed webhook, arriving later, finds the booking paid and sends nothing
             });
-
             if (
               reconciliation.outcome === "cancelled_refunded" ||
               reconciliation.outcome === "cancelled_refund_failed"
@@ -633,10 +635,8 @@ export async function POST(request: NextRequest) {
             }
           }
 
-          await queueXeroInvoiceForPaidBooking({
-            bookingId: booking.id,
-            createdByMemberId: session.user.id,
-          });
+          await queueInvoiceAndDeliverPaidConfirmation(reconciliation, { bookingId: booking.id, format, job: "create-payment-intent", // #5433: invoice, then confirmation
+            queueInvoice: () => queueXeroInvoiceForPaidBooking({ bookingId: booking.id, createdByMemberId: session.user.id }) });
 
           return NextResponse.json({
             alreadyPaid: true,

@@ -8,9 +8,11 @@
  * (`upsertXeroObjectLink`). Turning one off keeps the stored metadata and
  * sets the link inactive.
  *
- * A voided reading turns nothing off: the recount already leaves a voided
- * note out. A live reading that a stored snapshot of the note refuses — a
- * newer one, or a void — turns nothing off either. And a link whose own
+ * A voided reading of a modification note turns off every link it still has
+ * (#5289 A), deciding each bank-transfer payment's total as a removal does; a
+ * voided reading of any other note turns nothing off, since the recount
+ * already leaves a voided note out. A live reading that a stored snapshot of
+ * the note refuses — a newer one, or a void — turns nothing off either. And a link whose own
  * stamp is newer than this reading is left as the newer write recorded it,
  * under that link's row lock. That covers the write for an invoice this
  * reading still lists, so an older sync cannot turn the removed allocation
@@ -23,7 +25,6 @@ import { getClubFormat } from "@/lib/club-format-settings";
 import { lockPaymentForRefundedTotal, PAYMENT_ROW_WAIT_TRANSACTION_OPTIONS } from "@/lib/payment-transactions";
 import { type XeroObjectLinkInput, upsertXeroObjectLink } from "@/lib/xero-sync";
 import { asRecord, readString } from "@/lib/xero-json";
-import { NOTE_ALLOCATION_ROLE, ROLELESS_ALLOCATION_ROLE } from "@/lib/xero-clearing-allocations";
 import {
   type XeroCreditNoteSnapshotSource,
   isIncludedRefundCreditNoteStatus,
@@ -34,12 +35,11 @@ import {
 } from "@/lib/xero-refund-note-status";
 import { type BankTransferFloorAlert, sendBankTransferFloorAlert } from "./credit-note-bank-transfer-floor";
 import { decideLinkedRefundedTotalCents } from "./linked-refunded-total";
+import { bankTransferPaymentIdsOfInvoices, bankTransferPaymentsOfNoteAllocations } from "./bank-transfer-payment-of-invoice";
 import { decideXeroRefundedColumns } from "./xero-refunded-columns";
 
-const RETIRED_ALLOCATION_ROLES = [NOTE_ALLOCATION_ROLE, ROLELESS_ALLOCATION_ROLE] as const;
-
 /** #4449: the bank-transfer payment an allocation write decides, its invoice, and the note the alert names. */
-type DecidedPayment = { id: string; invoiceId: string; creditNoteId: string | null };
+export type DecidedPayment = { id: string; invoiceId: string; creditNoteId: string | null };
 
 /** The snapshot time an allocation link records, beside the amount it applied. */
 export function creditNoteAllocationSnapshotStamp(
@@ -60,10 +60,6 @@ export async function readStoredCreditNoteSnapshots(creditNoteId: string): Promi
 
 function readingMayRetireAllocations(readingMetadata: unknown, storedSnapshots: readonly unknown[]): boolean {
   return storedSnapshots.every((metadata) => judgeRefundNoteWrite(readingMetadata, metadata) === "apply");
-}
-
-function isLiveCreditNoteStatus(status: unknown): boolean {
-  return typeof status === "string" && isIncludedRefundCreditNoteStatus(status);
 }
 
 /**
@@ -155,9 +151,12 @@ async function writeLockedAllocation(tx: Prisma.TransactionClient, link: XeroObj
  * every writer from Xero takes (`decideXeroRefundedColumns`: clamp, the
  * bank-transfer floor of `INV-ADDPAY-021`, the status rule).
  *
- * Re-checked under the lock: the payment is still a bank transfer and still
- * the one payment whose own invoice id is the allocated invoice; otherwise it
- * decides nothing and leaves the payment to the recount after it.
+ * Re-checked under the lock: the payment is still the one bank-transfer
+ * payment the allocated invoice names, by the settle's own rule
+ * (`bankTransferPaymentIdsOfInvoices`, #5289 C: its own invoice id or an active
+ * invoice link); otherwise it decides nothing and leaves the payment to the
+ * recount after it. It decides with the payment's one invoice
+ * (`decisionInvoiceIdsOf`), the one the settle decides it with.
  *
  * Written through a claim on the row as re-read, when the total or status
  * moves, and also whenever this transaction wrote the link: `updatedAt` then
@@ -167,8 +166,10 @@ async function writeLockedAllocation(tx: Prisma.TransactionClient, link: XeroObj
  * The floor's alert is returned whenever the total is held at the floor,
  * moved or not; which writer sends it is the sync's choice
  * (`withHeldFloorAlerts`), so each payment is alerted once per sync attempt.
+ * #5289 B: the outbound completion of a note's own allocation decides through
+ * this too, under the Payment row it took first (`completeUnderPaymentRows`).
  */
-async function decideBankTransferRefundedTotal(
+export async function decideBankTransferRefundedTotal(
   tx: Prisma.TransactionClient,
   target: DecidedPayment,
   linkWritten: boolean,
@@ -177,12 +178,13 @@ async function decideBankTransferRefundedTotal(
     where: { id: target.id },
     select: { id: true, bookingId: true, amountCents: true, refundedAmountCents: true, status: true, source: true, xeroInvoiceId: true, updatedAt: true, booking: { select: { organiserSettled: true } } },
   });
-  if (!payment || payment.source !== PaymentSource.INTERNET_BANKING || payment.xeroInvoiceId !== target.invoiceId) return null;
-  if ((await tx.payment.count({ where: { xeroInvoiceId: target.invoiceId } })) !== 1) return null;
+  if (!payment || payment.source !== PaymentSource.INTERNET_BANKING) return null;
+  if ((await bankTransferPaymentIdsOfInvoices([target.invoiceId], tx)).get(target.invoiceId) !== payment.id) return null;
   const linked = await decideLinkedRefundedTotalCents(tx, [payment]);
   const decided = await decideXeroRefundedColumns(tx, {
     payment,
-    decidedCents: linked.get(payment.id) ?? 0,
+    decidedCents: linked.get(payment.id)?.cents ?? 0,
+    correctionCents: linked.get(payment.id)?.correctionCents ?? 0,
     creditNoteId: target.creditNoteId,
   });
   const floorAlert = decided.floorAlert;
@@ -207,36 +209,22 @@ async function decideBankTransferRefundedTotal(
 
 /**
  * #4449 (`INV-PAY-126`): for a modification note, the payment each allocated
- * invoice names: the one payment whose own invoice id it is, when that
- * payment is a bank transfer. An invoice matched to several payments names
- * none, as the repair after it skips one (`resolvePaymentIdsByInvoiceTargets`),
- * and a payment found only by its link is decided by that repair alone.
- * Narrower than that resolution on purpose, not a copy of it: the shared
- * decision finds any payment's invoice allocations by the payment's own
- * invoice id (#4444), but only a bank transfer's refunded total is decided
- * here - a card payment's is Stripe-led, decided by the recount alone under
- * its raise-only floor (#1353); for every payment this names, the resolution
- * names the same.
- * Read before the lock; `decideBankTransferRefundedTotal` re-checks it under it.
+ * invoice names: the one bank-transfer payment the settle matches it to
+ * (#5289 C, `bankTransferPaymentIdsOfInvoices`: its own invoice id or an active
+ * invoice link, exactly one). Only a bank transfer's total is decided here:
+ * a card payment's is Stripe-led, decided by the recount alone under its
+ * raise-only floor (#1353), though the shared decision finds its invoice
+ * allocations too (#4444). Read before the lock;
+ * `decideBankTransferRefundedTotal` re-checks it under it.
  */
 async function bankTransferPaymentIdsByInvoiceId(
   links: ReadonlyArray<{ metadata?: unknown }>,
   isModificationNote: boolean,
 ): Promise<Map<string, string>> {
-  const byInvoiceId = new Map<string, string>();
-  const invoiceIds = [
-    ...new Set(links.map((link) => readString(asRecord(link.metadata)?.invoiceId)).filter((id): id is string => Boolean(id))),
-  ];
-  if (!isModificationNote || invoiceIds.length === 0) return byInvoiceId;
-  const payments = await prisma.payment.findMany({
-    where: { xeroInvoiceId: { in: invoiceIds } },
-    select: { id: true, xeroInvoiceId: true, source: true },
-  });
-  for (const invoiceId of invoiceIds) {
-    const [only, ...more] = payments.filter((payment) => payment.xeroInvoiceId === invoiceId);
-    if (only && more.length === 0 && only.source === PaymentSource.INTERNET_BANKING) byInvoiceId.set(invoiceId, only.id);
-  }
-  return byInvoiceId;
+  if (!isModificationNote) return new Map();
+  return bankTransferPaymentIdsOfInvoices(
+    links.map((link) => readString(asRecord(link.metadata)?.invoiceId)).filter((id): id is string => Boolean(id)),
+  );
 }
 
 /**
@@ -252,8 +240,8 @@ function decidedPaymentOf(link: { metadata?: unknown }, byInvoiceId: ReadonlyMap
   return id && invoiceId ? { payment: { id, invoiceId, creditNoteId: readString(metadata?.creditNoteId) ?? null } } : {};
 }
 
-/** Floor alerts go out after every write's commit, outside any transaction. */
-async function sendFloorAlerts(alerts: readonly BankTransferFloorAlert[]): Promise<void> {
+/** Floor alerts go out after every write's commit, outside any transaction (#5289 B: the outbound completion's too). */
+export async function sendFloorAlerts(alerts: readonly BankTransferFloorAlert[]): Promise<void> {
   if (alerts.length === 0) return;
   const format = await getClubFormat();
   for (const alert of alerts) await sendBankTransferFloorAlert(alert, format);
@@ -278,10 +266,12 @@ export type HeldFloorAlerts = { alerts: BankTransferFloorAlert[]; recountedPayme
  * a retry cannot see again because its link is off - and the recount's own
  * alerts come with the retry. A retried attempt alerts a listed write's
  * payment again, as the recount's own alerts on a retry do. The send never
- * masks `run`'s error.
+ * masks `run`'s error. #5251: `alreadyHeld` are the alerts the note's status
+ * writes returned before `run` (`writeCreditNoteLinks`); a payment several
+ * writes held is alerted once, with the last of them.
  */
-export async function withHeldFloorAlerts<T>(run: (held: HeldFloorAlerts) => Promise<T>): Promise<T> {
-  const held: HeldFloorAlerts = { alerts: [], recountedPaymentIds: new Set() };
+export async function withHeldFloorAlerts<T>(run: (held: HeldFloorAlerts) => Promise<T>, alreadyHeld: BankTransferFloorAlert[] = []): Promise<T> {
+  const held: HeldFloorAlerts = { alerts: alreadyHeld, recountedPaymentIds: new Set() };
   try {
     return await run(held);
   } finally {
@@ -292,7 +282,8 @@ export async function withHeldFloorAlerts<T>(run: (held: HeldFloorAlerts) => Pro
 /** The held alerts for payments the recount did not decide; a failure to send is logged, never thrown. */
 async function sendFloorAlertsNotRecounted(alerts: readonly BankTransferFloorAlert[], recountedPaymentIds: ReadonlySet<string>): Promise<void> {
   try {
-    await sendFloorAlerts(alerts.filter((alert) => !recountedPaymentIds.has(alert.paymentId)));
+    const lastByPaymentId = new Map(alerts.filter((alert) => !recountedPaymentIds.has(alert.paymentId)).map((alert) => [alert.paymentId, alert] as const));
+    await sendFloorAlerts([...lastByPaymentId.values()]);
   } catch (err) {
     logger.error({ err, paymentIds: alerts.map((alert) => alert.paymentId) }, "Failed to send held bank-transfer floor alerts (#4449)");
   }
@@ -323,9 +314,40 @@ export async function writeCurrentCreditNoteAllocations(
   await sendFloorAlerts(floorAlerts);
 }
 
+/** What a removal pass did: the links it turned off, and (#5289 A) the payments whose totals it decided. */
+export type RetiredAllocations = { retired: number; decidedPaymentIds: string[] };
+
+/**
+ * The payments a note's sync hands its recount by id
+ * (`repairRefundedPaymentBusinessState`): those the note links, those whose
+ * mirror its void turned off (#4291), and, #5289 A, for a cancelled reading
+ * the payments its removal decided, which nothing else finds once their
+ * links are off. Each once.
+ */
+export function directRecountPaymentIds(input: {
+  linkedPaymentIds: readonly string[];
+  voidedMirrorPaymentIds: readonly string[];
+  status: unknown;
+  removedPaymentIds: readonly string[];
+}): string[] {
+  const removed = isIncludedRefundCreditNoteStatus(input.status) ? [] : input.removedPaymentIds;
+  return [...new Set([...input.linkedPaymentIds, ...input.voidedMirrorPaymentIds, ...removed])];
+}
+
 /**
  * Turn off this note's active allocation links whose invoice is not in
- * `listedInvoiceIds`. Returns how many were turned off.
+ * `listedInvoiceIds`.
+ *
+ * #5289 A (owner decision D1): a cancelled (VOIDED/DELETED) reading of a
+ * modification note lists nothing, so every link still active goes off, each
+ * through the same write as a live removal (`writeCurrentCreditNoteAllocation`:
+ * the Payment row, then the link, then the whole total decided under the row),
+ * and the payments it decided are returned for the sync's recount to decide
+ * too. The links are read by `active: true`, so a pass that stopped after the
+ * first of two finishes the second on the retry. A cancelled reading of any
+ * other note turns nothing off: the recount already leaves a voided note out.
+ * Nor does a reading that carries no status: it says neither which invoices
+ * the note still credits nor that it was cancelled.
  */
 export async function retireUnlistedCreditNoteAllocations(input: {
   creditNoteId: string;
@@ -337,43 +359,28 @@ export async function retireUnlistedCreditNoteAllocations(input: {
   readingMetadata: unknown;
   priorSnapshots: readonly unknown[];
   listedInvoiceIds: ReadonlySet<string>;
-}): Promise<number> {
-  if (!isLiveCreditNoteStatus(input.status)) return 0;
+}): Promise<RetiredAllocations> {
+  if (typeof input.status !== "string") return { retired: 0, decidedPaymentIds: [] };
+  const cancelled = !isIncludedRefundCreditNoteStatus(input.status);
+  if (cancelled && !input.isModificationNote) return { retired: 0, decidedPaymentIds: [] };
   const currentSnapshots = await readStoredCreditNoteSnapshots(input.creditNoteId);
-  if (!readingMayRetireAllocations(input.readingMetadata, [...input.priorSnapshots, ...currentSnapshots])) return 0;
+  if (!readingMayRetireAllocations(input.readingMetadata, [...input.priorSnapshots, ...currentSnapshots])) {
+    return { retired: 0, decidedPaymentIds: [] };
+  }
 
-  const links = await prisma.xeroObjectLink.findMany({
-    where: {
-      xeroObjectType: "ALLOCATION",
-      active: true,
-      role: { in: [...RETIRED_ALLOCATION_ROLES] },
-      metadata: { path: ["creditNoteId"], equals: input.creditNoteId },
-    },
-    // One order, so a removal that fails part-way has turned off a known prefix.
-    orderBy: [{ xeroObjectId: "asc" }, { localModel: "asc" }, { localId: "asc" }, { role: "asc" }],
-    select: {
-      localModel: true,
-      localId: true,
-      xeroObjectType: true,
-      xeroObjectId: true,
-      xeroObjectNumber: true,
-      xeroObjectUrl: true,
-      role: true,
-      metadata: true,
-    },
-  });
+  // One order, so a removal that fails part-way has turned off a known prefix. #4449, #5289 C: each
+  // link's payment is the one the settle finds for its invoice, its Payment row taken first, as the
+  // write that turned the link on took it.
+  const allocations = await bankTransferPaymentsOfNoteAllocations(input.creditNoteId);
+  const unlisted = cancelled ? allocations : allocations.filter((allocation) => !input.listedInvoiceIds.has(allocation.invoiceId));
 
   const readingAt = readRefundNoteSnapshotAt(input.readingMetadata);
-  const unlisted = links.filter((link) => {
-    const metadata = asRecord(link.metadata);
-    const invoiceId = readString(metadata?.invoiceId);
-    return readString(metadata?.creditNoteId) === input.creditNoteId && Boolean(invoiceId) && !input.listedInvoiceIds.has(invoiceId!);
-  });
-  // #4449: the payment's Payment row first, as the write that turned the link on took it.
-  const byInvoiceId = await bankTransferPaymentIdsByInvoiceId(unlisted, input.isModificationNote);
   let retired = 0;
+  const decidedPaymentIds = new Set<string>();
   const floorAlerts: BankTransferFloorAlert[] = [];
-  for (const link of unlisted) {
+  for (const { link, invoiceId, paymentId } of unlisted) {
+    // A removal's own write carries only its snapshot stamp, so its alert is told the note here.
+    const payment = input.isModificationNote && paymentId ? { id: paymentId, invoiceId, creditNoteId: input.creditNoteId } : undefined;
     const { written: turnedOff, floorAlert } = await writeCurrentCreditNoteAllocation(
       {
         ...link,
@@ -381,11 +388,12 @@ export async function retireUnlistedCreditNoteAllocations(input: {
         metadata: { [REFUND_NOTE_SNAPSHOT_AT_KEY]: readingAt?.toISOString() ?? null },
         mergeMetadata: true,
       },
-      decidedPaymentOf(link, byInvoiceId),
+      payment ? { payment } : {},
     );
     if (turnedOff) retired += 1;
+    if (payment) decidedPaymentIds.add(payment.id);
     holdOrCollect(floorAlert, input.heldFloorAlerts, floorAlerts);
   }
   await sendFloorAlerts(floorAlerts);
-  return retired;
+  return { retired, decidedPaymentIds: [...decidedPaymentIds] };
 }

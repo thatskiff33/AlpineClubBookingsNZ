@@ -30,15 +30,10 @@ import { readPrimaryInvoiceFeeAtLink } from "@/lib/xero-primary-invoice-gap-anch
 import { readCaptureRecorder, type RecorderStore } from "@/lib/additional-capture-recorder";
 import { asRecord } from "@/lib/xero-json";
 import type { PaymentStatus } from "@prisma/client";
-import { readKeptCaptureRecordedElsewhere, readKeptChangeCaptureEvidence, type KeptLateCaptureXeroPlan } from "@/lib/late-capture-kept-xero";
+import type { KeptLateCaptureXeroPlan } from "@/lib/late-capture-kept-xero";
+import type { KeptChangeCaptureRepairEvidence } from "./xero-booking-repair-kept-change-evidence";
 import type { AdminAlertSendOutcome } from "@/lib/email/admin-alert-send-result";
-import {
-  decideLateCapture,
-  keptChangeCaptureRoute,
-  keptLateCaptureInvoiceAsked,
-  type KeptChangeCaptureEvidence,
-  type KeptChangeCaptureRoute,
-} from "@/lib/late-capture-kept-xero-rules";
+import { decideLateCapture, keptLateCaptureInvoiceAsked } from "@/lib/late-capture-kept-xero-rules";
 import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
 import {
   xeroOperationSelect,
@@ -350,93 +345,6 @@ export async function applyAdditionalCaptureReceiptAction(
  * (`readCaptureRecorder`). A capture no change can be read from, or on a
  * booking not paid by card, is named for an officer and never applied.
  */
-/** What the repair pass knows about one kept change capture. */
-export type KeptChangeCaptureRepairEvidence = {
-  evidence: KeptChangeCaptureEvidence;
-  route: KeptChangeCaptureRoute;
-  /** The capture's receipt rows (`ADDITIONAL_CAPTURE_RECEIPT`), newest first. */
-  receiptOperations: XeroOperationRecord[];
-  /** The receipt's Xero payment is linked. */
-  receiptLinked: boolean;
-  /** Active links for checking each planned leg, rather than treating one as the whole receipt. */
-  receiptLinks: readonly { metadata: unknown }[];
-  /** Another writer records the capture (`readKeptCaptureRecordedElsewhere`), read only where no receipt row exists. */
-  recordedElsewhere: boolean;
-  /** Review MF2: the cents of it another writer records, so the dry run lists what the apply records. */
-  alreadyRecordedCents: number;
-  /** Review D-F3: the payment holds its primary invoice's id, so the evidence was read in full. */
-  primaryInvoiceIdSynced: boolean;
-};
-
-/**
- * Read-only: the evidence for every kept change capture on a cancelled booking,
- * by booking and then intent. Review D-F3: where the payment does not hold its
- * primary invoice's id, only what can be read without it.
- */
-export async function loadKeptChangeCaptureEvidence(
-  store: RecorderStore & Pick<RepairDependencies["prisma"], "xeroObjectLink">,
-  bookings: readonly LoadBooking[],
-  keptIntentsByBookingId: ReadonlyMap<string, ReadonlyMap<string, unknown>>,
-): Promise<Map<string, Map<string, KeptChangeCaptureRepairEvidence>>> {
-  const byBooking = new Map<string, Map<string, KeptChangeCaptureRepairEvidence>>();
-  for (const booking of bookings) {
-    const primaryInvoiceId = booking.payment?.xeroInvoiceId ?? null;
-    const kept = keptIntentsByBookingId.get(booking.id);
-    if (booking.status !== "CANCELLED" || !booking.payment || !kept) continue;
-    const captures = booking.payment.transactions.filter(
-      (row): row is typeof row & { id: string; stripePaymentIntentId: string } =>
-        row.kind === "ADDITIONAL" && row.id !== null && row.stripePaymentIntentId !== null && kept.has(row.stripePaymentIntentId),
-    );
-    const found = new Map<string, KeptChangeCaptureRepairEvidence>();
-    for (const capture of captures) {
-      const changeId = captureChangeId({ bookingModificationId: capture.bookingModificationId ?? null, reason: capture.reason ?? null });
-      const [evidence, receiptOperations, links] = await Promise.all([
-        readKeptChangeCaptureEvidence(store, { paymentIntentId: capture.stripePaymentIntentId, changeId, bookingId: booking.id, primaryInvoiceId }),
-        store.xeroSyncOperation.findMany({
-          where: {
-            localModel: "PaymentTransaction",
-            localId: capture.id,
-            queueType: XERO_OUTBOX_ADDITIONAL_CAPTURE_RECEIPT_TYPE,
-          },
-          select: xeroOperationSelect,
-          orderBy: [{ updatedAt: "desc" }, { createdAt: "desc" }],
-        }) as Promise<XeroOperationRecord[]>,
-        store.xeroObjectLink.findMany({
-          where: {
-            localModel: "PaymentTransaction",
-            localId: capture.id,
-            role: ADDITIONAL_CAPTURE_PAYMENT_ROLE,
-            active: true,
-          },
-          select: { metadata: true },
-        }),
-      ]);
-      const hasReceiptRow = receiptOperations.some((operation) => operation.status !== "CANCELLED");
-      const elsewhere =
-        hasReceiptRow || links.length > 0
-          ? 0
-          : await readKeptCaptureRecordedElsewhere(store, {
-              bookingId: booking.id,
-              primaryInvoiceId,
-              paymentIntentId: capture.stripePaymentIntentId,
-              changeId,
-            });
-      found.set(capture.stripePaymentIntentId, {
-        evidence,
-        route: keptChangeCaptureRoute(evidence),
-        receiptOperations,
-        receiptLinked: links.length > 0,
-        receiptLinks: links,
-        recordedElsewhere: elsewhere === "all",
-        alreadyRecordedCents: elsewhere === "all" ? 0 : elsewhere,
-        primaryInvoiceIdSynced: primaryInvoiceId !== null,
-      });
-    }
-    if (found.size > 0) byBooking.set(booking.id, found);
-  }
-  return byBooking;
-}
-
 /** The tool cannot acknowledge a finding, so one an officer answers by hand in Xero comes back (review D-F1). */
 const RAISED_AGAIN = "This tool cannot mark it done, so this finding is raised again on every run after you record it.";
 
@@ -446,6 +354,10 @@ const NOT_A_CARD_BOOKING_SUMMARY = `A late card payment a treasurer kept on this
 
 const PRIMARY_INVOICE_ID_NOT_SYNCED_SUMMARY =
   "A late card payment a treasurer kept for a booking change on this cancelled booking: this tool cannot tell yet whether Xero records it until the booking's primary invoice id is synced, because the booking's payment does not hold that invoice's id although the invoice is linked. Sync it first (this tool's SYNC_PAYMENT_PRIMARY_INVOICE_FIELD action); a later pass then lists the payment with the document that will record it, or nothing if one already does, and --apply records it.";
+
+/** #4381: a finding's words for a capture whose approved refund was closed paid another way, rather than kept. */
+const closeWords = (summary: string) => summary.replace("a treasurer kept", "whose approved refund was paid another way")
+  .replace("A treasurer kept a late card payment", "A treasurer paid back, another way, a late card payment").replace(/\b(the|a) kept card payment/, "$1 card payment whose refund was paid another way").replace("The keep's own", "The close's own");
 
 const KEPT_REFUSED_SUMMARY =
   "A late card payment a treasurer kept on this cancelled booking could not be recorded against the Xero invoice that bills it. Its Xero operation says why; record it by hand in Xero and mark the operation resolved, or fix the cause and retry it.";
@@ -469,16 +381,19 @@ export function addKeptChangeCaptureFinding({
   booking: { id: string };
   payment: { id: string; source: string | null; xeroInvoiceId: string | null };
   transaction: { stripePaymentIntentId: string | null; status: PaymentStatus; amountCents: number };
-  kept: { taskId: string };
+  kept: { taskId: string; paidAnotherWay?: true }; // #4381: an approved capture whose card refund was closed paid another way
   found: KeptChangeCaptureRepairEvidence | undefined;
 }): void {
   const paymentIntentId = transaction.stripePaymentIntentId;
-  if (!paymentIntentId || found?.route === "change-invoice") return;
+  // The task's live kept-capture invoice is its record (the keep's reading finds it first); its own findings answer it.
+  if (!paymentIntentId || found?.liveKeptInvoice || found?.route === "change-invoice") return;
+  const words = kept.paidAnotherWay ? closeWords : (summary: string) => summary;
   const { recordCents } = decideLateCapture({
-    taskStatus: "DISMISSED",
+    taskStatus: kept.paidAnotherWay ? "COMPLETED" : "DISMISSED",
     bookingStatus: "CANCELLED",
     superseded: false,
     capture: transaction,
+    refundClosedPaidAnotherWay: kept.paidAnotherWay,
   });
   if (recordCents === 0) return;
   // Review MF2: the figure the apply records - the kept invoice is sized net of
@@ -488,7 +403,7 @@ export function addKeptChangeCaptureFinding({
     paymentId: payment.id,
     manualRefundTaskId: kept.taskId,
     paymentIntentId,
-    bookingModificationId: found?.evidence.changeId ?? null,
+    bookingModificationId: found?.changeId ?? null,
     capturedCents: recordCents,
     alreadyRecordedCents,
     ...(found?.route === "kept-invoice" ? { recordsCents: recordCents - alreadyRecordedCents } : {}),
@@ -520,8 +435,8 @@ export function addKeptChangeCaptureFinding({
   if ((!partSent && found?.receiptLinked) || found?.recordedElsewhere) return;
   // Review D-F3: the booking counts as invoiced by its active link, but the
   // payment lacks the invoice's id, so nothing more can be read until it is synced.
-  if (!found?.primaryInvoiceIdSynced) return payment.xeroInvoiceId ? undefined : manualReview(PRIMARY_INVOICE_ID_NOT_SYNCED_SUMMARY);
-  if (found.route === "change-unknown") return manualReview(UNKNOWN_CHANGE_SUMMARY);
+  if (!found?.primaryInvoiceIdSynced) return payment.xeroInvoiceId ? undefined : manualReview(words(PRIMARY_INVOICE_ID_NOT_SYNCED_SUMMARY));
+  if (found.route === "change-unknown") return manualReview(words(UNKNOWN_CHANGE_SUMMARY));
   if (found.receiptOperations.some((operation) => operation.status !== "CANCELLED")) {
     const blocking = getBlockingOperation(found.receiptOperations, "PAYMENT", "CREATE", {
       payloadQueueType: XERO_OUTBOX_ADDITIONAL_CAPTURE_RECEIPT_TYPE,
@@ -531,42 +446,41 @@ export function addKeptChangeCaptureFinding({
       addFinding(findings, {
         code: "BLOCKED_BY_XERO_OPERATION",
         severity: "warning",
-        summary: "A failed Xero operation recording a late card payment a treasurer kept needs retrying.",
+        summary: words("A failed Xero operation recording a late card payment a treasurer kept needs retrying."),
         safeToAutoApply: action.safeToAutoApply,
         details: { ...details, operationId: blocking.operation.id, operationStatus: blocking.operation.status },
         actionKeys: [action.key],
       });
     } else if (blocking && blocking.kind !== "resolved" && ["FAILED", "PARTIAL"].includes(blocking.operation.status)) {
-      manualReview(KEPT_REFUSED_SUMMARY, { operationId: blocking.operation.id, reason: blocking.operation.lastErrorMessage });
+      manualReview(words(KEPT_REFUSED_SUMMARY), { operationId: blocking.operation.id, reason: blocking.operation.lastErrorMessage });
     }
     // Queued, running, done, or resolved by an officer in Xero.
     return;
   }
-  if (found.route === "receipt" && payment.source !== "STRIPE") return manualReview(NOT_A_CARD_BOOKING_SUMMARY);
+  if (found.route === "receipt" && payment.source !== "STRIPE") return manualReview(words(NOT_A_CARD_BOOKING_SUMMARY));
   if (found.route === "kept-invoice" && !keptChangeCaptureQueuesKeptInvoice(found, transaction)) return;
 
   const action = addAction(actionMap, {
     key: `queue:kept-late-capture-record:${kept.taskId}`,
     bookingId: booking.id,
     type: "QUEUE_KEPT_LATE_CAPTURE_RECORD",
-    description:
-      found.route === "receipt"
+    description: words(found.route === "receipt"
         ? "Record the kept card payment as a payment on the Xero invoice that bills its booking change, capped at what Xero shows still due. The keep's own decision runs again under its locks first, so it is recorded once."
-        : "Queue the Xero invoice, paid from the Stripe account on the capture day, that records a kept card payment for a booking change nothing in Xero bills. The keep's own decision runs again under its locks first, so it is recorded once.",
+        : "Queue the Xero invoice, paid from the Stripe account on the capture day, that records a kept card payment for a booking change nothing in Xero bills. The keep's own decision runs again under its locks first, so it is recorded once."),
     safeToAutoApply: true,
     payload: {
       manualRefundTaskId: kept.taskId,
       bookingId: booking.id,
       paymentIntentId,
+      ...(kept.paidAnotherWay ? { paidAnotherWayClose: true } : {}), // #4381: applied by the close's own split
     },
   });
   addFinding(findings, {
     code: "KEPT_LATE_CAPTURE_NOT_RECORDED_IN_XERO",
     severity: "critical",
-    summary:
-      found.route === "receipt"
+    summary: words(found.route === "receipt"
         ? "A treasurer kept a late card payment for a booking change on this cancelled booking, and Xero does not record it: the booking's Xero invoice still shows that change as owing though Stripe holds the money."
-        : "A treasurer kept a late card payment for a booking change on this cancelled booking, and Xero does not record it: nothing in Xero bills that change, so the kept-payment invoice records it.",
+        : "A treasurer kept a late card payment for a booking change on this cancelled booking, and Xero does not record it: nothing in Xero bills that change, so the kept-payment invoice records it."),
     safeToAutoApply: true,
     details,
     actionKeys: [action.key],
@@ -593,6 +507,7 @@ export function keptChangeCaptureQueuesKeptInvoice(
   return (
     found.route === "kept-invoice" &&
     found.primaryInvoiceIdSynced &&
+    !found.liveKeptInvoice &&
     !found.receiptLinked &&
     !found.recordedElsewhere &&
     !found.receiptOperations.some((operation) => operation.status !== "CANCELLED") &&
@@ -627,7 +542,7 @@ export function keptInvoiceBillsChange(
     if (task && keptLateCaptureInvoiceAsked(task.operations)) return true;
   }
   for (const [paymentIntentId, found] of context.keptChangeCaptures ?? []) {
-    if (found.evidence.changeId !== modificationId) continue;
+    if (found.changeId !== modificationId) continue;
     const transaction = captures.find((capture) => capture.stripePaymentIntentId === paymentIntentId);
     if (transaction && keptChangeCaptureQueuesKeptInvoice(found, transaction)) return true;
   }

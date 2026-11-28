@@ -152,6 +152,12 @@ vi.mock("@/lib/xero-kept-late-capture-invoice", () => ({
 vi.mock("@/lib/kept-late-capture-receipt-rows", () => ({
   keptReceiptHeldForOfficer: mocks.keptReceiptHeldForOfficer,
 }));
+// #4381: which document records the capture is the keep's reading, proved in
+// `card-refund-paid-another-way-xero.test.ts`; here every capture is the
+// kept-capture invoice's, as before #4381.
+vi.mock("@/lib/late-capture-kept-xero", () => ({
+  readKeptCaptureRecord: async () => ({ firstCut: "kept-invoice" }),
+}));
 vi.mock("@/lib/audit", () => ({
   createAuditLog: (...args: unknown[]) => {
     calls.push("audit");
@@ -911,6 +917,8 @@ describe("closing a dead card refund as paid another way", () => {
         "read-payment",
         "read-approval-task",
         "lock-approval-task",
+        // #4381: the task again, under its row lock.
+        "read-approval-task",
         // #4324 (review CONC-1): the capture's anchor is read for (a change capture only) before the receipt.
         "read-approval-task",
         "read-receipt",

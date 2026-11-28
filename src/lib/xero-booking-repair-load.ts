@@ -30,7 +30,8 @@ import {
   sumEditReviewChargeSharesByAnchor,
   type EditReviewChargeShareRow,
 } from "@/lib/edit-financial-review-charge-shape";
-import { loadAdditionalCaptureReceiptEvidence, loadKeptChangeCaptureEvidence } from "./xero-booking-repair-additional-capture";
+import { loadAdditionalCaptureReceiptEvidence } from "./xero-booking-repair-additional-capture";
+import { loadKeptChangeCaptureEvidence } from "./xero-booking-repair-kept-change-evidence";
 import type { RepairDependencies } from "./xero-booking-repair-deps";
 import { makeLocalKey, parseRepairScopeDay } from "./xero-booking-repair-utils";
 import {

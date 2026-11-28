@@ -85,11 +85,11 @@ rows and 56,846 words (70,395 before it). Wave 2 compacted the sixteen
 `INV-HOST` rows: twelve reached 300 and left, and `INV-HOST-029`,
 `INV-HOST-045`, `INV-HOST-046` and `INV-HOST-050` stay at their new counts
 while exceptions are proposed on their deciding issues (#2576, #3040, #3039,
-#3232). The table now holds 76 rows and 46,701 words.
+#3232). The table now holds 76 rows and 46,700 words.
 
 | ID | Words |
 | --- | ---: |
-| `INV-MOD-025` | 1717 |
+| `INV-MOD-025` | 1716 |
 | `INV-ADDPAY-037` | 1417 |
 | `INV-SSOT-004` | 471 |
 | `INV-HOST-050` | 532 |
@@ -103,7 +103,7 @@ while exceptions are proposed on their deciding issues (#2576, #3040, #3039,
 | `INV-OPS-013` | 1354 |
 | `INV-CONFIG-004` | 1304 |
 | `INV-OPS-012` | 1200 |
-| `INV-PAY-047` | 1164 |
+| `INV-PAY-047` | 1162 |
 | `INV-MOD-055` | 1002 |
 | `INV-ADDPAY-036` | 1137 |
 | `INV-SSOT-003` | 1075 |

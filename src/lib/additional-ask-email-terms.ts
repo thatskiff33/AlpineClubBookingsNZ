@@ -39,6 +39,8 @@ export function asksMemberCard(edit: CardAskFacts): boolean {
 export type AdditionalAskEmailTerms = {
   additionalAmountCents: number;
   additionalPaymentMethod: "STRIPE" | "INTERNET_BANKING" | undefined;
+  /** #5288 (`INV-PAY-163`): the figure is the amount now due on the primary invoice, not an addition (`internetBankingAskSentence`). */
+  asksAmountNowDue: boolean;
 };
 
 /** The additional figure a door's email may name as due, and how it is paid. */
@@ -48,14 +50,18 @@ export function additionalAskEmailTerms(
     additionalAmountCents: number;
     /** The booking payment's source; null where the door has none to name. */
     paymentSource: PaymentSource | null;
+    /** #5288: the settlement's answer; absent at a door that never raises the primary invoice. */
+    primaryInvoiceBillsIncrease?: boolean;
   },
   mint: { additionalAskRetired: boolean },
 ): AdditionalAskEmailTerms {
   const additionalAmountCents = mint.additionalAskRetired ? 0 : edit.additionalAmountCents;
-  if (additionalAmountCents <= 0) return { additionalAmountCents, additionalPaymentMethod: undefined };
-  if (asksMemberCard(edit)) return { additionalAmountCents, additionalPaymentMethod: "STRIPE" };
+  if (additionalAmountCents <= 0) return { additionalAmountCents, additionalPaymentMethod: undefined, asksAmountNowDue: false };
+  if (asksMemberCard(edit)) return { additionalAmountCents, additionalPaymentMethod: "STRIPE", asksAmountNowDue: false };
+  const internetBanking = edit.paymentSource === PaymentSource.INTERNET_BANKING;
   return {
     additionalAmountCents,
-    additionalPaymentMethod: edit.paymentSource === PaymentSource.INTERNET_BANKING ? "INTERNET_BANKING" : undefined,
+    additionalPaymentMethod: internetBanking ? "INTERNET_BANKING" : undefined,
+    asksAmountNowDue: internetBanking && edit.primaryInvoiceBillsIncrease === true,
   };
 }

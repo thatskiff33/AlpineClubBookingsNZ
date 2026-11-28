@@ -39,6 +39,8 @@ const mocks = vi.hoisted(() => ({
   queueWaitingPaidAnotherWayNote: vi.fn(),
   // #4494: the unpaid payload a gap invoice's payment overlapping the credit-release sweep's share is sent with.
   unpaidGapPayloadIfOverlapping: vi.fn(),
+  // #4381: whether the capture's approved refund was closed paid another way.
+  findLateCaptureRefundPaidAnotherWay: vi.fn(async (): Promise<unknown> => null),
 }));
 // #4525 (M13): each leg's capture receipt; the recorder has its own suite.
 const captureReceipts = vi.hoisted(() => ({ record: vi.fn() }));
@@ -100,6 +102,9 @@ vi.mock("@/lib/xero-primary-invoice-fee-gap", () => ({
 }));
 vi.mock("@/lib/xero-supplementary-invoice-enqueue", () => ({
   lockSupplementaryInvoiceAnchor: mocks.lockSupplementaryInvoiceAnchor,
+}));
+vi.mock("@/lib/late-capture-paid-another-way", () => ({
+  findLateCaptureRefundPaidAnotherWay: mocks.findLateCaptureRefundPaidAnotherWay,
 }));
 
 import {
@@ -226,6 +231,7 @@ const gapTarget = (status = "SUCCEEDED") => {
 beforeEach(() => {
   vi.clearAllMocks();
   mocks.unpaidGapPayloadIfOverlapping.mockResolvedValue(null);
+  mocks.findLateCaptureRefundPaidAnotherWay.mockResolvedValue(null);
   order = [];
   invoices = { [PRIMARY]: { amountDue: 8000 } };
   rows = { otherReceiptRunning: false, createRunning: false, primaryCreate: { status: "SUCCEEDED", responsePayload: {}, manuallyResolvedAt: null } };
@@ -1076,6 +1082,15 @@ describe("recordAdditionalCaptureReceipt", () => {
       mocks.findUniqueTask.mockResolvedValue({ id: "task_kept", status: "DISMISSED" });
       const seam = providers();
       await expect(run(seam)).resolves.toBe("xero_payment_1");
+    });
+
+    it("MUTATION #4381: an approved capture whose refund was closed paid another way still owes its receipt - the worker records it, never cancels the close's receipt", async () => {
+      mocks.lateCaptureRefundState.mockResolvedValue("refunded");
+      mocks.findUniqueTask.mockResolvedValue({ id: "task_kept", status: "COMPLETED" });
+      mocks.findLateCaptureRefundPaidAnotherWay.mockResolvedValue({ id: "close-1" });
+      const seam = providers();
+      await expect(run(seam)).resolves.toBe("xero_payment_1");
+      expect(mocks.updateManyOperation).not.toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ status: "CANCELLED" }) }));
     });
 
     it("stands down where its kept-capture invoice records it (INV-PAY-139)", async () => {

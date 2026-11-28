@@ -37,8 +37,10 @@ Bookings hub's areas (`bed-allocation`, `book`, `booking-approvals`,
 `deletion-requests`, `family-groups`, `induction`, `member-applications`,
 `member-fields`, `members`, `membership-cancellations`, `membership-setup`,
 `membership-types`, `subscription-categories`, `subscription-lockout`) in
-`membership/` (C9 #4806), and the Lodge hub's `display` and `lodges` areas in
-`lodge-ops/` (C11 part 1 #4808; its other areas move in part 2). Member
+`membership/` (C9 #4806), and the Lodge hub's areas (`calendar`, `chores`,
+`display`, `food-orders`, `hut-leaders`, `lockers`, `lodge`, `lodge-instructions`,
+`lodges`, `maintenance-reports`, `rooms-beds`, `roster`, `work-parties`) in
+`lodge-ops/` (C11 #4808). Member
 detail, member merge, induction print and induction settings are not areas; they
 live under `members/` and `induction/`. The
 count that used to stand here said 70 and was measured once; it had already

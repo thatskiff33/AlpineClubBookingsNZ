@@ -654,6 +654,20 @@ describe("enqueueXeroBookingInvoiceOperation", () => {
     );
   });
 
+  it("persists the booking edit's own instruction the same way (#5288)", async () => {
+    // The one other enqueuer that writes a value: an unlinked Internet Banking
+    // increase (`queueEditPrimaryInvoice`), whose booking-changed email is the
+    // ask. Every other edit passes null through that same call site.
+    await enqueueXeroBookingInvoiceOperation("booking_1", {
+      createdByMemberId: "admin_1",
+      invoiceEmailDelivery: "ASKED_BY_EDIT",
+    });
+
+    expect(mocks.startXeroSyncOperation).toHaveBeenCalledWith(
+      expect.objectContaining({ invoiceEmailDelivery: "ASKED_BY_EDIT" }),
+    );
+  });
+
   it("records no instruction for the fifteen enqueuers with no choice to express, when nothing was recorded before (#2929)", async () => {
     // THE ONE PLACE THE LIVE POPULATION IS COUNTED. Seventeen call sites reach
     // this function; the two in `booking-create` carry the officer's answer and
@@ -670,6 +684,9 @@ describe("enqueueXeroBookingInvoiceOperation", () => {
     //
     // Recount with, and keep this list in step with:
     //   grep -rn "invoiceEmailDelivery: null" --include=*.ts src/ | grep -v __tests__
+    // The booking-edit settlement's site (`queueEditPrimaryInvoice`) is not in
+    // that grep: it passes null for every edit but #5288's unlinked Internet
+    // Banking increase, which records ASKED_BY_EDIT (the test above).
     await enqueueXeroBookingInvoiceOperation("booking_1", {
       createdByMemberId: "admin_1",
       invoiceEmailDelivery: null,
