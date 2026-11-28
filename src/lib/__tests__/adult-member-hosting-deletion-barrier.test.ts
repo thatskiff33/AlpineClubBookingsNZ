@@ -39,7 +39,9 @@ function hasStandingFanoutBarrierContract(
   const firstRead = fanout.indexOf(
     "await loadHostingCoverageMemberFanoutCandidates(memberId, db, today)",
   );
-  const emptyReturn = fanout.indexOf("if (plannedAttended.length === 0) return 0");
+  const emptyReturn = fanout.indexOf(
+    "if (plannedAttended.length === 0 && !plannedFanout.ceilingBound) return 0",
+  );
 
   return (
     lock >= 0 &&
@@ -164,10 +166,11 @@ describe("standing fanout and booking-request linked-member fencing (#2597)", ()
     const fanout = standingFanoutBody(review);
     const lock = "await lockHostingCoverageMemberLifecycleTarget(db, memberId);";
     const read =
-      "const plannedAttended = await loadHostingCoverageMemberFanoutCandidates(memberId, db, today);";
+      "const plannedFanout = await loadHostingCoverageMemberFanoutCandidates(memberId, db, today);";
     const movedBody = fanout.replace(lock, "").replace(read, `${read}\n  ${lock}`);
     const moved = review.replace(fanout, movedBody);
-    const emptyReturn = "if (plannedAttended.length === 0) return 0;";
+    const emptyReturn =
+      "if (plannedAttended.length === 0 && !plannedFanout.ceilingBound) return 0;";
     const afterEmptyBody = fanout
       .replace(lock, "")
       .replace(emptyReturn, `${emptyReturn}\n  ${lock}`);
