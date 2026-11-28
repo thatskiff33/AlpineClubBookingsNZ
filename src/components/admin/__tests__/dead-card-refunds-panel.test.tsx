@@ -27,6 +27,7 @@ import {
   STRIPE_MAY_HAVE_REFUNDED_WARNING,
   type DeadCardRefundPanelRow,
 } from "@/components/admin/dead-card-refunds-panel";
+import { xeroRefundNotePromise } from "@/components/admin/dead-card-refunds-xero-copy";
 import { expectRecoveryAlertToHoldFocus } from "@/lib/__tests__/helpers/focus";
 import { LEGACY_GROUP_CARD_REFUND_TRY_AGAIN_REFUSAL } from "@/lib/card-refund-group-copy";
 import { describeRefundMethod } from "@/lib/xero-refund-method";
@@ -858,7 +859,7 @@ describe("#4851: a dead refund out of the group organiser's card", () => {
   it("MUTATION: a per-joiner row promises the joiner's bank refund note, and the close says it is queued", async () => {
     openDialog(row({ settleKind: "organiser-child", wholeAmountOnly: true, xeroRefundNote: "now" }));
     const dialog = screen.getByRole("dialog");
-    expect(dialog).toHaveTextContent(`A Xero refund credit note for the amount, worded "${BANK_NOTE_WORDING}", is queued when you close it.`);
+    expect(dialog).toHaveTextContent(xeroRefundNotePromise("now", BANK_NOTE_WORDING));
     expect(dialog).not.toHaveTextContent(/by hand|emailed/);
     fireEvent.click(fullChoice());
     fireEvent.change(noteBox(), { target: { value: "Bank transfer to the organiser" } });

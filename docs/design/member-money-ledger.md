@@ -647,7 +647,10 @@ review closed by hand), each at its live chain tip, so a reversed R14 is never
 covered. A hand-back paid "In cash" posts its R14 on CASH while its Xero
 payment settles to the bank code: a known `COMPONENT_UNUSABLE` conflict. So is
 a bank note from a group organiser's card refund closed paid another way
-(#5267): organiser shares post no R14 until M6. A payment left unsettled, part-settled or found
+(#5267): organiser shares post no R14 until M6. Until M6, so is the R13 of a
+reopened organiser joiner refund closed by bank: its row marks the failed refund
+only as `reopenedAfterRefundId`, and its unapplied R12 sits on the organiser's
+booking, not the joiner's. A payment left unsettled, part-settled or found
 already settled records nothing.
 
 `FAILED_LATER_REFUND_REVERSAL` records the invoice #4369's
