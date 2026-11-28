@@ -17,8 +17,7 @@ import {
   resolveOtherLodgeRateElection,
 } from "@/lib/booking-other-lodge-rate";
 import { resolveOtherLodgeRateEligibleGuestIds } from "@/lib/membership-type-policy";
-import { seasonYearOfStoredDate } from "@/lib/financial-year";
-import { clubFinancialYearEndMonth } from "@/lib/financial-year-server";
+import { clubSeasonYearOfStoredDate } from "@/lib/financial-year-server";
 import { getBookingEditPolicy } from "@/lib/booking-edit-policy";
 import { clubTime } from "@/lib/club-time/server";
 import { dateOnlyInstantOf } from "@/lib/club-time";
@@ -187,7 +186,7 @@ async function resolveRerates(
   let eligibleGuestIds = new Set<string>();
   if (role === "ADMIN" && carriesElection) {
     eligibleGuestIds = await resolveOtherLodgeRateEligibleGuestIds(prisma, {
-      seasonYear: seasonYearOfStoredDate(booking.checkIn, await clubFinancialYearEndMonth()),
+      seasonYear: await clubSeasonYearOfStoredDate(booking.checkIn),
       guests: stored.guests,
     });
   }

@@ -204,5 +204,5 @@ export async function computeAgeTier(
 
 // `computeSeasonYear` (an alias of the retired `getSeasonYear`) was re-exported
 // here for backwards compatibility and is gone with it (CT-4 group F1, #2870).
-// A caller asking "what season is it now" wants `clubSeasonYear(zone)` from
-// `@/lib/financial-year`, which needs the club's persisted zone.
+// A caller asking "what season is it now" wants `clubCurrentSeasonYear(zone)`
+// from `@/lib/financial-year-server`, which needs the club's persisted zone.

@@ -60,7 +60,7 @@ import {
 } from "@/lib/policies/booking-route-decisions";
 import { seasonYearOfStoredDate } from "@/lib/financial-year";
 import {
-  clubFinancialYearEndMonth,
+  clubSeasonYearOfStoredDate,
   refreshFinancialYearConfig,
 } from "@/lib/financial-year-server";
 import type { SubscriptionLockoutMode } from "@/lib/membership-lockout-settings";
@@ -885,7 +885,7 @@ export async function confirmWaitlistOffer(
     const nonMemberPricing = await evaluateNonMemberPricingRequirements(prisma, {
       mode: await resolveSubscriptionLockoutMode(),
       lodgeId: offerLodgeId,
-      seasonYear: seasonYearOfStoredDate(offerKind.checkIn, await clubFinancialYearEndMonth()),
+      seasonYear: await clubSeasonYearOfStoredDate(offerKind.checkIn),
       checkIn: offerKind.checkIn,
       checkOut: offerKind.checkOut,
       // Owner decision, 3 Aug 2026. The guard above has already established that

@@ -317,6 +317,8 @@ vi.mock("@/lib/financial-year-server", async (importOriginal) => ({
   ...((await importOriginal()) as typeof import("@/lib/financial-year-server")),
   refreshFinancialYearConfig: financialYear.resolveYearEnd,
   clubFinancialYearEndMonth: financialYear.resolveYearEnd,
+  clubSeasonYearOfStoredDate: async (value: Date) =>
+    (await import("@/lib/financial-year")).seasonYearOfStoredDate(value, await financialYear.resolveYearEnd()),
 }));
 
 // #5410: the club time zone is read before an offer pass opens its transaction,
