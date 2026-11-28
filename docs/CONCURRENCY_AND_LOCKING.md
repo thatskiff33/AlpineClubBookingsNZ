@@ -6322,8 +6322,9 @@ under the global lock. Officer decline claims `DECLINED` before releasing it.
 `settleBookingByDeposit` (`INV-ADDPAY-053`) enters the same settlement body as
 the manual mark-paid, with the same composition: `lock(1)` →
 `acquireLodgeCapacityLock` → the booking row (#4840) → `lockMemberCreditLedger`
-→ the Payment row. Every refusal reads the post-lock snapshot; the fenced
-`payment.updateMany` also re-asserts that no extra is owing, so a request raised
+→ the Payment row. Every refusal reads the snapshot taken under the first four;
+the open-request refusal therefore runs before the Payment row lock, and the
+fenced `payment.updateMany` re-asserts that no extra is owing, so one recorded
 between the read and the write is a 409. The balance request is created after
 that fenced write, under the Payment row lock the settle holds, beside the
 deposit's cash row, so no request writer can interleave a second one. The
@@ -6332,7 +6333,9 @@ settles one commits and the other is refused. Against a cancel, a cancel first
 leaves the settle refused; a settle first is either refused by the cancel's own
 drift check or cancelled after it, refunding only from the deposit. Its `lock(1)` is the body's
 registered site (`settleBookingPaymentInTransaction#1`); no advisory key or lock
-site is added. Proved on PostgreSQL in `deposit-settle.realdb.test.ts`.
+site is added. The manual-payment reversal refuses a deposit settle under its own
+locks, by the deposit's cash row (`isDepositSettledPayment`), whatever became of
+the request. Proved on PostgreSQL in `deposit-settle.realdb.test.ts`.
 
 ### Writer doing both → `lock(1)` first, then per-lodge
 

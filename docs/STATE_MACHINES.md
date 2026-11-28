@@ -2568,12 +2568,15 @@ settleBookingByDeposit (officer's deposit < amount owing; due date from club tod
   PaymentTransaction ADDITIONAL: INTERNET_BANKING, no intent, reason "deposit_balance",
            balanceDueOn = the due date, PENDING (the balance request; posts nothing, R25)
   AuditLog: "booking-payment.deposit.settle"
+  BookingEvent (after commit): MEMBER_PAID, or NON_MEMBER_CONFIRMED for a guest's booking,
+           for the deposit, reason "deposit_settle"
   refused, nothing written: deposit <= 0 or >= the amount owing; due date in the past or
            after check-in; worth moved; a request already open; any manual-settle refusal
 balance request (cause "balance"; an edit folded into it reads "mixed")
   -> never chased by the edit or credit-release chase, never re-sent by the officer's button
   -> part paid while owed (bookingPartPaid); not owed once the booking is cancelled
-Record manual payment's reversal: refused while a balance request exists
+Record manual payment's reversal: refused for a deposit settle, read from its PRIMARY row's
+           reason, so withdrawing or paying the request does not open it
 ```
 
 Paying the balance (card or officer), its reminders and overdue list, and how a

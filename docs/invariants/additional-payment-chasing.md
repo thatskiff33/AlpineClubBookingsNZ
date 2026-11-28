@@ -1806,5 +1806,5 @@ _Legacy: settles tasks raised before #4317._
 - **Chased only by its own schedule**: 14 and 3 days before the due date and
   the day after it (`balanceReminderSchedule`). The edit and credit-release
   chase, and the officer's re-send, select no request that carries a balance.
-- **Nothing writes one until the release that chases it is fully deployed**:
-  an older release would word it as an edit. Until then no caller exists.
+- **Nothing writes one yet; paying, chasing and retiring it are later
+  releases**: an older release would word it as an edit, so no caller exists.
