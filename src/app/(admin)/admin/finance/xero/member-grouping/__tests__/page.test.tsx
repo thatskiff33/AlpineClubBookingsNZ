@@ -10,6 +10,7 @@ import {
 } from "@/lib/__tests__/support/club-time-render";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ReactNode } from "react";
+import { expectSoundOutline } from "@/lib/__tests__/support/heading-outline";
 
 // Edit-level finance admin so canEdit/canView both resolve true (#1934/#2065).
 vi.mock("next-auth/react", () => ({
@@ -328,5 +329,43 @@ describe("XeroMemberGroupingPage (#2093)", () => {
     // The "Last synced" label persists and now shows a concrete localised date.
     expect(screen.getByText("Last synced:")).toBeInTheDocument();
     expect(screen.getByText(/2026/)).toBeInTheDocument();
+  });
+});
+
+describe("XeroMemberGroupingPage heading outline (#5216)", () => {
+  const H1 = "Xero member grouping";
+  const RULE: Rule = {
+    id: "rule-1",
+    membershipTypeId: "mt_full",
+    membershipTypeName: "Full",
+    ageTiers: ["ADULT"],
+    mode: "MANAGED",
+    groupId: "g_adults",
+    groupName: "Adults group",
+    isActive: true,
+    sortOrder: 0,
+  };
+
+  it("loading", () => {
+    fetchMock.mockImplementation(() => new Promise(() => {}));
+    render(<XeroMemberGroupingPage />);
+    expectSoundOutline(H1);
+  });
+
+  it.each([
+    ["with no rules", []],
+    ["with a rule", [RULE]],
+  ])("loaded %s: each card a level 2 under the h1", async (_state, rules) => {
+    fetchMock.mockImplementation(async () => jsonResponse(baseConfig({ rules })));
+    await renderLoaded();
+    expectSoundOutline(H1);
+    expect(screen.getByRole("heading", { level: 2, name: "Bulk re-sync (advanced)" })).toBeInTheDocument();
+  });
+
+  it("error", async () => {
+    fetchMock.mockImplementation(async () => jsonResponse({ error: "down" }, false));
+    render(<XeroMemberGroupingPage />);
+    await waitFor(() => expect(document.querySelector(".text-danger")).not.toBeNull());
+    expectSoundOutline(H1);
   });
 });
