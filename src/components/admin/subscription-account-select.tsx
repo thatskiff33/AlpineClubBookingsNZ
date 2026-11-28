@@ -10,6 +10,7 @@ import {
 import {
   accountsForMappingKey,
   describeMappingAccountFilter,
+  mappingCodeClassViolation,
   withIndefiniteArticle,
 } from "@/lib/xero-account-mapping-keys";
 
@@ -30,7 +31,8 @@ export interface SubscriptionAccountOption {
  * Xero Account Mapping screen does, because the save refuses a newly chosen
  * account of any other kind (#5235). The code already chosen stays listed even
  * when it is not one of those, so the picker shows what is stored, and says so
- * when the chart shows it is the wrong kind.
+ * when the chart shows it is the wrong kind: the same question the save asks
+ * (`mappingCodeClassViolation`), as the Account Mapping row asks it.
  */
 export function SubscriptionAccountSelect({
   id,
@@ -48,6 +50,8 @@ export function SubscriptionAccountSelect({
   const offered = accountsForMappingKey("subscriptionIncome", accounts);
   const chosenIsOffered = offered.some((account) => account.code === value);
   const chosen = accounts.find((account) => account.code === value);
+  const wrongKind =
+    mappingCodeClassViolation("subscriptionIncome", value, accounts) !== null;
   const wanted = withIndefiniteArticle(
     describeMappingAccountFilter("subscriptionIncome"),
   );
@@ -71,9 +75,8 @@ export function SubscriptionAccountSelect({
         ))}
         {value && !chosenIsOffered ? (
           <SelectItem value={value}>
-            {chosen
-              ? `${value} - ${chosen.name} (not ${wanted} account)`
-              : value}
+            {chosen ? `${value} - ${chosen.name}` : value}
+            {wrongKind ? ` (not ${wanted} account)` : ""}
           </SelectItem>
         ) : null}
       </SelectContent>

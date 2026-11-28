@@ -4,7 +4,7 @@ import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
 import { prisma } from "@/lib/prisma";
 import { normalizeXeroAccountClass } from "@/lib/xero-account-class";
 import { MAPPING_LABELS, normalizeMappingCode } from "@/lib/xero-account-mapping-keys";
-import { readStoredChartOfAccounts } from "@/lib/xero-admin-cache";
+import { readLastStoredChartOfAccounts } from "@/lib/xero-admin-cache";
 import { hutFeeRefundLineCodes } from "@/lib/xero-hut-fee-line-codes";
 import { getResolvedAccountMapping } from "@/lib/xero-mappings";
 import {
@@ -101,8 +101,8 @@ export async function readXeroTaxHealth(): Promise<XeroTaxHealth> {
  * is read even after its hour is up, so the warning does not clear itself once
  * nobody has opened an account screen for a while.
  *
- * Null whenever one of them cannot be established: no stored chart, a code the
- * chart does not list, or a line that takes its account from a Xero item. A
+ * Null whenever one of them cannot be established: no stored chart or one that
+ * could not be read, a code the chart does not list, or a line that takes its account from a Xero item. A
  * code Xero no longer has is `xeroTaxCodeProblem`'s to report. Nothing is read
  * for a club that is not registered, or while Xero's rates could not be read.
  */
@@ -115,8 +115,7 @@ async function hutFeeRefundsExpenseAccountProblem(
   if (!rate || rate.expenses) return null;
   const [mapping, chart] = await Promise.all([
     getResolvedAccountMapping("hutFeeRefunds"),
-    // An unreadable chart is "cannot be established", as the cached read it replaced treated it.
-    readStoredChartOfAccounts(prisma, { evenIfExpired: true }).catch(() => null),
+    readLastStoredChartOfAccounts(),
   ]);
   const lineAccount = normalizeMappingCode(hutFeeRefundLineCodes(mapping).accountCode);
   const account = chart?.find((row) => normalizeMappingCode(row.code) === lineAccount);

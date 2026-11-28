@@ -1,17 +1,21 @@
 /**
  * `readStoredChartOfAccounts` (#5235): the chart the mapping save and the
  * configuration import judge a code against, and, with `evenIfExpired`, the one
- * the Xero health check reads. A write must not be refused on a chart older
+ * the Xero health check and the setup checklist read through
+ * `readLastStoredChartOfAccounts`. A write must not be refused on a chart older
  * than its hour; a warning must not vanish because the chart is.
  */
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const connection = vi.hoisted(() => vi.fn());
-vi.mock("@/lib/prisma", () => ({ prisma: {} }));
+const moduleClient = vi.hoisted(() => ({ xeroAdminCache: { findUnique: vi.fn() } }));
+const warn = vi.hoisted(() => vi.fn());
+vi.mock("@/lib/prisma", () => ({ prisma: moduleClient }));
+vi.mock("@/lib/logger", () => ({ default: { warn } }));
 vi.mock("@/lib/xero-connection", () => ({ readXeroConnection: connection }));
 
-import { readStoredChartOfAccounts } from "@/lib/xero-admin-cache";
+import { readLastStoredChartOfAccounts, readStoredChartOfAccounts } from "@/lib/xero-admin-cache";
 
 const CHART = [{ code: "429", name: "General Expenses", type: "OVERHEADS", class: "EXPENSE" }];
 const HOUR_MS = 60 * 60 * 1000;
@@ -54,5 +58,30 @@ describe("readStoredChartOfAccounts", () => {
     await expect(readStoredChartOfAccounts(dbHolding(null).db, { evenIfExpired: true })).resolves.toBeNull();
     const malformed = dbHolding({ payload: [{ code: "429" }], expiresAt: new Date(Date.now() + HOUR_MS) });
     await expect(readStoredChartOfAccounts(malformed.db, { evenIfExpired: true })).resolves.toBeNull();
+  });
+});
+
+describe("readLastStoredChartOfAccounts, for a reader that only warns", () => {
+  beforeEach(() => {
+    connection.mockReset();
+    connection.mockResolvedValue({ tenantId: "tenant-1" });
+    moduleClient.xeroAdminCache.findUnique.mockReset();
+    warn.mockReset();
+  });
+
+  it("MUTATION: returns the last chart stored even after its hour is up", async () => {
+    moduleClient.xeroAdminCache.findUnique.mockResolvedValue({
+      payload: CHART,
+      expiresAt: new Date(Date.now() - 30 * 24 * HOUR_MS),
+    });
+    await expect(readLastStoredChartOfAccounts()).resolves.toEqual(CHART);
+    expect(warn).not.toHaveBeenCalled();
+  });
+
+  it("MUTATION: logs a failed read and reports no chart, so the report it is part of is still given", async () => {
+    const failure = new Error("database unavailable");
+    moduleClient.xeroAdminCache.findUnique.mockRejectedValue(failure);
+    await expect(readLastStoredChartOfAccounts()).resolves.toBeNull();
+    expect(warn).toHaveBeenCalledWith({ err: failure }, expect.stringContaining("chart of accounts"));
   });
 });

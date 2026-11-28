@@ -16,7 +16,8 @@ const mocks = vi.hoisted(() => ({
   mappings: vi.fn(),
 }));
 const openingCreditsRow = vi.hoisted(() => vi.fn());
-// #5235: the chart of accounts as the Xero screens last cached it, or null.
+// #5235: the chart of accounts as last stored, of any age, or null (`readLastStoredChartOfAccounts`,
+// whose own test holds that an expired chart is still read and a failed read is null).
 const storedChart = vi.hoisted(() => vi.fn());
 const accountMappingRows = vi.hoisted(() => vi.fn());
 // #4988: the health check asks whether the Opening Credits account is mapped,
@@ -24,7 +25,7 @@ const accountMappingRows = vi.hoisted(() => vi.fn());
 vi.mock("@/lib/prisma", () => ({
   prisma: { xeroAccountMapping: { findUnique: openingCreditsRow, findMany: accountMappingRows } },
 }));
-vi.mock("@/lib/xero-admin-cache", () => ({ readStoredChartOfAccounts: storedChart }));
+vi.mock("@/lib/xero-admin-cache", () => ({ readLastStoredChartOfAccounts: storedChart }));
 vi.mock("@/lib/xero-tax-anchors", () => import("./support/xero-tax-anchors-baseline"));
 vi.mock("@/lib/club-time-zone-runtime", () => ({ readClubTimeZoneOutsideRequest: async () => "Pacific/Auckland" }));
 vi.mock("@/lib/club-tax-settings", async (importOriginal) => ({
@@ -333,16 +334,6 @@ describe("readXeroTaxHealth", () => {
 
     it("MUTATION: is a health problem for a registered club whose code cannot be used on expenses", async () => {
       expect((await readXeroTaxHealth()).problems).toEqual([REFUND_ACCOUNT_PROBLEM]);
-    });
-
-    it("MUTATION: reads the last chart stored even after its hour is up, so the warning does not clear itself", async () => {
-      await readXeroTaxHealth();
-      expect(storedChart).toHaveBeenCalledWith(expect.anything(), { evenIfExpired: true });
-    });
-
-    it("says nothing when the stored chart cannot be read", async () => {
-      storedChart.mockRejectedValue(new Error("database unavailable"));
-      await expect(readXeroTaxHealth()).resolves.toEqual({ checked: true, problems: [] });
     });
 
     it("is clean when Xero lets the code in force sit on an expense account", async () => {

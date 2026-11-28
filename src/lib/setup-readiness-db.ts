@@ -37,7 +37,7 @@ import { getXeroTokenReadability } from "@/lib/xero-token-store";
 import { getStripeSetupState } from "@/lib/stripe-config";
 import { describeStoredXeroMappings } from "@/lib/setup-readiness-xero-mapping";
 import { ACCOUNT_MAPPING_KEYS } from "@/lib/xero-account-mapping-keys";
-import { readStoredChartOfAccounts } from "@/lib/xero-admin-cache";
+import { readLastStoredChartOfAccounts } from "@/lib/xero-admin-cache";
 
 /**
  * The sentinel a failed `ClubTimeSettings` read resolves to, so "the read did
@@ -175,7 +175,7 @@ export async function getSetupDatabaseSnapshot(): Promise<SetupDatabaseSnapshot>
     }),
     // #5235: the connected organisation's chart as last cached, never a call to
     // Xero. A known mismatch remains a warning until a newer chart replaces it.
-    readStoredChartOfAccounts(prisma, { evenIfExpired: true }).catch(() => null),
+    readLastStoredChartOfAccounts(),
     prisma.xeroItemCodeMapping.count({
       where: {
         category: "HUT_FEE",
