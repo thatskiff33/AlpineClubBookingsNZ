@@ -10,7 +10,7 @@ import { nameField } from "@/lib/zod-helpers";
 import { clubDomainEmail } from "@/config/club-identity";
 import { ensureMemberAccessRolesFromCompatibilityFields } from "@/lib/member-access-role-writes";
 import { clubTimeZone } from "@/lib/club-time/server";
-import { clubSeasonYear } from "@/lib/financial-year";
+import { clubCurrentSeasonYear } from "@/lib/financial-year-server";
 import { ensureDefaultSeasonSubscriptionForNewMember } from "@/lib/member-subscription-defaults";
 import { isFullAdmin } from "@/lib/access-roles";
 import { getDefaultLodgeId } from "@/lib/lodges";
@@ -195,7 +195,7 @@ export async function GET() {
       // required rather than defaulted so no caller can resolve it from inside
       // somebody else's transaction; this route holds no transaction and reads it
       // through the request-cached server binding.
-      clubSeasonYear(await clubTimeZone()),
+      await clubCurrentSeasonYear(await clubTimeZone()),
     );
     logAudit({
       action: "LODGE_ACCOUNT_CREATED",
@@ -475,7 +475,7 @@ export async function POST(request: NextRequest) {
   await ensureDefaultSeasonSubscriptionForNewMember(
     prisma,
     { id: created.id, role: "LODGE" },
-    clubSeasonYear(await clubTimeZone()),
+    await clubCurrentSeasonYear(await clubTimeZone()),
   );
   await ensureMemberAccessRolesFromCompatibilityFields(prisma, {
     memberId: created.id,

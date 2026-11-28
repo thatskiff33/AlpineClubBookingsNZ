@@ -26,7 +26,7 @@ import { arrivesAsMcpConnection, connectionJson } from "@/lib/mcp-connection-req
 import { xeroMemberContactPushBodySchema } from "@/lib/xero-member-contact-requests";
 import { getXeroApiErrorInfo } from "@/lib/xero-api-errors";
 import { clubTimeZone } from "@/lib/club-time/server";
-import { clubSeasonYear } from "@/lib/financial-year";
+import { clubCurrentSeasonYear } from "@/lib/financial-year-server";
 import {
   enqueueXeroEntranceFeeInvoiceOperation,
   processQueuedXeroOutboxOperations,
@@ -158,7 +158,7 @@ export async function POST(
       const seasonYearsToRefresh =
         flushedSubscriptionHistory.seasonYears.length > 0
           ? [
-              clubSeasonYear(await clubTimeZone()),
+              await clubCurrentSeasonYear(await clubTimeZone()),
               ...flushedSubscriptionHistory.seasonYears,
             ]
           : undefined;
@@ -225,7 +225,7 @@ export async function POST(
             // itself — but this route already holds it, React-cached for the
             // render pass, so pass the season rather than paying for a second
             // uncached read (#2870, correctness review).
-            seasonYear: clubSeasonYear(await clubTimeZone()),
+            seasonYear: await clubCurrentSeasonYear(await clubTimeZone()),
           });
 
         entranceFeeInvoiceQueued = Boolean(

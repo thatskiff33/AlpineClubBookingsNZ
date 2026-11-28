@@ -1586,6 +1586,7 @@ const AMBIENT_AUTHORITY_RESOLVERS = {
     // own name and branding, with a persisted row competing with a shipped
     // default — the same two-sources-and-a-guess as the year-end.
     "getClubIdentitySync",
+    "getFinancialYearEndMonth",
     // `email-theme.ts`. Module cache seeded by `primeEmailPalette()`, falls back
     // to `DEFAULT_EMAIL_PALETTE`. An unseeded worker renders a club's email in
     // the shipped colours and nothing says so.
@@ -1595,55 +1596,6 @@ const AMBIENT_AUTHORITY_RESOLVERS = {
     // names cannot see a function that reads them.
     "readEnvironmentClubTimeZoneSeed",
     "classifyEnvironmentClubTimeZoneSeed",
-  ],
-  /**
-   * NAMED, MEASURED, AND NOT YET BANNED — with the condition that promotes each
-   * one published beside it.
-   *
-   * THIS IS NOT AN EXEMPTION, and the difference is structural rather than
-   * verbal. An exemption is a FILE the arm stops applying to, it lives on
-   * `SRC_RESTRICTION_EXEMPTIONS`, and it shelters whatever else that file grows
-   * later — which is precisely how the `= APP_TIME_ZONE` default survived for
-   * months inside a lift written for a READ. `AUTHORITY_DEFAULT_RESTRICTIONS`
-   * carries no such entry, `ssot-authority-default-guard.test.ts` asserts that
-   * it never will, and nothing here changes that. A pending name is the arm
-   * declining to fire on ONE identifier anywhere in the tree, with its live
-   * count pinned in that same suite, so the count is a ratchet with a
-   * MECHANICAL trigger: delete the last default and the census fails and tells
-   * you to promote the name.
-   */
-  pending: [
-    {
-      name: "getFinancialYearEndMonth",
-      /**
-       * One live default remains, and the reason it is still here is a
-       * measurement rather than reluctance. #3133 expected zero — #3116 was
-       * deleting all four in flight — and #3136 merged having fixed the money
-       * paths WITHOUT deleting them. #5259 deleted the second, on
-       * `season-label.ts`'s `seasonSelectLabel`, once the year-end reached the
-       * browser as data through `ClubSeasonProvider` and every display site had
-       * a value to pass.
-       *
-       * `financial-year.ts`'s `seasonYearOfCalendarDate` — not for its own
-       * sake. Two optional pass-throughs forward the parameter,
-       * `seasonYearOfStoredDate(value, yearEndMonth?)` and
-       * `clubSeasonYear(zone, clock?, yearEndMonth?)`, and requiring it
-       * cascades to roughly NINETY non-test call sites across booking,
-       * waitlist, quote, membership, Xero, cron and `prisma/seed.ts`. Most of
-       * them have no year-end in scope, so the change that would actually get
-       * written at each is `getFinancialYearEndMonth()` AT the call site — which
-       * satisfies the letter of this rule while reading the same cold cache, and
-       * spreads one ambient read into ninety modules. That is worse for single
-       * source of truth, not better, by the same argument this file already
-       * makes for excluding `APP_STRIPE_CURRENCY`.
-       *
-       * Promote this name — move it to `banned` above and delete its pin in
-       * `ssot-authority-default-guard.test.ts` — when that default is gone. The
-       * cascade is its own change, resolving the year-end at each site rather
-       * than reading the cache there.
-       */
-      liveDefaults: 1,
-    },
   ],
 };
 
@@ -1704,7 +1656,7 @@ const AUTHORITY_DEFAULT_RESTRICTIONS = [
 ];
 
 /**
- * The banned and pending resolver names, for the second instrument in
+ * The banned resolver names, for the second instrument in
  * `ssot-authority-default-guard.test.ts`.
  *
  * Read from HERE rather than from a copy in the suite, for the reason

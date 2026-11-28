@@ -78,6 +78,7 @@ type MembershipSubscriptionStatus =
   | "NOT_REQUIRED";
 
 interface CheckMembershipStatusOptions {
+  yearEndMonth?: number;
   changedInvoiceIds?: Set<string>;
   forceRefreshOnlineInvoiceUrl?: boolean;
 }
@@ -328,6 +329,7 @@ export async function syncMemberSubscriptionHistoryForLinkedContact(
   memberId: string,
   options?: {
     seasonYears?: number[];
+    yearEndMonth?: number;
     forceRefreshOnlineInvoiceUrl?: boolean;
   }
 ): Promise<{
@@ -342,11 +344,12 @@ export async function syncMemberSubscriptionHistoryForLinkedContact(
   }>;
   errors: Array<{ seasonYear: number; error: string }>;
 }> {
+  const yearEndMonth = options?.yearEndMonth ?? await refreshFinancialYearConfig();
   const seasonYears = Array.from(
     new Set(
       (options?.seasonYears?.length
         ? options.seasonYears
-        : [clubSeasonYear(await readClubTimeZoneOutsideRequest())]
+        : [clubSeasonYear(await readClubTimeZoneOutsideRequest(), undefined, yearEndMonth)]
       ).filter(
         (seasonYear): seasonYear is number =>
           Number.isInteger(seasonYear) &&
@@ -367,6 +370,7 @@ export async function syncMemberSubscriptionHistoryForLinkedContact(
   for (const seasonYear of seasonYears) {
     try {
       const result = await checkMembershipStatus(memberId, seasonYear, {
+        yearEndMonth,
         forceRefreshOnlineInvoiceUrl:
           options?.forceRefreshOnlineInvoiceUrl ?? true,
       });
@@ -523,8 +527,9 @@ export async function checkMembershipStatus(
   });
   if (!member) throw new Error(`Member not found: ${memberId}`);
 
+  const yearEndMonth = options?.yearEndMonth ?? await refreshFinancialYearConfig();
   const year =
-    seasonYear ?? clubSeasonYear(await readClubTimeZoneOutsideRequest());
+    seasonYear ?? clubSeasonYear(await readClubTimeZoneOutsideRequest(), undefined, yearEndMonth);
 
   // #1944 non-clobber guard: never let Xero discovery downgrade a subscription
   // that was manually marked paid outside the Xero pipeline. The finance:edit
@@ -667,7 +672,7 @@ export async function checkMembershipStatus(
     // own season window now derives from the same resolved year-end (#3116).
     // Hoisting it also stops the settings/mapping read happening twice per
     // member on the matching path.
-    const matchOptions = await buildSubscriptionInvoiceMatchOptions();
+    const matchOptions = await buildSubscriptionInvoiceMatchOptions(yearEndMonth);
     const response = immutableChargeInvoiceId
       ? await callXeroApi(
           () =>
@@ -1330,13 +1335,12 @@ export function hasStrongSubscriptionInvoiceMatch(
  * flat primary item code is ALWAYS folded into `itemCodes` so it participates in
  * matching regardless of the fee-schedule read.
  */
-export async function buildSubscriptionInvoiceMatchOptions(): Promise<SubscriptionInvoiceMatchOptions> {
-  const [subscriptionMapping, lockoutSettings, yearEndMonth] = await Promise.all([
+export async function buildSubscriptionInvoiceMatchOptions(
+  yearEndMonth: number,
+): Promise<SubscriptionInvoiceMatchOptions> {
+  const [subscriptionMapping, lockoutSettings] = await Promise.all([
     getResolvedAccountMapping("subscriptionIncome"),
     loadMembershipLockoutSettings(),
-    // Resolved here rather than defaulted from the process cache, because the
-    // sweep that consumes these options runs from the Xero cron (#3116).
-    refreshFinancialYearConfig(),
   ]);
   const primaryItemCode = subscriptionMapping.itemCode;
   const feeScheduleCodes = lockoutSettings.useFeeScheduleItemCodes
@@ -1427,6 +1431,7 @@ export async function refreshAllMembershipStatuses(
   seasonYear?: number,
   options?: {
     includeBackfillCandidates?: boolean;
+    yearEndMonth?: number;
   }
 ): Promise<{
   seasonYear: number;
@@ -1440,8 +1445,9 @@ export async function refreshAllMembershipStatuses(
   errors: number;
   errorDetails: Array<{ member: string; error: string }>;
 }> {
+  const yearEndMonth = options?.yearEndMonth ?? await refreshFinancialYearConfig();
   const year =
-    seasonYear ?? clubSeasonYear(await readClubTimeZoneOutsideRequest());
+    seasonYear ?? clubSeasonYear(await readClubTimeZoneOutsideRequest(), undefined, yearEndMonth);
   const syncStartedAt = new Date();
   const cursor = await getXeroSyncCursor(
     MEMBERSHIP_SYNC_CURSOR_RESOURCE,
@@ -1455,7 +1461,6 @@ export async function refreshAllMembershipStatuses(
   // One resolution for the whole sweep, so the query window and every invoice
   // classified from it agree, and neither depends on what warmed the process
   // cache (#3116).
-  const yearEndMonth = await refreshFinancialYearConfig();
   const { start: windowStart, end: windowEnd } =
     getMembershipSeasonWindow(year, yearEndMonth);
 
@@ -1659,6 +1664,7 @@ export async function refreshAllMembershipStatuses(
         },
       });
       const result = await checkMembershipStatus(member.id, year, {
+        yearEndMonth,
         changedInvoiceIds: new Set([
           ...(member.xeroContactId
             ? changedInvoiceIdsByContact.get(member.xeroContactId) ?? []

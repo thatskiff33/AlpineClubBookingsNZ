@@ -1,3 +1,4 @@
+import { refreshFinancialYearConfig } from "@/lib/financial-year-server";
 import { prisma } from "@/lib/prisma";
 import { callXeroApi, getAuthenticatedXeroClient } from "@/lib/xero-api-client";
 import { checkMembershipStatus } from "@/lib/xero-membership-sync";
@@ -68,7 +69,8 @@ export async function syncLinkedPaymentInvoiceMetadata(
 
 export async function refreshLinkedSubscriptionsForInvoice(
   invoiceId: string,
-  linkedSubscriptionIds: string[]
+  linkedSubscriptionIds: string[],
+  yearEndMonth: number,
 ) {
   const subscriptionWhere = [
     {
@@ -97,7 +99,7 @@ export async function refreshLinkedSubscriptionsForInvoice(
 
   const refreshedSubscriptions = new Set<string>();
   for (const subscription of subscriptions) {
-    await checkMembershipStatus(subscription.memberId, subscription.seasonYear);
+    await checkMembershipStatus(subscription.memberId, subscription.seasonYear, { yearEndMonth });
     refreshedSubscriptions.add(`${subscription.memberId}:${subscription.seasonYear}`);
   }
 
@@ -107,7 +109,8 @@ export async function refreshLinkedSubscriptionsForInvoice(
   };
 }
 
-export async function reconcileXeroPayment(paymentId: string) {
+export async function reconcileXeroPayment(paymentId: string, resolvedYearEndMonth?: number) {
+  const yearEndMonth = resolvedYearEndMonth ?? await refreshFinancialYearConfig();
   const { xero, tenantId } = await getAuthenticatedXeroClient();
   const response = await callXeroApi(
     () => xero.accountingApi.getPayment(tenantId, paymentId),
@@ -190,7 +193,7 @@ export async function reconcileXeroPayment(paymentId: string) {
       )
     : { matchedPayments: 0, updatedPayments: 0 };
   const { refreshedSubscriptions } = invoiceId
-    ? await refreshLinkedSubscriptionsForInvoice(invoiceId, linkedSubscriptionIds)
+    ? await refreshLinkedSubscriptionsForInvoice(invoiceId, linkedSubscriptionIds, yearEndMonth)
     : { refreshedSubscriptions: new Set<string>() };
 
   await writeXeroInboundAuditLogs({

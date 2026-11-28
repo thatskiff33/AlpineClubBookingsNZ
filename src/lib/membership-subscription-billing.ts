@@ -152,20 +152,21 @@ function digest(value: unknown) {
 }
 
 /** The membership year's first and last days, as date-only instants. */
-function seasonBounds(seasonYear: number) {
-  return { start: getSeasonStartDate(seasonYear), end: getSeasonEndDate(seasonYear) };
+function seasonBounds(seasonYear: number, yearEndMonth: number) {
+  return { start: getSeasonStartDate(seasonYear, yearEndMonth), end: getSeasonEndDate(seasonYear, yearEndMonth) };
 }
 
 export function calculateMembershipCharge(input: {
   annualAmountCents: number;
   prorationRule: MembershipFeeProrationRule;
   seasonYear: number;
+  yearEndMonth: number;
   decisionDate: Date;
 }) {
   if (!Number.isSafeInteger(input.annualAmountCents) || input.annualAmountCents < 0) {
     throw new SubscriptionBillingError("Annual membership fee must be a non-negative integer number of cents.");
   }
-  const { start, end } = seasonBounds(input.seasonYear);
+  const { start, end } = seasonBounds(input.seasonYear, input.yearEndMonth);
   const decision = new Date(Date.UTC(
     input.decisionDate.getUTCFullYear(),
     input.decisionDate.getUTCMonth(),
@@ -373,7 +374,7 @@ export async function buildSubscriptionBillingPreview(input: {
   const yearEndMonth = input.yearEndMonth ?? (await refreshFinancialYearConfig());
   // Validate the date against the selected membership year before querying,
   // including an otherwise-empty preview.
-  const bounds = seasonBounds(input.seasonYear);
+  const bounds = seasonBounds(input.seasonYear, yearEndMonth);
   if (decisionDate < bounds.start || decisionDate > bounds.end) {
     throw new SubscriptionBillingError(`Decision date must fall within membership year ${input.seasonYear}.`);
   }
@@ -979,6 +980,7 @@ export async function buildSubscriptionBillingPreview(input: {
       member,
       seasonRowStatus: null,
       seasonYear: input.seasonYear,
+      yearEndMonth,
       rule: billingLiabilityRule,
       ageTierSettings: await getAgeTierSettingsMemoized(),
     });
@@ -2525,8 +2527,9 @@ export async function queueApprovedMembershipSubscriptionCharges(input: {
   const decisionDate =
     input.decisionDate ??
     dateOnlyInstantOf(clubToday(await readClubTimeZoneOutsideRequest()));
-  const seasonYear = seasonYearOfStoredDate(decisionDate);
-  const preview = await buildSubscriptionBillingPreview({ seasonYear, decisionDate, memberIds: input.memberIds });
+  const yearEndMonth = await refreshFinancialYearConfig();
+  const seasonYear = seasonYearOfStoredDate(decisionDate, yearEndMonth);
+  const preview = await buildSubscriptionBillingPreview({ seasonYear, yearEndMonth, decisionDate, memberIds: input.memberIds });
   const result = await confirmSubscriptionBillingPreview({
     preview,
     expectedConfirmationToken: preview.confirmationToken,

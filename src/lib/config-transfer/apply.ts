@@ -14,6 +14,7 @@ import { lockAdultMemberHostingPolicySet } from "@/lib/adult-member-hosting-poli
 import { settleHostingCoverageAfterCommit } from "@/lib/adult-member-hosting-coverage-drain";
 import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
 import { clubSeasonYear } from "@/lib/financial-year";
+import { refreshFinancialYearConfig } from "@/lib/financial-year-server";
 import {
   clearStaleNotRequiredRows,
   clearedRowsAuditMetadata,
@@ -526,7 +527,7 @@ async function clearStaleRowsAfterImport(
     clearUp: Awaited<ReturnType<typeof clearStaleNotRequiredRows>>;
   };
   try {
-    const seasonYear = clubSeasonYear(await readClubTimeZoneOutsideRequest());
+    const seasonYear = clubSeasonYear(await readClubTimeZoneOutsideRequest(), undefined, await refreshFinancialYearConfig());
     attemptedSeasonYear = seasonYear;
     // The clear-up waits on the billing season key, which a confirm may hold
     // for its whole budget.

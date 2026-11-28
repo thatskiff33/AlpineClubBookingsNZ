@@ -59,6 +59,7 @@ import {
   toGroupDiscountConfig,
 } from "@/lib/policies/booking-route-decisions";
 import { seasonYearOfStoredDate } from "@/lib/financial-year";
+import { refreshFinancialYearConfig } from "@/lib/financial-year-server";
 import type { SubscriptionLockoutMode } from "@/lib/membership-lockout-settings";
 import { resolveSubscriptionLockoutMode } from "@/lib/member-subscription-eligibility";
 import { clubToday, type CalendarDate } from "@/lib/club-time";
@@ -123,6 +124,7 @@ async function repriceWaitlistCandidate(
   // defaulted: the default is what put this decision on the container's zone.
   todayAtClub: CalendarDate,
   format: ClubFormat,
+  yearEndMonth: number,
   // #2543 — the club's mode, resolved by the sweep BEFORE it opened this
   // transaction. This reprice inherits the unpaid-subscription reprice like every
   // other pricing call, and it passes no locked night prices, so the WHOLE stay
@@ -191,7 +193,7 @@ async function repriceWaitlistCandidate(
       guests: guestsForPricing,
       seasons: seasonRateData,
       groupDiscount: toGroupDiscountConfig(groupDiscountSetting),
-      seasonYear: seasonYearOfStoredDate(candidate.checkIn),
+      seasonYear: seasonYearOfStoredDate(candidate.checkIn, yearEndMonth),
       subscriptionLockoutMode,
       // Finding 2 (privacy re-review of MG3 #2308). An unattended sweep with no
       // member on the other end of the response: there is nobody to collapse the
@@ -386,6 +388,7 @@ export async function processWaitlistForDates(freedDates: {
   // #2543 — resolved ONCE, before the transaction below takes the per-lodge
   // capacity lock. `resolveSubscriptionLockoutMode` can refresh the
   // financial-year cache from Xero, which must never happen inside it.
+  const yearEndMonth = await refreshFinancialYearConfig();
   const subscriptionLockoutMode = await resolveSubscriptionLockoutMode();
   // #3123 — and the club's own day, resolved here for the same reason: the
   // offer-time reprice inside the transaction below judges the booking's
@@ -487,6 +490,7 @@ export async function processWaitlistForDates(freedDates: {
             tx,
             bookingOwner(candidate).memberId,
             offerLodgeId,
+            yearEndMonth,
           );
           if (!eligible) continue;
           const quote = await quoteWaitlistEntryAtLodge(
@@ -522,6 +526,7 @@ export async function processWaitlistForDates(freedDates: {
             offerLodgeId,
             todayAtClub,
             format,
+            yearEndMonth,
             subscriptionLockoutMode,
           );
         }
@@ -877,7 +882,7 @@ export async function confirmWaitlistOffer(
     const nonMemberPricing = await evaluateNonMemberPricingRequirements(prisma, {
       mode: await resolveSubscriptionLockoutMode(),
       lodgeId: offerLodgeId,
-      seasonYear: seasonYearOfStoredDate(offerKind.checkIn),
+      seasonYear: seasonYearOfStoredDate(offerKind.checkIn, await refreshFinancialYearConfig()),
       checkIn: offerKind.checkIn,
       checkOut: offerKind.checkOut,
       // Owner decision, 3 Aug 2026. The guard above has already established that

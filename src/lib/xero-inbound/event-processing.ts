@@ -1,4 +1,5 @@
 import { type Prisma } from "@prisma/client";
+import { refreshFinancialYearConfig } from "@/lib/financial-year-server";
 import { prisma } from "@/lib/prisma";
 import { isPrismaUniqueConstraintError } from "@/lib/prisma-errors";
 import logger from "@/lib/logger";
@@ -67,6 +68,7 @@ function inboundEventObjectUrl(
 async function processXeroInboundEvent(
   event: StoredXeroInboundEvent,
   format: ClubFormat,
+  yearEndMonth: number,
 ) {
   if (!event.resourceId) {
     return {
@@ -83,9 +85,9 @@ async function processXeroInboundEvent(
     case "CONTACT":
       return reconcileXeroContact(event.resourceId);
     case "INVOICE":
-      return failIfRecountLeftUnsettled(await reconcileXeroInvoice(event.resourceId, format));
+      return failIfRecountLeftUnsettled(await reconcileXeroInvoice(event.resourceId, format, { yearEndMonth }));
     case "PAYMENT":
-      return reconcileXeroPayment(event.resourceId);
+      return reconcileXeroPayment(event.resourceId, yearEndMonth);
     case "CREDITNOTE":
       return failIfRecountLeftUnsettled(await reconcileXeroCreditNote(event.resourceId));
     default:
@@ -180,10 +182,12 @@ async function releaseProcessedWebhookEventClaim(event: StoredXeroInboundEvent) 
 export async function processStoredXeroInboundEvents(options?: {
   limit?: number;
   eventIds?: string[];
+  yearEndMonth?: number;
 }): Promise<ProcessStoredXeroInboundEventsResult> {
   // The club's format (#3565), resolved once, before any transaction or
   // lock below — never per amount and never inside a transaction.
   const format = await clubFormatValues();
+  const yearEndMonth = options?.yearEndMonth ?? await refreshFinancialYearConfig();
   const limit = Math.min(Math.max(options?.limit ?? 10, 1), 50);
   const eventIds =
     options?.eventIds?.filter((value): value is string => typeof value === "string" && value.trim().length > 0) ?? [];
@@ -270,7 +274,7 @@ export async function processStoredXeroInboundEvents(options?: {
       });
       claim = operation;
 
-      const reconcileResult = await processXeroInboundEvent(event, format);
+      const reconcileResult = await processXeroInboundEvent(event, format, yearEndMonth);
       await completeXeroSyncOperation(operation, {
         responsePayload: reconcileResult,
         xeroObjectType: buildInboundXeroObjectType(event.eventCategory),
@@ -313,7 +317,9 @@ export async function processStoredXeroInboundEvents(options?: {
 export async function processStoredXeroInboundEventBatches(options?: {
   batchSize?: number;
   maxBatches?: number;
+  yearEndMonth?: number;
 }): Promise<RunXeroInboundReconciliationCycleResult["inbound"]> {
+  const yearEndMonth = options?.yearEndMonth ?? await refreshFinancialYearConfig();
   const batchSize = Math.min(
     Math.max(options?.batchSize ?? DEFAULT_XERO_INBOUND_BATCH_SIZE, 1),
     50
@@ -329,7 +335,7 @@ export async function processStoredXeroInboundEventBatches(options?: {
   };
 
   for (let batch = 0; batch < maxBatches; batch += 1) {
-    const result = await processStoredXeroInboundEvents({ limit: batchSize });
+    const result = await processStoredXeroInboundEvents({ limit: batchSize, yearEndMonth });
     totals.batches += 1;
     totals.found += result.found;
     totals.processed += result.processed;
@@ -349,6 +355,7 @@ export async function processStoredXeroInboundEventBatches(options?: {
 export async function runXeroInboundReconciliationCycle(options?: {
   batchSize?: number;
   maxBatches?: number;
+  yearEndMonth?: number;
   seasonYear?: number;
   contactMinimumIntervalMs?: number;
   membershipMinimumIntervalMs?: number;
@@ -357,7 +364,9 @@ export async function runXeroInboundReconciliationCycle(options?: {
   includeInvoiceReconciliation?: boolean;
   includeDeletedPaymentRecheck?: boolean;
 }): Promise<RunXeroInboundReconciliationCycleResult> {
+  const yearEndMonth = options?.yearEndMonth ?? await refreshFinancialYearConfig();
   const totals = await processStoredXeroInboundEventBatches({
+    yearEndMonth,
     batchSize: options?.batchSize,
     maxBatches: options?.maxBatches,
   });
@@ -373,6 +382,7 @@ export async function runXeroInboundReconciliationCycle(options?: {
       ? null
       : await runIncrementalMembershipReconciliation({
           seasonYear: options?.seasonYear,
+          yearEndMonth,
           minimumIntervalMs: options?.membershipMinimumIntervalMs,
         });
   const invoiceReconciliation =
@@ -380,6 +390,7 @@ export async function runXeroInboundReconciliationCycle(options?: {
       ? null
       : await runIncrementalInvoiceReconciliation({
           membershipReconciliation,
+          yearEndMonth,
         });
 
   // #4531: links whose deleted-payment check was deferred or unanswered. Never

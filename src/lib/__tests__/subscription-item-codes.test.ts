@@ -167,7 +167,7 @@ describe("buildSubscriptionInvoiceMatchOptions (#2109)", () => {
       { xeroItemCode: "FULL-ADULT" },
     ]);
 
-    const options = await buildSubscriptionInvoiceMatchOptions();
+    const options = await buildSubscriptionInvoiceMatchOptions(3);
     expect(options.accountCode).toBe("203");
     expect(options.primaryItemCode).toBe("SUBS");
     // Fee-schedule codes are NOT consulted when off.
@@ -191,7 +191,7 @@ describe("buildSubscriptionInvoiceMatchOptions (#2109)", () => {
       { xeroItemCode: "FULL-YOUTH" },
     ]);
 
-    const options = await buildSubscriptionInvoiceMatchOptions();
+    const options = await buildSubscriptionInvoiceMatchOptions(3);
     expect(options.primaryItemCode).toBe("SUBS");
     expect(options.itemCodes).toEqual(["FULL-ADULT", "FULL-YOUTH", "SUBS"]);
     expect(options.textFallbackEnabled).toBe(false);
@@ -200,7 +200,7 @@ describe("buildSubscriptionInvoiceMatchOptions (#2109)", () => {
   it("defaults the account code to 203 when unconfigured", async () => {
     mocks.lockoutFindUnique.mockResolvedValue(null);
     mocks.accountMappingFindUnique.mockResolvedValue(null);
-    const options = await buildSubscriptionInvoiceMatchOptions();
+    const options = await buildSubscriptionInvoiceMatchOptions(3);
     expect(options.accountCode).toBe("203");
     expect(options.itemCodes).toEqual([]);
     expect(options.primaryItemCode).toBeNull();

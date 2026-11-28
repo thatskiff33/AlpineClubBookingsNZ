@@ -6,6 +6,10 @@ const mocks = vi.hoisted(() => ({
   resolveMembershipTypePolicyForMember: vi.fn(),
 }));
 
+vi.mock("@/lib/financial-year-server", () => ({
+  refreshFinancialYearConfig: vi.fn().mockResolvedValue(3),
+}));
+
 vi.mock("@/lib/prisma", () => ({
   prisma: {
     xeroGroupingSettings: { findUnique: mocks.settingsFindUnique },
@@ -81,7 +85,7 @@ describe("xero-member-grouping DB loaders", () => {
       const res = await resolveMemberGroupingForMember({
         memberId: "m1",
         ageTier: "ADULT",
-        context: { mode: "NONE", activeRules: rules },
+        context: { yearEndMonth: 3, mode: "NONE", activeRules: rules },
       });
       expect(res.skippedReason).toBe("grouping_mode_none");
       expect(mocks.resolveMembershipTypePolicyForMember).not.toHaveBeenCalled();
@@ -94,7 +98,7 @@ describe("xero-member-grouping DB loaders", () => {
       const res = await resolveMemberGroupingForMember({
         memberId: "m1",
         ageTier: "ADULT",
-        context: { mode: "MEMBERSHIP_TYPE_AND_AGE", activeRules: rules },
+        context: { yearEndMonth: 3, mode: "MEMBERSHIP_TYPE_AND_AGE", activeRules: rules },
       });
       // type+null(2) beats tier-only ADULT(1) -> g-life wins
       expect(res.managedGroup?.id).toBe("g-life");
@@ -108,7 +112,7 @@ describe("xero-member-grouping DB loaders", () => {
       const res = await resolveMemberGroupingForMember({
         memberId: "m1",
         ageTier: "ADULT",
-        context: { mode: "MEMBERSHIP_TYPE_AND_AGE", activeRules: rules },
+        context: { yearEndMonth: 3, mode: "MEMBERSHIP_TYPE_AND_AGE", activeRules: rules },
       });
       expect(res.managedGroup?.id).toBe("g-adult");
     });

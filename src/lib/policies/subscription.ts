@@ -203,13 +203,13 @@ export function liabilityRuleFor(
  * 2027-03-31. The one definition the TS rule and the SQL filter
  * (`subscription-liability-where.ts`) both read (`INV-SSOT`).
  */
-export function getSeasonEndCalendarDate(seasonYear: number): CalendarDate {
-  return addCalendarDays(getSeasonStartCalendarDate(seasonYear + 1), -1);
+export function getSeasonEndCalendarDate(seasonYear: number, yearEndMonth: number): CalendarDate {
+  return addCalendarDays(getSeasonStartCalendarDate(seasonYear + 1, yearEndMonth), -1);
 }
 
 /** {@link getSeasonEndCalendarDate} as a stored date-only instant. */
-export function getSeasonEndDate(seasonYear: number): Date {
-  return dateOnlyInstantOf(getSeasonEndCalendarDate(seasonYear));
+export function getSeasonEndDate(seasonYear: number, yearEndMonth: number): Date {
+  return dateOnlyInstantOf(getSeasonEndCalendarDate(seasonYear, yearEndMonth));
 }
 
 /**
@@ -221,6 +221,7 @@ export function resolveLiabilityAgeTier(input: {
   dateOfBirth: Date | null | undefined;
   storedAgeTier: AgeTier | null | undefined;
   seasonYear: number;
+  yearEndMonth: number;
   ageTierSettings: AgeTierSettingData[];
 }): AgeTier | null {
   const storedAgeTier = input.storedAgeTier ?? null;
@@ -229,8 +230,8 @@ export function resolveLiabilityAgeTier(input: {
   }
   const referenceDate =
     input.source === "SEASON_START"
-      ? getSeasonStartDate(input.seasonYear)
-      : getSeasonEndDate(input.seasonYear);
+      ? getSeasonStartDate(input.seasonYear, input.yearEndMonth)
+      : getSeasonEndDate(input.seasonYear, input.yearEndMonth);
   return computeAgeTierWithSettings(
     input.dateOfBirth,
     referenceDate,
@@ -277,6 +278,7 @@ export function resolveMemberSubscriptionLiability(input: {
   member: { dateOfBirth: Date | null; ageTier: AgeTier } | null | undefined;
   seasonRowStatus: SubscriptionStatus | null | undefined;
   seasonYear: number;
+  yearEndMonth: number;
   rule: SubscriptionLiabilityRule;
   ageTierSettings: AgeTierSettingData[];
 }): { owes: boolean; ageTier: AgeTier | null } {
@@ -286,6 +288,7 @@ export function resolveMemberSubscriptionLiability(input: {
         dateOfBirth: input.member.dateOfBirth,
         storedAgeTier: input.member.ageTier,
         seasonYear: input.seasonYear,
+        yearEndMonth: input.yearEndMonth,
         ageTierSettings: input.ageTierSettings,
       })
     : null;

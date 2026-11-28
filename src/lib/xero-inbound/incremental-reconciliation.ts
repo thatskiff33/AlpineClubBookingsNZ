@@ -1,6 +1,7 @@
 import { prisma } from "@/lib/prisma";
 import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
 import { clubSeasonYear } from "@/lib/financial-year";
+import { refreshFinancialYearConfig } from "@/lib/financial-year-server";
 import { syncContactsFromXero } from "@/lib/xero-bulk-contact-sync";
 import { refreshAllMembershipStatuses } from "@/lib/xero-membership-sync";
 import { type IncrementalContactReconciliationResult, type IncrementalMembershipReconciliationResult } from "./types";
@@ -107,10 +108,12 @@ export async function runIncrementalContactReconciliation(options?: {
 
 export async function runIncrementalMembershipReconciliation(options?: {
   seasonYear?: number;
+  yearEndMonth?: number;
   minimumIntervalMs?: number;
 }): Promise<IncrementalMembershipReconciliationResult> {
+  const yearEndMonth = options?.yearEndMonth ?? await refreshFinancialYearConfig();
   const seasonYear =
-    options?.seasonYear ?? clubSeasonYear(await readClubTimeZoneOutsideRequest());
+    options?.seasonYear ?? clubSeasonYear(await readClubTimeZoneOutsideRequest(), undefined, yearEndMonth);
   const minimumIntervalMs =
     options?.minimumIntervalMs ?? DEFAULT_MEMBERSHIP_RECONCILE_MIN_INTERVAL_MS;
   const cursor = await prisma.xeroSyncCursor.findUnique({
@@ -138,5 +141,5 @@ export async function runIncrementalMembershipReconciliation(options?: {
     );
   }
 
-  return refreshAllMembershipStatuses(seasonYear);
+  return refreshAllMembershipStatuses(seasonYear, { yearEndMonth });
 }

@@ -72,6 +72,7 @@ import { sendAdminWaitlistOfferAlert, sendWaitlistOfferEmail } from "@/lib/email
 import { sendAdminWaitlistNoticeUnsentAlert } from "@/lib/email/admin-alerts-waitlist-notice-unsent";
 import { emailReachability } from "@/lib/email-reachability";
 import { seasonYearOfStoredDate } from "@/lib/financial-year";
+import { refreshFinancialYearConfig } from "@/lib/financial-year-server";
 import logger from "@/lib/logger";
 import { resolveSubscriptionLockoutMode } from "@/lib/member-subscription-eligibility";
 import type { SubscriptionLockoutMode } from "@/lib/membership-lockout-settings";
@@ -253,7 +254,7 @@ async function offerRateNotice(notice: WaitlistOfferNotice, mode: SubscriptionLo
     const nonMemberPricing = await evaluateNonMemberPricingRequirements(prisma, {
       mode,
       lodgeId: notice.offeredLodgeId ?? notice.lodgeId ?? "",
-      seasonYear: seasonYearOfStoredDate(notice.checkIn),
+      seasonYear: seasonYearOfStoredDate(notice.checkIn, await refreshFinancialYearConfig()),
       checkIn: notice.checkIn,
       checkOut: notice.checkOut,
       // Owner decision, 3 Aug 2026: threaded for consistency with the confirm

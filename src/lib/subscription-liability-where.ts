@@ -35,6 +35,7 @@ import {
  */
 export function subscriptionNotRequiredMemberConditions(input: {
   seasonYear: number;
+  yearEndMonth: number;
   ageTierSettings: AgeTierSettingData[];
   liabilitySettings: SubscriptionLiabilitySettings;
   /**
@@ -56,6 +57,7 @@ export function subscriptionNotRequiredMemberConditions(input: {
   const exemptTier = exemptAgeTierWhere(
     rule.ageSource,
     seasonYear,
+    input.yearEndMonth,
     input.ageTierSettings,
   );
   return [
@@ -94,6 +96,7 @@ export function subscriptionNotRequiredMemberConditions(input: {
 function exemptAgeTierWhere(
   source: LiabilityAgeTierSource,
   seasonYear: number,
+  yearEndMonth: number,
   ageTierSettings: AgeTierSettingData[],
 ): Prisma.MemberWhereInput {
   const exemptSettings = ageTierSettings.filter(
@@ -105,8 +108,8 @@ function exemptAgeTierWhere(
   if (source === "STORED_TIER") return storedTierExempt;
   const reference: CalendarDate =
     source === "SEASON_START"
-      ? getSeasonStartCalendarDate(seasonYear)
-      : getSeasonEndCalendarDate(seasonYear);
+      ? getSeasonStartCalendarDate(seasonYear, yearEndMonth)
+      : getSeasonEndCalendarDate(seasonYear, yearEndMonth);
   return {
     OR: [
       { AND: [{ dateOfBirth: null }, storedTierExempt] },

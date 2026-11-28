@@ -529,6 +529,7 @@ export function isSubscriptionNotRequiredForMembershipType(params: {
   member: { ageTier: AgeTier; dateOfBirth: Date | null };
   seasonRowStatus: SubscriptionStatus | null | undefined;
   seasonYear: number;
+  yearEndMonth: number;
   ageTierSettings: AgeTierSettingData[];
   liabilitySettings: SubscriptionLiabilitySettings;
 }): boolean {
@@ -537,6 +538,7 @@ export function isSubscriptionNotRequiredForMembershipType(params: {
     member: params.member,
     seasonRowStatus: params.seasonRowStatus,
     seasonYear: params.seasonYear,
+    yearEndMonth: params.yearEndMonth,
     rule: liabilityRuleFor(ADMIN_LIST_LIABILITY_SIDE, params.liabilitySettings),
     ageTierSettings: params.ageTierSettings,
   }).owes;

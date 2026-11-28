@@ -58,6 +58,7 @@ export interface LiabilityImpactMember {
 
 export interface SubscriptionLiabilityImpact {
   seasonYear: number;
+  yearEndMonth: number;
   current: SubscriptionLiabilitySettings;
   proposed: SubscriptionLiabilitySettings;
   newlyOwing: LiabilityImpactMember[];
@@ -83,6 +84,7 @@ const UNPAID_INVOICE_STATUSES: ReadonlySet<SubscriptionStatus> = new Set(["UNPAI
  */
 export function classifyLiabilityImpact(input: {
   seasonYear: number;
+  yearEndMonth: number;
   current: SubscriptionLiabilitySettings;
   proposed: SubscriptionLiabilitySettings;
   ageTierSettings: AgeTierSettingData[];
@@ -108,6 +110,7 @@ export function classifyLiabilityImpact(input: {
         member: facts.member,
         seasonRowStatus: facts.seasonRow?.status,
         seasonYear: input.seasonYear,
+        yearEndMonth: input.yearEndMonth,
         rule,
         ageTierSettings: input.ageTierSettings,
       }).owes;
@@ -153,7 +156,7 @@ type ImpactReadDb = Pick<
  */
 export async function buildSubscriptionLiabilityImpact(
   db: ImpactReadDb,
-  params: { seasonYear: number; proposed: SubscriptionLiabilitySettings },
+  params: { seasonYear: number; yearEndMonth: number; proposed: SubscriptionLiabilitySettings },
 ): Promise<SubscriptionLiabilityImpact> {
   const { seasonYear } = params;
   // Stored settings first: the stale list states each row's members-list
@@ -185,6 +188,7 @@ export async function buildSubscriptionLiabilityImpact(
     // The rows saving the proposed rule would reset, as the clear-up selects them.
     findStaleNotRequiredRows(db, {
       seasonYear,
+      yearEndMonth: params.yearEndMonth,
       settings: params.proposed,
       listSettings: current,
     }),
@@ -195,6 +199,7 @@ export async function buildSubscriptionLiabilityImpact(
   });
   return classifyLiabilityImpact({
     seasonYear,
+    yearEndMonth: params.yearEndMonth,
     current,
     proposed: params.proposed,
     ageTierSettings,

@@ -124,6 +124,7 @@ import {
 import { recordBookingEvent } from "@/lib/booking-events";
 import { getLodgeCapacity } from "@/lib/lodge-capacity";
 import { seasonYearOfStoredDate } from "@/lib/financial-year";
+import { seasonSlashLabel } from "@/lib/season-label";
 import { clubFinancialYearEndMonth } from "@/lib/financial-year-server";
 import { ACTIVE_BOOKING_STATUSES } from "@/lib/booking-status";
 import { describeUniqueConstraintTarget } from "@/lib/prisma-errors";
@@ -891,7 +892,7 @@ export async function joinGroupBookingAsMember(
       });
       if (!paidSub) {
         throw new GroupBookingError(
-          `Your membership subscription for the ${seasonYear}/${seasonYear + 1} season is not paid. Please contact the club to arrange payment before joining.`,
+          `Your membership subscription for the ${seasonSlashLabel(seasonYear, yearEndMonth)} season is not paid. Please contact the club to arrange payment before joining.`,
           403,
           { code: "SUBSCRIPTION_REQUIRED" }
         );
@@ -901,6 +902,7 @@ export async function joinGroupBookingAsMember(
     const unpaidMemberGuests = await findUnpaidMemberGuests(prisma, {
       bookingMemberId: sessionUserId,
       checkIn,
+      yearEndMonth,
       guests,
     });
     // #2543: mode-gated like the four sibling paths — the call above still runs
@@ -938,6 +940,7 @@ export async function joinGroupBookingAsMember(
     });
     const hostingViolation = await evaluateProposedAdultMemberHosting(prisma, {
       bookingOwnerMemberId: sessionUserId,
+      seasonYear,
       // #3038. The joiner's booking does not exist yet, but the Group Trip they
       // are joining does, and its id came from the join code they redeemed — so
       // where the club has `SAME_GROUP_TRIP` on, a qualifying adult travelling
@@ -1078,6 +1081,7 @@ export async function joinGroupBookingAsMember(
     outcome = await createConfirmedBooking({
       journal,
       format,
+      yearEndMonth,
       // #3123 — the CLUB's day (`INV-CONFIG-002`), resolved at the top of this
       // function, outside every transaction. `createConfirmedBooking` is
       // transaction-aware and so cannot read the club's zone for itself
@@ -1674,6 +1678,8 @@ export async function verifyAndCreateNonMemberJoin(
   const price = await priceBookingGuestsWithMembershipTypePolicy(prisma, {
     checkIn,
     checkOut,
+    yearEndMonth: await clubFinancialYearEndMonth(),
+    seasonYear: seasonYearOfStoredDate(checkIn, await clubFinancialYearEndMonth()),
     guests: toGuestPricingInputs(guests),
     seasons: toSeasonRateData(seasons),
     groupDiscount: toGroupDiscountConfig(gds),

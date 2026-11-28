@@ -48,35 +48,9 @@
  * **Every helper below REQUIRES the year-end.** `seasonMonthsLabel` and
  * `seasonYearsLabel` lost their process-cache default in #3133;
  * `seasonSelectLabel` lost its own in #5259, once every display site had a
- * value to pass. An unstated year-end is a compile error rather than a silent
+ * value to pass. The season-year derivations also require it. An unstated year-end is a compile error rather than a silent
  * March, which also makes the SSR pass moot: a value passed in cannot differ
  * between the react-server and SSR module instances of a cache.
- *
- * ## The rest of the tree still writes this label by hand SEVEN times
- *
- * It was nineteen when this module was written. #3103 adopted five of them (four
- * files - the MEMBER profile page inlines it twice), #3116 adopted the four
- * money and provider sites below, and a further three went with the surfaces
- * those changes touched.
- *
- * **Measured on this branch**, excluding tests and this file:
- * `/[Ss]easonYear \+ 1/` matches **12** lines, of which **FIVE are date
- * ARITHMETIC rather than a label** - a season's end bound in
- * `membership-subscription-billing.ts`, two in `xero-membership-sync.ts` (one
- * inside a Xero query string), and two building a picker's year window.
- * Rewriting one of those does not change a label, it changes a date. So 12 minus
- * 5 leaves the **seven** remaining names, in `admin/reports`, `bookings`,
- * `bookings/[id]/confirm-draft`, `member/subscription-status`,
- * `group-booking.ts`, `membership-type-policy.ts` and
- * `subscription-lockout-enforcement.ts`.
- *
- * **NO SINGLE GREP RETURNS EXACTLY THAT SET**, which is why the count is stated
- * with its method rather than on its own. The obvious lower-case
- * `/seasonYear \+ 1/` misses every site spelling it `currentSeasonYear + 1`, and
- * a raw-text scan additionally matches this very paragraph. Read each call site
- * rather than trusting any number here, and see
- * `__tests__/season-label-adoption-contract.test.ts`, which discriminates a NAME
- * from ARITHMETIC with a self-checked pattern over comment-stripped source.
  *
  * **THE FOUR MONEY AND PROVIDER SITES ADOPTED THIS IN #3116, AND THE EXCLUSION
  * LIST IS NOW EMPTY.** They were `xero-subscription-invoices.ts` and
@@ -168,9 +142,17 @@ export function seasonYearsLabel(
   seasonYear: number,
   yearEndMonth: number,
 ): string {
+  return seasonYearRangeLabel(seasonYear, yearEndMonth, " - ");
+}
+
+export function seasonSlashLabel(seasonYear: number, yearEndMonth: number): string {
+  return seasonYearRangeLabel(seasonYear, yearEndMonth, "/");
+}
+
+function seasonYearRangeLabel(seasonYear: number, yearEndMonth: number, separator: string): string {
   return seasonStartMonthOf(yearEndMonth) === 1
     ? String(seasonYear)
-    : `${seasonYear} - ${seasonYear + 1}`;
+    : `${seasonYear}${separator}${seasonYear + 1}`;
 }
 
 /**

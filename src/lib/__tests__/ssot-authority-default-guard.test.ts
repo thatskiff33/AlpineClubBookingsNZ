@@ -371,6 +371,11 @@ describe("every spelling of the defect is closed", () => {
    */
   const spellings: Array<[string, string]> = [
     [
+      "the process-cached financial year-end",
+      'import { getFinancialYearEndMonth } from "@/lib/financial-year";\n' +
+        "export function f(month: number = getFinancialYearEndMonth()) { return month; }",
+    ],
+    [
       "a plain parameter default",
       'import { APP_TIME_ZONE } from "@/config/operational";\n' +
         "export function f(tz: string = APP_TIME_ZONE) {\n  return tz;\n}",
@@ -674,16 +679,6 @@ describe("the stated boundaries hold — each of these must stay clean", () => {
       'import { refreshFinancialYearConfig } from "@/lib/financial-year-server";\n' +
         "export async function f(month: number = await refreshFinancialYearConfig()) {\n" +
         "  return month;\n}",
-    ],
-    [
-      "a PENDING resolver name, which the arm deliberately does not fire on yet",
-      // This is the assertion that makes the pending list honest rather than a
-      // comment. It must stay clean while `getFinancialYearEndMonth` is pending
-      // and must START reporting the moment that name is promoted — at which
-      // point THIS ROW is what has to move to the spellings suite above, and
-      // the census below is what will have told you to.
-      'import { getFinancialYearEndMonth } from "@/lib/financial-year";\n' +
-        "export function f(month: number = getFinancialYearEndMonth()) {\n  return month;\n}",
     ],
   ];
 
@@ -1249,10 +1244,7 @@ describe("the resolver scanner asks the question it claims to ask", () => {
   });
 });
 
-describe("the ambient-state census: the banned names have no default anywhere, and the pending one is pinned", () => {
-  type PendingResolver = { readonly name: string; readonly liveDefaults: number };
-
-  const pending = AMBIENT_AUTHORITY_RESOLVERS.pending as PendingResolver[];
+describe("the ambient-state census: banned resolvers have no parameter defaults", () => {
   const banned = AMBIENT_AUTHORITY_RESOLVERS.banned as string[];
 
   /**
@@ -1267,13 +1259,12 @@ describe("the ambient-state census: the banned names have no default anywhere, a
   let hits: ResolverDefaultHit[] = [];
 
   beforeAll(() => {
-    const tracked = [...banned, ...pending.map((entry) => entry.name)];
     hits = CENSUS_ROOTS.flatMap((root) => walk(path.join(ROOT, root))).flatMap(
       (file) =>
         resolverDefaults(
           fs.readFileSync(path.join(ROOT, file), "utf8"),
           file,
-          tracked,
+          banned,
         ),
     );
   }, 120_000);
@@ -1294,34 +1285,4 @@ describe("the ambient-state census: the banned names have no default anywhere, a
     ).toEqual([]);
   });
 
-  it.each(pending)(
-    "pins the live default population of the pending resolver $name",
-    ({ name, liveDefaults }: PendingResolver) => {
-      const live = hits.filter((hit) => hit.name === name);
-      // THIS IS THE RATCHET, AND IT HAS A MECHANICAL TRIGGER, which is what
-      // separates it from an exemption list that rots. A pending name is one the
-      // arm deliberately does not fire on because deleting its remaining
-      // defaults needs a decision the arm cannot make. Pinning the count means
-      // the deferral cannot silently GROW, and — the half a comment could never
-      // do — the moment somebody deletes the last one this fails and hands them
-      // the next step instead of leaving the name pending forever.
-      expect(
-        live.map((entry) => `${entry.file}:${entry.line}`),
-        `The live default population of \`${name}\` is no longer ${liveDefaults}.\n` +
-          "WENT DOWN, or to zero? Good — that is the ratchet turning. Lower " +
-          "`liveDefaults` in `AMBIENT_AUTHORITY_RESOLVERS.pending` in " +
-          "eslint.config.mjs, and if it reached zero, MOVE THE NAME to `banned` " +
-          "and delete its pending entry: the arm then closes the class, and the " +
-          "boundary row asserting this name stays clean has to move up to the " +
-          "spellings suite.\n" +
-          "WENT UP? A new default on an ambient-state resolver was written while " +
-          "the arm was deliberately not firing on it, which is exactly what the " +
-          "pin exists to catch. Delete it rather than raising the number.\n" +
-          "Found:\n" +
-          live
-            .map((entry) => `${entry.file}:${entry.line}  ${entry.text}`)
-            .join("\n"),
-      ).toHaveLength(liveDefaults);
-    },
-  );
 });

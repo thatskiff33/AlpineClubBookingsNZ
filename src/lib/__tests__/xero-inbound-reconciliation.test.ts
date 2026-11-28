@@ -438,6 +438,10 @@ vi.mock("@/lib/xero-api-client", async (importOriginal) => {
   };
 });
 
+vi.mock("@/lib/financial-year-server", () => ({
+  refreshFinancialYearConfig: vi.fn().mockResolvedValue(3),
+}));
+
 vi.mock("@/lib/xero-membership-sync", async (importOriginal) => {
   const actual = (await importOriginal()) as typeof import("@/lib/xero-membership-sync");
 
@@ -1067,7 +1071,7 @@ describe("processStoredXeroInboundEvents", () => {
         xeroInvoiceNumber: "INV-001",
       },
     });
-    expect(mocks.checkMembershipStatus).toHaveBeenCalledWith("mem_1", 2026);
+    expect(mocks.checkMembershipStatus).toHaveBeenCalledWith("mem_1", 2026, { yearEndMonth: 3 });
     expect(mocks.upsertXeroObjectLink).toHaveBeenCalledWith(
       expect.objectContaining({
         localModel: "Payment",
@@ -1341,7 +1345,7 @@ describe("processStoredXeroInboundEvents", () => {
       skipped: 0,
     });
 
-    expect(mocks.checkMembershipStatus).toHaveBeenCalledWith("mem_1", 2026);
+    expect(mocks.checkMembershipStatus).toHaveBeenCalledWith("mem_1", 2026, { yearEndMonth: 3 });
     expect(mocks.auditLogCreate).toHaveBeenCalledWith(
       expect.objectContaining({
         data: expect.objectContaining({
@@ -5878,7 +5882,7 @@ describe("processStoredXeroInboundEvents", () => {
         xeroInvoiceNumber: "INV-001",
       },
     });
-    expect(mocks.checkMembershipStatus).toHaveBeenCalledWith("mem_1", 2026);
+    expect(mocks.checkMembershipStatus).toHaveBeenCalledWith("mem_1", 2026, { yearEndMonth: 3 });
     expect(mocks.upsertXeroObjectLink).toHaveBeenCalledWith(
       expect.objectContaining({
         localModel: "Payment",
@@ -8042,7 +8046,7 @@ describe("runXeroInboundReconciliationCycle", () => {
     });
 
     expect(mocks.syncContactsFromXero).toHaveBeenCalledTimes(1);
-    expect(mocks.refreshAllMembershipStatuses).toHaveBeenCalledWith(2026);
+    expect(mocks.refreshAllMembershipStatuses).toHaveBeenCalledWith(2026, { yearEndMonth: 3 });
   });
 
   it("re-checks links pending a deleted-payment check, and a failure never fails the cycle (#4531)", async () => {
