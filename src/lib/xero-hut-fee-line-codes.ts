@@ -69,12 +69,29 @@ export function hutFeeRefundLine(
   mapping: RefundLineMapping,
   taxRendering: XeroTaxRendering,
 ): LineItem {
+  return hutFeeRefundLineCodedAs(description, amountCents, hutFeeRefundLineCodes(mapping), taxRendering);
+}
+
+/**
+ * A hut-fee refund line coded with item and account codes the caller already
+ * holds rather than today's mapping: the failed-card-refund reversal copies
+ * the coding of the card note it undoes, so a mapping changed since (#5235,
+ * revenue to expense) cannot split the note and its reversal across two
+ * accounts. A code absent from `codes` stays absent from the line.
+ */
+export function hutFeeRefundLineCodedAs(
+  description: string,
+  amountCents: number,
+  codes: Pick<LineItem, "itemCode" | "accountCode">,
+  taxRendering: XeroTaxRendering,
+): LineItem {
   return {
     description,
     quantity: 1,
     unitAmount: amountCents / 100,
     ...xeroLineTax(taxRendering),
-    ...hutFeeRefundLineCodes(mapping),
+    ...(codes.itemCode ? { itemCode: codes.itemCode } : {}),
+    ...(codes.accountCode ? { accountCode: codes.accountCode } : {}),
   };
 }
 

@@ -30,7 +30,7 @@ import { addCalendarDays, isCalendarDate, requireCalendarDate } from "@/lib/club
 import { formatDateOnly } from "@/lib/date-only";
 import logger from "@/lib/logger";
 import { bookingOwner } from "@/lib/booking-owner";
-import { hutFeeRefundLine } from "@/lib/xero-hut-fee-line-codes";
+import { hutFeeRefundLine, hutFeeRefundLineCodedAs } from "@/lib/xero-hut-fee-line-codes";
 import { resolveXeroTaxRendering } from "@/lib/xero-tax-anchors";
 import type { XeroTaxRendering } from "@/lib/xero-tax-rendering";
 import { buildXeroInvoiceUrl } from "@/lib/xero-links";
@@ -201,6 +201,52 @@ async function reversalLink(paymentId: string, closeTaskId: string, role: string
   });
 }
 
+/** Refund methods whose note is not a card note: the reversal never copies one. */
+const NOT_CARD_NOTE_METHODS = new Set(["internet-banking", "account-credit"]);
+
+/**
+ * #5235 review (money, `INV-PAY-151`): the item and account code of the
+ * payment's latest card refund note still live in Xero, as its line was sent
+ * (the create operation's recorded request), or null when there is none to
+ * read. A note with no recorded method is a card note: every note on a card
+ * payment was one before a method was recorded. Notes are per payment, so the
+ * latest stands for the failed refunds this reversal answers.
+ */
+export async function readCardRefundNoteLineCodes(
+  paymentId: string,
+): Promise<Pick<LineItem, "itemCode" | "accountCode"> | null> {
+  const { prisma } = await import("@/lib/prisma");
+  const links = await prisma.xeroObjectLink.findMany({
+    where: { localModel: "Payment", localId: paymentId, xeroObjectType: "CREDIT_NOTE", role: "REFUND_CREDIT_NOTE", active: true },
+    select: { xeroObjectId: true },
+  });
+  if (links.length === 0) return null;
+  const operations = await prisma.xeroSyncOperation.findMany({
+    where: {
+      direction: "OUTBOUND",
+      entityType: "CREDIT_NOTE",
+      operationType: "CREATE",
+      localModel: "Payment",
+      localId: paymentId,
+      status: "SUCCEEDED",
+      xeroObjectId: { in: links.map((link) => link.xeroObjectId) },
+    },
+    orderBy: { createdAt: "desc" },
+    select: { requestPayload: true },
+  });
+  for (const operation of operations) {
+    const payload = asRecord(operation.requestPayload);
+    if (typeof payload?.refundMethod === "string" && NOT_CARD_NOTE_METHODS.has(payload.refundMethod)) continue;
+    const notes = Array.isArray(payload?.creditNotes) ? payload.creditNotes : [];
+    const lines = asRecord(notes[0])?.lineItems;
+    const line = asRecord(Array.isArray(lines) ? lines[0] : null);
+    const itemCode = typeof line?.itemCode === "string" && line.itemCode ? line.itemCode : undefined;
+    const accountCode = typeof line?.accountCode === "string" && line.accountCode ? line.accountCode : undefined;
+    if (itemCode || accountCode) return { ...(itemCode ? { itemCode } : {}), ...(accountCode ? { accountCode } : {}) };
+  }
+  return null;
+}
+
 async function chooseDocumentDate(
   closedOn: string,
   providers: ReversalProviders,
@@ -277,10 +323,17 @@ export async function createXeroCardRefundReversalInvoice(
       const contactId = await providers.findOrCreateXeroContactForInvoicedParty(booking, {
         createdByMemberId: params.createdByMemberId,
       });
-      const refunds = await providers.getResolvedAccountMapping("hutFeeRefunds");
       // #4632: the reversal undoes a note raised under the booking's treatment, so it carries the same one.
       const taxRendering = await resolveXeroTaxRendering({ kind: "booking", bookingId });
-      const line: LineItem = hutFeeRefundLine(cardRefundReversalDescription(bookingId), amountCents, refunds, taxRendering);
+      // #5235 review: and the coding that note was sent with, so a Hut Fee
+      // Refunds mapping changed since (revenue to expense) does not leave the
+      // note's account credited and another account charged. Only a payment
+      // with no readable card note falls back to today's mapping.
+      const description = cardRefundReversalDescription(bookingId);
+      const noteCodes = await readCardRefundNoteLineCodes(paymentId);
+      const line: LineItem = noteCodes
+        ? hutFeeRefundLineCodedAs(description, amountCents, noteCodes, taxRendering)
+        : hutFeeRefundLine(description, amountCents, await providers.getResolvedAccountMapping("hutFeeRefunds"), taxRendering);
       const buildInvoice = (resolvedContactId: string, documentDate: string): Invoice => ({
         type: Invoice.TypeEnum.ACCREC,
         contact: { contactID: resolvedContactId },

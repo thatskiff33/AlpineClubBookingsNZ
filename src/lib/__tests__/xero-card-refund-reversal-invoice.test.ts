@@ -10,6 +10,8 @@ const mocks = vi.hoisted(() => ({
   operationFindUnique: vi.fn(),
   operationUpdate: vi.fn(),
   linkFindFirst: vi.fn(),
+  linkFindMany: vi.fn(),
+  operationFindMany: vi.fn(),
   bookingFindUnique: vi.fn(),
   complete: vi.fn(),
   fail: vi.fn(),
@@ -26,9 +28,11 @@ vi.mock("@/lib/prisma", () => ({
       findUnique: (...args: unknown[]) => mocks.operationFindUnique(...args),
       update: (...args: unknown[]) => mocks.operationUpdate(...args),
       findFirst: async () => null,
+      findMany: (...args: unknown[]) => mocks.operationFindMany(...args),
     },
     xeroObjectLink: {
       findFirst: (...args: unknown[]) => mocks.linkFindFirst(...args),
+      findMany: (...args: unknown[]) => mocks.linkFindMany(...args),
     },
     booking: { findUnique: (...args: unknown[]) => mocks.bookingFindUnique(...args) },
   },
@@ -91,6 +95,8 @@ beforeEach(() => {
   mocks.operationFindUnique.mockResolvedValue({ requestPayload: PAYLOAD });
   mocks.operationUpdate.mockResolvedValue({});
   mocks.linkFindFirst.mockResolvedValue(null);
+  mocks.linkFindMany.mockResolvedValue([]);
+  mocks.operationFindMany.mockResolvedValue([]);
   mocks.bookingFindUnique.mockResolvedValue({
     id: PAYLOAD.bookingId,
     memberId: "member-1",
@@ -150,6 +156,31 @@ describe("the failed-card-refund reversal invoice (#4369)", () => {
       localId: "pay-1",
       metadata: { amountCents: 8_000, closeTaskId: "close-1", documentDate: CLOSED_ON },
     });
+  });
+
+  it("#5235 review: copies the card note's coding, not today's mapping, after Hut Fee Refunds moved to an expense account", async () => {
+    // The card note went to revenue 200 on item REF; the mapping is now expense 410 (the providers' 210 stands in).
+    mocks.linkFindMany.mockResolvedValue([{ xeroObjectId: "cn-card" }, { xeroObjectId: "cn-bank" }]);
+    mocks.operationFindMany.mockResolvedValue([
+      // Newest first: the bank note the close raised is never the one copied.
+      { requestPayload: { refundMethod: "internet-banking", creditNotes: [{ lineItems: [{ accountCode: "410" }] }] } },
+      { requestPayload: { refundMethod: "card", creditNotes: [{ lineItems: [{ itemCode: "REF", accountCode: "200" }] }] } },
+    ]);
+    await createXeroCardRefundReversalInvoice({ syncOperation: xeroClaim("op-1") }, providers() as never);
+    const line = (invoiceFrom(mocks.createInvoices.mock.calls[0]!).lineItems as Array<Record<string, unknown>>)[0]!;
+    expect(line).toMatchObject({ itemCode: "REF", accountCode: "200", taxType: "OUTPUT2", unitAmount: 80 });
+    expect(mocks.operationFindMany.mock.calls[0]![0]).toMatchObject({
+      where: { localId: "pay-1", status: "SUCCEEDED", xeroObjectId: { in: ["cn-card", "cn-bank"] } },
+    });
+  });
+
+  it("#5235 review: a card note sent with only an item code keeps the line item-coded", async () => {
+    mocks.linkFindMany.mockResolvedValue([{ xeroObjectId: "cn-card" }]);
+    mocks.operationFindMany.mockResolvedValue([{ requestPayload: { creditNotes: [{ lineItems: [{ itemCode: "REF" }] }] } }]);
+    await createXeroCardRefundReversalInvoice({ syncOperation: xeroClaim("op-1") }, providers() as never);
+    const line = (invoiceFrom(mocks.createInvoices.mock.calls[0]!).lineItems as Array<Record<string, unknown>>)[0]!;
+    expect(line.itemCode).toBe("REF");
+    expect(line).not.toHaveProperty("accountCode");
   });
 
   it("MUTATION: a lock on the close day dates the invoice the next open day and keeps the close day in the reference", async () => {
