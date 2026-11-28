@@ -1515,10 +1515,14 @@ that way (#5442).
   it fell to the page, so a failure alert that took it keeps it.
 - Wait for the outcome; never assert it on the line after `act`. The reply
   may still be in flight: `await waitFor(() => expect(status).toHaveTextContent(text))`.
-- Prove it with a slow-reply variant. `action-outcome-announcements.test.tsx`
-  runs every case against an instant reply and one delayed 50 ms of real time
-  (`REPLY_SPEEDS`), more than three ticks. The slow variant failed exactly the
-  two surfaces with the defect before the fix.
+- Prove it with a slow-reply variant: run the case over `REPLY_SPEEDS` from
+  `src/lib/__tests__/helpers/focus.ts`, an instant reply and one delayed 50 ms
+  of real time (`replyDelay`), more than three ticks. Then hold focus with
+  `expectToHoldFocus`. `action-outcome-announcements.test.tsx` and
+  `disabled-control-focus-return.test.tsx` do this for every member and
+  public surface with the defect; each slow case failed before its fix.
+- Inside an open dialog it does not apply: the dialog's focus trap keeps focus
+  on the dialog itself, so the hook would never act.
 
 ### Do not make the component's effect a layout effect
 
