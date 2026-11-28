@@ -26,6 +26,9 @@ vi.mock("next/navigation", () => ({
 vi.mock("next-auth/react", () => ({ signIn: mockSignIn }));
 vi.mock("sonner", () => ({ toast: { error: toastError, success: vi.fn() } }));
 vi.mock("@/lib/save-response-as-file", () => ({ saveResponseAsFile }));
+// Stripe Elements needs a live key and a browser; the settle button is enough.
+vi.mock("@/components/stripe/StripeProvider", () => ({ default: () => null }));
+vi.mock("@/components/stripe/PaymentForm", () => ({ default: () => null }));
 vi.mock("@/components/club-identity-provider", () => ({
   useClubIdentity: () => ({ name: "Test Club" }),
 }));
@@ -72,6 +75,7 @@ import { TwoFactorSecurityCard } from "@/app/(authenticated)/profile/two-factor-
 import { PartnerLinkSection } from "@/app/(authenticated)/profile/partner-link-section";
 import { ProfileForm } from "@/components/profile/profile-form";
 import { TwoFactorVerifyPanel } from "@/app/(public)/login/two-factor-panels";
+import { OrganiserGroupBookingCard } from "@/components/group-booking/organiser-group-booking-card";
 
 type Reply = { ok: boolean; body: unknown };
 
@@ -308,6 +312,50 @@ describe.each(REPLY_SPEEDS)("a control disabled while busy keeps focus ($speed r
     await press(button);
     await waitFor(() => expect(button).toHaveTextContent("Send another code"));
     await expectToHoldFocus(button, "Send another code");
+  });
+
+  it("group settlement that is refused", async () => {
+    installFetch(
+      { ok: false, body: { error: REFUSAL } },
+      {
+        delayMs,
+        // Every GET the card makes: payment options and the club's messages.
+        load: { methods: { stripe: { enabled: true } }, messages: {}, tokens: {} },
+      },
+    );
+    render(
+      <OrganiserGroupBookingCard
+        bookingId="bk_1"
+        canOpenGroup={false}
+        group={{
+          code: "ABCD2345",
+          status: "OPEN",
+          paymentMode: "ORGANISER_PAYS",
+          joinDeadline: null,
+          maxJoiners: null,
+          joiners: [
+            {
+              id: "j1",
+              name: "Jo Member",
+              guestCount: 1,
+              status: "CONFIRMED",
+              priceCents: 4500,
+              moneyReconciliation: {
+                visibility: "VISIBLE",
+                reconciliation: { state: "RECONCILED", reasons: [] },
+              },
+              isMember: true,
+              paysOwn: false,
+            },
+          ],
+          settlement: null,
+        }}
+      />,
+    );
+    const button = screen.getByRole("button", { name: "Settle group total" });
+    await press(button);
+    await screen.findByText(REFUSAL);
+    await expectToHoldFocus(button, "Settle group total");
   });
 
   it("profile save that is refused", async () => {
