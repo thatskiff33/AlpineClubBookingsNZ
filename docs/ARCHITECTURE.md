@@ -960,12 +960,17 @@ Use these ownership boundaries when adding new code:
 
 ### Paid-booking import engine
 
-`src/lib/booking-import/` separates pure CSV parsing, read-only planning and
-one-booking-per-transaction confirmation. It composes the existing booking
-rules and manual settlement body rather than calling the ordinary booking
-create service. Child A of #5005 is intentionally unreachable from routes and
-screens. Its [engine contract](design/booking-import.md) describes the preview,
-reconciliation totals, batch identity and later children.
+`src/lib/booking-import/` separates pure CSV parsing (`columns.ts` holds the
+columns and the mapping the screen proposes, with no Prisma import), read-only
+planning, one-booking-per-transaction confirmation, and batch reversal
+(`reverse.ts`). It composes the existing booking rules, manual settlement and
+reversal, and cancel rather than calling the ordinary booking create service.
+`request.ts` and `batches.ts` serve the routes under
+`/api/admin/bookings/import/` (filed under finance, each also checking
+bookings at the same level, O4), and the Bookings hub's **Import Paid
+Bookings** page and its batch page are the screen. Its
+[engine contract](design/booking-import.md) describes the preview,
+reconciliation totals, batch identity, reversal and the remaining children.
 
 ### Bed-allocation preference resolution
 

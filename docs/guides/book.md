@@ -26,6 +26,12 @@ date-only lodge nights. The behaviour and its guardrails are documented in
 - You want to apply account credit or a promo code to a booking as you create
   it.
 
+Not for future stays a moving-in club has **already been paid for** in its old
+system: Book on Behalf prices at today's rates and can raise a new invoice.
+Bring those across with
+[Import Paid Bookings](moving-in.md#7-future-bookings-import-prepaid-stays),
+which stores each at the amount paid and sends nothing.
+
 ## Step-by-step
 
 ### Choose who the booking is for

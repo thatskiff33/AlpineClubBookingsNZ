@@ -178,10 +178,20 @@ meantime. This is only possible while nothing has happened since that a
 reversal could not undo: no refund, no card payment, no open refund task, and
 no Xero invoice.
 
+**An imported booking's payment.** A paid future stay brought across from the
+club's previous system with
+[Import Paid Bookings](moving-in.md#7-future-bookings-import-prepaid-stays)
+carries a manual payment the import recorded: its note names the import batch
+and the old Booking Ref, and its amount is what the member paid. It reads and
+behaves like any cash payment. To undo a wrong import, reverse the batch from
+its page rather than reversing each payment here.
+
 ### Pay back a refund for a cash booking
 
 When a booking that was paid in cash is cancelled, there is no card charge to
-reverse, so the system raises a task instead of pretending money moved. It
+reverse, so the system raises a task instead of pretending money moved. An
+imported paid booking is a cash booking here: its cancellation raises the same
+task, at the club's policy amount of what the member paid. It
 appears at the top of this page in the **Money to settle** card, and the
 member is told the club will arrange their refund.
 

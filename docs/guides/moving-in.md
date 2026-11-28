@@ -6,19 +6,18 @@ Audience: Adopter, Operator
 
 The order in which a club moves its people and money in from a previous
 booking system or spreadsheet, the tool for each step, and how to prove that
-nothing was lost or doubled. Nothing here has its own admin page. Each step
-uses an existing admin area, linked where it applies.
+nothing was lost or doubled. Each step uses an admin area, linked where it
+applies.
 
 Two things carry money over, and both are easy to get wrong:
 
 - **credit members already hold** (an opening credit), which the
   [opening-credit batch](#6-credit-post-the-opening-credits) loads from one
   file, with one approval and a total you check first;
-- **future stays members have already paid for**, which have no import yet. The
-  [prepaid-booking recipe](#7-future-bookings-re-key-prepaid-stays-without-charging-twice)
-  shows how to re-key them without billing anyone twice. The bookings import is
-  tracked in
-  [#5005](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/5005).
+- **future stays members have already paid for**, which the
+  [paid-bookings import](#7-future-bookings-import-prepaid-stays) loads from
+  one file at the price actually paid, with a preview and totals you check
+  first, and without billing or emailing anyone.
 
 ## When you'd use it
 
@@ -194,41 +193,95 @@ your reason. Do it before members spend any of it: the reversal is refused, and
 nothing changes, once any member has used part of their opening credit. More
 detail is in [Refunds & Credits](refund-requests.md#post-or-reverse-opening-credits).
 
-### 7. Future bookings: re-key prepaid stays without charging twice
+### 7. Future bookings: import prepaid stays
 
-Until [#5005](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/5005)
-adds a bookings import, a stay booked in the old system is re-entered with
-[Book on Behalf](book.md). The danger is money. A stay the member **already
-paid for** must not become a second bill.
+Future stays members **already paid for** in the old system come across with
+**Admin → Bookings → Import Paid Bookings**. Each imported booking is stored as
+**Paid** at the amount the club received, holds its beds, and is placed by the
+normal bed allocation. No Xero invoice, card payment request or email is made,
+because the money is already in the club's accounts. You need both **finance
+edit** and **bookings edit** access to import or reverse.
 
 **Unpaid stays** are ordinary bookings. Book them the usual way.
 
-**Prepaid stays, whether or not your club uses Xero:**
+**The file.** One row per guest, for one lodge. Rows that share a **Booking
+Ref** are one booking. The columns are Booking Ref, Lodge (needed when the club
+has more than one active lodge), Owner Email, Owner First Name, Owner Last
+Name, Guest Type (Member or Non-member), Guest Email, Guest First Name, Guest
+Last Name, Age Group (for non-members: Adult, Youth, Child or Infant), Check
+In, Check Out and Amount Paid, and optionally Nights and Notes. Your columns
+can have other names: the import asks which column is which.
 
-1. Book on behalf of the member as usual, and choose **Card** as the
-   **Payment method**. Do **not** choose Internet Banking: on that path, Xero
-   raises an invoice the moment you confirm.
+- **Check Out is the morning the guests leave**, not their last night. If you
+  fill Nights, it must match.
+- **Amount Paid** is dollars and cents. Either give every guest row its own
+  amount, or give only the first row of a booking its total (the import shares
+  it across the booking's guest-nights). A mix is refused. A blank amount is
+  missing, not zero: a free stay says `0.00`.
+- Members (the owner and member guests) are matched by email, first name and
+  last name, as the member import matches them. Import members first (step 3).
+
+**Import it:**
+
+1. Open **Import Paid Bookings** and click **Import paid bookings**.
+2. Choose the lodge and the file, then check the column for each item and the
+   date format the file uses. Click **Preview**. Nothing is written yet.
+3. Read the preview. It shows the bookings, guests, guest-nights and dollars
+   that will import, the same for the refused bookings (grouped by reason), and
+   the beds booked each night beside the lodge's capacity. **Will import plus
+   refused equals the file**: compare the whole-file total with the old
+   system's report before you go on. Beside each amount is what the app's
+   rates would charge, as a typing check; a difference never refuses a row.
+4. Click **Import**. The import works through the file in slices and shows its
+   progress. If anything changed since your preview (another booking took the
+   last beds, say), nothing is written and the new preview is shown: read it
+   and import again.
+5. The batch page then shows the imported and refused totals to check against
+   the old records.
+
+**Refused rows.** Each refused booking says why: a member not matched, a check
+in before today, a member already booked that night, a night that would go over
+capacity or is held for a whole-lodge booking, a Booking Ref already imported,
+or a stay that breaks the club's own rules (no adult member hosting the
+non-members, or children with no adult). A paid stay that breaks a club rule is
+never let in under a reason: fix the row and import it again (a corrected file
+is a new batch), or enter it by hand:
+
+1. [Book on Behalf](book.md), choosing **Card** as the **Payment method**. Do
+   **not** choose Internet Banking: on that path, Xero raises an invoice the
+   moment you confirm.
 2. Click **Confirm Booking**, then **Create without emailing**.
 3. On the new booking, open **Record manual payment**
-   ([Record a payment made in cash or by an off-Xero bank transfer](payments.md#record-a-payment-made-in-cash-or-by-an-off-xero-bank-transfer)).
-   Put the old system's reference in the note, and record it without emailing.
-   The booking becomes **Paid** and holds its beds. Nothing is sent to Xero.
+   ([Record a payment made in cash or by an off-Xero bank transfer](payments.md#record-a-payment-made-in-cash-or-by-an-off-xero-bank-transfer)),
+   put the old Booking Ref in the note, and record it without emailing.
 
-This is right because the money was received, and entered in the club's
-accounts, before the move. A new Xero invoice would be a second debt for cash
-the club already has.
+Book on Behalf prices the stay at today's rates, so **Record manual payment**
+records that price, not what the member paid. Note the difference: if they
+paid more, give the extra back as a
+[credit adjustment](refund-requests.md#approve-or-reject-a-credit-adjustment);
+if they paid less, ask your treasurer how to settle it. Until the stay is
+keyed, its beds are not held. Part-paid bookings (a deposit with a balance
+still owing) are refused for now with "part-paid bookings cannot be imported
+yet"; enter them by hand.
 
-**If an invoice was raised anyway** (for example, the booking went through on
-Internet Banking), **Record manual payment** is refused. Settle that invoice
-in Xero instead, against the payment the old system recorded, so Xero shows
-it paid and not owed twice. If you are unsure, ask your treasurer which
-account the old payment sits in before you do anything.
+**If an invoice was raised anyway** (a hand-keyed booking went through on
+Internet Banking), **Record manual payment** is refused. Settle that invoice in
+Xero instead, against the payment the old system recorded.
 
-**If the price differs** from what the member paid: **Record manual payment**
-always records the full amount owing. If they paid more, record it, then give
-the extra back as a [credit adjustment](refund-requests.md#approve-or-reject-a-credit-adjustment).
-If they paid less, do not record it yet: collect the difference first, or ask
-your treasurer how to settle it.
+**Later.** An imported booking behaves like a booking paid in cash. Editing it
+works as usual. If it is cancelled, by the member or an officer, the club's
+cancellation policy applies to the imported amount and the refund appears
+under **Money to settle**; pay it back by bank transfer and click **Mark paid
+back** ([Pay back a refund for a cash booking](payments.md#pay-back-a-refund-for-a-cash-booking)).
+Nothing is asked of Stripe or Xero.
+
+**Reverse a batch.** If a batch was wrong, open it and click **Reverse batch**.
+It first lists which bookings it will take back and which it keeps, and why.
+Only bookings nobody has touched since the import are reversed: still paid, the
+stay not started, not edited, no refund or refund task, no card payment and no
+Xero link. Each is cancelled with its recorded payment taken back, nobody is
+emailed and nothing is refunded. Touched bookings are kept; deal with each by
+hand. A reversed Booking Ref can be imported again from a corrected file.
 
 ### 8. Check the totals against the old records
 
@@ -247,8 +300,10 @@ going on.
       paid count for this season.
 - [ ] **Credit:** the posted batch total on the **Opening credits** card equals
       the old system's total credit owed to members, to the cent.
-- [ ] **Prepaid stays:** the number of future paid bookings, and the sum of
-      the manual payments you recorded, equal the old system's prepaid list.
+- [ ] **Prepaid stays:** each import batch's imported plus refused totals
+      (bookings, guests, guest-nights, dollars) equal the old system's prepaid
+      list, and every refused booking has been fixed and imported again, or
+      entered by hand.
 - [ ] **Xero (Xero clubs):** no new invoice exists for a stay or credit that was
       paid before the move.
 - [ ] **Opening Credits mapping (Xero clubs):** set to the liability account
@@ -268,6 +323,7 @@ guide.
 | Import members from CSV, including **Membership Type** and **Family Key** | Admin → Members → Import CSV | Membership edit |
 | Import Members from Xero | Admin → Xero Setup | Membership edit; Xero connected |
 | Opening credits (import, post, reverse) | Admin → Finance → Refunds & Credits | Finance edit; finance view to see past batches |
+| Import paid bookings (preview, import, reverse a batch) | Admin → Bookings → Import Paid Bookings | Finance edit and bookings edit; finance view and bookings view to see past batches |
 | Record manual payment | The booking's **Admin tools** card | Finance edit |
 
 ## Troubleshooting
@@ -287,6 +343,11 @@ guide.
 | The Xero health check says **Opening Credits** cannot use the same Xero account as another mapping | Two saves of the account mapping, or a save and a configuration import, landed at the same moment, so the check each one made did not see the other | Choose a liability account no other mapping uses, or change the other mapping, and save |
 | A Xero operation says the Exempt tax category is not mapped, or its rate cannot carry it | The Exempt rate was archived or changed in Xero, a different Xero organisation was connected, or the club registered for GST later | A Full Admin maps **Exempt** again. A waiting operation then runs by itself within a few minutes; if a card booking's invoice operation failed with this message, retry it |
 | **Record manual payment** says there is a Xero invoice | The booking was confirmed on Internet Banking | Settle the invoice in Xero against the old payment; see step 7 |
+| The paid-bookings preview says a member is not matched | No member has that email with that first and last name, or more than one does | Fix the row, or the member's record, and preview again |
+| **Import** says the preview has changed | Something moved between your preview and the import, such as a booking taking the last beds | Read the new preview; nothing was written. Import again |
+| **Import** says the batch was reversed | That exact file was imported and then reversed | Correct the rows; a changed file is a new batch |
+| The import stopped part-way | The connection dropped or the server stopped | Upload the same file and import again: bookings already imported are not imported twice |
+| **Reverse batch** keeps a booking | It was edited, cancelled, refunded, paid by card or linked to Xero since the import, or its stay has started | Deal with that booking by hand |
 
 ## Related links
 
@@ -296,6 +357,7 @@ guide.
   [Xero](xero.md), [Book on Behalf](book.md), [Payments](payments.md),
   [Refunds & Credits](refund-requests.md).
 - `INV-PAY-162` in [payment-and-settlement.md](../invariants/payment-and-settlement.md):
-  the opening-credit contract.
-- [#5005](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/5005): the
-  future-bookings import.
+  the opening-credit contract; `INV-PAY-161` and `INV-PAY-163` the paid-bookings
+  import and its reversal.
+- [The paid-bookings import engine](../design/booking-import.md), for
+  developers.

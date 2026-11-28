@@ -4,10 +4,9 @@ Audience: Developer, Agent.
 
 This engine carries over fully paid future stays at what the club actually
 received, without charging or notifying anybody. Child A of #5005 is the
-engine and child B its batch reversal; there is deliberately no route, screen
-or operator command yet. Access, both officer permissions and the moving-in
-guide are child C; refund as account credit is D; part-paid support is E,
-after #5008.
+engine, child B its batch reversal, and child C the routes, the screen and the
+[moving-in guide's step](../guides/moving-in.md#7-future-bookings-import-prepaid-stays).
+Refund as account credit is child D; part-paid support is E, after #5008.
 
 ## File and preview
 
@@ -104,6 +103,31 @@ file can no longer be confirmed, and a reversed row frees its Booking Ref for a
 corrected file. The cancel re-processes the waitlist for the freed nights, as
 every cancellation does. Both census identities stay clean after a reversal
 (`booking-import.realdb.test.ts`).
+
+## Routes and screen
+
+Admin → Bookings → **Import Paid Bookings** (`/admin/booking-import`, a
+Bookings hub page) lists the batches and opens the import dialog; each batch has
+its own page (`/admin/booking-import/[id]`) with its totals and Reverse batch.
+The dialog reads the file's headers in the browser (`parseMemberImportCsv`),
+proposes a column mapping (`inferBookingImportColumnMapping`), and sends the
+text, the mapping and the date format; the server parses it again with that
+mapping, so the batch key still hashes the parsed content, not the mapping.
+
+| Route | Does | Needs |
+| --- | --- | --- |
+| `POST /api/admin/bookings/import/preview` | The dry run: the plan and any batch the same file already made. Writes nothing. | finance edit and bookings edit, a recent sign-in |
+| `POST /api/admin/bookings/import/confirm` | One slice (`BOOKING_IMPORT_SLICE` bookings) per call, with the preview's digest; 409 with the fresh plan when it changed. The dialog repeats it until `remaining` is zero. | as above |
+| `GET /api/admin/bookings/import/batches` | The batches, newest first, with file, imported, refused and reversed totals. | finance view and bookings view |
+| `GET /api/admin/bookings/import/batches/[id]` | One batch's totals and its reversal preview. | as above |
+| `POST /api/admin/bookings/import/batches/[id]/reverse` | One slice of the reversal per call; the page repeats it. | finance edit and bookings edit, a recent sign-in |
+
+O4 is two checks, both pinned by `booking-import-routes.test.ts`: the route
+map files the paths under finance, so `requireAdmin` checks finance, and
+`bookingImportBookingsRefusal` checks bookings at the same level. The writes
+are fresh-proof, so an AI app connection cannot run them; the reads are the
+screen's own (`website-flow`). Logs carry row numbers and reasons only, never
+names or emails.
 
 ## Related contracts
 

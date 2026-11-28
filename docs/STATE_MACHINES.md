@@ -6341,8 +6341,9 @@ date-only comparison in NZ time, and dismissal invalidation keyed on
 ## Paid-booking import batch lifecycle (#5005 child A)
 
 The [import engine](design/booking-import.md) records each booking separately,
-so a stopped batch resumes without creating a second booking. It has no route
-or screen yet.
+so a stopped batch resumes without creating a second booking. Admin → Bookings
+→ Import Paid Bookings drives it (child C): confirm and reverse each run in
+bounded slices the screen repeats.
 
 | Entity | From | To | Guard and effect |
 | --- | --- | --- | --- |

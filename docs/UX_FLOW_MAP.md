@@ -305,6 +305,16 @@ Journey: Review the relevant fee section; stage changes using its permission con
 
 [Guide](guides/fees.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
 
+### Import Paid Bookings — booking-import
+
+Screen: `/admin/booking-import`.
+
+Shows: Import batches and their totals; each batch's page has Reverse batch.
+
+Journey: Upload, map columns, check the preview's totals, then Import.
+
+[Guide](guides/moving-in.md#7-future-bookings-import-prepaid-stays)
+
 ### Promo Codes — promo-codes
 
 Screen: `/admin/promo-codes`.

@@ -200,8 +200,10 @@ row per page:
 The [UX flow map](../UX_FLOW_MAP.md) is a screen directory, grouped by area,
 with short journeys and links to the detailed guides. `docs:indexcheck` enforces
 this ceiling using its existing word counter. History belongs in the linked
-[archive](../UX_FLOW_HISTORY.md), rather than being appended to the map.
+[archive](../UX_FLOW_HISTORY.md), rather than being appended to the map. A new
+screen's section is not history: #5005 raised the ceiling from 8000 to 8050 for
+Import Paid Bookings, the map being full on `main`.
 
 | Document | Ceiling |
 | --- | ---: |
-| `docs/UX_FLOW_MAP.md` | 8000 |
+| `docs/UX_FLOW_MAP.md` | 8050 |
