@@ -2520,6 +2520,8 @@ describe("the registry is inert", () => {
       "#4968: waits for the Book on Behalf heading by its registry label",
     "e2e/book-on-behalf-nonmember.spec.ts":
       "#4968: waits for the Book on Behalf heading by its registry label",
+    "e2e/booking-import.spec.ts":
+      "#5005: opens Import Paid Bookings at its registry path",
     "e2e/dual-hat-booking.spec.ts":
       "#4968: waits for the Book on Behalf heading by its registry label",
     "e2e/config-transfer.spec.ts":
