@@ -216,9 +216,9 @@ const NO_COVER_EVIDENCE = { nights: [], scopes: [] } as const;
  *    snapshot with the revision it was evaluated under
  *    (`GroupTripCoverFreshness`); a stamp that is missing, malformed, from
  *    another trip or from an older revision is unverifiable;
- *  - only an `ENFORCED` lodge queues from every seam
- *    (`hostingModeQueuesCoverageReevaluation`), and a lodge whose Group Trip
- *    scope is now off is not answering with sibling cover any more. The caller
+ *  - only a lodge where the rule is active queues from every seam
+ *    (`hostingModeIsActive`), and a lodge whose Group Trip scope is now off is
+ *    not answering with sibling cover any more. The caller
  *    passes `null` in both cases, and while the trip is at the cap or its own
  *    freshness reads failed.
  *

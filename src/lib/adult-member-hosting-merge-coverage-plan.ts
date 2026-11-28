@@ -30,7 +30,7 @@ import { policyShowsGroupTripCover } from "@/lib/adult-member-hosting-stored-rev
 import { bookingOwner } from "@/lib/booking-owner";
 import { eachDateOnlyInRange, formatDateOnly } from "@/lib/date-only";
 import {
-  hostingModeQueuesCoverageReevaluation,
+  hostingModeIsActive,
   type ResolvedAdultMemberHostingPolicy,
 } from "@/lib/policies/adult-member-hosting";
 
@@ -49,7 +49,7 @@ export type MemberMergeHostingCoveragePlan = Readonly<{
 
 /**
  * Plan the merge's exact actorless SYSTEM_CHANGE fan-out after relation moves.
- * The policy-set lock held by merge keeps the ENFORCED decisions stable while
+ * The policy-set lock held by merge keeps the active-mode decisions stable while
  * the Member participant rows are acquired and this plan is re-read.
  */
 export async function buildMemberMergeHostingCoveragePlan(
@@ -103,7 +103,7 @@ export async function buildMemberMergeHostingCoveragePlan(
   }
   const queues = (booking: { lodgeId: string }): boolean => {
     const policy = policyByLodge.get(booking.lodgeId);
-    return policy !== undefined && hostingModeQueuesCoverageReevaluation(policy.mode);
+    return policy !== undefined && hostingModeIsActive(policy.mode);
   };
   const included = candidates.filter(queues);
   // #5239: THE MERGE HAS NO GROUP TRIP FAN-OUT, so a booking on ANOTHER account

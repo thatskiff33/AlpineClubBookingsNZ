@@ -85,7 +85,7 @@ function incidentPolicyChanged(
  * ahead, or carrying an active incident.
  *
  * Exported because the kiosk relies on it (#5239): a policy window — the Group
- * Trip scope off, or the lodge out of `ENFORCED` — is a time when a sibling's
+ * Trip scope off, or the rule `DISABLED` at the lodge — is a time when a sibling's
  * change queues nothing, and only bookings in this set are re-checked when it
  * ends. So the kiosk shows sibling cover only for cards this predicate matches,
  * read through this one definition rather than a copy of it.
