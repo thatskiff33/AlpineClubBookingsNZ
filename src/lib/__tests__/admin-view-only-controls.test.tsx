@@ -3847,7 +3847,9 @@ describe("member detail cards hand their reason to the page banner (#2168)", () 
             {...({
               member,
               pendingArchiveRequest: null,
-              reviewedArchiveRequests: [],
+              lifecycleRequests: [],
+              canUnarchive: false,
+              unarchive: { submitting: false, error: "", clearError: vi.fn(), submit: vi.fn() },
               isArchiveRequester: false,
               canRequestArchive: true,
               canRequestCancellation: false,
