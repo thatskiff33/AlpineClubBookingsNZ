@@ -985,6 +985,7 @@ File: [`invariants/integrations.md`](invariants/integrations.md). Prefix
 | `INV-INT-041` | A PENDING outbox row always holds a request the outbox can claim |
 | `INV-INT-042` | A once-ever alert claim with no email is given back |
 | `INV-INT-043` | A stranded QUEUED email is re-sent once or flagged, never twice |
+| `INV-INT-044` | An owed alert the database refuses is spooled, then sent once |
 
 ## Operations
 
