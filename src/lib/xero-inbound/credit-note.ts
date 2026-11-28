@@ -389,12 +389,8 @@ export async function reconcileXeroCreditNote(creditNoteId: string) {
       }));
 
     // #5289 A: a cancelled reading's removed payments are found nowhere else; the recount decides them again.
-    const directPaymentIds = directRecountPaymentIds({
-      linkedPaymentIds: [...paymentCandidates, ...accountCreditPayments].map((payment) => payment.id),
-      voidedMirrorPaymentIds,
-      status: creditNote.status,
-      removedPaymentIds: removal.decidedPaymentIds,
-    });
+    const linkedPaymentIds = [...paymentCandidates, ...accountCreditPayments].map((payment) => payment.id);
+    const directPaymentIds = directRecountPaymentIds({ linkedPaymentIds, voidedMirrorPaymentIds, status: creditNote.status, removedPaymentIds: removal.decidedPaymentIds });
     held.recountedPaymentIds = new Set([...directPaymentIds, ...modificationRefundAmountsByPaymentId.keys()]);
     const refundedPaymentRepair = await repairRefundedPaymentBusinessState({
       creditNoteId: creditNote.creditNoteID!,
