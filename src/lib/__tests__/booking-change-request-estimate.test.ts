@@ -287,10 +287,10 @@ describe("estimateChangeRequestAddedGuests (#4030)", () => {
       moved.guests[0].stayEnd = day("2026-04-03");
       moved.guests[0].nights = [{ stayDate: day("2026-04-01") }, { stayDate: day("2026-04-02") }];
       // The premise: the proposal crosses a season-year boundary.
-      expect(seasonYearOfStoredDate(day("2026-03-30"))).not.toBe(seasonYearOfStoredDate(moved.checkIn));
+      expect(seasonYearOfStoredDate(day("2026-03-30"), 3)).not.toBe(seasonYearOfStoredDate(moved.checkIn, 3));
       await estimateChangeRequestAddedGuests(moved, [child("Ari")], { checkIn: "2026-03-30" });
       expect(mocks.resolveGuestRateMembershipTypes.mock.calls[0][1]).toMatchObject({
-        seasonYear: seasonYearOfStoredDate(day("2026-03-30")),
+        seasonYear: seasonYearOfStoredDate(day("2026-03-30"), 3),
       });
     });
 

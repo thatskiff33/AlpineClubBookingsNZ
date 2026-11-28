@@ -117,9 +117,9 @@ import { isUnpaidInvoiceBlocker } from "@/lib/membership-cancellation-blocker-me
 import { prisma } from "@/lib/prisma";
 import { fixedClubClock } from "@/lib/club-time";
 import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
-import { clubSeasonYear } from "@/lib/financial-year";
 import { buildXeroInvoiceUrl } from "@/lib/xero-links";
 import { XERO_OUTBOX_MEMBERSHIP_CANCELLATION_CREDIT_NOTE_TYPE } from "@/lib/xero-operation-outbox-payload";
+import { clubCurrentSeasonYear } from "@/lib/financial-year-server";
 
 /**
  * Subscription states whose invoice a cancellation credits. The same rule
@@ -370,7 +370,7 @@ export async function loadMembershipCancellationSubscriptionCreditPlansByMemberI
   // The season is read from NOW, which is the same moment the credit note's own
   // gate reads it. A member has at most one subscription per season
   // (`@@unique([memberId, seasonYear])`), so this yields at most one plan each.
-  const seasonYear = clubSeasonYear(
+  const seasonYear = await clubCurrentSeasonYear(
     await readClubTimeZoneOutsideRequest(),
     fixedClubClock(new Date(options.nowMs ?? Date.now())),
   );

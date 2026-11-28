@@ -47,6 +47,7 @@ import {
   toSubscriptionLockoutParticipants,
 } from "@/lib/subscription-lockout-enforcement";
 import { seasonYearOfStoredDate } from "@/lib/financial-year";
+import { refreshFinancialYearConfig } from "@/lib/financial-year-server";
 import {
   reconcileBedAllocationsForBookingWithLodgeLockHeld,
 } from "@/lib/bed-allocation-lifecycle";
@@ -108,6 +109,8 @@ export async function quoteWaitlistEntryAtLodge(
   tx: QuoteDb,
   entry: WaitlistQuoteEntry,
   lodgeId: string,
+  /** Resolved by the caller before opening the capacity transaction. */
+  yearEndMonth: number,
 ): Promise<CrossLodgeQuote> {
   if (entry.hasPromoRedemption) {
     return { offerable: false, reason: "promo" };
@@ -146,6 +149,7 @@ export async function quoteWaitlistEntryAtLodge(
         })),
       ),
       seasons: toSeasonRateData(seasons),
+      seasonYear: seasonYearOfStoredDate(entry.checkIn, yearEndMonth),
       groupDiscount: toGroupDiscountConfig(groupDiscountSetting),
       // Finding 2 (privacy re-review of MG3 #2308). An unattended offer sweep
       // that DISCARDS the refusal entirely (see the catch below), so there is
@@ -294,6 +298,7 @@ export async function confirmCrossLodgeWaitlistOffer(
   /** The club's format (#3565), resolved once by the request, before any transaction. */
   format: ClubFormat,
 ): Promise<CrossLodgeConfirmResult> {
+  const yearEndMonth = await refreshFinancialYearConfig();
   // Phase 0 — #2363 minimum stay at the OFFERED lodge, evaluated OUTSIDE any
   // transaction (the house pattern for pre-write policy checks; Phase 1 below
   // holds that lodge's capacity lock, and a policy read on a second pool
@@ -421,7 +426,7 @@ export async function confirmCrossLodgeWaitlistOffer(
     const nonMemberPricing = await evaluateNonMemberPricingRequirements(prisma, {
       mode: await resolveSubscriptionLockoutMode(),
       lodgeId: offeredLodgeId,
-      seasonYear: seasonYearOfStoredDate(preflight.checkIn),
+      seasonYear: seasonYearOfStoredDate(preflight.checkIn, yearEndMonth),
       checkIn: preflight.checkIn,
       checkOut: preflight.checkOut,
       // Owner decision, 3 Aug 2026: the requirement follows the unfinancial
@@ -624,6 +629,7 @@ export async function confirmCrossLodgeWaitlistOffer(
           hasPromoRedemption: bookingPromoRedemptions(entry).length > 0,
         },
         offeredLodgeId,
+        yearEndMonth,
       );
       if (!quote.offerable) {
         await revertOfferToWaitlisted(tx, entry);
@@ -720,6 +726,7 @@ export async function confirmCrossLodgeWaitlistOffer(
   try {
     outcome = await createConfirmedBooking({
       format,
+      yearEndMonth,
       journal,
       todayAtClub: clubToday(clubZone),
       effectiveMemberId: memberId,

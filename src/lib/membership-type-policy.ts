@@ -38,7 +38,6 @@ const NON_MEMBER_MEMBERSHIP_TYPE_KEY = "NON_MEMBER";
 const BUILT_IN_MEMBERSHIP_TYPE_KEYS = BUILT_IN_MEMBERSHIP_TYPES.map(
   (type) => type.key,
 );
-import { seasonYearOfStoredDate } from "@/lib/financial-year";
 
 const MEMBERSHIP_TYPE_BLOCKS_BOOKING_CODE =
   "MEMBERSHIP_TYPE_BLOCKS_BOOKING";
@@ -1234,7 +1233,8 @@ export async function priceBookingGuestsWithMembershipTypePolicy(
     guests: UnratedGuestInput[];
     seasons: SeasonRateData[];
     groupDiscount?: GroupDiscountConfig;
-    seasonYear?: number;
+    /** REQUIRED (#5259): from the club's resolved year-end, never a default. */
+    seasonYear: number;
     /**
      * Forwarded to the policy guard below (privacy re-review of MG3 #2308,
      * finding 2). An admin/on-behalf or unattended system path passes `true` and
@@ -1252,7 +1252,7 @@ export async function priceBookingGuestsWithMembershipTypePolicy(
     subscriptionLockoutMode?: SubscriptionLockoutMode;
   },
 ): Promise<PriceBreakdown> {
-  const seasonYear = input.seasonYear ?? seasonYearOfStoredDate(input.checkIn);
+  const { seasonYear } = input;
   await assertMembershipTypeBookingAllowed(db, {
     ownerMemberId: input.ownerMemberId,
     guests: input.guests,

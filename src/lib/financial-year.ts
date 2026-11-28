@@ -76,9 +76,14 @@ export function normalizeYearEndMonth(value: number | null | undefined): number 
 // test seam
 /**
  * Synchronous read of the effective financial year-end month (1-12). Returns
- * the March default until the server seeds the cache. Used by the
- * (synchronous) season helpers so their signatures and ~40 call sites are
- * unchanged.
+ * the March default until the server seeds the cache.
+ *
+ * NO SEASON DERIVATION BELOW DEFAULTS TO THIS (#5259, `INV-SSOT-003`). It is the
+ * last value this process resolved, which is March on a process that has
+ * resolved nothing, so a derivation that fell back to it answered for the
+ * shipped default and looked exactly like an answer for the club. What still
+ * reads it says so by name: the season-EDGE accessor below, and the admin
+ * layout's bounded wait in `financial-year-server.ts`.
  */
 export function getFinancialYearEndMonth(): number {
   return cachedYearEndMonth;
@@ -123,12 +128,18 @@ export function getSeasonStartMonth(): number {
  * `YYYY-MM-DD` text - no `Date` is constructed and no host component is read, so
  * this returns the same answer on every host on earth.
  *
- * `yearEndMonth` defaults to the process cache so the call sites this replaced
- * keep reading the club's configured year-end without each passing it.
+ * `yearEndMonth` IS REQUIRED (#5259). It used to default to the process cache
+ * above, so a caller that passed nothing was answered from whatever had last
+ * seeded it - March on a cold process, for a club whose year ends in June. The
+ * caller resolves the club's year-end and passes it: `await
+ * clubFinancialYearEndMonth()` inside a request, `await
+ * refreshFinancialYearConfig()` once per run outside one, both in
+ * `financial-year-server.ts`, and BEFORE a transaction opens rather than inside
+ * it (the resolution reads on the global client and may reach Xero).
  */
 export function seasonYearOfCalendarDate(
   date: CalendarDate,
-  yearEndMonth: number = getFinancialYearEndMonth(),
+  yearEndMonth: number,
 ): number {
   const startMonth = seasonStartMonthOf(yearEndMonth);
   const { year, month } = calendarDateParts(date);
@@ -159,13 +170,13 @@ export function seasonYearOfCalendarDate(
  */
 export function seasonYearOfStoredDate(
   value: Date,
-  yearEndMonth?: number,
+  yearEndMonth: number,
 ): number {
   return seasonYearOfCalendarDate(
     calendarDateOfDateOnlyInstant(
       requireStoredCalendarDay(value, {
         subject: "seasonYearOfStoredDate",
-        instead: `If you meant "the club's season year now", call clubSeasonYear(zone) instead.`,
+        instead: `If you meant "the club's season year now", call clubSeasonYear(zone, clock, yearEndMonth) instead.`,
       }),
     ),
     yearEndMonth,
@@ -184,12 +195,17 @@ export function seasonYearOfStoredDate(
  *
  * `clock` exists so a caller that must hold time still - a batch that cannot be
  * allowed to straddle midnight mid-run - passes `fixedClubClock(instant)` rather
- * than letting each call re-read the clock.
+ * than letting each call re-read the clock. Pass `undefined` for the live clock.
+ *
+ * `yearEndMonth` is required for the reason {@link seasonYearOfCalendarDate}
+ * gives. A server caller with nothing else to do with the month uses
+ * `clubCurrentSeasonYear(zone, clock?)` in `financial-year-server.ts`, which
+ * resolves it; a browser screen uses `useClubSeason()`.
  */
 export function clubSeasonYear(
   zone: ClubTimeZone,
-  clock?: ClubClock,
-  yearEndMonth?: number,
+  clock: ClubClock | undefined,
+  yearEndMonth: number,
 ): number {
   return seasonYearOfCalendarDate(clubToday(zone, clock), yearEndMonth);
 }

@@ -31,6 +31,7 @@ import { prisma } from "@/lib/prisma";
 import { resolveBookingGuestDietarySeeding } from "@/lib/member-dietary-booking-writes";
 import { storedDateOnly } from "@/lib/stored-calendar-day";
 import { clubFormatValues } from "@/lib/club-format-server";
+import { clubFinancialYearEndMonth } from "@/lib/financial-year-server";
 
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
 
@@ -243,9 +244,13 @@ export async function copyBookingToDraft({
     policy: memberGuestPolicy,
   });
   const guests = consentPlan.guests;
+  // The copy's membership season prices from the club's resolved year-end
+  // (#5259), resolved here because the create opens its own transaction.
+  const yearEndMonth = await clubFinancialYearEndMonth();
 
   const booking = await createDraftBooking({
     format,
+    yearEndMonth,
     effectiveMemberId: sourceOwnerMemberId,
     isOnBehalf: true,
     sessionUserId: adminMemberId,

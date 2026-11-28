@@ -213,6 +213,7 @@ async function runRealPlanner(
       approvalRequired: true,
       pendingHoldExpiryDays: 0,
     },
+    yearEndMonth: 3,
   });
   return {
     envelope: [

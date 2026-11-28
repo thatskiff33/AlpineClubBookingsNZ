@@ -155,6 +155,7 @@ async function payStep(bookingId: string): Promise<number> {
       status: "PAYMENT_PENDING", shouldBePending: false, holdDays: 7, notifyMember: false,
       applyCreditCents: CREATE_PRICE,
       guestDietarySeeding: bookingGuestDietarySeeding(false),
+      yearEndMonth: 3,
     });
     expect(outcome.type, JSON.stringify(outcome)).toBe("created");
     const created = outcome as Extract<typeof outcome, { type: "created" }>;

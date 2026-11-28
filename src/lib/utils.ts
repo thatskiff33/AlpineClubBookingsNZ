@@ -111,7 +111,7 @@ export function formatSignedCents(cents: number, format: ClubFormat): string {
 // for every club west of Greenwich. Because it read the ARGUMENT that way, no call
 // site could fix itself by passing a better `Date` in: measured, handing it a
 // club-derived day made a behind-UTC deployment WORSE. Its two replacements are
-// `clubSeasonYear(zone, clock?)` and `seasonYearOfStoredDate(value)` in
-// `@/lib/financial-year`, which name which temporal kind the caller holds. Deleting
+// `clubSeasonYear(zone, clock, yearEndMonth)` and
+// `seasonYearOfStoredDate(value, yearEndMonth)` in `@/lib/financial-year`, which name which temporal kind the caller holds. Deleting
 // the name rather than repairing it is what made the typechecker enumerate every
 // call site instead of leaving the wrong ones silently green.

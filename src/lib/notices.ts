@@ -16,7 +16,7 @@ import {
 } from "@/lib/subscription-lockout-facts";
 import { fixedClubClock } from "@/lib/club-time";
 import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
-import { clubSeasonYear } from "@/lib/financial-year";
+import { clubCurrentSeasonYear } from "@/lib/financial-year-server";
 
 // ---------------------------------------------------------------------------
 // Member Notices audience resolution (server-only).
@@ -142,7 +142,7 @@ export async function getMemberAudienceKeys(
   // The CLUB's season at the caller's moment (INV-CONFIG-002). `options.now`
   // stays a pinnable instant; it becomes the clock rather than a value read with
   // host-local getters.
-  const seasonYear = clubSeasonYear(
+  const seasonYear = await clubCurrentSeasonYear(
     await readClubTimeZoneOutsideRequest(),
     options.now ? fixedClubClock(options.now) : undefined,
   );
@@ -496,7 +496,7 @@ export async function resolveNoticeAudienceMembers(
   options: { now?: Date } = {},
 ): Promise<ResolvedAudienceMember[]> {
   const now = options.now ?? new Date();
-  const seasonYear = clubSeasonYear(await readClubTimeZoneOutsideRequest(), fixedClubClock(now));
+  const seasonYear = await clubCurrentSeasonYear(await readClubTimeZoneOutsideRequest(), fixedClubClock(now));
 
   const notice = await prisma.notice.findUnique({
     where: { id: noticeId },

@@ -545,21 +545,20 @@ describe("who the booking page tells about eligibility, and in which season", ()
     expect(spreadEnd).toBeGreaterThan(key);
   });
 
-  it("reseeds the financial-year cache BEFORE it derives the season", () => {
-    // The season helpers default their year-end month to a process-level cache
-    // that serves March until something seeds it, and nothing on a page render
-    // otherwise does. `modify-quote` reseeds before its own derivation, so without
-    // this the page and the quote can disagree about the season for a club whose
-    // year end is not March — the screen offers a tick the save then refuses.
+  it("judges the season in the club's RESOLVED year-end, as modify-quote does", () => {
+    // The season derivation requires its year-end month (#5259), so the page
+    // can no longer fall back to a process cache serving March until something
+    // seeds it. What it passes still has to be the club's resolved month and not
+    // the cache read by name: `modify-quote` places the season with the resolved
+    // month, and a page judging another season would offer a tick the save then
+    // refuses for a club whose year end is not March.
     //
     // THIS SUITE READS THE PAGE FROM DISK, so `vitest related` cannot reach it
     // through the module graph and a rename in the page is CI-caught by design.
-    // CT-4 group F1 (#2870) renamed the derivation to `seasonYearOfStoredDate`.
-    const reseed = bookingPage.indexOf("await refreshFinancialYearConfig()");
-    const seasonForFence = bookingPage.indexOf(
-      "seasonYear: seasonYearOfStoredDate(booking.checkIn)",
-    );
-    expect(reseed).toBeGreaterThan(-1);
-    expect(seasonForFence).toBeGreaterThan(reseed);
+    const derivation = bookingPage.indexOf("seasonYear: seasonYearOfStoredDate(");
+    expect(derivation).toBeGreaterThan(-1);
+    const call = bookingPage.slice(derivation, bookingPage.indexOf("guests:", derivation));
+    expect(call).toContain("await clubFinancialYearEndMonth()");
+    expect(bookingPage).not.toContain("getFinancialYearEndMonth");
   });
 });

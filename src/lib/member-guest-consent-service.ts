@@ -49,6 +49,7 @@ import {
   resolveBookingGuestDietarySeeding,
 } from "@/lib/member-dietary-booking-writes";
 import type { ClubFormat } from "@/lib/club-format";
+import { clubFinancialYearEndMonth } from "@/lib/financial-year-server";
 import {
   guestRemovalXeroSettlement,
   queueGuestRemovalXeroSettlement,
@@ -363,6 +364,8 @@ async function removeClaimedConsentGuest(
     format: ClubFormat;
     /** #4627: the journal's posting context, resolved with `today` and for the same reason. */
     journal: BookingJournalContext;
+    /** #5259: the club's resolved year-end month, resolved with `today` and for the same reason. */
+    yearEndMonth: number;
   },
 ): Promise<{
   removed: true;
@@ -380,6 +383,7 @@ async function removeClaimedConsentGuest(
       today: params.today,
       format: params.format,
       journal: params.journal,
+      yearEndMonth: params.yearEndMonth,
       ...(params.settlementMethod ? { settlementMethod: params.settlementMethod } : {}),
       consentAuthority: {
         kind: params.kind,
@@ -576,6 +580,9 @@ export async function respondToMemberGuestConsent(params: {
   const guestDietarySeeding = await resolveBookingGuestDietarySeeding();
   // #4627: the journal's posting context, resolved here for the same reason, on the same zone.
   const journal = await resolveBookingMoneyPostingContext({ zone: clubZone });
+  // #5259: the club's year-end, which a decline's reprice places the booking's
+  // season with. Resolving it can reach Xero, so it too stays out here.
+  const yearEndMonth = await clubFinancialYearEndMonth();
 
   try {
     return await db.$transaction(async (tx) => {
@@ -671,6 +678,7 @@ export async function respondToMemberGuestConsent(params: {
         today: clubTodayDateOnly,
         format,
         journal,
+        yearEndMonth,
       });
 
       return {
@@ -714,10 +722,12 @@ export async function expireMemberGuestConsent(params: {
   guestId: string;
   /** The club's format (#3565), resolved by the sweep before any transaction. */
   format: ClubFormat;
+  /** The club's resolved year-end month (#5259), resolved by the sweep once per run. */
+  yearEndMonth: number;
   now?: Date;
   db?: typeof prisma;
 }): Promise<MemberGuestConsentOutcome> {
-  const { guestId, format, now = new Date(), db = prisma } = params;
+  const { guestId, format, yearEndMonth, now = new Date(), db = prisma } = params;
 
   // #3123 / INV-LOCK-004 — the club's day, resolved before the transaction
   // opens. Inside it this path holds `pg_advisory_xact_lock(1)` and the
@@ -809,6 +819,7 @@ export async function expireMemberGuestConsent(params: {
         today: clubTodayDateOnly,
         format,
         journal,
+        yearEndMonth,
       });
 
       return {

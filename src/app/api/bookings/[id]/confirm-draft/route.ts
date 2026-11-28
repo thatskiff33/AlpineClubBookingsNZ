@@ -12,6 +12,8 @@ import {
   checkCapacityForGuestRanges,
 } from "@/lib/capacity";
 import { seasonYearOfStoredDate } from "@/lib/financial-year";
+import { clubFinancialYearEndMonth } from "@/lib/financial-year-server";
+import { seasonSlashLabel } from "@/lib/season-label";
 import {
   enqueueXeroBookingInvoiceOperation,
   kickQueuedXeroOutboxOperationsIfConnected,
@@ -125,7 +127,11 @@ export async function POST(
     );
   }
 
-  const seasonYear = seasonYearOfStoredDate(new Date(booking.checkIn));
+  // The draft's membership season, from the club's RESOLVED year-end (#5259),
+  // once: the policy, the subscription gate and the paid-up-adult requirement
+  // below all judge the same season.
+  const yearEndMonth = await clubFinancialYearEndMonth();
+  const seasonYear = seasonYearOfStoredDate(new Date(booking.checkIn), yearEndMonth);
   try {
     await assertMembershipTypeBookingAllowed(prisma, {
       ownerMemberId: bookingOwner(booking).memberId,
@@ -190,7 +196,7 @@ export async function POST(
       },
     });
     if (!paidSub) {
-      const seasonDisplay = `${seasonYear}/${seasonYear + 1}`;
+      const seasonDisplay = seasonSlashLabel(seasonYear, yearEndMonth);
       return NextResponse.json(
         {
           error: `Your membership subscription for the ${seasonDisplay} season is not paid. Please contact the club to arrange payment before booking.`,

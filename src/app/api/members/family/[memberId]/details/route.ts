@@ -4,7 +4,6 @@ import { requireActiveSessionUser } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma";
 import { computeAgeTier, getSeasonStartDate } from "@/lib/age-tier";
 import { clubTimeZone } from "@/lib/club-time/server";
-import { clubSeasonYear } from "@/lib/financial-year";
 import { parseDateOnly } from "@/lib/date-only";
 import { dateOnlyInstantOf } from "@/lib/club-time";
 import { clubTime } from "@/lib/club-time/server";
@@ -37,6 +36,7 @@ import { delegatedFamilyDetailsSchema, familyMemberIdParamsSchema } from "@/lib/
 import { applyRateLimit, rateLimiters } from "@/lib/rate-limit";
 import { connectionJson } from "@/lib/mcp-connection-request";
 import { FAMILY_MEMBER_DETAILS_CONNECTION_SHAPE } from "@/lib/connection-shapes";
+import { clubCurrentSeasonYear as resolveClubCurrentSeasonYear } from "@/lib/financial-year-server";
 
 const DELEGATED_MEMBER_SELECT = {
   id: true,
@@ -247,7 +247,7 @@ export async function PUT(
   // (CT-4, #2870): the tier the date of birth implies and the exemption that may
   // override it must be judged in the same season, and that tier decides a price
   // band.
-  const clubCurrentSeasonYear = clubSeasonYear(await clubTimeZone());
+  const clubCurrentSeasonYear = await resolveClubCurrentSeasonYear(await clubTimeZone());
   const dobDerivedTier = await computeAgeTier(
     dob,
     getSeasonStartDate(clubCurrentSeasonYear),

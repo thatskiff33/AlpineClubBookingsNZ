@@ -6,7 +6,6 @@ import { applyRateLimit, rateLimiters } from "@/lib/rate-limit";
 import { computeAgeTier, getSeasonStartDate } from "@/lib/age-tier";
 import { parseDateOnly } from "@/lib/date-only";
 import { clubTimeZone, clubTodayDateOnlyInstant } from "@/lib/club-time/server";
-import { clubSeasonYear } from "@/lib/financial-year";
 import { logAudit } from "@/lib/audit";
 import logger from "@/lib/logger";
 import {
@@ -23,6 +22,7 @@ import { parseJsonRequestBody } from "@/lib/api-json";
 import { familyGroupCreateSchema } from "@/lib/family-group-request-schemas";
 import { connectionJson } from "@/lib/mcp-connection-request";
 import { FAMILY_GROUP_CREATE_CONNECTION_SHAPE } from "@/lib/connection-shapes";
+import { clubCurrentSeasonYear } from "@/lib/financial-year-server";
 
 /**
  * POST /api/members/family/create-group (#1681, #1682)
@@ -193,7 +193,7 @@ export async function POST(req: NextRequest) {
   }
 
   // Per-child DOB sanity, mirroring request-child.
-  const seasonStart = getSeasonStartDate(clubSeasonYear(await clubTimeZone()));
+  const seasonStart = getSeasonStartDate(await clubCurrentSeasonYear(await clubTimeZone()));
   // CT-4 (#2870): "in the future" means a later CLUB calendar day, taken from
   // the persisted ClubTimeSettings zone and not the container's TZ
   // (INV-CONFIG-002, INV-DATE-019). The date of birth takes no zone at all

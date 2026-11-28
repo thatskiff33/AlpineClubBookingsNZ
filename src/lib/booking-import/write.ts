@@ -64,6 +64,7 @@ import { ManualBookingPaymentError } from "@/lib/manual-booking-payment-error";
 import { settleImportedBookingInTransaction } from "@/lib/payment-reconciliation";
 import { LOCK1_HOLDER_TRANSACTION_BUDGET } from "@/lib/db-transaction";
 import { prisma } from "@/lib/prisma";
+import { clubFinancialYearEndMonth } from "@/lib/financial-year-server";
 
 /** Thrown inside a booking's transaction to roll it back and record the row refused. */
 class ImportRowRefused extends Error {
@@ -100,9 +101,10 @@ export async function confirmBookingImport(input: {
   const { lodgeId, bookings, officerMemberId, today, format } = input;
 
   // Everything the transactions need from outside them, resolved once (`INV-LOCK-004`).
-  const [journal, dietarySeeding] = await Promise.all([
+  const [journal, dietarySeeding, yearEndMonth] = await Promise.all([
     resolveBookingMoneyPostingContext(),
     resolveBookingGuestDietarySeeding(),
+    clubFinancialYearEndMonth(),
   ]);
 
   const existing = await prisma.bookingImportBatch.findUnique({
@@ -117,6 +119,7 @@ export async function confirmBookingImport(input: {
     bookings,
     today,
     format,
+    yearEndMonth,
     batchId: existing?.id ?? null,
   });
   if (plan.digest !== input.digest) return { outcome: "stale", plan };
@@ -157,6 +160,7 @@ export async function confirmBookingImport(input: {
       officerMemberId,
       today,
       format,
+      yearEndMonth,
       journal,
       dietarySeeding,
     });
@@ -252,6 +256,7 @@ type ImportOneInput = {
   officerMemberId: string;
   today: Date;
   format: ClubDateFormat;
+  yearEndMonth: number;
   journal: BookingJournalContext;
   dietarySeeding: BookingGuestDietarySeeding;
 };
@@ -328,7 +333,13 @@ async function writeOneBooking(
   // person-night (whose keys it takes), hosting, supervision and capacity.
   const { lodge, activeLodgeCount } = await loadBookingImportLodge(tx, lodgeId);
   if (!lodge) throw new Error("The lodge to import into does not exist");
-  const context = { lodge, activeLodgeCount, today: input.today, format: input.format };
+  const context = {
+    lodge,
+    activeLodgeCount,
+    today: input.today,
+    format: input.format,
+    yearEndMonth: input.yearEndMonth,
+  };
   const members = await loadBookingImportMembers(tx, [booking]);
   const { resolved, refusals } = resolveImportBooking(booking, context, members);
   if (!resolved) throw new ImportRowRefused(refusals);

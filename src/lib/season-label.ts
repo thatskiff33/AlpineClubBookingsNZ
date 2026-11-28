@@ -52,31 +52,22 @@
  * March, which also makes the SSR pass moot: a value passed in cannot differ
  * between the react-server and SSR module instances of a cache.
  *
- * ## The rest of the tree still writes this label by hand SEVEN times
+ * **NO SEASON DERIVATION DEFAULTS ITS YEAR-END EITHER (#5259).**
+ * `seasonYearOfCalendarDate` and its two pass-throughs in `financial-year.ts`
+ * lost the last process-cache default, so the season YEAR a name is built from
+ * is derived from the same caller-supplied month as the name. `INV-SSOT-003`
+ * now bans `getFinancialYearEndMonth` as a parameter default outright.
  *
- * It was nineteen when this module was written. #3103 adopted five of them (four
- * files - the MEMBER profile page inlines it twice), #3116 adopted the four
- * money and provider sites below, and a further three went with the surfaces
- * those changes touched.
+ * ## Two places still write the slash name by hand
  *
- * **Measured on this branch**, excluding tests and this file:
- * `/[Ss]easonYear \+ 1/` matches **12** lines, of which **FIVE are date
- * ARITHMETIC rather than a label** - a season's end bound in
- * `membership-subscription-billing.ts`, two in `xero-membership-sync.ts` (one
- * inside a Xero query string), and two building a picker's year window.
- * Rewriting one of those does not change a label, it changes a date. So 12 minus
- * 5 leaves the **seven** remaining names, in `admin/reports`, `bookings`,
- * `bookings/[id]/confirm-draft`, `member/subscription-status`,
- * `group-booking.ts`, `membership-type-policy.ts` and
- * `subscription-lockout-enforcement.ts`.
- *
- * **NO SINGLE GREP RETURNS EXACTLY THAT SET**, which is why the count is stated
- * with its method rather than on its own. The obvious lower-case
- * `/seasonYear \+ 1/` misses every site spelling it `currentSeasonYear + 1`, and
- * a raw-text scan additionally matches this very paragraph. Read each call site
- * rather than trusting any number here, and see
- * `__tests__/season-label-adoption-contract.test.ts`, which discriminates a NAME
- * from ARITHMETIC with a self-checked pattern over comment-stripped source.
+ * The unpaid-subscription rate notice (`subscription-lockout-enforcement.ts`)
+ * and the membership-type refusal (`membership-type-policy.ts`) build
+ * `${seasonYear}/${seasonYear + 1}`: neither has a year-end in scope, and
+ * threading one in reaches every booking pricing path. The booking,
+ * confirm-draft and group-trip refusals, the reports heading and the member
+ * subscription status name theirs through {@link seasonSlashLabel} (#5259).
+ * `__tests__/season-label-adoption-contract.test.ts` tells a NAME from
+ * ARITHMETIC over comment-stripped source.
  *
  * **THE FOUR MONEY AND PROVIDER SITES ADOPTED THIS IN #3116, AND THE EXCLUSION
  * LIST IS NOW EMPTY.** They were `xero-subscription-invoices.ts` and
@@ -168,9 +159,21 @@ export function seasonYearsLabel(
   seasonYear: number,
   yearEndMonth: number,
 ): string {
+  return seasonYearRangeLabel(seasonYear, yearEndMonth, " - ");
+}
+
+/**
+ * The same years with a slash - `"2026/2027"`, or `"2026"` for a December
+ * year-end - for the sentences that have always spelled a season that way.
+ */
+export function seasonSlashLabel(seasonYear: number, yearEndMonth: number): string {
+  return seasonYearRangeLabel(seasonYear, yearEndMonth, "/");
+}
+
+function seasonYearRangeLabel(seasonYear: number, yearEndMonth: number, separator: string): string {
   return seasonStartMonthOf(yearEndMonth) === 1
     ? String(seasonYear)
-    : `${seasonYear} - ${seasonYear + 1}`;
+    : `${seasonYear}${separator}${seasonYear + 1}`;
 }
 
 /**

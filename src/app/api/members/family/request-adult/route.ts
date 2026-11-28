@@ -5,7 +5,6 @@ import { prisma } from "@/lib/prisma";
 import { applyRateLimit, rateLimiters } from "@/lib/rate-limit";
 import { computeAgeTier, getSeasonStartDate } from "@/lib/age-tier";
 import { clubTimeZone } from "@/lib/club-time/server";
-import { clubSeasonYear } from "@/lib/financial-year";
 import { parseDateOnly } from "@/lib/date-only";
 import { dateOnlyInstantOf } from "@/lib/club-time";
 import { clubTime } from "@/lib/club-time/server";
@@ -16,6 +15,7 @@ import { parseJsonRequestBody } from "@/lib/api-json";
 import { familyAdultRequestSchema } from "@/lib/family-group-request-schemas";
 import { connectionJson } from "@/lib/mcp-connection-request";
 import { FAMILY_REQUEST_SUBMITTED_CONNECTION_SHAPE } from "@/lib/connection-shapes";
+import { clubCurrentSeasonYear } from "@/lib/financial-year-server";
 
 /**
  * POST /api/members/family/request-adult
@@ -67,7 +67,7 @@ export async function POST(req: NextRequest) {
 
   const ageTier = await computeAgeTier(
     dateOfBirth,
-    getSeasonStartDate(clubSeasonYear(await clubTimeZone())),
+    getSeasonStartDate(await clubCurrentSeasonYear(await clubTimeZone())),
   );
   if (ageTier !== "ADULT") {
     return NextResponse.json(

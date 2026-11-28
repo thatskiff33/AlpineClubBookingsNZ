@@ -110,7 +110,7 @@ function parsed(lines: string[], header = HEADER) {
 
 async function plan(lines: string[], header?: string) {
   const bookings = parsed(lines, header);
-  return { bookings, plan: await planner.planBookingImport(prisma, { lodgeId: LODGE, bookings, today: TODAY, format: FORMAT }) };
+  return { bookings, plan: await planner.planBookingImport(prisma, { lodgeId: LODGE, bookings, today: TODAY, format: FORMAT, yearEndMonth: 3 }) };
 }
 
 /** Plan, then confirm with the digest the preview showed, as the route will. */
@@ -393,7 +393,7 @@ async function existingBooking(ref: string, guests: Line[]) {
     expect(await prisma.bookingImportBatch.count({ where: { lodgeId: LODGE } })).toBe(1);
 
     // The same content again resumes the same batch; its preview is unchanged.
-    const again = await planner.planBookingImport(prisma, { lodgeId: LODGE, bookings, today: TODAY, format: FORMAT, batchId: first.outcome === "completed" ? first.batchId : null });
+    const again = await planner.planBookingImport(prisma, { lodgeId: LODGE, bookings, today: TODAY, format: FORMAT, batchId: first.outcome === "completed" ? first.batchId : null, yearEndMonth: 3 });
     expect(again.digest).toBe(preview.digest);
     expect(again.rows.every((row) => row.alreadyImported)).toBe(true);
     expect((await confirm()).outcome).toBe("completed");
@@ -442,7 +442,7 @@ async function existingBooking(ref: string, guests: Line[]) {
     expect(result.outcome).toBe("completed");
     if (result.outcome !== "completed") return;
     expect(result.rows.map((row) => row.outcome)).toEqual(["IMPORTED", "IMPORTED"]);
-    const resumed = await planner.planBookingImport(prisma, { lodgeId: LODGE, bookings, today: TODAY, format: FORMAT, batchId: result.batchId });
+    const resumed = await planner.planBookingImport(prisma, { lodgeId: LODGE, bookings, today: TODAY, format: FORMAT, batchId: result.batchId, yearEndMonth: 3 });
     expect(resumed.digest).toBe(preview.digest);
     expect(await heldBeds("2026-08-10", "2026-08-12")).toEqual([4, 4]);
   }, 120_000);
@@ -461,7 +461,7 @@ async function existingBooking(ref: string, guests: Line[]) {
     expect(preview.rows[0]!.nights.map((night) => night.night)).toEqual(["2026-08-10", "2026-08-11", "2026-08-13"]);
     const result = await writer.confirmBookingImport({ lodgeId: LODGE, bookings, digest: preview.digest, officerMemberId: OFFICER, today: TODAY, format: FORMAT });
     if (result.outcome !== "completed") throw new Error(`confirm was ${result.outcome}`);
-    const resumed = await planner.planBookingImport(prisma, { lodgeId: LODGE, bookings, today: TODAY, format: FORMAT, batchId: result.batchId });
+    const resumed = await planner.planBookingImport(prisma, { lodgeId: LODGE, bookings, today: TODAY, format: FORMAT, batchId: result.batchId, yearEndMonth: 3 });
     expect(resumed.digest).toBe(preview.digest);
   }, 120_000);
 
@@ -507,6 +507,7 @@ async function existingBooking(ref: string, guests: Line[]) {
       status: "PAYMENT_PENDING", shouldBePending: false, holdDays: 7, notifyMember: false,
       subscriptionLockoutMode: "NO_BLOCK", guestDietarySeeding: bookingGuestDietarySeeding(false),
       todayAtClub: requireCalendarDate("2026-07-01"), journal, format: CLUB_FORMAT_TEST,
+      yearEndMonth: 3,
     });
     const capacity = await import("@/lib/capacity");
     const acquire = capacity.acquireLodgeCapacityLock;

@@ -392,6 +392,7 @@ async function expectLinkedToBinding(bookingId: string, lineCount: number): Prom
       status: "PAYMENT_PENDING", shouldBePending: false, holdDays: 7, notifyMember: false, confirmOverCapacity: true,
       paymentMethod: "internet_banking", internetBankingSettings: { holdBedSlots: false, holdDays: 7, minimumDaysBeforeCheckIn: 0 },
       guestDietarySeeding: bookingGuestDietarySeeding(false),
+      yearEndMonth: 3,
     });
     expect(outcome.type, JSON.stringify(outcome)).toBe("created");
     const booking = (outcome as Extract<typeof outcome, { type: "created" }>).booking;

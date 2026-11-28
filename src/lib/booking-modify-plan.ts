@@ -731,7 +731,7 @@ export async function prepareGuestPlan(
     newCheckIn,
     newCheckOut,
     memberGuestPolicy,
-    subscriptionLockoutMode,
+    subscriptionLockoutMode, yearEndMonth,
     today,
     format,
     now = new Date(),
@@ -752,19 +752,19 @@ export async function prepareGuestPlan(
      */
     memberGuestPolicy?: MemberGuestAddPolicy;
     /**
-     * The club's subscription-lockout mode (#2543), resolved by the caller before
-     * it opened this transaction.
+     * The club's subscription-lockout mode (#2543), and `yearEndMonth` (#5259) that
+     * places both check-ins in their seasons, resolved before this transaction.
      *
-     * This planner is the SIXTH enforcement site — the apply half of the edit flow
-     * whose preview is `modify-quote` — and it was the one the issue's anchor list
-     * missed. Without the mode it hard-blocked an unpaid member guest in EVERY
-     * regime, so under NON_MEMBER_PRICING a member was quoted the non-member price
-     * with an explanation and then refused on save with the pre-#2543 403: an edit
-     * that could never complete. Optional, and a missing value is read as
-     * HARD_BLOCK, which is the pre-#2543 behaviour and the safe direction for the
-     * planner's own unit tests.
+     * This planner is the SIXTH enforcement site — the apply half of the edit flow whose
+     * preview is `modify-quote` — and it was the one the issue's anchor list missed.
+     * Without the mode it hard-blocked an unpaid member guest in EVERY regime, so under
+     * NON_MEMBER_PRICING a member was quoted the non-member price with an explanation
+     * and then refused on save with the pre-#2543 403: an edit that could never
+     * complete. Optional, and a missing value is read as HARD_BLOCK, which is the
+     * pre-#2543 behaviour and the safe direction for the planner's own unit tests.
      */
     subscriptionLockoutMode?: SubscriptionLockoutMode;
+    yearEndMonth: number;
     /**
      * The CLUB's today, as the UTC-midnight `Date` a `@db.Date` round-trips
      * through, resolved by the caller BEFORE it opened this transaction
@@ -847,7 +847,7 @@ export async function prepareGuestPlan(
   // booking, and a cold cache, all at once.
   const otherLodgeEligibleGuestIds = requestCarriesOtherLodgeElection(input)
     ? await resolveOtherLodgeRateEligibleGuestIds(tx, {
-        seasonYear: seasonYearOfStoredDate(booking.checkIn),
+        seasonYear: seasonYearOfStoredDate(booking.checkIn, yearEndMonth),
         guests: booking.guests,
       })
     : new Set<string>();
@@ -1189,7 +1189,7 @@ export async function prepareGuestPlan(
   if (!guestAuthorizationIsAdmin) {
     const unpaidMemberGuests = await findUnpaidMemberGuestNames(tx, {
       bookingMemberId: bookingOwner(booking).memberId,
-      checkIn: isInProgressEdit && editableFrom ? editableFrom : newCheckIn,
+      checkIn: isInProgressEdit && editableFrom ? editableFrom : newCheckIn, yearEndMonth,
       guests: normalizedAddGuests ?? [],
     });
     // #2543: mode-gated like the five sibling refusal sites. The lookup above
@@ -1224,7 +1224,7 @@ export async function prepareGuestPlan(
     const nonMemberPricing = await evaluateNonMemberPricingRequirements(tx, {
       mode: subscriptionLockoutMode,
       lodgeId: bookingLodgeId,
-      seasonYear: seasonYearOfStoredDate(newCheckIn),
+      seasonYear: seasonYearOfStoredDate(newCheckIn, yearEndMonth),
       checkIn: newCheckIn,
       checkOut: newCheckOut,
       // Owner decision, 3 Aug 2026. On the apply path this also closes the
@@ -1588,7 +1588,7 @@ export async function calculateModifiedPricing(
     normalizedAddGuests,
     removeGuestIds,
     guestsForPricing,
-    subscriptionLockoutMode,
+    subscriptionLockoutMode, yearEndMonth,
     skipBookingLifecycleRules,
     seasonRateData,
     adminOverride = false,
@@ -1644,14 +1644,14 @@ export async function calculateModifiedPricing(
      */
     skipAuthorization?: boolean;
     /**
-     * #2543 — the mode this request resolved, forwarded to every rate resolution
-     * and to the price call below, so all four agree and none of them reads the
-     * settings from inside the transaction holding the capacity lock.
+     * #2543 — the mode this request resolved (and #5259 its year-end), forwarded to every rate
+     * resolution and the price call below, so all four agree and none reads settings under the lock.
      */
     subscriptionLockoutMode?: SubscriptionLockoutMode;
+    yearEndMonth: number;
   },
 ): Promise<PricingResult> {
-  const seasonYear = seasonYearOfStoredDate(newCheckIn);
+  const seasonYear = seasonYearOfStoredDate(newCheckIn, yearEndMonth);
   await assertMembershipTypeBookingAllowed(tx, {
     ownerMemberId: bookingOwner(booking).memberId,
     guests: guestsForPricing,

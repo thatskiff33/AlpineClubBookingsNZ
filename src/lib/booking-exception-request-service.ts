@@ -8,6 +8,8 @@ import { buildModificationExceptionQueueWhere, buildNewBookingExceptionQueueWher
 import { getBookingTimingSettings } from "@/lib/booking-timing-settings";
 import { adminListPage, adminQueueCreatedOrder, type AdminListPage } from "@/lib/admin-list-page";
 import { addDaysDateOnly, parseDateOnly, formatDateOnly } from "@/lib/date-only";
+import { seasonYearOfStoredDate } from "@/lib/financial-year";
+import { clubFinancialYearEndMonth } from "@/lib/financial-year-server";
 import { clubTimeZone } from "@/lib/club-time/server";
 import { normalizeGuestStayRange } from "@/lib/booking-guest-stay-range-input";
 import { getStayNights } from "@/lib/policies/pricing";
@@ -761,6 +763,7 @@ export async function evaluateProposalPartyViolations(
   db: PolicyEvaluationDb,
   lodgeId: string,
   party: ProposalParty,
+  yearEndMonth: number, // the club's resolved year-end (#5259), resolved before any transaction
   /**
    * Who is asking, and about which booking (#2543/#2569). Optional, and used by
    * both the paid-up-adult and adult-member-hosting evaluations below.
@@ -784,7 +787,7 @@ export async function evaluateProposalPartyViolations(
     bookingId?: string | null;
   },
 ): Promise<PolicyExceptionViolation[]> {
-  return evaluatePartyViolations(db, lodgeId, party, presence, true);
+  return evaluatePartyViolations(db, lodgeId, party, presence, true, seasonYearOfStoredDate(parseDateOnly(party.checkIn), yearEndMonth));
 }
 
 /**
@@ -799,17 +802,12 @@ export async function evaluatePersistedBookingNonHostingPolicyViolations(
   lodgeId: string,
   party: ProposalParty,
   presence: { requestedByMemberId?: string | null; bookingId: string },
-  options?: {
+  options: {
     /**
-     * The membership season these nights fall in, resolved authoritatively by the
-     * caller. See the same parameter on `evaluateProposedPaidUpAdultPresence` for
-     * why a read-only evidence caller must resolve it rather than letting the
-     * paid-up-adult rule read the process-level financial-year cache: nothing on a
-     * diagnostics path seeds that cache, so a club whose year-end month is not
-     * March would have its party judged in the wrong season. Omitted by every
-     * product caller, whose gated request has already seeded it.
+     * The membership season, resolved by the caller from stored state (#5259); see
+     * `evaluateProposedPaidUpAdultPresence` on why never from a process cache.
      */
-    seasonYear?: number;
+    seasonYear: number;
     /**
      * The club's subscription-lockout mode, read authoritatively by the caller. Same
      * reason as `seasonYear`: left to itself the paid-up-adult rule peeks it through
@@ -835,9 +833,9 @@ export async function evaluatePersistedBookingNonHostingPolicyViolations(
     party,
     presence,
     false,
-    options?.seasonYear,
-    options?.subscriptionLockoutMode,
-    options?.readAgeTierSettings,
+    options.seasonYear,
+    options.subscriptionLockoutMode,
+    options.readAgeTierSettings,
   );
 }
 
@@ -849,7 +847,7 @@ async function evaluatePartyViolations(
     | { requestedByMemberId?: string | null; bookingId?: string | null }
     | undefined,
   includeProposedHosting: boolean,
-  seasonYear?: number,
+  seasonYear: number,
   subscriptionLockoutMode?: SubscriptionLockoutMode,
   readAgeTierSettings?: AgeTierSettingsReader,
 ): Promise<PolicyExceptionViolation[]> {
@@ -880,7 +878,7 @@ async function evaluatePartyViolations(
         groupBookingId,
         lodgeId,
         checkIn,
-        checkOut,
+        checkOut, seasonYear,
         guests: party.guests.map((guest) => ({
           firstName: guest.firstName,
           lastName: guest.lastName,
@@ -1362,6 +1360,7 @@ export async function createNewBookingExceptionRequest(
     prisma,
     input.lodgeId,
     proposedParty,
+    await clubFinancialYearEndMonth(),
     // #2543 — no live booking exists yet, so every cross-family member guest in the
     // proposal is somebody who would be invited PENDING.
     { requestedByMemberId: input.requestedByMemberId },
@@ -1586,6 +1585,7 @@ export async function createModificationExceptionRequest(
     prisma,
     input.lodgeId,
     input.proposed,
+    await clubFinancialYearEndMonth(),
     // #2543 — a modification: rows already on the booking are judged by their
     // stored consent status, and only the ones this proposal would newly invite
     // count as not-yet-present.

@@ -560,7 +560,7 @@ describe("computeXeroGroupingRulesFingerprint — migration byte-identity (D-B5)
   }
 
   function ctx(activeRules: XeroGroupingRule[]): XeroGroupingContext {
-    return { mode: "MEMBERSHIP_TYPE_AND_AGE", activeRules };
+    return { mode: "MEMBERSHIP_TYPE_AND_AGE", activeRules, yearEndMonth: 3 };
   }
 
   it("migrated NULL 'Any age' rule ([] tiers) is byte-identical to the old scalar-null fingerprint", () => {

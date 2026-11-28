@@ -659,6 +659,7 @@ describe("findUnpaidMemberGuests Xero-off bypass", () => {
   const params = {
     bookingMemberId: "owner-1",
     checkIn: new Date("2026-07-01"),
+    yearEndMonth: 3,
     guests: [{ isMember: true, memberId: "g1" }],
   };
 

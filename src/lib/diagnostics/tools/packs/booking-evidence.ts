@@ -394,15 +394,15 @@ function assertPopulationWithinCeiling(
  * must derive it identically or they contradict each other for whichever part of
  * the year the two answers straddle.
  *
- * WHY NOT THE SHARED SEASON HELPERS' DEFAULT YEAR-END. `clubSeasonYear` and
- * `seasonYearOfStoredDate` (`financial-year.ts`) default their year-end month to
- * the process-level cache in
- * that module. That cache is seeded by `refreshFinancialYearConfig()`, which
- * is called by exactly three product paths (the membership-lockout settings write,
- * the finance dashboard page, and the subscription-eligibility gate). NOTHING on a
- * diagnostics path calls it. So on a cold process the cache is still
- * `DEFAULT_FINANCIAL_YEAR_END_MONTH` — March — and a club with any other year-end
- * month gets evidence judged in the WRONG SEASON: the paid-up-adult rule and the
+ * WHY NOT THE PROCESS CACHE. `clubSeasonYear` and `seasonYearOfStoredDate`
+ * (`financial-year.ts`) take the year-end month as a required argument since
+ * #5259; before that they defaulted it to the process-level cache in that
+ * module, and the cache is still there to read by name. It is seeded by
+ * `refreshFinancialYearConfig()`, which product requests and workers call to
+ * resolve the month they pass. NOTHING on a diagnostics path calls it. So on a
+ * cold process the cache is still `DEFAULT_FINANCIAL_YEAR_END_MONTH` — March —
+ * and a club with any other year-end month would get evidence judged in the
+ * WRONG SEASON: the paid-up-adult rule and the
  * hosting subscription bridge both read `MemberSubscription` by
  * `(memberId, seasonYear)`, so the wrong season silently reports a settled member
  * as unfinancial or an unfinancial member as settled, depending on which side of

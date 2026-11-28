@@ -33,6 +33,7 @@ import {
 import { fixedClubClock } from "@/lib/club-time";
 import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
 import { clubSeasonYear } from "@/lib/financial-year";
+import { refreshFinancialYearConfig } from "@/lib/financial-year-server";
 
 // ---------------------------------------------------------------------------
 // Pure types
@@ -309,18 +310,26 @@ export async function getActiveXeroGroupingRules(): Promise<XeroGroupingRule[]> 
   }));
 }
 
-export interface XeroGroupingContext {
-  mode: XeroMemberGroupingMode;
-  activeRules: XeroGroupingRule[];
-}
+/**
+ * NONE carries no year-end: it resolves no membership type, so no season, and
+ * its sync must stay a no-op that reads nothing from Xero (#1934, #5259).
+ */
+export type XeroGroupingContext = { activeRules: XeroGroupingRule[] } & (
+  | { mode: "NONE" }
+  | { mode: Exclude<XeroMemberGroupingMode, "NONE">; yearEndMonth: number }
+);
 
-/** Loads the mode + active rules together (one call for a bulk run). */
+/**
+ * Loads the mode + active rules together (one call for a bulk run), and under
+ * a grouping mode the club's year-end, which a cold cache reads from Xero.
+ */
 export async function loadXeroGroupingContext(): Promise<XeroGroupingContext> {
   const [mode, activeRules] = await Promise.all([
     getXeroGroupingMode(),
     getActiveXeroGroupingRules(),
   ]);
-  return { mode, activeRules };
+  if (mode === "NONE") return { mode, activeRules };
+  return { mode, activeRules, yearEndMonth: await refreshFinancialYearConfig() };
 }
 
 /**
@@ -336,11 +345,12 @@ export async function loadXeroGroupingContext(): Promise<XeroGroupingContext> {
  */
 export async function resolveEffectiveMembershipTypeId(
   memberId: string,
+  yearEndMonth: number,
   now: Date = new Date(),
 ): Promise<string | null> {
   const policy = await resolveMembershipTypePolicyForMember(prisma, {
     memberId,
-    seasonYear: clubSeasonYear(await readClubTimeZoneOutsideRequest(), fixedClubClock(now)),
+    seasonYear: clubSeasonYear(await readClubTimeZoneOutsideRequest(), fixedClubClock(now), yearEndMonth),
   });
   return policy?.membershipType.id ?? null;
 }
@@ -366,6 +376,7 @@ export async function resolveMemberGroupingForMember(params: {
   }
   const membershipTypeId = await resolveEffectiveMembershipTypeId(
     memberId,
+    context.yearEndMonth,
     params.now,
   );
   return resolveMemberGrouping({
@@ -408,6 +419,7 @@ export async function resolveMemberGroupingsForMembers(params: {
   const seasonYear = clubSeasonYear(
     await readClubTimeZoneOutsideRequest(),
     params.now ? fixedClubClock(params.now) : undefined,
+    context.yearEndMonth,
   );
   const policies = await resolveMembershipTypePoliciesForMembers(prisma, {
     memberIds: members.map((member) => member.id),
@@ -436,6 +448,11 @@ export async function resolveMemberGroupingsForMembers(params: {
  * age-tier columns.
  */
 export async function getManagedGroupUniverse(): Promise<string[]> {
-  const { mode, activeRules } = await loadXeroGroupingContext();
+  // Not `loadXeroGroupingContext`: the universe names no season, so it must
+  // not resolve the year-end.
+  const [mode, activeRules] = await Promise.all([
+    getXeroGroupingMode(),
+    getActiveXeroGroupingRules(),
+  ]);
   return computeManagedUniverse(mode, activeRules);
 }

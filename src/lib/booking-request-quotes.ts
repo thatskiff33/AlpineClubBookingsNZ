@@ -78,7 +78,7 @@ import {
   bookingRequestQuoteInputSchema,
   type SchoolChildCounts,
 } from "@/lib/admin-bookings-schemas/requests";
-import { seasonYearOfStoredDate } from "@/lib/financial-year";
+import { clubSeasonYearOfStoredDate } from "@/lib/financial-year-server";
 import { getCapacityFullNights } from "@/lib/capacity-full-nights";
 import { clubFormatValues } from "@/lib/club-format-server";
 import { isPendingSchoolAdultsWriteEnabled } from "@/lib/pending-school-adults-gate";
@@ -1815,7 +1815,7 @@ export async function holdBookingRequestSlots(input: {
   // annotation nothing would check that it supplies a night set at all.
   const guestCreates: HeldBookingGuestInput[] = (
     await resolveGuestRateMembershipTypes(prisma, {
-      seasonYear: seasonYearOfStoredDate(request.checkIn),
+      seasonYear: await clubSeasonYearOfStoredDate(request.checkIn),
       guests: guests.map((guest, index) => {
         const memberId = linkedMembers.get(index);
         return {

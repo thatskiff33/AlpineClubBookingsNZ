@@ -148,6 +148,7 @@ function draftInput(overrides: Record<string, unknown> = {}) {
     lodgeId: "lodge-1",
     guestDietarySeeding: bookingGuestDietarySeeding(false),
     format: CLUB_FORMAT_TEST,
+    yearEndMonth: 3,
     ...overrides,
   };
 }

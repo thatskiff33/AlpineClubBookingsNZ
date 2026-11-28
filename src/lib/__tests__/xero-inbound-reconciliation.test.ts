@@ -442,6 +442,13 @@ vi.mock("@/lib/xero-api-client", async (importOriginal) => {
   };
 });
 
+// The club's year-end, resolved once per reconcile (#5259). March by default;
+// `vi.fn(impl)` keeps that default through `vi.resetAllMocks()`.
+const financialYear = vi.hoisted(() => ({
+  refreshFinancialYearConfig: vi.fn(async () => 3),
+}));
+vi.mock("@/lib/financial-year-server", () => financialYear);
+
 vi.mock("@/lib/xero-membership-sync", async (importOriginal) => {
   const actual = (await importOriginal()) as typeof import("@/lib/xero-membership-sync");
 
@@ -991,6 +998,64 @@ describe("processStoredXeroInboundEvents", () => {
     });
   });
 
+  // #5259: the season an inbound invoice refreshes is placed with the club's
+  // RESOLVED year-end, not a process cache that answers March until seeded.
+  // 15 June 2026 is the 2026 season for a March or December year-end and the
+  // 2025 season for a June one.
+  it.each([
+    [3, 2026],
+    [6, 2025],
+    [12, 2026],
+  ])("refreshes the invoice's season under a year-end of month %i (season %i)", async (yearEndMonth, seasonYear) => {
+    financialYear.refreshFinancialYearConfig.mockResolvedValue(yearEndMonth);
+    mocks.inboundFindMany.mockResolvedValue([
+      {
+        id: "evt_2",
+        source: "webhook",
+        eventCategory: "INVOICE",
+        eventType: "UPDATE",
+        resourceId: "inv_1",
+        correlationKey: "corr_2",
+        payload: { resourceId: "inv_1" },
+      },
+    ]);
+    mocks.processedCreate.mockResolvedValue({ id: "processed_2" });
+    mocks.linkFindMany.mockResolvedValue([]);
+    mocks.paymentFindMany.mockResolvedValue([]);
+    mocks.subscriptionFindMany.mockResolvedValue([]);
+    mocks.memberFindMany.mockResolvedValue([{ id: "mem_1" }]);
+    mocks.checkMembershipStatus.mockResolvedValue({
+      status: "PAID",
+      xeroInvoiceId: "inv_1",
+    });
+    mocks.getAuthenticatedXeroClient.mockResolvedValue({
+      xero: {
+        accountingApi: {
+          getInvoice: vi.fn().mockResolvedValue({
+            body: {
+              invoices: [
+                {
+                  invoiceID: "inv_1",
+                  invoiceNumber: "INV-001",
+                  date: "2026-06-15",
+                  contact: { contactID: "contact_1" },
+                  lineItems: [{ accountCode: "203" }],
+                },
+              ],
+            },
+          }),
+        },
+      },
+      tenantId: "tenant_1",
+    });
+
+    await processStoredXeroInboundEvents();
+
+    expect(mocks.checkMembershipStatus).toHaveBeenCalledWith("mem_1", seasonYear, {
+      yearEndMonth,
+    });
+  });
+
   it("reconciles invoice events into payment metadata and membership refresh", async () => {
     mocks.inboundFindMany.mockResolvedValue([
       {
@@ -1071,7 +1136,7 @@ describe("processStoredXeroInboundEvents", () => {
         xeroInvoiceNumber: "INV-001",
       },
     });
-    expect(mocks.checkMembershipStatus).toHaveBeenCalledWith("mem_1", 2026);
+    expect(mocks.checkMembershipStatus).toHaveBeenCalledWith("mem_1", 2026, { yearEndMonth: 3 });
     expect(mocks.upsertXeroObjectLink).toHaveBeenCalledWith(
       expect.objectContaining({
         localModel: "Payment",
@@ -1345,7 +1410,7 @@ describe("processStoredXeroInboundEvents", () => {
       skipped: 0,
     });
 
-    expect(mocks.checkMembershipStatus).toHaveBeenCalledWith("mem_1", 2026);
+    expect(mocks.checkMembershipStatus).toHaveBeenCalledWith("mem_1", 2026, { yearEndMonth: 3 });
     expect(mocks.auditLogCreate).toHaveBeenCalledWith(
       expect.objectContaining({
         data: expect.objectContaining({
@@ -5882,7 +5947,7 @@ describe("processStoredXeroInboundEvents", () => {
         xeroInvoiceNumber: "INV-001",
       },
     });
-    expect(mocks.checkMembershipStatus).toHaveBeenCalledWith("mem_1", 2026);
+    expect(mocks.checkMembershipStatus).toHaveBeenCalledWith("mem_1", 2026, { yearEndMonth: 3 });
     expect(mocks.upsertXeroObjectLink).toHaveBeenCalledWith(
       expect.objectContaining({
         localModel: "Payment",
@@ -8048,7 +8113,7 @@ describe("runXeroInboundReconciliationCycle", () => {
     });
 
     expect(mocks.syncContactsFromXero).toHaveBeenCalledTimes(1);
-    expect(mocks.refreshAllMembershipStatuses).toHaveBeenCalledWith(2026);
+    expect(mocks.refreshAllMembershipStatuses).toHaveBeenCalledWith(2026, { yearEndMonth: 3 });
   });
 
   it("re-checks links pending a deleted-payment check, and a failure never fails the cycle (#4531)", async () => {

@@ -49,10 +49,16 @@ vi.mock("@/lib/member-subscription-defaults", async (importOriginal) => ({
   clearStaleNotRequiredRows: mocks.clearStale,
 }));
 
-vi.mock("@/lib/financial-year-server", () => ({
-  getFinancialYearResolution: mocks.getFinancialYearResolution,
-  refreshFinancialYearConfig: mocks.refreshFinancialYearConfig,
-}));
+vi.mock("@/lib/financial-year-server", async () => {
+  const { clubSeasonYear } = await import("@/lib/financial-year");
+  type ClubTimeZone = Parameters<typeof clubSeasonYear>[0];
+  return {
+    getFinancialYearResolution: mocks.getFinancialYearResolution,
+    refreshFinancialYearConfig: mocks.refreshFinancialYearConfig,
+    // The route's current season, under a March year-end (#5259).
+    clubCurrentSeasonYear: async (zone: ClubTimeZone) => clubSeasonYear(zone, undefined, 3),
+  };
+});
 
 import {
   GET as getLockoutSettings,

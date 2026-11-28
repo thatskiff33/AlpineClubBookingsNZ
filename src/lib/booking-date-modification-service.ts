@@ -143,6 +143,7 @@ import {
 } from "@/lib/xero-period-lock-guard";
 import { reconcileBedAllocationsForBookingWithLodgeLockHeld } from "@/lib/bed-allocation-lifecycle";
 import { seasonYearOfStoredDate } from "@/lib/financial-year";
+import { clubFinancialYearEndMonth } from "@/lib/financial-year-server";
 import { bookingFinalPriceCents } from "@/lib/booking-final-price";
 import { postModificationLedgerLines } from "@/lib/booking-ledger-modification-sync";
 import { computeModificationPricing } from "@/lib/booking-modification-pricing";
@@ -319,11 +320,10 @@ export async function modifyBookingDates({
   // money, and two todays on one date change would price it against itself.
   const todayAtClub = (await clubTime()).today();
   const clubTodayDateOnly = dateOnlyInstantOf(todayAtClub);
-  // The club's format (#3565), for the same reason and at the same point: the
-  // edit renders money under both locks, so it is read before either is taken.
-  const format = await clubFormatValues();
-  // #4627: the journal's posting context, before the transaction for the same reason.
-  const journal = await resolveBookingMoneyPostingContext();
+  // The club's format (#3565), journal context (#4627) and year-end (#5259), for the same
+  // reason: the edit prices and renders money under both locks, so each is read first.
+  const [format, journal, yearEndMonth] =
+    await Promise.all([clubFormatValues(), resolveBookingMoneyPostingContext(), clubFinancialYearEndMonth()]);
 
   const result = await prisma.$transaction(async (tx) => {
     // Two-tier lock protocol (#1881): a date change moves money (reduction
@@ -557,7 +557,7 @@ export async function modifyBookingDates({
       // the nights the new range adds price at current season rates.
       ...valuedNightLocksForGuest(g, booking),
     }));
-    const seasonYear = seasonYearOfStoredDate(newCheckIn);
+    const seasonYear = seasonYearOfStoredDate(newCheckIn, yearEndMonth);
     await assertMembershipTypeBookingAllowed(tx, {
       ownerMemberId: bookingOwner(booking).memberId,
       guests: guestsForPricing,

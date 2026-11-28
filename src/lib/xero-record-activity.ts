@@ -7,7 +7,7 @@ import {
 } from "@/lib/club-time";
 import { bookingOwner } from "@/lib/booking-owner";
 import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
-import { refreshFinancialYearConfig } from "@/lib/financial-year-server";
+import { clubFinancialYearEndMonth } from "@/lib/financial-year-server";
 import { prisma } from "@/lib/prisma";
 import { seasonYearsLabel } from "@/lib/season-label";
 import { formatCents } from "@/lib/utils";
@@ -61,7 +61,7 @@ function formatStatusLabel(value: string): string {
  * read is in-process cached and never rejects, so a display path can afford it.
  */
 async function resolveYearEndMonth(): Promise<number> {
-  return refreshFinancialYearConfig();
+  return clubFinancialYearEndMonth();
 }
 
 function createRecordReference(

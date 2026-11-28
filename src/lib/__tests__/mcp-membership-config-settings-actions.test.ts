@@ -45,10 +45,16 @@ vi.mock("@/lib/club-post-retention", async (importOriginal) => ({
   countPostsBeyondRetention: h.clubPosts.count,
   saveClubPostRetention: h.clubPosts.save,
 }));
-vi.mock("@/lib/financial-year-server", () => ({
-  getFinancialYearResolution: vi.fn(async () => ({ overrideMonth: null, xeroMonth: 3, effectiveMonth: 3 })),
-  refreshFinancialYearConfig: vi.fn(),
-}));
+vi.mock("@/lib/financial-year-server", async () => {
+  const { clubSeasonYear } = await import("@/lib/financial-year");
+  type ClubTimeZone = Parameters<typeof clubSeasonYear>[0];
+  return {
+    getFinancialYearResolution: vi.fn(async () => ({ overrideMonth: null, xeroMonth: 3, effectiveMonth: 3 })),
+    refreshFinancialYearConfig: vi.fn(),
+    // The routes' current season, under a March year-end (#5259).
+    clubCurrentSeasonYear: async (zone: ClubTimeZone) => clubSeasonYear(zone, undefined, 3),
+  };
+});
 vi.mock("@/lib/xero-mappings", () => ({
   getSubscriptionItemCodes: vi.fn(async () => ["SUB"]),
   getNonSubscriptionFeeItemCodes: vi.fn(async () => ["SUB"]),

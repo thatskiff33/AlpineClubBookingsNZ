@@ -568,6 +568,8 @@ export function buildPolicyExceptionApprovalHooks(
         tx,
         snapshot.lodgeId,
         snapshot.proposed,
+        // #5259: resolved with the batch facts before this transaction opened.
+        context.batchPreTransaction.yearEndMonth,
         {
           requestedByMemberId: request.requestedByMemberId,
           bookingId:
@@ -1065,6 +1067,9 @@ async function executeApprovedNewBooking(args: {
     todayAtClub: context.todayAtClub,
     // #4628: the journal context the route resolved for the batch executor, before this transaction.
     journal: context.batchPreTransaction.journal,
+    // #5259: the club's year-end, resolved with the batch facts before this
+    // transaction opened.
+    yearEndMonth: context.batchPreTransaction.yearEndMonth,
     effectiveMemberId: request.requestedByMemberId,
     // An officer executing a member's reviewed proposal IS an on-behalf create.
     isOnBehalf: true,

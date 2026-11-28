@@ -157,6 +157,7 @@ async function plan(
       approvalRequired: true,
       pendingHoldExpiryDays: 0,
     },
+    yearEndMonth: 3,
   });
 }
 

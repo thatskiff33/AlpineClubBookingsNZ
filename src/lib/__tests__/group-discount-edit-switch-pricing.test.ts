@@ -318,6 +318,7 @@ describe.each(SEASON_SHAPES)(
         ),
         skipBookingLifecycleRules: true,
         seasonRateData,
+        yearEndMonth: 3,
       });
       return result;
     }
@@ -402,6 +403,7 @@ describe.each(SEASON_SHAPES)(
           guestsForPricing: guestsForPricing(party),
           skipBookingLifecycleRules: true,
           seasonRateData,
+          yearEndMonth: 3,
         });
 
       const [on, off] = await Promise.all([run("on"), run("off")]);
@@ -444,6 +446,7 @@ describe.each(SEASON_SHAPES)(
           guestsForPricing: guestsForPricing(party),
           skipBookingLifecycleRules: true,
           seasonRateData,
+          yearEndMonth: 3,
         });
 
       const [disabled, on, off] = await Promise.all([
@@ -498,6 +501,7 @@ describe.each(SEASON_SHAPES)(
         guestsForPricing: guestsForPricing(party),
         skipBookingLifecycleRules: true,
         seasonRateData,
+        yearEndMonth: 3,
       });
     }
 

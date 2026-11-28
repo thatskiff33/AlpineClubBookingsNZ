@@ -20,7 +20,7 @@ import { isEffectiveModuleEnabled } from "@/lib/admin-modules";
 import { loadMemberGuestSettings } from "@/lib/member-guest-settings";
 import { resolveMemberGuestNameSearchAccess } from "@/lib/member-guest-find";
 import { resolveOtherLodgeRateEligibleGuestIds } from "@/lib/membership-type-policy";
-import { refreshFinancialYearConfig } from "@/lib/financial-year-server";
+import { clubFinancialYearEndMonth } from "@/lib/financial-year-server";
 import { seasonYearOfStoredDate } from "@/lib/financial-year";
 import { getPublicOtherLodges } from "@/lib/booking-request";
 import type { BookingDetailRecord } from "./load-booking-detail";
@@ -160,31 +160,6 @@ export async function buildBookingDetailEditorData({
     }),
     clubNameSearchEnabled: memberGuestSettings?.openMemberSearchEnabled ?? false,
   });
-  /**
-   * #2978: the season the other-lodge eligibility fence is judged in — resolved
-   * AUTHORITATIVELY rather than from whatever happened to warm the cache.
-   *
-   * `seasonYearOfStoredDate` reads the process-level financial-year cache in
-   * `financial-year.ts`, which serves the March default until a server path
-   * seeds it. Every WRITE path reaches `refreshFinancialYearConfig` through
-   * `resolveSubscriptionLockoutMode`; a page render does not, so on a cold
-   * process a club with any other year-end month would have this page offer
-   * ticks judged in one season while `modify-quote` — which reseeds before its
-   * own season derivation — fences them in another. The officer would see a tick
-   * box and be refused when they used it, which is exactly what acceptance
-   * criterion 2 of #2978 exists to prevent. No money is at stake (pricing
-   * re-checks eligibility itself), but `subscription-lockout-enforcement.ts` and
-   * `adult-member-hosting-review.ts` both refuse to trust this cache in these
-   * same words, and a season answer that depends on process history is not one
-   * to trust here either.
-   *
-   * Reseeded only for an admin, since only the admin spread below asks the
-   * question. `refreshFinancialYearConfig` reads the club's stored override and,
-   * with none set, the connected organisation's year end through its own cache.
-   */
-  if (viewerAuthorizationRole === "ADMIN") {
-    await refreshFinancialYearConfig();
-  }
   const editorData: BookingEditorData = {
     id: booking.id,
     lodgeName: booking.lodge.name,
@@ -291,9 +266,22 @@ export async function buildBookingDetailEditorData({
           // member's subscription is unpaid, so this list must not reach an
           // ordinary viewer. Costs no query on the common all-non-members
           // booking, which the helper short-circuits.
+          //
+          // THE SEASON THE FENCE IS JUDGED IN comes from the club's RESOLVED
+          // year-end (#5259), the same one `modify-quote` places it with. Were
+          // the two to differ, this page would offer ticks judged in one season
+          // and the quote would fence them in another: the officer would see a
+          // tick box and be refused when they used it, which is what acceptance
+          // criterion 2 of #2978 exists to prevent. Resolved only inside this
+          // admin spread, since only it asks the question; the read is the
+          // club's stored override and, with none set, the connected
+          // organisation's year end through its own cache.
           otherLodgeRateEligibleGuestIds: [
             ...(await resolveOtherLodgeRateEligibleGuestIds(prisma, {
-              seasonYear: seasonYearOfStoredDate(booking.checkIn),
+              seasonYear: seasonYearOfStoredDate(
+                booking.checkIn,
+                await clubFinancialYearEndMonth(),
+              ),
               guests: booking.guests,
             })),
           ],

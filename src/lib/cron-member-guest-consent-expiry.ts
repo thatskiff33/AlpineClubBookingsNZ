@@ -6,6 +6,7 @@ import {
 import logger from "@/lib/logger";
 import { prisma } from "@/lib/prisma";
 import { clubFormatValues } from "@/lib/club-format-server";
+import { refreshFinancialYearConfig } from "@/lib/financial-year-server";
 
 /**
  * The member-guest pending-hold expiry sweep ("+ Add Member Guest", epic #2305,
@@ -76,6 +77,9 @@ export async function runMemberGuestConsentExpiryCron(
   // The club's format (#3565), resolved once per sweep, before any row's
   // transaction; every outcome notice below renders with it.
   const format = await clubFormatValues();
+  // The club's financial year-end (#5259), likewise once per sweep: each
+  // removal's reprice places its booking's membership season with it.
+  const yearEndMonth = await refreshFinancialYearConfig();
 
   // Unbounded and ordered oldest-first, matching every other sweep in this repo.
   // The query is exactly the shape the partial index
@@ -107,7 +111,12 @@ export async function runMemberGuestConsentExpiryCron(
 
   for (const candidate of candidates) {
     try {
-      const outcome = await expireMemberGuestConsent({ guestId: candidate.id, now, format });
+      const outcome = await expireMemberGuestConsent({
+        guestId: candidate.id,
+        now,
+        format,
+        yearEndMonth,
+      });
 
       if (outcome.outcome === "ALREADY_RESOLVED") {
         skippedGuestIds.push(candidate.id);

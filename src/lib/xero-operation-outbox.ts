@@ -19,7 +19,7 @@ import {
 import { claimXeroSyncOperationToRunning } from "@/lib/xero-operation-claim";
 import { cardRefundNoteKey, readCardRefundNoteShare } from "@/lib/card-refund-own-note-share";
 import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
-import { clubSeasonYear } from "@/lib/financial-year";
+import { clubCurrentSeasonYear } from "@/lib/financial-year-server";
 import { buildXeroBookingInvoiceCorrelationKey } from "@/lib/xero-booking-invoice-key";
 import { findActivePrimaryInvoiceLink } from "@/lib/xero-booking-invoice-evidence";
 import {
@@ -2079,7 +2079,7 @@ export async function queueApprovedMembershipCancellationXeroOperations(params: 
   participantId: string;
   createdByMemberId?: string;
 }) {
-  const seasonYear = clubSeasonYear(await readClubTimeZoneOutsideRequest());
+  const seasonYear = await clubCurrentSeasonYear(await readClubTimeZoneOutsideRequest());
   const subscription = await prisma.memberSubscription.findUnique({
     where: {
       memberId_seasonYear: {

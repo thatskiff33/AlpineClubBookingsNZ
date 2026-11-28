@@ -121,6 +121,7 @@ import {
 } from "@/lib/member-guest-add-policy";
 import type { MemberGuestAddActor } from "@/lib/member-guest-consent";
 import { resolveSubscriptionLockoutMode } from "@/lib/member-subscription-eligibility";
+import { clubFinancialYearEndMonth } from "@/lib/financial-year-server";
 import type { SubscriptionLockoutMode } from "@/lib/membership-lockout-settings";
 import {
   dateOnlyInstantOf,
@@ -285,14 +286,14 @@ export type BatchModificationResponse = BatchModificationSettlementFacts & {
  * Everything a batch modification must resolve BEFORE its transaction opens
  * (#3232, `INV-LOCK-004`).
  *
- * Three reads, and each of them is here for a reason already written down
+ * The reads, and each of them is here for a reason already written down
  * somewhere else in the tree:
  *
  *  - the member-guest add policy, whose own module header says it must be read
  *    before the caller opens its transaction;
- *  - the club's subscription-lockout mode, which `INV-LOCK-004` names explicitly
- *    as a reader to resolve first and pass in as a value, because it can refresh
- *    the financial-year configuration from Xero;
+ *  - the club's subscription-lockout mode and (#5259) its financial year-end, which
+ *    `INV-LOCK-004` names as readers to resolve first and pass in as values,
+ *    because either can reach Xero for the financial-year configuration;
  *  - the Xero lock dates, which on a cold cache is a live HTTPS request with a
  *    possible OAuth refresh.
  *
@@ -303,6 +304,7 @@ export type BatchModificationResponse = BatchModificationSettlementFacts & {
 interface BatchModificationPreparation {
   readonly memberGuestPolicy: Awaited<ReturnType<typeof loadMemberGuestAddPolicy>>;
   readonly subscriptionLockoutMode: SubscriptionLockoutMode;
+  readonly yearEndMonth: number;
   readonly xeroLockDates: XeroLockDateFacts;
   /**
    * #3029 (`INV-MOD-059`): whether a guest this edit ADDS, or a placeholder it
@@ -377,17 +379,15 @@ async function prepareBookingBatchModification(options: {
       options.adminOverride.requestedCheckIn,
     );
   }
-  const [memberGuestPolicy, subscriptionLockoutMode, xeroLockDates, guestDietarySeeding, journal] =
+  const [memberGuestPolicy, subscriptionLockoutMode, yearEndMonth, xeroLockDates, guestDietarySeeding, journal] =
     await Promise.all([
       loadMemberGuestAddPolicy(),
-      resolveSubscriptionLockoutMode(),
-      resolveXeroLockDateFacts(options.candidateCheckIns, {
-        audience: options.audience,
-      }),
+      resolveSubscriptionLockoutMode(), clubFinancialYearEndMonth(),
+      resolveXeroLockDateFacts(options.candidateCheckIns, { audience: options.audience }),
       resolveBookingGuestDietarySeeding(),
       resolveBookingMoneyPostingContext(),
     ]);
-  return { memberGuestPolicy, subscriptionLockoutMode, xeroLockDates, guestDietarySeeding, journal };
+  return { memberGuestPolicy, subscriptionLockoutMode, yearEndMonth, xeroLockDates, guestDietarySeeding, journal };
 }
 
 /**
@@ -1066,7 +1066,7 @@ export async function modifyBookingBatch({
       // the planner's refusals and the paid-up-adult requirement branch on the
       // same mode `modify-quote` previewed, and no settings read happens under
       // the global + per-lodge locks this transaction holds.
-      subscriptionLockoutMode,
+      subscriptionLockoutMode, yearEndMonth: preparation.yearEndMonth,
     });
     const guestNameUpdates = resolveGuestNameUpdates({
       booking,
@@ -1170,7 +1170,7 @@ export async function modifyBookingBatch({
           removeGuestIds: input.removeGuestIds,
           guestsForPricing: guestPlan.guestsForPricing,
           // #2543 — see the `prepareGuestPlan` call above.
-          subscriptionLockoutMode,
+          subscriptionLockoutMode, yearEndMonth: preparation.yearEndMonth,
           // Finding 2 (privacy re-review of MG3 #2308). #2526: read the SAME
           // answer the guest plan used, so a policy-exception approval (which
           // borrows ADMIN only for the reviewed minimum-stay override) prices

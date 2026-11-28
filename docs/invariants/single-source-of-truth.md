@@ -151,28 +151,14 @@ History, measurements and rejected alternatives: #3126 (and #3123, #3131,
   - A resolver returning the **club's own** answer on every call
     (`await clubTimeZone()`, `await readClubTimeZoneOutsideRequest()`) is not
     this defect and is not on the list.
-  - **`getFinancialYearEndMonth` is PENDING, not exempt**, and the difference is
-    structural: an exemption is a file the arm stops applying to and shelters
-    whatever that file grows later, which is exactly how a `= APP_TIME_ZONE`
-    default survived for months inside a lift written for a READ.
-    `AUTHORITY_DEFAULT_RESTRICTIONS` still carries **zero** exemptions and
-    `ssot-authority-default-guard.test.ts` asserts it. A pending name is one
-    identifier the arm declines to fire on, with its live population **pinned**
-    in that suite — so the deferral cannot grow, and the moment the last default
-    goes the pin fails and hands the reader the promotion step. That is a ratchet
-    with a mechanical trigger rather than a list that rots.
-  - Its one remaining default is held by **cost, not doubt**, and needs a
-    decision rather than more threading. `seasonSelectLabel`'s went in #5259,
-    once the year-end reached the browser as data through `ClubSeasonProvider`.
-    `seasonYearOfCalendarDate` cascades through two optional
-    pass-throughs into most of the booking, waitlist, membership and Xero tree,
-    where the change actually written at each site would be
-    `getFinancialYearEndMonth()` **at** the call site — compliant with this
-    rule's letter while reading the same cold cache, and one ambient read spread
-    across every one of those modules. That is the `APP_STRIPE_CURRENCY`
-    argument above, which #3563 then paid — a cost a later change can settle,
-    not a permanent answer. The figures live with the pending entry in `eslint.config.mjs`,
-    beside the pin that keeps them true.
+  - **`getFinancialYearEndMonth` is banned, no longer pending** (#5259). Its
+    last default, on `seasonYearOfCalendarDate`, went once every caller passed
+    the club's resolved year-end: `clubFinancialYearEndMonth()` inside a
+    request, `refreshFinancialYearConfig()` once per run outside one. The pending
+    list and its pinned count went with it. The cache is still read **by name**
+    where the month cannot be resolved in place — the age-tier season start, the
+    hosting reconciler inside its writers' transactions, the admin layout's
+    bounded wait — which an arm scoped to defaults does not reach.
 - **What no syntactic arm here reaches**, stated plainly rather than left as a
   discovered gap: a default that calls a **club-time** resolver
   (`= await clubTimeZone()`), which returns the club's own answer and is not

@@ -167,6 +167,7 @@ import { getGuestBedNightKeys, sameNightKeys } from "@/lib/booking-guest-stay-ra
 import { promoBreakdownLines } from "@/lib/booking-edit-promo-lines";
 import { overCapacityNights } from "@/lib/over-capacity-confirmation";
 import { seasonYearOfStoredDate } from "@/lib/financial-year";
+import { clubFinancialYearEndMonth } from "@/lib/financial-year-server";
 import { storedDateOnly } from "@/lib/stored-calendar-day";
 import { bookingManagementAuthorizationRole } from "@/lib/admin-permissions";
 import { BOOKING_CHANGE_QUOTE_CONNECTION_SHAPE } from "@/lib/connection-shapes-bookings";
@@ -707,14 +708,12 @@ export async function POST(
   // HOISTED FROM ~500 LINES BELOW BY #2978, AND THAT MOVED MORE THAN THE READ.
   // There are roughly fifteen early returns between here and where this used to
   // sit, so a preview that refuses at one of them now performs this settings
-  // read where before it short-circuited first. Two consequences worth having in
-  // the open: the read is cached but can reach Xero for the organisation's
-  // accounting year when the Xero module is on, and — the reason the hoist is a
-  // net improvement rather than a cost — it reseeds the financial-year cache
-  // BEFORE the `seasonYearOfStoredDate(booking.checkIn)` calls below, so a cold
-  // process at a club with a non-March year end no longer judges the season
-  // against the March default.
+  // read where before it short-circuited first. Worth having in the open: the
+  // read is cached but can reach Xero for the organisation's accounting year
+  // when the Xero module is on.
   const subscriptionLockoutMode = await resolveSubscriptionLockoutMode();
+  // #5259: the club's RESOLVED year-end, once, for every season this preview judges.
+  const yearEndMonth = await clubFinancialYearEndMonth();
 
   let otherLodgeElection: OtherLodgeRateElection;
   try {
@@ -739,7 +738,7 @@ export async function POST(
     const otherLodgeEligibleGuestIds =
       isAdmin && requestCarriesOtherLodgeElection(otherLodgeInput)
         ? await resolveOtherLodgeRateEligibleGuestIds(prisma, {
-            seasonYear: seasonYearOfStoredDate(booking.checkIn),
+            seasonYear: seasonYearOfStoredDate(booking.checkIn, yearEndMonth),
             guests: booking.guests,
           })
         : new Set<string>();
@@ -1247,7 +1246,7 @@ export async function POST(
   if (partyThrottled) return partyThrottled;
 
   const totalGuestCount = guestsForPricing.length;
-  const seasonYear = seasonYearOfStoredDate(newCheckIn);
+  const seasonYear = seasonYearOfStoredDate(newCheckIn, yearEndMonth);
 
   const bookingLodgeId = booking.lodgeId ?? (await getDefaultLodgeId(prisma));
   const lodgeCapacity = await getLodgeCapacity(bookingLodgeId);
@@ -1349,6 +1348,7 @@ export async function POST(
       unpaidMemberGuests = await findUnpaidMemberGuestNames(prisma, {
         bookingMemberId: bookingOwner(booking).memberId,
         checkIn: isInProgressEdit && editableFrom ? editableFrom : newCheckIn,
+        yearEndMonth,
         guests: normalizedAddGuests ?? [],
       });
     } catch (error) {

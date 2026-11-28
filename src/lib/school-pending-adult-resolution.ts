@@ -12,6 +12,7 @@ import { areOldSchoolAdultsRuntimesStopped } from "@/lib/pending-school-adults-g
 import { storedSchoolTeacherListSchema } from "@/lib/school-teacher-schema";
 import { resolveGuestRateMembershipTypes, resolveMembershipTypePoliciesForMembers } from "@/lib/membership-type-policy";
 import { seasonYearOfStoredDate } from "@/lib/financial-year";
+import { clubFinancialYearEndMonth } from "@/lib/financial-year-server";
 import { planAcceptedSchoolHeldPrices, readAcceptedSchoolTerms } from "@/lib/school-pending-adult-price-plan";
 import { bookingFinalPriceCents } from "@/lib/booking-final-price";
 import { PrimaryInvoiceRaisedDuringEditError, writeEditOnPayment } from "@/lib/booking-primary-invoice-claim";
@@ -50,6 +51,9 @@ export async function resolveAcceptedSchoolPendingAdults(input: {
   }
 
   const dietarySeeding = await resolveBookingGuestDietarySeeding();
+  // The club's year-end (#5259), before the locks below: the member-rate check
+  // and the rate snapshot read the season the held check-in falls in.
+  const yearEndMonth = await clubFinancialYearEndMonth();
   const outcome = await prisma.$transaction(async (tx) => {
     await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
     await acquireLodgeCapacityLock(tx, heldLocator.lodgeId);
@@ -106,7 +110,7 @@ export async function resolveAcceptedSchoolPendingAdults(input: {
       });
       const policies = await resolveMembershipTypePoliciesForMembers(tx, {
         memberIds: members.map((member) => member.id),
-        seasonYear: seasonYearOfStoredDate(hold.checkIn),
+        seasonYear: seasonYearOfStoredDate(hold.checkIn, yearEndMonth),
       });
       if (members.some((member) => member.canLogin || policies.get(member.id)?.bookingBehavior === "MEMBER_RATE")) {
         throw new BookingRequestError("A named adult may be a club member. Review their rate and consent, then issue new terms if needed.", 409);
@@ -210,7 +214,7 @@ export async function resolveAcceptedSchoolPendingAdults(input: {
     // Match the held-booking and approval writers' immutable rate-type snapshot.
     // The accepted cents stay fixed; these adults have no member identity.
     const ratedTeachers = await resolveGuestRateMembershipTypes(tx, {
-      seasonYear: seasonYearOfStoredDate(hold.checkIn),
+      seasonYear: seasonYearOfStoredDate(hold.checkIn, yearEndMonth),
       guests: proposed.map((teacher) => ({ ...teacher, isMember: false })),
     });
     const dietaryWrites = await resolveBookingGuestDietary(

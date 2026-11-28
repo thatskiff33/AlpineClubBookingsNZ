@@ -17,8 +17,7 @@ import {
   resolveOtherLodgeRateElection,
 } from "@/lib/booking-other-lodge-rate";
 import { resolveOtherLodgeRateEligibleGuestIds } from "@/lib/membership-type-policy";
-import { seasonYearOfStoredDate } from "@/lib/financial-year";
-import { refreshFinancialYearConfig } from "@/lib/financial-year-server";
+import { clubSeasonYearOfStoredDate } from "@/lib/financial-year-server";
 import { getBookingEditPolicy } from "@/lib/booking-edit-policy";
 import { clubTime } from "@/lib/club-time/server";
 import { dateOnlyInstantOf } from "@/lib/club-time";
@@ -182,13 +181,12 @@ async function resolveRerates(
   });
   const linkedMemberByGuestId = new Map(links.map((link) => [link.guestId, link.memberId]));
   // As the quote does: eligibility costs reads, so only for an officer's
-  // election, and judged on the booking's season once the club's financial
-  // year is loaded (the quote reseeds it first through the lockout mode).
+  // election, and judged on the booking's season under the club's resolved
+  // year-end, as the quote judges it (#5259).
   let eligibleGuestIds = new Set<string>();
   if (role === "ADMIN" && carriesElection) {
-    await refreshFinancialYearConfig();
     eligibleGuestIds = await resolveOtherLodgeRateEligibleGuestIds(prisma, {
-      seasonYear: seasonYearOfStoredDate(booking.checkIn),
+      seasonYear: await clubSeasonYearOfStoredDate(booking.checkIn),
       guests: stored.guests,
     });
   }

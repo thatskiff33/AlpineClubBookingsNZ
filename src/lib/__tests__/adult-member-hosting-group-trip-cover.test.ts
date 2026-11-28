@@ -67,6 +67,7 @@ import {
   groupTripCoverageDependentWhere,
   groupTripCoverageSourceWhere,
 } from "@/lib/group-trip-identity";
+import { seasonYearOfStoredDate } from "@/lib/financial-year";
 
 const LODGE = "lodge-a";
 const OTHER_LODGE = "lodge-b";
@@ -967,6 +968,7 @@ describe("pre-persist Group Trip cover for a join (#3038)", () => {
       checkIn: new Date("2026-08-03T00:00:00.000Z"),
       checkOut: new Date("2026-08-05T00:00:00.000Z"),
       guests: proposedGuests,
+      seasonYear: seasonYearOfStoredDate(new Date("2026-08-03T00:00:00.000Z"), 3),
     });
     expect(violation).toBeNull();
   });
@@ -985,6 +987,7 @@ describe("pre-persist Group Trip cover for a join (#3038)", () => {
       checkIn: new Date("2026-08-03T00:00:00.000Z"),
       checkOut: new Date("2026-08-05T00:00:00.000Z"),
       guests: proposedGuests,
+      seasonYear: seasonYearOfStoredDate(new Date("2026-08-03T00:00:00.000Z"), 3),
     });
     expect(violation?.affectedNights).toEqual(["2026-08-03", "2026-08-04"]);
   });
@@ -1001,6 +1004,7 @@ describe("pre-persist Group Trip cover for a join (#3038)", () => {
       checkIn: new Date("2026-08-03T00:00:00.000Z"),
       checkOut: new Date("2026-08-05T00:00:00.000Z"),
       guests: proposedGuests,
+      seasonYear: seasonYearOfStoredDate(new Date("2026-08-03T00:00:00.000Z"), 3),
     });
     expect(violation?.affectedNights).toEqual(["2026-08-03", "2026-08-04"]);
   });
@@ -1141,7 +1145,7 @@ describe("a MODIFICATION exception proposal is judged with its Group Trip (INV-H
       db,
       LODGE,
       party,
-      { bookingId: "b-main" },
+      3, { bookingId: "b-main" },
     );
     expect(
       violations.map((violation) => violation.reasonCode),
@@ -1161,7 +1165,7 @@ describe("a MODIFICATION exception proposal is judged with its Group Trip (INV-H
       db,
       LODGE,
       party,
-      { bookingId: "b-main" },
+      3, { bookingId: "b-main" },
     );
     expect(violations.map((violation) => violation.reasonCode)).toContain(HOSTING);
   });
@@ -1202,7 +1206,7 @@ describe("a MODIFICATION exception proposal is judged with its Group Trip (INV-H
       db,
       LODGE,
       party,
-      { bookingId: "b-main" },
+      3, { bookingId: "b-main" },
     );
     expect(
       violations.map((violation) => violation.reasonCode),
@@ -1236,7 +1240,7 @@ describe("a MODIFICATION exception proposal is judged with its Group Trip (INV-H
       db,
       LODGE,
       party,
-      { bookingId: "b-main" },
+      3, { bookingId: "b-main" },
     );
     expect(violations.map((violation) => violation.reasonCode)).toContain(
       HOSTING,
@@ -1251,7 +1255,7 @@ describe("a MODIFICATION exception proposal is judged with its Group Trip (INV-H
       [withAdult(organiserOf(TRIP), ["2026-08-03", "2026-08-04"])],
       GROUP_TRIP_ON,
     );
-    const violations = await evaluateProposalPartyViolations(db, LODGE, party, {
+    const violations = await evaluateProposalPartyViolations(db, LODGE, party, 3, {
       requestedByMemberId: "joining-member",
     });
     expect(violations.map((violation) => violation.reasonCode)).toContain(HOSTING);

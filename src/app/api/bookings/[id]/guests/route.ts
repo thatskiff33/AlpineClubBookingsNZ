@@ -145,6 +145,7 @@ import {
   buildSameOwnerCoverageRefusalBody,
 } from "@/lib/adult-member-hosting-same-owner";
 import { seasonYearOfStoredDate } from "@/lib/financial-year";
+import { clubFinancialYearEndMonth } from "@/lib/financial-year-server";
 import {
   authorizationRoleFromAccessRoles,
   hasAdminAccess,
@@ -266,11 +267,10 @@ export async function POST(
   // #3029 (W10, `INV-MOD-059`) — whether an added linked member is seeded from
   // their dietary/allergy profile. The toggle, read HERE for the same reason.
   const guestDietarySeeding = await resolveBookingGuestDietarySeeding();
-  // The club's format (#3565), resolved once, before any transaction or
-  // lock below — never per amount and never inside a transaction.
-  const format = await clubFormatValues();
-  // #4627: the journal's posting context, resolved before the transaction (`INV-LOCK-004`).
-  const journal = await resolveBookingMoneyPostingContext();
+  // The club's format (#3565), the journal's posting context (#4627) and the club's
+  // year-end (#5259), each resolved once before any transaction or lock below.
+  const [format, journal, yearEndMonth] =
+    await Promise.all([clubFormatValues(), resolveBookingMoneyPostingContext(), clubFinancialYearEndMonth()]);
 
   try {
     const result = await prisma.$transaction(async (tx) => {
@@ -483,7 +483,7 @@ export async function POST(
         today: clubTodayDateOnly,
       }, format);
 
-      const seasonYear = seasonYearOfStoredDate(booking.checkIn);
+      const seasonYear = seasonYearOfStoredDate(booking.checkIn, yearEndMonth);
       await assertMembershipTypeBookingAllowed(tx, {
         ownerMemberId: bookingOwner(booking).memberId,
         guests: [
@@ -501,7 +501,7 @@ export async function POST(
       if (!isAdmin) {
         const unpaidMemberGuests = await findUnpaidMemberGuestNames(tx, {
           bookingMemberId: bookingOwner(booking).memberId,
-          checkIn: booking.checkIn,
+          checkIn: booking.checkIn, yearEndMonth,
           guests: normalizedNewGuests,
         });
 

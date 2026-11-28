@@ -43,6 +43,7 @@ import {
 } from "@/lib/policies/booking-route-decisions";
 import { nonMemberHoldEnd } from "@/lib/non-member-hold-end";
 import { priceBookingGuestsWithMembershipTypePolicy } from "@/lib/membership-type-policy";
+import { seasonYearOfStoredDate } from "@/lib/financial-year";
 import { acquireLodgeCapacityLock, checkCapacityForGuestRanges } from "@/lib/capacity";
 import { postBindingCharge } from "@/lib/booking-ledger-pending-charge";
 import { postStoredBookingConfirmationLedgerLines } from "@/lib/booking-ledger-confirmation-sync";
@@ -354,6 +355,7 @@ export async function createDraftBooking(input: DraftBookingInput): Promise<Book
       guests: guestInputs,
       seasons: seasonData,
       groupDiscount,
+      seasonYear: seasonYearOfStoredDate(checkIn, input.yearEndMonth),
       // #2543 — the mode this request resolved, so the price cannot be computed
       // under a different regime than the gate that let the booking through, and
       // no settings read happens under the capacity lock.
@@ -913,6 +915,7 @@ export async function createConfirmedBooking(input: ConfirmedBookingInput): Prom
         guests: guestInputs,
         seasons: seasonData,
         groupDiscount,
+        seasonYear: seasonYearOfStoredDate(checkIn, input.yearEndMonth),
         // #2543 — see the draft path above.
         subscriptionLockoutMode: input.subscriptionLockoutMode,
         // Finding 2 (privacy re-review of MG3 #2308).
@@ -1321,6 +1324,7 @@ export async function createConfirmedBooking(input: ConfirmedBookingInput): Prom
           guests,
           seasons: seasonData,
           groupDiscount,
+          seasonYear: seasonYearOfStoredDate(checkIn, input.yearEndMonth),
         });
         if (!childPrice) {
           throw new Error(
@@ -1808,6 +1812,7 @@ export async function createWaitlistedBooking(input: WaitlistedBookingInput): Pr
     guests: guestInputs,
     seasons: seasonData,
     groupDiscount,
+    seasonYear: seasonYearOfStoredDate(checkIn, input.yearEndMonth),
     // #2543 — see the draft path above.
     subscriptionLockoutMode: input.subscriptionLockoutMode,
     // Finding 2 (privacy re-review of MG3 #2308).

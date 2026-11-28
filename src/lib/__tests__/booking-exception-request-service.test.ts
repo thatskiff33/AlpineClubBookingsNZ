@@ -1713,7 +1713,7 @@ describe("evaluateProposalPartyViolations", () => {
       // The mocked prisma is injected; cast satisfies the strict param type.
       {} as never,
       "lodge_1",
-      { checkIn: "2026-07-04", checkOut: "2026-07-05", guests: [] },
+      { checkIn: "2026-07-04", checkOut: "2026-07-05", guests: [] }, 3,
     );
     expect(violations.map((v) => v.reasonCode).sort()).toEqual([
       "ADULT_MEMBER_HOSTING_REQUIRED",

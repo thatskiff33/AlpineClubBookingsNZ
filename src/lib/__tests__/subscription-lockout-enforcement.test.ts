@@ -52,6 +52,7 @@ import {
   toSubscriptionLockoutParticipants,
   type SubscriptionLockoutDb,
 } from "@/lib/subscription-lockout-enforcement";
+import { seasonYearOfStoredDate } from "@/lib/financial-year";
 
 const SEASON = 2026;
 const CHECK_IN = parseDateOnly("2026-07-04");
@@ -888,6 +889,7 @@ describe("evaluateProposedPaidUpAdultPresence (#2543 <-> #2365)", () => {
         checkIn: CHECK_IN,
         checkOut: CHECK_OUT,
         guests: [{ isMember: true, memberId: "adult-unpaid", nights: ["2026-07-04"] }],
+        seasonYear: seasonYearOfStoredDate(CHECK_IN, 3),
       },
     );
     expect(violation?.reasonCode).toBe("PAID_UP_ADULT_MEMBER_REQUIRED");
@@ -904,6 +906,7 @@ describe("evaluateProposedPaidUpAdultPresence (#2543 <-> #2365)", () => {
           { isMember: true, memberId: "adult-unpaid" },
           { isMember: true, memberId: "adult-paid" },
         ],
+        seasonYear: seasonYearOfStoredDate(CHECK_IN, 3),
       }),
     ).resolves.toBeNull();
   });
@@ -916,6 +919,7 @@ describe("evaluateProposedPaidUpAdultPresence (#2543 <-> #2365)", () => {
         checkIn: CHECK_IN,
         checkOut: CHECK_OUT,
         guests: [{ isMember: true, memberId: "adult-unpaid" }],
+        seasonYear: seasonYearOfStoredDate(CHECK_IN, 3),
       }),
     ).resolves.toBeNull();
   });
@@ -933,6 +937,7 @@ describe("evaluateProposedPaidUpAdultPresence (#2543 <-> #2365)", () => {
         checkOut: CHECK_OUT,
         bookingOwnerMemberId: "adult-unpaid",
         guests: [{ isMember: false, memberId: null, nights: ["2026-07-04"] }],
+        seasonYear: seasonYearOfStoredDate(CHECK_IN, 3),
       },
     );
 
@@ -949,6 +954,7 @@ describe("evaluateProposedPaidUpAdultPresence (#2543 <-> #2365)", () => {
         checkOut: CHECK_OUT,
         bookingOwnerMemberId: "adult-paid",
         guests: [{ isMember: false, memberId: null }],
+        seasonYear: seasonYearOfStoredDate(CHECK_IN, 3),
       }),
     ).resolves.toBeNull();
   });
@@ -972,6 +978,7 @@ describe("evaluateProposedPaidUpAdultPresence (#2543 <-> #2365)", () => {
       checkIn: CHECK_IN,
       checkOut: CHECK_OUT,
       guests: [{ isMember: true, memberId: "adult-unpaid" }],
+      seasonYear: seasonYearOfStoredDate(CHECK_IN, 3),
     });
     expect(seasonAsked()).toBe(SEASON);
   });
@@ -992,6 +999,7 @@ describe("evaluateProposedPaidUpAdultPresence (#2543 <-> #2365)", () => {
         checkOut: CHECK_OUT,
         guests: [{ isMember: true, memberId: "adult-unpaid", nights: ["2026-07-04"] }],
         mode: "NON_MEMBER_PRICING",
+        seasonYear: seasonYearOfStoredDate(CHECK_IN, 3),
       },
     );
     expect(violation?.reasonCode).toBe("PAID_UP_ADULT_MEMBER_REQUIRED");
@@ -1143,6 +1151,7 @@ describe("the age-tier reader seam (#2376)", () => {
         checkOut: CHECK_OUT,
         guests: [{ isMember: true, memberId: "adult-unpaid" }],
         readAgeTierSettings: adultExemptReader,
+        seasonYear: seasonYearOfStoredDate(CHECK_IN, 3),
       }),
     ).resolves.toBeNull();
     expect(cachedReader()).not.toHaveBeenCalled();
@@ -1299,6 +1308,7 @@ describe("the proposed-party evaluator honours D-12 presence (#2543)", () => {
             ? { ...guest, operationallyPresent: false }
             : guest,
         ),
+        seasonYear: seasonYearOfStoredDate(CHECK_IN, 3),
       },
     );
 
@@ -1319,6 +1329,7 @@ describe("the proposed-party evaluator honours D-12 presence (#2543)", () => {
             ? { ...guest, operationallyPresent: true }
             : guest,
         ),
+        seasonYear: seasonYearOfStoredDate(CHECK_IN, 3),
       },
     );
 
@@ -1333,6 +1344,7 @@ describe("the proposed-party evaluator honours D-12 presence (#2543)", () => {
         checkIn: CHECK_IN,
         checkOut: CHECK_OUT,
         guests: party,
+        seasonYear: seasonYearOfStoredDate(CHECK_IN, 3),
       },
     );
 

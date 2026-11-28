@@ -3,11 +3,12 @@ import { prisma } from "./prisma";
 import {
   computeAgeTierWithSettings,
   getAgeTierSettings,
-  getSeasonStartCalendarDate,
+  seasonStartCalendarDateUnder,
 } from "./age-tier";
 import { dateOnlyInstantOf } from "@/lib/club-time";
 import { readClubTimeZoneOutsideRequest } from "./club-time-zone-runtime";
 import { clubSeasonYear } from "./financial-year";
+import { refreshFinancialYearConfig } from "./financial-year-server";
 import { dateOfBirthPrefilterBoundForMinAge } from "./date-of-birth-prefilter";
 import {
   sendAgeUpInvitationEmail,
@@ -309,11 +310,17 @@ export async function checkAgeUpMembers(): Promise<{
   skipped: number;
   failed: number;
 }> {
-  const seasonYear = clubSeasonYear(await readClubTimeZoneOutsideRequest());
+  // The club's year-end, resolved once for the run (#5259).
+  const yearEndMonth = await refreshFinancialYearConfig();
+  const seasonYear = clubSeasonYear(
+    await readClubTimeZoneOutsideRequest(),
+    undefined,
+    yearEndMonth,
+  );
   // ONE season-start calendar day for the prefilter AND the authority (#3082).
   // The bound below and `computeAgeTierWithSettings` further down used to read
   // two different frames off the same value; they now read the same day.
-  const seasonStartDay = getSeasonStartCalendarDate(seasonYear);
+  const seasonStartDay = seasonStartCalendarDateUnder(seasonYear, yearEndMonth);
   const seasonStart = dateOnlyInstantOf(seasonStartDay);
   const ageTierSettings = await getAgeTierSettings();
   const adultAgeTierSetting = ageTierSettings.find(

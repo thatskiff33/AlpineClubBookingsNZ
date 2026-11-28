@@ -142,6 +142,7 @@ async function plan(lines: string[], options: Parameters<typeof fakeDb>[0] & { b
     today: TODAY,
     format: FORMAT,
     batchId: options.batchId ?? null,
+    yearEndMonth: 3,
   });
   return { db, result };
 }
@@ -412,7 +413,13 @@ describe("planBookingImport: a resumed batch", () => {
 });
 
 describe("checkImportBooking: the writer's locked mode", () => {
-  const context: BookingImportContext = { lodge: LODGE, activeLodgeCount: 1, today: TODAY, format: FORMAT };
+  const context: BookingImportContext = {
+    lodge: LODGE,
+    activeLodgeCount: 1,
+    today: TODAY,
+    format: FORMAT,
+    yearEndMonth: 3,
+  };
   const resolved: ResolvedImportBooking = {
     bookingRef: "B1",
     ownerMemberId: PEOPLE.ann.id,

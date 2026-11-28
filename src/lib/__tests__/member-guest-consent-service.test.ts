@@ -746,7 +746,7 @@ describe("the status-guarded claim resolves every race to one winner", () => {
     await respond(TARGET, "APPROVE");
     const confirmed = { ...world().guests.get(GUEST)! };
 
-    const result = await expireMemberGuestConsent({ format: CLUB_FORMAT_TEST, guestId: GUEST, now: NOW });
+    const result = await expireMemberGuestConsent({ format: CLUB_FORMAT_TEST, guestId: GUEST, now: NOW, yearEndMonth: 3 });
     expect(result).toEqual({ outcome: "ALREADY_RESOLVED" });
     expect(world().guests.get(GUEST)).toEqual(confirmed);
     expect(h.removeGuest).not.toHaveBeenCalled();
@@ -1317,7 +1317,7 @@ describe("expireMemberGuestConsent", () => {
     // account and no card refund is ever issued that nobody asked for. This is not
     // a weakening of D-14 — D-14 governs what a GUEST may do, this governs a timer
     // the club configured.
-    const result = await expireMemberGuestConsent({ format: CLUB_FORMAT_TEST, guestId: GUEST, now: NOW });
+    const result = await expireMemberGuestConsent({ format: CLUB_FORMAT_TEST, guestId: GUEST, now: NOW, yearEndMonth: 3 });
 
     expect(result).toMatchObject({ outcome: "EXPIRED", removed: true });
     expect(h.removeGuest).toHaveBeenCalledTimes(1);
@@ -1339,7 +1339,7 @@ describe("expireMemberGuestConsent", () => {
       payment: { source: "STRIPE" },
     });
 
-    const result = await expireMemberGuestConsent({ format: CLUB_FORMAT_TEST, guestId: GUEST, now: NOW });
+    const result = await expireMemberGuestConsent({ format: CLUB_FORMAT_TEST, guestId: GUEST, now: NOW, yearEndMonth: 3 });
 
     expect(result).toMatchObject({ outcome: "EXPIRED", removed: true });
     expect(h.removeGuest).toHaveBeenCalledTimes(1);
@@ -1353,7 +1353,7 @@ describe("expireMemberGuestConsent", () => {
       payment: { source: "INTERNET_BANKING" },
     });
 
-    const result = await expireMemberGuestConsent({ format: CLUB_FORMAT_TEST, guestId: GUEST, now: NOW });
+    const result = await expireMemberGuestConsent({ format: CLUB_FORMAT_TEST, guestId: GUEST, now: NOW, yearEndMonth: 3 });
 
     expect(result).toMatchObject({ outcome: "EXPIRED", removed: true });
     expect(h.removeGuest.mock.calls[0][0]).not.toHaveProperty("settlementMethod");
@@ -1366,7 +1366,7 @@ describe("expireMemberGuestConsent", () => {
     // `cron:member-guest-consent-expiry`. Writing the target's id here would
     // attribute to them a decision they never made — they were silent, which is
     // the whole reason this ran.
-    await expireMemberGuestConsent({ format: CLUB_FORMAT_TEST, guestId: GUEST, now: NOW });
+    await expireMemberGuestConsent({ format: CLUB_FORMAT_TEST, guestId: GUEST, now: NOW, yearEndMonth: 3 });
     expect(h.removeGuest.mock.calls[0][0].actorMemberId).toBe(OWNER);
     expect(h.removeGuest.mock.calls[0][0].actorMemberId).not.toBe(TARGET);
   });
@@ -1376,7 +1376,7 @@ describe("expireMemberGuestConsent", () => {
     // classify as DECLINED-shaped rather than EXPIRED, and the two are different
     // facts: somebody refused, versus the clock ran out.
     h.removeGuest.mockImplementationOnce(async () => removalResult());
-    await expireMemberGuestConsent({ format: CLUB_FORMAT_TEST, guestId: GUEST, now: NOW });
+    await expireMemberGuestConsent({ format: CLUB_FORMAT_TEST, guestId: GUEST, now: NOW, yearEndMonth: 3 });
     expect(world().guests.get(GUEST)).toMatchObject({
       consentStatus: "EXPIRED",
       consentRespondedAt: null,
@@ -1394,7 +1394,7 @@ describe("expireMemberGuestConsent", () => {
       world().guests.get(GUEST)!.consentExpiresAt = new Date(NOW.getTime() + 60 * 60 * 1000);
     };
 
-    const result = await expireMemberGuestConsent({ format: CLUB_FORMAT_TEST, guestId: GUEST, now: NOW });
+    const result = await expireMemberGuestConsent({ format: CLUB_FORMAT_TEST, guestId: GUEST, now: NOW, yearEndMonth: 3 });
     expect(result).toEqual({ outcome: "ALREADY_RESOLVED" });
     expect(world().guests.get(GUEST)?.consentStatus).toBe("PENDING");
     expect(h.removeGuest).not.toHaveBeenCalled();
@@ -1405,14 +1405,14 @@ describe("expireMemberGuestConsent", () => {
     // meeting one means something is wrong. The sweep leaves it alone rather than
     // guessing that "no deadline" means "expired".
     world().guests.get(GUEST)!.consentExpiresAt = null;
-    await expect(expireMemberGuestConsent({ format: CLUB_FORMAT_TEST, guestId: GUEST, now: NOW })).resolves.toEqual({
+    await expect(expireMemberGuestConsent({ format: CLUB_FORMAT_TEST, guestId: GUEST, now: NOW, yearEndMonth: 3 })).resolves.toEqual({
       outcome: "ALREADY_RESOLVED",
     });
     expect(h.removeGuest).not.toHaveBeenCalled();
   });
 
   it("does nothing for a guest id that does not exist", async () => {
-    await expect(expireMemberGuestConsent({ format: CLUB_FORMAT_TEST, guestId: "g-nope", now: NOW })).resolves.toEqual({
+    await expect(expireMemberGuestConsent({ format: CLUB_FORMAT_TEST, guestId: "g-nope", now: NOW, yearEndMonth: 3 })).resolves.toEqual({
       outcome: "ALREADY_RESOLVED",
     });
   });
@@ -1425,7 +1425,7 @@ describe("expireMemberGuestConsent", () => {
     refuseAfterPartialRemoval(
       new h.BookingGuestRemovalError(REFUSALS.LAST_GUEST, 400),
     );
-    const result = await expireMemberGuestConsent({ format: CLUB_FORMAT_TEST, guestId: GUEST, now: NOW });
+    const result = await expireMemberGuestConsent({ format: CLUB_FORMAT_TEST, guestId: GUEST, now: NOW, yearEndMonth: 3 });
 
     expect(result).toEqual({
       outcome: "BLOCKED",
@@ -1443,7 +1443,7 @@ describe("expireMemberGuestConsent", () => {
     // The repo's declared two-tier order (#1881). This transaction can reprice a
     // booking AND release a bed, so it belongs in both cohorts; taking them in the
     // other order is how a deadlock with cancel/settlement is introduced.
-    await expireMemberGuestConsent({ format: CLUB_FORMAT_TEST, guestId: GUEST, now: NOW });
+    await expireMemberGuestConsent({ format: CLUB_FORMAT_TEST, guestId: GUEST, now: NOW, yearEndMonth: 3 });
     expect(world().tx.$executeRaw).toHaveBeenCalled();
     expect(h.acquireLodgeCapacityLock).toHaveBeenCalledTimes(1);
     const globalLockAt = world().tx.$executeRaw.mock.invocationCallOrder[0];
@@ -1456,7 +1456,7 @@ describe("expireMemberGuestConsent", () => {
     // Single-lodge clubs leave `lodgeId` null, and the capacity lock still has to
     // be keyed to something.
     world().bookings.get(BOOKING)!.lodgeId = null as unknown as string;
-    await expireMemberGuestConsent({ format: CLUB_FORMAT_TEST, guestId: GUEST, now: NOW });
+    await expireMemberGuestConsent({ format: CLUB_FORMAT_TEST, guestId: GUEST, now: NOW, yearEndMonth: 3 });
     expect(h.getDefaultLodgeId).toHaveBeenCalledTimes(1);
     expect(h.acquireLodgeCapacityLock.mock.calls[0][1]).toBe("lodge-1");
   });
@@ -1668,7 +1668,7 @@ describe("#3954 review round 4: an unpaid ask moving under the removal is a retr
     refuseAfterPartialRemoval(new AdditionalAskChangedDuringReductionError());
 
     await expect(
-      expireMemberGuestConsent({ format: CLUB_FORMAT_TEST, guestId: GUEST, now: NOW }),
+      expireMemberGuestConsent({ format: CLUB_FORMAT_TEST, guestId: GUEST, now: NOW, yearEndMonth: 3 }),
     ).rejects.toBeInstanceOf(AdditionalAskChangedDuringReductionError);
     expectStillPending();
   });

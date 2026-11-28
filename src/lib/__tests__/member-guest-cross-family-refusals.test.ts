@@ -400,6 +400,7 @@ describe("D-8 leak 3 — the unpaid-subscription refusal", () => {
       guests: [
         { isMember: true, memberId: OUTSIDER, crossFamilyMemberGuest: true },
       ],
+      yearEndMonth: 3,
     }).catch((err: unknown) => err);
 
     expect(error).toBeInstanceOf(BookingGuestValidationError);
@@ -415,6 +416,7 @@ describe("D-8 leak 3 — the unpaid-subscription refusal", () => {
       bookingMemberId: BOOKER,
       checkIn: CHECK_IN,
       guests: [{ isMember: true, memberId: CHILD }],
+      yearEndMonth: 3,
     }).catch((err: unknown) => err);
 
     expect(Array.isArray(result)).toBe(true);

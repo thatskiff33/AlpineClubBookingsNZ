@@ -1,13 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
 import { hasAdminAreaAccess } from "@/lib/admin-permissions";
 import { clubTimeZone } from "@/lib/club-time/server";
-import { clubSeasonYear } from "@/lib/financial-year";
 import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/session-guards";
 import { buildSubscriptionLiabilityImpact } from "@/lib/subscription-liability-impact";
 import { liabilityImpactQuerySchema } from "@/lib/admin-membership-api/config-settings";
 import { connectionJson } from "@/lib/mcp-connection-request";
 import { LIABILITY_IMPACT_CONNECTION_SHAPE } from "@/lib/connection-shapes/membership-config";
+import { clubCurrentSeasonYear } from "@/lib/financial-year-server";
 
 /**
  * Who a proposed liability rule would change, for the club's current season
@@ -35,7 +35,7 @@ export async function GET(request: NextRequest) {
     );
   }
 
-  const seasonYear = clubSeasonYear(await clubTimeZone());
+  const seasonYear = await clubCurrentSeasonYear(await clubTimeZone());
   const impact = await buildSubscriptionLiabilityImpact(prisma, {
     seasonYear,
     proposed: parsed.data,

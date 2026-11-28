@@ -9,6 +9,7 @@ import {
 import {
   getFinancialYearResolution,
   refreshFinancialYearConfig,
+  clubCurrentSeasonYear,
 } from "@/lib/financial-year-server";
 import {
   MEMBERSHIP_LOCKOUT_SETTINGS_ID,
@@ -22,7 +23,6 @@ import {
 import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/session-guards";
 import { clubTimeZone } from "@/lib/club-time/server";
-import { clubSeasonYear } from "@/lib/financial-year";
 import { membershipLockoutSettingsSchema } from "@/lib/admin-membership-api/config-settings";
 import { connectionJson } from "@/lib/mcp-connection-request";
 import {
@@ -163,7 +163,7 @@ export async function PUT(request: NextRequest) {
   };
   // #5190: a save that leaves the club on a chosen rule also runs the stale-row
   // clear-up, in the same transaction (`saveLockoutSettings`).
-  const seasonYear = clubSeasonYear(await clubTimeZone());
+  const seasonYear = await clubCurrentSeasonYear(await clubTimeZone());
   const saved = await saveLockoutSettingsUnlessBusy(prisma, {
     data,
     liabilityAfterSave: liabilityChoice ?? stored,

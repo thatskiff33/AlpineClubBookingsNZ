@@ -83,6 +83,7 @@ describe("findUnpaidMemberGuests BASED_ON_AGE_TIER dominance (#2041)", () => {
       bookingMemberId: "owner",
       checkIn,
       guests: [{ isMember: true, memberId: "g1" }],
+      yearEndMonth: 3,
     });
     expect(result).toEqual([]);
   });
@@ -99,6 +100,7 @@ describe("findUnpaidMemberGuests BASED_ON_AGE_TIER dominance (#2041)", () => {
       bookingMemberId: "owner",
       checkIn,
       guests: [{ isMember: true, memberId: "g1" }],
+      yearEndMonth: 3,
     });
     expect(result.map((r) => r.memberId)).toEqual(["g1"]);
   });
@@ -112,6 +114,7 @@ describe("findUnpaidMemberGuests BASED_ON_AGE_TIER dominance (#2041)", () => {
       bookingMemberId: "owner",
       checkIn,
       guests: [{ isMember: true, memberId: "g1" }],
+      yearEndMonth: 3,
     });
     expect(result).toEqual([]);
   });
@@ -128,6 +131,7 @@ describe("findUnpaidMemberGuests BASED_ON_AGE_TIER dominance (#2041)", () => {
       bookingMemberId: "owner",
       checkIn,
       guests: [{ isMember: true, memberId: "g1" }],
+      yearEndMonth: 3,
     });
     expect(result.map((r) => r.memberId)).toEqual(["g1"]);
   });
@@ -161,6 +165,7 @@ describe("findUnpaidMemberGuests and the shared liability rule (#5190)", () => {
       bookingMemberId: "owner",
       checkIn,
       guests: [{ isMember: true, memberId: "g1" }],
+      yearEndMonth: 3,
     });
     return result.map((row) => row.memberId);
   };

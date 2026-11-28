@@ -4,9 +4,9 @@ import { prisma } from "@/lib/prisma";
 import { clubToday } from "@/lib/club-time";
 import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
 import {
-  getFinancialYearEndMonth,
   seasonYearOfCalendarDate,
 } from "@/lib/financial-year";
+import { refreshFinancialYearConfig } from "@/lib/financial-year-server";
 import { xeroCalendarDate } from "@/lib/xero-provider-dates";
 import { buildXeroInvoiceUrl } from "@/lib/xero-links";
 import { callXeroApi, getAuthenticatedXeroClient } from "@/lib/xero-api-client";
@@ -56,10 +56,10 @@ function buildSkippedInvoiceReconciliation(
  * When Xero sends no date at all the fallback is the CLUB's today, not the UTC
  * clock's (`INV-DATE-019`).
  */
-async function buildSeasonYearFromInvoice(invoice: Invoice): Promise<number> {
+async function buildSeasonYearFromInvoice(invoice: Invoice, yearEndMonth: number): Promise<number> {
   const zone = await readClubTimeZoneOutsideRequest();
   const invoiceDate = xeroCalendarDate(invoice.date) ?? clubToday(zone);
-  return seasonYearOfCalendarDate(invoiceDate, getFinancialYearEndMonth());
+  return seasonYearOfCalendarDate(invoiceDate, yearEndMonth);
 }
 
 export async function reconcileXeroInvoice(
@@ -70,8 +70,9 @@ export async function reconcileXeroInvoice(
    * audit lines with amounts in them.
    */
   format: ClubFormat,
-  options?: { skipSubscriptionRefresh?: boolean }
+  options?: { skipSubscriptionRefresh?: boolean; yearEndMonth?: number }
 ) {
+  const yearEndMonth = options?.yearEndMonth ?? await refreshFinancialYearConfig();
   const { xero, tenantId } = await getAuthenticatedXeroClient();
   const response = await callXeroApi(
     () => xero.accountingApi.getInvoice(tenantId, invoiceId),
@@ -216,10 +217,11 @@ export async function reconcileXeroInvoice(
     ? { refreshedSubscriptions: new Set<string>() }
     : await refreshLinkedSubscriptionsForInvoice(
         invoice.invoiceID,
-        linkedSubscriptionIds
+        linkedSubscriptionIds,
+        yearEndMonth,
       );
 
-  const seasonYear = await buildSeasonYearFromInvoice(invoice);
+  const seasonYear = await buildSeasonYearFromInvoice(invoice, yearEndMonth);
   // Member-less inbound gate (#2109 FIX-3): the reconciler sees ONE invoice at a
   // time and cannot run prefer-paid selection, so it treats an invoice as a
   // subscription ONLY on a STRONG match (account code, the flat primary/fallback
@@ -233,7 +235,7 @@ export async function reconcileXeroInvoice(
   const looksLikeSubscriptionInvoice = hasStrongSubscriptionInvoiceMatch(
     [invoice],
     seasonYear,
-    await buildSubscriptionInvoiceMatchOptions()
+    await buildSubscriptionInvoiceMatchOptions(yearEndMonth)
   );
   const fallbackSubscriptionMemberIds: string[] = [];
 
@@ -246,7 +248,7 @@ export async function reconcileXeroInvoice(
     if (contactId) {
       const memberIds = await resolveMemberIdsForContact(contactId);
       for (const memberId of memberIds) {
-        await checkMembershipStatus(memberId, seasonYear);
+        await checkMembershipStatus(memberId, seasonYear, { yearEndMonth });
         refreshedSubscriptions.add(`${memberId}:${seasonYear}`);
         fallbackSubscriptionMemberIds.push(memberId);
       }
@@ -312,6 +314,7 @@ export async function reconcileXeroInvoice(
 
 export async function runIncrementalInvoiceReconciliation(options: {
   membershipReconciliation: IncrementalMembershipReconciliationResult | null;
+  yearEndMonth?: number;
 }): Promise<IncrementalInvoiceReconciliationResult> {
   // The club's format (#3565), resolved once, before any transaction or
   // lock below — never per amount and never inside a transaction.
@@ -324,6 +327,7 @@ export async function runIncrementalInvoiceReconciliation(options: {
     );
   }
 
+  const yearEndMonth = options.yearEndMonth ?? await refreshFinancialYearConfig();
   let processed = 0;
   let succeeded = 0;
   let failed = 0;
@@ -334,7 +338,7 @@ export async function runIncrementalInvoiceReconciliation(options: {
     processed += 1;
 
     try {
-      const reconciled = await reconcileXeroInvoice(invoiceId, format, { skipSubscriptionRefresh: true });
+      const reconciled = await reconcileXeroInvoice(invoiceId, format, { skipSubscriptionRefresh: true, yearEndMonth });
       // #4095 (PR #4437 review, L2): a recount its settle left unwritten. Unlike
       // a stored event, nothing retries this invoice: the membership cursor has
       // already moved past it, and no caller reads `failed`. So a person is

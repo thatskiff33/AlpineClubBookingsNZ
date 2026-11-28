@@ -419,6 +419,7 @@ async function removeGuest(guestId: string) {
         today: TODAY,
         format: CLUB_FORMAT_TEST,
         journal: memberMoneyTestContext(),
+        yearEndMonth: 3,
       }),
     { maxWait: 10_000, timeout: 20_000 },
   );

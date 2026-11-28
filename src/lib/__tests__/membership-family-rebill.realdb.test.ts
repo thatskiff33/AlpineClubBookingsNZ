@@ -429,7 +429,7 @@ let priorXeroModule: { xeroIntegration: boolean } | null = null;
         membershipTypeId: TYPE_ID,
         applyFrom: RESAVE_APPLY_FROM,
         now: dateOnlyInstantOf(clubToday(zone)),
-        clubCurrentSeasonYear: clubSeasonYear(zone),
+        clubCurrentSeasonYear: clubSeasonYear(zone, undefined, 3),
       });
       expect(changePreview.init?.status ?? 200).toBe(200);
       const { previewToken } = (changePreview.body as { preview: { previewToken: string } }).preview;

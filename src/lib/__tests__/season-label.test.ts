@@ -46,13 +46,14 @@ import {
   DEFAULT_FINANCIAL_YEAR_END_MONTH,
   __setFinancialYearEndMonthForTesting,
   getFinancialYearEndMonth,
-  getSeasonStartMonth,
+  seasonStartMonthOf,
   seasonYearOfCalendarDate,
 } from "@/lib/financial-year";
 import { calendarDateFromParts } from "@/lib/club-time";
 import {
   seasonMonthsLabel,
   seasonSelectLabel,
+  seasonSlashLabel,
   seasonYearsLabel,
 } from "@/lib/season-label";
 import { withTimeZone } from "@/lib/__tests__/helpers/timezone";
@@ -97,20 +98,23 @@ describe("seasonSelectLabel", () => {
     // rather than as a string: the label names two calendar years exactly when
     // the derivation puts the season's first and last months in two of them.
     for (const yearEndMonth of EVERY_YEAR_END_MONTH) {
-      __setFinancialYearEndMonthForTesting(yearEndMonth);
-      const startMonth = getSeasonStartMonth();
+      const startMonth = seasonStartMonthOf(yearEndMonth);
       // The season's first day, and the day 11 months later, which is its last
       // month. Their season year is the same by construction; whether their
       // CALENDAR years differ is the question the label answers.
       const firstMonth = calendarDateFromParts(2026, startMonth, 1);
       const lastMonthYear = startMonth === 1 ? 2026 : 2027;
       const lastMonth = calendarDateFromParts(lastMonthYear, yearEndMonth, 1);
-      expect(seasonYearOfCalendarDate(firstMonth), `year-end ${yearEndMonth}`)
+      expect(seasonYearOfCalendarDate(firstMonth, yearEndMonth), `year-end ${yearEndMonth}`)
         .toBe(2026);
-      expect(seasonYearOfCalendarDate(lastMonth), `year-end ${yearEndMonth}`)
+      expect(seasonYearOfCalendarDate(lastMonth, yearEndMonth), `year-end ${yearEndMonth}`)
         .toBe(2026);
       expect(seasonYearsLabel(2026, yearEndMonth), `year-end ${yearEndMonth}`).toBe(
         lastMonthYear === 2026 ? "2026" : "2026 - 2027",
+      );
+      // The slash spelling the booking refusals use answers the same question.
+      expect(seasonSlashLabel(2026, yearEndMonth), `year-end ${yearEndMonth}`).toBe(
+        lastMonthYear === 2026 ? "2026" : "2026/2027",
       );
     }
   });
@@ -159,9 +163,9 @@ describe("the explicit yearEndMonth argument", () => {
     THE ARGUMENT IS REQUIRED ON ALL THREE: `seasonMonthsLabel` and
     `seasonYearsLabel` since #3133, `seasonSelectLabel` since #5259, when the
     year-end reached every display site through `ClubSeasonProvider` and
-    `bindClubSeason`. `seasonYearOfCalendarDate(date, m?)` and its two
-    pass-throughs next door still default to the cache; `INV-SSOT-003` carries
-    that remaining pending entry.
+    `bindClubSeason`. `seasonYearOfCalendarDate` and its two pass-throughs also
+    require the year-end explicitly, so derivations and labels share the same
+    caller-supplied configuration (`INV-SSOT-003`).
   */
   it("reads the argument and ignores the cache entirely", () => {
     // Set the cache to a year-end no case below asks for: a label that still

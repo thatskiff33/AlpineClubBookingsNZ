@@ -28,6 +28,8 @@ import {
 import { applyBookingPromotions } from "@/lib/booking-promotions";
 import { validateSeveralPromoCodes } from "@/lib/promo-codes-preview";
 import { clubTime } from "@/lib/club-time/server";
+import { seasonYearOfStoredDate } from "@/lib/financial-year";
+import { clubFinancialYearEndMonth } from "@/lib/financial-year-server";
 import { applyRateLimit, rateLimiters } from "@/lib/rate-limit";
 import { parseJsonRequestBody } from "@/lib/api-json";
 import { bookingManagementAuthorizationRole } from "@/lib/admin-permissions";
@@ -243,6 +245,9 @@ export async function POST(req: NextRequest) {
     ? toEditTimeGroupDiscountConfig(gds)
     : toGroupDiscountConfig(gds);
 
+  // The stay's membership season, from the club's resolved year-end (#5259).
+  const yearEndMonth = await clubFinancialYearEndMonth();
+
   try {
     const price = await priceBookingGuestsWithMembershipTypePolicy(prisma, {
       ownerMemberId: effectiveMemberId,
@@ -251,6 +256,7 @@ export async function POST(req: NextRequest) {
       guests,
       seasons: seasonData,
       groupDiscount,
+      seasonYear: seasonYearOfStoredDate(checkIn, yearEndMonth),
       skipAuthorization: isAuthorizedOnBehalf,
     });
 

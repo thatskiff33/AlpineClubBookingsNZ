@@ -141,7 +141,7 @@ import {
   resolveGroupDiscountRateType,
   resolveGuestRateMembershipTypes,
 } from "@/lib/membership-type-policy";
-import { seasonYearOfStoredDate } from "@/lib/financial-year";
+import { clubFinancialYearEndMonth, clubSeasonYearOfStoredDate } from "@/lib/financial-year-server";
 import { getDefaultLodgeId, lodgeNullTolerantScope } from "@/lib/lodges";
 import { prisma } from "@/lib/prisma";
 import { planAcceptedSchoolHeldPrices, readAcceptedSchoolTerms } from "@/lib/school-pending-adult-price-plan";
@@ -438,7 +438,7 @@ async function priceSchoolGuests(input: {
   // School requests are non-member (NON_MEMBER_DEFAULT); resolve the rate
   // membership type so pricing keys on the NON_MEMBER type (#1930, E4).
   const ratedGuests = await resolveGuestRateMembershipTypes(prisma, {
-    seasonYear: seasonYearOfStoredDate(input.checkIn),
+    seasonYear: await clubSeasonYearOfStoredDate(input.checkIn),
     guests: input.guests.map((guest) => ({
       ageTier: guest.ageTier,
       isMember: false,
@@ -761,9 +761,9 @@ export async function approveSchoolBookingRequest(input: {
    */
   ownerContactMemberId?: string | null;
 }): Promise<ApproveSchoolBookingRequestOutcome> {
-  // The club's format (#3565), resolved once, before any transaction or
-  // lock below — never per amount and never inside a transaction.
-  const format = await clubFormatValues();
+  // The club's format (#3565) and year-end (#5259), resolved once, before any
+  // transaction or lock below — never per amount and never inside a transaction.
+  const [format, yearEndMonth] = await Promise.all([clubFormatValues(), clubFinancialYearEndMonth()]);
   const initialRequest = await prisma.bookingRequest.findUnique({
     where: { id: input.requestId },
   });
@@ -1185,7 +1185,7 @@ export async function approveSchoolBookingRequest(input: {
         // value rather than reading the club's zone under these locks
         // (`INV-LOCK-004`).
         today: clubTodayDateOnly,
-        format,
+        format, yearEndMonth,
         heldBookingId: request.heldBookingId ?? null,
       });
 
@@ -2181,9 +2181,9 @@ export async function approveMemberWholeLodgeRequest(input: {
   adminMemberId: string;
   override?: MemberWholeLodgeApprovalOverride;
 }): Promise<ApproveMemberWholeLodgeRequestOutcome> {
-  // The club's format (#3565), resolved once, before any transaction or
-  // lock below — never per amount and never inside a transaction.
-  const format = await clubFormatValues();
+  // The club's format (#3565) and year-end (#5259), resolved once, before any
+  // transaction or lock below — never per amount and never inside a transaction.
+  const [format, yearEndMonth] = await Promise.all([clubFormatValues(), clubFinancialYearEndMonth()]);
   // Whether the member can choose how to pay. The booking page offers the
   // Internet Banking switch — and the switch route accepts it — only when BOTH
   // modules are on (`canSwitchToInternetBanking`, booking-detail-payment.ts),
@@ -2599,7 +2599,7 @@ export async function approveMemberWholeLodgeRequest(input: {
         // value rather than reading the club's zone under these locks
         // (`INV-LOCK-004`).
         today: clubTodayDateOnly,
-        format,
+        format, yearEndMonth,
         heldBookingId: null,
       });
       // #3029 (W9): placeholder guests link no member, so nothing is seeded —

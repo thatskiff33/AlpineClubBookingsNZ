@@ -3,7 +3,9 @@ import { auth } from "@/lib/auth";
 import { requireActiveSessionUser } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma";
 import { clubTimeZone } from "@/lib/club-time/server";
-import { clubCurrentSeasonYear } from "@/lib/financial-year-server";
+import { seasonSlashLabel } from "@/lib/season-label";
+import { clubSeasonYear } from "@/lib/financial-year";
+import { clubFinancialYearEndMonth } from "@/lib/financial-year-server";
 import {
   requiresPaidSubscriptionForMemberForBooking,
   resolveMembershipTypePolicyForMember,
@@ -24,8 +26,9 @@ export async function GET() {
     return inactiveResponse;
   }
 
-  const seasonYear = await clubCurrentSeasonYear(await clubTimeZone());
-  const seasonDisplay = `${seasonYear}/${seasonYear + 1}`;
+  const yearEndMonth = await clubFinancialYearEndMonth();
+  const seasonYear = clubSeasonYear(await clubTimeZone(), undefined, yearEndMonth);
+  const seasonDisplay = seasonSlashLabel(seasonYear, yearEndMonth);
 
   const subscriptionSelect = {
     status: true,

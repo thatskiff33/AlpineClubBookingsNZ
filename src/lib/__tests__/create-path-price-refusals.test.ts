@@ -325,6 +325,7 @@ describe("buildApprovalGuestCreates refuses a short per-guest split (#3167)", ()
       heldBookingId: null,
       today: CLUB_TODAY,
       format: CLUB_FORMAT_TEST,
+      yearEndMonth: 3,
     });
   }
 

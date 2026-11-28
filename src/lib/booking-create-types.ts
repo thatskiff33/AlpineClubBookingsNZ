@@ -102,6 +102,14 @@ interface BaseInput {
    */
   subscriptionLockoutMode?: SubscriptionLockoutMode;
   /**
+   * The club's resolved financial year-end month (#5259), which places the
+   * stay in a membership season for pricing and the membership-type policy.
+   * REQUIRED, and resolved by the caller before ANY transaction opens
+   * (`INV-LOCK-004`): `createConfirmedBooking` may already be inside the
+   * caller's transaction, and resolving the month can reach Xero.
+   */
+  yearEndMonth: number;
+  /**
    * Whether new linked-member guest rows are seeded from the member's dietary/
    * allergy profile (#3029, `INV-MOD-059`): the field toggle, read by the caller
    * BEFORE any transaction opens (`INV-LOCK-004`). REQUIRED, unlike the lockout

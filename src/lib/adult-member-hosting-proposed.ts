@@ -17,7 +17,6 @@ import {
 import { groupTripIdentityForJoin } from "@/lib/group-trip-identity";
 import type { AdultMemberHostingPolicyExceptionViolation } from "@/lib/booking-policy-exceptions";
 import { eachDateOnlyInRange, formatDateOnly } from "@/lib/date-only";
-import { seasonYearOfStoredDate } from "@/lib/financial-year";
 import {
   evaluateAdultMemberHostingWithPolicy,
   hostingModeIsActive,
@@ -86,6 +85,12 @@ export async function evaluateProposedAdultMemberHosting(
     lodgeId: string;
     checkIn: Date;
     checkOut: Date;
+    /**
+     * The membership season `checkIn` falls in, which the #2543 subscription
+     * bridge judges settlement in. REQUIRED (#5259): the caller derives it from
+     * the club's resolved year-end month, never from a default.
+     */
+    seasonYear: number;
     guests: ReadonlyArray<{
       firstName: string;
       lastName: string;
@@ -180,11 +185,7 @@ export async function evaluateProposedAdultMemberHosting(
   return evaluateAdultMemberHostingWithPolicy(
     // #2543 — the same bridge the persisted path applies, so a proposed party
     // and the booking it becomes cannot disagree about who may host.
-    await withSubscriptionSettlement(
-      participants,
-      db,
-      seasonYearOfStoredDate(input.checkIn),
-    ),
+    await withSubscriptionSettlement(participants, db, input.seasonYear),
     resolved,
   );
 }
