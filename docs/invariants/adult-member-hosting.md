@@ -368,7 +368,7 @@ cannot depend on another and there are no dependents to refuse or fan out to. It
 not a licence to skip the booking being changed. Under `SAME_BOOKING` alone, a
 confirmation or a change to an attending member's active/age/consent/subscription
 qualification can still open or resolve that booking's incident, so own-booking and
-member-qualification seams always queue under `ENFORCED`; they take the owner lock
+member-qualification seams always queue at an active mode; they take the owner lock
 only when cross-booking scope is enabled. The CONSEQUENCE then decides what happens.
 Under `ENFORCED`, the full behaviour below.
 Under `ADMIN_REVIEW_REQUIRED` nothing is ever refused and no incident is ever

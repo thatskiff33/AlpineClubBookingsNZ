@@ -4563,9 +4563,9 @@ export async function reconcileSameOwnerCoverageIncident(
     enforcement: "REVIEW_ONLY",
   });
   if (outcome.mode !== "ENFORCED") {
-    // The club is no longer enforcing (or the booking moved out of scope), so an
-    // incident is no longer the right instrument. Resolve rather than leave a row
-    // an officer can do nothing useful with.
+    // Not enforcing: no incident. The reconcile above has re-stamped the review
+    // snapshot, all a review-only lodge's row is for (`INV-HOST-045`); resolve any
+    // stray incident rather than leave a row an officer can do nothing with.
     const closed = await resolveHostingCoverageIncidents(
       { bookingId: params.bookingId, resolution: "COVERAGE_RESTORED" },
       db,
