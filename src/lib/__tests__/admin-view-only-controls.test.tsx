@@ -2,7 +2,7 @@
 
 import "@testing-library/jest-dom/vitest";
 import type { ComponentProps } from "react";
-import { act, cleanup, fireEvent, render, screen, waitFor } from "@/lib/__tests__/support/club-time-render";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@/lib/__tests__/support/club-season-render";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AdminPermissionMatrix } from "@/lib/admin-permissions";
 import {
@@ -3847,7 +3847,9 @@ describe("member detail cards hand their reason to the page banner (#2168)", () 
             {...({
               member,
               pendingArchiveRequest: null,
-              reviewedArchiveRequests: [],
+              lifecycleRequests: [],
+              canUnarchive: false,
+              unarchive: { submitting: false, error: "", clearError: vi.fn(), submit: vi.fn() },
               isArchiveRequester: false,
               canRequestArchive: true,
               canRequestCancellation: false,

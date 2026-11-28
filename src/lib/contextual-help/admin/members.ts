@@ -148,6 +148,11 @@ export const adminMembersHelpEntries: HelpEntry[] = [
           description:
             "Only one member per email should be login-capable; shared-email family members may be non-login records.",
         },
+        {
+          name: "Unarchive",
+          description:
+            "A Full Admin can clear an archive from the member page's Lifecycle card, with a reason. The member stays cancelled, and the Archive history keeps every archive and unarchive.",
+        },
       ],
       [
         "Member changes can affect privacy, access, bookings, and subscriptions. Confirm the target member before saving.",

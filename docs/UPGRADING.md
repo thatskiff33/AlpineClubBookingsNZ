@@ -480,6 +480,50 @@ complaint alert.
 **Rollback.** Nothing to undo: the previous release never reads the column or
 the index, so leave both in place.
 
+### Give older activity records a seven-year expiry (#5265)
+
+**Who needs it.** Every club whose database is older than v0.14.0. Before that
+release, 82 kinds of activity record were written with no category, so they got
+no retention class and no expiry and are kept for ever. The owner decided on
+20 Nov 2026 (#5265) that they get the same seven years new records get, counted
+from the day each was recorded. **Nothing changes at deploy**: there is no
+migration, and the records keep their current retention until the owner runs
+the apply below.
+
+**What to do, once this release alone serves.** Read the counts first, because
+records already more than seven years old are deleted for good at the next
+nightly clean-up after the apply.
+
+```bash
+DATABASE_URL=<database> pnpm run audit:expiry-backfill              # census: counts by kind, writes nothing
+DATABASE_URL=<database> pnpm run audit:expiry-backfill -- --dry-run # the same, the batch plan and the apply command
+DATABASE_URL=<operator connection> pnpm run audit:expiry-backfill -- --apply \
+  --actor <your member id> --confirm-total <n> [--allow-delete <n>]
+```
+
+The census and dry run can be pointed at a copy or at the live database. Apply
+refuses unless `--confirm-total` is the live total and, when some records would
+be deleted, `--allow-delete` is that count. Under the
+[least-privilege roles](../DEPLOYMENT.md#least-privilege-database-roles) only the
+operator connection may change an expiry. The full steps:
+[`AUDIT_RETENTION_ARCHIVE_RUNBOOK.md`](AUDIT_RETENTION_ARCHIVE_RUNBOOK.md#older-entries-with-no-expiry-5265).
+This census replaces the read-only retention query in
+[the #2581 section](#one-off-categorisation-of-older-activity-entries-with-no-category-2581).
+
+**How to check it worked.** The census reports 0, and the activity log has one
+`AUDIT_EXPIRY_BACKFILLED` entry, under Admin, per batch.
+
+**Rollback.** Before the next nightly clean-up (03:30 club time), the apply can
+be undone without a restore: the census reports "entries with an expiry and no
+retention class", which reads 0 before the first apply and afterwards counts
+exactly what the apply wrote, and the runbook's
+[undo](AUDIT_RETENTION_ARCHIVE_RUNBOOK.md#older-entries-with-no-expiry-5265)
+clears those expiries, refusing if the count is not the one you give it. Take a
+backup just before the apply all the same. It is the fallback: the only way to
+get back a record the clean-up has already deleted, and the only way back if
+that line did not read 0 beforehand. Restoring it also takes back every booking
+and payment made since.
+
 ## v0.13.2 → v0.14.0
 
 ### Upgrade checklist for this release
@@ -3150,6 +3194,8 @@ WHERE "category" IS NOT NULL
 GROUP BY 1;
 
 -- Retention on the entries the backfill categorised: what they were recorded with.
+-- Superseded by `pnpm run audit:expiry-backfill`'s census since #5265, which
+-- gives them seven years by owner decision; kept for a database not yet there.
 -- Expect every row to have neither a retention class nor an expiry (kept
 -- indefinitely); a non-zero "withClass" or "withExpiry" is worth reading, not alarming.
 SELECT count(*)                                              AS "backfilled",

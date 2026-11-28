@@ -73,7 +73,9 @@ describe("seasonSelectLabel", () => {
   it("renders the shipped default exactly as the hard-coded label did", () => {
     // The literal that shipped, reproduced here rather than referenced, so a
     // change to the rendered text has to be made on purpose.
-    expect(seasonSelectLabel(2026, CLUB_FORMAT_TEST)).toBe("2026 - 2027 (Apr-Mar)");
+    expect(
+      seasonSelectLabel(2026, CLUB_FORMAT_TEST, DEFAULT_FINANCIAL_YEAR_END_MONTH),
+    ).toBe("2026 - 2027 (Apr-Mar)");
     expect(DEFAULT_FINANCIAL_YEAR_END_MONTH).toBe(3);
   });
 
@@ -87,8 +89,7 @@ describe("seasonSelectLabel", () => {
     [8, "2026 - 2027 (Sept-Aug)"],
     [9, "2026 - 2027 (Oct-Sept)"],
   ])("follows a year-end of month %i", (yearEndMonth, expected) => {
-    __setFinancialYearEndMonthForTesting(yearEndMonth);
-    expect(seasonSelectLabel(2026, CLUB_FORMAT_TEST)).toBe(expected);
+    expect(seasonSelectLabel(2026, CLUB_FORMAT_TEST, yearEndMonth)).toBe(expected);
   });
 
   it("agrees with the season derivation about whether one year or two", () => {
@@ -115,10 +116,9 @@ describe("seasonSelectLabel", () => {
   });
 
   it("names the months independently of which season is being labelled", () => {
-    __setFinancialYearEndMonthForTesting(6);
     expect(seasonMonthsLabel(6, CLUB_FORMAT_TEST)).toBe("Jul-Jun");
     for (const seasonYear of [1999, 2026, 2400]) {
-      expect(seasonSelectLabel(seasonYear, CLUB_FORMAT_TEST)).toBe(
+      expect(seasonSelectLabel(seasonYear, CLUB_FORMAT_TEST, 6)).toBe(
         `${seasonYear} - ${seasonYear + 1} (Jul-Jun)`,
       );
     }
@@ -156,42 +156,22 @@ describe("the explicit yearEndMonth argument", () => {
     read during render. That is a manufactured hydration mismatch. Passing the
     value cannot produce one.
 
-    THE ARGUMENT IS NO LONGER OPTIONAL ON TWO OF THE THREE (#3133).
-    `seasonMonthsLabel` and `seasonYearsLabel` REQUIRE it; `seasonSelectLabel`
-    still defaults to the cache, and so do
-    `seasonYearOfCalendarDate(date, m?)`, `seasonYearOfStoredDate(value, m?)`
-    and `clubSeasonYear(zone, clock, m?)` next door. That split is deliberate
-    rather than half-finished: the two that became required had no non-test
-    caller left relying on the default after #3136, and the ones that kept it
-    have populations that cannot be threaded without a decision — thirteen
-    display sites, ten of them in a browser bundle the cache can never reach,
-    and a roughly ninety-site cascade through the two optional pass-throughs.
-    `INV-SSOT-003` carries that measurement and the promotion condition; the
-    lint arm carries `getFinancialYearEndMonth` as a pending name with its live
-    count pinned in `ssot-authority-default-guard.test.ts`.
+    THE ARGUMENT IS REQUIRED ON ALL THREE: `seasonMonthsLabel` and
+    `seasonYearsLabel` since #3133, `seasonSelectLabel` since #5259, when the
+    year-end reached every display site through `ClubSeasonProvider` and
+    `bindClubSeason`. `seasonYearOfCalendarDate(date, m?)` and its two
+    pass-throughs next door still default to the cache; `INV-SSOT-003` carries
+    that remaining pending entry.
   */
-  it("matches the cached path for every year-end, both halves", () => {
-    // The discriminating assertion in this file for the override being wired
-    // through BOTH halves. Wire it into `seasonYearsLabel` only and the months
-    // stay Apr-Mar; wire it into `seasonMonthsLabel` only and December still
-    // reads "2026 - 2027". Either way this fails.
-    for (const yearEndMonth of EVERY_YEAR_END_MONTH) {
-      const viaArgument = seasonSelectLabel(2026, CLUB_FORMAT_TEST, yearEndMonth);
-      __setFinancialYearEndMonthForTesting(yearEndMonth);
-      const viaCache = seasonSelectLabel(2026, CLUB_FORMAT_TEST);
-      __setFinancialYearEndMonthForTesting(DEFAULT_FINANCIAL_YEAR_END_MONTH);
-      expect(viaArgument, `year-end ${yearEndMonth}`).toBe(viaCache);
-    }
-  });
-
-  it("reads the argument, not the cache, and writes nothing back", () => {
-    expect(getFinancialYearEndMonth()).toBe(DEFAULT_FINANCIAL_YEAR_END_MONTH);
-    expect(seasonSelectLabel(2026, CLUB_FORMAT_TEST, 12)).toBe("2026 (Jan-Dec)");
+  it("reads the argument and ignores the cache entirely", () => {
+    // Set the cache to a year-end no case below asks for: a label that still
+    // read it would come out Jan-Dec.
+    __setFinancialYearEndMonthForTesting(12);
+    expect(seasonSelectLabel(2026, CLUB_FORMAT_TEST, 3)).toBe("2026 - 2027 (Apr-Mar)");
+    expect(seasonSelectLabel(2026, CLUB_FORMAT_TEST, 6)).toBe("2026 - 2027 (Jul-Jun)");
     expect(seasonMonthsLabel(6, CLUB_FORMAT_TEST)).toBe("Jul-Jun");
-    expect(seasonYearsLabel(2026, 12)).toBe("2026");
-    // The cache is untouched, which is the whole point of the argument.
-    expect(getFinancialYearEndMonth()).toBe(DEFAULT_FINANCIAL_YEAR_END_MONTH);
-    expect(seasonSelectLabel(2026, CLUB_FORMAT_TEST)).toBe("2026 - 2027 (Apr-Mar)");
+    expect(seasonYearsLabel(2026, 3)).toBe("2026 - 2027");
+    expect(getFinancialYearEndMonth()).toBe(12);
   });
 
   it("clamps a nonsense year-end the same way the cache setter does", () => {
@@ -214,11 +194,15 @@ describe("the host machine cannot move a month name", () => {
     ).toBe("Pacific/Pago_Pago");
 
     for (const yearEndMonth of EVERY_YEAR_END_MONTH) {
-      __setFinancialYearEndMonthForTesting(yearEndMonth);
-      const expected = withTimeZone("UTC", () => seasonSelectLabel(2026, CLUB_FORMAT_TEST));
+      const expected = withTimeZone("UTC", () =>
+        seasonSelectLabel(2026, CLUB_FORMAT_TEST, yearEndMonth),
+      );
       for (const zone of ["Pacific/Pago_Pago", "Pacific/Kiritimati"]) {
         withTimeZone(zone, () => {
-          expect(seasonSelectLabel(2026, CLUB_FORMAT_TEST), `${zone} / ${yearEndMonth}`).toBe(
+          expect(
+            seasonSelectLabel(2026, CLUB_FORMAT_TEST, yearEndMonth),
+            `${zone} / ${yearEndMonth}`,
+          ).toBe(
             expected,
           );
         });
@@ -249,13 +233,13 @@ describe("the host machine cannot move a month name", () => {
     */
     vi.resetModules();
     const fresh = await import("@/lib/season-label");
-    // A fresh graph means a fresh financial-year cache, so this is the March
-    // default by construction rather than by this file's beforeEach.
     withTimeZone("Pacific/Pago_Pago", () => {
       expect(
         fresh.seasonMonthsLabel(DEFAULT_FINANCIAL_YEAR_END_MONTH, CLUB_FORMAT_TEST),
       ).toBe("Apr-Mar");
-      expect(fresh.seasonSelectLabel(2026, CLUB_FORMAT_TEST)).toBe("2026 - 2027 (Apr-Mar)");
+      expect(
+        fresh.seasonSelectLabel(2026, CLUB_FORMAT_TEST, DEFAULT_FINANCIAL_YEAR_END_MONTH),
+      ).toBe("2026 - 2027 (Apr-Mar)");
       expect(fresh.seasonMonthsLabel(12, CLUB_FORMAT_TEST)).toBe("Jan-Dec");
     });
   });

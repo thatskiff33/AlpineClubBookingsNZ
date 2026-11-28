@@ -10,7 +10,7 @@
  * `ApiRefusalError`, so anything else shows the card's own fallback.
  */
 
-import { cleanup, fireEvent, render, screen } from "@/lib/__tests__/support/club-time-render";
+import { cleanup, fireEvent, render, screen } from "@/lib/__tests__/support/club-season-render";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ComponentProps } from "react";
 import { itShowsEveryRefusal } from "@/lib/__tests__/support/failed-write-cases";

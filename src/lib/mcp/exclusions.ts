@@ -47,7 +47,7 @@ export const MCP_PERMANENT_EXCLUSION_REASONS = {
   "changes-charges":
     "Changes what a member owes or is invoiced, or previews such a change for an officer to confirm, which an officer reviews and confirms on the website.",
   "ends-membership":
-    "Decides a request to archive, delete or cancel someone's membership, which cannot be undone from an app and is decided on the website.",
+    "Decides a request to archive, delete or cancel someone's membership, or undoes an archive, which is decided on the website, never from an app.",
   "sign-in-access":
     "Sends someone a sign-in link or changes who signs in with an email address, which stays on the website.",
   "mass-message": "Emails many members at once, which an officer composes, checks and sends on the website.",
@@ -293,11 +293,13 @@ const PERMANENT_ROUTES: ReadonlyArray<{
   },
   // Approving archives or deletes the member, or ends their membership and
   // its future bookings. Raising the request is an action: a second officer
-  // decides it here, on the website.
+  // decides it here, on the website. A Full Admin's unarchive (#5540) is the
+  // archive's one reverse edge, decided in one step on the website too.
   {
     reason: "ends-membership",
     routes: [
       "PATCH /api/admin/member-lifecycle-action-requests/[requestId]",
+      "POST /api/admin/members/[id]/lifecycle/unarchive",
       "POST /api/admin/membership-cancellation-requests/[requestId]/participants/[participantId]",
     ],
   },

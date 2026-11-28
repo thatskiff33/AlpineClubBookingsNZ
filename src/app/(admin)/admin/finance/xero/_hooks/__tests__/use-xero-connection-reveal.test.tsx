@@ -9,6 +9,11 @@
 import { act, cleanup, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+// The hook refreshes the router after a disconnect (#5259); nothing here disconnects.
+vi.mock("next/navigation", () => ({
+  useRouter: () => ({ refresh: vi.fn() }),
+}));
+
 import { useXeroConnection } from "@/app/(admin)/admin/finance/xero/_hooks/use-xero-connection";
 import {
   expectRevealed,

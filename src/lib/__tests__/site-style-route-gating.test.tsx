@@ -43,6 +43,12 @@ vi.mock("@/lib/prisma", () => ({
   },
 }));
 
+// The admin layout resolves the club's year-end for its season screens
+// (#5259); the real resolver reads settings and Xero, which no case here is about.
+vi.mock("@/lib/financial-year-server", () => ({
+  clubFinancialYearEndMonthForLayout: async () => 3,
+}));
+
 vi.mock("@/lib/module-settings", () => ({
   loadEffectiveModuleFlags: mocks.loadEffectiveModuleFlags,
 }));

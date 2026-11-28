@@ -93,6 +93,7 @@ import type {
 } from "@/lib/admin-member-xero-actions";
 import type { MemberContactCreateRecoveryState } from "@/lib/xero-contact-create-recovery";
 import { useClubFormat } from "@/components/club-format-provider";
+import { useClubSeason } from "@/components/club-season-provider";
 import {
   getXeroPartialSuccessGuidance,
   isXeroPartialSuccessRecovery,
@@ -115,6 +116,7 @@ export default function MemberDetailPage({
   params: Promise<{ id: string }>;
 }) {
   const format = useClubFormat();
+  const season = useClubSeason();
   const { id } = use(params);
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -480,6 +482,7 @@ export default function MemberDetailPage({
     handleSubmitArchiveRequest,
     handleReviewArchiveRequest,
     handleSubmitCancellationRequest,
+    unarchive,
   } = useMemberLifecycleActions({ id, fetchMember, setLoading });
 
   // Xero link/push state
@@ -733,9 +736,6 @@ export default function MemberDetailPage({
   );
   const pendingArchiveRequest =
     archiveRequests.find((request) => request.status === "REQUESTED") ?? null;
-  const reviewedArchiveRequests = archiveRequests
-    .filter((request) => request.status !== "REQUESTED")
-    .slice(0, 3);
   const isArchiveRequester =
     pendingArchiveRequest?.requestedBy?.id === session?.user?.id;
   const canRequestArchive = Boolean(
@@ -804,7 +804,7 @@ export default function MemberDetailPage({
       currentSeasonSubscriptionLabel: currentSeasonSubscription
         ? subscriptionStatusLabel(currentSeasonSubscription.status)
         : null,
-    }, format),
+    }, season),
     finance: formatMemberFinancePreview({
       creditBalanceCents: creditLoading ? null : creditBalance,
       promoCodeCount: member.promoCodes?.length ?? 0,
@@ -1117,7 +1117,9 @@ export default function MemberDetailPage({
               canEdit={canEditMembership}
               member={member}
               pendingArchiveRequest={pendingArchiveRequest}
-              reviewedArchiveRequests={reviewedArchiveRequests}
+              lifecycleRequests={lifecycleRequests}
+              canUnarchive={actorIsFullAdmin && memberIsArchived}
+              unarchive={unarchive}
               isArchiveRequester={isArchiveRequester}
               canRequestArchive={canRequestArchive}
               canRequestCancellation={canRequestCancellation}
