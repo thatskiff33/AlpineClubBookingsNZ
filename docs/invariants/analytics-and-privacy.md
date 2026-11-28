@@ -301,8 +301,7 @@ History, measurements and rejected alternatives: #2755 (and #2581, #2695, #2730,
 The test that decides whether an `admin` audit writer moves in a sweep, and the
 one destination a lane may never choose for itself. Owner decisions of 11 August
 2026: #2765 (the fifteen keeps, with the deciding rule) and #2777 (`lockers`
-stay `admin`; reopening is a fresh owner decision). The measurement and the
-costed options live on those issues, not here.
+stay `admin`; reopening is a fresh owner decision).
 
 - **The test is: did this site SPLIT a subsystem? Not: does this site name a
   lodge, a member or a payment.** A split is the defect — some other writer of
@@ -353,9 +352,12 @@ costed options live on those issues, not here.
   mis-classification, in the opposite direction. **Pinned, not left to a
   reviewer:** `src/lib/diagnostics/tools/packs/__tests__/support-correlation.test.ts`
   asserts all three strings name every subsystem in the set, so a copy-edit
-  that drops one fails by name. The population here is three string literals in
-  one file, which is why this half is pinned rather than reviewer-enforced like
-  the backfill answer in `INV-OPS-012`.
+  that drops one fails by name.
+- **The eight held writers stay `admin` (owner decision, 20 Nov 2026, #5265):**
+  six `member_lifecycle` delete and archive sites, two family-suggestion sites.
+  Reopening one is a fresh owner decision. Pinned in
+  `HELD_ADMIN_CATEGORIES_5265`; reasoning:
+  `docs/ai-diagnostics/audit-admin-category-review.md`.
 
 ## INV-PRIV-014
 
