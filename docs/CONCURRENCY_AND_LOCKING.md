@@ -2960,7 +2960,7 @@ mispricing a booking.
 #### Owed admin alert spool (#5297)
 
 - **Owed-alert spool ingest** — `src/lib/admin-alert-spool.ts`
-  (`markAlertOwedOrSpool`, `ingestSpooledAlerts`, #5297, `INV-INT-044`),
+  (`markAlertOwedOrSpool`, `ingestSpooledAlerts`, #5297, `INV-INT-045`),
   called first by `sweepOnceEverAlerts`. A spooled owed row is written with
   `markAlertOwed`'s plain `create`, a duplicate key ignored, and only then is
   its file deleted; two sweeps or a re-read after a crash write one row. The

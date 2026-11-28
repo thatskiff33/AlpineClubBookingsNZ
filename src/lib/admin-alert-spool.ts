@@ -8,7 +8,7 @@ import { markAlertOwed } from "@/lib/alert-cooldown";
 import logger from "@/lib/logger";
 
 /**
- * #5297 (`INV-INT-044`): THE OWED-ALERT SPOOL. An alert raised while the
+ * #5297 (`INV-INT-045`): THE OWED-ALERT SPOOL. An alert raised while the
  * database refuses every write (an outage, a full disk, a failover) cannot
  * store its owed row (`markAlertOwed`), so the sweep that re-sends it would
  * have nothing to find. The row it would have written is kept on local disk

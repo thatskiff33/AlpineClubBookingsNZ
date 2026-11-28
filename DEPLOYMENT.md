@@ -2135,7 +2135,7 @@ role: the in-app restore over the live database is refused.
 An admin alert raised while the database refuses every write (an outage, a
 full disk, a failover) is kept as a small file until the payments cron, every
 15 minutes, moves it into the database and sends it once (#5297,
-`INV-INT-044`). Compose mounts the `admin_alert_spool` named volume at
+`INV-INT-045`). Compose mounts the `admin_alert_spool` named volume at
 `/admin-alert-spool` on `app`, `app_blue` and `app_green` and sets
 `ADMIN_ALERT_SPOOL_DIR` to it, so a file a web slot wrote survives its restart
 or a blue/green swap and the cron leader reads it. The volume is normally

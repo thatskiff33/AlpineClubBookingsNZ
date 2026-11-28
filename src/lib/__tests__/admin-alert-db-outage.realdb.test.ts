@@ -1,5 +1,5 @@
 /**
- * Real-PostgreSQL proof for #5297 (`INV-INT-044`): a raised-once admin alert
+ * Real-PostgreSQL proof for #5297 (`INV-INT-045`): a raised-once admin alert
  * fired while the database refuses every call is still delivered once the
  * database answers, and never twice.
  *

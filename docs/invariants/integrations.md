@@ -777,7 +777,8 @@ as a duplicate and never applied twice by racing takeovers.
   over through the same guard; losing it answers 409. A fresh one is refused.
 - **The operation row** the dead attempt left is recovered by `INV-INT-038`.
 - **Replays are harmless.** Handlers are idempotent; the same SES feedback
-  (message id and event type) is not counted twice toward suppression.
+  (message id and event type) is not counted twice toward suppression; what
+  a report changes is `INV-INT-044`.
 - **A poison event stops being retaken.** After three dead attempts (the
   `INV-INT-038` row's `attemptCount`), the worker leaves the event PROCESSING
   and logs an error each run; only Replay retries it.
@@ -1000,7 +1001,7 @@ decision, 18 Nov 2026).
   `INV-LOCK-002`); the `AlertCooldown` row lock serialises, registered in the
   writer index (`INV-LOCK-003`). The confirm holds no provider call.
 - **Known limits, not owner-accepted:** an alert raised while every database
-  write fails is kept on disk by `INV-INT-044`; an email row a crash leaves
+  write fails is kept on disk by `INV-INT-045`; an email row a crash leaves
   `QUEUED` is settled by `INV-INT-043`; if one recipient's row write fails while another's
   commits, the claim is kept and that recipient gets nothing, with no `FAILED`
   row to retry.
@@ -1010,44 +1011,6 @@ Pinned by `admin-alert-once-lost-cases.test.ts`, `admin-alert-once.test.ts`,
 `admin-alert-once-census.test.ts`, `alert-cooldown.test.ts`,
 `attempt-log-once-ever-claim.test.ts` and, against real PostgreSQL,
 `admin-alert-once-sweep.realdb.test.ts`.
-
-## Owed alerts kept on disk during a database outage (#5297)
-
-### INV-INT-044
-
-An owed admin alert the database refuses is kept on local disk and sent once
-the database answers, never twice (owner decision, 20 Nov 2026).
-
-- **Spool.** `markAlertOwedOrSpool` (`admin-alert-spool.ts`) writes the owed
-  row; if that throws, it writes the same fields to
-  `ADMIN_ALERT_SPOOL_DIR`, one file per key (`sha256` of it): a temporary
-  file, synced, renamed over. A repeat overwrites. Raised-once alerts
-  (`INV-INT-042`) and the Internet Banking hold's owed marker use it. Disk
-  refused too: logged only, as before.
-- **No second channel.** The spool never sends: a direct send would have no
-  claim or `EmailLog` row. The error log line (Sentry when configured) is the
-  signal as it fires.
-- **Ingest.** The once-ever alert sweep first moves each file into the
-  database through `markAlertOwed`, which only creates and ignores a duplicate,
-  stamped when spooled, then deletes the file. A crash between the two writes
-  nothing new. The sweep sends only through the alert's once-ever claim, so a
-  file for an alert sent meanwhile is settled unsent, a lost-reply claim is
-  given back after 15 minutes first, and an email row a crash left `QUEUED`
-  is `INV-INT-043`'s alone. The 7-day give-up runs from the spool time.
-- **Privacy.** A file holds exactly the owed row's fields: ids, cents and
-  error text. Mode 0600 in a 0700 directory, outside anything web-served, not
-  backed up, deleted once ingested, at most 500 files; an unreadable one is
-  logged and deleted.
-- **Storage.** The `admin_alert_spool` volume, on every app container,
-  outlives restarts and blue/green swaps.
-- **No lock.** Create-only rows; no advisory key (`INV-LOCK-001`), in the
-  writer index (`INV-LOCK-003`).
-- **Known limit:** a full disk during the outage leaves the log as the only
-  record.
-
-Pinned by `admin-alert-spool.test.ts`, `admin-alert-once-sweep.test.ts`,
-`admin-alert-once-replayable.test.ts`, `internet-banking-payment-cron.test.ts`
-and `admin-alert-db-outage.realdb.test.ts` (PostgreSQL).
 
 ## Emails a crash left QUEUED (#5298)
 
@@ -1084,3 +1047,80 @@ Pinned by `handover.test.ts`, `durable-email-idempotency.test.ts`,
 `email-failure-review-queue.test.ts`, `email-deliverability-section.test.tsx`,
 `admin-alert-audience.test.ts`, `admin-alert-once-census.test.ts` and
 `stranded-queued-email.realdb.test.ts` (PostgreSQL).
+
+## Bounce and complaint reports (#5469)
+
+### INV-INT-044
+
+A bounce or complaint report changes only what it names: the address's
+suppression and, for a bounce, the one email it is about (owner decisions,
+27 and 28 Nov 2026).
+
+- **One event, one rule.** Each mail service's adapter turns its report into
+  a `DeliveryFeedbackEvent`; `applyDeliveryFeedback`
+  (`email/delivery-feedback.ts`) alone acts on it; SES's is
+  `email/ses-feedback.ts`. Another service adds an adapter, a route and an
+  entry in `email/provider-message-id.ts`.
+- **The id is stored at send** in `EmailLog.providerMessageId` by both send
+  paths, for SES only (`USE_AWS_SES`), in its documented shape.
+- **Which email.** The stored id; failing that, the Message-ID header the
+  report carries, warning when that row's stored id differs. Never the
+  address.
+- **A bounce** marks that row `BOUNCED`. **A complaint** marks nothing;
+  officers get `admin-email-complaint` once per report for each address it
+  names (D6), while blocked, through `sendReplayableAdminAlertOnceEver`
+  keyed on suppression row and report, never the address. Unstored and
+  unsent, it throws so the report is redelivered. **"Not spam"** changes
+  nothing (D5).
+- **Suppression is unchanged**, decided by the event's kind, and stops
+  pending sends: the email core and the retry job check it first.
+- **Replays are harmless:** the row is already `BOUNCED`, the suppression
+  is not counted twice, and the alert claim is kept.
+- **No new lock:** one status-guarded update (`INV-LOCK-001`).
+- **Limits.** Rows with no stored id match only by header. The previous
+  release marks every row during a switchover. Old marks stay. No alert
+  for a muted template, an empty audience or a block lifted first; a crash
+  before the store, after the redeliveries end, loses it.
+
+Pinned by `ses-feedback-named-message.test.ts`,
+`ses-feedback-adapter.test.ts`, `provider-message-id.test.ts`,
+`cron-email-retry.test.ts` and `phase6a-notifications.test.ts`.
+
+## Owed alerts kept on disk during a database outage (#5297)
+
+### INV-INT-045
+
+An owed admin alert the database refuses is kept on local disk and sent once
+the database answers, never twice (owner decision, 20 Nov 2026).
+
+- **Spool.** `markAlertOwedOrSpool` (`admin-alert-spool.ts`) writes the owed
+  row; if that throws, it writes the same fields to
+  `ADMIN_ALERT_SPOOL_DIR`, one file per key (`sha256` of it): a temporary
+  file, synced, renamed over. A repeat overwrites. Raised-once alerts
+  (`INV-INT-042`) and the Internet Banking hold's owed marker use it. Disk
+  refused too: logged only, as before. A spooled alert counts as stored, so
+  `throwIfUnstored` (`INV-INT-044`) throws only when both refused.
+- **No second channel.** The spool never sends: a direct send would have no
+  claim or `EmailLog` row. The error log line (Sentry when configured) is the
+  signal as it fires.
+- **Ingest.** The once-ever alert sweep first moves each file into the
+  database through `markAlertOwed`, which only creates and ignores a duplicate,
+  stamped when spooled, then deletes the file. A crash between the two writes
+  nothing new. The sweep sends only through the alert's once-ever claim, so a
+  file for an alert sent meanwhile is settled unsent, a lost-reply claim is
+  given back after 15 minutes first, and an email row a crash left `QUEUED`
+  is `INV-INT-043`'s alone. The 7-day give-up runs from the spool time.
+- **Privacy.** A file holds exactly the owed row's fields: ids, cents and
+  error text. Mode 0600 in a 0700 directory, outside anything web-served, not
+  backed up, deleted once ingested, at most 500 files; an unreadable one is
+  logged and deleted.
+- **Storage.** The `admin_alert_spool` volume, on every app container,
+  outlives restarts and blue/green swaps.
+- **No lock.** Create-only rows; no advisory key (`INV-LOCK-001`), in the
+  writer index (`INV-LOCK-003`).
+- **Known limit:** a full disk during the outage leaves the log as the only
+  record.
+
+Pinned by `admin-alert-spool.test.ts`, `admin-alert-once-sweep.test.ts`,
+`admin-alert-once-replayable.test.ts`, `internet-banking-payment-cron.test.ts`
+and `admin-alert-db-outage.realdb.test.ts` (PostgreSQL).

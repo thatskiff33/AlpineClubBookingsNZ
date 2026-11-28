@@ -19,7 +19,7 @@ vi.mock("@/lib/logger", () => ({ default: logger }));
 import { ADMIN_ALERT_SPOOL_MAX_FILES, ingestSpooledAlerts, markAlertOwedOrSpool } from "@/lib/admin-alert-spool";
 
 /**
- * #5297 (`INV-INT-044`): an owed admin alert the database refuses is kept on
+ * #5297 (`INV-INT-045`): an owed admin alert the database refuses is kept on
  * local disk, one file per key, and moved into the database by the sweep
  * exactly once. Driven over the in-memory `AlertCooldown` table and a real
  * temporary directory.

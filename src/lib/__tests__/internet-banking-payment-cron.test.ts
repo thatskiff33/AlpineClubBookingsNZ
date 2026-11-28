@@ -1553,7 +1553,7 @@ describe("releaseExpiredInternetBankingHolds delta round (#3643 D4, D5, D9)", ()
     });
   });
 
-  // #5297 (`INV-INT-044`): the database refusing the marker leaves it on disk,
+  // #5297 (`INV-INT-045`): the database refusing the marker leaves it on disk,
   // for the once-ever alert sweep to write so the drain below finds it.
   it("D4: an owed marker the database refuses is kept on disk with what the row would hold", async () => {
     mocks.readHoldPaymentEvidence.mockResolvedValue(UNREADABLE);
