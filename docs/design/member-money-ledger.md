@@ -645,7 +645,9 @@ covers is `ALREADY_COVERED`. A bank note's R14 is read from what is posted:
 (including a cancellation noted on its own record, a card-shortfall part and a
 review closed by hand), each at its live chain tip, so a reversed R14 is never
 covered. A hand-back paid "In cash" posts its R14 on CASH while its Xero
-payment settles to the bank code: a known `COMPONENT_UNUSABLE` conflict. A payment left unsettled, part-settled or found
+payment settles to the bank code: a known `COMPONENT_UNUSABLE` conflict. So is
+a bank note from a group organiser's card refund closed paid another way
+(#5267): organiser shares post no R14 until M6. A payment left unsettled, part-settled or found
 already settled records nothing.
 
 `FAILED_LATER_REFUND_REVERSAL` records the invoice #4369's
