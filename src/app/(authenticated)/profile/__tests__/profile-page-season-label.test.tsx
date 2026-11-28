@@ -32,7 +32,7 @@
  */
 import type { ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   auth: vi.fn(),
@@ -41,6 +41,13 @@ const mocks = vi.hoisted(() => ({
   loadMemberFieldsFlags: vi.fn(),
   memberFindUnique: vi.fn(),
   requiresPaidSubscriptionForMemberForBooking: vi.fn(),
+  clubFinancialYearEndMonth: vi.fn(),
+}));
+
+// The page resolves the club's year-end on the server (#5259); each case
+// chooses it here, where the real resolver would read the override or Xero.
+vi.mock("@/lib/financial-year-server", () => ({
+  clubFinancialYearEndMonth: mocks.clubFinancialYearEndMonth,
 }));
 
 vi.mock("next/navigation", () => ({
@@ -135,10 +142,7 @@ vi.mock("@/components/audit-timeline", () => ({
   AuditTimeline: () => <section>Audit timeline</section>,
 }));
 
-import {
-  DEFAULT_FINANCIAL_YEAR_END_MONTH,
-  __setFinancialYearEndMonthForTesting,
-} from "@/lib/financial-year";
+import { DEFAULT_FINANCIAL_YEAR_END_MONTH } from "@/lib/financial-year";
 import ProfilePage from "../page";
 
 const MODULE_FLAGS = {
@@ -214,17 +218,15 @@ async function renderProfilePage() {
 describe("the member profile page names a season by the club's year-end", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    __setFinancialYearEndMonthForTesting(DEFAULT_FINANCIAL_YEAR_END_MONTH);
+    mocks.clubFinancialYearEndMonth.mockResolvedValue(
+      DEFAULT_FINANCIAL_YEAR_END_MONTH,
+    );
     mocks.auth.mockResolvedValue({ user: { id: "member-1" } });
     mocks.memberFindUnique.mockResolvedValue(member());
     mocks.requiresPaidSubscriptionForMemberForBooking.mockResolvedValue(true);
     mocks.getAvailablePromoCodesForMember.mockResolvedValue([]);
     mocks.loadMemberFieldsFlags.mockResolvedValue({ showOccupation: false });
     mocks.loadEffectiveModuleFlags.mockResolvedValue(MODULE_FLAGS);
-  });
-
-  afterEach(() => {
-    __setFinancialYearEndMonthForTesting(DEFAULT_FINANCIAL_YEAR_END_MONTH);
   });
 
   it("names both calendar years, in both places, under the March default", async () => {
@@ -248,7 +250,7 @@ describe("the member profile page names a season by the club's year-end", () => 
   it("names ONE calendar year under a December year-end, in both places", async () => {
     // The discriminator: re-inline either site and this fails while the March
     // case above still passes.
-    __setFinancialYearEndMonthForTesting(12);
+    mocks.clubFinancialYearEndMonth.mockResolvedValue(12);
 
     const html = await renderProfilePage();
 
@@ -256,5 +258,17 @@ describe("the member profile page names a season by the club's year-end", () => 
     expect(html).toContain("2025 (Jan-Dec)");
     expect(html).not.toContain("2026 - 2027");
     expect(html).not.toContain("2025 - 2026");
+  });
+
+  it("shows a June club the season it is in, named Jul-Jun", async () => {
+    // 1 July 2026 starts a June club's season 2026, so the row marked current
+    // is 2026 and both names carry the club's own months.
+    mocks.clubFinancialYearEndMonth.mockResolvedValue(6);
+
+    const html = await renderProfilePage();
+
+    expect(html).toContain("Subscription 2026 - 2027 (Jul-Jun)");
+    expect(html).toContain("2025 - 2026 (Jul-Jun)");
+    expect(html).not.toContain("Apr-Mar");
   });
 });

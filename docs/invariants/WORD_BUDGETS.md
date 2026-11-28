@@ -85,7 +85,7 @@ rows and 56,846 words (70,395 before it). Wave 2 compacted the sixteen
 `INV-HOST` rows: twelve reached 300 and left, and `INV-HOST-029`,
 `INV-HOST-045`, `INV-HOST-046` and `INV-HOST-050` stay at their new counts
 while exceptions are proposed on their deciding issues (#2576, #3040, #3039,
-#3232). The table now holds 76 rows and 46,711 words.
+#3232). The table now holds 76 rows and 46,701 words.
 
 | ID | Words |
 | --- | ---: |
@@ -95,8 +95,8 @@ while exceptions are proposed on their deciding issues (#2576, #3040, #3039,
 | `INV-HOST-050` | 532 |
 | `INV-PRIV-012` | 857 |
 | `INV-CONFIG-005` | 676 |
-| `INV-HOST-046` | 410 |
-| `INV-HOST-045` | 476 |
+| `INV-HOST-046` | 409 |
+| `INV-HOST-045` | 467 |
 | `INV-ADDPAY-039` | 931 |
 | `INV-SSOT-001` | 427 |
 | `INV-PRIV-016` | 1512 |
@@ -106,7 +106,7 @@ while exceptions are proposed on their deciding issues (#2576, #3040, #3039,
 | `INV-PAY-047` | 1164 |
 | `INV-MOD-055` | 1002 |
 | `INV-ADDPAY-036` | 1137 |
-| `INV-SSOT-003` | 1094 |
+| `INV-SSOT-003` | 1075 |
 | `INV-ADDPAY-038` | 1025 |
 | `INV-CONFIG-002` | 874 |
 | `INV-MONEY-003` | 867 |
@@ -121,7 +121,7 @@ while exceptions are proposed on their deciding issues (#2576, #3040, #3039,
 | `INV-MONEY-029` | 808 |
 | `INV-LIFE-062` | 639 |
 | `INV-ADDPAY-017` | 637 |
-| `INV-PRIV-013` | 625 |
+| `INV-PRIV-013` | 623 |
 | `INV-MOD-006` | 623 |
 | `INV-ADDPAY-023` | 584 |
 | `INV-LOCK-002` | 589 |

@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import "@testing-library/jest-dom/vitest";
-import { cleanup, render, screen } from "@/lib/__tests__/support/club-time-render";
+import { cleanup, render, screen } from "@/lib/__tests__/support/club-season-render";
 import type { ReactNode } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import SubscriptionsPage from "@/app/(admin)/admin/finance/subscriptions/page";
