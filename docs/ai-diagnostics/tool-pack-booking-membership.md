@@ -1393,12 +1393,12 @@ the boundary, including a club on a December year-end.
 
 #### The season comes from stored state, never from the process cache
 
-The shared derivation defaults its year-end month to the value **cached in the
-process** by `refreshFinancialYearConfig()`. Three product paths
-call that — the membership-lockout settings write, the finance dashboard page and
-the subscription-eligibility gate — and **no diagnostics path does**. So a
-diagnostics read that let the rules derive their own season was reading, on a cold
-process, the March default: a club with any other financial year-end would have the
+The shared derivation used to default its year-end month to the value **cached
+in the process** by `refreshFinancialYearConfig()`, and since #5259 it requires
+the month instead. Product requests and workers resolve it through that call;
+**no diagnostics path does**, and the cache can still be read by name. So a
+diagnostics read that took the cached month was reading, on a cold process, the
+March default: a club with any other financial year-end would have the
 paid-up-adult rule and the hosting subscription bridge look up `MemberSubscription`
 by the wrong `(memberId, seasonYear)` and report a settled member as unfinancial, or
 an unfinancial member as settled, depending on which side of the real season start
