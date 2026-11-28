@@ -3385,6 +3385,9 @@ operation's row exactly as it read it before asking Xero (status, `startedAt`
 and `updatedAt`), so a run in between refuses the cancel. The operation can be
 retried or cancelled, never marked resolved. Once one line of several has
 completed, the correction can only be retried.
+Known limit (owner decision, 28 Nov 2026): if a later note is then changed in
+Xero so it can never be corrected, the correction stays `RESERVED` for good;
+the voided-note alert still fires. The officer guide has the manual steps.
 
 ## Waitlist Lifecycle
 

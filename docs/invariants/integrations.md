@@ -675,7 +675,9 @@ to the cent. It never raises a second credit note.
   invoice with the reference, and a void line's note not voided. Under the lock
   it claims the operation exactly as read, then the correction, and writes
   restore rows. The fence (`providerMutationStartedAt`) refuses cancel; it lifts
-  only with no line completed and a definite refusal. Never marked resolved.
+  only with no line completed and a definite refusal. Never marked resolved;
+  a part-corrected multi-note correction whose later note changes in Xero
+  stays RESERVED (known limit, fixed by hand).
 - **Readers wait.** The outside-spend mirror, the converge and the flag skip a
   note while its correction is RESERVED (`admin-credit-deduction-note-guard.ts`).
   A note voided by a completed correction raises no alert.
