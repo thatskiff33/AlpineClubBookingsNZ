@@ -430,6 +430,38 @@ export function ageUpAuditTotals(adjustments: readonly Pick<SubscriptionBillingA
   return { ageUpTopUpCents: centsOf("TOP_UP"), ageUpCreditCents: centsOf("CREDIT") };
 }
 
+/** Queue a credit adjustment's Xero credit note, in the confirm's transaction. */
+async function enqueueAgeUpCredit(tx: Prisma.TransactionClient, adjustmentId: string, confirmedByMemberId?: string) {
+  const key = ageUpCreditIdempotencyKey(adjustmentId);
+  await startXeroSyncOperation({
+    direction: "OUTBOUND",
+    entityType: "CREDIT_NOTE",
+    operationType: "CREATE",
+    localModel: AGE_UP_ADJUSTMENT_LOCAL_MODEL,
+    localId: adjustmentId,
+    queueType: XERO_OUTBOX_AGE_UP_CREDIT_TYPE,
+    requestPayload: buildAgeUpCreditPayload(adjustmentId),
+    status: "PENDING",
+    idempotencyKey: key,
+    correlationKey: key,
+    createdByMemberId: confirmedByMemberId ?? null,
+    store: tx,
+  });
+}
+
+/** Queue a top-up charge's invoice as a season charge's is queued, in the confirm's transaction. */
+async function enqueueTopUpInvoice(tx: Prisma.TransactionClient, chargeId: string, confirmedByMemberId?: string) {
+  const correlationKey = buildXeroIdempotencyKey("membership-charge", chargeId, "invoice-and-email", "v1");
+  await startXeroSyncOperation({
+    ...subscriptionInvoiceOutboxRow(chargeId),
+    status: "PENDING",
+    idempotencyKey: correlationKey,
+    correlationKey,
+    createdByMemberId: confirmedByMemberId ?? null,
+    store: tx,
+  });
+}
+
 /**
  * Write the preview's age-up top-ups and credits, inside the billing confirm's
  * season-locked transaction and from its fresh in-transaction preview. Returns
@@ -474,21 +506,7 @@ export async function confirmAgeUpAdjustments(
     };
     if (item.kind === "CREDIT") {
       const credit = await tx.memberSubscriptionAgeUpAdjustment.create({ data: adjustment, select: { id: true } });
-      const key = ageUpCreditIdempotencyKey(credit.id);
-      await startXeroSyncOperation({
-        direction: "OUTBOUND",
-        entityType: "CREDIT_NOTE",
-        operationType: "CREATE",
-        localModel: AGE_UP_ADJUSTMENT_LOCAL_MODEL,
-        localId: credit.id,
-        queueType: XERO_OUTBOX_AGE_UP_CREDIT_TYPE,
-        requestPayload: buildAgeUpCreditPayload(credit.id),
-        status: "PENDING",
-        idempotencyKey: key,
-        correlationKey: key,
-        createdByMemberId: input.confirmedByMemberId ?? null,
-        store: tx,
-      });
+      await enqueueAgeUpCredit(tx, credit.id, input.confirmedByMemberId);
       continue;
     }
     if (!item.xeroAccountCode) {
@@ -542,15 +560,7 @@ export async function confirmAgeUpAdjustments(
       select: { id: true },
     });
     await tx.memberSubscriptionAgeUpAdjustment.create({ data: { ...adjustment, chargeId: charge.id } });
-    const correlationKey = buildXeroIdempotencyKey("membership-charge", charge.id, "invoice-and-email", "v1");
-    await startXeroSyncOperation({
-      ...subscriptionInvoiceOutboxRow(charge.id),
-      status: "PENDING",
-      idempotencyKey: correlationKey,
-      correlationKey,
-      createdByMemberId: input.confirmedByMemberId ?? null,
-      store: tx,
-    });
+    await enqueueTopUpInvoice(tx, charge.id, input.confirmedByMemberId);
     chargeIds.push(charge.id);
   }
   return chargeIds;

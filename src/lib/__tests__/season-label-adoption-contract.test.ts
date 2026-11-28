@@ -110,7 +110,9 @@ const ADOPTED = [
   "src/lib/admin-member-detail-helpers.ts",
   // The four money and provider sites, adopted by #3116. See this file's
   // docblock for why they were held back and what changed.
-  "src/lib/membership-subscription-billing.ts",
+  // The subscription invoice line's season name: #5190 PR 3 moved the line
+  // builders out of `membership-subscription-billing.ts` into this module.
+  "src/lib/membership-charge-calculation.ts",
   "src/lib/xero-subscription-invoices.ts",
   "src/lib/membership-cancellation-xero.ts",
   "src/lib/xero-record-activity.ts",
@@ -149,7 +151,7 @@ function read(relative: string): string {
   // COMMENTS ARE STRIPPED BEFORE MATCHING, and that is not cosmetic. This
   // repository documents each defect at the site where it was removed, so the
   // files that were cleaned MOST are the ones whose comments most often quote
-  // the very text the scan is looking for - `membership-subscription-billing.ts`
+  // the very text the scan is looking for - `membership-charge-calculation.ts`
   // now explains what its invoice line used to say and why it changed. Matching
   // raw source would read that explanation as an unadopted site and fail a file
   // precisely because it was documented well. One shared `stripComments`, never

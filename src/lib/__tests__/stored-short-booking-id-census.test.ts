@@ -82,6 +82,9 @@ const REVIEWED_SHORT_FORMS: string[] = [
   "src/lib/nomination.ts :: memberId",
   // A member credit's id, in its Xero credit-note reference.
   "src/lib/xero-admin-grant-credit-note.ts :: credit.id",
+  // A subscription age-up adjustment's id, in its Xero credit-note reference:
+  // the tail, because the head of the id is its creation time (#5190).
+  "src/lib/subscription-age-up-credit.ts :: adjustment.id",
   // A Xero sync operation's id.
   "src/lib/xero-admin-failures.ts :: representativeOperationId",
   // An operation's local record: a Payment in the first, a Booking OR a
