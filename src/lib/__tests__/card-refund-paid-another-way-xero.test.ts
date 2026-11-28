@@ -342,13 +342,13 @@ describe("#4381: a late change capture's close is split as the keep splits it (I
     expect(mocks.readKeptCaptureRecord).toHaveBeenLastCalledWith(lateDb, expect.objectContaining({ lockAnchor: false }));
   });
 
-  it("receipt route recorded by another writer (the credit-release sweep holds it): nothing is queued and the note waits", async () => {
+  it("receipt route recorded by another writer (the credit-release sweep holds it): nothing is queued, the note waits and the dialog says not to record it by hand", async () => {
     mocks.captureReceiptRefusal.mockResolvedValue("recorded-by-credit-release-sweep");
     mocks.recordedElsewhere.mockResolvedValue({ kind: "credit-release-sweep" });
     const xeroPlan = await closePlan();
     expect(xeroPlan).toEqual({ xeroRefundNote: "after-receipt", receipt: null, creditReleaseSweep: true });
-    expect(paidAnotherWayXeroPromise(xeroPlan)).toBe("none");
-    expect(await closeQueue(xeroPlan)).toBe("nothing");
+    expect(paidAnotherWayXeroPromise(xeroPlan)).toBe("after-credit-release");
+    expect(await closeQueue(xeroPlan)).toBe("refund-note-after-credit-release");
     expect(mocks.enqueueCaptureReceipt).not.toHaveBeenCalled();
     expect(mocks.enqueueKeptInvoice).not.toHaveBeenCalled();
   });

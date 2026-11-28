@@ -108,6 +108,7 @@ function keptCaptureFindings(operations: XeroOperationRecord[], links: { metadat
     receiptLinks: links,
     receiptStoodDown: false,
     recordedElsewhere: false,
+    creditReleaseSweep: false,
     alreadyRecordedCents: 0,
     primaryInvoiceIdSynced: true,
   };

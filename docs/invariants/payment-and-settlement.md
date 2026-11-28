@@ -1949,14 +1949,14 @@ and **`INV-PAY-147`** (slice evidence).
   approval withdraws an undecided receipt. A
   paid-another-way close takes this split (#4381, `INV-PAY-122`). Where
   another writer records the whole capture, the close's note credits the one
-  invoice in Xero that does (`readLateCaptureRecordedElsewhere`: the primary
-  recorded it at link, or an invoice covers the change unnamed), never above
-  it; the credit-release sweep stays `after-receipt` until #4380; otherwise
-  `none` (owner, 28 Nov 2026).
+  invoice in Xero that does (`readLateCaptureRecordedElsewhere`), never
+  above it; the credit-release sweep stays `after-receipt` until #4380, never
+  to record by hand; otherwise `none` (owner, 28 Nov 2026).
 - **Repair.** `KEPT_LATE_CAPTURE_NOT_RECORDED_IN_XERO`: a dry run of the
   cents `--apply` records; "cannot tell yet" without the primary's id. A
   close with no note raised or queued:
-  `PAID_ANOTHER_WAY_REFUND_NOTE_RECORD_BY_HAND`.
+  `PAID_ANOTHER_WAY_REFUND_NOTE_RECORD_BY_HAND`; one the sweep holds:
+  `PAID_ANOTHER_WAY_REFUND_NOTE_AWAITS_CREDIT_RELEASE`.
 - Pinned by `late-capture-kept-xero.test.ts`,
   `late-capture-recorded-elsewhere.test.ts`,
   `card-refund-paid-another-way-xero.test.ts`,

@@ -48,6 +48,7 @@ export const XERO_BOOKING_REPAIR_FINDING_CODES = [
   // the close's bank-transfer refund its own notes do not cover. Report-only;
   // not raised once any note row of the close exists (round 10).
   "PAID_ANOTHER_WAY_REFUND_NOTE_RECORD_BY_HAND",
+  "PAID_ANOTHER_WAY_REFUND_NOTE_AWAITS_CREDIT_RELEASE", // #4381: the sweep holds it; its note follows (#4380), never by hand
   // #3924 round 12: a late capture's card refunds that no note will answer -
   // its receipt is the app's invoice in Xero, but its row was resolved by
   // hand, so every card-refund path reads it so - and that no record-by-hand
@@ -528,9 +529,8 @@ export interface BookingClassificationContext {
     { taskId: string; raisedAt: Date; operations: XeroOperationRecord[] }
   >;
   /**
-   * #4324: of those, the kept CHANGE captures on a cancelled booking whose
-   * primary invoice exists, by intent (`loadKeptChangeCaptureEvidence`);
-   * #4381: and those whose refund was closed paid another way. Absent, none.
+   * #4324, #4381: of those, the kept CHANGE captures (or closed paid another way) on a cancelled booking whose
+   * primary invoice exists, by intent (`loadKeptChangeCaptureEvidence`). Absent, none.
    */
   keptChangeCaptures?: Map<string, KeptChangeCaptureRepairEvidence>;
   /**

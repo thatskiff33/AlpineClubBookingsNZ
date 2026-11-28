@@ -19,6 +19,7 @@ import {
   readKeptChangeCaptureEvidence,
   type KeptCaptureRecordStore,
 } from "@/lib/late-capture-kept-xero";
+import { readLateCaptureRecordedElsewhere } from "@/lib/late-capture-recorded-elsewhere";
 import { keptChangeCaptureRoute, type KeptChangeCaptureRoute } from "@/lib/late-capture-kept-xero-rules";
 import { xeroOperationSelect, type XeroOperationRecord } from "./xero-booking-repair-types";
 
@@ -47,6 +48,14 @@ export type KeptChangeCaptureRepairEvidence = {
   receiptStoodDown: boolean;
   /** Another writer records the capture (`readKeptCaptureRecordedElsewhere`), read only where no live receipt row exists. */
   recordedElsewhere: boolean;
+  /**
+   * #4381 (owner decision 28 Nov 2026): no live record of the capture's own,
+   * and the credit-release sweep records or holds it
+   * (`readLateCaptureRecordedElsewhere`). A close's waiting note follows once
+   * an invoice in Xero names the capture (#4380), so it is never recorded by
+   * hand.
+   */
+  creditReleaseSweep: boolean;
   /** Review MF2: the cents of it another writer records, so the dry run lists what the apply records. */
   alreadyRecordedCents: number;
   /** Review D-F3: the payment holds its primary invoice's id. */
@@ -136,6 +145,10 @@ export async function loadKeptChangeCaptureEvidence(
         : reading.decided && route !== "receipt"
           ? route === "change-invoice" ? 0 : reading.decided.elsewhere
           : await readKeptCaptureRecordedElsewhere(store, read);
+      const creditReleaseSweep =
+        !liveRecord &&
+        (elsewhere === "all" || receiptStoodDown) &&
+        (await readLateCaptureRecordedElsewhere(store, paymentIntentId)).kind === "credit-release-sweep";
       found.set(paymentIntentId, {
         changeId,
         route,
@@ -145,6 +158,7 @@ export async function loadKeptChangeCaptureEvidence(
         receiptLinks: links,
         receiptStoodDown,
         recordedElsewhere: elsewhere === "all",
+        creditReleaseSweep,
         alreadyRecordedCents: elsewhere === "all" ? 0 : elsewhere,
         primaryInvoiceIdSynced: payment.xeroInvoiceId !== null,
       });

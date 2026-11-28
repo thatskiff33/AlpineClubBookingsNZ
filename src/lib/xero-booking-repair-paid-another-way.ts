@@ -248,12 +248,14 @@ export function addPaidAnotherWayReceiptFinding({
   if (!failed && changeCapture && (receiptRowLive || receiptStoodDown || changeCapture.found?.route !== "change-invoice")) {
     // #4381 (owner decision 28 Nov 2026): another writer records the capture
     // (or the capture's receipt stood down for one) and the verdict names no
-    // one invoice in Xero to credit - the credit-release sweep's hold
-    // (accepted until #4380), parts on two documents, or an invoice not yet
-    // in Xero - so no note follows. Named for an officer to record by hand.
-    // One the verdict does name was answered above: its note is queued.
+    // one invoice in Xero to credit. The credit-release sweep's hold (accepted
+    // until #4380) keeps the close's waiting key, so its note follows later:
+    // named as waiting, never to record by hand. Anything else - parts on two
+    // documents, or an invoice not yet in Xero - is named for an officer to
+    // record by hand. One the verdict does name was answered above.
     if ((changeCapture.found?.recordedElsewhere || receiptStoodDown) && !receiptRowLive && state.receipt.kind === "none") {
-      addNoRefundNoteFinding(findings, close, details, "recorded-elsewhere");
+      if (changeCapture.found?.creditReleaseSweep) addCreditReleaseWaitFinding(findings, close, details);
+      else addNoRefundNoteFinding(findings, close, details, "recorded-elsewhere");
       return true;
     }
     return addChangeCaptureFinding(changeCapture);
@@ -360,11 +362,42 @@ function addRecordByHandFinding(
 }
 
 /**
+ * #4381 (owner decision 28 Nov 2026 on #4381;
+ * `PAID_ANOTHER_WAY_REFUND_NOTE_AWAITS_CREDIT_RELEASE`): a close whose capture
+ * the credit-release sweep holds. It keeps its waiting key, so the nightly note
+ * step queues its note once an invoice in Xero names the capture (#4380). A
+ * refund recorded by hand meanwhile would be credited a second time, so this
+ * says not to. Report-only. Not once any note of the close was asked for.
+ */
+function addCreditReleaseWaitFinding(
+  findings: MutableFinding[],
+  close: NonNullable<LateCaptureTask["paidAnotherWayClose"]>,
+  details: { paymentId: string; manualRefundTaskId: string; paymentIntentId: string | null },
+): void {
+  const state = close.receiptState;
+  if (!state || state.noteAsked || !state.close || state.close.amountCents <= 0) return;
+  const amount = close.paidBackLabel ? `the ${close.paidBackLabel} paid back` : "what was paid back";
+  addFinding(findings, {
+    code: "PAID_ANOTHER_WAY_REFUND_NOTE_AWAITS_CREDIT_RELEASE",
+    severity: "info",
+    summary: `A late card payment whose refund was paid another way is held as released credit, so it has no Xero refund credit note yet. One for ${amount} is queued automatically once that credit is released (#4380). Do not record it by hand in Xero, or it would be credited twice.`,
+    safeToAutoApply: false,
+    details: {
+      ...details,
+      closeRecordId: state.close.id,
+      closeAmountCents: state.close.amountCents,
+      noRefundNote: "credit-release-sweep",
+    },
+    actionKeys: [],
+  });
+}
+
+/**
  * #4381 (owner decision 28 Nov 2026 on #4381): a close with no bank-transfer
  * note raised and none queued, for its own reason - it planned none (`none`;
- * the dialog told the treasurer to record it by hand), or another writer
- * records the capture and the app has no invoice in Xero it can credit
- * (`recorded-elsewhere`). Report-only, under the record-by-hand code, sized
+ * the dialog told the treasurer to record it by hand), or a writer other
+ * than the credit-release sweep records the capture and the app has no
+ * invoice in Xero it can credit (`recorded-elsewhere`). Report-only, under the record-by-hand code, sized
  * by what every close of the capture paid back. Not once any note of the
  * close was asked for.
  */

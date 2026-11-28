@@ -5831,8 +5831,9 @@ close (no receipt in Xero; a change capture on an invoiced booking, #4381) ->
   another writer records all of it (owner, 28 Nov 2026) ->
     one invoice in Xero records the whole capture -> plan `now`: the bank
       note PENDING with the close, crediting that invoice
-    the credit-release sweep holds it -> waiting key, nothing queued, no
-      note follows (until #4380); the repair tool names it
+    the credit-release sweep holds it -> waiting key, nothing queued; the
+      note follows once an invoice names the capture (#4380), so it is
+      never recorded by hand (PAID_ANOTHER_WAY_REFUND_NOTE_AWAITS_CREDIT_RELEASE)
     anything else -> nothing, plan `none`; the repair tool names it
   the change's own unsent invoice names it -> KEPT_LATE_CAPTURE_INVOICE
     PENDING for the gross capture, as before

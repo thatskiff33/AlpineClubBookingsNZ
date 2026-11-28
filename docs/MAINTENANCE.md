@@ -1868,11 +1868,15 @@ one a close made before that change still waits for
 (`PAID_ANOTHER_WAY_REFUND_NOTE_NOT_QUEUED`). Where other documents record it
 but no one invoice in Xero can be named for certain, the close queues nothing
 and its dialog says to record the refund by hand. Wherever a close has no
-bank-transfer note raised and none queued - that case, a close that planned
-none, or the credit-release sweep holding the payment (until #4380) - the tool
-reports `PAID_ANOTHER_WAY_REFUND_NOTE_RECORD_BY_HAND` with what was paid back:
-record that refund by hand in Xero against the invoice that records the
-payment. It is report-only and keeps appearing after you do. A close made
+bank-transfer note raised and none queued - that case, or a close that
+planned none - the tool reports `PAID_ANOTHER_WAY_REFUND_NOTE_RECORD_BY_HAND`
+with what was paid back: record that refund by hand in Xero against the
+invoice that records the payment. It is report-only and keeps appearing after
+you do. Where the credit-release sweep holds the payment, the close keeps
+waiting for its note, which is queued once that credit is released (#4380):
+the tool reports `PAID_ANOTHER_WAY_REFUND_NOTE_AWAITS_CREDIT_RELEASE`, also
+report-only, and the dialog says the same. Do not record that refund by hand,
+or the note that follows credits it a second time. A close made
 before #4381 that already raised a kept-payment invoice
 beside the invoice billing the change is not found by the tool; correct it in
 Xero by hand. When the receipt row failed before reaching

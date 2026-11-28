@@ -6383,7 +6383,9 @@ describe("runBookingXeroRepair", () => {
             { id: "txn_primary", source: "STRIPE", status: "SUCCEEDED", reason: null, amountCents: 8000, carriedAskCents: options.sweep === "share" ? 3000 : 0, withdrawnAt: null, stripePaymentIntentId: "pi_kept" },
           ];
           transactions.findUnique.mockImplementation(async ({ where }: any) =>
-            where?.stripePaymentIntentId === "pi_kept" ? { paymentId: "payment_1", amountCents: 8000 } : null,
+            where?.stripePaymentIntentId === "pi_kept"
+              ? { kind: "ADDITIONAL", paymentId: "payment_1", amountCents: 8000, bookingModificationId: "mod_change", reason: null }
+              : null,
           );
           transactions.findMany.mockImplementation(async ({ where }: any) =>
             where?.paymentId === "payment_1" && where?.kind === "ADDITIONAL" ? ledger : [],
@@ -6547,6 +6549,7 @@ describe("runBookingXeroRepair", () => {
           receiptLinks: [],
           receiptStoodDown: false,
           recordedElsewhere,
+          creditReleaseSweep: false,
           alreadyRecordedCents: 0,
           primaryInvoiceIdSynced: true,
         });
@@ -6627,6 +6630,11 @@ describe("runBookingXeroRepair", () => {
           bookingReport.findings.find((finding) => finding.code === "PAID_ANOTHER_WAY_REFUND_NOTE_RECORD_BY_HAND") as
             | { severity: string; safeToAutoApply: boolean; summary: string; details: Record<string, unknown> }
             | undefined;
+        // #4381: a close whose capture the credit-release sweep holds waits for its note.
+        const sweepWaitFinding = (bookingReport: { findings: { code: string }[] }) =>
+          bookingReport.findings.find((finding) => finding.code === "PAID_ANOTHER_WAY_REFUND_NOTE_AWAITS_CREDIT_RELEASE") as
+            | { severity: string; safeToAutoApply: boolean; summary: string; actions: unknown[]; details: Record<string, unknown> }
+            | undefined;
 
         it("MUTATION: the primary invoice bills the change - its receipt, by the close's own split on --apply, and no kept-capture invoice", async () => {
           const { bookingReport } = await runChange(changeBooking(), { closedPaidAnotherWay: true });
@@ -6694,7 +6702,7 @@ describe("runBookingXeroRepair", () => {
           expect(closeFinding(bookingReport)).toBeUndefined();
         });
 
-        it("MUTATION the sweep holds all of it: nothing queued, and (#4381, owner 28 Nov 2026) the close with no note is named to record by hand", async () => {
+        it("MUTATION the sweep holds all of it: nothing queued, and (#4381, owner 28 Nov 2026) the close is named as waiting for its note, never to record by hand", async () => {
           const { bookingReport } = await runChange(changeBooking(), {
             closedPaidAnotherWay: true,
             marked: false,
@@ -6704,11 +6712,16 @@ describe("runBookingXeroRepair", () => {
           expect(changeFinding(bookingReport)).toBeUndefined();
           expect(closeFinding(bookingReport)).toBeUndefined();
           expect(bookingReport.actions.some((a) => a.type === "QUEUE_KEPT_LATE_CAPTURE_INVOICE" || a.type === "QUEUE_KEPT_LATE_CAPTURE_RECORD")).toBe(false);
-          expect(noNoteFinding(bookingReport)).toMatchObject({
-            severity: "warning",
+          // The close keeps its waiting key, so a refund recorded by hand would be credited twice.
+          expect(noNoteFinding(bookingReport)).toBeUndefined();
+          expect(sweepWaitFinding(bookingReport)).toMatchObject({
+            severity: "info",
             safeToAutoApply: false,
-            details: expect.objectContaining({ noRefundNote: "recorded-elsewhere", recordByHandCents: 6000 }),
+            actions: [],
+            details: expect.objectContaining({ noRefundNote: "credit-release-sweep", closeAmountCents: 6000 }),
           });
+          expect(sweepWaitFinding(bookingReport)?.summary).toMatch(/One for the \$60\.00 paid back is queued automatically once that credit is released \(#4380\)\. Do not record it by hand in Xero/);
+          expect(sweepWaitFinding(bookingReport)?.summary).not.toMatch(/Record .* as a refund by hand/);
 
           // Once its note was asked for, nothing is named.
           const asked = await runChange(changeBooking(), {
@@ -6719,6 +6732,7 @@ describe("runBookingXeroRepair", () => {
             noteAsked: true,
           });
           expect(noNoteFinding(asked.bookingReport)).toBeUndefined();
+          expect(sweepWaitFinding(asked.bookingReport)).toBeUndefined();
         });
 
         it("the change's own invoice names the capture and was never sent: the kept-capture invoice for the gross capture, as before", async () => {
@@ -6810,6 +6824,7 @@ describe("runBookingXeroRepair", () => {
             receiptLinks: [],
             receiptStoodDown: false,
             recordedElsewhere: false,
+            creditReleaseSweep: false,
             alreadyRecordedCents: 0,
             primaryInvoiceIdSynced: true,
             ...over,

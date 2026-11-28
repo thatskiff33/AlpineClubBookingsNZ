@@ -91,8 +91,10 @@ export type PaidAnotherWayXeroPlan =
       /**
        * #4381 (owner, 28 Nov 2026), with `receipt: null`: the credit-release
        * sweep holds the capture, so nothing is queued and no note follows
-       * until #4380. The close keeps its waiting key; the dialog promises
-       * nothing (`none`) and the repair tool names the close.
+       * until #4380. The close keeps its waiting key, so its note follows once
+       * an invoice in Xero names the capture: the dialog says so and never to
+       * record it by hand (`after-credit-release`), and the repair tool names
+       * the close as waiting, not as one to record by hand.
        */
       creditReleaseSweep?: true;
       /**
@@ -120,12 +122,14 @@ export type PaidAnotherWayXeroPromise =
   | "covered-by-card-note"
   | "after-receipt-on-its-way"
   | "after-receipt-failed"
-  | "after-receipt-held-for-officer";
+  | "after-receipt-held-for-officer"
+  /** #4381: the credit-release sweep holds the capture; the note follows once an invoice names it (#4380). */
+  | "after-credit-release";
 
 export function paidAnotherWayXeroPromise(plan: PaidAnotherWayXeroPlan): PaidAnotherWayXeroPromise {
   if (plan.xeroRefundNote === "now" && plan.cardNoteCoversCents) return "covered-by-card-note";
   if (plan.xeroRefundNote !== "after-receipt") return plan.xeroRefundNote;
-  if (plan.creditReleaseSweep) return "none";
+  if (plan.creditReleaseSweep) return "after-credit-release";
   if (plan.receiptHeldForOfficer) return "after-receipt-held-for-officer";
   if (plan.receipt === null) return plan.receiptFailed ? "after-receipt-failed" : "after-receipt-on-its-way";
   return "after-receipt";
@@ -388,6 +392,8 @@ export type PaidAnotherWayXeroQueued =
   | "refund-note-after-failed-receipt"
   | "receipt-held-for-officer"
   | "stripe-reversal-and-bank-note"
+  /** #4381: the credit-release sweep holds the capture; the waiting note follows its release (#4380). */
+  | "refund-note-after-credit-release"
   | "nothing";
 
 /**
@@ -497,7 +503,7 @@ export async function queuePaidAnotherWayXero(
   }
   if (plan.xeroRefundNote === "none") return "nothing";
   if (plan.receipt === null) {
-    if (plan.creditReleaseSweep) return "nothing";
+    if (plan.creditReleaseSweep) return "refund-note-after-credit-release";
     // Round 10: a failed change invoice that may be in Xero waits on an
     // officer's check of Xero, as a held receipt row does.
     if (plan.receiptHeldForOfficer) return "receipt-held-for-officer";
