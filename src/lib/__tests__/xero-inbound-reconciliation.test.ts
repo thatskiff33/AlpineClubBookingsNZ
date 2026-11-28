@@ -222,7 +222,9 @@ vi.mock("@/lib/prisma", () => ({
           where.metadata != null;
         // #4370: the recount's bulk read of each payment's card refund reversals.
         const reversalRead = where.role === "CARD_REFUND_REVERSAL_INVOICE" && typeof where.localId === "object";
-        if (snapshotRead || unlistedAllocationRead || reversalRead) return Promise.resolve([]);
+        // #5289 C: the read of a payment's primary-invoice links, for the one payment of an invoice.
+        const primaryInvoiceLinkRead = where.role === "PRIMARY_INVOICE" && where.NOT !== undefined;
+        if (snapshotRead || unlistedAllocationRead || reversalRead || primaryInvoiceLinkRead) return Promise.resolve([]);
         return mocks.linkFindMany(args);
       },
       // #3642: the group-settlement arm looks up an abandoned invoice's link.
@@ -246,8 +248,10 @@ vi.mock("@/lib/prisma", () => ({
       // #4449: the allocation write's read of each invoice's one payment, by
       // source, answers none here, without taking a slot from the ordered
       // `paymentFindMany` queue the cases below set up.
+      // #5289 C: so does its read by the settle's rule (`bankTransferPaymentIdsOfInvoices`).
       findMany: (args: { where?: Record<string, unknown>; select?: Record<string, unknown> }) =>
-        args?.select?.source === true && args?.where?.xeroInvoiceId !== undefined
+        (args?.select?.source === true && args?.where?.xeroInvoiceId !== undefined) ||
+        (args?.select?.xeroInvoiceId === true && args?.where?.source === "INTERNET_BANKING" && Array.isArray(args?.where?.OR))
           ? Promise.resolve([])
           : mocks.paymentFindMany(args),
       findUnique: mocks.paymentFindUnique,
@@ -307,7 +311,7 @@ vi.mock("@/lib/xero-inbound/linked-refunded-total", async (importOriginal) => {
     ...actual,
     decideLinkedRefundedTotalCents: (...args: Parameters<typeof actual.decideLinkedRefundedTotalCents>) =>
       args[2]?.transactionRowsOverride
-        ? Promise.resolve(new Map(args[1].map((payment) => [payment.id, payment.refundedAmountCents])))
+        ? Promise.resolve(new Map(args[1].map((payment) => [payment.id, { cents: payment.refundedAmountCents, correctionCents: 0 }])))
         : actual.decideLinkedRefundedTotalCents(...args),
   };
 });
@@ -7421,6 +7425,7 @@ describe("processStoredXeroInboundEvents", () => {
       skipped: 0,
     });
 
+    // #5251: a missing note link changes whether the note counts, so it is written on the transaction holding its Payment rows.
     expect(mocks.upsertXeroObjectLink).toHaveBeenCalledWith(
       expect.objectContaining({
         localModel: "BookingModification",
@@ -7428,7 +7433,8 @@ describe("processStoredXeroInboundEvents", () => {
         xeroObjectType: "CREDIT_NOTE",
         xeroObjectId: "cn_mod_recover_1",
         role: "MODIFICATION_CREDIT_NOTE",
-      })
+      }),
+      { store: expect.anything() },
     );
     // #4447: the allocation is written inside the row lock, on that transaction.
     expect(mocks.upsertXeroObjectLink).toHaveBeenCalledWith(

@@ -33,6 +33,7 @@ import {
   type ModificationNoteWording,
 } from "@/lib/xero-refund-method";
 import type { ClubFormat } from "@/lib/club-format";
+import { CLEARING_ALLOCATION_LINK_WHERE, NOTE_ALLOCATION_ROLE, ROLELESS_ALLOCATION_ROLE } from "@/lib/xero-note-allocation-link-roles";
 
 export interface ClearingAllocationTarget {
   invoiceId: string;
@@ -206,15 +207,8 @@ export function readBookingClearingNoteRetryInput(operation: {
   return { amountCents, wording: readModificationNoteWording(payload) };
 }
 
-/** The role a note's own allocation links carry: the builder's, its PARTIAL retry's and the inbound mirror's. */
-export const NOTE_ALLOCATION_ROLE = "MODIFICATION_CREDIT_NOTE_ALLOCATION";
-
-/**
- * #4767: the role `allocateCreditNoteToInvoice` gives a link when its caller
- * names none. Before #4757 the repair tool could offer a note's own failed
- * allocation row its generic ALLOCATE retry, which links with this role.
- */
-export const ROLELESS_ALLOCATION_ROLE = "CREDIT_NOTE_ALLOCATION";
+// #5289 B: defined in a leaf the Xero operation funnel reads too.
+export { CLEARING_ALLOCATION_LINK_WHERE, NOTE_ALLOCATION_ROLE, ROLELESS_ALLOCATION_ROLE };
 
 /** The link roles that can show a note's planned target allocated (`linkAllocatesClearingTarget`). */
 export const CLEARING_TARGET_LINK_ROLES: readonly string[] = [NOTE_ALLOCATION_ROLE, ROLELESS_ALLOCATION_ROLE];
@@ -324,17 +318,6 @@ export function distinctClearingAllocations<L extends DatedClearingAllocationLin
   }
   return [...byKey.values()];
 }
-
-/**
- * Pure (#4786): the money readers' role-and-anchor filter for allocation
- * links found by their invoice: the note's own role, or the role-less one on
- * the note's own anchor. A payment's role-less links mirror its refund and
- * account notes, which its direct refund total counts, so they are never read
- * as a clearing or edit note's allocation.
- */
-export const CLEARING_ALLOCATION_LINK_WHERE = {
-  OR: [{ role: NOTE_ALLOCATION_ROLE }, { role: ROLELESS_ALLOCATION_ROLE, localModel: { not: "Payment" } }],
-};
 
 /**
  * Pure (#4786): the one allocation a link records, or null when it records

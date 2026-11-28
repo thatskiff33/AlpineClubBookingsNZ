@@ -692,6 +692,18 @@ describe("markBookingPaymentSucceeded", () => {
       expect(result).not.toHaveProperty("paidConfirmation");
     });
 
+    // #5433 card recovery doors, fix round 1: "asked but cannot be keyed" comes back as null, apart from "not asked"
+    // (absent), so the caller sends the unkeyed fallback only when it asked.
+    it("comes back null, not absent, when the caller asked and the booking cannot key a marker", async () => {
+      const result = await markBookingPaymentSucceeded({
+        format: CLUB_FORMAT_TEST, bookingId: "not:an-id", paymentIntentId: "pi_owed", amountCents: 10000, paymentMethodId: "pm_1", owesPaidConfirmation: true,
+      });
+
+      expect(result.outcome).toBe("paid");
+      expect(mocks.owedNoticeCreateMany).not.toHaveBeenCalled();
+      expect(result).toHaveProperty("paidConfirmation", null);
+    });
+
     it("is not written by a replayed settle that finds the booking already paid (no PAID claim)", async () => {
       mocks.bookingFindUnique.mockResolvedValue({ ...makeStaggeredBooking(), status: BookingStatus.PAID });
       // Refund history on the arriving intent: the paid booking stays as it is.

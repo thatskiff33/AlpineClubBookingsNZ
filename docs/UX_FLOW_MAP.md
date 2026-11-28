@@ -445,7 +445,7 @@ Screen: `/admin/members`.
 
 Shows: A searchable member list and individual membership records.
 
-Journey: Search, filter or bulk-select members, open a profile, and use its permitted actions. A Full Admin answers an access request from a profile's Lifecycle & Deletion section: download that member's subject access report, or find someone else by email or a non-member guest by name. Merge preview and execution failures take focus and scroll into view.
+Journey: Search, filter or bulk-select members, open a profile, and use its permitted actions. From a profile's Lifecycle & Deletion section, a Full Admin downloads subject access reports (that member, anyone by email, a non-member guest by name) and unarchives an archived member (#5540). Merge preview and execution failures take focus and scroll into view.
 
 [Guide](guides/members.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
 
@@ -941,7 +941,7 @@ Screen: `/admin/email-deliverability`.
 
 Shows: Email delivery results and eligible retry controls.
 
-Journey: Filter delivery outcomes and inspect a failure before retrying eligible mail. A failed booking confirmation, pre-arrival reminder or guest payment link links to its booking, where an officer sends a fresh copy.
+Journey: Filter outcomes and inspect failures before retrying mail. A failed booking confirmation, pre-arrival reminder or guest payment link links to its booking for a fresh copy. Try again warns of possible duplicates.
 
 [Guide](guides/email-deliverability.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
 

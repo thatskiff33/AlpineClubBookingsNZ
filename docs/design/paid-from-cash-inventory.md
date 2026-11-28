@@ -384,8 +384,8 @@ rows.
 | `app/(admin)/admin/membership/members/_types.ts` | subscription status |
 | `app/(admin)/admin/membership/members/_utils.ts` | subscription status label |
 | `app/(admin)/admin/membership/membership-cancellations/page.tsx` | membership cancellation request status |
-| `app/(admin)/admin/roster/[date]/print/page.tsx` | roster assignment status |
-| `app/(admin)/admin/roster/page.tsx` | roster assignment status |
+| `app/(admin)/admin/lodge-ops/roster/[date]/print/page.tsx` | roster assignment status |
+| `app/(admin)/admin/lodge-ops/roster/page.tsx` | roster assignment status |
 | `app/(authenticated)/book/_hooks/use-booking-wizard.ts` — subscription status type | subscription status |
 | `app/(authenticated)/bookings/consent/[guestId]/page.tsx` | guest consent status |
 | `app/(authenticated)/dashboard/page.tsx` — `inductionComplete` | induction status |

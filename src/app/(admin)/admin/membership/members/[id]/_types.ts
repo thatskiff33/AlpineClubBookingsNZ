@@ -40,7 +40,7 @@ interface LifecycleActor {
 export interface MemberLifecycleActionRequest {
   id: string;
   memberId: string;
-  action: "ARCHIVE" | "DELETE";
+  action: "ARCHIVE" | "DELETE" | "UNARCHIVE";
   status: "REQUESTED" | "APPROVED" | "REJECTED";
   reason: string;
   reviewNote: string | null;

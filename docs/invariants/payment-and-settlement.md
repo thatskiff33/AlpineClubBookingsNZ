@@ -4048,14 +4048,15 @@ _Split from `INV-PAY-057` (#3220)._
   a part payment recognised at cancel included, is cash-sized. That receipt
   still includes the corrected amount, so the correction keeps counting and the
   net stays the cash. A recount finds any payment's modification notes by its
-  invoice (#4444): a later note drops none, and a note counts once per
-  payment. A card payment's total never rises above Stripe's refunds (owner,
-  23 Nov), so two notes for one refund cannot pass Stripe.
+  one invoice (#4444, #5289), each counted once per payment. A card payment's
+  total never rises above Stripe's refunds (owner, 23 Nov).
   A keep sets the whole refunded total its links record under the `Payment`
-  row (`decideLinkedRefundedTotalCents`, floored), never an increment; the
-  note's allocation write or removal locks that row first and decides it too,
-  so a writer queued on `lock(1)` reads the net (#4449). The recount after a
-  keep or replay is a backstop; failing, the event is retried (#4095).
+  row (`decideLinkedRefundedTotalCents`, floored), never an increment; every
+  allocation writer (inbound, a voided note's removal, the app's own, a
+  note's status, #5251) locks the payment the settle's rule finds first and
+  decides it too, so a writer
+  queued on `lock(1)` reads the net (#4449, #5289). The recount after a keep
+  or replay is a backstop; failing, the event is retried (#4095).
 - **The refunded-total repair writes through a claim** on the row it read
   (status, totals, `updatedAt`, which every settle transition touches),
   re-running once from scratch when lost, and never un-refunds a payment whose

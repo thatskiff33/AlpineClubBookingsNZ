@@ -45,8 +45,8 @@ vi.mock("@/hooks/use-admin-area-edit-access", () => ({
     "Your admin role can view this area but cannot make changes.",
 }));
 
-import ChoresPage from "@/app/(admin)/admin/chores/page";
-import LockersPage from "@/app/(admin)/admin/lockers/page";
+import ChoresPage from "@/app/(admin)/admin/lodge-ops/chores/page";
+import LockersPage from "@/app/(admin)/admin/lodge-ops/lockers/page";
 import AdminLodgesPage from "@/app/(admin)/admin/lodge-ops/lodges/page";
 
 type Handler = (

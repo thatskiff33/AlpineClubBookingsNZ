@@ -491,6 +491,7 @@ export const AUDIT_WRITE_SITES: Readonly<Record<string, AuditWriteSiteLedgerEntr
   "src/lib/member-partner-link.ts::requestPartnerLink#1": {"category":"family","sink":"logAudit","action":"(dynamic) oneStep ? \"MEMBER_PARTNER_LINK_CONFIRMED\" : \"MEMBER_PARTNER_LINK_REQUESTED\""},
   "src/lib/member-partner-link.ts::respondToPartnerLink#0": {"category":"family","sink":"logAudit","action":"MEMBER_PARTNER_LINK_DECLINED"},
   "src/lib/member-partner-link.ts::respondToPartnerLink#1": {"category":"family","sink":"logAudit","action":"MEMBER_PARTNER_LINK_CONFIRMED"},
+  "src/lib/member-unarchive.ts::unarchiveMember.request#0": {"category":"admin","sink":"createAuditLog","action":"member_lifecycle.unarchived"},
   "src/lib/membership-cancellation-admin.ts::reviewMembershipCancellationParticipant#0": {"category":"account","sink":"createAuditLog","action":"membership_cancellation.approval_blocked","reviewed":["2755-officer-visible"]},
   "src/lib/membership-cancellation-admin.ts::reviewMembershipCancellationParticipant#1": {"category":"account","sink":"createAuditLog","action":"membership_cancellation.participant_cancelled","reviewed":["2755-officer-visible"]},
   "src/lib/membership-cancellation-admin.ts::reviewMembershipCancellationParticipant#2": {"category":"account","sink":"createAuditLog","action":"membership_cancellation.participant_rejected","reviewed":["2755-officer-visible"]},

@@ -5,7 +5,7 @@ import { cleanup, fireEvent, render, screen, waitFor } from "@/lib/__tests__/sup
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { settleLodgeScopedPage } from "@/lib/__tests__/helpers/lodge-scope-settle";
 import { itShowsEveryRefusal } from "@/lib/__tests__/support/failed-write-cases";
-import HutLeadersPage from "@/app/(admin)/admin/hut-leaders/page";
+import HutLeadersPage from "@/app/(admin)/admin/lodge-ops/hut-leaders/page";
 
 /*
   The assignment save and the kiosk PIN reset read a refusal without a bare

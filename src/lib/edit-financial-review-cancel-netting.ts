@@ -27,6 +27,7 @@ import { editReviewHandBackLinesWhere } from "@/lib/edit-financial-review-charge
 import { paidByOrganiserCard, paidByOrganiserInternetBanking } from "@/lib/group-organiser-paid";
 import type { ClubFormat } from "@/lib/club-format";
 import { ManualBookingPaymentError } from "@/lib/manual-booking-payment-error";
+import { NOT_A_SETTLEMENT_MARKER_WHERE } from "@/lib/manual-settlement-reversal-event";
 import {
   buildBookingCancellationRefundIdempotencyKey,
   buildEditFinancialReviewRefundRecoveryIdempotencyKey,
@@ -274,8 +275,9 @@ export async function capturedShareOwedAfterCancellation({
   // against, and no part of its share may become the joiner's credit (`INV-PAY-137`).
   if (paidByOrganiserCard(owner)) throw new ManualBookingPaymentError(REVIEW_CANCELLATION_ORGANISER_PAID_MESSAGE, 409);
   if (paidByOrganiserInternetBanking(owner)) throw new ManualBookingPaymentError(REVIEW_CANCELLATION_ORGANISER_PAID_BY_BANK_MESSAGE, 409);
+  // #5289 review: the cancellation itself, never a settlement marker written after it.
   const cancelled = await store.bookingEvent.findFirst({
-    where: { bookingId, type: BookingEventType.CANCELLED },
+    where: { bookingId, type: BookingEventType.CANCELLED, ...NOT_A_SETTLEMENT_MARKER_WHERE },
     orderBy: { occurredAt: "desc" },
     select: { snapshot: true, occurredAt: true },
   });

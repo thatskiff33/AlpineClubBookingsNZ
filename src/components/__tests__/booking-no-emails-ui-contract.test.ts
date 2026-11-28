@@ -128,7 +128,7 @@ const NOT_BOOKING_BOUND: Record<string, string> = {
   // OTHER bookings' guests, who are still emailed. A silenced booking's own
   // `chore-roster` mail is already withheld by the mailer's gate, which is
   // where a multi-booking send has to be handled.
-  "app/(admin)/admin/roster/page.tsx":
+  "app/(admin)/admin/lodge-ops/roster/page.tsx":
     "per-date roster send fanning out across many bookings; the mailer's gate silences each one individually",
 };
 

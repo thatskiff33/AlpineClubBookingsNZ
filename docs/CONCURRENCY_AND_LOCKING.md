@@ -44,6 +44,7 @@ Guarded row claims and leases:
 [one refund note in flight (#3880)](#one-refund-credit-note-in-flight-per-payment-by-claim-order-3880) ·
 [Xero retry (#2262)](#a-xero-retry-claims-the-original-row-it-writes-2262-h3-3462-4256-4259) ·
 [a refund-note repair's pointer (#4279)](#a-refund-note-repair-adopts-its-pointer-only-in-its-won-completion-4279) ·
+[a note's allocation, inbound or the app's own, decides its bank-transfer payment's total (#4449, #5289)](#refund-note-link-writes-racing-a-void-4195-4223) ·
 [two callers on one Xero row (#4356)](#two-callers-on-one-xero-operation-row-guarded-outcomes-4356) ·
 [a Xero row back on PENDING (#5228)](#a-xero-outbox-row-back-on-pending-and-the-stuck-row-release-compare-and-sets-no-advisory-key-5228) ·
 [Xero token refresh (#3454)](#the-xero-token-refresh-uses-a-row-lease-3454-3806) ·
@@ -652,8 +653,9 @@ Now the completion carries the adoption (`canonicalRefundNote`, set by
 `refundCreditNoteCompletion` when asked, never for a refund request's own
 note) through both repair arms, directly and through
 `finishRefundCreditNoteSettlement`. `completeXeroSyncOperation` hands such a
-completion to `completeAdoptingCanonicalRefundNote`
-(`xero-refund-note-adoption.ts`), whose one transaction takes, in order:
+completion to `completeUnderPaymentRows`
+(`xero-payment-first-completion.ts`; #5289 B: also a completion recording a
+note's own allocation, below), whose one transaction takes, in order:
 
 1. the Payment row (`lockPaymentForRefundedTotal`, the existing helper and
    site), within `PAYMENT_ROW_WAIT_TRANSACTION_OPTIONS`;
@@ -939,7 +941,7 @@ are the literal `1`.
 | **Per-trip hosting coverage** | `hashtext("hosting-coverage-group"), hashtext(<GroupBooking.id>)` | `lockHostingCoverageGroup` / `lockHostingCoverageGroups`, with `tryLockHostingCoverageGroup(s)` tried first (`adult-member-hosting-coverage-lock.ts`) | cross-account | Serialises `SAME_GROUP_TRIP` coverage (#3039, epic #2943). The owner key cannot do this job: it is `Booking.memberId`, the DEPENDENT's own account, while every Group Trip source belongs to somebody else — so two writers changing two bookings in one trip hold two DIFFERENT owner keys and are not serialised at all. Not the lodge key either: one lodge holds many unrelated trips. Taken immediately BEFORE the sorted owner keys, because the trip's membership is what decides which owners the reconciliation fan-out will name. Several trips are taken in sorted order, and EVERY acquisition is tried with `pg_try_advisory_xact_lock` before the blocking form — one transaction can discover two trip keys (a booking in one trip whose same-owner dependent sits in another), so sorting within a call cannot order keys discovered in two, and a conflict rolls the whole outer transaction back with the stable `HOSTING_COVERAGE_PARTICIPANT_RETRY` 409 rather than waiting inside a booking transaction. Taken only where the lodge has `SAME_GROUP_TRIP` enabled AND the booking is in a trip. |
 | **Per-owner hosting coverage** | `hashtext("hosting-coverage-owner"), hashtext(<Booking.memberId>)` | `lockHostingCoverageOwner` / `lockHostingCoverageOwners` (`adult-member-hosting-coverage-lock.ts`) | cross-booking | Serialises `SAME_BOOKING_OWNER` coverage (#2576 §9): one booking's compliance depends on another booking of the SAME owner, so the key remains authoritative even though #2600 made allocation-participating confirmation and cancellation compose global → lodge. Taken LAST among the application lock families a caller composes, EXCEPT that since #3039 the per-TRIP hosting coverage key above sits immediately before it — so it is the second of the last two rather than the last. Roster-aware modification paths take global → lodge → roster-date → any applicable member keys → sorted queue-participant `Member FOR KEY SHARE NOWAIT` rows → coverage-group → coverage-owner; queued incident reconciliation takes hosting policy-set → sorted claimed member-lifecycle keys → sorted claimed `Member FOR KEY SHARE` rows → coverage-group (only where the reconciled booking is in a Group Trip at a lodge with `SAME_GROUP_TRIP` on; the evaluator takes it fail-fast before it reads a sibling as cover) → coverage-owner. Paths that do not use roster or member keys omit those tiers. Ordinary producers try sorted owner keys before re-entering the blocking helper, while merge takes its sorted owner keys only after it holds its participant rows `FOR UPDATE` (taken all at once, never holding one while waiting for another, #4855). The key is taken only when the lodge actually has the scope enabled. |
 | **Per-member credit ledger** | `hashtext("member-credit-ledger"), hashtext(<memberId>)` | `lockMemberCreditLedger(memberId, tx)` (`member-credit.ts`) | — | A member's credit-ledger balance operations (spend, negative-adjustment validation, orphan-restore repair, every applied-credit restore (`restoreCreditFromBooking`, taken inside the caller's transaction after its `lock(1)` and lodge locks, #3792), the Xero inbound applied-credit repair, and the F20 pre-payment-reduction applied-credit clamp `clampAppliedCreditToBookingPrice`, taken inside the modification transaction only when the booking carries applied credit, through its give-back `giveBackAppliedCredit`, which a credit-paid booking's review share also goes through (#3791), taken inside an `EDIT_FINANCIAL_REVIEW` completion after its `lock(1)`, its claim and its re-price, only on the account-credit route with no captured payment, and by a paid booking's price reduction (#3809, `giveBackPaidReductionCredit`), taken inside the batch, date-change and guest-removal transactions (the consent decline and expiry included) in `applyPaymentAdjustments`, after `lock(1)`, the lodge key and any roster-date keys and before any `Payment` row write, only on a PAID or COMPLETED booking with credit applied and a reduction the captured money's basis cannot return, and the #2265 stored-election consumption `consumeStoredCreditElection`, taken inside the `create-payment-intent` pay transaction and the Internet Banking switch transaction only when the booking carries an outstanding election)., and the member whole-lodge approval's credit application (`approveMemberWholeLodgeRequest`, #4019: `applyCreditToBooking` under this lock inside the approval transaction after its `lock(1)` and lodge key and BEFORE the adult-member-hosting reconcile that may take Member rows and the coverage keys), and the opening-credit batch's post and reversal (#4988, `INV-PAY-162`: every member's key, sorted, inside the batch transaction: the post before the batch row's claim, so it counts the members' deductions under the keys, the reversal before its `reversedAt` claim, so it reads the lots and re-checks spend under the keys; no global or lodge key). |
-| **Member lifecycle** | `hashtext("member-lifecycle:<memberId>")` | inline (`member-lifecycle-actions.ts`, `app/api/admin/deletion-requests/[id]/route.ts`, `nomination.ts` approval mapping, `admin-family-group-requests-service.ts`, `member-merge.ts`, `adult-member-hosting-coverage-drain.ts`) | — | Archive/delete of one member; account-deletion approval (the #1756 partner-share prefix — global cohort `lock(1)` + every affected lodge, sorted — and only then member lifecycle → shared standing-subject `Member FOR UPDATE NOWAIT` → exact queue-participant `Member FOR KEY SHARE NOWAIT` rows → coverage-owner before deactivation and guest unlink); overwrite of one member by application-approval mapping (E10, #1936); linking/removing one member into/from a family group on admin request review; **member merge** (dual-lock on master + loser, E11 #1937, see below — merge takes the merge-only partner-share prefix, so every affected lodge key is held BEFORE this tier while the global cohort key is deliberately NOT taken at all, and the two `member-partner-link:` keys immediately AFTER it, #2595); and the queue-drain handshake that prevents a claimed hosting item from using identities while merge re-points them. |
+| **Member lifecycle** | `hashtext("member-lifecycle:<memberId>")` | inline (`member-lifecycle-actions.ts`, `app/api/admin/deletion-requests/[id]/route.ts`, `nomination.ts` approval mapping, `admin-family-group-requests-service.ts`, `member-merge.ts`, `adult-member-hosting-coverage-drain.ts`); `member-unarchive.ts` through `acquireMemberLifecycleLocks` | — | Archive/delete of one member; a Full Admin's unarchive of one member (#5540: this key alone, then a re-read and a claim guarded on `archivedAt`, so it serialises with archive approval and with merge and account deletion of the same member); account-deletion approval (the #1756 partner-share prefix — global cohort `lock(1)` + every affected lodge, sorted — and only then member lifecycle → shared standing-subject `Member FOR UPDATE NOWAIT` → exact queue-participant `Member FOR KEY SHARE NOWAIT` rows → coverage-owner before deactivation and guest unlink); overwrite of one member by application-approval mapping (E10, #1936); linking/removing one member into/from a family group on admin request review; **member merge** (dual-lock on master + loser, E11 #1937, see below — merge takes the merge-only partner-share prefix, so every affected lodge key is held BEFORE this tier while the global cohort key is deliberately NOT taken at all, and the two `member-partner-link:` keys immediately AFTER it, #2595); and the queue-drain handshake that prevents a claimed hosting item from using identities while merge re-points them. |
 | **Membership application** | `hashtext(<application key>)` | `membershipApplicationLockKey` (`nomination.ts`) | — | State transitions of one membership application. |
 | **Membership applicant** | `hashtext(<applicant-email key>)` | `membershipApplicationApplicantLockKey` (`nomination.ts`) | — | Per-email applicant dedup at submit time. |
 | **Roster-date writers** | `hashtext("roster:<date>")` | `lockRosterDate(tx, date)` / sorted `lockRosterDates(tx, dates)` (`roster-lock.ts`) | date | Serialises whole-roster save/regenerate/confirm/auto-suggest, kiosk confirm and complete/uncomplete, and booking/guest cleanup that can remove suggested rows for the same lodge night. |
@@ -2246,7 +2248,8 @@ Counterpart analysis — no cycles are possible:
 
 - Other `member-lifecycle` holders either take one key or use sorted multi-key
   acquisition. Member archive/delete approval (`member-lifecycle-actions.ts`)
-  locks exactly one member and takes no application lock; the admin family-group request
+  and unarchive (`member-unarchive.ts`, #5540) lock exactly one member and take
+  no application lock; the admin family-group request
   review transactions (`admin-family-group-requests-service.ts`) lock exactly
   the one pre-existing member being linked into (or removed from) a group
   before writing `FamilyGroupMember` — required because a `FamilyGroupMember`
@@ -2953,6 +2956,57 @@ mispricing a booking.
   own exact stamp, as before; a sweep delete and either one can at worst both
   match the same unsent claim, and only one deletes it. Proved on PostgreSQL by
   `admin-alert-once-sweep.realdb.test.ts` (each order, behind a held row).
+
+#### Stranded QUEUED email sweep against the sender's hand-over (#5298)
+
+- **Email hand-over claim** — `src/lib/email/handover.ts`
+  (`claimEmailHandover`, `sweepStrandedQueuedEmails`, #5298, `INV-INT-043`),
+  called from `src/lib/email/core.ts` (`sendEmail`) and
+  `src/lib/cron-email-retry.ts` (`retryFailedEmails`, sweep first). The sender
+  moves its own `EmailLog` row from `handoverState` `PENDING` to `STARTED` with
+  one `updateMany` guarded on id, `QUEUED`, `PENDING` and attempts 1 (the
+  previous release's retry job claims a row the sweep handed back without
+  moving it off `PENDING`, and raises attempts), and calls the mail server only
+  if it won. Every other write the sender makes to its row
+  (`senderEmailRow`: the booking gate, suppression, environment gate, dev-mode,
+  SENT and FAILED writes) is guarded the same way: on the claim's own guard
+  before the claim, on `STARTED` at the claim's `lastAttemptAt` after it, so a
+  sender that stalls past the threshold cannot write over a row the sweep has
+  settled. A failed replay's FAILED write is guarded on the row as the retry
+  job claimed it, for the same reason. The sweep settles a row whose
+  `lastAttemptAt` is strictly older than `strandedQueuedAfterMs()`, the
+  greater of 30 minutes and `replayInFlightWindowMs()` (up to about 110
+  minutes with the largest transport timeouts), with one `updateMany` guarded
+  on the row exactly as read (status, hand-over state,
+  attempts, `lastAttemptAt`, and for a re-send a body kept), always moving it
+  off `QUEUED`. Both take the one row's lock; PostgreSQL re-checks the loser's
+  guard against the committed row, so it matches nothing: a late sender sends
+  nothing (`handover_lost`), and a sweep after the sender's claim leaves the row
+  alone. The retry job's own `FAILED -> QUEUED` claim now also writes `STARTED`,
+  so a crash after it is flagged, never re-sent. No transaction, advisory key,
+  tier or order (INV-LOCK-001, INV-LOCK-002); this entry is the site's
+  registration (INV-LOCK-003). The provider call stays outside any transaction.
+
+  Reconciled with #5255's once-ever alert row (`recordClaimedEmailAttempt`
+  writes the same `PENDING` row in its confirm transaction, then the sender
+  claims as above), #4669's `releaseUnreceivedAlertCopies` (touches only
+  `FAILED` rows at attempts 1; a sweep re-send keeps attempts at 1 and leaves
+  the body, so its count is unchanged; a stranded owner-retried alert
+  (`isOwnerRetriedAlertTemplate`: a caller-retried alert, or one sent through
+  `sendAdminAlertOnceEverWithTakeover`, whose owner takes a held claim with no
+  sent marker over; `admin-alert-once-census.test.ts` pins that set to the
+  takeover callers) is never re-sent by the sweep but released the same way,
+  `FAILED` at attempts 1 with no body, because its owner sends it again, and
+  neither admin alert sender reports its lost hand-over as queued, so that
+  owner does; when another
+  recipient received the alert, or the retry job holds another recipient's
+  copy, the owner has stopped, so the sender fails the
+  lost copy with its body kept, guarded like the claim, and the retry job
+  replays it) and #4963's Try again (a `FAILED` row
+  at the ceiling; the next retry claim writes `STARTED`). Proved on PostgreSQL
+  by `stranded-queued-email.realdb.test.ts` (each order, behind a held row; a
+  stalled sender resuming through the real `sendEmail`; a sender and a replay
+  stalled inside the hand-over; two racing sweeps; a stranded takeover alert).
 
 #### Member photo writer (epic #171)
 
@@ -6038,9 +6092,13 @@ the pre-#4217 code). Now:
   read under it. Its figure logic (#3979, `INV-PAY-126`) is unchanged, except
   that a keep sets the payment's whole refunded total its links record, read
   plainly under the `Payment` row (`decideLinkedRefundedTotalCents`, with the
-  bank-transfer floor; #4449, replacing #4095's increment), and sends any floor
-  alert after its commit. The credit-note allocation write that would race it
-  takes the same row first (#4449, below), so whichever commits second counts
+  bank-transfer floor; #4449, replacing #4095's increment). A floor alert it
+  owes is written as a marker in its own transaction and sent after its commit
+  by a claim on that marker (#5289 F, `kept-settle-floor-alert.ts`: no lock, one
+  conditional write), so a replay or the inbound cron sends one a stopped
+  process never sent, exactly once. The credit-note allocation write and the
+  outbound completion of a note's own allocation that would race it take the
+  same row first (#4449, #5289 B, below), so whichever commits second counts
   the correction and a writer queued on `lock(1)` reads the net. After it
   commits, outside every lock, a keep or a replay with an applied correction
   still triggers the lock-free inbound recount
@@ -6440,8 +6498,11 @@ table, until #5433's last pull request removes that source.
 
 The Stripe capture's settle records the member's paid confirmation the same way
 (#5433 PR 3, `recordPaidBookingConfirmationOwed`), when its caller asks
-(`owesPaidConfirmation`: the Stripe webhook, the confirm-payment route and the
-confirm-pending job's saved-card charge): one `OwedNotice` insert of one row on
+(`owesPaidConfirmation`: the Stripe webhook, the confirm-payment route, the
+confirm-pending job's saved-card charge, and since the card recovery doors the
+create-payment-intent and payment-link recoveries and the charge-saved-method
+route, each of which passes the flag to the same settle and changes nothing
+else inside it): one `OwedNotice` insert of one row on
 a primary key derived from the kind, the booking and the moment it was paid,
 written by `settleAndPostBookingReceipts` only when the settle body returns a
 fresh `paid` (its status-guarded PAID claim), and last in that transaction,
@@ -6456,7 +6517,9 @@ is an error log and the settle commits, so the marker can never roll back a
 captured payment for a reason of shape (a database failure of the insert still
 rolls the transaction back, like any write in it). Delivery after the commit and
 the sweep are the bump's, above, with the member's event key
-`<bookingId>:<paidAtMs>`.
+`<bookingId>:<paidAtMs>`; every card door reaches them through one sequence
+(`queueInvoiceAndDeliverPaidConfirmation`), which runs after the settle has
+returned and takes no lock or transaction of its own.
 
 The rest of `resolveHoldWindowUnderLock` records its notices the same way
 (#5433 PR 4), each as the last write of the branch that commits the change,
@@ -8599,7 +8662,7 @@ same two rows Payment first, inside their own transactions:
   then the link write, inside the caller's transaction (a group cancel or an
   edit review's refund leg);
 - a refund-note repair's completion that adopts its note (#4279,
-  `completeAdoptingCanonicalRefundNote`): the Payment row, its claim of its own
+  `completeUnderPaymentRows`): the Payment row, its claim of its own
   operation row, the pointer, then the link writes.
 
 The heal never waits on Payment while it holds the link: `NOWAIT` turns a held
@@ -9134,19 +9197,31 @@ switch a newer one off. It takes no advisory key, so `INV-LOCK-001`,
 row, and nothing else is taken while it is held, except the `Payment` row a
 bank-transfer write takes before it (#4449, below). A
 same-invoice link at an older amount stays active; the recount keeps the
-newest. A voided reading, or a live reading a stored void or a newer snapshot
-refuses, turns nothing off.
+newest. A live reading a stored void or a newer snapshot refuses turns nothing
+off, nor does a voided reading of any note but a modification note. #5289 A
+(owner decision D1): a VOIDED or DELETED reading of a modification note lists
+nothing, so every allocation link of the note still active goes off, each
+through the same write as a removal (its payment's `Payment` row, then the
+link, then the decision below); the payments it decided join the sync's
+recount (`held.recountedPaymentIds`, one floor alert per sync attempt). The
+links are found by `active: true` (`bankTransferPaymentsOfNoteAllocations`), so
+a sync stopped after the first of two finishes the second on its retry.
 
 **The allocation write decides a bank-transfer total (#4449).** For a
 modification note, an allocation write, turning a link on or (review item 4)
-off, whose invoice is the one invoice of exactly one payment, a bank-transfer
-one, takes that `Payment` row FIRST (`lockPaymentForRefundedTotal`,
+off, whose invoice names exactly one bank-transfer payment by the settle's own
+rule (#5289 C, `bankTransferPaymentIdsOfInvoices`: its own invoice id or an
+active `PRIMARY_INVOICE` link), takes that `Payment` row FIRST (`lockPaymentForRefundedTotal`,
 `FOR NO KEY UPDATE`), then reserves and locks its allocation row as above,
 writes it, and decides the payment's whole refunded total under the row
-(`decideLinkedRefundedTotalCents`, then `decideXeroRefundedColumns`: the clamp,
-the bank-transfer floor of `INV-ADDPAY-021`, the status rule). Under the lock it
-first re-reads the payment and re-counts the payments holding that invoice;
-if it is no longer the one bank-transfer payment there, it decides nothing.
+(`decideLinkedRefundedTotalCents`, then `decideXeroRefundedColumns`: the clamp
+of the Xero figure, the card raise-only floor (#5289 E), the bank-transfer
+floor of `INV-ADDPAY-021` with the corrections counted (#5289 D), the status
+rule). A payment's total counts one invoice's allocations, its own or the one
+its only link names (`decisionInvoiceIdsOf`), the one the settle decides it
+with. Under the lock it first re-reads the payment and asks the same rule on
+its transaction; if it is no longer that invoice's one bank-transfer payment,
+it decides nothing.
 It writes through a claim on the row as re-read (status, refunded total,
 `updatedAt`) whenever the total or status changes or the link was written,
 and always moves `updatedAt` forward, so a lock-free recount that read the
@@ -9169,15 +9244,60 @@ takes a `CREDIT_NOTE` link and then the `Payment` row, both `NOWAIT`. No
 writer takes an allocation row and then a `Payment` row, so none is a cycle.
 A settle that commits first is read by the write, whose re-decided total counts
 the receipt it captured; a write that commits first is read by the settle. A
-card payment, an invoice matched to several payments, or one found only by its
-link takes no `Payment` row here and is decided by the recount alone.
+card payment, or an invoice matched to several bank-transfer payments, takes no
+`Payment` row here and is decided by the recount alone; since #5289 C a payment
+found only by its link is locked and decided like any other.
 
-Not serialised on the `Payment` row: the modification note's own status write
-(its `MODIFICATION_CREDIT_NOTE` link, a void included) goes through the link
-funnel with its link row only. A settle holding the row can still count a note
-voided while it runs; the cancel queued behind it then reads a net too low by
-that note (it under-refunds, never over-refunds), until the sync's own recount
-corrects the total after its commit. Main counted live links the same way.
+**The app's own allocation of a note decides it too (#5289 B).** When the app
+creates an edit's (or a clearing) note and allocates it, or a retry finishes
+that allocation, the completion's links carry `NOTE_ALLOCATION_ROLE`.
+`completeXeroSyncOperation` hands such a completion to `completeUnderPaymentRows`
+(`xero-payment-first-completion.ts`), the transaction #4279 opened for a
+refund note's pointer: every `Payment` row either intent names, as one sorted
+set (the adopted note's payment, and the one bank-transfer payment of each
+allocated invoice by the settle's rule), then the operation row's guarded
+claim, then the links, then each payment's whole total decided under its row
+(`decideBankTransferRefundedTotal`, moving `updatedAt`). A claim refused before
+its links writes and decides nothing; a success refused on a later claim's row
+that still records its links decides; a PARTIAL decides for the links it
+carries. An injected store is refused. Budget:
+`PAYMENT_ROW_WAIT_TRANSACTION_OPTIONS`; the floor alert goes out after the
+commit. Order (`INV-LOCK-002`): `Payment` rows, then the `XeroSyncOperation`
+row, then link rows; no writer takes an operation row and then a `Payment`
+row (the settle, the refund-note record and resolve take `Payment` first), so
+none is a cycle. `advisory-lock-guard.test.ts` keeps every writer of the role
+on one of these two paths, bar one: the booking repair tool's link backfill
+(`xero-booking-repair-passes.ts`) takes no `Payment` row, so it takes the link
+row alone (`FOR UPDATE`) and never switches a retired row back on (an
+operator's review instead); a missing row it creates bare, with no amounts, so
+it counts nothing until the note's sync writes it. A removal waits on that row
+lock; neither takes a `Payment` row after the link, so no cycle.
+
+**A note's own status is written under its `Payment` rows (#5251).** Owner
+decision, 28 Nov 2026. The inbound sync writes a modification note's own
+`MODIFICATION_CREDIT_NOTE` link (its status, a void included) through
+`writeCreditNoteLinks` (`modification-note-status-write.ts`). When the write
+changes whether the note counts (a cancelled reading, or a live one over a
+link that is missing, off or cancelled), it first takes the `Payment` row of
+every bank-transfer payment the note's active allocations name
+(`bankTransferPaymentsOfNoteAllocations`, the removal's read), ids sorted,
+then writes the note's link rows in one fixed order, then decides each total
+under the rows (`decideBankTransferRefundedTotal`, moving `updatedAt`), all in
+one transaction with `PAYMENT_ROW_WAIT_TRANSACTION_OPTIONS`. The payments are
+read again under the rows; an allocation committed in between that names a
+payment not held rolls the write back, and it runs again (three attempts,
+then the event is retried). A settle holding a row has either committed before
+the status changes, and its total is decided again here, or waits and reads
+the status this write left; the cancel queued on `lock(1)` reads that total.
+A live reading over a live link changes nothing a total reads and keeps the
+funnel's own write with no `Payment` row, so the sync's first wait on the row
+is still its allocation write or removal, and a newer reading's removal still
+decides straight after the settle it queued behind. The note's other links
+keep the funnel (a refund note's void takes its row there, #4200). Order
+(`INV-LOCK-002`): `Payment` rows, then link rows, as the allocation write; no
+new key, and `lockPaymentForRefundedTotal` is still the one statement.
+`kept-settle-queued-cancel.realdb.test.ts` drives a void before and during the
+settle (VOID cases); without the rows the queued reader sees the note counted.
 
 Inside the settle's or the write's own transaction (READ COMMITTED), #4370's
 failed-later card refund reads (`readFailedCardRefundRecountCentsIn`) are taken
@@ -9186,7 +9306,8 @@ throws and its event is retried: a refund note's link write takes no `Payment`
 row, so it can commit between those statements. The recount reads them in one
 read-only snapshot. `kept-settle-queued-cancel.realdb.test.ts` drives both
 commit orders and a fold above the rows, each with a writer queued on `lock(1)`
-and the `Payment` row; `kept-settle-failed-card-refund.realdb.test.ts` drives a
+and the `Payment` row, through the real inbound sync (#5289 G), for a payment
+named only by its link (C) and for the outbound completion (B); `kept-settle-failed-card-refund.realdb.test.ts` drives a
 keep over a failed-later card refund on a bank transfer.
 
 **Mixed releases.** The own-row-first order is consistent within this release;

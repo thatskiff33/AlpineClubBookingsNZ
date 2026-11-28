@@ -31,7 +31,7 @@ vi.mock("@/components/admin/occupancy-calendar", () => ({
   OccupancyCalendar: () => <div data-testid="occupancy-calendar" />,
 }))
 
-import RosterPage from "@/app/(admin)/admin/roster/page"
+import RosterPage from "@/app/(admin)/admin/lodge-ops/roster/page"
 import type { ReactNode } from "react"
 import { ClubTimeProvider } from "@/components/club-time-provider"
 import { ENVIRONMENT_CLUB_ZONE } from "@/lib/__tests__/helpers/environment-club-zone"
