@@ -516,19 +516,29 @@ signals come from it, or from the daily credit check:
   whose figures do not match, or could not be compared. The row names the
   kind of mismatch and the booking. Admins who receive payment failure alerts
   are emailed the first time each one is found, never again for the same one.
-  A person with server access runs `pnpm run booking-ledger:census` for the
-  full report; the app does not fix these itself.
+  If that email fails, or no admin is set to receive it, the run shows a
+  warning on [Background Jobs](background-jobs.md) and a later night tries
+  again. A person with server access runs `pnpm run booking-ledger:census`
+  for the full report; the app does not fix these itself.
 - **Known booking money classes not acknowledged** (Info): known history the
   club's owner has not yet signed off. These are not new faults. The server
-  has no copy of the owner's sign-off file, so they stay listed.
+  has no copy of the owner's sign-off file, so they stay listed. Nothing you
+  do in the app clears them, so they are left out of the Stuck States number
+  in the admin sidebar.
 - **Money check did not run** (Warning): the latest nightly run failed, or
   there has been no good run for more than 36 hours. Anything else the check
   shows is from its last good run. Open [Background Jobs](background-jobs.md)
-  for the error.
+  for the error. A check that has never run, as on a new installation before
+  its first night, shows nothing here; Background Jobs lists it as missing.
 - **Members with negative credit** and **Cancelled bookings still holding
   credit** (Critical): account credit that should not be possible. Open the
   member's credit history, or the booking, to find the cause before anyone
   runs the repair described in the maintenance guide.
+
+The same nightly run also counts bookings whose price records do not
+reconcile. That count names no booking, so it is a sentence on the first two
+signals and never a signal alone. A Finance report shows the same count for
+the dates it covers, and `pnpm run booking-money:census` prints the breakdown.
 
 ## Settings reference
 
@@ -561,9 +571,10 @@ Jobs](background-jobs.md) for operations the app is still retrying.
 
 The named rows are membership-roll detail, so they appear **only if you also
 have Membership view access**. The payment rows also show amounts, so they need
-**Finance view as well**. The money check rows need only Membership view; a
-credit amount on them shows only with Finance view too. An admin without them sees the same signal and the
-same count — just not the names or links. This keeps the queue useful to
+**Finance view as well**. The money check rows put a member or a booking's
+owner beside a money fact, so they need both too. An admin without them sees
+the same signal and the same count — just not the names or links. This keeps
+the queue useful to
 support staff (they can see a problem exists and hand it on) without widening
 who can read the membership roll or the club's money.
 

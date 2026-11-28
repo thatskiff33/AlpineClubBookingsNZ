@@ -4579,12 +4579,12 @@ Xero note mints one when spent), **`INV-CONFIG-008`** (the Exempt line).
   totals), once-ever claims in `AlertCooldown`, and the alert's email rows.
 - **Each finding alerts once.** A finding is a census class on a booking. The
   first night it is seen, one admin email names it, never again. A night
-  with nothing new sends nothing; a failed send is retried the next night,
-  and the run carries a warning on Background Jobs.
+  with nothing new sends nothing. A send that failed or reached nobody is
+  retried; its run warns on Background Jobs.
 - **No acknowledgements on the server.** Every finding is reported. Drift
   (disagreements, coverage gaps, integrity findings) is a critical Stuck
   States item; known-class instances are an info item, as the census's
-  unacknowledged count, not an emergency.
+  unacknowledged count, not an emergency, nor in the sidebar's count.
 - **A check that stopped never reads as clean.** A failed or stale latest
   run (the cron-health classifier's answer) shows "Money check did not run",
   beside the last good run's findings.
@@ -4594,7 +4594,7 @@ Xero note mints one when spent), **`INV-CONFIG-008`** (the Exempt line).
   job still reports both to Sentry and heals nothing.
 - **Still operator-run:** the full report and the owner's `--acknowledged`
   file (`pnpm run booking-ledger:census`), `--fail-on-gap`, and every repair.
-- Names need membership view (#2823); credit amounts, finance view too.
+- Named rows need membership and finance view (`INV-PAY-156`).
 - Proven by `cron-booking-money-census.test.ts`,
   `stuck-state-money-signals.test.ts`, `stuck-state-dashboard.test.ts` and
   `cron-booking-money-census.realdb.test.ts`.

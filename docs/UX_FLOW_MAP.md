@@ -1062,9 +1062,9 @@ Shows: Operational incidents and guided repair actions.
 Journey: Inspect flagged records and follow each one's documented recovery.
 A signal over particular bookings lists them under it (at most 50, then "and N
 more"), each linking to the booking; its **Open** link goes to that list, or to
-Background Jobs for operations still retrying (#4959). Payment lists need
-Finance and Membership view; unnamed-guest and money check (#4910) lists,
-Membership view.
+Background Jobs for operations still retrying (#4959). Payment and money check
+(#4910) lists need Finance and Membership view; unnamed-guest lists, Membership
+view.
 A card refund Stripe gave up on is settled on its row, never with a new Stripe
 dashboard refund (#4368): **Paid another way**, or **Try the card again** after a
 confirm dialog; a row a later Stripe refund covers reads "nothing left owed" and
