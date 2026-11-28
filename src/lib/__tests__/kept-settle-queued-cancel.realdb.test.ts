@@ -27,6 +27,11 @@
  * first and decides the total under it, so whichever commits second counts the
  * correction, and the cancel queued behind both reads it.
  *
+ * #5251 (owner decision 28 Nov 2026): the note's own status write takes the
+ * Payment rows the note is counted on before it writes the status, and
+ * decides each total again under them, so a note voided while the settle runs
+ * is never counted by the settle and then read by a queued cancel (VOID cases).
+ *
  * Each case seeds the booking, payment, invoice link and edit notes as their
  * writers leave them (the shapes `ib-settle-from-cash.realdb.test.ts`
  * documents), stalls one writer on a row a holder transaction keeps locked,
@@ -39,7 +44,7 @@
  */
 import type { PrismaClient } from "@prisma/client";
 import type { Invoice } from "xero-node";
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { releaseBookingJournalForTeardown } from "./support/booking-financial-history-teardown";
 import { syncFakeXeroCreditNote } from "./support/fake-xero-credit-note-sync";
 
@@ -278,6 +283,35 @@ async function removeAllocation(ids: NoteIds, noteCents: number): Promise<void> 
     allocations: [],
     payments: [],
   });
+}
+
+/**
+ * #5251: the REAL inbound credit-note sync of a newer reading that voids the
+ * note in Xero. It writes the note's own status first, then removes the
+ * allocation (#5289 A).
+ */
+async function voidNote(ids: NoteIds, noteCents: number): Promise<void> {
+  await syncFakeXeroCreditNote({
+    creditNoteID: ids.noteId,
+    creditNoteNumber: `CN-${ids.noteId}`,
+    status: "VOIDED",
+    total: noteCents / 100,
+    appliedAmount: 0,
+    remainingCredit: 0,
+    updatedDateUTC: new Date("2026-06-30T12:00:00.000Z"),
+    allocations: [],
+    payments: [],
+  });
+}
+
+/** The note's own `MODIFICATION_CREDIT_NOTE` link on its edit, as committed. */
+function noteLinkWhere(ids: NoteIds) {
+  return { localModel: "BookingModification", localId: ids.modificationId, xeroObjectType: "CREDIT_NOTE", xeroObjectId: ids.noteId, role: "MODIFICATION_CREDIT_NOTE" };
+}
+
+async function noteLinkStatus(ids: NoteIds): Promise<unknown> {
+  const link = await prisma.xeroObjectLink.findFirst({ where: noteLinkWhere(ids), select: { metadata: true } });
+  return (link?.metadata as Record<string, unknown> | null)?.status;
 }
 
 /** Whether the note's allocation link on the invoice is active. */
@@ -643,6 +677,94 @@ async function paymentFigures() {
       allocationRow.release();
       await allocationRow.done;
       await removing.catch(() => undefined);
+      await settling;
+      await reading?.catch(() => undefined);
+    }
+    expect(await paymentFigures()).toMatchObject({ refundedAmountCents: 0, status: "SUCCEEDED" });
+  }, 60_000);
+
+  it("MUTATION (#5251) VOID DURING THE SETTLE: the note voided in Xero while the settle holds the Payment row writes its status only once it has the row, after the settle, and decides the total under it, before a writer queued on lock(1) reads it", async () => {
+    await bookInvoicedAndCutTo(20_000);
+    await queueModificationNote(CORRECTION, 10_000, { noteWording: "invoice-correction" });
+    await syncNote(CORRECTION, 10_000);
+    // Stop the sync after its status write, before its allocation removal (#5289 A) could decide the total instead.
+    const retire = await import("@/lib/xero-inbound/retire-unlisted-credit-note-allocations");
+    const original = retire.writeCurrentCreditNoteAllocations;
+    let paused = false;
+    let resume!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      resume = resolve;
+    });
+    const pause = vi.spyOn(retire, "writeCurrentCreditNoteAllocations").mockImplementation((async (...args: Parameters<typeof original>) => {
+      paused = true;
+      await gate;
+      return original(...args);
+    }) as typeof original);
+
+    const receipt = await holdReceiptRow();
+    const settling = settleKept([{ id: CORRECTION.noteId, cents: 10_000 }]);
+    let voiding: Promise<void> | null = null;
+    let reading: Promise<number> | null = null;
+    try {
+      const [settlePid] = await untilQueuedBehind(receipt.pid);
+      // The settle has read the note live and counts it; the treasurer voids it in Xero now.
+      voiding = voidNote(CORRECTION, 10_000);
+      await untilQueuedBehind(settlePid, { unless: () => paused });
+      expect(await noteLinkStatus(CORRECTION)).toBe("AUTHORISED");
+      reading = readQueuedOnCancelLocks();
+      await untilQueuedBehind(settlePid, { count: paused ? 1 : 2 });
+      receipt.release();
+      // The settle committed $100; the status write, next on the Payment row, took it back off.
+      expect(await reading).toBe(0);
+      resume();
+      await voiding;
+      expect(await noteLinkStatus(CORRECTION)).toBe("VOIDED");
+    } finally {
+      resume();
+      receipt.release();
+      await receipt.done;
+      await settling;
+      await voiding?.catch(() => undefined);
+      await reading?.catch(() => undefined);
+      pause.mockRestore();
+    }
+    expect(await paymentFigures()).toMatchObject({ refundedAmountCents: 0, status: "SUCCEEDED" });
+  }, 60_000);
+
+  it("MUTATION (#5251) VOID BEFORE THE SETTLE: the status write holds the Payment row while the settle waits on it, and the keep, second, reads the note voided and counts no correction, before a writer queued on lock(1) reads it", async () => {
+    await bookInvoicedAndCutTo(20_000);
+    await queueModificationNote(CORRECTION, 10_000, { noteWording: "invoice-correction" });
+    await syncNote(CORRECTION, 10_000);
+    const where = noteLinkWhere(CORRECTION);
+
+    // Hold the note's own link row, so the status write parks on it after it has taken the Payment row.
+    const noteRow = await holdLocks((tx) =>
+      tx.$queryRaw`
+        SELECT 1 FROM "XeroObjectLink"
+        WHERE "localModel" = ${where.localModel} AND "localId" = ${where.localId} AND "xeroObjectType" = ${where.xeroObjectType}
+          AND "xeroObjectId" = ${where.xeroObjectId} AND "role" = ${where.role}
+        FOR UPDATE`,
+    );
+    let settling: Promise<unknown> | null = null;
+    let settled = false;
+    let reading: Promise<number> | null = null;
+    const voiding = voidNote(CORRECTION, 10_000);
+    try {
+      const [voidPid] = await untilQueuedBehind(noteRow.pid);
+      settling = settleKept([{ id: CORRECTION.noteId, cents: 10_000 }]).finally(() => {
+        settled = true;
+      });
+      const [settlePid] = await untilQueuedBehind(voidPid, { unless: () => settled });
+      reading = readQueuedOnCancelLocks();
+      if (settlePid) await untilQueuedBehind(settlePid);
+      noteRow.release();
+      expect(await reading).toBe(0);
+      await voiding;
+      expect(await noteLinkStatus(CORRECTION)).toBe("VOIDED");
+    } finally {
+      noteRow.release();
+      await noteRow.done;
+      await voiding.catch(() => undefined);
       await settling;
       await reading?.catch(() => undefined);
     }
