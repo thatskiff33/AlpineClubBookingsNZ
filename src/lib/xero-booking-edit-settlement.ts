@@ -9,12 +9,10 @@ import {
   wouldQueueCheckInDatedInvoiceUpdate,
 } from "@/lib/xero-booking-edit-conditions";
 import {
-  enqueueXeroBookingInvoiceOperation,
   enqueueXeroBookingInvoiceUpdateOperation,
   enqueueXeroModificationAccountCreditNoteOperation,
   enqueueXeroModificationCreditNoteOperation,
   enqueueXeroRefundCreditNoteOperation,
-  kickQueuedXeroOutboxOperationsIfConnected,
   recordSkippedXeroBookingInvoiceUpdateOperation,
 } from "@/lib/xero-operation-outbox";
 import {
@@ -28,11 +26,18 @@ import {
   type RefundMethod,
 } from "@/lib/xero-refund-method";
 import { followSupersededAskInvoicesForIntentSafely } from "@/lib/superseded-ask-invoice-carry";
+import { kickQueuedXeroOperation, queueEditPrimaryInvoice } from "@/lib/xero-booking-edit-primary-invoice";
 
 type XeroBookingEditFinancialAction =
   | { type: "none"; reason: string }
   | {
       type: "primary-invoice";
+      /**
+       * #5288: the invoice bills an Internet Banking increase, so the booking's
+       * applied credit is allocated against it, as an Internet Banking create's
+       * is (#1620); the member owes only what is left.
+       */
+      allocateAppliedCredit: boolean;
       reason: string;
     }
   | {
@@ -123,6 +128,15 @@ export interface ClassifyXeroBookingEditSettlementInput {
   datesChanged?: boolean;
   guestIdentityChanged?: boolean;
   createPrimaryInvoiceWhenMissing?: boolean;
+  /**
+   * #5288 (`INV-PAY-163`): the settlement's `primaryInvoiceBillsIncrease`. An
+   * Internet Banking increase with no primary invoice linked is billed by
+   * raising that invoice now - it bills the price plus every recorded fee -
+   * with the applied credit allocated against it. Every door that settles
+   * through `applyPaymentAdjustments` passes it: dates, batch, guest removal,
+   * guest acceptance.
+   */
+  primaryInvoiceBillsIncrease?: boolean;
   requiresAdditionalStripePayment?: boolean;
   additionalPaymentIntentId?: string | null;
   settlementMethod?: "card" | "credit" | null;
@@ -225,15 +239,23 @@ export function classifyXeroBookingEditSettlement(
 
   let financialAction: XeroBookingEditFinancialAction;
   if (!input.hasIssuedXeroInvoice) {
-    financialAction = input.createPrimaryInvoiceWhenMissing
+    financialAction = input.primaryInvoiceBillsIncrease
       ? {
           type: "primary-invoice",
-          reason: "No original Xero invoice exists, so the edit should create the primary booking invoice.",
+          allocateAppliedCredit: true,
+          reason:
+            "No primary Xero invoice is linked, so the edit raises it now: it bills the price and every recorded fee, this edit's increase included.",
         }
-      : {
-          type: "none",
-          reason: "No original Xero invoice exists for this booking edit.",
-        };
+      : input.createPrimaryInvoiceWhenMissing
+        ? {
+            type: "primary-invoice",
+            allocateAppliedCredit: false,
+            reason: "No original Xero invoice exists, so the edit should create the primary booking invoice.",
+          }
+        : {
+            type: "none",
+            reason: "No original Xero invoice exists for this booking edit.",
+          };
   } else if (xeroNetAmountCents > 0) {
     const waitForPaymentIntentId =
       input.requiresAdditionalStripePayment ? input.additionalPaymentIntentId ?? null : null;
@@ -374,12 +396,6 @@ export function classifyXeroBookingEditSettlement(
   };
 }
 
-async function kickQueuedXeroOperation(queued: { queueOperationId: string | null }) {
-  if (queued.queueOperationId) {
-    await kickQueuedXeroOutboxOperationsIfConnected({ limit: 1 });
-  }
-}
-
 /**
  * #3809: the allocated note for applied credit given back beside another note
  * on the same edit. Scoped by the existing per-share key slot
@@ -411,11 +427,7 @@ export async function queueXeroBookingEditSettlement(
   let supplementaryInvoice: XeroSupplementaryInvoiceEnqueueOutcome = "none";
 
   if (decision.financialAction.type === "primary-invoice") {
-    const queued = await enqueueXeroBookingInvoiceOperation(input.bookingId, {
-      createdByMemberId: input.createdByMemberId,
-      invoiceEmailDelivery: null,
-    });
-    await kickQueuedXeroOperation(queued);
+    await queueEditPrimaryInvoice(input, decision.financialAction.allocateAppliedCredit);
   } else if (decision.financialAction.type === "supplementary-invoice") {
     if (
       input.requiresAdditionalStripePayment &&

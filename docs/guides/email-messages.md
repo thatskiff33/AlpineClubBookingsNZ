@@ -140,7 +140,12 @@ payment we asked for has been cancelled, so you no longer need to pay it."
 booking the club asks by card it reads "An additional payment of $X is
 required.", also while the card request waits to be retried; on a booking paid
 by internet banking it names an Internet Banking payment against the Xero
-invoice; any other amount still to pay is named without a method (#4052).
+invoice; any other amount still to pay is named without a method (#4052). On a
+booking paid with account credit whose Xero invoice is not linked yet, the
+change raises that invoice, and the sentence reads "The amount now due on this
+booking is $X by Internet Banking. This replaces any earlier amount we asked
+for.": $X is the whole amount the invoice will show as due, so a member edited
+twice is told one figure, not two to add up (#5288).
 
 `{{paymentNote}}` on the **Your Request Was Approved** message (an approved
 booking-rule exception that created a new booking) says what is left to pay, and
@@ -571,7 +576,9 @@ you want both reworded; editing only one leaves the other on its built-in text.
 > charge of a saved card, an officer's confirmation of pending guests (which
 > still sends only when the officer asks), a bank transfer, and the recovery
 > of a card payment found already taken. A zero-balance confirmation follows
-> the same rules since the next note. During the
+> the same rules since the next note, and the charge of a saved card and the
+> recovery of a card payment found already taken since the card recovery doors
+> note below. During the
 > switch to this version a server still running the version before it sends
 > the confirmation as it always did, so an owner can be sent two: one by this
 > version after Stripe's notice, and one by the older server's scheduled job.
@@ -644,6 +651,34 @@ you want both reworded; editing only one leaves the other on its built-in text.
 > During the switch to this version, a server still running the version
 > before it sends these emails as it always did, with nothing kept for a
 > later run.
+
+> **Upgrade note (#5433, the card recovery doors).** Three ways a card payment
+> confirms a booking sent the member no **Booking Confirmed** email at all, and
+> now send it on the same rules as a card payment on the booking page (above):
+>
+> - a card payment the member made whose notice from Stripe did not reach the
+>   app, found when the member comes back to the pay step;
+> - the same for a payment made through the booking's payment link, found
+>   when the link is used again;
+> - a charge of a saved card through the charge-saved-method route, whether
+>   an officer or an authorised scheduled call starts it (owner decision,
+>   28 Nov 2026).
+>
+> Before, these sent nothing, and Stripe's notice arriving afterwards found the
+> booking already paid and sent nothing either, so the member was told only
+> when Stripe's notice happened to confirm the booking first. Now the member
+> gets one confirmation, whichever of these or Stripe's notice confirms the
+> booking first. If the app is interrupted after the payment is
+> saved, a later run of the email retry job (every 30 minutes) sends it, until
+> the end of the check-in day or for seven days after the payment if that
+> comes first, and officers get **Booking confirmation not sent** when it could
+> not be sent in time, did not reach the owner, or the owner cannot be emailed
+> at all, as for every card payment (owner decisions, 23 and 25 Nov 2026). The
+> booking's Xero invoice is queued first, as before.
+>
+> An officer's confirmation of pending guests is unchanged: it still sends only
+> when the officer asks. During the switch to this version, a server still
+> running the version before it sends nothing for these three, as before.
 
 ## Settings reference
 

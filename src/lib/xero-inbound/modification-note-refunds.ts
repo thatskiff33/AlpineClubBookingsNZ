@@ -5,7 +5,7 @@
  * module's `repairRefundedPaymentBusinessState` is the one consumer of the
  * payment-side helpers here, and `credit-note.ts` calls the note-side one.
  */
-import { PaymentStatus, PaymentTransactionKind, type Prisma } from "@prisma/client";
+import { PaymentSource, PaymentStatus, PaymentTransactionKind, type Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import logger from "@/lib/logger";
 import { isCapturedTransactionStatus, latestTransactionOfKind } from "@/lib/payment-transaction-status";
@@ -14,6 +14,7 @@ import { getNextRefundedPaymentStatus } from "./amounts";
 import { invoiceCorrectionNoteIds, noCashModificationNoteIds } from "./account-credit-modification-notes";
 import { paymentsCountingInvoiceCorrections } from "./linked-refunded-total";
 import { NOT_CARD_REFUND_REVERSAL_INVOICE_LINK } from "@/lib/xero-card-refund-reversal-outbox";
+import { decisionInvoiceIdsOf } from "./bank-transfer-payment-of-invoice";
 
 async function resolvePaymentIdsByInvoiceTargets(
   creditNoteId: string,
@@ -73,7 +74,21 @@ async function resolvePaymentIdsByInvoiceTargets(
       },
     });
 
+    // #5289 C: a bank-transfer payment found by its link counts the note only on its one invoice
+    // (`decisionInvoiceIdsOf`), as `decideLinkedRefundedTotalCents` counts its earlier notes, never
+    // on an older invoice it is still linked to, and nowhere while it has no one invoice (two primary
+    // invoice links, say), since the decision would count nothing for it. One found by its own invoice
+    // id already is. A card payment found only by its link keeps the earlier rule: any linked invoice.
+    const linkedPayments = linkedMatches.length === 0 ? [] : await prisma.payment.findMany({
+      where: { id: { in: [...new Set(linkedMatches.map((link) => link.localId))] } },
+      select: { id: true, source: true, xeroInvoiceId: true },
+    });
+    const decisionInvoiceIds = await decisionInvoiceIdsOf(linkedPayments);
+    const linkOnlyNonBankPayments = new Set(linkedPayments
+      .filter((payment) => payment.source !== PaymentSource.INTERNET_BANKING && !payment.xeroInvoiceId)
+      .map((payment) => payment.id));
     for (const link of linkedMatches) {
+      if (decisionInvoiceIds.get(link.localId) !== link.xeroObjectId && !linkOnlyNonBankPayments.has(link.localId)) continue;
       const ids = paymentIdsByInvoiceId.get(link.xeroObjectId) ?? new Set<string>();
       ids.add(link.localId);
       paymentIdsByInvoiceId.set(link.xeroObjectId, ids);

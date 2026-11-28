@@ -498,8 +498,9 @@ describe("N-11: retryFailedEmails", () => {
     expect(result.retried).toBe(1);
     expect(result.succeeded).toBe(0);
     expect(result.failed).toBe(1);
-    expect(mockPrisma.emailLog.update).toHaveBeenCalledWith({
-      where: { id: "log-fail-2" },
+    expect(mockPrisma.emailLog.updateMany).toHaveBeenCalledWith({
+      // #5298: restored to FAILED only while the row is as this run claimed it.
+      where: expect.objectContaining({ id: "log-fail-2", status: "QUEUED", handoverState: "STARTED" }),
       data: expect.objectContaining({
         attempts: 3,
         errorMessage: "SMTP error",
@@ -531,8 +532,9 @@ describe("N-11: retryFailedEmails", () => {
     const result = await retryFailedEmails();
 
     expect(result).toEqual({ retried: 1, succeeded: 0, failed: 1 });
-    expect(mockPrisma.emailLog.update).toHaveBeenCalledWith({
-      where: { id: "log-fail-3" },
+    expect(mockPrisma.emailLog.updateMany).toHaveBeenCalledWith({
+      // #5298: restored to FAILED only while the row is as this run claimed it.
+      where: expect.objectContaining({ id: "log-fail-3", status: "QUEUED", handoverState: "STARTED" }),
       data: expect.objectContaining({
         attempts: 3,
         errorMessage: "SMTP error",

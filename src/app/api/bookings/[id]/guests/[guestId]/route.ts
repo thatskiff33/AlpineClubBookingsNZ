@@ -367,7 +367,7 @@ export async function DELETE(
         // promo the remaining guests relied on (#1042). #4052: a card ask is
         // named as one even while its failed mint waits for its retry - never
         // as Internet Banking because no intent came back.
-        ...additionalTerms,
+        ...additionalTerms, paymentReference: result.booking.payment?.reference ?? null, // #5288: the only ask may be this email
         billedToOrganiserCents: result.billedToOrganiserCents, // #4299
       }, format).catch((err) =>
         logger.error({ err, bookingId }, "Failed to send booking modified email")

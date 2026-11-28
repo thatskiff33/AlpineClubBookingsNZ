@@ -1000,8 +1000,8 @@ decision, 18 Nov 2026).
   `INV-LOCK-002`); the `AlertCooldown` row lock serialises, registered in the
   writer index (`INV-LOCK-003`). The confirm holds no provider call.
 - **Known limits, not owner-accepted:** an alert raised while every database
-  write fails is only logged (#5297); an email row a crash left `QUEUED` is
-  never sent (#5298); if one recipient's row write fails while another's
+  write fails is only logged (#5297); an email row a crash leaves `QUEUED` is
+  settled by `INV-INT-043`; if one recipient's row write fails while another's
   commits, the claim is kept and that recipient gets nothing, with no `FAILED`
   row to retry.
 
@@ -1010,3 +1010,39 @@ Pinned by `admin-alert-once-lost-cases.test.ts`, `admin-alert-once.test.ts`,
 `admin-alert-once-census.test.ts`, `alert-cooldown.test.ts`,
 `attempt-log-once-ever-claim.test.ts` and, against real PostgreSQL,
 `admin-alert-once-sweep.realdb.test.ts`.
+
+## Emails a crash left QUEUED (#5298)
+
+### INV-INT-043
+
+After a crash, only a `QUEUED` email provably never handed to the mail server can be
+resent automatically (#5298).
+
+- **Claim.** The sender must win `PENDING` at attempt 1 to `STARTED` before sending;
+  `handover_lost` sends nothing. Sender and replay writes check row ownership. Retry
+  claims write `STARTED`. SES offers no idempotency key or delivery confirmation here.
+- **Sweep.** Each 30-minute retry run checks up to 50 rows past
+  `strandedQueuedAfterMs()`, ignoring rows older than seven days. Guarding each write
+  against the row as read, it releases unclaimed first attempts for owner-retried alerts
+  to their owner; otherwise it queues retained bodies for replay or flags **Never sent**
+  without one. All other cases, including legacy rows and ambiguous commits, are flagged
+  `UNCONFIRMED`. Both flags alert officers. Only an officer's **Try again** resends
+  unconfirmed mail, with a duplicate warning. Unconfirmed keyed mail counts as told.
+- **Callers.** Normally `handover_lost` counts as owed to the retry job. For
+  owner-retried alerts it does not. If another recipient received the alert or the job
+  holds another copy, the sender hands lost copies to the job because the owner stops
+  retrying.
+- **No new lock** (`INV-LOCK-001`); in the writer index (`INV-LOCK-003`).
+- **Known limits.** Only a log line records a lost copy the sender hands to the job if
+  that write fails or the sweep claimed the row first (the sender stalled past the
+  threshold). Release depends on the owner retrying: a past-cutoff marker beyond its
+  hard ceiling clears unsent. `owedOfficerAlertOutcome` alerts (bump, waitlist, hold-ended
+  cancellation, saved-card-unusable) may arrive twice after a crash under their
+  at-least-once contract. Classifying them as owner-retried would lose alerts when every
+  hand-over fails without a crash.
+
+Pinned by `handover.test.ts`, `durable-email-idempotency.test.ts`,
+`cron-email-retry.test.ts`,
+`email-failure-review-queue.test.ts`, `email-deliverability-section.test.tsx`,
+`admin-alert-audience.test.ts`, `admin-alert-once-census.test.ts` and
+`stranded-queued-email.realdb.test.ts` (PostgreSQL).

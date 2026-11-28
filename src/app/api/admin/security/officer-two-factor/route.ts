@@ -19,6 +19,11 @@ import {
 import { prisma } from "@/lib/prisma";
 import { requireRecentAuth } from "@/lib/require-recent-auth";
 import { requireAdmin } from "@/lib/session-guards";
+import {
+  OFFICER_TWO_FACTOR_POLICY_CONNECTION_SHAPE,
+  type OfficerTwoFactorPolicyAnswer,
+} from "@/lib/connection-shapes/support-system";
+import { connectionJson } from "@/lib/mcp-connection-request";
 
 const AREA = "support" as const;
 
@@ -37,15 +42,16 @@ function hidden() {
   return NextResponse.json({ error: "Not found" }, { status: 404 });
 }
 
-export async function GET() {
+export async function GET(request: Request) {
   if (!OFFICER_SIGN_IN_ENFORCED) return hidden();
   const guard = await requireAdmin({ permission: { area: AREA, level: "view" } });
   if (!guard.ok) return guard.response;
   const policy = await loadLoginSecurityRefresh();
-  return NextResponse.json({
+  const answer: OfficerTwoFactorPolicyAnswer = {
     officerTwoFactorPolicy: policy.officerTwoFactorPolicy,
     officerTwoFactorGraceDays: policy.officerTwoFactorGraceDays,
-  });
+  };
+  return connectionJson(request, answer, OFFICER_TWO_FACTOR_POLICY_CONNECTION_SHAPE);
 }
 
 export async function PUT(request: Request) {

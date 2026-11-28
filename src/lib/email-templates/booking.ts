@@ -24,7 +24,7 @@ import {
 } from "@/lib/booking-money-lines";
 import type { PromoCodeAdjustment } from "@/lib/booking-promo-redemptions";
 import { bookingCancelledRefundMade, bookingCancelledRefundSentence, type BookingCancelledRefundMethod } from "@/lib/booking-modified-email-copy";
-import { type BookingModifiedRefundDestination, bookingModifiedRefundPending, bookingModifiedRefundSentence, organiserBilledSentence } from "@/lib/booking-modified-email-copy";
+import { type BookingModifiedRefundDestination, bookingModifiedRefundPending, bookingModifiedRefundSentence, internetBankingAskSentence, organiserBilledSentence } from "@/lib/booking-modified-email-copy";
 import { appliedCreditGiveBackNote, unpaidAskCancelledNote } from "@/lib/booking-credit-give-back-copy";
 import { escapeHtml } from "./escape";
 import {
@@ -451,7 +451,7 @@ export function bookingModifiedTemplate(params: {
   additionalAmountCents: number;
   billedToOrganiserCents?: number; // #4299: invoiced to the group organiser instead (see `sendBookingModifiedEmail`)
   unpaidAskCancelled: boolean; // #3954: the drop cancelled the unpaid additional payment; required
-  additionalPaymentMethod?: "STRIPE" | "INTERNET_BANKING";
+  additionalPaymentMethod?: "STRIPE" | "INTERNET_BANKING"; asksAmountNowDue?: boolean; // #5288: see `internetBankingAskSentence`
   paymentReference?: string | null;
   xeroInvoiceNumber?: string | null;
   // #2390: see bookingModificationSummaryRows — it renders as one more change
@@ -544,7 +544,7 @@ export function bookingModifiedTemplate(params: {
         ? ` Payment reference: ${escapeHtml(paymentReference)}.`
         : "";
       settlementNote = alertBox(
-        `An additional Internet Banking payment of ${formatCents(additionalAmountCents, format)} is required.${invoiceContext}${referenceContext} Xero reconciliation confirms the payment before it is treated as paid.`,
+        `${internetBankingAskSentence(formatCents(additionalAmountCents, format), params.asksAmountNowDue === true)}${invoiceContext}${referenceContext} Xero reconciliation confirms the payment before it is treated as paid.`,
         "warning"
       );
     } else {

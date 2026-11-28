@@ -1,16 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
 import { parseOptionalJsonRequestBody } from "@/lib/api-json";
-import { z } from "zod";
+import { emailFailureReviewSchema } from "@/lib/admin-support-api/messages";
+import { EMAIL_FAILURE_REVIEWED_CONNECTION_SHAPE } from "@/lib/connection-shapes/support-messages";
+import { connectionJson } from "@/lib/mcp-connection-request";
 import {
   EmailFailureReviewError,
   markExhaustedEmailFailureReviewed,
 } from "@/lib/email-failure-review";
 import { requireAdmin } from "@/lib/session-guards";
 import logger from "@/lib/logger";
-
-const reviewSchema = z.object({
-  reason: z.string().max(500).optional(),
-});
 
 export async function POST(
   request: NextRequest,
@@ -24,7 +22,7 @@ export async function POST(
   const jsonBody = await parseOptionalJsonRequestBody(request, { whenAbsent: {} });
   if (!jsonBody.ok) return jsonBody.response;
   const body = jsonBody.body;
-  const parsed = reviewSchema.safeParse(body);
+  const parsed = emailFailureReviewSchema.safeParse(body);
   if (!parsed.success) {
     return NextResponse.json(
       { error: "Invalid review payload", details: parsed.error.flatten() },
@@ -40,7 +38,7 @@ export async function POST(
       reason: parsed.data.reason,
     });
 
-    return NextResponse.json(result);
+    return connectionJson(request, result, EMAIL_FAILURE_REVIEWED_CONNECTION_SHAPE);
   } catch (error) {
     if (error instanceof EmailFailureReviewError) {
       return NextResponse.json({ error: error.message }, { status: error.status });

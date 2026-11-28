@@ -731,6 +731,7 @@ describe("booking-modified default body (#2267)", () => {
     changeFeeCents?: number;
     additionalAmountCents?: number;
     additionalPaymentMethod?: "STRIPE" | "INTERNET_BANKING";
+    asksAmountNowDue?: boolean;
     paymentReference?: string | null;
     xeroInvoiceNumber?: string | null;
   }): Promise<{ templateData: EmailTemplateData; html: string }> {
@@ -910,6 +911,26 @@ describe("booking-modified default body (#2267)", () => {
     );
     expect(rendered).toContain("Xero invoice INV-100");
     expect(rendered).toContain("Payment reference: ABC123.");
+    expect(rendered).not.toContain("This replaces any earlier amount");
+    expectCleanBody(rendered);
+  });
+
+  it("MUTATION (#5288): an increase the new primary invoice bills asks for the amount now due, in both forms", async () => {
+    const { html, templateData } = await captureModified({
+      newFinalPriceCents: 37000,
+      additionalAmountCents: 10000,
+      additionalPaymentMethod: "INTERNET_BANKING",
+      asksAmountNowDue: true,
+      paymentReference: "ABC123",
+    });
+
+    const sentence = "The amount now due on this booking is $100.00 by Internet Banking. This replaces any earlier amount we asked for.";
+    const rendered = renderDefaultBody("booking-modified", templateData);
+    for (const body of [rendered, html]) {
+      expect(body).toContain(sentence);
+      expect(body).toContain("Payment reference: ABC123.");
+      expect(body).not.toContain("An additional Internet Banking payment");
+    }
     expectCleanBody(rendered);
   });
 

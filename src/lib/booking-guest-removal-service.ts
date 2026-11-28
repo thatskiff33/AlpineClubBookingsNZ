@@ -168,7 +168,7 @@ export type RemoveBookingGuestResult = {
   bookingModificationId: string;
   /** #3530: the itemised lines the removal stored, or null when it stored none. */
   priceLines: ModificationLine[] | null;
-  zeroDollarAutoPaid: boolean;
+  zeroDollarAutoPaid: boolean; primaryInvoiceBillsIncrease: boolean; // #5288: a released promo's increase
   supersededPrimaryPaymentIntents: SupersededPrimaryPaymentIntent[];
   // #1372: this removal newly dropped a paid (capacity-holding) booking into the
   // blocked minors-only review state, so the route should alert admins.
@@ -1043,7 +1043,7 @@ export async function removeBookingGuestInTransaction({
     xeroRefundAmountCents: paymentImpact.xeroRefundAmountCents,
     appliedCreditGivenBackCents: paymentImpact.appliedCreditGivenBackCents,
     organiserChildRefund: paymentImpact.organiserChildRefund,
-    xeroAdditionalAmountCents: paymentImpact.xeroAdditionalAmountCents,
+    xeroAdditionalAmountCents: paymentImpact.xeroAdditionalAmountCents, primaryInvoiceBillsIncrease: paymentImpact.primaryInvoiceBillsIncrease, // #5288
     hasSucceededPayment: paymentImpact.hasSucceededPayment,
     refundHeldForDispute: paymentImpact.refundHeldForDispute,
     hasIssuedXeroInvoice: paymentImpact.hasIssuedXeroInvoice,

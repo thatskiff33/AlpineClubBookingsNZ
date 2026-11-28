@@ -7271,6 +7271,21 @@ enum EmailLogStatus {
 }
 
 /**
+ * #5298 (INV-INT-043): where a send stood relative to the mail server.
+ *
+ *   PENDING     recorded, not yet handed over. The sender and the stranded-row
+ *               sweep race one guarded write out of it, so only one acts.
+ *   STARTED     a sender won that write and may have reached the mail server.
+ *   UNCONFIRMED the sweep found it QUEUED and STARTED (or unknown) long after the
+ *               send, so it may have been delivered; an officer decides.
+ */
+enum EmailHandoverState {
+  PENDING
+  STARTED
+  UNCONFIRMED
+}
+
+/**
  * Why a send failed closed because this installation's environment role could
  * not be confirmed (#3035, INV-CONFIG-004).
  *
@@ -7344,6 +7359,10 @@ model EmailLog {
   // Prisma client selects explicit column lists, so it cannot see this column at
   // all and a blue/green drain is unaffected.
   deliveryBlockReason            EmailDeliveryBlockReason?
+  // #5298 (INV-INT-043): how far a QUEUED row got towards the mail server, so a
+  // row a crash left QUEUED is re-sent only when it provably never reached it.
+  // NULL is a row the previous release wrote, or any row before #5298.
+  handoverState                  EmailHandoverState?
   createdAt                      DateTime       @default(now())
   updatedAt                      DateTime       @updatedAt
 

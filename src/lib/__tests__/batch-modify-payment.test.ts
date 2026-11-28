@@ -352,6 +352,9 @@ vi.mock("@/lib/xero-operation-outbox", () => ({
   kickQueuedXeroOutboxOperationsIfConnected: mockKickQueuedXeroOutboxOperationsIfConnected,
   recordSkippedXeroBookingInvoiceUpdateOperation: mockRecordSkippedXeroBookingInvoiceUpdateOperation,
 }));
+// #5288: an edit's primary invoice is queued only while the Xero module is on
+// (`queueEditPrimaryInvoice`); these route tests run with it on.
+vi.mock("@/lib/xero-invoicing-guard", () => ({ isXeroInvoicingEnabled: vi.fn(async () => true) }));
 vi.mock("@/lib/xero-supplementary-invoice-enqueue", () => ({
   enqueueXeroSupplementaryInvoiceOperation: mockEnqueueXeroSupplementaryInvoiceOperation,
 }));
@@ -2776,13 +2779,15 @@ describe("PUT /api/bookings/[id]/modify", () => {
     );
     expect(mockCreatePaymentIntent).not.toHaveBeenCalled();
 
-    await Promise.resolve();
+    // The after-commit enqueue awaits the Xero module check first (#5288). Flushed
+    // by hand: `vi.waitFor` would advance the frozen clock under the faked Date.
+    for (let tick = 0; tick < 10; tick += 1) await Promise.resolve();
+    expect(mockKickQueuedXeroOutboxOperationsIfConnected).toHaveBeenCalledWith({ limit: 1 });
     expect(mockEnqueueXeroBookingInvoiceOperation).toHaveBeenCalledWith("bk1", {
       createdByMemberId: "m1",
       // #2929: an edit settlement has no creation-time email choice.
       invoiceEmailDelivery: null,
     });
-    expect(mockKickQueuedXeroOutboxOperationsIfConnected).toHaveBeenCalledWith({ limit: 1 });
   });
 
   it("rolls back the modification when the in-transaction recovery enqueue throws", async () => {

@@ -18,6 +18,7 @@ import { usableClubCurrencyCode } from "@/lib/club-format";
 import { clubFormatXeroBaseCurrencyMismatch } from "@/lib/club-format-copy";
 import { xeroBaseCurrencyMismatch } from "@/lib/xero-base-currency";
 import { SEED_COMMAND_DETAILS } from "@/lib/seed-commands";
+import { SETUP_STEP_IDS, type SetupStepId } from "@/lib/setup-step-ids";
 /*
   TYPE-ONLY, and it has to stay that way. `environment-role.ts` imports
   `@/lib/prisma`, and this module is imported by the `tsx` entrypoints
@@ -49,31 +50,6 @@ import { buildDataEncryptionKeyCheck, type DataKeyRingSource, type DataKeyUsageS
 import { buildDatabaseRoleCheck, type DatabaseRoleSnapshot } from "@/lib/setup-readiness-database-role";
 import { describeEnvironmentRoleDeclaration, describeEnvironmentRoleOverride } from "@/lib/setup-readiness-environment-role";
 
-export const SETUP_STEP_IDS = [
-  "club-config",
-  "club-time-zone",
-  "environment-role",
-  "runtime-env",
-  "auth-secret-strength",
-  "data-encryption-keys",
-  "database-role",
-  "seed-admin",
-  "feature-flags",
-  "booking-policies",
-  "membership-cancellation",
-  "age-tiers",
-  "seasons-rates",
-  "key-rate-holders",
-  "stripe",
-  "email-ses",
-  "sentry",
-  "address-autocomplete",
-  "xero-operational",
-  "finance-dashboard",
-  "xero-mappings",
-] as const;
-
-export type SetupStepId = (typeof SETUP_STEP_IDS)[number];
 type SetupStatus = "complete" | "warning" | "blocked" | "not_started";
 type SetupCategoryId =
   | "foundation"

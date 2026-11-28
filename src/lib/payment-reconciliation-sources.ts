@@ -37,10 +37,14 @@ export type MarkBookingPaymentSucceededResult = {
    * #5433 (owner decision D1): the paid confirmation's owed marker, which the
    * settle committed with a fresh "paid" when the caller asked for it
    * (`owesPaidConfirmation`). The caller hands it to
-   * `deliverPaidBookingConfirmation` after the commit; absent on every other
-   * outcome, and on "paid" for a caller that sends no confirmation.
+   * `deliverPaidBookingConfirmation` after the commit. Null when the caller
+   * asked and the settle marked the booking paid but the booking cannot key a
+   * marker (the caller then sends it once, unkeyed); absent on every other
+   * outcome, and on "paid" for a caller that did not ask, so the after-commit
+   * sequence never takes "not asked" for "cannot be keyed" (#5433, the card
+   * recovery doors, fix round 1).
    */
-  paidConfirmation?: OwedNoticeMarker;
+  paidConfirmation?: OwedNoticeMarker | null;
 };
 
 /** The card settle door's input (`markBookingPaymentSucceeded`), here with the other settlement types (#5005, #5433). */
@@ -74,9 +78,11 @@ export type StripeSettlementSource = {
   /**
    * #5433 (owner decision D1): the caller sends the member the paid
    * confirmation, so a fresh PAID claim records it as owed in this settle's
-   * transaction. Set by the three callers that send it (the Stripe webhook,
-   * the confirm-payment route, the confirm-pending job's saved-card charge);
-   * every other card door sends none, or only on an officer's choice, and
+   * transaction. Set by every card door that confirms a booking by itself:
+   * the Stripe webhook, the confirm-payment route, the confirm-pending job's
+   * saved-card charge, the create-payment-intent and payment-link recoveries
+   * and the charge-saved-method route (`paid-booking-confirmation-after-commit.ts`).
+   * An officer's confirm-pending-guests sends only on the officer's choice and
    * writes no marker.
    */
   owesPaidConfirmation?: boolean;

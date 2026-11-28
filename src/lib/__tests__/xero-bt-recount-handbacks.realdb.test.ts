@@ -315,10 +315,15 @@ let prisma: (typeof import("@/lib/prisma"))["prisma"];
         expect.objectContaining({ queueOperationId: own!.id }),
       );
       expect(await refundNoteRows()).toBe(1);
-      // Until that note is raised in Xero, the deploy note lists the payment and the floor's alert is true.
+      // Until that note is raised in Xero, the deploy note lists the payment.
       expect(await deployNoteListedPaymentIds()).toEqual([ORGANISER_PAYMENT_ID]);
 
       const { BANK_TRANSFER_REFUND_SHORTFALL_ADVICE } = await import("@/lib/xero-inbound/credit-note-bank-transfer-floor");
+      // #5289 D: while that note is queued, Xero is behind by design: the floor keeps the total and alerts nothing.
+      expect(await watchDivergenceAlertMessages(() => reconcileCanonicalNote(100))).toEqual([]);
+      expect(await paymentState(ORGANISER_PAYMENT_ID)).toEqual({ refundedAmountCents: 13_000, status: "PARTIALLY_REFUNDED" });
+      // Once it can no longer be raised (failed for good), the next writer alerts the shortfall.
+      await prisma.xeroSyncOperation.update({ where: { id: own!.id }, data: { status: "FAILED", replayable: false } });
       const alerts = await watchDivergenceAlertMessages(() => reconcileCanonicalNote(100));
       expect(await paymentState(ORGANISER_PAYMENT_ID)).toEqual({ refundedAmountCents: 13_000, status: "PARTIALLY_REFUNDED" });
       expect(alerts).toEqual([{ operation: `inbound-credit-note-repair:${CANONICAL_NOTE}`, errorMessage: expect.stringContaining(BANK_TRANSFER_REFUND_SHORTFALL_ADVICE) }]);
@@ -363,10 +368,13 @@ let prisma: (typeof import("@/lib/prisma"))["prisma"];
       // Asked again, the same row.
       expect(await queueRefundRequestCardNotes({ payment: { id: ORGANISER_PAYMENT_ID, source: "INTERNET_BANKING" }, cardNoteCents: 4_000, plan: [{ madeRefundId: "re_race_4230" }], createdByMemberId: OFFICER_ID })).toEqual({ queueOperationId: own!.id });
       expect(await refundNoteRows()).toBe(1);
-      // Until that note is in Xero, the deploy note lists the payment and the floor's alert is true
+      // Until that note is in Xero, the deploy note lists the payment
       // (`xero-bt-card-refund-notes` raises it and proves every reader then counts it).
       expect(await deployNoteListedPaymentIds()).toEqual([ORGANISER_PAYMENT_ID]);
       const { BANK_TRANSFER_REFUND_SHORTFALL_ADVICE } = await import("@/lib/xero-inbound/credit-note-bank-transfer-floor");
+      // #5289 D: no alert while the note is queued; one once it has failed for good.
+      expect(await watchDivergenceAlertMessages(() => reconcileCanonicalNote(100))).toEqual([]);
+      await prisma.xeroSyncOperation.update({ where: { id: own!.id }, data: { status: "FAILED", replayable: false } });
       const alerts = await watchDivergenceAlertMessages(() => reconcileCanonicalNote(100));
       expect(await paymentState(ORGANISER_PAYMENT_ID)).toEqual({ refundedAmountCents: 14_000, status: "PARTIALLY_REFUNDED" });
       expect(alerts).toEqual([{ operation: `inbound-credit-note-repair:${CANONICAL_NOTE}`, errorMessage: expect.stringContaining(BANK_TRANSFER_REFUND_SHORTFALL_ADVICE) }]);

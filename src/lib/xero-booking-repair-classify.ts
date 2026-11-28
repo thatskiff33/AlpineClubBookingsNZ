@@ -90,7 +90,7 @@ import {
 import { addAppliedCreditFindings, waitForAppliedCreditWorkBeforeClearing } from "./xero-booking-repair-applied-credit";
 import { addBlockedNoteAllocationFinding, addResolvedNoteAllocationFinding, dispatchOwnNoteRow, reportModificationNoteInvoiceRefusal } from "./xero-booking-repair-own-note-row";
 import { isStripeCardRefundEdit, modificationNoteInvoiceRefusal, ownModificationNotePayload } from "@/lib/xero-modification-note-refusal";
-import { addKeptLateCaptureRefundByHandFinding, addLateCaptureCardRefundByHandFindings, addPaidAnotherWayReceiptFinding } from "./xero-booking-repair-paid-another-way";
+import { addKeptLateCaptureRefundByHandFinding, addLateCaptureCardRefundByHandFindings, addPaidAnotherWayReceiptFinding, closedChangeCapture } from "./xero-booking-repair-paid-another-way";
 import { addKeptChangeCaptureFinding, addUnrecordedAdditionalCaptureFindings, keptInvoiceBillsChange } from "./xero-booking-repair-additional-capture";
 import { addRefundRequestNoteNotQueuedFindings, paidBackRefundRequestCents } from "./xero-booking-repair-request-notes";
 import { isRecordedBookingInvoicePayment } from "@/lib/xero-inbound/object-links";
@@ -2055,7 +2055,7 @@ export function classifyBookingContext(
       });
       // #3924 round 7 (M2), round 11: an approved capture's close is answered by its own finding, never the one below.
       if (lateTask.status === "COMPLETED" && lateTask.paidAnotherWayClose) {
-        const args = { findings, actionMap, booking, paymentId: payment.id, transaction, lateTask, keptInvoice };
+        const args = { findings, actionMap, booking, paymentId: payment.id, transaction, lateTask, keptInvoice, changeCapture: closedChangeCapture(context, payment, paymentLinks, transaction) };
         if (addPaidAnotherWayReceiptFinding(args) || keptInvoice?.kind === "resolved") continue;
       } else if (keptInvoice?.kind === "resolved") {
         const details = {
