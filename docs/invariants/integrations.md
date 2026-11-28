@@ -1018,24 +1018,25 @@ Pinned by `admin-alert-once-lost-cases.test.ts`, `admin-alert-once.test.ts`,
 After a crash, only a `QUEUED` email provably never handed to the mail server can be
 resent automatically (#5298).
 
-- **Claim.** The sender must win `PENDING` at attempt 1 → `STARTED` before sending;
+- **Claim.** The sender must win `PENDING` at attempt 1 to `STARTED` before sending;
   `handover_lost` sends nothing. Sender and replay writes check row ownership. Retry
   claims write `STARTED`. SES offers no idempotency key or delivery confirmation here.
 - **Sweep.** Each 30-minute retry run checks up to 50 rows past
   `strandedQueuedAfterMs()`, ignoring rows older than seven days. Guarding each write
   against the row as read, it releases unclaimed first attempts for owner-retried alerts
-  to their owner; otherwise it queues retained bodies for replay or flags “Never sent”
+  to their owner; otherwise it queues retained bodies for replay or flags **Never sent**
   without one. All other cases, including legacy rows and ambiguous commits, are flagged
-  `UNCONFIRMED`. Both flags alert officers. Only an officer’s **Try again** resends
+  `UNCONFIRMED`. Both flags alert officers. Only an officer's **Try again** resends
   unconfirmed mail, with a duplicate warning. Unconfirmed keyed mail counts as told.
 - **Callers.** Normally `handover_lost` counts as owed to the retry job. For
   owner-retried alerts it does not. If another recipient received the alert or the job
   holds another copy, the sender hands lost copies to the job because the owner stops
   retrying.
-- **Known limits.** Only a log line records a lost copy if that hand-off write fails or
-  the sweep wins first (sender stalled past threshold, another recipient received the
-  alert). Release depends on the owner retrying: a past-cutoff marker beyond its hard
-  ceiling clears unsent. `owedOfficerAlertOutcome` alerts (bump, waitlist, hold-ended
+- **No new lock** (`INV-LOCK-001`); in the writer index (`INV-LOCK-003`).
+- **Known limits.** Only a log line records a lost copy the sender hands to the job if
+  that write fails or the sweep claimed the row first (the sender stalled past the
+  threshold). Release depends on the owner retrying: a past-cutoff marker beyond its
+  hard ceiling clears unsent. `owedOfficerAlertOutcome` alerts (bump, waitlist, hold-ended
   cancellation, saved-card-unusable) may arrive twice after a crash under their
   at-least-once contract. Classifying them as owner-retried would lose alerts when every
   hand-over fails without a crash.
