@@ -2,19 +2,28 @@
  * The combined lock-out walk (#4620 §4 item 4).
  *
  * A required officer in every factor state, with the club-wide `twoFactor`
- * module on and off, can always reach enrolment or verification, and the
- * officer gate never refuses a forced password change that enrolment is
- * waiting on. The claims are built with the release on, as they are once
- * officer sign-in is switched on.
+ * module on and off, is always sent to the enrolment or the verification
+ * page, both of which the gate lets them open, and the officer gate never
+ * refuses a forced password change that enrolment is waiting on. The claims
+ * are built with the release on, as they are once officer sign-in is switched
+ * on.
  *
- * This walks the gate's decisions. The route guard, the enrol page and the
- * signed-in layout each have their own case for the same officer:
- * `session-guards.test.ts`, `two-factor-detour-landing.test.tsx` and
+ * This walks the gate's decisions: where it sends the officer and what it
+ * lets them open. It does not run the pages or routes behind those paths. The
+ * route guard, the enrol page and the signed-in layout each have their own
+ * case for the same officer: `session-guards.test.ts`,
+ * `two-factor-detour-landing.test.tsx` and
  * `authenticated-layout-officer-gated-onboarding.test.tsx`.
  *
- * One state the gate cannot open: an officer with no password who is being
- * forced to change it. The change route asks for the current password, so
- * their way through is "Forgot password", which sets one and clears the flag.
+ * Two states the gate alone cannot open:
+ *
+ * - An officer with no password who is being forced to change it. The change
+ *   route asks for the current password, so their way through is "Forgot
+ *   password", which sets one and clears the flag.
+ * - `twoFactorEnabled` on with no method stored, while the club-wide module
+ *   is on. The gate sends them to verify, and the verify route answers 409
+ *   because there is nothing to verify against. No writer in the app leaves a
+ *   member like that; the way out is a factor reset. Pinned at the bottom.
  */
 
 import { describe, expect, it } from "vitest";
@@ -24,6 +33,7 @@ import { buildOfficerTwoFactorClaims } from "@/lib/officer-two-factor-claims";
 import {
   authenticatorEnrolmentBlock,
   isSecondFactorEnrolled,
+  PROFILE_SECURITY_HREF,
 } from "@/lib/second-factor-enrolment";
 import {
   factorGateRedirect,
@@ -131,7 +141,7 @@ describe("officer lock-out walk (#4620)", () => {
           forcePasswordChange: false,
         };
 
-        it("is sent somewhere it can make progress from any admin page", () => {
+        it("is sent to an enrolment or verification page it may open, from any admin page", () => {
           const destination = factorGateRedirect({
             sessionUser,
             member,
@@ -242,6 +252,34 @@ describe("officer lock-out walk (#4620)", () => {
     expect(
       factorGateRedirect({ sessionUser, pathname: "/admin", callbackPath: "/admin", now: NOW }),
     ).toBeNull();
+  });
+
+  it("keeps the profile security link on the gated officer's allowlist", () => {
+    // The grace banner and the enrol page both link here to add a passkey.
+    const path = PROFILE_SECURITY_HREF.split("#")[0];
+    expect(isOfficerEnrolmentPathAllowed(path, "GET")).toBe(true);
+    const { sessionUser } = fullAdminSession(STATES[0], PHASES[0]);
+    expect(factorGateRedirect({ sessionUser, pathname: path, now: NOW })).toBeNull();
+  });
+
+  it("sends the flag-without-a-method officer to verify while the module is on", () => {
+    // The header's second exception: the gate's answer is pinned here so a
+    // change to it is seen. The verify route's 409 for this member is in
+    // `two-factor-routes.test.ts`.
+    const state = STATES.find((entry) => entry.name === "flag on with no method stored");
+    expect(state).toBeDefined();
+    if (!state) return;
+    const { claims, sessionUser } = fullAdminSession(state, PHASES[2]);
+    expect(claims.twoFactorSatisfiesOfficer).toBe(false);
+    expect(
+      factorGateRedirect({
+        sessionUser,
+        member: { twoFactorEnabled: true, forcePasswordChange: false },
+        pathname: "/admin",
+        callbackPath: "/admin",
+        now: NOW,
+      }),
+    ).toBe("/login/verify?callbackUrl=%2Fadmin");
   });
 
   it("gates a past-grace officer with no factor (the walk is not vacuous)", () => {

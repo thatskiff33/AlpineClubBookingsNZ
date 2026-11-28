@@ -247,6 +247,22 @@ describe("two-factor auth routes", () => {
     expect(mocks.markTwoFactorSessionVerified).toHaveBeenCalledWith("EMAIL");
   });
 
+  // The lock-out walk's second exception (#4620): the flag without a method
+  // has nothing to verify against, so the route refuses before any code is read.
+  it("refuses to verify for a member with the flag on and no method stored", async () => {
+    mocks.requireTwoFactorApiSession.mockResolvedValue(
+      sessionGuard({ enrolled: true, method: null }),
+    );
+
+    const response = await verifyCode(
+      request("/api/auth/2fa/verify", { method: "TOTP", code: "123456" }),
+    );
+
+    expect(response.status).toBe(409);
+    expect(mocks.verifyStoredTotpCode).not.toHaveBeenCalled();
+    expect(mocks.markTwoFactorSessionVerified).not.toHaveBeenCalled();
+  });
+
   it("rejects mismatched enrolled methods", async () => {
     mocks.requireTwoFactorApiSession.mockResolvedValue(
       sessionGuard({ enrolled: true, method: "EMAIL" }),

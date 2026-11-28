@@ -20,22 +20,29 @@ export type TwoFactorGateMember = {
   twoFactorEnabled?: boolean | null;
 };
 
+/**
+ * A forced password change comes first (#4620): enrolment refuses until it is
+ * done, so neither gate may refuse the route that makes the change.
+ */
+function isForcedPasswordChangeFirst(params: {
+  member?: TwoFactorGateMember | null;
+  allowForcePasswordChange?: boolean;
+}): boolean {
+  return params.allowForcePasswordChange === true && params.member?.forcePasswordChange === true;
+}
+
 export function isTwoFactorSessionBlocked(params: {
   sessionUser?: TwoFactorSessionUser | null;
   member?: TwoFactorGateMember | null;
   allowForcePasswordChange?: boolean;
 }) {
-  const { sessionUser, member, allowForcePasswordChange = false } = params;
+  const { sessionUser } = params;
 
   if (!sessionUser?.twoFactorRequired || sessionUser.twoFactorVerified) {
     return false;
   }
 
-  if (allowForcePasswordChange && member?.forcePasswordChange) {
-    return false;
-  }
-
-  return true;
+  return !isForcedPasswordChangeFirst(params);
 }
 
 export function buildTwoFactorGatePath(params: {
@@ -106,6 +113,23 @@ export function isOfficerSessionGated(
 }
 
 /**
+ * A required officer who does not satisfy yet and still has grace left: the
+ * one who is reminded rather than stopped. The opposite answer to
+ * `isOfficerSessionGated` for the same officer.
+ */
+export function isOfficerInGrace(
+  sessionUser: TwoFactorSessionUser | null | undefined,
+  now: Date = new Date(),
+): boolean {
+  return (
+    sessionUser?.officerTwoFactorRequired === true &&
+    sessionUser.twoFactorSatisfiesOfficer !== true &&
+    sessionUser.officerTwoFactorGraceEndsAt != null &&
+    !isOfficerSessionGated(sessionUser, now)
+  );
+}
+
+/**
  * After the club-wide challenge is done (or when there is none): a gated
  * officer is blocked everywhere except the enrolment allowlist.
  */
@@ -137,12 +161,8 @@ export function factorGateRedirect(params: {
   if (isTwoFactorSessionBlocked(params)) {
     return buildTwoFactorGatePath(params);
   }
-  // A forced password change comes first (#4620): enrolment refuses until it
-  // is done, so the officer gate must not refuse the change itself.
-  const passwordChangeFirst =
-    params.allowForcePasswordChange === true && params.member?.forcePasswordChange === true;
   if (
-    !passwordChangeFirst &&
+    !isForcedPasswordChangeFirst(params) &&
     isOfficerEnrolmentSessionBlocked({
       sessionUser: params.sessionUser,
       pathname: params.pathname ?? params.callbackPath ?? null,

@@ -34,7 +34,11 @@ import {
 import { loadSignedInMember } from "@/lib/signed-in-member";
 import { getCurrentSiteBanners } from "@/lib/site-banners";
 import { getWebsiteThemeRenderState } from "@/lib/club-theme";
-import { factorGateRedirect, isOfficerSessionGated } from "@/lib/two-factor-gate";
+import {
+  factorGateRedirect,
+  isOfficerInGrace,
+  isOfficerSessionGated,
+} from "@/lib/two-factor-gate";
 import { OfficerGraceBanner } from "@/components/officer-grace-banner";
 
 export default async function AuthenticatedLayout({
@@ -75,21 +79,21 @@ export default async function AuthenticatedLayout({
   }
 
   const requestedPath = requestHeaders.get(REQUEST_PATH_HEADER);
+  // One instant for the gate, the reminder and the wizard hold-back, so they
+  // cannot disagree about whether grace has ended.
+  const now = new Date();
   const factorGate = factorGateRedirect({
     sessionUser: session.user,
     member,
     callbackPath: requestedPath,
     pathname: requestedPath,
+    now,
   });
   if (factorGate) {
     redirect(factorGate);
   }
-  const officerGated = isOfficerSessionGated(session.user);
-  const officerGraceReminder =
-    session.user.officerTwoFactorRequired === true &&
-    session.user.twoFactorSatisfiesOfficer !== true &&
-    session.user.officerTwoFactorGraceEndsAt != null &&
-    !officerGated;
+  const officerGated = isOfficerSessionGated(session.user, now);
+  const officerGraceReminder = isOfficerInGrace(session.user, now);
 
   // Lodge-only accounts can only access /lodge/* routes. Combined access-role
   // accounts continue to their requested member or finance workspace.
