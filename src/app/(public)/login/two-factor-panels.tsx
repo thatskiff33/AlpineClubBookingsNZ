@@ -133,7 +133,6 @@ export function TwoFactorEnrollPanel({
   }, [method, totpSetup]);
 
   async function sendEmailCode() {
-    // A browser drops focus from a disabled control; hand it back when re-enabled (#5442).
     focusReturn.capture();
     setLoading(true);
     setError("");
@@ -156,7 +155,6 @@ export function TwoFactorEnrollPanel({
 
   async function enrollTotp() {
     if (!totpSetup) return;
-    // A browser drops focus from a disabled control; hand it back when re-enabled (#5442).
     focusReturn.capture();
     setLoading(true);
     setError("");
@@ -181,7 +179,6 @@ export function TwoFactorEnrollPanel({
   }
 
   async function enrollEmail() {
-    // A browser drops focus from a disabled control; hand it back when re-enabled (#5442).
     focusReturn.capture();
     setLoading(true);
     setError("");
@@ -356,7 +353,6 @@ export function TwoFactorVerifyPanel({
   const [error, setError] = useState("");
 
   async function sendEmailCode() {
-    // A browser drops focus from a disabled control; hand it back when re-enabled (#5442).
     focusReturn.capture();
     setLoading(true);
     setError("");
@@ -378,7 +374,6 @@ export function TwoFactorVerifyPanel({
   }
 
   async function verify() {
-    // A browser drops focus from a disabled control; hand it back when re-enabled (#5442).
     focusReturn.capture();
     setLoading(true);
     setError("");
@@ -409,7 +404,6 @@ export function TwoFactorVerifyPanel({
   }
 
   async function signInWithPasskey() {
-    // A browser drops focus from a disabled control; hand it back when re-enabled (#5442).
     focusReturn.capture();
     setLoading(true);
     setError("");

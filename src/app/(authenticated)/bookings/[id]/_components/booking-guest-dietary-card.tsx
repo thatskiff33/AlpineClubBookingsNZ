@@ -103,7 +103,6 @@ function GuestDietaryRow({
   const dirty = draft.trim() !== (guest.dietaryRequirements ?? "");
 
   async function save() {
-    // A browser drops focus from a disabled control; hand it back when re-enabled (#5442).
     focusReturn.capture();
     setSaving(true);
     try {

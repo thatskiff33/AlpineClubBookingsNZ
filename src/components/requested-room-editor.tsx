@@ -167,7 +167,6 @@ export function RequestedRoomEditor({
   }
 
   async function handleSave() {
-    // A browser drops focus from a disabled control; hand it back when re-enabled (#5442).
     focusReturn.capture();
     setSaving(true);
     setSaved(false);

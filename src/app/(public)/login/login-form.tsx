@@ -173,7 +173,6 @@ export function LoginForm({
     setError("");
     setEmailNotVerified(false);
     setResendSuccess(false);
-    // A browser drops focus from a disabled control; hand it back when re-enabled (#5442).
     focusReturn.capture();
     setLoading(true);
 

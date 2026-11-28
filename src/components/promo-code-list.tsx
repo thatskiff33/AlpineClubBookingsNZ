@@ -123,7 +123,6 @@ export function PromoCodeList({
   }
 
   async function run(entries: PromoCodeListEntry[], extra?: { code: string; appliesTo?: string }) {
-    // A browser drops focus from a disabled control; hand it back when re-enabled (#5442).
     focusReturn.capture();
     setBusy(true);
     setError("");

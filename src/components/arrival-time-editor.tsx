@@ -74,7 +74,6 @@ export function ArrivalTimeEditor({
       : null;
 
   async function handleSave() {
-    // A browser drops focus from a disabled control; hand it back when re-enabled (#5442).
     focusReturn.capture();
     setSaving(true);
     setError("");

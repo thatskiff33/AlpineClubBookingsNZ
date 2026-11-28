@@ -55,7 +55,6 @@ export function NoticeAcknowledgeButton({
   }
 
   const acknowledge = async () => {
-    // A browser drops focus from a disabled control; hand it back when re-enabled (#5442).
     focusReturn.capture();
     setSubmitting(true);
     setError(null);

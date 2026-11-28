@@ -164,7 +164,6 @@ export function ProfileForm({
     e.preventDefault();
     if (readOnly) return;
 
-    // A browser drops focus from a disabled control; hand it back when re-enabled (#5442).
     focusReturn.capture();
     setSavingState(true);
 

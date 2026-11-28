@@ -276,7 +276,6 @@ export function OrganiserGroupBookingCard({
     const usingInternetBanking = methodOverride
       ? methodOverride === "internet_banking"
       : internetBankingEnabled && settleMethod === "internet_banking";
-    // A browser drops focus from a disabled control; hand it back when re-enabled (#5442).
     focusReturn.capture();
     setSettleBusy(true);
     setSettleError("");

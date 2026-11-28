@@ -218,7 +218,6 @@ export function FamilyGroupSection({ familyGroups, canManage = false }: FamilyGr
   async function handleRequestJoin(e: React.FormEvent) {
     e.preventDefault();
     setError("");
-    // A browser drops focus from a disabled control; hand it back when re-enabled (#5442).
     focusReturn.capture();
     setSubmitting(true);
 
@@ -264,7 +263,6 @@ export function FamilyGroupSection({ familyGroups, canManage = false }: FamilyGr
   async function handleCreateGroup(e: React.FormEvent) {
     e.preventDefault();
     setError("");
-    // A browser drops focus from a disabled control; hand it back when re-enabled (#5442).
     focusReturn.capture();
     setSubmitting(true);
 
@@ -304,7 +302,6 @@ export function FamilyGroupSection({ familyGroups, canManage = false }: FamilyGr
   async function handleInvite(e: React.FormEvent, familyGroupId: string) {
     e.preventDefault();
     setError("");
-    // A browser drops focus from a disabled control; hand it back when re-enabled (#5442).
     focusReturn.capture();
     setSubmitting(true);
 
@@ -332,7 +329,6 @@ export function FamilyGroupSection({ familyGroups, canManage = false }: FamilyGr
   async function handleChildRequest(e: React.FormEvent, familyGroupId: string) {
     e.preventDefault();
     setError("");
-    // A browser drops focus from a disabled control; hand it back when re-enabled (#5442).
     focusReturn.capture();
     setSubmitting(true);
 
@@ -369,7 +365,6 @@ export function FamilyGroupSection({ familyGroups, canManage = false }: FamilyGr
   async function handleAdultRequest(e: React.FormEvent, familyGroupId: string) {
     e.preventDefault();
     setError("");
-    // A browser drops focus from a disabled control; hand it back when re-enabled (#5442).
     focusReturn.capture();
     setSubmitting(true);
 
@@ -416,7 +411,6 @@ export function FamilyGroupSection({ familyGroups, canManage = false }: FamilyGr
   async function handleDelegatedDetails(e: React.FormEvent, memberId: string) {
     e.preventDefault();
     setError("");
-    // A browser drops focus from a disabled control; hand it back when re-enabled (#5442).
     focusReturn.capture();
     setSubmitting(true);
 
@@ -458,7 +452,6 @@ export function FamilyGroupSection({ familyGroups, canManage = false }: FamilyGr
   async function handleRemovalRequest(e: React.FormEvent, familyGroupId: string, memberId: string) {
     e.preventDefault();
     setError("");
-    // A browser drops focus from a disabled control; hand it back when re-enabled (#5442).
     focusReturn.capture();
     setSubmitting(true);
 

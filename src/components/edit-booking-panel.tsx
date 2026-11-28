@@ -1315,7 +1315,6 @@ export function EditBookingPanel({
     }
     if (saveInFlightRef.current) return;
     saveInFlightRef.current = true;
-    // A browser drops focus from a disabled control; hand it back when re-enabled (#5442).
     focusReturn.capture();
     setSaving(true);
     // A fresh save attempt retires the previous refusal's offer (#2562).
@@ -1542,7 +1541,6 @@ export function EditBookingPanel({
   async function handleSubmitChangeRequest(cardAddGuests: ChangeRequestAddGuest[]) {
     setRequestError("");
     setRequestSuccess("");
-    // A browser drops focus from a disabled control; hand it back when re-enabled (#5442).
     focusReturn.capture();
     setRequestSubmitting(true);
 

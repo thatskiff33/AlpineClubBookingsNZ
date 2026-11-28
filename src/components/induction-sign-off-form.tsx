@@ -62,7 +62,6 @@ export function InductionSignOffForm({
       toast.error("Please accept the declaration before signing off.");
       return;
     }
-    // A browser drops focus from a disabled control; hand it back when re-enabled (#5442).
     focusReturn.capture();
     setSubmitting(true);
 

@@ -17,7 +17,6 @@ export function DataExportButton() {
   const focusReturn = useActionFocusReturn();
 
   async function handleExport() {
-    // A browser drops focus from a disabled control; hand it back when re-enabled (#5442).
     focusReturn.capture();
     setLoading(true);
     setError(null);

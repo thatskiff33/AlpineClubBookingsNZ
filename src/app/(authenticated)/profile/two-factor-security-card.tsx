@@ -57,7 +57,6 @@ export function TwoFactorSecurityCard({
   });
 
   async function regenerate() {
-    // A browser drops focus from a disabled control; hand it back when re-enabled (#5442).
     focusReturn.capture();
     setLoading(true);
     setError("");
@@ -95,7 +94,6 @@ export function TwoFactorSecurityCard({
   }
 
   async function addPasskey() {
-    // A browser drops focus from a disabled control; hand it back when re-enabled (#5442).
     focusReturn.capture();
     setLoading(true);
     setError("");

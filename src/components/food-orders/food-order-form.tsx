@@ -123,7 +123,6 @@ export function FoodOrderForm({
       ...line,
       quantity: parseFoodOrderQuantity(line.quantity) ?? line.quantity,
     }));
-    // A browser drops focus from a disabled control; hand it back when re-enabled (#5442).
     focusReturn.capture();
     setSubmitting(true);
     try {
