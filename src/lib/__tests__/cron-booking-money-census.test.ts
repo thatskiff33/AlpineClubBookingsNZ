@@ -1,9 +1,23 @@
 import { beforeEach, describe, expect, it, vi, type Mock } from "vitest";
 
-const mocks = vi.hoisted(() => ({ reportCronError: vi.fn() }));
+const mocks = vi.hoisted(() => ({
+  reportCronError: vi.fn(),
+  prisma: {},
+  censusBookingLedgerProjection: vi.fn(),
+  censusBookingMoneyReconciliation: vi.fn(),
+  getClubFormat: vi.fn(),
+}));
 
-// Every dependency is injected, so no test here reaches a database.
-vi.mock("@/lib/prisma", () => ({ prisma: {} }));
+// Every dependency is injected or stood in for, so no test here reaches a database.
+vi.mock("@/lib/prisma", () => ({ prisma: mocks.prisma }));
+vi.mock("@/lib/booking-ledger-projection-census-store", async (importOriginal) => ({
+  ...((await importOriginal()) as typeof import("@/lib/booking-ledger-projection-census-store")),
+  censusBookingLedgerProjection: mocks.censusBookingLedgerProjection,
+}));
+vi.mock("@/lib/booking-money-reconciliation-store", () => ({
+  censusBookingMoneyReconciliation: mocks.censusBookingMoneyReconciliation,
+}));
+vi.mock("@/lib/club-format-settings", () => ({ getClubFormat: mocks.getClubFormat }));
 vi.mock("@/lib/logger", () => ({
   default: { info: vi.fn(), error: vi.fn(), warn: vi.fn(), debug: vi.fn() },
 }));
@@ -116,6 +130,24 @@ describe("#4910 runBookingMoneyCensus: the nightly booking money check", () => {
     expect(deps.censusMoney).toHaveBeenCalledWith(ZONE);
     expect(deps.readZone.mock.invocationCallOrder[0]).toBeLessThan(deps.censusLedger.mock.invocationCallOrder[0]);
     expect(deps.readJournalInactive.mock.invocationCallOrder[0]).toBeLessThan(deps.censusLedger.mock.invocationCallOrder[0]);
+  });
+
+  it("left to its own reads, runs both censuses on the database with no acknowledgements and the club's journal state", async () => {
+    mocks.getClubFormat.mockResolvedValue({ currencyCode: "NZD", locale: "en-NZ", unusableStoredCurrency: "XAU" });
+    mocks.censusBookingLedgerProjection.mockResolvedValue(cleanReport());
+    mocks.censusBookingMoneyReconciliation.mockResolvedValue(moneyTotals());
+    const { readJournalInactive, censusLedger, censusMoney, now, ...injected } = buildDeps();
+
+    const summary = await runBookingMoneyCensus(injected);
+
+    // No `acknowledgements`: the server holds no owner file, so every finding is reported.
+    expect(mocks.censusBookingLedgerProjection).toHaveBeenCalledWith(mocks.prisma, {
+      journalInactive: expect.stringContaining("XAU"),
+      pageSize: CENSUS_PAGE_SIZE,
+    });
+    expect(mocks.censusBookingMoneyReconciliation).toHaveBeenCalledWith(mocks.prisma, ZONE);
+    expect(summary).toMatchObject({ verdict: "GATE_OPEN", findings: 0 });
+    for (const unused of [readJournalInactive, censusLedger, censusMoney, now]) expect(unused).not.toHaveBeenCalled();
   });
 
   it("alerts once for a night's new findings, names them by class and booking, and stamps each", async () => {

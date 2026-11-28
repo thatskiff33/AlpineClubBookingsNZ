@@ -1,11 +1,27 @@
 import { describe, expect, it, vi } from "vitest";
 
-vi.mock("@/lib/prisma", () => ({ prisma: {} }));
+const mocks = vi.hoisted(() => ({
+  bookingFindMany: vi.fn(),
+  memberFindMany: vi.fn(),
+  getExpectedJobCronRuns: vi.fn(),
+  getClubTimeZone: vi.fn(),
+  readMemberCreditBalances: vi.fn(),
+  findOrphanedAppliedCredits: vi.fn(),
+}));
+
+vi.mock("@/lib/prisma", () => ({
+  prisma: { booking: { findMany: mocks.bookingFindMany }, member: { findMany: mocks.memberFindMany } },
+}));
+vi.mock("@/lib/admin-cron-runs", () => ({ getExpectedJobCronRuns: mocks.getExpectedJobCronRuns }));
+vi.mock("@/lib/club-time-zone-settings", () => ({ getClubTimeZone: mocks.getClubTimeZone }));
+vi.mock("@/lib/member-credit-balances", () => ({ readMemberCreditBalances: mocks.readMemberCreditBalances }));
+vi.mock("@/lib/orphaned-applied-credit-backfill", () => ({ findOrphanedAppliedCredits: mocks.findOrphanedAppliedCredits }));
 
 import type { AdminCronRun } from "@/lib/admin-cron-health";
 import { BOOKING_MONEY_CENSUS_JOB_NAME } from "@/lib/booking-money-census-job";
 import type { BookingMoneyCensusSummary } from "@/lib/booking-money-census-summary";
-import { classifyBookingMoneyCensusRuns } from "@/lib/stuck-state-money-signals";
+import { classifyBookingMoneyCensusRuns, defaultStuckStateMoneyDependencies } from "@/lib/stuck-state-money-signals";
+import { OWNED_BOOKING_SELECT } from "@/lib/stuck-state-payment-signals";
 
 const NOW = new Date("2026-07-01T00:00:00.000Z");
 const ZONE = "Pacific/Auckland";
@@ -98,5 +114,56 @@ describe("classifyBookingMoneyCensusRuns (#4910)", () => {
     expect(state.problem).toBe("Its latest summary could not be read.");
     expect(state.summary).toBeNull();
     expect(state.checkedAt).not.toBeNull();
+  });
+});
+
+describe("the money check's own reads (#4910)", () => {
+  const deps = defaultStuckStateMoneyDependencies;
+
+  it("classifies the job's stored runs in the club's zone", async () => {
+    mocks.getClubTimeZone.mockResolvedValue(ZONE);
+    mocks.getExpectedJobCronRuns.mockResolvedValue([failure(6), run(30)]);
+
+    const state = await deps.readLatestBookingMoneyCensusRun(NOW);
+
+    expect(mocks.getExpectedJobCronRuns).toHaveBeenCalledWith(BOOKING_MONEY_CENSUS_JOB_NAME);
+    expect(state).toEqual(classifyBookingMoneyCensusRuns([failure(6), run(30)], ZONE, NOW));
+    expect(state.problem).toBe("Latest run failed: census read failed");
+  });
+
+  it("lists only balances below zero, the furthest below first and then by member", async () => {
+    mocks.readMemberCreditBalances.mockResolvedValue([
+      { memberId: "member-c", balanceCents: -100 },
+      { memberId: "member-zero", balanceCents: 0 },
+      { memberId: "member-b", balanceCents: -100 },
+      { memberId: "member-credit", balanceCents: 4_000 },
+      { memberId: "member-a", balanceCents: -2_500 },
+    ]);
+
+    expect(await deps.listNegativeCreditBalances()).toEqual([
+      { memberId: "member-a", balanceCents: -2_500 },
+      { memberId: "member-b", balanceCents: -100 },
+      { memberId: "member-c", balanceCents: -100 },
+    ]);
+  });
+
+  it("reads held credit with the backfill's own finder, and reads no more of a booking or member than its name", async () => {
+    const held = { findings: [{ bookingId: "booking-o", appliedCreditCents: 4_000 }] };
+    mocks.findOrphanedAppliedCredits.mockResolvedValue(held);
+    mocks.bookingFindMany.mockResolvedValue([]);
+    mocks.memberFindMany.mockResolvedValue([]);
+
+    expect(await deps.findOrphanedAppliedCredits()).toBe(held);
+    await deps.listMoneyCheckBookings(["booking-a", "booking-b"]);
+    await deps.listMoneyCheckMembers(["member-1"]);
+
+    expect(mocks.bookingFindMany).toHaveBeenCalledWith({
+      where: { id: { in: ["booking-a", "booking-b"] } },
+      select: OWNED_BOOKING_SELECT,
+    });
+    expect(mocks.memberFindMany).toHaveBeenCalledWith({
+      where: { id: { in: ["member-1"] } },
+      select: { id: true, firstName: true, lastName: true },
+    });
   });
 });

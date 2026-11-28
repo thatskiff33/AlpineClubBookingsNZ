@@ -70,6 +70,11 @@ const READERS: Record<string, { reason: string; importOnly: boolean }> = {
     reason: "the census command asks whether the club's journal is inactive (a pure decision on its format)",
     importOnly: false,
   },
+  // #4910: the nightly check runs the same census, so it asks the same question of the club's format.
+  "src/lib/cron-booking-money-census.ts": {
+    reason: "the nightly money check asks whether the club's journal is inactive (a pure decision on its format)",
+    importOnly: true,
+  },
   "src/lib/booking-ledger-projection-census-journal.ts": {
     reason: "the pure JOURNAL comparison of the journal's charges with the bridged lines, and report v3 over its refund debts (#5185)",
     importOnly: false,
