@@ -4,7 +4,7 @@ import { modificationChangeFeeKey } from "../../booking-ledger-posting-keys";
 import { invoiceLineItemsTotalCents } from "../../xero-modification-line-items";
 import type { XeroTaxRendering } from "../../xero-tax-rendering";
 import { bookingChargeIdentity } from "./booking-charges";
-import { componentKey, liveComponentGross, liveComponentSplit, type PostedRevenueLeg } from "./components";
+import { componentKey, liveComponentGross, liveComponentSplit, movedComponents, type PostedRevenueLeg } from "./components";
 import { frozenLineCodes, primaryInvoicePayloadHash, splitStayAndFeeCents, type PrimaryInvoiceCoverage } from "./primary-invoice-plan";
 
 /**
@@ -92,74 +92,115 @@ export interface SupplementaryInvoiceCoverage extends PrimaryInvoiceCoverage {
   sliceKey?: string;
 }
 
-interface SupplementaryRendering {
+/** What a slice document's plan freezes beside its outcome: the same for an invoice and an edit's credit note (ALP-753). */
+interface SliceDocumentRendering {
   legacyKey: string;
   payloadHash: string;
   frozenMapping: Record<string, unknown>;
   lineTotalCents: number;
 }
 
-export type SupplementaryInvoicePlan =
-  | (SupplementaryRendering & { outcome: "COVERED"; coverage: SupplementaryInvoiceCoverage[] })
-  | (SupplementaryRendering & { outcome: "CONFLICT"; reason: MemberMoneyExportConflictReason; problem: string });
+/** A slice document's plan: the slices its lines cover, or the one reason they cover none. */
+export type SliceDocumentPlan =
+  | (SliceDocumentRendering & { outcome: "COVERED"; coverage: SupplementaryInvoiceCoverage[] })
+  | (SliceDocumentRendering & { outcome: "CONFLICT"; reason: MemberMoneyExportConflictReason; problem: string });
 
-/** Plan the supplementary invoice the sender sent: its coverage or its conflict. */
-export function planSupplementaryBookingInvoice(input: SupplementaryInvoicePlanInput): SupplementaryInvoicePlan {
-  const { bookingId, anchor, lines, sliceEvent, postedLegs } = input;
-  const { stayCents, feeCents } = splitStayAndFeeCents(lines);
-  const lineTotalCents = invoiceLineItemsTotalCents(lines);
-  const rendering = (coverage: SupplementaryInvoiceCoverage[]): SupplementaryRendering => ({
+export type SupplementaryInvoicePlan = SliceDocumentPlan;
+
+/**
+ * The rendering frozen beside a slice document's manifest: its key, the hash
+ * and codes of the lines sent, how they were built, the tax treatment they
+ * were sent with (#4632: the booking's own, from its tax anchor) and the tax
+ * code of each slice covered. The one freeze a supplementary invoice and an
+ * edit's credit note share.
+ */
+export function sliceDocumentRendering(
+  input: { anchor: unknown; legacyKey: string; lines: LineItem[]; taxRendering: XeroTaxRendering; priceLines: unknown },
+  coverage: readonly SupplementaryInvoiceCoverage[],
+): SliceDocumentRendering {
+  return {
     legacyKey: input.legacyKey,
-    payloadHash: primaryInvoicePayloadHash(lines),
+    payloadHash: primaryInvoicePayloadHash(input.lines),
     frozenMapping: {
       source: "BUILT",
-      anchor,
+      anchor: input.anchor,
       priceLines: input.priceLines ?? null,
-      lineCodes: frozenLineCodes(lines),
-      // #4632: the treatment the invoice was sent with, from the booking's tax anchor.
+      lineCodes: frozenLineCodes(input.lines),
       taxType: input.taxRendering.taxType ?? null,
       lineAmountTypes: input.taxRendering.lineAmountTypes,
       componentTaxCodes: coverage.map(({ account, chargeIdentity, sliceKey, taxCode }) =>
         ({ account, chargeIdentity, sliceKey: sliceKey ?? null, taxCode })),
     },
-    lineTotalCents,
-  });
-  const conflict = (reason: MemberMoneyExportConflictReason, problem: string): SupplementaryInvoicePlan =>
-    ({ outcome: "CONFLICT", reason, problem, ...rendering([]) });
+    lineTotalCents: invoiceLineItemsTotalCents(input.lines),
+  };
+}
 
-  if (stayCents < 0) return conflict("REDUCTION_NETTED", "the invoice nets a price reduction against a fee");
-  if (sliceEvent === "AMBIGUOUS") return conflict("COMPONENT_UNUSABLE", "the review task closed more than once; which closure this bills is unknown");
-  if (!sliceEvent) return conflict("COMPONENT_UNUSABLE", "the journal holds no event for what this invoice bills");
+/**
+ * Which way a document moves the stay charge: an invoice BILLS what its events
+ * charged, a credit note RETURNS what they reduced (ALP-753). A slice is always
+ * covered as positive cents; the direction says which sign of movement counts.
+ */
+type StaySliceDirection = "BILLS" | "RETURNS";
+
+const DIRECTION_WORDS: Record<StaySliceDirection, { sign: 1 | -1; document: string; verb: string; netted: string }> = {
+  BILLS: { sign: 1, document: "invoice", verb: "bill", netted: "the invoice nets a settled review share's give-back against what the edit charges" },
+  RETURNS: { sign: -1, document: "note", verb: "return", netted: "the note nets a settled review share's charge against what the edit returns" },
+};
+
+type StaySliceMatch =
+  | { outcome: "MATCHED"; event: SliceEvent; moved: Map<string, number>; coverage: SupplementaryInvoiceCoverage[] }
+  | { outcome: "CONFLICT"; reason: MemberMoneyExportConflictReason; problem: string };
+
+/**
+ * Match a document's stay lines to the stay slices its events moved (#4525,
+ * Ledger M13): the anchor's own event and each itemised settled review share's
+ * closure, one slice each, keyed by the event. A missing, reversed or ambiguous
+ * event, a share that moves a fee, an event that moves other booking revenue,
+ * lines that do not carry exactly the slices' movement, or a slice moving the
+ * other way than the document are each a conflict, never partial coverage.
+ * The one rule a supplementary invoice and an edit's credit note share.
+ */
+export function matchStaySlices(input: {
+  bookingId: string;
+  sliceEvent: SliceEvent | null | "AMBIGUOUS";
+  shareEvents: ReadonlyArray<SliceEvent | null | "AMBIGUOUS">;
+  /** What the document's stay lines carry, positive whichever way it moves money. */
+  stayCents: number;
+  direction: StaySliceDirection;
+}): StaySliceMatch {
+  const { bookingId, sliceEvent, stayCents } = input;
+  const { sign, document, verb, netted } = DIRECTION_WORDS[input.direction];
+  const conflict = (reason: MemberMoneyExportConflictReason, problem: string): StaySliceMatch => ({ outcome: "CONFLICT", reason, problem });
+
+  if (sliceEvent === "AMBIGUOUS") return conflict("COMPONENT_UNUSABLE", `the review task closed more than once; which closure this ${verb}s is unknown`);
+  if (!sliceEvent) return conflict("COMPONENT_UNUSABLE", `the journal holds no event for what this ${document} ${verb}s`);
   if (sliceEvent.reversed) return conflict("COMPONENT_UNUSABLE", `the journal reversed ${sliceEvent.eventKey}`);
-  const shareEvents = anchor.kind === "MODIFICATION" ? input.shareEvents ?? [] : [];
   const shareSlices: SliceEvent[] = [];
-  for (const share of shareEvents) {
-    if (share === "AMBIGUOUS") return conflict("COMPONENT_UNUSABLE", "a settled review share's task closed more than once; which closure this bills is unknown");
-    if (!share) return conflict("COMPONENT_UNUSABLE", "the journal holds no closure for a settled review share this invoice bills");
+  for (const share of input.shareEvents) {
+    if (share === "AMBIGUOUS") return conflict("COMPONENT_UNUSABLE", `a settled review share's task closed more than once; which closure this ${verb}s is unknown`);
+    if (!share) return conflict("COMPONENT_UNUSABLE", `the journal holds no closure for a settled review share this ${document} ${verb}s`);
+    if (share.reversed) return conflict("COMPONENT_UNUSABLE", `the journal reversed ${share.eventKey}`);
     shareSlices.push(share);
   }
 
-  // Each slice moves the stay charge and nothing else of booking revenue; together they are what the stay lines bill.
+  // Each slice moves the stay charge and nothing else of booking revenue; together they are what the stay lines carry.
   const stayIdentity = bookingChargeIdentity(bookingId);
   const stayKey = componentKey("BOOKING_REVENUE", stayIdentity);
   const moved = liveComponentGross(sliceEvent.legs);
   const stayMovements: { event: SliceEvent; cents: number }[] = [];
   for (const event of [sliceEvent, ...shareSlices]) {
     const eventMoved = event === sliceEvent ? moved : liveComponentGross(event.legs);
-    const otherStay = [...eventMoved].find(([key, cents]) =>
-      cents !== 0 && key.startsWith(componentKey("BOOKING_REVENUE", "")) && key !== stayKey);
-    if (otherStay) return conflict("COMPONENT_UNUSABLE", `${event.eventKey} moves booking revenue other than the stay charge`);
-    if (event !== sliceEvent && [...eventMoved].some(([key, cents]) => cents !== 0 && key.startsWith(componentKey("FEE_REVENUE", "")))) {
-      return conflict("FEE_CENTS", `${event.eventKey} moves a fee this invoice does not bill`);
+    if (movedComponents(eventMoved, "BOOKING_REVENUE").some(([key]) => key !== stayKey)) return conflict("COMPONENT_UNUSABLE", `${event.eventKey} moves booking revenue other than the stay charge`);
+    if (event !== sliceEvent && movedComponents(eventMoved, "FEE_REVENUE").length > 0) {
+      return conflict("FEE_CENTS", `${event.eventKey} moves a fee this ${document} does not ${verb}`);
     }
-    stayMovements.push({ event, cents: eventMoved.get(stayKey) ?? 0 });
+    // In the document's own direction: a note's slice is the reduction, so its movement counts negated.
+    stayMovements.push({ event, cents: sign * (eventMoved.get(stayKey) ?? 0) });
   }
   if (stayMovements.reduce((sum, { cents }) => sum + cents, 0) !== stayCents) {
-    return conflict("STAY_CENTS", `the stay lines do not bill what ${stayMovements.map(({ event }) => event.eventKey).join(" and ")} moved the stay charge by`);
+    return conflict("STAY_CENTS", `the stay lines do not ${verb} what ${stayMovements.map(({ event }) => event.eventKey).join(" and ")} moved the stay charge by`);
   }
-  if (stayMovements.some(({ cents }) => cents < 0)) {
-    return conflict("REDUCTION_NETTED", "the invoice nets a settled review share's give-back against what the edit charges");
-  }
+  if (stayMovements.some(({ cents }) => cents < 0)) return conflict("REDUCTION_NETTED", netted);
 
   const coverage: SupplementaryInvoiceCoverage[] = [];
   for (const { event, cents } of stayMovements) {
@@ -169,12 +210,32 @@ export function planSupplementaryBookingInvoice(input: SupplementaryInvoicePlanI
     if (slice.bookingId !== bookingId) return conflict("COMPONENT_UNUSABLE", `the stay charge ${stayIdentity} names another booking`);
     coverage.push({ account: "BOOKING_REVENUE", chargeIdentity: stayIdentity, sliceKey: event.eventKey, coveredCents: cents, taxCode: slice.taxCode });
   }
+  return { outcome: "MATCHED", event: sliceEvent, moved, coverage };
+}
+
+/** Plan the supplementary invoice the sender sent: its coverage or its conflict. */
+export function planSupplementaryBookingInvoice(input: SupplementaryInvoicePlanInput): SupplementaryInvoicePlan {
+  const { bookingId, anchor, lines, sliceEvent, postedLegs } = input;
+  const { stayCents, feeCents } = splitStayAndFeeCents(lines);
+  const conflict = (reason: MemberMoneyExportConflictReason, problem: string): SupplementaryInvoicePlan =>
+    ({ outcome: "CONFLICT", reason, problem, ...sliceDocumentRendering(input, []) });
+
+  if (stayCents < 0) return conflict("REDUCTION_NETTED", "the invoice nets a price reduction against a fee");
+  const matched = matchStaySlices({
+    bookingId,
+    sliceEvent,
+    shareEvents: anchor.kind === "MODIFICATION" ? input.shareEvents ?? [] : [],
+    stayCents,
+    direction: "BILLS",
+  });
+  if (matched.outcome === "CONFLICT") return conflict(matched.reason, matched.problem);
+  const { coverage, moved } = matched;
 
   // A second ask bills a review's share, never a fee; an edit bills its own fee and no other.
   const ownFee = anchor.kind === "MODIFICATION" ? modificationChangeFeeKey(anchor.modificationId) : null;
-  const feesMoved = [...moved].filter(([key, cents]) => cents !== 0 && key.startsWith(componentKey("FEE_REVENUE", "")));
+  const feesMoved = movedComponents(moved, "FEE_REVENUE");
   if (feesMoved.some(([key]) => ownFee === null || key !== componentKey("FEE_REVENUE", ownFee))) {
-    return conflict("FEE_CENTS", `${sliceEvent.eventKey} moves a fee this invoice does not bill`);
+    return conflict("FEE_CENTS", `${matched.event.eventKey} moves a fee this invoice does not bill`);
   }
   const feeMoved = feesMoved.reduce((sum, [, cents]) => sum + cents, 0);
   if (feeMoved !== feeCents) return conflict("FEE_CENTS", "the change-fee line does not bill the fee the edit posted");
@@ -185,8 +246,9 @@ export function planSupplementaryBookingInvoice(input: SupplementaryInvoicePlanI
     if (fee.grossCents !== feeCents) return conflict("FEE_CENTS", `the fee ${ownFee} no longer carries what the edit posted`);
     coverage.push({ account: "FEE_REVENUE", chargeIdentity: ownFee, coveredCents: feeCents, taxCode: fee.taxCode });
   }
-  if (coverage.reduce((sum, c) => sum + c.coveredCents, 0) !== lineTotalCents) {
+  const rendering = sliceDocumentRendering(input, coverage);
+  if (coverage.reduce((sum, c) => sum + c.coveredCents, 0) !== rendering.lineTotalCents) {
     return conflict("STAY_CENTS", "the lines' total is not what the slice and fee carry");
   }
-  return { outcome: "COVERED", coverage, ...rendering(coverage) };
+  return { outcome: "COVERED", coverage, ...rendering };
 }

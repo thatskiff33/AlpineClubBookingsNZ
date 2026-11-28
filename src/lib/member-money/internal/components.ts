@@ -74,6 +74,12 @@ export function liveComponentGross(posted: readonly PostedRevenueLeg[]): Map<str
   return gross;
 }
 
+/** The components of one account a gross map (`liveComponentGross`) moves: its non-zero entries, as `[componentKey, cents]`. */
+export function movedComponents(gross: ReadonlyMap<string, number>, account: MemberMoneyAccount): [key: string, cents: number][] {
+  const prefix = componentKey(account, "");
+  return [...gross].filter(([key, cents]) => cents !== 0 && key.startsWith(prefix));
+}
+
 /** The tax codes a component still carries money under. A code fully netted to zero no longer counts. */
 const liveCodes = (state: ComponentState) => [...state.byCode].filter(([, totals]) => totals.gross !== 0);
 

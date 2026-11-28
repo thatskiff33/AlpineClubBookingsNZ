@@ -44,6 +44,7 @@ const mocks = vi.hoisted(() => ({
   createCreditNoteAllocation: vi.fn(),
   findLateCapturePaymentIntents: vi.fn(),
   readLateCaptureXeroReceipt: vi.fn(),
+  recordModificationCreditNoteManifest: vi.fn(),
 }));
 
 const deallocationFence = vi.hoisted(() => ({ findFirst: vi.fn() }));
@@ -138,6 +139,12 @@ vi.mock("@/lib/late-capture-xero-receipt", async (importOriginal) => ({
   readLateCaptureXeroReceipt: mocks.readLateCaptureXeroReceipt,
   // Round 11: the close's plan reads the paid-another-way verdict; one mock answers both.
   readPaidAnotherWayLateCaptureXeroReceipt: mocks.readLateCaptureXeroReceipt,
+}));
+
+// #4525 (ALP-753): the edit note's manifest recorder; its own suite drives it.
+vi.mock("@/lib/member-money/doors", async (importOriginal) => ({
+  ...((await importOriginal()) as typeof import("@/lib/member-money/doors")),
+  recordModificationCreditNoteManifest: mocks.recordModificationCreditNoteManifest,
 }));
 
 vi.mock("@/lib/club-time-zone-runtime", () => ({
@@ -1292,5 +1299,65 @@ describe("itemised modification notes (#3530)", () => {
     expect(mocks.bookingModificationFindUnique).not.toHaveBeenCalled();
     const enqueued = mocks.startXeroSyncOperation.mock.calls[0][0];
     expect(enqueued.requestPayload).not.toHaveProperty("priceLines");
+  });
+});
+
+describe("#4525 (ALP-753): the edit note's export manifest is recorded after the send, and changes nothing sent", () => {
+  const editNote = (overrides: { refundAmountCents?: number; reviewTaskId?: string } = {}) => createXeroCreditNoteForModification({
+    format: CLUB_FORMAT_TEST,
+    bookingId: BOOKING_ID,
+    refundAmountCents: 2500,
+    bookingModificationId: "cmmodification01",
+    ...overrides,
+  });
+
+  it("hands the recorder the lines, key and tax the note was sent with, once its row has completed", async () => {
+    await expect(editNote({ reviewTaskId: "task-1" })).resolves.toBe("cn_1");
+    const started = mocks.startXeroSyncOperation.mock.calls[0]![0] as { idempotencyKey: string };
+    expect(mocks.recordModificationCreditNoteManifest).toHaveBeenCalledTimes(1);
+    expect(mocks.recordModificationCreditNoteManifest).toHaveBeenCalledWith(expect.objectContaining({
+      bookingId: BOOKING_ID,
+      modificationId: "cmmodification01",
+      reviewTaskId: "task-1",
+      legacyKey: started.idempotencyKey,
+      lines: builtCreditNote().lineItems,
+      taxRendering: expect.objectContaining({ lineAmountTypes: expect.anything() }),
+      itemisedShareTaskIds: [],
+      providerCreditNoteId: "cn_1",
+    }));
+    expect(mocks.completeXeroSyncOperation.mock.invocationCallOrder[0]!)
+      .toBeLessThan(mocks.recordModificationCreditNoteManifest.mock.invocationCallOrder[0]!);
+  });
+
+  it("records a note whose allocation was refused too: the note is in Xero", async () => {
+    mocks.createCreditNoteAllocation.mockRejectedValueOnce(new Error("allocation refused"));
+    await expect(editNote()).resolves.toBe("cn_1");
+    expect(completion()).toMatchObject({ status: "PARTIAL" });
+    expect(mocks.recordModificationCreditNoteManifest).toHaveBeenCalledWith(expect.objectContaining({ providerCreditNoteId: "cn_1" }));
+  });
+
+  it("records nothing for a skipped, invoice-less, refused or booking-anchored note", async () => {
+    await editNote({ refundAmountCents: 0 });
+    mocks.bookingFindUnique.mockResolvedValueOnce({ ...bookingRow(), payment: { id: PAYMENT_ID, xeroInvoiceId: null } });
+    await editNote();
+    configureInvoicesDue({ invoice_1: 10 });
+    await expect(editNote()).rejects.toThrow();
+    configureInvoicesDue({ invoice_1: 150 });
+    await createXeroCreditNoteForModification({ format: CLUB_FORMAT_TEST, bookingId: BOOKING_ID, refundAmountCents: 2500, clearsUnpaidInvoice: true });
+    expect(mocks.retryXeroWriteWithContactRepair).toHaveBeenCalledTimes(1);
+    expect(mocks.recordModificationCreditNoteManifest).not.toHaveBeenCalled();
+  });
+
+  it("MUTATION: a recorder that fails leaves the note, its payload and its row's outcome as they were", async () => {
+    await editNote();
+    const sent = builtCreditNote();
+    const completed = completion();
+    vi.clearAllMocks();
+    mocks.recordModificationCreditNoteManifest.mockImplementation(() => { throw new Error("manifest store down"); });
+    await expect(editNote()).resolves.toBe("cn_1");
+    expect(builtCreditNote()).toEqual(sent);
+    expect(completion()).toEqual(completed);
+    expect(mocks.completeXeroSyncOperation).toHaveBeenCalledTimes(1);
+    expect(mocks.failXeroSyncOperation).not.toHaveBeenCalled();
   });
 });

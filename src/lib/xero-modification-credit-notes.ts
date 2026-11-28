@@ -9,6 +9,7 @@
 
 import { CreditNote, type LineItem } from "xero-node";
 import { prisma } from "./prisma";
+import logger from "./logger";
 import { bookingOwner } from "@/lib/booking-owner";
 import { buildXeroInvoiceUrl } from "@/lib/xero-links";
 import {
@@ -69,6 +70,7 @@ import {
 } from "@/lib/xero-modification-note-refusal";
 import type { ClubFormat } from "@/lib/club-format";
 import type { XeroOperationClaim } from "@/lib/xero-operation-outcome-guard";
+import { recordModificationCreditNoteManifest } from "@/lib/member-money/doors";
 
 /**
  * `refundMethod` is how the reduction went back to the member (`INV-PAY-101`,
@@ -410,9 +412,7 @@ export async function createXeroCreditNoteForModification(params: {
     });
 
     const created = response.body.creditNotes?.[0];
-    if (!created?.creditNoteID) {
-      throw new Error("Failed to create modification credit note");
-    }
+    if (!created?.creditNoteID) throw new Error("Failed to create modification credit note");
     const createdCreditNoteId = created.creditNoteID;
 
     // One allocation call per target, each with its own Xero idempotency key.
@@ -510,11 +510,31 @@ export async function createXeroCreditNoteForModification(params: {
       xeroObjectNumber: created.creditNoteNumber ?? null,
       extraLinks: [noteLink, ...allocationLinks],
     });
+    await recordSentNoteManifest({ bookingModificationId, bookingId, reviewTaskId, legacyKey: creditNoteIdempotencyKey, lines: itemised?.lineItems ?? [modRefundLineItem],
+      taxRendering, priceLines: itemised?.record ?? null, itemisedShareTaskIds: itemised?.itemisedShareTaskIds ?? [], providerCreditNoteId: createdCreditNoteId });
 
     return createdCreditNoteId;
   } catch (error) {
     await failXeroSyncOperation(operationClaim!, error);
     throw error;
+  }
+}
+
+/**
+ * #4525 (ALP-753): what an edit's note returns of the journal, recorded once
+ * its row has completed, or gone PARTIAL (the note is in Xero either way). A
+ * booking-anchored clearing note has no edit behind it and records none. Never
+ * throws, so nothing about the note or its row changes.
+ */
+async function recordSentNoteManifest(
+  input: Omit<Parameters<typeof recordModificationCreditNoteManifest>[0], "modificationId"> & { bookingModificationId: string | undefined },
+): Promise<void> {
+  const { bookingModificationId, ...rest } = input;
+  if (!bookingModificationId) return;
+  try {
+    await recordModificationCreditNoteManifest({ ...rest, modificationId: bookingModificationId });
+  } catch (error) {
+    logger.error({ err: error, bookingId: input.bookingId, creditNoteId: input.providerCreditNoteId }, "Could not record the edit's credit note's export manifest; the note is unchanged");
   }
 }
 

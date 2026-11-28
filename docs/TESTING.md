@@ -213,7 +213,12 @@ pushes a booking invoice, pays it in parts in the fake and reconciles each
 state, and
 [`stripe-webhook-round-trip.realdb.test.ts`](../src/test/providers/stripe-webhook-round-trip.realdb.test.ts)
 delivers a dashboard refund, its redelivery and a later `refund.failed`. A
-ledger stage writes its own per-pair proofs on these transports.
+ledger stage writes its own per-pair proofs on these transports. The export
+manifests' proofs (#4525) share one helper,
+[`manifest-round-trip.ts`](../src/test/providers/manifest-round-trip.ts): read
+a sent document back through the app's client and hold its recorded manifest
+to the lines Xero holds. Its first suite is
+[`xero-booking-invoice-manifest-round-trip.realdb.test.ts`](../src/test/providers/xero-booking-invoice-manifest-round-trip.realdb.test.ts).
 
 ### Contract fixtures and sandbox captures
 
@@ -261,7 +266,7 @@ Run the provider suites with:
 pnpm run test:named src/test/providers/provider-fakes.test.ts src/test/providers/provider-contracts.test.ts src/test/providers/ledger-scenarios.test.ts src/test/providers/round-trip.test.ts src/test/providers/provider-transports.test.ts src/test/providers/production-import-census.test.ts
 ```
 
-The two realdb suites need the race harness's disposable PostgreSQL
+These realdb suites need the race harness's disposable PostgreSQL
 (`RUN_CONCURRENCY_RACE_TESTS=1` and `CONCURRENCY_RACE_DATABASE_URL`) and run in
 the `realdb-all` CI job.
 

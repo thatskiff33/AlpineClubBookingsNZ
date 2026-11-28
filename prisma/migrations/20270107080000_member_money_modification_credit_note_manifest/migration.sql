@@ -1,0 +1,12 @@
+-- Ledger M13 (#4525), the edit credit note cohort (ALP-753): expand only. One
+-- more export document role, the credit note an edit (or a review's share of
+-- it) raises, covering the stay slice its journal event returned.
+--
+-- Purely additive: an enum value only, catalog-only, no table lock, no DML.
+-- The draining release never writes this role and reads no manifest row, so
+-- no read it makes can return one. Nothing in this migration uses the new
+-- value, so PostgreSQL's refusal to use a label in the transaction that added
+-- it does not arise. The coverage-total and generation triggers already treat
+-- any role but the invoice pair as a group of its own. PostgreSQL cannot drop
+-- an enum value; the reverse is to leave it unused.
+ALTER TYPE "MemberMoneyExportDocumentRole" ADD VALUE IF NOT EXISTS 'MODIFICATION_CREDIT_NOTE';

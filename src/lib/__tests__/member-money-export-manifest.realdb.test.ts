@@ -228,6 +228,26 @@ async function stored(bookingId: string) {
     });
   });
 
+  it("covers an edit credit note's slice beside an invoice's slice of the same event, and refuses a second note on it (ALP-753)", async () => {
+    const id = await booking();
+    const slice = { account: "BOOKING_REVENUE" as const, chargeIdentity: `booking:${id}:charge`, sliceKey: "modification:mod-n", coveredCents: 4500, taxCode: "GST_INCLUSIVE_1500BP" };
+    const note = (legacyKey: string, overrides: Partial<ExportManifestRow> = {}) => row(id, {
+      documentRole: "MODIFICATION_CREDIT_NOTE", legacyKey, lineTotalCents: 4500, providerInvoiceId: `CN-${legacyKey}`, coverage: [slice], ...overrides,
+    });
+    // An invoice role's cover of the same event's slice is a group of its own: the note's cover does not meet it.
+    await write(row(id, { documentRole: "SUPPLEMENTARY_BOOKING_INVOICE", legacyKey: "supplementary", lineTotalCents: 4500, coverage: [slice] }));
+    await expect(write(note("first"))).resolves.toBe("WRITTEN");
+    await expect(write(note("first"))).resolves.toBe("SAME");
+    const refused = await write(note("second")).catch((error: unknown) => error);
+    expect(refused).toMatchObject({ code: "P2002" });
+    expect(describeUniqueConstraintTarget(refused)).toContain("chargeidenti");
+    await expect(write(note("second", { outcome: "CONFLICT", reason: "ALREADY_COVERED", coverage: [] }))).resolves.toBe("WRITTEN");
+    await expect(write(note("short", { lineTotalCents: 4000, coverage: [{ ...slice, sliceKey: "modification:mod-o" }] }))).rejects.toThrow(/coverage_total_mismatch/);
+    const roles = (await app.query(`SELECT "documentRole" FROM "MemberMoneyExportCoverage" WHERE "chargeIdentity" = $1 AND "sliceKey" = $2 ORDER BY "documentRole"`,
+      [slice.chargeIdentity, slice.sliceKey])).rows;
+    expect(roles.map((r) => r.documentRole).sort()).toEqual(["MODIFICATION_CREDIT_NOTE", "SUPPLEMENTARY_BOOKING_INVOICE"]);
+  });
+
   it("lets several receipts cover one capture under their own keys, and refuses a key covering it twice", async () => {
     const id = await booking();
     await expect(write(receipt(id, `payment:${id}:a`, 5000))).resolves.toBe("WRITTEN");
