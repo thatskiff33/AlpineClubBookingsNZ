@@ -27,6 +27,8 @@ const NO_RESEND_GUIDANCE: Record<
   Exclude<ExhaustedEmailFailure["recovery"], "retry" | "fresh_copy">,
   string
 > = {
+  address_blocked:
+    "This address is blocked after a bounce or complaint, so nothing can be sent to it from here. If the member asks to receive email again, clear its suppression under Active suppressions above; this row then shows whatever can still be done for it, which may be nothing.",
   token_reissue:
     "No copy of this message was kept because it held a single-use link, so it can't be resent from here. Reissue it from Token Email Recovery above.",
   sensitive:
@@ -37,7 +39,7 @@ const NO_RESEND_GUIDANCE: Record<
 
 /** #5298 (INV-INT-043): a send the app stopped part-way through. */
 const UNCONFIRMED_DELIVERY_NOTE =
-  "May already have been delivered: the app stopped while sending this email, so it may have reached the recipient. Check with them before you try again.";
+  "May already have been delivered: the app stopped while sending this email, so it may have reached the recipient.";
 
 /** What **Try again** asks; #5298: it warns of a duplicate when the recipient may already have it. */
 function tryAgainDescription(to: string, deliveryUnconfirmed: boolean): string {
@@ -577,7 +579,7 @@ function EmailFailureRowNotes({ failure }: { failure: ExhaustedEmailFailure }) {
       <EmailFailureLinks failure={failure} />
       {failure.deliveryUnconfirmed ? (
         <p className="col-span-full text-xs font-medium text-warning-11">
-          {UNCONFIRMED_DELIVERY_NOTE}
+          {UNCONFIRMED_DELIVERY_NOTE} Check with them before you {failure.recovery === "retry" ? "try again" : "send it another way"}.
         </p>
       ) : null}
       {failure.recovery === "fresh_copy" && failure.freshCopyHref ? (
