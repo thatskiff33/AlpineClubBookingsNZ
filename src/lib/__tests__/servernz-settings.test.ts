@@ -67,6 +67,13 @@ describe("loadServerNzSettings", () => {
     expect(settings.otherLodgesEnabled).toBe(false);
     expect(settings.baseUrl).toBeNull();
   });
+
+  it("throws on the global client when asked to, so a counter reports the failure rather than the defaults", async () => {
+    mocks.findUnique.mockRejectedValue(new Error("database unavailable"));
+    await expect(
+      loadServerNzSettings(undefined, { failOnError: true }),
+    ).rejects.toThrow("database unavailable");
+  });
 });
 
 it("propagates a fenced settings read failure instead of reporting defaults (#4436)", async () => {

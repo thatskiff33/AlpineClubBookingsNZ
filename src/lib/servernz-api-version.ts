@@ -163,6 +163,13 @@ export function computeServerVersionStatus(
 }
 
 /**
+ * The fact every pause message opens with (`INV-SSOT`): `describeServerVersionPause`
+ * below, and the Needs Attention card, which has no version numbers to name.
+ */
+export const SERVER_VERSION_PAUSE_SUMMARY =
+  "Syncing with the Alpine Central Server is paused";
+
+/**
  * The one sentence that explains a pause, used by the gate's error, the Daily
  * digest, the setup page and the lodges panel so every surface says the same
  * thing. Names only the two numbers.
@@ -175,7 +182,7 @@ export function describeServerVersionPause(
     serverVersion === SERVER_VERSION_UNKNOWN
       ? "the server does not report a version, so it is on a release from before version checks"
       : `the server reports ${serverVersion}`;
-  return `Syncing with the Alpine Central Server is paused: this site is built for server version ${expected} and ${serverPart}. Nothing is sent or received until the two match.`;
+  return `${SERVER_VERSION_PAUSE_SUMMARY}: this site is built for server version ${expected} and ${serverPart}. Nothing is sent or received until the two match.`;
 }
 
 /**

@@ -159,10 +159,14 @@ export async function lockServerNzSettings(
 
 /**
  * Read the ServerNZ settings with safe defaults. A missing row or query failure
- * falls back to defaults so the setup page keeps rendering.
+ * falls back to defaults so the setup page keeps rendering. `failOnError` is for
+ * a reader that must report a failed read rather than see the defaults: the
+ * Needs Attention counter, where a default would read as "versions fine" and
+ * hide the queue instead of naming it unavailable.
  */
 export async function loadServerNzSettings(
   db: Pick<Prisma.TransactionClient, "serverNzSettings"> = prisma,
+  options: { failOnError?: boolean } = {},
 ): Promise<ServerNzSettingsValues> {
   try {
     const row = await db.serverNzSettings.findUnique({
@@ -185,7 +189,7 @@ export async function loadServerNzSettings(
     };
   } catch (error) {
     // A fenced operational read must fail rather than hide a database failure.
-    if (db !== prisma) throw error;
+    if (db !== prisma || options.failOnError) throw error;
     return { ...DEFAULTS };
   }
 }

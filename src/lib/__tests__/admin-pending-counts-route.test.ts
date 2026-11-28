@@ -36,6 +36,9 @@ vi.mock("@/lib/prisma", () => ({
 vi.mock("@/lib/xero-webhook-health", () => ({
   getXeroWebhookHealth: vi.fn().mockResolvedValue({ silent: true }),
 }));
+vi.mock("@/lib/servernz-version-check", () => ({
+  readStoredServerVersion: vi.fn().mockResolvedValue({ status: "match" }),
+}));
 vi.mock("@/lib/membership-cancellation-admin", () => ({
   getPendingMembershipCancellationReviewCount: vi.fn().mockResolvedValue(2),
 }));

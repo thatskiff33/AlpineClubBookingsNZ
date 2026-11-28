@@ -140,6 +140,14 @@ describe("readStoredServerVersion (no network)", () => {
     expect(await readStoredServerVersion()).toMatchObject({ status: "no-key", serverVersion: "0" });
     expect(mocks.refreshStoredServerVersion).not.toHaveBeenCalled();
   });
+
+  it("passes failOnError through to the settings read, and defaults it off", async () => {
+    stored("2.7");
+    await readStoredServerVersion({ failOnError: true });
+    expect(mocks.loadServerNzSettings).toHaveBeenLastCalledWith(undefined, { failOnError: true });
+    await readStoredServerVersion();
+    expect(mocks.loadServerNzSettings).toHaveBeenLastCalledWith(undefined, {});
+  });
 });
 
 describe("isServerSyncPaused", () => {

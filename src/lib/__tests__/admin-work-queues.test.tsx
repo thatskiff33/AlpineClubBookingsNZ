@@ -182,6 +182,23 @@ describe("the officer work queue registry", () => {
     }
   });
 
+  it("shows a paused Alpine Central Server link only with its module on, to finance viewers", () => {
+    // The setup page's own gates: the alpineCentralServer module and the
+    // finance area. A club that never linked a server has the module off.
+    const counts = { ...ZERO_ADMIN_PENDING_COUNTS, alpineServerVersionMismatch: 1 };
+    const finance = matrix({ finance: "view" });
+    expect(queue("alpine-server-version").href(CLUB_DAY)).toBe(
+      adminHref("alpine-server-setup"),
+    );
+    for (const view of [dashboardQueues, sidebarQueues]) {
+      expect(view(counts, allOn, finance)).toEqual([["alpine-server-version", 1]]);
+      expect(
+        view(counts, { ...allOn, alpineCentralServer: false }, finance),
+      ).toEqual([]);
+      expect(view(counts, allOn, matrix({ support: "edit" }))).toEqual([]);
+    }
+  });
+
   it("names a queue whose count failed instead of hiding it", () => {
     const html = renderToStaticMarkup(
       <AdminWorkQueueCards

@@ -29,6 +29,7 @@ import {
   CreditCard,
   DollarSign,
   RotateCcw,
+  ServerCrash,
   Trash2,
   UserX,
   Users,
@@ -47,6 +48,7 @@ import {
   type AdminPermissionMatrix,
 } from "@/lib/admin-permissions";
 import type { CalendarDate } from "@/lib/club-time";
+import { SERVER_VERSION_PAUSE_SUMMARY } from "@/lib/servernz-api-version";
 import {
   buildUnpaidFinishedStaysHref,
   buildUnsettledAdditionalStaysHref,
@@ -58,6 +60,11 @@ import {
  */
 export const ADMIN_PENDING_COUNT_KEYS = [
   "xeroSilentWebhook",
+  /**
+   * 1 while the linked Alpine Central Server reports a different API version
+   * from the one this site speaks, so every server sync is paused; else 0.
+   */
+  "alpineServerVersionMismatch",
   "familyRequests",
   "memberApplications",
   "refundAppeals",
@@ -169,6 +176,24 @@ export const ADMIN_WORK_QUEUES: readonly AdminWorkQueue[] = [
     card: {
       describe: () =>
         "Xero has not delivered a webhook event for longer than expected. Check the Xero connection and webhook settings.",
+    },
+  },
+  {
+    // The stored version answer (#49) as a queue: while it differs from this
+    // site's, every server-bound sync is paused, and before this only the
+    // Daily digest and the setup page said so.
+    key: "alpine-server-version",
+    label: "Alpine Server Out of Sync",
+    href: () => adminHref("alpine-server-setup"),
+    icon: ServerCrash,
+    counts: ["alpineServerVersionMismatch"],
+    tone: "danger",
+    card: {
+      title: "Alpine Central Server Version Mismatch",
+      // The pause's one opening phrase; the setup page it links to names both
+      // numbers through `describeServerVersionPause`.
+      describe: () =>
+        `${SERVER_VERSION_PAUSE_SUMMARY} because this site and the server are on different software versions. Update whichever side is behind; syncing resumes once the two match.`,
     },
   },
   {
