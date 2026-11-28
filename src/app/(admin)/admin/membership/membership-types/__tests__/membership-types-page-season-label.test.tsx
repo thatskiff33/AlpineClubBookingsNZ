@@ -8,21 +8,13 @@
  * as "<from> to <to>". The template asserts a season spans two calendar years,
  * which is false under a December year-end.
  *
- * ## THE PAGE IS `"use client"`, SO THE DECEMBER CASE PROVES THE RULE, NOT THE SCREEN
+ * ## The year-end arrives as data (#5259)
  *
- * The year-end month lives in a module cache seeded only by
- * `refreshFinancialYearConfig()`, which reads Prisma and is therefore
- * server-side (`INV-OPS-013`). In a browser this page's derivation answers for
- * the March default, and it will keep doing so until the year-end reaches the
- * client the way the zone already does. Under vitest the cache is the same
- * module instance the test writes to, which is the only reason
- * `__setFinancialYearEndMonthForTesting` reaches the component here.
- *
- * That is not a hole this change opened. `defaultSeasonYear`, which drives the
- * two roll-forward pickers, reads the SAME unseeded cache - so label and value
- * are stale together and the banner cannot name a season the pickers did not
- * select. #3102 refused to plumb one half without the other for exactly that
- * reason, and `src/lib/season-label.ts` records it.
+ * The page is `"use client"`; the admin layout resolves the club's year-end on
+ * the server and mounts `ClubSeasonProvider` with it, and the page derives BOTH
+ * `defaultSeasonYear` (the two roll-forward pickers) and the banner's names from
+ * `useClubSeason()`. So label and value move together, and each case below
+ * passes its year-end through that provider, as production does.
  *
  * ## `defaultSeasonYear + 1` is arithmetic and must stay
  *
@@ -32,7 +24,7 @@
  * pin from-2026/to-2027, so a rewrite there shows up as a wrong season rather
  * than as a wrong string.
  */
-import { beforeEach, afterEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 // The shared renderer, not Testing Library directly: this page derives the
 // club's current season from `useClubTime()`, which throws with no provider.
@@ -41,7 +33,7 @@ import {
   render,
   screen,
   waitFor,
-} from "@/lib/__tests__/support/club-time-render";
+} from "@/lib/__tests__/support/club-season-render";
 
 vi.mock("next-auth/react", () => ({
   useSession: () => ({
@@ -62,10 +54,6 @@ vi.mock("next-auth/react", () => ({
   }),
 }));
 
-import {
-  DEFAULT_FINANCIAL_YEAR_END_MONTH,
-  __setFinancialYearEndMonthForTesting,
-} from "@/lib/financial-year";
 import AdminMembershipTypesPage from "@/app/(admin)/admin/membership/membership-types/page";
 
 const membershipTypes = [
@@ -132,8 +120,8 @@ function mockFetch() {
   );
 }
 
-async function previewRollForward() {
-  render(<AdminMembershipTypesPage />);
+async function previewRollForward(yearEndMonth?: number) {
+  render(<AdminMembershipTypesPage />, { yearEndMonth });
   await waitFor(() => expect(screen.queryByText("Full")).not.toBeNull());
   fireEvent.click(screen.getByRole("button", { name: /Preview/ }));
   await waitFor(() => expect(screen.queryByText("Seasons")).not.toBeNull());
@@ -141,13 +129,8 @@ async function previewRollForward() {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  __setFinancialYearEndMonthForTesting(DEFAULT_FINANCIAL_YEAR_END_MONTH);
   global.fetch = fetchMock as typeof fetch;
   mockFetch();
-});
-
-afterEach(() => {
-  __setFinancialYearEndMonthForTesting(DEFAULT_FINANCIAL_YEAR_END_MONTH);
 });
 
 describe("AdminMembershipTypesPage season naming (#3103)", () => {
@@ -163,13 +146,21 @@ describe("AdminMembershipTypesPage season naming (#3103)", () => {
   it("names ONE calendar year under a December year-end", async () => {
     // The discriminator: re-inline the local template and the March case above
     // still passes while this one fails.
-    __setFinancialYearEndMonthForTesting(12);
-
-    await previewRollForward();
+    await previewRollForward(12);
 
     expect(
       screen.queryByText(/2026 \(Jan-Dec\) to 2027 \(Jan-Dec\)/),
     ).not.toBeNull();
     expect(screen.queryByText(/2026 - 2027/)).toBeNull();
+  });
+
+  it("rolls a June club from the season it is in, named Jul-Jun", async () => {
+    // 1 July 2026 is the first day of a June club's season 2026.
+    await previewRollForward(6);
+
+    expect(
+      screen.queryByText(/2026 - 2027 \(Jul-Jun\) to 2027 - 2028 \(Jul-Jun\)/),
+    ).not.toBeNull();
+    expect(screen.queryByText(/Apr-Mar/)).toBeNull();
   });
 });
