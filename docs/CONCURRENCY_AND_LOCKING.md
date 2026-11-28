@@ -411,8 +411,9 @@ claimed inside `reverseManualBookingPayment`'s transaction (lock(1), the lodge
 key, then the Payment row) through its `beforeReverse` hook, which re-reads
 "untouched" under those locks; the batch adds no key of its own there. A free
 stay claims its row under lock(1) then the lodge key at the registered site
-`reverseOneRow#1`. The cancel that follows is `cancelBooking`'s own claim. A
-lost row claim moves nothing.
+`reverseOneRow#1`. The cancel that follows is `cancelBooking`'s own claim,
+asked with `refuseRefund`: its paid-path claim throws, rolling back, before any
+write if the policy would give anything back. A lost row claim moves nothing.
 
 ### A writer that does BOTH takes BOTH — global first
 

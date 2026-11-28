@@ -4533,29 +4533,25 @@ settlement body), **`INV-PAY-040`** (the manual capacity refusal),
 **Related: `INV-PAY-045`** (manual reversal), **`INV-PAY-161`** (the import).
 
 - **A batch reversal takes back only the imported bookings nobody has
-  touched** (#5005). Untouched means: still `PAID`, the stay not started
-  (`bookingStayHasStarted`), no `BookingModification` and the price as
-  imported, no refund, no refund task of any status, no card transaction or
-  intent, no Xero invoice or operation, and the payment as the import recorded
-  it. `importedBookingTouches` is the one reader; the preview
-  (`planBookingImportReversal`) and the writer both call it. A touched booking
-  is kept and named with plain reasons.
+  touched** (#5005). Untouched: still `PAID`, the stay not started, no
+  `BookingModification` and the imported price, no refund, no refund task of
+  any status, no card transaction or intent, no Xero invoice or operation, and
+  the payment as imported. `importedBookingTouches` is the one reader, for the
+  preview and the writer. A touched booking is kept and named.
 - **Two existing writers, no copy.** A paid stay goes through
-  `reverseManualBookingPayment`, whose `beforeReverse` hook re-checks
-  "untouched" under its locks and claims the import row `REVERSED` with a
-  status-guarded update, so the row and the money move together. A free stay
-  claims its row under lock(1) and the lodge key. `cancelBooking` then cancels
-  the unpaid booking with no email (`notifyMember: false`), no refund and its
-  beds released, and only in the shape the first step left; a booking that
-  changed in between is reported, never cancelled into a refund.
-- **Resumable and safe twice.** The batch is claimed `REVERSED` once; a
-  `REVERSED` row whose booking is not cancelled is finished on the next run,
-  and a call may be bounded by `maxBookings`. A reversed batch's file cannot be
-  confirmed again, and a reversed row frees its Booking Ref.
-- **Both censuses stay clean**: the cash lines net to zero and the
-  cancellation posts the stay's reversal. Nothing goes to Xero, Stripe or any
-  inbox.
-- Proven by `booking-import.realdb.test.ts`.
+  `reverseManualBookingPayment`, whose `beforeReverse` hook re-checks under its
+  locks and claims the import row `REVERSED` with a status-guarded update, so
+  row and money move together. A free stay claims its row under lock(1) and the
+  lodge key. `cancelBooking` then cancels with no email. Before it runs, the
+  booking is re-checked as step 1 left it (stage `reversed`); its `refuseRefund`
+  option refuses under its own locks if there is money to give back.
+- **Resumable, safe twice, never stalled.** The batch is claimed `REVERSED`
+  once. A `REVERSED` row whose booking is not cancelled is finished next run. A
+  bounded call returns a cursor (`nextAfterLineNumber`) past the rows it tried,
+  so kept rows never block the rest. A reversed batch's file cannot be
+  confirmed again; a reversed row frees its Booking Ref.
+- **Both censuses stay clean**; nothing goes to Xero, Stripe or any inbox.
+- Proven by `booking-import.realdb.test.ts` and `booking-import-routes.test.ts`.
 
 ## INV-PAY-162
 

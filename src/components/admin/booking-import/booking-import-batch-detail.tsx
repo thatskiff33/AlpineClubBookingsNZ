@@ -81,19 +81,24 @@ export function BookingImportBatchDetail({ batchId, canReverse }: { batchId: str
     setDialogError("")
     let reversed = 0
     let kept = 0
+    let afterLineNumber: number | null = null
     try {
+      // One slice per call, carrying on after the last line the previous slice tried.
       for (;;) {
         const response = await fetchWithRecentAuth(`/api/admin/bookings/import/batches/${encodeURIComponent(batchId)}/reverse`, {
           method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(afterLineNumber === null ? {} : { afterLineNumber }),
         })
         if (!response.ok) {
           setDialogError(await apiErrorMessageFromResponse(response, "The reversal stopped. Reverse again to carry on."))
           return
         }
-        const body = (await response.json()) as { rows: { outcome: string }[]; remaining: number }
+        const body = (await response.json()) as { rows: { outcome: string }[]; remaining: number; nextAfterLineNumber: number | null }
         reversed += body.rows.filter((row) => row.outcome === "REVERSED").length
         kept += body.rows.filter((row) => row.outcome !== "REVERSED").length
-        if (body.remaining === 0) break
+        if (body.remaining === 0 || body.nextAfterLineNumber === null) break
+        afterLineNumber = body.nextAfterLineNumber
       }
       toast.success(`Reversed ${reversed} booking${reversed === 1 ? "" : "s"}${kept ? `; ${kept} kept` : ""}`)
       setConfirming(false)

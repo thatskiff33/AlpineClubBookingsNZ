@@ -50,17 +50,20 @@ class ImportReversalKept extends Error {
   }
 }
 
-const CHANGED_AFTER_REVERSAL =
-  "Its payment was reversed, but the booking changed before it could be cancelled; check it and cancel it by hand if it should go";
-
 /**
- * Why an imported booking can no longer be reversed: empty when it is
- * untouched. Plain sentences an officer may read; none names a person.
- * The reversal writer's own refusals (`INV-PAY-045`) are a second wall.
+ * Why an imported booking cannot be taken back: empty when nothing has
+ * happened to it. Plain sentences an officer may read; none names a person.
+ *
+ * At stage `imported` (before step 1) it must still be PAID as imported, its
+ * stay not started. At stage `reversed` (before step 2, the cancel) it must be
+ * exactly what step 1 left: a paid stay unpaid with its manual payment taken
+ * back, a free stay still PAID on its $0 payment. Either way it must carry no
+ * edit, refund, refund task, card payment or Xero link. The reversal writer's
+ * own refusals (`INV-PAY-045`) and the cancel's `refuseRefund` are further walls.
  */
 export async function importedBookingTouches(
   db: Db,
-  input: { bookingId: string; importedAmountCents: number; today: Date },
+  input: { bookingId: string; importedAmountCents: number; today: Date; stage: "imported" | "reversed" },
 ): Promise<string[]> {
   const booking = await db.booking.findUnique({
     where: { id: input.bookingId },
@@ -81,36 +84,39 @@ export async function importedBookingTouches(
     },
   });
   if (!booking) return ["The booking no longer exists"];
+  const paid = input.importedAmountCents > 0;
+  const reversedPaidStay = input.stage === "reversed" && paid;
+  const expectedStatus = reversedPaidStay ? BookingStatus.PAYMENT_PENDING : BookingStatus.PAID;
   const reasons: string[] = [];
   if (booking.status === BookingStatus.CANCELLED) reasons.push("It has been cancelled");
-  else if (booking.status !== BookingStatus.PAID) reasons.push("It is no longer marked paid");
-  if (bookingStayHasStarted(booking.checkIn, input.today)) reasons.push("The stay has started");
+  else if (booking.status !== expectedStatus) reasons.push(reversedPaidStay ? "It has been paid again" : "It is no longer marked paid");
+  if (input.stage === "imported" && bookingStayHasStarted(booking.checkIn, input.today)) reasons.push("The stay has started");
 
-  const [modifications, refundTasks] = await Promise.all([
-    db.bookingModification.count({ where: { bookingId: input.bookingId } }),
-    db.manualRefundTask.count({ where: { bookingId: input.bookingId } }),
-  ]);
+  const modifications = await db.bookingModification.count({ where: { bookingId: input.bookingId } });
   if (modifications > 0 || booking.finalPriceCents !== input.importedAmountCents) {
     reasons.push("It has been edited since the import");
   }
-  if (refundTasks > 0) reasons.push("It has a refund task");
+  if ((await db.manualRefundTask.count({ where: { bookingId: input.bookingId } })) > 0) reasons.push("It has a refund task");
 
   const payment = booking.payment;
   if (!payment) return [...reasons, "Its payment record is missing"];
-  const [refunds, cardTransactions, xeroOperations] = await Promise.all([
-    db.paymentRefund.count({ where: { paymentId: payment.id } }),
-    db.paymentTransaction.count({ where: { paymentId: payment.id, source: PaymentSource.STRIPE } }),
-    db.xeroSyncOperation.count({ where: { localId: { in: [input.bookingId, payment.id] } } }),
-  ]);
+  const refunds = await db.paymentRefund.count({ where: { paymentId: payment.id } });
+  const cardTransactions = await db.paymentTransaction.count({ where: { paymentId: payment.id, source: PaymentSource.STRIPE } });
+  const xeroOperations = await db.xeroSyncOperation.count({ where: { localId: { in: [input.bookingId, payment.id] } } });
   if (payment.refundedAmountCents !== 0 || refunds > 0) reasons.push("Money has been refunded on it");
   if (payment.stripePaymentIntentId || cardTransactions > 0) reasons.push("A card payment has been started or taken on it");
   if (payment.xeroInvoiceId || xeroOperations > 0) reasons.push("It has been linked to Xero");
-  const settledAsImported =
+  // A paid stay carries the import's manual payment until step 1 takes it back.
+  const expectsManualPayment = paid && input.stage === "imported";
+  const paymentAsExpected =
     payment.amountCents === input.importedAmountCents &&
-    (input.importedAmountCents === 0 ? payment.manuallyMarkedPaidAt === null : payment.manuallyMarkedPaidAt !== null);
-  if (!settledAsImported) reasons.push("Its recorded payment has changed since the import");
+    (payment.manuallyMarkedPaidAt !== null) === expectsManualPayment;
+  if (!paymentAsExpected) reasons.push("Its recorded payment has changed since the import");
   return reasons;
 }
+
+const STEP_TWO_REFUSED =
+  "Its recorded payment was taken back, but the booking was not cancelled; check it and cancel it by hand if it should go";
 
 export type BookingImportReversalRowState =
   /** Will be reversed. */
@@ -200,6 +206,7 @@ export async function planBookingImportReversal(
         bookingId: row.bookingId,
         importedAmountCents: row.amountCents,
         today: input.today,
+        stage: "imported",
       });
       state = reasons.length === 0 ? "UNTOUCHED" : "TOUCHED";
     }
@@ -228,7 +235,7 @@ export type BookingImportReversalRowResult =
   | { bookingRef: string; outcome: "REVERSED"; bookingId: string }
   | { bookingRef: string; outcome: "KEPT"; bookingId: string; reasons: string[] }
   /** Its payment was reversed but the cancel did not finish; the next run retries it. */
-  | { bookingRef: string; outcome: "CANCEL_PENDING"; bookingId: string; reason: string };
+  | { bookingRef: string; outcome: "CANCEL_PENDING"; bookingId: string; reasons: string[] };
 
 export type BookingImportReversalResult =
   | { outcome: "not_found" }
@@ -238,15 +245,19 @@ export type BookingImportReversalResult =
       outcome: "reversed";
       batchId: string;
       rows: BookingImportReversalRowResult[];
-      /** Bookings left for another run when `maxBookings` stopped this one. */
+      /** Bookings after `nextAfterLineNumber` still to try when `maxBookings` stopped this run. */
       remaining: number;
+      /** Pass back as `afterLineNumber` to carry on; null when this run tried nothing. */
+      nextAfterLineNumber: number | null;
     };
 
 /**
  * Reverse a completed batch. Safe to run again: a finished row is skipped, a
  * row stopped half-way is finished, and each row's claim makes a concurrent
- * reversal take each booking once. `maxBookings` bounds one call so a route
- * can repeat it until `remaining` is zero.
+ * reversal take each booking once. `maxBookings` bounds one call; the caller
+ * repeats it with `afterLineNumber` set to the last `nextAfterLineNumber` until
+ * `remaining` is zero. The cursor matters: a kept booking stays IMPORTED, so
+ * without it a run would retry the same kept rows and never reach the rest.
  */
 export async function reverseBookingImport(input: {
   batchId: string;
@@ -255,6 +266,7 @@ export async function reverseBookingImport(input: {
   format: ClubFormat;
   ipAddress: string;
   maxBookings?: number;
+  afterLineNumber?: number;
 }): Promise<BookingImportReversalResult> {
   const batch = await prisma.bookingImportBatch.findUnique({
     where: { id: input.batchId },
@@ -280,17 +292,18 @@ export async function reverseBookingImport(input: {
     where: {
       batchId: batch.id,
       bookingId: { not: null },
+      ...(input.afterLineNumber === undefined ? {} : { firstLineNumber: { gt: input.afterLineNumber } }),
       OR: [
         { status: BookingImportRowStatus.IMPORTED },
         { status: BookingImportRowStatus.REVERSED, booking: { status: { not: BookingStatus.CANCELLED } } },
       ],
     },
     orderBy: { firstLineNumber: "asc" },
-    select: { id: true, bookingRef: true, status: true, bookingId: true, amountCents: true },
+    select: { id: true, bookingRef: true, firstLineNumber: true, status: true, bookingId: true, amountCents: true },
   });
-  const limit = input.maxBookings ?? rows.length;
+  const slice = rows.slice(0, input.maxBookings ?? rows.length);
   const results: BookingImportReversalRowResult[] = [];
-  for (const row of rows.slice(0, limit)) {
+  for (const row of slice) {
     results.push(await reverseOneRow(input, batch.lodgeId, { ...row, bookingId: row.bookingId! }));
   }
 
@@ -316,12 +329,19 @@ export async function reverseBookingImport(input: {
       },
     });
   }
-  return { outcome: "reversed", batchId: batch.id, rows: results, remaining: Math.max(0, rows.length - limit) };
+  return {
+    outcome: "reversed",
+    batchId: batch.id,
+    rows: results,
+    remaining: rows.length - slice.length,
+    nextAfterLineNumber: slice.at(-1)?.firstLineNumber ?? null,
+  };
 }
 
 type ReversalRow = {
   id: string;
   bookingRef: string;
+  firstLineNumber: number;
   status: BookingImportRowStatus;
   bookingId: string;
   amountCents: number;
@@ -334,7 +354,7 @@ async function reverseOneRow(
 ): Promise<BookingImportReversalRowResult> {
   const { bookingRef, bookingId } = row;
   if (row.status === BookingImportRowStatus.IMPORTED) {
-    const touch = { bookingId, importedAmountCents: row.amountCents, today: input.today };
+    const touch = { bookingId, importedAmountCents: row.amountCents, today: input.today, stage: "imported" as const };
     // A cheap read first, so an obviously touched booking never waits for lock(1).
     const touched = await importedBookingTouches(prisma, touch);
     if (touched.length > 0) return { bookingRef, outcome: "KEPT", bookingId, reasons: touched };
@@ -381,36 +401,34 @@ async function reverseOneRow(
 
 /**
  * Step 2: cancel the reversed booking with no email; nothing is left to
- * refund. Only the shape step 1 leaves is cancelled: an unpaid booking whose
- * manual payment was taken back, or a free stay still on its $0 payment. If a
- * card payment landed in between, the booking is left for an officer, never
- * cancelled into a refund here.
+ * refund. Only the shape step 1 left is cancelled, re-checked here
+ * (`importedBookingTouches` at stage `reversed`): a booking edited, paid again
+ * or refunded since is reported and left for an officer. `refuseRefund` makes
+ * the cancel itself refuse, under its locks, if money to give back appeared in
+ * the moment between this check and its claim.
  */
 async function cancelReversedBooking(
   input: Parameters<typeof reverseBookingImport>[0],
   row: ReversalRow,
 ): Promise<BookingImportReversalRowResult> {
   const { bookingRef, bookingId } = row;
-  const booking = await prisma.booking.findUnique({
-    where: { id: bookingId },
-    select: { status: true, payment: { select: { amountCents: true, refundedAmountCents: true, manuallyMarkedPaidAt: true } } },
+  const isCancelled = async () =>
+    (await prisma.booking.findUnique({ where: { id: bookingId }, select: { status: true } }))?.status === BookingStatus.CANCELLED;
+  if (await isCancelled()) return { bookingRef, outcome: "REVERSED", bookingId };
+  const changed = await importedBookingTouches(prisma, {
+    bookingId,
+    importedAmountCents: row.amountCents,
+    today: input.today,
+    stage: "reversed",
   });
-  if (booking?.status === BookingStatus.CANCELLED) return { bookingRef, outcome: "REVERSED", bookingId };
-  const payment = booking?.payment;
-  const asStepOneLeftIt =
-    row.amountCents > 0
-      ? booking?.status === BookingStatus.PAYMENT_PENDING && payment?.manuallyMarkedPaidAt === null
-      : booking?.status === BookingStatus.PAID && payment?.amountCents === 0 && payment.refundedAmountCents === 0;
-  if (!asStepOneLeftIt) {
-    return { bookingRef, outcome: "CANCEL_PENDING", bookingId, reason: CHANGED_AFTER_REVERSAL };
-  }
+  if (changed.length > 0) return { bookingRef, outcome: "CANCEL_PENDING", bookingId, reasons: [STEP_TWO_REFUSED, ...changed] };
   const result = await cancelBooking(bookingId, input.officerMemberId, "ADMIN", input.ipAddress, input.format, "card", {
     hasBookingsEditAccess: true,
     notifyMember: false,
+    refuseRefund: true,
   });
   if (result.status === 200) return { bookingRef, outcome: "REVERSED", bookingId };
   // A member or officer may have cancelled it in between: the end is the same.
-  const after = await prisma.booking.findUnique({ where: { id: bookingId }, select: { status: true } });
-  if (after?.status === BookingStatus.CANCELLED) return { bookingRef, outcome: "REVERSED", bookingId };
-  return { bookingRef, outcome: "CANCEL_PENDING", bookingId, reason: result.error };
+  if (await isCancelled()) return { bookingRef, outcome: "REVERSED", bookingId };
+  return { bookingRef, outcome: "CANCEL_PENDING", bookingId, reasons: [STEP_TWO_REFUSED, result.error] };
 }

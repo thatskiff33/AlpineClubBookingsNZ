@@ -132,6 +132,7 @@ import {
   recordPartPaymentInClaim,
 } from "@/lib/internet-banking-part-payment-at-cancel";
 import { LOCK1_HOLDER_TRANSACTION_BUDGET } from "@/lib/db-transaction";
+import { CANCEL_REFUND_REFUSED_MESSAGE, CancelRefundRefusedError } from "@/lib/booking-cancel-refund-refusal";
 import { appendReturnedCreditSentence } from "@/lib/booking-cancel-credit-sentence";
 import type { CancelBookingResult } from "@/lib/booking-cancel-result";
 
@@ -261,6 +262,7 @@ export async function cancelBooking(
      * block by inventing a reason.
      */
     hostingCoverageOverride?: HostingCoverageOverrideInput;
+    refuseRefund?: boolean; // #5005: 409 instead of refunding or restoring anything (booking-cancel-refund-refusal.ts)
   } = {}
 ): Promise<CancelBookingResponse> {
   // Issue #1705: resolve the honoured email choice once, so the main cancel and
@@ -283,7 +285,8 @@ export async function cancelBooking(
     notifyMember,
     options.enforceStartedStayBlock ?? false,
     options.hostingCoverageOverride ?? null,
-    options.enforceMemberCancelDoor ?? false
+    options.enforceMemberCancelDoor ?? false,
+    options.refuseRefund ?? false
   );
 
   if (result.status === 200) {
@@ -500,7 +503,8 @@ async function performBookingCancellation(
   hostingCoverageOverride: HostingCoverageOverrideInput | null = null,
   // #3497: the member-door status guard (see the guard below). Default false so
   // every internal/officer caller is unaffected.
-  enforceMemberCancelDoor = false
+  enforceMemberCancelDoor = false,
+  refuseRefund = false // #5005: see booking-cancel-refund-refusal.ts
 ): Promise<CancelBookingResponse> {
   // Issue #1705 (#1698 pattern): a suppressed admin cancel records the choice in
   // the audit metadata — notifyMember is false only when an authorized admin
@@ -536,9 +540,7 @@ async function performBookingCancellation(
     },
   });
 
-  if (!booking) {
-    return { status: 404, error: "Booking not found" };
-  }
+  if (!booking) return { status: 404, error: "Booking not found" };
 
   // Authorization (issue #1313, option A2): the booking owner, a Full Admin
   // (sessionUserRole === "ADMIN"), OR a Booking Officer (bookings:edit, passed
@@ -631,11 +633,7 @@ async function performBookingCancellation(
   // deletion cleanup) never pass this option and reach the generic PENDING
   // branch exactly as before.
   if (requireRequestHold && booking.status !== "AWAITING_REVIEW") {
-    return {
-      status: 409,
-      error:
-        "This hold can no longer be released (it was just approved or cancelled).",
-    };
+    return { status: 409, error: "This hold can no longer be released (it was just approved or cancelled)." };
   }
 
   // Bookings awaiting admin review have no payment yet; same no-payment
@@ -1680,6 +1678,7 @@ async function performBookingCancellation(
       capAppliedCredit: await bookingReducedThroughCreditGiveBack(bookingId, tx),
     });
     const { paidAmountCents, refundableBaseCents } = money;
+    if (refuseRefund && (money.refundAmountCents > 0 || money.creditToRestoreCents > 0)) throw new CancelRefundRefusedError();
     let refundAmountCents = money.refundAmountCents;
     let refundPercentage = money.refundPercentage;
 
@@ -2038,6 +2037,7 @@ async function performBookingCancellation(
     };
   }, LOCK1_HOLDER_TRANSACTION_BUDGET).catch((err: unknown) => {
     if (err instanceof PartPaymentChangedError) return { claimed: false as const };
+    if (err instanceof CancelRefundRefusedError) return { claimed: false as const, refundRefused: true as const };
     throw err;
   });
 
@@ -2045,10 +2045,8 @@ async function performBookingCancellation(
   // real 409. This MUST be non-200 so the outer cancelBooking does not re-run
   // the group/child cleanup and does not report a false refundAmountCents:0.
   if (!claim.claimed) {
-    return {
-      status: 409,
-      error: "This booking is already being cancelled or has been cancelled",
-    };
+    const error = "refundRefused" in claim ? CANCEL_REFUND_REFUSED_MESSAGE : "This booking is already being cancelled or has been cancelled";
+    return { status: 409, error };
   }
 
   const {

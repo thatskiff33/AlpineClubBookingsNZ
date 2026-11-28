@@ -781,8 +781,12 @@ async function existingBooking(ref: string, guests: Line[]) {
   }, 120_000);
 
   describe("reversing a batch (#5005 child B)", () => {
-    const reverse = (batchId: string, maxBookings?: number) =>
-      reverser.reverseBookingImport({ batchId, officerMemberId: OFFICER, today: TODAY, format: CLUB_FORMAT_TEST, ipAddress: "127.0.0.1", ...(maxBookings ? { maxBookings } : {}) });
+    const reverse = (batchId: string, maxBookings?: number, afterLineNumber?: number) =>
+      reverser.reverseBookingImport({
+        batchId, officerMemberId: OFFICER, today: TODAY, format: CLUB_FORMAT_TEST, ipAddress: "127.0.0.1",
+        ...(maxBookings ? { maxBookings } : {}),
+        ...(afterLineNumber === undefined ? {} : { afterLineNumber }),
+      });
     const batchOf = (result: Awaited<ReturnType<typeof importFile>>["result"]) => {
       if (result.outcome !== "completed") throw new Error(`confirm was ${result.outcome}`);
       return result.batchId;
@@ -898,11 +902,70 @@ async function existingBooking(ref: string, guests: Line[]) {
       expect(await prisma.booking.findUniqueOrThrow({ where: { id: firstId }, select: { status: true } })).toEqual({ status: "PAYMENT_PENDING" });
       expect(await heldBeds("2026-08-10", "2026-08-12")).toEqual([0, 0]);
 
-      // Bounded: one booking per call, then the rest.
-      expect(await reverse(batchId, 1)).toMatchObject({ rows: [{ bookingRef: "R1", outcome: "REVERSED" }], remaining: 1 });
-      expect(await reverse(batchId, 1)).toMatchObject({ rows: [{ bookingRef: "R2", outcome: "REVERSED" }], remaining: 0 });
+      // Bounded: one booking per call, then the rest after the cursor.
+      const first = await reverse(batchId, 1);
+      expect(first).toMatchObject({ rows: [{ bookingRef: "R1", outcome: "REVERSED" }], remaining: 1, nextAfterLineNumber: 2 });
+      expect(await reverse(batchId, 1, 2)).toMatchObject({ rows: [{ bookingRef: "R2", outcome: "REVERSED" }], remaining: 0 });
       expect(await prisma.booking.count({ where: { lodgeId: LODGE, status: { not: "CANCELLED" } } })).toBe(0);
       for (const id of await lodgeBookingIds()) await expectCensusClean(id);
+    }, 120_000);
+
+    it("walks past kept bookings with its cursor, so a later untouched booking is reached", async () => {
+      const { result } = await importFile([
+        line({ ref: "K1", member: PEOPLE.owner, amount: "10" }),
+        line({ ref: "K2", owner: PEOPLE.friend, member: PEOPLE.friend, amount: "10" }),
+        line({ ref: "K3", owner: PEOPLE.other, member: PEOPLE.other, amount: "10" }),
+      ]);
+      const batchId = batchOf(result);
+      const { cancelBooking } = await import("@/lib/booking-cancel");
+      for (const [ref, member] of [["K1", OWNER], ["K2", FRIEND]] as const) {
+        expect((await cancelBooking(importedId(result, ref), member, "USER", "127.0.0.1", CLUB_FORMAT_TEST)).status).toBe(200);
+      }
+      // Without the cursor a one-booking slice would try K1 for ever.
+      const one = await reverse(batchId, 1);
+      expect(one).toMatchObject({ rows: [{ bookingRef: "K1", outcome: "KEPT" }], remaining: 2, nextAfterLineNumber: 2 });
+      const two = await reverse(batchId, 1, 2);
+      expect(two).toMatchObject({ rows: [{ bookingRef: "K2", outcome: "KEPT" }], remaining: 1, nextAfterLineNumber: 3 });
+      expect(await reverse(batchId, 1, 3)).toMatchObject({ rows: [{ bookingRef: "K3", outcome: "REVERSED" }], remaining: 0 });
+      expect(await prisma.booking.findUniqueOrThrow({ where: { id: importedId(result, "K3") }, select: { status: true } })).toEqual({ status: "CANCELLED" });
+    }, 120_000);
+
+    it("does not cancel a reversed booking that was edited before its cancel ran, and the cancel itself refuses a refund", async () => {
+      const { result } = await importFile([line({ ref: "Q1", member: PEOPLE.owner, amount: "60" })]);
+      const batchId = batchOf(result);
+      const bookingId = importedId(result, "Q1");
+      // refuseRefund: the PAID imported booking would raise a by-hand refund, so the cancel refuses and writes nothing.
+      const { cancelBooking } = await import("@/lib/booking-cancel");
+      const { CANCEL_REFUND_REFUSED_MESSAGE } = await import("@/lib/booking-cancel-refund-refusal");
+      expect(await cancelBooking(bookingId, OFFICER, "ADMIN", "127.0.0.1", CLUB_FORMAT_TEST, "card", { notifyMember: false, refuseRefund: true }))
+        .toEqual({ status: 409, error: CANCEL_REFUND_REFUSED_MESSAGE });
+      expect(await prisma.booking.findUniqueOrThrow({ where: { id: bookingId }, select: { status: true } })).toEqual({ status: "PAID" });
+      expect(await prisma.manualRefundTask.count({ where: { bookingId } })).toBe(0);
+
+      const cancel = await import("@/lib/booking-cancel");
+      const spy = vi.spyOn(cancel, "cancelBooking").mockRejectedValueOnce(new Error("the process stopped"));
+      try {
+        await expect(reverse(batchId)).rejects.toThrow("the process stopped");
+      } finally {
+        spy.mockRestore();
+      }
+      // Between the two steps an officer edits the now-unpaid booking.
+      const { clubTime } = await import("@/lib/club-time/server");
+      await editService.modifyBookingBatch({
+        bookingId,
+        actor: { id: OFFICER, role: "ADMIN" },
+        input: { addGuests: [{ firstName: "Late", lastName: "Friend", ageTier: "ADULT", isMember: false }] } as never,
+        ipAddress: "127.0.0.1",
+        todayAtClub: (await clubTime()).today(),
+        format: CLUB_FORMAT_TEST,
+        waiveChangeFee: true,
+      });
+      while (pendingXeroWork.length > 0) await Promise.allSettled(pendingXeroWork.splice(0));
+      const resumed = await reverse(batchId);
+      expect(resumed).toMatchObject({ rows: [{ bookingRef: "Q1", outcome: "CANCEL_PENDING", reasons: expect.arrayContaining(["It has been edited since the import"]) }] });
+      expect(await prisma.booking.findUniqueOrThrow({ where: { id: bookingId }, select: { status: true } })).toEqual({ status: "PAYMENT_PENDING" });
+      const preview = await reverser.planBookingImportReversal(prisma, { batchId, today: TODAY });
+      expect(preview!.rows[0]).toMatchObject({ state: "REVERSED", cancelPending: true });
     }, 120_000);
 
     it("refuses a batch still being imported", async () => {

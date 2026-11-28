@@ -94,9 +94,15 @@ under the reversal's locks and claims the row REVERSED in the same
 transaction. A free stay claims its row under lock(1) and the lodge key. Then
 `cancelBooking` cancels the booking with no email and nothing to refund. A run
 that stops between the two steps leaves a REVERSED row on an unpaid booking
-holding no beds; the next run cancels it. If the booking changed in between (a
-card payment, say), the run reports it and cancels nothing. A call may be
-bounded with `maxBookings`; the route repeats it until nothing remains.
+holding no beds; the next run cancels it. Before cancelling, the booking is
+re-checked as step 1 left it (`importedBookingTouches` at stage `reversed`): if
+it was edited, paid again or refunded in between, the run reports it and
+cancels nothing. The cancel is also called with `refuseRefund`, which refuses
+under its own locks if the policy would give anything back, so a payment that
+lands in the moment between the check and the cancel's claim is never refunded
+by it. A call may be bounded with `maxBookings`; it returns a cursor
+(`nextAfterLineNumber`) that the next call passes as `afterLineNumber`, so kept
+bookings, which stay IMPORTED, never stop the run reaching the rest.
 
 The batch is claimed REVERSED by the first run and records who and when. Its
 file can no longer be confirmed, and a reversed row frees its Booking Ref for a
@@ -120,7 +126,7 @@ mapping, so the batch key still hashes the parsed content, not the mapping.
 | `POST /api/admin/bookings/import/confirm` | One slice (`BOOKING_IMPORT_SLICE` bookings) per call, with the preview's digest; 409 with the fresh plan when it changed. The dialog repeats it until `remaining` is zero. | as above |
 | `GET /api/admin/bookings/import/batches` | The batches, newest first, with file, imported, refused and reversed totals. | finance view and bookings view |
 | `GET /api/admin/bookings/import/batches/[id]` | One batch's totals and its reversal preview. | as above |
-| `POST /api/admin/bookings/import/batches/[id]/reverse` | One slice of the reversal per call; the page repeats it. | finance edit and bookings edit, a recent sign-in |
+| `POST /api/admin/bookings/import/batches/[id]/reverse` | One slice of the reversal per call, after `afterLineNumber` if given; the page repeats it with each answer's `nextAfterLineNumber`. | finance edit and bookings edit, a recent sign-in |
 
 O4 is two checks, both pinned by `booking-import-routes.test.ts`: the route
 map files the paths under finance, so `requireAdmin` checks finance, and

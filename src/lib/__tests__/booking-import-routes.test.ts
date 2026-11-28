@@ -172,4 +172,13 @@ describe("paid-booking import routes (#5005 child C)", () => {
     expect((await reverseBatch(post("/api/admin/bookings/import/batches/batch-1/reverse", {}), batchParams)).status).toBe(404);
     expect(engine.reverse).toHaveBeenLastCalledWith(expect.objectContaining({ batchId: "batch-1", officerMemberId: "officer-1", maxBookings: 20 }));
   });
+
+  it("carries the reversal's cursor from one slice to the next, and refuses any other body", async () => {
+    engine.reverse.mockResolvedValue({ outcome: "reversed", batchId: "batch-1", rows: [], remaining: 0, nextAfterLineNumber: null });
+    await reverseBatch(post("/api/admin/bookings/import/batches/batch-1/reverse", { afterLineNumber: 41 }), batchParams);
+    expect(engine.reverse).toHaveBeenLastCalledWith(expect.objectContaining({ afterLineNumber: 41 }));
+    const bad = await reverseBatch(post("/api/admin/bookings/import/batches/batch-1/reverse", { afterLineNumber: -1 }), batchParams);
+    expect(bad.status).toBe(400);
+    expect(engine.reverse).toHaveBeenCalledTimes(1);
+  });
 });

@@ -29,10 +29,15 @@ async function reverseLeftoverBatches(request: APIRequestContext) {
   expect(listed.ok()).toBe(true);
   const { batches } = (await listed.json()) as { batches: { id: string; status: string }[] };
   for (const batch of batches.filter((entry) => entry.status === "COMPLETED")) {
+    let afterLineNumber: number | null = null;
     for (let slice = 0; slice < 50; slice += 1) {
-      const reversed = await request.post(`/api/admin/bookings/import/batches/${batch.id}/reverse`);
+      const reversed = await request.post(`/api/admin/bookings/import/batches/${batch.id}/reverse`, {
+        data: afterLineNumber === null ? {} : { afterLineNumber },
+      });
       expect(reversed.ok()).toBe(true);
-      if (((await reversed.json()) as { remaining: number }).remaining === 0) break;
+      const body = (await reversed.json()) as { remaining: number; nextAfterLineNumber: number | null };
+      if (body.remaining === 0 || body.nextAfterLineNumber === null) break;
+      afterLineNumber = body.nextAfterLineNumber;
     }
   }
 }

@@ -2266,15 +2266,6 @@ const MANUAL_REVERSAL_REFUSAL =
   "This payment can no longer be reversed — cancel the booking instead.";
 
 /**
- * #5005 (child B): a caller's own check, run under the reversal's locks after
- * every refusal has passed and before anything is written. It may throw to
- * refuse (rolling the reversal back) or write its own rows in the same
- * transaction: an import's batch reversal re-checks "untouched" and marks its
- * row reversed atomically with the money.
- */
-type ManualReversalBeforeHook = (tx: Prisma.TransactionClient, booking: { id: string; paymentId: string }) => Promise<void>;
-
-/**
  * B5 (#2262) — reverse a manual mark-paid (direction "unpaid").
  *
  * Only ever permitted on a payment THIS feature marked paid, and only while
@@ -2305,6 +2296,9 @@ type ManualReversalBeforeHook = (tx: Prisma.TransactionClient, booking: { id: st
  * fenced payment write has already 409'd by then. It can never close an
  * operation the reversal itself depends on: the reversal enqueues no recovery
  * work of its own and runs strictly after the settle whose operations it closes.
+ *
+ * #5005 (child B): `beforeReverse` runs under these locks after every refusal and before any write; it may throw
+ * (rolling back) or write in this transaction. An import's batch reversal re-checks "untouched" and claims its row.
  */
 export async function reverseManualBookingPayment({
   bookingId,
@@ -2315,7 +2309,7 @@ export async function reverseManualBookingPayment({
   bookingId: string;
   actingAdminMemberId: string;
   note: string | null;
-  beforeReverse?: ManualReversalBeforeHook;
+  beforeReverse?: (tx: Prisma.TransactionClient, booking: { id: string; paymentId: string }) => Promise<void>;
 }): Promise<ManualBookingReversalResult> {
   const journal = await resolveBookingMoneyPostingContext();
   const reversal = await prisma.$transaction(async (tx) => {
@@ -2348,7 +2342,10 @@ export async function reverseManualBookingPayment({
     }
     const payment = booking.payment;
     if (!payment || !payment.manuallyMarkedPaidAt) {
-      throw new ManualBookingPaymentError("Only a manually recorded payment can be reversed here.", 409);
+      throw new ManualBookingPaymentError(
+        "Only a manually recorded payment can be reversed here.",
+        409
+      );
     }
     if (booking.status !== BookingStatus.PAID) {
       throw new ManualBookingPaymentError(MANUAL_REVERSAL_REFUSAL, 409);
@@ -2375,7 +2372,10 @@ export async function reverseManualBookingPayment({
       select: { id: true },
     });
     if (settledStripeTransaction) {
-      throw new ManualBookingPaymentError("A card payment has since settled this booking — reversing the manual record here would misstate the ledger.", 409);
+      throw new ManualBookingPaymentError(
+        "A card payment has since settled this booking — reversing the manual record here would misstate the ledger.",
+        409
+      );
     }
 
     const openTask = await tx.manualRefundTask.findFirst({
@@ -2383,7 +2383,10 @@ export async function reverseManualBookingPayment({
       select: { id: true },
     });
     if (openTask) {
-      throw new ManualBookingPaymentError("There is an open manual refund task for this payment — resolve it before reversing the settlement.", 409);
+      throw new ManualBookingPaymentError(
+        "There is an open manual refund task for this payment — resolve it before reversing the settlement.",
+        409
+      );
     }
 
     // Guard 2 again, for anything acquired SINCE the settle.
