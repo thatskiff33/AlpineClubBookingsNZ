@@ -261,6 +261,7 @@ vi.mock("@/lib/booking-batch-modification-service", () => ({
 }));
 
 import {
+  fenceHostingCoverageQueue,
   fenceHostingPolicyFindMany,
   fenceMemberFindMany,
   hostingMemberRow,
@@ -529,6 +530,7 @@ function makeTx(booking: ReturnType<typeof makeBooking>) {
     adultMemberHostingPolicy: {
       findMany: fenceHostingPolicyFindMany({ mode: "ADMIN_REVIEW_REQUIRED" }),
     },
+    hostingCoverageReevaluation: fenceHostingCoverageQueue(),
     booking: {
       findUnique: fenceBooking.findUnique,
       findMany: fenceBooking.findMany,

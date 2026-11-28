@@ -46,6 +46,7 @@ import {
 } from "@/lib/booking-review";
 import {
   fenceBookingFindMany,
+  fenceHostingCoverageQueue,
   fenceMemberFindMany,
   recordingBookingDouble,
 } from "@/lib/__tests__/support/hosting-participant-fence-double";
@@ -208,6 +209,7 @@ function makeFamilyDb(rows: BookingRow[], policies: unknown[]) {
         update,
       },
       adultMemberHostingPolicy: { findMany: vi.fn().mockResolvedValue(policies) },
+      hostingCoverageReevaluation: fenceHostingCoverageQueue(),
       lodge: { findFirst: vi.fn() },
       member: { findMany: fenceMemberFindMany() },
     } as any,

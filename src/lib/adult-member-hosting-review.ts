@@ -2894,19 +2894,17 @@ async function settleSameOwnerDependentCoverage(
   // turn it into a live incident source, an officer override can leave it
   // confirmed but uncovered, and a later correction must close that incident.
   // Only the cross-booking fan-out needs the owner lock and dependent inspection.
-  // Queued at every active mode: the kiosk reads no row as "nothing changed" (`INV-HOST-045`).
+  // Queued at every active mode, as the kiosk reads no row as "nothing changed"
+  // (`INV-HOST-045`); incidents and overrides exist only under ENFORCED, and the
+  // drain resolves any stray one at review-only.
   if (!resolved.hostScopes.sameBookingOwner) {
     const context = options.coverageChange ?? { cause: "SYSTEM_CHANGE" as const };
-    if (context.cause === "OFFICER_OVERRIDE" && !context.reason?.trim()) {
-      throw new Error(
-        "Overriding adult-member hosting coverage requires an explicit reason",
-      );
+    if (resolved.mode === "ENFORCED") {
+      if (context.cause === "OFFICER_OVERRIDE" && !context.reason?.trim()) {
+        throw new Error("Overriding adult-member hosting coverage requires an explicit reason");
+      }
+      await resolveOwnCoverageIncidentAfterChange(booking, db, context.actorMemberId ?? null);
     }
-    await resolveOwnCoverageIncidentAfterChange(
-      booking,
-      db,
-      context.actorMemberId ?? null,
-    );
     await enqueueHostingCoverageReevaluation(
       {
         memberId: bookingOwner(booking).memberId,

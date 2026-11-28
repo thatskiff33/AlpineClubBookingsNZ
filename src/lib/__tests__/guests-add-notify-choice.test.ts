@@ -126,6 +126,7 @@ import { checkCapacity, checkCapacityForGuestRanges } from "@/lib/capacity";
 import { logAudit } from "@/lib/audit";
 import { sendBookingModifiedEmail } from "@/lib/email";
 import {
+  fenceHostingCoverageQueue,
   fenceHostingPolicyFindMany,
   fenceMemberFindMany,
   hostingMemberRow,
@@ -265,6 +266,7 @@ function makeTx(booking: ReturnType<typeof makeBooking>) {
     adultMemberHostingPolicy: {
       findMany: fenceHostingPolicyFindMany({ mode: "ADMIN_REVIEW_REQUIRED" }),
     },
+    hostingCoverageReevaluation: fenceHostingCoverageQueue(),
     // #2619: the participant fence re-reads the locked Member rows and each
     // source booking's owner/lodge under the lock. An empty booking.findMany
     // made it report drift on data that never changed.

@@ -109,6 +109,25 @@ export function fenceHostingPolicyFindMany(
 }
 
 /**
+ * `hostingCoverageReevaluation` for a double whose policy is an active mode.
+ *
+ * Every seam that can change cover queues a re-evaluation at BOTH active modes
+ * (`INV-HOST-045`), so a booking write that passes the fence above reaches
+ * `enqueueHostingCoverageReevaluation` under `ADMIN_REVIEW_REQUIRED` as well as
+ * `ENFORCED`. `create` records the item and answers the id the seam returns;
+ * the post-commit drain's reads answer "nothing queued", which is what a
+ * best-effort drain needs to finish quietly.
+ */
+export function fenceHostingCoverageQueue() {
+  return {
+    create: vi.fn(async () => ({ id: "fence-double-reevaluation" })),
+    findMany: vi.fn(async () => []),
+    findFirst: vi.fn(async () => null),
+    updateMany: vi.fn(async () => ({ count: 0 })),
+  };
+}
+
+/**
  * The live `Member` row the hosting EVALUATOR reads off a booking guest (#2675).
  *
  * `BOOKING_HOSTING_SELECT` hydrates `guests.member` with exactly these five

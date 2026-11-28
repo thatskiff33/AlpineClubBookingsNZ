@@ -177,6 +177,7 @@ import { SELF_REMOVABLE_GUEST_BOOKING_STATUSES } from "@/lib/booking-guest-self-
  */
 const CLUB_TODAY_DATE_ONLY = new Date("2026-07-01T00:00:00.000Z");
 import {
+  fenceHostingCoverageQueue,
   fenceHostingPolicyFindMany,
   fenceMemberFindMany,
   hostingMemberRow,
@@ -383,6 +384,7 @@ function makeTx(
     adultMemberHostingPolicy: {
       findMany: fenceHostingPolicyFindMany({ mode: "ADMIN_REVIEW_REQUIRED" }),
     },
+    hostingCoverageReevaluation: fenceHostingCoverageQueue(),
     booking: {
       findUnique: fenceBooking.findUnique,
       findMany: fenceBooking.findMany,

@@ -870,12 +870,12 @@ let deletionApprovalWasReleased: (typeof import("@/lib/deletion-request-decision
         const queued = await mergeA.$transaction((tx) =>
           applyDeletionHostingEffect(tx),
         );
-        expect(queued).toBe(mode === "ENFORCED" ? 1 : 0);
+        expect(queued).toBe(mode === "DISABLED" ? 0 : 1);
         expect(
           await primary.hostingCoverageReevaluation.count({
             where: { sourceBookingId: IDS.deletionHoldBooking },
           }),
-        ).toBe(queueCountBeforeRetry + (mode === "ENFORCED" ? 1 : 0));
+        ).toBe(queueCountBeforeRetry + (mode === "DISABLED" ? 0 : 1));
         await expect(
           primary.bookingGuest.findUniqueOrThrow({
             where: { id: IDS.deletionHoldAdult },

@@ -42,6 +42,12 @@ vi.mock("@/lib/prisma", () => ({
     // against needs this client. `findUnique` answering undefined is the
     // "booking not found" branch, which writes nothing.
     adultMemberHostingPolicy: { findMany: vi.fn().mockResolvedValue([]) },
+    // A test that switches the policy to an active mode reaches the queue: every
+    // seam that can change cover queues at both active modes (INV-HOST-045).
+    hostingCoverageReevaluation: {
+      create: vi.fn().mockResolvedValue({ id: "queued-reevaluation" }),
+      findMany: vi.fn().mockResolvedValue([]),
+    },
     booking: {
       create: vi.fn(),
       findUnique: vi.fn(),

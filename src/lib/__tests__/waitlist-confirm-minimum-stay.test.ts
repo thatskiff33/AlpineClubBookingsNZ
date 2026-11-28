@@ -168,6 +168,7 @@ const txClient = {
   adultMemberHostingPolicy: {
     findMany: fenceHostingPolicyFindMany({ mode: "ADMIN_REVIEW_REQUIRED" }),
   },
+  hostingCoverageReevaluation: fenceHostingCoverageQueue(),
   booking: {
     findUnique: fenceBooking.findUnique,
     findMany: fenceBooking.findMany,
@@ -233,6 +234,7 @@ vi.mock("@/lib/logger", () => ({
 }));
 
 import {
+  fenceHostingCoverageQueue,
   fenceHostingPolicyFindMany,
   fenceMemberFindMany,
   hostingMemberRow,
