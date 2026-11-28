@@ -36,9 +36,9 @@ import {
   reconcileAdultMemberHostingReview,
   reconcileAdultMemberHostingReviewWithSiblings,
   recordAdultMemberHostingReviewForNewBooking,
-  parseStoredHostingReview,
   toHostingParticipants,
 } from "@/lib/adult-member-hosting-review";
+import { parseStoredHostingReview } from "@/lib/adult-member-hosting-stored-review";
 import { evaluateProposedAdultMemberHosting } from "@/lib/adult-member-hosting-proposed";
 import {
   bookingReviewReasonCodes,
