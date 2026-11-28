@@ -411,6 +411,19 @@ export function hostingModeCanRefuseStranding(
 }
 
 /**
+ * Does every seam that can change cover queue a re-evaluation at this mode?
+ * Only `ENFORCED`: the confirming and membership-standing seams queue nothing
+ * under `ADMIN_REVIEW_REQUIRED`, so only there does "no queued row" mean
+ * "nothing changed", and only there may the kiosk show cover resting on
+ * another booking (#5239, `INV-HOST-045`). Those seams and the kiosk share it.
+ */
+export function hostingModeQueuesCoverageReevaluation(
+  mode: EffectiveAdultMemberHostingMode,
+): boolean {
+  return mode === "ENFORCED";
+}
+
+/**
  * Club-wide default with per-lodge override (ADR-001 resolved question 3), with
  * one difference from the minimum-stay policy SET: this policy is a single row
  * per scope, so a lodge overrides by holding a row whose mode is not INHERIT,
