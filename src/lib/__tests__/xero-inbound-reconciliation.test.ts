@@ -7359,6 +7359,7 @@ describe("processStoredXeroInboundEvents", () => {
       skipped: 0,
     });
 
+    // #5251: a missing note link changes whether the note counts, so it is written on the transaction holding its Payment rows.
     expect(mocks.upsertXeroObjectLink).toHaveBeenCalledWith(
       expect.objectContaining({
         localModel: "BookingModification",
@@ -7366,7 +7367,8 @@ describe("processStoredXeroInboundEvents", () => {
         xeroObjectType: "CREDIT_NOTE",
         xeroObjectId: "cn_mod_recover_1",
         role: "MODIFICATION_CREDIT_NOTE",
-      })
+      }),
+      { store: expect.anything() },
     );
     // #4447: the allocation is written inside the row lock, on that transaction.
     expect(mocks.upsertXeroObjectLink).toHaveBeenCalledWith(
