@@ -92,6 +92,8 @@ export interface StuckStateItem {
   href: string;
   summary: string;
   details?: StuckStateDetail[];
+  /** #4910: nothing in the app clears it, so it stays out of `totals.affectedCount`, the sidebar's count. */
+  standing?: true;
 }
 
 interface StuckStateDomainSummary {
@@ -286,7 +288,7 @@ function buildDomains(items: StuckStateItem[]): StuckStateDomainSummary[] {
 
 function buildTotals(items: StuckStateItem[]) {
   return {
-    affectedCount: items.reduce((sum, item) => sum + item.count, 0),
+    affectedCount: items.reduce((sum, item) => sum + (item.standing ? 0 : item.count), 0),
     itemCount: items.length,
     critical: items
       .filter((item) => item.severity === "critical")
@@ -876,8 +878,7 @@ export async function getStuckStateDashboard(input?: {
 
   buildPaymentItems(items, paymentSignals.counts, paymentSignals.details);
   // #4910 (`INV-PAY-163`): the nightly booking money check and the two credit faults.
-  const moneyCheckViewer = { membership: viewerCanViewMembership, finance: input?.viewerCanViewFinance ?? false };
-  for (const item of await getMoneyCheckItems(deps, now, moneyCheckViewer)) addItem(items, { ...item, domain: "payment" });
+  for (const item of await getMoneyCheckItems(deps, now, viewerCanViewPaymentRows)) addItem(items, { ...item, domain: "payment" });
   const [exhaustedSettlementAlerts, exhaustedSettlementAlertRows] = await Promise.all([
     deps.countExhaustedCashSettlementAlerts(),
     viewerCanViewPaymentRows

@@ -1444,9 +1444,11 @@ describe("getStuckStateDashboard money check items (#4910)", () => {
 
   const item = (dashboard: Awaited<ReturnType<typeof getStuckStateDashboard>>, id: string) =>
     dashboard.items.find((candidate) => candidate.id === id);
+  /** Who may read the named rows: membership view and finance view, both (`INV-PAY-156`). */
+  const ROWS_VIEWER = { viewerCanViewMembership: true, viewerCanViewFinance: true };
 
   it("shows drift from the latest run as a critical Finance item with its classes, bookings and command", async () => {
-    const dashboard = await getStuckStateDashboard({ deps: moneyDeps(), now: NOW, viewerCanViewMembership: true });
+    const dashboard = await getStuckStateDashboard({ deps: moneyDeps(), now: NOW, ...ROWS_VIEWER });
 
     const drift = item(dashboard, "payment-booking-money-census-drift");
     expect(drift).toMatchObject({
@@ -1469,7 +1471,7 @@ describe("getStuckStateDashboard money check items (#4910)", () => {
   });
 
   it("shows known classes as the census's unacknowledged count, as information and not as an emergency", async () => {
-    const dashboard = await getStuckStateDashboard({ deps: moneyDeps(), now: NOW, viewerCanViewMembership: true });
+    const dashboard = await getStuckStateDashboard({ deps: moneyDeps(), now: NOW, ...ROWS_VIEWER });
 
     const known = item(dashboard, "payment-booking-money-census-known");
     expect(known).toMatchObject({ severity: "info", owner: "Finance", count: 2 });
@@ -1482,12 +1484,28 @@ describe("getStuckStateDashboard money check items (#4910)", () => {
     expect(dashboard.totals.info).toBe(2);
   });
 
-  it("keeps counts and classes but reads no name without membership:view (#2823)", async () => {
+  it("leaves the known classes out of the sidebar's count: nothing in the app clears them", async () => {
+    const deps = moneyDeps();
+    const dashboard = await getStuckStateDashboard({ deps, now: NOW });
+
+    // Three drift findings are work waiting; the two known-class instances are history.
+    expect(item(dashboard, "payment-booking-money-census-known")?.count).toBe(2);
+    expect(dashboard.totals.affectedCount).toBe(3);
+    resetStuckStateAffectedCountCache();
+    expect(await getStuckStateAffectedCount({ deps, now: NOW })).toBe(3);
+    resetStuckStateAffectedCountCache();
+  });
+
+  it.each([
+    ["membership view alone", { viewerCanViewMembership: true }],
+    ["finance view alone", { viewerCanViewFinance: true }],
+    ["neither view", {}],
+  ])("keeps counts and classes but reads no name with %s (#2823, INV-PAY-156)", async (_case, viewer) => {
     const deps = moneyDeps({
       listNegativeCreditBalances: vi.fn().mockResolvedValue([{ memberId: "member-1", balanceCents: -500 }]),
       findOrphanedAppliedCredits: vi.fn().mockResolvedValue({ findings: [{ bookingId: "booking-o", appliedCreditCents: 4_000 }] }),
     });
-    const dashboard = await getStuckStateDashboard({ deps, now: NOW, viewerCanViewFinance: true });
+    const dashboard = await getStuckStateDashboard({ deps, now: NOW, ...viewer });
 
     for (const id of [
       "payment-booking-money-census-drift",
@@ -1501,7 +1519,8 @@ describe("getStuckStateDashboard money check items (#4910)", () => {
     expect(item(dashboard, "payment-booking-money-census-drift")?.summary).toContain("CAPTURED disagreement (2)");
     expect(deps.listMoneyCheckBookings).not.toHaveBeenCalled();
     expect(deps.listMoneyCheckMembers).not.toHaveBeenCalled();
-    expect(JSON.stringify(dashboard)).not.toMatch(/Aroha|Mere/);
+    // No name, and no member's amount either.
+    expect(JSON.stringify(dashboard)).not.toMatch(/Aroha|Mere|\$5\.00|\$40\.00/);
   });
 
   it("says the check did not run when its latest run failed or went stale, beside its last good findings", async () => {
@@ -1561,25 +1580,19 @@ describe("getStuckStateDashboard money check items (#4910)", () => {
     expect(deps.listMoneyCheckMembers).not.toHaveBeenCalled();
   });
 
-  it("lists members with negative credit, with the amount only for a finance viewer", async () => {
+  it("lists members with negative credit, with each balance", async () => {
     const balances = [
       { memberId: "member-1", balanceCents: -2_500 },
       { memberId: "member-2", balanceCents: -100 },
     ];
-    const deps = () => moneyDeps({ listNegativeCreditBalances: vi.fn().mockResolvedValue(balances) });
+    const deps = moneyDeps({ listNegativeCreditBalances: vi.fn().mockResolvedValue(balances) });
 
-    const finance = await getStuckStateDashboard({ deps: deps(), now: NOW, viewerCanViewMembership: true, viewerCanViewFinance: true });
+    const finance = await getStuckStateDashboard({ deps, now: NOW, ...ROWS_VIEWER });
     const financeItem = item(finance, "payment-negative-credit-balances");
     expect(financeItem).toMatchObject({ domain: "payment", title: "Members with negative credit", severity: "critical", owner: "Finance", count: 2 });
     expect(financeItem?.details).toEqual([
       { id: "member-1", title: "Mere Parata", summary: "Credit balance $-25.00.", href: adminHref("member-detail", { id: "member-1" }), opens: "member" },
       { id: "member-2", title: "Mere Parata", summary: "Credit balance $-1.00.", href: adminHref("member-detail", { id: "member-2" }), opens: "member" },
-    ]);
-
-    const membershipOnly = await getStuckStateDashboard({ deps: deps(), now: NOW, viewerCanViewMembership: true });
-    expect(item(membershipOnly, "payment-negative-credit-balances")?.details?.map((detail) => detail.summary)).toEqual([
-      "Credit balance is below zero.",
-      "Credit balance is below zero.",
     ]);
   });
 

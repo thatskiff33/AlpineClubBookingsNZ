@@ -14,10 +14,15 @@
  *   holding applied credit: the two reads the daily credit reconciliation
  *   reports to Sentry (`readMemberCreditBalances`, `findOrphanedAppliedCredits`).
  *
- * NAMES (#2823). Every item keeps its count and link for any support admin.
- * The rows naming a booking's owner or a member are read only for a membership
- * viewer, and a credit amount is printed only for one who also holds finance
- * view (#4959).
+ * NAMES (#2823, `INV-PAY-156`). Every item keeps its count and link for any
+ * support admin. A row puts a booking's owner or a member beside a money fact
+ * about them, so the rows are read only for a viewer with both membership and
+ * finance view, like every other payment row on the page (#4959).
+ *
+ * THE SIDEBAR COUNT. The known-class item is `standing`: the server holds no
+ * acknowledgement file, so nothing an admin does in the app clears it. It
+ * stays on the page and out of `totals.affectedCount`, the sidebar's count of
+ * work waiting.
  */
 import { adminAnchorHref, adminHref } from "@/lib/admin-hubs";
 import { buildCronHealthReport, getAdminCronJobDefinitions, type AdminCronRun } from "@/lib/admin-cron-health";
@@ -77,9 +82,9 @@ export interface StuckStateMoneyDependencies {
   findOrphanedAppliedCredits: () => Promise<{
     findings: ReadonlyArray<Pick<OrphanedAppliedCreditFinding, "bookingId" | "appliedCreditCents">>;
   }>;
-  /** The bookings the named rows print. Called only for a membership viewer. */
+  /** The bookings the named rows print. Called only for a viewer who may see the rows. */
   listMoneyCheckBookings: (bookingIds: readonly string[]) => Promise<OwnedBooking[]>;
-  /** The members the named rows print. Called only for a membership viewer. */
+  /** The members the named rows print. Called only for a viewer who may see the rows. */
   listMoneyCheckMembers: (memberIds: readonly string[]) => Promise<NamedMember[]>;
 }
 
@@ -156,6 +161,8 @@ export type StuckStateMoneyItem = {
   href: string;
   summary: string;
   details?: StuckStateDetail[];
+  /** Nothing in the app clears this item, so it stays out of the sidebar's count of work waiting. */
+  standing?: true;
 };
 
 function plural(count: number, singular: string, pluralForm = `${singular}s`) {
@@ -191,7 +198,8 @@ function reconciliationSentence(summary: BookingMoneyCensusSummary): string {
 export async function getMoneyCheckItems(
   deps: StuckStateMoneyDependencies & { loadDetailFormat: () => Promise<StuckStateDetailFormat> },
   now: Date,
-  viewer: { membership: boolean; finance: boolean },
+  /** The dashboard's payment-row gate: membership view and finance view, both (`INV-PAY-156`). */
+  viewerCanViewRows: boolean,
 ): Promise<StuckStateMoneyItem[]> {
   const [run, negative, orphaned] = await Promise.all([
     deps.readLatestBookingMoneyCensusRun(now),
@@ -206,11 +214,11 @@ export async function getMoneyCheckItems(
   const negativeRows = negative.slice(0, STUCK_STATE_DETAIL_ROW_CAP);
   const orphanedRows = orphaned.findings.slice(0, STUCK_STATE_DETAIL_ROW_CAP);
 
-  // #2823: without membership view the name lookups never run.
-  const bookingIds = viewer.membership
+  // #2823: without both views the name lookups never run.
+  const bookingIds = viewerCanViewRows
     ? [...new Set([...driftRows, ...knownRows, ...orphanedRows].map((row) => row.bookingId))]
     : [];
-  const memberIds = viewer.membership ? negativeRows.map((row) => row.memberId) : [];
+  const memberIds = viewerCanViewRows ? negativeRows.map((row) => row.memberId) : [];
   const [bookings, members] = await Promise.all([
     bookingIds.length > 0 ? deps.listMoneyCheckBookings(bookingIds) : [],
     memberIds.length > 0 ? deps.listMoneyCheckMembers(memberIds) : [],
@@ -221,7 +229,7 @@ export async function getMoneyCheckItems(
   const printsCheckDate =
     run.checkedAt !== null &&
     (run.problem !== null || (summary !== null && summary.drift + summary.unacknowledgedClassInstances > 0));
-  const printsAmount = viewer.finance && negativeRows.length + orphanedRows.length > 0;
+  const printsAmount = viewerCanViewRows && negativeRows.length + orphanedRows.length > 0;
   const format = printsCheckDate || printsAmount ? await deps.loadDetailFormat() : null;
   const checkedOn = run.checkedAt && format ? format.instantDate(run.checkedAt) : null;
   const theCheck = checkedOn ? `The nightly check on ${checkedOn}` : "The nightly check";
@@ -234,7 +242,7 @@ export async function getMoneyCheckItems(
       : { id, title: formatBookingReference(bookingId), summary: line, href: `/bookings/${bookingId}` };
   };
   const classDetails = (rows: ReturnType<typeof classBookingRows>) =>
-    viewer.membership
+    viewerCanViewRows
       ? rows.map(({ entry, bookingId }) =>
           bookingRow(`${entry.class}:${bookingId}`, bookingId, `${describeBookingMoneyCensusClass(entry)}.`),
         )
@@ -263,6 +271,7 @@ export async function getMoneyCheckItems(
       href: adminAnchorHref("stuck-states", "payment-booking-money-census-known"),
       summary: `${theCheck} counted ${summary.unacknowledgedClassInstances} ${plural(summary.unacknowledgedClassInstances, "instance")} of known classes the owner has not acknowledged: ${classCounts(known)}. These are known history, not new faults. The server holds no acknowledgement file, so they stay listed here; ${BOOKING_LEDGER_CENSUS_COMMAND} --acknowledged <owner-file.json> checks them against the owner's file.${summary.drift > 0 ? "" : reconciliationSentence(summary)}`,
       details: classDetails(knownRows),
+      standing: true,
     });
   }
   if (run.problem) {
@@ -289,21 +298,19 @@ export async function getMoneyCheckItems(
       count: negative.length,
       href: adminAnchorHref("stuck-states", "payment-negative-credit-balances"),
       summary: `${negative.length} ${plural(negative.length, "member")} ${plural(negative.length, "has", "have")} an account credit balance below zero, which should never happen: more credit was used than was ever added. Open each member's credit history to find the entry that took it below zero.`,
-      details: viewer.membership
-        ? negativeRows.map((row) => {
-            const member = membersById.get(row.memberId);
-            return {
-              id: row.memberId,
-              title: [member?.firstName, member?.lastName].filter(Boolean).join(" ") || "Member",
-              summary:
-                viewer.finance && format
-                  ? `Credit balance ${format.cents(row.balanceCents)}.`
-                  : "Credit balance is below zero.",
-              href: adminHref("member-detail", { id: row.memberId }),
-              opens: "member" as const,
-            };
-          })
-        : undefined,
+      details:
+        viewerCanViewRows && format
+          ? negativeRows.map((row) => {
+              const member = membersById.get(row.memberId);
+              return {
+                id: row.memberId,
+                title: [member?.firstName, member?.lastName].filter(Boolean).join(" ") || "Member",
+                summary: `Credit balance ${format.cents(row.balanceCents)}.`,
+                href: adminHref("member-detail", { id: row.memberId }),
+                opens: "member" as const,
+              };
+            })
+          : undefined,
     });
   }
   if (orphaned.findings.length > 0) {
@@ -316,17 +323,12 @@ export async function getMoneyCheckItems(
       count,
       href: adminAnchorHref("stuck-states", "payment-orphaned-applied-credit"),
       summary: `${count} cancelled ${plural(count, "booking")} still ${plural(count, "holds", "hold")} account credit that was applied to ${plural(count, "it", "them")} and never returned to the member. The app does not return it by itself: find out why the cancellation did not, then run ${ORPHANED_CREDIT_BACKFILL_COMMAND} on the server.`,
-      details: viewer.membership
-        ? orphanedRows.map((row) =>
-            bookingRow(
-              row.bookingId,
-              row.bookingId,
-              viewer.finance && format
-                ? `${format.cents(row.appliedCreditCents)} of applied credit not returned.`
-                : "Applied credit not returned.",
-            ),
-          )
-        : undefined,
+      details:
+        viewerCanViewRows && format
+          ? orphanedRows.map((row) =>
+              bookingRow(row.bookingId, row.bookingId, `${format.cents(row.appliedCreditCents)} of applied credit not returned.`),
+            )
+          : undefined,
     });
   }
   return items;

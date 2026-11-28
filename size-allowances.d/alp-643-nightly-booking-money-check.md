@@ -20,7 +20,8 @@ lines: 555
 reason: the same single entry, in the list of daily jobs.
 
 file: src/lib/stuck-state-dashboard.ts
-lines: 1099
-reason: five lines of wiring only: the money-check items are built in their own
+lines: 1100
+reason: six lines of wiring only: the money-check items are built in their own
   module, stuck-state-money-signals.ts, and the dashboard imports them, extends
-  its dependencies with theirs and adds them after the payment items.
+  its dependencies with theirs, adds them after the payment items and leaves an
+  item nothing in the app clears out of the sidebar's count.
