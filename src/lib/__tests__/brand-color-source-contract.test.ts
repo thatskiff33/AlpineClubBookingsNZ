@@ -215,7 +215,7 @@ const THEMED_NEUTRAL_ALLOWLIST = new Set<string>(
     // Print pages: self-consistent hard-light paper surfaces. `bg-white`,
     // `border-gray-400` rules and grey ink are correct for paper output and
     // must not follow the club theme.
-    "src/app/(admin)/admin/roster/[date]/print/page.tsx",
+    "src/app/(admin)/admin/lodge-ops/roster/[date]/print/page.tsx",
     "src/app/(admin)/admin/membership/induction/[id]/print/page.tsx",
     // Reports: the six `print:border-slate-300` PRINT-ONLY variants (the
     // file's screen classes are fully tokenised). Print output is paper, not

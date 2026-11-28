@@ -78,7 +78,7 @@ import {
   hasLateCaptureApprovalTask,
   keptCaptureAnchorId,
   keptReceiptStillKeptElseClosed,
-  lateCaptureStillKept,
+  lateCaptureReceiptOwed,
 } from "@/lib/kept-late-capture-change-receipt";
 import { amountDueOn, ownPaymentPending, type InvoiceRead } from "@/lib/additional-capture-receipt-invoice-read";
 import { completeRecordedReceipt, findReceiptLegPayment, sendAdditionalCaptureReceiptLegs, type OtherRecorder } from "@/lib/additional-capture-receipt-send";
@@ -90,6 +90,7 @@ import {
   sameInvoiceIds,
 } from "@/lib/additional-capture-receipt-legs";
 import {
+  RECORDED_BY_ANOTHER_WRITER_PREFIX,
   readAdditionalCaptureReceiptPayload,
   type AdditionalCaptureReceiptPlan,
   type AdditionalCaptureReceiptTarget,
@@ -414,12 +415,12 @@ export async function recordAdditionalCaptureReceipt(
       bookingModificationId: captureChangeId(transaction),
     });
     if (recorder.kind === "primary-invoice") {
-      return standDown("SUCCEEDED", "recorded-by-primary-invoice", { primaryInvoiceId });
+      return standDown("SUCCEEDED", `${RECORDED_BY_ANOTHER_WRITER_PREFIX}primary-invoice`, { primaryInvoiceId });
     }
     if (recorder.kind === "supplementary-invoice" || recorder.kind === "kept-late-capture-invoice") {
-      return standDown("SUCCEEDED", `recorded-by-${recorder.kind}`, { operationId: recorder.operationId });
+      return standDown("SUCCEEDED", `${RECORDED_BY_ANOTHER_WRITER_PREFIX}${recorder.kind}`, { operationId: recorder.operationId });
     }
-    if (recorder.kind === "credit-release-sweep") return standDown("SUCCEEDED", "recorded-by-credit-release-sweep");
+    if (recorder.kind === "credit-release-sweep") return standDown("SUCCEEDED", `${RECORDED_BY_ANOTHER_WRITER_PREFIX}credit-release-sweep`);
     if (recorder.namingUnreadable) return refuse("naming-unreadable");
     const { gap, targets, alreadyRecordedCents } = recorder;
     // Only the part no other writer recorded. #4434: what is left is split
@@ -557,7 +558,7 @@ export async function recordAdditionalCaptureReceipt(
     const stored = await prisma.$transaction(async (tx) => {
       const changeId = captureChangeId(transaction);
       await lockSupplementaryInvoiceAnchor(tx, keptCaptureAnchorId(transaction, bookingId));
-      if (cancelled && !(await lateCaptureStillKept(tx, paymentIntentId))) {
+      if (cancelled && !(await lateCaptureReceiptOwed(tx, paymentIntentId))) {
         await closeKeptReceiptNotKept(tx, params.syncOperation, {});
         return "not-kept" as const;
       }
@@ -581,7 +582,7 @@ export async function recordAdditionalCaptureReceipt(
     if (stored === "lost-claim") {
       throw waitFor("This run no longer holds the receipt's claim; nothing was stored or sent");
     }
-    if (stored !== "stored") return standDown("SUCCEEDED", `recorded-by-${stored}`, { decidedAgainUnderLock: true });
+    if (stored !== "stored") return standDown("SUCCEEDED", `${RECORDED_BY_ANOTHER_WRITER_PREFIX}${stored}`, { decidedAgainUnderLock: true });
     return plan;
   }
 

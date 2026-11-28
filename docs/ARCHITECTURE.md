@@ -952,7 +952,7 @@ Use these ownership boundaries when adding new code:
 | Policy rules | `src/lib/policies/` | Pricing, age-tier, cancellation, change-fee, minimum-stay, member-credit, and booking-route decisions live as testable policy helpers. |
 | Operational Xero | `src/lib/xero-*.ts` | Import the focused module that owns the behavior. The `src/lib/xero.ts` compatibility facade was retired in #4930, and the module-graph census fails any import of it. |
 | Admin/member services | `src/lib/admin-member-xero-actions.ts`, `src/lib/member-serialization.ts`, `src/lib/member-lifecycle-actions.ts`, `src/lib/membership-cancellation-*.ts` | Shared admin/member request wrappers, DTO shape, lifecycle actions, and cancellation workflows live outside page files. |
-| Admin hub registry | `src/lib/admin-hubs/` | One entry per admin page: its hub, old and hub URLs, area or admission rule, and module flags (epic #4468). Inert until #4815 flips `ADMIN_HUBS_LIVE`. Since C2 (#4799), `security-map.ts` generates the page half of the route-to-area map, the special admission paths and the admin page module gates from it, for every page's old and hub path. Since C3 (#4800), `next.config.ts` builds its redirects and `beforeFiles` rewrites from it (`buildAdminUrlRules`), the sidebar's active link is its `activeAdminHref` (a moved page's old and hub path are one page), every other `usePathname()` reader whose output depends on an admin path goes through `canonicalAdminPathname` (a key, such as help content) or `servedAdminPathname` (a URL, such as a return-to link) so the server render and the browser agree under a rewrite, `buildAdminUrlRules` refuses a dynamic page moving without a static sibling its pattern captures, and `revalidateAdminPage(id)` (`src/lib/admin-page-revalidation.ts`) is the only way production code revalidates an admin page: it refreshes the page's file path, which under a rewrite is the destination. Since S1 (#4796), a page that holds a merged page declares its `tabs` or `anchors` (linked with `adminTabHref` and `adminAnchorHref`, read by the shared `AdminPageTabs` shell), and `retired.ts` lists each page retired by a merge: `buildAdminUrlRules` gives its old URL a redirect, ahead of every other rule (a 307 for its first release, so a rollback is safe, made permanent one release later), to where its destination is served, query kept; a retired page has no file and no security-map entry. Relative imports only, so `next.config.ts` can load it. |
+| Admin hub registry | `src/lib/admin-hubs/` | One entry per admin page: its hub, old and hub URLs, area or admission rule, and module flags (epic #4468). Inert until #4815 flips `ADMIN_HUBS_LIVE`. Since C2 (#4799), `security-map.ts` generates the page half of the route-to-area map, the special admission paths and the admin page module gates from it, for every page's old and hub path. Since C3 (#4800), `next.config.ts` builds its redirects and `beforeFiles` rewrites from it (`buildAdminUrlRules`), the sidebar's active link is its `activeAdminHref` (a moved page's old and hub path are one page), every other `usePathname()` reader whose output depends on an admin path goes through `canonicalAdminPathname` (a key, such as help content) or `servedAdminPathname` (a URL, such as a return-to link) so the server render and the browser agree under a rewrite, `buildAdminUrlRules` refuses a dynamic page moving without a static sibling its pattern captures, and `revalidateAdminPage(id)` (`src/lib/admin-page-revalidation.ts`) is the only way production code revalidates an admin page: it refreshes the page's file path, which under a rewrite is the destination. Since S1 (#4796), a page that holds a merged page declares its `tabs` or `anchors` (linked with `adminTabHref` and `adminAnchorHref`, read by the shared `AdminPageTabs` shell), and `retired.ts` lists each page retired by a merge: `buildAdminUrlRules` gives its old URL a redirect, ahead of every other rule (a 307 for its first release, so a rollback is safe, made permanent one release later), to where its destination is served, query kept; a retired page has no file and no security-map entry. The Lodge hub's prefix is `lodge-ops` (C11 #4808), because `/admin/lodge` is the kiosk page and a `kiosk` module prefix; prefixes match at a segment boundary, so no other Lodge page takes the kiosk gate. Relative imports only, so `next.config.ts` can load it. |
 | Business logic | `src/lib/` | Keep money in integer cents, dates as New Zealand date-only lodge nights, and external calls outside long database transactions where practical. |
 | Database | `prisma/schema.prisma`, `prisma/migrations/` | Schema changes must include deployable migrations and respect the blue/green migration policy. |
 | Operations | `scripts/`, `deploy/`, Compose files | Deployment helpers should be reusable by forks through environment overrides. |
@@ -2097,6 +2097,12 @@ The source of truth is `prisma/schema.prisma`. Key domains are:
   connection rather than a separate finance token store.
 - Cron run records, email logs, webhook logs, processed webhook events, and
   backup/audit-retention support records.
+- Each email log row (`EmailLog`) keeps two ids for a sent message: `messageId`,
+  the Message-ID header the mail library generated, and, since #5469,
+  `providerMessageId`, the id the mail server gave it, read from the server's
+  reply by `src/lib/email/provider-message-id.ts` (null for a server the app
+  does not recognise, and for rows sent before #5469). Bounce and complaint
+  reports find their email by it (`INV-INT-044`).
 - Owed notices (`OwedNotice`, #5433): a notice a committed change still owes,
   written in the change's own transaction by a deterministic id and cleared
   once sent; the confirm-pending and email retry jobs sweep what the first
@@ -2563,7 +2569,7 @@ same-owner cover, a separate urgent incident opens without changing
    the same lodge serialise while bookings at different lodges never contend.
    `CONCURRENCY_AND_LOCKING.md` maps the full advisory-lock landscape (all seven
    lock families, which paths take which, and the ordering disciplines).
-   Member lifecycle approval (delete / archive) acquires
+   Member lifecycle approval (delete / archive) and unarchive (#5540) acquire
    `pg_advisory_xact_lock(hashtext('member-lifecycle:<memberId>'))` inside
    the transaction. Future approve / reject paths that recount eligibility
    then mutate the member graph should follow the same idiom so a parallel
@@ -3586,7 +3592,14 @@ on Addy availability.
 ### Email
 
 AWS SES SMTP sends transactional email. SES SNS feedback is ingested for bounce
-and complaint suppression. Email templates should avoid embedding secrets and
+and complaint suppression: the SES adapter (`email/ses-feedback.ts`) turns a
+notification into one service-neutral `DeliveryFeedbackEvent`, and one rule
+(`email/delivery-feedback.ts`) suppresses the address, marks a bounced email,
+and alerts officers of a complaint (`INV-INT-044`). To add another mail
+service: an entry in `email/provider-message-id.ts` saying how its reply to a
+send names the message, and, for its bounce and complaint reports, an adapter
+that builds the event and a route that receives them; the rule does not
+change. Email templates should avoid embedding secrets and
 should use effective recipient logic for dependents where required. Editable
 templates and admin/system delivery policies are registered in the email
 message registry and surfaced in Admin Setup and Admin Notifications.

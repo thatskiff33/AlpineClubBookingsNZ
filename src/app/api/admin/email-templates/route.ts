@@ -1,5 +1,16 @@
 import { NextRequest, NextResponse } from "next/server";
-import { z } from "zod";
+import { emailTemplateUpdateSchema } from "@/lib/admin-support-api/messages";
+import {
+  EMAIL_TEMPLATE_SAVED_CONNECTION_SHAPE,
+  type EmailTemplateOverrideAnswer,
+  type EmailTemplateStaleContent,
+} from "@/lib/connection-shapes/support-messages";
+import { readTemplateQuery, templatesAnswer } from "@/lib/email-templates-route-answer";
+import {
+  arrivesAsMcpConnection,
+  connectionJson,
+  websiteOnlyForConnection,
+} from "@/lib/mcp-connection-request";
 import {
   buildStructuredAuditLogCreateArgs,
   getAuditRequestContext,
@@ -8,6 +19,7 @@ import {
   EMAIL_TEMPLATE_DEFINITIONS,
   EMAIL_TEMPLATE_KEY_SET,
 } from "@/lib/email-message-registry";
+import { emailTemplateConnectionEditRefusal } from "@/lib/email-template-connection-edit";
 import {
   EMPTYABLE_OVERRIDE_TOKENS,
   OPTIONAL_TEMPLATE_TOKENS,
@@ -37,26 +49,13 @@ interface EmailTemplateOverrideRecord {
   updatedByMemberId: string | null;
 }
 
-const templateUpdateSchema = z
-  .object({
-    templateName: z.string().trim().min(1),
-    subject: z.string().trim().max(500).nullable().optional(),
-    bodyText: z.string().trim().max(10000).nullable().optional(),
-    // Fork #38: the rich-editor body. Sanitised server-side before storage;
-    // bodyText is DERIVED from it on save so audit, diffs and validation
-    // keep operating on text. A save that provides bodyText WITHOUT
-    // bodyHtml clears any stored bodyHtml — the text becomes authoritative,
-    // so a stale rich body can never shadow a scripted plain save.
-    bodyHtml: z.string().trim().max(20000).nullable().optional(),
-  })
-  .strict()
-  .refine(
-    (value) =>
-      value.subject !== undefined ||
-      value.bodyText !== undefined ||
-      value.bodyHtml !== undefined,
-    "A subject, bodyText or bodyHtml update is required",
-  );
+// The update schema lives in admin-support-api/messages.ts, which the AI app
+// action `update_email_template` offers too (ALP-724). Fork #38: its rich
+// `bodyHtml` is sanitised server-side before storage and `bodyText` DERIVED
+// from it on save, so audit, diffs and validation keep operating on text. A
+// save that provides bodyText WITHOUT bodyHtml clears any stored bodyHtml: the
+// text becomes authoritative, so a stale rich body can never shadow a
+// scripted plain save.
 
 async function loadOverrides() {
   const delegate = (prisma as unknown as {
@@ -155,7 +154,7 @@ async function loadAnnotationStripAudit(): Promise<
   return byTemplate;
 }
 
-function serializeOverride(override: EmailTemplateOverrideRecord) {
+function serializeOverride(override: EmailTemplateOverrideRecord): EmailTemplateOverrideAnswer {
   return {
     subject: override.subject,
     bodyText: override.bodyText,
@@ -165,11 +164,14 @@ function serializeOverride(override: EmailTemplateOverrideRecord) {
   };
 }
 
-export async function GET() {
+export async function GET(request: NextRequest) {
   const guard = await requireAdmin({
     permission: { area: "support", level: "view" },
   });
   if (!guard.ok) return guard.response;
+
+  const query = readTemplateQuery(request);
+  if (!query.ok) return query.response;
 
   const overrides = await loadOverrides();
   const staleOverrides = overrides
@@ -278,21 +280,7 @@ export async function GET() {
     overrideByTemplate.size > 0
       ? await loadAnnotationStripAudit()
       : new Map<string, AnnotationStripRecord>();
-  const staleContentByTemplate = new Map<
-    string,
-    {
-      differsFromDefault: boolean;
-      subjectDiffersFromDefault: boolean;
-      bodyDiffersFromDefault: boolean;
-      reasons: string[];
-      missingRequiredTokens: string[];
-      retiredTokens: string[];
-      bracketAnnotations: string[];
-      danglingLines: string[];
-      strippedAnnotations: string[];
-      unconditionalLines: string[];
-    }
-  >();
+  const staleContentByTemplate = new Map<string, EmailTemplateStaleContent>();
   for (const definition of EMAIL_TEMPLATE_DEFINITIONS) {
     const override = overrideByTemplate.get(definition.key);
     if (!override) continue;
@@ -498,7 +486,7 @@ export async function GET() {
     })
     .filter((entry): entry is { templateName: string; tokens: string[] } => entry !== null);
 
-  return NextResponse.json({
+  const { body, shape } = templatesAnswer(query.templateName, {
     templates: EMAIL_TEMPLATE_DEFINITIONS.map((definition) => {
       const override = overrideByTemplate.get(definition.key);
       return {
@@ -514,8 +502,8 @@ export async function GET() {
     retiredTokenOverrides,
     missingRequiredTokenOverrides,
   });
+  return connectionJson(request, body, shape);
 }
-
 export async function PUT(request: NextRequest) {
   const guard = await requireAdmin({
     permission: { area: "support", level: "edit" },
@@ -529,7 +517,7 @@ export async function PUT(request: NextRequest) {
   if (!jsonBody.ok) return jsonBody.response;
   const body = jsonBody.body;
 
-  const parsed = templateUpdateSchema.safeParse(body);
+  const parsed = emailTemplateUpdateSchema.safeParse(body);
   if (!parsed.success) {
     return NextResponse.json(
       { error: "Invalid input", details: parsed.error.flatten() },
@@ -540,6 +528,9 @@ export async function PUT(request: NextRequest) {
   if (!EMAIL_TEMPLATE_KEY_SET.has(parsed.data.templateName)) {
     return NextResponse.json({ error: "Unknown email template" }, { status: 400 });
   }
+  // ALP-724: sign-in-link and bank-transfer templates are changed on the website only.
+  const connectionRefusal = arrivesAsMcpConnection(request) && emailTemplateConnectionEditRefusal(parsed.data.templateName);
+  if (connectionRefusal) return websiteOnlyForConnection(connectionRefusal);
 
   // Fork #38: a rich body is sanitised FIRST, then its derived text is what
   // every existing rule validates — so token and content rules read the body
@@ -664,5 +655,5 @@ export async function PUT(request: NextRequest) {
     }),
   );
 
-  return NextResponse.json({ override: record });
+  return connectionJson(request, { override: record }, EMAIL_TEMPLATE_SAVED_CONNECTION_SHAPE);
 }

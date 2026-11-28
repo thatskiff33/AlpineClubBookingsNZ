@@ -218,6 +218,25 @@ describe("DELETE /api/bookings/[id]/guests/[guestId] refund recovery", () => {
     expect(mocks.markBookingModificationRefundRecoverySucceeded).toHaveBeenCalled();
   });
 
+  it("MUTATION (#5288): a released promotion billed on the new primary invoice asks the amount now due, with the payment reference", async () => {
+    mocks.removeBookingGuestInTransaction.mockResolvedValue(
+      makeResult({
+        booking: { ...makeResult().booking, payment: { source: "INTERNET_BANKING", reference: "REF-5288" } },
+        priceDiffCents: 2000, refundAmountCents: 0, pendingRefundAmountCents: 0, additionalAmountCents: 2000,
+        hasSucceededPayment: false, settlementMethod: null, primaryInvoiceBillsIncrease: true,
+      }),
+    );
+
+    await DELETE(makeRequest(), { params });
+
+    expect(mocks.sendBookingModifiedEmail).toHaveBeenCalledWith(
+      expect.objectContaining({
+        additionalAmountCents: 2000, additionalPaymentMethod: "INTERNET_BANKING", asksAmountNowDue: true, paymentReference: "REF-5288",
+      }),
+      expect.anything(),
+    );
+  });
+
   it("does not refund or enqueue recovery when there is nothing to refund", async () => {
     mocks.removeBookingGuestInTransaction.mockResolvedValue(
       makeResult({

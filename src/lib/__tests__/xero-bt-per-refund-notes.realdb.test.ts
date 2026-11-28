@@ -633,9 +633,9 @@ function answerRefundsAsStripeWould(params: { paymentIntentId: string; amountCen
       expect(card).toMatchObject({ cents: 4_000, ownRecord: null });
       expect(own).toMatchObject({ cents: 10_000, ownRecord: handBack, handBackTaskId: handBack });
       // The hand-back's note lands first (the card note's run failed and is retried
-      // later). While the card note is still missing from Xero the floor's alert is true.
+      // later). #5289 D: the card note is still queued, so Xero is behind by design and the floor alerts nothing.
       expect(await raiseQueuedNote(own!.id, `${P}-mixed-own`)).toEqual([10_000]);
-      expect(await reconcile(`${P}-mixed-own`, 10_000)).toEqual([`inbound-credit-note-repair:${P}-mixed-own`]);
+      expect(await reconcile(`${P}-mixed-own`, 10_000)).toEqual([]);
       expect(await raiseQueuedNote(card!.id, `${P}-mixed-card`)).toEqual([4_000]);
       expect(await reconcile(`${P}-mixed-card`, 4_000)).toEqual([]);
 

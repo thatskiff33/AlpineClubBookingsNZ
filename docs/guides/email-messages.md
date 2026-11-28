@@ -140,7 +140,12 @@ payment we asked for has been cancelled, so you no longer need to pay it."
 booking the club asks by card it reads "An additional payment of $X is
 required.", also while the card request waits to be retried; on a booking paid
 by internet banking it names an Internet Banking payment against the Xero
-invoice; any other amount still to pay is named without a method (#4052).
+invoice; any other amount still to pay is named without a method (#4052). On a
+booking paid with account credit whose Xero invoice is not linked yet, the
+change raises that invoice, and the sentence reads "The amount now due on this
+booking is $X by Internet Banking. This replaces any earlier amount we asked
+for.": $X is the whole amount the invoice will show as due, so a member edited
+twice is told one figure, not two to add up (#5288).
 
 `{{paymentNote}}` on the **Your Request Was Approved** message (an approved
 booking-rule exception that created a new booking) says what is left to pay, and
@@ -490,18 +495,14 @@ you want both reworded; editing only one leaves the other on its built-in text.
 > missing a required token, and it cannot be saved again until you add
 > `{{offerNote}}` back or restore the default. Nothing is blocked until then.
 >
-> Three limits officers should know. The offer email is withheld if **No
+> Two limits officers should know. The offer email is withheld if **No
 > emails** is on for the booking when the email is sent, and turning emails
 > back on later does not send it: the member is not told of the offer by
 > email. They are told if the offer expires only if emails are on at that
-> moment. So contact them directly, or retract the offer.
-> When the mail provider reports a bounce or
-> a complaint for a member's address, every earlier email to that address is
-> marked bounced too, so a member who did receive their offer can still be
-> reported in a **Waitlist email not sent** alert when it lapses; that alert
-> says only that the email is not known to have reached them. And a **Waitlist
+> moment. So contact them directly, or retract the offer. And a **Waitlist
 > Offer Expired** email that cannot be delivered raises no alert: the member
-> is simply back on the waitlist.
+> is simply back on the waitlist. What a bounce or complaint marks changed
+> in #5469 (the next upgrade note).
 >
 > During the switch to this version, a server still running the version
 > before it that expires an offer this version made and never sent sends the
@@ -516,6 +517,69 @@ you want both reworded; editing only one leaves the other on its built-in text.
 > otherwise it is not sent and moves to the email-failure review queue. It gets no window restart and no
 > "not sent" alert; and if such an offer lapses, the member is sent **Waitlist
 > Offer Expired** as before.
+
+> **Upgrade note (#5469, bounces and complaints).** When the mail service
+> reports that an email bounced, only that email is now marked bounced. Before,
+> every earlier email to the address was marked bounced too, so a member's
+> email history could show emails that arrived as bounced. A temporary bounce
+> (a full mailbox, say) follows the same rule as a permanent one. A complaint,
+> usually the recipient marking an email as spam, now marks no email at all:
+> the email arrived, so it keeps showing as sent. A "not spam" report, the
+> recipient moving a club email out of their spam folder, changes nothing: the
+> address is not blocked and no alert is sent (owner decision D5).
+>
+> The address is blocked from further emails exactly as before: at once for a
+> complaint or a permanent bounce, from the second temporary bounce. The block
+> covers this site's own emails; invoices emailed by Xero are not covered by it
+> (owner decision D7). Once it is blocked, nothing of the site's own waiting to
+> be sent or retried goes to it. After a first temporary bounce, an email to the
+> address that failed and is waiting for a retry is now retried, where before it
+> was marked bounced and dropped.
+>
+> What an officer can notice:
+>
+> - A new alert, **Admin Email Complaint** (`admin-email-complaint`), sent once
+>   per complaint report for each address it names (owner decision D6). It
+>   gives the address, the
+>   complaint's type in plain words, the members whose record uses the address
+>   (five by name and a count of the rest, or that no member record does),
+>   which email the complaint was about and when it was sent (or that the app
+>   could not tell), and that the address is now blocked for the site's own
+>   emails, invoices emailed by Xero excepted. It links to **Email
+>   Deliverability**, where the block is listed and can be lifted. It goes to
+>   officers who receive **Reported issues** alerts (owner decision D4: Support
+>   & System edit, which lifting a block needs), and its wording is editable
+>   like the others. If it cannot be sent at once, it is kept and tried again
+>   until an officer has it, for up to 7 days: every 15 minutes after a send
+>   that failed, and a day later when nobody could receive it. It is not sent
+>   at all when the template is muted or nobody receives Reported issues
+>   alerts, and it is dropped for good if the block is lifted before it goes.
+> - A member who received their waitlist offer email still counts as told if
+>   they mark it as spam, or if another email to them later bounces or draws a
+>   complaint, so no **Waitlist email not sent** alert is raised for it. If the
+>   offer lapses, the **Waitlist Offer Expired** email is attempted, but when
+>   the member marked an email as spam their address is blocked, so it is
+>   refused and does not reach them; the complaint alert is how officers hear.
+>   An offer email that bounced counts as not told, as before, when the app can
+>   match the bounce to it (see Limits).
+> - An exhausted email failure to a blocked address no longer offers **Try
+>   again** on Email Deliverability; it says the address is blocked instead.
+>
+> To tell which email a report is about, the app now keeps the id the mail
+> service gave each email when it accepted it. Only AWS SES is recognised
+> (`USE_AWS_SES=true`).
+>
+> Limits. An email sent before this version, or while a server still running
+> the version before it was handling mail during the switch, has no stored
+> id: a report about it marks it only when SES includes the original email
+> headers, an optional setting
+> ([`CONFIGURATION.md`](../../CONFIGURATION.md#ses-bounce-and-complaint-feedback)).
+> Without it, the address is still blocked but no email is marked, so a
+> bounced offer email of that age counts as told. The same holds for email
+> sent through an SMTP relay. Emails already marked bounced before this version
+> stay marked. During the switch, a server still running the version before it
+> marks every email to the address on a bounce or a complaint (a "not spam"
+> report included), as before, and sends no complaint alert.
 
 > **Upgrade note (#5433, card-payment confirmations).** A member's **Booking
 > Confirmed** email after paying by card is no longer lost if the payment is
@@ -571,7 +635,9 @@ you want both reworded; editing only one leaves the other on its built-in text.
 > charge of a saved card, an officer's confirmation of pending guests (which
 > still sends only when the officer asks), a bank transfer, and the recovery
 > of a card payment found already taken. A zero-balance confirmation follows
-> the same rules since the next note. During the
+> the same rules since the next note, and the charge of a saved card and the
+> recovery of a card payment found already taken since the card recovery doors
+> note below. During the
 > switch to this version a server still running the version before it sends
 > the confirmation as it always did, so an owner can be sent two: one by this
 > version after Stripe's notice, and one by the older server's scheduled job.
@@ -644,6 +710,34 @@ you want both reworded; editing only one leaves the other on its built-in text.
 > During the switch to this version, a server still running the version
 > before it sends these emails as it always did, with nothing kept for a
 > later run.
+
+> **Upgrade note (#5433, the card recovery doors).** Three ways a card payment
+> confirms a booking sent the member no **Booking Confirmed** email at all, and
+> now send it on the same rules as a card payment on the booking page (above):
+>
+> - a card payment the member made whose notice from Stripe did not reach the
+>   app, found when the member comes back to the pay step;
+> - the same for a payment made through the booking's payment link, found
+>   when the link is used again;
+> - a charge of a saved card through the charge-saved-method route, whether
+>   an officer or an authorised scheduled call starts it (owner decision,
+>   28 Nov 2026).
+>
+> Before, these sent nothing, and Stripe's notice arriving afterwards found the
+> booking already paid and sent nothing either, so the member was told only
+> when Stripe's notice happened to confirm the booking first. Now the member
+> gets one confirmation, whichever of these or Stripe's notice confirms the
+> booking first. If the app is interrupted after the payment is
+> saved, a later run of the email retry job (every 30 minutes) sends it, until
+> the end of the check-in day or for seven days after the payment if that
+> comes first, and officers get **Booking confirmation not sent** when it could
+> not be sent in time, did not reach the owner, or the owner cannot be emailed
+> at all, as for every card payment (owner decisions, 23 and 25 Nov 2026). The
+> booking's Xero invoice is queued first, as before.
+>
+> An officer's confirmation of pending guests is unchanged: it still sends only
+> when the officer asks. During the switch to this version, a server still
+> running the version before it sends nothing for these three, as before.
 
 ## Settings reference
 

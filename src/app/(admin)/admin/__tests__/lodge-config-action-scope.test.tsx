@@ -88,8 +88,8 @@ vi.mock("next/navigation", () => ({
   useSearchParams: () => new URLSearchParams(),
 }));
 
-import ChoresPage from "@/app/(admin)/admin/chores/page";
-import LockersPage from "@/app/(admin)/admin/lockers/page";
+import ChoresPage from "@/app/(admin)/admin/lodge-ops/chores/page";
+import LockersPage from "@/app/(admin)/admin/lodge-ops/lockers/page";
 import SeasonsPage from "@/app/(admin)/admin/rules/seasons/page";
 
 type Answer = { status: number; body: unknown };

@@ -1,7 +1,7 @@
 import { APPLIED_CREDIT_ALLOCATION_ROLE } from "@/lib/xero-applied-credit-link-roles";
 import { storedShortBookingId } from "@/lib/booking-reference";
 import { type CreditNote as XeroCreditNote } from "xero-node";
-import { CreditType, PaymentSource, PaymentStatus } from "@prisma/client";
+import { CreditType, PaymentStatus } from "@prisma/client";
 import { bookingOwner } from "@/lib/booking-owner";
 import { syncBookingLedgerCredits } from "@/lib/booking-ledger-credit-sync";
 import { prisma } from "@/lib/prisma";
@@ -13,7 +13,7 @@ import { isIncludedRefundCreditNoteStatus, readRefundNoteRowsByPayment } from "@
 import { findActiveXeroObjectLinks } from "./object-links";
 import { notifyXeroSyncError } from "@/lib/xero-error-alert";
 import { sendBankTransferFloorAlert } from "./credit-note-bank-transfer-floor";
-import { decideXeroRefundedColumns } from "./xero-refunded-columns";
+import { decideXeroRefundedColumns, sendCardLedgerFloorAlert } from "./xero-refunded-columns";
 import { createAuditLog } from "@/lib/audit";
 import { lockMemberCreditLedger } from "@/lib/member-credit";
 import { buildBookingAppliedCreditDescription, isBookingAppliedCreditDescription } from "@/lib/member-credit-booking-rows";
@@ -22,7 +22,7 @@ import { assertNoAppliedCreditDeallocationFence } from "@/lib/xero-applied-credi
 import { getClubFormat } from "@/lib/club-format-settings";
 import { formatCents } from "@/lib/utils";
 import { decideLinkedRefundedTotalCents } from "./linked-refunded-total";
-import { capCardRefundedTotalAtStripeRefunds } from "@/lib/organiser-child-refund";
+import { invoiceCorrectionNoteIds } from "./account-credit-modification-notes";
 
 /** #3792: the operator alert, and the audit action, for a refused change. */
 const RESTORED_BOOKING_ALLOCATION_CHANGE_ERROR_TYPE =
@@ -187,9 +187,13 @@ export async function repairRefundedPaymentBusinessState(input: {
   // #4449 (`INV-PAY-126`): what each payment's links record, less the note being synced (`decideLinkedRefundedTotalCents`),
   // read AFTER the payment rows, so a request paid back in between (#4215, `INV-PAY-118`) loses the claim below.
   // #4288: the note's own refund-note row too; its void may move no Payment column, so `repairOne` re-reads it locked.
-  const [linkedRefundedCentsByPaymentId, currentNoteRows] = await Promise.all([
+  const [linkedRefundedCentsByPaymentId, currentNoteRows, currentNoteIsCorrection] = await Promise.all([
     decideLinkedRefundedTotalCents(prisma, payments, { excludeCreditNoteId: input.creditNoteId }),
     input.creditNoteId === null ? new Map<string, { active: boolean; metadata: unknown }>() : readRefundNoteRowsByPayment(input.creditNoteId, paymentIds, prisma),
+    // #5289 D: whether the note being synced is an invoice correction, whose contribution the floor adds to the detail.
+    input.creditNoteId !== null && input.modificationRefundAmountsByPaymentId.size > 0
+      ? invoiceCorrectionNoteIds([input.creditNoteId]).then((ids) => ids.has(input.creditNoteId!))
+      : false,
   ]);
 
   // #4288: each payment's current note as its own refund-note row holds it NOW (read above, after the payment rows),
@@ -224,15 +228,13 @@ export async function repairRefundedPaymentBusinessState(input: {
         ? input.modificationRefundAmountsByPaymentId.get(payment.id) ?? 0
         : 0;
 
+    const linked = linkedRefundedCentsByPaymentId.get(payment.id);
     const rawRefundedTotalCents =
-      (linkedRefundedCentsByPaymentId.get(payment.id) ?? 0) +
+      (linked?.cents ?? 0) +
       currentDirectRefundContributionCents +
       currentModificationRefundContributionCents;
-    const nextRefundedTotalCents = Math.min(
-      Math.max(rawRefundedTotalCents, 0),
-      payment.amountCents
-    );
-
+    // #5289 D: the corrections counted, the note being synced's own when it is one, for the bank-transfer floor.
+    const correctionCents = (linked?.correctionCents ?? 0) + (currentNoteIsCorrection ? currentModificationRefundContributionCents : 0);
     if (rawRefundedTotalCents > payment.amountCents) {
       logger.warn(
         {
@@ -245,57 +247,22 @@ export async function repairRefundedPaymentBusinessState(input: {
       );
     }
 
-    // F5 (#1353): for source=STRIPE the local refund ledger is Stripe-truth
-    // (written by processed refunds and the recovery machinery) — the repair
-    // may RAISE it from Xero-derived totals but must never LOWER it. A lower
-    // Xero-derived total means either a refund-delta credit note is missing
-    // in Xero (the F4 class this floor stops self-masking: the
-    // missing-credit-note detector compares against refundedAmountCents) or
-    // an operator voided a refund note in Xero for money Stripe has already
-    // paid out. Both are Xero-side divergences to surface, not local-ledger
-    // corruption to apply — so keep the ledger, log, and raise the deduped
-    // Xero sync alert. Non-Stripe payments (Internet Banking) keep the
-    // existing treat-Xero-as-authoritative behaviour: Xero IS their payment
-    // rail.
-    const isStripePayment = payment.source === PaymentSource.STRIPE;
-    let effectiveRefundedTotalCents = nextRefundedTotalCents;
-    if (
-      isStripePayment &&
-      nextRefundedTotalCents < payment.refundedAmountCents
-    ) {
-      logger.warn(
-        {
-          creditNoteId: input.creditNoteId,
-          paymentId: payment.id,
-          localRefundedAmountCents: payment.refundedAmountCents,
-          xeroDerivedRefundedTotalCents: nextRefundedTotalCents,
-        },
-        "Xero-derived refund total is below the local Stripe refund ledger; keeping the local ledger (raise-only floor)"
-      );
-      await notifyXeroSyncError({
-        errorType: "refund-ledger-divergence",
-        operation: `inbound-credit-note-repair:${input.creditNoteId ?? `recount:${payment.id}`}`,
-        errorMessage: `Xero-derived refund total (${formatCents(nextRefundedTotalCents, format)}) for payment ${payment.id} is below the local Stripe refund ledger (${formatCents(payment.refundedAmountCents, format)}). The local ledger was kept (raise-only floor, #1353). Likely causes: a missing refund-delta credit note in Xero, or a refund credit note voided in Xero after Stripe paid the refund out.`,
-      });
-      effectiveRefundedTotalCents = payment.refundedAmountCents;
-    }
-    // #3653 (`INV-PAY-114`), #4444 (`INV-PAY-126`, owner decision 23 Nov 2026): a Xero note never raises a card
-    // payment's total past the refunds Stripe recorded for it, so two notes for one refund cannot.
-    if (isStripePayment) {
-      effectiveRefundedTotalCents = await capCardRefundedTotalAtStripeRefunds(prisma, payment, effectiveRefundedTotalCents);
-    }
-    // #4449 (`INV-SSOT`): the clamp, the bank-transfer floor (#4162, `INV-ADDPAY-021`: never below a bank
-    // transfer's own refund detail; less is alerted, not applied) and the status rule (F5 #1353: never
-    // un-refund a card payment; #3979: a total falling to nothing on a payment never captured returns it to
-    // its uncaptured state) are the one step the kept settle and the allocation write take too.
+    // #4449 (`INV-SSOT`), #5289 E: the one step every writer from Xero takes. The Xero-derived figure
+    // is clamped, and only it; then a card ledger is never lowered (F5 #1353's raise-only floor, its
+    // alert returned) and capped at Stripe's refunds (#3653, #4444, `INV-PAY-126`); a bank
+    // transfer is held at its own refund detail plus the corrections counted (#4162, `INV-ADDPAY-021`);
+    // then the status rule (F5: never un-refund a card payment; #3979: a total falling to nothing on a
+    // payment never captured returns it to its uncaptured state).
     const decided = await decideXeroRefundedColumns(prisma, {
       payment,
-      decidedCents: effectiveRefundedTotalCents,
+      decidedCents: rawRefundedTotalCents,
+      correctionCents,
       creditNoteId: input.creditNoteId,
       creditNoteNumber: input.creditNote.creditNoteNumber ?? null,
     });
     if (decided.floorAlert) await sendBankTransferFloorAlert(decided.floorAlert, format);
-    effectiveRefundedTotalCents = decided.refundedAmountCents;
+    if (decided.cardFloorAlert) await sendCardLedgerFloorAlert(decided.cardFloorAlert, format);
+    const effectiveRefundedTotalCents = decided.refundedAmountCents;
     const nextStatus = decided.status;
     const updates: {
       refundedAmountCents?: number;

@@ -13,12 +13,14 @@ import {
   REPLAYABLE_FAILED_EMAIL_WHERE,
 } from "@/lib/email/retry-selection";
 import { retireReplayableEmailRow } from "@/lib/email/retire-replayable";
+import { sentEmailIdsFromResult } from "@/lib/email/provider-message-id";
 import { replayStillWanted } from "@/lib/email/retry-still-wanted";
 import {
   describeDeliveryDecision,
   resolveDeliveryPolicy,
 } from "@/lib/environment-delivery-policy";
 import { getActiveEmailSuppression } from "@/lib/email-suppression";
+import { suppressedEmailErrorMessage } from "@/lib/email/suppressed-email-message";
 import {
   ALWAYS_BOOKING_SCOPED_TEMPLATE_NAMES,
   resolveBookingEmailGate,
@@ -29,10 +31,8 @@ import {
   finalizeBookingEmailHtml,
   hasBookingDetailHref,
 } from "@/lib/booking-email-html";
-import { adminEmailDeliveryFailedTemplate } from "@/lib/email-templates/admin-ops";
-import { renderEmailHtml } from "@/lib/email-theme";
-
-const RETRY_FAILURE_ALERT_TEMPLATE = "admin-email-failure";
+import { alertOfficersOfUndeliveredEmail } from "@/lib/email/delivery-failed-alert";
+import { sweepStrandedQueuedEmails } from "@/lib/email/handover";
 
 /**
  * The guard on this job's pre-send claim (F33, #1885): the row is still
@@ -89,25 +89,104 @@ async function retireUnverifiableBookingEmail(params: {
   );
 }
 
+/** #5469: the retry job's suppression read failed; the row waits for the next run. */
+const SUPPRESSION_UNREADABLE: unique symbol = Symbol("suppression-unreadable");
+
+/**
+ * A replay the provider refused or the transport failed. The row goes back to
+ * `FAILED` for the next run, or to the review queue with an officer alert at
+ * the ceiling, only while it is still as this run claimed it (#5298,
+ * `INV-INT-043`): a replay that outlasted `strandedQueuedAfterMs()` may have
+ * been flagged `UNCONFIRMED` at the ceiling by the stranded-email sweep, which
+ * has told officers already, and an unguarded write would set its attempts
+ * back below the ceiling and have it sent again.
+ */
+async function recordReplayFailure({ emailLog, newAttempts, claimedAt, err }: {
+  emailLog: Pick<EmailLog, "id" | "to" | "templateName">;
+  newAttempts: number;
+  claimedAt: Date;
+  err: unknown;
+}): Promise<void> {
+  const errorMessage = err instanceof Error ? err.message : String(err);
+  logger.error({ err, emailLogId: emailLog.id, attempt: newAttempts }, "Email retry failed");
+  const restored = await prisma.emailLog
+    .updateMany({
+      where: { id: emailLog.id, status: "QUEUED", handoverState: "STARTED", attempts: newAttempts, lastAttemptAt: claimedAt },
+      data: {
+        // Restore FAILED (the claim moved the row to QUEUED) — will
+        // retry again if attempts < MAX.
+        status: "FAILED",
+        attempts: newAttempts,
+        lastAttemptAt: new Date(),
+        errorMessage,
+        /*
+          AND CLEAR THE ENVIRONMENT BLOCK REASON (#3035 review). This row may
+          have been failed by the environment gate earlier — undeclared role,
+          or a live site in capture mode — and `deliveryBlockReason` was
+          written nowhere else and cleared nowhere at all. So once an operator
+          repaired the configuration and the replay then hit a genuine provider
+          failure, the row kept the stale block reason for the life of the
+          installation: counted forever by
+          `readWithheldApplicationEmail`, which selects
+          `FAILED` + `deliveryBlockReason NOT NULL`. Admin -> Environment would
+          go on telling a healthy live club it was holding mail back, which
+          breaks owner decision 1 — the count has to DRAIN after the repair,
+          because a count that never drains cannot distinguish anything.
+
+          It also falsifies the column's own documented contract in
+          `schema.prisma` ("NULL for … a genuine transport failure") and
+          INV-CONFIG-004's promise that a safety block is distinguishable from a
+          transport failure by more than a message string. This write is now
+          exactly that: a transport failure, so the reason is NULL and the
+          message string is the provider's.
+        */
+        deliveryBlockReason: null,
+      },
+    })
+    .catch((updateErr) => {
+      logger.error({ err: updateErr, emailLogId: emailLog.id }, "Failed to update EmailLog after retry failure");
+      return null;
+    });
+  if (restored?.count === 0) {
+    logger.warn({ emailLogId: emailLog.id }, "A failed replay found its row already settled by the stranded-email sweep; left as it is (#5298)");
+    return;
+  }
+
+  // Alert officers when email exhausts retries
+  if (newAttempts >= EMAIL_RETRY_MAX_ATTEMPTS) {
+    await alertOfficersOfUndeliveredEmail({
+      recipient: emailLog.to,
+      templateName: emailLog.templateName,
+      attemptCount: newAttempts,
+    });
+  }
+}
+
 /**
  * N-11: Retry failed emails with backoff.
  * Queries EmailLog for FAILED records with attempts below
  * EMAIL_RETRY_MAX_ATTEMPTS and re-sends.
  * Token-bearing templates are intentionally excluded because their HTML bodies
  * are not retained in EmailLog.
- * SES/SNS bounce and complaint feedback marks undeliverable messages as
- * BOUNCED, so they are excluded from retry recovery. Suppression is
- * re-checked per row before each retry send (F26, #1885) because a FAILED
- * row can predate the suppression that SNS feedback created.
+ * A bounce report marks only the message it names as BOUNCED, and a complaint
+ * marks none (#5469, `INV-INT-044`), so a bounced row is excluded from retry
+ * recovery. Other rows to the address keep their status: suppression is re-checked per row before
+ * each retry send (F26, #1885), and that check, not a status rewrite, is what
+ * stops a FAILED row to an address SNS feedback has since suppressed.
  * Each row is claimed (FAILED -> QUEUED) with a guarded update before the
  * send so an interrupted or concurrent run can never deliver the same email
  * twice (F33, #1885).
+ * Rows a crash left QUEUED are settled first (#5298, INV-INT-043,
+ * `sweepStrandedQueuedEmails`): re-sent once if never handed over, flagged
+ * to officers otherwise.
  * Runs every 30 minutes.
  */
 export async function retryFailedEmails(): Promise<{
   retried: number;
   succeeded: number;
   failed: number;
+  /** #5469: rows left for the next run because their suppression could not be read. */
+  skipped: number;
 }> {
   /*
     Environment-safety boundary (#3035, ENV-SAFETY 2; epic #2986). INV-CONFIG-004.
@@ -147,7 +226,7 @@ export async function retryFailedEmails(): Promise<{
       { job: "retryFailedEmails" },
       "Skipped the email retry run: this installation is not the club's live site, so no message was replayed and no provider was contacted. Every failed row is left untouched",
     );
-    return { retried: 0, succeeded: 0, failed: 0 };
+    return { retried: 0, succeeded: 0, failed: 0, skipped: 0 };
   }
   if (delivery.kind !== "allow") {
     /*
@@ -202,6 +281,11 @@ export async function retryFailedEmails(): Promise<{
   */
   await getEmailTransporter(delivery.clearance);
 
+  // #5298 (INV-INT-043): settle rows a crash left QUEUED first, so a row it
+  // hands back as FAILED is replayed by the selection below in this same run,
+  // unless 50 older-created failures fill it; then a later run replays it.
+  await sweepStrandedQueuedEmails();
+
   // Backoff: don't retry emails until at least 15 minutes after the last attempt
   const backoffThreshold = new Date(Date.now() - EMAIL_RETRY_BACKOFF_MS);
 
@@ -221,6 +305,7 @@ export async function retryFailedEmails(): Promise<{
   let retried = 0;
   let succeeded = 0;
   let failed = 0;
+  let skipped = 0;
 
   for (const emailLog of failedEmails) {
     /*
@@ -249,7 +334,7 @@ export async function retryFailedEmails(): Promise<{
         `Email retry stopped part-way: ${describeDeliveryDecision(stillPermitted)}`,
       );
     }
-    const { transporter } = await getEmailTransporter(stillPermitted.clearance);
+    const { transporter, mailService } = await getEmailTransporter(stillPermitted.clearance);
 
     const usesBookingRetryBody = emailLog.bookingRetryHtmlBody != null;
     // Retained HTML, rendered by whichever process first attempted this
@@ -258,22 +343,13 @@ export async function retryFailedEmails(): Promise<{
     // re-theming a replay would change what the member is shown relative to
     // what the club approved at send time.
     let retryHtml = emailLog.bookingRetryHtmlBody ?? emailLog.htmlBody!;
-    // F26 (#1885): a FAILED row can be created before an SNS bounce/complaint
-    // suppresses the recipient (the pre-send check in core.ts passed, then the
-    // SMTP send failed after the suppression landed). Re-check here so a
-    // suppressed recipient is never re-delivered. Mirrors core.ts: on check
-    // failure proceed (fail-open, same as the pre-send path); on an active
-    // suppression mark the row BOUNCED with the same reason string and drop
-    // the retained body.
-    const activeSuppression = await getActiveEmailSuppression(
-      emailLog.to,
-    ).catch((err) => {
-      logger.error(
-        { err, to: emailLog.to, templateName: emailLog.templateName },
-        "Failed to check email suppression state before retry",
-      );
-      return null;
+    // F26 (#1885): re-check suppression, which can postdate the row; #5469: a
+    // failed read skips the row, unclaimed and counted, for the next run.
+    const activeSuppression = await getActiveEmailSuppression(emailLog.to).catch((err: unknown): typeof SUPPRESSION_UNREADABLE => {
+      logger.error({ err, emailLogId: emailLog.id }, "Failed to check email suppression state before retry; left for the next run");
+      return SUPPRESSION_UNREADABLE;
     });
+    if (activeSuppression === SUPPRESSION_UNREADABLE) { skipped++; continue; }
 
     if (activeSuppression) {
       await prisma.emailLog
@@ -283,7 +359,7 @@ export async function retryFailedEmails(): Promise<{
             status: "BOUNCED",
             htmlBody: null,
             bookingRetryHtmlBody: null,
-            errorMessage: `Email suppressed after SES ${activeSuppression.reason.toLowerCase()} feedback`,
+            errorMessage: suppressedEmailErrorMessage(activeSuppression.reason),
             // #3035: the recipient's address is the reason now, not the
             // environment. See the failure branch below on why the block reason
             // must not persist past the thing it described.
@@ -504,12 +580,16 @@ export async function retryFailedEmails(): Promise<{
     // row is no longer FAILED, the claim finds nothing, and we never
     // double-send. Two overlapping cron runs race the same guarded update and
     // only one wins.
+    const claimedAt = new Date();
     const claim = await prisma.emailLog.updateMany({
       where: emailRetryClaimWhere(emailLog),
       data: {
         status: "QUEUED",
+        // #5298 (INV-INT-043): this run may now reach the mail server, so a
+        // crash from here leaves a row the stranded-email sweep only flags.
+        handoverState: "STARTED",
         attempts: newAttempts,
-        lastAttemptAt: new Date(),
+        lastAttemptAt: claimedAt,
         ...(retryHtml !== retainedHtml
           ? usesBookingRetryBody
             ? { bookingRetryHtmlBody: retryHtml }
@@ -565,89 +645,7 @@ export async function retryFailedEmails(): Promise<{
         attachments,
       });
     } catch (err) {
-      const errorMessage = err instanceof Error ? err.message : String(err);
-      logger.error(
-        { err, emailLogId: emailLog.id, attempt: newAttempts },
-        "Email retry failed",
-      );
-
-      await prisma.emailLog
-        .update({
-          where: { id: emailLog.id },
-          data: {
-            // Restore FAILED (the claim moved the row to QUEUED) — will
-            // retry again if attempts < MAX.
-            status: "FAILED",
-            attempts: newAttempts,
-            lastAttemptAt: new Date(),
-            errorMessage,
-            /*
-              AND CLEAR THE ENVIRONMENT BLOCK REASON (#3035 review). This row may
-              have been failed by the environment gate earlier — undeclared role,
-              or a live site in capture mode — and `deliveryBlockReason` was
-              written nowhere else and cleared nowhere at all. So once an operator
-              repaired the configuration and the replay then hit a genuine provider
-              failure, the row kept the stale block reason for the life of the
-              installation: counted forever by
-              `readWithheldApplicationEmail`, which selects
-              `FAILED` + `deliveryBlockReason NOT NULL`. Admin -> Environment would
-              go on telling a healthy live club it was holding mail back, which
-              breaks owner decision 1 — the count has to DRAIN after the repair,
-              because a count that never drains cannot distinguish anything.
-
-              It also falsifies the column's own documented contract in
-              `schema.prisma` ("NULL for … a genuine transport failure") and
-              INV-CONFIG-004's promise that a safety block is distinguishable from a
-              transport failure by more than a message string. This write is now
-              exactly that: a transport failure, so the reason is NULL and the
-              message string is the provider's.
-            */
-            deliveryBlockReason: null,
-          },
-        })
-        .catch((updateErr) => {
-          logger.error(
-            { err: updateErr, emailLogId: emailLog.id },
-            "Failed to update EmailLog after retry failure",
-          );
-        });
-
-      // Alert admin when email exhausts retries
-      if (
-        newAttempts >= EMAIL_RETRY_MAX_ATTEMPTS &&
-        emailLog.templateName !== RETRY_FAILURE_ALERT_TEMPLATE
-      ) {
-        try {
-          const { sendEmail, getAdminEmails } = await import("./email");
-          // #2548: the shared resolver, so this system-failure alert reaches
-          // the same audience as every other one — access-role resolved, with
-          // definition-backed custom roles included — instead of re-deriving it
-          // from the legacy `role: "ADMIN"` scalar.
-          const admins = await getAdminEmails();
-          for (const adminEmail of admins) {
-            await sendEmail({
-              to: adminEmail,
-              subject: "Email delivery permanently failed",
-              html: await renderEmailHtml(() => adminEmailDeliveryFailedTemplate({
-                recipient: emailLog.to,
-                templateName: emailLog.templateName,
-                attemptCount: newAttempts,
-              })),
-              // Admin failure alert: never withheld by a booking flag (#2258).
-              bookingContext: "none",
-              templateName: RETRY_FAILURE_ALERT_TEMPLATE,
-              templateData: {
-                originalRecipient: emailLog.to,
-                originalTemplateName: emailLog.templateName,
-                attemptCount: newAttempts,
-              },
-            }).catch(() => {}); // Don't let alert failure break the cron
-          }
-        } catch {
-          // Non-critical
-        }
-      }
-
+      await recordReplayFailure({ emailLog, newAttempts, claimedAt, err });
       failed++;
       continue;
     }
@@ -662,7 +660,7 @@ export async function retryFailedEmails(): Promise<{
         data: {
           status: "SENT",
           sentAt: new Date(),
-          messageId: result.messageId || null,
+          ...sentEmailIdsFromResult(mailService, result), // #5469
           errorMessage: null,
           // #3035: the row is delivered, so nothing about it is being withheld.
           // Leaving a stale `deliveryBlockReason` here would keep a SENT message
@@ -680,5 +678,5 @@ export async function retryFailedEmails(): Promise<{
     succeeded++;
   }
 
-  return { retried, succeeded, failed };
+  return { retried, succeeded, failed, skipped };
 }

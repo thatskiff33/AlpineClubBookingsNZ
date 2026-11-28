@@ -109,7 +109,7 @@ afterEach(() => {
 describe("hut leaders assignment error placement", () => {
   it("surfaces a POST overlap error in the member card and the page-level alert", async () => {
     stubFetch();
-    const HutLeadersPage = (await import("@/app/(admin)/admin/hut-leaders/page")).default;
+    const HutLeadersPage = (await import("@/app/(admin)/admin/lodge-ops/hut-leaders/page")).default;
 
     render(<HutLeadersPage />);
 
@@ -261,7 +261,7 @@ describe("custodian bed hold controls (#2286)", () => {
 
   it("releases the bed with ONE explicit null bedId, keeping the assignment", async () => {
     const calls = stubWithAssignment();
-    const HutLeadersPage = (await import("@/app/(admin)/admin/hut-leaders/page"))
+    const HutLeadersPage = (await import("@/app/(admin)/admin/lodge-ops/hut-leaders/page"))
       .default;
     render(<HutLeadersPage />);
 
@@ -282,7 +282,7 @@ describe("custodian bed hold controls (#2286)", () => {
 
   it("announces the over-capacity question, takes focus, and names the uncounted bookings", async () => {
     const calls = stubWithAssignment({ ok: false, body: OVER_CAPACITY_BODY });
-    const HutLeadersPage = (await import("@/app/(admin)/admin/hut-leaders/page"))
+    const HutLeadersPage = (await import("@/app/(admin)/admin/lodge-ops/hut-leaders/page"))
       .default;
     render(<HutLeadersPage />);
 
@@ -328,7 +328,7 @@ describe("custodian bed hold controls (#2286)", () => {
 
   it("offers a bed picker per row, so a cron-created assignment can hold a bed too", async () => {
     stubWithAssignment();
-    const HutLeadersPage = (await import("@/app/(admin)/admin/hut-leaders/page"))
+    const HutLeadersPage = (await import("@/app/(admin)/admin/lodge-ops/hut-leaders/page"))
       .default;
     render(<HutLeadersPage />);
 
@@ -338,7 +338,7 @@ describe("custodian bed hold controls (#2286)", () => {
 
   it("offers no Hold/Change bed while bed allocation is off, but keeps Release bed (#3817)", async () => {
     stubWithAssignment(undefined, undefined, false);
-    const HutLeadersPage = (await import("@/app/(admin)/admin/hut-leaders/page"))
+    const HutLeadersPage = (await import("@/app/(admin)/admin/lodge-ops/hut-leaders/page"))
       .default;
     render(<HutLeadersPage />);
 
@@ -364,7 +364,7 @@ describe("custodian bed hold controls (#2286)", () => {
 
   it("announces the whole-lodge-hold amendment question and accepts it explicitly", async () => {
     const calls = stubWithAssignment({ ok: false, body: HOLD_AMENDMENT_BODY });
-    const HutLeadersPage = (await import("@/app/(admin)/admin/hut-leaders/page"))
+    const HutLeadersPage = (await import("@/app/(admin)/admin/lodge-ops/hut-leaders/page"))
       .default;
     render(<HutLeadersPage />);
 
@@ -404,7 +404,7 @@ describe("custodian bed hold controls (#2286)", () => {
 
   it("words the whole-lodge question for the custodian tick when no bed is in play (#3817)", async () => {
     stubWithAssignment({ ok: false, body: HOLD_AMENDMENT_BODY });
-    const HutLeadersPage = (await import("@/app/(admin)/admin/hut-leaders/page"))
+    const HutLeadersPage = (await import("@/app/(admin)/admin/lodge-ops/hut-leaders/page"))
       .default;
     render(<HutLeadersPage />);
 
@@ -428,7 +428,7 @@ describe("custodian bed hold controls (#2286)", () => {
       { ok: false, body: OVER_CAPACITY_BODY },
       { ok: false, body: HOLD_AMENDMENT_BODY },
     ]);
-    const HutLeadersPage = (await import("@/app/(admin)/admin/hut-leaders/page"))
+    const HutLeadersPage = (await import("@/app/(admin)/admin/lodge-ops/hut-leaders/page"))
       .default;
     render(<HutLeadersPage />);
 
@@ -466,7 +466,7 @@ describe("custodian bed hold controls (#2286)", () => {
       { ok: false, status: 409, body: { error: REFUSAL } },
     );
     vi.stubGlobal("confirm", () => true);
-    const HutLeadersPage = (await import("@/app/(admin)/admin/hut-leaders/page"))
+    const HutLeadersPage = (await import("@/app/(admin)/admin/lodge-ops/hut-leaders/page"))
       .default;
     render(<HutLeadersPage />);
 
@@ -481,7 +481,7 @@ describe("custodian bed hold controls (#2286)", () => {
 
   it("sends nothing at all when the officer declines the amendment", async () => {
     const calls = stubWithAssignment({ ok: false, body: HOLD_AMENDMENT_BODY });
-    const HutLeadersPage = (await import("@/app/(admin)/admin/hut-leaders/page"))
+    const HutLeadersPage = (await import("@/app/(admin)/admin/lodge-ops/hut-leaders/page"))
       .default;
     render(<HutLeadersPage />);
 

@@ -98,7 +98,7 @@ describe("the Paid another way dialog", () => {
     expect(screen.getByText("$150.00 is still owed.")).toBeInTheDocument();
     // Round 7 (SSOT): the note's wording is the one home's, never spelled here.
     expect(
-      screen.getByText(`A Xero refund credit note for the amount, worded "${BANK_NOTE_WORDING}", is queued when you close it.`),
+      screen.getByText(`Closing this queues a Xero refund credit note for the amount, worded "${BANK_NOTE_WORDING}". If an invoice already records the payment, the note credits that invoice.`),
     ).toBeInTheDocument();
     // #4368 (decision 7): settled here, never with a new Stripe dashboard refund; the old "wait for it" is gone.
     expect(screen.getByText("Settle it here, not with a new refund in the Stripe dashboard.")).toBeInTheDocument();
@@ -111,6 +111,31 @@ describe("the Paid another way dialog", () => {
       screen.getByText(/No Xero refund credit note is queued: the app has no Xero invoice it can credit for this money yet/),
     ).toBeInTheDocument();
     expect(screen.queryByText(/there is no Xero invoice/)).not.toBeInTheDocument();
+  });
+
+  // #4381 (owner, 28 Nov 2026): the close keeps its waiting key, so a refund
+  // recorded by hand would be credited twice once the note follows.
+  it("MUTATION: a charge held as released credit - the note follows later, and the dialog says not to record it by hand", () => {
+    openDialog(row({ xeroRefundNote: "after-credit-release" }));
+    expect(
+      screen.getByText(
+        "No Xero refund credit note yet: this late card charge is held as released credit. One is queued automatically once that credit is released. Do not record this refund by hand in Xero, or it would be credited twice.",
+      ),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/record the refund there by hand/)).not.toBeInTheDocument();
+  });
+
+  it("MUTATION: after a close of a charge held as released credit, the message says not to record it by hand", async () => {
+    openDialog(row({ xeroRefundNote: "after-credit-release" }));
+    fireEvent.click(fullChoice());
+    fireEvent.change(noteBox(), { target: { value: "Bank transfer" } });
+    respond(200, { success: true, xeroQueued: "refund-note-after-credit-release" });
+    fireEvent.click(closeButton());
+
+    await waitFor(() => expect(mocks.toastSuccess).toHaveBeenCalled());
+    expect(mocks.toastSuccess).toHaveBeenCalledWith(
+      "Closed. $150.00 recorded as paid back in full. No Xero refund credit note yet: this late card charge is held as released credit. One is queued automatically once that credit is released. Do not record this refund by hand in Xero, or it would be credited twice.",
+    );
   });
 
   // #3924 round 6 (owner, 8 Oct 2026: "Record receipt, then credit").

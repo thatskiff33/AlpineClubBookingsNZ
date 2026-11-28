@@ -25,6 +25,7 @@ type EmailRow = {
   bookingRetryHtmlBody: string | null;
   bookingId: string | null;
   bookingRecipientMemberId: string | null;
+  handoverState: "PENDING" | "STARTED" | "UNCONFIRMED" | null;
 };
 type AuditRow = {
   action: string;
@@ -80,7 +81,22 @@ Object.assign(mockPrisma, {
       args.where.id.in.filter((id) => store.bookingIds.has(id)).map((id) => ({ id })),
     ),
   },
+  // #5469: the suppression list's rows, filtered by the query's own where
+  // (address, suppressedAt not null, clearedAt null).
+  emailSuppression: {
+    findMany: vi.fn(async (args: { where: Record<string, unknown> }) =>
+      suppressionRows.filter((row) => matchesWhere(row, args.where)).map((row) => ({ email: row.email })),
+    ),
+  },
 });
+
+/** Suppression rows as the list stores them (lower case), a lifted one with `clearedAt` set. */
+const suppressionRows: Array<{ email: string; suppressedAt: Date | null; clearedAt: Date | null }> = [];
+const blockedAddresses = {
+  add: (email: string, clearedAt: Date | null = null) =>
+    suppressionRows.push({ email, suppressedAt: new Date("2026-05-01T00:00:00.000Z"), clearedAt }),
+  clear: () => suppressionRows.splice(0),
+};
 
 vi.mock("@/lib/prisma", () => ({ prisma: mockPrisma }));
 vi.mock("@/lib/audit", () => ({ createAuditLog: vi.fn() }));
@@ -105,6 +121,7 @@ function exhausted(id: string, minutes: number, overrides: Partial<EmailRow> = {
     bookingRetryHtmlBody: null,
     bookingId: null,
     bookingRecipientMemberId: null,
+    handoverState: null,
     ...overrides,
   };
 }
@@ -126,6 +143,7 @@ describe("getExhaustedEmailFailureReviewQueue (#4963)", () => {
     store.emails = [];
     store.audits = [];
     store.bookingIds = new Set();
+    blockedAddresses.clear();
   });
 
   it("reports the true total when archived rows fill the scan window, and says the window is capped", async () => {
@@ -273,6 +291,44 @@ describe("getExhaustedEmailFailureReviewQueue (#4963)", () => {
       "no-booking": "retired",
       "booking-deleted": "retired",
     });
+  });
+
+  it("MUTATION: offers no resend for a row whose address is blocked, whatever it would otherwise offer (#5469)", async () => {
+    store.emails.push(
+      exhausted("blocked-retry", 60, { to: "Blocked.One@Example.com" }),
+      exhausted("blocked-token", 50, { to: "blocked-two@example.com", templateName: "member-setup-invite", htmlBody: null }),
+      exhausted("open", 40, { templateName: "member-welcome" }),
+    );
+    blockedAddresses.add("blocked.one@example.com");
+    blockedAddresses.add("blocked-two@example.com");
+    // A block an officer has lifted no longer counts.
+    store.emails.push(exhausted("lifted", 30, { to: "lifted@example.com", templateName: "member-welcome" }));
+    blockedAddresses.add("lifted@example.com", new Date("2026-05-02T00:00:00.000Z"));
+
+    const queue = await getExhaustedEmailFailureReviewQueue();
+
+    expect(Object.fromEntries(queue.failures.map((failure) => [failure.id, failure.recovery]))).toEqual({
+      "blocked-retry": "address_blocked",
+      "blocked-token": "address_blocked",
+      open: "retry",
+      lifted: "retry",
+    });
+  });
+
+  // #5298 (INV-INT-043): the stranded-email sweep's flag reaches the officer.
+  it("says which rows may already have reached their recipient", async () => {
+    store.emails.push(
+      exhausted("unconfirmed", 60, { handoverState: "UNCONFIRMED" }),
+      exhausted("never-sent", 50, { handoverState: "PENDING", htmlBody: null }),
+      exhausted("retried", 40, { handoverState: "STARTED" }),
+      exhausted("legacy", 30),
+    );
+
+    const queue = await getExhaustedEmailFailureReviewQueue();
+
+    expect(
+      Object.fromEntries(queue.failures.map((failure) => [failure.id, failure.deliveryUnconfirmed])),
+    ).toEqual({ unconfirmed: true, "never-sent": false, retried: false, legacy: false });
   });
 
   it("never reads a retained body into the queue", async () => {

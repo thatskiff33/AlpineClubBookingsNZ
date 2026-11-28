@@ -32,6 +32,8 @@ import { requireRecentAuth } from "@/lib/require-recent-auth";
 import { AI_DIAGNOSTICS_DISCLOSURE_VERSION } from "@/lib/ai-diagnostics-disclosure";
 import { judgeAiDiagnosticsEnable } from "@/lib/ai-diagnostics-enable-gate";
 import { isPrismaRecordNotFoundError } from "@/lib/prisma-errors";
+import { CLUB_MODULES_CONNECTION_SHAPE } from "@/lib/connection-shapes/support-system";
+import { connectionJson } from "@/lib/mcp-connection-request";
 
 const moduleSettingsSchema = z
   .object(
@@ -62,7 +64,7 @@ function getChanges(
   }));
 }
 
-export async function GET() {
+export async function GET(request: Request) {
   const guard = await requireAdmin({
     permission: { area: "support", level: "view" },
   });
@@ -72,7 +74,7 @@ export async function GET() {
 
   // The club's format (#3565), resolved once per request.
   const format = await clubFormatValues();
-  return NextResponse.json(await loadClubModuleSettings(format));
+  return connectionJson(request, await loadClubModuleSettings(format), CLUB_MODULES_CONNECTION_SHAPE);
 }
 
 export async function PUT(request: Request) {

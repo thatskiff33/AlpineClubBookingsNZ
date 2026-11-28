@@ -2,6 +2,7 @@ import type { PaymentSource } from "@prisma/client";
 
 import { isAdditionalAskRetiredBookingStatus } from "@/lib/additional-payment-chase";
 import { paidByOrganiserInternetBanking } from "@/lib/group-organiser-paid";
+import { CARD_PAYMENT_SOURCE } from "@/lib/payment-source";
 
 /**
  * The `Payment.status` values that mean MONEY WAS TAKEN — captured, and possibly
@@ -160,8 +161,10 @@ export function hasCapturedPayment(
   return true;
 }
 
-/** The `Payment.source` a card ask is minted against, checked by the compiler. */
-const CARD_PAYMENT_SOURCE = "STRIPE" satisfies PaymentSource;
+/** A settled booking on a settled payment of one `source`: what both increase questions share (`INV-SSOT`, #5288). */
+export function isSettledOnPaymentSource(booking: Parameters<typeof canAskCardForIncrease>[0], source: PaymentSource): boolean {
+  return isSettledBookingStatus(booking.status) && isCapturedPaymentStatus(booking.payment?.status ?? "") && booking.payment?.source === source;
+}
 
 /**
  * #3502 (`INV-PAY-047`, `INV-MOD-018`): may an edit that RAISES this booking's
@@ -198,11 +201,7 @@ export function canAskCardForIncrease(booking: {
   status: string;
   payment: { status: string; source: PaymentSource } | null | undefined;
 }): boolean {
-  return (
-    isSettledBookingStatus(booking.status) &&
-    isCapturedPaymentStatus(booking.payment?.status ?? "") &&
-    booking.payment?.source === CARD_PAYMENT_SOURCE
-  );
+  return isSettledOnPaymentSource(booking, CARD_PAYMENT_SOURCE);
 }
 
 /**
@@ -444,7 +443,7 @@ export function stripeRefundMirrorShowsCapture(payment: {
   refundedAmountCents: number;
 }): boolean {
   return (
-    payment.source === "STRIPE" &&
+    payment.source === CARD_PAYMENT_SOURCE &&
     (payment.status === "REFUNDED" ||
       payment.status === "PARTIALLY_REFUNDED" ||
       payment.refundedAmountCents > 0)
@@ -584,7 +583,7 @@ export function editReviewRefundSettlementPayment(task: {
 export function editReviewRefundGoesBackOnCard(payment: {
   source: string | null;
 }): boolean {
-  return payment.source === "STRIPE";
+  return payment.source === CARD_PAYMENT_SOURCE;
 }
 
 /**

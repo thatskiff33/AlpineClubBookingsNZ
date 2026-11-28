@@ -4,6 +4,8 @@ import {
   requeueExhaustedEmailFailure,
 } from "@/lib/email-failure-review";
 import { requireAdmin } from "@/lib/session-guards";
+import { EMAIL_FAILURE_REQUEUED_CONNECTION_SHAPE } from "@/lib/connection-shapes/support-messages";
+import { connectionJson } from "@/lib/mcp-connection-request";
 import logger from "@/lib/logger";
 
 /**
@@ -12,7 +14,7 @@ import logger from "@/lib/logger";
  * suppression, "No emails" and environment checks still decide the send.
  */
 export async function POST(
-  _request: NextRequest,
+  request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   const guard = await requireAdmin({
@@ -27,7 +29,7 @@ export async function POST(
       requestedByMemberId: session.user.id,
     });
 
-    return NextResponse.json(result);
+    return connectionJson(request, result, EMAIL_FAILURE_REQUEUED_CONNECTION_SHAPE);
   } catch (error) {
     if (error instanceof EmailFailureReviewError) {
       return NextResponse.json({ error: error.message }, { status: error.status });
