@@ -26,7 +26,7 @@ describe("the age-up real-database proof stays wired into CI (#5190)", () => {
     expect(suite).toContain("one run raises a part-season charge, a top-up and a credit");
     expect(suite).toContain("a top-up holds its member back only once its invoice is issued and unpaid");
     expect(suite).toContain("a voided top-up is named, not raised again");
-    expect(suite).toContain("the unique key refuses a second adjustment for one birthday");
+    expect(suite).toContain("the unique key refuses a second adjustment for one member and season");
     expect(suite).toContain("two credit workers on one adjustment grant one credit lot");
   });
 });
