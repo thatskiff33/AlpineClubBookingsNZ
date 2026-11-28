@@ -36,6 +36,15 @@ import {
 } from "./xero-credit-note-mirror";
 import { writtenDownCentsByCreditNote } from "./xero-credit-note-write-down";
 import { fundingLotWhere } from "./xero-applied-credit-slice-lookup";
+import { xeroCreditNoteSnapshotMetadata } from "./xero-refund-note-status";
+import { accountCreditNoteReadingIsCurrent } from "./xero-account-credit-note-reading";
+
+/**
+ * A note as the sweep read it: the mirror's evidence, plus (#4347,
+ * `INV-ADDPAY-041`) the reading's snapshot so the mirror can refuse it, under the
+ * member's credit lock, once a stored void or a newer stored snapshot has beaten it.
+ */
+export type SweptCreditNote = CreditNoteMirrorEvidence & { readingMetadata?: ReturnType<typeof xeroCreditNoteSnapshotMetadata> };
 
 /**
  * A complete pass throttles the next full one; deferred rechecks are not throttled. The
@@ -70,11 +79,11 @@ export interface CreditNoteMirrorSweepDeps {
   minPassIntervalMs?: number;
   noteLimit?: number;
   /** Read one note from Xero; throws on an outage or rate limit. Injected in tests. */
-  readCreditNote?: (creditNoteId: string) => Promise<CreditNoteMirrorEvidence | null>;
-  mirror?: (evidence: CreditNoteMirrorEvidence) => Promise<CreditNoteMirrorResult>;
+  readCreditNote?: (creditNoteId: string) => Promise<SweptCreditNote | null>;
+  mirror?: (evidence: SweptCreditNote) => Promise<CreditNoteMirrorResult>;
 }
 
-async function readCreditNoteLive(creditNoteId: string): Promise<CreditNoteMirrorEvidence | null> {
+async function readCreditNoteLive(creditNoteId: string): Promise<SweptCreditNote | null> {
   const { xero, tenantId } = await getAuthenticatedXeroClient();
   const response = await callXeroApi(() => xero.accountingApi.getCreditNote(tenantId, creditNoteId), {
     operation: "getCreditNote",
@@ -85,7 +94,8 @@ async function readCreditNoteLive(creditNoteId: string): Promise<CreditNoteMirro
     armTransientBreaker: false,
   });
   const note = response.body.creditNotes?.[0];
-  return note ? creditNoteMirrorEvidenceFrom(note) : null;
+  const evidence = note ? creditNoteMirrorEvidenceFrom(note) : null;
+  return evidence && note ? { ...evidence, readingMetadata: xeroCreditNoteSnapshotMetadata(note) } : null;
 }
 
 /**
@@ -130,7 +140,15 @@ export async function runCreditNoteMirrorSweep(deps: CreditNoteMirrorSweepDeps =
   const minPassIntervalMs = deps.minPassIntervalMs ?? DEFAULT_MIN_PASS_INTERVAL_MS;
   const noteLimit = deps.noteLimit ?? DEFAULT_NOTE_LIMIT;
   const read = deps.readCreditNote ?? readCreditNoteLive;
-  const mirror = deps.mirror ?? ((evidence) => mirrorCreditNoteOutsideSpend(evidence, { db, now }));
+  const mirror =
+    deps.mirror ??
+    (({ readingMetadata, ...evidence }: SweptCreditNote) =>
+      mirrorCreditNoteOutsideSpend(evidence, {
+        db,
+        now,
+        // #4347: a reading a stored void or newer snapshot beat moves no credit ("stale-reading").
+        readingIsCurrent: readingMetadata ? (tx) => accountCreditNoteReadingIsCurrent(evidence.creditNoteId, readingMetadata, tx) : undefined,
+      }));
 
   const result: CreditNoteMirrorSweepResult = {
     skipped: false,

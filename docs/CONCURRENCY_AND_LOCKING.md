@@ -9059,7 +9059,8 @@ Transaction boundaries, traced on `main` after #5231 and #5302 (#4279):
   note; the allocation repair and the outside-spend mirror (#4270), later, each
   take the member's credit key (`lockMemberCreditLedger`) and plain-read the
   note's account-credit rows under it (the mirror through its
-  `readingIsCurrent` dependency). No
+  `readingIsCurrent` dependency, which the nightly mirror sweep passes too,
+  read outside any transaction). No
   transaction holds the account-credit row while it waits on Payment or the
   member key, so the order is link, commit, then Payment or member
   (`INV-LOCK-002`);

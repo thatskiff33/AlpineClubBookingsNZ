@@ -1637,8 +1637,8 @@ landing after a void put the refund back. Now:
 - a reading the note's account-credit row refuses (`readingIsCurrent`, the
   #4447 test: any stored snapshot would keep itself over the reading) does not
   stamp the member's cancellation credit, is not mirrored as outside spend
-  (#4270), and posts no allocation to the member's ledger. The mirror and the
-  allocation repair re-check it after taking the member's credit lock, so a void
+  (#4270) by the reconcile or the nightly mirror sweep, and posts no allocation
+  to the member's ledger. The mirror and the allocation repair re-check it after taking the member's credit lock, so a void
   committing after the reconcile's own check still stops them. The stamp is
   checked once, without that lock: it records which note funds a credit, never
   an amount, and a void landing just after it is the ordinary "stamped, then
