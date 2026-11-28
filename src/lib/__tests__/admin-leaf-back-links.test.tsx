@@ -2,7 +2,7 @@
 
 import type { ComponentProps, ReactElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { ClubTimeTestProvider } from "@/lib/__tests__/support/club-time-render";
+import { ClubSeasonTestProvider } from "@/lib/__tests__/support/club-season-render";
 import { describe, expect, it, vi } from "vitest";
 import { getAdminPage } from "@/lib/admin-hubs";
 
@@ -107,10 +107,11 @@ import { MemberDetailHeader } from "@/app/(admin)/admin/membership/members/[id]/
  * mounts `ClubTimeProvider` — so a leaf that formats an instant reads the
  * club’s persisted zone rather than the viewer’s. Rendering one bare here would
  * throw, which is the provider doing its job; the shell is what the test is
- * standing in for.
+ * standing in for. The admin layout also mounts `ClubSeasonProvider` (#5259),
+ * so the stand-in does too.
  */
 function renderLeaf(node: ReactElement): string {
-  return renderToStaticMarkup(<ClubTimeTestProvider>{node}</ClubTimeTestProvider>);
+  return renderToStaticMarkup(<ClubSeasonTestProvider>{node}</ClubSeasonTestProvider>);
 }
 
 describe("admin drill-down leaf back links", () => {
