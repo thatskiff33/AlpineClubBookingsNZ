@@ -1287,7 +1287,7 @@ actually taken.
 
 ## INV-MOD-041
 
-### Where it holds, and the one fence left
+### Where it holds, and the retired fence
 
 **It holds on EVERY edit door, and none of them parks** (#4317). The doors in
 `INV-MOD-044` price every edit from stored data; a door added later prices the

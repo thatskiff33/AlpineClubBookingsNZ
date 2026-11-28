@@ -488,7 +488,7 @@ Prefix `INV-MOD`.
 | `INV-MOD-038` | Legacy: three consumers read a re-based total; none restates a bill |
 | `INV-MOD-039` | Superseded for edits and re-bases; the grain test survives in a census |
 | `INV-MOD-040` | An edit writes valued amounts again; estimate sources still prohibited |
-| `INV-MOD-041` | Every edit door prices; the legacy open-review fence still refuses |
+| `INV-MOD-041` | Every edit door prices; the open-review fence is retired |
 | `INV-MOD-042` | No door parks or freezes money; promotion changes are applied |
 | `INV-MOD-043` | The in-progress promo notice is built even where nothing calls for it |
 | `INV-MOD-044` | The five edit doors, each priced from stored data |

@@ -398,7 +398,7 @@ function occurrenceKeyViolation(
  * fragment, and the one definition of it (`INV-SSOT`). It lives here, with the
  * module that mints the kind.
  */
-export const OPEN_EDIT_FINANCIAL_REVIEW_TASK_FILTER = {
+const OPEN_EDIT_FINANCIAL_REVIEW_TASK_FILTER = {
   kind: ManualRefundTaskKind.EDIT_FINANCIAL_REVIEW,
   status: ManualRefundTaskStatus.OPEN,
 } as const;
