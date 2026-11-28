@@ -671,6 +671,8 @@ describe("the hub prefix census", () => {
       "/admin/booking-desk/booking-approvals",
       "/admin/booking-desk/booking-change-requests",
       "/admin/booking-desk/book",
+      "/admin/booking-desk/booking-import",
+      "/admin/booking-desk/booking-import/[id]",
       "/admin/booking-desk/bed-allocation",
       "/admin/booking-desk/waitlist",
     ]);
@@ -797,6 +799,8 @@ describe("the entries' shape", () => {
       "book",
       "booking-approvals",
       "booking-change-requests",
+      "booking-import",
+      "booking-import-batch",
       "booking-messages",
       "booking-policies",
       "booking-policies-adult-member-hosting",
@@ -1038,7 +1042,7 @@ describe("which pages are menu and palette destinations", () => {
     expect(
       ADMIN_PAGES.filter((page) => page.kind === "test").map((page) => page.id),
     ).toEqual(["testing-route-error"]);
-    expect(ADMIN_PAGES.filter((page) => !isAdminMenuDestination(page))).toHaveLength(17);
+    expect(ADMIN_PAGES.filter((page) => !isAdminMenuDestination(page))).toHaveLength(18);
   });
 });
 
@@ -1804,6 +1808,7 @@ describe("buildAdminUrlRules", () => {
       ["/admin/book", "/admin/booking-desk/book"],
       ["/admin/booking-approvals", "/admin/booking-desk/booking-approvals"],
       ["/admin/booking-change-requests", "/admin/booking-desk/booking-change-requests"],
+      ["/admin/booking-import", "/admin/booking-desk/booking-import"],
       ["/admin/booking-messages", "/admin/messages/booking-messages"],
       ["/admin/booking-policies", "/admin/rules/booking-policies"],
       ["/admin/booking-policies/adult-member-hosting", "/admin/rules/booking-policies/adult-member-hosting"],
@@ -1872,6 +1877,7 @@ describe("buildAdminUrlRules", () => {
       ["/admin/xero/setup", "/admin/finance/xero/setup"],
       ["/admin/xero/unallocated-payments", "/admin/finance/xero/unallocated-payments"],
     ] as const;
+    const bookingImportBatch = ["/admin/booking-import/[id]", "/admin/booking-desk/booking-import/[id]"] as const;
     const inductionPrint = ["/admin/induction/[id]/print", "/admin/membership/induction/[id]/print"] as const;
     const lodgePages = (["", "/central-lodge", "/display", "/roster", "/setup"] as const).map(
       (rest) => [`/admin/lodges/[id]${rest}`, `/admin/lodge-ops/lodges/[id]${rest}`] as const,
@@ -1888,12 +1894,13 @@ describe("buildAdminUrlRules", () => {
         .map((page) => [page.oldPath, page.hubPath])
         .sort((a, b) => a[0].localeCompare(b[0])),
     ).toEqual(
-      [...staticMoves, inductionPrint, ...lodgePages, memberDetail, memberMerge, noticeDetail, xeroRecord].sort((a, b) =>
+      [...staticMoves, bookingImportBatch, inductionPrint, ...lodgePages, memberDetail, memberMerge, noticeDetail, xeroRecord].sort((a, b) =>
         a[0].localeCompare(b[0]),
       ),
     );
     const moves = [
       ...staticMoves,
+      ["/admin/booking-import/:id", "/admin/booking-desk/booking-import/:id"],
       ["/admin/induction/:id/print", "/admin/membership/induction/:id/print"],
       ["/admin/lodges/:id", "/admin/lodge-ops/lodges/:id"],
       ["/admin/lodges/:id/central-lodge", "/admin/lodge-ops/lodges/:id/central-lodge"],
@@ -2197,6 +2204,10 @@ describe("the registry is inert", () => {
     "src/lib/__tests__/admin-page-exact-path-proxy.test.ts":
       "C4: the proxy's 404 for every registered page spelled another way",
     "src/app/(admin)/admin/booking-desk/book/page.tsx": "C5: the Xero setup link is adminHref",
+    "src/app/(admin)/admin/booking-desk/booking-import/[id]/page.tsx":
+      "#5005: its back link is adminLink",
+    "src/components/admin/booking-import/booking-import-batches-card.tsx":
+      "#5005: each batch links to its page with adminHref",
     "src/app/(admin)/admin/dashboard/page.tsx":
       "C5: the payments and refunds links, and the payments permission check, are adminHref; " +
       "C6: the seasons and promo-code links; C10: the Bookings, Booking Requests and Bed Allocation links",

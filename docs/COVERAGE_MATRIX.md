@@ -89,6 +89,7 @@ For what an officer sees and does on each screen, use the
 | `book` | bookings | — (admin book-on-behalf) | [guide](guides/book.md) | 1 |
 | `booking-approvals` | bookings | `STATE_MACHINES.md` | [guide](guides/booking-requests.md) (redirect → Approvals tab) | 1 |
 | `booking-change-requests` | bookings | `STATE_MACHINES.md` | [guide](guides/booking-requests.md) (redirect → Changes tab) | 1 |
+| `booking-import` | bookings (page); finance and bookings (API, edit on both to import or reverse) | [`design/booking-import.md`](design/booking-import.md), [`STATE_MACHINES.md`](STATE_MACHINES.md#paid-booking-import-batch-lifecycle-5005-child-a), `INV-PAY-161`, `INV-PAY-163`, `INV-CAP-040`; batch page `booking-import/[id]` | [guide](guides/moving-in.md#7-future-bookings-import-prepaid-stays) | — (#5005, postdates #2050) |
 | `booking-messages` | support | — | [guide](guides/booking-messages.md) | 1 |
 | `booking-policies` | bookings | `ARCHITECTURE.md` (booking policies), `CANCELLATIONS.md` | [guide](guides/booking-policies.md) | 1 |
 | `booking-requests` | bookings | `ARCHITECTURE.md` (public booking requests) | [guide](guides/booking-requests.md) | 1 |
@@ -164,7 +165,7 @@ For what an officer sees and does on each screen, use the
 
 ## Summary
 
-- **86** admin route areas, one row each. `src/app/(admin)/admin` holds more directories that aren't areas: `__tests__`; `_lib`, shared server helpers with no route (Next.js treats an `_`-prefixed folder as private); and each hub directory that pages have moved into (`website`, `finance`, `rules`, `system`, `messages`, `booking-desk`, `membership`), which holds areas rather than being one. `src/lib/__tests__/coverage-matrix-areas.test.ts` checks this count, that every area directory has exactly one row, and that each row's permission area matches the route map.
+- **87** admin route areas, one row each. `src/app/(admin)/admin` holds more directories that aren't areas: `__tests__`; `_lib`, shared server helpers with no route (Next.js treats an `_`-prefixed folder as private); and each hub directory that pages have moved into (`website`, `finance`, `rules`, `system`, `messages`, `booking-desk`, `membership`), which holds areas rather than being one. `src/lib/__tests__/coverage-matrix-areas.test.ts` checks this count, that every area directory has exactly one row, and that each row's permission area matches the route map.
 - **2** areas are already served by a **feature hub** (`display` → lobby-display,
   `lodges` → multi-lodge). #2050 should extend, not duplicate, those hubs.
 - **13** areas have **no reference coverage** beyond their operator guide

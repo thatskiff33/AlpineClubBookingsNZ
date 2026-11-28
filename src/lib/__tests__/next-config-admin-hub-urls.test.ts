@@ -582,7 +582,7 @@ describe("next.config.ts over the moved Bookings hub", () => {
   // Bookings moved in C10 (#4807). The prefix is `booking-desk`, not `bookings`.
   it("PREMISE: every Bookings page has moved", () => {
     const bookings = ADMIN_PAGES.filter((page) => page.hub === "bookings");
-    expect(bookings).toHaveLength(7);
+    expect(bookings).toHaveLength(9);
     expect(bookings.filter((page) => !page.moved).map((page) => page.id)).toEqual([]);
   });
 

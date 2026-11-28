@@ -98,6 +98,10 @@ const ORACLE_ROUTE_AREAS: ReadonlyArray<{
       "/admin/book",
       "/admin/bed-allocation",
       "/admin/waitlist",
+      // Import Paid Bookings (#5005 child C), added after C2: a new directory,
+      // so its reviewed answer is here. Bookings, like its hub; its API also
+      // needs finance, and its actions edit on both (O4).
+      "/admin/booking-import",
       "/admin/booking-approvals",
       "/admin/booking-change-requests",
       "/admin/booking-policies",
@@ -950,6 +954,8 @@ describe("the Bookings hub keeps each page's own admission (C10 #4807)", () => {
       [],
     ],
     ["book", "/admin/book", "/admin/booking-desk/book", []],
+    ["booking-import", "/admin/booking-import", "/admin/booking-desk/booking-import", []],
+    ["booking-import-batch", "/admin/booking-import/[id]", "/admin/booking-desk/booking-import/[id]", []],
     ["bed-allocation", "/admin/bed-allocation", "/admin/booking-desk/bed-allocation", ["bedAllocation"]],
     ["waitlist", "/admin/waitlist", "/admin/booking-desk/waitlist", ["waitlist"]],
   ];

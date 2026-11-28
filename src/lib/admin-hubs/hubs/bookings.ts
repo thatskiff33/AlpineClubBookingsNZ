@@ -52,6 +52,25 @@ export const BOOKINGS_HUB = defineHub({
       moved: true,
     },
     {
+      // #5005: a moving-in club's paid future bookings, carried over at what
+      // was paid. Opening it is a bookings read; its API also needs finance,
+      // and importing or reversing needs edit on both (O4).
+      id: "booking-import",
+      label: "Import Paid Bookings",
+      keywords: ["moving in", "carry over", "previous system", "csv"],
+      oldPath: "/admin/booking-import",
+      area: "bookings",
+      moved: true,
+    },
+    {
+      id: "booking-import-batch",
+      label: "Import Batch",
+      oldPath: "/admin/booking-import/[id]",
+      area: "bookings",
+      kind: "detail",
+      moved: true,
+    },
+    {
       id: "bed-allocation",
       label: "Bed Allocation",
       oldPath: "/admin/bed-allocation",

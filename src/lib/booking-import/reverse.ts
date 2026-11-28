@@ -131,6 +131,8 @@ export type BookingImportReversalRow = {
   reasons: string[];
   /** Why a NOT_IMPORTED booking was refused at import. */
   refusals: string[];
+  /** A REVERSED booking a stopped run has not cancelled yet; the next run does. */
+  cancelPending: boolean;
   amountCents: number;
   guestCount: number;
   guestNightCount: number;
@@ -178,6 +180,7 @@ export async function planBookingImportReversal(
       amountCents: true,
       guestCount: true,
       guestNightCount: true,
+      booking: { select: { status: true } },
     },
   });
   const totals: BookingImportReversalPlan["totals"] = {
@@ -211,6 +214,7 @@ export async function planBookingImportReversal(
       bookingId: row.bookingId,
       state,
       reasons,
+      cancelPending: state === "REVERSED" && row.booking !== null && row.booking.status !== BookingStatus.CANCELLED,
       refusals: state === "NOT_IMPORTED" ? splitBookingImportRefusals(row.refusalReason, null).map((refusal) => refusal.message) : [],
       amountCents: row.amountCents,
       guestCount: row.guestCount,
