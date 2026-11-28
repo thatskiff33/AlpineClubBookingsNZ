@@ -10,6 +10,8 @@
  *     deposit's cash line; the journal shows the charge (R01), the deposit's
  *     receipt (R08) applied to it and the rest still open, with nothing posted for
  *     the request (R25). Both money records agree and the journal's batches verify.
+ *     Applied credit is netted first: balance = worth - credit - deposit. A due date
+ *     of today is accepted.
  *  2. Each refusal writes nothing: a deposit of nothing, or of all that is owing; a
  *     due date in the past, after check-in, or not a date; a moved worth; a request
  *     already open (on its rows, or on the summary columns alone); a booking already
@@ -42,6 +44,9 @@ const WORTH = 20_000;
 const CHECK_IN = "2027-08-01";
 const DEPOSIT = 5_000;
 const DUE_ON = "2027-07-15";
+/** The club's calendar date under the frozen test clock (`2026-07-01T00:00:00.000Z`). */
+const TODAY = "2026-07-01";
+const CREDIT = 3_000;
 
 let prisma: PrismaClient;
 let reconciliation: typeof import("@/lib/payment-reconciliation");
@@ -222,6 +227,39 @@ async function expectNothingWritten(bookingId: string) {
     await prisma.paymentTransaction.updateMany({ where: { payment: { bookingId: id }, kind: "ADDITIONAL" }, data: { withdrawnAt: new Date("2026-07-01T00:00:00.000Z") } });
     await prisma.payment.update({ where: { bookingId: id }, data: { additionalAmountCents: 0, additionalPaymentStatus: null } });
     await refusedBothWays();
+  });
+
+  it("accepts a due date of today, the club's frozen calendar date", async () => {
+    const id = await unpaidBooking();
+    await settle(id, { balanceDueOn: TODAY });
+    expect((await paymentOf(id))!.transactions[0]).toMatchObject({ reason: "deposit_balance", balanceDueOn: new Date(`${TODAY}T00:00:00.000Z`) });
+    expect((await prisma.booking.findUniqueOrThrow({ where: { id }, select: { status: true } })).status).toBe("PAID");
+  });
+
+  it("splits what is owing net of applied credit: balance = worth - credit - deposit", async () => {
+    const id = await unpaidBooking();
+    const payment = await prisma.payment.create({
+      data: { id: `${id}-payment`, bookingId: id, amountCents: 0, source: "INTERNET_BANKING", status: "PENDING", reference: `REF-${id}` },
+    });
+    // Account credit applied by the real writer, as the booking's create applies it.
+    await prisma.memberCredit.create({ data: { memberId: names.memberId, amountCents: CREDIT, type: "ADMIN_ADJUSTMENT", description: `${PREFIX} credit for ${id}` } });
+    const credit = await import("@/lib/member-credit");
+    await prisma.$transaction((tx) => credit.applyCreditToBooking(names.memberId, CREDIT, id, tx, CLUB_FORMAT_TEST));
+    await prisma.payment.update({ where: { id: payment.id }, data: { creditAppliedCents: CREDIT } });
+
+    // No change fee: an unpaid booking's edit records none (INV-MOD-042, owner 10 Nov 2026).
+    const balance = WORTH - CREDIT - DEPOSIT;
+    const result = await settle(id);
+    expect(result).toMatchObject({ depositCents: DEPOSIT, creditAppliedCents: CREDIT, balanceCents: balance });
+
+    const settled = (await paymentOf(id))!;
+    expect(settled).toMatchObject({ amountCents: DEPOSIT, creditAppliedCents: CREDIT, additionalAmountCents: balance, changeFeeCents: 0 });
+    // INV-PAY-047: received + credit + still owed = worth.
+    expect(settled.amountCents + settled.creditAppliedCents + settled.additionalAmountCents).toBe(WORTH);
+    expect(settled.transactions[0]).toMatchObject({ kind: "ADDITIONAL", reason: "deposit_balance", amountCents: balance });
+    expect(await partPaid("PAID", settled)).toEqual({ owingCents: balance, dueOn: DUE_ON });
+    await expectCensusClean(id);
+    await expectJournalClean(id, settled.id);
   });
 
   it.each([
