@@ -78,7 +78,10 @@ export function SectionCard({
           className="flex w-full items-start justify-between gap-3 rounded-md text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring md:flex-1"
         >
           <div className="space-y-1">
-            <CardTitle id={titleId}>{title}</CardTitle>
+            {/* Not a heading: the title sits inside the toggle button, whose
+                children are presentational in ARIA, so a heading role here
+                would be dropped. The card is a named region instead. */}
+            <CardTitle id={titleId} headingLevel="none">{title}</CardTitle>
             <CardDescription>{description}</CardDescription>
           </div>
           {open ? (

@@ -102,7 +102,7 @@ export function ConnectionStatusPanel({
   return (
     <Card className="mb-6">
       <CardHeader>
-        <CardTitle className="flex items-center gap-3">
+        <CardTitle headingLevel={2} className="flex items-center gap-3">
           Connection Status
           {status?.connected ? (
             <ToneChip tone="success" icon={CheckCircle2}>
